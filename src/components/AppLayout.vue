@@ -3,6 +3,7 @@ import { useKeyboardShortcuts } from "../composables/useKeyboardShortcuts";
 import { useSettingsStore } from "../stores/settingsStore";
 import ThreadEditor from "./ThreadEditor.vue";
 import SettingsView from "./SettingsView.vue";
+import ModelSelector from "./ModelSelector.vue";
 
 useKeyboardShortcuts();
 const settingsStore = useSettingsStore();
@@ -38,6 +39,7 @@ const settingsStore = useSettingsStore();
     <main class="main-content">
       <ThreadEditor />
     </main>
+    <ModelSelector />
 
     <SettingsView v-if="settingsStore.settingsOpen" />
   </div>

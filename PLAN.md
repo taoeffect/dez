@@ -8,7 +8,7 @@
 - [x] 4. Editor-Style Thread Redesign (`editor-thread`)
 - [x] 5. LLM Provider Abstraction (`providers`)
 - [x] 6. Settings & Configuration (`settings`)
-- [ ] 7. Model Selector Taskbar (`model-selector`)
+- [x] 7. Model Selector Taskbar (`model-selector`)
 - [ ] 8. Tabbed Conversations (`tabs`)
 - [ ] 9. Streaming Chat Integration (`streaming`)
 - [ ] 10. Local Persistence (`persistence`)

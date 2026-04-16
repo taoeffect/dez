@@ -1,11 +1,37 @@
 import { defineStore } from 'pinia'
 import { ref } from 'vue'
 import type { Role, Section } from '../types/chat'
+import { useSettingsStore } from './settingsStore'
 
 export const useThreadStore = defineStore('thread', () => {
   const sections = ref<Section[]>([
     { id: crypto.randomUUID(), role: 'user', content: '' },
   ])
+
+  const activeModel = ref<{ providerId: string; modelId: string; modelName: string } | null>(null)
+
+  function initActiveModel() {
+    const settings = useSettingsStore()
+    if (settings.defaultNewTabModel) {
+      activeModel.value = {
+        providerId: settings.defaultNewTabModel.providerId,
+        modelId: settings.defaultNewTabModel.modelId,
+        modelName: settings.defaultNewTabModel.modelId,
+      }
+    } else if (settings.lastUsedModel) {
+      activeModel.value = {
+        providerId: settings.lastUsedModel.providerId,
+        modelId: settings.lastUsedModel.modelId,
+        modelName: settings.lastUsedModel.modelId,
+      }
+    }
+  }
+
+  function setActiveModel(providerId: string, modelId: string, modelName: string) {
+    activeModel.value = { providerId, modelId, modelName }
+    const settings = useSettingsStore()
+    settings.setLastUsedModel({ providerId, modelId })
+  }
 
   function updateSectionContent(id: string, content: string) {
     const section = sections.value.find((s) => s.id === id)
@@ -68,6 +94,9 @@ export const useThreadStore = defineStore('thread', () => {
 
   return {
     sections,
+    activeModel,
+    initActiveModel,
+    setActiveModel,
     updateSectionContent,
     toggleSectionRole,
     addSection,

@@ -14,6 +14,7 @@ export const useSettingsStore = defineStore('settings', () => {
   const theme = ref<Theme>('system')
   const defaultModels = ref<Record<string, string>>({})
   const defaultNewTabModel = ref<DefaultModel | null>(null)
+  const lastUsedModel = ref<DefaultModel | null>(null)
   const settingsOpen = ref(false)
 
   let storeInstance: Awaited<ReturnType<typeof load>> | null = null
@@ -26,6 +27,7 @@ export const useSettingsStore = defineStore('settings', () => {
       theme?: Theme
       defaultModels?: Record<string, string>
       defaultNewTabModel?: DefaultModel | null
+      lastUsedModel?: DefaultModel | null
     }>('settings')
 
     if (saved) {
@@ -33,11 +35,12 @@ export const useSettingsStore = defineStore('settings', () => {
       if (saved.theme) theme.value = saved.theme
       if (saved.defaultModels) defaultModels.value = saved.defaultModels
       if (saved.defaultNewTabModel !== undefined) defaultNewTabModel.value = saved.defaultNewTabModel
+      if (saved.lastUsedModel !== undefined) lastUsedModel.value = saved.lastUsedModel
     }
 
     applyTheme(theme.value)
 
-    watch([showPillSeparators, theme, defaultModels, defaultNewTabModel], persist, { deep: true })
+    watch([showPillSeparators, theme, defaultModels, defaultNewTabModel, lastUsedModel], persist, { deep: true })
     watch(theme, applyTheme)
   }
 
@@ -48,6 +51,7 @@ export const useSettingsStore = defineStore('settings', () => {
       theme: theme.value,
       defaultModels: defaultModels.value,
       defaultNewTabModel: defaultNewTabModel.value,
+      lastUsedModel: lastUsedModel.value,
     })
   }
 
@@ -76,6 +80,10 @@ export const useSettingsStore = defineStore('settings', () => {
     defaultNewTabModel.value = model
   }
 
+  function setLastUsedModel(model: DefaultModel | null) {
+    lastUsedModel.value = model
+  }
+
   function openSettings() {
     settingsOpen.value = true
   }
@@ -89,12 +97,14 @@ export const useSettingsStore = defineStore('settings', () => {
     theme,
     defaultModels,
     defaultNewTabModel,
+    lastUsedModel,
     settingsOpen,
     init,
     togglePillSeparators,
     setTheme,
     setDefaultModel,
     setDefaultNewTabModel,
+    setLastUsedModel,
     openSettings,
     closeSettings,
   }
