@@ -5,6 +5,7 @@ pub mod zed;
 
 use async_trait::async_trait;
 use serde::Serialize;
+use tokio::sync::mpsc;
 
 #[derive(Debug, Clone, Serialize)]
 pub struct ModelInfo {
@@ -20,11 +21,18 @@ pub struct ProviderInfo {
     pub configured: bool,
 }
 
-#[allow(dead_code)]
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, serde::Deserialize)]
 pub struct ChatMessage {
     pub role: String,
     pub content: String,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(tag = "kind", content = "data")]
+pub enum StreamEvent {
+    Token { content: String },
+    Done,
+    Error { message: String },
 }
 
 #[derive(Debug, thiserror::Error)]
@@ -56,6 +64,12 @@ pub trait LlmProvider: Send + Sync {
     fn is_configured(&self) -> bool;
     async fn configure(&mut self, api_key: String);
     async fn list_models(&self) -> Result<Vec<ModelInfo>, ProviderError>;
+    async fn stream_chat(
+        &self,
+        messages: Vec<ChatMessage>,
+        model: &str,
+        tx: mpsc::UnboundedSender<StreamEvent>,
+    ) -> Result<(), ProviderError>;
 }
 
 pub struct ProviderRegistry {

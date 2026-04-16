@@ -12,10 +12,11 @@
 - [x] 8. Tabbed Conversations (`tabs`)
 - [x] 9. Unified Editor Surface (`unified-editor`)
 - [ ] 10. Streaming Chat Integration (`streaming`)
-- [ ] 11. Local Persistence (`persistence`)
-- [ ] 12. Saved Prompts (`saved-prompts`)
-- [ ] 13. Conversation History Browser (`history`)
-- [ ] 14. Polish & Cross-Platform (`polish`)
+- [ ] 11. Provider Implementations (`provider-impls`)
+- [ ] 12. Local Persistence (`persistence`)
+- [ ] 13. Saved Prompts (`saved-prompts`)
+- [ ] 14. Conversation History Browser (`history`)
+- [ ] 15. Polish & Cross-Platform (`polish`)
 
 ---
 
@@ -139,7 +140,17 @@ Wire the LLM providers into the chat UI with streaming token delivery.
 - Handle errors gracefully (network failures, rate limits, invalid API keys) with inline error messages
 - Show a typing/thinking indicator while waiting for the first token
 
-## 10. Local Persistence — `persistence`
+## 11. Provider Implementations — `provider-impls`
+
+Implement real API integrations for the remaining LLM providers (OpenRouter is already complete from step 10).
+
+- **Z.ai** — Implement `stream_chat` using the Zed AI SSE endpoint, handle auth
+- **GitHub Copilot** — Implement OAuth device flow for token acquisition, then `stream_chat` via the Copilot chat completions API (OpenAI-compatible SSE)
+- **MiniMax** — Implement `stream_chat` using the MiniMax API, handle their SSE format
+- Replace hardcoded `list_models` stubs with real API calls where the provider supports dynamic model listing
+- Ensure all providers handle auth errors, rate limits, and network failures gracefully through `StreamEvent::Error`
+
+## 12. Local Persistence — `persistence`
 
 Persist conversations to disk so they survive app restarts.
 
@@ -150,7 +161,7 @@ Persist conversations to disk so they survive app restarts.
 - Load last-open tabs on app launch
 - Generate conversation titles automatically (first user message truncated, or LLM-generated later)
 
-## 11. Saved Prompts — `saved-prompts`
+## 13. Saved Prompts — `saved-prompts`
 
 Allow users to create, edit, and quickly insert saved prompt templates.
 
@@ -160,7 +171,7 @@ Allow users to create, edit, and quickly insert saved prompt templates.
 - Inserting a prompt replaces the current input or appends to it
 - Each prompt has a `name`, `content`, and optional `description`
 
-## 12. Conversation History Browser — `history`
+## 14. Conversation History Browser — `history`
 
 Provide a UI to browse, search, and manage past conversations.
 
@@ -171,7 +182,7 @@ Provide a UI to browse, search, and manage past conversations.
 - Delete conversations with confirmation
 - Sort by most recent (default) or alphabetical
 
-## 13. Polish & Cross-Platform — `polish`
+## 15. Polish & Cross-Platform — `polish`
 
 Final pass for UX quality, performance, and platform compatibility.
 

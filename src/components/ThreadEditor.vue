@@ -1,14 +1,24 @@
 <script setup lang="ts">
-import { ref, watch, nextTick, onMounted } from 'vue'
+import { ref, watch, nextTick, onMounted, computed } from 'vue'
 import { useThreadStore } from '../stores/threadStore'
 import { useSettingsStore } from '../stores/settingsStore'
 import { useTabStore } from '../stores/tabStore'
+import { useStreaming } from '../composables/useStreaming'
 
 const store = useThreadStore()
 const settingsStore = useSettingsStore()
 const tabStore = useTabStore()
+const { isStreaming, streamingTabId, streamingError, startStreaming, stopStreaming } = useStreaming()
 const editorEl = ref<HTMLDivElement | null>(null)
 let syncing = false
+let streamRafId: number | null = null
+
+const isActiveTabStreaming = computed(() => isStreaming.value && streamingTabId.value === tabStore.activeTabId)
+const showThinking = computed(() => {
+  if (!isActiveTabStreaming.value) return false
+  const last = store.sections[store.sections.length - 1]
+  return last?.role === 'agent' && last.content === ''
+})
 
 const PILL_USER = '------------------- USER -----------------------'
 const PILL_AGENT = '------------------- AGENT -----------------------'
@@ -432,29 +442,20 @@ function setCursorToSection(sectionIndex: number, offset: number) {
 }
 
 function submitThread() {
+  if (isActiveTabStreaming.value) return
   const thread = store.getThreadForSubmission()
   if (thread.length === 0) return
 
-  const lastSection = store.sections[store.sections.length - 1]
-  if (lastSection.role !== 'agent' || lastSection.content.trim() !== '') {
-    store.addSection('agent')
-  }
-
-  const agentSection = store.sections[store.sections.length - 1]
-  agentSection.content = '…'
-
+  startStreaming()
   nextTick(() => {
-    const last = store.sections[store.sections.length - 1]
-    if (last.role === 'agent') {
-      store.addSection('user')
-    }
-    nextTick(() => {
-      buildDOM()
-      nextTick(() => {
-        setCursorToSection(store.sections.length - 1, 0)
-      })
-    })
+    buildDOM()
+    scrollToBottom()
   })
+}
+
+function scrollToBottom() {
+  const el = editorEl.value
+  if (el) el.scrollTop = el.scrollHeight
 }
 
 function onCopy(event: ClipboardEvent) {
@@ -552,24 +553,78 @@ watch(
     })
   }
 )
+
+watch(isActiveTabStreaming, (streaming) => {
+  if (streaming) {
+    const streamRefresh = () => {
+      if (!isActiveTabStreaming.value) {
+        streamRafId = null
+        buildDOM()
+        nextTick(() => {
+          setCursorToSection(store.sections.length - 1, store.sections[store.sections.length - 1].content.length)
+          scrollToBottom()
+        })
+        return
+      }
+      buildDOM()
+      scrollToBottom()
+      streamRafId = requestAnimationFrame(streamRefresh)
+    }
+    streamRafId = requestAnimationFrame(streamRefresh)
+  } else {
+    if (streamRafId !== null) {
+      cancelAnimationFrame(streamRafId)
+      streamRafId = null
+    }
+    buildDOM()
+    nextTick(() => {
+      setCursorToSection(store.sections.length - 1, store.sections[store.sections.length - 1].content.length)
+    })
+  }
+})
 </script>
 
 <template>
-  <div
-    ref="editorEl"
-    class="thread-editor"
-    contenteditable="true"
-    spellcheck="false"
-    @input="onInput"
-    @keydown="onKeydown"
-    @copy="onCopy"
-    @cut="onCopy"
-    @paste="onPaste"
-    @click="onEditorClick"
-  />
+  <div class="editor-container">
+    <div
+      ref="editorEl"
+      class="thread-editor"
+      contenteditable="true"
+      spellcheck="false"
+      @input="onInput"
+      @keydown="onKeydown"
+      @copy="onCopy"
+      @cut="onCopy"
+      @paste="onPaste"
+      @click="onEditorClick"
+    />
+    <div v-if="showThinking" class="thinking-indicator">
+      <span class="thinking-dot" />
+      <span class="thinking-dot" />
+      <span class="thinking-dot" />
+    </div>
+    <div v-if="streamingError && !isActiveTabStreaming" class="stream-error">
+      {{ streamingError }}
+    </div>
+    <button
+      v-if="isActiveTabStreaming"
+      class="stop-button"
+      @click="stopStreaming"
+    >
+      Stop
+    </button>
+  </div>
 </template>
 
 <style scoped>
+.editor-container {
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+  min-height: 0;
+  position: relative;
+}
+
 .thread-editor {
   flex: 1;
   overflow-y: auto;
@@ -635,5 +690,66 @@ watch(
 
 .thread-editor :deep(.section-block--agent) {
   opacity: 0.85;
+}
+
+.thinking-indicator {
+  display: flex;
+  gap: 4px;
+  padding: 8px 16px;
+  max-width: 768px;
+  margin: 0 auto;
+  width: 100%;
+  box-sizing: border-box;
+}
+
+.thinking-dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background-color: var(--color-text);
+  opacity: 0.4;
+  animation: thinking-pulse 1.4s ease-in-out infinite;
+}
+
+.thinking-dot:nth-child(2) {
+  animation-delay: 0.2s;
+}
+
+.thinking-dot:nth-child(3) {
+  animation-delay: 0.4s;
+}
+
+@keyframes thinking-pulse {
+  0%, 80%, 100% { opacity: 0.2; transform: scale(0.8); }
+  40% { opacity: 0.6; transform: scale(1); }
+}
+
+.stream-error {
+  padding: 8px 16px;
+  max-width: 768px;
+  margin: 0 auto;
+  width: 100%;
+  box-sizing: border-box;
+  color: #e55;
+  font-size: 13px;
+}
+
+.stop-button {
+  position: absolute;
+  bottom: 16px;
+  right: 16px;
+  padding: 6px 16px;
+  border-radius: 6px;
+  border: 1px solid var(--color-border);
+  background: var(--color-bg, #1e1e1e);
+  color: var(--color-text);
+  font-size: 13px;
+  cursor: pointer;
+  opacity: 0.8;
+  transition: opacity 0.15s;
+}
+
+.stop-button:hover {
+  opacity: 1;
 }
 </style>

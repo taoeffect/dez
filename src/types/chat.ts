@@ -19,3 +19,8 @@ export interface Tab {
   activeModel: ActiveModel | null
   createdAt: number
 }
+
+export type StreamEvent =
+  | { kind: 'Token'; data: { content: string } }
+  | { kind: 'Done'; data: null }
+  | { kind: 'Error'; data: { message: string } }

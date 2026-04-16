@@ -1,6 +1,7 @@
 use async_trait::async_trait;
+use tokio::sync::mpsc;
 
-use super::{LlmProvider, ModelInfo, ProviderError};
+use super::{ChatMessage, LlmProvider, ModelInfo, ProviderError, StreamEvent};
 
 pub struct CopilotProvider {
     api_key: Option<String>,
@@ -38,5 +39,14 @@ impl LlmProvider for CopilotProvider {
             ModelInfo { id: "gpt-4o".into(), name: "GPT-4o".into(), provider: "copilot".into() },
             ModelInfo { id: "claude-sonnet-4-20250514".into(), name: "Claude Sonnet 4".into(), provider: "copilot".into() },
         ])
+    }
+
+    async fn stream_chat(
+        &self,
+        _messages: Vec<ChatMessage>,
+        _model: &str,
+        _tx: mpsc::UnboundedSender<StreamEvent>,
+    ) -> Result<(), ProviderError> {
+        Err(ProviderError::NotConfigured("GitHub Copilot streaming not yet implemented".into()))
     }
 }

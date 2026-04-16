@@ -1,6 +1,7 @@
 use async_trait::async_trait;
+use tokio::sync::mpsc;
 
-use super::{LlmProvider, ModelInfo, ProviderError};
+use super::{ChatMessage, LlmProvider, ModelInfo, ProviderError, StreamEvent};
 
 pub struct MiniMaxProvider {
     api_key: Option<String>,
@@ -37,5 +38,14 @@ impl LlmProvider for MiniMaxProvider {
         Ok(vec![
             ModelInfo { id: "MiniMax-M1".into(), name: "MiniMax M1".into(), provider: "minimax".into() },
         ])
+    }
+
+    async fn stream_chat(
+        &self,
+        _messages: Vec<ChatMessage>,
+        _model: &str,
+        _tx: mpsc::UnboundedSender<StreamEvent>,
+    ) -> Result<(), ProviderError> {
+        Err(ProviderError::NotConfigured("MiniMax streaming not yet implemented".into()))
     }
 }

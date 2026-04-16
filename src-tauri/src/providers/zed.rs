@@ -1,6 +1,7 @@
 use async_trait::async_trait;
+use tokio::sync::mpsc;
 
-use super::{LlmProvider, ModelInfo, ProviderError};
+use super::{ChatMessage, LlmProvider, ModelInfo, ProviderError, StreamEvent};
 
 pub struct ZedProvider {
     api_key: Option<String>,
@@ -38,5 +39,14 @@ impl LlmProvider for ZedProvider {
             ModelInfo { id: "claude-sonnet-4-20250514".into(), name: "Claude Sonnet 4".into(), provider: "zed".into() },
             ModelInfo { id: "claude-3-5-haiku-20241022".into(), name: "Claude 3.5 Haiku".into(), provider: "zed".into() },
         ])
+    }
+
+    async fn stream_chat(
+        &self,
+        _messages: Vec<ChatMessage>,
+        _model: &str,
+        _tx: mpsc::UnboundedSender<StreamEvent>,
+    ) -> Result<(), ProviderError> {
+        Err(ProviderError::NotConfigured("Z.ai streaming not yet implemented".into()))
     }
 }
