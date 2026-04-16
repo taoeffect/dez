@@ -10,7 +10,7 @@
 - [x] 6. Settings & Configuration (`settings`)
 - [x] 7. Model Selector Taskbar (`model-selector`)
 - [x] 8. Tabbed Conversations (`tabs`)
-- [ ] 9. Unified Editor Surface (`unified-editor`)
+- [x] 9. Unified Editor Surface (`unified-editor`)
 - [ ] 10. Streaming Chat Integration (`streaming`)
 - [ ] 11. Local Persistence (`persistence`)
 - [ ] 12. Saved Prompts (`saved-prompts`)
