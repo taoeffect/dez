@@ -6,7 +6,6 @@ export const useThreadStore = defineStore('thread', () => {
   const sections = ref<Section[]>([
     { id: crypto.randomUUID(), role: 'user', content: '' },
   ])
-  const showPillSeparators = ref(true)
 
   function updateSectionContent(id: string, content: string) {
     const section = sections.value.find((s) => s.id === id)
@@ -67,13 +66,8 @@ export const useThreadStore = defineStore('thread', () => {
     return newSection
   }
 
-  function togglePillSeparators() {
-    showPillSeparators.value = !showPillSeparators.value
-  }
-
   return {
     sections,
-    showPillSeparators,
     updateSectionContent,
     toggleSectionRole,
     addSection,
@@ -81,6 +75,5 @@ export const useThreadStore = defineStore('thread', () => {
     splitSection,
     clearThread,
     getThreadForSubmission,
-    togglePillSeparators,
   }
 })

@@ -1,5 +1,13 @@
 <script setup lang="ts">
+import { onMounted } from "vue";
 import AppLayout from "./components/AppLayout.vue";
+import { useSettingsStore } from "./stores/settingsStore";
+
+const settingsStore = useSettingsStore();
+
+onMounted(() => {
+  settingsStore.init();
+});
 </script>
 
 <template>
@@ -35,11 +43,18 @@ import AppLayout from "./components/AppLayout.vue";
 }
 
 @media (prefers-color-scheme: dark) {
-  :root {
+  :root:not([data-theme="light"]) {
     --color-bg: #1e1e1e;
     --color-text: #f6f6f6;
     --color-tab-bar: #2a2a2a;
     --color-border: #3a3a3a;
   }
+}
+
+:root[data-theme="dark"] {
+  --color-bg: #1e1e1e;
+  --color-text: #f6f6f6;
+  --color-tab-bar: #2a2a2a;
+  --color-border: #3a3a3a;
 }
 </style>

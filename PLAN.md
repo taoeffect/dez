@@ -7,7 +7,7 @@
 - [x] 3. Inline Editing (`inline-editing`)
 - [x] 4. Editor-Style Thread Redesign (`editor-thread`)
 - [x] 5. LLM Provider Abstraction (`providers`)
-- [ ] 6. Settings & Configuration (`settings`)
+- [x] 6. Settings & Configuration (`settings`)
 - [ ] 7. Model Selector Taskbar (`model-selector`)
 - [ ] 8. Tabbed Conversations (`tabs`)
 - [ ] 9. Streaming Chat Integration (`streaming`)

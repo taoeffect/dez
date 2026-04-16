@@ -1,10 +1,11 @@
 <script setup lang="ts">
 import { useKeyboardShortcuts } from "../composables/useKeyboardShortcuts";
-import { useThreadStore } from "../stores/threadStore";
+import { useSettingsStore } from "../stores/settingsStore";
 import ThreadEditor from "./ThreadEditor.vue";
+import SettingsView from "./SettingsView.vue";
 
 useKeyboardShortcuts();
-const threadStore = useThreadStore();
+const settingsStore = useSettingsStore();
 </script>
 
 <template>
@@ -14,12 +15,22 @@ const threadStore = useThreadStore();
       <div class="tab-bar-actions">
         <button
           class="tab-bar-btn"
-          :class="{ 'tab-bar-btn--active': threadStore.showPillSeparators }"
+          :class="{ 'tab-bar-btn--active': settingsStore.showPillSeparators }"
           title="Toggle role labels"
-          @click="threadStore.togglePillSeparators"
+          @click="settingsStore.togglePillSeparators"
         >
           <svg width="14" height="14" viewBox="0 0 14 14" fill="none">
             <rect x="1" y="5" width="12" height="4" rx="2" fill="currentColor"/>
+          </svg>
+        </button>
+        <button
+          class="tab-bar-btn"
+          title="Settings (Cmd/Ctrl+,)"
+          @click="settingsStore.openSettings"
+        >
+          <svg width="14" height="14" viewBox="0 0 14 14" fill="none">
+            <path d="M7 9a2 2 0 100-4 2 2 0 000 4z" fill="currentColor"/>
+            <path d="M13 8.5l-1.3-.7a4.8 4.8 0 000-1.6L13 5.5l-1-1.7-1.4.4a4.7 4.7 0 00-1.4-.8L9 2H7l-.2 1.4a4.7 4.7 0 00-1.4.8L4 3.8 3 5.5l1.3.7a4.8 4.8 0 000 1.6L3 8.5l1 1.7 1.4-.4c.4.3.9.6 1.4.8L7 12h2l.2-1.4c.5-.2 1-.5 1.4-.8l1.4.4 1-1.7z" stroke="currentColor" stroke-width="1" fill="none"/>
           </svg>
         </button>
       </div>
@@ -27,6 +38,8 @@ const threadStore = useThreadStore();
     <main class="main-content">
       <ThreadEditor />
     </main>
+
+    <SettingsView v-if="settingsStore.settingsOpen" />
   </div>
 </template>
 

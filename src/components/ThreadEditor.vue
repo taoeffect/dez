@@ -1,8 +1,10 @@
 <script setup lang="ts">
 import { ref, nextTick, watch, onMounted } from 'vue'
 import { useThreadStore } from '../stores/threadStore'
+import { useSettingsStore } from '../stores/settingsStore'
 
 const store = useThreadStore()
+const settingsStore = useSettingsStore()
 const sectionRefs = ref<Map<string, HTMLTextAreaElement>>(new Map())
 const editorEl = ref<HTMLElement | null>(null)
 
@@ -136,7 +138,7 @@ watch(
     <div class="thread-editor-content">
       <template v-for="section in store.sections" :key="section.id">
         <div
-          v-if="store.showPillSeparators"
+          v-if="settingsStore.showPillSeparators"
           class="pill-separator"
         >
           <button
