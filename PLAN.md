@@ -4,16 +4,17 @@
 
 - [x] 1. Foundation & Window Shell (`foundation`)
 - [x] 2. Chat Message UI (`chat-ui`)
-- [ ] 3. Inline Editing (`inline-editing`)
-- [ ] 4. LLM Provider Abstraction (`providers`)
-- [ ] 5. Settings & Configuration (`settings`)
-- [ ] 6. Model Selector Taskbar (`model-selector`)
-- [ ] 7. Tabbed Conversations (`tabs`)
-- [ ] 8. Streaming Chat Integration (`streaming`)
-- [ ] 9. Local Persistence (`persistence`)
-- [ ] 10. Saved Prompts (`saved-prompts`)
-- [ ] 11. Conversation History Browser (`history`)
-- [ ] 12. Polish & Cross-Platform (`polish`)
+- [x] 3. Inline Editing (`inline-editing`)
+- [ ] 4. Editor-Style Thread Redesign (`editor-thread`)
+- [ ] 5. LLM Provider Abstraction (`providers`)
+- [ ] 6. Settings & Configuration (`settings`)
+- [ ] 7. Model Selector Taskbar (`model-selector`)
+- [ ] 8. Tabbed Conversations (`tabs`)
+- [ ] 9. Streaming Chat Integration (`streaming`)
+- [ ] 10. Local Persistence (`persistence`)
+- [ ] 11. Saved Prompts (`saved-prompts`)
+- [ ] 12. Conversation History Browser (`history`)
+- [ ] 13. Polish & Cross-Platform (`polish`)
 
 ---
 
@@ -51,7 +52,19 @@ Let users edit any message in the thread, including agent responses.
 - Optionally allow "re-run from here" — resend the conversation up to the edited message and regenerate the agent response
 - Visual indicator (pencil icon or "edited" label) on edited messages
 
-## 4. LLM Provider Abstraction — `providers`
+## 4. Editor-Style Thread Redesign — `editor-thread`
+
+Completely redesign the chat UI to work like Zed's text threads: a single living, always-editable document — not a chat view with an input field.
+
+- **Remove the ChatInput / ChatThread / ChatMessage separation.** Replace with a single `ThreadEditor.vue` component that is one continuous editable document, exactly like a text/source-code editor. The user's cursor is always active; there is no "view mode" vs "edit mode" — the entire document is always editable.
+- **Pill separators as role toggles.** "User" and "Agent" pill labels sit between sections of text. Clicking a pill toggles its value between "User" and "Agent". In normal conversation flow, pills alternate automatically.
+- **Always editable everywhere.** The user types directly into the document at any position — adding new text at the bottom, revising earlier messages, or modifying agent responses. There is no input box, no send button, no message bubbles, no "enter edit mode" gesture. It is a plain text editor.
+- **Cmd/Ctrl+Enter to submit.** Pressing Cmd+Enter (macOS) or Ctrl+Enter (Linux) submits the full thread to the LLM for continuation/inference. The agent's response streams in at the end of the document after an auto-inserted "Agent" pill.
+- **Content model.** The store holds an ordered list of `{ role, content }` sections. The editor renders them as contiguous text separated by pill labels. Edits update the corresponding section in the store.
+- **Code block handling.** Code blocks within sections still get syntax highlighting (read-only rendered blocks or inline highlighting).
+- **Remove old components.** Delete `ChatInput.vue`, `ChatMessage.vue`, `ChatThread.vue` and the inline-editing overlay code added in step 3. Replace with the new editor component.
+
+## 5. LLM Provider Abstraction — `providers`
 
 Create a unified Rust-side interface for talking to multiple LLM providers.
 
@@ -65,7 +78,7 @@ Create a unified Rust-side interface for talking to multiple LLM providers.
 - Expose a `list_models(provider)` command to the frontend
 - Expose a `get_configured_providers` command so the UI knows which providers are ready
 
-## 5. Settings & Configuration — `settings`
+## 6. Settings & Configuration — `settings`
 
 Central place to manage providers, API keys, and UI preferences.
 
@@ -77,7 +90,7 @@ Central place to manage providers, API keys, and UI preferences.
 - Persist settings via `tauri-plugin-store` or a JSON config file
 - Settings changes take effect immediately (reactive via Pinia store)
 
-## 6. Model Selector Taskbar — `model-selector`
+## 7. Model Selector Taskbar — `model-selector`
 
 A persistent taskbar at the bottom of the window for selecting the active LLM model.
 
@@ -91,7 +104,7 @@ A persistent taskbar at the bottom of the window for selecting the active LLM mo
 - Selecting a model updates the active conversation's model immediately
 - Remember the last-used model as the default for new conversations
 
-## 7. Tabbed Conversations — `tabs`
+## 8. Tabbed Conversations — `tabs`
 
 Enable multiple concurrent conversations in a single window.
 
@@ -103,18 +116,18 @@ Enable multiple concurrent conversations in a single window.
 - Persist tab order and active tab in memory (not yet to disk — that comes in persistence)
 - Keyboard navigation: Cmd/Ctrl+1-9 to switch tabs, Cmd/Ctrl+Shift+[ / ] to cycle
 
-## 8. Streaming Chat Integration — `streaming`
+## 9. Streaming Chat Integration — `streaming`
 
 Wire the LLM providers into the chat UI with streaming token delivery.
 
 - Use Tauri Channels (`Channel<T>`) to stream tokens from Rust to the frontend
 - Create a `send_message` Tauri command that accepts conversation context and streams the response
-- Update `ChatThread.vue` to append tokens in real-time to the last agent message
+- Update `ThreadEditor.vue` to append tokens in real-time to the end of the document
 - Add a "Stop" button to cancel in-flight generation
 - Handle errors gracefully (network failures, rate limits, invalid API keys) with inline error messages
 - Show a typing/thinking indicator while waiting for the first token
 
-## 9. Local Persistence — `persistence`
+## 10. Local Persistence — `persistence`
 
 Persist conversations to disk so they survive app restarts.
 
@@ -125,17 +138,17 @@ Persist conversations to disk so they survive app restarts.
 - Load last-open tabs on app launch
 - Generate conversation titles automatically (first user message truncated, or LLM-generated later)
 
-## 10. Saved Prompts — `saved-prompts`
+## 11. Saved Prompts — `saved-prompts`
 
 Allow users to create, edit, and quickly insert saved prompt templates.
 
 - Store prompts as JSON in app data directory (via Tauri FS plugin)
 - Create a `PromptManager.vue` overlay/modal for CRUD operations on prompts
-- Implement `/prompt` slash-command in `ChatInput.vue` to open a fuzzy-searchable prompt picker
+- Implement `/prompt` slash-command in the thread editor to open a fuzzy-searchable prompt picker
 - Inserting a prompt replaces the current input or appends to it
 - Each prompt has a `name`, `content`, and optional `description`
 
-## 11. Conversation History Browser — `history`
+## 12. Conversation History Browser — `history`
 
 Provide a UI to browse, search, and manage past conversations.
 
@@ -146,7 +159,7 @@ Provide a UI to browse, search, and manage past conversations.
 - Delete conversations with confirmation
 - Sort by most recent (default) or alphabetical
 
-## 12. Polish & Cross-Platform — `polish`
+## 13. Polish & Cross-Platform — `polish`
 
 Final pass for UX quality, performance, and platform compatibility.
 

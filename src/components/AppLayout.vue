@@ -1,11 +1,10 @@
 <script setup lang="ts">
 import { useKeyboardShortcuts } from "../composables/useKeyboardShortcuts";
-import { useChatStore } from "../stores/chatStore";
-import ChatThread from "./ChatThread.vue";
-import ChatInput from "./ChatInput.vue";
+import { useThreadStore } from "../stores/threadStore";
+import ThreadEditor from "./ThreadEditor.vue";
 
 useKeyboardShortcuts();
-const chatStore = useChatStore();
+const threadStore = useThreadStore();
 </script>
 
 <template>
@@ -15,9 +14,9 @@ const chatStore = useChatStore();
       <div class="tab-bar-actions">
         <button
           class="tab-bar-btn"
-          :class="{ 'tab-bar-btn--active': chatStore.showPillSeparators }"
+          :class="{ 'tab-bar-btn--active': threadStore.showPillSeparators }"
           title="Toggle role labels"
-          @click="chatStore.togglePillSeparators"
+          @click="threadStore.togglePillSeparators"
         >
           <svg width="14" height="14" viewBox="0 0 14 14" fill="none">
             <rect x="1" y="5" width="12" height="4" rx="2" fill="currentColor"/>
@@ -26,8 +25,7 @@ const chatStore = useChatStore();
       </div>
     </header>
     <main class="main-content">
-      <ChatThread />
-      <ChatInput />
+      <ThreadEditor />
     </main>
   </div>
 </template>

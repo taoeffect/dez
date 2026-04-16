@@ -1,0 +1,86 @@
+import { defineStore } from 'pinia'
+import { ref } from 'vue'
+import type { Role, Section } from '../types/chat'
+
+export const useThreadStore = defineStore('thread', () => {
+  const sections = ref<Section[]>([
+    { id: crypto.randomUUID(), role: 'user', content: '' },
+  ])
+  const showPillSeparators = ref(true)
+
+  function updateSectionContent(id: string, content: string) {
+    const section = sections.value.find((s) => s.id === id)
+    if (section) {
+      section.content = content
+    }
+  }
+
+  function toggleSectionRole(id: string) {
+    const section = sections.value.find((s) => s.id === id)
+    if (section) {
+      section.role = section.role === 'user' ? 'agent' : 'user'
+    }
+  }
+
+  function addSection(role: Role): Section {
+    const section: Section = {
+      id: crypto.randomUUID(),
+      role,
+      content: '',
+    }
+    sections.value.push(section)
+    return section
+  }
+
+  function removeSectionIfEmpty(id: string) {
+    const index = sections.value.findIndex((s) => s.id === id)
+    if (index !== -1 && sections.value[index].content.trim() === '' && sections.value.length > 1) {
+      sections.value.splice(index, 1)
+    }
+  }
+
+  function clearThread() {
+    sections.value = [
+      { id: crypto.randomUUID(), role: 'user', content: '' },
+    ]
+  }
+
+  function getThreadForSubmission(): { role: Role; content: string }[] {
+    return sections.value
+      .filter((s) => s.content.trim() !== '')
+      .map((s) => ({ role: s.role, content: s.content }))
+  }
+
+  function splitSection(id: string, cursorPosition: number): Section | null {
+    const index = sections.value.findIndex((s) => s.id === id)
+    if (index === -1) return null
+    const current = sections.value[index]
+    const before = current.content.slice(0, cursorPosition)
+    const after = current.content.slice(cursorPosition)
+    current.content = before
+    const newSection: Section = {
+      id: crypto.randomUUID(),
+      role: 'user',
+      content: after,
+    }
+    sections.value.splice(index + 1, 0, newSection)
+    return newSection
+  }
+
+  function togglePillSeparators() {
+    showPillSeparators.value = !showPillSeparators.value
+  }
+
+  return {
+    sections,
+    showPillSeparators,
+    updateSectionContent,
+    toggleSectionRole,
+    addSection,
+    removeSectionIfEmpty,
+    splitSection,
+    clearThread,
+    getThreadForSubmission,
+    togglePillSeparators,
+  }
+})

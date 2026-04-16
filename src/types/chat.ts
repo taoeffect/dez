@@ -1,8 +1,7 @@
 export type Role = 'user' | 'agent'
 
-export interface Message {
+export interface Section {
   id: string
   role: Role
   content: string
-  timestamp: number
 }
