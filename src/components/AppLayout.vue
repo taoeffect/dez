@@ -4,6 +4,7 @@ import { useSettingsStore } from "../stores/settingsStore";
 import ThreadEditor from "./ThreadEditor.vue";
 import SettingsView from "./SettingsView.vue";
 import ModelSelector from "./ModelSelector.vue";
+import TabBar from "./TabBar.vue";
 
 useKeyboardShortcuts();
 const settingsStore = useSettingsStore();
@@ -12,7 +13,7 @@ const settingsStore = useSettingsStore();
 <template>
   <div class="app-layout">
     <header class="tab-bar">
-      <div class="tab-bar-tabs"></div>
+      <TabBar />
       <div class="tab-bar-actions">
         <button
           class="tab-bar-btn"
@@ -64,14 +65,6 @@ const settingsStore = useSettingsStore();
   flex-shrink: 0;
   user-select: none;
   -webkit-user-select: none;
-}
-
-.tab-bar-tabs {
-  display: flex;
-  align-items: center;
-  gap: 4px;
-  flex: 1;
-  min-width: 0;
 }
 
 .tab-bar-actions {

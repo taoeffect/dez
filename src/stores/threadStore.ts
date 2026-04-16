@@ -1,16 +1,24 @@
 import { defineStore } from 'pinia'
-import { ref } from 'vue'
+import { computed } from 'vue'
 import type { Role, Section } from '../types/chat'
 import { useSettingsStore } from './settingsStore'
+import { useTabStore } from './tabStore'
 
 export const useThreadStore = defineStore('thread', () => {
-  const sections = ref<Section[]>([
-    { id: crypto.randomUUID(), role: 'user', content: '' },
-  ])
+  const tabStore = useTabStore()
 
-  const activeModel = ref<{ providerId: string; modelId: string; modelName: string } | null>(null)
+  const sections = computed({
+    get: () => tabStore.activeTab.sections,
+    set: (val: Section[]) => { tabStore.activeTab.sections = val },
+  })
+
+  const activeModel = computed({
+    get: () => tabStore.activeTab.activeModel,
+    set: (val) => { tabStore.activeTab.activeModel = val },
+  })
 
   function initActiveModel() {
+    if (activeModel.value) return
     const settings = useSettingsStore()
     if (settings.defaultNewTabModel) {
       activeModel.value = {
@@ -37,6 +45,7 @@ export const useThreadStore = defineStore('thread', () => {
     const section = sections.value.find((s) => s.id === id)
     if (section) {
       section.content = content
+      tabStore.autoTitle(tabStore.activeTabId)
     }
   }
 
@@ -65,7 +74,7 @@ export const useThreadStore = defineStore('thread', () => {
   }
 
   function clearThread() {
-    sections.value = [
+    tabStore.activeTab.sections = [
       { id: crypto.randomUUID(), role: 'user', content: '' },
     ]
   }

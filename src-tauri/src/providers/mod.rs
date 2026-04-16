@@ -20,6 +20,7 @@ pub struct ProviderInfo {
     pub configured: bool,
 }
 
+#[allow(dead_code)]
 #[derive(Debug, Clone, Serialize)]
 pub struct ChatMessage {
     pub role: String,
@@ -27,6 +28,7 @@ pub struct ChatMessage {
 }
 
 #[derive(Debug, thiserror::Error)]
+#[allow(dead_code)]
 pub enum ProviderError {
     #[error("HTTP error: {0}")]
     Http(#[from] reqwest::Error),

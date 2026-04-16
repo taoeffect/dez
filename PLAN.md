@@ -9,12 +9,13 @@
 - [x] 5. LLM Provider Abstraction (`providers`)
 - [x] 6. Settings & Configuration (`settings`)
 - [x] 7. Model Selector Taskbar (`model-selector`)
-- [ ] 8. Tabbed Conversations (`tabs`)
-- [ ] 9. Streaming Chat Integration (`streaming`)
-- [ ] 10. Local Persistence (`persistence`)
-- [ ] 11. Saved Prompts (`saved-prompts`)
-- [ ] 12. Conversation History Browser (`history`)
-- [ ] 13. Polish & Cross-Platform (`polish`)
+- [x] 8. Tabbed Conversations (`tabs`)
+- [ ] 9. Unified Editor Surface (`unified-editor`)
+- [ ] 10. Streaming Chat Integration (`streaming`)
+- [ ] 11. Local Persistence (`persistence`)
+- [ ] 12. Saved Prompts (`saved-prompts`)
+- [ ] 13. Conversation History Browser (`history`)
+- [ ] 14. Polish & Cross-Platform (`polish`)
 
 ---
 
@@ -116,7 +117,18 @@ Enable multiple concurrent conversations in a single window.
 - Persist tab order and active tab in memory (not yet to disk — that comes in persistence)
 - Keyboard navigation: Cmd/Ctrl+1-9 to switch tabs, Cmd/Ctrl+Shift+[ / ] to cycle
 
-## 9. Streaming Chat Integration — `streaming`
+## 9. Unified Editor Surface — `unified-editor`
+
+Make the main content area behave as a single, cohesive text editor rather than a collection of separate components that merely look like one.
+
+- **Full-surface editing**: The main textarea must fill the entire content area. Clicking anywhere in the blank space should focus and place the cursor, not just where placeholder text appears. The placeholder ("Start typing") must be fully visible and vertically centered or top-aligned.
+- **Seamless cross-pill text selection**: Users must be able to click and drag across the entire document — including across pill separators — to select text, exactly as if it were a single text editor. Selection must not stop at pill boundaries.
+- **Copy behavior with pill conversion**: When text is copied from a selection that spans pills, the pills should be serialized as plain-text dividers in the clipboard:
+  - User pill: `------------------- USER -----------------------`
+  - Agent pill: `------------------- AGENT -----------------------`
+- This may require rethinking the current approach of separate `<textarea>` elements per section. Consider a single contenteditable surface, a single textarea with virtual pill rendering, or a similar architecture that naturally supports contiguous selection.
+
+## 10. Streaming Chat Integration — `streaming`
 
 Wire the LLM providers into the chat UI with streaming token delivery.
 
