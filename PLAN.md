@@ -2,8 +2,8 @@
 
 ## Progress
 
-- [ ] 1. Foundation & Window Shell (`foundation`)
-- [ ] 2. Chat Message UI (`chat-ui`)
+- [x] 1. Foundation & Window Shell (`foundation`)
+- [x] 2. Chat Message UI (`chat-ui`)
 - [ ] 3. Inline Editing (`inline-editing`)
 - [ ] 4. LLM Provider Abstraction (`providers`)
 - [ ] 5. Settings & Configuration (`settings`)
