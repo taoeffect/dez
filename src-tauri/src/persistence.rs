@@ -4,9 +4,26 @@ use std::path::PathBuf;
 // ---------------- Types ----------------
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+pub enum ContentNodeData {
+    Text {
+        text: String,
+    },
+    Prompt {
+        id: String,
+        #[serde(rename = "promptId")]
+        prompt_id: Option<String>,
+        name: String,
+        body: String,
+        #[serde(default)]
+        expanded: bool,
+    },
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SectionData {
     pub role: String,
-    pub content: String,
+    pub nodes: Vec<ContentNodeData>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -114,11 +131,15 @@ fn conversations_dir() -> PathBuf {
 }
 
 fn conversation_path(id: &str) -> PathBuf {
-    conversations_dir().join(format!("{}.txt", sanitize_id(id)))
+    conversations_dir().join(format!("{}.md", sanitize_id(id)))
 }
 
 fn app_state_path() -> PathBuf {
     base_dir().join("app_state.json")
+}
+
+fn prompts_path() -> PathBuf {
+    base_dir().join("prompts.json")
 }
 
 fn sanitize_id(id: &str) -> String {
@@ -129,11 +150,17 @@ fn sanitize_id(id: &str) -> String {
 
 // ---------------- Conversation I/O ----------------
 
-const USER_SEP: &str = "--- USER ---";
-const AGENT_SEP: &str = "--- AGENT ---";
-
 fn escape_title(s: &str) -> String {
     s.replace('|', "/").replace('\n', " ").replace('\r', " ")
+}
+
+fn escape_prompt_body(body: &str) -> String {
+    // Only need to protect the closing marker; everything else is literal.
+    body.replace("</dez:prompt>", "<\\/dez:prompt>")
+}
+
+fn unescape_prompt_body(body: &str) -> String {
+    body.replace("<\\/dez:prompt>", "</dez:prompt>")
 }
 
 pub fn serialize_conversation(data: &ConversationData) -> String {
@@ -142,29 +169,42 @@ pub fn serialize_conversation(data: &ConversationData) -> String {
         .as_ref()
         .map(|m| format!("{}/{}", m.provider_id, m.model_id))
         .unwrap_or_default();
-    let header = format!(
+    let mut out = String::new();
+    out.push_str(&format!(
         "<!-- title: {} | model: {} | created: {} -->\n",
         escape_title(&data.title),
         escape_title(&model_str),
         data.created_at
-    );
-    let mut out = String::new();
-    out.push_str(&header);
+    ));
+
     for section in &data.sections {
-        let sep = if section.role == "agent" { AGENT_SEP } else { USER_SEP };
         out.push('\n');
-        out.push_str(sep);
-        out.push('\n');
-        out.push_str(&section.content);
-        if !section.content.ends_with('\n') {
-            out.push('\n');
+        let tag = if section.role == "agent" { "agent" } else { "user" };
+        out.push_str(&format!("<dez:pill type=\"{}\"/>\n", tag));
+        for node in &section.nodes {
+            match node {
+                ContentNodeData::Text { text } => {
+                    out.push_str(text);
+                    if !text.ends_with('\n') {
+                        out.push('\n');
+                    }
+                }
+                ContentNodeData::Prompt { name, body, .. } => {
+                    out.push_str(&format!("<dez:prompt name=\"{}\">\n", name));
+                    let esc = escape_prompt_body(body);
+                    out.push_str(&esc);
+                    if !esc.ends_with('\n') {
+                        out.push('\n');
+                    }
+                    out.push_str("</dez:prompt>\n");
+                }
+            }
         }
     }
     out
 }
 
 fn parse_header(line: &str) -> (String, String, i64) {
-    // Expect: <!-- title: X | model: Y | created: N -->
     let inner = line
         .trim()
         .trim_start_matches("<!--")
@@ -186,12 +226,35 @@ fn parse_header(line: &str) -> (String, String, i64) {
     (title, model, created)
 }
 
+fn parse_pill_type(trimmed: &str) -> Option<&'static str> {
+    // Matches <dez:pill type="user"/> or <dez:pill type="agent"/>
+    if !trimmed.starts_with("<dez:pill") {
+        return None;
+    }
+    if trimmed.contains("type=\"user\"") {
+        Some("user")
+    } else if trimmed.contains("type=\"agent\"") {
+        Some("agent")
+    } else {
+        None
+    }
+}
+
+fn parse_prompt_open(trimmed: &str) -> Option<String> {
+    if !trimmed.starts_with("<dez:prompt") || trimmed.ends_with("/>") {
+        return None;
+    }
+    let start = trimmed.find("name=\"")? + 6;
+    let rest = &trimmed[start..];
+    let end = rest.find('"')?;
+    Some(rest[..end].to_string())
+}
+
 pub fn parse_conversation(id: &str, content: &str) -> ConversationData {
     let mut title = String::new();
     let mut model_str = String::new();
     let mut created_at: i64 = 0;
 
-    // Detect optional header line
     let body = if let Some(first_line_end) = content.find('\n') {
         let first = &content[..first_line_end];
         if first.trim_start().starts_with("<!--") && first.trim_end().ends_with("-->") {
@@ -213,54 +276,101 @@ pub fn parse_conversation(id: &str, content: &str) -> ConversationData {
         content
     };
 
-    parse_sections_body(id, title, model_str, created_at, body.lines())
-}
-
-fn parse_sections_body<'a, I: Iterator<Item = &'a str>>(
-    id: &str,
-    title: String,
-    model_str: String,
-    created_at: i64,
-    lines: I,
-) -> ConversationData {
     let mut sections: Vec<SectionData> = Vec::new();
     let mut current_role: Option<&'static str> = None;
-    let mut current_content = String::new();
+    let mut current_nodes: Vec<ContentNodeData> = Vec::new();
+    let mut text_buf = String::new();
 
-    let flush = |sections: &mut Vec<SectionData>, role: Option<&'static str>, content: &mut String| {
-        if let Some(r) = role {
-            let trimmed = content.trim_end_matches('\n').to_string();
-            sections.push(SectionData {
-                role: r.to_string(),
-                content: trimmed,
-            });
-        }
-        content.clear();
-    };
+    // Prompt-body accumulation state
+    let mut in_prompt = false;
+    let mut prompt_name = String::new();
+    let mut prompt_body = String::new();
 
-    for line in lines {
-        let trimmed = line.trim();
-        if trimmed == USER_SEP {
-            flush(&mut sections, current_role, &mut current_content);
-            current_role = Some("user");
-        } else if trimmed == AGENT_SEP {
-            flush(&mut sections, current_role, &mut current_content);
-            current_role = Some("agent");
-        } else {
-            if current_role.is_none() {
-                // Content before any separator — treat as user
-                current_role = Some("user");
+    fn flush_text(nodes: &mut Vec<ContentNodeData>, buf: &mut String) {
+        if !buf.is_empty() {
+            // Strip trailing newline that was appended after each line.
+            let text = buf.trim_end_matches('\n').to_string();
+            if !text.is_empty() {
+                nodes.push(ContentNodeData::Text { text });
             }
-            current_content.push_str(line);
-            current_content.push('\n');
+            buf.clear();
         }
     }
-    flush(&mut sections, current_role, &mut current_content);
+
+    fn flush_section(
+        sections: &mut Vec<SectionData>,
+        role: Option<&'static str>,
+        nodes: &mut Vec<ContentNodeData>,
+    ) {
+        if let Some(r) = role {
+            sections.push(SectionData {
+                role: r.to_string(),
+                nodes: std::mem::take(nodes),
+            });
+        }
+    }
+
+    for line in body.lines() {
+        let trimmed = line.trim();
+
+        if in_prompt {
+            if trimmed == "</dez:prompt>" {
+                let body_val = unescape_prompt_body(prompt_body.trim_end_matches('\n'));
+                current_nodes.push(ContentNodeData::Prompt {
+                    id: uuid_like(),
+                    prompt_id: None,
+                    name: std::mem::take(&mut prompt_name),
+                    body: body_val,
+                    expanded: false,
+                });
+                prompt_body.clear();
+                in_prompt = false;
+            } else {
+                prompt_body.push_str(line);
+                prompt_body.push('\n');
+            }
+            continue;
+        }
+
+        if let Some(role) = parse_pill_type(trimmed) {
+            flush_text(&mut current_nodes, &mut text_buf);
+            flush_section(&mut sections, current_role, &mut current_nodes);
+            current_role = Some(role);
+            continue;
+        }
+
+        if let Some(name) = parse_prompt_open(trimmed) {
+            flush_text(&mut current_nodes, &mut text_buf);
+            if current_role.is_none() {
+                current_role = Some("user");
+            }
+            prompt_name = name;
+            in_prompt = true;
+            continue;
+        }
+
+        if current_role.is_none() {
+            current_role = Some("user");
+        }
+        text_buf.push_str(line);
+        text_buf.push('\n');
+    }
+
+    // Finalize any dangling prompt-open without close: treat as text.
+    if in_prompt {
+        text_buf.push_str("<dez:prompt name=\"");
+        text_buf.push_str(&prompt_name);
+        text_buf.push_str("\">\n");
+        text_buf.push_str(&prompt_body);
+    }
+
+    flush_text(&mut current_nodes, &mut text_buf);
+    flush_section(&mut sections, current_role, &mut current_nodes);
 
     if sections.is_empty() {
         sections.push(SectionData {
             role: "user".to_string(),
-            content: String::new(),
+            nodes: Vec::new(),
         });
     }
 
@@ -288,6 +398,18 @@ fn parse_sections_body<'a, I: Iterator<Item = &'a str>>(
         active_model,
         created_at,
     }
+}
+
+fn uuid_like() -> String {
+    // Simple non-crypto id for rehydrated prompt nodes. Frontend will keep
+    // using crypto.randomUUID() for in-memory inserts; we just need something
+    // unique-ish on load.
+    use std::time::{SystemTime, UNIX_EPOCH};
+    let nanos = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|d| d.as_nanos())
+        .unwrap_or(0);
+    format!("p-{:x}", nanos)
 }
 
 fn ensure_dir(path: &PathBuf) -> Result<(), String> {
@@ -332,7 +454,7 @@ pub fn list_conversations() -> Vec<ConversationSummary> {
     };
     for entry in entries.flatten() {
         let path = entry.path();
-        if path.extension().and_then(|s| s.to_str()) != Some("txt") {
+        if path.extension().and_then(|s| s.to_str()) != Some("md") {
             continue;
         }
         let id = match path.file_stem().and_then(|s| s.to_str()) {
@@ -389,6 +511,45 @@ pub fn save_app_state(state: &AppState) -> Result<(), String> {
         ensure_dir(&parent.to_path_buf())?;
     }
     let json = serde_json::to_string_pretty(state).map_err(|e| format!("Serialize error: {}", e))?;
+    std::fs::write(&path, &json).map_err(|e| format!("Write error: {}", e))?;
+
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        let perms = std::fs::Permissions::from_mode(0o600);
+        let _ = std::fs::set_permissions(&path, perms);
+    }
+
+    Ok(())
+}
+
+// ---------------- Prompts I/O ----------------
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PromptData {
+    pub id: String,
+    pub name: String,
+    pub content: String,
+}
+
+pub fn load_prompts() -> Vec<PromptData> {
+    let path = prompts_path();
+    if !path.exists() {
+        return Vec::new();
+    }
+    match std::fs::read_to_string(&path) {
+        Ok(content) => serde_json::from_str(&content).unwrap_or_default(),
+        Err(_) => Vec::new(),
+    }
+}
+
+pub fn save_prompts(prompts: &[PromptData]) -> Result<(), String> {
+    let path = prompts_path();
+    if let Some(parent) = path.parent() {
+        ensure_dir(&parent.to_path_buf())?;
+    }
+    let json =
+        serde_json::to_string_pretty(prompts).map_err(|e| format!("Serialize error: {}", e))?;
     std::fs::write(&path, &json).map_err(|e| format!("Write error: {}", e))?;
 
     #[cfg(unix)]

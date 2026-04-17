@@ -1,23 +1,73 @@
 <script setup lang="ts">
-import { ref, watch, nextTick, onMounted, computed } from 'vue'
+import { ref, watch, nextTick, onMounted, onBeforeUnmount, computed } from 'vue'
 import { useThreadStore } from '../stores/threadStore'
 import { useSettingsStore } from '../stores/settingsStore'
 import { useTabStore } from '../stores/tabStore'
+import { usePromptsStore, type Prompt } from '../stores/promptsStore'
 import { useStreaming } from '../composables/useStreaming'
+import {
+  promptNode,
+  sectionIsEmpty,
+  sectionVisibleText,
+  splitContentAt,
+  textNode,
+} from '../types/content'
+import type { ContentNode, PromptNode, Section } from '../types/chat'
+import PromptAutocomplete from './PromptAutocomplete.vue'
+
+function sectionTextLength(section: Section): number {
+  return sectionVisibleText(section).length
+}
 
 const store = useThreadStore()
 const settingsStore = useSettingsStore()
 const tabStore = useTabStore()
+const promptsStore = usePromptsStore()
 const { isStreaming, streamingTabId, streamingError, startStreaming, stopStreaming } = useStreaming()
 const editorEl = ref<HTMLDivElement | null>(null)
 let syncing = false
 let streamRafId: number | null = null
 
+// Slash-command autocomplete state
+const AC_TRIGGER = '/prompt '
+const acActive = ref(false)
+const acQuery = ref('')
+const acIndex = ref(0)
+const acSectionId = ref<string | null>(null)
+const acTriggerOffset = ref(0) // visible-text offset in section where `/prompt ` begins
+const acCaretOffset = ref(0) // visible-text offset of caret within section
+const acX = ref(0)
+const acY = ref(0)
+
+const acFiltered = computed<Prompt[]>(() => {
+  if (!acActive.value) return []
+  const q = acQuery.value.toLowerCase()
+  const list = promptsStore.prompts
+  if (!q) return list.slice(0, 20)
+  return list.filter((p) => p.name.toLowerCase().includes(q)).slice(0, 20)
+})
+
+watch(acFiltered, (list) => {
+  if (list.length === 0) {
+    acIndex.value = 0
+    return
+  }
+  if (acIndex.value >= list.length) acIndex.value = list.length - 1
+  if (acIndex.value < 0) acIndex.value = 0
+})
+
+function closeAutocomplete() {
+  acActive.value = false
+  acQuery.value = ''
+  acIndex.value = 0
+  acSectionId.value = null
+}
+
 const isActiveTabStreaming = computed(() => isStreaming.value && streamingTabId.value === tabStore.activeTabId)
 const showThinking = computed(() => {
   if (!isActiveTabStreaming.value) return false
   const last = store.sections[store.sections.length - 1]
-  return last?.role === 'agent' && last.content === ''
+  return last?.role === 'agent' && sectionIsEmpty(last)
 })
 
 let saveDebounce: ReturnType<typeof setTimeout> | null = null
@@ -29,8 +79,57 @@ function scheduleSave() {
   }, 600)
 }
 
-const PILL_USER = '------------------- USER -----------------------'
-const PILL_AGENT = '------------------- AGENT -----------------------'
+const PILL_USER = '<dez:pill type="user"/>'
+const PILL_AGENT = '<dez:pill type="agent"/>'
+
+function serializePrompt(name: string, body: string): string {
+  const escaped = body.replace(/<\/dez:prompt>/g, '<\\/dez:prompt>')
+  return `<dez:prompt name="${name}">\n${escaped}\n</dez:prompt>`
+}
+
+function appendTextRun(block: HTMLElement, text: string) {
+  if (text === '') return
+  const lines = text.split('\n')
+  lines.forEach((line, idx) => {
+    if (idx > 0) block.appendChild(document.createElement('br'))
+    if (line) block.appendChild(document.createTextNode(line))
+  })
+  // If text ends with '\n', append a trailing <br> so the empty final line
+  // renders. Read-back (`readSectionNodes`) strips a trailing <br>, so this
+  // round-trips symmetrically.
+  if (text.endsWith('\n')) block.appendChild(document.createElement('br'))
+}
+
+function buildPromptPill(section: Section, node: PromptNode): HTMLSpanElement {
+  const pill = document.createElement('span')
+  pill.className = 'dez-prompt-pill'
+  pill.contentEditable = 'false'
+  pill.dataset.nodeId = node.id
+  pill.textContent = node.expanded ? '▼' : '▶ ' + node.name
+  pill.title = node.expanded ? 'Click to collapse' : 'Click to expand'
+  if (node.expanded) pill.classList.add('dez-prompt-pill--expanded')
+  pill.addEventListener('click', (e) => {
+    e.preventDefault()
+    e.stopPropagation()
+    store.togglePromptExpanded(section.id, node.id)
+    nextTick(() => buildDOM())
+  })
+  return pill
+}
+
+function buildPromptBody(node: PromptNode): HTMLSpanElement {
+  const body = document.createElement('span')
+  body.className = 'dez-prompt-body'
+  body.dataset.nodeId = node.id
+  // Editable inline span (inherits contenteditable=true from editor root).
+  const lines = node.body.split('\n')
+  lines.forEach((line, idx) => {
+    if (idx > 0) body.appendChild(document.createElement('br'))
+    if (line) body.appendChild(document.createTextNode(line))
+  })
+  if (node.body === '') body.appendChild(document.createTextNode('\u200b'))
+  return body
+}
 
 function buildDOM() {
   const el = editorEl.value
@@ -67,19 +166,35 @@ function buildDOM() {
     block.dataset.sectionId = section.id
     block.dataset.sectionIndex = String(index)
 
-    if (section.content === '') {
+    if (sectionIsEmpty(section)) {
       block.appendChild(document.createElement('br'))
     } else {
-      const lines = section.content.split('\n')
-      lines.forEach((line, lineIdx) => {
-        if (lineIdx > 0) {
-          block.appendChild(document.createElement('br'))
+      for (const node of section.content) {
+        if (node.kind === 'text') {
+          if (node.text === '') {
+            // Empty text nodes (normalize invariant adds them around pills)
+            // must emit a zero-width space so the caret can land on a real
+            // text node adjacent to the pill. The ZWSP is stripped on read
+            // and counted as zero by the offset walkers.
+            block.appendChild(document.createTextNode('\u200b'))
+          } else {
+            appendTextRun(block, node.text)
+          }
+        } else {
+          block.appendChild(buildPromptPill(section, node))
+          if (node.expanded) {
+            block.appendChild(buildPromptBody(node))
+          }
         }
-        if (line) {
-          block.appendChild(document.createTextNode(line))
-        }
-      })
-      if (section.content.endsWith('\n')) {
+      }
+      // Ensure trailing editable text position exists: if last content node is
+      // a prompt and not followed by a text run, the normalize invariant added
+      // an empty text node — nothing to do. If the section ends with only a
+      // pill and empty text, buildDOM emits no trailing node, so append a <br>
+      // to keep the caret landable.
+      if (block.lastChild && block.lastChild instanceof HTMLElement &&
+          (block.lastChild.classList.contains('dez-prompt-pill') ||
+           block.lastChild.classList.contains('dez-prompt-body'))) {
         block.appendChild(document.createElement('br'))
       }
     }
@@ -93,7 +208,7 @@ function buildDOM() {
 }
 
 function updateEmptyState(el: HTMLElement) {
-  const isEmpty = store.sections.length === 1 && store.sections[0].content === ''
+  const isEmpty = store.sections.length === 1 && sectionIsEmpty(store.sections[0])
   el.classList.toggle('is-empty', isEmpty)
 }
 
@@ -102,6 +217,20 @@ interface SavedSelection {
   offset: number
   endSectionIndex: number
   endOffset: number
+}
+
+function isAtomicPillElement(node: Node | null): node is HTMLElement {
+  return !!node && node instanceof HTMLElement &&
+    (node.classList.contains('dez-prompt-pill') || node.classList.contains('dez-prompt-body'))
+}
+
+function ancestorAtomicPill(node: Node, root: Node): HTMLElement | null {
+  let cur: Node | null = node
+  while (cur && cur !== root) {
+    if (isAtomicPillElement(cur)) return cur
+    cur = cur.parentNode
+  }
+  return null
 }
 
 function saveSelection(container: HTMLElement): SavedSelection | null {
@@ -133,35 +262,60 @@ function resolvePosition(container: HTMLElement, node: Node, offset: number): { 
   }
   if (!block) return null
 
+  // If cursor is inside a pill/body subtree, don't track it as a section
+  // offset; callers will treat this as "no restorable position".
+  if (ancestorAtomicPill(node, block)) return null
+
   const sectionIndex = parseInt(block.dataset.sectionIndex || '0', 10)
   const textOffset = getTextOffset(block, node, offset)
   return { sectionIndex, offset: textOffset }
 }
 
+function makeAtomicWalker(root: Node): TreeWalker {
+  return document.createTreeWalker(root, NodeFilter.SHOW_TEXT | NodeFilter.SHOW_ELEMENT, {
+    acceptNode(n) {
+      if (n.nodeType === Node.ELEMENT_NODE && isAtomicPillElement(n as HTMLElement)) {
+        return NodeFilter.FILTER_REJECT
+      }
+      return NodeFilter.FILTER_ACCEPT
+    },
+  })
+}
+
+function visibleTextLen(s: string): number {
+  let n = 0
+  for (let i = 0; i < s.length; i++) if (s.charCodeAt(i) !== 0x200b) n++
+  return n
+}
+
 function getTextOffset(root: Node, targetNode: Node, targetOffset: number): number {
   let offset = 0
-  const walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT | NodeFilter.SHOW_ELEMENT)
+  const walker = makeAtomicWalker(root)
   let node: Node | null = walker.currentNode
   while (node) {
     if (node === targetNode) {
       if (node.nodeType === Node.TEXT_NODE) {
-        return offset + targetOffset
+        return offset + visibleTextLen((node.textContent || '').slice(0, targetOffset))
       }
       let count = 0
       for (let i = 0; i < targetOffset; i++) {
         const child = (node as HTMLElement).childNodes[i]
         if (child) {
           if (child.nodeType === Node.TEXT_NODE) {
-            count += child.textContent?.length || 0
-          } else if ((child as HTMLElement).tagName === 'BR') {
-            count += 1
+            count += visibleTextLen(child.textContent || '')
+          } else if (child instanceof HTMLElement) {
+            if (child.classList.contains('dez-prompt-pill') || child.classList.contains('dez-prompt-body')) {
+              // atomic: contributes 0 to section visible text offset
+            } else if (child.tagName === 'BR') {
+              count += 1
+            }
           }
         }
       }
       return offset + count
     }
     if (node.nodeType === Node.TEXT_NODE && node !== root) {
-      offset += node.textContent?.length || 0
+      offset += visibleTextLen(node.textContent || '')
     } else if (node instanceof HTMLElement && node.tagName === 'BR') {
       offset += 1
     }
@@ -193,7 +347,7 @@ function restoreSelection(container: HTMLElement, saved: SavedSelection | null) 
 
 function findNodeAtOffset(root: Node, targetOffset: number): { node: Node; offset: number } | null {
   let offset = 0
-  const walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT | NodeFilter.SHOW_ELEMENT)
+  const walker = makeAtomicWalker(root)
   let node: Node | null = walker.currentNode
 
   if (targetOffset === 0) {
@@ -206,9 +360,18 @@ function findNodeAtOffset(root: Node, targetOffset: number): { node: Node; offse
 
   while (node) {
     if (node.nodeType === Node.TEXT_NODE && node !== root) {
-      const len = node.textContent?.length || 0
+      const len = visibleTextLen(node.textContent || '')
       if (offset + len >= targetOffset) {
-        return { node, offset: targetOffset - offset }
+        // Convert visible-offset back into a raw text-node index.
+        const remaining = targetOffset - offset
+        const raw = node.textContent || ''
+        let seen = 0
+        let rawIdx = 0
+        for (; rawIdx < raw.length; rawIdx++) {
+          if (seen >= remaining) break
+          if (raw.charCodeAt(rawIdx) !== 0x200b) seen++
+        }
+        return { node, offset: rawIdx }
       }
       offset += len
     } else if (node instanceof HTMLElement && node.tagName === 'BR') {
@@ -218,7 +381,10 @@ function findNodeAtOffset(root: Node, targetOffset: number): { node: Node; offse
         if (next && next.nodeType === Node.TEXT_NODE) {
           return { node: next, offset: 0 }
         }
-        return { node: node.parentNode!, offset: Array.from(node.parentNode!.childNodes).indexOf(node) + 1 }
+        const parent = node.parentNode
+        if (parent) {
+          return { node: parent, offset: Array.from(parent.childNodes).indexOf(node) + 1 }
+        }
       }
     }
     node = walker.nextNode()
@@ -231,61 +397,160 @@ function findNodeAtOffset(root: Node, targetOffset: number): { node: Node; offse
   return { node: root, offset: root.childNodes.length }
 }
 
+/**
+ * Read a block's children and produce a fresh ContentNode[]. Prompt pills
+ * contribute a PromptNode (identity, name, promptId carried over from the
+ * current store section by data-node-id). A trailing `.dez-prompt-body`
+ * sibling provides the updated body text for the preceding pill.
+ */
+function readSectionNodes(block: HTMLElement, section: Section): ContentNode[] {
+  const existingById = new Map<string, PromptNode>()
+  for (const n of section.content) if (n.kind === 'prompt') existingById.set(n.id, n)
+
+  const out: ContentNode[] = []
+  let textBuf = ''
+  const flushText = () => {
+    if (textBuf.length > 0) {
+      out.push(textNode(textBuf))
+      textBuf = ''
+    }
+  }
+
+  const children = Array.from(block.childNodes)
+  for (let i = 0; i < children.length; i++) {
+    const child = children[i]
+    if (child.nodeType === Node.TEXT_NODE) {
+      textBuf += (child.textContent || '').replace(/\u200b/g, '')
+      continue
+    }
+    if (!(child instanceof HTMLElement)) continue
+
+    if (child.tagName === 'BR') {
+      // Strip a trailing BR unconditionally — matches the old
+      // extractTextContent behavior. Any real newline produced by plain Enter
+      // is contributed by the empty orphan <div> sibling that the browser
+      // appends after the section-block.
+      if (i === children.length - 1) continue
+      textBuf += '\n'
+      continue
+    }
+
+    if (child.classList.contains('dez-prompt-pill')) {
+      const nodeId = child.dataset.nodeId || ''
+      const existing = existingById.get(nodeId)
+      if (!existing) continue
+      flushText()
+      // If the next sibling is the matching body, read it.
+      const next = children[i + 1]
+      let body = existing.body
+      if (next instanceof HTMLElement && next.classList.contains('dez-prompt-body') &&
+          next.dataset.nodeId === nodeId) {
+        body = extractPlainText(next)
+        i += 1
+      }
+      out.push({
+        kind: 'prompt',
+        id: existing.id,
+        promptId: existing.promptId,
+        name: existing.name,
+        body,
+        expanded: existing.expanded,
+      })
+      continue
+    }
+
+    if (child.classList.contains('dez-prompt-body')) {
+      // Orphan body (pill was deleted but body wasn't) — ignore.
+      continue
+    }
+
+    // Generic element: treat its text content as text.
+    textBuf += extractPlainText(child)
+  }
+  flushText()
+  return out
+}
+
+function extractPlainText(root: HTMLElement): string {
+  let text = ''
+  const walk = (node: Node) => {
+    if (node.nodeType === Node.TEXT_NODE) {
+      text += node.textContent || ''
+      return
+    }
+    if (node instanceof HTMLElement) {
+      if (node.tagName === 'BR') {
+        text += '\n'
+        return
+      }
+      for (const child of Array.from(node.childNodes)) walk(child)
+    }
+  }
+  for (const child of Array.from(root.childNodes)) walk(child)
+  if (text.endsWith('\n')) text = text.slice(0, -1)
+  // Strip zero-width spaces used as empty-body placeholders.
+  if (text.includes('\u200b')) text = text.replace(/\u200b/g, '')
+  return text
+}
+
 function readDOMToStore() {
   if (syncing) return
   const el = editorEl.value
   if (!el) return
 
-  // Walk the editor's direct children in order. A `.section-block` owns any
-  // following non-`.section-block` / non-`.pill-separator` siblings (orphans
-  // produced by the browser on plain Enter, drag-drop, autocorrect, etc.)
-  // so their text is ingested into the preceding section.
-  const perSection = new Map<string, string>()
+  // Group direct children by the most recent section-block owner.
+  const groupedBlocks = new Map<string, HTMLElement[]>()
+  const orphanTextPerSection = new Map<string, string>()
   const sectionOrder: string[] = []
   let currentId: string | null = null
 
-  const appendLine = (id: string, line: string) => {
-    const existing = perSection.get(id)
-    if (existing === undefined) {
-      perSection.set(id, line)
-      sectionOrder.push(id)
-    } else {
-      perSection.set(id, existing + '\n' + line)
-    }
-  }
-
   Array.from(el.childNodes).forEach((node) => {
     if (node instanceof HTMLElement) {
-      if (node.classList.contains('pill-separator')) {
-        // Non-editable boundary, contributes no text.
-        return
-      }
+      if (node.classList.contains('pill-separator')) return
       if (node.classList.contains('section-block')) {
         const id = node.dataset.sectionId
         if (!id) return
         currentId = id
-        appendLine(id, extractTextContent(node))
+        if (!groupedBlocks.has(id)) {
+          groupedBlocks.set(id, [])
+          sectionOrder.push(id)
+        }
+        groupedBlocks.get(id)!.push(node)
         return
       }
     }
-
-    // Orphan sibling attributed to the most recent section-block.
     if (!currentId) return
     let line = ''
     if (node.nodeType === Node.TEXT_NODE) {
       line = node.textContent || ''
     } else if (node instanceof HTMLElement) {
-      line = node.tagName === 'BR' ? '' : extractTextContent(node)
+      line = node.tagName === 'BR' ? '' : extractPlainText(node)
     }
-    appendLine(currentId, line)
+    const existing = orphanTextPerSection.get(currentId)
+    orphanTextPerSection.set(currentId, existing === undefined ? line : existing + '\n' + line)
   })
 
   sectionOrder.forEach((sectionId) => {
-    const content = perSection.get(sectionId) ?? ''
     const section = store.sections.find((s) => s.id === sectionId)
-    if (section && section.content !== content) {
-      store.updateSectionContent(sectionId, content)
+    if (!section) return
+    const blocks = groupedBlocks.get(sectionId) || []
+    let nodes: ContentNode[] = []
+    blocks.forEach((block, idx) => {
+      if (idx > 0) {
+        // Joining two cloned blocks with the same id: insert a newline in text.
+        const last = nodes[nodes.length - 1]
+        if (last && last.kind === 'text') last.text += '\n'
+        else nodes.push(textNode('\n'))
+      }
+      nodes = nodes.concat(readSectionNodes(block, section))
+    })
+    const orphanText = orphanTextPerSection.get(sectionId)
+    if (orphanText !== undefined) {
+      const last = nodes[nodes.length - 1]
+      if (last && last.kind === 'text') last.text += '\n' + orphanText
+      else nodes.push(textNode('\n' + orphanText))
     }
+    store.setSectionContent(sectionId, nodes.length > 0 ? nodes : [textNode('')])
   })
 }
 
@@ -299,9 +564,6 @@ function hasOrphanSiblings(el: HTMLElement): boolean {
   })
 }
 
-// Plain Enter in contenteditable often *clones* the enclosing section-block,
-// producing two (or more) sibling `.section-block`s sharing the same
-// `data-section-id`. Detect that so we can re-normalize to one-block-per-section.
 function hasClonedSectionBlocks(el: HTMLElement): boolean {
   const seen = new Set<string>()
   for (const node of Array.from(el.children)) {
@@ -315,9 +577,6 @@ function hasClonedSectionBlocks(el: HTMLElement): boolean {
   return false
 }
 
-// Mirrors `readDOMToStore`'s walk to resolve the live cursor into a
-// (sectionId, textOffset) pair expressed in *store content* terms, so we can
-// restore the cursor after `buildDOM()` recreates the canonical structure.
 function computeStoreSelection(): { sectionId: string; offset: number } | null {
   const el = editorEl.value
   if (!el) return null
@@ -327,7 +586,11 @@ function computeStoreSelection(): { sectionId: string; offset: number } | null {
   const cursorNode = range.startContainer
   const cursorOffset = range.startOffset
 
-  // Find the direct child of el that contains (or equals) the cursor node.
+  // If the cursor landed inside an atomic pill/body, we can't express that as
+  // a section offset — bail and let the caller skip cursor restoration.
+  const inAtomic = ancestorAtomicPill(cursorNode, el)
+  if (inAtomic) return null
+
   let topChild: Node | null = cursorNode
   while (topChild && topChild.parentNode !== el) {
     topChild = topChild.parentNode
@@ -364,14 +627,13 @@ function computeStoreSelection(): { sectionId: string; offset: number } | null {
       }
       if (id !== currentId) {
         currentId = id
-        accumulated = extractTextContent(node).length
+        accumulated = blockTextLength(node)
       } else {
-        accumulated += 1 + extractTextContent(node).length
+        accumulated += 1 + blockTextLength(node)
       }
       continue
     }
 
-    // Orphan sibling.
     if (isTarget) {
       if (!currentId) return null
       let within = 0
@@ -387,7 +649,7 @@ function computeStoreSelection(): { sectionId: string; offset: number } | null {
       if (node.nodeType === Node.TEXT_NODE) {
         text = node.textContent || ''
       } else if (node instanceof HTMLElement) {
-        text = node.tagName === 'BR' ? '' : extractTextContent(node)
+        text = node.tagName === 'BR' ? '' : extractPlainText(node)
       }
       accumulated += 1 + text.length
     }
@@ -395,53 +657,217 @@ function computeStoreSelection(): { sectionId: string; offset: number } | null {
   return null
 }
 
-function extractTextContent(block: HTMLElement): string {
-  let text = ''
-  block.childNodes.forEach((node) => {
-    if (node.nodeType === Node.TEXT_NODE) {
-      text += node.textContent || ''
-    } else if (node instanceof HTMLElement) {
-      if (node.tagName === 'BR') {
-        text += '\n'
-      } else if (node.tagName === 'DIV' || node.tagName === 'P') {
-        if (text.length > 0 && !text.endsWith('\n')) {
-          text += '\n'
-        }
-        text += node.textContent || ''
-      } else {
-        text += node.textContent || ''
-      }
+/** Length of a section-block's visible text (excluding pill/body atoms). */
+function blockTextLength(block: HTMLElement): number {
+  let len = 0
+  const walker = makeAtomicWalker(block)
+  let node: Node | null = walker.currentNode
+  while (node) {
+    if (node.nodeType === Node.TEXT_NODE && node !== block) {
+      len += visibleTextLen(node.textContent || '')
+    } else if (node instanceof HTMLElement && node.tagName === 'BR') {
+      len += 1
     }
-  })
-  if (text.endsWith('\n')) {
-    text = text.slice(0, -1)
+    node = walker.nextNode()
   }
-  return text
+  return len
 }
 
-function onInput() {
+function isInPromptBody(node: Node): boolean {
+  let cur: Node | null = node
+  while (cur) {
+    if (cur instanceof HTMLElement && cur.classList.contains('dez-prompt-body')) return true
+    cur = cur.parentNode
+  }
+  return false
+}
+
+function detectAutocomplete() {
   const el = editorEl.value
-  // Capture cursor in store-space BEFORE ingesting, while DOM still reflects
-  // what the browser produced (orphan siblings OR cloned section-blocks).
-  const needsRebuild = !!el && (hasOrphanSiblings(el) || hasClonedSectionBlocks(el))
+  if (!el) return closeAutocomplete()
+  const sel = window.getSelection()
+  if (!sel || sel.rangeCount === 0 || !sel.isCollapsed) return closeAutocomplete()
+  const range = sel.getRangeAt(0)
+  if (isInPromptBody(range.startContainer)) return closeAutocomplete()
+
+  // Find the section-block ancestor.
+  let block: HTMLElement | null = null
+  let cur: Node | null = range.startContainer
+  while (cur && cur !== el) {
+    if (cur instanceof HTMLElement && cur.classList.contains('section-block')) {
+      block = cur
+      break
+    }
+    cur = cur.parentNode
+  }
+  if (!block) return closeAutocomplete()
+  const sectionId = block.dataset.sectionId
+  if (!sectionId) return closeAutocomplete()
+  const section = store.sections.find((s) => s.id === sectionId)
+  if (!section) return closeAutocomplete()
+
+  // Caret offset within this section-block's visible text.
+  const offsetInBlock = getTextOffset(block, range.startContainer, range.startOffset)
+
+  // Accumulate offset across cloned blocks (same sectionId earlier in DOM).
+  let base = 0
+  for (const b of Array.from(el.querySelectorAll('.section-block'))) {
+    if ((b as HTMLElement).dataset.sectionId !== sectionId) continue
+    if (b === block) break
+    base += blockTextLength(b as HTMLElement) + 1
+  }
+  const caretOffset = base + offsetInBlock
+
+  // Look backward through section's visible text for the trigger.
+  const visible = sectionVisibleText(section)
+  const before = visible.slice(0, caretOffset)
+  const triggerIdx = before.lastIndexOf(AC_TRIGGER)
+  if (triggerIdx < 0) return closeAutocomplete()
+
+  const query = before.slice(triggerIdx + AC_TRIGGER.length)
+  // Abort if query contains whitespace or newline; another trigger already
+  // closed. Also abort if there's a newline between triggerIdx and caret.
+  if (/[\s\n]/.test(query)) return closeAutocomplete()
+  // Require the trigger to be at start-of-line or preceded by whitespace so
+  // random substrings like "x/prompt " don't trip it.
+  if (triggerIdx > 0) {
+    const prev = before[triggerIdx - 1]
+    if (prev !== '\n' && prev !== ' ' && prev !== '\t') return closeAutocomplete()
+  }
+
+  acActive.value = true
+  acQuery.value = query
+  acSectionId.value = sectionId
+  acTriggerOffset.value = triggerIdx
+  acCaretOffset.value = caretOffset
+
+  // Position panel just below the caret.
+  const rects = range.getClientRects()
+  let rect: DOMRect | null = null
+  if (rects.length > 0) rect = rects[0]
+  else {
+    const container = range.startContainer
+    if (container instanceof HTMLElement) rect = container.getBoundingClientRect()
+  }
+  if (rect) {
+    acX.value = rect.left
+    acY.value = rect.bottom + 4
+  }
+}
+
+function acceptPrompt(prompt: Prompt) {
+  const sectionId = acSectionId.value
+  if (!sectionId) return closeAutocomplete()
+  const section = store.sections.find((s) => s.id === sectionId)
+  if (!section) return closeAutocomplete()
+
+  const trigger = acTriggerOffset.value
+  const caret = acCaretOffset.value
+
+  // Split content at the caret; then trim `/prompt <query>` off the end of
+  // the "before" half (length = caret - trigger).
+  const [beforeAll, after] = splitContentAt(section.content, caret)
+  const trimLen = caret - trigger
+  let remaining = trimLen
+  const before: ContentNode[] = []
+  for (const node of beforeAll) before.push(node)
+  // Walk back through `before` text nodes removing `remaining` chars.
+  for (let i = before.length - 1; i >= 0 && remaining > 0; i--) {
+    const n = before[i]
+    if (n.kind !== 'text') continue
+    if (n.text.length >= remaining) {
+      before[i] = textNode(n.text.slice(0, n.text.length - remaining))
+      remaining = 0
+      break
+    } else {
+      remaining -= n.text.length
+      before[i] = textNode('')
+    }
+  }
+
+  const newPrompt = promptNode({
+    promptId: prompt.id,
+    name: prompt.name,
+    body: prompt.content,
+    expanded: false,
+  })
+
+  const combined: ContentNode[] = [...before, newPrompt, ...after]
+  const newSectionId = section.id
+  const promptNodeId = newPrompt.id
+  store.setSectionContent(newSectionId, combined)
+
+  closeAutocomplete()
+
+  nextTick(() => {
+    buildDOM()
+    nextTick(() => {
+      // Place caret in the text node immediately after the new pill.
+      const el = editorEl.value
+      if (!el) return
+      const blocks = Array.from(el.querySelectorAll('.section-block'))
+      for (const b of blocks) {
+        if ((b as HTMLElement).dataset.sectionId !== newSectionId) continue
+        const pill = b.querySelector(`.dez-prompt-pill[data-node-id="${promptNodeId}"]`)
+        if (pill) {
+          // The next sibling should be the caret-landable text (post-normalize).
+          let target: Node | null = pill.nextSibling
+          while (target && target.nodeType !== Node.TEXT_NODE) {
+            if (target instanceof HTMLElement && target.classList.contains('dez-prompt-body')) {
+              target = target.nextSibling
+              continue
+            }
+            break
+          }
+          const sel = window.getSelection()
+          if (!sel) return
+          const range = document.createRange()
+          if (target && target.nodeType === Node.TEXT_NODE) {
+            range.setStart(target, 0)
+          } else if (pill.parentNode) {
+            const parent = pill.parentNode
+            const idx = Array.from(parent.childNodes).indexOf(pill as ChildNode) + 1
+            range.setStart(parent, idx)
+          } else return
+          range.collapse(true)
+          sel.removeAllRanges()
+          sel.addRange(range)
+          return
+        }
+      }
+    })
+  })
+}
+
+function onSelectionChange() {
+  if (!acActive.value) return
+  // Re-run detection; if caret moved out of trigger region, it will close.
+  detectAutocomplete()
+}
+
+function onInput(event: Event) {
+  const el = editorEl.value
+  const target = (event.target as Node) ?? null
+  // Edits inside a prompt-body span update only that node's body; no DOM
+  // restructuring is needed, so we can take a fast path that skips rebuild
+  // detection.
+  const sel = window.getSelection()
+  const inBody = !!sel && sel.rangeCount > 0 && isInPromptBody(sel.getRangeAt(0).startContainer)
+
+  const needsRebuild = !inBody && !!el && (hasOrphanSiblings(el) || hasClonedSectionBlocks(el))
   const storeSel = needsRebuild ? computeStoreSelection() : null
   readDOMToStore()
   if (el) {
     updateEmptyState(el)
-    // If the browser destroyed our section-block structure, rebuild it
     if (!el.querySelector('.section-block')) {
       buildDOM()
       nextTick(() => {
         if (el) {
           el.focus()
-          setCursorToSection(store.sections.length - 1, store.sections[store.sections.length - 1].content.length)
+          setCursorToSection(store.sections.length - 1, sectionTextLength(store.sections[store.sections.length - 1]))
         }
       })
     } else if (needsRebuild) {
-      // Browser inserted orphan siblings or cloned section-blocks (typically
-      // on plain Enter). Re-normalize the DOM to keep the canonical structure
-      // (one `.section-block` per section), restoring the cursor via the
-      // store-space position we captured above.
       nextTick(() => {
         buildDOM()
         nextTick(() => {
@@ -449,7 +875,7 @@ function onInput() {
             const idx = store.sections.findIndex((s) => s.id === storeSel.sectionId)
             if (idx >= 0) {
               const section = store.sections[idx]
-              const clamped = Math.min(storeSel.offset, section.content.length)
+              const clamped = Math.min(storeSel.offset, sectionTextLength(section))
               setCursorToSection(idx, clamped)
             }
           }
@@ -457,11 +883,38 @@ function onInput() {
       })
     }
   }
+  void target
   scheduleSave()
+  nextTick(() => detectAutocomplete())
 }
 
 function onKeydown(event: KeyboardEvent) {
   const mod = event.metaKey || event.ctrlKey
+
+  // Autocomplete intercepts navigation + accept keys first.
+  if (acActive.value && acFiltered.value.length > 0) {
+    if (event.key === 'ArrowDown') {
+      event.preventDefault()
+      acIndex.value = (acIndex.value + 1) % acFiltered.value.length
+      return
+    }
+    if (event.key === 'ArrowUp') {
+      event.preventDefault()
+      acIndex.value = (acIndex.value - 1 + acFiltered.value.length) % acFiltered.value.length
+      return
+    }
+    if (event.key === 'Escape') {
+      event.preventDefault()
+      closeAutocomplete()
+      return
+    }
+    if (event.key === 'Tab' || (event.key === 'Enter' && !mod && !event.shiftKey)) {
+      event.preventDefault()
+      const picked = acFiltered.value[acIndex.value]
+      if (picked) acceptPrompt(picked)
+      return
+    }
+  }
 
   if (event.key === 'Enter' && mod) {
     event.preventDefault()
@@ -474,8 +927,6 @@ function onKeydown(event: KeyboardEvent) {
     insertNewSection()
     return
   }
-
-  // Plain Enter: let the browser handle it natively for responsiveness
 
   if (event.key === 'Backspace') {
     handleBackspace(event)
@@ -490,11 +941,11 @@ function insertNewSection() {
   const el = editorEl.value
   if (!el) return
 
-  // Sync DOM to store first so cloned blocks are merged
+  // Disallow splitting from inside a prompt body.
+  if (isInPromptBody(range.startContainer)) return
+
   readDOMToStore()
 
-  // Find which section-block the cursor is in, and compute the offset
-  // across all cloned blocks with the same sectionId
   let cursorBlock: HTMLElement | null = null
   let node: Node | null = range.startContainer
   while (node && node !== el) {
@@ -505,14 +956,10 @@ function insertNewSection() {
     node = node.parentNode
   }
   if (!cursorBlock) {
-    // DOM has no section-block (structure was destroyed) — rescue text content,
-    // rebuild, then split
-    const rawText = el.textContent || ''
     const lastSection = store.sections[store.sections.length - 1]
     if (!lastSection) return
-    lastSection.content = rawText
     const cursorOffset = getTextOffset(el, range.startContainer, range.startOffset)
-    const splitAt = Math.min(cursorOffset, rawText.length)
+    const splitAt = Math.min(cursorOffset, sectionTextLength(lastSection))
     const newSection = store.splitSection(lastSection.id, splitAt)
     if (newSection) {
       nextTick(() => {
@@ -531,14 +978,12 @@ function insertNewSection() {
   const section = store.sections.find((s) => s.id === sectionId)
   if (!section) return
 
-  // Sum content length of all preceding clones with the same sectionId
   let offsetBefore = 0
   const allBlocks = Array.from(el.querySelectorAll('.section-block'))
   for (const block of allBlocks) {
     if ((block as HTMLElement).dataset.sectionId !== sectionId) continue
     if (block === cursorBlock) break
-    const blockText = extractTextContent(block as HTMLElement)
-    offsetBefore += blockText.length + 1 // +1 for the newline between clones
+    offsetBefore += blockTextLength(block as HTMLElement) + 1
   }
 
   const offsetInBlock = getTextOffset(cursorBlock, range.startContainer, range.startOffset)
@@ -565,17 +1010,19 @@ function handleBackspace(event: KeyboardEvent) {
   const el = editorEl.value
   if (!el) return
 
+  if (isInPromptBody(range.startContainer)) return
+
   const pos = resolvePosition(el, range.startContainer, range.startOffset)
   if (!pos) return
 
   const section = store.sections[pos.sectionIndex]
   if (!section) return
 
-  if (section.content === '' && store.sections.length > 1) {
+  if (sectionIsEmpty(section) && store.sections.length > 1) {
     event.preventDefault()
     const focusIndex = pos.sectionIndex > 0 ? pos.sectionIndex - 1 : 1
     const focusSection = store.sections[focusIndex]
-    const focusOffset = focusSection.content.length
+    const focusOffset = sectionTextLength(focusSection)
     store.removeSectionIfEmpty(section.id)
     nextTick(() => {
       buildDOM()
@@ -632,32 +1079,100 @@ function onCopy(event: ClipboardEvent) {
 
   const range = sel.getRangeAt(0)
   const fragment = range.cloneContents()
-  let text = ''
-
-  fragment.childNodes.forEach((node) => {
-    if (node instanceof HTMLElement) {
-      if (node.classList.contains('pill-separator')) {
-        const btn = node.querySelector('.pill')
-        if (btn) {
-          const role = btn.textContent?.trim().toUpperCase()
-          if (role === 'USER') {
-            text += PILL_USER + '\n'
-          } else if (role === 'AGENT') {
-            text += PILL_AGENT + '\n'
-          }
-        }
-      } else if (node.classList.contains('section-block')) {
-        text += extractTextContent(node as HTMLElement) + '\n'
-      } else {
-        text += (node.textContent || '') + '\n'
-      }
-    } else if (node.nodeType === Node.TEXT_NODE) {
-      text += node.textContent || ''
-    }
-  })
+  const text = serializeFragment(fragment)
 
   event.preventDefault()
   event.clipboardData?.setData('text/plain', text.trimEnd())
+}
+
+function serializeFragment(fragment: DocumentFragment | HTMLElement): string {
+  let out = ''
+  const nodes = Array.from(fragment.childNodes)
+  for (const node of nodes) {
+    if (node.nodeType === Node.TEXT_NODE) {
+      out += node.textContent || ''
+      continue
+    }
+    if (!(node instanceof HTMLElement)) continue
+
+    if (node.classList.contains('pill-separator')) {
+      const btn = node.querySelector('.pill')
+      const role = btn?.textContent?.trim().toUpperCase()
+      if (role === 'USER') out += PILL_USER + '\n'
+      else if (role === 'AGENT') out += PILL_AGENT + '\n'
+      continue
+    }
+
+    if (node.classList.contains('section-block')) {
+      out += serializeBlock(node) + '\n'
+      continue
+    }
+
+    if (node.classList.contains('dez-prompt-pill')) {
+      const nodeId = node.dataset.nodeId || ''
+      const info = findPromptInfo(nodeId)
+      if (info) out += serializePrompt(info.name, info.body)
+      continue
+    }
+
+    if (node.classList.contains('dez-prompt-body')) continue
+
+    if (node.tagName === 'BR') {
+      out += '\n'
+      continue
+    }
+
+    out += serializeBlock(node)
+  }
+  return out
+}
+
+function serializeBlock(block: HTMLElement): string {
+  let out = ''
+  const children = Array.from(block.childNodes)
+  for (let i = 0; i < children.length; i++) {
+    const child = children[i]
+    if (child.nodeType === Node.TEXT_NODE) {
+      out += child.textContent || ''
+      continue
+    }
+    if (!(child instanceof HTMLElement)) continue
+    if (child.tagName === 'BR') {
+      if (i === children.length - 1) continue
+      out += '\n'
+      continue
+    }
+    if (child.classList.contains('dez-prompt-pill')) {
+      const nodeId = child.dataset.nodeId || ''
+      const next = children[i + 1]
+      let body = ''
+      let name = ''
+      const info = findPromptInfo(nodeId)
+      if (info) {
+        name = info.name
+        body = info.body
+      }
+      if (next instanceof HTMLElement && next.classList.contains('dez-prompt-body') &&
+          next.dataset.nodeId === nodeId) {
+        body = extractPlainText(next)
+        i += 1
+      }
+      out += serializePrompt(name, body)
+      continue
+    }
+    if (child.classList.contains('dez-prompt-body')) continue
+    out += extractPlainText(child)
+  }
+  return out
+}
+
+function findPromptInfo(nodeId: string): { name: string; body: string } | null {
+  for (const section of store.sections) {
+    for (const n of section.content) {
+      if (n.kind === 'prompt' && n.id === nodeId) return { name: n.name, body: n.body }
+    }
+  }
+  return null
 }
 
 function onEditorClick(event: MouseEvent) {
@@ -665,8 +1180,10 @@ function onEditorClick(event: MouseEvent) {
   if (!el) return
 
   if (event.target === el) {
+    const sel = window.getSelection()
+    if (sel && !sel.isCollapsed) return
     el.focus()
-    setCursorToSection(store.sections.length - 1, store.sections[store.sections.length - 1].content.length)
+    setCursorToSection(store.sections.length - 1, sectionTextLength(store.sections[store.sections.length - 1]))
   }
 }
 
@@ -682,9 +1199,14 @@ onMounted(() => {
     const el = editorEl.value
     if (el) {
       el.focus()
-      setCursorToSection(store.sections.length - 1, store.sections[store.sections.length - 1].content.length)
+      setCursorToSection(store.sections.length - 1, sectionTextLength(store.sections[store.sections.length - 1]))
     }
   })
+  document.addEventListener('selectionchange', onSelectionChange)
+})
+
+onBeforeUnmount(() => {
+  document.removeEventListener('selectionchange', onSelectionChange)
 })
 
 watch(
@@ -703,16 +1225,38 @@ watch(
   }
 )
 
+// Rebuild when the *structure* of prompt nodes changes (insert/remove pill,
+// expand/collapse). Text edits don't change this signature, so typing doesn't
+// trigger a rebuild cascade.
+const promptStructureSignature = computed(() => {
+  return store.sections
+    .map((s) => {
+      const pills = s.content
+        .filter((n): n is Extract<ContentNode, { kind: 'prompt' }> => n.kind === 'prompt')
+        .map((p) => `${p.id}:${p.expanded ? 'E' : 'C'}`)
+        .join(',')
+      return `${s.id}[${pills}]`
+    })
+    .join('|')
+})
+
+watch(promptStructureSignature, () => {
+  if (!syncing) {
+    nextTick(() => buildDOM())
+  }
+})
+
 watch(
   () => tabStore.activeTabId,
   () => {
+    closeAutocomplete()
     nextTick(() => {
       buildDOM()
       nextTick(() => {
         const el = editorEl.value
         if (el) {
           el.focus()
-          setCursorToSection(store.sections.length - 1, store.sections[store.sections.length - 1].content.length)
+          setCursorToSection(store.sections.length - 1, sectionTextLength(store.sections[store.sections.length - 1]))
         }
       })
     })
@@ -726,7 +1270,7 @@ watch(isActiveTabStreaming, (streaming) => {
         streamRafId = null
         buildDOM()
         nextTick(() => {
-          setCursorToSection(store.sections.length - 1, store.sections[store.sections.length - 1].content.length)
+          setCursorToSection(store.sections.length - 1, sectionTextLength(store.sections[store.sections.length - 1]))
           scrollToBottom()
         })
         return
@@ -743,7 +1287,7 @@ watch(isActiveTabStreaming, (streaming) => {
     }
     buildDOM()
     nextTick(() => {
-      setCursorToSection(store.sections.length - 1, store.sections[store.sections.length - 1].content.length)
+      setCursorToSection(store.sections.length - 1, sectionTextLength(store.sections[store.sections.length - 1]))
     })
   }
 })
@@ -762,6 +1306,16 @@ watch(isActiveTabStreaming, (streaming) => {
       @cut="onCopy"
       @paste="onPaste"
       @click="onEditorClick"
+      @blur="closeAutocomplete"
+    />
+    <PromptAutocomplete
+      v-if="acActive && acFiltered.length > 0"
+      :prompts="acFiltered"
+      :selected-index="acIndex"
+      :x="acX"
+      :y="acY"
+      @select="acceptPrompt"
+      @hover="(i: number) => (acIndex = i)"
     />
     <div v-if="showThinking" class="thinking-indicator">
       <span class="thinking-dot" />
@@ -800,7 +1354,7 @@ watch(isActiveTabStreaming, (streaming) => {
   box-sizing: border-box;
   outline: none;
   color: var(--color-text);
-  font-family: inherit;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, 'Liberation Mono', monospace;
   font-size: 15px;
   line-height: 1.6;
   min-height: 100%;
@@ -855,6 +1409,47 @@ watch(isActiveTabStreaming, (streaming) => {
 
 .thread-editor :deep(.section-block--agent) {
   opacity: 0.85;
+}
+
+.thread-editor :deep(.dez-prompt-pill) {
+  display: inline-block;
+  font-size: 12px;
+  font-weight: 500;
+  color: var(--color-text);
+  padding: 1px 8px;
+  margin: 0 2px;
+  border-radius: 8px;
+  background-color: var(--color-border);
+  opacity: 0.85;
+  cursor: pointer;
+  user-select: none;
+  -webkit-user-select: none;
+  vertical-align: baseline;
+  transition: opacity 0.15s;
+}
+
+.thread-editor :deep(.dez-prompt-pill:hover) {
+  opacity: 1;
+}
+
+.thread-editor :deep(.dez-prompt-pill--expanded) {
+  background-color: transparent;
+  padding: 0 4px 0 0;
+  margin: 0;
+  border-radius: 0;
+  opacity: 0.7;
+}
+
+.thread-editor :deep(.dez-prompt-body) {
+  display: inline;
+  margin: 0;
+  padding: 0;
+  background-color: transparent;
+  border: none;
+  font-family: inherit;
+  font-size: inherit;
+  white-space: pre-wrap;
+  outline: none;
 }
 
 .thinking-indicator {

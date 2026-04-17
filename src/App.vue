@@ -3,14 +3,18 @@ import { onMounted, watch } from "vue";
 import AppLayout from "./components/AppLayout.vue";
 import { useSettingsStore } from "./stores/settingsStore";
 import { useTabStore } from "./stores/tabStore";
+import { usePromptsStore } from "./stores/promptsStore";
 
 const settingsStore = useSettingsStore();
 const tabStore = useTabStore();
+const promptsStore = usePromptsStore();
 
 onMounted(async () => {
   const state = await settingsStore.init(() => {
     tabStore.saveAppState();
   });
+
+  await promptsStore.init();
 
   if (state && Array.isArray((state as { tabs?: unknown[] }).tabs)) {
     await tabStore.restoreFromState(state as never);

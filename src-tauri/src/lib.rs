@@ -67,6 +67,8 @@ pub fn run() {
             commands::delete_conversation,
             commands::save_app_state,
             commands::load_app_state,
+            commands::load_prompts,
+            commands::save_prompts,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

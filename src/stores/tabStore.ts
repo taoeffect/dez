@@ -1,12 +1,24 @@
 import { defineStore } from 'pinia'
 import { ref, computed } from 'vue'
 import { invoke } from '@tauri-apps/api/core'
-import type { Tab, Section, ActiveModel } from '../types/chat'
+import type { Tab, Section, ActiveModel, ContentNode } from '../types/chat'
+import { emptyContent, normalizeContent, sectionIsEmpty, sectionVisibleText } from '../types/content'
 import { useSettingsStore } from './settingsStore'
+
+type ContentNodeData =
+  | { kind: 'text'; text: string }
+  | {
+      kind: 'prompt'
+      id: string
+      promptId: string | null
+      name: string
+      body: string
+      expanded?: boolean
+    }
 
 interface SectionData {
   role: 'user' | 'agent'
-  content: string
+  nodes: ContentNodeData[]
 }
 
 interface ConversationData {
@@ -25,12 +37,36 @@ interface TabData {
   createdAt: number
 }
 
+function contentNodeToData(n: ContentNode): ContentNodeData {
+  if (n.kind === 'text') return { kind: 'text', text: n.text }
+  return {
+    kind: 'prompt',
+    id: n.id,
+    promptId: n.promptId,
+    name: n.name,
+    body: n.body,
+    expanded: n.expanded,
+  }
+}
+
+function dataToContentNode(n: ContentNodeData): ContentNode {
+  if (n.kind === 'text') return { kind: 'text', text: n.text }
+  return {
+    kind: 'prompt',
+    id: n.id,
+    promptId: n.promptId,
+    name: n.name,
+    body: n.body,
+    expanded: false,
+  }
+}
+
 function createDefaultTab(): Tab {
   return {
     id: crypto.randomUUID(),
     title: 'New Tab',
     conversationId: crypto.randomUUID(),
-    sections: [{ id: crypto.randomUUID(), role: 'user', content: '' }],
+    sections: [{ id: crypto.randomUUID(), role: 'user', content: emptyContent() }],
     activeModel: null,
     createdAt: Date.now(),
   }
@@ -85,7 +121,7 @@ export const useTabStore = defineStore('tabs', () => {
     }
     // Delete empty conversation files; persist otherwise
     if (tab) {
-      const hasContent = tab.sections.some((s) => s.content.trim() !== '')
+      const hasContent = tab.sections.some((s) => !sectionIsEmpty(s))
       if (!hasContent) {
         invoke('delete_conversation', { id: tab.conversationId }).catch(() => {})
       }
@@ -118,9 +154,9 @@ export const useTabStore = defineStore('tabs', () => {
   function autoTitle(tabId: string) {
     const tab = tabs.value.find((t) => t.id === tabId)
     if (!tab) return
-    const firstContent = tab.sections.find((s) => s.role === 'user' && s.content.trim())
+    const firstContent = tab.sections.find((s) => s.role === 'user' && sectionVisibleText(s).trim())
     if (firstContent) {
-      const text = firstContent.content.trim()
+      const text = sectionVisibleText(firstContent).trim()
       tab.title = text.length > 30 ? text.slice(0, 30) + '…' : text
     }
   }
@@ -128,12 +164,15 @@ export const useTabStore = defineStore('tabs', () => {
   async function saveTab(tabId: string): Promise<void> {
     const tab = tabs.value.find((t) => t.id === tabId)
     if (!tab) return
-    const hasContent = tab.sections.some((s) => s.content.trim() !== '')
+    const hasContent = tab.sections.some((s) => !sectionIsEmpty(s))
     if (!hasContent) return
     const data: ConversationData = {
       id: tab.conversationId,
       title: tab.title,
-      sections: tab.sections.map((s) => ({ role: s.role, content: s.content })),
+      sections: tab.sections.map((s) => ({
+        role: s.role,
+        nodes: s.content.map((n) => contentNodeToData(n)),
+      })),
       activeModel: tab.activeModel,
       created_at: tab.createdAt,
     }
@@ -192,10 +231,10 @@ export const useTabStore = defineStore('tabs', () => {
         const sections: Section[] = conv.sections.map((s) => ({
           id: crypto.randomUUID(),
           role: s.role,
-          content: s.content,
+          content: normalizeContent(s.nodes.map((n) => dataToContentNode(n))),
         }))
         if (sections.length === 0) {
-          sections.push({ id: crypto.randomUUID(), role: 'user', content: '' })
+          sections.push({ id: crypto.randomUUID(), role: 'user', content: emptyContent() })
         }
         restored.push({
           id: td.id,
@@ -211,7 +250,7 @@ export const useTabStore = defineStore('tabs', () => {
           id: td.id,
           title: td.title || 'New Tab',
           conversationId: td.conversationId,
-          sections: [{ id: crypto.randomUUID(), role: 'user', content: '' }],
+          sections: [{ id: crypto.randomUUID(), role: 'user', content: emptyContent() }],
           activeModel: td.activeModel ?? null,
           createdAt: td.createdAt || Date.now(),
         })

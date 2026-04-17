@@ -6,7 +6,7 @@ use tokio::task::JoinHandle;
 use tauri::ipc::Channel;
 use tauri::State;
 
-use crate::persistence::{AppState, ConversationData, ConversationSummary};
+use crate::persistence::{AppState, ConversationData, ConversationSummary, PromptData};
 use crate::providers::{ChatMessage, ProviderError, ProviderInfo, ModelInfo, ProviderRegistry, StreamEvent};
 use crate::providers::copilot::DeviceFlowResponse;
 
@@ -217,4 +217,14 @@ pub async fn save_app_state(state: AppState) -> Result<(), String> {
 #[tauri::command]
 pub async fn load_app_state() -> Result<AppState, String> {
     Ok(crate::persistence::load_app_state())
+}
+
+#[tauri::command]
+pub async fn load_prompts() -> Result<Vec<PromptData>, String> {
+    Ok(crate::persistence::load_prompts())
+}
+
+#[tauri::command]
+pub async fn save_prompts(prompts: Vec<PromptData>) -> Result<(), String> {
+    crate::persistence::save_prompts(&prompts)
 }

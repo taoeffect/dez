@@ -3,6 +3,7 @@ import { ref, onMounted } from 'vue'
 import { invoke } from '@tauri-apps/api/core'
 import { openUrl } from '@tauri-apps/plugin-opener'
 import { useSettingsStore, type Theme } from '../stores/settingsStore'
+import PromptManager from './PromptManager.vue'
 
 interface ProviderInfo {
   id: string
@@ -18,7 +19,7 @@ interface ModelInfo {
 
 const settings = useSettingsStore()
 
-const activeSection = ref<'providers' | 'appearance' | 'general'>('providers')
+const activeSection = ref<'providers' | 'prompts' | 'appearance' | 'general'>('providers')
 const providers = ref<ProviderInfo[]>([])
 const providerModels = ref<Record<string, ModelInfo[]>>({})
 const apiKeyInputs = ref<Record<string, string>>({})
@@ -136,7 +137,7 @@ function onOverlayClick(e: MouseEvent) {
 
 <template>
   <div class="settings-overlay" @click="onOverlayClick" @keydown.escape="onClose">
-    <div class="settings-modal">
+    <div class="settings-modal" :class="{ 'settings-modal--wide': activeSection === 'prompts' }">
       <div class="settings-header">
         <h2>Settings</h2>
         <button class="settings-close" @click="onClose" title="Close (Esc)">×</button>
@@ -145,7 +146,7 @@ function onOverlayClick(e: MouseEvent) {
       <div class="settings-body">
         <nav class="settings-nav">
           <button
-            v-for="s in (['providers', 'appearance', 'general'] as const)"
+            v-for="s in (['providers', 'prompts', 'appearance', 'general'] as const)"
             :key="s"
             class="settings-nav-btn"
             :class="{ 'settings-nav-btn--active': activeSection === s }"
@@ -224,6 +225,11 @@ function onOverlayClick(e: MouseEvent) {
 
             <p v-if="keyError" class="settings-error">{{ keyError }}</p>
             <p v-if="!providers.length" class="settings-empty">No providers available.</p>
+          </div>
+
+          <!-- Prompts -->
+          <div v-if="activeSection === 'prompts'" class="settings-section settings-section--fill">
+            <PromptManager />
           </div>
 
           <!-- Appearance -->
@@ -324,6 +330,11 @@ function onOverlayClick(e: MouseEvent) {
   box-shadow: 0 8px 32px rgba(0, 0, 0, 0.25);
 }
 
+.settings-modal--wide {
+  width: 820px;
+  height: 80vh;
+}
+
 .settings-header {
   display: flex;
   align-items: center;
@@ -401,12 +412,21 @@ function onOverlayClick(e: MouseEvent) {
   flex: 1;
   overflow-y: auto;
   padding: 16px 20px;
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
 }
 
 .settings-section {
   display: flex;
   flex-direction: column;
   gap: 16px;
+}
+
+.settings-section--fill {
+  flex: 1;
+  min-height: 0;
+  height: 100%;
 }
 
 .settings-row {

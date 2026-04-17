@@ -22,6 +22,10 @@ cd src-tauri && cargo check
 
 No test framework is configured. No linter or formatter is set up.
 
+## Pre-release: no backwards compatibility
+
+Dez is pre-release software with no users yet. **Do not add backwards-compatibility shims, legacy format parsers, or migration code for on-disk formats (conversation files, app state, prompt store, provider keys).** When a format changes, remove the old code paths outright. Breaking changes are acceptable; users can delete `~/.config/dez/` to reset.
+
 ## Project-level plan
 
 The project contains a top-level PLAN.md file that is being implemented via the 'tasks' skill.

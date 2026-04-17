@@ -1,6 +1,17 @@
 import { defineStore } from 'pinia'
 import { computed } from 'vue'
 import type { Role, Section } from '../types/chat'
+import {
+  appendStreamingText,
+  contentEquals,
+  emptyContent,
+  normalizeContent,
+  sectionIsEmpty,
+  sectionPlainText,
+  setSectionPlainText,
+  splitContentAt,
+} from '../types/content'
+import type { ContentNode } from '../types/chat'
 import { useSettingsStore } from './settingsStore'
 import { useTabStore } from './tabStore'
 
@@ -41,11 +52,38 @@ export const useThreadStore = defineStore('thread', () => {
     settings.setLastUsedModel({ providerId, modelId })
   }
 
-  function updateSectionContent(id: string, content: string) {
+  /** Replace a section's entire content with plain text (used by the DOM reader). */
+  function updateSectionContent(id: string, text: string) {
     const section = sections.value.find((s) => s.id === id)
     if (section) {
-      section.content = content
+      setSectionPlainText(section, text)
       tabStore.autoTitle(tabStore.activeTabId)
+    }
+  }
+
+  /**
+   * Replace a section's entire content with a structured ContentNode[] (used by
+   * the DOM reader when the section contains prompt pills). Normalizes and
+   * skips the mutation if the resulting array is structurally equal to the
+   * current one, to avoid unnecessary reactivity churn during DOM typing.
+   */
+  function setSectionContent(id: string, nodes: ContentNode[]) {
+    const section = sections.value.find((s) => s.id === id)
+    if (!section) return
+    const normalized = normalizeContent(nodes)
+    if (contentEquals(section.content, normalized)) return
+    section.content.splice(0, section.content.length, ...normalized)
+    tabStore.autoTitle(tabStore.activeTabId)
+  }
+
+  function togglePromptExpanded(sectionId: string, nodeId: string) {
+    const section = sections.value.find((s) => s.id === sectionId)
+    if (!section) return
+    for (const node of section.content) {
+      if (node.kind === 'prompt' && node.id === nodeId) {
+        node.expanded = !node.expanded
+        return
+      }
     }
   }
 
@@ -60,7 +98,7 @@ export const useThreadStore = defineStore('thread', () => {
     const section: Section = {
       id: crypto.randomUUID(),
       role,
-      content: '',
+      content: emptyContent(),
     }
     sections.value.push(section)
     return section
@@ -68,29 +106,28 @@ export const useThreadStore = defineStore('thread', () => {
 
   function removeSectionIfEmpty(id: string) {
     const index = sections.value.findIndex((s) => s.id === id)
-    if (index !== -1 && sections.value[index].content.trim() === '' && sections.value.length > 1) {
+    if (index !== -1 && sectionIsEmpty(sections.value[index]) && sections.value.length > 1) {
       sections.value.splice(index, 1)
     }
   }
 
   function clearThread() {
     tabStore.activeTab.sections = [
-      { id: crypto.randomUUID(), role: 'user', content: '' },
+      { id: crypto.randomUUID(), role: 'user', content: emptyContent() },
     ]
   }
 
   function getThreadForSubmission(): { role: Role; content: string }[] {
     return sections.value
-      .filter((s) => s.content.trim() !== '')
-      .map((s) => ({ role: s.role, content: s.content }))
+      .filter((s) => !sectionIsEmpty(s))
+      .map((s) => ({ role: s.role, content: sectionPlainText(s) }))
   }
 
   function splitSection(id: string, cursorPosition: number): Section | null {
     const index = sections.value.findIndex((s) => s.id === id)
     if (index === -1) return null
     const current = sections.value[index]
-    const before = current.content.slice(0, cursorPosition)
-    const after = current.content.slice(cursorPosition)
+    const [before, after] = splitContentAt(current.content, cursorPosition)
     current.content = before
     const newSection: Section = {
       id: crypto.randomUUID(),
@@ -101,17 +138,25 @@ export const useThreadStore = defineStore('thread', () => {
     return newSection
   }
 
+  function appendTokenToSection(id: string, token: string) {
+    const section = sections.value.find((s) => s.id === id)
+    if (section) appendStreamingText(section, token)
+  }
+
   return {
     sections,
     activeModel,
     initActiveModel,
     setActiveModel,
     updateSectionContent,
+    setSectionContent,
+    togglePromptExpanded,
     toggleSectionRole,
     addSection,
     removeSectionIfEmpty,
     splitSection,
     clearThread,
     getThreadForSubmission,
+    appendTokenToSection,
   }
 })

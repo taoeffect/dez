@@ -3,6 +3,7 @@ import { invoke, Channel } from '@tauri-apps/api/core'
 import { useThreadStore } from '../stores/threadStore'
 import { useTabStore } from '../stores/tabStore'
 import type { StreamEvent } from '../types/chat'
+import { appendStreamingText, emptyContent, sectionIsEmpty, setSectionPlainText } from '../types/content'
 
 const isStreaming = ref(false)
 const streamingTabId = ref<string | null>(null)
@@ -25,12 +26,12 @@ export function useStreaming() {
     const tabId = tabStore.activeTabId
 
     const lastSection = threadStore.sections[threadStore.sections.length - 1]
-    if (lastSection.role !== 'agent' || lastSection.content.trim() !== '') {
+    if (lastSection.role !== 'agent' || !sectionIsEmpty(lastSection)) {
       threadStore.addSection('agent')
     }
 
     const agentSection = threadStore.sections[threadStore.sections.length - 1]
-    agentSection.content = ''
+    agentSection.content = emptyContent()
 
     isStreaming.value = true
     streamingTabId.value = tabId
@@ -43,7 +44,7 @@ export function useStreaming() {
 
       switch (event.kind) {
         case 'Token':
-          agentSection.content += event.data.content
+          appendStreamingText(agentSection, event.data.content)
           break
         case 'Done':
           finishStreaming()
@@ -80,10 +81,11 @@ export function useStreaming() {
     if (wasStreamingTab === tabStore.activeTabId) {
       const lastSection = threadStore.sections[threadStore.sections.length - 1]
       if (lastSection.role === 'agent') {
-        if (lastSection.content.trim() === '') {
-          lastSection.content = streamingError.value
-            ? `Error: ${streamingError.value}`
-            : ''
+        if (sectionIsEmpty(lastSection)) {
+          setSectionPlainText(
+            lastSection,
+            streamingError.value ? `Error: ${streamingError.value}` : '',
+          )
         }
         threadStore.addSection('user')
       }
