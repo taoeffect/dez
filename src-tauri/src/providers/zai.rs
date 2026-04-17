@@ -3,14 +3,14 @@ use tokio::sync::mpsc;
 
 use super::{ChatMessage, LlmProvider, ModelInfo, ProviderError, StreamEvent, stream_openai_sse};
 
-const ZED_API_BASE: &str = "https://api.z.ai/api/coding/paas/v4";
+const ZAI_API_BASE: &str = "https://api.z.ai/api/coding/paas/v4";
 
-pub struct ZedProvider {
+pub struct ZaiProvider {
     api_key: Option<String>,
     client: reqwest::Client,
 }
 
-impl ZedProvider {
+impl ZaiProvider {
     pub fn new() -> Self {
         Self {
             api_key: None,
@@ -20,9 +20,9 @@ impl ZedProvider {
 }
 
 #[async_trait]
-impl LlmProvider for ZedProvider {
+impl LlmProvider for ZaiProvider {
     fn id(&self) -> &str {
-        "zed"
+        "zai"
     }
 
     fn name(&self) -> &str {
@@ -42,12 +42,12 @@ impl LlmProvider for ZedProvider {
             return Err(ProviderError::NotConfigured("Z.ai API key not set".into()));
         }
         Ok(vec![
-            ModelInfo { id: "glm-5.1".into(), name: "GLM 5.1".into(), provider: "zed".into() },
-            ModelInfo { id: "glm-5".into(), name: "GLM 5".into(), provider: "zed".into() },
-            ModelInfo { id: "glm-5-turbo".into(), name: "GLM 5 Turbo".into(), provider: "zed".into() },
-            ModelInfo { id: "glm-4.7".into(), name: "GLM 4.7".into(), provider: "zed".into() },
-            ModelInfo { id: "glm-4.6".into(), name: "GLM 4.6".into(), provider: "zed".into() },
-            ModelInfo { id: "glm-4.5".into(), name: "GLM 4.5".into(), provider: "zed".into() },
+            ModelInfo { id: "glm-5.1".into(), name: "GLM 5.1".into(), provider: "zai".into() },
+            ModelInfo { id: "glm-5".into(), name: "GLM 5".into(), provider: "zai".into() },
+            ModelInfo { id: "glm-5-turbo".into(), name: "GLM 5 Turbo".into(), provider: "zai".into() },
+            ModelInfo { id: "glm-4.7".into(), name: "GLM 4.7".into(), provider: "zai".into() },
+            ModelInfo { id: "glm-4.6".into(), name: "GLM 4.6".into(), provider: "zai".into() },
+            ModelInfo { id: "glm-4.5".into(), name: "GLM 4.5".into(), provider: "zai".into() },
         ])
     }
 
@@ -73,7 +73,7 @@ impl LlmProvider for ZedProvider {
 
         let resp = self
             .client
-            .post(format!("{}/chat/completions", ZED_API_BASE))
+            .post(format!("{}/chat/completions", ZAI_API_BASE))
             .header("Authorization", format!("Bearer {}", api_key))
             .header("Content-Type", "application/json")
             .json(&body)

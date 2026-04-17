@@ -22,7 +22,7 @@ pub struct KeyStoreData {
     #[serde(default)]
     pub openrouter: ProviderCredentials,
     #[serde(default)]
-    pub zed: ProviderCredentials,
+    pub zai: ProviderCredentials,
     #[serde(default)]
     pub minimax: ProviderCredentials,
     #[serde(default)]

@@ -1,7 +1,7 @@
 pub mod copilot;
 pub mod minimax;
 pub mod openrouter;
-pub mod zed;
+pub mod zai;
 
 use async_trait::async_trait;
 use futures::StreamExt;
@@ -85,7 +85,7 @@ impl ProviderRegistry {
         Self {
             providers: vec![
                 Box::new(openrouter::OpenRouterProvider::new()),
-                Box::new(zed::ZedProvider::new()),
+                Box::new(zai::ZaiProvider::new()),
                 Box::new(copilot::CopilotProvider::new()),
                 Box::new(minimax::MiniMaxProvider::new()),
             ],
@@ -119,7 +119,7 @@ impl ProviderRegistry {
         for p in &self.providers {
             match p.id() {
                 "openrouter" => data.openrouter = ProviderCredentials { api_key: p.get_api_key() },
-                "zed" => data.zed = ProviderCredentials { api_key: p.get_api_key() },
+                "zai" => data.zai = ProviderCredentials { api_key: p.get_api_key() },
                 "minimax" => data.minimax = ProviderCredentials { api_key: p.get_api_key() },
                 "copilot" => {
                     if let Some(copilot) = p.as_any().downcast_ref::<copilot::CopilotProvider>() {

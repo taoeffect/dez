@@ -22,8 +22,8 @@ pub fn run() {
                 p.configure(api_key).await;
             }
         }
-        if let Some(api_key) = keys.zed.api_key {
-            if let Some(p) = registry.get_provider_mut("zed") {
+        if let Some(api_key) = keys.zai.api_key {
+            if let Some(p) = registry.get_provider_mut("zai") {
                 p.configure(api_key).await;
             }
         }
