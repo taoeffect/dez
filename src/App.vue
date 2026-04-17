@@ -1,12 +1,31 @@
 <script setup lang="ts">
-import { onMounted } from "vue";
+import { onMounted, watch } from "vue";
 import AppLayout from "./components/AppLayout.vue";
 import { useSettingsStore } from "./stores/settingsStore";
+import { useTabStore } from "./stores/tabStore";
 
 const settingsStore = useSettingsStore();
+const tabStore = useTabStore();
 
-onMounted(() => {
-  settingsStore.init();
+onMounted(async () => {
+  const state = await settingsStore.init(() => {
+    tabStore.saveAppState();
+  });
+
+  if (state && Array.isArray((state as { tabs?: unknown[] }).tabs)) {
+    await tabStore.restoreFromState(state as never);
+  }
+
+  // Persist app state whenever tabs, active tab, or per-tab model changes
+  watch(
+    () => [
+      tabStore.tabs.map((t) => `${t.id}:${t.title}:${t.conversationId}:${t.activeModel?.providerId ?? ''}/${t.activeModel?.modelId ?? ''}`).join('|'),
+      tabStore.activeTabId,
+    ],
+    () => {
+      tabStore.saveAppState();
+    },
+  );
 });
 </script>
 

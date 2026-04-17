@@ -6,6 +6,7 @@ use tokio::task::JoinHandle;
 use tauri::ipc::Channel;
 use tauri::State;
 
+use crate::persistence::{AppState, ConversationData, ConversationSummary};
 use crate::providers::{ChatMessage, ProviderError, ProviderInfo, ModelInfo, ProviderRegistry, StreamEvent};
 use crate::providers::copilot::DeviceFlowResponse;
 
@@ -186,4 +187,34 @@ pub async fn copilot_poll_device_flow(
     }
 
     Ok(authenticated)
+}
+
+#[tauri::command]
+pub async fn save_conversation(data: ConversationData) -> Result<(), String> {
+    crate::persistence::save_conversation(&data)
+}
+
+#[tauri::command]
+pub async fn load_conversation(id: String) -> Result<ConversationData, String> {
+    crate::persistence::load_conversation(&id)
+}
+
+#[tauri::command]
+pub async fn list_conversations() -> Result<Vec<ConversationSummary>, String> {
+    Ok(crate::persistence::list_conversations())
+}
+
+#[tauri::command]
+pub async fn delete_conversation(id: String) -> Result<(), String> {
+    crate::persistence::delete_conversation(&id)
+}
+
+#[tauri::command]
+pub async fn save_app_state(state: AppState) -> Result<(), String> {
+    crate::persistence::save_app_state(&state)
+}
+
+#[tauri::command]
+pub async fn load_app_state() -> Result<AppState, String> {
+    Ok(crate::persistence::load_app_state())
 }

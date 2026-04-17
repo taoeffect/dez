@@ -15,6 +15,7 @@ export interface ActiveModel {
 export interface Tab {
   id: string
   title: string
+  conversationId: string
   sections: Section[]
   activeModel: ActiveModel | null
   createdAt: number

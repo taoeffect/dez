@@ -1,5 +1,6 @@
 mod commands;
 mod key_store;
+mod persistence;
 mod providers;
 
 use std::sync::Arc;
@@ -60,6 +61,12 @@ pub fn run() {
             commands::cancel_generation,
             commands::copilot_start_device_flow,
             commands::copilot_poll_device_flow,
+            commands::save_conversation,
+            commands::load_conversation,
+            commands::list_conversations,
+            commands::delete_conversation,
+            commands::save_app_state,
+            commands::load_app_state,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

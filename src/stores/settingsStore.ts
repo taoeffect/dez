@@ -1,12 +1,22 @@
 import { defineStore } from 'pinia'
 import { ref, watch } from 'vue'
-import { load } from '@tauri-apps/plugin-store'
+import { invoke } from '@tauri-apps/api/core'
 
 export type Theme = 'light' | 'dark' | 'system'
 
 export interface DefaultModel {
   providerId: string
   modelId: string
+}
+
+interface AppStatePayload {
+  tabs?: unknown[]
+  activeTabId?: string | null
+  showPillSeparators?: boolean
+  theme?: Theme
+  defaultModels?: Record<string, string>
+  defaultNewTabModel?: DefaultModel | null
+  lastUsedModel?: DefaultModel | null
 }
 
 export const useSettingsStore = defineStore('settings', () => {
@@ -17,42 +27,46 @@ export const useSettingsStore = defineStore('settings', () => {
   const lastUsedModel = ref<DefaultModel | null>(null)
   const settingsOpen = ref(false)
 
-  let storeInstance: Awaited<ReturnType<typeof load>> | null = null
+  let initialized = false
+  let persistCallback: (() => void) | null = null
+  let pendingPersist: ReturnType<typeof setTimeout> | null = null
 
-  async function init() {
-    storeInstance = await load('settings.json', { defaults: {}, autoSave: true })
+  async function init(onPersist?: () => void) {
+    if (onPersist) persistCallback = onPersist
 
-    const saved = await storeInstance.get<{
-      showPillSeparators?: boolean
-      theme?: Theme
-      defaultModels?: Record<string, string>
-      defaultNewTabModel?: DefaultModel | null
-      lastUsedModel?: DefaultModel | null
-    }>('settings')
+    const state = (await invoke<AppStatePayload>('load_app_state').catch(() => ({}))) as AppStatePayload
 
-    if (saved) {
-      if (saved.showPillSeparators !== undefined) showPillSeparators.value = saved.showPillSeparators
-      if (saved.theme) theme.value = saved.theme
-      if (saved.defaultModels) defaultModels.value = saved.defaultModels
-      if (saved.defaultNewTabModel !== undefined) defaultNewTabModel.value = saved.defaultNewTabModel
-      if (saved.lastUsedModel !== undefined) lastUsedModel.value = saved.lastUsedModel
+    if (state) {
+      if (typeof state.showPillSeparators === 'boolean')
+        showPillSeparators.value = state.showPillSeparators
+      if (state.theme) theme.value = state.theme
+      if (state.defaultModels) defaultModels.value = state.defaultModels
+      if (state.defaultNewTabModel !== undefined)
+        defaultNewTabModel.value = state.defaultNewTabModel
+      if (state.lastUsedModel !== undefined) lastUsedModel.value = state.lastUsedModel
     }
 
     applyTheme(theme.value)
 
-    watch([showPillSeparators, theme, defaultModels, defaultNewTabModel, lastUsedModel], persist, { deep: true })
+    initialized = true
+
+    watch(
+      [showPillSeparators, theme, defaultModels, defaultNewTabModel, lastUsedModel],
+      schedulePersist,
+      { deep: true },
+    )
     watch(theme, applyTheme)
+
+    return state
   }
 
-  async function persist() {
-    if (!storeInstance) return
-    await storeInstance.set('settings', {
-      showPillSeparators: showPillSeparators.value,
-      theme: theme.value,
-      defaultModels: defaultModels.value,
-      defaultNewTabModel: defaultNewTabModel.value,
-      lastUsedModel: lastUsedModel.value,
-    })
+  function schedulePersist() {
+    if (!initialized) return
+    if (pendingPersist) clearTimeout(pendingPersist)
+    pendingPersist = setTimeout(() => {
+      pendingPersist = null
+      if (persistCallback) persistCallback()
+    }, 200)
   }
 
   function applyTheme(t: Theme) {

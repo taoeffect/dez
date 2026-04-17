@@ -20,6 +20,15 @@ const showThinking = computed(() => {
   return last?.role === 'agent' && last.content === ''
 })
 
+let saveDebounce: ReturnType<typeof setTimeout> | null = null
+function scheduleSave() {
+  if (saveDebounce) clearTimeout(saveDebounce)
+  saveDebounce = setTimeout(() => {
+    saveDebounce = null
+    tabStore.saveActiveTab().catch(() => {})
+  }, 600)
+}
+
 const PILL_USER = '------------------- USER -----------------------'
 const PILL_AGENT = '------------------- AGENT -----------------------'
 
@@ -227,30 +236,163 @@ function readDOMToStore() {
   const el = editorEl.value
   if (!el) return
 
-  // Gather all section blocks, grouping by sectionId since the browser
-  // may clone a block when Enter splits a line
-  const allBlocks = Array.from(el.querySelectorAll('.section-block'))
-  const grouped = new Map<string, HTMLElement[]>()
-  allBlocks.forEach((block) => {
-    const id = (block as HTMLElement).dataset.sectionId
-    if (!id) return
-    if (!grouped.has(id)) grouped.set(id, [])
-    grouped.get(id)!.push(block as HTMLElement)
+  // Walk the editor's direct children in order. A `.section-block` owns any
+  // following non-`.section-block` / non-`.pill-separator` siblings (orphans
+  // produced by the browser on plain Enter, drag-drop, autocorrect, etc.)
+  // so their text is ingested into the preceding section.
+  const perSection = new Map<string, string>()
+  const sectionOrder: string[] = []
+  let currentId: string | null = null
+
+  const appendLine = (id: string, line: string) => {
+    const existing = perSection.get(id)
+    if (existing === undefined) {
+      perSection.set(id, line)
+      sectionOrder.push(id)
+    } else {
+      perSection.set(id, existing + '\n' + line)
+    }
+  }
+
+  Array.from(el.childNodes).forEach((node) => {
+    if (node instanceof HTMLElement) {
+      if (node.classList.contains('pill-separator')) {
+        // Non-editable boundary, contributes no text.
+        return
+      }
+      if (node.classList.contains('section-block')) {
+        const id = node.dataset.sectionId
+        if (!id) return
+        currentId = id
+        appendLine(id, extractTextContent(node))
+        return
+      }
+    }
+
+    // Orphan sibling attributed to the most recent section-block.
+    if (!currentId) return
+    let line = ''
+    if (node.nodeType === Node.TEXT_NODE) {
+      line = node.textContent || ''
+    } else if (node instanceof HTMLElement) {
+      line = node.tagName === 'BR' ? '' : extractTextContent(node)
+    }
+    appendLine(currentId, line)
   })
 
-  grouped.forEach((blocks, sectionId) => {
-    let content = ''
-    blocks.forEach((block, i) => {
-      if (i > 0 && content.length > 0 && !content.endsWith('\n')) {
-        content += '\n'
-      }
-      content += extractTextContent(block)
-    })
+  sectionOrder.forEach((sectionId) => {
+    const content = perSection.get(sectionId) ?? ''
     const section = store.sections.find((s) => s.id === sectionId)
     if (section && section.content !== content) {
       store.updateSectionContent(sectionId, content)
     }
   })
+}
+
+function hasOrphanSiblings(el: HTMLElement): boolean {
+  return Array.from(el.childNodes).some((node) => {
+    if (node.nodeType === Node.TEXT_NODE) return (node.textContent || '') !== ''
+    if (node instanceof HTMLElement) {
+      return !node.classList.contains('section-block') && !node.classList.contains('pill-separator')
+    }
+    return false
+  })
+}
+
+// Plain Enter in contenteditable often *clones* the enclosing section-block,
+// producing two (or more) sibling `.section-block`s sharing the same
+// `data-section-id`. Detect that so we can re-normalize to one-block-per-section.
+function hasClonedSectionBlocks(el: HTMLElement): boolean {
+  const seen = new Set<string>()
+  for (const node of Array.from(el.children)) {
+    if (!(node instanceof HTMLElement)) continue
+    if (!node.classList.contains('section-block')) continue
+    const id = node.dataset.sectionId
+    if (!id) continue
+    if (seen.has(id)) return true
+    seen.add(id)
+  }
+  return false
+}
+
+// Mirrors `readDOMToStore`'s walk to resolve the live cursor into a
+// (sectionId, textOffset) pair expressed in *store content* terms, so we can
+// restore the cursor after `buildDOM()` recreates the canonical structure.
+function computeStoreSelection(): { sectionId: string; offset: number } | null {
+  const el = editorEl.value
+  if (!el) return null
+  const sel = window.getSelection()
+  if (!sel || sel.rangeCount === 0) return null
+  const range = sel.getRangeAt(0)
+  const cursorNode = range.startContainer
+  const cursorOffset = range.startOffset
+
+  // Find the direct child of el that contains (or equals) the cursor node.
+  let topChild: Node | null = cursorNode
+  while (topChild && topChild.parentNode !== el) {
+    topChild = topChild.parentNode
+  }
+  if (!topChild) return null
+
+  let currentId: string | null = null
+  let accumulated = 0
+
+  const children = Array.from(el.childNodes)
+  for (const node of children) {
+    const isTarget = node === topChild
+
+    if (node instanceof HTMLElement && node.classList.contains('pill-separator')) {
+      if (isTarget) return null
+      continue
+    }
+
+    if (node instanceof HTMLElement && node.classList.contains('section-block')) {
+      const id = node.dataset.sectionId
+      if (!id) {
+        if (isTarget) return null
+        continue
+      }
+      if (isTarget) {
+        if (id !== currentId) {
+          currentId = id
+          accumulated = 0
+        } else {
+          accumulated += 1
+        }
+        const within = getTextOffset(node, cursorNode, cursorOffset)
+        return { sectionId: currentId, offset: accumulated + within }
+      }
+      if (id !== currentId) {
+        currentId = id
+        accumulated = extractTextContent(node).length
+      } else {
+        accumulated += 1 + extractTextContent(node).length
+      }
+      continue
+    }
+
+    // Orphan sibling.
+    if (isTarget) {
+      if (!currentId) return null
+      let within = 0
+      if (node.nodeType === Node.TEXT_NODE) {
+        within = cursorOffset
+      } else if (node instanceof HTMLElement) {
+        within = node.tagName === 'BR' ? 0 : getTextOffset(node, cursorNode, cursorOffset)
+      }
+      return { sectionId: currentId, offset: accumulated + 1 + within }
+    }
+    if (currentId) {
+      let text = ''
+      if (node.nodeType === Node.TEXT_NODE) {
+        text = node.textContent || ''
+      } else if (node instanceof HTMLElement) {
+        text = node.tagName === 'BR' ? '' : extractTextContent(node)
+      }
+      accumulated += 1 + text.length
+    }
+  }
+  return null
 }
 
 function extractTextContent(block: HTMLElement): string {
@@ -278,8 +420,12 @@ function extractTextContent(block: HTMLElement): string {
 }
 
 function onInput() {
-  readDOMToStore()
   const el = editorEl.value
+  // Capture cursor in store-space BEFORE ingesting, while DOM still reflects
+  // what the browser produced (orphan siblings OR cloned section-blocks).
+  const needsRebuild = !!el && (hasOrphanSiblings(el) || hasClonedSectionBlocks(el))
+  const storeSel = needsRebuild ? computeStoreSelection() : null
+  readDOMToStore()
   if (el) {
     updateEmptyState(el)
     // If the browser destroyed our section-block structure, rebuild it
@@ -291,8 +437,27 @@ function onInput() {
           setCursorToSection(store.sections.length - 1, store.sections[store.sections.length - 1].content.length)
         }
       })
+    } else if (needsRebuild) {
+      // Browser inserted orphan siblings or cloned section-blocks (typically
+      // on plain Enter). Re-normalize the DOM to keep the canonical structure
+      // (one `.section-block` per section), restoring the cursor via the
+      // store-space position we captured above.
+      nextTick(() => {
+        buildDOM()
+        nextTick(() => {
+          if (storeSel) {
+            const idx = store.sections.findIndex((s) => s.id === storeSel.sectionId)
+            if (idx >= 0) {
+              const section = store.sections[idx]
+              const clamped = Math.min(storeSel.offset, section.content.length)
+              setCursorToSection(idx, clamped)
+            }
+          }
+        })
+      })
     }
   }
+  scheduleSave()
 }
 
 function onKeydown(event: KeyboardEvent) {

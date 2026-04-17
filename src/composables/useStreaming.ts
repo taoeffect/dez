@@ -88,6 +88,8 @@ export function useStreaming() {
         threadStore.addSection('user')
       }
       tabStore.autoTitle(tabStore.activeTabId)
+      if (wasStreamingTab) tabStore.saveTab(wasStreamingTab).catch(() => {})
+      tabStore.saveAppState()
     }
   }
 

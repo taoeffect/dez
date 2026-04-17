@@ -22,6 +22,14 @@ cd src-tauri && cargo check
 
 No test framework is configured. No linter or formatter is set up.
 
+## Project-level plan
+
+The project contains a top-level PLAN.md file that is being implemented via the 'tasks' skill.
+
+If the user asks you to "continue the plan" or something to that effect, read the top-level PLAN.md file, load the 'tasks' skill, and verify what step we're currently on (the PLAN.md file might be out of date, so check for existence of task files first) and then either continue the current task (if it's not finished), or create a new  task for the current part of the plan we're on.
+
+When a project-level step is completed, remember update the top-level PLAN.md to mark it as completed.
+
 ## Architecture
 
 Tauri v2 desktop app: Rust backend + Vue 3 / TypeScript / Vite frontend. State management via Pinia.

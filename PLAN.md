@@ -1,5 +1,9 @@
 # Dez — Development Plan
 
+This is the high-level project PLAN.md file.
+
+Each step represents a task (per the `tasks` skill) that is to be done. (e.g. the first task is `foundation` and found in `~/.agents/tasks/persistence/`)
+
 ## Progress
 
 - [x] 1. Foundation & Window Shell (`foundation`)
@@ -14,7 +18,7 @@
 - [x] 10. Streaming Chat Integration (`streaming`)
 - [x] 11. Provider Implementations (`provider-impls`)
 - [x] 12. Provider Key Persistence (`provider-keys`)
-- [ ] 13. Local Persistence (`persistence`)
+- [x] 13. Local Persistence (`persistence`)
 - [ ] 14. Favorite Models (`favorite-models`)
 - [ ] 15. Saved Prompts (`saved-prompts`)
 - [ ] 16. Conversation History Browser (`history`)
