@@ -19,7 +19,7 @@ Each step represents a task (per the `tasks` skill) that is to be done. (e.g. th
 - [x] 11. Provider Implementations (`provider-impls`)
 - [x] 12. Provider Key Persistence (`provider-keys`)
 - [x] 13. Local Persistence (`persistence`)
-- [ ] 14. Favorite Models (`favorite-models`)
+- [x] 14. Favorite Models (`favorite-models`)
 - [ ] 15. Saved Prompts (`saved-prompts`)
 - [ ] 16. Conversation History Browser (`history`)
 - [ ] 17. Polish & Cross-Platform (`polish`)
@@ -194,11 +194,25 @@ Allow users to star/favorite models in the model selector for quick access.
 
 Allow users to create, edit, and quickly insert saved prompt templates.
 
-- Store prompts as JSON in app data directory (via Tauri FS plugin)
-- Create a `PromptManager.vue` overlay/modal for CRUD operations on prompts
-- Implement `/prompt` slash-command in the thread editor to open a fuzzy-searchable prompt picker
-- Inserting a prompt replaces the current input or appends to it
-- Each prompt has a `name`, `content`, and optional `description`
+- **Storage**: Store prompts as JSON in `~/.config/dez/prompts.json` (via the same persistence pattern as `app_state.json`, not the Tauri Store plugin). Expose `load_prompts` / `save_prompts` Tauri commands.
+- **Prompt shape**: Each prompt is `{ id, name, content }`. `name` must be unique (used as the slash-command key); `content` is the prompt body. No `description` field.
+- **PromptManager UI**: Create a `PromptManager.vue` overlay/modal (accessible from the settings view or a toolbar button) with a two-column table:
+  - Column 1: **Name** — short identifier, used for autocomplete matching.
+  - Column 2: **Prompt** — the saved prompt body (multi-line).
+  - Supports add, edit, delete, and rename. Names must be unique and contain no whitespace (enforce via validation).
+- **Trigger syntax**: The user types `/prompt ` (slash-command followed by a space) in the `ThreadEditor` to begin prompt insertion.
+  - Once the space is typed after `/prompt`, an inline autocomplete menu appears in the editor at the caret position, listing matching prompt names.
+  - As the user continues typing after the space (e.g. `/prompt rev…`), the list filters by prefix/substring on `name`.
+  - **Tab** or **Enter** accepts the highlighted suggestion. **Escape** dismisses the menu.
+  - Arrow keys navigate the suggestion list.
+- **Prompt pill (collapsed state)**: When a prompt name is accepted, replace the literal `/prompt <name>` text in the editor with a **prompt pill**: a non-editable inline element containing a disclosure triangle (▶) followed by the prompt's name. The pill is styled distinctly from role pills (e.g. tinted background, small badge shape) so it's clearly a prompt reference rather than a role separator.
+- **Pill expansion (expanded state)**: Clicking the disclosure triangle toggles the pill between collapsed and expanded:
+  - **Collapsed (▶ Name)**: Only the name is shown; the prompt content is stored in the section model but not rendered in the DOM.
+  - **Expanded (▼ Name)**: The full prompt text is rendered inline below/after the pill as normal editable text. The user can edit this text like any other section content — edits update the stored prompt content for that insertion (but do NOT modify the saved prompt template in `prompts.json`; insertions are per-instance copies).
+  - Re-clicking the triangle hides the text again without losing edits.
+- **Content model integration**: A prompt insertion is a new kind of content node within a `Section`. The existing `Section` model (`{ id, role, content: string }`) must be extended to support a mixed content array, e.g. `content: Array<TextNode | PromptNode>` where `PromptNode = { kind: 'prompt', id, name, body, expanded }`. All existing persistence, streaming, and DOM-rebuild code paths must be updated to handle the mixed model.
+- **Submission behavior**: When the thread is submitted to the LLM (Cmd/Ctrl+Enter), each prompt pill contributes its `body` verbatim to the message content at its in-document position, regardless of whether it is collapsed or expanded in the UI.
+- **Persistence**: Prompt pills (name + body + expanded state) serialize into the conversation file. The plain-text conversation format should round-trip prompt insertions — either by expanding them inline on save, or by adding a new marker syntax. Pick one approach and document it in AGENTS.md.
 
 ## 16. Conversation History Browser — `history`
 

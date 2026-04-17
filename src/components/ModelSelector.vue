@@ -44,11 +44,25 @@ const filteredGrouped = computed<GroupedModels[]>(() => {
   const q = searchQuery.value.toLowerCase()
   const groups: GroupedModels[] = []
 
+  const matches = (m: ModelInfo) =>
+    !q || m.name.toLowerCase().includes(q) || m.id.toLowerCase().includes(q)
+
+  const favModels: ModelInfo[] = []
+  for (const fav of settingsStore.favorites) {
+    const m = allModels.value.find(
+      (x) => x.provider === fav.providerId && x.id === fav.modelId,
+    )
+    if (m && matches(m)) favModels.push(m)
+  }
+  if (favModels.length > 0) {
+    groups.push({ providerId: '__favorites__', providerName: 'Favorites', models: favModels })
+  }
+
   for (const provider of providers.value) {
     if (!provider.configured) continue
     const models = allModels.value
       .filter((m) => m.provider === provider.id)
-      .filter((m) => !q || m.name.toLowerCase().includes(q) || m.id.toLowerCase().includes(q))
+      .filter(matches)
     if (models.length > 0) {
       groups.push({ providerId: provider.id, providerName: provider.name, models })
     }
@@ -101,6 +115,11 @@ function close() {
 function selectModel(model: ModelInfo) {
   threadStore.setActiveModel(model.provider, model.id, model.name)
   close()
+}
+
+function toggleFavorite(model: ModelInfo, e: MouseEvent) {
+  e.stopPropagation()
+  settingsStore.toggleFavorite(model.provider, model.id)
 }
 
 function openProviderSettings() {
@@ -167,11 +186,21 @@ onUnmounted(() => {
             <div class="model-group-header">{{ group.providerName }}</div>
             <button
               v-for="model in group.models"
-              :key="model.id"
+              :key="group.providerId + ':' + model.id"
               class="model-item"
               :class="{ 'model-item--active': threadStore.activeModel?.modelId === model.id && threadStore.activeModel?.providerId === model.provider }"
               @click="selectModel(model)"
             >
+              <span
+                class="model-item-star"
+                :class="{ 'model-item-star--on': settingsStore.isFavorite(model.provider, model.id) }"
+                :title="settingsStore.isFavorite(model.provider, model.id) ? 'Unfavorite' : 'Favorite'"
+                @click="toggleFavorite(model, $event)"
+              >
+                <svg width="12" height="12" viewBox="0 0 12 12" fill="none">
+                  <path d="M6 1.5l1.4 2.9 3.1.4-2.3 2.2.6 3.1L6 8.6l-2.8 1.5.6-3.1L1.5 4.8l3.1-.4L6 1.5z" :fill="settingsStore.isFavorite(model.provider, model.id) ? 'currentColor' : 'none'" stroke="currentColor" stroke-width="1" stroke-linejoin="round"/>
+                </svg>
+              </span>
               <span class="model-item-name">{{ model.name }}</span>
               <span class="model-item-provider">{{ group.providerName }}</span>
             </button>
@@ -337,6 +366,29 @@ onUnmounted(() => {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+.model-item-star {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 18px;
+  height: 18px;
+  margin-right: 6px;
+  border-radius: 3px;
+  color: var(--color-text);
+  opacity: 0.3;
+  transition: opacity 0.1s, color 0.1s;
+  flex-shrink: 0;
+}
+
+.model-item-star:hover {
+  opacity: 0.9;
+}
+
+.model-item-star--on {
+  opacity: 1;
+  color: #e0b34a;
 }
 
 .model-item-provider {

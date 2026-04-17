@@ -75,6 +75,8 @@ pub struct AppState {
     pub default_new_tab_model: Option<DefaultModelRef>,
     #[serde(rename = "lastUsedModel", default)]
     pub last_used_model: Option<DefaultModelRef>,
+    #[serde(default)]
+    pub favorites: Vec<DefaultModelRef>,
 }
 
 fn default_true() -> bool {
@@ -95,6 +97,7 @@ impl Default for AppState {
             default_models: std::collections::HashMap::new(),
             default_new_tab_model: None,
             last_used_model: None,
+            favorites: Vec::new(),
         }
     }
 }

@@ -17,6 +17,7 @@ interface AppStatePayload {
   defaultModels?: Record<string, string>
   defaultNewTabModel?: DefaultModel | null
   lastUsedModel?: DefaultModel | null
+  favorites?: DefaultModel[]
 }
 
 export const useSettingsStore = defineStore('settings', () => {
@@ -25,6 +26,7 @@ export const useSettingsStore = defineStore('settings', () => {
   const defaultModels = ref<Record<string, string>>({})
   const defaultNewTabModel = ref<DefaultModel | null>(null)
   const lastUsedModel = ref<DefaultModel | null>(null)
+  const favorites = ref<DefaultModel[]>([])
   const settingsOpen = ref(false)
 
   let initialized = false
@@ -44,6 +46,7 @@ export const useSettingsStore = defineStore('settings', () => {
       if (state.defaultNewTabModel !== undefined)
         defaultNewTabModel.value = state.defaultNewTabModel
       if (state.lastUsedModel !== undefined) lastUsedModel.value = state.lastUsedModel
+      if (Array.isArray(state.favorites)) favorites.value = state.favorites
     }
 
     applyTheme(theme.value)
@@ -51,7 +54,7 @@ export const useSettingsStore = defineStore('settings', () => {
     initialized = true
 
     watch(
-      [showPillSeparators, theme, defaultModels, defaultNewTabModel, lastUsedModel],
+      [showPillSeparators, theme, defaultModels, defaultNewTabModel, lastUsedModel, favorites],
       schedulePersist,
       { deep: true },
     )
@@ -98,6 +101,23 @@ export const useSettingsStore = defineStore('settings', () => {
     lastUsedModel.value = model
   }
 
+  function isFavorite(providerId: string, modelId: string): boolean {
+    return favorites.value.some(
+      (f) => f.providerId === providerId && f.modelId === modelId,
+    )
+  }
+
+  function toggleFavorite(providerId: string, modelId: string) {
+    const idx = favorites.value.findIndex(
+      (f) => f.providerId === providerId && f.modelId === modelId,
+    )
+    if (idx >= 0) {
+      favorites.value.splice(idx, 1)
+    } else {
+      favorites.value.push({ providerId, modelId })
+    }
+  }
+
   function openSettings() {
     settingsOpen.value = true
   }
@@ -112,6 +132,7 @@ export const useSettingsStore = defineStore('settings', () => {
     defaultModels,
     defaultNewTabModel,
     lastUsedModel,
+    favorites,
     settingsOpen,
     init,
     togglePillSeparators,
@@ -119,6 +140,8 @@ export const useSettingsStore = defineStore('settings', () => {
     setDefaultModel,
     setDefaultNewTabModel,
     setLastUsedModel,
+    isFavorite,
+    toggleFavorite,
     openSettings,
     closeSettings,
   }
