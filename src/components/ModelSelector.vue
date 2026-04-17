@@ -65,14 +65,14 @@ async function loadModels() {
         try {
           const pModels = await invoke<ModelInfo[]>('list_models', { providerId: p.id })
           models.push(...pModels)
-        } catch {
-          // skip unavailable provider
+        } catch (e) {
+          console.error(`Failed to load models for ${p.id}:`, e)
         }
       }
     }
     allModels.value = models
-  } catch {
-    // silently fail
+  } catch (e) {
+    console.error('Failed to load providers:', e)
   }
 }
 

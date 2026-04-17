@@ -1,15 +1,21 @@
 use async_trait::async_trait;
 use tokio::sync::mpsc;
 
-use super::{ChatMessage, LlmProvider, ModelInfo, ProviderError, StreamEvent};
+use super::{ChatMessage, LlmProvider, ModelInfo, ProviderError, StreamEvent, stream_openai_sse};
+
+const ZED_API_BASE: &str = "https://api.z.ai/api/coding/paas/v4";
 
 pub struct ZedProvider {
     api_key: Option<String>,
+    client: reqwest::Client,
 }
 
 impl ZedProvider {
     pub fn new() -> Self {
-        Self { api_key: None }
+        Self {
+            api_key: None,
+            client: reqwest::Client::new(),
+        }
     }
 }
 
@@ -36,17 +42,62 @@ impl LlmProvider for ZedProvider {
             return Err(ProviderError::NotConfigured("Z.ai API key not set".into()));
         }
         Ok(vec![
-            ModelInfo { id: "claude-sonnet-4-20250514".into(), name: "Claude Sonnet 4".into(), provider: "zed".into() },
-            ModelInfo { id: "claude-3-5-haiku-20241022".into(), name: "Claude 3.5 Haiku".into(), provider: "zed".into() },
+            ModelInfo { id: "glm-5.1".into(), name: "GLM 5.1".into(), provider: "zed".into() },
+            ModelInfo { id: "glm-5".into(), name: "GLM 5".into(), provider: "zed".into() },
+            ModelInfo { id: "glm-5-turbo".into(), name: "GLM 5 Turbo".into(), provider: "zed".into() },
+            ModelInfo { id: "glm-4.7".into(), name: "GLM 4.7".into(), provider: "zed".into() },
+            ModelInfo { id: "glm-4.6".into(), name: "GLM 4.6".into(), provider: "zed".into() },
+            ModelInfo { id: "glm-4.5".into(), name: "GLM 4.5".into(), provider: "zed".into() },
         ])
     }
 
     async fn stream_chat(
         &self,
-        _messages: Vec<ChatMessage>,
-        _model: &str,
-        _tx: mpsc::UnboundedSender<StreamEvent>,
+        messages: Vec<ChatMessage>,
+        model: &str,
+        tx: mpsc::UnboundedSender<StreamEvent>,
     ) -> Result<(), ProviderError> {
-        Err(ProviderError::NotConfigured("Z.ai streaming not yet implemented".into()))
+        let api_key = self
+            .api_key
+            .as_ref()
+            .ok_or_else(|| ProviderError::NotConfigured("Z.ai API key not set".into()))?;
+
+        let body = serde_json::json!({
+            "model": model,
+            "messages": messages.iter().map(|m| serde_json::json!({
+                "role": if m.role == "agent" { "assistant" } else { &m.role },
+                "content": m.content,
+            })).collect::<Vec<_>>(),
+            "stream": true,
+        });
+
+        let resp = self
+            .client
+            .post(format!("{}/chat/completions", ZED_API_BASE))
+            .header("Authorization", format!("Bearer {}", api_key))
+            .header("Content-Type", "application/json")
+            .json(&body)
+            .send()
+            .await?;
+
+        if !resp.status().is_success() {
+            let status = resp.status();
+            let text = resp.text().await.unwrap_or_default();
+            let _ = tx.send(StreamEvent::Error {
+                message: format!("API error {}: {}", status, text),
+            });
+            return Ok(());
+        }
+
+        stream_openai_sse(resp, tx).await;
+        Ok(())
+    }
+
+    fn as_any(&self) -> &dyn std::any::Any {
+        self
+    }
+
+    fn as_any_mut(&mut self) -> &mut dyn std::any::Any {
+        self
     }
 }

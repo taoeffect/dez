@@ -20,6 +20,8 @@ pub fn run() {
             commands::set_api_key,
             commands::send_message,
             commands::cancel_generation,
+            commands::copilot_start_device_flow,
+            commands::copilot_poll_device_flow,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

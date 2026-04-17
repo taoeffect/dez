@@ -11,12 +11,13 @@
 - [x] 7. Model Selector Taskbar (`model-selector`)
 - [x] 8. Tabbed Conversations (`tabs`)
 - [x] 9. Unified Editor Surface (`unified-editor`)
-- [ ] 10. Streaming Chat Integration (`streaming`)
-- [ ] 11. Provider Implementations (`provider-impls`)
-- [ ] 12. Local Persistence (`persistence`)
-- [ ] 13. Saved Prompts (`saved-prompts`)
-- [ ] 14. Conversation History Browser (`history`)
-- [ ] 15. Polish & Cross-Platform (`polish`)
+- [x] 10. Streaming Chat Integration (`streaming`)
+- [x] 11. Provider Implementations (`provider-impls`)
+- [ ] 12. Provider Key Persistence (`provider-keys`)
+- [ ] 13. Local Persistence (`persistence`)
+- [ ] 14. Saved Prompts (`saved-prompts`)
+- [ ] 15. Conversation History Browser (`history`)
+- [ ] 16. Polish & Cross-Platform (`polish`)
 
 ---
 
@@ -150,18 +151,30 @@ Implement real API integrations for the remaining LLM providers (OpenRouter is a
 - Replace hardcoded `list_models` stubs with real API calls where the provider supports dynamic model listing
 - Ensure all providers handle auth errors, rate limits, and network failures gracefully through `StreamEvent::Error`
 
-## 12. Local Persistence — `persistence`
+## 12. Provider Key Persistence — `provider-keys`
+
+Persist provider API keys and OAuth tokens to disk so they survive app restarts.
+
+- Store credentials in `~/.config/dez/provider_keys.json` (same path on both macOS and Linux)
+- On startup, read the file and call `configure()` on each provider that has a saved key
+- For GitHub Copilot, persist the GitHub OAuth token (and cached Copilot token + expiry); on launch, auto-exchange for a fresh Copilot token if expired
+- After any key save or Copilot auth, write the updated credentials to disk immediately
+- Create the directory and file if they don't exist
+- File format: `{ "openrouter": { "api_key": "..." }, "zed": { "api_key": "..." }, "minimax": { "api_key": "..." }, "copilot": { "github_token": "...", "copilot_token": "...", "copilot_token_expires_at": 123 } }`
+- Set restrictive file permissions (0600) to protect secrets
+
+## 13. Local Persistence — `persistence`
 
 Persist conversations to disk so they survive app restarts.
 
-- Choose storage format: SQLite via `tauri-plugin-sql` or JSON files via `tauri-plugin-fs`
+- Choose storage format: JSON files via `tauri-plugin-fs`
 - Design a data schema: `Conversation { id, title, model, messages[], createdAt, updatedAt }`
 - Create Rust commands: `save_conversation`, `load_conversation`, `list_conversations`, `delete_conversation`
 - Auto-save on every new message
 - Load last-open tabs on app launch
 - Generate conversation titles automatically (first user message truncated, or LLM-generated later)
 
-## 13. Saved Prompts — `saved-prompts`
+## 14. Saved Prompts — `saved-prompts`
 
 Allow users to create, edit, and quickly insert saved prompt templates.
 
@@ -171,7 +184,7 @@ Allow users to create, edit, and quickly insert saved prompt templates.
 - Inserting a prompt replaces the current input or appends to it
 - Each prompt has a `name`, `content`, and optional `description`
 
-## 14. Conversation History Browser — `history`
+## 15. Conversation History Browser — `history`
 
 Provide a UI to browse, search, and manage past conversations.
 
@@ -182,7 +195,7 @@ Provide a UI to browse, search, and manage past conversations.
 - Delete conversations with confirmation
 - Sort by most recent (default) or alphabetical
 
-## 15. Polish & Cross-Platform — `polish`
+## 16. Polish & Cross-Platform — `polish`
 
 Final pass for UX quality, performance, and platform compatibility.
 

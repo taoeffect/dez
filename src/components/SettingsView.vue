@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { ref, onMounted } from 'vue'
 import { invoke } from '@tauri-apps/api/core'
+import { openUrl } from '@tauri-apps/plugin-opener'
 import { useSettingsStore, type Theme } from '../stores/settingsStore'
 
 interface ProviderInfo {
@@ -23,6 +24,9 @@ const providerModels = ref<Record<string, ModelInfo[]>>({})
 const apiKeyInputs = ref<Record<string, string>>({})
 const savingKey = ref<string | null>(null)
 const keyError = ref<string | null>(null)
+
+const copilotDeviceFlow = ref<{ userCode: string; verificationUri: string; deviceCode: string } | null>(null)
+const copilotPolling = ref(false)
 
 const themes: { value: Theme; label: string }[] = [
   { value: 'system', label: 'System' },
@@ -81,6 +85,44 @@ async function saveApiKey(providerId: string) {
   }
 }
 
+async function startCopilotDeviceFlow() {
+  keyError.value = null
+  try {
+    const resp = await invoke<{ user_code: string; verification_uri: string; device_code: string }>('copilot_start_device_flow')
+    copilotDeviceFlow.value = {
+      userCode: resp.user_code,
+      verificationUri: resp.verification_uri,
+      deviceCode: resp.device_code,
+    }
+    await navigator.clipboard.writeText(resp.user_code).catch(() => {})
+    await openUrl(resp.verification_uri)
+    await pollCopilotDeviceFlow(resp.device_code)
+  } catch (e) {
+    keyError.value = `Copilot sign-in failed: ${e}`
+  }
+}
+
+async function pollCopilotDeviceFlow(deviceCode: string) {
+  copilotPolling.value = true
+  try {
+    for (let i = 0; i < 60; i++) {
+      await new Promise(r => setTimeout(r, 5000))
+      const done = await invoke<boolean>('copilot_poll_device_flow', { deviceCode })
+      if (done) {
+        copilotDeviceFlow.value = null
+        await loadProviders()
+        return
+      }
+    }
+    keyError.value = 'Copilot sign-in timed out. Please try again.'
+  } catch (e) {
+    keyError.value = `Copilot sign-in failed: ${e}`
+  } finally {
+    copilotPolling.value = false
+    copilotDeviceFlow.value = null
+  }
+}
+
 function onClose() {
   settings.closeSettings()
 }
@@ -127,7 +169,24 @@ function onOverlayClick(e: MouseEvent) {
                 </span>
               </div>
 
-              <div class="provider-key-row">
+              <div v-if="provider.id === 'copilot'" class="provider-key-row">
+                <template v-if="copilotDeviceFlow">
+                  <div class="copilot-device-flow">
+                    <p class="copilot-flow-text">Enter code <code class="copilot-code">{{ copilotDeviceFlow.userCode }}</code> on GitHub</p>
+                    <p class="copilot-flow-hint">Code copied to clipboard. Waiting for authorization…</p>
+                  </div>
+                </template>
+                <template v-else>
+                  <button
+                    class="settings-btn"
+                    :disabled="copilotPolling"
+                    @click="startCopilotDeviceFlow()"
+                  >
+                    {{ provider.configured ? 'Re-authenticate with GitHub' : 'Sign in with GitHub' }}
+                  </button>
+                </template>
+              </div>
+              <div v-else class="provider-key-row">
                 <input
                   v-model="apiKeyInputs[provider.id]"
                   type="password"
@@ -490,6 +549,33 @@ function onOverlayClick(e: MouseEvent) {
 .provider-key-row {
   display: flex;
   gap: 8px;
+}
+
+.copilot-device-flow {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.copilot-flow-text {
+  font-size: 13px;
+  margin: 0;
+}
+
+.copilot-code {
+  font-family: monospace;
+  font-size: 14px;
+  font-weight: 700;
+  background: var(--color-border);
+  padding: 2px 8px;
+  border-radius: 4px;
+  letter-spacing: 1px;
+}
+
+.copilot-flow-hint {
+  font-size: 11px;
+  opacity: 0.6;
+  margin: 0;
 }
 
 .provider-model-row {

@@ -7,6 +7,7 @@ use tauri::ipc::Channel;
 use tauri::State;
 
 use crate::providers::{ChatMessage, ProviderError, ProviderInfo, ModelInfo, ProviderRegistry, StreamEvent};
+use crate::providers::copilot::DeviceFlowResponse;
 
 pub type SharedRegistry = Arc<Mutex<ProviderRegistry>>;
 type ActiveGenerations = Arc<Mutex<HashMap<String, JoinHandle<()>>>>;
@@ -132,4 +133,46 @@ pub async fn cancel_generation(
         handle.abort();
     }
     Ok(())
+}
+
+#[tauri::command]
+pub async fn copilot_start_device_flow(
+    registry: State<'_, SharedRegistry>,
+) -> Result<DeviceFlowResponse, ProviderError> {
+    let registry = registry.lock().await;
+    let provider = registry
+        .get_provider("copilot")
+        .ok_or_else(|| ProviderError::NotConfigured("Copilot provider not found".into()))?;
+
+    // Downcast to CopilotProvider
+    let copilot = provider
+        .as_any()
+        .downcast_ref::<crate::providers::copilot::CopilotProvider>()
+        .ok_or_else(|| ProviderError::Api("Failed to access Copilot provider".into()))?;
+
+    copilot.start_device_flow().await
+}
+
+#[tauri::command]
+pub async fn copilot_poll_device_flow(
+    device_code: String,
+    registry: State<'_, SharedRegistry>,
+) -> Result<bool, ProviderError> {
+    let mut registry = registry.lock().await;
+    let provider = registry
+        .get_provider_mut("copilot")
+        .ok_or_else(|| ProviderError::NotConfigured("Copilot provider not found".into()))?;
+
+    // Downcast to CopilotProvider
+    let copilot = provider
+        .as_any_mut()
+        .downcast_mut::<crate::providers::copilot::CopilotProvider>()
+        .ok_or_else(|| ProviderError::Api("Failed to access Copilot provider".into()))?;
+
+    let authenticated = copilot.poll_device_flow(&device_code).await?;
+    if authenticated {
+        // Also exchange for Copilot token immediately
+        copilot.ensure_copilot_token().await?;
+    }
+    Ok(authenticated)
 }

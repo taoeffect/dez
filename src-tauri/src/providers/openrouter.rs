@@ -1,9 +1,8 @@
 use async_trait::async_trait;
-use futures::StreamExt;
 use serde::Deserialize;
 use tokio::sync::mpsc;
 
-use super::{ChatMessage, LlmProvider, ModelInfo, ProviderError, StreamEvent};
+use super::{ChatMessage, LlmProvider, ModelInfo, ProviderError, StreamEvent, stream_openai_sse};
 
 const OPENROUTER_API_BASE: &str = "https://openrouter.ai/api/v1";
 
@@ -16,21 +15,6 @@ struct OpenRouterModel {
 #[derive(Debug, Deserialize)]
 struct OpenRouterModelsResponse {
     data: Vec<OpenRouterModel>,
-}
-
-#[derive(Debug, Deserialize)]
-struct SseDelta {
-    content: Option<String>,
-}
-
-#[derive(Debug, Deserialize)]
-struct SseChoice {
-    delta: Option<SseDelta>,
-}
-
-#[derive(Debug, Deserialize)]
-struct SseChunk {
-    choices: Option<Vec<SseChoice>>,
 }
 
 pub struct OpenRouterProvider {
@@ -129,56 +113,15 @@ impl LlmProvider for OpenRouterProvider {
             return Ok(());
         }
 
-        let mut stream = resp.bytes_stream();
-        let mut buffer = String::new();
-
-        while let Some(chunk) = stream.next().await {
-            let chunk = match chunk {
-                Ok(c) => c,
-                Err(e) => {
-                    let _ = tx.send(StreamEvent::Error {
-                        message: format!("Stream error: {}", e),
-                    });
-                    return Ok(());
-                }
-            };
-
-            buffer.push_str(&String::from_utf8_lossy(&chunk));
-
-            while let Some(line_end) = buffer.find('\n') {
-                let line = buffer[..line_end].trim().to_string();
-                buffer = buffer[line_end + 1..].to_string();
-
-                if line.is_empty() || line.starts_with(':') {
-                    continue;
-                }
-
-                if let Some(data) = line.strip_prefix("data: ") {
-                    if data.trim() == "[DONE]" {
-                        let _ = tx.send(StreamEvent::Done);
-                        return Ok(());
-                    }
-
-                    if let Ok(chunk) = serde_json::from_str::<SseChunk>(data) {
-                        if let Some(choices) = chunk.choices {
-                            for choice in choices {
-                                if let Some(delta) = choice.delta {
-                                    if let Some(content) = delta.content {
-                                        if !content.is_empty() {
-                                            let _ = tx.send(StreamEvent::Token {
-                                                content,
-                                            });
-                                        }
-                                    }
-                                }
-                            }
-                        }
-                    }
-                }
-            }
-        }
-
-        let _ = tx.send(StreamEvent::Done);
+        stream_openai_sse(resp, tx).await;
         Ok(())
+    }
+
+    fn as_any(&self) -> &dyn std::any::Any {
+        self
+    }
+
+    fn as_any_mut(&mut self) -> &mut dyn std::any::Any {
+        self
     }
 }
