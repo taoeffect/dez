@@ -13,11 +13,12 @@
 - [x] 9. Unified Editor Surface (`unified-editor`)
 - [x] 10. Streaming Chat Integration (`streaming`)
 - [x] 11. Provider Implementations (`provider-impls`)
-- [ ] 12. Provider Key Persistence (`provider-keys`)
+- [x] 12. Provider Key Persistence (`provider-keys`)
 - [ ] 13. Local Persistence (`persistence`)
-- [ ] 14. Saved Prompts (`saved-prompts`)
-- [ ] 15. Conversation History Browser (`history`)
-- [ ] 16. Polish & Cross-Platform (`polish`)
+- [ ] 14. Favorite Models (`favorite-models`)
+- [ ] 15. Saved Prompts (`saved-prompts`)
+- [ ] 16. Conversation History Browser (`history`)
+- [ ] 17. Polish & Cross-Platform (`polish`)
 
 ---
 
@@ -165,16 +166,27 @@ Persist provider API keys and OAuth tokens to disk so they survive app restarts.
 
 ## 13. Local Persistence — `persistence`
 
-Persist conversations to disk so they survive app restarts.
+Persist conversations and application state to disk so they survive app restarts.
 
-- Choose storage format: JSON files via `tauri-plugin-fs`
-- Design a data schema: `Conversation { id, title, model, messages[], createdAt, updatedAt }`
+- Store conversations as plain text files in `~/.config/dez/conversations/`, one file per conversation
+- Use `--- USER ---` and `--- AGENT ---` separator strings between sections; on load, parse these to reconstruct the pill-separated section model
+- Store all application settings in `~/.config/dez/settings.json` — this includes open tabs (with references to conversation files), currently selected models per tab, default models per provider, favorited models, theme, and any other preferences
 - Create Rust commands: `save_conversation`, `load_conversation`, `list_conversations`, `delete_conversation`
 - Auto-save on every new message
-- Load last-open tabs on app launch
+- On app launch, read `settings.json` to restore open tabs and their associated conversation files
 - Generate conversation titles automatically (first user message truncated, or LLM-generated later)
 
-## 14. Saved Prompts — `saved-prompts`
+## 14. Favorite Models — `favorite-models`
+
+Allow users to star/favorite models in the model selector for quick access.
+
+- Add a star icon next to each model in the `ModelSelector.vue` dropdown
+- Clicking the star toggles the model as a favorite; persist favorites in `~/.config/dez/settings.json`
+- Add a "Favorites" section at the top of the model selector dropdown that lists all starred models across providers
+- Favorites section appears above the per-provider model groups
+- If no models are favorited, the Favorites section is hidden
+
+## 15. Saved Prompts — `saved-prompts`
 
 Allow users to create, edit, and quickly insert saved prompt templates.
 
@@ -184,7 +196,7 @@ Allow users to create, edit, and quickly insert saved prompt templates.
 - Inserting a prompt replaces the current input or appends to it
 - Each prompt has a `name`, `content`, and optional `description`
 
-## 15. Conversation History Browser — `history`
+## 16. Conversation History Browser — `history`
 
 Provide a UI to browse, search, and manage past conversations.
 
@@ -195,7 +207,7 @@ Provide a UI to browse, search, and manage past conversations.
 - Delete conversations with confirmation
 - Sort by most recent (default) or alphabetical
 
-## 16. Polish & Cross-Platform — `polish`
+## 17. Polish & Cross-Platform — `polish`
 
 Final pass for UX quality, performance, and platform compatibility.
 

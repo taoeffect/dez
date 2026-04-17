@@ -438,14 +438,22 @@ function onOverlayClick(e: MouseEvent) {
 }
 
 .settings-select {
-  padding: 6px 10px;
+  padding: 6px 30px 6px 10px;
   border: 1px solid var(--color-border);
   border-radius: 6px;
-  background: var(--color-bg);
+  background: var(--color-bg) url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='10' height='6'%3E%3Cpath d='M0 0l5 6 5-6z' fill='%23888'/%3E%3C/svg%3E") no-repeat right 10px center;
   color: var(--color-text);
+  color-scheme: dark light;
   font-size: 13px;
   outline: none;
   min-width: 180px;
+  -webkit-appearance: none;
+  appearance: none;
+}
+
+.settings-select option {
+  background: var(--color-bg);
+  color: var(--color-text);
 }
 
 .settings-btn {

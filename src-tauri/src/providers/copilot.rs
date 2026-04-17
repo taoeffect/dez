@@ -31,9 +31,9 @@ struct CopilotTokenResponse {
 }
 
 pub struct CopilotProvider {
-    github_token: Option<String>,
-    copilot_token: Option<String>,
-    copilot_token_expires_at: i64,
+    pub github_token: Option<String>,
+    pub copilot_token: Option<String>,
+    pub copilot_token_expires_at: i64,
     client: reqwest::Client,
 }
 
@@ -245,6 +245,10 @@ impl LlmProvider for CopilotProvider {
 
         stream_openai_sse(resp, tx).await;
         Ok(())
+    }
+
+    fn get_api_key(&self) -> Option<String> {
+        self.github_token.clone()
     }
 
     fn as_any(&self) -> &dyn std::any::Any {

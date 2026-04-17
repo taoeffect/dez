@@ -92,6 +92,10 @@ impl LlmProvider for MiniMaxProvider {
         Ok(())
     }
 
+    fn get_api_key(&self) -> Option<String> {
+        self.api_key.clone()
+    }
+
     fn as_any(&self) -> &dyn std::any::Any {
         self
     }

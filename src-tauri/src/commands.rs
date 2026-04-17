@@ -55,6 +55,12 @@ pub async fn set_api_key(
         .get_provider_mut(&provider_id)
         .ok_or_else(|| ProviderError::NotConfigured(format!("Unknown provider: {}", provider_id)))?;
     provider.configure(api_key).await;
+
+    let creds = registry.extract_credentials();
+    if let Err(e) = crate::key_store::save_keys(&creds) {
+        eprintln!("Failed to persist keys: {}", e);
+    }
+
     Ok(())
 }
 
@@ -171,8 +177,13 @@ pub async fn copilot_poll_device_flow(
 
     let authenticated = copilot.poll_device_flow(&device_code).await?;
     if authenticated {
-        // Also exchange for Copilot token immediately
         copilot.ensure_copilot_token().await?;
     }
+
+    let creds = registry.extract_credentials();
+    if let Err(e) = crate::key_store::save_keys(&creds) {
+        eprintln!("Failed to persist keys: {}", e);
+    }
+
     Ok(authenticated)
 }

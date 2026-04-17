@@ -71,6 +71,7 @@ pub trait LlmProvider: Send + Sync {
         model: &str,
         tx: mpsc::UnboundedSender<StreamEvent>,
     ) -> Result<(), ProviderError>;
+    fn get_api_key(&self) -> Option<String>;
     fn as_any(&self) -> &dyn std::any::Any;
     fn as_any_mut(&mut self) -> &mut dyn std::any::Any;
 }
@@ -108,6 +109,32 @@ impl ProviderRegistry {
 
     pub fn get_provider_mut(&mut self, id: &str) -> Option<&mut Box<dyn LlmProvider>> {
         self.providers.iter_mut().find(|p| p.id() == id)
+    }
+
+    pub fn extract_credentials(&self) -> crate::key_store::KeyStoreData {
+        use crate::key_store::{KeyStoreData, ProviderCredentials, CopilotCredentials};
+
+        let mut data = KeyStoreData::default();
+
+        for p in &self.providers {
+            match p.id() {
+                "openrouter" => data.openrouter = ProviderCredentials { api_key: p.get_api_key() },
+                "zed" => data.zed = ProviderCredentials { api_key: p.get_api_key() },
+                "minimax" => data.minimax = ProviderCredentials { api_key: p.get_api_key() },
+                "copilot" => {
+                    if let Some(copilot) = p.as_any().downcast_ref::<copilot::CopilotProvider>() {
+                        data.copilot = CopilotCredentials {
+                            github_token: copilot.github_token.clone(),
+                            copilot_token: copilot.copilot_token.clone(),
+                            copilot_token_expires_at: copilot.copilot_token_expires_at,
+                        };
+                    }
+                }
+                _ => {}
+            }
+        }
+
+        data
     }
 }
 
