@@ -28,6 +28,13 @@ const editorEl = ref<HTMLDivElement | null>(null)
 let syncing = false
 let streamRafId: number | null = null
 
+// Selection-normalization hints (populated by mousedown / keydown). Module-
+// level so `normalizeSelection` can consult them on any selectionchange.
+let lastPointerX = 0
+let lastPointerY = 0
+let lastPointerTs = 0
+let lastArrowDirection: 'forward' | 'backward' | null = null
+
 // Slash-command autocomplete state
 const AC_TRIGGER = '/prompt '
 const acActive = ref(false)
@@ -112,7 +119,37 @@ function buildPromptPill(section: Section, node: PromptNode): HTMLSpanElement {
     e.preventDefault()
     e.stopPropagation()
     store.togglePromptExpanded(section.id, node.id)
-    nextTick(() => buildDOM())
+    nextTick(() => {
+      buildDOM()
+      // buildDOM's save/restore skips positions inside pills, so we must
+      // place the caret explicitly after the rebuilt pill.
+      nextTick(() => {
+        const el = editorEl.value
+        if (!el) return
+        const freshPill = el.querySelector(
+          `.dez-prompt-pill[data-node-id="${node.id}"]`
+        ) as HTMLElement | null
+        if (!freshPill || !freshPill.parentNode) return
+        let target: Node = freshPill
+        if (
+          target.nextSibling instanceof HTMLElement &&
+          (target.nextSibling as HTMLElement).classList.contains('dez-prompt-body')
+        ) {
+          target = target.nextSibling
+        }
+        const parent = target.parentNode
+        if (!parent) return
+        const idx = Array.from(parent.childNodes).indexOf(target as ChildNode) + 1
+        const s = window.getSelection()
+        if (s) {
+          const r = document.createRange()
+          r.setStart(parent, idx)
+          r.collapse(true)
+          s.removeAllRanges()
+          s.addRange(r)
+        }
+      })
+    })
   })
   return pill
 }
@@ -761,27 +798,68 @@ function acceptPrompt(prompt: Prompt) {
   const section = store.sections.find((s) => s.id === sectionId)
   if (!section) return closeAutocomplete()
 
-  const trigger = acTriggerOffset.value
-  const caret = acCaretOffset.value
+  // Recompute fresh offsets from the CURRENT store state — do not rely on
+  // stale `acTriggerOffset`/`acCaretOffset` which may have been captured
+  // before recent DOM→store syncs. Use the current DOM caret to derive the
+  // caret's visible-text offset within the section, then search backward
+  // for the trigger in the section's current visible text.
+  const el = editorEl.value
+  if (!el) return closeAutocomplete()
+
+  // Flush any pending DOM edits into the store so `section.content` and the
+  // visible-text search reflect exactly what the user sees.
+  readDOMToStore()
+  const freshSection = store.sections.find((s) => s.id === sectionId)
+  if (!freshSection) return closeAutocomplete()
+
+  const sel = window.getSelection()
+  if (!sel || sel.rangeCount === 0) return closeAutocomplete()
+  const range = sel.getRangeAt(0)
+
+  // Find the section-block containing the caret and derive offset-within-block.
+  let block: HTMLElement | null = null
+  let cur: Node | null = range.startContainer
+  while (cur && cur !== el) {
+    if (cur instanceof HTMLElement && cur.classList.contains('section-block')) {
+      block = cur
+      break
+    }
+    cur = cur.parentNode
+  }
+  if (!block || block.dataset.sectionId !== sectionId) return closeAutocomplete()
+
+  const offsetInBlock = getTextOffset(block, range.startContainer, range.startOffset)
+  let base = 0
+  for (const b of Array.from(el.querySelectorAll('.section-block'))) {
+    if ((b as HTMLElement).dataset.sectionId !== sectionId) continue
+    if (b === block) break
+    base += blockTextLength(b as HTMLElement) + 1
+  }
+  const caret = base + offsetInBlock
+
+  const visible = sectionVisibleText(freshSection)
+  const before = visible.slice(0, caret)
+  const trigger = before.lastIndexOf(AC_TRIGGER)
+  if (trigger < 0) return closeAutocomplete()
 
   // Split content at the caret; then trim `/prompt <query>` off the end of
   // the "before" half (length = caret - trigger).
-  const [beforeAll, after] = splitContentAt(section.content, caret)
+  const [beforeAll, after] = splitContentAt(freshSection.content, caret)
   const trimLen = caret - trigger
   let remaining = trimLen
-  const before: ContentNode[] = []
-  for (const node of beforeAll) before.push(node)
-  // Walk back through `before` text nodes removing `remaining` chars.
-  for (let i = before.length - 1; i >= 0 && remaining > 0; i--) {
-    const n = before[i]
+  const beforeNodes: ContentNode[] = []
+  for (const node of beforeAll) beforeNodes.push(node)
+  // Walk back through `beforeNodes` text nodes removing `remaining` chars.
+  for (let i = beforeNodes.length - 1; i >= 0 && remaining > 0; i--) {
+    const n = beforeNodes[i]
     if (n.kind !== 'text') continue
     if (n.text.length >= remaining) {
-      before[i] = textNode(n.text.slice(0, n.text.length - remaining))
+      beforeNodes[i] = textNode(n.text.slice(0, n.text.length - remaining))
       remaining = 0
       break
     } else {
       remaining -= n.text.length
-      before[i] = textNode('')
+      beforeNodes[i] = textNode('')
     }
   }
 
@@ -792,8 +870,8 @@ function acceptPrompt(prompt: Prompt) {
     expanded: false,
   })
 
-  const combined: ContentNode[] = [...before, newPrompt, ...after]
-  const newSectionId = section.id
+  const combined: ContentNode[] = [...beforeNodes, newPrompt, ...after]
+  const newSectionId = freshSection.id
   const promptNodeId = newPrompt.id
   store.setSectionContent(newSectionId, combined)
 
@@ -840,9 +918,233 @@ function acceptPrompt(prompt: Prompt) {
 }
 
 function onSelectionChange() {
-  if (!acActive.value) return
-  // Re-run detection; if caret moved out of trigger region, it will close.
-  detectAutocomplete()
+  if (syncing) return
+  normalizeSelection()
+  if (acActive.value) {
+    // Re-run detection; if caret moved out of trigger region, it will close.
+    detectAutocomplete()
+  }
+}
+
+/**
+ * Model-first selection reconciler. Runs on every selectionchange and snaps
+ * the caret off ambiguous positions introduced by our ZWSP-anchored pill
+ * structure. Borrows the idea from CodeMirror 6 / Lexical: normalize once
+ * in a central place instead of patching every click/arrow handler.
+ */
+function normalizeSelection() {
+  const el = editorEl.value
+  if (!el) return
+  const sel = window.getSelection()
+  if (!sel || sel.rangeCount === 0 || !sel.isCollapsed) return
+  const range = sel.getRangeAt(0)
+  if (!el.contains(range.startContainer)) return
+
+  const node = range.startContainer
+  const offset = range.startOffset
+
+  // Helper to commit a new collapsed selection at (parent, index) or a text
+  // node + offset. Uses parent+childIndex where possible to avoid landing
+  // inside ZWSP text nodes at all.
+  const setCaret = (anchor: Node, anchorOffset: number) => {
+    const r = document.createRange()
+    r.setStart(anchor, anchorOffset)
+    r.collapse(true)
+    sel.removeAllRanges()
+    sel.addRange(r)
+  }
+
+  // --- Rule 2: caret inside a contenteditable=false atomic (pill). Push
+  // out on the side hinted by pointer X (or forward by default).
+  const atomic = ancestorAtomicPill(node, el)
+  if (atomic && atomic.classList.contains('dez-prompt-pill') && atomic.parentNode) {
+    const parent = atomic.parentNode
+    const pillRect = atomic.getBoundingClientRect()
+    const forward = lastArrowDirection === 'forward' ||
+      (lastArrowDirection === null && lastPointerX >= (pillRect.left + pillRect.right) / 2)
+    const idx = Array.from(parent.childNodes).indexOf(atomic as ChildNode)
+    setCaret(parent, forward ? idx + 1 : idx)
+    return
+  }
+
+  // --- Rule 1b: caret at element-level position (parent, childIndex) that
+  // is visually "before a pill" — the child at offset is a ZWSP-only text
+  // node followed by a pill, or is a pill itself. Browsers sometimes place
+  // the caret here instead of inside the adjacent text node.
+  if (node.nodeType === Node.ELEMENT_NODE && node.parentNode) {
+    const childAt = offset < node.childNodes.length ? node.childNodes[offset] : null
+
+    let pillAhead: HTMLElement | null = null
+    if (childAt instanceof HTMLElement && childAt.classList.contains('dez-prompt-pill')) {
+      pillAhead = childAt
+    } else if (childAt && childAt.nodeType === Node.TEXT_NODE &&
+               (childAt.textContent || '').replace(/\u200b/g, '') === '') {
+      pillAhead = findAdjacentPill(childAt, 'forward')
+    }
+
+    if (pillAhead) {
+      const pillRect = pillAhead.getBoundingClientRect()
+      const forward = lastArrowDirection === 'forward' ||
+        (lastArrowDirection === null &&
+          withinPointerRecency() &&
+          (lastPointerY > pillRect.bottom || lastPointerX >= pillRect.right))
+      if (forward) {
+        let target: Node = pillAhead
+        if (
+          target.nextSibling instanceof HTMLElement &&
+          (target.nextSibling as HTMLElement).classList.contains('dez-prompt-body')
+        ) {
+          target = target.nextSibling
+        }
+        const parent = target.parentNode
+        if (parent) {
+          const idx = Array.from(parent.childNodes).indexOf(target as ChildNode) + 1
+          setCaret(parent, idx)
+          return
+        }
+      } else if (lastArrowDirection === 'backward') {
+        const parent = pillAhead.parentNode
+        if (parent) {
+          const idx = Array.from(parent.childNodes).indexOf(pillAhead as ChildNode)
+          setCaret(parent, idx)
+          return
+        }
+      }
+    }
+  }
+
+  // --- Rule 1: caret inside a text node whose pre-offset content is all
+  // ZWSP (or empty) AND a pill sibling follows (skipping empty/ZWSP
+  // siblings). Snap to after-pill (forward hint) or before-the-ZWSP-run
+  // (backward hint).
+  if (node.nodeType === Node.TEXT_NODE) {
+    const raw = node.textContent || ''
+    const pre = raw.slice(0, offset)
+    const preIsZwspOnly = pre.replace(/\u200b/g, '') === ''
+    const post = raw.slice(offset)
+    const postIsZwspOnly = post.replace(/\u200b/g, '') === ''
+
+    // Find nearest non-empty non-atomic siblings in both directions.
+    const nextPill = findAdjacentPill(node, 'forward')
+    const prevPill = findAdjacentPill(node, 'backward')
+
+    if (preIsZwspOnly && nextPill && node.parentNode) {
+      // Caret visually at the start of a ZWSP-run that precedes a pill.
+      // Decide forward vs backward.
+      const pillRect = nextPill.getBoundingClientRect()
+      const forward = lastArrowDirection === 'forward' ||
+        (lastArrowDirection === null &&
+          withinPointerRecency() &&
+          (lastPointerY > pillRect.bottom || lastPointerX >= pillRect.right))
+      if (forward) {
+        // Caret goes AFTER the pill (skip expanded body if any).
+        let target: Node = nextPill
+        if (
+          target.nextSibling instanceof HTMLElement &&
+          (target.nextSibling as HTMLElement).classList.contains('dez-prompt-body')
+        ) {
+          target = target.nextSibling
+        }
+        const parent = target.parentNode
+        if (parent) {
+          const idx = Array.from(parent.childNodes).indexOf(target as ChildNode) + 1
+          setCaret(parent, idx)
+          return
+        }
+      } else if (lastArrowDirection === 'backward') {
+        // Caret goes BEFORE the ZWSP text node (to any preceding text or
+        // the block start).
+        const parent = node.parentNode
+        if (parent) {
+          const idx = Array.from(parent.childNodes).indexOf(node as ChildNode)
+          setCaret(parent, idx)
+          return
+        }
+      }
+    }
+
+    if (postIsZwspOnly && prevPill && node.parentNode) {
+      // Caret at end of a ZWSP-run after a pill. Decide forward vs back.
+      const pillRect = prevPill.getBoundingClientRect()
+      const backward = lastArrowDirection === 'backward' ||
+        (lastArrowDirection === null &&
+          withinPointerRecency() &&
+          lastPointerX < pillRect.left &&
+          lastPointerY <= pillRect.bottom)
+      if (backward) {
+        const parent = prevPill.parentNode
+        if (parent) {
+          const idx = Array.from(parent.childNodes).indexOf(prevPill as ChildNode)
+          setCaret(parent, idx)
+          return
+        }
+      } else if (lastArrowDirection === 'forward') {
+        const parent = node.parentNode
+        if (parent) {
+          const idx = Array.from(parent.childNodes).indexOf(node as ChildNode) + 1
+          setCaret(parent, idx)
+          return
+        }
+      }
+    }
+  }
+
+  // --- Rule 3: caret at (section-block, 0) but last pointer Y was below
+  // the block's last rendered content rect — snap to block end.
+  if (
+    node instanceof HTMLElement &&
+    node.classList.contains('section-block') &&
+    offset === 0 &&
+    withinPointerRecency()
+  ) {
+    const probe = document.createRange()
+    probe.selectNodeContents(node)
+    probe.collapse(false)
+    const rects = probe.getClientRects()
+    const lastRect = rects.length > 0 ? rects[rects.length - 1] : node.getBoundingClientRect()
+    if (lastPointerY > lastRect.bottom) {
+      sel.removeAllRanges()
+      sel.addRange(probe)
+    }
+  }
+}
+
+/** Is the last-pointer hint recent enough to be trusted? */
+function withinPointerRecency(): boolean {
+  return performance.now() - lastPointerTs < 400
+}
+
+/**
+ * Walk siblings from `from` in `dir`, skipping empty/ZWSP-only text nodes
+ * and expanded prompt bodies, and return the next `dez-prompt-pill` if it's
+ * the immediate non-trivial neighbor (else null).
+ */
+function findAdjacentPill(from: Node, dir: 'forward' | 'backward'): HTMLElement | null {
+  let sib: Node | null = dir === 'forward' ? from.nextSibling : from.previousSibling
+  while (sib) {
+    if (sib.nodeType === Node.TEXT_NODE) {
+      const t = sib.textContent || ''
+      if (t.replace(/\u200b/g, '') === '') {
+        sib = dir === 'forward' ? sib.nextSibling : sib.previousSibling
+        continue
+      }
+      return null
+    }
+    if (sib instanceof HTMLElement) {
+      if (sib.classList.contains('dez-prompt-pill')) return sib
+      if (sib.classList.contains('dez-prompt-body')) {
+        sib = dir === 'forward' ? sib.nextSibling : sib.previousSibling
+        continue
+      }
+      if (sib.tagName === 'BR') {
+        // A <br> is a visible line break — the pill isn't on the same run.
+        return null
+      }
+      return null
+    }
+    sib = dir === 'forward' ? sib.nextSibling : sib.previousSibling
+  }
+  return null
 }
 
 function onInput(event: Event) {
@@ -890,6 +1192,17 @@ function onInput(event: Event) {
 
 function onKeydown(event: KeyboardEvent) {
   const mod = event.metaKey || event.ctrlKey
+
+  // Track arrow-key direction as a hint for normalizeSelection.
+  if (event.key === 'ArrowRight' || event.key === 'End' ||
+      event.key === 'ArrowDown' || event.key === 'PageDown') {
+    lastArrowDirection = 'forward'
+  } else if (event.key === 'ArrowLeft' || event.key === 'Home' ||
+             event.key === 'ArrowUp' || event.key === 'PageUp') {
+    lastArrowDirection = 'backward'
+  } else {
+    lastArrowDirection = null
+  }
 
   // Autocomplete intercepts navigation + accept keys first.
   if (acActive.value && acFiltered.value.length > 0) {
@@ -1175,16 +1488,40 @@ function findPromptInfo(nodeId: string): { name: string; body: string } | null {
   return null
 }
 
+function onEditorMousedown(event: MouseEvent) {
+  lastPointerX = event.clientX
+  lastPointerY = event.clientY
+  lastPointerTs = performance.now()
+  lastArrowDirection = null
+}
+
 function onEditorClick(event: MouseEvent) {
   const el = editorEl.value
   if (!el) return
 
+  const sel = window.getSelection()
+  if (sel && !sel.isCollapsed) return
+
   if (event.target === el) {
-    const sel = window.getSelection()
-    if (sel && !sel.isCollapsed) return
     el.focus()
-    setCursorToSection(store.sections.length - 1, sectionTextLength(store.sections[store.sections.length - 1]))
+    const blocks = el.querySelectorAll('.section-block')
+    const lastBlock = blocks[blocks.length - 1] as HTMLElement | undefined
+    if (lastBlock) {
+      const range = document.createRange()
+      range.selectNodeContents(lastBlock)
+      range.collapse(false)
+      const sel2 = window.getSelection()
+      if (sel2) {
+        sel2.removeAllRanges()
+        sel2.addRange(range)
+      }
+    }
+    return
   }
+
+  // All other click-placement edge cases (click past right edge of a pill,
+  // click in empty padding below the last content rect) are handled
+  // centrally by `normalizeSelection` via the selectionchange listener.
 }
 
 function onPaste(event: ClipboardEvent) {
@@ -1302,6 +1639,7 @@ watch(isActiveTabStreaming, (streaming) => {
       spellcheck="false"
       @input="onInput"
       @keydown="onKeydown"
+      @mousedown="onEditorMousedown"
       @copy="onCopy"
       @cut="onCopy"
       @paste="onPaste"

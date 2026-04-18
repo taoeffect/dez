@@ -20,9 +20,10 @@ Each step represents a task (per the `tasks` skill) that is to be done. (e.g. th
 - [x] 12. Provider Key Persistence (`provider-keys`)
 - [x] 13. Local Persistence (`persistence`)
 - [x] 14. Favorite Models (`favorite-models`)
-- [ ] 15. Saved Prompts (`saved-prompts`)
-- [ ] 16. Conversation History Browser (`history`)
-- [ ] 17. Polish & Cross-Platform (`polish`)
+- [ ] 15. Editor Selection Re-architecture (`bugfix`)
+- [ ] 16. Saved Prompts (`saved-prompts`)
+- [ ] 17. Conversation History Browser (`history`)
+- [ ] 18. Polish & Cross-Platform (`polish`)
 
 ---
 
@@ -190,7 +191,21 @@ Allow users to star/favorite models in the model selector for quick access.
 - Favorites section appears above the per-provider model groups
 - If no models are favorited, the Favorites section is hidden
 
-## 15. Saved Prompts — `saved-prompts`
+## 15. Editor Selection Re-architecture — `bugfix`
+
+Fix a family of caret-placement bugs around prompt pills (click past pill jumps to start of line, first Right-arrow after click doesn't cross the pill, etc.) by replacing per-event patches with a single model-first selection reconciler. Detailed rationale, prior attempts, and subtasks live in `.agents/tasks/bugfix/PLAN.md`, `TODOs.md`, `CURRENT_DESIGN.md`, and `KNOWLEDGE.md`.
+
+Summary:
+
+- **Root cause**: Prompt pills (`contenteditable="false"` spans) are surrounded by zero-width space (ZWSP) text nodes so the caret has "somewhere to land" beside them. The browser's native caret placement legitimately prefers the nearest text node, so clicks past a pill land at offset 0 of the ZWSP **before** the pill — visually the start of the line. Per-event patches in `onEditorClick` have produced whack-a-mole results.
+- **Direction**: Borrow from CodeMirror 6 / Lexical / ProseMirror — introduce a single `normalizeSelection()` reconciler driven by `selectionchange`, with mousedown/keypress hints for "forward vs backward" intent. Treat ZWSP-prefix positions as forbidden zones that snap off.
+- **Subtasks (in `.agents/tasks/bugfix/`)**:
+  - **Task A** (first) — Implement `normalizeSelection()` + hint tracking; delete the existing per-handler click patches. Expected to fix Bug 1b (double Right-arrow) and Bug 1d (click past line-ending pill) in one shot.
+  - **Task B** (deferred) — Own `mousedown` hit-testing if Task A still flickers.
+  - **Task C** (deferred) — Remove ZWSPs; replace with sparse "caret anchor" spans only where needed.
+- **Already completed in this task folder**: Bug 1a (click at end of pill line), Bug 1c (click below pill line), Bug 2 (extra USER section after prompt insertion).
+
+## 16. Saved Prompts — `saved-prompts`
 
 Allow users to create, edit, and quickly insert saved prompt templates.
 
@@ -214,7 +229,7 @@ Allow users to create, edit, and quickly insert saved prompt templates.
 - **Submission behavior**: When the thread is submitted to the LLM (Cmd/Ctrl+Enter), each prompt pill contributes its `body` verbatim to the message content at its in-document position, regardless of whether it is collapsed or expanded in the UI.
 - **Persistence**: Prompt pills (name + body + expanded state) serialize into the conversation file. The plain-text conversation format should round-trip prompt insertions — either by expanding them inline on save, or by adding a new marker syntax. Pick one approach and document it in AGENTS.md.
 
-## 16. Conversation History Browser — `history`
+## 17. Conversation History Browser — `history`
 
 Provide a UI to browse, search, and manage past conversations.
 
@@ -225,7 +240,7 @@ Provide a UI to browse, search, and manage past conversations.
 - Delete conversations with confirmation
 - Sort by most recent (default) or alphabetical
 
-## 17. Polish & Cross-Platform — `polish`
+## 18. Polish & Cross-Platform — `polish`
 
 Final pass for UX quality, performance, and platform compatibility.
 
