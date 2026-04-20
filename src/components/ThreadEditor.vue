@@ -1147,6 +1147,70 @@ function findAdjacentPill(from: Node, dir: 'forward' | 'backward'): HTMLElement 
   return null
 }
 
+/**
+ * True if the caret is collapsed at a position where the first non-trivial
+ * (non-empty / non-ZWSP) content of the current section-block following it
+ * is a `dez-prompt-pill`. Used to intercept plain Enter so the pill moves
+ * to a new section instead of the browser inserting a stray <br> above it.
+ */
+function isCaretBeforeLeadingPill(): boolean {
+  const sel = window.getSelection()
+  if (!sel || sel.rangeCount === 0 || !sel.isCollapsed) return false
+  const el = editorEl.value
+  if (!el) return false
+
+  const range = sel.getRangeAt(0)
+  const startNode = range.startContainer
+  const startOffset = range.startOffset
+
+  // Locate the enclosing section-block.
+  let block: HTMLElement | null = null
+  let cur: Node | null = startNode
+  while (cur && cur !== el) {
+    if (cur instanceof HTMLElement && cur.classList.contains('section-block')) {
+      block = cur
+      break
+    }
+    cur = cur.parentNode
+  }
+  if (!block) return false
+
+  // Don't intercept if caret is inside a prompt body.
+  if (isInPromptBody(startNode)) return false
+
+  // Determine the starting child index of the block from which to scan
+  // forward.  If the caret is on the block itself, it's startOffset.  If
+  // the caret is inside a text-node child whose prefix up to startOffset is
+  // empty / ZWSP-only, scan from the index of that text node onward.
+  let scanFromIdx: number
+  if (startNode === block) {
+    scanFromIdx = startOffset
+  } else if (startNode.nodeType === Node.TEXT_NODE && startNode.parentNode === block) {
+    const prefix = (startNode.textContent || '').slice(0, startOffset)
+    if (prefix.replace(/\u200b/g, '') !== '') return false
+    scanFromIdx = Array.from(block.childNodes).indexOf(startNode as ChildNode)
+    if (scanFromIdx < 0) return false
+  } else {
+    return false
+  }
+
+  const children = Array.from(block.childNodes)
+  for (let i = scanFromIdx; i < children.length; i++) {
+    const child = children[i]
+    if (child.nodeType === Node.TEXT_NODE) {
+      if ((child.textContent || '').replace(/\u200b/g, '') === '') continue
+      return false
+    }
+    if (child instanceof HTMLElement) {
+      if (child.classList.contains('dez-prompt-pill')) return true
+      if (child.classList.contains('dez-prompt-body')) continue
+      return false
+    }
+    return false
+  }
+  return false
+}
+
 function onInput(event: Event) {
   const el = editorEl.value
   const target = (event.target as Node) ?? null
@@ -1239,6 +1303,17 @@ function onKeydown(event: KeyboardEvent) {
     event.preventDefault()
     insertNewSection()
     return
+  }
+
+  // Plain Enter immediately before a pill at the start of a section: split
+  // the section so the pill moves to a new section below. Without this the
+  // browser inserts a stray <br> above the pill.
+  if (event.key === 'Enter' && !mod && !event.shiftKey) {
+    if (isCaretBeforeLeadingPill()) {
+      event.preventDefault()
+      insertNewSection()
+      return
+    }
   }
 
   if (event.key === 'Backspace') {
@@ -1403,7 +1478,7 @@ function serializeFragment(fragment: DocumentFragment | HTMLElement): string {
   const nodes = Array.from(fragment.childNodes)
   for (const node of nodes) {
     if (node.nodeType === Node.TEXT_NODE) {
-      out += node.textContent || ''
+      out += (node.textContent || '').replace(/\u200b/g, '')
       continue
     }
     if (!(node instanceof HTMLElement)) continue
@@ -1446,7 +1521,7 @@ function serializeBlock(block: HTMLElement): string {
   for (let i = 0; i < children.length; i++) {
     const child = children[i]
     if (child.nodeType === Node.TEXT_NODE) {
-      out += child.textContent || ''
+      out += (child.textContent || '').replace(/\u200b/g, '')
       continue
     }
     if (!(child instanceof HTMLElement)) continue
