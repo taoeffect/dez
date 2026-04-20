@@ -13,10 +13,20 @@ export const SECTION_SEP = '\u001E'
 
 /** Private-use codepoints that bracket a prompt pill in the buffer:
  *  `PILL_OPEN<id>PILL_BODY<body>PILL_CLOSE`. The whole marker sequence is
- *  replaced with a single atomic widget (collapsed pill in STEP-4). */
+ *  replaced with a single atomic widget (collapsed pill in STEP-4).
+ *
+ *  `PILL_NL` is an in-doc newline escape used inside the body slot. CM's
+ *  inline `Decoration.replace` does NOT collapse lines when the replaced
+ *  range spans a line break — the widget renders on the first line and the
+ *  remaining lines leak through as empty `cm-line`s where the caret gets
+ *  stuck. By escaping `\n` → `\u{E003}` inside the body the marker sequence
+ *  always stays on a single line, so the atomic replace behaves correctly.
+ *  Newlines are restored in `decodeSectionContent` when we sync back to the
+ *  store. */
 export const PILL_OPEN = '\u{E000}'
 export const PILL_BODY = '\u{E001}'
 export const PILL_CLOSE = '\u{E002}'
+export const PILL_NL = '\u{E003}'
 
 /** Lightweight mirror of a Section kept in the CM state. The CM doc is the
  *  source of truth for text; this field just tracks per-section identity
@@ -55,9 +65,10 @@ export function initialPillMetadata(sections: Section[]): Map<string, PillMetada
 }
 
 /** Encode a single prompt pill as the `OPEN id BODY body CLOSE` marker
- *  sequence. */
+ *  sequence. Newlines in `body` are escaped to `PILL_NL` so the marker
+ *  sequence always fits on one line (see `PILL_NL` doc). */
 export function encodePrompt(id: string, body: string): string {
-  return PILL_OPEN + id + PILL_BODY + body + PILL_CLOSE
+  return PILL_OPEN + id + PILL_BODY + body.replace(/\n/g, PILL_NL) + PILL_CLOSE
 }
 
 /** Encode a section's content nodes as a single string: text nodes verbatim,
@@ -111,22 +122,22 @@ export function scanPills(doc: string): PillLocation[] {
   while (i < doc.length) {
     if (doc[i] !== PILL_OPEN) { i++; continue }
     const from = i
-    // find BODY marker; abort if we hit another OPEN / CLOSE first
+    // find BODY marker; abort if we hit another OPEN / CLOSE / newline first
     let j = from + 1
     let bodyAt = -1
     while (j < doc.length) {
       const c = doc[j]
-      if (c === PILL_OPEN || c === PILL_CLOSE) break
+      if (c === PILL_OPEN || c === PILL_CLOSE || c === '\n') break
       if (c === PILL_BODY) { bodyAt = j; break }
       j++
     }
     if (bodyAt < 0) { i = from + 1; continue }
-    // find CLOSE; abort on nested OPEN
+    // find CLOSE; abort on nested OPEN or raw newline (body escapes newlines)
     let k = bodyAt + 1
     let closeAt = -1
     while (k < doc.length) {
       const c = doc[k]
-      if (c === PILL_OPEN) break
+      if (c === PILL_OPEN || c === '\n') break
       if (c === PILL_CLOSE) { closeAt = k; break }
       k++
     }
@@ -164,7 +175,7 @@ function decodeSectionContent(
       id: p.id,
       promptId: meta?.promptId ?? null,
       name: meta?.name ?? '',
-      body: fragment.slice(p.bodyFrom, p.bodyTo),
+      body: fragment.slice(p.bodyFrom, p.bodyTo).replace(/\u{E003}/gu, '\n'),
       expanded: meta?.expanded ?? false,
     })
     cursor = p.to
