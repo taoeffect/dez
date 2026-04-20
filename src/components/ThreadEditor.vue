@@ -1,19 +1,24 @@
 <script setup lang="ts">
-import { computed } from 'vue'
+import { computed, onBeforeUnmount, onMounted, ref, watch, nextTick } from 'vue'
+import { EditorState, Prec } from '@codemirror/state'
+import { EditorView, keymap } from '@codemirror/view'
+import { history, historyKeymap, defaultKeymap } from '@codemirror/commands'
 import { useThreadStore } from '../stores/threadStore'
 import { useTabStore } from '../stores/tabStore'
-import { useStreaming } from '../composables/useStreaming'
-import { sectionIsEmpty } from '../types/content'
-
-// Step 1 of the codemirror migration: the legacy contenteditable editor has
-// been removed. The CodeMirror view will be wired up in step 2. Until then
-// the editor area is intentionally non-functional — this is a pre-release
-// app with no users and the plan explicitly accepts an intermediate broken
-// state (see `.agents/tasks/codemirror/PLAN.md`).
+import { useStreaming, setStreamingCmView } from '../composables/useStreaming'
+import { sectionIsEmpty, setSectionPlainText } from '../types/content'
+import {
+  buildInitialDoc,
+  dezLanguageSupport,
+  dezTheme,
+} from './cmEditor'
 
 const store = useThreadStore()
 const tabStore = useTabStore()
-const { isStreaming, streamingTabId, streamingError, stopStreaming } = useStreaming()
+const { isStreaming, streamingTabId, streamingError, startStreaming, stopStreaming } = useStreaming()
+
+const hostRef = ref<HTMLDivElement | null>(null)
+let view: EditorView | null = null
 
 const isActiveTabStreaming = computed(
   () => isStreaming.value && streamingTabId.value === tabStore.activeTabId,
@@ -24,13 +29,125 @@ const showThinking = computed(() => {
   const last = store.sections[store.sections.length - 1]
   return last?.role === 'agent' && sectionIsEmpty(last)
 })
+
+/** Flatten CM doc back into a specific tab's `sections[0]` as plain text. */
+function syncDocToTab(tabId: string) {
+  if (!view) return
+  const text = view.state.doc.toString()
+  const tab = tabStore.tabs.find((t) => t.id === tabId)
+  if (!tab) return
+  const first = tab.sections[0]
+  if (!first) return
+  setSectionPlainText(first, text)
+  if (tab.sections.length > 1) {
+    tab.sections.splice(1, tab.sections.length - 1)
+  }
+  tabStore.autoTitle(tabId)
+}
+
+function syncDocToStore() {
+  syncDocToTab(tabStore.activeTabId)
+}
+
+function buildState(): EditorState {
+  const submitKeymap = Prec.high(
+    keymap.of([
+      {
+        key: 'Mod-Enter',
+        preventDefault: true,
+        run: () => {
+          syncDocToStore()
+          void startStreaming()
+          return true
+        },
+      },
+      {
+        key: 'Shift-Enter',
+        preventDefault: true,
+        run: (v) => {
+          // Step 2 stub: plain newline. Real section split lands in step 3.
+          const { from, to } = v.state.selection.main
+          v.dispatch({
+            changes: { from, to, insert: '\n' },
+            selection: { anchor: from + 1 },
+            scrollIntoView: true,
+          })
+          return true
+        },
+      },
+    ]),
+  )
+
+  return EditorState.create({
+    doc: buildInitialDoc(store.sections),
+    extensions: [
+      history(),
+      submitKeymap,
+      keymap.of([...defaultKeymap, ...historyKeymap]),
+      EditorView.lineWrapping,
+      dezLanguageSupport(),
+      dezTheme,
+      EditorView.domEventHandlers({
+        blur: () => {
+          syncDocToStore()
+          return false
+        },
+      }),
+    ],
+  })
+}
+
+function mountView() {
+  if (!hostRef.value) return
+  view = new EditorView({ state: buildState(), parent: hostRef.value })
+  setStreamingCmView(view)
+}
+
+function resetViewToActiveTab() {
+  if (!view) return
+  view.setState(buildState())
+}
+
+onMounted(() => {
+  mountView()
+})
+
+onBeforeUnmount(() => {
+  syncDocToStore()
+  setStreamingCmView(null)
+  view?.destroy()
+  view = null
+})
+
+// Rebuild state when the active tab changes — the CM doc is per-tab.
+// Sync the previous tab's doc back to its sections BEFORE swapping so edits
+// are not lost (the watcher fires after `activeTabId` has already updated,
+// so we capture the previous id from the watcher args).
+watch(
+  () => tabStore.activeTabId,
+  (_newId, oldId) => {
+    if (oldId) syncDocToTab(oldId)
+    nextTick(() => {
+      resetViewToActiveTab()
+    })
+  },
+)
+
+// When streaming finishes on the active tab, the store gets a fresh empty
+// user section. Rebuild CM state so the trailing sentinels/newlines line up.
+watch(
+  () => [isStreaming.value, streamingTabId.value] as const,
+  ([streaming], [prevStreaming]) => {
+    if (prevStreaming && !streaming) {
+      nextTick(() => resetViewToActiveTab())
+    }
+  },
+)
 </script>
 
 <template>
   <div class="editor-container">
-    <div class="thread-editor thread-editor--placeholder">
-      <p>CodeMirror editor not yet mounted (migration step 2).</p>
-    </div>
+    <div ref="hostRef" class="thread-editor" />
     <div v-if="showThinking" class="thinking-indicator">
       <span class="thinking-dot" />
       <span class="thinking-dot" />
@@ -60,27 +177,20 @@ const showThinking = computed(() => {
 
 .thread-editor {
   flex: 1;
-  overflow-y: auto;
-  padding: 16px;
-  max-width: 768px;
-  margin: 0 auto;
-  width: 100%;
-  box-sizing: border-box;
-  outline: none;
-  color: var(--color-text);
-  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, 'Liberation Mono', monospace;
-  font-size: 15px;
-  line-height: 1.6;
-  min-height: 100%;
-  cursor: text;
-  position: relative;
-  white-space: pre-wrap;
-  word-wrap: break-word;
+  min-height: 0;
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
 }
 
-.thread-editor--placeholder {
-  opacity: 0.4;
-  font-style: italic;
+.thread-editor :deep(.cm-editor) {
+  flex: 1;
+  min-height: 0;
+  height: 100%;
+}
+
+.thread-editor :deep(.cm-scroller) {
+  overflow-y: auto;
 }
 
 .thinking-indicator {
@@ -102,13 +212,8 @@ const showThinking = computed(() => {
   animation: thinking-pulse 1.4s ease-in-out infinite;
 }
 
-.thinking-dot:nth-child(2) {
-  animation-delay: 0.2s;
-}
-
-.thinking-dot:nth-child(3) {
-  animation-delay: 0.4s;
-}
+.thinking-dot:nth-child(2) { animation-delay: 0.2s; }
+.thinking-dot:nth-child(3) { animation-delay: 0.4s; }
 
 @keyframes thinking-pulse {
   0%, 80%, 100% { opacity: 0.2; transform: scale(0.8); }
@@ -140,7 +245,5 @@ const showThinking = computed(() => {
   transition: opacity 0.15s;
 }
 
-.stop-button:hover {
-  opacity: 1;
-}
+.stop-button:hover { opacity: 1; }
 </style>

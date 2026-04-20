@@ -1,5 +1,6 @@
 import { ref } from 'vue'
 import { invoke, Channel } from '@tauri-apps/api/core'
+import type { EditorView } from '@codemirror/view'
 import { useThreadStore } from '../stores/threadStore'
 import { useTabStore } from '../stores/tabStore'
 import type { StreamEvent } from '../types/chat'
@@ -8,6 +9,14 @@ import { appendStreamingText, emptyContent, sectionIsEmpty, setSectionPlainText 
 const isStreaming = ref(false)
 const streamingTabId = ref<string | null>(null)
 const streamingError = ref<string | null>(null)
+
+// Step-2 bridge: ThreadEditor registers its mounted CM view here so streamed
+// tokens can be reflected into the editor. Cleared on unmount and on tab
+// switch. Replaced in step 8 by a direct-dispatch pathway.
+let streamingCmView: EditorView | null = null
+export function setStreamingCmView(view: EditorView | null) {
+  streamingCmView = view
+}
 
 export function useStreaming() {
   const threadStore = useThreadStore()
@@ -45,6 +54,13 @@ export function useStreaming() {
       switch (event.kind) {
         case 'Token':
           appendStreamingText(agentSection, event.data.content)
+          if (streamingCmView && streamingTabId.value === tabStore.activeTabId) {
+            const view = streamingCmView
+            view.dispatch({
+              changes: { from: view.state.doc.length, insert: event.data.content },
+              scrollIntoView: true,
+            })
+          }
           break
         case 'Done':
           finishStreaming()
