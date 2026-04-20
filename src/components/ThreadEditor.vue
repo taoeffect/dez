@@ -5,16 +5,28 @@ import { EditorView, keymap } from '@codemirror/view'
 import { history, historyKeymap, defaultKeymap } from '@codemirror/commands'
 import { useThreadStore } from '../stores/threadStore'
 import { useTabStore } from '../stores/tabStore'
+import { useSettingsStore } from '../stores/settingsStore'
 import { useStreaming, setStreamingCmView } from '../composables/useStreaming'
-import { sectionIsEmpty, setSectionPlainText } from '../types/content'
+import { sectionIsEmpty } from '../types/content'
 import {
+  SECTION_SEP,
   buildInitialDoc,
   dezLanguageSupport,
   dezTheme,
+  docToSections,
+  initialSectionModels,
+  roleSeparatorMouseHandler,
+  roleSeparators,
+  sectionsField,
+  setSectionsEffect,
+  setShowSeparatorsEffect,
+  showSeparatorsField,
+  splitSectionEffect,
 } from './cmEditor'
 
 const store = useThreadStore()
 const tabStore = useTabStore()
+const settings = useSettingsStore()
 const { isStreaming, streamingTabId, streamingError, startStreaming, stopStreaming } = useStreaming()
 
 const hostRef = ref<HTMLDivElement | null>(null)
@@ -30,18 +42,24 @@ const showThinking = computed(() => {
   return last?.role === 'agent' && sectionIsEmpty(last)
 })
 
-/** Flatten CM doc back into a specific tab's `sections[0]` as plain text. */
+/** Count RS occurrences in [0, pos) so we know which section the cursor is in. */
+function sectionIndexAtPos(doc: string, pos: number): number {
+  let n = 0
+  for (let i = 0; i < pos && i < doc.length; i++) {
+    if (doc.charCodeAt(i) === 0x1e) n++
+  }
+  return n
+}
+
+/** Flatten CM doc back into the given tab's `sections[]` using the live
+ *  sectionsField for id + role preservation. */
 function syncDocToTab(tabId: string) {
   if (!view) return
-  const text = view.state.doc.toString()
   const tab = tabStore.tabs.find((t) => t.id === tabId)
   if (!tab) return
-  const first = tab.sections[0]
-  if (!first) return
-  setSectionPlainText(first, text)
-  if (tab.sections.length > 1) {
-    tab.sections.splice(1, tab.sections.length - 1)
-  }
+  const models = view.state.field(sectionsField)
+  const sections = docToSections(view.state.doc.toString(), models)
+  tab.sections.splice(0, tab.sections.length, ...sections)
   tabStore.autoTitle(tabId)
 }
 
@@ -50,6 +68,7 @@ function syncDocToStore() {
 }
 
 function buildState(): EditorState {
+  const models = initialSectionModels(store.sections)
   const submitKeymap = Prec.high(
     keymap.of([
       {
@@ -65,11 +84,14 @@ function buildState(): EditorState {
         key: 'Shift-Enter',
         preventDefault: true,
         run: (v) => {
-          // Step 2 stub: plain newline. Real section split lands in step 3.
           const { from, to } = v.state.selection.main
+          const doc = v.state.doc.toString()
+          const afterIndex = sectionIndexAtPos(doc, from)
+          const insert = `\n${SECTION_SEP}\n`
           v.dispatch({
-            changes: { from, to, insert: '\n' },
-            selection: { anchor: from + 1 },
+            changes: { from, to, insert },
+            selection: { anchor: from + insert.length },
+            effects: splitSectionEffect.of({ afterIndex }),
             scrollIntoView: true,
           })
           return true
@@ -81,6 +103,10 @@ function buildState(): EditorState {
   return EditorState.create({
     doc: buildInitialDoc(store.sections),
     extensions: [
+      sectionsField.init(() => models),
+      showSeparatorsField.init(() => settings.showPillSeparators),
+      roleSeparators,
+      roleSeparatorMouseHandler,
       history(),
       submitKeymap,
       keymap.of([...defaultKeymap, ...historyKeymap]),
@@ -120,9 +146,6 @@ onBeforeUnmount(() => {
 })
 
 // Rebuild state when the active tab changes — the CM doc is per-tab.
-// Sync the previous tab's doc back to its sections BEFORE swapping so edits
-// are not lost (the watcher fires after `activeTabId` has already updated,
-// so we capture the previous id from the watcher args).
 watch(
   () => tabStore.activeTabId,
   (_newId, oldId) => {
@@ -141,6 +164,32 @@ watch(
     if (prevStreaming && !streaming) {
       nextTick(() => resetViewToActiveTab())
     }
+  },
+)
+
+// External role toggles (from elsewhere) and separator-visibility toggle.
+watch(
+  () => settings.showPillSeparators,
+  (v) => {
+    if (view) view.dispatch({ effects: setShowSeparatorsEffect.of(v) })
+  },
+)
+
+// If the active tab's sections change identity list from elsewhere (e.g.
+// streaming appended a new agent section on this tab while mounted),
+// mirror that into sectionsField so ids + roles stay aligned.
+watch(
+  () => store.sections.map((s) => `${s.id}:${s.role}`).join('|'),
+  () => {
+    if (!view) return
+    const models = initialSectionModels(store.sections)
+    // Only dispatch if the model list differs from the current one.
+    const current = view.state.field(sectionsField)
+    const same =
+      current.length === models.length &&
+      current.every((m, i) => m.id === models[i].id && m.role === models[i].role)
+    if (same) return
+    view.dispatch({ effects: setSectionsEffect.of(models) })
   },
 )
 </script>
