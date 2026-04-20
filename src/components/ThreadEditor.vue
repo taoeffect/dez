@@ -14,7 +14,12 @@ import {
   dezLanguageSupport,
   dezTheme,
   docToSections,
+  initialPillMetadata,
   initialSectionModels,
+  pillsField,
+  promptAtomicRanges,
+  promptPillMouseHandler,
+  promptPills,
   roleSeparatorMouseHandler,
   roleSeparators,
   sectionsField,
@@ -58,7 +63,8 @@ function syncDocToTab(tabId: string) {
   const tab = tabStore.tabs.find((t) => t.id === tabId)
   if (!tab) return
   const models = view.state.field(sectionsField)
-  const sections = docToSections(view.state.doc.toString(), models)
+  const meta = view.state.field(pillsField)
+  const sections = docToSections(view.state.doc.toString(), models, meta)
   tab.sections.splice(0, tab.sections.length, ...sections)
   tabStore.autoTitle(tabId)
 }
@@ -69,6 +75,7 @@ function syncDocToStore() {
 
 function buildState(): EditorState {
   const models = initialSectionModels(store.sections)
+  const pillMeta = initialPillMetadata(store.sections)
   const submitKeymap = Prec.high(
     keymap.of([
       {
@@ -105,8 +112,12 @@ function buildState(): EditorState {
     extensions: [
       sectionsField.init(() => models),
       showSeparatorsField.init(() => settings.showPillSeparators),
+      pillsField.init(() => pillMeta),
       roleSeparators,
       roleSeparatorMouseHandler,
+      promptPills,
+      promptAtomicRanges,
+      promptPillMouseHandler,
       history(),
       submitKeymap,
       keymap.of([...defaultKeymap, ...historyKeymap]),

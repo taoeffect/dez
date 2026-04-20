@@ -3,13 +3,20 @@ import { markdown } from '@codemirror/lang-markdown'
 import { Decoration, EditorView, WidgetType, type DecorationSet } from '@codemirror/view'
 import { StateEffect, StateField, type Extension, type Transaction } from '@codemirror/state'
 import { tags as t } from '@lezer/highlight'
-import type { Role, Section } from '../types/chat'
-import { sectionPlainText, textNode } from '../types/content'
+import type { ContentNode, Role, Section } from '../types/chat'
+import { normalizeContent, textNode } from '../types/content'
 
 /** ASCII Record Separator; never typeable, never on-disk, used in-buffer to
  *  encode a section boundary. The char sits alone on its own line and the
  *  whole line is replaced with a block widget (the role separator pill). */
 export const SECTION_SEP = '\u001E'
+
+/** Private-use codepoints that bracket a prompt pill in the buffer:
+ *  `PILL_OPEN<id>PILL_BODY<body>PILL_CLOSE`. The whole marker sequence is
+ *  replaced with a single atomic widget (collapsed pill in STEP-4). */
+export const PILL_OPEN = '\u{E000}'
+export const PILL_BODY = '\u{E001}'
+export const PILL_CLOSE = '\u{E002}'
 
 /** Lightweight mirror of a Section kept in the CM state. The CM doc is the
  *  source of truth for text; this field just tracks per-section identity
@@ -19,17 +26,56 @@ export interface SectionModel {
   role: Role
 }
 
+/** Metadata for a prompt pill, keyed by the in-doc pill id. The doc carries
+ *  only the pill id + body text; name / promptId / expanded live here. */
+export interface PillMetadata {
+  promptId: string | null
+  name: string
+  expanded: boolean
+}
+
 /** Produce `{ id, role }` for each section to seed `sectionsField`. */
 export function initialSectionModels(sections: Section[]): SectionModel[] {
   if (sections.length === 0) return [{ id: crypto.randomUUID(), role: 'user' }]
   return sections.map((s) => ({ id: s.id, role: s.role }))
 }
 
-/** Encode `Section[]` as a single string: section plain text joined with
+/** Walk all sections and collect the per-pill metadata map to seed
+ *  `pillsField`. */
+export function initialPillMetadata(sections: Section[]): Map<string, PillMetadata> {
+  const m = new Map<string, PillMetadata>()
+  for (const s of sections) {
+    for (const n of s.content) {
+      if (n.kind === 'prompt') {
+        m.set(n.id, { promptId: n.promptId, name: n.name, expanded: n.expanded })
+      }
+    }
+  }
+  return m
+}
+
+/** Encode a single prompt pill as the `OPEN id BODY body CLOSE` marker
+ *  sequence. */
+export function encodePrompt(id: string, body: string): string {
+  return PILL_OPEN + id + PILL_BODY + body + PILL_CLOSE
+}
+
+/** Encode a section's content nodes as a single string: text nodes verbatim,
+ *  prompt nodes as marker sequences. */
+export function encodeSection(section: Section): string {
+  let out = ''
+  for (const n of section.content) {
+    if (n.kind === 'text') out += n.text
+    else out += encodePrompt(n.id, n.body)
+  }
+  return out
+}
+
+/** Encode `Section[]` as a single string: encoded sections joined with
  *  `\n\u001E\n`. No trailing separator (streaming appends to the end). */
 export function sectionsToDoc(sections: Section[]): string {
   if (sections.length === 0) return ''
-  return sections.map(sectionPlainText).join(`\n${SECTION_SEP}\n`)
+  return sections.map(encodeSection).join(`\n${SECTION_SEP}\n`)
 }
 
 /** Split a doc string into per-section text fragments by `\u001E`. The
@@ -48,18 +94,101 @@ export function splitDocBySeparator(doc: string): string[] {
   return out
 }
 
+export interface PillLocation {
+  id: string
+  from: number
+  bodyFrom: number
+  bodyTo: number
+  to: number
+}
+
+/** Scan a string for well-formed prompt marker sequences. Malformed
+ *  sequences (missing BODY or CLOSE, or a nested OPEN) are silently skipped
+ *  so CM never crashes on partial edits. */
+export function scanPills(doc: string): PillLocation[] {
+  const out: PillLocation[] = []
+  let i = 0
+  while (i < doc.length) {
+    if (doc[i] !== PILL_OPEN) { i++; continue }
+    const from = i
+    // find BODY marker; abort if we hit another OPEN / CLOSE first
+    let j = from + 1
+    let bodyAt = -1
+    while (j < doc.length) {
+      const c = doc[j]
+      if (c === PILL_OPEN || c === PILL_CLOSE) break
+      if (c === PILL_BODY) { bodyAt = j; break }
+      j++
+    }
+    if (bodyAt < 0) { i = from + 1; continue }
+    // find CLOSE; abort on nested OPEN
+    let k = bodyAt + 1
+    let closeAt = -1
+    while (k < doc.length) {
+      const c = doc[k]
+      if (c === PILL_OPEN) break
+      if (c === PILL_CLOSE) { closeAt = k; break }
+      k++
+    }
+    if (closeAt < 0) { i = from + 1; continue }
+    const id = doc.slice(from + 1, bodyAt)
+    if (id.length === 0) { i = from + 1; continue }
+    out.push({
+      id,
+      from,
+      bodyFrom: bodyAt + 1,
+      bodyTo: closeAt,
+      to: closeAt + 1,
+    })
+    i = closeAt + 1
+  }
+  return out
+}
+
+/** Decode a section fragment into interleaved text + prompt content nodes.
+ *  Metadata (name / promptId / expanded) is looked up in `pillsMeta` by id;
+ *  missing metadata degrades to empty name / null promptId / collapsed. */
+function decodeSectionContent(
+  fragment: string,
+  pillsMeta: Map<string, PillMetadata>,
+): ContentNode[] {
+  const pills = scanPills(fragment)
+  if (pills.length === 0) return normalizeContent([textNode(fragment)])
+  const out: ContentNode[] = []
+  let cursor = 0
+  for (const p of pills) {
+    out.push(textNode(fragment.slice(cursor, p.from)))
+    const meta = pillsMeta.get(p.id)
+    out.push({
+      kind: 'prompt',
+      id: p.id,
+      promptId: meta?.promptId ?? null,
+      name: meta?.name ?? '',
+      body: fragment.slice(p.bodyFrom, p.bodyTo),
+      expanded: meta?.expanded ?? false,
+    })
+    cursor = p.to
+  }
+  out.push(textNode(fragment.slice(cursor)))
+  return normalizeContent(out)
+}
+
 /** Reconstruct a `Section[]` for the store given the current doc and the
  *  live `SectionModel[]` (for id + role preservation). When the field got
  *  out of sync (e.g. raw deletion of a separator), we truncate / pad with
  *  default user roles to match the fragment count. */
-export function docToSections(doc: string, models: SectionModel[]): Section[] {
+export function docToSections(
+  doc: string,
+  models: SectionModel[],
+  pillsMeta: Map<string, PillMetadata>,
+): Section[] {
   const fragments = splitDocBySeparator(doc)
   return fragments.map((text, i) => {
     const model = models[i] ?? { id: crypto.randomUUID(), role: 'user' as Role }
     return {
       id: model.id,
       role: model.role,
-      content: [textNode(text)],
+      content: decodeSectionContent(text, pillsMeta),
     }
   })
 }
@@ -81,6 +210,13 @@ export const splitSectionEffect = StateEffect.define<{
 }>()
 export const setSectionsEffect = StateEffect.define<SectionModel[]>()
 export const setShowSeparatorsEffect = StateEffect.define<boolean>()
+
+export const setPillsEffect = StateEffect.define<Map<string, PillMetadata>>()
+export const updatePillMetaEffect = StateEffect.define<{
+  id: string
+  patch: Partial<PillMetadata>
+}>()
+export const togglePillExpandedEffect = StateEffect.define<{ id: string }>()
 
 /* ──────────────────────  sectionsField  ─────────────────────── */
 
@@ -136,6 +272,47 @@ export const showSeparatorsField = StateField.define<boolean>({
       if (e.is(setShowSeparatorsEffect)) return e.value
     }
     return value
+  },
+})
+
+/* ──────────────────────────  pillsField  ───────────────────── */
+
+export const pillsField = StateField.define<Map<string, PillMetadata>>({
+  create: () => new Map(),
+  update(value, tr) {
+    let next = value
+    for (const e of tr.effects) {
+      if (e.is(setPillsEffect)) {
+        next = new Map(e.value)
+      } else if (e.is(updatePillMetaEffect)) {
+        const cur = next.get(e.value.id)
+        if (cur) {
+          const copy = new Map(next)
+          copy.set(e.value.id, { ...cur, ...e.value.patch })
+          next = copy
+        }
+      } else if (e.is(togglePillExpandedEffect)) {
+        const cur = next.get(e.value.id)
+        if (cur) {
+          const copy = new Map(next)
+          copy.set(e.value.id, { ...cur, expanded: !cur.expanded })
+          next = copy
+        }
+      }
+    }
+    if (tr.docChanged) {
+      const liveIds = new Set(scanPills(tr.newDoc.toString()).map((p) => p.id))
+      let needsPrune = false
+      for (const k of next.keys()) {
+        if (!liveIds.has(k)) { needsPrune = true; break }
+      }
+      if (needsPrune) {
+        const pruned = new Map<string, PillMetadata>()
+        for (const [k, v] of next) if (liveIds.has(k)) pruned.set(k, v)
+        next = pruned
+      }
+    }
+    return next
   },
 })
 
@@ -234,6 +411,91 @@ export const roleSeparatorMouseHandler = EditorView.domEventHandlers({
   },
 })
 
+/* ──────────────────────  Prompt pill widget  ───────────────── */
+
+class PromptPillWidget extends WidgetType {
+  constructor(
+    readonly pillId: string,
+    readonly name: string,
+    readonly expanded: boolean,
+  ) {
+    super()
+  }
+  eq(other: WidgetType): boolean {
+    return (
+      other instanceof PromptPillWidget &&
+      other.pillId === this.pillId &&
+      other.name === this.name &&
+      other.expanded === this.expanded
+    )
+  }
+  toDOM(): HTMLElement {
+    const el = document.createElement('span')
+    el.className = 'dez-prompt-pill'
+    el.setAttribute('data-pill-id', this.pillId)
+    el.setAttribute('data-expanded', this.expanded ? '1' : '0')
+    const caret = document.createElement('span')
+    caret.className = 'dez-prompt-pill__caret'
+    caret.textContent = this.expanded ? '▼' : '▶'
+    const label = document.createElement('span')
+    label.className = 'dez-prompt-pill__name'
+    label.textContent = this.name || '(unnamed)'
+    el.appendChild(caret)
+    el.appendChild(document.createTextNode(' '))
+    el.appendChild(label)
+    return el
+  }
+  ignoreEvent(): boolean {
+    return false
+  }
+}
+
+/** Build a decoration set with one `Decoration.replace` per prompt marker
+ *  sequence, rendering the collapsed pill widget. STEP-4 always renders
+ *  collapsed regardless of `meta.expanded`; STEP-5 will branch on it. */
+function buildPromptDecorations(
+  doc: string,
+  meta: Map<string, PillMetadata>,
+): DecorationSet {
+  const pills = scanPills(doc)
+  if (pills.length === 0) return Decoration.none
+  const ranges = pills.map((p) => {
+    const m = meta.get(p.id)
+    return Decoration.replace({
+      widget: new PromptPillWidget(p.id, m?.name ?? '', false),
+      inclusive: false,
+    }).range(p.from, p.to)
+  })
+  return Decoration.set(ranges, true)
+}
+
+export const promptPills = EditorView.decorations.compute(
+  [pillsField, 'doc'],
+  (state) => buildPromptDecorations(state.doc.toString(), state.field(pillsField)),
+)
+
+/** Make the full marker sequence an atomic unit for caret motion, selection
+ *  extension, and delete operations. */
+export const promptAtomicRanges = EditorView.atomicRanges.of((view) =>
+  buildPromptDecorations(view.state.doc.toString(), view.state.field(pillsField)),
+)
+
+/** Click handler: toggle the `expanded` flag in `pillsField`. STEP-4 doesn't
+ *  change the rendering based on this flag yet — STEP-5 lights it up. */
+export const promptPillMouseHandler = EditorView.domEventHandlers({
+  mousedown(event, view) {
+    const target = event.target as HTMLElement | null
+    if (!target) return false
+    const pill = target.closest('.dez-prompt-pill') as HTMLElement | null
+    if (!pill) return false
+    const id = pill.getAttribute('data-pill-id')
+    if (!id) return false
+    event.preventDefault()
+    view.dispatch({ effects: togglePillExpandedEffect.of({ id }) })
+    return true
+  },
+})
+
 /* ───────────────────────  Theme / language  ──────────────────── */
 
 export function buildInitialDoc(sections: Section[]): string {
@@ -306,6 +568,28 @@ export const dezTheme = EditorView.theme({
   '.dez-role-separator[data-role="agent"] .dez-role-separator__label': {
     color: 'var(--color-link, #4a9eff)',
     borderColor: 'var(--color-link, #4a9eff)',
+  },
+  '.dez-prompt-pill': {
+    display: 'inline-flex',
+    alignItems: 'center',
+    gap: '4px',
+    padding: '1px 8px',
+    margin: '0 1px',
+    borderRadius: '999px',
+    border: '1px solid var(--color-border, #333)',
+    background: 'var(--color-bg-subtle, rgba(127,127,127,0.08))',
+    color: 'var(--color-link, #4a9eff)',
+    cursor: 'pointer',
+    userSelect: 'none',
+    fontFamily:
+      "ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif",
+    fontSize: '12px',
+    lineHeight: '1.4',
+    verticalAlign: 'baseline',
+  },
+  '.dez-prompt-pill__caret': {
+    fontSize: '9px',
+    opacity: '0.8',
   },
 })
 
