@@ -1,3 +1,4 @@
+pub mod chat_protocol;
 pub mod copilot;
 pub mod minimax;
 pub mod openrouter;
@@ -5,8 +6,7 @@ pub mod venice;
 pub mod zai;
 
 use async_trait::async_trait;
-use futures::StreamExt;
-use serde::{Deserialize, Serialize};
+use serde::Serialize;
 use tokio::sync::mpsc;
 
 #[derive(Debug, Clone, Serialize)]
@@ -139,75 +139,4 @@ impl ProviderRegistry {
 
         data
     }
-}
-
-#[derive(Debug, Deserialize)]
-pub struct SseDelta {
-    pub content: Option<String>,
-}
-
-#[derive(Debug, Deserialize)]
-pub struct SseChoice {
-    pub delta: Option<SseDelta>,
-}
-
-#[derive(Debug, Deserialize)]
-pub struct SseChunk {
-    pub choices: Option<Vec<SseChoice>>,
-}
-
-pub async fn stream_openai_sse(
-    resp: reqwest::Response,
-    tx: mpsc::UnboundedSender<StreamEvent>,
-) {
-    let mut stream = resp.bytes_stream();
-    let mut buffer = String::new();
-
-    while let Some(chunk) = stream.next().await {
-        let chunk = match chunk {
-            Ok(c) => c,
-            Err(e) => {
-                let _ = tx.send(StreamEvent::Error {
-                    message: format!("Stream error: {}", e),
-                });
-                return;
-            }
-        };
-
-        buffer.push_str(&String::from_utf8_lossy(&chunk));
-
-        while let Some(line_end) = buffer.find('\n') {
-            let line = buffer[..line_end].trim().to_string();
-            buffer = buffer[line_end + 1..].to_string();
-
-            if line.is_empty() || line.starts_with(':') {
-                continue;
-            }
-
-            if let Some(data) = line.strip_prefix("data: ") {
-                if data.trim() == "[DONE]" {
-                    let _ = tx.send(StreamEvent::Done);
-                    return;
-                }
-
-                if let Ok(chunk) = serde_json::from_str::<SseChunk>(data) {
-                    if let Some(choices) = chunk.choices {
-                        for choice in choices {
-                            if let Some(delta) = choice.delta {
-                                if let Some(content) = delta.content {
-                                    if !content.is_empty() {
-                                        let _ = tx.send(StreamEvent::Token {
-                                            content,
-                                        });
-                                    }
-                                }
-                            }
-                        }
-                    }
-                }
-            }
-        }
-    }
-
-    let _ = tx.send(StreamEvent::Done);
 }

@@ -2,7 +2,7 @@ use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
 use tokio::sync::mpsc;
 
-use super::{ChatMessage, LlmProvider, ModelInfo, ProviderError, StreamEvent, stream_openai_sse};
+use super::{chat_protocol::OpenAiChatClient, ChatMessage, LlmProvider, ModelInfo, ProviderError, StreamEvent};
 
 const GITHUB_DEVICE_CODE_URL: &str = "https://github.com/login/device/code";
 const GITHUB_TOKEN_URL: &str = "https://github.com/login/oauth/access_token";
@@ -212,39 +212,20 @@ impl LlmProvider for CopilotProvider {
                 "Copilot token not available. Please re-authenticate.".into(),
             ))?;
 
-        let body = serde_json::json!({
-            "model": model,
-            "messages": messages.iter().map(|m| serde_json::json!({
-                "role": if m.role == "agent" { "assistant" } else { &m.role },
-                "content": m.content,
-            })).collect::<Vec<_>>(),
-            "stream": true,
-        });
-
-        let resp = self
-            .client
-            .post(COPILOT_CHAT_URL)
-            .header("Authorization", format!("Bearer {}", copilot_token))
-            .header("Content-Type", "application/json")
-            .header("Editor-Version", "vscode/1.97.2")
-            .header("Editor-Plugin-Version", "copilot-chat/0.24.2")
-            .header("User-Agent", "GitHubCopilotChat/0.24.2")
-            .header("Copilot-Integration-Id", "vscode-chat")
-            .json(&body)
-            .send()
-            .await?;
-
-        if !resp.status().is_success() {
-            let status = resp.status();
-            let text = resp.text().await.unwrap_or_default();
-            let _ = tx.send(StreamEvent::Error {
-                message: format!("API error {}: {}", status, text),
-            });
-            return Ok(());
-        }
-
-        stream_openai_sse(resp, tx).await;
-        Ok(())
+        OpenAiChatClient::new(&self.client, COPILOT_CHAT_URL)
+            .stream_chat(
+                copilot_token,
+                &messages,
+                model,
+                &[
+                    ("Editor-Version", "vscode/1.97.2"),
+                    ("Editor-Plugin-Version", "copilot-chat/0.24.2"),
+                    ("User-Agent", "GitHubCopilotChat/0.24.2"),
+                    ("Copilot-Integration-Id", "vscode-chat"),
+                ],
+                tx,
+            )
+            .await
     }
 
     fn get_api_key(&self) -> Option<String> {

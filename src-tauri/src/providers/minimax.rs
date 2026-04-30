@@ -1,9 +1,9 @@
 use async_trait::async_trait;
 use tokio::sync::mpsc;
 
-use super::{ChatMessage, LlmProvider, ModelInfo, ProviderError, StreamEvent, stream_openai_sse};
+use super::{chat_protocol::AnthropicChatClient, ChatMessage, LlmProvider, ModelInfo, ProviderError, StreamEvent};
 
-const MINIMAX_API_BASE: &str = "https://api.minimax.io/v1";
+const MINIMAX_ANTHROPIC_MESSAGES_URL: &str = "https://api.minimax.io/anthropic/v1/messages";
 
 pub struct MiniMaxProvider {
     api_key: Option<String>,
@@ -43,10 +43,12 @@ impl LlmProvider for MiniMaxProvider {
         }
         Ok(vec![
             ModelInfo { id: "MiniMax-M2.7".into(), name: "MiniMax M2.7".into(), provider: "minimax".into() },
+            ModelInfo { id: "MiniMax-M2.7-highspeed".into(), name: "MiniMax M2.7 Highspeed".into(), provider: "minimax".into() },
             ModelInfo { id: "MiniMax-M2.5".into(), name: "MiniMax M2.5".into(), provider: "minimax".into() },
+            ModelInfo { id: "MiniMax-M2.5-highspeed".into(), name: "MiniMax M2.5 Highspeed".into(), provider: "minimax".into() },
             ModelInfo { id: "MiniMax-M2.1".into(), name: "MiniMax M2.1".into(), provider: "minimax".into() },
+            ModelInfo { id: "MiniMax-M2.1-highspeed".into(), name: "MiniMax M2.1 Highspeed".into(), provider: "minimax".into() },
             ModelInfo { id: "MiniMax-M2".into(), name: "MiniMax M2".into(), provider: "minimax".into() },
-            ModelInfo { id: "MiniMax-M1".into(), name: "MiniMax M1".into(), provider: "minimax".into() },
         ])
     }
 
@@ -61,35 +63,9 @@ impl LlmProvider for MiniMaxProvider {
             .as_ref()
             .ok_or_else(|| ProviderError::NotConfigured("MiniMax API key not set".into()))?;
 
-        let body = serde_json::json!({
-            "model": model,
-            "messages": messages.iter().map(|m| serde_json::json!({
-                "role": if m.role == "agent" { "assistant" } else { &m.role },
-                "content": m.content,
-            })).collect::<Vec<_>>(),
-            "stream": true,
-        });
-
-        let resp = self
-            .client
-            .post(format!("{}/chat/completions", MINIMAX_API_BASE))
-            .header("Authorization", format!("Bearer {}", api_key))
-            .header("Content-Type", "application/json")
-            .json(&body)
-            .send()
-            .await?;
-
-        if !resp.status().is_success() {
-            let status = resp.status();
-            let text = resp.text().await.unwrap_or_default();
-            let _ = tx.send(StreamEvent::Error {
-                message: format!("API error {}: {}", status, text),
-            });
-            return Ok(());
-        }
-
-        stream_openai_sse(resp, tx).await;
-        Ok(())
+        AnthropicChatClient::new(&self.client, MINIMAX_ANTHROPIC_MESSAGES_URL)
+            .stream_chat(api_key, &messages, model, tx)
+            .await
     }
 
     fn get_api_key(&self) -> Option<String> {

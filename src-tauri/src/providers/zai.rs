@@ -1,7 +1,7 @@
 use async_trait::async_trait;
 use tokio::sync::mpsc;
 
-use super::{ChatMessage, LlmProvider, ModelInfo, ProviderError, StreamEvent, stream_openai_sse};
+use super::{chat_protocol::OpenAiChatClient, ChatMessage, LlmProvider, ModelInfo, ProviderError, StreamEvent};
 
 const ZAI_API_BASE: &str = "https://api.z.ai/api/coding/paas/v4";
 
@@ -62,35 +62,9 @@ impl LlmProvider for ZaiProvider {
             .as_ref()
             .ok_or_else(|| ProviderError::NotConfigured("Z.ai API key not set".into()))?;
 
-        let body = serde_json::json!({
-            "model": model,
-            "messages": messages.iter().map(|m| serde_json::json!({
-                "role": if m.role == "agent" { "assistant" } else { &m.role },
-                "content": m.content,
-            })).collect::<Vec<_>>(),
-            "stream": true,
-        });
-
-        let resp = self
-            .client
-            .post(format!("{}/chat/completions", ZAI_API_BASE))
-            .header("Authorization", format!("Bearer {}", api_key))
-            .header("Content-Type", "application/json")
-            .json(&body)
-            .send()
-            .await?;
-
-        if !resp.status().is_success() {
-            let status = resp.status();
-            let text = resp.text().await.unwrap_or_default();
-            let _ = tx.send(StreamEvent::Error {
-                message: format!("API error {}: {}", status, text),
-            });
-            return Ok(());
-        }
-
-        stream_openai_sse(resp, tx).await;
-        Ok(())
+        OpenAiChatClient::new(&self.client, format!("{}/chat/completions", ZAI_API_BASE))
+            .stream_chat(api_key, &messages, model, &[], tx)
+            .await
     }
 
     fn get_api_key(&self) -> Option<String> {

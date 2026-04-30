@@ -2,7 +2,7 @@ use async_trait::async_trait;
 use serde::Deserialize;
 use tokio::sync::mpsc;
 
-use super::{ChatMessage, LlmProvider, ModelInfo, ProviderError, StreamEvent, stream_openai_sse};
+use super::{chat_protocol::OpenAiChatClient, ChatMessage, LlmProvider, ModelInfo, ProviderError, StreamEvent};
 
 const OPENROUTER_API_BASE: &str = "https://openrouter.ai/api/v1";
 
@@ -86,35 +86,9 @@ impl LlmProvider for OpenRouterProvider {
             .as_ref()
             .ok_or_else(|| ProviderError::NotConfigured("OpenRouter API key not set".into()))?;
 
-        let body = serde_json::json!({
-            "model": model,
-            "messages": messages.iter().map(|m| serde_json::json!({
-                "role": if m.role == "agent" { "assistant" } else { &m.role },
-                "content": m.content,
-            })).collect::<Vec<_>>(),
-            "stream": true,
-        });
-
-        let resp = self
-            .client
-            .post(format!("{}/chat/completions", OPENROUTER_API_BASE))
-            .header("Authorization", format!("Bearer {}", api_key))
-            .header("Content-Type", "application/json")
-            .json(&body)
-            .send()
-            .await?;
-
-        if !resp.status().is_success() {
-            let status = resp.status();
-            let text = resp.text().await.unwrap_or_default();
-            let _ = tx.send(StreamEvent::Error {
-                message: format!("API error {}: {}", status, text),
-            });
-            return Ok(());
-        }
-
-        stream_openai_sse(resp, tx).await;
-        Ok(())
+        OpenAiChatClient::new(&self.client, format!("{}/chat/completions", OPENROUTER_API_BASE))
+            .stream_chat(api_key, &messages, model, &[], tx)
+            .await
     }
 
     fn get_api_key(&self) -> Option<String> {
