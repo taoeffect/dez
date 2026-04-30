@@ -1,6 +1,7 @@
 pub mod copilot;
 pub mod minimax;
 pub mod openrouter;
+pub mod venice;
 pub mod zai;
 
 use async_trait::async_trait;
@@ -88,6 +89,7 @@ impl ProviderRegistry {
                 Box::new(zai::ZaiProvider::new()),
                 Box::new(copilot::CopilotProvider::new()),
                 Box::new(minimax::MiniMaxProvider::new()),
+                Box::new(venice::VeniceProvider::new()),
             ],
         }
     }
@@ -121,6 +123,7 @@ impl ProviderRegistry {
                 "openrouter" => data.openrouter = ProviderCredentials { api_key: p.get_api_key() },
                 "zai" => data.zai = ProviderCredentials { api_key: p.get_api_key() },
                 "minimax" => data.minimax = ProviderCredentials { api_key: p.get_api_key() },
+                "venice" => data.venice = ProviderCredentials { api_key: p.get_api_key() },
                 "copilot" => {
                     if let Some(copilot) = p.as_any().downcast_ref::<copilot::CopilotProvider>() {
                         data.copilot = CopilotCredentials {

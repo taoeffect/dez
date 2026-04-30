@@ -26,6 +26,8 @@ pub struct KeyStoreData {
     #[serde(default)]
     pub minimax: ProviderCredentials,
     #[serde(default)]
+    pub venice: ProviderCredentials,
+    #[serde(default)]
     pub copilot: CopilotCredentials,
 }
 

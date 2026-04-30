@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed, onBeforeUnmount, onMounted, ref, watch, nextTick } from 'vue'
-import { EditorState, Prec } from '@codemirror/state'
+import { EditorSelection, EditorState, Prec } from '@codemirror/state'
 import { EditorView, keymap } from '@codemirror/view'
 import { history, historyKeymap, defaultKeymap } from '@codemirror/commands'
 import { useThreadStore } from '../stores/threadStore'
@@ -56,6 +56,59 @@ function sectionIndexAtPos(doc: string, pos: number): number {
   return n
 }
 
+function previousEditableLineInSection(state: EditorState, lineNumber: number) {
+  if (lineNumber <= 1) return null
+  const previous = state.doc.line(lineNumber - 1)
+  return previous.text === SECTION_SEP ? null : previous
+}
+
+function moveLineUpWithinSection(v: EditorView): boolean {
+  const { state } = v
+  const range = state.selection.main
+  if (!range.empty) {
+    v.dispatch({
+      selection: EditorSelection.cursor(range.from),
+      scrollIntoView: true,
+      userEvent: 'select',
+    })
+    return true
+  }
+
+  const currentLine = state.doc.lineAt(range.head)
+  const previousLine = previousEditableLineInSection(state, currentLine.number)
+  const moved = v.moveVertically(range, false)
+  const movedLine = state.doc.lineAt(moved.head)
+  if (moved.head < range.head) {
+    if (movedLine.number === currentLine.number) {
+      v.dispatch({
+        selection: EditorSelection.create([moved]),
+        scrollIntoView: true,
+        userEvent: 'select',
+      })
+      return true
+    }
+    if (previousLine && movedLine.number === previousLine.number) {
+      v.dispatch({
+        selection: EditorSelection.create([moved]),
+        scrollIntoView: true,
+        userEvent: 'select',
+      })
+      return true
+    }
+  }
+
+  if (!previousLine) return true
+
+  const column = range.head - currentLine.from
+  const target = previousLine.from + Math.min(column, previousLine.length)
+  v.dispatch({
+    selection: EditorSelection.cursor(target),
+    scrollIntoView: true,
+    userEvent: 'select',
+  })
+  return true
+}
+
 /** Flatten CM doc back into the given tab's `sections[]` using the live
  *  sectionsField for id + role preservation. */
 function syncDocToTab(tabId: string) {
@@ -78,6 +131,11 @@ function buildState(): EditorState {
   const pillMeta = initialPillMetadata(store.sections)
   const submitKeymap = Prec.high(
     keymap.of([
+      {
+        key: 'ArrowUp',
+        preventDefault: true,
+        run: moveLineUpWithinSection,
+      },
       {
         key: 'Mod-Enter',
         preventDefault: true,

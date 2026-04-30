@@ -44,10 +44,18 @@ export interface PillMetadata {
   expanded: boolean
 }
 
+function normalizeSectionModels(models: SectionModel[]): SectionModel[] {
+  if (models.length === 0) return [{ id: crypto.randomUUID(), role: 'user' }]
+  if (models[0].role === 'user') return models
+  const copy = models.slice()
+  copy[0] = { ...copy[0], role: 'user' }
+  return copy
+}
+
 /** Produce `{ id, role }` for each section to seed `sectionsField`. */
 export function initialSectionModels(sections: Section[]): SectionModel[] {
   if (sections.length === 0) return [{ id: crypto.randomUUID(), role: 'user' }]
-  return sections.map((s) => ({ id: s.id, role: s.role }))
+  return normalizeSectionModels(sections.map((s) => ({ id: s.id, role: s.role })))
 }
 
 /** Walk all sections and collect the per-pill metadata map to seed
@@ -198,7 +206,7 @@ export function docToSections(
     const model = models[i] ?? { id: crypto.randomUUID(), role: 'user' as Role }
     return {
       id: model.id,
-      role: model.role,
+      role: i === 0 ? 'user' : model.role,
       content: decodeSectionContent(text, pillsMeta),
     }
   })
@@ -233,13 +241,13 @@ export const togglePillExpandedEffect = StateEffect.define<{ id: string }>()
 
 function reconcileToDoc(models: SectionModel[], doc: string): SectionModel[] {
   const expected = countSeparators(doc) + 1
-  if (models.length === expected) return models
-  if (models.length > expected) return models.slice(0, expected)
+  if (models.length === expected) return normalizeSectionModels(models)
+  if (models.length > expected) return normalizeSectionModels(models.slice(0, expected))
   const padded = models.slice()
   while (padded.length < expected) {
     padded.push({ id: crypto.randomUUID(), role: 'user' })
   }
-  return padded
+  return normalizeSectionModels(padded)
 }
 
 export const sectionsField = StateField.define<SectionModel[]>({
@@ -250,7 +258,7 @@ export const sectionsField = StateField.define<SectionModel[]>({
       if (e.is(setSectionsEffect)) {
         next = e.value.slice()
       } else if (e.is(toggleRoleEffect)) {
-        if (e.value.index >= 0 && e.value.index < next.length) {
+        if (e.value.index > 0 && e.value.index < next.length) {
           const copy = next.slice()
           const old = copy[e.value.index]
           copy[e.value.index] = { ...old, role: old.role === 'user' ? 'agent' : 'user' }
@@ -270,7 +278,7 @@ export const sectionsField = StateField.define<SectionModel[]>({
     if (tr.docChanged) {
       next = reconcileToDoc(next, tr.newDoc.toString())
     }
-    return next
+    return normalizeSectionModels(next)
   },
 })
 
@@ -330,21 +338,23 @@ export const pillsField = StateField.define<Map<string, PillMetadata>>({
 /* ──────────────────────  Role separator widget  ─────────────── */
 
 class RoleSeparatorWidget extends WidgetType {
-  constructor(readonly index: number, readonly role: Role) {
+  constructor(readonly index: number, readonly role: Role, readonly fixed = false) {
     super()
   }
   eq(other: WidgetType): boolean {
     return (
       other instanceof RoleSeparatorWidget &&
       other.index === this.index &&
-      other.role === this.role
+      other.role === this.role &&
+      other.fixed === this.fixed
     )
   }
   toDOM(): HTMLElement {
     const el = document.createElement('div')
-    el.className = 'dez-role-separator'
+    el.className = this.fixed ? 'dez-role-separator dez-role-separator--fixed' : 'dez-role-separator'
     el.setAttribute('data-section-index', String(this.index))
     el.setAttribute('data-role', this.role)
+    if (this.fixed) el.setAttribute('data-fixed', '1')
     const label = document.createElement('span')
     label.className = 'dez-role-separator__label'
     label.textContent = this.role === 'user' ? 'User' : 'Agent'
@@ -365,8 +375,18 @@ function buildSeparatorDecorations(
   models: SectionModel[],
   show: boolean,
 ): DecorationSet {
-  if (!show) return Decoration.none
-  const ranges: { from: number; to: number; deco: Decoration }[] = []
+  const ranges: { from: number; to: number; deco: Decoration }[] = [
+    {
+      from: 0,
+      to: 0,
+      deco: Decoration.widget({
+        widget: new RoleSeparatorWidget(0, 'user', true),
+        block: true,
+        side: -1,
+      }),
+    },
+  ]
+  if (!show) return Decoration.set(ranges.map((b) => b.deco.range(b.from, b.to)), true)
   // The separator char `\u001E` sits alone on its own line. Only block-replace
   // when it actually is line-alone — if the user deletes a surrounding `\n`
   // and the RS joins an adjacent line, skip the block decoration (the next
@@ -410,8 +430,10 @@ export const roleSeparatorMouseHandler = EditorView.domEventHandlers({
   mousedown(event, view) {
     const target = event.target as HTMLElement | null
     if (!target) return false
-    const sep = target.closest('.dez-role-separator') as HTMLElement | null
-    if (!sep) return false
+    const label = target.closest('.dez-role-separator__label') as HTMLElement | null
+    if (!label) return false
+    const sep = label.closest('.dez-role-separator') as HTMLElement | null
+    if (!sep || sep.getAttribute('data-fixed') === '1') return false
     const idxStr = sep.getAttribute('data-section-index')
     if (!idxStr) return false
     const index = Number(idxStr)
@@ -561,7 +583,6 @@ export const dezTheme = EditorView.theme({
     alignItems: 'center',
     margin: '12px 0',
     padding: '0',
-    cursor: 'pointer',
     userSelect: 'none',
     color: 'var(--color-muted, #888)',
     fontSize: '11px',
@@ -575,6 +596,10 @@ export const dezTheme = EditorView.theme({
     borderRadius: '999px',
     border: '1px solid var(--color-border, #333)',
     background: 'var(--color-bg-subtle, rgba(127,127,127,0.08))',
+    cursor: 'pointer',
+  },
+  '.dez-role-separator--fixed .dez-role-separator__label': {
+    cursor: 'default',
   },
   '.dez-role-separator[data-role="agent"] .dez-role-separator__label': {
     color: 'var(--color-link, #4a9eff)',
