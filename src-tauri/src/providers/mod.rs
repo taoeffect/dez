@@ -1,3 +1,4 @@
+pub mod charm_hyper;
 pub mod chat_protocol;
 pub mod copilot;
 pub mod minimax;
@@ -90,6 +91,7 @@ impl ProviderRegistry {
                 Box::new(copilot::CopilotProvider::new()),
                 Box::new(minimax::MiniMaxProvider::new()),
                 Box::new(venice::VeniceProvider::new()),
+                Box::new(charm_hyper::CharmHyperProvider::new()),
             ],
         }
     }
@@ -124,6 +126,7 @@ impl ProviderRegistry {
                 "zai" => data.zai = ProviderCredentials { api_key: p.get_api_key() },
                 "minimax" => data.minimax = ProviderCredentials { api_key: p.get_api_key() },
                 "venice" => data.venice = ProviderCredentials { api_key: p.get_api_key() },
+                "charm_hyper" => data.charm_hyper = ProviderCredentials { api_key: p.get_api_key() },
                 "copilot" => {
                     if let Some(copilot) = p.as_any().downcast_ref::<copilot::CopilotProvider>() {
                         data.copilot = CopilotCredentials {

@@ -37,6 +37,11 @@ pub fn run() {
                 p.configure(api_key).await;
             }
         }
+        if let Some(api_key) = keys.charm_hyper.api_key {
+            if let Some(p) = registry.get_provider_mut("charm_hyper") {
+                p.configure(api_key).await;
+            }
+        }
         if let Some(github_token) = keys.copilot.github_token {
             if let Some(p) = registry.get_provider_mut("copilot") {
                 let copilot = p

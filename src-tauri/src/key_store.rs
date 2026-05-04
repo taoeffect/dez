@@ -28,6 +28,8 @@ pub struct KeyStoreData {
     #[serde(default)]
     pub venice: ProviderCredentials,
     #[serde(default)]
+    pub charm_hyper: ProviderCredentials,
+    #[serde(default)]
     pub copilot: CopilotCredentials,
 }
 
