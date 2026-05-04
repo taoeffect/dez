@@ -631,8 +631,10 @@ function serializePlainDocFragment(doc: string, from: number, to: number, models
     const c = doc[i]
     if (c === SECTION_SEP) {
       const role = sectionRoleForSeparator(doc, models, i)
+      if (out.endsWith('\n')) out = out.slice(0, -1)
       if (out.length > 0 && !out.endsWith('\n')) out += '\n'
       out += `<dez:pill type="${role}"/>\n`
+      if (i + 1 < to && doc[i + 1] === '\n') i++
     } else if (c === PILL_NL) {
       out += '\n'
     } else if (c !== PILL_OPEN && c !== PILL_BODY && c !== PILL_CLOSE) {
@@ -688,11 +690,13 @@ export function parseClipboardText(text: string): ParsedClipboardText {
   let cursor = 0
   for (const match of text.matchAll(marker)) {
     out += stripLiveSentinels(text.slice(cursor, match.index))
+    let nextCursor = (match.index ?? 0) + match[0].length
     if (match[1]) {
       const role = match[1] as Role
       if (out.length > 0 && !out.endsWith('\n')) out += '\n'
       out += `${SECTION_SEP}\n`
       separatorRoles.push(role)
+      if (text[nextCursor] === '\n') nextCursor++
     } else {
       const id = crypto.randomUUID()
       const name = unescapePromptName(match[2] ?? '')
@@ -703,7 +707,7 @@ export function parseClipboardText(text: string): ParsedClipboardText {
       out += encodePrompt(id, body, true)
       pills.set(id, { promptId: null, name, expanded: false })
     }
-    cursor = (match.index ?? 0) + match[0].length
+    cursor = nextCursor
   }
   out += stripLiveSentinels(text.slice(cursor))
   return { text: out, pills, separatorRoles }
