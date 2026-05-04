@@ -41,18 +41,24 @@ const displayName = computed(() => {
 })
 
 const filteredGrouped = computed<GroupedModels[]>(() => {
-  const q = searchQuery.value.toLowerCase()
+  const q = searchQuery.value.trim().toLowerCase()
   const groups: GroupedModels[] = []
 
-  const matches = (m: ModelInfo) =>
-    !q || m.name.toLowerCase().includes(q) || m.id.toLowerCase().includes(q)
+  const providerById = new Map(providers.value.map((provider) => [provider.id, provider]))
+  const providerMatches = (provider: ProviderInfo) =>
+    !q || provider.name.toLowerCase().includes(q) || provider.id.toLowerCase().includes(q)
+  const modelMatches = (m: ModelInfo, provider: ProviderInfo | undefined) =>
+    !q ||
+    m.name.toLowerCase().includes(q) ||
+    m.id.toLowerCase().includes(q) ||
+    (provider ? providerMatches(provider) : m.provider.toLowerCase().includes(q))
 
   const favModels: ModelInfo[] = []
   for (const fav of settingsStore.favorites) {
     const m = allModels.value.find(
       (x) => x.provider === fav.providerId && x.id === fav.modelId,
     )
-    if (m && matches(m)) favModels.push(m)
+    if (m && modelMatches(m, providerById.get(m.provider))) favModels.push(m)
   }
   if (favModels.length > 0) {
     groups.push({ providerId: '__favorites__', providerName: 'Favorites', models: favModels })
@@ -60,9 +66,10 @@ const filteredGrouped = computed<GroupedModels[]>(() => {
 
   for (const provider of providers.value) {
     if (!provider.configured) continue
+    const matchesProvider = providerMatches(provider)
     const models = allModels.value
       .filter((m) => m.provider === provider.id)
-      .filter(matches)
+      .filter((m) => matchesProvider || modelMatches(m, provider))
     if (models.length > 0) {
       groups.push({ providerId: provider.id, providerName: provider.name, models })
     }
