@@ -40,18 +40,43 @@ const displayName = computed(() => {
   return 'Select model'
 })
 
+function normalizeSearchText(value: string) {
+  return value.toLowerCase().replace(/[^a-z0-9]+/g, ' ').trim()
+}
+
+function fuzzyIncludes(text: string, query: string) {
+  let queryIndex = 0
+  for (let textIndex = 0; textIndex < text.length && queryIndex < query.length; textIndex += 1) {
+    if (text[textIndex] === query[queryIndex]) queryIndex += 1
+  }
+  return queryIndex === query.length
+}
+
+function fieldMatches(fields: string[], queryTerms: string[]) {
+  if (!queryTerms.length) return true
+  const normalizedFields = fields.map(normalizeSearchText).filter(Boolean)
+  const combined = normalizedFields.join(' ')
+
+  return queryTerms.every((term) =>
+    normalizedFields.some((field) => field.includes(term) || fuzzyIncludes(field, term)) ||
+    combined.includes(term) ||
+    fuzzyIncludes(combined, term),
+  )
+}
+
 const filteredGrouped = computed<GroupedModels[]>(() => {
-  const q = searchQuery.value.trim().toLowerCase()
+  const queryTerms = normalizeSearchText(searchQuery.value).split(/\s+/).filter(Boolean)
   const groups: GroupedModels[] = []
 
   const providerById = new Map(providers.value.map((provider) => [provider.id, provider]))
   const providerMatches = (provider: ProviderInfo) =>
-    !q || provider.name.toLowerCase().includes(q) || provider.id.toLowerCase().includes(q)
-  const modelMatches = (m: ModelInfo, provider: ProviderInfo | undefined) =>
-    !q ||
-    m.name.toLowerCase().includes(q) ||
-    m.id.toLowerCase().includes(q) ||
-    (provider ? providerMatches(provider) : m.provider.toLowerCase().includes(q))
+    fieldMatches([provider.name, provider.id], queryTerms)
+  const modelMatches = (m: ModelInfo, provider: ProviderInfo | undefined) => {
+    const fields = provider
+      ? [provider.name, provider.id, m.name, m.id]
+      : [m.provider, m.name, m.id]
+    return fieldMatches(fields, queryTerms)
+  }
 
   const favModels: ModelInfo[] = []
   for (const fav of settingsStore.favorites) {
