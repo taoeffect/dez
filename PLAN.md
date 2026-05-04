@@ -20,8 +20,8 @@ Each step represents a task (per the `tasks` skill) that is to be done. (e.g. th
 - [x] 12. Provider Key Persistence (`provider-keys`)
 - [x] 13. Local Persistence (`persistence`)
 - [x] 14. Favorite Models (`favorite-models`)
-- [ ] 15. Editor Selection Re-architecture (`bugfix`)
-- [ ] 16. Saved Prompts (`saved-prompts`)
+- [x] 15. Editor Selection Re-architecture (`bugfix`)
+- [x] 16. Saved Prompts (`saved-prompts-2`)
 - [ ] 17. Conversation History Browser (`history`)
 - [ ] 18. Polish & Cross-Platform (`polish`)
 

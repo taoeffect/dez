@@ -6,11 +6,14 @@ import { history, historyKeymap, defaultKeymap } from '@codemirror/commands'
 import { useThreadStore } from '../stores/threadStore'
 import { useTabStore } from '../stores/tabStore'
 import { useSettingsStore } from '../stores/settingsStore'
+import { usePromptsStore, type Prompt } from '../stores/promptsStore'
 import { useStreaming, setStreamingCmView } from '../composables/useStreaming'
 import { sectionIsEmpty } from '../types/content'
+import PromptAutocomplete from './PromptAutocomplete.vue'
 import {
   SECTION_SEP,
   buildInitialDoc,
+  encodePrompt,
   dezLanguageSupport,
   dezTheme,
   docToSections,
@@ -18,11 +21,14 @@ import {
   initialSectionModels,
   pillsField,
   promptAtomicRanges,
+  parseClipboardText,
   promptPillMouseHandler,
   promptPills,
   roleSeparatorMouseHandler,
   roleSeparators,
   sectionsField,
+  serializeDocRangeForClipboard,
+  setPillsEffect,
   setSectionsEffect,
   setShowSeparatorsEffect,
   showSeparatorsField,
@@ -32,10 +38,20 @@ import {
 const store = useThreadStore()
 const tabStore = useTabStore()
 const settings = useSettingsStore()
+const promptsStore = usePromptsStore()
 const { isStreaming, streamingTabId, streamingError, startStreaming, stopStreaming } = useStreaming()
 
 const hostRef = ref<HTMLDivElement | null>(null)
 let view: EditorView | null = null
+let pendingPersist: ReturnType<typeof setTimeout> | null = null
+
+const autocompleteOpen = ref(false)
+const autocompleteQuery = ref('')
+const autocompleteFrom = ref(0)
+const autocompleteTo = ref(0)
+const autocompleteX = ref(0)
+const autocompleteY = ref(0)
+const autocompleteSelectedIndex = ref(0)
 
 const isActiveTabStreaming = computed(
   () => isStreaming.value && streamingTabId.value === tabStore.activeTabId,
@@ -45,6 +61,13 @@ const showThinking = computed(() => {
   if (!isActiveTabStreaming.value) return false
   const last = store.sections[store.sections.length - 1]
   return last?.role === 'agent' && sectionIsEmpty(last)
+})
+
+const matchingPrompts = computed(() => {
+  const q = autocompleteQuery.value.trim().toLowerCase()
+  const prompts = promptsStore.prompts.slice().sort((a, b) => a.name.localeCompare(b.name))
+  if (!q) return prompts
+  return prompts.filter((p) => p.name.toLowerCase().includes(q))
 })
 
 /** Count RS occurrences in [0, pos) so we know which section the cursor is in. */
@@ -111,7 +134,20 @@ function moveLineUpWithinSection(v: EditorView): boolean {
 
 /** Flatten CM doc back into the given tab's `sections[]` using the live
  *  sectionsField for id + role preservation. */
-function syncDocToTab(tabId: string) {
+function persistTab(tabId: string) {
+  void tabStore.saveTab(tabId)
+  void tabStore.saveAppState()
+}
+
+function schedulePersistTab(tabId: string) {
+  if (pendingPersist) clearTimeout(pendingPersist)
+  pendingPersist = setTimeout(() => {
+    pendingPersist = null
+    persistTab(tabId)
+  }, 200)
+}
+
+function syncDocToTab(tabId: string, persist = false) {
   if (!view) return
   const tab = tabStore.tabs.find((t) => t.id === tabId)
   if (!tab) return
@@ -120,15 +156,165 @@ function syncDocToTab(tabId: string) {
   const sections = docToSections(view.state.doc.toString(), models, meta)
   tab.sections.splice(0, tab.sections.length, ...sections)
   tabStore.autoTitle(tabId)
+  if (persist) schedulePersistTab(tabId)
 }
 
-function syncDocToStore() {
-  syncDocToTab(tabStore.activeTabId)
+function syncDocToStore(persist = false) {
+  syncDocToTab(tabStore.activeTabId, persist)
+}
+
+function closeAutocomplete() {
+  autocompleteOpen.value = false
+  autocompleteQuery.value = ''
+  autocompleteSelectedIndex.value = 0
+}
+
+function updatePromptAutocomplete(v: EditorView) {
+  const range = v.state.selection.main
+  if (!v.hasFocus || !range.empty) {
+    closeAutocomplete()
+    return
+  }
+  const line = v.state.doc.lineAt(range.head)
+  const before = line.text.slice(0, range.head - line.from)
+  const match = /(^|[\t ])\/prompt ([^\s]*)$/.exec(before)
+  if (!match) {
+    closeAutocomplete()
+    return
+  }
+  autocompleteQuery.value = match[2]
+  const from = line.from + before.length - match[0].length + match[1].length
+  autocompleteFrom.value = from
+  autocompleteTo.value = range.head
+  const coords = v.coordsAtPos(range.head)
+  autocompleteX.value = coords?.left ?? 0
+  autocompleteY.value = (coords?.bottom ?? 0) + 4
+  if (matchingPrompts.value.length === 0) {
+    closeAutocomplete()
+    return
+  }
+  if (autocompleteSelectedIndex.value >= matchingPrompts.value.length) {
+    autocompleteSelectedIndex.value = 0
+  }
+  autocompleteOpen.value = true
+}
+
+function acceptPrompt(prompt?: Prompt): boolean {
+  if (!view || !autocompleteOpen.value) return false
+  const selected = prompt ?? matchingPrompts.value[autocompleteSelectedIndex.value]
+  if (!selected) return false
+  const id = crypto.randomUUID()
+  const insert = encodePrompt(id, selected.content, true)
+  const meta = new Map(view.state.field(pillsField))
+  meta.set(id, { promptId: selected.id, name: selected.name, expanded: false })
+  view.dispatch({
+    changes: { from: autocompleteFrom.value, to: autocompleteTo.value, insert },
+    selection: { anchor: autocompleteFrom.value + insert.length },
+    effects: setPillsEffect.of(meta),
+    scrollIntoView: true,
+  })
+  closeAutocomplete()
+  syncDocToStore(true)
+  return true
+}
+
+function setClipboardText(event: ClipboardEvent, text: string) {
+  event.clipboardData?.setData('text/plain', text)
+}
+
+function writeSelectionToClipboard(event: ClipboardEvent, cut: boolean, v: EditorView): boolean {
+  const range = v.state.selection.main
+  if (range.empty) return false
+  const text = serializeDocRangeForClipboard(
+    v.state.doc.toString(),
+    range.from,
+    range.to,
+    v.state.field(sectionsField),
+    v.state.field(pillsField),
+  )
+  event.preventDefault()
+  setClipboardText(event, text)
+  if (cut) {
+    v.dispatch({
+      changes: { from: range.from, to: range.to, insert: '' },
+      selection: { anchor: range.from },
+      scrollIntoView: true,
+    })
+    syncDocToStore(true)
+  }
+  return true
+}
+
+function pasteClipboardText(event: ClipboardEvent, v: EditorView): boolean {
+  const text = event.clipboardData?.getData('text/plain') ?? ''
+  if (!text) return false
+  const parsed = parseClipboardText(text)
+  const range = v.state.selection.main
+  const meta = new Map(v.state.field(pillsField))
+  for (const [id, pill] of parsed.pills) meta.set(id, pill)
+  v.dispatch({
+    changes: { from: range.from, to: range.to, insert: parsed.text },
+    selection: { anchor: range.from + parsed.text.length },
+    effects: setPillsEffect.of(meta),
+    scrollIntoView: true,
+  })
+  syncDocToStore(true)
+  event.preventDefault()
+  return true
 }
 
 function buildState(): EditorState {
   const models = initialSectionModels(store.sections)
   const pillMeta = initialPillMetadata(store.sections)
+  const autocompleteKeymap = Prec.highest(
+    keymap.of([
+      {
+        key: 'ArrowDown',
+        preventDefault: true,
+        run: () => {
+          if (!autocompleteOpen.value) return false
+          autocompleteSelectedIndex.value =
+            (autocompleteSelectedIndex.value + 1) % matchingPrompts.value.length
+          return true
+        },
+      },
+      {
+        key: 'ArrowUp',
+        preventDefault: true,
+        run: () => {
+          if (!autocompleteOpen.value) return false
+          autocompleteSelectedIndex.value =
+            (autocompleteSelectedIndex.value - 1 + matchingPrompts.value.length) %
+            matchingPrompts.value.length
+          return true
+        },
+      },
+      {
+        key: 'Tab',
+        preventDefault: true,
+        run: () => acceptPrompt(),
+      },
+      {
+        key: 'Enter',
+        preventDefault: true,
+        run: () => acceptPrompt(),
+      },
+      {
+        key: 'Escape',
+        preventDefault: true,
+        run: () => {
+          if (!autocompleteOpen.value) return false
+          closeAutocomplete()
+          return true
+        },
+      },
+      {
+        key: 'Mod-Enter',
+        preventDefault: true,
+        run: () => autocompleteOpen.value,
+      },
+    ]),
+  )
   const submitKeymap = Prec.high(
     keymap.of([
       {
@@ -140,7 +326,7 @@ function buildState(): EditorState {
         key: 'Mod-Enter',
         preventDefault: true,
         run: () => {
-          syncDocToStore()
+          syncDocToStore(true)
           void startStreaming()
           return true
         },
@@ -177,14 +363,24 @@ function buildState(): EditorState {
       promptAtomicRanges,
       promptPillMouseHandler,
       history(),
+      autocompleteKeymap,
       submitKeymap,
       keymap.of([...defaultKeymap, ...historyKeymap]),
       EditorView.lineWrapping,
       dezLanguageSupport(),
       dezTheme,
+      EditorView.updateListener.of((update) => {
+        if (update.docChanged || update.selectionSet || update.focusChanged) {
+          updatePromptAutocomplete(update.view)
+        }
+      }),
       EditorView.domEventHandlers({
+        copy: (event, v) => writeSelectionToClipboard(event, false, v),
+        cut: (event, v) => writeSelectionToClipboard(event, true, v),
+        paste: pasteClipboardText,
         blur: () => {
-          syncDocToStore()
+          syncDocToStore(true)
+          closeAutocomplete()
           return false
         },
       }),
@@ -208,7 +404,12 @@ onMounted(() => {
 })
 
 onBeforeUnmount(() => {
+  if (pendingPersist) {
+    clearTimeout(pendingPersist)
+    pendingPersist = null
+  }
   syncDocToStore()
+  persistTab(tabStore.activeTabId)
   setStreamingCmView(null)
   view?.destroy()
   view = null
@@ -218,7 +419,7 @@ onBeforeUnmount(() => {
 watch(
   () => tabStore.activeTabId,
   (_newId, oldId) => {
-    if (oldId) syncDocToTab(oldId)
+    if (oldId) syncDocToTab(oldId, true)
     nextTick(() => {
       resetViewToActiveTab()
     })
@@ -266,6 +467,15 @@ watch(
 <template>
   <div class="editor-container">
     <div ref="hostRef" class="thread-editor" />
+    <PromptAutocomplete
+      v-if="autocompleteOpen && matchingPrompts.length > 0"
+      :prompts="matchingPrompts"
+      :selected-index="autocompleteSelectedIndex"
+      :x="autocompleteX"
+      :y="autocompleteY"
+      @select="acceptPrompt"
+      @hover="autocompleteSelectedIndex = $event"
+    />
     <div v-if="showThinking" class="thinking-indicator">
       <span class="thinking-dot" />
       <span class="thinking-dot" />

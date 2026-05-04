@@ -75,8 +75,9 @@ export function initialPillMetadata(sections: Section[]): Map<string, PillMetada
 /** Encode a single prompt pill as the `OPEN id BODY body CLOSE` marker
  *  sequence. Newlines in `body` are escaped to `PILL_NL` so the marker
  *  sequence always fits on one line (see `PILL_NL` doc). */
-export function encodePrompt(id: string, body: string): string {
-  return PILL_OPEN + id + PILL_BODY + body.replace(/\n/g, PILL_NL) + PILL_CLOSE
+export function encodePrompt(id: string, body: string, escapeNewlines = true): string {
+  const encodedBody = escapeNewlines ? body.replace(/\n/g, PILL_NL) : body
+  return PILL_OPEN + id + PILL_BODY + encodedBody + PILL_CLOSE
 }
 
 /** Encode a section's content nodes as a single string: text nodes verbatim,
@@ -85,7 +86,7 @@ export function encodeSection(section: Section): string {
   let out = ''
   for (const n of section.content) {
     if (n.kind === 'text') out += n.text
-    else out += encodePrompt(n.id, n.body)
+    else out += encodePrompt(n.id, n.body, !n.expanded)
   }
   return out
 }
@@ -130,7 +131,6 @@ export function scanPills(doc: string): PillLocation[] {
   while (i < doc.length) {
     if (doc[i] !== PILL_OPEN) { i++; continue }
     const from = i
-    // find BODY marker; abort if we hit another OPEN / CLOSE / newline first
     let j = from + 1
     let bodyAt = -1
     while (j < doc.length) {
@@ -140,12 +140,11 @@ export function scanPills(doc: string): PillLocation[] {
       j++
     }
     if (bodyAt < 0) { i = from + 1; continue }
-    // find CLOSE; abort on nested OPEN or raw newline (body escapes newlines)
     let k = bodyAt + 1
     let closeAt = -1
     while (k < doc.length) {
       const c = doc[k]
-      if (c === PILL_OPEN || c === '\n') break
+      if (c === PILL_OPEN) break
       if (c === PILL_CLOSE) { closeAt = k; break }
       k++
     }
@@ -446,6 +445,17 @@ export const roleSeparatorMouseHandler = EditorView.domEventHandlers({
 
 /* ──────────────────────  Prompt pill widget  ───────────────── */
 
+class HiddenPromptMarkerWidget extends WidgetType {
+  eq(other: WidgetType): boolean {
+    return other instanceof HiddenPromptMarkerWidget
+  }
+  toDOM(): HTMLElement {
+    const el = document.createElement('span')
+    el.className = 'dez-hidden-prompt-marker'
+    return el
+  }
+}
+
 class PromptPillWidget extends WidgetType {
   constructor(
     readonly pillId: string,
@@ -483,9 +493,6 @@ class PromptPillWidget extends WidgetType {
   }
 }
 
-/** Build a decoration set with one `Decoration.replace` per prompt marker
- *  sequence, rendering the collapsed pill widget. STEP-4 always renders
- *  collapsed regardless of `meta.expanded`; STEP-5 will branch on it. */
 function buildPromptDecorations(
   doc: string,
   meta: Map<string, PillMetadata>,
@@ -494,11 +501,24 @@ function buildPromptDecorations(
   if (pills.length === 0) return Decoration.none
   const ranges = pills.map((p) => {
     const m = meta.get(p.id)
+    if (m?.expanded) {
+      return [
+        Decoration.replace({
+          widget: new PromptPillWidget(p.id, m.name, true),
+          inclusive: false,
+        }).range(p.from, p.bodyFrom),
+        Decoration.mark({ class: 'dez-prompt-body' }).range(p.bodyFrom, p.bodyTo),
+        Decoration.replace({
+          widget: new HiddenPromptMarkerWidget(),
+          inclusive: false,
+        }).range(p.bodyTo, p.to),
+      ]
+    }
     return Decoration.replace({
       widget: new PromptPillWidget(p.id, m?.name ?? '', false),
       inclusive: false,
     }).range(p.from, p.to)
-  })
+  }).flat()
   return Decoration.set(ranges, true)
 }
 
@@ -507,14 +527,38 @@ export const promptPills = EditorView.decorations.compute(
   (state) => buildPromptDecorations(state.doc.toString(), state.field(pillsField)),
 )
 
-/** Make the full marker sequence an atomic unit for caret motion, selection
- *  extension, and delete operations. */
+function buildPromptAtomicDecorations(
+  doc: string,
+  meta: Map<string, PillMetadata>,
+): DecorationSet {
+  const pills = scanPills(doc)
+  if (pills.length === 0) return Decoration.none
+  const ranges = pills.map((p) => {
+    const m = meta.get(p.id)
+    if (m?.expanded) {
+      return [
+        Decoration.replace({
+          widget: new HiddenPromptMarkerWidget(),
+          inclusive: false,
+        }).range(p.from, p.bodyFrom),
+        Decoration.replace({
+          widget: new HiddenPromptMarkerWidget(),
+          inclusive: false,
+        }).range(p.bodyTo, p.to),
+      ]
+    }
+    return Decoration.replace({
+      widget: new HiddenPromptMarkerWidget(),
+      inclusive: false,
+    }).range(p.from, p.to)
+  }).flat()
+  return Decoration.set(ranges, true)
+}
+
 export const promptAtomicRanges = EditorView.atomicRanges.of((view) =>
-  buildPromptDecorations(view.state.doc.toString(), view.state.field(pillsField)),
+  buildPromptAtomicDecorations(view.state.doc.toString(), view.state.field(pillsField)),
 )
 
-/** Click handler: toggle the `expanded` flag in `pillsField`. STEP-4 doesn't
- *  change the rendering based on this flag yet — STEP-5 lights it up. */
 export const promptPillMouseHandler = EditorView.domEventHandlers({
   mousedown(event, view) {
     const target = event.target as HTMLElement | null
@@ -523,11 +567,139 @@ export const promptPillMouseHandler = EditorView.domEventHandlers({
     if (!pill) return false
     const id = pill.getAttribute('data-pill-id')
     if (!id) return false
+    const loc = scanPills(view.state.doc.toString()).find((p) => p.id === id)
+    if (!loc) return false
+    const meta = view.state.field(pillsField).get(id)
+    const body = view.state.sliceDoc(loc.bodyFrom, loc.bodyTo)
     event.preventDefault()
-    view.dispatch({ effects: togglePillExpandedEffect.of({ id }) })
+    view.dispatch({
+      changes: {
+        from: loc.bodyFrom,
+        to: loc.bodyTo,
+        insert: meta?.expanded ? body.replace(/\n/g, PILL_NL) : body.replace(/\u{E003}/gu, '\n'),
+      },
+      effects: togglePillExpandedEffect.of({ id }),
+    })
     return true
   },
 })
+
+function escapePromptName(name: string): string {
+  return name.replace(/&/g, '&amp;').replace(/"/g, '&quot;')
+}
+
+function unescapePromptName(name: string): string {
+  return name.replace(/&quot;/g, '"').replace(/&amp;/g, '&')
+}
+
+function escapePromptClipboardBody(body: string): string {
+  return body.replace(/<\/dez:prompt>/g, '<\\/dez:prompt>')
+}
+
+function unescapePromptClipboardBody(body: string): string {
+  return body.replace(/<\\\/dez:prompt>/g, '</dez:prompt>')
+}
+
+export function stripLiveSentinels(text: string): string {
+  return text
+    .replace(/\u001E/g, '')
+    .replace(/\u{E000}/gu, '')
+    .replace(/\u{E001}/gu, '')
+    .replace(/\u{E002}/gu, '')
+    .replace(/\u{E003}/gu, '\n')
+}
+
+function sectionRoleForSeparator(doc: string, models: SectionModel[], pos: number): Role {
+  let index = 1
+  for (let i = 0; i < pos && i < doc.length; i++) {
+    if (doc.charCodeAt(i) === 0x1e) index++
+  }
+  return models[index]?.role ?? 'user'
+}
+
+function serializePlainDocFragment(doc: string, from: number, to: number, models: SectionModel[]): string {
+  let out = ''
+  for (let i = from; i < to; i++) {
+    const c = doc[i]
+    if (c === SECTION_SEP) {
+      const role = sectionRoleForSeparator(doc, models, i)
+      if (out.length > 0 && !out.endsWith('\n')) out += '\n'
+      out += `<dez:pill type="${role}"/>\n`
+    } else if (c === PILL_NL) {
+      out += '\n'
+    } else if (c !== PILL_OPEN && c !== PILL_BODY && c !== PILL_CLOSE) {
+      out += c
+    }
+  }
+  return out
+}
+
+export function serializeDocRangeForClipboard(
+  doc: string,
+  from: number,
+  to: number,
+  models: SectionModel[],
+  pillsMeta: Map<string, PillMetadata>,
+): string {
+  if (from >= to) return ''
+  const pills = scanPills(doc).filter((p) => p.to > from && p.from < to)
+  let out = ''
+  let cursor = from
+  for (const p of pills) {
+    if (cursor < Math.min(p.from, to)) {
+      out += serializePlainDocFragment(doc, cursor, Math.min(p.from, to), models)
+    }
+    const meta = pillsMeta.get(p.id)
+    const bodyFrom = Math.max(from, p.bodyFrom)
+    const bodyTo = Math.min(to, p.bodyTo)
+    if (from <= p.from && to >= p.to) {
+      const body = doc.slice(p.bodyFrom, p.bodyTo).replace(/\u{E003}/gu, '\n')
+      out += `<dez:prompt name="${escapePromptName(meta?.name ?? '')}">\n${escapePromptClipboardBody(body)}`
+      if (!out.endsWith('\n')) out += '\n'
+      out += '</dez:prompt>\n'
+    } else if (bodyFrom < bodyTo) {
+      out += doc.slice(bodyFrom, bodyTo).replace(/\u{E003}/gu, '\n')
+    }
+    cursor = Math.max(cursor, Math.min(p.to, to))
+  }
+  if (cursor < to) out += serializePlainDocFragment(doc, cursor, to, models)
+  return stripLiveSentinels(out)
+}
+
+export interface ParsedClipboardText {
+  text: string
+  pills: Map<string, PillMetadata>
+  separatorRoles: Role[]
+}
+
+export function parseClipboardText(text: string): ParsedClipboardText {
+  const pills = new Map<string, PillMetadata>()
+  const separatorRoles: Role[] = []
+  const marker = /<dez:pill\s+type="(user|agent)"\s*\/\>|<dez:prompt\s+name="([^"]*)">([\s\S]*?)<\/dez:prompt>/g
+  let out = ''
+  let cursor = 0
+  for (const match of text.matchAll(marker)) {
+    out += stripLiveSentinels(text.slice(cursor, match.index))
+    if (match[1]) {
+      const role = match[1] as Role
+      if (out.length > 0 && !out.endsWith('\n')) out += '\n'
+      out += `${SECTION_SEP}\n`
+      separatorRoles.push(role)
+    } else {
+      const id = crypto.randomUUID()
+      const name = unescapePromptName(match[2] ?? '')
+      let body = match[3] ?? ''
+      if (body.startsWith('\n')) body = body.slice(1)
+      if (body.endsWith('\n')) body = body.slice(0, -1)
+      body = unescapePromptClipboardBody(stripLiveSentinels(body))
+      out += encodePrompt(id, body, true)
+      pills.set(id, { promptId: null, name, expanded: false })
+    }
+    cursor = (match.index ?? 0) + match[0].length
+  }
+  out += stripLiveSentinels(text.slice(cursor))
+  return { text: out, pills, separatorRoles }
+}
 
 /* ───────────────────────  Theme / language  ──────────────────── */
 
@@ -626,6 +798,19 @@ export const dezTheme = EditorView.theme({
   '.dez-prompt-pill__caret': {
     fontSize: '9px',
     opacity: '0.8',
+  },
+  '.dez-prompt-pill[data-expanded="1"]': {
+    padding: '0 2px',
+    margin: '0',
+    border: 'none',
+    background: 'transparent',
+    borderRadius: '0',
+  },
+  '.dez-prompt-pill[data-expanded="1"] .dez-prompt-pill__name': {
+    display: 'none',
+  },
+  '.dez-prompt-body': {
+    color: 'var(--color-text)',
   },
 })
 
