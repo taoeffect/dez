@@ -7,9 +7,15 @@ use super::{chat_protocol::OpenAiChatClient, ChatMessage, LlmProvider, ModelInfo
 const OPENROUTER_API_BASE: &str = "https://openrouter.ai/api/v1";
 
 #[derive(Debug, Deserialize)]
+struct OpenRouterArchitecture {
+    output_modalities: Vec<String>,
+}
+
+#[derive(Debug, Deserialize)]
 struct OpenRouterModel {
     id: String,
     name: String,
+    architecture: OpenRouterArchitecture,
 }
 
 #[derive(Debug, Deserialize)]
@@ -67,6 +73,7 @@ impl LlmProvider for OpenRouterProvider {
         Ok(resp
             .data
             .into_iter()
+            .filter(|m| m.architecture.output_modalities == ["text"])
             .map(|m| ModelInfo {
                 id: m.id,
                 name: m.name,
