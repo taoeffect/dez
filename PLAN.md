@@ -251,4 +251,4 @@ Final pass for UX quality, performance, and platform compatibility.
 - Performance: make editing in the editor super snappy, even with somewhat large text threads
 - Performance audit: virtualize long message lists if needed
 - Accessibility pass: keyboard navigation, ARIA labels, focus management
-- Package with `tauri build` for `.dmg` (macOS) and `.AppImage` / `.deb` (Linux)
+- Package with `tauri build` for `.dmg` (macOS) and `.AppImage` (Linux)
