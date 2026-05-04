@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed, onBeforeUnmount, onMounted, ref, watch, nextTick } from 'vue'
-import { EditorSelection, EditorState, Prec } from '@codemirror/state'
+import { EditorSelection, EditorState, Prec, type StateEffect } from '@codemirror/state'
 import { EditorView, keymap } from '@codemirror/view'
 import { history, historyKeymap, defaultKeymap } from '@codemirror/commands'
 import { useThreadStore } from '../stores/threadStore'
@@ -89,6 +89,12 @@ function previousEditableLineInSection(state: EditorState, lineNumber: number) {
   if (lineNumber <= 1) return null
   const previous = state.doc.line(lineNumber - 1)
   return previous.text === SECTION_SEP ? null : previous
+}
+
+function nextEditableLineInSection(state: EditorState, lineNumber: number) {
+  if (lineNumber >= state.doc.lines) return null
+  const next = state.doc.line(lineNumber + 1)
+  return next.text === SECTION_SEP ? null : next
 }
 
 function lastEditableLineOfPreviousSection(state: EditorState, lineNumber: number) {
@@ -253,6 +259,65 @@ function moveLineUpWithinSection(v: EditorView): boolean {
   return true
 }
 
+function moveLineDownWithinSection(v: EditorView): boolean {
+  const { state } = v
+  const range = state.selection.main
+  if (!range.empty) {
+    v.dispatch({
+      selection: EditorSelection.cursor(range.to),
+      scrollIntoView: true,
+      userEvent: 'select',
+    })
+    return true
+  }
+
+  const currentLine = state.doc.lineAt(range.head)
+  const nextLine = nextEditableLineInSection(state, currentLine.number)
+
+  if (!nextLine) {
+    const crossSectionTarget = firstEditableLineOfNextSection(state, currentLine.number)
+    if (!crossSectionTarget) return true
+    const column = range.head - currentLine.from
+    const target = crossSectionTarget.from + Math.min(column, crossSectionTarget.length)
+    v.dispatch({
+      selection: EditorSelection.cursor(target),
+      scrollIntoView: true,
+      userEvent: 'select',
+    })
+    return true
+  }
+
+  const moved = v.moveVertically(range, true)
+  const movedLine = state.doc.lineAt(moved.head)
+  if (moved.head > range.head) {
+    if (movedLine.number === currentLine.number) {
+      v.dispatch({
+        selection: EditorSelection.create([moved]),
+        scrollIntoView: true,
+        userEvent: 'select',
+      })
+      return true
+    }
+    if (movedLine.number === nextLine.number) {
+      v.dispatch({
+        selection: EditorSelection.create([moved]),
+        scrollIntoView: true,
+        userEvent: 'select',
+      })
+      return true
+    }
+  }
+
+  const column = range.head - currentLine.from
+  const target = nextLine.from + Math.min(column, nextLine.length)
+  v.dispatch({
+    selection: EditorSelection.cursor(target),
+    scrollIntoView: true,
+    userEvent: 'select',
+  })
+  return true
+}
+
 /** Flatten CM doc back into the given tab's `sections[]` using the live
  *  sectionsField for id + role preservation. */
 function persistTab(tabId: string) {
@@ -379,13 +444,37 @@ function pasteClipboardText(event: ClipboardEvent, v: EditorView): boolean {
   const text = event.clipboardData?.getData('text/plain') ?? ''
   if (!text) return false
   const parsed = parseClipboardText(text)
+  let pasteText = parsed.text
+  const trimmedRoles = parsed.separatorRoles.slice()
+  const leadingMarker = SECTION_SEP + '\n'
+  while (pasteText.startsWith(leadingMarker) && trimmedRoles.length > 0) {
+    pasteText = pasteText.slice(leadingMarker.length)
+    trimmedRoles.shift()
+  }
   const range = v.state.selection.main
   const meta = new Map(v.state.field(pillsField))
   for (const [id, pill] of parsed.pills) meta.set(id, pill)
+  const effects: StateEffect<unknown>[] = [setPillsEffect.of(meta)]
+  if (trimmedRoles.length > 0 || range.from !== range.to) {
+    const doc = v.state.doc.toString()
+    const fromSec = sectionIndexAtPos(doc, range.from)
+    const toSec = sectionIndexAtPos(doc, range.to)
+    const oldModels = v.state.field(sectionsField)
+    const inserted = trimmedRoles.map((role) => ({
+      id: crypto.randomUUID(),
+      role,
+    }))
+    const newModels = [
+      ...oldModels.slice(0, fromSec + 1),
+      ...inserted,
+      ...oldModels.slice(toSec + 1),
+    ]
+    effects.push(setSectionsEffect.of(newModels))
+  }
   v.dispatch({
-    changes: { from: range.from, to: range.to, insert: parsed.text },
-    selection: { anchor: range.from + parsed.text.length },
-    effects: setPillsEffect.of(meta),
+    changes: { from: range.from, to: range.to, insert: pasteText },
+    selection: { anchor: range.from + pasteText.length },
+    effects,
     scrollIntoView: true,
   })
   event.preventDefault()
@@ -450,6 +539,11 @@ function buildState(): EditorState {
         key: 'ArrowUp',
         preventDefault: true,
         run: moveLineUpWithinSection,
+      },
+      {
+        key: 'ArrowDown',
+        preventDefault: true,
+        run: moveLineDownWithinSection,
       },
       {
         key: 'ArrowLeft',
