@@ -286,10 +286,13 @@ pub fn parse_conversation(id: &str, content: &str) -> ConversationData {
     let mut prompt_name = String::new();
     let mut prompt_body = String::new();
 
-    fn flush_text(nodes: &mut Vec<ContentNodeData>, buf: &mut String) {
+    fn flush_text(nodes: &mut Vec<ContentNodeData>, buf: &mut String, strip_trailing_newline: bool) {
         if !buf.is_empty() {
-            // Strip trailing newline that was appended after each line.
-            let text = buf.trim_end_matches('\n').to_string();
+            let text = if strip_trailing_newline {
+                buf.trim_end_matches('\n').to_string()
+            } else {
+                std::mem::take(buf)
+            };
             if !text.is_empty() {
                 nodes.push(ContentNodeData::Text { text });
             }
@@ -303,6 +306,19 @@ pub fn parse_conversation(id: &str, content: &str) -> ConversationData {
         nodes: &mut Vec<ContentNodeData>,
     ) {
         if let Some(r) = role {
+            if sections.is_empty() && r == "user" && nodes.is_empty() {
+                return;
+            }
+            if sections.is_empty() && r == "user" {
+                if let Some(ContentNodeData::Text { text }) = nodes.first_mut() {
+                    let trimmed = text.trim_start_matches('\n').to_string();
+                    if trimmed.is_empty() {
+                        nodes.remove(0);
+                    } else {
+                        *text = trimmed;
+                    }
+                }
+            }
             sections.push(SectionData {
                 role: r.to_string(),
                 nodes: std::mem::take(nodes),
@@ -333,14 +349,14 @@ pub fn parse_conversation(id: &str, content: &str) -> ConversationData {
         }
 
         if let Some(role) = parse_pill_type(trimmed) {
-            flush_text(&mut current_nodes, &mut text_buf);
+            flush_text(&mut current_nodes, &mut text_buf, true);
             flush_section(&mut sections, current_role, &mut current_nodes);
             current_role = Some(role);
             continue;
         }
 
         if let Some(name) = parse_prompt_open(trimmed) {
-            flush_text(&mut current_nodes, &mut text_buf);
+            flush_text(&mut current_nodes, &mut text_buf, false);
             if current_role.is_none() {
                 current_role = Some("user");
             }
@@ -364,7 +380,7 @@ pub fn parse_conversation(id: &str, content: &str) -> ConversationData {
         text_buf.push_str(&prompt_body);
     }
 
-    flush_text(&mut current_nodes, &mut text_buf);
+    flush_text(&mut current_nodes, &mut text_buf, true);
     flush_section(&mut sections, current_role, &mut current_nodes);
 
     if sections.is_empty() {
@@ -560,4 +576,159 @@ pub fn save_prompts(prompts: &[PromptData]) -> Result<(), String> {
     }
 
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn text_node(text: &str) -> ContentNodeData {
+        ContentNodeData::Text {
+            text: text.to_string(),
+        }
+    }
+
+    fn section(role: &str, nodes: Vec<ContentNodeData>) -> SectionData {
+        SectionData {
+            role: role.to_string(),
+            nodes,
+        }
+    }
+
+    fn text_content(node: &ContentNodeData) -> &str {
+        match node {
+            ContentNodeData::Text { text } => text,
+            ContentNodeData::Prompt { .. } => panic!("expected text node"),
+        }
+    }
+
+    #[test]
+    fn parse_collapses_duplicate_leading_user_pills_before_content() {
+        let content = r#"<!-- title: Duplicate pills | model: provider/model | created: 123 -->
+
+<dez:pill type="user"/>
+
+
+<dez:pill type="user"/>
+
+
+<dez:pill type="user"/>
+
+
+what's your name?
+<dez:pill type="agent"/>
+Hi there!
+"#;
+
+        let parsed = parse_conversation("conversation", content);
+
+        assert_eq!(parsed.sections.len(), 2);
+        assert_eq!(parsed.sections[0].role, "user");
+        assert_eq!(parsed.sections[1].role, "agent");
+        assert_eq!(parsed.sections[0].nodes.len(), 1);
+        assert_eq!(text_content(&parsed.sections[0].nodes[0]), "what's your name?");
+        assert_eq!(text_content(&parsed.sections[1].nodes[0]), "Hi there!");
+    }
+
+    #[test]
+    fn duplicate_leading_user_pills_do_not_round_trip() {
+        let content = r#"<!-- title: Duplicate pills | model:  | created: 456 -->
+
+<dez:pill type="user"/>
+
+<dez:pill type="user"/>
+
+hello
+<dez:pill type="agent"/>
+world
+"#;
+
+        let parsed = parse_conversation("conversation", content);
+        let serialized = serialize_conversation(&parsed);
+        let reparsed = parse_conversation("conversation", &serialized);
+
+        assert_eq!(serialized.matches("<dez:pill type=\"user\"/>").count(), 1);
+        assert_eq!(reparsed.sections.len(), 2);
+        assert_eq!(reparsed.sections[0].role, "user");
+        assert_eq!(reparsed.sections[1].role, "agent");
+        assert_eq!(text_content(&reparsed.sections[0].nodes[0]), "hello");
+        assert_eq!(text_content(&reparsed.sections[1].nodes[0]), "world");
+    }
+
+    #[test]
+    fn normal_round_trip_preserves_trailing_empty_user_section() {
+        let data = ConversationData {
+            id: "conversation".to_string(),
+            title: "Chat".to_string(),
+            sections: vec![
+                section("user", vec![text_node("hello")]),
+                section("agent", vec![text_node("world")]),
+                section("user", Vec::new()),
+            ],
+            active_model: None,
+            created_at: 789,
+        };
+
+        let serialized = serialize_conversation(&data);
+        let parsed = parse_conversation("conversation", &serialized);
+
+        assert_eq!(parsed.sections.len(), 3);
+        assert_eq!(parsed.sections[0].role, "user");
+        assert_eq!(parsed.sections[1].role, "agent");
+        assert_eq!(parsed.sections[2].role, "user");
+        assert!(parsed.sections[2].nodes.is_empty());
+    }
+
+    #[test]
+    fn non_leading_section_text_keeps_intentional_leading_blank_line() {
+        let data = ConversationData {
+            id: "conversation".to_string(),
+            title: "Chat".to_string(),
+            sections: vec![
+                section("user", vec![text_node("hello")]),
+                section("agent", vec![text_node("\nworld")]),
+            ],
+            active_model: None,
+            created_at: 789,
+        };
+
+        let serialized = serialize_conversation(&data);
+        let parsed = parse_conversation("conversation", &serialized);
+
+        assert_eq!(parsed.sections.len(), 2);
+        assert_eq!(parsed.sections[1].role, "agent");
+        assert_eq!(text_content(&parsed.sections[1].nodes[0]), "\nworld");
+    }
+
+    #[test]
+    fn text_before_prompt_keeps_trailing_newline() {
+        let content = "<!-- title: t | model:  | created: 1 -->\n\n<dez:pill type=\"agent\"/>\n\nHi there! today?\n<dez:prompt name=\"code-review\">\nthis is a multi-line\n\nbody of many things\n</dez:prompt>\n\nrest of text\n";
+
+        let parsed = parse_conversation("c", content);
+        assert_eq!(parsed.sections.len(), 1);
+        assert_eq!(parsed.sections[0].role, "agent");
+        assert_eq!(parsed.sections[0].nodes.len(), 3);
+        let pre = text_content(&parsed.sections[0].nodes[0]);
+        assert!(
+            pre.ends_with('\n'),
+            "text before prompt should keep trailing newline; got {:?}",
+            pre
+        );
+        assert_eq!(pre, "\nHi there! today?\n");
+        match &parsed.sections[0].nodes[1] {
+            ContentNodeData::Prompt { name, body, .. } => {
+                assert_eq!(name, "code-review");
+                assert_eq!(body, "this is a multi-line\n\nbody of many things");
+            }
+            _ => panic!("expected prompt"),
+        }
+        assert_eq!(text_content(&parsed.sections[0].nodes[2]), "\nrest of text");
+
+        let serialized = serialize_conversation(&parsed);
+        let reparsed = parse_conversation("c", &serialized);
+        assert_eq!(
+            text_content(&reparsed.sections[0].nodes[0]),
+            "\nHi there! today?\n"
+        );
+    }
 }

@@ -19,14 +19,18 @@ import {
   docToSections,
   initialPillMetadata,
   initialSectionModels,
+  leadingPillContentAttributes,
+  mergeSectionEffect,
   pillsField,
   promptAtomicRanges,
   parseClipboardText,
   promptPillMouseHandler,
   promptPills,
+  roleSeparatorAtomicRanges,
   roleSeparatorMouseHandler,
   roleSeparators,
   sectionsField,
+  toggleRoleEffect,
   serializeDocRangeForClipboard,
   setPillsEffect,
   setSectionsEffect,
@@ -44,6 +48,8 @@ const { isStreaming, streamingTabId, streamingError, startStreaming, stopStreami
 const hostRef = ref<HTMLDivElement | null>(null)
 let view: EditorView | null = null
 let pendingPersist: ReturnType<typeof setTimeout> | null = null
+let pendingPersistTabId: string | null = null
+let syncingViewStructure = false
 
 const autocompleteOpen = ref(false)
 const autocompleteQuery = ref('')
@@ -85,6 +91,109 @@ function previousEditableLineInSection(state: EditorState, lineNumber: number) {
   return previous.text === SECTION_SEP ? null : previous
 }
 
+function lastEditableLineOfPreviousSection(state: EditorState, lineNumber: number) {
+  let n = lineNumber - 1
+  while (n >= 1) {
+    const line = state.doc.line(n)
+    if (line.text !== SECTION_SEP) return line
+    n--
+  }
+  return null
+}
+
+function firstEditableLineOfNextSection(state: EditorState, lineNumber: number) {
+  const total = state.doc.lines
+  let n = lineNumber + 1
+  while (n <= total) {
+    const line = state.doc.line(n)
+    if (line.text !== SECTION_SEP) return line
+    n++
+  }
+  return null
+}
+
+function moveCursorAcrossSeparatorLeft(v: EditorView): boolean {
+  const { state } = v
+  const range = state.selection.main
+  if (!range.empty) return false
+  const currentLine = state.doc.lineAt(range.head)
+  if (range.head !== currentLine.from) return false
+  if (currentLine.number <= 1) return false
+  const previous = state.doc.line(currentLine.number - 1)
+  if (previous.text !== SECTION_SEP) return false
+  const target = lastEditableLineOfPreviousSection(state, currentLine.number)
+  if (!target) return false
+  v.dispatch({
+    selection: EditorSelection.cursor(target.to),
+    scrollIntoView: true,
+    userEvent: 'select',
+  })
+  return true
+}
+
+function moveCursorAcrossSeparatorRight(v: EditorView): boolean {
+  const { state } = v
+  const range = state.selection.main
+  if (!range.empty) return false
+  const currentLine = state.doc.lineAt(range.head)
+  if (range.head !== currentLine.to) return false
+  if (currentLine.number >= state.doc.lines) return false
+  const next = state.doc.line(currentLine.number + 1)
+  if (next.text !== SECTION_SEP) return false
+  const target = firstEditableLineOfNextSection(state, currentLine.number)
+  if (!target) return false
+  v.dispatch({
+    selection: EditorSelection.cursor(target.from),
+    scrollIntoView: true,
+    userEvent: 'select',
+  })
+  return true
+}
+
+function mergeWithPreviousSection(v: EditorView): boolean {
+  const { state } = v
+  const range = state.selection.main
+  if (!range.empty) return false
+  const currentLine = state.doc.lineAt(range.head)
+  if (range.head !== currentLine.from) return false
+  if (currentLine.number <= 1) return false
+  const previous = state.doc.line(currentLine.number - 1)
+  if (previous.text !== SECTION_SEP) return false
+  const target = lastEditableLineOfPreviousSection(state, currentLine.number)
+  if (!target) return false
+  const removeIndex = sectionIndexAtPos(state.doc.toString(), currentLine.from)
+  v.dispatch({
+    changes: { from: target.to, to: currentLine.from, insert: '' },
+    selection: { anchor: target.to },
+    effects: mergeSectionEffect.of({ removeIndex }),
+    scrollIntoView: true,
+    userEvent: 'delete.backward',
+  })
+  return true
+}
+
+function mergeWithNextSection(v: EditorView): boolean {
+  const { state } = v
+  const range = state.selection.main
+  if (!range.empty) return false
+  const currentLine = state.doc.lineAt(range.head)
+  if (range.head !== currentLine.to) return false
+  if (currentLine.number >= state.doc.lines) return false
+  const next = state.doc.line(currentLine.number + 1)
+  if (next.text !== SECTION_SEP) return false
+  const target = firstEditableLineOfNextSection(state, currentLine.number)
+  if (!target) return false
+  const removeIndex = sectionIndexAtPos(state.doc.toString(), target.from)
+  v.dispatch({
+    changes: { from: currentLine.to, to: target.from, insert: '' },
+    selection: { anchor: currentLine.to },
+    effects: mergeSectionEffect.of({ removeIndex }),
+    scrollIntoView: true,
+    userEvent: 'delete.forward',
+  })
+  return true
+}
+
 function moveLineUpWithinSection(v: EditorView): boolean {
   const { state } = v
   const range = state.selection.main
@@ -99,6 +208,20 @@ function moveLineUpWithinSection(v: EditorView): boolean {
 
   const currentLine = state.doc.lineAt(range.head)
   const previousLine = previousEditableLineInSection(state, currentLine.number)
+
+  if (!previousLine) {
+    const crossSectionTarget = lastEditableLineOfPreviousSection(state, currentLine.number)
+    if (!crossSectionTarget) return true
+    const column = range.head - currentLine.from
+    const target = crossSectionTarget.from + Math.min(column, crossSectionTarget.length)
+    v.dispatch({
+      selection: EditorSelection.cursor(target),
+      scrollIntoView: true,
+      userEvent: 'select',
+    })
+    return true
+  }
+
   const moved = v.moveVertically(range, false)
   const movedLine = state.doc.lineAt(moved.head)
   if (moved.head < range.head) {
@@ -110,7 +233,7 @@ function moveLineUpWithinSection(v: EditorView): boolean {
       })
       return true
     }
-    if (previousLine && movedLine.number === previousLine.number) {
+    if (movedLine.number === previousLine.number) {
       v.dispatch({
         selection: EditorSelection.create([moved]),
         scrollIntoView: true,
@@ -119,8 +242,6 @@ function moveLineUpWithinSection(v: EditorView): boolean {
       return true
     }
   }
-
-  if (!previousLine) return true
 
   const column = range.head - currentLine.from
   const target = previousLine.from + Math.min(column, previousLine.length)
@@ -139,12 +260,23 @@ function persistTab(tabId: string) {
   void tabStore.saveAppState()
 }
 
+function flushPendingPersist() {
+  if (!pendingPersist) return
+  const tabId = pendingPersistTabId
+  clearTimeout(pendingPersist)
+  pendingPersist = null
+  pendingPersistTabId = null
+  if (tabId) persistTab(tabId)
+}
+
 function schedulePersistTab(tabId: string) {
   if (pendingPersist) clearTimeout(pendingPersist)
+  pendingPersistTabId = tabId
   pendingPersist = setTimeout(() => {
     pendingPersist = null
+    pendingPersistTabId = null
     persistTab(tabId)
-  }, 200)
+  }, 500)
 }
 
 function syncDocToTab(tabId: string, persist = false) {
@@ -214,7 +346,6 @@ function acceptPrompt(prompt?: Prompt): boolean {
     scrollIntoView: true,
   })
   closeAutocomplete()
-  syncDocToStore(true)
   return true
 }
 
@@ -240,7 +371,6 @@ function writeSelectionToClipboard(event: ClipboardEvent, cut: boolean, v: Edito
       selection: { anchor: range.from },
       scrollIntoView: true,
     })
-    syncDocToStore(true)
   }
   return true
 }
@@ -258,7 +388,6 @@ function pasteClipboardText(event: ClipboardEvent, v: EditorView): boolean {
     effects: setPillsEffect.of(meta),
     scrollIntoView: true,
   })
-  syncDocToStore(true)
   event.preventDefault()
   return true
 }
@@ -323,6 +452,22 @@ function buildState(): EditorState {
         run: moveLineUpWithinSection,
       },
       {
+        key: 'ArrowLeft',
+        run: moveCursorAcrossSeparatorLeft,
+      },
+      {
+        key: 'ArrowRight',
+        run: moveCursorAcrossSeparatorRight,
+      },
+      {
+        key: 'Backspace',
+        run: mergeWithPreviousSection,
+      },
+      {
+        key: 'Delete',
+        run: mergeWithNextSection,
+      },
+      {
         key: 'Mod-Enter',
         preventDefault: true,
         run: () => {
@@ -358,7 +503,9 @@ function buildState(): EditorState {
       showSeparatorsField.init(() => settings.showPillSeparators),
       pillsField.init(() => pillMeta),
       roleSeparators,
+      roleSeparatorAtomicRanges,
       roleSeparatorMouseHandler,
+      leadingPillContentAttributes,
       promptPills,
       promptAtomicRanges,
       promptPillMouseHandler,
@@ -370,6 +517,12 @@ function buildState(): EditorState {
       dezLanguageSupport(),
       dezTheme,
       EditorView.updateListener.of((update) => {
+        const roleChanged = update.transactions.some((tr) =>
+          tr.effects.some((effect) => effect.is(toggleRoleEffect)),
+        )
+        if ((update.docChanged || roleChanged) && !syncingViewStructure) {
+          syncDocToStore(true)
+        }
         if (update.docChanged || update.selectionSet || update.focusChanged) {
           updatePromptAutocomplete(update.view)
         }
@@ -379,7 +532,8 @@ function buildState(): EditorState {
         cut: (event, v) => writeSelectionToClipboard(event, true, v),
         paste: pasteClipboardText,
         blur: () => {
-          syncDocToStore(true)
+          syncDocToStore()
+          flushPendingPersist()
           closeAutocomplete()
           return false
         },
@@ -394,9 +548,42 @@ function mountView() {
   setStreamingCmView(view)
 }
 
-function resetViewToActiveTab() {
+function resetViewToActiveTab(moveCursorToEnd = false) {
   if (!view) return
-  view.setState(buildState())
+  const state = buildState()
+  view.setState(state)
+  if (moveCursorToEnd) {
+    view.dispatch({
+      selection: EditorSelection.cursor(view.state.doc.length),
+      scrollIntoView: true,
+      userEvent: 'select',
+    })
+  }
+}
+
+function syncViewStructureToStoreSections() {
+  if (!view) return
+  const models = initialSectionModels(store.sections)
+  const current = view.state.field(sectionsField)
+  const same =
+    current.length === models.length &&
+    current.every((m, i) => m.id === models[i].id && m.role === models[i].role)
+  if (same) return
+  syncingViewStructure = true
+  try {
+    if (models.length > current.length) {
+      const insert = Array.from({ length: models.length - current.length }, () => `\n${SECTION_SEP}\n`).join('')
+      view.dispatch({
+        changes: { from: view.state.doc.length, insert },
+        effects: setSectionsEffect.of(models),
+        scrollIntoView: true,
+      })
+    } else {
+      view.dispatch({ effects: setSectionsEffect.of(models) })
+    }
+  } finally {
+    syncingViewStructure = false
+  }
 }
 
 onMounted(() => {
@@ -404,11 +591,8 @@ onMounted(() => {
 })
 
 onBeforeUnmount(() => {
-  if (pendingPersist) {
-    clearTimeout(pendingPersist)
-    pendingPersist = null
-  }
   syncDocToStore()
+  flushPendingPersist()
   persistTab(tabStore.activeTabId)
   setStreamingCmView(null)
   view?.destroy()
@@ -419,7 +603,11 @@ onBeforeUnmount(() => {
 watch(
   () => tabStore.activeTabId,
   (_newId, oldId) => {
-    if (oldId) syncDocToTab(oldId, true)
+    if (oldId) {
+      syncDocToTab(oldId)
+      flushPendingPersist()
+      persistTab(oldId)
+    }
     nextTick(() => {
       resetViewToActiveTab()
     })
@@ -432,7 +620,7 @@ watch(
   () => [isStreaming.value, streamingTabId.value] as const,
   ([streaming], [prevStreaming]) => {
     if (prevStreaming && !streaming) {
-      nextTick(() => resetViewToActiveTab())
+      nextTick(() => resetViewToActiveTab(true))
     }
   },
 )
@@ -451,15 +639,7 @@ watch(
 watch(
   () => store.sections.map((s) => `${s.id}:${s.role}`).join('|'),
   () => {
-    if (!view) return
-    const models = initialSectionModels(store.sections)
-    // Only dispatch if the model list differs from the current one.
-    const current = view.state.field(sectionsField)
-    const same =
-      current.length === models.length &&
-      current.every((m, i) => m.id === models[i].id && m.role === models[i].role)
-    if (same) return
-    view.dispatch({ effects: setSectionsEffect.of(models) })
+    syncViewStructureToStoreSections()
   },
 )
 </script>

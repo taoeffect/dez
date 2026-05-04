@@ -107,8 +107,8 @@ export function splitDocBySeparator(doc: string): string[] {
   const out: string[] = []
   for (let i = 0; i < parts.length; i++) {
     let p = parts[i]
-    if (i > 0 && p.startsWith('\n')) p = p.slice(1)
-    if (i < parts.length - 1 && p.endsWith('\n')) p = p.slice(0, -1)
+    if (i > 0) p = p.replace(/^[\t ]*\n/, '')
+    if (i < parts.length - 1) p = p.replace(/\n[\t ]*$/, '')
     out.push(p)
   }
   return out
@@ -226,6 +226,7 @@ export const splitSectionEffect = StateEffect.define<{
   newId?: string
   newRole?: Role
 }>()
+export const mergeSectionEffect = StateEffect.define<{ removeIndex: number }>()
 export const setSectionsEffect = StateEffect.define<SectionModel[]>()
 export const setShowSeparatorsEffect = StateEffect.define<boolean>()
 
@@ -272,6 +273,13 @@ export const sectionsField = StateField.define<SectionModel[]>({
           role: newRole ?? 'user',
         })
         next = copy
+      } else if (e.is(mergeSectionEffect)) {
+        const { removeIndex } = e.value
+        if (removeIndex > 0 && removeIndex < next.length) {
+          const copy = next.slice()
+          copy.splice(removeIndex, 1)
+          next = copy
+        }
       }
     }
     if (tr.docChanged) {
@@ -292,6 +300,11 @@ export const showSeparatorsField = StateField.define<boolean>({
     return value
   },
 })
+
+export const leadingPillContentAttributes = EditorView.contentAttributes.compute(
+  [showSeparatorsField],
+  (state) => ({ class: state.field(showSeparatorsField) ? 'dez-has-leading-pill' : '' }),
+)
 
 /* ──────────────────────────  pillsField  ───────────────────── */
 
@@ -337,23 +350,21 @@ export const pillsField = StateField.define<Map<string, PillMetadata>>({
 /* ──────────────────────  Role separator widget  ─────────────── */
 
 class RoleSeparatorWidget extends WidgetType {
-  constructor(readonly index: number, readonly role: Role, readonly fixed = false) {
+  constructor(readonly index: number, readonly role: Role) {
     super()
   }
   eq(other: WidgetType): boolean {
     return (
       other instanceof RoleSeparatorWidget &&
       other.index === this.index &&
-      other.role === this.role &&
-      other.fixed === this.fixed
+      other.role === this.role
     )
   }
   toDOM(): HTMLElement {
-    const el = document.createElement('div')
-    el.className = this.fixed ? 'dez-role-separator dez-role-separator--fixed' : 'dez-role-separator'
+    const el = document.createElement('span')
+    el.className = 'dez-role-separator'
     el.setAttribute('data-section-index', String(this.index))
     el.setAttribute('data-role', this.role)
-    if (this.fixed) el.setAttribute('data-fixed', '1')
     const label = document.createElement('span')
     label.className = 'dez-role-separator__label'
     label.textContent = this.role === 'user' ? 'User' : 'Agent'
@@ -373,37 +384,25 @@ function buildSeparatorDecorations(
   doc: string,
   models: SectionModel[],
   show: boolean,
+  protectOnly = false,
 ): DecorationSet {
-  const ranges: { from: number; to: number; deco: Decoration }[] = [
-    {
-      from: 0,
-      to: 0,
-      deco: Decoration.widget({
-        widget: new RoleSeparatorWidget(0, 'user', true),
-        block: true,
-        side: -1,
-      }),
-    },
-  ]
+  const ranges: { from: number; to: number; deco: Decoration }[] = []
   if (!show) return Decoration.set(ranges.map((b) => b.deco.range(b.from, b.to)), true)
-  // The separator char `\u001E` sits alone on its own line. Only block-replace
-  // when it actually is line-alone — if the user deletes a surrounding `\n`
-  // and the RS joins an adjacent line, skip the block decoration (the next
-  // edit or sync reconciles it).
   let sectionIndex = 0
   for (let i = 0; i < doc.length; i++) {
     if (doc.charCodeAt(i) !== 0x1e) continue
     sectionIndex += 1
-    const atLineStart = i === 0 || doc.charCodeAt(i - 1) === 0x0a
-    const atLineEnd = i === doc.length - 1 || doc.charCodeAt(i + 1) === 0x0a
-    if (!atLineStart || !atLineEnd) continue
+    const lineStart = doc.lastIndexOf('\n', i - 1) + 1
+    const nextNewline = doc.indexOf('\n', i + 1)
+    const lineEnd = nextNewline === -1 ? doc.length : nextNewline
+    const lineText = doc.slice(lineStart, lineEnd)
+    if (lineText.trim() !== SECTION_SEP) continue
     const nextRole = models[sectionIndex]?.role ?? 'user'
     ranges.push({
       from: i,
       to: i + 1,
       deco: Decoration.replace({
-        widget: new RoleSeparatorWidget(sectionIndex, nextRole),
-        block: true,
+        widget: protectOnly ? undefined : new RoleSeparatorWidget(sectionIndex, nextRole),
         inclusive: false,
       }),
     })
@@ -423,6 +422,15 @@ export const roleSeparators = EditorView.decorations.compute(
   },
 )
 
+export const roleSeparatorAtomicRanges = EditorView.atomicRanges.of((view) =>
+  buildSeparatorDecorations(
+    view.state.doc.toString(),
+    view.state.field(sectionsField),
+    true,
+    true,
+  ),
+)
+
 /** Click handler: toggle the role of the section that the clicked
  *  separator precedes. */
 export const roleSeparatorMouseHandler = EditorView.domEventHandlers({
@@ -432,7 +440,7 @@ export const roleSeparatorMouseHandler = EditorView.domEventHandlers({
     const label = target.closest('.dez-role-separator__label') as HTMLElement | null
     if (!label) return false
     const sep = label.closest('.dez-role-separator') as HTMLElement | null
-    if (!sep || sep.getAttribute('data-fixed') === '1') return false
+    if (!sep) return false
     const idxStr = sep.getAttribute('data-section-index')
     if (!idxStr) return false
     const index = Number(idxStr)
@@ -643,7 +651,7 @@ export function serializeDocRangeForClipboard(
 ): string {
   if (from >= to) return ''
   const pills = scanPills(doc).filter((p) => p.to > from && p.from < to)
-  let out = ''
+  let out = from === 0 ? '<dez:pill type="user"/>\n' : ''
   let cursor = from
   for (const p of pills) {
     if (cursor < Math.min(p.from, to)) {
@@ -739,6 +747,29 @@ export const dezTheme = EditorView.theme({
     width: '100%',
     caretColor: 'var(--color-text)',
     padding: 0,
+    position: 'relative',
+  },
+  '.cm-content.dez-has-leading-pill': {
+    paddingTop: '46px',
+  },
+  '.cm-content.dez-has-leading-pill::before': {
+    content: '"User"',
+    position: 'absolute',
+    top: '12px',
+    left: '0',
+    width: 'max-content',
+    padding: '2px 10px',
+    borderRadius: '999px',
+    border: '1px solid var(--color-border, #333)',
+    background: 'var(--color-bg-subtle, rgba(127,127,127,0.08))',
+    color: 'var(--color-muted, #888)',
+    fontFamily:
+      "ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif",
+    fontSize: '11px',
+    letterSpacing: '0.08em',
+    textTransform: 'uppercase',
+    userSelect: 'none',
+    pointerEvents: 'none',
   },
   '.cm-line': { padding: '0' },
   '&.cm-focused': { outline: 'none' },
@@ -751,8 +782,9 @@ export const dezTheme = EditorView.theme({
   },
   '.cm-gutters': { display: 'none' },
   '.dez-role-separator': {
-    display: 'flex',
+    display: 'inline-flex',
     alignItems: 'center',
+    width: '100%',
     margin: '12px 0',
     padding: '0',
     userSelect: 'none',
@@ -769,9 +801,6 @@ export const dezTheme = EditorView.theme({
     border: '1px solid var(--color-border, #333)',
     background: 'var(--color-bg-subtle, rgba(127,127,127,0.08))',
     cursor: 'pointer',
-  },
-  '.dez-role-separator--fixed .dez-role-separator__label': {
-    cursor: 'default',
   },
   '.dez-role-separator[data-role="agent"] .dez-role-separator__label': {
     color: 'var(--color-link, #4a9eff)',
