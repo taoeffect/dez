@@ -16,10 +16,14 @@ interface ModelInfo {
   provider: string
 }
 
+interface DisplayModel extends ModelInfo {
+  providerName: string
+}
+
 interface GroupedModels {
   providerId: string
   providerName: string
-  models: ModelInfo[]
+  models: DisplayModel[]
 }
 
 const threadStore = useThreadStore()
@@ -77,13 +81,17 @@ const filteredGrouped = computed<GroupedModels[]>(() => {
       : [m.provider, m.name, m.id]
     return fieldMatches(fields, queryTerms)
   }
+  const toDisplayModel = (m: ModelInfo): DisplayModel => ({
+    ...m,
+    providerName: providerById.get(m.provider)?.name ?? m.provider,
+  })
 
-  const favModels: ModelInfo[] = []
+  const favModels: DisplayModel[] = []
   for (const fav of settingsStore.favorites) {
     const m = allModels.value.find(
       (x) => x.provider === fav.providerId && x.id === fav.modelId,
     )
-    if (m && modelMatches(m, providerById.get(m.provider))) favModels.push(m)
+    if (m && modelMatches(m, providerById.get(m.provider))) favModels.push(toDisplayModel(m))
   }
   if (favModels.length > 0) {
     groups.push({ providerId: '__favorites__', providerName: 'Favorites', models: favModels })
@@ -95,6 +103,7 @@ const filteredGrouped = computed<GroupedModels[]>(() => {
     const models = allModels.value
       .filter((m) => m.provider === provider.id)
       .filter((m) => matchesProvider || modelMatches(m, provider))
+      .map(toDisplayModel)
     if (models.length > 0) {
       groups.push({ providerId: provider.id, providerName: provider.name, models })
     }
@@ -234,7 +243,7 @@ onUnmounted(() => {
                 </svg>
               </span>
               <span class="model-item-name">{{ model.name }}</span>
-              <span class="model-item-provider">{{ group.providerName }}</span>
+              <span class="model-item-provider">{{ model.providerName }}</span>
             </button>
           </div>
         </template>
