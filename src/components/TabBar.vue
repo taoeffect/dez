@@ -3,6 +3,21 @@ import { useTabStore } from '../stores/tabStore'
 
 const tabStore = useTabStore()
 
+function onWheel(e: WheelEvent) {
+  const target = e.currentTarget as HTMLElement
+  const maxScrollLeft = target.scrollWidth - target.clientWidth
+
+  if (maxScrollLeft <= 0) return
+
+  const delta = Math.abs(e.deltaX) > Math.abs(e.deltaY) ? e.deltaX : e.deltaY
+  const nextScrollLeft = Math.max(0, Math.min(maxScrollLeft, target.scrollLeft + delta))
+
+  if (nextScrollLeft === target.scrollLeft) return
+
+  e.preventDefault()
+  target.scrollLeft = nextScrollLeft
+}
+
 function onMiddleClick(e: MouseEvent, tabId: string) {
   if (e.button === 1) {
     e.preventDefault()
@@ -12,7 +27,7 @@ function onMiddleClick(e: MouseEvent, tabId: string) {
 </script>
 
 <template>
-  <div class="tab-bar-tabs">
+  <div class="tab-bar-tabs" @wheel="onWheel">
     <div
       v-for="tab in tabStore.tabs"
       :key="tab.id"
