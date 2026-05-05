@@ -22,7 +22,7 @@ Each step represents a task (per the `tasks` skill) that is to be done. (e.g. th
 - [x] 14. Favorite Models (`favorite-models`)
 - [x] 15. Editor Selection Re-architecture (`bugfix`)
 - [x] 16. Saved Prompts (`saved-prompts-2`)
-- [ ] 17. Conversation History Browser (`history`)
+- [x] 17. Conversation History Browser (`history`)
 - [ ] 18. Polish & Cross-Platform (`polish`)
 
 ---

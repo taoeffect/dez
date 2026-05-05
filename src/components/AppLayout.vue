@@ -5,6 +5,7 @@ import ThreadEditor from "./ThreadEditor.vue";
 import SettingsView from "./SettingsView.vue";
 import ModelSelector from "./ModelSelector.vue";
 import TabBar from "./TabBar.vue";
+import HistoryPanel from "./HistoryPanel.vue";
 
 useKeyboardShortcuts();
 const settingsStore = useSettingsStore();
@@ -27,6 +28,17 @@ const settingsStore = useSettingsStore();
         </button>
         <button
           class="tab-bar-btn"
+          title="History (Cmd/Ctrl+H)"
+          @click="settingsStore.openHistory"
+        >
+          <svg width="14" height="14" viewBox="0 0 14 14" fill="none">
+            <path d="M7 2a5 5 0 105 5" stroke="currentColor" stroke-width="1.2" stroke-linecap="round"/>
+            <path d="M7 4.5V7l1.8 1.1" stroke="currentColor" stroke-width="1.2" stroke-linecap="round" stroke-linejoin="round"/>
+            <path d="M10.8 1.8V5H7.6" stroke="currentColor" stroke-width="1.2" stroke-linecap="round" stroke-linejoin="round"/>
+          </svg>
+        </button>
+        <button
+          class="tab-bar-btn"
           title="Settings (Cmd/Ctrl+,)"
           @click="settingsStore.openSettings"
         >
@@ -42,6 +54,7 @@ const settingsStore = useSettingsStore();
     </main>
     <ModelSelector />
 
+    <HistoryPanel v-if="settingsStore.historyOpen" @close="settingsStore.closeHistory" />
     <SettingsView v-if="settingsStore.settingsOpen" />
   </div>
 </template>

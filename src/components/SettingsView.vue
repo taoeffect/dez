@@ -39,8 +39,9 @@ const shortcuts = [
   { keys: 'Cmd/Ctrl + Enter', action: 'Submit thread to LLM' },
   { keys: 'Cmd/Ctrl + N', action: 'New tab' },
   { keys: 'Cmd/Ctrl + W', action: 'Close tab' },
+  { keys: 'Cmd/Ctrl + H', action: 'Open history' },
   { keys: 'Cmd/Ctrl + ,', action: 'Open settings' },
-  { keys: 'Escape', action: 'Close settings' },
+  { keys: 'Escape', action: 'Close overlays' },
 ]
 
 onMounted(async () => {

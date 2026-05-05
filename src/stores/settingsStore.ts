@@ -28,6 +28,7 @@ export const useSettingsStore = defineStore('settings', () => {
   const lastUsedModel = ref<DefaultModel | null>(null)
   const favorites = ref<DefaultModel[]>([])
   const settingsOpen = ref(false)
+  const historyOpen = ref(false)
 
   let initialized = false
   let persistCallback: (() => void) | null = null
@@ -119,11 +120,21 @@ export const useSettingsStore = defineStore('settings', () => {
   }
 
   function openSettings() {
+    historyOpen.value = false
     settingsOpen.value = true
   }
 
   function closeSettings() {
     settingsOpen.value = false
+  }
+
+  function openHistory() {
+    settingsOpen.value = false
+    historyOpen.value = true
+  }
+
+  function closeHistory() {
+    historyOpen.value = false
   }
 
   return {
@@ -134,6 +145,7 @@ export const useSettingsStore = defineStore('settings', () => {
     lastUsedModel,
     favorites,
     settingsOpen,
+    historyOpen,
     init,
     togglePillSeparators,
     setTheme,
@@ -144,5 +156,7 @@ export const useSettingsStore = defineStore('settings', () => {
     toggleFavorite,
     openSettings,
     closeSettings,
+    openHistory,
+    closeHistory,
   }
 })

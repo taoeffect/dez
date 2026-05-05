@@ -53,7 +53,12 @@ pub struct ConversationSummary {
     pub title: String,
     #[serde(rename = "createdAt")]
     pub created_at: i64,
+    #[serde(rename = "updatedAt")]
+    pub updated_at: i64,
     pub model: Option<String>,
+    #[serde(rename = "messageCount")]
+    pub message_count: usize,
+    pub preview: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -428,6 +433,58 @@ fn uuid_like() -> String {
     format!("p-{:x}", nanos)
 }
 
+fn node_plain_text(node: &ContentNodeData) -> &str {
+    match node {
+        ContentNodeData::Text { text } => text,
+        ContentNodeData::Prompt { body, .. } => body,
+    }
+}
+
+fn section_has_visible_content(section: &SectionData) -> bool {
+    section.nodes.iter().any(|node| match node {
+        ContentNodeData::Text { text } => !text.trim().is_empty(),
+        ContentNodeData::Prompt { .. } => true,
+    })
+}
+
+fn message_count(sections: &[SectionData]) -> usize {
+    sections
+        .iter()
+        .filter(|section| section_has_visible_content(section))
+        .count()
+}
+
+fn conversation_preview(sections: &[SectionData]) -> String {
+    let text = sections
+        .iter()
+        .flat_map(|section| section.nodes.iter())
+        .map(node_plain_text)
+        .collect::<Vec<_>>()
+        .join(" ");
+    let normalized = text.split_whitespace().collect::<Vec<_>>().join(" ");
+    const MAX_PREVIEW_CHARS: usize = 160;
+    if normalized.chars().count() > MAX_PREVIEW_CHARS {
+        let mut preview = normalized.chars().take(MAX_PREVIEW_CHARS).collect::<String>();
+        preview.push('…');
+        preview
+    } else {
+        normalized
+    }
+}
+
+fn file_updated_at(path: &PathBuf, fallback: i64) -> i64 {
+    let Ok(metadata) = std::fs::metadata(path) else {
+        return fallback;
+    };
+    let Ok(modified) = metadata.modified() else {
+        return fallback;
+    };
+    let Ok(duration) = modified.duration_since(std::time::UNIX_EPOCH) else {
+        return fallback;
+    };
+    i64::try_from(duration.as_millis()).unwrap_or(fallback)
+}
+
 fn ensure_dir(path: &PathBuf) -> Result<(), String> {
     std::fs::create_dir_all(path).map_err(|e| format!("Failed to create directory: {}", e))
 }
@@ -478,25 +535,23 @@ pub fn list_conversations() -> Vec<ConversationSummary> {
             None => continue,
         };
         let Ok(content) = std::fs::read_to_string(&path) else { continue };
-        let mut title = String::new();
-        let mut model_str = String::new();
-        let mut created: i64 = 0;
-        if let Some(first) = content.lines().next() {
-            if first.trim_start().starts_with("<!--") {
-                let (t, m, c) = parse_header(first);
-                title = t;
-                model_str = m;
-                created = c;
-            }
-        }
+        let parsed = parse_conversation(&id, &content);
+        let model_str = parsed
+            .active_model
+            .as_ref()
+            .map(|m| format!("{}/{}", m.provider_id, m.model_id));
+        let updated_at = file_updated_at(&path, parsed.created_at);
         out.push(ConversationSummary {
             id,
-            title,
-            created_at: created,
-            model: if model_str.is_empty() { None } else { Some(model_str) },
+            title: parsed.title,
+            created_at: parsed.created_at,
+            updated_at,
+            model: model_str,
+            message_count: message_count(&parsed.sections),
+            preview: conversation_preview(&parsed.sections),
         });
     }
-    out.sort_by(|a, b| b.created_at.cmp(&a.created_at));
+    out.sort_by(|a, b| b.updated_at.cmp(&a.updated_at));
     out
 }
 
@@ -730,5 +785,26 @@ world
             text_content(&reparsed.sections[0].nodes[0]),
             "\nHi there! today?\n"
         );
+    }
+
+    #[test]
+    fn history_summary_helpers_count_and_preview_conversations() {
+        let sections = vec![
+            section("user", vec![text_node("   ")]),
+            section("user", vec![text_node("Hello\nthere")]),
+            section(
+                "agent",
+                vec![ContentNodeData::Prompt {
+                    id: "p1".to_string(),
+                    prompt_id: None,
+                    name: "summary".to_string(),
+                    body: "Prompt body\nwith spacing".to_string(),
+                    expanded: false,
+                }],
+            ),
+        ];
+
+        assert_eq!(message_count(&sections), 2);
+        assert_eq!(conversation_preview(&sections), "Hello there Prompt body with spacing");
     }
 }

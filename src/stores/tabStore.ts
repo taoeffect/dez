@@ -29,6 +29,16 @@ interface ConversationData {
   created_at: number
 }
 
+export interface ConversationSummary {
+  id: string
+  title: string
+  createdAt: number
+  updatedAt: number
+  model: string | null
+  messageCount: number
+  preview: string
+}
+
 interface TabData {
   id: string
   title: string
@@ -216,6 +226,70 @@ export const useTabStore = defineStore('tabs', () => {
     }
   }
 
+  function tabFromConversation(conv: ConversationData, overrides: Partial<Tab> = {}): Tab {
+    const sections: Section[] = conv.sections.map((s) => ({
+      id: crypto.randomUUID(),
+      role: s.role,
+      content: normalizeContent(s.nodes.map((n) => dataToContentNode(n))),
+    }))
+    if (sections.length === 0) {
+      sections.push({ id: crypto.randomUUID(), role: 'user', content: emptyContent() })
+    }
+    return {
+      id: overrides.id ?? crypto.randomUUID(),
+      title: overrides.title ?? (conv.title || 'New Tab'),
+      conversationId: overrides.conversationId ?? conv.id,
+      sections,
+      activeModel: overrides.activeModel ?? conv.activeModel ?? null,
+      createdAt: overrides.createdAt ?? (conv.created_at || Date.now()),
+    }
+  }
+
+  async function openConversationInNewTab(id: string): Promise<Tab | null> {
+    try {
+      const conv = await invoke<ConversationData>('load_conversation', { id })
+      const tab = tabFromConversation(conv)
+      tabs.value.push(tab)
+      activeTabId.value = tab.id
+      await saveAppState()
+      return tab
+    } catch (e) {
+      console.error('Failed to open conversation', e)
+      return null
+    }
+  }
+
+  async function deleteConversationById(id: string): Promise<void> {
+    try {
+      await invoke('delete_conversation', { id })
+    } catch (e) {
+      console.error('Failed to delete conversation', e)
+      return
+    }
+
+    const matchingTabs = tabs.value.filter((t) => t.conversationId === id)
+    if (!matchingTabs.length) {
+      await saveAppState()
+      return
+    }
+
+    if (matchingTabs.length === tabs.value.length) {
+      const replacement = createDefaultTab()
+      initActiveTabModel(replacement)
+      tabs.value = [replacement]
+      activeTabId.value = replacement.id
+      await saveAppState()
+      return
+    }
+
+    const deletedActive = matchingTabs.some((t) => t.id === activeTabId.value)
+    tabs.value = tabs.value.filter((t) => t.conversationId !== id)
+    if (deletedActive) {
+      activeTabId.value = tabs.value[0].id
+    }
+    await saveAppState()
+  }
+
   async function restoreFromState(appState: {
     tabs: TabData[]
     activeTabId: string | null
@@ -228,22 +302,13 @@ export const useTabStore = defineStore('tabs', () => {
         const conv = await invoke<ConversationData>('load_conversation', {
           id: td.conversationId,
         })
-        const sections: Section[] = conv.sections.map((s) => ({
-          id: crypto.randomUUID(),
-          role: s.role,
-          content: normalizeContent(s.nodes.map((n) => dataToContentNode(n))),
-        }))
-        if (sections.length === 0) {
-          sections.push({ id: crypto.randomUUID(), role: 'user', content: emptyContent() })
-        }
-        restored.push({
+        restored.push(tabFromConversation(conv, {
           id: td.id,
           title: td.title || conv.title || 'New Tab',
           conversationId: td.conversationId,
-          sections,
           activeModel: td.activeModel ?? conv.activeModel ?? null,
           createdAt: td.createdAt || conv.created_at || Date.now(),
-        })
+        }))
       } catch {
         // Conversation file missing: restore an empty tab with a new conversation id
         restored.push({
@@ -282,6 +347,8 @@ export const useTabStore = defineStore('tabs', () => {
     saveTab,
     saveActiveTab,
     saveAppState,
+    openConversationInNewTab,
+    deleteConversationById,
     restoreFromState,
   }
 })

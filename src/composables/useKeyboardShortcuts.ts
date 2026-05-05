@@ -11,6 +11,9 @@ export function useKeyboardShortcuts() {
       if (settingsStore.settingsOpen) {
         e.preventDefault();
         settingsStore.closeSettings();
+      } else if (settingsStore.historyOpen) {
+        e.preventDefault();
+        settingsStore.closeHistory();
       }
       return;
     }
@@ -41,6 +44,10 @@ export function useKeyboardShortcuts() {
       case ",":
         e.preventDefault();
         settingsStore.settingsOpen ? settingsStore.closeSettings() : settingsStore.openSettings();
+        break;
+      case "h":
+        e.preventDefault();
+        settingsStore.historyOpen ? settingsStore.closeHistory() : settingsStore.openHistory();
         break;
       case "n":
         e.preventDefault();
