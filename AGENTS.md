@@ -13,6 +13,9 @@ npm run tauri dev
 npm run build              # frontend only: vue-tsc --noEmit && vite build
 npm run tauri build        # production Tauri bundle
 
+# Version bump
+npm run bump-version -- <version>   # updates npm, Tauri, and Cargo version files
+
 # Preview built frontend
 npm run preview
 

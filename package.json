@@ -1,7 +1,7 @@
 {
   "name": "dez",
   "private": true,
-  "version": "0.1.0",
+  "version": "0.1.1",
   "type": "module",
   "scripts": {
     "dev": "vite",
@@ -10,6 +10,7 @@
     "build:macos:dmg": "tauri build --target aarch64-apple-darwin --bundles dmg",
     "build:macos:app": "tauri build --target aarch64-apple-darwin --bundles app",
     "build:desktop": "node scripts/build-desktop.js",
+    "bump-version": "node scripts/bump-version.js",
     "preview": "vite preview",
     "tauri": "tauri"
   },
