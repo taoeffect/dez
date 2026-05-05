@@ -6,6 +6,10 @@
   "scripts": {
     "dev": "vite",
     "build": "vue-tsc --noEmit && vite build",
+    "build:linux:appimage": "tauri build --bundles appimage",
+    "build:macos:dmg": "tauri build --target aarch64-apple-darwin --bundles dmg",
+    "build:macos:app": "tauri build --target aarch64-apple-darwin --bundles app",
+    "build:desktop": "node scripts/build-desktop.js",
     "preview": "vite preview",
     "tauri": "tauri"
   },

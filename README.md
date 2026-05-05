@@ -18,6 +18,71 @@ A chat application inspired by Zed's text threads, built with Tauri v2, Vue 3, a
 
 The main window contains a tab bar for conversations and buttons to access saved prompts, settings, and conversation history.
 
+## Packaging
+
+Install dependencies before packaging:
+
+```bash
+npm ci
+```
+
+Build a Linux AppImage on Linux:
+
+```bash
+npm run build:linux:appimage
+```
+
+The AppImage is written under `src-tauri/target/release/bundle/appimage/`.
+
+Build an Apple Silicon macOS DMG on macOS:
+
+```bash
+npm run build:macos:dmg
+```
+
+The DMG is written under `src-tauri/target/aarch64-apple-darwin/release/bundle/dmg/`. macOS packaging requires macOS and Xcode tooling; it is not supported as a Linux cross-compilation target.
+
+To run the native build for the current platform only:
+
+```bash
+npm run build:desktop
+```
+
+## Tagged releases
+
+Pushing a version tag starts the desktop release workflow:
+
+```bash
+git tag v0.1.0
+git push origin v0.1.0
+```
+
+The workflow builds the Linux AppImage on Ubuntu, builds the Apple Silicon DMG on macOS, creates the GitHub Release for the tag if needed, and attaches both files as downloadable release assets. Every release tag should have both artifacts.
+
+## macOS unsigned build note
+
+The macOS DMG is currently unsigned and not notarized. On Apple Silicon Macs, macOS may show "Dez is damaged and can't be opened" or block the app as coming from an unidentified developer.
+
+If that happens, remove the quarantine attribute from the downloaded DMG before opening it. Adjust the filename to match the downloaded artifact:
+
+```bash
+xattr -d com.apple.quarantine ~/Downloads/dez_0.1.0_aarch64.dmg
+```
+
+If you already copied the app into Applications, run:
+
+```bash
+xattr -cr /Applications/Dez.app
+```
+
+If macOS reports a permission error, run:
+
+```bash
+sudo xattr -cr /Applications/Dez.app
+```
+
+Developer ID signing and notarization can be added later to avoid this quarantine workaround for downloaded builds.
+
 ## Tech Stack
 
 - [Tauri v2](https://v2.tauri.app/) (Rust backend)
