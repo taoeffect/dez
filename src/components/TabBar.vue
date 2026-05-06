@@ -1,7 +1,26 @@
 <script setup lang="ts">
+import { nextTick, ref, watch } from 'vue'
 import { useTabStore } from '../stores/tabStore'
 
 const tabStore = useTabStore()
+const tabElements = ref(new Map<string, HTMLElement>())
+
+function setTabElement(tabId: string, element: unknown) {
+  if (element instanceof HTMLElement) {
+    tabElements.value.set(tabId, element)
+  } else {
+    tabElements.value.delete(tabId)
+  }
+}
+
+async function scrollActiveTabIntoView() {
+  await nextTick()
+
+  const activeTabId = tabStore.activeTabId
+  if (!activeTabId) return
+
+  tabElements.value.get(activeTabId)?.scrollIntoView({ block: 'nearest', inline: 'nearest' })
+}
 
 function onWheel(e: WheelEvent) {
   const target = e.currentTarget as HTMLElement
@@ -24,6 +43,12 @@ function onMiddleClick(e: MouseEvent, tabId: string) {
     tabStore.closeTab(tabId)
   }
 }
+
+watch(
+  () => [tabStore.activeTabId, tabStore.tabs.length],
+  scrollActiveTabIntoView,
+  { immediate: true },
+)
 </script>
 
 <template>
@@ -31,6 +56,7 @@ function onMiddleClick(e: MouseEvent, tabId: string) {
     <div
       v-for="tab in tabStore.tabs"
       :key="tab.id"
+      :ref="(element) => setTabElement(tab.id, element)"
       class="tab"
       :class="{ 'tab--active': tab.id === tabStore.activeTabId }"
       @click="tabStore.switchTab(tab.id)"
