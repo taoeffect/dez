@@ -1,0 +1,53 @@
+import sbp from '@sbp/sbp'
+import '@sbp/okturtles.events'
+import { SHOW_TOAST } from './events'
+
+export type ToastVariant = 'default' | 'success' | 'warning' | 'error'
+export type ToastPosition =
+  | 'top-right'
+  | 'top-left'
+  | 'top-center'
+  | 'bottom-right'
+  | 'bottom-left'
+  | 'bottom-center'
+
+export interface ToastSbpInvocation {
+  selector: string
+  args?: unknown[]
+}
+
+export interface ToastData {
+  message: string
+  title?: string
+  variant?: ToastVariant
+  position?: ToastPosition
+  duration?: number
+  icon?: string
+  closeable?: boolean
+  sbpInvocation?: ToastSbpInvocation | [string, ...unknown[]]
+}
+
+sbp('sbp/selectors/register', {
+  'dez.ui/toast' (area: string, data: ToastData): void {
+    if (!area || !data) {
+      throw Error('sbp("dez.ui/toast") failed - Missing parameters')
+    }
+
+    if (!data.message || typeof data.message !== 'string') {
+      throw Error('sbp("dez.ui/toast") failed - "message" is required and must be a string')
+    }
+
+    const defaultData = {
+      variant: 'default' as ToastVariant,
+      position: 'bottom-right' as ToastPosition,
+      closeable: true,
+    }
+
+    sbp('okTurtles.events/emit', SHOW_TOAST, area, {
+      ...defaultData,
+      ...data,
+    })
+  },
+})
+
+export default sbp

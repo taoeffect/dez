@@ -6,6 +6,7 @@ import SettingsView from "./SettingsView.vue";
 import ModelSelector from "./ModelSelector.vue";
 import TabBar from "./TabBar.vue";
 import HistoryPanel from "./HistoryPanel.vue";
+import ToastContainer from "./toast/ToastContainer.vue";
 
 useKeyboardShortcuts();
 const settingsStore = useSettingsStore();
@@ -56,6 +57,7 @@ const settingsStore = useSettingsStore();
 
     <HistoryPanel v-if="settingsStore.historyOpen" @close="settingsStore.closeHistory" />
     <SettingsView v-if="settingsStore.settingsOpen" />
+    <ToastContainer area="app-global" />
   </div>
 </template>
 
