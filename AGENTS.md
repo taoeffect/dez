@@ -121,6 +121,9 @@ The frontend never touches these files directly; use Tauri commands and Rust per
 - **CSP disabled**: `src-tauri/tauri.conf.json` sets `"csp": null` intentionally during development.
 - **Vite port is fixed**: Tauri dev expects Vite on port `1420` with `strictPort: true`; if the port is occupied, dev startup fails instead of choosing another port.
 - **App state plugin unused for core state**: `@tauri-apps/plugin-store` is installed and permissioned, but app state, prompts, conversations, and provider keys are persisted by custom Rust file I/O.
+- When using the `agentic_fetch` tool:
+  - If searching the web, *ALWAYS* tell the tool to never use local tools like Grep, and only search the web
+  - If searching local folders, *ALWAYS* tell the tool to restrict its searches to this folder only and to never search outside of it
 
 ## Code conventions
 
