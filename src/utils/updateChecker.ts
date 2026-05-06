@@ -57,21 +57,46 @@ async function checkForUpdatesIfDue(settings: SettingsStore): Promise<void> {
   }
 }
 
-async function runUpdateCheck(): Promise<void> {
+export async function checkForUpdatesNow(): Promise<void> {
+  if (checkPromise) {
+    await checkPromise
+    return
+  }
+
+  checkPromise = runUpdateCheck({ showLatestToast: true })
+
+  try {
+    await checkPromise
+  } finally {
+    checkPromise = null
+  }
+}
+
+async function runUpdateCheck(options: { showLatestToast?: boolean } = {}): Promise<void> {
   try {
     const latestRelease = await invoke<LatestRelease>('get_latest_release')
     if (isNewerVersion(latestRelease.version, __APP_VERSION__)) {
+      showUpdateAvailableToast(latestRelease)
+    } else if (options.showLatestToast) {
       sbp('dez.ui/toast', 'app-global', {
-        title: 'Update available',
-        message: `Dez ${latestRelease.version} is available.`,
+        message: "No updates, you're running the latest version.",
         variant: 'default',
-        actionLabel: 'View latest release',
-        sbpInvocation: ['dez.ui/openUrl', latestRelease.url],
+        duration: 5000,
       })
     }
   } catch (error) {
     console.warn('Update check failed', error)
   }
+}
+
+function showUpdateAvailableToast(latestRelease: LatestRelease): void {
+  sbp('dez.ui/toast', 'app-global', {
+    title: 'Update available',
+    message: `Dez ${latestRelease.version} is available.`,
+    variant: 'default',
+    actionLabel: 'View latest release',
+    sbpInvocation: ['dez.ui/openUrl', latestRelease.url],
+  })
 }
 
 function isNewerVersion(candidate: string, current: string): boolean {

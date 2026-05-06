@@ -3,6 +3,7 @@ import { onMounted, ref } from 'vue'
 import { invoke } from '@tauri-apps/api/core'
 import { openUrl } from '@tauri-apps/plugin-opener'
 import { useSettingsStore, type SettingsSection, type Theme } from '../stores/settingsStore'
+import { checkForUpdatesNow } from '../utils/updateChecker'
 import PromptManager from './PromptManager.vue'
 
 interface ProviderInfo {
@@ -25,6 +26,7 @@ const providerModels = ref<Record<string, ModelInfo[]>>({})
 const apiKeyInputs = ref<Record<string, string>>({})
 const savingKey = ref<string | null>(null)
 const keyError = ref<string | null>(null)
+const checkingUpdates = ref(false)
 
 const copilotDeviceFlow = ref<{ userCode: string; verificationUri: string; deviceCode: string } | null>(null)
 const copilotPolling = ref(false)
@@ -122,6 +124,15 @@ async function pollCopilotDeviceFlow(deviceCode: string) {
   } finally {
     copilotPolling.value = false
     copilotDeviceFlow.value = null
+  }
+}
+
+async function manuallyCheckForUpdates() {
+  checkingUpdates.value = true
+  try {
+    await checkForUpdatesNow()
+  } finally {
+    checkingUpdates.value = false
   }
 }
 
@@ -302,6 +313,16 @@ function onOverlayClick(e: MouseEvent) {
               </button>
             </div>
 
+            <div class="settings-row settings-row--end">
+              <button
+                class="settings-btn settings-btn--sm"
+                :disabled="checkingUpdates"
+                @click="manuallyCheckForUpdates()"
+              >
+                {{ checkingUpdates ? 'Checking…' : 'Check for updates' }}
+              </button>
+            </div>
+
             <div class="settings-shortcuts">
               <label class="settings-label">Keyboard shortcuts</label>
               <table class="shortcuts-table">
@@ -446,6 +467,10 @@ function onOverlayClick(e: MouseEvent) {
   align-items: center;
   justify-content: space-between;
   gap: 12px;
+}
+
+.settings-row--end {
+  justify-content: flex-end;
 }
 
 .settings-label {
