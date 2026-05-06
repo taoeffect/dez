@@ -1,6 +1,6 @@
 {
   "$schema": "https://schema.tauri.app/config/2",
-  "productName": "dez",
+  "productName": "Dez",
   "version": "0.2.1",
   "identifier": "com.taoeffect.dez",
   "build": {
