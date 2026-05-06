@@ -2,9 +2,7 @@
 
 A chat application inspired by Zed's text threads, built with Tauri v2, Vue 3, and TypeScript.
 
-**Status: In Development**
-
-## Planned Features
+## Features
 
 - **Tabbed conversations** — multiple concurrent chats in a single window
 - **Multi-provider model selection** — Z.ai, OpenRouter, Github Copilot, and MiniMax Coding Plan

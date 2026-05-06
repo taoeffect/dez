@@ -39,10 +39,6 @@ Tagged releases are driven by `.github/workflows/release-desktop.yml`: pushing a
 
 No frontend test framework, ESLint, or formatter is configured. The only observed automated tests are Rust unit tests in `src-tauri/src/persistence.rs`.
 
-## Pre-release: no backwards compatibility
-
-Dez is pre-release software with no users yet. **Do not add backwards-compatibility shims, legacy format parsers, or migration code for on-disk formats (conversation files, app state, prompt store, provider keys).** When a format changes, remove old code paths outright. Breaking changes are acceptable; users can delete `~/.config/dez/` to reset.
-
 ## Git conventions
 
 Commit messages must use an 80-character maximum line width for both subject and body.
