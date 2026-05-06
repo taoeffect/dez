@@ -165,7 +165,7 @@ function toggleFavorite(model: ModelInfo, e: MouseEvent) {
 
 function openProviderSettings() {
   close()
-  settingsStore.openSettings()
+  settingsStore.openSettings('providers')
 }
 
 function onClickOutside(e: MouseEvent) {

@@ -3,6 +3,7 @@ import { ref, watch } from 'vue'
 import { invoke } from '@tauri-apps/api/core'
 
 export type Theme = 'light' | 'dark' | 'system'
+export type SettingsSection = 'general' | 'providers' | 'prompts' | 'appearance'
 
 export interface DefaultModel {
   providerId: string
@@ -32,6 +33,7 @@ export const useSettingsStore = defineStore('settings', () => {
   const checkForUpdates = ref(true)
   const lastUpdateCheckAt = ref<number | null>(null)
   const settingsOpen = ref(false)
+  const settingsSection = ref<SettingsSection>('general')
   const historyOpen = ref(false)
 
   let initialized = false
@@ -144,7 +146,8 @@ export const useSettingsStore = defineStore('settings', () => {
     }
   }
 
-  function openSettings() {
+  function openSettings(section: SettingsSection = 'general') {
+    settingsSection.value = section
     historyOpen.value = false
     settingsOpen.value = true
   }
@@ -172,6 +175,7 @@ export const useSettingsStore = defineStore('settings', () => {
     checkForUpdates,
     lastUpdateCheckAt,
     settingsOpen,
+    settingsSection,
     historyOpen,
     init,
     togglePillSeparators,

@@ -1,8 +1,8 @@
 <script setup lang="ts">
-import { ref, onMounted } from 'vue'
+import { onMounted, ref } from 'vue'
 import { invoke } from '@tauri-apps/api/core'
 import { openUrl } from '@tauri-apps/plugin-opener'
-import { useSettingsStore, type Theme } from '../stores/settingsStore'
+import { useSettingsStore, type SettingsSection, type Theme } from '../stores/settingsStore'
 import PromptManager from './PromptManager.vue'
 
 interface ProviderInfo {
@@ -18,8 +18,8 @@ interface ModelInfo {
 }
 
 const settings = useSettingsStore()
+const sections: SettingsSection[] = ['general', 'providers', 'prompts', 'appearance']
 
-const activeSection = ref<'providers' | 'prompts' | 'appearance' | 'general'>('providers')
 const providers = ref<ProviderInfo[]>([])
 const providerModels = ref<Record<string, ModelInfo[]>>({})
 const apiKeyInputs = ref<Record<string, string>>({})
@@ -138,7 +138,7 @@ function onOverlayClick(e: MouseEvent) {
 
 <template>
   <div class="settings-overlay" @click="onOverlayClick" @keydown.escape="onClose">
-    <div class="settings-modal" :class="{ 'settings-modal--wide': activeSection === 'prompts' }">
+    <div class="settings-modal" :class="{ 'settings-modal--wide': settings.settingsSection === 'prompts' }">
       <div class="settings-header">
         <h2>Settings</h2>
         <button class="settings-close" @click="onClose" title="Close (Esc)">×</button>
@@ -147,11 +147,11 @@ function onOverlayClick(e: MouseEvent) {
       <div class="settings-body">
         <nav class="settings-nav">
           <button
-            v-for="s in (['providers', 'prompts', 'appearance', 'general'] as const)"
+            v-for="s in sections"
             :key="s"
             class="settings-nav-btn"
-            :class="{ 'settings-nav-btn--active': activeSection === s }"
-            @click="activeSection = s"
+            :class="{ 'settings-nav-btn--active': settings.settingsSection === s }"
+            @click="settings.settingsSection = s"
           >
             {{ s.charAt(0).toUpperCase() + s.slice(1) }}
           </button>
@@ -159,7 +159,7 @@ function onOverlayClick(e: MouseEvent) {
 
         <div class="settings-content">
           <!-- Providers -->
-          <div v-if="activeSection === 'providers'" class="settings-section">
+          <div v-if="settings.settingsSection === 'providers'" class="settings-section">
             <div v-for="provider in providers" :key="provider.id" class="provider-card">
               <div class="provider-header">
                 <span class="provider-name">{{ provider.name }}</span>
@@ -229,12 +229,12 @@ function onOverlayClick(e: MouseEvent) {
           </div>
 
           <!-- Prompts -->
-          <div v-if="activeSection === 'prompts'" class="settings-section settings-section--fill">
+          <div v-if="settings.settingsSection === 'prompts'" class="settings-section settings-section--fill">
             <PromptManager />
           </div>
 
           <!-- Appearance -->
-          <div v-if="activeSection === 'appearance'" class="settings-section">
+          <div v-if="settings.settingsSection === 'appearance'" class="settings-section">
             <div class="settings-row">
               <label class="settings-label">Theme</label>
               <div class="settings-btn-group">
@@ -263,7 +263,7 @@ function onOverlayClick(e: MouseEvent) {
           </div>
 
           <!-- General -->
-          <div v-if="activeSection === 'general'" class="settings-section">
+          <div v-if="settings.settingsSection === 'general'" class="settings-section">
             <div class="settings-row">
               <label class="settings-label">Default model for new tabs</label>
               <select

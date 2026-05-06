@@ -31,7 +31,7 @@ const settingsStore = useSettingsStore();
         <button
           class="tab-bar-btn"
           title="Settings (Cmd/Ctrl+,)"
-          @click="settingsStore.openSettings"
+          @click="settingsStore.openSettings('general')"
         >
           <svg width="14" height="14" viewBox="0 0 14 14" fill="none">
             <path d="M7 9a2 2 0 100-4 2 2 0 000 4z" fill="currentColor"/>
