@@ -3,6 +3,9 @@
 ## Commands
 
 ```bash
+# Install dependencies before building or packaging
+npm ci
+
 # Development (frontend only, no Tauri shell)
 npm run dev
 
@@ -12,6 +15,11 @@ npm run tauri dev
 # Build
 npm run build              # frontend only: vue-tsc --noEmit && vite build
 npm run tauri build        # production Tauri bundle
+
+# Platform packaging
+npm run build:desktop          # native bundle for the current platform only
+npm run build:linux:appimage   # Linux AppImage; Linux only
+npm run build:macos:dmg        # Apple Silicon macOS DMG; macOS only
 
 # Version bump
 npm run bump-version -- <version>   # updates npm, Tauri, and Cargo version files
@@ -26,6 +34,8 @@ npx vue-tsc --noEmit
 cd src-tauri && cargo check
 cd src-tauri && cargo test
 ```
+
+Tagged releases are driven by `.github/workflows/release-desktop.yml`: pushing a `v*` tag builds a Linux AppImage on Ubuntu, an unsigned Apple Silicon DMG on macOS, creates the GitHub Release if needed, and uploads both artifacts.
 
 No frontend test framework, ESLint, or formatter is configured. The only observed automated tests are Rust unit tests in `src-tauri/src/persistence.rs`.
 
@@ -72,6 +82,14 @@ User edits ThreadEditor (CodeMirror document)
 - **Stores**: `tabStore` owns tabs, tab persistence, conversation persistence, active models, titles, and app-state serialization. `threadStore` is a computed proxy over the active tab. `settingsStore` owns UI/model preferences and delegates persistence to `tabStore.saveAppState()` through a debounced callback wired in `App.vue`. `promptsStore` loads/saves `prompts.json` directly through Tauri commands.
 - **Streaming state**: `useStreaming.ts` has module-level refs (`isStreaming`, `streamingTabId`, `streamingError`), so streaming status is shared across composable instances. `setStreamingCmView()` is a temporary bridge from `ThreadEditor` so token streaming can patch the active CodeMirror doc while also mutating store state.
 - **Dev global**: In dev builds, `src/main.ts` exposes `window.__stores = { thread, tab, settings, prompts }` for webview console testing.
+
+### SBP
+
+SBP (Selector-Based Programming) is a selector-string message-passing style: calls look like `sbp('domain/action', ...args)`, and selectors are registered under domains that act as stable APIs. In this project, note the `sbp` domain for SBP internals, `dez.ui` for Dez UI selectors, and `okTurtles.events` for event emit/listen behavior. `src/utils/ui.ts` registers the current Dez UI selector(s), and `src/main.ts` exposes `window.sbp = sbp`.
+
+### Toasts
+
+Toast UI lives under `src/components/toast/`. Toasts are emitted through the SBP selector `dez.ui/toast` and rendered by `ToastContainer.vue`; `AppLayout.vue` mounts the app-wide container. See `src/components/toast/README.md` for payload fields, examples, area behavior, and display rules.
 
 ### Backend (`src-tauri/src/`)
 

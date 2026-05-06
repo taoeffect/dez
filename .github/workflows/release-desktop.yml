@@ -101,6 +101,9 @@ jobs:
       TAG_NAME: ${{ github.ref_name }}
 
     steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
       - name: Download AppImage artifact
         uses: actions/download-artifact@v4
         with:
@@ -118,7 +121,7 @@ jobs:
           if ! gh release view "$TAG_NAME" >/dev/null 2>&1; then
             gh release create "$TAG_NAME" \
               --title "$TAG_NAME" \
-              --notes "Desktop builds for $TAG_NAME"
+              --notes-file .github/release-notes-template.md
           fi
 
       - name: Upload release assets
