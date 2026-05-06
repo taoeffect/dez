@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed, onBeforeUnmount, onMounted, ref, watch, nextTick } from 'vue'
 import { EditorSelection, EditorState, Prec, type StateEffect } from '@codemirror/state'
-import { EditorView, keymap } from '@codemirror/view'
+import { EditorView, drawSelection, keymap } from '@codemirror/view'
 import { history, historyKeymap, defaultKeymap } from '@codemirror/commands'
 import { useThreadStore } from '../stores/threadStore'
 import { useTabStore } from '../stores/tabStore'
@@ -29,6 +29,7 @@ import {
   roleSeparatorAtomicRanges,
   roleSeparatorMouseHandler,
   roleSeparators,
+  scanPills,
   sectionsField,
   toggleRoleEffect,
   serializeDocRangeForClipboard,
@@ -150,6 +151,36 @@ function moveCursorAcrossSeparatorRight(v: EditorView): boolean {
   if (!target) return false
   v.dispatch({
     selection: EditorSelection.cursor(target.from),
+    scrollIntoView: true,
+    userEvent: 'select',
+  })
+  return true
+}
+
+function moveCursorAcrossPromptLeft(v: EditorView): boolean {
+  const { state } = v
+  const range = state.selection.main
+  if (!range.empty) return false
+  const pill = scanPills(state.doc.toString()).find((p) => p.to === range.head)
+  if (!pill) return false
+  if (state.field(pillsField).get(pill.id)?.expanded) return false
+  v.dispatch({
+    selection: EditorSelection.cursor(pill.from, -1),
+    scrollIntoView: true,
+    userEvent: 'select',
+  })
+  return true
+}
+
+function moveCursorAcrossPromptRight(v: EditorView): boolean {
+  const { state } = v
+  const range = state.selection.main
+  if (!range.empty) return false
+  const pill = scanPills(state.doc.toString()).find((p) => p.from === range.head)
+  if (!pill) return false
+  if (state.field(pillsField).get(pill.id)?.expanded) return false
+  v.dispatch({
+    selection: EditorSelection.cursor(pill.to, 1),
     scrollIntoView: true,
     userEvent: 'select',
   })
@@ -547,11 +578,11 @@ function buildState(): EditorState {
       },
       {
         key: 'ArrowLeft',
-        run: moveCursorAcrossSeparatorLeft,
+        run: (v) => moveCursorAcrossPromptLeft(v) || moveCursorAcrossSeparatorLeft(v),
       },
       {
         key: 'ArrowRight',
-        run: moveCursorAcrossSeparatorRight,
+        run: (v) => moveCursorAcrossPromptRight(v) || moveCursorAcrossSeparatorRight(v),
       },
       {
         key: 'Backspace',
@@ -603,6 +634,7 @@ function buildState(): EditorState {
       promptPills,
       promptAtomicRanges,
       promptPillMouseHandler,
+      drawSelection(),
       history(),
       autocompleteKeymap,
       submitKeymap,
