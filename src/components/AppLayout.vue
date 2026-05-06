@@ -19,16 +19,6 @@ const settingsStore = useSettingsStore();
       <div class="tab-bar-actions">
         <button
           class="tab-bar-btn"
-          :class="{ 'tab-bar-btn--active': settingsStore.showPillSeparators }"
-          title="Toggle role labels"
-          @click="settingsStore.togglePillSeparators"
-        >
-          <svg width="14" height="14" viewBox="0 0 14 14" fill="none">
-            <rect x="1" y="5" width="12" height="4" rx="2" fill="currentColor"/>
-          </svg>
-        </button>
-        <button
-          class="tab-bar-btn"
           title="History (Cmd/Ctrl+H)"
           @click="settingsStore.openHistory"
         >
