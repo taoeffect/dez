@@ -13,7 +13,7 @@ A chat application inspired by Zed's text threads, built with Tauri v2, Vue 3, a
 ## Features
 
 - **Tabbed conversations** — multiple concurrent chats in a single window
-- **Multi-provider model selection** — Z.ai, OpenRouter, Github Copilot, and MiniMax Coding Plan
+- **Multi-provider model selection** — OpenRouter, Z.ai, GitHub Copilot, MiniMax, Venice, and Charm Hyper
 - **Saved prompts** — selectable via `/prompt` shortcut (Zed-style)
 - **Inline editing** — edit any message in a thread, including agent responses
 - **Text pill separators** — toggleable "User" / "Agent" labels between messages
