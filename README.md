@@ -1,8 +1,8 @@
-# Dez
-
 <p align="center">
   <img src="src-tauri/icons/128x128.png" alt="Dez app icon" width="128" height="128">
 </p>
+
+# Dez
 
 A [Tauri](https://v2.tauri.app/)-based chat application inspired by Zed's text threads.
 
