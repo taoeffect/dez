@@ -6,6 +6,10 @@
 
 A chat application inspired by Zed's text threads, built with Tauri v2, Vue 3, and TypeScript.
 
+<p align="center">
+  <video src="https://github.com/user-attachments/assets/99a4b112-49e5-44eb-9579-00db6623d2fb" controls autoplay muted playsinline width="800"></video>
+</p>
+
 ## Features
 
 - **Tabbed conversations** — multiple concurrent chats in a single window
