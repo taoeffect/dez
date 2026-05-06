@@ -1,6 +1,6 @@
 [package]
 name = "dez"
-version = "0.2.1"
+version = "0.3.0"
 description = "A friendly chat interface to various LLMs"
 authors = ["Greg Slepak w/AI"]
 edition = "2024"
