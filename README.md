@@ -1,5 +1,9 @@
 # Dez
 
+<p align="center">
+  <img src="src-tauri/icons/128x128.png" alt="Dez app icon" width="128" height="128">
+</p>
+
 A chat application inspired by Zed's text threads, built with Tauri v2, Vue 3, and TypeScript.
 
 ## Features
