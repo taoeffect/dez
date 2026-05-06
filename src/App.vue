@@ -1,13 +1,15 @@
 <script setup lang="ts">
-import { onMounted, watch } from "vue";
+import { onMounted, onUnmounted, watch } from "vue";
 import AppLayout from "./components/AppLayout.vue";
 import { useSettingsStore } from "./stores/settingsStore";
 import { useTabStore } from "./stores/tabStore";
 import { usePromptsStore } from "./stores/promptsStore";
+import { startUpdateChecker } from "./utils/updateChecker";
 
 const settingsStore = useSettingsStore();
 const tabStore = useTabStore();
 const promptsStore = usePromptsStore();
+let stopUpdateChecker: (() => void) | null = null;
 
 onMounted(async () => {
   const state = await settingsStore.init(() => {
@@ -20,6 +22,8 @@ onMounted(async () => {
     await tabStore.restoreFromState(state as never);
   }
 
+  stopUpdateChecker = startUpdateChecker(settingsStore);
+
   // Persist app state whenever tabs, active tab, or per-tab model changes
   watch(
     () => [
@@ -30,6 +34,10 @@ onMounted(async () => {
       tabStore.saveAppState();
     },
   );
+});
+
+onUnmounted(() => {
+  stopUpdateChecker?.();
 });
 </script>
 

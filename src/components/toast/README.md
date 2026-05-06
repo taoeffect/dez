@@ -50,6 +50,7 @@ sbp('dez.ui/toast', 'app-global', {
 sbp('dez.ui/toast', 'app-global', {
   message: 'Click me',
   variant: 'default',
+  actionLabel: 'Run action',
   sbpInvocation: ['dez.ui/toast', 'app-global', {
     message: 'Clicked toast action',
     variant: 'success',
@@ -68,7 +69,8 @@ sbp('dez.ui/toast', 'app-global', {
 | `duration` | No | `number` | Milliseconds before auto-dismiss. Omit for persistent toast. |
 | `icon` | No | `string` | Overrides the default variant icon. |
 | `closeable` | No | `boolean` | Shows or hides the close button. |
-| `sbpInvocation` | No | `{ selector: string, args?: unknown[] }` or `[string, ...unknown[]]` | Invoked when the toast body is clicked. |
+| `actionLabel` | No | `string` | Renders a text-button action inside the toast. |
+| `sbpInvocation` | No | `{ selector: string, args?: unknown[] }` or `[string, ...unknown[]]` | Invoked when the toast body or action is clicked. |
 
 Defaults applied by `dez.ui/toast`:
 
@@ -88,4 +90,4 @@ Defaults applied by `dez.ui/toast`:
 - `duration` adds a progress bar and auto-dismisses the toast when the timer completes.
 - Hover pauses the progress animation and timer; leaving the toast resumes them.
 - `closeable: false` hides the close button, but the toast can still close by timeout or max-count eviction.
-- Toast title and message are rendered as Vue text bindings, not `v-html`, so HTML in toast content is not executed.
+- Toast title, message, and action text are rendered as Vue text bindings, not `v-html`, so HTML in toast content is not executed.

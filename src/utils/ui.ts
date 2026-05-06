@@ -1,5 +1,6 @@
 import sbp from '@sbp/sbp'
 import '@sbp/okturtles.events'
+import { openUrl } from '@tauri-apps/plugin-opener'
 import { SHOW_TOAST } from './events'
 
 export type ToastVariant = 'default' | 'success' | 'warning' | 'error'
@@ -24,10 +25,21 @@ export interface ToastData {
   duration?: number
   icon?: string
   closeable?: boolean
+  actionLabel?: string
   sbpInvocation?: ToastSbpInvocation | [string, ...unknown[]]
 }
 
 sbp('sbp/selectors/register', {
+  'dez.ui/openUrl' (url: string): void {
+    if (!url || typeof url !== 'string') {
+      throw Error('sbp("dez.ui/openUrl") failed - "url" is required and must be a string')
+    }
+
+    openUrl(url).catch((error) => {
+      console.error('Failed to open URL:', error)
+    })
+  },
+
   'dez.ui/toast' (area: string, data: ToastData): void {
     if (!area || !data) {
       throw Error('sbp("dez.ui/toast") failed - Missing parameters')

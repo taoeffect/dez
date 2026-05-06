@@ -2,8 +2,8 @@
 name = "dez"
 version = "0.1.1"
 description = "A friendly chat interface to various LLMs"
-authors = ["you"]
-edition = "2021"
+authors = ["Greg Slepak w/AI"]
+edition = "2024"
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 

@@ -99,6 +99,10 @@ pub struct AppState {
     pub last_used_model: Option<DefaultModelRef>,
     #[serde(default)]
     pub favorites: Vec<DefaultModelRef>,
+    #[serde(rename = "checkForUpdates", default = "default_true")]
+    pub check_for_updates: bool,
+    #[serde(rename = "lastUpdateCheckAt", default)]
+    pub last_update_check_at: Option<i64>,
 }
 
 fn default_true() -> bool {
@@ -120,6 +124,8 @@ impl Default for AppState {
             default_new_tab_model: None,
             last_used_model: None,
             favorites: Vec::new(),
+            check_for_updates: true,
+            last_update_check_at: None,
         }
     }
 }

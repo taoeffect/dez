@@ -63,12 +63,14 @@ pub fn run() {
         .plugin(tauri_plugin_store::Builder::default().build())
         .manage(Arc::new(Mutex::new(registry)))
         .manage(GenerationState::new())
+        .manage(reqwest::Client::new())
         .invoke_handler(tauri::generate_handler![
             commands::get_configured_providers,
             commands::list_models,
             commands::set_api_key,
             commands::send_message,
             commands::cancel_generation,
+            commands::get_latest_release,
             commands::copilot_start_device_flow,
             commands::copilot_poll_device_flow,
             commands::save_conversation,

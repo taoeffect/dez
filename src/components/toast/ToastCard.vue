@@ -114,6 +114,14 @@ defineExpose({ closeToast })
     <div class="toast-content">
       <p v-if="data.title" class="toast-title">{{ data.title }}</p>
       <p class="toast-message">{{ data.message }}</p>
+      <button
+        v-if="data.actionLabel"
+        class="toast-action"
+        type="button"
+        @click.stop="onToastClick"
+      >
+        {{ data.actionLabel }}
+      </button>
     </div>
     <button
       v-if="showCloseButton"
@@ -209,6 +217,25 @@ defineExpose({ closeToast })
   font-size: 13px;
   line-height: 18px;
   opacity: 0.9;
+}
+
+.toast-action {
+  margin-top: 8px;
+  padding: 0;
+  border: none;
+  background: transparent;
+  color: currentColor;
+  cursor: pointer;
+  font: inherit;
+  font-size: 13px;
+  font-weight: 700;
+  line-height: 18px;
+  text-decoration: underline;
+  text-underline-offset: 3px;
+}
+
+.toast-action:hover {
+  opacity: 0.78;
 }
 
 .toast-close {

@@ -215,6 +215,8 @@ export const useTabStore = defineStore('tabs', () => {
       defaultNewTabModel: settings.defaultNewTabModel,
       lastUsedModel: settings.lastUsedModel,
       favorites: settings.favorites,
+      checkForUpdates: settings.checkForUpdates,
+      lastUpdateCheckAt: settings.lastUpdateCheckAt,
     }
   }
 

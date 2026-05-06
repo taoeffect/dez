@@ -291,6 +291,17 @@ function onOverlayClick(e: MouseEvent) {
               </select>
             </div>
 
+            <div class="settings-row">
+              <label class="settings-label">Check for updates</label>
+              <button
+                class="settings-toggle"
+                :class="{ 'settings-toggle--on': settings.checkForUpdates }"
+                @click="settings.setCheckForUpdates(!settings.checkForUpdates)"
+              >
+                <span class="settings-toggle-knob" />
+              </button>
+            </div>
+
             <div class="settings-shortcuts">
               <label class="settings-label">Keyboard shortcuts</label>
               <table class="shortcuts-table">

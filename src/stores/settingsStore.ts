@@ -18,6 +18,8 @@ interface AppStatePayload {
   defaultNewTabModel?: DefaultModel | null
   lastUsedModel?: DefaultModel | null
   favorites?: DefaultModel[]
+  checkForUpdates?: boolean
+  lastUpdateCheckAt?: number | null
 }
 
 export const useSettingsStore = defineStore('settings', () => {
@@ -27,6 +29,8 @@ export const useSettingsStore = defineStore('settings', () => {
   const defaultNewTabModel = ref<DefaultModel | null>(null)
   const lastUsedModel = ref<DefaultModel | null>(null)
   const favorites = ref<DefaultModel[]>([])
+  const checkForUpdates = ref(true)
+  const lastUpdateCheckAt = ref<number | null>(null)
   const settingsOpen = ref(false)
   const historyOpen = ref(false)
 
@@ -48,6 +52,10 @@ export const useSettingsStore = defineStore('settings', () => {
         defaultNewTabModel.value = state.defaultNewTabModel
       if (state.lastUsedModel !== undefined) lastUsedModel.value = state.lastUsedModel
       if (Array.isArray(state.favorites)) favorites.value = state.favorites
+      if (typeof state.checkForUpdates === 'boolean')
+        checkForUpdates.value = state.checkForUpdates
+      if (typeof state.lastUpdateCheckAt === 'number')
+        lastUpdateCheckAt.value = state.lastUpdateCheckAt
     }
 
     applyTheme(theme.value)
@@ -55,7 +63,16 @@ export const useSettingsStore = defineStore('settings', () => {
     initialized = true
 
     watch(
-      [showPillSeparators, theme, defaultModels, defaultNewTabModel, lastUsedModel, favorites],
+      [
+        showPillSeparators,
+        theme,
+        defaultModels,
+        defaultNewTabModel,
+        lastUsedModel,
+        favorites,
+        checkForUpdates,
+        lastUpdateCheckAt,
+      ],
       schedulePersist,
       { deep: true },
     )
@@ -102,6 +119,14 @@ export const useSettingsStore = defineStore('settings', () => {
     lastUsedModel.value = model
   }
 
+  function setCheckForUpdates(enabled: boolean) {
+    checkForUpdates.value = enabled
+  }
+
+  function setLastUpdateCheckAt(timestamp: number | null) {
+    lastUpdateCheckAt.value = timestamp
+  }
+
   function isFavorite(providerId: string, modelId: string): boolean {
     return favorites.value.some(
       (f) => f.providerId === providerId && f.modelId === modelId,
@@ -144,6 +169,8 @@ export const useSettingsStore = defineStore('settings', () => {
     defaultNewTabModel,
     lastUsedModel,
     favorites,
+    checkForUpdates,
+    lastUpdateCheckAt,
     settingsOpen,
     historyOpen,
     init,
@@ -152,6 +179,8 @@ export const useSettingsStore = defineStore('settings', () => {
     setDefaultModel,
     setDefaultNewTabModel,
     setLastUsedModel,
+    setCheckForUpdates,
+    setLastUpdateCheckAt,
     isFavorite,
     toggleFavorite,
     openSettings,

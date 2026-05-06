@@ -10,11 +10,26 @@ use crate::persistence::{AppState, ConversationData, ConversationSummary, Prompt
 use crate::providers::{ChatMessage, ProviderError, ProviderInfo, ModelInfo, ProviderRegistry, StreamEvent};
 use crate::providers::copilot::DeviceFlowResponse;
 
+const RELEASES_URL: &str = "https://github.com/taoeffect/dez/releases";
+const LATEST_RELEASE_API: &str = "https://api.github.com/repos/taoeffect/dez/releases/latest";
+
 pub type SharedRegistry = Arc<Mutex<ProviderRegistry>>;
 type ActiveGenerations = Arc<Mutex<HashMap<String, JoinHandle<()>>>>;
 
 pub struct GenerationState {
     pub active: ActiveGenerations,
+}
+
+#[derive(Debug, Clone, serde::Serialize)]
+pub struct LatestRelease {
+    pub version: String,
+    pub url: String,
+}
+
+#[derive(Debug, serde::Deserialize)]
+struct GitHubReleaseResponse {
+    tag_name: String,
+    html_url: Option<String>,
 }
 
 impl GenerationState {
@@ -140,6 +155,76 @@ pub async fn cancel_generation(
         handle.abort();
     }
     Ok(())
+}
+
+#[tauri::command]
+pub async fn get_latest_release(client: State<'_, reqwest::Client>) -> Result<LatestRelease, String> {
+    let release: GitHubReleaseResponse = client
+        .get(LATEST_RELEASE_API)
+        .header(reqwest::header::USER_AGENT, "dez-update-checker")
+        .send()
+        .await
+        .map_err(|e| format!("Failed to check for updates: {}", e))?
+        .error_for_status()
+        .map_err(|e| format!("Failed to check for updates: {}", e))?
+        .json()
+        .await
+        .map_err(|e| format!("Failed to parse update response: {}", e))?;
+
+    parse_latest_release(release)
+}
+
+fn parse_latest_release(release: GitHubReleaseResponse) -> Result<LatestRelease, String> {
+    let tag = release.tag_name.trim();
+    if tag.is_empty() {
+        return Err("Failed to find tag_name in release response".to_string());
+    }
+
+    Ok(LatestRelease {
+        version: tag.trim_start_matches('v').to_string(),
+        url: release.html_url.unwrap_or_else(|| RELEASES_URL.to_string()),
+    })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn parses_latest_release_from_github_api_response() {
+        let release = GitHubReleaseResponse {
+            tag_name: "v0.2.0".to_string(),
+            html_url: Some("https://github.com/taoeffect/dez/releases/tag/v0.2.0".to_string()),
+        };
+
+        let parsed = parse_latest_release(release).expect("release should parse");
+
+        assert_eq!(parsed.version, "0.2.0");
+        assert_eq!(parsed.url, "https://github.com/taoeffect/dez/releases/tag/v0.2.0");
+    }
+
+    #[test]
+    fn rejects_latest_release_response_without_tag_name() {
+        let release = GitHubReleaseResponse {
+            tag_name: "".to_string(),
+            html_url: Some("https://github.com/taoeffect/dez/releases/latest".to_string()),
+        };
+
+        assert!(parse_latest_release(release).is_err());
+    }
+
+    #[test]
+    fn falls_back_to_releases_url_without_html_url() {
+        let release = GitHubReleaseResponse {
+            tag_name: "v0.2.0".to_string(),
+            html_url: None,
+        };
+
+        let parsed = parse_latest_release(release).expect("release should parse");
+
+        assert_eq!(parsed.version, "0.2.0");
+        assert_eq!(parsed.url, RELEASES_URL);
+    }
 }
 
 #[tauri::command]
