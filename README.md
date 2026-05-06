@@ -4,7 +4,7 @@
   <img src="src-tauri/icons/128x128.png" alt="Dez app icon" width="128" height="128">
 </p>
 
-A chat application inspired by Zed's text threads, built with Tauri v2, Vue 3, and TypeScript.
+A [Tauri](https://v2.tauri.app/)-based chat application inspired by Zed's text threads.
 
 <p align="center">
   <video src="https://github.com/user-attachments/assets/99a4b112-49e5-44eb-9579-00db6623d2fb" controls autoplay muted playsinline width="800"></video>
@@ -96,6 +96,6 @@ Developer ID signing and notarization can be added later to avoid this quarantin
 - TypeScript
 - Vite
 
-## Recommended IDE Setup
+## License
 
-- [VSCodium](https://vscodium.com/) + [Vue - Official](https://marketplace.visualstudio.com/items?itemName=Vue.volar) + [Tauri](https://marketplace.visualstudio.com/items?itemName=tauri-apps.tauri-vscode) + [rust-analyzer](https://marketplace.visualstudio.com/items?itemName=rust-lang.rust-analyzer)
+AGPL-3.0. See [`LICENSE`](LICENSE) for license details.
