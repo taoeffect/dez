@@ -248,7 +248,14 @@ function moveLineUpWithinSection(v: EditorView): boolean {
 
   if (!previousLine) {
     const crossSectionTarget = lastEditableLineOfPreviousSection(state, currentLine.number)
-    if (!crossSectionTarget) return true
+    if (!crossSectionTarget) {
+      v.dispatch({
+        selection: EditorSelection.cursor(currentLine.from),
+        scrollIntoView: true,
+        userEvent: 'select',
+      })
+      return true
+    }
     const column = range.head - currentLine.from
     const target = crossSectionTarget.from + Math.min(column, crossSectionTarget.length)
     v.dispatch({
@@ -307,7 +314,14 @@ function moveLineDownWithinSection(v: EditorView): boolean {
 
   if (!nextLine) {
     const crossSectionTarget = firstEditableLineOfNextSection(state, currentLine.number)
-    if (!crossSectionTarget) return true
+    if (!crossSectionTarget) {
+      v.dispatch({
+        selection: EditorSelection.cursor(currentLine.to),
+        scrollIntoView: true,
+        userEvent: 'select',
+      })
+      return true
+    }
     const column = range.head - currentLine.from
     const target = crossSectionTarget.from + Math.min(column, crossSectionTarget.length)
     v.dispatch({
@@ -575,6 +589,33 @@ function buildState(): EditorState {
         key: 'ArrowDown',
         preventDefault: true,
         run: moveLineDownWithinSection,
+      },
+      {
+        key: 'Home',
+        preventDefault: true,
+        run: (v) => {
+          v.dispatch({
+            selection: EditorSelection.cursor(0),
+            effects: EditorView.scrollIntoView(0, { y: 'start', yMargin: 0 }),
+            userEvent: 'select',
+          })
+          requestAnimationFrame(() => {
+            v.scrollDOM.scrollTop = 0
+          })
+          return true
+        },
+      },
+      {
+        key: 'End',
+        preventDefault: true,
+        run: (v) => {
+          v.dispatch({
+            selection: EditorSelection.cursor(v.state.doc.length),
+            scrollIntoView: true,
+            userEvent: 'select',
+          })
+          return true
+        },
       },
       {
         key: 'ArrowLeft',
