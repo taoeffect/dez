@@ -9,6 +9,7 @@
     "build:linux:appimage": "NO_STRIP=1 tauri build --bundles appimage",
     "build:macos:dmg": "tauri build --target aarch64-apple-darwin --bundles dmg",
     "build:macos:app": "tauri build --target aarch64-apple-darwin --bundles app",
+    "build:win": "tauri build --target x86_64-pc-windows-msvc --bundles msi",
     "build:desktop": "node scripts/build-desktop.js",
     "check:persistence": "node scripts/check-persistence.mjs",
     "bump-version": "node scripts/bump-version.js",

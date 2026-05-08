@@ -8,6 +8,10 @@ const commands = {
   darwin: {
     build: ['npm', ['run', 'build:macos:dmg']],
     otherPlatform: 'Linux AppImage builds must run on Linux or the tagged-release workflow.'
+  },
+  windows: {
+    build: ['npm', ['run', 'build:win']],
+    otherPlatform: 'Windows builds may need to run on windows?'
   }
 };
 
