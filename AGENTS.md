@@ -1,5 +1,10 @@
 # AGENTS.md
 
+> [!IMPORTANT]
+> This codebase is currently in the middle of an upgrade/rewrite that involves moving a lot of the code from Rust to TypeScript
+> and also changing the way model streaming is done to support concurrent streaming across different tabs.
+> Some of this info might be outdated. It will be updated after the migration is complete.
+
 ## Commands
 
 ```bash
@@ -15,6 +20,9 @@ npm run tauri dev
 # Build
 npm run build              # frontend only: vue-tsc --noEmit && vite build
 npm run tauri build        # production Tauri bundle
+
+# Deterministic persistence fixture checks
+npm run check:persistence
 
 # Platform packaging
 npm run build:desktop          # native bundle for the current platform only
@@ -81,7 +89,19 @@ User edits ThreadEditor (CodeMirror document)
 
 ### SBP
 
-SBP (Selector-Based Programming) is a selector-string message-passing style: calls look like `sbp('domain/action', ...args)`, and selectors are registered under domains that act as stable APIs. In this project, note the `sbp` domain for SBP internals, `dez.ui` for Dez UI selectors, and `okTurtles.events` for event emit/listen behavior. `src/utils/ui.ts` registers the current Dez UI selector(s), and `src/main.ts` exposes `window.sbp = sbp`.
+SBP (Selector-Based Programming) is a selector-string message-passing style: calls look like `sbp('domain/action', ...args)`, and selectors are registered under domains that act as stable APIs. In this project, `src/sbp/README.md` documents selector domains and boundary rules. `src/main.ts` imports `src/sbp` once to register selector modules and exposes `window.sbp = sbp`.
+
+Components should call `dez.controller/*` for workflows, `dez.ui/*` for UI services, and high-level data domains only when direct data reads are needed. Components and stores must not call `dez.native/*`, import Tauri APIs, call `invoke()`, or perform runtime `fetch()`. `src/sbp/native.ts` is the only frontend layer that should call Tauri `invoke()` directly; `src/sbp/http.ts` owns native HTTP streaming; `src/sbp/persistence.ts` owns raw file routing plus TypeScript persistence parsing/serialization; `src/sbp/provider.ts` owns provider metadata/model/stream behavior; `src/sbp/stream.ts` owns stream lifecycle; `src/sbp/editor.ts` owns the active CodeMirror bridge; `src/sbp/model.ts` exposes cloned app snapshots/store-backed model selectors; `src/sbp/diagnostics.ts` is for sanitized development/support probes only.
+
+SBP selector definitions should contain the selector behavior directly in the registered function body, e.g. `export default sbp('sbp/selectors/register', { 'domain/selector': function (...) { ... } })`. Do not write selectors that merely delegate to same-file helper functions for the selector behavior. Shared constants, module state, types, and true reusable pure helpers/core-domain helpers may live outside selectors, but avoid same-file wrapper-helper indirection, just put the function definition right there as the value of the selector.
+
+Avoid wrapper selectors that do nothing except call another selector with identical parameters. Controller/core selectors should add meaningful boundary behavior such as workflow orchestration, normalization, error handling, state refresh, lifecycle management, cloning, or validation.
+
+### Dependencies
+
+- Use Zod for runtime schema validation at untrusted or persisted data boundaries, especially when malformed JSON should be tolerated without breaking startup.
+- Use `@sbp/okturtles.eventqueue` to serialize async operations that must not race each other.
+- Use `turtledash` as a lightweight lodash-style utility package; its `debounce` helper is preferred over ad hoc `setTimeout` / `clearTimeout` debounce code.
 
 ### Toasts
 
@@ -101,9 +121,9 @@ Toast UI lives under `src/components/toast/`. Toasts are emitted through the SBP
 
 All app data is under `~/.config/dez/`, computed from `$HOME` in Rust rather than Tauri's path API.
 
-- `app_state.json`: tabs, active tab id, pill visibility, theme, default model settings, last-used model, and favorites. Read/written via `load_app_state` / `save_app_state`.
-- `conversations/<sanitized-id>.md`: Markdown-like conversation files with a header and Dez XML-ish structural markers. Conversation ids are sanitized to ASCII alphanumeric, `-`, and `_` before use as filenames.
-- `prompts.json`: saved prompt templates (`{ id, name, content }[]`). Read/written via `load_prompts` / `save_prompts`.
+- `app_state.json`: tabs, active tab id, pill visibility, theme, default model settings, last-used model, and favorites. Runtime parsing/serialization is TypeScript-owned in `src/core/persistence/appState.ts`; Rust only reads/writes raw JSON via `load_app_state_json` / `save_app_state_json`.
+- `conversations/<sanitized-id>.md`: Markdown-like conversation files with a header and Dez XML-ish structural markers. Conversation ids are sanitized to ASCII alphanumeric, `-`, and `_` before use as filenames. Runtime parsing/serialization is TypeScript-owned in `src/core/persistence/conversationFormat.ts`; Rust only reads/writes/lists/deletes raw files through the raw conversation-file commands.
+- `prompts.json`: saved prompt templates (`{ id, name, content }[]`). Runtime parsing/serialization is TypeScript-owned in `src/core/persistence/prompts.ts`; Rust only reads/writes raw JSON via `load_prompts_json` / `save_prompts_json`.
 - `provider_keys.json`: provider API keys plus Copilot GitHub/Copilot tokens. Files are written with mode `0600` on Unix.
 
 Do not ever read, view, print, or `cat` `~/.config/dez/provider_keys.json`; it can contain API keys and OAuth tokens.
@@ -117,7 +137,7 @@ Do not ever read, view, print, or `cat` `~/.config/dez/provider_keys.json`; it c
 - Prompt `expanded` is not persisted as UI state on load; frontend rehydrates loaded prompts collapsed.
 - Clipboard serialization in `cmEditor.ts` uses the same `dez:` marker namespace and strips live CodeMirror sentinels.
 
-The frontend never touches these files directly; use Tauri commands and Rust persistence helpers.
+The frontend never touches these files directly; use `dez.persistence/*` selectors from app code. `src/sbp/native.ts` is the only frontend layer that should invoke raw Tauri file commands.
 
 ## Gotchas
 
@@ -151,9 +171,17 @@ The frontend never touches these files directly; use Tauri commands and Rust per
 - Styling uses component-scoped CSS or CodeMirror theme rules in `cmEditor.ts`; global theme variables live in `App.vue`. No CSS framework is configured.
 - Theme is controlled with `data-theme` on `<html>` plus `prefers-color-scheme` fallback.
 
+## Misc. Directives
+
+- When a file needs to move to a new location with only small changes, use the `cp` command to copy it and then the Edit tool instead of reconstructing it manually.
+- Import the live SBP function only from the package: `import sbp from '@sbp/sbp'`. Do not import `sbp` via relative paths like `./sbp` or `../sbp`; relative imports are only for selector registration side effects or local SBP types/modules.
+- When using the 'tasks' skill, if while working you discover that the steps in a `STEP-*` file are wrong, incomplete, or not the best approach, rewrite that step file to follow the better approach before continuing.
+- Any errors should be logged with `console.error` (in addition to being thrown when throwing is still needed).
+
 ## Testing approach
 
-- Run `npm run build` after frontend changes; it performs TypeScript/Vue type-checking before Vite build.
-- Run `cd src-tauri && cargo check` after Rust changes for fast feedback.
+- Run `npm run build` after major frontend changes (not after tiny changes) and before considering a task complete; it performs TypeScript/Vue type-checking before Vite build.
+- Run `npm run check:persistence` after changes to `src/core/persistence/**`, persistence selectors, raw persistence IPC, or app/history/prompt persistence routing.
+- Run `cd src-tauri && cargo check` after significant Rust changes for feedback.
 - Run `cd src-tauri && cargo test` when touching persistence or other Rust logic with tests.
 - There are no observed frontend unit tests; use type-check/build and targeted manual verification via `npm run tauri dev` when UI behavior changes.

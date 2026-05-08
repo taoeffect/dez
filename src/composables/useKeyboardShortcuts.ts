@@ -1,4 +1,5 @@
 import { onMounted, onUnmounted } from "vue";
+import sbp from "@sbp/sbp";
 import { useSettingsStore } from "../stores/settingsStore";
 import { useTabStore } from "../stores/tabStore";
 
@@ -59,7 +60,7 @@ export function useKeyboardShortcuts() {
         break;
       case "w":
         e.preventDefault();
-        tabStore.closeTab(tabStore.activeTabId);
+        void sbp("dez.controller/closeTab", tabStore.activeTabId);
         break;
     }
   }

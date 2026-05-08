@@ -1,10 +1,10 @@
 <script setup lang="ts">
 import { computed, onMounted, onUnmounted, ref } from 'vue'
-import sbp from '../../utils/ui'
+import sbp from '@sbp/sbp'
 import { SHOW_TOAST } from '../../utils/events'
 import ToastCard from './ToastCard.vue'
 import type { ToastItem } from './ToastCard.vue'
-import type { ToastData, ToastPosition } from '../../utils/ui'
+import type { ToastData, ToastPosition } from '../../sbp/ui'
 
 const props = defineProps<{
   area: string

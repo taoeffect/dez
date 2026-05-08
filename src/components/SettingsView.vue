@@ -1,22 +1,9 @@
 <script setup lang="ts">
 import { onMounted, ref } from 'vue'
-import { invoke } from '@tauri-apps/api/core'
-import { openUrl } from '@tauri-apps/plugin-opener'
+import sbp from '@sbp/sbp'
 import { useSettingsStore, type SettingsSection, type Theme } from '../stores/settingsStore'
-import { checkForUpdatesNow } from '../utils/updateChecker'
+import type { ModelInfo, ProviderInfo } from '../sbp/types'
 import PromptManager from './PromptManager.vue'
-
-interface ProviderInfo {
-  id: string
-  name: string
-  configured: boolean
-}
-
-interface ModelInfo {
-  id: string
-  name: string
-  provider: string
-}
 
 const settings = useSettingsStore()
 const sections: SettingsSection[] = ['general', 'providers', 'prompts', 'appearance']
@@ -28,7 +15,7 @@ const savingKey = ref<string | null>(null)
 const keyError = ref<string | null>(null)
 const checkingUpdates = ref(false)
 
-const copilotDeviceFlow = ref<{ userCode: string; verificationUri: string; deviceCode: string } | null>(null)
+const copilotDeviceFlow = ref<{ userCode: string; verificationUri: string } | null>(null)
 const copilotPolling = ref(false)
 
 const themes: { value: Theme; label: string }[] = [
@@ -46,30 +33,31 @@ const shortcuts = [
   { keys: 'Escape', action: 'Close overlays' },
 ]
 
+interface ProviderSettingsData {
+  providers: ProviderInfo[]
+  providerModels: Record<string, ModelInfo[]>
+}
+
+interface CopilotDeviceFlowViewState {
+  userCode: string
+  verificationUri: string
+}
+
 onMounted(async () => {
   await loadProviders()
 })
 
 async function loadProviders() {
   try {
-    providers.value = await invoke<ProviderInfo[]>('get_configured_providers')
-    for (const p of providers.value) {
-      if (p.configured) {
-        await loadModels(p.id)
-      }
-    }
+    applyProviderSettings(await sbp('dez.controller/loadProviderSettings') as ProviderSettingsData)
   } catch {
     // silently fail — providers may not be reachable
   }
 }
 
-async function loadModels(providerId: string) {
-  try {
-    const models = await invoke<ModelInfo[]>('list_models', { providerId })
-    providerModels.value[providerId] = models
-  } catch {
-    providerModels.value[providerId] = []
-  }
+function applyProviderSettings(data: ProviderSettingsData) {
+  providers.value = data.providers
+  providerModels.value = data.providerModels
 }
 
 async function saveApiKey(providerId: string) {
@@ -79,9 +67,8 @@ async function saveApiKey(providerId: string) {
   savingKey.value = providerId
   keyError.value = null
   try {
-    await invoke('set_api_key', { providerId, apiKey: key })
+    applyProviderSettings(await sbp('dez.controller/saveProviderSecret', providerId, key) as ProviderSettingsData)
     apiKeyInputs.value[providerId] = ''
-    await loadProviders()
   } catch (e) {
     keyError.value = `Failed to save key for ${providerId}: ${e}`
   } finally {
@@ -91,34 +78,13 @@ async function saveApiKey(providerId: string) {
 
 async function startCopilotDeviceFlow() {
   keyError.value = null
-  try {
-    const resp = await invoke<{ user_code: string; verification_uri: string; device_code: string }>('copilot_start_device_flow')
-    copilotDeviceFlow.value = {
-      userCode: resp.user_code,
-      verificationUri: resp.verification_uri,
-      deviceCode: resp.device_code,
-    }
-    await navigator.clipboard.writeText(resp.user_code).catch(() => {})
-    await openUrl(resp.verification_uri)
-    await pollCopilotDeviceFlow(resp.device_code)
-  } catch (e) {
-    keyError.value = `Copilot sign-in failed: ${e}`
-  }
-}
-
-async function pollCopilotDeviceFlow(deviceCode: string) {
   copilotPolling.value = true
   try {
-    for (let i = 0; i < 60; i++) {
-      await new Promise(r => setTimeout(r, 5000))
-      const done = await invoke<boolean>('copilot_poll_device_flow', { deviceCode })
-      if (done) {
-        copilotDeviceFlow.value = null
-        await loadProviders()
-        return
-      }
-    }
-    keyError.value = 'Copilot sign-in timed out. Please try again.'
+    applyProviderSettings(await sbp('dez.controller/signInWithCopilot', {
+      onDeviceFlow(flow: CopilotDeviceFlowViewState) {
+        copilotDeviceFlow.value = flow
+      },
+    }) as ProviderSettingsData)
   } catch (e) {
     keyError.value = `Copilot sign-in failed: ${e}`
   } finally {
@@ -130,7 +96,7 @@ async function pollCopilotDeviceFlow(deviceCode: string) {
 async function manuallyCheckForUpdates() {
   checkingUpdates.value = true
   try {
-    await checkForUpdatesNow()
+    await sbp('dez.controller/checkForUpdatesNow')
   } finally {
     checkingUpdates.value = false
   }

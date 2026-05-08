@@ -1,6 +1,6 @@
 [package]
 name = "dez"
-version = "0.3.0"
+version = "0.4.0"
 description = "A friendly chat interface to various LLMs"
 authors = ["Greg Slepak w/AI"]
 edition = "2024"
@@ -26,6 +26,5 @@ serde_json = "=1.0.149"
 reqwest = { version = "=0.12.28", features = ["json", "stream"] }
 tokio = { version = "=1.52.0", features = ["full"] }
 thiserror = "=2.0.18"
-async-trait = "=0.1.89"
 futures = "=0.3.32"
 

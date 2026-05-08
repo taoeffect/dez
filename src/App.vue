@@ -4,7 +4,7 @@ import AppLayout from "./components/AppLayout.vue";
 import { useSettingsStore } from "./stores/settingsStore";
 import { useTabStore } from "./stores/tabStore";
 import { usePromptsStore } from "./stores/promptsStore";
-import { startUpdateChecker } from "./utils/updateChecker";
+import sbp from "@sbp/sbp";
 
 const settingsStore = useSettingsStore();
 const tabStore = useTabStore();
@@ -22,7 +22,7 @@ onMounted(async () => {
     await tabStore.restoreFromState(state as never);
   }
 
-  stopUpdateChecker = startUpdateChecker(settingsStore);
+  stopUpdateChecker = sbp('dez.controller/startUpdateChecker') as () => void;
 
   // Persist app state whenever tabs, active tab, or per-tab model changes
   watch(

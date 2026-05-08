@@ -1,7 +1,7 @@
 {
   "name": "dez",
   "private": true,
-  "version": "0.3.0",
+  "version": "0.4.0",
   "type": "module",
   "scripts": {
     "dev": "vite",
@@ -10,6 +10,7 @@
     "build:macos:dmg": "tauri build --target aarch64-apple-darwin --bundles dmg",
     "build:macos:app": "tauri build --target aarch64-apple-darwin --bundles app",
     "build:desktop": "node scripts/build-desktop.js",
+    "check:persistence": "node scripts/check-persistence.mjs",
     "bump-version": "node scripts/bump-version.js",
     "preview": "vite preview",
     "tauri": "tauri"
@@ -20,6 +21,7 @@
     "@codemirror/language": "6.12.3",
     "@codemirror/state": "6.6.0",
     "@codemirror/view": "6.41.1",
+    "@sbp/okturtles.eventqueue": "1.2.1",
     "@sbp/okturtles.events": "1.0.1",
     "@sbp/sbp": "2.4.1",
     "@tauri-apps/api": "2",
@@ -28,7 +30,9 @@
     "codemirror": "6.0.2",
     "pinia": "3.0.4",
     "shiki": "4.0.2",
-    "vue": "3.5.13"
+    "turtledash": "1.0.3",
+    "vue": "3.5.13",
+    "zod": "4.3.6"
   },
   "devDependencies": {
     "@tauri-apps/cli": "2",

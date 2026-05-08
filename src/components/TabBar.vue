@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { nextTick, ref, watch } from 'vue'
+import sbp from '@sbp/sbp'
 import { useTabStore } from '../stores/tabStore'
 
 const tabStore = useTabStore()
@@ -37,10 +38,14 @@ function onWheel(e: WheelEvent) {
   target.scrollLeft = nextScrollLeft
 }
 
+function closeTab(tabId: string) {
+  void sbp('dez.controller/closeTab', tabId)
+}
+
 function onMiddleClick(e: MouseEvent, tabId: string) {
   if (e.button === 1) {
     e.preventDefault()
-    tabStore.closeTab(tabId)
+    closeTab(tabId)
   }
 }
 
@@ -67,7 +72,7 @@ watch(
         v-if="tabStore.tabs.length > 1"
         class="tab-close"
         title="Close tab"
-        @click.stop="tabStore.closeTab(tab.id)"
+        @click.stop="closeTab(tab.id)"
       >
         <svg width="10" height="10" viewBox="0 0 10 10" fill="none">
           <path d="M2 2l6 6M8 2l-6 6" stroke="currentColor" stroke-width="1.2" stroke-linecap="round"/>

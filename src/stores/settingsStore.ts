@@ -1,6 +1,7 @@
 import { defineStore } from 'pinia'
 import { ref, watch } from 'vue'
-import { invoke } from '@tauri-apps/api/core'
+import sbp from '@sbp/sbp'
+import { debounce } from 'turtledash'
 
 export type Theme = 'light' | 'dark' | 'system'
 export type SettingsSection = 'general' | 'providers' | 'prompts' | 'appearance'
@@ -38,12 +39,15 @@ export const useSettingsStore = defineStore('settings', () => {
 
   let initialized = false
   let persistCallback: (() => void) | null = null
-  let pendingPersist: ReturnType<typeof setTimeout> | null = null
+
+  const persistSettings = debounce(() => {
+    if (persistCallback) persistCallback()
+  }, 1000)
 
   async function init(onPersist?: () => void) {
     if (onPersist) persistCallback = onPersist
 
-    const state = (await invoke<AppStatePayload>('load_app_state').catch(() => ({}))) as AppStatePayload
+    const state = (await sbp('dez.persistence/loadAppState').catch(() => ({}))) as AppStatePayload
 
     if (state) {
       if (typeof state.showPillSeparators === 'boolean')
@@ -85,11 +89,7 @@ export const useSettingsStore = defineStore('settings', () => {
 
   function schedulePersist() {
     if (!initialized) return
-    if (pendingPersist) clearTimeout(pendingPersist)
-    pendingPersist = setTimeout(() => {
-      pendingPersist = null
-      if (persistCallback) persistCallback()
-    }, 200)
+    persistSettings()
   }
 
   function applyTheme(t: Theme) {

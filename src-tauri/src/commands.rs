@@ -1,24 +1,11 @@
-use std::collections::HashMap;
-use std::sync::Arc;
-use tokio::sync::Mutex;
-use tokio::task::JoinHandle;
-
-use tauri::ipc::Channel;
 use tauri::State;
 
-use crate::persistence::{AppState, ConversationData, ConversationSummary, PromptData};
-use crate::providers::{ChatMessage, ProviderError, ProviderInfo, ModelInfo, ProviderRegistry, StreamEvent};
-use crate::providers::copilot::DeviceFlowResponse;
+use crate::copilot::{CopilotChatToken, DeviceFlowResponse};
+use crate::native_error::NativeError;
+use crate::persistence::ConversationFile;
 
 const RELEASES_URL: &str = "https://github.com/taoeffect/dez/releases";
 const LATEST_RELEASE_API: &str = "https://api.github.com/repos/taoeffect/dez/releases/latest";
-
-pub type SharedRegistry = Arc<Mutex<ProviderRegistry>>;
-type ActiveGenerations = Arc<Mutex<HashMap<String, JoinHandle<()>>>>;
-
-pub struct GenerationState {
-    pub active: ActiveGenerations,
-}
 
 #[derive(Debug, Clone, serde::Serialize)]
 pub struct LatestRelease {
@@ -32,129 +19,55 @@ struct GitHubReleaseResponse {
     html_url: Option<String>,
 }
 
-impl GenerationState {
-    pub fn new() -> Self {
-        Self {
-            active: Arc::new(Mutex::new(HashMap::new())),
-        }
-    }
-}
-
 #[tauri::command]
-pub async fn get_configured_providers(
-    registry: State<'_, SharedRegistry>,
-) -> Result<Vec<ProviderInfo>, ProviderError> {
-    let registry = registry.lock().await;
-    Ok(registry.get_provider_infos())
-}
-
-#[tauri::command]
-pub async fn list_models(
+pub async fn get_provider_secret(
     provider_id: String,
-    registry: State<'_, SharedRegistry>,
-) -> Result<Vec<ModelInfo>, ProviderError> {
-    let registry = registry.lock().await;
-    let provider = registry
-        .get_provider(&provider_id)
-        .ok_or_else(|| ProviderError::NotConfigured(format!("Unknown provider: {}", provider_id)))?;
-    provider.list_models().await
+    client: State<'_, reqwest::Client>,
+) -> Result<Option<String>, NativeError> {
+    if provider_id == "copilot" {
+        return get_copilot_chat_token(client).await.map(|token| Some(token.token));
+    }
+
+    let keys = crate::key_store::load_keys();
+    Ok(crate::key_store::get_provider_secret(&keys, &provider_id))
 }
 
 #[tauri::command]
-pub async fn set_api_key(
-    provider_id: String,
-    api_key: String,
-    registry: State<'_, SharedRegistry>,
-) -> Result<(), ProviderError> {
-    let mut registry = registry.lock().await;
-    let provider = registry
-        .get_provider_mut(&provider_id)
-        .ok_or_else(|| ProviderError::NotConfigured(format!("Unknown provider: {}", provider_id)))?;
-    provider.configure(api_key).await;
+pub async fn get_copilot_chat_token(
+    client: State<'_, reqwest::Client>,
+) -> Result<CopilotChatToken, NativeError> {
+    crate::copilot::ensure_copilot_token(&client).await
+}
 
-    let creds = registry.extract_credentials();
-    if let Err(e) = crate::key_store::save_keys(&creds) {
-        eprintln!("Failed to persist keys: {}", e);
-    }
+#[tauri::command]
+pub async fn save_provider_secret(
+    provider_id: String,
+    secret: String,
+) -> Result<(), NativeError> {
+    let mut keys = crate::key_store::load_keys();
+    crate::key_store::set_provider_secret(&mut keys, &provider_id, secret)
+        .map_err(NativeError::Api)?;
+    crate::key_store::save_keys(&keys).map_err(NativeError::Api)?;
 
     Ok(())
 }
 
 #[tauri::command]
-pub async fn send_message(
-    tab_id: String,
-    messages: Vec<ChatMessage>,
-    provider_id: String,
-    model_id: String,
-    on_event: Channel<StreamEvent>,
-    registry: State<'_, SharedRegistry>,
-    generation_state: State<'_, GenerationState>,
-) -> Result<(), ProviderError> {
-    // Cancel any existing generation for this tab
-    {
-        let mut active = generation_state.active.lock().await;
-        if let Some(handle) = active.remove(&tab_id) {
-            handle.abort();
-        }
-    }
+pub async fn get_configured_provider_ids() -> Result<Vec<String>, NativeError> {
+    let keys = crate::key_store::load_keys();
+    let configured_ids = [
+        ("openrouter", keys.openrouter.api_key),
+        ("zai", keys.zai.api_key),
+        ("venice", keys.venice.api_key),
+        ("charm_hyper", keys.charm_hyper.api_key),
+        ("minimax", keys.minimax.api_key),
+        ("copilot", keys.copilot.github_token),
+    ]
+    .into_iter()
+    .filter_map(|(provider_id, secret)| secret.map(|_| provider_id.to_string()))
+    .collect();
 
-    let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel::<StreamEvent>();
-
-    let registry_arc = Arc::clone(&registry);
-    let active_generations = generation_state.active.clone();
-    let tab_id_clone = tab_id.clone();
-
-    let handle = tokio::spawn(async move {
-        let registry_guard = registry_arc.lock().await;
-        let provider = match registry_guard.get_provider(&provider_id) {
-            Some(p) => p,
-            None => {
-                let _ = tx.send(StreamEvent::Error {
-                    message: format!("Unknown provider: {}", provider_id),
-                });
-                return;
-            }
-        };
-
-        if let Err(e) = provider.stream_chat(messages, &model_id, tx.clone()).await {
-            let _ = tx.send(StreamEvent::Error {
-                message: e.to_string(),
-            });
-        }
-
-        // Clean up from active generations
-        let mut active = active_generations.lock().await;
-        active.remove(&tab_id_clone);
-    });
-
-    // Store the handle
-    {
-        let mut active = generation_state.active.lock().await;
-        active.insert(tab_id.clone(), handle);
-    }
-
-    // Forward events from mpsc to Tauri Channel
-    tokio::spawn(async move {
-        while let Some(event) = rx.recv().await {
-            if on_event.send(event).is_err() {
-                break;
-            }
-        }
-    });
-
-    Ok(())
-}
-
-#[tauri::command]
-pub async fn cancel_generation(
-    tab_id: String,
-    generation_state: State<'_, GenerationState>,
-) -> Result<(), ProviderError> {
-    let mut active = generation_state.active.lock().await;
-    if let Some(handle) = active.remove(&tab_id) {
-        handle.abort();
-    }
-    Ok(())
+    Ok(configured_ids)
 }
 
 #[tauri::command]
@@ -229,87 +142,55 @@ mod tests {
 
 #[tauri::command]
 pub async fn copilot_start_device_flow(
-    registry: State<'_, SharedRegistry>,
-) -> Result<DeviceFlowResponse, ProviderError> {
-    let registry = registry.lock().await;
-    let provider = registry
-        .get_provider("copilot")
-        .ok_or_else(|| ProviderError::NotConfigured("Copilot provider not found".into()))?;
-
-    // Downcast to CopilotProvider
-    let copilot = provider
-        .as_any()
-        .downcast_ref::<crate::providers::copilot::CopilotProvider>()
-        .ok_or_else(|| ProviderError::Api("Failed to access Copilot provider".into()))?;
-
-    copilot.start_device_flow().await
+    client: State<'_, reqwest::Client>,
+) -> Result<DeviceFlowResponse, NativeError> {
+    crate::copilot::start_device_flow(&client).await
 }
 
 #[tauri::command]
 pub async fn copilot_poll_device_flow(
     device_code: String,
-    registry: State<'_, SharedRegistry>,
-) -> Result<bool, ProviderError> {
-    let mut registry = registry.lock().await;
-    let provider = registry
-        .get_provider_mut("copilot")
-        .ok_or_else(|| ProviderError::NotConfigured("Copilot provider not found".into()))?;
-
-    // Downcast to CopilotProvider
-    let copilot = provider
-        .as_any_mut()
-        .downcast_mut::<crate::providers::copilot::CopilotProvider>()
-        .ok_or_else(|| ProviderError::Api("Failed to access Copilot provider".into()))?;
-
-    let authenticated = copilot.poll_device_flow(&device_code).await?;
-    if authenticated {
-        copilot.ensure_copilot_token().await?;
-    }
-
-    let creds = registry.extract_credentials();
-    if let Err(e) = crate::key_store::save_keys(&creds) {
-        eprintln!("Failed to persist keys: {}", e);
-    }
-
-    Ok(authenticated)
+    client: State<'_, reqwest::Client>,
+) -> Result<bool, NativeError> {
+    crate::copilot::poll_device_flow(&client, &device_code).await
 }
 
 #[tauri::command]
-pub async fn save_conversation(data: ConversationData) -> Result<(), String> {
-    crate::persistence::save_conversation(&data)
+pub async fn save_conversation_file(id: String, content: String) -> Result<(), String> {
+    crate::persistence::save_conversation_file(&id, &content)
 }
 
 #[tauri::command]
-pub async fn load_conversation(id: String) -> Result<ConversationData, String> {
-    crate::persistence::load_conversation(&id)
+pub async fn load_conversation_file(id: String) -> Result<String, String> {
+    crate::persistence::load_conversation_file(&id)
 }
 
 #[tauri::command]
-pub async fn list_conversations() -> Result<Vec<ConversationSummary>, String> {
-    Ok(crate::persistence::list_conversations())
+pub async fn list_conversation_files() -> Result<Vec<ConversationFile>, String> {
+    Ok(crate::persistence::list_conversation_files())
 }
 
 #[tauri::command]
-pub async fn delete_conversation(id: String) -> Result<(), String> {
-    crate::persistence::delete_conversation(&id)
+pub async fn delete_conversation_file(id: String) -> Result<(), String> {
+    crate::persistence::delete_conversation_file(&id)
 }
 
 #[tauri::command]
-pub async fn save_app_state(state: AppState) -> Result<(), String> {
-    crate::persistence::save_app_state(&state)
+pub async fn save_app_state_json(content: String) -> Result<(), String> {
+    crate::persistence::save_app_state_json(&content)
 }
 
 #[tauri::command]
-pub async fn load_app_state() -> Result<AppState, String> {
-    Ok(crate::persistence::load_app_state())
+pub async fn load_app_state_json() -> Result<String, String> {
+    Ok(crate::persistence::load_app_state_json())
 }
 
 #[tauri::command]
-pub async fn load_prompts() -> Result<Vec<PromptData>, String> {
-    Ok(crate::persistence::load_prompts())
+pub async fn save_prompts_json(content: String) -> Result<(), String> {
+    crate::persistence::save_prompts_json(&content)
 }
 
 #[tauri::command]
-pub async fn save_prompts(prompts: Vec<PromptData>) -> Result<(), String> {
-    crate::persistence::save_prompts(&prompts)
+pub async fn load_prompts_json() -> Result<String, String> {
+    Ok(crate::persistence::load_prompts_json())
 }

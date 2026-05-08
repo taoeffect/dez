@@ -1,8 +1,15 @@
 import { defineStore } from 'pinia'
 import { ref, computed } from 'vue'
-import { invoke } from '@tauri-apps/api/core'
+import sbp from '@sbp/sbp'
 import type { Tab, Section, ActiveModel, ContentNode } from '../types/chat'
-import { emptyContent, normalizeContent, sectionIsEmpty, sectionVisibleText } from '../types/content'
+import { appendStreamingText, emptyContent, normalizeContent, sectionIsEmpty, sectionVisibleText } from '../types/content'
+import { sectionsToStreamMessages } from '../core/stream/messages'
+import {
+  ensureTrailingAgentSection,
+  ensureTrailingUserSection,
+  fillEmptyAgentSectionOnError,
+} from '../core/stream/sections'
+import type { StreamMessage } from '../core/stream/types'
 import { useSettingsStore } from './settingsStore'
 
 type ContentNodeData =
@@ -133,7 +140,7 @@ export const useTabStore = defineStore('tabs', () => {
     if (tab) {
       const hasContent = tab.sections.some((s) => !sectionIsEmpty(s))
       if (!hasContent) {
-        invoke('delete_conversation', { id: tab.conversationId }).catch(() => {})
+        sbp('dez.persistence/deleteConversation', tab.conversationId).catch(() => {})
       }
     }
   }
@@ -154,6 +161,47 @@ export const useTabStore = defineStore('tabs', () => {
     const idx = activeTabIndex.value
     const next = (idx + direction + tabs.value.length) % tabs.value.length
     activeTabId.value = tabs.value[next].id
+  }
+
+  function tabById(tabId: string): Tab | null {
+    return tabs.value.find((t) => t.id === tabId) ?? null
+  }
+
+  function activeModelForTab(tabId: string): ActiveModel | null {
+    return tabById(tabId)?.activeModel ?? null
+  }
+
+  function streamMessagesForTab(tabId: string): StreamMessage[] {
+    const tab = tabById(tabId)
+    return tab ? sectionsToStreamMessages(tab.sections) : []
+  }
+
+  function ensureTrailingAgentSectionForTab(tabId: string): Section | null {
+    const tab = tabById(tabId)
+    return tab ? ensureTrailingAgentSection(tab.sections) : null
+  }
+
+  function appendTokenToTabSection(tabId: string, sectionId: string, token: string): boolean {
+    const tab = tabById(tabId)
+    const section = tab?.sections.find((candidate) => candidate.id === sectionId)
+    if (!tab || !section) return false
+    appendStreamingText(section, token)
+    return true
+  }
+
+  function ensureTrailingUserSectionForTab(tabId: string): Section | null {
+    const tab = tabById(tabId)
+    return tab ? ensureTrailingUserSection(tab.sections) : null
+  }
+
+  function finalizeStreamSectionForTab(tabId: string, sectionId: string, error: string | null): Section | null {
+    const tab = tabById(tabId)
+    const section = tab?.sections.find((candidate) => candidate.id === sectionId)
+    if (!tab || !section) return null
+    fillEmptyAgentSectionOnError(section, error)
+    if (section.role === 'agent') ensureTrailingUserSection(tab.sections)
+    autoTitle(tabId)
+    return section
   }
 
   function updateTabTitle(tabId: string, title: string) {
@@ -187,7 +235,7 @@ export const useTabStore = defineStore('tabs', () => {
       created_at: tab.createdAt,
     }
     try {
-      await invoke('save_conversation', { data })
+      await sbp('dez.persistence/saveConversation', data)
     } catch (e) {
       console.error('Failed to save conversation', e)
     }
@@ -222,7 +270,7 @@ export const useTabStore = defineStore('tabs', () => {
 
   async function saveAppState(): Promise<void> {
     try {
-      await invoke('save_app_state', { state: serializeAppState() })
+      await sbp('dez.persistence/saveAppState', serializeAppState())
     } catch (e) {
       console.error('Failed to save app state', e)
     }
@@ -249,7 +297,7 @@ export const useTabStore = defineStore('tabs', () => {
 
   async function openConversationInNewTab(id: string): Promise<Tab | null> {
     try {
-      const conv = await invoke<ConversationData>('load_conversation', { id })
+      const conv = await sbp('dez.persistence/loadConversation', id) as ConversationData
       const tab = tabFromConversation(conv)
       tabs.value.push(tab)
       activeTabId.value = tab.id
@@ -263,7 +311,7 @@ export const useTabStore = defineStore('tabs', () => {
 
   async function deleteConversationById(id: string): Promise<void> {
     try {
-      await invoke('delete_conversation', { id })
+      await sbp('dez.persistence/deleteConversation', id)
     } catch (e) {
       console.error('Failed to delete conversation', e)
       return
@@ -301,9 +349,7 @@ export const useTabStore = defineStore('tabs', () => {
     const restored: Tab[] = []
     for (const td of appState.tabs) {
       try {
-        const conv = await invoke<ConversationData>('load_conversation', {
-          id: td.conversationId,
-        })
+        const conv = await sbp('dez.persistence/loadConversation', td.conversationId) as ConversationData
         restored.push(tabFromConversation(conv, {
           id: td.id,
           title: td.title || conv.title || 'New Tab',
@@ -341,6 +387,13 @@ export const useTabStore = defineStore('tabs', () => {
     activeTabIndex,
     createTab,
     closeTab,
+    tabById,
+    activeModelForTab,
+    streamMessagesForTab,
+    ensureTrailingAgentSectionForTab,
+    appendTokenToTabSection,
+    ensureTrailingUserSectionForTab,
+    finalizeStreamSectionForTab,
     switchTab,
     switchToIndex,
     cycleTab,

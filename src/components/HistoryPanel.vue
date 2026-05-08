@@ -1,7 +1,8 @@
 <script setup lang="ts">
 import { computed, onMounted, ref } from 'vue'
-import { invoke } from '@tauri-apps/api/core'
-import { useTabStore, type ConversationSummary } from '../stores/tabStore'
+import sbp from '@sbp/sbp'
+import { useTabStore } from '../stores/tabStore'
+import type { ConversationSummary } from '../sbp/types'
 
 const emit = defineEmits<{
   close: []
@@ -45,8 +46,9 @@ async function loadConversations() {
   loading.value = true
   error.value = null
   try {
-    conversations.value = await invoke<ConversationSummary[]>('list_conversations')
+    conversations.value = await sbp('dez.persistence/listConversations') as ConversationSummary[]
   } catch (e) {
+    console.error('Failed to load history:', e)
     error.value = `Failed to load history: ${e}`
   } finally {
     loading.value = false

@@ -1,20 +1,10 @@
 <script setup lang="ts">
 import { ref, computed, onMounted, onUnmounted, nextTick } from 'vue'
-import { invoke } from '@tauri-apps/api/core'
+import sbp from '@sbp/sbp'
 import { useThreadStore } from '../stores/threadStore'
 import { useSettingsStore } from '../stores/settingsStore'
+import type { ModelInfo, ProviderInfo } from '../sbp/types'
 
-interface ProviderInfo {
-  id: string
-  name: string
-  configured: boolean
-}
-
-interface ModelInfo {
-  id: string
-  name: string
-  provider: string
-}
 
 interface DisplayModel extends ModelInfo {
   providerName: string
@@ -113,12 +103,12 @@ const filteredGrouped = computed<GroupedModels[]>(() => {
 
 async function loadModels() {
   try {
-    providers.value = await invoke<ProviderInfo[]>('get_configured_providers')
+    providers.value = await sbp('dez.provider/infos') as ProviderInfo[]
     const models: ModelInfo[] = []
     for (const p of providers.value) {
       if (p.configured) {
         try {
-          const pModels = await invoke<ModelInfo[]>('list_models', { providerId: p.id })
+          const pModels = await sbp('dez.provider/listModels', p.id) as ModelInfo[]
           models.push(...pModels)
         } catch (e) {
           console.error(`Failed to load models for ${p.id}:`, e)
@@ -154,7 +144,7 @@ function close() {
 }
 
 function selectModel(model: ModelInfo) {
-  threadStore.setActiveModel(model.provider, model.id, model.name)
+  sbp('dez.controller/selectModelForActiveTab', model.provider, model.id, model.name)
   close()
 }
 

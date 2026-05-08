@@ -1,6 +1,6 @@
 /// <reference types="vite/client" />
 
-import type sbp from './utils/ui'
+import type sbp from '@sbp/sbp'
 
 declare global {
   const __APP_VERSION__: string

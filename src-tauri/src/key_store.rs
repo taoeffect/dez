@@ -66,3 +66,29 @@ pub fn save_keys(data: &KeyStoreData) -> Result<(), String> {
 
     Ok(())
 }
+
+pub fn get_provider_secret(data: &KeyStoreData, provider_id: &str) -> Option<String> {
+    match provider_id {
+        "openrouter" => data.openrouter.api_key.clone(),
+        "zai" => data.zai.api_key.clone(),
+        "minimax" => data.minimax.api_key.clone(),
+        "venice" => data.venice.api_key.clone(),
+        "charm_hyper" => data.charm_hyper.api_key.clone(),
+        "copilot" => data.copilot.copilot_token.clone(),
+        _ => None,
+    }
+}
+
+pub fn set_provider_secret(data: &mut KeyStoreData, provider_id: &str, secret: String) -> Result<(), String> {
+    match provider_id {
+        "openrouter" => data.openrouter.api_key = Some(secret),
+        "zai" => data.zai.api_key = Some(secret),
+        "minimax" => data.minimax.api_key = Some(secret),
+        "venice" => data.venice.api_key = Some(secret),
+        "charm_hyper" => data.charm_hyper.api_key = Some(secret),
+        "copilot" => data.copilot.github_token = Some(secret),
+        _ => return Err(format!("Unknown provider: {}", provider_id)),
+    }
+
+    Ok(())
+}

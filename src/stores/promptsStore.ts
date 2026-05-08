@@ -1,6 +1,7 @@
 import { defineStore } from 'pinia'
 import { ref, watch } from 'vue'
-import { invoke } from '@tauri-apps/api/core'
+import sbp from '@sbp/sbp'
+import { debounce } from 'turtledash'
 
 export interface Prompt {
   id: string
@@ -12,13 +13,19 @@ export const usePromptsStore = defineStore('prompts', () => {
   const prompts = ref<Prompt[]>([])
 
   let initialized = false
-  let pendingPersist: ReturnType<typeof setTimeout> | null = null
+
+  const persistPrompts = debounce(() => {
+    void sbp('dez.persistence/savePrompts', prompts.value).catch((err: unknown) => {
+      console.error('Failed to save prompts:', err)
+    })
+  }, 1000)
 
   async function init() {
     try {
-      const loaded = await invoke<Prompt[]>('load_prompts')
+      const loaded = await sbp('dez.persistence/loadPrompts') as Prompt[]
       if (Array.isArray(loaded)) prompts.value = loaded
-    } catch {
+    } catch (err) {
+      console.error('Failed to load prompts:', err)
       prompts.value = []
     }
 
@@ -29,13 +36,7 @@ export const usePromptsStore = defineStore('prompts', () => {
 
   function schedulePersist() {
     if (!initialized) return
-    if (pendingPersist) clearTimeout(pendingPersist)
-    pendingPersist = setTimeout(() => {
-      pendingPersist = null
-      void invoke('save_prompts', { prompts: prompts.value }).catch((err) => {
-        console.error('Failed to save prompts:', err)
-      })
-    }, 200)
+    persistPrompts()
   }
 
   function addPrompt(name: string, content: string): Prompt {

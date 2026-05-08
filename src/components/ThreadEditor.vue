@@ -6,9 +6,11 @@ import { history, historyKeymap, defaultKeymap } from '@codemirror/commands'
 import { useThreadStore } from '../stores/threadStore'
 import { useTabStore } from '../stores/tabStore'
 import { useSettingsStore } from '../stores/settingsStore'
+import sbp from '@sbp/sbp'
 import { usePromptsStore, type Prompt } from '../stores/promptsStore'
-import { useStreaming, setStreamingCmView } from '../composables/useStreaming'
+import { useStreamStore } from '../stores/streamStore'
 import { sectionIsEmpty } from '../types/content'
+import { debounce } from 'turtledash'
 import PromptAutocomplete from './PromptAutocomplete.vue'
 import {
   SECTION_SEP,
@@ -44,11 +46,10 @@ const store = useThreadStore()
 const tabStore = useTabStore()
 const settings = useSettingsStore()
 const promptsStore = usePromptsStore()
-const { isStreaming, streamingTabId, streamingError, startStreaming, stopStreaming } = useStreaming()
+const streamStore = useStreamStore()
 
 const hostRef = ref<HTMLDivElement | null>(null)
 let view: EditorView | null = null
-let pendingPersist: ReturnType<typeof setTimeout> | null = null
 let pendingPersistTabId: string | null = null
 let syncingViewStructure = false
 
@@ -60,9 +61,8 @@ const autocompleteX = ref(0)
 const autocompleteY = ref(0)
 const autocompleteSelectedIndex = ref(0)
 
-const isActiveTabStreaming = computed(
-  () => isStreaming.value && streamingTabId.value === tabStore.activeTabId,
-)
+const isActiveTabStreaming = computed(() => streamStore.isStreaming(tabStore.activeTabId))
+const streamingError = computed(() => streamStore.activeTabError)
 
 const showThinking = computed(() => {
   if (!isActiveTabStreaming.value) return false
@@ -370,23 +370,19 @@ function persistTab(tabId: string) {
   void tabStore.saveAppState()
 }
 
-function flushPendingPersist() {
-  if (!pendingPersist) return
+const persistPendingTab = debounce(() => {
   const tabId = pendingPersistTabId
-  clearTimeout(pendingPersist)
-  pendingPersist = null
   pendingPersistTabId = null
   if (tabId) persistTab(tabId)
+}, 1000)
+
+function flushPendingPersist() {
+  persistPendingTab.flush()
 }
 
 function schedulePersistTab(tabId: string) {
-  if (pendingPersist) clearTimeout(pendingPersist)
   pendingPersistTabId = tabId
-  pendingPersist = setTimeout(() => {
-    pendingPersist = null
-    pendingPersistTabId = null
-    persistTab(tabId)
-  }, 500)
+  persistPendingTab()
 }
 
 function syncDocToTab(tabId: string, persist = false) {
@@ -638,7 +634,7 @@ function buildState(): EditorState {
         preventDefault: true,
         run: () => {
           syncDocToStore(true)
-          void startStreaming()
+          void sbp('dez.controller/submitActiveTab')
           return true
         },
       },
@@ -709,10 +705,25 @@ function buildState(): EditorState {
   })
 }
 
+function registerActiveView() {
+  if (view) sbp('dez.editor/registerActiveView', tabStore.activeTabId, view)
+}
+
+function unregisterActiveView(tabId = tabStore.activeTabId) {
+  sbp('dez.editor/unregisterActiveView', tabId)
+}
+
 function mountView() {
   if (!hostRef.value) return
   view = new EditorView({ state: buildState(), parent: hostRef.value })
-  setStreamingCmView(view)
+  registerActiveView()
+}
+
+function scrollViewToBottomAfterLayout(v: EditorView) {
+  requestAnimationFrame(() => {
+    if (view !== v) return
+    v.scrollDOM.scrollTop = v.scrollDOM.scrollHeight
+  })
 }
 
 function resetViewToActiveTab(moveCursorToEnd = false) {
@@ -722,10 +733,19 @@ function resetViewToActiveTab(moveCursorToEnd = false) {
   if (moveCursorToEnd) {
     view.dispatch({
       selection: EditorSelection.cursor(view.state.doc.length),
-      scrollIntoView: true,
       userEvent: 'select',
     })
+    scrollViewToBottomAfterLayout(view)
   }
+}
+
+function stopActiveTab() {
+  void sbp('dez.controller/stopActiveTab')
+}
+
+function onEditorStreamFinished(tabId: string) {
+  if (tabId !== tabStore.activeTabId) return
+  nextTick(() => resetViewToActiveTab(true))
 }
 
 function syncViewStructureToStoreSections() {
@@ -755,13 +775,15 @@ function syncViewStructureToStoreSections() {
 
 onMounted(() => {
   mountView()
+  sbp('dez.editor/onStreamFinished', onEditorStreamFinished)
 })
 
 onBeforeUnmount(() => {
   syncDocToStore()
   flushPendingPersist()
   persistTab(tabStore.activeTabId)
-  setStreamingCmView(null)
+  unregisterActiveView()
+  sbp('dez.editor/offStreamFinished', onEditorStreamFinished)
   view?.destroy()
   view = null
 })
@@ -774,21 +796,12 @@ watch(
       syncDocToTab(oldId)
       flushPendingPersist()
       persistTab(oldId)
+      unregisterActiveView(oldId)
     }
     nextTick(() => {
       resetViewToActiveTab()
+      registerActiveView()
     })
-  },
-)
-
-// When streaming finishes on the active tab, the store gets a fresh empty
-// user section. Rebuild CM state so the trailing sentinels/newlines line up.
-watch(
-  () => [isStreaming.value, streamingTabId.value] as const,
-  ([streaming], [prevStreaming]) => {
-    if (prevStreaming && !streaming) {
-      nextTick(() => resetViewToActiveTab(true))
-    }
   },
 )
 
@@ -834,7 +847,7 @@ watch(
     <button
       v-if="isActiveTabStreaming"
       class="stop-button"
-      @click="stopStreaming"
+      @click="stopActiveTab"
     >
       Stop
     </button>
