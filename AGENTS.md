@@ -1,10 +1,5 @@
 # AGENTS.md
 
-> [!IMPORTANT]
-> This codebase is currently in the middle of an upgrade/rewrite that involves moving a lot of the code from Rust to TypeScript
-> and also changing the way model streaming is done to support concurrent streaming across different tabs.
-> Some of this info might be outdated. It will be updated after the migration is complete.
-
 ## Commands
 
 ```bash
@@ -64,15 +59,16 @@ Tauri v2 desktop app: Rust backend + Vue 3 / TypeScript / Vite frontend. State m
 ```text
 User edits ThreadEditor (CodeMirror document)
   -> ThreadEditor syncs CodeMirror doc to tabStore.activeTab.sections
-  -> Mod-Enter calls useStreaming.startStreaming()
-    -> invoke('send_message', { tabId, messages, providerId, modelId, onEvent: Channel })
-      -> Rust commands::send_message spawns a Tokio task
-        -> ProviderRegistry finds provider by id
-        -> provider.stream_chat() sends HTTP request and parses streaming response
-        -> provider sends StreamEvent over mpsc
-      -> second Tokio task forwards mpsc events to the Tauri Channel
-    -> Channel.onmessage appends tokens to the trailing agent section
-    -> active CodeMirror view is patched directly while streaming
+  -> Mod-Enter calls dez.controller/submitActiveTab
+    -> dez.stream/start creates a stream session + native HTTP request id
+      -> dez.provider/streamChat builds provider-specific requests in TypeScript
+      -> dez.http/stream owns a Tauri Channel and byte stream
+        -> dez.native/streamHttp invokes Rust http_bridge::stream_http
+          -> Rust spawns a Tokio task, streams reqwest chunks, and emits Headers/Chunk/Done/Error
+      -> TypeScript decodes SSE frames and provider token deltas
+    -> dez.stream/receiveToken appends tokens to the captured agent section
+    -> dez.editor/appendTokenIfVisible patches the active CodeMirror view only when visible
+    -> finish/error/cancel reconciles the editor, appends a trailing user section, and persists
 ```
 
 ### Frontend (`src/`)
@@ -84,7 +80,7 @@ User edits ThreadEditor (CodeMirror document)
 - **Role separators**: Role pills are CodeMirror replacement widgets over `SECTION_SEP` lines. The first section is normalized to `user`; toggling a role only applies to separators after the first section.
 - **Prompt pills**: Saved prompts are managed in `PromptManager.vue` and persisted by `promptsStore`. Typing `/prompt ` in `ThreadEditor.vue` opens `PromptAutocomplete.vue`; accepting inserts a prompt sentinel sequence plus metadata. Prompt body text is copied per insertion and does not mutate the saved prompt template.
 - **Stores**: `tabStore` owns tabs, tab persistence, conversation persistence, active models, titles, and app-state serialization. `threadStore` is a computed proxy over the active tab. `settingsStore` owns UI/model preferences and delegates persistence to `tabStore.saveAppState()` through a debounced callback wired in `App.vue`. `promptsStore` loads/saves `prompts.json` directly through Tauri commands.
-- **Streaming state**: `useStreaming.ts` has module-level refs (`isStreaming`, `streamingTabId`, `streamingError`), so streaming status is shared across composable instances. `setStreamingCmView()` is a temporary bridge from `ThreadEditor` so token streaming can patch the active CodeMirror doc while also mutating store state.
+- **Streaming state**: `streamStore` tracks per-tab sessions and errors. `src/sbp/stream.ts` owns lifecycle/cancellation, `src/sbp/provider.ts` builds provider requests and parses streamed tokens, `src/sbp/http.ts` owns active native HTTP streams, and `src/sbp/editor.ts` owns the active CodeMirror bridge.
 - **Dev global**: In dev builds, `src/main.ts` exposes `window.__stores = { thread, tab, settings, prompts }` for webview console testing.
 
 ### SBP
@@ -103,19 +99,21 @@ Avoid wrapper selectors that do nothing except call another selector with identi
 - Use `@sbp/okturtles.eventqueue` to serialize async operations that must not race each other.
 - Use `turtledash` as a lightweight lodash-style utility package; its `debounce` helper is preferred over ad hoc `setTimeout` / `clearTimeout` debounce code.
 
+### Providers
+
+Provider definitions live in `src/core/providers/**`; adding a provider requires registering a `ProviderSpec`, extending the `ProviderId` union, adding credential handling in `src-tauri/src/key_store.rs`, and wiring any settings UI expectations. Chat/model HTTP behavior should stay TypeScript-owned behind `dez.provider/*` and `dez.http/*`, not in Rust provider adapters.
+
 ### Toasts
 
 Toast UI lives under `src/components/toast/`. Toasts are emitted through the SBP selector `dez.ui/toast` and rendered by `ToastContainer.vue`; `AppLayout.vue` mounts the app-wide container. See `src/components/toast/README.md` for payload fields, examples, area behavior, and display rules.
 
 ### Backend (`src-tauri/src/`)
 
-- **Command entry points**: Tauri commands live in `commands.rs` and are registered in `lib.rs`. The frontend calls them with `@tauri-apps/api/core.invoke`.
-- **Provider abstraction**: `providers/mod.rs` defines `LlmProvider` with `configure`, `list_models`, `stream_chat`, `get_api_key`, and downcasting hooks. Registered providers are OpenRouter, Z.ai, Copilot, MiniMax, Venice, and Charm Hyper.
-- **Provider registry**: `ProviderRegistry` is constructed once in `lib.rs`, wrapped in `Arc<Mutex<_>>`, and stored as managed Tauri state.
-- **Generation cancellation**: `GenerationState` maps `tab_id` to a `JoinHandle`. `send_message` aborts any existing generation for that tab before starting a new one; `cancel_generation` aborts by tab id.
-- **Streaming events**: Rust serializes `StreamEvent` as a tagged enum `{ kind, data }`, matching the TypeScript union in `src/types/chat.ts`.
-- **Provider errors**: `ProviderError` implements `Serialize` manually as a string because Tauri command errors must be serializable.
-- **Credential loading**: `lib.rs::run()` loads provider credentials at startup and configures providers before building the Tauri app. Copilot is special-cased by downcasting and refreshing its Copilot token.
+- **Command entry points**: Tauri commands live in `commands.rs` and `http_bridge.rs`; `lib.rs` registers them with `tauri::generate_handler!`. The only frontend direct `invoke()` call sites should be selectors in `src/sbp/native.ts`.
+- **Native HTTP bridge**: Provider model listing and chat streaming are TypeScript-owned. Rust exposes generic `http_request`, `stream_http`, and `cancel_http_stream` commands backed by a shared `reqwest::Client` and `HttpStreamState` map of `requestId -> JoinHandle`.
+- **Streaming events**: `http_bridge.rs` emits `{ kind, data }` Tauri Channel events: `Headers`, `Chunk`, `Done`, and `Error`. TypeScript assembles bytes and parses provider-specific SSE.
+- **Credentials**: `key_store.rs` reads/writes `~/.config/dez/provider_keys.json` with mode `0600` on Unix. Normal providers store `api_key`; Copilot stores GitHub/Copilot token fields and refreshes chat tokens via `copilot.rs`.
+- **Persistence**: `persistence.rs` only performs private-file raw string I/O and id sanitization. TypeScript owns app-state, prompt, and conversation format parsing/serialization.
 
 ## Persistence layout
 
@@ -147,14 +145,15 @@ The frontend never touches these files directly; use `dez.persistence/*` selecto
 - **Prompt newlines in collapsed pills**: Collapsed prompt bodies escape `\n` as `PILL_NL` because CodeMirror inline replacement decorations do not correctly collapse multi-line ranges. Expanded pills restore real newlines for editable body text.
 - **Settings persistence is indirect**: `settingsStore` only schedules a debounced callback. `App.vue` wires that callback to `tabStore.saveAppState()`. Calling `settingsStore.init()` without the callback would drop initial persistence.
 - **Prompt persistence is separate**: Saved prompt templates persist through `promptsStore` to `prompts.json`; prompt insertions inside conversations persist as conversation content nodes/markers and are independent copies.
-- **Active-tab streaming patch**: Streaming always mutates the agent section captured at stream start. Only the currently active tab's CodeMirror view is patched through `streamingCmView`; tab/store guards prevent tokens from applying to the wrong visible editor.
-- **Registry lock held across HTTP**: `commands::send_message` locks the whole `ProviderRegistry` and holds the guard while `provider.stream_chat(...)` runs. Concurrent streams across different providers are serialized on this mutex.
+- **Active-tab streaming patch**: Streaming always mutates the agent section captured at stream start. Only the currently active tab's registered CodeMirror view is patched through `dez.editor/appendTokenIfVisible`; tab/store guards prevent tokens from applying to the wrong visible editor.
+- **Concurrent streaming path**: Chat streaming no longer goes through a Rust provider registry. `src/sbp/stream.ts` tracks request ids per tab, and `http_bridge.rs` tracks request ids globally for native cancellation.
 - **Provider role mapping**: The app uses internal role `agent`. OpenAI-compatible provider adapters must map `agent` to API role `assistant` when building requests.
 - **Copilot auth path differs**: Copilot does not use normal `set_api_key`/`configure` flow. Use `copilot_start_device_flow` and `copilot_poll_device_flow`; tokens are then persisted via `key_store`.
 - **Tauri capabilities**: `src-tauri/capabilities/default.json` currently grants `core:default`, `opener:default`, and `store:default`. Add permissions there when adding Tauri plugins.
 - **CSP disabled**: `src-tauri/tauri.conf.json` sets `"csp": null` intentionally during development.
 - **Vite port is fixed**: Tauri dev expects Vite on port `1420` with `strictPort: true`; if the port is occupied, dev startup fails instead of choosing another port.
 - **App state plugin unused for core state**: `@tauri-apps/plugin-store` is installed and permissioned, but app state, prompts, conversations, and provider keys are persisted by custom Rust file I/O.
+- **Secrets wrapper is not a vault**: `src/core/secret.ts` redacts `toString()`/`toJSON()`, but code can still call `.reveal()`. Do not log provider request headers, native HTTP payloads, or diagnostic data without explicit sanitization.
 - When using the `agentic_fetch` tool:
   - If searching the web, *ALWAYS* tell the tool to never use local tools like Grep, and only search the web
   - If searching local folders, *ALWAYS* tell the tool to restrict its searches to this folder only and to never search outside of it
