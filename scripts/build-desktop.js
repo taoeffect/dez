@@ -9,16 +9,16 @@ const commands = {
     build: ['npm', ['run', 'build:macos:dmg']],
     otherPlatform: 'Linux AppImage builds must run on Linux or the tagged-release workflow.'
   },
-  windows: {
+  win32: {
     build: ['npm', ['run', 'build:win']],
-    otherPlatform: 'Windows builds may need to run on windows?'
+    otherPlatform: 'Linux AppImage builds must run on Linux and macOS DMG builds must run on macOS. Use the tagged-release workflow to build all desktop artifacts.'
   }
 };
 
 const command = commands[process.platform];
 
 if (!command) {
-  console.error('Desktop packaging is supported from Linux for AppImage and macOS for Apple Silicon DMG.');
+  console.error('Desktop packaging is supported from Linux for AppImage, macOS for Apple Silicon DMG, and Windows for MSI.');
   console.error('Use the tagged-release workflow to build all desktop artifacts.');
   process.exit(1);
 }

@@ -88,12 +88,46 @@ jobs:
           path: src-tauri/target/aarch64-apple-darwin/release/bundle/dmg/*.dmg
           if-no-files-found: error
 
+  build-windows-msi:
+    name: Build Windows MSI
+    runs-on: windows-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Setup Rust (MSVC)
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Install frontend dependencies
+        run: npm ci
+
+      - name: Ensure WiX Toolset (for MSI bundling)
+        run: choco install -y wixtoolset --no-progress
+
+      - name: Build Windows MSI
+        run: npm run build:win
+
+      - name: Upload MSI artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: dez-windows-msi
+          path: D:\a\dez\dez\src-tauri\target\x86_64-pc-windows-msvc\release\bundle\msi\*.msi
+          if-no-files-found: error
+
   publish-release:
     name: Publish GitHub Release assets
     runs-on: ubuntu-22.04
     needs:
       - build-linux-appimage
       - build-macos-dmg
+      - build-windows-msi
 
     env:
       GH_TOKEN: ${{ github.token }}
@@ -114,6 +148,12 @@ jobs:
         uses: actions/download-artifact@v4
         with:
           name: dez-macos-aarch64-dmg
+          path: release-assets
+
+      - name: Download Windows MSI artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: dez-windows-msi
           path: release-assets
 
       - name: Create release if needed
