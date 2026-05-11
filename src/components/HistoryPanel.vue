@@ -2,7 +2,7 @@
 import { computed, onMounted, ref } from 'vue'
 import sbp from '@sbp/sbp'
 import { useTabStore } from '../stores/tabStore'
-import type { ConversationSummary } from '../sbp/types'
+import type { ConversationSummary } from '../model/types'
 
 const emit = defineEmits<{
   close: []

@@ -9,7 +9,7 @@ import { useSettingsStore } from '../stores/settingsStore'
 import sbp from '@sbp/sbp'
 import { usePromptsStore, type Prompt } from '../stores/promptsStore'
 import { useStreamStore } from '../stores/streamStore'
-import { sectionIsEmpty } from '../types/content'
+import { sectionIsEmpty } from '../model/chat/content'
 import { debounce } from 'turtledash'
 import PromptAutocomplete from './PromptAutocomplete.vue'
 import {

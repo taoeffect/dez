@@ -1,7 +1,7 @@
 import { defineStore } from 'pinia'
 import { computed, ref } from 'vue'
 import { useTabStore } from './tabStore'
-import type { StreamSessionState, StreamStartInput, StreamStatus, StreamTerminalInput } from '../core/stream/types'
+import type { StreamSessionState, StreamStartInput, StreamStatus, StreamTerminalInput } from '../model/streams/types'
 
 function terminalStatusTime(status: StreamStatus): number | null {
   return status === 'streaming' || status === 'idle' ? null : Date.now()

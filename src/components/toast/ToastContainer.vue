@@ -4,7 +4,7 @@ import sbp from '@sbp/sbp'
 import { SHOW_TOAST } from '../../utils/events'
 import ToastCard from './ToastCard.vue'
 import type { ToastItem } from './ToastCard.vue'
-import type { ToastData, ToastPosition } from '../../sbp/ui'
+import type { ToastData, ToastPosition } from '../../view/toast/selectors'
 
 const props = defineProps<{
   area: string

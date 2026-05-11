@@ -1,6 +1,6 @@
 import { defineStore } from 'pinia'
 import { computed } from 'vue'
-import type { Role, Section } from '../types/chat'
+import type { Role, Section } from '../model/chat/types'
 import {
   appendStreamingText,
   contentEquals,
@@ -10,8 +10,8 @@ import {
   sectionPlainText,
   setSectionPlainText,
   splitContentAt,
-} from '../types/content'
-import type { ContentNode } from '../types/chat'
+} from '../model/chat/content'
+import type { ContentNode } from '../model/chat/types'
 import { useSettingsStore } from './settingsStore'
 import { useTabStore } from './tabStore'
 

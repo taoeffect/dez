@@ -3,7 +3,7 @@ import { ref, computed, onMounted, onUnmounted, nextTick } from 'vue'
 import sbp from '@sbp/sbp'
 import { useThreadStore } from '../stores/threadStore'
 import { useSettingsStore } from '../stores/settingsStore'
-import type { ModelInfo, ProviderInfo } from '../sbp/types'
+import type { ModelInfo, ProviderInfo } from '../model/types'
 
 
 interface DisplayModel extends ModelInfo {

@@ -1,15 +1,15 @@
 import { defineStore } from 'pinia'
 import { ref, computed } from 'vue'
 import sbp from '@sbp/sbp'
-import type { Tab, Section, ActiveModel, ContentNode } from '../types/chat'
-import { appendStreamingText, emptyContent, normalizeContent, sectionIsEmpty, sectionVisibleText } from '../types/content'
-import { sectionsToStreamMessages } from '../core/stream/messages'
+import type { Tab, Section, ActiveModel, ContentNode } from '../model/chat/types'
+import { appendStreamingText, emptyContent, normalizeContent, sectionIsEmpty, sectionVisibleText } from '../model/chat/content'
+import { sectionsToStreamMessages } from '../model/streams/messages'
 import {
   ensureTrailingAgentSection,
   ensureTrailingUserSection,
   fillEmptyAgentSectionOnError,
-} from '../core/stream/sections'
-import type { StreamMessage } from '../core/stream/types'
+} from '../model/streams/sections'
+import type { StreamMessage } from '../model/streams/types'
 import { useSettingsStore } from './settingsStore'
 
 type ContentNodeData =

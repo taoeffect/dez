@@ -1,7 +1,9 @@
 import { createApp } from "vue";
 import { createPinia } from "pinia";
 import sbp from "@sbp/sbp";
-import "./sbp";
+import "./view";
+import "./controller";
+import "./model";
 import App from "./App.vue";
 import { useThreadStore } from "./stores/threadStore";
 import { useTabStore } from "./stores/tabStore";

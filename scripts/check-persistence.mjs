@@ -15,13 +15,13 @@ async function bundlePersistenceModules() {
     logLevel: 'silent',
     build: {
       lib: {
-        entry: join(root, 'src/core/persistence/conversationFormat.ts'),
+        entry: join(root, 'src/model/persistence/conversationFormat.ts'),
         formats: ['es'],
         fileName: () => 'persistence-check.mjs',
       },
       rollupOptions: {
         external: [],
-        input: join(root, 'src/core/persistence/conversationFormat.ts'),
+        input: join(root, 'src/model/persistence/conversationFormat.ts'),
         output: {
           dir: tempDir,
           entryFileNames: 'persistence-check.mjs',
@@ -36,10 +36,10 @@ async function bundlePersistenceModules() {
 async function bundleAllModules() {
   const entry = join(tempDir, 'entry.ts')
   await writeFile(entry, `
-    export * from ${JSON.stringify(join(root, 'src/core/persistence/conversationFormat.ts'))}
-    export * from ${JSON.stringify(join(root, 'src/core/persistence/summaries.ts'))}
-    export * from ${JSON.stringify(join(root, 'src/core/persistence/appState.ts'))}
-    export * from ${JSON.stringify(join(root, 'src/core/persistence/prompts.ts'))}
+    export * from ${JSON.stringify(join(root, 'src/model/persistence/conversationFormat.ts'))}
+    export * from ${JSON.stringify(join(root, 'src/model/persistence/summaries.ts'))}
+    export * from ${JSON.stringify(join(root, 'src/model/persistence/appState.ts'))}
+    export * from ${JSON.stringify(join(root, 'src/model/persistence/prompts.ts'))}
   `)
   await build({
     configFile: false,
