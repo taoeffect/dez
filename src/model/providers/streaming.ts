@@ -1,6 +1,6 @@
 import { responseOk } from '../../utils/protocol/errors'
+import { readNativeChunkText, type NativeHttpResponseHead, type NativeHttpStreamResult } from '../../utils/protocol/nativeHttp'
 import { decodeSseData } from '../../utils/protocol/sse'
-import type { NativeHttpResponseHead, NativeHttpStreamResult } from '../../utils/protocol/nativeHttp'
 import { extractAnthropicSseTokens } from './anthropicSse'
 import { providerStatusError } from './errors'
 import { extractOpenAiSseTokens } from './openaiSse'
@@ -8,28 +8,10 @@ import { providerStreamProtocol } from './requests'
 import type { ProviderId } from './types'
 import type { ProviderStreamChatInput } from './streamTypes'
 
-async function streamBodyText(chunks: AsyncIterable<Uint8Array>, maxLength = 1000): Promise<string> {
-  const decoder = new TextDecoder()
-  let text = ''
-
-  for await (const chunk of chunks) {
-    const part = decoder.decode(chunk, { stream: true })
-    if (text.length < maxLength) {
-      text = `${text}${part}`.slice(0, maxLength)
-    }
-  }
-
-  if (text.length < maxLength) {
-    text = `${text}${decoder.decode()}`.slice(0, maxLength)
-  }
-
-  return text
-}
-
 async function assertStreamResponseOk(providerId: ProviderId, response: NativeHttpResponseHead, chunks: AsyncIterable<Uint8Array>): Promise<void> {
   if (responseOk(response)) return
 
-  const bodyText = await streamBodyText(chunks)
+  const bodyText = await readNativeChunkText(chunks)
   throw providerStatusError(providerId, response, bodyText)
 }
 

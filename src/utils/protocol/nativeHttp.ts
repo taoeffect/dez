@@ -89,6 +89,24 @@ export function nativeResponseJson<T>(response: NativeHttpResponse): T {
   return JSON.parse(nativeResponseText(response)) as T
 }
 
+export async function readNativeChunkText(chunks: AsyncIterable<Uint8Array>, maxLength = 1000): Promise<string> {
+  const decoder = new TextDecoder()
+  let text = ''
+
+  for await (const chunk of chunks) {
+    const part = decoder.decode(chunk, { stream: true })
+    if (text.length < maxLength) {
+      text = `${text}${part}`.slice(0, maxLength)
+    }
+  }
+
+  if (text.length < maxLength) {
+    text = `${text}${decoder.decode()}`.slice(0, maxLength)
+  }
+
+  return text
+}
+
 export function nativeRequestFromFetch(input: URL | string, options: RequestInit = {}): NativeHttpRequest {
   const body = nativeBodyFromFetchBody(options.body)
 
