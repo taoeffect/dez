@@ -1,32 +1,32 @@
 import sbp from '@sbp/sbp'
-import { useSettingsStore, type SettingsSection, type Theme } from '../model/state/settings'
+import type { SettingsSection, Theme } from '../model/state/settings'
 
 export default sbp('sbp/selectors/register', {
   'dez.controller/openSettings' (section: SettingsSection = 'general'): void {
-    useSettingsStore().openSettings(section)
+    sbp('dez.model/settings/open', section)
   },
 
   'dez.controller/closeSettings' (): void {
-    useSettingsStore().closeSettings()
+    sbp('dez.model/settings/close')
   },
 
   'dez.controller/openHistory' (): void {
-    useSettingsStore().openHistory()
+    sbp('dez.model/settings/historyOpen')
   },
 
   'dez.controller/closeHistory' (): void {
-    useSettingsStore().closeHistory()
+    sbp('dez.model/settings/historyClose')
   },
 
   'dez.controller/setTheme' (theme: Theme): void {
-    useSettingsStore().setTheme(theme)
+    sbp('dez.model/settings/setTheme', theme)
   },
 
   'dez.controller/togglePillSeparators' (): void {
-    useSettingsStore().togglePillSeparators()
+    sbp('dez.model/settings/togglePillSeparators')
   },
 
   'dez.controller/setCheckForUpdates' (enabled: boolean): void {
-    useSettingsStore().setCheckForUpdates(enabled)
+    sbp('dez.model/settings/setCheckForUpdates', enabled)
   },
 })

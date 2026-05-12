@@ -1,31 +1,29 @@
 import sbp from '@sbp/sbp'
-import { useTabStore } from '../model/state/tabs'
-import { useThreadStore } from '../model/state/thread'
 import type { Tab } from '../model/chat/types'
 
 export default sbp('sbp/selectors/register', {
   'dez.controller/selectModelForActiveTab' (providerId: string, modelId: string, modelName: string): void {
-    useThreadStore().setActiveModel(providerId, modelId, modelName)
+    sbp('dez.model/setActiveModel', providerId, modelId, modelName)
   },
 
   'dez.controller/createTab' (): Tab {
-    return useTabStore().createTab()
+    return sbp('dez.model/tabs/create') as Tab
   },
 
   async 'dez.controller/closeTab' (tabId: string): Promise<void> {
     await sbp('dez.controller/stopTab', tabId)
-    useTabStore().closeTab(tabId)
+    sbp('dez.model/tabs/close', tabId)
   },
 
   'dez.controller/switchTab' (tabId: string): void {
-    useTabStore().switchTab(tabId)
+    sbp('dez.model/tabs/switch', tabId)
   },
 
   'dez.controller/switchToIndex' (index: number): void {
-    useTabStore().switchToIndex(index)
+    sbp('dez.model/tabs/switchToIndex', index)
   },
 
   'dez.controller/cycleTab' (direction: 1 | -1): void {
-    useTabStore().cycleTab(direction)
+    sbp('dez.model/tabs/cycle', direction)
   },
 })
