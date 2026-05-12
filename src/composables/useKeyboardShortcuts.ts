@@ -1,7 +1,7 @@
 import { onMounted, onUnmounted } from "vue";
 import sbp from "@sbp/sbp";
-import { useSettingsStore } from "../stores/settingsStore";
-import { useTabStore } from "../stores/tabStore";
+import { useSettingsStore } from "../model/state/settings";
+import { useTabStore } from "../model/state/tabs";
 
 export function useKeyboardShortcuts() {
   const settingsStore = useSettingsStore();

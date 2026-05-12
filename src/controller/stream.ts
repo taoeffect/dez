@@ -1,6 +1,6 @@
 import sbp from '@sbp/sbp'
-import { useStreamStore } from '../stores/streamStore'
-import { useTabStore } from '../stores/tabStore'
+import { useStreamStore } from '../model/state/streams'
+import { useTabStore } from '../model/state/tabs'
 import type { ActiveModel } from '../model/chat/types'
 import type { StreamMessage, StreamSessionState, StreamStartInput, StreamStatus } from '../model/streams/types'
 

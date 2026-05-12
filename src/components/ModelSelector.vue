@@ -1,8 +1,8 @@
 <script setup lang="ts">
 import { ref, computed, onMounted, onUnmounted, nextTick } from 'vue'
 import sbp from '@sbp/sbp'
-import { useThreadStore } from '../stores/threadStore'
-import { useSettingsStore } from '../stores/settingsStore'
+import { useThreadStore } from '../model/state/thread'
+import { useSettingsStore } from '../model/state/settings'
 import type { ModelInfo, ProviderInfo } from '../model/providers'
 
 

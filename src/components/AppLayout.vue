@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { useKeyboardShortcuts } from "../composables/useKeyboardShortcuts";
-import { useSettingsStore } from "../stores/settingsStore";
+import { useSettingsStore } from "../model/state/settings";
 import ThreadEditor from "./ThreadEditor.vue";
 import SettingsView from "./SettingsView.vue";
 import ModelSelector from "./ModelSelector.vue";

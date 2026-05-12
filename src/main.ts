@@ -5,10 +5,10 @@ import "./view";
 import "./controller";
 import "./model";
 import App from "./App.vue";
-import { useThreadStore } from "./stores/threadStore";
-import { useTabStore } from "./stores/tabStore";
-import { useSettingsStore } from "./stores/settingsStore";
-import { usePromptsStore } from "./stores/promptsStore";
+import { useThreadStore } from "./model/state/thread";
+import { useTabStore } from "./model/state/tabs";
+import { useSettingsStore } from "./model/state/settings";
+import { usePromptsStore } from "./model/state/prompts";
 
 const app = createApp(App);
 app.use(createPinia());

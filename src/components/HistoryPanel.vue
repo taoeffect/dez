@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed, onMounted, ref } from 'vue'
 import sbp from '@sbp/sbp'
-import { useTabStore } from '../stores/tabStore'
+import { useTabStore } from '../model/state/tabs'
 import type { ConversationSummary } from '../model/persistence/types'
 
 const emit = defineEmits<{

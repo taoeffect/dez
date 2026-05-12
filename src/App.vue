@@ -1,9 +1,9 @@
 <script setup lang="ts">
 import { onMounted, onUnmounted, watch } from "vue";
 import AppLayout from "./components/AppLayout.vue";
-import { useSettingsStore } from "./stores/settingsStore";
-import { useTabStore } from "./stores/tabStore";
-import { usePromptsStore } from "./stores/promptsStore";
+import { useSettingsStore } from "./model/state/settings";
+import { useTabStore } from "./model/state/tabs";
+import { usePromptsStore } from "./model/state/prompts";
 import sbp from "@sbp/sbp";
 
 const settingsStore = useSettingsStore();

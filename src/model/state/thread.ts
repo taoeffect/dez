@@ -1,6 +1,6 @@
 import { defineStore } from 'pinia'
 import { computed } from 'vue'
-import type { Role, Section } from '../model/chat/types'
+import type { Role, Section } from '../chat/types'
 import {
   appendStreamingText,
   contentEquals,
@@ -10,10 +10,10 @@ import {
   sectionPlainText,
   setSectionPlainText,
   splitContentAt,
-} from '../model/chat/content'
-import type { ContentNode } from '../model/chat/types'
-import { useSettingsStore } from './settingsStore'
-import { useTabStore } from './tabStore'
+} from '../chat/content'
+import type { ContentNode } from '../chat/types'
+import { useSettingsStore } from './settings'
+import { useTabStore } from './tabs'
 
 export const useThreadStore = defineStore('thread', () => {
   const tabStore = useTabStore()

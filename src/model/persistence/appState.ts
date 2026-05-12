@@ -1,6 +1,6 @@
 import * as z from 'zod'
 import type { AppStatePayload } from './types'
-import type { DefaultModel, Theme } from '../../stores/settingsStore'
+import type { DefaultModel, Theme } from '../state/settings'
 
 const themeSchema = z.enum(['light', 'dark', 'system'])
 const defaultModelSchema = z.object({

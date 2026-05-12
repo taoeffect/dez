@@ -1,6 +1,6 @@
 import type { ActiveModel, ContentNode } from './chat/types'
-import type { Prompt } from '../stores/promptsStore'
-import type { DefaultModel, Theme } from '../stores/settingsStore'
+import type { Prompt } from './state/prompts'
+import type { DefaultModel, Theme } from './state/settings'
 
 export interface LatestRelease {
   version: string
