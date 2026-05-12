@@ -1,7 +1,6 @@
 import type { Secret } from '../../utils/secret'
 import { modelData, stringField } from './modelParsing'
-import { providerModel, type ModelInfo, type ProviderSpec } from './types'
-import type { HttpFetchOptions } from '../../utils/protocol/http'
+import { providerModel, type HttpFetchOptions, type ModelInfo, type ProviderSpec } from './types'
 
 const COPILOT_API_BASE = 'https://api.githubcopilot.com'
 

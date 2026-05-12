@@ -1,6 +1,5 @@
 import type { Secret } from '../../utils/secret'
-import type { ChatMessage } from './types'
-import type { HttpFetchOptions } from '../../utils/protocol/http'
+import type { ChatMessage, HttpFetchOptions } from './types'
 
 export interface OpenAiChatRequestBody {
   model: string

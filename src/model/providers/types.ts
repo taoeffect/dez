@@ -1,6 +1,9 @@
 import type { Secret } from '../../utils/secret'
 import type { Role } from '../chat/types'
-import type { HttpFetchOptions } from '../../utils/protocol/http'
+
+export interface HttpFetchOptions extends RequestInit {
+  providerId?: string
+}
 
 export type ProviderId =
   | 'openrouter'
