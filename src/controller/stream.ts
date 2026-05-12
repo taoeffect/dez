@@ -1,8 +1,6 @@
 import sbp from '@sbp/sbp'
-import { useStreamStore } from '../model/state/streams'
-import { useTabStore } from '../model/state/tabs'
 import type { ActiveModel } from '../model/chat/types'
-import type { StreamMessage, StreamSessionState, StreamStartInput, StreamStatus } from '../model/streams/types'
+import type { StreamMessage, StreamSessionState } from '../model/streams/types'
 
 interface StreamStartArgs {
   tabId: string
@@ -18,92 +16,42 @@ interface NativeStreamRuntime {
 
 const nativeStreamsByTab = new Map<string, NativeStreamRuntime>()
 
-function cloneStreamSession(session: StreamSessionState): StreamSessionState {
-  return {
-    ...session,
-    model: { ...session.model },
-  }
-}
-
-function cloneStreamSessions(sessions: StreamSessionState[]): StreamSessionState[] {
-  return sessions.map(cloneStreamSession)
-}
-
-function finishStream(tabId: string, error: string | null): StreamSessionState | null {
-  const streamStore = useStreamStore()
-  const session = streamStore.session(tabId)
-  const result = error ? streamStore.error(tabId, error) : streamStore.finish(tabId)
-  if (session) {
-    useTabStore().finalizeStreamSectionForTab(tabId, session.sectionId, error)
-    sbp('dez.editor/reconcileAfterStreamFinish', tabId)
-    useTabStore().saveTab(tabId).catch(() => {})
-    useTabStore().saveAppState()
-  }
-  return result
+function finalizeStream(tabId: string, session: StreamSessionState | null, error: string | null): void {
+  if (!session) return
+  sbp('dez.model/finalizeStreamSectionForTab', tabId, session.sectionId, error)
+  sbp('dez.editor/reconcileAfterStreamFinish', tabId)
+  sbp('dez.model/tabs/save', tabId).catch(() => {})
+  sbp('dez.model/appState/save')
 }
 
 export default sbp('sbp/selectors/register', {
-  'dez.stream/status' (tabId: string): StreamStatus {
-    return useStreamStore().status(tabId)
-  },
-
-  'dez.stream/isStreaming' (tabId: string): boolean {
-    return useStreamStore().isStreaming(tabId)
-  },
-
-  'dez.stream/session' (tabId: string): StreamSessionState | null {
-    const session = useStreamStore().session(tabId)
-    return session ? cloneStreamSession(session) : null
-  },
-
-  'dez.stream/activeTabStatus' (): StreamStatus {
-    const tabStore = useTabStore()
-    return useStreamStore().status(tabStore.activeTabId)
-  },
-
-  'dez.stream/activeSessions' (): StreamSessionState[] {
-    return cloneStreamSessions(useStreamStore().activeSessions)
-  },
-
-  'dez.stream/startSession' (input: StreamStartInput): StreamSessionState {
-    return cloneStreamSession(useStreamStore().startSession(input))
-  },
-
   'dez.stream/receiveToken' (tabId: string, sectionId: string, token: string): StreamSessionState | null {
-    const streamStore = useStreamStore()
-    const session = streamStore.session(tabId)
-    if (!session || session.sectionId !== sectionId || session.status !== 'streaming') return session ? cloneStreamSession(session) : null
-    useTabStore().appendTokenToTabSection(tabId, sectionId, token)
+    const session = sbp('dez.model/streams/session', tabId) as StreamSessionState | null
+    if (!session || session.sectionId !== sectionId || session.status !== 'streaming') return session
+    sbp('dez.model/appendTokenToTabSection', tabId, sectionId, token)
     sbp('dez.editor/appendTokenIfVisible', tabId, sectionId, token)
-    const nextSession = streamStore.receiveToken(tabId, token)
-    return nextSession ? cloneStreamSession(nextSession) : null
+    return sbp('dez.model/streams/receiveToken', tabId, token) as StreamSessionState | null
   },
 
   'dez.stream/finish' (tabId: string): StreamSessionState | null {
-    const session = finishStream(tabId, null)
-    return session ? cloneStreamSession(session) : null
+    const session = sbp('dez.model/streams/session', tabId) as StreamSessionState | null
+    const result = sbp('dez.model/streams/finish', tabId) as StreamSessionState | null
+    finalizeStream(tabId, session, null)
+    return result
   },
 
   'dez.stream/error' (tabId: string, message: string): StreamSessionState | null {
-    const session = finishStream(tabId, message)
-    return session ? cloneStreamSession(session) : null
+    const session = sbp('dez.model/streams/session', tabId) as StreamSessionState | null
+    const result = sbp('dez.model/streams/error', tabId, message) as StreamSessionState | null
+    finalizeStream(tabId, session, message)
+    return result
   },
 
   'dez.stream/cancelled' (tabId: string): StreamSessionState | null {
-    const streamStore = useStreamStore()
-    const session = streamStore.session(tabId)
-    const result = streamStore.cancelled(tabId)
-    if (session) {
-      useTabStore().finalizeStreamSectionForTab(tabId, session.sectionId, null)
-      sbp('dez.editor/reconcileAfterStreamFinish', tabId)
-      useTabStore().saveTab(tabId).catch(() => {})
-      useTabStore().saveAppState()
-    }
-    return result ? cloneStreamSession(result) : null
-  },
-
-  'dez.stream/removeSession' (tabId: string): void {
-    useStreamStore().removeSession(tabId)
+    const session = sbp('dez.model/streams/session', tabId) as StreamSessionState | null
+    const result = sbp('dez.model/streams/cancelled', tabId) as StreamSessionState | null
+    finalizeStream(tabId, session, null)
+    return result
   },
 
   async 'dez.stream/start' (args: StreamStartArgs): Promise<void> {
@@ -119,7 +67,7 @@ export default sbp('sbp/selectors/register', {
     const requestId = crypto.randomUUID()
     nativeStreamsByTab.set(args.tabId, { requestId, cancelling: false })
 
-    sbp('dez.stream/startSession', {
+    sbp('dez.model/streams/startSession', {
       tabId: args.tabId,
       sectionId: args.sectionId,
       model: args.model,
@@ -159,7 +107,7 @@ export default sbp('sbp/selectors/register', {
   },
 
   async 'dez.stream/stop' (tabId: string): Promise<void> {
-    if (!useStreamStore().isStreaming(tabId)) return
+    if (!sbp('dez.model/streams/isStreaming', tabId)) return
     const currentStream = nativeStreamsByTab.get(tabId)
     if (currentStream) {
       currentStream.cancelling = true

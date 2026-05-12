@@ -1,5 +1,4 @@
 import sbp from '@sbp/sbp'
-import { openUrl } from '@tauri-apps/plugin-opener'
 import { SHOW_TOAST } from '../../utils/events'
 
 export type ToastVariant = 'default' | 'success' | 'warning' | 'error'
@@ -29,16 +28,6 @@ export interface ToastData {
 }
 
 export default sbp('sbp/selectors/register', {
-  'dez.ui/openUrl' (url: string): void {
-    if (!url || typeof url !== 'string') {
-      throw Error('sbp("dez.ui/openUrl") failed - "url" is required and must be a string')
-    }
-
-    openUrl(url).catch((error) => {
-      console.error('Failed to open URL:', error)
-    })
-  },
-
   'dez.ui/toast' (area: string, data: ToastData): void {
     if (!area || !data) {
       throw Error('sbp("dez.ui/toast") failed - Missing parameters')

@@ -61,7 +61,7 @@ export default sbp('sbp/selectors/register', {
 
     await options.onDeviceFlow?.(viewState)
     await navigator.clipboard.writeText(viewState.userCode).catch(() => undefined)
-    sbp('dez.ui/openUrl', viewState.verificationUri)
+    sbp('dez.controller/openUrl', viewState.verificationUri)
 
     for (let i = 0; i < 60; i += 1) {
       await new Promise(resolve => setTimeout(resolve, 5000))

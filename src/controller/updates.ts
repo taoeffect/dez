@@ -36,7 +36,7 @@ export default sbp('sbp/selectors/register', {
               message: `Dez ${latestRelease.version} is available.`,
               variant: 'default',
               actionLabel: 'View latest release',
-              sbpInvocation: ['dez.ui/openUrl', latestRelease.url],
+              sbpInvocation: ['dez.controller/openUrl', latestRelease.url],
             })
           }
         } catch (error) {
@@ -93,7 +93,7 @@ export default sbp('sbp/selectors/register', {
             message: `Dez ${latestRelease.version} is available.`,
             variant: 'default',
             actionLabel: 'View latest release',
-            sbpInvocation: ['dez.ui/openUrl', latestRelease.url],
+            sbpInvocation: ['dez.controller/openUrl', latestRelease.url],
           })
         } else {
           sbp('dez.ui/toast', 'app-global', {

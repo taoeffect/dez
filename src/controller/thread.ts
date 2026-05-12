@@ -1,31 +1,27 @@
 import sbp from '@sbp/sbp'
-import { useStreamStore } from '../model/state/streams'
-import { useTabStore } from '../model/state/tabs'
 
 export default sbp('sbp/selectors/register', {
   async 'dez.controller/submitActiveTab' (): Promise<void> {
-    const tabStore = useTabStore()
-    await sbp('dez.controller/submitTab', tabStore.activeTabId)
+    await sbp('dez.controller/submitTab', sbp('dez.model/tabs/activeId'))
   },
 
   async 'dez.controller/submitTab' (tabId: string): Promise<void> {
-    const tabStore = useTabStore()
-    const streamStore = useStreamStore()
-    if (!tabStore.tabById(tabId)) return
+    const tab = sbp('dez.model/tab', tabId)
+    if (!tab) return
 
-    const model = tabStore.activeModelForTab(tabId)
+    const model = sbp('dez.model/activeModelForTab', tabId)
     if (!model) {
-      streamStore.setError(tabId, 'No model selected')
+      sbp('dez.model/streams/setError', tabId, 'No model selected')
       return
     }
 
-    const messages = tabStore.streamMessagesForTab(tabId)
+    const messages = sbp('dez.model/streamMessagesForTab', tabId)
     if (messages.length === 0) return
 
-    const agentSection = tabStore.ensureTrailingAgentSectionForTab(tabId)
+    const agentSection = sbp('dez.model/ensureTrailingAgentSectionForTab', tabId)
     if (!agentSection) return
 
-    streamStore.clearError(tabId)
+    sbp('dez.model/streams/clearError', tabId)
     await sbp('dez.stream/start', {
       tabId,
       sectionId: agentSection.id,
@@ -35,8 +31,7 @@ export default sbp('sbp/selectors/register', {
   },
 
   async 'dez.controller/stopActiveTab' (): Promise<void> {
-    const tabStore = useTabStore()
-    await sbp('dez.controller/stopTab', tabStore.activeTabId)
+    await sbp('dez.controller/stopTab', sbp('dez.model/tabs/activeId'))
   },
 
   async 'dez.controller/stopTab' (tabId: string): Promise<void> {
