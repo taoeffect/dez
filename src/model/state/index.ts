@@ -22,7 +22,7 @@ import {
   fillEmptyAgentSectionOnError,
 } from '../streams/sections'
 import type { StreamMessage, StreamSessionState, StreamStartInput, StreamStatus } from '../streams/types'
-import type { ModelSnapshot } from '../types'
+import type { ModelSnapshot } from '../snapshot'
 
 interface SettingsSnapshot {
   showPillSeparators: boolean

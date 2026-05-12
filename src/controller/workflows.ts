@@ -7,7 +7,7 @@ import { useTabStore } from '../model/state/tabs'
 import { useThreadStore } from '../model/state/thread'
 import type { Tab } from '../model/chat/types'
 import type { ModelInfo, ProviderId, ProviderInfo } from '../model/providers'
-import type { CopilotDeviceFlowResponse, LatestRelease } from '../model/types'
+import type { CopilotDeviceFlowResponse, LatestRelease } from './nativeTypes'
 
 interface ProviderSettingsData {
   providers: ProviderInfo[]

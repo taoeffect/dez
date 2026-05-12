@@ -10,7 +10,7 @@ import type {
   CopilotChatToken,
   CopilotDeviceFlowResponse,
   LatestRelease,
-} from '../model/types'
+} from './nativeTypes'
 
 // TODO: in the future, use the star selector here to just directly invoke these
 // without having to have a copy of every rust-function here. You'll have to forgive the AI.
