@@ -1,4 +1,4 @@
-import type { PromptData } from '../types'
+import type { PromptData } from './types'
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value)

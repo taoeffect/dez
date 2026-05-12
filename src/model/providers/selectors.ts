@@ -1,29 +1,12 @@
 import sbp from '@sbp/sbp'
 import { secret, type Secret } from '../../utils/secret'
-import { assertNativeResponseOk, providerStatusError, responseOk } from '../../utils/protocol/errors'
-import { nativeRequestFromFetch, nativeResponseJson, nativeResponseText, type NativeHttpResponse, type NativeHttpResponseHead, type NativeHttpStreamResult } from '../../utils/protocol/nativeHttp'
-import { decodeSseData } from '../../utils/protocol/sse'
-import { extractAnthropicSseTokens } from './anthropicSse'
-import { extractOpenAiSseTokens } from './openaiSse'
-import { anthropicChatRequest } from './anthropicCompatible'
-import { copilotHeaders } from './copilot'
-import { openAiChatRequest } from './openaiCompatible'
+import { nativeRequestFromFetch, nativeResponseJson, nativeResponseText, type NativeHttpResponse, type NativeHttpStreamResult } from '../../utils/protocol/nativeHttp'
+import { assertProviderResponseOk } from './errors'
 import { getProviderInfos, getProviderSpec, getProviderSpecs } from './registry'
-import { ProviderNotConfiguredError, type ChatMessage, type ModelInfo, type ProviderId, type ProviderInfo, type ProviderSpec } from './types'
-
-type ProviderStreamProtocol = 'openai' | 'anthropic'
-
-export interface ProviderStreamChatInput {
-  providerId: ProviderId
-  modelId: string
-  messages: ChatMessage[]
-  requestId?: string
-  onToken(token: string): void | Promise<void>
-}
-
-export interface ProviderStreamChatResult {
-  requestId: string
-}
+import { providerChatRequest } from './requests'
+import { streamProviderTokens } from './streaming'
+import type { ProviderStreamChatInput, ProviderStreamChatResult } from './streamTypes'
+import { ProviderNotConfiguredError, type ModelInfo, type ProviderId, type ProviderInfo, type ProviderSpec } from './types'
 
 async function configuredProviderIds(): Promise<string[]> {
   const ids = await sbp('dez.native/getConfiguredProviderIds') as string[]
@@ -40,23 +23,6 @@ async function refreshCopilotSecret(): Promise<Secret<string>> {
   return secret(value.token)
 }
 
-function providerStreamProtocol(providerId: ProviderId): ProviderStreamProtocol {
-  return providerId === 'minimax' ? 'anthropic' : 'openai'
-}
-
-function providerChatRequest(spec: ProviderSpec, input: ProviderStreamChatInput, providerSecretValue: Secret<string>) {
-  const options = input.providerId === 'minimax'
-    ? anthropicChatRequest(providerSecretValue, input.messages, input.modelId)
-    : openAiChatRequest(
-      providerSecretValue,
-      input.messages,
-      input.modelId,
-      input.providerId === 'copilot' ? copilotHeaders : {},
-    )
-
-  return nativeRequestFromFetch(spec.chatUrl, options)
-}
-
 async function nativeChatStream(input: ProviderStreamChatInput, spec: ProviderSpec, requestId: string, refreshCopilot = false): Promise<NativeHttpStreamResult> {
   const providerSecretValue = input.providerId === 'copilot' && refreshCopilot
     ? await refreshCopilotSecret()
@@ -66,46 +32,8 @@ async function nativeChatStream(input: ProviderStreamChatInput, spec: ProviderSp
     throw new ProviderNotConfiguredError(input.providerId)
   }
 
-  const request = providerChatRequest(spec, input, providerSecretValue)
+  const request = providerChatRequest(spec, input.providerId, input.messages, input.modelId, providerSecretValue)
   return await sbp('dez.http/stream', request, requestId) as NativeHttpStreamResult
-}
-
-async function streamBodyText(chunks: AsyncIterable<Uint8Array>, maxLength = 1000): Promise<string> {
-  const decoder = new TextDecoder()
-  let text = ''
-
-  for await (const chunk of chunks) {
-    const part = decoder.decode(chunk, { stream: true })
-    if (text.length < maxLength) {
-      text = `${text}${part}`.slice(0, maxLength)
-    }
-  }
-
-  if (text.length < maxLength) {
-    text = `${text}${decoder.decode()}`.slice(0, maxLength)
-  }
-
-  return text
-}
-
-async function assertStreamResponseOk(providerId: ProviderId, response: NativeHttpResponseHead, chunks: AsyncIterable<Uint8Array>): Promise<void> {
-  if (responseOk(response)) return
-
-  const bodyText = await streamBodyText(chunks)
-  throw providerStatusError(providerId, response, bodyText)
-}
-
-async function streamTokens(input: ProviderStreamChatInput, result: NativeHttpStreamResult): Promise<void> {
-  await assertStreamResponseOk(input.providerId, result.response, result.chunks)
-
-  const data = decodeSseData(result.chunks)
-  const tokens = providerStreamProtocol(input.providerId) === 'anthropic'
-    ? extractAnthropicSseTokens(data)
-    : extractOpenAiSseTokens(data)
-
-  for await (const token of tokens) {
-    await input.onToken(token)
-  }
 }
 
 export default sbp('sbp/selectors/register', {
@@ -137,7 +65,7 @@ export default sbp('sbp/selectors/register', {
       const request = nativeRequestFromFetch(spec.modelsUrl, options)
       const response = await sbp('dez.http/request', request) as NativeHttpResponse
       const responseText = nativeResponseText(response)
-      assertNativeResponseOk(response, providerId, responseText)
+      assertProviderResponseOk(response, providerId, responseText)
       const data = nativeResponseJson<unknown>(response)
       return spec.parseModels(data)
     } catch (error) {
@@ -163,7 +91,7 @@ export default sbp('sbp/selectors/register', {
       result = await nativeChatStream(input, spec, requestId, true)
     }
 
-    await streamTokens(input, result)
+    await streamProviderTokens(input, result)
     return { requestId: result.requestId }
   },
 })

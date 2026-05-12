@@ -27,11 +27,6 @@ export interface ChatMessage {
   content: string
 }
 
-export interface ProviderListModelsContext {
-  secret: Secret<string> | null
-  fetch(input: URL | Request | string, options?: HttpFetchOptions): Promise<Response>
-}
-
 export interface ProviderSpec {
   id: ProviderId
   name: string

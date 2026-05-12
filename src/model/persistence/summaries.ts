@@ -1,4 +1,4 @@
-import type { ConversationData, ConversationSummary, SectionData } from '../types'
+import type { ConversationData, ConversationSummary, SectionData } from './types'
 
 function nodePlainText(node: SectionData['nodes'][number]): string {
   return node.kind === 'text' ? node.text : node.body

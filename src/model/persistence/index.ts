@@ -3,7 +3,7 @@ import { parseAppStateJson, serializeAppStateJson } from './appState'
 import { parseConversation, serializeConversation } from './conversationFormat'
 import { parsePromptsJson, serializePromptsJson } from './prompts'
 import { conversationSummary, sortConversationSummaries } from './summaries'
-import type { AppStatePayload, ConversationData, ConversationFile, ConversationSummary, PromptData } from '../types'
+import type { AppStatePayload, ConversationData, ConversationFile, ConversationSummary, PromptData } from './types'
 
 export default sbp('sbp/selectors/register', {
   async 'dez.persistence/saveConversation' (data: ConversationData): Promise<void> {

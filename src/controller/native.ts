@@ -5,8 +5,8 @@ import type {
   NativeHttpResponse,
   NativeHttpStreamEvent,
 } from '../utils/protocol/nativeHttp'
+import type { ConversationFile } from '../model/persistence/types'
 import type {
-  ConversationFile,
   CopilotChatToken,
   CopilotDeviceFlowResponse,
   LatestRelease,

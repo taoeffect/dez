@@ -179,7 +179,7 @@ The frontend never touches these files directly; use `dez.persistence/*` selecto
 
 ## Testing approach
 
-- Run `npm run build` after major frontend changes (not after tiny changes) and before considering a task complete; it performs TypeScript/Vue type-checking before Vite build.
+- Run `npm run build` at the end of a task step if frontend changes were made, not after every edit; it performs TypeScript/Vue type-checking before Vite build.
 - Run `npm run check:persistence` after changes to `src/core/persistence/**`, persistence selectors, raw persistence IPC, or app/history/prompt persistence routing.
 - Run `cd src-tauri && cargo check` after significant Rust changes for feedback.
 - Run `cd src-tauri && cargo test` when touching persistence or other Rust logic with tests.

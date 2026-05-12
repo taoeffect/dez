@@ -1,5 +1,5 @@
 import type { ActiveModel } from '../chat/types'
-import type { ContentNodeData, ConversationData, SectionData } from '../types'
+import type { ContentNodeData, ConversationData, SectionData } from './types'
 
 function escapeTitle(value: string): string {
   return value.replaceAll('|', '/').replaceAll('\n', ' ').replaceAll('\r', ' ')

@@ -2,7 +2,7 @@
 import { onMounted, ref } from 'vue'
 import sbp from '@sbp/sbp'
 import { useSettingsStore, type SettingsSection, type Theme } from '../stores/settingsStore'
-import type { ModelInfo, ProviderInfo } from '../model/types'
+import type { ModelInfo, ProviderInfo } from '../model/providers'
 import PromptManager from './PromptManager.vue'
 
 const settings = useSettingsStore()

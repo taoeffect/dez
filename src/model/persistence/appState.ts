@@ -1,5 +1,5 @@
 import * as z from 'zod'
-import type { AppStatePayload } from '../types'
+import type { AppStatePayload } from './types'
 import type { DefaultModel, Theme } from '../../stores/settingsStore'
 
 const themeSchema = z.enum(['light', 'dark', 'system'])

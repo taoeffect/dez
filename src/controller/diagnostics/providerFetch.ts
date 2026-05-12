@@ -1,10 +1,9 @@
 import sbp from '@sbp/sbp'
 import { secret, type Secret } from '../../utils/secret'
-import { assertNativeResponseOk, providerStatusError, responseOk } from '../../utils/protocol/errors'
+import { responseOk } from '../../utils/protocol/errors'
 import { bytesFromNativeBody, nativeRequestFromFetch, nativeResponseJson, type NativeHttpResponse, type NativeHttpStreamResult } from '../../utils/protocol/nativeHttp'
-import { anthropicChatRequest } from '../../model/providers/anthropicCompatible'
-import { copilotHeaders } from '../../model/providers/copilot'
-import { openAiChatRequest } from '../../model/providers/openaiCompatible'
+import { assertProviderResponseOk, providerStatusError } from '../../model/providers/errors'
+import { providerChatRequest } from '../../model/providers/requests'
 import { getProviderSpec, type ChatMessage, type ModelInfo, type ProviderId, type ProviderSpec, isProviderId } from '../../model/providers'
 
 export interface ProviderFetchProbeResult {
@@ -88,7 +87,7 @@ async function probeModelList(spec: ProviderSpec, providerSecretValue: Secret<st
     }
     const response = await sbp('dez.http/request', request) as NativeHttpResponse
     const responseText = new TextDecoder().decode(bytesFromNativeBody(response.body))
-    assertNativeResponseOk(response, spec.id, responseText)
+    assertProviderResponseOk(response, spec.id, responseText)
     const data = nativeResponseJson<unknown>(response)
     return {
       ok: true,
@@ -160,13 +159,8 @@ function chatRequestForProvider(
     throw providerSecretError()
   }
 
-  const options = spec.id === 'minimax'
-    ? anthropicChatRequest(providerSecretValue, messages, modelId)
-    : openAiChatRequest(providerSecretValue, messages, modelId, spec.id === 'copilot' ? copilotHeaders : {})
-
-  return nativeRequestFromFetch(spec.chatUrl, options)
+  return providerChatRequest(spec, spec.id, messages, modelId, providerSecretValue)
 }
-
 function sseBlocks(buffer: string): { blocks: string[]; rest: string } {
   const parts = buffer.split(/\r?\n\r?\n/)
   return {
