@@ -6,10 +6,10 @@ export function useKeyboardShortcuts() {
     if (e.key === "Escape") {
       if (sbp("dez.model/settings/isOpen") as boolean) {
         e.preventDefault();
-        sbp("dez.controller/closeSettings");
+        sbp("dez.model/settings/close");
       } else if (sbp("dez.model/settings/isHistoryOpen") as boolean) {
         e.preventDefault();
-        sbp("dez.controller/closeHistory");
+        sbp("dez.model/settings/historyClose");
       }
       return;
     }
@@ -20,38 +20,38 @@ export function useKeyboardShortcuts() {
     // Cmd/Ctrl+1-9: switch to tab by index
     if (e.key >= "1" && e.key <= "9" && !e.shiftKey) {
       e.preventDefault();
-      sbp("dez.controller/switchToIndex", parseInt(e.key) - 1);
+      sbp("dez.model/tabs/switchToIndex", parseInt(e.key) - 1);
       return;
     }
 
     // Cmd/Ctrl+Shift+[ or ]: cycle tabs
     if (e.shiftKey && (e.key === "[" || e.key === "{")) {
       e.preventDefault();
-      sbp("dez.controller/cycleTab", -1);
+      sbp("dez.model/tabs/cycle", -1);
       return;
     }
     if (e.shiftKey && (e.key === "]" || e.key === "}")) {
       e.preventDefault();
-      sbp("dez.controller/cycleTab", 1);
+      sbp("dez.model/tabs/cycle", 1);
       return;
     }
 
     switch (e.key.toLowerCase()) {
       case ",":
         e.preventDefault();
-        (sbp("dez.model/settings/isOpen") as boolean) ? sbp("dez.controller/closeSettings") : sbp("dez.controller/openSettings");
+        (sbp("dez.model/settings/isOpen") as boolean) ? sbp("dez.model/settings/close") : sbp("dez.model/settings/open");
         break;
       case "h":
         e.preventDefault();
-        (sbp("dez.model/settings/isHistoryOpen") as boolean) ? sbp("dez.controller/closeHistory") : sbp("dez.controller/openHistory");
+        (sbp("dez.model/settings/isHistoryOpen") as boolean) ? sbp("dez.model/settings/historyClose") : sbp("dez.model/settings/historyOpen");
         break;
       case "n":
         e.preventDefault();
-        sbp("dez.controller/createTab");
+        sbp("dez.model/tabs/create");
         break;
       case "t":
         e.preventDefault();
-        sbp("dez.controller/createTab");
+        sbp("dez.model/tabs/create");
         break;
       case "w":
         e.preventDefault();

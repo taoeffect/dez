@@ -1,6 +1,7 @@
 <script setup lang="ts">
+import sbp from "@sbp/sbp";
 import { useKeyboardShortcuts } from "../composables/useKeyboardShortcuts";
-import { useSettingsStore } from "../../model/state/settings";
+import { useModelState } from "../modelState";
 import ThreadEditor from "../thread/ThreadEditor.vue";
 import SettingsView from "../settings/SettingsView.vue";
 import ModelSelector from "../model-selector/ModelSelector.vue";
@@ -9,7 +10,7 @@ import HistoryPanel from "../history/HistoryPanel.vue";
 import ToastContainer from "../toast/ToastContainer.vue";
 
 useKeyboardShortcuts();
-const settingsStore = useSettingsStore();
+const { settings } = useModelState();
 </script>
 
 <template>
@@ -20,7 +21,7 @@ const settingsStore = useSettingsStore();
         <button
           class="tab-bar-btn"
           title="History (Cmd/Ctrl+H)"
-          @click="settingsStore.openHistory"
+          @click="sbp('dez.model/settings/historyOpen')"
         >
           <svg width="14" height="14" viewBox="0 0 14 14" fill="none">
             <path d="M7 2a5 5 0 105 5" stroke="currentColor" stroke-width="1.2" stroke-linecap="round"/>
@@ -31,7 +32,7 @@ const settingsStore = useSettingsStore();
         <button
           class="tab-bar-btn"
           title="Settings (Cmd/Ctrl+,)"
-          @click="settingsStore.openSettings('general')"
+          @click="sbp('dez.model/settings/open', 'general')"
         >
           <svg width="14" height="14" viewBox="0 0 14 14" fill="none">
             <path d="M7 9a2 2 0 100-4 2 2 0 000 4z" fill="currentColor"/>
@@ -45,8 +46,8 @@ const settingsStore = useSettingsStore();
     </main>
     <ModelSelector />
 
-    <HistoryPanel v-if="settingsStore.historyOpen" @close="settingsStore.closeHistory" />
-    <SettingsView v-if="settingsStore.settingsOpen" />
+    <HistoryPanel v-if="settings.historyOpen" @close="sbp('dez.model/settings/historyClose')" />
+    <SettingsView v-if="settings.settingsOpen" />
     <ToastContainer area="app-global" />
   </div>
 </template>

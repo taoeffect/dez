@@ -24,7 +24,7 @@ import {
 import type { StreamMessage } from '../streams/types'
 import type { ModelSnapshot } from '../snapshot'
 
-interface SettingsSnapshot {
+export interface SettingsSnapshot {
   showPillSeparators: boolean
   theme: Theme
   defaultModels: Record<string, string>
@@ -442,6 +442,21 @@ export default sbp('sbp/selectors/register', {
 
   'dez.model/thread/sectionsIdentity' (): string {
     return useTabStore().activeTab.sections.map((section) => `${section.id}:${section.role}`).join('|')
+  },
+
+  // CodeMirror owns the focused document, so this selector is the model boundary
+  // that replaces parsed editor sections and refreshes the tab title together.
+  'dez.model/tabs/replaceSections' (tabId: string, sections: Section[]): boolean {
+    const tab = useTabStore().tabs.find((candidate) => candidate.id === tabId)
+    if (!tab) return false
+    tab.sections.splice(0, tab.sections.length, ...sections.map((section) => ({
+      id: section.id,
+      role: section.role,
+      content: normalizeContent(section.content),
+    })))
+    const title = firstUserTitle(tab.sections)
+    if (title) tab.title = title
+    return true
   },
 
   'dez.model/thread/submission' (): { role: Role; content: string }[] {

@@ -1,7 +1,6 @@
 import sbp from '@sbp/sbp'
 import type { EditorView } from '@codemirror/view'
 
-const STREAM_FINISHED_EVENT = 'dez.editor.stream-finished'
 const BOTTOM_FOLLOW_THRESHOLD_PX = 96
 
 let activeView: EditorView | null = null
@@ -53,10 +52,6 @@ export default sbp('sbp/selectors/register', {
     followingStreamTabId = null
   },
 
-  'dez.editor/activeTabId' (): string | null {
-    return activeViewTabId
-  },
-
   'dez.editor/startStreamingFollowIfVisible' (tabId: string): boolean {
     if (!activeView || activeViewTabId !== tabId) return false
     followingStreamTabId = isNearScrollBottom(activeView) ? tabId : null
@@ -88,14 +83,6 @@ export default sbp('sbp/selectors/register', {
     }
     if (followingStreamTabId === tabId) followingStreamTabId = null
     if (activeViewTabId !== tabId) return
-    sbp('okTurtles.events/emit', STREAM_FINISHED_EVENT, tabId)
-  },
-
-  'dez.editor/onStreamFinished' (handler: (tabId: string) => void): void {
-    sbp('okTurtles.events/on', STREAM_FINISHED_EVENT, handler)
-  },
-
-  'dez.editor/offStreamFinished' (handler: (tabId: string) => void): void {
-    sbp('okTurtles.events/off', STREAM_FINISHED_EVENT, handler)
+    sbp('okTurtles.events/emit', 'dez.editor.stream-finished', tabId)
   },
 })

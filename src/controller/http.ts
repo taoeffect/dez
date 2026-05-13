@@ -3,7 +3,6 @@ import { Channel } from '@tauri-apps/api/core'
 import {
   createNativeHttpByteStream,
   type NativeHttpRequest,
-  type NativeHttpResponse,
   type NativeHttpResponseHead,
   type NativeHttpStreamEvent,
   type NativeHttpStreamResult,
@@ -17,10 +16,6 @@ interface ActiveNativeHttpStream {
 const activeStreams = new Map<string, ActiveNativeHttpStream>()
 
 export default sbp('sbp/selectors/register', {
-  async 'dez.http/request' (request: NativeHttpRequest): Promise<NativeHttpResponse> {
-    return await sbp('dez.native/httpRequest', request) as NativeHttpResponse
-  },
-
   async 'dez.http/stream' (request: NativeHttpRequest, requestId = crypto.randomUUID()): Promise<NativeHttpStreamResult> {
     const channel = new Channel<NativeHttpStreamEvent>()
     const byteStream = createNativeHttpByteStream()

@@ -3,12 +3,8 @@ import { computed, onBeforeUnmount, onMounted, ref, watch, nextTick } from 'vue'
 import { EditorSelection, EditorState, Prec, type StateEffect } from '@codemirror/state'
 import { EditorView, drawSelection, keymap } from '@codemirror/view'
 import { history, historyKeymap, defaultKeymap } from '@codemirror/commands'
-import { useThreadStore } from '../../model/state/thread'
-import { useTabStore } from '../../model/state/tabs'
-import { useSettingsStore } from '../../model/state/settings'
 import sbp from '@sbp/sbp'
-import { usePromptsStore, type Prompt } from '../../model/state/prompts'
-import { useStreamStore } from '../../model/state/streams'
+import { useModelState, type Prompt } from '../modelState'
 import { sectionIsEmpty } from '../../model/chat/content'
 import { debounce } from 'turtledash'
 import PromptAutocomplete from './PromptAutocomplete.vue'
@@ -42,11 +38,15 @@ import {
   splitSectionEffect,
 } from './cmEditor'
 
-const store = useThreadStore()
-const tabStore = useTabStore()
-const settings = useSettingsStore()
-const promptsStore = usePromptsStore()
-const streamStore = useStreamStore()
+const {
+  activeTabId,
+  activeSections,
+  activeSectionsIdentity,
+  settings,
+  prompts,
+  activeTabStreaming,
+  activeTabStreamError,
+} = useModelState()
 
 const hostRef = ref<HTMLDivElement | null>(null)
 let view: EditorView | null = null
@@ -61,20 +61,21 @@ const autocompleteX = ref(0)
 const autocompleteY = ref(0)
 const autocompleteSelectedIndex = ref(0)
 
-const isActiveTabStreaming = computed(() => streamStore.isStreaming(tabStore.activeTabId))
-const streamingError = computed(() => streamStore.activeTabError)
+const isActiveTabStreaming = activeTabStreaming
+const streamingError = activeTabStreamError
 
 const showThinking = computed(() => {
   if (!isActiveTabStreaming.value) return false
-  const last = store.sections[store.sections.length - 1]
+  const sections = activeSections.value
+  const last = sections[sections.length - 1]
   return last?.role === 'agent' && sectionIsEmpty(last)
 })
 
 const matchingPrompts = computed(() => {
   const q = autocompleteQuery.value.trim().toLowerCase()
-  const prompts = promptsStore.prompts.slice().sort((a, b) => a.name.localeCompare(b.name))
-  if (!q) return prompts
-  return prompts.filter((p) => p.name.toLowerCase().includes(q))
+  const sortedPrompts = prompts.value.slice().sort((a, b) => a.name.localeCompare(b.name))
+  if (!q) return sortedPrompts
+  return sortedPrompts.filter((p) => p.name.toLowerCase().includes(q))
 })
 
 /** Count RS occurrences in [0, pos) so we know which section the cursor is in. */
@@ -366,8 +367,8 @@ function moveLineDownWithinSection(v: EditorView): boolean {
 /** Flatten CM doc back into the given tab's `sections[]` using the live
  *  sectionsField for id + role preservation. */
 function persistTab(tabId: string) {
-  void tabStore.saveTab(tabId)
-  void tabStore.saveAppState()
+  void sbp('dez.model/tabs/save', tabId)
+  void sbp('dez.model/appState/save')
 }
 
 const persistPendingTab = debounce(() => {
@@ -387,18 +388,16 @@ function schedulePersistTab(tabId: string) {
 
 function syncDocToTab(tabId: string, persist = false) {
   if (!view) return
-  const tab = tabStore.tabs.find((t) => t.id === tabId)
-  if (!tab) return
+  if (!sbp('dez.model/tab', tabId)) return
   const models = view.state.field(sectionsField)
   const meta = view.state.field(pillsField)
   const sections = docToSections(view.state.doc.toString(), models, meta)
-  tab.sections.splice(0, tab.sections.length, ...sections)
-  tabStore.autoTitle(tabId)
+  sbp('dez.model/tabs/replaceSections', tabId, sections)
   if (persist) schedulePersistTab(tabId)
 }
 
 function syncDocToStore(persist = false) {
-  syncDocToTab(tabStore.activeTabId, persist)
+  syncDocToTab(activeTabId.value, persist)
 }
 
 function closeAutocomplete() {
@@ -523,8 +522,9 @@ function pasteClipboardText(event: ClipboardEvent, v: EditorView): boolean {
 }
 
 function buildState(): EditorState {
-  const models = initialSectionModels(store.sections)
-  const pillMeta = initialPillMetadata(store.sections)
+  const sections = activeSections.value
+  const models = initialSectionModels(sections)
+  const pillMeta = initialPillMetadata(sections)
   const autocompleteKeymap = Prec.highest(
     keymap.of([
       {
@@ -634,7 +634,7 @@ function buildState(): EditorState {
         preventDefault: true,
         run: () => {
           syncDocToStore(true)
-          void sbp('dez.controller/submitActiveTab')
+          void sbp('dez.controller/submitTab', activeTabId.value)
           return true
         },
       },
@@ -659,10 +659,10 @@ function buildState(): EditorState {
   )
 
   return EditorState.create({
-    doc: buildInitialDoc(store.sections),
+    doc: buildInitialDoc(sections),
     extensions: [
       sectionsField.init(() => models),
-      showSeparatorsField.init(() => settings.showPillSeparators),
+      showSeparatorsField.init(() => settings.value.showPillSeparators),
       pillsField.init(() => pillMeta),
       roleSeparators,
       roleSeparatorAtomicRanges,
@@ -706,10 +706,10 @@ function buildState(): EditorState {
 }
 
 function registerActiveView() {
-  if (view) sbp('dez.editor/registerActiveView', tabStore.activeTabId, view)
+  if (view) sbp('dez.editor/registerActiveView', activeTabId.value, view)
 }
 
-function unregisterActiveView(tabId = tabStore.activeTabId) {
+function unregisterActiveView(tabId = activeTabId.value) {
   sbp('dez.editor/unregisterActiveView', tabId)
 }
 
@@ -740,17 +740,17 @@ function resetViewToActiveTab(moveCursorToEnd = false) {
 }
 
 function stopActiveTab() {
-  void sbp('dez.controller/stopActiveTab')
+  void sbp('dez.stream/stop', activeTabId.value)
 }
 
 function onEditorStreamFinished(tabId: string) {
-  if (tabId !== tabStore.activeTabId) return
+  if (tabId !== activeTabId.value) return
   nextTick(() => resetViewToActiveTab(true))
 }
 
 function syncViewStructureToStoreSections() {
   if (!view) return
-  const models = initialSectionModels(store.sections)
+  const models = initialSectionModels(activeSections.value)
   const current = view.state.field(sectionsField)
   const same =
     current.length === models.length &&
@@ -775,22 +775,22 @@ function syncViewStructureToStoreSections() {
 
 onMounted(() => {
   mountView()
-  sbp('dez.editor/onStreamFinished', onEditorStreamFinished)
+  sbp('okTurtles.events/on', 'dez.editor.stream-finished', onEditorStreamFinished)
 })
 
 onBeforeUnmount(() => {
   syncDocToStore()
   flushPendingPersist()
-  persistTab(tabStore.activeTabId)
+  persistTab(activeTabId.value)
   unregisterActiveView()
-  sbp('dez.editor/offStreamFinished', onEditorStreamFinished)
+  sbp('okTurtles.events/off', 'dez.editor.stream-finished', onEditorStreamFinished)
   view?.destroy()
   view = null
 })
 
 // Rebuild state when the active tab changes — the CM doc is per-tab.
 watch(
-  () => tabStore.activeTabId,
+  () => activeTabId.value,
   (_newId, oldId) => {
     if (oldId) {
       syncDocToTab(oldId)
@@ -807,7 +807,7 @@ watch(
 
 // External role toggles (from elsewhere) and separator-visibility toggle.
 watch(
-  () => settings.showPillSeparators,
+  () => settings.value.showPillSeparators,
   (v) => {
     if (view) view.dispatch({ effects: setShowSeparatorsEffect.of(v) })
   },
@@ -817,7 +817,7 @@ watch(
 // streaming appended a new agent section on this tab while mounted),
 // mirror that into sectionsField so ids + roles stay aligned.
 watch(
-  () => store.sections.map((s) => `${s.id}:${s.role}`).join('|'),
+  () => activeSectionsIdentity.value,
   () => {
     syncViewStructureToStoreSections()
   },

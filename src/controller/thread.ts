@@ -1,10 +1,6 @@
 import sbp from '@sbp/sbp'
 
 export default sbp('sbp/selectors/register', {
-  async 'dez.controller/submitActiveTab' (): Promise<void> {
-    await sbp('dez.controller/submitTab', sbp('dez.model/tabs/activeId'))
-  },
-
   async 'dez.controller/submitTab' (tabId: string): Promise<void> {
     const tab = sbp('dez.model/tab', tabId)
     if (!tab) return
@@ -30,11 +26,4 @@ export default sbp('sbp/selectors/register', {
     })
   },
 
-  async 'dez.controller/stopActiveTab' (): Promise<void> {
-    await sbp('dez.controller/stopTab', sbp('dez.model/tabs/activeId'))
-  },
-
-  async 'dez.controller/stopTab' (tabId: string): Promise<void> {
-    await sbp('dez.stream/stop', tabId)
-  },
 })

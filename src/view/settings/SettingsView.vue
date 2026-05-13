@@ -1,11 +1,11 @@
 <script setup lang="ts">
 import { onMounted, ref } from 'vue'
 import sbp from '@sbp/sbp'
-import { useSettingsStore, type SettingsSection, type Theme } from '../../model/state/settings'
+import { useModelState, type SettingsSection, type Theme } from '../modelState'
 import type { ModelInfo, ProviderInfo } from '../../model/providers'
 import PromptManager from '../prompts/PromptManager.vue'
 
-const settings = useSettingsStore()
+const { settings } = useModelState()
 const sections: SettingsSection[] = ['general', 'providers', 'prompts', 'appearance']
 
 const providers = ref<ProviderInfo[]>([])
@@ -103,7 +103,7 @@ async function manuallyCheckForUpdates() {
 }
 
 function onClose() {
-  settings.closeSettings()
+  sbp('dez.model/settings/close')
 }
 
 function onOverlayClick(e: MouseEvent) {
@@ -128,7 +128,7 @@ function onOverlayClick(e: MouseEvent) {
             :key="s"
             class="settings-nav-btn"
             :class="{ 'settings-nav-btn--active': settings.settingsSection === s }"
-            @click="settings.settingsSection = s"
+            @click="sbp('dez.model/settings/setSection', s)"
           >
             {{ s.charAt(0).toUpperCase() + s.slice(1) }}
           </button>
@@ -187,7 +187,7 @@ function onOverlayClick(e: MouseEvent) {
                 <select
                   class="settings-select"
                   :value="settings.defaultModels[provider.id] || ''"
-                  @change="settings.setDefaultModel(provider.id, ($event.target as HTMLSelectElement).value)"
+                  @change="sbp('dez.model/settings/setDefaultModel', provider.id, ($event.target as HTMLSelectElement).value)"
                 >
                   <option value="" disabled>Select a model</option>
                   <option
@@ -220,7 +220,7 @@ function onOverlayClick(e: MouseEvent) {
                   :key="t.value"
                   class="settings-btn"
                   :class="{ 'settings-btn--active': settings.theme === t.value }"
-                  @click="settings.setTheme(t.value)"
+                  @click="sbp('dez.model/settings/setTheme', t.value)"
                 >
                   {{ t.label }}
                 </button>
@@ -232,7 +232,7 @@ function onOverlayClick(e: MouseEvent) {
               <button
                 class="settings-toggle"
                 :class="{ 'settings-toggle--on': settings.showPillSeparators }"
-                @click="settings.togglePillSeparators()"
+                @click="sbp('dez.model/settings/togglePillSeparators')"
               >
                 <span class="settings-toggle-knob" />
               </button>
@@ -249,9 +249,9 @@ function onOverlayClick(e: MouseEvent) {
                 @change="
                   (() => {
                     const v = ($event.target as HTMLSelectElement).value
-                    if (!v) { settings.setDefaultNewTabModel(null); return }
+                    if (!v) { sbp('dez.model/settings/setDefaultNewTabModel', null); return }
                     const [pid, mid] = v.split(':')
-                    settings.setDefaultNewTabModel({ providerId: pid, modelId: mid })
+                    sbp('dez.model/settings/setDefaultNewTabModel', { providerId: pid, modelId: mid })
                   })()
                 "
               >
@@ -273,7 +273,7 @@ function onOverlayClick(e: MouseEvent) {
               <button
                 class="settings-toggle"
                 :class="{ 'settings-toggle--on': settings.checkForUpdates }"
-                @click="settings.setCheckForUpdates(!settings.checkForUpdates)"
+                @click="sbp('dez.model/settings/setCheckForUpdates', !settings.checkForUpdates)"
               >
                 <span class="settings-toggle-knob" />
               </button>

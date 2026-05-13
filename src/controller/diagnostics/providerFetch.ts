@@ -19,7 +19,7 @@ async function probeModelList(spec: ProviderSpec, providerSecretValue: Secret<st
       ...nativeRequestFromFetch(spec.modelsUrl, options),
       timeoutMs: 20000,
     }
-    const response = await sbp('dez.http/request', request) as NativeHttpResponse
+    const response = await sbp('dez.native/httpRequest', request) as NativeHttpResponse
     const responseText = nativeResponseText(response)
     assertProviderResponseOk(response, spec.id, responseText)
     return {

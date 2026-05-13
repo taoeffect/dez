@@ -63,7 +63,7 @@ export default sbp('sbp/selectors/register', {
 
     try {
       const request = nativeRequestFromFetch(spec.modelsUrl, options)
-      const response = await sbp('dez.http/request', request) as NativeHttpResponse
+      const response = await sbp('dez.native/httpRequest', request) as NativeHttpResponse
       const responseText = nativeResponseText(response)
       assertProviderResponseOk(response, providerId, responseText)
       const data = nativeResponseJson<unknown>(response)

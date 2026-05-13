@@ -1,9 +1,9 @@
 <script setup lang="ts">
 import { nextTick, ref, watch } from 'vue'
 import sbp from '@sbp/sbp'
-import { useTabStore } from '../../model/state/tabs'
+import { useModelState } from '../modelState'
 
-const tabStore = useTabStore()
+const { tabs, activeTabId } = useModelState()
 const tabElements = ref(new Map<string, HTMLElement>())
 
 function setTabElement(tabId: string, element: unknown) {
@@ -17,10 +17,9 @@ function setTabElement(tabId: string, element: unknown) {
 async function scrollActiveTabIntoView() {
   await nextTick()
 
-  const activeTabId = tabStore.activeTabId
-  if (!activeTabId) return
+  if (!activeTabId.value) return
 
-  tabElements.value.get(activeTabId)?.scrollIntoView({ block: 'nearest', inline: 'nearest' })
+  tabElements.value.get(activeTabId.value)?.scrollIntoView({ block: 'nearest', inline: 'nearest' })
 }
 
 function onWheel(e: WheelEvent) {
@@ -50,7 +49,7 @@ function onMiddleClick(e: MouseEvent, tabId: string) {
 }
 
 watch(
-  () => [tabStore.activeTabId, tabStore.tabs.length],
+  () => [activeTabId.value, tabs.value.length],
   scrollActiveTabIntoView,
   { immediate: true },
 )
@@ -59,17 +58,17 @@ watch(
 <template>
   <div class="tab-bar-tabs" @wheel="onWheel">
     <div
-      v-for="tab in tabStore.tabs"
+      v-for="tab in tabs"
       :key="tab.id"
       :ref="(element) => setTabElement(tab.id, element)"
       class="tab"
-      :class="{ 'tab--active': tab.id === tabStore.activeTabId }"
-      @click="tabStore.switchTab(tab.id)"
+      :class="{ 'tab--active': tab.id === activeTabId }"
+      @click="sbp('dez.model/tabs/switch', tab.id)"
       @mousedown="onMiddleClick($event, tab.id)"
     >
       <span class="tab-title">{{ tab.title }}</span>
       <button
-        v-if="tabStore.tabs.length > 1"
+        v-if="tabs.length > 1"
         class="tab-close"
         title="Close tab"
         @click.stop="closeTab(tab.id)"
@@ -79,7 +78,7 @@ watch(
         </svg>
       </button>
     </div>
-    <button class="tab-new" title="New tab (Cmd/Ctrl+T)" @click="tabStore.createTab()">
+    <button class="tab-new" title="New tab (Cmd/Ctrl+T)" @click="sbp('dez.model/tabs/create')">
       <svg width="12" height="12" viewBox="0 0 12 12" fill="none">
         <path d="M6 2v8M2 6h8" stroke="currentColor" stroke-width="1.4" stroke-linecap="round"/>
       </svg>

@@ -1,8 +1,9 @@
 <script setup lang="ts">
 import { ref, computed, watch, onMounted, nextTick } from 'vue'
-import { usePromptsStore, type Prompt } from '../../model/state/prompts'
+import sbp from '@sbp/sbp'
+import { useModelState, type Prompt } from '../modelState'
 
-const store = usePromptsStore()
+const { prompts } = useModelState()
 
 const search = ref('')
 const selectedId = ref<string | null>(null)
@@ -16,7 +17,7 @@ const nameWhitespaceRe = /\s/
 const UNTITLED = 'Untitled'
 
 const sortedPrompts = computed<Prompt[]>(() =>
-  [...store.prompts].sort((a, b) => a.name.localeCompare(b.name)),
+  [...prompts.value].sort((a, b) => a.name.localeCompare(b.name)),
 )
 
 const filteredPrompts = computed<Prompt[]>(() => {
@@ -29,14 +30,14 @@ const filteredPrompts = computed<Prompt[]>(() => {
 
 const selected = computed<Prompt | null>(() => {
   if (!selectedId.value) return null
-  return store.prompts.find((p) => p.id === selectedId.value) ?? null
+  return prompts.value.find((p) => p.id === selectedId.value) ?? null
 })
 
 function validateName(name: string, ignoreId: string | null): string | null {
   const trimmed = name.trim()
   if (!trimmed) return 'Name is required.'
   if (nameWhitespaceRe.test(trimmed)) return 'Name cannot contain whitespace.'
-  const collision = store.prompts.find((p) => p.name === trimmed && p.id !== ignoreId)
+  const collision = prompts.value.find((p) => p.name === trimmed && p.id !== ignoreId)
   if (collision) return 'Name must be unique.'
   return null
 }
@@ -44,18 +45,18 @@ function validateName(name: string, ignoreId: string | null): string | null {
 function selectPrompt(id: string) {
   selectedId.value = id
   pendingDeleteId.value = null
-  const p = store.prompts.find((x) => x.id === id)
+  const p = prompts.value.find((x) => x.id === id)
   editName.value = p?.name ?? ''
   nameError.value = null
 }
 
 function onAdd() {
-  const existing = store.getByName(UNTITLED)
+  const existing = sbp('dez.model/prompts/getByName', UNTITLED) as Prompt | undefined
   if (existing) {
     if (selectedId.value !== existing.id) selectPrompt(existing.id)
     return
   }
-  const p = store.addPrompt(UNTITLED, '')
+  const p = sbp('dez.model/prompts/add', UNTITLED, '') as Prompt
   selectPrompt(p.id)
   void nextTick(() => nameInputRef.value?.focus())
 }
@@ -65,14 +66,14 @@ function onNameInput() {
   const err = validateName(editName.value, selected.value.id)
   nameError.value = err
   if (!err) {
-    store.updatePrompt(selected.value.id, { name: editName.value.trim() })
+    sbp('dez.model/prompts/update', selected.value.id, { name: editName.value.trim() })
   }
 }
 
 function onContentInput(e: Event) {
   if (!selected.value) return
   const el = e.target as HTMLTextAreaElement
-  store.updatePrompt(selected.value.id, { content: el.value })
+  sbp('dez.model/prompts/update', selected.value.id, { content: el.value })
 }
 
 function requestDelete(id: string) {
@@ -88,7 +89,7 @@ function confirmDelete(id: string) {
   const idx = list.findIndex((p) => p.id === id)
   const wasSelected = selectedId.value === id
 
-  store.removePrompt(id)
+  sbp('dez.model/prompts/remove', id)
   pendingDeleteId.value = null
 
   if (wasSelected) {

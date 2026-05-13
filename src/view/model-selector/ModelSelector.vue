@@ -1,8 +1,7 @@
 <script setup lang="ts">
 import { ref, computed, onMounted, onUnmounted, nextTick } from 'vue'
 import sbp from '@sbp/sbp'
-import { useThreadStore } from '../../model/state/thread'
-import { useSettingsStore } from '../../model/state/settings'
+import { useModelState } from '../modelState'
 import type { ModelInfo, ProviderInfo } from '../../model/providers'
 
 
@@ -16,8 +15,7 @@ interface GroupedModels {
   models: DisplayModel[]
 }
 
-const threadStore = useThreadStore()
-const settingsStore = useSettingsStore()
+const { activeModel, settings } = useModelState()
 
 const isOpen = ref(false)
 const searchQuery = ref('')
@@ -28,8 +26,8 @@ const providers = ref<ProviderInfo[]>([])
 const allModels = ref<ModelInfo[]>([])
 
 const displayName = computed(() => {
-  if (threadStore.activeModel) {
-    return threadStore.activeModel.modelName
+  if (activeModel.value) {
+    return activeModel.value.modelName
   }
   return 'Select model'
 })
@@ -77,7 +75,7 @@ const filteredGrouped = computed<GroupedModels[]>(() => {
   })
 
   const favModels: DisplayModel[] = []
-  for (const fav of settingsStore.favorites) {
+  for (const fav of settings.value.favorites) {
     const m = allModels.value.find(
       (x) => x.provider === fav.providerId && x.id === fav.modelId,
     )
@@ -144,18 +142,24 @@ function close() {
 }
 
 function selectModel(model: ModelInfo) {
-  sbp('dez.controller/selectModelForActiveTab', model.provider, model.id, model.name)
+  sbp('dez.model/setActiveModel', model.provider, model.id, model.name)
   close()
 }
 
 function toggleFavorite(model: ModelInfo, e: MouseEvent) {
   e.stopPropagation()
-  settingsStore.toggleFavorite(model.provider, model.id)
+  sbp('dez.model/settings/toggleFavorite', model.provider, model.id)
+}
+
+function isFavorite(model: ModelInfo) {
+  return settings.value.favorites.some(
+    (favorite) => favorite.providerId === model.provider && favorite.modelId === model.id,
+  )
 }
 
 function openProviderSettings() {
   close()
-  settingsStore.openSettings('providers')
+  sbp('dez.model/settings/open', 'providers')
 }
 
 function onClickOutside(e: MouseEvent) {
@@ -174,7 +178,7 @@ function onKeydown(e: KeyboardEvent) {
 onMounted(() => {
   document.addEventListener('mousedown', onClickOutside)
   document.addEventListener('keydown', onKeydown, true)
-  threadStore.initActiveModel()
+  sbp('dez.model/thread/initActiveModel')
 })
 
 onUnmounted(() => {
@@ -219,17 +223,17 @@ onUnmounted(() => {
               v-for="model in group.models"
               :key="group.providerId + ':' + model.id"
               class="model-item"
-              :class="{ 'model-item--active': threadStore.activeModel?.modelId === model.id && threadStore.activeModel?.providerId === model.provider }"
+              :class="{ 'model-item--active': activeModel?.modelId === model.id && activeModel?.providerId === model.provider }"
               @click="selectModel(model)"
             >
               <span
                 class="model-item-star"
-                :class="{ 'model-item-star--on': settingsStore.isFavorite(model.provider, model.id) }"
-                :title="settingsStore.isFavorite(model.provider, model.id) ? 'Unfavorite' : 'Favorite'"
+                :class="{ 'model-item-star--on': isFavorite(model) }"
+                :title="isFavorite(model) ? 'Unfavorite' : 'Favorite'"
                 @click="toggleFavorite(model, $event)"
               >
                 <svg width="12" height="12" viewBox="0 0 12 12" fill="none">
-                  <path d="M6 1.5l1.4 2.9 3.1.4-2.3 2.2.6 3.1L6 8.6l-2.8 1.5.6-3.1L1.5 4.8l3.1-.4L6 1.5z" :fill="settingsStore.isFavorite(model.provider, model.id) ? 'currentColor' : 'none'" stroke="currentColor" stroke-width="1" stroke-linejoin="round"/>
+                  <path d="M6 1.5l1.4 2.9 3.1.4-2.3 2.2.6 3.1L6 8.6l-2.8 1.5.6-3.1L1.5 4.8l3.1-.4L6 1.5z" :fill="isFavorite(model) ? 'currentColor' : 'none'" stroke="currentColor" stroke-width="1" stroke-linejoin="round"/>
                 </svg>
               </span>
               <span class="model-item-name">{{ model.name }}</span>

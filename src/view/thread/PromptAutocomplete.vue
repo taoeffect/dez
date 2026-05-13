@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import type { Prompt } from '../../model/state/prompts'
+import type { Prompt } from '../modelState'
 
 defineProps<{
   prompts: Prompt[]

@@ -91,7 +91,7 @@ Components should call `dez.controller/*` for workflows, `dez.ui/*` for UI servi
 
 SBP selector definitions should contain the selector behavior directly in the registered function body, e.g. `export default sbp('sbp/selectors/register', { 'domain/selector': function (...) { ... } })`. Do not write selectors that merely delegate to same-file helper functions for the selector behavior. Shared constants, module state, types, and true reusable pure helpers/core-domain helpers may live outside selectors, but avoid same-file wrapper-helper indirection, just put the function definition right there as the value of the selector.
 
-Avoid wrapper selectors that do nothing except call another selector with identical parameters. Controller/core selectors should add meaningful boundary behavior such as workflow orchestration, normalization, error handling, state refresh, lifecycle management, cloning, or validation.
+Avoid wrapper selectors that do nothing except call another selector with identical parameters. Controller/core selectors should add meaningful boundary behavior such as workflow orchestration, normalization, error handling, state refresh, lifecycle management, cloning, or validation. Do not create alternate controller names for simple model mutations; call the model selector directly instead, e.g. use `dez.model/settings/historyOpen` rather than adding `dez.controller/openHistory`.
 
 ### Dependencies
 
@@ -169,6 +169,12 @@ The frontend never touches these files directly; use `dez.persistence/*` selecto
 - Rust/TypeScript JSON naming crosses a boundary manually. Many Rust fields use individual `#[serde(rename = "camelCase")]` attributes rather than a global `rename_all`; check each struct before changing payloads.
 - Styling uses component-scoped CSS or CodeMirror theme rules in `cmEditor.ts`; global theme variables live in `App.vue`. No CSS framework is configured.
 - Theme is controlled with `data-theme` on `<html>` plus `prefers-color-scheme` fallback.
+
+## Comments
+
+ALWAYS add comments above any code that could be considered confusing, unclear, hackish, or non-idiomatic explaining why the code exists, what scenarios it covers, and what it does.
+
+Brief comments are encouraged above functions that do anything non-trivial explaining the "why and what" of the function.
 
 ## Misc. Directives
 

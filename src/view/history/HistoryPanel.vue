@@ -1,14 +1,11 @@
 <script setup lang="ts">
 import { computed, onMounted, ref } from 'vue'
 import sbp from '@sbp/sbp'
-import { useTabStore } from '../../model/state/tabs'
 import type { ConversationSummary } from '../../model/persistence/types'
 
 const emit = defineEmits<{
   close: []
 }>()
-
-const tabStore = useTabStore()
 
 const conversations = ref<ConversationSummary[]>([])
 const search = ref('')
@@ -72,7 +69,7 @@ function messageLabel(count: number): string {
 }
 
 async function openConversation(id: string) {
-  const tab = await tabStore.openConversationInNewTab(id)
+  const tab = await sbp('dez.model/tabs/openConversation', id)
   if (tab) emit('close')
 }
 
@@ -85,7 +82,7 @@ function cancelDelete() {
 }
 
 async function confirmDelete(id: string) {
-  await tabStore.deleteConversationById(id)
+  await sbp('dez.model/tabs/deleteConversation', id)
   pendingDeleteId.value = null
   conversations.value = conversations.value.filter((conversation) => conversation.id !== id)
 }
