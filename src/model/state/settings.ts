@@ -22,15 +22,6 @@ export const useSettingsStore = defineStore('settings', () => {
   const settingsSection = ref<SettingsSection>('general')
   const historyOpen = ref(false)
 
-  function applyTheme(t: Theme) {
-    const root = document.documentElement
-    if (t === 'system') {
-      root.removeAttribute('data-theme')
-    } else {
-      root.setAttribute('data-theme', t)
-    }
-  }
-
   function togglePillSeparators() {
     showPillSeparators.value = !showPillSeparators.value
   }
@@ -107,7 +98,6 @@ export const useSettingsStore = defineStore('settings', () => {
     settingsOpen,
     settingsSection,
     historyOpen,
-    applyTheme,
     togglePillSeparators,
     setTheme,
     setDefaultModel,

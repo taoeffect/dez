@@ -524,7 +524,7 @@ export default sbp('sbp/selectors/register', {
       if (typeof state.lastUpdateCheckAt === 'number') settings.lastUpdateCheckAt = state.lastUpdateCheckAt
     }
 
-    settings.applyTheme(settings.theme)
+    sbp('dez.ui/applyTheme', settings.theme)
     settingsPersistenceReady = true
     return state
   },
@@ -554,7 +554,7 @@ export default sbp('sbp/selectors/register', {
     stopThemeWatch = watch(
       () => settings.theme,
       (theme) => {
-        settings.applyTheme(theme)
+        sbp('dez.ui/applyTheme', theme)
       },
     )
   },

@@ -59,7 +59,7 @@ export default sbp('sbp/selectors/register', {
     }
 
     await options.onDeviceFlow?.(viewState)
-    await navigator.clipboard.writeText(viewState.userCode).catch(() => undefined)
+    await sbp('dez.ui/copyText', viewState.userCode).catch(() => undefined)
     sbp('dez.controller/openUrl', viewState.verificationUri)
 
     for (let i = 0; i < 60; i += 1) {
