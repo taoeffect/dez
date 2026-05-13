@@ -13,6 +13,15 @@ function unescapePromptBody(body: string): string {
   return body.replaceAll('<\\/dez:prompt>', '</dez:prompt>')
 }
 
+function stripLiveEditorSentinels(value: string): string {
+  return value
+    .replace(/\u001E/g, '')
+    .replace(/\u{E000}/gu, '')
+    .replace(/\u{E001}/gu, '')
+    .replace(/\u{E002}/gu, '')
+    .replace(/\u{E003}/gu, '\n')
+}
+
 function promptId(): string {
   return `p-${Date.now().toString(16)}-${Math.floor(Math.random() * 0xffffffff).toString(16)}`
 }
@@ -29,11 +38,12 @@ export function serializeConversation(data: ConversationData): string {
     output += `<dez:pill type="${tag}"/>\n`
     for (const node of section.nodes) {
       if (node.kind === 'text') {
-        output += node.text
-        if (!node.text.endsWith('\n')) output += '\n'
+        const text = stripLiveEditorSentinels(node.text)
+        output += text
+        if (!text.endsWith('\n')) output += '\n'
       } else {
         output += `<dez:prompt name="${node.name}">\n`
-        const body = escapePromptBody(node.body)
+        const body = escapePromptBody(stripLiveEditorSentinels(node.body))
         output += body
         if (!body.endsWith('\n')) output += '\n'
         output += '</dez:prompt>\n'

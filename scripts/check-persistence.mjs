@@ -225,6 +225,29 @@ world
   }
 
   {
+    const liveSentinelText = 'a\u001Eb\uE000c\uE001d\uE002e\uE003f'
+    const data = {
+      id: 'conversation',
+      title: 'Chat',
+      sections: [
+        section('user', [
+          textNode(liveSentinelText),
+          { kind: 'prompt', id: 'p1', promptId: null, name: 'prompt', body: liveSentinelText, expanded: false },
+        ]),
+      ],
+      activeModel: null,
+      created_at: 1000,
+    }
+    const serialized = serializeConversation(data)
+    assert(!serialized.includes('\u001E'))
+    assert(!serialized.includes('\uE000'))
+    assert(!serialized.includes('\uE001'))
+    assert(!serialized.includes('\uE002'))
+    assert(!serialized.includes('\uE003'))
+    assert(serialized.includes('abcde\nf'))
+  }
+
+  {
     const parsed = parseConversation('empty', '')
     assert.deepEqual(parsed, {
       id: 'empty',

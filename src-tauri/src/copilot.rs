@@ -43,8 +43,8 @@ pub async fn start_device_flow(client: &reqwest::Client) -> Result<DeviceFlowRes
         .await?;
 
     if !resp.status().is_success() {
-        let text = resp.text().await.unwrap_or_default();
-        return Err(NativeError::Api(format!("Device flow error: {}", text)));
+        let status = resp.status();
+        return Err(NativeError::Api(format!("Device flow error: HTTP {}", status)));
     }
 
     let flow: DeviceFlowResponse = resp.json().await?;
@@ -117,8 +117,8 @@ pub async fn ensure_copilot_token(client: &reqwest::Client) -> Result<CopilotCha
         .await?;
 
     if !resp.status().is_success() {
-        let text = resp.text().await.unwrap_or_default();
-        return Err(NativeError::Api(format!("Copilot token error: {}", text)));
+        let status = resp.status();
+        return Err(NativeError::Api(format!("Copilot token error: HTTP {}", status)));
     }
 
     let token_resp: CopilotTokenResponse = resp.json().await?;
