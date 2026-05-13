@@ -1,7 +1,5 @@
 import { defineStore } from 'pinia'
-import { ref, watch } from 'vue'
-import sbp from '@sbp/sbp'
-import { debounce } from 'turtledash'
+import { ref } from 'vue'
 
 export type Theme = 'light' | 'dark' | 'system'
 export type SettingsSection = 'general' | 'providers' | 'prompts' | 'appearance'
@@ -9,19 +7,6 @@ export type SettingsSection = 'general' | 'providers' | 'prompts' | 'appearance'
 export interface DefaultModel {
   providerId: string
   modelId: string
-}
-
-interface AppStatePayload {
-  tabs?: unknown[]
-  activeTabId?: string | null
-  showPillSeparators?: boolean
-  theme?: Theme
-  defaultModels?: Record<string, string>
-  defaultNewTabModel?: DefaultModel | null
-  lastUsedModel?: DefaultModel | null
-  favorites?: DefaultModel[]
-  checkForUpdates?: boolean
-  lastUpdateCheckAt?: number | null
 }
 
 export const useSettingsStore = defineStore('settings', () => {
@@ -36,61 +21,6 @@ export const useSettingsStore = defineStore('settings', () => {
   const settingsOpen = ref(false)
   const settingsSection = ref<SettingsSection>('general')
   const historyOpen = ref(false)
-
-  let initialized = false
-  let persistCallback: (() => void) | null = null
-
-  const persistSettings = debounce(() => {
-    if (persistCallback) persistCallback()
-  }, 1000)
-
-  async function init(onPersist?: () => void) {
-    if (onPersist) persistCallback = onPersist
-
-    const state = (await sbp('dez.persistence/loadAppState').catch(() => ({}))) as AppStatePayload
-
-    if (state) {
-      if (typeof state.showPillSeparators === 'boolean')
-        showPillSeparators.value = state.showPillSeparators
-      if (state.theme) theme.value = state.theme
-      if (state.defaultModels) defaultModels.value = state.defaultModels
-      if (state.defaultNewTabModel !== undefined)
-        defaultNewTabModel.value = state.defaultNewTabModel
-      if (state.lastUsedModel !== undefined) lastUsedModel.value = state.lastUsedModel
-      if (Array.isArray(state.favorites)) favorites.value = state.favorites
-      if (typeof state.checkForUpdates === 'boolean')
-        checkForUpdates.value = state.checkForUpdates
-      if (typeof state.lastUpdateCheckAt === 'number')
-        lastUpdateCheckAt.value = state.lastUpdateCheckAt
-    }
-
-    applyTheme(theme.value)
-
-    initialized = true
-
-    watch(
-      [
-        showPillSeparators,
-        theme,
-        defaultModels,
-        defaultNewTabModel,
-        lastUsedModel,
-        favorites,
-        checkForUpdates,
-        lastUpdateCheckAt,
-      ],
-      schedulePersist,
-      { deep: true },
-    )
-    watch(theme, applyTheme)
-
-    return state
-  }
-
-  function schedulePersist() {
-    if (!initialized) return
-    persistSettings()
-  }
 
   function applyTheme(t: Theme) {
     const root = document.documentElement
@@ -177,7 +107,7 @@ export const useSettingsStore = defineStore('settings', () => {
     settingsOpen,
     settingsSection,
     historyOpen,
-    init,
+    applyTheme,
     togglePillSeparators,
     setTheme,
     setDefaultModel,

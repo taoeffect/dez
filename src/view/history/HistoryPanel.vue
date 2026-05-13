@@ -43,7 +43,7 @@ async function loadConversations() {
   loading.value = true
   error.value = null
   try {
-    conversations.value = await sbp('dez.persistence/listConversations') as ConversationSummary[]
+    conversations.value = await sbp('dez.model/conversations/list') as ConversationSummary[]
   } catch (e) {
     console.error('Failed to load history:', e)
     error.value = `Failed to load history: ${e}`

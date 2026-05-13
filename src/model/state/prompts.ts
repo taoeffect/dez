@@ -1,7 +1,5 @@
 import { defineStore } from 'pinia'
-import { ref, watch } from 'vue'
-import sbp from '@sbp/sbp'
-import { debounce } from 'turtledash'
+import { ref } from 'vue'
 
 export interface Prompt {
   id: string
@@ -11,33 +9,6 @@ export interface Prompt {
 
 export const usePromptsStore = defineStore('prompts', () => {
   const prompts = ref<Prompt[]>([])
-
-  let initialized = false
-
-  const persistPrompts = debounce(() => {
-    void sbp('dez.persistence/savePrompts', prompts.value).catch((err: unknown) => {
-      console.error('Failed to save prompts:', err)
-    })
-  }, 1000)
-
-  async function init() {
-    try {
-      const loaded = await sbp('dez.persistence/loadPrompts') as Prompt[]
-      if (Array.isArray(loaded)) prompts.value = loaded
-    } catch (err) {
-      console.error('Failed to load prompts:', err)
-      prompts.value = []
-    }
-
-    initialized = true
-
-    watch(prompts, schedulePersist, { deep: true })
-  }
-
-  function schedulePersist() {
-    if (!initialized) return
-    persistPrompts()
-  }
 
   function addPrompt(name: string, content: string): Prompt {
     const prompt: Prompt = {
@@ -74,7 +45,6 @@ export const usePromptsStore = defineStore('prompts', () => {
 
   return {
     prompts,
-    init,
     addPrompt,
     updatePrompt,
     removePrompt,

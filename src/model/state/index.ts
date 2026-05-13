@@ -1,8 +1,11 @@
 import sbp from '@sbp/sbp'
+import { watch, type WatchStopHandle } from 'vue'
+import { debounce } from 'turtledash'
 import './streams'
 import { usePromptsStore, type Prompt } from './prompts'
 import { useSettingsStore, type DefaultModel, type SettingsSection, type Theme } from './settings'
 import { useTabStore } from './tabs'
+import type { AppStatePayload, ConversationSummary } from '../persistence/types'
 import type { ActiveModel, ContentNode, Role, Section, Tab } from '../chat/types'
 import {
   appendStreamingText,
@@ -69,6 +72,20 @@ interface TabData {
   activeModel: ActiveModel | null
   createdAt: number
 }
+
+let settingsPersistenceReady = false
+let stopSettingsPersistWatch: WatchStopHandle | null = null
+let stopThemeWatch: WatchStopHandle | null = null
+let promptsPersistenceReady = false
+let stopPromptsPersistWatch: WatchStopHandle | null = null
+
+const persistSettings = debounce(() => {
+  if (settingsPersistenceReady) void sbp('dez.model/appState/save')
+}, 1000)
+
+const persistPrompts = debounce(() => {
+  if (promptsPersistenceReady) void sbp('dez.model/prompts/save')
+}, 1000)
 
 function cloneContentNode(node: ContentNode): ContentNode {
   return { ...node }
@@ -576,8 +593,62 @@ export default sbp('sbp/selectors/register', {
     ]
   },
 
-  async 'dez.model/settings/init' (onPersist?: () => void): Promise<unknown> {
-    return useSettingsStore().init(onPersist)
+  async 'dez.model/settings/init' (): Promise<AppStatePayload> {
+    const settings = useSettingsStore()
+    const state = (await sbp('dez.persistence/loadAppState').catch(() => ({}))) as AppStatePayload
+
+    if (state) {
+      if (typeof state.showPillSeparators === 'boolean') settings.showPillSeparators = state.showPillSeparators
+      if (state.theme) settings.theme = state.theme
+      if (state.defaultModels) settings.defaultModels = state.defaultModels
+      if (state.defaultNewTabModel !== undefined) settings.defaultNewTabModel = state.defaultNewTabModel
+      if (state.lastUsedModel !== undefined) settings.lastUsedModel = state.lastUsedModel
+      if (Array.isArray(state.favorites)) settings.favorites = state.favorites
+      if (typeof state.checkForUpdates === 'boolean') settings.checkForUpdates = state.checkForUpdates
+      if (typeof state.lastUpdateCheckAt === 'number') settings.lastUpdateCheckAt = state.lastUpdateCheckAt
+    }
+
+    settings.applyTheme(settings.theme)
+    settingsPersistenceReady = true
+    return state
+  },
+
+  // Settings persistence is model-owned so stores remain reactive state only; the
+  // debounce preserves the old app-state write coalescing behavior.
+  'dez.model/settings/startPersistence' (): void {
+    const settings = useSettingsStore()
+    stopSettingsPersistWatch?.()
+    stopThemeWatch?.()
+    stopSettingsPersistWatch = watch(
+      [
+        () => settings.showPillSeparators,
+        () => settings.theme,
+        () => settings.defaultModels,
+        () => settings.defaultNewTabModel,
+        () => settings.lastUsedModel,
+        () => settings.favorites,
+        () => settings.checkForUpdates,
+        () => settings.lastUpdateCheckAt,
+      ],
+      () => {
+        persistSettings()
+      },
+      { deep: true },
+    )
+    stopThemeWatch = watch(
+      () => settings.theme,
+      (theme) => {
+        settings.applyTheme(theme)
+      },
+    )
+  },
+
+  'dez.model/settings/stopPersistence' (): void {
+    stopSettingsPersistWatch?.()
+    stopSettingsPersistWatch = null
+    stopThemeWatch?.()
+    stopThemeWatch = null
+    settingsPersistenceReady = false
   },
 
   'dez.model/settings/snapshot' (): SettingsSnapshot {
@@ -701,7 +772,42 @@ export default sbp('sbp/selectors/register', {
   },
 
   async 'dez.model/prompts/init' (): Promise<void> {
-    await usePromptsStore().init()
+    const prompts = usePromptsStore()
+    try {
+      const loaded = await sbp('dez.persistence/loadPrompts') as Prompt[]
+      prompts.prompts = Array.isArray(loaded) ? loaded.map(clonePrompt) : []
+    } catch (error) {
+      console.error('Failed to load prompts:', error)
+      prompts.prompts = []
+    }
+    promptsPersistenceReady = true
+  },
+
+  async 'dez.model/prompts/save' (): Promise<void> {
+    try {
+      await sbp('dez.persistence/savePrompts', usePromptsStore().prompts.map(clonePrompt))
+    } catch (error) {
+      console.error('Failed to save prompts:', error)
+    }
+  },
+
+  // Prompt templates persist separately from conversations; the model watcher
+  // keeps that persistence boundary out of the Pinia store implementation.
+  'dez.model/prompts/startPersistence' (): void {
+    stopPromptsPersistWatch?.()
+    stopPromptsPersistWatch = watch(
+      () => usePromptsStore().prompts,
+      () => {
+        persistPrompts()
+      },
+      { deep: true },
+    )
+  },
+
+  'dez.model/prompts/stopPersistence' (): void {
+    stopPromptsPersistWatch?.()
+    stopPromptsPersistWatch = null
+    promptsPersistenceReady = false
   },
 
   'dez.model/prompts/list' (): Prompt[] {
@@ -746,6 +852,15 @@ export default sbp('sbp/selectors/register', {
     if (index < 0) return false
     prompts.splice(index, 1)
     return true
+  },
+
+  async 'dez.model/conversations/list' (): Promise<ConversationSummary[]> {
+    try {
+      return await sbp('dez.persistence/listConversations') as ConversationSummary[]
+    } catch (error) {
+      console.error('Failed to list conversations', error)
+      return []
+    }
   },
 
 })
