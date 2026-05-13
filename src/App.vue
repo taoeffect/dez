@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { onMounted, onUnmounted, watch } from "vue";
-import AppLayout from "./components/AppLayout.vue";
+import AppLayout from "./view/app/AppLayout.vue";
 import { useSettingsStore } from "./model/state/settings";
 import { useTabStore } from "./model/state/tabs";
 import { usePromptsStore } from "./model/state/prompts";

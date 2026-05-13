@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { nextTick, ref, watch } from 'vue'
 import sbp from '@sbp/sbp'
-import { useTabStore } from '../model/state/tabs'
+import { useTabStore } from '../../model/state/tabs'
 
 const tabStore = useTabStore()
 const tabElements = ref(new Map<string, HTMLElement>())

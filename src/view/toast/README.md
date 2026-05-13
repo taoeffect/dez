@@ -8,7 +8,7 @@ Import and mount one or more containers where toast UI should appear:
 
 ```vue
 <script setup lang="ts">
-import ToastContainer from './toast/ToastContainer.vue'
+import ToastContainer from './ToastContainer.vue'
 </script>
 
 <template>

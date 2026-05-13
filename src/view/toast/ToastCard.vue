@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed, onUnmounted, ref } from 'vue'
 import sbp from '@sbp/sbp'
-import type { ToastData } from '../../view/toast/selectors'
+import type { ToastData } from './selectors'
 
 export interface ToastItem extends ToastData {
   id: string

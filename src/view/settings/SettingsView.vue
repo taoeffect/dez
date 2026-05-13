@@ -1,9 +1,9 @@
 <script setup lang="ts">
 import { onMounted, ref } from 'vue'
 import sbp from '@sbp/sbp'
-import { useSettingsStore, type SettingsSection, type Theme } from '../model/state/settings'
-import type { ModelInfo, ProviderInfo } from '../model/providers'
-import PromptManager from './PromptManager.vue'
+import { useSettingsStore, type SettingsSection, type Theme } from '../../model/state/settings'
+import type { ModelInfo, ProviderInfo } from '../../model/providers'
+import PromptManager from '../prompts/PromptManager.vue'
 
 const settings = useSettingsStore()
 const sections: SettingsSection[] = ['general', 'providers', 'prompts', 'appearance']

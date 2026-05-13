@@ -1,9 +1,9 @@
 <script setup lang="ts">
 import { ref, computed, onMounted, onUnmounted, nextTick } from 'vue'
 import sbp from '@sbp/sbp'
-import { useThreadStore } from '../model/state/thread'
-import { useSettingsStore } from '../model/state/settings'
-import type { ModelInfo, ProviderInfo } from '../model/providers'
+import { useThreadStore } from '../../model/state/thread'
+import { useSettingsStore } from '../../model/state/settings'
+import type { ModelInfo, ProviderInfo } from '../../model/providers'
 
 
 interface DisplayModel extends ModelInfo {

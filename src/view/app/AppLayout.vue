@@ -1,12 +1,12 @@
 <script setup lang="ts">
-import { useKeyboardShortcuts } from "../composables/useKeyboardShortcuts";
-import { useSettingsStore } from "../model/state/settings";
-import ThreadEditor from "./ThreadEditor.vue";
-import SettingsView from "./SettingsView.vue";
-import ModelSelector from "./ModelSelector.vue";
-import TabBar from "./TabBar.vue";
-import HistoryPanel from "./HistoryPanel.vue";
-import ToastContainer from "./toast/ToastContainer.vue";
+import { useKeyboardShortcuts } from "../../composables/useKeyboardShortcuts";
+import { useSettingsStore } from "../../model/state/settings";
+import ThreadEditor from "../thread/ThreadEditor.vue";
+import SettingsView from "../settings/SettingsView.vue";
+import ModelSelector from "../model-selector/ModelSelector.vue";
+import TabBar from "../tabs/TabBar.vue";
+import HistoryPanel from "../history/HistoryPanel.vue";
+import ToastContainer from "../toast/ToastContainer.vue";
 
 useKeyboardShortcuts();
 const settingsStore = useSettingsStore();

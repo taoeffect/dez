@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { ref, computed, watch, onMounted, nextTick } from 'vue'
-import { usePromptsStore, type Prompt } from '../model/state/prompts'
+import { usePromptsStore, type Prompt } from '../../model/state/prompts'
 
 const store = usePromptsStore()
 

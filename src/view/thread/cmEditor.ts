@@ -3,8 +3,8 @@ import { markdown } from '@codemirror/lang-markdown'
 import { Decoration, EditorView, WidgetType, type DecorationSet } from '@codemirror/view'
 import { StateEffect, StateField, type Extension, type Transaction } from '@codemirror/state'
 import { tags as t } from '@lezer/highlight'
-import type { ContentNode, Role, Section } from '../model/chat/types'
-import { normalizeContent, textNode } from '../model/chat/content'
+import type { ContentNode, Role, Section } from '../../model/chat/types'
+import { normalizeContent, textNode } from '../../model/chat/content'
 
 /** ASCII Record Separator; never typeable, never on-disk, used in-buffer to
  *  encode a section boundary. The char sits alone on its own line and the
