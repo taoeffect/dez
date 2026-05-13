@@ -135,10 +135,6 @@ export const useStreamStore = defineStore('streams', () => {
 })
 
 export default sbp('sbp/selectors/register', {
-  'dez.model/streams/status' (tabId: string): StreamStatus {
-    return useStreamStore().status(tabId)
-  },
-
   'dez.model/streams/isStreaming' (tabId: string): boolean {
     return useStreamStore().isStreaming(tabId)
   },
@@ -148,19 +144,10 @@ export default sbp('sbp/selectors/register', {
     return session ? cloneStreamSession(session) : null
   },
 
-  'dez.model/streams/activeTabStatus' (): StreamStatus {
-    const tabStore = useTabStore()
-    return useStreamStore().status(tabStore.activeTabId)
-  },
-
   'dez.model/streams/activeTabError' (): string | null {
     const streamStore = useStreamStore()
     const activeTabId = useTabStore().activeTabId
     return streamStore.session(activeTabId)?.error ?? streamStore.errorsByTab[activeTabId] ?? null
-  },
-
-  'dez.model/streams/activeSessions' (): StreamSessionState[] {
-    return useStreamStore().activeSessions.map(cloneStreamSession)
   },
 
   'dez.model/streams/startSession' (input: StreamStartInput): StreamSessionState {
@@ -198,7 +185,4 @@ export default sbp('sbp/selectors/register', {
     useStreamStore().clearError(tabId)
   },
 
-  'dez.model/streams/removeSession' (tabId: string): void {
-    useStreamStore().removeSession(tabId)
-  },
 })

@@ -14,33 +14,37 @@ const CHECK_INTERVAL_MS = 60 * 60 * 1000
 let updateCheckPromise: Promise<void> | null = null
 let stopUpdateChecker: (() => void) | null = null
 
+export function stopUpdateCheckerService(): void {
+  stopUpdateChecker?.()
+}
+
+async function latestReleaseStatus(): Promise<LatestReleaseStatus> {
+  const latestRelease = await sbp('dez.native/getLatestRelease') as LatestRelease
+  return {
+    latestRelease,
+    hasUpdate: isNewerVersion(latestRelease.version, __APP_VERSION__),
+  }
+}
+
+function showAvailableUpdateToast(latestRelease: LatestRelease): void {
+  sbp('dez.ui/toast', 'app-global', {
+    title: 'Update available',
+    message: `Dez ${latestRelease.version} is available.`,
+    variant: 'default',
+    actionLabel: 'View latest release',
+    sbpInvocation: ['dez.controller/openUrl', latestRelease.url],
+  })
+}
+
+function showUpToDateToast(): void {
+  sbp('dez.ui/toast', 'app-global', {
+    message: "No updates, you're running the latest version.",
+    variant: 'default',
+    duration: 5000,
+  })
+}
+
 export default sbp('sbp/selectors/register', {
-  async 'dez.controller/getLatestReleaseStatus' (): Promise<LatestReleaseStatus> {
-    const latestRelease = await sbp('dez.native/getLatestRelease') as LatestRelease
-    return {
-      latestRelease,
-      hasUpdate: isNewerVersion(latestRelease.version, __APP_VERSION__),
-    }
-  },
-
-  'dez.controller/showAvailableUpdateToast' (latestRelease: LatestRelease): void {
-    sbp('dez.ui/toast', 'app-global', {
-      title: 'Update available',
-      message: `Dez ${latestRelease.version} is available.`,
-      variant: 'default',
-      actionLabel: 'View latest release',
-      sbpInvocation: ['dez.controller/openUrl', latestRelease.url],
-    })
-  },
-
-  'dez.controller/showUpToDateToast' (): void {
-    sbp('dez.ui/toast', 'app-global', {
-      message: "No updates, you're running the latest version.",
-      variant: 'default',
-      duration: 5000,
-    })
-  },
-
   'dez.controller/startUpdateChecker' (): () => void {
     stopUpdateChecker?.()
 
@@ -58,9 +62,9 @@ export default sbp('sbp/selectors/register', {
       sbp('dez.model/settings/setLastUpdateCheckAt', now)
       updateCheckPromise = (async () => {
         try {
-          const { latestRelease, hasUpdate } = await sbp('dez.controller/getLatestReleaseStatus') as LatestReleaseStatus
+          const { latestRelease, hasUpdate } = await latestReleaseStatus()
           if (hasUpdate) {
-            sbp('dez.controller/showAvailableUpdateToast', latestRelease)
+            showAvailableUpdateToast(latestRelease)
           }
         } catch (error) {
           console.error('Update check failed', error)
@@ -97,10 +101,6 @@ export default sbp('sbp/selectors/register', {
     return stopUpdateChecker
   },
 
-  'dez.controller/stopUpdateChecker' (): void {
-    stopUpdateChecker?.()
-  },
-
   async 'dez.controller/checkForUpdatesNow' (): Promise<void> {
     if (updateCheckPromise) {
       await updateCheckPromise
@@ -109,11 +109,11 @@ export default sbp('sbp/selectors/register', {
 
     updateCheckPromise = (async () => {
       try {
-        const { latestRelease, hasUpdate } = await sbp('dez.controller/getLatestReleaseStatus') as LatestReleaseStatus
+        const { latestRelease, hasUpdate } = await latestReleaseStatus()
         if (hasUpdate) {
-          sbp('dez.controller/showAvailableUpdateToast', latestRelease)
+          showAvailableUpdateToast(latestRelease)
         } else {
-          sbp('dez.controller/showUpToDateToast')
+          showUpToDateToast()
         }
       } catch (error) {
         console.error('Update check failed', error)

@@ -16,29 +16,29 @@ interface CopilotSignInOptions {
   onDeviceFlow?(flow: CopilotDeviceFlowViewState): void | Promise<void>
 }
 
-export default sbp('sbp/selectors/register', {
-  async 'dez.controller/loadConfiguredProviderModels' (providers: ProviderInfo[]): Promise<Record<string, ModelInfo[]>> {
-    const providerModels: Record<string, ModelInfo[]> = {}
+async function loadConfiguredProviderModels(providers: ProviderInfo[]): Promise<Record<string, ModelInfo[]>> {
+  const providerModels: Record<string, ModelInfo[]> = {}
 
-    for (const provider of providers) {
-      if (!provider.configured) continue
+  for (const provider of providers) {
+    if (!provider.configured) continue
 
-      try {
-        providerModels[provider.id] = await sbp('dez.provider/listModels', provider.id) as ModelInfo[]
-      } catch (error) {
-        console.error(`Failed to load models for ${provider.id}`, error)
-        providerModels[provider.id] = []
-      }
+    try {
+      providerModels[provider.id] = await sbp('dez.provider/listModels', provider.id) as ModelInfo[]
+    } catch (error) {
+      console.error(`Failed to load models for ${provider.id}`, error)
+      providerModels[provider.id] = []
     }
+  }
 
-    return providerModels
-  },
+  return providerModels
+}
 
+export default sbp('sbp/selectors/register', {
   async 'dez.controller/loadProviderSettings' (): Promise<ProviderSettingsData> {
     const providers = await sbp('dez.provider/infos') as ProviderInfo[]
     return {
       providers,
-      providerModels: await sbp('dez.controller/loadConfiguredProviderModels', providers) as Record<string, ModelInfo[]>,
+      providerModels: await loadConfiguredProviderModels(providers),
     }
   },
 
@@ -47,7 +47,7 @@ export default sbp('sbp/selectors/register', {
     const providers = await sbp('dez.provider/infos') as ProviderInfo[]
     return {
       providers,
-      providerModels: await sbp('dez.controller/loadConfiguredProviderModels', providers) as Record<string, ModelInfo[]>,
+      providerModels: await loadConfiguredProviderModels(providers),
     }
   },
 
@@ -69,7 +69,7 @@ export default sbp('sbp/selectors/register', {
         const providers = await sbp('dez.provider/infos') as ProviderInfo[]
         return {
           providers,
-          providerModels: await sbp('dez.controller/loadConfiguredProviderModels', providers) as Record<string, ModelInfo[]>,
+          providerModels: await loadConfiguredProviderModels(providers),
         }
       }
     }

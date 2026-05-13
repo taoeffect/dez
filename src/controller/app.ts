@@ -1,10 +1,27 @@
 import sbp from '@sbp/sbp'
 import { watch, type WatchStopHandle } from 'vue'
 import type { ModelSnapshot } from '../model/snapshot'
+import { stopUpdateCheckerService } from './updates'
 
 let initialized = false
 let initPromise: Promise<void> | null = null
 let stopAppStateWatch: WatchStopHandle | null = null
+
+function startAppStateWatcher(): void {
+  stopAppStateWatch?.()
+  stopAppStateWatch = watch(
+    () => {
+      const tabs = sbp('dez.model/tabs/list') as ModelSnapshot['tabs']
+      return [
+        tabs.map((tab) => `${tab.id}:${tab.title}:${tab.conversationId}:${tab.activeModel?.providerId ?? ''}/${tab.activeModel?.modelId ?? ''}`).join('|'),
+        sbp('dez.model/tabs/activeId') as string,
+      ]
+    },
+    () => {
+      void sbp('dez.model/appState/save')
+    },
+  )
+}
 
 export default sbp('sbp/selectors/register', {
   // App startup can be retried after a failed async init, but concurrent Vue
@@ -24,7 +41,7 @@ export default sbp('sbp/selectors/register', {
       sbp('dez.model/settings/startPersistence')
       sbp('dez.model/prompts/startPersistence')
       sbp('dez.controller/startUpdateChecker')
-      sbp('dez.controller/app/startAppStateWatcher')
+      startAppStateWatcher()
       initialized = true
     })()
 
@@ -38,32 +55,11 @@ export default sbp('sbp/selectors/register', {
     }
   },
 
-  // The tab store owns conversation bodies separately; this watcher persists the
-  // app-state index whenever tab metadata or the active tab changes.
-  'dez.controller/app/startAppStateWatcher' (): void {
-    stopAppStateWatch?.()
-    stopAppStateWatch = watch(
-      () => {
-        const tabs = sbp('dez.model/tabs/list') as ModelSnapshot['tabs']
-        return [
-          tabs.map((tab) => `${tab.id}:${tab.title}:${tab.conversationId}:${tab.activeModel?.providerId ?? ''}/${tab.activeModel?.modelId ?? ''}`).join('|'),
-          sbp('dez.model/tabs/activeId') as string,
-        ]
-      },
-      () => {
-        void sbp('dez.model/appState/save')
-      },
-    )
-  },
-
-  'dez.controller/app/stopAppStateWatcher' (): void {
-    stopAppStateWatch?.()
-    stopAppStateWatch = null
-  },
 
   'dez.controller/app/cleanup' (): void {
-    sbp('dez.controller/stopUpdateChecker')
-    sbp('dez.controller/app/stopAppStateWatcher')
+    stopUpdateCheckerService()
+    stopAppStateWatch?.()
+    stopAppStateWatch = null
     sbp('dez.model/settings/stopPersistence')
     sbp('dez.model/prompts/stopPersistence')
     initialized = false

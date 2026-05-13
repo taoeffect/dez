@@ -6,17 +6,13 @@ import { usePromptsStore, type Prompt } from './prompts'
 import { useSettingsStore, type DefaultModel, type SettingsSection, type Theme } from './settings'
 import { useTabStore } from './tabs'
 import type { AppStatePayload, ConversationSummary } from '../persistence/types'
-import type { ActiveModel, ContentNode, Role, Section, Tab } from '../chat/types'
+import type { ActiveModel, ContentNode, Section, Tab } from '../chat/types'
 import {
   appendStreamingText,
-  contentEquals,
   emptyContent,
   normalizeContent,
   sectionIsEmpty,
-  sectionPlainText,
   sectionVisibleText,
-  setSectionPlainText,
-  splitContentAt,
 } from '../chat/content'
 import { sectionsToStreamMessages } from '../streams/messages'
 import {
@@ -243,15 +239,6 @@ export default sbp('sbp/selectors/register', {
     return useTabStore().activeTabId
   },
 
-  'dez.model/tabs/activeIndex' (): number {
-    const tabStore = useTabStore()
-    return tabStore.tabs.findIndex((tab) => tab.id === tabStore.activeTabId)
-  },
-
-  'dez.model/activeTab' (): Tab {
-    return cloneTab(useTabStore().activeTab) as Tab
-  },
-
   'dez.model/tab' (tabId: string): Tab | null {
     const tab = useTabStore().tabs.find((candidate) => candidate.id === tabId) ?? null
     return tab ? cloneTab(tab) as Tab : null
@@ -318,10 +305,6 @@ export default sbp('sbp/selectors/register', {
     } catch (error) {
       console.error('Failed to save conversation', error)
     }
-  },
-
-  async 'dez.model/tabs/saveActive' (): Promise<void> {
-    await sbp('dez.model/tabs/save', useTabStore().activeTabId)
   },
 
   async 'dez.model/tabs/openConversation' (id: string): Promise<Tab | null> {
@@ -476,12 +459,6 @@ export default sbp('sbp/selectors/register', {
     return true
   },
 
-  'dez.model/thread/submission' (): { role: Role; content: string }[] {
-    return useTabStore().activeTab.sections
-      .filter((section) => !sectionIsEmpty(section))
-      .map((section) => ({ role: section.role, content: sectionPlainText(section) }))
-  },
-
   'dez.model/streamMessagesForTab' (tabId: string): StreamMessage[] {
     const tab = useTabStore().tabs.find((candidate) => candidate.id === tabId)
     return tab ? sectionsToStreamMessages(tab.sections).map((message) => ({ ...message })) : []
@@ -501,12 +478,6 @@ export default sbp('sbp/selectors/register', {
     return true
   },
 
-  'dez.model/ensureTrailingUserSectionForTab' (tabId: string): Section | null {
-    const tab = useTabStore().tabs.find((candidate) => candidate.id === tabId)
-    const section = tab ? ensureTrailingUserSection(tab.sections) : null
-    return section ? cloneSections([section])[0] as Section : null
-  },
-
   'dez.model/finalizeStreamSectionForTab' (tabId: string, sectionId: string, error: string | null): Section | null {
     const tab = useTabStore().tabs.find((candidate) => candidate.id === tabId)
     const section = tab?.sections.find((candidate) => candidate.id === sectionId)
@@ -516,81 +487,6 @@ export default sbp('sbp/selectors/register', {
     const title = firstUserTitle(tab.sections)
     if (title) tab.title = title
     return cloneSections([section])[0] as Section
-  },
-
-  'dez.model/addSection' (role: Role): Section {
-    const section: Section = {
-      id: crypto.randomUUID(),
-      role,
-      content: emptyContent(),
-    }
-    useTabStore().activeTab.sections.push(section)
-    return cloneSections([section])[0] as Section
-  },
-
-  'dez.model/updateSectionContent' (id: string, text: string): void {
-    const tab = useTabStore().activeTab
-    const section = tab.sections.find((candidate) => candidate.id === id)
-    if (!section) return
-    setSectionPlainText(section, text)
-    const title = firstUserTitle(tab.sections)
-    if (title) tab.title = title
-  },
-
-  'dez.model/setSectionContent' (id: string, nodes: ContentNode[]): void {
-    const tab = useTabStore().activeTab
-    const section = tab.sections.find((candidate) => candidate.id === id)
-    if (!section) return
-    const normalized = normalizeContent(nodes)
-    if (contentEquals(section.content, normalized)) return
-    section.content.splice(0, section.content.length, ...normalized)
-    const title = firstUserTitle(tab.sections)
-    if (title) tab.title = title
-  },
-
-  'dez.model/toggleSectionRole' (id: string): void {
-    const section = useTabStore().activeTab.sections.find((candidate) => candidate.id === id)
-    if (section) section.role = section.role === 'user' ? 'agent' : 'user'
-  },
-
-  'dez.model/togglePromptExpanded' (sectionId: string, nodeId: string): void {
-    const section = useTabStore().activeTab.sections.find((candidate) => candidate.id === sectionId)
-    if (!section) return
-    const node = section.content.find((candidate) => candidate.kind === 'prompt' && candidate.id === nodeId)
-    if (node?.kind === 'prompt') node.expanded = !node.expanded
-  },
-
-  'dez.model/thread/removeSectionIfEmpty' (id: string): void {
-    const sections = useTabStore().activeTab.sections
-    const index = sections.findIndex((section) => section.id === id)
-    if (index !== -1 && sectionIsEmpty(sections[index]) && sections.length > 1) sections.splice(index, 1)
-  },
-
-  'dez.model/thread/splitSection' (id: string, cursorPosition: number): Section | null {
-    const sections = useTabStore().activeTab.sections
-    const index = sections.findIndex((section) => section.id === id)
-    if (index === -1) return null
-    const current = sections[index]
-    const [before, after] = splitContentAt(current.content, cursorPosition)
-    current.content = before
-    const newSection: Section = {
-      id: crypto.randomUUID(),
-      role: 'user',
-      content: after,
-    }
-    sections.splice(index + 1, 0, newSection)
-    return cloneSections([newSection])[0] as Section
-  },
-
-  'dez.model/thread/appendTokenToSection' (id: string, token: string): void {
-    const section = useTabStore().activeTab.sections.find((candidate) => candidate.id === id)
-    if (section) appendStreamingText(section, token)
-  },
-
-  'dez.model/clearThread' (): void {
-    useTabStore().activeTab.sections = [
-      { id: crypto.randomUUID(), role: 'user', content: emptyContent() },
-    ]
   },
 
   async 'dez.model/settings/init' (): Promise<AppStatePayload> {
@@ -655,30 +551,6 @@ export default sbp('sbp/selectors/register', {
     return cloneSettings()
   },
 
-  'dez.model/settings/showPillSeparators' (): boolean {
-    return useSettingsStore().showPillSeparators
-  },
-
-  'dez.model/settings/theme' (): Theme {
-    return useSettingsStore().theme
-  },
-
-  'dez.model/settings/defaultModels' (): Record<string, string> {
-    return { ...useSettingsStore().defaultModels }
-  },
-
-  'dez.model/settings/defaultNewTabModel' (): DefaultModel | null {
-    return cloneDefaultModel(useSettingsStore().defaultNewTabModel)
-  },
-
-  'dez.model/settings/lastUsedModel' (): DefaultModel | null {
-    return cloneDefaultModel(useSettingsStore().lastUsedModel)
-  },
-
-  'dez.model/settings/favorites' (): DefaultModel[] {
-    return useSettingsStore().favorites.map((favorite) => ({ ...favorite }))
-  },
-
   'dez.model/settings/checkForUpdates' (): boolean {
     return useSettingsStore().checkForUpdates
   },
@@ -689,10 +561,6 @@ export default sbp('sbp/selectors/register', {
 
   'dez.model/settings/isOpen' (): boolean {
     return useSettingsStore().settingsOpen
-  },
-
-  'dez.model/settings/section' (): SettingsSection {
-    return useSettingsStore().settingsSection
   },
 
   'dez.model/settings/isHistoryOpen' (): boolean {
@@ -741,22 +609,12 @@ export default sbp('sbp/selectors/register', {
     useSettingsStore().defaultNewTabModel = model ? { ...model } : null
   },
 
-  'dez.model/settings/setLastUsedModel' (model: DefaultModel | null): void {
-    useSettingsStore().lastUsedModel = model ? { ...model } : null
-  },
-
   'dez.model/settings/setCheckForUpdates' (enabled: boolean): void {
     useSettingsStore().checkForUpdates = enabled
   },
 
   'dez.model/settings/setLastUpdateCheckAt' (timestamp: number | null): void {
     useSettingsStore().lastUpdateCheckAt = timestamp
-  },
-
-  'dez.model/settings/isFavorite' (providerId: string, modelId: string): boolean {
-    return useSettingsStore().favorites.some(
-      (favorite) => favorite.providerId === providerId && favorite.modelId === modelId,
-    )
   },
 
   'dez.model/settings/toggleFavorite' (providerId: string, modelId: string): void {
@@ -814,17 +672,8 @@ export default sbp('sbp/selectors/register', {
     return usePromptsStore().prompts.map(clonePrompt)
   },
 
-  'dez.model/prompts/sorted' (): Prompt[] {
-    return usePromptsStore().prompts.map(clonePrompt).sort((a, b) => a.name.localeCompare(b.name))
-  },
-
   'dez.model/prompts/getByName' (name: string): Prompt | undefined {
     const prompt = usePromptsStore().prompts.find((candidate) => candidate.name === name)
-    return prompt ? clonePrompt(prompt) : undefined
-  },
-
-  'dez.model/prompts/getById' (id: string): Prompt | undefined {
-    const prompt = usePromptsStore().prompts.find((candidate) => candidate.id === id)
     return prompt ? clonePrompt(prompt) : undefined
   },
 

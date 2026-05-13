@@ -2,7 +2,7 @@ import sbp from '@sbp/sbp'
 import { secret, type Secret } from '../../utils/secret'
 import { nativeRequestFromFetch, nativeResponseJson, nativeResponseText, type NativeHttpResponse, type NativeHttpStreamResult } from '../../utils/protocol/nativeHttp'
 import { assertProviderResponseOk } from './errors'
-import { getProviderInfos, getProviderSpec, getProviderSpecs } from './registry'
+import { getProviderInfos, getProviderSpec } from './registry'
 import { providerChatRequest } from './requests'
 import { streamProviderTokens } from './streaming'
 import type { ProviderStreamChatInput, ProviderStreamChatResult } from './streamTypes'
@@ -39,14 +39,6 @@ async function nativeChatStream(input: ProviderStreamChatInput, spec: ProviderSp
 export default sbp('sbp/selectors/register', {
   async 'dez.provider/infos' (): Promise<ProviderInfo[]> {
     return getProviderInfos(await configuredProviderIds())
-  },
-
-  async 'dez.provider/configuredIds' (): Promise<string[]> {
-    return await configuredProviderIds()
-  },
-
-  'dez.provider/specs' () {
-    return getProviderSpecs()
   },
 
   async 'dez.provider/listModels' (providerId: ProviderId): Promise<ModelInfo[]> {
