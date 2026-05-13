@@ -93,6 +93,8 @@ SBP selector definitions should contain the selector behavior directly in the re
 
 Avoid wrapper selectors that do nothing except call another selector with identical parameters. Controller/core selectors should add meaningful boundary behavior such as workflow orchestration, normalization, error handling, state refresh, lifecycle management, cloning, or validation. Do not create alternate controller names for simple model mutations; call the model selector directly instead, e.g. use `dez.model/settings/historyOpen` rather than adding `dez.controller/openHistory`.
 
+Selectors should represent high-level, cross-module actions that are useful to call without importing a function. Do not create selectors for simple, frequent, file-local behavior such as event handlers, scroll bookkeeping, or small helpers used only inside the registration file; make those normal functions or inline callbacks instead. A selector can still be appropriate with only one current call site when it represents a high-level user- or system-initiated workflow. Prefer one meaningful selector with options over near-duplicate selectors for scheduled/manual variants, and let internal scheduled callers use that selector when it preserves the API boundary and avoids duplicate workflow code.
+
 ### Dependencies
 
 - Use Zod for runtime schema validation at untrusted or persisted data boundaries, especially when malformed JSON should be tolerated without breaking startup.

@@ -15,6 +15,10 @@ function cloneStreamSession(session: StreamSessionState): StreamSessionState {
   }
 }
 
+function cloneNullableStreamSession(session: StreamSessionState | null): StreamSessionState | null {
+  return session ? cloneStreamSession(session) : null
+}
+
 export const useStreamStore = defineStore('streams', () => {
   const sessionsByTab = ref<Record<string, StreamSessionState>>({})
   const errorsByTab = ref<Record<string, string | null>>({})
@@ -134,47 +138,46 @@ export const useStreamStore = defineStore('streams', () => {
   }
 })
 
+export function streamIsStreaming(tabId: string): boolean {
+  return useStreamStore().isStreaming(tabId)
+}
+
+export function streamSession(tabId: string): StreamSessionState | null {
+  return cloneNullableStreamSession(useStreamStore().session(tabId))
+}
+
+export function startStreamSession(input: StreamStartInput): StreamSessionState {
+  return cloneStreamSession(useStreamStore().startSession({
+    ...input,
+    model: { ...input.model },
+  }))
+}
+
+export function receiveStreamToken(tabId: string, token: string): StreamSessionState | null {
+  return cloneNullableStreamSession(useStreamStore().receiveToken(tabId, token))
+}
+
+export function finishStreamSession(tabId: string): StreamSessionState | null {
+  return cloneNullableStreamSession(useStreamStore().finish(tabId))
+}
+
+export function errorStreamSession(tabId: string, message: string): StreamSessionState | null {
+  return cloneNullableStreamSession(useStreamStore().error(tabId, message))
+}
+
+export function cancelStreamSession(tabId: string): StreamSessionState | null {
+  return cloneNullableStreamSession(useStreamStore().cancelled(tabId))
+}
+
 export default sbp('sbp/selectors/register', {
   'dez.model/streams/isStreaming' (tabId: string): boolean {
-    return useStreamStore().isStreaming(tabId)
-  },
-
-  'dez.model/streams/session' (tabId: string): StreamSessionState | null {
-    const session = useStreamStore().session(tabId)
-    return session ? cloneStreamSession(session) : null
+    return streamIsStreaming(tabId)
   },
 
   'dez.model/streams/activeTabError' (): string | null {
     const streamStore = useStreamStore()
     const activeTabId = useTabStore().activeTabId
     return streamStore.session(activeTabId)?.error ?? streamStore.errorsByTab[activeTabId] ?? null
-  },
-
-  'dez.model/streams/startSession' (input: StreamStartInput): StreamSessionState {
-    return cloneStreamSession(useStreamStore().startSession({
-      ...input,
-      model: { ...input.model },
-    }))
-  },
-
-  'dez.model/streams/receiveToken' (tabId: string, token: string): StreamSessionState | null {
-    const session = useStreamStore().receiveToken(tabId, token)
-    return session ? cloneStreamSession(session) : null
-  },
-
-  'dez.model/streams/finish' (tabId: string): StreamSessionState | null {
-    const session = useStreamStore().finish(tabId)
-    return session ? cloneStreamSession(session) : null
-  },
-
-  'dez.model/streams/error' (tabId: string, message: string): StreamSessionState | null {
-    const session = useStreamStore().error(tabId, message)
-    return session ? cloneStreamSession(session) : null
-  },
-
-  'dez.model/streams/cancelled' (tabId: string): StreamSessionState | null {
-    const session = useStreamStore().cancelled(tabId)
-    return session ? cloneStreamSession(session) : null
   },
 
   'dez.model/streams/setError' (tabId: string, message: string): void {

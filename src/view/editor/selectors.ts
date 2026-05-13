@@ -29,6 +29,12 @@ function restoreScrollAfterLayout(view: EditorView, scrollTop: number): void {
   })
 }
 
+function handleVisibleScroll(tabId: string): void {
+  if (!activeView || activeViewTabId !== tabId) return
+  if (streamingScrollRestorePending) return
+  followingStreamTabId = isNearScrollBottom(activeView) ? tabId : null
+}
+
 export default sbp('sbp/selectors/register', {
   'dez.editor/registerActiveView' (tabId: string, view: EditorView): void {
     if (activeView && activeScrollHandler) {
@@ -36,7 +42,7 @@ export default sbp('sbp/selectors/register', {
     }
     activeViewTabId = tabId
     activeView = view
-    activeScrollHandler = () => sbp('dez.editor/handleVisibleScroll', tabId)
+    activeScrollHandler = () => handleVisibleScroll(tabId)
     view.scrollDOM.addEventListener('scroll', activeScrollHandler, { passive: true })
     followingStreamTabId = null
   },
@@ -56,12 +62,6 @@ export default sbp('sbp/selectors/register', {
     if (!activeView || activeViewTabId !== tabId) return false
     followingStreamTabId = isNearScrollBottom(activeView) ? tabId : null
     return followingStreamTabId === tabId
-  },
-
-  'dez.editor/handleVisibleScroll' (tabId: string): void {
-    if (!activeView || activeViewTabId !== tabId) return
-    if (streamingScrollRestorePending) return
-    followingStreamTabId = isNearScrollBottom(activeView) ? tabId : null
   },
 
   'dez.editor/appendTokenIfVisible' (tabId: string, _sectionId: string, token: string): boolean {

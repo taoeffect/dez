@@ -96,7 +96,7 @@ async function startCopilotDeviceFlow() {
 async function manuallyCheckForUpdates() {
   checkingUpdates.value = true
   try {
-    await sbp('dez.controller/checkForUpdatesNow')
+    await sbp('dez.controller/checkForUpdates')
   } finally {
     checkingUpdates.value = false
   }

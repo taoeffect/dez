@@ -80,7 +80,7 @@ const persistSettings = debounce(() => {
 }, 1000)
 
 const persistPrompts = debounce(() => {
-  if (promptsPersistenceReady) void sbp('dez.model/prompts/save')
+  if (promptsPersistenceReady) void savePrompts()
 }, 1000)
 
 function cloneContentNode(node: ContentNode): ContentNode {
@@ -214,6 +214,45 @@ function tabFromConversation(conv: ConversationData, overrides: Partial<Tab> = {
     sections,
     activeModel: overrides.activeModel ?? conv.activeModel ?? null,
     createdAt: overrides.createdAt ?? (conv.created_at || Date.now()),
+  }
+}
+
+export function appendTokenToTabSection(tabId: string, sectionId: string, token: string): boolean {
+  const tab = useTabStore().tabs.find((candidate) => candidate.id === tabId)
+  const section = tab?.sections.find((candidate) => candidate.id === sectionId)
+  if (!tab || !section) return false
+  appendStreamingText(section, token)
+  return true
+}
+
+export function finalizeStreamSectionForTab(tabId: string, sectionId: string, error: string | null): Section | null {
+  const tab = useTabStore().tabs.find((candidate) => candidate.id === tabId)
+  const section = tab?.sections.find((candidate) => candidate.id === sectionId)
+  if (!tab || !section) return null
+  fillEmptyAgentSectionOnError(section, error)
+  if (section.role === 'agent') ensureTrailingUserSection(tab.sections)
+  const title = firstUserTitle(tab.sections)
+  if (title) tab.title = title
+  return cloneSections([section])[0] as Section
+}
+
+export function settingsCheckForUpdates(): boolean {
+  return useSettingsStore().checkForUpdates
+}
+
+export function settingsLastUpdateCheckAt(): number | null {
+  return useSettingsStore().lastUpdateCheckAt
+}
+
+export function setSettingsLastUpdateCheckAt(timestamp: number | null): void {
+  useSettingsStore().lastUpdateCheckAt = timestamp
+}
+
+export async function savePrompts(): Promise<void> {
+  try {
+    await sbp('dez.persistence/savePrompts', usePromptsStore().prompts.map(clonePrompt))
+  } catch (error) {
+    console.error('Failed to save prompts:', error)
   }
 }
 
@@ -470,25 +509,6 @@ export default sbp('sbp/selectors/register', {
     return section ? cloneSections([section])[0] as Section : null
   },
 
-  'dez.model/appendTokenToTabSection' (tabId: string, sectionId: string, token: string): boolean {
-    const tab = useTabStore().tabs.find((candidate) => candidate.id === tabId)
-    const section = tab?.sections.find((candidate) => candidate.id === sectionId)
-    if (!tab || !section) return false
-    appendStreamingText(section, token)
-    return true
-  },
-
-  'dez.model/finalizeStreamSectionForTab' (tabId: string, sectionId: string, error: string | null): Section | null {
-    const tab = useTabStore().tabs.find((candidate) => candidate.id === tabId)
-    const section = tab?.sections.find((candidate) => candidate.id === sectionId)
-    if (!tab || !section) return null
-    fillEmptyAgentSectionOnError(section, error)
-    if (section.role === 'agent') ensureTrailingUserSection(tab.sections)
-    const title = firstUserTitle(tab.sections)
-    if (title) tab.title = title
-    return cloneSections([section])[0] as Section
-  },
-
   async 'dez.model/settings/init' (): Promise<AppStatePayload> {
     const settings = useSettingsStore()
     const state = (await sbp('dez.persistence/loadAppState').catch(() => ({}))) as AppStatePayload
@@ -551,14 +571,6 @@ export default sbp('sbp/selectors/register', {
     return cloneSettings()
   },
 
-  'dez.model/settings/checkForUpdates' (): boolean {
-    return useSettingsStore().checkForUpdates
-  },
-
-  'dez.model/settings/lastUpdateCheckAt' (): number | null {
-    return useSettingsStore().lastUpdateCheckAt
-  },
-
   'dez.model/settings/isOpen' (): boolean {
     return useSettingsStore().settingsOpen
   },
@@ -613,10 +625,6 @@ export default sbp('sbp/selectors/register', {
     useSettingsStore().checkForUpdates = enabled
   },
 
-  'dez.model/settings/setLastUpdateCheckAt' (timestamp: number | null): void {
-    useSettingsStore().lastUpdateCheckAt = timestamp
-  },
-
   'dez.model/settings/toggleFavorite' (providerId: string, modelId: string): void {
     const favorites = useSettingsStore().favorites
     const index = favorites.findIndex(
@@ -639,14 +647,6 @@ export default sbp('sbp/selectors/register', {
       prompts.prompts = []
     }
     promptsPersistenceReady = true
-  },
-
-  async 'dez.model/prompts/save' (): Promise<void> {
-    try {
-      await sbp('dez.persistence/savePrompts', usePromptsStore().prompts.map(clonePrompt))
-    } catch (error) {
-      console.error('Failed to save prompts:', error)
-    }
   },
 
   // Prompt templates persist separately from conversations; the model watcher

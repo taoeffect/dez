@@ -1,6 +1,11 @@
 import sbp from '@sbp/sbp'
 import { watch } from 'vue'
 import { isNewerVersion } from '../utils/version'
+import {
+  settingsCheckForUpdates,
+  settingsLastUpdateCheckAt,
+  setSettingsLastUpdateCheckAt,
+} from '../model/state'
 import type { LatestRelease } from './nativeTypes'
 
 interface LatestReleaseStatus {
@@ -8,11 +13,17 @@ interface LatestReleaseStatus {
   hasUpdate: boolean
 }
 
+interface UpdateCheckOptions {
+  notifyWhenCurrent?: boolean
+  onlyIfDue?: boolean
+}
+
 const ONE_DAY_MS = 24 * 60 * 60 * 1000
 const CHECK_INTERVAL_MS = 60 * 60 * 1000
 
 let updateCheckPromise: Promise<void> | null = null
 let stopUpdateChecker: (() => void) | null = null
+
 
 export function stopUpdateCheckerService(): void {
   stopUpdateChecker?.()
@@ -48,45 +59,15 @@ export default sbp('sbp/selectors/register', {
   'dez.controller/startUpdateChecker' (): () => void {
     stopUpdateChecker?.()
 
-    const checkIfDue = async (): Promise<void> => {
-      if (!sbp('dez.model/settings/checkForUpdates')) return
-      if (updateCheckPromise) {
-        await updateCheckPromise
-        return
-      }
-
-      const now = Date.now()
-      const lastCheckedAt = sbp('dez.model/settings/lastUpdateCheckAt') as number | null
-      if (typeof lastCheckedAt === 'number' && now - lastCheckedAt < ONE_DAY_MS) return
-
-      sbp('dez.model/settings/setLastUpdateCheckAt', now)
-      updateCheckPromise = (async () => {
-        try {
-          const { latestRelease, hasUpdate } = await latestReleaseStatus()
-          if (hasUpdate) {
-            showAvailableUpdateToast(latestRelease)
-          }
-        } catch (error) {
-          console.error('Update check failed', error)
-        }
-      })()
-
-      try {
-        await updateCheckPromise
-      } finally {
-        updateCheckPromise = null
-      }
-    }
-
     const interval = window.setInterval(() => {
-      void checkIfDue()
+      void sbp('dez.controller/checkForUpdates', { onlyIfDue: true, notifyWhenCurrent: false })
     }, CHECK_INTERVAL_MS)
 
     const stopWatch = watch(
-      () => sbp('dez.model/settings/checkForUpdates') as boolean,
+      () => settingsCheckForUpdates(),
       (enabled) => {
         if (enabled) {
-          void checkIfDue()
+          void sbp('dez.controller/checkForUpdates', { onlyIfDue: true, notifyWhenCurrent: false })
         }
       },
       { immediate: true },
@@ -101,7 +82,17 @@ export default sbp('sbp/selectors/register', {
     return stopUpdateChecker
   },
 
-  async 'dez.controller/checkForUpdatesNow' (): Promise<void> {
+  async 'dez.controller/checkForUpdates' (options: UpdateCheckOptions = {}): Promise<void> {
+    const notifyWhenCurrent = options.notifyWhenCurrent ?? true
+
+    if (options.onlyIfDue) {
+      if (!settingsCheckForUpdates()) return
+      const now = Date.now()
+      const lastCheckedAt = settingsLastUpdateCheckAt()
+      if (typeof lastCheckedAt === 'number' && now - lastCheckedAt < ONE_DAY_MS) return
+      setSettingsLastUpdateCheckAt(now)
+    }
+
     if (updateCheckPromise) {
       await updateCheckPromise
       return
@@ -112,7 +103,7 @@ export default sbp('sbp/selectors/register', {
         const { latestRelease, hasUpdate } = await latestReleaseStatus()
         if (hasUpdate) {
           showAvailableUpdateToast(latestRelease)
-        } else {
+        } else if (notifyWhenCurrent) {
           showUpToDateToast()
         }
       } catch (error) {
