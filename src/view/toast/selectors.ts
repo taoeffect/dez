@@ -1,5 +1,5 @@
 import sbp from '@sbp/sbp'
-import { SHOW_TOAST } from '../../utils/events'
+import { SHOW_TOAST } from './events'
 
 export type ToastVariant = 'default' | 'success' | 'warning' | 'error'
 export type ToastPosition =

@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed, onMounted, onUnmounted, ref } from 'vue'
 import sbp from '@sbp/sbp'
-import { SHOW_TOAST } from '../../utils/events'
+import { SHOW_TOAST } from './events'
 import ToastCard from './ToastCard.vue'
 import type { ToastItem } from './ToastCard.vue'
 import type { ToastData, ToastPosition } from './selectors'
