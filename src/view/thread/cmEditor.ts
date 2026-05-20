@@ -34,6 +34,7 @@ export const PILL_NL = '\u{E003}'
 export interface SectionModel {
   id: string
   role: Role
+  generated?: boolean
 }
 
 /** Metadata for a prompt pill, keyed by the in-doc pill id. The doc carries
@@ -199,10 +200,12 @@ export function docToSections(
   doc: string,
   models: SectionModel[],
   pillsMeta: Map<string, PillMetadata>,
+  fallbackModels: SectionModel[] = [],
 ): Section[] {
   const fragments = splitDocBySeparator(doc)
+  const reconciledModels = reconcileSectionModelsToDoc(models, doc, fallbackModels)
   return fragments.map((text, i) => {
-    const model = models[i] ?? { id: crypto.randomUUID(), role: 'user' as Role }
+    const model = reconciledModels[i]
     return {
       id: model.id,
       role: i === 0 ? 'user' : model.role,
@@ -239,15 +242,25 @@ export const togglePillExpandedEffect = StateEffect.define<{ id: string }>()
 
 /* ──────────────────────  sectionsField  ─────────────────────── */
 
-function reconcileToDoc(models: SectionModel[], doc: string): SectionModel[] {
+export function reconcileSectionModelsToDoc(
+  models: SectionModel[],
+  doc: string,
+  fallbackModels: SectionModel[] = [],
+): SectionModel[] {
   const expected = countSeparators(doc) + 1
-  if (models.length === expected) return normalizeSectionModels(models)
-  if (models.length > expected) return normalizeSectionModels(models.slice(0, expected))
-  const padded = models.slice()
-  while (padded.length < expected) {
-    padded.push({ id: crypto.randomUUID(), role: 'user' })
+  const reconciled: SectionModel[] = []
+  for (let i = 0; i < expected; i++) {
+    const model = models[i]
+    const fallback = fallbackModels[i]
+    if (model) {
+      reconciled.push(model.generated && fallback && model.id !== fallback.id ? fallback : model)
+    } else if (fallback) {
+      reconciled.push(fallback)
+    } else {
+      reconciled.push({ id: crypto.randomUUID(), role: 'user', generated: true })
+    }
   }
-  return normalizeSectionModels(padded)
+  return normalizeSectionModels(reconciled)
 }
 
 export const sectionsField = StateField.define<SectionModel[]>({
@@ -283,7 +296,7 @@ export const sectionsField = StateField.define<SectionModel[]>({
       }
     }
     if (tr.docChanged) {
-      next = reconcileToDoc(next, tr.newDoc.toString())
+      next = reconcileSectionModelsToDoc(next, tr.newDoc.toString())
     }
     return normalizeSectionModels(next)
   },

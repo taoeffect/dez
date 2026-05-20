@@ -16,8 +16,11 @@ npm run tauri dev
 npm run build              # frontend only: vue-tsc --noEmit && vite build
 npm run tauri build        # production Tauri bundle
 
-# Deterministic persistence fixture checks
-npm run check:persistence
+# Frontend unit tests
+npm test
+
+# Frontend unit tests in watch mode
+npm run test:watch
 
 # Platform packaging
 npm run build:desktop          # native bundle for the current platform only
@@ -40,7 +43,7 @@ cd src-tauri && cargo test
 
 Tagged releases are driven by `.github/workflows/release-desktop.yml`: pushing a `v*` tag builds a Linux AppImage on Ubuntu, an unsigned Apple Silicon DMG on macOS, creates the GitHub Release if needed, and uploads both artifacts.
 
-No frontend test framework, ESLint, or formatter is configured. Observed automated tests include Rust unit tests in `src-tauri/src/commands.rs`; persistence behavior also has deterministic fixture checks through `npm run check:persistence`.
+Frontend unit tests use Vitest with colocated `*.test.ts` files. Observed automated tests include Rust unit tests in `src-tauri/src/commands.rs`.
 
 ## Git conventions
 
@@ -198,7 +201,7 @@ Brief comments are encouraged above functions that do anything non-trivial expla
 ## Testing approach
 
 - Run `npm run build` at the end of a task step if frontend changes were made, not after every edit; it performs TypeScript/Vue type-checking before Vite build.
-- Run `npm run check:persistence` after changes to `src/core/persistence/**`, persistence selectors, raw persistence IPC, or app/history/prompt persistence routing.
+- Run `npm test` after frontend logic changes, especially persistence or editor helper changes covered by colocated `*.test.ts` files.
 - Run `cd src-tauri && cargo check` after significant Rust changes for feedback.
 - Run `cd src-tauri && cargo test` when touching Rust logic with tests, including the release/update helpers in `src-tauri/src/commands.rs`.
-- There are no observed frontend unit tests; use type-check/build and targeted manual verification via `npm run tauri dev` when UI behavior changes.
+- Use type-check/build and targeted manual verification via `npm run tauri dev` when UI behavior changes beyond unit-testable helper logic.

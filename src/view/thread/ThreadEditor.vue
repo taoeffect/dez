@@ -17,6 +17,7 @@ import {
   docToSections,
   initialPillMetadata,
   initialSectionModels,
+  reconcileSectionModelsToDoc,
   leadingPillContentAttributes,
   mergeSectionEffect,
   pillsField,
@@ -386,12 +387,26 @@ function schedulePersistTab(tabId: string) {
   persistPendingTab()
 }
 
+function sectionModelsEqual(left: ReturnType<typeof initialSectionModels>, right: ReturnType<typeof initialSectionModels>): boolean {
+  return left.length === right.length && left.every((model, i) => {
+    const candidate = right[i]
+    return candidate && model.id === candidate.id && model.role === candidate.role
+  })
+}
+
 function syncDocToTab(tabId: string, persist = false) {
   if (!view) return
-  if (!sbp('dez.model/tab', tabId)) return
+  const tab = sbp('dez.model/tab', tabId)
+  if (!tab) return
+  const doc = view.state.doc.toString()
   const models = view.state.field(sectionsField)
+  const fallbackModels = initialSectionModels(tab.sections)
+  const reconciledModels = reconcileSectionModelsToDoc(models, doc, fallbackModels)
+  if (!sectionModelsEqual(models, reconciledModels)) {
+    view.dispatch({ effects: setSectionsEffect.of(reconciledModels) })
+  }
   const meta = view.state.field(pillsField)
-  const sections = docToSections(view.state.doc.toString(), models, meta)
+  const sections = docToSections(doc, reconciledModels, meta)
   sbp('dez.model/tabs/replaceSections', tabId, sections)
   if (persist) schedulePersistTab(tabId)
 }
