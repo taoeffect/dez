@@ -40,7 +40,7 @@ cd src-tauri && cargo test
 
 Tagged releases are driven by `.github/workflows/release-desktop.yml`: pushing a `v*` tag builds a Linux AppImage on Ubuntu, an unsigned Apple Silicon DMG on macOS, creates the GitHub Release if needed, and uploads both artifacts.
 
-No frontend test framework, ESLint, or formatter is configured. The only observed automated tests are Rust unit tests in `src-tauri/src/persistence.rs`.
+No frontend test framework, ESLint, or formatter is configured. Observed automated tests include Rust unit tests in `src-tauri/src/commands.rs`; persistence behavior also has deterministic fixture checks through `npm run check:persistence`.
 
 ## Git conventions
 
@@ -52,14 +52,24 @@ The top-level `PLAN.md` tracks project work. If asked to "continue the plan", re
 
 ## Architecture
 
-Tauri v2 desktop app: Rust backend + Vue 3 / TypeScript / Vite frontend. State management uses Pinia setup stores.
+Dez follows an SBP MVC pattern: selectors are the cross-layer API, and code should live in the owning MVC layer. Tauri v2 provides the Rust backend; Vue 3 / TypeScript / Vite provide the frontend. State management uses Pinia setup stores as internal model implementation details.
+
+Top-level source sketch:
+
+- `src/model/`: domain state, persistence formats, providers, chat/stream model logic, and model selectors.
+- `src/controller/`: user workflows, startup/shutdown, native/Tauri boundaries, HTTP runtime orchestration, updates, and diagnostics.
+- `src/view/`: Vue UI, view composables, CodeMirror editor services, toast/theme/clipboard UI selectors, and reactive read adapters.
+- `src/utils/`: cross-layer utilities only.
+- `src-tauri/`: Rust commands, native HTTP bridge, persistence file I/O, credential storage, and app bootstrap.
+
+SBP is covered in more detail in a section below.
 
 ### Runtime data flow
 
 ```text
 User edits ThreadEditor (CodeMirror document)
   -> ThreadEditor syncs CodeMirror doc to tabStore.activeTab.sections
-  -> Mod-Enter calls dez.controller/submitActiveTab
+  -> Mod-Enter calls dez.controller/submitTab
     -> dez.stream/start creates a stream session + native HTTP request id
       -> dez.provider/streamChat builds provider-specific requests in TypeScript
       -> dez.http/stream owns a Tauri Channel and byte stream
@@ -74,18 +84,18 @@ User edits ThreadEditor (CodeMirror document)
 ### Frontend (`src/`)
 
 - **Single editor surface**: `ThreadEditor.vue` owns one CodeMirror `EditorView`; the old contenteditable/chat-message architecture is no longer current. Avoid DOM-first fixes. The CodeMirror document is flattened text with sentinel markers, and store state is reconstructed through helpers in `src/view/thread/cmEditor.ts`.
-- **Conversation model**: A tab owns `Section[]`, where each section is `{ id, role: 'user'|'agent', content: ContentNode[] }`. `ContentNode` is `TextNode` or `PromptNode`. Shared helpers are in `src/types/content.ts`.
+- **Conversation model**: A tab owns `Section[]`, where each section is `{ id, role: 'user'|'agent', content: ContentNode[] }`. `ContentNode` is `TextNode` or `PromptNode`. Shared helpers are in `src/model/chat/content.ts`.
 - **CodeMirror sentinels**: `cmEditor.ts` uses ASCII Record Separator `SECTION_SEP = '\u001E'` as an in-buffer section boundary. Prompt pills are encoded with private-use sentinels `PILL_OPEN`, `PILL_BODY`, `PILL_CLOSE`, and `PILL_NL`; these are live-editor implementation details and must not be written to disk or exposed in clipboard text.
 - **State fields**: `sectionsField` mirrors per-section `{ id, role }`; `pillsField` stores prompt metadata (`name`, `promptId`, `expanded`) keyed by the in-doc pill id. Text lives in the CodeMirror doc, not these fields.
 - **Role separators**: Role pills are CodeMirror replacement widgets over `SECTION_SEP` lines. The first section is normalized to `user`; toggling a role only applies to separators after the first section.
 - **Prompt pills**: Saved prompts are managed in `PromptManager.vue` and persisted by `promptsStore`. Typing `/prompt ` in `ThreadEditor.vue` opens `PromptAutocomplete.vue`; accepting inserts a prompt sentinel sequence plus metadata. Prompt body text is copied per insertion and does not mutate the saved prompt template.
-- **Stores**: `tabStore` owns tabs, tab persistence, conversation persistence, active models, titles, and app-state serialization. `threadStore` is a computed proxy over the active tab. `settingsStore` owns UI/model preferences and delegates persistence to `tabStore.saveAppState()` through a debounced callback wired in `App.vue`. `promptsStore` loads/saves `prompts.json` directly through Tauri commands.
-- **Streaming state**: `streamStore` tracks per-tab sessions and errors. `src/sbp/stream.ts` owns lifecycle/cancellation, `src/sbp/provider.ts` builds provider requests and parses streamed tokens, `src/sbp/http.ts` owns active native HTTP streams, and `src/sbp/editor.ts` owns the active CodeMirror bridge.
-- **Dev global**: In dev builds, `src/main.ts` exposes `window.__stores = { thread, tab, settings, prompts }` for webview console testing.
+- **Model state**: Pinia stores under `src/model/state/**` are internal model implementation details. `dez.model/*` selectors own tab mutations, active models, titles, settings, prompts, stream session state, app-state serialization, and persistence watchers; view code reads reactive state through `src/view/modelState.ts`.
+- **Streaming state**: `src/model/state/streams.ts` tracks per-tab sessions and errors. `src/controller/stream.ts` owns lifecycle/cancellation, `src/model/providers/**` builds provider requests and parses streamed tokens, `src/controller/http.ts` owns active native HTTP streams, and `src/view/editor/selectors.ts` owns the active CodeMirror bridge.
+- **Dev global**: In dev builds, `src/main.ts` exposes `window.__stores = { tab, settings, prompts }` for webview console testing.
 
 ### SBP
 
-SBP (Selector-Based Programming) is a selector-string message-passing style: calls look like `sbp('domain/action', ...args)`, and selectors are registered under domains that act as stable APIs. In this project, `src/sbp/README.md` documents selector domains and boundary rules. `src/main.ts` imports `src/sbp` once to register selector modules and exposes `window.sbp = sbp`.
+[SBP](https://github.com/okTurtles/sbp) (Selector-Based Programming) is a selector-string message-passing style: calls look like `sbp('domain/action', ...args)`, and selectors are registered under domains that act as stable APIs. In this project, `src/sbp/README.md` documents selector domains and boundary rules. `src/main.ts` imports `src/sbp` once to register selector modules and exposes `window.sbp = sbp`.
 
 Components should call `dez.controller/*` for workflows, `dez.ui/*` for UI services, and high-level data domains only when direct data reads are needed. Components and stores must not call `dez.native/*`, import Tauri APIs, call `invoke()`, or perform runtime `fetch()`. `src/sbp/native.ts` is the only frontend layer that should call Tauri `invoke()` directly; `src/sbp/http.ts` owns native HTTP streaming; `src/sbp/persistence.ts` owns raw file routing plus TypeScript persistence parsing/serialization; `src/sbp/provider.ts` owns provider metadata/model/stream behavior; `src/sbp/stream.ts` owns stream lifecycle; `src/sbp/editor.ts` owns the active CodeMirror bridge; `src/sbp/model.ts` exposes cloned app snapshots/store-backed model selectors; `src/sbp/diagnostics.ts` is for sanitized development/support probes only.
 
@@ -103,11 +113,11 @@ Selectors should represent high-level, cross-module actions that are useful to c
 
 ### Providers
 
-Provider definitions live in `src/core/providers/**`; adding a provider requires registering a `ProviderSpec`, extending the `ProviderId` union, adding credential handling in `src-tauri/src/key_store.rs`, and wiring any settings UI expectations. Chat/model HTTP behavior should stay TypeScript-owned behind `dez.provider/*` and `dez.http/*`, not in Rust provider adapters.
+Provider definitions live in `src/model/providers/**`; adding a provider requires registering a `ProviderSpec`, extending the `ProviderId` union in `src/model/providers/types.ts`, adding credential handling in `src-tauri/src/key_store.rs`, and wiring any settings UI expectations. Chat/model HTTP behavior should stay TypeScript-owned behind `dez.provider/*` and `dez.http/*`, not in Rust provider adapters.
 
 ### Toasts
 
-Toast UI lives under `src/view/toast/`. Toasts are emitted through the SBP selector `dez.ui/toast` and rendered by `ToastContainer.vue`; `AppLayout.vue` mounts the app-wide container. See `src/view/toast/README.md` for payload fields, examples, area behavior, and display rules.
+Toast UI lives under `src/view/toast/`. Toasts are emitted through the SBP selector `dez.ui/toast` and rendered by `ToastContainer.vue`; `AppLayout.vue` mounts the app-wide container. Toast actions that open external URLs should use `dez.controller/openUrl`. See `src/view/toast/README.md` for payload fields, examples, area behavior, and display rules.
 
 ### Backend (`src-tauri/src/`)
 
@@ -137,7 +147,7 @@ Do not ever read, view, print, or `cat` `~/.config/dez/provider_keys.json`; it c
 - Prompt `expanded` is not persisted as UI state on load; frontend rehydrates loaded prompts collapsed.
 - Clipboard serialization in `cmEditor.ts` uses the same `dez:` marker namespace and strips live CodeMirror sentinels.
 
-The frontend never touches these files directly; use `dez.persistence/*` selectors from app code. `src/sbp/native.ts` is the only frontend layer that should invoke raw Tauri file commands.
+The frontend never touches these files directly; use `dez.persistence/*` selectors from app code. `src/controller/native.ts` is the only frontend layer that should invoke raw Tauri file commands.
 
 ## Gotchas
 
@@ -145,8 +155,8 @@ The frontend never touches these files directly; use `dez.persistence/*` selecto
 - **Do not leak sentinels**: `SECTION_SEP` and prompt private-use codepoints are only for the live CodeMirror doc. `stripLiveSentinels`, clipboard serializers, and persistence conversion exist to keep them out of user-visible text and disk files.
 - **First section role invariant**: `cmEditor.ts` normalizes the first section to `user`. Role separator widgets represent the section after the separator, so index math around separators is easy to get off by one.
 - **Prompt newlines in collapsed pills**: Collapsed prompt bodies escape `\n` as `PILL_NL` because CodeMirror inline replacement decorations do not correctly collapse multi-line ranges. Expanded pills restore real newlines for editable body text.
-- **Settings persistence is indirect**: `settingsStore` only schedules a debounced callback. `App.vue` wires that callback to `tabStore.saveAppState()`. Calling `settingsStore.init()` without the callback would drop initial persistence.
-- **Prompt persistence is separate**: Saved prompt templates persist through `promptsStore` to `prompts.json`; prompt insertions inside conversations persist as conversation content nodes/markers and are independent copies.
+- **Settings persistence is model-owned**: `dez.model/settings/startPersistence` installs debounced app-state persistence and theme watchers after `dez.controller/app/init` loads initial state. Calling model settings mutations before startup completes can race initial persistence readiness.
+- **Prompt persistence is separate**: Saved prompt templates persist through `dez.model/prompts/startPersistence` to `prompts.json`; prompt insertions inside conversations persist as conversation content nodes/markers and are independent copies.
 - **Active-tab streaming patch**: Streaming always mutates the agent section captured at stream start. Only the currently active tab's registered CodeMirror view is patched through `dez.editor/appendTokenIfVisible`; tab/store guards prevent tokens from applying to the wrong visible editor.
 - **Concurrent streaming path**: Chat streaming no longer goes through a Rust provider registry. `src/sbp/stream.ts` tracks request ids per tab, and `http_bridge.rs` tracks request ids globally for native cancellation.
 - **Provider role mapping**: The app uses internal role `agent`. OpenAI-compatible provider adapters must map `agent` to API role `assistant` when building requests.
@@ -190,5 +200,5 @@ Brief comments are encouraged above functions that do anything non-trivial expla
 - Run `npm run build` at the end of a task step if frontend changes were made, not after every edit; it performs TypeScript/Vue type-checking before Vite build.
 - Run `npm run check:persistence` after changes to `src/core/persistence/**`, persistence selectors, raw persistence IPC, or app/history/prompt persistence routing.
 - Run `cd src-tauri && cargo check` after significant Rust changes for feedback.
-- Run `cd src-tauri && cargo test` when touching persistence or other Rust logic with tests.
+- Run `cd src-tauri && cargo test` when touching Rust logic with tests, including the release/update helpers in `src-tauri/src/commands.rs`.
 - There are no observed frontend unit tests; use type-check/build and targeted manual verification via `npm run tauri dev` when UI behavior changes.
