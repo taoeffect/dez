@@ -37,7 +37,22 @@ async function latestReleaseStatus(): Promise<LatestReleaseStatus> {
   }
 }
 
+const RELEASE_URL_PREFIX = 'https://github.com/taoeffect/dez'
+
+function isValidReleaseUrl(url: string): boolean {
+  return url.startsWith(RELEASE_URL_PREFIX)
+}
+
 function showAvailableUpdateToast(latestRelease: LatestRelease): void {
+  if (!isValidReleaseUrl(latestRelease.url)) {
+    console.error('GitHub API returned corrupt release URL:', latestRelease.url)
+    sbp('dez.ui/toast', 'app-global', {
+      title: 'Update check error',
+      message: `GitHub API returned a corrupt release URL: "${latestRelease.url}". Aborting for safety.`,
+      variant: 'error',
+    })
+    return
+  }
   sbp('dez.ui/toast', 'app-global', {
     title: 'Update available',
     message: `Dez ${latestRelease.version} is available.`,
