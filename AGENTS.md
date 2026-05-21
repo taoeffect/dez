@@ -49,10 +49,6 @@ Frontend unit tests use Vitest with colocated `*.test.ts` files. Observed automa
 
 Commit messages must use an 80-character maximum line width for both subject and body.
 
-## Project-level plan
-
-The top-level `PLAN.md` tracks project work. If asked to "continue the plan", read `PLAN.md`, load the `tasks` skill, verify the current task state from task files (the plan can be stale), then continue the unfinished task or create the next task. When a project-level step is completed, update `PLAN.md`.
-
 ## Architecture
 
 Dez follows an SBP MVC pattern: selectors are the cross-layer API, and code should live in the owning MVC layer. Tauri v2 provides the Rust backend; Vue 3 / TypeScript / Vite provide the frontend. State management uses Pinia setup stores as internal model implementation details.
