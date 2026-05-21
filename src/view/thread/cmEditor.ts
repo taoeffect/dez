@@ -221,6 +221,26 @@ function countSeparators(doc: string): number {
   return n
 }
 
+function sectionIndexAtOffset(doc: string, pos: number): number {
+  let index = 0
+  for (let i = 0; i < pos && i < doc.length; i++) {
+    if (doc.charCodeAt(i) === 0x1e) index++
+  }
+  return index
+}
+
+export function removedSeparatorModelIndexes(tr: Transaction): number[] {
+  const oldDoc = tr.startState.doc.toString()
+  const indexes: number[] = []
+  tr.changes.iterChanges((fromA, toA) => {
+    let removeIndex = sectionIndexAtOffset(oldDoc, fromA) + 1
+    for (let i = fromA; i < toA; i++) {
+      if (oldDoc.charCodeAt(i) === 0x1e) indexes.push(removeIndex++)
+    }
+  })
+  return indexes
+}
+
 /* ──────────────────────────  Effects  ────────────────────────── */
 
 export const toggleRoleEffect = StateEffect.define<{ index: number }>()
@@ -267,9 +287,11 @@ export const sectionsField = StateField.define<SectionModel[]>({
   create: () => [{ id: crypto.randomUUID(), role: 'user' }],
   update(value, tr: Transaction) {
     let next = value
+    let sectionModelsManagedByEffect = false
     for (const e of tr.effects) {
       if (e.is(setSectionsEffect)) {
         next = e.value.slice()
+        sectionModelsManagedByEffect = true
       } else if (e.is(toggleRoleEffect)) {
         if (e.value.index > 0 && e.value.index < next.length) {
           const copy = next.slice()
@@ -286,6 +308,7 @@ export const sectionsField = StateField.define<SectionModel[]>({
           role: newRole ?? 'user',
         })
         next = copy
+        sectionModelsManagedByEffect = true
       } else if (e.is(mergeSectionEffect)) {
         const { removeIndex } = e.value
         if (removeIndex > 0 && removeIndex < next.length) {
@@ -293,9 +316,20 @@ export const sectionsField = StateField.define<SectionModel[]>({
           copy.splice(removeIndex, 1)
           next = copy
         }
+        sectionModelsManagedByEffect = true
       }
     }
     if (tr.docChanged) {
+      if (!sectionModelsManagedByEffect) {
+        const removed = removedSeparatorModelIndexes(tr).sort((a, b) => b - a)
+        if (removed.length > 0) {
+          const copy = next.slice()
+          for (const index of removed) {
+            if (index > 0 && index < copy.length) copy.splice(index, 1)
+          }
+          next = copy
+        }
+      }
       next = reconcileSectionModelsToDoc(next, tr.newDoc.toString())
     }
     return normalizeSectionModels(next)

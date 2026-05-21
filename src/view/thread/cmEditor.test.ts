@@ -1,9 +1,12 @@
+import { EditorState } from '@codemirror/state'
 import { describe, expect, it } from 'vitest'
 import {
   SECTION_SEP,
   docToSections,
   initialSectionModels,
   reconcileSectionModelsToDoc,
+  removedSeparatorModelIndexes,
+  sectionsField,
   type SectionModel,
 } from './cmEditor'
 import type { ContentNode, Role, Section } from '../../model/chat/types'
@@ -60,5 +63,28 @@ describe('CodeMirror section role reconciliation', () => {
 
     expect(reconciled.map((model) => model.role)).toEqual(['user', 'user'])
     expect(reconciled.map((model) => model.id)).toEqual(['s1', 's2'])
+  })
+
+  it('removes the metadata model for a deleted non-trailing separator', () => {
+    const doc = ['hello', 'answer', 'next'].join(`\n${SECTION_SEP}\n`)
+    const models = initialSectionModels([
+      section('s1', 'user', 'hello'),
+      section('s2', 'agent', 'answer'),
+      section('s3', 'user', 'next'),
+    ])
+    const state = EditorState.create({ doc, extensions: [sectionsField.init(() => models)] })
+    const separatorFrom = 'hello\n'.length
+    const separatorTo = 'hello\n'.length + `${SECTION_SEP}\nanswer\n`.length
+    const tr = state.update({ changes: { from: separatorFrom, to: separatorTo, insert: '' } })
+    const nextState = tr.state
+
+    expect(removedSeparatorModelIndexes(tr)).toEqual([1])
+    expect(nextState.field(sectionsField).map((model) => model.role)).toEqual(['user', 'user'])
+    expect(nextState.field(sectionsField).map((model) => model.id)).toEqual(['s1', 's3'])
+    expect(
+      docToSections(nextState.doc.toString(), nextState.field(sectionsField), new Map()).map(
+        (candidate) => candidate.role,
+      ),
+    ).toEqual(['user', 'user'])
   })
 })
