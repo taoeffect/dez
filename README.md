@@ -4,7 +4,7 @@
 
 # Dez
 
-Talk with LLMs in a fully editable plaintext document. Inspired by Zed's text threads feature (no longer with us, RIP).
+Talk with AI in a fully editable plaintext document. Inspired by Zed's text threads feature (no longer with us, RIP).
 
 <p align="center">
   <video src="https://github.com/user-attachments/assets/99a4b112-49e5-44eb-9579-00db6623d2fb" controls autoplay muted playsinline width="800"></video>
