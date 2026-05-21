@@ -11,6 +11,7 @@ import PromptAutocomplete from './PromptAutocomplete.vue'
 import {
   SECTION_SEP,
   buildInitialDoc,
+  cutSelectedRangesTransaction,
   encodePrompt,
   dezLanguageSupport,
   dezTheme,
@@ -23,6 +24,7 @@ import {
   mergeSectionEffect,
   strictMultiCursorBackspace,
   pillsField,
+  plainTextPasteTransaction,
   promptAtomicRanges,
   parseClipboardText,
   promptPillMouseHandler,
@@ -32,8 +34,8 @@ import {
   roleSeparators,
   scanPills,
   sectionsField,
+  serializeSelectionForClipboard,
   toggleRoleEffect,
-  serializeDocRangeForClipboard,
   setPillsEffect,
   setSectionsEffect,
   setShowSeparatorsEffect,
@@ -509,23 +511,13 @@ function setClipboardText(event: ClipboardEvent, text: string) {
 }
 
 function writeSelectionToClipboard(event: ClipboardEvent, cut: boolean, v: EditorView): boolean {
-  const range = v.state.selection.main
-  if (range.empty) return false
-  const text = serializeDocRangeForClipboard(
-    v.state.doc.toString(),
-    range.from,
-    range.to,
-    v.state.field(sectionsField),
-    v.state.field(pillsField),
-  )
+  const text = serializeSelectionForClipboard(v.state)
+  if (!text) return false
   event.preventDefault()
   setClipboardText(event, text)
   if (cut) {
-    v.dispatch({
-      changes: { from: range.from, to: range.to, insert: '' },
-      selection: { anchor: range.from },
-      scrollIntoView: true,
-    })
+    const transaction = cutSelectedRangesTransaction(v.state)
+    if (transaction) v.dispatch(v.state.update(transaction))
   }
   return true
 }
@@ -540,6 +532,12 @@ function pasteClipboardText(event: ClipboardEvent, v: EditorView): boolean {
   while (pasteText.startsWith(leadingMarker) && trimmedRoles.length > 0) {
     pasteText = pasteText.slice(leadingMarker.length)
     trimmedRoles.shift()
+  }
+  const isStructuredPaste = parsed.separatorRoles.length > 0 || parsed.pills.size > 0
+  if (!isStructuredPaste) {
+    v.dispatch(v.state.update(plainTextPasteTransaction(v.state, pasteText)))
+    event.preventDefault()
+    return true
   }
   const range = v.state.selection.main
   const meta = new Map(v.state.field(pillsField))

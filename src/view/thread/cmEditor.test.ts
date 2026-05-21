@@ -7,14 +7,18 @@ import {
   PILL_CLOSE,
   PILL_OPEN,
   SECTION_SEP,
+  cutSelectedRangesTransaction,
   docToSections,
   initialSectionModels,
   keymapHasPlatformBinding,
   linuxLineNavigationKeymap,
   physicalLineBoundarySelection,
+  pillsField,
+  plainTextPasteTransaction,
   reconcileSectionModelsToDoc,
   removedSeparatorModelIndexes,
   sectionsField,
+  serializeSelectionForClipboard,
   strictMultiCursorBackspace,
   type SectionModel,
 } from './cmEditor'
@@ -235,5 +239,52 @@ describe('multi-cursor Backspace', () => {
     expect(strictMultiCursorBackspace({ state: singleCursorState } as EditorView)).toBe(false)
     expect(strictMultiCursorBackspace({ state: lineStartState } as EditorView)).toBe(false)
     expect(strictMultiCursorBackspace({ state: promptState } as EditorView)).toBe(false)
+  })
+})
+
+describe('clipboard helpers', () => {
+  it('builds plain-text paste transactions for every selection range', () => {
+    const state = EditorState.create({
+      doc: 'one\ntwo\nthree',
+      selection: EditorSelection.create([
+        EditorSelection.cursor(0),
+        EditorSelection.range(4, 7),
+        EditorSelection.cursor(13),
+      ], 1),
+      extensions: [EditorState.allowMultipleSelections.of(true)],
+    })
+
+    const nextState = state.update(plainTextPasteTransaction(state, 'X')).state
+
+    expect(nextState.doc.toString()).toBe('Xone\nX\nthreeX')
+    expect(nextState.selection.ranges).toHaveLength(3)
+    expect(nextState.selection.mainIndex).toBe(1)
+  })
+
+  it('serializes and cuts every non-empty selected range', () => {
+    const state = EditorState.create({
+      doc: 'alpha\nbeta\ngamma',
+      selection: EditorSelection.create([
+        EditorSelection.range(0, 5),
+        EditorSelection.cursor(6),
+        EditorSelection.range(11, 16),
+      ], 2),
+      extensions: [
+        EditorState.allowMultipleSelections.of(true),
+        sectionsField.init(() => initialSectionModels([
+          section('s1', 'user', 'alpha\nbeta\ngamma'),
+        ])),
+        pillsField.init(() => new Map()),
+      ],
+    })
+
+    expect(serializeSelectionForClipboard(state)).toBe('<dez:pill type="user"/>\nalpha\ngamma')
+    const cut = cutSelectedRangesTransaction(state)
+    expect(cut).not.toBeNull()
+    const nextState = state.update(cut!).state
+
+    expect(nextState.doc.toString()).toBe('\nbeta\n')
+    expect(nextState.selection.ranges.map((range) => range.head)).toEqual([0, 6])
+    expect(nextState.selection.mainIndex).toBe(1)
   })
 })

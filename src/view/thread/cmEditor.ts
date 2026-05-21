@@ -2,7 +2,7 @@ import { selectAll } from '@codemirror/commands'
 import { HighlightStyle, syntaxHighlighting } from '@codemirror/language'
 import { markdown } from '@codemirror/lang-markdown'
 import { Decoration, EditorView, WidgetType, type DecorationSet, type KeyBinding } from '@codemirror/view'
-import { EditorSelection, StateEffect, StateField, findClusterBreak, type EditorState, type Extension, type Transaction } from '@codemirror/state'
+import { EditorSelection, StateEffect, StateField, findClusterBreak, type EditorState, type Extension, type Transaction, type TransactionSpec } from '@codemirror/state'
 import { tags as t } from '@lezer/highlight'
 import type { ContentNode, Role, Section } from '../../model/chat/types'
 import { normalizeContent, textNode } from '../../model/chat/content'
@@ -816,6 +816,55 @@ export function serializeDocRangeForClipboard(
   }
   if (cursor < to) out += serializePlainDocFragment(doc, cursor, to, models)
   return stripLiveSentinels(out)
+}
+
+export function serializeSelectionForClipboard(state: EditorState): string {
+  const ranges = state.selection.ranges.filter((range) => !range.empty)
+  if (ranges.length === 0) return ''
+  const doc = state.doc.toString()
+  const models = state.field(sectionsField)
+  const pillsMeta = state.field(pillsField)
+  return ranges.map((range) => serializeDocRangeForClipboard(
+    doc,
+    range.from,
+    range.to,
+    models,
+    pillsMeta,
+  )).join('\n')
+}
+
+export function cutSelectedRangesTransaction(state: EditorState): TransactionSpec | null {
+  const ranges = state.selection.ranges
+  if (ranges.every((range) => range.empty)) return null
+  const mainNonEmptyIndex = Math.max(0, ranges.slice(0, state.selection.mainIndex + 1).filter((range) => !range.empty).length - 1)
+  const changes = state.changeByRange((range) => {
+    if (range.empty) return { range: EditorSelection.cursor(range.from) }
+    return {
+      changes: { from: range.from, to: range.to, insert: '' },
+      range: EditorSelection.cursor(range.from),
+    }
+  })
+  if (changes.changes.empty) return null
+  const selection = EditorSelection.create(
+    ranges.filter((range) => !range.empty).map((range) => {
+      return EditorSelection.cursor(changes.changes.mapPos(range.from))
+    }),
+    mainNonEmptyIndex,
+  )
+  return {
+    ...changes,
+    selection,
+    scrollIntoView: true,
+    userEvent: 'delete.cut',
+  }
+}
+
+export function plainTextPasteTransaction(state: EditorState, text: string): TransactionSpec {
+  return {
+    ...state.replaceSelection(text),
+    scrollIntoView: true,
+    userEvent: 'input.paste',
+  }
 }
 
 export interface ParsedClipboardText {
