@@ -26,6 +26,8 @@ const themes: { value: Theme; label: string }[] = [
 
 const shortcuts = [
   { keys: 'Cmd/Ctrl + Enter', action: 'Submit thread to LLM' },
+  { keys: 'Ctrl + Shift + Up', action: 'Add cursor on line above' },
+  { keys: 'Ctrl + Shift + Down', action: 'Add cursor on line below' },
   { keys: 'Cmd/Ctrl + N', action: 'New tab' },
   { keys: 'Cmd/Ctrl + W', action: 'Close tab' },
   { keys: 'Cmd/Ctrl + H', action: 'Open history' },
