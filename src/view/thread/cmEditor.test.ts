@@ -261,6 +261,41 @@ describe('clipboard helpers', () => {
     expect(nextState.selection.mainIndex).toBe(1)
   })
 
+  it('pastes matching copied plain-text ranges into matching cursors', () => {
+    const copyState = EditorState.create({
+      doc: '_asdf\nasdf\nasdf',
+      selection: EditorSelection.create([
+        EditorSelection.range(1, 5),
+        EditorSelection.range(6, 10),
+        EditorSelection.range(11, 15),
+      ], 1),
+      extensions: [
+        EditorState.allowMultipleSelections.of(true),
+        sectionsField.init(() => initialSectionModels([
+          section('s1', 'user', '_asdf\nasdf\nasdf'),
+        ])),
+        pillsField.init(() => new Map()),
+      ],
+    })
+    const pasteState = EditorState.create({
+      doc: 'asdf\nasdf\nasdf',
+      selection: EditorSelection.create([
+        EditorSelection.cursor(4),
+        EditorSelection.cursor(9),
+        EditorSelection.cursor(14),
+      ], 1),
+      extensions: [EditorState.allowMultipleSelections.of(true)],
+    })
+
+    const copied = serializeSelectionForClipboard(copyState)
+    const nextState = pasteState.update(plainTextPasteTransaction(pasteState, copied)).state
+
+    expect(copied).toBe('asdf\nasdf\nasdf')
+    expect(nextState.doc.toString()).toBe('asdfasdf\nasdfasdf\nasdfasdf')
+    expect(nextState.selection.ranges.map((range) => range.head)).toEqual([8, 17, 26])
+    expect(nextState.selection.mainIndex).toBe(1)
+  })
+
   it('serializes and cuts every non-empty selected range', () => {
     const state = EditorState.create({
       doc: 'alpha\nbeta\ngamma',

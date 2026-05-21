@@ -860,8 +860,20 @@ export function cutSelectedRangesTransaction(state: EditorState): TransactionSpe
 }
 
 export function plainTextPasteTransaction(state: EditorState, text: string): TransactionSpec {
+  const ranges = state.selection.ranges
+  const paste = state.toText(text)
+  let index = 1
+  const changes = paste.lines === ranges.length
+    ? state.changeByRange((range) => {
+      const line = paste.line(index++)
+      return {
+        changes: { from: range.from, to: range.to, insert: line.text },
+        range: EditorSelection.cursor(range.from + line.length),
+      }
+    })
+    : state.replaceSelection(paste)
   return {
-    ...state.replaceSelection(text),
+    ...changes,
     scrollIntoView: true,
     userEvent: 'input.paste',
   }
