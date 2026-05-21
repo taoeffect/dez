@@ -19,6 +19,7 @@ import {
   initialSectionModels,
   reconcileSectionModelsToDoc,
   leadingPillContentAttributes,
+  linuxLineNavigationKeymap,
   mergeSectionEffect,
   pillsField,
   promptAtomicRanges,
@@ -651,6 +652,7 @@ function buildState(): EditorState {
         preventDefault: true,
         run: (v) => addDocumentLineCursor(v, true),
       },
+      ...linuxLineNavigationKeymap(),
       {
         key: 'ArrowUp',
         preventDefault: true,

@@ -1,9 +1,13 @@
-import { EditorState } from '@codemirror/state'
+import { selectAll } from '@codemirror/commands'
+import { EditorSelection, EditorState } from '@codemirror/state'
 import { describe, expect, it } from 'vitest'
 import {
   SECTION_SEP,
   docToSections,
   initialSectionModels,
+  keymapHasPlatformBinding,
+  linuxLineNavigationKeymap,
+  physicalLineBoundarySelection,
   reconcileSectionModelsToDoc,
   removedSeparatorModelIndexes,
   sectionsField,
@@ -86,5 +90,41 @@ describe('CodeMirror section role reconciliation', () => {
         (candidate) => candidate.role,
       ),
     ).toEqual(['user', 'user'])
+  })
+})
+
+describe('Linux line-navigation keymap', () => {
+  it('binds Linux Ctrl+A and Ctrl+E without changing macOS Ctrl+A/Ctrl+E behavior', () => {
+    const bindings = linuxLineNavigationKeymap()
+
+    expect(keymapHasPlatformBinding(bindings, 'linux', 'Ctrl-a')).toBe(true)
+    expect(keymapHasPlatformBinding(bindings, 'linux', 'Ctrl-e')).toBe(true)
+    expect(keymapHasPlatformBinding(bindings, 'linux', 'Meta-a')).toBe(true)
+    expect(keymapHasPlatformBinding(bindings, 'linux', 'Mod-a')).toBe(true)
+    expect(keymapHasPlatformBinding(bindings, 'linux', 'Alt-a')).toBe(true)
+    expect(keymapHasPlatformBinding(bindings, 'mac', 'Ctrl-a')).toBe(false)
+    expect(keymapHasPlatformBinding(bindings, 'mac', 'Ctrl-e')).toBe(false)
+    expect(bindings.find((binding) => binding.linux === 'Meta-a')?.run).toBe(selectAll)
+    expect(bindings.find((binding) => binding.linux === 'Mod-a')?.run).toBe(selectAll)
+    expect(bindings.find((binding) => binding.linux === 'Alt-a')?.run).toBe(selectAll)
+  })
+
+  it('moves every selection range to its physical document-line boundaries', () => {
+    const state = EditorState.create({
+      doc: 'alpha\nbeta\ngamma',
+      selection: EditorSelection.create([
+        EditorSelection.cursor(2),
+        EditorSelection.cursor(8),
+        EditorSelection.range(15, 12),
+      ], 1),
+      extensions: [EditorState.allowMultipleSelections.of(true)],
+    })
+    const lineStarts = physicalLineBoundarySelection(state, false)
+    const lineEnds = physicalLineBoundarySelection(state, true)
+
+    expect(lineStarts.ranges.map((range) => range.head)).toEqual([0, 6, 11])
+    expect(lineEnds.ranges.map((range) => range.head)).toEqual([5, 10, 16])
+    expect(lineStarts.mainIndex).toBe(1)
+    expect(lineEnds.mainIndex).toBe(1)
   })
 })

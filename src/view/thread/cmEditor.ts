@@ -1,7 +1,8 @@
+import { selectAll } from '@codemirror/commands'
 import { HighlightStyle, syntaxHighlighting } from '@codemirror/language'
 import { markdown } from '@codemirror/lang-markdown'
-import { Decoration, EditorView, WidgetType, type DecorationSet } from '@codemirror/view'
-import { StateEffect, StateField, type Extension, type Transaction } from '@codemirror/state'
+import { Decoration, EditorView, WidgetType, type DecorationSet, type KeyBinding } from '@codemirror/view'
+import { EditorSelection, StateEffect, StateField, type EditorState, type Extension, type Transaction } from '@codemirror/state'
 import { tags as t } from '@lezer/highlight'
 import type { ContentNode, Role, Section } from '../../model/chat/types'
 import { normalizeContent, textNode } from '../../model/chat/content'
@@ -43,6 +44,68 @@ export interface PillMetadata {
   promptId: string | null
   name: string
   expanded: boolean
+}
+
+export function physicalLineBoundarySelection(state: EditorState, end: boolean): EditorSelection {
+  return EditorSelection.create(
+    state.selection.ranges.map((range) => {
+      const line = state.doc.lineAt(range.head)
+      return EditorSelection.cursor(end ? line.to : line.from, end ? -1 : 1, range.bidiLevel ?? undefined)
+    }),
+    state.selection.mainIndex,
+  )
+}
+
+export function cursorPhysicalLineStart(view: EditorView): boolean {
+  const selection = physicalLineBoundarySelection(view.state, false)
+  if (selection.eq(view.state.selection, true)) return false
+  view.dispatch({ selection, scrollIntoView: true, userEvent: 'select' })
+  return true
+}
+
+export function cursorPhysicalLineEnd(view: EditorView): boolean {
+  const selection = physicalLineBoundarySelection(view.state, true)
+  if (selection.eq(view.state.selection, true)) return false
+  view.dispatch({ selection, scrollIntoView: true, userEvent: 'select' })
+  return true
+}
+
+export function linuxLineNavigationKeymap(): KeyBinding[] {
+  return [
+    {
+      linux: 'Ctrl-a',
+      preventDefault: true,
+      run: cursorPhysicalLineStart,
+    },
+    {
+      linux: 'Ctrl-e',
+      preventDefault: true,
+      run: cursorPhysicalLineEnd,
+    },
+    {
+      linux: 'Meta-a',
+      preventDefault: true,
+      run: selectAll,
+    },
+    {
+      linux: 'Mod-a',
+      preventDefault: true,
+      run: selectAll,
+    },
+    {
+      linux: 'Alt-a',
+      preventDefault: true,
+      run: selectAll,
+    },
+  ]
+}
+
+export function keymapHasPlatformBinding(
+  bindings: readonly KeyBinding[],
+  platform: 'linux' | 'mac' | 'win',
+  key: string,
+): boolean {
+  return bindings.some((binding) => binding[platform] === key)
 }
 
 function normalizeSectionModels(models: SectionModel[]): SectionModel[] {
