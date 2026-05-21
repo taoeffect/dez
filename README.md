@@ -18,6 +18,7 @@ A [Tauri](https://v2.tauri.app/)-based chat application inspired by Zed's text t
 - **Inline editing** — edit any message in a thread, including agent responses
 - **Text pill separators** — toggleable "User" / "Agent" labels between messages
 - **Conversation history** — persisted locally with the ability to browse and delete past conversations
+- **Multiple cursors** - <kbd>Ctrl+Shift+Up</kbd> and <kbd>Ctrl+Shift+Down</kbd> adds cursors above and below
 - **Cross-platform** — macOS and Linux
 
 ## UI
