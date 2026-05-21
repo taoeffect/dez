@@ -365,6 +365,39 @@ function moveLineDownWithinSection(v: EditorView): boolean {
   return true
 }
 
+function documentLineCursorTarget(state: EditorState, head: number, forward: boolean): number | null {
+  const currentLine = state.doc.lineAt(head)
+  const adjacentLine = forward
+    ? nextEditableLineInSection(state, currentLine.number)
+    : previousEditableLineInSection(state, currentLine.number)
+  const targetLine = adjacentLine ?? (forward
+    ? firstEditableLineOfNextSection(state, currentLine.number)
+    : lastEditableLineOfPreviousSection(state, currentLine.number)
+  )
+  if (!targetLine) return null
+  const column = head - currentLine.from
+  return targetLine.from + Math.min(column, targetLine.length)
+}
+
+function addDocumentLineCursor(v: EditorView, forward: boolean): boolean {
+  const { state } = v
+  const selection = state.selection
+  const ranges = selection.ranges.slice()
+  for (const range of selection.ranges) {
+    const target = documentLineCursorTarget(state, range.head, forward)
+    if (target === null) continue
+    ranges.push(EditorSelection.cursor(target, range.assoc, range.bidiLevel ?? undefined))
+  }
+  const nextSelection = EditorSelection.create(ranges, selection.mainIndex)
+  if (nextSelection.ranges.length === selection.ranges.length) return false
+  v.dispatch({
+    selection: nextSelection,
+    scrollIntoView: true,
+    userEvent: 'select',
+  })
+  return true
+}
+
 /** Flatten CM doc back into the given tab's `sections[]` using the live
  *  sectionsField for id + role preservation. */
 function persistTab(tabId: string) {
@@ -589,8 +622,35 @@ function buildState(): EditorState {
       },
     ]),
   )
+  const selectionKeymap = Prec.high(
+    keymap.of([
+      {
+        key: 'Escape',
+        preventDefault: true,
+        run: (v) => {
+          if (v.state.selection.ranges.length <= 1) return false
+          v.dispatch({
+            selection: v.state.selection.asSingle(),
+            scrollIntoView: true,
+            userEvent: 'select',
+          })
+          return true
+        },
+      },
+    ]),
+  )
   const submitKeymap = Prec.high(
     keymap.of([
+      {
+        key: 'Ctrl-Shift-ArrowUp',
+        preventDefault: true,
+        run: (v) => addDocumentLineCursor(v, false),
+      },
+      {
+        key: 'Ctrl-Shift-ArrowDown',
+        preventDefault: true,
+        run: (v) => addDocumentLineCursor(v, true),
+      },
       {
         key: 'ArrowUp',
         preventDefault: true,
@@ -687,8 +747,10 @@ function buildState(): EditorState {
       promptAtomicRanges,
       promptPillMouseHandler,
       drawSelection(),
+      EditorState.allowMultipleSelections.of(true),
       history(),
       autocompleteKeymap,
+      selectionKeymap,
       submitKeymap,
       keymap.of([...defaultKeymap, ...historyKeymap]),
       EditorView.lineWrapping,
