@@ -21,6 +21,7 @@ import {
   leadingPillContentAttributes,
   linuxLineNavigationKeymap,
   mergeSectionEffect,
+  strictMultiCursorBackspace,
   pillsField,
   promptAtomicRanges,
   parseClipboardText,
@@ -700,7 +701,7 @@ function buildState(): EditorState {
       },
       {
         key: 'Backspace',
-        run: mergeWithPreviousSection,
+        run: (v) => mergeWithPreviousSection(v) || strictMultiCursorBackspace(v),
       },
       {
         key: 'Delete',

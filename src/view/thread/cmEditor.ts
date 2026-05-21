@@ -2,7 +2,7 @@ import { selectAll } from '@codemirror/commands'
 import { HighlightStyle, syntaxHighlighting } from '@codemirror/language'
 import { markdown } from '@codemirror/lang-markdown'
 import { Decoration, EditorView, WidgetType, type DecorationSet, type KeyBinding } from '@codemirror/view'
-import { EditorSelection, StateEffect, StateField, type EditorState, type Extension, type Transaction } from '@codemirror/state'
+import { EditorSelection, StateEffect, StateField, findClusterBreak, type EditorState, type Extension, type Transaction } from '@codemirror/state'
 import { tags as t } from '@lezer/highlight'
 import type { ContentNode, Role, Section } from '../../model/chat/types'
 import { normalizeContent, textNode } from '../../model/chat/content'
@@ -67,6 +67,41 @@ export function cursorPhysicalLineEnd(view: EditorView): boolean {
   const selection = physicalLineBoundarySelection(view.state, true)
   if (selection.eq(view.state.selection, true)) return false
   view.dispatch({ selection, scrollIntoView: true, userEvent: 'select' })
+  return true
+}
+
+export function strictMultiCursorBackspace(view: EditorView): boolean {
+  const { state } = view
+  const selection = state.selection
+  if (selection.ranges.length <= 1) return false
+  if (selection.ranges.some((range) => !range.empty)) return false
+  const doc = state.doc.toString()
+  const pills = scanPills(doc)
+  const targets = new Map(selection.ranges.map((range) => {
+    const line = state.doc.lineAt(range.head)
+    if (range.head <= line.from || line.text === SECTION_SEP) return [range, null] as const
+    const target = findClusterBreak(line.text, range.head - line.from, false, true) + line.from
+    if (target === range.head) return [range, null] as const
+    const deleted = doc.slice(target, range.head)
+    const touchesSentinel = deleted.includes(SECTION_SEP) ||
+      deleted.includes(PILL_OPEN) ||
+      deleted.includes(PILL_BODY) ||
+      deleted.includes(PILL_CLOSE) ||
+      deleted.includes(PILL_NL)
+    const touchesPill = pills.some((pill) => target < pill.to && range.head > pill.from)
+    return [range, touchesSentinel || touchesPill ? null : target] as const
+  }))
+  if (selection.ranges.some((range) => targets.get(range) === null)) return false
+  const changes = state.changeByRange((range) => {
+    const target = targets.get(range)
+    if (target === undefined || target === null) return { range }
+    return { changes: { from: target, to: range.head }, range: EditorSelection.cursor(target, -1) }
+  })
+  if (changes.changes.empty) return false
+  view.dispatch(state.update(changes, {
+    scrollIntoView: true,
+    userEvent: 'delete.backward',
+  }))
   return true
 }
 

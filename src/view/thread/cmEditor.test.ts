@@ -1,7 +1,11 @@
 import { selectAll } from '@codemirror/commands'
-import { EditorSelection, EditorState } from '@codemirror/state'
+import { EditorSelection, EditorState, type Transaction, type TransactionSpec } from '@codemirror/state'
+import { EditorView } from '@codemirror/view'
 import { describe, expect, it } from 'vitest'
 import {
+  PILL_BODY,
+  PILL_CLOSE,
+  PILL_OPEN,
   SECTION_SEP,
   docToSections,
   initialSectionModels,
@@ -11,6 +15,7 @@ import {
   reconcileSectionModelsToDoc,
   removedSeparatorModelIndexes,
   sectionsField,
+  strictMultiCursorBackspace,
   type SectionModel,
 } from './cmEditor'
 import type { ContentNode, Role, Section } from '../../model/chat/types'
@@ -21,6 +26,26 @@ function textNode(text: string): ContentNode {
 
 function section(id: string, role: Role, text: string): Section {
   return { id, role, content: [textNode(text)] }
+}
+
+function dispatchCommand(state: EditorState, command: (view: EditorView) => boolean): EditorState {
+  let nextState = state
+  const view = {
+    get state() {
+      return nextState
+    },
+    dispatch(...specs: [Transaction] | [readonly Transaction[]] | TransactionSpec[]) {
+      if (specs.length === 1 && Array.isArray(specs[0])) {
+        for (const tr of specs[0]) nextState = tr.state
+      } else if (specs.length === 1 && 'startState' in specs[0]) {
+        nextState = specs[0].state
+      } else {
+        nextState = nextState.update(...specs as TransactionSpec[]).state
+      }
+    },
+  } as EditorView
+  expect(command(view)).toBe(true)
+  return nextState
 }
 
 describe('CodeMirror section role reconciliation', () => {
@@ -126,5 +151,53 @@ describe('Linux line-navigation keymap', () => {
     expect(lineEnds.ranges.map((range) => range.head)).toEqual([5, 10, 16])
     expect(lineStarts.mainIndex).toBe(1)
     expect(lineEnds.mainIndex).toBe(1)
+  })
+})
+
+describe('multi-cursor Backspace', () => {
+  it('deletes one character before every cursor after line-start prefix insertion', () => {
+    const state = EditorState.create({
+      doc: '- asdf\n- asdf\n- asdf',
+      selection: EditorSelection.create([
+        EditorSelection.cursor(2),
+        EditorSelection.cursor(9),
+        EditorSelection.cursor(16),
+      ], 2),
+      extensions: [EditorState.allowMultipleSelections.of(true)],
+    })
+
+    const nextState = dispatchCommand(state, strictMultiCursorBackspace)
+
+    expect(nextState.doc.toString()).toBe('-asdf\n-asdf\n-asdf')
+    expect(nextState.selection.ranges.map((range) => range.head)).toEqual([1, 7, 13])
+    expect(nextState.selection.mainIndex).toBe(2)
+  })
+
+  it('falls through for single cursors, physical line starts, and prompt pills', () => {
+    const singleCursorState = EditorState.create({
+      doc: '- asdf',
+      selection: EditorSelection.cursor(2),
+    })
+    const lineStartState = EditorState.create({
+      doc: 'alpha\nbeta',
+      selection: EditorSelection.create([
+        EditorSelection.cursor(0),
+        EditorSelection.cursor(6),
+      ], 1),
+      extensions: [EditorState.allowMultipleSelections.of(true)],
+    })
+    const promptDoc = `x${PILL_OPEN}p1${PILL_BODY}body${PILL_CLOSE}y`
+    const promptState = EditorState.create({
+      doc: promptDoc,
+      selection: EditorSelection.create([
+        EditorSelection.cursor(1),
+        EditorSelection.cursor(promptDoc.length - 1),
+      ], 1),
+      extensions: [EditorState.allowMultipleSelections.of(true)],
+    })
+
+    expect(strictMultiCursorBackspace({ state: singleCursorState } as EditorView)).toBe(false)
+    expect(strictMultiCursorBackspace({ state: lineStartState } as EditorView)).toBe(false)
+    expect(strictMultiCursorBackspace({ state: promptState } as EditorView)).toBe(false)
   })
 })
