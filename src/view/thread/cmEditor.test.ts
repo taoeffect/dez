@@ -1,6 +1,6 @@
-import { selectAll } from '@codemirror/commands'
+import { defaultKeymap, selectAll } from '@codemirror/commands'
 import { EditorSelection, EditorState, type Transaction, type TransactionSpec } from '@codemirror/state'
-import { EditorView } from '@codemirror/view'
+import { EditorView, keymap, runScopeHandlers } from '@codemirror/view'
 import { describe, expect, it } from 'vitest'
 import {
   PILL_BODY,
@@ -125,13 +125,49 @@ describe('Linux line-navigation keymap', () => {
     expect(keymapHasPlatformBinding(bindings, 'linux', 'Ctrl-a')).toBe(true)
     expect(keymapHasPlatformBinding(bindings, 'linux', 'Ctrl-e')).toBe(true)
     expect(keymapHasPlatformBinding(bindings, 'linux', 'Meta-a')).toBe(true)
-    expect(keymapHasPlatformBinding(bindings, 'linux', 'Mod-a')).toBe(true)
+    expect(keymapHasPlatformBinding(bindings, 'linux', 'Mod-a')).toBe(false)
     expect(keymapHasPlatformBinding(bindings, 'linux', 'Alt-a')).toBe(true)
     expect(keymapHasPlatformBinding(bindings, 'mac', 'Ctrl-a')).toBe(false)
     expect(keymapHasPlatformBinding(bindings, 'mac', 'Ctrl-e')).toBe(false)
     expect(bindings.find((binding) => binding.linux === 'Meta-a')?.run).toBe(selectAll)
-    expect(bindings.find((binding) => binding.linux === 'Mod-a')?.run).toBe(selectAll)
     expect(bindings.find((binding) => binding.linux === 'Alt-a')?.run).toBe(selectAll)
+  })
+
+  it('consumes Linux Ctrl+A at physical line start before default select-all can run', () => {
+    let state = EditorState.create({
+      doc: 'alpha\nbeta',
+      selection: EditorSelection.cursor(0),
+      extensions: [keymap.of([...linuxLineNavigationKeymap(), ...defaultKeymap])],
+    })
+    const view = {
+      get state() {
+        return state
+      },
+      dispatch(...specs: [Transaction] | [readonly Transaction[]] | TransactionSpec[]) {
+        if (specs.length === 1 && Array.isArray(specs[0])) {
+          for (const tr of specs[0]) state = tr.state
+        } else if (specs.length === 1 && 'startState' in specs[0]) {
+          state = specs[0].state
+        } else {
+          state = state.update(...specs as TransactionSpec[]).state
+        }
+      },
+    } as EditorView
+    const event = {
+      key: 'a',
+      keyCode: 65,
+      ctrlKey: true,
+      altKey: false,
+      metaKey: false,
+      shiftKey: false,
+      preventDefault() {},
+      stopPropagation() {},
+    } as unknown as KeyboardEvent
+
+    expect(runScopeHandlers(view, event, 'editor')).toBe(true)
+    expect(state.selection.ranges).toHaveLength(1)
+    expect(state.selection.main.empty).toBe(true)
+    expect(state.selection.main.head).toBe(0)
   })
 
   it('moves every selection range to its physical document-line boundaries', () => {

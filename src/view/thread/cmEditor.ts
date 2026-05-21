@@ -58,15 +58,17 @@ export function physicalLineBoundarySelection(state: EditorState, end: boolean):
 
 export function cursorPhysicalLineStart(view: EditorView): boolean {
   const selection = physicalLineBoundarySelection(view.state, false)
-  if (selection.eq(view.state.selection, true)) return false
-  view.dispatch({ selection, scrollIntoView: true, userEvent: 'select' })
+  if (!selection.eq(view.state.selection, true)) {
+    view.dispatch({ selection, scrollIntoView: true, userEvent: 'select' })
+  }
   return true
 }
 
 export function cursorPhysicalLineEnd(view: EditorView): boolean {
   const selection = physicalLineBoundarySelection(view.state, true)
-  if (selection.eq(view.state.selection, true)) return false
-  view.dispatch({ selection, scrollIntoView: true, userEvent: 'select' })
+  if (!selection.eq(view.state.selection, true)) {
+    view.dispatch({ selection, scrollIntoView: true, userEvent: 'select' })
+  }
   return true
 }
 
@@ -119,11 +121,6 @@ export function linuxLineNavigationKeymap(): KeyBinding[] {
     },
     {
       linux: 'Meta-a',
-      preventDefault: true,
-      run: selectAll,
-    },
-    {
-      linux: 'Mod-a',
       preventDefault: true,
       run: selectAll,
     },
