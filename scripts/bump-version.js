@@ -2,7 +2,8 @@ import { readFileSync, writeFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
-const version = process.argv[2];
+const rawVersion = process.argv[2];
+const version = rawVersion?.replace(/^v/i, '');
 
 if (!version) {
   console.error('Usage: node scripts/bump-version.js <version>');
@@ -10,7 +11,7 @@ if (!version) {
 }
 
 if (!/^\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?(?:\+[0-9A-Za-z.-]+)?$/.test(version)) {
-  console.error(`Invalid version: ${version}`);
+  console.error(`Invalid version: ${rawVersion}`);
   process.exit(1);
 }
 
