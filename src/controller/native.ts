@@ -72,19 +72,11 @@ export default sbp('sbp/selectors/register', {
     return invoke('delete_conversation_file', { id })
   },
 
-  'dez.native/saveAppStateJson' (content: string): Promise<void> {
-    return invoke('save_app_state_json', { content })
+  'dez.native/saveAppFile' (name: string, content: string): Promise<void> {
+    return invoke('save_app_file', { name, content })
   },
 
-  'dez.native/loadAppStateJson' (): Promise<string> {
-    return invoke<string>('load_app_state_json')
-  },
-
-  'dez.native/savePromptsJson' (content: string): Promise<void> {
-    return invoke('save_prompts_json', { content })
-  },
-
-  'dez.native/loadPromptsJson' (): Promise<string> {
-    return invoke<string>('load_prompts_json')
+  'dez.native/loadAppFile' (name: string): Promise<string> {
+    return invoke<string>('load_app_file', { name })
   },
 })

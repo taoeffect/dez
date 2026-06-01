@@ -27,10 +27,8 @@ pub fn run() {
             commands::load_conversation_file,
             commands::list_conversation_files,
             commands::delete_conversation_file,
-            commands::save_app_state_json,
-            commands::load_app_state_json,
-            commands::save_prompts_json,
-            commands::load_prompts_json,
+            commands::save_app_file,
+            commands::load_app_file,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

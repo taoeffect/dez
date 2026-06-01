@@ -22,12 +22,23 @@ fn conversation_path(id: &str) -> PathBuf {
     conversations_dir().join(format!("{}.md", sanitize_id(id)))
 }
 
-fn app_state_path() -> PathBuf {
-    base_dir().join("app_state.json")
-}
-
-fn prompts_path() -> PathBuf {
-    base_dir().join("prompts.json")
+// Sanitizes a single-file name used by the generic app-file commands so a
+// buggy/malicious caller cannot escape `~/.config/dez/`. We allow only ascii
+// alphanumerics plus `-`, `_`, `.`, which excludes path separators and rules
+// out `..` traversal (a name of all dots like ".." would still be rejected
+// below). Returns an error rather than silently coercing so callers don't
+// accidentally read/write the wrong file.
+fn sanitize_app_file_name(name: &str) -> Result<String, String> {
+    let valid = !name.is_empty()
+        && name != "."
+        && name != ".."
+        && name
+            .chars()
+            .all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_' || c == '.');
+    if !valid {
+        return Err(format!("Invalid app file name: {}", name));
+    }
+    Ok(name.to_string())
 }
 
 fn sanitize_id(id: &str) -> String {
@@ -121,20 +132,14 @@ pub fn delete_conversation_file(id: &str) -> Result<(), String> {
     Ok(())
 }
 
-pub fn load_app_state_json() -> String {
-    std::fs::read_to_string(app_state_path()).unwrap_or_default()
+pub fn load_app_file(name: &str) -> Result<String, String> {
+    let safe = sanitize_app_file_name(name)?;
+    let path = base_dir().join(safe);
+    Ok(std::fs::read_to_string(path).unwrap_or_default())
 }
 
-pub fn save_app_state_json(content: &str) -> Result<(), String> {
-    let path = app_state_path();
-    write_private_file(&path, content)
-}
-
-pub fn load_prompts_json() -> String {
-    std::fs::read_to_string(prompts_path()).unwrap_or_default()
-}
-
-pub fn save_prompts_json(content: &str) -> Result<(), String> {
-    let path = prompts_path();
+pub fn save_app_file(name: &str, content: &str) -> Result<(), String> {
+    let safe = sanitize_app_file_name(name)?;
+    let path = base_dir().join(safe);
     write_private_file(&path, content)
 }

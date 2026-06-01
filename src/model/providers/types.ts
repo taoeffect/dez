@@ -25,6 +25,18 @@ export interface ProviderInfo {
   configured: boolean
 }
 
+// Result of an explicit provider model fetch that surfaces success/failure
+// instead of masking errors with fallbackModels. `ok` is the basis for a
+// provider's "working" status: a configured provider whose fetch fails
+// (expired/invalid key, network) yields `ok = false`. A provider that needs no
+// network (buildModelListRequest returns null) yields `ok = true` with its
+// fallback models.
+export interface ProviderModelsResult {
+  ok: boolean
+  models: ModelInfo[]
+  error?: string
+}
+
 export interface ChatMessage {
   role: Role
   content: string

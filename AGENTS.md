@@ -120,6 +120,7 @@ Toast UI lives under `src/view/toast/`. Toasts are emitted through the SBP selec
 
 ### Backend (`src-tauri/src/`)
 
+- **Keep Rust barebones**: The Rust layer should stay as small as possible — a thin, generic interface to the OS, not a per-feature API. Prefer generic, reusable commands/functions over adding a new bespoke command for every feature. When a new feature needs native behavior that resembles existing behavior (e.g. reading/writing another JSON file under `~/.config/dez/`), reuse or generalize the existing mechanism rather than copy-pasting another near-identical command, so adding frontend features rarely requires touching Rust. For example, single-file JSON persistence goes through generic `load_app_file(name)` / `save_app_file(name, content)` commands where TypeScript chooses the file name (with path-traversal-safe sanitization in Rust), instead of one command per file.
 - **Command entry points**: Tauri commands live in `commands.rs` and `http_bridge.rs`; `lib.rs` registers them with `tauri::generate_handler!`. The only frontend direct `invoke()` call sites should be selectors in `src/sbp/native.ts`.
 - **Native HTTP bridge**: Provider model listing and chat streaming are TypeScript-owned. Rust exposes generic `http_request`, `stream_http`, and `cancel_http_stream` commands backed by a shared `reqwest::Client` and `HttpStreamState` map of `requestId -> JoinHandle`.
 - **Streaming events**: `http_bridge.rs` emits `{ kind, data }` Tauri Channel events: `Headers`, `Chunk`, `Done`, and `Error`. TypeScript assembles bytes and parses provider-specific SSE.
@@ -130,9 +131,9 @@ Toast UI lives under `src/view/toast/`. Toasts are emitted through the SBP selec
 
 All app data is under `~/.config/dez/`, computed from `$HOME` in Rust rather than Tauri's path API.
 
-- `app_state.json`: tabs, active tab id, pill visibility, theme, default model settings, last-used model, and favorites. Runtime parsing/serialization is TypeScript-owned in `src/core/persistence/appState.ts`; Rust only reads/writes raw JSON via `load_app_state_json` / `save_app_state_json`.
+- `app_state.json`: tabs, active tab id, pill visibility, theme, default model settings, last-used model, and favorites. Runtime parsing/serialization is TypeScript-owned in `src/core/persistence/appState.ts`; Rust only reads/writes raw JSON via the generic `load_app_file('app_state.json')` / `save_app_file('app_state.json', content)` commands.
 - `conversations/<sanitized-id>.md`: Markdown-like conversation files with a header and Dez XML-ish structural markers. Conversation ids are sanitized to ASCII alphanumeric, `-`, and `_` before use as filenames. Runtime parsing/serialization is TypeScript-owned in `src/core/persistence/conversationFormat.ts`; Rust only reads/writes/lists/deletes raw files through the raw conversation-file commands.
-- `prompts.json`: saved prompt templates (`{ id, name, content }[]`). Runtime parsing/serialization is TypeScript-owned in `src/core/persistence/prompts.ts`; Rust only reads/writes raw JSON via `load_prompts_json` / `save_prompts_json`.
+- `prompts.json`: saved prompt templates (`{ id, name, content }[]`). Runtime parsing/serialization is TypeScript-owned in `src/core/persistence/prompts.ts`; Rust only reads/writes raw JSON via the generic `load_app_file('prompts.json')` / `save_app_file('prompts.json', content)` commands.
 - `provider_keys.json`: provider API keys plus Copilot GitHub/Copilot tokens. Files are written with mode `0600` on Unix.
 
 Do not ever read, view, print, or `cat` `~/.config/dez/provider_keys.json`; it can contain API keys and OAuth tokens.

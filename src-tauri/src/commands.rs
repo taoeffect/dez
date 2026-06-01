@@ -176,21 +176,11 @@ pub async fn delete_conversation_file(id: String) -> Result<(), String> {
 }
 
 #[tauri::command]
-pub async fn save_app_state_json(content: String) -> Result<(), String> {
-    crate::persistence::save_app_state_json(&content)
+pub async fn save_app_file(name: String, content: String) -> Result<(), String> {
+    crate::persistence::save_app_file(&name, &content)
 }
 
 #[tauri::command]
-pub async fn load_app_state_json() -> Result<String, String> {
-    Ok(crate::persistence::load_app_state_json())
-}
-
-#[tauri::command]
-pub async fn save_prompts_json(content: String) -> Result<(), String> {
-    crate::persistence::save_prompts_json(&content)
-}
-
-#[tauri::command]
-pub async fn load_prompts_json() -> Result<String, String> {
-    Ok(crate::persistence::load_prompts_json())
+pub async fn load_app_file(name: String) -> Result<String, String> {
+    crate::persistence::load_app_file(&name)
 }
