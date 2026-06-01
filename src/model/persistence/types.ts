@@ -1,8 +1,26 @@
 import type { ActiveModel } from '../chat/types'
+import type { ModelInfo, ProviderId } from '../providers/types'
 import type { Prompt } from '../state/prompts'
 import type { DefaultModel, Theme } from '../state/settings'
 
 export type PromptData = Prompt
+
+// Persisted model-selector cache entry for a single provider. `models` is the
+// last successfully-fetched list, `working` reflects whether the last fetch
+// succeeded (false hides the provider until it works again).
+export interface CachedProvider {
+  models: ModelInfo[]
+  working: boolean
+  updatedAt: number
+  lastCheckedAt: number
+}
+
+// Whole persisted model cache (~/.config/dez/model_cache.json). Non-secret:
+// only model ids/names, never keys.
+export interface ModelCache {
+  providers: Partial<Record<ProviderId, CachedProvider>>
+  version: number
+}
 
 export type ContentNodeData =
   | { kind: 'text'; text: string }

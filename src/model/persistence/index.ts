@@ -1,13 +1,15 @@
 import sbp from '@sbp/sbp'
 import { parseAppStateJson, serializeAppStateJson } from './appState'
 import { parseConversation, serializeConversation } from './conversationFormat'
+import { parseModelCacheJson, serializeModelCacheJson } from './modelCache'
 import { parsePromptsJson, serializePromptsJson } from './prompts'
 import { conversationSummary, sortConversationSummaries } from './summaries'
-import type { AppStatePayload, ConversationData, ConversationFile, ConversationSummary, PromptData } from './types'
+import type { AppStatePayload, ConversationData, ConversationFile, ConversationSummary, ModelCache, PromptData } from './types'
 
 // File names under ~/.config/dez/ passed to the generic native app-file I/O.
 const APP_STATE_FILE = 'app_state.json'
 const PROMPTS_FILE = 'prompts.json'
+const MODEL_CACHE_FILE = 'model_cache.json'
 
 export default sbp('sbp/selectors/register', {
   async 'dez.persistence/saveConversation' (data: ConversationData): Promise<void> {
@@ -87,6 +89,26 @@ export default sbp('sbp/selectors/register', {
       return parsePromptsJson(content)
     } catch (error) {
       console.error('Failed to load prompts:', error)
+      throw error
+    }
+  },
+
+  async 'dez.persistence/saveModelCache' (cache: ModelCache): Promise<void> {
+    try {
+      const snapshot = serializeModelCacheJson(cache)
+      await sbp('okTurtles.eventQueue/queueEvent', 'dez.persistence/modelCache', ['dez.native/saveAppFile', MODEL_CACHE_FILE, snapshot])
+    } catch (error) {
+      console.error('Failed to save model cache:', error)
+      throw error
+    }
+  },
+
+  async 'dez.persistence/loadModelCache' (): Promise<ModelCache> {
+    try {
+      const content = await sbp('dez.native/loadAppFile', MODEL_CACHE_FILE) as string
+      return parseModelCacheJson(content)
+    } catch (error) {
+      console.error('Failed to load model cache:', error)
       throw error
     }
   },
