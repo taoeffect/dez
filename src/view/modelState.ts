@@ -5,6 +5,7 @@ import type { Prompt } from '../model/state/prompts'
 import type { DefaultModel, SettingsSection, Theme } from '../model/state/settings'
 import type { SettingsSnapshot } from '../model/state'
 import type { ModelSnapshot } from '../model/snapshot'
+import type { ModelCache } from '../model/persistence/types'
 
 export interface ViewModelState {
   tabs: ComputedRef<ModelSnapshot['tabs']>
@@ -14,6 +15,7 @@ export interface ViewModelState {
   activeSectionsIdentity: ComputedRef<string>
   settings: ComputedRef<SettingsSnapshot>
   prompts: ComputedRef<Prompt[]>
+  modelCache: ComputedRef<ModelCache>
   activeTabStreaming: ComputedRef<boolean>
   activeTabStreamError: ComputedRef<string | null>
 }
@@ -30,6 +32,10 @@ export function useModelState(): ViewModelState {
     activeSectionsIdentity: computed(() => sbp('dez.model/thread/sectionsIdentity') as string),
     settings: computed(() => sbp('dez.model/settings/snapshot') as SettingsSnapshot),
     prompts: computed(() => sbp('dez.model/prompts/list') as Prompt[]),
+    // Reactive model-selector cache snapshot. Reading the snapshot selector
+    // inside a computed tracks the underlying Pinia cache store, so the popup
+    // re-renders live as the background refresh applies per-provider results.
+    modelCache: computed(() => sbp('dez.model/modelCache/snapshot') as ModelCache),
     activeTabStreaming: computed(() => {
       const activeTabId = sbp('dez.model/tabs/activeId') as string
       return sbp('dez.model/streams/isStreaming', activeTabId) as boolean

@@ -15,7 +15,7 @@ interface GroupedModels {
   models: DisplayModel[]
 }
 
-const { activeModel, settings } = useModelState()
+const { activeModel, settings, modelCache } = useModelState()
 
 const isOpen = ref(false)
 const searchQuery = ref('')
@@ -23,7 +23,23 @@ const searchInput = ref<HTMLInputElement | null>(null)
 const dropdownEl = ref<HTMLElement | null>(null)
 
 const providers = ref<ProviderInfo[]>([])
-const allModels = ref<ModelInfo[]>([])
+
+// Models to show right now, derived reactively from the persisted cache: only
+// providers that are currently configured AND whose cached `working !== false`.
+// This mirrors dez.model/modelCache/visibleModels but is computed locally so it
+// reactively combines the cache snapshot with the configured `providers` ref.
+const visibleModels = computed<ModelInfo[]>(() => {
+  const configured = new Set<string>(
+    providers.value.filter((provider) => provider.configured).map((provider) => provider.id),
+  )
+  const models: ModelInfo[] = []
+  for (const [providerId, entry] of Object.entries(modelCache.value.providers)) {
+    if (!entry || entry.working === false) continue
+    if (!configured.has(providerId)) continue
+    models.push(...entry.models)
+  }
+  return models
+})
 
 const displayName = computed(() => {
   if (activeModel.value) {
@@ -76,7 +92,7 @@ const filteredGrouped = computed<GroupedModels[]>(() => {
 
   const favModels: DisplayModel[] = []
   for (const fav of settings.value.favorites) {
-    const m = allModels.value.find(
+    const m = visibleModels.value.find(
       (x) => x.provider === fav.providerId && x.id === fav.modelId,
     )
     if (m && modelMatches(m, providerById.get(m.provider))) favModels.push(toDisplayModel(m))
@@ -88,7 +104,7 @@ const filteredGrouped = computed<GroupedModels[]>(() => {
   for (const provider of providers.value) {
     if (!provider.configured) continue
     const matchesProvider = providerMatches(provider)
-    const models = allModels.value
+    const models = visibleModels.value
       .filter((m) => m.provider === provider.id)
       .filter((m) => matchesProvider || modelMatches(m, provider))
       .map(toDisplayModel)
@@ -99,21 +115,12 @@ const filteredGrouped = computed<GroupedModels[]>(() => {
   return groups
 })
 
-async function loadModels() {
+// Load the configured-provider set + group names. Provider "configured" status
+// depends on native key presence (async) and is not reactive, so it is
+// refreshed on each open rather than tracked as reactive state.
+async function loadProviders() {
   try {
     providers.value = await sbp('dez.provider/infos') as ProviderInfo[]
-    const models: ModelInfo[] = []
-    for (const p of providers.value) {
-      if (p.configured) {
-        try {
-          const pModels = await sbp('dez.provider/listModels', p.id) as ModelInfo[]
-          models.push(...pModels)
-        } catch (e) {
-          console.error(`Failed to load models for ${p.id}:`, e)
-        }
-      }
-    }
-    allModels.value = models
   } catch (e) {
     console.error('Failed to load providers:', e)
   }
@@ -130,7 +137,11 @@ function toggle() {
 async function open() {
   isOpen.value = true
   searchQuery.value = ''
-  await loadModels()
+  // Show cached models immediately. We only await the cheap configured-provider
+  // fetch (no model network calls); cached visibleModels render right away and
+  // the background refresh below reconciles them in place as results land.
+  await loadProviders()
+  void sbp('dez.controller/modelCache/refresh')
   nextTick(() => {
     searchInput.value?.focus()
   })
