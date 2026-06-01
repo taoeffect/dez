@@ -2,10 +2,13 @@ import sbp from '@sbp/sbp'
 import { watch, type WatchStopHandle } from 'vue'
 import { debounce } from 'turtledash'
 import './streams'
+import { useModelCacheStore } from './modelCache'
 import { usePromptsStore, type Prompt } from './prompts'
 import { useSettingsStore, type DefaultModel, type SettingsSection, type Theme } from './settings'
 import { useTabStore } from './tabs'
-import type { AppStatePayload, ConversationSummary } from '../persistence/types'
+import type { AppStatePayload, CachedProvider, ConversationSummary, ModelCache } from '../persistence/types'
+import { emptyModelCache } from '../persistence/modelCache'
+import type { ModelInfo, ProviderId, ProviderModelsResult } from '../providers/types'
 import type { ActiveModel, ContentNode, Section, Tab } from '../chat/types'
 import {
   appendStreamingText,
@@ -74,6 +77,8 @@ let stopSettingsPersistWatch: WatchStopHandle | null = null
 let stopThemeWatch: WatchStopHandle | null = null
 let promptsPersistenceReady = false
 let stopPromptsPersistWatch: WatchStopHandle | null = null
+let modelCachePersistenceReady = false
+let stopModelCachePersistWatch: WatchStopHandle | null = null
 
 const persistSettings = debounce(() => {
   if (settingsPersistenceReady) void sbp('dez.model/appState/save')
@@ -81,6 +86,10 @@ const persistSettings = debounce(() => {
 
 const persistPrompts = debounce(() => {
   if (promptsPersistenceReady) void savePrompts()
+}, 1000)
+
+const persistModelCache = debounce(() => {
+  if (modelCachePersistenceReady) void saveModelCache()
 }, 1000)
 
 function cloneContentNode(node: ContentNode): ContentNode {
@@ -253,6 +262,28 @@ export async function savePrompts(): Promise<void> {
     await sbp('dez.persistence/savePrompts', usePromptsStore().prompts.map(clonePrompt))
   } catch (error) {
     console.error('Failed to save prompts:', error)
+  }
+}
+
+function cloneModelCache(cache: ModelCache): ModelCache {
+  const providers: Partial<Record<ProviderId, CachedProvider>> = {}
+  for (const [key, entry] of Object.entries(cache.providers)) {
+    if (!entry) continue
+    providers[key as ProviderId] = {
+      models: entry.models.map((model) => ({ ...model })),
+      working: entry.working,
+      updatedAt: entry.updatedAt,
+      lastCheckedAt: entry.lastCheckedAt,
+    }
+  }
+  return { providers, version: cache.version }
+}
+
+export async function saveModelCache(): Promise<void> {
+  try {
+    await sbp('dez.persistence/saveModelCache', cloneModelCache(useModelCacheStore().cache))
+  } catch (error) {
+    console.error('Failed to save model cache:', error)
   }
 }
 
@@ -701,6 +732,79 @@ export default sbp('sbp/selectors/register', {
     if (index < 0) return false
     prompts.splice(index, 1)
     return true
+  },
+
+  async 'dez.model/modelCache/init' (): Promise<void> {
+    const store = useModelCacheStore()
+    try {
+      store.cache = await sbp('dez.persistence/loadModelCache') as ModelCache
+    } catch (error) {
+      console.error('Failed to load model cache:', error)
+      store.cache = emptyModelCache()
+    }
+    modelCachePersistenceReady = true
+  },
+
+  // The model cache persists separately from app-state/prompts; the model-owned
+  // watcher keeps the persistence boundary out of the Pinia store.
+  'dez.model/modelCache/startPersistence' (): void {
+    stopModelCachePersistWatch?.()
+    stopModelCachePersistWatch = watch(
+      () => useModelCacheStore().cache,
+      () => {
+        persistModelCache()
+      },
+      { deep: true },
+    )
+  },
+
+  'dez.model/modelCache/stopPersistence' (): void {
+    stopModelCachePersistWatch?.()
+    stopModelCachePersistWatch = null
+    modelCachePersistenceReady = false
+  },
+
+  'dez.model/modelCache/snapshot' (): ModelCache {
+    return cloneModelCache(useModelCacheStore().cache)
+  },
+
+  // Models to show right now: only providers that are configured (in the passed
+  // set) AND whose cached `working !== false`. A provider with no cache entry
+  // contributes nothing until its first successful fetch.
+  'dez.model/modelCache/visibleModels' (configuredProviderIds: ProviderId[]): ModelInfo[] {
+    const configured = new Set(configuredProviderIds)
+    const providers = useModelCacheStore().cache.providers
+    const visible: ModelInfo[] = []
+    for (const [key, entry] of Object.entries(providers)) {
+      if (!entry || entry.working === false) continue
+      if (!configured.has(key as ProviderId)) continue
+      for (const model of entry.models) visible.push({ ...model })
+    }
+    return visible
+  },
+
+  // Reconciliation primitive: on success replace models, mark working, and bump
+  // both timestamps; on failure keep the last-known models but mark the provider
+  // not-working and bump only the attempt timestamp.
+  'dez.model/modelCache/applyProviderResult' (providerId: ProviderId, result: ProviderModelsResult): void {
+    const store = useModelCacheStore()
+    const now = Date.now()
+    const existing = store.cache.providers[providerId]
+    if (result.ok) {
+      store.cache.providers[providerId] = {
+        models: result.models.map((model) => ({ ...model })),
+        working: true,
+        updatedAt: now,
+        lastCheckedAt: now,
+      }
+      return
+    }
+    store.cache.providers[providerId] = {
+      models: existing ? existing.models.map((model) => ({ ...model })) : [],
+      working: false,
+      updatedAt: existing ? existing.updatedAt : 0,
+      lastCheckedAt: now,
+    }
   },
 
   async 'dez.model/conversations/list' (): Promise<ConversationSummary[]> {
