@@ -44,6 +44,10 @@ export default sbp('sbp/selectors/register', {
 
   async 'dez.controller/saveProviderSecret' (providerId: ProviderId, value: string): Promise<ProviderSettingsData> {
     await sbp('dez.native/saveProviderSecret', providerId, value)
+    // A newly-saved key may make a previously-failing provider work again;
+    // kick a fire-and-forget cache refresh so its `working` flips back to true
+    // and its models repopulate without blocking the settings workflow.
+    void sbp('dez.controller/modelCache/refresh')
     const providers = await sbp('dez.provider/infos') as ProviderInfo[]
     return {
       providers,
@@ -66,6 +70,9 @@ export default sbp('sbp/selectors/register', {
       await new Promise(resolve => setTimeout(resolve, 5000))
       const done = await sbp('dez.native/copilotPollDeviceFlow', flow.device_code) as boolean
       if (done) {
+        // Copilot just became configured/working; refresh the model cache in
+        // the background so its models repopulate without blocking sign-in.
+        void sbp('dez.controller/modelCache/refresh')
         const providers = await sbp('dez.provider/infos') as ProviderInfo[]
         return {
           providers,
