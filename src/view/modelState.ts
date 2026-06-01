@@ -16,6 +16,7 @@ export interface ViewModelState {
   settings: ComputedRef<SettingsSnapshot>
   prompts: ComputedRef<Prompt[]>
   modelCache: ComputedRef<ModelCache>
+  modelCacheRefreshing: ComputedRef<boolean>
   activeTabStreaming: ComputedRef<boolean>
   activeTabStreamError: ComputedRef<string | null>
 }
@@ -36,6 +37,9 @@ export function useModelState(): ViewModelState {
     // inside a computed tracks the underlying Pinia cache store, so the popup
     // re-renders live as the background refresh applies per-provider results.
     modelCache: computed(() => sbp('dez.model/modelCache/snapshot') as ModelCache),
+    // Reactive in-progress flag for the model cache refresh; drives the popup
+    // spinner. Reads the store ref so it stays reactive.
+    modelCacheRefreshing: computed(() => sbp('dez.model/modelCache/refreshing') as boolean),
     activeTabStreaming: computed(() => {
       const activeTabId = sbp('dez.model/tabs/activeId') as string
       return sbp('dez.model/streams/isStreaming', activeTabId) as boolean

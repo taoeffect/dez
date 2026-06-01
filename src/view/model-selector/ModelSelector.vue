@@ -15,7 +15,7 @@ interface GroupedModels {
   models: DisplayModel[]
 }
 
-const { activeModel, settings, modelCache } = useModelState()
+const { activeModel, settings, modelCache, modelCacheRefreshing } = useModelState()
 
 const isOpen = ref(false)
 const searchQuery = ref('')
@@ -256,9 +256,18 @@ onUnmounted(() => {
           No models found
         </div>
       </div>
-      <button class="model-dropdown-configure" @click="openProviderSettings">
-        Configure Providers
-      </button>
+      <div class="model-dropdown-footer">
+        <button class="model-dropdown-configure" @click="openProviderSettings">
+          Configure Providers
+        </button>
+        <!-- Spinner appears only while a background model-cache refresh runs,
+             signalling to the user that the model list is still updating. -->
+        <span
+          v-if="modelCacheRefreshing"
+          class="model-dropdown-spinner"
+          aria-label="Refreshing models"
+        ></span>
+      </div>
     </div>
   </div>
 </template>
@@ -451,10 +460,16 @@ onUnmounted(() => {
   opacity: 0.5;
 }
 
+.model-dropdown-footer {
+  display: flex;
+  align-items: center;
+  border-top: 1px solid var(--color-border);
+}
+
 .model-dropdown-configure {
+  flex: 1;
   padding: 8px;
   border: none;
-  border-top: 1px solid var(--color-border);
   background: transparent;
   color: var(--color-text);
   font-size: 12px;
@@ -467,5 +482,24 @@ onUnmounted(() => {
 
 .model-dropdown-configure:hover {
   opacity: 1;
+}
+
+/* Subtle CSS border spinner shown while a background model refresh runs.
+   Theme vars keep it visible in both light and dark themes. */
+.model-dropdown-spinner {
+  flex-shrink: 0;
+  width: 12px;
+  height: 12px;
+  margin-right: 10px;
+  border: 2px solid var(--color-border);
+  border-top-color: var(--color-text);
+  border-radius: 50%;
+  animation: model-dropdown-spin 0.7s linear infinite;
+}
+
+@keyframes model-dropdown-spin {
+  to {
+    transform: rotate(360deg);
+  }
 }
 </style>

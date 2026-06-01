@@ -768,6 +768,18 @@ export default sbp('sbp/selectors/register', {
     return cloneModelCache(useModelCacheStore().cache)
   },
 
+  // Drives the popup refresh spinner; set true while a background refresh batch
+  // runs and false when it finishes (see dez.controller/modelCache/refresh).
+  'dez.model/modelCache/setRefreshing' (value: boolean): void {
+    useModelCacheStore().refreshing = value
+  },
+
+  // Reactive read of the refresh flag. The view computed wraps this so reading
+  // the store ref keeps Vue dependency tracking live.
+  'dez.model/modelCache/refreshing' (): boolean {
+    return useModelCacheStore().refreshing
+  },
+
   // Models to show right now: only providers that are configured (in the passed
   // set) AND whose cached `working !== false`. A provider with no cache entry
   // contributes nothing until its first successful fetch.

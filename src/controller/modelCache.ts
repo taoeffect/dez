@@ -12,6 +12,10 @@ export default sbp('sbp/selectors/register', {
   async 'dez.controller/modelCache/refresh' (): Promise<void> {
     if (refreshInFlight) return refreshInFlight
 
+    // Flag set true for the whole shared batch (dedup means overlapping callers
+    // reuse refreshInFlight), cleared in finally to avoid spinner flicker.
+    sbp('dez.model/modelCache/setRefreshing', true)
+
     refreshInFlight = (async () => {
       const providers = await sbp('dez.provider/infos') as ProviderInfo[]
       const configured = providers.filter((provider) => provider.configured)
@@ -36,6 +40,7 @@ export default sbp('sbp/selectors/register', {
       await refreshInFlight
     } finally {
       refreshInFlight = null
+      sbp('dez.model/modelCache/setRefreshing', false)
     }
   },
 })
