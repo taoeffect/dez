@@ -33,6 +33,7 @@ export default sbp('sbp/selectors/register', {
     initPromise = (async () => {
       const state = await sbp('dez.model/settings/init')
       await sbp('dez.model/prompts/init')
+      await sbp('dez.model/modelCache/init')
 
       if (state && Array.isArray((state as { tabs?: unknown[] }).tabs)) {
         await sbp('dez.model/appState/restore', state)
@@ -40,9 +41,13 @@ export default sbp('sbp/selectors/register', {
 
       sbp('dez.model/settings/startPersistence')
       sbp('dez.model/prompts/startPersistence')
+      sbp('dez.model/modelCache/startPersistence')
       sbp('dez.controller/startUpdateChecker')
       startAppStateWatcher()
       initialized = true
+      // Warm the cache against real availability in the background so the model
+      // selector reconciles after startup without blocking init.
+      void sbp('dez.controller/modelCache/refresh')
     })()
 
     try {
@@ -62,6 +67,7 @@ export default sbp('sbp/selectors/register', {
     stopAppStateWatch = null
     sbp('dez.model/settings/stopPersistence')
     sbp('dez.model/prompts/stopPersistence')
+    sbp('dez.model/modelCache/stopPersistence')
     initialized = false
   },
 })
