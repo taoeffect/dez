@@ -26,8 +26,8 @@ const providers = ref<ProviderInfo[]>([])
 
 // Models to show right now, derived reactively from the persisted cache: only
 // providers that are currently configured AND whose cached `working !== false`.
-// This mirrors dez.model/modelCache/visibleModels but is computed locally so it
-// reactively combines the cache snapshot with the configured `providers` ref.
+// Computed locally because it must reactively combine the cache snapshot with
+// the async-loaded `providers` ref.
 const visibleModels = computed<ModelInfo[]>(() => {
   const configured = new Set<string>(
     providers.value.filter((provider) => provider.configured).map((provider) => provider.id),

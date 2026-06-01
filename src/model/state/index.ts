@@ -8,7 +8,7 @@ import { useSettingsStore, type DefaultModel, type SettingsSection, type Theme }
 import { useTabStore } from './tabs'
 import type { AppStatePayload, CachedProvider, ConversationSummary, ModelCache } from '../persistence/types'
 import { emptyModelCache } from '../persistence/modelCache'
-import type { ModelInfo, ProviderId, ProviderModelsResult } from '../providers/types'
+import type { ProviderId, ProviderModelsResult } from '../providers/types'
 import type { ActiveModel, ContentNode, Section, Tab } from '../chat/types'
 import {
   appendStreamingText,
@@ -778,21 +778,6 @@ export default sbp('sbp/selectors/register', {
   // the store ref keeps Vue dependency tracking live.
   'dez.model/modelCache/refreshing' (): boolean {
     return useModelCacheStore().refreshing
-  },
-
-  // Models to show right now: only providers that are configured (in the passed
-  // set) AND whose cached `working !== false`. A provider with no cache entry
-  // contributes nothing until its first successful fetch.
-  'dez.model/modelCache/visibleModels' (configuredProviderIds: ProviderId[]): ModelInfo[] {
-    const configured = new Set(configuredProviderIds)
-    const providers = useModelCacheStore().cache.providers
-    const visible: ModelInfo[] = []
-    for (const [key, entry] of Object.entries(providers)) {
-      if (!entry || entry.working === false) continue
-      if (!configured.has(key as ProviderId)) continue
-      for (const model of entry.models) visible.push({ ...model })
-    }
-    return visible
   },
 
   // Reconciliation primitive: on success replace models, mark working, and bump
