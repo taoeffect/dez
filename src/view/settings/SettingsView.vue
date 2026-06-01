@@ -1,11 +1,57 @@
 <script setup lang="ts">
-import { onMounted, ref } from 'vue'
+import { computed, onMounted, onUnmounted, nextTick, ref } from 'vue'
 import sbp from '@sbp/sbp'
 import { useModelState, type SettingsSection, type Theme } from '../modelState'
 import type { ModelInfo, ProviderInfo } from '../../model/providers'
 import PromptManager from '../prompts/PromptManager.vue'
+import ModelPicker from '../model-selector/ModelPicker.vue'
 
 const { settings } = useModelState()
+
+// Searchable picker for the "Default model for new tabs" setting, replacing the
+// old unsearchable native <select>. Reuses the same ModelPicker as the
+// bottom-left model selector so the two stay DRY.
+const defaultModelPickerOpen = ref(false)
+const defaultModelPickerEl = ref<HTMLElement | null>(null)
+const defaultModelPicker = ref<InstanceType<typeof ModelPicker> | null>(null)
+
+const defaultNewTabModelLabel = computed(() => {
+  const m = settings.value.defaultNewTabModel
+  if (!m) return 'None (use last used)'
+  const provider = providers.value.find((p) => p.id === m.providerId)
+  const providerName = provider?.name ?? m.providerId
+  const model = providerModels.value[m.providerId]?.find((x) => x.id === m.modelId)
+  return `${providerName} — ${model?.name ?? m.modelId}`
+})
+
+function toggleDefaultModelPicker() {
+  if (defaultModelPickerOpen.value) {
+    closeDefaultModelPicker()
+  } else {
+    defaultModelPickerOpen.value = true
+    nextTick(() => defaultModelPicker.value?.focus())
+  }
+}
+
+function closeDefaultModelPicker() {
+  defaultModelPickerOpen.value = false
+}
+
+function selectDefaultNewTabModel(model: ModelInfo) {
+  sbp('dez.model/settings/setDefaultNewTabModel', { providerId: model.provider, modelId: model.id })
+  closeDefaultModelPicker()
+}
+
+function clearDefaultNewTabModel() {
+  sbp('dez.model/settings/setDefaultNewTabModel', null)
+  closeDefaultModelPicker()
+}
+
+function onDefaultModelClickOutside(e: MouseEvent) {
+  if (defaultModelPickerEl.value && !defaultModelPickerEl.value.contains(e.target as Node)) {
+    closeDefaultModelPicker()
+  }
+}
 const sections: SettingsSection[] = ['general', 'providers', 'prompts', 'appearance']
 
 const providers = ref<ProviderInfo[]>([])
@@ -47,6 +93,11 @@ interface CopilotDeviceFlowViewState {
 
 onMounted(async () => {
   await loadProviders()
+  document.addEventListener('mousedown', onDefaultModelClickOutside)
+})
+
+onUnmounted(() => {
+  document.removeEventListener('mousedown', onDefaultModelClickOutside)
 })
 
 async function loadProviders() {
@@ -245,29 +296,26 @@ function onOverlayClick(e: MouseEvent) {
           <div v-if="settings.settingsSection === 'general'" class="settings-section">
             <div class="settings-row">
               <label class="settings-label">Default model for new tabs</label>
-              <select
-                class="settings-select"
-                :value="settings.defaultNewTabModel ? `${settings.defaultNewTabModel.providerId}:${settings.defaultNewTabModel.modelId}` : ''"
-                @change="
-                  (() => {
-                    const v = ($event.target as HTMLSelectElement).value
-                    if (!v) { sbp('dez.model/settings/setDefaultNewTabModel', null); return }
-                    const [pid, mid] = v.split(':')
-                    sbp('dez.model/settings/setDefaultNewTabModel', { providerId: pid, modelId: mid })
-                  })()
-                "
-              >
-                <option value="">None (use last used)</option>
-                <template v-for="provider in providers" :key="provider.id">
-                  <option
-                    v-for="model in (providerModels[provider.id] || [])"
-                    :key="model.id"
-                    :value="`${provider.id}:${model.id}`"
-                  >
-                    {{ provider.name }} — {{ model.name }}
-                  </option>
-                </template>
-              </select>
+              <div ref="defaultModelPickerEl" class="settings-model-picker">
+                <button class="settings-model-trigger" @click="toggleDefaultModelPicker">
+                  <span class="settings-model-trigger-label">{{ defaultNewTabModelLabel }}</span>
+                  <svg width="10" height="10" viewBox="0 0 10 10" fill="none" class="settings-model-chevron" :class="{ 'settings-model-chevron--open': defaultModelPickerOpen }">
+                    <path d="M2 4l3 3 3-3" stroke="currentColor" stroke-width="1.2" stroke-linecap="round" stroke-linejoin="round"/>
+                  </svg>
+                </button>
+                <div v-if="defaultModelPickerOpen" class="settings-model-dropdown">
+                  <ModelPicker
+                    ref="defaultModelPicker"
+                    :selected-provider-id="settings.defaultNewTabModel?.providerId ?? null"
+                    :selected-model-id="settings.defaultNewTabModel?.modelId ?? null"
+                    none-label="None (use last used)"
+                    :show-footer="false"
+                    @select="selectDefaultNewTabModel"
+                    @select-none="clearDefaultNewTabModel"
+                    @configure="closeDefaultModelPicker"
+                  />
+                </div>
+              </div>
             </div>
 
             <div class="settings-row">
@@ -445,6 +493,69 @@ function onOverlayClick(e: MouseEvent) {
   font-size: 13px;
   font-weight: 500;
   opacity: 0.8;
+}
+
+/* Searchable default-model picker (replaces the old native <select>). The
+   dropdown is absolutely positioned under the trigger and reuses ModelPicker. */
+.settings-model-picker {
+  position: relative;
+  flex: 1;
+  max-width: 320px;
+}
+
+.settings-model-trigger {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 6px;
+  width: 100%;
+  padding: 6px 10px;
+  border: 1px solid var(--color-border);
+  border-radius: 6px;
+  background: transparent;
+  color: var(--color-text);
+  font-size: 13px;
+  font-family: inherit;
+  cursor: pointer;
+  text-align: left;
+}
+
+.settings-model-trigger:hover {
+  border-color: var(--color-text);
+}
+
+.settings-model-trigger-label {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.settings-model-chevron {
+  flex-shrink: 0;
+  opacity: 0.6;
+  transition: transform 0.15s;
+}
+
+.settings-model-chevron--open {
+  transform: rotate(180deg);
+}
+
+.settings-model-dropdown {
+  position: absolute;
+  top: 100%;
+  right: 0;
+  width: 320px;
+  max-height: 320px;
+  margin-top: 4px;
+  background: var(--color-bg);
+  border: 1px solid var(--color-border);
+  border-radius: 8px;
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.2);
+  display: flex;
+  flex-direction: column;
+  z-index: 50;
 }
 
 .settings-input {

@@ -2,44 +2,14 @@
 import { ref, computed, onMounted, onUnmounted, nextTick } from 'vue'
 import sbp from '@sbp/sbp'
 import { useModelState } from '../modelState'
-import type { ModelInfo, ProviderInfo } from '../../model/providers'
+import type { ModelInfo } from '../../model/providers'
+import ModelPicker from './ModelPicker.vue'
 
-
-interface DisplayModel extends ModelInfo {
-  providerName: string
-}
-
-interface GroupedModels {
-  providerId: string
-  providerName: string
-  models: DisplayModel[]
-}
-
-const { activeModel, settings, modelCache, modelCacheRefreshing } = useModelState()
+const { activeModel } = useModelState()
 
 const isOpen = ref(false)
-const searchQuery = ref('')
-const searchInput = ref<HTMLInputElement | null>(null)
 const dropdownEl = ref<HTMLElement | null>(null)
-
-const providers = ref<ProviderInfo[]>([])
-
-// Models to show right now, derived reactively from the persisted cache: only
-// providers that are currently configured AND whose cached `working !== false`.
-// Computed locally because it must reactively combine the cache snapshot with
-// the async-loaded `providers` ref.
-const visibleModels = computed<ModelInfo[]>(() => {
-  const configured = new Set<string>(
-    providers.value.filter((provider) => provider.configured).map((provider) => provider.id),
-  )
-  const models: ModelInfo[] = []
-  for (const [providerId, entry] of Object.entries(modelCache.value.providers)) {
-    if (!entry || entry.working === false) continue
-    if (!configured.has(providerId)) continue
-    models.push(...entry.models)
-  }
-  return models
-})
+const picker = ref<InstanceType<typeof ModelPicker> | null>(null)
 
 const displayName = computed(() => {
   if (activeModel.value) {
@@ -47,84 +17,6 @@ const displayName = computed(() => {
   }
   return 'Select model'
 })
-
-function normalizeSearchText(value: string) {
-  return value.toLowerCase().replace(/[^a-z0-9]+/g, ' ').trim()
-}
-
-function fuzzyIncludes(text: string, query: string) {
-  let queryIndex = 0
-  for (let textIndex = 0; textIndex < text.length && queryIndex < query.length; textIndex += 1) {
-    if (text[textIndex] === query[queryIndex]) queryIndex += 1
-  }
-  return queryIndex === query.length
-}
-
-function fieldMatches(fields: string[], queryTerms: string[]) {
-  if (!queryTerms.length) return true
-  const normalizedFields = fields.map(normalizeSearchText).filter(Boolean)
-  const combined = normalizedFields.join(' ')
-
-  return queryTerms.every((term) =>
-    normalizedFields.some((field) => field.includes(term) || fuzzyIncludes(field, term)) ||
-    combined.includes(term) ||
-    fuzzyIncludes(combined, term),
-  )
-}
-
-const filteredGrouped = computed<GroupedModels[]>(() => {
-  const queryTerms = normalizeSearchText(searchQuery.value).split(/\s+/).filter(Boolean)
-  const groups: GroupedModels[] = []
-
-  const providerById = new Map(providers.value.map((provider) => [provider.id, provider]))
-  const providerMatches = (provider: ProviderInfo) =>
-    fieldMatches([provider.name, provider.id], queryTerms)
-  const modelMatches = (m: ModelInfo, provider: ProviderInfo | undefined) => {
-    const fields = provider
-      ? [provider.name, provider.id, m.name, m.id]
-      : [m.provider, m.name, m.id]
-    return fieldMatches(fields, queryTerms)
-  }
-  const toDisplayModel = (m: ModelInfo): DisplayModel => ({
-    ...m,
-    providerName: providerById.get(m.provider)?.name ?? m.provider,
-  })
-
-  const favModels: DisplayModel[] = []
-  for (const fav of settings.value.favorites) {
-    const m = visibleModels.value.find(
-      (x) => x.provider === fav.providerId && x.id === fav.modelId,
-    )
-    if (m && modelMatches(m, providerById.get(m.provider))) favModels.push(toDisplayModel(m))
-  }
-  if (favModels.length > 0) {
-    groups.push({ providerId: '__favorites__', providerName: 'Favorites', models: favModels })
-  }
-
-  for (const provider of providers.value) {
-    if (!provider.configured) continue
-    const matchesProvider = providerMatches(provider)
-    const models = visibleModels.value
-      .filter((m) => m.provider === provider.id)
-      .filter((m) => matchesProvider || modelMatches(m, provider))
-      .map(toDisplayModel)
-    if (models.length > 0) {
-      groups.push({ providerId: provider.id, providerName: provider.name, models })
-    }
-  }
-  return groups
-})
-
-// Load the configured-provider set + group names. Provider "configured" status
-// depends on native key presence (async) and is not reactive, so it is
-// refreshed on each open rather than tracked as reactive state.
-async function loadProviders() {
-  try {
-    providers.value = await sbp('dez.provider/infos') as ProviderInfo[]
-  } catch (e) {
-    console.error('Failed to load providers:', e)
-  }
-}
 
 function toggle() {
   if (isOpen.value) {
@@ -134,38 +26,18 @@ function toggle() {
   }
 }
 
-async function open() {
+function open() {
   isOpen.value = true
-  searchQuery.value = ''
-  // Show cached models immediately. We only await the cheap configured-provider
-  // fetch (no model network calls); cached visibleModels render right away and
-  // the background refresh below reconciles them in place as results land.
-  await loadProviders()
-  void sbp('dez.controller/modelCache/refresh')
-  nextTick(() => {
-    searchInput.value?.focus()
-  })
+  nextTick(() => picker.value?.focus())
 }
 
 function close() {
   isOpen.value = false
-  searchQuery.value = ''
 }
 
 function selectModel(model: ModelInfo) {
   sbp('dez.model/setActiveModel', model.provider, model.id, model.name)
   close()
-}
-
-function toggleFavorite(model: ModelInfo, e: MouseEvent) {
-  e.stopPropagation()
-  sbp('dez.model/settings/toggleFavorite', model.provider, model.id)
-}
-
-function isFavorite(model: ModelInfo) {
-  return settings.value.favorites.some(
-    (favorite) => favorite.providerId === model.provider && favorite.modelId === model.id,
-  )
 }
 
 function openProviderSettings() {
@@ -216,59 +88,14 @@ onUnmounted(() => {
     </div>
 
     <div v-if="isOpen" class="model-dropdown">
-      <div class="model-dropdown-search">
-        <input
-          ref="searchInput"
-          v-model="searchQuery"
-          type="text"
-          class="model-dropdown-input"
-          placeholder="Search models…"
-          @keydown.escape.stop="close"
-        />
-      </div>
-      <div class="model-dropdown-list">
-        <template v-if="filteredGrouped.length">
-          <div v-for="group in filteredGrouped" :key="group.providerId" class="model-group">
-            <div class="model-group-header">{{ group.providerName }}</div>
-            <button
-              v-for="model in group.models"
-              :key="group.providerId + ':' + model.id"
-              class="model-item"
-              :class="{ 'model-item--active': activeModel?.modelId === model.id && activeModel?.providerId === model.provider }"
-              @click="selectModel(model)"
-            >
-              <span
-                class="model-item-star"
-                :class="{ 'model-item-star--on': isFavorite(model) }"
-                :title="isFavorite(model) ? 'Unfavorite' : 'Favorite'"
-                @click="toggleFavorite(model, $event)"
-              >
-                <svg width="12" height="12" viewBox="0 0 12 12" fill="none">
-                  <path d="M6 1.5l1.4 2.9 3.1.4-2.3 2.2.6 3.1L6 8.6l-2.8 1.5.6-3.1L1.5 4.8l3.1-.4L6 1.5z" :fill="isFavorite(model) ? 'currentColor' : 'none'" stroke="currentColor" stroke-width="1" stroke-linejoin="round"/>
-                </svg>
-              </span>
-              <span class="model-item-name">{{ model.name }}</span>
-              <span class="model-item-provider">{{ model.providerName }}</span>
-            </button>
-          </div>
-        </template>
-        <div v-else class="model-dropdown-empty">
-          No models found
-        </div>
-      </div>
-      <div class="model-dropdown-footer">
-        <button class="model-dropdown-configure" @click="openProviderSettings">
-          Configure Providers
-        </button>
-        <!-- Spinner signals an in-progress background model-cache refresh.
-             Kept in the layout always (visibility toggled) so its width never
-             shifts the centered "Configure Providers" text. -->
-        <span
-          class="model-dropdown-spinner"
-          :class="{ 'is-hidden': !modelCacheRefreshing }"
-          aria-label="Refreshing models"
-        ></span>
-      </div>
+      <ModelPicker
+        ref="picker"
+        :selected-provider-id="activeModel?.providerId ?? null"
+        :selected-model-id="activeModel?.modelId ?? null"
+        show-favorites
+        @select="selectModel"
+        @configure="openProviderSettings"
+      />
     </div>
   </div>
 </template>
@@ -350,163 +177,5 @@ onUnmounted(() => {
   flex-direction: column;
   margin-bottom: 4px;
   z-index: 50;
-}
-
-.model-dropdown-search {
-  padding: 8px;
-  border-bottom: 1px solid var(--color-border);
-}
-
-.model-dropdown-input {
-  width: 100%;
-  padding: 6px 8px;
-  border: 1px solid var(--color-border);
-  border-radius: 6px;
-  background: transparent;
-  color: var(--color-text);
-  font-size: 13px;
-  font-family: inherit;
-  outline: none;
-  box-sizing: border-box;
-}
-
-.model-dropdown-input:focus {
-  border-color: var(--color-text);
-}
-
-.model-dropdown-list {
-  flex: 1;
-  overflow-y: auto;
-  padding: 4px;
-}
-
-.model-group-header {
-  font-size: 11px;
-  font-weight: 600;
-  text-transform: uppercase;
-  letter-spacing: 0.05em;
-  color: var(--color-text);
-  opacity: 0.5;
-  padding: 6px 8px 2px;
-}
-
-.model-item {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  width: 100%;
-  padding: 6px 8px;
-  border: none;
-  border-radius: 4px;
-  background: transparent;
-  color: var(--color-text);
-  font-size: 13px;
-  font-family: inherit;
-  cursor: pointer;
-  text-align: left;
-  transition: background 0.1s;
-}
-
-.model-item:hover {
-  background: var(--color-border);
-}
-
-.model-item--active {
-  background: var(--color-border);
-  font-weight: 500;
-}
-
-.model-item-name {
-  flex: 1;
-  min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.model-item-star {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  width: 18px;
-  height: 18px;
-  margin-right: 6px;
-  border-radius: 3px;
-  color: var(--color-text);
-  opacity: 0.3;
-  transition: opacity 0.1s, color 0.1s;
-  flex-shrink: 0;
-}
-
-.model-item-star:hover {
-  opacity: 0.9;
-}
-
-.model-item-star--on {
-  opacity: 1;
-  color: #e0b34a;
-}
-
-.model-item-provider {
-  font-size: 11px;
-  opacity: 0.5;
-  flex-shrink: 0;
-  margin-left: 8px;
-}
-
-.model-dropdown-empty {
-  padding: 16px;
-  text-align: center;
-  font-size: 13px;
-  opacity: 0.5;
-}
-
-.model-dropdown-footer {
-  display: flex;
-  align-items: center;
-  border-top: 1px solid var(--color-border);
-}
-
-.model-dropdown-configure {
-  flex: 1;
-  padding: 8px;
-  border: none;
-  background: transparent;
-  color: var(--color-text);
-  font-size: 12px;
-  font-family: inherit;
-  cursor: pointer;
-  opacity: 0.6;
-  transition: opacity 0.15s;
-  text-align: center;
-}
-
-.model-dropdown-configure:hover {
-  opacity: 1;
-}
-
-/* Subtle CSS border spinner shown while a background model refresh runs.
-   Theme vars keep it visible in both light and dark themes. */
-.model-dropdown-spinner {
-  flex-shrink: 0;
-  width: 12px;
-  height: 12px;
-  margin-right: 10px;
-  border: 2px solid var(--color-border);
-  border-top-color: var(--color-text);
-  border-radius: 50%;
-  animation: model-dropdown-spin 0.7s linear infinite;
-}
-
-/* Hidden but still occupies layout space, preventing the centered configure
-   text from shifting when the spinner toggles. */
-.model-dropdown-spinner.is-hidden {
-  visibility: hidden;
-}
-
-@keyframes model-dropdown-spin {
-  to {
-    transform: rotate(360deg);
-  }
 }
 </style>
