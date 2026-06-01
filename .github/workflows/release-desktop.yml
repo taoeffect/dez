@@ -10,8 +10,19 @@ permissions:
 
 jobs:
   build-linux-appimage:
-    name: Build Linux AppImage
-    runs-on: ubuntu-22.04
+    name: Build Linux AppImage (${{ matrix.arch }})
+    runs-on: ${{ matrix.runner }}
+
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - arch: x86_64
+            runner: ubuntu-22.04
+            artifact: dez-linux-x86_64-appimage
+          - arch: arm64
+            runner: ubuntu-22.04-arm
+            artifact: dez-linux-arm64-appimage
 
     steps:
       - name: Checkout
@@ -46,11 +57,25 @@ jobs:
       - name: Build AppImage
         run: npm run build:linux:appimage
 
+      - name: Stage AppImage release asset
+        run: |
+          mkdir -p release-assets
+          version="${GITHUB_REF_NAME#v}"
+          appimages=(src-tauri/target/release/bundle/appimage/*.AppImage)
+
+          if [ "${#appimages[@]}" -ne 1 ] || [ ! -f "${appimages[0]}" ]; then
+            echo "Expected exactly one AppImage, found ${#appimages[@]}"
+            printf '%s\n' "${appimages[@]}"
+            exit 1
+          fi
+
+          cp "${appimages[0]}" "release-assets/Dez_${version}_linux_${{ matrix.arch }}.AppImage"
+
       - name: Upload AppImage artifact
         uses: actions/upload-artifact@v4
         with:
-          name: dez-linux-appimage
-          path: src-tauri/target/release/bundle/appimage/*.AppImage
+          name: ${{ matrix.artifact }}
+          path: release-assets/*.AppImage
           if-no-files-found: error
 
   build-macos-dmg:
@@ -104,10 +129,16 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Download AppImage artifact
+      - name: Download x86_64 AppImage artifact
         uses: actions/download-artifact@v4
         with:
-          name: dez-linux-appimage
+          name: dez-linux-x86_64-appimage
+          path: release-assets
+
+      - name: Download ARM64 AppImage artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: dez-linux-arm64-appimage
           path: release-assets
 
       - name: Download DMG artifact

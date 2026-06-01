@@ -33,13 +33,13 @@ Install dependencies before packaging:
 npm ci
 ```
 
-Build a Linux AppImage on Linux:
+Build a Linux AppImage on Linux for the current machine architecture:
 
 ```bash
 npm run build:linux:appimage
 ```
 
-The AppImage is written under `src-tauri/target/release/bundle/appimage/`.
+The AppImage is written under `src-tauri/target/release/bundle/appimage/`. A local Linux build is native to the host machine, so run it on x86_64 Linux for an x86_64 AppImage or on ARM64 Linux for an ARM64 AppImage.
 
 Build an Apple Silicon macOS DMG on macOS:
 
@@ -64,7 +64,7 @@ git tag v0.1.0
 git push origin v0.1.0
 ```
 
-The workflow builds the Linux AppImage on Ubuntu, builds the Apple Silicon DMG on macOS, creates the GitHub Release for the tag if needed, and attaches both files as downloadable release assets. Every release tag should have both artifacts.
+The workflow builds Linux x86_64 and Linux ARM64 AppImages on Ubuntu, builds the Apple Silicon DMG on macOS, creates the GitHub Release for the tag if needed, and attaches all release assets. Linux downloads are labeled by architecture, for example `Dez_0.1.0_linux_x86_64.AppImage` and `Dez_0.1.0_linux_arm64.AppImage`; ARM users should choose the `arm64` AppImage.
 
 ## macOS unsigned build note
 

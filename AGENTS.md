@@ -24,7 +24,7 @@ npm run test:watch
 
 # Platform packaging
 npm run build:desktop          # native bundle for the current platform only
-npm run build:linux:appimage   # Linux AppImage; Linux only
+npm run build:linux:appimage   # Linux AppImage for host arch; Linux only
 npm run build:macos:dmg        # Apple Silicon macOS DMG; macOS only
 
 # Version bump
@@ -41,7 +41,7 @@ cd src-tauri && cargo check
 cd src-tauri && cargo test
 ```
 
-Tagged releases are driven by `.github/workflows/release-desktop.yml`: pushing a `v*` tag builds a Linux AppImage on Ubuntu, an unsigned Apple Silicon DMG on macOS, creates the GitHub Release if needed, and uploads both artifacts.
+Tagged releases are driven by `.github/workflows/release-desktop.yml`: pushing a `v*` tag builds Linux x86_64 and Linux ARM64 AppImages on Ubuntu, an unsigned Apple Silicon DMG on macOS, creates the GitHub Release if needed, and uploads all artifacts. Linux release asset names include the architecture, e.g. `Dez_<version>_linux_x86_64.AppImage` and `Dez_<version>_linux_arm64.AppImage`.
 
 Frontend unit tests use Vitest with colocated `*.test.ts` files. Observed automated tests include Rust unit tests in `src-tauri/src/commands.rs`.
 

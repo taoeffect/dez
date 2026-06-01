@@ -3,11 +3,13 @@ import { spawnSync } from 'node:child_process';
 const commands = {
   linux: {
     build: ['npm', ['run', 'build:linux:appimage']],
-    otherPlatform: 'macOS Apple Silicon DMG builds must run on macOS or the tagged-release workflow.'
+    otherPlatform: 'macOS Apple Silicon DMG builds must run on macOS or the tagged-release workflow.',
+    releaseNote: 'This local AppImage is for the current Linux host architecture only.'
   },
   darwin: {
     build: ['npm', ['run', 'build:macos:dmg']],
-    otherPlatform: 'Linux AppImage builds must run on Linux or the tagged-release workflow.'
+    otherPlatform: 'Linux AppImage builds must run on Linux or the tagged-release workflow.',
+    releaseNote: 'This local DMG is for Apple Silicon macOS only.'
   }
 };
 
@@ -26,5 +28,6 @@ if (result.status !== 0) {
   process.exit(result.status ?? 1);
 }
 
+console.log(command.releaseNote);
 console.log(command.otherPlatform);
-console.log('Use the tagged-release workflow to build both desktop artifacts for a release.');
+console.log('Use the tagged-release workflow to build all release artifacts.');
