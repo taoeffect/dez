@@ -260,11 +260,12 @@ onUnmounted(() => {
         <button class="model-dropdown-configure" @click="openProviderSettings">
           Configure Providers
         </button>
-        <!-- Spinner appears only while a background model-cache refresh runs,
-             signalling to the user that the model list is still updating. -->
+        <!-- Spinner signals an in-progress background model-cache refresh.
+             Kept in the layout always (visibility toggled) so its width never
+             shifts the centered "Configure Providers" text. -->
         <span
-          v-if="modelCacheRefreshing"
           class="model-dropdown-spinner"
+          :class="{ 'is-hidden': !modelCacheRefreshing }"
           aria-label="Refreshing models"
         ></span>
       </div>
@@ -495,6 +496,12 @@ onUnmounted(() => {
   border-top-color: var(--color-text);
   border-radius: 50%;
   animation: model-dropdown-spin 0.7s linear infinite;
+}
+
+/* Hidden but still occupies layout space, preventing the centered configure
+   text from shifting when the spinner toggles. */
+.model-dropdown-spinner.is-hidden {
+  visibility: hidden;
 }
 
 @keyframes model-dropdown-spin {
