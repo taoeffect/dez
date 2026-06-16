@@ -8,6 +8,7 @@ export interface OpenAiChatRequestBody {
     content: string
   }[]
   stream: boolean
+  [key: string]: unknown
 }
 
 export function bearerJsonRequest(secret: Secret<string>): HttpFetchOptions {
@@ -19,8 +20,13 @@ export function bearerJsonRequest(secret: Secret<string>): HttpFetchOptions {
   }
 }
 
-export function openAiChatBody(messages: ChatMessage[], model: string): OpenAiChatRequestBody {
+export function openAiChatBody(
+  messages: ChatMessage[],
+  model: string,
+  extraBody: Record<string, unknown> = {},
+): OpenAiChatRequestBody {
   return {
+    ...extraBody,
     model,
     messages: messages.map((message) => ({
       role: message.role === 'agent' ? 'assistant' : message.role,
@@ -35,6 +41,7 @@ export function openAiChatRequest(
   messages: ChatMessage[],
   model: string,
   extraHeaders: Record<string, string> = {},
+  extraBody: Record<string, unknown> = {},
 ): HttpFetchOptions {
   return {
     method: 'POST',
@@ -43,6 +50,6 @@ export function openAiChatRequest(
       'Content-Type': 'application/json',
       ...extraHeaders,
     },
-    body: JSON.stringify(openAiChatBody(messages, model)),
+    body: JSON.stringify(openAiChatBody(messages, model, extraBody)),
   }
 }

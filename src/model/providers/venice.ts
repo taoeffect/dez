@@ -4,6 +4,13 @@ import { providerModel, type ModelInfo, type ProviderSpec } from './types'
 
 const VENICE_API_BASE = 'https://api.venice.ai/api/v1'
 
+export const VENICE_CHAT_PARAMETERS = {
+  include_venice_system_prompt: false,
+  enable_web_search: 'on',
+  enable_x_search: true,
+  enable_web_scraping: true,
+} as const
+
 export const veniceProvider: ProviderSpec = {
   id: 'venice',
   name: 'Venice',

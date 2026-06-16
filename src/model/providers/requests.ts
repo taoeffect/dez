@@ -4,6 +4,7 @@ import { anthropicChatRequest } from './anthropicCompatible'
 import { copilotHeaders } from './copilot'
 import { openAiChatRequest } from './openaiCompatible'
 import type { ChatMessage, ProviderId, ProviderSpec } from './types'
+import { VENICE_CHAT_PARAMETERS } from './venice'
 
 export type ProviderStreamProtocol = 'openai' | 'anthropic'
 
@@ -25,6 +26,7 @@ export function providerChatRequest(
       messages,
       modelId,
       providerId === 'copilot' ? copilotHeaders : {},
+      providerId === 'venice' ? { venice_parameters: VENICE_CHAT_PARAMETERS } : {},
     )
 
   return nativeRequestFromFetch(spec.chatUrl, options)
