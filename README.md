@@ -17,6 +17,7 @@ Talk with AI in a fully editable plaintext document. Inspired by Zed's text thre
 - **Saved prompts** — selectable via `/prompt` shortcut (Zed-style)
 - **Inline editing** — edit any message in a thread, including agent responses
 - **Text pill separators** — toggleable "User" / "Agent" labels between messages
+- **Multiple simultaneous responses** — Ask different AIs the same question across multiple tabs at once
 - **Conversation history** — persisted locally with the ability to browse and delete past conversations
 - **Multiple cursors** - <kbd>Ctrl+Shift+Up</kbd> and <kbd>Ctrl+Shift+Down</kbd> adds cursors above and below
 - **Web search & URL scraping** - on Venice-based models
