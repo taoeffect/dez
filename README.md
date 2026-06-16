@@ -19,6 +19,8 @@ Talk with AI in a fully editable plaintext document. Inspired by Zed's text thre
 - **Text pill separators** — toggleable "User" / "Agent" labels between messages
 - **Conversation history** — persisted locally with the ability to browse and delete past conversations
 - **Multiple cursors** - <kbd>Ctrl+Shift+Up</kbd> and <kbd>Ctrl+Shift+Down</kbd> adds cursors above and below
+- **Web search & URL scraping** - on Venice-based models
+- **X search** - Via Grok models on Venice
 - **Cross-platform** — macOS and Linux
 
 ## UI
