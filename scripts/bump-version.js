@@ -3,12 +3,21 @@ import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 const rawVersion = process.argv[2];
-const version = rawVersion?.replace(/^v/i, '');
 
-if (!version) {
-  console.error('Usage: node scripts/bump-version.js <version>');
-  process.exit(1);
+if (!rawVersion) {
+  console.log(`Bump the app version across npm, Tauri, and Cargo files.
+
+Usage:
+  npm run bump-version -- <version>
+  node scripts/bump-version.js <version>
+
+Example:
+  npm run bump-version -- 0.6.1
+  node scripts/bump-version.js v0.6.1`);
+  process.exit(0);
 }
+
+const version = rawVersion.replace(/^v/i, '');
 
 if (!/^\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?(?:\+[0-9A-Za-z.-]+)?$/.test(version)) {
   console.error(`Invalid version: ${rawVersion}`);
