@@ -64,8 +64,8 @@ export default sbp('sbp/selectors/register', {
     return invoke<string>('load_conversation_file', { id })
   },
 
-  'dez.native/listConversationFiles' (): Promise<ConversationFile[]> {
-    return invoke<ConversationFile[]>('list_conversation_files')
+  'dez.native/listConversationFiles' (includeContent: boolean): Promise<ConversationFile[]> {
+    return invoke<ConversationFile[]>('list_conversation_files', { includeContent })
   },
 
   'dez.native/deleteConversationFile' (id: string): Promise<void> {

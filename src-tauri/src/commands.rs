@@ -166,8 +166,8 @@ pub async fn load_conversation_file(id: String) -> Result<String, String> {
 }
 
 #[tauri::command]
-pub async fn list_conversation_files() -> Result<Vec<ConversationFile>, String> {
-    Ok(crate::persistence::list_conversation_files())
+pub async fn list_conversation_files(include_content: bool) -> Result<Vec<ConversationFile>, String> {
+    Ok(crate::persistence::list_conversation_files(include_content))
 }
 
 #[tauri::command]
