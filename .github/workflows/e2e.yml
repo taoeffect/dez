@@ -1,0 +1,84 @@
+name: E2E UI tests
+
+on:
+  pull_request:
+  push:
+    branches:
+      - master
+
+concurrency:
+  group: e2e-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+jobs:
+  e2e:
+    name: E2E (Linux, WebDriver)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+
+    env:
+      # Pin the native WebDriver so tauri-driver never has to guess its
+      # location; the webkit2gtk-driver apt package installs it here.
+      DEZ_E2E_NATIVE_DRIVER: /usr/bin/WebKitWebDriver
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Install frontend dependencies
+        run: npm ci
+
+      # Fail fast on harness/spec type errors before the slow native steps
+      # (apt + cargo + tauri build). Needs only the npm-installed typescript.
+      - name: Type-check E2E harness
+        run: npm run typecheck:e2e
+
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      # Must run before `cargo install tauri-driver` so the installed
+      # binary (in ~/.cargo/bin) and the build target dir are cached.
+      - name: Rust cache
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: src-tauri
+
+      - name: Install tauri-driver
+        run: cargo install tauri-driver --locked
+
+      - name: Install Tauri Linux dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            build-essential \
+            file \
+            libwebkit2gtk-4.1-dev \
+            libgtk-3-dev \
+            libxdo-dev \
+            libssl-dev \
+            libayatana-appindicator3-dev \
+            librsvg2-dev \
+            patchelf \
+            xdg-utils \
+            webkit2gtk-driver \
+            xvfb
+
+      - name: Build debug app (no bundle)
+        run: npm run tauri build -- --debug --no-bundle
+
+      - name: Run E2E tests under Xvfb
+        run: xvfb-run -a npm run test:e2e
+
+      - name: Upload failure screenshots
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: e2e-failure-screenshots
+          path: tests/e2e/artifacts/*.png
+          if-no-files-found: ignore
