@@ -21,7 +21,11 @@ const emit = defineEmits<{
 const closing = ref(false)
 const paused = ref(false)
 const progressOnPause = ref<number | null>(null)
-let closeTimer: ReturnType<typeof window.setTimeout> | null = null
+// Explicit `number` (the browser's real timer id type) instead of
+// `ReturnType<typeof window.setTimeout>`: when @types/node is hoisted into
+// the root node_modules (e.g. by webdriverio's install), TypeScript resolves
+// that query to NodeJS.Timeout and the window.setTimeout assignment breaks.
+let closeTimer: number | null = null
 let pauseStartedAt = 0
 
 const showCloseButton = computed(() => props.data.closeable !== false)

@@ -22,6 +22,13 @@ npm test
 # Frontend unit tests in watch mode
 npm run test:watch
 
+# E2E UI tests (WebDriver driving the real Tauri app; Linux only, needs
+# tauri-driver + WebKitWebDriver; build the debug binary first)
+npm run test:e2e
+
+# Type-check the e2e harness and specs (not covered by `npm run build`)
+npm run typecheck:e2e
+
 # Platform packaging
 npm run build:desktop          # native bundle for the current platform only
 npm run build:linux:appimage   # Linux AppImage for host arch; Linux only
@@ -202,4 +209,6 @@ Brief comments are encouraged above functions that do anything non-trivial expla
 - Run `npm test` after frontend logic changes, especially persistence or editor helper changes covered by colocated `*.test.ts` files.
 - Run `cd src-tauri && cargo check` after significant Rust changes for feedback.
 - Run `cd src-tauri && cargo test` when touching Rust logic with tests, including the release/update helpers in `src-tauri/src/commands.rs`.
+- Run `npm run test:e2e` after UI behavior changes covered by the WebDriver e2e specs under `tests/e2e/` (Linux only; requires the debug binary, `tauri-driver`, and `WebKitWebDriver`).
+- Run `npm run typecheck:e2e` after changing the e2e harness or specs; `npm run build` does not type-check files under `tests/e2e/`.
 - Use type-check/build and targeted manual verification via `npm run tauri dev` when UI behavior changes beyond unit-testable helper logic.

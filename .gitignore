@@ -27,3 +27,6 @@ dist-ssr
 /REVIEW.md
 /CLAUDE.md
 /.claude/
+
+# E2E failure screenshots
+/tests/e2e/artifacts/

@@ -11,6 +11,8 @@
     "build:macos:app": "tauri build --target aarch64-apple-darwin --bundles app",
     "build:desktop": "node scripts/build-desktop.js",
     "test": "vitest run",
+    "test:e2e": "vitest run --config vitest.e2e.config.ts",
+    "typecheck:e2e": "tsc -p tsconfig.e2e.json --noEmit",
     "test:watch": "vitest",
     "bump-version": "node scripts/bump-version.js",
     "preview": "vite preview",
@@ -41,6 +43,7 @@
     "typescript": "~5.6.2",
     "vite": "6.4.1",
     "vitest": "4.1.5",
-    "vue-tsc": "2.1.10"
+    "vue-tsc": "2.1.10",
+    "webdriverio": "9.29.1"
   }
 }
