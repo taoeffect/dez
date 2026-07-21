@@ -4,7 +4,10 @@ use std::path::PathBuf;
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ConversationFile {
     pub id: String,
-    pub content: String,
+    // None when the listing was requested without contents (metadata-only
+    // mode); serializes as `content: null` so TypeScript can distinguish
+    // "not requested" from an empty file.
+    pub content: Option<String>,
     #[serde(rename = "updatedAt")]
     pub updated_at: i64,
 }
@@ -93,7 +96,10 @@ pub fn load_conversation_file(id: &str) -> Result<String, String> {
     std::fs::read_to_string(&path).map_err(|e| format!("Read error: {}", e))
 }
 
-pub fn list_conversation_files() -> Vec<ConversationFile> {
+// Lists saved conversations. With `include_content: false` only file metadata
+// is stat'd (no file reads), letting the frontend fetch contents just for the
+// files its search cache considers stale.
+pub fn list_conversation_files(include_content: bool) -> Vec<ConversationFile> {
     let dir = conversations_dir();
     if !dir.exists() {
         return Vec::new();
@@ -112,8 +118,20 @@ pub fn list_conversation_files() -> Vec<ConversationFile> {
             Some(s) => s.to_string(),
             None => continue,
         };
-        let Ok(content) = std::fs::read_to_string(&path) else { continue };
+        // Stat mtime BEFORE reading content: the frontend's search cache keys
+        // parsed content by this timestamp, so if a save lands between the two
+        // operations the content must be same-or-newer than the recorded
+        // mtime. That way the next listing sees a newer mtime and re-parses
+        // (self-correcting). Read-before-stat would instead pair pre-save
+        // content with the post-save mtime, pinning stale text in the cache
+        // until the file's next save.
         let updated_at = file_updated_at(&path, 0);
+        let content = if include_content {
+            let Ok(text) = std::fs::read_to_string(&path) else { continue };
+            Some(text)
+        } else {
+            None
+        };
         out.push(ConversationFile {
             id,
             content,

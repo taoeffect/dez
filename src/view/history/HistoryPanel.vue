@@ -1,33 +1,30 @@
 <script setup lang="ts">
-import { computed, onMounted, ref } from 'vue'
+import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import sbp from '@sbp/sbp'
-import type { ConversationSummary } from '../../model/persistence/types'
+import { debounce } from 'turtledash'
+import type { ConversationSearchOutcome, ConversationSearchResult } from '../../model/persistence/types'
 
 const emit = defineEmits<{
   close: []
 }>()
 
-const conversations = ref<ConversationSummary[]>([])
+const conversations = ref<ConversationSearchResult[]>([])
+// Count of all saved conversations for the header. Every search returns it
+// alongside the filtered results (it's query-independent), and it's kept
+// current on delete.
+const totalCount = ref(0)
 const search = ref('')
 const sortMode = ref<'recent' | 'alphabetical'>('recent')
 const loading = ref(false)
 const error = ref<string | null>(null)
 const pendingDeleteId = ref<string | null>(null)
 
-const filteredConversations = computed(() => {
-  const q = search.value.trim().toLowerCase()
-  const filtered = q
-    ? conversations.value.filter((conversation) => {
-        const haystack = [
-          conversation.title,
-          conversation.model ?? '',
-          conversation.preview,
-        ].join('\n').toLowerCase()
-        return haystack.includes(q)
-      })
-    : conversations.value
+// Monotonic id per search call so a slow older search can't overwrite the
+// results of a newer one after typing.
+let searchSeq = 0
 
-  return [...filtered].sort((a, b) => {
+const sortedConversations = computed(() => {
+  return [...conversations.value].sort((a, b) => {
     if (sortMode.value === 'alphabetical') {
       return displayTitle(a).localeCompare(displayTitle(b))
     }
@@ -35,15 +32,42 @@ const filteredConversations = computed(() => {
   })
 })
 
+// Full-text search over saved conversations through the model boundary. The
+// selector logs failures and returns an empty outcome, so no error UI is
+// driven from here.
+async function runSearch() {
+  const seq = ++searchSeq
+  const { total, results } = await sbp('dez.model/conversations/search', search.value) as ConversationSearchOutcome
+  if (seq !== searchSeq) return
+  totalCount.value = total
+  conversations.value = results
+}
+
+// Keystroke path: debounced so fast typing coalesces into one search, and no
+// loading flag so the Refresh button doesn't flicker on every keystroke.
+const debouncedSearch = debounce(() => {
+  void runSearch()
+}, 150)
+
+watch(search, () => {
+  debouncedSearch()
+})
+
 onMounted(() => {
   void loadConversations()
 })
 
+onBeforeUnmount(() => {
+  debouncedSearch.clear()
+})
+
+// Mount/Refresh path: same search plus the loading flag and error UI. The
+// catch is defensive only — search failures are handled in the model layer.
 async function loadConversations() {
   loading.value = true
   error.value = null
   try {
-    conversations.value = await sbp('dez.model/conversations/list') as ConversationSummary[]
+    await runSearch()
   } catch (e) {
     console.error('Failed to load history:', e)
     error.value = `Failed to load history: ${e}`
@@ -52,7 +76,7 @@ async function loadConversations() {
   }
 }
 
-function displayTitle(conversation: ConversationSummary): string {
+function displayTitle(conversation: ConversationSearchResult): string {
   return conversation.title.trim() || 'Untitled conversation'
 }
 
@@ -85,6 +109,7 @@ async function confirmDelete(id: string) {
   await sbp('dez.model/tabs/deleteConversation', id)
   pendingDeleteId.value = null
   conversations.value = conversations.value.filter((conversation) => conversation.id !== id)
+  totalCount.value = Math.max(0, totalCount.value - 1)
 }
 
 function onOverlayClick(e: MouseEvent) {
@@ -100,7 +125,7 @@ function onOverlayClick(e: MouseEvent) {
       <div class="history-header">
         <div>
           <h2>Conversation History</h2>
-          <p>{{ conversations.length }} saved conversations</p>
+          <p>{{ totalCount }} saved conversations</p>
         </div>
         <button class="history-close" title="Close (Esc)" @click="emit('close')">×</button>
       </div>
@@ -126,12 +151,12 @@ function onOverlayClick(e: MouseEvent) {
       <div v-if="loading && !conversations.length" class="history-empty">
         Loading history…
       </div>
-      <div v-else-if="!filteredConversations.length" class="history-empty">
+      <div v-else-if="!sortedConversations.length" class="history-empty">
         {{ search.trim() ? 'No matching conversations.' : 'No saved conversations yet.' }}
       </div>
       <ul v-else class="history-list">
         <li
-          v-for="conversation in filteredConversations"
+          v-for="conversation in sortedConversations"
           :key="conversation.id"
           class="history-row"
           @click="openConversation(conversation.id)"
@@ -160,7 +185,12 @@ function onOverlayClick(e: MouseEvent) {
                 <span>{{ conversation.model || 'No model' }}</span>
                 <span>{{ messageLabel(conversation.messageCount) }}</span>
               </div>
-              <p class="history-row-preview">{{ conversation.preview || 'No preview available.' }}</p>
+              <!-- Snippet segments render on a single line: a newline between
+                   them would become a stray space between adjacent segments. -->
+              <p v-if="conversation.snippet" class="history-row-preview">
+                <template v-for="(segment, i) in conversation.snippet" :key="i"><mark v-if="segment.match" class="history-row-mark">{{ segment.text }}</mark><template v-else>{{ segment.text }}</template></template>
+              </p>
+              <p v-else class="history-row-preview">{{ conversation.preview || 'No preview available.' }}</p>
             </div>
             <button
               class="history-row-trash"
@@ -388,6 +418,15 @@ function onOverlayClick(e: MouseEvent) {
   display: -webkit-box;
   -webkit-line-clamp: 2;
   -webkit-box-orient: vertical;
+}
+
+/* Translucent amber so highlighted terms read on both theme backgrounds
+   without needing a dedicated accent variable. */
+.history-row-mark {
+  background: rgba(255, 190, 60, 0.35);
+  color: inherit;
+  border-radius: 2px;
+  padding: 0 1px;
 }
 
 .history-row-trash {

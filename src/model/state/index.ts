@@ -6,7 +6,7 @@ import { useModelCacheStore } from './modelCache'
 import { usePromptsStore, type Prompt } from './prompts'
 import { useSettingsStore, type DefaultModel, type SettingsSection, type Theme } from './settings'
 import { useTabStore } from './tabs'
-import type { AppStatePayload, CachedProvider, ConversationSummary, ModelCache } from '../persistence/types'
+import type { AppStatePayload, CachedProvider, ConversationSearchOutcome, ModelCache } from '../persistence/types'
 import { emptyModelCache } from '../persistence/modelCache'
 import type { ProviderId, ProviderModelsResult } from '../providers/types'
 import type { ActiveModel, ContentNode, Section, Tab } from '../chat/types'
@@ -804,12 +804,20 @@ export default sbp('sbp/selectors/register', {
     }
   },
 
-  async 'dez.model/conversations/list' (): Promise<ConversationSummary[]> {
+  // Error-handling boundary for the history panel: full-text search (empty
+  // query lists everything) that degrades to an empty listing on failure.
+  // Searches are serialized through an event queue because concurrent runs
+  // race on the shared parse cache in search.ts — e.g. a keystroke search
+  // overlapping the slow mount search would also see an empty cache and
+  // duplicate the cold-start full-content listing. Queued, it reuses the
+  // first run's warm cache and loads only what changed.
+  async 'dez.model/conversations/search' (query: string): Promise<ConversationSearchOutcome> {
     try {
-      return await sbp('dez.persistence/listConversations') as ConversationSummary[]
+      return await sbp('okTurtles.eventQueue/queueEvent', 'dez.persistence/conversationSearch',
+        ['dez.persistence/searchConversations', query]) as ConversationSearchOutcome
     } catch (error) {
-      console.error('Failed to list conversations', error)
-      return []
+      console.error('Failed to search conversations', error)
+      return { total: 0, results: [] }
     }
   },
 

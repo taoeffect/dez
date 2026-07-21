@@ -46,7 +46,3 @@ export function conversationSummary(
     preview: conversationPreview(data.sections),
   }
 }
-
-export function sortConversationSummaries(summaries: ConversationSummary[]): ConversationSummary[] {
-  return summaries.slice().sort((a, b) => b.updatedAt - a.updatedAt)
-}

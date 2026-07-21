@@ -56,10 +56,36 @@ export interface ConversationSummary {
   preview: string
 }
 
+// One row of the native conversation listing. `content` is null when the
+// listing was requested metadata-only (the search cache already holds the
+// parsed text for files whose updatedAt is unchanged).
 export interface ConversationFile {
   id: string
-  content: string
+  content: string | null
   updatedAt: number
+}
+
+// One piece of a search-result snippet; `match: true` segments are the query
+// terms the view should highlight. Segments are ordered and concatenate back
+// into the full snippet text.
+export interface SnippetSegment {
+  text: string
+  match: boolean
+}
+
+// A conversation matched by full-text search. `snippet` is null when only the
+// title/model matched (or the query was empty) — the view falls back to the
+// plain `preview` in that case.
+export interface ConversationSearchResult extends ConversationSummary {
+  snippet: SnippetSegment[] | null
+}
+
+// What a conversation search returns. `total` counts every saved conversation
+// regardless of the query (the listing is in hand before filtering, so it's
+// free), letting the history header stay correct while results are filtered.
+export interface ConversationSearchOutcome {
+  total: number
+  results: ConversationSearchResult[]
 }
 
 export interface AppStatePayload {

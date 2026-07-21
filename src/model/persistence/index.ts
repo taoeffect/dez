@@ -3,8 +3,8 @@ import { parseAppStateJson, serializeAppStateJson } from './appState'
 import { parseConversation, serializeConversation } from './conversationFormat'
 import { parseModelCacheJson, serializeModelCacheJson } from './modelCache'
 import { parsePromptsJson, serializePromptsJson } from './prompts'
-import { conversationSummary, sortConversationSummaries } from './summaries'
-import type { AppStatePayload, ConversationData, ConversationFile, ConversationSummary, ModelCache, PromptData } from './types'
+import { searchConversationFiles, staleConversationIds } from './search'
+import type { AppStatePayload, ConversationData, ConversationFile, ConversationSearchOutcome, ModelCache, PromptData } from './types'
 
 // File names under ~/.config/dez/ passed to the generic native app-file I/O.
 const APP_STATE_FILE = 'app_state.json'
@@ -31,16 +31,43 @@ export default sbp('sbp/selectors/register', {
     }
   },
 
-  async 'dez.persistence/listConversations' (): Promise<ConversationSummary[]> {
+  // Full-text search over saved conversations. An empty/whitespace query
+  // returns every conversation (this replaces the old plain listing), so the
+  // panel uses one selector for both listing and searching. Parse work is
+  // cached per file mtime inside searchConversationFiles; file contents are
+  // fetched only for files the cache considers stale, so repeated panel
+  // opens/keystrokes cost O(changed files) in file I/O. `total` is the
+  // query-independent conversation count, taken from the listing already in
+  // hand so the history header stays correct while results are filtered.
+  async 'dez.persistence/searchConversations' (query: string): Promise<ConversationSearchOutcome> {
     try {
-      const files = await sbp('dez.native/listConversationFiles') as ConversationFile[]
-      const summaries = files.map((file) => {
-        const data = parseConversation(file.id, file.content)
-        return conversationSummary(data, file.updatedAt)
-      })
-      return sortConversationSummaries(summaries)
+      let files = await sbp('dez.native/listConversationFiles', false) as ConversationFile[]
+      const stale = new Set(staleConversationIds(files))
+      if (files.length > 0 && stale.size === files.length) {
+        // Cold start (nothing usable cached): one full-content listing beats
+        // N per-file invoke round-trips.
+        files = await sbp('dez.native/listConversationFiles', true) as ConversationFile[]
+      } else if (stale.size > 0) {
+        const loaded = await Promise.all([...stale].map(async (id): Promise<[string, string] | null> => {
+          try {
+            return [id, await sbp('dez.native/loadConversationFile', id) as string]
+          } catch (error) {
+            // File vanished between listing and load (e.g. deleted); skip it
+            // this round — the next listing simply won't include it.
+            console.error('Failed to load conversation for search:', id, error)
+            return null
+          }
+        }))
+        const contentById = new Map(loaded.filter((entry): entry is [string, string] => entry !== null))
+        files = files.flatMap((file) => {
+          if (!stale.has(file.id)) return [file]
+          const content = contentById.get(file.id)
+          return content === undefined ? [] : [{ ...file, content }]
+        })
+      }
+      return { total: files.length, results: searchConversationFiles(files, query) }
     } catch (error) {
-      console.error('Failed to list conversations:', error)
+      console.error('Failed to search conversations:', error)
       throw error
     }
   },
