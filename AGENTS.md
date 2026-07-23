@@ -1,5 +1,7 @@
 # AGENTS.md
 
+If `CLAUDE.md` exists in this repository, it is a symlink to this file; edit only `AGENTS.md`, never `CLAUDE.md` directly.
+
 ## Commands
 
 ```bash
@@ -48,7 +50,7 @@ cd src-tauri && cargo check
 cd src-tauri && cargo test
 ```
 
-Tagged releases are driven by `.github/workflows/release-desktop.yml`: pushing a `v*` tag builds Linux x86_64 and Linux ARM64 AppImages on Ubuntu, an unsigned Apple Silicon DMG on macOS, creates the GitHub Release if needed, and uploads all artifacts. Linux release asset names include the architecture, e.g. `Dez_<version>_linux_x86_64.AppImage` and `Dez_<version>_linux_arm64.AppImage`.
+Tagged releases are driven by `.github/workflows/release-desktop.yml`: pushing a `v*` tag first runs the E2E UI tests workflow as a reusable job, and only if it passes builds Linux x86_64 and Linux ARM64 AppImages on Ubuntu, an unsigned Apple Silicon DMG on macOS, creates the GitHub Release if needed, and uploads all artifacts. Linux release asset names include the architecture, e.g. `Dez_<version>_linux_x86_64.AppImage` and `Dez_<version>_linux_arm64.AppImage`.
 
 Frontend unit tests use Vitest with colocated `*.test.ts` files. Observed automated tests include Rust unit tests in `src-tauri/src/commands.rs`.
 

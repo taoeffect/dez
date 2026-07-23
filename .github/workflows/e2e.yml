@@ -5,6 +5,9 @@ on:
   push:
     branches:
       - master
+  # Reusable entry point so the release workflow can gate builds on these
+  # tests passing for the tagged commit.
+  workflow_call:
 
 concurrency:
   group: e2e-${{ github.ref }}

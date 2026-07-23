@@ -9,9 +9,16 @@ permissions:
   contents: write
 
 jobs:
+  # Gate all release builds on the E2E UI tests passing for the tagged
+  # commit; builds below only start when this reusable workflow succeeds.
+  e2e:
+    name: E2E gate
+    uses: ./.github/workflows/e2e.yml
+
   build-linux-appimage:
     name: Build Linux AppImage (${{ matrix.arch }})
     runs-on: ${{ matrix.runner }}
+    needs: e2e
 
     strategy:
       fail-fast: false
@@ -82,6 +89,7 @@ jobs:
   build-macos-dmg:
     name: Build macOS Apple Silicon DMG
     runs-on: macos-latest
+    needs: e2e
 
     env:
       APPLE_SIGNING_IDENTITY: '-'
