@@ -16,6 +16,9 @@ export const useSettingsStore = defineStore('settings', () => {
   const defaultNewTabModel = ref<DefaultModel | null>(null)
   const lastUsedModel = ref<DefaultModel | null>(null)
   const favorites = ref<DefaultModel[]>([])
+  // Sparse per-provider setting overrides keyed by provider id then setting
+  // key; effective value = stored value ?? provider descriptor default.
+  const providerSettings = ref<Record<string, Record<string, boolean>>>({})
   const checkForUpdates = ref(true)
   const lastUpdateCheckAt = ref<number | null>(null)
   const settingsOpen = ref(false)
@@ -93,6 +96,7 @@ export const useSettingsStore = defineStore('settings', () => {
     defaultNewTabModel,
     lastUsedModel,
     favorites,
+    providerSettings,
     checkForUpdates,
     lastUpdateCheckAt,
     settingsOpen,

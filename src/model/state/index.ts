@@ -33,6 +33,7 @@ export interface SettingsSnapshot {
   defaultNewTabModel: DefaultModel | null
   lastUsedModel: DefaultModel | null
   favorites: DefaultModel[]
+  providerSettings: Record<string, Record<string, boolean>>
   checkForUpdates: boolean
   lastUpdateCheckAt: number | null
   settingsOpen: boolean
@@ -131,6 +132,16 @@ function clonePrompt(prompt: Prompt): Prompt {
   return { ...prompt }
 }
 
+function cloneProviderSettings(
+  providerSettings: Record<string, Record<string, boolean>>,
+): Record<string, Record<string, boolean>> {
+  const output: Record<string, Record<string, boolean>> = {}
+  for (const [providerId, record] of Object.entries(providerSettings)) {
+    output[providerId] = { ...record }
+  }
+  return output
+}
+
 function cloneSettings(settings = useSettingsStore()): SettingsSnapshot {
   return {
     showPillSeparators: settings.showPillSeparators,
@@ -139,6 +150,7 @@ function cloneSettings(settings = useSettingsStore()): SettingsSnapshot {
     defaultNewTabModel: cloneDefaultModel(settings.defaultNewTabModel),
     lastUsedModel: cloneDefaultModel(settings.lastUsedModel),
     favorites: settings.favorites.map((favorite) => ({ ...favorite })),
+    providerSettings: cloneProviderSettings(settings.providerSettings),
     checkForUpdates: settings.checkForUpdates,
     lastUpdateCheckAt: settings.lastUpdateCheckAt,
     settingsOpen: settings.settingsOpen,
@@ -443,6 +455,7 @@ export default sbp('sbp/selectors/register', {
         defaultNewTabModel: settings.defaultNewTabModel,
         lastUsedModel: settings.lastUsedModel,
         favorites: settings.favorites,
+        providerSettings: settings.providerSettings,
         checkForUpdates: settings.checkForUpdates,
         lastUpdateCheckAt: settings.lastUpdateCheckAt,
       })
@@ -551,6 +564,7 @@ export default sbp('sbp/selectors/register', {
       if (state.defaultNewTabModel !== undefined) settings.defaultNewTabModel = state.defaultNewTabModel
       if (state.lastUsedModel !== undefined) settings.lastUsedModel = state.lastUsedModel
       if (Array.isArray(state.favorites)) settings.favorites = state.favorites
+      if (state.providerSettings) settings.providerSettings = state.providerSettings
       if (typeof state.checkForUpdates === 'boolean') settings.checkForUpdates = state.checkForUpdates
       if (typeof state.lastUpdateCheckAt === 'number') settings.lastUpdateCheckAt = state.lastUpdateCheckAt
     }
@@ -574,6 +588,7 @@ export default sbp('sbp/selectors/register', {
         () => settings.defaultNewTabModel,
         () => settings.lastUsedModel,
         () => settings.favorites,
+        () => settings.providerSettings,
         () => settings.checkForUpdates,
         () => settings.lastUpdateCheckAt,
       ],
@@ -646,6 +661,24 @@ export default sbp('sbp/selectors/register', {
 
   'dez.model/settings/setDefaultModel' (providerId: string, modelId: string): void {
     useSettingsStore().defaultModels[providerId] = modelId
+  },
+
+  // Records a sparse per-provider override; effective values merge these with
+  // the provider descriptor defaults at read/request-build time.
+  'dez.model/settings/setProviderSetting' (providerId: string, key: string, value: boolean): void {
+    const providerSettings = useSettingsStore().providerSettings
+    const existing = providerSettings[providerId]
+    if (existing) {
+      existing[key] = value
+    } else {
+      providerSettings[providerId] = { [key]: value }
+    }
+  },
+
+  // Clears all stored overrides for a provider; effective values fall back
+  // to the provider descriptor defaults at read/request-build time.
+  'dez.model/settings/resetProviderSettings' (providerId: string): void {
+    delete useSettingsStore().providerSettings[providerId]
   },
 
   'dez.model/settings/setDefaultNewTabModel' (model: DefaultModel | null): void {

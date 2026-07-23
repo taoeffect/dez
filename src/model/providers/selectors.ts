@@ -6,7 +6,7 @@ import { getProviderInfos, getProviderSpec } from './registry'
 import { providerChatRequest } from './requests'
 import { streamProviderTokens } from './streaming'
 import type { ProviderStreamChatInput, ProviderStreamChatResult } from './streamTypes'
-import { ProviderNotConfiguredError, type ModelInfo, type ProviderId, type ProviderInfo, type ProviderModelsResult, type ProviderSpec } from './types'
+import { isProviderId, ProviderNotConfiguredError, type ModelInfo, type ProviderId, type ProviderInfo, type ProviderModelsResult, type ProviderSettingDef, type ProviderSpec } from './types'
 
 async function configuredProviderIds(): Promise<string[]> {
   const ids = await sbp('dez.native/getConfiguredProviderIds') as string[]
@@ -32,7 +32,7 @@ async function nativeChatStream(input: ProviderStreamChatInput, spec: ProviderSp
     throw new ProviderNotConfiguredError(input.providerId)
   }
 
-  const request = providerChatRequest(spec, input.providerId, input.messages, input.modelId, providerSecretValue)
+  const request = providerChatRequest(spec, input.providerId, input.messages, input.modelId, providerSecretValue, input.providerSettings)
   return await sbp('dez.http/stream', request, requestId) as NativeHttpStreamResult
 }
 
@@ -59,6 +59,20 @@ async function fetchProviderModels(spec: ProviderSpec, providerId: ProviderId): 
 export default sbp('sbp/selectors/register', {
   async 'dez.provider/infos' (): Promise<ProviderInfo[]> {
     return getProviderInfos(await configuredProviderIds())
+  },
+
+  // Synchronous read for the provider-settings popup: exposes only the
+  // display name + declarative settings descriptor instead of the full
+  // ProviderSpec (chatUrl, request builders, ...). Accepts a plain string so
+  // view code doesn't need isProviderId; returns null for unknown ids. The
+  // settings array is copied so callers can't mutate the registered spec.
+  'dez.provider/settingsDescriptor' (providerId: string): { name: string, settings: ProviderSettingDef[] | null } | null {
+    if (!isProviderId(providerId)) {
+      return null
+    }
+
+    const spec = getProviderSpec(providerId)
+    return spec ? { name: spec.name, settings: spec.settings ? [...spec.settings] : null } : null
   },
 
   async 'dez.provider/listModels' (providerId: ProviderId): Promise<ModelInfo[]> {

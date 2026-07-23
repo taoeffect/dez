@@ -4,7 +4,7 @@ import { anthropicChatRequest } from './anthropicCompatible'
 import { copilotHeaders } from './copilot'
 import { openAiChatRequest } from './openaiCompatible'
 import type { ChatMessage, ProviderId, ProviderSpec } from './types'
-import { VENICE_CHAT_PARAMETERS } from './venice'
+import { buildVeniceParameters } from './venice'
 
 export type ProviderStreamProtocol = 'openai' | 'anthropic'
 
@@ -18,6 +18,9 @@ export function providerChatRequest(
   messages: ChatMessage[],
   modelId: string,
   providerSecretValue: Secret<string>,
+  // Sparse user overrides for this provider's settings (see
+  // ProviderSpec.settings); missing keys fall back to descriptor defaults.
+  providerSettings?: Record<string, boolean>,
 ): NativeHttpRequest {
   const options = providerId === 'minimax'
     ? anthropicChatRequest(providerSecretValue, messages, modelId)
@@ -26,7 +29,7 @@ export function providerChatRequest(
       messages,
       modelId,
       providerId === 'copilot' ? copilotHeaders : {},
-      providerId === 'venice' ? { venice_parameters: VENICE_CHAT_PARAMETERS } : {},
+      providerId === 'venice' ? { venice_parameters: buildVeniceParameters(providerSettings) } : {},
     )
 
   return nativeRequestFromFetch(spec.chatUrl, options)

@@ -24,6 +24,7 @@ export interface ModelSnapshot {
     defaultNewTabModel: DefaultModel | null
     lastUsedModel: DefaultModel | null
     favorites: DefaultModel[]
+    providerSettings: Record<string, Record<string, boolean>>
     checkForUpdates: boolean
     lastUpdateCheckAt: number | null
     settingsOpen: boolean

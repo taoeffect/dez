@@ -26,6 +26,7 @@ describe('app state persistence format', () => {
       defaultNewTabModel: { providerId: 'openrouter', modelId: 'model' },
       lastUsedModel: { providerId: 'zai', modelId: 'chat' },
       favorites: [{ providerId: 'venice', modelId: 'llm' }, null],
+      providerSettings: { venice: { webSearch: false, veniceSystemPrompt: true } },
       checkForUpdates: false,
       lastUpdateCheckAt: 12,
     }))
@@ -45,8 +46,27 @@ describe('app state persistence format', () => {
     expect(state.defaultNewTabModel).toEqual({ providerId: 'openrouter', modelId: 'model' })
     expect(state.lastUsedModel).toEqual({ providerId: 'zai', modelId: 'chat' })
     expect(state.favorites).toEqual([{ providerId: 'venice', modelId: 'llm' }])
+    expect(state.providerSettings).toEqual({ venice: { webSearch: false, veniceSystemPrompt: true } })
     expect(state.checkForUpdates).toBe(false)
     expect(state.lastUpdateCheckAt).toBe(12)
     expect(serializeAppStateJson(state)).toBe(JSON.stringify(state, null, 2))
+  })
+
+  it('tolerates missing or malformed providerSettings', () => {
+    expect(parseAppStateJson('{}').providerSettings).toEqual({})
+    expect(parseAppStateJson('{ "providerSettings": 42 }').providerSettings).toEqual({})
+    // A malformed value drops only that key: valid sibling overrides survive
+    // both within the same provider and in other providers, and a malformed
+    // provider record drops only that provider.
+    expect(parseAppStateJson(JSON.stringify({
+      providerSettings: {
+        venice: { webSearch: false, xSearch: 'broken' },
+        openrouter: { someFlag: true },
+        zai: 42,
+      },
+    })).providerSettings).toEqual({
+      venice: { webSearch: false },
+      openrouter: { someFlag: true },
+    })
   })
 })

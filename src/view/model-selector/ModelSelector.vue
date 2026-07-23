@@ -4,10 +4,12 @@ import sbp from '@sbp/sbp'
 import { useModelState } from '../modelState'
 import type { ModelInfo } from '../../model/providers'
 import ModelPicker from './ModelPicker.vue'
+import ProviderSettingsPopup from './ProviderSettingsPopup.vue'
 
 const { activeModel } = useModelState()
 
 const isOpen = ref(false)
+const settingsOpen = ref(false)
 const dropdownEl = ref<HTMLElement | null>(null)
 const picker = ref<InstanceType<typeof ModelPicker> | null>(null)
 
@@ -27,6 +29,9 @@ function toggle() {
 }
 
 function open() {
+  // The model dropdown and the provider-settings popup are mutually
+  // exclusive; opening one closes the other.
+  settingsOpen.value = false
   isOpen.value = true
   nextTick(() => picker.value?.focus())
 }
@@ -40,21 +45,33 @@ function selectModel(model: ModelInfo) {
   close()
 }
 
-function openProviderSettings() {
+// Gear button: toggles the per-provider settings popup (not the Settings
+// modal — API-key configuration stays reachable via ModelPicker's footer).
+function toggleSettingsPopup() {
   close()
+  settingsOpen.value = !settingsOpen.value
+}
+
+// ModelPicker footer "Configure Providers": opens the Settings modal on the
+// providers section for API-key configuration.
+function openProviderConfig() {
+  close()
+  settingsOpen.value = false
   sbp('dez.model/settings/open', 'providers')
 }
 
 function onClickOutside(e: MouseEvent) {
   if (dropdownEl.value && !dropdownEl.value.contains(e.target as Node)) {
     close()
+    settingsOpen.value = false
   }
 }
 
 function onKeydown(e: KeyboardEvent) {
-  if (e.key === 'Escape' && isOpen.value) {
+  if (e.key === 'Escape' && (isOpen.value || settingsOpen.value)) {
     e.stopPropagation()
     close()
+    settingsOpen.value = false
   }
 }
 
@@ -79,7 +96,7 @@ onUnmounted(() => {
           <path d="M2 4l3 3 3-3" stroke="currentColor" stroke-width="1.2" stroke-linecap="round" stroke-linejoin="round"/>
         </svg>
       </button>
-      <button class="model-selector-gear" title="Configure providers" @click="openProviderSettings">
+      <button class="model-selector-gear" title="Provider settings" @click="toggleSettingsPopup">
         <svg width="12" height="12" viewBox="0 0 14 14" fill="none">
           <path d="M7 9a2 2 0 100-4 2 2 0 000 4z" fill="currentColor"/>
           <path d="M13 8.5l-1.3-.7a4.8 4.8 0 000-1.6L13 5.5l-1-1.7-1.4.4a4.7 4.7 0 00-1.4-.8L9 2H7l-.2 1.4a4.7 4.7 0 00-1.4.8L4 3.8 3 5.5l1.3.7a4.8 4.8 0 000 1.6L3 8.5l1 1.7 1.4-.4c.4.3.9.6 1.4.8L7 12h2l.2-1.4c.5-.2 1-.5 1.4-.8l1.4.4 1-1.7z" stroke="currentColor" stroke-width="1" fill="none"/>
@@ -94,9 +111,11 @@ onUnmounted(() => {
         :selected-model-id="activeModel?.modelId ?? null"
         show-favorites
         @select="selectModel"
-        @configure="openProviderSettings"
+        @configure="openProviderConfig"
       />
     </div>
+
+    <ProviderSettingsPopup v-if="settingsOpen" />
   </div>
 </template>
 

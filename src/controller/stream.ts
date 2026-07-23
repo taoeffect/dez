@@ -4,6 +4,7 @@ import type { StreamMessage, StreamSessionState } from '../model/streams/types'
 import {
   appendTokenToTabSection,
   finalizeStreamSectionForTab,
+  type SettingsSnapshot,
 } from '../model/state'
 import {
   cancelStreamSession,
@@ -88,6 +89,12 @@ export default sbp('sbp/selectors/register', {
     })
     sbp('dez.editor/startStreamingFollowIfVisible', args.tabId)
 
+    // Read the provider's stored setting overrides at stream start (rather
+    // than threading them from submitTab) so every caller — including future
+    // retries — picks up the user's current settings consistently.
+    const providerSettings = (sbp('dez.model/settings/snapshot') as SettingsSnapshot)
+      .providerSettings[args.model.providerId]
+
     try {
       await sbp('dez.provider/streamChat', {
         providerId: args.model.providerId,
@@ -97,6 +104,7 @@ export default sbp('sbp/selectors/register', {
           content: message.content,
         })),
         requestId,
+        providerSettings,
         onToken: (token: string) => {
           if (nativeStreamsByTab.get(args.tabId)?.requestId !== requestId) return
           receiveToken(args.tabId, args.sectionId, token)

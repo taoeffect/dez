@@ -28,6 +28,7 @@ onUnmounted(() => {
   --color-text: #0f0f0f;
   --color-tab-bar: #e8e8e8;
   --color-border: #d0d0d0;
+  --color-accent: #4c8dff;
 
   font-family: Inter, Avenir, Helvetica, Arial, sans-serif;
   font-size: 16px;

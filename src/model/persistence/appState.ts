@@ -48,6 +48,23 @@ function defaultModels(value: unknown): Record<string, string> {
   return output
 }
 
+// Sparse provider-settings overrides: provider id -> setting key -> boolean.
+// Tolerant per key like defaultModels(): a malformed value drops only that
+// key, a malformed provider record drops only that provider, and a malformed
+// top level falls back to {} so startup never breaks on bad data.
+function providerSettings(value: unknown): Record<string, Record<string, boolean>> {
+  if (!isRecord(value)) return {}
+  const output: Record<string, Record<string, boolean>> = {}
+  for (const [providerId, record] of Object.entries(value)) {
+    if (!isRecord(record)) continue
+    output[providerId] = {}
+    for (const [key, flag] of Object.entries(record)) {
+      if (typeof flag === 'boolean') output[providerId][key] = flag
+    }
+  }
+  return output
+}
+
 export function defaultAppState(): AppStatePayload {
   return {
     tabs: [],
@@ -58,6 +75,7 @@ export function defaultAppState(): AppStatePayload {
     defaultNewTabModel: null,
     lastUsedModel: null,
     favorites: [],
+    providerSettings: {},
     checkForUpdates: true,
     lastUpdateCheckAt: null,
   }
@@ -87,6 +105,7 @@ export function parseAppStateJson(content: string): AppStatePayload {
       favorites: Array.isArray(parsed.favorites)
         ? parsed.favorites.map(defaultModel).filter((item): item is DefaultModel => item !== null)
         : fallback.favorites,
+      providerSettings: providerSettings(parsed.providerSettings),
       checkForUpdates: typeof parsed.checkForUpdates === 'boolean'
         ? parsed.checkForUpdates
         : fallback.checkForUpdates,

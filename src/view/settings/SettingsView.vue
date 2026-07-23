@@ -636,7 +636,7 @@ function onOverlayClick(e: MouseEvent) {
 }
 
 .settings-toggle--on {
-  background: #4c8dff;
+  background: var(--color-accent);
 }
 
 .settings-toggle-knob {

@@ -42,12 +42,29 @@ export interface ChatMessage {
   content: string
 }
 
+// One user-adjustable provider setting rendered by the provider-settings
+// popup. `key` addresses the value inside the provider's stored settings
+// record; only booleans exist today but `type` leaves room for future kinds.
+export interface ProviderSettingDef {
+  key: string
+  label: string
+  type: 'boolean'
+  default: boolean
+  // Optional per-model visibility gate: the popup hides the setting row when
+  // this returns false for the active model id. Absent = always visible.
+  // Never serialized — only value overrides are persisted, keyed by `key`.
+  visibleForModel?: (modelId: string) => boolean
+}
+
 export interface ProviderSpec {
   id: ProviderId
   name: string
   modelsUrl: string
   chatUrl: string
   fallbackModels?: ModelInfo[]
+  // Declarative per-provider settings; providers without settings leave this
+  // undefined, which drives the popup's "No Settings for X" empty state.
+  settings?: ProviderSettingDef[]
   buildModelListRequest(secret: Secret<string> | null): HttpFetchOptions | null
   parseModels(data: unknown): ModelInfo[]
 }
