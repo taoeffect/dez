@@ -8,6 +8,11 @@ If `CLAUDE.md` exists in this repository, it is a symlink to this file; edit onl
 # Install dependencies before building or packaging
 npm ci
 
+# Rust build auto-cleanup: Tauri build scripts run `npm run clean:rust`
+# first, which deletes Rust build artifacts older than 14 days from
+# src-tauri/target via scripts/clean-rust.js. cargo-sweep is optional;
+# without it the cleanup is skipped and builds still work.
+
 # Development (frontend only, no Tauri shell)
 npm run dev
 

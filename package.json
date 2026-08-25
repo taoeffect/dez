@@ -6,17 +6,18 @@
   "scripts": {
     "dev": "vite",
     "build": "vue-tsc --noEmit && vite build",
-    "build:linux:appimage": "NO_STRIP=1 tauri build --bundles appimage",
-    "build:macos:dmg": "tauri build --target aarch64-apple-darwin --bundles dmg",
-    "build:macos:app": "tauri build --target aarch64-apple-darwin --bundles app",
-    "build:desktop": "node scripts/build-desktop.js",
+    "clean:rust": "node scripts/clean-rust.js",
+    "build:linux:appimage": "npm run clean:rust && NO_STRIP=1 tauri build --bundles appimage",
+    "build:macos:dmg": "npm run clean:rust && tauri build --target aarch64-apple-darwin --bundles dmg",
+    "build:macos:app": "npm run clean:rust && tauri build --target aarch64-apple-darwin --bundles app",
+    "build:desktop": "npm run clean:rust && node scripts/build-desktop.js",
     "test": "vitest run",
     "test:e2e": "vitest run --config vitest.e2e.config.ts",
     "typecheck:e2e": "tsc -p tsconfig.e2e.json --noEmit",
     "test:watch": "vitest",
     "bump-version": "node scripts/bump-version.js",
     "preview": "vite preview",
-    "tauri": "tauri"
+    "tauri": "npm run clean:rust && tauri"
   },
   "dependencies": {
     "@codemirror/commands": "6.10.3",
