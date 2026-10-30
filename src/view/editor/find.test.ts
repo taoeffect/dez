@@ -133,6 +133,12 @@ describe('find navigation', () => {
     const words = createState('alpha beta')
     expect(findNextMatch(words, regex('\\w+'), 2)).toMatchObject({ from: 6, to: 10 })
   })
+
+  it('agrees with a full scan for multi-line queries started at a line start', () => {
+    // A scan from line 2 would split these differently: `two`, and `a\na` at 2.
+    expect(findNextMatch(createState('one\ntwo. three\nfour.'), regex('[^.]+'), 4)).toMatchObject({ from: 8, to: 19 })
+    expect(findNextMatch(createState('a\na\na'), plain('a\na'), 2)).toMatchObject({ from: 0, to: 3 })
+  })
 })
 
 describe('find status', () => {
@@ -195,6 +201,13 @@ describe('find replace', () => {
     const next = apply(state, replaceMatchTransaction(state, plain('one', 'uno')))
     expect(next.doc.toString()).toBe('one two one two')
     expect(next.selection.main).toMatchObject({ from: 8, to: 11 })
+  })
+
+  it('does not replace text that only a scan from its line start sees as a match', () => {
+    const state = createState('one\ntwo. three\nfour.', [4, 7])
+    const next = apply(state, replaceMatchTransaction(state, regex('[^.]+', 'X')))
+    expect(next.doc.toString()).toBe('one\ntwo. three\nfour.')
+    expect(next.selection.main).toMatchObject({ from: 8, to: 19 })
   })
 
   it('leaves the cursor after the replacement when it replaced the only match', () => {

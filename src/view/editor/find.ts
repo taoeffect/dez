@@ -182,14 +182,16 @@ export function* findMatches(
 }
 
 /** First match starting at or after `pos`, wrapping to the first match in
- *  the doc. The scan starts at `pos`'s line start so single-line regexes
- *  see the same matches as a scan from 0 (e.g. `\w+` from mid-word). */
+ *  the doc. Scans from 0: a scan that starts mid-doc can split a
+ *  multi-line query differently (`[^.]+` from a line start), and would then
+ *  disagree with `findMatchStatus` and the highlights. */
 export function findNextMatch(state: EditorState, query: SearchQuery, pos: number): FindMatch | null {
-  for (const match of findMatches(state, query, state.doc.lineAt(pos).from)) {
+  let first: FindMatch | null = null
+  for (const match of findMatches(state, query)) {
     if (match.from >= pos) return match
+    first ??= match
   }
-  const first = findMatches(state, query).next()
-  return first.done ? null : first.value
+  return first
 }
 
 /** Last match starting before `pos`, wrapping to the last match in the
@@ -205,10 +207,11 @@ export function findPreviousMatch(state: EditorState, query: SearchQuery, pos: n
   return previous ?? last
 }
 
-/** The match that covers exactly `[from, to)`, or `null`. */
+/** The match that covers exactly `[from, to)`, or `null`. Scans from 0 for
+ *  the same reason as `findNextMatch`. */
 export function findMatchAt(state: EditorState, query: SearchQuery, from: number, to: number): FindMatch | null {
   if (from === to) return null
-  for (const match of findMatches(state, query, state.doc.lineAt(from).from)) {
+  for (const match of findMatches(state, query)) {
     if (match.from > from) break
     if (match.from === from && match.to === to) return match
   }
