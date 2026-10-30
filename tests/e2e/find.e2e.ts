@@ -389,19 +389,21 @@ describe('find and replace', () => {
     await browser.keys([Key.ArrowDown])
     await waitForValue('field after ArrowDown', () => fieldState(FIND_FIELD), { value: 'third', rows: 1, caret: 5 })
 
-    // Typing starts a new browse; going past the newest entry restores the
-    // typed draft.
+    // Typing while browsing starts a new browse: ArrowUp starts again from
+    // the newest entry, and going past it restores the typed draft.
+    await browser.keys([Key.ArrowUp])
+    await waitForValue('field after ArrowUp', () => fieldState(FIND_FIELD), { value: 'lazy', rows: 1, caret: 4 })
     await typeKeys('x')
     await browser.keys([Key.ArrowUp])
-    await waitForValue('field after ArrowUp', () => fieldState(FIND_FIELD), { value: 'third', rows: 1, caret: 5 })
+    await waitForValue('field after typing and ArrowUp', () => fieldState(FIND_FIELD), { value: 'third', rows: 1, caret: 5 })
     await browser.keys([Key.ArrowDown])
-    await waitForValue('restored draft', () => fieldState(FIND_FIELD), { value: 'thirdx', rows: 1, caret: 6 })
+    await waitForValue('restored draft', () => fieldState(FIND_FIELD), { value: 'lazyx', rows: 1, caret: 5 })
 
     // In a multi-line search, ArrowUp off the first line moves the caret
     // up a line; only ArrowUp on the first line recalls.
     await browser.keys([Key.Shift, Key.Enter])
     await typeKeys('fox')
-    await waitForValue('multi-line draft', () => fieldState(FIND_FIELD), { value: 'thirdx\nfox', rows: 2, caret: 10 })
+    await waitForValue('multi-line draft', () => fieldState(FIND_FIELD), { value: 'lazyx\nfox', rows: 2, caret: 9 })
     // The native caret move keeps the pixel x position, so with a
     // proportional font only the line is fixed, not the column.
     await browser.keys([Key.ArrowUp])
@@ -411,7 +413,7 @@ describe('find and replace', () => {
         const { value, rows, caret } = await fieldState(FIND_FIELD)
         return { value, rows, caretOnFirstLine: caret <= value.indexOf('\n') }
       },
-      { value: 'thirdx\nfox', rows: 2, caretOnFirstLine: true }
+      { value: 'lazyx\nfox', rows: 2, caretOnFirstLine: true }
     )
     await browser.keys([Key.ArrowUp])
     await waitForValue('field after ArrowUp on the first line', () => fieldState(FIND_FIELD), { value: 'third', rows: 1, caret: 5 })
