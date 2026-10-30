@@ -30,7 +30,8 @@ npm test
 npm run test:watch
 
 # E2E UI tests (WebDriver driving the real Tauri app; Linux only, needs
-# tauri-driver + WebKitWebDriver; build the debug binary first)
+# tauri-driver + WebKitWebDriver; build the debug binary first; with no
+# display server, see "GUI tests without a display" under Testing approach)
 npm run test:e2e
 
 # Type-check the e2e harness and specs (not covered by `npm run build`)
@@ -220,3 +221,26 @@ Brief comments are encouraged above functions that do anything non-trivial expla
 - Run `npm run test:e2e` after UI behavior changes covered by the WebDriver e2e specs under `tests/e2e/` (Linux only; requires the debug binary, `tauri-driver`, and `WebKitWebDriver`).
 - Run `npm run typecheck:e2e` after changing the e2e harness or specs; `npm run build` does not type-check files under `tests/e2e/`.
 - Use type-check/build and targeted manual verification via `npm run tauri dev` when UI behavior changes beyond unit-testable helper logic.
+
+### GUI tests without a display (sandboxes)
+
+An agent sandbox can have `DISPLAY` and `WAYLAND_DISPLAY` set while no display server runs: `$XDG_RUNTIME_DIR` has no `wayland-*` socket and `/tmp/.X11-unix` does not exist. Then the app window cannot open, and every e2e spec fails only with `Hook timed out in 120000ms` in `beforeAll`, with no display error. CI uses `xvfb-run`, but `Xvfb` may not be installed, and an install needs sudo. Use KDE's headless compositor instead; it needs no sudo:
+
+```bash
+# 1. Start it as a long-lived background process (e.g. a named service).
+#    It prints nothing when ready, so do not wait for a log line.
+kwin_wayland --virtual --socket wayland-dez --width 1280 --height 800 \
+  --no-lockscreen --no-global-shortcuts
+
+# 2. It is ready when its socket exists (about 1 s after start).
+test -S "$XDG_RUNTIME_DIR/wayland-dez"
+
+# 3. Run the app or tests against it. WAYLAND_DISPLAY is the setting that
+#    matters; the other two force GTK to use Wayland.
+env -u DISPLAY GDK_BACKEND=wayland WAYLAND_DISPLAY=wayland-dez npm run test:e2e
+```
+
+- Stop the compositor when you are done.
+- Do not use `broadwayd` (GTK's browser backend). Window sizes come out negative, CodeMirror throws in its height map, and CSS transitions crash `WebKitWebProcess`.
+- To look at the UI, write a throwaway spec that calls `browser.saveScreenshot('/tmp/<name>.png')`, open the PNG, then delete the spec and the PNG. Under kwin the screenshots are real renders at 2x device pixels.
+- `npm run test:e2e` uses the existing `src-tauri/target/debug/dez` as is. After source changes, rebuild it with `npm run tauri build -- --debug --no-bundle`, or the suite tests stale code. A plain `cargo build` binary does not work for e2e.
