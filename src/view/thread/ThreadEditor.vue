@@ -872,10 +872,9 @@ function resetViewToActiveTab(moveCursorToEnd = false) {
       userEvent: 'select',
     })
     scrollViewToBottomAfterLayout(view)
-  }
-  // setState runs no update listeners, so the find bookkeeping is redone
-  // here for the new doc.
-  if (findState.open) {
+  } else if (findState.open) {
+    // setState runs no update listeners, so redo the find bookkeeping that
+    // the listener does for the dispatch above.
     findState.origin = view.state.selection.main.from
     refreshFindStatus()
   }
