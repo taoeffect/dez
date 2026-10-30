@@ -45,6 +45,7 @@ import {
 } from './cmEditor'
 import { findExtension, findMatchStatus, findNextMatch, findQueryField, setFindQueryEffect } from '../editor/find'
 import { findState, openFindQuery } from '../editor/findState'
+import { isModalOpen } from '../composables/useKeyboardShortcuts'
 
 const {
   activeTabId,
@@ -642,14 +643,17 @@ function buildState(): EditorState {
   )
   // Listed after autocompleteKeymap at the same precedence, so an open prompt
   // autocomplete takes Esc first. Returns false while find is closed so
-  // multi-cursor Esc and selection collapse still run.
+  // multi-cursor Esc and selection collapse still run. While a modal is open,
+  // Esc must close only the modal: the event still bubbles to the global
+  // handler (CM does not stop it), which closes the modal, and returning true
+  // keeps the default Esc binding from collapsing the current match.
   const findKeymap = Prec.highest(
     keymap.of([
       {
         key: 'Escape',
         run: () => {
           if (!findState.open) return false
-          sbp('dez.editor/closeFind')
+          if (!isModalOpen()) sbp('dez.editor/closeFind')
           return true
         },
       },

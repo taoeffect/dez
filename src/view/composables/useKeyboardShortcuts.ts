@@ -2,6 +2,12 @@ import { onMounted, onUnmounted } from "vue";
 import sbp from "@sbp/sbp";
 import { findState } from "../editor/findState";
 
+// While Settings or History is open, Esc closes it first, so the find Esc
+// handlers in the editor and in the dropdown pass Esc on to this handler.
+export function isModalOpen(): boolean {
+  return (sbp("dez.model/settings/isOpen") as boolean) || (sbp("dez.model/settings/isHistoryOpen") as boolean);
+}
+
 export function useKeyboardShortcuts() {
   function handleKeydown(e: KeyboardEvent) {
     if (e.key === "Escape") {
@@ -43,7 +49,7 @@ export function useKeyboardShortcuts() {
       return;
     }
 
-    const modalOpen = (sbp("dez.model/settings/isOpen") as boolean) || (sbp("dez.model/settings/isHistoryOpen") as boolean);
+    const modalOpen = isModalOpen();
     switch (e.key.toLowerCase()) {
       case ",":
         e.preventDefault();

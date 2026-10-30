@@ -4,6 +4,7 @@ import sbp from '@sbp/sbp'
 import { createFindQuery } from '../editor/find'
 import { findHistory } from '../editor/findHistory'
 import { findState } from '../editor/findState'
+import { isModalOpen } from '../composables/useKeyboardShortcuts'
 
 const searchRef = ref<HTMLTextAreaElement | null>(null)
 const replaceRef = ref<HTMLTextAreaElement | null>(null)
@@ -51,9 +52,12 @@ async function toggleReplace() {
 // editor's contentDOM only), but they do bubble to the global shortcut
 // handler on `window`. Stop Esc/Enter here so they act once; Mod-f/Mod-g
 // are left to the global handler. Shift+Enter keeps the native newline.
+// While a modal is open, Esc bubbles on so the global handler closes only
+// the modal.
 function handleFieldKeydown(e: KeyboardEvent, onEnter: () => void) {
   if (e.isComposing) return
   if (e.key === 'Escape') {
+    if (isModalOpen()) return
     e.preventDefault()
     e.stopPropagation()
     sbp('dez.editor/closeFind')

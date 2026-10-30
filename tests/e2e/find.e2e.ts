@@ -492,4 +492,39 @@ describe('find and replace', () => {
     await waitForValue('dropdown open after Esc elsewhere', dropdownOpen, false)
     await waitForValue('match count after Esc elsewhere', matchCount, 0)
   })
+
+  it('closes only an open Settings or History modal on Esc, and find on the next Esc', async () => {
+    const settingsOpen = async (): Promise<boolean> =>
+      browser.execute(() => document.querySelector('.settings-overlay') !== null)
+    const historyOpen = async (): Promise<boolean> =>
+      browser.execute(() => document.querySelector('.history-overlay') !== null)
+
+    await openFixture()
+    await openFindWithQuery('fox')
+    await waitForValue('status', findStatus, '1 of 4')
+
+    // The modals do not take focus, so Esc goes to the editor first. The
+    // current match must stay selected.
+    await focusEditor()
+    await browser.keys([Key.Control, ','])
+    await waitForValue('settings open', settingsOpen, true)
+    expect(await focusedArea()).toBe('editor')
+    await browser.keys([Key.Escape])
+    await waitForValue('settings open after Esc in the editor', settingsOpen, false)
+    expect(await dropdownOpen()).toBe(true)
+    expect(await findStatus()).toBe('1 of 4')
+    await browser.keys([Key.Escape])
+    await waitForValue('dropdown open after the second Esc in the editor', dropdownOpen, false)
+
+    await browser.keys([Key.Control, 'f'])
+    await waitFor(browser, FIND_FIELD, 10_000)
+    await browser.keys([Key.Control, 'h'])
+    await waitForValue('history open', historyOpen, true)
+    expect(await focusedArea()).toBe('find')
+    await browser.keys([Key.Escape])
+    await waitForValue('history open after Esc in the search field', historyOpen, false)
+    expect(await dropdownOpen()).toBe(true)
+    await browser.keys([Key.Escape])
+    await waitForValue('dropdown open after the second Esc in the search field', dropdownOpen, false)
+  })
 })
