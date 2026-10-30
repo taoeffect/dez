@@ -43,7 +43,7 @@ import {
   showSeparatorsField,
   splitSectionEffect,
 } from './cmEditor'
-import { findExtension, findMatchStatus, findNextMatch, findQueryField, setFindQueryEffect } from '../editor/find'
+import { findExtension, findMatchStatus, findNextMatch, findQueryField, selectMatchSpec, setFindQueryEffect } from '../editor/find'
 import { findState, openFindQuery } from '../editor/findState'
 import { isModalOpen } from '../composables/useKeyboardShortcuts'
 
@@ -971,11 +971,7 @@ watch(
       view.dispatch({ effects: setFindQueryEffect.of(query) })
       return
     }
-    view.dispatch({
-      selection: EditorSelection.single(match.from, match.to),
-      effects: [setFindQueryEffect.of(query), EditorView.scrollIntoView(EditorSelection.range(match.from, match.to))],
-      userEvent: 'select.search',
-    })
+    view.dispatch(selectMatchSpec(match, [setFindQueryEffect.of(query)]))
   },
 )
 

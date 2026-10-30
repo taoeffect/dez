@@ -10,6 +10,7 @@ import {
   findQueryField,
   replaceAllMatchesTransaction,
   replaceMatchTransaction,
+  selectMatchSpec,
   setFindQueryEffect,
 } from './find'
 import { findHistory } from './findHistory'
@@ -155,11 +156,7 @@ export default sbp('sbp/selectors/register', {
       : findPreviousMatch(state, query, main.from)
     if (!match) return
     findState.origin = match.from
-    view.dispatch({
-      selection: EditorSelection.single(match.from, match.to),
-      effects: EditorView.scrollIntoView(EditorSelection.range(match.from, match.to)),
-      userEvent: 'select.search',
-    })
+    view.dispatch(selectMatchSpec(match))
   },
 
   /** "Replace" ('current') or "Replace all" ('all') with the replace field

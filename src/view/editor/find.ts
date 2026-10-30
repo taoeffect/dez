@@ -12,7 +12,7 @@ import {
   type Text,
   type TransactionSpec,
 } from '@codemirror/state'
-import { Decoration, ViewPlugin, type DecorationSet, type EditorView, type ViewUpdate } from '@codemirror/view'
+import { Decoration, EditorView, ViewPlugin, type DecorationSet, type ViewUpdate } from '@codemirror/view'
 import { SECTION_SEP, pillsField, scanPills, type PillMetadata } from '../thread/cmEditor'
 
 /** Status counting stops here; the UI shows `1000+`. */
@@ -283,6 +283,17 @@ function replacementText(query: SearchQuery, match: FindMatch): string {
     })
 }
 
+/** Select a match and scroll it into view, with optional extra effects.
+ *  `'select.search'` tells the update listener in `ThreadEditor.vue` that
+ *  find made this selection, so the search origin stays where it was. */
+export function selectMatchSpec(match: FindMatch, effects: StateEffect<unknown>[] = []): FindTransaction {
+  return {
+    selection: EditorSelection.single(match.from, match.to),
+    effects: [...effects, EditorView.scrollIntoView(EditorSelection.range(match.from, match.to))],
+    userEvent: 'select.search',
+  }
+}
+
 /** "Replace": when the main selection is exactly a match, replace it and
  *  select the next match; otherwise only select the match at or after the
  *  selection start. `null` when there is no match. Each replace is its own
@@ -293,7 +304,7 @@ export function replaceMatchTransaction(state: EditorState, query: SearchQuery):
   if (!current) {
     const next = findNextMatch(state, query, from)
     if (!next) return null
-    return { selection: EditorSelection.single(next.from, next.to), userEvent: 'select.search' }
+    return selectMatchSpec(next)
   }
   const changes = state.changes({ from: current.from, to: current.to, insert: replacementText(query, current) })
   const next = findNextMatch(state, query, current.to)
