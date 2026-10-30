@@ -9,7 +9,9 @@ import {
   findMatchStatus,
   findMatches,
   findNextMatch,
+  findPrefillText,
   findPreviousMatch,
+  findQueryField,
   replaceAllMatchesTransaction,
   replaceMatchTransaction,
   type FindTransaction,
@@ -143,6 +145,33 @@ describe('find status', () => {
   it('stops counting at the limit', () => {
     const state = createState('a'.repeat(FIND_COUNT_LIMIT + 1), [0, 1])
     expect(findMatchStatus(state, plain('a'))).toEqual({ total: FIND_COUNT_LIMIT, current: 1, capped: true })
+  })
+})
+
+describe('find prefill', () => {
+  it('takes the selected text, or nothing for an empty, long, or sentinel selection', () => {
+    expect(findPrefillText(createState('one two', [4, 7]), false)).toBe('two')
+    expect(findPrefillText(createState('one two', [7, 4]), false)).toBe('two')
+    expect(findPrefillText(createState('one two', [4, 4]), false)).toBeNull()
+    expect(findPrefillText(createState('a\nb\nc\nd', [0, 5]), false)).toBe('a\nb\nc')
+    expect(findPrefillText(createState('a\nb\nc\nd', [0, 7]), false)).toBeNull()
+    expect(findPrefillText(createState(sectioned('a', 'b')), false)).toBeNull()
+    expect(findPrefillText(createState(sectioned('a', 'b'), [0, 5]), false)).toBeNull()
+  })
+
+  it('escapes regex syntax so the pattern compiles with the u flag and matches the selection', () => {
+    const text = 'a-b (c) [d] {e} $f ^g .h *i +j ?k |l \\m /n "o" #p'
+    const state = createState(`x ${text} y`, [2, 2 + text.length])
+    const search = findPrefillText(state, true)
+    expect(search).not.toBeNull()
+    expect(matchTexts(state, regex(search!))).toEqual([text])
+  })
+
+  it('keeps the open query when the selection already is one of its matches', () => {
+    const query = regex('t\\w+')
+    const extensions = [findQueryField.init(() => query)]
+    expect(findPrefillText(createState('one two', [4, 7], extensions), true)).toBeNull()
+    expect(findPrefillText(createState('one two', [0, 3], extensions), true)).toBe('one')
   })
 })
 

@@ -229,6 +229,30 @@ export function findMatchStatus(state: EditorState, query: SearchQuery): FindSta
   return { total, current, capped: false }
 }
 
+/** Selections longer than this many lines do not prefill the search. */
+const PREFILL_MAX_LINES = 3
+
+// CM compiles find regexes with the `u` flag. There, escaping a character
+// that has no regex meaning (e.g. `\-` outside a class) is a syntax error,
+// so escape only the syntax characters and `/`.
+const REGEXP_SYNTAX_CHARS = /[\^$\\.*+?()[\]{}|/]/g
+
+/** Search text that Cmd/Ctrl+F takes from the main selection, escaped in
+ *  regex mode. `null` (keep the current search) when the selection is
+ *  empty, longer than 3 lines, holds a sentinel, or already is a match of
+ *  the open query: the match text would replace a regex that the user
+ *  typed. */
+export function findPrefillText(state: EditorState, regexp: boolean): string | null {
+  const { from, to } = state.selection.main
+  if (from === to) return null
+  if (state.doc.lineAt(to).number - state.doc.lineAt(from).number >= PREFILL_MAX_LINES) return null
+  const text = state.sliceDoc(from, to)
+  if (SENTINEL_CHAR.test(text)) return null
+  const query = state.field(findQueryField, false)
+  if (query && findMatchAt(state, query, from, to)) return null
+  return regexp ? text.replace(REGEXP_SYNTAX_CHARS, '\\$&') : text
+}
+
 /** Replacement text for one match. Plain mode inserts `query.replace`
  *  as-is. Regex mode mirrors `RegExpQuery.getReplacement` in
  *  `@codemirror/search` 6.6.0, which is not public API: first `\n`, `\r`,

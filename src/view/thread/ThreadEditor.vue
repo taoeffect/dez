@@ -6,8 +6,9 @@ import { history, historyKeymap, defaultKeymap } from '@codemirror/commands'
 import sbp from '@sbp/sbp'
 import { useModelState, type Prompt } from '../modelState'
 import { sectionIsEmpty } from '../../model/chat/content'
-import { debounce } from 'turtledash'
+import { debounce, throttle } from 'turtledash'
 import PromptAutocomplete from './PromptAutocomplete.vue'
+import FindDropdown from './FindDropdown.vue'
 import {
   SECTION_SEP,
   buildInitialDoc,
@@ -42,6 +43,8 @@ import {
   showSeparatorsField,
   splitSectionEffect,
 } from './cmEditor'
+import { findExtension, findMatchStatus, findNextMatch, findQueryField, setFindQueryEffect } from '../editor/find'
+import { findState, openFindQuery } from '../editor/findState'
 
 const {
   activeTabId,
@@ -65,6 +68,7 @@ const autocompleteTo = ref(0)
 const autocompleteX = ref(0)
 const autocompleteY = ref(0)
 const autocompleteSelectedIndex = ref(0)
+const findDropdownRef = ref<InstanceType<typeof FindDropdown> | null>(null)
 
 const isActiveTabStreaming = activeTabStreaming
 const streamingError = activeTabStreamError
@@ -452,6 +456,20 @@ function syncDocToStore(persist = false) {
   syncDocToTab(activeTabId.value, persist)
 }
 
+/** Recount matches for the find dropdown status. */
+function refreshFindStatus() {
+  if (!view) return
+  const query = view.state.field(findQueryField)
+  findState.status = query?.valid ? findMatchStatus(view.state, query) : null
+}
+
+// A recount scans the whole doc (~10 ms for 200 KB), and streamed tokens
+// change the doc many times a second. While edits keep coming, recount at
+// most every 250 ms (throttle), then once more after they stop (debounce)
+// so the final count is right.
+const refreshFindStatusThrottled = throttle(refreshFindStatus, 250)
+const refreshFindStatusDebounced = debounce(refreshFindStatus, 250)
+
 function closeAutocomplete() {
   autocompleteOpen.value = false
   autocompleteQuery.value = ''
@@ -622,6 +640,21 @@ function buildState(): EditorState {
       },
     ]),
   )
+  // Listed after autocompleteKeymap at the same precedence, so an open prompt
+  // autocomplete takes Esc first. Returns false while find is closed so
+  // multi-cursor Esc and selection collapse still run.
+  const findKeymap = Prec.highest(
+    keymap.of([
+      {
+        key: 'Escape',
+        run: () => {
+          if (!findState.open) return false
+          sbp('dez.editor/closeFind')
+          return true
+        },
+      },
+    ]),
+  )
   const selectionKeymap = Prec.high(
     keymap.of([
       {
@@ -751,12 +784,21 @@ function buildState(): EditorState {
       EditorState.allowMultipleSelections.of(true),
       history(),
       autocompleteKeymap,
+      findKeymap,
       selectionKeymap,
       submitKeymap,
       keymap.of([...defaultKeymap, ...historyKeymap]),
       EditorView.lineWrapping,
       dezLanguageSupport(),
       dezTheme,
+      findExtension(openFindQuery()),
+      // The find dropdown floats over the top of the scroller. Count it as
+      // hidden space so matches (and anything else CM scrolls to) are not
+      // scrolled under it.
+      EditorView.scrollMargins.of(() => {
+        const dropdown = findDropdownRef.value?.$el as HTMLElement | undefined
+        return dropdown ? { top: dropdown.offsetTop + dropdown.offsetHeight } : null
+      }),
       EditorView.updateListener.of((update) => {
         const roleChanged = update.transactions.some((tr) =>
           tr.effects.some((effect) => effect.is(toggleRoleEffect)),
@@ -766,6 +808,18 @@ function buildState(): EditorState {
         }
         if (update.docChanged || update.selectionSet || update.focusChanged) {
           updatePromptAutocomplete(update.view)
+        }
+        const findQuery = update.state.field(findQueryField)
+        if (findQuery !== update.startState.field(findQueryField) || (findQuery && update.selectionSet)) {
+          refreshFindStatus()
+        } else if (findQuery && update.docChanged) {
+          refreshFindStatusThrottled()
+          refreshFindStatusDebounced()
+        }
+        // Typing in the find field searches from where the user last put the
+        // selection; find's own selections ('select.search') keep the origin.
+        if (findQuery && update.transactions.some((tr) => tr.selection && !tr.isUserEvent('select.search'))) {
+          findState.origin = update.state.selection.main.from
         }
       }),
       EditorView.domEventHandlers({
@@ -815,6 +869,12 @@ function resetViewToActiveTab(moveCursorToEnd = false) {
     })
     scrollViewToBottomAfterLayout(view)
   }
+  // setState runs no update listeners, so the find bookkeeping is redone
+  // here for the new doc.
+  if (findState.open) {
+    findState.origin = view.state.selection.main.from
+    refreshFindStatus()
+  }
 }
 
 function stopActiveTab() {
@@ -862,6 +922,7 @@ onBeforeUnmount(() => {
   persistTab(activeTabId.value)
   unregisterActiveView()
   sbp('okTurtles.events/off', 'dez.editor.stream-finished', onEditorStreamFinished)
+  refreshFindStatusDebounced.clear()
   view?.destroy()
   view = null
 })
@@ -891,6 +952,29 @@ watch(
   },
 )
 
+// Search as the user types: install the query, which drives the match
+// marks, and select the first match at or after `findState.origin`. With no
+// match the selection stays where it is. Closing is handled by
+// `dez.editor/closeFind`.
+watch(
+  [() => findState.open, () => findState.search, () => findState.regexp],
+  () => {
+    const query = openFindQuery()
+    if (!view || !query) return
+    const { state } = view
+    const match = query.valid ? findNextMatch(state, query, Math.min(findState.origin, state.doc.length)) : null
+    if (!match) {
+      view.dispatch({ effects: setFindQueryEffect.of(query) })
+      return
+    }
+    view.dispatch({
+      selection: EditorSelection.single(match.from, match.to),
+      effects: [setFindQueryEffect.of(query), EditorView.scrollIntoView(EditorSelection.range(match.from, match.to))],
+      userEvent: 'select.search',
+    })
+  },
+)
+
 // If the active tab's sections change identity list from elsewhere (e.g.
 // streaming appended a new agent section on this tab while mounted),
 // mirror that into sectionsField so ids + roles stay aligned.
@@ -905,6 +989,7 @@ watch(
 <template>
   <div class="editor-container">
     <div ref="hostRef" class="thread-editor" />
+    <FindDropdown v-if="findState.open" ref="findDropdownRef" />
     <PromptAutocomplete
       v-if="autocompleteOpen && matchingPrompts.length > 0"
       :prompts="matchingPrompts"

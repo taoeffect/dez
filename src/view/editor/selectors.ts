@@ -1,5 +1,15 @@
 import sbp from '@sbp/sbp'
-import type { EditorView } from '@codemirror/view'
+import { EditorSelection } from '@codemirror/state'
+import { EditorView } from '@codemirror/view'
+import {
+  findMatchAt,
+  findNextMatch,
+  findPrefillText,
+  findPreviousMatch,
+  findQueryField,
+  setFindQueryEffect,
+} from './find'
+import { findState } from './findState'
 
 const BOTTOM_FOLLOW_THRESHOLD_PX = 96
 
@@ -84,5 +94,62 @@ export default sbp('sbp/selectors/register', {
     if (followingStreamTabId === tabId) followingStreamTabId = null
     if (activeViewTabId !== tabId) return
     sbp('okTurtles.events/emit', 'dez.editor.stream-finished', tabId)
+  },
+
+  /** Cmd/Ctrl+F: open the find dropdown (or refocus it), prefilled from the
+   *  editor selection when `findPrefillText` allows it. */
+  'dez.editor/openFind' (): void {
+    const view = activeView
+    if (!view) return
+    const { state } = view
+    const prefill = findPrefillText(state, findState.regexp)
+    findState.origin = state.selection.main.from
+    if (prefill !== null) findState.search = prefill
+    findState.open = true
+    findState.focusRequest++
+  },
+
+  /** Close the dropdown, clear the match marks, and return focus to the
+   *  editor. A selected match collapses to a cursor at its end, so no
+   *  highlighted text is left behind. */
+  'dez.editor/closeFind' (): void {
+    if (!findState.open) return
+    findState.open = false
+    findState.status = null
+    const view = activeView
+    if (!view) return
+    const { state } = view
+    const query = state.field(findQueryField, false)
+    const { main } = state.selection
+    const selectedMatch = query ? findMatchAt(state, query, main.from, main.to) : null
+    view.dispatch({
+      effects: setFindQueryEffect.of(null),
+      ...(selectedMatch && {
+        selection: state.selection.replaceRange(EditorSelection.cursor(main.to)),
+        userEvent: 'select',
+      }),
+    })
+    view.focus()
+  },
+
+  /** Next/previous match from the main selection, wrapping around the doc.
+   *  The match becomes the new origin for typing in the search field. */
+  'dez.editor/selectFindMatch' (direction: 'next' | 'previous'): void {
+    const view = activeView
+    if (!view || !findState.open) return
+    const { state } = view
+    const query = state.field(findQueryField, false)
+    if (!query) return
+    const { main } = state.selection
+    const match = direction === 'next'
+      ? findNextMatch(state, query, main.to)
+      : findPreviousMatch(state, query, main.from)
+    if (!match) return
+    findState.origin = match.from
+    view.dispatch({
+      selection: EditorSelection.single(match.from, match.to),
+      effects: EditorView.scrollIntoView(EditorSelection.range(match.from, match.to)),
+      userEvent: 'select.search',
+    })
   },
 })

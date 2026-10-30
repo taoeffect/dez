@@ -1,5 +1,6 @@
 import { onMounted, onUnmounted } from "vue";
 import sbp from "@sbp/sbp";
+import { findState } from "../editor/findState";
 
 export function useKeyboardShortcuts() {
   function handleKeydown(e: KeyboardEvent) {
@@ -10,6 +11,12 @@ export function useKeyboardShortcuts() {
       } else if (sbp("dez.model/settings/isHistoryOpen") as boolean) {
         e.preventDefault();
         sbp("dez.model/settings/historyClose");
+      } else if (findState.open && !e.defaultPrevented) {
+        // Esc in the editor was already handled by CodeMirror, which
+        // prevents the default even when no binding ran (an open prompt
+        // autocomplete takes Esc first). This branch covers focus elsewhere.
+        e.preventDefault();
+        sbp("dez.editor/closeFind");
       }
       return;
     }
@@ -36,6 +43,7 @@ export function useKeyboardShortcuts() {
       return;
     }
 
+    const modalOpen = (sbp("dez.model/settings/isOpen") as boolean) || (sbp("dez.model/settings/isHistoryOpen") as boolean);
     switch (e.key.toLowerCase()) {
       case ",":
         e.preventDefault();
@@ -56,6 +64,18 @@ export function useKeyboardShortcuts() {
       case "w":
         e.preventDefault();
         void sbp("dez.controller/closeTab", sbp("dez.model/tabs/activeId"));
+        break;
+      case "f":
+        // This handler treats Ctrl as Mod on macOS too, where CodeMirror
+        // uses Ctrl+F (cursor right) in the editor and prevents the default.
+        if (e.shiftKey || e.defaultPrevented || modalOpen) break;
+        e.preventDefault();
+        sbp("dez.editor/openFind");
+        break;
+      case "g":
+        if (!findState.open || modalOpen) break;
+        e.preventDefault();
+        sbp("dez.editor/selectFindMatch", e.shiftKey ? "previous" : "next");
         break;
     }
   }
