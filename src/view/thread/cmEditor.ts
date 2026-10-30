@@ -1048,6 +1048,17 @@ export const dezTheme = EditorView.theme({
   '.dez-prompt-body': {
     color: 'var(--color-text)',
   },
+  // Find highlights (src/view/editor/find.ts). Amber, so they differ from the
+  // blue selection; the current match is stronger and outlined because the
+  // selection under it looks the same focused or not.
+  '.dez-find-match': {
+    backgroundColor: 'var(--color-find-match, rgba(255, 190, 60, 0.35))',
+    borderRadius: '2px',
+  },
+  '.dez-find-match.dez-find-match--current': {
+    backgroundColor: 'var(--color-find-match-current, rgba(255, 150, 0, 0.6))',
+    outline: '1px solid var(--color-find-match-outline, rgba(230, 120, 0, 0.95))',
+  },
 })
 
 export function dezLanguageSupport(): Extension {
