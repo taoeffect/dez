@@ -2,7 +2,7 @@ import { history, undo, undoDepth } from '@codemirror/commands'
 import type { SearchQuery } from '@codemirror/search'
 import { EditorSelection, EditorState, type Extension } from '@codemirror/state'
 import { describe, expect, it } from 'vitest'
-import { PILL_NL, PILL_OPEN, SECTION_SEP, encodePrompt, pillsField, type PillMetadata } from '../thread/cmEditor'
+import { PILL_NL, PILL_OPEN, SECTION_SEP, encodePrompt, pillsField, scanPills, type PillMetadata } from '../thread/cmEditor'
 import {
   FIND_COUNT_LIMIT,
   createFindQuery,
@@ -233,6 +233,18 @@ describe('find replace', () => {
     const query = regex('(\\w+)@(\\w+)(x)?', '$2 at $1 [$&] $$ <$3> $12 $0\\t\\n|')
     const next = apply(state, replaceAllMatchesTransaction(state, query))
     expect(next.doc.toString()).toBe('host at ann [ann@host] $ <> ann2 $0\t\n|')
+  })
+
+  it('strips sentinels from $n groups that a lookahead captured outside the match', () => {
+    const doc = sectioned(`a ${encodePrompt('p1', 'b')} c`, 'd')
+    const state = createState(doc, undefined, [pillsField.init(() => new Map())])
+    // `[\s\S]` runs CM's multi-line regex cursor, `.` the single-line one.
+    for (const search of ['a(?=([\\s\\S]*))', 'a(?=(.*))']) {
+      const next = apply(state, replaceAllMatchesTransaction(state, regex(search, '$1')))
+      const text = next.doc.toString()
+      expect(text.split(SECTION_SEP)).toHaveLength(2)
+      expect(scanPills(text)).toHaveLength(1)
+    }
   })
 
   it('inserts plain-mode replacements literally', () => {

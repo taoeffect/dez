@@ -270,7 +270,11 @@ function replacementText(query: SearchQuery, match: FindMatch): string {
       if (ref === '$') return '$'
       for (let digits = ref.length; digits > 0; digits--) {
         const group = Number(ref.slice(0, digits))
-        if (group > 0 && group < groups.length) return (groups[group] ?? '') + ref.slice(digits)
+        // A group inside a lookaround can capture text outside the match,
+        // sentinels included, so strip them as the replace text is stripped.
+        if (group > 0 && group < groups.length) {
+          return (groups[group] ?? '').replace(SENTINEL_CHARS, '') + ref.slice(digits)
+        }
       }
       return token
     })
