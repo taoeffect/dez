@@ -285,7 +285,7 @@ describe('find and replace', () => {
     await waitForValue('status after the previous button', findStatus, '3 of 4')
     await click(browser, 'button[title^="Next match"]')
     await waitForValue('status after the next button', findStatus, '4 of 4')
-    // The buttons do not take focus from the field.
+    // Navigating from the buttons does not move focus to the editor.
     expect(await focusedArea()).toBe('find')
     expect(await matchCount()).toBe(4)
   })
