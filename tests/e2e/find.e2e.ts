@@ -125,6 +125,13 @@ describe('find and replace', () => {
     }, on)
   }
 
+  async function setReplaceOpen (open: boolean): Promise<void> {
+    const isOpen = (): Promise<boolean> =>
+      browser.execute((sel: string) => document.querySelector(sel) !== null, REPLACE_FIELD)
+    if ((await isOpen()) !== open) await click(browser, 'button[title="Toggle replace"]')
+    await waitForValue('replace row open', isOpen, open)
+  }
+
   async function clickButtonWithText (text: string): Promise<void> {
     await browser.execute((label: string) => {
       const button = Array.from(document.querySelectorAll('.find-dropdown button'))
@@ -328,6 +335,7 @@ describe('find and replace', () => {
       }))
     }
 
+    await setReplaceOpen(false)
     await click(browser, 'button[title="Toggle replace"]')
     await waitFor(browser, REPLACE_FIELD, 10_000)
     await waitForValue('focus after expanding', focusedArea, 'replace')
@@ -381,10 +389,7 @@ describe('find and replace', () => {
     await browser.keys([Key.Enter])
     await waitForValue('status after Enter', findStatus, '2 of 4')
 
-    if (!(await browser.execute((sel: string) => document.querySelector(sel) !== null, REPLACE_FIELD))) {
-      await click(browser, 'button[title="Toggle replace"]')
-    }
-    await waitFor(browser, REPLACE_FIELD, 10_000)
+    await setReplaceOpen(true)
     await typeInto(browser, REPLACE_FIELD, 'cat', { clear: true })
     const before = await sectionTexts()
     await pressImeEnter(REPLACE_FIELD)
@@ -481,10 +486,7 @@ describe('find and replace', () => {
     await waitForValue('shrunk field', () => fieldState(FIND_FIELD), { value: 'brown fox.\nfox two', rows: 2, caret: 18 })
     await waitForValue('status', findStatus, '1 of 1')
 
-    if (!(await browser.execute((sel: string) => document.querySelector(sel) !== null, REPLACE_FIELD))) {
-      await click(browser, 'button[title="Toggle replace"]')
-    }
-    await waitFor(browser, REPLACE_FIELD, 10_000)
+    await setReplaceOpen(true)
     await typeInto(browser, REPLACE_FIELD, 'x', { clear: true })
     await browser.keys([Key.Shift, Key.Enter])
     await typeKeys('y')
