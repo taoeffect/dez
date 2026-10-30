@@ -44,7 +44,7 @@ import {
   splitSectionEffect,
 } from './cmEditor'
 import { findExtension, findMatchStatus, findNextMatch, findQueryField, selectMatchSpec, setFindQueryEffect } from '../editor/find'
-import { findState, openFindQuery } from '../editor/findState'
+import { activeFindQuery, findState } from '../editor/findState'
 import { isModalOpen } from '../composables/useKeyboardShortcuts'
 
 const {
@@ -795,7 +795,7 @@ function buildState(): EditorState {
       EditorView.lineWrapping,
       dezLanguageSupport(),
       dezTheme,
-      findExtension(openFindQuery()),
+      findExtension(activeFindQuery()),
       // The find dropdown floats over the top of the scroller. Count it as
       // hidden space so matches (and anything else CM scrolls to) are not
       // scrolled under it.
@@ -962,7 +962,7 @@ watch(
 watch(
   [() => findState.open, () => findState.search, () => findState.regexp],
   () => {
-    const query = openFindQuery()
+    const query = activeFindQuery()
     if (!view || !query) return
     const { state } = view
     const match = query.valid ? findNextMatch(state, query, Math.min(findState.origin, state.doc.length)) : null

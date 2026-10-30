@@ -27,6 +27,6 @@ export const findState = reactive({
 })
 
 /** The query for the CM find field: `null` while the dropdown is closed. */
-export function openFindQuery(): SearchQuery | null {
+export function activeFindQuery(): SearchQuery | null {
   return findState.open ? createFindQuery(findState) : null
 }
