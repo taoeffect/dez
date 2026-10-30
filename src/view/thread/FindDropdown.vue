@@ -2,6 +2,7 @@
 import { computed, nextTick, onMounted, ref, watch } from 'vue'
 import sbp from '@sbp/sbp'
 import { createFindQuery } from '../editor/find'
+import { findHistory } from '../editor/findHistory'
 import { findState } from '../editor/findState'
 
 const searchRef = ref<HTMLTextAreaElement | null>(null)
@@ -19,6 +20,13 @@ const statusText = computed(() => {
   if (status.current !== null) return `${status.current} of ${total}`
   return status.total === 1 ? '1 result' : `${total} results`
 })
+
+// Each field shows one row per query line, up to 3 rows; more lines scroll
+// inside the field.
+const MAX_FIELD_ROWS = 3
+function fieldRows(text: string): number {
+  return Math.min(text.split('\n').length, MAX_FIELD_ROWS)
+}
 
 function focusSearch() {
   searchRef.value?.focus()
@@ -56,7 +64,50 @@ function handleFieldKeydown(e: KeyboardEvent, onEnter: () => void) {
   }
 }
 
+let measureContext: CanvasRenderingContext2D | null = null
+
+// WebKit does not scroll a text field to a caret that script placed (only
+// typing does), so scroll to the end of the text by hand: down to the last
+// line, and right to the end of that line, measured with the field's font.
+function scrollFieldToEnd(field: HTMLTextAreaElement) {
+  field.scrollTop = field.scrollHeight
+  measureContext ??= document.createElement('canvas').getContext('2d')
+  if (!measureContext) return
+  const style = getComputedStyle(field)
+  measureContext.font = `${style.fontStyle} ${style.fontWeight} ${style.fontSize} ${style.fontFamily}`
+  const lastLine = field.value.slice(field.value.lastIndexOf('\n') + 1)
+  const caretX = parseFloat(style.paddingLeft) + measureContext.measureText(lastLine).width
+  field.scrollLeft = caretX + parseFloat(style.paddingRight) - field.clientWidth
+}
+
+// ArrowUp on the first line loads an older search and ArrowDown on the last
+// line a newer one; elsewhere in a multi-line search they move the caret.
+// The search watcher in ThreadEditor.vue searches the recalled text.
+async function recallHistory(e: KeyboardEvent) {
+  const field = searchRef.value
+  if (!field || e.isComposing || e.shiftKey || e.altKey || e.ctrlKey || e.metaKey) return
+  const { value, selectionStart, selectionEnd } = field
+  let entry: string | null = null
+  if (e.key === 'ArrowUp' && !value.slice(0, selectionStart).includes('\n')) {
+    entry = findHistory.older(value)
+  } else if (e.key === 'ArrowDown' && !value.slice(selectionEnd).includes('\n')) {
+    entry = findHistory.newer()
+  }
+  if (entry === null) return
+  e.preventDefault()
+  findState.search = entry
+  // The caret goes to the end once v-model has written the new value and
+  // the rows have grown.
+  await nextTick()
+  field.setSelectionRange(entry.length, entry.length)
+  scrollFieldToEnd(field)
+}
+
 function onSearchKeydown(e: KeyboardEvent) {
+  if (e.key === 'ArrowUp' || e.key === 'ArrowDown') {
+    void recallHistory(e)
+    return
+  }
   handleFieldKeydown(e, () => sbp('dez.editor/selectFindMatch', 'next'))
 }
 
@@ -88,13 +139,15 @@ watch(() => findState.focusRequest, focusSearch, { flush: 'post' })
       v-model="findState.search"
       class="find-field"
       :class="{ 'find-field--invalid': invalidRegex }"
-      rows="1"
+      :rows="fieldRows(findState.search)"
+      wrap="off"
       placeholder="Find"
       aria-label="Find"
       spellcheck="false"
       autocomplete="off"
       autocapitalize="off"
       @keydown="onSearchKeydown"
+      @input="findHistory.resetBrowse()"
     />
     <div class="find-controls">
       <button
@@ -147,7 +200,8 @@ watch(() => findState.focusRequest, focusSearch, { flush: 'post' })
         ref="replaceRef"
         v-model="findState.replace"
         class="find-field"
-        rows="1"
+        :rows="fieldRows(findState.replace)"
+        wrap="off"
         placeholder="Replace"
         aria-label="Replace"
         spellcheck="false"
@@ -198,12 +252,21 @@ watch(() => findState.focusRequest, focusSearch, { flush: 'post' })
   z-index: 50;
 }
 
+/* Top-aligned at the height of a one-row field (30px), so the controls stay
+   level with the first line while a multi-line field grows. */
 .find-controls {
+  align-self: start;
+  min-height: 30px;
   display: flex;
   align-items: center;
   gap: 2px;
 }
 
+/* `wrap="off"` with hidden horizontal overflow: a newline is part of the
+   query, so a soft-wrapped long line must not look like one. Long lines
+   scroll sideways like an <input> (the caret keeps itself in view). It
+   also keeps rows equal to query lines, which the history's first/last
+   line check relies on. */
 .find-field {
   grid-column: 2;
   min-width: 0;
@@ -218,6 +281,7 @@ watch(() => findState.focusRequest, focusSearch, { flush: 'post' })
   font-family: inherit;
   outline: none;
   resize: none;
+  overflow-x: hidden;
   overflow-y: auto;
 }
 

@@ -12,6 +12,7 @@ import {
   replaceMatchTransaction,
   setFindQueryEffect,
 } from './find'
+import { findHistory } from './findHistory'
 import { findState } from './findState'
 
 const BOTTOM_FOLLOW_THRESHOLD_PX = 96
@@ -110,13 +111,16 @@ export default sbp('sbp/selectors/register', {
     if (prefill !== null) findState.search = prefill
     findState.open = true
     findState.focusRequest++
+    // ArrowUp in the field starts a new browse from the shown text.
+    findHistory.resetBrowse()
   },
 
-  /** Close the dropdown, clear the match marks, and return focus to the
-   *  editor. A selected match collapses to a cursor at its end, so no
-   *  highlighted text is left behind. */
+  /** Close the dropdown, add the search to the history, clear the match
+   *  marks, and return focus to the editor. A selected match collapses to a
+   *  cursor at its end, so no highlighted text is left behind. */
   'dez.editor/closeFind' (): void {
     if (!findState.open) return
+    findHistory.commit(findState.search)
     findState.open = false
     findState.status = null
     const view = activeView
@@ -136,10 +140,12 @@ export default sbp('sbp/selectors/register', {
   },
 
   /** Next/previous match from the main selection, wrapping around the doc.
-   *  The match becomes the new origin for typing in the search field. */
+   *  The match becomes the new origin for typing in the search field. The
+   *  search goes into the history even without a match. */
   'dez.editor/selectFindMatch' (direction: 'next' | 'previous'): void {
     const view = activeView
     if (!view || !findState.open) return
+    findHistory.commit(findState.search)
     const { state } = view
     const query = state.field(findQueryField, false)
     if (!query) return
@@ -158,10 +164,12 @@ export default sbp('sbp/selectors/register', {
 
   /** "Replace" ('current') or "Replace all" ('all') with the replace field
    *  text; see `replaceMatchTransaction` / `replaceAllMatchesTransaction`.
-   *  Each call is one transaction, so one undo step and one store sync. */
+   *  Each call is one transaction, so one undo step and one store sync.
+   *  The search goes into the history. */
   'dez.editor/replaceFindMatches' (scope: 'current' | 'all'): void {
     const view = activeView
     if (!view || !findState.open) return
+    findHistory.commit(findState.search)
     const query = createFindQuery(findState, findState.replace)
     if (scope === 'all') {
       const spec = replaceAllMatchesTransaction(view.state, query)
