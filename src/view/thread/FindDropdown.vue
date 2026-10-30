@@ -55,7 +55,10 @@ async function toggleReplace() {
 // While a modal is open, Esc bubbles on so the global handler closes only
 // the modal.
 function handleFieldKeydown(e: KeyboardEvent, onEnter: () => void) {
-  if (e.isComposing) return
+  // WebKit on macOS fires the IME-confirming Enter after compositionend,
+  // with isComposing false but keyCode 229.
+  // https://bugs.webkit.org/show_bug.cgi?id=165004
+  if (e.isComposing || e.keyCode === 229) return
   if (e.key === 'Escape') {
     if (isModalOpen()) return
     e.preventDefault()

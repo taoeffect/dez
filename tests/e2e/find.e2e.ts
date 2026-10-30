@@ -358,6 +358,42 @@ describe('find and replace', () => {
     await waitForValue('sections after undoing Enter', sectionTexts, replaced(1))
   })
 
+  // On macOS WebKit, the keydown of the Enter that confirms IME text comes
+  // after compositionend, with isComposing false and keyCode 229. No IME
+  // runs here, so the test sends that keydown itself. Vue renders what it
+  // changed before the next WebDriver command reads the page.
+  it('ignores the Enter that confirms IME text in the find and replace fields', async () => {
+    const pressImeEnter = async (selector: string): Promise<void> => {
+      await browser.execute((sel: string) => {
+        const field = document.querySelector(sel) as HTMLTextAreaElement | null
+        if (!field) throw new Error(`pressImeEnter: ${sel} not found`)
+        field.dispatchEvent(new KeyboardEvent('keydown', {
+          key: 'Enter', code: 'Enter', keyCode: 229, bubbles: true, cancelable: true,
+        }))
+      }, selector)
+    }
+
+    await openFixture()
+    await openFindWithQuery('fox')
+    await waitForValue('status', findStatus, '1 of 4')
+    await pressImeEnter(FIND_FIELD)
+    expect(await findStatus()).toBe('1 of 4')
+    await browser.keys([Key.Enter])
+    await waitForValue('status after Enter', findStatus, '2 of 4')
+
+    if (!(await browser.execute((sel: string) => document.querySelector(sel) !== null, REPLACE_FIELD))) {
+      await click(browser, 'button[title="Toggle replace"]')
+    }
+    await waitFor(browser, REPLACE_FIELD, 10_000)
+    await typeInto(browser, REPLACE_FIELD, 'cat', { clear: true })
+    const before = await sectionTexts()
+    await pressImeEnter(REPLACE_FIELD)
+    expect(await findStatus()).toBe('2 of 4')
+    expect(await sectionTexts()).toEqual(before)
+    await browser.keys([Key.Enter])
+    await waitForValue('status after Enter in the replace field', findStatus, '2 of 3')
+  })
+
   it('recalls earlier searches with ArrowUp and ArrowDown', async () => {
     await openFixture()
     await openFindWithQuery('quick')
