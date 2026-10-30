@@ -461,6 +461,27 @@ describe('find and replace', () => {
     await waitForValue('field after ArrowUp on the first line', () => fieldState(FIND_FIELD), { value: 'third', rows: 1, caret: 5 })
   })
 
+  // WebKit does not scroll a text field to a caret that script placed, so
+  // the dropdown scrolls a recalled search to its end by hand. This entry
+  // is taller than the 3-row field, and its last line is wider than it.
+  it('scrolls a recalled search to the end of its last line', async () => {
+    const entry = 'one\ntwo\nthree\nfour: a last line that is long enough to scroll the field sideways'
+    await openFixture()
+    await openFindWithQuery(entry)
+    await browser.keys([Key.Enter])
+    await typeInto(browser, FIND_FIELD, 'x', { clear: true })
+    await browser.keys([Key.ArrowUp])
+    await waitForValue('recalled search scrolled to its end', () => browser.execute((sel: string) => {
+      const field = document.querySelector(sel) as HTMLTextAreaElement
+      return {
+        value: field.value,
+        rows: field.rows,
+        atBottom: field.scrollTop > 0 && field.scrollTop + field.clientHeight >= field.scrollHeight - 1,
+        atRight: field.scrollLeft > 0 && field.scrollLeft + field.clientWidth >= field.scrollWidth - 1,
+      }
+    }, FIND_FIELD), { value: entry, rows: 3, atBottom: true, atRight: true })
+  })
+
   it('grows the fields with Shift+Enter up to three rows and matches across lines', async () => {
     await openFixture()
     await openFindWithQuery('')
