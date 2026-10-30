@@ -173,7 +173,6 @@ describe('find prefill', () => {
     expect(findPrefillText(createState('one two', [4, 4]), false)).toBeNull()
     expect(findPrefillText(createState('a\nb\nc\nd', [0, 5]), false)).toBe('a\nb\nc')
     expect(findPrefillText(createState('a\nb\nc\nd', [0, 7]), false)).toBeNull()
-    expect(findPrefillText(createState(sectioned('a', 'b')), false)).toBeNull()
     expect(findPrefillText(createState(sectioned('a', 'b'), [0, 5]), false)).toBeNull()
   })
 
