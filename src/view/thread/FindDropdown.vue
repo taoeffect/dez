@@ -1,10 +1,11 @@
 <script setup lang="ts">
-import { computed, onMounted, ref, watch } from 'vue'
+import { computed, nextTick, onMounted, ref, watch } from 'vue'
 import sbp from '@sbp/sbp'
 import { createFindQuery } from '../editor/find'
 import { findState } from '../editor/findState'
 
 const searchRef = ref<HTMLTextAreaElement | null>(null)
+const replaceRef = ref<HTMLTextAreaElement | null>(null)
 
 const query = computed(() => createFindQuery(findState))
 const invalidRegex = computed(() => query.value.search !== '' && !query.value.valid)
@@ -24,11 +25,25 @@ function focusSearch() {
   searchRef.value?.select()
 }
 
+// Expanding moves focus to the replace field. Collapsing while that field
+// has focus moves focus to the search field, so focus is not lost to
+// <body> when the field is removed.
+async function toggleReplace() {
+  const replaceHadFocus = replaceRef.value !== null && document.activeElement === replaceRef.value
+  findState.replaceOpen = !findState.replaceOpen
+  if (findState.replaceOpen) {
+    await nextTick()
+    replaceRef.value?.focus()
+  } else if (replaceHadFocus) {
+    searchRef.value?.focus()
+  }
+}
+
 // Keys typed here never reach the CodeMirror keymaps (they listen on the
 // editor's contentDOM only), but they do bubble to the global shortcut
 // handler on `window`. Stop Esc/Enter here so they act once; Mod-f/Mod-g
 // are left to the global handler. Shift+Enter keeps the native newline.
-function onSearchKeydown(e: KeyboardEvent) {
+function handleFieldKeydown(e: KeyboardEvent, onEnter: () => void) {
   if (e.isComposing) return
   if (e.key === 'Escape') {
     e.preventDefault()
@@ -37,8 +52,16 @@ function onSearchKeydown(e: KeyboardEvent) {
   } else if (e.key === 'Enter' && !e.shiftKey && !e.altKey && !e.ctrlKey && !e.metaKey) {
     e.preventDefault()
     e.stopPropagation()
-    sbp('dez.editor/selectFindMatch', 'next')
+    onEnter()
   }
+}
+
+function onSearchKeydown(e: KeyboardEvent) {
+  handleFieldKeydown(e, () => sbp('dez.editor/selectFindMatch', 'next'))
+}
+
+function onReplaceKeydown(e: KeyboardEvent) {
+  handleFieldKeydown(e, () => sbp('dez.editor/replaceFindMatches', 'current'))
 }
 
 onMounted(focusSearch)
@@ -48,20 +71,32 @@ watch(() => findState.focusRequest, focusSearch, { flush: 'post' })
 
 <template>
   <div class="find-dropdown" role="search">
-    <div class="find-row">
-      <textarea
-        ref="searchRef"
-        v-model="findState.search"
-        class="find-field"
-        :class="{ 'find-field--invalid': invalidRegex }"
-        rows="1"
-        placeholder="Find"
-        aria-label="Find"
-        spellcheck="false"
-        autocomplete="off"
-        autocapitalize="off"
-        @keydown="onSearchKeydown"
-      />
+    <button
+      class="find-btn find-btn--chevron"
+      :class="{ 'find-btn--expanded': findState.replaceOpen }"
+      title="Toggle replace"
+      :aria-expanded="findState.replaceOpen"
+      @mousedown.prevent
+      @click="toggleReplace"
+    >
+      <svg width="10" height="10" viewBox="0 0 10 10" fill="none">
+        <path d="M3.5 2l3 3-3 3" stroke="currentColor" stroke-width="1.2" stroke-linecap="round" stroke-linejoin="round"/>
+      </svg>
+    </button>
+    <textarea
+      ref="searchRef"
+      v-model="findState.search"
+      class="find-field"
+      :class="{ 'find-field--invalid': invalidRegex }"
+      rows="1"
+      placeholder="Find"
+      aria-label="Find"
+      spellcheck="false"
+      autocomplete="off"
+      autocapitalize="off"
+      @keydown="onSearchKeydown"
+    />
+    <div class="find-controls">
       <button
         class="find-btn find-btn--toggle"
         :class="{ 'find-btn--active': findState.regexp }"
@@ -107,19 +142,55 @@ watch(() => findState.focusRequest, focusSearch, { flush: 'post' })
         </svg>
       </button>
     </div>
+    <template v-if="findState.replaceOpen">
+      <textarea
+        ref="replaceRef"
+        v-model="findState.replace"
+        class="find-field"
+        rows="1"
+        placeholder="Replace"
+        aria-label="Replace"
+        spellcheck="false"
+        autocomplete="off"
+        autocapitalize="off"
+        @keydown="onReplaceKeydown"
+      />
+      <div class="find-controls">
+        <button
+          class="find-btn find-btn--text"
+          title="Replace (Enter)"
+          @mousedown.prevent
+          @click="sbp('dez.editor/replaceFindMatches', 'current')"
+        >
+          Replace
+        </button>
+        <button
+          class="find-btn find-btn--text"
+          @mousedown.prevent
+          @click="sbp('dez.editor/replaceFindMatches', 'all')"
+        >
+          Replace all
+        </button>
+      </div>
+    </template>
   </div>
 </template>
 
 <style scoped>
 /* Anchored to `.editor-container`, which does not scroll, so the dropdown
    stays put while `.cm-scroller` scrolls under it. `right` leaves room for
-   the scroller's scrollbar. */
+   the scroller's scrollbar. A 3-column grid (chevron | field | controls)
+   keeps the search and replace fields the same width. */
 .find-dropdown {
   position: absolute;
   top: 8px;
   right: 24px;
   width: min(440px, calc(100% - 48px));
   padding: 6px;
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 4px 2px;
   background: var(--color-bg);
   border: 1px solid var(--color-border);
   border-radius: 8px;
@@ -127,14 +198,14 @@ watch(() => findState.focusRequest, focusSearch, { flush: 'post' })
   z-index: 50;
 }
 
-.find-row {
+.find-controls {
   display: flex;
   align-items: center;
   gap: 2px;
 }
 
 .find-field {
-  flex: 1;
+  grid-column: 2;
   min-width: 0;
   margin-right: 4px;
   padding: 5px 8px;
@@ -197,5 +268,35 @@ watch(() => findState.focusRequest, focusSearch, { flush: 'post' })
   opacity: 1;
   color: var(--color-accent);
   box-shadow: inset 0 0 0 1px var(--color-accent);
+}
+
+/* Spans both rows when the replace row is shown, so it reads as the toggle
+   for the whole dropdown. */
+.find-btn--chevron {
+  width: 18px;
+  align-self: stretch;
+  height: auto;
+  min-height: 26px;
+}
+
+.find-btn--chevron.find-btn--expanded {
+  grid-row: span 2;
+}
+
+.find-btn--chevron svg {
+  transition: transform 0.15s;
+}
+
+.find-btn--expanded svg {
+  transform: rotate(90deg);
+}
+
+.find-btn--text {
+  width: auto;
+  padding: 0 8px;
+  font-size: 12px;
+  font-family: inherit;
+  white-space: nowrap;
+  opacity: 0.7;
 }
 </style>

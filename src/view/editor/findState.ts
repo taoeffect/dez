@@ -9,6 +9,11 @@ export const findState = reactive({
   open: false,
   search: '',
   regexp: false,
+  /** Replace field text; used only by the replace selectors, so it is not
+   *  part of the CM find query. */
+  replace: '',
+  /** Whether the replace row is expanded. */
+  replaceOpen: false,
   /** Match count for the open query; `null` while closed, or while the
    *  query is empty or an invalid regex. */
   status: null as FindStatus | null,

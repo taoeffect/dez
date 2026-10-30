@@ -2,11 +2,14 @@ import sbp from '@sbp/sbp'
 import { EditorSelection } from '@codemirror/state'
 import { EditorView } from '@codemirror/view'
 import {
+  createFindQuery,
   findMatchAt,
   findNextMatch,
   findPrefillText,
   findPreviousMatch,
   findQueryField,
+  replaceAllMatchesTransaction,
+  replaceMatchTransaction,
   setFindQueryEffect,
 } from './find'
 import { findState } from './findState'
@@ -151,5 +154,26 @@ export default sbp('sbp/selectors/register', {
       effects: EditorView.scrollIntoView(EditorSelection.range(match.from, match.to)),
       userEvent: 'select.search',
     })
+  },
+
+  /** "Replace" ('current') or "Replace all" ('all') with the replace field
+   *  text; see `replaceMatchTransaction` / `replaceAllMatchesTransaction`.
+   *  Each call is one transaction, so one undo step and one store sync. */
+  'dez.editor/replaceFindMatches' (scope: 'current' | 'all'): void {
+    const view = activeView
+    if (!view || !findState.open) return
+    const query = createFindQuery(findState, findState.replace)
+    if (scope === 'all') {
+      const spec = replaceAllMatchesTransaction(view.state, query)
+      if (spec) view.dispatch(spec)
+    } else {
+      const spec = replaceMatchTransaction(view.state, query)
+      if (!spec?.selection) return
+      // The spec's selection is already in post-change positions, which is
+      // what effects in the same spec refer to.
+      view.dispatch({ ...spec, effects: EditorView.scrollIntoView(spec.selection.main) })
+    }
+    // Typing in the search field next searches from the replaced spot.
+    findState.origin = view.state.selection.main.from
   },
 })
