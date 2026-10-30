@@ -46,6 +46,18 @@ function apply(state: EditorState, spec: FindTransaction | null): EditorState {
   return state.update(spec!).state
 }
 
+function undoOnce(state: EditorState): EditorState {
+  let next = state
+  expect(undo({ state, dispatch: (tr) => { next = tr.state } })).toBe(true)
+  return next
+}
+
+// CM joins typing next to a recent change into that change's undo step,
+// unless the change was isolated with `isolateHistory`.
+function typeAtCursor(state: EditorState, text: string): EditorState {
+  return state.update({ changes: { from: state.selection.main.head, insert: text }, userEvent: 'input.type' }).state
+}
+
 function sectioned(...sections: string[]): string {
   return sections.join(`\n${SECTION_SEP}\n`)
 }
@@ -217,21 +229,41 @@ describe('find replace', () => {
     expect(next.selection.main).toMatchObject({ from: 6, to: 6 })
   })
 
+  it('keeps a replace and the typing right after it as separate undo steps', () => {
+    const doc = 'x one y'
+    let state = createState(doc, [2, 5], [history()])
+
+    state = apply(state, replaceMatchTransaction(state, plain('one', 'uno')))
+    const replacedDoc = state.doc.toString()
+    state = typeAtCursor(state, '!')
+    expect(state.doc.toString()).toBe('x uno! y')
+    expect(undoDepth(state)).toBe(2)
+
+    state = undoOnce(state)
+    expect(state.doc.toString()).toBe(replacedDoc)
+    state = undoOnce(state)
+    expect(state.doc.toString()).toBe(doc)
+  })
+
   it('returns null when there is nothing to replace', () => {
     const state = createState('abc', [0, 0])
     expect(replaceMatchTransaction(state, plain('z', 'y'))).toBeNull()
     expect(replaceAllMatchesTransaction(state, plain('z', 'y'))).toBeNull()
   })
 
-  it('replaces all matches as one undo step and leaves separators and pills intact', () => {
+  it('replaces all matches as one undo step apart from later typing, and leaves separators and pills intact', () => {
     const doc = sectioned(`o ${encodePrompt('p1', 'oo')} o`, 'foo')
     let state = createState(doc, undefined, [history(), pillsField.init(() => new Map())])
 
     state = apply(state, replaceAllMatchesTransaction(state, plain('o', `0${SECTION_SEP}${PILL_NL}`)))
     expect(state.doc.toString()).toBe(sectioned(`0 ${encodePrompt('p1', 'oo')} 0`, 'f00'))
-    expect(undoDepth(state)).toBe(1)
+    const replacedDoc = state.doc.toString()
+    state = typeAtCursor(state, 'x')
+    expect(undoDepth(state)).toBe(2)
 
-    undo({ state, dispatch: (tr) => { state = tr.state } })
+    state = undoOnce(state)
+    expect(state.doc.toString()).toBe(replacedDoc)
+    state = undoOnce(state)
     expect(state.doc.toString()).toBe(doc)
   })
 
