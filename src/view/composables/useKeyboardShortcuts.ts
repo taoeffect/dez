@@ -72,9 +72,12 @@ export function useKeyboardShortcuts() {
         void sbp("dez.controller/closeTab", sbp("dez.model/tabs/activeId"));
         break;
       case "f":
-        // This handler treats Ctrl as Mod on macOS too, where CodeMirror
-        // uses Ctrl+F (cursor right) in the editor and prevents the default.
-        if (e.shiftKey || e.defaultPrevented || modalOpen) break;
+        // On macOS, Ctrl+F is emacs-style "forward char" in CodeMirror and in
+        // native text fields, so only Cmd+F opens find there. CodeMirror does
+        // not prevent the default when the cursor cannot move (doc end), so
+        // this checks the platform, using the same test as CodeMirror's keymap.
+        if (e.ctrlKey && !e.metaKey && /Mac/.test(navigator.platform)) break;
+        if (e.shiftKey || modalOpen) break;
         e.preventDefault();
         sbp("dez.editor/openFind");
         break;
