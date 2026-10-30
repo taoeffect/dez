@@ -40,7 +40,8 @@ describe('find and replace', () => {
   let browser: E2EBrowser
 
   // Poll until `read()` returns `expected`. The failure message shows the
-  // last value read, which `waitUntil` alone would not.
+  // last value read, which `waitUntil` alone would not. Its cause is the
+  // `waitUntil` error: a timeout, or the error that the last `read()` threw.
   async function waitForValue<T> (label: string, read: () => Promise<T>, expected: T): Promise<void> {
     let actual: T | undefined
     try {
@@ -48,8 +49,8 @@ describe('find and replace', () => {
         actual = await read()
         return isDeepStrictEqual(actual, expected)
       }, { timeout: 10_000, interval: 50 })
-    } catch {
-      throw new Error(`${label}: expected ${JSON.stringify(expected)}, got ${JSON.stringify(actual)}`)
+    } catch (err) {
+      throw new Error(`${label}: expected ${JSON.stringify(expected)}, got ${JSON.stringify(actual)}`, { cause: err })
     }
   }
 
