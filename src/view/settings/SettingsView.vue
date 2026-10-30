@@ -74,11 +74,16 @@ const shortcuts = [
   { keys: 'Cmd/Ctrl + Enter', action: 'Submit thread to LLM' },
   { keys: 'Ctrl + Shift + Up', action: 'Add cursor on line above' },
   { keys: 'Ctrl + Shift + Down', action: 'Add cursor on line below' },
+  { keys: 'Cmd/Ctrl + F', action: 'Find and replace' },
+  { keys: 'Cmd/Ctrl + G', action: 'Next match (or Enter in find field)' },
+  { keys: 'Cmd/Ctrl + Shift + G', action: 'Previous match' },
+  { keys: 'Up / Down', action: 'Search history (in find field)' },
+  { keys: 'Shift + Enter', action: 'New line in find field' },
   { keys: 'Cmd/Ctrl + N', action: 'New tab' },
   { keys: 'Cmd/Ctrl + W', action: 'Close tab' },
   { keys: 'Cmd/Ctrl + H', action: 'Open history' },
   { keys: 'Cmd/Ctrl + ,', action: 'Open settings' },
-  { keys: 'Escape', action: 'Close overlays' },
+  { keys: 'Escape', action: 'Close find and overlays' },
 ]
 
 interface ProviderSettingsData {
