@@ -44,6 +44,7 @@ import {
   splitSectionEffect,
 } from './cmEditor'
 import { findExtension, findMatchStatus, findNextMatch, findQueryField, selectMatchSpec, setFindQueryEffect } from '../editor/find'
+import { markdownTables } from '../editor/tables'
 import { activeFindQuery, findState } from '../editor/findState'
 import { isModalOpen } from '../composables/useKeyboardShortcuts'
 
@@ -796,6 +797,7 @@ function buildState(): EditorState {
       dezLanguageSupport(),
       dezTheme,
       findExtension(activeFindQuery()),
+      markdownTables(),
       // The find dropdown floats over the top of the scroller. Count it as
       // hidden space so matches (and anything else CM scrolls to) are not
       // scrolled under it.
@@ -958,21 +960,19 @@ watch(
 // Search as the user types: install the query, which drives the match
 // marks, and select the first match at or after `findState.origin`. With no
 // match the selection stays where it is. Closing is handled by
-// `dez.editor/closeFind`.
-watch(
-  [() => findState.open, () => findState.search, () => findState.regexp],
-  () => {
-    const query = activeFindQuery()
-    if (!view || !query) return
-    const { state } = view
-    const match = query.valid ? findNextMatch(state, query, Math.min(findState.origin, state.doc.length)) : null
-    if (!match) {
-      view.dispatch({ effects: setFindQueryEffect.of(query) })
-      return
-    }
-    view.dispatch(selectMatchSpec(match, [setFindQueryEffect.of(query)]))
-  },
-)
+// `dez.editor/closeFind`. The getter tracks every `findState` field that
+// the query reads and returns a new query each run, so any query input
+// change re-runs this.
+watch(activeFindQuery, (query) => {
+  if (!view || !query) return
+  const { state } = view
+  const match = query.valid ? findNextMatch(state, query, Math.min(findState.origin, state.doc.length)) : null
+  if (!match) {
+    view.dispatch({ effects: setFindQueryEffect.of(query) })
+    return
+  }
+  view.dispatch(selectMatchSpec(match, [setFindQueryEffect.of(query)]))
+})
 
 // If the active tab's sections change identity list from elsewhere (e.g.
 // streaming appended a new agent section on this tab while mounted),

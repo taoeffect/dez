@@ -26,11 +26,11 @@ function createState(doc: string, selection?: [number, number], extensions: Exte
 }
 
 function plain(search: string, replace = ''): SearchQuery {
-  return createFindQuery({ search, regexp: false }, replace)
+  return createFindQuery({ search, regexp: false, caseSensitive: false }, replace)
 }
 
 function regex(search: string, replace = ''): SearchQuery {
-  return createFindQuery({ search, regexp: true }, replace)
+  return createFindQuery({ search, regexp: true, caseSensitive: false }, replace)
 }
 
 function matchTexts(state: EditorState, query: SearchQuery): string[] {
@@ -117,6 +117,26 @@ describe('find matching', () => {
     expect(invalid.valid).toBe(false)
     expect(matchTexts(state, invalid)).toEqual([])
     expect(findMatchStatus(state, invalid)).toEqual({ total: 0, current: null, capped: false })
+  })
+
+  it('matches plain text case-sensitively when the flag is set', () => {
+    const state = createState('Hello\nWORLD hello')
+    const exact = (search: string): SearchQuery => createFindQuery({ search, regexp: false, caseSensitive: true })
+    expect(matchTexts(state, exact('hello'))).toEqual(['hello'])
+    expect(matchTexts(state, exact('Hello'))).toEqual(['Hello'])
+    expect(matchTexts(state, exact('o\nW'))).toEqual(['o\nW'])
+    expect(matchTexts(state, exact('o\nw'))).toEqual([])
+  })
+
+  it('matches regexes case-sensitively when the flag is set, on one line and across lines', () => {
+    const state = createState('Hello\nWORLD hello')
+    const exact = (search: string): SearchQuery => createFindQuery({ search, regexp: true, caseSensitive: true })
+    expect(matchTexts(state, regex('[A-Z]+'))).toEqual(['Hello', 'WORLD', 'hello'])
+    expect(matchTexts(state, exact('[A-Z]+'))).toEqual(['H', 'WORLD'])
+    expect(matchTexts(state, exact('h.llo'))).toEqual(['hello'])
+    // `\s` runs CM's multi-line regex cursor, which takes the flag separately.
+    expect(matchTexts(state, exact('o\\sW'))).toEqual(['o\nW'])
+    expect(matchTexts(state, exact('o\\sw'))).toEqual([])
   })
 })
 

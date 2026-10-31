@@ -158,8 +158,20 @@ watch(() => findState.focusRequest, focusSearch, { flush: 'post' })
     />
     <div class="find-controls">
       <button
-        class="find-btn find-btn--toggle"
+        class="find-btn find-btn--case"
+        :class="{ 'find-btn--active': findState.caseSensitive }"
+        aria-label="Case-sensitive search"
+        :title="findState.caseSensitive ? 'Disable case-sensitive search' : 'Enable case-sensitive search'"
+        :aria-pressed="findState.caseSensitive"
+        @mousedown.prevent
+        @click="findState.caseSensitive = !findState.caseSensitive"
+      >
+        <span aria-hidden="true">Aa</span>
+      </button>
+      <button
+        class="find-btn find-btn--regex"
         :class="{ 'find-btn--active': findState.regexp }"
+        aria-label="Regex search"
         :title="findState.regexp ? 'Disable regex' : 'Enable regex'"
         :aria-pressed="findState.regexp"
         @mousedown.prevent
@@ -360,6 +372,13 @@ watch(() => findState.focusRequest, focusSearch, { flush: 'post' })
 
 .find-btn--expanded svg {
   transform: rotate(90deg);
+}
+
+.find-btn--case {
+  font-size: 12px;
+  font-weight: 600;
+  font-family: inherit;
+  letter-spacing: -0.02em;
 }
 
 .find-btn--text {

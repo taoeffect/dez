@@ -29,6 +29,10 @@ export const PILL_BODY = '\u{E001}'
 export const PILL_CLOSE = '\u{E002}'
 export const PILL_NL = '\u{E003}'
 
+/** Any live-doc sentinel: `SECTION_SEP` or a prompt pill marker
+ *  (`PILL_OPEN`..`PILL_NL`). */
+export const SENTINEL_CHAR = /[\u001E\uE000-\uE003]/
+
 /** Lightweight mirror of a Section kept in the CM state. The CM doc is the
  *  source of truth for text; this field just tracks per-section identity
  *  (id) and role. */
@@ -1058,6 +1062,59 @@ export const dezTheme = EditorView.theme({
   '.dez-find-match.dez-find-match--current': {
     backgroundColor: 'var(--color-find-match-current, rgba(255, 150, 0, 0.6))',
     outline: '1px solid var(--color-find-match-outline, rgba(230, 120, 0, 0.95))',
+  },
+  // GFM tables (src/view/editor/tables.ts): the source text laid out as a
+  // table. CM's height map counts only the space inside the wrapper's border
+  // box above the first row and below the last one, so the space around the
+  // table is wrapper padding (not margin) and rows touch: no border-spacing,
+  // no border-collapse overlap, no row margins. Otherwise clicks and
+  // scrolling drift. Cells draw the grid: right + bottom borders, plus top
+  // on the header row and left on the first cell of each row.
+  '.dez-table': {
+    display: 'table',
+    borderCollapse: 'separate',
+    borderSpacing: '0',
+    padding: '6px 0',
+  },
+  '.cm-line.dez-table-row': {
+    display: 'table-row',
+  },
+  '.dez-table-cell': {
+    display: 'table-cell',
+    verticalAlign: 'top',
+    padding: '0 0.5ch',
+    borderRight: '1px solid var(--color-border, #333)',
+    borderBottom: '1px solid var(--color-border, #333)',
+  },
+  '.dez-table-cell--first': {
+    borderLeft: '1px solid var(--color-border, #333)',
+  },
+  '.dez-table-cell--center': { textAlign: 'center' },
+  '.dez-table-cell--right': { textAlign: 'right' },
+  '.dez-table-row--header .dez-table-cell': {
+    borderTop: '1px solid var(--color-border, #333)',
+    borderBottom: 'none',
+    background: 'var(--color-bg-subtle, rgba(127,127,127,0.08))',
+    fontWeight: '600',
+  },
+  // The delimiter row stays a real, editable line, so its dashes keep their
+  // caret positions, but the text is invisible (the user asked for no
+  // dashes under the header). The thin row on the header's background, with
+  // its bottom border, reads as the rule under the header. The caret and
+  // the selection are drawn in their own layers, so they still show in it.
+  // The `*` covers syntax and find marks nested inside a cell.
+  '.dez-table-row--delimiter .dez-table-cell': {
+    background: 'var(--color-bg-subtle, rgba(127,127,127,0.08))',
+    fontSize: '0.7em',
+    lineHeight: '1.2',
+  },
+  '.dez-table-row--delimiter .dez-table-cell, .dez-table-row--delimiter .dez-table-cell *': {
+    color: 'transparent',
+  },
+  // Splitting pipes keep their width (cell padding) but are invisible. The
+  // `*` covers syntax highlight spans nested inside a pipe mark.
+  '.dez-table-pipe, .dez-table-pipe *': {
+    color: 'transparent',
   },
 })
 

@@ -1,6 +1,7 @@
 import fs from 'node:fs'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
+import { isDeepStrictEqual } from 'node:util'
 import type { E2EBrowser } from './session'
 
 const artifactsDir = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../artifacts')
@@ -51,6 +52,60 @@ export async function waitFor (browser: E2EBrowser, selector: string, timeoutMs 
     },
     { timeout: timeoutMs, timeoutMsg: `waitFor: "${selector}" did not appear within ${timeoutMs}ms` }
   )
+}
+
+/**
+ * Poll until `read()` returns `expected` (deep equality). The failure
+ * message shows the last value read, which `waitUntil` alone would not.
+ * Its cause is the `waitUntil` error: a timeout, or the error that the
+ * last `read()` threw.
+ */
+export async function waitForValue<T> (browser: E2EBrowser, label: string, read: () => Promise<T>, expected: T): Promise<void> {
+  let actual: T | undefined
+  try {
+    await browser.waitUntil(async () => {
+      actual = await read()
+      return isDeepStrictEqual(actual, expected)
+    }, { timeout: 10_000, interval: 50 })
+  } catch (err) {
+    throw new Error(`${label}: expected ${JSON.stringify(expected)}, got ${JSON.stringify(actual)}`, { cause: err })
+  }
+}
+
+/**
+ * Send real key actions, one action per character: a key repeated inside
+ * one `browser.keys` chord is dropped.
+ */
+export async function typeKeys (browser: E2EBrowser, text: string): Promise<void> {
+  for (const ch of text) await browser.keys(ch)
+}
+
+/**
+ * Start a fresh record of the page's `console.error` calls. Errors thrown
+ * inside CodeMirror plugins and Vue handlers are only logged, not thrown
+ * to WebDriver, so a spec calls this in `beforeEach` and checks
+ * `consoleErrors()` in `afterEach`. `console.error` is wrapped once per
+ * page; later calls only empty the record.
+ */
+export async function resetConsoleErrors (browser: E2EBrowser): Promise<void> {
+  await browser.execute(() => {
+    Reflect.set(window, '__e2eErrors', [])
+    if (Reflect.get(window, '__e2eConsoleWrapped')) return
+    Reflect.set(window, '__e2eConsoleWrapped', true)
+    const original = console.error.bind(console)
+    console.error = (...args: unknown[]) => {
+      const record = Reflect.get(window, '__e2eErrors') as string[]
+      record.push(args.map((arg) => arg instanceof Error ? arg.stack ?? arg.message : String(arg)).join(' '))
+      original(...args)
+    }
+  })
+}
+
+/**
+ * The `console.error` calls recorded since the last `resetConsoleErrors()`.
+ */
+export async function consoleErrors (browser: E2EBrowser): Promise<string[]> {
+  return browser.execute(() => Reflect.get(window, '__e2eErrors') as string[])
 }
 
 /**

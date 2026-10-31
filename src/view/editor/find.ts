@@ -13,7 +13,7 @@ import {
   type TransactionSpec,
 } from '@codemirror/state'
 import { Decoration, EditorView, ViewPlugin, type DecorationSet, type ViewUpdate } from '@codemirror/view'
-import { SECTION_SEP, pillsField, scanPills, type PillMetadata } from '../thread/cmEditor'
+import { SECTION_SEP, SENTINEL_CHAR, pillsField, scanPills, type PillMetadata } from '../thread/cmEditor'
 
 /** Status counting stops here; the UI shows `1000+`. */
 export const FIND_COUNT_LIMIT = 1000
@@ -23,14 +23,12 @@ export const FIND_COUNT_LIMIT = 1000
  *  value as `@codemirror/search`'s own highlighter. */
 const HIGHLIGHT_MARGIN = 250
 
-// Live-doc sentinels from cmEditor.ts: SECTION_SEP (U+001E) and the prompt
-// pill markers PILL_OPEN..PILL_NL (U+E000-U+E003).
-const SENTINEL_CHAR = /[\u001E\uE000-\uE003]/
-const SENTINEL_CHARS = /[\u001E\uE000-\uE003]/g
+const SENTINEL_CHARS = new RegExp(SENTINEL_CHAR.source, 'g')
 
 export interface FindQueryInput {
   search: string
   regexp: boolean
+  caseSensitive: boolean
 }
 
 export interface FindMatch {
@@ -55,11 +53,12 @@ export interface FindTransaction extends TransactionSpec {
 
 /** Build the query for the find dropdown. Plain mode is literal text, so a
  *  typed `\n` stays two characters; real newlines from Shift+Enter match line
- *  breaks. Search is always case-insensitive. Sentinels are removed so a
- *  pasted marker can never match or be written back by a replace. */
-export function createFindQuery({ search, regexp }: FindQueryInput, replace = ''): SearchQuery {
+ *  breaks. Sentinels are removed so a pasted marker can never match or be
+ *  written back by a replace. */
+export function createFindQuery({ search, regexp, caseSensitive }: FindQueryInput, replace = ''): SearchQuery {
   return new SearchQuery({
     search: search.replace(SENTINEL_CHARS, ''),
+    caseSensitive,
     regexp,
     literal: !regexp,
     replace: replace.replace(SENTINEL_CHARS, ''),

@@ -9,6 +9,7 @@ export const findState = reactive({
   open: false,
   search: '',
   regexp: false,
+  caseSensitive: false,
   /** Replace field text; used only by the replace selectors, so it is not
    *  part of the CM find query. */
   replace: '',

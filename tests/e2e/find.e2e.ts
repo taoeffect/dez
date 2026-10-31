@@ -1,8 +1,7 @@
-import { isDeepStrictEqual } from 'node:util'
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from 'vitest'
 import { Key } from 'webdriverio'
 import { startApp, type RunningApp } from './harness/app'
-import { click, screenshotOnFailure, typeInto, waitFor } from './harness/dom'
+import { click, consoleErrors, resetConsoleErrors, screenshotOnFailure, typeInto, typeKeys, waitFor, waitForValue } from './harness/dom'
 import { makeConversation, seedAppState, seedConversation } from './harness/fixtures'
 import { createSession, destroySession, type E2EBrowser } from './harness/session'
 
@@ -17,14 +16,17 @@ import { createSession, destroySession, type E2EBrowser } from './harness/sessio
 // buttons are clicked with `el.click()`.
 //
 // One app session serves the whole file. Each test opens the fixture in a
-// new tab. Find state (query, regex flag, replace row, history) is shared
-// by all tabs and is not reset, so each test sets what it depends on.
+// new tab. Find state (query, regex and case flags, replace row, history) is
+// shared by all tabs and is not reset, so each test sets what it depends on.
 
 const FIND_FIELD = '.find-field[aria-label="Find"]'
 const REPLACE_FIELD = '.find-field[aria-label="Replace"]'
+const REGEX_TOGGLE = '.find-btn--regex'
+const CASE_TOGGLE = '.find-btn--case'
 
 // "fox" (any case) matches 4 times: "Fox one", "brown fox", "fox two", and
-// the agent section's "Fox". The regex `fox \w+` matches 3 of them.
+// the agent section's "Fox"; only "brown fox" and "fox two" match it
+// case-sensitively. The regex `fox \w+` matches 3 of them.
 const USER_TEXT = 'Fox one: the quick brown fox.\nfox two jumps over the lazy dog.'
 const AGENT_TEXT = 'A third Fox appears.\nNothing to see on this line.'
 
@@ -38,27 +40,6 @@ let fixtureCount = 0
 describe('find and replace', () => {
   let app: RunningApp
   let browser: E2EBrowser
-
-  // Poll until `read()` returns `expected`. The failure message shows the
-  // last value read, which `waitUntil` alone would not. Its cause is the
-  // `waitUntil` error: a timeout, or the error that the last `read()` threw.
-  async function waitForValue<T> (label: string, read: () => Promise<T>, expected: T): Promise<void> {
-    let actual: T | undefined
-    try {
-      await browser.waitUntil(async () => {
-        actual = await read()
-        return isDeepStrictEqual(actual, expected)
-      }, { timeout: 10_000, interval: 50 })
-    } catch (err) {
-      throw new Error(`${label}: expected ${JSON.stringify(expected)}, got ${JSON.stringify(actual)}`, { cause: err })
-    }
-  }
-
-  // One action per character: a key repeated inside one `browser.keys`
-  // chord is dropped.
-  async function typeKeys (text: string): Promise<void> {
-    for (const ch of text) await browser.keys(ch)
-  }
 
   async function findStatus (): Promise<string> {
     return browser.execute(() => document.querySelector('.find-status')?.textContent?.trim() ?? '')
@@ -76,8 +57,13 @@ describe('find and replace', () => {
     )
   }
 
+  // CM's own selection layer stays in the DOM, hidden, and still holds
+  // selection rects; hidden rects have no client rects. So count only the
+  // rects that the user sees.
   async function selectionDrawn (): Promise<boolean> {
-    return browser.execute(() => document.querySelector('.cm-selectionBackground') !== null)
+    return browser.execute(() =>
+      Array.from(document.querySelectorAll('.cm-selectionBackground')).some((el) => el.getClientRects().length > 0)
+    )
   }
 
   async function dropdownOpen (): Promise<boolean> {
@@ -118,19 +104,32 @@ describe('find and replace', () => {
     })
   }
 
-  async function setRegex (on: boolean): Promise<void> {
-    await browser.execute((wanted: boolean) => {
-      const toggle = document.querySelector('.find-btn--toggle') as HTMLButtonElement | null
-      if (!toggle) throw new Error('setRegex: regex toggle not found')
+  async function setToggle (selector: string, on: boolean): Promise<void> {
+    await browser.execute((sel: string, wanted: boolean) => {
+      const toggle = document.querySelector(sel) as HTMLButtonElement | null
+      if (!toggle) throw new Error(`setToggle: ${sel} not found`)
       if ((toggle.getAttribute('aria-pressed') === 'true') !== wanted) toggle.click()
-    }, on)
+    }, selector, on)
+  }
+
+  // `label` is the accessible name. It must stay the same in both states;
+  // `aria-pressed` gives the state and `title` is only the tooltip.
+  async function toggleState (selector: string): Promise<{ pressed: string | null, title: string | null, label: string | null }> {
+    return browser.execute((sel: string) => {
+      const button = document.querySelector(sel)
+      return {
+        pressed: button?.getAttribute('aria-pressed') ?? null,
+        title: button?.getAttribute('title') ?? null,
+        label: button?.getAttribute('aria-label') ?? null,
+      }
+    }, selector)
   }
 
   async function setReplaceOpen (open: boolean): Promise<void> {
     const isOpen = (): Promise<boolean> =>
       browser.execute((sel: string) => document.querySelector(sel) !== null, REPLACE_FIELD)
     if ((await isOpen()) !== open) await click(browser, 'button[title="Toggle replace"]')
-    await waitForValue('replace row open', isOpen, open)
+    await waitForValue(browser, 'replace row open', isOpen, open)
   }
 
   async function clickButtonWithText (text: string): Promise<void> {
@@ -182,11 +181,13 @@ describe('find and replace', () => {
     await browser.keys([Key.Control, Key.Home])
   }
 
-  // Ctrl+F, then a fresh query: plain mode, empty field, typed text.
+  // Ctrl+F, then a fresh query: plain, case-insensitive, empty field, typed
+  // text.
   async function openFindWithQuery (search: string): Promise<void> {
     await browser.keys([Key.Control, 'f'])
     await waitFor(browser, FIND_FIELD, 10_000)
-    await setRegex(false)
+    await setToggle(REGEX_TOGGLE, false)
+    await setToggle(CASE_TOGGLE, false)
     await typeInto(browser, FIND_FIELD, search, { clear: true })
   }
 
@@ -207,26 +208,13 @@ describe('find and replace', () => {
   // Errors thrown by selectors inside Vue handlers are only logged, so the
   // page records console.error calls and each test checks the record.
   beforeEach(async () => {
-    await browser.execute(() => {
-      const errors: string[] = []
-      Reflect.set(window, '__findE2eErrors', errors)
-      if (!Reflect.get(window, '__findE2eConsoleWrapped')) {
-        Reflect.set(window, '__findE2eConsoleWrapped', true)
-        const original = console.error.bind(console)
-        console.error = (...args: unknown[]) => {
-          const record = Reflect.get(window, '__findE2eErrors') as string[]
-          record.push(args.map((arg) => arg instanceof Error ? arg.stack ?? arg.message : String(arg)).join(' '))
-          original(...args)
-        }
-      }
-    })
+    await resetConsoleErrors(browser)
   })
 
   afterEach(async (ctx) => {
     await screenshotOnFailure(browser, ctx)
     if (ctx.task.result?.state === 'fail') return
-    const errors = await browser.execute(() => Reflect.get(window, '__findE2eErrors') as string[])
-    expect(errors).toEqual([])
+    expect(await consoleErrors(browser)).toEqual([])
   })
 
   afterAll(async () => {
@@ -248,43 +236,44 @@ describe('find and replace', () => {
     }, FIND_FIELD)
     expect(prefilled).toEqual({ value: 'Fox', start: 0, end: 3 })
 
-    await setRegex(false)
-    await waitForValue('status', findStatus, '1 of 4')
-    await waitForValue('match count', matchCount, 4)
-    await waitForValue('current match', currentMatchTexts, ['Fox'])
+    await setToggle(REGEX_TOGGLE, false)
+    await setToggle(CASE_TOGGLE, false)
+    await waitForValue(browser, 'status', findStatus, '1 of 4')
+    await waitForValue(browser, 'match count', matchCount, 4)
+    await waitForValue(browser, 'current match', currentMatchTexts, ['Fox'])
 
     // Search as you type: the first match at or after the doc start.
     await typeInto(browser, FIND_FIELD, 'lazy dog', { clear: true })
-    await waitForValue('status', findStatus, '1 of 1')
-    await waitForValue('current match', currentMatchTexts, ['lazy dog'])
+    await waitForValue(browser, 'status', findStatus, '1 of 1')
+    await waitForValue(browser, 'current match', currentMatchTexts, ['lazy dog'])
 
     await typeInto(browser, FIND_FIELD, 'zebra', { clear: true })
-    await waitForValue('status', findStatus, 'No results')
-    await waitForValue('match count', matchCount, 0)
+    await waitForValue(browser, 'status', findStatus, 'No results')
+    await waitForValue(browser, 'match count', matchCount, 0)
   })
 
   it('navigates with Enter, Ctrl+G, Shift+Ctrl+G, and the arrow buttons, wrapping at both ends', async () => {
     await openFixture()
     await openFindWithQuery('fox')
-    await waitForValue('status', findStatus, '1 of 4')
+    await waitForValue(browser, 'status', findStatus, '1 of 4')
 
     await browser.keys([Key.Enter])
-    await waitForValue('status after Enter', findStatus, '2 of 4')
-    await waitForValue('current match', currentMatchTexts, ['fox'])
+    await waitForValue(browser, 'status after Enter', findStatus, '2 of 4')
+    await waitForValue(browser, 'current match', currentMatchTexts, ['fox'])
     await browser.keys([Key.Control, 'g'])
-    await waitForValue('status after Ctrl+G', findStatus, '3 of 4')
+    await waitForValue(browser, 'status after Ctrl+G', findStatus, '3 of 4')
     await browser.keys([Key.Control, 'g'])
-    await waitForValue('status after Ctrl+G', findStatus, '4 of 4')
-    await waitForValue('current match', currentMatchTexts, ['Fox'])
+    await waitForValue(browser, 'status after Ctrl+G', findStatus, '4 of 4')
+    await waitForValue(browser, 'current match', currentMatchTexts, ['Fox'])
     await browser.keys([Key.Control, 'g'])
-    await waitForValue('status after wrapping forward', findStatus, '1 of 4')
+    await waitForValue(browser, 'status after wrapping forward', findStatus, '1 of 4')
     await browser.keys([Key.Control, Key.Shift, 'g'])
-    await waitForValue('status after wrapping back', findStatus, '4 of 4')
+    await waitForValue(browser, 'status after wrapping back', findStatus, '4 of 4')
 
     await click(browser, 'button[title^="Previous match"]')
-    await waitForValue('status after the previous button', findStatus, '3 of 4')
+    await waitForValue(browser, 'status after the previous button', findStatus, '3 of 4')
     await click(browser, 'button[title^="Next match"]')
-    await waitForValue('status after the next button', findStatus, '4 of 4')
+    await waitForValue(browser, 'status after the next button', findStatus, '4 of 4')
     // Navigating from the buttons does not move focus to the editor.
     expect(await focusedArea()).toBe('find')
     expect(await matchCount()).toBe(4)
@@ -293,38 +282,53 @@ describe('find and replace', () => {
   it('switches between literal and regex matching', async () => {
     await openFixture()
     await openFindWithQuery('fox \\w+')
-    const toggle = async (): Promise<{ pressed: string | null, title: string | null }> =>
-      browser.execute(() => {
-        const button = document.querySelector('.find-btn--toggle')
-        return { pressed: button?.getAttribute('aria-pressed') ?? null, title: button?.getAttribute('title') ?? null }
-      })
+    await waitForValue(browser, 'literal status', findStatus, 'No results')
+    expect(await toggleState(REGEX_TOGGLE)).toEqual({ pressed: 'false', title: 'Enable regex', label: 'Regex search' })
 
-    await waitForValue('literal status', findStatus, 'No results')
-    expect(await toggle()).toEqual({ pressed: 'false', title: 'Enable regex' })
-
-    await click(browser, '.find-btn--toggle')
-    await waitForValue('regex toggle', toggle, { pressed: 'true', title: 'Disable regex' })
-    await waitForValue('regex status', findStatus, '1 of 3')
-    await waitForValue('match count', matchCount, 3)
-    await waitForValue('current match', currentMatchTexts, ['Fox one'])
+    await click(browser, REGEX_TOGGLE)
+    await waitForValue(browser, 'regex toggle', () => toggleState(REGEX_TOGGLE), { pressed: 'true', title: 'Disable regex', label: 'Regex search' })
+    await waitForValue(browser, 'regex status', findStatus, '1 of 3')
+    await waitForValue(browser, 'match count', matchCount, 3)
+    await waitForValue(browser, 'current match', currentMatchTexts, ['Fox one'])
 
     const invalid = async (): Promise<boolean> =>
       browser.execute((sel: string) => document.querySelector(sel)?.classList.contains('find-field--invalid') ?? false, FIND_FIELD)
     await typeInto(browser, FIND_FIELD, 'fox(', { clear: true })
-    await waitForValue('invalid status', findStatus, 'Invalid regex')
+    await waitForValue(browser, 'invalid status', findStatus, 'Invalid regex')
     expect(await invalid()).toBe(true)
-    await waitForValue('match count', matchCount, 0)
+    await waitForValue(browser, 'match count', matchCount, 0)
 
     // The same text is a valid literal search.
-    await click(browser, '.find-btn--toggle')
-    await waitForValue('literal status', findStatus, 'No results')
+    await click(browser, REGEX_TOGGLE)
+    await waitForValue(browser, 'literal status', findStatus, 'No results')
     expect(await invalid()).toBe(false)
+  })
+
+  it('switches between case-insensitive and case-sensitive matching', async () => {
+    await openFixture()
+    await openFindWithQuery('fox')
+    await waitForValue(browser, 'case-insensitive status', findStatus, '1 of 4')
+    expect(await toggleState(CASE_TOGGLE)).toEqual({ pressed: 'false', title: 'Enable case-sensitive search', label: 'Case-sensitive search' })
+
+    // The toggle searches again from the doc start, so "brown fox" becomes
+    // the current match.
+    await click(browser, CASE_TOGGLE)
+    await waitForValue(browser, 'case toggle', () => toggleState(CASE_TOGGLE), { pressed: 'true', title: 'Disable case-sensitive search', label: 'Case-sensitive search' })
+    await waitForValue(browser, 'case-sensitive status', findStatus, '1 of 2')
+    await waitForValue(browser, 'match count', matchCount, 2)
+    await waitForValue(browser, 'current match', currentMatchTexts, ['fox'])
+
+    await click(browser, CASE_TOGGLE)
+    await waitForValue(browser, 'case toggle', () => toggleState(CASE_TOGGLE), { pressed: 'false', title: 'Enable case-sensitive search', label: 'Case-sensitive search' })
+    await waitForValue(browser, 'case-insensitive status', findStatus, '1 of 4')
+    await waitForValue(browser, 'match count', matchCount, 4)
+    await waitForValue(browser, 'current match', currentMatchTexts, ['Fox'])
   })
 
   it('replaces one match at a time and all at once, each as one undo step', async () => {
     await openFixture()
     await openFindWithQuery('fox')
-    await waitForValue('status', findStatus, '1 of 4')
+    await waitForValue(browser, 'status', findStatus, '1 of 4')
     const before = await sectionTexts()
     // Each step of `expected` replaces the next "fox" (any case) in doc
     // order; the last one replaces all that are left.
@@ -339,7 +343,7 @@ describe('find and replace', () => {
     await setReplaceOpen(false)
     await click(browser, 'button[title="Toggle replace"]')
     await waitFor(browser, REPLACE_FIELD, 10_000)
-    await waitForValue('focus after expanding', focusedArea, 'replace')
+    await waitForValue(browser, 'focus after expanding', focusedArea, 'replace')
     expect(await browser.execute(() =>
       document.querySelector('button[title="Toggle replace"]')?.getAttribute('aria-expanded')
     )).toBe('true')
@@ -347,24 +351,24 @@ describe('find and replace', () => {
 
     // Replace the current match; the next match becomes current.
     await click(browser, 'button[title="Replace (Enter)"]')
-    await waitForValue('sections after Replace', sectionTexts, replaced(1))
-    await waitForValue('status after Replace', findStatus, '1 of 3')
-    await waitForValue('current match', currentMatchTexts, ['fox'])
+    await waitForValue(browser, 'sections after Replace', sectionTexts, replaced(1))
+    await waitForValue(browser, 'status after Replace', findStatus, '1 of 3')
+    await waitForValue(browser, 'current match', currentMatchTexts, ['fox'])
 
     // Enter in the replace field does the same.
     await browser.keys([Key.Enter])
-    await waitForValue('sections after Enter', sectionTexts, replaced(2))
-    await waitForValue('status after Enter', findStatus, '1 of 2')
+    await waitForValue(browser, 'sections after Enter', sectionTexts, replaced(2))
+    await waitForValue(browser, 'status after Enter', findStatus, '1 of 2')
 
     await clickButtonWithText('Replace all')
-    await waitForValue('sections after Replace all', sectionTexts, replaced(4))
-    await waitForValue('status after Replace all', findStatus, 'No results')
+    await waitForValue(browser, 'sections after Replace all', sectionTexts, replaced(4))
+    await waitForValue(browser, 'status after Replace all', findStatus, 'No results')
 
     await focusEditor()
     await browser.keys([Key.Control, 'z'])
-    await waitForValue('sections after undoing Replace all', sectionTexts, replaced(2))
+    await waitForValue(browser, 'sections after undoing Replace all', sectionTexts, replaced(2))
     await browser.keys([Key.Control, 'z'])
-    await waitForValue('sections after undoing Enter', sectionTexts, replaced(1))
+    await waitForValue(browser, 'sections after undoing Enter', sectionTexts, replaced(1))
   })
 
   // On macOS WebKit, the keydown of the Enter that confirms IME text comes
@@ -384,11 +388,11 @@ describe('find and replace', () => {
 
     await openFixture()
     await openFindWithQuery('fox')
-    await waitForValue('status', findStatus, '1 of 4')
+    await waitForValue(browser, 'status', findStatus, '1 of 4')
     await pressImeEnter(FIND_FIELD)
     expect(await findStatus()).toBe('1 of 4')
     await browser.keys([Key.Enter])
-    await waitForValue('status after Enter', findStatus, '2 of 4')
+    await waitForValue(browser, 'status after Enter', findStatus, '2 of 4')
 
     await setReplaceOpen(true)
     await typeInto(browser, REPLACE_FIELD, 'cat', { clear: true })
@@ -397,23 +401,23 @@ describe('find and replace', () => {
     expect(await findStatus()).toBe('2 of 4')
     expect(await sectionTexts()).toEqual(before)
     await browser.keys([Key.Enter])
-    await waitForValue('status after Enter in the replace field', findStatus, '2 of 3')
+    await waitForValue(browser, 'status after Enter in the replace field', findStatus, '2 of 3')
   })
 
   it('recalls earlier searches with ArrowUp and ArrowDown', async () => {
     await openFixture()
     await openFindWithQuery('quick')
-    await waitForValue('status', findStatus, '1 of 1')
+    await waitForValue(browser, 'status', findStatus, '1 of 1')
     // Next/previous (Enter or button) and closing add the search to the
     // history, even when the match does not move.
     await browser.keys([Key.Enter])
     await typeInto(browser, FIND_FIELD, 'lazy', { clear: true })
-    await waitForValue('status', findStatus, '1 of 1')
+    await waitForValue(browser, 'status', findStatus, '1 of 1')
     await click(browser, 'button[title^="Next match"]')
     await typeInto(browser, FIND_FIELD, 'third', { clear: true })
-    await waitForValue('status', findStatus, '1 of 1')
+    await waitForValue(browser, 'status', findStatus, '1 of 1')
     await browser.keys([Key.Escape])
-    await waitForValue('dropdown open', dropdownOpen, false)
+    await waitForValue(browser, 'dropdown open', dropdownOpen, false)
 
     // The reopened field shows the newest entry, so the first ArrowUp skips
     // it. A recalled search runs right away, with the caret at its end.
@@ -421,35 +425,36 @@ describe('find and replace', () => {
     await waitFor(browser, FIND_FIELD, 10_000)
     expect((await fieldState(FIND_FIELD)).value).toBe('third')
     await browser.keys([Key.ArrowUp])
-    await waitForValue('field after ArrowUp', () => fieldState(FIND_FIELD), { value: 'lazy', rows: 1, caret: 4 })
-    await waitForValue('status of the recalled search', findStatus, '1 of 1')
-    await waitForValue('current match', currentMatchTexts, ['lazy'])
+    await waitForValue(browser, 'field after ArrowUp', () => fieldState(FIND_FIELD), { value: 'lazy', rows: 1, caret: 4 })
+    await waitForValue(browser, 'status of the recalled search', findStatus, '1 of 1')
+    await waitForValue(browser, 'current match', currentMatchTexts, ['lazy'])
     await browser.keys([Key.ArrowUp])
-    await waitForValue('field after ArrowUp', () => fieldState(FIND_FIELD), { value: 'quick', rows: 1, caret: 5 })
+    await waitForValue(browser, 'field after ArrowUp', () => fieldState(FIND_FIELD), { value: 'quick', rows: 1, caret: 5 })
     await browser.keys([Key.ArrowDown])
-    await waitForValue('field after ArrowDown', () => fieldState(FIND_FIELD), { value: 'lazy', rows: 1, caret: 4 })
+    await waitForValue(browser, 'field after ArrowDown', () => fieldState(FIND_FIELD), { value: 'lazy', rows: 1, caret: 4 })
     await browser.keys([Key.ArrowDown])
-    await waitForValue('field after ArrowDown', () => fieldState(FIND_FIELD), { value: 'third', rows: 1, caret: 5 })
+    await waitForValue(browser, 'field after ArrowDown', () => fieldState(FIND_FIELD), { value: 'third', rows: 1, caret: 5 })
 
     // Typing while browsing starts a new browse: ArrowUp starts again from
     // the newest entry, and going past it restores the typed draft.
     await browser.keys([Key.ArrowUp])
-    await waitForValue('field after ArrowUp', () => fieldState(FIND_FIELD), { value: 'lazy', rows: 1, caret: 4 })
-    await typeKeys('x')
+    await waitForValue(browser, 'field after ArrowUp', () => fieldState(FIND_FIELD), { value: 'lazy', rows: 1, caret: 4 })
+    await typeKeys(browser, 'x')
     await browser.keys([Key.ArrowUp])
-    await waitForValue('field after typing and ArrowUp', () => fieldState(FIND_FIELD), { value: 'third', rows: 1, caret: 5 })
+    await waitForValue(browser, 'field after typing and ArrowUp', () => fieldState(FIND_FIELD), { value: 'third', rows: 1, caret: 5 })
     await browser.keys([Key.ArrowDown])
-    await waitForValue('restored draft', () => fieldState(FIND_FIELD), { value: 'lazyx', rows: 1, caret: 5 })
+    await waitForValue(browser, 'restored draft', () => fieldState(FIND_FIELD), { value: 'lazyx', rows: 1, caret: 5 })
 
     // In a multi-line search, ArrowUp off the first line moves the caret
     // up a line; only ArrowUp on the first line recalls.
     await browser.keys([Key.Shift, Key.Enter])
-    await typeKeys('fox')
-    await waitForValue('multi-line draft', () => fieldState(FIND_FIELD), { value: 'lazyx\nfox', rows: 2, caret: 9 })
+    await typeKeys(browser, 'fox')
+    await waitForValue(browser, 'multi-line draft', () => fieldState(FIND_FIELD), { value: 'lazyx\nfox', rows: 2, caret: 9 })
     // The native caret move keeps the pixel x position, so with a
     // proportional font only the line is fixed, not the column.
     await browser.keys([Key.ArrowUp])
     await waitForValue(
+      browser,
       'caret after ArrowUp on the last line',
       async () => {
         const { value, rows, caret } = await fieldState(FIND_FIELD)
@@ -458,7 +463,7 @@ describe('find and replace', () => {
       { value: 'lazyx\nfox', rows: 2, caretOnFirstLine: true }
     )
     await browser.keys([Key.ArrowUp])
-    await waitForValue('field after ArrowUp on the first line', () => fieldState(FIND_FIELD), { value: 'third', rows: 1, caret: 5 })
+    await waitForValue(browser, 'field after ArrowUp on the first line', () => fieldState(FIND_FIELD), { value: 'third', rows: 1, caret: 5 })
   })
 
   // WebKit does not scroll a text field to a caret that script placed, so
@@ -471,7 +476,7 @@ describe('find and replace', () => {
     await browser.keys([Key.Enter])
     await typeInto(browser, FIND_FIELD, 'x', { clear: true })
     await browser.keys([Key.ArrowUp])
-    await waitForValue('recalled search scrolled to its end', () => browser.execute((sel: string) => {
+    await waitForValue(browser, 'recalled search scrolled to its end', () => browser.execute((sel: string) => {
       const field = document.querySelector(sel) as HTMLTextAreaElement
       return {
         value: field.value,
@@ -485,49 +490,49 @@ describe('find and replace', () => {
   it('grows the fields with Shift+Enter up to three rows and matches across lines', async () => {
     await openFixture()
     await openFindWithQuery('')
-    await waitForValue('empty field', () => fieldState(FIND_FIELD), { value: '', rows: 1, caret: 0 })
+    await waitForValue(browser, 'empty field', () => fieldState(FIND_FIELD), { value: '', rows: 1, caret: 0 })
 
-    await typeKeys('brown fox.')
+    await typeKeys(browser, 'brown fox.')
     await browser.keys([Key.Shift, Key.Enter])
-    await typeKeys('fox two')
-    await waitForValue('two-line field', () => fieldState(FIND_FIELD), { value: 'brown fox.\nfox two', rows: 2, caret: 18 })
+    await typeKeys(browser, 'fox two')
+    await waitForValue(browser, 'two-line field', () => fieldState(FIND_FIELD), { value: 'brown fox.\nfox two', rows: 2, caret: 18 })
     // The match spans the line break, so it draws one element per line.
-    await waitForValue('status', findStatus, '1 of 1')
-    await waitForValue('current match', currentMatchTexts, ['brown fox.', 'fox two'])
+    await waitForValue(browser, 'status', findStatus, '1 of 1')
+    await waitForValue(browser, 'current match', currentMatchTexts, ['brown fox.', 'fox two'])
 
     await browser.keys([Key.Shift, Key.Enter])
-    await typeKeys('a')
-    await waitForValue('three-line field', () => fieldState(FIND_FIELD), { value: 'brown fox.\nfox two\na', rows: 3, caret: 20 })
+    await typeKeys(browser, 'a')
+    await waitForValue(browser, 'three-line field', () => fieldState(FIND_FIELD), { value: 'brown fox.\nfox two\na', rows: 3, caret: 20 })
     await browser.keys([Key.Shift, Key.Enter])
-    await typeKeys('b')
-    await waitForValue('four-line field', () => fieldState(FIND_FIELD), { value: 'brown fox.\nfox two\na\nb', rows: 3, caret: 22 })
-    await waitForValue('status', findStatus, 'No results')
+    await typeKeys(browser, 'b')
+    await waitForValue(browser, 'four-line field', () => fieldState(FIND_FIELD), { value: 'brown fox.\nfox two\na\nb', rows: 3, caret: 22 })
+    await waitForValue(browser, 'status', findStatus, 'No results')
 
     // Deleting the newlines shrinks the field again.
     for (let i = 0; i < 4; i++) await browser.keys([Key.Backspace])
-    await waitForValue('shrunk field', () => fieldState(FIND_FIELD), { value: 'brown fox.\nfox two', rows: 2, caret: 18 })
-    await waitForValue('status', findStatus, '1 of 1')
+    await waitForValue(browser, 'shrunk field', () => fieldState(FIND_FIELD), { value: 'brown fox.\nfox two', rows: 2, caret: 18 })
+    await waitForValue(browser, 'status', findStatus, '1 of 1')
 
     await setReplaceOpen(true)
     await typeInto(browser, REPLACE_FIELD, 'x', { clear: true })
     await browser.keys([Key.Shift, Key.Enter])
-    await typeKeys('y')
-    await waitForValue('two-line replace field', () => fieldState(REPLACE_FIELD), { value: 'x\ny', rows: 2, caret: 3 })
+    await typeKeys(browser, 'y')
+    await waitForValue(browser, 'two-line replace field', () => fieldState(REPLACE_FIELD), { value: 'x\ny', rows: 2, caret: 3 })
   })
 
   it('closes with Esc from the dropdown, the editor, and elsewhere, clearing the highlights', async () => {
     await openFixture()
     await openFindWithQuery('fox')
-    await waitForValue('status', findStatus, '1 of 4')
-    await waitForValue('match count', matchCount, 4)
-    await waitForValue('selection drawn', selectionDrawn, true)
+    await waitForValue(browser, 'status', findStatus, '1 of 4')
+    await waitForValue(browser, 'match count', matchCount, 4)
+    await waitForValue(browser, 'selection drawn', selectionDrawn, true)
 
     // Esc in the search field: the selected match collapses to a cursor and
     // focus returns to the editor.
     await browser.keys([Key.Escape])
-    await waitForValue('dropdown open', dropdownOpen, false)
-    await waitForValue('match count after Esc', matchCount, 0)
-    await waitForValue('selection drawn after Esc', selectionDrawn, false)
+    await waitForValue(browser, 'dropdown open', dropdownOpen, false)
+    await waitForValue(browser, 'match count after Esc', matchCount, 0)
+    await waitForValue(browser, 'selection drawn after Esc', selectionDrawn, false)
     expect(await focusedArea()).toBe('editor')
 
     // Ctrl+F in the editor reopens with the query kept and searches from the
@@ -535,22 +540,22 @@ describe('find and replace', () => {
     await browser.keys([Key.Control, 'f'])
     await waitFor(browser, FIND_FIELD, 10_000)
     expect((await fieldState(FIND_FIELD)).value).toBe('fox')
-    await waitForValue('status after reopening', findStatus, '2 of 4')
-    await waitForValue('match count after reopening', matchCount, 4)
+    await waitForValue(browser, 'status after reopening', findStatus, '2 of 4')
+    await waitForValue(browser, 'match count after reopening', matchCount, 4)
 
     await focusEditor()
     await browser.keys([Key.Escape])
-    await waitForValue('dropdown open after Esc in the editor', dropdownOpen, false)
-    await waitForValue('match count after Esc in the editor', matchCount, 0)
+    await waitForValue(browser, 'dropdown open after Esc in the editor', dropdownOpen, false)
+    await waitForValue(browser, 'match count after Esc in the editor', matchCount, 0)
 
     await browser.keys([Key.Control, 'f'])
     await waitFor(browser, FIND_FIELD, 10_000)
-    await waitForValue('match count after reopening', matchCount, 4)
+    await waitForValue(browser, 'match count after reopening', matchCount, 4)
     await browser.execute(() => (document.activeElement as HTMLElement | null)?.blur())
     expect(await focusedArea()).toBe('body')
     await browser.keys([Key.Escape])
-    await waitForValue('dropdown open after Esc elsewhere', dropdownOpen, false)
-    await waitForValue('match count after Esc elsewhere', matchCount, 0)
+    await waitForValue(browser, 'dropdown open after Esc elsewhere', dropdownOpen, false)
+    await waitForValue(browser, 'match count after Esc elsewhere', matchCount, 0)
   })
 
   it('closes only an open Settings or History modal on Esc, and find on the next Esc', async () => {
@@ -561,30 +566,30 @@ describe('find and replace', () => {
 
     await openFixture()
     await openFindWithQuery('fox')
-    await waitForValue('status', findStatus, '1 of 4')
+    await waitForValue(browser, 'status', findStatus, '1 of 4')
 
     // The modals do not take focus, so Esc goes to the editor first. The
     // current match must stay selected.
     await focusEditor()
     await browser.keys([Key.Control, ','])
-    await waitForValue('settings open', settingsOpen, true)
+    await waitForValue(browser, 'settings open', settingsOpen, true)
     expect(await focusedArea()).toBe('editor')
     await browser.keys([Key.Escape])
-    await waitForValue('settings open after Esc in the editor', settingsOpen, false)
+    await waitForValue(browser, 'settings open after Esc in the editor', settingsOpen, false)
     expect(await dropdownOpen()).toBe(true)
     expect(await findStatus()).toBe('1 of 4')
     await browser.keys([Key.Escape])
-    await waitForValue('dropdown open after the second Esc in the editor', dropdownOpen, false)
+    await waitForValue(browser, 'dropdown open after the second Esc in the editor', dropdownOpen, false)
 
     await browser.keys([Key.Control, 'f'])
     await waitFor(browser, FIND_FIELD, 10_000)
     await browser.keys([Key.Control, 'h'])
-    await waitForValue('history open', historyOpen, true)
+    await waitForValue(browser, 'history open', historyOpen, true)
     expect(await focusedArea()).toBe('find')
     await browser.keys([Key.Escape])
-    await waitForValue('history open after Esc in the search field', historyOpen, false)
+    await waitForValue(browser, 'history open after Esc in the search field', historyOpen, false)
     expect(await dropdownOpen()).toBe(true)
     await browser.keys([Key.Escape])
-    await waitForValue('dropdown open after the second Esc in the search field', dropdownOpen, false)
+    await waitForValue(browser, 'dropdown open after the second Esc in the search field', dropdownOpen, false)
   })
 })
