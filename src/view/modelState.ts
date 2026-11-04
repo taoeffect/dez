@@ -17,6 +17,8 @@ export interface ViewModelState {
   prompts: ComputedRef<Prompt[]>
   modelCache: ComputedRef<ModelCache>
   modelCacheRefreshing: ComputedRef<boolean>
+  modelCacheErrors: ComputedRef<Record<string, string>>
+  modelCacheChecking: ComputedRef<string[]>
   activeTabStreaming: ComputedRef<boolean>
   activeTabStreamError: ComputedRef<string | null>
 }
@@ -40,6 +42,11 @@ export function useModelState(): ViewModelState {
     // Reactive in-progress flag for the model cache refresh; drives the popup
     // spinner. Reads the store ref so it stays reactive.
     modelCacheRefreshing: computed(() => sbp('dez.model/modelCache/refreshing') as boolean),
+    // Provider id -> last model-list error, for providers whose last check
+    // failed. In memory only, so it is empty after a restart.
+    modelCacheErrors: computed(() => sbp('dez.model/modelCache/errors') as Record<string, string>),
+    // Ids of the providers whose newest model check is still running.
+    modelCacheChecking: computed(() => sbp('dez.model/modelCache/checking') as string[]),
     activeTabStreaming: computed(() => {
       const activeTabId = sbp('dez.model/tabs/activeId') as string
       return sbp('dez.model/streams/isStreaming', activeTabId) as boolean

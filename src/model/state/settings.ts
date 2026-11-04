@@ -1,5 +1,6 @@
 import { defineStore } from 'pinia'
 import { ref } from 'vue'
+import type { ProviderConfig } from '../providers/config'
 
 export type Theme = 'light' | 'dark' | 'system'
 export type SettingsSection = 'general' | 'providers' | 'prompts' | 'appearance'
@@ -12,7 +13,9 @@ export interface DefaultModel {
 export const useSettingsStore = defineStore('settings', () => {
   const showPillSeparators = ref(true)
   const theme = ref<Theme>('system')
-  const defaultModels = ref<Record<string, string>>({})
+  // User-defined providers, already validated by customProviderConfigSchema.
+  // Built-ins are not stored here; they are literals in providers/builtins.ts.
+  const customProviders = ref<ProviderConfig[]>([])
   const defaultNewTabModel = ref<DefaultModel | null>(null)
   const lastUsedModel = ref<DefaultModel | null>(null)
   const favorites = ref<DefaultModel[]>([])
@@ -31,10 +34,6 @@ export const useSettingsStore = defineStore('settings', () => {
 
   function setTheme(t: Theme) {
     theme.value = t
-  }
-
-  function setDefaultModel(providerId: string, modelId: string) {
-    defaultModels.value[providerId] = modelId
   }
 
   function setDefaultNewTabModel(model: DefaultModel | null) {
@@ -92,7 +91,7 @@ export const useSettingsStore = defineStore('settings', () => {
   return {
     showPillSeparators,
     theme,
-    defaultModels,
+    customProviders,
     defaultNewTabModel,
     lastUsedModel,
     favorites,
@@ -104,7 +103,6 @@ export const useSettingsStore = defineStore('settings', () => {
     historyOpen,
     togglePillSeparators,
     setTheme,
-    setDefaultModel,
     setDefaultNewTabModel,
     setLastUsedModel,
     setCheckForUpdates,

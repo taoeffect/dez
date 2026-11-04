@@ -5,8 +5,8 @@ export interface ProviderStreamChatInput {
   modelId: string
   messages: ChatMessage[]
   requestId?: string
-  // Sparse user overrides for this provider's settings descriptor
-  // (ProviderSpec.settings); missing keys fall back to descriptor defaults.
+  // Sparse user overrides for this provider's settings
+  // (ProviderConfig.settings); missing keys fall back to the setting defaults.
   providerSettings?: Record<string, boolean>
   onToken(token: string): void | Promise<void>
 }

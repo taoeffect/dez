@@ -1,6 +1,4 @@
-export type AnthropicSseTokenEvent =
-  | { kind: 'token', token: string }
-  | { kind: 'done' }
+import type { SseTokenEvent } from './types'
 
 interface AnthropicDelta {
   type?: unknown
@@ -12,7 +10,7 @@ interface AnthropicChunk {
   delta?: AnthropicDelta
 }
 
-export function parseAnthropicSseData(data: string): AnthropicSseTokenEvent[] {
+export function parseAnthropicSseData(data: string): SseTokenEvent[] {
   if (data.trim() === '[DONE]') return [{ kind: 'done' }]
 
   const chunk = JSON.parse(data) as AnthropicChunk
@@ -24,13 +22,4 @@ export function parseAnthropicSseData(data: string): AnthropicSseTokenEvent[] {
   }
 
   return []
-}
-
-export async function* extractAnthropicSseTokens(data: AsyncIterable<string>): AsyncGenerator<string> {
-  for await (const item of data) {
-    for (const event of parseAnthropicSseData(item)) {
-      if (event.kind === 'done') return
-      yield event.token
-    }
-  }
 }

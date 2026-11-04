@@ -8,6 +8,14 @@ const GITHUB_TOKEN_URL: &str = "https://github.com/login/oauth/access_token";
 const COPILOT_TOKEN_URL: &str = "https://api.github.com/copilot_internal/v2/token";
 const COPILOT_CLIENT_ID: &str = "Iv1.b507a08c87ecfe98";
 
+// Model checks and chats of Copilot wait for this token request. Without a
+// timeout, a request that never gets an answer (e.g. a half-open connection
+// after the laptop wakes) keeps Copilot "Checking…" and holds the shared
+// model-cache refresh forever. The timeout is per request, not on the shared
+// client, because that client also streams chats. Same as the model-list
+// timeout (MODEL_LIST_TIMEOUT_MS in src/model/providers/provider.ts).
+const COPILOT_TOKEN_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(20);
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct DeviceFlowResponse {
     pub device_code: String,
@@ -66,11 +74,13 @@ pub async fn poll_device_flow(client: &reqwest::Client, device_code: &str) -> Re
     let token_resp: OAuthTokenResponse = resp.json().await?;
 
     if let Some(token) = token_resp.access_token {
-        let mut keys = key_store::load_keys();
-        keys.copilot.github_token = Some(token);
-        keys.copilot.copilot_token = None;
-        keys.copilot.copilot_token_expires_at = 0;
-        key_store::save_keys(&keys).map_err(NativeError::Api)?;
+        key_store::update_keys(|keys| {
+            keys.copilot.github_token = Some(token);
+            keys.copilot.copilot_token = None;
+            keys.copilot.copilot_token_expires_at = 0;
+            Ok(true)
+        })
+        .map_err(NativeError::Api)?;
         ensure_copilot_token(client).await?;
         return Ok(true);
     }
@@ -91,7 +101,7 @@ pub async fn ensure_copilot_token(client: &reqwest::Client) -> Result<CopilotCha
         .unwrap_or_default()
         .as_secs() as i64;
 
-    let mut keys = key_store::load_keys();
+    let keys = key_store::load_keys().map_err(NativeError::Api)?;
     if let Some(token) = keys.copilot.copilot_token.clone() {
         if now < keys.copilot.copilot_token_expires_at - 60 {
             return Ok(CopilotChatToken {
@@ -109,6 +119,7 @@ pub async fn ensure_copilot_token(client: &reqwest::Client) -> Result<CopilotCha
 
     let resp = client
         .get(COPILOT_TOKEN_URL)
+        .timeout(COPILOT_TOKEN_TIMEOUT)
         .header("Authorization", format!("token {}", github_token))
         .header("Editor-Version", "vscode/1.97.2")
         .header("Editor-Plugin-Version", "copilot-chat/0.24.2")
@@ -122,9 +133,18 @@ pub async fn ensure_copilot_token(client: &reqwest::Client) -> Result<CopilotCha
     }
 
     let token_resp: CopilotTokenResponse = resp.json().await?;
-    keys.copilot.copilot_token = Some(token_resp.token.clone());
-    keys.copilot.copilot_token_expires_at = token_resp.expires_at;
-    key_store::save_keys(&keys).map_err(NativeError::Api)?;
+    // The store can change while the request runs, so change only the chat
+    // token fields. Skip the write if the user signed in again meanwhile: this
+    // token belongs to the old GitHub token.
+    key_store::update_keys(|keys| {
+        if keys.copilot.github_token.as_deref() != Some(github_token.as_str()) {
+            return Ok(false);
+        }
+        keys.copilot.copilot_token = Some(token_resp.token.clone());
+        keys.copilot.copilot_token_expires_at = token_resp.expires_at;
+        Ok(true)
+    })
+    .map_err(NativeError::Api)?;
 
     Ok(CopilotChatToken {
         token: token_resp.token,

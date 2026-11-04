@@ -1,4 +1,5 @@
 import type { ActiveModel } from '../chat/types'
+import type { ProviderConfig } from '../providers/config'
 import type { ModelInfo, ProviderId } from '../providers/types'
 import type { Prompt } from '../state/prompts'
 import type { DefaultModel, Theme } from '../state/settings'
@@ -93,7 +94,11 @@ export interface AppStatePayload {
   activeTabId?: string | null
   showPillSeparators?: boolean
   theme?: Theme
-  defaultModels?: Record<string, string>
+  customProviders?: ProviderConfig[]
+  // Parse only: the hand-added `apiKey` of each kept customProviders entry,
+  // by provider id. dez.controller/app/init moves them to provider_keys.json;
+  // serializeAppStateJson never writes them.
+  customProviderApiKeys?: Record<string, string>
   defaultNewTabModel?: DefaultModel | null
   lastUsedModel?: DefaultModel | null
   favorites?: DefaultModel[]

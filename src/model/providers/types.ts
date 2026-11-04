@@ -1,17 +1,9 @@
-import type { Secret } from '../../utils/secret'
 import type { Role } from '../chat/types'
+import type { ApiFormatId, ProviderAuth } from './config'
 
-export interface HttpFetchOptions extends RequestInit {
-  providerId?: string
-}
-
-export type ProviderId =
-  | 'openrouter'
-  | 'zai'
-  | 'venice'
-  | 'charm_hyper'
-  | 'minimax'
-  | 'copilot'
+// Any id that passes `isValidProviderId()` in `config.ts`: built-in ids plus
+// user-defined custom provider ids.
+export type ProviderId = string
 
 export interface ModelInfo {
   id: string
@@ -19,18 +11,25 @@ export interface ModelInfo {
   provider: ProviderId
 }
 
+// What views and controllers know about a provider. Plain data, so it can be
+// cloned and shown without the Provider class.
 export interface ProviderInfo {
   id: ProviderId
   name: string
+  builtIn: boolean
+  auth: ProviderAuth
+  apiFormat: ApiFormatId
+  baseUrl: string
+  // A key is stored (for GitHub Copilot: the user is signed in).
+  hasKey: boolean
+  // The provider can be used: it has a key or does not need one.
   configured: boolean
 }
 
-// Result of an explicit provider model fetch that surfaces success/failure
-// instead of masking errors with fallbackModels. `ok` is the basis for a
-// provider's "working" status: a configured provider whose fetch fails
-// (expired/invalid key, network) yields `ok = false`. A provider that needs no
-// network (buildModelListRequest returns null) yields `ok = true` with its
-// fallback models.
+// Result of a provider model fetch. `ok` is the basis for a provider's
+// "working" status: a fetch that fails (expired or invalid key, network)
+// yields `ok = false` with no models. A provider that does not fetch models
+// yields `ok = true` with its config models.
 export interface ProviderModelsResult {
   ok: boolean
   models: ModelInfo[]
@@ -42,32 +41,11 @@ export interface ChatMessage {
   content: string
 }
 
-// One user-adjustable provider setting rendered by the provider-settings
-// popup. `key` addresses the value inside the provider's stored settings
-// record; only booleans exist today but `type` leaves room for future kinds.
-export interface ProviderSettingDef {
-  key: string
-  label: string
-  type: 'boolean'
-  default: boolean
-  // Optional per-model visibility gate: the popup hides the setting row when
-  // this returns false for the active model id. Absent = always visible.
-  // Never serialized — only value overrides are persisted, keyed by `key`.
-  visibleForModel?: (modelId: string) => boolean
-}
-
-export interface ProviderSpec {
-  id: ProviderId
-  name: string
-  modelsUrl: string
-  chatUrl: string
-  fallbackModels?: ModelInfo[]
-  // Declarative per-provider settings; providers without settings leave this
-  // undefined, which drives the popup's "No Settings for X" empty state.
-  settings?: ProviderSettingDef[]
-  buildModelListRequest(secret: Secret<string> | null): HttpFetchOptions | null
-  parseModels(data: unknown): ModelInfo[]
-}
+// One parsed SSE `data:` payload yields zero or more of these, in either
+// API format.
+export type SseTokenEvent =
+  | { kind: 'token', token: string }
+  | { kind: 'done' }
 
 export class ProviderError extends Error {
   constructor(
@@ -88,8 +66,4 @@ export class ProviderNotConfiguredError extends ProviderError {
 
 export function providerModel(provider: ProviderId, id: string, name: string): ModelInfo {
   return { id, name, provider }
-}
-
-export function isProviderId(value: string): value is ProviderId {
-  return ['openrouter', 'zai', 'venice', 'charm_hyper', 'minimax', 'copilot'].includes(value)
 }

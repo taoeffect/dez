@@ -30,6 +30,10 @@ export default sbp('sbp/selectors/register', {
     return invoke('save_provider_secret', { providerId, secret })
   },
 
+  'dez.native/deleteProviderSecret' (providerId: string): Promise<void> {
+    return invoke('delete_provider_secret', { providerId })
+  },
+
   'dez.native/getConfiguredProviderIds' (): Promise<string[]> {
     return invoke<string[]>('get_configured_provider_ids')
   },

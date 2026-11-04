@@ -1,5 +1,5 @@
 import * as z from 'zod'
-import { isProviderId } from '../providers/types'
+import { isValidProviderId } from '../providers/config'
 import type { ProviderId } from '../providers/types'
 import type { CachedProvider, ModelCache } from './types'
 
@@ -8,10 +8,10 @@ export const MODEL_CACHE_VERSION = 1
 const modelInfoSchema = z.object({
   id: z.string(),
   name: z.string(),
-  provider: z.string().refine(isProviderId, 'unknown provider'),
+  provider: z.string().refine(isValidProviderId, 'invalid provider id'),
 })
 
-// Individually drop invalid models (e.g. unknown provider) instead of failing
+// Individually drop invalid models (e.g. a bad provider id) instead of failing
 // the whole provider entry, so one bad model doesn't discard the rest.
 const modelsSchema = z.array(modelInfoSchema.nullable().catch(() => null))
   .catch(() => [])
@@ -29,8 +29,10 @@ export function emptyModelCache(): ModelCache {
 }
 
 // Parse a persisted model cache, tolerating malformed/missing JSON by returning
-// an empty cache. Unknown provider keys (or entries that fail validation) are
-// dropped so a stale/forward-version file can't break startup.
+// an empty cache. Keys that are not valid provider ids (or entries that fail
+// validation) are dropped so a stale/forward-version file can't break startup.
+// An entry of a provider that no longer exists is kept but never shown: the
+// picker lists only configured providers.
 export function parseModelCacheJson(content: string): ModelCache {
   try {
     const parsed = JSON.parse(content) as unknown
@@ -41,7 +43,7 @@ export function parseModelCacheJson(content: string): ModelCache {
     const providers: Partial<Record<ProviderId, CachedProvider>> = {}
     if (typeof rawProviders === 'object' && rawProviders !== null && !Array.isArray(rawProviders)) {
       for (const [key, value] of Object.entries(rawProviders)) {
-        if (!isProviderId(key)) continue
+        if (!isValidProviderId(key)) continue
         const result = cachedProviderSchema.safeParse(value)
         if (result.success) providers[key] = result.data
       }

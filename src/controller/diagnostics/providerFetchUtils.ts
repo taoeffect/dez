@@ -1,40 +1,23 @@
 import sbp from '@sbp/sbp'
-import { parseAnthropicSseData } from '../../model/providers/anthropicSse'
-import { parseOpenAiSseData } from '../../model/providers/openaiSse'
-import { isProviderId, type ModelInfo, type ProviderId, type ProviderSpec } from '../../model/providers'
-import { providerStreamProtocol } from '../../model/providers/requests'
+import { requireProvider, type ModelInfo, type Provider, type ProviderId, type ProviderInfo } from '../../model/providers'
 import { decodeSseData } from '../../utils/protocol/sse'
-import { secret, type Secret } from '../../utils/secret'
 import type { ProviderFetchProbeResult } from './providerFetchTypes'
 
 export function providerSecretError(): Error {
   return new Error('Provider is not configured')
 }
 
-export async function configuredProviderIds(): Promise<ProviderId[]> {
-  const ids = await sbp('dez.native/getConfiguredProviderIds') as string[]
-  return ids.filter(isProviderId)
+// Every provider that can be used now: built-ins with a key, GitHub Copilot
+// when signed in, and providers that need no key.
+async function configuredProviderIds(): Promise<ProviderId[]> {
+  const providers = await sbp('dez.provider/infos') as ProviderInfo[]
+  return providers.filter((provider) => provider.configured).map((provider) => provider.id)
 }
 
-export async function providerSecret(providerId: ProviderId): Promise<Secret<string> | null> {
-  const value = await sbp('dez.native/getProviderSecret', providerId) as string | null
-  return value ? secret(value) : null
-}
+export async function resolveRequestedProviders(requestedProviders?: ProviderId[]): Promise<Provider[]> {
+  const providerIds = requestedProviders ?? await configuredProviderIds()
 
-export function resolveRequestedProviders(requestedProviders?: ProviderId[]): Promise<ProviderId[]> {
-  if (!requestedProviders) {
-    return configuredProviderIds()
-  }
-
-  for (const providerId of requestedProviders) {
-    if (!isProviderId(providerId)) {
-      const error = new Error(`Unknown provider: ${providerId}`)
-      console.error(error)
-      throw error
-    }
-  }
-
-  return Promise.resolve(requestedProviders)
+  return providerIds.map(requireProvider)
 }
 
 function modelMatchesNameOrId(model: ModelInfo, value: string): boolean {
@@ -58,38 +41,29 @@ function selectCopilotSpikeModel(models: ModelInfo[]): string | null {
 }
 
 export function selectProbeModel(
-  providerId: ProviderId,
-  spec: ProviderSpec,
+  provider: Provider,
   models: ModelInfo[],
   modelOverride?: Partial<Record<ProviderId, string>>,
 ): string {
-  const override = modelOverride?.[providerId]
+  const override = modelOverride?.[provider.id]
   if (override) {
     return override
   }
 
-  if (providerId === 'copilot') {
+  if (provider.config.auth === 'githubCopilot') {
     const copilotModel = selectCopilotSpikeModel(models)
     if (copilotModel) {
       return copilotModel
     }
   }
 
-  const listedModel = models[0]
-  if (listedModel) {
-    return listedModel.id
-  }
-
-  return spec.fallbackModels?.[0]?.id ?? ''
+  const listedModel = models[0] ?? provider.configModels()[0]
+  return listedModel?.id ?? ''
 }
 
-export async function readFirstToken(providerId: ProviderId, chunks: AsyncIterable<Uint8Array>): Promise<boolean> {
-  const parseData = providerStreamProtocol(providerId) === 'anthropic'
-    ? parseAnthropicSseData
-    : parseOpenAiSseData
-
+export async function readFirstToken(provider: Provider, chunks: AsyncIterable<Uint8Array>): Promise<boolean> {
   for await (const data of decodeSseData(chunks)) {
-    for (const event of parseData(data)) {
+    for (const event of provider.format.parseSseData(data)) {
       if (event.kind === 'done') {
         return false
       }

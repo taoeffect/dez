@@ -13,7 +13,7 @@ Talk with AI in a fully editable plaintext document. Inspired by Zed's text thre
 ## Features
 
 - **Tabbed conversations** — multiple concurrent chats in a single window
-- **Multi-provider model selection** — OpenRouter, Z.ai, GitHub Copilot, MiniMax, Venice, and Charm Hyper
+- **Multi-provider model selection** — OpenRouter, Z.ai, GitHub Copilot, MiniMax, Venice, and Charm Hyper, plus your own [custom providers](#custom-providers): any OpenAI- or Anthropic-compatible server, such as llama-server, LM Studio, or Ollama
 - **Saved prompts** — selectable via `/prompt` shortcut (Zed-style)
 - **Inline editing** — edit any message in a thread, including agent responses
 - **Text pill separators** — toggleable "User" / "Agent" labels between messages
@@ -32,6 +32,56 @@ Talk with AI in a fully editable plaintext document. Inspired by Zed's text thre
 ## UI
 
 The main window contains a tab bar for conversations and buttons to access saved prompts, settings, and conversation history.
+
+## Custom providers
+
+A custom provider is any server that speaks the OpenAI chat completions API or the Anthropic messages API. This includes local servers such as llama-server, LM Studio, Ollama, and vLLM, and hosted APIs that are compatible with one of the two.
+
+To add one, open Settings › Providers and click **+ Add provider**. Set the name, the API format, and the base URL. An API key is optional: local servers usually need none. Add model ids if the server does not list its models.
+
+You can also add custom providers by hand in `~/.config/dez/app_state.json`. **Close Dez first.** Dez saves this file while it runs, so it overwrites changes made while it is open.
+
+```json
+{
+  "customProviders": [
+    {
+      "id": "ollama",
+      "name": "Ollama",
+      "baseUrl": "http://localhost:11434/v1",
+      "models": [{ "id": "llama3.2", "name": "Llama 3.2" }]
+    },
+    {
+      "id": "claude-proxy",
+      "name": "Claude proxy",
+      "baseUrl": "https://llm.example.com",
+      "apiFormat": "anthropic",
+      "apiKey": "sk-..."
+    }
+  ]
+}
+```
+
+| Field | Required | Meaning |
+|---|---|---|
+| `id` | yes | 1 to 64 letters, digits, `-`, or `_`. It must not be a built-in id (`openrouter`, `zai`, `venice`, `charm_hyper`, `minimax`, `copilot`), `__favorites__`, or a JavaScript `Object.prototype` name such as `__proto__` or `constructor`. |
+| `name` | yes | The name in the model picker and in Settings. |
+| `baseUrl` | yes | An `http://` or `https://` URL with no query (`?`), fragment (`#`), user name, or password. See the base URL rule below. |
+| `apiFormat` | no | `openai` (default) or `anthropic`. |
+| `models` | no | Models that always show, as `{ "id": "...", "name": "..." }`. The name is optional. |
+| `fetchModels` | no | `true` (default) also lists the models that the server reports. `false` never asks the server. |
+| `apiKey` | no | When Dez starts, it moves the key into `~/.config/dez/provider_keys.json` and removes it from `app_state.json`. |
+| `headers` | no | Extra HTTP headers for every request, as `{ "Name": "value" }`. A name may use only letters, digits, and ``!#$%&'*+-.^_`\|~``. A value must not contain a line break or a control character other than tab. Dez stores headers as plain text in `app_state.json`, so put an API key in `apiKey`, not in a header. |
+| `maxOutputTokens` | no | `max_tokens` for the Anthropic format (default 32000). |
+| `settings` | no | On/off toggles for the provider settings popup in the model picker. Each toggle writes a value into the chat request. See the Venice `settings` in [`src/model/providers/builtins.ts`](src/model/providers/builtins.ts). |
+
+The base URL rule:
+
+- **OpenAI format**: the base URL includes the version, the same as in the OpenAI SDKs. Dez sends chats to `<baseUrl>/chat/completions` and gets models from `<baseUrl>/models`. Common local base URLs are `http://localhost:8080/v1` (llama-server), `http://localhost:1234/v1` (LM Studio), `http://localhost:11434/v1` (Ollama), and `http://localhost:8000/v1` (vLLM).
+- **Anthropic format**: the base URL has no `/v1`, the same as in the Anthropic SDKs, e.g. `https://api.anthropic.com`. Dez sends chats to `<baseUrl>/v1/messages` and gets models from `<baseUrl>/v1/models`. If the base URL ends in `/v1`, Dez removes it.
+
+Dez drops an entry that is not valid, and the other providers still load. The next time Dez saves `app_state.json`, the dropped entry is no longer in the file, so keep a copy of your edits until they work.
+
+A provider shows in the model picker only while its last model check worked. If a local server was off when Dez started, start the server, then click **Check again** in Settings › Providers. The model picker also checks again when you open it, at most once a minute per provider.
 
 ## Packaging
 

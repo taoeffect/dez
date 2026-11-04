@@ -59,20 +59,6 @@ export interface NativeHttpStreamResult {
   chunks: AsyncIterable<Uint8Array>
 }
 
-export function normalizeHeaders(headers?: HeadersInit): NativeHttpHeaders {
-  if (!headers) return {}
-
-  if (headers instanceof Headers) {
-    return Object.fromEntries(headers.entries())
-  }
-
-  if (Array.isArray(headers)) {
-    return Object.fromEntries(headers.map(([key, value]) => [key, value]))
-  }
-
-  return { ...headers }
-}
-
 export function bytesFromNativeBody(body: number[] | Uint8Array): Uint8Array {
   return body instanceof Uint8Array ? body : new Uint8Array(body)
 }
@@ -105,35 +91,6 @@ export async function readNativeChunkText(chunks: AsyncIterable<Uint8Array>, max
   }
 
   return text
-}
-
-export function nativeRequestFromFetch(input: URL | string, options: RequestInit = {}): NativeHttpRequest {
-  const body = nativeBodyFromFetchBody(options.body)
-
-  return {
-    method: nativeMethod(options.method),
-    url: input.toString(),
-    headers: normalizeHeaders(options.headers),
-    ...(body === undefined ? {} : { body }),
-  }
-}
-
-export function nativeMethod(method?: string): NativeHttpMethod {
-  const normalized = (method ?? 'GET').toUpperCase()
-  if (normalized === 'GET' || normalized === 'POST' || normalized === 'PUT' || normalized === 'PATCH' || normalized === 'DELETE') {
-    return normalized
-  }
-
-  throw new Error(`Unsupported HTTP method: ${normalized}`)
-}
-
-export function nativeBodyFromFetchBody(body: BodyInit | null | undefined): NativeHttpBody | undefined {
-  if (body === null || body === undefined) return undefined
-  if (typeof body === 'string') return body
-  if (body instanceof Uint8Array) return Array.from(body)
-  if (body instanceof ArrayBuffer) return Array.from(new Uint8Array(body))
-
-  throw new Error('Unsupported native HTTP request body type')
 }
 
 export function createNativeHttpByteStream(): {

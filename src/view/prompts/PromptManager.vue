@@ -141,15 +141,15 @@ onMounted(() => {
         <li
           v-for="p in filteredPrompts"
           :key="p.id"
-          class="prompt-row"
-          :class="{ 'prompt-row--active': p.id === selectedId }"
+          class="settings-list-row prompt-row"
+          :class="{ 'settings-list-row--active': p.id === selectedId }"
           @click="selectPrompt(p.id)"
         >
           <template v-if="pendingDeleteId === p.id">
             <span class="prompt-row-confirm-text">Delete?</span>
             <div class="prompt-row-confirm-actions" @click.stop>
-              <button class="prompt-confirm-btn prompt-confirm-btn--danger" @click="confirmDelete(p.id)">Yes</button>
-              <button class="prompt-confirm-btn" @click="cancelDelete">Cancel</button>
+              <button class="settings-confirm-btn settings-confirm-btn--danger" @click="confirmDelete(p.id)">Yes</button>
+              <button class="settings-confirm-btn" @click="cancelDelete">Cancel</button>
             </div>
           </template>
           <template v-else>
@@ -268,25 +268,8 @@ onMounted(() => {
 }
 
 .prompt-row {
-  display: flex;
-  align-items: center;
   justify-content: space-between;
   gap: 6px;
-  padding: 6px 8px;
-  border-radius: 6px;
-  cursor: pointer;
-  font-size: 13px;
-  color: var(--color-text);
-  transition: background 0.1s;
-}
-
-.prompt-row:hover {
-  background: var(--color-border);
-}
-
-.prompt-row--active {
-  background: var(--color-border);
-  font-weight: 500;
 }
 
 .prompt-row-name {
@@ -329,29 +312,6 @@ onMounted(() => {
 .prompt-row-confirm-actions {
   display: flex;
   gap: 4px;
-}
-
-.prompt-confirm-btn {
-  padding: 2px 8px;
-  border: 1px solid var(--color-border);
-  border-radius: 4px;
-  background: transparent;
-  color: var(--color-text);
-  font-size: 11px;
-  cursor: pointer;
-}
-
-.prompt-confirm-btn:hover {
-  background: var(--color-border);
-}
-
-.prompt-confirm-btn--danger {
-  color: #f44336;
-  border-color: #f44336;
-}
-
-.prompt-confirm-btn--danger:hover {
-  background: rgba(244, 67, 54, 0.15);
 }
 
 .prompt-sidebar-empty {
@@ -428,10 +388,5 @@ onMounted(() => {
 .prompt-editor-empty-hint {
   font-size: 12px;
   opacity: 0.7;
-}
-
-.settings-error {
-  font-size: 12px;
-  color: #f44336;
 }
 </style>

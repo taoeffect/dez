@@ -6,30 +6,21 @@ import type { ProviderSettingDef } from '../../model/providers'
 
 const { activeModel, settings } = useModelState()
 
-// Display name + settings descriptor for the active provider, read through
-// the provider selector boundary (handles unknown/invalid provider ids by
+// Display name + the toggles shown for the active model, read through the
+// provider selector boundary (handles unknown/invalid provider ids by
 // returning null) instead of importing the model registry into the view.
 const descriptor = computed(() => {
   const providerId = activeModel.value?.providerId
   if (!providerId) return null
-  return sbp('dez.provider/settingsDescriptor', providerId) as
-    { name: string, settings: ProviderSettingDef[] | null } | null
+  return sbp('dez.provider/settingsDescriptor', providerId, activeModel.value?.modelId ?? '') as
+    { name: string, settings: ProviderSettingDef[] } | null
 })
 
 const providerName = computed(
   () => descriptor.value?.name ?? activeModel.value?.providerId ?? '',
 )
 
-const settingDefs = computed(() => descriptor.value?.settings ?? null)
-
-// Rows actually rendered: defs whose optional per-model visibility predicate
-// accepts the active model id (defs without a predicate always show).
-const visibleSettingDefs = computed(() => {
-  const defs = settingDefs.value
-  if (!defs) return null
-  const modelId = activeModel.value?.modelId ?? ''
-  return defs.filter((def) => !def.visibleForModel || def.visibleForModel(modelId))
-})
+const settingDefs = computed(() => descriptor.value?.settings ?? [])
 
 // Effective value: stored override if the user ever flipped the toggle,
 // otherwise the descriptor default (stored settings are sparse).
@@ -55,11 +46,11 @@ function resetToDefaults() {
 
 <template>
   <div class="provider-settings-popup">
-    <template v-if="activeModel && settingDefs">
+    <template v-if="activeModel && settingDefs.length > 0">
       <div class="provider-settings-header">{{ providerName }}</div>
       <div class="provider-settings-rows">
         <button
-          v-for="def in visibleSettingDefs"
+          v-for="def in settingDefs"
           :key="def.key"
           class="provider-settings-row"
           type="button"

@@ -24,11 +24,11 @@ pub async fn get_provider_secret(
     provider_id: String,
     client: State<'_, reqwest::Client>,
 ) -> Result<Option<String>, NativeError> {
-    if provider_id == "copilot" {
+    if provider_id == crate::key_store::COPILOT_PROVIDER_ID {
         return get_copilot_chat_token(client).await.map(|token| Some(token.token));
     }
 
-    let keys = crate::key_store::load_keys();
+    let keys = crate::key_store::load_keys().map_err(NativeError::Api)?;
     Ok(crate::key_store::get_provider_secret(&keys, &provider_id))
 }
 
@@ -44,30 +44,23 @@ pub async fn save_provider_secret(
     provider_id: String,
     secret: String,
 ) -> Result<(), NativeError> {
-    let mut keys = crate::key_store::load_keys();
-    crate::key_store::set_provider_secret(&mut keys, &provider_id, secret)
-        .map_err(NativeError::Api)?;
-    crate::key_store::save_keys(&keys).map_err(NativeError::Api)?;
+    crate::key_store::update_keys(|keys| {
+        crate::key_store::set_provider_secret(keys, &provider_id, secret)?;
+        Ok(true)
+    })
+    .map_err(NativeError::Api)
+}
 
-    Ok(())
+#[tauri::command]
+pub async fn delete_provider_secret(provider_id: String) -> Result<(), NativeError> {
+    crate::key_store::update_keys(|keys| crate::key_store::delete_provider_secret(keys, &provider_id))
+        .map_err(NativeError::Api)
 }
 
 #[tauri::command]
 pub async fn get_configured_provider_ids() -> Result<Vec<String>, NativeError> {
-    let keys = crate::key_store::load_keys();
-    let configured_ids = [
-        ("openrouter", keys.openrouter.api_key),
-        ("zai", keys.zai.api_key),
-        ("venice", keys.venice.api_key),
-        ("charm_hyper", keys.charm_hyper.api_key),
-        ("minimax", keys.minimax.api_key),
-        ("copilot", keys.copilot.github_token),
-    ]
-    .into_iter()
-    .filter_map(|(provider_id, secret)| secret.map(|_| provider_id.to_string()))
-    .collect();
-
-    Ok(configured_ids)
+    let keys = crate::key_store::load_keys().map_err(NativeError::Api)?;
+    Ok(crate::key_store::configured_provider_ids(&keys))
 }
 
 #[tauri::command]

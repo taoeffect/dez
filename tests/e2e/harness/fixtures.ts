@@ -91,6 +91,13 @@ export async function seedConversation (
   return filePath
 }
 
+async function writeAppStateFile (home: string, content: string): Promise<string> {
+  const filePath = path.join(configDir(home), 'app_state.json')
+  await fs.promises.mkdir(configDir(home), { recursive: true })
+  await fs.promises.writeFile(filePath, content, 'utf8')
+  return filePath
+}
+
 /**
  * Seed `<home>/.config/dez/app_state.json` from the app's real
  * `defaultAppState()` + `serializeAppStateJson()`, with `checkForUpdates`
@@ -107,10 +114,20 @@ export async function seedAppState (
     checkForUpdates: false,
     ...overrides
   }
-  const filePath = path.join(configDir(home), 'app_state.json')
-  await fs.promises.mkdir(configDir(home), { recursive: true })
-  await fs.promises.writeFile(filePath, serializeAppStateJson(payload), 'utf8')
-  return filePath
+  return writeAppStateFile(home, serializeAppStateJson(payload))
+}
+
+/**
+ * Like `seedAppState()`, but writes `raw` as plain JSON over the defaults,
+ * without the app's serializer or types. Use it for data that the app must
+ * drop or rewrite on start, e.g. invalid `customProviders` entries or a
+ * hand-added `apiKey`. Call before `createSession()`.
+ */
+export async function seedRawAppState (
+  home: string,
+  raw: Record<string, unknown>
+): Promise<string> {
+  return writeAppStateFile(home, JSON.stringify({ ...defaultAppState(), checkForUpdates: false, ...raw }, null, 2))
 }
 
 /**

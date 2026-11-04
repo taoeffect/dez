@@ -27,26 +27,28 @@ describe('model cache persistence format', () => {
     expect(serializeModelCacheJson(parsed)).toBe(JSON.stringify(parsed, null, 2))
   })
 
-  it('drops unknown providers', () => {
+  it('keeps custom provider ids and drops keys that are not valid provider ids', () => {
     const parsed = parseModelCacheJson(JSON.stringify({
       version: MODEL_CACHE_VERSION,
       providers: {
-        bogus: { models: [], working: true, updatedAt: 0, lastCheckedAt: 0 },
+        'my-server_2': { models: [], working: true, updatedAt: 0, lastCheckedAt: 0 },
+        'ollama/local': { models: [], working: true, updatedAt: 0, lastCheckedAt: 0 },
+        '': { models: [], working: true, updatedAt: 0, lastCheckedAt: 0 },
         zai: { models: [], working: false, updatedAt: 1, lastCheckedAt: 2 },
       },
     }))
-    expect(Object.keys(parsed.providers)).toEqual(['zai'])
+    expect(Object.keys(parsed.providers)).toEqual(['my-server_2', 'zai'])
     expect(parsed.providers.zai).toEqual({ models: [], working: false, updatedAt: 1, lastCheckedAt: 2 })
   })
 
-  it('drops models referencing unknown providers', () => {
+  it('drops models whose provider id is not valid', () => {
     const parsed = parseModelCacheJson(JSON.stringify({
       version: MODEL_CACHE_VERSION,
       providers: {
-        openrouter: {
+        'my-server': {
           models: [
-            { id: 'good', name: 'Good', provider: 'openrouter' },
-            { id: 'bad', name: 'Bad', provider: 'nope' },
+            { id: 'good', name: 'Good', provider: 'my-server' },
+            { id: 'bad', name: 'Bad', provider: 'has space' },
           ],
           working: true,
           updatedAt: 0,
@@ -54,10 +56,10 @@ describe('model cache persistence format', () => {
         },
       },
     }))
-    // A model with an unknown provider is dropped individually; the rest of
+    // A model with a bad provider id is dropped individually; the rest of
     // the provider entry is preserved.
-    expect(parsed.providers.openrouter?.models).toEqual([
-      { id: 'good', name: 'Good', provider: 'openrouter' },
+    expect(parsed.providers['my-server']?.models).toEqual([
+      { id: 'good', name: 'Good', provider: 'my-server' },
     ])
   })
 

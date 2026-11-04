@@ -8,6 +8,7 @@ import { useSettingsStore, type DefaultModel, type SettingsSection, type Theme }
 import { useTabStore } from './tabs'
 import type { AppStatePayload, CachedProvider, ConversationSearchOutcome, ModelCache } from '../persistence/types'
 import { emptyModelCache } from '../persistence/modelCache'
+import type { ProviderConfig } from '../providers/config'
 import type { ProviderId, ProviderModelsResult } from '../providers/types'
 import type { ActiveModel, ContentNode, Section, Tab } from '../chat/types'
 import {
@@ -29,7 +30,7 @@ import type { ModelSnapshot } from '../snapshot'
 export interface SettingsSnapshot {
   showPillSeparators: boolean
   theme: Theme
-  defaultModels: Record<string, string>
+  customProviders: ProviderConfig[]
   defaultNewTabModel: DefaultModel | null
   lastUsedModel: DefaultModel | null
   favorites: DefaultModel[]
@@ -142,11 +143,38 @@ function cloneProviderSettings(
   return output
 }
 
+// Copies only the known ProviderConfig fields, so a stray field of a caller's
+// object (such as a hand-added `apiKey`) never enters the store or
+// app_state.json.
+function cloneProviderConfig(config: ProviderConfig): ProviderConfig {
+  const {
+    id, name, baseUrl, apiFormat, models, fetchModels, auth,
+    headers, maxOutputTokens, settings,
+    ...uncopied
+  } = config
+  // A compile error when ProviderConfig gets a field that this clone does not
+  // copy; without it, the next app-state save would silently drop the field.
+  uncopied satisfies Record<string, never>
+  const clone: ProviderConfig = {
+    id,
+    name,
+    baseUrl,
+    apiFormat,
+    models: models.map((model) => ({ ...model })),
+    fetchModels,
+    auth,
+  }
+  if (headers) clone.headers = { ...headers }
+  if (maxOutputTokens !== undefined) clone.maxOutputTokens = maxOutputTokens
+  if (settings) clone.settings = settings.map((setting) => ({ ...setting }))
+  return clone
+}
+
 function cloneSettings(settings = useSettingsStore()): SettingsSnapshot {
   return {
     showPillSeparators: settings.showPillSeparators,
     theme: settings.theme,
-    defaultModels: { ...settings.defaultModels },
+    customProviders: settings.customProviders.map(cloneProviderConfig),
     defaultNewTabModel: cloneDefaultModel(settings.defaultNewTabModel),
     lastUsedModel: cloneDefaultModel(settings.lastUsedModel),
     favorites: settings.favorites.map((favorite) => ({ ...favorite })),
@@ -281,7 +309,7 @@ function cloneModelCache(cache: ModelCache): ModelCache {
   const providers: Partial<Record<ProviderId, CachedProvider>> = {}
   for (const [key, entry] of Object.entries(cache.providers)) {
     if (!entry) continue
-    providers[key as ProviderId] = {
+    providers[key] = {
       models: entry.models.map((model) => ({ ...model })),
       working: entry.working,
       updatedAt: entry.updatedAt,
@@ -476,7 +504,7 @@ export default sbp('sbp/selectors/register', {
         activeTabId: tabStore.activeTabId,
         showPillSeparators: settings.showPillSeparators,
         theme: settings.theme,
-        defaultModels: settings.defaultModels,
+        customProviders: settings.customProviders,
         defaultNewTabModel: settings.defaultNewTabModel,
         lastUsedModel: settings.lastUsedModel,
         favorites: settings.favorites,
@@ -585,7 +613,7 @@ export default sbp('sbp/selectors/register', {
     if (state) {
       if (typeof state.showPillSeparators === 'boolean') settings.showPillSeparators = state.showPillSeparators
       if (state.theme) settings.theme = state.theme
-      if (state.defaultModels) settings.defaultModels = state.defaultModels
+      if (Array.isArray(state.customProviders)) settings.customProviders = state.customProviders
       if (state.defaultNewTabModel !== undefined) settings.defaultNewTabModel = state.defaultNewTabModel
       if (state.lastUsedModel !== undefined) settings.lastUsedModel = state.lastUsedModel
       if (Array.isArray(state.favorites)) settings.favorites = state.favorites
@@ -609,7 +637,7 @@ export default sbp('sbp/selectors/register', {
       [
         () => settings.showPillSeparators,
         () => settings.theme,
-        () => settings.defaultModels,
+        () => settings.customProviders,
         () => settings.defaultNewTabModel,
         () => settings.lastUsedModel,
         () => settings.favorites,
@@ -694,10 +722,6 @@ export default sbp('sbp/selectors/register', {
     useSettingsStore().theme = theme
   },
 
-  'dez.model/settings/setDefaultModel' (providerId: string, modelId: string): void {
-    useSettingsStore().defaultModels[providerId] = modelId
-  },
-
   // Records a sparse per-provider override; effective values merge these with
   // the provider descriptor defaults at read/request-build time.
   'dez.model/settings/setProviderSetting' (providerId: string, key: string, value: boolean): void {
@@ -734,6 +758,35 @@ export default sbp('sbp/selectors/register', {
     } else {
       favorites.push({ providerId, modelId })
     }
+  },
+
+  'dez.model/customProviders/list' (): ProviderConfig[] {
+    return useSettingsStore().customProviders.map(cloneProviderConfig)
+  },
+
+  // Adds a custom provider, or replaces the one with the same id in place.
+  // The caller validates the config first with customProviderConfigSchema.
+  'dez.model/customProviders/save' (config: ProviderConfig): void {
+    const customProviders = useSettingsStore().customProviders
+    const index = customProviders.findIndex((existing) => existing.id === config.id)
+    if (index >= 0) customProviders.splice(index, 1, cloneProviderConfig(config))
+    else customProviders.push(cloneProviderConfig(config))
+  },
+
+  // Removes a custom provider and, in the same step, every setting that names
+  // it, so no favorite or default model points at a provider that is gone.
+  // Returns false and changes nothing when no custom provider has this id,
+  // so a built-in id never clears the built-in's settings.
+  'dez.model/customProviders/remove' (providerId: ProviderId): boolean {
+    const settings = useSettingsStore()
+    const index = settings.customProviders.findIndex((config) => config.id === providerId)
+    if (index < 0) return false
+    settings.customProviders.splice(index, 1)
+    settings.favorites = settings.favorites.filter((favorite) => favorite.providerId !== providerId)
+    if (settings.defaultNewTabModel?.providerId === providerId) settings.defaultNewTabModel = null
+    if (settings.lastUsedModel?.providerId === providerId) settings.lastUsedModel = null
+    delete settings.providerSettings[providerId]
+    return true
   },
 
   async 'dez.model/prompts/init' (): Promise<void> {
@@ -836,8 +889,8 @@ export default sbp('sbp/selectors/register', {
     return cloneModelCache(useModelCacheStore().cache)
   },
 
-  // Drives the popup refresh spinner; set true while a background refresh batch
-  // runs and false when it finishes (see dez.controller/modelCache/refresh).
+  // Drives the popup refresh spinner; true while any refresh run is active and
+  // false when the last one finishes (see dez.controller/modelCache/refresh).
   'dez.model/modelCache/setRefreshing' (value: boolean): void {
     useModelCacheStore().refreshing = value
   },
@@ -848,9 +901,33 @@ export default sbp('sbp/selectors/register', {
     return useModelCacheStore().refreshing
   },
 
-  // Reconciliation primitive: on success replace models, mark working, and bump
-  // both timestamps; on failure keep the last-known models but mark the provider
-  // not-working and bump only the attempt timestamp.
+  // The last model-list error of each provider whose last check failed.
+  'dez.model/modelCache/errors' (): Record<ProviderId, string> {
+    return { ...useModelCacheStore().errors }
+  },
+
+  'dez.model/modelCache/setChecking' (providerId: ProviderId, value: boolean): void {
+    const checking = useModelCacheStore().checking
+    if (value) checking[providerId] = true
+    else delete checking[providerId]
+  },
+
+  // Ids of the providers whose newest model check is still running (see
+  // dez.controller/modelCache/refresh).
+  'dez.model/modelCache/checking' (): ProviderId[] {
+    return Object.keys(useModelCacheStore().checking)
+  },
+
+  'dez.model/modelCache/removeProvider' (providerId: ProviderId): void {
+    const store = useModelCacheStore()
+    delete store.cache.providers[providerId]
+    delete store.errors[providerId]
+  },
+
+  // Reconciliation primitive: on success replace models, mark working, bump
+  // both timestamps, and clear the error; on failure keep the last-known
+  // models but mark the provider not-working, bump only the attempt
+  // timestamp, and record the error.
   'dez.model/modelCache/applyProviderResult' (providerId: ProviderId, result: ProviderModelsResult): void {
     const store = useModelCacheStore()
     const now = Date.now()
@@ -862,6 +939,7 @@ export default sbp('sbp/selectors/register', {
         updatedAt: now,
         lastCheckedAt: now,
       }
+      delete store.errors[providerId]
       return
     }
     store.cache.providers[providerId] = {
@@ -870,6 +948,7 @@ export default sbp('sbp/selectors/register', {
       updatedAt: existing ? existing.updatedAt : 0,
       lastCheckedAt: now,
     }
+    store.errors[providerId] = result.error ?? 'The model list request failed'
   },
 
   // Error-handling boundary for the history panel: full-text search (empty

@@ -18,6 +18,7 @@ pub fn run() {
             commands::get_provider_secret,
             commands::get_copilot_chat_token,
             commands::save_provider_secret,
+            commands::delete_provider_secret,
             commands::get_configured_provider_ids,
             http_bridge::http_request,
             http_bridge::stream_http,

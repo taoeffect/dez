@@ -1,19 +1,17 @@
 import sbp from '@sbp/sbp'
 import { secret, type Secret } from '../../utils/secret'
-import { nativeRequestFromFetch, nativeResponseJson, nativeResponseText, type NativeHttpResponse, type NativeHttpStreamResult } from '../../utils/protocol/nativeHttp'
+import { nativeResponseJson, nativeResponseText, type NativeHttpResponse, type NativeHttpStreamResult } from '../../utils/protocol/nativeHttp'
+import type { ProviderSettingDef } from './config'
 import { assertProviderResponseOk } from './errors'
-import { getProviderInfos, getProviderSpec } from './registry'
-import { providerChatRequest } from './requests'
+import type { Provider } from './provider'
+import { getProvider, listProviders, requireProvider } from './registry'
 import { streamProviderTokens } from './streaming'
 import type { ProviderStreamChatInput, ProviderStreamChatResult } from './streamTypes'
-import { isProviderId, ProviderNotConfiguredError, type ModelInfo, type ProviderId, type ProviderInfo, type ProviderModelsResult, type ProviderSettingDef, type ProviderSpec } from './types'
+import { ProviderNotConfiguredError, type ProviderId, type ProviderInfo, type ProviderModelsResult } from './types'
 
-async function configuredProviderIds(): Promise<string[]> {
-  const ids = await sbp('dez.native/getConfiguredProviderIds') as string[]
-  return ids
-}
-
-async function providerSecret(providerId: ProviderId): Promise<Secret<string> | null> {
+// The stored key, or null when there is none. Throws for GitHub Copilot when
+// the user is not signed in.
+export async function providerSecret(providerId: ProviderId): Promise<Secret<string> | null> {
   const value = await sbp('dez.native/getProviderSecret', providerId) as string | null
   return value ? secret(value) : null
 }
@@ -23,97 +21,69 @@ async function refreshCopilotSecret(): Promise<Secret<string>> {
   return secret(value.token)
 }
 
-async function nativeChatStream(input: ProviderStreamChatInput, spec: ProviderSpec, requestId: string, refreshCopilot = false): Promise<NativeHttpStreamResult> {
-  const providerSecretValue = input.providerId === 'copilot' && refreshCopilot
-    ? await refreshCopilotSecret()
-    : await providerSecret(input.providerId)
-
-  if (!providerSecretValue) {
-    throw new ProviderNotConfiguredError(input.providerId)
+// Providers that do not require a key send requests without auth headers
+// when no key is stored, or when the key store cannot be read (like
+// dez.provider/infos, which then treats them as configured).
+async function requestSecret(provider: Provider, refreshCopilot = false): Promise<Secret<string> | null> {
+  let value: Secret<string> | null
+  try {
+    value = refreshCopilot ? await refreshCopilotSecret() : await providerSecret(provider.id)
+  } catch (error) {
+    if (provider.requiresKey) throw error
+    console.error(`Failed to read the API key of provider ${provider.id}:`, error)
+    value = null
   }
 
-  const request = providerChatRequest(spec, input.providerId, input.messages, input.modelId, providerSecretValue, input.providerSettings)
-  return await sbp('dez.http/stream', request, requestId) as NativeHttpStreamResult
+  if (!value && provider.requiresKey) {
+    throw new ProviderNotConfiguredError(provider.id)
+  }
+
+  return value
 }
 
-// Fetches a provider's live model list over the network. Returns null when the
-// provider needs no network request (buildModelListRequest returns null), in
-// which case callers should fall back to spec.fallbackModels. Throws on any
-// HTTP/parse failure WITHOUT substituting fallbackModels, so callers that need
-// to detect a non-working provider (listModelsResult) can see the real error.
-async function fetchProviderModels(spec: ProviderSpec, providerId: ProviderId): Promise<ModelInfo[] | null> {
-  const providerSecretValue = await providerSecret(providerId)
-  const options = spec.buildModelListRequest(providerSecretValue)
-  if (!options) {
-    return null
-  }
-
-  const request = nativeRequestFromFetch(spec.modelsUrl, options)
-  const response = await sbp('dez.native/httpRequest', request) as NativeHttpResponse
-  const responseText = nativeResponseText(response)
-  assertProviderResponseOk(response, providerId, responseText)
-  const data = nativeResponseJson<unknown>(response)
-  return spec.parseModels(data)
+async function nativeChatStream(provider: Provider, input: ProviderStreamChatInput, requestId: string, refreshCopilot = false): Promise<NativeHttpStreamResult> {
+  const secretValue = await requestSecret(provider, refreshCopilot)
+  const request = provider.chatRequest(input.messages, input.modelId, secretValue, input.providerSettings)
+  return await sbp('dez.http/stream', request, requestId) as NativeHttpStreamResult
 }
 
 export default sbp('sbp/selectors/register', {
   async 'dez.provider/infos' (): Promise<ProviderInfo[]> {
-    return getProviderInfos(await configuredProviderIds())
-  },
-
-  // Synchronous read for the provider-settings popup: exposes only the
-  // display name + declarative settings descriptor instead of the full
-  // ProviderSpec (chatUrl, request builders, ...). Accepts a plain string so
-  // view code doesn't need isProviderId; returns null for unknown ids. The
-  // settings array is copied so callers can't mutate the registered spec.
-  'dez.provider/settingsDescriptor' (providerId: string): { name: string, settings: ProviderSettingDef[] | null } | null {
-    if (!isProviderId(providerId)) {
-      return null
-    }
-
-    const spec = getProviderSpec(providerId)
-    return spec ? { name: spec.name, settings: spec.settings ? [...spec.settings] : null } : null
-  },
-
-  async 'dez.provider/listModels' (providerId: ProviderId): Promise<ModelInfo[]> {
-    const spec = getProviderSpec(providerId)
-    if (!spec) {
-      throw new Error(`Unknown provider: ${providerId}`)
-    }
-
+    let keyIds: string[] = []
     try {
-      const models = await fetchProviderModels(spec, providerId)
-      // null means no network request needed → use fallback models.
-      return models ?? spec.fallbackModels ?? []
+      keyIds = await sbp('dez.native/getConfiguredProviderIds') as string[]
     } catch (error) {
-      // Existing behavior: mask failures with fallbackModels so the settings
-      // UI and popup keep showing something. Callers needing real failure
-      // detection use dez.provider/listModelsResult instead.
-      if (spec.fallbackModels) {
-        return spec.fallbackModels
-      }
-
-      throw error
+      // Still list every provider, as if no key were stored, so providers
+      // that need no key stay usable.
+      console.error('Failed to read configured provider ids:', error)
     }
+
+    const keys = new Set(keyIds)
+    return listProviders().map((provider) => provider.info(keys))
   },
 
-  // Like listModels but surfaces success/failure without masking errors as
-  // fallback. Basis for per-provider "working" status in the model cache.
+  // Synchronous read for the provider settings popup: the provider's display
+  // name and the toggles shown for this model, instead of the whole Provider.
+  // Takes a plain string, so views need no id check; null for unknown ids.
+  'dez.provider/settingsDescriptor' (providerId: string, modelId: string): { name: string, settings: ProviderSettingDef[] } | null {
+    const provider = getProvider(providerId)
+    return provider ? { name: provider.name, settings: provider.visibleSettings(modelId) } : null
+  },
+
+  // Never throws for a known provider: every failure becomes `ok: false`, the
+  // basis for the provider's "working" status in the model cache.
   async 'dez.provider/listModelsResult' (providerId: ProviderId): Promise<ProviderModelsResult> {
-    const spec = getProviderSpec(providerId)
-    if (!spec) {
-      throw new Error(`Unknown provider: ${providerId}`)
-    }
+    const provider = requireProvider(providerId)
 
     try {
-      const models = await fetchProviderModels(spec, providerId)
-      // null means no network request needed → counts as a working provider
-      // with its fallback models.
-      if (models === null) {
-        return { ok: true, models: spec.fallbackModels ?? [] }
+      const request = provider.modelListRequest(await requestSecret(provider))
+      if (!request) {
+        return { ok: true, models: provider.configModels() }
       }
 
-      return { ok: true, models }
+      const response = await sbp('dez.native/httpRequest', request) as NativeHttpResponse
+      assertProviderResponseOk(response, provider, nativeResponseText(response))
+      return { ok: true, models: provider.mergeModels(provider.parseModels(nativeResponseJson<unknown>(response))) }
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error)
       console.error(`Failed to list models for provider ${providerId}:`, error)
@@ -122,20 +92,18 @@ export default sbp('sbp/selectors/register', {
   },
 
   async 'dez.provider/streamChat' (input: ProviderStreamChatInput): Promise<ProviderStreamChatResult> {
-    const spec = getProviderSpec(input.providerId)
-    if (!spec) {
-      throw new Error(`Unknown provider: ${input.providerId}`)
-    }
-
+    const provider = requireProvider(input.providerId)
     const requestId = input.requestId ?? crypto.randomUUID()
-    let result = await nativeChatStream(input, spec, requestId)
+    let result = await nativeChatStream(provider, input, requestId)
 
-    if (input.providerId === 'copilot' && result.response.status === 401) {
+    // A 401 can mean the cached Copilot chat token expired early; get a fresh
+    // one and retry once.
+    if (provider.config.auth === 'githubCopilot' && result.response.status === 401) {
       await sbp('dez.http/cancelStream', result.requestId)
-      result = await nativeChatStream(input, spec, requestId, true)
+      result = await nativeChatStream(provider, input, requestId, true)
     }
 
-    await streamProviderTokens(input, result)
+    await streamProviderTokens(provider, input, result)
     return { requestId: result.requestId }
   },
 })

@@ -1,31 +1,32 @@
 import sbp from '@sbp/sbp'
 import type { Secret } from '../../utils/secret'
 import { responseOk, sanitizeSensitiveErrorText } from '../../utils/protocol/errors'
-import { nativeRequestFromFetch, nativeResponseText, readNativeChunkText, type NativeHttpResponse, type NativeHttpStreamResult } from '../../utils/protocol/nativeHttp'
+import { nativeResponseText, readNativeChunkText, type NativeHttpResponse, type NativeHttpStreamResult } from '../../utils/protocol/nativeHttp'
 import { assertProviderResponseOk, providerStatusError } from '../../model/providers/errors'
-import { getProviderSpec, type ChatMessage, type ProviderSpec } from '../../model/providers'
-import { providerChatRequest } from '../../model/providers/requests'
-import { buildProviderFetchReport, providerSecret, providerSecretError, readFirstToken, resolveRequestedProviders, selectProbeModel } from './providerFetchUtils'
+import { providerSecret, type ChatMessage, type Provider } from '../../model/providers'
+import { buildProviderFetchReport, providerSecretError, readFirstToken, resolveRequestedProviders, selectProbeModel } from './providerFetchUtils'
 import type { ChatProbeResult, ModelProbeResult, ProviderFetchProbeResult, ProviderFetchSpikeOptions } from './providerFetchTypes'
 
-async function probeModelList(spec: ProviderSpec, providerSecretValue: Secret<string> | null): Promise<ModelProbeResult> {
+// The models the server reports, without the config models, so the report
+// shows what the endpoint itself returned.
+async function probeModelList(provider: Provider, providerSecretValue: Secret<string> | null): Promise<ModelProbeResult> {
   try {
-    const options = spec.buildModelListRequest(providerSecretValue)
-    if (!options) {
+    if (!providerSecretValue && provider.requiresKey) {
       throw providerSecretError()
     }
 
-    const request = {
-      ...nativeRequestFromFetch(spec.modelsUrl, options),
-      timeoutMs: 20000,
+    const listRequest = provider.modelListRequest(providerSecretValue)
+    if (!listRequest) {
+      return { ok: true, error: null, models: [] }
     }
-    const response = await sbp('dez.native/httpRequest', request) as NativeHttpResponse
+
+    const response = await sbp('dez.native/httpRequest', listRequest) as NativeHttpResponse
     const responseText = nativeResponseText(response)
-    assertProviderResponseOk(response, spec.id, responseText)
+    assertProviderResponseOk(response, provider, responseText)
     return {
       ok: true,
       error: null,
-      models: spec.parseModels(JSON.parse(responseText) as unknown),
+      models: provider.parseModels(JSON.parse(responseText) as unknown),
     }
   } catch (error) {
     return {
@@ -37,20 +38,20 @@ async function probeModelList(spec: ProviderSpec, providerSecretValue: Secret<st
 }
 
 function chatRequestForProvider(
-  spec: ProviderSpec,
+  provider: Provider,
   providerSecretValue: Secret<string> | null,
   messages: ChatMessage[],
   modelId: string,
 ) {
-  if (!providerSecretValue) {
+  if (!providerSecretValue && provider.requiresKey) {
     throw providerSecretError()
   }
 
-  return providerChatRequest(spec, spec.id, messages, modelId, providerSecretValue)
+  return provider.chatRequest(messages, modelId, providerSecretValue)
 }
 
 async function probeChat(
-  spec: ProviderSpec,
+  provider: Provider,
   providerSecretValue: Secret<string> | null,
   modelId: string,
   prompt: string,
@@ -69,16 +70,16 @@ async function probeChat(
 
   try {
     const messages: ChatMessage[] = [{ role: 'user', content: prompt }]
-    const request = chatRequestForProvider(spec, providerSecretValue, messages, modelId)
+    const request = chatRequestForProvider(provider, providerSecretValue, messages, modelId)
     result = await sbp('dez.http/stream', request) as NativeHttpStreamResult
 
     if (!responseOk(result.response)) {
       const text = await readNativeChunkText(result.chunks)
-      throw providerStatusError(spec.id, result.response, text)
+      throw providerStatusError(provider, result.response, text)
     }
 
     const streaming = await Promise.race([
-      readFirstToken(spec.id, result.chunks),
+      readFirstToken(provider, result.chunks),
       new Promise<never>((_, reject) => {
         timeoutId = setTimeout(() => {
           timedOut = true
@@ -109,25 +110,18 @@ async function probeChat(
 
 export default sbp('sbp/selectors/register', {
   async 'dez.diagnostics/runProviderFetchSpike' (options?: ProviderFetchSpikeOptions): Promise<ProviderFetchProbeResult[]> {
-    const providerIds = await resolveRequestedProviders(options?.providers)
+    const providers = await resolveRequestedProviders(options?.providers)
     const results: ProviderFetchProbeResult[] = []
     const prompt = options?.prompt ?? 'ping'
 
-    for (const providerId of providerIds) {
-      const spec = getProviderSpec(providerId)
-      if (!spec) {
-        const error = new Error(`Unknown provider: ${providerId}`)
-        console.error(error)
-        throw error
-      }
-
-      const providerSecretValue = await providerSecret(providerId)
-      const nativeModels = await probeModelList(spec, providerSecretValue)
-      const modelId = selectProbeModel(providerId, spec, nativeModels.models, options?.modelOverride)
-      const nativeChat = await probeChat(spec, providerSecretValue, modelId, prompt)
+    for (const provider of providers) {
+      const providerSecretValue = await providerSecret(provider.id)
+      const nativeModels = await probeModelList(provider, providerSecretValue)
+      const modelId = selectProbeModel(provider, nativeModels.models, options?.modelOverride)
+      const nativeChat = await probeChat(provider, providerSecretValue, modelId, prompt)
 
       results.push({
-        providerId,
+        providerId: provider.id,
         modelId,
         nativeChatOk: nativeChat.ok,
         nativeChatError: nativeChat.error,
