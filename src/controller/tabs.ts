@@ -13,7 +13,7 @@ export default sbp('sbp/selectors/register', {
   },
 
   // Saves the conversation to a Markdown file that the user picks in the
-  // native save dialog. The file has the same format as the history files.
+  // native save dialog.
   async 'dez.controller/saveConversationAs' (tabId: string): Promise<void> {
     if (saveDialogOpen) return
     const data = sbp('dez.model/tabs/conversationData', tabId) as ConversationData | null

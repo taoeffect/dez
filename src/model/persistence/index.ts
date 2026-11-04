@@ -1,6 +1,6 @@
 import sbp from '@sbp/sbp'
 import { parseAppStateJson, serializeAppStateJson } from './appState'
-import { parseConversation, serializeConversation } from './conversationFormat'
+import { parseConversation, serializeConversation, serializeConversationAsMarkdown } from './conversationFormat'
 import { parseModelCacheJson, serializeModelCacheJson } from './modelCache'
 import { parsePromptsJson, serializePromptsJson } from './prompts'
 import { searchConversationFiles, staleConversationIds } from './search'
@@ -21,12 +21,11 @@ export default sbp('sbp/selectors/register', {
     }
   },
 
-  // Writes the conversation in the same format as the history files, so Dez
-  // can read an exported file again. `path` must be the exact path that the
-  // save dialog returned; the fs scope allows no other path.
+  // Writes the conversation as plain Markdown. `path` must be the exact path
+  // that the save dialog returned; the fs scope allows no other path.
   async 'dez.persistence/exportConversation' (data: ConversationData, path: string): Promise<void> {
     try {
-      await sbp('dez.native/writeTextFile', path, serializeConversation(data))
+      await sbp('dez.native/writeTextFile', path, serializeConversationAsMarkdown(data))
     } catch (error) {
       console.error('Failed to export conversation:', error)
       throw error

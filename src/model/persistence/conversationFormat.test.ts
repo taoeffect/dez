@@ -1,5 +1,6 @@
+import { commonmarkLanguage } from '@codemirror/lang-markdown'
 import { describe, expect, it } from 'vitest'
-import { parseConversation, serializeConversation } from './conversationFormat'
+import { parseConversation, serializeConversation, serializeConversationAsMarkdown } from './conversationFormat'
 import type { ContentNodeData, ConversationData, SectionData } from './types'
 
 function textNode(text: string): ContentNodeData {
@@ -203,5 +204,54 @@ world
       activeModel: null,
       created_at: 0,
     })
+  })
+})
+
+describe('conversation Markdown export', () => {
+  it('writes one heading per message with prompt bodies inline and skips empty messages', () => {
+    const pillId = 'bdbf417c-2282-4d77-991c-2ac65e1f0a11'
+    const data: ConversationData = {
+      id: 'conversation',
+      title: 'Translate\nthis  text',
+      sections: [
+        section('user', [
+          textNode(`Translate \uE000${pillId}\uE001`),
+          { kind: 'prompt', id: 'p1', promptId: null, name: 'text', body: 'this text\uE003please', expanded: false },
+          textNode(' now.'),
+        ]),
+        section('agent', [textNode('Done:\n\n```\ncode\n```\n')]),
+        section('user', [textNode('  \n')]),
+      ],
+      activeModel: null,
+      created_at: 1000,
+    }
+
+    const markdown = serializeConversationAsMarkdown(data)
+
+    expect(markdown).toBe([
+      '# Translate this text',
+      '',
+      '## User',
+      '',
+      'Translate this text',
+      'please now.',
+      '',
+      '## Agent',
+      '',
+      'Done:',
+      '',
+      '```',
+      'code',
+      '```',
+      '',
+    ].join('\n'))
+    // Viewers must show the turns as headings, not as literal marker text.
+    const headings: string[] = []
+    commonmarkLanguage.parser.parse(markdown).iterate({
+      enter: (node) => {
+        if (node.name.startsWith('ATXHeading')) headings.push(markdown.slice(node.from, node.to))
+      },
+    })
+    expect(headings).toEqual(['# Translate this text', '## User', '## Agent'])
   })
 })

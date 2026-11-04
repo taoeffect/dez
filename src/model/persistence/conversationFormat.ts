@@ -46,6 +46,27 @@ export function serializeConversation(data: ConversationData): string {
   return output
 }
 
+// The conversation as plain Markdown for people to read (Save As Markdown).
+// The history format above does not render: a CommonMark tag name cannot
+// hold `:`, so viewers show `<dez:pill …/>` as text. Each message gets a
+// `## User` / `## Agent` heading (the editor's role labels) and holds what
+// the model received: its text with prompt bodies inline. Dez cannot read
+// this format back.
+export function serializeConversationAsMarkdown(data: ConversationData): string {
+  let output = `# ${data.title.replace(/\s+/g, ' ').trim() || 'Conversation'}\n`
+
+  for (const section of data.sections) {
+    const text = section.nodes
+      .map((node) => stripLiveSentinels(node.kind === 'text' ? node.text : node.body))
+      .join('')
+    if (text.trim() === '') continue
+    output += `\n## ${section.role === 'agent' ? 'Agent' : 'User'}\n\n${text}`
+    if (!text.endsWith('\n')) output += '\n'
+  }
+
+  return output
+}
+
 function parseHeader(line: string): { title: string; model: string; createdAt: number } {
   const inner = line
     .trim()
