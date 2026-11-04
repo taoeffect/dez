@@ -1,12 +1,33 @@
 import sbp from '@sbp/sbp'
 import { hide } from '@tauri-apps/api/app'
 import { isTauri } from '@tauri-apps/api/core'
+import { Image } from '@tauri-apps/api/image'
 import { Menu, Submenu, type MenuItemOptions, type PredefinedMenuItemOptions } from '@tauri-apps/api/menu'
 import { getCurrentWindow } from '@tauri-apps/api/window'
 import { isMacPlatform } from '../utils/platform'
 import { DEZ_REPO_URL } from './updates'
+import dezIconUrl from '../../src-tauri/icons/128x128.png'
 
 const SEPARATOR: PredefinedMenuItemOptions = { item: 'Separator' }
+
+// The GTK About dialog (muda) shows a "missing image" icon unless the About
+// metadata has an icon. Tauri decodes PNG bytes only with its `image-png`
+// Cargo feature, which Dez does not enable, so the webview decodes the
+// bundle icon and passes raw RGBA. 128 px is the usual GTK About logo size.
+async function loadAboutIcon (): Promise<Image> {
+  const img = document.createElement('img')
+  img.src = dezIconUrl
+  await img.decode()
+  const canvas = document.createElement('canvas')
+  canvas.width = img.naturalWidth
+  canvas.height = img.naturalHeight
+  const context = canvas.getContext('2d')
+  if (!context) throw new Error('No 2D canvas context')
+  context.drawImage(img, 0, 0)
+  const { data } = context.getImageData(0, 0, canvas.width, canvas.height)
+  // Tauri IPC sends a `Uint8Array` as bytes, but not a `Uint8ClampedArray`.
+  return Image.new(new Uint8Array(data.buffer), canvas.width, canvas.height)
+}
 
 let menuInstalled = false
 
@@ -42,9 +63,24 @@ export default sbp('sbp/selectors/register', {
       text: 'Check for Updates…',
       action: () => void sbp('dez.controller/checkForUpdates'),
     }
+    // macOS gets no icon: AppKit's About panel shows the app icon by itself.
+    const aboutIcon = isMacPlatform
+      ? undefined
+      : await loadAboutIcon().catch((error: unknown) => {
+        console.error('Failed to load the About Dez icon:', error)
+        return undefined
+      })
     const about: PredefinedMenuItemOptions = {
       text: 'About Dez',
-      item: { About: { name: 'Dez', version: __APP_VERSION__, website: DEZ_REPO_URL, websiteLabel: 'Dez on GitHub' } },
+      item: {
+        About: {
+          name: 'Dez',
+          version: __APP_VERSION__,
+          website: DEZ_REPO_URL,
+          websiteLabel: 'Dez on GitHub',
+          icon: aboutIcon,
+        },
+      },
     }
 
     try {
