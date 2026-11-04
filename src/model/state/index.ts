@@ -396,19 +396,37 @@ export default sbp('sbp/selectors/register', {
     }
   },
 
+  // An open tab is the newest copy of its conversation, and two tabs with one
+  // conversation id save to the same file and overwrite each other's edits.
+  // So this switches to an open tab instead of loading the file again.
+  // App state saved before this check existed can hold several such tabs:
+  // they stay open, and the active one wins, else the first one.
   async 'dez.model/tabs/openConversation' (id: string): Promise<Tab | null> {
     const tabStore = useTabStore()
-    try {
-      const conversation = await sbp('dez.persistence/loadConversation', id) as ConversationData
-      const tab = tabFromConversation(conversation)
-      tabStore.tabs.push(tab)
-      tabStore.activeTabId = tab.id
-      await sbp('dez.model/appState/save')
-      return cloneTab(tab) as Tab
-    } catch (error) {
-      console.error('Failed to open conversation', error)
-      return null
+    const findOpenTab = (): Tab | undefined => {
+      const openTabs = tabStore.tabs.filter((tab) => tab.conversationId === id)
+      return openTabs.find((tab) => tab.id === tabStore.activeTabId) ?? openTabs[0]
     }
+    let tab = findOpenTab()
+    if (!tab) {
+      let conversation: ConversationData
+      try {
+        conversation = await sbp('dez.persistence/loadConversation', id) as ConversationData
+      } catch (error) {
+        console.error('Failed to open conversation', error)
+        return null
+      }
+      // Look again: another call for the same id (a double click on a
+      // History row) can add the tab while this call waits for the disk.
+      tab = findOpenTab()
+      if (!tab) {
+        tab = tabFromConversation(conversation)
+        tabStore.tabs.push(tab)
+      }
+    }
+    tabStore.activeTabId = tab.id
+    await sbp('dez.model/appState/save')
+    return cloneTab(tab) as Tab
   },
 
   async 'dez.model/tabs/deleteConversation' (id: string): Promise<void> {
