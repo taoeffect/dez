@@ -8,7 +8,6 @@ import {
   PILL_NL,
   PILL_OPEN,
   SECTION_SEP,
-  SENTINEL_CHAR,
   cutSelectedRangesTransaction,
   docToSections,
   encodePrompt,
@@ -32,7 +31,7 @@ import {
   type PillMetadata,
   type SectionModel,
 } from './cmEditor'
-import { sectionVisibleText } from '../../model/chat/content'
+import { SENTINEL_CHAR, sectionVisibleText } from '../../model/chat/content'
 import type { ContentNode, Role, Section } from '../../model/chat/types'
 
 function textNode(text: string): ContentNode {

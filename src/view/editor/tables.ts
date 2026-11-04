@@ -8,7 +8,8 @@ import {
   layer,
   type DecorationSet,
 } from '@codemirror/view'
-import { SECTION_SEP, SENTINEL_CHAR } from '../thread/cmEditor'
+import { SENTINEL_CHAR } from '../../model/chat/content'
+import { SECTION_SEP } from '../thread/cmEditor'
 
 export type TableAlignment = 'left' | 'center' | 'right' | null
 

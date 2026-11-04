@@ -13,7 +13,8 @@ import {
   type TransactionSpec,
 } from '@codemirror/state'
 import { Decoration, EditorView, ViewPlugin, type DecorationSet, type ViewUpdate } from '@codemirror/view'
-import { SECTION_SEP, SENTINEL_CHAR, pillsField, scanPills, type PillMetadata } from '../thread/cmEditor'
+import { SENTINEL_CHAR } from '../../model/chat/content'
+import { SECTION_SEP, pillsField, scanPills, type PillMetadata } from '../thread/cmEditor'
 
 /** Status counting stops here; the UI shows `1000+`. */
 export const FIND_COUNT_LIMIT = 1000

@@ -1,3 +1,4 @@
+import { stripLiveSentinels } from '../chat/content'
 import type { ActiveModel } from '../chat/types'
 import type { ContentNodeData, ConversationData, SectionData } from './types'
 
@@ -11,19 +12,6 @@ function escapePromptBody(body: string): string {
 
 function unescapePromptBody(body: string): string {
   return body.replaceAll('<\\/dez:prompt>', '</dez:prompt>')
-}
-
-// Live CodeMirror sentinels (see `src/view/thread/cmEditor.ts`; the model
-// layer must not import the view): U+001E separates sections, U+E000 id
-// U+E001 body U+E002 brackets a prompt pill, U+E003 is an escaped newline.
-// Text nodes reach this point without them, so any left are from a broken
-// pill. A pill header (U+E000 + id + U+E001) goes with its id: the id is
-// not text, and kept as text it once became UUID tab titles.
-function stripLiveEditorSentinels(value: string): string {
-  return value
-    .replace(/\u{E000}[^\n\u001E\u{E000}-\u{E002}]*\u{E001}/gu, '')
-    .replace(/[\u001E\u{E000}-\u{E002}]/gu, '')
-    .replace(/\u{E003}/gu, '\n')
 }
 
 function promptId(): string {
@@ -42,12 +30,12 @@ export function serializeConversation(data: ConversationData): string {
     output += `<dez:pill type="${tag}"/>\n`
     for (const node of section.nodes) {
       if (node.kind === 'text') {
-        const text = stripLiveEditorSentinels(node.text)
+        const text = stripLiveSentinels(node.text)
         output += text
         if (!text.endsWith('\n')) output += '\n'
       } else {
         output += `<dez:prompt name="${node.name}">\n`
-        const body = escapePromptBody(stripLiveEditorSentinels(node.body))
+        const body = escapePromptBody(stripLiveSentinels(node.body))
         output += body
         if (!body.endsWith('\n')) output += '\n'
         output += '</dez:prompt>\n'

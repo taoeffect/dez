@@ -5,7 +5,7 @@ import { Decoration, EditorView, WidgetType, type DecorationSet, type KeyBinding
 import { EditorSelection, EditorState, StateEffect, StateField, findClusterBreak, type Extension, type Transaction, type TransactionSpec } from '@codemirror/state'
 import { tags as t } from '@lezer/highlight'
 import type { ContentNode, Role, Section } from '../../model/chat/types'
-import { normalizeContent, textNode } from '../../model/chat/content'
+import { SENTINEL_CHAR, normalizeContent, stripLiveSentinels, textNode } from '../../model/chat/content'
 
 /** ASCII Record Separator; never typeable, never on-disk, used in-buffer to
  *  encode a section boundary. The char sits alone on its own line and the
@@ -28,10 +28,8 @@ export const PILL_OPEN = '\u{E000}'
 export const PILL_BODY = '\u{E001}'
 export const PILL_CLOSE = '\u{E002}'
 export const PILL_NL = '\u{E003}'
-
-/** Any live-doc sentinel: `SECTION_SEP` or a prompt pill marker
- *  (`PILL_OPEN`..`PILL_NL`). */
-export const SENTINEL_CHAR = /[\u001E\uE000-\uE003]/
+// `SENTINEL_CHAR` and `stripLiveSentinels` in `src/model/chat/content.ts`
+// match these code points and `SECTION_SEP`; change them together.
 
 /** Lightweight mirror of a Section kept in the CM state. The CM doc is the
  *  source of truth for text; this field just tracks per-section identity
@@ -224,7 +222,9 @@ export interface PillLocation {
 
 /** Index of the `PILL_BODY` that ends the pill header (`PILL_OPEN` + id)
  *  starting at `from`, or -1 when there is no header there. An id never
- *  holds a newline, a section separator, or another open/close marker. */
+ *  holds a newline, a section separator, or another open/close marker.
+ *  `stripLiveSentinels` in `src/model/chat/content.ts` removes broken
+ *  headers with the same rule; the two must agree. */
 function pillHeaderBodyIndex(doc: string, from: number): number {
   for (let j = from + 1; j < doc.length; j++) {
     const c = doc[j]
@@ -811,17 +811,6 @@ function escapePromptClipboardBody(body: string): string {
 
 function unescapePromptClipboardBody(body: string): string {
   return body.replace(/<\\\/dez:prompt>/g, '</dez:prompt>')
-}
-
-/** Plain text of live-doc text that holds no well-formed pill: no
- *  sentinels, and no ids of the pill headers (`PILL_OPEN` + id +
- *  `PILL_BODY`, the rule of `pillHeaderBodyIndex`) of broken pills. */
-export function stripLiveSentinels(text: string): string {
-  if (!SENTINEL_CHAR.test(text)) return text
-  return text
-    .replace(/\u{E000}[^\n\u001E\u{E000}-\u{E002}]*\u{E001}/gu, '')
-    .replace(/[\u001E\u{E000}-\u{E002}]/gu, '')
-    .replace(/\u{E003}/gu, '\n')
 }
 
 function sectionRoleForSeparator(doc: string, models: SectionModel[], pos: number): Role {

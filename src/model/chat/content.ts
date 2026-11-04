@@ -158,3 +158,21 @@ export function contentEquals(a: ContentNode[], b: ContentNode[]): boolean {
   }
   return true
 }
+
+/** Any live CodeMirror sentinel (the constants are in
+ *  `src/view/thread/cmEditor.ts`): U+001E separates sections, U+E000 id
+ *  U+E001 body U+E002 brackets a prompt pill, U+E003 is an escaped newline. */
+export const SENTINEL_CHAR = /[\u001E\uE000-\uE003]/
+
+/** Plain text of live-doc text that holds no well-formed pill: no sentinels,
+ *  and no ids of broken pill headers. A header (U+E000 + id + U+E001) goes
+ *  with its id: the id is not text, and kept as text it became UUID tab
+ *  titles. The header rule must match `pillHeaderBodyIndex` in cmEditor.ts.
+ *  The view (titles, clipboard) and the disk format both use this one copy. */
+export function stripLiveSentinels(text: string): string {
+  if (!SENTINEL_CHAR.test(text)) return text
+  return text
+    .replace(/\u{E000}[^\n\u001E\u{E000}-\u{E002}]*\u{E001}/gu, '')
+    .replace(/[\u001E\u{E000}-\u{E002}]/gu, '')
+    .replace(/\u{E003}/gu, '\n')
+}
