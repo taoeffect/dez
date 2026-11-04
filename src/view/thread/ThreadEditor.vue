@@ -42,6 +42,7 @@ import {
   setShowSeparatorsEffect,
   showSeparatorsField,
   splitSectionEffect,
+  unwrapBrokenPills,
 } from './cmEditor'
 import { findExtension, findMatchStatus, findNextMatch, findQueryField, selectMatchSpec, setFindQueryEffect } from '../editor/find'
 import { markdownTables } from '../editor/tables'
@@ -493,6 +494,13 @@ function updatePromptAutocomplete(v: EditorView) {
   }
   autocompleteQuery.value = match[2]
   const from = line.from + before.length - match[0].length + match[1].length
+  // Pills do not nest (`scanPills` rejects a pill inside a pill body), so
+  // accepting a prompt inside a pill would break that pill. Typing
+  // `/prompt ` in an expanded pill body offers nothing.
+  if (scanPills(v.state.doc.toString()).some((pill) => pill.from < range.head && from < pill.to)) {
+    closeAutocomplete()
+    return
+  }
   autocompleteFrom.value = from
   autocompleteTo.value = range.head
   const coords = v.coordsAtPos(range.head)
@@ -545,7 +553,13 @@ function writeSelectionToClipboard(event: ClipboardEvent, cut: boolean, v: Edito
 function pasteClipboardText(event: ClipboardEvent, v: EditorView): boolean {
   const text = event.clipboardData?.getData('text/plain') ?? ''
   if (!text) return false
-  const parsed = parseClipboardText(text)
+  // In a pill body, pasted prompts and section markers would nest a pill or
+  // split this one, so the paste is plain text there.
+  const pills = scanPills(v.state.doc.toString())
+  const insidePillBody = v.state.selection.ranges.some((range) =>
+    pills.some((pill) => pill.bodyFrom <= range.from && range.to <= pill.bodyTo),
+  )
+  const parsed = parseClipboardText(text, insidePillBody)
   let pasteText = parsed.text
   const trimmedRoles = parsed.separatorRoles.slice()
   const leadingMarker = SECTION_SEP + '\n'
@@ -785,6 +799,7 @@ function buildState(): EditorState {
       promptPills,
       promptAtomicRanges,
       promptPillMouseHandler,
+      unwrapBrokenPills,
       drawSelection(),
       EditorState.allowMultipleSelections.of(true),
       history(),
@@ -866,6 +881,9 @@ function scrollViewToBottomAfterLayout(v: EditorView) {
 
 function resetViewToActiveTab(moveCursorToEnd = false) {
   if (!view) return
+  // The autocomplete range points into the old doc; accepting it after the
+  // swap would insert a pill at a wrong position.
+  closeAutocomplete()
   const state = buildState()
   view.setState(state)
   if (moveCursorToEnd) {

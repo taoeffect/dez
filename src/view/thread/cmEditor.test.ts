@@ -1,27 +1,38 @@
-import { defaultKeymap, selectAll } from '@codemirror/commands'
+import { defaultKeymap, history, selectAll, undo, undoDepth } from '@codemirror/commands'
 import { EditorSelection, EditorState, type Transaction, type TransactionSpec } from '@codemirror/state'
 import { EditorView, keymap, runScopeHandlers } from '@codemirror/view'
 import { describe, expect, it } from 'vitest'
 import {
   PILL_BODY,
   PILL_CLOSE,
+  PILL_NL,
   PILL_OPEN,
   SECTION_SEP,
+  SENTINEL_CHAR,
   cutSelectedRangesTransaction,
   docToSections,
+  encodePrompt,
   initialSectionModels,
   keymapHasPlatformBinding,
   linuxLineNavigationKeymap,
+  parseClipboardText,
   physicalLineBoundarySelection,
   pillsField,
   plainTextPasteTransaction,
   reconcileSectionModelsToDoc,
   removedSeparatorModelIndexes,
+  scanPills,
   sectionsField,
+  serializeDocRangeForClipboard,
   serializeSelectionForClipboard,
+  setPillsEffect,
+  splitSectionEffect,
   strictMultiCursorBackspace,
+  unwrapBrokenPills,
+  type PillMetadata,
   type SectionModel,
 } from './cmEditor'
+import { sectionVisibleText } from '../../model/chat/content'
 import type { ContentNode, Role, Section } from '../../model/chat/types'
 
 function textNode(text: string): ContentNode {
@@ -321,5 +332,126 @@ describe('clipboard helpers', () => {
     expect(nextState.doc.toString()).toBe('\nbeta\n')
     expect(nextState.selection.ranges.map((range) => range.head)).toEqual([0, 6])
     expect(nextState.selection.mainIndex).toBe(1)
+  })
+
+  it('parses copied prompts and sections as plain text for a paste inside a pill body', () => {
+    const copied = [
+      '<dez:pill type="user"/>',
+      'x <dez:prompt name="Inner">',
+      'inner',
+      '</dez:prompt> y',
+      '<dez:pill type="agent"/>',
+      'z',
+    ].join('\n')
+
+    const structured = parseClipboardText(copied)
+    const plain = parseClipboardText(copied, true)
+
+    expect(structured.pills.size).toBe(1)
+    expect(structured.separatorRoles).toEqual(['user', 'agent'])
+    expect(plain).toEqual({ text: 'x inner y\nz', pills: new Map(), separatorRoles: [] })
+  })
+})
+
+describe('broken prompt pills', () => {
+  // Live pill ids are `crypto.randomUUID()` values (see `acceptPrompt`).
+  const PILL_ID = 'bdbf417c-2282-4d77-991c-2ac65e1f0a11'
+  const NESTED_ID = '7f1c2d3e-4b5a-4c6d-8e9f-0a1b2c3d4e5f'
+  const BODY = 'Summarize\nthis'
+  // An expanded pill (real newlines in the body) at the doc start, then text.
+  const DOC = `${encodePrompt(PILL_ID, BODY, false)} tail`
+  const BODY_FROM = `${PILL_OPEN}${PILL_ID}${PILL_BODY}`.length
+  const BODY_TO = BODY_FROM + BODY.length
+  const PILL_TO = BODY_TO + 1
+  const META: PillMetadata = { promptId: 'saved', name: 'Summary', expanded: true }
+
+  function pillState(): EditorState {
+    return EditorState.create({
+      doc: DOC,
+      extensions: [
+        history(),
+        sectionsField.init(() => [{ id: 's1', role: 'user' }]),
+        pillsField.init(() => new Map([[PILL_ID, META]])),
+        unwrapBrokenPills,
+      ],
+    })
+  }
+
+  const edits: Array<{ name: string, spec: TransactionSpec, sections: ContentNode[][] }> = [
+    {
+      name: 'Backspace after the hidden close marker deletes only it',
+      spec: { changes: { from: BODY_TO, to: PILL_TO } },
+      sections: [[textNode('Summarize\nthis tail')]],
+    },
+    {
+      name: 'typing over a selection from the body to past the pill',
+      spec: { changes: { from: BODY_FROM + 3, to: PILL_TO + 2, insert: 'X' } },
+      sections: [[textNode('SumXail')]],
+    },
+    {
+      name: 'Shift+Enter inside the body splits the section',
+      spec: {
+        changes: { from: BODY_FROM + 'Summarize'.length, insert: `\n${SECTION_SEP}\n` },
+        effects: splitSectionEffect.of({ afterIndex: 0 }),
+      },
+      sections: [[textNode('Summarize')], [textNode('\nthis tail')]],
+    },
+    {
+      name: 'a prompt accepted inside the body nests a pill',
+      spec: {
+        changes: { from: BODY_FROM + 'Summarize'.length, insert: encodePrompt(NESTED_ID, 'inner') },
+        effects: setPillsEffect.of(new Map([
+          [PILL_ID, META],
+          [NESTED_ID, { promptId: 'other', name: 'Inner', expanded: false }],
+        ])),
+      },
+      sections: [[
+        textNode('Summarize'),
+        { kind: 'prompt', id: NESTED_ID, promptId: 'other', name: 'Inner', body: 'inner', expanded: false },
+        textNode('\nthis tail'),
+      ]],
+    },
+    {
+      name: 'Backspace at the body start deletes the header',
+      spec: { changes: { from: 0, to: BODY_FROM } },
+      sections: [[textNode('Summarize\nthis tail')]],
+    },
+  ]
+
+  for (const edit of edits) {
+    it(`unwraps the pill and keeps its id out of the text: ${edit.name}`, () => {
+      const state = pillState().update(edit.spec).state
+      const doc = state.doc.toString()
+      const sections = docToSections(doc, state.field(sectionsField), state.field(pillsField))
+      const markerChars = Array.from(doc).filter((c) => c === PILL_OPEN || c === PILL_BODY || c === PILL_CLOSE)
+
+      expect(doc).not.toContain(PILL_ID)
+      // Every marker char left in the doc belongs to a well-formed pill.
+      expect(markerChars).toHaveLength(3 * scanPills(doc).length)
+      expect(sections.map((section) => section.content)).toEqual(edit.sections)
+      // `firstUserTitle` builds the tab title from this text.
+      expect(sectionVisibleText(sections[0])).not.toMatch(SENTINEL_CHAR)
+    })
+
+    it(`restores the pill with one undo: ${edit.name}`, () => {
+      const state = pillState().update(edit.spec).state
+      expect(undoDepth(state)).toBe(1)
+
+      const restored = dispatchCommand(state, undo)
+
+      expect(restored.doc.toString()).toBe(DOC)
+      expect(restored.field(pillsField).get(PILL_ID)).toEqual(META)
+    })
+  }
+
+  it('decodes and copies leftover broken markers as text without the pill id', () => {
+    const doc = `x${PILL_CLOSE} ${PILL_OPEN}${PILL_ID}${PILL_BODY}a${PILL_NL}b${PILL_BODY}`
+    const models: SectionModel[] = [{ id: 's1', role: 'user' }]
+
+    const sections = docToSections(doc, models, new Map())
+    const copied = serializeDocRangeForClipboard(doc, 0, doc.length, models, new Map())
+
+    expect(sections.map((section) => section.content)).toEqual([[textNode('x a\nb')]])
+    expect(copied).toBe('<dez:pill type="user"/>\nx a\nb')
   })
 })

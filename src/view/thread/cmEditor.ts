@@ -2,7 +2,7 @@ import { selectAll } from '@codemirror/commands'
 import { HighlightStyle, syntaxHighlighting } from '@codemirror/language'
 import { markdown } from '@codemirror/lang-markdown'
 import { Decoration, EditorView, WidgetType, type DecorationSet, type KeyBinding } from '@codemirror/view'
-import { EditorSelection, StateEffect, StateField, findClusterBreak, type EditorState, type Extension, type Transaction, type TransactionSpec } from '@codemirror/state'
+import { EditorSelection, EditorState, StateEffect, StateField, findClusterBreak, type Extension, type Transaction, type TransactionSpec } from '@codemirror/state'
 import { tags as t } from '@lezer/highlight'
 import type { ContentNode, Role, Section } from '../../model/chat/types'
 import { normalizeContent, textNode } from '../../model/chat/content'
@@ -222,29 +222,37 @@ export interface PillLocation {
   to: number
 }
 
+/** Index of the `PILL_BODY` that ends the pill header (`PILL_OPEN` + id)
+ *  starting at `from`, or -1 when there is no header there. An id never
+ *  holds a newline, a section separator, or another open/close marker. */
+function pillHeaderBodyIndex(doc: string, from: number): number {
+  for (let j = from + 1; j < doc.length; j++) {
+    const c = doc[j]
+    if (c === PILL_BODY) return j
+    if (c === PILL_OPEN || c === PILL_CLOSE || c === '\n' || c === SECTION_SEP) return -1
+  }
+  return -1
+}
+
 /** Scan a string for well-formed prompt marker sequences. Malformed
- *  sequences (missing BODY or CLOSE, or a nested OPEN) are silently skipped
- *  so CM never crashes on partial edits. */
+ *  sequences (missing BODY or CLOSE, empty id, or a nested OPEN) are
+ *  skipped so CM never crashes on partial edits; `brokenPillMarkerChanges`
+ *  removes what is left of them. A pill never spans a section separator:
+ *  `docToSections` decodes each section on its own, so a pill that a
+ *  separator split is broken there and must be broken here too. */
 export function scanPills(doc: string): PillLocation[] {
   const out: PillLocation[] = []
   let i = 0
   while (i < doc.length) {
     if (doc[i] !== PILL_OPEN) { i++; continue }
     const from = i
-    let j = from + 1
-    let bodyAt = -1
-    while (j < doc.length) {
-      const c = doc[j]
-      if (c === PILL_OPEN || c === PILL_CLOSE || c === '\n') break
-      if (c === PILL_BODY) { bodyAt = j; break }
-      j++
-    }
+    const bodyAt = pillHeaderBodyIndex(doc, from)
     if (bodyAt < 0) { i = from + 1; continue }
     let k = bodyAt + 1
     let closeAt = -1
     while (k < doc.length) {
       const c = doc[k]
-      if (c === PILL_OPEN) break
+      if (c === PILL_OPEN || c === SECTION_SEP) break
       if (c === PILL_CLOSE) { closeAt = k; break }
       k++
     }
@@ -263,19 +271,59 @@ export function scanPills(doc: string): PillLocation[] {
   return out
 }
 
+/** Changes that unwrap every broken prompt pill in `doc`, sorted by
+ *  position. A pill breaks when an edit removes or splits one of its
+ *  markers (e.g. Backspace over the hidden close marker of an expanded
+ *  pill, Shift+Enter in its body, or a pill nested in its body). Every
+ *  marker outside a well-formed pill is removed; an open marker that still
+ *  starts a header is removed with its id, so the id never becomes visible
+ *  text (it was the source of UUID tab titles). `PILL_NL` outside a pill
+ *  becomes a real newline. The body text stays as plain text. Removing all
+ *  of them at once cannot pair up new pills: only the markers of the
+ *  well-formed pills remain. */
+export function brokenPillMarkerChanges(doc: string): { from: number; to: number; insert: string }[] {
+  const changes: { from: number; to: number; insert: string }[] = []
+  const pills = scanPills(doc)
+  let pillIndex = 0
+  let i = 0
+  while (i < doc.length) {
+    const pill = pills[pillIndex]
+    if (pill && i === pill.from) {
+      i = pill.to
+      pillIndex++
+      continue
+    }
+    const c = doc[i]
+    if (c === PILL_OPEN) {
+      const bodyAt = pillHeaderBodyIndex(doc, i)
+      const to = bodyAt < 0 ? i + 1 : bodyAt + 1
+      changes.push({ from: i, to, insert: '' })
+      i = to
+      continue
+    }
+    if (c === PILL_BODY || c === PILL_CLOSE) changes.push({ from: i, to: i + 1, insert: '' })
+    else if (c === PILL_NL) changes.push({ from: i, to: i + 1, insert: '\n' })
+    i++
+  }
+  return changes
+}
+
 /** Decode a section fragment into interleaved text + prompt content nodes.
  *  Metadata (name / promptId / expanded) is looked up in `pillsMeta` by id;
- *  missing metadata degrades to empty name / null promptId / collapsed. */
+ *  missing metadata degrades to empty name / null promptId / collapsed.
+ *  Markers of broken pills never reach a text node: the editor unwraps
+ *  broken pills (`unwrapBrokenPills`), and `stripLiveSentinels` removes any
+ *  that are left, with their ids. */
 function decodeSectionContent(
   fragment: string,
   pillsMeta: Map<string, PillMetadata>,
 ): ContentNode[] {
   const pills = scanPills(fragment)
-  if (pills.length === 0) return normalizeContent([textNode(fragment)])
+  if (pills.length === 0) return normalizeContent([textNode(stripLiveSentinels(fragment))])
   const out: ContentNode[] = []
   let cursor = 0
   for (const p of pills) {
-    out.push(textNode(fragment.slice(cursor, p.from)))
+    out.push(textNode(stripLiveSentinels(fragment.slice(cursor, p.from))))
     const meta = pillsMeta.get(p.id)
     out.push({
       kind: 'prompt',
@@ -287,7 +335,7 @@ function decodeSectionContent(
     })
     cursor = p.to
   }
-  out.push(textNode(fragment.slice(cursor)))
+  out.push(textNode(stripLiveSentinels(fragment.slice(cursor))))
   return normalizeContent(out)
 }
 
@@ -454,6 +502,11 @@ export const leadingPillContentAttributes = EditorView.contentAttributes.compute
 
 /* ──────────────────────────  pillsField  ───────────────────── */
 
+/** Pill metadata by in-doc pill id. Entries stay after their pill leaves
+ *  the doc, so an undo that brings a pill back also brings back its name
+ *  and expanded state (an expanded body holds real newlines, and drawing it
+ *  as a collapsed pill breaks the single-line pill decoration). The view
+ *  state, and with it this map, is rebuilt from the tab on tab switch. */
 export const pillsField = StateField.define<Map<string, PillMetadata>>({
   create: () => new Map(),
   update(value, tr) {
@@ -477,20 +530,26 @@ export const pillsField = StateField.define<Map<string, PillMetadata>>({
         }
       }
     }
-    if (tr.docChanged) {
-      const liveIds = new Set(scanPills(tr.newDoc.toString()).map((p) => p.id))
-      let needsPrune = false
-      for (const k of next.keys()) {
-        if (!liveIds.has(k)) { needsPrune = true; break }
-      }
-      if (needsPrune) {
-        const pruned = new Map<string, PillMetadata>()
-        for (const [k, v] of next) if (liveIds.has(k)) pruned.set(k, v)
-        next = pruned
-      }
-    }
     return next
   },
+})
+
+/** Unwraps the prompt pills that a transaction broke, in that same
+ *  transaction, so one undo step restores the pill. Every edit path can
+ *  break a pill (Backspace/Delete over a hidden marker, typing over a
+ *  selection, paste, Shift+Enter, default keymap commands), so the repair
+ *  is a filter and not a check in each key handler. A pill only breaks
+ *  when a sentinel is deleted or inserted, so other edits (typing,
+ *  streamed tokens) skip the full-doc scan. */
+export const unwrapBrokenPills = EditorState.transactionFilter.of((tr) => {
+  if (!tr.docChanged) return tr
+  let touchesSentinel = false
+  tr.changes.iterChanges((fromA, toA, _fromB, _toB, inserted) => {
+    touchesSentinel ||= SENTINEL_CHAR.test(tr.startState.sliceDoc(fromA, toA)) || SENTINEL_CHAR.test(inserted.toString())
+  })
+  if (!touchesSentinel) return tr
+  const changes = brokenPillMarkerChanges(tr.newDoc.toString())
+  return changes.length === 0 ? tr : [tr, { changes, sequential: true }]
 })
 
 /* ──────────────────────  Role separator widget  ─────────────── */
@@ -754,12 +813,14 @@ function unescapePromptClipboardBody(body: string): string {
   return body.replace(/<\\\/dez:prompt>/g, '</dez:prompt>')
 }
 
+/** Plain text of live-doc text that holds no well-formed pill: no
+ *  sentinels, and no ids of the pill headers (`PILL_OPEN` + id +
+ *  `PILL_BODY`, the rule of `pillHeaderBodyIndex`) of broken pills. */
 export function stripLiveSentinels(text: string): string {
+  if (!SENTINEL_CHAR.test(text)) return text
   return text
-    .replace(/\u001E/g, '')
-    .replace(/\u{E000}/gu, '')
-    .replace(/\u{E001}/gu, '')
-    .replace(/\u{E002}/gu, '')
+    .replace(/\u{E000}[^\n\u001E\u{E000}-\u{E002}]*\u{E001}/gu, '')
+    .replace(/[\u001E\u{E000}-\u{E002}]/gu, '')
     .replace(/\u{E003}/gu, '\n')
 }
 
@@ -783,7 +844,12 @@ function serializePlainDocFragment(doc: string, from: number, to: number, models
       if (i + 1 < to && doc[i + 1] === '\n') i++
     } else if (c === PILL_NL) {
       out += '\n'
-    } else if (c !== PILL_OPEN && c !== PILL_BODY && c !== PILL_CLOSE) {
+    } else if (c === PILL_OPEN) {
+      // Callers pass ranges outside well-formed pills, so a header here is
+      // what is left of a broken pill. Its id is not text: skip it.
+      const bodyAt = pillHeaderBodyIndex(doc, i)
+      if (bodyAt >= 0 && bodyAt < to) i = bodyAt
+    } else if (c !== PILL_BODY && c !== PILL_CLOSE) {
       out += c
     }
   }
@@ -889,7 +955,12 @@ export interface ParsedClipboardText {
   separatorRoles: Role[]
 }
 
-export function parseClipboardText(text: string): ParsedClipboardText {
+/** Turn clipboard text (with `dez:` markers) into live-doc text: section
+ *  markers become separators, prompt markup becomes collapsed pills. With
+ *  `plainText`, the result holds no sentinels: prompt bodies are inlined
+ *  and section markers dropped, for a paste inside a pill body, where a
+ *  nested pill or a separator would break the pill. */
+export function parseClipboardText(text: string, plainText = false): ParsedClipboardText {
   const pills = new Map<string, PillMetadata>()
   const separatorRoles: Role[] = []
   const marker = /<dez:pill\s+type="(user|agent)"\s*\/\>|<dez:prompt\s+name="([^"]*)">([\s\S]*?)<\/dez:prompt>/g
@@ -901,18 +972,24 @@ export function parseClipboardText(text: string): ParsedClipboardText {
     if (match[1]) {
       const role = match[1] as Role
       if (out.length > 0 && !out.endsWith('\n')) out += '\n'
-      out += `${SECTION_SEP}\n`
-      separatorRoles.push(role)
+      if (!plainText) {
+        out += `${SECTION_SEP}\n`
+        separatorRoles.push(role)
+      }
       if (text[nextCursor] === '\n') nextCursor++
     } else {
-      const id = crypto.randomUUID()
       const name = unescapePromptName(match[2] ?? '')
       let body = match[3] ?? ''
       if (body.startsWith('\n')) body = body.slice(1)
       if (body.endsWith('\n')) body = body.slice(0, -1)
       body = unescapePromptClipboardBody(stripLiveSentinels(body))
-      out += encodePrompt(id, body, true)
-      pills.set(id, { promptId: null, name, expanded: false })
+      if (plainText) {
+        out += body
+      } else {
+        const id = crypto.randomUUID()
+        out += encodePrompt(id, body, true)
+        pills.set(id, { promptId: null, name, expanded: false })
+      }
     }
     cursor = nextCursor
   }

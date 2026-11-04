@@ -158,8 +158,12 @@ world
     expect(promptContent(parsed.sections[0].nodes[1]).body).toBe('literal </dez:prompt> marker')
   })
 
-  it('strips live CodeMirror sentinels from serialized content', () => {
-    const liveSentinelText = 'a\u001Eb\uE000c\uE001d\uE002e\uE003f'
+  it('strips live CodeMirror sentinels and broken pill ids from serialized content', () => {
+    const pillId = 'bdbf417c-2282-4d77-991c-2ac65e1f0a11'
+    // Text nodes hold no pills, so every marker here is left from a broken
+    // pill: a separator, a pill header with its id, a close marker, and an
+    // escaped newline.
+    const liveSentinelText = `a\u001Eb\uE000${pillId}\uE001c\uE002d\uE003e`
     const data: ConversationData = {
       id: 'conversation',
       title: 'Chat',
@@ -175,12 +179,20 @@ world
 
     const serialized = serializeConversation(data)
 
-    expect(serialized).not.toContain('\u001E')
-    expect(serialized).not.toContain('\uE000')
-    expect(serialized).not.toContain('\uE001')
-    expect(serialized).not.toContain('\uE002')
-    expect(serialized).not.toContain('\uE003')
-    expect(serialized).toContain('abcde\nf')
+    expect(serialized).not.toMatch(/[\u001E\uE000-\uE003]/)
+    expect(serialized).not.toContain(pillId)
+    expect(serialized).toBe([
+      '<!-- title: Chat | model:  | created: 1000 -->',
+      '',
+      '<dez:pill type="user"/>',
+      'abcd',
+      'e',
+      '<dez:prompt name="prompt">',
+      'abcd',
+      'e',
+      '</dez:prompt>',
+      '',
+    ].join('\n'))
   })
 
   it('falls back to an empty user section for empty content', () => {
