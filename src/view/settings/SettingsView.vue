@@ -70,20 +70,32 @@ const themes: { value: Theme; label: string }[] = [
   { value: 'dark', label: 'Dark' },
 ]
 
+const mac = /Mac/.test(navigator.platform)
+
+// Help › Keyboard Shortcuts opens this list, so it has a row for each app
+// shortcut in the native menubar (`src/controller/menu.ts`). Standard
+// Cut/Copy/Paste keys and the macOS app-menu keys are not listed. Rows are
+// keyed by `keys`, so each `keys` text must be unique.
 const shortcuts = [
   { keys: 'Cmd/Ctrl + Enter', action: 'Submit thread to LLM' },
+  { keys: 'Shift + Enter', action: 'New message (new line in find field)' },
   { keys: 'Ctrl + Shift + Up', action: 'Add cursor on line above' },
   { keys: 'Ctrl + Shift + Down', action: 'Add cursor on line below' },
+  { keys: 'Cmd/Ctrl + Z', action: 'Undo' },
+  { keys: 'Cmd/Ctrl + Shift + Z', action: 'Redo' },
+  ...(mac ? [] : [{ keys: 'Alt + A', action: 'Select all (Ctrl + A moves to line start)' }]),
   { keys: 'Cmd/Ctrl + F', action: 'Find and replace' },
   { keys: 'Cmd/Ctrl + G', action: 'Next match (or Enter in find field)' },
   { keys: 'Cmd/Ctrl + Shift + G', action: 'Previous match' },
   { keys: 'Up / Down', action: 'Search history (in find field)' },
-  { keys: 'Shift + Enter', action: 'New line in find field' },
-  { keys: 'Cmd/Ctrl + N', action: 'New tab' },
+  { keys: 'Cmd/Ctrl + N or T', action: 'New conversation tab' },
+  { keys: 'Cmd/Ctrl + 1…9', action: 'Go to tab 1…9' },
+  { keys: 'Cmd/Ctrl + Shift + [ / ]', action: 'Previous / next tab' },
   { keys: 'Cmd/Ctrl + W', action: 'Close tab' },
   { keys: 'Cmd/Ctrl + S', action: 'Save conversation as Markdown' },
   { keys: 'Cmd/Ctrl + H', action: 'Open history' },
   { keys: 'Cmd/Ctrl + ,', action: 'Open settings' },
+  ...(mac ? [] : [{ keys: 'Ctrl + Q', action: 'Quit' }]),
   { keys: 'Escape', action: 'Close find and overlays' },
 ]
 
