@@ -71,6 +71,10 @@ export function useKeyboardShortcuts() {
         e.preventDefault();
         void sbp("dez.controller/closeTab", sbp("dez.model/tabs/activeId"));
         break;
+      case "s":
+        e.preventDefault();
+        void sbp("dez.controller/saveConversationAs", sbp("dez.model/tabs/activeId"));
+        break;
       case "f":
         // On macOS, Ctrl+F is emacs-style "forward char" in CodeMirror and in
         // native text fields, so only Cmd+F opens find there. CodeMirror does

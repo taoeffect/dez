@@ -369,19 +369,26 @@ export default sbp('sbp/selectors/register', {
     tabStore.activeTabId = tabStore.tabs[nextIndex].id
   },
 
-  async 'dez.model/tabs/save' (tabId: string): Promise<void> {
+  // The persisted form of a tab. Null when the tab is missing or every
+  // section is empty: an empty conversation is neither saved nor exported.
+  'dez.model/tabs/conversationData' (tabId: string): ConversationData | null {
     const tab = useTabStore().tabs.find((candidate) => candidate.id === tabId)
-    if (!tab || !tab.sections.some((section) => !sectionIsEmpty(section))) return
-    const data: ConversationData = {
+    if (!tab || !tab.sections.some((section) => !sectionIsEmpty(section))) return null
+    return {
       id: tab.conversationId,
       title: tab.title,
       sections: tab.sections.map((section) => ({
         role: section.role,
         nodes: section.content.map((node) => contentNodeToData(node)),
       })),
-      activeModel: tab.activeModel,
+      activeModel: cloneActiveModel(tab.activeModel),
       created_at: tab.createdAt,
     }
+  },
+
+  async 'dez.model/tabs/save' (tabId: string): Promise<void> {
+    const data = sbp('dez.model/tabs/conversationData', tabId) as ConversationData | null
+    if (!data) return
     try {
       await sbp('dez.persistence/saveConversation', data)
     } catch (error) {

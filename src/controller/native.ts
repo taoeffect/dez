@@ -1,5 +1,7 @@
 import sbp from '@sbp/sbp'
 import { invoke, type Channel } from '@tauri-apps/api/core'
+import { save, type SaveDialogOptions } from '@tauri-apps/plugin-dialog'
+import { writeTextFile } from '@tauri-apps/plugin-fs'
 import type {
   NativeHttpRequest,
   NativeHttpResponse,
@@ -82,5 +84,16 @@ export default sbp('sbp/selectors/register', {
 
   'dez.native/getAppDir' (): Promise<string> {
     return invoke<string>('get_app_dir')
+  },
+
+  // Returns the chosen path, or null when the user cancels. The dialog
+  // plugin adds that exact path to the fs scope, so `writeTextFile` below
+  // may write only files that the user picked here.
+  'dez.native/showSaveDialog' (options: SaveDialogOptions): Promise<string | null> {
+    return save(options)
+  },
+
+  'dez.native/writeTextFile' (path: string, content: string): Promise<void> {
+    return writeTextFile(path, content)
   },
 })

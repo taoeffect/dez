@@ -21,6 +21,11 @@ tauri-build = { version = "=2.5.6", features = [] }
 tauri = { version = "=2.10.3", features = [] }
 tauri-plugin-opener = "=2.5.3"
 tauri-plugin-store = "=2.4.2"
+# Later dialog (2.8+) and fs (2.6+) releases need tauri 2.12. The npm
+# packages stay at 2.7.0 / 2.5.0, because their later patch releases need
+# @tauri-apps/api 2.11. The Tauri CLI only requires the same major.minor.
+tauri-plugin-dialog = "=2.7.3"
+tauri-plugin-fs = "=2.5.2"
 serde = { version = "=1.0.228", features = ["derive"] }
 serde_json = "=1.0.149"
 reqwest = { version = "=0.12.28", features = ["json", "stream"] }

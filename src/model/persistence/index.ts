@@ -21,6 +21,18 @@ export default sbp('sbp/selectors/register', {
     }
   },
 
+  // Writes the conversation in the same format as the history files, so Dez
+  // can read an exported file again. `path` must be the exact path that the
+  // save dialog returned; the fs scope allows no other path.
+  async 'dez.persistence/exportConversation' (data: ConversationData, path: string): Promise<void> {
+    try {
+      await sbp('dez.native/writeTextFile', path, serializeConversation(data))
+    } catch (error) {
+      console.error('Failed to export conversation:', error)
+      throw error
+    }
+  },
+
   async 'dez.persistence/loadConversation' (id: string): Promise<ConversationData> {
     try {
       const content = await sbp('dez.native/loadConversationFile', id) as string

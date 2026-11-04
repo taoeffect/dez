@@ -81,6 +81,7 @@ const shortcuts = [
   { keys: 'Shift + Enter', action: 'New line in find field' },
   { keys: 'Cmd/Ctrl + N', action: 'New tab' },
   { keys: 'Cmd/Ctrl + W', action: 'Close tab' },
+  { keys: 'Cmd/Ctrl + S', action: 'Save conversation as Markdown' },
   { keys: 'Cmd/Ctrl + H', action: 'Open history' },
   { keys: 'Cmd/Ctrl + ,', action: 'Open settings' },
   { keys: 'Escape', action: 'Close find and overlays' },

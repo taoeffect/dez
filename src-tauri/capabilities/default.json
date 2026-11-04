@@ -10,6 +10,8 @@
       "identifier": "opener:allow-open-path",
       "allow": [{ "path": "$HOME/.config/dez" }]
     },
-    "store:default"
+    "store:default",
+    "dialog:allow-save",
+    "fs:allow-write-text-file"
   ]
 }
