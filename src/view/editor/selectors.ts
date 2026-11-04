@@ -16,6 +16,7 @@ import {
 import { findHistory } from './findHistory'
 import { findState } from './findState'
 import { isModalOpen } from '../composables/useKeyboardShortcuts'
+import { isMacPlatform } from '../../utils/platform'
 
 const BOTTOM_FOLLOW_THRESHOLD_PX = 96
 
@@ -73,14 +74,13 @@ function keydownForKeyName (name: string): KeyboardEvent {
     console.error(error)
     throw error
   }
-  const mac = /Mac/.test(navigator.platform)
   const shiftKey = parts.includes('Shift')
   const mod = parts.includes('Mod')
   return new KeyboardEvent('keydown', {
     key: shiftKey && key.length === 1 ? key.toUpperCase() : key,
     keyCode: /^[a-z0-9]$/i.test(key) ? key.toUpperCase().charCodeAt(0) : 0,
-    ctrlKey: parts.includes('Ctrl') || (mod && !mac),
-    metaKey: parts.includes('Meta') || (mod && mac),
+    ctrlKey: parts.includes('Ctrl') || (mod && !isMacPlatform),
+    metaKey: parts.includes('Meta') || (mod && isMacPlatform),
     altKey: parts.includes('Alt'),
     shiftKey,
     cancelable: true,

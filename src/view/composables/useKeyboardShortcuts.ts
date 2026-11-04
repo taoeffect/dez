@@ -1,6 +1,7 @@
 import { onMounted, onUnmounted } from "vue";
 import sbp from "@sbp/sbp";
 import { findState } from "../editor/findState";
+import { isMacPlatform } from "../../utils/platform";
 
 // While Settings or History is open, Esc closes it first, so the find Esc
 // handlers in the editor and in the dropdown pass Esc on to this handler.
@@ -84,8 +85,8 @@ export function useKeyboardShortcuts() {
         // On macOS, Ctrl+F is emacs-style "forward char" in CodeMirror and in
         // native text fields, so only Cmd+F opens find there. CodeMirror does
         // not prevent the default when the cursor cannot move (doc end), so
-        // this checks the platform, using the same test as CodeMirror's keymap.
-        if (e.ctrlKey && !e.metaKey && /Mac/.test(navigator.platform)) break;
+        // this checks the platform.
+        if (e.ctrlKey && !e.metaKey && isMacPlatform) break;
         if (e.shiftKey) break;
         if (sbp("dez.editor/openFind") as boolean) e.preventDefault();
         break;

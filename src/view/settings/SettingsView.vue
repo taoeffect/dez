@@ -3,6 +3,7 @@ import { computed, onMounted, onUnmounted, nextTick, ref } from 'vue'
 import sbp from '@sbp/sbp'
 import { useModelState, type SettingsSection, type Theme } from '../modelState'
 import type { ModelInfo, ProviderInfo } from '../../model/providers'
+import { isMacPlatform } from '../../utils/platform'
 import PromptManager from '../prompts/PromptManager.vue'
 import ModelPicker from '../model-selector/ModelPicker.vue'
 
@@ -70,8 +71,6 @@ const themes: { value: Theme; label: string }[] = [
   { value: 'dark', label: 'Dark' },
 ]
 
-const mac = /Mac/.test(navigator.platform)
-
 // Help › Keyboard Shortcuts opens this list, so it has a row for each app
 // shortcut in the native menubar (`src/controller/menu.ts`). Standard
 // Cut/Copy/Paste keys and the macOS app-menu keys are not listed. Rows are
@@ -83,7 +82,7 @@ const shortcuts = [
   { keys: 'Ctrl + Shift + Down', action: 'Add cursor on line below' },
   { keys: 'Cmd/Ctrl + Z', action: 'Undo' },
   { keys: 'Cmd/Ctrl + Shift + Z', action: 'Redo' },
-  ...(mac ? [] : [{ keys: 'Alt + A', action: 'Select all (Ctrl + A moves to line start)' }]),
+  ...(isMacPlatform ? [] : [{ keys: 'Alt + A', action: 'Select all (Ctrl + A moves to line start)' }]),
   { keys: 'Cmd/Ctrl + F', action: 'Find and replace' },
   { keys: 'Cmd/Ctrl + G', action: 'Next match (or Enter in find field)' },
   { keys: 'Cmd/Ctrl + Shift + G', action: 'Previous match' },
@@ -95,7 +94,7 @@ const shortcuts = [
   { keys: 'Cmd/Ctrl + S', action: 'Save conversation as Markdown' },
   { keys: 'Cmd/Ctrl + H', action: 'Open history' },
   { keys: 'Cmd/Ctrl + ,', action: 'Open settings' },
-  ...(mac ? [] : [{ keys: 'Ctrl + Q', action: 'Quit' }]),
+  ...(isMacPlatform ? [] : [{ keys: 'Ctrl + Q', action: 'Quit' }]),
   { keys: 'Escape', action: 'Close find and overlays' },
 ]
 

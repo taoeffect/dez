@@ -3,6 +3,7 @@ import { hide } from '@tauri-apps/api/app'
 import { isTauri } from '@tauri-apps/api/core'
 import { Menu, Submenu, type MenuItemOptions, type PredefinedMenuItemOptions } from '@tauri-apps/api/menu'
 import { getCurrentWindow } from '@tauri-apps/api/window'
+import { isMacPlatform } from '../utils/platform'
 import { DEZ_REPO_URL } from './updates'
 
 const SEPARATOR: PredefinedMenuItemOptions = { item: 'Separator' }
@@ -32,7 +33,6 @@ export default sbp('sbp/selectors/register', {
     // `npm run dev` runs in a plain browser, which has no native menu.
     if (menuInstalled || !isTauri()) return
     menuInstalled = true
-    const mac = /Mac/.test(navigator.platform)
     const settings: MenuItemOptions = {
       text: 'Settings…',
       accelerator: 'CmdOrCtrl+,',
@@ -53,12 +53,12 @@ export default sbp('sbp/selectors/register', {
         items: [
           { text: 'Keyboard Shortcuts', action: () => sbp('dez.model/settings/open', 'general') },
           { text: 'Dez on GitHub', action: () => sbp('dez.controller/openUrl', DEZ_REPO_URL) },
-          ...(mac ? [] : [SEPARATOR, checkForUpdates, about]),
+          ...(isMacPlatform ? [] : [SEPARATOR, checkForUpdates, about]),
         ],
       })
       const menu = await Menu.new({
         items: [
-          ...(mac
+          ...(isMacPlatform
             ? [{
                 text: 'Dez',
                 items: [
@@ -100,7 +100,7 @@ export default sbp('sbp/selectors/register', {
                 action: () => void sbp('dez.controller/closeTab', sbp('dez.model/tabs/activeId')),
               },
               // Closing the last window exits, as the window close button does.
-              ...(mac
+              ...(isMacPlatform
                 ? []
                 : [SEPARATOR, {
                     text: 'Quit',
@@ -114,7 +114,7 @@ export default sbp('sbp/selectors/register', {
           {
             text: 'Edit',
             items: [
-              ...(mac
+              ...(isMacPlatform
                 ? [{ item: 'Undo' }, { item: 'Redo' }] satisfies PredefinedMenuItemOptions[]
                 : [
                     { text: 'Undo', accelerator: 'Ctrl+Z', action: () => sbp('dez.editor/runKeyBinding', 'Mod-z', 'undo') },
@@ -124,14 +124,14 @@ export default sbp('sbp/selectors/register', {
               { item: 'Cut' },
               { item: 'Copy' },
               { item: 'Paste' },
-              mac
+              isMacPlatform
                 ? { item: 'SelectAll' }
                 : { text: 'Select All', accelerator: 'Alt+A', action: () => sbp('dez.editor/runKeyBinding', 'Alt-a', 'selectAll') },
               SEPARATOR,
               { text: 'Find…', accelerator: 'CmdOrCtrl+F', action: () => sbp('dez.editor/openFind') },
               { text: 'Find Next', accelerator: 'CmdOrCtrl+G', action: () => sbp('dez.editor/selectFindMatch', 'next') },
               { text: 'Find Previous', accelerator: 'CmdOrCtrl+Shift+G', action: () => sbp('dez.editor/selectFindMatch', 'previous') },
-              ...(mac ? [] : [SEPARATOR, settings]),
+              ...(isMacPlatform ? [] : [SEPARATOR, settings]),
             ],
           },
           {
@@ -165,7 +165,7 @@ export default sbp('sbp/selectors/register', {
           {
             text: 'Window',
             items: [
-              ...(mac ? [{ item: 'Minimize' }, { item: 'Maximize', text: 'Zoom' }, SEPARATOR] satisfies PredefinedMenuItemOptions[] : []),
+              ...(isMacPlatform ? [{ item: 'Minimize' }, { item: 'Maximize', text: 'Zoom' }, SEPARATOR] satisfies PredefinedMenuItemOptions[] : []),
               { text: 'Previous Tab', accelerator: 'CmdOrCtrl+Shift+[', action: () => sbp('dez.model/tabs/cycle', -1) },
               { text: 'Next Tab', accelerator: 'CmdOrCtrl+Shift+]', action: () => sbp('dez.model/tabs/cycle', 1) },
               SEPARATOR,
@@ -182,7 +182,7 @@ export default sbp('sbp/selectors/register', {
       await menu.setAsAppMenu()
       // Tauri 2.10.3's `set_as_windows_menu_for_nsapp` command sets the help
       // menu instead (menu/plugin.rs), so the Window menu is not registered.
-      if (mac) await help.setAsHelpMenuForNSApp()
+      if (isMacPlatform) await help.setAsHelpMenuForNSApp()
     } catch (error) {
       menuInstalled = false
       console.error('Failed to install the app menu:', error)
