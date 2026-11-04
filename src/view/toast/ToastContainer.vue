@@ -63,7 +63,6 @@ function onShowToast (toastArea: unknown, data: unknown): void {
   const toast = {
     ...(data as ToastData),
     id: makeToastId(),
-    createdTimestamp: Date.now(),
   } satisfies ToastItem
 
   toasts.value.push(toast)
@@ -86,13 +85,6 @@ function onShowToast (toastArea: unknown, data: unknown): void {
 function closeToast (id: string): void {
   toasts.value = toasts.value.filter((toast) => toast.id !== id)
   toastRefs.delete(id)
-}
-
-function updateCreatedTimestamp (id: string, adjustedCreatedTimestamp: number): void {
-  const toast = toasts.value.find((item) => item.id === id)
-  if (toast) {
-    toast.createdTimestamp = adjustedCreatedTimestamp
-  }
 }
 
 function updateSmallScreenState (): void {
@@ -128,7 +120,6 @@ onUnmounted(() => {
           :ref="(component) => setToastRef(toast.id, component as InstanceType<typeof ToastCard> | null)"
           :data="toast"
           @close="closeToast"
-          @unpause-animation="updateCreatedTimestamp"
         />
       </div>
     </template>
@@ -146,7 +137,6 @@ onUnmounted(() => {
           :ref="(component) => setToastRef(toast.id, component as InstanceType<typeof ToastCard> | null)"
           :data="toast"
           @close="closeToast"
-          @unpause-animation="updateCreatedTimestamp"
         />
       </div>
     </template>

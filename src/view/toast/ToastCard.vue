@@ -5,7 +5,6 @@ import type { ToastData } from './selectors'
 
 export interface ToastItem extends ToastData {
   id: string
-  createdTimestamp: number
   closing?: boolean
 }
 
@@ -15,18 +14,14 @@ const props = defineProps<{
 
 const emit = defineEmits<{
   close: [id: string]
-  'unpause-animation': [id: string, adjustedCreatedTimestamp: number]
 }>()
 
 const closing = ref(false)
-const paused = ref(false)
-const progressOnPause = ref<number | null>(null)
 // Explicit `number` (the browser's real timer id type) instead of
 // `ReturnType<typeof window.setTimeout>`: when @types/node is hoisted into
 // the root node_modules (e.g. by webdriverio's install), TypeScript resolves
 // that query to NodeJS.Timeout and the window.setTimeout assignment breaks.
 let closeTimer: number | null = null
-let pauseStartedAt = 0
 
 const showCloseButton = computed(() => props.data.closeable !== false)
 const hasDuration = computed(() => typeof props.data.duration === 'number' && props.data.duration > 0)
@@ -53,26 +48,6 @@ function closeToast (): void {
   closeTimer = window.setTimeout(() => {
     emit('close', props.data.id)
   }, 250)
-}
-
-function pauseAnimation (): void {
-  if (!hasDuration.value || paused.value) return
-
-  paused.value = true
-  pauseStartedAt = Date.now()
-
-  const elapsed = Date.now() - props.data.createdTimestamp
-  const duration = props.data.duration ?? 0
-  progressOnPause.value = Math.max(0, Math.min(100, 100 - (elapsed / duration) * 100))
-}
-
-function unpauseAnimation (): void {
-  if (!paused.value) return
-
-  const pauseDuration = Date.now() - pauseStartedAt
-  paused.value = false
-  progressOnPause.value = null
-  emit('unpause-animation', props.data.id, props.data.createdTimestamp + pauseDuration)
 }
 
 function onAnimationEnd (event: AnimationEvent): void {
@@ -109,8 +84,6 @@ defineExpose({ closeToast })
     :class="[`toast-card--${variant}`, { 'toast-card--closing': closing, 'toast-card--clickable': data.sbpInvocation }]"
     role="status"
     aria-live="polite"
-    @mouseenter="pauseAnimation"
-    @mouseleave="unpauseAnimation"
     @click="onToastClick"
     @animationend="onAnimationEnd"
   >
@@ -137,11 +110,7 @@ defineExpose({ closeToast })
       ×
     </button>
     <div v-if="hasDuration" class="toast-progress" aria-hidden="true">
-      <div
-        class="toast-progress-bar"
-        :class="{ 'toast-progress-bar--paused': paused }"
-        :style="paused && progressOnPause !== null ? { width: `${progressOnPause}%` } : progressStyle"
-      />
+      <div class="toast-progress-bar" :style="progressStyle" />
     </div>
   </article>
 </template>
@@ -278,7 +247,11 @@ defineExpose({ closeToast })
   animation-fill-mode: forwards;
 }
 
-.toast-progress-bar--paused {
+/* Hover pauses the timer through the play state only. Do not change the
+   duration (for example with an inline style) while the bar is paused: a
+   duration shorter than the elapsed time ends the paused animation at once,
+   and its `animationend` closes the toast. */
+.toast-card:hover .toast-progress-bar {
   animation-play-state: paused;
 }
 
