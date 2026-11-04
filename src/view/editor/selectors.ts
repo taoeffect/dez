@@ -231,7 +231,9 @@ export default sbp('sbp/selectors/register', {
    *  accelerator takes the key before the page sees it, so the menu item
    *  must do what the key would do where focus is; see `TextFieldAction`.
    *  Without a focused text field, every action except `'editor'` focuses
-   *  the editor before the binding runs. Returns whether anything ran. */
+   *  the editor before the binding runs. While Settings or History covers
+   *  the editor, the binding runs only if the editor still has focus, as a
+   *  key press would. Returns whether anything ran. */
   'dez.editor/runKeyBinding' (key: string, inTextField: TextFieldAction = 'editor'): boolean {
     const focused = document.activeElement
     if (inTextField !== 'editor' && (focused instanceof HTMLInputElement || focused instanceof HTMLTextAreaElement)) {
@@ -240,7 +242,7 @@ export default sbp('sbp/selectors/register', {
       return inTextField !== 'none' && document.execCommand(inTextField)
     }
     const view = activeView
-    if (!view) return false
+    if (!view || (isModalOpen() && !view.hasFocus)) return false
     if (inTextField !== 'editor' && !view.hasFocus) view.focus()
     return runScopeHandlers(view, keydownForKeyName(key), 'editor')
   },

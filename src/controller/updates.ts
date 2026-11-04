@@ -37,10 +37,10 @@ async function latestReleaseStatus(): Promise<LatestReleaseStatus> {
   }
 }
 
-const RELEASE_URL_PREFIX = 'https://github.com/taoeffect/dez'
+export const DEZ_REPO_URL = 'https://github.com/taoeffect/dez'
 
 function isValidReleaseUrl(url: string): boolean {
-  return url.startsWith(RELEASE_URL_PREFIX)
+  return url.startsWith(DEZ_REPO_URL)
 }
 
 function showAvailableUpdateToast(latestRelease: LatestRelease): void {

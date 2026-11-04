@@ -45,6 +45,7 @@ export default sbp('sbp/selectors/register', {
       sbp('dez.controller/startUpdateChecker')
       startAppStateWatcher()
       initialized = true
+      void sbp('dez.controller/menu/install')
       // Warm the cache against real availability in the background so the model
       // selector reconciles after startup without blocking init.
       void sbp('dez.controller/modelCache/refresh')
