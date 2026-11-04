@@ -4,10 +4,16 @@ import { findState } from "../editor/findState";
 
 // While Settings or History is open, Esc closes it first, so the find Esc
 // handlers in the editor and in the dropdown pass Esc on to this handler.
+// The find selectors also do nothing while one of them covers the editor.
 export function isModalOpen(): boolean {
   return (sbp("dez.model/settings/isOpen") as boolean) || (sbp("dez.model/settings/isHistoryOpen") as boolean);
 }
 
+// The Mod shortcuts below are also native menu items, which call the same
+// selectors. On Linux a menu accelerator takes the key before this handler
+// sees it, so context checks (a modal is open, find is closed, …) belong in
+// the selector, not here. A selector that returns false did nothing, so the
+// key keeps its default action.
 export function useKeyboardShortcuts() {
   function handleKeydown(e: KeyboardEvent) {
     if (e.key === "Escape") {
@@ -49,15 +55,14 @@ export function useKeyboardShortcuts() {
       return;
     }
 
-    const modalOpen = isModalOpen();
     switch (e.key.toLowerCase()) {
       case ",":
         e.preventDefault();
-        (sbp("dez.model/settings/isOpen") as boolean) ? sbp("dez.model/settings/close") : sbp("dez.model/settings/open");
+        sbp("dez.model/settings/toggle");
         break;
       case "h":
         e.preventDefault();
-        (sbp("dez.model/settings/isHistoryOpen") as boolean) ? sbp("dez.model/settings/historyClose") : sbp("dez.model/settings/historyOpen");
+        sbp("dez.model/settings/historyToggle");
         break;
       case "n":
         e.preventDefault();
@@ -81,14 +86,11 @@ export function useKeyboardShortcuts() {
         // not prevent the default when the cursor cannot move (doc end), so
         // this checks the platform, using the same test as CodeMirror's keymap.
         if (e.ctrlKey && !e.metaKey && /Mac/.test(navigator.platform)) break;
-        if (e.shiftKey || modalOpen) break;
-        e.preventDefault();
-        sbp("dez.editor/openFind");
+        if (e.shiftKey) break;
+        if (sbp("dez.editor/openFind") as boolean) e.preventDefault();
         break;
       case "g":
-        if (!findState.open || modalOpen) break;
-        e.preventDefault();
-        sbp("dez.editor/selectFindMatch", e.shiftKey ? "previous" : "next");
+        if (sbp("dez.editor/selectFindMatch", e.shiftKey ? "previous" : "next") as boolean) e.preventDefault();
         break;
     }
   }

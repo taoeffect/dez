@@ -643,6 +643,11 @@ export default sbp('sbp/selectors/register', {
     useSettingsStore().settingsOpen = false
   },
 
+  'dez.model/settings/toggle' (): void {
+    if (useSettingsStore().settingsOpen) sbp('dez.model/settings/close')
+    else sbp('dez.model/settings/open')
+  },
+
   'dez.model/settings/setSection' (section: SettingsSection): void {
     useSettingsStore().settingsSection = section
   },
@@ -655,6 +660,11 @@ export default sbp('sbp/selectors/register', {
 
   'dez.model/settings/historyClose' (): void {
     useSettingsStore().historyOpen = false
+  },
+
+  'dez.model/settings/historyToggle' (): void {
+    if (useSettingsStore().historyOpen) sbp('dez.model/settings/historyClose')
+    else sbp('dez.model/settings/historyOpen')
   },
 
   'dez.model/settings/togglePillSeparators' (): void {

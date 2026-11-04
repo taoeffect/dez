@@ -1,6 +1,6 @@
 import sbp from '@sbp/sbp'
 import { EditorSelection } from '@codemirror/state'
-import { EditorView } from '@codemirror/view'
+import { EditorView, runScopeHandlers } from '@codemirror/view'
 import {
   createFindQuery,
   findMatchAt,
@@ -15,6 +15,7 @@ import {
 } from './find'
 import { findHistory } from './findHistory'
 import { findState } from './findState'
+import { isModalOpen } from '../composables/useKeyboardShortcuts'
 
 const BOTTOM_FOLLOW_THRESHOLD_PX = 96
 
@@ -48,6 +49,42 @@ function handleVisibleScroll(tabId: string): void {
   if (!activeView || activeViewTabId !== tabId) return
   if (streamingScrollRestorePending) return
   followingStreamTabId = isNearScrollBottom(activeView) ? tabId : null
+}
+
+/** What `dez.editor/runKeyBinding` does while a native text field (an
+ *  `<input>` or `<textarea>`, such as the find field) has focus: run the
+ *  binding in the editor anyway, do nothing, or run this
+ *  `document.execCommand` edit command in the field. */
+export type TextFieldAction = 'editor' | 'none' | 'insertLineBreak' | 'undo' | 'redo' | 'selectAll'
+
+const KEY_NAME_MODIFIERS: Record<string, true> = { Mod: true, Ctrl: true, Meta: true, Alt: true, Shift: true }
+
+// A synthetic keydown for a CodeMirror key name such as `Mod-Shift-z`, for
+// the platform that CodeMirror's keymaps use (`Mod` is Cmd on macOS, else
+// Ctrl). `keyCode` is set for letters and digits because CodeMirror finds a
+// Shift+letter binding through it: with `key` "Z" and no keyCode, no
+// binding matches `Mod-Shift-z`, and with `key` "z" the `Mod-z` binding runs.
+function keydownForKeyName (name: string): KeyboardEvent {
+  const parts = name.split(/-(?!$)/)
+  const key = parts.pop() ?? ''
+  for (const modifier of parts) {
+    if (Object.hasOwn(KEY_NAME_MODIFIERS, modifier)) continue
+    const error = new Error(`Unknown modifier "${modifier}" in key name "${name}"`)
+    console.error(error)
+    throw error
+  }
+  const mac = /Mac/.test(navigator.platform)
+  const shiftKey = parts.includes('Shift')
+  const mod = parts.includes('Mod')
+  return new KeyboardEvent('keydown', {
+    key: shiftKey && key.length === 1 ? key.toUpperCase() : key,
+    keyCode: /^[a-z0-9]$/i.test(key) ? key.toUpperCase().charCodeAt(0) : 0,
+    ctrlKey: parts.includes('Ctrl') || (mod && !mac),
+    metaKey: parts.includes('Meta') || (mod && mac),
+    altKey: parts.includes('Alt'),
+    shiftKey,
+    cancelable: true,
+  })
 }
 
 export default sbp('sbp/selectors/register', {
@@ -102,10 +139,11 @@ export default sbp('sbp/selectors/register', {
   },
 
   /** Cmd/Ctrl+F: open the find dropdown (or refocus it), prefilled from the
-   *  editor selection when `findPrefillText` allows it. */
-  'dez.editor/openFind' (): void {
+   *  editor selection when `findPrefillText` allows it. Does nothing while
+   *  Settings or History covers the editor. Returns whether it opened. */
+  'dez.editor/openFind' (): boolean {
     const view = activeView
-    if (!view) return
+    if (!view || isModalOpen()) return false
     const { state } = view
     const prefill = findPrefillText(state, findState.regexp)
     findState.origin = state.selection.main.from
@@ -114,6 +152,7 @@ export default sbp('sbp/selectors/register', {
     findState.focusRequest++
     // ArrowUp in the field starts a new browse from the shown text.
     findHistory.resetBrowse()
+    return true
   },
 
   /** Close the dropdown, add the search to the history, clear the match
@@ -142,21 +181,24 @@ export default sbp('sbp/selectors/register', {
 
   /** Next/previous match from the main selection, wrapping around the doc.
    *  The match becomes the new origin for typing in the search field. The
-   *  search goes into the history even without a match. */
-  'dez.editor/selectFindMatch' (direction: 'next' | 'previous'): void {
+   *  search goes into the history even without a match. Does nothing while
+   *  find is closed or Settings or History covers the editor. Returns
+   *  whether it searched. */
+  'dez.editor/selectFindMatch' (direction: 'next' | 'previous'): boolean {
     const view = activeView
-    if (!view || !findState.open) return
+    if (!view || !findState.open || isModalOpen()) return false
     findHistory.commit(findState.search)
     const { state } = view
     const query = state.field(findQueryField, false)
-    if (!query) return
+    if (!query) return true
     const { main } = state.selection
     const match = direction === 'next'
       ? findNextMatch(state, query, main.to)
       : findPreviousMatch(state, query, main.from)
-    if (!match) return
+    if (!match) return true
     findState.origin = match.from
     view.dispatch(selectMatchSpec(match))
+    return true
   },
 
   /** "Replace" ('current') or "Replace all" ('all') with the replace field
@@ -180,5 +222,26 @@ export default sbp('sbp/selectors/register', {
     }
     // Typing in the search field next searches from the replaced spot.
     findState.origin = view.state.selection.main.from
+  },
+
+  /** Run an editor key binding (a CodeMirror key name such as `Mod-Enter`)
+   *  without a key press, for the native menu. The editor keymaps stay the
+   *  only definition of these keys, with all their checks (an open prompt
+   *  autocomplete, several cursors, section splits). On Linux a menu
+   *  accelerator takes the key before the page sees it, so the menu item
+   *  must do what the key would do where focus is; see `TextFieldAction`.
+   *  Without a focused text field, every action except `'editor'` focuses
+   *  the editor before the binding runs. Returns whether anything ran. */
+  'dez.editor/runKeyBinding' (key: string, inTextField: TextFieldAction = 'editor'): boolean {
+    const focused = document.activeElement
+    if (inTextField !== 'editor' && (focused instanceof HTMLInputElement || focused instanceof HTMLTextAreaElement)) {
+      // execCommand is deprecated, but it is the only way for a script to
+      // run the field's own edit commands (its undo stack, a line break).
+      return inTextField !== 'none' && document.execCommand(inTextField)
+    }
+    const view = activeView
+    if (!view) return false
+    if (inTextField !== 'editor' && !view.hasFocus) view.focus()
+    return runScopeHandlers(view, keydownForKeyName(key), 'editor')
   },
 })
