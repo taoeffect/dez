@@ -79,4 +79,8 @@ export default sbp('sbp/selectors/register', {
   'dez.native/loadAppFile' (name: string): Promise<string> {
     return invoke<string>('load_app_file', { name })
   },
+
+  'dez.native/getAppDir' (): Promise<string> {
+    return invoke<string>('get_app_dir')
+  },
 })

@@ -161,3 +161,15 @@ pub fn save_app_file(name: &str, content: &str) -> Result<(), String> {
     let path = base_dir().join(safe);
     write_private_file(&path, content)
 }
+
+// Returns the data folder for callers that hand it to the OS, e.g. to open it
+// in the file manager. The folder is created first because the opener plugin
+// rejects a path that does not exist. A non-UTF-8 path is an error, because a
+// lossy string would name a different folder.
+pub fn app_dir() -> Result<String, String> {
+    let dir = base_dir();
+    ensure_dir(&dir)?;
+    dir.into_os_string()
+        .into_string()
+        .map_err(|path| format!("App folder path is not valid UTF-8: {:?}", path))
+}

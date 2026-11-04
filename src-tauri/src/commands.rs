@@ -184,3 +184,8 @@ pub async fn save_app_file(name: String, content: String) -> Result<(), String> 
 pub async fn load_app_file(name: String) -> Result<String, String> {
     crate::persistence::load_app_file(&name)
 }
+
+#[tauri::command]
+pub async fn get_app_dir() -> Result<String, String> {
+    crate::persistence::app_dir()
+}

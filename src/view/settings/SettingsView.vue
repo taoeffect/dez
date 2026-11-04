@@ -344,6 +344,13 @@ function onOverlayClick(e: MouseEvent) {
               </button>
             </div>
 
+            <div class="settings-row">
+              <label class="settings-label">Dez folder</label>
+              <button class="settings-btn settings-btn--sm" @click="sbp('dez.controller/openAppFolder')">
+                Open Dez Folder
+              </button>
+            </div>
+
             <div class="settings-shortcuts">
               <label class="settings-label">Keyboard shortcuts</label>
               <table class="shortcuts-table">
