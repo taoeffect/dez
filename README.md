@@ -19,9 +19,12 @@ Talk with AI in a fully editable plaintext document. Inspired by Zed's text thre
 - **Text pill separators** — toggleable "User" / "Agent" labels between messages
 - **Multiple simultaneous responses** — Ask different AIs the same question across multiple tabs at once
 - **Conversation history** — persisted locally with the ability to browse and delete past conversations
+- **Save as Markdown** - <kbd>Cmd/Ctrl+S</kbd> saves the current conversation to a Markdown file you pick
 - **Multiple cursors** - <kbd>Ctrl+Shift+Up</kbd> and <kbd>Ctrl+Shift+Down</kbd> adds cursors above and below
 - **Find & replace** - <kbd>Cmd/Ctrl+F</kbd> opens a find bar with live highlights
 - **Markdown tables** - Renders GFM-flavored markdown tables inline
+- **Native menubar** - File, Edit, Conversation, View, Window, and Help menus with an item for every keyboard shortcut
+- **Open Dez Folder** - a button in Settings › General opens the folder where Dez keeps its data (`~/.config/dez/`)
 - **Web search & URL scraping** - Venice-based models can search the Internet and read URLs you give them
 - **X search** - Via Grok models on Venice
 - **Cross-platform** — macOS and Linux

@@ -71,7 +71,7 @@ Dez follows an SBP MVC pattern: selectors are the cross-layer API, and code shou
 Top-level source sketch:
 
 - `src/model/`: domain state, persistence formats, providers, chat/stream model logic, and model selectors.
-- `src/controller/`: user workflows, startup/shutdown, native/Tauri boundaries, HTTP runtime orchestration, updates, and diagnostics.
+- `src/controller/`: user workflows, startup/shutdown, native/Tauri boundaries, the native menubar, HTTP runtime orchestration, updates, and diagnostics.
 - `src/view/`: Vue UI, view composables, CodeMirror editor services, toast/theme/clipboard UI selectors, and reactive read adapters.
 - `src/utils/`: cross-layer utilities only.
 - `src-tauri/`: Rust commands, native HTTP bridge, persistence file I/O, credential storage, and app bootstrap.
@@ -107,6 +107,7 @@ User edits ThreadEditor (CodeMirror document)
 - **Markdown tables**: `src/view/editor/tables.ts` shows valid GFM tables in the thread editor as tables, in place. `findMarkdownTables()` is its own section-aware scanner, because the editor's markdown language has no GFM. `markdownTables()` is the CodeMirror extension that `buildState()` in `ThreadEditor.vue` adds; the table CSS is in `dezTheme` in `cmEditor.ts`. The rule: a top-level GFM table renders if and only if its source is valid, wherever the cursor is. Tables in blockquotes never render; the `findMarkdownTables()` comment says which tables in list items do. No table text is replaced: every character stays in the DOM and keeps its caret position, and CSS only makes the delimiter row and the splitting pipes transparent. So an edit that breaks the syntax shows the raw source, and a fix renders the table again. Table row lines hold only cell marks (no widgets or replace decorations), or the browser adds extra columns. `markdownTables()` also draws the editor selection (it hides the `drawSelection()` layer) and forwards clicks in the margin beside table rows.
 - **Model state**: Pinia stores under `src/model/state/**` are internal model implementation details. `dez.model/*` selectors own tab mutations, active models, titles, settings, prompts, stream session state, app-state serialization, and persistence watchers; view code reads reactive state through `src/view/modelState.ts`.
 - **Streaming state**: `src/model/state/streams.ts` tracks per-tab sessions and errors. `src/controller/stream.ts` owns lifecycle/cancellation, `src/model/providers/**` builds provider requests and parses streamed tokens, `src/controller/http.ts` owns active native HTTP streams, and `src/view/editor/selectors.ts` owns the active CodeMirror bridge.
+- **Menubar and shortcuts**: `src/controller/menu.ts` builds the native menubar in TypeScript (`dez.controller/menu/install`, called from `dez.controller/app/init`; skipped outside Tauri, so `npm run dev` has no menu). Every shortcut has a menu item, and the item and the key handler call the same selector. App keys are in `src/view/composables/useKeyboardShortcuts.ts`; editor keys stay in the CodeMirror keymaps, and menu items run them through `dez.editor/runKeyBinding`. The Settings › General shortcut list is `shortcuts` in `SettingsView.vue`. See the key order gotcha below.
 - **Dev global**: In dev builds, `src/main.ts` exposes `window.__stores = { tab, settings, prompts }` for webview console testing.
 
 ### SBP
@@ -143,6 +144,7 @@ Toast UI lives under `src/view/toast/`. Toasts are emitted through the SBP selec
 - **Streaming events**: `http_bridge.rs` emits `{ kind, data }` Tauri Channel events: `Headers`, `Chunk`, `Done`, and `Error`. TypeScript assembles bytes and parses provider-specific SSE.
 - **Credentials**: `key_store.rs` reads/writes `~/.config/dez/provider_keys.json` with mode `0600` on Unix. Normal providers store `api_key`; Copilot stores GitHub/Copilot token fields and refreshes chat tokens via `copilot.rs`.
 - **Persistence**: `persistence.rs` only performs private-file raw string I/O and id sanitization. TypeScript owns app-state, prompt, and conversation format parsing/serialization.
+- **Plugins and app folder**: `lib.rs` registers the `opener`, `fs`, `dialog`, and `store` plugins. Save As Markdown has no Rust command: `dez.native/showSaveDialog` (dialog plugin) adds the picked path to the fs scope at run time, and `dez.native/writeTextFile` (fs plugin) writes it, so the webview can write only files the user picked. Open Dez Folder gets the path from the generic `get_app_dir` command (creates `~/.config/dez/` if missing) and opens it with the opener plugin's `openPath`.
 
 ## Persistence layout
 
@@ -179,7 +181,8 @@ The frontend never touches these files directly; use `dez.persistence/*` selecto
 - **Concurrent streaming path**: Chat streaming no longer goes through a Rust provider registry. `src/controller/stream.ts` tracks request ids per tab, and `http_bridge.rs` tracks request ids globally for native cancellation.
 - **Provider role mapping**: The app uses internal role `agent`. OpenAI-compatible provider adapters must map `agent` to API role `assistant` when building requests.
 - **Copilot auth path differs**: Copilot does not use normal `set_api_key`/`configure` flow. Use `copilot_start_device_flow` and `copilot_poll_device_flow`; tokens are then persisted via `key_store`.
-- **Tauri capabilities**: `src-tauri/capabilities/default.json` currently grants `core:default`, `opener:default`, and `store:default`. Add permissions there when adding Tauri plugins.
+- **Tauri capabilities**: `src-tauri/capabilities/default.json` grants `core:default`, `core:app:allow-app-hide` (macOS "Hide Dez"), `core:window:allow-close` (Linux File › Quit), `opener:default`, `opener:allow-open-path` scoped to `$HOME/.config/dez` (Open Dez Folder), `store:default`, `dialog:allow-save`, and `fs:allow-write-text-file` (no static fs scope). Add permissions there when adding Tauri plugins or calling another plugin/core command.
+- **Shortcut key order differs by platform**: On Linux, a GTK menu accelerator takes the key before the webview, so the page key handler never sees it. On macOS, the page sees keys first and the menu gets only keys the page did not handle (not yet tested on a Mac). So context checks (a modal is open, find is closed, editor focus) belong in the selector that both paths call, never only in a key handler. `dez.editor/runKeyBinding` does nothing while a modal is open and the editor has no focus.
 - **CSP disabled**: `src-tauri/tauri.conf.json` sets `"csp": null` intentionally during development.
 - **Vite port is fixed**: Tauri dev expects Vite on port `1420` with `strictPort: true`; if the port is occupied, dev startup fails instead of choosing another port.
 - **App state plugin unused for core state**: `@tauri-apps/plugin-store` is installed and permissioned, but app state, prompts, conversations, and provider keys are persisted by custom Rust file I/O.
@@ -221,6 +224,7 @@ Brief comments are encouraged above functions that do anything non-trivial expla
 - Run `cd src-tauri && cargo test` when touching Rust logic with tests, including the release/update helpers in `src-tauri/src/commands.rs`.
 - Run `npm run test:e2e` after UI behavior changes covered by the WebDriver e2e specs under `tests/e2e/` (Linux only; requires the debug binary, `tauri-driver`, and `WebKitWebDriver`).
 - Run `npm run typecheck:e2e` after changing the e2e harness or specs; `npm run build` does not type-check files under `tests/e2e/`.
+- WebDriver keys (`browser.keys`) skip GTK, so e2e specs test the page key handlers, never the Linux menu accelerators or menu clicks. To check those by hand: run rootful Xwayland on kwin (`WAYLAND_DISPLAY=wayland-dez Xwayland :5 -geometry 1280x800 -ac`), start the app with `env -u WAYLAND_DISPLAY DISPLAY=:5 GDK_BACKEND=x11`, send real keys with XTest (`libXtst`), and click items through AT-SPI inside `dbus-run-session` (start `/usr/libexec/at-spi-bus-launcher --launch-immediately` and `/usr/libexec/at-spi2-registryd` first).
 - Use type-check/build and targeted manual verification via `npm run tauri dev` when UI behavior changes beyond unit-testable helper logic.
 
 ### GUI tests without a display (sandboxes)
