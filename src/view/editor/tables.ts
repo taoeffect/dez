@@ -9,6 +9,7 @@ import {
   type DecorationSet,
 } from '@codemirror/view'
 import { SENTINEL_CHAR } from '../../model/chat/content'
+import { closesFence, fenceOpener, type Fence } from '../../utils/markdownFence'
 import { SECTION_SEP } from '../thread/cmEditor'
 
 export type TableAlignment = 'left' | 'center' | 'right' | null
@@ -54,31 +55,14 @@ const BLANK = /^[ \t]*$/
 const UNESCAPED_PIPE = /(?:^|[^\\])(?:\\\\)*\|/
 /** At most 3 spaces of indent; more makes an indented code line. */
 const BLOCK_INDENT = /^ {0,3}[^ \t]/
-const FENCE_OPEN = /^ {0,3}(`{3,}|~{3,})/
-const FENCE_CLOSE = /^ {0,3}(`{3,}|~{3,})[ \t]*$/
 /** ATX heading, blockquote, or list item. */
 const BLOCK_START = /^ {0,3}(?:#{1,6}(?:[ \t]|$)|>|(?:[-+*]|\d{1,9}[.)])[ \t])/
 const THEMATIC_BREAK = /^ {0,3}([-*_])(?:[ \t]*\1){2,}[ \t]*$/
-
-interface Fence {
-  char: string
-  length: number
-}
 
 interface ParsedRow {
   cells: TableCell[]
   /** The cell count of `@lezer/markdown`'s `parseRow`. */
   count: number
-}
-
-function fenceOpener(text: string): Fence | null {
-  const match = FENCE_OPEN.exec(text)
-  if (!match) return null
-  const marker = match[1]
-  // CommonMark: a backtick fence's info string has no backticks, so a line
-  // like ```code``` is inline code, not a fence.
-  if (marker[0] === '`' && text.includes('`', match[0].length)) return null
-  return { char: marker[0], length: marker.length }
 }
 
 /** True for a line that starts a block which interrupts a paragraph, and so
@@ -187,8 +171,7 @@ export function findMarkdownTables(doc: Text): MarkdownTable[] {
       continue
     }
     if (fence) {
-      const close = FENCE_CLOSE.exec(text)
-      if (close && close[1][0] === fence.char && close[1].length >= fence.length) fence = null
+      if (closesFence(text, fence)) fence = null
       continue
     }
     if (table) {

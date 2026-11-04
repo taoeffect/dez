@@ -208,6 +208,16 @@ world
 })
 
 describe('conversation Markdown export', () => {
+  function headings(markdown: string): string[] {
+    const found: string[] = []
+    commonmarkLanguage.parser.parse(markdown).iterate({
+      enter: (node) => {
+        if (node.name.startsWith('ATXHeading')) found.push(markdown.slice(node.from, node.to))
+      },
+    })
+    return found
+  }
+
   it('writes one heading per message with prompt bodies inline and skips empty messages', () => {
     const pillId = 'bdbf417c-2282-4d77-991c-2ac65e1f0a11'
     const data: ConversationData = {
@@ -246,12 +256,56 @@ describe('conversation Markdown export', () => {
       '',
     ].join('\n'))
     // Viewers must show the turns as headings, not as literal marker text.
-    const headings: string[] = []
-    commonmarkLanguage.parser.parse(markdown).iterate({
-      enter: (node) => {
-        if (node.name.startsWith('ATXHeading')) headings.push(markdown.slice(node.from, node.to))
-      },
-    })
-    expect(headings).toEqual(['# Translate this text', '## User', '## Agent'])
+    expect(headings(markdown)).toEqual(['# Translate this text', '## User', '## Agent'])
+  })
+
+  it('closes a code fence left open at the end of a message', () => {
+    const data: ConversationData = {
+      id: 'conversation',
+      title: 'Stopped streams',
+      sections: [
+        section('agent', [textNode('Here:\n\n```js\nconst a = 1')]),
+        section('user', [textNode('Steps?')]),
+        // The opener is inside a list item. A closer at column 0 would end
+        // the list item and open a new fence that runs to the end.
+        section('agent', [textNode('1. Install:\n\n   ````bash\n   ```\n   npm i\n')]),
+        section('user', [textNode('Thanks')]),
+      ],
+      activeModel: null,
+      created_at: 1000,
+    }
+
+    const markdown = serializeConversationAsMarkdown(data)
+
+    expect(markdown).toBe([
+      '# Stopped streams',
+      '',
+      '## Agent',
+      '',
+      'Here:',
+      '',
+      '```js',
+      'const a = 1',
+      '```',
+      '',
+      '## User',
+      '',
+      'Steps?',
+      '',
+      '## Agent',
+      '',
+      '1. Install:',
+      '',
+      '   ````bash',
+      '   ```',
+      '   npm i',
+      '   ````',
+      '',
+      '## User',
+      '',
+      'Thanks',
+      '',
+    ].join('\n'))
+    expect(headings(markdown)).toEqual(['# Stopped streams', '## Agent', '## User', '## Agent', '## User'])
   })
 })

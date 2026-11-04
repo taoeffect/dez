@@ -1,3 +1,4 @@
+import { closesFence, fenceOpener, type Fence } from '../../utils/markdownFence'
 import { stripLiveSentinels } from '../chat/content'
 import type { ActiveModel } from '../chat/types'
 import type { ContentNodeData, ConversationData, SectionData } from './types'
@@ -46,6 +47,22 @@ export function serializeConversation(data: ConversationData): string {
   return output
 }
 
+// CommonMark ends an unclosed fence only at the end of the document, so a
+// message that stops inside a code block (a stopped stream) would turn all
+// later headings into code. The editor treats each message as its own
+// document, so the export closes the fence at the end of its message.
+function unclosedFence(text: string): Fence | null {
+  let fence: Fence | null = null
+  for (const line of text.split('\n')) {
+    if (fence) {
+      if (closesFence(line, fence)) fence = null
+    } else {
+      fence = fenceOpener(line)
+    }
+  }
+  return fence
+}
+
 // The conversation as plain Markdown for people to read (Save As Markdown).
 // The history format above does not render: a CommonMark tag name cannot
 // hold `:`, so viewers show `<dez:pill …/>` as text. Each message gets a
@@ -62,6 +79,10 @@ export function serializeConversationAsMarkdown(data: ConversationData): string 
     if (text.trim() === '') continue
     output += `\n## ${section.role === 'agent' ? 'Agent' : 'User'}\n\n${text}`
     if (!text.endsWith('\n')) output += '\n'
+    // The closer keeps the opener's indent: a column-0 closer after a fence
+    // in a list item would end the list item and open a new fence.
+    const fence = unclosedFence(text)
+    if (fence) output += `${' '.repeat(fence.indent)}${fence.char.repeat(fence.length)}\n`
   }
 
   return output
