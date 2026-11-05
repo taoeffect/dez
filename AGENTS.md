@@ -155,7 +155,8 @@ Do not ever read, view, print, or `cat` `~/.config/dez/provider_keys.json`; it c
 - **Provider role mapping**: internal role `agent` maps to API role `assistant` in both formats.
 - **Copilot auth differs**: device flow commands, not the API-key commands.
 - **Tauri capabilities**: a new plugin or core command needs a permission in `src-tauri/capabilities/default.json`.
-- **The window starts hidden**: `dez.controller/window/restore` shows it, so a frontend failure before init shows no window; read the Vite output.
+- **The window starts hidden**: `dez.controller/window/restore` shows it, so a frontend failure before init shows no window; read the Vite output. On macOS, `lib.rs` shows it at launch so that it comes to the front.
+- **Saved window position units differ by platform**: logical points on macOS, physical px elsewhere (`src/controller/window.ts`).
 - **Shortcut key order differs by platform**: on Linux the menu accelerator gets the key first; put context checks in the selector both paths call, never only in a key handler.
 - **CSP disabled**: `"csp": null` in `tauri.conf.json` on purpose during development.
 - **Vite port is fixed**: `1420` with `strictPort: true`.

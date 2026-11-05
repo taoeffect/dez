@@ -13,9 +13,10 @@ export interface DefaultModel {
 
 // The main window's last normal (not maximized) geometry, `window` in
 // app_state.json. `width`/`height` is the logical inner size, so it means the
-// same on screens with other scale factors. `x`/`y` is the physical outer
-// position, the coordinate space of the monitor rects that the fit at startup
-// compares it with. On Wayland the position always reads (0,0).
+// same on screens with other scale factors. `x`/`y` is the outer position in
+// the one coordinate space that the window system uses for all screens:
+// logical points on macOS, physical px elsewhere (src/controller/window.ts).
+// On Wayland the position always reads (0,0).
 export interface WindowGeometry {
   width: number
   height: number

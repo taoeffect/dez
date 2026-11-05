@@ -3,8 +3,12 @@
 // a lower resolution, another scale factor. The window keeps its saved size
 // and place while they fit; else it moves and shrinks, so the whole window,
 // frame included, is inside the work area of one monitor.
+//
+// Positions and monitor areas are in the coordinates that the window system
+// uses for every screen: physical px, but logical points on macOS (see
+// `screenInPoints`).
 
-export interface PhysicalPoint {
+export interface Point {
   x: number
   y: number
 }
@@ -14,20 +18,28 @@ export interface Extent {
   height: number
 }
 
-// The parts of a Tauri `Monitor` that the fit reads. The work area is in
-// physical px; it is the monitor without the panels, docks and menu bars.
+// The parts of a Tauri `Monitor` that the fit reads. The work area is the
+// monitor without the panels, docks and menu bars.
 export interface MonitorArea {
-  workArea: { position: PhysicalPoint; size: Extent }
+  workArea: { position: Point; size: Extent }
+  /** What one logical px is in the work area's coordinates. */
   scaleFactor: number
+}
+
+// A Tauri `Monitor`, all in physical px.
+export interface MonitorInfo extends MonitorArea {
+  position: Point
+  size: Extent
 }
 
 export interface WindowPlacement {
   /** Logical inner size. */
   width: number
   height: number
-  /** Physical outer position. As the fit input, null means that no position
-   *  was saved; as the fit output, null leaves the position to the OS. */
-  position: PhysicalPoint | null
+  /** Outer position, in the monitors' coordinates. As the fit input, null
+   *  means that no position was saved; as the fit output, null leaves the
+   *  position to the OS. */
+  position: Point | null
   maximized: boolean
 }
 
@@ -48,7 +60,7 @@ function overlapLength(start: number, length: number, otherStart: number, otherL
 // The monitor whose work area holds the largest part of the saved window, or
 // null when no monitor holds any part of it. The saved size is logical, so
 // each monitor converts it with its own scale factor.
-function monitorUnder(request: WindowPlacement, position: PhysicalPoint, { monitors, frame }: WindowFitOptions): MonitorArea | null {
+function monitorUnder(request: WindowPlacement, position: Point, { monitors, frame }: WindowFitOptions): MonitorArea | null {
   let best: MonitorArea | null = null
   let bestOverlap = 0
   for (const monitor of monitors) {
@@ -105,5 +117,24 @@ export function fitWindowGeometry(request: WindowPlacement, options: WindowFitOp
       y: fitStart(start.y, outerHeight, area.y, areaSize.height),
     },
     maximized: request.maximized,
+  }
+}
+
+// On macOS all screens share one coordinate space, in logical points, and
+// Tauri gives each monitor in physical px at the monitor's own scale factor:
+// with a Retina and a non-Retina screen, those physical rects overlap. So
+// on macOS the fit runs in points. It uses the whole screen, not the work
+// area: Tauri 2.10 puts the macOS work area at the top of the screen, over
+// the menu bar, which would move a window at the bottom of the screen up at
+// each launch. AppKit itself keeps a title bar below the menu bar.
+// https://github.com/tauri-apps/tauri/pull/14655 (fixed in Tauri 2.11)
+export function screenInPoints(monitor: MonitorInfo): MonitorArea {
+  const scale = monitor.scaleFactor
+  return {
+    workArea: {
+      position: { x: monitor.position.x / scale, y: monitor.position.y / scale },
+      size: { width: monitor.size.width / scale, height: monitor.size.height / scale },
+    },
+    scaleFactor: 1,
   }
 }

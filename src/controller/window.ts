@@ -1,10 +1,11 @@
 import sbp from '@sbp/sbp'
 import { isTauri } from '@tauri-apps/api/core'
-import { LogicalSize, PhysicalPosition, availableMonitors, getCurrentWindow, primaryMonitor } from '@tauri-apps/api/window'
+import { LogicalPosition, LogicalSize, PhysicalPosition, availableMonitors, getCurrentWindow, primaryMonitor } from '@tauri-apps/api/window'
 import { debounce } from 'turtledash'
 import type { SettingsSnapshot } from '../model/state'
 import type { WindowGeometry } from '../model/state/settings'
-import { fitWindowGeometry, type Extent } from './windowFit'
+import { isMacPlatform } from '../utils/platform'
+import { fitWindowGeometry, screenInPoints, type Extent } from './windowFit'
 
 // `minWidth` and `minHeight` of the main window in tauri.conf.json; the
 // window API cannot read them.
@@ -39,15 +40,16 @@ function decorationExtentOf (readLength: number, restoredLength: number | undefi
 
 export default sbp('sbp/selectors/register', {
   // The main window starts hidden (`visible: false` in tauri.conf.json), so
-  // it never shows at the default size before it moves to the saved one.
+  // it never shows at the default size before it moves to the saved one; on
+  // macOS only, lib.rs shows it at launch, so that it comes to the front.
   // The saved geometry can be from another screen setup, so it is fitted to
   // the monitors there are now. Every path shows the window, also when the
   // restore fails: a window that stays hidden looks like an app that does
-  // not start. Only this selector shows the window, so when the frontend
-  // fails before `dez.controller/app/init` runs (for example a compile error
-  // in `npm run tauri dev`), no window shows; read the Vite output. Wayland
-  // gives no window positions: there only the size and maximized are
-  // restored, and the compositor places the window.
+  // not start. On Linux and Windows only this selector shows the window, so
+  // when the frontend fails before `dez.controller/app/init` runs (for
+  // example a compile error in `npm run tauri dev`), no window shows; read
+  // the Vite output. Wayland gives no window positions: there only the size
+  // and maximized are restored, and the compositor places the window.
   async 'dez.controller/window/restore' (): Promise<void> {
     if (!isTauri()) return
     const appWindow = getCurrentWindow()
@@ -66,12 +68,25 @@ export default sbp('sbp/selectors/register', {
         width: Math.max(0, outer.width - inner.width) / scale,
         height: Math.max(0, outer.height - inner.height) / scale,
       }
+      // The saved position is in logical points on macOS and in physical px
+      // on the other platforms: each is the one space that the window system
+      // uses for all screens. On macOS, `setPosition` converts physical px
+      // with the scale factor of the screen that the window is on now, not
+      // that of the saved place, and a window that was never shown reads a
+      // scale factor of 1, also on a Retina screen: the window opened at
+      // twice its saved position. Points need no scale factor.
+      // https://github.com/tauri-apps/plugins-workspace/issues/3521
       // With nothing saved, the default size from tauri.conf.json is centered.
       const placement = fitWindowGeometry(
         saved
           ? { width: saved.width, height: saved.height, position: { x: saved.x, y: saved.y }, maximized: saved.maximized }
           : { width: inner.width / scale, height: inner.height / scale, position: null, maximized: false },
-        { monitors, primary, minSize: WINDOW_MIN_SIZE, frame },
+        {
+          monitors: isMacPlatform ? monitors.map(screenInPoints) : monitors,
+          primary: isMacPlatform && primary ? screenInPoints(primary) : primary,
+          minSize: WINDOW_MIN_SIZE,
+          frame,
+        },
       )
       // The position goes after the size, so that a resize cannot move the
       // window after it is placed.
@@ -79,7 +94,8 @@ export default sbp('sbp/selectors/register', {
       restoredSize = { width: Math.round(placement.width), height: Math.round(placement.height) }
       decorationExtent = null
       if (placement.position) {
-        await appWindow.setPosition(new PhysicalPosition(placement.position.x, placement.position.y))
+        const { x, y } = placement.position
+        await appWindow.setPosition(isMacPlatform ? new LogicalPosition(x, y) : new PhysicalPosition(x, y))
         lastNormalGeometry = { ...restoredSize, ...placement.position, maximized: false }
       }
       if (placement.maximized) await appWindow.maximize()
@@ -114,11 +130,14 @@ export default sbp('sbp/selectors/register', {
           if (lastNormalGeometry) sbp('dez.model/settings/setWindowGeometry', { ...lastNormalGeometry, maximized: true })
           return
         }
-        const [size, position, scale] = await Promise.all([
+        const [size, physicalPosition, scale] = await Promise.all([
           appWindow.innerSize(),
           appWindow.outerPosition(),
           appWindow.scaleFactor(),
         ])
+        // tao gives macOS positions as points times the window's scale
+        // factor, so this division gives the points back exactly.
+        const position = isMacPlatform ? physicalPosition.toLogical(scale) : physicalPosition
         const width = Math.round(size.width / scale)
         const height = Math.round(size.height / scale)
         // The first read comes at least 500 ms after the restore showed the
@@ -133,8 +152,8 @@ export default sbp('sbp/selectors/register', {
         lastNormalGeometry = {
           width: width - decorationExtent.width,
           height: height - decorationExtent.height,
-          x: position.x,
-          y: position.y,
+          x: Math.round(position.x),
+          y: Math.round(position.y),
           maximized: false,
         }
         sbp('dez.model/settings/setWindowGeometry', lastNormalGeometry)

@@ -23,7 +23,7 @@ pub fn run() {
     //   write only files that the user picked.
     // - store:default: the store plugin is installed but not used. App state,
     //   prompts, conversations, and keys use persistence.rs and key_store.rs.
-    tauri::Builder::default()
+    let builder = tauri::Builder::default()
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_fs::init())
         .plugin(tauri_plugin_dialog::init())
@@ -52,9 +52,31 @@ pub fn run() {
             commands::load_app_file,
             commands::get_app_dir,
             commands::is_window_fullscreen,
-        ])
-        // Reads tauri.conf.json, whose `"csp": null` is on purpose during
-        // development.
+        ]);
+    // macOS brings the app to the front when it starts, and with it each
+    // window that is visible at that time. The main window starts hidden
+    // (`visible: false`), and the frontend shows it about a second later
+    // (`dez.controller/window/restore`). On macOS 14+ the system can refuse
+    // that later request to come to the front, so Dez stayed behind other
+    // apps. So on macOS the window shows here, at launch, at its default size
+    // and place, and the restore moves it to the saved geometry. tao's
+    // `window_activation_hack` (app_state.rs) says the same: show windows
+    // when the app starts (`StartCause::Init`, when `setup` runs).
+    // https://developer.apple.com/documentation/appkit/passing-control-from-one-app-to-another-with-cooperative-activation
+    #[cfg(target_os = "macos")]
+    let builder = builder.setup(|app| {
+        use tauri::Manager;
+        if let Some(window) = app.get_webview_window("main") {
+            // The restore shows the window too, so a failure here is not fatal.
+            if let Err(error) = window.show() {
+                eprintln!("Failed to show the main window at launch: {error}");
+            }
+        }
+        Ok(())
+    });
+    // Reads tauri.conf.json, whose `"csp": null` is on purpose during
+    // development.
+    builder
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
 }

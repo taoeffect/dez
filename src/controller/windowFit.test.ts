@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { fitWindowGeometry, type MonitorArea, type WindowFitOptions, type WindowPlacement } from './windowFit'
+import { fitWindowGeometry, screenInPoints, type MonitorArea, type MonitorInfo, type WindowFitOptions, type WindowPlacement } from './windowFit'
 
 function monitor(x: number, y: number, width: number, height: number, scaleFactor = 1): MonitorArea {
   return { workArea: { position: { x, y }, size: { width, height } }, scaleFactor }
@@ -111,5 +111,31 @@ describe('fitWindowGeometry', () => {
   it('applies only the saved size when no monitors are reported', () => {
     expect(fitWindowGeometry(saved(1000, 700, 200, 100, true), options({ monitors: [], primary: null })))
       .toEqual({ width: 1000, height: 700, position: null, maximized: true })
+  })
+})
+
+describe('screenInPoints', () => {
+  // How Tauri 2.10 reports macOS screens: rects are points times each
+  // screen's own scale factor, and the work area starts at the screen top
+  // but is only as high as the screen below the menu bar.
+  function macScreen(x: number, y: number, width: number, height: number, scaleFactor: number, menuBar = 0): MonitorInfo {
+    const position = { x: x * scaleFactor, y: y * scaleFactor }
+    const size = { width: width * scaleFactor, height: height * scaleFactor }
+    return { position, size, workArea: { position, size: { ...size, height: size.height - menuBar * scaleFactor } }, scaleFactor }
+  }
+
+  const retina = macScreen(0, 0, 1512, 982, 2, 33)
+  const external = macScreen(1512, 0, 1920, 1080, 1, 25)
+  const mac = options({ monitors: [retina, external].map(screenInPoints), primary: screenInPoints(retina), frame: { width: 0, height: 28 } })
+
+  it('keeps a window on a non-Retina screen right of a Retina one', () => {
+    // In physical px the Retina screen (0..3024) covers this place too.
+    expect(fitWindowGeometry(saved(1000, 700, 2000, 100), mac))
+      .toEqual({ width: 1000, height: 700, position: { x: 2000, y: 100 }, maximized: false })
+  })
+
+  it('keeps a window at the bottom of the screen where it is', () => {
+    expect(fitWindowGeometry(saved(800, 600, 100, 354), mac))
+      .toEqual({ width: 800, height: 600, position: { x: 100, y: 354 }, maximized: false })
   })
 })
