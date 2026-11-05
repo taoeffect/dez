@@ -1,4 +1,4 @@
-import type { ActiveModel, ModelRef } from '../chat/types'
+import type { ActiveModel, ModelRef, SectionThinking } from '../chat/types'
 import type { ProviderConfig } from '../providers/config'
 import type { ModelInfo, ProviderId } from '../providers/types'
 import type { Prompt } from '../state/prompts'
@@ -38,6 +38,7 @@ export interface SectionData {
   role: 'user' | 'agent'
   nodes: ContentNodeData[]
   model?: ModelRef
+  thinking?: SectionThinking
 }
 
 export interface ConversationData {
@@ -94,7 +95,6 @@ export interface ConversationSearchOutcome {
 export interface AppStatePayload {
   tabs?: unknown[]
   activeTabId?: string | null
-  showPillSeparators?: boolean
   theme?: Theme
   customProviders?: ProviderConfig[]
   // Parse only: the hand-added `apiKey` of each kept customProviders entry,

@@ -2,6 +2,7 @@ import fs from 'node:fs'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { isDeepStrictEqual } from 'node:util'
+import { Key } from 'webdriverio'
 import type { E2EBrowser } from './session'
 
 const artifactsDir = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../artifacts')
@@ -148,6 +149,15 @@ export async function click (browser: E2EBrowser, selector: string): Promise<voi
 export async function openHistoryPanel (browser: E2EBrowser): Promise<void> {
   await click(browser, 'button[title^="History"]')
   await waitFor(browser, '.history-overlay')
+}
+
+/**
+ * Close Settings with Esc and wait until its Providers page is gone. Call it
+ * while the Providers page is open.
+ */
+export async function closeSettings (browser: E2EBrowser): Promise<void> {
+  await browser.keys([Key.Escape])
+  await waitForValue(browser, 'Settings open', () => browser.execute(() => document.querySelector('.provider-manager') !== null), false)
 }
 
 /**

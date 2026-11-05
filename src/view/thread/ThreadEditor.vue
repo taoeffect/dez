@@ -7,6 +7,7 @@ import sbp from '@sbp/sbp'
 import { useModelState, type Prompt } from '../modelState'
 import { sectionIsEmpty } from '../../model/chat/content'
 import { sameModelRef } from '../../model/chat/modelRef'
+import { sameThinking } from '../../model/chat/thinking'
 import { debounce, throttle } from 'turtledash'
 import PromptAutocomplete from './PromptAutocomplete.vue'
 import FindDropdown from './FindDropdown.vue'
@@ -22,7 +23,6 @@ import {
   initialPillMetadata,
   initialSectionModels,
   reconcileSectionModelsToDoc,
-  leadingPillContentAttributes,
   linuxLineNavigationKeymap,
   mergeSectionEffect,
   strictMultiCursorBackspace,
@@ -39,12 +39,11 @@ import {
   toggleRoleEffect,
   setPillsEffect,
   setSectionsEffect,
-  setShowSeparatorsEffect,
-  showSeparatorsField,
   splitSectionEffect,
   unwrapBrokenPills,
 } from './cmEditor'
 import { modelDisplayNamesField, setModelDisplayNamesEffect, setStreamingSectionEffect, streamingSectionField } from './modelChip'
+import { thinkingExpandedField } from './thinkingPill'
 import { findExtension, findMatchStatus, findNextMatch, findQueryField, selectMatchSpec, setFindQueryEffect } from '../editor/find'
 import { markdownTables } from '../editor/tables'
 import { activeFindQuery, findState } from '../editor/findState'
@@ -54,7 +53,6 @@ const {
   activeTabId,
   activeSections,
   activeSectionsIdentity,
-  settings,
   modelDisplayNames,
   prompts,
   activeTabStreaming,
@@ -64,6 +62,8 @@ const {
 
 const hostRef = ref<HTMLDivElement | null>(null)
 let view: EditorView | null = null
+// The tab whose content the view's state holds.
+let viewTabId: string | null = null
 let pendingPersistTabId: string | null = null
 let syncingViewStructure = false
 
@@ -79,7 +79,9 @@ const findDropdownRef = ref<InstanceType<typeof FindDropdown> | null>(null)
 const isActiveTabStreaming = activeTabStreaming
 const streamingError = activeTabStreamError
 
-const showThinking = computed(() => {
+// The three dots under the editor while the stream has not written text
+// yet.
+const showBusyIndicator = computed(() => {
   if (!isActiveTabStreaming.value) return false
   const sections = activeSections.value
   const last = sections[sections.length - 1]
@@ -435,12 +437,18 @@ function schedulePersistTab(tabId: string) {
 }
 
 // Compares every `SectionModel` field the store also holds, so a store-side
-// change on an existing section id (a model stamp at stream start) still
-// reaches the editor's `sectionsField`.
+// change on an existing section id (a model stamp at stream start, thinking
+// cleared on a reused section) still reaches the editor's `sectionsField`.
+// Thinking is compared by value: the store and the editor keep separate
+// copies of it.
 function sectionModelsEqual(left: ReturnType<typeof initialSectionModels>, right: ReturnType<typeof initialSectionModels>): boolean {
   return left.length === right.length && left.every((model, i) => {
     const candidate = right[i]
-    return candidate && model.id === candidate.id && model.role === candidate.role && sameModelRef(model.model, candidate.model)
+    return candidate &&
+      model.id === candidate.id &&
+      model.role === candidate.role &&
+      sameModelRef(model.model, candidate.model) &&
+      sameThinking(model.thinking, candidate.thinking)
   })
 }
 
@@ -564,7 +572,9 @@ function pasteClipboardText(event: ClipboardEvent, v: EditorView): boolean {
   return true
 }
 
-function buildState(): EditorState {
+/** A new editor state for the active tab. `expandedThinking` is the set of
+ *  open thinking panels to keep; without it, all start closed. */
+function buildState(expandedThinking: ReadonlySet<string> = new Set()): EditorState {
   const sections = activeSections.value
   const models = initialSectionModels(sections)
   const pillMeta = initialPillMetadata(sections)
@@ -751,14 +761,13 @@ function buildState(): EditorState {
     doc: buildInitialDoc(sections),
     extensions: [
       sectionsField.init(() => models),
-      showSeparatorsField.init(() => settings.value.showPillSeparators),
       modelDisplayNamesField.init(() => modelDisplayNames.value),
       streamingSectionField.init(() => activeTabStreamingSectionId.value),
       pillsField.init(() => pillMeta),
+      thinkingExpandedField.init(() => expandedThinking),
       roleSeparators,
       roleSeparatorAtomicRanges,
       roleSeparatorMouseHandler,
-      leadingPillContentAttributes,
       promptPills,
       promptAtomicRanges,
       promptPillMouseHandler,
@@ -832,6 +841,7 @@ function unregisterActiveView(tabId = activeTabId.value) {
 function mountView() {
   if (!hostRef.value) return
   view = new EditorView({ state: buildState(), parent: hostRef.value })
+  viewTabId = activeTabId.value
   registerActiveView()
 }
 
@@ -842,19 +852,31 @@ function scrollViewToBottomAfterLayout(v: EditorView) {
   })
 }
 
-function resetViewToActiveTab(moveCursorToEnd = false) {
+// `streamEnd` is set for the rebuild at the end of a stream. It puts the
+// caret at the doc end, then scrolls to the bottom when the view still
+// followed the stream, or keeps the scroll position that the user chose.
+function resetViewToActiveTab(streamEnd?: { followBottom: boolean }) {
   if (!view) return
   // The autocomplete range points into the old doc; accepting it after the
   // swap would insert a pill at a wrong position.
   closeAutocomplete()
-  const state = buildState()
+  // A rebuild of the same tab, such as the reset at the end of each
+  // stream, keeps the open thinking panels; another tab starts with all
+  // closed.
+  const sameTab = viewTabId === activeTabId.value
+  // The new state has no line heights yet, so its scrollTop would show
+  // other lines. The snapshot holds the top line and its offset instead.
+  const scrollSnapshot = streamEnd && !streamEnd.followBottom ? view.scrollSnapshot() : null
+  const state = buildState(sameTab ? view.state.field(thinkingExpandedField) : undefined)
   view.setState(state)
-  if (moveCursorToEnd) {
+  viewTabId = activeTabId.value
+  if (streamEnd) {
     view.dispatch({
       selection: EditorSelection.cursor(view.state.doc.length),
+      ...(scrollSnapshot && { effects: scrollSnapshot }),
       userEvent: 'select',
     })
-    scrollViewToBottomAfterLayout(view)
+    if (streamEnd.followBottom) scrollViewToBottomAfterLayout(view)
   } else if (findState.open) {
     // setState runs no update listeners, so redo the find bookkeeping that
     // the listener does for the dispatch above.
@@ -867,9 +889,9 @@ function stopActiveTab() {
   void sbp('dez.stream/stop', activeTabId.value)
 }
 
-function onEditorStreamFinished(tabId: string) {
+function onEditorStreamFinished(tabId: string, followBottom: boolean) {
   if (tabId !== activeTabId.value) return
-  nextTick(() => resetViewToActiveTab(true))
+  nextTick(() => resetViewToActiveTab({ followBottom }))
 }
 
 function syncViewStructureToStoreSections() {
@@ -881,10 +903,11 @@ function syncViewStructureToStoreSections() {
   try {
     if (models.length > current.length) {
       const insert = Array.from({ length: models.length - current.length }, () => `\n${SECTION_SEP}\n`).join('')
+      // No scroll: a view that follows a stream scrolls to the new bottom
+      // in the next frame, and any other view stays where the user put it.
       view.dispatch({
         changes: { from: view.state.doc.length, insert },
         effects: setSectionsEffect.of(models),
-        scrollIntoView: true,
       })
     } else {
       view.dispatch({ effects: setSectionsEffect.of(models) })
@@ -924,14 +947,6 @@ watch(
       resetViewToActiveTab()
       registerActiveView()
     })
-  },
-)
-
-// External role toggles (from elsewhere) and separator-visibility toggle.
-watch(
-  () => settings.value.showPillSeparators,
-  (v) => {
-    if (view) view.dispatch({ effects: setShowSeparatorsEffect.of(v) })
   },
 )
 
@@ -995,10 +1010,10 @@ watch(
       @select="acceptPrompt"
       @hover="autocompleteSelectedIndex = $event"
     />
-    <div v-if="showThinking" class="thinking-indicator">
-      <span class="thinking-dot" />
-      <span class="thinking-dot" />
-      <span class="thinking-dot" />
+    <div v-if="showBusyIndicator" class="busy-indicator">
+      <span class="busy-dot" />
+      <span class="busy-dot" />
+      <span class="busy-dot" />
     </div>
     <div v-if="streamingError && !isActiveTabStreaming" class="stream-error">
       {{ streamingError }}
@@ -1040,7 +1055,7 @@ watch(
   overflow-y: auto;
 }
 
-.thinking-indicator {
+.busy-indicator {
   display: flex;
   gap: 4px;
   padding: 8px 16px;
@@ -1050,19 +1065,19 @@ watch(
   box-sizing: border-box;
 }
 
-.thinking-dot {
+.busy-dot {
   width: 6px;
   height: 6px;
   border-radius: 50%;
   background-color: var(--color-text);
   opacity: 0.4;
-  animation: thinking-pulse 1.4s ease-in-out infinite;
+  animation: busy-pulse 1.4s ease-in-out infinite;
 }
 
-.thinking-dot:nth-child(2) { animation-delay: 0.2s; }
-.thinking-dot:nth-child(3) { animation-delay: 0.4s; }
+.busy-dot:nth-child(2) { animation-delay: 0.2s; }
+.busy-dot:nth-child(3) { animation-delay: 0.4s; }
 
-@keyframes thinking-pulse {
+@keyframes busy-pulse {
   0%, 80%, 100% { opacity: 0.2; transform: scale(0.8); }
   40% { opacity: 0.6; transform: scale(1); }
 }

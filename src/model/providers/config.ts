@@ -1,5 +1,6 @@
 import * as z from 'zod'
 import { BUILT_IN_PROVIDER_IDS } from './builtins'
+import { THINKING_SETTING_KEY } from './thinking'
 
 // Provider ids are JSON keys in provider_keys.json, the `provider` half of a
 // conversation header's `model: provider/model` (split at the first `/`), and
@@ -55,9 +56,13 @@ const settingBodyValueSchema = z.union([z.string(), z.number(), z.boolean()])
 
 // One toggle in the model picker's provider settings popup. The toggle state
 // is stored under `key` in settings.providerSettings[providerId], and every
-// chat request writes the matching value at `bodyPath`.
+// chat request writes the matching value at `bodyPath`. The Thinking toggle
+// is stored there too, so its key is reserved.
 const providerSettingDefSchema = z.object({
-  key: z.string().min(1),
+  key: z.string().min(1).refine(
+    (key) => key !== THINKING_SETTING_KEY,
+    `Setting key "${THINKING_SETTING_KEY}" is reserved for the Thinking toggle`,
+  ),
   label: z.string().trim().min(1),
   type: z.literal('boolean'),
   default: z.boolean(),
@@ -93,6 +98,37 @@ const headersSchema = z.record(
   },
 )
 
+// Object.prototype names. A request body part may not use them as keys at any
+// depth, and the merge into the chat body and the stream parsers skip them,
+// so neither reads or sets an inherited member.
+export const FORBIDDEN_BODY_KEYS: ReadonlySet<string> = new Set(['__proto__', 'constructor', 'prototype'])
+
+function hasForbiddenBodyKey(value: unknown): boolean {
+  if (Array.isArray(value)) return value.some(hasForbiddenBodyKey)
+  if (value === null || typeof value !== 'object') return false
+  return Object.entries(value).some(([key, entry]) => FORBIDDEN_BODY_KEYS.has(key) || hasForbiddenBodyKey(entry))
+}
+
+// A JSON object that is deep-merged into the chat request body. Zod's record
+// and JSON schemas silently drop a `__proto__` key (JSON.parse makes it an
+// own property), so the raw input is checked before them.
+const requestBodyPartSchema = z.unknown()
+  .refine((value) => !hasForbiddenBodyKey(value), 'Body keys must not be "__proto__", "constructor", or "prototype"')
+  .pipe(z.record(z.string(), z.json()))
+
+// Present: the provider supports thinking. Dez asks for it as the user's
+// Thinking toggle says, and shows the thinking the provider streams. Absent:
+// Dez sends no thinking fields, ignores reasoning in replies, and shows no
+// toggle.
+const thinkingConfigSchema = z.object({
+  // Merged when the toggle is on. Absent: the API format's default request
+  // (adaptive, summarized thinking for Anthropic; nothing for OpenAI).
+  enabledBody: requestBodyPartSchema.optional(),
+  // Merged when the toggle is off. Absent: nothing, because many models
+  // refuse a request that turns thinking off.
+  disabledBody: requestBodyPartSchema.optional(),
+})
+
 // The whole definition of a provider. Built-ins are literals of this type and
 // custom providers are the same JSON in app_state.json, so one Provider class
 // serves both.
@@ -115,6 +151,7 @@ export const providerConfigSchema = z.object({
   // Anthropic `max_tokens`; the OpenAI format ignores it.
   maxOutputTokens: z.number().int().positive().optional(),
   settings: z.array(providerSettingDefSchema).optional(),
+  thinking: thinkingConfigSchema.optional(),
 })
 
 // Custom providers come from app_state.json or Settings. They cannot take a
@@ -139,4 +176,5 @@ export function configIssueText(error: z.ZodError): string {
 export type ApiFormatId = (typeof API_FORMAT_IDS)[number]
 export type ProviderSettingDef = z.infer<typeof providerSettingDefSchema>
 export type ProviderConfig = z.infer<typeof providerConfigSchema>
+export type ProviderThinkingConfig = z.infer<typeof thinkingConfigSchema>
 export type ProviderAuth = ProviderConfig['auth']

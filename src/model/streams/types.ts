@@ -1,10 +1,13 @@
-import type { ActiveModel, Role } from '../chat/types'
+import type { ActiveModel, Role, SectionThinking } from '../chat/types'
 
 export type StreamStatus = 'idle' | 'streaming' | 'finished' | 'error' | 'cancelled'
 
 export interface StreamMessage {
   role: Role
   content: string
+  // Set only on an agent message whose thinking can go back to the request
+  // model (sectionsToStreamMessages).
+  thinking?: SectionThinking
 }
 
 export interface StreamStartInput {

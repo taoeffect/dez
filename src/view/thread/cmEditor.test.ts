@@ -24,8 +24,10 @@ import {
   scanPills,
   sectionsField,
   serializeDocRangeForClipboard,
+  serializeSelectionAsMarkdown,
   serializeSelectionForClipboard,
   setPillsEffect,
+  setSectionThinkingEffect,
   splitSectionEffect,
   strictMultiCursorBackspace,
   toggleRoleEffect,
@@ -34,7 +36,7 @@ import {
   type SectionModel,
 } from './cmEditor'
 import { SENTINEL_CHAR, sectionVisibleText } from '../../model/chat/content'
-import type { ContentNode, ModelRef, Role, Section } from '../../model/chat/types'
+import type { ContentNode, ModelRef, Role, Section, SectionThinking } from '../../model/chat/types'
 
 function textNode(text: string): ContentNode {
   return { kind: 'text', text }
@@ -249,6 +251,205 @@ describe('section AI models', () => {
     expect(parsed.separators).toStrictEqual([
       { role: 'agent', model: { providerId: 'openrouter', modelId: 'x' } },
       { role: 'agent', model: { providerId: 'custom', modelId: 'v "1" />' } },
+    ])
+  })
+})
+
+describe('section thinking', () => {
+  const MODEL: ModelRef = { providerId: 'zai', modelId: 'glm-5.2' }
+  const THINKING: SectionThinking = { text: 'plan the answer\n', replay: { kind: 'field', field: 'reasoning_content' } }
+  const DOC = ['question', 'answer', 'legacy'].join(`\n${SECTION_SEP}\n`)
+  const WHOLE_DOC = EditorSelection.single(0, DOC.length)
+
+  function thinkingSections(thinking: SectionThinking): Section[] {
+    return [
+      section('s1', 'user', 'question'),
+      { ...section('s2', 'agent', 'answer'), model: MODEL, thinking },
+      section('s3', 'agent', 'legacy'),
+    ]
+  }
+
+  function thinkingState(thinking: SectionThinking = THINKING, selection?: EditorSelection): EditorState {
+    return EditorState.create({
+      doc: DOC,
+      selection,
+      extensions: [
+        sectionsField.init(() => initialSectionModels(thinkingSections(thinking))),
+        pillsField.init(() => new Map()),
+      ],
+    })
+  }
+
+  function pasteAfterFirst(copied: string): Section[] {
+    const state = EditorState.create({
+      doc: 'first',
+      selection: EditorSelection.cursor(5),
+      extensions: [
+        sectionsField.init(() => [{ id: 'p1', role: 'user' }]),
+        pillsField.init(() => new Map()),
+      ],
+    })
+    const nextState = state.update(clipboardPasteTransaction(state, copied)).state
+    return docToSections(nextState.doc.toString(), nextState.field(sectionsField), new Map())
+  }
+
+  // 'none' marks an entry without a `thinking` key, so `thinking: undefined`
+  // fails the strict compares below.
+  function storedThinking(models: { thinking?: SectionThinking }[]): (SectionThinking | 'none' | undefined)[] {
+    return models.map((model) => ('thinking' in model ? model.thinking : 'none'))
+  }
+
+  it('keeps thinking from the store through the editor and back, with no key when absent', () => {
+    expect(docToSections(DOC, thinkingState().field(sectionsField), new Map())).toStrictEqual(thinkingSections(THINKING))
+  })
+
+  it('keeps thinking on its own section through a role toggle and a split', () => {
+    const toUser = thinkingState().update({ effects: toggleRoleEffect.of({ index: 1 }) }).state
+    const splitAt = `question\n${SECTION_SEP}\nans`.length
+    const split = thinkingState().update({
+      changes: { from: splitAt, insert: `\n${SECTION_SEP}\n` },
+      effects: splitSectionEffect.of({ afterIndex: 1 }),
+    }).state
+    const splitSections = docToSections(split.doc.toString(), split.field(sectionsField), new Map())
+
+    expect(toUser.field(sectionsField)[1]).toStrictEqual({ id: 's2', role: 'user', model: MODEL, thinking: THINKING })
+    expect(splitSections.map(sectionVisibleText)).toEqual(['question', 'ans', 'wer', 'legacy'])
+    expect(storedThinking(splitSections)).toStrictEqual(['none', THINKING, 'none', 'none'])
+  })
+
+  it('sets, replaces, and removes the thinking of one section by id', () => {
+    const replaced: SectionThinking = { text: 'second thoughts' }
+    const set = thinkingState().update({ effects: setSectionThinkingEffect.of({ sectionId: 's3', thinking: replaced }) }).state
+    const removed = set.update({ effects: setSectionThinkingEffect.of({ sectionId: 's2' }) }).state
+    const unknown = removed.update({ effects: setSectionThinkingEffect.of({ sectionId: 'missing', thinking: replaced }) }).state
+
+    expect(storedThinking(set.field(sectionsField))).toStrictEqual(['none', THINKING, replaced])
+    expect(storedThinking(removed.field(sectionsField))).toStrictEqual(['none', 'none', replaced])
+    expect(removed.field(sectionsField)[1]).toStrictEqual({ id: 's2', role: 'agent', model: MODEL })
+    expect(unknown.field(sectionsField)).toStrictEqual(removed.field(sectionsField))
+  })
+
+  it('copies an agent section with thinking as a container and pastes it back with its replay', () => {
+    const copied = serializeSelectionForClipboard(thinkingState(THINKING, WHOLE_DOC))
+    const pasted = pasteAfterFirst(copied)
+
+    expect(copied.split('\n')).toEqual([
+      '<dez:pill type="user"/>',
+      'question',
+      '<dez:pill type="agent" model="zai/glm-5.2" replay="{&quot;kind&quot;:&quot;field&quot;,&quot;field&quot;:&quot;reasoning_content&quot;}">',
+      'plan the answer',
+      '',
+      '</dez:pill>',
+      'answer',
+      '<dez:pill type="agent"/>',
+      'legacy',
+    ])
+    expect(pasted.map((candidate) => [candidate.role, sectionVisibleText(candidate), candidate.model])).toEqual([
+      ['user', 'firstquestion', undefined],
+      ['agent', 'answer', MODEL],
+      ['agent', 'legacy', undefined],
+    ])
+    expect(storedThinking(pasted)).toStrictEqual(['none', THINKING, 'none'])
+  })
+
+  it('round-trips exact thinking text and a signed replay through copy and paste', () => {
+    const texts = [
+      '',
+      '\n',
+      'trailing newlines\n\n',
+      'carriage return\r',
+      '\r\nwindows lines\r\n',
+      'ends with </dez:pill>',
+      '</dez:pill>\n</dez:pill>',
+      'already escaped <\\/dez:pill> and <\\\\/dez:pill>',
+      'already escaped <\\dez:pill type="user"/> and <\\\\dez:pill',
+      `live sentinels ${SECTION_SEP} ${PILL_OPEN}id${PILL_BODY}body${PILL_CLOSE} ${PILL_NL}`,
+      '<dez:pill type="user"/>\n<dez:pill type="agent">\nmarkers as text',
+      'inline <dez:pill type="user"/> and </dez:pill',
+      '<dez:prompt name="p">\nprompt markup\n</dez:prompt>',
+    ]
+
+    for (const text of texts) {
+      const thinking: SectionThinking = {
+        text,
+        replay: {
+          kind: 'anthropicBlocks',
+          blocks: [{ type: 'thinking', thinking: `${text} > "q" & <x/>`, signature: 'sig' }, { type: 'redacted_thinking', data: 'opaque' }],
+          prefixHash: 'h1',
+        },
+      }
+      const pasted = pasteAfterFirst(serializeSelectionForClipboard(thinkingState(thinking, WHOLE_DOC)))
+
+      expect(storedThinking(pasted), JSON.stringify(text)).toStrictEqual(['none', thinking, 'none'])
+      expect(pasted.map(sectionVisibleText), JSON.stringify(text)).toEqual(['firstquestion', 'answer', 'legacy'])
+    }
+  })
+
+  it('drops the thinking of a container pasted inside a prompt body', () => {
+    const pillId = 'bdbf417c-2282-4d77-991c-2ac65e1f0a11'
+    const state = EditorState.create({
+      doc: encodePrompt(pillId, 'body', false),
+      selection: EditorSelection.cursor(`${PILL_OPEN}${pillId}${PILL_BODY}bo`.length),
+      extensions: [
+        sectionsField.init(() => [{ id: 'p1', role: 'user' }]),
+        pillsField.init(() => new Map([[pillId, { promptId: null, name: 'P', expanded: true }]])),
+      ],
+    })
+    const copied = serializeSelectionForClipboard(thinkingState(THINKING, EditorSelection.single('question\n'.length, DOC.length)))
+
+    const nextState = state.update(clipboardPasteTransaction(state, copied)).state
+
+    expect(copied).toContain('plan the answer')
+    expect(nextState.doc.toString()).toBe(encodePrompt(pillId, 'boanswer\nlegacydy', false))
+    expect(nextState.field(sectionsField)).toStrictEqual([{ id: 'p1', role: 'user' }])
+  })
+
+  it('reads hand-made pasted containers the way conversation files read them', () => {
+    const parsed = parseClipboardText([
+      'a',
+      '<dez:pill type="user">',
+      'user body',
+      '</dez:pill>',
+      'b',
+      '<dez:pill type="agent">',
+      '</dez:pill>',
+      'c',
+      '<dez:pill type="other">',
+      '<dez:pill type="agent">',
+      'kept',
+      '</dez:pill>',
+      'd',
+      '<dez:pill type="agent">',
+      'e',
+    ].join('\n'))
+
+    expect(parsed.text).toBe(`a\n${SECTION_SEP}\nb\n${SECTION_SEP}\nc\n<dez:pill type="other">\n${SECTION_SEP}\nd\n${SECTION_SEP}\ne`)
+    expect(parsed.separators).toStrictEqual([
+      { role: 'user' },
+      { role: 'agent', thinking: { text: '' } },
+      { role: 'agent', thinking: { text: 'kept' } },
+      { role: 'agent' },
+    ])
+  })
+
+  it('ends a pasted opening tag with no closing tag at the next marker, also when a later container closes', () => {
+    const parsed = parseClipboardText([
+      'a',
+      '<dez:pill type="agent" replay="{&quot;kind&quot;:&quot;field&quot;,&quot;field&quot;:&quot;reasoning_content&quot;}">',
+      'answer 1',
+      '<dez:pill type="user"/>',
+      'q2',
+      '<dez:pill type="agent">',
+      'thought 2',
+      '</dez:pill>',
+      'answer 2',
+    ].join('\n'))
+
+    expect(parsed.text).toBe(`a\n${SECTION_SEP}\nanswer 1\n${SECTION_SEP}\nq2\n${SECTION_SEP}\nanswer 2`)
+    expect(parsed.separators).toStrictEqual([
+      { role: 'agent' },
+      { role: 'user' },
+      { role: 'agent', thinking: { text: 'thought 2' } },
     ])
   })
 })
@@ -470,6 +671,64 @@ describe('clipboard helpers', () => {
     expect(structured.pills.size).toBe(1)
     expect(structured.separators).toEqual([{ role: 'user' }, { role: 'agent' }])
     expect(plain).toEqual({ text: 'x inner y\nz', pills: new Map(), separators: [] })
+  })
+})
+
+describe('Copy Markdown', () => {
+  const PILL_ID = 'bdbf417c-2282-4d77-991c-2ac65e1f0a11'
+  const THINKING: SectionThinking = { text: 'plan the answer', replay: { kind: 'field', field: 'reasoning_content' } }
+
+  function markdownOf(doc: string, selection: EditorSelection, models: SectionModel[] = [{ id: 's1', role: 'user' }]): string {
+    return serializeSelectionAsMarkdown(EditorState.create({
+      doc,
+      selection,
+      extensions: [
+        EditorState.allowMultipleSelections.of(true),
+        sectionsField.init(() => models),
+        pillsField.init(() => new Map([[PILL_ID, { promptId: 'saved', name: 'Summary', expanded: false }]])),
+      ],
+    }))
+  }
+
+  it('copies sections as text with one blank line between them, and no markers or thinking', () => {
+    const doc = ['question', 'answer', 'legacy'].join(`\n${SECTION_SEP}\n`)
+    const models: SectionModel[] = [
+      { id: 's1', role: 'user' },
+      { id: 's2', role: 'agent', model: { providerId: 'zai', modelId: 'glm-5.2' }, thinking: THINKING },
+      { id: 's3', role: 'agent' },
+    ]
+
+    expect(markdownOf(doc, EditorSelection.single(0, doc.length), models)).toBe('question\n\nanswer\n\nlegacy')
+  })
+
+  it('keeps the section text, but drops empty sections and separators at the range ends', () => {
+    const doc = ['one', '', 'two\n', 'three'].join(`\n${SECTION_SEP}\n`)
+    const fromFirstSeparatorLine = doc.indexOf(SECTION_SEP) - 1
+    const toAfterLastSeparator = doc.lastIndexOf(SECTION_SEP) + 1
+
+    expect(markdownOf(doc, EditorSelection.single(0, doc.length))).toBe('one\n\ntwo\n\nthree')
+    expect(markdownOf(doc, EditorSelection.single(fromFirstSeparatorLine, toAfterLastSeparator))).toBe('two\n')
+  })
+
+  it('copies a whole or partly selected prompt pill as its body text with real newlines', () => {
+    const doc = `see ${encodePrompt(PILL_ID, 'line one\nline two')} end\n${SECTION_SEP}\nreply`
+    const bodyFrom = doc.indexOf(PILL_BODY) + 1
+
+    expect(markdownOf(doc, EditorSelection.single(0, doc.length))).toBe('see line one\nline two end\n\nreply')
+    expect(markdownOf(doc, EditorSelection.single(bodyFrom + 'line '.length, doc.indexOf(' end')))).toBe('one\nline two')
+    expect(markdownOf(doc, EditorSelection.single(0, doc.indexOf(PILL_BODY)))).toBe('see ')
+  })
+
+  it('joins the non-empty ranges with newlines, and copies nothing without selected text', () => {
+    const doc = `alpha\n${SECTION_SEP}\nbeta gamma`
+    const separatorOnly = EditorSelection.range('alpha'.length, 'alpha\n'.length + `${SECTION_SEP}\n`.length)
+
+    expect(markdownOf(doc, EditorSelection.create([
+      EditorSelection.range(0, 'alpha'.length),
+      separatorOnly,
+      EditorSelection.range(doc.length - 'gamma'.length, doc.length),
+    ]))).toBe('alpha\ngamma')
+    expect(markdownOf(doc, EditorSelection.create([separatorOnly, EditorSelection.cursor(2)]))).toBe('')
   })
 })
 

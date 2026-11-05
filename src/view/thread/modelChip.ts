@@ -109,23 +109,25 @@ function span(className: string, text = ''): HTMLSpanElement {
 
 /** Shows the model inside the agent role pill, after the role word: the
  *  switch icon, the model name, and the provider name. The pill also gets
- *  the model facts as its tooltip and its accessible name. One pill and one
- *  color for every model: the name, not a color, tells models apart. Styles
- *  are in `dezTheme` (`cmEditor.ts`). */
+ *  the model facts as its tooltip, and the model part gets them as its
+ *  accessible name. One pill and one color for every model: the name, not
+ *  a color, tells models apart. Styles are in `dezTheme` (`cmEditor.ts`). */
 export function addModelToPill(pill: HTMLElement, chip: ModelChip): void {
   pill.setAttribute('data-model-key', chip.key)
   const provider = chip.providerName ?? 'Unknown provider'
   const switched = chip.switchedFrom ? `Switched from ${chip.switchedFrom}` : null
   pill.title = [chip.modelName, provider, chip.key, switched].filter(Boolean).join('\n')
-  // A plain span cannot carry an aria-label, so the pill is one labeled
-  // graphic for screen readers. That hides its text, so the label starts
-  // with the role word. "Generating" is the spoken form of the streaming
-  // animation.
-  pill.setAttribute('role', 'img')
-  const generating = chip.streaming ? 'Generating' : null
-  pill.setAttribute('aria-label', ['Agent', `Model: ${chip.modelName}`, `Provider: ${provider}`, chip.key, switched, generating].filter(Boolean).join(', '))
   if (chip.streaming) pill.setAttribute('data-streaming', '1')
   const model = span('dez-role-separator__model')
+  // A plain span cannot carry an aria-label, so the model part is one
+  // labeled graphic for screen readers. "Generating" is the spoken form of
+  // the streaming animation. The role is on the model part, not on the
+  // pill: an image hides its children, and the pill also holds the role
+  // word and the thinking triangle (`thinkingPill.ts`), which screen
+  // readers must reach.
+  model.setAttribute('role', 'img')
+  const generating = chip.streaming ? 'Generating' : null
+  model.setAttribute('aria-label', [`Model: ${chip.modelName}`, `Provider: ${provider}`, chip.key, switched, generating].filter(Boolean).join(', '))
   if (chip.switchedFrom) {
     pill.setAttribute('data-switched', '1')
     model.appendChild(switchIcon())

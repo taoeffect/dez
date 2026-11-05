@@ -1,8 +1,9 @@
 import { EditorState } from '@codemirror/state'
 import { EditorView, type WidgetType } from '@codemirror/view'
 import { describe, expect, it } from 'vitest'
-import { SECTION_SEP, roleSeparators, sectionsField, showSeparatorsField, type SectionModel } from './cmEditor'
+import { SECTION_SEP, roleSeparators, sectionsField, type SectionModel } from './cmEditor'
 import { modelDisplayNamesField, sectionModelChips, setModelDisplayNamesEffect, setStreamingSectionEffect, streamingSectionField } from './modelChip'
+import { thinkingExpandedField } from './thinkingPill'
 import type { ModelRef, Role } from '../../model/chat/types'
 import type { ModelDisplayNames } from '../../model/providers/types'
 
@@ -98,9 +99,9 @@ describe('role separator model chips', () => {
       doc: DOC,
       extensions: [
         sectionsField.init(() => SECTIONS),
-        showSeparatorsField,
         modelDisplayNamesField.init(() => NAMES),
         streamingSectionField.init(() => streamingSectionId),
+        thinkingExpandedField,
         roleSeparators,
       ],
     })

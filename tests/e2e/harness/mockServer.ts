@@ -3,7 +3,8 @@ import type { AddressInfo } from 'node:net'
 
 // A mock OpenAI-compatible server in the spec's process. Each spec routes
 // its own requests and keeps its own record; this module holds the parts
-// they share: the request body, the streamed chat reply, start, and stop.
+// they share: the request body, the SSE reply parts, the streamed chat
+// reply, start, and stop.
 
 export interface MockServer {
   /** `http://127.0.0.1:<port>`, with no trailing slash. */
@@ -36,6 +37,17 @@ export async function startMockServer (handler: MockHandler): Promise<MockServer
   }
 }
 
+/** Starts a 200 SSE reply and sends its headers at once. */
+export function startEventStream (res: http.ServerResponse): void {
+  res.writeHead(200, { 'Content-Type': 'text/event-stream', 'Cache-Control': 'no-cache' })
+  res.flushHeaders()
+}
+
+/** Writes one chat completion SSE frame with one choice. */
+export function writeChatFrame (res: http.ServerResponse, delta: Record<string, string>, finishReason: string | null = null): void {
+  res.write(`data: ${JSON.stringify({ choices: [{ index: 0, delta, finish_reason: finishReason }] })}\n\n`)
+}
+
 // The reply streams in several chunks and names `name`, so a test can see
 // which request a reply answers.
 function replyTokens (name: string): string[] {
@@ -51,10 +63,8 @@ export function replyText (name: string): string {
  *  ends the stream with `[DONE]`. When `hold` is set, the stream stays open
  *  after the tokens until `hold` resolves. */
 export async function sendChatReply (res: http.ServerResponse, name: string, hold?: Promise<void> | null): Promise<void> {
-  res.writeHead(200, { 'Content-Type': 'text/event-stream', 'Cache-Control': 'no-cache' })
-  for (const token of replyTokens(name)) {
-    res.write(`data: ${JSON.stringify({ choices: [{ index: 0, delta: { content: token } }] })}\n\n`)
-  }
+  startEventStream(res)
+  for (const token of replyTokens(name)) writeChatFrame(res, { content: token })
   if (hold) await hold
   res.end('data: [DONE]\n\n')
 }

@@ -133,6 +133,23 @@ describe('searchConversationFiles', () => {
     expect(joined(byName.snippet)).toContain('greeting')
   })
 
+  it('neither searches nor previews agent thinking', () => {
+    const file = fileFor(
+      conversation('a', 'Notes', [
+        section('user', [textNode('question')]),
+        { role: 'agent', nodes: [textNode('answer')], thinking: { text: 'hiddenreasoning', replay: { kind: 'field', field: 'reasoning' } } },
+        { role: 'agent', nodes: [], thinking: { text: 'thinkingonly' } },
+      ]),
+      1000,
+    )
+
+    expect(searchConversationFiles([file], 'hiddenreasoning')).toEqual([])
+    expect(searchConversationFiles([file], 'thinkingonly')).toEqual([])
+    const [result] = searchConversationFiles([file], 'answer')
+    expect(result.preview).toBe('question answer')
+    expect(result.messageCount).toBe(2)
+  })
+
   it('merges overlapping term highlights into one segment', () => {
     const file = fileFor(conversation('a', 'Notes', [section('user', [textNode('the foundation stands')])]), 1000)
     const [result] = searchConversationFiles([file], 'foun undation')

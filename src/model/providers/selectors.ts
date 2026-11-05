@@ -3,13 +3,12 @@ import { modelRefKey } from '../chat/modelRef'
 import type { ModelCache } from '../persistence/types'
 import { secret, type Secret } from '../../utils/secret'
 import { nativeResponseJson, nativeResponseText, type NativeHttpResponse, type NativeHttpStreamResult } from '../../utils/protocol/nativeHttp'
-import type { ProviderSettingDef } from './config'
 import { assertProviderResponseOk } from './errors'
-import type { Provider } from './provider'
+import type { Provider, ProviderChatRequest } from './provider'
 import { getProvider, listProviders, requireProvider } from './registry'
 import { streamProviderTokens } from './streaming'
 import type { ProviderStreamChatInput, ProviderStreamChatResult } from './streamTypes'
-import { ProviderNotConfiguredError, type ModelDisplayNames, type ProviderId, type ProviderInfo, type ProviderModelsResult } from './types'
+import { ProviderNotConfiguredError, type ModelDisplayNames, type ProviderId, type ProviderInfo, type ProviderModelsResult, type ProviderSettingsDescriptor } from './types'
 
 // The stored key, or null when there is none. Throws for GitHub Copilot when
 // the user is not signed in.
@@ -43,10 +42,15 @@ async function requestSecret(provider: Provider, refreshCopilot = false): Promis
   return value
 }
 
-async function nativeChatStream(provider: Provider, input: ProviderStreamChatInput, requestId: string, refreshCopilot = false): Promise<NativeHttpStreamResult> {
+async function nativeChatStream(
+  provider: Provider,
+  input: ProviderStreamChatInput,
+  requestId: string,
+  refreshCopilot = false,
+): Promise<{ result: NativeHttpStreamResult, thinking: ProviderChatRequest['thinking'] }> {
   const secretValue = await requestSecret(provider, refreshCopilot)
-  const request = provider.chatRequest(input.messages, input.modelId, secretValue, input.providerSettings)
-  return await sbp('dez.http/stream', request, requestId) as NativeHttpStreamResult
+  const { request, thinking } = provider.chatRequest(input.messages, input.modelId, secretValue, input.providerSettings)
+  return { result: await sbp('dez.http/stream', request, requestId) as NativeHttpStreamResult, thinking }
 }
 
 export default sbp('sbp/selectors/register', {
@@ -65,11 +69,14 @@ export default sbp('sbp/selectors/register', {
   },
 
   // Synchronous read for the provider settings popup: the provider's display
-  // name and the toggles shown for this model, instead of the whole Provider.
-  // Takes a plain string, so views need no id check; null for unknown ids.
-  'dez.provider/settingsDescriptor' (providerId: string, modelId: string): { name: string, settings: ProviderSettingDef[] } | null {
+  // name, the toggles shown for this model, and whether it has the Thinking
+  // toggle, instead of the whole Provider. Takes a plain string, so views need
+  // no id check; null for unknown ids.
+  'dez.provider/settingsDescriptor' (providerId: string, modelId: string): ProviderSettingsDescriptor | null {
     const provider = getProvider(providerId)
-    return provider ? { name: provider.name, settings: provider.visibleSettings(modelId) } : null
+    return provider
+      ? { name: provider.name, settings: provider.visibleSettings(modelId), supportsThinking: provider.supportsThinking }
+      : null
   },
 
   // Synchronous and reactive: it reads the custom providers and the model
@@ -122,16 +129,19 @@ export default sbp('sbp/selectors/register', {
   async 'dez.provider/streamChat' (input: ProviderStreamChatInput): Promise<ProviderStreamChatResult> {
     const provider = requireProvider(input.providerId)
     const requestId = input.requestId ?? crypto.randomUUID()
-    let result = await nativeChatStream(provider, input, requestId)
+    let stream = await nativeChatStream(provider, input, requestId)
 
     // A 401 can mean the cached Copilot chat token expired early; get a fresh
-    // one and retry once.
-    if (provider.config.auth === 'githubCopilot' && result.response.status === 401) {
-      await sbp('dez.http/cancelStream', result.requestId)
-      result = await nativeChatStream(provider, input, requestId, true)
+    // one and retry once. The refused response is never parsed, so its
+    // thinking cannot mix with the retry's.
+    if (provider.config.auth === 'githubCopilot' && stream.result.response.status === 401) {
+      await sbp('dez.http/cancelStream', stream.result.requestId)
+      stream = await nativeChatStream(provider, input, requestId, true)
     }
 
-    await streamProviderTokens(provider, input, result)
-    return { requestId: result.requestId }
+    const thinkingReplay = await streamProviderTokens(provider, input, stream.result, stream.thinking)
+    return thinkingReplay
+      ? { requestId: stream.result.requestId, thinkingReplay }
+      : { requestId: stream.result.requestId }
   },
 })

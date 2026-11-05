@@ -1,15 +1,25 @@
 import { selectAll } from '@codemirror/commands'
 import { HighlightStyle, syntaxHighlighting } from '@codemirror/language'
 import { markdown } from '@codemirror/lang-markdown'
-import { Decoration, EditorView, WidgetType, type DecorationSet, type KeyBinding } from '@codemirror/view'
+import { Decoration, EditorView, ViewPlugin, WidgetType, type DecorationSet, type KeyBinding, type ViewUpdate } from '@codemirror/view'
 import { EditorSelection, EditorState, StateEffect, StateField, findClusterBreak, type Extension, type Transaction, type TransactionSpec } from '@codemirror/state'
 import { tags as t } from '@lezer/highlight'
-import type { ContentNode, ModelRef, Role, Section } from '../../model/chat/types'
+import type { ContentNode, ModelRef, Role, Section, SectionThinking } from '../../model/chat/types'
 import { modelRefField } from '../../model/chat/modelRef'
-import { PILL_MARKER, parsePillMarker, pillMarkerLine } from '../../model/chat/pillMarker'
+import { PILL_MARKER, parsePillMarkerMatch, pillMarkerText } from '../../model/chat/pillMarker'
+import { thinkingField } from '../../model/chat/thinking'
 import { SENTINEL_CHAR, normalizeContent, stripLiveSentinels, textNode } from '../../model/chat/content'
 import { escapeMarkerAttribute, unescapeMarkerAttribute } from '../../utils/markerAttribute'
 import { addModelToPill, modelDisplayNamesField, sameModelChip, sectionModelChips, streamingSectionField, type ModelChip } from './modelChip'
+import {
+  isThinkingPanelEvent,
+  renderPillThinking,
+  sameThinkingView,
+  sectionThinkingView,
+  thinkingExpandedField,
+  toggleThinkingExpandedEffect,
+  type PillThinkingView,
+} from './thinkingPill'
 
 /** ASCII Record Separator; never typeable, never on-disk, used in-buffer to
  *  encode a section boundary. The char sits alone on its own line and the
@@ -37,13 +47,15 @@ export const PILL_NL = '\u{E003}'
 
 /** Lightweight mirror of a Section kept in the CM state. The CM doc is the
  *  source of truth for text; this field just tracks per-section identity
- *  (id), role, and the AI model that wrote the section (`model`, absent when
- *  unknown). The editor writes this field back to the store on every doc
- *  change (`syncDocToTab`), so a section field missing here is lost there. */
+ *  (id), role, the AI model that wrote the section (`model`, absent when
+ *  unknown), and its thinking (`thinking`, never doc text). The editor
+ *  writes this field back to the store on every doc change
+ *  (`syncDocToTab`), so a section field missing here is lost there. */
 export interface SectionModel {
   id: string
   role: Role
   model?: ModelRef
+  thinking?: SectionThinking
   generated?: boolean
 }
 
@@ -157,10 +169,16 @@ function normalizeSectionModels(models: SectionModel[]): SectionModel[] {
   return copy
 }
 
-/** Produce `{ id, role, model? }` for each section to seed `sectionsField`. */
+/** Produce `{ id, role, model?, thinking? }` for each section to seed
+ *  `sectionsField`. */
 export function initialSectionModels(sections: Section[]): SectionModel[] {
   if (sections.length === 0) return [{ id: crypto.randomUUID(), role: 'user' }]
-  return normalizeSectionModels(sections.map((s) => ({ id: s.id, role: s.role, ...modelRefField(s.model) })))
+  return normalizeSectionModels(sections.map((s) => ({
+    id: s.id,
+    role: s.role,
+    ...modelRefField(s.model),
+    ...thinkingField(s.thinking),
+  })))
 }
 
 /** Walk all sections and collect the per-pill metadata map to seed
@@ -364,6 +382,7 @@ export function docToSections(
       id: sectionModel.id,
       role: i === 0 ? 'user' : sectionModel.role,
       ...modelRefField(sectionModel.model),
+      ...thinkingField(sectionModel.thinking),
       content: decodeSectionContent(text, pillsMeta),
     }
   })
@@ -406,7 +425,10 @@ export const splitSectionEffect = StateEffect.define<{
 }>()
 export const mergeSectionEffect = StateEffect.define<{ removeIndex: number }>()
 export const setSectionsEffect = StateEffect.define<SectionModel[]>()
-export const setShowSeparatorsEffect = StateEffect.define<boolean>()
+/** Sets the thinking of the section with `sectionId`, or removes it when
+ *  `thinking` is absent. Thinking is not doc text, so this changes no doc
+ *  text and no section structure. */
+export const setSectionThinkingEffect = StateEffect.define<{ sectionId: string; thinking?: SectionThinking }>()
 
 export const setPillsEffect = StateEffect.define<Map<string, PillMetadata>>()
 export const updatePillMetaEffect = StateEffect.define<{
@@ -472,6 +494,14 @@ export const sectionsField = StateField.define<SectionModel[]>({
           next = copy
         }
         sectionModelsManagedByEffect = true
+      } else if (e.is(setSectionThinkingEffect)) {
+        const index = next.findIndex((model) => model.id === e.value.sectionId)
+        if (index >= 0) {
+          const { thinking: _replaced, ...section } = next[index]
+          const copy = next.slice()
+          copy[index] = { ...section, ...thinkingField(e.value.thinking) }
+          next = copy
+        }
       }
     }
     if (tr.docChanged) {
@@ -490,23 +520,6 @@ export const sectionsField = StateField.define<SectionModel[]>({
     return normalizeSectionModels(next)
   },
 })
-
-/* ──────────────────────  visibility field  ─────────────────── */
-
-export const showSeparatorsField = StateField.define<boolean>({
-  create: () => true,
-  update(value, tr) {
-    for (const e of tr.effects) {
-      if (e.is(setShowSeparatorsEffect)) return e.value
-    }
-    return value
-  },
-})
-
-export const leadingPillContentAttributes = EditorView.contentAttributes.compute(
-  [showSeparatorsField],
-  (state) => ({ class: state.field(showSeparatorsField) ? 'dez-has-leading-pill' : '' }),
-)
 
 /* ──────────────────────────  pillsField  ───────────────────── */
 
@@ -563,9 +576,14 @@ export const unwrapBrokenPills = EditorState.transactionFilter.of((tr) => {
 /* ──────────────────────  Role separator widget  ─────────────── */
 
 class RoleSeparatorWidget extends WidgetType {
-  constructor(readonly index: number, readonly role: Role, readonly chip: ModelChip | null) {
+  constructor(
+    readonly index: number,
+    readonly role: Role,
+    readonly chip: ModelChip | null,
+  ) {
     super()
   }
+  // Thinking is left out on purpose: see `pillThinkingUpdater`.
   eq(other: WidgetType): boolean {
     return (
       other instanceof RoleSeparatorWidget &&
@@ -574,7 +592,7 @@ class RoleSeparatorWidget extends WidgetType {
       sameModelChip(other.chip, this.chip)
     )
   }
-  toDOM(): HTMLElement {
+  toDOM(view: EditorView): HTMLElement {
     const el = document.createElement('span')
     el.className = 'dez-role-separator'
     el.setAttribute('data-section-index', String(this.index))
@@ -584,27 +602,60 @@ class RoleSeparatorWidget extends WidgetType {
     label.textContent = this.role === 'user' ? 'User' : 'Agent'
     el.appendChild(label)
     if (this.chip) addModelToPill(label, this.chip)
+    renderPillThinking(el, label, pillThinkingAt(view.state, this.index), view)
     return el
   }
-  ignoreEvent(): boolean {
-    // Let mousedown/click bubble to the view so our domEventHandler runs.
-    return false
+  ignoreEvent(event: Event): boolean {
+    // Events in the thinking panel belong to its text field. CodeMirror and
+    // `roleSeparatorMouseHandler` leave them alone, so mouse selection,
+    // select all and copy work there natively. All other events reach the
+    // view, so a mousedown on the pill runs `roleSeparatorMouseHandler`.
+    return isThinkingPanelEvent(event)
   }
 }
+
+/** The thinking parts of the pill of section `index` in `state`. */
+function pillThinkingAt(state: EditorState, index: number): PillThinkingView | null {
+  return sectionThinkingView(state.field(sectionsField)[index], state.field(thinkingExpandedField), state.field(streamingSectionField))
+}
+
+// Changes the thinking parts of the drawn pills in place (a thinking token,
+// the panel opened or closed, the spinner turned into the triangle).
+// CodeMirror draws a changed widget into a new line element, even when the
+// widget's `updateDOM` keeps its DOM. That move takes the focus from the
+// thinking text field, drops its selection, scrolls the panel back to the
+// top, and restarts the pill's busy animations, at every thinking token.
+// So `RoleSeparatorWidget.eq` ignores thinking, CodeMirror leaves the pill
+// alone, and this plugin changes it. `toDOM` reads the thinking from the
+// state, so a pill that CodeMirror draws again is up to date.
+const pillThinkingUpdater = ViewPlugin.define(() => ({
+  update({ startState, state, view }: ViewUpdate) {
+    if (
+      startState.field(sectionsField) === state.field(sectionsField) &&
+      startState.field(thinkingExpandedField) === state.field(thinkingExpandedField) &&
+      startState.field(streamingSectionField) === state.field(streamingSectionField)
+    ) return
+    for (const separator of view.contentDOM.querySelectorAll<HTMLElement>('.dez-role-separator')) {
+      const index = Number(separator.dataset.sectionIndex)
+      const thinking = pillThinkingAt(state, index)
+      if (sameThinkingView(pillThinkingAt(startState, index), thinking)) continue
+      const label = separator.firstElementChild
+      if (label instanceof HTMLElement) renderPillThinking(separator, label, thinking, view)
+    }
+  },
+}))
 
 /** Build the decoration set for the current doc. Each `\u001E` line is
  *  replaced with a block separator widget whose role/index come from the
  *  sectionsField and whose model part comes from `chips` (by section
  *  index). With `chips` null, the ranges have no widget (atomic ranges
- *  only). Returns an empty set when separators are hidden. */
+ *  only). */
 function buildSeparatorDecorations(
   doc: string,
   models: SectionModel[],
-  show: boolean,
   chips: readonly (ModelChip | null)[] | null,
 ): DecorationSet {
   const ranges: { from: number; to: number; deco: Decoration }[] = []
-  if (!show) return Decoration.set(ranges.map((b) => b.deco.range(b.from, b.to)), true)
   let sectionIndex = 0
   for (let i = 0; i < doc.length; i++) {
     if (doc.charCodeAt(i) !== 0x1e) continue
@@ -619,7 +670,9 @@ function buildSeparatorDecorations(
       from: i,
       to: i + 1,
       deco: Decoration.replace({
-        widget: chips ? new RoleSeparatorWidget(sectionIndex, nextRole, chips[sectionIndex] ?? null) : undefined,
+        widget: chips
+          ? new RoleSeparatorWidget(sectionIndex, nextRole, chips[sectionIndex] ?? null)
+          : undefined,
         inclusive: false,
       }),
     })
@@ -630,27 +683,32 @@ function buildSeparatorDecorations(
   )
 }
 
-export const roleSeparators = EditorView.decorations.compute(
-  [sectionsField, showSeparatorsField, modelDisplayNamesField, streamingSectionField, 'doc'],
-  (state) => {
-    const models = state.field(sectionsField)
-    const show = state.field(showSeparatorsField)
-    const chips = sectionModelChips(models, state.field(modelDisplayNamesField), state.field(streamingSectionField))
-    return buildSeparatorDecorations(state.doc.toString(), models, show, chips)
-  },
-)
+/** The role separator pills. The states that use them need
+ *  `thinkingExpandedField` and `streamingSectionField`. */
+export const roleSeparators: Extension = [
+  EditorView.decorations.compute(
+    [sectionsField, modelDisplayNamesField, streamingSectionField, 'doc'],
+    (state) => {
+      const models = state.field(sectionsField)
+      const chips = sectionModelChips(models, state.field(modelDisplayNamesField), state.field(streamingSectionField))
+      return buildSeparatorDecorations(state.doc.toString(), models, chips)
+    },
+  ),
+  pillThinkingUpdater,
+]
 
 export const roleSeparatorAtomicRanges = EditorView.atomicRanges.of((view) =>
   buildSeparatorDecorations(
     view.state.doc.toString(),
     view.state.field(sectionsField),
-    true,
     null,
   ),
 )
 
-/** Click handler: a mousedown anywhere on a role pill, its model part too,
- *  toggles the role of the section that the separator precedes. */
+/** Click handler: a mousedown on the disclosure triangle of a role pill
+ *  opens or closes its thinking panel. A mousedown anywhere else on the
+ *  pill, its model part too, toggles the role of the section that the
+ *  separator precedes. */
 export const roleSeparatorMouseHandler = EditorView.domEventHandlers({
   mousedown(event, view) {
     const target = event.target as Element | null
@@ -664,6 +722,11 @@ export const roleSeparatorMouseHandler = EditorView.domEventHandlers({
     const index = Number(idxStr)
     if (!Number.isFinite(index)) return false
     event.preventDefault()
+    if (target.closest('.dez-role-separator__disclosure')) {
+      const sectionId = view.state.field(sectionsField)[index]?.id
+      if (sectionId) view.dispatch({ effects: toggleThinkingExpandedEffect.of(sectionId) })
+      return true
+    }
     view.dispatch({ effects: toggleRoleEffect.of({ index }) })
     return true
   },
@@ -821,9 +884,11 @@ function unescapePromptClipboardBody(body: string): string {
 // The clipboard marker of the section that starts at the separator at `pos`.
 function clipboardSectionMarker(doc: string, models: SectionModel[], pos: number): string {
   const section = models[sectionIndexAtOffset(doc, pos) + 1]
-  return pillMarkerLine(section?.role ?? 'user', section?.model)
+  return pillMarkerText(section?.role ?? 'user', section?.model, section?.thinking)
 }
 
+// Every sentinel in the range is turned into a marker or a newline, or is
+// skipped, so the doc text in the result holds no sentinels.
 function serializePlainDocFragment(doc: string, from: number, to: number, models: SectionModel[]): string {
   let out = ''
   for (let i = from; i < to; i++) {
@@ -848,6 +913,10 @@ function serializePlainDocFragment(doc: string, from: number, to: number, models
   return out
 }
 
+/** Clipboard text of one doc range, with `dez:` markers. Live sentinels are
+ *  removed piece by piece, from doc text and prompt parts only: a section
+ *  marker can be a container that holds thinking text, which must stay
+ *  exact (the `field` replay sends it back to the provider). */
 export function serializeDocRangeForClipboard(
   doc: string,
   from: number,
@@ -857,7 +926,7 @@ export function serializeDocRangeForClipboard(
 ): string {
   if (from >= to) return ''
   const pills = scanPills(doc).filter((p) => p.to > from && p.from < to)
-  let out = from === 0 ? `${pillMarkerLine('user')}\n` : ''
+  let out = from === 0 ? `${pillMarkerText('user')}\n` : ''
   let cursor = from
   for (const p of pills) {
     if (cursor < Math.min(p.from, to)) {
@@ -867,17 +936,18 @@ export function serializeDocRangeForClipboard(
     const bodyFrom = Math.max(from, p.bodyFrom)
     const bodyTo = Math.min(to, p.bodyTo)
     if (from <= p.from && to >= p.to) {
-      const body = doc.slice(p.bodyFrom, p.bodyTo).replace(/\u{E003}/gu, '\n')
-      out += `<dez:prompt name="${escapeMarkerAttribute(meta?.name ?? '')}">\n${escapePromptClipboardBody(body)}`
+      const name = stripLiveSentinels(meta?.name ?? '')
+      const body = stripLiveSentinels(doc.slice(p.bodyFrom, p.bodyTo))
+      out += `<dez:prompt name="${escapeMarkerAttribute(name)}">\n${escapePromptClipboardBody(body)}`
       if (!out.endsWith('\n')) out += '\n'
       out += '</dez:prompt>\n'
     } else if (bodyFrom < bodyTo) {
-      out += doc.slice(bodyFrom, bodyTo).replace(/\u{E003}/gu, '\n')
+      out += stripLiveSentinels(doc.slice(bodyFrom, bodyTo))
     }
     cursor = Math.max(cursor, Math.min(p.to, to))
   }
   if (cursor < to) out += serializePlainDocFragment(doc, cursor, to, models)
-  return stripLiveSentinels(out)
+  return out
 }
 
 export function serializeSelectionForClipboard(state: EditorState): string {
@@ -893,6 +963,49 @@ export function serializeSelectionForClipboard(state: EditorState): string {
     models,
     pillsMeta,
   )).join('\n')
+}
+
+/** Copy Markdown text of one doc range: what the model reads, with no `dez:`
+ *  markers and no thinking. A prompt pill, whole or in part, gives its body
+ *  text. Each separator line gives one blank line between the text of two
+ *  sections; empty sections and a separator at either end of the range give
+ *  nothing. A pill never spans a separator (`scanPills`), so the text between
+ *  pills holds every separator. */
+function serializeDocRangeAsMarkdown(doc: string, from: number, to: number): string {
+  let out = ''
+  let sectionBreak = false
+  const append = (text: string) => {
+    if (text === '') return
+    if (sectionBreak && out !== '') out += out.endsWith('\n\n') ? '' : out.endsWith('\n') ? '\n' : '\n\n'
+    sectionBreak = false
+    out += text
+  }
+  const appendDocText = (fragmentFrom: number, fragmentTo: number) => {
+    splitDocBySeparator(doc.slice(fragmentFrom, fragmentTo)).forEach((part, index) => {
+      if (index > 0) sectionBreak = true
+      append(stripLiveSentinels(part))
+    })
+  }
+  let cursor = from
+  for (const p of scanPills(doc).filter((pill) => pill.to > from && pill.from < to)) {
+    if (cursor < p.from) appendDocText(cursor, p.from)
+    append(stripLiveSentinels(doc.slice(Math.max(from, p.bodyFrom), Math.min(to, p.bodyTo))))
+    cursor = Math.min(p.to, to)
+  }
+  if (cursor < to) appendDocText(cursor, to)
+  return out
+}
+
+/** The selection for Copy Markdown (`dez.editor/copyMarkdown`): each range as
+ *  `serializeDocRangeAsMarkdown` gives it, joined by newlines. Ranges that
+ *  give no text are left out, so an empty result means nothing to copy. */
+export function serializeSelectionAsMarkdown(state: EditorState): string {
+  const doc = state.doc.toString()
+  return state.selection.ranges
+    .filter((range) => !range.empty)
+    .map((range) => serializeDocRangeAsMarkdown(doc, range.from, range.to))
+    .filter((text) => text !== '')
+    .join('\n')
 }
 
 export function cutSelectedRangesTransaction(state: EditorState): TransactionSpec | null {
@@ -945,34 +1058,44 @@ export interface ParsedClipboardText {
   text: string
   pills: Map<string, PillMetadata>
   /** One entry per `SECTION_SEP` in `text`, in order. */
-  separators: { role: Role; model?: ModelRef }[]
+  separators: Pick<SectionModel, 'role' | 'model' | 'thinking'>[]
 }
 
 /** Turn clipboard text (with `dez:` markers) into live-doc text: section
- *  markers become separators, prompt markup becomes collapsed pills. With
+ *  markers become separators, prompt markup becomes collapsed pills, and the
+ *  body of an agent container becomes the separator's thinking. With
  *  `plainText`, the result holds no sentinels: prompt bodies are inlined
- *  and section markers dropped, for a paste inside a pill body, where a
- *  nested pill or a separator would break the pill. A `model` on a user
- *  marker, or one that is not a `provider/model` value, is ignored. A pill
- *  marker without a valid `type` stays text. */
+ *  and section markers (with their thinking) dropped, for a paste inside a
+ *  pill body, where a nested pill or a separator would break the pill. A
+ *  `model` on a user marker, or one that is not a `provider/model` value, is
+ *  ignored. A pill marker without a valid `type` stays text. */
 export function parseClipboardText(text: string, plainText = false): ParsedClipboardText {
   const pills = new Map<string, PillMetadata>()
   const separators: ParsedClipboardText['separators'] = []
   const marker = new RegExp(String.raw`(${PILL_MARKER.source})|<dez:prompt\s+name="([^"]*)">([\s\S]*?)<\/dez:prompt>`, 'g')
   let out = ''
   let cursor = 0
-  for (const match of text.matchAll(marker)) {
-    const pill = match[1] === undefined ? null : parsePillMarker(match[1])
+  for (let match = marker.exec(text); match; match = marker.exec(text)) {
+    const pill = match[1] === undefined ? null : parsePillMarkerMatch(match[1])
     // A pill marker with no valid `type` is not a marker. `cursor` does not
-    // move, so the next slice copies it as plain text.
-    if (match[1] !== undefined && !pill) continue
+    // move, so a later slice copies it as plain text. The scan goes on just
+    // after its `<`, so markers in the body of such a container still count,
+    // as they do in conversation files.
+    if (match[1] !== undefined && !pill) {
+      marker.lastIndex = match.index + 1
+      continue
+    }
     out += stripLiveSentinels(text.slice(cursor, match.index))
-    let nextCursor = (match.index ?? 0) + match[0].length
+    let nextCursor = match.index + match[0].length
     if (pill) {
       if (out.length > 0 && !out.endsWith('\n')) out += '\n'
       if (!plainText) {
         out += `${SECTION_SEP}\n`
-        separators.push(pill.model ? { role: pill.role, model: pill.model } : { role: pill.role })
+        separators.push({
+          role: pill.marker.role,
+          ...modelRefField(pill.marker.model ?? undefined),
+          ...thinkingField(pill.thinking),
+        })
       }
       if (text[nextCursor] === '\n') nextCursor++
     } else {
@@ -996,11 +1119,11 @@ export function parseClipboardText(text: string, plainText = false): ParsedClipb
 }
 
 /** The transaction for a paste of clipboard text with `dez:` markers. Each
- *  pasted section marker starts a new section with the marker's role and
- *  model. Markers at the very start of the paste are dropped, so the paste
- *  joins the section at the caret. In a pill body, pasted prompts and
- *  section markers would nest a pill or split this one, so the paste is
- *  plain text there. */
+ *  pasted section marker starts a new section with the marker's role,
+ *  model, and thinking. Markers at the very start of the paste are dropped,
+ *  so the paste joins the section at the caret. In a pill body, pasted
+ *  prompts and section markers would nest a pill or split this one, so the
+ *  paste is plain text there. */
 export function clipboardPasteTransaction(state: EditorState, text: string): TransactionSpec {
   const doc = state.doc.toString()
   const pills = scanPills(doc)
@@ -1024,11 +1147,7 @@ export function clipboardPasteTransaction(state: EditorState, text: string): Tra
   const effects: StateEffect<unknown>[] = [setPillsEffect.of(meta)]
   if (separators.length > 0 || range.from !== range.to) {
     const oldModels = state.field(sectionsField)
-    const inserted: SectionModel[] = separators.map(({ role, model }) => ({
-      id: crypto.randomUUID(),
-      role,
-      ...modelRefField(model),
-    }))
+    const inserted: SectionModel[] = separators.map((separator) => ({ id: crypto.randomUUID(), ...separator }))
     effects.push(setSectionsEffect.of([
       ...oldModels.slice(0, sectionIndexAtOffset(doc, range.from) + 1),
       ...inserted,
@@ -1062,6 +1181,9 @@ export const dezHighlightStyle = HighlightStyle.define([
   { tag: t.meta, color: 'var(--color-muted, #888)' },
 ])
 
+/** The padding around the doc inside the editor scroller. */
+export const SCROLLER_PADDING_PX = 16
+
 export const dezTheme = EditorView.theme({
   '&': {
     height: '100%',
@@ -1073,20 +1195,19 @@ export const dezTheme = EditorView.theme({
     fontFamily:
       "ui-monospace, SFMono-Regular, Menlo, Consolas, 'Liberation Mono', monospace",
     lineHeight: '1.6',
-    padding: '16px',
+    padding: `${SCROLLER_PADDING_PX}px`,
   },
   '.cm-content': {
     maxWidth: '768px',
     margin: '0 auto',
     width: '100%',
     caretColor: 'var(--color-text)',
-    padding: 0,
+    // Room for the pill of the first section, which `::before` draws: the
+    // first section has no separator line in the doc to put a widget on.
+    padding: '46px 0 0',
     position: 'relative',
   },
-  '.cm-content.dez-has-leading-pill': {
-    paddingTop: '46px',
-  },
-  '.cm-content.dez-has-leading-pill::before': {
+  '.cm-content::before': {
     content: '"User"',
     position: 'absolute',
     top: '12px',
@@ -1207,16 +1328,118 @@ export const dezTheme = EditorView.theme({
     content: '"·"',
     marginRight: '6px',
   },
+  // Left slot of an agent pill (`thinkingPill.ts`): a spinner while the
+  // section streams and has no thinking yet, then a disclosure triangle
+  // that opens the thinking panel. Both fit in the line box of the role
+  // word, so the pill keeps its height. The triangle has padding with a
+  // negative margin: a larger target that does not grow the pill. Under
+  // reduced motion the spinner does not turn (see the media query below).
+  '.dez-role-separator__spinner': {
+    display: 'inline-block',
+    flex: 'none',
+    alignSelf: 'center',
+    verticalAlign: 'middle',
+    boxSizing: 'border-box',
+    width: '9px',
+    height: '9px',
+    marginRight: '6px',
+    border: '1.5px solid currentColor',
+    borderRightColor: 'transparent',
+    borderRadius: '50%',
+  },
+  '.dez-role-separator__disclosure': {
+    display: 'inline-block',
+    flex: 'none',
+    alignSelf: 'center',
+    verticalAlign: 'middle',
+    padding: '2px 4px',
+    margin: '-2px 2px -2px -4px',
+    fontSize: '9px',
+    lineHeight: '1',
+    letterSpacing: 'normal',
+  },
+  '.dez-role-separator__disclosure[aria-expanded="true"]': {
+    transform: 'rotate(90deg)',
+  },
+  // The thinking panel (`renderPillThinking` in thinkingPill.ts) takes its
+  // own row below the pill. A hidden mirror of the text and the read-only
+  // textarea share one grid cell, so the cell, and with it the textarea, is
+  // as tall as the text. Both need the same font, padding and wrapping
+  // rules for that. Past its max height the panel scrolls. The separator
+  // row is uppercase, letter-spaced and not selectable; the panel resets
+  // all three.
+  '.dez-role-separator[data-thinking-open]': {
+    flexWrap: 'wrap',
+  },
+  '.dez-role-separator__thinking': {
+    display: 'grid',
+    flex: '1 0 100%',
+    minWidth: '0',
+    maxHeight: '20em',
+    marginTop: '6px',
+    overflowY: 'auto',
+    overflowAnchor: 'none',
+    boxSizing: 'border-box',
+    border: '1px solid var(--color-border, #333)',
+    borderRadius: '8px',
+    background: 'var(--color-bg-subtle, rgba(127,127,127,0.08))',
+    color: 'var(--color-muted, #888)',
+    fontSize: '13px',
+    lineHeight: '1.5',
+    letterSpacing: 'normal',
+    textTransform: 'none',
+    cursor: 'auto',
+    userSelect: 'text',
+  },
+  '.dez-role-separator__thinking:focus-within': {
+    borderColor: 'var(--color-link, #4a9eff)',
+  },
+  '.dez-role-separator__thinking-mirror, .dez-role-separator__thinking-text': {
+    gridArea: '1 / 1',
+    boxSizing: 'border-box',
+    minWidth: '0',
+    margin: '0',
+    padding: '8px 12px',
+    border: 'none',
+    font: 'inherit',
+    letterSpacing: 'inherit',
+    whiteSpace: 'pre-wrap',
+    overflowWrap: 'anywhere',
+    wordBreak: 'normal',
+  },
+  '.dez-role-separator__thinking-mirror': {
+    visibility: 'hidden',
+  },
+  // A text that ends in a newline shows an empty last line in the textarea,
+  // but in the mirror only when something follows the newline.
+  '.dez-role-separator__thinking-mirror::after': {
+    content: '" "',
+  },
+  '.dez-role-separator__thinking-text': {
+    width: '100%',
+    height: '100%',
+    minHeight: '0',
+    resize: 'none',
+    overflow: 'hidden',
+    outline: 'none',
+    background: 'transparent',
+    color: 'inherit',
+    cursor: 'text',
+  },
   // "Generating" state of the pill whose response is streaming
   // (`data-streaming`): a soft ring around the pill breathes in and out,
   // and a highlight sweeps across the model name, both in the agent accent.
   // All of it is motion, so it applies only when the user has not asked for
   // reduced motion. The ring is a pseudo-element that animates only its
   // opacity. The name shimmer is a gradient clipped to the text: twice the
-  // name's width, so each loop is one sweep plus a pause. Streamed tokens
-  // keep the widget (`eq`), so the animations run without restarts until
-  // the stream ends.
+  // name's width, so each loop is one sweep plus a pause. Streamed text
+  // tokens keep the widget (`eq`), and `pillThinkingUpdater` changes the
+  // thinking parts in place, so the animations run without restarts until
+  // the stream ends. The left-slot spinner turns only here too.
   '@media (prefers-reduced-motion: no-preference)': {
+    '.dez-role-separator__spinner': {
+      animation: 'dez-role-pill-spin 0.9s linear infinite',
+    },
     '.dez-role-separator__label[data-streaming]::after': {
       content: '""',
       position: 'absolute',
@@ -1247,6 +1470,9 @@ export const dezTheme = EditorView.theme({
   '@keyframes dez-role-pill-shimmer': {
     '0%': { backgroundPosition: '200% 0' },
     '100%': { backgroundPosition: '0 0' },
+  },
+  '@keyframes dez-role-pill-spin': {
+    to: { transform: 'rotate(360deg)' },
   },
   '.dez-prompt-pill': {
     display: 'inline-flex',

@@ -6,12 +6,13 @@ import { click, waitFor } from './harness/dom'
 import { makeConversation, seedAppState, seedConversation } from './harness/fixtures'
 import { createSession, destroySession, type E2EBrowser } from './harness/session'
 
-// Throwaway verification spec for the provider-settings-popup task (TODO-4).
-// Drives the real app: gear button toggles the popup, Venice toggles mutate
-// persisted providerSettings, settings survive an app restart, and a
-// non-Venice provider shows the empty state. All interaction goes through
-// executed JS (harness click()/dispatched KeyboardEvent) because wry's
-// automation session rejects native WebDriver click/sendKeys.
+// Drives the real app: the gear button toggles the popup, the Venice
+// toggles (after the Thinking row, which comes first for every provider
+// with thinking) change the persisted providerSettings, the settings survive
+// an app restart, OpenRouter shows only the Thinking row, and a custom
+// provider without thinking shows the empty state. All interaction goes
+// through executed JS (harness click()/dispatched KeyboardEvent) because
+// wry's automation session rejects native WebDriver click/sendKeys.
 describe('provider settings popup', () => {
   let app: RunningApp
   let browser: E2EBrowser
@@ -42,9 +43,10 @@ describe('provider settings popup', () => {
     app = await startApp()
     try {
       // Seed a restored tab whose activeModel is a Grok Venice model (Grok
-      // keeps all four setting rows visible; non-Grok hides the X search
-      // row). The app's initial default tab is created before settings load,
-      // so defaultNewTabModel alone would leave activeModel null.
+      // keeps all four Venice setting rows visible; non-Grok hides the X
+      // search row). The app's initial default tab is created before
+      // settings load, so defaultNewTabModel alone would leave activeModel
+      // null.
       const veniceModel = { providerId: 'venice', modelId: 'grok-4-20', modelName: 'grok-4-20' }
       await seedConversation(app.home, makeConversation({ id: 'conv-e2e', activeModel: veniceModel }))
       await seedAppState(app.home, {
@@ -55,7 +57,18 @@ describe('provider settings popup', () => {
           activeModel: veniceModel,
           createdAt: Date.now()
         }],
-        activeTabId: 'tab-e2e'
+        activeTabId: 'tab-e2e',
+        // No settings and no thinking. It has no server, and with
+        // `fetchModels: false` the app never sends it a request.
+        customProviders: [{
+          id: 'plain',
+          name: 'Plain Mock',
+          baseUrl: 'http://127.0.0.1:9/v1',
+          apiFormat: 'openai',
+          models: [{ id: 'plain-model' }],
+          fetchModels: false,
+          auth: 'apiKey'
+        }]
       })
       browser = await createSession(app.binary, app.port)
     } catch (err) {
@@ -85,20 +98,23 @@ describe('provider settings popup', () => {
         (el) => el.textContent?.trim() ?? ''
       )
     )
-    expect(labels).toEqual(['Web search', 'X search', 'Web scraping', 'Venice system prompt'])
+    expect(labels).toEqual(['Thinking', 'Web search', 'X search', 'Web scraping', 'Venice system prompt'])
 
-    // Defaults: web search on, Venice system prompt off.
+    // Defaults: thinking on, web search on, Venice system prompt off.
     expect(await rowChecked(0)).toBe('true')
-    expect(await rowChecked(3)).toBe('false')
+    expect(await rowChecked(1)).toBe('true')
+    expect(await rowChecked(4)).toBe('false')
 
-    // Flip both and confirm the switch state updates in the UI.
+    // Flip all three and confirm the switch state updates in the UI.
     await browser.execute(() => {
       const rows = document.querySelectorAll<HTMLButtonElement>('.provider-settings-row')
       rows[0].click()
-      rows[3].click()
+      rows[1].click()
+      rows[4].click()
     })
     expect(await rowChecked(0)).toBe('false')
-    expect(await rowChecked(3)).toBe('true')
+    expect(await rowChecked(1)).toBe('false')
+    expect(await rowChecked(4)).toBe('true')
 
     // Escape closes the popup.
     await pressEscape()
@@ -110,7 +126,8 @@ describe('provider settings popup', () => {
       async () => {
         try {
           const state = JSON.parse(await fs.promises.readFile(stateFile, 'utf8'))
-          return state.providerSettings?.venice?.webSearch === false &&
+          return state.providerSettings?.venice?.thinking === false &&
+            state.providerSettings?.venice?.webSearch === false &&
             state.providerSettings?.venice?.veniceSystemPrompt === true
         } catch {
           return false
@@ -128,8 +145,9 @@ describe('provider settings popup', () => {
     await click(browser, '.model-selector-gear')
     await waitFor(browser, '.provider-settings-popup')
     expect(await rowChecked(0)).toBe('false')
-    expect(await rowChecked(1)).toBe('true')
-    expect(await rowChecked(3)).toBe('true')
+    expect(await rowChecked(1)).toBe('false')
+    expect(await rowChecked(2)).toBe('true')
+    expect(await rowChecked(4)).toBe('true')
     await pressEscape()
   })
 
@@ -138,16 +156,18 @@ describe('provider settings popup', () => {
     await click(browser, '.model-selector-gear')
     await waitFor(browser, '.provider-settings-popup')
     expect(await rowChecked(0)).toBe('false')
+    expect(await rowChecked(1)).toBe('false')
 
     try {
       await click(browser, '.provider-settings-reset')
 
-      // Switch states fall back to the Venice descriptor defaults (the
-      // first three on, Venice system prompt off).
+      // Switch states fall back to the defaults: Thinking and the first
+      // three Venice rows on, Venice system prompt off.
       expect(await rowChecked(0)).toBe('true')
       expect(await rowChecked(1)).toBe('true')
       expect(await rowChecked(2)).toBe('true')
-      expect(await rowChecked(3)).toBe('false')
+      expect(await rowChecked(3)).toBe('true')
+      expect(await rowChecked(4)).toBe('false')
     } finally {
       // Keep the popup closed for the next test even if an assertion fails.
       await pressEscape()
@@ -183,7 +203,7 @@ describe('provider settings popup', () => {
         (el) => el.textContent?.trim() ?? ''
       )
     )
-    expect(nonGrokLabels).toEqual(['Web search', 'Web scraping', 'Venice system prompt'])
+    expect(nonGrokLabels).toEqual(['Thinking', 'Web search', 'Web scraping', 'Venice system prompt'])
     await pressEscape()
 
     // Switch back to a Grok model: the X search row returns.
@@ -199,16 +219,32 @@ describe('provider settings popup', () => {
         (el) => el.textContent?.trim() ?? ''
       )
     )
-    expect(grokLabels).toEqual(['Web search', 'X search', 'Web scraping', 'Venice system prompt'])
+    expect(grokLabels).toEqual(['Thinking', 'Web search', 'X search', 'Web scraping', 'Venice system prompt'])
     await pressEscape()
   })
 
-  it('shows the empty state for a provider without settings', async () => {
-    // Switch the active tab's model to a non-Venice provider via the SBP
-    // bridge (window.sbp is exposed by src/main.ts).
+  it('shows only the Thinking row for OpenRouter, and the empty state for a provider without settings', async () => {
+    // Switch the active tab's model through the SBP bridge (window.sbp is
+    // exposed by src/main.ts). OpenRouter has no settings of its own, but it
+    // supports thinking.
     await browser.execute(() => {
       const w = window as unknown as { sbp: (sel: string, ...args: unknown[]) => unknown }
       w.sbp('dez.model/setActiveModel', 'openrouter', 'some/model', 'Some Model')
+    })
+
+    await click(browser, '.model-selector-gear')
+    await waitFor(browser, '.provider-settings-popup')
+    const openRouterView = await browser.execute(() => ({
+      header: document.querySelector('.provider-settings-header')?.textContent?.trim() ?? null,
+      labels: Array.from(document.querySelectorAll('.provider-settings-label')).map((el) => el.textContent?.trim() ?? ''),
+    }))
+    expect(openRouterView).toEqual({ header: 'OpenRouter', labels: ['Thinking'] })
+    expect(await rowChecked(0)).toBe('true')
+    await pressEscape()
+
+    await browser.execute(() => {
+      const w = window as unknown as { sbp: (sel: string, ...args: unknown[]) => unknown }
+      w.sbp('dez.model/setActiveModel', 'plain', 'plain-model', 'plain-model')
     })
 
     await click(browser, '.model-selector-gear')
@@ -216,7 +252,8 @@ describe('provider settings popup', () => {
     const text = await browser.execute(
       () => document.querySelector('.provider-settings-empty')?.textContent?.trim() ?? ''
     )
-    expect(text).toBe('No Settings for OpenRouter')
+    expect(text).toBe('No Settings for Plain Mock')
+    expect(await browser.execute(() => document.querySelector('.provider-settings-row') !== null)).toBe(false)
     await pressEscape()
   })
 

@@ -159,6 +159,7 @@ export default sbp('sbp/selectors/register', {
               SEPARATOR,
               { item: 'Cut' },
               { item: 'Copy' },
+              { text: 'Copy Markdown', accelerator: 'CmdOrCtrl+Shift+C', action: () => sbp('dez.editor/copyMarkdown') },
               { item: 'Paste' },
               isMacPlatform
                 ? { item: 'SelectAll' }

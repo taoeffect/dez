@@ -1,4 +1,4 @@
-import type { ActiveModel, ContentNode, ModelRef } from './chat/types'
+import type { ActiveModel, ContentNode, ModelRef, SectionThinking } from './chat/types'
 import type { ProviderConfig } from './providers/config'
 import type { Prompt } from './state/prompts'
 import type { DefaultModel, Theme } from './state/settings'
@@ -14,13 +14,13 @@ export interface ModelSnapshot {
       role: 'user' | 'agent'
       content: ContentNode[]
       model?: ModelRef
+      thinking?: SectionThinking
     }[]
     createdAt: number
   }[]
   activeTabId: string
   activeModel: ActiveModel | null
   settings: {
-    showPillSeparators: boolean
     theme: Theme
     customProviders: ProviderConfig[]
     defaultNewTabModel: DefaultModel | null

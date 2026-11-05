@@ -1,6 +1,8 @@
 import sbp from '@sbp/sbp'
-import { EditorSelection } from '@codemirror/state'
+import { EditorSelection, Transaction, type TransactionSpec } from '@codemirror/state'
 import { EditorView, runScopeHandlers } from '@codemirror/view'
+import type { SectionThinking } from '../../model/chat/types'
+import { SCROLLER_PADDING_PX, serializeSelectionAsMarkdown, setSectionThinkingEffect } from '../thread/cmEditor'
 import {
   createFindQuery,
   findMatchAt,
@@ -18,38 +20,64 @@ import { findState } from './findState'
 import { isModalOpen } from '../composables/useKeyboardShortcuts'
 import { isMacPlatform } from '../../utils/platform'
 
-const BOTTOM_FOLLOW_THRESHOLD_PX = 96
+/** Scroll positions can be fractions of a pixel: a view this close to its
+ *  bottom is at its bottom. */
+const AT_BOTTOM_PX = 1
+
+/** A scroll down that ends this close to the bottom starts the follow
+ *  again: the last line then shows in full. Ctrl+End stops in this zone,
+ *  because CodeMirror scrolls the caret into view with a 5 px margin,
+ *  which is less than the scroller's bottom padding. */
+const RESUME_FOLLOW_PX = SCROLLER_PADDING_PX
 
 let activeView: EditorView | null = null
 let activeViewTabId: string | null = null
 let activeScrollHandler: (() => void) | null = null
+/** The tab whose registered view follows the text that its stream adds. */
 let followingStreamTabId: string | null = null
-let streamingScrollRestorePending = false
+/** The scrollTop of the registered view at its last scroll event. */
+let lastScrollTop = 0
+let followFrameRequested = false
 
-function isNearScrollBottom(view: EditorView): boolean {
-  const scroll = view.scrollDOM
-  return scroll.scrollHeight - scroll.scrollTop - scroll.clientHeight <= BOTTOM_FOLLOW_THRESHOLD_PX
-}
-
-function scrollViewToBottomAfterLayout(view: EditorView): void {
+// In the next frame, after the browser laid out the changes, scroll the
+// registered view to its bottom if it still follows its stream then: a user
+// scroll up in between wins. One frame serves all changes before it.
+function followToBottomNextFrame(): void {
+  if (followFrameRequested) return
+  followFrameRequested = true
   requestAnimationFrame(() => {
-    if (activeView !== view) return
-    view.scrollDOM.scrollTop = view.scrollDOM.scrollHeight
+    followFrameRequested = false
+    if (!activeView || followingStreamTabId === null || followingStreamTabId !== activeViewTabId) return
+    activeView.scrollDOM.scrollTop = activeView.scrollDOM.scrollHeight
   })
 }
 
-function restoreScrollAfterLayout(view: EditorView, scrollTop: number): void {
-  streamingScrollRestorePending = true
-  requestAnimationFrame(() => {
-    if (activeView === view) view.scrollDOM.scrollTop = scrollTop
-    streamingScrollRestorePending = false
-  })
-}
-
+// A scroll up by the user stops the follow, and a scroll down to the bottom
+// starts it again. Only the user moves a view up while it is not at its
+// bottom: new text, the follow scroll, and CodeMirror's scroll anchoring
+// (it keeps the top line in place when the doc grows below it) never do.
+// So this one rule covers the wheel, the scrollbar, keys and find jumps.
+// The distance from the bottom alone cannot tell a user scroll from new
+// text, because a scroll event can come after more text arrived.
 function handleVisibleScroll(tabId: string): void {
   if (!activeView || activeViewTabId !== tabId) return
-  if (streamingScrollRestorePending) return
-  followingStreamTabId = isNearScrollBottom(activeView) ? tabId : null
+  const scroll = activeView.scrollDOM
+  const previousScrollTop = lastScrollTop
+  lastScrollTop = scroll.scrollTop
+  const fromBottom = scroll.scrollHeight - scroll.scrollTop - scroll.clientHeight
+  if (followingStreamTabId === tabId) {
+    // A shorter doc also moves a view up, but leaves it at its bottom.
+    if (scroll.scrollTop < previousScrollTop && fromBottom > AT_BOTTOM_PX) followingStreamTabId = null
+  } else if (scroll.scrollTop > previousScrollTop && fromBottom <= RESUME_FOLLOW_PX) {
+    followingStreamTabId = tabId
+  }
+}
+
+// A streamed change makes the doc taller. A view that follows the stream
+// then scrolls to the new bottom; any other view stays where it is.
+function dispatchStreamChange(view: EditorView, tabId: string, spec: TransactionSpec): void {
+  view.dispatch(spec)
+  if (followingStreamTabId === tabId) followToBottomNextFrame()
 }
 
 /** What `dez.editor/runKeyBinding` does while a native text field (an
@@ -88,6 +116,8 @@ function keydownForKeyName (name: string): KeyboardEvent {
 }
 
 export default sbp('sbp/selectors/register', {
+  /** A view that becomes visible does not follow a stream until the user
+   *  scrolls it to the bottom. */
   'dez.editor/registerActiveView' (tabId: string, view: EditorView): void {
     if (activeView && activeScrollHandler) {
       activeView.scrollDOM.removeEventListener('scroll', activeScrollHandler)
@@ -97,6 +127,7 @@ export default sbp('sbp/selectors/register', {
     activeScrollHandler = () => handleVisibleScroll(tabId)
     view.scrollDOM.addEventListener('scroll', activeScrollHandler, { passive: true })
     followingStreamTabId = null
+    lastScrollTop = view.scrollDOM.scrollTop
   },
 
   'dez.editor/unregisterActiveView' (tabId: string): void {
@@ -110,32 +141,49 @@ export default sbp('sbp/selectors/register', {
     followingStreamTabId = null
   },
 
+  /** When a reply starts in the visible tab, its view follows the reply,
+   *  wherever the user had scrolled to: the next frame scrolls it to the
+   *  bottom. Returns whether the tab is visible. */
   'dez.editor/startStreamingFollowIfVisible' (tabId: string): boolean {
     if (!activeView || activeViewTabId !== tabId) return false
-    followingStreamTabId = isNearScrollBottom(activeView) ? tabId : null
-    return followingStreamTabId === tabId
+    followingStreamTabId = tabId
+    followToBottomNextFrame()
+    return true
   },
 
   'dez.editor/appendTokenIfVisible' (tabId: string, _sectionId: string, token: string): boolean {
     if (!activeView || activeViewTabId !== tabId) return false
-    const view = activeView
-    const scrollTop = view.scrollDOM.scrollTop
-    const followBottom = followingStreamTabId === tabId
-    view.dispatch({
-      changes: { from: view.state.doc.length, insert: token },
+    dispatchStreamChange(activeView, tabId, {
+      changes: { from: activeView.state.doc.length, insert: token },
     })
-    if (followBottom) scrollViewToBottomAfterLayout(view)
-    else restoreScrollAfterLayout(view, scrollTop)
     return true
   },
 
+  /** Shows the new thinking of a streaming section in the registered view
+   *  of `tabId`, or removes it when `thinking` is absent. Does nothing and
+   *  returns false when another tab is visible. The store holds thinking
+   *  separately: the editor writes sections back to the store only on doc
+   *  changes, and this changes no doc text. Not an undo step: an undo must
+   *  not remove thinking that the stream still writes. */
+  'dez.editor/setSectionThinkingIfVisible' (tabId: string, sectionId: string, thinking?: SectionThinking): boolean {
+    if (!activeView || activeViewTabId !== tabId) return false
+    dispatchStreamChange(activeView, tabId, {
+      effects: setSectionThinkingEffect.of({ sectionId, ...(thinking && { thinking }) }),
+      annotations: Transaction.addToHistory.of(false),
+    })
+    return true
+  },
+
+  /** Ends the follow of the stream of `tabId`, and lets the editor of a
+   *  visible tab rebuild its state from the store. The event tells the
+   *  editor whether the view still followed the stream: only then does the
+   *  rebuild scroll to the bottom, else it keeps the user's scroll
+   *  position. */
   'dez.editor/reconcileAfterStreamFinish' (tabId: string): void {
-    if (followingStreamTabId === tabId && activeView && activeViewTabId === tabId) {
-      scrollViewToBottomAfterLayout(activeView)
-    }
-    if (followingStreamTabId === tabId) followingStreamTabId = null
+    const following = followingStreamTabId === tabId
+    if (following) followingStreamTabId = null
     if (activeViewTabId !== tabId) return
-    sbp('okTurtles.events/emit', 'dez.editor.stream-finished', tabId)
+    sbp('okTurtles.events/emit', 'dez.editor.stream-finished', tabId, following)
   },
 
   /** Cmd/Ctrl+F: open the find dropdown (or refocus it), prefilled from the
@@ -245,5 +293,28 @@ export default sbp('sbp/selectors/register', {
     if (!view || (isModalOpen() && !view.hasFocus)) return false
     if (inTextField !== 'editor' && !view.hasFocus) view.focus()
     return runScopeHandlers(view, keydownForKeyName(key), 'editor')
+  },
+
+  /** Copy Markdown (Cmd/Ctrl+Shift+C): copy the editor selection as plain
+   *  Markdown (`serializeSelectionAsMarkdown`). On Linux the menu
+   *  accelerator takes this key from every field, so a focused text field
+   *  (the find field, a thinking panel) copies its own selected text as is.
+   *  A password field gives nothing, as it does to a normal copy. Focus
+   *  decides, not an open modal: with focus anywhere else, nothing is
+   *  copied. Returns whether it copied. */
+  'dez.editor/copyMarkdown' (): boolean {
+    const focused = document.activeElement
+    let text = ''
+    if (focused instanceof HTMLInputElement || focused instanceof HTMLTextAreaElement) {
+      const { selectionStart, selectionEnd } = focused
+      if (focused.type !== 'password' && selectionStart !== null && selectionEnd !== null) {
+        text = focused.value.slice(selectionStart, selectionEnd)
+      }
+    } else if (activeView?.hasFocus) {
+      text = serializeSelectionAsMarkdown(activeView.state)
+    }
+    if (text === '') return false
+    sbp('dez.ui/copyText', text).catch((error: unknown) => console.error('Copy Markdown failed:', error))
+    return true
   },
 })

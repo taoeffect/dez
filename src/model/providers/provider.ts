@@ -1,12 +1,22 @@
+import type { JsonObject } from '../../utils/json'
 import type { NativeHttpHeaders, NativeHttpRequest } from '../../utils/protocol/nativeHttp'
 import type { Secret } from '../../utils/secret'
 import { API_FORMATS, type ApiFormat } from './apiFormats'
-import type { ProviderConfig, ProviderSettingDef } from './config'
+import { FORBIDDEN_BODY_KEYS, type ProviderConfig, type ProviderSettingDef } from './config'
 import { isRecord, modelData } from './modelParsing'
+import { isThinkingEnabled } from './thinking'
 import { providerModel, type ChatMessage, type ModelInfo, type ProviderInfo } from './types'
 
 export interface ProviderOptions {
   builtIn: boolean
+}
+
+export interface ProviderChatRequest {
+  request: NativeHttpRequest
+  // Set only when the request asks for thinking: then the reply's thinking
+  // is shown and kept. `prefixHash` (thinking.ts) goes into a signed replay
+  // that the reply makes.
+  thinking?: { prefixHash: string }
 }
 
 // A server that accepts the connection but never answers (a stuck local
@@ -36,6 +46,12 @@ export class Provider {
     return this.builtIn
   }
 
+  // An empty `thinking` object counts: it asks for the format's default
+  // request.
+  get supportsThinking(): boolean {
+    return this.config.thinking !== undefined
+  }
+
   // `keyIds`: the providers with a stored key, as dez.native/getConfiguredProviderIds
   // reports them (GitHub Copilot counts when the user is signed in).
   info(keyIds: ReadonlySet<string>): ProviderInfo {
@@ -50,6 +66,7 @@ export class Provider {
       baseUrl: this.config.baseUrl,
       hasKey,
       configured: hasKey || !this.requiresKey,
+      supportsThinking: this.supportsThinking,
     }
   }
 
@@ -111,13 +128,18 @@ export class Provider {
 
   // `overrides` are the user's stored toggle values for this provider
   // (settings.providerSettings[id]); missing keys use the setting default.
+  // The Thinking toggle is one of them (thinking.ts).
   chatRequest(
     messages: ChatMessage[],
     modelId: string,
     secret: Secret<string> | null,
     overrides: Record<string, boolean> = {},
-  ): NativeHttpRequest {
-    const body = this.format.chatBody(messages, modelId, this.config)
+  ): ProviderChatRequest {
+    const thinking = this.config.thinking
+    const thinkingOn = thinking !== undefined && isThinkingEnabled(overrides)
+    // Earlier thinking goes back only in a request that asks for thinking.
+    const sentMessages = thinkingOn ? messages : messages.map(({ role, content }) => ({ role, content }))
+    const { body, prefixHash } = this.format.chatBody(sentMessages, modelId, this.config)
 
     // Every setting is written, also the ones hidden for this model, so the
     // body does not depend on which toggles the popup shows.
@@ -127,11 +149,19 @@ export class Provider {
       writeBodyPath(body, setting.bodyPath, enabled ? (setting.onValue ?? true) : (setting.offValue ?? false))
     }
 
+    // After the settings, so a thinking body can add to an object that a
+    // setting made, such as Venice's `venice_parameters`.
+    const thinkingBody = thinkingOn ? (thinking.enabledBody ?? this.format.thinkingBody) : thinking?.disabledBody
+    if (thinkingBody) mergeBodyPart(body, thinkingBody)
+
     return {
-      method: 'POST',
-      url: this.format.chatUrl(this.config.baseUrl),
-      headers: this.requestHeaders(secret, { 'Content-Type': 'application/json' }),
-      body: JSON.stringify(body),
+      request: {
+        method: 'POST',
+        url: this.format.chatUrl(this.config.baseUrl),
+        headers: this.requestHeaders(secret, { 'Content-Type': 'application/json' }),
+        body: JSON.stringify(body),
+      },
+      ...(thinkingOn && { thinking: { prefixHash } }),
     }
   }
 
@@ -184,4 +214,24 @@ function writeBodyPath(body: Record<string, unknown>, path: string, value: unkno
   }
 
   target[segments[segments.length - 1]] = value
+}
+
+// Deep-merges a config body part into the chat body: plain objects merge key
+// by key, and other values (scalars, arrays) replace. Nested objects of the
+// part are merged into new objects of the body, never put into it, so a
+// later write cannot change the config. Arrays are put in as they are, as
+// nothing writes into them before the body is serialized.
+function mergeBodyPart(target: Record<string, unknown>, part: JsonObject): void {
+  for (const [key, value] of Object.entries(part)) {
+    if (FORBIDDEN_BODY_KEYS.has(key)) continue
+
+    if (isRecord(value)) {
+      const existing = Object.hasOwn(target, key) ? target[key] : undefined
+      const nested = isRecord(existing) ? existing : {}
+      target[key] = nested
+      mergeBodyPart(nested, value as JsonObject)
+    } else {
+      target[key] = value
+    }
+  }
 }

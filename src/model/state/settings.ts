@@ -11,7 +11,6 @@ export interface DefaultModel {
 }
 
 export const useSettingsStore = defineStore('settings', () => {
-  const showPillSeparators = ref(true)
   const theme = ref<Theme>('system')
   // User-defined providers, already validated by customProviderConfigSchema.
   // Built-ins are not stored here; they are literals in providers/builtins.ts.
@@ -27,10 +26,6 @@ export const useSettingsStore = defineStore('settings', () => {
   const settingsOpen = ref(false)
   const settingsSection = ref<SettingsSection>('general')
   const historyOpen = ref(false)
-
-  function togglePillSeparators() {
-    showPillSeparators.value = !showPillSeparators.value
-  }
 
   function setTheme(t: Theme) {
     theme.value = t
@@ -89,7 +84,6 @@ export const useSettingsStore = defineStore('settings', () => {
   }
 
   return {
-    showPillSeparators,
     theme,
     customProviders,
     defaultNewTabModel,
@@ -101,7 +95,6 @@ export const useSettingsStore = defineStore('settings', () => {
     settingsOpen,
     settingsSection,
     historyOpen,
-    togglePillSeparators,
     setTheme,
     setDefaultNewTabModel,
     setLastUsedModel,

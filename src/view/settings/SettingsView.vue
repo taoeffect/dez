@@ -76,6 +76,7 @@ const shortcuts = [
   { keys: 'Ctrl + Shift + Down', action: 'Add cursor on line below' },
   { keys: 'Cmd/Ctrl + Z', action: 'Undo' },
   { keys: 'Cmd/Ctrl + Shift + Z', action: 'Redo' },
+  { keys: 'Cmd/Ctrl + Shift + C', action: 'Copy Markdown (no pills or thinking)' },
   ...(isMacPlatform ? [] : [{ keys: 'Alt + A', action: 'Select all (Ctrl + A moves to line start)' }]),
   { keys: 'Cmd/Ctrl + F', action: 'Find and replace' },
   { keys: 'Cmd/Ctrl + G', action: 'Next match (or Enter in find field)' },
@@ -167,17 +168,6 @@ function onOverlayClick(e: MouseEvent) {
                   {{ t.label }}
                 </button>
               </div>
-            </div>
-
-            <div class="settings-row">
-              <label class="settings-label">Show role pill separators</label>
-              <button
-                class="settings-toggle"
-                :class="{ 'settings-toggle--on': settings.showPillSeparators }"
-                @click="sbp('dez.model/settings/togglePillSeparators')"
-              >
-                <span class="settings-toggle-knob" />
-              </button>
             </div>
           </div>
 

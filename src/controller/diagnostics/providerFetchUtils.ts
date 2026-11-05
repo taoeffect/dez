@@ -1,5 +1,5 @@
 import sbp from '@sbp/sbp'
-import { requireProvider, type ModelInfo, type Provider, type ProviderId, type ProviderInfo } from '../../model/providers'
+import { requireProvider, type ModelInfo, type Provider, type ProviderId, type ProviderInfo, type SseTokenEvent } from '../../model/providers'
 import { decodeSseData } from '../../utils/protocol/sse'
 import type { ProviderFetchProbeResult } from './providerFetchTypes'
 
@@ -61,19 +61,31 @@ export function selectProbeModel(
   return listedModel?.id ?? ''
 }
 
+// Thinking text counts too: a model that thinks first sends it before any
+// answer text.
 export async function readFirstToken(provider: Provider, chunks: AsyncIterable<Uint8Array>): Promise<boolean> {
-  for await (const data of decodeSseData(chunks)) {
-    for (const event of provider.format.parseSseData(data)) {
+  const parser = provider.format.createStreamParser(provider.supportsThinking)
+  let ended = false
+  const hasToken = (events: SseTokenEvent[]): boolean => {
+    for (const event of events) {
       if (event.kind === 'done') {
+        ended = true
         return false
       }
-
-      if (event.token.length > 0) {
-        return true
-      }
+      if (event.token.length > 0) return true
     }
+    return false
   }
 
+  for await (const data of decodeSseData(chunks)) {
+    if (hasToken(parser.parse(data))) return true
+    if (ended) break
+  }
+
+  // Text held back for a possible inline tag comes out only at the end, also
+  // when the stream ended with `[DONE]`.
+  if (hasToken(parser.finish().events)) return true
+  if (ended) return false
   throw new Error('No token received before stream ended')
 }
 

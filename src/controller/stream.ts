@@ -1,9 +1,12 @@
 import sbp from '@sbp/sbp'
-import type { ActiveModel } from '../model/chat/types'
+import type { ActiveModel, SectionThinking } from '../model/chat/types'
+import type { ProviderStreamChatResult } from '../model/providers'
 import type { StreamMessage, StreamSessionState } from '../model/streams/types'
 import {
+  appendThinkingToTabSection,
   appendTokenToTabSection,
   finalizeStreamSectionForTab,
+  setThinkingReplayForTabSection,
   type SettingsSnapshot,
 } from '../model/state'
 import {
@@ -38,12 +41,28 @@ function finalizeStream(tabId: string, session: StreamSessionState | null, error
   sbp('dez.model/appState/save')
 }
 
-function receiveToken(tabId: string, sectionId: string, token: string): StreamSessionState | null {
+// The tab's stream session still writes into `sectionId`.
+function streamWritesSection(tabId: string, sectionId: string): boolean {
   const session = streamSession(tabId)
-  if (!session || session.sectionId !== sectionId || session.status !== 'streaming') return session
+  return !!session && session.sectionId === sectionId && session.status === 'streaming'
+}
+
+function receiveToken(tabId: string, sectionId: string, token: string): void {
+  if (!streamWritesSection(tabId, sectionId)) return
   appendTokenToTabSection(tabId, sectionId, token)
   sbp('dez.editor/appendTokenIfVisible', tabId, sectionId, token)
-  return receiveStreamToken(tabId, token)
+  receiveStreamToken(tabId, token)
+}
+
+// `change` updates the thinking of the streaming section in the store; the
+// editor then gets the new thinking in the same tick, so the editor's
+// section watcher finds both copies equal. Thinking is not answer text, so
+// it does not count in the session's token count. The store changes for a
+// tab in the background too; its editor reads the store when it is shown.
+function updateStreamThinking(tabId: string, sectionId: string, change: () => SectionThinking | null): void {
+  if (!streamWritesSection(tabId, sectionId)) return
+  const thinking = change()
+  if (thinking) sbp('dez.editor/setSectionThinkingIfVisible', tabId, sectionId, thinking)
 }
 
 function finishStream(tabId: string): StreamSessionState | null {
@@ -80,6 +99,7 @@ export default sbp('sbp/selectors/register', {
 
     const requestId = crypto.randomUUID()
     nativeStreamsByTab.set(args.tabId, { requestId, cancelling: false })
+    const isCurrentRequest = () => nativeStreamsByTab.get(args.tabId)?.requestId === requestId
 
     startStreamSession({
       tabId: args.tabId,
@@ -96,23 +116,33 @@ export default sbp('sbp/selectors/register', {
       .providerSettings[args.model.providerId]
 
     try {
-      await sbp('dez.provider/streamChat', {
+      const result = await sbp('dez.provider/streamChat', {
         providerId: args.model.providerId,
         modelId: args.model.modelId,
         messages: args.messages.map((message) => ({
           role: message.role,
           content: message.content,
+          ...(message.thinking && { thinking: message.thinking }),
         })),
         requestId,
         providerSettings,
         onToken: (token: string) => {
-          if (nativeStreamsByTab.get(args.tabId)?.requestId !== requestId) return
+          if (!isCurrentRequest()) return
           receiveToken(args.tabId, args.sectionId, token)
         },
-      })
+        onThinking: (token: string) => {
+          if (!isCurrentRequest()) return
+          updateStreamThinking(args.tabId, args.sectionId, () => appendThinkingToTabSection(args.tabId, args.sectionId, token))
+        },
+      }) as ProviderStreamChatResult
 
       const currentStream = nativeStreamsByTab.get(args.tabId)
       if (currentStream?.requestId === requestId && !currentStream.cancelling) {
+        // Before the finish, which saves the conversation.
+        const replay = result.thinkingReplay
+        if (replay) {
+          updateStreamThinking(args.tabId, args.sectionId, () => setThinkingReplayForTabSection(args.tabId, args.sectionId, replay))
+        }
         finishStream(args.tabId)
       }
     } catch (error) {
@@ -121,7 +151,7 @@ export default sbp('sbp/selectors/register', {
         errorStream(args.tabId, error instanceof Error ? error.message : String(error))
       }
     } finally {
-      if (nativeStreamsByTab.get(args.tabId)?.requestId === requestId) {
+      if (isCurrentRequest()) {
         nativeStreamsByTab.delete(args.tabId)
       }
     }

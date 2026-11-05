@@ -5,6 +5,7 @@ import { useModelState } from '../modelState'
 import type { ApiFormatId, ProviderConfig, ProviderInfo } from '../../model/providers'
 import { API_FORMATS } from '../../model/providers/apiFormats'
 import { customProviderConfigSchema } from '../../model/providers/config'
+import { isThinkingEnabled, THINKING_SETTING_KEY } from '../../model/providers/thinking'
 
 interface CopilotDeviceFlowViewState {
   userCode: string
@@ -43,6 +44,10 @@ const selectedConfig = computed<ProviderConfig | null>(
   () => settings.value.customProviders.find((config) => config.id === selectedId.value) ?? null,
 )
 const isChecking = computed(() => selectedId.value !== null && modelCacheChecking.value.includes(selectedId.value))
+// The same stored value as the Thinking row of the model picker's popup.
+const thinkingEnabled = computed(
+  () => isThinkingEnabled(selectedId.value ? settings.value.providerSettings[selectedId.value] : undefined),
+)
 
 const nameDraft = ref('')
 const nameError = ref<string | null>(null)
@@ -211,6 +216,22 @@ function removeModel(index: number) {
 function toggleFetchModels() {
   const config = selectedConfig.value
   if (config) saveConfig({ ...config, fetchModels: !config.fetchModels })
+}
+
+// Checked stores an empty `thinking` object: thinking with the API format's
+// default requests. Unchecked removes the key, with any request bodies added
+// to app_state.json by hand.
+function toggleSupportsThinking() {
+  const config = selectedConfig.value
+  if (!config) return
+  const { thinking, ...withoutThinking } = config
+  saveConfig(thinking ? withoutThinking : { ...config, thinking: {} })
+}
+
+function toggleThinking() {
+  if (selectedId.value) {
+    sbp('dez.model/settings/setProviderSetting', selectedId.value, THINKING_SETTING_KEY, !thinkingEnabled.value)
+  }
 }
 
 // `key` null removes the stored key.
@@ -535,6 +556,33 @@ onBeforeUnmount(() => {
         </div>
       </div>
 
+      <div v-if="selectedConfig || selectedInfo.supportsThinking" class="provider-field">
+        <span id="provider-thinking-label" class="provider-field-label">Thinking</span>
+        <label v-if="selectedConfig" class="provider-checkbox-row">
+          <input
+            type="checkbox"
+            class="provider-supports-thinking-checkbox"
+            :checked="selectedConfig.thinking !== undefined"
+            @change="toggleSupportsThinking"
+          />
+          Supports thinking
+        </label>
+        <div v-if="selectedInfo.supportsThinking" class="provider-field-row provider-field-row--between">
+          <span id="provider-thinking-toggle-text" class="provider-toggle-label">Ask for, show, and send back the model's thinking</span>
+          <button
+            class="settings-toggle provider-thinking-toggle"
+            :class="{ 'settings-toggle--on': thinkingEnabled }"
+            role="switch"
+            aria-labelledby="provider-thinking-label"
+            aria-describedby="provider-thinking-toggle-text"
+            :aria-checked="thinkingEnabled"
+            @click="toggleThinking"
+          >
+            <span class="settings-toggle-knob" />
+          </button>
+        </div>
+      </div>
+
       <p v-if="saveError" class="settings-error">{{ saveError }}</p>
 
       <div v-if="!selectedInfo.builtIn" class="provider-danger">
@@ -821,6 +869,20 @@ onBeforeUnmount(() => {
 
 .provider-toggle-label {
   font-size: 13px;
+}
+
+.provider-checkbox-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 13px;
+  cursor: pointer;
+}
+
+.provider-checkbox-row input {
+  margin: 0;
+  accent-color: var(--color-accent);
+  cursor: pointer;
 }
 
 .provider-models-status {

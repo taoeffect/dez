@@ -2,7 +2,8 @@
 import { computed } from 'vue'
 import sbp from '@sbp/sbp'
 import { useModelState } from '../modelState'
-import type { ProviderSettingDef } from '../../model/providers'
+import type { ProviderSettingsDescriptor } from '../../model/providers'
+import { THINKING_DEFAULT, THINKING_SETTING_KEY } from '../../model/providers/thinking'
 
 const { activeModel, settings } = useModelState()
 
@@ -13,14 +14,21 @@ const descriptor = computed(() => {
   const providerId = activeModel.value?.providerId
   if (!providerId) return null
   return sbp('dez.provider/settingsDescriptor', providerId, activeModel.value?.modelId ?? '') as
-    { name: string, settings: ProviderSettingDef[] } | null
+    ProviderSettingsDescriptor | null
 })
 
 const providerName = computed(
   () => descriptor.value?.name ?? activeModel.value?.providerId ?? '',
 )
 
-const settingDefs = computed(() => descriptor.value?.settings ?? [])
+// The Thinking toggle comes first. It is stored with the config's toggles,
+// so the rows share one code path, and "Reset to defaults" resets it too.
+const settingDefs = computed(() => {
+  const defs = descriptor.value?.settings ?? []
+  return descriptor.value?.supportsThinking
+    ? [{ key: THINKING_SETTING_KEY, label: 'Thinking', default: THINKING_DEFAULT }, ...defs]
+    : defs
+})
 
 // Effective value: stored override if the user ever flipped the toggle,
 // otherwise the descriptor default (stored settings are sparse).

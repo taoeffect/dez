@@ -3,7 +3,7 @@ import type { EditorView } from '@codemirror/view'
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from 'vitest'
 import { Key } from 'webdriverio'
 import { startApp, type RunningApp } from './harness/app'
-import { click, consoleErrors, resetConsoleErrors, screenshotOnFailure, typeInto, waitFor, waitForValue } from './harness/dom'
+import { click, closeSettings, consoleErrors, resetConsoleErrors, screenshotOnFailure, typeInto, waitFor, waitForValue } from './harness/dom'
 import { seedRawAppState } from './harness/fixtures'
 import { replyText, sendChatReply, startMockServer, type MockServer } from './harness/mockServer'
 import { createSession, destroySession, type E2EBrowser } from './harness/session'
@@ -159,11 +159,6 @@ describe('custom providers', () => {
   async function openProviderSettings (): Promise<void> {
     await sbpCall(browser, 'dez.model/settings/open', 'providers')
     await waitFor(browser, '.provider-manager .provider-row', 10_000)
-  }
-
-  async function closeSettings (): Promise<void> {
-    await browser.keys([Key.Escape])
-    await waitForValue(browser, 'Settings open', () => browser.execute(() => document.querySelector('.provider-manager') !== null), false)
   }
 
   // Types into a Settings field and commits it with Enter, the way the
@@ -335,7 +330,7 @@ describe('custom providers', () => {
           : '2 models available',
       })
     }
-    await closeSettings()
+    await closeSettings(browser)
   })
 
   it('adds, edits, and deletes a custom provider in Settings › Providers', async () => {
@@ -475,6 +470,6 @@ describe('custom providers', () => {
       return Array.isArray(saved) ? saved.map((config) => config.id) : null
     }, ['local', 'keyed'])
     expect(await sbpCall(browser, 'dez.native/getConfiguredProviderIds')).not.toContain(addedId)
-    await closeSettings()
+    await closeSettings(browser)
   })
 })

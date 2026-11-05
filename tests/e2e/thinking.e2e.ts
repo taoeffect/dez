@@ -1,0 +1,735 @@
+import fs from 'node:fs'
+import type http from 'node:http'
+import type { EditorView } from '@codemirror/view'
+import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from 'vitest'
+import { Key } from 'webdriverio'
+import { startApp, type RunningApp } from './harness/app'
+import { click, closeSettings, consoleErrors, resetConsoleErrors, screenshotOnFailure, waitFor, waitForValue } from './harness/dom'
+import { conversationFilePath, makeConversation, seedConversation, seedRawAppState } from './harness/fixtures'
+import { startEventStream, startMockServer, writeChatFrame, type MockServer } from './harness/mockServer'
+import { createSession, destroySession, type E2EBrowser } from './harness/session'
+import { activeTabStreaming, pickModel, sbpCall, submit, threadSections, waitForThread } from './harness/thread'
+
+// Model thinking, driven through the real app against a mock server in this
+// process: the thinking parts of the agent pill, the saved container marker,
+// the send-back of earlier thinking, both Thinking toggles, the "Supports
+// thinking" checkbox of custom providers, and Copy Markdown.
+//
+// Three custom providers share the mock, each under its own path prefix.
+// "Thinker Mock" (OpenAI format) and "Claude Mock" (Anthropic format) are
+// seeded with `thinking: {}`. "Plain Mock" (OpenAI format) has no thinking
+// until the checkbox test turns it on. Both OpenAI routes stream
+// `reasoning_content` before the answer, so a reply to a provider without
+// thinking shows that the app ignores it. `fetchModels: false` keeps the
+// model lists to the configs, so the mock serves only chat requests.
+//
+// One app session serves the whole file. The Thinker tests run in order in
+// the first tab: each builds on the replies of the one before.
+
+const THINKER = { id: 'thinker', name: 'Thinker Mock', modelId: 'think-model', modelName: 'Think Model' }
+const PLAIN = { id: 'plain', name: 'Plain Mock', modelId: 'plain-model', modelName: 'Plain Model' }
+const CLAUDE = { id: 'claude', name: 'Claude Mock', modelId: 'claude-model', modelName: 'Claude Model' }
+
+const THINKER_CHAT = '/thinker/v1/chat/completions'
+const PLAIN_CHAT = '/plain/v1/chat/completions'
+const CLAUDE_CHAT = '/claude/v1/messages'
+
+const FIELD_REPLAY = { kind: 'field', field: 'reasoning_content' }
+
+// The two parts of the thinking of the nth reply of an OpenAI route, in
+// stream order. The second part adds lines, so an open panel grows while
+// the reply streams.
+function thinkingParts (n: number): [string, string] {
+  return [`Plan ${n}:`, '\n- read the question\n- write the answer']
+}
+
+function thinkingText (n: number): string {
+  return thinkingParts(n).join('')
+}
+
+function answerText (n: number): string {
+  return `Answer ${n}.`
+}
+
+function claudeBlock (n: number): { type: 'thinking', thinking: string, signature: string } {
+  return { type: 'thinking', thinking: `Claude plan ${n}.`, signature: `sig-${n}` }
+}
+
+function claudeAnswer (n: number): string {
+  return `Claude answer ${n}.`
+}
+
+// The thinking that the store holds for the nth Claude reply: the shown text
+// and the signed replay with the prefix hash of the messages before it.
+function claudeThinking (n: number): unknown {
+  return {
+    text: claudeBlock(n).thinking,
+    replay: { kind: 'anthropicBlocks', blocks: [claudeBlock(n)], prefixHash: expect.any(String) },
+  }
+}
+
+// The lines that the conversation file holds for the nth Thinker reply: the
+// container marker with the replay and the exact thinking text, then the
+// answer. The last line is the blank line before the next marker.
+function savedThinkerReply (n: number): string[] {
+  return [
+    `<dez:pill type="agent" model="${THINKER.id}/${THINKER.modelId}" replay="{&quot;kind&quot;:&quot;field&quot;,&quot;field&quot;:&quot;reasoning_content&quot;}">`,
+    ...thinkingText(n).split('\n'),
+    '</dez:pill>',
+    answerText(n),
+    '',
+  ]
+}
+
+interface MockRequest {
+  path: string
+  body: Record<string, unknown>
+}
+
+interface MockState {
+  requests: MockRequest[]
+  /** An OpenAI reply waits at each of its pause points for the next of
+   *  these promises, while any are left. */
+  pauses: Array<Promise<void>>
+}
+
+/** What the thinking parts of one role pill show. */
+interface PillThinkingView {
+  role: string
+  /** The left slot of the pill. */
+  slot: 'spinner' | 'disclosure' | null
+  /** `aria-expanded` of the disclosure triangle. */
+  expanded: string | null
+  /** `data-thinking-open` is set on the separator. */
+  open: boolean
+  /** The text of the panel's text field, or null without a panel. */
+  panelText: string | null
+}
+
+interface Gate {
+  opened: Promise<void>
+  open: () => void
+}
+
+function gate (): Gate {
+  let open = (): void => {}
+  const opened = new Promise<void>((resolve) => { open = resolve })
+  return { opened, open }
+}
+
+// Streams the nth reply of an OpenAI route: the two thinking parts as
+// `reasoning_content`, then the answer with a `finish_reason`, then
+// `[DONE]`. It pauses before each part and before the answer.
+async function sendOpenAiReply (res: http.ServerResponse, n: number, state: MockState): Promise<void> {
+  startEventStream(res)
+  for (const part of thinkingParts(n)) {
+    await state.pauses.shift()
+    writeChatFrame(res, { reasoning_content: part })
+  }
+  await state.pauses.shift()
+  writeChatFrame(res, { content: 'Answer' })
+  writeChatFrame(res, { content: ` ${n}.` }, 'stop')
+  res.end('data: [DONE]\n\n')
+}
+
+// Streams the nth reply of the Anthropic route: one signed thinking block,
+// then the answer block.
+function sendAnthropicReply (res: http.ServerResponse, n: number): void {
+  startEventStream(res)
+  const event = (data: Record<string, unknown>): void => {
+    res.write(`event: ${String(data.type)}\ndata: ${JSON.stringify(data)}\n\n`)
+  }
+  const block = claudeBlock(n)
+  event({
+    type: 'message_start',
+    message: { id: `msg_${n}`, type: 'message', role: 'assistant', model: CLAUDE.modelId, content: [], stop_reason: null, usage: { input_tokens: 1, output_tokens: 1 } },
+  })
+  event({ type: 'content_block_start', index: 0, content_block: { type: 'thinking', thinking: '', signature: '' } })
+  event({ type: 'content_block_delta', index: 0, delta: { type: 'thinking_delta', thinking: block.thinking } })
+  event({ type: 'content_block_delta', index: 0, delta: { type: 'signature_delta', signature: block.signature } })
+  event({ type: 'content_block_stop', index: 0 })
+  event({ type: 'content_block_start', index: 1, content_block: { type: 'text', text: '' } })
+  event({ type: 'content_block_delta', index: 1, delta: { type: 'text_delta', text: claudeAnswer(n) } })
+  event({ type: 'content_block_stop', index: 1 })
+  event({ type: 'message_delta', delta: { stop_reason: 'end_turn' }, usage: { output_tokens: 5 } })
+  event({ type: 'message_stop' })
+  res.end()
+}
+
+// Answers only the chat requests of the three providers, and records them.
+async function startThinkingMock (state: MockState): Promise<MockServer> {
+  return startMockServer(async (req, res, body) => {
+    const path = req.url ?? ''
+    if (req.method !== 'POST' || ![THINKER_CHAT, PLAIN_CHAT, CLAUDE_CHAT].includes(path)) {
+      res.writeHead(404, { 'Content-Type': 'text/plain' })
+      res.end('not found')
+      return
+    }
+    state.requests.push({ path, body: JSON.parse(body) as Record<string, unknown> })
+    const n = state.requests.filter((request) => request.path === path).length
+    if (path === CLAUDE_CHAT) sendAnthropicReply(res, n)
+    else await sendOpenAiReply(res, n, state)
+  })
+}
+
+describe('thinking', () => {
+  let app: RunningApp
+  let browser: E2EBrowser
+  let server: MockServer
+  let stateFile = ''
+  const mock: MockState = { requests: [], pauses: [] }
+
+  function requestBodies (path: string): Array<Record<string, unknown>> {
+    return mock.requests.filter((request) => request.path === path).map((request) => request.body)
+  }
+
+  // The saved Plain Mock config as the app writes it, without `thinking`.
+  function savedPlainConfig (): Record<string, unknown> {
+    return {
+      id: PLAIN.id,
+      name: PLAIN.name,
+      baseUrl: `${server.url}/${PLAIN.id}/v1`,
+      apiFormat: 'openai',
+      models: [{ id: PLAIN.modelId, name: PLAIN.modelName }],
+      fetchModels: false,
+      auth: 'apiKey',
+    }
+  }
+
+  async function savedState (): Promise<{ providerSettings?: Record<string, unknown>, customProviders?: Array<Record<string, unknown>> }> {
+    try {
+      return JSON.parse(await fs.promises.readFile(stateFile, 'utf8'))
+    } catch {
+      return {}
+    }
+  }
+
+  async function savedProviderSettings (providerId: string): Promise<unknown> {
+    return (await savedState()).providerSettings?.[providerId] ?? null
+  }
+
+  async function savedCustomProvider (providerId: string): Promise<unknown> {
+    return (await savedState()).customProviders?.find((config) => config.id === providerId) ?? null
+  }
+
+  // The lines of each agent section in the active tab's conversation file,
+  // from its marker line to the next marker, or null while the file does
+  // not exist.
+  async function savedAgentReplies (): Promise<string[][] | null> {
+    const tab = await sbpCall(browser, 'dez.model/tab', await sbpCall(browser, 'dez.model/tabs/activeId')) as { conversationId: string }
+    let content: string
+    try {
+      content = await fs.promises.readFile(conversationFilePath(app.home, tab.conversationId), 'utf8')
+    } catch {
+      return null
+    }
+    const replies: string[][] = []
+    let reply: string[] | null = null
+    for (const line of content.split('\n')) {
+      if (line.startsWith('<dez:pill type="user"')) {
+        reply = null
+      } else if (line.startsWith('<dez:pill type="agent"')) {
+        reply = [line]
+        replies.push(reply)
+      } else {
+        reply?.push(line)
+      }
+    }
+    return replies
+  }
+
+  // The thinking of each section of the active tab in the store.
+  async function storedThinking (): Promise<unknown[]> {
+    return browser.execute(() => {
+      const sbp = Reflect.get(window, 'sbp') as (selector: string, ...args: unknown[]) => unknown
+      const sections = sbp('dez.model/thread/sections') as Array<{ thinking?: unknown }>
+      return sections.map((section) => section.thinking ? JSON.parse(JSON.stringify(section.thinking)) as unknown : null)
+    })
+  }
+
+  async function pillThinking (index: number): Promise<PillThinkingView | null> {
+    return browser.execute((sectionIndex: number) => {
+      const separator = document.querySelector<HTMLElement>(`.cm-content .dez-role-separator[data-section-index="${sectionIndex}"]`)
+      if (!separator) return null
+      const label = separator.querySelector('.dez-role-separator__label')
+      const disclosure = label?.querySelector('.dez-role-separator__disclosure')
+      const spinner = label?.querySelector('.dez-role-separator__spinner')
+      const field = separator.querySelector<HTMLTextAreaElement>('.dez-role-separator__thinking textarea.dez-role-separator__thinking-text')
+      return {
+        role: separator.dataset.role ?? '',
+        slot: disclosure ? 'disclosure' as const : spinner ? 'spinner' as const : null,
+        expanded: disclosure?.getAttribute('aria-expanded') ?? null,
+        open: separator.dataset.thinkingOpen === '1',
+        panelText: field?.value ?? null,
+      }
+    }, index)
+  }
+
+  // A mousedown on the disclosure triangle of the pill before section
+  // `index`, as a click gives.
+  async function toggleThinking (index: number): Promise<void> {
+    await browser.execute((sectionIndex: number) => {
+      const target = document.querySelector(`.cm-content .dez-role-separator[data-section-index="${sectionIndex}"] .dez-role-separator__disclosure`)
+      if (!target) throw new Error(`toggleThinking: no triangle for section ${sectionIndex}`)
+      target.dispatchEvent(new MouseEvent('mousedown', { bubbles: true, cancelable: true, button: 0 }))
+    }, index)
+  }
+
+  // Where a click in the middle of the first text line of section `index`
+  // lands: "same line" when CodeMirror maps it to that line. A stale height
+  // of the pill above it would move the click to a later line.
+  async function lineHitBelowPill (index: number): Promise<string> {
+    return browser.execute((sectionIndex: number) => {
+      const content = document.querySelector('.cm-content')
+      if (!content) throw new Error('lineHitBelowPill: .cm-content not found')
+      const view = Reflect.get(Reflect.get(content, 'cmTile'), 'root').view as EditorView
+      const line = content.querySelector(`.dez-role-separator[data-section-index="${sectionIndex}"]`)?.closest('.cm-line')?.nextElementSibling
+      if (!(line instanceof HTMLElement)) throw new Error(`lineHitBelowPill: no line after separator ${sectionIndex}`)
+      const rect = line.getBoundingClientRect()
+      const hit = view.posAtCoords({ x: rect.left + 4, y: rect.top + rect.height / 2 })
+      const expected = view.state.doc.lineAt(view.posAtDOM(line)).number
+      const actual = hit === null ? null : view.state.doc.lineAt(hit).number
+      return actual === expected ? 'same line' : `line ${expected}, click on ${actual}`
+    }, index)
+  }
+
+  async function openGear (): Promise<void> {
+    await click(browser, '.model-selector-gear')
+    await waitFor(browser, '.provider-settings-popup', 10_000)
+  }
+
+  async function closeGear (): Promise<void> {
+    await browser.execute(() => {
+      document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape' }))
+    })
+    await waitForValue(browser, 'popup open', () => browser.execute(() => document.querySelector('.provider-settings-popup') !== null), false)
+  }
+
+  async function gearRows (): Promise<{ header: string | null, rows: Array<[string, string | null]> }> {
+    return browser.execute(() => ({
+      header: document.querySelector('.provider-settings-header')?.textContent?.trim() ?? null,
+      rows: Array.from(document.querySelectorAll('.provider-settings-row')).map((row): [string, string | null] => [
+        row.querySelector('.provider-settings-label')?.textContent?.trim() ?? '',
+        row.getAttribute('aria-checked'),
+      ]),
+    }))
+  }
+
+  async function openProviderDetail (providerId: string, name: string): Promise<void> {
+    await sbpCall(browser, 'dez.model/settings/open', 'providers')
+    await waitFor(browser, `.provider-row[data-provider-id="${providerId}"]`, 10_000)
+    await click(browser, `.provider-row[data-provider-id="${providerId}"]`)
+    await waitForValue(browser, `${name} details`, () => browser.execute(
+      () => document.querySelector('.provider-detail-name')?.textContent?.trim() ?? null
+    ), name)
+  }
+
+  /** `aria-checked` of the Thinking switch in Settings › Providers, or null
+   *  when the selected provider has none. */
+  async function thinkingSwitch (): Promise<string | null> {
+    return browser.execute(() => document.querySelector('.provider-thinking-toggle')?.getAttribute('aria-checked') ?? null)
+  }
+
+  async function supportsThinkingChecked (): Promise<boolean | null> {
+    return browser.execute(() => document.querySelector<HTMLInputElement>('input.provider-supports-thinking-checkbox')?.checked ?? null)
+  }
+
+  async function newTab (providerName: string, modelName: string): Promise<void> {
+    await sbpCall(browser, 'dez.model/tabs/create')
+    await waitForValue(browser, 'new tab', () => threadSections(browser), [{ role: 'user', text: '' }])
+    await pickModel(browser, providerName, modelName)
+  }
+
+  beforeAll(async () => {
+    server = await startThinkingMock(mock)
+    app = await startApp()
+    try {
+      const provider = (config: typeof THINKER, apiFormat: string, baseUrl: string, thinking: boolean): Record<string, unknown> => ({
+        id: config.id,
+        name: config.name,
+        baseUrl,
+        apiFormat,
+        fetchModels: false,
+        models: [{ id: config.modelId, name: config.modelName }],
+        ...(thinking ? { thinking: {} } : {}),
+      })
+      stateFile = await seedRawAppState(app.home, {
+        customProviders: [
+          provider(THINKER, 'openai', `${server.url}/${THINKER.id}/v1`, true),
+          provider(PLAIN, 'openai', `${server.url}/${PLAIN.id}/v1`, false),
+          // Anthropic SDK style: the base URL has no `/v1`.
+          provider(CLAUDE, 'anthropic', `${server.url}/${CLAUDE.id}`, true),
+        ],
+      })
+      await seedConversation(app.home, makeConversation({
+        id: 'copy-source',
+        title: 'Copy source',
+        sections: [
+          { role: 'user', nodes: [{ kind: 'text', text: 'Question with **bold**' }] },
+          {
+            role: 'agent',
+            nodes: [{ kind: 'text', text: 'Answer line' }],
+            model: { providerId: THINKER.id, modelId: THINKER.modelId },
+            thinking: { text: 'Seeded plan.\nSecond line.', replay: { kind: 'field', field: 'reasoning_content' } },
+          },
+          { role: 'user', nodes: [{ kind: 'text', text: 'Follow-up' }] },
+        ],
+      }))
+      browser = await createSession(app.binary, app.port)
+    } catch (err) {
+      await app.stop()
+      throw err
+    }
+    await waitFor(browser, 'header.tab-bar', 60_000)
+  })
+
+  beforeEach(async () => {
+    await resetConsoleErrors(browser)
+  })
+
+  afterEach(async (ctx) => {
+    await screenshotOnFailure(browser, ctx)
+    if (ctx.task.result?.state === 'fail') return
+    expect(await consoleErrors(browser)).toEqual([])
+  })
+
+  afterAll(async () => {
+    await destroySession(browser)
+    await app?.stop()
+    await server?.stop()
+  })
+
+  it('shows a spinner, then a triangle that opens the thinking as it streams, and keeps it open after the stream', async () => {
+    await pickModel(browser, THINKER.name, THINKER.modelName)
+    const gates = [gate(), gate(), gate()]
+    mock.pauses = gates.map((g) => g.opened)
+    try {
+      await submit(browser, 'Question 1')
+      // The reply streams and has no thinking yet.
+      await waitForValue(browser, 'pill before the thinking', () => pillThinking(1), {
+        role: 'agent', slot: 'spinner', expanded: null, open: false, panelText: null,
+      })
+      gates[0].open()
+      await waitForValue(browser, 'pill with thinking', () => pillThinking(1), {
+        role: 'agent', slot: 'disclosure', expanded: 'false', open: false, panelText: null,
+      })
+      // Screen readers get the triangle as a "Thinking" button, and its open
+      // state from `expanded`. The pill has a model here; no part of it that
+      // holds the triangle may be an image, because an image hides its
+      // children (WebKit's computed role does not show that).
+      const triangle = await browser.$('.cm-content .dez-role-separator[data-section-index="1"] .dez-role-separator__disclosure')
+      expect([await triangle.getComputedRole(), await triangle.getComputedLabel()]).toEqual(['button', 'Thinking'])
+      expect(await browser.execute(() => {
+        const pill = document.querySelector('.cm-content .dez-role-separator[data-section-index="1"] .dez-role-separator__label')
+        return { model: pill?.hasAttribute('data-model-key') ?? false, inImage: !!pill?.querySelector('.dez-role-separator__disclosure')?.closest('[role="img"]') }
+      })).toEqual({ model: true, inImage: false })
+      // A mousedown on the triangle opens the panel and keeps the role.
+      await toggleThinking(1)
+      await waitForValue(browser, 'open panel', () => pillThinking(1), {
+        role: 'agent', slot: 'disclosure', expanded: 'true', open: true, panelText: thinkingParts(1)[0],
+      })
+      expect(await browser.execute(() => {
+        const field = document.querySelector<HTMLTextAreaElement>('.dez-role-separator__thinking-text')
+        return { readOnly: field?.readOnly ?? null, label: field?.getAttribute('aria-label') ?? null }
+      })).toEqual({ readOnly: true, label: 'Thinking' })
+      gates[1].open()
+      await waitForValue(browser, 'panel after more thinking', () => pillThinking(1), {
+        role: 'agent', slot: 'disclosure', expanded: 'true', open: true, panelText: thinkingText(1),
+      })
+      expect(await activeTabStreaming(browser)).toBe(true)
+    } finally {
+      for (const g of gates) g.open()
+      mock.pauses = []
+    }
+
+    await waitForThread(browser, [
+      { role: 'user', text: 'Question 1' },
+      { role: 'agent', text: answerText(1) },
+      { role: 'user', text: '' },
+    ])
+    // The editor rebuilds its state from the store when a stream ends; the
+    // panel stays open.
+    await waitForValue(browser, 'panel after the stream', () => pillThinking(1), {
+      role: 'agent', slot: 'disclosure', expanded: 'true', open: true, panelText: thinkingText(1),
+    })
+    expect(await storedThinking()).toEqual([null, { text: thinkingText(1), replay: FIELD_REPLAY }, null])
+    await waitForValue(browser, 'saved reply', savedAgentReplies, [savedThinkerReply(1)])
+    // The OpenAI format asks for no thinking fields by default.
+    expect(requestBodies(THINKER_CHAT)).toEqual([{
+      model: THINKER.modelId,
+      stream: true,
+      messages: [{ role: 'user', content: 'Question 1' }],
+    }])
+
+    await toggleThinking(1)
+    await waitForValue(browser, 'closed panel', () => pillThinking(1), {
+      role: 'agent', slot: 'disclosure', expanded: 'false', open: false, panelText: null,
+    })
+    // Opening the panel makes the pill taller with no doc change. A click
+    // on the answer below it must still land on the answer line.
+    await toggleThinking(1)
+    await waitForValue(browser, 'opened again', async () => (await pillThinking(1))?.panelText ?? null, thinkingText(1))
+    await waitForValue(browser, 'click below the open pill', () => lineHitBelowPill(1), 'same line')
+  })
+
+  it('sends the thinking back with the next request to the same model', async () => {
+    await submit(browser, 'Question 2')
+    await waitForThread(browser, [
+      { role: 'user', text: 'Question 1' },
+      { role: 'agent', text: answerText(1) },
+      { role: 'user', text: 'Question 2' },
+      { role: 'agent', text: answerText(2) },
+      { role: 'user', text: '' },
+    ])
+    expect(requestBodies(THINKER_CHAT)[1]).toEqual({
+      model: THINKER.modelId,
+      stream: true,
+      messages: [
+        { role: 'user', content: 'Question 1' },
+        { role: 'assistant', content: answerText(1), reasoning_content: thinkingText(1) },
+        { role: 'user', content: 'Question 2' },
+      ],
+    })
+  })
+
+  it('changes one Thinking value from the gear popup and Settings › Providers, and drops thinking while it is off', async () => {
+    await openGear()
+    expect(await gearRows()).toEqual({ header: THINKER.name, rows: [['Thinking', 'true']] })
+    await click(browser, '.provider-settings-row')
+    expect(await gearRows()).toEqual({ header: THINKER.name, rows: [['Thinking', 'false']] })
+    await closeGear()
+    await waitForValue(browser, 'saved toggle', () => savedProviderSettings(THINKER.id), { thinking: false })
+
+    await openProviderDetail(THINKER.id, THINKER.name)
+    expect(await thinkingSwitch()).toBe('false')
+    await click(browser, '.provider-thinking-toggle')
+    await waitForValue(browser, 'switch after a click', thinkingSwitch, 'true')
+    await waitForValue(browser, 'saved toggle after a click', () => savedProviderSettings(THINKER.id), { thinking: true })
+    await click(browser, '.provider-thinking-toggle')
+    await waitForValue(browser, 'switch after a second click', thinkingSwitch, 'false')
+    await closeSettings(browser)
+    await openGear()
+    expect(await gearRows()).toEqual({ header: THINKER.name, rows: [['Thinking', 'false']] })
+    await closeGear()
+
+    // Off: the request sends no thinking back, and the reasoning of the
+    // reply is neither shown nor stored.
+    await submit(browser, 'Question 3')
+    await waitForThread(browser, [
+      { role: 'user', text: 'Question 1' },
+      { role: 'agent', text: answerText(1) },
+      { role: 'user', text: 'Question 2' },
+      { role: 'agent', text: answerText(2) },
+      { role: 'user', text: 'Question 3' },
+      { role: 'agent', text: answerText(3) },
+      { role: 'user', text: '' },
+    ])
+    expect(requestBodies(THINKER_CHAT)[2]).toEqual({
+      model: THINKER.modelId,
+      stream: true,
+      messages: [
+        { role: 'user', content: 'Question 1' },
+        { role: 'assistant', content: answerText(1) },
+        { role: 'user', content: 'Question 2' },
+        { role: 'assistant', content: answerText(2) },
+        { role: 'user', content: 'Question 3' },
+      ],
+    })
+    expect(await storedThinking()).toEqual([
+      null,
+      { text: thinkingText(1), replay: FIELD_REPLAY },
+      null,
+      { text: thinkingText(2), replay: FIELD_REPLAY },
+      null,
+      null,
+      null,
+    ])
+    await waitForValue(browser, 'pill of the reply without thinking', () => pillThinking(5), {
+      role: 'agent', slot: null, expanded: null, open: false, panelText: null,
+    })
+    await waitForValue(browser, 'saved replies', savedAgentReplies, [
+      savedThinkerReply(1),
+      savedThinkerReply(2),
+      [`<dez:pill type="agent" model="${THINKER.id}/${THINKER.modelId}"/>`, answerText(3), ''],
+    ])
+
+    // "Reset to defaults" turns thinking on again and drops the saved value.
+    await openGear()
+    await click(browser, '.provider-settings-reset')
+    expect(await gearRows()).toEqual({ header: THINKER.name, rows: [['Thinking', 'true']] })
+    await closeGear()
+    await waitForValue(browser, 'saved toggle after the reset', () => savedProviderSettings(THINKER.id), null)
+  })
+
+  it('turns thinking on and off for a custom provider with the Supports thinking checkbox', async () => {
+    await newTab(PLAIN.name, PLAIN.modelName)
+    // Without thinking support, the reasoning in the reply is ignored.
+    await submit(browser, 'Plain question 1')
+    await waitForThread(browser, [
+      { role: 'user', text: 'Plain question 1' },
+      { role: 'agent', text: answerText(1) },
+      { role: 'user', text: '' },
+    ])
+    expect(await storedThinking()).toEqual([null, null, null])
+    expect(await pillThinking(1)).toEqual({ role: 'agent', slot: null, expanded: null, open: false, panelText: null })
+
+    await openProviderDetail(PLAIN.id, PLAIN.name)
+    expect(await supportsThinkingChecked()).toBe(false)
+    expect(await thinkingSwitch()).toBeNull()
+    await click(browser, 'input.provider-supports-thinking-checkbox')
+    await waitForValue(browser, 'Thinking switch', thinkingSwitch, 'true')
+    expect(await supportsThinkingChecked()).toBe(true)
+    await waitForValue(browser, 'saved config with thinking', () => savedCustomProvider(PLAIN.id), { ...savedPlainConfig(), thinking: {} })
+    await closeSettings(browser)
+    await openGear()
+    expect(await gearRows()).toEqual({ header: PLAIN.name, rows: [['Thinking', 'true']] })
+    await closeGear()
+
+    await submit(browser, 'Plain question 2')
+    await waitForThread(browser, [
+      { role: 'user', text: 'Plain question 1' },
+      { role: 'agent', text: answerText(1) },
+      { role: 'user', text: 'Plain question 2' },
+      { role: 'agent', text: answerText(2) },
+      { role: 'user', text: '' },
+    ])
+    expect(await storedThinking()).toEqual([null, null, null, { text: thinkingText(2), replay: FIELD_REPLAY }, null])
+    expect((await pillThinking(3))?.slot).toBe('disclosure')
+    // The checkbox asks for nothing more than the OpenAI format default.
+    expect(requestBodies(PLAIN_CHAT)[1]).toEqual({
+      model: PLAIN.modelId,
+      stream: true,
+      messages: [
+        { role: 'user', content: 'Plain question 1' },
+        { role: 'assistant', content: answerText(1) },
+        { role: 'user', content: 'Plain question 2' },
+      ],
+    })
+
+    await openProviderDetail(PLAIN.id, PLAIN.name)
+    await click(browser, 'input.provider-supports-thinking-checkbox')
+    await waitForValue(browser, 'Thinking switch after the uncheck', thinkingSwitch, null)
+    expect(await supportsThinkingChecked()).toBe(false)
+    await waitForValue(browser, 'saved config without thinking', () => savedCustomProvider(PLAIN.id), savedPlainConfig())
+    await closeSettings(browser)
+  })
+
+  it('sends signed Anthropic thinking back only while the messages before it are unchanged', async () => {
+    await newTab(CLAUDE.name, CLAUDE.modelName)
+    await submit(browser, 'Claude question 1')
+    await waitForThread(browser, [
+      { role: 'user', text: 'Claude question 1' },
+      { role: 'agent', text: claudeAnswer(1) },
+      { role: 'user', text: '' },
+    ])
+    // The Anthropic format asks for adaptive, summarized thinking by default.
+    expect(requestBodies(CLAUDE_CHAT)[0]).toEqual({
+      model: CLAUDE.modelId,
+      stream: true,
+      max_tokens: 32000,
+      thinking: { type: 'adaptive', display: 'summarized' },
+      messages: [{ role: 'user', content: 'Claude question 1' }],
+    })
+    expect(await storedThinking()).toEqual([null, claudeThinking(1), null])
+    expect((await pillThinking(1))?.slot).toBe('disclosure')
+
+    await submit(browser, 'Claude question 2')
+    await waitForThread(browser, [
+      { role: 'user', text: 'Claude question 1' },
+      { role: 'agent', text: claudeAnswer(1) },
+      { role: 'user', text: 'Claude question 2' },
+      { role: 'agent', text: claudeAnswer(2) },
+      { role: 'user', text: '' },
+    ])
+    expect(requestBodies(CLAUDE_CHAT)[1].messages).toEqual([
+      { role: 'user', content: 'Claude question 1' },
+      { role: 'assistant', content: [claudeBlock(1), { type: 'text', text: claudeAnswer(1) }] },
+      { role: 'user', content: 'Claude question 2' },
+    ])
+    // Both replies hold a signed replay, so a text-only send after the edit
+    // comes from the prefix check.
+    expect(await storedThinking()).toEqual([null, claudeThinking(1), null, claudeThinking(2), null])
+
+    // An edit of the first question changes the messages before both
+    // replies, so their signed thinking is stale and goes back as text only.
+    await browser.execute((question: string, added: string) => {
+      const content = document.querySelector('.cm-content')
+      if (!content) throw new Error('edit: .cm-content not found')
+      const view = Reflect.get(Reflect.get(content, 'cmTile'), 'root').view as EditorView
+      view.dispatch({ changes: { from: String(view.state.doc).indexOf(question) + question.length, insert: added } })
+    }, 'Claude question 1', ' (edited)')
+    await waitForValue(browser, 'edited question', async () => (await threadSections(browser))[0]?.text ?? null, 'Claude question 1 (edited)')
+    await submit(browser, 'Claude question 3')
+    await waitForValue(browser, 'third reply', async () => (await threadSections(browser))[5]?.text ?? null, claudeAnswer(3))
+    await waitForValue(browser, 'streaming', () => activeTabStreaming(browser), false)
+    expect(requestBodies(CLAUDE_CHAT)[2].messages).toEqual([
+      { role: 'user', content: 'Claude question 1 (edited)' },
+      { role: 'assistant', content: claudeAnswer(1) },
+      { role: 'user', content: 'Claude question 2' },
+      { role: 'assistant', content: claudeAnswer(2) },
+      { role: 'user', content: 'Claude question 3' },
+    ])
+
+    // The third reply came after the edit, so its thinking goes back.
+    await submit(browser, 'Claude question 4')
+    await waitForThread(browser, [
+      { role: 'user', text: 'Claude question 1 (edited)' },
+      { role: 'agent', text: claudeAnswer(1) },
+      { role: 'user', text: 'Claude question 2' },
+      { role: 'agent', text: claudeAnswer(2) },
+      { role: 'user', text: 'Claude question 3' },
+      { role: 'agent', text: claudeAnswer(3) },
+      { role: 'user', text: 'Claude question 4' },
+      { role: 'agent', text: claudeAnswer(4) },
+      { role: 'user', text: '' },
+    ])
+    expect(requestBodies(CLAUDE_CHAT)[3].messages).toEqual([
+      { role: 'user', content: 'Claude question 1 (edited)' },
+      { role: 'assistant', content: claudeAnswer(1) },
+      { role: 'user', content: 'Claude question 2' },
+      { role: 'assistant', content: claudeAnswer(2) },
+      { role: 'user', content: 'Claude question 3' },
+      { role: 'assistant', content: [claudeBlock(3), { type: 'text', text: claudeAnswer(3) }] },
+      { role: 'user', content: 'Claude question 4' },
+    ])
+  })
+
+  it('copies the selection as Markdown without markers or thinking, and a thinking panel selection as is', async () => {
+    await sbpCall(browser, 'dez.model/tabs/openConversation', 'copy-source')
+    await waitForValue(browser, 'seeded thread', () => threadSections(browser), [
+      { role: 'user', text: 'Question with **bold**' },
+      { role: 'agent', text: 'Answer line' },
+      { role: 'user', text: 'Follow-up' },
+    ])
+    // Records what the app copies. WebDriver keys are no real input events,
+    // so Wayland would not give the app the system clipboard anyway.
+    await browser.execute(() => {
+      const copied: string[] = []
+      Reflect.set(window, '__e2eCopied', copied)
+      Object.defineProperty(navigator.clipboard, 'writeText', {
+        configurable: true,
+        value: async (text: string) => { copied.push(text) },
+      })
+    })
+    const copiedTexts = (): Promise<string[]> => browser.execute(() => Reflect.get(window, '__e2eCopied') as string[])
+
+    await browser.execute(() => {
+      const content = document.querySelector('.cm-content')
+      if (!content) throw new Error('select: .cm-content not found')
+      const view = Reflect.get(Reflect.get(content, 'cmTile'), 'root').view as EditorView
+      view.focus()
+      view.dispatch({ selection: { anchor: 0, head: view.state.doc.length } })
+    })
+    await browser.keys([Key.Control, Key.Shift, 'c'])
+    await waitForValue(browser, 'copied Markdown', copiedTexts, ['Question with **bold**\n\nAnswer line\n\nFollow-up'])
+
+    // In the thinking panel, select all selects the panel text, and Copy
+    // Markdown copies it unchanged.
+    await toggleThinking(1)
+    await waitForValue(browser, 'open panel', async () => (await pillThinking(1))?.panelText ?? null, 'Seeded plan.\nSecond line.')
+    await browser.execute(() => document.querySelector<HTMLTextAreaElement>('.dez-role-separator__thinking-text')?.focus())
+    await browser.keys([Key.Control, 'a'])
+    await browser.keys([Key.Control, Key.Shift, 'c'])
+    await waitForValue(browser, 'copied thinking', copiedTexts, ['Question with **bold**\n\nAnswer line\n\nFollow-up', 'Seeded plan.\nSecond line.'])
+  })
+})

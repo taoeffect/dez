@@ -1,9 +1,11 @@
+import type { ThinkingReplay } from '../chat/types'
 import { responseOk } from '../../utils/protocol/errors'
 import { readNativeChunkText, type NativeHttpResponseHead, type NativeHttpStreamResult } from '../../utils/protocol/nativeHttp'
 import { decodeSseData } from '../../utils/protocol/sse'
 import { providerStatusError } from './errors'
-import type { Provider } from './provider'
+import type { Provider, ProviderChatRequest } from './provider'
 import type { ProviderStreamChatInput } from './streamTypes'
+import type { SseTokenEvent } from './types'
 
 async function assertStreamResponseOk(provider: Provider, response: NativeHttpResponseHead, chunks: AsyncIterable<Uint8Array>): Promise<void> {
   if (responseOk(response)) return
@@ -12,13 +14,41 @@ async function assertStreamResponseOk(provider: Provider, response: NativeHttpRe
   throw providerStatusError(provider, response, bodyText)
 }
 
-export async function streamProviderTokens(provider: Provider, input: ProviderStreamChatInput, result: NativeHttpStreamResult): Promise<void> {
+// Sends the answer text to `onToken` and, when the request asked for
+// thinking (`requestThinking`), the thinking to `onThinking`. Returns the
+// replay of a complete thinking, for the next request.
+//
+// A provider that supports thinking always has its thinking split from the
+// answer text, so with the Thinking toggle off its thinking is dropped, not
+// shown as answer text.
+export async function streamProviderTokens(
+  provider: Provider,
+  input: ProviderStreamChatInput,
+  result: NativeHttpStreamResult,
+  requestThinking: ProviderChatRequest['thinking'],
+): Promise<ThinkingReplay | undefined> {
   await assertStreamResponseOk(provider, result.response, result.chunks)
 
-  for await (const data of decodeSseData(result.chunks)) {
-    for (const event of provider.format.parseSseData(data)) {
-      if (event.kind === 'done') return
-      await input.onToken(event.token)
+  const parser = provider.format.createStreamParser(provider.supportsThinking)
+  // True at the end of the stream.
+  const deliver = async (events: SseTokenEvent[]): Promise<boolean> => {
+    for (const event of events) {
+      if (event.kind === 'done') return true
+      if (event.kind === 'token') {
+        await input.onToken(event.token)
+      } else if (requestThinking) {
+        await input.onThinking(event.token)
+      }
     }
+    return false
   }
+
+  for await (const data of decodeSseData(result.chunks)) {
+    if (await deliver(parser.parse(data))) break
+  }
+
+  const end = parser.finish()
+  await deliver(end.events)
+  if (!requestThinking || !end.replay) return undefined
+  return end.replay.kind === 'field' ? end.replay : { ...end.replay, prefixHash: requestThinking.prefixHash }
 }

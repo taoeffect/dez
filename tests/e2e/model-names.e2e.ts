@@ -61,8 +61,9 @@ const GONE_PROVIDER_ID = '0b7c6a52-5f2e-4c1d-9a8b-3e4f5a6b7c8d'
 const GONE = { key: `${GONE_PROVIDER_ID}/old-model`, providerId: GONE_PROVIDER_ID, modelId: 'old-model' }
 
 // What the model part of a pill must show. The title and the aria-label
-// list the same facts; the aria-label also names the role, labels the
-// model and the provider, and says "Generating" while the reply streams.
+// list the same facts; the aria-label (on the model part, so the role word
+// and the thinking triangle stay readable) labels the model and the
+// provider, and says "Generating" while the reply streams.
 function expectedChip (
   key: string,
   name: string,
@@ -79,7 +80,7 @@ function expectedChip (
     switched: options.switchedFrom !== undefined,
     streaming,
     title: [name, providerText, key, ...switched].join('\n'),
-    ariaLabel: ['Agent', `Model: ${name}`, `Provider: ${providerText}`, key, ...switched, ...(streaming ? ['Generating'] : [])].join(', '),
+    ariaLabel: [`Model: ${name}`, `Provider: ${providerText}`, key, ...switched, ...(streaming ? ['Generating'] : [])].join(', '),
   }
 }
 
@@ -131,7 +132,7 @@ describe('model names', () => {
                 switched: pill.dataset.switched === '1',
                 streaming: pill.dataset.streaming === '1',
                 title: pill.title,
-                ariaLabel: pill.getAttribute('aria-label') ?? '',
+                ariaLabel: pill.querySelector('.dez-role-separator__model')?.getAttribute('aria-label') ?? '',
               }
             : null,
         }

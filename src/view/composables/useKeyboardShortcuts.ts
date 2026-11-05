@@ -77,6 +77,10 @@ export function useKeyboardShortcuts() {
         e.preventDefault();
         void sbp("dez.controller/closeTab", sbp("dez.model/tabs/activeId"));
         break;
+      case "c":
+        // Copy Markdown. Shift makes `key` "C", which the switch lowercases.
+        if (e.shiftKey && (sbp("dez.editor/copyMarkdown") as boolean)) e.preventDefault();
+        break;
       case "s":
         e.preventDefault();
         void sbp("dez.controller/saveConversationAs", sbp("dez.model/tabs/activeId"));

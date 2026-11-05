@@ -107,7 +107,6 @@ export function defaultAppState(): AppStatePayload {
   return {
     tabs: [],
     activeTabId: null,
-    showPillSeparators: true,
     theme: 'system',
     customProviders: [],
     defaultNewTabModel: null,
@@ -132,9 +131,6 @@ export function parseAppStateJson(content: string): AppStatePayload {
       activeTabId: typeof parsed.activeTabId === 'string' || parsed.activeTabId === null
         ? parsed.activeTabId
         : fallback.activeTabId,
-      showPillSeparators: typeof parsed.showPillSeparators === 'boolean'
-        ? parsed.showPillSeparators
-        : fallback.showPillSeparators,
       theme: isTheme(parsed.theme) ? parsed.theme : fallback.theme,
       customProviders: providers.configs,
       customProviderApiKeys: providers.apiKeys,

@@ -53,6 +53,17 @@ describe('dez.controller/providers/save', () => {
     expect(refreshes).toEqual([])
   })
 
+  it('keeps the cached models and starts no check when only thinking support changes', () => {
+    sbp('dez.controller/providers/save', { ...local, thinking: {} })
+    expect(sbp('dez.model/customProviders/list')).toEqual([{ ...local, thinking: {} }])
+
+    sbp('dez.controller/providers/save', local)
+    expect(sbp('dez.model/customProviders/list')).toEqual([local])
+
+    expect(cachedLocal()).toMatchObject({ working: true, models: [{ id: 'fetched' }] })
+    expect(refreshes).toEqual([])
+  })
+
   it('checks a renamed provider that has no cached result yet', () => {
     sbp('dez.model/modelCache/removeProvider', 'local')
 

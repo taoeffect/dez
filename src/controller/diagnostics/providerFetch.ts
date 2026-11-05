@@ -47,7 +47,7 @@ function chatRequestForProvider(
     throw providerSecretError()
   }
 
-  return provider.chatRequest(messages, modelId, providerSecretValue)
+  return provider.chatRequest(messages, modelId, providerSecretValue).request
 }
 
 async function probeChat(

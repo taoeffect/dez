@@ -37,9 +37,10 @@ export default sbp('sbp/selectors/register', {
   // Validates and stores a custom provider, then returns the stored config,
   // normalized by the schema (trimmed text, no trailing '/'). A change can make
   // the cached models wrong (another base URL or format), so they are dropped
-  // and the provider is checked again at once. The name is in no request, so a
-  // rename alone keeps the cached models and starts no check. A provider with
-  // no cached result yet (one that was just added) is still checked.
+  // and the provider is checked again at once. The name and `thinking` are not
+  // in the model list request, so a change of only those keeps the cached
+  // models and starts no check. A provider with no cached result yet (one that
+  // was just added) is still checked.
   'dez.controller/providers/save' (config: ProviderConfig): ProviderConfig {
     const result = customProviderConfigSchema.safeParse(config)
     if (!result.success) {
@@ -50,14 +51,17 @@ export default sbp('sbp/selectors/register', {
 
     const saved = result.data
     // Both configs are read back from the model, so they come from the same
-    // clone and their keys are in the same order for JSON.stringify.
+    // clone and their keys are in the same order for JSON.stringify. The clone
+    // writes `thinking` last, so the spread below adds a missing one in the
+    // same place.
     const previous = (sbp('dez.model/customProviders/list') as ProviderConfig[])
       .find((existing) => existing.id === saved.id)
     sbp('dez.model/customProviders/save', saved)
     const current = (sbp('dez.model/customProviders/list') as ProviderConfig[])
       .find((existing) => existing.id === saved.id)
     const cached = (sbp('dez.model/modelCache/snapshot') as ModelCache).providers[saved.id]
-    if (cached && previous && current && JSON.stringify({ ...previous, name: current.name }) === JSON.stringify(current)) {
+    if (cached && previous && current
+      && JSON.stringify({ ...previous, name: current.name, thinking: current.thinking }) === JSON.stringify(current)) {
       return saved
     }
 

@@ -20,7 +20,6 @@ describe('app state persistence format', () => {
         null,
       ],
       activeTabId: 'tab',
-      showPillSeparators: false,
       theme: 'dark',
       defaultNewTabModel: { providerId: 'openrouter', modelId: 'model' },
       lastUsedModel: { providerId: 'zai', modelId: 'chat' },
@@ -39,7 +38,6 @@ describe('app state persistence format', () => {
     }])
     expect(parseAppStateJson('{ "tabs": [null], "activeTabId": null }').tabs).toEqual([])
     expect(state.activeTabId).toBe('tab')
-    expect(state.showPillSeparators).toBe(false)
     expect(state.theme).toBe('dark')
     expect(state.defaultNewTabModel).toEqual({ providerId: 'openrouter', modelId: 'model' })
     expect(state.lastUsedModel).toEqual({ providerId: 'zai', modelId: 'chat' })

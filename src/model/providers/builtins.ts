@@ -14,6 +14,10 @@ export const BUILT_IN_PROVIDER_CONFIGS: readonly ProviderConfig[] = [
     models: [],
     fetchModels: true,
     auth: 'apiKey',
+    // OpenRouter drops a field that the routed model does not take, so the
+    // request is safe for every model. Some models must think, so there is no
+    // off field.
+    thinking: { enabledBody: { reasoning: { enabled: true } } },
   },
   {
     id: 'zai',
@@ -32,6 +36,8 @@ export const BUILT_IN_PROVIDER_CONFIGS: readonly ProviderConfig[] = [
     ],
     fetchModels: true,
     auth: 'apiKey',
+    // GLM-5.3 refuses `type: 'disabled'`, so there is no off field.
+    thinking: { enabledBody: { thinking: { type: 'enabled' } } },
   },
   {
     id: 'venice',
@@ -80,6 +86,11 @@ export const BUILT_IN_PROVIDER_CONFIGS: readonly ProviderConfig[] = [
         bodyPath: 'venice_parameters.include_venice_system_prompt',
       },
     ],
+    // Venice's own off switch, which also removes the thinking from replies.
+    thinking: {
+      enabledBody: { reasoning: { enabled: true } },
+      disabledBody: { venice_parameters: { disable_thinking: true } },
+    },
   },
   {
     id: 'charm_hyper',
@@ -89,6 +100,9 @@ export const BUILT_IN_PROVIDER_CONFIGS: readonly ProviderConfig[] = [
     models: [],
     fetchModels: true,
     auth: 'apiKey',
+    // Hyper's models think by default, and their effort levels differ per
+    // model, so no field is sent.
+    thinking: {},
   },
   {
     id: 'minimax',
@@ -108,6 +122,9 @@ export const BUILT_IN_PROVIDER_CONFIGS: readonly ProviderConfig[] = [
     auth: 'apiKey',
     // MiniMax recommends 65536 output tokens for these models.
     maxOutputTokens: 65536,
+    // M3 on this endpoint thinks only with `adaptive`, and M3.1-Flash refuses
+    // `disabled`, so there is no off field.
+    thinking: { enabledBody: { thinking: { type: 'adaptive' } } },
   },
   {
     id: 'copilot',
@@ -124,6 +141,10 @@ export const BUILT_IN_PROVIDER_CONFIGS: readonly ProviderConfig[] = [
       'User-Agent': 'GitHubCopilotChat/0.24.2',
       'Copilot-Integration-Id': 'vscode-chat',
     },
+    // Copilot documents no thinking field, and `reasoning_effort` gives a 400
+    // on models that do not list it. Its Claude and Gemini models stream
+    // thinking without a field.
+    thinking: {},
   },
 ]
 

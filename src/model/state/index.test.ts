@@ -1,7 +1,7 @@
 import sbp from '@sbp/sbp'
 import { createPinia, setActivePinia } from 'pinia'
 import { beforeEach, describe, expect, it } from 'vitest'
-import type { ActiveModel, ContentNode, ModelRef, Section, Tab } from '../chat/types'
+import type { ActiveModel, ContentNode, ModelRef, Section, SectionThinking, Tab } from '../chat/types'
 import type { ConversationData, ModelCache } from '../persistence/types'
 import type { ProviderConfig } from '../providers/config'
 import type { SettingsSnapshot } from './index'
@@ -123,6 +123,10 @@ describe('section models', () => {
     return sections.map((section) => ('model' in section ? section.model : 'none'))
   }
 
+  function storedThinking (sections: { thinking?: SectionThinking }[]): (SectionThinking | 'none' | undefined)[] {
+    return sections.map((section) => ('thinking' in section ? section.thinking : 'none'))
+  }
+
   function ensureAgentSection (model: ModelRef): Section {
     return sbp('dez.model/ensureTrailingAgentSectionForTab', activeId(), model) as Section
   }
@@ -176,6 +180,59 @@ describe('section models', () => {
     const reopened = await openConversation('conv-copy')
     expect(reopened?.conversationId).toBe('conv-copy')
     expect(storedModels(reopened?.sections ?? [])).toStrictEqual(['none', alpha, 'none', 'none'])
+  })
+
+  it('keeps section thinking through edits, conversationData and a reload of the conversation', async () => {
+    const thinking: SectionThinking = {
+      text: 'step one\n',
+      replay: { kind: 'reasoningDetails', details: [{ type: 'reasoning.text', text: 'step one\n', index: 0 }], prefixHash: 'h' },
+    }
+    sbp('dez.model/tabs/replaceSections', activeId(), [
+      { id: 'u1', role: 'user', content: text('question') },
+      { id: 'a1', role: 'agent', content: text('answer'), model: alpha, thinking },
+      { id: 'u2', role: 'user', content: text('') },
+    ])
+    typeIntoLastSection('next question')
+
+    expect(storedThinking(threadSections())).toStrictEqual(['none', thinking, 'none'])
+    const data = sbp('dez.model/tabs/conversationData', activeId()) as ConversationData
+    expect(storedThinking(data.sections)).toStrictEqual(['none', thinking, 'none'])
+
+    diskConversations.set('conv-copy', { ...data, id: 'conv-copy' })
+    const reopened = await openConversation('conv-copy')
+    expect(storedThinking(reopened?.sections ?? [])).toStrictEqual(['none', thinking, 'none'])
+  })
+
+  it('clears the old thinking of a reused empty agent section', () => {
+    sbp('dez.model/tabs/replaceSections', activeId(), [
+      { id: 'u1', role: 'user', content: text('question') },
+      { id: 'a1', role: 'agent', content: text(''), model: alpha, thinking: { text: 'cut off' } },
+    ])
+
+    const reused = ensureAgentSection(beta)
+
+    expect(reused.id).toBe('a1')
+    expect(storedThinking(threadSections())).toStrictEqual(['none', 'none'])
+  })
+
+  it('changes the identity when a section gains thinking, gains a replay, or loses its thinking on reuse', () => {
+    const sections = (thinking?: SectionThinking): Section[] => [
+      { id: 'u1', role: 'user', content: text('question') },
+      { id: 'a1', role: 'agent', content: text(''), model: alpha, ...(thinking ? { thinking } : {}) },
+    ]
+    const identity = (): string => sbp('dez.model/thread/sectionsIdentity') as string
+    sbp('dez.model/tabs/replaceSections', activeId(), sections())
+    const withoutThinking = identity()
+    sbp('dez.model/tabs/replaceSections', activeId(), sections({ text: 'cut off' }))
+    const withText = identity()
+    sbp('dez.model/tabs/replaceSections', activeId(), sections({ text: 'cut off', replay: { kind: 'field', field: 'reasoning' } }))
+    const withReplay = identity()
+
+    ensureAgentSection(alpha)
+
+    expect(withText).not.toBe(withoutThinking)
+    expect(withReplay).not.toBe(withText)
+    expect(identity()).not.toBe(withReplay)
   })
 })
 

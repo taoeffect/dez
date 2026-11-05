@@ -8,9 +8,9 @@ import { useSettingsStore, type DefaultModel, type SettingsSection, type Theme }
 import { useTabStore } from './tabs'
 import type { AppStatePayload, CachedProvider, ConversationSearchOutcome, ModelCache } from '../persistence/types'
 import { emptyModelCache } from '../persistence/modelCache'
-import type { ProviderConfig } from '../providers/config'
+import type { ProviderConfig, ProviderThinkingConfig } from '../providers/config'
 import type { ProviderId, ProviderModelsResult } from '../providers/types'
-import type { ActiveModel, ContentNode, ModelRef, Section, Tab } from '../chat/types'
+import type { ActiveModel, ContentNode, ModelRef, Section, SectionThinking, Tab, ThinkingReplay } from '../chat/types'
 import {
   appendStreamingText,
   emptyContent,
@@ -19,6 +19,8 @@ import {
   sectionVisibleText,
 } from '../chat/content'
 import { modelRefField, modelRefKey } from '../chat/modelRef'
+import { thinkingField } from '../chat/thinking'
+import { cloneJsonObject } from '../../utils/json'
 import { sectionsToStreamMessages } from '../streams/messages'
 import {
   ensureTrailingAgentSection,
@@ -29,7 +31,6 @@ import type { StreamMessage } from '../streams/types'
 import type { ModelSnapshot } from '../snapshot'
 
 export interface SettingsSnapshot {
-  showPillSeparators: boolean
   theme: Theme
   customProviders: ProviderConfig[]
   defaultNewTabModel: DefaultModel | null
@@ -58,6 +59,7 @@ interface SectionData {
   role: 'user' | 'agent'
   nodes: ContentNodeData[]
   model?: ModelRef
+  thinking?: SectionThinking
 }
 
 interface ConversationData {
@@ -106,6 +108,7 @@ function cloneSections(sections: Section[]): ModelSnapshot['tabs'][number]['sect
     role: section.role,
     content: section.content.map(cloneContentNode),
     ...modelRefField(section.model),
+    ...thinkingField(section.thinking),
   }))
 }
 
@@ -152,7 +155,7 @@ function cloneProviderSettings(
 function cloneProviderConfig(config: ProviderConfig): ProviderConfig {
   const {
     id, name, baseUrl, apiFormat, models, fetchModels, auth,
-    headers, maxOutputTokens, settings,
+    headers, maxOutputTokens, settings, thinking,
     ...uncopied
   } = config
   // A compile error when ProviderConfig gets a field that this clone does not
@@ -170,12 +173,26 @@ function cloneProviderConfig(config: ProviderConfig): ProviderConfig {
   if (headers) clone.headers = { ...headers }
   if (maxOutputTokens !== undefined) clone.maxOutputTokens = maxOutputTokens
   if (settings) clone.settings = settings.map((setting) => ({ ...setting }))
+  // Last: dez.controller/providers/save compares configs as JSON text and
+  // relies on this key order.
+  if (thinking) clone.thinking = cloneThinkingConfig(thinking)
+  return clone
+}
+
+// An empty object is kept: it means "supports thinking, with the default
+// requests".
+function cloneThinkingConfig(thinking: ProviderThinkingConfig): ProviderThinkingConfig {
+  const { enabledBody, disabledBody, ...uncopied } = thinking
+  // The same compile guard as in cloneProviderConfig.
+  uncopied satisfies Record<string, never>
+  const clone: ProviderThinkingConfig = {}
+  if (enabledBody) clone.enabledBody = cloneJsonObject(enabledBody)
+  if (disabledBody) clone.disabledBody = cloneJsonObject(disabledBody)
   return clone
 }
 
 function cloneSettings(settings = useSettingsStore()): SettingsSnapshot {
   return {
-    showPillSeparators: settings.showPillSeparators,
     theme: settings.theme,
     customProviders: settings.customProviders.map(cloneProviderConfig),
     defaultNewTabModel: cloneDefaultModel(settings.defaultNewTabModel),
@@ -256,6 +273,7 @@ function tabFromConversation(conv: ConversationData, overrides: Partial<Tab> = {
     role: section.role,
     content: normalizeContent(section.nodes.map((node) => dataToContentNode(node))),
     ...modelRefField(section.model),
+    ...thinkingField(section.thinking),
   }))
   if (sections.length === 0) {
     sections.push({ id: crypto.randomUUID(), role: 'user', content: emptyContent() })
@@ -270,18 +288,45 @@ function tabFromConversation(conv: ConversationData, overrides: Partial<Tab> = {
   }
 }
 
-export function appendTokenToTabSection(tabId: string, sectionId: string, token: string): boolean {
+function findTabSection(tabId: string, sectionId: string): { tab: Tab; section: Section } | null {
   const tab = useTabStore().tabs.find((candidate) => candidate.id === tabId)
   const section = tab?.sections.find((candidate) => candidate.id === sectionId)
-  if (!tab || !section) return false
+  return tab && section ? { tab, section } : null
+}
+
+export function appendTokenToTabSection(tabId: string, sectionId: string, token: string): boolean {
+  const section = findTabSection(tabId, sectionId)?.section
+  if (!section) return false
   appendStreamingText(section, token)
   return true
 }
 
+// Returns the section's thinking after the append, or null when the tab or
+// the section is gone. The editor makes its own copy of it.
+export function appendThinkingToTabSection(tabId: string, sectionId: string, token: string): SectionThinking | null {
+  const section = findTabSection(tabId, sectionId)?.section
+  if (!section) return null
+  if (section.thinking) {
+    section.thinking.text += token
+  } else {
+    section.thinking = { text: token }
+  }
+  return section.thinking
+}
+
+// A reply can have a replay without shown text (encrypted reasoning only),
+// so this makes the thinking when there is none.
+export function setThinkingReplayForTabSection(tabId: string, sectionId: string, replay: ThinkingReplay): SectionThinking | null {
+  const section = findTabSection(tabId, sectionId)?.section
+  if (!section) return null
+  section.thinking = { text: section.thinking?.text ?? '', replay }
+  return section.thinking
+}
+
 export function finalizeStreamSectionForTab(tabId: string, sectionId: string, error: string | null): Section | null {
-  const tab = useTabStore().tabs.find((candidate) => candidate.id === tabId)
-  const section = tab?.sections.find((candidate) => candidate.id === sectionId)
-  if (!tab || !section) return null
+  const found = findTabSection(tabId, sectionId)
+  if (!found) return null
+  const { tab, section } = found
   fillEmptyAgentSectionOnError(section, error)
   if (section.role === 'agent') ensureTrailingUserSection(tab.sections)
   const title = firstUserTitle(tab.sections)
@@ -413,6 +458,7 @@ export default sbp('sbp/selectors/register', {
         role: section.role,
         nodes: section.content.map((node) => contentNodeToData(node)),
         ...modelRefField(section.model),
+        ...thinkingField(section.thinking),
       })),
       activeModel: cloneActiveModel(tab.activeModel),
       created_at: tab.createdAt,
@@ -507,7 +553,6 @@ export default sbp('sbp/selectors/register', {
       await sbp('dez.persistence/saveAppState', {
         tabs: tabsData,
         activeTabId: tabStore.activeTabId,
-        showPillSeparators: settings.showPillSeparators,
         theme: settings.theme,
         customProviders: settings.customProviders,
         defaultNewTabModel: settings.defaultNewTabModel,
@@ -585,10 +630,16 @@ export default sbp('sbp/selectors/register', {
   // `sectionsField` when it changes. The model key is part of it, so a stamp
   // on a reused empty agent section (same id and role) still reaches the
   // editor before the first token; else the editor's write-back on every
-  // token (`replaceSections`) would erase the stamp.
+  // token (`replaceSections`) would erase the stamp. For the same reason it
+  // marks whether a section has thinking and a replay: a reused section loses
+  // its old thinking, and the editor must lose it too. The thinking text is
+  // left out, so a streamed thinking token does not trigger this sync.
   'dez.model/thread/sectionsIdentity' (): string {
     return useTabStore().activeTab.sections
-      .map((section) => `${section.id}:${section.role}:${section.model ? modelRefKey(section.model) : ''}`)
+      .map((section) => {
+        const thinking = section.thinking ? (section.thinking.replay ? 'replay' : 'text') : ''
+        return `${section.id}:${section.role}:${section.model ? modelRefKey(section.model) : ''}:${thinking}`
+      })
       .join('|')
   },
 
@@ -602,15 +653,18 @@ export default sbp('sbp/selectors/register', {
       role: section.role,
       content: normalizeContent(section.content),
       ...modelRefField(section.model),
+      ...thinkingField(section.thinking),
     })))
     const title = firstUserTitle(tab.sections)
     if (title) tab.title = title
     return true
   },
 
-  'dez.model/streamMessagesForTab' (tabId: string): StreamMessage[] {
+  // `model`: the model the request goes to, which decides what earlier
+  // thinking goes back with it.
+  'dez.model/streamMessagesForTab' (tabId: string, model: ModelRef): StreamMessage[] {
     const tab = useTabStore().tabs.find((candidate) => candidate.id === tabId)
-    return tab ? sectionsToStreamMessages(tab.sections).map((message) => ({ ...message })) : []
+    return tab ? sectionsToStreamMessages(tab.sections, model).map((message) => ({ ...message })) : []
   },
 
   // Stamps the agent section with the model of the request that will fill it.
@@ -625,7 +679,6 @@ export default sbp('sbp/selectors/register', {
     const state = (await sbp('dez.persistence/loadAppState').catch(() => ({}))) as AppStatePayload
 
     if (state) {
-      if (typeof state.showPillSeparators === 'boolean') settings.showPillSeparators = state.showPillSeparators
       if (state.theme) settings.theme = state.theme
       if (Array.isArray(state.customProviders)) settings.customProviders = state.customProviders
       if (state.defaultNewTabModel !== undefined) settings.defaultNewTabModel = state.defaultNewTabModel
@@ -649,7 +702,6 @@ export default sbp('sbp/selectors/register', {
     stopThemeWatch?.()
     stopSettingsPersistWatch = watch(
       [
-        () => settings.showPillSeparators,
         () => settings.theme,
         () => settings.customProviders,
         () => settings.defaultNewTabModel,
@@ -725,11 +777,6 @@ export default sbp('sbp/selectors/register', {
   'dez.model/settings/historyToggle' (): void {
     if (useSettingsStore().historyOpen) sbp('dez.model/settings/historyClose')
     else sbp('dez.model/settings/historyOpen')
-  },
-
-  'dez.model/settings/togglePillSeparators' (): void {
-    const settings = useSettingsStore()
-    settings.showPillSeparators = !settings.showPillSeparators
   },
 
   'dez.model/settings/setTheme' (theme: Theme): void {

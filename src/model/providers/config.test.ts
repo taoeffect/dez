@@ -108,6 +108,49 @@ describe('provider config schema', () => {
     expect(withPath('')).toBe(false)
   })
 
+  it('reserves the Thinking toggle key for settings', () => {
+    const withKey = (key: string) => providerConfigSchema.safeParse({
+      id: 'p',
+      name: 'P',
+      baseUrl: 'http://h',
+      settings: [{ key, label: 'K', type: 'boolean', default: true, bodyPath: 'options.flag' }],
+    }).success
+
+    expect(withKey('reasoning')).toBe(true)
+    expect(withKey('thinking')).toBe(false)
+  })
+
+  it('keeps an empty thinking object and accepts only JSON objects as bodies', () => {
+    const parse = (thinking: unknown) => providerConfigSchema.safeParse({ id: 'p', name: 'P', baseUrl: 'http://h', thinking })
+    const bodies = {
+      enabledBody: { reasoning: { enabled: true, effort: null, levels: ['low', 2] } },
+      disabledBody: { venice_parameters: { disable_thinking: true } },
+    }
+
+    // Present means "supports thinking", so an empty object must survive.
+    expect(parse({}).data?.thinking).toEqual({})
+    expect(parse(bodies).data?.thinking).toEqual(bodies)
+    expect(parse({ enabledBody: 'reasoning' }).success).toBe(false)
+    expect(parse({ enabledBody: [{ reasoning: true }] }).success).toBe(false)
+    expect(parse({ disabledBody: { when: () => false } }).success).toBe(false)
+  })
+
+  it('rejects thinking body keys that name Object.prototype members, at any depth', () => {
+    // JSON.parse makes `__proto__` an own key, as in a hand-edited app_state.json.
+    const parseJson = (thinking: string) => providerConfigSchema.safeParse({
+      id: 'p',
+      name: 'P',
+      baseUrl: 'http://h',
+      thinking: JSON.parse(thinking),
+    })
+
+    expect(parseJson('{"enabledBody":{"reasoning":{"enabled":true}}}').success).toBe(true)
+    expect(parseJson('{"enabledBody":{"__proto__":{"polluted":true}}}').success).toBe(false)
+    expect(parseJson('{"enabledBody":{"a":{"__proto__":{"polluted":true}}}}').success).toBe(false)
+    expect(parseJson('{"disabledBody":{"constructor":{"prototype":1}}}').success).toBe(false)
+    expect(parseJson('{"disabledBody":{"list":[{"prototype":1}]}}').success).toBe(false)
+  })
+
   it('writes every built-in exactly as the schema would produce it', () => {
     // Built-ins skip the schema at run time, so each literal must already be
     // in the schema's output form.

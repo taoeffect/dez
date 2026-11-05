@@ -17,6 +17,15 @@ let streamRequests: NativeHttpRequest[] = []
 
 // Requests to this base URL get HTTP 404; every other server answers.
 const FAILING_BASE_URL = 'http://localhost:9090/v1'
+// This server thinks before it answers.
+const REASONING_BASE_URL = 'http://localhost:7070/v1'
+
+const REASONING_STREAM = [
+  'data: {"choices":[{"delta":{"reasoning_content":"Plan"}}]}',
+  'data: {"choices":[{"delta":{"reasoning_content":" it."}}]}',
+  'data: {"choices":[{"delta":{"content":"Hello"},"finish_reason":"stop"}]}',
+  'data: [DONE]',
+].join('\n\n') + '\n\n'
 
 // Stand-ins for the native layer: the key store cannot be read.
 sbp('sbp/selectors/register', {
@@ -40,7 +49,9 @@ sbp('sbp/selectors/register', {
       chunks: (async function * () {
         yield new TextEncoder().encode(failing
           ? 'Not found'
-          : 'data: {"choices":[{"delta":{"content":"Hello"}}]}\n\ndata: [DONE]\n\n')
+          : request.url.startsWith(REASONING_BASE_URL)
+            ? REASONING_STREAM
+            : 'data: {"choices":[{"delta":{"content":"Hello"}}]}\n\ndata: [DONE]\n\n')
       })(),
     }
   },
@@ -92,6 +103,73 @@ describe('provider requests when provider_keys.json cannot be read', () => {
 
     expect(result).toEqual({ ok: false, models: [], error: KEY_STORE_ERROR })
     expect(httpRequests).toEqual([])
+  })
+})
+
+describe('thinking in chat streams', () => {
+  async function streamThinker(providerSettings?: Record<string, boolean>) {
+    sbp('dez.model/customProviders/save', {
+      id: 'thinker',
+      name: 'Thinker',
+      baseUrl: REASONING_BASE_URL,
+      apiFormat: 'openai',
+      models: [],
+      fetchModels: true,
+      auth: 'apiKey',
+      thinking: {},
+    })
+    const calls: string[] = []
+    const result = await sbp('dez.provider/streamChat', {
+      providerId: 'thinker',
+      modelId: 'm',
+      messages: [{ role: 'user', content: 'Hi' }],
+      requestId: 'request-1',
+      ...(providerSettings && { providerSettings }),
+      onToken: (token: string) => { calls.push(`token:${token}`) },
+      onThinking: (token: string) => { calls.push(`thinking:${token}`) },
+    })
+    return { calls, result }
+  }
+
+  it('sends the thinking and the answer to their callbacks and returns the replay', async () => {
+    const { calls, result } = await streamThinker()
+
+    expect(calls).toEqual(['thinking:Plan', 'thinking: it.', 'token:Hello'])
+    expect(result).toStrictEqual({
+      requestId: 'request-1',
+      thinkingReplay: { kind: 'field', field: 'reasoning_content' },
+    })
+  })
+
+  it('drops the thinking and returns no replay when the toggle is off', async () => {
+    const { calls, result } = await streamThinker({ thinking: false })
+
+    expect(calls).toEqual(['token:Hello'])
+    expect(result).toStrictEqual({ requestId: 'request-1' })
+  })
+
+  it('shows no thinking for a provider without thinking support', async () => {
+    const calls: string[] = []
+    sbp('dez.model/customProviders/save', {
+      id: 'plain',
+      name: 'Plain',
+      baseUrl: REASONING_BASE_URL,
+      apiFormat: 'openai',
+      models: [],
+      fetchModels: true,
+      auth: 'apiKey',
+    })
+    const result = await sbp('dez.provider/streamChat', {
+      providerId: 'plain',
+      modelId: 'm',
+      messages: [{ role: 'user', content: 'Hi' }],
+      requestId: 'request-2',
+      onToken: (token: string) => { calls.push(`token:${token}`) },
+      onThinking: (token: string) => { calls.push(`thinking:${token}`) },
+    })
+
+    expect(calls).toEqual(['token:Hello'])
+    expect(result).toStrictEqual({ requestId: 'request-2' })
   })
 })
 

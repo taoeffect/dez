@@ -11,7 +11,8 @@ export function createStreamSection(role: Role): Section {
 }
 
 // The returned section gets `model`, also when it is a reused empty agent
-// section: it records the model that writes the next response.
+// section: it records the model that writes the next response. A reused
+// section loses its old thinking, which belongs to the earlier request.
 export function ensureTrailingAgentSection(sections: Section[], model: ModelRef): Section {
   const lastSection = sections[sections.length - 1]
   if (!lastSection || lastSection.role !== 'agent' || !sectionIsEmpty(lastSection)) {
@@ -22,6 +23,7 @@ export function ensureTrailingAgentSection(sections: Section[], model: ModelRef)
 
   lastSection.content = emptyContent()
   lastSection.model = cloneModelRef(model)
+  delete lastSection.thinking
   return lastSection
 }
 

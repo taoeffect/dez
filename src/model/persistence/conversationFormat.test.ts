@@ -1,6 +1,6 @@
 import { commonmarkLanguage } from '@codemirror/lang-markdown'
 import { describe, expect, it } from 'vitest'
-import type { ModelRef } from '../chat/types'
+import type { ModelRef, SectionThinking, ThinkingReplay } from '../chat/types'
 import { parseConversation, serializeConversation, serializeConversationAsMarkdown } from './conversationFormat'
 import type { ContentNodeData, ConversationData, SectionData } from './types'
 
@@ -320,6 +320,195 @@ describe('agent pill models', () => {
   })
 })
 
+describe('agent thinking containers', () => {
+  const model: ModelRef = { providerId: 'zai', modelId: 'glm-4.6' }
+
+  function thinkingSection(answer: string, thinking: SectionThinking): SectionData {
+    return { role: 'agent', nodes: [textNode(answer)], model, thinking }
+  }
+
+  function conversation(sections: SectionData[]): ConversationData {
+    return { id: 'conversation', title: 'Chat', sections: [section('user', [textNode('hi')]), ...sections], activeModel: null, created_at: 1 }
+  }
+
+  function file(lines: string[]): string {
+    return ['<!-- title: Chat | model:  | created: 1 -->', ...lines, ''].join('\n')
+  }
+
+  it('writes the thinking as the exact container body, with the markers escaped', () => {
+    const data = conversation([thinkingSection('answer', { text: 'line one\n</dez:pill>\n<dez:pill type="user"/>\n' })])
+
+    expect(serializeConversation(data)).toBe(file([
+      '',
+      '<dez:pill type="user"/>',
+      'hi',
+      '',
+      '<dez:pill type="agent" model="zai/glm-4.6">',
+      'line one',
+      '<\\/dez:pill>',
+      '<\\dez:pill type="user"/>',
+      '',
+      '</dez:pill>',
+      'answer',
+    ]))
+  })
+
+  // The `field` replay sends the text back, so every byte must survive.
+  it('round-trips the thinking text byte for byte', () => {
+    const texts = [
+      'plain',
+      '',
+      '\n',
+      'trailing newlines\n\n',
+      '\n\nleading newlines',
+      'carriage\r\nreturns\r',
+      '  indented\n\ttabbed  ',
+      'inline </dez:pill> closer',
+      '</dez:pill>',
+      '  </dez:pill>  ',
+      'already escaped <\\/dez:pill> and <\\\\/dez:pill>',
+      'already escaped <\\dez:pill type="user"/> and <\\\\dez:pill',
+      '<dez:pill type="user"/>\n<dez:prompt name="p">\nbody\n</dez:prompt>',
+      '  <dez:pill type="agent" model="zai/glm-4.6">  \n</dez:pill',
+      '<!-- title: x | model: y | created: 2 -->',
+    ]
+    const data = conversation(texts.map((text, index) => thinkingSection(`answer ${index}`, { text })))
+
+    expect(parseConversation('conversation', serializeConversation(data))).toStrictEqual(data)
+  })
+
+  it('round-trips each replay kind in a one-line replay attribute', () => {
+    const replays: ThinkingReplay[] = [
+      { kind: 'field', field: 'reasoning_content' },
+      { kind: 'field', field: 'reasoning' },
+      {
+        kind: 'anthropicBlocks',
+        blocks: [
+          { type: 'thinking', thinking: 'a "quoted" & <b>\nnext line\r', signature: 'sig/+==' },
+          { type: 'redacted_thinking', data: 'opaque&quot;data' },
+        ],
+        prefixHash: 'h1',
+      },
+      {
+        kind: 'reasoningDetails',
+        details: [
+          { type: 'reasoning.text', text: 'step', index: 0, signature: null },
+          { type: 'reasoning.encrypted', data: 'enc', nested: { list: [1, 2.5, true, null, 'x'] } },
+        ],
+        prefixHash: 'h2',
+      },
+      { kind: 'copilot', opaque: 'op"aque&\n', prefixHash: 'h3' },
+    ]
+    const data = conversation(replays.map((replay, index) => thinkingSection(`answer ${index}`, { text: `thought ${index}`, replay })))
+
+    const serialized = serializeConversation(data)
+    const openingTags = serialized.split('\n').filter((line) => line.startsWith('<dez:pill type="agent"'))
+
+    expect(openingTags).toHaveLength(replays.length)
+    expect(openingTags.every((line) => line.endsWith('">') && line.includes(' replay="{&quot;kind&quot;:'))).toBe(true)
+    expect(parseConversation('conversation', serialized)).toStrictEqual(data)
+  })
+
+  it('keeps the thinking but no replay when the replay attribute is not a known shape', () => {
+    const badReplays = [
+      'not json',
+      '{&quot;kind&quot;:&quot;unknown&quot;}',
+      '{&quot;kind&quot;:&quot;field&quot;,&quot;field&quot;:&quot;content&quot;}',
+      '{&quot;kind&quot;:&quot;copilot&quot;,&quot;opaque&quot;:&quot;x&quot;}',
+      '[]',
+      '',
+    ]
+    const content = file(['<dez:pill type="user"/>', 'hi', ...badReplays.flatMap((replay, index) => [
+      `<dez:pill type="agent" replay="${replay}">`,
+      `thought ${index}`,
+      '</dez:pill>',
+      `answer ${index}`,
+    ])])
+
+    const parsed = parseConversation('conversation', content)
+
+    expect(parsed.sections.slice(1).map((s) => s.thinking)).toStrictEqual(badReplays.map((_, index) => ({ text: `thought ${index}` })))
+    expect(parsed.sections.slice(1).map((s) => textContent(s.nodes[0]))).toEqual(badReplays.map((_, index) => `answer ${index}`))
+  })
+
+  it('reads a container without a model, and no thinking from a self-closing tag with a replay', () => {
+    const content = file([
+      '<dez:pill type="user"/>',
+      'hi',
+      '<dez:pill type="agent">',
+      'thought',
+      '</dez:pill>',
+      'one',
+      '<dez:pill type="agent" replay="{&quot;kind&quot;:&quot;field&quot;,&quot;field&quot;:&quot;reasoning&quot;}"/>',
+      'two',
+    ])
+
+    const parsed = parseConversation('conversation', content)
+
+    expect(parsed.sections.slice(1)).toStrictEqual([
+      { role: 'agent', nodes: [textNode('one')], thinking: { text: 'thought' } },
+      { role: 'agent', nodes: [textNode('two')] },
+    ])
+  })
+
+  it('drops the body of a user container and the thinking of a section saved as user', () => {
+    const content = file([
+      '<dez:pill type="user"/>',
+      'hi',
+      '<dez:pill type="user">',
+      'hand-written body',
+      '</dez:pill>',
+      'question',
+    ])
+    const asUser: SectionData = { role: 'user', nodes: [textNode('was an agent reply')], model, thinking: { text: 'thought' } }
+
+    expect(parseConversation('conversation', content).sections).toStrictEqual([
+      section('user', [textNode('hi')]),
+      section('user', [textNode('question')]),
+    ])
+    expect(serializeConversation(conversation([asUser]))).not.toContain('thought')
+  })
+
+  // The writer escapes every marker in a thinking body, so a marker line
+  // before any closing line means a hand edit lost the closing line. The
+  // lines after the opening tag must not become thinking (a `field` replay
+  // would send them to the provider) even when a later container closes.
+  it('reads an opening tag with no closing line before the next marker as a self-closing marker', () => {
+    const content = file([
+      '<dez:pill type="user"/>',
+      'hi',
+      '<dez:pill type="agent" model="zai/glm-4.6" replay="{&quot;kind&quot;:&quot;field&quot;,&quot;field&quot;:&quot;reasoning_content&quot;}">',
+      'answer 1',
+      '<dez:prompt name="p">',
+      'prompt body',
+      '</dez:prompt>',
+      '<dez:pill type="user"/>',
+      'q2',
+      '<dez:pill type="agent" model="zai/glm-4.6">',
+      'thought 2',
+      '</dez:pill>',
+      'answer 2',
+      '<dez:pill type="user"/>',
+      'q3',
+      '<dez:pill type="agent" model="zai/glm-4.6">',
+      'the last closing line was deleted',
+    ])
+
+    expect(parseConversation('conversation', content).sections).toStrictEqual([
+      section('user', [textNode('hi')]),
+      {
+        role: 'agent',
+        nodes: [textNode('answer 1\n'), { kind: 'prompt', id: expect.any(String), promptId: null, name: 'p', body: 'prompt body', expanded: false }],
+        model,
+      },
+      section('user', [textNode('q2')]),
+      { role: 'agent', nodes: [textNode('answer 2')], model, thinking: { text: 'thought 2' } },
+      section('user', [textNode('q3')]),
+      { role: 'agent', nodes: [textNode('the last closing line was deleted')], model },
+    ])
+  })
+})
+
 describe('conversation Markdown export', () => {
   function headings(markdown: string): string[] {
     const found: string[] = []
@@ -420,5 +609,21 @@ describe('conversation Markdown export', () => {
       '',
     ].join('\n'))
     expect(headings(markdown)).toEqual(['# Stopped streams', '## Agent', '## User', '## Agent', '## User'])
+  })
+
+  it('leaves out the agent thinking', () => {
+    const data: ConversationData = {
+      id: 'conversation',
+      title: 'Chat',
+      sections: [
+        section('user', [textNode('Question?')]),
+        { role: 'agent', nodes: [textNode('Answer.')], thinking: { text: 'hidden reasoning', replay: { kind: 'field', field: 'reasoning_content' } } },
+        { role: 'agent', nodes: [textNode('  ')], thinking: { text: 'thinking only' } },
+      ],
+      activeModel: null,
+      created_at: 1000,
+    }
+
+    expect(serializeConversationAsMarkdown(data)).toBe('# Chat\n\n## User\n\nQuestion?\n\n## Agent\n\nAnswer.\n')
   })
 })

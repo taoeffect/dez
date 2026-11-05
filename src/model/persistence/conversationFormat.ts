@@ -1,8 +1,8 @@
 import { closesFence, fenceOpener, type Fence } from '../../utils/markdownFence'
 import { stripLiveSentinels } from '../chat/content'
 import { modelRefKey, parseModelRefKey } from '../chat/modelRef'
-import { parsePillMarker, pillMarkerLine } from '../chat/pillMarker'
-import type { ActiveModel, ModelRef } from '../chat/types'
+import { PILL_CLOSE_TAG, containerThinking, parsePillMarker, pillMarkerText, type PillMarker } from '../chat/pillMarker'
+import type { ActiveModel, ModelRef, SectionThinking } from '../chat/types'
 import type { ContentNodeData, ConversationData, SectionData } from './types'
 
 function escapeTitle(value: string): string {
@@ -27,7 +27,7 @@ export function serializeConversation(data: ConversationData): string {
 
   for (const section of data.sections) {
     output += '\n'
-    output += `${pillMarkerLine(section.role, section.model)}\n`
+    output += `${pillMarkerText(section.role, section.model, section.thinking)}\n`
     for (const node of section.nodes) {
       if (node.kind === 'text') {
         const text = stripLiveSentinels(node.text)
@@ -66,8 +66,8 @@ function unclosedFence(text: string): Fence | null {
 // The history format above does not render: a CommonMark tag name cannot
 // hold `:`, so viewers show `<dez:pill …/>` as text. Each message gets a
 // `## User` / `## Agent` heading (the editor's role labels) and holds what
-// the model received: its text with prompt bodies inline. Dez cannot read
-// this format back.
+// the model received: its text with prompt bodies inline, without the agent
+// thinking. Dez cannot read this format back.
 export function serializeConversationAsMarkdown(data: ConversationData): string {
   let output = `# ${data.title.replace(/\s+/g, ' ').trim() || 'Conversation'}\n`
 
@@ -133,6 +133,7 @@ function flushSection(
   sections: SectionData[],
   role: 'user' | 'agent' | null,
   model: ModelRef | null,
+  thinking: SectionThinking | undefined,
   nodes: ContentNodeData[],
 ): ContentNodeData[] {
   if (!role) return nodes
@@ -148,13 +149,28 @@ function flushSection(
       }
     }
   }
-  sections.push(model ? { role, nodes, model } : { role, nodes })
+  sections.push({ role, nodes, ...(model ? { model } : {}), ...(thinking ? { thinking } : {}) })
   return []
 }
 
 function activeModelFromHeader(model: string): ActiveModel | null {
   const ref = parseModelRefKey(model)
   return ref ? { ...ref, modelName: ref.modelId } : null
+}
+
+// An opening tag starts a container only when a closing tag line comes
+// before the next marker line. The writer escapes both in a thinking body
+// (`pillMarkerText`), so a marker line first means a hand edit lost the
+// closing line. The tag then reads as a self-closing marker, and the lines
+// after it stay section text: a later container's closing line must not
+// turn them into thinking that a `field` replay sends to the provider.
+function closesContainer(lines: string[], start: number): boolean {
+  for (let index = start; index < lines.length; index++) {
+    const trimmed = lines[index].trim()
+    if (trimmed === PILL_CLOSE_TAG) return true
+    if (parsePillMarker(trimmed)) return false
+  }
+  return false
 }
 
 export function parseConversation(id: string, content: string): ConversationData {
@@ -181,17 +197,35 @@ export function parseConversation(id: string, content: string): ConversationData
     body = ''
   }
 
+  const lines = body.split('\n').slice(0, body.endsWith('\n') ? -1 : undefined)
   const sections: SectionData[] = []
   let currentRole: 'user' | 'agent' | null = null
   let currentModel: ModelRef | null = null
+  let currentThinking: SectionThinking | undefined
   let currentNodes: ContentNodeData[] = []
   let textBuffer = ''
   let inPrompt = false
   let currentPromptName = ''
   let promptBody = ''
+  // The marker of the container being read, and its body lines so far.
+  let openContainer: PillMarker | null = null
+  let containerLines: string[] = []
 
-  for (const line of body.split('\n').slice(0, body.endsWith('\n') ? -1 : undefined)) {
+  for (const [index, line] of lines.entries()) {
     const trimmed = line.trim()
+
+    // The body is the exact lines between the tag lines. Unlike a prompt
+    // body, it keeps trailing newlines: the text may go back to the provider.
+    if (openContainer) {
+      if (trimmed === PILL_CLOSE_TAG) {
+        currentThinking = containerThinking(openContainer, containerLines.join('\n'))
+        openContainer = null
+        containerLines = []
+      } else {
+        containerLines.push(line)
+      }
+      continue
+    }
 
     if (inPrompt) {
       if (trimmed === '</dez:prompt>') {
@@ -216,9 +250,11 @@ export function parseConversation(id: string, content: string): ConversationData
     const marker = parsePillMarker(trimmed)
     if (marker) {
       textBuffer = flushText(currentNodes, textBuffer, true)
-      currentNodes = flushSection(sections, currentRole, currentModel, currentNodes)
+      currentNodes = flushSection(sections, currentRole, currentModel, currentThinking, currentNodes)
       currentRole = marker.role
       currentModel = marker.model
+      currentThinking = undefined
+      if (marker.container && closesContainer(lines, index + 1)) openContainer = marker
       continue
     }
 
@@ -242,7 +278,7 @@ export function parseConversation(id: string, content: string): ConversationData
   }
 
   flushText(currentNodes, textBuffer, true)
-  flushSection(sections, currentRole, currentModel, currentNodes)
+  flushSection(sections, currentRole, currentModel, currentThinking, currentNodes)
 
   if (sections.length === 0) {
     sections.push({ role: 'user', nodes: [] })

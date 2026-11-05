@@ -19,9 +19,11 @@ Talk with AI in a fully editable plaintext document. Inspired by Zed's text thre
 - **X search** - Via Grok models on Venice
 - **Inline editing** — edit any message in a thread, including agent responses
 - **Per-response model labels** — switch models mid-convo and remember who said what
+- **Model thinking** — when a model streams its thinking, a triangle on its response pill opens it, live while the model thinks. Dez sends earlier thinking back to the providers that use it. Turn thinking off per provider in Settings › Providers or in the model picker's settings popup
 - **Multiple simultaneous responses** — Ask different AIs the same question across multiple tabs at once
 - **Conversation history** — persisted locally with the ability to browse and delete past conversations
 - **Save as Markdown** - <kbd>Cmd/Ctrl+S</kbd> saves the current conversation to a Markdown file you pick
+- **Copy Markdown** - <kbd>Cmd/Ctrl+Shift+C</kbd> copies the selection as plain Markdown, with no response pills and no thinking
 - **Multiple cursors** - <kbd>Ctrl+Shift+Up</kbd> and <kbd>Ctrl+Shift+Down</kbd> adds cursors above and below
 - **Find & replace** - <kbd>Cmd/Ctrl+F</kbd> opens a find bar with live highlights
 - **Markdown tables** - Renders GFM-flavored markdown tables inline
@@ -37,7 +39,7 @@ The main window contains a tab bar for conversations and buttons to access saved
 
 A custom provider is any server that speaks the OpenAI chat completions API or the Anthropic messages API. This includes local servers such as llama-server, LM Studio, Ollama, and vLLM, and hosted APIs that are compatible with one of the two.
 
-To add one, open Settings › Providers and click **+ Add provider**. Set the name, the API format, and the base URL. An API key is optional: local servers usually need none. Add model ids if the server does not list its models.
+To add one, open Settings › Providers and click **+ Add provider**. Set the name, the API format, and the base URL. An API key is optional: local servers usually need none. Add model ids if the server does not list its models. If the server's models think, check **Supports thinking** (see [Thinking](#thinking)).
 
 You can also add custom providers by hand in `~/.config/dez/app_state.json`. **Close Dez first.** Dez saves this file while it runs, so it overwrites changes made while it is open.
 
@@ -72,7 +74,8 @@ You can also add custom providers by hand in `~/.config/dez/app_state.json`. **C
 | `apiKey` | no | When Dez starts, it moves the key into `~/.config/dez/provider_keys.json` and removes it from `app_state.json`. |
 | `headers` | no | Extra HTTP headers for every request, as `{ "Name": "value" }`. A name may use only letters, digits, and ``!#$%&'*+-.^_`\|~``. A value must not contain a line break or a control character other than tab. Dez stores headers as plain text in `app_state.json`, so put an API key in `apiKey`, not in a header. |
 | `maxOutputTokens` | no | `max_tokens` for the Anthropic format (default 32000). |
-| `settings` | no | On/off toggles for the provider settings popup in the model picker. Each toggle writes a value into the chat request. See the Venice `settings` in [`src/model/providers/builtins.ts`](src/model/providers/builtins.ts). |
+| `settings` | no | On/off toggles for the provider settings popup in the model picker. Each toggle writes a value into the chat request. See the Venice `settings` in [`src/model/providers/builtins.ts`](src/model/providers/builtins.ts). The key `thinking` is reserved for the Thinking toggle. |
+| `thinking` | no | Set it when the server's models think. See [Thinking](#thinking). Checking **Supports thinking** writes `{}`; unchecking it removes the field. |
 
 The base URL rule:
 
@@ -82,6 +85,24 @@ The base URL rule:
 Dez drops an entry that is not valid, and the other providers still load. The next time Dez saves `app_state.json`, the dropped entry is no longer in the file, so keep a copy of your edits until they work.
 
 A provider shows in the model picker only while its last model check worked. If a local server was off when Dez started, start the server, then click **Check again** in Settings › Providers. The model picker also checks again when you open it, at most once a minute per provider.
+
+### Thinking
+
+A custom provider that has `thinking` gets the Thinking toggle (on by default) in Settings › Providers and in the model picker's settings popup. While the toggle is on, Dez shows the thinking that the server streams, and sends the thinking of earlier responses of the same model back to the server.
+
+Dez reads thinking from these parts of a reply:
+
+- **OpenAI format**: the `reasoning_content`, `reasoning`, `reasoning_text`, or `reasoning_details` field of a delta, or a reply that starts with `<think>` or `<thought>`.
+- **Anthropic format**: `thinking` and `redacted_thinking` blocks.
+
+`thinking` is an object with two optional fields. Each one is a JSON object that Dez merges into the chat request: objects merge key by key, and other values replace. `enabledBody: {}` sends nothing.
+
+| Field | Sent when | Default |
+|---|---|---|
+| `enabledBody` | the Thinking toggle is on | OpenAI format: nothing. Anthropic format: `{ "thinking": { "type": "adaptive", "display": "summarized" } }`. |
+| `disabledBody` | the Thinking toggle is off | nothing |
+
+Some servers reject a field for thinking that their model does not support. For example, Claude Sonnet 4.5, Opus 4.5, and Haiku 4.5 reject `adaptive`. For those, set `enabledBody` by hand, e.g. `{ "thinking": { "type": "enabled", "budget_tokens": 8000 } }`, or uncheck **Supports thinking**.
 
 ## Packaging
 
