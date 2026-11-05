@@ -183,6 +183,26 @@ function setPanelText(panel: HTMLElement, text: string): boolean {
   return true
 }
 
+/** Makes CodeMirror read the line heights again at its next measure, after
+ *  the pill changed its height in place.
+ *
+ *  `requestMeasure()` alone is not enough. CodeMirror reads the line heights
+ *  only after it draws lines again, or when the height of `.cm-content`
+ *  changes. When the doc is shorter than the editor, `.cm-content` keeps
+ *  its height (`min-height: 100%`), so CodeMirror keeps the old pill height:
+ *  it draws the caret at the old place, and clicks below the pill land on
+ *  the wrong line. `mustMeasureContent` is the internal flag that CodeMirror
+ *  sets when it draws lines (seen in @codemirror/view 6.41.1 to 6.43.15). If
+ *  a new version removes it, this does only `requestMeasure()`, and the
+ *  close checks in `tests/e2e/thinking.e2e.ts` fail. */
+function measureLineHeights(view: EditorView): void {
+  const viewState: unknown = Reflect.get(view, 'viewState')
+  if (typeof viewState === 'object' && viewState !== null && 'mustMeasureContent' in viewState) {
+    Reflect.set(viewState, 'mustMeasureContent', true)
+  }
+  view.requestMeasure()
+}
+
 /** Draws the thinking parts of a role pill to match `thinking`: the slot at
  *  the left of the pill `label`, and the panel after the label in
  *  `separator`. It changes only the parts that differ, so a thinking token
@@ -193,8 +213,8 @@ function setPanelText(panel: HTMLElement, text: string): boolean {
  *  height, so the textarea always fits its text without script measuring.
  *  The panel has a max height and scrolls; while the section streams, it
  *  stays at the bottom unless the user scrolled up. A change of the panel's
- *  height asks CodeMirror to measure again, so clicks below the pill land on
- *  the right line. */
+ *  height makes CodeMirror measure the line heights again, so the caret and
+ *  clicks below the pill stay on the right line. */
 export function renderPillThinking(separator: HTMLElement, label: HTMLElement, thinking: PillThinkingView | null, view: EditorView): void {
   renderSlot(label, thinking)
   const existing = directChild(separator, PANEL_CLASS)
@@ -202,7 +222,7 @@ export function renderPillThinking(separator: HTMLElement, label: HTMLElement, t
     if (existing) {
       existing.remove()
       separator.removeAttribute('data-thinking-open')
-      view.requestMeasure()
+      measureLineHeights(view)
     }
     return
   }
@@ -213,7 +233,7 @@ export function renderPillThinking(separator: HTMLElement, label: HTMLElement, t
   }
   const changed = setPanelText(panel, thinking.text)
   if (existing && !changed) return
-  view.requestMeasure()
+  measureLineHeights(view)
   if (thinking.streaming && !panelsScrolledUp.has(panel)) {
     view.requestMeasure({
       key: panel,

@@ -275,9 +275,11 @@ describe('thinking', () => {
     }, index)
   }
 
-  // Where a click in the middle of the first text line of section `index`
+  // Where a click near the left edge of the first line of section `index`
   // lands: "same line" when CodeMirror maps it to that line. A stale height
-  // of the pill above it would move the click to a later line.
+  // of the pill above it would move the click to another line. The lookup
+  // is the imprecise one that CodeMirror uses for clicks, so an empty line
+  // gets a position too.
   async function lineHitBelowPill (index: number): Promise<string> {
     return browser.execute((sectionIndex: number) => {
       const content = document.querySelector('.cm-content')
@@ -286,11 +288,32 @@ describe('thinking', () => {
       const line = content.querySelector(`.dez-role-separator[data-section-index="${sectionIndex}"]`)?.closest('.cm-line')?.nextElementSibling
       if (!(line instanceof HTMLElement)) throw new Error(`lineHitBelowPill: no line after separator ${sectionIndex}`)
       const rect = line.getBoundingClientRect()
-      const hit = view.posAtCoords({ x: rect.left + 4, y: rect.top + rect.height / 2 })
+      const hit = view.posAtCoords({ x: rect.left + 4, y: rect.top + rect.height / 2 }, false)
       const expected = view.state.doc.lineAt(view.posAtDOM(line)).number
-      const actual = hit === null ? null : view.state.doc.lineAt(hit).number
+      const actual = view.state.doc.lineAt(hit).number
       return actual === expected ? 'same line' : `line ${expected}, click on ${actual}`
     }, index)
+  }
+
+  // The drawn caret against the selection head: "at the end" when the head
+  // is at the end of the doc and the caret is drawn on it. CodeMirror moves
+  // the caret only when it sees that the layout changed.
+  async function caretAtEnd (): Promise<string> {
+    return browser.execute(() => {
+      const content = document.querySelector('.cm-content')
+      if (!content) throw new Error('caretAtEnd: .cm-content not found')
+      const view = Reflect.get(Reflect.get(content, 'cmTile'), 'root').view as EditorView
+      const { head } = view.state.selection.main
+      if (head !== view.state.doc.length) return `head at ${head} of ${view.state.doc.length}`
+      const caret = document.querySelector<HTMLElement>('.cm-cursorLayer .cm-cursor-primary')
+      const layer = caret?.parentElement
+      const coords = view.coordsAtPos(head)
+      if (!caret || !layer || !coords) throw new Error('caretAtEnd: no caret')
+      // The caret is hidden while the editor has no focus, so its offset
+      // in the layer gives its place.
+      const offset = layer.getBoundingClientRect().top + parseFloat(caret.style.top) - coords.top
+      return Math.abs(offset) < 2 ? 'at the end' : `caret ${Math.round(offset)}px off the end`
+    })
   }
 
   async function openGear (): Promise<void> {
@@ -465,6 +488,13 @@ describe('thinking', () => {
     await waitForValue(browser, 'closed panel', () => pillThinking(1), {
       role: 'agent', slot: 'disclosure', expanded: 'false', open: false, panelText: null,
     })
+    // Closing the panel makes the pill shorter with no doc change. The caret
+    // must stay at the end of the doc, and a click on a line below the pill
+    // must land on that line. The doc is shorter than the editor here, so
+    // the height of the editor content does not change.
+    await waitForValue(browser, 'caret after the close', caretAtEnd, 'at the end')
+    await waitForValue(browser, 'click below the closed pill', () => lineHitBelowPill(1), 'same line')
+    await waitForValue(browser, 'click on the last line', () => lineHitBelowPill(2), 'same line')
     // Opening the panel makes the pill taller with no doc change. A click
     // on the answer below it must still land on the answer line.
     await toggleThinking(1)
