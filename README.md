@@ -19,7 +19,6 @@ Talk with AI in a fully editable plaintext document. Inspired by Zed's text thre
 - **X search** - Via Grok models on Venice
 - **Inline editing** — edit any message in a thread, including agent responses
 - **Per-response model labels** — switch models mid-convo and remember who said what
-- **Model thinking** — when a model streams its thinking, a triangle on its response pill opens it, live while the model thinks. Dez sends earlier thinking back to the providers that use it. Turn thinking off per provider in Settings › Providers or in the model picker's settings popup
 - **Multiple simultaneous responses** — Ask different AIs the same question across multiple tabs at once
 - **Conversation history** — persisted locally with the ability to browse and delete past conversations
 - **Save as Markdown** - <kbd>Cmd/Ctrl+S</kbd> saves the current conversation to a Markdown file you pick

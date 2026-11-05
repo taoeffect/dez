@@ -235,6 +235,10 @@ The frontend never touches these files directly; use `dez.persistence/*` selecto
 - Styling uses component-scoped CSS or CodeMirror theme rules in `cmEditor.ts`; global theme variables live in `App.vue`. No CSS framework is configured.
 - Theme is controlled with `data-theme` on `<html>` plus `prefers-color-scheme` fallback.
 
+## README
+
+Never modify the README unless the user explicitely asks.
+
 ## Comments
 
 ALWAYS add comments above any code that could be considered confusing, unclear, hackish, or non-idiomatic explaining why the code exists, what scenarios it covers, and what it does.
