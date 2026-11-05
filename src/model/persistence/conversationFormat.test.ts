@@ -1,5 +1,6 @@
 import { commonmarkLanguage } from '@codemirror/lang-markdown'
 import { describe, expect, it } from 'vitest'
+import type { ModelRef } from '../chat/types'
 import { parseConversation, serializeConversation, serializeConversationAsMarkdown } from './conversationFormat'
 import type { ContentNodeData, ConversationData, SectionData } from './types'
 
@@ -204,6 +205,118 @@ world
       activeModel: null,
       created_at: 0,
     })
+  })
+})
+
+describe('agent pill models', () => {
+  function modeledSection(role: SectionData['role'], text: string, model: ModelRef): SectionData {
+    return { role, nodes: [textNode(text)], model }
+  }
+
+  function conversation(sections: SectionData[]): ConversationData {
+    return { id: 'conversation', title: 'Chat', sections, activeModel: null, created_at: 1 }
+  }
+
+  function pillLines(serialized: string): string[] {
+    return serialized.split('\n').filter((line) => line.startsWith('<dez:pill'))
+  }
+
+  it('round-trips a model per agent section and writes none for an unknown model', () => {
+    const data: ConversationData = {
+      ...conversation([
+        section('user', [textNode('hi')]),
+        modeledSection('agent', 'one', { providerId: 'openrouter', modelId: 'anthropic/claude-sonnet-4.5' }),
+        section('user', [textNode('switch')]),
+        modeledSection('agent', 'two', { providerId: 'zai', modelId: 'glm-4.6' }),
+        section('user', [textNode('again')]),
+        section('agent', [textNode('three')]),
+      ]),
+      activeModel: { providerId: 'zai', modelId: 'glm-4.6', modelName: 'glm-4.6' },
+    }
+
+    const serialized = serializeConversation(data)
+
+    expect(pillLines(serialized)).toEqual([
+      '<dez:pill type="user"/>',
+      '<dez:pill type="agent" model="openrouter/anthropic/claude-sonnet-4.5"/>',
+      '<dez:pill type="user"/>',
+      '<dez:pill type="agent" model="zai/glm-4.6"/>',
+      '<dez:pill type="user"/>',
+      '<dez:pill type="agent"/>',
+    ])
+    // Strict: a section without a model must not come back as `model: undefined`.
+    expect(parseConversation('conversation', serialized)).toStrictEqual(data)
+  })
+
+  it('escapes a model id so the pill stays on one line and reads back exactly', () => {
+    const model = { providerId: 'custom-1', modelId: 'vendor/a"b & c&quot;d />\nline\re' }
+    const data = conversation([section('user', [textNode('hi')]), modeledSection('agent', 'reply', model)])
+
+    const serialized = serializeConversation(data)
+    const parsed = parseConversation('conversation', serialized)
+
+    expect(pillLines(serialized)).toEqual([
+      '<dez:pill type="user"/>',
+      '<dez:pill type="agent" model="custom-1/vendor/a&quot;b &amp; c&amp;quot;d />&#10;line&#13;e"/>',
+    ])
+    expect(parsed.sections[1].model).toStrictEqual(model)
+    expect(textContent(parsed.sections[1].nodes[0])).toBe('reply')
+  })
+
+  it('parses a file without model attributes with no model keys', () => {
+    const parsed = parseConversation('conversation', '<!-- title: t | model: zai/glm-4.6 | created: 1 -->\n\n<dez:pill type="user"/>\nhi\n<dez:pill type="agent"/>\nhello\n')
+
+    expect(parsed.sections.map((s) => s.role)).toEqual(['user', 'agent'])
+    expect(parsed.sections.map((s) => Object.hasOwn(s, 'model'))).toEqual([false, false])
+  })
+
+  it('ignores a model on user pills and empty or invalid model values', () => {
+    const content = [
+      '<!-- title: t | model:  | created: 1 -->',
+      '<dez:pill type="user" model="openrouter/x"/>',
+      'hi',
+      '<dez:pill type="agent" model=""/>',
+      'a',
+      '<dez:pill type="agent" model="no-slash"/>',
+      'b',
+      '<dez:pill type="agent" model="/model"/>',
+      'c',
+      '<dez:pill type="agent" model="provider/"/>',
+      'd',
+      '',
+    ].join('\n')
+
+    const parsed = parseConversation('conversation', content)
+
+    expect(parsed.sections.map((s) => s.role)).toEqual(['user', 'agent', 'agent', 'agent', 'agent'])
+    expect(parsed.sections.map((s) => Object.hasOwn(s, 'model'))).toEqual([false, false, false, false, false])
+  })
+
+  it('drops the model of a section saved as user', () => {
+    const data = conversation([
+      section('user', [textNode('hi')]),
+      modeledSection('user', 'was an agent reply', { providerId: 'zai', modelId: 'glm-4.6' }),
+    ])
+
+    expect(pillLines(serializeConversation(data))).toEqual(['<dez:pill type="user"/>', '<dez:pill type="user"/>'])
+  })
+
+  it('reads attributes in any order and keeps a pill without a type as text', () => {
+    const content = [
+      '<!-- title: t | model:  | created: 1 -->',
+      '<dez:pill type="user"/>',
+      'hi',
+      '<dez:pill   model="openrouter/x"  type="agent" />',
+      'hello',
+      '<dez:pill model="openrouter/y"/>',
+      '',
+    ].join('\n')
+
+    const parsed = parseConversation('conversation', content)
+
+    expect(parsed.sections).toHaveLength(2)
+    expect(parsed.sections[1].model).toStrictEqual({ providerId: 'openrouter', modelId: 'x' })
+    expect(textContent(parsed.sections[1].nodes[0])).toBe('hello\n<dez:pill model="openrouter/y"/>')
   })
 })
 

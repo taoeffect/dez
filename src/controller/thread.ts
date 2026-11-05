@@ -14,7 +14,8 @@ export default sbp('sbp/selectors/register', {
     const messages = sbp('dez.model/streamMessagesForTab', tabId)
     if (messages.length === 0) return
 
-    const agentSection = sbp('dez.model/ensureTrailingAgentSectionForTab', tabId)
+    // The stamp and the request use the same model read.
+    const agentSection = sbp('dez.model/ensureTrailingAgentSectionForTab', tabId, model)
     if (!agentSection) return
 
     sbp('dez.model/streams/clearError', tabId)

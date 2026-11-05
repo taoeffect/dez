@@ -1,3 +1,4 @@
+import { modelRefKey } from '../chat/modelRef'
 import { parseConversation } from './conversationFormat'
 import { conversationSummary } from './summaries'
 import type {
@@ -90,7 +91,10 @@ function entryForFile(file: ConversationFile): SearchCacheEntry | null {
     plainText,
     lowerText: plainText.toLowerCase(),
     lowerTitle: summary.title.normalize('NFC').toLowerCase(),
-    lowerModel: (summary.model ?? '').normalize('NFC').toLowerCase(),
+    // The raw `provider/model` key, not the names that the history row
+    // shows: names change with provider configs and the model cache, and
+    // this cache entry lives until the file changes.
+    lowerModel: (summary.model ? modelRefKey(summary.model) : '').normalize('NFC').toLowerCase(),
   }
   cache.set(file.id, entry)
   return entry

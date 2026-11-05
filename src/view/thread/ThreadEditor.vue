@@ -1,17 +1,19 @@
 <script setup lang="ts">
 import { computed, onBeforeUnmount, onMounted, ref, watch, nextTick } from 'vue'
-import { EditorSelection, EditorState, Prec, type StateEffect } from '@codemirror/state'
+import { EditorSelection, EditorState, Prec } from '@codemirror/state'
 import { EditorView, drawSelection, keymap } from '@codemirror/view'
 import { history, historyKeymap, defaultKeymap } from '@codemirror/commands'
 import sbp from '@sbp/sbp'
 import { useModelState, type Prompt } from '../modelState'
 import { sectionIsEmpty } from '../../model/chat/content'
+import { sameModelRef } from '../../model/chat/modelRef'
 import { debounce, throttle } from 'turtledash'
 import PromptAutocomplete from './PromptAutocomplete.vue'
 import FindDropdown from './FindDropdown.vue'
 import {
   SECTION_SEP,
   buildInitialDoc,
+  clipboardPasteTransaction,
   cutSelectedRangesTransaction,
   encodePrompt,
   dezLanguageSupport,
@@ -25,9 +27,7 @@ import {
   mergeSectionEffect,
   strictMultiCursorBackspace,
   pillsField,
-  plainTextPasteTransaction,
   promptAtomicRanges,
-  parseClipboardText,
   promptPillMouseHandler,
   promptPills,
   roleSeparatorAtomicRanges,
@@ -44,6 +44,7 @@ import {
   splitSectionEffect,
   unwrapBrokenPills,
 } from './cmEditor'
+import { modelDisplayNamesField, setModelDisplayNamesEffect, setStreamingSectionEffect, streamingSectionField } from './modelChip'
 import { findExtension, findMatchStatus, findNextMatch, findQueryField, selectMatchSpec, setFindQueryEffect } from '../editor/find'
 import { markdownTables } from '../editor/tables'
 import { activeFindQuery, findState } from '../editor/findState'
@@ -54,8 +55,10 @@ const {
   activeSections,
   activeSectionsIdentity,
   settings,
+  modelDisplayNames,
   prompts,
   activeTabStreaming,
+  activeTabStreamingSectionId,
   activeTabStreamError,
 } = useModelState()
 
@@ -431,10 +434,13 @@ function schedulePersistTab(tabId: string) {
   persistPendingTab()
 }
 
+// Compares every `SectionModel` field the store also holds, so a store-side
+// change on an existing section id (a model stamp at stream start) still
+// reaches the editor's `sectionsField`.
 function sectionModelsEqual(left: ReturnType<typeof initialSectionModels>, right: ReturnType<typeof initialSectionModels>): boolean {
   return left.length === right.length && left.every((model, i) => {
     const candidate = right[i]
-    return candidate && model.id === candidate.id && model.role === candidate.role
+    return candidate && model.id === candidate.id && model.role === candidate.role && sameModelRef(model.model, candidate.model)
   })
 }
 
@@ -553,52 +559,7 @@ function writeSelectionToClipboard(event: ClipboardEvent, cut: boolean, v: Edito
 function pasteClipboardText(event: ClipboardEvent, v: EditorView): boolean {
   const text = event.clipboardData?.getData('text/plain') ?? ''
   if (!text) return false
-  // In a pill body, pasted prompts and section markers would nest a pill or
-  // split this one, so the paste is plain text there.
-  const pills = scanPills(v.state.doc.toString())
-  const insidePillBody = v.state.selection.ranges.some((range) =>
-    pills.some((pill) => pill.bodyFrom <= range.from && range.to <= pill.bodyTo),
-  )
-  const parsed = parseClipboardText(text, insidePillBody)
-  let pasteText = parsed.text
-  const trimmedRoles = parsed.separatorRoles.slice()
-  const leadingMarker = SECTION_SEP + '\n'
-  while (pasteText.startsWith(leadingMarker) && trimmedRoles.length > 0) {
-    pasteText = pasteText.slice(leadingMarker.length)
-    trimmedRoles.shift()
-  }
-  const isStructuredPaste = parsed.separatorRoles.length > 0 || parsed.pills.size > 0
-  if (!isStructuredPaste) {
-    v.dispatch(v.state.update(plainTextPasteTransaction(v.state, pasteText)))
-    event.preventDefault()
-    return true
-  }
-  const range = v.state.selection.main
-  const meta = new Map(v.state.field(pillsField))
-  for (const [id, pill] of parsed.pills) meta.set(id, pill)
-  const effects: StateEffect<unknown>[] = [setPillsEffect.of(meta)]
-  if (trimmedRoles.length > 0 || range.from !== range.to) {
-    const doc = v.state.doc.toString()
-    const fromSec = sectionIndexAtPos(doc, range.from)
-    const toSec = sectionIndexAtPos(doc, range.to)
-    const oldModels = v.state.field(sectionsField)
-    const inserted = trimmedRoles.map((role) => ({
-      id: crypto.randomUUID(),
-      role,
-    }))
-    const newModels = [
-      ...oldModels.slice(0, fromSec + 1),
-      ...inserted,
-      ...oldModels.slice(toSec + 1),
-    ]
-    effects.push(setSectionsEffect.of(newModels))
-  }
-  v.dispatch({
-    changes: { from: range.from, to: range.to, insert: pasteText },
-    selection: { anchor: range.from + pasteText.length },
-    effects,
-    scrollIntoView: true,
-  })
+  v.dispatch(clipboardPasteTransaction(v.state, text))
   event.preventDefault()
   return true
 }
@@ -791,6 +752,8 @@ function buildState(): EditorState {
     extensions: [
       sectionsField.init(() => models),
       showSeparatorsField.init(() => settings.value.showPillSeparators),
+      modelDisplayNamesField.init(() => modelDisplayNames.value),
+      streamingSectionField.init(() => activeTabStreamingSectionId.value),
       pillsField.init(() => pillMeta),
       roleSeparators,
       roleSeparatorAtomicRanges,
@@ -913,10 +876,7 @@ function syncViewStructureToStoreSections() {
   if (!view) return
   const models = initialSectionModels(activeSections.value)
   const current = view.state.field(sectionsField)
-  const same =
-    current.length === models.length &&
-    current.every((m, i) => m.id === models[i].id && m.role === models[i].role)
-  if (same) return
+  if (sectionModelsEqual(current, models)) return
   syncingViewStructure = true
   try {
     if (models.length > current.length) {
@@ -972,6 +932,25 @@ watch(
   () => settings.value.showPillSeparators,
   (v) => {
     if (view) view.dispatch({ effects: setShowSeparatorsEffect.of(v) })
+  },
+)
+
+// Model names on agent pills follow provider renames and model-list
+// refreshes.
+watch(
+  () => modelDisplayNames.value,
+  (names) => {
+    if (view) view.dispatch({ effects: setModelDisplayNamesEffect.of(names) })
+  },
+)
+
+// The agent pill of the streaming response shows a "generating" state while
+// the stream runs. `buildState` seeds the same value, so a state rebuilt on
+// a tab switch or at the end of a stream shows the right pill at once.
+watch(
+  () => activeTabStreamingSectionId.value,
+  (sectionId) => {
+    if (view) view.dispatch({ effects: setStreamingSectionEffect.of(sectionId) })
   },
 )
 

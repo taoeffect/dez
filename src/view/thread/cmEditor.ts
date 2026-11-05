@@ -4,8 +4,12 @@ import { markdown } from '@codemirror/lang-markdown'
 import { Decoration, EditorView, WidgetType, type DecorationSet, type KeyBinding } from '@codemirror/view'
 import { EditorSelection, EditorState, StateEffect, StateField, findClusterBreak, type Extension, type Transaction, type TransactionSpec } from '@codemirror/state'
 import { tags as t } from '@lezer/highlight'
-import type { ContentNode, Role, Section } from '../../model/chat/types'
+import type { ContentNode, ModelRef, Role, Section } from '../../model/chat/types'
+import { modelRefField } from '../../model/chat/modelRef'
+import { PILL_MARKER, parsePillMarker, pillMarkerLine } from '../../model/chat/pillMarker'
 import { SENTINEL_CHAR, normalizeContent, stripLiveSentinels, textNode } from '../../model/chat/content'
+import { escapeMarkerAttribute, unescapeMarkerAttribute } from '../../utils/markerAttribute'
+import { addModelToPill, modelDisplayNamesField, sameModelChip, sectionModelChips, streamingSectionField, type ModelChip } from './modelChip'
 
 /** ASCII Record Separator; never typeable, never on-disk, used in-buffer to
  *  encode a section boundary. The char sits alone on its own line and the
@@ -33,10 +37,13 @@ export const PILL_NL = '\u{E003}'
 
 /** Lightweight mirror of a Section kept in the CM state. The CM doc is the
  *  source of truth for text; this field just tracks per-section identity
- *  (id) and role. */
+ *  (id), role, and the AI model that wrote the section (`model`, absent when
+ *  unknown). The editor writes this field back to the store on every doc
+ *  change (`syncDocToTab`), so a section field missing here is lost there. */
 export interface SectionModel {
   id: string
   role: Role
+  model?: ModelRef
   generated?: boolean
 }
 
@@ -150,10 +157,10 @@ function normalizeSectionModels(models: SectionModel[]): SectionModel[] {
   return copy
 }
 
-/** Produce `{ id, role }` for each section to seed `sectionsField`. */
+/** Produce `{ id, role, model? }` for each section to seed `sectionsField`. */
 export function initialSectionModels(sections: Section[]): SectionModel[] {
   if (sections.length === 0) return [{ id: crypto.randomUUID(), role: 'user' }]
-  return normalizeSectionModels(sections.map((s) => ({ id: s.id, role: s.role })))
+  return normalizeSectionModels(sections.map((s) => ({ id: s.id, role: s.role, ...modelRefField(s.model) })))
 }
 
 /** Walk all sections and collect the per-pill metadata map to seed
@@ -352,10 +359,11 @@ export function docToSections(
   const fragments = splitDocBySeparator(doc)
   const reconciledModels = reconcileSectionModelsToDoc(models, doc, fallbackModels)
   return fragments.map((text, i) => {
-    const model = reconciledModels[i]
+    const sectionModel = reconciledModels[i]
     return {
-      id: model.id,
-      role: i === 0 ? 'user' : model.role,
+      id: sectionModel.id,
+      role: i === 0 ? 'user' : sectionModel.role,
+      ...modelRefField(sectionModel.model),
       content: decodeSectionContent(text, pillsMeta),
     }
   })
@@ -555,14 +563,15 @@ export const unwrapBrokenPills = EditorState.transactionFilter.of((tr) => {
 /* ──────────────────────  Role separator widget  ─────────────── */
 
 class RoleSeparatorWidget extends WidgetType {
-  constructor(readonly index: number, readonly role: Role) {
+  constructor(readonly index: number, readonly role: Role, readonly chip: ModelChip | null) {
     super()
   }
   eq(other: WidgetType): boolean {
     return (
       other instanceof RoleSeparatorWidget &&
       other.index === this.index &&
-      other.role === this.role
+      other.role === this.role &&
+      sameModelChip(other.chip, this.chip)
     )
   }
   toDOM(): HTMLElement {
@@ -574,6 +583,7 @@ class RoleSeparatorWidget extends WidgetType {
     label.className = 'dez-role-separator__label'
     label.textContent = this.role === 'user' ? 'User' : 'Agent'
     el.appendChild(label)
+    if (this.chip) addModelToPill(label, this.chip)
     return el
   }
   ignoreEvent(): boolean {
@@ -584,12 +594,14 @@ class RoleSeparatorWidget extends WidgetType {
 
 /** Build the decoration set for the current doc. Each `\u001E` line is
  *  replaced with a block separator widget whose role/index come from the
- *  sectionsField. Returns an empty set when separators are hidden. */
+ *  sectionsField and whose model part comes from `chips` (by section
+ *  index). With `chips` null, the ranges have no widget (atomic ranges
+ *  only). Returns an empty set when separators are hidden. */
 function buildSeparatorDecorations(
   doc: string,
   models: SectionModel[],
   show: boolean,
-  protectOnly = false,
+  chips: readonly (ModelChip | null)[] | null,
 ): DecorationSet {
   const ranges: { from: number; to: number; deco: Decoration }[] = []
   if (!show) return Decoration.set(ranges.map((b) => b.deco.range(b.from, b.to)), true)
@@ -607,7 +619,7 @@ function buildSeparatorDecorations(
       from: i,
       to: i + 1,
       deco: Decoration.replace({
-        widget: protectOnly ? undefined : new RoleSeparatorWidget(sectionIndex, nextRole),
+        widget: chips ? new RoleSeparatorWidget(sectionIndex, nextRole, chips[sectionIndex] ?? null) : undefined,
         inclusive: false,
       }),
     })
@@ -619,11 +631,12 @@ function buildSeparatorDecorations(
 }
 
 export const roleSeparators = EditorView.decorations.compute(
-  [sectionsField, showSeparatorsField, 'doc'],
+  [sectionsField, showSeparatorsField, modelDisplayNamesField, streamingSectionField, 'doc'],
   (state) => {
     const models = state.field(sectionsField)
     const show = state.field(showSeparatorsField)
-    return buildSeparatorDecorations(state.doc.toString(), models, show)
+    const chips = sectionModelChips(models, state.field(modelDisplayNamesField), state.field(streamingSectionField))
+    return buildSeparatorDecorations(state.doc.toString(), models, show, chips)
   },
 )
 
@@ -632,15 +645,15 @@ export const roleSeparatorAtomicRanges = EditorView.atomicRanges.of((view) =>
     view.state.doc.toString(),
     view.state.field(sectionsField),
     true,
-    true,
+    null,
   ),
 )
 
-/** Click handler: toggle the role of the section that the clicked
- *  separator precedes. */
+/** Click handler: a mousedown anywhere on a role pill, its model part too,
+ *  toggles the role of the section that the separator precedes. */
 export const roleSeparatorMouseHandler = EditorView.domEventHandlers({
   mousedown(event, view) {
-    const target = event.target as HTMLElement | null
+    const target = event.target as Element | null
     if (!target) return false
     const label = target.closest('.dez-role-separator__label') as HTMLElement | null
     if (!label) return false
@@ -797,14 +810,6 @@ export const promptPillMouseHandler = EditorView.domEventHandlers({
   },
 })
 
-function escapePromptName(name: string): string {
-  return name.replace(/&/g, '&amp;').replace(/"/g, '&quot;')
-}
-
-function unescapePromptName(name: string): string {
-  return name.replace(/&quot;/g, '"').replace(/&amp;/g, '&')
-}
-
 function escapePromptClipboardBody(body: string): string {
   return body.replace(/<\/dez:prompt>/g, '<\\/dez:prompt>')
 }
@@ -813,12 +818,10 @@ function unescapePromptClipboardBody(body: string): string {
   return body.replace(/<\\\/dez:prompt>/g, '</dez:prompt>')
 }
 
-function sectionRoleForSeparator(doc: string, models: SectionModel[], pos: number): Role {
-  let index = 1
-  for (let i = 0; i < pos && i < doc.length; i++) {
-    if (doc.charCodeAt(i) === 0x1e) index++
-  }
-  return models[index]?.role ?? 'user'
+// The clipboard marker of the section that starts at the separator at `pos`.
+function clipboardSectionMarker(doc: string, models: SectionModel[], pos: number): string {
+  const section = models[sectionIndexAtOffset(doc, pos) + 1]
+  return pillMarkerLine(section?.role ?? 'user', section?.model)
 }
 
 function serializePlainDocFragment(doc: string, from: number, to: number, models: SectionModel[]): string {
@@ -826,10 +829,10 @@ function serializePlainDocFragment(doc: string, from: number, to: number, models
   for (let i = from; i < to; i++) {
     const c = doc[i]
     if (c === SECTION_SEP) {
-      const role = sectionRoleForSeparator(doc, models, i)
+      const marker = clipboardSectionMarker(doc, models, i)
       if (out.endsWith('\n')) out = out.slice(0, -1)
       if (out.length > 0 && !out.endsWith('\n')) out += '\n'
-      out += `<dez:pill type="${role}"/>\n`
+      out += `${marker}\n`
       if (i + 1 < to && doc[i + 1] === '\n') i++
     } else if (c === PILL_NL) {
       out += '\n'
@@ -854,7 +857,7 @@ export function serializeDocRangeForClipboard(
 ): string {
   if (from >= to) return ''
   const pills = scanPills(doc).filter((p) => p.to > from && p.from < to)
-  let out = from === 0 ? '<dez:pill type="user"/>\n' : ''
+  let out = from === 0 ? `${pillMarkerLine('user')}\n` : ''
   let cursor = from
   for (const p of pills) {
     if (cursor < Math.min(p.from, to)) {
@@ -865,7 +868,7 @@ export function serializeDocRangeForClipboard(
     const bodyTo = Math.min(to, p.bodyTo)
     if (from <= p.from && to >= p.to) {
       const body = doc.slice(p.bodyFrom, p.bodyTo).replace(/\u{E003}/gu, '\n')
-      out += `<dez:prompt name="${escapePromptName(meta?.name ?? '')}">\n${escapePromptClipboardBody(body)}`
+      out += `<dez:prompt name="${escapeMarkerAttribute(meta?.name ?? '')}">\n${escapePromptClipboardBody(body)}`
       if (!out.endsWith('\n')) out += '\n'
       out += '</dez:prompt>\n'
     } else if (bodyFrom < bodyTo) {
@@ -941,33 +944,39 @@ export function plainTextPasteTransaction(state: EditorState, text: string): Tra
 export interface ParsedClipboardText {
   text: string
   pills: Map<string, PillMetadata>
-  separatorRoles: Role[]
+  /** One entry per `SECTION_SEP` in `text`, in order. */
+  separators: { role: Role; model?: ModelRef }[]
 }
 
 /** Turn clipboard text (with `dez:` markers) into live-doc text: section
  *  markers become separators, prompt markup becomes collapsed pills. With
  *  `plainText`, the result holds no sentinels: prompt bodies are inlined
  *  and section markers dropped, for a paste inside a pill body, where a
- *  nested pill or a separator would break the pill. */
+ *  nested pill or a separator would break the pill. A `model` on a user
+ *  marker, or one that is not a `provider/model` value, is ignored. A pill
+ *  marker without a valid `type` stays text. */
 export function parseClipboardText(text: string, plainText = false): ParsedClipboardText {
   const pills = new Map<string, PillMetadata>()
-  const separatorRoles: Role[] = []
-  const marker = /<dez:pill\s+type="(user|agent)"\s*\/\>|<dez:prompt\s+name="([^"]*)">([\s\S]*?)<\/dez:prompt>/g
+  const separators: ParsedClipboardText['separators'] = []
+  const marker = new RegExp(String.raw`(${PILL_MARKER.source})|<dez:prompt\s+name="([^"]*)">([\s\S]*?)<\/dez:prompt>`, 'g')
   let out = ''
   let cursor = 0
   for (const match of text.matchAll(marker)) {
+    const pill = match[1] === undefined ? null : parsePillMarker(match[1])
+    // A pill marker with no valid `type` is not a marker. `cursor` does not
+    // move, so the next slice copies it as plain text.
+    if (match[1] !== undefined && !pill) continue
     out += stripLiveSentinels(text.slice(cursor, match.index))
     let nextCursor = (match.index ?? 0) + match[0].length
-    if (match[1]) {
-      const role = match[1] as Role
+    if (pill) {
       if (out.length > 0 && !out.endsWith('\n')) out += '\n'
       if (!plainText) {
         out += `${SECTION_SEP}\n`
-        separatorRoles.push(role)
+        separators.push(pill.model ? { role: pill.role, model: pill.model } : { role: pill.role })
       }
       if (text[nextCursor] === '\n') nextCursor++
     } else {
-      const name = unescapePromptName(match[2] ?? '')
+      const name = unescapeMarkerAttribute(match[2] ?? '')
       let body = match[3] ?? ''
       if (body.startsWith('\n')) body = body.slice(1)
       if (body.endsWith('\n')) body = body.slice(0, -1)
@@ -983,7 +992,55 @@ export function parseClipboardText(text: string, plainText = false): ParsedClipb
     cursor = nextCursor
   }
   out += stripLiveSentinels(text.slice(cursor))
-  return { text: out, pills, separatorRoles }
+  return { text: out, pills, separators }
+}
+
+/** The transaction for a paste of clipboard text with `dez:` markers. Each
+ *  pasted section marker starts a new section with the marker's role and
+ *  model. Markers at the very start of the paste are dropped, so the paste
+ *  joins the section at the caret. In a pill body, pasted prompts and
+ *  section markers would nest a pill or split this one, so the paste is
+ *  plain text there. */
+export function clipboardPasteTransaction(state: EditorState, text: string): TransactionSpec {
+  const doc = state.doc.toString()
+  const pills = scanPills(doc)
+  const insidePillBody = state.selection.ranges.some((range) =>
+    pills.some((pill) => pill.bodyFrom <= range.from && range.to <= pill.bodyTo),
+  )
+  const parsed = parseClipboardText(text, insidePillBody)
+  let pasteText = parsed.text
+  const separators = parsed.separators.slice()
+  const leadingMarker = SECTION_SEP + '\n'
+  while (pasteText.startsWith(leadingMarker) && separators.length > 0) {
+    pasteText = pasteText.slice(leadingMarker.length)
+    separators.shift()
+  }
+  if (parsed.separators.length === 0 && parsed.pills.size === 0) {
+    return plainTextPasteTransaction(state, pasteText)
+  }
+  const range = state.selection.main
+  const meta = new Map(state.field(pillsField))
+  for (const [id, pill] of parsed.pills) meta.set(id, pill)
+  const effects: StateEffect<unknown>[] = [setPillsEffect.of(meta)]
+  if (separators.length > 0 || range.from !== range.to) {
+    const oldModels = state.field(sectionsField)
+    const inserted: SectionModel[] = separators.map(({ role, model }) => ({
+      id: crypto.randomUUID(),
+      role,
+      ...modelRefField(model),
+    }))
+    effects.push(setSectionsEffect.of([
+      ...oldModels.slice(0, sectionIndexAtOffset(doc, range.from) + 1),
+      ...inserted,
+      ...oldModels.slice(sectionIndexAtOffset(doc, range.to) + 1),
+    ]))
+  }
+  return {
+    changes: { from: range.from, to: range.to, insert: pasteText },
+    selection: { anchor: range.from + pasteText.length },
+    effects,
+    scrollIntoView: true,
+  }
 }
 
 /* ───────────────────────  Theme / language  ──────────────────── */
@@ -1082,6 +1139,114 @@ export const dezTheme = EditorView.theme({
   '.dez-role-separator[data-role="agent"] .dez-role-separator__label': {
     color: 'var(--color-link, #4a9eff)',
     borderColor: 'var(--color-link, #4a9eff)',
+  },
+  // Agent pill with a model (`addModelToPill` in modelChip.ts): one pill
+  // holds the role word, a thin divider, the model name, and the provider
+  // name, in the agent accent for every model. The model part has a smaller
+  // line height than the role word, so the pill keeps the height and
+  // baseline of the other role pills, and a separator does not move when a
+  // stream stamps a model on it. The separator row is uppercase and
+  // letter-spaced; model names keep their case. Only the model name shrinks
+  // (with an ellipsis) and the provider name has a cap, so a long model id
+  // never wraps the separator row. `nowrap` keeps the role word whole: the
+  // editor's line wrapping (`overflow-wrap: anywhere`) would let the pill
+  // break it into letters when it shrinks.
+  '.dez-role-separator__label[data-model-key]': {
+    position: 'relative',
+    display: 'inline-flex',
+    alignItems: 'baseline',
+    minWidth: '0',
+    whiteSpace: 'nowrap',
+  },
+  '.dez-role-separator__model': {
+    display: 'inline-flex',
+    alignItems: 'baseline',
+    gap: '6px',
+    minWidth: '0',
+    marginLeft: '8px',
+    color: 'var(--color-text)',
+    fontSize: '12px',
+    lineHeight: '1.25',
+    letterSpacing: 'normal',
+    textTransform: 'none',
+  },
+  '.dez-role-separator__model::before': {
+    content: '""',
+    alignSelf: 'center',
+    flex: 'none',
+    width: '1px',
+    height: '11px',
+    marginRight: '2px',
+    background: 'var(--color-link, #4a9eff)',
+    opacity: '0.45',
+  },
+  '.dez-role-separator__switch': {
+    alignSelf: 'center',
+    flex: 'none',
+    width: '12px',
+    height: '12px',
+    color: 'var(--color-link, #4a9eff)',
+  },
+  '.dez-role-separator__model-name': {
+    minWidth: '0',
+    overflow: 'hidden',
+    textOverflow: 'ellipsis',
+    whiteSpace: 'nowrap',
+    fontWeight: '600',
+  },
+  '.dez-role-separator__model-provider': {
+    flex: 'none',
+    maxWidth: '14em',
+    overflow: 'hidden',
+    textOverflow: 'ellipsis',
+    whiteSpace: 'nowrap',
+    fontSize: '11px',
+    opacity: '0.55',
+  },
+  '.dez-role-separator__model-provider::before': {
+    content: '"·"',
+    marginRight: '6px',
+  },
+  // "Generating" state of the pill whose response is streaming
+  // (`data-streaming`): a soft ring around the pill breathes in and out,
+  // and a highlight sweeps across the model name, both in the agent accent.
+  // All of it is motion, so it applies only when the user has not asked for
+  // reduced motion. The ring is a pseudo-element that animates only its
+  // opacity. The name shimmer is a gradient clipped to the text: twice the
+  // name's width, so each loop is one sweep plus a pause. Streamed tokens
+  // keep the widget (`eq`), so the animations run without restarts until
+  // the stream ends.
+  '@media (prefers-reduced-motion: no-preference)': {
+    '.dez-role-separator__label[data-streaming]::after': {
+      content: '""',
+      position: 'absolute',
+      top: '-1px',
+      right: '-1px',
+      bottom: '-1px',
+      left: '-1px',
+      borderRadius: 'inherit',
+      boxShadow: '0 0 0 3px var(--color-link, #4a9eff)',
+      opacity: '0',
+      pointerEvents: 'none',
+      animation: 'dez-role-pill-glow 1.8s ease-in-out infinite',
+    },
+    '.dez-role-separator__label[data-streaming] .dez-role-separator__model-name': {
+      color: 'transparent',
+      backgroundImage:
+        'linear-gradient(90deg, var(--color-text) 40%, var(--color-link, #4a9eff) 50%, var(--color-text) 60%)',
+      backgroundSize: '200% 100%',
+      WebkitBackgroundClip: 'text',
+      backgroundClip: 'text',
+      animation: 'dez-role-pill-shimmer 2.4s linear infinite',
+    },
+  },
+  '@keyframes dez-role-pill-glow': {
+    '0%, 100%': { opacity: '0' },
+    '50%': { opacity: '0.3' },
+  },
+  '@keyframes dez-role-pill-shimmer': {
+    '0%': { backgroundPosition: '200% 0' },
+    '100%': { backgroundPosition: '0 0' },
   },
   '.dez-prompt-pill': {
     display: 'inline-flex',

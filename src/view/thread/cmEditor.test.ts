@@ -8,6 +8,7 @@ import {
   PILL_NL,
   PILL_OPEN,
   SECTION_SEP,
+  clipboardPasteTransaction,
   cutSelectedRangesTransaction,
   docToSections,
   encodePrompt,
@@ -27,12 +28,13 @@ import {
   setPillsEffect,
   splitSectionEffect,
   strictMultiCursorBackspace,
+  toggleRoleEffect,
   unwrapBrokenPills,
   type PillMetadata,
   type SectionModel,
 } from './cmEditor'
 import { SENTINEL_CHAR, sectionVisibleText } from '../../model/chat/content'
-import type { ContentNode, Role, Section } from '../../model/chat/types'
+import type { ContentNode, ModelRef, Role, Section } from '../../model/chat/types'
 
 function textNode(text: string): ContentNode {
   return { kind: 'text', text }
@@ -129,6 +131,125 @@ describe('CodeMirror section role reconciliation', () => {
         (candidate) => candidate.role,
       ),
     ).toEqual(['user', 'user'])
+  })
+})
+
+describe('section AI models', () => {
+  const MODEL: ModelRef = { providerId: 'openrouter', modelId: 'anthropic/claude-sonnet-4.5' }
+  const DOC = ['hello', 'answer', 'legacy'].join(`\n${SECTION_SEP}\n`)
+
+  function modeledSections(): Section[] {
+    return [
+      section('s1', 'user', 'hello'),
+      { ...section('s2', 'agent', 'answer'), model: MODEL },
+      section('s3', 'agent', 'legacy'),
+    ]
+  }
+
+  function modeledState(selection?: EditorSelection): EditorState {
+    return EditorState.create({
+      doc: DOC,
+      selection,
+      extensions: [
+        sectionsField.init(() => initialSectionModels(modeledSections())),
+        pillsField.init(() => new Map()),
+      ],
+    })
+  }
+
+  it('keeps section models from the store through the editor and back, with no key when unknown', () => {
+    const state = modeledState()
+
+    expect(docToSections(DOC, state.field(sectionsField), new Map())).toStrictEqual(modeledSections())
+  })
+
+  it('keeps the model when the role is toggled to user and back', () => {
+    const toUser = modeledState().update({ effects: toggleRoleEffect.of({ index: 1 }) }).state
+    const back = toUser.update({ effects: toggleRoleEffect.of({ index: 1 }) }).state
+
+    expect(toUser.field(sectionsField)[1]).toStrictEqual({ id: 's2', role: 'user', model: MODEL })
+    expect(back.field(sectionsField)[1]).toStrictEqual({ id: 's2', role: 'agent', model: MODEL })
+  })
+
+  it('pastes copied agent sections with their models', () => {
+    const copied = serializeSelectionForClipboard(modeledState(EditorSelection.single(2, DOC.length)))
+    const pasteState = EditorState.create({
+      doc: 'first',
+      selection: EditorSelection.cursor(5),
+      extensions: [
+        sectionsField.init(() => [{ id: 'p1', role: 'user' }]),
+        pillsField.init(() => new Map()),
+      ],
+    })
+
+    const nextState = pasteState.update(clipboardPasteTransaction(pasteState, copied)).state
+    const pasted = docToSections(nextState.doc.toString(), nextState.field(sectionsField), new Map())
+
+    expect(copied).toBe([
+      'llo',
+      '<dez:pill type="agent" model="openrouter/anthropic/claude-sonnet-4.5"/>',
+      'answer',
+      '<dez:pill type="agent"/>',
+      'legacy',
+    ].join('\n'))
+    expect(pasted.map((candidate) => [candidate.role, sectionVisibleText(candidate), candidate.model])).toEqual([
+      ['user', 'firstllo', undefined],
+      ['agent', 'answer', MODEL],
+      ['agent', 'legacy', undefined],
+    ])
+    expect(pasted[2]).not.toHaveProperty('model')
+  })
+
+  it('round-trips a model id with quotes, an ampersand, and a newline through a copied marker', () => {
+    const tricky: ModelRef = { providerId: 'custom', modelId: 'org/"quoted" & co\nnext' }
+    const state = EditorState.create({
+      doc: `hi\n${SECTION_SEP}\nreply`,
+      selection: EditorSelection.single(0, `hi\n${SECTION_SEP}\nreply`.length),
+      extensions: [
+        sectionsField.init(() => [{ id: 's1', role: 'user' }, { id: 's2', role: 'agent', model: tricky }]),
+        pillsField.init(() => new Map()),
+      ],
+    })
+
+    const copied = serializeSelectionForClipboard(state)
+
+    expect(copied.split('\n')).toEqual([
+      '<dez:pill type="user"/>',
+      'hi',
+      '<dez:pill type="agent" model="custom/org/&quot;quoted&quot; &amp; co&#10;next"/>',
+      'reply',
+    ])
+    expect(parseClipboardText(copied).separators).toStrictEqual([{ role: 'user' }, { role: 'agent', model: tricky }])
+  })
+
+  it('ignores a pasted model on a user marker and a model value without a provider', () => {
+    const parsed = parseClipboardText([
+      'a',
+      '<dez:pill type="user" model="openrouter/x"/>',
+      'b',
+      '<dez:pill type="agent" model="no-slash"/>',
+      'c',
+    ].join('\n'))
+
+    expect(parsed.text).toBe(`a\n${SECTION_SEP}\nb\n${SECTION_SEP}\nc`)
+    expect(parsed.separators).toStrictEqual([{ role: 'user' }, { role: 'agent' }])
+  })
+
+  it('reads pasted marker attributes in any order and a model value that holds />', () => {
+    const parsed = parseClipboardText([
+      'a',
+      '<dez:pill model="openrouter/x" type="agent"/>',
+      'b',
+      '<dez:pill  type="agent"  model="custom/v &quot;1&quot; />" />',
+      'c',
+      '<dez:pill type="other"/>',
+    ].join('\n'))
+
+    expect(parsed.text).toBe(`a\n${SECTION_SEP}\nb\n${SECTION_SEP}\nc\n<dez:pill type="other"/>`)
+    expect(parsed.separators).toStrictEqual([
+      { role: 'agent', model: { providerId: 'openrouter', modelId: 'x' } },
+      { role: 'agent', model: { providerId: 'custom', modelId: 'v "1" />' } },
+    ])
   })
 })
 
@@ -347,8 +468,8 @@ describe('clipboard helpers', () => {
     const plain = parseClipboardText(copied, true)
 
     expect(structured.pills.size).toBe(1)
-    expect(structured.separatorRoles).toEqual(['user', 'agent'])
-    expect(plain).toEqual({ text: 'x inner y\nz', pills: new Map(), separatorRoles: [] })
+    expect(structured.separators).toEqual([{ role: 'user' }, { role: 'agent' }])
+    expect(plain).toEqual({ text: 'x inner y\nz', pills: new Map(), separators: [] })
   })
 })
 

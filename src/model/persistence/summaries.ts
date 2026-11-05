@@ -1,3 +1,4 @@
+import { cloneModelRef } from '../chat/modelRef'
 import type { ConversationData, ConversationSummary, SectionData } from './types'
 
 function nodePlainText(node: SectionData['nodes'][number]): string {
@@ -28,10 +29,6 @@ export function conversationPreview(sections: SectionData[]): string {
   return normalized
 }
 
-export function conversationModel(data: ConversationData): string | null {
-  return data.activeModel ? `${data.activeModel.providerId}/${data.activeModel.modelId}` : null
-}
-
 export function conversationSummary(
   data: ConversationData,
   updatedAt = data.created_at,
@@ -41,7 +38,7 @@ export function conversationSummary(
     title: data.title,
     createdAt: data.created_at,
     updatedAt,
-    model: conversationModel(data),
+    model: data.activeModel ? cloneModelRef(data.activeModel) : null,
     messageCount: messageCount(data.sections),
     preview: conversationPreview(data.sections),
   }

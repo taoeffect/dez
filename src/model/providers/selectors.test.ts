@@ -2,7 +2,7 @@ import sbp from '@sbp/sbp'
 import { createPinia, setActivePinia } from 'pinia'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import type { NativeHttpRequest, NativeHttpResponse, NativeHttpStreamResult } from '../../utils/protocol/nativeHttp'
-import type { ProviderModelsResult } from './types'
+import type { ModelDisplayNames, ProviderModelsResult } from './types'
 // Side-effect imports: register the dez.model/* selectors and the selectors
 // under test.
 import '../state/index'
@@ -137,5 +137,53 @@ describe('provider error messages', () => {
     expect(chatError).toBeInstanceOf(Error)
     expect((chatError as Error).message).not.toContain(uuid)
     expect(streamRequests).toEqual([])
+  })
+})
+
+describe('model display names', () => {
+  beforeEach(() => {
+    sbp('dez.model/customProviders/save', {
+      id: 'named',
+      name: 'Named server',
+      baseUrl: 'http://localhost:8081/v1',
+      apiFormat: 'openai',
+      models: [{ id: 'alpha', name: 'Alpha One' }, { id: 'beta' }],
+      fetchModels: true,
+      auth: 'apiKey',
+    })
+    // As if the last fetch ran before the config named `alpha`.
+    sbp('dez.model/modelCache/applyProviderResult', 'named', {
+      ok: true,
+      models: [
+        { id: 'alpha', name: 'alpha (served)', provider: 'named' },
+        { id: 'beta', name: 'Beta Two', provider: 'named' },
+        { id: 'vendor/gamma', name: 'Gamma', provider: 'named' },
+      ],
+    })
+    sbp('dez.model/modelCache/applyProviderResult', 'gone', {
+      ok: true,
+      models: [{ id: 'delta', name: 'Delta', provider: 'gone' }],
+    })
+  })
+
+  const names = () => sbp('dez.provider/modelDisplayNames') as ModelDisplayNames
+
+  it('prefer a name set in the provider config over the cached name', () => {
+    expect(names().models.get('named/alpha')).toBe('Alpha One')
+  })
+
+  it('use the cached name when the config sets none', () => {
+    expect(names().models.get('named/beta')).toBe('Beta Two')
+    expect(names().models.get('named/vendor/gamma')).toBe('Gamma')
+  })
+
+  it('have no entry for a model that is neither configured nor cached', () => {
+    expect(names().models.has('named/epsilon')).toBe(false)
+  })
+
+  it('name known providers and have no entry for an unknown provider', () => {
+    expect(names().providers.get('named')).toBe('Named server')
+    expect(names().providers.get('openrouter')).toBe('OpenRouter')
+    expect(names().providers.has('gone')).toBe(false)
   })
 })

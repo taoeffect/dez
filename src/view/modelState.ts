@@ -6,6 +6,7 @@ import type { DefaultModel, SettingsSection, Theme } from '../model/state/settin
 import type { SettingsSnapshot } from '../model/state'
 import type { ModelSnapshot } from '../model/snapshot'
 import type { ModelCache } from '../model/persistence/types'
+import type { ModelDisplayNames } from '../model/providers/types'
 
 export interface ViewModelState {
   tabs: ComputedRef<ModelSnapshot['tabs']>
@@ -19,7 +20,9 @@ export interface ViewModelState {
   modelCacheRefreshing: ComputedRef<boolean>
   modelCacheErrors: ComputedRef<Record<string, string>>
   modelCacheChecking: ComputedRef<string[]>
+  modelDisplayNames: ComputedRef<ModelDisplayNames>
   activeTabStreaming: ComputedRef<boolean>
+  activeTabStreamingSectionId: ComputedRef<string | null>
   activeTabStreamError: ComputedRef<string | null>
 }
 
@@ -47,9 +50,18 @@ export function useModelState(): ViewModelState {
     modelCacheErrors: computed(() => sbp('dez.model/modelCache/errors') as Record<string, string>),
     // Ids of the providers whose newest model check is still running.
     modelCacheChecking: computed(() => sbp('dez.model/modelCache/checking') as string[]),
+    // Provider and model names for agent role pills and history rows.
+    // Updates when a custom provider changes or a model refresh lands in the
+    // cache.
+    modelDisplayNames: computed(() => sbp('dez.provider/modelDisplayNames') as ModelDisplayNames),
     activeTabStreaming: computed(() => {
       const activeTabId = sbp('dez.model/tabs/activeId') as string
       return sbp('dez.model/streams/isStreaming', activeTabId) as boolean
+    }),
+    // Drives the "generating" state of the streaming response's agent pill.
+    activeTabStreamingSectionId: computed(() => {
+      const activeTabId = sbp('dez.model/tabs/activeId') as string
+      return sbp('dez.model/streams/streamingSectionId', activeTabId) as string | null
     }),
     activeTabStreamError: computed(() => sbp('dez.model/streams/activeTabError') as string | null),
   }

@@ -1,5 +1,6 @@
-import type { Role, Section } from '../chat/types'
+import type { ModelRef, Role, Section } from '../chat/types'
 import { emptyContent, sectionIsEmpty, setSectionPlainText } from '../chat/content'
+import { cloneModelRef } from '../chat/modelRef'
 
 export function createStreamSection(role: Role): Section {
   return {
@@ -9,15 +10,18 @@ export function createStreamSection(role: Role): Section {
   }
 }
 
-export function ensureTrailingAgentSection(sections: Section[]): Section {
+// The returned section gets `model`, also when it is a reused empty agent
+// section: it records the model that writes the next response.
+export function ensureTrailingAgentSection(sections: Section[], model: ModelRef): Section {
   const lastSection = sections[sections.length - 1]
   if (!lastSection || lastSection.role !== 'agent' || !sectionIsEmpty(lastSection)) {
-    const section = createStreamSection('agent')
+    const section: Section = { ...createStreamSection('agent'), model: cloneModelRef(model) }
     sections.push(section)
     return section
   }
 
   lastSection.content = emptyContent()
+  lastSection.model = cloneModelRef(model)
   return lastSection
 }
 

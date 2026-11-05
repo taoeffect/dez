@@ -1,4 +1,4 @@
-import type { ActiveModel } from '../chat/types'
+import type { ActiveModel, ModelRef } from '../chat/types'
 import type { ProviderConfig } from '../providers/config'
 import type { ModelInfo, ProviderId } from '../providers/types'
 import type { Prompt } from '../state/prompts'
@@ -37,6 +37,7 @@ export type ContentNodeData =
 export interface SectionData {
   role: 'user' | 'agent'
   nodes: ContentNodeData[]
+  model?: ModelRef
 }
 
 export interface ConversationData {
@@ -52,7 +53,8 @@ export interface ConversationSummary {
   title: string
   createdAt: number
   updatedAt: number
-  model: string | null
+  /** The header `model:`: the tab's last selected model. */
+  model: ModelRef | null
   messageCount: number
   preview: string
 }

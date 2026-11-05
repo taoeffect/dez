@@ -1,16 +1,21 @@
 import sbp from '@sbp/sbp'
 import { createPinia, setActivePinia } from 'pinia'
 import { beforeEach, describe, expect, it } from 'vitest'
-import type { Tab } from '../chat/types'
+import type { ActiveModel, ContentNode, ModelRef, Section, Tab } from '../chat/types'
 import type { ConversationData, ModelCache } from '../persistence/types'
 import type { ProviderConfig } from '../providers/config'
 import type { SettingsSnapshot } from './index'
 // Side-effect import: registers the dez.model/* selectors under test.
 import './index'
+import { appendTokenToTabSection, finalizeStreamSectionForTab } from './index'
 
 // Conversation ids that the stub disk load below was asked for. Reset in
 // beforeEach.
 let loadCalls: string[] = []
+
+// Conversations that the stub disk load below returns instead of its default
+// one. Reset in beforeEach.
+const diskConversations = new Map<string, ConversationData>()
 
 // Stub the persistence selectors that the tab selectors call.
 // src/model/persistence/index.ts is never imported by this test, so these are
@@ -18,6 +23,8 @@ let loadCalls: string[] = []
 sbp('sbp/selectors/register', {
   async 'dez.persistence/loadConversation' (id: string): Promise<ConversationData> {
     loadCalls.push(id)
+    const saved = diskConversations.get(id)
+    if (saved) return saved
     return {
       id,
       title: `Title ${id}`,
@@ -44,6 +51,7 @@ async function openConversation (id: string): Promise<Tab | null> {
 beforeEach(() => {
   setActivePinia(createPinia())
   loadCalls = []
+  diskConversations.clear()
 })
 
 describe('dez.model/tabs/openConversation', () => {
@@ -92,6 +100,82 @@ describe('dez.model/tabs/openConversation', () => {
     expect(activeId()).toBe('t1')
 
     expect(tabs().map((tab) => tab.id)).toEqual(['t1', 't2', 't3'])
+  })
+})
+
+describe('section models', () => {
+  const alpha: ModelRef = { providerId: 'local', modelId: 'alpha' }
+  // submitTab passes the tab's ActiveModel; only the ref fields are stored.
+  const beta: ActiveModel = { providerId: 'openrouter', modelId: 'vendor/beta', modelName: 'Beta' }
+  const betaRef: ModelRef = { providerId: 'openrouter', modelId: 'vendor/beta' }
+
+  function text (value: string): ContentNode[] {
+    return [{ kind: 'text', text: value }]
+  }
+
+  function threadSections (): Section[] {
+    return sbp('dez.model/thread/sections') as Section[]
+  }
+
+  // 'none' marks a section without a `model` key, so `model: undefined`
+  // fails the strict compares below.
+  function storedModels (sections: { model?: ModelRef }[]): (ModelRef | 'none' | undefined)[] {
+    return sections.map((section) => ('model' in section ? section.model : 'none'))
+  }
+
+  function ensureAgentSection (model: ModelRef): Section {
+    return sbp('dez.model/ensureTrailingAgentSectionForTab', activeId(), model) as Section
+  }
+
+  // What the editor does on a doc change: it writes every section back.
+  function typeIntoLastSection (value: string): void {
+    const sections = threadSections()
+    sections[sections.length - 1].content = text(value)
+    sbp('dez.model/tabs/replaceSections', activeId(), sections)
+  }
+
+  it('stamps each agent section with the model of its request across a model switch', () => {
+    typeIntoLastSection('first question')
+    const first = ensureAgentSection(alpha)
+    appendTokenToTabSection(activeId(), first.id, 'first answer')
+    finalizeStreamSectionForTab(activeId(), first.id, null)
+    typeIntoLastSection('second question')
+    const second = ensureAgentSection(beta)
+
+    const sections = threadSections()
+    expect([sections[1].id, sections[3].id]).toEqual([first.id, second.id])
+    expect(sections.map((section) => section.role)).toEqual(['user', 'agent', 'user', 'agent'])
+    expect(storedModels(sections)).toStrictEqual(['none', alpha, 'none', betaRef])
+  })
+
+  it('gives a reused empty agent section the new model and changes the identity', () => {
+    typeIntoLastSection('question')
+    const first = ensureAgentSection(alpha)
+    const identityBefore = sbp('dez.model/thread/sectionsIdentity') as string
+
+    const second = ensureAgentSection(beta)
+
+    expect(second.id).toBe(first.id)
+    expect(threadSections()).toHaveLength(2)
+    expect(storedModels(threadSections())).toStrictEqual(['none', betaRef])
+    expect(sbp('dez.model/thread/sectionsIdentity')).not.toBe(identityBefore)
+  })
+
+  it('keeps section models through conversationData and a reload of the conversation', async () => {
+    sbp('dez.model/tabs/replaceSections', activeId(), [
+      { id: 'u1', role: 'user', content: text('question') },
+      { id: 'a1', role: 'agent', content: text('modeled answer'), model: alpha },
+      { id: 'a2', role: 'agent', content: text('legacy answer') },
+      { id: 'u2', role: 'user', content: text('') },
+    ])
+
+    const data = sbp('dez.model/tabs/conversationData', activeId()) as ConversationData
+    expect(storedModels(data.sections)).toStrictEqual(['none', alpha, 'none', 'none'])
+
+    diskConversations.set('conv-copy', { ...data, id: 'conv-copy' })
+    const reopened = await openConversation('conv-copy')
+    expect(reopened?.conversationId).toBe('conv-copy')
+    expect(storedModels(reopened?.sections ?? [])).toStrictEqual(['none', alpha, 'none', 'none'])
   })
 })
 

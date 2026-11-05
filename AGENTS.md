@@ -45,6 +45,11 @@ npm run build:macos:dmg        # Apple Silicon macOS DMG; macOS only
 # Version bump
 npm run bump-version -- <version>   # updates npm, Tauri, and Cargo version files
 
+# Release notes body for a tag (the release workflow runs it; needs gh, a
+# clone with full history and tags, REVIEW_MODEL, REVIEW_PROVIDER, and the
+# provider's API key, e.g. ZAI_API_KEY; prints to stdout without --out)
+node scripts/release-notes.js <tag> [--out <file>]
+
 # Preview built frontend
 npm run preview
 
@@ -56,11 +61,13 @@ cd src-tauri && cargo check
 cd src-tauri && cargo test
 ```
 
-Tagged releases are driven by `.github/workflows/release-desktop.yml`: pushing a `v*` tag first runs the E2E UI tests workflow as a reusable job, and only if it passes builds Linux x86_64 and Linux ARM64 AppImages on Ubuntu, an unsigned Apple Silicon DMG on macOS, creates the GitHub Release if needed, and uploads all artifacts. Linux release asset names include the architecture, e.g. `Dez_<version>_linux_x86_64.AppImage` and `Dez_<version>_linux_arm64.AppImage`.
+Tagged releases are driven by `.github/workflows/release-desktop.yml`: pushing a `v*` tag first runs the E2E UI tests workflow as a reusable job, and only if it passes builds Linux x86_64 and Linux ARM64 AppImages on Ubuntu, an unsigned Apple Silicon DMG on macOS, writes the release notes, creates the GitHub Release if needed, and uploads all artifacts. Linux release asset names include the architecture, e.g. `Dez_<version>_linux_x86_64.AppImage` and `Dez_<version>_linux_arm64.AppImage`.
+
+The `release-notes` job runs `scripts/release-notes.js`. The release body is `.github/release-notes-template.md` (the only source of that text), then a `## Changes` part that the `REVIEW_MODEL` model writes from the commit messages since the previous release, in the style of the v0.8.0 notes. `REVIEW_MODEL` and `REVIEW_PROVIDER` are variables of the GitHub environment `Default`, not repository variables. `ZAI_API_KEY` is a secret of `Default` and also a repository secret, so the environment does not limit it: only the "Write release notes" step may reference it, and no other job may reference it or use `secrets: inherit`. The `release-notes` job runs no `npm ci`, and the script uses only Node built-ins. If the notes fail, no release is made; "Re-run failed jobs" retries without a rebuild. A release that already exists keeps its notes, because a maintainer may have edited them. Then the notes job does not run the script, so a model failure cannot stop the asset upload. To write new notes for an existing release, run the script locally, then `gh release edit <tag> --notes-file <file>`.
 
 Every CI job removes the compromised eMudhra CA roots in its first step, before any network request. Ubuntu jobs run the shared okTurtles action `okTurtles/libcheloniajs/.github/actions/fix-ubuntu-ca-roots@main` and get `NODE_OPTIONS: --use-openssl-ca` (in the workflow `env` of `e2e.yml`; in the job `env` of the Ubuntu jobs in `release-desktop.yml`, so the macOS job does not get it). The macOS job runs its own inline fix. A new job must do the same. The header of that action's [`action.yml`](https://github.com/okTurtles/libcheloniajs/blob/main/.github/actions/fix-ubuntu-ca-roots/action.yml) gives the reasons and all the rules for callers.
 
-Frontend unit tests use Vitest with colocated `*.test.ts` files. Observed automated tests include Rust unit tests in `src-tauri/src/commands.rs` and `src-tauri/src/key_store.rs`.
+Frontend unit tests use Vitest with colocated `*.test.ts` files; `npm test` also runs the colocated `scripts/*.test.js` tests of the Node scripts. Observed automated tests include Rust unit tests in `src-tauri/src/commands.rs` and `src-tauri/src/key_store.rs`.
 
 ## Git conventions
 
@@ -86,6 +93,7 @@ SBP is covered in more detail in a section below.
 User edits ThreadEditor (CodeMirror document)
   -> ThreadEditor syncs CodeMirror doc to tabStore.activeTab.sections
   -> Mod-Enter calls dez.controller/submitTab
+    -> dez.model/ensureTrailingAgentSectionForTab stamps the agent section with the request model
     -> dez.stream/start creates a stream session + native HTTP request id
       -> dez.provider/streamChat builds provider-specific requests in TypeScript
       -> dez.http/stream owns a Tauri Channel and byte stream
@@ -100,10 +108,11 @@ User edits ThreadEditor (CodeMirror document)
 ### Frontend (`src/`)
 
 - **Single editor surface**: `ThreadEditor.vue` owns one CodeMirror `EditorView`; the old contenteditable/chat-message architecture is no longer current. Avoid DOM-first fixes. The CodeMirror document is flattened text with sentinel markers, and store state is reconstructed through helpers in `src/view/thread/cmEditor.ts`.
-- **Conversation model**: A tab owns `Section[]`, where each section is `{ id, role: 'user'|'agent', content: ContentNode[] }`. `ContentNode` is `TextNode` or `PromptNode`. Shared helpers are in `src/model/chat/content.ts`.
+- **Conversation model**: A tab owns `Section[]`, where each section is `{ id, role: 'user'|'agent', content: ContentNode[], model?: ModelRef }`. `ContentNode` is `TextNode` or `PromptNode`. Shared helpers are in `src/model/chat/content.ts`. `model` is the `{ providerId, modelId }` that wrote an agent response; the key is absent when the model is unknown (old files, hand-made sections, new user sections), so code that copies sections copies it only when set. A section toggled from agent to user keeps its `model` in memory, so toggling it back shows the model again; check `role === 'agent'` before you show or save a model. Model key helpers (`modelRefKey`, `parseModelRefKey`, `sameModelRef`) are in `src/model/chat/modelRef.ts`.
 - **CodeMirror sentinels**: `cmEditor.ts` uses ASCII Record Separator `SECTION_SEP = '\u001E'` as an in-buffer section boundary. Prompt pills are encoded with private-use sentinels `PILL_OPEN`, `PILL_BODY`, `PILL_CLOSE`, and `PILL_NL`; these are live-editor implementation details and must not be written to disk or exposed in clipboard text.
-- **State fields**: `sectionsField` mirrors per-section `{ id, role }`; `pillsField` stores prompt metadata (`name`, `promptId`, `expanded`) keyed by the in-doc pill id. Text lives in the CodeMirror doc, not these fields.
-- **Role separators**: Role pills are CodeMirror replacement widgets over `SECTION_SEP` lines. The first section is normalized to `user`; toggling a role only applies to separators after the first section.
+- **State fields**: `sectionsField` mirrors per-section `{ id, role, model? }`; `pillsField` stores prompt metadata (`name`, `promptId`, `expanded`) keyed by the in-doc pill id. Text lives in the CodeMirror doc, not these fields.
+- **Role separators**: Role pills are CodeMirror replacement widgets over `SECTION_SEP` lines. The first section is normalized to `user`; toggling a role only applies to separators after the first section, and a mousedown anywhere on a separator's pill, its model part too, toggles that role. When an agent section has a model, its agent pill also shows that model after the role word, in the same pill (`addModelToPill` in `src/view/thread/modelChip.ts`): the model name, the provider name, a switch icon when the model differs from the nearest earlier agent section that has a model, and an animation while that section streams. Every model uses the same agent accent color; the name, not a color, tells models apart. The pill with a model has the same height as the other pills and never wraps; a long model name ends in an ellipsis. Names come from `dez.provider/modelDisplayNames` through `modelLabel()` in `src/view/modelLabel.ts` (config name, then cached name, then the model id; an unknown provider shows no provider name). The model is widget DOM, not doc text, so find and copy never see it. With pill separators hidden, no model shows.
+- **History panel**: `src/view/history/HistoryPanel.vue` lists saved conversations. A row shows the conversation header model with the same `modelLabel()` names as the agent pills, so a custom provider shows its name, not its UUID id; the model's tooltip (`title`) is the raw `provider/model` key. History search still matches the raw key, not the display names.
 - **Prompt pills**: Saved prompts are managed in `PromptManager.vue` and persisted by `promptsStore`. Typing `/prompt ` in `ThreadEditor.vue` opens `PromptAutocomplete.vue`; accepting inserts a prompt sentinel sequence plus metadata. Prompt body text is copied per insertion and does not mutate the saved prompt template.
 - **Find/replace**: `src/view/editor/find.ts` is the CodeMirror find engine (matching, highlights, navigation, replace). It uses only `SearchQuery` and its cursors from `@codemirror/search`, not the built-in search panel, commands, or keymap. `findState.ts` holds the dropdown state that must survive `view.setState()`, `findHistory.ts` is the in-memory search history, and `src/view/thread/FindDropdown.vue` is the UI. Workflows are the `dez.editor/openFind`, `closeFind`, `selectFindMatch`, and `replaceFindMatches` selectors; global keys are in `src/view/composables/useKeyboardShortcuts.ts`. Matches skip sentinels, separator lines, pill markers, and collapsed prompt bodies, so a replace never touches them; iterate matches only through `findMatches()`.
 - **Markdown tables**: `src/view/editor/tables.ts` shows valid GFM tables in the thread editor as tables, in place. `findMarkdownTables()` is its own section-aware scanner, because the editor's markdown language has no GFM. `markdownTables()` is the CodeMirror extension that `buildState()` in `ThreadEditor.vue` adds; the table CSS is in `dezTheme` in `cmEditor.ts`. The rule: a top-level GFM table renders if and only if its source is valid, wherever the cursor is. Tables in blockquotes never render; the `findMarkdownTables()` comment says which tables in list items do. No table text is replaced: every character stays in the DOM and keeps its caret position, and CSS only makes the delimiter row and the splitting pipes transparent. So an edit that breaks the syntax shows the raw source, and a fix renders the table again. Table row lines hold only cell marks (no widgets or replace decorations), or the browser adds extra columns. `markdownTables()` also draws the editor selection (it hides the `drawSelection()` layer) and forwards clicks in the margin beside table rows.
@@ -168,12 +177,13 @@ Do not ever read, view, print, or `cat` `~/.config/dez/provider_keys.json`; it c
 
 ### Conversation file format
 
-- Header: `<!-- title: X | model: provider/model | created: N -->`.
-- Section markers: `<dez:pill type="user"/>` and `<dez:pill type="agent"/>` on their own lines.
+- Header: `<!-- title: X | model: provider/model | created: N -->`. The header `model:` is the tab's last selected model, not the model of each response.
+- Section markers: `<dez:pill type="user"/>` and `<dez:pill type="agent"/>` on their own lines. An agent pill with a section model is `<dez:pill type="agent" model="provider/model"/>`. Only agent pills get `model`; it is ignored on user pills. Attribute order does not matter, and a missing or bad `model` value means "no model" (old files load with no model, and Dez does not fill it in from the header). The file and the clipboard write and read pill markers only through `src/model/chat/pillMarker.ts`.
+- Marker attribute values (`model`, clipboard prompt `name`) are escaped with `src/utils/markerAttribute.ts`: `&`, `"`, LF, and CR become `&amp;`, `&quot;`, `&#10;`, and `&#13;`, so a marker stays on one line. The conversation file writes prompt names unescaped.
 - Prompt markers: `<dez:prompt name="NAME"> ... </dez:prompt>` wraps a prompt insertion body.
 - Literal `</dez:prompt>` inside a prompt body is escaped as `<\/dez:prompt>` on save.
 - Prompt `expanded` is not persisted as UI state on load; frontend rehydrates loaded prompts collapsed.
-- Clipboard serialization in `cmEditor.ts` uses the same `dez:` marker namespace and strips live CodeMirror sentinels.
+- Clipboard serialization in `cmEditor.ts` uses the same `dez:` marker namespace and strips live CodeMirror sentinels. Copied agent pills carry `model`, so a paste keeps each section's model.
 
 The frontend never touches these files directly; use `dez.persistence/*` selectors from app code. `src/controller/native.ts` is the only frontend layer that should invoke raw Tauri file commands.
 
@@ -186,6 +196,7 @@ The frontend never touches these files directly; use `dez.persistence/*` selecto
 - **Settings persistence is model-owned**: `dez.model/settings/startPersistence` installs debounced app-state persistence and theme watchers after `dez.controller/app/init` loads initial state. Calling model settings mutations before startup completes can race initial persistence readiness.
 - **Prompt persistence is separate**: Saved prompt templates persist through `dez.model/prompts/startPersistence` to `prompts.json`; prompt insertions inside conversations persist as conversation content nodes/markers and are independent copies.
 - **Active-tab streaming patch**: Streaming always mutates the agent section captured at stream start. Only the currently active tab's registered CodeMirror view is patched through `dez.editor/appendTokenIfVisible`; tab/store guards prevent tokens from applying to the wrong visible editor.
+- **Section model flows through the editor**: During a stream, every token is a doc change, and `syncDocToTab` in `ThreadEditor.vue` writes the editor's `sectionsField` back to the store with `dez.model/tabs/replaceSections`. So a per-section field such as `model` must be in `SectionModel` (`cmEditor.ts`), `docToSections`, `dez.model/thread/sectionsIdentity`, and the editor's section equality checks, or the store loses it on the first token.
 - **Concurrent streaming path**: Chat streaming no longer goes through a Rust provider registry. `src/controller/stream.ts` tracks request ids per tab, and `http_bridge.rs` tracks request ids globally for native cancellation.
 - **Provider role mapping**: The app uses internal role `agent`. Both API formats (`openai` and `anthropic`) must map `agent` to API role `assistant` when building requests.
 - **Copilot auth path differs**: Copilot does not use the API-key commands; `save_provider_secret` refuses `copilot`. Use `copilot_start_device_flow` and `copilot_poll_device_flow`; tokens are then persisted via `key_store`.

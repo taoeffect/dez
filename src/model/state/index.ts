@@ -10,7 +10,7 @@ import type { AppStatePayload, CachedProvider, ConversationSearchOutcome, ModelC
 import { emptyModelCache } from '../persistence/modelCache'
 import type { ProviderConfig } from '../providers/config'
 import type { ProviderId, ProviderModelsResult } from '../providers/types'
-import type { ActiveModel, ContentNode, Section, Tab } from '../chat/types'
+import type { ActiveModel, ContentNode, ModelRef, Section, Tab } from '../chat/types'
 import {
   appendStreamingText,
   emptyContent,
@@ -18,6 +18,7 @@ import {
   sectionIsEmpty,
   sectionVisibleText,
 } from '../chat/content'
+import { modelRefField, modelRefKey } from '../chat/modelRef'
 import { sectionsToStreamMessages } from '../streams/messages'
 import {
   ensureTrailingAgentSection,
@@ -56,6 +57,7 @@ type ContentNodeData =
 interface SectionData {
   role: 'user' | 'agent'
   nodes: ContentNodeData[]
+  model?: ModelRef
 }
 
 interface ConversationData {
@@ -103,6 +105,7 @@ function cloneSections(sections: Section[]): ModelSnapshot['tabs'][number]['sect
     id: section.id,
     role: section.role,
     content: section.content.map(cloneContentNode),
+    ...modelRefField(section.model),
   }))
 }
 
@@ -252,6 +255,7 @@ function tabFromConversation(conv: ConversationData, overrides: Partial<Tab> = {
     id: crypto.randomUUID(),
     role: section.role,
     content: normalizeContent(section.nodes.map((node) => dataToContentNode(node))),
+    ...modelRefField(section.model),
   }))
   if (sections.length === 0) {
     sections.push({ id: crypto.randomUUID(), role: 'user', content: emptyContent() })
@@ -408,6 +412,7 @@ export default sbp('sbp/selectors/register', {
       sections: tab.sections.map((section) => ({
         role: section.role,
         nodes: section.content.map((node) => contentNodeToData(node)),
+        ...modelRefField(section.model),
       })),
       activeModel: cloneActiveModel(tab.activeModel),
       created_at: tab.createdAt,
@@ -576,8 +581,15 @@ export default sbp('sbp/selectors/register', {
     return cloneSections(useTabStore().activeTab.sections) as Section[]
   },
 
+  // The editor watches this string and copies store section metadata into its
+  // `sectionsField` when it changes. The model key is part of it, so a stamp
+  // on a reused empty agent section (same id and role) still reaches the
+  // editor before the first token; else the editor's write-back on every
+  // token (`replaceSections`) would erase the stamp.
   'dez.model/thread/sectionsIdentity' (): string {
-    return useTabStore().activeTab.sections.map((section) => `${section.id}:${section.role}`).join('|')
+    return useTabStore().activeTab.sections
+      .map((section) => `${section.id}:${section.role}:${section.model ? modelRefKey(section.model) : ''}`)
+      .join('|')
   },
 
   // CodeMirror owns the focused document, so this selector is the model boundary
@@ -589,6 +601,7 @@ export default sbp('sbp/selectors/register', {
       id: section.id,
       role: section.role,
       content: normalizeContent(section.content),
+      ...modelRefField(section.model),
     })))
     const title = firstUserTitle(tab.sections)
     if (title) tab.title = title
@@ -600,9 +613,10 @@ export default sbp('sbp/selectors/register', {
     return tab ? sectionsToStreamMessages(tab.sections).map((message) => ({ ...message })) : []
   },
 
-  'dez.model/ensureTrailingAgentSectionForTab' (tabId: string): Section | null {
+  // Stamps the agent section with the model of the request that will fill it.
+  'dez.model/ensureTrailingAgentSectionForTab' (tabId: string, model: ModelRef): Section | null {
     const tab = useTabStore().tabs.find((candidate) => candidate.id === tabId)
-    const section = tab ? ensureTrailingAgentSection(tab.sections) : null
+    const section = tab ? ensureTrailingAgentSection(tab.sections, model) : null
     return section ? cloneSections([section])[0] as Section : null
   },
 

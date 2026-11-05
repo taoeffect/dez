@@ -1,4 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
+import { parseModelRefKey } from '../chat/modelRef'
 import { serializeConversation } from './conversationFormat'
 import { clearConversationSearchCache, conversationPlainText, searchConversationFiles, staleConversationIds } from './search'
 import type { ContentNodeData, ConversationData, ConversationFile, SectionData, SnippetSegment } from './types'
@@ -16,13 +17,12 @@ function section(role: SectionData['role'], nodes: ContentNodeData[]): SectionDa
 }
 
 function conversation(id: string, title: string, sections: SectionData[], model: string | null = null): ConversationData {
+  const ref = model ? parseModelRefKey(model) : null
   return {
     id,
     title,
     sections,
-    activeModel: model
-      ? { providerId: model.split('/')[0], modelId: model.split('/')[1], modelName: model.split('/')[1] }
-      : null,
+    activeModel: ref ? { ...ref, modelName: ref.modelId } : null,
     created_at: 1000,
   }
 }
@@ -70,6 +70,16 @@ describe('searchConversationFiles', () => {
     expect(searchConversationFiles([file], 'trip itinerary').length).toBe(1)
     expect(searchConversationFiles([file], 'gpt-4o itinerary').length).toBe(1)
     expect(searchConversationFiles([file], 'itinerary missing').length).toBe(0)
+  })
+
+  it('matches the raw provider/model key of the header model, and returns the ref', () => {
+    const file = fileFor(
+      conversation('a', 'Notes', [section('user', [textNode('hello')])], 'openrouter/anthropic/claude-sonnet-4.5'),
+      1000,
+    )
+
+    const [result] = searchConversationFiles([file], 'openrouter/anthropic/claude')
+    expect(result?.model).toStrictEqual({ providerId: 'openrouter', modelId: 'anthropic/claude-sonnet-4.5' })
   })
 
   it('matches case-insensitively', () => {

@@ -14,6 +14,7 @@ Talk with AI in a fully editable plaintext document. Inspired by Zed's text thre
 
 - **Tabbed conversations** — multiple concurrent chats in a single window
 - **Multi-provider model selection** — OpenRouter, Z.ai, GitHub Copilot, MiniMax, Venice, and Charm Hyper, plus your own [custom providers](#custom-providers): any OpenAI- or Anthropic-compatible server, such as llama-server, LM Studio, or Ollama
+- **Per-response model labels** — each agent response shows the name and provider of the model that wrote it, and shows when the model changed mid-conversation
 - **Saved prompts** — selectable via `/prompt` shortcut (Zed-style)
 - **Inline editing** — edit any message in a thread, including agent responses
 - **Text pill separators** — toggleable "User" / "Agent" labels between messages
@@ -122,7 +123,25 @@ git tag v0.1.0
 git push origin v0.1.0
 ```
 
-The workflow builds Linux x86_64 and Linux ARM64 AppImages on Ubuntu, builds the Apple Silicon DMG on macOS, creates the GitHub Release for the tag if needed, and attaches all release assets. Linux downloads are labeled by architecture, for example `Dez_0.1.0_linux_x86_64.AppImage` and `Dez_0.1.0_linux_arm64.AppImage`; ARM users should choose the `arm64` AppImage.
+The workflow builds Linux x86_64 and Linux ARM64 AppImages on Ubuntu, builds the Apple Silicon DMG on macOS, writes the release notes, creates the GitHub Release for the tag if needed, and attaches all release assets. Linux downloads are labeled by architecture, for example `Dez_0.1.0_linux_x86_64.AppImage` and `Dez_0.1.0_linux_arm64.AppImage`; ARM users should choose the `arm64` AppImage.
+
+### Release notes
+
+The release notes start with the text of `.github/release-notes-template.md`. Then an AI model writes a `## Changes` part from the commit messages since the previous release, with **NEW**, **ENHANCEMENT**, and **FIXES** groups, and the last line names the model. If the release has no new commits, or the model finds no change that needs a note, the notes are the template text only. The workflow reads the model settings and the API key from the GitHub environment `Default` (Settings › Environments):
+
+- Variable `REVIEW_MODEL`: the model id, for example `glm-5.3`.
+- Variable `REVIEW_PROVIDER`: the API endpoint. Now the only value is `zai-coding-plan` (the Z.ai coding plan).
+- Secret `ZAI_API_KEY`: the Z.ai API key. The repository also has a repository secret with this name, so the environment does not keep the key from other jobs. Only the "Write release notes" step uses it, and it gets the `Default` value: an environment secret wins over a repository secret with the same name.
+
+If the release notes job fails, the workflow makes no release. Click **Re-run failed jobs** to try again; the builds do not run again.
+
+A release that already exists keeps its notes, because you may have edited them. Then the workflow does not ask the AI model for notes; it only attaches the assets. To write new notes for a release, run the script on your machine with `ZAI_API_KEY` set in your shell. The script needs `gh` and a clone with all tags:
+
+```bash
+REVIEW_MODEL=glm-5.3 REVIEW_PROVIDER=zai-coding-plan \
+  node scripts/release-notes.js v0.1.0 --out notes.md
+gh release edit v0.1.0 --notes-file notes.md
+```
 
 ## macOS unsigned build note
 

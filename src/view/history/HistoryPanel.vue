@@ -3,6 +3,11 @@ import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import sbp from '@sbp/sbp'
 import { debounce } from 'turtledash'
 import type { ConversationSearchOutcome, ConversationSearchResult } from '../../model/persistence/types'
+import { modelRefKey } from '../../model/chat/modelRef'
+import { modelLabel } from '../modelLabel'
+import { useModelState } from '../modelState'
+
+const { modelDisplayNames } = useModelState()
 
 const emit = defineEmits<{
   close: []
@@ -31,6 +36,16 @@ const sortedConversations = computed(() => {
     return b.updatedAt - a.updatedAt
   })
 })
+
+// Each row with the names of its header model, the same names as the agent
+// role pills. They come from the live provider configs and model cache, so a
+// provider rename or a model refresh updates the open panel.
+const rows = computed(() => sortedConversations.value.map((conversation) => ({
+  conversation,
+  model: conversation.model
+    ? { key: modelRefKey(conversation.model), ...modelLabel(conversation.model, modelDisplayNames.value) }
+    : null,
+})))
 
 // Full-text search over saved conversations through the model boundary. The
 // selector logs failures and returns an empty outcome, so no error UI is
@@ -151,12 +166,12 @@ function onOverlayClick(e: MouseEvent) {
       <div v-if="loading && !conversations.length" class="history-empty">
         Loading history…
       </div>
-      <div v-else-if="!sortedConversations.length" class="history-empty">
+      <div v-else-if="!rows.length" class="history-empty">
         {{ search.trim() ? 'No matching conversations.' : 'No saved conversations yet.' }}
       </div>
       <ul v-else class="history-list">
         <li
-          v-for="conversation in sortedConversations"
+          v-for="{ conversation, model } in rows"
           :key="conversation.id"
           class="history-row"
           @click="openConversation(conversation.id)"
@@ -182,8 +197,12 @@ function onOverlayClick(e: MouseEvent) {
                 <span class="history-row-date">{{ formatDate(conversation.updatedAt || conversation.createdAt) }}</span>
               </div>
               <div class="history-row-meta">
-                <span>{{ conversation.model || 'No model' }}</span>
-                <span>{{ messageLabel(conversation.messageCount) }}</span>
+                <span v-if="model" class="history-row-model" :title="model.key">
+                  <span class="history-row-model-name">{{ model.modelName }}</span>
+                  <span v-if="model.providerName" class="history-row-model-provider">{{ model.providerName }}</span>
+                </span>
+                <span v-else>No model</span>
+                <span class="history-row-count">{{ messageLabel(conversation.messageCount) }}</span>
               </div>
               <!-- Snippet segments render on a single line: a newline between
                    them would become a stray space between adjacent segments. -->
@@ -407,6 +426,33 @@ function onOverlayClick(e: MouseEvent) {
   margin-top: 3px;
   font-size: 11px;
   opacity: 0.6;
+}
+
+/* A long model name ends in an ellipsis; the message count never shrinks. */
+.history-row-model {
+  display: flex;
+  gap: 5px;
+  min-width: 0;
+}
+
+.history-row-model-name {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.history-row-model-provider {
+  flex-shrink: 0;
+  opacity: 0.75;
+}
+
+.history-row-model-provider::before {
+  content: '·';
+  margin-right: 5px;
+}
+
+.history-row-count {
+  flex-shrink: 0;
 }
 
 .history-row-preview {

@@ -1,6 +1,8 @@
 import { closesFence, fenceOpener, type Fence } from '../../utils/markdownFence'
 import { stripLiveSentinels } from '../chat/content'
-import type { ActiveModel } from '../chat/types'
+import { modelRefKey, parseModelRefKey } from '../chat/modelRef'
+import { parsePillMarker, pillMarkerLine } from '../chat/pillMarker'
+import type { ActiveModel, ModelRef } from '../chat/types'
 import type { ContentNodeData, ConversationData, SectionData } from './types'
 
 function escapeTitle(value: string): string {
@@ -20,15 +22,12 @@ function promptId(): string {
 }
 
 export function serializeConversation(data: ConversationData): string {
-  const model = data.activeModel
-    ? `${data.activeModel.providerId}/${data.activeModel.modelId}`
-    : ''
+  const model = data.activeModel ? modelRefKey(data.activeModel) : ''
   let output = `<!-- title: ${escapeTitle(data.title)} | model: ${escapeTitle(model)} | created: ${data.created_at} -->\n`
 
   for (const section of data.sections) {
     output += '\n'
-    const tag = section.role === 'agent' ? 'agent' : 'user'
-    output += `<dez:pill type="${tag}"/>\n`
+    output += `${pillMarkerLine(section.role, section.model)}\n`
     for (const node of section.nodes) {
       if (node.kind === 'text') {
         const text = stripLiveSentinels(node.text)
@@ -113,13 +112,6 @@ function parseHeader(line: string): { title: string; model: string; createdAt: n
   return { title, model, createdAt }
 }
 
-function parsePillType(trimmed: string): 'user' | 'agent' | null {
-  if (!trimmed.startsWith('<dez:pill')) return null
-  if (trimmed.includes('type="user"')) return 'user'
-  if (trimmed.includes('type="agent"')) return 'agent'
-  return null
-}
-
 function parsePromptOpen(trimmed: string): string | null {
   if (!trimmed.startsWith('<dez:prompt') || trimmed.endsWith('/>')) return null
   const start = trimmed.indexOf('name="')
@@ -140,6 +132,7 @@ function flushText(nodes: ContentNodeData[], text: string, stripTrailingNewline:
 function flushSection(
   sections: SectionData[],
   role: 'user' | 'agent' | null,
+  model: ModelRef | null,
   nodes: ContentNodeData[],
 ): ContentNodeData[] {
   if (!role) return nodes
@@ -155,21 +148,13 @@ function flushSection(
       }
     }
   }
-  sections.push({ role, nodes })
+  sections.push(model ? { role, nodes, model } : { role, nodes })
   return []
 }
 
 function activeModelFromHeader(model: string): ActiveModel | null {
-  if (!model) return null
-  const separator = model.indexOf('/')
-  const providerId = separator >= 0 ? model.slice(0, separator) : model
-  const modelId = separator >= 0 ? model.slice(separator + 1) : ''
-  if (!providerId || !modelId) return null
-  return {
-    providerId,
-    modelId,
-    modelName: modelId,
-  }
+  const ref = parseModelRefKey(model)
+  return ref ? { ...ref, modelName: ref.modelId } : null
 }
 
 export function parseConversation(id: string, content: string): ConversationData {
@@ -198,6 +183,7 @@ export function parseConversation(id: string, content: string): ConversationData
 
   const sections: SectionData[] = []
   let currentRole: 'user' | 'agent' | null = null
+  let currentModel: ModelRef | null = null
   let currentNodes: ContentNodeData[] = []
   let textBuffer = ''
   let inPrompt = false
@@ -227,11 +213,12 @@ export function parseConversation(id: string, content: string): ConversationData
       continue
     }
 
-    const role = parsePillType(trimmed)
-    if (role) {
+    const marker = parsePillMarker(trimmed)
+    if (marker) {
       textBuffer = flushText(currentNodes, textBuffer, true)
-      currentNodes = flushSection(sections, currentRole, currentNodes)
-      currentRole = role
+      currentNodes = flushSection(sections, currentRole, currentModel, currentNodes)
+      currentRole = marker.role
+      currentModel = marker.model
       continue
     }
 
@@ -255,7 +242,7 @@ export function parseConversation(id: string, content: string): ConversationData
   }
 
   flushText(currentNodes, textBuffer, true)
-  flushSection(sections, currentRole, currentNodes)
+  flushSection(sections, currentRole, currentModel, currentNodes)
 
   if (sections.length === 0) {
     sections.push({ role: 'user', nodes: [] })

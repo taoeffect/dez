@@ -11,6 +11,15 @@ export interface ModelInfo {
   provider: ProviderId
 }
 
+// Display names for agent role pills and history rows: provider id ->
+// provider name, and `modelRefKey` -> model name. Maps, not plain objects,
+// because the ids come from files. A missing entry means the name is
+// unknown.
+export interface ModelDisplayNames {
+  providers: Map<ProviderId, string>
+  models: Map<string, string>
+}
+
 // What views and controllers know about a provider. Plain data, so it can be
 // cloned and shown without the Provider class.
 export interface ProviderInfo {

@@ -1,13 +1,13 @@
 import fs from 'node:fs'
-import http from 'node:http'
-import type { AddressInfo } from 'node:net'
 import type { EditorView } from '@codemirror/view'
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from 'vitest'
 import { Key } from 'webdriverio'
 import { startApp, type RunningApp } from './harness/app'
-import { click, consoleErrors, resetConsoleErrors, screenshotOnFailure, typeInto, typeKeys, waitFor, waitForValue } from './harness/dom'
+import { click, consoleErrors, resetConsoleErrors, screenshotOnFailure, typeInto, waitFor, waitForValue } from './harness/dom'
 import { seedRawAppState } from './harness/fixtures'
+import { replyText, sendChatReply, startMockServer, type MockServer } from './harness/mockServer'
 import { createSession, destroySession, type E2EBrowser } from './harness/session'
+import { openPicker, pickerGroups, pickModel, sbpCall, submit, threadSections, waitForThread } from './harness/thread'
 
 // Custom providers, driven through the real app against a mock
 // OpenAI-compatible server in this process.
@@ -26,11 +26,6 @@ interface MockRequest {
   path: string
   authorization: string | null
   body: unknown
-}
-
-interface ThreadSection {
-  role: string
-  text: string
 }
 
 interface ProviderRow {
@@ -70,22 +65,10 @@ const SEEDED_CUSTOM: ProviderRow[] = [
   { id: 'keyed', name: 'Keyed Mock' },
 ]
 
-// The reply streams in several chunks and names the provider prefix.
-function replyTokens (prefix: string): string[] {
-  return ['Reply', ' from', ` ${prefix}`, '.']
-}
-
-function replyText (prefix: string): string {
-  return replyTokens(prefix).join('')
-}
-
 // Records every request in `requests`. A body that is not JSON is recorded
 // as its raw text.
-async function startMockServer (requests: MockRequest[]): Promise<http.Server> {
-  const server = http.createServer(async (req, res) => {
-    const chunks: Buffer[] = []
-    for await (const chunk of req) chunks.push(chunk as Buffer)
-    const text = Buffer.concat(chunks).toString('utf8')
+async function startProvidersMock (requests: MockRequest[]): Promise<MockServer> {
+  return startMockServer(async (req, res, text) => {
     let body: unknown = null
     if (text) {
       try {
@@ -102,27 +85,19 @@ async function startMockServer (requests: MockRequest[]): Promise<http.Server> {
       res.writeHead(200, { 'Content-Type': 'application/json' })
       res.end(JSON.stringify({ object: 'list', data: SERVER_MODELS }))
     } else if (req.method === 'POST' && route?.[2] === 'chat/completions') {
-      res.writeHead(200, { 'Content-Type': 'text/event-stream', 'Cache-Control': 'no-cache' })
-      for (const token of replyTokens(route[1])) {
-        res.write(`data: ${JSON.stringify({ choices: [{ index: 0, delta: { content: token } }] })}\n\n`)
-      }
-      res.end('data: [DONE]\n\n')
+      // The reply names the provider prefix.
+      await sendChatReply(res, route[1])
     } else {
       res.writeHead(404, { 'Content-Type': 'text/plain' })
       res.end('not found')
     }
   })
-  await new Promise<void>((resolve, reject) => {
-    server.once('error', reject)
-    server.listen(0, '127.0.0.1', () => resolve())
-  })
-  return server
 }
 
 describe('custom providers', () => {
   let app: RunningApp
   let browser: E2EBrowser
-  let server: http.Server
+  let server: MockServer
   let mockUrl = ''
   let stateFile = ''
   const requests: MockRequest[] = []
@@ -146,25 +121,6 @@ describe('custom providers', () => {
     )
   }
 
-  async function sbpCall (selector: string, ...args: unknown[]): Promise<unknown> {
-    return browser.execute(async (sel: string, selectorArgs: unknown[]) => {
-      const sbp = Reflect.get(window, 'sbp') as (selector: string, ...args: unknown[]) => unknown
-      return await sbp(sel, ...selectorArgs)
-    }, selector, args)
-  }
-
-  // The active tab's sections as role and plain text.
-  async function threadSections (): Promise<ThreadSection[]> {
-    return browser.execute(() => {
-      const sbp = Reflect.get(window, 'sbp') as (selector: string, ...args: unknown[]) => unknown
-      const sections = sbp('dez.model/thread/sections') as Array<{ role: string, content: Array<{ kind: string, text?: string }> }>
-      return sections.map((section) => ({
-        role: section.role,
-        text: section.content.map((node) => node.kind === 'text' ? node.text ?? '' : '').join(''),
-      }))
-    })
-  }
-
   async function editorDoc (): Promise<string> {
     return browser.execute(() => {
       const content = document.querySelector('.cm-content')
@@ -172,61 +128,6 @@ describe('custom providers', () => {
       const view = Reflect.get(Reflect.get(content, 'cmTile'), 'root').view as EditorView
       return String(view.state.doc)
     })
-  }
-
-  async function pickerGroups (): Promise<Array<{ provider: string, models: string[] }>> {
-    return browser.execute(() =>
-      Array.from(document.querySelectorAll('.model-dropdown .model-group')).map((group) => ({
-        provider: group.querySelector('.model-group-header')?.textContent?.trim() ?? '',
-        models: Array.from(group.querySelectorAll('.model-item-name')).map((name) => name.textContent?.trim() ?? ''),
-      }))
-    )
-  }
-
-  async function openPicker (): Promise<void> {
-    await click(browser, '.model-selector-btn')
-    await waitFor(browser, '.model-dropdown', 10_000)
-  }
-
-  // Picks the model named `modelName` in the picker group of `providerName`.
-  async function pickModel (providerName: string, modelName: string): Promise<void> {
-    await openPicker()
-    await waitForValue(browser, `${providerName} in the picker`, async () =>
-      (await pickerGroups()).find((group) => group.provider === providerName)?.models.includes(modelName) ?? false, true)
-    await browser.execute((provider: string, model: string) => {
-      const group = Array.from(document.querySelectorAll('.model-dropdown .model-group')).find(
-        (candidate) => candidate.querySelector('.model-group-header')?.textContent?.trim() === provider
-      )
-      const item = Array.from(group?.querySelectorAll<HTMLElement>('.model-item') ?? []).find(
-        (candidate) => candidate.querySelector('.model-item-name')?.textContent?.trim() === model
-      )
-      if (!item) throw new Error(`pickModel: ${provider} › ${model} not found`)
-      item.click()
-    }, providerName, modelName)
-    await waitForValue(browser, 'selected model', () => textOf('.model-selector-label'), modelName)
-  }
-
-  // Types `text` at the end of the active tab, then submits it with
-  // Ctrl+Enter. A new reply lands after the trailing user section.
-  async function submit (text: string): Promise<void> {
-    await browser.execute(() => {
-      const content = document.querySelector('.cm-content') as HTMLElement | null
-      if (!content) throw new Error('submit: .cm-content not found')
-      content.focus()
-    })
-    await browser.keys([Key.Control, Key.End])
-    await typeKeys(browser, text)
-    await browser.keys([Key.Control, Key.Enter])
-  }
-
-  // Waits until the active tab holds `expected` and no stream runs.
-  async function waitForThread (expected: ThreadSection[]): Promise<void> {
-    await waitForValue(browser, 'thread sections', threadSections, expected)
-    await waitForValue(browser, 'streaming', () => browser.execute(() => {
-      const sbp = Reflect.get(window, 'sbp') as (selector: string, ...args: unknown[]) => unknown
-      return sbp('dez.model/streams/isStreaming', sbp('dez.model/tabs/activeId')) as boolean
-    }), false)
-    expect(await sbpCall('dez.model/streams/activeTabError')).toBeNull()
   }
 
   async function providerLists (): Promise<{ builtIn: ProviderRow[], custom: ProviderRow[] }> {
@@ -256,7 +157,7 @@ describe('custom providers', () => {
   }
 
   async function openProviderSettings (): Promise<void> {
-    await sbpCall('dez.model/settings/open', 'providers')
+    await sbpCall(browser, 'dez.model/settings/open', 'providers')
     await waitFor(browser, '.provider-manager .provider-row', 10_000)
   }
 
@@ -273,8 +174,8 @@ describe('custom providers', () => {
   }
 
   beforeAll(async () => {
-    server = await startMockServer(requests)
-    mockUrl = `http://127.0.0.1:${(server.address() as AddressInfo).port}`
+    server = await startProvidersMock(requests)
+    mockUrl = server.url
     app = await startApp()
     try {
       stateFile = await seedRawAppState(app.home, {
@@ -298,7 +199,7 @@ describe('custom providers', () => {
     // The app-state parse logs each dropped entry before the store gets the
     // list, so once the list has the two valid entries, the logs are done.
     await waitForValue(browser, 'loaded custom providers', async () =>
-      ((await sbpCall('dez.model/customProviders/list')) as unknown[]).length, 2)
+      ((await sbpCall(browser, 'dez.model/customProviders/list')) as unknown[]).length, 2)
   })
 
   // beforeAll waits for the startup logs of the dropped entries, so they
@@ -316,9 +217,7 @@ describe('custom providers', () => {
   afterAll(async () => {
     await destroySession(browser)
     await app?.stop()
-    // reqwest keeps its connections open, and close() waits for them.
-    server?.closeAllConnections()
-    await new Promise<void>((resolve) => server ? server.close(() => resolve()) : resolve())
+    await server?.stop()
   })
 
   it('drops invalid entries and moves a hand-added API key out of app_state.json', async () => {
@@ -331,7 +230,7 @@ describe('custom providers', () => {
     // These requests show that the startup check run has begun. Once it
     // ends, every provider it checked has sent its request (the mock records
     // a request before it answers), so a wrongly kept entry would show here.
-    await waitForValue(browser, 'startup check run', () => sbpCall('dez.model/modelCache/refreshing'), false)
+    await waitForValue(browser, 'startup check run', () => sbpCall(browser, 'dez.model/modelCache/refreshing'), false)
     expect(requests.filter((request) => /^\/(noname|collision|duplicate)\//.test(request.path))).toEqual([])
 
     // The import saves app state once, without the key and without the
@@ -344,11 +243,11 @@ describe('custom providers', () => {
   })
 
   it('lists the config and server models of each valid custom provider in the picker', async () => {
-    await openPicker()
+    await openPicker(browser)
     // Built-ins have no key here, so only the custom groups show. The config
     // model comes first and keeps its config name; the server's copy of it
     // is not listed again.
-    await waitForValue(browser, 'picker groups', pickerGroups, [
+    await waitForValue(browser, 'picker groups', () => pickerGroups(browser), [
       { provider: 'Local Mock', models: ['Config name', 'fetched-model'] },
       { provider: 'Keyed Mock', models: ['Server name', 'fetched-model'] },
     ])
@@ -357,9 +256,9 @@ describe('custom providers', () => {
   })
 
   it('streams a reply from a provider without a key', async () => {
-    await pickModel('Local Mock', 'Config name')
-    await submit('Hello mock')
-    await waitForThread([
+    await pickModel(browser, 'Local Mock', 'Config name')
+    await submit(browser, 'Hello mock')
+    await waitForThread(browser, [
       { role: 'user', text: 'Hello mock' },
       { role: 'agent', text: replyText('local') },
       { role: 'user', text: '' },
@@ -367,8 +266,8 @@ describe('custom providers', () => {
     expect(await editorDoc()).toContain(replyText('local'))
 
     // The second turn sends the first reply back with the `assistant` role.
-    await submit('And again')
-    await waitForThread([
+    await submit(browser, 'And again')
+    await waitForThread(browser, [
       { role: 'user', text: 'Hello mock' },
       { role: 'agent', text: replyText('local') },
       { role: 'user', text: 'And again' },
@@ -395,11 +294,11 @@ describe('custom providers', () => {
   })
 
   it('sends the stored key to a provider whose key came from app_state.json', async () => {
-    await sbpCall('dez.model/tabs/create')
-    await waitForValue(browser, 'new tab', threadSections, [{ role: 'user', text: '' }])
-    await pickModel('Keyed Mock', 'fetched-model')
-    await submit('Hello keyed')
-    await waitForThread([
+    await sbpCall(browser, 'dez.model/tabs/create')
+    await waitForValue(browser, 'new tab', () => threadSections(browser), [{ role: 'user', text: '' }])
+    await pickModel(browser, 'Keyed Mock', 'fetched-model')
+    await submit(browser, 'Hello keyed')
+    await waitForThread(browser, [
       { role: 'user', text: 'Hello keyed' },
       { role: 'agent', text: replyText('keyed') },
       { role: 'user', text: '' },
@@ -416,7 +315,7 @@ describe('custom providers', () => {
 
   it('shows built-ins with a badge and no delete control in Settings › Providers', async () => {
     // The picker footer is the way users reach this page.
-    await openPicker()
+    await openPicker(browser)
     await click(browser, '.model-picker-configure')
     await waitFor(browser, '.provider-manager .provider-row', 10_000)
 
@@ -541,7 +440,7 @@ describe('custom providers', () => {
     await waitForValue(browser, 'model check with the key', async () =>
       requestsTo('/added/v1/models').at(-1)?.authorization ?? null, `Bearer ${ADDED_API_KEY}`)
     expect(requestsTo('/added/v1/models')[0].authorization).toBeNull()
-    expect(await sbpCall('dez.native/getConfiguredProviderIds')).toContain(addedId)
+    expect(await sbpCall(browser, 'dez.native/getConfiguredProviderIds')).toContain(addedId)
 
     await waitForValue(browser, 'added provider in app_state.json', async () => {
       const saved = await savedCustomProviders()
@@ -575,7 +474,7 @@ describe('custom providers', () => {
       const saved = await savedCustomProviders()
       return Array.isArray(saved) ? saved.map((config) => config.id) : null
     }, ['local', 'keyed'])
-    expect(await sbpCall('dez.native/getConfiguredProviderIds')).not.toContain(addedId)
+    expect(await sbpCall(browser, 'dez.native/getConfiguredProviderIds')).not.toContain(addedId)
     await closeSettings()
   })
 })

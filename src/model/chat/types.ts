@@ -21,15 +21,24 @@ export interface PromptNode {
 
 export type ContentNode = TextNode | PromptNode
 
+/** A provider and a model, e.g. `openrouter` + `anthropic/claude-sonnet-4.5`. */
+export interface ModelRef {
+  providerId: string
+  modelId: string
+}
+
 export interface Section {
   id: string
   role: Role
   content: ContentNode[]
+  /** The model that wrote this agent section. Absent when unknown (user
+   *  sections, hand-made sections, files saved before Dez stored it); never
+   *  set to `undefined`. It stays when the role becomes `user`, but only
+   *  `agent` sections show it or save it. */
+  model?: ModelRef
 }
 
-export interface ActiveModel {
-  providerId: string
-  modelId: string
+export interface ActiveModel extends ModelRef {
   modelName: string
 }
 

@@ -1,4 +1,6 @@
 import sbp from '@sbp/sbp'
+import { modelRefKey } from '../chat/modelRef'
+import type { ModelCache } from '../persistence/types'
 import { secret, type Secret } from '../../utils/secret'
 import { nativeResponseJson, nativeResponseText, type NativeHttpResponse, type NativeHttpStreamResult } from '../../utils/protocol/nativeHttp'
 import type { ProviderSettingDef } from './config'
@@ -7,7 +9,7 @@ import type { Provider } from './provider'
 import { getProvider, listProviders, requireProvider } from './registry'
 import { streamProviderTokens } from './streaming'
 import type { ProviderStreamChatInput, ProviderStreamChatResult } from './streamTypes'
-import { ProviderNotConfiguredError, type ProviderId, type ProviderInfo, type ProviderModelsResult } from './types'
+import { ProviderNotConfiguredError, type ModelDisplayNames, type ProviderId, type ProviderInfo, type ProviderModelsResult } from './types'
 
 // The stored key, or null when there is none. Throws for GitHub Copilot when
 // the user is not signed in.
@@ -68,6 +70,32 @@ export default sbp('sbp/selectors/register', {
   'dez.provider/settingsDescriptor' (providerId: string, modelId: string): { name: string, settings: ProviderSettingDef[] } | null {
     const provider = getProvider(providerId)
     return provider ? { name: provider.name, settings: provider.visibleSettings(modelId) } : null
+  },
+
+  // Synchronous and reactive: it reads the custom providers and the model
+  // cache through model selectors, so a view computed over it updates when
+  // either changes. A name set in a provider config beats the cached name,
+  // because the cache keeps the name from the last fetch and a config edit
+  // does not refetch.
+  'dez.provider/modelDisplayNames' (): ModelDisplayNames {
+    const providers = new Map<ProviderId, string>()
+    const models = new Map<string, string>()
+
+    const cache = sbp('dez.model/modelCache/snapshot') as ModelCache
+    for (const [providerId, entry] of Object.entries(cache.providers)) {
+      for (const model of entry?.models ?? []) {
+        models.set(modelRefKey({ providerId, modelId: model.id }), model.name)
+      }
+    }
+
+    for (const provider of listProviders()) {
+      providers.set(provider.id, provider.name)
+      for (const model of provider.config.models) {
+        if (model.name) models.set(modelRefKey({ providerId: provider.id, modelId: model.id }), model.name)
+      }
+    }
+
+    return { providers, models }
   },
 
   // Never throws for a known provider: every failure becomes `ok: false`, the

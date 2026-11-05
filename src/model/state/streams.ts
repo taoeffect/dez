@@ -174,6 +174,12 @@ export default sbp('sbp/selectors/register', {
     return streamIsStreaming(tabId)
   },
 
+  // Id of the section that the tab's stream writes into, while it streams.
+  'dez.model/streams/streamingSectionId' (tabId: string): string | null {
+    const session = useStreamStore().session(tabId)
+    return session?.status === 'streaming' ? session.sectionId : null
+  },
+
   'dez.model/streams/activeTabError' (): string | null {
     const streamStore = useStreamStore()
     const activeTabId = useTabStore().activeTabId
