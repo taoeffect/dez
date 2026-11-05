@@ -2,6 +2,8 @@ import type { ActiveModel, Role, SectionThinking } from '../chat/types'
 
 export type StreamStatus = 'idle' | 'streaming' | 'finished' | 'error' | 'cancelled'
 
+export type StreamEndStatus = Exclude<StreamStatus, 'idle' | 'streaming'>
+
 export interface StreamMessage {
   role: Role
   content: string
@@ -30,5 +32,5 @@ export interface StreamSessionState {
 
 export interface StreamTerminalInput {
   tabId: string
-  status: Exclude<StreamStatus, 'idle' | 'streaming'>
+  status: StreamEndStatus
 }

@@ -1,6 +1,7 @@
 import type { ModelRef, Role, Section } from '../chat/types'
 import { emptyContent, sectionIsEmpty, setSectionPlainText } from '../chat/content'
 import { cloneModelRef } from '../chat/modelRef'
+import type { StreamEndStatus } from './types'
 
 export function createStreamSection(role: Role): Section {
   return {
@@ -31,16 +32,19 @@ function ensureTrailingUserSection(sections: Section[]): void {
   if (sections.at(-1)?.role !== 'user') sections.push(createStreamSection('user'))
 }
 
-// Ends the stream that wrote `section`. A failed request that wrote no answer
-// text and no thinking leaves no trace: its agent section goes, and no user
-// section is added, so the tab ends with the user's text as before the
-// submit (the error shows in a toast). Any other end keeps the section,
-// blanks it when it has only whitespace, and adds a trailing user section
-// for the next message.
-export function endStreamSection(sections: Section[], section: Section, failed: boolean): void {
+// Ends the stream that wrote `section`. A stream that wrote no answer text
+// leaves no trace when the user stopped it or when it failed with no
+// thinking either: its agent section goes, and no user section is added,
+// so the tab ends with the user's text as before the submit (a failure
+// shows in a toast). A stop drops the thinking too: thinking alone is not
+// the start of an answer. Any other end keeps the section, blanks it when
+// it has only whitespace, and adds a trailing user section for the next
+// message.
+export function endStreamSection(sections: Section[], section: Section, status: StreamEndStatus): void {
   if (section.role !== 'agent') return
   const empty = sectionIsEmpty(section)
-  if (failed && empty && !section.thinking) {
+  const leavesNoTrace = empty && (status === 'cancelled' || (status === 'error' && !section.thinking))
+  if (leavesNoTrace) {
     const index = sections.findIndex((candidate) => candidate.id === section.id)
     // The first section is always a user section; never remove it.
     if (index > 0) sections.splice(index, 1)

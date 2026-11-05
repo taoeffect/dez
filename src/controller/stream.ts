@@ -1,7 +1,7 @@
 import sbp from '@sbp/sbp'
 import type { ActiveModel, SectionThinking, Tab } from '../model/chat/types'
 import type { ProviderStreamChatResult } from '../model/providers'
-import type { StreamMessage, StreamSessionState } from '../model/streams/types'
+import type { StreamEndStatus, StreamMessage, StreamSessionState } from '../model/streams/types'
 import {
   appendThinkingToTabSection,
   appendTokenToTabSection,
@@ -37,9 +37,9 @@ interface NativeStreamRuntime {
 // cancel.
 const nativeStreamsByTab = new Map<string, NativeStreamRuntime>()
 
-function finalizeStream(tabId: string, session: StreamSessionState | null, failed: boolean): void {
+function finalizeStream(tabId: string, session: StreamSessionState | null, status: StreamEndStatus): void {
   if (!session) return
-  finalizeStreamSectionForTab(tabId, session.sectionId, failed)
+  finalizeStreamSectionForTab(tabId, session.sectionId, status)
   sbp('dez.editor/reconcileAfterStreamFinish', tabId)
   sbp('dez.model/tabs/save', tabId).catch(() => {})
   sbp('dez.model/appState/save')
@@ -72,21 +72,21 @@ function updateStreamThinking(tabId: string, sectionId: string, change: () => Se
 function finishStream(tabId: string): StreamSessionState | null {
   const session = streamSession(tabId)
   const result = finishStreamSession(tabId)
-  finalizeStream(tabId, session, false)
+  finalizeStream(tabId, session, 'finished')
   return result
 }
 
 function errorStream(tabId: string): StreamSessionState | null {
   const session = streamSession(tabId)
   const result = errorStreamSession(tabId)
-  finalizeStream(tabId, session, true)
+  finalizeStream(tabId, session, 'error')
   return result
 }
 
 function cancelStream(tabId: string): StreamSessionState | null {
   const session = streamSession(tabId)
   const result = cancelStreamSession(tabId)
-  finalizeStream(tabId, session, false)
+  finalizeStream(tabId, session, 'cancelled')
   return result
 }
 

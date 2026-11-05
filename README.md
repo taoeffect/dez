@@ -14,7 +14,7 @@ Talk with AI in a fully editable plaintext document. Inspired by Zed's text thre
 
 - **Saved prompts** — selectable via `/prompt` shortcut (Zed-style)
 - **Tabbed conversations** — multiple concurrent chats in a single window
-- **Multi-provider model selection** — OpenRouter, Z.ai, GitHub Copilot, MiniMax, Venice, and Charm Hyper, plus your own [custom providers](#custom-providers): any OpenAI- or Anthropic-compatible server, such as llama-server, LM Studio, or Ollama
+- **Multi-provider model selection** — OpenRouter, Z.ai, GitHub Copilot, Kimi, MiniMax, Venice, and Charm Hyper, plus your own [custom providers](#custom-providers): any OpenAI- or Anthropic-compatible server, such as llama-server, LM Studio, or Ollama
 - **Web search & URL scraping** - Venice-based models can search the Internet and read URLs you give them
 - **X search** - Via Grok models on Venice
 - **Inline editing** — edit any message in a thread, including agent responses

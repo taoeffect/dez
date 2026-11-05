@@ -919,8 +919,8 @@ function syncViewStructureToStoreSections() {
   if (sectionModelsEqual(current, models)) return
   // The store has fewer sections than the view only right before a rebuild
   // of the whole view state from the store, in the same microtask run, so no
-  // input event comes between: a failed stream removed its empty agent
-  // section (the stream-end rebuild follows), or the active tab changed.
+  // input event comes between: a failed or stopped stream removed its empty
+  // agent section (the stream-end rebuild follows), or the active tab changed.
   // Until then the view keeps the models that match its doc; fewer models
   // would leave a separator without one.
   if (models.length < current.length) return

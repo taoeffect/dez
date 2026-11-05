@@ -17,10 +17,11 @@ export interface MockProviderApp {
  * The setup of a spec file whose tests answer each chat request
  * themselves: starts a holding chat mock for `provider`, then the app with
  * `provider` as its only custom provider, and picks the provider's model.
- * One app session then serves the whole file. On a failure it stops what it
- * started, then throws.
+ * `config` adds to or replaces fields of the provider's config, such as
+ * `thinking`. One app session then serves the whole file. On a failure it
+ * stops what it started, then throws.
  */
-export async function startMockProviderApp (provider: MockProvider): Promise<MockProviderApp> {
+export async function startMockProviderApp (provider: MockProvider, config: Record<string, unknown> = {}): Promise<MockProviderApp> {
   const mock = await startHoldingChatMock(mockChatPath(provider))
   let app: RunningApp | undefined
   let browser: E2EBrowser | undefined
@@ -31,7 +32,7 @@ export async function startMockProviderApp (provider: MockProvider): Promise<Moc
   }
   try {
     app = await startApp()
-    await seedRawAppState(app.home, { customProviders: [mockProviderConfig(provider, mock.url)] })
+    await seedRawAppState(app.home, { customProviders: [{ ...mockProviderConfig(provider, mock.url), ...config }] })
     browser = await createSession(app.binary, app.port)
     await waitFor(browser, 'header.tab-bar', 60_000)
     await pickModel(browser, provider.name, provider.modelName)

@@ -5,14 +5,16 @@ import { click, consoleErrors, openHistoryPanel, pointerClick, pointerDoubleClic
 import { startMockProviderApp } from './harness/mockProviderApp'
 import { replyText, sendChatReply, startEventStream, writeChatFrame, type HeldRequest, type HoldingChatMock, type MockProvider } from './harness/mockServer'
 import type { E2EBrowser } from './harness/session'
-import { activeTabStreaming, focusEditor, focusedArea, openErrorToasts, openPicker, sbpCall, submit, threadSections, waitForThread } from './harness/thread'
+import { activeTabStreaming, editorDoc, focusEditor, focusedArea, openErrorToasts, openPicker, sbpCall, submit, threadSections, waitForThread } from './harness/thread'
 
 // Esc and the Submit/Stop button of the bottom bar stop the stream of the
 // active tab, through the real app against a mock server in this process.
 // Esc closes an open model dropdown, prompt autocomplete, find, or modal
 // first (also with the focus inside the modal), and the stream goes on; the
 // next Esc stops it. A stop keeps the answer so far, adds the trailing user
-// section, and closes the request. A double-click on the button acts once.
+// section, and closes the request. A stop before any answer text (thinking
+// does not count) removes the agent section instead. A double-click on the
+// button acts once.
 //
 // One app session serves the whole file; each test starts in a new tab.
 
@@ -71,6 +73,15 @@ describe('submit and stop a streaming reply', () => {
     })
   }
 
+  async function caretOffset (): Promise<number> {
+    return browser.execute(() => {
+      const content = document.querySelector('.cm-content')
+      if (!content) throw new Error('caretOffset: .cm-content not found')
+      const view = Reflect.get(Reflect.get(content, 'cmTile'), 'root').view as EditorView
+      return view.state.selection.main.head
+    })
+  }
+
   // What the Submit/Stop button in the bottom bar shows, and its
   // accessible name.
   async function submitButtonFace (): Promise<{ label: string, keycap: string, name: string }> {
@@ -89,7 +100,8 @@ describe('submit and stop a streaming reply', () => {
   const STOP_FACE = { label: 'Stop', keycap: 'Esc', name: 'Stop (Esc)' }
 
   beforeAll(async () => {
-    ({ browser, mock, stop: stopApp } = await startMockProviderApp(PROVIDER))
+    // Thinking support, so the app reads `reasoning_content` frames.
+    ({ browser, mock, stop: stopApp } = await startMockProviderApp(PROVIDER, { thinking: {} }))
   })
 
   beforeEach(async () => {
@@ -266,11 +278,29 @@ describe('submit and stop a streaming reply', () => {
     expect(await activeTabStreaming(browser), 'streaming').toBe(true)
 
     await browser.keys([Key.Escape])
-    await expectStopped(request, [
-      { role: 'user', text: 'Stop from outside' },
-      { role: 'agent', text: '' },
-      { role: 'user', text: '' },
-    ])
+    await expectStopped(request, [{ role: 'user', text: 'Stop from outside' }])
+  })
+
+  it('removes the agent pill when Esc stops a reply that only thought, and puts the caret back at the end of the user text', async () => {
+    const question = 'Stop while thinking'
+    await submit(browser, question)
+    const request = await mock.waitForRequest(browser)
+    startEventStream(request.reply)
+    writeChatFrame(request.reply, { reasoning_content: 'Let me think' })
+    await waitForValue(browser, 'thinking so far', async () => {
+      const sections = await sbpCall(browser, 'dez.model/thread/sections') as Array<{ thinking?: { text: string } }>
+      return sections.at(-1)?.thinking?.text
+    }, 'Let me think')
+    expect(await focusedArea(browser)).toBe('editor')
+
+    await browser.keys([Key.Escape])
+    await expectStopped(request, [{ role: 'user', text: question }])
+    // The editor rebuilds its state from the store a tick after the stop.
+    await waitForValue(browser, 'editor doc', () => editorDoc(browser), question)
+    expect(await caretOffset()).toBe(question.length)
+
+    await typeKeys(browser, ' again')
+    await waitForValue(browser, 'thread after typing', () => threadSections(browser), [{ role: 'user', text: `${question} again` }])
   })
 
   it('submits with the button, which turns into Stop while the reply streams and back after a stop', async () => {

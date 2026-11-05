@@ -117,6 +117,7 @@ describe('dez.stream/start thinking', () => {
   it('drops thinking and the replay that come after the user stopped the stream', async () => {
     streamChat = async (input) => {
       await input.onThinking('Before')
+      await input.onToken('Answer')
       await sbp('dez.stream/stop', activeTab().id)
       await input.onThinking(' after')
       return { requestId: input.requestId as string, thinkingReplay: { kind: 'field', field: 'reasoning' } }
@@ -188,8 +189,9 @@ describe('dez.stream/start errors', () => {
     expect(toasts.map((toast) => toast.data.title)).toEqual(['Request failed in "Hi"'])
   })
 
-  it('shows no toast when the user stops the stream, and keeps the stopped section', async () => {
-    streamChat = async () => {
+  it('shows no toast when the user stops the stream, and keeps the answer so far', async () => {
+    streamChat = async (input) => {
+      await input.onToken('Partial')
       await sbp('dez.stream/stop', activeTab().id)
       throw new Error('cancelled')
     }
@@ -198,9 +200,24 @@ describe('dez.stream/start errors', () => {
 
     expect(sectionTexts()).toEqual([
       { role: 'user', text: 'Hi' },
-      { role: 'agent', text: '' },
+      { role: 'agent', text: 'Partial' },
       { role: 'user', text: '' },
     ])
+    expect(toasts).toEqual([])
+  })
+
+  it('removes the agent section of a stream stopped before any answer text, also when it had thinking', async () => {
+    streamChat = async (input) => {
+      await input.onThinking('Plan')
+      await input.onToken('\n')
+      await sbp('dez.stream/stop', activeTab().id)
+      throw new Error('cancelled')
+    }
+
+    await startStream()
+
+    expect(sectionTexts()).toEqual([{ role: 'user', text: 'Hi' }])
+    expect(savedConversations.at(-1)?.sections).toHaveLength(1)
     expect(toasts).toEqual([])
   })
 })

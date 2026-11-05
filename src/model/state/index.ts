@@ -31,7 +31,7 @@ import {
   endStreamSection,
   ensureTrailingAgentSection,
 } from '../streams/sections'
-import type { StreamMessage } from '../streams/types'
+import type { StreamEndStatus, StreamMessage } from '../streams/types'
 import type { ModelSnapshot } from '../snapshot'
 
 export interface SettingsSnapshot {
@@ -332,12 +332,11 @@ export function setThinkingReplayForTabSection(tabId: string, sectionId: string,
   return section.thinking
 }
 
-// `failed`: the request ended with an error (not a cancel).
-export function finalizeStreamSectionForTab(tabId: string, sectionId: string, failed: boolean): void {
+export function finalizeStreamSectionForTab(tabId: string, sectionId: string, status: StreamEndStatus): void {
   const found = findTabSection(tabId, sectionId)
   if (!found) return
   const { tab, section } = found
-  endStreamSection(tab.sections, section, failed)
+  endStreamSection(tab.sections, section, status)
   const title = firstUserTitle(tab.sections)
   if (title) tab.title = title
 }
