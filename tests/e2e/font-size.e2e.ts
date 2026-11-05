@@ -25,8 +25,12 @@ interface EditorMetrics {
   fontSize: number
   /** Computed font size of the role pill words, in px, to one decimal. */
   pillFontSize: number
-  /** CodeMirror's measured default line height, rounded to whole px. */
-  lineHeight: number
+  /** Set when CodeMirror's measured default line height is not the height
+   *  of a drawn one-row line, so CodeMirror did not measure the text again.
+   *  The test compares with the drawn line, not with `px * 1.6`, because
+   *  WebKitGTK 2.52 (the CI runner) floors fractional line heights (25.6px
+   *  draws as 25px) and 2.54 does not. */
+  lineHeightMismatch: string | null
   /** Lines whose place in CodeMirror's height map is not where the DOM
    *  draws them. */
   misplacedLines: string[]
@@ -42,8 +46,11 @@ async function editorMetrics (browser: E2EBrowser): Promise<EditorMetrics> {
     if (!content || !pill || !chrome) throw new Error('editorMetrics: editor, role pill or model button not found')
     const view = Reflect.get(Reflect.get(content, 'cmTile'), 'root').view as EditorView
     const misplacedLines: string[] = []
+    let rowHeight = Infinity
     for (const line of content.querySelectorAll<HTMLElement>(':scope > .cm-line')) {
       const rect = line.getBoundingClientRect()
+      // Lines with a role pill are taller; the shortest line is one row.
+      rowHeight = Math.min(rowHeight, rect.height)
       const block = view.lineBlockAt(view.posAtDOM(line))
       const top = view.documentTop + block.top
       if (Math.abs(top - rect.top) > 1 || Math.abs(block.height - rect.height) > 1) {
@@ -51,10 +58,13 @@ async function editorMetrics (browser: E2EBrowser): Promise<EditorMetrics> {
         misplacedLines.push(`line ${number}: map ${Math.round(top)}+${Math.round(block.height)}, DOM ${Math.round(rect.top)}+${Math.round(rect.height)}`)
       }
     }
+    const lineHeightMismatch = Math.abs(view.defaultLineHeight - rowHeight) > 0.5
+      ? `CodeMirror ${view.defaultLineHeight}, DOM ${rowHeight}`
+      : null
     return {
       fontSize: parseFloat(getComputedStyle(content).fontSize),
       pillFontSize: Math.round(parseFloat(getComputedStyle(pill).fontSize) * 10) / 10,
-      lineHeight: Math.round(view.defaultLineHeight),
+      lineHeightMismatch,
       misplacedLines,
       chromeFontSize: parseFloat(getComputedStyle(chrome).fontSize),
     }
@@ -62,12 +72,12 @@ async function editorMetrics (browser: E2EBrowser): Promise<EditorMetrics> {
 }
 
 // What the editor shows at `px`: the pill words are 11px at the default
-// 15px, the line height is 1.6, and the chrome stays at 12px.
+// 15px, and the chrome stays at 12px.
 function expectedMetrics (px: number): EditorMetrics {
   return {
     fontSize: px,
     pillFontSize: Math.round(px * 11 / 15 * 10) / 10,
-    lineHeight: Math.round(px * 1.6),
+    lineHeightMismatch: null,
     misplacedLines: [],
     chromeFontSize: 12,
   }
