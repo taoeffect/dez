@@ -7,7 +7,8 @@ export default sbp('sbp/selectors/register', {
 
     const model = sbp('dez.model/activeModelForTab', tabId)
     if (!model) {
-      sbp('dez.model/streams/setError', tabId, 'No model selected')
+      console.error('Cannot send: no model selected')
+      sbp('dez.ui/toast', 'app-global', { variant: 'error', title: 'Cannot send', message: 'No model selected' })
       return
     }
 
@@ -18,7 +19,6 @@ export default sbp('sbp/selectors/register', {
     const agentSection = sbp('dez.model/ensureTrailingAgentSectionForTab', tabId, model)
     if (!agentSection) return
 
-    sbp('dez.model/streams/clearError', tabId)
     await sbp('dez.stream/start', {
       tabId,
       sectionId: agentSection.id,

@@ -23,7 +23,6 @@ export interface ViewModelState {
   modelDisplayNames: ComputedRef<ModelDisplayNames>
   activeTabStreaming: ComputedRef<boolean>
   activeTabStreamingSectionId: ComputedRef<string | null>
-  activeTabStreamError: ComputedRef<string | null>
 }
 
 // View components need reactive reads without owning Pinia stores directly;
@@ -63,7 +62,6 @@ export function useModelState(): ViewModelState {
       const activeTabId = sbp('dez.model/tabs/activeId') as string
       return sbp('dez.model/streams/streamingSectionId', activeTabId) as string | null
     }),
-    activeTabStreamError: computed(() => sbp('dez.model/streams/activeTabError') as string | null),
   }
 }
 

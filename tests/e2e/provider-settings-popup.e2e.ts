@@ -1,9 +1,7 @@
-import fs from 'node:fs'
-import path from 'node:path'
 import { afterAll, beforeAll, describe, expect, it } from 'vitest'
 import { startApp, type RunningApp } from './harness/app'
 import { click, waitFor } from './harness/dom'
-import { makeConversation, seedAppState, seedConversation } from './harness/fixtures'
+import { makeConversation, readAppState, seedAppState, seedConversation } from './harness/fixtures'
 import { createSession, destroySession, type E2EBrowser } from './harness/session'
 
 // Drives the real app: the gear button toggles the popup, the Venice
@@ -121,17 +119,10 @@ describe('provider settings popup', () => {
     expect(await popupExists()).toBe(false)
 
     // Debounced persistence should land the overrides in app_state.json.
-    const stateFile = path.join(app.home, '.config', 'dez', 'app_state.json')
     await browser.waitUntil(
       async () => {
-        try {
-          const state = JSON.parse(await fs.promises.readFile(stateFile, 'utf8'))
-          return state.providerSettings?.venice?.thinking === false &&
-            state.providerSettings?.venice?.webSearch === false &&
-            state.providerSettings?.venice?.veniceSystemPrompt === true
-        } catch {
-          return false
-        }
+        const venice = (await readAppState(app.home))?.providerSettings?.venice
+        return venice?.thinking === false && venice.webSearch === false && venice.veniceSystemPrompt === true
       },
       { timeout: 10_000, timeoutMsg: 'providerSettings.venice was not persisted to app_state.json' }
     )
@@ -174,15 +165,10 @@ describe('provider settings popup', () => {
     }
 
     // Debounced persistence should drop the venice overrides entirely.
-    const stateFile = path.join(app.home, '.config', 'dez', 'app_state.json')
     await browser.waitUntil(
       async () => {
-        try {
-          const state = JSON.parse(await fs.promises.readFile(stateFile, 'utf8'))
-          return state.providerSettings?.venice === undefined
-        } catch {
-          return false
-        }
+        const state = await readAppState(app.home)
+        return state !== null && state.providerSettings?.venice === undefined
       },
       { timeout: 10_000, timeoutMsg: 'providerSettings.venice was not cleared from app_state.json' }
     )

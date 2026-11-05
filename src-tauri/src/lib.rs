@@ -33,6 +33,7 @@ pub fn run() {
             commands::save_app_file,
             commands::load_app_file,
             commands::get_app_dir,
+            commands::is_window_fullscreen,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

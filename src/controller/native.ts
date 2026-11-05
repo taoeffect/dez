@@ -90,6 +90,10 @@ export default sbp('sbp/selectors/register', {
     return invoke<string>('get_app_dir')
   },
 
+  'dez.native/isWindowFullscreen' (): Promise<boolean> {
+    return invoke<boolean>('is_window_fullscreen')
+  },
+
   // Returns the chosen path, or null when the user cancels. The dialog
   // plugin adds that exact path to the fs scope, so `writeTextFile` below
   // may write only files that the user picked here.

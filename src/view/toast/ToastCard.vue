@@ -60,13 +60,15 @@ function onToastClick (): void {
   const invocation = props.data.sbpInvocation
   if (!invocation) return
 
-  if (Array.isArray(invocation)) {
-    const [selector, ...args] = invocation
-    sbp(selector, ...args)
-    return
-  }
-
-  sbp(invocation.selector, ...(invocation.args ?? []))
+  const [selector, ...args]: [string, ...unknown[]] = Array.isArray(invocation)
+    ? invocation
+    : [invocation.selector, ...(invocation.args ?? [])]
+  // A click has no caller that can take a failure, so log it here. The async
+  // wrapper turns a synchronous throw (for example an unknown selector) into
+  // a rejection, so one catch logs a throw and a rejected promise alike.
+  void (async () => { await sbp(selector, ...args) })().catch((error: unknown) => {
+    console.error(`Toast click: "${selector}" failed:`, error)
+  })
 }
 
 onUnmounted(() => {
@@ -164,9 +166,35 @@ defineExpose({ closeToast })
   color: #b45309;
 }
 
+/* Error toasts stand out from the others: a red tint, a red stripe on the
+   left, and a red icon and title. The card grows with its text from the
+   normal width up to 560 px, and a long message scrolls inside the card
+   instead of covering the window. The message is selectable, so the user
+   can copy it. */
+.toast-card--error {
+  width: fit-content;
+  min-width: min(360px, calc(100vw - 32px));
+  max-width: min(560px, calc(100vw - 32px));
+  border-color: var(--color-error-border);
+  background: var(--color-error-bg);
+  box-shadow: inset 4px 0 0 var(--color-error), 0 12px 32px rgba(0, 0, 0, 0.22);
+}
+
 .toast-card--error .toast-icon {
-  background: rgba(235, 87, 87, 0.16);
-  color: #eb5757;
+  background: var(--color-error);
+  color: var(--color-error-bg);
+}
+
+.toast-card--error .toast-title {
+  color: var(--color-error);
+}
+
+.toast-card--error .toast-message {
+  max-height: 40vh;
+  overflow-y: auto;
+  cursor: text;
+  user-select: text;
+  -webkit-user-select: text;
 }
 
 .toast-content {

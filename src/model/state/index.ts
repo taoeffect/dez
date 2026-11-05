@@ -4,7 +4,8 @@ import { debounce } from 'turtledash'
 import './streams'
 import { useModelCacheStore } from './modelCache'
 import { usePromptsStore, type Prompt } from './prompts'
-import { useSettingsStore, type DefaultModel, type SettingsSection, type Theme } from './settings'
+import { useSettingsStore, type DefaultModel, type SettingsSection, type Theme, type WindowGeometry } from './settings'
+import { clampEditorFontSize } from '../editorFontSize'
 import { useTabStore } from './tabs'
 import type { AppStatePayload, CachedProvider, ConversationSearchOutcome, ModelCache } from '../persistence/types'
 import { emptyModelCache } from '../persistence/modelCache'
@@ -23,15 +24,16 @@ import { thinkingField } from '../chat/thinking'
 import { cloneJsonObject } from '../../utils/json'
 import { sectionsToStreamMessages } from '../streams/messages'
 import {
+  endStreamSection,
   ensureTrailingAgentSection,
-  ensureTrailingUserSection,
-  fillEmptyAgentSectionOnError,
 } from '../streams/sections'
 import type { StreamMessage } from '../streams/types'
 import type { ModelSnapshot } from '../snapshot'
 
 export interface SettingsSnapshot {
   theme: Theme
+  editorFontSize: number
+  windowGeometry: WindowGeometry | null
   customProviders: ProviderConfig[]
   defaultNewTabModel: DefaultModel | null
   lastUsedModel: DefaultModel | null
@@ -81,6 +83,7 @@ interface TabData {
 let settingsPersistenceReady = false
 let stopSettingsPersistWatch: WatchStopHandle | null = null
 let stopThemeWatch: WatchStopHandle | null = null
+let stopEditorFontSizeWatch: WatchStopHandle | null = null
 let promptsPersistenceReady = false
 let stopPromptsPersistWatch: WatchStopHandle | null = null
 let modelCachePersistenceReady = false
@@ -194,6 +197,8 @@ function cloneThinkingConfig(thinking: ProviderThinkingConfig): ProviderThinking
 function cloneSettings(settings = useSettingsStore()): SettingsSnapshot {
   return {
     theme: settings.theme,
+    editorFontSize: settings.editorFontSize,
+    windowGeometry: settings.windowGeometry ? { ...settings.windowGeometry } : null,
     customProviders: settings.customProviders.map(cloneProviderConfig),
     defaultNewTabModel: cloneDefaultModel(settings.defaultNewTabModel),
     lastUsedModel: cloneDefaultModel(settings.lastUsedModel),
@@ -323,15 +328,14 @@ export function setThinkingReplayForTabSection(tabId: string, sectionId: string,
   return section.thinking
 }
 
-export function finalizeStreamSectionForTab(tabId: string, sectionId: string, error: string | null): Section | null {
+// `failed`: the request ended with an error (not a cancel).
+export function finalizeStreamSectionForTab(tabId: string, sectionId: string, failed: boolean): void {
   const found = findTabSection(tabId, sectionId)
-  if (!found) return null
+  if (!found) return
   const { tab, section } = found
-  fillEmptyAgentSectionOnError(section, error)
-  if (section.role === 'agent') ensureTrailingUserSection(tab.sections)
+  endStreamSection(tab.sections, section, failed)
   const title = firstUserTitle(tab.sections)
   if (title) tab.title = title
-  return cloneSections([section])[0] as Section
 }
 
 export function settingsCheckForUpdates(): boolean {
@@ -554,6 +558,8 @@ export default sbp('sbp/selectors/register', {
         tabs: tabsData,
         activeTabId: tabStore.activeTabId,
         theme: settings.theme,
+        editorFontSize: settings.editorFontSize,
+        window: settings.windowGeometry ?? undefined,
         customProviders: settings.customProviders,
         defaultNewTabModel: settings.defaultNewTabModel,
         lastUsedModel: settings.lastUsedModel,
@@ -680,6 +686,8 @@ export default sbp('sbp/selectors/register', {
 
     if (state) {
       if (state.theme) settings.theme = state.theme
+      if (typeof state.editorFontSize === 'number') settings.editorFontSize = state.editorFontSize
+      if (state.window) settings.windowGeometry = state.window
       if (Array.isArray(state.customProviders)) settings.customProviders = state.customProviders
       if (state.defaultNewTabModel !== undefined) settings.defaultNewTabModel = state.defaultNewTabModel
       if (state.lastUsedModel !== undefined) settings.lastUsedModel = state.lastUsedModel
@@ -690,6 +698,7 @@ export default sbp('sbp/selectors/register', {
     }
 
     sbp('dez.ui/applyTheme', settings.theme)
+    sbp('dez.ui/applyEditorFontSize', settings.editorFontSize)
     settingsPersistenceReady = true
     return state
   },
@@ -700,9 +709,12 @@ export default sbp('sbp/selectors/register', {
     const settings = useSettingsStore()
     stopSettingsPersistWatch?.()
     stopThemeWatch?.()
+    stopEditorFontSizeWatch?.()
     stopSettingsPersistWatch = watch(
       [
         () => settings.theme,
+        () => settings.editorFontSize,
+        () => settings.windowGeometry,
         () => settings.customProviders,
         () => settings.defaultNewTabModel,
         () => settings.lastUsedModel,
@@ -722,6 +734,12 @@ export default sbp('sbp/selectors/register', {
         sbp('dez.ui/applyTheme', theme)
       },
     )
+    stopEditorFontSizeWatch = watch(
+      () => settings.editorFontSize,
+      (px) => {
+        sbp('dez.ui/applyEditorFontSize', px)
+      },
+    )
   },
 
   'dez.model/settings/stopPersistence' (): void {
@@ -729,6 +747,8 @@ export default sbp('sbp/selectors/register', {
     stopSettingsPersistWatch = null
     stopThemeWatch?.()
     stopThemeWatch = null
+    stopEditorFontSizeWatch?.()
+    stopEditorFontSizeWatch = null
     settingsPersistenceReady = false
   },
 
@@ -781,6 +801,25 @@ export default sbp('sbp/selectors/register', {
 
   'dez.model/settings/setTheme' (theme: Theme): void {
     useSettingsStore().theme = theme
+  },
+
+  // Cmd/Ctrl+= and Cmd/Ctrl+- (keys and View menu items). One size for all
+  // tabs; it stays in range, so a key at the limit does nothing.
+  'dez.model/settings/changeEditorFontSize' (delta: number): void {
+    const settings = useSettingsStore()
+    settings.editorFontSize = clampEditorFontSize(settings.editorFontSize + delta)
+  },
+
+  // The window tracker (dez.controller/window/startTracking) calls it after
+  // moves and resizes. An unchanged geometry is not assigned, so the first
+  // save after an unchanged restore, and further events while the window
+  // stays maximized, write no app_state.json.
+  'dez.model/settings/setWindowGeometry' (geometry: WindowGeometry): void {
+    const settings = useSettingsStore()
+    const current = settings.windowGeometry
+    const fields = ['width', 'height', 'x', 'y', 'maximized'] as const
+    if (current && fields.every((field) => current[field] === geometry[field])) return
+    settings.windowGeometry = { ...geometry }
   },
 
   // Records a sparse per-provider override; effective values merge these with

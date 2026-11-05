@@ -131,8 +131,9 @@ export async function waitForRowCount (browser: E2EBrowser, expected: number, ti
 /**
  * Click an element via executed JS (`el.click()`). wry's automation session
  * rejects WebDriver's native `element/click` endpoint with "unsupported
- * operation" (the same limitation as sendKeys), so all clicks in specs must
- * go through the DOM's own click path rather than webdriverio's `.click()`.
+ * operation" (the same limitation as sendKeys), so specs never use
+ * webdriverio's `.click()`. This click sends no mousedown, so the focus
+ * stays as it is; `pointerClick` sends real mouse events.
  */
 export async function click (browser: E2EBrowser, selector: string): Promise<void> {
   await browser.execute((sel: string) => {
@@ -140,6 +141,52 @@ export async function click (browser: E2EBrowser, selector: string): Promise<voi
     if (!el) throw new Error(`click: element not found: ${sel}`)
     el.click()
   }, selector)
+}
+
+/** The center of an element in viewport px, for WebDriver pointer actions. */
+async function elementCenter (browser: E2EBrowser, selector: string): Promise<{ x: number, y: number }> {
+  return browser.execute((sel: string) => {
+    const el = document.querySelector(sel)
+    if (!el) throw new Error(`elementCenter: element not found: ${sel}`)
+    const rect = el.getBoundingClientRect()
+    return { x: Math.round(rect.left + rect.width / 2), y: Math.round(rect.top + rect.height / 2) }
+  }, selector)
+}
+
+/**
+ * Click the center of an element with WebDriver pointer actions: a real
+ * mousedown, mouseup, and click, with the browser's default actions (the
+ * focus moves unless the page prevents the mousedown). WebKitWebDriver
+ * accepts pointer actions, unlike the `element/click` endpoint (see
+ * `click`). Each call starts a new click series (`event.detail` is 1), also
+ * right after another call at the same place; for a double-click, use
+ * `pointerDoubleClick`.
+ */
+export async function pointerClick (browser: E2EBrowser, selector: string): Promise<void> {
+  const center = await elementCenter(browser, selector)
+  await browser.action('pointer', { parameters: { pointerType: 'mouse' } })
+    .move({ x: center.x, y: center.y, origin: 'viewport' })
+    .down({ button: 0 })
+    .up({ button: 0 })
+    .perform()
+}
+
+/**
+ * Double-click the center of an element with WebDriver pointer actions: two
+ * real clicks in one action sequence, so the second click has
+ * `event.detail` 2. `gapMs` is the time between the clicks; WebKitGTK still
+ * counts a double-click at 150 ms, but not at 600 ms.
+ */
+export async function pointerDoubleClick (browser: E2EBrowser, selector: string, gapMs: number): Promise<void> {
+  const center = await elementCenter(browser, selector)
+  await browser.action('pointer', { parameters: { pointerType: 'mouse' } })
+    .move({ x: center.x, y: center.y, origin: 'viewport' })
+    .down({ button: 0 })
+    .up({ button: 0 })
+    .pause(gapMs)
+    .down({ button: 0 })
+    .up({ button: 0 })
+    .perform()
 }
 
 /**

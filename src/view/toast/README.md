@@ -56,6 +56,20 @@ sbp('dez.ui/toast', 'app-global', {
     variant: 'success',
   }],
 })
+
+sbp('dez.ui/toast', 'app-global', {
+  title: 'Conversation saved',
+  message: path,
+  variant: 'success',
+  duration: 5000,
+  sbpInvocation: ['dez.controller/revealInFileManager', path],
+})
+
+sbp('dez.ui/toast', 'app-global', {
+  title: 'Request failed',
+  message: 'Venice returned HTTP 401: {"error":"Authentication failed"}',
+  variant: 'error',
+})
 ```
 
 ## ToastData fields
@@ -64,13 +78,13 @@ sbp('dez.ui/toast', 'app-global', {
 | --- | --- | --- | --- |
 | `message` | Yes | `string` | Main toast text. |
 | `title` | No | `string` | Optional bold heading. |
-| `variant` | No | `'default' \| 'success' \| 'warning' \| 'error'` | Controls icon color and default icon. |
+| `variant` | No | `'default' \| 'success' \| 'warning' \| 'error'` | Controls icon color and default icon. `error` also changes the card's look and size (see below). |
 | `position` | No | `'top-right' \| 'top-left' \| 'top-center' \| 'bottom-right' \| 'bottom-left' \| 'bottom-center'` | Chooses the desktop toast pocket. |
 | `duration` | No | `number` | Milliseconds before auto-dismiss. Omit for persistent toast. |
 | `icon` | No | `string` | Overrides the default variant icon. |
 | `closeable` | No | `boolean` | Shows or hides the close button. |
 | `actionLabel` | No | `string` | Renders a text-button action inside the toast. |
-| `sbpInvocation` | No | `{ selector: string, args?: unknown[] }` or `[string, ...unknown[]]` | Invoked when the toast body or action is clicked. |
+| `sbpInvocation` | No | `{ selector: string, args?: unknown[] }` or `[string, ...unknown[]]` | Invoked when the toast body or action is clicked: `[selector, ...args]` calls `sbp(selector, ...args)`. The selector may be async. A selector that throws or rejects is logged with `console.error`. |
 
 Defaults applied by `dez.ui/toast`:
 
@@ -87,7 +101,11 @@ Defaults applied by `dez.ui/toast`:
 - Each `ToastContainer` displays a maximum of 4 toasts and closes the oldest toast when a fifth is added.
 - Desktop layouts support six pockets: top-left, top-center, top-right, bottom-left, bottom-center, and bottom-right.
 - On screens up to 768px wide, positions are grouped into top and bottom stacks.
+- A layout with a bar at the bottom sets the CSS variable `--toast-inset-bottom` to the bar's height, and the container keeps every toast above it. `AppLayout.vue` sets it, so the bottom toasts never cover the bottom bar and its Submit/Stop button.
 - `duration` adds a progress bar and auto-dismisses the toast when the timer completes.
 - Hover pauses the progress animation and timer; leaving the toast resumes them.
+- A toast with `sbpInvocation` shows a pointer cursor. A click on it runs the invocation and does not close the toast; a click on the close button does not run it.
 - `closeable: false` hides the close button, but the toast can still close by timeout or max-count eviction.
+- `error` toasts have a red tint, a red stripe on the left, and a red icon and title, from the theme variables `--color-error`, `--color-error-bg`, and `--color-error-border` in `App.vue` (light and dark values). The card grows with its text from the normal 360 px up to 560 px (never wider than the window less 32 px). A message taller than 40% of the window scrolls inside the card. The message text is selectable, so the user can copy it.
+- Errors of a chat request (`dez.stream/start`) and a send with no model (`dez.controller/submitTab`) are `error` toasts with no `duration`, so they stay until the user closes them.
 - Toast title, message, and action text are rendered as Vue text bindings, not `v-html`, so HTML in toast content is not executed.

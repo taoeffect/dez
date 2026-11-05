@@ -76,7 +76,7 @@ const shortcuts = [
   { keys: 'Ctrl + Shift + Down', action: 'Add cursor on line below' },
   { keys: 'Cmd/Ctrl + Z', action: 'Undo' },
   { keys: 'Cmd/Ctrl + Shift + Z', action: 'Redo' },
-  { keys: 'Cmd/Ctrl + Shift + C', action: 'Copy Markdown (no pills or thinking)' },
+  { keys: 'Cmd/Ctrl + Shift + C', action: 'Copy Markdown (as Save As Markdown writes it)' },
   ...(isMacPlatform ? [] : [{ keys: 'Alt + A', action: 'Select all (Ctrl + A moves to line start)' }]),
   { keys: 'Cmd/Ctrl + F', action: 'Find and replace' },
   { keys: 'Cmd/Ctrl + G', action: 'Next match (or Enter in find field)' },
@@ -88,9 +88,11 @@ const shortcuts = [
   { keys: 'Cmd/Ctrl + W', action: 'Close tab' },
   { keys: 'Cmd/Ctrl + S', action: 'Save conversation as Markdown' },
   { keys: 'Cmd/Ctrl + H', action: 'Open history' },
+  { keys: 'Cmd/Ctrl + =', action: 'Increase font size' },
+  { keys: 'Cmd/Ctrl + -', action: 'Decrease font size' },
   { keys: 'Cmd/Ctrl + ,', action: 'Open settings' },
   ...(isMacPlatform ? [] : [{ keys: 'Ctrl + Q', action: 'Quit' }]),
-  { keys: 'Escape', action: 'Close find and overlays' },
+  { keys: 'Escape', action: 'Close overlays and find, else stop the response' },
 ]
 
 onMounted(() => {
@@ -122,7 +124,7 @@ function onOverlayClick(e: MouseEvent) {
 </script>
 
 <template>
-  <div class="settings-overlay" @click="onOverlayClick" @keydown.escape="onClose">
+  <div class="settings-overlay" @click="onOverlayClick">
     <div class="settings-modal">
       <div class="settings-header">
         <h2>Settings</h2>

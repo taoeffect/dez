@@ -18,6 +18,10 @@ export function isModalOpen(): boolean {
 export function useKeyboardShortcuts() {
   function handleKeydown(e: KeyboardEvent) {
     if (e.key === "Escape") {
+      // Only this handler closes Settings and History on Esc. An Esc
+      // handler on a modal would run first when the focus is inside it,
+      // and this handler would then see no modal and also close find or
+      // stop the stream.
       if (sbp("dez.model/settings/isOpen") as boolean) {
         e.preventDefault();
         sbp("dez.model/settings/close");
@@ -30,6 +34,16 @@ export function useKeyboardShortcuts() {
         // autocomplete takes Esc first). This branch covers focus elsewhere.
         e.preventDefault();
         sbp("dez.editor/closeFind");
+      } else if (!e.defaultPrevented && !e.isComposing && e.keyCode !== 229) {
+        // Esc with the focus outside the editor (the page, a button, a
+        // thinking panel) stops the stream. In the editor the stop binding
+        // runs first. During an IME composition CodeMirror ignores the key,
+        // and that Esc only ends the composition.
+        const activeTabId = sbp("dez.model/tabs/activeId") as string;
+        if (sbp("dez.model/streams/isStreaming", activeTabId) as boolean) {
+          e.preventDefault();
+          void sbp("dez.stream/stop", activeTabId);
+        }
       }
       return;
     }
@@ -96,6 +110,17 @@ export function useKeyboardShortcuts() {
         break;
       case "g":
         if (sbp("dez.editor/selectFindMatch", e.shiftKey ? "previous" : "next") as boolean) e.preventDefault();
+        break;
+      case "=":
+      case "+":
+        // "+" too: on a US layout Ctrl+Shift+= gives "+", and on some
+        // layouts (German) "+" has its own key.
+        e.preventDefault();
+        sbp("dez.model/settings/changeEditorFontSize", 1);
+        break;
+      case "-":
+        e.preventDefault();
+        sbp("dez.model/settings/changeEditorFontSize", -1);
         break;
     }
   }

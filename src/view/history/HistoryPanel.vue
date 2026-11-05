@@ -135,7 +135,7 @@ function onOverlayClick(e: MouseEvent) {
 </script>
 
 <template>
-  <div class="history-overlay" @click="onOverlayClick" @keydown.escape="emit('close')">
+  <div class="history-overlay" @click="onOverlayClick">
     <div class="history-modal">
       <div class="history-header">
         <div>

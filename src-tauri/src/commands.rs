@@ -182,3 +182,22 @@ pub async fn load_app_file(name: String) -> Result<String, String> {
 pub async fn get_app_dir() -> Result<String, String> {
     crate::persistence::app_dir()
 }
+
+// On Linux, tao 0.34 reads fullscreen only from its own `set_fullscreen`
+// calls, so a window that the window manager made fullscreen (its window
+// menu, a tiling window manager key) reads as not fullscreen; GDK has the
+// real state. A command without `async` runs on the main thread, where GTK
+// must be called. Other platforms track their own fullscreen in tao.
+#[tauri::command]
+pub fn is_window_fullscreen(window: tauri::WebviewWindow) -> Result<bool, String> {
+    #[cfg(target_os = "linux")]
+    {
+        use gtk::prelude::WidgetExt;
+        let gtk_window = window.gtk_window().map_err(|error| error.to_string())?;
+        Ok(gtk_window
+            .window()
+            .is_some_and(|gdk_window| gdk_window.state().contains(gtk::gdk::WindowState::FULLSCREEN)))
+    }
+    #[cfg(not(target_os = "linux"))]
+    window.is_fullscreen().map_err(|error| error.to_string())
+}

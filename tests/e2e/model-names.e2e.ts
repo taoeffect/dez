@@ -3,7 +3,7 @@ import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from
 import { startApp, type RunningApp } from './harness/app'
 import { click, consoleErrors, openHistoryPanel, resetConsoleErrors, screenshotOnFailure, waitFor, waitForValue } from './harness/dom'
 import { conversationFilePath, makeConversation, seedConversation, seedRawAppState } from './harness/fixtures'
-import { replyText, sendChatReply, startMockServer, type MockServer } from './harness/mockServer'
+import { replyText, sendChatReply, startChatMock, type MockServer } from './harness/mockServer'
 import { createSession, destroySession, type E2EBrowser } from './harness/session'
 import { activeTabStreaming, pickModel, sbpCall, submit, threadSections, waitForThread } from './harness/thread'
 
@@ -92,22 +92,6 @@ interface MockState {
   hold: Promise<void> | null
 }
 
-// Answers only chat requests to `/mock/v1`, and records their models.
-async function startChatMock (state: MockState): Promise<MockServer> {
-  return startMockServer(async (req, res, body) => {
-    if (req.method !== 'POST' || req.url !== '/mock/v1/chat/completions') {
-      res.writeHead(404, { 'Content-Type': 'text/plain' })
-      res.end('not found')
-      return
-    }
-    const model = String(JSON.parse(body).model)
-    state.chatModels.push(model)
-    const hold = state.hold
-    state.hold = null
-    await sendChatReply(res, model, hold)
-  })
-}
-
 describe('model names', () => {
   let app: RunningApp
   let browser: E2EBrowser
@@ -185,7 +169,14 @@ describe('model names', () => {
   }
 
   beforeAll(async () => {
-    server = await startChatMock(mock)
+    // Answers only chat requests to `/mock/v1`, and records their models.
+    server = await startChatMock(['/mock/v1/chat/completions'], async (_req, res, body) => {
+      const model = String(JSON.parse(body).model)
+      mock.chatModels.push(model)
+      const hold = mock.hold
+      mock.hold = null
+      await sendChatReply(res, model, hold)
+    })
     app = await startApp()
     try {
       await seedRawAppState(app.home, {

@@ -1,9 +1,11 @@
 import sbp from '@sbp/sbp'
 import { createPinia, setActivePinia } from 'pinia'
-import { beforeEach, describe, expect, it } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi, type MockInstance } from 'vitest'
 import type { ActiveModel, Section, SectionThinking, Tab } from '../model/chat/types'
+import { sectionVisibleText } from '../model/chat/content'
 import type { ConversationData } from '../model/persistence/types'
 import type { ChatMessage, ProviderStreamChatInput, ProviderStreamChatResult } from '../model/providers'
+import type { ToastData } from '../view/toast/selectors'
 // Side-effect imports: register the dez.model/* selectors and the selectors
 // under test.
 import '../model/state/index'
@@ -18,6 +20,8 @@ let streamChat: (input: ProviderStreamChatInput) => Promise<ProviderStreamChatRe
 let editorThinking: (SectionThinking | undefined)[] = []
 let editorTokens: string[] = []
 let savedConversations: ConversationData[] = []
+let toasts: Array<{ area: string, data: ToastData }> = []
+let consoleError: MockInstance<typeof console.error>
 
 // Stand-ins for the provider, the editor and the disk. The editor stub
 // returns false, as for a tab in the background: the store must keep the
@@ -44,6 +48,9 @@ sbp('sbp/selectors/register', {
     savedConversations.push(structuredClone(data))
   },
   async 'dez.persistence/saveAppState' (): Promise<void> {},
+  'dez.ui/toast' (area: string, data: ToastData): void {
+    toasts.push({ area, data })
+  },
 })
 
 function activeTab(): Tab {
@@ -53,6 +60,10 @@ function activeTab(): Tab {
 
 function agentSection(): Section {
   return activeTab().sections.find((section) => section.id === 'a1') as Section
+}
+
+function sectionTexts(): Array<{ role: string, text: string }> {
+  return activeTab().sections.map((section) => ({ role: section.role, text: sectionVisibleText(section) }))
 }
 
 async function startStream(): Promise<void> {
@@ -69,10 +80,16 @@ beforeEach(() => {
   editorThinking = []
   editorTokens = []
   savedConversations = []
+  toasts = []
+  consoleError = vi.spyOn(console, 'error').mockImplementation(() => {})
   sbp('dez.model/tabs/replaceSections', activeTab().id, [
     { id: 'u1', role: 'user', content: [{ kind: 'text', text: 'Hi' }] },
     { id: 'a1', role: 'agent', content: [{ kind: 'text', text: '' }], model },
   ])
+})
+
+afterEach(() => {
+  consoleError.mockRestore()
 })
 
 describe('dez.stream/start thinking', () => {
@@ -109,6 +126,93 @@ describe('dez.stream/start thinking', () => {
 
     expect(agentSection().thinking).toStrictEqual({ text: 'Before' })
     expect(savedConversations.at(-1)?.sections[1].thinking).toStrictEqual({ text: 'Before' })
+  })
+})
+
+describe('dez.stream/start errors', () => {
+  const message = 'Venice returned HTTP 401: {"error":"Authentication failed"}'
+
+  it('removes the agent section of a request that fails before any output, and shows a sticky error toast', async () => {
+    streamChat = async () => {
+      throw new Error(message)
+    }
+
+    await startStream()
+
+    expect(sectionTexts()).toEqual([{ role: 'user', text: 'Hi' }])
+    expect(savedConversations.at(-1)?.sections).toHaveLength(1)
+    expect(toasts).toStrictEqual([{ area: 'app-global', data: { variant: 'error', title: 'Request failed', message } }])
+    expect(consoleError).toHaveBeenCalled()
+  })
+
+  it('keeps the answer text that came before the error, with no error text, and adds a user section', async () => {
+    streamChat = async (input) => {
+      await input.onToken('Partial answer')
+      throw new Error('connection reset')
+    }
+
+    await startStream()
+
+    expect(sectionTexts()).toEqual([
+      { role: 'user', text: 'Hi' },
+      { role: 'agent', text: 'Partial answer' },
+      { role: 'user', text: '' },
+    ])
+    expect(toasts.map((toast) => toast.data.message)).toEqual(['connection reset'])
+  })
+
+  it('keeps a section that got only thinking before the error', async () => {
+    streamChat = async (input) => {
+      await input.onThinking('Plan')
+      throw new Error('connection reset')
+    }
+
+    await startStream()
+
+    expect(sectionTexts()).toEqual([
+      { role: 'user', text: 'Hi' },
+      { role: 'agent', text: '' },
+      { role: 'user', text: '' },
+    ])
+    expect(agentSection().thinking).toStrictEqual({ text: 'Plan' })
+  })
+
+  it('names the tab in the toast title when the tab is in the background', async () => {
+    streamChat = async () => {
+      sbp('dez.model/tabs/create')
+      throw new Error(message)
+    }
+
+    await startStream()
+
+    expect(toasts.map((toast) => toast.data.title)).toEqual(['Request failed in "Hi"'])
+  })
+
+  it('shows no toast when the user stops the stream, and keeps the stopped section', async () => {
+    streamChat = async () => {
+      await sbp('dez.stream/stop', activeTab().id)
+      throw new Error('cancelled')
+    }
+
+    await startStream()
+
+    expect(sectionTexts()).toEqual([
+      { role: 'user', text: 'Hi' },
+      { role: 'agent', text: '' },
+      { role: 'user', text: '' },
+    ])
+    expect(toasts).toEqual([])
+  })
+})
+
+describe('dez.controller/submitTab without a model', () => {
+  it('shows an error toast and adds no section', async () => {
+    sbp('dez.model/tabs/replaceSections', activeTab().id, [{ id: 'u1', role: 'user', content: [{ kind: 'text', text: 'Hi' }] }])
+
+    await sbp('dez.controller/submitTab', activeTab().id)
+
+    expect(sectionTexts()).toEqual([{ role: 'user', text: 'Hi' }])
+    expect(toasts).toStrictEqual([{ area: 'app-global', data: { variant: 'error', title: 'Cannot send', message: 'No model selected' } }])
   })
 })
 

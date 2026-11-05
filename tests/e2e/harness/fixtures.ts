@@ -98,6 +98,16 @@ async function writeAppStateFile (home: string, content: string): Promise<string
   return filePath
 }
 
+/** `<home>/.config/dez/app_state.json` as the app saved it, or null while
+ *  it is missing or half written. */
+export async function readAppState (home: string): Promise<AppStatePayload | null> {
+  try {
+    return JSON.parse(await fs.promises.readFile(path.join(configDir(home), 'app_state.json'), 'utf8')) as AppStatePayload
+  } catch {
+    return null
+  }
+}
+
 /**
  * Seed `<home>/.config/dez/app_state.json` from the app's real
  * `defaultAppState()` + `serializeAppStateJson()`, with `checkForUpdates`

@@ -4,6 +4,7 @@ import { startApp, type RunningApp } from './harness/app'
 import { click, consoleErrors, resetConsoleErrors, screenshotOnFailure, typeInto, typeKeys, waitFor, waitForValue } from './harness/dom'
 import { makeConversation, seedAppState, seedConversation } from './harness/fixtures'
 import { createSession, destroySession, type E2EBrowser } from './harness/session'
+import { focusEditor, focusedArea } from './harness/thread'
 
 // Find/replace dropdown in the thread editor, driven through the real app.
 //
@@ -78,17 +79,6 @@ describe('find and replace', () => {
     }, selector)
   }
 
-  // 'find' / 'replace' for the dropdown fields, 'editor' for CodeMirror.
-  async function focusedArea (): Promise<string> {
-    return browser.execute(() => {
-      const el = document.activeElement
-      if (!el) return 'none'
-      if (el.matches('.find-field')) return el.getAttribute('aria-label')?.toLowerCase() ?? 'field'
-      if (el.matches('.cm-content')) return 'editor'
-      return el.tagName.toLowerCase()
-    })
-  }
-
   // Section texts of the active tab, read from the store (it syncs on every
   // doc change).
   async function sectionTexts (): Promise<SectionText[]> {
@@ -141,14 +131,6 @@ describe('find and replace', () => {
     }, text)
   }
 
-  async function focusEditor (): Promise<void> {
-    await browser.execute(() => {
-      const content = document.querySelector('.cm-content') as HTMLElement | null
-      if (!content) throw new Error('focusEditor: .cm-content not found')
-      content.focus()
-    })
-  }
-
   // Seed the fixture under a new id, open it in a new tab, and put the
   // cursor at the doc start with the find dropdown closed. The last line
   // names the fixture, so the wait cannot match an older tab's editor.
@@ -177,7 +159,7 @@ describe('find and replace', () => {
       ),
       { timeout: 30_000, timeoutMsg: `fixture ${id} did not open in the editor` }
     )
-    await focusEditor()
+    await focusEditor(browser)
     await browser.keys([Key.Control, Key.Home])
   }
 
@@ -229,7 +211,7 @@ describe('find and replace', () => {
     await browser.keys([Key.Control, 'f'])
 
     await waitFor(browser, FIND_FIELD, 10_000)
-    expect(await focusedArea()).toBe('find')
+    expect(await focusedArea(browser)).toBe('find')
     const prefilled = await browser.execute((sel: string) => {
       const field = document.querySelector(sel) as HTMLTextAreaElement
       return { value: field.value, start: field.selectionStart, end: field.selectionEnd }
@@ -275,7 +257,7 @@ describe('find and replace', () => {
     await click(browser, 'button[title^="Next match"]')
     await waitForValue(browser, 'status after the next button', findStatus, '4 of 4')
     // Navigating from the buttons does not move focus to the editor.
-    expect(await focusedArea()).toBe('find')
+    expect(await focusedArea(browser)).toBe('find')
     expect(await matchCount()).toBe(4)
   })
 
@@ -343,7 +325,7 @@ describe('find and replace', () => {
     await setReplaceOpen(false)
     await click(browser, 'button[title="Toggle replace"]')
     await waitFor(browser, REPLACE_FIELD, 10_000)
-    await waitForValue(browser, 'focus after expanding', focusedArea, 'replace')
+    await waitForValue(browser, 'focus after expanding', () => focusedArea(browser), 'replace')
     expect(await browser.execute(() =>
       document.querySelector('button[title="Toggle replace"]')?.getAttribute('aria-expanded')
     )).toBe('true')
@@ -364,7 +346,7 @@ describe('find and replace', () => {
     await waitForValue(browser, 'sections after Replace all', sectionTexts, replaced(4))
     await waitForValue(browser, 'status after Replace all', findStatus, 'No results')
 
-    await focusEditor()
+    await focusEditor(browser)
     await browser.keys([Key.Control, 'z'])
     await waitForValue(browser, 'sections after undoing Replace all', sectionTexts, replaced(2))
     await browser.keys([Key.Control, 'z'])
@@ -533,7 +515,7 @@ describe('find and replace', () => {
     await waitForValue(browser, 'dropdown open', dropdownOpen, false)
     await waitForValue(browser, 'match count after Esc', matchCount, 0)
     await waitForValue(browser, 'selection drawn after Esc', selectionDrawn, false)
-    expect(await focusedArea()).toBe('editor')
+    expect(await focusedArea(browser)).toBe('editor')
 
     // Ctrl+F in the editor reopens with the query kept and searches from the
     // cursor at the end of the first match.
@@ -543,7 +525,7 @@ describe('find and replace', () => {
     await waitForValue(browser, 'status after reopening', findStatus, '2 of 4')
     await waitForValue(browser, 'match count after reopening', matchCount, 4)
 
-    await focusEditor()
+    await focusEditor(browser)
     await browser.keys([Key.Escape])
     await waitForValue(browser, 'dropdown open after Esc in the editor', dropdownOpen, false)
     await waitForValue(browser, 'match count after Esc in the editor', matchCount, 0)
@@ -552,7 +534,7 @@ describe('find and replace', () => {
     await waitFor(browser, FIND_FIELD, 10_000)
     await waitForValue(browser, 'match count after reopening', matchCount, 4)
     await browser.execute(() => (document.activeElement as HTMLElement | null)?.blur())
-    expect(await focusedArea()).toBe('body')
+    expect(await focusedArea(browser)).toBe('body')
     await browser.keys([Key.Escape])
     await waitForValue(browser, 'dropdown open after Esc elsewhere', dropdownOpen, false)
     await waitForValue(browser, 'match count after Esc elsewhere', matchCount, 0)
@@ -570,10 +552,10 @@ describe('find and replace', () => {
 
     // The modals do not take focus, so Esc goes to the editor first. The
     // current match must stay selected.
-    await focusEditor()
+    await focusEditor(browser)
     await browser.keys([Key.Control, ','])
     await waitForValue(browser, 'settings open', settingsOpen, true)
-    expect(await focusedArea()).toBe('editor')
+    expect(await focusedArea(browser)).toBe('editor')
     await browser.keys([Key.Escape])
     await waitForValue(browser, 'settings open after Esc in the editor', settingsOpen, false)
     expect(await dropdownOpen()).toBe(true)
@@ -585,7 +567,7 @@ describe('find and replace', () => {
     await waitFor(browser, FIND_FIELD, 10_000)
     await browser.keys([Key.Control, 'h'])
     await waitForValue(browser, 'history open', historyOpen, true)
-    expect(await focusedArea()).toBe('find')
+    expect(await focusedArea(browser)).toBe('find')
     await browser.keys([Key.Escape])
     await waitForValue(browser, 'history open after Esc in the search field', historyOpen, false)
     expect(await dropdownOpen()).toBe(true)

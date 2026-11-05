@@ -144,9 +144,11 @@ onUnmounted(() => {
 </template>
 
 <style scoped>
+/* A layout with a bar at the bottom sets `--toast-inset-bottom` to the
+   bar's height, so the bottom toasts stay above the bar. */
 .toast-container {
   position: fixed;
-  inset: 0;
+  inset: 0 0 var(--toast-inset-bottom, 0px);
   z-index: 120;
   pointer-events: none;
 }
@@ -156,7 +158,8 @@ onUnmounted(() => {
   display: flex;
   flex-direction: column;
   gap: 10px;
-  max-width: min(360px, calc(100vw - 32px));
+  /* The widest card: an error card grows with its text up to 560 px. */
+  max-width: min(560px, calc(100vw - 32px));
 }
 
 .toast-pocket--top {

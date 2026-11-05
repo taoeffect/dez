@@ -5,6 +5,7 @@ import { useModelState } from "../modelState";
 import ThreadEditor from "../thread/ThreadEditor.vue";
 import SettingsView from "../settings/SettingsView.vue";
 import ModelSelector from "../model-selector/ModelSelector.vue";
+import SubmitButton from "../thread/SubmitButton.vue";
 import TabBar from "../tabs/TabBar.vue";
 import HistoryPanel from "../history/HistoryPanel.vue";
 import ToastContainer from "../toast/ToastContainer.vue";
@@ -44,7 +45,10 @@ const { settings } = useModelState();
     <main class="main-content">
       <ThreadEditor />
     </main>
-    <ModelSelector />
+    <footer class="bottom-bar">
+      <ModelSelector />
+      <SubmitButton />
+    </footer>
 
     <HistoryPanel v-if="settings.historyOpen" @close="sbp('dez.model/settings/historyClose')" />
     <SettingsView v-if="settings.settingsOpen" />
@@ -58,6 +62,10 @@ const { settings } = useModelState();
   flex-direction: column;
   height: 100vh;
   overflow: hidden;
+  --bottom-bar-height: 28px;
+  /* ToastContainer keeps its toasts above this inset, so a sticky error
+     toast never covers the bottom bar and its Submit/Stop button. */
+  --toast-inset-bottom: var(--bottom-bar-height);
 }
 
 .tab-bar {
@@ -108,5 +116,17 @@ const { settings } = useModelState();
   flex-direction: column;
   overflow: hidden;
   background-color: var(--color-bg);
+}
+
+.bottom-bar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  height: var(--bottom-bar-height);
+  padding: 0 3px 0 8px;
+  background-color: var(--color-tab-bar);
+  border-top: 1px solid var(--color-border);
+  flex-shrink: 0;
 }
 </style>

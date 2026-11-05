@@ -56,27 +56,31 @@ watch(
 </script>
 
 <template>
-  <div class="tab-bar-tabs" @wheel="onWheel">
-    <div
-      v-for="tab in tabs"
-      :key="tab.id"
-      :ref="(element) => setTabElement(tab.id, element)"
-      class="tab"
-      :class="{ 'tab--active': tab.id === activeTabId }"
-      @click="sbp('dez.model/tabs/switch', tab.id)"
-      @mousedown="onMiddleClick($event, tab.id)"
-    >
-      <span class="tab-title">{{ tab.title }}</span>
-      <button
-        v-if="tabs.length > 1"
-        class="tab-close"
-        title="Close tab"
-        @click.stop="closeTab(tab.id)"
+  <div class="tab-bar-tabs">
+    <!-- The `+` stays outside this scrolling strip: as its last item, it
+         scrolled out of view when a new tab was scrolled into view. -->
+    <div class="tab-strip" @wheel="onWheel">
+      <div
+        v-for="tab in tabs"
+        :key="tab.id"
+        :ref="(element) => setTabElement(tab.id, element)"
+        class="tab"
+        :class="{ 'tab--active': tab.id === activeTabId }"
+        @click="sbp('dez.model/tabs/switch', tab.id)"
+        @mousedown="onMiddleClick($event, tab.id)"
       >
-        <svg width="10" height="10" viewBox="0 0 10 10" fill="none">
-          <path d="M2 2l6 6M8 2l-6 6" stroke="currentColor" stroke-width="1.2" stroke-linecap="round"/>
-        </svg>
-      </button>
+        <span class="tab-title">{{ tab.title }}</span>
+        <button
+          v-if="tabs.length > 1"
+          class="tab-close"
+          title="Close tab"
+          @click.stop="closeTab(tab.id)"
+        >
+          <svg width="10" height="10" viewBox="0 0 10 10" fill="none">
+            <path d="M2 2l6 6M8 2l-6 6" stroke="currentColor" stroke-width="1.2" stroke-linecap="round"/>
+          </svg>
+        </button>
+      </div>
     </div>
     <button class="tab-new" title="New tab (Cmd/Ctrl+T)" @click="sbp('dez.model/tabs/create')">
       <svg width="12" height="12" viewBox="0 0 12 12" fill="none">
@@ -93,11 +97,22 @@ watch(
   gap: 2px;
   flex: 1;
   min-width: 0;
+}
+
+/* The strip is as wide as its tabs, so the `+` sits right after the last
+   tab. When the tabs do not fit, the strip shrinks and scrolls, and the `+`
+   stays at the right end of the bar. */
+.tab-strip {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  flex: 0 1 auto;
+  min-width: 0;
   overflow-x: auto;
   scrollbar-width: none;
 }
 
-.tab-bar-tabs::-webkit-scrollbar {
+.tab-strip::-webkit-scrollbar {
   display: none;
 }
 

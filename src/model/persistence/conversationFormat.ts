@@ -1,5 +1,5 @@
-import { closesFence, fenceOpener, type Fence } from '../../utils/markdownFence'
 import { stripLiveSentinels } from '../chat/content'
+import { messagesAsMarkdown } from '../chat/markdown'
 import { modelRefKey, parseModelRefKey } from '../chat/modelRef'
 import { PILL_CLOSE_TAG, containerThinking, parsePillMarker, pillMarkerText, type PillMarker } from '../chat/pillMarker'
 import type { ActiveModel, ModelRef, SectionThinking } from '../chat/types'
@@ -46,45 +46,21 @@ export function serializeConversation(data: ConversationData): string {
   return output
 }
 
-// CommonMark ends an unclosed fence only at the end of the document, so a
-// message that stops inside a code block (a stopped stream) would turn all
-// later headings into code. The editor treats each message as its own
-// document, so the export closes the fence at the end of its message.
-function unclosedFence(text: string): Fence | null {
-  let fence: Fence | null = null
-  for (const line of text.split('\n')) {
-    if (fence) {
-      if (closesFence(line, fence)) fence = null
-    } else {
-      fence = fenceOpener(line)
-    }
-  }
-  return fence
-}
-
 // The conversation as plain Markdown for people to read (Save As Markdown).
 // The history format above does not render: a CommonMark tag name cannot
-// hold `:`, so viewers show `<dez:pill …/>` as text. Each message gets a
-// `## User` / `## Agent` heading (the editor's role labels) and holds what
-// the model received: its text with prompt bodies inline, without the agent
-// thinking. Dez cannot read this format back.
+// hold `:`, so viewers show `<dez:pill …/>` as text. Each message gets its
+// role heading (`messagesAsMarkdown`, which Copy Markdown also uses) and
+// holds what the model received: its text with prompt bodies inline, without
+// the agent thinking. Dez cannot read this format back.
 export function serializeConversationAsMarkdown(data: ConversationData): string {
-  let output = `# ${data.title.replace(/\s+/g, ' ').trim() || 'Conversation'}\n`
-
-  for (const section of data.sections) {
-    const text = section.nodes
+  const messages = messagesAsMarkdown(data.sections.map((section) => ({
+    role: section.role,
+    text: section.nodes
       .map((node) => stripLiveSentinels(node.kind === 'text' ? node.text : node.body))
-      .join('')
-    if (text.trim() === '') continue
-    output += `\n## ${section.role === 'agent' ? 'Agent' : 'User'}\n\n${text}`
-    if (!text.endsWith('\n')) output += '\n'
-    // The closer keeps the opener's indent: a column-0 closer after a fence
-    // in a list item would end the list item and open a new fence.
-    const fence = unclosedFence(text)
-    if (fence) output += `${' '.repeat(fence.indent)}${fence.char.repeat(fence.length)}\n`
-  }
-
-  return output
+      .join(''),
+  })))
+  const title = `# ${data.title.replace(/\s+/g, ' ').trim() || 'Conversation'}\n`
+  return messages === '' ? title : `${title}\n${messages}`
 }
 
 function parseHeader(line: string): { title: string; model: string; createdAt: number } {

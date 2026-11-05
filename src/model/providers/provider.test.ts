@@ -101,6 +101,13 @@ describe('Anthropic format requests', () => {
     expect(minimaxRequest.url).toBe('https://api.minimax.io/anthropic/v1/messages')
     expect(requestBody(minimaxRequest).max_tokens).toBe(65536)
   })
+
+  it('sends Kimi chat and model-list requests under the /coding path', () => {
+    const kimi = builtInProvider('kimi')
+
+    expect(kimi.chatRequest(messages, 'k3', key).request.url).toBe('https://api.kimi.com/coding/v1/messages')
+    expect(kimi.modelListRequest(key)?.url).toBe('https://api.kimi.com/coding/v1/models?limit=1000')
+  })
 })
 
 describe('static headers', () => {
@@ -191,9 +198,14 @@ describe('thinking request bodies', () => {
     expect(bodyWith(builtInProvider('venice')).reasoning).toEqual({ enabled: true })
   })
 
-  it('adds nothing to the body of an OpenAI-format built-in with an empty thinking config', () => {
+  it('adds only the format default to a built-in with an empty thinking config', () => {
     expect(bodyWith(builtInProvider('charm_hyper'))).toEqual(base)
     expect(bodyWith(builtInProvider('copilot'))).toEqual(base)
+    expect(bodyWith(builtInProvider('kimi'))).toEqual({
+      ...base,
+      max_tokens: 32000,
+      thinking: { type: 'adaptive', display: 'summarized' },
+    })
   })
 
   it('sends no thinking fields when the toggle is off, except a disabledBody', () => {
@@ -201,6 +213,7 @@ describe('thinking request bodies', () => {
       expect(bodyWith(builtInProvider(id), { thinking: false })).toEqual(base)
     }
     expect(bodyWith(builtInProvider('minimax'), { thinking: false })).toEqual({ ...base, max_tokens: 65536 })
+    expect(bodyWith(builtInProvider('kimi'), { thinking: false })).toEqual({ ...base, max_tokens: 32000 })
   })
 
   it('merges the Venice disabledBody into the venice_parameters that the settings wrote', () => {

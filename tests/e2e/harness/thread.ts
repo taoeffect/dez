@@ -1,3 +1,4 @@
+import type { EditorView } from '@codemirror/view'
 import { expect } from 'vitest'
 import { Key } from 'webdriverio'
 import { click, typeKeys, waitFor, waitForValue } from './dom'
@@ -67,14 +68,43 @@ export async function pickModel (browser: E2EBrowser, providerName: string, mode
   ), modelName)
 }
 
+/** Moves the focus into the thread editor. */
+export async function focusEditor (browser: E2EBrowser): Promise<void> {
+  await browser.execute(() => {
+    const content = document.querySelector<HTMLElement>('.cm-content')
+    if (!content) throw new Error('focusEditor: .cm-content not found')
+    content.focus()
+  })
+}
+
+/** Where the focus is: 'find' or 'replace' for the find dropdown fields,
+ *  'editor' for the thread editor, else the tag name of the focused
+ *  element. */
+export async function focusedArea (browser: E2EBrowser): Promise<string> {
+  return browser.execute(() => {
+    const el = document.activeElement
+    if (!el) return 'none'
+    if (el.matches('.find-field')) return el.getAttribute('aria-label')?.toLowerCase() ?? 'field'
+    if (el.matches('.cm-content')) return 'editor'
+    return el.tagName.toLowerCase()
+  })
+}
+
+/** The text of the active editor's CodeMirror doc, with its live
+ *  sentinels. */
+export async function editorDoc (browser: E2EBrowser): Promise<string> {
+  return browser.execute(() => {
+    const content = document.querySelector('.cm-content')
+    if (!content) throw new Error('editorDoc: .cm-content not found')
+    const view = Reflect.get(Reflect.get(content, 'cmTile'), 'root').view as EditorView
+    return view.state.doc.toString()
+  })
+}
+
 /** Types `text` at the end of the active tab, then submits it with
  *  Ctrl+Enter. A new reply lands after the trailing user section. */
 export async function submit (browser: E2EBrowser, text: string): Promise<void> {
-  await browser.execute(() => {
-    const content = document.querySelector('.cm-content') as HTMLElement | null
-    if (!content) throw new Error('submit: .cm-content not found')
-    content.focus()
-  })
+  await focusEditor(browser)
   await browser.keys([Key.Control, Key.End])
   await typeKeys(browser, text)
   await browser.keys([Key.Control, Key.Enter])
@@ -88,10 +118,21 @@ export async function activeTabStreaming (browser: E2EBrowser): Promise<boolean>
   })
 }
 
+/** Title and message of each open (not closing) error toast. */
+export async function openErrorToasts (browser: E2EBrowser): Promise<Array<{ title: string, message: string }>> {
+  return browser.execute(() => Array.from(
+    document.querySelectorAll('.toast-card--error:not(.toast-card--closing)'),
+    (card) => ({
+      title: card.querySelector('.toast-title')?.textContent ?? '',
+      message: card.querySelector('.toast-message')?.textContent ?? '',
+    })
+  ))
+}
+
 /** Waits until the active tab holds `expected` and no stream runs, then
- *  checks that the tab has no stream error. */
+ *  checks that no error toast is open. */
 export async function waitForThread (browser: E2EBrowser, expected: ThreadSection[]): Promise<void> {
   await waitForValue(browser, 'thread sections', () => threadSections(browser), expected)
   await waitForValue(browser, 'streaming', () => activeTabStreaming(browser), false)
-  expect(await sbpCall(browser, 'dez.model/streams/activeTabError')).toBeNull()
+  expect(await openErrorToasts(browser)).toEqual([])
 }

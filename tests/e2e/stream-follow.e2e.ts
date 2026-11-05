@@ -5,9 +5,9 @@ import { Key } from 'webdriverio'
 import { startApp, type RunningApp } from './harness/app'
 import { consoleErrors, resetConsoleErrors, screenshotOnFailure, waitFor, waitForValue } from './harness/dom'
 import { makeConversation, seedConversation, seedRawAppState } from './harness/fixtures'
-import { startEventStream, startMockServer, writeChatFrame, type MockServer } from './harness/mockServer'
+import { mockChatPath, mockProviderConfig, startChatMock, startEventStream, writeChatFrame, type MockProvider, type MockServer } from './harness/mockServer'
 import { createSession, destroySession, type E2EBrowser } from './harness/session'
-import { activeTabStreaming, pickModel, sbpCall, submit, threadSections } from './harness/thread'
+import { activeTabStreaming, openErrorToasts, pickModel, sbpCall, submit, threadSections } from './harness/thread'
 
 // How the thread editor scrolls while a reply streams, driven through the
 // real app against a mock server in this process:
@@ -24,8 +24,7 @@ import { activeTabStreaming, pickModel, sbpCall, submit, threadSections } from '
 // One app session and one tab serve the whole file. The tests run in order:
 // each adds a reply to the conversation of the one before.
 
-const PROVIDER = { id: 'follow', name: 'Follow Mock', modelId: 'follow-model', modelName: 'Follow Model' }
-const CHAT_PATH = `/${PROVIDER.id}/v1/chat/completions`
+const PROVIDER: MockProvider = { id: 'follow', name: 'Follow Mock', modelId: 'follow-model', modelName: 'Follow Model' }
 const CONVERSATION_ID = 'long-thread'
 
 /** What a view at its bottom may still have below it: scroll positions
@@ -53,21 +52,6 @@ interface ScrollView {
 // Text that is taller than the editor, so the view can scroll.
 function longText (label: string): string {
   return Array.from({ length: 40 }, (_, i) => `${label} line ${i + 1}`).join('\n')
-}
-
-// Answers only the chat requests of the mock provider, and keeps each
-// reply open for the test.
-async function startFollowMock (state: MockState): Promise<MockServer> {
-  return startMockServer((req, res) => {
-    if (req.method !== 'POST' || req.url !== CHAT_PATH) {
-      res.writeHead(404, { 'Content-Type': 'text/plain' })
-      res.end('not found')
-      return
-    }
-    state.requests++
-    startEventStream(res)
-    state.reply = res
-  })
 }
 
 describe('stream follow', () => {
@@ -156,26 +140,23 @@ describe('stream follow', () => {
   async function waitForReplyEnd (): Promise<void> {
     await waitForValue(browser, 'streaming', () => activeTabStreaming(browser), false)
     await waitForValue(browser, 'trailing user section', async () => (await threadSections(browser)).at(-1), { role: 'user', text: '' })
-    expect(await sbpCall(browser, 'dez.model/streams/activeTabError')).toBeNull()
+    expect(await openErrorToasts(browser)).toEqual([])
     // The editor rebuilds its state from the store a tick after the end,
     // then scrolls in a later frame. Give a wrong scroll time to happen.
     await browser.pause(300)
   }
 
   beforeAll(async () => {
-    server = await startFollowMock(mock)
+    // Keeps each reply open for the test.
+    server = await startChatMock([mockChatPath(PROVIDER)], (_req, res) => {
+      mock.requests++
+      startEventStream(res)
+      mock.reply = res
+    })
     app = await startApp()
     try {
       await seedRawAppState(app.home, {
-        customProviders: [{
-          id: PROVIDER.id,
-          name: PROVIDER.name,
-          baseUrl: `${server.url}/${PROVIDER.id}/v1`,
-          apiFormat: 'openai',
-          fetchModels: false,
-          models: [{ id: PROVIDER.modelId, name: PROVIDER.modelName }],
-          thinking: {},
-        }],
+        customProviders: [{ ...mockProviderConfig(PROVIDER, server.url), thinking: {} }],
       })
       await seedConversation(app.home, makeConversation({
         id: CONVERSATION_ID,

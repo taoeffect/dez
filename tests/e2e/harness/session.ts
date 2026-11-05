@@ -17,6 +17,11 @@ interface TauriCapabilities extends WebdriverIO.Capabilities {
  * `'tauri:options'.application` tells tauri-driver which binary to launch.
  * Do not add `browserName` — WebKitWebDriver rejects capability matching
  * when it is present.
+ *
+ * The app window starts hidden and shows when startup has restored its size
+ * and position (`dez.controller/window/restore`). The page loads before
+ * that, and a pointer action on the hidden window fails with "move target
+ * out of bounds", so this waits until the window shows.
  */
 export async function createSession (binary: string, port: number): Promise<E2EBrowser> {
   // Bound to a const so the vendor key survives assignability checking
@@ -26,13 +31,32 @@ export async function createSession (binary: string, port: number): Promise<E2EB
       application: binary
     }
   }
-  return remote({
+  const browser = await remote({
     hostname: '127.0.0.1',
     port,
     path: '/',
     logLevel: 'error',
     capabilities
   })
+  try {
+    await browser.waitUntil(async () => {
+      try {
+        return await browser.execute(async () => {
+          const internals = Reflect.get(window, '__TAURI_INTERNALS__') as {
+            invoke: (command: string, args: Record<string, unknown>) => Promise<unknown>
+          }
+          return await internals.invoke('plugin:window|is_visible', { label: 'main' }) === true
+        })
+      } catch {
+        // The page is not loaded yet.
+        return false
+      }
+    }, { timeout: 60_000, interval: 50, timeoutMsg: 'createSession: the app window did not show within 60 s' })
+  } catch (err) {
+    await destroySession(browser)
+    throw err
+  }
+  return browser
 }
 
 /**

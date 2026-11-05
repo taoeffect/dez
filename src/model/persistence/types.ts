@@ -2,7 +2,7 @@ import type { ActiveModel, ModelRef, SectionThinking } from '../chat/types'
 import type { ProviderConfig } from '../providers/config'
 import type { ModelInfo, ProviderId } from '../providers/types'
 import type { Prompt } from '../state/prompts'
-import type { DefaultModel, Theme } from '../state/settings'
+import type { DefaultModel, Theme, WindowGeometry } from '../state/settings'
 
 export type PromptData = Prompt
 
@@ -96,6 +96,8 @@ export interface AppStatePayload {
   tabs?: unknown[]
   activeTabId?: string | null
   theme?: Theme
+  editorFontSize?: number
+  window?: WindowGeometry
   customProviders?: ProviderConfig[]
   // Parse only: the hand-added `apiKey` of each kept customProviders entry,
   // by provider id. dez.controller/app/init moves them to provider_keys.json;

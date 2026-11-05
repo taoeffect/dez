@@ -36,11 +36,13 @@ export default sbp('sbp/selectors/register', {
       // what the tab holds now, or the first copy if the tab is gone.
       const latest = sbp('dez.model/tabs/conversationData', tabId) as ConversationData | null
       await sbp('dez.persistence/exportConversation', latest ?? data, path)
+      // A click on the toast shows the saved file in the file manager.
       sbp('dez.ui/toast', 'app-global', {
         title: 'Conversation saved',
         message: path,
         variant: 'success',
         duration: 5000,
+        sbpInvocation: ['dez.controller/revealInFileManager', path],
       })
     } catch (error) {
       console.error('Failed to save the conversation as Markdown:', error)

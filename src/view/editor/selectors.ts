@@ -295,11 +295,11 @@ export default sbp('sbp/selectors/register', {
     return runScopeHandlers(view, keydownForKeyName(key), 'editor')
   },
 
-  /** Copy Markdown (Cmd/Ctrl+Shift+C): copy the editor selection as plain
-   *  Markdown (`serializeSelectionAsMarkdown`). On Linux the menu
-   *  accelerator takes this key from every field, so a focused text field
-   *  (the find field, a thinking panel) copies its own selected text as is.
-   *  A password field gives nothing, as it does to a normal copy. Focus
+  /** Copy Markdown (Cmd/Ctrl+Shift+C): copy the editor selection as the
+   *  Markdown of Save As Markdown (`serializeSelectionAsMarkdown`). On Linux
+   *  the menu accelerator takes this key from every field, so a focused text
+   *  field (the find field, a thinking panel) copies its own selected text as
+   *  is. A password field gives nothing, as it does to a normal copy. Focus
    *  decides, not an open modal: with focus anywhere else, nothing is
    *  copied. Returns whether it copied. */
   'dez.editor/copyMarkdown' (): boolean {

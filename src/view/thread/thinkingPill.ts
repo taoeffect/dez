@@ -1,6 +1,7 @@
 import { StateEffect, StateField } from '@codemirror/state'
 import type { EditorView } from '@codemirror/view'
 import type { Role, SectionThinking } from '../../model/chat/types'
+import { measureLineHeights } from './editorMeasure'
 
 /** What the thinking parts of an agent role pill show: the left slot (a
  *  spinner or a disclosure triangle) and the thinking panel. */
@@ -181,26 +182,6 @@ function setPanelText(panel: HTMLElement, text: string): boolean {
     panelFollowScrollTop.delete(panel)
   }
   return true
-}
-
-/** Makes CodeMirror read the line heights again at its next measure, after
- *  the pill changed its height in place.
- *
- *  `requestMeasure()` alone is not enough. CodeMirror reads the line heights
- *  only after it draws lines again, or when the height of `.cm-content`
- *  changes. When the doc is shorter than the editor, `.cm-content` keeps
- *  its height (`min-height: 100%`), so CodeMirror keeps the old pill height:
- *  it draws the caret at the old place, and clicks below the pill land on
- *  the wrong line. `mustMeasureContent` is the internal flag that CodeMirror
- *  sets when it draws lines (seen in @codemirror/view 6.41.1 to 6.43.15). If
- *  a new version removes it, this does only `requestMeasure()`, and the
- *  close checks in `tests/e2e/thinking.e2e.ts` fail. */
-function measureLineHeights(view: EditorView): void {
-  const viewState: unknown = Reflect.get(view, 'viewState')
-  if (typeof viewState === 'object' && viewState !== null && 'mustMeasureContent' in viewState) {
-    Reflect.set(viewState, 'mustMeasureContent', true)
-  }
-  view.requestMeasure()
 }
 
 /** Draws the thinking parts of a role pill to match `thinking`: the slot at

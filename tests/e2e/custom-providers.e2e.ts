@@ -1,13 +1,12 @@
 import fs from 'node:fs'
-import type { EditorView } from '@codemirror/view'
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from 'vitest'
 import { Key } from 'webdriverio'
 import { startApp, type RunningApp } from './harness/app'
 import { click, closeSettings, consoleErrors, resetConsoleErrors, screenshotOnFailure, typeInto, waitFor, waitForValue } from './harness/dom'
-import { seedRawAppState } from './harness/fixtures'
+import { readAppState, seedRawAppState } from './harness/fixtures'
 import { replyText, sendChatReply, startMockServer, type MockServer } from './harness/mockServer'
 import { createSession, destroySession, type E2EBrowser } from './harness/session'
-import { openPicker, pickerGroups, pickModel, sbpCall, submit, threadSections, waitForThread } from './harness/thread'
+import { editorDoc, openPicker, pickerGroups, pickModel, sbpCall, submit, threadSections, waitForThread } from './harness/thread'
 
 // Custom providers, driven through the real app against a mock
 // OpenAI-compatible server in this process.
@@ -57,6 +56,7 @@ const BUILT_INS: ProviderRow[] = [
   { id: 'venice', name: 'Venice' },
   { id: 'charm_hyper', name: 'Charm Hyper' },
   { id: 'minimax', name: 'MiniMax' },
+  { id: 'kimi', name: 'Kimi' },
   { id: 'copilot', name: 'GitHub Copilot' },
 ]
 
@@ -107,11 +107,7 @@ describe('custom providers', () => {
   }
 
   async function savedCustomProviders (): Promise<unknown> {
-    try {
-      return JSON.parse(await fs.promises.readFile(stateFile, 'utf8')).customProviders ?? null
-    } catch {
-      return null
-    }
+    return (await readAppState(app.home))?.customProviders ?? null
   }
 
   async function textOf (selector: string): Promise<string | null> {
@@ -119,15 +115,6 @@ describe('custom providers', () => {
       (sel: string) => document.querySelector(sel)?.textContent?.trim() ?? null,
       selector
     )
-  }
-
-  async function editorDoc (): Promise<string> {
-    return browser.execute(() => {
-      const content = document.querySelector('.cm-content')
-      if (!content) throw new Error('editorDoc: .cm-content not found')
-      const view = Reflect.get(Reflect.get(content, 'cmTile'), 'root').view as EditorView
-      return String(view.state.doc)
-    })
   }
 
   async function providerLists (): Promise<{ builtIn: ProviderRow[], custom: ProviderRow[] }> {
@@ -258,7 +245,7 @@ describe('custom providers', () => {
       { role: 'agent', text: replyText('local') },
       { role: 'user', text: '' },
     ])
-    expect(await editorDoc()).toContain(replyText('local'))
+    expect(await editorDoc(browser)).toContain(replyText('local'))
 
     // The second turn sends the first reply back with the `assistant` role.
     await submit(browser, 'And again')

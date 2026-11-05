@@ -1,5 +1,5 @@
 import sbp from '@sbp/sbp'
-import type { ActiveModel, SectionThinking } from '../model/chat/types'
+import type { ActiveModel, SectionThinking, Tab } from '../model/chat/types'
 import type { ProviderStreamChatResult } from '../model/providers'
 import type { StreamMessage, StreamSessionState } from '../model/streams/types'
 import {
@@ -33,9 +33,9 @@ interface NativeStreamRuntime {
 
 const nativeStreamsByTab = new Map<string, NativeStreamRuntime>()
 
-function finalizeStream(tabId: string, session: StreamSessionState | null, error: string | null): void {
+function finalizeStream(tabId: string, session: StreamSessionState | null, failed: boolean): void {
   if (!session) return
-  finalizeStreamSectionForTab(tabId, session.sectionId, error)
+  finalizeStreamSectionForTab(tabId, session.sectionId, failed)
   sbp('dez.editor/reconcileAfterStreamFinish', tabId)
   sbp('dez.model/tabs/save', tabId).catch(() => {})
   sbp('dez.model/appState/save')
@@ -68,21 +68,21 @@ function updateStreamThinking(tabId: string, sectionId: string, change: () => Se
 function finishStream(tabId: string): StreamSessionState | null {
   const session = streamSession(tabId)
   const result = finishStreamSession(tabId)
-  finalizeStream(tabId, session, null)
+  finalizeStream(tabId, session, false)
   return result
 }
 
-function errorStream(tabId: string, message: string): StreamSessionState | null {
+function errorStream(tabId: string): StreamSessionState | null {
   const session = streamSession(tabId)
-  const result = errorStreamSession(tabId, message)
-  finalizeStream(tabId, session, message)
+  const result = errorStreamSession(tabId)
+  finalizeStream(tabId, session, true)
   return result
 }
 
 function cancelStream(tabId: string): StreamSessionState | null {
   const session = streamSession(tabId)
   const result = cancelStreamSession(tabId)
-  finalizeStream(tabId, session, null)
+  finalizeStream(tabId, session, false)
   return result
 }
 
@@ -148,7 +148,20 @@ export default sbp('sbp/selectors/register', {
     } catch (error) {
       const currentStream = nativeStreamsByTab.get(args.tabId)
       if (currentStream?.requestId === requestId && !currentStream.cancelling) {
-        errorStream(args.tabId, error instanceof Error ? error.message : String(error))
+        console.error('Chat request failed:', error)
+        errorStream(args.tabId)
+        // Sticky (no duration): the user closes it. For a tab in the
+        // background the title names the tab, else the user cannot tell
+        // where the error came from. Read after the stream end, which sets
+        // the title of a new tab.
+        const tab = sbp('dez.model/tab', args.tabId) as Tab | null
+        const inBackground = !!tab && tab.id !== sbp('dez.model/tabs/activeId')
+        sbp('dez.ui/toast', 'app-global', {
+          variant: 'error',
+          title: inBackground ? `Request failed in "${tab.title}"` : 'Request failed',
+          // The toast refuses an empty message.
+          message: (error instanceof Error ? error.message : String(error)) || 'Unknown error',
+        })
       }
     } finally {
       if (isCurrentRequest()) {

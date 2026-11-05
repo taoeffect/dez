@@ -21,6 +21,7 @@ describe('app state persistence format', () => {
       ],
       activeTabId: 'tab',
       theme: 'dark',
+      editorFontSize: 18,
       defaultNewTabModel: { providerId: 'openrouter', modelId: 'model' },
       lastUsedModel: { providerId: 'zai', modelId: 'chat' },
       favorites: [{ providerId: 'venice', modelId: 'llm' }, null],
@@ -39,6 +40,7 @@ describe('app state persistence format', () => {
     expect(parseAppStateJson('{ "tabs": [null], "activeTabId": null }').tabs).toEqual([])
     expect(state.activeTabId).toBe('tab')
     expect(state.theme).toBe('dark')
+    expect(state.editorFontSize).toBe(18)
     expect(state.defaultNewTabModel).toEqual({ providerId: 'openrouter', modelId: 'model' })
     expect(state.lastUsedModel).toEqual({ providerId: 'zai', modelId: 'chat' })
     expect(state.favorites).toEqual([{ providerId: 'venice', modelId: 'llm' }])
@@ -64,6 +66,29 @@ describe('app state persistence format', () => {
       venice: { webSearch: false },
       openrouter: { someFlag: true },
     })
+  })
+
+  it('rounds and clamps a hand-edited editorFontSize, and ignores a bad type', () => {
+    const parseFontSize = (value: unknown) => parseAppStateJson(JSON.stringify({ editorFontSize: value })).editorFontSize
+    expect(parseAppStateJson('{}').editorFontSize).toBe(15)
+    expect(parseFontSize(17.6)).toBe(18)
+    expect(parseFontSize(4)).toBe(10)
+    expect(parseFontSize(99)).toBe(32)
+    expect(parseAppStateJson('{ "editorFontSize": 1e400 }').editorFontSize).toBe(32)
+    expect(parseFontSize('20')).toBe(15)
+    expect(parseFontSize(null)).toBe(15)
+  })
+
+  it('keeps a whole window geometry and drops a bad one as a whole', () => {
+    const geometry = { width: 1000, height: 700, x: -1280, y: 40, maximized: true }
+    const parseWindow = (value: unknown) => parseAppStateJson(JSON.stringify({ window: value })).window
+    expect(parseAppStateJson(serializeAppStateJson({ window: geometry })).window).toEqual(geometry)
+    expect(parseAppStateJson('{}').window).toBeUndefined()
+    expect(parseWindow({ ...geometry, maximized: 'yes' })).toBeUndefined()
+    expect(parseWindow({ ...geometry, width: 0 })).toBeUndefined()
+    expect(parseWindow({ ...geometry, x: '10' })).toBeUndefined()
+    expect(parseWindow({ width: 1000, height: 700, maximized: false })).toBeUndefined()
+    expect(parseWindow('1000x700')).toBeUndefined()
   })
 })
 

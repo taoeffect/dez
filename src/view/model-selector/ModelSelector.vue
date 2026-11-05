@@ -89,20 +89,18 @@ onUnmounted(() => {
 
 <template>
   <div ref="dropdownEl" class="model-selector">
-    <div class="model-selector-bar">
-      <button class="model-selector-btn" @click="toggle">
-        <span class="model-selector-label">{{ displayName }}</span>
-        <svg width="10" height="10" viewBox="0 0 10 10" fill="none" class="model-selector-chevron" :class="{ 'model-selector-chevron--open': isOpen }">
-          <path d="M2 4l3 3 3-3" stroke="currentColor" stroke-width="1.2" stroke-linecap="round" stroke-linejoin="round"/>
-        </svg>
-      </button>
-      <button class="model-selector-gear" title="Provider settings" @click="toggleSettingsPopup">
-        <svg width="12" height="12" viewBox="0 0 14 14" fill="none">
-          <path d="M7 9a2 2 0 100-4 2 2 0 000 4z" fill="currentColor"/>
-          <path d="M13 8.5l-1.3-.7a4.8 4.8 0 000-1.6L13 5.5l-1-1.7-1.4.4a4.7 4.7 0 00-1.4-.8L9 2H7l-.2 1.4a4.7 4.7 0 00-1.4.8L4 3.8 3 5.5l1.3.7a4.8 4.8 0 000 1.6L3 8.5l1 1.7 1.4-.4c.4.3.9.6 1.4.8L7 12h2l.2-1.4c.5-.2 1-.5 1.4-.8l1.4.4 1-1.7z" stroke="currentColor" stroke-width="1" fill="none"/>
-        </svg>
-      </button>
-    </div>
+    <button class="model-selector-btn" @click="toggle">
+      <span class="model-selector-label">{{ displayName }}</span>
+      <svg width="10" height="10" viewBox="0 0 10 10" fill="none" class="model-selector-chevron" :class="{ 'model-selector-chevron--open': isOpen }">
+        <path d="M2 4l3 3 3-3" stroke="currentColor" stroke-width="1.2" stroke-linecap="round" stroke-linejoin="round"/>
+      </svg>
+    </button>
+    <button class="model-selector-gear" title="Provider settings" @click="toggleSettingsPopup">
+      <svg width="12" height="12" viewBox="0 0 14 14" fill="none">
+        <path d="M7 9a2 2 0 100-4 2 2 0 000 4z" fill="currentColor"/>
+        <path d="M13 8.5l-1.3-.7a4.8 4.8 0 000-1.6L13 5.5l-1-1.7-1.4.4a4.7 4.7 0 00-1.4-.8L9 2H7l-.2 1.4a4.7 4.7 0 00-1.4.8L4 3.8 3 5.5l1.3.7a4.8 4.8 0 000 1.6L3 8.5l1 1.7 1.4-.4c.4.3.9.6 1.4.8L7 12h2l.2-1.4c.5-.2 1-.5 1.4-.8l1.4.4 1-1.7z" stroke="currentColor" stroke-width="1" fill="none"/>
+      </svg>
+    </button>
 
     <div v-if="isOpen" class="model-dropdown">
       <ModelPicker
@@ -120,19 +118,16 @@ onUnmounted(() => {
 </template>
 
 <style scoped>
+/* The left part of the bottom bar (`AppLayout.vue`). It fills the bar's
+   height, so the dropdown and the popup (`bottom: 100%`) open from the
+   bar's top edge. */
 .model-selector {
   position: relative;
-  flex-shrink: 0;
-}
-
-.model-selector-bar {
   display: flex;
   align-items: center;
-  height: 28px;
-  padding: 0 8px;
-  background-color: var(--color-tab-bar);
-  border-top: 1px solid var(--color-border);
+  align-self: stretch;
   gap: 4px;
+  flex-shrink: 0;
 }
 
 .model-selector-btn {

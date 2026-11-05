@@ -5,6 +5,7 @@ import { startApp, type RunningApp } from './harness/app'
 import { consoleErrors, resetConsoleErrors, screenshotOnFailure, typeKeys, waitFor, waitForValue } from './harness/dom'
 import { makeConversation, seedAppState, seedConversation } from './harness/fixtures'
 import { createSession, destroySession, type E2EBrowser } from './harness/session'
+import { focusEditor } from './harness/thread'
 
 // Markdown tables in the thread editor, driven through the real app.
 //
@@ -241,11 +242,7 @@ describe('markdown tables', () => {
       void sbp('dez.model/tabs/openConversation', conversationId)
     }, id)
     await waitForValue(browser, `fixture ${id} open`, async () => (await editorSnapshot()).doc.endsWith(`\n${id}`), true)
-    await browser.execute(() => {
-      const content = document.querySelector('.cm-content') as HTMLElement | null
-      if (!content) throw new Error('openFixture: .cm-content not found')
-      content.focus()
-    })
+    await focusEditor(browser)
     await browser.keys([Key.Control, Key.Home])
     await waitForValue(browser, 'caret at the doc start', caret, 0)
   }

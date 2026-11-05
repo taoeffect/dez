@@ -175,6 +175,11 @@ export default sbp('sbp/selectors/register', {
             text: 'Conversation',
             items: [
               { text: 'Send', accelerator: 'CmdOrCtrl+Enter', action: () => sbp('dez.editor/runKeyBinding', 'Mod-Enter') },
+              // Esc stops the stream on the page, but this item has no
+              // `Escape` accelerator: on Linux GTK takes an accelerator
+              // before the page, so Esc could no longer close find, the
+              // dropdowns or the modals.
+              { text: 'Stop', action: () => sbp('dez.stream/stop', sbp('dez.model/tabs/activeId')) },
               {
                 text: 'New Message',
                 accelerator: 'Shift+Enter',
@@ -197,6 +202,17 @@ export default sbp('sbp/selectors/register', {
             text: 'View',
             items: [
               { text: 'History', accelerator: 'CmdOrCtrl+H', action: () => sbp('dez.model/settings/historyToggle') },
+              SEPARATOR,
+              {
+                text: 'Increase Font Size',
+                accelerator: 'CmdOrCtrl+=',
+                action: () => sbp('dez.model/settings/changeEditorFontSize', 1),
+              },
+              {
+                text: 'Decrease Font Size',
+                accelerator: 'CmdOrCtrl+-',
+                action: () => sbp('dez.model/settings/changeEditorFontSize', -1),
+              },
             ],
           },
           {

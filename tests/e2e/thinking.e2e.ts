@@ -5,8 +5,8 @@ import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from
 import { Key } from 'webdriverio'
 import { startApp, type RunningApp } from './harness/app'
 import { click, closeSettings, consoleErrors, resetConsoleErrors, screenshotOnFailure, waitFor, waitForValue } from './harness/dom'
-import { conversationFilePath, makeConversation, seedConversation, seedRawAppState } from './harness/fixtures'
-import { startEventStream, startMockServer, writeChatFrame, type MockServer } from './harness/mockServer'
+import { conversationFilePath, makeConversation, readAppState, seedConversation, seedRawAppState } from './harness/fixtures'
+import { startChatMock, startEventStream, writeChatFrame, type MockServer } from './harness/mockServer'
 import { createSession, destroySession, type E2EBrowser } from './harness/session'
 import { activeTabStreaming, pickModel, sbpCall, submit, threadSections, waitForThread } from './harness/thread'
 
@@ -156,27 +156,10 @@ function sendAnthropicReply (res: http.ServerResponse, n: number): void {
   res.end()
 }
 
-// Answers only the chat requests of the three providers, and records them.
-async function startThinkingMock (state: MockState): Promise<MockServer> {
-  return startMockServer(async (req, res, body) => {
-    const path = req.url ?? ''
-    if (req.method !== 'POST' || ![THINKER_CHAT, PLAIN_CHAT, CLAUDE_CHAT].includes(path)) {
-      res.writeHead(404, { 'Content-Type': 'text/plain' })
-      res.end('not found')
-      return
-    }
-    state.requests.push({ path, body: JSON.parse(body) as Record<string, unknown> })
-    const n = state.requests.filter((request) => request.path === path).length
-    if (path === CLAUDE_CHAT) sendAnthropicReply(res, n)
-    else await sendOpenAiReply(res, n, state)
-  })
-}
-
 describe('thinking', () => {
   let app: RunningApp
   let browser: E2EBrowser
   let server: MockServer
-  let stateFile = ''
   const mock: MockState = { requests: [], pauses: [] }
 
   function requestBodies (path: string): Array<Record<string, unknown>> {
@@ -196,20 +179,12 @@ describe('thinking', () => {
     }
   }
 
-  async function savedState (): Promise<{ providerSettings?: Record<string, unknown>, customProviders?: Array<Record<string, unknown>> }> {
-    try {
-      return JSON.parse(await fs.promises.readFile(stateFile, 'utf8'))
-    } catch {
-      return {}
-    }
-  }
-
   async function savedProviderSettings (providerId: string): Promise<unknown> {
-    return (await savedState()).providerSettings?.[providerId] ?? null
+    return (await readAppState(app.home))?.providerSettings?.[providerId] ?? null
   }
 
   async function savedCustomProvider (providerId: string): Promise<unknown> {
-    return (await savedState()).customProviders?.find((config) => config.id === providerId) ?? null
+    return (await readAppState(app.home))?.customProviders?.find((config) => config.id === providerId) ?? null
   }
 
   // The lines of each agent section in the active tab's conversation file,
@@ -364,7 +339,14 @@ describe('thinking', () => {
   }
 
   beforeAll(async () => {
-    server = await startThinkingMock(mock)
+    // Answers only the chat requests of the three providers, and records them.
+    server = await startChatMock([THINKER_CHAT, PLAIN_CHAT, CLAUDE_CHAT], async (req, res, body) => {
+      const path = req.url ?? ''
+      mock.requests.push({ path, body: JSON.parse(body) as Record<string, unknown> })
+      const n = mock.requests.filter((request) => request.path === path).length
+      if (path === CLAUDE_CHAT) sendAnthropicReply(res, n)
+      else await sendOpenAiReply(res, n, mock)
+    })
     app = await startApp()
     try {
       const provider = (config: typeof THINKER, apiFormat: string, baseUrl: string, thinking: boolean): Record<string, unknown> => ({
@@ -376,7 +358,7 @@ describe('thinking', () => {
         models: [{ id: config.modelId, name: config.modelName }],
         ...(thinking ? { thinking: {} } : {}),
       })
-      stateFile = await seedRawAppState(app.home, {
+      await seedRawAppState(app.home, {
         customProviders: [
           provider(THINKER, 'openai', `${server.url}/${THINKER.id}/v1`, true),
           provider(PLAIN, 'openai', `${server.url}/${PLAIN.id}/v1`, false),
@@ -724,7 +706,7 @@ describe('thinking', () => {
     ])
   })
 
-  it('copies the selection as Markdown without markers or thinking, and a thinking panel selection as is', async () => {
+  it('copies the selection as Markdown with role headings and without markers or thinking, and a thinking panel selection as is', async () => {
     await sbpCall(browser, 'dez.model/tabs/openConversation', 'copy-source')
     await waitForValue(browser, 'seeded thread', () => threadSections(browser), [
       { role: 'user', text: 'Question with **bold**' },
@@ -751,7 +733,9 @@ describe('thinking', () => {
       view.dispatch({ selection: { anchor: 0, head: view.state.doc.length } })
     })
     await browser.keys([Key.Control, Key.Shift, 'c'])
-    await waitForValue(browser, 'copied Markdown', copiedTexts, ['Question with **bold**\n\nAnswer line\n\nFollow-up'])
+    // The same text as Save As Markdown, without its `# Copy source` line.
+    const tabMarkdown = '## User\n\nQuestion with **bold**\n\n## Agent\n\nAnswer line\n\n## User\n\nFollow-up\n'
+    await waitForValue(browser, 'copied Markdown', copiedTexts, [tabMarkdown])
 
     // In the thinking panel, select all selects the panel text, and Copy
     // Markdown copies it unchanged.
@@ -760,6 +744,6 @@ describe('thinking', () => {
     await browser.execute(() => document.querySelector<HTMLTextAreaElement>('.dez-role-separator__thinking-text')?.focus())
     await browser.keys([Key.Control, 'a'])
     await browser.keys([Key.Control, Key.Shift, 'c'])
-    await waitForValue(browser, 'copied thinking', copiedTexts, ['Question with **bold**\n\nAnswer line\n\nFollow-up', 'Seeded plan.\nSecond line.'])
+    await waitForValue(browser, 'copied thinking', copiedTexts, [tabMarkdown, 'Seeded plan.\nSecond line.'])
   })
 })

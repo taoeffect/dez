@@ -44,6 +44,7 @@ import {
 } from './cmEditor'
 import { modelDisplayNamesField, setModelDisplayNamesEffect, setStreamingSectionEffect, streamingSectionField } from './modelChip'
 import { thinkingExpandedField } from './thinkingPill'
+import { measureTextSize } from './editorMeasure'
 import { findExtension, findMatchStatus, findNextMatch, findQueryField, selectMatchSpec, setFindQueryEffect } from '../editor/find'
 import { markdownTables } from '../editor/tables'
 import { activeFindQuery, findState } from '../editor/findState'
@@ -57,7 +58,7 @@ const {
   prompts,
   activeTabStreaming,
   activeTabStreamingSectionId,
-  activeTabStreamError,
+  settings,
 } = useModelState()
 
 const hostRef = ref<HTMLDivElement | null>(null)
@@ -77,7 +78,6 @@ const autocompleteSelectedIndex = ref(0)
 const findDropdownRef = ref<InstanceType<typeof FindDropdown> | null>(null)
 
 const isActiveTabStreaming = activeTabStreaming
-const streamingError = activeTabStreamError
 
 // The three dots under the editor while the stream has not written text
 // yet.
@@ -645,6 +645,23 @@ function buildState(expandedThinking: ReadonlySet<string> = new Set()): EditorSt
       },
     ]),
   )
+  // Listed after the autocomplete and find keymaps, so Esc closes those
+  // first and stops the stream only when neither is open. It runs before
+  // the multi-cursor and selection Esc bindings, which do nothing while it
+  // stops. A modal takes Esc first: the event bubbles on to the global
+  // handler, which closes the modal, and the stream goes on.
+  const stopStreamKeymap = Prec.highest(
+    keymap.of([
+      {
+        key: 'Escape',
+        run: () => {
+          if (isModalOpen() || !isActiveTabStreaming.value) return false
+          void sbp('dez.stream/stop', activeTabId.value)
+          return true
+        },
+      },
+    ]),
+  )
   const selectionKeymap = Prec.high(
     keymap.of([
       {
@@ -777,6 +794,7 @@ function buildState(expandedThinking: ReadonlySet<string> = new Set()): EditorSt
       history(),
       autocompleteKeymap,
       findKeymap,
+      stopStreamKeymap,
       selectionKeymap,
       submitKeymap,
       keymap.of([...defaultKeymap, ...historyKeymap]),
@@ -885,10 +903,6 @@ function resetViewToActiveTab(streamEnd?: { followBottom: boolean }) {
   }
 }
 
-function stopActiveTab() {
-  void sbp('dez.stream/stop', activeTabId.value)
-}
-
 function onEditorStreamFinished(tabId: string, followBottom: boolean) {
   if (tabId !== activeTabId.value) return
   nextTick(() => resetViewToActiveTab({ followBottom }))
@@ -899,6 +913,13 @@ function syncViewStructureToStoreSections() {
   const models = initialSectionModels(activeSections.value)
   const current = view.state.field(sectionsField)
   if (sectionModelsEqual(current, models)) return
+  // The store has fewer sections than the view only right before a rebuild
+  // of the whole view state from the store, in the same microtask run, so no
+  // input event comes between: a failed stream removed its empty agent
+  // section (the stream-end rebuild follows), or the active tab changed.
+  // Until then the view keeps the models that match its doc; fewer models
+  // would leave a separator without one.
+  if (models.length < current.length) return
   syncingViewStructure = true
   try {
     if (models.length > current.length) {
@@ -969,6 +990,16 @@ watch(
   },
 )
 
+// A font size change (`dez.ui/applyEditorFontSize` sets the CSS variable in
+// the same tick) resizes every line, but CodeMirror sees no change of the
+// doc or of the editor's size, so it would keep the old line heights.
+watch(
+  () => settings.value.editorFontSize,
+  () => {
+    if (view) measureTextSize(view)
+  },
+)
+
 // Search as the user types: install the query, which drives the match
 // marks, and select the first match at or after `findState.origin`. With no
 // match the selection stays where it is. Closing is handled by
@@ -1015,16 +1046,6 @@ watch(
       <span class="busy-dot" />
       <span class="busy-dot" />
     </div>
-    <div v-if="streamingError && !isActiveTabStreaming" class="stream-error">
-      {{ streamingError }}
-    </div>
-    <button
-      v-if="isActiveTabStreaming"
-      class="stop-button"
-      @click="stopActiveTab"
-    >
-      Stop
-    </button>
   </div>
 </template>
 
@@ -1081,31 +1102,4 @@ watch(
   0%, 80%, 100% { opacity: 0.2; transform: scale(0.8); }
   40% { opacity: 0.6; transform: scale(1); }
 }
-
-.stream-error {
-  padding: 8px 16px;
-  max-width: 768px;
-  margin: 0 auto;
-  width: 100%;
-  box-sizing: border-box;
-  color: #e55;
-  font-size: 13px;
-}
-
-.stop-button {
-  position: absolute;
-  bottom: 16px;
-  right: 16px;
-  padding: 6px 16px;
-  border-radius: 6px;
-  border: 1px solid var(--color-border);
-  background: var(--color-bg, #1e1e1e);
-  color: var(--color-text);
-  font-size: 13px;
-  cursor: pointer;
-  opacity: 0.8;
-  transition: opacity 0.15s;
-}
-
-.stop-button:hover { opacity: 1; }
 </style>

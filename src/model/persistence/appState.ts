@@ -1,7 +1,8 @@
 import * as z from 'zod'
 import { configIssueText, customProviderConfigSchema, providerModelConfigSchema, type ProviderConfig } from '../providers/config'
 import type { AppStatePayload } from './types'
-import type { DefaultModel, Theme } from '../state/settings'
+import type { DefaultModel, Theme, WindowGeometry } from '../state/settings'
+import { EDITOR_FONT_SIZE_DEFAULT, clampEditorFontSize } from '../editorFontSize'
 
 const themeSchema = z.enum(['light', 'dark', 'system'])
 const defaultModelSchema = z.object({
@@ -20,6 +21,16 @@ const tabSchema = z.object({
   createdAt: z.number().catch(() => Date.now()),
 })
 
+// A `window` value that is not a whole geometry is dropped as a whole; the
+// window then opens at its default size, centered.
+const windowGeometrySchema = z.object({
+  width: z.number().positive(),
+  height: z.number().positive(),
+  x: z.number(),
+  y: z.number(),
+  maximized: z.boolean(),
+})
+
 type TabData = z.infer<typeof tabSchema>
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -33,6 +44,11 @@ function isTheme(value: unknown): value is Theme {
 function defaultModel(value: unknown): DefaultModel | null {
   const result = defaultModelSchema.safeParse(value)
   return result.success ? result.data : null
+}
+
+function windowGeometry(value: unknown): WindowGeometry | undefined {
+  const result = windowGeometrySchema.safeParse(value)
+  return result.success ? result.data : undefined
 }
 
 function tabData(value: unknown): TabData | null {
@@ -108,6 +124,7 @@ export function defaultAppState(): AppStatePayload {
     tabs: [],
     activeTabId: null,
     theme: 'system',
+    editorFontSize: EDITOR_FONT_SIZE_DEFAULT,
     customProviders: [],
     defaultNewTabModel: null,
     lastUsedModel: null,
@@ -132,6 +149,11 @@ export function parseAppStateJson(content: string): AppStatePayload {
         ? parsed.activeTabId
         : fallback.activeTabId,
       theme: isTheme(parsed.theme) ? parsed.theme : fallback.theme,
+      // A hand-edited size is rounded and kept in range, not dropped.
+      editorFontSize: typeof parsed.editorFontSize === 'number'
+        ? clampEditorFontSize(parsed.editorFontSize)
+        : fallback.editorFontSize,
+      window: windowGeometry(parsed.window),
       customProviders: providers.configs,
       customProviderApiKeys: providers.apiKeys,
       defaultNewTabModel: parsed.defaultNewTabModel === null

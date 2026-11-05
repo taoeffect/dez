@@ -26,11 +26,9 @@ export interface StreamSessionState {
   updatedAt: number
   finishedAt: number | null
   tokenCount: number
-  error: string | null
 }
 
 export interface StreamTerminalInput {
   tabId: string
   status: Exclude<StreamStatus, 'idle' | 'streaming'>
-  error?: string | null
 }

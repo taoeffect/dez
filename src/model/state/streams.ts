@@ -21,25 +21,14 @@ function cloneNullableStreamSession(session: StreamSessionState | null): StreamS
 
 export const useStreamStore = defineStore('streams', () => {
   const sessionsByTab = ref<Record<string, StreamSessionState>>({})
-  const errorsByTab = ref<Record<string, string | null>>({})
 
   const activeSessions = computed(() => {
     return Object.values(sessionsByTab.value).filter((session) => session.status === 'streaming')
   })
 
-  const activeTabSession = computed(() => {
-    const tabStore = useTabStore()
-    return session(tabStore.activeTabId)
-  })
-
   const isActiveTabStreaming = computed(() => {
     const tabStore = useTabStore()
     return isStreaming(tabStore.activeTabId)
-  })
-
-  const activeTabError = computed(() => {
-    const tabStore = useTabStore()
-    return activeTabSession.value?.error ?? errorsByTab.value[tabStore.activeTabId] ?? null
   })
 
   function session(tabId: string): StreamSessionState | null {
@@ -65,10 +54,8 @@ export const useStreamStore = defineStore('streams', () => {
       updatedAt: now,
       finishedAt: null,
       tokenCount: 0,
-      error: null,
     }
     sessionsByTab.value[input.tabId] = nextSession
-    errorsByTab.value[input.tabId] = null
     return nextSession
   }
 
@@ -83,10 +70,7 @@ export const useStreamStore = defineStore('streams', () => {
   function setTerminal(input: StreamTerminalInput): StreamSessionState | null {
     const currentSession = session(input.tabId)
     if (!currentSession) return null
-    const error = input.error ?? null
     currentSession.status = input.status
-    currentSession.error = error
-    errorsByTab.value[input.tabId] = error
     currentSession.updatedAt = Date.now()
     currentSession.finishedAt = terminalStatusTime(input.status)
     return currentSession
@@ -96,34 +80,22 @@ export const useStreamStore = defineStore('streams', () => {
     return setTerminal({ tabId, status: 'finished' })
   }
 
-  function error(tabId: string, message: string): StreamSessionState | null {
-    return setTerminal({ tabId, status: 'error', error: message })
+  function error(tabId: string): StreamSessionState | null {
+    return setTerminal({ tabId, status: 'error' })
   }
 
   function cancelled(tabId: string): StreamSessionState | null {
     return setTerminal({ tabId, status: 'cancelled' })
   }
 
-  function setError(tabId: string, message: string): void {
-    errorsByTab.value[tabId] = message
-  }
-
-  function clearError(tabId: string): void {
-    errorsByTab.value[tabId] = null
-  }
-
   function removeSession(tabId: string): void {
     delete sessionsByTab.value[tabId]
-    delete errorsByTab.value[tabId]
   }
 
   return {
     sessionsByTab,
-    errorsByTab,
     activeSessions,
-    activeTabSession,
     isActiveTabStreaming,
-    activeTabError,
     session,
     status,
     isStreaming,
@@ -132,8 +104,6 @@ export const useStreamStore = defineStore('streams', () => {
     finish,
     error,
     cancelled,
-    setError,
-    clearError,
     removeSession,
   }
 })
@@ -161,8 +131,8 @@ export function finishStreamSession(tabId: string): StreamSessionState | null {
   return cloneNullableStreamSession(useStreamStore().finish(tabId))
 }
 
-export function errorStreamSession(tabId: string, message: string): StreamSessionState | null {
-  return cloneNullableStreamSession(useStreamStore().error(tabId, message))
+export function errorStreamSession(tabId: string): StreamSessionState | null {
+  return cloneNullableStreamSession(useStreamStore().error(tabId))
 }
 
 export function cancelStreamSession(tabId: string): StreamSessionState | null {
@@ -179,19 +149,4 @@ export default sbp('sbp/selectors/register', {
     const session = useStreamStore().session(tabId)
     return session?.status === 'streaming' ? session.sectionId : null
   },
-
-  'dez.model/streams/activeTabError' (): string | null {
-    const streamStore = useStreamStore()
-    const activeTabId = useTabStore().activeTabId
-    return streamStore.session(activeTabId)?.error ?? streamStore.errorsByTab[activeTabId] ?? null
-  },
-
-  'dez.model/streams/setError' (tabId: string, message: string): void {
-    useStreamStore().setError(tabId, message)
-  },
-
-  'dez.model/streams/clearError' (tabId: string): void {
-    useStreamStore().clearError(tabId)
-  },
-
 })

@@ -127,6 +127,24 @@ export const BUILT_IN_PROVIDER_CONFIGS: readonly ProviderConfig[] = [
     thinking: { enabledBody: { thinking: { type: 'adaptive' } } },
   },
   {
+    id: 'kimi',
+    name: 'Kimi',
+    baseUrl: 'https://api.kimi.com/coding',
+    apiFormat: 'anthropic',
+    models: [
+      { id: 'k3.1-pro-highspeed', name: 'Kimi K3.1 Pro Highspeed' },
+      { id: 'k3', name: 'Kimi K3' },
+    ],
+    fetchModels: true,
+    auth: 'apiKey',
+    // The format's default body (adaptive, summarized) gives signed thinking
+    // blocks. K3.1 Pro refuses `disabled` with a 400, so there is no off field;
+    // with the toggle off the models still think, and Dez hides it. No
+    // User-Agent header: requests work without one, and Kimi's terms forbid
+    // a false client name.
+    thinking: {},
+  },
+  {
     id: 'copilot',
     name: 'GitHub Copilot',
     baseUrl: 'https://api.githubcopilot.com',

@@ -23,6 +23,7 @@ import {
   removedSeparatorModelIndexes,
   scanPills,
   sectionsField,
+  sectionsToDoc,
   serializeDocRangeForClipboard,
   serializeSelectionAsMarkdown,
   serializeSelectionForClipboard,
@@ -37,6 +38,7 @@ import {
 } from './cmEditor'
 import { SENTINEL_CHAR, sectionVisibleText } from '../../model/chat/content'
 import type { ContentNode, ModelRef, Role, Section, SectionThinking } from '../../model/chat/types'
+import { serializeConversationAsMarkdown } from '../../model/persistence/conversationFormat'
 
 function textNode(text: string): ContentNode {
   return { kind: 'text', text }
@@ -690,7 +692,7 @@ describe('Copy Markdown', () => {
     }))
   }
 
-  it('copies sections as text with one blank line between them, and no markers or thinking', () => {
+  it('copies each selected section under its role heading, with no markers or thinking', () => {
     const doc = ['question', 'answer', 'legacy'].join(`\n${SECTION_SEP}\n`)
     const models: SectionModel[] = [
       { id: 's1', role: 'user' },
@@ -698,25 +700,93 @@ describe('Copy Markdown', () => {
       { id: 's3', role: 'agent' },
     ]
 
-    expect(markdownOf(doc, EditorSelection.single(0, doc.length), models)).toBe('question\n\nanswer\n\nlegacy')
+    expect(markdownOf(doc, EditorSelection.single(0, doc.length), models))
+      .toBe('## User\n\nquestion\n\n## Agent\n\nanswer\n\n## Agent\n\nlegacy\n')
   })
 
-  it('keeps the section text, but drops empty sections and separators at the range ends', () => {
+  it('gives a heading only to a section whose role pill is selected, and nothing for an empty section', () => {
     const doc = ['one', '', 'two\n', 'three'].join(`\n${SECTION_SEP}\n`)
+    const models: SectionModel[] = [
+      { id: 's1', role: 'user' },
+      { id: 's2', role: 'agent' },
+      { id: 's3', role: 'user' },
+      { id: 's4', role: 'agent' },
+    ]
     const fromFirstSeparatorLine = doc.indexOf(SECTION_SEP) - 1
     const toAfterLastSeparator = doc.lastIndexOf(SECTION_SEP) + 1
+    const lastSectionText = doc.length - 'three'.length
 
-    expect(markdownOf(doc, EditorSelection.single(0, doc.length))).toBe('one\n\ntwo\n\nthree')
-    expect(markdownOf(doc, EditorSelection.single(fromFirstSeparatorLine, toAfterLastSeparator))).toBe('two\n')
+    expect(markdownOf(doc, EditorSelection.single(0, doc.length), models))
+      .toBe('## User\n\none\n\n## User\n\ntwo\n\n## Agent\n\nthree\n')
+    // The first section's pill counts as selected only from doc position 0.
+    expect(markdownOf(doc, EditorSelection.single(0, 'on'.length), models)).toBe('## User\n\non\n')
+    expect(markdownOf(doc, EditorSelection.single(1, doc.length), models))
+      .toBe('ne\n\n## User\n\ntwo\n\n## Agent\n\nthree\n')
+    expect(markdownOf(doc, EditorSelection.single(fromFirstSeparatorLine, toAfterLastSeparator), models)).toBe('## User\n\ntwo\n')
+    // Inside one section's text, the copy is that text as is.
+    expect(markdownOf(doc, EditorSelection.single(lastSectionText, doc.length), models)).toBe('three')
   })
 
   it('copies a whole or partly selected prompt pill as its body text with real newlines', () => {
     const doc = `see ${encodePrompt(PILL_ID, 'line one\nline two')} end\n${SECTION_SEP}\nreply`
     const bodyFrom = doc.indexOf(PILL_BODY) + 1
+    const models: SectionModel[] = [{ id: 's1', role: 'user' }, { id: 's2', role: 'agent' }]
 
-    expect(markdownOf(doc, EditorSelection.single(0, doc.length))).toBe('see line one\nline two end\n\nreply')
+    expect(markdownOf(doc, EditorSelection.single(0, doc.length), models))
+      .toBe('## User\n\nsee line one\nline two end\n\n## Agent\n\nreply\n')
     expect(markdownOf(doc, EditorSelection.single(bodyFrom + 'line '.length, doc.indexOf(' end')))).toBe('one\nline two')
-    expect(markdownOf(doc, EditorSelection.single(0, doc.indexOf(PILL_BODY)))).toBe('see ')
+    expect(markdownOf(doc, EditorSelection.single(1, doc.indexOf(PILL_BODY)))).toBe('ee ')
+  })
+
+  it('closes a code fence that the selected part of a section leaves open', () => {
+    const doc = ['question', '1. step\n\n   ```sh\n   run it\n   ```\n\ndone'].join(`\n${SECTION_SEP}\n`)
+    const models: SectionModel[] = [{ id: 's1', role: 'user' }, { id: 's2', role: 'agent' }]
+
+    expect(markdownOf(doc, EditorSelection.single(0, doc.indexOf('   run it')), models))
+      .toBe('## User\n\nquestion\n\n## Agent\n\n1. step\n\n   ```sh\n   ```\n')
+  })
+
+  it('copies a whole tab as Save As Markdown saves it, without the title line', () => {
+    const sections: Section[] = [
+      {
+        id: 's1',
+        role: 'user',
+        content: [
+          textNode('Summarize: '),
+          { kind: 'prompt', id: PILL_ID, promptId: 'saved', name: 'Summary', body: 'line one\nline two', expanded: false },
+          textNode('\n'),
+        ],
+      },
+      {
+        id: 's2',
+        role: 'agent',
+        model: { providerId: 'zai', modelId: 'glm-5.2' },
+        thinking: THINKING,
+        content: [textNode('Stopped in code:\n\n```ts\nconst x = 1')],
+      },
+      section('s3', 'agent', ' \n'),
+      section('s4', 'user', 'Thanks'),
+      section('s5', 'user', ''),
+    ]
+    const doc = sectionsToDoc(sections)
+    const copied = serializeSelectionAsMarkdown(EditorState.create({
+      doc,
+      selection: EditorSelection.single(0, doc.length),
+      extensions: [
+        sectionsField.init(() => initialSectionModels(sections)),
+        pillsField.init(() => new Map([[PILL_ID, { promptId: 'saved', name: 'Summary', expanded: false }]])),
+      ],
+    }))
+    const saved = serializeConversationAsMarkdown({
+      id: 'c1',
+      title: 'Chat',
+      activeModel: null,
+      created_at: 0,
+      sections: sections.map((s) => ({ role: s.role, nodes: s.content })),
+    })
+
+    expect(saved.startsWith('# Chat\n\n')).toBe(true)
+    expect(copied).toBe(saved.slice('# Chat\n\n'.length))
   })
 
   it('joins the non-empty ranges with newlines, and copies nothing without selected text', () => {
@@ -724,10 +794,10 @@ describe('Copy Markdown', () => {
     const separatorOnly = EditorSelection.range('alpha'.length, 'alpha\n'.length + `${SECTION_SEP}\n`.length)
 
     expect(markdownOf(doc, EditorSelection.create([
-      EditorSelection.range(0, 'alpha'.length),
+      EditorSelection.range(1, 'alpha'.length),
       separatorOnly,
       EditorSelection.range(doc.length - 'gamma'.length, doc.length),
-    ]))).toBe('alpha\ngamma')
+    ]))).toBe('lpha\ngamma')
     expect(markdownOf(doc, EditorSelection.create([separatorOnly, EditorSelection.cursor(2)]))).toBe('')
   })
 })

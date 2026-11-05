@@ -8,7 +8,9 @@ import type { ContentNode, ModelRef, Role, Section, SectionThinking } from '../.
 import { modelRefField } from '../../model/chat/modelRef'
 import { PILL_MARKER, parsePillMarkerMatch, pillMarkerText } from '../../model/chat/pillMarker'
 import { thinkingField } from '../../model/chat/thinking'
+import { messagesAsMarkdown, type MarkdownMessage } from '../../model/chat/markdown'
 import { SENTINEL_CHAR, normalizeContent, stripLiveSentinels, textNode } from '../../model/chat/content'
+import { EDITOR_FONT_SIZE_DEFAULT } from '../../model/editorFontSize'
 import { escapeMarkerAttribute, unescapeMarkerAttribute } from '../../utils/markerAttribute'
 import { addModelToPill, modelDisplayNamesField, sameModelChip, sectionModelChips, streamingSectionField, type ModelChip } from './modelChip'
 import {
@@ -967,33 +969,37 @@ export function serializeSelectionForClipboard(state: EditorState): string {
 
 /** Copy Markdown text of one doc range: what the model reads, with no `dez:`
  *  markers and no thinking. A prompt pill, whole or in part, gives its body
- *  text. Each separator line gives one blank line between the text of two
- *  sections; empty sections and a separator at either end of the range give
- *  nothing. A pill never spans a separator (`scanPills`), so the text between
- *  pills holds every separator. */
-function serializeDocRangeAsMarkdown(doc: string, from: number, to: number): string {
-  let out = ''
-  let sectionBreak = false
-  const append = (text: string) => {
-    if (text === '') return
-    if (sectionBreak && out !== '') out += out.endsWith('\n\n') ? '' : out.endsWith('\n') ? '\n' : '\n\n'
-    sectionBreak = false
-    out += text
-  }
+ *  text. A range that holds a role pill gives its section parts as
+ *  `messagesAsMarkdown` gives them, so a whole tab copies as Save As
+ *  Markdown saves it (without the title): a part gets its role heading only
+ *  when its pill is in the range, and an empty part gives nothing. The pill
+ *  of a later section is its separator line; the first section's pill is
+ *  the editor's `::before`, so it counts as selected when the range starts
+ *  at doc position 0 (as in `serializeDocRangeForClipboard`). A range inside
+ *  one section's text gives that text as is: a copied word gets no heading
+ *  and no newline. A pill never spans a separator (`scanPills`), so the text
+ *  between pills holds every separator. */
+function serializeDocRangeAsMarkdown(doc: string, from: number, to: number, models: SectionModel[]): string {
+  const parts = ['']
   const appendDocText = (fragmentFrom: number, fragmentTo: number) => {
     splitDocBySeparator(doc.slice(fragmentFrom, fragmentTo)).forEach((part, index) => {
-      if (index > 0) sectionBreak = true
-      append(stripLiveSentinels(part))
+      if (index > 0) parts.push('')
+      parts[parts.length - 1] += stripLiveSentinels(part)
     })
   }
   let cursor = from
   for (const p of scanPills(doc).filter((pill) => pill.to > from && pill.from < to)) {
     if (cursor < p.from) appendDocText(cursor, p.from)
-    append(stripLiveSentinels(doc.slice(Math.max(from, p.bodyFrom), Math.min(to, p.bodyTo))))
+    parts[parts.length - 1] += stripLiveSentinels(doc.slice(Math.max(from, p.bodyFrom), Math.min(to, p.bodyTo)))
     cursor = Math.min(p.to, to)
   }
   if (cursor < to) appendDocText(cursor, to)
-  return out
+  if (from > 0 && parts.length === 1) return parts[0]
+  const firstSection = sectionIndexAtOffset(doc, from)
+  return messagesAsMarkdown(parts.map((text, index): MarkdownMessage => {
+    if (index > 0) return { role: models[firstSection + index]?.role ?? 'user', text }
+    return from === 0 ? { role: 'user', text } : { text }
+  }))
 }
 
 /** The selection for Copy Markdown (`dez.editor/copyMarkdown`): each range as
@@ -1001,9 +1007,10 @@ function serializeDocRangeAsMarkdown(doc: string, from: number, to: number): str
  *  give no text are left out, so an empty result means nothing to copy. */
 export function serializeSelectionAsMarkdown(state: EditorState): string {
   const doc = state.doc.toString()
+  const models = state.field(sectionsField)
   return state.selection.ranges
     .filter((range) => !range.empty)
-    .map((range) => serializeDocRangeAsMarkdown(doc, range.from, range.to))
+    .map((range) => serializeDocRangeAsMarkdown(doc, range.from, range.to, models))
     .filter((text) => text !== '')
     .join('\n')
 }
@@ -1184,12 +1191,24 @@ export const dezHighlightStyle = HighlightStyle.define([
 /** The padding around the doc inside the editor scroller. */
 export const SCROLLER_PADDING_PX = 16
 
+// Every size in the editor follows the user's editor font size
+// (`--dez-editor-font-size`, set by `dez.ui/applyEditorFontSize`), so text,
+// pills, the thinking panel and tables grow and shrink together.
+// `editorSize(px)` is `px` at the default font size and scales with the font
+// size. The text and the spacing around it scale; hairline borders, the
+// content column width and the scroller padding stay fixed.
+const EDITOR_FONT_SIZE_VAR = `var(--dez-editor-font-size, ${EDITOR_FONT_SIZE_DEFAULT}px)`
+
+function editorSize(...px: number[]): string {
+  return px.map((value) => `calc(${EDITOR_FONT_SIZE_VAR} * ${value} / ${EDITOR_FONT_SIZE_DEFAULT})`).join(' ')
+}
+
 export const dezTheme = EditorView.theme({
   '&': {
     height: '100%',
     color: 'var(--color-text)',
     backgroundColor: 'transparent',
-    fontSize: '15px',
+    fontSize: EDITOR_FONT_SIZE_VAR,
   },
   '.cm-scroller': {
     fontFamily:
@@ -1204,23 +1223,23 @@ export const dezTheme = EditorView.theme({
     caretColor: 'var(--color-text)',
     // Room for the pill of the first section, which `::before` draws: the
     // first section has no separator line in the doc to put a widget on.
-    padding: '46px 0 0',
+    padding: `${editorSize(46)} 0 0`,
     position: 'relative',
   },
   '.cm-content::before': {
     content: '"User"',
     position: 'absolute',
-    top: '12px',
+    top: editorSize(12),
     left: '0',
     width: 'max-content',
-    padding: '2px 10px',
+    padding: editorSize(2, 10),
     borderRadius: '999px',
     border: '1px solid var(--color-border, #333)',
     background: 'var(--color-bg-subtle, rgba(127,127,127,0.08))',
     color: 'var(--color-muted, #888)',
     fontFamily:
       "ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif",
-    fontSize: '11px',
+    fontSize: editorSize(11),
     letterSpacing: '0.08em',
     textTransform: 'uppercase',
     userSelect: 'none',
@@ -1229,29 +1248,35 @@ export const dezTheme = EditorView.theme({
   '.cm-line': { padding: '0' },
   '&.cm-focused': { outline: 'none' },
   '.cm-cursor, .cm-dropCursor': { borderLeftColor: 'var(--color-text)' },
-  '.cm-selectionBackground, ::selection': {
-    backgroundColor: 'var(--color-selection, rgba(100, 149, 237, 0.35))',
+  // Colors are theme variables (App.vue). The focused rule must be as
+  // specific as CM's base-theme rule `&light.cm-focused > .cm-scroller >
+  // .cm-selectionLayer .cm-selectionBackground`, or that rule's light
+  // lavender wins in both app themes: this theme has no `dark` flag, so CM
+  // always styles the editor as light. The inactive color shows while focus
+  // is elsewhere, e.g. in the find field after Find Next.
+  '.cm-selectionBackground': {
+    backgroundColor: 'var(--color-selection-inactive, rgba(100, 149, 237, 0.35))',
   },
-  '&.cm-focused .cm-selectionBackground': {
-    backgroundColor: 'var(--color-selection, rgba(100, 149, 237, 0.35))',
+  '&.cm-focused > .cm-scroller > .cm-selectionLayer .cm-selectionBackground, ::selection': {
+    backgroundColor: 'var(--color-selection, #d7d4f0)',
   },
   '.cm-gutters': { display: 'none' },
   '.dez-role-separator': {
     display: 'inline-flex',
     alignItems: 'center',
     width: '100%',
-    margin: '12px 0',
+    margin: `${editorSize(12)} 0`,
     padding: '0',
     userSelect: 'none',
     color: 'var(--color-muted, #888)',
-    fontSize: '11px',
+    fontSize: editorSize(11),
     fontFamily:
       "ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif",
     letterSpacing: '0.08em',
     textTransform: 'uppercase',
   },
   '.dez-role-separator__label': {
-    padding: '2px 10px',
+    padding: editorSize(2, 10),
     borderRadius: '999px',
     border: '1px solid var(--color-border, #333)',
     background: 'var(--color-bg-subtle, rgba(127,127,127,0.08))',
@@ -1282,11 +1307,11 @@ export const dezTheme = EditorView.theme({
   '.dez-role-separator__model': {
     display: 'inline-flex',
     alignItems: 'baseline',
-    gap: '6px',
+    gap: editorSize(6),
     minWidth: '0',
-    marginLeft: '8px',
+    marginLeft: editorSize(8),
     color: 'var(--color-text)',
-    fontSize: '12px',
+    fontSize: editorSize(12),
     lineHeight: '1.25',
     letterSpacing: 'normal',
     textTransform: 'none',
@@ -1296,16 +1321,16 @@ export const dezTheme = EditorView.theme({
     alignSelf: 'center',
     flex: 'none',
     width: '1px',
-    height: '11px',
-    marginRight: '2px',
+    height: editorSize(11),
+    marginRight: editorSize(2),
     background: 'var(--color-link, #4a9eff)',
     opacity: '0.45',
   },
   '.dez-role-separator__switch': {
     alignSelf: 'center',
     flex: 'none',
-    width: '12px',
-    height: '12px',
+    width: editorSize(12),
+    height: editorSize(12),
     color: 'var(--color-link, #4a9eff)',
   },
   '.dez-role-separator__model-name': {
@@ -1321,12 +1346,12 @@ export const dezTheme = EditorView.theme({
     overflow: 'hidden',
     textOverflow: 'ellipsis',
     whiteSpace: 'nowrap',
-    fontSize: '11px',
+    fontSize: editorSize(11),
     opacity: '0.55',
   },
   '.dez-role-separator__model-provider::before': {
     content: '"·"',
-    marginRight: '6px',
+    marginRight: editorSize(6),
   },
   // Left slot of an agent pill (`thinkingPill.ts`): a spinner while the
   // section streams and has no thinking yet, then a disclosure triangle
@@ -1340,9 +1365,9 @@ export const dezTheme = EditorView.theme({
     alignSelf: 'center',
     verticalAlign: 'middle',
     boxSizing: 'border-box',
-    width: '9px',
-    height: '9px',
-    marginRight: '6px',
+    width: editorSize(9),
+    height: editorSize(9),
+    marginRight: editorSize(6),
     border: '1.5px solid currentColor',
     borderRightColor: 'transparent',
     borderRadius: '50%',
@@ -1352,9 +1377,9 @@ export const dezTheme = EditorView.theme({
     flex: 'none',
     alignSelf: 'center',
     verticalAlign: 'middle',
-    padding: '2px 4px',
-    margin: '-2px 2px -2px -4px',
-    fontSize: '9px',
+    padding: editorSize(2, 4),
+    margin: editorSize(-2, 2, -2, -4),
+    fontSize: editorSize(9),
     lineHeight: '1',
     letterSpacing: 'normal',
   },
@@ -1376,15 +1401,15 @@ export const dezTheme = EditorView.theme({
     flex: '1 0 100%',
     minWidth: '0',
     maxHeight: '20em',
-    marginTop: '6px',
+    marginTop: editorSize(6),
     overflowY: 'auto',
     overflowAnchor: 'none',
     boxSizing: 'border-box',
     border: '1px solid var(--color-border, #333)',
-    borderRadius: '8px',
+    borderRadius: editorSize(8),
     background: 'var(--color-bg-subtle, rgba(127,127,127,0.08))',
     color: 'var(--color-muted, #888)',
-    fontSize: '13px',
+    fontSize: editorSize(13),
     lineHeight: '1.5',
     letterSpacing: 'normal',
     textTransform: 'none',
@@ -1394,12 +1419,20 @@ export const dezTheme = EditorView.theme({
   '.dez-role-separator__thinking:focus-within': {
     borderColor: 'var(--color-link, #4a9eff)',
   },
+  // CM's `hideNativeSelection` paints the native selection of a focused
+  // field in the editor with the OS `Highlight` color, `!important`. In
+  // WebKitGTK that is a strong blue, and the muted panel text on it is
+  // unreadable, so the panel uses the editor's selection color instead. One
+  // more class than CM's `.cm-content :focus::selection` makes this win.
+  '.cm-content .dez-role-separator__thinking-text:focus::selection': {
+    backgroundColor: 'var(--color-selection, #d7d4f0) !important',
+  },
   '.dez-role-separator__thinking-mirror, .dez-role-separator__thinking-text': {
     gridArea: '1 / 1',
     boxSizing: 'border-box',
     minWidth: '0',
     margin: '0',
-    padding: '8px 12px',
+    padding: editorSize(8, 12),
     border: 'none',
     font: 'inherit',
     letterSpacing: 'inherit',
@@ -1477,9 +1510,9 @@ export const dezTheme = EditorView.theme({
   '.dez-prompt-pill': {
     display: 'inline-flex',
     alignItems: 'center',
-    gap: '4px',
-    padding: '1px 8px',
-    margin: '0 1px',
+    gap: editorSize(4),
+    padding: editorSize(1, 8),
+    margin: `0 ${editorSize(1)}`,
     borderRadius: '999px',
     border: '1px solid var(--color-border, #333)',
     background: 'var(--color-bg-subtle, rgba(127,127,127,0.08))',
@@ -1488,16 +1521,16 @@ export const dezTheme = EditorView.theme({
     userSelect: 'none',
     fontFamily:
       "ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif",
-    fontSize: '12px',
+    fontSize: editorSize(12),
     lineHeight: '1.4',
     verticalAlign: 'baseline',
   },
   '.dez-prompt-pill__caret': {
-    fontSize: '9px',
+    fontSize: editorSize(9),
     opacity: '0.8',
   },
   '.dez-prompt-pill[data-expanded="1"]': {
-    padding: '0 2px',
+    padding: `0 ${editorSize(2)}`,
     margin: '0',
     border: 'none',
     background: 'transparent',
@@ -1510,8 +1543,11 @@ export const dezTheme = EditorView.theme({
     color: 'var(--color-text)',
   },
   // Find highlights (src/view/editor/find.ts). Amber, so they differ from the
-  // blue selection; the current match is stronger and outlined because the
-  // selection under it looks the same focused or not.
+  // blue selection. They are text backgrounds, so they draw over the
+  // selection layer, and their translucent colors mix with it: a selected
+  // match still looks selected. The current match is always the main
+  // selection; its stronger color and outline set it apart from the other
+  // matches that a selection covers.
   '.dez-find-match': {
     backgroundColor: 'var(--color-find-match, rgba(255, 190, 60, 0.35))',
     borderRadius: '2px',
@@ -1531,7 +1567,7 @@ export const dezTheme = EditorView.theme({
     display: 'table',
     borderCollapse: 'separate',
     borderSpacing: '0',
-    padding: '6px 0',
+    padding: `${editorSize(6)} 0`,
   },
   '.cm-line.dez-table-row': {
     display: 'table-row',

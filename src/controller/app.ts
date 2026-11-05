@@ -65,7 +65,13 @@ export default sbp('sbp/selectors/register', {
     if (initPromise) return initPromise
 
     initPromise = (async () => {
-      const state = await sbp('dez.model/settings/init') as AppStatePayload
+      let state: AppStatePayload
+      try {
+        state = await sbp('dez.model/settings/init') as AppStatePayload
+      } finally {
+        // In a finally: the window starts hidden, and the restore shows it.
+        await sbp('dez.controller/window/restore')
+      }
       await sbp('dez.model/prompts/init')
       await sbp('dez.model/modelCache/init')
 
@@ -83,6 +89,7 @@ export default sbp('sbp/selectors/register', {
       sbp('dez.model/modelCache/startPersistence')
       sbp('dez.controller/startUpdateChecker')
       startAppStateWatcher()
+      sbp('dez.controller/window/startTracking')
       initialized = true
       void sbp('dez.controller/menu/install')
       // Warm the cache against real availability in the background so the model
@@ -105,6 +112,7 @@ export default sbp('sbp/selectors/register', {
     stopUpdateCheckerService()
     stopAppStateWatch?.()
     stopAppStateWatch = null
+    sbp('dez.controller/window/stopTracking')
     sbp('dez.model/settings/stopPersistence')
     sbp('dez.model/prompts/stopPersistence')
     sbp('dez.model/modelCache/stopPersistence')

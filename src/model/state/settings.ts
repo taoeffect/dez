@@ -1,6 +1,7 @@
 import { defineStore } from 'pinia'
 import { ref } from 'vue'
 import type { ProviderConfig } from '../providers/config'
+import { EDITOR_FONT_SIZE_DEFAULT } from '../editorFontSize'
 
 export type Theme = 'light' | 'dark' | 'system'
 export type SettingsSection = 'general' | 'providers' | 'prompts' | 'appearance'
@@ -10,8 +11,24 @@ export interface DefaultModel {
   modelId: string
 }
 
+// The main window's last normal (not maximized) geometry, `window` in
+// app_state.json. `width`/`height` is the logical inner size, so it means the
+// same on screens with other scale factors. `x`/`y` is the physical outer
+// position, the coordinate space of the monitor rects that the fit at startup
+// compares it with. On Wayland the position always reads (0,0).
+export interface WindowGeometry {
+  width: number
+  height: number
+  x: number
+  y: number
+  maximized: boolean
+}
+
 export const useSettingsStore = defineStore('settings', () => {
   const theme = ref<Theme>('system')
+  const editorFontSize = ref(EDITOR_FONT_SIZE_DEFAULT)
+  // null while app_state.json has no `window`; dez.controller/window fills it.
+  const windowGeometry = ref<WindowGeometry | null>(null)
   // User-defined providers, already validated by customProviderConfigSchema.
   // Built-ins are not stored here; they are literals in providers/builtins.ts.
   const customProviders = ref<ProviderConfig[]>([])
@@ -85,6 +102,8 @@ export const useSettingsStore = defineStore('settings', () => {
 
   return {
     theme,
+    editorFontSize,
+    windowGeometry,
     customProviders,
     defaultNewTabModel,
     lastUsedModel,

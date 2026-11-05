@@ -142,7 +142,7 @@ describe('section models', () => {
     typeIntoLastSection('first question')
     const first = ensureAgentSection(alpha)
     appendTokenToTabSection(activeId(), first.id, 'first answer')
-    finalizeStreamSectionForTab(activeId(), first.id, null)
+    finalizeStreamSectionForTab(activeId(), first.id, false)
     typeIntoLastSection('second question')
     const second = ensureAgentSection(beta)
 
@@ -278,6 +278,30 @@ describe('dez.model/customProviders/remove', () => {
 
     expect(sbp('dez.model/customProviders/remove', 'openrouter')).toBe(false)
     expect(settings()).toEqual(before)
+  })
+})
+
+describe('dez.model/settings/changeEditorFontSize', () => {
+  function fontSize (): number {
+    return (sbp('dez.model/settings/snapshot') as SettingsSnapshot).editorFontSize
+  }
+
+  function change (delta: number, times = 1): void {
+    for (let i = 0; i < times; i++) sbp('dez.model/settings/changeEditorFontSize', delta)
+  }
+
+  it('steps by one px and stops at both limits', () => {
+    expect(fontSize()).toBe(15)
+    change(1)
+    expect(fontSize()).toBe(16)
+    change(1, 40)
+    expect(fontSize()).toBe(32)
+    change(-1)
+    expect(fontSize()).toBe(31)
+    change(-1, 40)
+    expect(fontSize()).toBe(10)
+    change(1)
+    expect(fontSize()).toBe(11)
   })
 })
 
