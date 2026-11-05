@@ -12,12 +12,13 @@ Talk with AI in a fully editable plaintext document. Inspired by Zed's text thre
 
 ## Features
 
+- **Saved prompts** — selectable via `/prompt` shortcut (Zed-style)
 - **Tabbed conversations** — multiple concurrent chats in a single window
 - **Multi-provider model selection** — OpenRouter, Z.ai, GitHub Copilot, MiniMax, Venice, and Charm Hyper, plus your own [custom providers](#custom-providers): any OpenAI- or Anthropic-compatible server, such as llama-server, LM Studio, or Ollama
-- **Per-response model labels** — each agent response shows the name and provider of the model that wrote it, and shows when the model changed mid-conversation
-- **Saved prompts** — selectable via `/prompt` shortcut (Zed-style)
+- **Web search & URL scraping** - Venice-based models can search the Internet and read URLs you give them
+- **X search** - Via Grok models on Venice
 - **Inline editing** — edit any message in a thread, including agent responses
-- **Text pill separators** — toggleable "User" / "Agent" labels between messages
+- **Per-response model labels** — switch models mid-convo and remember who said what
 - **Multiple simultaneous responses** — Ask different AIs the same question across multiple tabs at once
 - **Conversation history** — persisted locally with the ability to browse and delete past conversations
 - **Save as Markdown** - <kbd>Cmd/Ctrl+S</kbd> saves the current conversation to a Markdown file you pick
@@ -26,8 +27,6 @@ Talk with AI in a fully editable plaintext document. Inspired by Zed's text thre
 - **Markdown tables** - Renders GFM-flavored markdown tables inline
 - **Native menubar** - File, Edit, Conversation, View, Window, and Help menus with an item for every keyboard shortcut
 - **Open Dez Folder** - a button in Settings › General opens the folder where Dez keeps its data (`~/.config/dez/`)
-- **Web search & URL scraping** - Venice-based models can search the Internet and read URLs you give them
-- **X search** - Via Grok models on Venice
 - **Cross-platform** — macOS and Linux
 
 ## UI
