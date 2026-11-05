@@ -18,6 +18,12 @@ export function isModalOpen(): boolean {
 export function useKeyboardShortcuts() {
   function handleKeydown(e: KeyboardEvent) {
     if (e.key === "Escape") {
+      // Esc closes the innermost open thing first: the model dropdown
+      // (ModelSelector.vue takes the key before this handler), Settings or
+      // History, the prompt autocomplete, find. With none open, it stops
+      // the active tab's stream. tests/e2e/submit-stop.e2e.ts covers the
+      // order.
+      //
       // Only this handler closes Settings and History on Esc. An Esc
       // handler on a modal would run first when the focus is inside it,
       // and this handler would then see no modal and also close find or

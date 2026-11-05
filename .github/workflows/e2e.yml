@@ -19,6 +19,8 @@ env:
   # See the header of the action's action.yml for all the rules.
   NODE_OPTIONS: --use-openssl-ca
 
+# Every job removes the compromised eMudhra CA roots in its first step,
+# before any network request (see the e2e job). A new job must do the same.
 jobs:
   e2e:
     name: E2E (Linux, WebDriver)

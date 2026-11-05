@@ -67,6 +67,9 @@ function onClickOutside(e: MouseEvent) {
   }
 }
 
+// This listener is on `document` in the capture phase (see onMounted), so an
+// open dropdown or popup takes Esc before the editor and the global shortcut
+// handler, which would else close find or stop the stream.
 function onKeydown(e: KeyboardEvent) {
   if (e.key === 'Escape' && (isOpen.value || settingsOpen.value)) {
     e.stopPropagation()

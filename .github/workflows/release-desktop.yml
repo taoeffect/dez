@@ -8,6 +8,11 @@ on:
 permissions:
   contents: write
 
+# Every job removes the compromised eMudhra CA roots in its first step,
+# before any network request. Ubuntu jobs use the shared okTurtles
+# fix-ubuntu-ca-roots action and set NODE_OPTIONS: --use-openssl-ca in the
+# job env. The macOS job runs its own inline fix. A new job must do the
+# same. The e2e gate gets the fix and NODE_OPTIONS from e2e.yml.
 jobs:
   # Gate all release builds on the E2E UI tests passing for the tagged
   # commit; builds below only start when this reusable workflow succeeds.
@@ -165,11 +170,11 @@ jobs:
   # notes" step may reference it. Never reference it, or use
   # `secrets: inherit`, in another job. This job runs no npm ci: the script
   # uses only Node built-ins, so no third-party package code runs next to
-  # the key. If it fails, "Re-run failed jobs" retries it and
-  # publish-release without a rebuild: a partial re-run keeps the artifacts
-  # of the jobs that passed. If the release already exists, the job writes
-  # no notes (publish-release keeps the existing ones), so a model failure
-  # cannot stop the asset upload.
+  # the key. If it fails, publish-release does not run, so no release is
+  # made. "Re-run failed jobs" then retries both without a rebuild: a
+  # partial re-run keeps the artifacts of the jobs that passed. If the
+  # release already exists, the job writes no notes (publish-release keeps
+  # the existing ones), so a model failure cannot stop the asset upload.
   release-notes:
     name: Write release notes
     runs-on: ubuntu-22.04

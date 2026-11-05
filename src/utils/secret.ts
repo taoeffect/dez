@@ -1,5 +1,11 @@
 const SECRET_TAG = Symbol('Secret')
 
+/**
+ * Hides a value from `toString()` and `JSON.stringify` (both give '[Secret]').
+ * It is not a vault: `reveal()` returns the real value. So never log provider
+ * request headers, native HTTP payloads, or diagnostic data without removing
+ * secrets first.
+ */
 export class Secret<T> {
   readonly [SECRET_TAG] = true
 

@@ -31,6 +31,10 @@ interface NativeStreamRuntime {
   cancelling: boolean
 }
 
+// The native HTTP request of each tab's stream, so tabs stream at the same
+// time and a new start or a stop cancels only its own tab's request.
+// http_bridge.rs keeps the global map of request ids that does the native
+// cancel.
 const nativeStreamsByTab = new Map<string, NativeStreamRuntime>()
 
 function finalizeStream(tabId: string, session: StreamSessionState | null, failed: boolean): void {
@@ -150,6 +154,7 @@ export default sbp('sbp/selectors/register', {
       if (currentStream?.requestId === requestId && !currentStream.cancelling) {
         console.error('Chat request failed:', error)
         errorStream(args.tabId)
+        // The error shows only in this toast, never as thread text.
         // Sticky (no duration): the user closes it. For a tab in the
         // background the title names the tab, else the user cannot tell
         // where the error came from. Read after the stream end, which sets

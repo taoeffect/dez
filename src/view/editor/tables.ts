@@ -134,7 +134,9 @@ function cellAlignment(cellText: string): TableAlignment {
   return null
 }
 
-/** Find the GFM tables in a live editor doc, in doc order. The rules follow
+/** Find the GFM tables in a live editor doc, in doc order. The editor's
+ *  markdown language (`dezLanguageSupport` in `cmEditor.ts`) has no GFM, so
+ *  its syntax tree has no tables; this scan finds them. The rules follow
  *  `@lezer/markdown`'s GFM `Table` extension, with these differences, because
  *  the app's syntax tree is one CommonMark doc over all sections:
  *  - each section is a separate doc: a `SECTION_SEP` line ends a table and
@@ -349,7 +351,8 @@ function buildTableDecorations(state: EditorState): TableDecorations {
  *  split a cell.
  *  The decorations come only from the doc text, never from the cursor: an
  *  edit that breaks the syntax shows the raw source, and the table returns
- *  as soon as the source is valid again. */
+ *  as soon as the source is valid again. The table CSS is in `dezTheme`
+ *  (`cmEditor.ts`). */
 const tableDecorationsField = StateField.define<TableDecorations>({
   create: (state) => buildTableDecorations(state),
   update: (value, tr) => tr.docChanged ? buildTableDecorations(tr.state) : value,
@@ -544,6 +547,9 @@ const tableMarginClicks = ViewPlugin.define((view) => {
   }
 })
 
+/** Tables for the thread editor (`buildState()` in `ThreadEditor.vue`). It
+ *  also replaces the selection layer of `drawSelection()` and forwards
+ *  clicks in the margin beside table rows. */
 export function markdownTables(): Extension {
   return [tableDecorationsField, tableAwareSelectionLayer, hideDefaultSelectionLayer, tableMarginClicks]
 }

@@ -131,7 +131,9 @@ const thinkingConfigSchema = z.object({
 
 // The whole definition of a provider. Built-ins are literals of this type and
 // custom providers are the same JSON in app_state.json, so one Provider class
-// serves both.
+// serves both. Put every difference between providers in this data (headers,
+// maxOutputTokens, settings, thinking), never in a branch on the provider id.
+// Behavior that depends on the sign-in reads `auth` ('githubCopilot').
 export const providerConfigSchema = z.object({
   id: providerIdSchema,
   name: z.string().trim().min(1, 'Name must not be empty'),

@@ -1,7 +1,9 @@
 import { spawnSync } from 'node:child_process';
 
 // Best-effort cleanup of old Rust build artifacts in src-tauri/target so the
-// directory does not grow unboundedly across months of debug builds.
+// directory does not grow unboundedly across months of debug builds. The
+// package.json build scripts and `npm run tauri` run this first (as
+// `npm run clean:rust`); it deletes artifacts older than 14 days.
 // cargo-sweep is an optional dev tool: without it, builds still work and we
 // simply skip the cleanup instead of failing.
 const probe = spawnSync('cargo', ['sweep', '--version'], { stdio: 'ignore' });

@@ -21,7 +21,9 @@ export interface ModelDisplayNames {
 }
 
 // What views and controllers know about a provider. Plain data, so it can be
-// cloned and shown without the Provider class.
+// cloned and shown without the Provider class. Views learn about a provider
+// (thinking support too) from this or ProviderSettingsDescriptor, never from
+// registry imports.
 export interface ProviderInfo {
   id: ProviderId
   name: string

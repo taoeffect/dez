@@ -2,7 +2,8 @@
 // `model="…"`) in conversation files and clipboard text. A value ends at the
 // next `"` and a marker must stay on one line, so `"`, LF, and CR become
 // character references. `&` is escaped too, so a value that holds a literal
-// `&quot;` reads back unchanged.
+// `&quot;` reads back unchanged. Conversation files write prompt names
+// without this escaping (conversationFormat.ts).
 const ESCAPES: Record<string, string> = {
   '&': '&amp;',
   '"': '&quot;',

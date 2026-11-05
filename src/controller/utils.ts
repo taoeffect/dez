@@ -12,6 +12,9 @@ export default sbp('sbp/selectors/register', {
     })
   },
 
+  // `get_app_dir` creates ~/.config/dez if it is missing. The capabilities
+  // allow `openPath` only on that folder (`opener:allow-open-path` in
+  // src-tauri/capabilities/default.json).
   async 'dez.controller/openAppFolder' (): Promise<void> {
     try {
       const dir = await sbp('dez.native/getAppDir') as string
@@ -26,7 +29,8 @@ export default sbp('sbp/selectors/register', {
     }
   },
 
-  // Shows a file in the system file manager. On macOS, Finder selects it. On
+  // Shows a file in the system file manager. `opener:default` allows
+  // `revealItemInDir` on every path. On macOS, Finder selects it. On
   // Linux, the opener plugin asks the org.freedesktop.FileManager1 D-Bus
   // service (Dolphin, Nautilus, …) to select it. Without that service the
   // reveal fails: the plugin's portal fallback (2.5.3) calls the bus name

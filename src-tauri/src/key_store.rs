@@ -5,6 +5,8 @@ use std::sync::{Mutex, PoisonError};
 
 // GitHub Copilot stores OAuth tokens from the device flow, not an API key, so
 // it has its own field in `KeyStoreData` and never an `api_keys` entry.
+// copilot.rs runs the sign-in (`copilot_start_device_flow`,
+// `copilot_poll_device_flow`) and refreshes the short-lived chat token.
 pub const COPILOT_PROVIDER_ID: &str = "copilot";
 
 const MAX_PROVIDER_ID_LEN: usize = 64;

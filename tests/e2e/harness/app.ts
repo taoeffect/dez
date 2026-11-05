@@ -23,7 +23,10 @@ export interface RunningApp {
 /**
  * Locate the app binary for tests. Precedence:
  * 1. `DEZ_E2E_BINARY` env override (absolute or cwd-relative path).
- * 2. `src-tauri/target/debug/dez` if it exists.
+ * 2. `src-tauri/target/debug/dez` if it exists. It is used as is, even when
+ *    it is older than the source: after source changes, rebuild it with
+ *    `npm run tauri build -- --debug --no-bundle`, or the suite tests stale
+ *    code.
  * 3. Build it with `npm run tauri build -- --debug --no-bundle` when
  *    `DEZ_E2E_BUILD=1` (opt-in because the build is slow).
  *

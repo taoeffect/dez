@@ -91,8 +91,10 @@ function withValidModels(entry: unknown, entryIndex: number): unknown {
 // built-in id, or a repeated id (the first one wins) drops only that entry,
 // and never the built-ins. A hand-added `apiKey` is not part of the config
 // (the schema strips it); it is returned in `apiKeys` so that startup can
-// move it to provider_keys.json. Logs name the entry index and the Zod
-// issues only, never the entry, because the entry can hold a key.
+// move it to provider_keys.json. A key put in `headers` is part of the
+// config, so it stays in app_state.json as written. Logs name the entry
+// index and the Zod issues only, never the entry, because the entry can
+// hold a key.
 function customProviders(value: unknown): { configs: ProviderConfig[]; apiKeys: Record<string, string> } {
   const configs: ProviderConfig[] = []
   const apiKeys: Record<string, string> = {}
@@ -135,6 +137,8 @@ export function defaultAppState(): AppStatePayload {
   }
 }
 
+// app_state.json holds an AppStatePayload (types.ts). A bad field gets its
+// default, so a hand edit never stops startup.
 export function parseAppStateJson(content: string): AppStatePayload {
   try {
     const parsed = JSON.parse(content) as unknown

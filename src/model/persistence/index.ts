@@ -11,6 +11,10 @@ const APP_STATE_FILE = 'app_state.json'
 const PROMPTS_FILE = 'prompts.json'
 const MODEL_CACHE_FILE = 'model_cache.json'
 
+// App code reads and writes the files under ~/.config/dez/ only through
+// these selectors, which own the file formats. They reach the disk only
+// through `dez.native/*` (src/controller/native.ts), the one frontend layer
+// that calls the raw Tauri file commands.
 export default sbp('sbp/selectors/register', {
   async 'dez.persistence/saveConversation' (data: ConversationData): Promise<void> {
     try {

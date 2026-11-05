@@ -75,6 +75,9 @@ function fitStart(start: number, outerLength: number, areaStart: number, areaLen
   return Math.max(areaStart, Math.min(Math.round(start), areaStart + areaLength - outerLength))
 }
 
+// With no saved position, or with no part of the saved window on any
+// monitor, the window is centered on the primary monitor. With no monitors,
+// the OS places it.
 export function fitWindowGeometry(request: WindowPlacement, options: WindowFitOptions): WindowPlacement {
   const { monitors, primary, minSize, frame } = options
   if (monitors.length === 0) {

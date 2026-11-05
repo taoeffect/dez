@@ -152,7 +152,12 @@ function overlapsProtectedRange(ranges: DocRange[], from: number, to: number): b
  *  `SearchQuery.test`: when `test` rejects a match, CM's multi-line regex
  *  cursor (patterns with `\s`, `\W`, `[^`, `\n`, ...) ends the whole search.
  *  A rejected match still consumes its text, so a greedy regex that crosses
- *  a separator yields nothing for that stretch. */
+ *  a separator yields nothing for that stretch.
+ *  Every find feature (count, highlights, next/previous, replace) must get
+ *  its matches here. So the app uses only `SearchQuery` and the cursors of
+ *  `@codemirror/search`, never its search panel, commands, or keymap: they
+ *  do not skip protected ranges, so their replace could break separators
+ *  and pills. */
 export function* findMatches(
   state: EditorState,
   query: SearchQuery,

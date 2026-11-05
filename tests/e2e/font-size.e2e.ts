@@ -10,7 +10,7 @@ import { focusEditor, sbpCall, threadSections } from './harness/thread'
 // Cmd/Ctrl+= and Cmd/Ctrl+- change the font size of the thread editor in
 // every tab, the size survives a relaunch, and the app chrome keeps its
 // size. WebDriver keys reach the page key handler only; the Linux menu
-// accelerators take the keys before the page (AGENTS.md).
+// accelerators take the keys before the page (see vitest.e2e.config.ts).
 //
 // After each change CodeMirror must measure the text again, or its height
 // map keeps the old line heights: the caret and clicks land on the wrong

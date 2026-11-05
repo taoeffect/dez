@@ -1,3 +1,7 @@
+//! Generic HTTP for the webview. TypeScript owns all provider logic (model
+//! lists, chat requests, SSE parsing). Rust only sends a request and passes
+//! the response bytes back, so a new provider needs no Rust change.
+
 use std::collections::HashMap;
 use std::sync::Arc;
 use std::time::Duration;
@@ -43,6 +47,8 @@ pub struct HttpResponse {
     pub body: Vec<u8>,
 }
 
+// Sent on the Channel as `{ kind, data }`. Keep it in step with
+// `NativeHttpStreamEvent` in src/utils/protocol/nativeHttp.ts.
 #[derive(Debug, Clone, serde::Serialize)]
 #[serde(tag = "kind", content = "data")]
 pub enum HttpStreamEvent {

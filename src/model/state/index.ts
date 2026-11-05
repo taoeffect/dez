@@ -1,3 +1,7 @@
+// The Pinia stores in this folder are internal to the model. Other layers
+// change and read them through the dez.model/* selectors (and the plain
+// functions exported here and from streams.ts); views read reactive state
+// through src/view/modelState.ts.
 import sbp from '@sbp/sbp'
 import { watch, type WatchStopHandle } from 'vue'
 import { debounce } from 'turtledash'
@@ -705,6 +709,9 @@ export default sbp('sbp/selectors/register', {
 
   // Settings persistence is model-owned so stores remain reactive state only; the
   // debounce preserves the old app-state write coalescing behavior.
+  // dez.controller/app/init calls this only after settings/init has loaded
+  // app_state.json. A settings mutation before then can be lost: the loaded
+  // state can replace it, and no watcher saves it.
   'dez.model/settings/startPersistence' (): void {
     const settings = useSettingsStore()
     stopSettingsPersistWatch?.()

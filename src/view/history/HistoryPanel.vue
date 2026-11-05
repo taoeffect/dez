@@ -39,7 +39,9 @@ const sortedConversations = computed(() => {
 
 // Each row with the names of its header model, the same names as the agent
 // role pills. They come from the live provider configs and model cache, so a
-// provider rename or a model refresh updates the open panel.
+// provider rename or a model refresh updates the open panel. The tooltip is
+// the raw `provider/model` key, which is what history search matches, not
+// the names (`src/model/persistence/search.ts`).
 const rows = computed(() => sortedConversations.value.map((conversation) => ({
   conversation,
   model: conversation.model

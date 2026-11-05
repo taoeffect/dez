@@ -17,7 +17,8 @@ export interface CachedProvider {
 }
 
 // Whole persisted model cache (~/.config/dez/model_cache.json). Non-secret:
-// only model ids/names, never keys.
+// only model ids/names, never keys. The model picker shows these last-known
+// lists at once at startup; a background refresh then checks them.
 export interface ModelCache {
   providers: Partial<Record<ProviderId, CachedProvider>>
   version: number

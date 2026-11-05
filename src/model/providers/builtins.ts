@@ -3,8 +3,10 @@
 import type { ProviderConfig } from './config'
 
 // The providers that ship with the app. They are the same JSON a user can add
-// as a custom provider. They skip the schema at run time, so every field the
-// schema would fill in is written out here (config.test.ts checks this).
+// as a custom provider. To add a built-in, add a literal here: it needs no
+// type union, no Rust change, and no per-provider module. Built-ins skip the
+// schema at run time, so every field the schema would fill in is written out
+// here (config.test.ts checks this).
 export const BUILT_IN_PROVIDER_CONFIGS: readonly ProviderConfig[] = [
   {
     id: 'openrouter',

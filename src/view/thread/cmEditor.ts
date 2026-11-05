@@ -39,20 +39,28 @@ export const SECTION_SEP = '\u001E'
  *  stuck. By escaping `\n` → `\u{E003}` inside the body the marker sequence
  *  always stays on a single line, so the atomic replace behaves correctly.
  *  Newlines are restored in `decodeSectionContent` when we sync back to the
- *  store. */
+ *  store. Only collapsed pills escape newlines: the body of an expanded pill
+ *  holds real newlines, so the user edits it as normal lines. */
 export const PILL_OPEN = '\u{E000}'
 export const PILL_BODY = '\u{E001}'
 export const PILL_CLOSE = '\u{E002}'
 export const PILL_NL = '\u{E003}'
 // `SENTINEL_CHAR` and `stripLiveSentinels` in `src/model/chat/content.ts`
 // match these code points and `SECTION_SEP`; change them together.
+// All of them live only in the editor doc. Files, clipboard text and titles
+// must never hold them: `docToSections`, the clipboard serializers and
+// `stripLiveSentinels` keep them out.
 
 /** Lightweight mirror of a Section kept in the CM state. The CM doc is the
  *  source of truth for text; this field just tracks per-section identity
  *  (id), role, the AI model that wrote the section (`model`, absent when
  *  unknown), and its thinking (`thinking`, never doc text). The editor
  *  writes this field back to the store on every doc change
- *  (`syncDocToTab`), so a section field missing here is lost there. */
+ *  (`syncDocToTab`), so a section field missing here is lost there. A new
+ *  per-section field must also go in `initialSectionModels`,
+ *  `docToSections`, `sectionModelsEqual` (ThreadEditor.vue) and
+ *  `dez.model/thread/sectionsIdentity`, or the store loses it on the first
+ *  streamed token. */
 export interface SectionModel {
   id: string
   role: Role
@@ -163,6 +171,8 @@ export function keymapHasPlatformBinding(
   return bindings.some((binding) => binding[platform] === key)
 }
 
+/** The first section is always `user`. It has no separator line in the
+ *  doc, so it has no role pill that could toggle it. */
 function normalizeSectionModels(models: SectionModel[]): SectionModel[] {
   if (models.length === 0) return [{ id: crypto.randomUUID(), role: 'user' }]
   if (models[0].role === 'user') return models
@@ -501,6 +511,8 @@ export const sectionsField = StateField.define<SectionModel[]>({
         if (index >= 0) {
           const { thinking: _replaced, ...section } = next[index]
           const copy = next.slice()
+          // The value is the store's object, a reactive proxy. Keep a plain
+          // copy: `structuredClone` refuses proxies.
           copy[index] = { ...section, ...thinkingField(e.value.thinking) }
           next = copy
         }
@@ -585,7 +597,9 @@ class RoleSeparatorWidget extends WidgetType {
   ) {
     super()
   }
-  // Thinking is left out on purpose: see `pillThinkingUpdater`.
+  // Thinking is left out on purpose: see `pillThinkingUpdater`. Every other
+  // part that `toDOM` draws must be compared here, or CodeMirror keeps
+  // stale pill DOM.
   eq(other: WidgetType): boolean {
     return (
       other instanceof RoleSeparatorWidget &&
@@ -629,7 +643,9 @@ function pillThinkingAt(state: EditorState, index: number): PillThinkingView | n
 // top, and restarts the pill's busy animations, at every thinking token.
 // So `RoleSeparatorWidget.eq` ignores thinking, CodeMirror leaves the pill
 // alone, and this plugin changes it. `toDOM` reads the thinking from the
-// state, so a pill that CodeMirror draws again is up to date.
+// state, so a pill that CodeMirror draws again is up to date. A change of
+// the pill's height in place must call `measureLineHeights`
+// (`editorMeasure.ts`), as `renderPillThinking` does.
 const pillThinkingUpdater = ViewPlugin.define(() => ({
   update({ startState, state, view }: ViewUpdate) {
     if (
@@ -651,7 +667,8 @@ const pillThinkingUpdater = ViewPlugin.define(() => ({
  *  replaced with a block separator widget whose role/index come from the
  *  sectionsField and whose model part comes from `chips` (by section
  *  index). With `chips` null, the ranges have no widget (atomic ranges
- *  only). */
+ *  only). Separator n (counting from 1) starts section n, so the index of
+ *  a pill is the section after it; section 0 has no separator. */
 function buildSeparatorDecorations(
   doc: string,
   models: SectionModel[],

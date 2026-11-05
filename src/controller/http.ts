@@ -13,6 +13,9 @@ interface ActiveNativeHttpStream {
   rejectHeaders(reason: unknown): void
 }
 
+// Rust (http_bridge.rs) only moves bytes. Provider requests are built and
+// their replies parsed in TypeScript, behind dez.provider/* and this
+// domain, so keep provider behavior out of Rust.
 const activeStreams = new Map<string, ActiveNativeHttpStream>()
 
 export default sbp('sbp/selectors/register', {

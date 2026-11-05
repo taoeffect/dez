@@ -43,8 +43,11 @@ export default sbp('sbp/selectors/register', {
   // The saved geometry can be from another screen setup, so it is fitted to
   // the monitors there are now. Every path shows the window, also when the
   // restore fails: a window that stays hidden looks like an app that does
-  // not start. Wayland gives no window positions: there only the size and
-  // maximized are restored, and the compositor places the window.
+  // not start. Only this selector shows the window, so when the frontend
+  // fails before `dez.controller/app/init` runs (for example a compile error
+  // in `npm run tauri dev`), no window shows; read the Vite output. Wayland
+  // gives no window positions: there only the size and maximized are
+  // restored, and the compositor places the window.
   async 'dez.controller/window/restore' (): Promise<void> {
     if (!isTauri()) return
     const appWindow = getCurrentWindow()
@@ -104,7 +107,8 @@ export default sbp('sbp/selectors/register', {
         // A fullscreen size is not one to open with, and the store already
         // holds the geometry from before it. `appWindow.isFullscreen()`
         // misses a fullscreen that the Linux window manager makes; see
-        // `is_window_fullscreen` in commands.rs.
+        // `is_window_fullscreen` in commands.rs. No e2e spec covers this:
+        // only a window manager makes such a fullscreen, and CI has none.
         if (await appWindow.isMinimized() || await sbp('dez.native/isWindowFullscreen')) return
         if (await appWindow.isMaximized()) {
           if (lastNormalGeometry) sbp('dez.model/settings/setWindowGeometry', { ...lastNormalGeometry, maximized: true })
@@ -145,6 +149,7 @@ export default sbp('sbp/selectors/register', {
       }))
     saveGeometry()
     stopWindowTracking = () => {
+      // A pending save is dropped, so a move just before quit can be lost.
       saveGeometry.clear()
       for (const listener of listeners) void listener.then((unlisten) => unlisten?.())
     }

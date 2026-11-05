@@ -49,8 +49,9 @@ export type ThinkingReplay =
   | { kind: 'copilot'; opaque: string; prefixHash: string }
 
 /** The reasoning a model streamed before its answer. It is not in the
- *  section content: the editor shows it in the agent pill, and requests,
- *  exports, previews, and search never read it as message text. */
+ *  section content or the CodeMirror doc: the editor shows it in the agent
+ *  pill, and requests, previews, titles, search, find, Save As Markdown, and
+ *  Copy Markdown never read it as message text. */
 export interface SectionThinking {
   /** Every streamed thinking part, joined in stream order. */
   text: string

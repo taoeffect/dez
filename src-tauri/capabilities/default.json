@@ -1,7 +1,7 @@
 {
   "$schema": "../gen/schemas/desktop-schema.json",
   "identifier": "default",
-  "description": "Capability for the main window",
+  "description": "Capability for the main window. Why each permission is here: see run() in src/lib.rs.",
   "windows": ["main"],
   "permissions": [
     "core:default",

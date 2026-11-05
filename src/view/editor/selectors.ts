@@ -59,6 +59,10 @@ function followToBottomNextFrame(): void {
 // So this one rule covers the wheel, the scrollbar, keys and find jumps.
 // The distance from the bottom alone cannot tell a user scroll from new
 // text, because a scroll event can come after more text arrived.
+// So code that runs without a user action must not scroll a view up, or
+// scroll a view that does not follow: that looks like a user scroll, and
+// stops or starts the follow.
+// `tests/e2e/stream-follow.e2e.ts` covers the rules.
 function handleVisibleScroll(tabId: string): void {
   if (!activeView || activeViewTabId !== tabId) return
   const scroll = activeView.scrollDOM
@@ -151,6 +155,11 @@ export default sbp('sbp/selectors/register', {
     return true
   },
 
+  /** Appends a streamed token to the registered view of `tabId`. Does
+   *  nothing and returns false when another tab is visible; the store
+   *  already has the token. The token goes at the doc end, so `sectionId`
+   *  is not used: at stream start the streaming agent section is the last
+   *  section (`dez.model/ensureTrailingAgentSectionForTab`). */
   'dez.editor/appendTokenIfVisible' (tabId: string, _sectionId: string, token: string): boolean {
     if (!activeView || activeViewTabId !== tabId) return false
     dispatchStreamChange(activeView, tabId, {

@@ -37,7 +37,9 @@ export default sbp('sbp/selectors/register', {
   // editor keymap through `dez.editor/runKeyBinding`), so a key does the
   // same thing whichever path gets it: on Linux a menu accelerator takes the
   // key before the page sees it; on macOS the page sees it first and the
-  // menu gets only keys that the page did not handle.
+  // menu gets only keys that the page did not handle (not yet tested on a
+  // Mac). A new shortcut also needs a row in Settings › General
+  // (`shortcuts` in SettingsView.vue).
   //
   // Platform differences:
   // - Linux skips the predefined Undo, Redo, Hide, Quit, … items (muda), so

@@ -111,7 +111,8 @@ function span(className: string, text = ''): HTMLSpanElement {
  *  switch icon, the model name, and the provider name. The pill also gets
  *  the model facts as its tooltip, and the model part gets them as its
  *  accessible name. One pill and one color for every model: the name, not
- *  a color, tells models apart. Styles are in `dezTheme` (`cmEditor.ts`). */
+ *  a color, tells models apart. Styles are in `dezTheme` (`cmEditor.ts`).
+ *  The model is widget DOM, not doc text, so find and copy never see it. */
 export function addModelToPill(pill: HTMLElement, chip: ModelChip): void {
   pill.setAttribute('data-model-key', chip.key)
   const provider = chip.providerName ?? 'Unknown provider'

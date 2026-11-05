@@ -1,10 +1,14 @@
 #!/usr/bin/env node
 /**
  * Writes the GitHub release body for a Dez release tag: the text of
- * .github/release-notes-template.md, then a "## Changes" part that an AI model
- * writes from the commit messages since the previous release, in the style of
- * the hand-written v0.8.0 notes. The release workflow runs it, and it also
- * runs on a local machine (see USAGE).
+ * .github/release-notes-template.md (the only source of that text), then a
+ * "## Changes" part that an AI model writes from the commit messages since
+ * the previous release, in the style of the hand-written v0.8.0 notes. The
+ * release workflow runs it, and it also runs on a local machine (see USAGE).
+ *
+ * The release workflow keeps the notes of a release that already exists. To
+ * write new notes for it, run this script locally, then
+ * `gh release edit <tag> --notes-file <file>`.
  *
  * It uses only Node built-ins: the workflow job that holds the API key then
  * needs no `npm ci`, so no third-party package code runs next to the key.

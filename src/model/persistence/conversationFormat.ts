@@ -5,6 +5,29 @@ import { PILL_CLOSE_TAG, containerThinking, parsePillMarker, pillMarkerText, typ
 import type { ActiveModel, ModelRef, SectionThinking } from '../chat/types'
 import type { ContentNodeData, ConversationData, SectionData } from './types'
 
+// The conversation history file, ~/.config/dez/conversations/<id>.md
+// (persistence.rs keeps only the ASCII letters, digits, `-`, and `_` of the
+// id):
+//
+//   <!-- title: X | model: provider/model | created: N -->
+//
+//   <dez:pill type="user"/>
+//   text
+//   <dez:prompt name="NAME">
+//   prompt body
+//   </dez:prompt>
+//   <dez:pill type="agent" model="provider/model"/>
+//   text
+//
+// - The header `model:` is the tab's last selected model (`activeModel`),
+//   not the model of each reply. A pill with no `model` gives a section with
+//   no model; the header never fills it in.
+// - Each pill line starts a section. pillMarker.ts owns the pill markers,
+//   the thinking containers, and their escaping.
+// - A literal `</dez:prompt>` in a prompt body is written as `<\/dez:prompt>`.
+//   The prompt name is written as is, without escapeMarkerAttribute.
+// - The prompt `expanded` UI state is not saved: loaded prompts are collapsed.
+
 function escapeTitle(value: string): string {
   return value.replaceAll('|', '/').replaceAll('\n', ' ').replaceAll('\r', ' ')
 }

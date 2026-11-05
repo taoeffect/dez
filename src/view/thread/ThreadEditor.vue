@@ -62,6 +62,10 @@ const {
 } = useModelState()
 
 const hostRef = ref<HTMLDivElement | null>(null)
+// The one CodeMirror view of the thread. Its doc is the active tab's
+// sections as flat text with sentinels; `cmEditor.ts` converts it to and
+// from store sections. Fix editor behavior through CodeMirror state and
+// extensions, not by changing its DOM.
 let view: EditorView | null = null
 // The tab whose content the view's state holds.
 let viewTabId: string | null = null

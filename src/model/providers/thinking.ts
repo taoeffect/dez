@@ -1,6 +1,9 @@
 // The user's Thinking toggle is stored with the popup toggles, under this key
 // in settings.providerSettings[providerId]. A provider config may not use it
-// as a `settings[]` key (config.ts refuses it).
+// as a `settings[]` key (config.ts refuses it). Two UIs change this one value:
+// the Thinking row of the model picker's gear popup
+// (ProviderSettingsPopup.vue) and the Thinking switch in Settings › Providers
+// (ProviderManager.vue).
 export const THINKING_SETTING_KEY = 'thinking'
 
 // The stored toggles are sparse: a provider whose toggle the user never

@@ -1,3 +1,9 @@
+//! Raw private-file I/O under `~/.config/dez/`, plus id and file-name
+//! sanitization. TypeScript owns every file format (app state, prompts,
+//! conversations, model cache); Rust never parses them. The generic
+//! `save_app_file`/`load_app_file` commands take the file name from
+//! TypeScript, so a new JSON file needs no new command.
+
 use serde::{Deserialize, Serialize};
 use std::io::Write;
 use std::path::{Path, PathBuf};
@@ -14,6 +20,9 @@ pub struct ConversationFile {
     pub updated_at: i64,
 }
 
+// All app data is under `$HOME/.config/dez/` on every OS. The path comes from
+// $HOME on purpose, not from Tauri's path API. `key_store_path` in
+// key_store.rs builds the same folder.
 fn base_dir() -> PathBuf {
     let home = std::env::var("HOME").unwrap_or_else(|_| ".".into());
     PathBuf::from(home).join(".config").join("dez")
@@ -46,6 +55,8 @@ fn sanitize_app_file_name(name: &str) -> Result<String, String> {
     Ok(name.to_string())
 }
 
+// Conversation ids become file names. Unlike `sanitize_app_file_name`, this
+// drops other characters and does not fail.
 fn sanitize_id(id: &str) -> String {
     id.chars()
         .filter(|c| c.is_ascii_alphanumeric() || *c == '-' || *c == '_')
@@ -72,13 +83,14 @@ fn ensure_dir(path: &Path) -> Result<(), String> {
 static TEMP_FILE_COUNTER: AtomicU64 = AtomicU64::new(0);
 
 // The one writer for every private file: app files, conversations, and
-// `provider_keys.json`. It writes a temp file next to `path`, then renames it
-// over `path`. A rename replaces the file in one step, so a crash or a full
-// disk never leaves a cut-off file (a cut-off `app_state.json` would load as
-// the default state). The temp file is created with mode 0600, so other users
-// can never read it, not even for a moment. The process id in its name keeps
-// two running Dez apps apart, and the counter keeps two saves in this process
-// apart: the save commands are async and take no lock, so they can overlap.
+// `provider_keys.json`; use it for any new one. It writes a temp file next to
+// `path`, then renames it over `path`. A rename replaces the file in one
+// step, so a crash or a full disk never leaves a cut-off file (a cut-off
+// `app_state.json` would load as the default state). The temp file is created
+// with mode 0600, so other users can never read it, not even for a moment.
+// The process id in its name keeps two running Dez apps apart, and the
+// counter keeps two saves in this process apart: the save commands are async
+// and take no lock, so they can overlap.
 pub(crate) fn write_private_file(path: &Path, content: &str) -> Result<(), String> {
     if let Some(parent) = path.parent() {
         ensure_dir(parent)?;
