@@ -58,6 +58,10 @@ const HANG_TEXT = ['Hanging fixture.', '', '| Key | Left | Right |', '|-----|---
 const TAB_ROW = '\t| x | y |'
 const TAB_TEXT = ['Tab fixture.', '', '| Key | Text |', '|-----|------|', TAB_ROW].join('\n')
 
+// GFM allows a body row with fewer cells than the table has columns.
+const SHORT_ROW = '| Cy |'
+const SHORT_TEXT = ['Short row fixture.', '', HEADER, DELIMITER, ANN_ROW, SHORT_ROW].join('\n')
+
 // Short cells with chars that are wider than 1ch (CJK, emoji, a tab), next
 // to a long column that wraps and so takes all the width that it can get.
 const WIDE_ROW = `| ab | 東京都 | ✅ | 🚀 | \tbc | ${LONG_CELL} |`
@@ -555,6 +559,23 @@ describe('markdown tables', () => {
     expect(charWidth, 'width of the space after the pipe').toBeGreaterThan(1)
     // WebKit puts the chars after a tab up to about 0.5px off.
     expect(Math.abs(space.x - pipe.x - charWidth), 'width of the leading pipe minus a char width').toBeLessThan(1)
+  })
+
+  // A short last row ends left of the table's right edge: its first cell has
+  // the table's bottom-left corner, and no cell has the bottom-right one.
+  it('rounds no corner inside the table when the last row is short', async () => {
+    await openFixture(SHORT_TEXT)
+    const corners = await browser.execute((wanted: string) => {
+      const line = Array.from(document.querySelectorAll('.cm-content .dez-table-row')).find((el) => el.textContent === wanted)
+      if (!line) throw new Error(`corners: no rendered row ${wanted}`)
+      return Array.from(line.querySelectorAll(':scope > .dez-table-cell')).map((cell) => {
+        const style = getComputedStyle(cell)
+        return { bottomLeft: style.borderBottomLeftRadius, bottomRight: style.borderBottomRightRadius }
+      })
+    }, SHORT_ROW)
+    expect(corners).toHaveLength(1)
+    expect(corners[0].bottomLeft, 'bottom-left radius').not.toBe('0px')
+    expect(corners[0].bottomRight, 'bottom-right radius').toBe('0px')
   })
 
   it('keeps short cells with wide chars on one line next to a long column', async () => {

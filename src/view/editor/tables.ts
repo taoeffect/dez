@@ -417,7 +417,9 @@ function buildTableDecorations(state: EditorState): TableDecorations {
         const shape = shapes[rowIndex][index]
         // The delimiter row's smaller font would shrink a `ch` width.
         const width = row.kind === 'delimiter' ? null : widths[index]
-        const last = index === row.cells.length - 1
+        // A short body row (fewer cells than columns) ends inside the table,
+        // so only a cell in the last column takes the table's right corners.
+        const last = index === table.alignments.length - 1
         cells.add(cell.from, cell.to, cellMark(index === 0, last, table.alignments[index], cellStyle(shape, width)))
         for (const pipe of cell.pipes) rows.add(pipe, pipe + 1, pipe === shape.closingPipe ? CLOSING_PIPE_MARK : PIPE_MARK)
       })
