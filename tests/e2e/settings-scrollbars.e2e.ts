@@ -17,9 +17,10 @@ import { sbpCall } from './harness/thread'
 // a classic scrollbar, so they cannot pass with overlay scrollbars.
 //
 // WebKitGTK draws overlay scrollbars unless GTK's `gtk-overlay-scrolling`
-// is off. The app's HOME is the harness temp dir, so the spec turns it off
-// there two ways: in a GSettings keyfile (GTK reads GSettings on Wayland)
-// and in settings.ini (X11 with no XSETTINGS manager, as under xvfb-run).
+// is off. The app's HOME and XDG_CONFIG_HOME are in the harness temp dir,
+// so the spec turns it off there two ways: in a GSettings keyfile (GTK reads
+// GSettings on Wayland) and in settings.ini (X11 with no XSETTINGS manager,
+// as under xvfb-run).
 //
 // The checks run in the order that showed the bug: the first look at a
 // pane after its scrollbar came or went. A later relayout of the pane

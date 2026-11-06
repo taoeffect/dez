@@ -137,6 +137,10 @@ async function killProcessGroup (child: ChildProcess): Promise<void> {
  * Start tauri-driver wired to a fully isolated app instance:
  * - fresh temp HOME so the app's ~/.config/dez data can never touch the
  *   real user profile (Rust derives the config dir from $HOME);
+ * - XDG_CONFIG_HOME set to the temp HOME's `.config` too: GLib and GTK read
+ *   it before $HOME/.config, and GitHub's Ubuntu runners set it to the
+ *   runner's own ~/.config, so GTK settings seeded in the temp HOME would be
+ *   ignored and GLib would write into the runner's profile;
  * - TAURI_WEBVIEW_AUTOMATION=true inherited down the spawn chain
  *   (tauri-driver -> WebKitWebDriver -> app) to enable wry's automation
  *   session — without it, new-session requests hang forever;
@@ -166,6 +170,7 @@ export async function startApp (options: { env?: Record<string, string> } = {}):
       ...process.env,
       ...options.env,
       HOME: home,
+      XDG_CONFIG_HOME: path.join(home, '.config'),
       TAURI_WEBVIEW_AUTOMATION: 'true'
     },
     stdio: ['ignore', 'pipe', 'pipe']
