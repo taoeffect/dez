@@ -18,12 +18,14 @@ export interface DefaultModel {
 // same on screens with other scale factors. `x`/`y` is the outer position in
 // the one coordinate space that the window system uses for all screens:
 // logical points on macOS, physical px elsewhere (src/controller/window.ts).
-// On Wayland the position always reads (0,0).
+// GTK's Wayland backend gives no positions, so a run there keeps the saved
+// `x`/`y`, and saves none (both absent) when there were none; the next
+// restore then centers the window.
 export interface WindowGeometry {
   width: number
   height: number
-  x: number
-  y: number
+  x?: number
+  y?: number
   maximized: boolean
 }
 

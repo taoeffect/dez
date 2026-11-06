@@ -4,17 +4,20 @@ import { startApp, type RunningApp } from './harness/app'
 import { screenshotOnFailure, waitFor, waitForValue } from './harness/dom'
 import { readAppState, seedAppState } from './harness/fixtures'
 import { createSession, destroySession, type E2EBrowser } from './harness/session'
+import { sbpCall } from './harness/thread'
 
 // The main window opens with the geometry saved in app_state.json, fitted to
 // the screen: a saved window that is larger than the screen and off it opens
 // inside the screen. A resize and a move are saved and come back after a
 // relaunch, at the same size.
 //
-// Wayland gives no window positions: there the position always reads (0,0)
-// and a move does nothing, so the position checks hold there trivially. CI
-// runs these specs on X11 (xvfb-run), where they are real. Under Wayland,
-// GTK draws the window frame, and the read size is larger than the saved
-// one; the size checks are real there.
+// The specs run on both GTK backends. CI runs them on X11 (xvfb-run), where
+// the position checks are real. Wayland gives no window positions: there the
+// position always reads (0,0) and a move does nothing, and the specs check
+// that the place seeded in app_state.json stays saved through the fit, a
+// resize, and relaunches (the restore of that place on X11 is the specs'
+// X11 run). Under Wayland, GTK draws the window frame, and the read size is
+// larger than the saved one; the size checks are real there.
 
 interface Rect {
   x: number
@@ -43,6 +46,8 @@ const MOVED = { x: 40, y: 30 }
 // More growth than any GTK frame adds; still fits a 1280x800 logical screen
 // with the frame.
 const GROWN = { width: RESIZED.width + 250, height: RESIZED.height + 250 }
+// From a larger screen, and on a monitor left of and below this one.
+const SEEDED: WindowGeometry = { width: 5000, height: 4000, x: -9000, y: 9000, maximized: false }
 
 // The window API that the app uses, called in the page.
 async function windowState (browser: E2EBrowser): Promise<WindowState> {
@@ -71,33 +76,41 @@ async function windowState (browser: E2EBrowser): Promise<WindowState> {
   })
 }
 
-// The work area that holds the whole saved window, if any. The saved size is
-// logical and the work areas are physical.
-function workAreaHolding (geometry: WindowGeometry, { scale, workAreas }: WindowState): Rect | undefined {
-  return workAreas.find((area) => geometry.x >= area.x && geometry.y >= area.y &&
-    geometry.x + geometry.width * scale <= area.x + area.width &&
-    geometry.y + geometry.height * scale <= area.y + area.height)
+// The work area that holds the whole window, if any: `x`/`y` is its physical
+// place and `width`/`height` its logical size; the work areas are physical.
+function workAreaHolding ({ x, y, width, height }: Rect, { scale, workAreas }: WindowState): Rect | undefined {
+  return workAreas.find((area) => x >= area.x && y >= area.y &&
+    x + width * scale <= area.x + area.width &&
+    y + height * scale <= area.y + area.height)
 }
 
 describe('window geometry', () => {
   let app: RunningApp
   let browser: E2EBrowser
+  // GTK runs on Wayland (the local recipe), not on X11 (CI).
+  let wayland: boolean
 
   async function savedGeometry (): Promise<WindowGeometry | null> {
     return (await readAppState(app.home))?.window ?? null
   }
 
+  // The place that the tracker saves: the window's own on X11; under
+  // Wayland, which gives no window positions, the seeded one stays.
+  function expectedSavedPlace ({ x, y }: WindowState): Pick<WindowGeometry, 'x' | 'y'> {
+    return wayland ? { x: SEEDED.x, y: SEEDED.y } : { x, y }
+  }
+
   beforeAll(async () => {
     app = await startApp()
     try {
-      // From a larger screen, and on a monitor left of and below this one.
-      await seedAppState(app.home, { window: { width: 5000, height: 4000, x: -9000, y: 9000, maximized: false } })
+      await seedAppState(app.home, { window: SEEDED })
       browser = await createSession(app.binary, app.port)
     } catch (err) {
       await app.stop()
       throw err
     }
     await waitFor(browser, 'header.tab-bar', 60_000)
+    wayland = await sbpCall(browser, 'dez.native/gdkBackend') === 'wayland'
   })
 
   afterEach(async (ctx) => {
@@ -111,13 +124,12 @@ describe('window geometry', () => {
 
   it('fits a saved window that is larger than the screen and off it into the screen', async () => {
     // The tracker saves the fitted geometry over the seeded one.
-    await waitForValue(browser, 'saved geometry fits a work area', async () => {
-      const saved = await savedGeometry()
-      return saved !== null && saved.width !== 5000 && workAreaHolding(saved, await windowState(browser)) !== undefined
-    }, true)
+    await waitForValue(browser, 'saved geometry is not the seed', async () => (await savedGeometry())?.width !== SEEDED.width, true)
     const saved = await savedGeometry() as WindowGeometry
     const state = await windowState(browser)
-    const area = workAreaHolding(saved, state) as Rect
+    expect({ x: saved.x, y: saved.y }).toEqual(expectedSavedPlace(state))
+    const area = workAreaHolding({ x: state.x, y: state.y, width: saved.width, height: saved.height }, state) as Rect
+    expect(area).toBeDefined()
     // The fit clamps the 5000 px wide seed to the width of the work area. A
     // restore that failed or ignored the seed leaves the 900 px wide default
     // of tauri.conf.json, which fits a large screen too, so only the width
@@ -141,7 +153,7 @@ describe('window geometry', () => {
       return saved && { width: saved.width, height: saved.height }
     }, RESIZED)
     const moved = await windowState(browser)
-    expect(await savedGeometry()).toEqual({ ...RESIZED, x: moved.x, y: moved.y, maximized: false })
+    expect(await savedGeometry()).toEqual({ ...RESIZED, ...expectedSavedPlace(moved), maximized: false })
 
     await destroySession(browser)
     browser = await createSession(app.binary, app.port)
@@ -172,5 +184,7 @@ describe('window geometry', () => {
       const saved = await savedGeometry()
       return saved && { width: Math.min(saved.width, GROWN.width), height: Math.min(saved.height, GROWN.height) }
     }, GROWN)
+    const saved = await savedGeometry() as WindowGeometry
+    expect({ x: saved.x, y: saved.y }).toEqual(expectedSavedPlace(await windowState(browser)))
   })
 })

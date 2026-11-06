@@ -24,14 +24,15 @@ const tabSchema = z.object({
 })
 
 // A `window` value that is not a whole geometry is dropped as a whole; the
-// window then opens at its default size, centered.
+// window then opens at its default size, centered. `x`/`y` are both there or
+// both absent (no saved place, see `WindowGeometry`).
 const windowGeometrySchema = z.object({
   width: z.number().positive(),
   height: z.number().positive(),
-  x: z.number(),
-  y: z.number(),
+  x: z.number().optional(),
+  y: z.number().optional(),
   maximized: z.boolean(),
-})
+}).refine((geometry) => (geometry.x === undefined) === (geometry.y === undefined))
 
 type TabData = z.infer<typeof tabSchema>
 

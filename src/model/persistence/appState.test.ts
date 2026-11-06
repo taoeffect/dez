@@ -118,8 +118,15 @@ describe('app state persistence format', () => {
     expect(parseWindow({ ...geometry, maximized: 'yes' })).toBeUndefined()
     expect(parseWindow({ ...geometry, width: 0 })).toBeUndefined()
     expect(parseWindow({ ...geometry, x: '10' })).toBeUndefined()
-    expect(parseWindow({ width: 1000, height: 700, maximized: false })).toBeUndefined()
     expect(parseWindow('1000x700')).toBeUndefined()
+  })
+
+  it('keeps a window geometry with no position, and drops half a position', () => {
+    const sizeOnly = { width: 1000, height: 700, maximized: false }
+    const parseWindow = (value: unknown) => parseAppStateJson(JSON.stringify({ window: value })).window
+    expect(parseWindow(sizeOnly)).toStrictEqual(sizeOnly)
+    expect(parseWindow({ ...sizeOnly, x: 10 })).toBeUndefined()
+    expect(parseWindow({ ...sizeOnly, y: 10 })).toBeUndefined()
   })
 })
 

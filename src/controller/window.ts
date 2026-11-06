@@ -5,7 +5,7 @@ import { debounce } from 'turtledash'
 import type { SettingsSnapshot } from '../model/state'
 import type { WindowGeometry } from '../model/state/settings'
 import { isMacPlatform } from '../utils/platform'
-import { fitWindowGeometry, screenInPoints, type Extent } from './windowFit'
+import { fitWindowGeometry, screenInPoints, type Extent, type Point } from './windowFit'
 
 // `minWidth` and `minHeight` of the main window in tauri.conf.json; the
 // window API cannot read them.
@@ -36,6 +36,37 @@ const MAX_DECORATION_EXTENT = 150
 function decorationExtentOf (readLength: number, restoredLength: number | undefined): number {
   const growth = readLength - (restoredLength ?? readLength)
   return growth > 0 && growth <= MAX_DECORATION_EXTENT ? growth : 0
+}
+
+// The saved place of `geometry`, or null when it has none.
+function positionOf (geometry: WindowGeometry | null): Point | null {
+  return geometry?.x !== undefined && geometry.y !== undefined ? { x: geometry.x, y: geometry.y } : null
+}
+
+// GTK's Wayland backend gives no window positions: `outerPosition()` reads
+// (0,0), `setPosition()` does nothing, and the compositor places the window.
+// Dez runs GTK on X11 when it can (lib.rs `run()`), so this is a user's
+// `GDK_BACKEND=wayland`, or a desktop with no X server. There the tracker
+// keeps the saved place, from an X11 run that shares app_state.json (another
+// Dez build, such as the AppImage), instead of saving (0,0) over it. (0,0) is
+// also a real X11 place, so the GDK backend tells the two apart, not the read.
+// A failed read counts as no positions: a lost move is the smaller harm.
+async function windowPositionsReadable (): Promise<boolean> {
+  try {
+    return await sbp('dez.native/gdkBackend') !== 'wayland'
+  } catch (error) {
+    console.error('Failed to read the GDK backend:', error)
+    return false
+  }
+}
+
+// `geometry` with the place that the store holds in place of its own, or
+// with no place when the store holds none; the next restore then centers the
+// window.
+function withStoredPosition (geometry: WindowGeometry): WindowGeometry {
+  const { width, height, maximized } = geometry
+  const stored = positionOf((sbp('dez.model/settings/snapshot') as SettingsSnapshot).windowGeometry)
+  return { width, height, ...stored, maximized }
 }
 
 export default sbp('sbp/selectors/register', {
@@ -79,7 +110,7 @@ export default sbp('sbp/selectors/register', {
       // With nothing saved, the default size from tauri.conf.json is centered.
       const placement = fitWindowGeometry(
         saved
-          ? { width: saved.width, height: saved.height, position: { x: saved.x, y: saved.y }, maximized: saved.maximized }
+          ? { width: saved.width, height: saved.height, position: positionOf(saved), maximized: saved.maximized }
           : { width: inner.width / scale, height: inner.height / scale, position: null, maximized: false },
         {
           monitors: isMacPlatform ? monitors.map(screenInPoints) : monitors,
@@ -117,6 +148,10 @@ export default sbp('sbp/selectors/register', {
   'dez.controller/window/startTracking' (): void {
     if (!isTauri() || stopWindowTracking) return
     const appWindow = getCurrentWindow()
+    const positionsReadable = windowPositionsReadable()
+    const setWindowGeometry = async (geometry: WindowGeometry): Promise<void> => {
+      sbp('dez.model/settings/setWindowGeometry', await positionsReadable ? geometry : withStoredPosition(geometry))
+    }
     // A drag sends many events; only the geometry at its end is saved.
     const saveGeometry = debounce(async () => {
       try {
@@ -127,7 +162,7 @@ export default sbp('sbp/selectors/register', {
         // only a window manager makes such a fullscreen, and CI has none.
         if (await appWindow.isMinimized() || await sbp('dez.native/isWindowFullscreen')) return
         if (await appWindow.isMaximized()) {
-          if (lastNormalGeometry) sbp('dez.model/settings/setWindowGeometry', { ...lastNormalGeometry, maximized: true })
+          if (lastNormalGeometry) await setWindowGeometry({ ...lastNormalGeometry, maximized: true })
           return
         }
         const [size, physicalPosition, scale] = await Promise.all([
@@ -156,7 +191,7 @@ export default sbp('sbp/selectors/register', {
           y: Math.round(position.y),
           maximized: false,
         }
-        sbp('dez.model/settings/setWindowGeometry', lastNormalGeometry)
+        await setWindowGeometry(lastNormalGeometry)
       } catch (error) {
         console.error('Failed to read the window size and position:', error)
       }
