@@ -66,7 +66,7 @@ ThreadEditor (CodeMirror doc) syncs to the active tab's sections
 - `main.ts`: registers all selectors; dev builds expose `window.__stores`.
 - `view/thread/ThreadEditor.vue`: the one CodeMirror `EditorView` (no contenteditable).
 - `view/thread/cmEditor.ts`: doc ⇄ sections, sentinels, state fields, role pill widgets, clipboard format, `dezTheme`.
-- `view/thread/modelChip.ts`, `thinkingPill.ts`: the model part and the thinking slot and panel of an agent pill.
+- `view/thread/modelChip.ts`, `thinkingPill.ts`, `pillDuration.ts`: the model part, the thinking slot and panel, and the reply time of an agent pill.
 - `view/thread/editorMeasure.ts`: forced CodeMirror re-measures.
 - `view/editor/selectors.ts`: `dez.editor/*`, the active-editor bridge (stream patching, scroll follow, Copy Markdown, `runKeyBinding`).
 - `view/editor/find.ts`, `findState.ts`, `findHistory.ts`, `view/thread/FindDropdown.vue`: find and replace.
@@ -155,7 +155,7 @@ Do not ever read, view, print, or `cat` `~/.config/dez/provider_keys.json`; it c
 
 - **Do not leak sentinels**: the section and prompt pill sentinels (`cmEditor.ts`) live only in the editor doc, never on disk or in the clipboard.
 - **First section is always `user`**: a role pill belongs to the section after it, so separator index math is easy to get off by one (`cmEditor.ts`).
-- **`model` and `thinking` are agent-only**: show, save, or send them only when `role === 'agent'`; copy them only when set (`modelRefField`, `thinkingField`).
+- **`model`, `thinking`, and `durationMs` are agent-only**: show, save, or send them only when `role === 'agent'` (`durationMs` is never sent); copy them only when set (`modelRefField`, `thinkingField`, `durationField`).
 - **Per-section fields flow through the editor**: the editor writes sections back to the store on every doc change; a new field must follow `SectionModel` in `cmEditor.ts`.
 - **Thinking has two copies during a stream** (store and visible editor); see `dez.editor/setSectionThinkingIfVisible`.
 - **Agent pill DOM changes in place**: see `RoleSeparatorWidget.eq` and `pillThinkingUpdater` in `cmEditor.ts`.

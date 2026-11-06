@@ -13,6 +13,7 @@ import { SENTINEL_CHAR, normalizeContent, stripLiveSentinels, textNode } from '.
 import { EDITOR_FONT_SIZE_DEFAULT } from '../../model/editorFontSize'
 import { escapeMarkerAttribute, unescapeMarkerAttribute } from '../../utils/markerAttribute'
 import { addModelToPill, modelDisplayNamesField, sameModelChip, sectionModelChips, streamingSectionField, type ModelChip } from './modelChip'
+import { addDurationToPill } from './pillDuration'
 import {
   isThinkingPanelEvent,
   renderPillThinking,
@@ -587,6 +588,8 @@ class RoleSeparatorWidget extends WidgetType {
     readonly index: number,
     readonly role: Role,
     readonly chip: ModelChip | null,
+    /** The reply time of an agent section, or null for none. */
+    readonly durationMs: number | null,
   ) {
     super()
   }
@@ -598,7 +601,8 @@ class RoleSeparatorWidget extends WidgetType {
       other instanceof RoleSeparatorWidget &&
       other.index === this.index &&
       other.role === this.role &&
-      sameModelChip(other.chip, this.chip)
+      sameModelChip(other.chip, this.chip) &&
+      other.durationMs === this.durationMs
     )
   }
   toDOM(view: EditorView): HTMLElement {
@@ -611,6 +615,7 @@ class RoleSeparatorWidget extends WidgetType {
     label.textContent = this.role === 'user' ? 'User' : 'Agent'
     el.appendChild(label)
     if (this.chip) addModelToPill(label, this.chip)
+    if (this.durationMs !== null) addDurationToPill(label, this.durationMs)
     renderPillThinking(el, label, pillThinkingAt(view.state, this.index), view)
     return el
   }
@@ -661,7 +666,9 @@ const pillThinkingUpdater = ViewPlugin.define(() => ({
  *  sectionsField and whose model part comes from `chips` (by section
  *  index). With `chips` null, the ranges have no widget (atomic ranges
  *  only). Separator n (counting from 1) starts section n, so the index of
- *  a pill is the section after it; section 0 has no separator. */
+ *  a pill is the section after it; section 0 has no separator. Only agent
+ *  pills show a reply time: a user section can still hold one in memory
+ *  after a role toggle. */
 function buildSeparatorDecorations(
   doc: string,
   models: SectionModel[],
@@ -677,13 +684,15 @@ function buildSeparatorDecorations(
     const lineEnd = nextNewline === -1 ? doc.length : nextNewline
     const lineText = doc.slice(lineStart, lineEnd)
     if (lineText.trim() !== SECTION_SEP) continue
-    const nextRole = models[sectionIndex]?.role ?? 'user'
+    const nextSection = models[sectionIndex]
+    const nextRole = nextSection?.role ?? 'user'
+    const durationMs = nextRole === 'agent' ? nextSection?.durationMs ?? null : null
     ranges.push({
       from: i,
       to: i + 1,
       deco: Decoration.replace({
         widget: chips
-          ? new RoleSeparatorWidget(sectionIndex, nextRole, chips[sectionIndex] ?? null)
+          ? new RoleSeparatorWidget(sectionIndex, nextRole, chips[sectionIndex] ?? null, durationMs)
           : undefined,
         inclusive: false,
       }),
@@ -1340,7 +1349,8 @@ export const dezTheme = EditorView.theme({
     letterSpacing: 'normal',
     textTransform: 'none',
   },
-  '.dez-role-separator__model::before': {
+  // The thin divider before the model part and before the reply time.
+  '.dez-role-separator__model::before, .dez-role-separator__duration::before': {
     content: '""',
     alignSelf: 'center',
     flex: 'none',
@@ -1376,6 +1386,28 @@ export const dezTheme = EditorView.theme({
   '.dez-role-separator__model-provider::before': {
     content: '"·"',
     marginRight: editorSize(6),
+  },
+  // Reply time (`addDurationToPill` in pillDuration.ts) at the end of an
+  // agent pill: after the model part, or after the role word in a pill with
+  // no model. Muted, smaller than the model name, and set off by the same
+  // divider, so it reads as secondary. Tabular numerals keep times of the
+  // same form the same width. It keeps its own case and spacing in the
+  // uppercase row ("4.2s", not "4.2S"). A line height of 1 keeps it inside
+  // the role word's line box, so the pill is as tall as one with no time.
+  // `flex: none` makes a long model name shrink first.
+  '.dez-role-separator__duration': {
+    display: 'inline-flex',
+    alignItems: 'baseline',
+    flex: 'none',
+    gap: editorSize(6),
+    marginLeft: editorSize(8),
+    color: 'var(--color-muted, #888)',
+    fontSize: editorSize(11),
+    lineHeight: '1',
+    letterSpacing: 'normal',
+    textTransform: 'none',
+    fontVariantNumeric: 'tabular-nums',
+    whiteSpace: 'nowrap',
   },
   // Left slot of an agent pill (`thinkingPill.ts`): a spinner while the
   // section streams and has no thinking yet, then a disclosure triangle
