@@ -413,6 +413,10 @@ export default sbp('sbp/selectors/register', {
     return useTabStore().activeTabId
   },
 
+  'dez.model/tabs/activeConversationId' (): string {
+    return useTabStore().activeTab.conversationId
+  },
+
   'dez.model/tab' (tabId: string): Tab | null {
     const tab = useTabStore().tabs.find((candidate) => candidate.id === tabId) ?? null
     return tab ? cloneTab(tab) as Tab : null

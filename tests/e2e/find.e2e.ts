@@ -565,7 +565,7 @@ describe('find and replace', () => {
 
     await browser.keys([Key.Control, 'f'])
     await waitFor(browser, FIND_FIELD, 10_000)
-    await browser.keys([Key.Control, 'h'])
+    await browser.keys([Key.Control, Key.Shift, 'h'])
     await waitForValue(browser, 'history open', historyOpen, true)
     expect(await focusedArea(browser)).toBe('find')
     await browser.keys([Key.Escape])

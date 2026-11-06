@@ -1,8 +1,9 @@
+import type { EditorView } from '@codemirror/view'
 import { afterAll, afterEach, beforeAll, describe, expect, it } from 'vitest'
 import { Key } from 'webdriverio'
 import { startApp, type RunningApp } from './harness/app'
 import { click, screenshotOnFailure, typeKeys, waitFor, waitForValue } from './harness/dom'
-import { seedAppState } from './harness/fixtures'
+import { makeConversation, seedAppState, seedConversation } from './harness/fixtures'
 import { createSession, destroySession, type E2EBrowser } from './harness/session'
 import { focusEditor, sbpCall, threadSections } from './harness/thread'
 
@@ -71,6 +72,23 @@ async function tabStrip (browser: E2EBrowser): Promise<{ titles: string[], activ
 async function conversationIds (browser: E2EBrowser): Promise<string[]> {
   const tabs = await sbpCall(browser, 'dez.model/tabs/list') as Array<{ conversationId: string }>
   return tabs.map((tab) => tab.conversationId)
+}
+
+// The doc line at the top of the editor's view and the caret, read two
+// frames after the last change so that its scroll work is done.
+async function viewPlace (browser: E2EBrowser): Promise<{ topLine: number, caret: number }> {
+  return browser.execute(() => new Promise<{ topLine: number, caret: number }>((resolve, reject) => {
+    requestAnimationFrame(() => requestAnimationFrame(() => {
+      const content = document.querySelector('.cm-content')
+      if (!content) {
+        reject(new Error('viewPlace: .cm-content not found'))
+        return
+      }
+      const view = Reflect.get(Reflect.get(content, 'cmTile'), 'root').view as EditorView
+      const block = view.lineBlockAtHeight(view.scrollDOM.getBoundingClientRect().top - view.documentTop)
+      resolve({ topLine: view.state.doc.lineAt(block.from).number, caret: view.state.selection.main.head })
+    }))
+  }))
 }
 
 const VISIBLE = {
@@ -174,5 +192,56 @@ describe('tab bar', () => {
     const withNewTab = [...withTypedTab, 'New Tab']
     await waitForValue(browser, 'tabs after Ctrl+T', () => tabStrip(browser), { titles: withNewTab, active: withNewTab.length - 1 })
     expect(await threadSections(browser)).toEqual([{ role: 'user', text: '' }])
+  })
+
+  // Regression: a tab came back at the top of its doc, with the caret at the
+  // doc start, after a tab switch and after Ctrl+Shift+T.
+  it('shows a tab where the user left it, after a tab switch and after Ctrl+Shift+T', async () => {
+    const id = 'tabs-e2e-long'
+    const text = Array.from({ length: 150 }, (_, i) => `line ${i + 1}`).join('\n')
+    await seedConversation(app.home, makeConversation({
+      id,
+      title: id,
+      sections: [
+        { role: 'user', nodes: [{ kind: 'text', text }] },
+        { role: 'agent', nodes: [{ kind: 'text', text: 'Reply.' }] },
+      ],
+    }))
+    await sbpCall(browser, 'dez.model/tabs/openConversation', id)
+    let opened = { titles: [] as string[], active: -1 }
+    await waitForValue(browser, 'long tab open', async () => {
+      opened = await tabStrip(browser)
+      return opened.titles[opened.active]
+    }, id)
+    const longTab = `.tab-strip > .tab:nth-child(${opened.active + 1})`
+
+    // Focus first: a script focus of the editor scrolls it to the caret.
+    await focusEditor(browser)
+    await browser.keys([Key.Control, Key.End])
+    const docLength = await browser.execute(() => {
+      const content = document.querySelector('.cm-content')
+      if (!content) throw new Error('docLength: .cm-content not found')
+      return (Reflect.get(Reflect.get(content, 'cmTile'), 'root').view as EditorView).state.doc.length
+    })
+    let bottom = { topLine: 0, caret: 0 }
+    await waitForValue(browser, 'caret at the doc end', async () => {
+      bottom = await viewPlace(browser)
+      return bottom.caret
+    }, docLength)
+    expect(bottom.topLine).toBeGreaterThan(100)
+
+    await browser.keys([Key.Control, 't'])
+    await waitForValue(browser, 'new tab active', async () => (await tabStrip(browser)).active, opened.titles.length)
+    await click(browser, longTab)
+    await waitForValue(browser, 'long tab active', async () => (await tabStrip(browser)).active, opened.active)
+    await waitForValue(browser, 'place after the tab switch', () => viewPlace(browser), bottom)
+
+    await focusEditor(browser)
+    await browser.keys([Key.Control, 'w'])
+    await waitForValue(browser, 'long tab closed', async () => (await tabStrip(browser)).titles.includes(id), false)
+    await focusEditor(browser)
+    await browser.keys([Key.Control, Key.Shift, 't'])
+    await waitForValue(browser, 'long tab reopened', async () => (await tabStrip(browser)).active, opened.active)
+    await waitForValue(browser, 'place after Ctrl+Shift+T', () => viewPlace(browser), bottom)
   })
 })

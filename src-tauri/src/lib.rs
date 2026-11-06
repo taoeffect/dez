@@ -10,7 +10,6 @@ pub fn run() {
     // The webview may call only what capabilities/default.json allows. Add a
     // permission there for each new plugin, or plugin or core command, that
     // the frontend calls. Why each extra permission is there:
-    // - core:app:allow-app-hide: the macOS "Hide Dez" menu item.
     // - core:window:allow-close: File › Quit on Linux.
     // - core:window:allow-set-size, -set-position, -maximize, -show, and
     //   -set-focus: the window restore at startup (the window starts hidden).

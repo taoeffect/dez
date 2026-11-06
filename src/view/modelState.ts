@@ -12,6 +12,7 @@ import type { Shortcut } from '../model/shortcuts'
 export interface ViewModelState {
   tabs: ComputedRef<ModelSnapshot['tabs']>
   activeTabId: ComputedRef<string>
+  activeConversationId: ComputedRef<string>
   activeModel: ComputedRef<ActiveModel | null>
   activeSections: ComputedRef<Section[]>
   activeSectionsIdentity: ComputedRef<string>
@@ -35,6 +36,7 @@ export function useModelState(): ViewModelState {
   return {
     tabs: computed(() => sbp('dez.model/tabs/list') as ModelSnapshot['tabs']),
     activeTabId: computed(() => sbp('dez.model/tabs/activeId') as string),
+    activeConversationId: computed(() => sbp('dez.model/tabs/activeConversationId') as string),
     activeModel: computed(() => sbp('dez.model/activeModel') as ActiveModel | null),
     activeSections: computed(() => sbp('dez.model/thread/sections') as Section[]),
     activeSectionsIdentity: computed(() => sbp('dez.model/thread/sectionsIdentity') as string),

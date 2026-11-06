@@ -81,7 +81,8 @@ const DEFINITIONS = {
   previousTab: { label: 'Previous tab', group: 'Tabs', scope: 'app', key: 'Mod-Shift-[' },
   nextTab: { label: 'Next tab', group: 'Tabs', scope: 'app', key: 'Mod-Shift-]' },
   ...goToTabDefinitions,
-  history: { label: 'Open history', group: 'App', scope: 'app', key: 'Mod-h' },
+  // Not Mod-h: on macOS Cmd+H is the predefined Hide item of the app menu.
+  history: { label: 'Open history', group: 'App', scope: 'app', key: 'Mod-Shift-h' },
   settings: { label: 'Open settings', group: 'App', scope: 'app', key: 'Mod-,' },
   // `+` too: on a US layout it is Shift+=, and some layouts (German) have a
   // `+` key.
@@ -356,7 +357,7 @@ const FOCUS_MOVE = 'moving the focus'
 const RESERVED_KEYS: Record<ShortcutPlatform, Readonly<Partial<Record<string, string>>>> = {
   mac: {
     'Meta-x': 'Cut', 'Meta-c': 'Copy', 'Meta-v': 'Paste', Tab: FOCUS_MOVE, 'Shift-Tab': FOCUS_MOVE,
-    'Meta-a': 'Select All', 'Meta-q': 'Quit Dez', 'Meta-m': 'Minimize', 'Meta-Alt-h': 'Hide Others',
+    'Meta-a': 'Select All', 'Meta-q': 'Quit Dez', 'Meta-m': 'Minimize', 'Meta-h': 'Hide Dez', 'Meta-Alt-h': 'Hide Others',
     'Meta-Alt-i': 'the developer console',
   },
   linux: {

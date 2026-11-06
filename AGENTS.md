@@ -19,6 +19,7 @@ npm run typecheck:e2e          # type-check tests/e2e (`npm run build` does not)
 npm run build:desktop          # native bundle for the current platform
 npm run build:linux:appimage   # Linux AppImage for the host arch; Linux only
 npm run build:macos:dmg        # Apple Silicon macOS DMG; macOS only
+npm run build:macos:app        # Apple Silicon macOS .app; macOS only
 npm run bump-version -- <version>                    # npm, Tauri, and Cargo version files
 node scripts/release-notes.js <tag> [--out <file>]   # release notes body for a tag
 npm run preview                # preview the built frontend
@@ -27,6 +28,7 @@ cd src-tauri && cargo test
 ```
 
 - Tauri build scripts first run `npm run clean:rust` (`scripts/clean-rust.js`).
+- macOS builds need Xcode 26+: `build:macos:*` first run `scripts/build-macos-icon.js`, which compiles `src-tauri/icons/Dez.icon` into the gitignored `src-tauri/icons/Assets.car` (icon name set in `src-tauri/Info.plist`). A bare `tauri build` on macOS fails without that file.
 - Releases: a pushed `v*` tag runs `.github/workflows/release-desktop.yml` (e2e gate, Linux AppImages, macOS DMG, release notes from `scripts/release-notes.js`, GitHub Release). The rules are in the comments of those files.
 - CI rules (details in the workflow comments): every job removes the compromised eMudhra CA roots in its first step, and only the "Write release notes" step may reference `ZAI_API_KEY`.
 
@@ -70,12 +72,14 @@ ThreadEditor (CodeMirror doc) syncs to the active tab's sections
 - `model/chat/`: `Section` / `ContentNode` types and helpers (`content.ts`, `modelRef.ts`, `thinking.ts`, `markdown.ts`, `pillMarker.ts`).
 - `model/state/`: Pinia stores (internal) and `dez.model/*` selectors; views read state through `view/modelState.ts`.
 - `controller/stream.ts`, `model/state/streams.ts`, `controller/http.ts`: stream lifecycle, per-tab sessions, native HTTP streams.
-- `controller/menu.ts`: the native menubar (Tauri only). `view/composables/useKeyboardShortcuts.ts`: app keys.
+- `model/shortcuts.ts`: the editable shortcut registry (ids, default keys, key event matching, validation, labels, menu accelerators); user overrides are in the settings store.
+- `controller/menu.ts`: the native menubar (Tauri only); `dez.controller/menu/suspendAccelerators` turns its keys off while a key is recorded. `view/composables/useKeyboardShortcuts.ts`: app keys.
 - `controller/window.ts`, `windowFit.ts`: restore and save the window size and position.
 - `view/app/AppLayout.vue`: layout and bottom bar (`ModelSelector.vue`, `view/thread/SubmitButton.vue`).
 - `view/history/HistoryPanel.vue`: saved conversations.
 - `view/prompts/PromptManager.vue`, `view/thread/PromptAutocomplete.vue`: saved prompts and `/prompt ` insertion.
-- `view/settings/SettingsView.vue`, `ProviderManager.vue`: settings, the shortcut list, the providers page.
+- `view/settings/SettingsView.vue`, `ProviderManager.vue`, `ShortcutManager.vue`: settings, the providers page, and Settings › Shortcuts with its key recorder (Help › Keyboard Shortcuts opens it).
+- `view/tabs/TabBar.vue`: tabs, colored busy/done by `dez.model/tabs/activity`. `dez.model/tabs/reopenClosed` brings back a closed tab from a session-only list (`model/state/tabs.ts`).
 - `view/modelLabel.ts`: model display names. `view/theme.ts`: theme and editor font size.
 
 ### SBP
@@ -106,6 +110,7 @@ Rules:
 - Zod for runtime validation at untrusted or persisted data boundaries, so malformed JSON never breaks startup.
 - `@sbp/okturtles.eventqueue` to serialize async operations that must not race.
 - `turtledash` for lodash-style helpers; use its `debounce`, not ad hoc timers.
+- `w3c-keyname`, at the version CodeMirror uses, so that shortcut matching (`model/shortcuts.ts`) agrees with CodeMirror keymaps.
 
 ### Providers (`src/model/providers/`)
 
@@ -123,7 +128,7 @@ Rules:
 ### Backend (`src-tauri/src/`)
 
 - **Keep Rust barebones**: a thin, generic OS interface, not a per-feature API. Reuse or generalize an existing command (e.g. `load_app_file(name)` / `save_app_file(name, content)`) instead of adding a near-copy, so frontend features rarely need Rust changes.
-- `commands.rs`, `http_bridge.rs`: Tauri commands, registered in `lib.rs`.
+- `commands.rs`, `http_bridge.rs`: Tauri commands, registered in `lib.rs`. `open_devtools` (Help › Developer Console) needs the `devtools` feature of the `tauri` crate in release builds (`Cargo.toml`).
 - `http_bridge.rs`: generic `http_request`, `stream_http`, `cancel_http_stream`.
 - `persistence.rs`: raw private-file I/O and id sanitization; write every private file with `write_private_file`.
 - `key_store.rs`: `provider_keys.json`. `copilot.rs`: Copilot device flow and token refresh.
@@ -133,7 +138,7 @@ Rules:
 
 All app data is under `~/.config/dez/`. TypeScript owns every format; Rust only moves raw strings. App code uses `dez.persistence/*` only.
 
-- `app_state.json`: tabs, settings, window geometry, provider toggles, custom providers (`src/model/persistence/appState.ts`).
+- `app_state.json`: tabs, settings (with shortcut overrides), window geometry, provider toggles, custom providers (`src/model/persistence/appState.ts`).
 - `conversations/<sanitized-id>.md`: conversations (format: `src/model/persistence/conversationFormat.ts`; pill markers: `src/model/chat/pillMarker.ts`).
 - `prompts.json`: saved prompt templates (`src/model/persistence/prompts.ts`).
 - `model_cache.json`: last-known model lists, no secrets (`src/model/persistence/modelCache.ts`).
@@ -154,10 +159,11 @@ Do not ever read, view, print, or `cat` `~/.config/dez/provider_keys.json`; it c
 - **Persistence starts after init**: settings changes made before `dez.model/settings/startPersistence` can be lost.
 - **Provider role mapping**: internal role `agent` maps to API role `assistant` in both formats.
 - **Copilot auth differs**: device flow commands, not the API-key commands.
-- **Tauri capabilities**: a new plugin or core command needs a permission in `src-tauri/capabilities/default.json`.
+- **Tauri capabilities**: a new plugin or core command needs a permission in `src-tauri/capabilities/default.json`; app commands registered in `lib.rs` need none.
 - **The window starts hidden**: `dez.controller/window/restore` shows it, so a frontend failure before init shows no window; read the Vite output. On macOS, `lib.rs` shows it at launch so that it comes to the front.
 - **Saved window position units differ by platform**: logical points on macOS, physical px elsewhere (`src/controller/window.ts`).
 - **Shortcut key order differs by platform**: on Linux the menu accelerator gets the key first; put context checks in the selector both paths call, never only in a key handler.
+- **Never hard-code a shortcut key**: every binding path (window handler, CodeMirror keymap, find field, menu accelerators, button titles and keycaps) reads the effective keys from `src/model/shortcuts.ts` and the settings store.
 - **CSP disabled**: `"csp": null` in `tauri.conf.json` on purpose during development.
 - **Vite port is fixed**: `1420` with `strictPort: true`.
 - **`@tauri-apps/plugin-store` is unused**: app files use Dez's own Rust file I/O.
@@ -201,6 +207,7 @@ Brief comments are encouraged above functions that do anything non-trivial expla
 - Run `npm run test:e2e` after UI behavior changes covered by `tests/e2e/`. It runs the existing debug binary: rebuild first (`tests/e2e/harness/app.ts`).
 - Run `npm run typecheck:e2e` after changing the e2e harness or specs.
 - E2E keys skip GTK, so specs never test Linux menu accelerators; the manual recipe is in `vitest.e2e.config.ts`.
+- E2E specs that restart the app use `MockProviderApp.relaunch()` (`tests/e2e/harness/mockProviderApp.ts`).
 - E2E clicks: never use webdriverio's `.click()`; use `click()` or `pointerClick()` from `tests/e2e/harness/dom.ts`.
 - **No display server** (every spec fails with `Hook timed out in 120000ms` in `beforeAll`): run under headless `kwin_wayland`; the recipe is in `vitest.e2e.config.ts`.
 - For UI changes beyond unit-testable logic, also check by hand with `npm run tauri dev`.

@@ -173,6 +173,7 @@ describe('validateShortcutKey', () => {
     expect(validateShortcutKey('linux', 'closeTab', 'Ctrl-Shift-I')).toBe('Reserved for the developer console')
     expect(validateShortcutKey('linux', 'closeTab', 'Shift-Tab')).toBe('Reserved for moving the focus')
     expect(validateShortcutKey('mac', 'closeTab', 'Mod-q')).toBe('Reserved for Quit Dez')
+    expect(validateShortcutKey('mac', 'history', 'Mod-h')).toBe('Reserved for Hide Dez')
     expect(validateShortcutKey('mac', 'closeTab', 'Cmd-Alt-i')).toBe('Reserved for the developer console')
     expect(validateShortcutKey('mac', 'closeTab', 'Ctrl-a')).toBeNull()
   })

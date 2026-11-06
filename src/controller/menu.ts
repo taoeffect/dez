@@ -1,6 +1,5 @@
 import sbp from '@sbp/sbp'
 import { watch } from 'vue'
-import { hide } from '@tauri-apps/api/app'
 import { isTauri } from '@tauri-apps/api/core'
 import { Image } from '@tauri-apps/api/image'
 import { Menu, MenuItem, Submenu, type MenuItemOptions, type PredefinedMenuItemOptions } from '@tauri-apps/api/menu'
@@ -97,8 +96,8 @@ export default sbp('sbp/selectors/register', {
   // - On Linux the predefined Cut/Copy/Paste only show their keys, and the
   //   keys reach the page as before. Clicking them does nothing, because
   //   that needs Tauri's `linux-libxdo` feature, which works on X11 only.
-  // - macOS has a fixed Cmd+H on the predefined Hide, which Dez uses for
-  //   History, so "Hide Dez" is a custom item without a key.
+  // - macOS Hide is the predefined item, with its fixed Cmd+H; History uses
+  //   Cmd+Shift+H, and Settings › Shortcuts refuses Cmd+H.
   // - GTK never matches Shift+[ / Shift+] (the key arrives as `{` / `}`),
   //   so on Linux the page handles Previous/Next Tab keys.
   async 'dez.controller/menu/install' (): Promise<void> {
@@ -164,12 +163,7 @@ export default sbp('sbp/selectors/register', {
                   SEPARATOR,
                   { item: 'Services' },
                   SEPARATOR,
-                  {
-                    text: 'Hide Dez',
-                    action: () => {
-                      hide().catch((error) => console.error('Failed to hide Dez:', error))
-                    },
-                  },
+                  { item: 'Hide', text: 'Hide Dez' },
                   { item: 'HideOthers' },
                   { item: 'ShowAll' },
                   SEPARATOR,

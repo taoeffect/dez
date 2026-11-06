@@ -53,6 +53,7 @@ import { isModalOpen } from '../composables/useKeyboardShortcuts'
 
 const {
   activeTabId,
+  activeConversationId,
   activeSections,
   activeSectionsIdentity,
   modelDisplayNames,
@@ -71,8 +72,39 @@ const hostRef = ref<HTMLDivElement | null>(null)
 let view: EditorView | null = null
 // The tab whose content the view's state holds.
 let viewTabId: string | null = null
+// The conversation of that tab.
+let viewConversationId: string | null = null
 let pendingPersistTabId: string | null = null
 let syncingViewStructure = false
+
+// Where the view was in each conversation that it left, so that it shows
+// the same place on a return: a tab switch, File › Reopen Closed Tab (the
+// reopened tab has a new tab id but the same conversation id), or History.
+// The selection comes back too: a caret left at the doc start would scroll
+// the view back up at the first key press. Session-only. The restore
+// scrolls the view as a user scroll does, on purpose: a place at the very
+// bottom of a tab whose reply still streams starts the stream follow again
+// (`handleVisibleScroll` in `src/view/editor/selectors.ts`).
+interface ViewPlace {
+  scroll: ReturnType<EditorView['scrollSnapshot']>
+  selection: EditorSelection
+}
+const viewPlaces = new Map<string, ViewPlace>()
+
+function rememberViewPlace() {
+  if (!view || !viewConversationId) return
+  viewPlaces.set(viewConversationId, { scroll: view.scrollSnapshot(), selection: view.state.selection })
+}
+
+// A stream that ended while the tab was in the background can make the doc
+// shorter (a failed reply drops its empty agent section), so the saved
+// selection may point past the end.
+function selectionWithin(selection: EditorSelection, length: number): EditorSelection {
+  return EditorSelection.create(
+    selection.ranges.map((range) => EditorSelection.range(Math.min(range.anchor, length), Math.min(range.head, length))),
+    selection.mainIndex,
+  )
+}
 
 const autocompleteOpen = ref(false)
 const autocompleteQuery = ref('')
@@ -871,6 +903,7 @@ function mountView() {
   if (!hostRef.value) return
   view = new EditorView({ state: buildState(), parent: hostRef.value })
   viewTabId = activeTabId.value
+  viewConversationId = activeConversationId.value
   registerActiveView()
 }
 
@@ -899,6 +932,8 @@ function resetViewToActiveTab(streamEnd?: { followBottom: boolean }) {
   const state = buildState(sameTab ? view.state.field(thinkingExpandedField) : undefined)
   view.setState(state)
   viewTabId = activeTabId.value
+  viewConversationId = activeConversationId.value
+  const place = sameTab ? undefined : viewPlaces.get(viewConversationId)
   if (streamEnd) {
     view.dispatch({
       selection: EditorSelection.cursor(view.state.doc.length),
@@ -906,9 +941,17 @@ function resetViewToActiveTab(streamEnd?: { followBottom: boolean }) {
       userEvent: 'select',
     })
     if (streamEnd.followBottom) scrollViewToBottomAfterLayout(view)
+  } else if (place) {
+    // The update listener also does the find bookkeeping for this
+    // selection.
+    view.dispatch({
+      selection: selectionWithin(place.selection, view.state.doc.length),
+      effects: place.scroll,
+      userEvent: 'select',
+    })
   } else if (findState.open) {
     // setState runs no update listeners, so redo the find bookkeeping that
-    // the listener does for the dispatch above.
+    // the listener does for the dispatches above.
     findState.origin = view.state.selection.main.from
     refreshFindStatus()
   }
@@ -970,6 +1013,7 @@ watch(
   () => activeTabId.value,
   (_newId, oldId) => {
     if (oldId) {
+      rememberViewPlace()
       syncDocToTab(oldId)
       flushPendingPersist()
       persistTab(oldId)
