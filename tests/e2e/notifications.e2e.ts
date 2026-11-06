@@ -81,6 +81,36 @@ async function waitForSoundEnd (browser: E2EBrowser): Promise<void> {
   await waitForValue(browser, 'sound paused', async () => (await soundState(browser)).paused, true)
 }
 
+// The alert rule reads the user idle time from the OS (src-tauri/src/idle.rs),
+// and WebDriver input does not reset it, so the real reading passes 1 minute
+// during a run. The page cannot replace Tauri's `invoke` (a read-only
+// property), but on Linux Tauri sends each command as a `fetch` of
+// `ipc://localhost/<command>` (scripts/ipc-protocol.js in the tauri crate),
+// and `window.fetch` can be wrapped. The wrapper answers `user_idle_ms` with
+// `idleMs` (null: no idle source), as Tauri does, and counts the reads.
+async function setUserIdleMs (browser: E2EBrowser, idleMs: number | null): Promise<void> {
+  await browser.execute((value: number | null) => {
+    Reflect.set(window, '__e2eIdleMs', value)
+    Reflect.set(window, '__e2eIdleReads', 0)
+    if (Reflect.get(window, '__e2eFetchWrapped')) return
+    Reflect.set(window, '__e2eFetchWrapped', true)
+    const originalFetch = window.fetch
+    window.fetch = async (input: RequestInfo | URL, init?: RequestInit): Promise<Response> => {
+      const url = input instanceof Request ? input.url : String(input)
+      if (url !== 'ipc://localhost/user_idle_ms') return originalFetch(input, init)
+      Reflect.set(window, '__e2eIdleReads', (Reflect.get(window, '__e2eIdleReads') as number) + 1)
+      return new Response(JSON.stringify(Reflect.get(window, '__e2eIdleMs')), {
+        headers: { 'Content-Type': 'application/json', 'Tauri-Response': 'ok' },
+      })
+    }
+  }, idleMs)
+}
+
+/** The `user_idle_ms` calls since the last `setUserIdleMs`. */
+async function userIdleReads (browser: E2EBrowser): Promise<number> {
+  return browser.execute(() => Reflect.get(window, '__e2eIdleReads') as number)
+}
+
 describe('Settings › Notifications', () => {
   let app: RunningApp
   let browser: E2EBrowser
@@ -289,7 +319,8 @@ describe('Settings › Notifications', () => {
 // The sound and the system notification at the end of a reply. The app's
 // session bus is a private bus with a fake notification server on it
 // (harness/notificationServer.py), which records each notification and
-// sends the click.
+// sends the click. Each test starts with a user who is not away
+// (`setUserIdleMs`).
 describe('reply-end alerts', () => {
   const PROVIDER: MockProvider = { id: 'alerts', name: 'Alerts Mock', modelId: 'alerts-model', modelName: 'Alerts Model' }
   const VOLUME = 40
@@ -346,7 +377,11 @@ describe('reply-end alerts', () => {
     // A new tab gets the last used model, which startMockProviderApp picked.
     await sbpCall(browser, 'dez.model/tabs/create')
     await resetConsoleErrors(browser)
+    // A sound that still plays takes no new play() (dez.ui/playDoneSound),
+    // so an alert in this test would not show.
+    await waitForValue(browser, 'no sound playing', async () => (await soundState(browser)).paused !== false, true)
     await recordSoundPlays(browser)
+    await setUserIdleMs(browser, 0)
     shownBefore = server?.notifications.length ?? 0
   })
 
@@ -384,11 +419,8 @@ describe('reply-end alerts', () => {
     await waitForValue(browser, 'focused area', async () => focusedArea(browser), 'editor')
   })
 
-  it('gives no alert when a reply ends in the active tab of the focused window', async () => {
+  it('gives no alert when a reply ends in the active tab of the focused window while the user is not away', async () => {
     expect(await windowIsFocused()).toBe(true)
-    // A sound that still plays takes no new play() (dez.ui/playDoneSound), so
-    // a wrong alert would not show.
-    await waitForValue(browser, 'no sound playing', async () => (await soundState(browser)).paused !== false, true)
     await submit(browser, 'Foreground question')
     const request = await mock.waitForRequest(browser)
 
@@ -399,18 +431,34 @@ describe('reply-end alerts', () => {
       { role: 'agent', text: replyText('the foreground') },
       { role: 'user', text: '' },
     ])
-    // The alert reads the window focus first, an IPC call. Give a wrong
-    // alert time to start.
-    await browser.pause(500)
+    // The idle time is the alert rule's last read. Give a wrong alert time
+    // to start after it.
+    await waitForValue(browser, 'idle time reads', async () => userIdleReads(browser), 1)
+    await browser.pause(300)
     expect((await soundState(browser)).plays).toEqual([])
     expect(newNotifications()).toEqual([])
   })
 
-  // The fake server sends no activation token, so Dez asks for the focus
-  // with `gtk_window_present`, which headless KWin grants. A real session's
-  // click comes with a token (a manual check).
-  it('a click on the notification brings the minimized window back', async (ctx) => {
-    const { request } = await askInBackgroundTab('Minimized question')
+  it('plays the sound and shows a notification when a reply ends in the active tab after more than 1 minute with no user input', async () => {
+    expect(await windowIsFocused()).toBe(true)
+    await setUserIdleMs(browser, 61_000)
+    await submit(browser, 'Away question')
+    const request = await mock.waitForRequest(browser)
+
+    await sendChatReply(request.reply, 'the away user')
+
+    await waitForValue(browser, 'sound plays', async () => (await soundState(browser)).plays, [VOLUME])
+    await waitForNotifications([{ appName: 'Dez', summary: 'Away question', body: 'Reply finished', actions: ['default', 'Open'] }])
+    expect(await userIdleReads(browser)).toBe(1)
+  })
+
+  // The user is not away, so only the lost window focus gives the alert. The
+  // fake server sends no activation token, so Dez asks for the focus with
+  // `gtk_window_present`, which headless KWin grants. A real session's click
+  // comes with a token (a manual check).
+  it('alerts for a reply in the active tab of the minimized window, and a click on the notification brings the window back', async (ctx) => {
+    await submit(browser, 'Minimized question')
+    const request = await mock.waitForRequest(browser)
     await browser.minimizeWindow()
     try {
       const lostFocus = await browser.waitUntil(async () => !await windowIsFocused(), { timeout: 3_000, interval: 50 }).catch(() => false)
@@ -420,6 +468,7 @@ describe('reply-end alerts', () => {
         return
       }
       await sendChatReply(request.reply, 'the minimized window')
+      await waitForValue(browser, 'sound plays', async () => (await soundState(browser)).plays, [VOLUME])
       const [notification] = await waitForNotifications([{ appName: 'Dez', summary: 'Minimized question', body: 'Reply finished', actions: ['default', 'Open'] }])
 
       server?.click(notification.id)

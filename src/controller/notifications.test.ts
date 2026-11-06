@@ -33,6 +33,8 @@ let soundPlays: number[] = []
 let playDoneSound: (volumePercent: number) => void
 let notifications: ShownNotification[] = []
 let showNotification: (notification: ShownNotification) => Promise<void>
+// The user idle time that the alert rule reads, in ms (null: unknown).
+let userIdleMs: () => Promise<number | null>
 let editorFocuses: EditorFocus[] = []
 let consoleError: MockInstance<typeof console.error>
 
@@ -42,6 +44,9 @@ sbp('sbp/selectors/register', {
   },
   'dez.native/showNotification' (title: string, body: string, onClick: ShownNotification['onClick']): Promise<void> {
     return showNotification({ title, body, onClick })
+  },
+  'dez.native/userIdleMs' (): Promise<number | null> {
+    return userIdleMs()
   },
   'dez.editor/focus' (): boolean {
     editorFocuses.push({
@@ -82,6 +87,7 @@ beforeEach(() => {
   showNotification = async (notification) => {
     notifications.push(notification)
   }
+  userIdleMs = async () => 0
   editorFocuses = []
   appWindow.isFocused = async () => true
   consoleError = vi.spyOn(console, 'error').mockImplementation(() => {})
@@ -100,19 +106,55 @@ describe('dez.controller/alertReplyEnded', () => {
     expect(soundPlays).toEqual([30])
   })
 
-  it('gives no alert for a reply that ends in the active tab of the focused window', async () => {
+  it('gives no alert for a reply that ends in the active tab of the focused window while the user is not away', async () => {
     await alertReplyEnded(activeTabId())
 
     expect(soundPlays).toEqual([])
     expect(notifications).toEqual([])
   })
 
-  it('plays the sound for a reply that ends in the active tab while another window has focus', async () => {
+  it('plays the sound and shows a notification for a reply that ends in the active tab while another window has focus', async () => {
     appWindow.isFocused = async () => false
 
     await alertReplyEnded(activeTabId())
 
     expect(soundPlays).toEqual([50])
+    expect(notifications).toHaveLength(1)
+  })
+
+  it('plays the sound and shows a notification for a reply that ends in the active tab after more than 1 minute with no user input', async () => {
+    userIdleMs = async () => 60_001
+
+    await alertReplyEnded(activeTabId())
+
+    expect(soundPlays).toEqual([50])
+    expect(notifications).toHaveLength(1)
+  })
+
+  // On a desktop with no idle source an "away" guess would alert for each
+  // reply.
+  it.each([
+    { idleMs: 60_000, label: 'exactly 1 minute' },
+    { idleMs: null, label: 'unknown' },
+  ])('gives no alert for a reply that ends in the active tab of the focused window when the idle time is $label', async ({ idleMs }) => {
+    userIdleMs = async () => idleMs
+
+    await alertReplyEnded(activeTabId())
+
+    expect(soundPlays).toEqual([])
+    expect(notifications).toEqual([])
+  })
+
+  it('counts a failed idle time read as "not away", and logs it', async () => {
+    userIdleMs = async () => {
+      throw new Error('no idle source')
+    }
+
+    await alertReplyEnded(activeTabId())
+
+    expect(soundPlays).toEqual([])
+    expect(notifications).toEqual([])
+    expect(consoleError).toHaveBeenCalled()
   })
 
   it('counts a failed focus read as "not focused"', async () => {
