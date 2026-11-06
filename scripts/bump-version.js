@@ -86,18 +86,33 @@ export function bumpedFiles(version, texts) {
   return changed;
 }
 
+// The `--check` flag, which may come before or after the version, and the
+// version without a leading `v`. Throws unless the arguments are exactly one
+// valid version plus the optional flag, so a misplaced flag never writes.
+export function parseArgs(args) {
+  const check = args.includes('--check');
+  const rest = args.filter(arg => arg !== '--check');
+  if (rest.length !== 1) {
+    throw new Error(`Expected one version, got: ${rest.join(' ') || '(none)'}`);
+  }
+  const version = rest[0].replace(/^v/i, '');
+  if (!VERSION_PATTERN.test(version)) {
+    throw new Error(`Invalid version: ${rest[0]}`);
+  }
+  return { check, version };
+}
+
 function main(args) {
   if (args.length === 0) {
     console.log(USAGE);
     return;
   }
 
-  const check = args[0] === '--check';
-  const rawVersion = check ? args[1] : args[0];
-  const version = rawVersion?.replace(/^v/i, '');
-
-  if (!version || !VERSION_PATTERN.test(version)) {
-    console.error(`Invalid version: ${rawVersion ?? '(none)'}\n\n${USAGE}`);
+  let check, version;
+  try {
+    ({ check, version } = parseArgs(args));
+  } catch (error) {
+    console.error(`${error.message}\n\n${USAGE}`);
     process.exit(1);
   }
 

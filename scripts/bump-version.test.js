@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { bumpedFiles, versionMismatches } from './bump-version.js';
+import { bumpedFiles, parseArgs, versionMismatches } from './bump-version.js';
 
 const json = data => `${JSON.stringify(data, null, 2)}\n`;
 
@@ -49,5 +49,20 @@ describe('bumpedFiles', () => {
     const files = { ...versionFiles('0.12.0'), ...bumpedFiles('0.12.1', versionFiles('0.12.0')) };
     expect(versionMismatches('0.12.1', files)).toEqual([]);
     expect(files['src-tauri/Cargo.lock']).toContain('name = "dbus"\nversion = "0.12.0"');
+  });
+});
+
+describe('parseArgs', () => {
+  it('takes --check before or after the version, so a check never writes', () => {
+    expect(parseArgs(['--check', 'v0.6.1'])).toEqual({ check: true, version: '0.6.1' });
+    expect(parseArgs(['0.6.1', '--check'])).toEqual({ check: true, version: '0.6.1' });
+    expect(parseArgs(['0.6.1'])).toEqual({ check: false, version: '0.6.1' });
+  });
+
+  it('refuses anything but one valid version and the flag', () => {
+    expect(() => parseArgs(['--check'])).toThrow('Expected one version, got: (none)');
+    expect(() => parseArgs(['0.6.1', '0.6.2'])).toThrow('Expected one version, got: 0.6.1 0.6.2');
+    expect(() => parseArgs(['0.6.1', '--chek'])).toThrow('Expected one version, got: 0.6.1 --chek');
+    expect(() => parseArgs(['0.6'])).toThrow('Invalid version: 0.6');
   });
 });
