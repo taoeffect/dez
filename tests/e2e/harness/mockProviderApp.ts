@@ -8,7 +8,8 @@ import { pickModel } from './thread'
 export interface MockProviderApp {
   mock: HoldingChatMock
   app: RunningApp
-  browser: E2EBrowser
+  /** The live session: after `relaunch()`, the new one. */
+  readonly browser: E2EBrowser
   /** Ends the session and starts a new one on the same HOME, as a relaunch
    *  of the app does, and returns it. `stop` then ends the new session. */
   relaunch: () => Promise<E2EBrowser>
@@ -48,7 +49,16 @@ export async function startMockProviderApp (provider: MockProvider, config: Reco
       await waitFor(next, 'header.tab-bar', 60_000)
       return next
     }
-    return { mock, app, browser, relaunch, stop }
+    return {
+      mock,
+      app,
+      get browser () {
+        if (!browser) throw new Error('No e2e session: relaunch() failed')
+        return browser
+      },
+      relaunch,
+      stop,
+    }
   } catch (err) {
     await stop()
     throw err
