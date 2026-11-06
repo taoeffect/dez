@@ -331,17 +331,6 @@ function onOverlayClick(e: MouseEvent) {
   height: 100%;
 }
 
-.settings-row {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 12px;
-}
-
-.settings-row--end {
-  justify-content: flex-end;
-}
-
 .settings-label {
   font-size: 13px;
   font-weight: 500;
@@ -412,11 +401,22 @@ function onOverlayClick(e: MouseEvent) {
 }
 </style>
 
-<!-- Form controls shared by the Settings sections and the managers they
-     mount (ProviderManager, PromptManager, ShortcutManager). Not scoped,
+<!-- Rows and form controls shared by the Settings sections and the managers
+     they mount (ProviderManager, PromptManager, ShortcutManager). Not scoped,
      because a parent's scoped styles do not reach elements inside a child
      component. -->
 <style>
+.settings-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.settings-row--end {
+  justify-content: flex-end;
+}
+
 .settings-input {
   flex: 1;
   padding: 6px 10px;
