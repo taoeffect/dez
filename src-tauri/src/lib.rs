@@ -31,7 +31,9 @@ pub fn run() {
         .manage(reqwest::Client::new())
         .manage(http_bridge::HttpStreamState::new())
         // The frontend invokes these only from the `dez.native/*` selectors in
-        // src/controller/native.ts.
+        // src/controller/native.ts. App commands need no capability entry:
+        // build.rs declares no app command list, so the webview may call each
+        // command registered here.
         .invoke_handler(tauri::generate_handler![
             commands::get_provider_secret,
             commands::get_copilot_chat_token,
@@ -52,6 +54,7 @@ pub fn run() {
             commands::load_app_file,
             commands::get_app_dir,
             commands::is_window_fullscreen,
+            commands::open_devtools,
         ]);
     // macOS brings the app to the front when it starts, and with it each
     // window that is visible at that time. The main window starts hidden

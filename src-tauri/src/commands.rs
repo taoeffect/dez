@@ -201,3 +201,10 @@ pub fn is_window_fullscreen(window: tauri::WebviewWindow) -> Result<bool, String
     #[cfg(not(target_os = "linux"))]
     window.is_fullscreen().map_err(|error| error.to_string())
 }
+
+// Help › Developer Console. Release builds have `open_devtools` only through
+// the `devtools` feature of the tauri crate (Cargo.toml).
+#[tauri::command]
+pub fn open_devtools(window: tauri::WebviewWindow) {
+    window.open_devtools();
+}

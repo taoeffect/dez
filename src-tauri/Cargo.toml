@@ -18,7 +18,14 @@ crate-type = ["staticlib", "cdylib", "rlib"]
 tauri-build = { version = "=2.5.6", features = [] }
 
 [dependencies]
-tauri = { version = "=2.10.3", features = [] }
+# `devtools` lets release builds open the Web Inspector: Help › Developer
+# Console calls `open_devtools` (commands.rs). Debug builds have it anyway.
+# In release builds it also turns on Tauri's own inspector key (Ctrl+Shift+I
+# on Linux, Cmd+Option+I on macOS) and the "Inspect Element" context menu
+# item. WebKit keeps console messages from before the inspector opens, so
+# the console shows earlier logs too. On macOS it uses a private WebKit API,
+# which only blocks App Store distribution.
+tauri = { version = "=2.10.3", features = ["devtools"] }
 tauri-plugin-opener = "=2.5.3"
 tauri-plugin-store = "=2.4.2"
 # Later dialog (2.8+) and fs (2.6+) releases need tauri 2.12. The npm

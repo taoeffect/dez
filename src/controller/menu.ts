@@ -91,6 +91,13 @@ export default sbp('sbp/selectors/register', {
         items: [
           { text: 'Keyboard Shortcuts', action: () => sbp('dez.model/settings/open', 'general') },
           { text: 'Dez on GitHub', action: () => sbp('dez.controller/openUrl', DEZ_REPO_URL) },
+          SEPARATOR,
+          {
+            text: 'Developer Console',
+            action: () => {
+              sbp('dez.native/openDevtools').catch((error: unknown) => console.error('Failed to open the developer console:', error))
+            },
+          },
           ...(isMacPlatform ? [] : [SEPARATOR, checkForUpdates, about]),
         ],
       })
