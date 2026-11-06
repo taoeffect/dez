@@ -40,7 +40,13 @@ tokio = { version = "=1.52.0", features = ["full"] }
 thiserror = "=2.0.18"
 futures = "=0.3.32"
 
-# The gtk version that tauri uses, so its `gtk_window()` type matches.
+# The gtk version that tauri uses, so its `gtk_window()` type matches. The
+# zbus version that tauri-plugin-opener already pulls in: notification.rs
+# talks to the desktop notification server with it.
 [target.'cfg(target_os = "linux")'.dependencies]
 gtk = "=0.18.2"
+zbus = "=5.14.0"
+
+[target.'cfg(target_os = "macos")'.dependencies]
+mac-notification-sys = "=0.6.15"
 

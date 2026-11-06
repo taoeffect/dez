@@ -3,13 +3,14 @@ import { startApp, type RunningApp } from './harness/app'
 import { consoleErrors, pointerClick, pointerDrag, resetConsoleErrors, screenshotOnFailure, waitFor, waitForValue } from './harness/dom'
 import { readAppState, seedAppState } from './harness/fixtures'
 import { startMockProviderApp } from './harness/mockProviderApp'
-import { replyText, sendChatReply, type HoldingChatMock, type MockProvider } from './harness/mockServer'
+import { replyText, sendChatReply, type HeldRequest, type HoldingChatMock, type MockProvider } from './harness/mockServer'
+import { startNotificationServer, type NotificationServer, type ShownNotification } from './harness/notificationServer'
 import { createSession, destroySession, type E2EBrowser } from './harness/session'
-import { sbpCall, submit, waitForThread } from './harness/thread'
+import { focusedArea, sbpCall, submit, waitForThread } from './harness/thread'
 
 // Settings › Notifications: the reply-done sound with its volume slider, and
-// the system notification setting. Then the sound at the end of a reply that
-// the user does not look at. The seeded app state has both alerts off
+// the system notification setting. Then the alerts at the end of a reply
+// that the user does not look at. The seeded app state has both alerts off
 // (`quietAppState` in harness/fixtures.ts), so the spec starts from "off".
 //
 // The page records each `play()` of a media element and mutes the element
@@ -229,26 +230,60 @@ describe('Settings › Notifications', () => {
   })
 })
 
-describe('reply-end sound', () => {
+// The sound and the system notification at the end of a reply. The app's
+// session bus is a private bus with a fake notification server on it
+// (harness/notificationServer.py), which records each notification and
+// sends the click.
+describe('reply-end alerts', () => {
   const PROVIDER: MockProvider = { id: 'alerts', name: 'Alerts Mock', modelId: 'alerts-model', modelName: 'Alerts Model' }
   const VOLUME = 40
   let browser: E2EBrowser
   let mock: HoldingChatMock
   let stopApp: (() => Promise<void>) | undefined
+  let server: NotificationServer | undefined
+  // The notifications from before the test.
+  let shownBefore = 0
 
+  function newNotifications (): ShownNotification[] {
+    return (server as NotificationServer).notifications.slice(shownBefore)
+  }
+
+  async function waitForNotifications (expected: Omit<ShownNotification, 'id'>[]): Promise<ShownNotification[]> {
+    await waitForValue(browser, 'notifications', async () => newNotifications().map(({ id: _id, ...rest }) => rest), expected)
+    return newNotifications()
+  }
+
+  // Calls `plugin:window|is_focused` for the main window; the capability
+  // file allows it.
   async function windowIsFocused (): Promise<boolean> {
-    return browser.execute(async () => {
+    return await browser.execute(async () => {
       const internals = Reflect.get(window, '__TAURI_INTERNALS__') as {
         invoke: (command: string, args: Record<string, unknown>) => Promise<unknown>
       }
-      return await internals.invoke('plugin:window|is_focused', { label: 'main' }) === true
-    })
+      return internals.invoke('plugin:window|is_focused', { label: 'main' })
+    }) === true
+  }
+
+  async function activeTabId (): Promise<string> {
+    return await sbpCall(browser, 'dez.model/tabs/activeId') as string
+  }
+
+  // Sends `question` in a new tab, opens another tab, and returns the first
+  // tab's id and the reply's request.
+  async function askInBackgroundTab (question: string): Promise<{ tabId: string, request: HeldRequest }> {
+    const tabId = await activeTabId()
+    await submit(browser, question)
+    const request = await mock.waitForRequest(browser)
+    await sbpCall(browser, 'dez.model/tabs/create')
+    return { tabId, request }
   }
 
   beforeAll(async () => {
-    ({ browser, mock, stop: stopApp } = await startMockProviderApp(PROVIDER))
+    server = await startNotificationServer()
+    ;({ browser, mock, stop: stopApp } = await startMockProviderApp(PROVIDER, {}, { env: server.env }))
     await sbpCall(browser, 'dez.model/settings/setDoneSound', true)
     await sbpCall(browser, 'dez.model/settings/setDoneSoundVolume', VOLUME)
+    await sbpCall(browser, 'dez.model/settings/setDoneNotification', true)
   })
 
   beforeEach(async () => {
@@ -256,6 +291,7 @@ describe('reply-end sound', () => {
     await sbpCall(browser, 'dez.model/tabs/create')
     await resetConsoleErrors(browser)
     await recordSoundPlays(browser)
+    shownBefore = server?.notifications.length ?? 0
   })
 
   afterEach(async (ctx) => {
@@ -267,19 +303,32 @@ describe('reply-end sound', () => {
 
   afterAll(async () => {
     await stopApp?.()
+    await server?.stop()
   })
 
-  it('plays the sound at the set volume when a reply ends in a background tab', async () => {
-    await submit(browser, 'Background question')
-    const request = await mock.waitForRequest(browser)
-    await sbpCall(browser, 'dez.model/tabs/create')
+  it('plays the sound and shows a notification when a reply ends in a background tab', async () => {
+    const { request } = await askInBackgroundTab('Background question')
 
     await sendChatReply(request.reply, 'the background')
 
     await waitForValue(browser, 'sound plays', async () => (await soundState(browser)).plays, [VOLUME])
+    await waitForNotifications([{ appName: 'Dez', summary: 'Background question', body: 'Reply finished', actions: ['default', 'Open'] }])
   })
 
-  it('plays nothing when a reply ends in the active tab of the focused window', async () => {
+  it('a click on the notification closes Settings, opens the tab, and focuses the editor', async () => {
+    const { tabId, request } = await askInBackgroundTab('Click question')
+    await sbpCall(browser, 'dez.model/settings/open')
+    await sendChatReply(request.reply, 'the click')
+    const [notification] = await waitForNotifications([{ appName: 'Dez', summary: 'Click question', body: 'Reply finished', actions: ['default', 'Open'] }])
+
+    server?.click(notification.id)
+
+    await waitForValue(browser, 'active tab', activeTabId, tabId)
+    expect(await sbpCall(browser, 'dez.model/settings/isOpen')).toBe(false)
+    await waitForValue(browser, 'focused area', async () => focusedArea(browser), 'editor')
+  })
+
+  it('gives no alert when a reply ends in the active tab of the focused window', async () => {
     expect(await windowIsFocused()).toBe(true)
     // A sound that still plays takes no new play() (dez.ui/playDoneSound), so
     // a wrong alert would not show.
@@ -295,8 +344,39 @@ describe('reply-end sound', () => {
       { role: 'user', text: '' },
     ])
     // The alert reads the window focus first, an IPC call. Give a wrong
-    // sound time to start.
+    // alert time to start.
     await browser.pause(500)
     expect((await soundState(browser)).plays).toEqual([])
+    expect(newNotifications()).toEqual([])
+  })
+
+  // The fake server sends no activation token, so Dez asks for the focus
+  // with `gtk_window_present`, which headless KWin grants. A real session's
+  // click comes with a token (a manual check).
+  it('a click on the notification brings the minimized window back', async (ctx) => {
+    const { request } = await askInBackgroundTab('Minimized question')
+    await browser.minimizeWindow()
+    try {
+      const lostFocus = await browser.waitUntil(async () => !await windowIsFocused(), { timeout: 3_000, interval: 50 }).catch(() => false)
+      // Xvfb in CI has no window manager, so a minimize does nothing there.
+      if (!lostFocus) {
+        ctx.skip('The minimize needs a window manager, such as headless KWin')
+        return
+      }
+      await sendChatReply(request.reply, 'the minimized window')
+      const [notification] = await waitForNotifications([{ appName: 'Dez', summary: 'Minimized question', body: 'Reply finished', actions: ['default', 'Open'] }])
+
+      server?.click(notification.id)
+
+      await waitForValue(browser, 'window focused', windowIsFocused, true)
+    } finally {
+      // On Wayland a screenshot of a minimized window never returns, and
+      // afterEach takes one after a failure. `set_focus` does not restore a
+      // minimized window there, but WebDriver Set Window Rect does.
+      if (!await windowIsFocused()) {
+        const { x, y, width, height } = await browser.getWindowRect()
+        await browser.setWindowRect(x, y, width, height)
+      }
+    }
   })
 })

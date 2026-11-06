@@ -21,8 +21,8 @@ let editorThinking: (SectionThinking | undefined)[] = []
 let editorTokens: string[] = []
 let savedConversations: ConversationData[] = []
 let toasts: Array<{ area: string, data: ToastData }> = []
-// The tab of each reply-end alert.
-let alertedTabs: string[] = []
+// The tab and end status of each reply-end alert.
+let alerts: { tabId: string, status: string }[] = []
 let consoleError: MockInstance<typeof console.error>
 
 // Stand-ins for the provider, the editor and the disk. The editor stub
@@ -54,8 +54,8 @@ sbp('sbp/selectors/register', {
   'dez.ui/toast' (area: string, data: ToastData): void {
     toasts.push({ area, data })
   },
-  async 'dez.controller/alertReplyEnded' (tabId: string): Promise<void> {
-    alertedTabs.push(tabId)
+  async 'dez.controller/alertReplyEnded' (tabId: string, status: string): Promise<void> {
+    alerts.push({ tabId, status })
   },
 })
 
@@ -87,7 +87,7 @@ beforeEach(() => {
   editorTokens = []
   savedConversations = []
   toasts = []
-  alertedTabs = []
+  alerts = []
   consoleError = vi.spyOn(console, 'error').mockImplementation(() => {})
   sbp('dez.model/tabs/replaceSections', activeTab().id, [
     { id: 'u1', role: 'user', content: [{ kind: 'text', text: 'Hi' }] },
@@ -325,7 +325,7 @@ describe('reply-end alerts', () => {
 
     await startStream()
 
-    expect(alertedTabs).toEqual([activeTab().id])
+    expect(alerts).toEqual([{ tabId: activeTab().id, status: 'finished' }])
   })
 
   it('alerts for a reply that fails', async () => {
@@ -335,7 +335,7 @@ describe('reply-end alerts', () => {
 
     await startStream()
 
-    expect(alertedTabs).toEqual([activeTab().id])
+    expect(alerts).toEqual([{ tabId: activeTab().id, status: 'error' }])
   })
 
   // A stop is the user's own act.
@@ -348,7 +348,7 @@ describe('reply-end alerts', () => {
 
     await startStream()
 
-    expect(alertedTabs).toEqual([])
+    expect(alerts).toEqual([])
   })
 })
 

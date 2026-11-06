@@ -9,16 +9,49 @@ import './notifications'
 // The Dez window as the alert rule sees it. Set by each test.
 const appWindow = vi.hoisted(() => ({ isFocused: async (): Promise<boolean> => true }))
 vi.mock('@tauri-apps/api/window', () => ({ getCurrentWindow: () => appWindow }))
+// The real Channel registers its callback with the Tauri webview.
+vi.mock('@tauri-apps/api/core', () => ({
+  Channel: class {
+    onmessage: (message: null) => void = () => {}
+  },
+}))
+
+interface ShownNotification {
+  title: string
+  body: string
+  onClick: { onmessage: (message: null) => void }
+}
+
+// What the editor focus call saw: it does nothing while a panel is open.
+interface EditorFocus {
+  activeTabId: string
+  panelOpen: boolean
+}
 
 // The volume of each sound that played.
 let soundPlays: number[] = []
 let playDoneSound: (volumePercent: number) => void
+let notifications: ShownNotification[] = []
+let showNotification: (notification: ShownNotification) => Promise<void>
+let editorFocuses: EditorFocus[] = []
 let consoleError: MockInstance<typeof console.error>
 
 sbp('sbp/selectors/register', {
   'dez.ui/playDoneSound' (volumePercent: number): void {
     playDoneSound(volumePercent)
   },
+  'dez.native/showNotification' (title: string, body: string, onClick: ShownNotification['onClick']): Promise<void> {
+    return showNotification({ title, body, onClick })
+  },
+  'dez.editor/focus' (): boolean {
+    editorFocuses.push({
+      activeTabId: activeTabId(),
+      panelOpen: (sbp('dez.model/settings/isOpen') as boolean) || (sbp('dez.model/settings/isHistoryOpen') as boolean),
+    })
+    return true
+  },
+  // A closed empty tab deletes its conversation file.
+  async 'dez.persistence/deleteConversation' (): Promise<void> {},
 })
 
 function activeTabId(): string {
@@ -32,14 +65,24 @@ function backgroundTabId(): string {
   return tabId
 }
 
-async function alertReplyEnded(tabId: string): Promise<void> {
-  await sbp('dez.controller/alertReplyEnded', tabId)
+async function alertReplyEnded(tabId: string, status: 'finished' | 'error' = 'finished'): Promise<void> {
+  await sbp('dez.controller/alertReplyEnded', tabId, status)
+}
+
+function clickNotification(): void {
+  expect(notifications).toHaveLength(1)
+  notifications[0].onClick.onmessage(null)
 }
 
 beforeEach(() => {
   setActivePinia(createPinia())
   soundPlays = []
   playDoneSound = (volumePercent) => soundPlays.push(volumePercent)
+  notifications = []
+  showNotification = async (notification) => {
+    notifications.push(notification)
+  }
+  editorFocuses = []
   appWindow.isFocused = async () => true
   consoleError = vi.spyOn(console, 'error').mockImplementation(() => {})
 })
@@ -57,10 +100,11 @@ describe('dez.controller/alertReplyEnded', () => {
     expect(soundPlays).toEqual([30])
   })
 
-  it('plays nothing for a reply that ends in the active tab of the focused window', async () => {
+  it('gives no alert for a reply that ends in the active tab of the focused window', async () => {
     await alertReplyEnded(activeTabId())
 
     expect(soundPlays).toEqual([])
+    expect(notifications).toEqual([])
   })
 
   it('plays the sound for a reply that ends in the active tab while another window has focus', async () => {
@@ -102,14 +146,85 @@ describe('dez.controller/alertReplyEnded', () => {
     await alertReplyEnded(backgroundTabId())
 
     expect(soundPlays).toEqual([])
+    expect(notifications).toHaveLength(1)
   })
 
-  it('logs a sound that fails, and does not throw', async () => {
+  // The sound and the notification fail on their own.
+  it('logs a sound that fails, shows the notification, and does not throw', async () => {
     playDoneSound = () => {
       throw new Error('no audio device')
     }
 
     await expect(alertReplyEnded(backgroundTabId())).resolves.toBeUndefined()
     expect(consoleError).toHaveBeenCalled()
+    expect(notifications).toHaveLength(1)
+  })
+
+  it.each([
+    { status: 'finished', body: 'Reply finished' },
+    { status: 'error', body: 'Reply failed' },
+  ] as const)('shows a notification with the tab title and "$body" for a $status reply', async ({ status, body }) => {
+    const tabId = backgroundTabId()
+    sbp('dez.model/tabs/replaceSections', tabId, [{ id: 'u1', role: 'user', content: [{ kind: 'text', text: 'Plan the trip' }] }])
+
+    await alertReplyEnded(tabId, status)
+
+    expect(notifications.map(({ title, body }) => ({ title, body }))).toEqual([{ title: 'Plan the trip', body }])
+  })
+
+  it('shows no notification while the notification setting is off', async () => {
+    sbp('dez.model/settings/setDoneNotification', false)
+
+    await alertReplyEnded(backgroundTabId())
+
+    expect(notifications).toEqual([])
+    expect(soundPlays).toEqual([50])
+  })
+
+  it('shows no notification for a tab that closed before the reply end', async () => {
+    const tabId = backgroundTabId()
+    sbp('dez.model/tabs/close', tabId)
+
+    await alertReplyEnded(tabId)
+
+    expect(notifications).toEqual([])
+  })
+
+  it('logs a notification that fails, and does not throw', async () => {
+    showNotification = async () => {
+      throw new Error('no notification server')
+    }
+
+    await expect(alertReplyEnded(backgroundTabId())).resolves.toBeUndefined()
+    expect(consoleError).toHaveBeenCalled()
+    expect(soundPlays).toEqual([50])
+  })
+
+  // The editor takes no focus while a panel covers it.
+  it.each(['dez.model/settings/open', 'dez.model/settings/historyOpen'])('a click closes the panel of %s, opens the tab, and then focuses the editor', async (openPanel) => {
+    const tabId = backgroundTabId()
+    await alertReplyEnded(tabId)
+    sbp(openPanel)
+
+    clickNotification()
+
+    expect(activeTabId()).toBe(tabId)
+    expect(sbp('dez.model/settings/isOpen')).toBe(false)
+    expect(sbp('dez.model/settings/isHistoryOpen')).toBe(false)
+    expect(editorFocuses).toEqual([{ activeTabId: tabId, panelOpen: false }])
+  })
+
+  it('a click after the tab closed changes nothing', async () => {
+    const tabId = backgroundTabId()
+    await alertReplyEnded(tabId)
+    const otherTabId = activeTabId()
+    sbp('dez.model/tabs/close', tabId)
+    sbp('dez.model/settings/open')
+
+    clickNotification()
+
+    expect(activeTabId()).toBe(otherTabId)
+    expect(sbp('dez.model/settings/isOpen')).toBe(true)
+    expect(editorFocuses).toEqual([])
   })
 })

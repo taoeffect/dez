@@ -1,4 +1,4 @@
-import { startApp, type RunningApp } from './app'
+import { startApp, type AppOptions, type RunningApp } from './app'
 import { waitFor } from './dom'
 import { seedRawAppState } from './fixtures'
 import { mockChatPath, mockProviderConfig, startHoldingChatMock, type HoldingChatMock, type MockProvider } from './mockServer'
@@ -22,10 +22,14 @@ export interface MockProviderApp {
  * themselves: starts a holding chat mock for `provider`, then the app with
  * `provider` as its only custom provider, and picks the provider's model.
  * `config` adds to or replaces fields of the provider's config, such as
- * `thinking`. One app session then serves the whole file. On a failure it
- * stops what it started, then throws.
+ * `thinking`. `appOptions` goes to `startApp`. One app session then serves
+ * the whole file. On a failure it stops what it started, then throws.
  */
-export async function startMockProviderApp (provider: MockProvider, config: Record<string, unknown> = {}): Promise<MockProviderApp> {
+export async function startMockProviderApp (
+  provider: MockProvider,
+  config: Record<string, unknown> = {},
+  appOptions: AppOptions = {},
+): Promise<MockProviderApp> {
   const mock = await startHoldingChatMock(mockChatPath(provider))
   let app: RunningApp | undefined
   let browser: E2EBrowser | undefined
@@ -35,7 +39,7 @@ export async function startMockProviderApp (provider: MockProvider, config: Reco
     await mock.stop()
   }
   try {
-    app = await startApp()
+    app = await startApp(appOptions)
     await seedRawAppState(app.home, { customProviders: [{ ...mockProviderConfig(provider, mock.url), ...config }] })
     browser = await createSession(app.binary, app.port)
     await waitFor(browser, 'header.tab-bar', 60_000)

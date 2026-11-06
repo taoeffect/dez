@@ -98,6 +98,13 @@ export default sbp('sbp/selectors/register', {
     return invoke('open_devtools')
   },
 
+  // `onClick` gets one message when the user clicks the notification, after
+  // Rust brought the window to the front. It resolves when the notification
+  // shows; the wait for a click goes on in Rust.
+  'dez.native/showNotification' (title: string, body: string, onClick: Channel<null>): Promise<void> {
+    return invoke('show_notification', { title, body, onClick })
+  },
+
   // Returns the chosen path, or null when the user cancels. The dialog
   // plugin adds that exact path to the fs scope, so `writeTextFile` below
   // may write only files that the user picked here.

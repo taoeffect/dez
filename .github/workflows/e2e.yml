@@ -84,6 +84,8 @@ jobs:
       - name: Install tauri-driver
         run: cargo install tauri-driver --locked
 
+      # dbus-daemon and python3-gi run the fake notification server of
+      # tests/e2e/harness/notificationServer.py.
       - name: Install Tauri Linux dependencies
         run: |
           sudo apt-get update
@@ -99,7 +101,9 @@ jobs:
             patchelf \
             xdg-utils \
             webkit2gtk-driver \
-            xvfb
+            xvfb \
+            dbus-daemon \
+            python3-gi
 
       - name: Build debug app (no bundle)
         run: npm run tauri build -- --debug --no-bundle

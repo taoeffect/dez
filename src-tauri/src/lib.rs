@@ -3,6 +3,7 @@ mod copilot;
 mod http_bridge;
 mod key_store;
 mod native_error;
+mod notification;
 mod persistence;
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
@@ -54,6 +55,7 @@ pub fn run() {
             commands::get_app_dir,
             commands::is_window_fullscreen,
             commands::open_devtools,
+            notification::show_notification,
         ]);
     // macOS brings the app to the front when it starts, and with it each
     // window that is visible at that time. The main window starts hidden

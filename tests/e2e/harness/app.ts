@@ -133,6 +133,11 @@ async function killProcessGroup (child: ChildProcess): Promise<void> {
   }
 }
 
+export interface AppOptions {
+  /** Extra variables for the driver and the app it launches. */
+  env?: Record<string, string>
+}
+
 /**
  * Start tauri-driver wired to a fully isolated app instance:
  * - fresh temp HOME so the app's ~/.config/dez data can never touch the
@@ -148,7 +153,7 @@ async function killProcessGroup (child: ChildProcess): Promise<void> {
  *   never collide with a stray driver or with each other;
  * - `options.env`: extra variables for the driver and the app it launches.
  */
-export async function startApp (options: { env?: Record<string, string> } = {}): Promise<RunningApp> {
+export async function startApp (options: AppOptions = {}): Promise<RunningApp> {
   const binary = resolveBinary()
   const home = await fs.promises.mkdtemp(path.join(os.tmpdir(), 'dez-e2e-'))
   const port = await findFreePort()

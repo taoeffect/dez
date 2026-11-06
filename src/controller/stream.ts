@@ -44,7 +44,7 @@ function finalizeStream(tabId: string, session: StreamSessionState | null, statu
   if (status !== 'cancelled') {
     sbp('dez.model/tabs/markReplyDone', tabId)
     // Not awaited; it catches its own failures.
-    sbp('dez.controller/alertReplyEnded', tabId)
+    sbp('dez.controller/alertReplyEnded', tabId, status)
   }
   sbp('dez.editor/reconcileAfterStreamFinish', tabId)
   sbp('dez.model/tabs/save', tabId).catch(() => {})
