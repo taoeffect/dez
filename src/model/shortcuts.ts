@@ -350,20 +350,18 @@ const SHIFT_KEYS: Readonly<Record<string, true>> = {
 }
 
 // Keys that no action may take: the standard edit keys, focus moves, the
-// macOS app-menu items with fixed keys (`src/controller/menu.ts`), the Linux
-// editor's line navigation (`linuxLineNavigationKeymap` in cmEditor.ts), and
-// the developer console key that Tauri's `devtools` feature adds.
+// macOS app-menu items with fixed keys (`src/controller/menu.ts`), and the
+// Linux editor's line navigation (`linuxLineNavigationKeymap` in
+// cmEditor.ts). `validateShortcutKey` also reserves the developer console keys.
 const FOCUS_MOVE = 'moving the focus'
 const RESERVED_KEYS: Record<ShortcutPlatform, Readonly<Partial<Record<string, string>>>> = {
   mac: {
     'Meta-x': 'Cut', 'Meta-c': 'Copy', 'Meta-v': 'Paste', Tab: FOCUS_MOVE, 'Shift-Tab': FOCUS_MOVE,
     'Meta-a': 'Select All', 'Meta-q': 'Quit Dez', 'Meta-m': 'Minimize', 'Meta-h': 'Hide Dez', 'Meta-Alt-h': 'Hide Others',
-    'Meta-Alt-i': 'the developer console',
   },
   linux: {
     'Ctrl-x': 'Cut', 'Ctrl-c': 'Copy', 'Ctrl-v': 'Paste', Tab: FOCUS_MOVE, 'Shift-Tab': FOCUS_MOVE,
     'Ctrl-a': 'moving to the line start', 'Ctrl-e': 'moving to the line end',
-    'Shift-Ctrl-i': 'the developer console',
   },
 }
 
@@ -396,6 +394,14 @@ export function validateShortcutKey (
   const name = formatKeyName(parts)
   const reserved = RESERVED_KEYS[platform][name]
   if (reserved) return `Reserved for ${reserved}`
+  // The toggle key that Tauri's `devtools` feature adds (toggle-devtools.js
+  // in the tauri crate, a `document` keydown listener) checks only Cmd+Option
+  // on macOS or Ctrl+Shift elsewhere, and ignores the other modifiers. So
+  // Shift+Cmd+Option+I also toggles the inspector, and an action on that key
+  // would run with it.
+  if (parts.key === 'i' && (platform === 'mac' ? parts.meta && parts.alt : parts.ctrl && parts.shift)) {
+    return 'Reserved for the developer console'
+  }
   if (!parts.ctrl && !parts.meta && !parts.alt && !worksWithoutCommandModifier(parts, shortcut)) {
     return platform === 'mac' ? 'This key needs ⌘, ⌥, or ⌃' : 'This key needs Ctrl, Alt, or Super'
   }

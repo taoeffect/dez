@@ -178,6 +178,16 @@ describe('validateShortcutKey', () => {
     expect(validateShortcutKey('mac', 'closeTab', 'Ctrl-a')).toBeNull()
   })
 
+  // Tauri's toggle (toggle-devtools.js) does not look at the other modifiers.
+  it('refuses the developer console key with more modifiers, on its own platform only', () => {
+    expect(validateShortcutKey('linux', 'closeTab', 'Shift-Ctrl-Alt-i')).toBe('Reserved for the developer console')
+    expect(validateShortcutKey('linux', 'closeTab', 'Shift-Meta-Ctrl-i')).toBe('Reserved for the developer console')
+    expect(validateShortcutKey('mac', 'closeTab', 'Shift-Meta-Alt-i')).toBe('Reserved for the developer console')
+    expect(validateShortcutKey('mac', 'closeTab', 'Meta-Ctrl-Alt-i')).toBe('Reserved for the developer console')
+    expect(validateShortcutKey('linux', 'closeTab', 'Meta-Alt-i')).toBeNull()
+    expect(validateShortcutKey('mac', 'closeTab', 'Shift-Ctrl-i')).toBeNull()
+  })
+
   it('refuses a key or an active alias of another action', () => {
     expect(validateShortcutKey('linux', 'closeTab', 'Ctrl-t')).toBe('Used by New tab')
     expect(validateShortcutKey('linux', 'closeTab', 'Ctrl-+')).toBe('Used by Increase font size')
