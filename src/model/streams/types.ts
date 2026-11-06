@@ -30,6 +30,12 @@ export interface StreamSessionState {
   tokenCount: number
 }
 
+/** A session after its stream ended (finished, failed, or stopped). */
+export interface EndedStreamSession extends StreamSessionState {
+  status: StreamEndStatus
+  finishedAt: number
+}
+
 export interface StreamTerminalInput {
   tabId: string
   status: StreamEndStatus

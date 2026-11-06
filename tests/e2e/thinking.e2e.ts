@@ -73,7 +73,7 @@ function claudeThinking (n: number): unknown {
 // answer. The last line is the blank line before the next marker.
 function savedThinkerReply (n: number): string[] {
   return [
-    `<dez:pill type="agent" model="${THINKER.id}/${THINKER.modelId}" replay="{&quot;kind&quot;:&quot;field&quot;,&quot;field&quot;:&quot;reasoning_content&quot;}">`,
+    `<dez:pill type="agent" model="${THINKER.id}/${THINKER.modelId}" duration-ms="#" replay="{&quot;kind&quot;:&quot;field&quot;,&quot;field&quot;:&quot;reasoning_content&quot;}">`,
     ...thinkingText(n).split('\n'),
     '</dez:pill>',
     answerText(n),
@@ -189,7 +189,8 @@ describe('thinking', () => {
 
   // The lines of each agent section in the active tab's conversation file,
   // from its marker line to the next marker, or null while the file does
-  // not exist.
+  // not exist. The reply time changes from run to run, so its digits read
+  // as `#`.
   async function savedAgentReplies (): Promise<string[][] | null> {
     const tab = await sbpCall(browser, 'dez.model/tab', await sbpCall(browser, 'dez.model/tabs/activeId')) as { conversationId: string }
     let content: string
@@ -204,7 +205,7 @@ describe('thinking', () => {
       if (line.startsWith('<dez:pill type="user"')) {
         reply = null
       } else if (line.startsWith('<dez:pill type="agent"')) {
-        reply = [line]
+        reply = [line.replace(/ duration-ms="\d+"/, ' duration-ms="#"')]
         replies.push(reply)
       } else {
         reply?.push(line)
@@ -562,7 +563,7 @@ describe('thinking', () => {
     await waitForValue(browser, 'saved replies', savedAgentReplies, [
       savedThinkerReply(1),
       savedThinkerReply(2),
-      [`<dez:pill type="agent" model="${THINKER.id}/${THINKER.modelId}"/>`, answerText(3), ''],
+      [`<dez:pill type="agent" model="${THINKER.id}/${THINKER.modelId}" duration-ms="#"/>`, answerText(3), ''],
     ])
 
     // "Reset to defaults" turns thinking on again and drops the saved value.

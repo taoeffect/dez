@@ -1,7 +1,7 @@
 import sbp from '@sbp/sbp'
 import type { ActiveModel, SectionThinking, Tab } from '../model/chat/types'
 import type { ProviderStreamChatResult } from '../model/providers'
-import type { StreamEndStatus, StreamMessage, StreamSessionState } from '../model/streams/types'
+import type { EndedStreamSession, StreamMessage } from '../model/streams/types'
 import {
   appendThinkingToTabSection,
   appendTokenToTabSection,
@@ -37,14 +37,14 @@ interface NativeStreamRuntime {
 // cancel.
 const nativeStreamsByTab = new Map<string, NativeStreamRuntime>()
 
-function finalizeStream(tabId: string, session: StreamSessionState | null, status: StreamEndStatus): void {
+function finalizeStream(tabId: string, session: EndedStreamSession | null): void {
   if (!session) return
-  finalizeStreamSectionForTab(tabId, session.sectionId, status)
+  finalizeStreamSectionForTab(session)
   // A stop is the user's own act, so it marks nothing and gives no alert.
-  if (status !== 'cancelled') {
+  if (session.status !== 'cancelled') {
     sbp('dez.model/tabs/markReplyDone', tabId)
     // Not awaited; it catches its own failures.
-    sbp('dez.controller/alertReplyEnded', tabId, status)
+    sbp('dez.controller/alertReplyEnded', tabId, session.status)
   }
   sbp('dez.editor/reconcileAfterStreamFinish', tabId)
   sbp('dez.model/tabs/save', tabId).catch(() => {})
@@ -73,27 +73,6 @@ function updateStreamThinking(tabId: string, sectionId: string, change: () => Se
   if (!streamWritesSection(tabId, sectionId)) return
   const thinking = change()
   if (thinking) sbp('dez.editor/setSectionThinkingIfVisible', tabId, sectionId, thinking)
-}
-
-function finishStream(tabId: string): StreamSessionState | null {
-  const session = streamSession(tabId)
-  const result = finishStreamSession(tabId)
-  finalizeStream(tabId, session, 'finished')
-  return result
-}
-
-function errorStream(tabId: string): StreamSessionState | null {
-  const session = streamSession(tabId)
-  const result = errorStreamSession(tabId)
-  finalizeStream(tabId, session, 'error')
-  return result
-}
-
-function cancelStream(tabId: string): StreamSessionState | null {
-  const session = streamSession(tabId)
-  const result = cancelStreamSession(tabId)
-  finalizeStream(tabId, session, 'cancelled')
-  return result
 }
 
 export default sbp('sbp/selectors/register', {
@@ -153,13 +132,13 @@ export default sbp('sbp/selectors/register', {
         if (replay) {
           updateStreamThinking(args.tabId, args.sectionId, () => setThinkingReplayForTabSection(args.tabId, args.sectionId, replay))
         }
-        finishStream(args.tabId)
+        finalizeStream(args.tabId, finishStreamSession(args.tabId))
       }
     } catch (error) {
       const currentStream = nativeStreamsByTab.get(args.tabId)
       if (currentStream?.requestId === requestId && !currentStream.cancelling) {
         console.error('Chat request failed:', error)
-        errorStream(args.tabId)
+        finalizeStream(args.tabId, errorStreamSession(args.tabId))
         // The error shows only in this toast, never as thread text.
         // Sticky (no duration): the user closes it. For a tab in the
         // background the title names the tab, else the user cannot tell
@@ -196,7 +175,7 @@ export default sbp('sbp/selectors/register', {
       if (nativeStreamsByTab.get(tabId)?.requestId === currentStream?.requestId) {
         nativeStreamsByTab.delete(tabId)
       }
-      cancelStream(tabId)
+      finalizeStream(tabId, cancelStreamSession(tabId))
     }
   },
 })

@@ -13,7 +13,8 @@ export function createStreamSection(role: Role): Section {
 
 // The returned section gets `model`, also when it is a reused empty agent
 // section: it records the model that writes the next response. A reused
-// section loses its old thinking, which belongs to the earlier request.
+// section loses its old thinking and duration, which belong to the earlier
+// request.
 export function ensureTrailingAgentSection(sections: Section[], model: ModelRef): Section {
   const lastSection = sections[sections.length - 1]
   if (!lastSection || lastSection.role !== 'agent' || !sectionIsEmpty(lastSection)) {
@@ -25,6 +26,7 @@ export function ensureTrailingAgentSection(sections: Section[], model: ModelRef)
   lastSection.content = emptyContent()
   lastSection.model = cloneModelRef(model)
   delete lastSection.thinking
+  delete lastSection.durationMs
   return lastSection
 }
 
@@ -32,15 +34,15 @@ function ensureTrailingUserSection(sections: Section[]): void {
   if (sections.at(-1)?.role !== 'user') sections.push(createStreamSection('user'))
 }
 
-// Ends the stream that wrote `section`. A stream that wrote no answer text
-// leaves no trace when the user stopped it or when it failed with no
-// thinking either: its agent section goes, and no user section is added,
-// so the tab ends with the user's text as before the submit (a failure
-// shows in a toast). A stop drops the thinking too: thinking alone is not
-// the start of an answer. Any other end keeps the section, blanks it when
-// it has only whitespace, and adds a trailing user section for the next
-// message.
-export function endStreamSection(sections: Section[], section: Section, status: StreamEndStatus): void {
+// Ends the stream that wrote `section`, which took `durationMs`. A stream
+// that wrote no answer text leaves no trace when the user stopped it or
+// when it failed with no thinking either: its agent section goes, and no
+// user section is added, so the tab ends with the user's text as before the
+// submit (a failure shows in a toast). A stop drops the thinking too:
+// thinking alone is not the start of an answer. Any other end keeps the
+// section with its duration, blanks it when it has only whitespace, and
+// adds a trailing user section for the next message.
+export function endStreamSection(sections: Section[], section: Section, status: StreamEndStatus, durationMs: number): void {
   if (section.role !== 'agent') return
   const empty = sectionIsEmpty(section)
   const leavesNoTrace = empty && (status === 'cancelled' || (status === 'error' && !section.thinking))
@@ -50,6 +52,7 @@ export function endStreamSection(sections: Section[], section: Section, status: 
     if (index > 0) sections.splice(index, 1)
     return
   }
+  section.durationMs = durationMs
   if (empty) setSectionPlainText(section, '')
   ensureTrailingUserSection(sections)
 }

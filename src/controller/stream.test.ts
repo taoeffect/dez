@@ -352,6 +352,92 @@ describe('reply-end alerts', () => {
   })
 })
 
+describe('reply duration', () => {
+  const start = Date.UTC(2026, 10, 6, 12)
+
+  // 'none' marks a section without a `durationMs` key.
+  function durations(sections: { durationMs?: number }[] = []): (number | 'none' | undefined)[] {
+    return sections.map((section) => ('durationMs' in section ? section.durationMs : 'none'))
+  }
+
+  beforeEach(() => {
+    vi.useFakeTimers({ toFake: ['Date'] })
+    vi.setSystemTime(start)
+  })
+
+  afterEach(() => {
+    vi.useRealTimers()
+  })
+
+  // Each reply takes 4213 ms, and its end keeps the agent section.
+  const keptReplies: Record<string, typeof streamChat> = {
+    'finishes': async (input) => {
+      await input.onToken('Answer')
+      vi.setSystemTime(start + 4213)
+      return { requestId: input.requestId as string }
+    },
+    'fails after answer text': async (input) => {
+      await input.onToken('Partial')
+      vi.setSystemTime(start + 4213)
+      throw new Error('connection reset')
+    },
+    'fails after only thinking': async (input) => {
+      await input.onThinking('Plan')
+      vi.setSystemTime(start + 4213)
+      throw new Error('connection reset')
+    },
+    'the user stops after answer text': async (input) => {
+      await input.onToken('Partial')
+      vi.setSystemTime(start + 4213)
+      await sbp('dez.stream/stop', activeTab().id)
+      throw new Error('cancelled')
+    },
+  }
+
+  it.each(Object.entries(keptReplies))('stamps the agent section of a reply that %s, and saves it', async (_name, reply) => {
+    streamChat = reply
+
+    await startStream()
+
+    expect(durations(activeTab().sections)).toStrictEqual(['none', 4213, 'none'])
+    expect(durations(savedConversations.at(-1)?.sections)).toStrictEqual(['none', 4213, 'none'])
+  })
+
+  it('stamps 0 when the system clock was set back during the reply', async () => {
+    streamChat = async (input) => {
+      await input.onToken('Answer')
+      vi.setSystemTime(start - 60_000)
+      return { requestId: input.requestId as string }
+    }
+
+    await startStream()
+
+    expect(agentSection().durationMs).toBe(0)
+  })
+
+  // A new start in the tab cancels the earlier request with no stream end,
+  // so only the new stream's start and end count.
+  it('stamps the time of the stream that replaced an earlier one in the tab', async () => {
+    streamChat = async (first) => {
+      streamChat = async (second) => {
+        await second.onToken('Answer')
+        vi.setSystemTime(start + 3500)
+        return { requestId: second.requestId as string }
+      }
+      vi.setSystemTime(start + 1000)
+      await startStream()
+      // The earlier request returns last.
+      vi.setSystemTime(start + 9000)
+      return { requestId: first.requestId as string }
+    }
+
+    await startStream()
+
+    expect(agentSection().durationMs).toBe(2500)
+    expect(durations(savedConversations.at(-1)?.sections)).toStrictEqual(['none', 2500, 'none'])
+  })
+})
+
 describe('dez.controller/submitTab without a model', () => {
   it('shows an error toast and adds no section', async () => {
     sbp('dez.model/tabs/replaceSections', activeTab().id, [{ id: 'u1', role: 'user', content: [{ kind: 'text', text: 'Hi' }] }])

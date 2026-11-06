@@ -325,7 +325,7 @@ describe('section models', () => {
     typeIntoLastSection('first question')
     const first = ensureAgentSection(alpha)
     appendTokenToTabSection(activeId(), first.id, 'first answer')
-    finalizeStreamSectionForTab(activeId(), first.id, 'finished')
+    finalizeStreamSectionForTab({ tabId: activeId(), sectionId: first.id, status: 'finished', model: { ...alpha, modelName: 'Alpha' }, startedAt: 1000, updatedAt: 1500, finishedAt: 1500, tokenCount: 12 })
     typeIntoLastSection('second question')
     const second = ensureAgentSection(beta)
 
@@ -386,16 +386,17 @@ describe('section models', () => {
     expect(storedThinking(reopened?.sections ?? [])).toStrictEqual(['none', thinking, 'none'])
   })
 
-  it('clears the old thinking of a reused empty agent section', () => {
+  it('clears the old thinking and duration of a reused empty agent section', () => {
     sbp('dez.model/tabs/replaceSections', activeId(), [
       { id: 'u1', role: 'user', content: text('question') },
-      { id: 'a1', role: 'agent', content: text(''), model: alpha, thinking: { text: 'cut off' } },
+      { id: 'a1', role: 'agent', content: text(''), model: alpha, thinking: { text: 'cut off' }, durationMs: 4213 },
     ])
 
     const reused = ensureAgentSection(beta)
 
     expect(reused.id).toBe('a1')
     expect(storedThinking(threadSections())).toStrictEqual(['none', 'none'])
+    expect(storedDurations(threadSections())).toStrictEqual(['none', 'none'])
   })
 
   it('changes the identity when a section gains thinking, gains a replay, or loses its thinking on reuse', () => {

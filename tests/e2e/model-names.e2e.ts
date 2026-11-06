@@ -132,12 +132,13 @@ describe('model names', () => {
   }
 
   // The marker line of each section in the active tab's conversation file,
-  // or null while the file does not exist.
+  // or null while the file does not exist. The reply time changes from run
+  // to run, so its digits read as `#`.
   async function savedPillLines (): Promise<string[] | null> {
     const tab = await sbpCall(browser, 'dez.model/tab', await sbpCall(browser, 'dez.model/tabs/activeId')) as { conversationId: string }
     try {
       const content = await fs.promises.readFile(conversationFilePath(app.home, tab.conversationId), 'utf8')
-      return content.split('\n').filter((line) => line.startsWith('<dez:pill'))
+      return content.split('\n').filter((line) => line.startsWith('<dez:pill')).map((line) => line.replace(/ duration-ms="\d+"/, ' duration-ms="#"'))
     } catch {
       return null
     }
@@ -304,9 +305,9 @@ describe('model names', () => {
     // stream.
     await waitForValue(browser, 'saved pills', savedPillLines, [
       '<dez:pill type="user"/>',
-      `<dez:pill type="agent" model="${ALPHA.key}"/>`,
+      `<dez:pill type="agent" model="${ALPHA.key}" duration-ms="#"/>`,
       '<dez:pill type="user"/>',
-      `<dez:pill type="agent" model="${BETA.key}"/>`,
+      `<dez:pill type="agent" model="${BETA.key}" duration-ms="#"/>`,
       '<dez:pill type="user"/>',
     ])
   })
@@ -327,7 +328,7 @@ describe('model names', () => {
       '<dez:pill type="user"/>',
       '<dez:pill type="user"/>',
       '<dez:pill type="user"/>',
-      `<dez:pill type="agent" model="${BETA.key}"/>`,
+      `<dez:pill type="agent" model="${BETA.key}" duration-ms="#"/>`,
       '<dez:pill type="user"/>',
     ])
 
@@ -341,9 +342,9 @@ describe('model names', () => {
     ])
     await waitForValue(browser, 'saved pills as agent', savedPillLines, [
       '<dez:pill type="user"/>',
-      `<dez:pill type="agent" model="${ALPHA.key}"/>`,
+      `<dez:pill type="agent" model="${ALPHA.key}" duration-ms="#"/>`,
       '<dez:pill type="user"/>',
-      `<dez:pill type="agent" model="${BETA.key}"/>`,
+      `<dez:pill type="agent" model="${BETA.key}" duration-ms="#"/>`,
       '<dez:pill type="user"/>',
     ])
   })

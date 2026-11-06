@@ -2,20 +2,16 @@ import sbp from '@sbp/sbp'
 import { defineStore } from 'pinia'
 import { computed, ref } from 'vue'
 import { useTabStore } from './tabs'
-import type { StreamSessionState, StreamStartInput, StreamStatus, StreamTerminalInput } from '../streams/types'
+import type { EndedStreamSession, StreamSessionState, StreamStartInput, StreamStatus, StreamTerminalInput } from '../streams/types'
 
-function terminalStatusTime(status: StreamStatus): number | null {
-  return status === 'streaming' || status === 'idle' ? null : Date.now()
-}
-
-function cloneStreamSession(session: StreamSessionState): StreamSessionState {
+function cloneStreamSession<Session extends StreamSessionState>(session: Session): Session {
   return {
     ...session,
     model: { ...session.model },
   }
 }
 
-function cloneNullableStreamSession(session: StreamSessionState | null): StreamSessionState | null {
+function cloneNullableStreamSession<Session extends StreamSessionState>(session: Session | null): Session | null {
   return session ? cloneStreamSession(session) : null
 }
 
@@ -67,24 +63,22 @@ export const useStreamStore = defineStore('streams', () => {
     return currentSession
   }
 
-  function setTerminal(input: StreamTerminalInput): StreamSessionState | null {
+  function setTerminal(input: StreamTerminalInput): EndedStreamSession | null {
     const currentSession = session(input.tabId)
     if (!currentSession) return null
-    currentSession.status = input.status
-    currentSession.updatedAt = Date.now()
-    currentSession.finishedAt = terminalStatusTime(input.status)
-    return currentSession
+    const now = Date.now()
+    return Object.assign(currentSession, { status: input.status, updatedAt: now, finishedAt: now })
   }
 
-  function finish(tabId: string): StreamSessionState | null {
+  function finish(tabId: string): EndedStreamSession | null {
     return setTerminal({ tabId, status: 'finished' })
   }
 
-  function error(tabId: string): StreamSessionState | null {
+  function error(tabId: string): EndedStreamSession | null {
     return setTerminal({ tabId, status: 'error' })
   }
 
-  function cancelled(tabId: string): StreamSessionState | null {
+  function cancelled(tabId: string): EndedStreamSession | null {
     return setTerminal({ tabId, status: 'cancelled' })
   }
 
@@ -127,15 +121,15 @@ export function receiveStreamToken(tabId: string, token: string): StreamSessionS
   return cloneNullableStreamSession(useStreamStore().receiveToken(tabId, token))
 }
 
-export function finishStreamSession(tabId: string): StreamSessionState | null {
+export function finishStreamSession(tabId: string): EndedStreamSession | null {
   return cloneNullableStreamSession(useStreamStore().finish(tabId))
 }
 
-export function errorStreamSession(tabId: string): StreamSessionState | null {
+export function errorStreamSession(tabId: string): EndedStreamSession | null {
   return cloneNullableStreamSession(useStreamStore().error(tabId))
 }
 
-export function cancelStreamSession(tabId: string): StreamSessionState | null {
+export function cancelStreamSession(tabId: string): EndedStreamSession | null {
   return cloneNullableStreamSession(useStreamStore().cancelled(tabId))
 }
 

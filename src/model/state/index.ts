@@ -34,7 +34,7 @@ import {
   endStreamSection,
   ensureTrailingAgentSection,
 } from '../streams/sections'
-import type { StreamEndStatus, StreamMessage } from '../streams/types'
+import type { EndedStreamSession, StreamMessage } from '../streams/types'
 import type { ModelSnapshot } from '../snapshot'
 
 export interface SettingsSnapshot {
@@ -358,11 +358,15 @@ export function setThinkingReplayForTabSection(tabId: string, sectionId: string,
   return section.thinking
 }
 
-export function finalizeStreamSectionForTab(tabId: string, sectionId: string, status: StreamEndStatus): void {
-  const found = findTabSection(tabId, sectionId)
+// Ends the section that the ended stream `session` wrote. A section that
+// stays gets the time from the stream start (the request went out) to its
+// end; `Date.now()` steps back when the system clock is set back, so the
+// time never goes below 0.
+export function finalizeStreamSectionForTab(session: EndedStreamSession): void {
+  const found = findTabSection(session.tabId, session.sectionId)
   if (!found) return
   const { tab, section } = found
-  endStreamSection(tab.sections, section, status)
+  endStreamSection(tab.sections, section, session.status, Math.max(0, session.finishedAt - session.startedAt))
   const title = firstUserTitle(tab.sections)
   if (title) tab.title = title
 }
