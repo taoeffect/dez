@@ -9,9 +9,10 @@ import SubmitButton from "../thread/SubmitButton.vue";
 import TabBar from "../tabs/TabBar.vue";
 import HistoryPanel from "../history/HistoryPanel.vue";
 import ToastContainer from "../toast/ToastContainer.vue";
+import { shortcutKeyText } from "../../model/shortcuts";
 
 useKeyboardShortcuts();
-const { settings } = useModelState();
+const { settings, shortcuts } = useModelState();
 </script>
 
 <template>
@@ -21,7 +22,7 @@ const { settings } = useModelState();
       <div class="tab-bar-actions">
         <button
           class="tab-bar-btn"
-          title="History (Cmd/Ctrl+H)"
+          :title="`History (${shortcutKeyText(shortcuts, 'history')})`"
           @click="sbp('dez.model/settings/historyOpen')"
         >
           <svg width="14" height="14" viewBox="0 0 14 14" fill="none">
@@ -32,7 +33,7 @@ const { settings } = useModelState();
         </button>
         <button
           class="tab-bar-btn"
-          title="Settings (Cmd/Ctrl+,)"
+          :title="`Settings (${shortcutKeyText(shortcuts, 'settings')})`"
           @click="sbp('dez.model/settings/open', 'general')"
         >
           <svg width="14" height="14" viewBox="0 0 14 14" fill="none">

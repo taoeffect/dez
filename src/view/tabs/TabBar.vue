@@ -2,8 +2,9 @@
 import { nextTick, ref, watch } from 'vue'
 import sbp from '@sbp/sbp'
 import { useModelState } from '../modelState'
+import { shortcutKeyText } from '../../model/shortcuts'
 
-const { tabs, activeTabId, tabActivity } = useModelState()
+const { tabs, activeTabId, tabActivity, shortcuts } = useModelState()
 const tabElements = ref(new Map<string, HTMLElement>())
 
 function setTabElement(tabId: string, element: unknown) {
@@ -86,7 +87,7 @@ watch(
         </button>
       </div>
     </div>
-    <button class="tab-new" title="New tab (Cmd/Ctrl+T)" @click="sbp('dez.model/tabs/create')">
+    <button class="tab-new" :title="`New tab (${shortcutKeyText(shortcuts, 'newTab')})`" @click="sbp('dez.model/tabs/create')">
       <svg width="12" height="12" viewBox="0 0 12 12" fill="none">
         <path d="M6 2v8M2 6h8" stroke="currentColor" stroke-width="1.4" stroke-linecap="round"/>
       </svg>

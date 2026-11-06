@@ -9,6 +9,9 @@ export interface MockProviderApp {
   mock: HoldingChatMock
   app: RunningApp
   browser: E2EBrowser
+  /** Ends the session and starts a new one on the same HOME, as a relaunch
+   *  of the app does, and returns it. `stop` then ends the new session. */
+  relaunch: () => Promise<E2EBrowser>
   /** Ends the session, then stops the app and the mock. */
   stop: () => Promise<void>
 }
@@ -36,7 +39,16 @@ export async function startMockProviderApp (provider: MockProvider, config: Reco
     browser = await createSession(app.binary, app.port)
     await waitFor(browser, 'header.tab-bar', 60_000)
     await pickModel(browser, provider.name, provider.modelName)
-    return { mock, app, browser, stop }
+    const { binary, port } = app
+    const relaunch = async (): Promise<E2EBrowser> => {
+      await destroySession(browser)
+      browser = undefined
+      const next = await createSession(binary, port)
+      browser = next
+      await waitFor(next, 'header.tab-bar', 60_000)
+      return next
+    }
+    return { mock, app, browser, relaunch, stop }
   } catch (err) {
     await stop()
     throw err

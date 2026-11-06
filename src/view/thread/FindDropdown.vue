@@ -6,7 +6,7 @@ import { findHistory } from '../editor/findHistory'
 import { findState } from '../editor/findState'
 import { isModalOpen } from '../composables/useKeyboardShortcuts'
 import { useModelState } from '../modelState'
-import { matchShortcut } from '../../model/shortcuts'
+import { matchShortcut, shortcutKeyText } from '../../model/shortcuts'
 
 const { shortcuts } = useModelState()
 const findFieldShortcuts = computed(() => shortcuts.value.filter((shortcut) => shortcut.scope === 'findField'))
@@ -191,7 +191,7 @@ watch(() => findState.focusRequest, focusSearch, { flush: 'post' })
       <span class="find-status" aria-live="polite">{{ statusText }}</span>
       <button
         class="find-btn"
-        title="Previous match (Shift+Cmd/Ctrl+G)"
+        :title="`Previous match (${shortcutKeyText(shortcuts, 'findPrevious')})`"
         @mousedown.prevent
         @click="sbp('dez.editor/selectFindMatch', 'previous')"
       >
@@ -201,7 +201,7 @@ watch(() => findState.focusRequest, focusSearch, { flush: 'post' })
       </button>
       <button
         class="find-btn"
-        title="Next match (Enter, Cmd/Ctrl+G)"
+        :title="`Next match (Enter, ${shortcutKeyText(shortcuts, 'findNext')})`"
         @mousedown.prevent
         @click="sbp('dez.editor/selectFindMatch', 'next')"
       >

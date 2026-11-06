@@ -35,6 +35,12 @@ async function loadAboutIcon (): Promise<Image> {
 // one has now, so that a key change can update them.
 const shortcutMenuItems = new Map<ShortcutId, { item: MenuItem, accelerator: string | null }>()
 
+// Set while a row of Settings › Shortcuts records a key. On Linux GTK takes
+// a menu accelerator before the page sees the key, so every shortcut item
+// then has no accelerator, and the recorder gets Ctrl+W instead of the menu
+// closing the tab.
+let acceleratorsSuspended = false
+
 // A menu item that runs an editable shortcut, with the shortcut's key as its
 // accelerator. A key that a menu cannot take gets none (see
 // `shortcutAccelerator`): bare Esc, for example, stops the stream on the
@@ -55,7 +61,7 @@ async function shortcutMenuItem (shortcuts: readonly Shortcut[], id: ShortcutId,
 async function updateAccelerators (): Promise<void> {
   const shortcuts = sbp('dez.model/settings/shortcuts') as readonly Shortcut[]
   for (const [id, entry] of shortcutMenuItems) {
-    const accelerator = shortcutAccelerator(findShortcut(shortcuts, id).key, currentShortcutPlatform)
+    const accelerator = acceleratorsSuspended ? null : shortcutAccelerator(findShortcut(shortcuts, id).key, currentShortcutPlatform)
     if (accelerator === entry.accelerator) continue
     try {
       await entry.item.setAccelerator(accelerator)
@@ -80,8 +86,8 @@ export default sbp('sbp/selectors/register', {
   // key before the page sees it; on macOS the page sees it first and the
   // menu gets only keys that the page did not handle (not yet tested on a
   // Mac). The keys are the current keys of `dez.model/settings/shortcuts`,
-  // and the accelerators follow a key change; a new shortcut also needs a
-  // row in Settings › General (`shortcuts` in SettingsView.vue).
+  // and the accelerators follow a key change; Settings › Shortcuts lists
+  // every action of the registry (`src/model/shortcuts.ts`) by itself.
   //
   // Platform differences:
   // - Undo and Redo are custom items, because predefined items have fixed
@@ -133,7 +139,7 @@ export default sbp('sbp/selectors/register', {
       const help = await Submenu.new({
         text: 'Help',
         items: [
-          { text: 'Keyboard Shortcuts', action: () => sbp('dez.model/settings/open', 'general') },
+          { text: 'Keyboard Shortcuts', action: () => sbp('dez.model/settings/open', 'shortcuts') },
           { text: 'Dez on GitHub', action: () => sbp('dez.controller/openUrl', DEZ_REPO_URL) },
           SEPARATOR,
           {
@@ -284,5 +290,13 @@ export default sbp('sbp/selectors/register', {
       menuInstalled = false
       console.error('Failed to install the app menu:', error)
     }
+  },
+
+  // Removes every shortcut menu accelerator while `suspended` is true, and
+  // gives them back after; see `acceleratorsSuspended`. Without the menu
+  // (`npm run dev`) there is nothing to change.
+  'dez.controller/menu/suspendAccelerators' (suspended: boolean): Promise<void> {
+    acceleratorsSuspended = suspended
+    return sbp('okTurtles.eventQueue/queueEvent', 'dez.controller/menu/accelerators', updateAccelerators)
   },
 })

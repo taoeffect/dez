@@ -3,10 +3,10 @@ import { computed, onMounted, onUnmounted, nextTick, ref } from 'vue'
 import sbp from '@sbp/sbp'
 import { useModelState, type SettingsSection, type Theme } from '../modelState'
 import type { ModelInfo } from '../../model/providers'
-import { isMacPlatform } from '../../utils/platform'
 import PromptManager from '../prompts/PromptManager.vue'
 import ProviderManager from './ProviderManager.vue'
 import ModelPicker from '../model-selector/ModelPicker.vue'
+import ShortcutManager from './ShortcutManager.vue'
 
 const { settings, modelCache } = useModelState()
 
@@ -55,7 +55,7 @@ function onDefaultModelClickOutside(e: MouseEvent) {
     closeDefaultModelPicker()
   }
 }
-const sections: SettingsSection[] = ['general', 'providers', 'prompts', 'appearance']
+const sections: SettingsSection[] = ['general', 'providers', 'prompts', 'appearance', 'shortcuts']
 
 const checkingUpdates = ref(false)
 
@@ -63,37 +63,6 @@ const themes: { value: Theme; label: string }[] = [
   { value: 'system', label: 'System' },
   { value: 'light', label: 'Light' },
   { value: 'dark', label: 'Dark' },
-]
-
-// Help › Keyboard Shortcuts opens this list, so it has a row for each app
-// shortcut in the native menubar (`src/controller/menu.ts`). Standard
-// Cut/Copy/Paste keys and the macOS app-menu keys are not listed. Rows are
-// keyed by `keys`, so each `keys` text must be unique.
-const shortcuts = [
-  { keys: 'Cmd/Ctrl + Enter', action: 'Submit thread to LLM' },
-  { keys: 'Shift + Enter', action: 'New message (new line in find field)' },
-  { keys: 'Ctrl + Shift + Up', action: 'Add cursor on line above' },
-  { keys: 'Ctrl + Shift + Down', action: 'Add cursor on line below' },
-  { keys: 'Cmd/Ctrl + Z', action: 'Undo' },
-  { keys: 'Cmd/Ctrl + Shift + Z', action: 'Redo' },
-  { keys: 'Cmd/Ctrl + Shift + C', action: 'Copy Markdown (as Save As Markdown writes it)' },
-  ...(isMacPlatform ? [] : [{ keys: 'Alt + A', action: 'Select all (Ctrl + A moves to line start)' }]),
-  { keys: 'Cmd/Ctrl + F', action: 'Find and replace' },
-  { keys: 'Cmd/Ctrl + G', action: 'Next match (or Enter in find field)' },
-  { keys: 'Cmd/Ctrl + Shift + G', action: 'Previous match' },
-  { keys: 'Up / Down', action: 'Search history (in find field)' },
-  { keys: 'Cmd/Ctrl + N or T', action: 'New conversation tab' },
-  { keys: 'Cmd/Ctrl + Shift + T', action: 'Reopen closed tab' },
-  { keys: 'Cmd/Ctrl + 1…9', action: 'Go to tab 1…9' },
-  { keys: 'Cmd/Ctrl + Shift + [ / ]', action: 'Previous / next tab' },
-  { keys: 'Cmd/Ctrl + W', action: 'Close tab' },
-  { keys: 'Cmd/Ctrl + S', action: 'Save conversation as Markdown' },
-  { keys: 'Cmd/Ctrl + H', action: 'Open history' },
-  { keys: 'Cmd/Ctrl + =', action: 'Increase font size' },
-  { keys: 'Cmd/Ctrl + -', action: 'Decrease font size' },
-  { keys: 'Cmd/Ctrl + ,', action: 'Open settings' },
-  ...(isMacPlatform ? [] : [{ keys: 'Ctrl + Q', action: 'Quit' }]),
-  { keys: 'Escape', action: 'Close overlays and find, else stop the response' },
 ]
 
 onMounted(() => {
@@ -174,6 +143,11 @@ function onOverlayClick(e: MouseEvent) {
             </div>
           </div>
 
+          <!-- Shortcuts -->
+          <div v-if="settings.settingsSection === 'shortcuts'" class="settings-section">
+            <ShortcutManager />
+          </div>
+
           <!-- General -->
           <div v-if="settings.settingsSection === 'general'" class="settings-section">
             <div class="settings-row">
@@ -226,18 +200,6 @@ function onOverlayClick(e: MouseEvent) {
               <button class="settings-btn settings-btn--sm" @click="sbp('dez.controller/openAppFolder')">
                 Open Dez Folder
               </button>
-            </div>
-
-            <div class="settings-shortcuts">
-              <label class="settings-label">Keyboard shortcuts</label>
-              <table class="shortcuts-table">
-                <tbody>
-                  <tr v-for="s in shortcuts" :key="s.keys">
-                    <td class="shortcut-keys">{{ s.keys }}</td>
-                    <td class="shortcut-action">{{ s.action }}</td>
-                  </tr>
-                </tbody>
-              </table>
             </div>
           </div>
         </div>
@@ -448,37 +410,12 @@ function onOverlayClick(e: MouseEvent) {
   flex-direction: column;
   z-index: 50;
 }
-
-.settings-shortcuts {
-  display: flex;
-  flex-direction: column;
-  gap: 8px;
-}
-
-.shortcuts-table {
-  width: 100%;
-  border-collapse: collapse;
-  font-size: 13px;
-}
-
-.shortcuts-table td {
-  padding: 4px 0;
-}
-
-.shortcut-keys {
-  font-family: monospace;
-  opacity: 0.7;
-  width: 180px;
-}
-
-.shortcut-action {
-  opacity: 0.9;
-}
 </style>
 
 <!-- Form controls shared by the Settings sections and the managers they
-     mount (ProviderManager, PromptManager). Not scoped, because a parent's
-     scoped styles do not reach elements inside a child component. -->
+     mount (ProviderManager, PromptManager, ShortcutManager). Not scoped,
+     because a parent's scoped styles do not reach elements inside a child
+     component. -->
 <style>
 .settings-input {
   flex: 1;

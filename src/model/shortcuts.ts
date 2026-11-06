@@ -466,6 +466,12 @@ export function shortcutLabel (key: string, platform: ShortcutPlatform, style: S
   return [...modifiers.filter((modifier) => modifier), keyText].join('+')
 }
 
+/** The `text` label of the key that action `id` has now, for a button title
+ *  such as "New tab (Ctrl+T)", so that the title follows a key change. */
+export function shortcutKeyText (shortcuts: readonly Shortcut[], id: ShortcutId): string {
+  return shortcutLabel(findShortcut(shortcuts, id).key, currentShortcutPlatform, 'text')
+}
+
 // Key names that Tauri's accelerator parser (muda `parse_key`) accepts as
 // they are. It splits the accelerator on `+`, so the `+` key has none.
 const ACCELERATOR_NAMED_KEYS: Readonly<Record<string, true>> = {

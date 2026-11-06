@@ -5,7 +5,7 @@ import { EDITOR_FONT_SIZE_DEFAULT } from '../editorFontSize'
 import { currentShortcutPlatform, resolveShortcuts, type ShortcutOverrides } from '../shortcuts'
 
 export type Theme = 'light' | 'dark' | 'system'
-export type SettingsSection = 'general' | 'providers' | 'prompts' | 'appearance'
+export type SettingsSection = 'general' | 'providers' | 'prompts' | 'appearance' | 'shortcuts'
 
 export interface DefaultModel {
   providerId: string
