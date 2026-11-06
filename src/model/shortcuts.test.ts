@@ -203,6 +203,15 @@ describe('validateShortcutKey', () => {
     expect(validateShortcutKey('linux', 'closeTab', 'Ctrl-+', { increaseFontSize: 'Ctrl-i', newTab: 'Shift-Ctrl-=' }))
       .toBe('Used by New tab')
   })
+
+  // Quit has no page handler, so a key without a menu accelerator would
+  // leave it with no working key.
+  it('refuses a key that the menu cannot take for a menu-only action', () => {
+    expect(validateShortcutKey('linux', 'quit', 'Ctrl-Pause')).toBe('The menu cannot use this key')
+    expect(validateShortcutKey('linux', 'quit', 'Ctrl-<')).toBe('The menu cannot use this key')
+    expect(validateShortcutKey('linux', 'quit', 'Shift-Ctrl-q')).toBeNull()
+    expect(validateShortcutKey('linux', 'closeTab', 'Ctrl-Pause')).toBeNull()
+  })
 })
 
 describe('parseShortcutOverrides', () => {
@@ -237,6 +246,10 @@ describe('parseShortcutOverrides', () => {
 
   it('drops a saved key whose press runs another action, and keeps the other entries', () => {
     expect(parseShortcutOverrides({ newTab: 'Shift-Ctrl-=', find: 'Alt-f' }, 'linux')).toEqual({ find: 'Alt-f' })
+  })
+
+  it('drops a saved menu-only key that the menu cannot take', () => {
+    expect(parseShortcutOverrides({ quit: 'Ctrl-Pause', find: 'Alt-f' }, 'linux')).toEqual({ find: 'Alt-f' })
   })
 })
 

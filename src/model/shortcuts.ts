@@ -399,6 +399,11 @@ export function validateShortcutKey (
   if (!parts.ctrl && !parts.meta && !parts.alt && !worksWithoutCommandModifier(parts, shortcut)) {
     return platform === 'mac' ? 'This key needs ⌘, ⌥, or ⌃' : 'This key needs Ctrl, Alt, or Super'
   }
+  // A menu-only action (Quit) has no page handler: it needs a key that the
+  // native menu can take.
+  if (shortcut.scope === 'menu' && shortcutAccelerator(name, platform) === null) {
+    return 'The menu cannot use this key'
+  }
   const aliases = platformDefaults(platform).find((candidate) => candidate.id === id)?.aliases ?? []
   for (const candidateKey of name === shortcut.defaultKey ? [name, ...aliases] : [name]) {
     const owner = shortcuts.find((other) => other.id !== id && other.keys.includes(candidateKey))
