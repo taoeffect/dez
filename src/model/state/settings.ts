@@ -6,7 +6,7 @@ import { DONE_SOUND_VOLUME_DEFAULT } from '../doneSoundVolume'
 import { currentShortcutPlatform, resolveShortcuts, type ShortcutOverrides } from '../shortcuts'
 
 export type Theme = 'light' | 'dark' | 'system'
-export type SettingsSection = 'general' | 'providers' | 'prompts' | 'appearance' | 'shortcuts'
+export type SettingsSection = 'general' | 'providers' | 'prompts' | 'appearance' | 'notifications' | 'shortcuts'
 
 export interface DefaultModel {
   providerId: string

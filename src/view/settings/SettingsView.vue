@@ -55,7 +55,7 @@ function onDefaultModelClickOutside(e: MouseEvent) {
     closeDefaultModelPicker()
   }
 }
-const sections: SettingsSection[] = ['general', 'providers', 'prompts', 'appearance', 'shortcuts']
+const sections: SettingsSection[] = ['general', 'providers', 'prompts', 'appearance', 'notifications', 'shortcuts']
 
 // Providers and Prompts fill the content pane and scroll inside their own
 // lists, so the pane itself never scrolls for them. Its scrollbar gutter
@@ -85,6 +85,13 @@ async function manuallyCheckForUpdates() {
   } finally {
     checkingUpdates.value = false
   }
+}
+
+// Each slider step saves the volume and plays the sound at it, so the user
+// hears the volume while choosing it.
+function onDoneSoundVolumeInput(e: Event) {
+  sbp('dez.model/settings/setDoneSoundVolume', Number((e.target as HTMLInputElement).value))
+  sbp('dez.ui/playDoneSound', settings.value.doneSoundVolume)
 }
 
 function onClose() {
@@ -146,6 +153,55 @@ function onOverlayClick(e: MouseEvent) {
                 </button>
               </div>
             </div>
+          </div>
+
+          <!-- Notifications -->
+          <div v-if="settings.settingsSection === 'notifications'" class="settings-section">
+            <div class="notifications-group">
+              <label class="settings-checkbox-row">
+                <input
+                  type="checkbox"
+                  class="done-sound-checkbox"
+                  :checked="settings.doneSound"
+                  @change="sbp('dez.model/settings/setDoneSound', !settings.doneSound)"
+                />
+                Play a sound when a reply finishes
+              </label>
+              <div class="notifications-indented notifications-volume" :class="{ 'notifications-volume--disabled': !settings.doneSound }">
+                <label class="settings-label" for="done-sound-volume">Volume</label>
+                <input
+                  id="done-sound-volume"
+                  type="range"
+                  class="done-sound-volume"
+                  min="0"
+                  max="100"
+                  step="1"
+                  :value="settings.doneSoundVolume"
+                  :disabled="!settings.doneSound"
+                  :style="{ '--volume-fill': `${settings.doneSoundVolume}%` }"
+                  @input="onDoneSoundVolumeInput"
+                />
+                <span class="done-sound-volume-value">{{ settings.doneSoundVolume }}%</span>
+              </div>
+            </div>
+
+            <div class="notifications-group">
+              <label class="settings-checkbox-row">
+                <input
+                  type="checkbox"
+                  class="done-notification-checkbox"
+                  :checked="settings.doneNotification"
+                  @change="sbp('dez.model/settings/setDoneNotification', !settings.doneNotification)"
+                />
+                Show a system notification when a reply finishes
+              </label>
+              <p class="notifications-indented notifications-hint">Click the notification to go to the tab of the reply.</p>
+            </div>
+
+            <p class="notifications-hint">
+              Alerts come only for a reply that finishes or fails while you are not looking at it:
+              in another tab, or while you use another window.
+            </p>
           </div>
 
           <!-- Shortcuts -->
@@ -342,6 +398,81 @@ function onOverlayClick(e: MouseEvent) {
   opacity: 0.8;
 }
 
+/* A checkbox and the rows that belong to it, closer together than the
+   section's rows. */
+.notifications-group {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+/* Starts where the text of the checkbox above starts: the checkbox is 12px
+   wide in WebKitGTK, and the gap after it is 8px. */
+.notifications-indented {
+  padding-left: 20px;
+}
+
+.notifications-volume {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.notifications-volume--disabled {
+  opacity: 0.5;
+}
+
+/* A drawn slider, not the native one: WebKitGTK draws the native track in
+   a dark gray that does not show on the dark theme's background. The track
+   and knob follow `.settings-toggle`. The part left of the knob is filled up
+   to `--volume-fill`, the value in percent. */
+.done-sound-volume {
+  -webkit-appearance: none;
+  appearance: none;
+  width: 200px;
+  height: 16px;
+  margin: 0;
+  background: transparent;
+  cursor: pointer;
+}
+
+.done-sound-volume:disabled {
+  cursor: default;
+}
+
+.done-sound-volume::-webkit-slider-runnable-track {
+  height: 4px;
+  border-radius: 2px;
+  background: linear-gradient(
+    to right,
+    var(--color-accent) var(--volume-fill),
+    var(--color-border) var(--volume-fill)
+  );
+}
+
+.done-sound-volume::-webkit-slider-thumb {
+  -webkit-appearance: none;
+  appearance: none;
+  width: 14px;
+  height: 14px;
+  margin-top: -5px;
+  border-radius: 50%;
+  background: white;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.35);
+}
+
+.done-sound-volume-value {
+  min-width: 4ch;
+  font-size: 13px;
+  font-variant-numeric: tabular-nums;
+}
+
+.notifications-hint {
+  font-size: 12px;
+  line-height: 1.4;
+  color: var(--color-muted);
+}
+
 /* Searchable default-model picker (replaces the old native <select>). The
    dropdown is absolutely positioned under the trigger and reuses ModelPicker. */
 .settings-model-picker {
@@ -502,6 +633,22 @@ function onOverlayClick(e: MouseEvent) {
 
 .settings-toggle--on .settings-toggle-knob {
   transform: translateX(16px);
+}
+
+/* A native checkbox with its text, inside a <label> so that a click on the
+   text also toggles it. */
+.settings-checkbox-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 13px;
+  cursor: pointer;
+}
+
+.settings-checkbox-row input {
+  margin: 0;
+  accent-color: var(--color-accent);
+  cursor: pointer;
 }
 
 .settings-error {

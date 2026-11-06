@@ -558,7 +558,7 @@ onBeforeUnmount(() => {
 
       <div v-if="selectedConfig || selectedInfo.supportsThinking" class="provider-field">
         <span id="provider-thinking-label" class="provider-field-label">Thinking</span>
-        <label v-if="selectedConfig" class="provider-checkbox-row">
+        <label v-if="selectedConfig" class="settings-checkbox-row">
           <input
             type="checkbox"
             class="provider-supports-thinking-checkbox"
@@ -869,20 +869,6 @@ onBeforeUnmount(() => {
 
 .provider-toggle-label {
   font-size: 13px;
-}
-
-.provider-checkbox-row {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  font-size: 13px;
-  cursor: pointer;
-}
-
-.provider-checkbox-row input {
-  margin: 0;
-  accent-color: var(--color-accent);
-  cursor: pointer;
 }
 
 .provider-models-status {
