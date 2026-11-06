@@ -1,4 +1,4 @@
-import { base, keyName, shift } from 'w3c-keyname'
+import { base, keyName, shift as shiftedKeyNames } from 'w3c-keyname'
 import { isMacPlatform } from '../utils/platform'
 
 // The editable keyboard shortcuts: the one list of actions with their default
@@ -289,7 +289,7 @@ export function eventKeyNames (event: ShortcutKeyEvent): string[] {
     !(isMacPlatform && event.altKey && !(event.ctrlKey || event.metaKey)) &&
     baseName && baseName !== name) {
     names.push(withModifiers(baseName, event, true))
-    const shiftName = shift[event.keyCode]
+    const shiftName = shiftedKeyNames[event.keyCode]
     if (event.shiftKey && shiftName !== name && shiftName !== baseName) names.push(withModifiers(shiftName, event, false))
   } else if (isChar && event.shiftKey) {
     names.push(withModifiers(name, event, true))
@@ -327,7 +327,8 @@ const KEY_CODES = new Map<string, number>()
 const SHIFTED_KEY_CODES = new Map<string, number>()
 for (const code of mainKeyCodes) {
   if (!KEY_CODES.has(base[code])) KEY_CODES.set(base[code], code)
-  if (shift[code] !== base[code] && !SHIFTED_KEY_CODES.has(shift[code])) SHIFTED_KEY_CODES.set(shift[code], code)
+  const shiftedName = shiftedKeyNames[code]
+  if (shiftedName !== base[code] && !SHIFTED_KEY_CODES.has(shiftedName)) SHIFTED_KEY_CODES.set(shiftedName, code)
 }
 
 /** A keydown that a press of `key` gives on a US layout (`Shift-Ctrl-[`
@@ -344,7 +345,7 @@ export function keyEventInit (key: string, platform: ShortcutPlatform = currentS
   if (parts.key === 'Space') return { key: ' ', keyCode: 32, ...modifiers }
   const keyCode = KEY_CODES.get(parts.key)
   if (keyCode !== undefined) {
-    const typed = parts.shift && [...parts.key].length === 1 ? shift[keyCode] : parts.key
+    const typed = parts.shift && [...parts.key].length === 1 ? shiftedKeyNames[keyCode] : parts.key
     return { key: typed, keyCode, ...modifiers }
   }
   return { key: parts.key, keyCode: SHIFTED_KEY_CODES.get(parts.key) ?? 0, ...modifiers }
