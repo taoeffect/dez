@@ -152,6 +152,25 @@ jobs:
       - name: Install frontend dependencies
         run: npm ci
 
+      # build:macos:dmg first runs scripts/build-macos-icon.js, which compiles
+      # the app icon with actool. Only actool from Xcode 26 or newer reads
+      # .icon documents. When the runner's default Xcode is older, select the
+      # newest installed release Xcode (named like Xcode_26.3.app; betas are
+      # skipped). The script fails with a clear message if actool is still
+      # too old.
+      - name: Select Xcode 26 or newer
+        shell: bash
+        run: |
+          major="$(xcrun actool --version --output-format human-readable-text < /dev/null |
+            awk -F': ' '/short-bundle-version/ { split($2, v, "."); print v[1] }' || true)"
+          echo "Default actool major version: ${major:-unknown}"
+          if [ "${major:-0}" -lt 26 ]; then
+            xcode="$(ls -d /Applications/Xcode_*.app | grep -E '/Xcode_[0-9.]+\.app$' | sort -V | tail -n 1)"
+            echo "Selecting ${xcode}"
+            sudo xcode-select -s "${xcode}"
+          fi
+          xcodebuild -version
+
       - name: Build unsigned Apple Silicon DMG
         run: npm run build:macos:dmg
 

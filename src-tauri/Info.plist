@@ -1,0 +1,15 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<!--
+	Tauri merges this file into the bundle's Info.plist. CFBundleIconName names
+	the app icon in Resources/Assets.car, which scripts/build-macos-icon.js
+	compiles from icons/Dez.icon; it must match the script's iconName. macOS 26
+	draws an app icon at full size only when it comes from Assets.car.
+	CFBundleIconFile (icon.icns, set by Tauri) stays as the fallback.
+	-->
+	<key>CFBundleIconName</key>
+	<string>Dez</string>
+</dict>
+</plist>

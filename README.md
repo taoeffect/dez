@@ -127,6 +127,8 @@ npm run build:macos:dmg
 
 The DMG is written under `src-tauri/target/aarch64-apple-darwin/release/bundle/dmg/`. macOS packaging requires macOS and Xcode tooling; it is not supported as a Linux cross-compilation target.
 
+macOS builds need Xcode 26 or newer (`xcrun actool --version`). `build:macos:dmg` and `build:macos:app` first run `scripts/build-macos-icon.js`, which compiles the app icon `src-tauri/icons/Dez.icon` into `src-tauri/icons/Assets.car`. A bare `tauri build` does not compile it, and fails when that file is missing. If the default Xcode is older, select a newer one with `sudo xcode-select -s <path to Xcode.app>`.
+
 To run the native build for the current platform only:
 
 ```bash
