@@ -190,7 +190,8 @@ onUnmounted(stopRecording)
   color: var(--color-muted);
 }
 
-/* A fixed width, so the keys of all rows line up. */
+/* A minimum width, so the keys of most rows line up; a longer key widens
+   only its own button. */
 .shortcut-key {
   min-width: 128px;
   padding: 3px 8px;

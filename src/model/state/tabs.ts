@@ -38,9 +38,9 @@ export const useTabStore = defineStore('tabs', () => {
 
   // Tabs whose reply ended while they were in the background, for the tab
   // bar. Session-only: never saved. The mark lasts until the tab is active
-  // again; every path that activates a tab (switch, close, create, open,
-  // delete, restore) sets `activeTabId`, so this one watch clears it. Sync,
-  // so a read right after the switch already sees no mark.
+  // again; every path that activates a tab sets `activeTabId`, so this one
+  // watch clears it. Sync, so a read right after the switch already sees no
+  // mark.
   const replyDoneTabIds = ref(new Set<string>())
   watch(activeTabId, (tabId) => {
     replyDoneTabIds.value.delete(tabId)

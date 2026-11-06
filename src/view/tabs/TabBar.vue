@@ -152,18 +152,23 @@ watch(
 
 /* Reply activity colors (dez.model/tabs/activity). A tab in the background
    dims only its title here, not the whole tab as `.tab` does, so the color
-   keeps its full strength. `.tab.` outranks `.tab:hover`, so a hover keeps
-   the color. */
+   keeps its full strength. `.tab:hover` has the same specificity as
+   `.tab.tab--busy`, so the `:hover` selectors keep the color on a hover
+   whatever the rule order. */
 .tab.tab--busy,
-.tab.tab--done {
+.tab.tab--busy:hover,
+.tab.tab--done,
+.tab.tab--done:hover {
   opacity: 1;
 }
 
-.tab.tab--busy {
+.tab.tab--busy,
+.tab.tab--busy:hover {
   background: var(--color-tab-busy);
 }
 
-.tab.tab--done {
+.tab.tab--done,
+.tab.tab--done:hover {
   background: var(--color-tab-done);
 }
 
