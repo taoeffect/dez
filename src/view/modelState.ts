@@ -3,7 +3,7 @@ import sbp from '@sbp/sbp'
 import type { ActiveModel, Section } from '../model/chat/types'
 import type { Prompt } from '../model/state/prompts'
 import type { DefaultModel, SettingsSection, Theme } from '../model/state/settings'
-import type { SettingsSnapshot } from '../model/state'
+import type { SettingsSnapshot, TabActivity } from '../model/state'
 import type { ModelSnapshot } from '../model/snapshot'
 import type { ModelCache } from '../model/persistence/types'
 import type { ModelDisplayNames } from '../model/providers/types'
@@ -23,6 +23,7 @@ export interface ViewModelState {
   modelDisplayNames: ComputedRef<ModelDisplayNames>
   activeTabStreaming: ComputedRef<boolean>
   activeTabStreamingSectionId: ComputedRef<string | null>
+  tabActivity: ComputedRef<Record<string, TabActivity>>
 }
 
 // View components need reactive reads without owning Pinia stores directly;
@@ -62,6 +63,8 @@ export function useModelState(): ViewModelState {
       const activeTabId = sbp('dez.model/tabs/activeId') as string
       return sbp('dez.model/streams/streamingSectionId', activeTabId) as string | null
     }),
+    // Tab id -> busy or done, for the tab bar colors.
+    tabActivity: computed(() => sbp('dez.model/tabs/activity') as Record<string, TabActivity>),
   }
 }
 

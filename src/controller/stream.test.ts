@@ -48,6 +48,7 @@ sbp('sbp/selectors/register', {
     savedConversations.push(structuredClone(data))
   },
   async 'dez.persistence/saveAppState' (): Promise<void> {},
+  async 'dez.persistence/deleteConversation' (): Promise<void> {},
   'dez.ui/toast' (area: string, data: ToastData): void {
     toasts.push({ area, data })
   },
@@ -219,6 +220,93 @@ describe('dez.stream/start errors', () => {
     expect(sectionTexts()).toEqual([{ role: 'user', text: 'Hi' }])
     expect(savedConversations.at(-1)?.sections).toHaveLength(1)
     expect(toasts).toEqual([])
+  })
+})
+
+describe('tab activity', () => {
+  function activity(): Record<string, string> {
+    return sbp('dez.model/tabs/activity') as Record<string, string>
+  }
+
+  it('shows busy while the reply streams, in the active tab and in the background', async () => {
+    const tabId = activeTab().id
+    const seen: Array<Record<string, string>> = []
+    streamChat = async (input) => {
+      seen.push(activity())
+      sbp('dez.model/tabs/create')
+      seen.push(activity())
+      return { requestId: input.requestId as string }
+    }
+
+    await startStream()
+
+    expect(seen).toEqual([{ [tabId]: 'busy' }, { [tabId]: 'busy' }])
+  })
+
+  it('marks a tab done when its reply ends in the background, until the tab is active', async () => {
+    const tabId = activeTab().id
+    streamChat = async (input) => {
+      sbp('dez.model/tabs/create')
+      return { requestId: input.requestId as string }
+    }
+
+    await startStream()
+    expect(activity()).toEqual({ [tabId]: 'done' })
+
+    sbp('dez.model/tabs/switch', tabId)
+    expect(activity()).toEqual({})
+    sbp('dez.model/tabs/cycle', 1)
+    expect(activity()).toEqual({})
+  })
+
+  it('clears the mark when the tab becomes active because the active tab next to it closed', async () => {
+    const tabId = activeTab().id
+    streamChat = async (input) => {
+      sbp('dez.model/tabs/create')
+      return { requestId: input.requestId as string }
+    }
+
+    await startStream()
+    sbp('dez.model/tabs/close', activeTab().id)
+
+    expect(activeTab().id).toBe(tabId)
+    expect(activity()).toEqual({})
+  })
+
+  it('marks a tab done when its request fails in the background', async () => {
+    const tabId = activeTab().id
+    streamChat = async () => {
+      sbp('dez.model/tabs/create')
+      throw new Error('connection reset')
+    }
+
+    await startStream()
+
+    expect(activity()).toEqual({ [tabId]: 'done' })
+  })
+
+  it('adds no mark when the reply ends in the active tab', async () => {
+    streamChat = async (input) => {
+      await input.onToken('Answer')
+      return { requestId: input.requestId as string }
+    }
+
+    await startStream()
+
+    expect(activity()).toEqual({})
+  })
+
+  it('adds no mark when the user stops the reply of a tab in the background', async () => {
+    const tabId = activeTab().id
+    streamChat = async () => {
+      sbp('dez.model/tabs/create')
+      await sbp('dez.stream/stop', tabId)
+      throw new Error('cancelled')
+    }
+
+    await startStream()
+
+    expect(activity()).toEqual({})
   })
 })
 

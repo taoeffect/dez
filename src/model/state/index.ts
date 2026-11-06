@@ -5,7 +5,7 @@
 import sbp from '@sbp/sbp'
 import { watch, type WatchStopHandle } from 'vue'
 import { debounce } from 'turtledash'
-import './streams'
+import { streamIsStreaming } from './streams'
 import { useModelCacheStore } from './modelCache'
 import { usePromptsStore, type Prompt } from './prompts'
 import { useSettingsStore, type DefaultModel, type SettingsSection, type Theme, type WindowGeometry } from './settings'
@@ -49,6 +49,11 @@ export interface SettingsSnapshot {
   settingsSection: SettingsSection
   historyOpen: boolean
 }
+
+// A tab's reply activity in the tab bar: `busy` while its reply streams,
+// `done` after a reply ended while the tab was in the background, until the
+// tab is active again.
+export type TabActivity = 'busy' | 'done'
 
 type ContentNodeData =
   | { kind: 'text'; text: string }
@@ -427,6 +432,7 @@ export default sbp('sbp/selectors/register', {
     if (index === -1) return
     const tab = tabStore.tabs[index]
     tabStore.tabs.splice(index, 1)
+    tabStore.replyDoneTabIds.delete(tabId)
     if (tabStore.activeTabId === tabId) {
       const newIndex = Math.min(index, tabStore.tabs.length - 1)
       tabStore.activeTabId = tabStore.tabs[newIndex].id
@@ -451,6 +457,28 @@ export default sbp('sbp/selectors/register', {
     const currentIndex = tabStore.tabs.findIndex((tab) => tab.id === tabStore.activeTabId)
     const nextIndex = (currentIndex + direction + tabStore.tabs.length) % tabStore.tabs.length
     tabStore.activeTabId = tabStore.tabs[nextIndex].id
+  },
+
+  // A reply that ends while its tab is in the background marks the tab
+  // `done`. A reply that ends in the active tab needs no mark: the user sees
+  // it end. The tabs store clears the mark when the tab becomes active.
+  'dez.model/tabs/markReplyDone' (tabId: string): void {
+    const tabStore = useTabStore()
+    if (tabId === tabStore.activeTabId || !tabStore.tabs.some((tab) => tab.id === tabId)) return
+    tabStore.replyDoneTabIds.add(tabId)
+  },
+
+  // The activity of each tab that has one. Busy wins over done, though both
+  // never meet: a new reply starts only in the active tab, which has no
+  // mark.
+  'dez.model/tabs/activity' (): Record<string, TabActivity> {
+    const tabStore = useTabStore()
+    const activity: Record<string, TabActivity> = {}
+    for (const tab of tabStore.tabs) {
+      if (streamIsStreaming(tab.id)) activity[tab.id] = 'busy'
+      else if (tabStore.replyDoneTabIds.has(tab.id)) activity[tab.id] = 'done'
+    }
+    return activity
   },
 
   // The persisted form of a tab. Null when the tab is missing or every
@@ -525,6 +553,7 @@ export default sbp('sbp/selectors/register', {
     }
 
     const matchingTabs = tabStore.tabs.filter((tab) => tab.conversationId === id)
+    for (const tab of matchingTabs) tabStore.replyDoneTabIds.delete(tab.id)
     if (!matchingTabs.length) {
       await sbp('dez.model/appState/save')
       return

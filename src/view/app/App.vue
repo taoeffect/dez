@@ -49,6 +49,10 @@ onUnmounted(() => {
   --color-error: #c4302b;
   --color-error-bg: #fdeeed;
   --color-error-border: #f0b9b5;
+  /* Tab bar backgrounds (TabBar.vue): a tab whose reply streams (busy), and
+     a tab whose reply ended in the background (done). */
+  --color-tab-busy: #f7dc9b;
+  --color-tab-done: #c2e5c4;
 
   font-family: Inter, Avenir, Helvetica, Arial, sans-serif;
   font-size: 16px;
@@ -81,6 +85,8 @@ onUnmounted(() => {
     --color-error: #ff7b72;
     --color-error-bg: #3a2224;
     --color-error-border: #6b3236;
+    --color-tab-busy: #5b4716;
+    --color-tab-done: #234d2e;
   }
 }
 
@@ -99,5 +105,7 @@ onUnmounted(() => {
   --color-error: #ff7b72;
   --color-error-bg: #3a2224;
   --color-error-border: #6b3236;
+  --color-tab-busy: #5b4716;
+  --color-tab-done: #234d2e;
 }
 </style>

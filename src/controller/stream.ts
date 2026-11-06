@@ -40,6 +40,8 @@ const nativeStreamsByTab = new Map<string, NativeStreamRuntime>()
 function finalizeStream(tabId: string, session: StreamSessionState | null, status: StreamEndStatus): void {
   if (!session) return
   finalizeStreamSectionForTab(tabId, session.sectionId, status)
+  // A stop is the user's own act, so it marks nothing.
+  if (status !== 'cancelled') sbp('dez.model/tabs/markReplyDone', tabId)
   sbp('dez.editor/reconcileAfterStreamFinish', tabId)
   sbp('dez.model/tabs/save', tabId).catch(() => {})
   sbp('dez.model/appState/save')

@@ -3,7 +3,7 @@ import { nextTick, ref, watch } from 'vue'
 import sbp from '@sbp/sbp'
 import { useModelState } from '../modelState'
 
-const { tabs, activeTabId } = useModelState()
+const { tabs, activeTabId, tabActivity } = useModelState()
 const tabElements = ref(new Map<string, HTMLElement>())
 
 function setTabElement(tabId: string, element: unknown) {
@@ -65,7 +65,11 @@ watch(
         :key="tab.id"
         :ref="(element) => setTabElement(tab.id, element)"
         class="tab"
-        :class="{ 'tab--active': tab.id === activeTabId }"
+        :class="{
+          'tab--active': tab.id === activeTabId,
+          'tab--busy': tabActivity[tab.id] === 'busy',
+          'tab--done': tabActivity[tab.id] === 'done',
+        }"
         @click="sbp('dez.model/tabs/switch', tab.id)"
         @mousedown="onMiddleClick($event, tab.id)"
       >
@@ -143,6 +147,28 @@ watch(
 .tab--active {
   opacity: 1;
   background: rgba(128, 128, 128, 0.15);
+}
+
+/* Reply activity colors (dez.model/tabs/activity). A tab in the background
+   dims only its title here, not the whole tab as `.tab` does, so the color
+   keeps its full strength. `.tab.` outranks `.tab:hover`, so a hover keeps
+   the color. */
+.tab.tab--busy,
+.tab.tab--done {
+  opacity: 1;
+}
+
+.tab.tab--busy {
+  background: var(--color-tab-busy);
+}
+
+.tab.tab--done {
+  background: var(--color-tab-done);
+}
+
+.tab--busy:not(.tab--active) .tab-title,
+.tab--done:not(.tab--active) .tab-title {
+  opacity: 0.6;
 }
 
 .tab-title {
