@@ -487,6 +487,19 @@ export default sbp('sbp/selectors/register', {
     if (tabStore.tabs.some((tab) => tab.id === tabId)) tabStore.activeTabId = tabId
   },
 
+  // Moves a tab so that `toIndex` (clamped to the list) is its index after
+  // the move. The active tab stays the same. The app state watcher
+  // (controller/app.ts) saves the new order, once per call.
+  'dez.model/tabs/move' (tabId: string, toIndex: number): void {
+    const tabStore = useTabStore()
+    const fromIndex = tabStore.tabs.findIndex((tab) => tab.id === tabId)
+    if (fromIndex === -1) return
+    const index = Math.max(0, Math.min(toIndex, tabStore.tabs.length - 1))
+    if (index === fromIndex) return
+    const [tab] = tabStore.tabs.splice(fromIndex, 1)
+    tabStore.tabs.splice(index, 0, tab)
+  },
+
   'dez.model/tabs/switchToIndex' (index: number): void {
     const tabStore = useTabStore()
     if (index >= 0 && index < tabStore.tabs.length) tabStore.activeTabId = tabStore.tabs[index].id

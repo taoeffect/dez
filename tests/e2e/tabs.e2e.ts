@@ -1,9 +1,20 @@
 import type { EditorView } from '@codemirror/view'
-import { afterAll, afterEach, beforeAll, describe, expect, it } from 'vitest'
+import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from 'vitest'
 import { Key } from 'webdriverio'
 import { startApp, type RunningApp } from './harness/app'
-import { click, pointerClick, screenshotOnFailure, typeKeys, waitFor, waitForValue } from './harness/dom'
-import { makeConversation, seedAppState, seedConversation } from './harness/fixtures'
+import {
+  click,
+  consoleErrors,
+  pointerClick,
+  pointerDrag,
+  pointerRelease,
+  resetConsoleErrors,
+  screenshotOnFailure,
+  typeKeys,
+  waitFor,
+  waitForValue,
+} from './harness/dom'
+import { makeConversation, readAppState, seedAppState, seedConversation } from './harness/fixtures'
 import { createSession, destroySession, type E2EBrowser } from './harness/session'
 import { editorDoc, focusEditor, focusedArea, sbpCall, threadSections } from './harness/thread'
 
@@ -72,6 +83,29 @@ async function tabStrip (browser: E2EBrowser): Promise<{ titles: string[], activ
 async function conversationIds (browser: E2EBrowser): Promise<string[]> {
   const tabs = await sbpCall(browser, 'dez.model/tabs/list') as Array<{ conversationId: string }>
   return tabs.map((tab) => tab.conversationId)
+}
+
+async function tabIds (browser: E2EBrowser): Promise<string[]> {
+  const tabs = await sbpCall(browser, 'dez.model/tabs/list') as Array<{ id: string }>
+  return tabs.map((tab) => tab.id)
+}
+
+async function horizontalBounds (browser: E2EBrowser, selector: string): Promise<{ left: number, right: number }> {
+  return browser.execute((sel: string) => {
+    const element = document.querySelector(sel)
+    if (!element) throw new Error(`horizontalBounds: element not found: ${sel}`)
+    const { left, right } = element.getBoundingClientRect()
+    return { left, right }
+  }, selector)
+}
+
+// How far the tab strip scrolls, and how far it is scrolled now.
+async function stripScroll (browser: E2EBrowser): Promise<{ max: number, left: number }> {
+  return browser.execute(() => {
+    const strip = document.querySelector('.tab-strip')
+    if (!strip) throw new Error('stripScroll: .tab-strip not found')
+    return { max: strip.scrollWidth - strip.clientWidth, left: strip.scrollLeft }
+  })
 }
 
 // The doc line at the top of the editor's view and the caret, read two
@@ -281,5 +315,106 @@ describe('tab bar', () => {
 
     await browser.keys([Key.Escape])
     await waitForValue(browser, 'Settings open', () => sbpCall(browser, 'dez.model/settings/isOpen'), false)
+  })
+})
+
+// Tabs move by mouse drag, with pointer events (see TabBar.vue). The model
+// order changes once, at the drop.
+describe('tab drag', () => {
+  const TITLES = ['One', 'Two', 'Three', 'Four']
+  const MAX_EXTRA_TABS = 60
+  let app: RunningApp
+  let browser: E2EBrowser
+
+  beforeAll(async () => {
+    app = await startApp()
+    try {
+      // The text is the title, so the title stays when the editor derives it
+      // from the first user line.
+      for (const title of TITLES) {
+        await seedConversation(app.home, makeConversation({
+          id: `conv-${title}`,
+          title,
+          sections: [{ role: 'user', nodes: [{ kind: 'text', text: title }] }],
+        }))
+      }
+      await seedAppState(app.home, {
+        tabs: TITLES.map((title) => ({ id: `tab-${title}`, title, conversationId: `conv-${title}`, activeModel: null, createdAt: Date.now() })),
+        activeTabId: 'tab-Four',
+      })
+      browser = await createSession(app.binary, app.port)
+    } catch (err) {
+      await app.stop()
+      throw err
+    }
+    await waitFor(browser, 'header.tab-bar', 60_000)
+    await waitForValue(browser, 'seeded tabs', () => tabStrip(browser), { titles: TITLES, active: 3 })
+  })
+
+  beforeEach(async () => {
+    await resetConsoleErrors(browser)
+  })
+
+  afterEach(async (ctx) => {
+    await screenshotOnFailure(browser, ctx)
+    if (ctx.task.result?.state === 'fail') return
+    expect(await consoleErrors(browser)).toEqual([])
+  })
+
+  afterAll(async () => {
+    await destroySession(browser)
+    await app?.stop()
+  })
+
+  it('moves a tab dragged past the third tab, makes it active, and saves the order', async () => {
+    const third = await horizontalBounds(browser, '.tab-strip > .tab:nth-child(3)')
+    // Past the middle of the third tab, not past the middle of the fourth.
+    await pointerDrag(browser, '.tab-strip > .tab:nth-child(1) .tab-title', third.right - 2)
+
+    const moved = ['Two', 'Three', 'One', 'Four']
+    await waitForValue(browser, 'bar after the drag', () => tabStrip(browser), { titles: moved, active: 2 })
+    await waitForValue(browser, 'saved tabs after the drag', async () => {
+      const saved = await readAppState(app.home)
+      return { titles: (saved?.tabs as Array<{ title: string }> | undefined)?.map((tab) => tab.title), activeTabId: saved?.activeTabId }
+    }, { titles: moved, activeTabId: 'tab-One' })
+  })
+
+  // A move under the drag threshold is still a click.
+  it('switches tabs on a click with a small move, and closes a tab with its close button', async () => {
+    const order = (await tabStrip(browser)).titles
+    const lastTitle = '.tab-strip > .tab:nth-child(4) .tab-title'
+    const last = await horizontalBounds(browser, lastTitle)
+    await pointerDrag(browser, lastTitle, Math.round((last.left + last.right) / 2) + 3)
+    await waitForValue(browser, 'bar after a click on the last tab', () => tabStrip(browser), { titles: order, active: 3 })
+
+    await pointerClick(browser, '.tab-strip > .tab:nth-child(1) .tab-close')
+    await waitForValue(browser, 'bar after a click on a close button', () => tabStrip(browser), { titles: order.slice(1), active: 2 })
+  })
+
+  // A tab held at the right end of a strip that scrolls goes to a place that
+  // was out of view. Until the drop, only the bar shows the new place.
+  it('scrolls the strip while a tab is held at its end, and drops the tab there', async () => {
+    for (let extraTabs = 0; (await stripScroll(browser)).max < 300; extraTabs++) {
+      expect(extraTabs, 'new tabs before the strip scrolls 300 px').toBeLessThan(MAX_EXTRA_TABS)
+      await sbpCall(browser, 'dez.model/tabs/create')
+    }
+    await browser.execute(() => {
+      const strip = document.querySelector('.tab-strip')
+      if (strip) strip.scrollLeft = 0
+    })
+    const ids = await tabIds(browser)
+    const firstTitle = (await tabStrip(browser)).titles[0]
+    const strip = await horizontalBounds(browser, '.tab-strip')
+
+    await pointerDrag(browser, '.tab-strip > .tab:nth-child(1) .tab-title', Math.round(strip.right) - 4, { release: false })
+    await waitForValue(browser, 'strip scrolled to its end', async () => {
+      const { max, left } = await stripScroll(browser)
+      return left >= max - 1
+    }, true)
+    await waitForValue(browser, 'held tab last in the bar', async () => (await tabStrip(browser)).titles.at(-1), firstTitle)
+    expect(await tabIds(browser)).toEqual(ids)
+
+    await pointerRelease(browser)
+    await waitForValue(browser, 'tabs after the drop', () => tabIds(browser), [...ids.slice(1), ids[0]])
   })
 })

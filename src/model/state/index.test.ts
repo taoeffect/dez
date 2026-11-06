@@ -218,6 +218,53 @@ describe('dez.model/tabs/reopenClosed', () => {
   })
 })
 
+describe('dez.model/tabs/move', () => {
+  function move (tabId: string, toIndex: number): void {
+    sbp('dez.model/tabs/move', tabId, toIndex)
+  }
+
+  function order (): string[] {
+    return tabs().map((tab) => tab.id)
+  }
+
+  // Four tabs; the second one is active.
+  function fourTabs (): string[] {
+    for (let count = 0; count < 3; count++) sbp('dez.model/tabs/create')
+    const ids = order()
+    sbp('dez.model/tabs/switch', ids[1])
+    return ids
+  }
+
+  it('puts the tab at the given index, forward and backward, and keeps the active tab', () => {
+    const [a, b, c, d] = fourTabs()
+
+    move(a, 1)
+    expect(order()).toEqual([b, a, c, d])
+    move(b, 2)
+    expect(order()).toEqual([a, c, b, d])
+    move(d, 0)
+    expect(order()).toEqual([d, a, c, b])
+    expect(activeId()).toBe(b)
+  })
+
+  it('clamps the index to the list', () => {
+    const [a, b, c, d] = fourTabs()
+
+    move(b, 99)
+    expect(order()).toEqual([a, c, d, b])
+    move(b, -5)
+    expect(order()).toEqual([b, a, c, d])
+  })
+
+  it('changes nothing for a missing tab or the index the tab has', () => {
+    const ids = fourTabs()
+
+    move('missing', 0)
+    move(ids[2], 2)
+    expect(order()).toEqual(ids)
+  })
+})
+
 describe('section models', () => {
   const alpha: ModelRef = { providerId: 'local', modelId: 'alpha' }
   // submitTab passes the tab's ActiveModel; only the ref fields are stored.

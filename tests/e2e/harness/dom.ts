@@ -189,6 +189,44 @@ export async function pointerDoubleClick (browser: E2EBrowser, selector: string,
     .perform()
 }
 
+// The input source of `pointerDrag` and `pointerRelease`. A button held by
+// one action call is released only by an `up` from the same source:
+// WebKitWebDriver's `releaseActions` sends no pointerup, and a source that
+// pressed nothing has no button to release.
+const DRAG_POINTER = { id: 'dragMouse', parameters: { pointerType: 'mouse' } } as const
+
+/**
+ * Drag an element with WebDriver pointer actions: press at its center and
+ * move along its row to `toX` (viewport px) in steps of at most 10 px, one
+ * pointermove each, as a real mouse sends them. Then release, unless
+ * `release` is false: the button stays down until `pointerRelease`.
+ */
+export async function pointerDrag (
+  browser: E2EBrowser,
+  fromSelector: string,
+  toX: number,
+  options: { release?: boolean } = {}
+): Promise<void> {
+  const from = await elementCenter(browser, fromSelector)
+  const steps = Math.max(1, Math.ceil(Math.abs(toX - from.x) / 10))
+  let action = browser.action('pointer', DRAG_POINTER)
+    .move({ x: from.x, y: from.y, origin: 'viewport' })
+    .down({ button: 0 })
+  for (let step = 1; step <= steps; step++) {
+    action = action.move({ x: Math.round(from.x + (toX - from.x) * step / steps), y: from.y, origin: 'viewport', duration: 10 })
+  }
+  if (options.release === false) {
+    await action.perform(true)
+  } else {
+    await action.up({ button: 0 }).perform()
+  }
+}
+
+/** Release the button that `pointerDrag(…, { release: false })` holds. */
+export async function pointerRelease (browser: E2EBrowser): Promise<void> {
+  await browser.action('pointer', DRAG_POINTER).up({ button: 0 }).perform()
+}
+
 /**
  * Open the history panel by clicking the toolbar toggle button and
  * waiting for the overlay to render.
