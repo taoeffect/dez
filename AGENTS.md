@@ -17,7 +17,7 @@ npm run test:watch             # unit tests in watch mode
 npm run test:e2e               # WebDriver UI tests on the real app; Linux only (see vitest.e2e.config.ts)
 npm run typecheck:e2e          # type-check tests/e2e (`npm run build` does not)
 npm run build:desktop          # native bundle for the current platform
-npm run build:linux:appimage   # Linux AppImage for the host arch; Linux only
+npm run build:linux:appimage   # Linux AppImage for the host arch; Linux only; needs patchelf
 npm run build:macos:dmg        # Apple Silicon macOS DMG; macOS only
 npm run build:macos:app        # Apple Silicon macOS .app; macOS only
 npm run bump-version -- [--check] <version>          # npm, Tauri, and Cargo version files; --check only checks
@@ -28,6 +28,7 @@ cd src-tauri && cargo test
 ```
 
 - Tauri build scripts first run `npm run clean:rust` (`scripts/clean-rust.js`).
+- `build:linux:appimage` runs `scripts/build-linux-appimage.js`: the AppImage bundles the build host's GStreamer plugins (`bundleMediaFramework`, for the done sound), and the build needs `patchelf` on the host.
 - macOS builds need Xcode 26+: `build:macos:*` first run `scripts/build-macos-icon.js`, which compiles `src-tauri/icons/Dez.icon` into the gitignored `src-tauri/icons/Assets.car` (icon name set in `src-tauri/Info.plist`). A bare `tauri build` on macOS fails without that file.
 - Releases: run `npm run bump-version` and commit before you tag. A pushed `v*` tag runs `.github/workflows/release-desktop.yml` (version check against the tag, e2e gate, Linux AppImages, macOS DMG, release notes from `scripts/release-notes.js`, GitHub Release). The rules are in the comments of those files.
 - CI rules (details in the workflow comments): every job removes the compromised eMudhra CA roots in its first step, and only the "Write release notes" step may reference `ZAI_API_KEY`.
@@ -57,6 +58,7 @@ ThreadEditor (CodeMirror doc) syncs to the active tab's sections
     -> openaiSse.ts / anthropicSse.ts split answer tokens from thinking tokens
     -> tokens go to the store, and to the editor if the tab is visible (dez.editor/*)
     -> finish/error/cancel reconciles the editor, adds a user section, and saves
+    -> finish/error of a reply the user does not look at -> dez.controller/alertReplyEnded (sound, notification)
 ```
 
 ### Frontend map (`src/`)
@@ -73,6 +75,7 @@ ThreadEditor (CodeMirror doc) syncs to the active tab's sections
 - `model/chat/`: `Section` / `ContentNode` types and helpers (`content.ts`, `modelRef.ts`, `thinking.ts`, `markdown.ts`, `pillMarker.ts`).
 - `model/state/`: Pinia stores (internal) and `dez.model/*` selectors; views read state through `view/modelState.ts`.
 - `controller/stream.ts`, `model/state/streams.ts`, `controller/http.ts`: stream lifecycle, per-tab sessions, native HTTP streams.
+- `controller/notifications.ts`: the reply-end alerts (sound, system notification; a click opens the reply's tab). `view/sound.ts`: `dez.ui/playDoneSound`. `assets/sounds/`: sound files (Git LFS).
 - `model/shortcuts.ts`: the editable shortcut registry (ids, default keys, key event matching, validation, labels, menu accelerators); user overrides are in the settings store.
 - `controller/menu.ts`: the native menubar (Tauri only); `dez.controller/menu/suspendAccelerators` turns its keys off while a key is recorded. `view/composables/useKeyboardShortcuts.ts`: app keys.
 - `controller/window.ts`, `windowFit.ts`: restore and save the window size and position.
@@ -80,7 +83,7 @@ ThreadEditor (CodeMirror doc) syncs to the active tab's sections
 - `view/history/HistoryPanel.vue`: saved conversations.
 - `view/prompts/PromptManager.vue`, `view/thread/PromptAutocomplete.vue`: saved prompts and `/prompt ` insertion.
 - `view/settings/SettingsView.vue`, `ProviderManager.vue`, `ShortcutManager.vue`: settings, the providers page, and Settings › Shortcuts with its key recorder (Help › Keyboard Shortcuts opens it).
-- `view/tabs/TabBar.vue`: tabs, colored busy/done by `dez.model/tabs/activity`. `dez.model/tabs/reopenClosed` brings back a closed tab from a session-only list (`model/state/tabs.ts`).
+- `view/tabs/TabBar.vue`: tabs, colored busy/done by `dez.model/tabs/activity`, pointer drag to reorder (`dez.model/tabs/move`). The `+` button, keys, and File menu create tabs with `dez.controller/newTab` (`controller/tabs.ts`), which focuses the editor (`dez.editor/focus`). `dez.model/tabs/reopenClosed` brings back a closed tab from a session-only list (`model/state/tabs.ts`).
 - `view/modelLabel.ts`: model display names. `view/theme.ts`: theme and editor font size.
 
 ### SBP
@@ -96,7 +99,7 @@ ThreadEditor (CodeMirror doc) syncs to the active tab's sections
 - `dez.native/*`: `src/controller/native.ts`, the only frontend module that calls Tauri `invoke()`
 - `dez.diagnostics/*`: `src/controller/diagnostics/` (sanitized probes only)
 - `dez.editor/*`: `src/view/editor/selectors.ts`
-- `dez.ui/*`: `src/view/toast/selectors.ts`, `src/view/theme.ts`, `src/view/clipboard.ts`
+- `dez.ui/*`: `src/view/toast/selectors.ts`, `src/view/theme.ts`, `src/view/clipboard.ts`, `src/view/sound.ts`
 
 Rules:
 
@@ -131,6 +134,7 @@ Rules:
 - **Keep Rust barebones**: a thin, generic OS interface, not a per-feature API. Reuse or generalize an existing command (e.g. `load_app_file(name)` / `save_app_file(name, content)`) instead of adding a near-copy, so frontend features rarely need Rust changes.
 - `commands.rs`, `http_bridge.rs`: Tauri commands, registered in `lib.rs`. `open_devtools` (Help › Developer Console) needs the `devtools` feature of the `tauri` crate in release builds (`Cargo.toml`).
 - `http_bridge.rs`: generic `http_request`, `stream_http`, `cancel_http_stream`.
+- `notification.rs`: `show_notification`, a system notification whose click brings the window to the front and calls back (zbus on Linux, `mac-notification-sys` on macOS).
 - `persistence.rs`: raw private-file I/O and id sanitization; write every private file with `write_private_file`.
 - `key_store.rs`: `provider_keys.json`. `copilot.rs`: Copilot device flow and token refresh.
 - `lib.rs`: plugins, permission reasons, app bootstrap.
@@ -169,6 +173,7 @@ Do not ever read, view, print, or `cat` `~/.config/dez/provider_keys.json`; it c
 - **Vite port is fixed**: `1420` with `strictPort: true`.
 - **`@tauri-apps/plugin-store` is unused**: app files use Dez's own Rust file I/O.
 - **Secrets wrapper is not a vault**: `src/utils/secret.ts`; never log provider headers, native HTTP payloads, or diagnostics without sanitization.
+- **Sounds are in Git LFS**: clone with LFS (`git lfs pull`); CI checkouts use `lfs: true`. A pointer file builds with no error, and only `play()` fails (the e2e guard in `tests/e2e/notifications.e2e.ts` catches it).
 - When using the `agentic_fetch` tool:
   - If searching the web, *ALWAYS* tell the tool to never use local tools like Grep, and only search the web
   - If searching local folders, *ALWAYS* tell the tool to restrict its searches to this folder only and to never search outside of it
@@ -209,6 +214,7 @@ Brief comments are encouraged above functions that do anything non-trivial expla
 - Run `npm run typecheck:e2e` after changing the e2e harness or specs.
 - E2E keys skip GTK, so specs never test Linux menu accelerators; the manual recipe is in `vitest.e2e.config.ts`.
 - E2E specs that restart the app use `MockProviderApp.relaunch()` (`tests/e2e/harness/mockProviderApp.ts`).
+- E2E seeds turn the reply-end alerts off (`quietAppState`, `tests/e2e/harness/fixtures.ts`), because the app uses the developer's audio and D-Bus session. Alert specs turn them on and use the fake notification server on a private bus (`tests/e2e/harness/notificationServer.ts`).
 - E2E clicks: never use webdriverio's `.click()`; use `click()` or `pointerClick()` from `tests/e2e/harness/dom.ts`.
 - **No display server** (every spec fails with `Hook timed out in 120000ms` in `beforeAll`): run under headless `kwin_wayland`; the recipe is in `vitest.e2e.config.ts`.
 - For UI changes beyond unit-testable logic, also check by hand with `npm run tauri dev`.

@@ -31,14 +31,21 @@ interface SectionState {
 interface SoundState {
   /** The volume at each `play()` call since `recordSoundPlays`. */
   plays: number[]
-  /** The volume of the last element that played, or null before a play. */
-  volume: number | null
+  /** The last volume that page code assigned to a media element, or null. */
+  lastVolumeSet: number | null
   paused: boolean | null
 }
 
+// The spec checks the volume that Dez assigns, not the element's `volume`
+// read-back. In WebKitGTK that read-back is the volume that the audio sink
+// (PulseAudio) last reported, and the sink reports each change later and in
+// its own time: right after quick changes it reads earlier values (a probe
+// saw 50 just after a set of 53), and in 2 of 8 runs it stayed at an earlier
+// drag value for more than 10 s.
 async function recordSoundPlays (browser: E2EBrowser): Promise<void> {
   await browser.execute(() => {
     Reflect.set(window, '__e2eSoundPlays', [])
+    Reflect.set(window, '__e2eVolumeSet', null)
     if (Reflect.get(window, '__e2ePlayWrapped')) return
     Reflect.set(window, '__e2ePlayWrapped', true)
     const originalPlay = HTMLMediaElement.prototype.play
@@ -48,6 +55,14 @@ async function recordSoundPlays (browser: E2EBrowser): Promise<void> {
       Reflect.set(window, '__e2eSound', this)
       return originalPlay.call(this)
     }
+    const volume = Object.getOwnPropertyDescriptor(HTMLMediaElement.prototype, 'volume')!
+    Object.defineProperty(HTMLMediaElement.prototype, 'volume', {
+      ...volume,
+      set (this: HTMLMediaElement, value: number) {
+        Reflect.set(window, '__e2eVolumeSet', Math.round(value * 100))
+        volume.set!.call(this, value)
+      },
+    })
   })
 }
 
@@ -56,7 +71,7 @@ async function soundState (browser: E2EBrowser): Promise<SoundState> {
     const sound = Reflect.get(window, '__e2eSound') as HTMLMediaElement | undefined
     return {
       plays: Reflect.get(window, '__e2eSoundPlays') as number[],
-      volume: sound ? Math.round(sound.volume * 100) : null,
+      lastVolumeSet: Reflect.get(window, '__e2eVolumeSet') as number | null,
       paused: sound?.paused ?? null,
     }
   })
@@ -191,11 +206,9 @@ describe('Settings › Notifications', () => {
     draggedVolume = state.volume
     expect(draggedVolume).toBeGreaterThan(70)
     expect(state.volumeLabel).toBe(`${draggedVolume}%`)
-    expect((await soundState(browser)).plays.length).toBeGreaterThan(0)
-    // Right after quick volume changes, WebKitGTK can read an older volume
-    // for a moment (0.89 after a drag that ended at 94%), so wait for the
-    // last one.
-    await waitForValue(browser, 'sound volume', async () => (await soundState(browser)).volume, draggedVolume)
+    const sound = await soundState(browser)
+    expect(sound.plays.length).toBeGreaterThan(0)
+    expect(sound.lastVolumeSet).toBe(draggedVolume)
     await waitForValue(browser, 'saved alerts', savedAlerts, {
       doneSound: true,
       doneSoundVolume: draggedVolume,
@@ -214,8 +227,8 @@ describe('Settings › Notifications', () => {
     })
     const afterTwoCalls = await soundState(browser)
     expect(afterTwoCalls.plays).toEqual([30])
+    expect(afterTwoCalls.lastVolumeSet).toBe(70)
     expect(afterTwoCalls.paused).toBe(false)
-    await waitForValue(browser, 'sound volume', async () => (await soundState(browser)).volume, 70)
 
     await waitForSoundEnd(browser)
     await sbpCall(browser, 'dez.ui/playDoneSound', 40)

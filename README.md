@@ -34,6 +34,14 @@ Talk with AI in a fully editable plaintext document. Inspired by Zed's text thre
 
 The main window contains a tab bar for conversations and buttons to access saved prompts, settings, and conversation history.
 
+## Notifications
+
+When a reply finishes or fails while you are not looking at it (its tab is in the background, or you use another window), Dez plays a short sound and shows a system notification. Click the notification to bring Dez to the front and go to the tab of the reply. A reply that you stop gives no alert.
+
+Settings › Notifications turns the sound and the notification on or off, and sets the volume of the sound. When you move the volume slider, Dez plays the sound at that volume. The sound and the notification are on by default.
+
+On Linux, Dez plays the sound with GStreamer. The AppImage includes the GStreamer plugins. Other Linux builds, such as `npm run tauri dev`, need the GStreamer base and good plugins on the system (Debian/Ubuntu: `gstreamer1.0-plugins-base` and `gstreamer1.0-plugins-good`; Fedora: `gstreamer1-plugins-base` and `gstreamer1-plugins-good`).
+
 ## Custom providers
 
 A custom provider is any server that speaks the OpenAI chat completions API or the Anthropic messages API. This includes local servers such as llama-server, LM Studio, Ollama, and vLLM, and hosted APIs that are compatible with one of the two.
@@ -118,6 +126,10 @@ npm run build:linux:appimage
 ```
 
 The AppImage is written under `src-tauri/target/release/bundle/appimage/`. A local Linux build is native to the host machine, so run it on x86_64 Linux for an x86_64 AppImage or on ARM64 Linux for an ARM64 AppImage.
+
+The AppImage includes the GStreamer plugins of the build machine, so that the notification sound plays. The build needs `patchelf` (Debian/Ubuntu: `sudo apt install patchelf`; Fedora: `sudo dnf install patchelf`) and the GStreamer base and good plugins.
+
+The notification sound (`src/assets/sounds/ding.mp3`) is stored with [Git LFS](https://git-lfs.com/). Install Git LFS and run `git lfs pull` before you build. Without it, the build has a small text file in place of the sound, and the sound does not play.
 
 Build an Apple Silicon macOS DMG on macOS:
 
