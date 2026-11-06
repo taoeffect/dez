@@ -69,7 +69,6 @@ const windowActions: Record<WindowShortcutId, (e: KeyboardEvent) => boolean | un
   find: () => sbp("dez.editor/openFind") as boolean,
   findNext: () => sbp("dez.editor/selectFindMatch", "next") as boolean,
   findPrevious: () => sbp("dez.editor/selectFindMatch", "previous") as boolean,
-  newConversation: () => void sbp("dez.controller/newTab"),
   newTab: () => void sbp("dez.controller/newTab"),
   reopenClosedTab: () => void sbp("dez.model/tabs/reopenClosed"),
   closeTab: () => void sbp("dez.controller/closeTab", sbp("dez.model/tabs/activeId")),

@@ -74,7 +74,6 @@ const DEFINITIONS = {
   findPrevious: { label: 'Previous match', group: 'Find', scope: 'app', key: 'Mod-Shift-g' },
   olderSearch: { label: 'Older search (in find field)', group: 'Find', scope: 'findField', key: 'ArrowUp' },
   newerSearch: { label: 'Newer search (in find field)', group: 'Find', scope: 'findField', key: 'ArrowDown' },
-  newConversation: { label: 'New conversation', group: 'Tabs', scope: 'app', key: 'Mod-n' },
   newTab: { label: 'New tab', group: 'Tabs', scope: 'app', key: 'Mod-t' },
   reopenClosedTab: { label: 'Reopen closed tab', group: 'Tabs', scope: 'app', key: 'Mod-Shift-t' },
   closeTab: { label: 'Close tab', group: 'Tabs', scope: 'app', key: 'Mod-w' },
