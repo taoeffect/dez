@@ -191,6 +191,18 @@ describe('validateShortcutKey', () => {
     expect(validateShortcutKey('linux', 'increaseFontSize', 'Ctrl-=', { increaseFontSize: 'Ctrl-i', newTab: 'Ctrl-+' }))
       .toBe('Used by New tab')
   })
+
+  // On a US layout Ctrl+Shift+= has two key names, `Ctrl-+` and
+  // `Shift-Ctrl-=`, and the press runs the action that has `Ctrl-+`.
+  it('refuses a key whose press runs another action', () => {
+    expect(validateShortcutKey('linux', 'newTab', 'Shift-Ctrl-=')).toBe('Used by Increase font size')
+    expect(validateShortcutKey('mac', 'submit', 'Shift-Meta-=')).toBe('Used by Increase font size')
+    expect(validateShortcutKey('linux', 'newTab', 'Shift-Ctrl-=', { increaseFontSize: 'Ctrl-i' })).toBeNull()
+    expect(validateShortcutKey('linux', 'increaseFontSize', 'Ctrl-=', { increaseFontSize: 'Ctrl-i', newTab: 'Shift-Ctrl-=' }))
+      .toBe('Used by New tab')
+    expect(validateShortcutKey('linux', 'closeTab', 'Ctrl-+', { increaseFontSize: 'Ctrl-i', newTab: 'Shift-Ctrl-=' }))
+      .toBe('Used by New tab')
+  })
 })
 
 describe('parseShortcutOverrides', () => {
@@ -221,6 +233,10 @@ describe('parseShortcutOverrides', () => {
   it('drops clashing entries, and then the entries that clash with the defaults they bring back', () => {
     expect(parseShortcutOverrides({ closeTab: 'Ctrl-k', newTab: 'Ctrl-k', history: 'Ctrl-w', find: 'Alt-f' }, 'linux'))
       .toEqual({ find: 'Alt-f' })
+  })
+
+  it('drops a saved key whose press runs another action, and keeps the other entries', () => {
+    expect(parseShortcutOverrides({ newTab: 'Shift-Ctrl-=', find: 'Alt-f' }, 'linux')).toEqual({ find: 'Alt-f' })
   })
 })
 

@@ -404,6 +404,23 @@ export function validateShortcutKey (
     const owner = shortcuts.find((other) => other.id !== id && other.keys.includes(candidateKey))
     if (owner) return `Used by ${owner.label}`
   }
+  // One press can have two key names (on a US layout Ctrl+Shift+= is
+  // `Ctrl-+` and `Shift-Ctrl-=`), and it runs the action of the first name
+  // that some action has (`matchShortcut`, CodeMirror). So with the new key
+  // in place, a US-layout press of every key must still run its own action.
+  // Only a clash with action `id` counts: a clash between two other actions
+  // in a saved set must not refuse every key, or `parseShortcutOverrides`
+  // would drop all the entries, not only those two. Other layouts can still
+  // have such pairs.
+  const next = resolveShortcuts(platform, { ...overrides, [id]: name })
+  for (const other of next) {
+    for (const otherKey of other.keys) {
+      const runs = matchShortcut(next, keyEventInit(otherKey, platform))
+      if (runs && runs.id !== other.id && (runs.id === id || other.id === id)) {
+        return `Used by ${(runs.id === id ? other : runs).label}`
+      }
+    }
+  }
   return null
 }
 
