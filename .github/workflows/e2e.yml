@@ -23,9 +23,18 @@ env:
 # before any network request (see the e2e job). A new job must do the same.
 jobs:
   e2e:
-    name: E2E (Linux, WebDriver)
+    name: E2E (Linux, WebDriver, ${{ matrix.shard }}/4)
     runs-on: ubuntu-24.04
     timeout-minutes: 45
+
+    # The specs run one file at a time, so four runners each run about a
+    # quarter of the files (`vitest --shard`). Vitest splits by file count,
+    # not by run time. The 4 in `name` and in the test step must match the
+    # length of `shard`.
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: [1, 2, 3, 4]
 
     env:
       # Pin the native WebDriver so tauri-driver never has to guess its
@@ -66,6 +75,9 @@ jobs:
         uses: Swatinem/rust-cache@v2
         with:
           workspaces: src-tauri
+          # All shards build the same thing and share one cache key, so
+          # only one of them saves it.
+          save-if: ${{ matrix.shard == 1 }}
 
       - name: Install tauri-driver
         run: cargo install tauri-driver --locked
@@ -91,7 +103,7 @@ jobs:
         run: npm run tauri build -- --debug --no-bundle
 
       - name: Run E2E tests under Xvfb
-        run: xvfb-run -a npm run test:e2e
+        run: xvfb-run -a npm run test:e2e -- --shard=${{ matrix.shard }}/4
 
       # upload-artifact sends the runtime token over HTTPS, so skip it when
       # the CA fix failed and the bundle can still trust a removed root.
@@ -99,6 +111,6 @@ jobs:
         if: failure() && steps.ca-roots.outcome == 'success'
         uses: actions/upload-artifact@v4
         with:
-          name: e2e-failure-screenshots
+          name: e2e-failure-screenshots-${{ matrix.shard }}
           path: tests/e2e/artifacts/*.png
           if-no-files-found: ignore
