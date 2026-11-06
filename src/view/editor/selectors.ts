@@ -17,6 +17,7 @@ import {
 } from './find'
 import { findHistory } from './findHistory'
 import { findState } from './findState'
+import { focusKeepingScroll } from './focus'
 import { isModalOpen } from '../composables/useKeyboardShortcuts'
 import { findShortcut, keyEventInit, type Shortcut, type ShortcutIdOfScope } from '../../model/shortcuts'
 
@@ -204,7 +205,7 @@ export default sbp('sbp/selectors/register', {
         userEvent: 'select',
       }),
     })
-    view.focus()
+    focusKeepingScroll(view)
   },
 
   /** Next/previous match from the main selection, wrapping around the doc.
@@ -273,7 +274,7 @@ export default sbp('sbp/selectors/register', {
     const view = activeView
     if (!view || (isModalOpen() && !view.hasFocus)) return false
     const { key } = findShortcut(sbp('dez.model/settings/shortcuts') as readonly Shortcut[], id)
-    if (inTextField !== 'editor' && !view.hasFocus) view.focus()
+    if (inTextField !== 'editor' && !view.hasFocus) focusKeepingScroll(view)
     return runScopeHandlers(view, new KeyboardEvent('keydown', { ...keyEventInit(key), cancelable: true }), 'editor')
   },
 

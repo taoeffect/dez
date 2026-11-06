@@ -49,6 +49,7 @@ import { thinkingExpandedField } from './thinkingPill'
 import { measureTextSize } from './editorMeasure'
 import { findExtension, findMatchStatus, findNextMatch, findQueryField, selectMatchSpec, setFindQueryEffect } from '../editor/find'
 import { markdownTables } from '../editor/tables'
+import { focusKeepingScrollOnMouseDown } from '../editor/focus'
 import { activeFindQuery, findState } from '../editor/findState'
 import { isModalOpen } from '../composables/useKeyboardShortcuts'
 
@@ -832,6 +833,7 @@ function buildState(expandedThinking: ReadonlySet<string> = new Set()): EditorSt
       promptPills,
       promptAtomicRanges,
       promptPillMouseHandler,
+      focusKeepingScrollOnMouseDown,
       unwrapBrokenPills,
       drawSelection(),
       EditorState.allowMultipleSelections.of(true),
