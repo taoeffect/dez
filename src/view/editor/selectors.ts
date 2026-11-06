@@ -117,6 +117,21 @@ export default sbp('sbp/selectors/register', {
     followingStreamTabId = null
   },
 
+  /** Puts the caret in the active editor, so the user can type at once.
+   *  Does nothing while Settings or History covers the editor. Returns
+   *  whether it focused the editor.
+   *
+   *  Right after a tab switch the view still shows the old tab: the
+   *  `activeTabId` watcher in `ThreadEditor.vue` swaps its state a tick
+   *  later. That is fine, because CodeMirror's `setState` gives the focus
+   *  back to a view that had it. */
+  'dez.editor/focus' (): boolean {
+    const view = activeView
+    if (!view || isModalOpen()) return false
+    if (!view.hasFocus) focusKeepingScroll(view)
+    return true
+  },
+
   /** When a reply starts in the visible tab, its view follows the reply,
    *  wherever the user had scrolled to: the next frame scrolls it to the
    *  bottom. Returns whether the tab is visible. */

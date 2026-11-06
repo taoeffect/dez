@@ -2,10 +2,10 @@ import type { EditorView } from '@codemirror/view'
 import { afterAll, afterEach, beforeAll, describe, expect, it } from 'vitest'
 import { Key } from 'webdriverio'
 import { startApp, type RunningApp } from './harness/app'
-import { click, screenshotOnFailure, typeKeys, waitFor, waitForValue } from './harness/dom'
+import { click, pointerClick, screenshotOnFailure, typeKeys, waitFor, waitForValue } from './harness/dom'
 import { makeConversation, seedAppState, seedConversation } from './harness/fixtures'
 import { createSession, destroySession, type E2EBrowser } from './harness/session'
-import { editorDoc, focusEditor, sbpCall, threadSections } from './harness/thread'
+import { editorDoc, focusEditor, focusedArea, sbpCall, threadSections } from './harness/thread'
 
 const MAX_CLICKS = 40
 // Clicks to make while the tabs overflow the strip, counting the click that
@@ -245,5 +245,41 @@ describe('tab bar', () => {
       return { conversationId: (await conversationIds(browser))[active], active }
     }, { conversationId: id, active: opened.active })
     await waitForValue(browser, 'place after Ctrl+Shift+T', () => viewPlace(browser), bottom)
+  })
+
+  // A new tab takes the focus, so the user can type in it at once. A press
+  // on `+` takes the focus, and a click on a tab moves it out of the
+  // editor, so both checks start with the focus outside the editor. Before
+  // the fix, the typed keys went nowhere. With Settings open, Ctrl+T still
+  // makes a tab behind it, and the focus stays in Settings.
+  it('focuses the editor of a new tab, except while Settings is open', async () => {
+    const start = (await tabStrip(browser)).titles
+
+    await pointerClick(browser, '.tab-new')
+    await waitForValue(browser, 'focus after a click on +', () => focusedArea(browser), 'editor')
+    await typeKeys(browser, 'Plus words')
+    const afterPlus = [...start, 'Plus words']
+    await waitForValue(browser, 'tabs after typing in the + tab', () => tabStrip(browser), { titles: afterPlus, active: start.length })
+
+    // On the title: the tab's center can be on its close button.
+    await pointerClick(browser, '.tab--active .tab-title')
+    await waitForValue(browser, 'focus after a click on a tab', () => focusedArea(browser), 'body')
+    await browser.keys([Key.Control, 't'])
+    await waitForValue(browser, 'focus after Ctrl+T', () => focusedArea(browser), 'editor')
+    await typeKeys(browser, 'Key words')
+    const afterKey = [...afterPlus, 'Key words']
+    await waitForValue(browser, 'tabs after typing in the Ctrl+T tab', () => tabStrip(browser), { titles: afterKey, active: afterPlus.length })
+
+    await sbpCall(browser, 'dez.model/settings/open', 'general')
+    await waitFor(browser, '.settings-nav-btn')
+    await pointerClick(browser, '.settings-nav-btn')
+    await waitForValue(browser, 'focus after a click in Settings', () => focusedArea(browser), 'button')
+    await browser.keys([Key.Control, 't'])
+    await waitForValue(browser, 'tabs after Ctrl+T in Settings', () => tabStrip(browser), { titles: [...afterKey, 'New Tab'], active: afterKey.length })
+    expect(await focusedArea(browser)).toBe('button')
+    expect(await sbpCall(browser, 'dez.model/settings/isOpen')).toBe(true)
+
+    await browser.keys([Key.Escape])
+    await waitForValue(browser, 'Settings open', () => sbpCall(browser, 'dez.model/settings/isOpen'), false)
   })
 })

@@ -87,7 +87,7 @@ watch(
         </button>
       </div>
     </div>
-    <button class="tab-new" :title="`New tab (${shortcutKeyText(shortcuts, 'newTab')})`" @click="sbp('dez.model/tabs/create')">
+    <button class="tab-new" :title="`New tab (${shortcutKeyText(shortcuts, 'newTab')})`" @click="sbp('dez.controller/newTab')">
       <svg width="12" height="12" viewBox="0 0 12 12" fill="none">
         <path d="M6 2v8M2 6h8" stroke="currentColor" stroke-width="1.4" stroke-linecap="round"/>
       </svg>

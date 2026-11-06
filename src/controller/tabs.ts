@@ -1,4 +1,5 @@
 import sbp from '@sbp/sbp'
+import type { Tab } from '../model/chat/types'
 import type { ConversationData } from '../model/persistence/types'
 import { safeFileName } from '../utils/fileName'
 
@@ -7,6 +8,16 @@ import { safeFileName } from '../utils/fileName'
 let saveDialogOpen = false
 
 export default sbp('sbp/selectors/register', {
+  // Every "new tab" path (the `+` button, the keys, the File menu) calls
+  // this, so the user can type in the new tab at once. On Linux the menu
+  // accelerator takes the key before the page key handler, so the focus
+  // must be here and not in a key handler.
+  'dez.controller/newTab' (): Tab {
+    const tab = sbp('dez.model/tabs/create') as Tab
+    sbp('dez.editor/focus')
+    return tab
+  },
+
   async 'dez.controller/closeTab' (tabId: string): Promise<void> {
     await sbp('dez.stream/stop', tabId)
     sbp('dez.model/tabs/close', tabId)

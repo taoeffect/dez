@@ -180,8 +180,8 @@ export default sbp('sbp/selectors/register', {
           {
             text: 'File',
             items: [
-              await shortcutMenuItem(shortcuts, 'newConversation', { text: 'New Conversation', action: () => sbp('dez.model/tabs/create') }),
-              await shortcutMenuItem(shortcuts, 'newTab', { text: 'New Tab', action: () => sbp('dez.model/tabs/create') }),
+              await shortcutMenuItem(shortcuts, 'newConversation', { text: 'New Conversation', action: () => sbp('dez.controller/newTab') }),
+              await shortcutMenuItem(shortcuts, 'newTab', { text: 'New Tab', action: () => sbp('dez.controller/newTab') }),
               await shortcutMenuItem(shortcuts, 'reopenClosedTab', { text: 'Reopen Closed Tab', action: () => sbp('dez.model/tabs/reopenClosed') }),
               SEPARATOR,
               await shortcutMenuItem(shortcuts, 'saveAs', {
