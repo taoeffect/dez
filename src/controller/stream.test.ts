@@ -21,6 +21,8 @@ let editorThinking: (SectionThinking | undefined)[] = []
 let editorTokens: string[] = []
 let savedConversations: ConversationData[] = []
 let toasts: Array<{ area: string, data: ToastData }> = []
+// The tab of each reply-end alert.
+let alertedTabs: string[] = []
 let consoleError: MockInstance<typeof console.error>
 
 // Stand-ins for the provider, the editor and the disk. The editor stub
@@ -52,6 +54,9 @@ sbp('sbp/selectors/register', {
   'dez.ui/toast' (area: string, data: ToastData): void {
     toasts.push({ area, data })
   },
+  async 'dez.controller/alertReplyEnded' (tabId: string): Promise<void> {
+    alertedTabs.push(tabId)
+  },
 })
 
 function activeTab(): Tab {
@@ -82,6 +87,7 @@ beforeEach(() => {
   editorTokens = []
   savedConversations = []
   toasts = []
+  alertedTabs = []
   consoleError = vi.spyOn(console, 'error').mockImplementation(() => {})
   sbp('dez.model/tabs/replaceSections', activeTab().id, [
     { id: 'u1', role: 'user', content: [{ kind: 'text', text: 'Hi' }] },
@@ -307,6 +313,42 @@ describe('tab activity', () => {
     await startStream()
 
     expect(activity()).toEqual({})
+  })
+})
+
+describe('reply-end alerts', () => {
+  it('alerts for a reply that finishes', async () => {
+    streamChat = async (input) => {
+      await input.onToken('Answer')
+      return { requestId: input.requestId as string }
+    }
+
+    await startStream()
+
+    expect(alertedTabs).toEqual([activeTab().id])
+  })
+
+  it('alerts for a reply that fails', async () => {
+    streamChat = async () => {
+      throw new Error('connection reset')
+    }
+
+    await startStream()
+
+    expect(alertedTabs).toEqual([activeTab().id])
+  })
+
+  // A stop is the user's own act.
+  it('gives no alert when the user stops the reply', async () => {
+    streamChat = async (input) => {
+      await input.onToken('Partial')
+      await sbp('dez.stream/stop', activeTab().id)
+      throw new Error('cancelled')
+    }
+
+    await startStream()
+
+    expect(alertedTabs).toEqual([])
   })
 })
 

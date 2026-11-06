@@ -2,11 +2,14 @@ import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from
 import { startApp, type RunningApp } from './harness/app'
 import { consoleErrors, pointerClick, pointerDrag, resetConsoleErrors, screenshotOnFailure, waitFor, waitForValue } from './harness/dom'
 import { readAppState, seedAppState } from './harness/fixtures'
+import { startMockProviderApp } from './harness/mockProviderApp'
+import { replyText, sendChatReply, type HoldingChatMock, type MockProvider } from './harness/mockServer'
 import { createSession, destroySession, type E2EBrowser } from './harness/session'
-import { sbpCall } from './harness/thread'
+import { sbpCall, submit, waitForThread } from './harness/thread'
 
 // Settings › Notifications: the reply-done sound with its volume slider, and
-// the system notification setting. The seeded app state has both alerts off
+// the system notification setting. Then the sound at the end of a reply that
+// the user does not look at. The seeded app state has both alerts off
 // (`quietAppState` in harness/fixtures.ts), so the spec starts from "off".
 //
 // The page records each `play()` of a media element and mutes the element
@@ -223,5 +226,77 @@ describe('Settings › Notifications', () => {
       volumeLabel: `${draggedVolume}%`,
       notification: true,
     })
+  })
+})
+
+describe('reply-end sound', () => {
+  const PROVIDER: MockProvider = { id: 'alerts', name: 'Alerts Mock', modelId: 'alerts-model', modelName: 'Alerts Model' }
+  const VOLUME = 40
+  let browser: E2EBrowser
+  let mock: HoldingChatMock
+  let stopApp: (() => Promise<void>) | undefined
+
+  async function windowIsFocused (): Promise<boolean> {
+    return browser.execute(async () => {
+      const internals = Reflect.get(window, '__TAURI_INTERNALS__') as {
+        invoke: (command: string, args: Record<string, unknown>) => Promise<unknown>
+      }
+      return await internals.invoke('plugin:window|is_focused', { label: 'main' }) === true
+    })
+  }
+
+  beforeAll(async () => {
+    ({ browser, mock, stop: stopApp } = await startMockProviderApp(PROVIDER))
+    await sbpCall(browser, 'dez.model/settings/setDoneSound', true)
+    await sbpCall(browser, 'dez.model/settings/setDoneSoundVolume', VOLUME)
+  })
+
+  beforeEach(async () => {
+    // A new tab gets the last used model, which startMockProviderApp picked.
+    await sbpCall(browser, 'dez.model/tabs/create')
+    await resetConsoleErrors(browser)
+    await recordSoundPlays(browser)
+  })
+
+  afterEach(async (ctx) => {
+    await screenshotOnFailure(browser, ctx)
+    await mock.dropOpenReplies(browser)
+    if (ctx.task.result?.state === 'fail') return
+    expect(await consoleErrors(browser)).toEqual([])
+  })
+
+  afterAll(async () => {
+    await stopApp?.()
+  })
+
+  it('plays the sound at the set volume when a reply ends in a background tab', async () => {
+    await submit(browser, 'Background question')
+    const request = await mock.waitForRequest(browser)
+    await sbpCall(browser, 'dez.model/tabs/create')
+
+    await sendChatReply(request.reply, 'the background')
+
+    await waitForValue(browser, 'sound plays', async () => (await soundState(browser)).plays, [VOLUME])
+  })
+
+  it('plays nothing when a reply ends in the active tab of the focused window', async () => {
+    expect(await windowIsFocused()).toBe(true)
+    // A sound that still plays takes no new play() (dez.ui/playDoneSound), so
+    // a wrong alert would not show.
+    await waitForValue(browser, 'no sound playing', async () => (await soundState(browser)).paused !== false, true)
+    await submit(browser, 'Foreground question')
+    const request = await mock.waitForRequest(browser)
+
+    await sendChatReply(request.reply, 'the foreground')
+
+    await waitForThread(browser, [
+      { role: 'user', text: 'Foreground question' },
+      { role: 'agent', text: replyText('the foreground') },
+      { role: 'user', text: '' },
+    ])
+    // The alert reads the window focus first, an IPC call. Give a wrong
+    // sound time to start.
+    await browser.pause(500)
+    expect((await soundState(browser)).plays).toEqual([])
   })
 })
