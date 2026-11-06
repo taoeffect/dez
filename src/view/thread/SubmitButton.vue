@@ -2,17 +2,24 @@
 import { computed } from 'vue'
 import sbp from '@sbp/sbp'
 import { useModelState } from '../modelState'
-import { isMacPlatform } from '../../utils/platform'
+import { currentShortcutPlatform, findShortcut, resolveShortcuts, shortcutLabel } from '../../model/shortcuts'
 
 const { activeTabId, activeTabStreaming } = useModelState()
 
-// The keycap names the key that does the same as a click: Cmd/Ctrl+Enter
-// submits, and Esc stops the active tab's stream.
-const face = computed(() => activeTabStreaming.value
-  ? { label: 'Stop', keycap: 'Esc', shortcut: 'Esc' }
-  : isMacPlatform
-    ? { label: 'Submit', keycap: '⌘↩', shortcut: 'Cmd+Enter' }
-    : { label: 'Submit', keycap: 'Ctrl+↩', shortcut: 'Ctrl+Enter' })
+const shortcuts = resolveShortcuts(currentShortcutPlatform)
+
+// The keycap names the key that does the same as a click: the Submit key
+// (Cmd/Ctrl+Enter by default) submits, and the Stop key (Esc) stops the
+// active tab's stream.
+const face = computed(() => {
+  const streaming = activeTabStreaming.value
+  const { key } = findShortcut(shortcuts, streaming ? 'stop' : 'submit')
+  return {
+    label: streaming ? 'Stop' : 'Submit',
+    keycap: shortcutLabel(key, currentShortcutPlatform),
+    shortcut: shortcutLabel(key, currentShortcutPlatform, 'text'),
+  }
+})
 
 function onClick (event: MouseEvent): void {
   // The face changes as soon as a request starts or stops, so the second
@@ -26,7 +33,7 @@ function onClick (event: MouseEvent): void {
   }
   // The same path as the key and Conversation › Send: the editor keymap
   // writes the doc to the store before it submits.
-  sbp('dez.editor/runKeyBinding', 'Mod-Enter')
+  sbp('dez.editor/runKeyBinding', 'submit')
 }
 </script>
 

@@ -55,12 +55,12 @@ describe('shortcut defaults', () => {
     }
   })
 
-  it('keep Select all and Quit on Linux only, and Ctrl+Y redo as a Linux alias', () => {
+  it('keep Select all and Quit on Linux only, with Super+A select-all and Ctrl+Y redo as Linux aliases', () => {
     const keysById = (platform: ShortcutPlatform) =>
       Object.fromEntries(resolveShortcuts(platform).map((shortcut) => [shortcut.id, shortcut.keys]))
     const linux = keysById('linux')
     const mac = keysById('mac')
-    expect(linux.selectAll).toEqual(['Alt-a'])
+    expect(linux.selectAll).toEqual(['Alt-a', 'Meta-a'])
     expect(linux.quit).toEqual(['Ctrl-q'])
     expect(linux.redo).toEqual(['Shift-Ctrl-z', 'Ctrl-y'])
     expect(mac.selectAll).toBeUndefined()

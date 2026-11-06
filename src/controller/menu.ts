@@ -4,6 +4,7 @@ import { isTauri } from '@tauri-apps/api/core'
 import { Image } from '@tauri-apps/api/image'
 import { Menu, Submenu, type MenuItemOptions, type PredefinedMenuItemOptions } from '@tauri-apps/api/menu'
 import { getCurrentWindow } from '@tauri-apps/api/window'
+import { currentShortcutPlatform, findShortcut, resolveShortcuts, shortcutAccelerator, type Shortcut, type ShortcutId } from '../model/shortcuts'
 import { isMacPlatform } from '../utils/platform'
 import { DEZ_REPO_URL } from './updates'
 import dezIconUrl from '../../src-tauri/icons/128x128.png'
@@ -29,6 +30,16 @@ async function loadAboutIcon (): Promise<Image> {
   return Image.new(new Uint8Array(data.buffer), canvas.width, canvas.height)
 }
 
+// A menu item that runs an editable shortcut, with the shortcut's key as its
+// accelerator. A key that a menu cannot take gets none (see
+// `shortcutAccelerator`): bare Esc, for example, stops the stream on the
+// page, but on Linux GTK would take it before the page, so Esc could no
+// longer close find, the dropdowns or the modals.
+function shortcutMenuItem (shortcuts: readonly Shortcut[], id: ShortcutId, item: Omit<MenuItemOptions, 'accelerator'>): MenuItemOptions {
+  const accelerator = shortcutAccelerator(findShortcut(shortcuts, id).key, currentShortcutPlatform)
+  return accelerator ? { ...item, accelerator } : item
+}
+
 let menuInstalled = false
 
 export default sbp('sbp/selectors/register', {
@@ -38,13 +49,14 @@ export default sbp('sbp/selectors/register', {
   // same thing whichever path gets it: on Linux a menu accelerator takes the
   // key before the page sees it; on macOS the page sees it first and the
   // menu gets only keys that the page did not handle (not yet tested on a
-  // Mac). A new shortcut also needs a row in Settings › General
-  // (`shortcuts` in SettingsView.vue).
+  // Mac). The keys come from `src/model/shortcuts.ts`; a new shortcut also
+  // needs a row in Settings › General (`shortcuts` in SettingsView.vue).
   //
   // Platform differences:
-  // - Linux skips the predefined Undo, Redo, Hide, Quit, … items (muda), so
-  //   they are custom items there. Select All is a custom Alt+A item,
-  //   because Ctrl+A moves to the line start in the Linux editor.
+  // - Undo and Redo are custom items, because predefined items have fixed
+  //   keys, and Linux skips the predefined Undo, Redo, Hide, Quit, … items
+  //   (muda). Select All is a custom Alt+A item on Linux, because Ctrl+A
+  //   moves to the line start in the Linux editor.
   // - On Linux the predefined Cut/Copy/Paste only show their keys, and the
   //   keys reach the page as before. Clicking them does nothing, because
   //   that needs Tauri's `linux-libxdo` feature, which works on X11 only.
@@ -56,11 +68,11 @@ export default sbp('sbp/selectors/register', {
     // `npm run dev` runs in a plain browser, which has no native menu.
     if (menuInstalled || !isTauri()) return
     menuInstalled = true
-    const settings: MenuItemOptions = {
+    const shortcuts = resolveShortcuts(currentShortcutPlatform)
+    const settings = shortcutMenuItem(shortcuts, 'settings', {
       text: 'Settings…',
-      accelerator: 'CmdOrCtrl+,',
       action: () => sbp('dez.model/settings/toggle'),
-    }
+    })
     const checkForUpdates: MenuItemOptions = {
       text: 'Check for Updates…',
       action: () => void sbp('dez.controller/checkForUpdates'),
@@ -130,112 +142,98 @@ export default sbp('sbp/selectors/register', {
           {
             text: 'File',
             items: [
-              { text: 'New Conversation', accelerator: 'CmdOrCtrl+N', action: () => sbp('dez.model/tabs/create') },
-              { text: 'New Tab', accelerator: 'CmdOrCtrl+T', action: () => sbp('dez.model/tabs/create') },
-              { text: 'Reopen Closed Tab', accelerator: 'CmdOrCtrl+Shift+T', action: () => sbp('dez.model/tabs/reopenClosed') },
+              shortcutMenuItem(shortcuts, 'newConversation', { text: 'New Conversation', action: () => sbp('dez.model/tabs/create') }),
+              shortcutMenuItem(shortcuts, 'newTab', { text: 'New Tab', action: () => sbp('dez.model/tabs/create') }),
+              shortcutMenuItem(shortcuts, 'reopenClosedTab', { text: 'Reopen Closed Tab', action: () => sbp('dez.model/tabs/reopenClosed') }),
               SEPARATOR,
-              {
+              shortcutMenuItem(shortcuts, 'saveAs', {
                 text: 'Save As Markdown…',
-                accelerator: 'CmdOrCtrl+S',
                 action: () => void sbp('dez.controller/saveConversationAs', sbp('dez.model/tabs/activeId')),
-              },
+              }),
               SEPARATOR,
-              {
+              shortcutMenuItem(shortcuts, 'closeTab', {
                 text: 'Close Tab',
-                accelerator: 'CmdOrCtrl+W',
                 action: () => void sbp('dez.controller/closeTab', sbp('dez.model/tabs/activeId')),
-              },
+              }),
               // Closing the last window exits, as the window close button does.
               ...(isMacPlatform
                 ? []
-                : [SEPARATOR, {
+                : [SEPARATOR, shortcutMenuItem(shortcuts, 'quit', {
                     text: 'Quit',
-                    accelerator: 'Ctrl+Q',
                     action: () => {
                       getCurrentWindow().close().catch((error) => console.error('Failed to close the window:', error))
                     },
-                  }]),
+                  })]),
             ],
           },
           {
             text: 'Edit',
             items: [
-              ...(isMacPlatform
-                ? [{ item: 'Undo' }, { item: 'Redo' }] satisfies PredefinedMenuItemOptions[]
-                : [
-                    { text: 'Undo', accelerator: 'Ctrl+Z', action: () => sbp('dez.editor/runKeyBinding', 'Mod-z', 'undo') },
-                    { text: 'Redo', accelerator: 'Ctrl+Shift+Z', action: () => sbp('dez.editor/runKeyBinding', 'Mod-Shift-z', 'redo') },
-                  ]),
+              shortcutMenuItem(shortcuts, 'undo', { text: 'Undo', action: () => sbp('dez.editor/runKeyBinding', 'undo', 'undo') }),
+              shortcutMenuItem(shortcuts, 'redo', { text: 'Redo', action: () => sbp('dez.editor/runKeyBinding', 'redo', 'redo') }),
               SEPARATOR,
               { item: 'Cut' },
               { item: 'Copy' },
-              { text: 'Copy Markdown', accelerator: 'CmdOrCtrl+Shift+C', action: () => sbp('dez.editor/copyMarkdown') },
+              shortcutMenuItem(shortcuts, 'copyMarkdown', { text: 'Copy Markdown', action: () => sbp('dez.editor/copyMarkdown') }),
               { item: 'Paste' },
               isMacPlatform
                 ? { item: 'SelectAll' }
-                : { text: 'Select All', accelerator: 'Alt+A', action: () => sbp('dez.editor/runKeyBinding', 'Alt-a', 'selectAll') },
+                : shortcutMenuItem(shortcuts, 'selectAll', {
+                    text: 'Select All',
+                    action: () => sbp('dez.editor/runKeyBinding', 'selectAll', 'selectAll'),
+                  }),
               SEPARATOR,
-              { text: 'Find…', accelerator: 'CmdOrCtrl+F', action: () => sbp('dez.editor/openFind') },
-              { text: 'Find Next', accelerator: 'CmdOrCtrl+G', action: () => sbp('dez.editor/selectFindMatch', 'next') },
-              { text: 'Find Previous', accelerator: 'CmdOrCtrl+Shift+G', action: () => sbp('dez.editor/selectFindMatch', 'previous') },
+              shortcutMenuItem(shortcuts, 'find', { text: 'Find…', action: () => sbp('dez.editor/openFind') }),
+              shortcutMenuItem(shortcuts, 'findNext', { text: 'Find Next', action: () => sbp('dez.editor/selectFindMatch', 'next') }),
+              shortcutMenuItem(shortcuts, 'findPrevious', { text: 'Find Previous', action: () => sbp('dez.editor/selectFindMatch', 'previous') }),
               ...(isMacPlatform ? [] : [SEPARATOR, settings]),
             ],
           },
           {
             text: 'Conversation',
             items: [
-              { text: 'Send', accelerator: 'CmdOrCtrl+Enter', action: () => sbp('dez.editor/runKeyBinding', 'Mod-Enter') },
-              // Esc stops the stream on the page, but this item has no
-              // `Escape` accelerator: on Linux GTK takes an accelerator
-              // before the page, so Esc could no longer close find, the
-              // dropdowns or the modals.
-              { text: 'Stop', action: () => sbp('dez.stream/stop', sbp('dez.model/tabs/activeId')) },
-              {
+              shortcutMenuItem(shortcuts, 'submit', { text: 'Send', action: () => sbp('dez.editor/runKeyBinding', 'submit') }),
+              shortcutMenuItem(shortcuts, 'stop', { text: 'Stop', action: () => sbp('dez.stream/stop', sbp('dez.model/tabs/activeId')) }),
+              shortcutMenuItem(shortcuts, 'newMessage', {
                 text: 'New Message',
-                accelerator: 'Shift+Enter',
-                action: () => sbp('dez.editor/runKeyBinding', 'Shift-Enter', 'insertLineBreak'),
-              },
+                action: () => sbp('dez.editor/runKeyBinding', 'newMessage', 'insertLineBreak'),
+              }),
               SEPARATOR,
-              {
+              shortcutMenuItem(shortcuts, 'addCursorAbove', {
                 text: 'Add Cursor Above',
-                accelerator: 'Ctrl+Shift+Up',
-                action: () => sbp('dez.editor/runKeyBinding', 'Ctrl-Shift-ArrowUp', 'none'),
-              },
-              {
+                action: () => sbp('dez.editor/runKeyBinding', 'addCursorAbove', 'none'),
+              }),
+              shortcutMenuItem(shortcuts, 'addCursorBelow', {
                 text: 'Add Cursor Below',
-                accelerator: 'Ctrl+Shift+Down',
-                action: () => sbp('dez.editor/runKeyBinding', 'Ctrl-Shift-ArrowDown', 'none'),
-              },
+                action: () => sbp('dez.editor/runKeyBinding', 'addCursorBelow', 'none'),
+              }),
             ],
           },
           {
             text: 'View',
             items: [
-              { text: 'History', accelerator: 'CmdOrCtrl+H', action: () => sbp('dez.model/settings/historyToggle') },
+              shortcutMenuItem(shortcuts, 'history', { text: 'History', action: () => sbp('dez.model/settings/historyToggle') }),
               SEPARATOR,
-              {
+              shortcutMenuItem(shortcuts, 'increaseFontSize', {
                 text: 'Increase Font Size',
-                accelerator: 'CmdOrCtrl+=',
                 action: () => sbp('dez.model/settings/changeEditorFontSize', 1),
-              },
-              {
+              }),
+              shortcutMenuItem(shortcuts, 'decreaseFontSize', {
                 text: 'Decrease Font Size',
-                accelerator: 'CmdOrCtrl+-',
                 action: () => sbp('dez.model/settings/changeEditorFontSize', -1),
-              },
+              }),
             ],
           },
           {
             text: 'Window',
             items: [
               ...(isMacPlatform ? [{ item: 'Minimize' }, { item: 'Maximize', text: 'Zoom' }, SEPARATOR] satisfies PredefinedMenuItemOptions[] : []),
-              { text: 'Previous Tab', accelerator: 'CmdOrCtrl+Shift+[', action: () => sbp('dez.model/tabs/cycle', -1) },
-              { text: 'Next Tab', accelerator: 'CmdOrCtrl+Shift+]', action: () => sbp('dez.model/tabs/cycle', 1) },
+              shortcutMenuItem(shortcuts, 'previousTab', { text: 'Previous Tab', action: () => sbp('dez.model/tabs/cycle', -1) }),
+              shortcutMenuItem(shortcuts, 'nextTab', { text: 'Next Tab', action: () => sbp('dez.model/tabs/cycle', 1) }),
               SEPARATOR,
-              ...Array.from({ length: 9 }, (_, index): MenuItemOptions => ({
-                text: `Tab ${index + 1}`,
-                accelerator: `CmdOrCtrl+${index + 1}`,
-                action: () => sbp('dez.model/tabs/switchToIndex', index),
+              ...([1, 2, 3, 4, 5, 6, 7, 8, 9] as const).map((n) => shortcutMenuItem(shortcuts, `goToTab${n}`, {
+                text: `Tab ${n}`,
+                action: () => sbp('dez.model/tabs/switchToIndex', n - 1),
               })),
             ],
           },

@@ -5,6 +5,9 @@ import { createFindQuery } from '../editor/find'
 import { findHistory } from '../editor/findHistory'
 import { findState } from '../editor/findState'
 import { isModalOpen } from '../composables/useKeyboardShortcuts'
+import { currentShortcutPlatform, matchShortcut, resolveShortcuts } from '../../model/shortcuts'
+
+const findFieldShortcuts = resolveShortcuts(currentShortcutPlatform).filter((shortcut) => shortcut.scope === 'findField')
 
 const searchRef = ref<HTMLTextAreaElement | null>(null)
 const replaceRef = ref<HTMLTextAreaElement | null>(null)
@@ -87,19 +90,19 @@ function scrollFieldToEnd(field: HTMLTextAreaElement) {
   field.scrollLeft = caretX + parseFloat(style.paddingRight) - field.clientWidth
 }
 
-// ArrowUp on the first line loads an older search and ArrowDown on the last
-// line a newer one; elsewhere in a multi-line search they move the caret.
-// The search watcher in ThreadEditor.vue searches the recalled text.
-async function recallHistory(e: KeyboardEvent) {
+// Older search and Newer search load an older or a newer search. A bare
+// ArrowUp (the default key) acts only on the first line, and a bare
+// ArrowDown only on the last line; elsewhere in a multi-line search they
+// move the caret. The search watcher in ThreadEditor.vue searches the
+// recalled text.
+async function recallHistory(e: KeyboardEvent, direction: 'older' | 'newer') {
   const field = searchRef.value
-  if (!field || e.isComposing || e.shiftKey || e.altKey || e.ctrlKey || e.metaKey) return
+  if (!field) return
   const { value, selectionStart, selectionEnd } = field
-  let entry: string | null = null
-  if (e.key === 'ArrowUp' && !value.slice(0, selectionStart).includes('\n')) {
-    entry = findHistory.older(value)
-  } else if (e.key === 'ArrowDown' && !value.slice(selectionEnd).includes('\n')) {
-    entry = findHistory.newer()
-  }
+  const bare = !e.shiftKey && !e.altKey && !e.ctrlKey && !e.metaKey
+  if (bare && e.key === 'ArrowUp' && value.slice(0, selectionStart).includes('\n')) return
+  if (bare && e.key === 'ArrowDown' && value.slice(selectionEnd).includes('\n')) return
+  const entry = direction === 'older' ? findHistory.older(value) : findHistory.newer()
   if (entry === null) return
   e.preventDefault()
   findState.search = entry
@@ -111,8 +114,9 @@ async function recallHistory(e: KeyboardEvent) {
 }
 
 function onSearchKeydown(e: KeyboardEvent) {
-  if (e.key === 'ArrowUp' || e.key === 'ArrowDown') {
-    void recallHistory(e)
+  const shortcut = e.isComposing ? null : matchShortcut(findFieldShortcuts, e)
+  if (shortcut) {
+    void recallHistory(e, shortcut.id === 'olderSearch' ? 'older' : 'newer')
     return
   }
   handleFieldKeydown(e, () => sbp('dez.editor/selectFindMatch', 'next'))

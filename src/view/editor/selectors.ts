@@ -18,7 +18,7 @@ import {
 import { findHistory } from './findHistory'
 import { findState } from './findState'
 import { isModalOpen } from '../composables/useKeyboardShortcuts'
-import { isMacPlatform } from '../../utils/platform'
+import { currentShortcutPlatform, findShortcut, keyEventInit, resolveShortcuts, type ShortcutIdOfScope } from '../../model/shortcuts'
 
 /** Scroll positions can be fractions of a pixel: a view this close to its
  *  bottom is at its bottom. */
@@ -89,35 +89,6 @@ function dispatchStreamChange(view: EditorView, tabId: string, spec: Transaction
  *  binding in the editor anyway, do nothing, or run this
  *  `document.execCommand` edit command in the field. */
 export type TextFieldAction = 'editor' | 'none' | 'insertLineBreak' | 'undo' | 'redo' | 'selectAll'
-
-const KEY_NAME_MODIFIERS: Record<string, true> = { Mod: true, Ctrl: true, Meta: true, Alt: true, Shift: true }
-
-// A synthetic keydown for a CodeMirror key name such as `Mod-Shift-z`, for
-// the platform that CodeMirror's keymaps use (`Mod` is Cmd on macOS, else
-// Ctrl). `keyCode` is set for letters and digits because CodeMirror finds a
-// Shift+letter binding through it: with `key` "Z" and no keyCode, no
-// binding matches `Mod-Shift-z`, and with `key` "z" the `Mod-z` binding runs.
-function keydownForKeyName (name: string): KeyboardEvent {
-  const parts = name.split(/-(?!$)/)
-  const key = parts.pop() ?? ''
-  for (const modifier of parts) {
-    if (Object.hasOwn(KEY_NAME_MODIFIERS, modifier)) continue
-    const error = new Error(`Unknown modifier "${modifier}" in key name "${name}"`)
-    console.error(error)
-    throw error
-  }
-  const shiftKey = parts.includes('Shift')
-  const mod = parts.includes('Mod')
-  return new KeyboardEvent('keydown', {
-    key: shiftKey && key.length === 1 ? key.toUpperCase() : key,
-    keyCode: /^[a-z0-9]$/i.test(key) ? key.toUpperCase().charCodeAt(0) : 0,
-    ctrlKey: parts.includes('Ctrl') || (mod && !isMacPlatform),
-    metaKey: parts.includes('Meta') || (mod && isMacPlatform),
-    altKey: parts.includes('Alt'),
-    shiftKey,
-    cancelable: true,
-  })
-}
 
 export default sbp('sbp/selectors/register', {
   /** A view that becomes visible does not follow a stream until the user
@@ -281,17 +252,18 @@ export default sbp('sbp/selectors/register', {
     findState.origin = view.state.selection.main.from
   },
 
-  /** Run an editor key binding (a CodeMirror key name such as `Mod-Enter`)
-   *  without a key press, for the native menu. The editor keymaps stay the
-   *  only definition of these keys, with all their checks (an open prompt
-   *  autocomplete, several cursors, section splits). On Linux a menu
-   *  accelerator takes the key before the page sees it, so the menu item
-   *  must do what the key would do where focus is; see `TextFieldAction`.
-   *  Without a focused text field, every action except `'editor'` focuses
-   *  the editor before the binding runs. While Settings or History covers
-   *  the editor, the binding runs only if the editor still has focus, as a
-   *  key press would. Returns whether anything ran. */
-  'dez.editor/runKeyBinding' (key: string, inTextField: TextFieldAction = 'editor'): boolean {
+  /** Run an editor shortcut (`src/model/shortcuts.ts`) through its current
+   *  key without a key press, for the native menu and the Submit button.
+   *  The editor keymap stays the only definition of these actions, with all
+   *  their checks (an open prompt autocomplete, several cursors, section
+   *  splits). On Linux a menu accelerator takes the key before the page
+   *  sees it, so the menu item must do what the key would do where focus
+   *  is; see `TextFieldAction`. Without a focused text field, every action
+   *  except `'editor'` focuses the editor before the binding runs. While
+   *  Settings or History covers the editor, the binding runs only if the
+   *  editor still has focus, as a key press would. Returns whether anything
+   *  ran. */
+  'dez.editor/runKeyBinding' (id: ShortcutIdOfScope<'editor'>, inTextField: TextFieldAction = 'editor'): boolean {
     const focused = document.activeElement
     if (inTextField !== 'editor' && (focused instanceof HTMLInputElement || focused instanceof HTMLTextAreaElement)) {
       // execCommand is deprecated, but it is the only way for a script to
@@ -300,8 +272,9 @@ export default sbp('sbp/selectors/register', {
     }
     const view = activeView
     if (!view || (isModalOpen() && !view.hasFocus)) return false
+    const { key } = findShortcut(resolveShortcuts(currentShortcutPlatform), id)
     if (inTextField !== 'editor' && !view.hasFocus) view.focus()
-    return runScopeHandlers(view, keydownForKeyName(key), 'editor')
+    return runScopeHandlers(view, new KeyboardEvent('keydown', { ...keyEventInit(key), cancelable: true }), 'editor')
   },
 
   /** Copy Markdown (Cmd/Ctrl+Shift+C): copy the editor selection as the

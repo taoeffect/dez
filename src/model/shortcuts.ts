@@ -44,7 +44,7 @@ const TAB_NUMBERS = [1, 2, 3, 4, 5, 6, 7, 8, 9] as const
 const goToTabDefinitions = Object.fromEntries(TAB_NUMBERS.map((n) => [
   `goToTab${n}`,
   { label: `Go to tab ${n}`, group: 'Tabs', scope: 'app', key: `Mod-${n}` } satisfies ShortcutDefinition,
-])) as Record<`goToTab${typeof TAB_NUMBERS[number]}`, ShortcutDefinition>
+])) as Record<`goToTab${typeof TAB_NUMBERS[number]}`, ShortcutDefinition & { readonly scope: 'app' }>
 
 // One entry per action, in the order of the Shortcuts tab. Not listed, and
 // never editable: Cut/Copy/Paste, the macOS app-menu keys, the Linux
@@ -65,8 +65,9 @@ const DEFINITIONS = {
   // Linux Ctrl+Y is a redo key of CodeMirror's `historyKeymap`.
   redo: { label: 'Redo', group: 'Editing', scope: 'editor', key: 'Mod-Shift-z', aliases: { linux: ['Ctrl-y'] } },
   // macOS has the predefined Select All item with Cmd+A. On Linux Ctrl+A
-  // moves to the line start (`linuxLineNavigationKeymap` in cmEditor.ts).
-  selectAll: { label: 'Select all', group: 'Editing', scope: 'editor', key: { linux: 'Alt-a' } },
+  // moves to the line start (`linuxLineNavigationKeymap` in cmEditor.ts), and
+  // Super+A also selects all.
+  selectAll: { label: 'Select all', group: 'Editing', scope: 'editor', key: { linux: 'Alt-a' }, aliases: { linux: ['Meta-a'] } },
   copyMarkdown: { label: 'Copy Markdown (as Save As Markdown writes it)', group: 'Editing', scope: 'app', key: 'Mod-Shift-c' },
   find: { label: 'Find and replace', group: 'Find', scope: 'app', key: 'Mod-f' },
   findNext: { label: 'Next match', group: 'Find', scope: 'app', key: 'Mod-g' },
@@ -97,6 +98,12 @@ const DEFINITIONS = {
 } satisfies Record<string, ShortcutDefinition>
 
 export type ShortcutId = keyof typeof DEFINITIONS
+
+/** The ids of the actions that `scope` handles, so that a binding path can
+ *  list a handler for each of them. */
+export type ShortcutIdOfScope<S extends ShortcutScope> = {
+  [Id in ShortcutId]: (typeof DEFINITIONS)[Id]['scope'] extends S ? Id : never
+}[ShortcutId]
 
 /** The user's keys that differ from the defaults, by action. */
 export type ShortcutOverrides = Readonly<Partial<Record<ShortcutId, string>>>
@@ -156,6 +163,16 @@ export function resolveShortcuts (platform: ShortcutPlatform, overrides: Shortcu
     const key = overrides[shortcut.id] ?? shortcut.defaultKey
     return { ...shortcut, key, keys: key === shortcut.defaultKey ? [key, ...aliases] : [key] }
   })
+}
+
+/** Action `id` of `shortcuts`, for a binding path that has it on this
+ *  platform. Throws when the platform lacks it. */
+export function findShortcut (shortcuts: readonly Shortcut[], id: ShortcutId): Shortcut {
+  const shortcut = shortcuts.find((candidate) => candidate.id === id)
+  if (shortcut) return shortcut
+  const error = new Error(`No "${id}" shortcut on this platform`)
+  console.error(error)
+  throw error
 }
 
 interface KeyParts {

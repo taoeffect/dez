@@ -1,4 +1,3 @@
-import { selectAll } from '@codemirror/commands'
 import { HighlightStyle, syntaxHighlighting } from '@codemirror/language'
 import { markdown } from '@codemirror/lang-markdown'
 import { Decoration, EditorView, ViewPlugin, WidgetType, type DecorationSet, type KeyBinding, type ViewUpdate } from '@codemirror/view'
@@ -149,16 +148,6 @@ export function linuxLineNavigationKeymap(): KeyBinding[] {
       linux: 'Ctrl-e',
       preventDefault: true,
       run: cursorPhysicalLineEnd,
-    },
-    {
-      linux: 'Meta-a',
-      preventDefault: true,
-      run: selectAll,
-    },
-    {
-      linux: 'Alt-a',
-      preventDefault: true,
-      run: selectAll,
     },
   ]
 }

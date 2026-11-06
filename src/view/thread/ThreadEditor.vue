@@ -1,13 +1,14 @@
 <script setup lang="ts">
 import { computed, onBeforeUnmount, onMounted, ref, watch, nextTick } from 'vue'
-import { EditorSelection, EditorState, Prec } from '@codemirror/state'
-import { EditorView, drawSelection, keymap } from '@codemirror/view'
-import { history, historyKeymap, defaultKeymap } from '@codemirror/commands'
+import { Compartment, EditorSelection, EditorState, Prec, type Extension } from '@codemirror/state'
+import { EditorView, drawSelection, keymap, type Command, type KeyBinding } from '@codemirror/view'
+import { history, historyKeymap, defaultKeymap, redo, selectAll, undo } from '@codemirror/commands'
 import sbp from '@sbp/sbp'
 import { useModelState, type Prompt } from '../modelState'
 import { sectionIsEmpty } from '../../model/chat/content'
 import { sameModelRef } from '../../model/chat/modelRef'
 import { sameThinking } from '../../model/chat/thinking'
+import { currentShortcutPlatform, resolveShortcuts, type ShortcutIdOfScope } from '../../model/shortcuts'
 import { debounce, throttle } from 'turtledash'
 import PromptAutocomplete from './PromptAutocomplete.vue'
 import FindDropdown from './FindDropdown.vue'
@@ -576,6 +577,67 @@ function pasteClipboardText(event: ClipboardEvent, v: EditorView): boolean {
   return true
 }
 
+// The editor's editable shortcuts (`src/model/shortcuts.ts`), by id.
+const editorShortcutCommands: Record<ShortcutIdOfScope<'editor'>, Command> = {
+  submit: () => {
+    // An open prompt autocomplete takes the Submit key and does nothing
+    // with it.
+    if (autocompleteOpen.value) return true
+    syncDocToStore(true)
+    void sbp('dez.controller/submitTab', activeTabId.value)
+    return true
+  },
+  // A modal takes Esc first: the event bubbles on to the global handler,
+  // which closes the modal, and the stream goes on.
+  stop: () => {
+    if (isModalOpen() || !isActiveTabStreaming.value) return false
+    void sbp('dez.stream/stop', activeTabId.value)
+    return true
+  },
+  newMessage: (v) => {
+    const { from, to } = v.state.selection.main
+    const doc = v.state.doc.toString()
+    const afterIndex = sectionIndexAtPos(doc, from)
+    const insert = `\n${SECTION_SEP}\n`
+    v.dispatch({
+      changes: { from, to, insert },
+      selection: { anchor: from + insert.length },
+      effects: splitSectionEffect.of({ afterIndex }),
+      scrollIntoView: true,
+    })
+    return true
+  },
+  addCursorAbove: (v) => addDocumentLineCursor(v, false),
+  addCursorBelow: (v) => addDocumentLineCursor(v, true),
+  undo,
+  redo,
+  selectAll,
+}
+
+// Undo and Redo are editable shortcuts, so they leave `historyKeymap`. Its
+// selection undo and redo (Mod-u, Alt-u) stay fixed.
+const fixedHistoryKeymap = historyKeymap.filter((binding) => binding.run !== undo && binding.run !== redo)
+
+// Holds the editor shortcuts' keymap, so that a key change can replace it
+// in the live view.
+const editorShortcuts = new Compartment()
+
+// One binding per key of each editor shortcut. In `buildState` it is listed
+// after the autocomplete and find keymaps at the same precedence, so Esc
+// closes those first and is the Stop key only when neither is open; Stop
+// runs before the multi-cursor and selection Esc bindings, which do nothing
+// while it stops. Stop returns false when there is no stream, so Esc goes on
+// to them; every other action takes its key even when it does nothing (an
+// Undo with no history), as CodeMirror's history keys do.
+function editorShortcutKeymap(): Extension {
+  const bindings = resolveShortcuts(currentShortcutPlatform).flatMap((shortcut): KeyBinding[] => {
+    if (!Object.hasOwn(editorShortcutCommands, shortcut.id)) return []
+    const run = editorShortcutCommands[shortcut.id as ShortcutIdOfScope<'editor'>]
+    return shortcut.keys.map((key) => ({ key, run, preventDefault: shortcut.id !== 'stop' }))
+  })
+  return Prec.highest(keymap.of(bindings))
+}
+
 /** A new editor state for the active tab. `expandedThinking` is the set of
  *  open thinking panels to keep; without it, all start closed. */
 function buildState(expandedThinking: ReadonlySet<string> = new Set()): EditorState {
@@ -624,11 +686,6 @@ function buildState(expandedThinking: ReadonlySet<string> = new Set()): EditorSt
           return true
         },
       },
-      {
-        key: 'Mod-Enter',
-        preventDefault: true,
-        run: () => autocompleteOpen.value,
-      },
     ]),
   )
   // Listed after autocompleteKeymap at the same precedence, so an open prompt
@@ -644,23 +701,6 @@ function buildState(expandedThinking: ReadonlySet<string> = new Set()): EditorSt
         run: () => {
           if (!findState.open) return false
           if (!isModalOpen()) sbp('dez.editor/closeFind')
-          return true
-        },
-      },
-    ]),
-  )
-  // Listed after the autocomplete and find keymaps, so Esc closes those
-  // first and stops the stream only when neither is open. It runs before
-  // the multi-cursor and selection Esc bindings, which do nothing while it
-  // stops. A modal takes Esc first: the event bubbles on to the global
-  // handler, which closes the modal, and the stream goes on.
-  const stopStreamKeymap = Prec.highest(
-    keymap.of([
-      {
-        key: 'Escape',
-        run: () => {
-          if (isModalOpen() || !isActiveTabStreaming.value) return false
-          void sbp('dez.stream/stop', activeTabId.value)
           return true
         },
       },
@@ -683,18 +723,10 @@ function buildState(expandedThinking: ReadonlySet<string> = new Set()): EditorSt
       },
     ]),
   )
-  const submitKeymap = Prec.high(
+  // Fixed cursor moves and deletes: the Linux line navigation, and the keys
+  // that know about the section separators and the prompt pills.
+  const sectionKeymap = Prec.high(
     keymap.of([
-      {
-        key: 'Ctrl-Shift-ArrowUp',
-        preventDefault: true,
-        run: (v) => addDocumentLineCursor(v, false),
-      },
-      {
-        key: 'Ctrl-Shift-ArrowDown',
-        preventDefault: true,
-        run: (v) => addDocumentLineCursor(v, true),
-      },
       ...linuxLineNavigationKeymap(),
       {
         key: 'ArrowUp',
@@ -749,32 +781,6 @@ function buildState(expandedThinking: ReadonlySet<string> = new Set()): EditorSt
         key: 'Delete',
         run: mergeWithNextSection,
       },
-      {
-        key: 'Mod-Enter',
-        preventDefault: true,
-        run: () => {
-          syncDocToStore(true)
-          void sbp('dez.controller/submitTab', activeTabId.value)
-          return true
-        },
-      },
-      {
-        key: 'Shift-Enter',
-        preventDefault: true,
-        run: (v) => {
-          const { from, to } = v.state.selection.main
-          const doc = v.state.doc.toString()
-          const afterIndex = sectionIndexAtPos(doc, from)
-          const insert = `\n${SECTION_SEP}\n`
-          v.dispatch({
-            changes: { from, to, insert },
-            selection: { anchor: from + insert.length },
-            effects: splitSectionEffect.of({ afterIndex }),
-            scrollIntoView: true,
-          })
-          return true
-        },
-      },
     ]),
   )
 
@@ -798,10 +804,10 @@ function buildState(expandedThinking: ReadonlySet<string> = new Set()): EditorSt
       history(),
       autocompleteKeymap,
       findKeymap,
-      stopStreamKeymap,
+      editorShortcuts.of(editorShortcutKeymap()),
       selectionKeymap,
-      submitKeymap,
-      keymap.of([...defaultKeymap, ...historyKeymap]),
+      sectionKeymap,
+      keymap.of([...defaultKeymap, ...fixedHistoryKeymap]),
       EditorView.lineWrapping,
       dezLanguageSupport(),
       dezTheme,
