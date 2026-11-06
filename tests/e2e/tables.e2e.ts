@@ -48,6 +48,11 @@ const LONG_CELL = Array.from({ length: 40 }, (_, i) => `word${i}`).join(' ')
 const WRAP_ROW = `| w | ${LONG_CELL} |`
 const WRAP_TEXT = ['Wrap fixture.', '', '| Key | Text |', '|-----|------|', WRAP_ROW].join('\n')
 
+// A long cell in a left-aligned column and one in a right-aligned last
+// column: both wrap.
+const HANG_ROW = `| w | ${LONG_CELL} | ${LONG_CELL} |`
+const HANG_TEXT = ['Hanging fixture.', '', '| Key | Left | Right |', '|-----|------|------:|', HANG_ROW].join('\n')
+
 // Short cells with chars that are wider than 1ch (CJK, emoji, a tab), next
 // to a long column that wraps and so takes all the width that it can get.
 const WIDE_ROW = `| ab | 東京都 | ✅ | 🚀 | \tbc | ${LONG_CELL} |`
@@ -464,6 +469,67 @@ describe('markdown tables', () => {
         expect(box[side], `${side} of cell ${index}`).toBeCloseTo(cells[index][side], 0)
       }
     })
+  })
+
+  // A cell keeps its source, so its first line starts with the transparent
+  // `| `. The lines that wrap must start under the text, not under that pipe.
+  it('lines up the wrapped lines of a cell and gives a cell the same inset on both sides', async () => {
+    await openFixture(HANG_TEXT)
+    const rowFrom = await docPos(HANG_ROW)
+    const keyFrom = await docPos('| Key', 2)
+    const leftFrom = rowFrom + HANG_ROW.indexOf(LONG_CELL)
+    const rightFrom = rowFrom + HANG_ROW.lastIndexOf(LONG_CELL)
+    const [key, left, right] = await browser.execute((texts: Array<{ from: number, to: number }>) => {
+      const content = document.querySelector('.cm-content')
+      if (!content) throw new Error('cellLayout: .cm-content not found')
+      const view = Reflect.get(Reflect.get(content, 'cmTile'), 'root').view as EditorView
+      return texts.map(({ from, to }) => {
+        // Each visual line of the text: the left edge of its first char and
+        // the right edge of its last char that is not a space.
+        const lines: Array<{ top: number, left: number, right: number }> = []
+        for (let pos = from; pos < to; pos++) {
+          const start = view.coordsAtPos(pos, 1)
+          const end = view.coordsAtPos(pos + 1, -1)
+          if (!start || !end) throw new Error(`cellLayout: no coords at ${pos}`)
+          let line = lines.at(-1)
+          if (!line || start.top > line.top + 1) {
+            line = { top: start.top, left: start.left, right: start.left }
+            lines.push(line)
+          }
+          if (view.state.doc.sliceString(pos, pos + 1) !== ' ') line.right = end.right
+        }
+        // The cell's box inside its borders.
+        const { node, offset } = view.domAtPos(from, 1)
+        const target = node.nodeType === Node.ELEMENT_NODE ? node.childNodes[offset] ?? node : node
+        const element = target.nodeType === Node.ELEMENT_NODE ? target as Element : target.parentElement
+        const cell = element?.closest('.dez-table-cell')
+        if (!cell) throw new Error(`cellLayout: no cell at ${from}`)
+        const innerLeft = cell.getBoundingClientRect().left + cell.clientLeft
+        return { lines, innerLeft, innerRight: innerLeft + cell.clientWidth }
+      })
+    }, [
+      { from: keyFrom, to: keyFrom + 'Key'.length },
+      { from: leftFrom, to: leftFrom + LONG_CELL.length },
+      { from: rightFrom, to: rightFrom + LONG_CELL.length },
+    ])
+    expect(left.lines.length, 'visual lines of the left-aligned cell').toBeGreaterThanOrEqual(3)
+    expect(right.lines.length, 'visual lines of the right-aligned cell').toBeGreaterThanOrEqual(3)
+    left.lines.forEach((line, index) => {
+      expect(line.left, `left edge of line ${index} of the left-aligned cell`).toBeCloseTo(left.lines[0].left, 0)
+    })
+    // The last line ends before the row's closing pipe, the others before
+    // the space at the wrap; both end at the same x.
+    right.lines.forEach((line, index) => {
+      expect(line.right, `right edge of line ${index} of the right-aligned cell`).toBeCloseTo(right.lines[0].right, 0)
+    })
+
+    // The gap between the text and the cell's border is the same on both
+    // sides of a cell (in the widest cell of a short column, and in the last
+    // cell, which has the closing pipe), and in every column.
+    const inset = left.lines[0].left - left.innerLeft
+    expect(key.lines[0].left - key.innerLeft, 'left inset of Key').toBeCloseTo(inset, 0)
+    expect(key.innerRight - key.lines[0].right, 'right inset of Key').toBeCloseTo(inset, 0)
+    expect(right.innerRight - right.lines[0].right, 'right inset of the right-aligned cell').toBeCloseTo(inset, 0)
   })
 
   it('keeps short cells with wide chars on one line next to a long column', async () => {

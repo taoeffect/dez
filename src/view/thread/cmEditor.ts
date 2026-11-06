@@ -1220,6 +1220,10 @@ function editorSize(...px: number[]): string {
   return px.map((value) => `calc(${EDITOR_FONT_SIZE_VAR} * ${value} / ${EDITOR_FONT_SIZE_DEFAULT})`).join(' ')
 }
 
+// Height of a table's delimiter row in em of the editor font. Thin, as it
+// draws no text, but tall enough for a caret that the user can see.
+const TABLE_DELIMITER_ROW_EM = 0.6
+
 export const dezTheme = EditorView.theme({
   '&': {
     height: '100%',
@@ -1576,8 +1580,12 @@ export const dezTheme = EditorView.theme({
   // box above the first row and below the last one, so the space around the
   // table is wrapper padding (not margin) and rows touch: no border-spacing,
   // no border-collapse overlap, no row margins. Otherwise clicks and
-  // scrolling drift. Cells draw the grid: right + bottom borders, plus top
-  // on the header row and left on the first cell of each row.
+  // scrolling drift. Space inside a row is cell padding, which CM measures
+  // as part of the line. Cells draw the grid: right + bottom borders, plus
+  // top on the header row and left on the first cell of each row; the
+  // corner cells round the table's corners like the thinking panel. The
+  // horizontal cell padding and the hanging indent are inline styles from
+  // `tables.ts`, as they depend on each cell's source.
   '.dez-table': {
     display: 'table',
     borderCollapse: 'separate',
@@ -1590,7 +1598,8 @@ export const dezTheme = EditorView.theme({
   '.dez-table-cell': {
     display: 'table-cell',
     verticalAlign: 'top',
-    padding: '0 0.5ch',
+    paddingTop: editorSize(4),
+    paddingBottom: editorSize(4),
     borderRight: '1px solid var(--color-border, #333)',
     borderBottom: '1px solid var(--color-border, #333)',
   },
@@ -1599,7 +1608,17 @@ export const dezTheme = EditorView.theme({
   },
   '.dez-table-cell--center': { textAlign: 'center' },
   '.dez-table-cell--right': { textAlign: 'right' },
+  '.dez-table-row--header .dez-table-cell--first': { borderTopLeftRadius: editorSize(8) },
+  '.dez-table-row--header .dez-table-cell--last': { borderTopRightRadius: editorSize(8) },
+  '.dez-table-row--last .dez-table-cell--first': { borderBottomLeftRadius: editorSize(8) },
+  '.dez-table-row--last .dez-table-cell--last': { borderBottomRightRadius: editorSize(8) },
+  // The header row and the delimiter row under it are one band on the
+  // header background. The header's top padding equals the delimiter row's
+  // height, so the header text sits in the middle of the band, not on top
+  // of an empty strip.
   '.dez-table-row--header .dez-table-cell': {
+    paddingTop: `${TABLE_DELIMITER_ROW_EM}em`,
+    paddingBottom: '0',
     borderTop: '1px solid var(--color-border, #333)',
     borderBottom: 'none',
     background: 'var(--color-bg-subtle, rgba(127,127,127,0.08))',
@@ -1610,17 +1629,22 @@ export const dezTheme = EditorView.theme({
   // dashes under the header). The thin row on the header's background, with
   // its bottom border, reads as the rule under the header. The caret and
   // the selection are drawn in their own layers, so they still show in it.
-  // The `*` covers syntax and find marks nested inside a cell.
+  // Its height is `TABLE_DELIMITER_ROW_EM` of the editor font: the font
+  // size at line height 1. The `*` covers syntax and find marks nested
+  // inside a cell.
   '.dez-table-row--delimiter .dez-table-cell': {
+    paddingTop: '0',
+    paddingBottom: '0',
     background: 'var(--color-bg-subtle, rgba(127,127,127,0.08))',
-    fontSize: '0.7em',
-    lineHeight: '1.2',
+    fontSize: `${TABLE_DELIMITER_ROW_EM}em`,
+    lineHeight: '1',
   },
   '.dez-table-row--delimiter .dez-table-cell, .dez-table-row--delimiter .dez-table-cell *': {
     color: 'transparent',
   },
-  // Splitting pipes keep their width (cell padding) but are invisible. The
-  // `*` covers syntax highlight spans nested inside a pipe mark.
+  // Splitting pipes keep their width (they fill the cells' pipe slots) but
+  // are invisible. The `*` covers syntax highlight spans nested inside a
+  // pipe mark.
   '.dez-table-pipe, .dez-table-pipe *': {
     color: 'transparent',
   },

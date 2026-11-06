@@ -228,14 +228,103 @@ interface TableDecorations {
   wrappers: RangeSet<BlockWrapper>
 }
 
-const ROW_LINES: Record<TableRowKind, Decoration> = {
-  header: Decoration.line({ class: 'dez-table-row dez-table-row--header' }),
-  delimiter: Decoration.line({ class: 'dez-table-row dez-table-row--delimiter' }),
-  body: Decoration.line({ class: 'dez-table-row dez-table-row--body' }),
+/** Row line decorations of each row kind: [any row but the last, the last
+ *  row]. The last row's class rounds the table's bottom corners. */
+const ROW_LINES: Record<TableRowKind, [Decoration, Decoration]> = {
+  header: rowLines('header'),
+  delimiter: rowLines('delimiter'),
+  body: rowLines('body'),
 }
 const PIPE_MARK = Decoration.mark({ class: 'dez-table-pipe' })
 const TABLE_WRAPPER = BlockWrapper.create({ tagName: 'div', attributes: { class: 'dez-table' } })
 const cellMarks = new Map<string, Decoration>()
+
+function rowLines(kind: TableRowKind): [Decoration, Decoration] {
+  const cls = `dez-table-row dez-table-row--${kind}`
+  return [Decoration.line({ class: cls }), Decoration.line({ class: `${cls} dez-table-row--last` })]
+}
+
+// The horizontal geometry of a cell. A cell keeps its source, so its text
+// sits between pipes that are transparent but keep their width: `| text |`.
+// Each side of a cell box has a pipe slot, 1ch wide, plus the padding:
+// - left: the opening pipe and the spaces after it are a hanging indent
+//   (`padding-left` + negative `text-indent`), so the first line starts
+//   where it always did and the lines that wrap start under its text, not
+//   2ch to the left of it. A cell with no opening pipe (a row without a
+//   leading pipe) gets an empty slot instead.
+// - right: an empty slot, as the next cell's opening pipe is in that cell.
+//   The pipe that closes a row hangs into it (negative `margin-right`), so
+//   the last cell has the same inset as the others and the last line of a
+//   wrapped right-aligned cell ends where the lines above it end (they end
+//   with the 1ch space at the wrap).
+// So `| a | b |` shows the same gap on both sides of `a` and of `b`.
+// The styles are inline because they depend on each cell's source.
+
+/** Cell padding in ch on each side, besides the pipe slot. */
+const CELL_PADDING_CH = 0.5
+/** A pipe is 1ch wide in the editor's monospace font. */
+const PIPE_SLOT_CH = 1
+/** At most this many ch of a cell's prefix hang. A source that pads a
+ *  right-aligned column with leading spaces would otherwise give each such
+ *  cell a wide `padding-left`, which the column cannot shrink below. The
+ *  rest of the prefix stays plain leading space on the first line. */
+const MAX_HANG_CH = 4
+
+const CLOSING_PIPE_MARK = Decoration.mark({ class: 'dez-table-pipe', attributes: { style: `margin-right: -${PIPE_SLOT_CH}ch` } })
+
+/** Where a cell's source sits in its box (see the notes above). */
+interface CellShape {
+  /** Width in ch of the leading spaces, the opening pipe, and the spaces
+   *  after it: the part of the first line before the text. Capped at
+   *  `MAX_HANG_CH`. */
+  hang: number
+  /** Whether a pipe opens the cell. */
+  opened: boolean
+  /** Doc position of the pipe that closes the row, if this cell has it. */
+  closingPipe: number | null
+}
+
+function cellShape(doc: Text, cell: TableCell): CellShape {
+  const text = doc.sliceString(cell.from, cell.to)
+  let prefix = 0
+  while (text.charCodeAt(prefix) === SPACE) prefix++
+  const opened = cell.pipes[0] === cell.from + prefix
+  if (opened) {
+    prefix++
+    while (text.charCodeAt(prefix) === SPACE) prefix++
+  }
+  // `cell.pipes` holds at most the opening pipe and a trailing pipe.
+  const last = cell.pipes.at(-1)
+  const closingPipe = last === undefined || (opened && cell.pipes.length === 1) ? null : last
+  return { hang: Math.min(prefix, MAX_HANG_CH), opened, closingPipe }
+}
+
+/** The inline style of a cell: its side paddings, its hanging indent, and
+ *  its `width` (see `shortColumnWidths`), if any. */
+function cellStyle(shape: CellShape, width: string | null): string {
+  const left = CELL_PADDING_CH + (shape.opened ? 0 : PIPE_SLOT_CH) + shape.hang
+  let style = `padding-left: ${left}ch; padding-right: ${CELL_PADDING_CH + PIPE_SLOT_CH}ch`
+  if (shape.hang > 0) style += `; text-indent: -${shape.hang}ch`
+  if (width !== null) style += `; width: ${width}`
+  return style
+}
+
+/** The first cell of a row draws the table's left border. The first and
+ *  last cells round the table's corners in the header and the last row.
+ *  Left alignment is the default, so only center / right need a class. */
+function cellMark(first: boolean, last: boolean, alignment: TableAlignment, style: string): Decoration {
+  const key = `${first}:${last}:${alignment}:${style}`
+  let mark = cellMarks.get(key)
+  if (!mark) {
+    let cls = 'dez-table-cell'
+    if (first) cls += ' dez-table-cell--first'
+    if (last) cls += ' dez-table-cell--last'
+    if (alignment === 'center' || alignment === 'right') cls += ` dez-table-cell--${alignment}`
+    mark = Decoration.mark({ class: cls, attributes: { style } })
+    cellMarks.set(key, mark)
+  }
+  return mark
+}
 
 /** A column whose widest header / body cell is at most this many ch wide is
  *  a short column (see `shortColumnWidths`). */
@@ -252,22 +341,6 @@ const ONE_CH_TEXT = /^[\x20-\x7E\u00A0-\u024F\u0370-\u04FF\u2010-\u2027]*$/
  *  (measured with Liberation Mono). */
 const OTHER_CHAR_CH = 2.5
 
-/** The first cell of a row draws the table's left border. Left alignment is
- *  the default, so only center / right need a class. `width` is a CSS width
- *  (see `shortColumnWidths`). */
-function cellMark(first: boolean, alignment: TableAlignment, width: string | null): Decoration {
-  const key = `${first}:${alignment}:${width}`
-  let mark = cellMarks.get(key)
-  if (!mark) {
-    let cls = 'dez-table-cell'
-    if (first) cls += ' dez-table-cell--first'
-    if (alignment === 'center' || alignment === 'right') cls += ` dez-table-cell--${alignment}`
-    mark = Decoration.mark({ class: cls, attributes: width === null ? undefined : { style: `width: ${width}` } })
-    cellMarks.set(key, mark)
-  }
-  return mark
-}
-
 /** CSS widths for the cells of the short columns, one per column; `null`
  *  for a long column. The browser's automatic table layout shares the width
  *  in proportion to each column's longest line, and cell text may break
@@ -282,23 +355,31 @@ function cellMark(first: boolean, alignment: TableAlignment, width: string | nul
  *  Do not give the wrapper a width that depends on the text: a wrapper whose
  *  attributes change is a new DOM element, which moves the line that the
  *  user is typing in (and can break an IME composition there). */
-function shortColumnWidths(doc: Text, tabSize: number, table: MarkdownTable): (string | null)[] {
-  const widths = table.alignments.map(() => 0)
-  for (const row of table.rows) {
-    if (row.kind === 'delimiter') continue
+function shortColumnWidths(doc: Text, tabSize: number, table: MarkdownTable, shapes: CellShape[][]): (string | null)[] {
+  const textWidths = table.alignments.map(() => 0)
+  const boxWidths = table.alignments.map(() => 0)
+  table.rows.forEach((row, rowIndex) => {
+    if (row.kind === 'delimiter') return
     row.cells.forEach((cell, index) => {
       // `textWidthCh` gives each UTF-16 code unit at least 1ch, so a cell
       // with more code units than a short column holds is long as it is.
       const length = cell.to - cell.from
       const width = length > SHORT_COLUMN_CH ? length : textWidthCh(doc.sliceString(cell.from, cell.to), tabSize)
-      widths[index] = Math.max(widths[index], width)
+      textWidths[index] = Math.max(textWidths[index], width)
+      // Beyond its source text, the box needs its empty pipe slots. The hang
+      // needs nothing: its padding and its negative indent cancel out on the
+      // first line.
+      const { opened, closingPipe } = shapes[rowIndex][index]
+      const emptySlots = (opened ? 0 : PIPE_SLOT_CH) + (closingPipe === null ? PIPE_SLOT_CH : 0)
+      boxWidths[index] = Math.max(boxWidths[index], width + emptySlots)
     })
-  }
-  // `box-sizing` is `border-box` app-wide: add the 0.5ch side paddings and
-  // the 1px right border of `.dez-table-cell`, and the first column's 1px
-  // left border.
-  return widths.map((width, index) =>
-    width <= SHORT_COLUMN_CH ? `calc(${width + 1}ch + ${index === 0 ? 2 : 1}px)` : null)
+  })
+  // `box-sizing` is `border-box` app-wide: add the side paddings and the 1px
+  // right border of `.dez-table-cell`, and the first column's 1px left
+  // border.
+  return textWidths.map((width, index) => width <= SHORT_COLUMN_CH
+    ? `calc(${boxWidths[index] + 2 * CELL_PADDING_CH}ch + ${index === 0 ? 2 : 1}px)`
+    : null)
 }
 
 /** An upper bound for the width of `text` in ch, in the editor font. The
@@ -322,18 +403,21 @@ function buildTableDecorations(state: EditorState): TableDecorations {
   const wrappers = new RangeSetBuilder<BlockWrapper>()
   for (const table of findMarkdownTables(doc)) {
     wrappers.add(table.from, table.to, TABLE_WRAPPER)
-    const widths = shortColumnWidths(doc, state.tabSize, table)
-    for (const row of table.rows) {
+    const shapes = table.rows.map((row) => row.cells.map((cell) => cellShape(doc, cell)))
+    const widths = shortColumnWidths(doc, state.tabSize, table, shapes)
+    table.rows.forEach((row, rowIndex) => {
       // RangeSetBuilder needs sorted input. A line decoration sorts before
       // a pipe mark that starts at the same position.
-      rows.add(row.from, row.from, ROW_LINES[row.kind])
+      rows.add(row.from, row.from, ROW_LINES[row.kind][rowIndex === table.rows.length - 1 ? 1 : 0])
       row.cells.forEach((cell, index) => {
+        const shape = shapes[rowIndex][index]
         // The delimiter row's smaller font would shrink a `ch` width.
         const width = row.kind === 'delimiter' ? null : widths[index]
-        cells.add(cell.from, cell.to, cellMark(index === 0, table.alignments[index], width))
-        for (const pipe of cell.pipes) rows.add(pipe, pipe + 1, PIPE_MARK)
+        const last = index === row.cells.length - 1
+        cells.add(cell.from, cell.to, cellMark(index === 0, last, table.alignments[index], cellStyle(shape, width)))
+        for (const pipe of cell.pipes) rows.add(pipe, pipe + 1, pipe === shape.closingPipe ? CLOSING_PIPE_MARK : PIPE_MARK)
       })
-    }
+    })
   }
   return { cells: cells.finish(), rows: rows.finish(), wrappers: wrappers.finish() }
 }
@@ -352,7 +436,8 @@ function buildTableDecorations(state: EditorState): TableDecorations {
  *  The decorations come only from the doc text, never from the cursor: an
  *  edit that breaks the syntax shows the raw source, and the table returns
  *  as soon as the source is valid again. The table CSS is in `dezTheme`
- *  (`cmEditor.ts`). */
+ *  (`cmEditor.ts`), except the horizontal cell geometry, which is inline
+ *  (`cellStyle`, `CLOSING_PIPE_MARK`). */
 const tableDecorationsField = StateField.define<TableDecorations>({
   create: (state) => buildTableDecorations(state),
   update: (value, tr) => tr.docChanged ? buildTableDecorations(tr.state) : value,
