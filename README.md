@@ -38,7 +38,7 @@ The main window contains a tab bar for conversations and buttons to access saved
 
 When a reply finishes or fails while you are not looking at it (its tab is in the background, or you use another window), Dez plays a short sound and shows a system notification. Click the notification to bring Dez to the front and go to the tab of the reply. A reply that you stop gives no alert.
 
-Settings › Notifications turns the sound and the notification on or off, and sets the volume of the sound. When you move the volume slider, Dez plays the sound at that volume. The sound and the notification are on by default.
+Settings › Notifications turns the sound and the notification on or off, and sets the volume of the sound. When you let go of the volume slider after a click or a drag, Dez plays the sound at the new volume. The sound and the notification are on by default.
 
 On Linux, Dez plays the sound with GStreamer. The AppImage includes the GStreamer plugins. Other Linux builds, such as `npm run tauri dev`, need the GStreamer base and good plugins on the system (Debian/Ubuntu: `gstreamer1.0-plugins-base` and `gstreamer1.0-plugins-good`; Fedora: `gstreamer1-plugins-base` and `gstreamer1-plugins-good`).
 

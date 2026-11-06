@@ -1,6 +1,6 @@
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from 'vitest'
 import { startApp, type RunningApp } from './harness/app'
-import { consoleErrors, pointerClick, pointerDrag, resetConsoleErrors, screenshotOnFailure, waitFor, waitForValue } from './harness/dom'
+import { consoleErrors, pointerClick, pointerDrag, pointerPress, pointerRelease, resetConsoleErrors, screenshotOnFailure, waitFor, waitForValue } from './harness/dom'
 import { readAppState, seedAppState } from './harness/fixtures'
 import { startMockProviderApp } from './harness/mockProviderApp'
 import { replyText, sendChatReply, type HeldRequest, type HoldingChatMock, type MockProvider } from './harness/mockServer'
@@ -124,13 +124,18 @@ describe('Settings › Notifications', () => {
     return { doneSound, doneSoundVolume, doneNotification }
   }
 
-  /** Drag the volume slider from its middle to `fraction` of its width. */
-  async function dragVolumeTo (fraction: number): Promise<void> {
-    const toX = await browser.execute((f: number) => {
+  /** The viewport point at `fraction` of the volume slider's width. */
+  async function volumeSliderPoint (fraction: number): Promise<{ x: number, y: number }> {
+    return browser.execute((f: number) => {
       const rect = document.querySelector('.done-sound-volume')!.getBoundingClientRect()
-      return Math.round(rect.left + rect.width * f)
+      return { x: Math.round(rect.left + rect.width * f), y: Math.round(rect.top + rect.height / 2) }
     }, fraction)
-    await pointerDrag(browser, '.done-sound-volume', toX)
+  }
+
+  /** Drag the volume slider from its middle to `fraction` of its width. */
+  async function dragVolumeTo (fraction: number, options: { release?: boolean } = {}): Promise<void> {
+    const { x } = await volumeSliderPoint(fraction)
+    await pointerDrag(browser, '.done-sound-volume', x, options)
   }
 
   beforeAll(async () => {
@@ -197,18 +202,35 @@ describe('Settings › Notifications', () => {
     expect((await soundState(browser)).plays).toEqual([])
   })
 
-  it('enables the slider with the sound checkbox, and plays the sound at the volume a drag sets', async () => {
+  it('enables the slider with the sound checkbox, and plays the sound once when a click on it ends', async () => {
     await pointerClick(browser, '.done-sound-checkbox')
     await waitForValue(browser, 'slider disabled', async () => (await sectionState()).volumeDisabled, false)
 
-    await dragVolumeTo(0.9)
+    // The press moves the thumb to the click point at once; the sound waits
+    // for the release.
+    const point = await volumeSliderPoint(0.2)
+    await pointerPress(browser, point.x, point.y)
+    const pressed = await sectionState()
+    expect(pressed.volume).toBeLessThan(35)
+    expect(pressed.volumeLabel).toBe(`${pressed.volume}%`)
+    expect((await soundState(browser)).plays).toEqual([])
+
+    await pointerRelease(browser)
+    await waitForValue(browser, 'sound plays', async () => (await soundState(browser)).plays, [pressed.volume])
+  })
+
+  it('plays no sound during a slider drag, and plays it once at the volume where the drag ends', async () => {
+    await waitForSoundEnd(browser)
+
+    await dragVolumeTo(0.9, { release: false })
     const state = await sectionState()
     draggedVolume = state.volume
     expect(draggedVolume).toBeGreaterThan(70)
     expect(state.volumeLabel).toBe(`${draggedVolume}%`)
-    const sound = await soundState(browser)
-    expect(sound.plays.length).toBeGreaterThan(0)
-    expect(sound.lastVolumeSet).toBe(draggedVolume)
+    expect((await soundState(browser)).plays).toEqual([])
+
+    await pointerRelease(browser)
+    await waitForValue(browser, 'sound plays', async () => (await soundState(browser)).plays, [draggedVolume])
     await waitForValue(browser, 'saved alerts', savedAlerts, {
       doneSound: true,
       doneSoundVolume: draggedVolume,

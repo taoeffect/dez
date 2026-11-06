@@ -330,12 +330,16 @@ describe('tab drag', () => {
     app = await startApp()
     try {
       // The text is the title, so the title stays when the editor derives it
-      // from the first user line.
+      // from the first user line. The agent lines are text for a drag to
+      // cross.
       for (const title of TITLES) {
         await seedConversation(app.home, makeConversation({
           id: `conv-${title}`,
           title,
-          sections: [{ role: 'user', nodes: [{ kind: 'text', text: title }] }],
+          sections: [
+            { role: 'user', nodes: [{ kind: 'text', text: title }] },
+            { role: 'agent', nodes: [{ kind: 'text', text: 'A line of thread text.\nAnother line of thread text.' }] },
+          ],
         }))
       }
       await seedAppState(app.home, {
@@ -377,6 +381,32 @@ describe('tab drag', () => {
       const saved = await readAppState(app.home)
       return { titles: (saved?.tabs as Array<{ title: string }> | undefined)?.map((tab) => tab.title), activeTabId: saved?.activeTabId }
     }, { titles: moved, activeTabId: 'tab-One' })
+  })
+
+  // WebKit lets a press on `user-select: none` content, such as a tab, start
+  // a text selection when the pointer reaches text.
+  it('selects no text when a tab drag goes down into the thread', async () => {
+    const before = await tabStrip(browser)
+    const activeTitle = '.tab-strip > .tab--active .tab-title'
+    const tab = await horizontalBounds(browser, activeTitle)
+    const lastLineY = await browser.execute(() => {
+      const line = Array.from(document.querySelectorAll('.cm-content .cm-line')).at(-1)
+      if (!line) throw new Error('editor line not found')
+      const rect = line.getBoundingClientRect()
+      return Math.round(rect.top + rect.height / 2)
+    })
+
+    // Straight down, so the tab keeps its place in the bar.
+    await pointerDrag(browser, activeTitle, Math.round((tab.left + tab.right) / 2), { toY: lastLineY })
+
+    const selection = await browser.execute(() => {
+      const content = document.querySelector('.cm-content')
+      if (!content) throw new Error('.cm-content not found')
+      const view = Reflect.get(Reflect.get(content, 'cmTile'), 'root').view as EditorView
+      return { pageText: window.getSelection()?.toString() ?? '', editorEmpty: view.state.selection.main.empty }
+    })
+    expect(selection).toEqual({ pageText: '', editorEmpty: true })
+    expect(await tabStrip(browser)).toEqual(before)
   })
 
   // A move under the drag threshold is still a click.

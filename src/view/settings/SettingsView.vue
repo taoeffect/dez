@@ -87,10 +87,15 @@ async function manuallyCheckForUpdates() {
   }
 }
 
-// Each slider step saves the volume and plays the sound at it, so the user
-// hears the volume while choosing it.
+// Each slider step saves the volume, so the label follows the thumb. The
+// preview plays only when the user commits a value: `change` fires on the
+// pointer release that ends a drag or a click on the track (and on each
+// arrow key press), never on the steps of a drag.
 function onDoneSoundVolumeInput(e: Event) {
   sbp('dez.model/settings/setDoneSoundVolume', Number((e.target as HTMLInputElement).value))
+}
+
+function onDoneSoundVolumeChange() {
   sbp('dez.ui/playDoneSound', settings.value.doneSoundVolume)
 }
 
@@ -180,6 +185,7 @@ function onOverlayClick(e: MouseEvent) {
                   :disabled="!settings.doneSound"
                   :style="{ '--volume-fill': `${settings.doneSoundVolume}%` }"
                   @input="onDoneSoundVolumeInput"
+                  @change="onDoneSoundVolumeChange"
                 />
                 <span class="done-sound-volume-value">{{ settings.doneSoundVolume }}%</span>
               </div>

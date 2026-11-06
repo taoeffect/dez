@@ -197,23 +197,27 @@ const DRAG_POINTER = { id: 'dragMouse', parameters: { pointerType: 'mouse' } } a
 
 /**
  * Drag an element with WebDriver pointer actions: press at its center and
- * move along its row to `toX` (viewport px) in steps of at most 10 px, one
- * pointermove each, as a real mouse sends them. Then release, unless
- * `release` is false: the button stays down until `pointerRelease`.
+ * move in a straight line to `toX` (viewport px) on the same row, or on row
+ * `toY` when given, in steps of at most 10 px, one pointermove each, as a
+ * real mouse sends them. Then release, unless `release` is false: the
+ * button stays down until `pointerRelease`.
  */
 export async function pointerDrag (
   browser: E2EBrowser,
   fromSelector: string,
   toX: number,
-  options: { release?: boolean } = {}
+  options: { release?: boolean, toY?: number } = {}
 ): Promise<void> {
   const from = await elementCenter(browser, fromSelector)
-  const steps = Math.max(1, Math.ceil(Math.abs(toX - from.x) / 10))
+  const toY = options.toY ?? from.y
+  const steps = Math.max(1, Math.ceil(Math.hypot(toX - from.x, toY - from.y) / 10))
   let action = browser.action('pointer', DRAG_POINTER)
     .move({ x: from.x, y: from.y, origin: 'viewport' })
     .down({ button: 0 })
   for (let step = 1; step <= steps; step++) {
-    action = action.move({ x: Math.round(from.x + (toX - from.x) * step / steps), y: from.y, origin: 'viewport', duration: 10 })
+    const x = Math.round(from.x + (toX - from.x) * step / steps)
+    const y = Math.round(from.y + (toY - from.y) * step / steps)
+    action = action.move({ x, y, origin: 'viewport', duration: 10 })
   }
   if (options.release === false) {
     await action.perform(true)
@@ -222,7 +226,18 @@ export async function pointerDrag (
   }
 }
 
-/** Release the button that `pointerDrag(…, { release: false })` holds. */
+/**
+ * Press the button at a viewport point and hold it, with no move: a click
+ * that `pointerRelease` ends. For checks between the press and the release.
+ */
+export async function pointerPress (browser: E2EBrowser, x: number, y: number): Promise<void> {
+  await browser.action('pointer', DRAG_POINTER)
+    .move({ x, y, origin: 'viewport' })
+    .down({ button: 0 })
+    .perform(true)
+}
+
+/** Release the button that `pointerPress` or `pointerDrag(…, { release: false })` holds. */
 export async function pointerRelease (browser: E2EBrowser): Promise<void> {
   await browser.action('pointer', DRAG_POINTER).up({ button: 0 }).perform()
 }

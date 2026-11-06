@@ -6,9 +6,8 @@ import sbp from '@sbp/sbp'
 import dingDataUrl from '../assets/sounds/ding.mp3?inline'
 
 // One shared player for the reply-done sound, made on first use. A call
-// while the sound plays only changes its volume: a drag of the Settings ›
-// Notifications volume slider fires many `input` events and must not restart
-// the sound on each one, and two replies that end together give one ding.
+// while the sound plays only changes its volume, so two replies that end
+// together give one ding.
 let doneSound: HTMLAudioElement | null = null
 
 export default sbp('sbp/selectors/register', {

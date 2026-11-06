@@ -104,6 +104,19 @@ function onTabPointerDown(e: PointerEvent, tabId: string) {
   window.addEventListener('pointermove', onPointerMove)
   window.addEventListener('pointerup', onPointerUp)
   window.addEventListener('pointercancel', onPointerCancel)
+  window.addEventListener('selectstart', preventSelectStart)
+}
+
+// WebKit lets a press on `user-select: none` content, such as a tab, start a
+// text selection: at the first move over selectable text it fires
+// `selectstart` on that text, so a tab dragged down into the thread selected
+// its text. A canceled `selectstart` ends text selection for the rest of the
+// press. A `preventDefault` on the press would also stop it, but it would
+// keep the focus in the editor when a tab is clicked.
+// https://github.com/WebKit/WebKit/blob/main/Source/WebCore/page/EventHandler.cpp
+// (EventHandler::updateSelectionForMouseDrag)
+function preventSelectStart(e: Event) {
+  e.preventDefault()
 }
 
 function onPointerMove(e: PointerEvent) {
@@ -199,6 +212,7 @@ function endPress(commit: boolean) {
   window.removeEventListener('pointermove', onPointerMove)
   window.removeEventListener('pointerup', onPointerUp)
   window.removeEventListener('pointercancel', onPointerCancel)
+  window.removeEventListener('selectstart', preventSelectStart)
   cancelAnimationFrame(edgeScrollFrame)
   if (!state?.dragging) return
   if (commit) sbp('dez.model/tabs/move', state.tabId, previewIndex.value)
