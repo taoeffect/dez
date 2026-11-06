@@ -135,6 +135,8 @@ Rules:
 - `commands.rs`, `http_bridge.rs`: Tauri commands, registered in `lib.rs`. `open_devtools` (Help › Developer Console) needs the `devtools` feature of the `tauri` crate in release builds (`Cargo.toml`).
 - `http_bridge.rs`: generic `http_request`, `stream_http`, `cancel_http_stream`.
 - `notification.rs`: `show_notification`, a system notification whose click brings the window to the front and calls back (zbus on Linux, `mac-notification-sys` on macOS).
+- `idle.rs`: `user_idle_ms`, the time since the last user input anywhere on the computer, or `null` when no source works (CoreGraphics on macOS; on Linux an ext-idle-notify watcher, GNOME Mutter IdleMonitor, or X11 XScreenSaver).
+- `session_bus.rs`: the one shared Linux D-Bus session connection (zbus) for `notification.rs` and `idle.rs`.
 - `persistence.rs`: raw private-file I/O and id sanitization; write every private file with `write_private_file`.
 - `key_store.rs`: `provider_keys.json`. `copilot.rs`: Copilot device flow and token refresh.
 - `lib.rs`: plugins, permission reasons, app bootstrap.
@@ -214,7 +216,7 @@ Brief comments are encouraged above functions that do anything non-trivial expla
 - Run `npm run typecheck:e2e` after changing the e2e harness or specs.
 - E2E keys skip GTK, so specs never test Linux menu accelerators; the manual recipe is in `vitest.e2e.config.ts`.
 - E2E specs that restart the app use `MockProviderApp.relaunch()` (`tests/e2e/harness/mockProviderApp.ts`).
-- E2E seeds turn the reply-end alerts off (`quietAppState`, `tests/e2e/harness/fixtures.ts`), because the app uses the developer's audio and D-Bus session. Alert specs turn them on and use the fake notification server on a private bus (`tests/e2e/harness/notificationServer.ts`).
+- E2E seeds turn the reply-end alerts off (`quietAppState`, `tests/e2e/harness/fixtures.ts`), because the app uses the developer's audio and D-Bus session. Alert specs turn them on, use the fake notification server on a private bus (`tests/e2e/harness/notificationServer.ts`), and pin the user idle time (`setUserIdleMs` in `tests/e2e/notifications.e2e.ts`), because WebDriver input does not reset the OS idle time.
 - E2E clicks: never use webdriverio's `.click()`; use `click()` or `pointerClick()` from `tests/e2e/harness/dom.ts`.
 - **No display server** (every spec fails with `Hook timed out in 120000ms` in `beforeAll`): run under headless `kwin_wayland`; the recipe is in `vitest.e2e.config.ts`.
 - For UI changes beyond unit-testable logic, also check by hand with `npm run tauri dev`.

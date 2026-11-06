@@ -36,9 +36,11 @@ The main window contains a tab bar for conversations and buttons to access saved
 
 ## Notifications
 
-When a reply finishes or fails while you are not looking at it (its tab is in the background, or you use another window), Dez plays a short sound and shows a system notification. Click the notification to bring Dez to the front and go to the tab of the reply. A reply that you stop gives no alert.
+When a reply finishes or fails while you are not looking at it, Dez plays a short sound and shows a system notification. You are not looking at a reply when its tab is in the background, when you use another window, or when you have been away from the computer for more than 1 minute (no keyboard, mouse, or touch input). Click the notification to bring Dez to the front and go to the tab of the reply. A reply that you stop gives no alert.
 
 Settings › Notifications turns the sound and the notification on or off, and sets the volume of the sound. When you let go of the volume slider after a click or a drag, Dez plays the sound at the new volume. The sound and the notification are on by default.
+
+To know if you are away, Dez asks the system for the time since your last input. On Linux, this works on KDE Plasma, on GNOME, on other Wayland desktops that support the `ext-idle-notify` protocol (such as Sway, Hyprland, niri, and COSMIC), and in X11 sessions. On other Wayland desktops, Dez cannot tell if you are away, so only a reply in a background tab or a reply while you use another window gives an alert.
 
 On Linux, Dez plays the sound with GStreamer. The AppImage includes the GStreamer plugins. Other Linux builds, such as `npm run tauri dev`, need the GStreamer base and good plugins on the system (Debian/Ubuntu: `gstreamer1.0-plugins-base` and `gstreamer1.0-plugins-good`; Fedora: `gstreamer1-plugins-base` and `gstreamer1-plugins-good`).
 

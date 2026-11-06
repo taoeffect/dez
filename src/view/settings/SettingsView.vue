@@ -206,7 +206,8 @@ function onOverlayClick(e: MouseEvent) {
 
             <p class="notifications-hint">
               Alerts come only for a reply that finishes or fails while you are not looking at it:
-              in another tab, or while you use another window.
+              in another tab, while you use another window, or when you have been away from the
+              computer for more than 1 minute.
             </p>
           </div>
 
