@@ -13,6 +13,11 @@ permissions:
 # fix-ubuntu-ca-roots action and set NODE_OPTIONS: --use-openssl-ca in the
 # job env. The macOS job runs its own inline fix. A new job must do the
 # same. The e2e gate gets the fix and NODE_OPTIONS from e2e.yml.
+#
+# Each job's timeout-minutes is 3x its run time in the v0.13.0 release,
+# rounded up, so a stuck step (an apt install once hung for 25 minutes)
+# fails in minutes, not after GitHub's 6-hour default. The e2e gate's
+# timeout is in e2e.yml.
 jobs:
   # Stops a release whose tag does not match the version files. Tauri names
   # the bundles (the DMG too) with the tauri.conf.json version, and the app
@@ -23,6 +28,7 @@ jobs:
   version-check:
     name: Check version files against the tag
     runs-on: ubuntu-22.04
+    timeout-minutes: 2
     permissions:
       contents: read
 
@@ -35,14 +41,14 @@ jobs:
         uses: okTurtles/libcheloniajs/.github/actions/fix-ubuntu-ca-roots@main
 
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
         with:
           persist-credentials: false
 
       - name: Setup Node
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@v7
         with:
-          node-version: 22
+          node-version: 24
 
       # The script uses only Node built-ins, so no npm ci.
       - name: Check version files
@@ -59,6 +65,7 @@ jobs:
     name: Build Linux AppImage (${{ matrix.arch }})
     runs-on: ${{ matrix.runner }}
     needs: e2e
+    timeout-minutes: ${{ matrix.timeout-minutes }}
 
     strategy:
       fail-fast: false
@@ -67,9 +74,11 @@ jobs:
           - arch: x86_64
             runner: ubuntu-22.04
             artifact: dez-linux-x86_64-appimage
+            timeout-minutes: 14
           - arch: arm64
             runner: ubuntu-22.04-arm
             artifact: dez-linux-arm64-appimage
+            timeout-minutes: 19
 
     # The first step and NODE_OPTIONS: the same CA root fix as in e2e.yml,
     # see the comments there. NODE_OPTIONS is set per Ubuntu job, not in the
@@ -83,12 +92,12 @@ jobs:
         uses: okTurtles/libcheloniajs/.github/actions/fix-ubuntu-ca-roots@main
 
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
 
       - name: Setup Node
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@v7
         with:
-          node-version: 22
+          node-version: 24
           cache: npm
 
       - name: Setup Rust
@@ -130,7 +139,7 @@ jobs:
           cp "${appimages[0]}" "release-assets/Dez_${version}_linux_${{ matrix.arch }}.AppImage"
 
       - name: Upload AppImage artifact
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: ${{ matrix.artifact }}
           path: release-assets/*.AppImage
@@ -140,6 +149,7 @@ jobs:
     name: Build macOS Apple Silicon DMG
     runs-on: macos-latest
     needs: e2e
+    timeout-minutes: 11
 
     env:
       APPLE_SIGNING_IDENTITY: '-'
@@ -171,12 +181,12 @@ jobs:
           ls -lA /etc/ssl/cert.pem
 
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
 
       - name: Setup Node
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@v7
         with:
-          node-version: 22
+          node-version: 24
           cache: npm
 
       - name: Setup Rust
@@ -210,7 +220,7 @@ jobs:
         run: npm run build:macos:dmg
 
       - name: Upload DMG artifact
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: dez-macos-aarch64-dmg
           path: src-tauri/target/aarch64-apple-darwin/release/bundle/dmg/*.dmg
@@ -233,6 +243,7 @@ jobs:
     name: Write release notes
     runs-on: ubuntu-22.04
     needs: e2e
+    timeout-minutes: 4
     environment: Default
     permissions:
       contents: read
@@ -250,15 +261,15 @@ jobs:
       # The full history and tags: the script finds the previous release tag
       # and reads the commit messages since it.
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
         with:
           fetch-depth: 0
           persist-credentials: false
 
       - name: Setup Node
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@v7
         with:
-          node-version: 22
+          node-version: 24
 
       # A failed check counts as "no release": then the notes are written,
       # so publish-release can still create the release. publish-release
@@ -288,7 +299,7 @@ jobs:
 
       - name: Upload release notes artifact
         if: steps.existing.outputs.exists != 'true'
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: release-notes
           path: release-notes.md
@@ -301,6 +312,7 @@ jobs:
       - build-linux-appimage
       - build-macos-dmg
       - release-notes
+    timeout-minutes: 3
 
     # The first step and NODE_OPTIONS: see build-linux-appimage.
     env:
@@ -314,26 +326,26 @@ jobs:
         uses: okTurtles/libcheloniajs/.github/actions/fix-ubuntu-ca-roots@main
 
       - name: Download x86_64 AppImage artifact
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v8
         with:
           name: dez-linux-x86_64-appimage
           path: release-assets
 
       - name: Download ARM64 AppImage artifact
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v8
         with:
           name: dez-linux-arm64-appimage
           path: release-assets
 
       - name: Download DMG artifact
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v8
         with:
           name: dez-macos-aarch64-dmg
           path: release-assets
 
       - name: Download release notes artifact
         if: needs.release-notes.outputs.release-exists != 'true'
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v8
         with:
           name: release-notes
           path: release-notes

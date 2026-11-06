@@ -25,7 +25,9 @@ jobs:
   e2e:
     name: E2E (Linux, WebDriver, ${{ matrix.shard }}/4)
     runs-on: ubuntu-24.04
-    timeout-minutes: 45
+    # 3x the run time in the v0.13.0 release, rounded up. That run was from
+    # before the 4 shards, when one runner ran all the specs.
+    timeout-minutes: 46
 
     # The specs run one file at a time, so four runners each run about a
     # quarter of the files (`vitest --shard`). Vitest splits by file count,
@@ -50,12 +52,12 @@ jobs:
         uses: okTurtles/libcheloniajs/.github/actions/fix-ubuntu-ca-roots@main
 
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
 
       - name: Setup Node
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@v7
         with:
-          node-version: 22
+          node-version: 24
           cache: npm
 
       - name: Install frontend dependencies
@@ -109,7 +111,7 @@ jobs:
       # the CA fix failed and the bundle can still trust a removed root.
       - name: Upload failure screenshots
         if: failure() && steps.ca-roots.outcome == 'success'
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: e2e-failure-screenshots-${{ matrix.shard }}
           path: tests/e2e/artifacts/*.png
