@@ -53,6 +53,11 @@ const WRAP_TEXT = ['Wrap fixture.', '', '| Key | Text |', '|-----|------|', WRAP
 const HANG_ROW = `| w | ${LONG_CELL} | ${LONG_CELL} |`
 const HANG_TEXT = ['Hanging fixture.', '', '| Key | Left | Right |', '|-----|------|------:|', HANG_ROW].join('\n')
 
+// A body row needs no block indent, so a tab may come before its leading
+// pipe.
+const TAB_ROW = '\t| x | y |'
+const TAB_TEXT = ['Tab fixture.', '', '| Key | Text |', '|-----|------|', TAB_ROW].join('\n')
+
 // Short cells with chars that are wider than 1ch (CJK, emoji, a tab), next
 // to a long column that wraps and so takes all the width that it can get.
 const WIDE_ROW = `| ab | 東京都 | ✅ | 🚀 | \tbc | ${LONG_CELL} |`
@@ -530,6 +535,26 @@ describe('markdown tables', () => {
     expect(key.lines[0].left - key.innerLeft, 'left inset of Key').toBeCloseTo(inset, 0)
     expect(key.innerRight - key.lines[0].right, 'right inset of Key').toBeCloseTo(inset, 0)
     expect(right.innerRight - right.lines[0].right, 'right inset of the right-aligned cell').toBeCloseTo(inset, 0)
+  })
+
+  // A tab before a body row's leading pipe is leading space, so that pipe
+  // opens the first cell as the header's pipe does: the row's source starts
+  // at the same x as the header's, and the pipe keeps its width.
+  it('opens the first cell at the leading pipe of a body row that starts with a tab', async () => {
+    await openFixture(TAB_TEXT)
+    const rowFrom = await docPos(TAB_ROW)
+    const headerPipe = await pointAt(await docPos('| Key'), 1)
+    const [tab, pipe, space, text] = [
+      await pointAt(rowFrom, 1),
+      await pointAt(rowFrom + 1, 1),
+      await pointAt(rowFrom + 2, 1),
+      await pointAt(rowFrom + 3, 1),
+    ]
+    expect(tab.x, 'start of the tab').toBeCloseTo(headerPipe.x, 0)
+    const charWidth = text.x - space.x
+    expect(charWidth, 'width of the space after the pipe').toBeGreaterThan(1)
+    // WebKit puts the chars after a tab up to about 0.5px off.
+    expect(Math.abs(space.x - pipe.x - charWidth), 'width of the leading pipe minus a char width').toBeLessThan(1)
   })
 
   it('keeps short cells with wide chars on one line next to a long column', async () => {

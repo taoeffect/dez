@@ -276,7 +276,7 @@ const CLOSING_PIPE_MARK = Decoration.mark({ class: 'dez-table-pipe', attributes:
 interface CellShape {
   /** Width in ch of the leading spaces, the opening pipe, and the spaces
    *  after it: the part of the first line before the text. Capped at
-   *  `MAX_HANG_CH`. */
+   *  `MAX_HANG_CH`; 0 when the leading space has a tab. */
   hang: number
   /** Whether a pipe opens the cell. */
   opened: boolean
@@ -287,8 +287,12 @@ interface CellShape {
 function cellShape(doc: Text, cell: TableCell): CellShape {
   const text = doc.sliceString(cell.from, cell.to)
   let prefix = 0
-  while (text.charCodeAt(prefix) === SPACE) prefix++
+  while (text.charCodeAt(prefix) === SPACE || text.charCodeAt(prefix) === TAB) prefix++
   const opened = cell.pipes[0] === cell.from + prefix
+  // Only a body row can start with a tab. A tab goes to the next tab stop,
+  // so its width is not known here, and a prefix with a tab does not hang:
+  // the lines that wrap start under the tab.
+  const hangs = !text.slice(0, prefix).includes('\t')
   if (opened) {
     prefix++
     while (text.charCodeAt(prefix) === SPACE) prefix++
@@ -296,7 +300,7 @@ function cellShape(doc: Text, cell: TableCell): CellShape {
   // `cell.pipes` holds at most the opening pipe and a trailing pipe.
   const last = cell.pipes.at(-1)
   const closingPipe = last === undefined || (opened && cell.pipes.length === 1) ? null : last
-  return { hang: Math.min(prefix, MAX_HANG_CH), opened, closingPipe }
+  return { hang: hangs ? Math.min(prefix, MAX_HANG_CH) : 0, opened, closingPipe }
 }
 
 /** The inline style of a cell: its side paddings, its hanging indent, and
