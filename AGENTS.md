@@ -20,7 +20,7 @@ npm run build:desktop          # native bundle for the current platform
 npm run build:linux:appimage   # Linux AppImage for the host arch; Linux only
 npm run build:macos:dmg        # Apple Silicon macOS DMG; macOS only
 npm run build:macos:app        # Apple Silicon macOS .app; macOS only
-npm run bump-version -- <version>                    # npm, Tauri, and Cargo version files
+npm run bump-version -- [--check] <version>          # npm, Tauri, and Cargo version files; --check only checks
 node scripts/release-notes.js <tag> [--out <file>]   # release notes body for a tag
 npm run preview                # preview the built frontend
 cd src-tauri && cargo check
@@ -29,7 +29,7 @@ cd src-tauri && cargo test
 
 - Tauri build scripts first run `npm run clean:rust` (`scripts/clean-rust.js`).
 - macOS builds need Xcode 26+: `build:macos:*` first run `scripts/build-macos-icon.js`, which compiles `src-tauri/icons/Dez.icon` into the gitignored `src-tauri/icons/Assets.car` (icon name set in `src-tauri/Info.plist`). A bare `tauri build` on macOS fails without that file.
-- Releases: a pushed `v*` tag runs `.github/workflows/release-desktop.yml` (e2e gate, Linux AppImages, macOS DMG, release notes from `scripts/release-notes.js`, GitHub Release). The rules are in the comments of those files.
+- Releases: run `npm run bump-version` and commit before you tag. A pushed `v*` tag runs `.github/workflows/release-desktop.yml` (version check against the tag, e2e gate, Linux AppImages, macOS DMG, release notes from `scripts/release-notes.js`, GitHub Release). The rules are in the comments of those files.
 - CI rules (details in the workflow comments): every job removes the compromised eMudhra CA roots in its first step, and only the "Write release notes" step may reference `ZAI_API_KEY`.
 
 ## Git conventions

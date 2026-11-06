@@ -1,94 +1,145 @@
 #!/usr/bin/env node
 
-import { readFileSync, writeFileSync } from 'node:fs';
+import { readFileSync, realpathSync, writeFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
-import { fileURLToPath } from 'node:url';
+import { fileURLToPath, pathToFileURL } from 'node:url';
 
-const rawVersion = process.argv[2];
-
-if (!rawVersion) {
-  console.log(`Bump the app version across npm, Tauri, and Cargo files.
+const USAGE = `Bump the app version across npm, Tauri, and Cargo files, or check it.
 
 Usage:
   npm run bump-version -- <version>
-  node scripts/bump-version.js <version>
+  npm run bump-version -- --check <version>
+  node scripts/bump-version.js [--check] <version>
+
+--check changes no file. It fails when a file holds another version.
+The release workflow runs it with the pushed tag.
 
 Example:
   npm run bump-version -- 0.6.1
-  node scripts/bump-version.js v0.6.1`);
-  process.exit(0);
+  node scripts/bump-version.js --check v0.6.1`;
+
+const VERSION_PATTERN = /^\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?(?:\+[0-9A-Za-z.-]+)?$/;
+
+// A JSON file whose version fields are on the objects that `targets` returns.
+function jsonVersions(targets) {
+  return {
+    read: text => targets(JSON.parse(text)).map(target => target.version),
+    write(text, version) {
+      const data = JSON.parse(text);
+      for (const target of targets(data)) {
+        target.version = version;
+      }
+      return `${JSON.stringify(data, null, 2)}\n`;
+    }
+  };
 }
 
-const version = rawVersion.replace(/^v/i, '');
-
-if (!/^\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?(?:\+[0-9A-Za-z.-]+)?$/.test(version)) {
-  console.error(`Invalid version: ${rawVersion}`);
-  process.exit(1);
+// A text file whose version is the second group of `pattern`.
+function textVersion(pattern) {
+  return {
+    read: text => [text.match(pattern)?.[2]],
+    write(text, version) {
+      if (!pattern.test(text)) {
+        throw new Error('no version line found');
+      }
+      return text.replace(pattern, `$1${version}$3`);
+    }
+  };
 }
 
-const repoRoot = join(dirname(fileURLToPath(import.meta.url)), '..');
-const changedFiles = [];
+// Every file that holds the app version, by repo-relative path. Tauri names
+// the bundles (the macOS DMG too) with the tauri.conf.json version, and the
+// About dialog and the update check use the package.json version
+// (__APP_VERSION__), so a release tag must match all of them.
+export const VERSION_FILES = {
+  'package.json': jsonVersions(data => [data]),
+  'package-lock.json': jsonVersions(data => [data, data.packages?.['']].filter(Boolean)),
+  'src-tauri/tauri.conf.json': jsonVersions(data => [data]),
+  'src-tauri/Cargo.toml': textVersion(/(^\[package\][\s\S]*?^version = ")([^"]+)(")/m),
+  'src-tauri/Cargo.lock': textVersion(/(^\[\[package\]\]\nname = "dez"\nversion = ")([^"]+)(")/m)
+};
 
-function writeIfChanged(filePath, content) {
-  const current = readFileSync(filePath, 'utf8');
+// The files that hold a version other than `version`, each with the
+// versions found in it (undefined where a file has no version).
+// `texts` maps every path of VERSION_FILES to the file content.
+export function versionMismatches(version, texts) {
+  return Object.entries(VERSION_FILES)
+    .map(([path, file]) => ({ path, found: file.read(texts[path]) }))
+    .filter(({ found }) => found.some(value => value !== version));
+}
 
-  if (current === content) {
+// The new content of every file that a bump to `version` changes.
+// Throws before anything is written when a file cannot be updated.
+export function bumpedFiles(version, texts) {
+  const changed = {};
+  for (const [path, file] of Object.entries(VERSION_FILES)) {
+    let updated;
+    try {
+      updated = file.write(texts[path], version);
+    } catch (error) {
+      throw new Error(`Could not update ${path}: ${error.message}`);
+    }
+    if (updated !== texts[path]) {
+      changed[path] = updated;
+    }
+  }
+  return changed;
+}
+
+function main(args) {
+  if (args.length === 0) {
+    console.log(USAGE);
     return;
   }
 
-  writeFileSync(filePath, content);
-  changedFiles.push(filePath);
-}
+  const check = args[0] === '--check';
+  const rawVersion = check ? args[1] : args[0];
+  const version = rawVersion?.replace(/^v/i, '');
 
-function updateJson(relativePath, updater) {
-  const filePath = join(repoRoot, relativePath);
-  const data = JSON.parse(readFileSync(filePath, 'utf8'));
-  updater(data);
-  writeIfChanged(filePath, `${JSON.stringify(data, null, 2)}\n`);
-}
-
-function updateText(relativePath, updater) {
-  const filePath = join(repoRoot, relativePath);
-  writeIfChanged(filePath, updater(readFileSync(filePath, 'utf8')));
-}
-
-function replaceRequired(content, pattern, replacement, relativePath) {
-  if (!pattern.test(content)) {
-    throw new Error(`Could not update ${relativePath}`);
+  if (!version || !VERSION_PATTERN.test(version)) {
+    console.error(`Invalid version: ${rawVersion ?? '(none)'}\n\n${USAGE}`);
+    process.exit(1);
   }
 
-  return content.replace(pattern, replacement);
+  const repoRoot = join(dirname(fileURLToPath(import.meta.url)), '..');
+  const texts = Object.fromEntries(
+    Object.keys(VERSION_FILES).map(path => [path, readFileSync(join(repoRoot, path), 'utf8')])
+  );
+
+  if (check) {
+    const mismatches = versionMismatches(version, texts);
+    if (mismatches.length === 0) {
+      console.log(`All version files hold ${version}.`);
+      return;
+    }
+    const lines = mismatches.map(({ path, found }) =>
+      `- ${path}: ${found.map(value => value ?? 'no version').join(', ')}`
+    );
+    console.error(`These files do not hold version ${version}:
+${lines.join('\n')}
+Run "npm run bump-version -- ${version}", commit the files, and tag that commit.`);
+    process.exit(1);
+  }
+
+  let changed;
+  try {
+    changed = bumpedFiles(version, texts);
+  } catch (error) {
+    console.error(error.message);
+    process.exit(1);
+  }
+
+  const paths = Object.keys(changed);
+  if (paths.length === 0) {
+    console.log(`Version already ${version}.`);
+    return;
+  }
+  for (const path of paths) {
+    writeFileSync(join(repoRoot, path), changed[path]);
+  }
+  console.log(`Bumped version to ${version}:\n${paths.map(path => `- ${path}`).join('\n')}`);
 }
 
-updateJson('package.json', data => {
-  data.version = version;
-});
-
-updateJson('package-lock.json', data => {
-  data.version = version;
-
-  if (data.packages?.['']) {
-    data.packages[''].version = version;
-  }
-});
-
-updateJson('src-tauri/tauri.conf.json', data => {
-  data.version = version;
-});
-
-updateText('src-tauri/Cargo.toml', content =>
-  replaceRequired(content, /(^\[package\][\s\S]*?^version = ")([^"]+)(")/m, `$1${version}$3`, 'src-tauri/Cargo.toml')
-);
-
-updateText('src-tauri/Cargo.lock', content =>
-  replaceRequired(content, /(^\[\[package\]\]\nname = "dez"\nversion = ")([^"]+)(")/m, `$1${version}$3`, 'src-tauri/Cargo.lock')
-);
-
-if (changedFiles.length === 0) {
-  console.log(`Version already ${version}.`);
-} else {
-  console.log(`Bumped version to ${version}:`);
-  for (const filePath of changedFiles) {
-    console.log(`- ${filePath.slice(repoRoot.length + 1)}`);
-  }
+if (process.argv[1] && import.meta.url === pathToFileURL(realpathSync(process.argv[1])).href) {
+  main(process.argv.slice(2));
 }

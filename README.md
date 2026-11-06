@@ -137,14 +137,18 @@ npm run build:desktop
 
 ## Tagged releases
 
-Pushing a version tag starts the desktop release workflow:
+First set the version in the npm, Tauri, and Cargo files, and commit them. Then push a version tag on that commit to start the desktop release workflow:
 
 ```bash
+npm run bump-version -- 0.1.0
+git commit -m "v0.1.0" package.json package-lock.json src-tauri/tauri.conf.json src-tauri/Cargo.toml src-tauri/Cargo.lock
 git tag v0.1.0
-git push origin v0.1.0
+git push origin HEAD v0.1.0
 ```
 
-The workflow builds Linux x86_64 and Linux ARM64 AppImages on Ubuntu, builds the Apple Silicon DMG on macOS, writes the release notes, creates the GitHub Release for the tag if needed, and attaches all release assets. Linux downloads are labeled by architecture, for example `Dez_0.1.0_linux_x86_64.AppImage` and `Dez_0.1.0_linux_arm64.AppImage`; ARM users should choose the `arm64` AppImage.
+The workflow first checks that the version files hold the tag's version (`npm run bump-version -- --check v0.1.0` runs the same check on your machine). The bundles get their names from `src-tauri/tauri.conf.json`, and the app shows the `package.json` version in About and in the update check, so on a mismatch the workflow stops before any build and makes no release. Then delete the tag (`git tag -d v0.1.0 && git push origin :refs/tags/v0.1.0`), bump and commit, and tag again.
+
+When the check passes, the workflow builds Linux x86_64 and Linux ARM64 AppImages on Ubuntu, builds the Apple Silicon DMG on macOS, writes the release notes, creates the GitHub Release for the tag if needed, and attaches all release assets. Linux downloads are labeled by architecture, for example `Dez_0.1.0_linux_x86_64.AppImage` and `Dez_0.1.0_linux_arm64.AppImage`; ARM users should choose the `arm64` AppImage. The macOS download is `Dez_0.1.0_aarch64.dmg`.
 
 ### Release notes
 
