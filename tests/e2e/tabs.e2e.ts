@@ -1,8 +1,10 @@
 import { afterAll, afterEach, beforeAll, describe, expect, it } from 'vitest'
+import { Key } from 'webdriverio'
 import { startApp, type RunningApp } from './harness/app'
-import { click, screenshotOnFailure, waitFor, waitForValue } from './harness/dom'
+import { click, screenshotOnFailure, typeKeys, waitFor, waitForValue } from './harness/dom'
 import { seedAppState } from './harness/fixtures'
 import { createSession, destroySession, type E2EBrowser } from './harness/session'
+import { focusEditor, sbpCall, threadSections } from './harness/thread'
 
 const MAX_CLICKS = 40
 // Clicks to make while the tabs overflow the strip, counting the click that
@@ -53,6 +55,22 @@ async function tabBarState (browser: E2EBrowser): Promise<TabBarState> {
       },
     }
   })
+}
+
+// The tab titles in tab bar order, and the index of the active tab.
+async function tabStrip (browser: E2EBrowser): Promise<{ titles: string[], active: number }> {
+  return browser.execute(() => {
+    const tabs = Array.from(document.querySelectorAll('.tab-strip > .tab'))
+    return {
+      titles: tabs.map((tab) => tab.querySelector('.tab-title')?.textContent ?? ''),
+      active: tabs.findIndex((tab) => tab.classList.contains('tab--active')),
+    }
+  })
+}
+
+async function conversationIds (browser: E2EBrowser): Promise<string[]> {
+  const tabs = await sbpCall(browser, 'dez.model/tabs/list') as Array<{ conversationId: string }>
+  return tabs.map((tab) => tab.conversationId)
 }
 
 const VISIBLE = {
@@ -118,5 +136,43 @@ describe('tab bar', () => {
       const { newTabButtonInHeader, newTabButtonOnTop } = (await tabBarState(browser)).view
       return { newTabButtonInHeader, newTabButtonOnTop }
     }, { newTabButtonInHeader: true, newTabButtonOnTop: true })
+  })
+
+  // Ctrl+W, then Ctrl+Shift+T: the tab comes back at its place, active, with
+  // its title and the text that was typed but never sent (it is not on
+  // disk). Before the fix, Ctrl+Shift+T opened a new tab, as Ctrl+T does.
+  // browser.keys skip GTK, so this tests the page handler, not the menu
+  // accelerators.
+  it('reopens a closed tab with Ctrl+Shift+T, and Ctrl+T still opens a new tab', async () => {
+    const start = (await tabStrip(browser)).titles
+    const typedIndex = start.length
+    const withTypedTab = [...start, 'Unsent words', 'New Tab']
+
+    await focusEditor(browser)
+    await browser.keys([Key.Control, 't'])
+    await waitForValue(browser, 'tabs after Ctrl+T', () => tabStrip(browser), { titles: [...start, 'New Tab'], active: typedIndex })
+    await focusEditor(browser)
+    await typeKeys(browser, 'Unsent words')
+    await browser.keys([Key.Control, 't'])
+    await waitForValue(browser, 'tabs after typing and Ctrl+T', () => tabStrip(browser), { titles: withTypedTab, active: typedIndex + 1 })
+
+    const typedConversationId = (await conversationIds(browser))[typedIndex]
+    await click(browser, `.tab-strip > .tab:nth-child(${typedIndex + 1})`)
+    await waitForValue(browser, 'typed tab selected', () => tabStrip(browser), { titles: withTypedTab, active: typedIndex })
+    await focusEditor(browser)
+    await browser.keys([Key.Control, 'w'])
+    await waitForValue(browser, 'tabs after Ctrl+W', () => tabStrip(browser), { titles: [...start, 'New Tab'], active: typedIndex })
+
+    await focusEditor(browser)
+    await browser.keys([Key.Control, Key.Shift, 't'])
+    await waitForValue(browser, 'tabs after Ctrl+Shift+T', () => tabStrip(browser), { titles: withTypedTab, active: typedIndex })
+    expect((await conversationIds(browser))[typedIndex]).toBe(typedConversationId)
+    expect(await threadSections(browser)).toEqual([{ role: 'user', text: 'Unsent words' }])
+
+    await focusEditor(browser)
+    await browser.keys([Key.Control, 't'])
+    const withNewTab = [...withTypedTab, 'New Tab']
+    await waitForValue(browser, 'tabs after Ctrl+T', () => tabStrip(browser), { titles: withNewTab, active: withNewTab.length - 1 })
+    expect(await threadSections(browser)).toEqual([{ role: 'user', text: '' }])
   })
 })

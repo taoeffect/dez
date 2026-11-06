@@ -83,6 +83,7 @@ const shortcuts = [
   { keys: 'Cmd/Ctrl + Shift + G', action: 'Previous match' },
   { keys: 'Up / Down', action: 'Search history (in find field)' },
   { keys: 'Cmd/Ctrl + N or T', action: 'New conversation tab' },
+  { keys: 'Cmd/Ctrl + Shift + T', action: 'Reopen closed tab' },
   { keys: 'Cmd/Ctrl + 1…9', action: 'Go to tab 1…9' },
   { keys: 'Cmd/Ctrl + Shift + [ / ]', action: 'Previous / next tab' },
   { keys: 'Cmd/Ctrl + W', action: 'Close tab' },

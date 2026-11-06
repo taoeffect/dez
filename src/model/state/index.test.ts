@@ -34,6 +34,7 @@ sbp('sbp/selectors/register', {
     }
   },
   async 'dez.persistence/saveAppState' (): Promise<void> {},
+  async 'dez.persistence/deleteConversation' (): Promise<void> {},
 })
 
 function tabs (): Tab[] {
@@ -100,6 +101,119 @@ describe('dez.model/tabs/openConversation', () => {
     expect(activeId()).toBe('t1')
 
     expect(tabs().map((tab) => tab.id)).toEqual(['t1', 't2', 't3'])
+  })
+})
+
+describe('dez.model/tabs/reopenClosed', () => {
+  function reopen (): boolean {
+    return sbp('dez.model/tabs/reopenClosed') as boolean
+  }
+
+  function close (tabId: string): void {
+    sbp('dez.model/tabs/close', tabId)
+  }
+
+  // What the editor does when the user types: the text and the title change
+  // in the store only; nothing is saved to disk.
+  function typeText (tabId: string, text: string): void {
+    sbp('dez.model/tabs/replaceSections', tabId, [{ id: crypto.randomUUID(), role: 'user', content: [{ kind: 'text', text }] }])
+  }
+
+  function tabWithText (text: string): Tab {
+    const tab = sbp('dez.model/tabs/create') as Tab
+    typeText(tab.id, text)
+    return tab
+  }
+
+  function titles (): string[] {
+    return tabs().map((tab) => tab.title)
+  }
+
+  function activeTab (): Tab {
+    return tabs().find((tab) => tab.id === activeId()) as Tab
+  }
+
+  it('reopens the newest closed tab first, at its old place, active, with its unsent text', () => {
+    const first = tabWithText('first')
+    const second = tabWithText('second')
+    tabWithText('third')
+    close(first.id)
+    close(second.id)
+    expect(titles()).toEqual(['New Tab', 'third'])
+
+    expect(reopen()).toBe(true)
+    expect(titles()).toEqual(['New Tab', 'second', 'third'])
+    expect(activeTab().title).toBe('second')
+    expect(activeTab().conversationId).toBe(second.conversationId)
+    expect(activeTab().sections.map((section) => section.content)).toEqual([[{ kind: 'text', text: 'second' }]])
+    // A new id: a stream session of the closed tab must not attach to it.
+    expect(activeTab().id).not.toBe(second.id)
+
+    expect(reopen()).toBe(true)
+    expect(titles()).toEqual(['New Tab', 'first', 'second', 'third'])
+    expect(activeTab().title).toBe('first')
+  })
+
+  it('puts the tab last when fewer tabs are left than its old place', () => {
+    tabWithText('a')
+    const b = tabWithText('b')
+    close(b.id)
+    close(tabs()[0].id)
+    expect(titles()).toEqual(['a'])
+
+    expect(reopen()).toBe(true)
+    expect(titles()).toEqual(['a', 'b'])
+  })
+
+  it('lists no empty tab, and the last tab never closes', () => {
+    typeText(activeId(), 'only')
+    close(activeId())
+    close((sbp('dez.model/tabs/create') as Tab).id)
+
+    expect(reopen()).toBe(false)
+    expect(titles()).toEqual(['only'])
+  })
+
+  it('switches to an open tab of the conversation instead of adding a second one', async () => {
+    const closed = tabWithText('kept')
+    close(closed.id)
+    const opened = await openConversation(closed.conversationId)
+    sbp('dez.model/tabs/switch', tabs()[0].id)
+    const tabCount = tabs().length
+
+    expect(reopen()).toBe(true)
+    expect(tabs()).toHaveLength(tabCount)
+    expect(activeId()).toBe(opened?.id)
+    expect(reopen()).toBe(false)
+  })
+
+  it('keeps only the newest closed copy of a conversation', async () => {
+    const closed = tabWithText('old text')
+    close(closed.id)
+    const opened = await openConversation(closed.conversationId) as Tab
+    typeText(opened.id, 'new text')
+    close(opened.id)
+
+    expect(reopen()).toBe(true)
+    expect(activeTab().title).toBe('new text')
+    expect(reopen()).toBe(false)
+  })
+
+  it('never brings back a deleted conversation', async () => {
+    const closed = tabWithText('deleted')
+    close(closed.id)
+    await sbp('dez.model/tabs/deleteConversation', closed.conversationId)
+
+    expect(reopen()).toBe(false)
+  })
+
+  it('remembers the last 20 closed tabs', () => {
+    const closed = Array.from({ length: 21 }, (_, index) => tabWithText(`tab ${index}`))
+    for (const tab of closed) close(tab.id)
+
+    const reopened: string[] = []
+    while (reopen()) reopened.push(activeTab().title)
+    expect(reopened).toEqual(Array.from({ length: 20 }, (_, index) => `tab ${20 - index}`))
   })
 })
 

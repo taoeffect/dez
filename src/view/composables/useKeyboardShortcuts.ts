@@ -90,8 +90,10 @@ export function useKeyboardShortcuts() {
         sbp("dez.model/tabs/create");
         break;
       case "t":
+        // Shift makes `key` "T", which the switch lowercases.
         e.preventDefault();
-        sbp("dez.model/tabs/create");
+        if (e.shiftKey) sbp("dez.model/tabs/reopenClosed");
+        else sbp("dez.model/tabs/create");
         break;
       case "w":
         e.preventDefault();

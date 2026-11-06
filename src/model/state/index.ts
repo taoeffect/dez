@@ -10,7 +10,7 @@ import { useModelCacheStore } from './modelCache'
 import { usePromptsStore, type Prompt } from './prompts'
 import { useSettingsStore, type DefaultModel, type SettingsSection, type Theme, type WindowGeometry } from './settings'
 import { clampEditorFontSize } from '../editorFontSize'
-import { useTabStore } from './tabs'
+import { MAX_CLOSED_TABS, useTabStore } from './tabs'
 import type { AppStatePayload, CachedProvider, ConversationSearchOutcome, ModelCache } from '../persistence/types'
 import { emptyModelCache } from '../persistence/modelCache'
 import type { ProviderConfig, ProviderThinkingConfig } from '../providers/config'
@@ -437,9 +437,36 @@ export default sbp('sbp/selectors/register', {
       const newIndex = Math.min(index, tabStore.tabs.length - 1)
       tabStore.activeTabId = tabStore.tabs[newIndex].id
     }
-    if (!tab.sections.some((section) => !sectionIsEmpty(section))) {
+    // At most one entry per conversation, the newest copy: an older copy
+    // must not come back over newer edits or over a file deleted below.
+    tabStore.closedTabs = tabStore.closedTabs.filter((entry) => entry.tab.conversationId !== tab.conversationId)
+    if (tab.sections.some((section) => !sectionIsEmpty(section))) {
+      tabStore.closedTabs.push({ tab: cloneTab(tab) as Tab, index })
+      if (tabStore.closedTabs.length > MAX_CLOSED_TABS) tabStore.closedTabs.shift()
+    } else {
       void sbp('dez.persistence/deleteConversation', tab.conversationId).catch(() => {})
     }
+  },
+
+  // Brings back the newest closed tab at its old place and activates it.
+  // When a tab of that conversation is open again (from History), it only
+  // switches to that tab: two tabs of one conversation overwrite each
+  // other's file (see openConversation). The tab gets a new id, so a stream
+  // session of the old id never attaches to it. False when no closed tab is
+  // left. The app state watcher (controller/app.ts) saves the new tab list.
+  'dez.model/tabs/reopenClosed' (): boolean {
+    const tabStore = useTabStore()
+    const entry = tabStore.closedTabs.pop()
+    if (!entry) return false
+    const openTab = tabStore.tabs.find((tab) => tab.conversationId === entry.tab.conversationId)
+    if (openTab) {
+      tabStore.activeTabId = openTab.id
+      return true
+    }
+    const tab: Tab = { ...entry.tab, id: crypto.randomUUID() }
+    tabStore.tabs.splice(Math.min(entry.index, tabStore.tabs.length), 0, tab)
+    tabStore.activeTabId = tab.id
+    return true
   },
 
   'dez.model/tabs/switch' (tabId: string): void {
@@ -551,6 +578,7 @@ export default sbp('sbp/selectors/register', {
       console.error('Failed to delete conversation', error)
       return
     }
+    tabStore.closedTabs = tabStore.closedTabs.filter((entry) => entry.tab.conversationId !== id)
 
     const matchingTabs = tabStore.tabs.filter((tab) => tab.conversationId === id)
     for (const tab of matchingTabs) tabStore.replyDoneTabIds.delete(tab.id)

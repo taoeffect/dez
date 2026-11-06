@@ -14,6 +14,16 @@ function createDefaultTab(): Tab {
   }
 }
 
+// A closed tab that File › Reopen Closed Tab can bring back: a copy of the
+// tab, with text that was typed but never sent (it is not on disk), and its
+// place in the tab bar.
+export interface ClosedTab {
+  tab: Tab
+  index: number
+}
+
+export const MAX_CLOSED_TABS = 20
+
 export const useTabStore = defineStore('tabs', () => {
   const tabs = ref<Tab[]>([createDefaultTab()])
   const activeTabId = ref<string>(tabs.value[0].id)
@@ -36,11 +46,15 @@ export const useTabStore = defineStore('tabs', () => {
     replyDoneTabIds.value.delete(tabId)
   }, { flush: 'sync' })
 
+  // Newest last. Session-only: never saved.
+  const closedTabs = ref<ClosedTab[]>([])
+
   return {
     tabs,
     activeTabId,
     activeTab,
     activeTabIndex,
     replyDoneTabIds,
+    closedTabs,
   }
 })

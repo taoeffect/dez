@@ -132,6 +132,7 @@ export default sbp('sbp/selectors/register', {
             items: [
               { text: 'New Conversation', accelerator: 'CmdOrCtrl+N', action: () => sbp('dez.model/tabs/create') },
               { text: 'New Tab', accelerator: 'CmdOrCtrl+T', action: () => sbp('dez.model/tabs/create') },
+              { text: 'Reopen Closed Tab', accelerator: 'CmdOrCtrl+Shift+T', action: () => sbp('dez.model/tabs/reopenClosed') },
               SEPARATOR,
               {
                 text: 'Save As Markdown…',
