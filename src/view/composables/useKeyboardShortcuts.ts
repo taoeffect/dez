@@ -1,7 +1,8 @@
-import { onMounted, onUnmounted } from "vue";
+import { computed, onMounted, onUnmounted } from "vue";
 import sbp from "@sbp/sbp";
 import { findState } from "../editor/findState";
-import { currentShortcutPlatform, matchShortcut, resolveShortcuts, type ShortcutIdOfScope } from "../../model/shortcuts";
+import { useModelState } from "../modelState";
+import { matchShortcut, type ShortcutIdOfScope } from "../../model/shortcuts";
 
 // While Settings or History is open, Esc closes it first, so the find Esc
 // handlers in the editor and in the dropdown pass Esc on to this handler.
@@ -89,12 +90,13 @@ const windowActions: Record<WindowShortcutId, (e: KeyboardEvent) => boolean | un
   decreaseFontSize: () => void sbp("dez.model/settings/changeEditorFontSize", -1),
 };
 
-const windowShortcuts = resolveShortcuts(currentShortcutPlatform).filter((shortcut) => Object.hasOwn(windowActions, shortcut.id));
-
 export function useKeyboardShortcuts() {
+  const { shortcuts } = useModelState();
+  const windowShortcuts = computed(() => shortcuts.value.filter((shortcut) => Object.hasOwn(windowActions, shortcut.id)));
+
   function handleKeydown(e: KeyboardEvent) {
     if (e.key === "Escape" && closeOnEscape(e)) return;
-    const shortcut = matchShortcut(windowShortcuts, e);
+    const shortcut = matchShortcut(windowShortcuts.value, e);
     // `windowShortcuts` has only the ids of `windowActions`.
     if (shortcut && windowActions[shortcut.id as WindowShortcutId](e) !== false) e.preventDefault();
   }

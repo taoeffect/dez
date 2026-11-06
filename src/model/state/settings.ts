@@ -1,7 +1,8 @@
 import { defineStore } from 'pinia'
-import { ref } from 'vue'
+import { computed, ref } from 'vue'
 import type { ProviderConfig } from '../providers/config'
 import { EDITOR_FONT_SIZE_DEFAULT } from '../editorFontSize'
+import { currentShortcutPlatform, resolveShortcuts, type ShortcutOverrides } from '../shortcuts'
 
 export type Theme = 'light' | 'dark' | 'system'
 export type SettingsSection = 'general' | 'providers' | 'prompts' | 'appearance'
@@ -41,6 +42,12 @@ export const useSettingsStore = defineStore('settings', () => {
   const providerSettings = ref<Record<string, Record<string, boolean>>>({})
   const checkForUpdates = ref(true)
   const lastUpdateCheckAt = ref<number | null>(null)
+  // The user's shortcut keys that differ from the defaults, already
+  // normalized and validated. Replaced as a whole on each change.
+  const shortcutOverrides = ref<ShortcutOverrides>({})
+  // Every shortcut with its effective key, computed once per change, since
+  // the window handler reads it on every keydown.
+  const shortcuts = computed(() => resolveShortcuts(currentShortcutPlatform, shortcutOverrides.value))
   const settingsOpen = ref(false)
   const settingsSection = ref<SettingsSection>('general')
   const historyOpen = ref(false)
@@ -112,6 +119,8 @@ export const useSettingsStore = defineStore('settings', () => {
     providerSettings,
     checkForUpdates,
     lastUpdateCheckAt,
+    shortcutOverrides,
+    shortcuts,
     settingsOpen,
     settingsSection,
     historyOpen,

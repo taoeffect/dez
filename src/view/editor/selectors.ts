@@ -18,7 +18,7 @@ import {
 import { findHistory } from './findHistory'
 import { findState } from './findState'
 import { isModalOpen } from '../composables/useKeyboardShortcuts'
-import { currentShortcutPlatform, findShortcut, keyEventInit, resolveShortcuts, type ShortcutIdOfScope } from '../../model/shortcuts'
+import { findShortcut, keyEventInit, type Shortcut, type ShortcutIdOfScope } from '../../model/shortcuts'
 
 /** Scroll positions can be fractions of a pixel: a view this close to its
  *  bottom is at its bottom. */
@@ -272,7 +272,7 @@ export default sbp('sbp/selectors/register', {
     }
     const view = activeView
     if (!view || (isModalOpen() && !view.hasFocus)) return false
-    const { key } = findShortcut(resolveShortcuts(currentShortcutPlatform), id)
+    const { key } = findShortcut(sbp('dez.model/settings/shortcuts') as readonly Shortcut[], id)
     if (inTextField !== 'editor' && !view.hasFocus) view.focus()
     return runScopeHandlers(view, new KeyboardEvent('keydown', { ...keyEventInit(key), cancelable: true }), 'editor')
   },

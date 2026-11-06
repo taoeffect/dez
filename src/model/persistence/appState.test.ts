@@ -28,6 +28,7 @@ describe('app state persistence format', () => {
       providerSettings: { venice: { webSearch: false, veniceSystemPrompt: true } },
       checkForUpdates: false,
       lastUpdateCheckAt: 12,
+      shortcuts: { closeTab: 'alt-k', bogus: 'Alt-j', newTab: 'Escape' },
     }))
 
     expect(state.tabs).toEqual([{
@@ -47,6 +48,8 @@ describe('app state persistence format', () => {
     expect(state.providerSettings).toEqual({ venice: { webSearch: false, veniceSystemPrompt: true } })
     expect(state.checkForUpdates).toBe(false)
     expect(state.lastUpdateCheckAt).toBe(12)
+    expect(state.shortcuts).toEqual({ closeTab: 'Alt-k' })
+    expect(parseAppStateJson('{ "shortcuts": "Alt-k" }').shortcuts).toEqual({})
     expect(parseAppStateJson(serializeAppStateJson(state))).toEqual(state)
   })
 

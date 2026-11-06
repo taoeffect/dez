@@ -5,9 +5,11 @@ import { createFindQuery } from '../editor/find'
 import { findHistory } from '../editor/findHistory'
 import { findState } from '../editor/findState'
 import { isModalOpen } from '../composables/useKeyboardShortcuts'
-import { currentShortcutPlatform, matchShortcut, resolveShortcuts } from '../../model/shortcuts'
+import { useModelState } from '../modelState'
+import { matchShortcut } from '../../model/shortcuts'
 
-const findFieldShortcuts = resolveShortcuts(currentShortcutPlatform).filter((shortcut) => shortcut.scope === 'findField')
+const { shortcuts } = useModelState()
+const findFieldShortcuts = computed(() => shortcuts.value.filter((shortcut) => shortcut.scope === 'findField'))
 
 const searchRef = ref<HTMLTextAreaElement | null>(null)
 const replaceRef = ref<HTMLTextAreaElement | null>(null)
@@ -114,7 +116,7 @@ async function recallHistory(e: KeyboardEvent, direction: 'older' | 'newer') {
 }
 
 function onSearchKeydown(e: KeyboardEvent) {
-  const shortcut = e.isComposing ? null : matchShortcut(findFieldShortcuts, e)
+  const shortcut = e.isComposing ? null : matchShortcut(findFieldShortcuts.value, e)
   if (shortcut) {
     void recallHistory(e, shortcut.id === 'olderSearch' ? 'older' : 'newer')
     return

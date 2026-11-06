@@ -3,6 +3,7 @@ import { configIssueText, customProviderConfigSchema, providerModelConfigSchema,
 import type { AppStatePayload } from './types'
 import type { DefaultModel, Theme, WindowGeometry } from '../state/settings'
 import { EDITOR_FONT_SIZE_DEFAULT, clampEditorFontSize } from '../editorFontSize'
+import { currentShortcutPlatform, parseShortcutOverrides } from '../shortcuts'
 
 const themeSchema = z.enum(['light', 'dark', 'system'])
 const defaultModelSchema = z.object({
@@ -134,6 +135,7 @@ export function defaultAppState(): AppStatePayload {
     providerSettings: {},
     checkForUpdates: true,
     lastUpdateCheckAt: null,
+    shortcuts: {},
   }
 }
 
@@ -174,6 +176,7 @@ export function parseAppStateJson(content: string): AppStatePayload {
       lastUpdateCheckAt: typeof parsed.lastUpdateCheckAt === 'number' || parsed.lastUpdateCheckAt === null
         ? parsed.lastUpdateCheckAt
         : fallback.lastUpdateCheckAt,
+      shortcuts: parseShortcutOverrides(parsed.shortcuts, currentShortcutPlatform),
     }
   } catch {
     return defaultAppState()

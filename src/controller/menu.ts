@@ -1,10 +1,11 @@
 import sbp from '@sbp/sbp'
+import { watch } from 'vue'
 import { hide } from '@tauri-apps/api/app'
 import { isTauri } from '@tauri-apps/api/core'
 import { Image } from '@tauri-apps/api/image'
-import { Menu, Submenu, type MenuItemOptions, type PredefinedMenuItemOptions } from '@tauri-apps/api/menu'
+import { Menu, MenuItem, Submenu, type MenuItemOptions, type PredefinedMenuItemOptions } from '@tauri-apps/api/menu'
 import { getCurrentWindow } from '@tauri-apps/api/window'
-import { currentShortcutPlatform, findShortcut, resolveShortcuts, shortcutAccelerator, type Shortcut, type ShortcutId } from '../model/shortcuts'
+import { currentShortcutPlatform, findShortcut, shortcutAccelerator, type Shortcut, type ShortcutId } from '../model/shortcuts'
 import { isMacPlatform } from '../utils/platform'
 import { DEZ_REPO_URL } from './updates'
 import dezIconUrl from '../../src-tauri/icons/128x128.png'
@@ -30,14 +31,43 @@ async function loadAboutIcon (): Promise<Image> {
   return Image.new(new Uint8Array(data.buffer), canvas.width, canvas.height)
 }
 
+// The menu items of the editable shortcuts, with the accelerator that each
+// one has now, so that a key change can update them.
+const shortcutMenuItems = new Map<ShortcutId, { item: MenuItem, accelerator: string | null }>()
+
 // A menu item that runs an editable shortcut, with the shortcut's key as its
 // accelerator. A key that a menu cannot take gets none (see
 // `shortcutAccelerator`): bare Esc, for example, stops the stream on the
 // page, but on Linux GTK would take it before the page, so Esc could no
 // longer close find, the dropdowns or the modals.
-function shortcutMenuItem (shortcuts: readonly Shortcut[], id: ShortcutId, item: Omit<MenuItemOptions, 'accelerator'>): MenuItemOptions {
+async function shortcutMenuItem (shortcuts: readonly Shortcut[], id: ShortcutId, options: Omit<MenuItemOptions, 'accelerator'>): Promise<MenuItem> {
   const accelerator = shortcutAccelerator(findShortcut(shortcuts, id).key, currentShortcutPlatform)
-  return accelerator ? { ...item, accelerator } : item
+  const item = await MenuItem.new(accelerator ? { ...options, accelerator } : options)
+  shortcutMenuItems.set(id, { item, accelerator })
+  return item
+}
+
+// Gives each shortcut menu item the accelerator of its action's current key.
+// It runs in an event queue, so that updates apply in order. A failed set
+// can leave the old key on the item (muda checks the new key before it
+// removes the old one), so the item then gets no accelerator; the page
+// handlers still run the action with the new key.
+async function updateAccelerators (): Promise<void> {
+  const shortcuts = sbp('dez.model/settings/shortcuts') as readonly Shortcut[]
+  for (const [id, entry] of shortcutMenuItems) {
+    const accelerator = shortcutAccelerator(findShortcut(shortcuts, id).key, currentShortcutPlatform)
+    if (accelerator === entry.accelerator) continue
+    try {
+      await entry.item.setAccelerator(accelerator)
+      entry.accelerator = accelerator
+    } catch (error) {
+      console.error(`Failed to set the menu accelerator ${accelerator} of the "${id}" shortcut:`, error)
+      await entry.item.setAccelerator(null).catch((clearError: unknown) => {
+        console.error(`Failed to clear the menu accelerator of the "${id}" shortcut:`, clearError)
+      })
+      entry.accelerator = null
+    }
+  }
 }
 
 let menuInstalled = false
@@ -49,8 +79,9 @@ export default sbp('sbp/selectors/register', {
   // same thing whichever path gets it: on Linux a menu accelerator takes the
   // key before the page sees it; on macOS the page sees it first and the
   // menu gets only keys that the page did not handle (not yet tested on a
-  // Mac). The keys come from `src/model/shortcuts.ts`; a new shortcut also
-  // needs a row in Settings › General (`shortcuts` in SettingsView.vue).
+  // Mac). The keys are the current keys of `dez.model/settings/shortcuts`,
+  // and the accelerators follow a key change; a new shortcut also needs a
+  // row in Settings › General (`shortcuts` in SettingsView.vue).
   //
   // Platform differences:
   // - Undo and Redo are custom items, because predefined items have fixed
@@ -68,11 +99,6 @@ export default sbp('sbp/selectors/register', {
     // `npm run dev` runs in a plain browser, which has no native menu.
     if (menuInstalled || !isTauri()) return
     menuInstalled = true
-    const shortcuts = resolveShortcuts(currentShortcutPlatform)
-    const settings = shortcutMenuItem(shortcuts, 'settings', {
-      text: 'Settings…',
-      action: () => sbp('dez.model/settings/toggle'),
-    })
     const checkForUpdates: MenuItemOptions = {
       text: 'Check for Updates…',
       action: () => void sbp('dez.controller/checkForUpdates'),
@@ -98,6 +124,12 @@ export default sbp('sbp/selectors/register', {
     }
 
     try {
+      shortcutMenuItems.clear()
+      const shortcuts = sbp('dez.model/settings/shortcuts') as readonly Shortcut[]
+      const settings = await shortcutMenuItem(shortcuts, 'settings', {
+        text: 'Settings…',
+        action: () => sbp('dez.model/settings/toggle'),
+      })
       const help = await Submenu.new({
         text: 'Help',
         items: [
@@ -136,29 +168,29 @@ export default sbp('sbp/selectors/register', {
                   { item: 'ShowAll' },
                   SEPARATOR,
                   { item: 'Quit', text: 'Quit Dez' },
-                ] satisfies Array<MenuItemOptions | PredefinedMenuItemOptions>,
+                ] satisfies Array<MenuItem | MenuItemOptions | PredefinedMenuItemOptions>,
               }]
             : []),
           {
             text: 'File',
             items: [
-              shortcutMenuItem(shortcuts, 'newConversation', { text: 'New Conversation', action: () => sbp('dez.model/tabs/create') }),
-              shortcutMenuItem(shortcuts, 'newTab', { text: 'New Tab', action: () => sbp('dez.model/tabs/create') }),
-              shortcutMenuItem(shortcuts, 'reopenClosedTab', { text: 'Reopen Closed Tab', action: () => sbp('dez.model/tabs/reopenClosed') }),
+              await shortcutMenuItem(shortcuts, 'newConversation', { text: 'New Conversation', action: () => sbp('dez.model/tabs/create') }),
+              await shortcutMenuItem(shortcuts, 'newTab', { text: 'New Tab', action: () => sbp('dez.model/tabs/create') }),
+              await shortcutMenuItem(shortcuts, 'reopenClosedTab', { text: 'Reopen Closed Tab', action: () => sbp('dez.model/tabs/reopenClosed') }),
               SEPARATOR,
-              shortcutMenuItem(shortcuts, 'saveAs', {
+              await shortcutMenuItem(shortcuts, 'saveAs', {
                 text: 'Save As Markdown…',
                 action: () => void sbp('dez.controller/saveConversationAs', sbp('dez.model/tabs/activeId')),
               }),
               SEPARATOR,
-              shortcutMenuItem(shortcuts, 'closeTab', {
+              await shortcutMenuItem(shortcuts, 'closeTab', {
                 text: 'Close Tab',
                 action: () => void sbp('dez.controller/closeTab', sbp('dez.model/tabs/activeId')),
               }),
               // Closing the last window exits, as the window close button does.
               ...(isMacPlatform
                 ? []
-                : [SEPARATOR, shortcutMenuItem(shortcuts, 'quit', {
+                : [SEPARATOR, await shortcutMenuItem(shortcuts, 'quit', {
                     text: 'Quit',
                     action: () => {
                       getCurrentWindow().close().catch((error) => console.error('Failed to close the window:', error))
@@ -169,41 +201,41 @@ export default sbp('sbp/selectors/register', {
           {
             text: 'Edit',
             items: [
-              shortcutMenuItem(shortcuts, 'undo', { text: 'Undo', action: () => sbp('dez.editor/runKeyBinding', 'undo', 'undo') }),
-              shortcutMenuItem(shortcuts, 'redo', { text: 'Redo', action: () => sbp('dez.editor/runKeyBinding', 'redo', 'redo') }),
+              await shortcutMenuItem(shortcuts, 'undo', { text: 'Undo', action: () => sbp('dez.editor/runKeyBinding', 'undo', 'undo') }),
+              await shortcutMenuItem(shortcuts, 'redo', { text: 'Redo', action: () => sbp('dez.editor/runKeyBinding', 'redo', 'redo') }),
               SEPARATOR,
               { item: 'Cut' },
               { item: 'Copy' },
-              shortcutMenuItem(shortcuts, 'copyMarkdown', { text: 'Copy Markdown', action: () => sbp('dez.editor/copyMarkdown') }),
+              await shortcutMenuItem(shortcuts, 'copyMarkdown', { text: 'Copy Markdown', action: () => sbp('dez.editor/copyMarkdown') }),
               { item: 'Paste' },
               isMacPlatform
                 ? { item: 'SelectAll' }
-                : shortcutMenuItem(shortcuts, 'selectAll', {
+                : await shortcutMenuItem(shortcuts, 'selectAll', {
                     text: 'Select All',
                     action: () => sbp('dez.editor/runKeyBinding', 'selectAll', 'selectAll'),
                   }),
               SEPARATOR,
-              shortcutMenuItem(shortcuts, 'find', { text: 'Find…', action: () => sbp('dez.editor/openFind') }),
-              shortcutMenuItem(shortcuts, 'findNext', { text: 'Find Next', action: () => sbp('dez.editor/selectFindMatch', 'next') }),
-              shortcutMenuItem(shortcuts, 'findPrevious', { text: 'Find Previous', action: () => sbp('dez.editor/selectFindMatch', 'previous') }),
+              await shortcutMenuItem(shortcuts, 'find', { text: 'Find…', action: () => sbp('dez.editor/openFind') }),
+              await shortcutMenuItem(shortcuts, 'findNext', { text: 'Find Next', action: () => sbp('dez.editor/selectFindMatch', 'next') }),
+              await shortcutMenuItem(shortcuts, 'findPrevious', { text: 'Find Previous', action: () => sbp('dez.editor/selectFindMatch', 'previous') }),
               ...(isMacPlatform ? [] : [SEPARATOR, settings]),
             ],
           },
           {
             text: 'Conversation',
             items: [
-              shortcutMenuItem(shortcuts, 'submit', { text: 'Send', action: () => sbp('dez.editor/runKeyBinding', 'submit') }),
-              shortcutMenuItem(shortcuts, 'stop', { text: 'Stop', action: () => sbp('dez.stream/stop', sbp('dez.model/tabs/activeId')) }),
-              shortcutMenuItem(shortcuts, 'newMessage', {
+              await shortcutMenuItem(shortcuts, 'submit', { text: 'Send', action: () => sbp('dez.editor/runKeyBinding', 'submit') }),
+              await shortcutMenuItem(shortcuts, 'stop', { text: 'Stop', action: () => sbp('dez.stream/stop', sbp('dez.model/tabs/activeId')) }),
+              await shortcutMenuItem(shortcuts, 'newMessage', {
                 text: 'New Message',
                 action: () => sbp('dez.editor/runKeyBinding', 'newMessage', 'insertLineBreak'),
               }),
               SEPARATOR,
-              shortcutMenuItem(shortcuts, 'addCursorAbove', {
+              await shortcutMenuItem(shortcuts, 'addCursorAbove', {
                 text: 'Add Cursor Above',
                 action: () => sbp('dez.editor/runKeyBinding', 'addCursorAbove', 'none'),
               }),
-              shortcutMenuItem(shortcuts, 'addCursorBelow', {
+              await shortcutMenuItem(shortcuts, 'addCursorBelow', {
                 text: 'Add Cursor Below',
                 action: () => sbp('dez.editor/runKeyBinding', 'addCursorBelow', 'none'),
               }),
@@ -212,13 +244,13 @@ export default sbp('sbp/selectors/register', {
           {
             text: 'View',
             items: [
-              shortcutMenuItem(shortcuts, 'history', { text: 'History', action: () => sbp('dez.model/settings/historyToggle') }),
+              await shortcutMenuItem(shortcuts, 'history', { text: 'History', action: () => sbp('dez.model/settings/historyToggle') }),
               SEPARATOR,
-              shortcutMenuItem(shortcuts, 'increaseFontSize', {
+              await shortcutMenuItem(shortcuts, 'increaseFontSize', {
                 text: 'Increase Font Size',
                 action: () => sbp('dez.model/settings/changeEditorFontSize', 1),
               }),
-              shortcutMenuItem(shortcuts, 'decreaseFontSize', {
+              await shortcutMenuItem(shortcuts, 'decreaseFontSize', {
                 text: 'Decrease Font Size',
                 action: () => sbp('dez.model/settings/changeEditorFontSize', -1),
               }),
@@ -228,13 +260,13 @@ export default sbp('sbp/selectors/register', {
             text: 'Window',
             items: [
               ...(isMacPlatform ? [{ item: 'Minimize' }, { item: 'Maximize', text: 'Zoom' }, SEPARATOR] satisfies PredefinedMenuItemOptions[] : []),
-              shortcutMenuItem(shortcuts, 'previousTab', { text: 'Previous Tab', action: () => sbp('dez.model/tabs/cycle', -1) }),
-              shortcutMenuItem(shortcuts, 'nextTab', { text: 'Next Tab', action: () => sbp('dez.model/tabs/cycle', 1) }),
+              await shortcutMenuItem(shortcuts, 'previousTab', { text: 'Previous Tab', action: () => sbp('dez.model/tabs/cycle', -1) }),
+              await shortcutMenuItem(shortcuts, 'nextTab', { text: 'Next Tab', action: () => sbp('dez.model/tabs/cycle', 1) }),
               SEPARATOR,
-              ...([1, 2, 3, 4, 5, 6, 7, 8, 9] as const).map((n) => shortcutMenuItem(shortcuts, `goToTab${n}`, {
+              ...await Promise.all(([1, 2, 3, 4, 5, 6, 7, 8, 9] as const).map((n) => shortcutMenuItem(shortcuts, `goToTab${n}`, {
                 text: `Tab ${n}`,
                 action: () => sbp('dez.model/tabs/switchToIndex', n - 1),
-              })),
+              }))),
             ],
           },
           help,
@@ -244,6 +276,10 @@ export default sbp('sbp/selectors/register', {
       // Tauri 2.10.3's `set_as_windows_menu_for_nsapp` command sets the help
       // menu instead (menu/plugin.rs), so the Window menu is not registered.
       if (isMacPlatform) await help.setAsHelpMenuForNSApp()
+      // `immediate` also applies a key change made while the menu was built.
+      watch(() => sbp('dez.model/settings/shortcuts') as readonly Shortcut[], () => {
+        void sbp('okTurtles.eventQueue/queueEvent', 'dez.controller/menu/accelerators', updateAccelerators)
+      }, { immediate: true })
     } catch (error) {
       menuInstalled = false
       console.error('Failed to install the app menu:', error)

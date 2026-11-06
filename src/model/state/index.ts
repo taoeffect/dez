@@ -10,6 +10,7 @@ import { useModelCacheStore } from './modelCache'
 import { usePromptsStore, type Prompt } from './prompts'
 import { useSettingsStore, type DefaultModel, type SettingsSection, type Theme, type WindowGeometry } from './settings'
 import { clampEditorFontSize } from '../editorFontSize'
+import { currentShortcutPlatform, findShortcut, normalizeShortcutKey, validateShortcutKey, type Shortcut, type ShortcutId, type ShortcutOverrides } from '../shortcuts'
 import { MAX_CLOSED_TABS, useTabStore } from './tabs'
 import type { AppStatePayload, CachedProvider, ConversationSearchOutcome, ModelCache } from '../persistence/types'
 import { emptyModelCache } from '../persistence/modelCache'
@@ -45,6 +46,7 @@ export interface SettingsSnapshot {
   providerSettings: Record<string, Record<string, boolean>>
   checkForUpdates: boolean
   lastUpdateCheckAt: number | null
+  shortcutOverrides: ShortcutOverrides
   settingsOpen: boolean
   settingsSection: SettingsSection
   historyOpen: boolean
@@ -215,6 +217,7 @@ function cloneSettings(settings = useSettingsStore()): SettingsSnapshot {
     providerSettings: cloneProviderSettings(settings.providerSettings),
     checkForUpdates: settings.checkForUpdates,
     lastUpdateCheckAt: settings.lastUpdateCheckAt,
+    shortcutOverrides: { ...settings.shortcutOverrides },
     settingsOpen: settings.settingsOpen,
     settingsSection: settings.settingsSection,
     historyOpen: settings.historyOpen,
@@ -627,6 +630,7 @@ export default sbp('sbp/selectors/register', {
         providerSettings: settings.providerSettings,
         checkForUpdates: settings.checkForUpdates,
         lastUpdateCheckAt: settings.lastUpdateCheckAt,
+        shortcuts: settings.shortcutOverrides,
       })
     } catch (error) {
       console.error('Failed to save app state', error)
@@ -755,6 +759,7 @@ export default sbp('sbp/selectors/register', {
       if (state.providerSettings) settings.providerSettings = state.providerSettings
       if (typeof state.checkForUpdates === 'boolean') settings.checkForUpdates = state.checkForUpdates
       if (typeof state.lastUpdateCheckAt === 'number') settings.lastUpdateCheckAt = state.lastUpdateCheckAt
+      if (state.shortcuts) settings.shortcutOverrides = state.shortcuts
     }
 
     sbp('dez.ui/applyTheme', settings.theme)
@@ -785,6 +790,7 @@ export default sbp('sbp/selectors/register', {
         () => settings.providerSettings,
         () => settings.checkForUpdates,
         () => settings.lastUpdateCheckAt,
+        () => settings.shortcutOverrides,
       ],
       () => {
         persistSettings()
@@ -901,6 +907,39 @@ export default sbp('sbp/selectors/register', {
   // to the provider descriptor defaults at read/request-build time.
   'dez.model/settings/resetProviderSettings' (providerId: string): void {
     delete useSettingsStore().providerSettings[providerId]
+  },
+
+  // Every shortcut of this platform with its effective key (the user's key,
+  // else the default), in display order. The same array until a key
+  // changes; a read inside a computed or watch tracks key changes.
+  'dez.model/settings/shortcuts' (): readonly Shortcut[] {
+    return useSettingsStore().shortcuts
+  },
+
+  // Gives action `id` a new key (any key name), or its default key for
+  // null. Returns why the key is refused, as text for Settings › Shortcuts,
+  // or null when the action now has it. Only keys that differ from the
+  // default are stored.
+  'dez.model/settings/setShortcut' (id: ShortcutId, key: string | null): string | null {
+    const settings = useSettingsStore()
+    const shortcut = findShortcut(settings.shortcuts, id)
+    const requested = key ?? shortcut.defaultKey
+    const error = validateShortcutKey(currentShortcutPlatform, id, requested, settings.shortcutOverrides)
+    if (error) return error
+    // Never null here: a key that passed validation is a key name.
+    const newKey = normalizeShortcutKey(requested, currentShortcutPlatform) ?? shortcut.key
+    if (newKey === shortcut.key) return null
+    const overrides: Partial<Record<ShortcutId, string>> = { ...settings.shortcutOverrides }
+    if (newKey === shortcut.defaultKey) delete overrides[id]
+    else overrides[id] = newKey
+    settings.shortcutOverrides = overrides
+    return null
+  },
+
+  // Reset All: every action gets its default key back. The defaults never
+  // clash (shortcuts.test.ts checks both platforms).
+  'dez.model/settings/resetShortcuts' (): void {
+    useSettingsStore().shortcutOverrides = {}
   },
 
   'dez.model/settings/setDefaultNewTabModel' (model: DefaultModel | null): void {

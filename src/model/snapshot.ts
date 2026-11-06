@@ -2,6 +2,7 @@ import type { ActiveModel, ContentNode, ModelRef, SectionThinking } from './chat
 import type { ProviderConfig } from './providers/config'
 import type { Prompt } from './state/prompts'
 import type { DefaultModel, Theme, WindowGeometry } from './state/settings'
+import type { ShortcutOverrides } from './shortcuts'
 
 export interface ModelSnapshot {
   tabs: {
@@ -31,6 +32,7 @@ export interface ModelSnapshot {
     providerSettings: Record<string, Record<string, boolean>>
     checkForUpdates: boolean
     lastUpdateCheckAt: number | null
+    shortcutOverrides: ShortcutOverrides
     settingsOpen: boolean
     settingsSection: string
     historyOpen: boolean

@@ -2,18 +2,16 @@
 import { computed } from 'vue'
 import sbp from '@sbp/sbp'
 import { useModelState } from '../modelState'
-import { currentShortcutPlatform, findShortcut, resolveShortcuts, shortcutLabel } from '../../model/shortcuts'
+import { currentShortcutPlatform, findShortcut, shortcutLabel } from '../../model/shortcuts'
 
-const { activeTabId, activeTabStreaming } = useModelState()
-
-const shortcuts = resolveShortcuts(currentShortcutPlatform)
+const { activeTabId, activeTabStreaming, shortcuts } = useModelState()
 
 // The keycap names the key that does the same as a click: the Submit key
 // (Cmd/Ctrl+Enter by default) submits, and the Stop key (Esc) stops the
 // active tab's stream.
 const face = computed(() => {
   const streaming = activeTabStreaming.value
-  const { key } = findShortcut(shortcuts, streaming ? 'stop' : 'submit')
+  const { key } = findShortcut(shortcuts.value, streaming ? 'stop' : 'submit')
   return {
     label: streaming ? 'Stop' : 'Submit',
     keycap: shortcutLabel(key, currentShortcutPlatform),

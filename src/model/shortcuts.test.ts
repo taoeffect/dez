@@ -8,6 +8,7 @@ import {
   keyEventInit,
   matchShortcut,
   normalizeShortcutKey,
+  parseShortcutOverrides,
   resolveShortcuts,
   shortcutAccelerator,
   shortcutLabel,
@@ -188,6 +189,37 @@ describe('validateShortcutKey', () => {
       .toBe('Used by New tab')
     expect(validateShortcutKey('linux', 'increaseFontSize', 'Ctrl-=', { increaseFontSize: 'Ctrl-i', newTab: 'Ctrl-+' }))
       .toBe('Used by New tab')
+  })
+})
+
+describe('parseShortcutOverrides', () => {
+  it('keeps the normalized keys that the platform can use, and drops the rest', () => {
+    expect(parseShortcutOverrides({
+      closeTab: 'ctrl-K',
+      newTab: 'Mod-t',
+      bogus: 'Ctrl-j',
+      history: 42,
+      find: 'Hyper-f',
+      saveAs: 'Ctrl-c',
+      settings: 'k',
+    }, 'linux')).toEqual({ closeTab: 'Shift-Ctrl-k' })
+    expect(parseShortcutOverrides({ selectAll: 'Cmd-Shift-a', quit: 'Cmd-Alt-q', newTab: 'Mod-Alt-t' }, 'mac'))
+      .toEqual({ newTab: 'Meta-Alt-t' })
+    for (const value of [null, [], 'Ctrl-k', 7]) expect(parseShortcutOverrides(value, 'linux')).toEqual({})
+  })
+
+  it('keeps a key that another entry frees, in any order', () => {
+    const swapped = { closeTab: 'Ctrl-t', newTab: 'Ctrl-w' }
+    expect(parseShortcutOverrides(swapped, 'linux')).toEqual(swapped)
+    expect(parseShortcutOverrides({ newTab: 'Ctrl-w', closeTab: 'Ctrl-t' }, 'linux')).toEqual(swapped)
+    expect(parseShortcutOverrides({ newTab: 'Ctrl-+' }, 'linux')).toEqual({})
+    expect(parseShortcutOverrides({ newTab: 'Ctrl-+', increaseFontSize: 'Ctrl-i' }, 'linux'))
+      .toEqual({ newTab: 'Ctrl-+', increaseFontSize: 'Ctrl-i' })
+  })
+
+  it('drops clashing entries, and then the entries that clash with the defaults they bring back', () => {
+    expect(parseShortcutOverrides({ closeTab: 'Ctrl-k', newTab: 'Ctrl-k', history: 'Ctrl-w', find: 'Alt-f' }, 'linux'))
+      .toEqual({ find: 'Alt-f' })
   })
 })
 

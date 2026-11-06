@@ -406,6 +406,33 @@ export function validateShortcutKey (
   return null
 }
 
+/** The overrides in a `shortcuts` value of app_state.json, which a user can
+ *  edit by hand: keys normalized, and only the entries that `platform` can
+ *  use. It drops unknown ids, ids that the platform lacks, values that are
+ *  not key names, default keys (no override), and keys that
+ *  `validateShortcutKey` refuses. */
+export function parseShortcutOverrides (value: unknown, platform: ShortcutPlatform): ShortcutOverrides {
+  if (typeof value !== 'object' || value === null || Array.isArray(value)) return {}
+  const defaultKeys = new Map(platformDefaults(platform).map((shortcut) => [shortcut.id as string, shortcut.defaultKey]))
+  let overrides: Partial<Record<ShortcutId, string>> = {}
+  for (const [id, key] of Object.entries(value)) {
+    const defaultKey = defaultKeys.get(id)
+    const normalized = typeof key === 'string' ? normalizeShortcutKey(key, platform) : null
+    if (defaultKey && normalized && normalized !== defaultKey) overrides[id as ShortcutId] = normalized
+  }
+  // Each entry is checked against all the others, not only the ones before
+  // it: a saved set where action A took action B's default key after B moved
+  // away is valid in any order. A dropped entry brings back its default key,
+  // which can clash with an entry that passed, so check again until nothing
+  // more drops. Two entries with the same key both drop.
+  for (;;) {
+    const kept = Object.fromEntries(Object.entries(overrides).filter(([id, key]) =>
+      validateShortcutKey(platform, id as ShortcutId, key, overrides) === null))
+    if (Object.keys(kept).length === Object.keys(overrides).length) return kept
+    overrides = kept
+  }
+}
+
 /** `keycap`: what a keycap shows (`⇧⌘T`, `Ctrl+↩`). `text`: words for a
  *  title or an aria-label (`Cmd+Enter`, `Ctrl+Up`). */
 export type ShortcutLabelStyle = 'keycap' | 'text'

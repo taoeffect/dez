@@ -5,6 +5,7 @@ import type { ActiveModel, ContentNode, ModelRef, Section, SectionThinking, Tab 
 import type { ConversationData, ModelCache } from '../persistence/types'
 import type { ProviderConfig } from '../providers/config'
 import type { SettingsSnapshot } from './index'
+import type { Shortcut, ShortcutId } from '../shortcuts'
 // Side-effect import: registers the dez.model/* selectors under test.
 import './index'
 import { appendTokenToTabSection, finalizeStreamSectionForTab } from './index'
@@ -416,6 +417,41 @@ describe('dez.model/settings/changeEditorFontSize', () => {
     expect(fontSize()).toBe(10)
     change(1)
     expect(fontSize()).toBe(11)
+  })
+})
+
+describe('dez.model/settings shortcuts', () => {
+  const overrides = () => (sbp('dez.model/settings/snapshot') as SettingsSnapshot).shortcutOverrides
+  const keyOf = (id: ShortcutId) => (sbp('dez.model/settings/shortcuts') as Shortcut[]).find((shortcut) => shortcut.id === id)?.keys
+  const set = (id: ShortcutId, key: string | null) => sbp('dez.model/settings/setShortcut', id, key) as string | null
+
+  it('stores only the keys that differ from the default, normalized', () => {
+    expect(set('closeTab', 'alt-K')).toBeNull()
+    expect(overrides()).toEqual({ closeTab: 'Shift-Alt-k' })
+    expect(keyOf('closeTab')).toEqual(['Shift-Alt-k'])
+    expect(set('increaseFontSize', 'Alt-i')).toBeNull()
+    expect(keyOf('increaseFontSize')).toEqual(['Alt-i'])
+    expect(set('increaseFontSize', 'Mod-=')).toBeNull()
+    expect(keyOf('increaseFontSize')).toHaveLength(2)
+    expect(set('closeTab', null)).toBeNull()
+    expect(overrides()).toEqual({})
+  })
+
+  it('refuses a key that is not allowed, and keeps the old one', () => {
+    expect(set('newTab', 'Alt-k')).toBeNull()
+    expect(set('closeTab', 'Alt-k')).toBe('Used by New tab')
+    expect(set('closeTab', 'Mod-c')).toBe('Reserved for Copy')
+    expect(set('closeTab', 'Hyper-w')).toBe('Not a valid key')
+    expect(overrides()).toEqual({ newTab: 'Alt-k' })
+  })
+
+  it('refuses a per-row reset while another action has the default key, but Reset All always works', () => {
+    expect(set('closeTab', 'Alt-k')).toBeNull()
+    expect(set('newTab', 'Mod-w')).toBeNull()
+    expect(set('closeTab', null)).toBe('Used by New tab')
+    sbp('dez.model/settings/resetShortcuts')
+    expect(overrides()).toEqual({})
+    expect(set('closeTab', 'Mod-t')).toBe('Used by New tab')
   })
 })
 

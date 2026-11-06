@@ -8,7 +8,7 @@ import { useModelState, type Prompt } from '../modelState'
 import { sectionIsEmpty } from '../../model/chat/content'
 import { sameModelRef } from '../../model/chat/modelRef'
 import { sameThinking } from '../../model/chat/thinking'
-import { currentShortcutPlatform, resolveShortcuts, type ShortcutIdOfScope } from '../../model/shortcuts'
+import type { ShortcutIdOfScope } from '../../model/shortcuts'
 import { debounce, throttle } from 'turtledash'
 import PromptAutocomplete from './PromptAutocomplete.vue'
 import FindDropdown from './FindDropdown.vue'
@@ -60,6 +60,7 @@ const {
   activeTabStreaming,
   activeTabStreamingSectionId,
   settings,
+  shortcuts,
 } = useModelState()
 
 const hostRef = ref<HTMLDivElement | null>(null)
@@ -630,7 +631,7 @@ const editorShortcuts = new Compartment()
 // to them; every other action takes its key even when it does nothing (an
 // Undo with no history), as CodeMirror's history keys do.
 function editorShortcutKeymap(): Extension {
-  const bindings = resolveShortcuts(currentShortcutPlatform).flatMap((shortcut): KeyBinding[] => {
+  const bindings = shortcuts.value.flatMap((shortcut): KeyBinding[] => {
     if (!Object.hasOwn(editorShortcutCommands, shortcut.id)) return []
     const run = editorShortcutCommands[shortcut.id as ShortcutIdOfScope<'editor'>]
     return shortcut.keys.map((key) => ({ key, run, preventDefault: shortcut.id !== 'stop' }))
@@ -1009,6 +1010,12 @@ watch(
     if (view) measureTextSize(view)
   },
 )
+
+// A shortcut key change applies to the live view at once; `buildState`
+// reads the current keys for the next tab.
+watch(shortcuts, () => {
+  if (view) view.dispatch({ effects: editorShortcuts.reconfigure(editorShortcutKeymap()) })
+})
 
 // Search as the user types: install the query, which drives the match
 // marks, and select the first match at or after `findState.origin`. With no

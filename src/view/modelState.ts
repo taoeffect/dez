@@ -7,6 +7,7 @@ import type { SettingsSnapshot, TabActivity } from '../model/state'
 import type { ModelSnapshot } from '../model/snapshot'
 import type { ModelCache } from '../model/persistence/types'
 import type { ModelDisplayNames } from '../model/providers/types'
+import type { Shortcut } from '../model/shortcuts'
 
 export interface ViewModelState {
   tabs: ComputedRef<ModelSnapshot['tabs']>
@@ -24,6 +25,7 @@ export interface ViewModelState {
   activeTabStreaming: ComputedRef<boolean>
   activeTabStreamingSectionId: ComputedRef<string | null>
   tabActivity: ComputedRef<Record<string, TabActivity>>
+  shortcuts: ComputedRef<readonly Shortcut[]>
 }
 
 // View components need reactive reads without owning Pinia stores directly;
@@ -65,6 +67,8 @@ export function useModelState(): ViewModelState {
     }),
     // Tab id -> busy or done, for the tab bar colors.
     tabActivity: computed(() => sbp('dez.model/tabs/activity') as Record<string, TabActivity>),
+    // Every shortcut with its effective key; changes when the user sets a key.
+    shortcuts: computed(() => sbp('dez.model/settings/shortcuts') as readonly Shortcut[]),
   }
 }
 

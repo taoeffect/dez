@@ -3,6 +3,7 @@ import type { ProviderConfig } from '../providers/config'
 import type { ModelInfo, ProviderId } from '../providers/types'
 import type { Prompt } from '../state/prompts'
 import type { DefaultModel, Theme, WindowGeometry } from '../state/settings'
+import type { ShortcutOverrides } from '../shortcuts'
 
 export type PromptData = Prompt
 
@@ -110,4 +111,7 @@ export interface AppStatePayload {
   providerSettings?: Record<string, Record<string, boolean>>
   checkForUpdates?: boolean
   lastUpdateCheckAt?: number | null
+  // The user's shortcut keys that differ from the defaults
+  // (src/model/shortcuts.ts).
+  shortcuts?: ShortcutOverrides
 }
