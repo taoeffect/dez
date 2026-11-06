@@ -1194,15 +1194,26 @@ export const dezHighlightStyle = HighlightStyle.define([
   { tag: t.meta, color: 'var(--color-muted, #888)' },
 ])
 
-/** The padding around the doc inside the editor scroller. */
+/** The padding above and below the doc inside the editor scroller. */
 export const SCROLLER_PADDING_PX = 16
+
+// The side gutter of the text column: the scroller's left and right
+// padding. The column has no max width (the user wants the window to
+// decide how wide the text is), so the gutter grows with the editor width
+// instead: today's 16px at the 600px minimum window, 40px at the 900px
+// default, and at most 80px from 1400px up, so text on a wide window does
+// not run close to its edges. A padding percentage resolves against the
+// width of the containing block, which is the editor's width for both the
+// scroller and the busy indicator (`ThreadEditor.vue`), so both get the
+// same gutter from this one value.
+export const TEXT_GUTTER = `clamp(${SCROLLER_PADDING_PX}px, calc(8% - 32px), 80px)`
 
 // Every size in the editor follows the user's editor font size
 // (`--dez-editor-font-size`, set by `dez.ui/applyEditorFontSize`), so text,
 // pills, the thinking panel and tables grow and shrink together.
 // `editorSize(px)` is `px` at the default font size and scales with the font
-// size. The text and the spacing around it scale; hairline borders, the
-// content column width and the scroller padding stay fixed.
+// size. The text and the spacing around it scale; hairline borders and the
+// scroller padding (`SCROLLER_PADDING_PX`, `TEXT_GUTTER`) do not.
 const EDITOR_FONT_SIZE_VAR = `var(--dez-editor-font-size, ${EDITOR_FONT_SIZE_DEFAULT}px)`
 
 function editorSize(...px: number[]): string {
@@ -1220,11 +1231,9 @@ export const dezTheme = EditorView.theme({
     fontFamily:
       "ui-monospace, SFMono-Regular, Menlo, Consolas, 'Liberation Mono', monospace",
     lineHeight: '1.6',
-    padding: `${SCROLLER_PADDING_PX}px`,
+    padding: `${SCROLLER_PADDING_PX}px ${TEXT_GUTTER}`,
   },
   '.cm-content': {
-    maxWidth: '768px',
-    margin: '0 auto',
     width: '100%',
     caretColor: 'var(--color-text)',
     // Room for the pill of the first section, which `::before` draws: the

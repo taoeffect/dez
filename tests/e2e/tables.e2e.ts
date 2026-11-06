@@ -1,4 +1,5 @@
 import type { EditorView } from '@codemirror/view'
+import { OVERLAY_SCROLLBAR_PX } from '../../src/view/editor/tables'
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from 'vitest'
 import { Key } from 'webdriverio'
 import { startApp, type RunningApp } from './harness/app'
@@ -542,27 +543,26 @@ describe('markdown tables', () => {
     const rowFrom = await docPos(BOB_ROW)
     const rowTo = rowFrom + BOB_ROW.length
     const rowY = (await pointAt(rowFrom + 2, 1)).y
-    // Points in the scroller's side margins, outside `.cm-content`. The
-    // right one stays left of the scroller's right padding (WebKitGTK draws
-    // its overlay scrollbar there).
-    const margins = await browser.execute((y: number) => {
+    // Points in the scroller's side margins (its padding), outside
+    // `.cm-content`. The right one stays left of the strip at the right
+    // edge where WebKitGTK draws its overlay scrollbar.
+    const margins = await browser.execute((y: number, scrollbarWidth: number) => {
       const content = document.querySelector('.cm-content')
       if (!content) throw new Error('margins: .cm-content not found')
       const view = Reflect.get(Reflect.get(content, 'cmTile'), 'root').view as EditorView
       const scroller = view.scrollDOM
       const scrollerBox = scroller.getBoundingClientRect()
       const contentBox = view.contentDOM.getBoundingClientRect()
-      const contentBoxRight = scrollerBox.left + scroller.clientLeft + scroller.clientWidth -
-        parseFloat(getComputedStyle(scroller).paddingRight)
+      const scrollbarLeft = scrollerBox.left + scroller.clientLeft + scroller.clientWidth - scrollbarWidth
       const left = { x: (scrollerBox.left + contentBox.left) / 2, y }
-      const right = { x: (contentBox.right + contentBoxRight) / 2, y }
+      const right = { x: (contentBox.right + scrollbarLeft) / 2, y }
       return {
         left,
         right,
         leftHitsScroller: document.elementFromPoint(left.x, left.y) === scroller,
-        rightHitsScroller: document.elementFromPoint(right.x, right.y) === scroller,
+        rightHitsScroller: right.x > contentBox.right && document.elementFromPoint(right.x, right.y) === scroller,
       }
-    }, rowY)
+    }, rowY, OVERLAY_SCROLLBAR_PX)
     expect(margins).toMatchObject({ leftHitsScroller: true, rightHitsScroller: true })
 
     await clickAt(margins.left)

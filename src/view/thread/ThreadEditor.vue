@@ -37,6 +37,7 @@ import {
   scanPills,
   sectionsField,
   serializeSelectionForClipboard,
+  TEXT_GUTTER,
   toggleRoleEffect,
   setPillsEffect,
   setSectionsEffect,
@@ -1137,12 +1138,12 @@ watch(
   overflow-y: auto;
 }
 
+/* Its dots line up with the text's left edge: the side padding is the
+   editor scroller's (`TEXT_GUTTER` in cmEditor.ts). */
 .busy-indicator {
   display: flex;
   gap: 4px;
-  padding: 8px 16px;
-  max-width: 768px;
-  margin: 0 auto;
+  padding: 8px v-bind(TEXT_GUTTER);
   width: 100%;
   box-sizing: border-box;
 }

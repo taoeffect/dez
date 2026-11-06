@@ -495,6 +495,13 @@ const hideDefaultSelectionLayer = EditorView.theme({
   '.cm-selectionLayer:not(.dez-selection-layer)': { display: 'none' },
 })
 
+/** The width of WebKitGTK's overlay scrollbar, which also takes presses:
+ *  `scrollbarSize` in WebKit's `AdwaitaScrollbarPainter.h`. It is drawn
+ *  over the right edge of a scroller's padding box. macOS overlay
+ *  scrollbars are narrower.
+ *  https://github.com/WebKit/WebKit/blob/main/Source/WebCore/platform/adwaita/AdwaitaScrollbarPainter.h */
+export const OVERLAY_SCROLLBAR_PX = 21
+
 /** A mousedown in the scroller's side margins (outside `.cm-content`) does
  *  not reach CM's handlers, which are on the content element, so WebKit
  *  places the caret with its own hit test. Next to a normal line that is
@@ -507,13 +514,14 @@ const tableMarginClicks = ViewPlugin.define((view) => {
   const onMouseDown = (event: MouseEvent): void => {
     const scroller = view.scrollDOM
     if (event.target !== scroller) return
-    // Leave presses on a scrollbar alone. WebKitGTK draws an overlay
-    // scrollbar in the scroller's right padding: it takes no layout width,
-    // so `clientWidth` does not show it, but a press on it still fires
-    // mousedown here. A classic scrollbar is right of the padding.
-    const contentBoxRight = scroller.getBoundingClientRect().left + scroller.clientLeft +
-      scroller.clientWidth - parseFloat(getComputedStyle(scroller).paddingRight)
-    if (event.clientX >= contentBoxRight) return
+    // Leave presses on a scrollbar alone. An overlay scrollbar takes no
+    // layout width, so `clientWidth` does not show it, but a press on it
+    // still fires mousedown here. The side margins are the scroller's
+    // padding (`TEXT_GUTTER` in cmEditor.ts), which can be much wider than
+    // the scrollbar, so only the scrollbar's strip at the right edge is
+    // skipped. A classic scrollbar is outside the padding box.
+    const paddingBoxRight = scroller.getBoundingClientRect().left + scroller.clientLeft + scroller.clientWidth
+    if (event.clientX >= paddingBoxRight - OVERLAY_SCROLLBAR_PX) return
     const content = view.contentDOM.getBoundingClientRect()
     if (event.clientY < content.top || event.clientY >= content.bottom) return
     const line = view.lineBlockAtHeight(event.clientY - view.documentTop)
