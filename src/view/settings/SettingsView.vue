@@ -57,6 +57,11 @@ function onDefaultModelClickOutside(e: MouseEvent) {
 }
 const sections: SettingsSection[] = ['general', 'providers', 'prompts', 'appearance', 'shortcuts']
 
+// Providers and Prompts fill the content pane and scroll inside their own
+// lists, so the pane itself never scrolls for them. Its scrollbar gutter
+// would only add an empty strip next to theirs.
+const contentScrolls = computed(() => settings.value.settingsSection !== 'providers' && settings.value.settingsSection !== 'prompts')
+
 const checkingUpdates = ref(false)
 
 const themes: { value: Theme; label: string }[] = [
@@ -114,7 +119,7 @@ function onOverlayClick(e: MouseEvent) {
           </button>
         </nav>
 
-        <div class="settings-content">
+        <div class="settings-content" :class="{ 'settings-scroller': contentScrolls }">
           <!-- Providers -->
           <div v-if="settings.settingsSection === 'providers'" class="settings-section settings-section--fill">
             <ProviderManager />
@@ -502,6 +507,17 @@ function onOverlayClick(e: MouseEvent) {
 .settings-error {
   font-size: 12px;
   color: #f44336;
+}
+
+/* A Settings pane that scrolls. A classic scrollbar (macOS with a mouse or
+   "Show scroll bars: Always", Linux with overlay scrolling off) takes room
+   from the content. When such a scrollbar comes or goes, WebKit can keep
+   the content at its old width, so the scrollbar covers the right edge of
+   the rows, or leaves a gap. A stable gutter keeps the room for the
+   scrollbar at all times, so the content width never changes. An overlay
+   scrollbar takes no room and gets no gutter. */
+.settings-scroller {
+  scrollbar-gutter: stable;
 }
 
 /* A row in the master-detail lists of ProviderManager (a <button>) and

@@ -141,9 +141,10 @@ async function killProcessGroup (child: ChildProcess): Promise<void> {
  *   (tauri-driver -> WebKitWebDriver -> app) to enable wry's automation
  *   session — without it, new-session requests hang forever;
  * - unique free ports for both the proxy and the native driver so runs
- *   never collide with a stray driver or with each other.
+ *   never collide with a stray driver or with each other;
+ * - `options.env`: extra variables for the driver and the app it launches.
  */
-export async function startApp (): Promise<RunningApp> {
+export async function startApp (options: { env?: Record<string, string> } = {}): Promise<RunningApp> {
   const binary = resolveBinary()
   const home = await fs.promises.mkdtemp(path.join(os.tmpdir(), 'dez-e2e-'))
   const port = await findFreePort()
@@ -163,6 +164,7 @@ export async function startApp (): Promise<RunningApp> {
     detached: true,
     env: {
       ...process.env,
+      ...options.env,
       HOME: home,
       TAURI_WEBVIEW_AUTOMATION: 'true'
     },

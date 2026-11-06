@@ -337,7 +337,7 @@ onBeforeUnmount(() => {
 <template>
   <div class="provider-manager">
     <!-- LEFT COLUMN -->
-    <div class="provider-sidebar">
+    <div class="provider-sidebar settings-scroller">
       <template v-for="group in providerGroups" :key="group.label">
         <div class="provider-group-label">{{ group.label }}</div>
         <ul v-if="group.infos.length" class="provider-list">
@@ -362,7 +362,7 @@ onBeforeUnmount(() => {
     </div>
 
     <!-- RIGHT COLUMN -->
-    <div v-if="selectedInfo" class="provider-detail">
+    <div v-if="selectedInfo" class="provider-detail settings-scroller">
       <div class="provider-detail-header">
         <h3 class="provider-detail-name">{{ selectedInfo.name }}</h3>
         <span v-if="selectedInfo.builtIn" class="provider-badge">Built-in</span>

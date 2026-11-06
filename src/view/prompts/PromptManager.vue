@@ -137,7 +137,7 @@ onMounted(() => {
         <button class="prompt-add-btn" title="New prompt" @click="onAdd">+</button>
       </div>
 
-      <ul v-if="filteredPrompts.length" class="prompt-list">
+      <ul v-if="filteredPrompts.length" class="prompt-list settings-scroller">
         <li
           v-for="p in filteredPrompts"
           :key="p.id"
