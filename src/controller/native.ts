@@ -94,6 +94,12 @@ export default sbp('sbp/selectors/register', {
     return invoke<boolean>('is_window_fullscreen')
   },
 
+  // "x11", "wayland", or another GDK backend name on Linux; null on the other
+  // platforms (src-tauri/src/commands.rs `gdk_backend`).
+  'dez.native/gdkBackend' (): Promise<string | null> {
+    return invoke<string | null>('gdk_backend')
+  },
+
   'dez.native/openDevtools' (): Promise<void> {
     return invoke('open_devtools')
   },

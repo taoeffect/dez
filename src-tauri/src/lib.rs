@@ -11,6 +11,18 @@ mod session_bus;
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
+    // GTK tries X11 first, then the other backends (Wayland), so in a Wayland
+    // session Dez runs as an Xwayland window, as the AppImage does
+    // (linuxdeploy's GTK hook sets GDK_BACKEND=x11). A Wayland client cannot
+    // read or set its place on the screen, so there the window could not come
+    // back to its saved place: GTK 3 has no call that places a toplevel, and
+    // WebKitGTK has no xdg-session-management. This is not the GDK_BACKEND
+    // variable: a GDK_BACKEND that the user sets still wins, the processes
+    // that Dez starts (a browser for a link) do not get it, and with no X
+    // server GTK still opens Wayland. It must come before GTK starts.
+    // https://docs.gtk.org/gdk3/func.set_allowed_backends.html
+    #[cfg(target_os = "linux")]
+    gtk::gdk::set_allowed_backends("x11,*");
     // The compositor counts the idle timeout from the start of the watch, so
     // it starts with the app: the first reply that ends already has an idle
     // time (see idle.rs).
@@ -62,6 +74,7 @@ pub fn run() {
             commands::load_app_file,
             commands::get_app_dir,
             commands::is_window_fullscreen,
+            commands::gdk_backend,
             commands::open_devtools,
             notification::show_notification,
             idle::user_idle_ms,

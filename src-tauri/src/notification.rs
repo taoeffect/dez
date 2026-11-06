@@ -144,8 +144,8 @@ mod platform {
     // GTK activates a shown window with it at once when it becomes the
     // startup id. `present()` would ask the compositor for a token of Dez's
     // own, which KWin may refuse while another app has the focus, so it runs
-    // only when the server sent no token. On X11 (the AppImage forces
-    // GDK_BACKEND=x11) only `present()` raises the window; an X11 startup id
+    // only when the server sent no token. On X11 (the default GTK backend,
+    // see lib.rs) only `present()` raises the window; an X11 startup id
     // as the token gives it the time of the click. GTK must be called on the
     // main thread.
     fn bring_to_front(window: &WebviewWindow, activation_token: Option<String>) {

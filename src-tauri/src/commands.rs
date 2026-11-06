@@ -131,6 +131,16 @@ mod tests {
         assert_eq!(parsed.version, "0.2.0");
         assert_eq!(parsed.url, RELEASES_URL);
     }
+
+    // The frontend compares the name with "wayland" and "x11".
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn names_the_gdk_backend_from_the_display_type() {
+        assert_eq!(gdk_backend_name("GdkX11Display").as_deref(), Some("x11"));
+        assert_eq!(gdk_backend_name("GdkWaylandDisplay").as_deref(), Some("wayland"));
+        assert_eq!(gdk_backend_name("GdkDisplay"), None);
+        assert_eq!(gdk_backend_name("MyDisplay"), None);
+    }
 }
 
 #[tauri::command]
@@ -200,6 +210,33 @@ pub fn is_window_fullscreen(window: tauri::WebviewWindow) -> Result<bool, String
     }
     #[cfg(not(target_os = "linux"))]
     window.is_fullscreen().map_err(|error| error.to_string())
+}
+
+// The GDK backend that GTK runs on: "x11", "wayland", or another GDK backend
+// name; None on other platforms. GTK picks it when it starts (lib.rs), and a
+// Wayland window cannot read or set its place on the screen. A command
+// without `async` runs on the main thread, where GTK must be called.
+#[tauri::command]
+pub fn gdk_backend() -> Option<String> {
+    #[cfg(target_os = "linux")]
+    {
+        use gtk::glib::prelude::ObjectExt;
+        gtk::gdk::Display::default().and_then(|display| gdk_backend_name(display.type_().name()))
+    }
+    #[cfg(not(target_os = "linux"))]
+    None
+}
+
+// GDK names each display type after its backend ("GdkX11Display",
+// "GdkWaylandDisplay"). gdk-rs `DisplayExtManual::backend` panics on a type
+// that it does not know, so the name is read here instead.
+#[cfg(target_os = "linux")]
+fn gdk_backend_name(display_type: &str) -> Option<String> {
+    display_type
+        .strip_prefix("Gdk")?
+        .strip_suffix("Display")
+        .filter(|name| !name.is_empty())
+        .map(str::to_lowercase)
 }
 
 // Help › Developer Console. Release builds have `open_devtools` only through
