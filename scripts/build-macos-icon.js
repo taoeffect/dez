@@ -80,7 +80,12 @@ const compiledCar = join(workDir, 'Assets.car');
 const compiled = !compileResult.error && compileResult.status === 0 && existsSync(compiledCar);
 
 if (compiled) {
-  copyFileSync(compiledCar, outputCar);
+  try {
+    copyFileSync(compiledCar, outputCar);
+  } catch (error) {
+    rmSync(workDir, { recursive: true, force: true });
+    fail(`could not write ${outputCar}: ${error.message}`);
+  }
 }
 
 rmSync(workDir, { recursive: true, force: true });
