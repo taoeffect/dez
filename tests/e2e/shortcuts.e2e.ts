@@ -64,6 +64,14 @@ describe('Settings › Shortcuts', () => {
     return (await readAppState(setup.app.home))?.shortcuts ?? {}
   }
 
+  // The overrides in the store. A "saves nothing" check reads these, not
+  // app_state.json: a wrong change shows here at once, but in the file only
+  // after the 1 s save delay, so a file read at once could never fail.
+  async function storeOverrides (): Promise<Record<string, string>> {
+    const shortcuts = await sbpCall(browser, 'dez.model/settings/shortcuts') as Array<{ id: string, key: string, defaultKey: string }>
+    return Object.fromEntries(shortcuts.filter((s) => s.key !== s.defaultKey).map((s) => [s.id, s.key]))
+  }
+
   // Opens Settings › Shortcuts as Help › Keyboard Shortcuts does.
   async function openShortcuts (): Promise<void> {
     await sbpCall(browser, 'dez.model/settings/open', 'shortcuts')
@@ -160,7 +168,7 @@ describe('Settings › Shortcuts', () => {
     await pointerClick(browser, '.settings-header h2')
     await waitForValue(browser, 'newTab row after a click outside', () => row('newTab'), unchanged)
     expect(await settingsOpen(), 'Settings open after the click').toBe(true)
-    expect(await savedShortcuts()).toEqual({})
+    expect(await storeOverrides()).toEqual({})
   })
 
   it('gives an app action a new key: the new key works and the old one does nothing', async () => {
@@ -193,7 +201,7 @@ describe('Settings › Shortcuts', () => {
     })
     expect(await tabCount(), 'tabs').toBe(before)
     expect(await settingsOpen(), 'Settings open').toBe(true)
-    expect(await savedShortcuts()).toEqual({ newTab: 'Ctrl-k' })
+    expect(await storeOverrides()).toEqual({ newTab: 'Ctrl-k' })
   })
 
   it('gives Submit a new key: the editor keymap and the Submit button follow', async () => {
