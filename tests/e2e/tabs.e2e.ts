@@ -5,7 +5,7 @@ import { startApp, type RunningApp } from './harness/app'
 import { click, screenshotOnFailure, typeKeys, waitFor, waitForValue } from './harness/dom'
 import { makeConversation, seedAppState, seedConversation } from './harness/fixtures'
 import { createSession, destroySession, type E2EBrowser } from './harness/session'
-import { focusEditor, sbpCall, threadSections } from './harness/thread'
+import { editorDoc, focusEditor, sbpCall, threadSections } from './harness/thread'
 
 const MAX_CLICKS = 40
 // Clicks to make while the tabs overflow the strip, counting the click that
@@ -218,11 +218,7 @@ describe('tab bar', () => {
     // Focus first: a script focus of the editor scrolls it to the caret.
     await focusEditor(browser)
     await browser.keys([Key.Control, Key.End])
-    const docLength = await browser.execute(() => {
-      const content = document.querySelector('.cm-content')
-      if (!content) throw new Error('docLength: .cm-content not found')
-      return (Reflect.get(Reflect.get(content, 'cmTile'), 'root').view as EditorView).state.doc.length
-    })
+    const docLength = (await editorDoc(browser)).length
     let bottom = { topLine: 0, caret: 0 }
     await waitForValue(browser, 'caret at the doc end', async () => {
       bottom = await viewPlace(browser)

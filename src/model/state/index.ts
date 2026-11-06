@@ -311,6 +311,13 @@ function findTabSection(tabId: string, sectionId: string): { tab: Tab; section: 
   return tab && section ? { tab, section } : null
 }
 
+// Drops every closed-tab entry of a conversation, so that an old copy never
+// comes back over newer edits or over a deleted conversation file.
+function forgetClosedConversation(conversationId: string): void {
+  const tabStore = useTabStore()
+  tabStore.closedTabs = tabStore.closedTabs.filter((entry) => entry.tab.conversationId !== conversationId)
+}
+
 export function appendTokenToTabSection(tabId: string, sectionId: string, token: string): boolean {
   const section = findTabSection(tabId, sectionId)?.section
   if (!section) return false
@@ -444,9 +451,8 @@ export default sbp('sbp/selectors/register', {
       const newIndex = Math.min(index, tabStore.tabs.length - 1)
       tabStore.activeTabId = tabStore.tabs[newIndex].id
     }
-    // At most one entry per conversation, the newest copy: an older copy
-    // must not come back over newer edits or over a file deleted below.
-    tabStore.closedTabs = tabStore.closedTabs.filter((entry) => entry.tab.conversationId !== tab.conversationId)
+    // At most one entry per conversation, the newest copy.
+    forgetClosedConversation(tab.conversationId)
     if (tab.sections.some((section) => !sectionIsEmpty(section))) {
       tabStore.closedTabs.push({ tab: cloneTab(tab) as Tab, index })
       if (tabStore.closedTabs.length > MAX_CLOSED_TABS) tabStore.closedTabs.shift()
@@ -585,7 +591,7 @@ export default sbp('sbp/selectors/register', {
       console.error('Failed to delete conversation', error)
       return
     }
-    tabStore.closedTabs = tabStore.closedTabs.filter((entry) => entry.tab.conversationId !== id)
+    forgetClosedConversation(id)
 
     const matchingTabs = tabStore.tabs.filter((tab) => tab.conversationId === id)
     for (const tab of matchingTabs) tabStore.replyDoneTabIds.delete(tab.id)

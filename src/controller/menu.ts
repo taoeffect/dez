@@ -40,13 +40,19 @@ const shortcutMenuItems = new Map<ShortcutId, { item: MenuItem, accelerator: str
 // closing the tab.
 let acceleratorsSuspended = false
 
+// The menu accelerator of the key that action `id` has now. The create path
+// and the update path both use it, so they always agree.
+function menuAccelerator (shortcuts: readonly Shortcut[], id: ShortcutId): string | null {
+  return shortcutAccelerator(findShortcut(shortcuts, id).key, currentShortcutPlatform)
+}
+
 // A menu item that runs an editable shortcut, with the shortcut's key as its
 // accelerator. A key that a menu cannot take gets none (see
 // `shortcutAccelerator`): bare Esc, for example, stops the stream on the
 // page, but on Linux GTK would take it before the page, so Esc could no
 // longer close find, the dropdowns or the modals.
 async function shortcutMenuItem (shortcuts: readonly Shortcut[], id: ShortcutId, options: Omit<MenuItemOptions, 'accelerator'>): Promise<MenuItem> {
-  const accelerator = shortcutAccelerator(findShortcut(shortcuts, id).key, currentShortcutPlatform)
+  const accelerator = menuAccelerator(shortcuts, id)
   const item = await MenuItem.new(accelerator ? { ...options, accelerator } : options)
   shortcutMenuItems.set(id, { item, accelerator })
   return item
@@ -60,7 +66,7 @@ async function shortcutMenuItem (shortcuts: readonly Shortcut[], id: ShortcutId,
 async function updateAccelerators (): Promise<void> {
   const shortcuts = sbp('dez.model/settings/shortcuts') as readonly Shortcut[]
   for (const [id, entry] of shortcutMenuItems) {
-    const accelerator = acceleratorsSuspended ? null : shortcutAccelerator(findShortcut(shortcuts, id).key, currentShortcutPlatform)
+    const accelerator = acceleratorsSuspended ? null : menuAccelerator(shortcuts, id)
     if (accelerator === entry.accelerator) continue
     try {
       await entry.item.setAccelerator(accelerator)

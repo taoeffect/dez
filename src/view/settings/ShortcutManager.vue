@@ -24,6 +24,12 @@ function keyText (key: string): string {
   return shortcutLabel(key, currentShortcutPlatform, 'text')
 }
 
+// Gives action `id` a key (null: its default) and shows why it was refused.
+function applyKey (id: ShortcutId, key: string | null): void {
+  const text = sbp('dez.model/settings/setShortcut', id, key) as string | null
+  refusal.value = text ? { id, text } : null
+}
+
 // While a row records, this listener gets each keydown first: the window
 // capture phase runs before ModelSelector's document capture Esc handler,
 // CodeMirror, and the window shortcut handler, and it stops the event, so
@@ -37,10 +43,7 @@ function onRecordKeydown (event: KeyboardEvent): void {
   const id = recordingId.value
   const key = eventShortcutKey(event)
   if (!id || key === null) return
-  if (key !== 'Escape') {
-    const text = sbp('dez.model/settings/setShortcut', id, key) as string | null
-    refusal.value = text ? { id, text } : null
-  }
+  if (key !== 'Escape') applyKey(id, key)
   stopRecording()
 }
 
@@ -79,8 +82,7 @@ function onKeyClick (id: ShortcutId): void {
 
 function reset (id: ShortcutId): void {
   stopRecording()
-  const text = sbp('dez.model/settings/setShortcut', id, null) as string | null
-  refusal.value = text ? { id, text } : null
+  applyKey(id, null)
 }
 
 function resetAll (): void {

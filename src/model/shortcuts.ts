@@ -474,9 +474,12 @@ export function parseShortcutOverrides (value: unknown, platform: ShortcutPlatfo
  *  title or an aria-label (`Cmd+Enter`, `Ctrl+Up`). */
 export type ShortcutLabelStyle = 'keycap' | 'text'
 
+// Words for the arrow keys, in text labels and in Tauri accelerators.
+const ARROW_WORDS: Readonly<Partial<Record<string, string>>> = {
+  ArrowUp: 'Up', ArrowDown: 'Down', ArrowLeft: 'Left', ArrowRight: 'Right',
+}
 const TEXT_KEY_NAMES: Readonly<Partial<Record<string, string>>> = {
-  Escape: 'Esc', ArrowUp: 'Up', ArrowDown: 'Down', ArrowLeft: 'Left', ArrowRight: 'Right',
-  PageUp: 'Page Up', PageDown: 'Page Down',
+  ...ARROW_WORDS, Escape: 'Esc', PageUp: 'Page Up', PageDown: 'Page Down',
 }
 const ARROW_SYMBOLS = { ArrowUp: '↑', ArrowDown: '↓', ArrowLeft: '←', ArrowRight: '→' }
 const KEYCAP_KEY_NAMES: Record<ShortcutPlatform, Readonly<Partial<Record<string, string>>>> = {
@@ -515,14 +518,11 @@ const ACCELERATOR_NAMED_KEYS: Readonly<Record<string, true>> = {
   Enter: true, Space: true, Tab: true, Backspace: true, Delete: true, Home: true, End: true, PageUp: true,
   PageDown: true, Insert: true, Escape: true, PrintScreen: true,
 }
-const ACCELERATOR_ARROWS: Readonly<Partial<Record<string, string>>> = {
-  ArrowUp: 'Up', ArrowDown: 'Down', ArrowLeft: 'Left', ArrowRight: 'Right',
-}
 
 function acceleratorKey (key: string): string | null {
   if (/^[a-z]$/.test(key)) return key.toUpperCase()
   if (/^[0-9`\\[\],=\-.';/]$/.test(key) || FUNCTION_KEY.test(key) || Object.hasOwn(ACCELERATOR_NAMED_KEYS, key)) return key
-  return ACCELERATOR_ARROWS[key] ?? null
+  return ARROW_WORDS[key] ?? null
 }
 
 /** The native menu accelerator for a key (`Ctrl+Shift+T`, `Cmd+Up`), or
