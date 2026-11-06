@@ -238,10 +238,16 @@ describe('tab bar', () => {
 
     await focusEditor(browser)
     await browser.keys([Key.Control, 'w'])
-    await waitForValue(browser, 'long tab closed', async () => (await tabStrip(browser)).titles.includes(id), false)
+    // By conversation id: the tab title is now the first user line, not id.
+    await waitForValue(browser, 'long tab closed', async () => (await conversationIds(browser)).includes(id), false)
     await focusEditor(browser)
     await browser.keys([Key.Control, Key.Shift, 't'])
-    await waitForValue(browser, 'long tab reopened', async () => (await tabStrip(browser)).active, opened.active)
+    // The index alone is true before the reopen: the close activates the
+    // new tab, which moves into the long tab's index.
+    await waitForValue(browser, 'long tab reopened', async () => {
+      const { active } = await tabStrip(browser)
+      return { conversationId: (await conversationIds(browser))[active], active }
+    }, { conversationId: id, active: opened.active })
     await waitForValue(browser, 'place after Ctrl+Shift+T', () => viewPlace(browser), bottom)
   })
 })
