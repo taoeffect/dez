@@ -9,8 +9,8 @@ import type { AppStatePayload, ConversationData } from '../../../src/model/persi
 // Seeding window: seed AFTER `startApp()` (which creates the temp HOME) and
 // BEFORE `createSession()` — tauri-driver only launches the app binary when
 // the WebDriver session is requested, so `app_state.json` (with
-// `checkForUpdates: false`) and the conversation files are already on disk
-// when the app boots and reads them.
+// `checkForUpdates: false` and the reply-end alerts off) and the
+// conversation files are already on disk when the app boots and reads them.
 //
 // Reset boundary (decided in TODO-4): the tauri-driver process, temp HOME,
 // and app session are per spec FILE (beforeAll/afterAll) because app launch
@@ -108,12 +108,23 @@ export async function readAppState (home: string): Promise<AppStatePayload | nul
   }
 }
 
+// Seeded settings that differ from the app defaults. `startApp` passes on
+// `process.env`, so the app uses the developer's network, audio, and D-Bus
+// session: with the defaults, startup fetches the latest GitHub release (a
+// possible toast), and each reply that ends in a background tab dings and
+// posts a real desktop notification. Specs that test one of these turn it
+// back on in their overrides.
+const quietAppState = {
+  checkForUpdates: false,
+  doneSound: false,
+  doneNotification: false
+} satisfies Partial<AppStatePayload>
+
 /**
  * Seed `<home>/.config/dez/app_state.json` from the app's real
- * `defaultAppState()` + `serializeAppStateJson()`, with `checkForUpdates`
- * forced to `false` by default: startup otherwise fires an immediate
- * GitHub release fetch (network + possible toast overlay) via
- * `dez.controller/startUpdateChecker`. Call before `createSession()`.
+ * `defaultAppState()` + `serializeAppStateJson()`, with the update check
+ * and the reply-end alerts off by default (`quietAppState`). Call before
+ * `createSession()`.
  */
 export async function seedAppState (
   home: string,
@@ -121,7 +132,7 @@ export async function seedAppState (
 ): Promise<string> {
   const payload: AppStatePayload = {
     ...defaultAppState(),
-    checkForUpdates: false,
+    ...quietAppState,
     ...overrides
   }
   return writeAppStateFile(home, serializeAppStateJson(payload))
@@ -137,7 +148,7 @@ export async function seedRawAppState (
   home: string,
   raw: Record<string, unknown>
 ): Promise<string> {
-  return writeAppStateFile(home, JSON.stringify({ ...defaultAppState(), checkForUpdates: false, ...raw }, null, 2))
+  return writeAppStateFile(home, JSON.stringify({ ...defaultAppState(), ...quietAppState, ...raw }, null, 2))
 }
 
 /**

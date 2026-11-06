@@ -28,6 +28,9 @@ describe('app state persistence format', () => {
       providerSettings: { venice: { webSearch: false, veniceSystemPrompt: true } },
       checkForUpdates: false,
       lastUpdateCheckAt: 12,
+      doneSound: false,
+      doneSoundVolume: 35,
+      doneNotification: false,
       shortcuts: { closeTab: 'alt-k', bogus: 'Alt-j', newTab: 'Escape' },
     }))
 
@@ -48,6 +51,9 @@ describe('app state persistence format', () => {
     expect(state.providerSettings).toEqual({ venice: { webSearch: false, veniceSystemPrompt: true } })
     expect(state.checkForUpdates).toBe(false)
     expect(state.lastUpdateCheckAt).toBe(12)
+    expect(state.doneSound).toBe(false)
+    expect(state.doneSoundVolume).toBe(35)
+    expect(state.doneNotification).toBe(false)
     expect(state.shortcuts).toEqual({ closeTab: 'Alt-k' })
     expect(parseAppStateJson('{ "shortcuts": "Alt-k" }').shortcuts).toEqual({})
     expect(parseAppStateJson(serializeAppStateJson(state))).toEqual(state)
@@ -80,6 +86,28 @@ describe('app state persistence format', () => {
     expect(parseAppStateJson('{ "editorFontSize": 1e400 }').editorFontSize).toBe(32)
     expect(parseFontSize('20')).toBe(15)
     expect(parseFontSize(null)).toBe(15)
+  })
+
+  it('turns the reply-end alerts on at half volume when app_state.json has no alert settings', () => {
+    const state = parseAppStateJson('{}')
+    expect(state.doneSound).toBe(true)
+    expect(state.doneSoundVolume).toBe(50)
+    expect(state.doneNotification).toBe(true)
+  })
+
+  it('rounds and clamps a hand-edited doneSoundVolume, and ignores bad alert types', () => {
+    const parse = (fields: Record<string, unknown>) => parseAppStateJson(JSON.stringify(fields))
+    const parseVolume = (value: unknown) => parse({ doneSoundVolume: value }).doneSoundVolume
+    expect(parseVolume(0)).toBe(0)
+    expect(parseVolume(100)).toBe(100)
+    expect(parseVolume(33.5)).toBe(34)
+    expect(parseVolume(-3)).toBe(0)
+    expect(parseVolume(250)).toBe(100)
+    expect(parseAppStateJson('{ "doneSoundVolume": 1e400 }').doneSoundVolume).toBe(100)
+    expect(parseVolume('20')).toBe(50)
+    expect(parseVolume(null)).toBe(50)
+    expect(parse({ doneSound: 'false' }).doneSound).toBe(true)
+    expect(parse({ doneNotification: 0 }).doneNotification).toBe(true)
   })
 
   it('keeps a whole window geometry and drops a bad one as a whole', () => {

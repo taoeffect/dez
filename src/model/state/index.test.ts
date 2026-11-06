@@ -1,8 +1,8 @@
 import sbp from '@sbp/sbp'
 import { createPinia, setActivePinia } from 'pinia'
-import { beforeEach, describe, expect, it } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import type { ActiveModel, ContentNode, ModelRef, Section, SectionThinking, Tab } from '../chat/types'
-import type { ConversationData, ModelCache } from '../persistence/types'
+import type { AppStatePayload, ConversationData, ModelCache } from '../persistence/types'
 import type { ProviderConfig } from '../providers/config'
 import type { SettingsSnapshot } from './index'
 import type { Shortcut, ShortcutId } from '../shortcuts'
@@ -18,7 +18,12 @@ let loadCalls: string[] = []
 // one. Reset in beforeEach.
 const diskConversations = new Map<string, ConversationData>()
 
-// Stub the persistence selectors that the tab selectors call.
+// What the stub app state load below returns, and each payload that the stub
+// save got. Reset in beforeEach.
+let diskAppState: AppStatePayload = {}
+let savedAppStates: AppStatePayload[] = []
+
+// Stub the persistence selectors that the tab and settings selectors call.
 // src/model/persistence/index.ts is never imported by this test, so these are
 // the only dez.persistence/* registrations in the test process.
 sbp('sbp/selectors/register', {
@@ -34,8 +39,18 @@ sbp('sbp/selectors/register', {
       created_at: 1000,
     }
   },
-  async 'dez.persistence/saveAppState' (): Promise<void> {},
+  async 'dez.persistence/loadAppState' (): Promise<AppStatePayload> {
+    return structuredClone(diskAppState)
+  },
+  async 'dez.persistence/saveAppState' (state: AppStatePayload): Promise<void> {
+    // A JSON copy, as the real save writes: the payload holds store proxies,
+    // which structuredClone refuses.
+    savedAppStates.push(JSON.parse(JSON.stringify(state)) as AppStatePayload)
+  },
   async 'dez.persistence/deleteConversation' (): Promise<void> {},
+  // dez.model/settings/init applies the loaded theme and font size.
+  'dez.ui/applyTheme' (): void {},
+  'dez.ui/applyEditorFontSize' (): void {},
 })
 
 function tabs (): Tab[] {
@@ -54,6 +69,8 @@ beforeEach(() => {
   setActivePinia(createPinia())
   loadCalls = []
   diskConversations.clear()
+  diskAppState = {}
+  savedAppStates = []
 })
 
 describe('dez.model/tabs/openConversation', () => {
@@ -464,6 +481,54 @@ describe('dez.model/settings/changeEditorFontSize', () => {
     expect(fontSize()).toBe(10)
     change(1)
     expect(fontSize()).toBe(11)
+  })
+})
+
+describe('dez.model/settings reply-end alerts', () => {
+  function alerts (): Pick<SettingsSnapshot, 'doneSound' | 'doneSoundVolume' | 'doneNotification'> {
+    const { doneSound, doneSoundVolume, doneNotification } = sbp('dez.model/settings/snapshot') as SettingsSnapshot
+    return { doneSound, doneSoundVolume, doneNotification }
+  }
+
+  // The app state that one change saved after the 1 s save delay, or
+  // undefined when the change saved nothing.
+  async function savedAfter (change: () => void): Promise<AppStatePayload | undefined> {
+    const saveCount = savedAppStates.length
+    change()
+    await vi.advanceTimersByTimeAsync(1000)
+    return savedAppStates.length > saveCount ? savedAppStates.at(-1) : undefined
+  }
+
+  afterEach(() => {
+    sbp('dez.model/settings/stopPersistence')
+    vi.useRealTimers()
+  })
+
+  it('rounds the volume and keeps it in 0-100', () => {
+    sbp('dez.model/settings/setDoneSoundVolume', 72.6)
+    expect(alerts().doneSoundVolume).toBe(73)
+    sbp('dez.model/settings/setDoneSoundVolume', -10)
+    expect(alerts().doneSoundVolume).toBe(0)
+    sbp('dez.model/settings/setDoneSoundVolume', 140)
+    expect(alerts().doneSoundVolume).toBe(100)
+  })
+
+  // Each setting changes alone, so a setting that is missing from the save
+  // watch list or from the save payload fails here.
+  it('loads the saved alert settings, and saves a change of each one', async () => {
+    diskAppState = { doneSound: false, doneSoundVolume: 20, doneNotification: false }
+    await sbp('dez.model/settings/init')
+    expect(alerts()).toEqual({ doneSound: false, doneSoundVolume: 20, doneNotification: false })
+
+    vi.useFakeTimers()
+    sbp('dez.model/settings/startPersistence')
+
+    expect(await savedAfter(() => sbp('dez.model/settings/setDoneSound', true)))
+      .toMatchObject({ doneSound: true, doneSoundVolume: 20, doneNotification: false })
+    expect(await savedAfter(() => sbp('dez.model/settings/setDoneSoundVolume', 80)))
+      .toMatchObject({ doneSound: true, doneSoundVolume: 80, doneNotification: false })
+    expect(await savedAfter(() => sbp('dez.model/settings/setDoneNotification', true)))
+      .toMatchObject({ doneSound: true, doneSoundVolume: 80, doneNotification: true })
   })
 })
 

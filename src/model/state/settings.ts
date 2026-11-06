@@ -2,6 +2,7 @@ import { defineStore } from 'pinia'
 import { computed, ref } from 'vue'
 import type { ProviderConfig } from '../providers/config'
 import { EDITOR_FONT_SIZE_DEFAULT } from '../editorFontSize'
+import { DONE_SOUND_VOLUME_DEFAULT } from '../doneSoundVolume'
 import { currentShortcutPlatform, resolveShortcuts, type ShortcutOverrides } from '../shortcuts'
 
 export type Theme = 'light' | 'dark' | 'system'
@@ -42,6 +43,11 @@ export const useSettingsStore = defineStore('settings', () => {
   const providerSettings = ref<Record<string, Record<string, boolean>>>({})
   const checkForUpdates = ref(true)
   const lastUpdateCheckAt = ref<number | null>(null)
+  // The reply-end alerts (Settings › Notifications): a sound at
+  // `doneSoundVolume` percent, and a system notification.
+  const doneSound = ref(true)
+  const doneSoundVolume = ref(DONE_SOUND_VOLUME_DEFAULT)
+  const doneNotification = ref(true)
   // The user's shortcut keys that differ from the defaults, already
   // normalized and validated. Replaced as a whole on each change.
   const shortcutOverrides = ref<ShortcutOverrides>({})
@@ -119,6 +125,9 @@ export const useSettingsStore = defineStore('settings', () => {
     providerSettings,
     checkForUpdates,
     lastUpdateCheckAt,
+    doneSound,
+    doneSoundVolume,
+    doneNotification,
     shortcutOverrides,
     shortcuts,
     settingsOpen,

@@ -32,6 +32,9 @@ export interface ModelSnapshot {
     providerSettings: Record<string, Record<string, boolean>>
     checkForUpdates: boolean
     lastUpdateCheckAt: number | null
+    doneSound: boolean
+    doneSoundVolume: number
+    doneNotification: boolean
     shortcutOverrides: ShortcutOverrides
     settingsOpen: boolean
     settingsSection: string

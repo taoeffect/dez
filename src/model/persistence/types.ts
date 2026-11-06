@@ -111,6 +111,10 @@ export interface AppStatePayload {
   providerSettings?: Record<string, Record<string, boolean>>
   checkForUpdates?: boolean
   lastUpdateCheckAt?: number | null
+  // The reply-end alerts; doneSoundVolume is an integer percent, 0-100.
+  doneSound?: boolean
+  doneSoundVolume?: number
+  doneNotification?: boolean
   // The user's shortcut keys that differ from the defaults
   // (src/model/shortcuts.ts).
   shortcuts?: ShortcutOverrides

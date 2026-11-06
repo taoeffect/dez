@@ -3,6 +3,7 @@ import { configIssueText, customProviderConfigSchema, providerModelConfigSchema,
 import type { AppStatePayload } from './types'
 import type { DefaultModel, Theme, WindowGeometry } from '../state/settings'
 import { EDITOR_FONT_SIZE_DEFAULT, clampEditorFontSize } from '../editorFontSize'
+import { DONE_SOUND_VOLUME_DEFAULT, clampDoneSoundVolume } from '../doneSoundVolume'
 import { currentShortcutPlatform, parseShortcutOverrides } from '../shortcuts'
 
 const themeSchema = z.enum(['light', 'dark', 'system'])
@@ -135,6 +136,9 @@ export function defaultAppState(): AppStatePayload {
     providerSettings: {},
     checkForUpdates: true,
     lastUpdateCheckAt: null,
+    doneSound: true,
+    doneSoundVolume: DONE_SOUND_VOLUME_DEFAULT,
+    doneNotification: true,
     shortcuts: {},
   }
 }
@@ -176,6 +180,15 @@ export function parseAppStateJson(content: string): AppStatePayload {
       lastUpdateCheckAt: typeof parsed.lastUpdateCheckAt === 'number' || parsed.lastUpdateCheckAt === null
         ? parsed.lastUpdateCheckAt
         : fallback.lastUpdateCheckAt,
+      doneSound: typeof parsed.doneSound === 'boolean' ? parsed.doneSound : fallback.doneSound,
+      // Like editorFontSize: a hand-edited volume is rounded and kept in
+      // range, not dropped.
+      doneSoundVolume: typeof parsed.doneSoundVolume === 'number'
+        ? clampDoneSoundVolume(parsed.doneSoundVolume)
+        : fallback.doneSoundVolume,
+      doneNotification: typeof parsed.doneNotification === 'boolean'
+        ? parsed.doneNotification
+        : fallback.doneNotification,
       shortcuts: parseShortcutOverrides(parsed.shortcuts, currentShortcutPlatform),
     }
   } catch {

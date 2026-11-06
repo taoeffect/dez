@@ -10,6 +10,7 @@ import { useModelCacheStore } from './modelCache'
 import { usePromptsStore, type Prompt } from './prompts'
 import { useSettingsStore, type DefaultModel, type SettingsSection, type Theme, type WindowGeometry } from './settings'
 import { clampEditorFontSize } from '../editorFontSize'
+import { clampDoneSoundVolume } from '../doneSoundVolume'
 import { currentShortcutPlatform, findShortcut, normalizeShortcutKey, validateShortcutKey, type Shortcut, type ShortcutId, type ShortcutOverrides } from '../shortcuts'
 import { MAX_CLOSED_TABS, useTabStore } from './tabs'
 import type { AppStatePayload, CachedProvider, ConversationSearchOutcome, ModelCache } from '../persistence/types'
@@ -46,6 +47,9 @@ export interface SettingsSnapshot {
   providerSettings: Record<string, Record<string, boolean>>
   checkForUpdates: boolean
   lastUpdateCheckAt: number | null
+  doneSound: boolean
+  doneSoundVolume: number
+  doneNotification: boolean
   shortcutOverrides: ShortcutOverrides
   settingsOpen: boolean
   settingsSection: SettingsSection
@@ -217,6 +221,9 @@ function cloneSettings(settings = useSettingsStore()): SettingsSnapshot {
     providerSettings: cloneProviderSettings(settings.providerSettings),
     checkForUpdates: settings.checkForUpdates,
     lastUpdateCheckAt: settings.lastUpdateCheckAt,
+    doneSound: settings.doneSound,
+    doneSoundVolume: settings.doneSoundVolume,
+    doneNotification: settings.doneNotification,
     shortcutOverrides: { ...settings.shortcutOverrides },
     settingsOpen: settings.settingsOpen,
     settingsSection: settings.settingsSection,
@@ -653,6 +660,9 @@ export default sbp('sbp/selectors/register', {
         providerSettings: settings.providerSettings,
         checkForUpdates: settings.checkForUpdates,
         lastUpdateCheckAt: settings.lastUpdateCheckAt,
+        doneSound: settings.doneSound,
+        doneSoundVolume: settings.doneSoundVolume,
+        doneNotification: settings.doneNotification,
         shortcuts: settings.shortcutOverrides,
       })
     } catch (error) {
@@ -782,6 +792,9 @@ export default sbp('sbp/selectors/register', {
       if (state.providerSettings) settings.providerSettings = state.providerSettings
       if (typeof state.checkForUpdates === 'boolean') settings.checkForUpdates = state.checkForUpdates
       if (typeof state.lastUpdateCheckAt === 'number') settings.lastUpdateCheckAt = state.lastUpdateCheckAt
+      if (typeof state.doneSound === 'boolean') settings.doneSound = state.doneSound
+      if (typeof state.doneSoundVolume === 'number') settings.doneSoundVolume = state.doneSoundVolume
+      if (typeof state.doneNotification === 'boolean') settings.doneNotification = state.doneNotification
       if (state.shortcuts) settings.shortcutOverrides = state.shortcuts
     }
 
@@ -813,6 +826,9 @@ export default sbp('sbp/selectors/register', {
         () => settings.providerSettings,
         () => settings.checkForUpdates,
         () => settings.lastUpdateCheckAt,
+        () => settings.doneSound,
+        () => settings.doneSoundVolume,
+        () => settings.doneNotification,
         () => settings.shortcutOverrides,
       ],
       () => {
@@ -971,6 +987,20 @@ export default sbp('sbp/selectors/register', {
 
   'dez.model/settings/setCheckForUpdates' (enabled: boolean): void {
     useSettingsStore().checkForUpdates = enabled
+  },
+
+  'dez.model/settings/setDoneSound' (enabled: boolean): void {
+    useSettingsStore().doneSound = enabled
+  },
+
+  // The Settings › Notifications volume slider; any number is rounded and
+  // kept in 0-100.
+  'dez.model/settings/setDoneSoundVolume' (percent: number): void {
+    useSettingsStore().doneSoundVolume = clampDoneSoundVolume(percent)
+  },
+
+  'dez.model/settings/setDoneNotification' (enabled: boolean): void {
+    useSettingsStore().doneNotification = enabled
   },
 
   'dez.model/settings/toggleFavorite' (providerId: string, modelId: string): void {
