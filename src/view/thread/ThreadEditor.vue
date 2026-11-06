@@ -478,9 +478,9 @@ function schedulePersistTab(tabId: string) {
 
 // Compares every `SectionModel` field the store also holds, so a store-side
 // change on an existing section id (a model stamp at stream start, thinking
-// cleared on a reused section) still reaches the editor's `sectionsField`.
-// Thinking is compared by value: the store and the editor keep separate
-// copies of it.
+// or a duration cleared on a reused section, a duration stamped at the
+// stream end) still reaches the editor's `sectionsField`. Thinking is
+// compared by value: the store and the editor keep separate copies of it.
 function sectionModelsEqual(left: ReturnType<typeof initialSectionModels>, right: ReturnType<typeof initialSectionModels>): boolean {
   return left.length === right.length && left.every((model, i) => {
     const candidate = right[i]
@@ -488,7 +488,8 @@ function sectionModelsEqual(left: ReturnType<typeof initialSectionModels>, right
       model.id === candidate.id &&
       model.role === candidate.role &&
       sameModelRef(model.model, candidate.model) &&
-      sameThinking(model.thinking, candidate.thinking)
+      sameThinking(model.thinking, candidate.thinking) &&
+      model.durationMs === candidate.durationMs
   })
 }
 

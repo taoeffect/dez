@@ -16,6 +16,7 @@ export interface ModelSnapshot {
       content: ContentNode[]
       model?: ModelRef
       thinking?: SectionThinking
+      durationMs?: number
     }[]
     createdAt: number
   }[]

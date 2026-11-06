@@ -25,6 +25,7 @@ import {
   sectionIsEmpty,
   sectionVisibleText,
 } from '../chat/content'
+import { durationField } from '../chat/duration'
 import { modelRefField, modelRefKey } from '../chat/modelRef'
 import { thinkingField } from '../chat/thinking'
 import { cloneJsonObject } from '../../utils/json'
@@ -77,6 +78,7 @@ interface SectionData {
   nodes: ContentNodeData[]
   model?: ModelRef
   thinking?: SectionThinking
+  durationMs?: number
 }
 
 interface ConversationData {
@@ -127,6 +129,7 @@ function cloneSections(sections: Section[]): ModelSnapshot['tabs'][number]['sect
     content: section.content.map(cloneContentNode),
     ...modelRefField(section.model),
     ...thinkingField(section.thinking),
+    ...durationField(section.durationMs),
   }))
 }
 
@@ -298,6 +301,7 @@ function tabFromConversation(conv: ConversationData, overrides: Partial<Tab> = {
     content: normalizeContent(section.nodes.map((node) => dataToContentNode(node))),
     ...modelRefField(section.model),
     ...thinkingField(section.thinking),
+    ...durationField(section.durationMs),
   }))
   if (sections.length === 0) {
     sections.push({ id: crypto.randomUUID(), role: 'user', content: emptyContent() })
@@ -554,6 +558,7 @@ export default sbp('sbp/selectors/register', {
         nodes: section.content.map((node) => contentNodeToData(node)),
         ...modelRefField(section.model),
         ...thinkingField(section.thinking),
+        ...durationField(section.durationMs),
       })),
       activeModel: cloneActiveModel(tab.activeModel),
       created_at: tab.createdAt,
@@ -736,12 +741,15 @@ export default sbp('sbp/selectors/register', {
   // token (`replaceSections`) would erase the stamp. For the same reason it
   // marks whether a section has thinking and a replay: a reused section loses
   // its old thinking, and the editor must lose it too. The thinking text is
-  // left out, so a streamed thinking token does not trigger this sync.
+  // left out, so a streamed thinking token does not trigger this sync. The
+  // duration is part of it as well: it is stamped after the last token and
+  // dropped from a reused section.
   'dez.model/thread/sectionsIdentity' (): string {
     return useTabStore().activeTab.sections
       .map((section) => {
         const thinking = section.thinking ? (section.thinking.replay ? 'replay' : 'text') : ''
-        return `${section.id}:${section.role}:${section.model ? modelRefKey(section.model) : ''}:${thinking}`
+        const model = section.model ? modelRefKey(section.model) : ''
+        return `${section.id}:${section.role}:${model}:${thinking}:${section.durationMs ?? ''}`
       })
       .join('|')
   },
@@ -757,6 +765,7 @@ export default sbp('sbp/selectors/register', {
       content: normalizeContent(section.content),
       ...modelRefField(section.model),
       ...thinkingField(section.thinking),
+      ...durationField(section.durationMs),
     })))
     const title = firstUserTitle(tab.sections)
     if (title) tab.title = title

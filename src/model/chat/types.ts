@@ -73,6 +73,13 @@ export interface Section {
    *  `model`, it stays when the role becomes `user`, but only `agent`
    *  sections show it, save it, or send it. */
   thinking?: SectionThinking
+  /** How long the stream that wrote this agent section ran, in whole
+   *  milliseconds, from the request start to the stream end. Absent when
+   *  unknown (a reply still streaming, user sections, files saved before
+   *  Dez stored it); never set to `undefined`. Like `model`, it stays when
+   *  the role becomes `user`, but only `agent` sections show it, save it,
+   *  or copy it. Never sent to a provider. */
+  durationMs?: number
 }
 
 export interface ActiveModel extends ModelRef {

@@ -1,8 +1,9 @@
 import { stripLiveSentinels } from '../chat/content'
+import { durationField } from '../chat/duration'
 import { messagesAsMarkdown } from '../chat/markdown'
 import { modelRefKey, parseModelRefKey } from '../chat/modelRef'
 import { PILL_CLOSE_TAG, containerThinking, parsePillMarker, pillMarkerText, type PillMarker } from '../chat/pillMarker'
-import type { ActiveModel, ModelRef, SectionThinking } from '../chat/types'
+import type { ActiveModel, SectionThinking } from '../chat/types'
 import type { ContentNodeData, ConversationData, SectionData } from './types'
 
 // The conversation history file, ~/.config/dez/conversations/<id>.md
@@ -16,12 +17,14 @@ import type { ContentNodeData, ConversationData, SectionData } from './types'
 //   <dez:prompt name="NAME">
 //   prompt body
 //   </dez:prompt>
-//   <dez:pill type="agent" model="provider/model"/>
+//   <dez:pill type="agent" model="provider/model" duration-ms="4213"/>
 //   text
 //
 // - The header `model:` is the tab's last selected model (`activeModel`),
 //   not the model of each reply. A pill with no `model` gives a section with
 //   no model; the header never fills it in.
+// - `duration-ms` is how long the reply took (`Section.durationMs`); files
+//   saved before Dez stored it have none.
 // - Each pill line starts a section. pillMarker.ts owns the pill markers,
 //   the thinking containers, and their escaping.
 // - A literal `</dez:prompt>` in a prompt body is written as `<\/dez:prompt>`.
@@ -50,7 +53,7 @@ export function serializeConversation(data: ConversationData): string {
 
   for (const section of data.sections) {
     output += '\n'
-    output += `${pillMarkerText(section.role, section.model, section.thinking)}\n`
+    output += `${pillMarkerText(section)}\n`
     for (const node of section.nodes) {
       if (node.kind === 'text') {
         const text = stripLiveSentinels(node.text)
@@ -128,10 +131,12 @@ function flushText(nodes: ContentNodeData[], text: string, stripTrailingNewline:
   return ''
 }
 
+// `marker` is the pill that started the section: null for text before the
+// first pill, which is a user section.
 function flushSection(
   sections: SectionData[],
   role: 'user' | 'agent' | null,
-  model: ModelRef | null,
+  marker: PillMarker | null,
   thinking: SectionThinking | undefined,
   nodes: ContentNodeData[],
 ): ContentNodeData[] {
@@ -148,7 +153,13 @@ function flushSection(
       }
     }
   }
-  sections.push({ role, nodes, ...(model ? { model } : {}), ...(thinking ? { thinking } : {}) })
+  sections.push({
+    role,
+    nodes,
+    ...(marker?.model ? { model: marker.model } : {}),
+    ...durationField(marker?.durationMs ?? undefined),
+    ...(thinking ? { thinking } : {}),
+  })
   return []
 }
 
@@ -199,7 +210,7 @@ export function parseConversation(id: string, content: string): ConversationData
   const lines = body.split('\n').slice(0, body.endsWith('\n') ? -1 : undefined)
   const sections: SectionData[] = []
   let currentRole: 'user' | 'agent' | null = null
-  let currentModel: ModelRef | null = null
+  let currentMarker: PillMarker | null = null
   let currentThinking: SectionThinking | undefined
   let currentNodes: ContentNodeData[] = []
   let textBuffer = ''
@@ -249,9 +260,9 @@ export function parseConversation(id: string, content: string): ConversationData
     const marker = parsePillMarker(trimmed)
     if (marker) {
       textBuffer = flushText(currentNodes, textBuffer, true)
-      currentNodes = flushSection(sections, currentRole, currentModel, currentThinking, currentNodes)
+      currentNodes = flushSection(sections, currentRole, currentMarker, currentThinking, currentNodes)
       currentRole = marker.role
-      currentModel = marker.model
+      currentMarker = marker
       currentThinking = undefined
       if (marker.container && closesContainer(lines, index + 1)) openContainer = marker
       continue
@@ -277,7 +288,7 @@ export function parseConversation(id: string, content: string): ConversationData
   }
 
   flushText(currentNodes, textBuffer, true)
-  flushSection(sections, currentRole, currentModel, currentThinking, currentNodes)
+  flushSection(sections, currentRole, currentMarker, currentThinking, currentNodes)
 
   if (sections.length === 0) {
     sections.push({ role: 'user', nodes: [] })

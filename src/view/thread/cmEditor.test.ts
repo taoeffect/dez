@@ -456,6 +456,80 @@ describe('section thinking', () => {
   })
 })
 
+describe('section durations', () => {
+  const MODEL: ModelRef = { providerId: 'zai', modelId: 'glm-5.2' }
+  const DOC = ['question', 'answer', 'thought', 'legacy'].join(`\n${SECTION_SEP}\n`)
+  const SECTIONS: Section[] = [
+    section('s1', 'user', 'question'),
+    { ...section('s2', 'agent', 'answer'), model: MODEL, durationMs: 4213 },
+    { ...section('s3', 'agent', 'thought'), thinking: { text: 'plan' }, durationMs: 0 },
+    section('s4', 'agent', 'legacy'),
+  ]
+
+  function durationState(selection?: EditorSelection): EditorState {
+    return EditorState.create({
+      doc: DOC,
+      selection,
+      extensions: [
+        sectionsField.init(() => initialSectionModels(SECTIONS)),
+        pillsField.init(() => new Map()),
+      ],
+    })
+  }
+
+  it('keeps the duration from the store through the editor and back, and through a role toggle', () => {
+    const toUser = durationState().update({ effects: toggleRoleEffect.of({ index: 1 }) }).state
+
+    // Strict: a section without a duration must not get `durationMs: undefined`.
+    expect(docToSections(DOC, durationState().field(sectionsField), new Map())).toStrictEqual(SECTIONS)
+    expect(toUser.field(sectionsField)[1]).toStrictEqual({ id: 's2', role: 'user', model: MODEL, durationMs: 4213 })
+  })
+
+  it('copies the duration in agent markers and pastes it back', () => {
+    const copied = serializeSelectionForClipboard(durationState(EditorSelection.single(0, DOC.length)))
+    const pasteState = EditorState.create({
+      doc: 'first',
+      selection: EditorSelection.cursor(5),
+      extensions: [
+        sectionsField.init(() => [{ id: 'p1', role: 'user' }]),
+        pillsField.init(() => new Map()),
+      ],
+    })
+    const pastedState = pasteState.update(clipboardPasteTransaction(pasteState, copied)).state
+    const pasted = docToSections(pastedState.doc.toString(), pastedState.field(sectionsField), new Map())
+
+    expect(copied.split('\n')).toEqual([
+      '<dez:pill type="user"/>',
+      'question',
+      '<dez:pill type="agent" model="zai/glm-5.2" duration-ms="4213"/>',
+      'answer',
+      '<dez:pill type="agent" duration-ms="0">',
+      'plan',
+      '</dez:pill>',
+      'thought',
+      '<dez:pill type="agent"/>',
+      'legacy',
+    ])
+    expect(pasted.map(sectionVisibleText)).toEqual(['firstquestion', 'answer', 'thought', 'legacy'])
+    // 'none' marks a section without a `durationMs` key.
+    expect(pasted.map((candidate) => ('durationMs' in candidate ? candidate.durationMs : 'none'))).toStrictEqual(['none', 4213, 0, 'none'])
+  })
+
+  it('copies no duration for a section toggled to user, and pastes none from a user marker or a bad value', () => {
+    const toUser = durationState(EditorSelection.single(0, DOC.length)).update({ effects: toggleRoleEffect.of({ index: 1 }) }).state
+    const parsed = parseClipboardText([
+      'a',
+      '<dez:pill type="user" duration-ms="5"/>',
+      'b',
+      '<dez:pill type="agent" duration-ms="-1"/>',
+      'c',
+    ].join('\n'))
+
+    expect(serializeSelectionForClipboard(toUser).split('\n').slice(2, 4)).toEqual(['<dez:pill type="user"/>', 'answer'])
+    expect(parsed.separators).toStrictEqual([{ role: 'user' }, { role: 'agent' }])
+  })
+})
+
 describe('Linux line-navigation keymap', () => {
   it('binds Linux Ctrl+A and Ctrl+E without changing macOS Ctrl+A/Ctrl+E behavior', () => {
     const bindings = linuxLineNavigationKeymap()
@@ -758,6 +832,7 @@ describe('Copy Markdown', () => {
         role: 'agent',
         model: { providerId: 'zai', modelId: 'glm-5.2' },
         thinking: THINKING,
+        durationMs: 4213,
         content: [textNode('Stopped in code:\n\n```ts\nconst x = 1')],
       },
       section('s3', 'agent', ' \n'),

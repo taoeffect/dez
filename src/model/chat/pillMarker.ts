@@ -1,22 +1,25 @@
 import * as z from 'zod'
 import { escapeMarkerAttribute, unescapeMarkerAttribute } from '../../utils/markerAttribute'
 import { modelRefKey, parseModelRefKey } from './modelRef'
-import type { ModelRef, Role, SectionThinking, ThinkingReplay } from './types'
+import type { ModelRef, Role, Section, SectionThinking, ThinkingReplay } from './types'
 
 // The `<dez:pill …/>` marker starts a section in conversation files and in
 // clipboard text. An agent section with thinking gets a container instead,
 // with the thinking text as its body:
 //
-//   <dez:pill type="agent" model="provider/model" replay="{…}">
+//   <dez:pill type="agent" model="provider/model" duration-ms="4213" replay="{…}">
 //   thinking text
 //   </dez:pill>
 //
-// Both formats write and read the markers only here, so they cannot drift
-// apart.
+// `duration-ms` is the reply duration (`Section.durationMs`). Both formats
+// write and read the markers only here, so they cannot drift apart.
 
 export interface PillMarker {
   role: Role
   model: ModelRef | null
+  /** The `duration-ms` attribute of an agent marker. Null when it is
+   *  missing or is not a whole number of milliseconds. */
+  durationMs: number | null
   /** The text is the opening tag of a container: thinking text lines
    *  follow, up to a `PILL_CLOSE_TAG` line. */
   container: boolean
@@ -51,6 +54,14 @@ function parseThinkingReplay(json: string): ThinkingReplay | null {
   return parsed.success ? parsed.data : null
 }
 
+// `pillMarkerText` writes whole, non-negative milliseconds. Any other value
+// (a hand edit) reads as "unknown", as a bad `model` does.
+function parseDurationMs(value: string | undefined): number | null {
+  if (value === undefined || !/^\d+$/.test(value)) return null
+  const durationMs = Number(value)
+  return Number.isSafeInteger(durationMs) ? durationMs : null
+}
+
 // A marker in the thinking text would end the container early, so the text
 // holds none: `</dez:pill>` is written as `<\/dez:pill>`, and `<dez:pill` as
 // `<\dez:pill`. Each `<`, `\`…, optional `/`, `dez:pill` run gets one more
@@ -69,12 +80,15 @@ function unescapeThinkingText(body: string): string {
 
 /** The marker text of a section: one self-closing tag, or a container when
  *  an agent section has thinking. The container body is the exact thinking
- *  text, not trimmed or indented. Only agent pills carry `model` and
- *  thinking, so a section saved or copied as `user` loses them. */
-export function pillMarkerText(role: Role, model?: ModelRef, thinking?: SectionThinking): string {
-  if (role !== 'agent') return '<dez:pill type="user"/>'
+ *  text, not trimmed or indented. Only agent pills carry `model`, the
+ *  duration, and thinking, so a section saved or copied as `user` loses
+ *  them. */
+export function pillMarkerText(section: Pick<Section, 'role' | 'model' | 'thinking' | 'durationMs'>): string {
+  if (section.role !== 'agent') return '<dez:pill type="user"/>'
   let tag = '<dez:pill type="agent"'
-  if (model) tag += ` model="${escapeMarkerAttribute(modelRefKey(model))}"`
+  if (section.model) tag += ` model="${escapeMarkerAttribute(modelRefKey(section.model))}"`
+  if (section.durationMs !== undefined) tag += ` duration-ms="${section.durationMs}"`
+  const { thinking } = section
   if (!thinking) return `${tag}/>`
   if (thinking.replay) tag += ` replay="${escapeMarkerAttribute(JSON.stringify(thinking.replay))}"`
   return `${tag}>\n${escapeThinkingText(thinking.text)}\n${PILL_CLOSE_TAG}`
@@ -105,12 +119,13 @@ const OPENING_TAG = new RegExp(String.raw`^<dez:pill${ATTRIBUTES}>$`)
 // is found with the attribute rule, not at the first `>` or `\n`.
 const CONTAINER_START = new RegExp(String.raw`^<dez:pill${ATTRIBUTES}>\n`)
 
-/** Role, model, and container state of a text that starts with
+/** Role, model, duration, and container state of a text that starts with
  *  `<dez:pill`. Null when `type` is not `user` or `agent`: the text is then
- *  not a marker. Attribute order and spacing do not matter. A `model` on a
- *  user pill is ignored, and a bad `model` or `replay` value means "none",
- *  not an error, so files edited by hand still open. Pass only the tag: the
- *  attributes are read from the whole text. */
+ *  not a marker. Attribute order and spacing do not matter. A `model` or
+ *  `duration-ms` on a user pill is ignored, and a bad `model`,
+ *  `duration-ms`, or `replay` value means "none", not an error, so files
+ *  edited by hand still open. Pass only the tag: the attributes are read
+ *  from the whole text. */
 export function parsePillMarker(text: string): PillMarker | null {
   if (!text.startsWith('<dez:pill')) return null
   const attributes = new Map<string, string>()
@@ -119,13 +134,14 @@ export function parsePillMarker(text: string): PillMarker | null {
   }
   const role = attributes.get('type')
   const container = OPENING_TAG.test(text)
-  if (role === 'user') return { role, model: null, container, replay: null }
+  if (role === 'user') return { role, model: null, durationMs: null, container, replay: null }
   if (role !== 'agent') return null
   const model = attributes.get('model')
   const replay = attributes.get('replay')
   return {
     role,
     model: model === undefined ? null : parseModelRefKey(unescapeMarkerAttribute(model)),
+    durationMs: parseDurationMs(attributes.get('duration-ms')),
     container,
     replay: container && replay !== undefined ? parseThinkingReplay(unescapeMarkerAttribute(replay)) : null,
   }

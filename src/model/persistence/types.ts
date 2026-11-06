@@ -41,6 +41,7 @@ export interface SectionData {
   nodes: ContentNodeData[]
   model?: ModelRef
   thinking?: SectionThinking
+  durationMs?: number
 }
 
 export interface ConversationData {

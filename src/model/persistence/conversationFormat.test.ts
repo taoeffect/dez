@@ -23,6 +23,10 @@ function promptContent(node: ContentNodeData): Extract<ContentNodeData, { kind: 
   return node
 }
 
+function pillLines(serialized: string): string[] {
+  return serialized.split('\n').filter((line) => line.startsWith('<dez:pill'))
+}
+
 describe('conversation persistence format', () => {
   it('collapses duplicate leading user pills while preserving the later agent section', () => {
     const content = `<!-- title: Duplicate pills | model: provider/model | created: 123 -->
@@ -215,10 +219,6 @@ describe('agent pill models', () => {
 
   function conversation(sections: SectionData[]): ConversationData {
     return { id: 'conversation', title: 'Chat', sections, activeModel: null, created_at: 1 }
-  }
-
-  function pillLines(serialized: string): string[] {
-    return serialized.split('\n').filter((line) => line.startsWith('<dez:pill'))
   }
 
   it('round-trips a model per agent section and writes none for an unknown model', () => {
@@ -506,6 +506,77 @@ describe('agent thinking containers', () => {
       section('user', [textNode('q3')]),
       { role: 'agent', nodes: [textNode('the last closing line was deleted')], model },
     ])
+  })
+})
+
+describe('agent pill durations', () => {
+  const model: ModelRef = { providerId: 'zai', modelId: 'glm-4.6' }
+  const header = '<!-- title: Chat | model:  | created: 1 -->'
+
+  it('round-trips the duration of self-closing and container agent pills, with no key when absent', () => {
+    const data: ConversationData = {
+      id: 'conversation',
+      title: 'Chat',
+      sections: [
+        section('user', [textNode('hi')]),
+        { role: 'agent', nodes: [textNode('fast')], model, durationMs: 4213 },
+        section('user', [textNode('again')]),
+        { role: 'agent', nodes: [textNode('thought')], durationMs: 0, thinking: { text: 'plan', replay: { kind: 'field', field: 'reasoning' } } },
+        section('user', [textNode('old')]),
+        { role: 'agent', nodes: [textNode('legacy')], model },
+      ],
+      activeModel: null,
+      created_at: 1,
+    }
+
+    const serialized = serializeConversation(data)
+
+    expect(pillLines(serialized)).toEqual([
+      '<dez:pill type="user"/>',
+      '<dez:pill type="agent" model="zai/glm-4.6" duration-ms="4213"/>',
+      '<dez:pill type="user"/>',
+      '<dez:pill type="agent" duration-ms="0" replay="{&quot;kind&quot;:&quot;field&quot;,&quot;field&quot;:&quot;reasoning&quot;}">',
+      '<dez:pill type="user"/>',
+      '<dez:pill type="agent" model="zai/glm-4.6"/>',
+    ])
+    // Strict: a section without a duration must not come back as
+    // `durationMs: undefined`.
+    expect(parseConversation('conversation', serialized)).toStrictEqual(data)
+  })
+
+  it('drops the duration of a section saved as user and ignores one on a user pill', () => {
+    const serialized = serializeConversation({
+      id: 'conversation',
+      title: 'Chat',
+      sections: [section('user', [textNode('hi')]), { role: 'user', nodes: [textNode('was an agent reply')], model, durationMs: 4213 }],
+      activeModel: null,
+      created_at: 1,
+    })
+    const parsed = parseConversation('conversation', `${header}\n<dez:pill type="user" duration-ms="5"/>\nhi\n`)
+
+    expect(pillLines(serialized)).toEqual(['<dez:pill type="user"/>', '<dez:pill type="user"/>'])
+    expect(parsed.sections).toStrictEqual([section('user', [textNode('hi')])])
+  })
+
+  // Hand edits must still open, with no time for a value that is not whole
+  // milliseconds.
+  it('reads a duration in any attribute order, and a bad value as none', () => {
+    const values = ['', '-5', '1.5', '1e3', ' 42', 'abc', '99999999999999999999']
+    const content = [
+      header,
+      '<dez:pill type="user"/>',
+      'hi',
+      '<dez:pill duration-ms="1500"  type="agent"/>',
+      'ordered',
+      ...values.flatMap((value, index) => [`<dez:pill type="agent" duration-ms="${value}"/>`, `bad ${index}`]),
+      '',
+    ].join('\n')
+
+    const parsed = parseConversation('conversation', content)
+
+    // 'none' marks a section without a `durationMs` key.
+    expect(parsed.sections.map((s) => ('durationMs' in s ? s.durationMs : 'none'))).toStrictEqual(['none', 1500, ...values.map(() => 'none')])
+    expect(parsed.sections.slice(2).map((s) => textContent(s.nodes[0]))).toEqual(values.map((_, index) => `bad ${index}`))
   })
 })
 

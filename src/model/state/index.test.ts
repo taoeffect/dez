@@ -306,6 +306,10 @@ describe('section models', () => {
     return sections.map((section) => ('thinking' in section ? section.thinking : 'none'))
   }
 
+  function storedDurations (sections: { durationMs?: number }[]): (number | 'none' | undefined)[] {
+    return sections.map((section) => ('durationMs' in section ? section.durationMs : 'none'))
+  }
+
   function ensureAgentSection (model: ModelRef): Section {
     return sbp('dez.model/ensureTrailingAgentSectionForTab', activeId(), model) as Section
   }
@@ -412,6 +416,43 @@ describe('section models', () => {
     expect(withText).not.toBe(withoutThinking)
     expect(withReplay).not.toBe(withText)
     expect(identity()).not.toBe(withReplay)
+  })
+
+  it('keeps section durations through edits, conversationData and a reload of the conversation', async () => {
+    sbp('dez.model/tabs/replaceSections', activeId(), [
+      { id: 'u1', role: 'user', content: text('question') },
+      { id: 'a1', role: 'agent', content: text('timed answer'), model: alpha, durationMs: 4213 },
+      { id: 'a2', role: 'agent', content: text('legacy answer') },
+      { id: 'u2', role: 'user', content: text('') },
+    ])
+    typeIntoLastSection('next question')
+
+    expect(storedDurations(threadSections())).toStrictEqual(['none', 4213, 'none', 'none'])
+    const data = sbp('dez.model/tabs/conversationData', activeId()) as ConversationData
+    expect(storedDurations(data.sections)).toStrictEqual(['none', 4213, 'none', 'none'])
+
+    diskConversations.set('conv-copy', { ...data, id: 'conv-copy' })
+    const reopened = await openConversation('conv-copy')
+    expect(storedDurations(reopened?.sections ?? [])).toStrictEqual(['none', 4213, 'none', 'none'])
+  })
+
+  // The editor copies store metadata only when this identity changes, so a
+  // duration stamped at the stream end, or dropped from a reused section,
+  // must change it.
+  it('changes the identity when a section gains or loses its duration', () => {
+    const sections = (durationMs?: number): Section[] => [
+      { id: 'u1', role: 'user', content: text('question') },
+      { id: 'a1', role: 'agent', content: text('answer'), model: alpha, ...(durationMs === undefined ? {} : { durationMs }) },
+    ]
+    const identity = (): string => sbp('dez.model/thread/sectionsIdentity') as string
+    sbp('dez.model/tabs/replaceSections', activeId(), sections())
+    const untimed = identity()
+    sbp('dez.model/tabs/replaceSections', activeId(), sections(4213))
+    const timed = identity()
+    sbp('dez.model/tabs/replaceSections', activeId(), sections())
+
+    expect(timed).not.toBe(untimed)
+    expect(identity()).toBe(untimed)
   })
 })
 

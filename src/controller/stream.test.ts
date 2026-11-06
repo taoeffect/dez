@@ -364,15 +364,15 @@ describe('dez.controller/submitTab without a model', () => {
 })
 
 describe('dez.controller/submitTab thinking send-back', () => {
-  it('sends back only the replayable thinking of agent sections that the request model wrote', async () => {
+  it('sends back only the replayable thinking of agent sections that the request model wrote, and no durations', async () => {
     const replay = { kind: 'field', field: 'reasoning_content' } as const
     sbp('dez.model/setActiveModel', model.providerId, model.modelId, model.modelName)
     sbp('dez.model/tabs/replaceSections', activeTab().id, [
       { id: 'u1', role: 'user', content: [{ kind: 'text', text: 'Q1' }] },
-      { id: 'a1', role: 'agent', content: [{ kind: 'text', text: 'Same model' }], model, thinking: { text: 'Kept', replay } },
+      { id: 'a1', role: 'agent', content: [{ kind: 'text', text: 'Same model' }], model, thinking: { text: 'Kept', replay }, durationMs: 4213 },
       { id: 'a2', role: 'agent', content: [{ kind: 'text', text: 'Other model' }], model: { providerId: 'other', modelId: 'm' }, thinking: { text: 'Other', replay } },
       { id: 'a3', role: 'agent', content: [{ kind: 'text', text: 'No replay' }], model, thinking: { text: 'Pasted' } },
-      { id: 'u2', role: 'user', content: [{ kind: 'text', text: 'Was agent' }], model, thinking: { text: 'Toggled', replay } },
+      { id: 'u2', role: 'user', content: [{ kind: 'text', text: 'Was agent' }], model, thinking: { text: 'Toggled', replay }, durationMs: 900 },
     ])
     let sent: ChatMessage[] = []
     streamChat = async (input) => {

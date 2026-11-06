@@ -4,6 +4,7 @@ import { Decoration, EditorView, ViewPlugin, WidgetType, type DecorationSet, typ
 import { EditorSelection, EditorState, StateEffect, StateField, findClusterBreak, type Extension, type Transaction, type TransactionSpec } from '@codemirror/state'
 import { tags as t } from '@lezer/highlight'
 import type { ContentNode, ModelRef, Role, Section, SectionThinking } from '../../model/chat/types'
+import { durationField } from '../../model/chat/duration'
 import { modelRefField } from '../../model/chat/modelRef'
 import { PILL_MARKER, parsePillMarkerMatch, pillMarkerText } from '../../model/chat/pillMarker'
 import { thinkingField } from '../../model/chat/thinking'
@@ -53,18 +54,19 @@ export const PILL_NL = '\u{E003}'
 /** Lightweight mirror of a Section kept in the CM state. The CM doc is the
  *  source of truth for text; this field just tracks per-section identity
  *  (id), role, the AI model that wrote the section (`model`, absent when
- *  unknown), and its thinking (`thinking`, never doc text). The editor
- *  writes this field back to the store on every doc change
- *  (`syncDocToTab`), so a section field missing here is lost there. A new
- *  per-section field must also go in `initialSectionModels`,
- *  `docToSections`, `sectionModelsEqual` (ThreadEditor.vue) and
- *  `dez.model/thread/sectionsIdentity`, or the store loses it on the first
- *  streamed token. */
+ *  unknown), its thinking (`thinking`, never doc text), and its reply
+ *  duration (`durationMs`). The editor writes this field back to the store
+ *  on every doc change (`syncDocToTab`), so a section field missing here is
+ *  lost there. A new per-section field must also go in
+ *  `initialSectionModels`, `docToSections`, `sectionModelsEqual`
+ *  (ThreadEditor.vue) and `dez.model/thread/sectionsIdentity`, or the store
+ *  loses it on the first streamed token. */
 export interface SectionModel {
   id: string
   role: Role
   model?: ModelRef
   thinking?: SectionThinking
+  durationMs?: number
   generated?: boolean
 }
 
@@ -170,8 +172,8 @@ function normalizeSectionModels(models: SectionModel[]): SectionModel[] {
   return copy
 }
 
-/** Produce `{ id, role, model?, thinking? }` for each section to seed
- *  `sectionsField`. */
+/** Produce `{ id, role, model?, thinking?, durationMs? }` for each section
+ *  to seed `sectionsField`. */
 export function initialSectionModels(sections: Section[]): SectionModel[] {
   if (sections.length === 0) return [{ id: crypto.randomUUID(), role: 'user' }]
   return normalizeSectionModels(sections.map((s) => ({
@@ -179,6 +181,7 @@ export function initialSectionModels(sections: Section[]): SectionModel[] {
     role: s.role,
     ...modelRefField(s.model),
     ...thinkingField(s.thinking),
+    ...durationField(s.durationMs),
   })))
 }
 
@@ -384,6 +387,7 @@ export function docToSections(
       role: i === 0 ? 'user' : sectionModel.role,
       ...modelRefField(sectionModel.model),
       ...thinkingField(sectionModel.thinking),
+      ...durationField(sectionModel.durationMs),
       content: decodeSectionContent(text, pillsMeta),
     }
   })
@@ -892,7 +896,7 @@ function unescapePromptClipboardBody(body: string): string {
 // The clipboard marker of the section that starts at the separator at `pos`.
 function clipboardSectionMarker(doc: string, models: SectionModel[], pos: number): string {
   const section = models[sectionIndexAtOffset(doc, pos) + 1]
-  return pillMarkerText(section?.role ?? 'user', section?.model, section?.thinking)
+  return pillMarkerText(section ?? { role: 'user' })
 }
 
 // Every sentinel in the range is turned into a marker or a newline, or is
@@ -934,7 +938,7 @@ export function serializeDocRangeForClipboard(
 ): string {
   if (from >= to) return ''
   const pills = scanPills(doc).filter((p) => p.to > from && p.from < to)
-  let out = from === 0 ? `${pillMarkerText('user')}\n` : ''
+  let out = from === 0 ? `${pillMarkerText({ role: 'user' })}\n` : ''
   let cursor = from
   for (const p of pills) {
     if (cursor < Math.min(p.from, to)) {
@@ -1071,7 +1075,7 @@ export interface ParsedClipboardText {
   text: string
   pills: Map<string, PillMetadata>
   /** One entry per `SECTION_SEP` in `text`, in order. */
-  separators: Pick<SectionModel, 'role' | 'model' | 'thinking'>[]
+  separators: Pick<SectionModel, 'role' | 'model' | 'thinking' | 'durationMs'>[]
 }
 
 /** Turn clipboard text (with `dez:` markers) into live-doc text: section
@@ -1108,6 +1112,7 @@ export function parseClipboardText(text: string, plainText = false): ParsedClipb
           role: pill.marker.role,
           ...modelRefField(pill.marker.model ?? undefined),
           ...thinkingField(pill.thinking),
+          ...durationField(pill.marker.durationMs ?? undefined),
         })
       }
       if (text[nextCursor] === '\n') nextCursor++
@@ -1133,10 +1138,10 @@ export function parseClipboardText(text: string, plainText = false): ParsedClipb
 
 /** The transaction for a paste of clipboard text with `dez:` markers. Each
  *  pasted section marker starts a new section with the marker's role,
- *  model, and thinking. Markers at the very start of the paste are dropped,
- *  so the paste joins the section at the caret. In a pill body, pasted
- *  prompts and section markers would nest a pill or split this one, so the
- *  paste is plain text there. */
+ *  model, duration, and thinking. Markers at the very start of the paste
+ *  are dropped, so the paste joins the section at the caret. In a pill
+ *  body, pasted prompts and section markers would nest a pill or split this
+ *  one, so the paste is plain text there. */
 export function clipboardPasteTransaction(state: EditorState, text: string): TransactionSpec {
   const doc = state.doc.toString()
   const pills = scanPills(doc)
