@@ -85,6 +85,11 @@ describe('normalizeShortcutKey', () => {
     expect(normalizeShortcutKey('ctrl-space', 'linux')).toBe('Ctrl-Space')
     expect(normalizeShortcutKey('shift-enter', 'linux')).toBe('Shift-Enter')
     expect(normalizeShortcutKey('f5', 'linux')).toBe('F5')
+    // `keyName` rewrites these old names, so no key press has them.
+    expect(normalizeShortcutKey('Ctrl-Up', 'linux')).toBe('Ctrl-ArrowUp')
+    expect(normalizeShortcutKey('alt-left', 'linux')).toBe('Alt-ArrowLeft')
+    expect(normalizeShortcutKey('Shift-Esc', 'linux')).toBe('Shift-Escape')
+    expect(normalizeShortcutKey('Meta-Del', 'mac')).toBe('Meta-Delete')
   })
 
   it('rejects what is not a key name', () => {

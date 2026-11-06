@@ -194,6 +194,14 @@ const MODIFIER_KEYS: Readonly<Record<string, true>> = {
 // `enter` or `pageup` gets CodeMirror's spelling.
 const NAMED_KEYS = new Map(Object.values(base).filter((name) => name.length > 1).map((name) => [name.toLowerCase(), name]))
 
+// Old key names, by lowercase name: `keyName` rewrites them to these W3C
+// names, so no key press gives them, and a hand-edited `Ctrl-Up` must
+// become `Ctrl-ArrowUp` to ever run.
+const LEGACY_KEY_NAMES = new Map([
+  ['esc', 'Escape'], ['del', 'Delete'], ['up', 'ArrowUp'], ['down', 'ArrowDown'], ['left', 'ArrowLeft'],
+  ['right', 'ArrowRight'],
+])
+
 // Key values that name no real key: `keyName` gives them for a key it cannot
 // name, a dead key, or an IME composition.
 const UNUSABLE_KEYS: Readonly<Record<string, true>> = { Unidentified: true, Dead: true, Process: true }
@@ -204,7 +212,7 @@ const UNUSABLE_KEYS: Readonly<Record<string, true>> = { Unidentified: true, Dead
 function normalizeKeyPart (key: string): string | null {
   if (key === ' ' || key.toLowerCase() === 'space') return 'Space'
   if ([...key].length === 1) return /[\s\p{C}]/u.test(key) ? null : key
-  const named = NAMED_KEYS.get(key.toLowerCase())
+  const named = NAMED_KEYS.get(key.toLowerCase()) ?? LEGACY_KEY_NAMES.get(key.toLowerCase())
   if (named) return named
   // Other W3C key values, such as `ContextMenu`, that a key press can give.
   return /^[A-Z][A-Za-z0-9]+$/.test(key) && !Object.hasOwn(UNUSABLE_KEYS, key) ? key : null
