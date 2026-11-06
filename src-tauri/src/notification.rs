@@ -42,12 +42,7 @@ mod platform {
     use tauri::WebviewWindow;
     use zbus::message::Type;
     use zbus::zvariant::Value;
-    use zbus::{Connection, MatchRule, MessageStream};
-
-    // One session bus connection for all notifications. A connection of
-    // its own per notification would keep a socket and a zbus thread open
-    // for each notification that GNOME keeps in its list without a close.
-    static SESSION_BUS: tokio::sync::OnceCell<Connection> = tokio::sync::OnceCell::const_new();
+    use zbus::{MatchRule, MessageStream};
 
     const SERVER: &str = "org.freedesktop.Notifications";
     const PATH: &str = "/org/freedesktop/Notifications";
@@ -82,7 +77,7 @@ mod platform {
     // close of that notification (an expiry, a dismiss, or a server limit of
     // notifications per app), or when the bus goes away.
     async fn notify(title: &str, body: &str) -> zbus::Result<(MessageStream, u32)> {
-        let connection = SESSION_BUS.get_or_try_init(Connection::session).await?;
+        let connection = crate::session_bus::session_bus().await?;
         // Subscribe before `Notify`, so that no signal for the new id is lost.
         let rule = MatchRule::builder()
             .msg_type(Type::Signal)
@@ -181,13 +176,16 @@ mod platform {
 // NSUserNotificationCenter through mac-notification-sys.
 #[cfg(target_os = "macos")]
 mod platform {
+    use std::ffi::CString;
     use std::sync::Once;
 
     use mac_notification_sys::{Notification, NotificationResponse};
+    use objc2::runtime::{AnyClass, AnyObject, Bool, Imp, Sel};
+    use objc2::{Encode, sel};
     use tauri::ipc::Channel;
     use tauri::{Manager, WebviewWindow};
 
-    static SET_APPLICATION: Once = Once::new();
+    static SETUP: Once = Once::new();
 
     pub async fn show(
         window: WebviewWindow,
@@ -198,7 +196,7 @@ mod platform {
         // Notifications show under the app with this bundle id, set once per
         // process. A dev build runs outside an app bundle, so it posts as
         // Terminal, as tauri-plugin-notification does.
-        SET_APPLICATION.call_once(|| {
+        SETUP.call_once(|| {
             let bundle_id = if tauri::is_dev() {
                 "com.apple.Terminal"
             } else {
@@ -207,6 +205,7 @@ mod platform {
             if let Err(error) = mac_notification_sys::set_application(bundle_id) {
                 eprintln!("Failed to set the notification app to {bundle_id}: {error}");
             }
+            present_while_frontmost();
         });
         // `send` blocks until the user clicks or dismisses the notification,
         // and the main run loop must run meanwhile (Tauri runs it). A send
@@ -235,6 +234,60 @@ mod platform {
             if let Err(error) = result {
                 eprintln!("Failed to bring the window to the front: {error}");
             }
+        }
+    }
+
+    // NSUserNotificationCenter sends a notification of the frontmost app only
+    // to Notification Center, with no banner, unless the center's delegate
+    // answers YES to `userNotificationCenter:shouldPresentNotification:`.
+    // Dez also alerts while it is frontmost (when the user is away), so it
+    // needs the banner. mac-notification-sys 0.6.15 makes its own delegate
+    // (`NotificationCenterDelegate`, objc/notify.m) at its first send, and
+    // that class has no such method. So this adds the method to the class
+    // before the first send: the class is then complete when the center gets
+    // the delegate. `class_addMethod` keeps a method that the class already
+    // has, so a later mac-notification-sys that adds one wins.
+    // https://developer.apple.com/documentation/foundation/nsusernotificationcenterdelegate/usernotificationcenter(_:shouldpresent:)
+    fn present_while_frontmost() {
+        extern "C-unwind" fn should_present(
+            _delegate: *mut AnyObject,
+            _cmd: Sel,
+            _center: *mut AnyObject,
+            _notification: *mut AnyObject,
+        ) -> Bool {
+            Bool::YES
+        }
+        type ShouldPresent =
+            extern "C-unwind" fn(*mut AnyObject, Sel, *mut AnyObject, *mut AnyObject) -> Bool;
+
+        let Some(class) = AnyClass::get(c"NotificationCenterDelegate") else {
+            eprintln!(
+                "No NotificationCenterDelegate class: banners will not show while Dez is in front"
+            );
+            return;
+        };
+        // The Objective-C type string of the method: the return type, then
+        // self, the selector, and the two arguments.
+        let (boolean, object, selector) =
+            (Bool::ENCODING, <*mut AnyObject>::ENCODING, Sel::ENCODING);
+        let types = CString::new(format!("{boolean}{object}{selector}{object}{object}"))
+            .expect("an Objective-C type string has no NUL byte");
+        // SAFETY: the function matches the selector's arguments and return
+        // type, as the type string says. The runtime calls an `Imp` with the
+        // real arguments, so its declared type does not matter.
+        let added = unsafe {
+            let implementation = std::mem::transmute::<ShouldPresent, Imp>(should_present);
+            objc2::ffi::class_addMethod(
+                std::ptr::from_ref(class).cast_mut(),
+                sel!(userNotificationCenter:shouldPresentNotification:),
+                implementation,
+                types.as_ptr(),
+            )
+        };
+        if !added.as_bool() {
+            eprintln!(
+                "The notification delegate already has shouldPresentNotification; Dez left it as is"
+            );
         }
     }
 }

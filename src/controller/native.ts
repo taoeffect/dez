@@ -105,6 +105,12 @@ export default sbp('sbp/selectors/register', {
     return invoke('show_notification', { title, body, onClick })
   },
 
+  // Milliseconds since the last user input anywhere on the computer, or null
+  // when this desktop gives no idle time (src-tauri/src/idle.rs).
+  'dez.native/userIdleMs' (): Promise<number | null> {
+    return invoke<number | null>('user_idle_ms')
+  },
+
   // Returns the chosen path, or null when the user cancels. The dialog
   // plugin adds that exact path to the fs scope, so `writeTextFile` below
   // may write only files that the user picked here.

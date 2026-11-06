@@ -1,13 +1,21 @@
 mod commands;
 mod copilot;
 mod http_bridge;
+mod idle;
 mod key_store;
 mod native_error;
 mod notification;
 mod persistence;
+#[cfg(target_os = "linux")]
+mod session_bus;
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
+    // The compositor counts the idle timeout from the start of the watch, so
+    // it starts with the app: the first reply that ends already has an idle
+    // time (see idle.rs).
+    #[cfg(target_os = "linux")]
+    idle::watch_wayland_idle();
     // The webview may call only what capabilities/default.json allows. Add a
     // permission there for each new plugin, or plugin or core command, that
     // the frontend calls. Why each extra permission is there:
@@ -56,6 +64,7 @@ pub fn run() {
             commands::is_window_fullscreen,
             commands::open_devtools,
             notification::show_notification,
+            idle::user_idle_ms,
         ]);
     // macOS brings the app to the front when it starts, and with it each
     // window that is visible at that time. The main window starts hidden
