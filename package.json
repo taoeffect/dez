@@ -7,7 +7,7 @@
     "dev": "vite",
     "build": "vue-tsc --noEmit && vite build",
     "clean:rust": "node scripts/clean-rust.js",
-    "build:linux:appimage": "npm run clean:rust && NO_STRIP=1 tauri build --bundles appimage",
+    "build:linux:appimage": "npm run clean:rust && NO_STRIP=1 node scripts/build-linux-appimage.js",
     "build:macos:dmg": "npm run clean:rust && node scripts/build-macos-icon.js && tauri build --target aarch64-apple-darwin --bundles dmg",
     "build:macos:app": "npm run clean:rust && node scripts/build-macos-icon.js && tauri build --target aarch64-apple-darwin --bundles app",
     "build:desktop": "npm run clean:rust && node scripts/build-desktop.js",

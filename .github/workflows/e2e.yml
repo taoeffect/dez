@@ -51,8 +51,13 @@ jobs:
         id: ca-roots
         uses: okTurtles/libcheloniajs/.github/actions/fix-ubuntu-ca-roots@main
 
+      # The build inlines src/assets/sounds/ding.mp3, which is in Git LFS.
+      # Without `lfs: true` the file is the LFS pointer text, and the build
+      # inlines that with no error; only the sound fails to play.
       - name: Checkout
         uses: actions/checkout@v7
+        with:
+          lfs: true
 
       - name: Setup Node
         uses: actions/setup-node@v7
@@ -85,7 +90,9 @@ jobs:
         run: cargo install tauri-driver --locked
 
       # dbus-daemon and python3-gi run the fake notification server of
-      # tests/e2e/harness/notificationServer.py.
+      # tests/e2e/harness/notificationServer.py. WebKitGTK plays the
+      # reply-done sound with GStreamer; its MP3 decoder (mpg123audiodec) is
+      # in gstreamer1.0-plugins-good.
       - name: Install Tauri Linux dependencies
         run: |
           sudo apt-get update
@@ -103,7 +110,9 @@ jobs:
             webkit2gtk-driver \
             xvfb \
             dbus-daemon \
-            python3-gi
+            python3-gi \
+            gstreamer1.0-plugins-base \
+            gstreamer1.0-plugins-good
 
       - name: Build debug app (no bundle)
         run: npm run tauri build -- --debug --no-bundle

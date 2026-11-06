@@ -39,6 +39,11 @@
       "files": {
         "Resources/Assets.car": "icons/Assets.car"
       }
+    },
+    "linux": {
+      "appimage": {
+        "bundleMediaFramework": true
+      }
     }
   }
 }

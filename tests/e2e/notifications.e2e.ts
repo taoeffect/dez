@@ -146,6 +146,27 @@ describe('Settings › Notifications', () => {
     await app?.stop()
   })
 
+  // A guard for CI: without Git LFS the checkout has the LFS pointer text in
+  // place of src/assets/sounds/ding.mp3, and Vite inlines that with no build
+  // error. Without an MP3 decoder (GStreamer's mpg123audiodec, in
+  // gst-plugins-good) the real file does not load either. Both give a media
+  // error 4 (MEDIA_ERR_SRC_NOT_SUPPORTED) here.
+  it('bundles a playable done sound of about 1 s', async () => {
+    await sbpCall(browser, 'dez.ui/playDoneSound', 50)
+    const loadState = async (): Promise<string> => browser.execute(() => {
+      const sound = Reflect.get(window, '__e2eSound') as HTMLMediaElement | undefined
+      if (!sound) return 'no play() call'
+      if (sound.error) return `media error ${sound.error.code}`
+      return sound.readyState >= HTMLMediaElement.HAVE_METADATA ? 'metadata loaded' : 'loading'
+    })
+    await waitForValue(browser, 'done sound load state', loadState, 'metadata loaded')
+
+    const duration = await browser.execute(() => (Reflect.get(window, '__e2eSound') as HTMLMediaElement).duration)
+    expect(duration).toBeGreaterThan(0.9)
+    expect(duration).toBeLessThan(1.2)
+    await waitForSoundEnd(browser)
+  })
+
   it('disables the volume slider while the sound is off', async () => {
     await openNotifications()
     expect(await sectionState()).toEqual({
