@@ -223,6 +223,25 @@ describe('dez.controller/alertReplyEnded', () => {
     expect(soundPlays).toEqual([50])
   })
 
+  // Both reads are native calls; with no alert on, nothing uses them.
+  it('reads neither the window focus nor the idle time while both alerts are off', async () => {
+    sbp('dez.model/settings/setDoneSound', false)
+    sbp('dez.model/settings/setDoneNotification', false)
+    let nativeReads = 0
+    appWindow.isFocused = async () => {
+      nativeReads++
+      return true
+    }
+    userIdleMs = async () => {
+      nativeReads++
+      return 0
+    }
+
+    await alertReplyEnded(activeTabId())
+
+    expect(nativeReads).toBe(0)
+  })
+
   it('shows no notification for a tab that closed before the reply end', async () => {
     const tabId = backgroundTabId()
     sbp('dez.model/tabs/close', tabId)

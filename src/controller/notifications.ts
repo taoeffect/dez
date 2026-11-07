@@ -70,10 +70,13 @@ export default sbp('sbp/selectors/register', {
   async 'dez.controller/alertReplyEnded' (tabId: string, status: AlertedStatus): Promise<void> {
     // Read now: the user can switch tabs while the focus and idle reads run.
     const inActiveTab = tabId === sbp('dez.model/tabs/activeId')
+    const settings = sbp('dez.model/settings/snapshot') as SettingsSnapshot
+    // The focus and idle reads are native calls (D-Bus or X11 on Linux):
+    // skip them when no alert is on.
+    if (!settings.doneSound && !settings.doneNotification) return
     // The idle read comes last: it runs only when the other checks would
     // skip the alert.
     if (inActiveTab && await windowIsFocused() && !await userIsAway()) return
-    const settings = sbp('dez.model/settings/snapshot') as SettingsSnapshot
     if (settings.doneSound) {
       try {
         sbp('dez.ui/playDoneSound', settings.doneSoundVolume)
