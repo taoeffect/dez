@@ -346,12 +346,13 @@ export function cellShape(doc: Text, cell: TableCell): CellShape {
   }
 }
 
-/** The inline style of a cell: its insets, its hanging indent, and its
- *  `width` (see `shortColumnWidths`), if any. */
-function cellStyle(shape: CellShape, width: string | null): string {
+/** The inline style of a cell: its insets, its hanging indent, and the
+ *  widths of its column (see `columnWidths`), if any. */
+function cellStyle(shape: CellShape, widths: ColumnWidths | null): string {
   let style = `padding-left: ${CELL_INSET_CH}ch; padding-right: ${CELL_INSET_CH}ch`
   if (shape.opened) style += `; text-indent: -${PIPE_SLOT_CH}ch`
-  if (width !== null) style += `; width: ${width}`
+  if (widths?.width) style += `; width: ${widths.width}`
+  if (widths) style += `; min-width: ${widths.minWidth}`
   return style
 }
 
@@ -373,7 +374,7 @@ function cellMark(first: boolean, last: boolean, alignment: TableAlignment, styl
 }
 
 /** A column whose widest header / body cell is at most this many ch wide is
- *  a short column (see `shortColumnWidths`). */
+ *  a short column (see `columnWidths`). */
 const SHORT_COLUMN_CH = 20
 
 /** Chars that the editor's monospace fonts draw 1ch wide: printable ASCII,
@@ -387,38 +388,132 @@ const ONE_CH_TEXT = /^[\x20-\x7E\u00A0-\u024F\u0370-\u04FF\u2010-\u2027]*$/
  *  (measured with Liberation Mono). */
 const OTHER_CHAR_CH = 2.5
 
-/** CSS widths for the cells of the short columns, one per column; `null`
- *  for a long column. The browser's automatic table layout shares the width
- *  in proportion to each column's longest line, and cell text may break
- *  anywhere (so that a table is never wider than the editor), so one long
- *  text column would squeeze the short columns until their words wrap. A
- *  CSS width on the cells of a short column makes it a fixed column, which
- *  the layout fills first and shrinks last; the long columns take the rest.
- *  Every row has the widths because CM renders only the lines near the
- *  viewport, and the header may not be one of them. Long columns still size
- *  from the rendered rows. A fixed column that is narrower than its text
- *  wraps that text, so a cell's width is an upper bound (`textWidthCh`).
- *  Do not give the wrapper a width that depends on the text: a wrapper whose
- *  attributes change is a new DOM element, which moves the line that the
- *  user is typing in (and can break an IME composition there). */
-function shortColumnWidths(tabSize: number, table: MarkdownTable, shapes: CellShape[][]): (string | null)[] {
-  const textWidths = table.alignments.map(() => 0)
+export interface ColumnTextWidths {
+  /** The widest text of the column's cells, on one line. */
+  line: number
+  /** The widest word of the column: the text between two spaces. */
+  word: number
+}
+
+/** Upper bounds in ch (`textWidthCh`) for the text of each column of a
+ *  table, from its header and body cells; the delimiter row draws no text.
+ *  The padding takes no room, so it does not count (`visibleText`). */
+export function columnTextWidths(tabSize: number, table: MarkdownTable, shapes: CellShape[][]): ColumnTextWidths[] {
+  const widths = table.alignments.map(() => ({ line: 0, word: 0 }))
   shapes.forEach((rowShapes, rowIndex) => {
     if (table.rows[rowIndex].kind === 'delimiter') return
     rowShapes.forEach(({ visibleText }, index) => {
-      // `textWidthCh` gives each UTF-16 code unit at least 1ch, so a cell
-      // with more code units than a short column holds is long as it is.
-      const width = visibleText.length > SHORT_COLUMN_CH ? visibleText.length : textWidthCh(visibleText, tabSize)
-      textWidths[index] = Math.max(textWidths[index], width)
+      const column = widths[index]
+      column.line = Math.max(column.line, textWidthCh(visibleText, tabSize))
+      for (const word of visibleText.split(' ')) column.word = Math.max(column.word, textWidthCh(word, tabSize))
     })
   })
-  // `box-sizing` is `border-box` app-wide: add the insets (the pipes hang
-  // into them), the 1px right border of `.dez-table-cell`, and the first
-  // column's 1px left border.
-  return textWidths.map((width, index) => width <= SHORT_COLUMN_CH
-    ? `calc(${width + 2 * CELL_INSET_CH}ch + ${index === 0 ? 2 : 1}px)`
-    : null)
+  return widths
 }
+
+/** CSS widths for the cells of one column. */
+interface ColumnWidths {
+  /** The `width` of a short column; `null` for a long column. */
+  width: string | null
+  /** The `min-width`: room for the column's longest word, or less when the
+   *  longest words of all columns do not fit the editor side by side. */
+  minWidth: string
+}
+
+/** The widths of each column of a table. Every row has them because CM
+ *  renders only the lines near the viewport, and the header may not be one
+ *  of them. The browser's automatic table layout makes each column at least
+ *  as wide as its cells' `min-width`, and shares the rest of the width in
+ *  proportion to each column's longest line.
+ *  - `min-width`, so that cell text wraps only between words, as in Typora:
+ *    the column's longest word. Cell text inherits CM's
+ *    `overflow-wrap: anywhere`, so without it a column has no floor, and one
+ *    long text column squeezes the others until their words break. When the
+ *    longest words of all columns do not fit the editor side by side, the
+ *    floors are cut to a common level, so that the table is never wider
+ *    than the editor, and the words that do not fit break: the columns with
+ *    the shorter words keep them whole, and the others share the rest of the
+ *    width equally. The level is `max(...)` below: for k = 0 … n-1, the
+ *    width left after the k smallest floors, shared by the other n-k
+ *    columns; the largest of those is the level at which the floors fill
+ *    the width exactly. It is a CSS expression of `TABLE_WIDTH_VAR`, the
+ *    width that the tables fill (`tableWidthTracker`), so it follows the
+ *    editor width with no new decorations. Before the first measure the
+ *    variable is not set, and the cells have no floors. A floor of the
+ *    word's exact width holds the word: WebKit's line builder adds
+ *    `LayoutUnit::epsilon()` to a line's width, as layout floors the widths
+ *    that it gets.
+ *  - `width`, for a short column: the width of its text, so that it does not
+ *    wrap. A CSS width makes it a fixed column, which the layout fills first
+ *    and shrinks last; the long columns take the rest. A fixed column that
+ *    is narrower than its text wraps that text, so the width is an upper
+ *    bound (`textWidthCh`).
+ *  Do not give the wrapper a width that depends on the text: a wrapper whose
+ *  attributes change is a new DOM element, which moves the line that the
+ *  user is typing in (and can break an IME composition there).
+ *  https://github.com/WebKit/WebKit/blob/main/Source/WebCore/layout/formattingContexts/inline/InlineLineBuilder.cpp */
+function columnWidths(tabSize: number, table: MarkdownTable, shapes: CellShape[][]): ColumnWidths[] {
+  const texts = columnTextWidths(tabSize, table, shapes)
+  const floorsCh = texts.map(({ word }) => word + 2 * CELL_INSET_CH)
+  const levels: string[] = []
+  let takenCh = 0
+  // The borders of a row: each cell's right border and the first cell's
+  // left border.
+  const bordersPx = texts.length + 1
+  for (const [index, floorCh] of [...floorsCh].sort((a, b) => a - b).entries()) {
+    levels.push(`(var(${TABLE_WIDTH_VAR}) - ${bordersPx}px - ${takenCh}ch) / ${texts.length - index}`)
+    takenCh += floorCh
+  }
+  const level = `max(${levels.join(', ')})`
+  return texts.map(({ line }, index) => {
+    // `box-sizing` is `border-box` app-wide: the widths include the insets
+    // (the pipes hang into them) and the cell's borders.
+    const borderPx = index === 0 ? 2 : 1
+    return {
+      width: line <= SHORT_COLUMN_CH ? `calc(${line + 2 * CELL_INSET_CH}ch + ${borderPx}px)` : null,
+      minWidth: `calc(min(${floorsCh[index]}ch, ${level}) + ${borderPx}px)`,
+    }
+  })
+}
+
+/** The CSS variable on `.cm-scroller` that holds the width of the content
+ *  box of `.cm-content`, which the tables fill (see `columnWidths`). */
+const TABLE_WIDTH_VAR = '--dez-table-width'
+
+/** Keeps `TABLE_WIDTH_VAR` at the width that the tables fill. The column
+ *  floors (`columnWidths`) need that width in CSS. `100%` does not work:
+ *  a percentage `min-width` on a table cell has no effect in the automatic
+ *  table layout. A query container on `.cm-scroller` gives the width as
+ *  `100cqw` with no script, but in WebKitGTK the container moves the view
+ *  up when a reply ends and the editor rebuilds its state
+ *  (`tests/e2e/stream-follow.e2e.ts`).
+ *  The width is read and written in CM's measure cycle, after each change
+ *  of the editor geometry. A new width asks for one more measure: CM then
+ *  reads the line heights again in the same frame, after the tables took
+ *  the new width, before it keeps the top line in place. The variable stays
+ *  on the scroller when the editor gets a new state, so the tables of the
+ *  new state lay out at once with the right width. */
+const tableWidthTracker = ViewPlugin.define((view) => {
+  const measure = {
+    read: (): string => {
+      const content = view.contentDOM
+      const style = getComputedStyle(content)
+      const width = content.getBoundingClientRect().width / view.scaleX - parseFloat(style.paddingLeft) - parseFloat(style.paddingRight)
+      return `${width}px`
+    },
+    write: (width: string): void => {
+      if (view.scrollDOM.style.getPropertyValue(TABLE_WIDTH_VAR) === width) return
+      view.scrollDOM.style.setProperty(TABLE_WIDTH_VAR, width)
+      view.requestMeasure(measure)
+    },
+  }
+  view.requestMeasure(measure)
+  return {
+    update: (update) => {
+      if (update.geometryChanged) view.requestMeasure(measure)
+    },
+  }
+})
 
 /** An upper bound for the width of `text` in ch, in the editor font. The
  *  font is monospace, but some chars are wider than 1ch, and a tab goes to
@@ -443,7 +538,7 @@ function buildTableDecorations(state: EditorState): TableDecorations {
   for (const table of findMarkdownTables(doc)) {
     wrappers.add(table.from, table.to, TABLE_WRAPPER)
     const shapes = table.rows.map((row) => row.cells.map((cell) => cellShape(doc, cell)))
-    const widths = shortColumnWidths(state.tabSize, table, shapes)
+    const widths = columnWidths(state.tabSize, table, shapes)
     table.rows.forEach((row, rowIndex) => {
       // RangeSetBuilder needs sorted input. A line decoration sorts before
       // a mark that starts at the same position.
@@ -451,11 +546,11 @@ function buildTableDecorations(state: EditorState): TableDecorations {
       row.cells.forEach((cell, index) => {
         const shape = shapes[rowIndex][index]
         // The delimiter row's smaller font would shrink a `ch` width.
-        const width = row.kind === 'delimiter' ? null : widths[index]
+        const columnWidth = row.kind === 'delimiter' ? null : widths[index]
         // A short body row (fewer cells than columns) ends inside the table,
         // so only a cell in the last column takes the table's right corners.
         const last = index === table.alignments.length - 1
-        cells.add(cell.from, cell.to, cellMark(index === 0, last, table.alignments[index], cellStyle(shape, width)))
+        cells.add(cell.from, cell.to, cellMark(index === 0, last, table.alignments[index], cellStyle(shape, columnWidth)))
         const marks: [number, number, Decoration][] = cell.pipes.map((pipe) => [pipe, pipe + 1, pipe === shape.closingPipe ? CLOSING_PIPE_MARK : PIPE_MARK])
         // The delimiter row's CSS gives all its text but the pipes no room.
         if (row.kind !== 'delimiter') for (const { from, to } of shape.padding) marks.push([from, to, PAD_MARK])
@@ -487,7 +582,8 @@ function buildTableDecorations(state: EditorState): TableDecorations {
  *  edit that breaks the syntax shows the raw source, and the table returns
  *  as soon as the source is valid again. The table CSS is in `dezTheme`
  *  (`cmEditor.ts`), except the horizontal cell geometry, which is inline
- *  (`cellStyle`, `CLOSING_PIPE_MARK`). */
+ *  (`cellStyle`, `CLOSING_PIPE_MARK`), and the width that the column floors
+ *  use (`tableWidthTracker`). */
 const tableDecorationsField = StateField.define<TableDecorations>({
   create: (state) => buildTableDecorations(state),
   update: (value, tr) => tr.docChanged ? buildTableDecorations(tr.state) : value,
@@ -741,9 +837,9 @@ const tableMarginClicks = ViewPlugin.define((view) => {
 })
 
 /** Tables for the thread editor (`buildState()` in `ThreadEditor.vue`). It
- *  also replaces the selection layer of `drawSelection()`, forwards clicks
- *  in the margin beside table rows, and moves a click in a cell's padding
- *  to the cell's text. */
+ *  also tracks the width that the tables fill, replaces the selection layer
+ *  of `drawSelection()`, forwards clicks in the margin beside table rows,
+ *  and moves a click in a cell's padding to the cell's text. */
 export function markdownTables(): Extension {
-  return [tableDecorationsField, snapPointerCarets, tableAwareSelectionLayer, hideDefaultSelectionLayer, tableMarginClicks]
+  return [tableDecorationsField, tableWidthTracker, snapPointerCarets, tableAwareSelectionLayer, hideDefaultSelectionLayer, tableMarginClicks]
 }

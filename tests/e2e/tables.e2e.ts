@@ -106,6 +106,13 @@ const USER_TABLE_TEXT = ['User table fixture.', '', ...[
   ]),
 ]].join('\n')
 
+// Three columns whose longest words do not fit the editor side by side
+// (about 91ch wide at the e2e window size): a short word, a 30-char word,
+// and a 150-char word. Only the 150-char word may break.
+const MID_WORD = 'm'.repeat(30)
+const LONG_WORD = 'l'.repeat(150)
+const LONG_WORDS_TEXT = ['Long words fixture.', '', '| Id | Mid | Long |', '|----|-----|------|', `| abcdef | ${MID_WORD} | ${LONG_WORD} |`].join('\n')
+
 interface Point {
   x: number
   y: number
@@ -284,6 +291,38 @@ describe('markdown tables', () => {
         )
       )
     })
+  }
+
+  // The words of the header and body cells of each rendered table whose
+  // first and last chars are on different visual lines. A word ends at a
+  // space or after a hyphen, the break chances of normal line breaking.
+  async function brokenWords (): Promise<string[]> {
+    return browser.execute(() => {
+      const content = document.querySelector('.cm-content')
+      if (!content) throw new Error('brokenWords: .cm-content not found')
+      const view = Reflect.get(Reflect.get(content, 'cmTile'), 'root').view as EditorView
+      const charTop = (pos: number): number => {
+        const rect = view.coordsForChar(pos)
+        if (!rect) throw new Error(`brokenWords: no char rect at ${pos}`)
+        return rect.top
+      }
+      const broken: string[] = []
+      const cells = document.querySelectorAll('.cm-content :is(.dez-table-row--header, .dez-table-row--body) > .dez-table-cell')
+      for (const cell of Array.from(cells)) {
+        const from = view.posAtDOM(cell, 0)
+        for (const word of (cell.textContent ?? '').matchAll(/[^\s-]*-|[^\s-]+/g)) {
+          if (word[0] === '|' || word[0].length < 2) continue
+          const first = from + word.index
+          if (Math.abs(charTop(first + word[0].length - 1) - charTop(first)) > 1) broken.push(word[0])
+        }
+      }
+      return broken
+    })
+  }
+
+  // The size of the page, which the editor fills.
+  async function pageSize (): Promise<string> {
+    return browser.execute(() => `${window.innerWidth}x${window.innerHeight}`)
   }
 
   // Each column's cells have the same left and right edge in every row.
@@ -687,6 +726,80 @@ describe('markdown tables', () => {
     expect(rowBottom - textBottom, 'space under the lowest header text').toBeLessThan(metrics.lineHeight / 2)
     // One line at line height 1, plus the 1px bottom border.
     expect(metrics.delimiterHeight, 'delimiter row height').toBeLessThanOrEqual(metrics.delimiterFontSize + 1.5)
+  })
+
+  // As in Typora, cell text wraps only between words, so each column is at
+  // least as wide as its longest word: the header texts of the user's table
+  // fit on one line, and `(`compaction.supersedeReads`,` in the first column
+  // does not break.
+  it('gives each column of the user\'s table the width of its longest word', async () => {
+    await openFixture(USER_TABLE_TEXT)
+    const [[header]] = await cellTextLayout()
+    const lineHeight = await browser.execute(() => {
+      const headerCell = document.querySelector('.cm-content .dez-table-row--header > .dez-table-cell')
+      if (!headerCell) throw new Error('lineHeight: no rendered table')
+      return parseFloat(getComputedStyle(headerCell).lineHeight)
+    })
+    // A text on one line is less than one line height from its top to its
+    // bottom; a text on two lines is more.
+    for (const [column, cell] of header.entries()) {
+      expect(cell.textBottom - cell.textTop, `height of header text ${column}`).toBeLessThan(lineHeight)
+    }
+    expect(await brokenWords()).toEqual([])
+  })
+
+  // A word breaks only when the longest words of all columns do not fit
+  // the editor side by side. Then the columns with the longest words share
+  // the room that the others leave, each at least an equal share, and the
+  // table still fits the editor. The room follows the editor width.
+  it('breaks only the words that cannot fit and keeps the table inside the editor', async () => {
+    await openFixture(LONG_WORDS_TEXT)
+    const layout = () => browser.execute(() => {
+      const content = document.querySelector('.cm-content')
+      const scroller = document.querySelector('.cm-scroller')
+      const table = document.querySelector('.cm-content .dez-table')
+      if (!content || !scroller || !table) throw new Error('layout: no rendered table')
+      const contentBox = content.getBoundingClientRect()
+      return {
+        contentWidth: contentBox.width,
+        tableFits: table.getBoundingClientRect().right <= contentBox.right + 0.5,
+        scrollsSideways: scroller.scrollWidth > scroller.clientWidth,
+        headerWidths: Array.from(table.querySelectorAll('.dez-table-row--header > .dez-table-cell'))
+          .map((cell) => cell.getBoundingClientRect().width),
+      }
+    })
+    const expectFits = async (label: string): Promise<void> => {
+      const { tableFits, scrollsSideways } = await layout()
+      expect(tableFits, `table inside ${label}`).toBe(true)
+      expect(scrollsSideways, `sideways scroll of ${label}`).toBe(false)
+    }
+    await expectFits('the editor')
+    expect(await brokenWords(), 'broken words in the editor').toEqual([LONG_WORD])
+
+    // 200 px less window gives an editor of about 650 px: less than the
+    // floors of Id and Mid plus Mid's floor once more (11 + 35 + 35 = 81ch,
+    // about 733 px). So the level is below Mid's floor, and Mid and Long
+    // share the room after Id equally.
+    // WebDriver's window rect sets back the exact size that it read. The
+    // window API's sizes do not, under the kwin recipe's client-side
+    // decorations, and the later tests need the editor width they had.
+    const page = await pageSize()
+    const rect = await browser.getWindowRect()
+    const { contentWidth } = await layout()
+    try {
+      await browser.setWindowRect(null, null, rect.width - 200, rect.height)
+      await waitForValue(browser, 'table inside the narrower editor', async () => {
+        const narrower = await layout()
+        return narrower.contentWidth < contentWidth - 100 && narrower.tableFits
+      }, true)
+      await expectFits('the narrower editor')
+      expect(await brokenWords(), 'broken words in the narrower editor').toEqual([MID_WORD, LONG_WORD])
+      const [, mid, long] = (await layout()).headerWidths
+      expect(mid, 'width of Mid next to Long').toBeCloseTo(long, 0)
+    } finally {
+      await browser.setWindowRect(null, null, rect.width, rect.height)
+      await waitForValue(browser, 'page size after the window size is back', pageSize, page)
+    }
   })
 
   // A caret in the padding would show at the text edge, but typing there

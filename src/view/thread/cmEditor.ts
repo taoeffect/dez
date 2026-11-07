@@ -1621,8 +1621,8 @@ export const dezTheme = EditorView.theme({
   // as part of the line. Cells draw the grid: right + bottom borders, plus
   // top on the header row and left on the first cell of each row; the
   // corner cells round the table's corners like the thinking panel. The
-  // horizontal cell padding and the hanging indent are inline styles from
-  // `tables.ts`, as they depend on each cell's source.
+  // horizontal cell padding, the hanging indent, and the column widths are
+  // inline styles from `tables.ts`, as they depend on each cell's source.
   '.dez-table': {
     display: 'table',
     borderCollapse: 'separate',

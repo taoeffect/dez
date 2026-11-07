@@ -1,7 +1,7 @@
 import { EditorSelection, EditorState, Text } from '@codemirror/state'
 import { describe, expect, it } from 'vitest'
 import { PILL_NL, SECTION_SEP, encodePrompt } from '../thread/cmEditor'
-import { cellShape, findMarkdownTables, markdownTables } from './tables'
+import { cellShape, columnTextWidths, findMarkdownTables, markdownTables } from './tables'
 
 function scan(doc: string) {
   return findMarkdownTables(Text.of(doc.split('\n')))
@@ -264,6 +264,29 @@ describe('cellShape', () => {
     expect(lastRowShapes(lines('| a |', '|---|', '| a  \\| |'))[0]).toEqual(
       { opened: true, closingPipe: 8, text: 'a  \\|', padding: [[1, 2], [7, 8]], visibleText: 'a  \\|' },
     )
+  })
+})
+
+describe('columnTextWidths', () => {
+  /** The text widths of each column of the first table, with tabs 4ch. */
+  function widths(doc: string) {
+    const text = Text.of(doc.split('\n'))
+    const [table] = findMarkdownTables(text)
+    return columnTextWidths(4, table, table.rows.map((row) => row.cells.map((cell) => cellShape(text, cell))))
+  }
+
+  it('takes the widest text and the widest word of the header and body cells, without padding or dashes', () => {
+    expect(widths(lines('|   Name     |  Note |', '|:-----------:|---------------|', '| Ann | a long note |', '| Bob | ok |'))).toEqual([
+      { line: 4, word: 4 },
+      { line: 11, word: 4 },
+    ])
+  })
+
+  it('gives tabs and chars wider than 1ch an upper bound', () => {
+    expect(widths(lines(HEADER, DELIMITER, '| \tx | 東京 y |'))).toEqual([
+      { line: 5, word: 5 },
+      { line: 7, word: 5 },
+    ])
   })
 })
 
