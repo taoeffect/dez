@@ -91,8 +91,8 @@ mod platform {
         let root = connection.setup().roots.get(screen)?.root;
         let reply = connection
             .screensaver_query_info(root)
-            .map_err(|error| error.to_string())
-            .and_then(|cookie| cookie.reply().map_err(|error| error.to_string()));
+            .map_err(x11rb::errors::ReplyError::from)
+            .and_then(|cookie| cookie.reply());
         match reply {
             Ok(info) => Some(info.ms_since_user_input.into()),
             Err(error) => {
@@ -137,7 +137,8 @@ mod wayland {
     // A read while the seat is not idle gives 0, so this is the resolution
     // of the idle time. Each pause in the input longer than this costs one
     // `idled` and one `resumed` event.
-    const IDLE_TIMEOUT: Duration = Duration::from_secs(1);
+    const IDLE_TIMEOUT_MS: u32 = 1_000;
+    const IDLE_TIMEOUT: Duration = Duration::from_millis(IDLE_TIMEOUT_MS as u64);
 
     #[derive(Clone, Copy)]
     pub(super) enum Seat {
@@ -203,13 +204,12 @@ mod wayland {
         ) else {
             return Ok(());
         };
-        let timeout = u32::try_from(IDLE_TIMEOUT.as_millis())?;
         // Version 2 counts only input and ignores idle inhibitors, such as a
         // playing video, which would hide that the user is away.
         if notifier.version() >= 2 {
-            notifier.get_input_idle_notification(timeout, &seat_proxy, &handle, ());
+            notifier.get_input_idle_notification(IDLE_TIMEOUT_MS, &seat_proxy, &handle, ());
         } else {
-            notifier.get_idle_notification(timeout, &seat_proxy, &handle, ());
+            notifier.get_idle_notification(IDLE_TIMEOUT_MS, &seat_proxy, &handle, ());
         }
         *seat() = Seat::Active;
         loop {
