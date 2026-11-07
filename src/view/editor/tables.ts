@@ -252,7 +252,6 @@ const ROW_LINES: Record<TableRowKind, [Decoration, Decoration]> = {
 const PIPE_MARK = Decoration.mark({ class: 'dez-table-pipe' })
 const PAD_MARK = Decoration.mark({ class: 'dez-table-pad' })
 const TABLE_WRAPPER = BlockWrapper.create({ tagName: 'div', attributes: { class: 'dez-table' } })
-const cellMarks = new Map<string, Decoration>()
 
 function rowLines(kind: TableRowKind): [Decoration, Decoration] {
   const cls = `dez-table-row dez-table-row--${kind}`
@@ -358,17 +357,21 @@ function cellStyle(shape: CellShape, widths: ColumnWidths | null): string {
 
 /** The first cell of a row draws the table's left border. The first and
  *  last cells round the table's corners in the header and the last row.
- *  Left alignment is the default, so only center / right need a class. */
-function cellMark(first: boolean, last: boolean, alignment: TableAlignment, style: string): Decoration {
+ *  Left alignment is the default, so only center / right need a class.
+ *  `marks` lets the cells of one build share their marks. It must not
+ *  outlive the build: the style holds the column floors, which change
+ *  as a column's longest word grows. CM compares marks with `eq`, so new
+ *  marks with the same class and style change no DOM. */
+function cellMark(marks: Map<string, Decoration>, first: boolean, last: boolean, alignment: TableAlignment, style: string): Decoration {
   const key = `${first}:${last}:${alignment}:${style}`
-  let mark = cellMarks.get(key)
+  let mark = marks.get(key)
   if (!mark) {
     let cls = 'dez-table-cell'
     if (first) cls += ' dez-table-cell--first'
     if (last) cls += ' dez-table-cell--last'
     if (alignment === 'center' || alignment === 'right') cls += ` dez-table-cell--${alignment}`
     mark = Decoration.mark({ class: cls, attributes: { style } })
-    cellMarks.set(key, mark)
+    marks.set(key, mark)
   }
   return mark
 }
@@ -534,6 +537,7 @@ function buildTableDecorations(state: EditorState): TableDecorations {
   const cells = new RangeSetBuilder<Decoration>()
   const rows = new RangeSetBuilder<Decoration>()
   const wrappers = new RangeSetBuilder<BlockWrapper>()
+  const cellMarks = new Map<string, Decoration>()
   const caretZones: CaretZone[] = []
   for (const table of findMarkdownTables(doc)) {
     wrappers.add(table.from, table.to, TABLE_WRAPPER)
@@ -550,7 +554,7 @@ function buildTableDecorations(state: EditorState): TableDecorations {
         // A short body row (fewer cells than columns) ends inside the table,
         // so only a cell in the last column takes the table's right corners.
         const last = index === table.alignments.length - 1
-        cells.add(cell.from, cell.to, cellMark(index === 0, last, table.alignments[index], cellStyle(shape, columnWidth)))
+        cells.add(cell.from, cell.to, cellMark(cellMarks, index === 0, last, table.alignments[index], cellStyle(shape, columnWidth)))
         const marks: [number, number, Decoration][] = cell.pipes.map((pipe) => [pipe, pipe + 1, pipe === shape.closingPipe ? CLOSING_PIPE_MARK : PIPE_MARK])
         // The delimiter row's CSS gives all its text but the pipes no room.
         if (row.kind !== 'delimiter') for (const { from, to } of shape.padding) marks.push([from, to, PAD_MARK])
