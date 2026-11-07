@@ -1,12 +1,11 @@
-import fs from 'node:fs'
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from 'vitest'
 import { longDuration, shortDuration } from '../../src/view/thread/pillDuration'
 import { consoleErrors, resetConsoleErrors, screenshotOnFailure, waitForValue } from './harness/dom'
-import { conversationFilePath, makeConversation, seedConversation } from './harness/fixtures'
+import { makeConversation, seedConversation } from './harness/fixtures'
 import { startMockProviderApp, type MockProviderApp } from './harness/mockProviderApp'
 import { replyText, sendChatReply, type MockProvider } from './harness/mockServer'
 import type { E2EBrowser } from './harness/session'
-import { activeTabStreaming, sbpCall, submit, threadSections, waitForThread } from './harness/thread'
+import { activeTabStreaming, rolePillHeights, savedPillLines, sbpCall, submit, threadSections, toggleRole, waitForThread } from './harness/thread'
 
 // The reply time at the end of agent role pills, through the real app
 // against a mock server in this process: no time while a reply streams, the
@@ -58,41 +57,14 @@ describe('reply duration', () => {
     )
   }
 
-  // The height of every role pill of the active editor.
-  async function pillHeights (): Promise<number[]> {
-    return browser.execute(() =>
-      Array.from(document.querySelectorAll('.cm-content .dez-role-separator__label')).map((pill) => pill.getBoundingClientRect().height)
-    )
-  }
-
   async function activeTab (): Promise<{ conversationId: string, sections: Array<{ durationMs?: number }> }> {
     return await sbpCall(browser, 'dez.model/tab', await sbpCall(browser, 'dez.model/tabs/activeId')) as { conversationId: string, sections: Array<{ durationMs?: number }> }
-  }
-
-  // The marker lines of the conversation file, or null while it does not
-  // exist.
-  async function savedPillLines (conversationId: string): Promise<string[] | null> {
-    try {
-      const content = await fs.promises.readFile(conversationFilePath(setup.app.home, conversationId), 'utf8')
-      return content.split('\n').filter((line) => line.startsWith('<dez:pill'))
-    } catch {
-      return null
-    }
-  }
-
-  // A mousedown on a pill part toggles the role of the section after it.
-  async function toggleRole (index: number, part: string): Promise<void> {
-    await browser.execute((sectionIndex: number, selector: string) => {
-      const target = document.querySelector(`.dez-role-separator[data-section-index="${sectionIndex}"] ${selector}`)
-      if (!target) throw new Error(`toggleRole: no ${selector} for section ${sectionIndex}`)
-      target.dispatchEvent(new MouseEvent('mousedown', { bubbles: true, cancelable: true, button: 0 }))
-    }, index, part)
   }
 
   // Every pill is as tall as the first one, so a separator does not move
   // when a time appears on its pill.
   async function expectEqualPillHeights (count: number): Promise<void> {
-    const [first, ...rest] = await pillHeights()
+    const [first, ...rest] = await rolePillHeights(browser)
     expect(rest).toHaveLength(count - 1)
     for (const height of rest) expect(height).toBeCloseTo(first, 1)
   }
@@ -146,7 +118,7 @@ describe('reply duration', () => {
       { index: 2, role: 'user', time: null },
     ])
     await expectEqualPillHeights(2)
-    await waitForValue(browser, 'saved pills', () => savedPillLines(tab.conversationId), [
+    await waitForValue(browser, 'saved pills', () => savedPillLines(setup.app.home, tab.conversationId), [
       '<dez:pill type="user"/>',
       `<dez:pill type="agent" model="${MODEL_KEY}" duration-ms="${durationMs}"/>`,
       '<dez:pill type="user"/>',
@@ -185,16 +157,16 @@ describe('reply duration', () => {
     // A mousedown on the time toggles the role, as one anywhere on the pill
     // does. As a user section it keeps its time in memory but shows none,
     // and the file drops it.
-    await toggleRole(3, '.dez-role-separator__duration')
+    await toggleRole(browser, 3, '.dez-role-separator__duration')
     await waitForValue(browser, 'pill as user', async () => (await pills())[2], { index: 3, role: 'user', time: null })
-    await waitForValue(browser, 'saved pill as user', async () => (await savedPillLines('timed'))?.[3] ?? null, '<dez:pill type="user"/>')
+    await waitForValue(browser, 'saved pill as user', async () => (await savedPillLines(setup.app.home, 'timed'))?.[3] ?? null, '<dez:pill type="user"/>')
 
-    await toggleRole(3, '.dez-role-separator__label')
+    await toggleRole(browser, 3)
     await waitForValue(browser, 'pill as agent', async () => (await pills())[2], { index: 3, role: 'agent', time: expectedTime(4213) })
     await waitForValue(
       browser,
       'saved pill as agent',
-      async () => (await savedPillLines('timed'))?.[3] ?? null,
+      async () => (await savedPillLines(setup.app.home, 'timed'))?.[3] ?? null,
       `<dez:pill type="agent" model="${MODEL_KEY}" duration-ms="4213"/>`
     )
   })

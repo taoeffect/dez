@@ -1,11 +1,10 @@
-import fs from 'node:fs'
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from 'vitest'
 import { startApp, type RunningApp } from './harness/app'
 import { click, consoleErrors, openHistoryPanel, resetConsoleErrors, screenshotOnFailure, waitFor, waitForValue } from './harness/dom'
-import { conversationFilePath, makeConversation, seedConversation, seedRawAppState } from './harness/fixtures'
+import { makeConversation, seedConversation, seedRawAppState } from './harness/fixtures'
 import { replyText, sendChatReply, startChatMock, type MockServer } from './harness/mockServer'
 import { createSession, destroySession, type E2EBrowser } from './harness/session'
-import { activeTabStreaming, pickModel, sbpCall, submit, threadSections, waitForThread } from './harness/thread'
+import { activeTabStreaming, maskPillDuration, pickModel, rolePillHeights, savedPillLines, sbpCall, submit, threadSections, toggleRole, waitForThread } from './harness/thread'
 
 // The model on agent role pills and the model names in history rows,
 // driven through the real app against a mock OpenAI-compatible server in this
@@ -124,34 +123,12 @@ describe('model names', () => {
     )
   }
 
-  // The height of every role pill of the active editor.
-  async function pillHeights (): Promise<number[]> {
-    return browser.execute(() =>
-      Array.from(document.querySelectorAll('.cm-content .dez-role-separator__label')).map((pill) => pill.getBoundingClientRect().height)
-    )
-  }
-
   // The marker line of each section in the active tab's conversation file,
   // or null while the file does not exist. The reply time changes from run
   // to run, so its digits read as `#`.
-  async function savedPillLines (): Promise<string[] | null> {
+  async function activeTabPillLines (): Promise<string[] | null> {
     const tab = await sbpCall(browser, 'dez.model/tab', await sbpCall(browser, 'dez.model/tabs/activeId')) as { conversationId: string }
-    try {
-      const content = await fs.promises.readFile(conversationFilePath(app.home, tab.conversationId), 'utf8')
-      return content.split('\n').filter((line) => line.startsWith('<dez:pill')).map((line) => line.replace(/ duration-ms="\d+"/, ' duration-ms="#"'))
-    } catch {
-      return null
-    }
-  }
-
-  // A mousedown on `part` of a role pill toggles the role of the section
-  // after it.
-  async function toggleRole (index: number, part = '.dez-role-separator__label'): Promise<void> {
-    await browser.execute((sectionIndex: number, selector: string) => {
-      const target = document.querySelector(`.dez-role-separator[data-section-index="${sectionIndex}"] ${selector}`)
-      if (!target) throw new Error(`toggleRole: no ${selector} for section ${sectionIndex}`)
-      target.dispatchEvent(new MouseEvent('mousedown', { bubbles: true, cancelable: true, button: 0 }))
-    }, index, part)
+    return (await savedPillLines(app.home, tab.conversationId))?.map(maskPillDuration) ?? null
   }
 
   // The model part of the history row of each title in `titles`.
@@ -268,7 +245,7 @@ describe('model names', () => {
     // A pill with a model is as tall as one without, so a separator does
     // not move when a stream stamps a model on its pill. The long model
     // name shrinks: it wraps neither the role word nor the name.
-    const [first, ...rest] = await pillHeights()
+    const [first, ...rest] = await rolePillHeights(browser)
     expect(rest).toHaveLength(6)
     for (const height of rest) expect(height).toBeCloseTo(first, 1)
   })
@@ -303,7 +280,7 @@ describe('model names', () => {
     // The editor writes its section data back to the store on every token,
     // so this also shows that the model stamped at stream start survived the
     // stream.
-    await waitForValue(browser, 'saved pills', savedPillLines, [
+    await waitForValue(browser, 'saved pills', activeTabPillLines, [
       '<dez:pill type="user"/>',
       `<dez:pill type="agent" model="${ALPHA.key}" duration-ms="#"/>`,
       '<dez:pill type="user"/>',
@@ -317,14 +294,14 @@ describe('model names', () => {
     // drops its model. Beta Two then has no earlier model to switch from.
     // A mousedown on the model name toggles the role, as one anywhere on
     // the pill does.
-    await toggleRole(1, '.dez-role-separator__model-name')
+    await toggleRole(browser, 1, '.dez-role-separator__model-name')
     await waitForValue(browser, 'separators as user', separators, [
       { index: 1, role: 'user', chip: null },
       { index: 2, role: 'user', chip: null },
       { index: 3, role: 'agent', chip: expectedChip(BETA.key, BETA.name, PROVIDER.name) },
       { index: 4, role: 'user', chip: null },
     ])
-    await waitForValue(browser, 'saved pills as user', savedPillLines, [
+    await waitForValue(browser, 'saved pills as user', activeTabPillLines, [
       '<dez:pill type="user"/>',
       '<dez:pill type="user"/>',
       '<dez:pill type="user"/>',
@@ -333,14 +310,14 @@ describe('model names', () => {
     ])
 
     // Back to agent: the section still knows its model.
-    await toggleRole(1)
+    await toggleRole(browser, 1)
     await waitForValue(browser, 'separators as agent', separators, [
       { index: 1, role: 'agent', chip: expectedChip(ALPHA.key, ALPHA.name, PROVIDER.name) },
       { index: 2, role: 'user', chip: null },
       { index: 3, role: 'agent', chip: expectedChip(BETA.key, BETA.name, PROVIDER.name, { switchedFrom: `${ALPHA.name} (${PROVIDER.name})` }) },
       { index: 4, role: 'user', chip: null },
     ])
-    await waitForValue(browser, 'saved pills as agent', savedPillLines, [
+    await waitForValue(browser, 'saved pills as agent', activeTabPillLines, [
       '<dez:pill type="user"/>',
       `<dez:pill type="agent" model="${ALPHA.key}" duration-ms="#"/>`,
       '<dez:pill type="user"/>',

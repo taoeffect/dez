@@ -1,7 +1,9 @@
+import fs from 'node:fs'
 import type { EditorView } from '@codemirror/view'
 import { expect } from 'vitest'
 import { Key } from 'webdriverio'
 import { click, typeKeys, waitFor, waitForValue } from './dom'
+import { conversationFilePath } from './fixtures'
 import type { E2EBrowser } from './session'
 
 // Helpers that drive the thread editor and the model picker through the
@@ -99,6 +101,40 @@ export async function editorDoc (browser: E2EBrowser): Promise<string> {
     const view = Reflect.get(Reflect.get(content, 'cmTile'), 'root').view as EditorView
     return view.state.doc.toString()
   })
+}
+
+/** The height of every role pill of the active editor. */
+export async function rolePillHeights (browser: E2EBrowser): Promise<number[]> {
+  return browser.execute(() =>
+    Array.from(document.querySelectorAll('.cm-content .dez-role-separator__label')).map((pill) => pill.getBoundingClientRect().height)
+  )
+}
+
+/** A mousedown on `part` of a role pill toggles the role of the section
+ *  after it. */
+export async function toggleRole (browser: E2EBrowser, index: number, part = '.dez-role-separator__label'): Promise<void> {
+  await browser.execute((sectionIndex: number, selector: string) => {
+    const target = document.querySelector(`.dez-role-separator[data-section-index="${sectionIndex}"] ${selector}`)
+    if (!target) throw new Error(`toggleRole: no ${selector} for section ${sectionIndex}`)
+    target.dispatchEvent(new MouseEvent('mousedown', { bubbles: true, cancelable: true, button: 0 }))
+  }, index, part)
+}
+
+/** The marker lines of a conversation file, or null while it does not
+ *  exist. */
+export async function savedPillLines (home: string, conversationId: string): Promise<string[] | null> {
+  try {
+    const content = await fs.promises.readFile(conversationFilePath(home, conversationId), 'utf8')
+    return content.split('\n').filter((line) => line.startsWith('<dez:pill'))
+  } catch {
+    return null
+  }
+}
+
+/** A saved pill line with its reply time as `#`: the time changes from run
+ *  to run. */
+export function maskPillDuration (line: string): string {
+  return line.replace(/ duration-ms="\d+"/, ' duration-ms="#"')
 }
 
 /** Types `text` at the end of the active tab, then submits it with

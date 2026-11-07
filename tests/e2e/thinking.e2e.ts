@@ -8,7 +8,7 @@ import { click, closeSettings, consoleErrors, resetConsoleErrors, screenshotOnFa
 import { conversationFilePath, makeConversation, readAppState, seedConversation, seedRawAppState } from './harness/fixtures'
 import { startChatMock, startEventStream, writeChatFrame, type MockServer } from './harness/mockServer'
 import { createSession, destroySession, type E2EBrowser } from './harness/session'
-import { activeTabStreaming, pickModel, sbpCall, submit, threadSections, waitForThread } from './harness/thread'
+import { activeTabStreaming, maskPillDuration, pickModel, sbpCall, submit, threadSections, waitForThread } from './harness/thread'
 
 // Model thinking, driven through the real app against a mock server in this
 // process: the thinking parts of the agent pill, the saved container marker,
@@ -205,7 +205,7 @@ describe('thinking', () => {
       if (line.startsWith('<dez:pill type="user"')) {
         reply = null
       } else if (line.startsWith('<dez:pill type="agent"')) {
-        reply = [line.replace(/ duration-ms="\d+"/, ' duration-ms="#"')]
+        reply = [maskPillDuration(line)]
         replies.push(reply)
       } else {
         reply?.push(line)
