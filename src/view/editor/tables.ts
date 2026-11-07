@@ -306,7 +306,7 @@ export interface CellShape {
  *  pipes in `cell.pipes` are structure; an escaped pipe is text. */
 export function cellShape(doc: Text, cell: TableCell): CellShape {
   const text = doc.sliceString(cell.from, cell.to)
-  const isBlank = (index: number): boolean => text.charCodeAt(index) === SPACE || text.charCodeAt(index) === TAB
+  const isBlank = (index: number): boolean => isSpaceOrTab(text, index, index + 1)
   let textFrom = 0
   while (isBlank(textFrom)) textFrom++
   const opened = cell.pipes[0] === cell.from + textFrom

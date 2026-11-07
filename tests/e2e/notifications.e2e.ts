@@ -264,7 +264,6 @@ describe('Settings › Notifications', () => {
 
   it('plays one sound at a time: a call while it plays only changes its volume', async () => {
     await waitForSoundEnd(browser)
-    await recordSoundPlays(browser)
 
     await browser.execute(() => {
       const sbp = Reflect.get(window, 'sbp') as (selector: string, ...args: unknown[]) => unknown
@@ -489,10 +488,7 @@ describe('reply-end alerts', () => {
     try {
       const lostFocus = await browser.waitUntil(async () => !await windowIsFocused(), { timeout: 3_000, interval: 50 }).catch(() => false)
       // Xvfb in CI has no window manager, so a minimize does nothing there.
-      if (!lostFocus) {
-        ctx.skip('The minimize needs a window manager, such as headless KWin')
-        return
-      }
+      ctx.skip(!lostFocus, 'The minimize needs a window manager, such as headless KWin')
       await sendChatReply(request.reply, 'the minimized window')
       await waitForValue(browser, 'sound plays', async () => (await soundState(browser)).plays, [VOLUME])
       const [notification] = await waitForNotifications([{ appName: 'Dez', summary: 'Minimized question', body: 'Reply finished', actions: ['default', 'Open'] }])

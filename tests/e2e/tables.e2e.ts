@@ -312,7 +312,7 @@ describe('markdown tables', () => {
       for (const cell of Array.from(cells)) {
         const from = view.posAtDOM(cell, 0)
         for (const word of (cell.textContent ?? '').matchAll(/[^\s-]*-|[^\s-]+/g)) {
-          if (word[0] === '|' || word[0].length < 2) continue
+          if (word[0].length < 2) continue
           const first = from + word.index
           if (Math.abs(charTop(first + word[0].length - 1) - charTop(first)) > 1) broken.push(word[0])
         }
@@ -324,6 +324,15 @@ describe('markdown tables', () => {
   // The size of the page, which the editor fills.
   async function pageSize (): Promise<string> {
     return browser.execute(() => `${window.innerWidth}x${window.innerHeight}`)
+  }
+
+  // The CSS line height of the first rendered header cell, in px.
+  async function headerLineHeight (): Promise<number> {
+    return browser.execute(() => {
+      const headerCell = document.querySelector('.cm-content .dez-table-row--header > .dez-table-cell')
+      if (!headerCell) throw new Error('headerLineHeight: no rendered table')
+      return parseFloat(getComputedStyle(headerCell).lineHeight)
+    })
   }
 
   // Each column's cells have the same left and right edge in every row.
@@ -711,23 +720,22 @@ describe('markdown tables', () => {
   it('adds no padding lines to the header and keeps the delimiter row one thin line', async () => {
     await openFixture(USER_TABLE_TEXT)
     const [[header]] = await cellTextLayout()
-    const metrics = await browser.execute(() => {
-      const headerCell = document.querySelector('.cm-content .dez-table-row--header > .dez-table-cell')
-      const delimiter = document.querySelector('.cm-content .dez-table-row--delimiter')
-      const delimiterCell = delimiter?.querySelector(':scope > .dez-table-cell')
-      if (!headerCell || !delimiter || !delimiterCell) throw new Error('metrics: no rendered table')
+    const lineHeight = await headerLineHeight()
+    const delimiter = await browser.execute(() => {
+      const row = document.querySelector('.cm-content .dez-table-row--delimiter')
+      const cell = row?.querySelector(':scope > .dez-table-cell')
+      if (!row || !cell) throw new Error('delimiter: no rendered delimiter row')
       return {
-        lineHeight: parseFloat(getComputedStyle(headerCell).lineHeight),
-        delimiterHeight: delimiter.getBoundingClientRect().height,
-        delimiterFontSize: parseFloat(getComputedStyle(delimiterCell).fontSize),
+        height: row.getBoundingClientRect().height,
+        fontSize: parseFloat(getComputedStyle(cell).fontSize),
       }
     })
-    expect(metrics.lineHeight, 'header line height').toBeGreaterThan(10)
+    expect(lineHeight, 'header line height').toBeGreaterThan(10)
     const textBottom = Math.max(...header.map((cell) => cell.textBottom))
     const rowBottom = Math.max(...header.map((cell) => cell.box.bottom))
-    expect(rowBottom - textBottom, 'space under the lowest header text').toBeLessThan(metrics.lineHeight / 2)
+    expect(rowBottom - textBottom, 'space under the lowest header text').toBeLessThan(lineHeight / 2)
     // One line at line height 1, plus the 1px bottom border.
-    expect(metrics.delimiterHeight, 'delimiter row height').toBeLessThanOrEqual(metrics.delimiterFontSize + 1.5)
+    expect(delimiter.height, 'delimiter row height').toBeLessThanOrEqual(delimiter.fontSize + 1.5)
   })
 
   // As in Typora, cell text wraps only between words, so each column is at
@@ -737,11 +745,7 @@ describe('markdown tables', () => {
   it('gives each column of the user\'s table the width of its longest word', async () => {
     await openFixture(USER_TABLE_TEXT)
     const [[header]] = await cellTextLayout()
-    const lineHeight = await browser.execute(() => {
-      const headerCell = document.querySelector('.cm-content .dez-table-row--header > .dez-table-cell')
-      if (!headerCell) throw new Error('lineHeight: no rendered table')
-      return parseFloat(getComputedStyle(headerCell).lineHeight)
-    })
+    const lineHeight = await headerLineHeight()
     // A text on one line is less than one line height from its top to its
     // bottom; a text on two lines is more.
     for (const [column, cell] of header.entries()) {
@@ -821,7 +825,7 @@ describe('markdown tables', () => {
       const before = (await editorSnapshot()).doc
       await typeKeys(browser, typed)
       const after = `${before.slice(0, edge)}${typed}${before.slice(edge)}`
-      await waitForValue(browser, `doc after typing ${typed}`, async () => (await editorSnapshot()).doc === after, true)
+      await waitForValue(browser, `doc after typing ${typed}`, async () => (await editorSnapshot()).doc, after)
     }
     await clickBeside(0, 'right', rowFrom + PADDED_ANN_ROW.indexOf('Ann') + 'Ann'.length, 'ie')
     await clickBeside(1, 'left', rowFrom + PADDED_ANN_ROW.indexOf('10') + 'ie'.length, '+')

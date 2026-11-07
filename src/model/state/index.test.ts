@@ -296,18 +296,10 @@ describe('section models', () => {
     return sbp('dez.model/thread/sections') as Section[]
   }
 
-  // 'none' marks a section without a `model` key, so `model: undefined`
-  // fails the strict compares below.
-  function storedModels (sections: { model?: ModelRef }[]): (ModelRef | 'none' | undefined)[] {
-    return sections.map((section) => ('model' in section ? section.model : 'none'))
-  }
-
-  function storedThinking (sections: { thinking?: SectionThinking }[]): (SectionThinking | 'none' | undefined)[] {
-    return sections.map((section) => ('thinking' in section ? section.thinking : 'none'))
-  }
-
-  function storedDurations (sections: { durationMs?: number }[]): (number | 'none' | undefined)[] {
-    return sections.map((section) => ('durationMs' in section ? section.durationMs : 'none'))
+  // 'none' marks a section without the `key` field, so `model: undefined`
+  // (or `thinking`, `durationMs`) fails the strict compares below.
+  function stored<K extends 'model' | 'thinking' | 'durationMs'> (sections: Partial<Pick<Section, K>>[], key: K): (Section[K] | 'none')[] {
+    return sections.map((section) => (key in section ? section[key] as Section[K] : 'none'))
   }
 
   function ensureAgentSection (model: ModelRef): Section {
@@ -332,7 +324,7 @@ describe('section models', () => {
     const sections = threadSections()
     expect([sections[1].id, sections[3].id]).toEqual([first.id, second.id])
     expect(sections.map((section) => section.role)).toEqual(['user', 'agent', 'user', 'agent'])
-    expect(storedModels(sections)).toStrictEqual(['none', alpha, 'none', betaRef])
+    expect(stored(sections, 'model')).toStrictEqual(['none', alpha, 'none', betaRef])
   })
 
   it('gives a reused empty agent section the new model and changes the identity', () => {
@@ -344,7 +336,7 @@ describe('section models', () => {
 
     expect(second.id).toBe(first.id)
     expect(threadSections()).toHaveLength(2)
-    expect(storedModels(threadSections())).toStrictEqual(['none', betaRef])
+    expect(stored(threadSections(), 'model')).toStrictEqual(['none', betaRef])
     expect(sbp('dez.model/thread/sectionsIdentity')).not.toBe(identityBefore)
   })
 
@@ -357,12 +349,12 @@ describe('section models', () => {
     ])
 
     const data = sbp('dez.model/tabs/conversationData', activeId()) as ConversationData
-    expect(storedModels(data.sections)).toStrictEqual(['none', alpha, 'none', 'none'])
+    expect(stored(data.sections, 'model')).toStrictEqual(['none', alpha, 'none', 'none'])
 
     diskConversations.set('conv-copy', { ...data, id: 'conv-copy' })
     const reopened = await openConversation('conv-copy')
     expect(reopened?.conversationId).toBe('conv-copy')
-    expect(storedModels(reopened?.sections ?? [])).toStrictEqual(['none', alpha, 'none', 'none'])
+    expect(stored(reopened?.sections ?? [], 'model')).toStrictEqual(['none', alpha, 'none', 'none'])
   })
 
   it('keeps section thinking through edits, conversationData and a reload of the conversation', async () => {
@@ -377,13 +369,13 @@ describe('section models', () => {
     ])
     typeIntoLastSection('next question')
 
-    expect(storedThinking(threadSections())).toStrictEqual(['none', thinking, 'none'])
+    expect(stored(threadSections(), 'thinking')).toStrictEqual(['none', thinking, 'none'])
     const data = sbp('dez.model/tabs/conversationData', activeId()) as ConversationData
-    expect(storedThinking(data.sections)).toStrictEqual(['none', thinking, 'none'])
+    expect(stored(data.sections, 'thinking')).toStrictEqual(['none', thinking, 'none'])
 
     diskConversations.set('conv-copy', { ...data, id: 'conv-copy' })
     const reopened = await openConversation('conv-copy')
-    expect(storedThinking(reopened?.sections ?? [])).toStrictEqual(['none', thinking, 'none'])
+    expect(stored(reopened?.sections ?? [], 'thinking')).toStrictEqual(['none', thinking, 'none'])
   })
 
   it('clears the old thinking and duration of a reused empty agent section', () => {
@@ -395,8 +387,8 @@ describe('section models', () => {
     const reused = ensureAgentSection(beta)
 
     expect(reused.id).toBe('a1')
-    expect(storedThinking(threadSections())).toStrictEqual(['none', 'none'])
-    expect(storedDurations(threadSections())).toStrictEqual(['none', 'none'])
+    expect(stored(threadSections(), 'thinking')).toStrictEqual(['none', 'none'])
+    expect(stored(threadSections(), 'durationMs')).toStrictEqual(['none', 'none'])
   })
 
   it('changes the identity when a section gains thinking, gains a replay, or loses its thinking on reuse', () => {
@@ -428,13 +420,13 @@ describe('section models', () => {
     ])
     typeIntoLastSection('next question')
 
-    expect(storedDurations(threadSections())).toStrictEqual(['none', 4213, 'none', 'none'])
+    expect(stored(threadSections(), 'durationMs')).toStrictEqual(['none', 4213, 'none', 'none'])
     const data = sbp('dez.model/tabs/conversationData', activeId()) as ConversationData
-    expect(storedDurations(data.sections)).toStrictEqual(['none', 4213, 'none', 'none'])
+    expect(stored(data.sections, 'durationMs')).toStrictEqual(['none', 4213, 'none', 'none'])
 
     diskConversations.set('conv-copy', { ...data, id: 'conv-copy' })
     const reopened = await openConversation('conv-copy')
-    expect(storedDurations(reopened?.sections ?? [])).toStrictEqual(['none', 4213, 'none', 'none'])
+    expect(stored(reopened?.sections ?? [], 'durationMs')).toStrictEqual(['none', 4213, 'none', 'none'])
   })
 
   // The editor copies store metadata only when this identity changes, so a
