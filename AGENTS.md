@@ -28,7 +28,7 @@ cd src-tauri && cargo test
 ```
 
 - Tauri build scripts first run `npm run clean:rust` (`scripts/clean-rust.js`).
-- `build:linux:appimage` runs `scripts/build-linux-appimage.js`: the AppImage bundles the build host's GStreamer plugins (`bundleMediaFramework`, for the done sound), and the build needs `patchelf` on the host.
+- `build:linux:appimage` runs `scripts/build-linux-appimage.js`; the AppImage bundles the build host's GStreamer plugins.
 - macOS builds need Xcode 26+: `build:macos:*` first run `scripts/build-macos-icon.js`, which compiles `src-tauri/icons/Dez.icon` into the gitignored `src-tauri/icons/Assets.car` (icon name set in `src-tauri/Info.plist`). A bare `tauri build` on macOS fails without that file.
 - Releases: run `npm run bump-version` and commit before you tag. A pushed `v*` tag runs `.github/workflows/release-desktop.yml` (version check against the tag, e2e gate, Linux AppImages, macOS DMG, release notes from `scripts/release-notes.js`, GitHub Release). The rules are in the comments of those files.
 - CI rules (details in the workflow comments): every job removes the compromised eMudhra CA roots in its first step, and only the "Write release notes" step may reference `ZAI_API_KEY`.
@@ -132,10 +132,10 @@ Rules:
 ### Backend (`src-tauri/src/`)
 
 - **Keep Rust barebones**: a thin, generic OS interface, not a per-feature API. Reuse or generalize an existing command (e.g. `load_app_file(name)` / `save_app_file(name, content)`) instead of adding a near-copy, so frontend features rarely need Rust changes.
-- `commands.rs`, `http_bridge.rs`: Tauri commands, registered in `lib.rs`. `open_devtools` (Help › Developer Console) needs the `devtools` feature of the `tauri` crate in release builds (`Cargo.toml`).
+- `commands.rs`, `http_bridge.rs`, `notification.rs`, `idle.rs`: Tauri commands, registered in `lib.rs`. `open_devtools` (Help › Developer Console) needs the `devtools` feature of the `tauri` crate in release builds (`Cargo.toml`).
 - `http_bridge.rs`: generic `http_request`, `stream_http`, `cancel_http_stream`.
 - `notification.rs`: `show_notification`, a system notification whose click brings the window to the front and calls back (zbus on Linux, NSUserNotificationCenter through objc2 on macOS).
-- `idle.rs`: `user_idle_ms`, the time since the last user input anywhere on the computer, or `null` when no source works (CoreGraphics on macOS; on Linux an ext-idle-notify watcher, GNOME Mutter IdleMonitor, or X11 XScreenSaver).
+- `idle.rs`: `user_idle_ms`, the time since the last user input on the computer, or `null` when unknown.
 - `session_bus.rs`: the one shared Linux D-Bus session connection (zbus) for `notification.rs` and `idle.rs`.
 - `persistence.rs`: raw private-file I/O and id sanitization; write every private file with `write_private_file`.
 - `key_store.rs`: `provider_keys.json`. `copilot.rs`: Copilot device flow and token refresh.
@@ -169,7 +169,7 @@ Do not ever read, view, print, or `cat` `~/.config/dez/provider_keys.json`; it c
 - **Tauri capabilities**: a new plugin or core command needs a permission in `src-tauri/capabilities/default.json`; app commands registered in `lib.rs` need none.
 - **The window starts hidden**: `dez.controller/window/restore` shows it, so a frontend failure before init shows no window; read the Vite output. On macOS, `lib.rs` shows it at launch so that it comes to the front.
 - **Saved window position units differ by platform**: logical points on macOS, physical px elsewhere (`src/controller/window.ts`).
-- **Wayland windows have no place**: under GTK's Wayland backend (Dez in a Wayland session) the window cannot read or set its place, so the window tracker keeps the saved place and the desktop places the window (`dez.native/gdkBackend`, `src/controller/window.ts`). The AppImage runs on X11 (linuxdeploy's GTK hook sets `GDK_BACKEND=x11`).
+- **Wayland windows have no place**: GTK's Wayland backend cannot read or set the window position (`dez.native/gdkBackend`, `src/controller/window.ts`). The AppImage runs on X11.
 - **Read monitors with `dez.native/monitors`**, never the window API's `availableMonitors()`, `primaryMonitor()`, or `currentMonitor()`: in Tauri 2.10 those call GDK off the main thread and can crash the app on X11 (`monitors` in `commands.rs`).
 - **Shortcut key order differs by platform**: on Linux the menu accelerator gets the key first; put context checks in the selector both paths call, never only in a key handler.
 - **Never hard-code a shortcut key**: every binding path (window handler, CodeMirror keymap, find field, menu accelerators, button titles and keycaps) reads the effective keys from `src/model/shortcuts.ts` and the settings store.
@@ -218,7 +218,7 @@ Brief comments are encouraged above functions that do anything non-trivial expla
 - Run `npm run typecheck:e2e` after changing the e2e harness or specs.
 - E2E keys skip GTK, so specs never test Linux menu accelerators; the manual recipe is in `vitest.e2e.config.ts`.
 - E2E specs that restart the app use `MockProviderApp.relaunch()` (`tests/e2e/harness/mockProviderApp.ts`).
-- E2E seeds turn the reply-end alerts off (`quietAppState`, `tests/e2e/harness/fixtures.ts`), because the app uses the developer's audio and D-Bus session. Alert specs turn them on, use the fake notification server on a private bus (`tests/e2e/harness/notificationServer.ts`), and pin the user idle time (`setUserIdleMs` in `tests/e2e/notifications.e2e.ts`), because WebDriver input does not reset the OS idle time.
+- E2E seeds turn the reply-end alerts off (`quietAppState`, `tests/e2e/harness/fixtures.ts`). Alert specs use the fake notification server (`tests/e2e/harness/notificationServer.ts`) and `setUserIdleMs` (`tests/e2e/notifications.e2e.ts`).
 - E2E clicks: never use webdriverio's `.click()`; use `click()` or `pointerClick()` from `tests/e2e/harness/dom.ts`.
 - **No display server** (every spec fails with `Hook timed out in 120000ms` in `beforeAll`): run under headless `kwin_wayland`; the recipe is in `vitest.e2e.config.ts`.
 - For UI changes beyond unit-testable logic, also check by hand with `npm run tauri dev`.
