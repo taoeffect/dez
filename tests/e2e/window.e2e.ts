@@ -49,7 +49,9 @@ const GROWN = { width: RESIZED.width + 250, height: RESIZED.height + 250 }
 // From a larger screen, and on a monitor left of and below this one.
 const SEEDED: WindowGeometry = { width: 5000, height: 4000, x: -9000, y: 9000, maximized: false }
 
-// The window API that the app uses, called in the page.
+// The window API that the app uses, called in the page. The monitors come
+// from the app's `monitors` command: the window plugin's monitor reads can
+// crash the app on X11 (src-tauri/src/commands.rs `monitors`).
 async function windowState (browser: E2EBrowser): Promise<WindowState> {
   return browser.execute(async () => {
     interface Point { x: number; y: number }
@@ -58,13 +60,13 @@ async function windowState (browser: E2EBrowser): Promise<WindowState> {
       invoke: (command: string, args?: Record<string, unknown>) => Promise<unknown>
     }
     const label = { label: 'main' }
-    const [visible, scale, inner, position, monitors] = await Promise.all([
+    const [visible, scale, inner, position, { monitors }] = await Promise.all([
       internals.invoke('plugin:window|is_visible', label),
       internals.invoke('plugin:window|scale_factor', label),
       internals.invoke('plugin:window|inner_size', label),
       internals.invoke('plugin:window|outer_position', label),
-      internals.invoke('plugin:window|available_monitors'),
-    ]) as [boolean, number, Size, Point, { workArea: { position: Point; size: Size } }[]]
+      internals.invoke('monitors'),
+    ]) as [boolean, number, Size, Point, { monitors: { workArea: { position: Point; size: Size } }[] }]
     return {
       visible,
       width: Math.round(inner.width / scale),
@@ -186,5 +188,34 @@ describe('window geometry', () => {
     }, GROWN)
     const saved = await savedGeometry() as WindowGeometry
     expect({ x: saved.x, y: saved.y }).toEqual(expectedSavedPlace(await windowState(browser)))
+  })
+
+  // Regression: on X11 (CI's xvfb-run) the restore's monitor reads sometimes
+  // crashed the app at startup, because Tauri 2.10 read the monitors from
+  // GDK off the main thread (src-tauri/src/commands.rs `monitors`). This
+  // many reads while the main thread answers other window calls crashed
+  // such a read at once. Under Wayland it passes either way.
+  it('reads the monitors many times while the window answers other calls', async () => {
+    const reads = await browser.execute(async () => {
+      const internals = Reflect.get(window, '__TAURI_INTERNALS__') as {
+        invoke: (command: string, args?: Record<string, unknown>) => Promise<unknown>
+      }
+      let count = 0
+      const readMonitors = async () => {
+        for (let i = 0; i < 300; i++) {
+          await internals.invoke('monitors')
+          count++
+        }
+      }
+      const readWindow = async () => {
+        for (let i = 0; i < 300; i++) {
+          await internals.invoke('plugin:window|outer_position', { label: 'main' })
+          await internals.invoke('plugin:window|inner_size', { label: 'main' })
+        }
+      }
+      await Promise.all([readMonitors(), readMonitors(), readMonitors(), readMonitors(), readWindow(), readWindow()])
+      return count
+    })
+    expect(reads).toBe(1200)
   })
 })

@@ -1,10 +1,11 @@
 import sbp from '@sbp/sbp'
 import { isTauri } from '@tauri-apps/api/core'
-import { LogicalPosition, LogicalSize, PhysicalPosition, availableMonitors, getCurrentWindow, primaryMonitor } from '@tauri-apps/api/window'
+import { LogicalPosition, LogicalSize, PhysicalPosition, getCurrentWindow } from '@tauri-apps/api/window'
 import { debounce } from 'turtledash'
 import type { SettingsSnapshot } from '../model/state'
 import type { WindowGeometry } from '../model/state/settings'
 import { isMacPlatform } from '../utils/platform'
+import type { NativeMonitors } from './nativeTypes'
 import { fitWindowGeometry, screenInPoints, type Extent, type Point } from './windowFit'
 
 // `minWidth` and `minHeight` of the main window in tauri.conf.json; the
@@ -86,9 +87,8 @@ export default sbp('sbp/selectors/register', {
     const appWindow = getCurrentWindow()
     try {
       const saved = (sbp('dez.model/settings/snapshot') as SettingsSnapshot).windowGeometry
-      const [monitors, primary, scale, inner, outer] = await Promise.all([
-        availableMonitors(),
-        primaryMonitor(),
+      const [{ monitors, primary }, scale, inner, outer] = await Promise.all([
+        sbp('dez.native/monitors') as Promise<NativeMonitors>,
         appWindow.scaleFactor(),
         appWindow.innerSize(),
         appWindow.outerSize(),

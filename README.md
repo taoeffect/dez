@@ -34,6 +34,8 @@ Talk with AI in a fully editable plaintext document. Inspired by Zed's text thre
 
 The main window contains a tab bar for conversations and buttons to access saved prompts, settings, and conversation history.
 
+Dez opens its window at the size and place where you left it. On Linux, Dez runs as an X11 window, also in a Wayland session (through Xwayland), because a Wayland app cannot read or set the place of its window. If you start Dez with `GDK_BACKEND=wayland`, or the desktop has no X server, the window is a Wayland window: Dez keeps its size, and the desktop picks its place.
+
 ## Notifications
 
 When a reply finishes or fails while you are not looking at it, Dez plays a short sound and shows a system notification. You are not looking at a reply when its tab is in the background, when you use another window, or when you have been away from the computer for more than 1 minute (no keyboard, mouse, or touch input). Click the notification to bring Dez to the front and go to the tab of the reply. A reply that you stop gives no alert.

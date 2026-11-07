@@ -22,7 +22,8 @@ headless compositor needs no sudo:
   test -S "$XDG_RUNTIME_DIR/wayland-dez"
 
   # 3. Run the app or tests against it. WAYLAND_DISPLAY is the setting that
-  #    matters; the other two force GTK to use Wayland.
+  #    matters; the other two force GTK to use Wayland (the app tries X11
+  #    first, src-tauri/src/lib.rs).
   env -u DISPLAY GDK_BACKEND=wayland WAYLAND_DISPLAY=wayland-dez npm run test:e2e
 
 - Stop the compositor when you are done.
@@ -30,6 +31,11 @@ headless compositor needs no sudo:
   the command above makes a 1280x800 logical screen. The app fits its window
   to the screen: on a smaller screen the window is smaller than its 900x700
   default, and specs that need that size fail.
+- Do not run the specs on GTK X11 under kwin's own Xwayland (`kwin_wayland
+  --xwayland`). It sets `Xft.dpi: 192`, so WebKit zooms the page 2x and
+  WebDriver pointer actions land at half the place; and KWin maximizes a
+  window that fills the screen, so `window.e2e.ts` fails. For X11 use a
+  rootful Xwayland with no window manager (below) or `xvfb-run`, as CI does.
 - Do not use `broadwayd` (GTK's browser backend). Window sizes come out
   negative, CodeMirror throws in its height map, and CSS transitions crash
   `WebKitWebProcess`.

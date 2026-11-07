@@ -74,6 +74,7 @@ pub fn run() {
             commands::load_app_file,
             commands::get_app_dir,
             commands::is_window_fullscreen,
+            commands::monitors,
             commands::gdk_backend,
             commands::open_devtools,
             notification::show_notification,

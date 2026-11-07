@@ -212,6 +212,28 @@ pub fn is_window_fullscreen(window: tauri::WebviewWindow) -> Result<bool, String
     window.is_fullscreen().map_err(|error| error.to_string())
 }
 
+#[derive(Debug, serde::Serialize)]
+pub struct Monitors {
+    monitors: Vec<tauri::Monitor>,
+    primary: Option<tauri::Monitor>,
+}
+
+// The monitors and the primary monitor, as the window plugin's
+// `available_monitors` and `primary_monitor` give them. Tauri 2.10 builds
+// each `Monitor` from GDK on the thread of the call, and the plugin's
+// commands are async: on X11 those GDK calls from a worker thread race the
+// main thread's, which corrupted the heap and aborted the app at startup
+// (in `gdk_x11_monitor_get_workarea`). A command without `async` runs on the
+// main thread. Tauri 2.12 builds the `Monitor` on the main thread.
+// https://github.com/tauri-apps/tauri/issues/15170
+#[tauri::command]
+pub fn monitors(window: tauri::WebviewWindow) -> Result<Monitors, String> {
+    Ok(Monitors {
+        monitors: window.available_monitors().map_err(|error| error.to_string())?,
+        primary: window.primary_monitor().map_err(|error| error.to_string())?,
+    })
+}
+
 // The GDK backend that GTK runs on: "x11", "wayland", or another GDK backend
 // name; None on other platforms. GTK picks it when it starts (lib.rs), and a
 // Wayland window cannot read or set its place on the screen. A command
