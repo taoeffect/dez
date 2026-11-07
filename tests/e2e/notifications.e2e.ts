@@ -409,6 +409,12 @@ describe('reply-end alerts', () => {
   it('a click on the notification closes Settings, opens the tab, and focuses the editor', async () => {
     const { tabId, request } = await askInBackgroundTab('Click question')
     await sbpCall(browser, 'dez.model/settings/open')
+    await waitFor(browser, '.settings-nav-btn')
+    // `submit` left the focus in the editor, and opening Settings keeps it
+    // there. Move it out, so that the focus check after the click sees the
+    // focus that the click gives.
+    await pointerClick(browser, '.settings-nav-btn')
+    await waitForValue(browser, 'focus in Settings', async () => focusedArea(browser), 'button')
     await sendChatReply(request.reply, 'the click')
     const [notification] = await waitForNotifications([{ appName: 'Dez', summary: 'Click question', body: 'Reply finished', actions: ['default', 'Open'] }])
 
