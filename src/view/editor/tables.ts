@@ -1,4 +1,4 @@
-import { EditorSelection, RangeSetBuilder, StateField, type EditorState, type Extension, type RangeSet, type Text } from '@codemirror/state'
+import { EditorSelection, EditorState, RangeSetBuilder, StateField, type Extension, type RangeSet, type Text } from '@codemirror/state'
 import {
   BlockWrapper,
   Decoration,
@@ -222,10 +222,24 @@ export function findMarkdownTables(doc: Text): MarkdownTable[] {
 interface TableDecorations {
   /** Outer marks: one `dez-table-cell` per cell. */
   cells: DecorationSet
-  /** Row line classes and the marks that hide the splitting pipes. */
+  /** Row line classes, the marks that hide the splitting pipes, and the
+   *  padding marks. */
   rows: DecorationSet
   /** One `div.dez-table` around the lines of each table. */
   wrappers: RangeSet<BlockWrapper>
+  /** One per cell, in doc order, for `snapPointerCarets`. */
+  caretZones: CaretZone[]
+}
+
+/** Where a pointer caret in a cell goes (see `snapPointerCarets`): a caret
+ *  in `[leadingFrom, text.from]` goes to the text start, one in
+ *  `(text.to, trailingTo]` to the text end. */
+interface CaretZone {
+  from: number
+  to: number
+  leadingFrom: number
+  text: DocRange
+  trailingTo: number
 }
 
 /** Row line decorations of each row kind: [any row but the last, the last
@@ -236,6 +250,7 @@ const ROW_LINES: Record<TableRowKind, [Decoration, Decoration]> = {
   body: rowLines('body'),
 }
 const PIPE_MARK = Decoration.mark({ class: 'dez-table-pipe' })
+const PAD_MARK = Decoration.mark({ class: 'dez-table-pad' })
 const TABLE_WRAPPER = BlockWrapper.create({ tagName: 'div', attributes: { class: 'dez-table' } })
 const cellMarks = new Map<string, Decoration>()
 
@@ -244,71 +259,98 @@ function rowLines(kind: TableRowKind): [Decoration, Decoration] {
   return [Decoration.line({ class: cls }), Decoration.line({ class: `${cls} dez-table-row--last` })]
 }
 
-// The horizontal geometry of a cell. A cell keeps its source, so its text
-// sits between pipes that are transparent but keep their width: `| text |`.
-// Each side of a cell box has a pipe slot, 1ch wide, plus the padding:
-// - left: the opening pipe and the spaces after it are a hanging indent
-//   (`padding-left` + negative `text-indent`), so the first line starts
-//   where it always did and the lines that wrap start under its text, not
-//   2ch to the left of it. A cell with no opening pipe (a row without a
-//   leading pipe) gets an empty slot instead.
-// - right: an empty slot, as the next cell's opening pipe is in that cell.
-//   The pipe that closes a row hangs into it (negative `margin-right`), so
-//   the last cell has the same inset as the others and the last line of a
-//   wrapped right-aligned cell ends where the lines above it end (they end
-//   with the 1ch space at the wrap).
-// So `| a | b |` shows the same gap on both sides of `a` and of `b`.
+// The horizontal geometry of a cell. A cell keeps its source, but only its
+// text takes room. Its pipes are transparent and 1ch wide. The spaces
+// between a pipe (or a line end) and the text are the cell's padding: they
+// take no room (`.dez-table-pad` in `cmEditor.ts`), so a source that pads
+// its cells to line up its pipes does not widen a column, add wrapped
+// lines, or move aligned text. Each side of a cell box has `CELL_INSET_CH`
+// between the border and the text, the gap that `| text |` shows:
+// - left: the opening pipe hangs into it (negative `text-indent`), so the
+//   text of the first line starts where the lines that wrap start.
+// - right: the pipe that closes a row hangs into it (negative
+//   `margin-right`), so the last cell has the same inset as the others.
+// So `| a | b |`, `|a|b|`, and `|   a |  b      |` look the same. A tab in
+// the padding keeps its width: it goes to the next tab stop, so its width
+// depends on where it starts and cannot be cancelled.
 // The styles are inline because they depend on each cell's source.
 
-/** Cell padding in ch on each side, besides the pipe slot. */
-const CELL_PADDING_CH = 0.5
+/** The gap in ch between a cell's border and its text, on each side. */
+const CELL_INSET_CH = 2.5
 /** A pipe is 1ch wide in the editor's monospace font. */
 const PIPE_SLOT_CH = 1
-/** At most this many ch of a cell's prefix hang. A source that pads a
- *  right-aligned column with leading spaces would otherwise give each such
- *  cell a wide `padding-left`, which the column cannot shrink below. The
- *  rest of the prefix stays plain leading space on the first line. */
-const MAX_HANG_CH = 4
 
 const CLOSING_PIPE_MARK = Decoration.mark({ class: 'dez-table-pipe', attributes: { style: `margin-right: -${PIPE_SLOT_CH}ch` } })
 
+interface DocRange {
+  from: number
+  to: number
+}
+
 /** Where a cell's source sits in its box (see the notes above). */
-interface CellShape {
-  /** Width in ch of the leading spaces, the opening pipe, and the spaces
-   *  after it: the part of the first line before the text. Capped at
-   *  `MAX_HANG_CH`; 0 when the leading space has a tab. */
-  hang: number
+export interface CellShape {
   /** Whether a pipe opens the cell. */
   opened: boolean
   /** Doc position of the pipe that closes the row, if this cell has it. */
   closingPipe: number | null
+  /** The text without the padding around it. In a cell with no text, the
+   *  empty range after the opening pipe (or at the cell start). */
+  text: DocRange
+  /** The padding, in doc order: each run of spaces between the cell's
+   *  text and a pipe or a line end. In a cell with no text, all its spaces. */
+  padding: DocRange[]
+  /** The source that takes room: the text, and the tabs of the padding. */
+  visibleText: string
 }
 
-function cellShape(doc: Text, cell: TableCell): CellShape {
+/** Split a cell's source into its pipes, its padding, and its text. Only the
+ *  pipes in `cell.pipes` are structure; an escaped pipe is text. */
+export function cellShape(doc: Text, cell: TableCell): CellShape {
   const text = doc.sliceString(cell.from, cell.to)
-  let prefix = 0
-  while (text.charCodeAt(prefix) === SPACE || text.charCodeAt(prefix) === TAB) prefix++
-  const opened = cell.pipes[0] === cell.from + prefix
-  // Only a body row can start with a tab. A tab goes to the next tab stop,
-  // so its width is not known here, and a prefix with a tab does not hang:
-  // the lines that wrap start under the tab.
-  const hangs = !text.slice(0, prefix).includes('\t')
-  if (opened) {
-    prefix++
-    while (text.charCodeAt(prefix) === SPACE) prefix++
-  }
+  const isBlank = (index: number): boolean => text.charCodeAt(index) === SPACE || text.charCodeAt(index) === TAB
+  let textFrom = 0
+  while (isBlank(textFrom)) textFrom++
+  const opened = cell.pipes[0] === cell.from + textFrom
   // `cell.pipes` holds at most the opening pipe and a trailing pipe.
   const last = cell.pipes.at(-1)
   const closingPipe = last === undefined || (opened && cell.pipes.length === 1) ? null : last
-  return { hang: hangs ? Math.min(prefix, MAX_HANG_CH) : 0, opened, closingPipe }
+  const innerFrom = opened ? textFrom + 1 : 0
+  const innerTo = closingPipe === null ? text.length : closingPipe - cell.from
+  textFrom = innerFrom
+  while (textFrom < innerTo && isBlank(textFrom)) textFrom++
+  let textTo = innerTo
+  while (textTo > textFrom && isBlank(textTo - 1)) textTo--
+  if (textFrom === innerTo) textFrom = textTo = innerFrom
+
+  // The whitespace around the text, without the pipes.
+  const blanks: [number, number][] = [[innerFrom, textFrom], [textTo, innerTo]]
+  if (opened) blanks.unshift([0, innerFrom - 1])
+  if (closingPipe !== null) blanks.push([innerTo + 1, text.length])
+  const padding: DocRange[] = []
+  let tabs = ''
+  for (const [from, to] of blanks) {
+    let run = from
+    for (let index = from; index <= to; index++) {
+      if (index < to && text.charCodeAt(index) === SPACE) continue
+      if (index > run) padding.push({ from: cell.from + run, to: cell.from + index })
+      if (index < to) tabs += '\t'
+      run = index + 1
+    }
+  }
+  return {
+    opened,
+    closingPipe,
+    text: { from: cell.from + textFrom, to: cell.from + textTo },
+    padding,
+    visibleText: tabs + text.slice(textFrom, textTo),
+  }
 }
 
-/** The inline style of a cell: its side paddings, its hanging indent, and
- *  its `width` (see `shortColumnWidths`), if any. */
+/** The inline style of a cell: its insets, its hanging indent, and its
+ *  `width` (see `shortColumnWidths`), if any. */
 function cellStyle(shape: CellShape, width: string | null): string {
-  const left = CELL_PADDING_CH + (shape.opened ? 0 : PIPE_SLOT_CH) + shape.hang
-  let style = `padding-left: ${left}ch; padding-right: ${CELL_PADDING_CH + PIPE_SLOT_CH}ch`
-  if (shape.hang > 0) style += `; text-indent: -${shape.hang}ch`
+  let style = `padding-left: ${CELL_INSET_CH}ch; padding-right: ${CELL_INSET_CH}ch`
+  if (shape.opened) style += `; text-indent: -${PIPE_SLOT_CH}ch`
   if (width !== null) style += `; width: ${width}`
   return style
 }
@@ -359,30 +401,22 @@ const OTHER_CHAR_CH = 2.5
  *  Do not give the wrapper a width that depends on the text: a wrapper whose
  *  attributes change is a new DOM element, which moves the line that the
  *  user is typing in (and can break an IME composition there). */
-function shortColumnWidths(doc: Text, tabSize: number, table: MarkdownTable, shapes: CellShape[][]): (string | null)[] {
+function shortColumnWidths(tabSize: number, table: MarkdownTable, shapes: CellShape[][]): (string | null)[] {
   const textWidths = table.alignments.map(() => 0)
-  const boxWidths = table.alignments.map(() => 0)
-  table.rows.forEach((row, rowIndex) => {
-    if (row.kind === 'delimiter') return
-    row.cells.forEach((cell, index) => {
+  shapes.forEach((rowShapes, rowIndex) => {
+    if (table.rows[rowIndex].kind === 'delimiter') return
+    rowShapes.forEach(({ visibleText }, index) => {
       // `textWidthCh` gives each UTF-16 code unit at least 1ch, so a cell
       // with more code units than a short column holds is long as it is.
-      const length = cell.to - cell.from
-      const width = length > SHORT_COLUMN_CH ? length : textWidthCh(doc.sliceString(cell.from, cell.to), tabSize)
+      const width = visibleText.length > SHORT_COLUMN_CH ? visibleText.length : textWidthCh(visibleText, tabSize)
       textWidths[index] = Math.max(textWidths[index], width)
-      // Beyond its source text, the box needs its empty pipe slots. The hang
-      // needs nothing: its padding and its negative indent cancel out on the
-      // first line.
-      const { opened, closingPipe } = shapes[rowIndex][index]
-      const emptySlots = (opened ? 0 : PIPE_SLOT_CH) + (closingPipe === null ? PIPE_SLOT_CH : 0)
-      boxWidths[index] = Math.max(boxWidths[index], width + emptySlots)
     })
   })
-  // `box-sizing` is `border-box` app-wide: add the side paddings and the 1px
-  // right border of `.dez-table-cell`, and the first column's 1px left
-  // border.
+  // `box-sizing` is `border-box` app-wide: add the insets (the pipes hang
+  // into them), the 1px right border of `.dez-table-cell`, and the first
+  // column's 1px left border.
   return textWidths.map((width, index) => width <= SHORT_COLUMN_CH
-    ? `calc(${boxWidths[index] + 2 * CELL_PADDING_CH}ch + ${index === 0 ? 2 : 1}px)`
+    ? `calc(${width + 2 * CELL_INSET_CH}ch + ${index === 0 ? 2 : 1}px)`
     : null)
 }
 
@@ -405,13 +439,14 @@ function buildTableDecorations(state: EditorState): TableDecorations {
   const cells = new RangeSetBuilder<Decoration>()
   const rows = new RangeSetBuilder<Decoration>()
   const wrappers = new RangeSetBuilder<BlockWrapper>()
+  const caretZones: CaretZone[] = []
   for (const table of findMarkdownTables(doc)) {
     wrappers.add(table.from, table.to, TABLE_WRAPPER)
     const shapes = table.rows.map((row) => row.cells.map((cell) => cellShape(doc, cell)))
-    const widths = shortColumnWidths(doc, state.tabSize, table, shapes)
+    const widths = shortColumnWidths(state.tabSize, table, shapes)
     table.rows.forEach((row, rowIndex) => {
       // RangeSetBuilder needs sorted input. A line decoration sorts before
-      // a pipe mark that starts at the same position.
+      // a mark that starts at the same position.
       rows.add(row.from, row.from, ROW_LINES[row.kind][rowIndex === table.rows.length - 1 ? 1 : 0])
       row.cells.forEach((cell, index) => {
         const shape = shapes[rowIndex][index]
@@ -421,17 +456,26 @@ function buildTableDecorations(state: EditorState): TableDecorations {
         // so only a cell in the last column takes the table's right corners.
         const last = index === table.alignments.length - 1
         cells.add(cell.from, cell.to, cellMark(index === 0, last, table.alignments[index], cellStyle(shape, width)))
-        for (const pipe of cell.pipes) rows.add(pipe, pipe + 1, pipe === shape.closingPipe ? CLOSING_PIPE_MARK : PIPE_MARK)
+        const marks: [number, number, Decoration][] = cell.pipes.map((pipe) => [pipe, pipe + 1, pipe === shape.closingPipe ? CLOSING_PIPE_MARK : PIPE_MARK])
+        // The delimiter row's CSS gives all its text but the pipes no room.
+        if (row.kind !== 'delimiter') for (const { from, to } of shape.padding) marks.push([from, to, PAD_MARK])
+        marks.sort((a, b) => a[0] - b[0])
+        for (const [from, to, mark] of marks) rows.add(from, to, mark)
+        // A click left of a row's leading pipe puts the caret at the row
+        // start (see `tableMarginClicks`), so that position does not snap.
+        const leadingFrom = index === 0 && shape.opened ? cell.pipes[0] + 1 : cell.from
+        caretZones.push({ from: cell.from, to: cell.to, leadingFrom, text: shape.text, trailingTo: shape.closingPipe ?? cell.to })
       })
     })
   }
-  return { cells: cells.finish(), rows: rows.finish(), wrappers: wrappers.finish() }
+  return { cells: cells.finish(), rows: rows.finish(), wrappers: wrappers.finish(), caretZones }
 }
 
 /** Lay out each table that `findMarkdownTables` finds as a table, in place,
  *  with the source text still in the doc and editable. No text is replaced,
  *  so every character keeps its caret position; the CSS only makes the
- *  delimiter row and the splitting pipes transparent. The wrapper is
+ *  delimiter row and the splitting pipes transparent and gives the padding
+ *  and the delimiter row's text no width. The wrapper is
  *  `display: table`, each row line is a table row, and cell marks that
  *  cover each row from end to end are the table cells. Inside a
  *  table row, any inline node that is not a cell becomes an extra anonymous
@@ -452,6 +496,56 @@ const tableDecorationsField = StateField.define<TableDecorations>({
     EditorView.decorations.from(field, (value) => value.rows),
     EditorView.blockWrappers.from(field, (value) => value.wrappers),
   ],
+})
+
+/** The zone of the cell that holds `pos`. Two cells meet at a splitting
+ *  pipe: with `side` < 0 that position is in the cell before it, otherwise
+ *  in the cell that the pipe opens. */
+function caretZoneAt(zones: CaretZone[], pos: number, side: number): CaretZone | null {
+  let lo = 0
+  let hi = zones.length
+  while (lo < hi) {
+    const mid = (lo + hi) >> 1
+    if (side < 0 ? zones[mid].from < pos : zones[mid].from <= pos) lo = mid + 1
+    else hi = mid
+  }
+  const zone = zones[lo - 1]
+  return zone !== undefined && pos <= zone.to ? zone : null
+}
+
+/** A click in a cell's padding puts the caret at the edge of the cell's
+ *  text. The padding takes no room, so a caret in it looks like a caret at
+ *  the text, but typing there would show the spaces between the text and
+ *  the typed chars. A click left of the text of a cell that a splitting
+ *  pipe opens gives the position before that pipe, which is the end of the
+ *  cell before it, so typing there would go into the wrong cell. The
+ *  caret's side tells which cell a click was in: CM gives -1 for a click
+ *  right of a cell's text and 1 for a click left of the next cell's text.
+ *  Only pointer carets snap: the arrow keys still step over each space,
+ *  and a selected range keeps its ends (a triple-click selects the whole
+ *  row line). */
+const snapPointerCarets = EditorState.transactionFilter.of((tr) => {
+  if (!tr.selection || tr.docChanged || !tr.isUserEvent('select.pointer')) return tr
+  const zones = tr.startState.field(tableDecorationsField).caretZones
+  if (zones.length === 0) return tr
+  let snapped = false
+  const ranges = tr.selection.ranges.map((range) => {
+    if (!range.empty) return range
+    const { head } = range
+    const side = range.assoc < 0 ? -1 : 1
+    const zone = caretZoneAt(zones, head, side) ?? caretZoneAt(zones, head, -side)
+    if (zone === null) return range
+    if (head >= zone.leadingFrom && head < zone.text.from) {
+      snapped = true
+      return EditorSelection.cursor(zone.text.from, 1)
+    }
+    if (head > zone.text.to && head <= zone.trailingTo) {
+      snapped = true
+      return EditorSelection.cursor(zone.text.to, -1)
+    }
+    return range
+  })
+  return snapped ? [tr, { selection: EditorSelection.create(ranges, tr.selection.mainIndex) }] : tr
 })
 
 interface ClientBox {
@@ -647,8 +741,9 @@ const tableMarginClicks = ViewPlugin.define((view) => {
 })
 
 /** Tables for the thread editor (`buildState()` in `ThreadEditor.vue`). It
- *  also replaces the selection layer of `drawSelection()` and forwards
- *  clicks in the margin beside table rows. */
+ *  also replaces the selection layer of `drawSelection()`, forwards clicks
+ *  in the margin beside table rows, and moves a click in a cell's padding
+ *  to the cell's text. */
 export function markdownTables(): Extension {
-  return [tableDecorationsField, tableAwareSelectionLayer, hideDefaultSelectionLayer, tableMarginClicks]
+  return [tableDecorationsField, snapPointerCarets, tableAwareSelectionLayer, hideDefaultSelectionLayer, tableMarginClicks]
 }

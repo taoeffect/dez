@@ -1632,6 +1632,9 @@ export const dezTheme = EditorView.theme({
   '.cm-line.dez-table-row': {
     display: 'table-row',
   },
+  // `pre-wrap`, not CM's `break-spaces`: the space at the end of a wrapped
+  // line hangs, as the hidden padding at the end of the last line does, so
+  // every line of a right-aligned or centered cell lines up.
   '.dez-table-cell': {
     display: 'table-cell',
     verticalAlign: 'top',
@@ -1639,6 +1642,13 @@ export const dezTheme = EditorView.theme({
     paddingBottom: editorSize(4),
     borderRight: '1px solid var(--color-border, #333)',
     borderBottom: '1px solid var(--color-border, #333)',
+    whiteSpace: 'pre-wrap',
+  },
+  // A cell's padding spaces take no room. The editor font is monospace, so
+  // `-1ch` cancels each char's advance; the chars keep their font size, so
+  // the caret in them keeps its height (`font-size: 0` gives a 0px caret).
+  '.dez-table-pad': {
+    letterSpacing: '-1ch',
   },
   '.dez-table-cell--first': {
     borderLeft: '1px solid var(--color-border, #333)',
@@ -1667,19 +1677,25 @@ export const dezTheme = EditorView.theme({
   // its bottom border, reads as the rule under the header. The caret and
   // the selection are drawn in their own layers, so they still show in it.
   // Its height is `TABLE_DELIMITER_ROW_EM` of the editor font: the font
-  // size at line height 1. The `*` covers syntax and find marks nested
-  // inside a cell.
+  // size at line height 1. Its dashes, colons, and spaces take no room (as
+  // `.dez-table-pad`), so they never widen a column or wrap, and the row
+  // stays one thin line; its pipes keep their width. The `*` covers syntax
+  // and find marks nested inside a cell.
   '.dez-table-row--delimiter .dez-table-cell': {
     paddingTop: '0',
     paddingBottom: '0',
     background: 'var(--color-bg-subtle, rgba(127,127,127,0.08))',
     fontSize: `${TABLE_DELIMITER_ROW_EM}em`,
     lineHeight: '1',
+    letterSpacing: '-1ch',
+  },
+  '.dez-table-row--delimiter .dez-table-pipe': {
+    letterSpacing: 'normal',
   },
   '.dez-table-row--delimiter .dez-table-cell, .dez-table-row--delimiter .dez-table-cell *': {
     color: 'transparent',
   },
-  // Splitting pipes keep their width (they fill the cells' pipe slots) but
+  // Splitting pipes keep their width (they hang into the cells' insets) but
   // are invisible. The `*` covers syntax highlight spans nested inside a
   // pipe mark.
   '.dez-table-pipe, .dez-table-pipe *': {

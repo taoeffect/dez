@@ -72,6 +72,40 @@ const WIDE_TEXT = ['Wide chars fixture.', '', '| Id | C | S | E | T | Text |', '
 const INTRO_LINE = 'Here is the table:'
 const INTRO_TEXT = ['Intro fixture.', '', INTRO_LINE, HEADER, DELIMITER, ANN_ROW, BOB_ROW].join('\n')
 
+// The table of MAIN_TEXT, and the same table with its cells padded more
+// than a formatter pads them: an indent before the leading pipe, spaces on
+// both sides of the text, and spaces after the closing pipe. The padding
+// takes no room, so both tables must look the same.
+const PADDED_ANN_ROW = ' |  Ann       |     10      |         ok |'
+const PADDED_ROWS = [
+  '|   Name     |    Score    |       Note |',
+  '|:-----------|:-----------:|-----------:|',
+  PADDED_ANN_ROW,
+  '| Bob        | 7           |      fine  |  ',
+]
+const PADDED_TEXT = ['Padded fixture.', '', HEADER, DELIMITER, ANN_ROW, BOB_ROW, '', ...PADDED_ROWS].join('\n')
+
+// The start of the user's table from the TODO-21 report. Its source pads
+// each cell to 60 chars and has 60 dashes per delimiter cell. Before the
+// padding took no room, its header band was many lines tall (lines of
+// padding under each header text) and its delimiter row wrapped.
+const USER_PAD_TO = 60
+const userRow = (cells: string[]): string => `| ${cells.map((cell) => cell.padEnd(USER_PAD_TO)).join(' | ')} |`
+const USER_TABLE_TEXT = ['User table fixture.', '', ...[
+  userRow(['What changes results', 'When', 'Cache guard']),
+  `| ${Array.from({ length: 3 }, () => '-'.repeat(USER_PAD_TO)).join(' | ')} |`,
+  userRow([
+    'Re-read cleanup (`compaction.supersedeReads`, on by default)',
+    'Each turn. An older `read` of a file becomes `[Superseded by a newer read of this file]` after a newer read of the same file.',
+    "Runs only if the messages after that result total about 8k tokens or less, and the result is within Anthropic's 20-block cache lookback. It also runs after 90 minutes idle, which is longer than the 1-hour cache life (`PRUNE_IDLE_FLUSH_MS`).",
+  ]),
+  userRow([
+    'Uneventful results (`compaction.dropUseless`, on by default)',
+    'A search with zero matches or a `wait` that ended with no change becomes `[Uneventful result elided]`.',
+    'Same guard as above.',
+  ]),
+]].join('\n')
+
 interface Point {
   x: number
   y: number
@@ -94,6 +128,16 @@ interface RenderedRow {
   kind: string
   text: string
   cells: Array<{ left: number, right: number, align: string }>
+}
+
+interface CellText {
+  box: Box
+  /** The left edge and top of the text's first char. */
+  textLeft: number
+  textTop: number
+  /** The right edge and bottom of the text's last char. */
+  textRight: number
+  textBottom: number
 }
 
 let fixtureCount = 0
@@ -211,6 +255,35 @@ describe('markdown tables', () => {
         return { left, right, top, bottom }
       })
     }, rowStart)
+  }
+
+  // Each rendered table as its header and body rows, each row as its cells:
+  // the cell box, and the edges of the cell's text (its source without the
+  // pipes and the whitespace around them).
+  async function cellTextLayout (): Promise<CellText[][][]> {
+    return browser.execute(() => {
+      const content = document.querySelector('.cm-content')
+      if (!content) throw new Error('cellTextLayout: .cm-content not found')
+      const view = Reflect.get(Reflect.get(content, 'cmTile'), 'root').view as EditorView
+      const charBox = (pos: number): Box => {
+        const rect = view.coordsForChar(pos)
+        if (!rect) throw new Error(`cellTextLayout: no char rect at ${pos}`)
+        return rect
+      }
+      return Array.from(document.querySelectorAll('.cm-content .dez-table')).map((table) =>
+        Array.from(table.querySelectorAll('.dez-table-row--header, .dez-table-row--body')).map((line) =>
+          Array.from(line.querySelectorAll(':scope > .dez-table-cell')).map((cell) => {
+            const from = view.posAtDOM(cell, 0)
+            const text = /[^\s|](?:.*[^\s|])?/.exec(cell.textContent ?? '')
+            if (!text) throw new Error(`cellTextLayout: no text in ${JSON.stringify(cell.textContent)}`)
+            const first = charBox(from + text.index)
+            const last = charBox(from + text.index + text[0].length - 1)
+            const { left, right, top, bottom } = cell.getBoundingClientRect()
+            return { box: { left, right, top, bottom }, textLeft: first.left, textTop: first.top, textRight: last.right, textBottom: last.bottom }
+          })
+        )
+      )
+    })
   }
 
   // Each column's cells have the same left and right edge in every row.
@@ -481,7 +554,8 @@ describe('markdown tables', () => {
   })
 
   // A cell keeps its source, so its first line starts with the transparent
-  // `| `. The lines that wrap must start under the text, not under that pipe.
+  // opening pipe. The lines that wrap must start under the text, not under
+  // that pipe.
   it('lines up the wrapped lines of a cell and gives a cell the same inset on both sides', async () => {
     await openFixture(HANG_TEXT)
     const rowFrom = await docPos(HANG_ROW)
@@ -523,31 +597,41 @@ describe('markdown tables', () => {
     ])
     expect(left.lines.length, 'visual lines of the left-aligned cell').toBeGreaterThanOrEqual(3)
     expect(right.lines.length, 'visual lines of the right-aligned cell').toBeGreaterThanOrEqual(3)
+    // WebKit rounds the rect of a char out to whole px, except at some ends
+    // of a text run (where a padding mark starts), so equal edges can
+    // measure up to 1px apart. A wrong hang or inset is 1ch (9px) off.
+    const expectSameX = (actual: number, expected: number, label: string): void => {
+      expect(Math.abs(actual - expected), label).toBeLessThan(1)
+    }
     left.lines.forEach((line, index) => {
-      expect(line.left, `left edge of line ${index} of the left-aligned cell`).toBeCloseTo(left.lines[0].left, 0)
+      expectSameX(line.left, left.lines[0].left, `left edge of line ${index} of the left-aligned cell`)
     })
-    // The last line ends before the row's closing pipe, the others before
-    // the space at the wrap; both end at the same x.
+    // The last line ends before the padding and the row's closing pipe, the
+    // others before the space that hangs at the wrap; both end at the same
+    // x.
     right.lines.forEach((line, index) => {
-      expect(line.right, `right edge of line ${index} of the right-aligned cell`).toBeCloseTo(right.lines[0].right, 0)
+      expectSameX(line.right, right.lines[0].right, `right edge of line ${index} of the right-aligned cell`)
     })
 
     // The gap between the text and the cell's border is the same on both
     // sides of a cell (in the widest cell of a short column, and in the last
     // cell, which has the closing pipe), and in every column.
     const inset = left.lines[0].left - left.innerLeft
-    expect(key.lines[0].left - key.innerLeft, 'left inset of Key').toBeCloseTo(inset, 0)
-    expect(key.innerRight - key.lines[0].right, 'right inset of Key').toBeCloseTo(inset, 0)
-    expect(right.innerRight - right.lines[0].right, 'right inset of the right-aligned cell').toBeCloseTo(inset, 0)
+    expectSameX(key.lines[0].left - key.innerLeft, inset, 'left inset of Key')
+    expectSameX(key.innerRight - key.lines[0].right, inset, 'right inset of Key')
+    expectSameX(right.innerRight - right.lines[0].right, inset, 'right inset of the right-aligned cell')
   })
 
   // A tab before a body row's leading pipe is leading space, so that pipe
   // opens the first cell as the header's pipe does: the row's source starts
-  // at the same x as the header's, and the pipe keeps its width.
+  // at the same x as the header's, the pipe keeps its 1ch width, and the
+  // space after it takes no room.
   it('opens the first cell at the leading pipe of a body row that starts with a tab', async () => {
     await openFixture(TAB_TEXT)
     const rowFrom = await docPos(TAB_ROW)
-    const headerPipe = await pointAt(await docPos('| Key'), 1)
+    const keyFrom = await docPos('| Key')
+    const headerPipe = await pointAt(keyFrom, 1)
+    const charWidth = (await pointAt(keyFrom + 3, 1)).x - (await pointAt(keyFrom + 2, 1)).x
     const [tab, pipe, space, text] = [
       await pointAt(rowFrom, 1),
       await pointAt(rowFrom + 1, 1),
@@ -555,10 +639,84 @@ describe('markdown tables', () => {
       await pointAt(rowFrom + 3, 1),
     ]
     expect(tab.x, 'start of the tab').toBeCloseTo(headerPipe.x, 0)
-    const charWidth = text.x - space.x
-    expect(charWidth, 'width of the space after the pipe').toBeGreaterThan(1)
+    expect(charWidth, 'width of a header char').toBeGreaterThan(1)
     // WebKit puts the chars after a tab up to about 0.5px off.
     expect(Math.abs(space.x - pipe.x - charWidth), 'width of the leading pipe minus a char width').toBeLessThan(1)
+    expect(Math.abs(text.x - space.x), 'width of the space after the pipe').toBeLessThan(0.5)
+  })
+
+  // The padding of a cell takes no room: it does not widen a column, add a
+  // line, or move the text of a left-, center-, or right-aligned cell.
+  it('shows padded cells like the same cells without padding', async () => {
+    await openFixture(PADDED_TEXT)
+    const [plain, padded] = await cellTextLayout()
+    expect(padded).toHaveLength(plain.length)
+    plain.forEach((row, rowIndex) => {
+      expect(padded[rowIndex]).toHaveLength(row.length)
+      row.forEach((cell, column) => {
+        const other = padded[rowIndex][column]
+        const where = `row ${rowIndex}, column ${column}`
+        expect(other.box.right - other.box.left, `width, ${where}`).toBeCloseTo(cell.box.right - cell.box.left, 0)
+        expect(other.box.bottom - other.box.top, `height, ${where}`).toBeCloseTo(cell.box.bottom - cell.box.top, 0)
+        expect(other.textLeft - other.box.left, `text left, ${where}`).toBeCloseTo(cell.textLeft - cell.box.left, 0)
+        expect(other.textTop - other.box.top, `text top, ${where}`).toBeCloseTo(cell.textTop - cell.box.top, 0)
+        expect(other.box.right - other.textRight, `text right, ${where}`).toBeCloseTo(cell.box.right - cell.textRight, 0)
+      })
+    })
+  })
+
+  // The padding of the user's table adds no lines under the header texts,
+  // and its hidden dashes (60 per delimiter cell) do not wrap.
+  it('adds no padding lines to the header and keeps the delimiter row one thin line', async () => {
+    await openFixture(USER_TABLE_TEXT)
+    const [[header]] = await cellTextLayout()
+    const metrics = await browser.execute(() => {
+      const headerCell = document.querySelector('.cm-content .dez-table-row--header > .dez-table-cell')
+      const delimiter = document.querySelector('.cm-content .dez-table-row--delimiter')
+      const delimiterCell = delimiter?.querySelector(':scope > .dez-table-cell')
+      if (!headerCell || !delimiter || !delimiterCell) throw new Error('metrics: no rendered table')
+      return {
+        lineHeight: parseFloat(getComputedStyle(headerCell).lineHeight),
+        delimiterHeight: delimiter.getBoundingClientRect().height,
+        delimiterFontSize: parseFloat(getComputedStyle(delimiterCell).fontSize),
+      }
+    })
+    expect(metrics.lineHeight, 'header line height').toBeGreaterThan(10)
+    const textBottom = Math.max(...header.map((cell) => cell.textBottom))
+    const rowBottom = Math.max(...header.map((cell) => cell.box.bottom))
+    expect(rowBottom - textBottom, 'space under the lowest header text').toBeLessThan(metrics.lineHeight / 2)
+    // One line at line height 1, plus the 1px bottom border.
+    expect(metrics.delimiterHeight, 'delimiter row height').toBeLessThanOrEqual(metrics.delimiterFontSize + 1.5)
+  })
+
+  // A caret in the padding would show at the text edge, but typing there
+  // would show the spaces. Left of the text of a centered or right-aligned
+  // cell is the position before the cell's pipe, which would type into the
+  // cell before it. So a click in the blank part of a cell puts the caret
+  // at the edge of the cell's text.
+  it('types at the text edge after a click in the blank part of a padded cell', async () => {
+    await openFixture(PADDED_TEXT)
+    const rowFrom = await docPos(PADDED_ANN_ROW)
+    // Click halfway between the text edge at `edge` and the cell border.
+    const clickBeside = async (column: number, side: 'left' | 'right', edge: number, typed: string): Promise<void> => {
+      const cell = (await rowCellBoxes(' |  Ann'))[column]
+      const point = await pointAt(edge, side === 'left' ? 1 : -1)
+      await clickAt({ x: side === 'left' ? (cell.left + point.x) / 2 : (point.x + cell.right) / 2, y: point.y })
+      await waitForValue(browser, `caret after a click ${side} of the text in column ${column}`, caret, edge)
+      const before = (await editorSnapshot()).doc
+      await typeKeys(browser, typed)
+      const after = `${before.slice(0, edge)}${typed}${before.slice(edge)}`
+      await waitForValue(browser, `doc after typing ${typed}`, async () => (await editorSnapshot()).doc === after, true)
+    }
+    await clickBeside(0, 'right', rowFrom + PADDED_ANN_ROW.indexOf('Ann') + 'Ann'.length, 'ie')
+    await clickBeside(1, 'left', rowFrom + PADDED_ANN_ROW.indexOf('10') + 'ie'.length, '+')
+    await clickBeside(2, 'left', rowFrom + PADDED_ANN_ROW.indexOf('ok') + 'ie+'.length, 'x')
+
+    const edited = ' |  Annie       |     +10      |         xok |'
+    expect(await lineState(edited)).toBe('table')
+    const tables = await renderedTables()
+    expect(tables[1].map((row) => row.text)).toEqual([PADDED_ROWS[0], PADDED_ROWS[1], edited, PADDED_ROWS[3]])
+    expectAlignedColumns(tables[1], 3)
   })
 
   // A short last row ends left of the table's right edge: its first cell has

@@ -1,7 +1,7 @@
-import { Text } from '@codemirror/state'
+import { EditorSelection, EditorState, Text } from '@codemirror/state'
 import { describe, expect, it } from 'vitest'
 import { PILL_NL, SECTION_SEP, encodePrompt } from '../thread/cmEditor'
-import { findMarkdownTables } from './tables'
+import { cellShape, findMarkdownTables, markdownTables } from './tables'
 
 function scan(doc: string) {
   return findMarkdownTables(Text.of(doc.split('\n')))
@@ -202,5 +202,113 @@ describe('findMarkdownTables', () => {
     expect(scan(lines(HEADER, '|---|'))).toEqual([])
     expect(tableSources(lines(HEADER, '|---|-'))).toHaveLength(1)
     expect(cellTexts(lines(HEADER, DELIMITER, '| 1 | 2'))[0][2]).toEqual(['| 1 ', '| 2'])
+  })
+})
+
+/** The shape of each cell in the last row of the first table, with doc
+ *  positions relative to the start of that row. */
+function lastRowShapes(doc: string) {
+  const row = scan(doc)[0].rows.at(-1)!
+  return row.cells.map((cell) => {
+    const shape = cellShape(Text.of(doc.split('\n')), cell)
+    return {
+      opened: shape.opened,
+      closingPipe: shape.closingPipe === null ? null : shape.closingPipe - row.from,
+      text: doc.slice(shape.text.from, shape.text.to),
+      padding: shape.padding.map(({ from, to }) => [from - row.from, to - row.from]),
+      visibleText: shape.visibleText,
+    }
+  })
+}
+
+describe('cellShape', () => {
+  it('splits padded cells into their pipes, padding, and text', () => {
+    expect(lastRowShapes(lines(HEADER, DELIMITER, '| a   |   b |'))).toEqual([
+      { opened: true, closingPipe: null, text: 'a', padding: [[1, 2], [3, 6]], visibleText: 'a' },
+      { opened: true, closingPipe: 12, text: 'b', padding: [[7, 10], [11, 12]], visibleText: 'b' },
+    ])
+  })
+
+  it('takes the spaces at the line ends of a row without edge pipes as padding', () => {
+    expect(lastRowShapes(lines('x | y', '--- | ---', '  a  |  b  '))).toEqual([
+      { opened: false, closingPipe: null, text: 'a', padding: [[0, 2], [3, 5]], visibleText: 'a' },
+      { opened: true, closingPipe: null, text: 'b', padding: [[6, 8], [9, 11]], visibleText: 'b' },
+    ])
+  })
+
+  it('takes the spaces before the leading pipe and after the trailing pipe as padding', () => {
+    expect(lastRowShapes(lines('| a |', '|---|', '   | b |   '))).toEqual([
+      { opened: true, closingPipe: 7, text: 'b', padding: [[0, 3], [4, 5], [6, 7], [8, 11]], visibleText: 'b' },
+    ])
+  })
+
+  it('gives an empty cell one padding run and an empty text after its opening pipe', () => {
+    expect(lastRowShapes(lines(HEADER, DELIMITER, '|   | b |'))[0]).toEqual(
+      { opened: true, closingPipe: null, text: '', padding: [[1, 4]], visibleText: '' },
+    )
+    const doc = lines(HEADER, DELIMITER, '|   | b |')
+    const cell = scan(doc)[0].rows[2].cells[0]
+    expect(cellShape(Text.of(doc.split('\n')), cell).text).toEqual({ from: cell.from + 1, to: cell.from + 1 })
+  })
+
+  it('keeps the tabs around the text out of the padding and in the visible text', () => {
+    expect(lastRowShapes(lines(HEADER, DELIMITER, '\t| x | y |'))[0]).toEqual(
+      { opened: true, closingPipe: null, text: 'x', padding: [[2, 3], [4, 5]], visibleText: '\tx' },
+    )
+    expect(lastRowShapes(lines('| a |', '|---|', '| \tbc |'))[0]).toEqual(
+      { opened: true, closingPipe: 6, text: 'bc', padding: [[1, 2], [5, 6]], visibleText: '\tbc' },
+    )
+  })
+
+  it('keeps an escaped pipe and the spaces inside the text as text', () => {
+    expect(lastRowShapes(lines('| a |', '|---|', '| a  \\| |'))[0]).toEqual(
+      { opened: true, closingPipe: 8, text: 'a  \\|', padding: [[1, 2], [7, 8]], visibleText: 'a  \\|' },
+    )
+  })
+})
+
+describe('pointer carets in table cells', () => {
+  const ROW = '| Ann   |     10 |'
+  const DOC = lines('| Name  |  Score |', '|:------|------:|', ROW, '| x |    |')
+  const rowFrom = DOC.indexOf(ROW)
+  const emptyRowFrom = DOC.indexOf('| x |')
+  const state = EditorState.create({ doc: DOC, extensions: markdownTables() })
+
+  function caretAfter(pos: number, assoc: -1 | 1, userEvent = 'select.pointer'): number {
+    // A bare range would lose its `assoc`; CM's mouse handler sends a selection.
+    const selection = EditorSelection.create([EditorSelection.cursor(pos, assoc)])
+    return state.update({ selection, userEvent }).state.selection.main.head
+  }
+
+  it('moves a click in the padding to the edge of the text', () => {
+    // After the leading pipe, before the space: the text start.
+    expect(caretAfter(rowFrom + 1, 1)).toBe(rowFrom + 2)
+    // In the spaces after "Ann", and right before the closing pipe.
+    expect(caretAfter(rowFrom + 6, 1)).toBe(rowFrom + 5)
+    expect(caretAfter(rowFrom + 17, -1)).toBe(rowFrom + 16)
+    // In the spaces before "10" (a right-aligned cell).
+    expect(caretAfter(rowFrom + 11, 1)).toBe(rowFrom + 14)
+  })
+
+  it('puts a caret at a splitting pipe into the cell on its side', () => {
+    // Right of "Ann": the end of the first cell's text.
+    expect(caretAfter(rowFrom + 8, -1)).toBe(rowFrom + 5)
+    // Left of "10": the start of the second cell's text, not before its pipe.
+    expect(caretAfter(rowFrom + 8, 1)).toBe(rowFrom + 14)
+  })
+
+  it('moves a click in an empty cell to the place after its opening pipe', () => {
+    expect(caretAfter(emptyRowFrom + 4, 1)).toBe(emptyRowFrom + 5)
+    expect(caretAfter(emptyRowFrom + 7, 1)).toBe(emptyRowFrom + 5)
+    expect(caretAfter(emptyRowFrom + 9, -1)).toBe(emptyRowFrom + 5)
+  })
+
+  it('leaves the text, the row ends, keyboard carets, and ranges alone', () => {
+    expect(caretAfter(rowFrom + 3, 1)).toBe(rowFrom + 3)
+    expect(caretAfter(rowFrom, 1)).toBe(rowFrom)
+    expect(caretAfter(rowFrom + ROW.length, -1)).toBe(rowFrom + ROW.length)
+    expect(caretAfter(rowFrom + 6, 1, 'select')).toBe(rowFrom + 6)
+    const range = state.update({ selection: EditorSelection.range(rowFrom + 1, rowFrom + 6), userEvent: 'select.pointer' }).state.selection.main
+    expect([range.anchor, range.head]).toEqual([rowFrom + 1, rowFrom + 6])
   })
 })
