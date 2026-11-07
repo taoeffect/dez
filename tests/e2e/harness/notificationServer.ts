@@ -37,7 +37,9 @@ export async function startNotificationServer (): Promise<NotificationServer> {
   const notifications: ShownNotification[] = []
   let stderr = ''
   server.stderr.on('data', (chunk: Buffer) => { stderr += chunk.toString() })
-  const exited = new Promise<void>((resolve) => server.once('exit', () => resolve()))
+  // `'close'`, not `'exit'`: at `'exit'` the stderr pipe can still hold the
+  // traceback that the start error below shows.
+  const exited = new Promise<void>((resolve) => server.once('close', () => resolve()))
 
   const address = await new Promise<string>((resolve, reject) => {
     const lines = readline.createInterface({ input: server.stdout })
