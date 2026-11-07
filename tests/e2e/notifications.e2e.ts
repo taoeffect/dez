@@ -425,6 +425,36 @@ describe('reply-end alerts', () => {
     await waitForValue(browser, 'focused area', async () => focusedArea(browser), 'editor')
   })
 
+  // Dez waits for the click of each notification in its own task
+  // (`wait_for_click` in src-tauri/src/notification.rs), and the wait ends
+  // when the server closes that notification. A real server sends no click
+  // after a close; here the click shows whether the wait for the closed
+  // notification still runs. The click on the other notification shows that
+  // the close did not end its wait. A tab loses its done mark when it
+  // becomes active, so the closed notification's tab keeps the mark only if
+  // it never opened, whichever click Dez handles first.
+  it('a click on a closed notification opens no tab, and the close does not end the wait of another notification', async () => {
+    const closedAlert = { appName: 'Dez', summary: 'Closed question', body: 'Reply finished', actions: ['default', 'Open'] }
+    const openAlert = { appName: 'Dez', summary: 'Open question', body: 'Reply finished', actions: ['default', 'Open'] }
+    const closed = await askInBackgroundTab('Closed question')
+    await sendChatReply(closed.request.reply, 'the closed notification')
+    await waitForNotifications([closedAlert])
+    const open = await askInBackgroundTab('Open question')
+    await sendChatReply(open.request.reply, 'the open notification')
+    const [closedNotification, openNotification] = await waitForNotifications([closedAlert, openAlert])
+
+    server?.close(closedNotification.id)
+    server?.click(closedNotification.id)
+    server?.click(openNotification.id)
+
+    await waitForValue(browser, 'active tab', activeTabId, open.tabId)
+    // A wrong click on the closed notification can come after the other one.
+    await browser.pause(300)
+    expect(await activeTabId()).toBe(open.tabId)
+    const activity = await sbpCall(browser, 'dez.model/tabs/activity') as Record<string, string>
+    expect(activity[closed.tabId]).toBe('done')
+  })
+
   it('gives no alert when a reply ends in the active tab of the focused window while the user is not away', async () => {
     expect(await windowIsFocused()).toBe(true)
     await submit(browser, 'Foreground question')

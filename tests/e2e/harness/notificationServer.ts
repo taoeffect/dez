@@ -22,6 +22,9 @@ export interface NotificationServer {
   /** The user clicks the notification body. With `activationToken`, the
    *  server first sends it as the `ActivationToken` signal. */
   click: (id: number, activationToken?: string) => void
+  /** The user dismisses the notification: the server sends
+   *  `NotificationClosed` with reason 2 (dismissed). */
+  close: (id: number) => void
   /** Stops the server and its bus. */
   stop: () => Promise<void>
 }
@@ -65,6 +68,9 @@ export async function startNotificationServer (): Promise<NotificationServer> {
     notifications,
     click (id, activationToken) {
       server.stdin.write(['click', id, activationToken].filter((part) => part !== undefined).join(' ') + '\n')
+    },
+    close (id) {
+      server.stdin.write(`close ${id}\n`)
     },
     // An end of stdin stops the script, and the script stops the bus.
     async stop () {
