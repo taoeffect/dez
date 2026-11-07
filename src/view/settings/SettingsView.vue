@@ -170,7 +170,7 @@ function onOverlayClick(e: MouseEvent) {
                   :checked="settings.doneSound"
                   @change="sbp('dez.model/settings/setDoneSound', !settings.doneSound)"
                 />
-                Play a sound when a reply finishes
+                Play a sound when a reply ends
               </label>
               <div class="notifications-indented notifications-volume" :class="{ 'notifications-volume--disabled': !settings.doneSound }">
                 <label class="settings-label" for="done-sound-volume">Volume</label>
@@ -199,7 +199,7 @@ function onOverlayClick(e: MouseEvent) {
                   :checked="settings.doneNotification"
                   @change="sbp('dez.model/settings/setDoneNotification', !settings.doneNotification)"
                 />
-                Show a system notification when a reply finishes
+                Show a system notification when a reply ends
               </label>
               <p class="notifications-indented notifications-hint">Click the notification to go to the tab of the reply.</p>
             </div>
