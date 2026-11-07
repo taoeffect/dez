@@ -22,8 +22,7 @@ headless compositor needs no sudo:
   test -S "$XDG_RUNTIME_DIR/wayland-dez"
 
   # 3. Run the app or tests against it. WAYLAND_DISPLAY is the setting that
-  #    matters; the other two force GTK to use Wayland (the app tries X11
-  #    first, src-tauri/src/lib.rs).
+  #    matters; the other two force GTK to use Wayland.
   env -u DISPLAY GDK_BACKEND=wayland WAYLAND_DISPLAY=wayland-dez npm run test:e2e
 
 - Stop the compositor when you are done.

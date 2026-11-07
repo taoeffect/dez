@@ -235,7 +235,7 @@ pub fn monitors(window: tauri::WebviewWindow) -> Result<Monitors, String> {
 }
 
 // The GDK backend that GTK runs on: "x11", "wayland", or another GDK backend
-// name; None on other platforms. GTK picks it when it starts (lib.rs), and a
+// name; None on other platforms. GTK picks it when it starts, and a
 // Wayland window cannot read or set its place on the screen. A command
 // without `async` runs on the main thread, where GTK must be called.
 #[tauri::command]

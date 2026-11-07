@@ -52,8 +52,8 @@ mod platform {
         }
         // In a Wayland session the X server is Xwayland, which counts only
         // the input to X windows: the user would look idle while typing in a
-        // Wayland window (Dez too, with GDK_BACKEND=wayland). Dez runs as an
-        // X window by default (lib.rs), but it still has WAYLAND_DISPLAY.
+        // Wayland window, such as Dez itself in a Wayland session. The
+        // AppImage runs as an X window, but it still has WAYLAND_DISPLAY.
         if env::var_os("WAYLAND_DISPLAY").is_some() {
             return None;
         }

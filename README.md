@@ -34,7 +34,7 @@ Talk with AI in a fully editable plaintext document. Inspired by Zed's text thre
 
 The main window contains a tab bar for conversations and buttons to access saved prompts, settings, and conversation history.
 
-Dez opens its window at the size and place where you left it. On Linux, Dez runs as an X11 window, also in a Wayland session (through Xwayland), because a Wayland app cannot read or set the place of its window. If you start Dez with `GDK_BACKEND=wayland`, or the desktop has no X server, the window is a Wayland window: Dez keeps its size, and the desktop picks its place.
+Dez opens its window at the size where you left it. On macOS and on X11 (also the AppImage, which runs through Xwayland in a Wayland session), it also opens at the place where you left it. In a Wayland session, Dez is a Wayland app: a Wayland app cannot read or set the place of its window, so the desktop picks the place.
 
 ## Notifications
 

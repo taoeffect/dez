@@ -139,7 +139,7 @@ Rules:
 - `session_bus.rs`: the one shared Linux D-Bus session connection (zbus) for `notification.rs` and `idle.rs`.
 - `persistence.rs`: raw private-file I/O and id sanitization; write every private file with `write_private_file`.
 - `key_store.rs`: `provider_keys.json`. `copilot.rs`: Copilot device flow and token refresh.
-- `lib.rs`: plugins, permission reasons, the Linux GTK backend order (X11 first), app bootstrap.
+- `lib.rs`: plugins, permission reasons, app bootstrap.
 
 ## Persistence layout
 
@@ -169,7 +169,7 @@ Do not ever read, view, print, or `cat` `~/.config/dez/provider_keys.json`; it c
 - **Tauri capabilities**: a new plugin or core command needs a permission in `src-tauri/capabilities/default.json`; app commands registered in `lib.rs` need none.
 - **The window starts hidden**: `dez.controller/window/restore` shows it, so a frontend failure before init shows no window; read the Vite output. On macOS, `lib.rs` shows it at launch so that it comes to the front.
 - **Saved window position units differ by platform**: logical points on macOS, physical px elsewhere (`src/controller/window.ts`).
-- **Linux GTK runs on X11 by default**: `lib.rs` asks GDK for X11 first (Xwayland in a Wayland session), because a Wayland window cannot read or set its place. Under GTK's Wayland backend (`GDK_BACKEND=wayland`, as in the e2e recipe) the window tracker keeps the saved place (`dez.native/gdkBackend`, `src/controller/window.ts`).
+- **Wayland windows have no place**: under GTK's Wayland backend (Dez in a Wayland session) the window cannot read or set its place, so the window tracker keeps the saved place and the desktop places the window (`dez.native/gdkBackend`, `src/controller/window.ts`). The AppImage runs on X11 (linuxdeploy's GTK hook sets `GDK_BACKEND=x11`).
 - **Read monitors with `dez.native/monitors`**, never the window API's `availableMonitors()`, `primaryMonitor()`, or `currentMonitor()`: in Tauri 2.10 those call GDK off the main thread and can crash the app on X11 (`monitors` in `commands.rs`).
 - **Shortcut key order differs by platform**: on Linux the menu accelerator gets the key first; put context checks in the selector both paths call, never only in a key handler.
 - **Never hard-code a shortcut key**: every binding path (window handler, CodeMirror keymap, find field, menu accelerators, button titles and keycaps) reads the effective keys from `src/model/shortcuts.ts` and the settings store.
