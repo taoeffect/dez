@@ -173,19 +173,46 @@ mod platform {
     }
 }
 
-// NSUserNotificationCenter through mac-notification-sys.
+// NSUserNotificationCenter. Dez posts the notification and owns the center
+// delegate, so a notification costs no thread and no timer: the click comes
+// as a delegate call on the main thread. mac-notification-sys 0.6.15 only
+// sets the app that notifications post as. Its `send` with `wait_for_click`
+// blocks a thread and adds a 0.5 s main-run-loop timer that scans the
+// delivered list, until the notification leaves Notification Center, which
+// a banner that timed out does only when the user clears it.
 #[cfg(target_os = "macos")]
+// NSUserNotification is deprecated but works; UNUserNotificationCenter needs
+// an app bundle, which a dev build does not have.
+#[allow(deprecated)]
 mod platform {
-    use std::ffi::CString;
-    use std::sync::Once;
+    use std::sync::{Mutex, Once, PoisonError};
+    use std::time::{Duration, Instant};
 
-    use mac_notification_sys::{Notification, NotificationResponse};
-    use objc2::runtime::{AnyClass, AnyObject, Bool, Imp, Sel};
-    use objc2::{Encode, sel};
+    use objc2::rc::{Retained, autoreleasepool};
+    use objc2::runtime::{NSObject, NSObjectProtocol, ProtocolObject};
+    use objc2::{AnyThread, ClassType, define_class, msg_send};
+    use objc2_foundation::{
+        NSString, NSUUID, NSUserNotification, NSUserNotificationActivationType,
+        NSUserNotificationCenter, NSUserNotificationCenterDelegate,
+    };
     use tauri::ipc::Channel;
     use tauri::{Manager, WebviewWindow};
 
+    // The delivery is asynchronous, so a notification can be missing from
+    // the delivered list for a moment after `deliverNotification:` returns
+    // (mac-notification-sys waits up to 2 s for it).
+    const DELIVERY_GRACE: Duration = Duration::from_secs(60);
+
+    // A posted notification whose click still goes to its tab.
+    struct Waiting {
+        identifier: String,
+        posted_at: Instant,
+        window: WebviewWindow,
+        on_click: Channel<()>,
+    }
+
     static SETUP: Once = Once::new();
+    static WAITING: Mutex<Vec<Waiting>> = Mutex::new(Vec::new());
 
     pub async fn show(
         window: WebviewWindow,
@@ -193,40 +220,151 @@ mod platform {
         body: String,
         on_click: Channel<()>,
     ) -> Result<(), String> {
-        // Notifications show under the app with this bundle id, set once per
-        // process. A dev build runs outside an app bundle, so it posts as
-        // Terminal, as tauri-plugin-notification does.
-        SETUP.call_once(|| {
-            let bundle_id = if tauri::is_dev() {
-                "com.apple.Terminal"
-            } else {
-                window.config().identifier.as_str()
-            };
-            if let Err(error) = mac_notification_sys::set_application(bundle_id) {
-                eprintln!("Failed to set the notification app to {bundle_id}: {error}");
-            }
-            present_while_frontmost();
-        });
-        // `send` blocks until the user clicks or dismisses the notification,
-        // and the main run loop must run meanwhile (Tauri runs it). A send
-        // error also comes out only then, so it is logged here and does not
-        // reach the caller.
-        std::thread::spawn(move || {
-            match Notification::new()
-                .title(&title)
-                .message(&body)
-                .wait_for_click(true)
-                .send()
-            {
-                Ok(NotificationResponse::Click) => {
-                    bring_to_front(&window);
-                    super::report_click(&on_click);
+        autoreleasepool(|_| {
+            // Notifications show under the app with this bundle id, set once
+            // per process and before the first use of the center. A dev
+            // build runs outside an app bundle, so it posts as Terminal, as
+            // tauri-plugin-notification does.
+            SETUP.call_once(|| {
+                let bundle_id = if tauri::is_dev() {
+                    "com.apple.Terminal"
+                } else {
+                    window.config().identifier.as_str()
+                };
+                if let Err(error) = mac_notification_sys::set_application(bundle_id) {
+                    eprintln!("Failed to set the notification app to {bundle_id}: {error}");
                 }
-                Ok(_) => {}
-                Err(error) => eprintln!("Failed to show a notification: {error}"),
-            }
-        });
+                set_delegate();
+            });
+            post(window, &title, &body, on_click)
+        })
+    }
+
+    fn post(
+        window: WebviewWindow,
+        title: &str,
+        body: &str,
+        on_click: Channel<()>,
+    ) -> Result<(), String> {
+        let center = notification_center()
+            .ok_or("Could not show the notification: no notification center")?;
+        let identifier = NSUUID::new().UUIDString();
+        let notification = NSUserNotification::new();
+        notification.setTitle(Some(&NSString::from_str(title)));
+        notification.setInformativeText(Some(&NSString::from_str(body)));
+        notification.setIdentifier(Some(&identifier));
+        // No "Show" button on an alert-style notification.
+        notification.setHasActionButton(false);
+
+        // A notification stays in the delivered list after its banner went
+        // away, until the user clears it from Notification Center or clicks
+        // it. Each one there stays clickable to its tab, so the list of
+        // waiting clicks drops only the notifications that left.
+        let delivered: Vec<String> = center
+            .deliveredNotifications()
+            .iter()
+            .filter_map(|delivered| delivered.identifier())
+            .map(|identifier| identifier.to_string())
+            .collect();
+        {
+            let mut waiting = WAITING.lock().unwrap_or_else(PoisonError::into_inner);
+            waiting.retain(|entry| {
+                entry.posted_at.elapsed() < DELIVERY_GRACE || delivered.contains(&entry.identifier)
+            });
+            waiting.push(Waiting {
+                identifier: identifier.to_string(),
+                posted_at: Instant::now(),
+                window,
+                on_click,
+            });
+        }
+        center.deliverNotification(&notification);
         Ok(())
+    }
+
+    // `defaultUserNotificationCenter` is nil in a process with no bundle id,
+    // and the objc2-foundation binding would panic on nil.
+    fn notification_center() -> Option<Retained<NSUserNotificationCenter>> {
+        unsafe {
+            msg_send![
+                NSUserNotificationCenter::class(),
+                defaultUserNotificationCenter
+            ]
+        }
+    }
+
+    define_class!(
+        // SAFETY: NSObject has no subclassing requirements, and `Delegate`
+        // does not implement `Drop`.
+        #[unsafe(super(NSObject))]
+        struct Delegate;
+
+        unsafe impl NSObjectProtocol for Delegate {}
+
+        unsafe impl NSUserNotificationCenterDelegate for Delegate {
+            #[unsafe(method(userNotificationCenter:didActivateNotification:))]
+            fn did_activate(
+                &self,
+                center: &NSUserNotificationCenter,
+                notification: &NSUserNotification,
+            ) {
+                clicked(center, notification);
+            }
+
+            // The center sends a notification of the frontmost app only to
+            // Notification Center, with no banner, unless this answers YES.
+            // Dez also alerts while it is frontmost (when the user is away),
+            // so it needs the banner.
+            // https://developer.apple.com/documentation/foundation/nsusernotificationcenterdelegate/usernotificationcenter(_:shouldpresent:)
+            #[unsafe(method(userNotificationCenter:shouldPresentNotification:))]
+            fn should_present(
+                &self,
+                _center: &NSUserNotificationCenter,
+                _notification: &NSUserNotification,
+            ) -> bool {
+                true
+            }
+        }
+    );
+
+    // The center does not retain its delegate, so the one delegate lives as
+    // long as the app.
+    fn set_delegate() {
+        let Some(center) = notification_center() else {
+            return;
+        };
+        let delegate: Retained<Delegate> =
+            unsafe { msg_send![super(Delegate::alloc().set_ivars(())), init] };
+        unsafe { center.setDelegate(Some(ProtocolObject::from_ref(&*delegate))) };
+        std::mem::forget(delegate);
+    }
+
+    // Runs on the main thread. A click on the body brings the window to the
+    // front, then tells the webview; that work runs on the async runtime, off
+    // the AppKit callback. Any click removes the notification from
+    // Notification Center, as mac-notification-sys did.
+    fn clicked(center: &NSUserNotificationCenter, notification: &NSUserNotification) {
+        center.removeDeliveredNotification(notification);
+        let Some(identifier) = notification.identifier().map(|id| id.to_string()) else {
+            return;
+        };
+        let entry = {
+            let mut waiting = WAITING.lock().unwrap_or_else(PoisonError::into_inner);
+            let index = waiting
+                .iter()
+                .position(|entry| entry.identifier == identifier);
+            index.map(|index| waiting.swap_remove(index))
+        };
+        let Some(entry) = entry else {
+            return;
+        };
+        if notification.activationType() != NSUserNotificationActivationType::ContentsClicked {
+            return;
+        }
+        tauri::async_runtime::spawn(async move {
+            bring_to_front(&entry.window);
+            super::report_click(&entry.on_click);
+        });
     }
 
     fn bring_to_front(window: &WebviewWindow) {
@@ -234,60 +372,6 @@ mod platform {
             if let Err(error) = result {
                 eprintln!("Failed to bring the window to the front: {error}");
             }
-        }
-    }
-
-    // NSUserNotificationCenter sends a notification of the frontmost app only
-    // to Notification Center, with no banner, unless the center's delegate
-    // answers YES to `userNotificationCenter:shouldPresentNotification:`.
-    // Dez also alerts while it is frontmost (when the user is away), so it
-    // needs the banner. mac-notification-sys 0.6.15 makes its own delegate
-    // (`NotificationCenterDelegate`, objc/notify.m) at its first send, and
-    // that class has no such method. So this adds the method to the class
-    // before the first send: the class is then complete when the center gets
-    // the delegate. `class_addMethod` keeps a method that the class already
-    // has, so a later mac-notification-sys that adds one wins.
-    // https://developer.apple.com/documentation/foundation/nsusernotificationcenterdelegate/usernotificationcenter(_:shouldpresent:)
-    fn present_while_frontmost() {
-        extern "C-unwind" fn should_present(
-            _delegate: *mut AnyObject,
-            _cmd: Sel,
-            _center: *mut AnyObject,
-            _notification: *mut AnyObject,
-        ) -> Bool {
-            Bool::YES
-        }
-        type ShouldPresent =
-            extern "C-unwind" fn(*mut AnyObject, Sel, *mut AnyObject, *mut AnyObject) -> Bool;
-
-        let Some(class) = AnyClass::get(c"NotificationCenterDelegate") else {
-            eprintln!(
-                "No NotificationCenterDelegate class: banners will not show while Dez is in front"
-            );
-            return;
-        };
-        // The Objective-C type string of the method: the return type, then
-        // self, the selector, and the two arguments.
-        let (boolean, object, selector) =
-            (Bool::ENCODING, <*mut AnyObject>::ENCODING, Sel::ENCODING);
-        let types = CString::new(format!("{boolean}{object}{selector}{object}{object}"))
-            .expect("an Objective-C type string has no NUL byte");
-        // SAFETY: the function matches the selector's arguments and return
-        // type, as the type string says. The runtime calls an `Imp` with the
-        // real arguments, so its declared type does not matter.
-        let added = unsafe {
-            let implementation = std::mem::transmute::<ShouldPresent, Imp>(should_present);
-            objc2::ffi::class_addMethod(
-                std::ptr::from_ref(class).cast_mut(),
-                sel!(userNotificationCenter:shouldPresentNotification:),
-                implementation,
-                types.as_ptr(),
-            )
-        };
-        if !added.as_bool() {
-            eprintln!(
-                "The notification delegate already has shouldPresentNotification; Dez left it as is"
-            );
         }
     }
 }

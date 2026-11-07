@@ -134,7 +134,7 @@ Rules:
 - **Keep Rust barebones**: a thin, generic OS interface, not a per-feature API. Reuse or generalize an existing command (e.g. `load_app_file(name)` / `save_app_file(name, content)`) instead of adding a near-copy, so frontend features rarely need Rust changes.
 - `commands.rs`, `http_bridge.rs`: Tauri commands, registered in `lib.rs`. `open_devtools` (Help › Developer Console) needs the `devtools` feature of the `tauri` crate in release builds (`Cargo.toml`).
 - `http_bridge.rs`: generic `http_request`, `stream_http`, `cancel_http_stream`.
-- `notification.rs`: `show_notification`, a system notification whose click brings the window to the front and calls back (zbus on Linux, `mac-notification-sys` on macOS).
+- `notification.rs`: `show_notification`, a system notification whose click brings the window to the front and calls back (zbus on Linux, NSUserNotificationCenter through objc2 on macOS).
 - `idle.rs`: `user_idle_ms`, the time since the last user input anywhere on the computer, or `null` when no source works (CoreGraphics on macOS; on Linux an ext-idle-notify watcher, GNOME Mutter IdleMonitor, or X11 XScreenSaver).
 - `session_bus.rs`: the one shared Linux D-Bus session connection (zbus) for `notification.rs` and `idle.rs`.
 - `persistence.rs`: raw private-file I/O and id sanitization; write every private file with `write_private_file`.

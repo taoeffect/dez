@@ -53,9 +53,12 @@ wayland-client = "=0.31.15"
 wayland-protocols = { version = "=0.32.13", features = ["client", "staging"] }
 x11rb = { version = "=0.14.0", features = ["screensaver"] }
 
-# objc2: the version that mac-notification-sys already uses. notification.rs
-# adds a method to its notification center delegate with it.
+# objc2, objc2-foundation: the versions that mac-notification-sys already
+# uses. notification.rs posts the notifications and owns the notification
+# center delegate with them; mac-notification-sys only sets the app id that
+# the notifications post as.
 [target.'cfg(target_os = "macos")'.dependencies]
 mac-notification-sys = "=0.6.15"
 objc2 = "=0.6.4"
+objc2-foundation = "=0.3.2"
 
