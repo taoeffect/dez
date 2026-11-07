@@ -689,9 +689,10 @@ describe('markdown tables', () => {
   it('shows padded cells like the same cells without padding', async () => {
     await openFixture(PADDED_TEXT)
     const [plain, padded] = await cellTextLayout()
-    expect(padded).toHaveLength(plain.length)
+    // The header and two body rows, 3 cells each.
+    expect(plain.map((row) => row.length), 'cells of the plain table').toEqual([3, 3, 3])
+    expect(padded.map((row) => row.length), 'cells of the padded table').toEqual([3, 3, 3])
     plain.forEach((row, rowIndex) => {
-      expect(padded[rowIndex]).toHaveLength(row.length)
       row.forEach((cell, column) => {
         const other = padded[rowIndex][column]
         const where = `row ${rowIndex}, column ${column}`
