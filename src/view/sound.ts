@@ -8,16 +8,16 @@ import dingDataUrl from '../assets/sounds/ding.mp3?inline'
 // One shared player for the reply-done sound, made on first use. A call
 // while the sound plays only changes its volume, so two replies that end
 // together give one ding.
-let doneSound: HTMLAudioElement | null = null
+let doneSoundPlayer: HTMLAudioElement | null = null
 
 export default sbp('sbp/selectors/register', {
   'dez.ui/playDoneSound' (volumePercent: number): void {
-    doneSound ??= new Audio(dingDataUrl)
-    doneSound.volume = volumePercent / 100
-    if (!doneSound.paused) return
+    doneSoundPlayer ??= new Audio(dingDataUrl)
+    doneSoundPlayer.volume = volumePercent / 100
+    if (!doneSoundPlayer.paused) return
     // At the end of the sound `paused` is true again, and `play()` starts it
     // from the beginning.
-    doneSound.play().catch((error: unknown) => {
+    doneSoundPlayer.play().catch((error: unknown) => {
       console.error('[sound] Could not play the reply-done sound:', error)
     })
   },

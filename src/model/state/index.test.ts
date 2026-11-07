@@ -527,7 +527,7 @@ describe('dez.model/settings/changeEditorFontSize', () => {
 })
 
 describe('dez.model/settings reply-end alerts', () => {
-  function alerts (): Pick<SettingsSnapshot, 'doneSound' | 'doneSoundVolume' | 'doneNotification'> {
+  function alertSettings (): Pick<SettingsSnapshot, 'doneSound' | 'doneSoundVolume' | 'doneNotification'> {
     const { doneSound, doneSoundVolume, doneNotification } = sbp('dez.model/settings/snapshot') as SettingsSnapshot
     return { doneSound, doneSoundVolume, doneNotification }
   }
@@ -548,11 +548,11 @@ describe('dez.model/settings reply-end alerts', () => {
 
   it('rounds the volume and keeps it in 0-100', () => {
     sbp('dez.model/settings/setDoneSoundVolume', 72.6)
-    expect(alerts().doneSoundVolume).toBe(73)
+    expect(alertSettings().doneSoundVolume).toBe(73)
     sbp('dez.model/settings/setDoneSoundVolume', -10)
-    expect(alerts().doneSoundVolume).toBe(0)
+    expect(alertSettings().doneSoundVolume).toBe(0)
     sbp('dez.model/settings/setDoneSoundVolume', 140)
-    expect(alerts().doneSoundVolume).toBe(100)
+    expect(alertSettings().doneSoundVolume).toBe(100)
   })
 
   // Each setting changes alone, so a setting that is missing from the save
@@ -560,7 +560,7 @@ describe('dez.model/settings reply-end alerts', () => {
   it('loads the saved alert settings, and saves a change of each one', async () => {
     diskAppState = { doneSound: false, doneSoundVolume: 20, doneNotification: false }
     await sbp('dez.model/settings/init')
-    expect(alerts()).toEqual({ doneSound: false, doneSoundVolume: 20, doneNotification: false })
+    expect(alertSettings()).toEqual({ doneSound: false, doneSoundVolume: 20, doneNotification: false })
 
     vi.useFakeTimers()
     sbp('dez.model/settings/startPersistence')

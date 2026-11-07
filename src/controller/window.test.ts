@@ -12,7 +12,7 @@ import './window'
 // The Dez window on one 1920x1080 screen at scale 1, with no frame, as the
 // Tauri window API reports it. Under GTK's Wayland backend the window reads
 // its place as (0,0), and `setPosition` does nothing.
-const screen = vi.hoisted(() => ({
+const desktop = vi.hoisted(() => ({
   wayland: false,
   window: { width: 900, height: 600, x: 0, y: 0, maximized: false },
   listeners: [] as (() => void)[],
@@ -28,24 +28,24 @@ vi.mock('@tauri-apps/api/window', () => {
     constructor (readonly x: number, readonly y: number) {}
   }
   const listen = async (listener: () => void) => {
-    screen.listeners.push(listener)
+    desktop.listeners.push(listener)
     return () => {}
   }
   const appWindow = {
     scaleFactor: async () => 1,
-    innerSize: async () => ({ width: screen.window.width, height: screen.window.height }),
-    outerSize: async () => ({ width: screen.window.width, height: screen.window.height }),
-    outerPosition: async () => screen.wayland ? { x: 0, y: 0 } : { x: screen.window.x, y: screen.window.y },
+    innerSize: async () => ({ width: desktop.window.width, height: desktop.window.height }),
+    outerSize: async () => ({ width: desktop.window.width, height: desktop.window.height }),
+    outerPosition: async () => desktop.wayland ? { x: 0, y: 0 } : { x: desktop.window.x, y: desktop.window.y },
     setSize: async ({ width, height }: LogicalSize) => {
-      Object.assign(screen.window, { width, height })
+      Object.assign(desktop.window, { width, height })
     },
     setPosition: async ({ x, y }: PhysicalPosition) => {
-      if (!screen.wayland) Object.assign(screen.window, { x, y })
+      if (!desktop.wayland) Object.assign(desktop.window, { x, y })
     },
     maximize: async () => {
-      screen.window.maximized = true
+      desktop.window.maximized = true
     },
-    isMaximized: async () => screen.window.maximized,
+    isMaximized: async () => desktop.window.maximized,
     isMinimized: async () => false,
     show: async () => {},
     setFocus: async () => {},
@@ -82,7 +82,7 @@ sbp('sbp/selectors/register', {
 const CENTERED = { x: 510, y: 240 }
 
 function useBackend (backend: 'x11' | 'wayland'): void {
-  screen.wayland = backend === 'wayland'
+  desktop.wayland = backend === 'wayland'
   gdkBackend = async () => backend
 }
 
@@ -95,8 +95,8 @@ function savedGeometry (): WindowGeometry | null {
 // app_state.json: it keeps what the last launch saved.
 async function launch (): Promise<void> {
   sbp('dez.controller/window/stopTracking')
-  screen.window = { width: 900, height: 600, x: 0, y: 0, maximized: false }
-  screen.listeners = []
+  desktop.window = { width: 900, height: 600, x: 0, y: 0, maximized: false }
+  desktop.listeners = []
   await sbp('dez.controller/window/restore')
   sbp('dez.controller/window/startTracking')
   await vi.advanceTimersByTimeAsync(500)
@@ -104,9 +104,9 @@ async function launch (): Promise<void> {
 
 // A move, resize, or unmaximize by the user or the window manager, up to the
 // tracker's save after it.
-async function changeWindow (change: Partial<typeof screen.window>): Promise<void> {
-  Object.assign(screen.window, change)
-  for (const listener of screen.listeners) listener()
+async function changeWindow (change: Partial<typeof desktop.window>): Promise<void> {
+  Object.assign(desktop.window, change)
+  for (const listener of desktop.listeners) listener()
   await vi.advanceTimersByTimeAsync(500)
 }
 
@@ -128,7 +128,7 @@ describe('window place on Linux', () => {
     useBackend('x11')
     sbp('dez.model/settings/setWindowGeometry', { width: 900, height: 600, x: 300, y: 200, maximized: false })
     await launch()
-    expect(screen.window).toMatchObject({ x: 300, y: 200 })
+    expect(desktop.window).toMatchObject({ x: 300, y: 200 })
     await changeWindow({ x: 437, y: 291 })
     expect(savedGeometry()).toEqual({ width: 900, height: 600, x: 437, y: 291, maximized: false })
   })
@@ -149,7 +149,7 @@ describe('window place on Linux', () => {
     const offScreen = { width: 900, height: 600, x: -9000, y: 9000 }
     sbp('dez.model/settings/setWindowGeometry', { ...offScreen, maximized: true })
     await launch()
-    expect(screen.window.maximized).toBe(true)
+    expect(desktop.window.maximized).toBe(true)
     expect(savedGeometry()).toEqual({ ...offScreen, maximized: true })
     await changeWindow({ maximized: false })
     expect(savedGeometry()).toEqual({ ...offScreen, maximized: false })
@@ -161,7 +161,7 @@ describe('window place on Linux', () => {
     expect(savedGeometry()).toStrictEqual({ width: 900, height: 600, maximized: false })
     useBackend('x11')
     await launch()
-    expect(screen.window).toMatchObject(CENTERED)
+    expect(desktop.window).toMatchObject(CENTERED)
     expect(savedGeometry()).toEqual({ width: 900, height: 600, ...CENTERED, maximized: false })
   })
 

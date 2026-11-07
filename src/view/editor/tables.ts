@@ -462,19 +462,19 @@ function columnWidths(tabSize: number, table: MarkdownTable, shapes: CellShape[]
   let takenCh = 0
   // The borders of a row: each cell's right border and the first cell's
   // left border.
-  const bordersPx = texts.length + 1
+  const rowBordersPx = texts.length + 1
   for (const [index, floorCh] of [...floorsCh].sort((a, b) => a - b).entries()) {
-    levels.push(`(var(${TABLE_WIDTH_VAR}) - ${bordersPx}px - ${takenCh}ch) / ${texts.length - index}`)
+    levels.push(`(var(${TABLE_WIDTH_VAR}) - ${rowBordersPx}px - ${takenCh}ch) / ${texts.length - index}`)
     takenCh += floorCh
   }
   const level = `max(${levels.join(', ')})`
   return texts.map(({ line }, index) => {
     // `box-sizing` is `border-box` app-wide: the widths include the insets
     // (the pipes hang into them) and the cell's borders.
-    const borderPx = index === 0 ? 2 : 1
+    const cellBordersPx = index === 0 ? 2 : 1
     return {
-      width: line <= SHORT_COLUMN_CH ? `calc(${line + 2 * CELL_INSET_CH}ch + ${borderPx}px)` : null,
-      minWidth: `calc(min(${floorsCh[index]}ch, ${level}) + ${borderPx}px)`,
+      width: line <= SHORT_COLUMN_CH ? `calc(${line + 2 * CELL_INSET_CH}ch + ${cellBordersPx}px)` : null,
+      minWidth: `calc(min(${floorsCh[index]}ch, ${level}) + ${cellBordersPx}px)`,
     }
   })
 }
