@@ -260,6 +260,15 @@ export async function closeSettings (browser: E2EBrowser): Promise<void> {
   await waitForValue(browser, 'Settings open', () => browser.execute(() => document.querySelector('.provider-manager') !== null), false)
 }
 
+/** Click the nav button of the open Settings whose label is `label`. */
+export async function clickSettingsNav (browser: E2EBrowser, label: string): Promise<void> {
+  await browser.execute((wanted: string) => {
+    const button = [...document.querySelectorAll<HTMLElement>('.settings-nav-btn')].find((el) => el.textContent?.trim() === wanted)
+    if (!button) throw new Error(`clickSettingsNav: no ${wanted} nav button`)
+    button.click()
+  }, label)
+}
+
 /**
  * Save a WebDriver screenshot to `tests/e2e/artifacts/` on test failure.
  * Call from an `afterEach` hook with the Vitest task context so the

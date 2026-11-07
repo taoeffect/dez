@@ -1,12 +1,12 @@
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from 'vitest'
 import { startApp, type RunningApp } from './harness/app'
-import { consoleErrors, pointerClick, pointerDrag, pointerPress, pointerRelease, resetConsoleErrors, screenshotOnFailure, waitFor, waitForValue } from './harness/dom'
+import { clickSettingsNav, consoleErrors, pointerClick, pointerDrag, pointerPress, pointerRelease, resetConsoleErrors, screenshotOnFailure, waitFor, waitForValue } from './harness/dom'
 import { readAppState, seedAppState } from './harness/fixtures'
 import { startMockProviderApp } from './harness/mockProviderApp'
 import { replyText, sendChatReply, type HeldRequest, type HoldingChatMock, type MockProvider } from './harness/mockServer'
 import { startNotificationServer, type NotificationServer, type ShownNotification } from './harness/notificationServer'
 import { createSession, destroySession, type E2EBrowser } from './harness/session'
-import { focusedArea, sbpCall, submit, waitForThread } from './harness/thread'
+import { activeTabId, focusedArea, sbpCall, submit, waitForThread } from './harness/thread'
 
 // Settings › Notifications: the reply-done sound with its volume slider, and
 // the system notification setting. Then the alerts at the end of a reply
@@ -120,13 +120,7 @@ describe('Settings › Notifications', () => {
   async function openNotifications (): Promise<void> {
     await sbpCall(browser, 'dez.model/settings/open')
     await waitFor(browser, '.settings-nav')
-    const found = await browser.execute(() => {
-      const button = Array.from(document.querySelectorAll<HTMLElement>('.settings-nav-btn'))
-        .find((b) => b.textContent?.trim() === 'Notifications')
-      button?.click()
-      return button !== undefined
-    })
-    expect(found).toBe(true)
+    await clickSettingsNav(browser, 'Notifications')
     await waitFor(browser, '.done-sound-checkbox', 10_000)
   }
 
@@ -351,14 +345,10 @@ describe('reply-end alerts', () => {
     }) === true
   }
 
-  async function activeTabId (): Promise<string> {
-    return await sbpCall(browser, 'dez.model/tabs/activeId') as string
-  }
-
   // Sends `question` in a new tab, opens another tab, and returns the first
   // tab's id and the reply's request.
   async function askInBackgroundTab (question: string): Promise<{ tabId: string, request: HeldRequest }> {
-    const tabId = await activeTabId()
+    const tabId = await activeTabId(browser)
     await submit(browser, question)
     const request = await mock.waitForRequest(browser)
     await sbpCall(browser, 'dez.model/tabs/create')
@@ -420,7 +410,7 @@ describe('reply-end alerts', () => {
 
     server?.click(notification.id)
 
-    await waitForValue(browser, 'active tab', activeTabId, tabId)
+    await waitForValue(browser, 'active tab', async () => activeTabId(browser), tabId)
     expect(await sbpCall(browser, 'dez.model/settings/isOpen')).toBe(false)
     await waitForValue(browser, 'focused area', async () => focusedArea(browser), 'editor')
   })
@@ -447,10 +437,10 @@ describe('reply-end alerts', () => {
     server?.click(closedNotification.id)
     server?.click(openNotification.id)
 
-    await waitForValue(browser, 'active tab', activeTabId, open.tabId)
+    await waitForValue(browser, 'active tab', async () => activeTabId(browser), open.tabId)
     // A wrong click on the closed notification can come after the other one.
     await browser.pause(300)
-    expect(await activeTabId()).toBe(open.tabId)
+    expect(await activeTabId(browser)).toBe(open.tabId)
     const activity = await sbpCall(browser, 'dez.model/tabs/activity') as Record<string, string>
     expect(activity[closed.tabId]).toBe('done')
   })

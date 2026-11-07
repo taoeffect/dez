@@ -7,7 +7,7 @@ import { conversationFilePath } from './harness/fixtures'
 import { startMockProviderApp } from './harness/mockProviderApp'
 import { startEventStream, writeChatFrame, type HeldRequest, type HoldingChatMock, type MockProvider } from './harness/mockServer'
 import type { E2EBrowser } from './harness/session'
-import { activeTabStreaming, editorDoc, openErrorToasts, sbpCall, submit, threadSections } from './harness/thread'
+import { activeTabId, activeTabStreaming, editorDoc, openErrorToasts, sbpCall, submit, threadSections } from './harness/thread'
 
 // Errors of a chat request, driven through the real app against a mock
 // server in this process:
@@ -45,10 +45,6 @@ describe('stream errors', () => {
   function answerStatus (request: HeldRequest, status: number, body: string): void {
     request.reply.writeHead(status, { 'Content-Type': 'application/json' })
     request.reply.end(body)
-  }
-
-  async function activeTabId (): Promise<string> {
-    return await sbpCall(browser, 'dez.model/tabs/activeId') as string
   }
 
   // The box of the open error toast. The entry animation scales the card,
@@ -132,7 +128,7 @@ describe('stream errors', () => {
     await waitForValue(browser, 'editor doc', () => editorDoc(browser), 'who are you now?')
 
     // The save at the stream end writes only the user section.
-    const tab = await sbpCall(browser, 'dez.model/tab', await activeTabId()) as { conversationId: string }
+    const tab = await sbpCall(browser, 'dez.model/tab', await activeTabId(browser)) as { conversationId: string }
     const file = conversationFilePath(app.home, tab.conversationId)
     await waitForValue(browser, 'saved section markers', async () => {
       const text = await fs.promises.readFile(file, 'utf8').catch(() => '')
@@ -199,7 +195,7 @@ describe('stream errors', () => {
   it('names a tab in the background in the toast title, and that tab ends with the typed text', async () => {
     await submit(browser, 'Background question')
     const request = await mock.waitForRequest(browser)
-    const backgroundTabId = await activeTabId()
+    const backgroundTabId = await activeTabId(browser)
     await sbpCall(browser, 'dez.model/tabs/create')
 
     answerStatus(request, 500, '{"error":"Server error"}')

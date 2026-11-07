@@ -3,7 +3,7 @@ import { click, consoleErrors, resetConsoleErrors, screenshotOnFailure, waitForV
 import { startMockProviderApp } from './harness/mockProviderApp'
 import { replyText, sendChatReply, type HoldingChatMock, type MockProvider } from './harness/mockServer'
 import type { E2EBrowser } from './harness/session'
-import { sbpCall, submit, waitForThread } from './harness/thread'
+import { activeTabId, sbpCall, submit, waitForThread } from './harness/thread'
 
 // The tab bar colors of a reply, through the real app against a mock server
 // in this process:
@@ -28,10 +28,6 @@ describe('tab activity colors', () => {
   let browser: E2EBrowser
   let mock: HoldingChatMock
   let stopApp: (() => Promise<void>) | undefined
-
-  async function activeTabId (): Promise<string> {
-    return await sbpCall(browser, 'dez.model/tabs/activeId') as string
-  }
 
   // The tab bar draws the tabs in the order of the model's tab list.
   async function tabSelector (tabId: string): Promise<string> {
@@ -90,7 +86,7 @@ describe('tab activity colors', () => {
   it('shows busy in the background, done when the reply ends there, and no color once the user selects the tab', async () => {
     await submit(browser, 'Background question')
     const request = await mock.waitForRequest(browser)
-    const tabId = await activeTabId()
+    const tabId = await activeTabId(browser)
     await waitForValue(browser, 'tab while its reply streams', () => tabLook(tabId), { title: 'Background question', active: true, color: 'busy' })
 
     await sbpCall(browser, 'dez.model/tabs/create')
@@ -115,7 +111,7 @@ describe('tab activity colors', () => {
   it('shows busy in the active tab, and no color when the reply ends there', async () => {
     await submit(browser, 'Foreground question')
     const request = await mock.waitForRequest(browser)
-    const tabId = await activeTabId()
+    const tabId = await activeTabId(browser)
     await waitForValue(browser, 'tab while its reply streams', () => tabLook(tabId), { title: 'Foreground question', active: true, color: 'busy' })
 
     await sendChatReply(request.reply, 'the foreground')

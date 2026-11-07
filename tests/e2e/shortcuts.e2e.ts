@@ -1,6 +1,6 @@
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from 'vitest'
 import { Key } from 'webdriverio'
-import { click, consoleErrors, pointerClick, resetConsoleErrors, screenshotOnFailure, typeKeys, waitFor, waitForValue } from './harness/dom'
+import { click, clickSettingsNav, consoleErrors, pointerClick, resetConsoleErrors, screenshotOnFailure, typeKeys, waitFor, waitForValue } from './harness/dom'
 import { readAppState } from './harness/fixtures'
 import { startMockProviderApp, type MockProviderApp } from './harness/mockProviderApp'
 import { replyText, sendChatReply, type MockProvider } from './harness/mockServer'
@@ -130,11 +130,7 @@ describe('Settings › Shortcuts', () => {
     await waitFor(browser, '.settings-overlay')
     expect(await browser.execute(() => document.querySelector('.shortcut-row') !== null), 'rows in General').toBe(false)
 
-    await browser.execute(() => {
-      const button = [...document.querySelectorAll<HTMLElement>('.settings-nav-btn')].find((el) => el.textContent?.trim() === 'Shortcuts')
-      if (!button) throw new Error('no Shortcuts nav button')
-      button.click()
-    })
+    await clickSettingsNav(browser, 'Shortcuts')
     await waitFor(browser, '.shortcut-manager')
 
     const listed = await browser.execute(() => [...document.querySelectorAll('.shortcut-group')].map((group) => ({

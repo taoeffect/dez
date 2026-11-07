@@ -23,6 +23,11 @@ export async function sbpCall (browser: E2EBrowser, selector: string, ...args: u
   }, selector, args)
 }
 
+/** The id of the active tab. */
+export async function activeTabId (browser: E2EBrowser): Promise<string> {
+  return await sbpCall(browser, 'dez.model/tabs/activeId') as string
+}
+
 /** The active tab's sections as role and plain text. */
 export async function threadSections (browser: E2EBrowser): Promise<ThreadSection[]> {
   return browser.execute(() => {
