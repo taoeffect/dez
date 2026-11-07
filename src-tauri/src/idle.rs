@@ -1,7 +1,8 @@
 //! The user idle time: how long ago the last keyboard, mouse, or touch input
 //! came, anywhere on the computer, not only in Dez. The webview sees only
 //! the input to its own window, so the OS must tell. The rule that uses the
-//! time stays in TypeScript (`dez.native/userIdleMs`).
+//! time (`AWAY_IDLE_MS`) is in TypeScript: `dez.controller/alertReplyEnded`
+//! in src/controller/notifications.ts.
 
 /// Milliseconds since the last user input, or `None` when no source on this
 /// desktop gives the idle time.

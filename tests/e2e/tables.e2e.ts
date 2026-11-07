@@ -85,10 +85,11 @@ const PADDED_ROWS = [
 ]
 const PADDED_TEXT = ['Padded fixture.', '', HEADER, DELIMITER, ANN_ROW, BOB_ROW, '', ...PADDED_ROWS].join('\n')
 
-// The start of the user's table from the TODO-21 report. Its source pads
-// each cell to 60 chars and has 60 dashes per delimiter cell. Before the
-// padding took no room, its header band was many lines tall (lines of
-// padding under each header text) and its delimiter row wrapped.
+// The start of a table that a user reported: three columns of long text with
+// inline code. Its source pads each cell to 60 chars and has 60 dashes per
+// delimiter cell. Before the padding took no room, its header band was many
+// lines tall (lines of padding under each header text) and its delimiter row
+// wrapped.
 const USER_PAD_TO = 60
 const userRow = (cells: string[]): string => `| ${cells.map((cell) => cell.padEnd(USER_PAD_TO)).join(' | ')} |`
 const USER_TABLE_TEXT = ['User table fixture.', '', ...[

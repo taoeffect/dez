@@ -111,9 +111,11 @@ export async function readAppState (home: string): Promise<AppStatePayload | nul
 // Seeded settings that differ from the app defaults. `startApp` passes on
 // `process.env`, so the app uses the developer's network, audio, and D-Bus
 // session: with the defaults, startup fetches the latest GitHub release (a
-// possible toast), and each reply that ends in a background tab dings and
-// posts a real desktop notification. Specs that test one of these turn it
-// back on in their overrides.
+// possible toast), and a reply dings and posts a real desktop notification
+// when it ends in a background tab, in an unfocused window, or after more
+// than 1 minute with no user input (WebDriver input does not reset the idle
+// time). Specs that test an alert turn it on at run time
+// (`notifications.e2e.ts`).
 const quietAppState = {
   checkForUpdates: false,
   doneSound: false,

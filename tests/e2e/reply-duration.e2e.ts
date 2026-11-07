@@ -136,8 +136,8 @@ describe('reply duration', () => {
       title: 'Timed',
       sections: [
         { role: 'user', nodes: [{ kind: 'text', text: 'First question' }] },
-        // Saved before agent pills had a model.
-        { role: 'agent', nodes: [{ kind: 'text', text: 'Legacy answer' }], durationMs: 65_000 },
+        // A time with no model: only a paste or a hand edit makes one.
+        { role: 'agent', nodes: [{ kind: 'text', text: 'Pasted answer' }], durationMs: 65_000 },
         { role: 'user', nodes: [{ kind: 'text', text: 'Second question' }] },
         { role: 'agent', nodes: [{ kind: 'text', text: 'Quick answer' }], model: { providerId: PROVIDER.id, modelId: PROVIDER.modelId }, durationMs: 4213 },
         { role: 'user', nodes: [{ kind: 'text', text: 'Third question' }] },

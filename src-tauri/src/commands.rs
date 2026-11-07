@@ -132,7 +132,7 @@ mod tests {
         assert_eq!(parsed.url, RELEASES_URL);
     }
 
-    // The frontend compares the name with "wayland" and "x11".
+    // The frontend compares the name with "wayland" (src/controller/window.ts).
     #[cfg(target_os = "linux")]
     #[test]
     fn names_the_gdk_backend_from_the_display_type() {

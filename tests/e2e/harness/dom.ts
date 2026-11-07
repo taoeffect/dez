@@ -189,10 +189,10 @@ export async function pointerDoubleClick (browser: E2EBrowser, selector: string,
     .perform()
 }
 
-// The input source of `pointerDrag` and `pointerRelease`. A button held by
-// one action call is released only by an `up` from the same source:
-// WebKitWebDriver's `releaseActions` sends no pointerup, and a source that
-// pressed nothing has no button to release.
+// The input source of `pointerDrag`, `pointerPress`, and `pointerRelease`. A
+// button held by one action call is released only by an `up` from the same
+// source: WebKitWebDriver's `releaseActions` sends no pointerup, and a source
+// that pressed nothing has no button to release.
 const DRAG_POINTER = { id: 'dragMouse', parameters: { pointerType: 'mouse' } } as const
 
 /**
