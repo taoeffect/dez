@@ -1,6 +1,7 @@
 import sbp from '@sbp/sbp'
 import { createPinia, setActivePinia } from 'pinia'
 import { afterEach, beforeEach, describe, expect, it, vi, type MockInstance } from 'vitest'
+import { DONE_SOUND_VOLUME_DEFAULT } from '../model/doneSoundVolume'
 // Side-effect imports: register the dez.model/* selectors and the selector
 // under test.
 import '../model/state/index'
@@ -33,8 +34,10 @@ let soundPlays: number[] = []
 let playDoneSound: (volumePercent: number) => void
 let notifications: ShownNotification[] = []
 let showNotification: (notification: ShownNotification) => Promise<void>
-// The user idle time that the alert rule reads, in ms (null: unknown).
+// The user idle time that the alert rule reads, in ms (null: unknown), and
+// the number of reads.
 let userIdleMs: () => Promise<number | null>
+let idleReads = 0
 let editorFocuses: EditorFocus[] = []
 let consoleError: MockInstance<typeof console.error>
 
@@ -46,6 +49,7 @@ sbp('sbp/selectors/register', {
     return showNotification({ title, body, onClick })
   },
   'dez.native/userIdleMs' (): Promise<number | null> {
+    idleReads++
     return userIdleMs()
   },
   'dez.editor/focus' (): boolean {
@@ -88,6 +92,7 @@ beforeEach(() => {
     notifications.push(notification)
   }
   userIdleMs = async () => 0
+  idleReads = 0
   editorFocuses = []
   appWindow.isFocused = async () => true
   consoleError = vi.spyOn(console, 'error').mockImplementation(() => {})
@@ -118,7 +123,7 @@ describe('dez.controller/alertReplyEnded', () => {
 
     await alertReplyEnded(activeTabId())
 
-    expect(soundPlays).toEqual([50])
+    expect(soundPlays).toEqual([DONE_SOUND_VOLUME_DEFAULT])
     expect(notifications).toHaveLength(1)
   })
 
@@ -127,22 +132,23 @@ describe('dez.controller/alertReplyEnded', () => {
 
     await alertReplyEnded(activeTabId())
 
-    expect(soundPlays).toEqual([50])
+    expect(soundPlays).toEqual([DONE_SOUND_VOLUME_DEFAULT])
     expect(notifications).toHaveLength(1)
   })
 
   // On a desktop with no idle source an "away" guess would alert for each
-  // reply.
+  // reply. There "unknown" is a normal answer, not an error to log.
   it.each([
     { idleMs: 60_000, label: 'exactly 1 minute' },
     { idleMs: null, label: 'unknown' },
-  ])('gives no alert for a reply that ends in the active tab of the focused window when the idle time is $label', async ({ idleMs }) => {
+  ])('gives no alert and logs nothing for a reply that ends in the active tab of the focused window when the idle time is $label', async ({ idleMs }) => {
     userIdleMs = async () => idleMs
 
     await alertReplyEnded(activeTabId())
 
     expect(soundPlays).toEqual([])
     expect(notifications).toEqual([])
+    expect(consoleError).not.toHaveBeenCalled()
   })
 
   it('counts a failed idle time read as "not away", and logs it', async () => {
@@ -157,6 +163,16 @@ describe('dez.controller/alertReplyEnded', () => {
     expect(consoleError).toHaveBeenCalled()
   })
 
+  // The idle read is a native call (D-Bus or X11 on Linux): it runs only
+  // when the other checks would skip the alert.
+  it('reads no idle time for a reply in a background tab or an unfocused window', async () => {
+    await alertReplyEnded(backgroundTabId())
+    appWindow.isFocused = async () => false
+    await alertReplyEnded(activeTabId())
+
+    expect(idleReads).toBe(0)
+  })
+
   it('counts a failed focus read as "not focused"', async () => {
     appWindow.isFocused = async () => {
       throw new Error('window gone')
@@ -164,7 +180,7 @@ describe('dez.controller/alertReplyEnded', () => {
 
     await alertReplyEnded(activeTabId())
 
-    expect(soundPlays).toEqual([50])
+    expect(soundPlays).toEqual([DONE_SOUND_VOLUME_DEFAULT])
     expect(consoleError).toHaveBeenCalled()
   })
 
@@ -179,7 +195,7 @@ describe('dez.controller/alertReplyEnded', () => {
 
     await alertReplyEnded(tabId)
 
-    expect(soundPlays).toEqual([50])
+    expect(soundPlays).toEqual([DONE_SOUND_VOLUME_DEFAULT])
   })
 
   it('plays nothing while the sound is off', async () => {
@@ -220,7 +236,7 @@ describe('dez.controller/alertReplyEnded', () => {
     await alertReplyEnded(backgroundTabId())
 
     expect(notifications).toEqual([])
-    expect(soundPlays).toEqual([50])
+    expect(soundPlays).toEqual([DONE_SOUND_VOLUME_DEFAULT])
   })
 
   // Both reads are native calls; with no alert on, nothing uses them.
@@ -258,7 +274,7 @@ describe('dez.controller/alertReplyEnded', () => {
 
     await expect(alertReplyEnded(backgroundTabId())).resolves.toBeUndefined()
     expect(consoleError).toHaveBeenCalled()
-    expect(soundPlays).toEqual([50])
+    expect(soundPlays).toEqual([DONE_SOUND_VOLUME_DEFAULT])
   })
 
   // The editor takes no focus while a panel covers it.
