@@ -34,13 +34,14 @@ gi.require_version("GLib", "2.0")
 from gi.repository import Gio, GLib  # noqa: E402
 
 # GLib 2.80 moved the Unix signal watch to GLibUnix, and newer PyGObject
-# warns on the old name.
+# warns on the old name. The GLibUnix of GLib 2.80.0 (Ubuntu 24.04, the CI
+# runner) has no signal_add yet, only signal_add_full; use the old name there.
 try:
     gi.require_version("GLibUnix", "2.0")
     from gi.repository import GLibUnix  # noqa: E402
 
     add_signal_watch = GLibUnix.signal_add
-except (ImportError, ValueError):
+except (ImportError, ValueError, AttributeError):
     add_signal_watch = GLib.unix_signal_add
 
 NAME = "org.freedesktop.Notifications"
