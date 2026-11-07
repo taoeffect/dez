@@ -11,7 +11,7 @@ npm ci                         # install dependencies before building or packagi
 npm run dev                    # frontend only, no Tauri shell
 npm run tauri dev              # full desktop app
 npm run build                  # frontend only: vue-tsc --noEmit && vite build
-npm run tauri build            # production Tauri bundle
+npm run tauri build            # production Tauri bundle; on Linux use build:linux:appimage (GStreamer paths, patchelf)
 npm test                       # unit tests (Vitest)
 npm run test:watch             # unit tests in watch mode
 npm run test:e2e               # WebDriver UI tests on the real app; Linux only (see vitest.e2e.config.ts)
