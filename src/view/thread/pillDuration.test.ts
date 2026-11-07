@@ -23,6 +23,11 @@ describe('reply time forms', () => {
       .toEqual(['1m 05s', '10m 00s', '59m 59s', '1h 00m', '1h 02m', '25h 00m'])
   })
 
+  it('rounds a time over an hour to whole minutes', () => {
+    expect([3_629_999, 3_630_000, 3_659_000, 7_170_000].map(shortDuration))
+      .toEqual(['1h 00m', '1h 01m', '1h 01m', '2h 00m'])
+  })
+
   // The tooltip names every nonzero unit, the seconds of a long reply too.
   it('spells out each nonzero unit in the long form', () => {
     expect([1000, 61_000, 120_000, 3_600_000, 3_725_000, 7_201_000].map(longDuration))
