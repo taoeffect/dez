@@ -1,6 +1,6 @@
 import sbp from '@sbp/sbp'
-import { StateField, Transaction, type EditorState, type Extension, type Text } from '@codemirror/state'
-import { Decoration, EditorView, WidgetType, type DecorationSet } from '@codemirror/view'
+import { StateEffect, StateField, Transaction, type EditorState, type Extension, type Text } from '@codemirror/state'
+import { Decoration, EditorView, ViewPlugin, WidgetType, showTooltip, type DecorationSet, type PluginValue, type Rect, type Tooltip } from '@codemirror/view'
 import { SENTINEL_CHAR } from '../../model/chat/content'
 import { findImageReferences, type ImageReference } from '../../model/chat/images'
 import { IMAGE_MAX_HEIGHT_PX, SECTION_SEP } from '../thread/cmEditor'
@@ -65,6 +65,8 @@ function imageIcon(): SVGSVGElement {
 function idBadge(id: string): HTMLElement {
   const badge = document.createElement('span')
   badge.className = 'dez-image__id'
+  badge.setAttribute('role', 'img')
+  badge.setAttribute('aria-label', `Image id: ${id}`)
   badge.append(imageIcon(), id)
   return badge
 }
@@ -80,27 +82,75 @@ function trashIcon(): SVGSVGElement {
  *  press keeps the focus and the caret where they are (as the Submit
  *  button's does), and `ImageWidget.ignoreEvent` keeps its events from
  *  CodeMirror. It is out of the Tab order, so Tab in the editor never lands
- *  on it while it is hidden. */
+ *  on it while it is hidden. It has no native `title`: its tooltip is
+ *  Dez's own (`trashTooltip`). */
 function trashButton(view: EditorView, widget: HTMLElement, path: string): HTMLButtonElement {
   const button = document.createElement('button')
   button.type = 'button'
   button.className = 'dez-image__trash'
-  button.title = 'Delete image'
   button.setAttribute('aria-label', 'Delete image')
   button.tabIndex = -1
   button.appendChild(trashIcon())
-  button.addEventListener('mousedown', (event) => event.preventDefault())
+  button.addEventListener('mousedown', (event) => {
+    event.preventDefault()
+    // The click opens the prompt, which the tooltip must not outlive.
+    view.plugin(imageTooltipHover)?.hide()
+  })
   button.addEventListener('click', () => {
     void deleteImage(view, view.posAtDOM(widget), path)
   })
   return button
 }
 
+/** The content of an overlay item's tooltip (`.dez-image-tooltip` in
+ *  `dezTheme`): what the item is, then what it is for. */
+function tooltipContent(title: string, ...text: Array<string | Node>): HTMLElement {
+  const dom = document.createElement('div')
+  dom.className = 'dez-image-tooltip'
+  dom.setAttribute('role', 'tooltip')
+  const titleLine = document.createElement('div')
+  titleLine.className = 'dez-image-tooltip__title'
+  titleLine.textContent = title
+  const textLine = document.createElement('div')
+  textLine.className = 'dez-image-tooltip__text'
+  textLine.append(...text)
+  dom.append(titleLine, textLine)
+  return dom
+}
+
+/** The id badge's tooltip. The id only names the image for now (models do
+ *  not get ids), so the text promises nothing more. */
+function idTooltip(id: string): HTMLElement {
+  const source = document.createElement('code')
+  source.textContent = `id=${id}`
+  return tooltipContent(`Image id: ${id}`, 'The short name of this image in this conversation. It is saved in the image\u2019s markdown as ', source, '.')
+}
+
+/** The trash's tooltip. The "Image not found" box has no file to delete
+ *  (`dez.controller/images/delete` deletes none), so its text says that
+ *  only the image's text goes. */
+function trashTooltip(missing: boolean): HTMLElement {
+  return tooltipContent(
+    'Delete image',
+    missing
+      ? 'The image file is not found, so this removes only the image from the conversation. Dez asks you first. You cannot undo this.'
+      : 'Removes the image from the conversation and deletes its file from the Dez folder. Dez asks you first. You cannot undo this.',
+  )
+}
+
+/** Shows the tooltip `content` while the pointer rests on `item`, an
+ *  overlay item of the image widget `widget` (`imageTooltipHover`). */
+function addTooltip(view: EditorView, widget: HTMLElement, item: HTMLElement, content: () => HTMLElement): void {
+  item.addEventListener('mouseenter', () => view.plugin(imageTooltipHover)?.enter(widget, item, content))
+  item.addEventListener('mouseleave', () => view.plugin(imageTooltipHover)?.leave())
+}
+
 /** An image, with an overlay that shows while the pointer is over the
  *  image: a small toolbar in its top-right corner with its id (null for an
- *  old reference with no id) in a badge, and a trash button. A reference to
- *  a file that does not load shows an "Image not found" box with the same
- *  overlay after its text, so that its text can go too. */
+ *  old reference with no id) in a badge, and a trash button, each with a
+ *  tooltip. A reference to a file that does not load shows an "Image not
+ *  found" box with the same overlay after its text, so that its text can go
+ *  too. */
 class ImageWidget extends WidgetType {
   constructor(readonly path: string, readonly id: string | null) {
     super()
@@ -121,8 +171,15 @@ class ImageWidget extends WidgetType {
     img.draggable = false
     const overlay = document.createElement('span')
     overlay.className = 'dez-image__overlay'
-    if (this.id !== null) overlay.appendChild(idBadge(this.id))
-    overlay.appendChild(trashButton(view, wrapper, this.path))
+    const { id } = this
+    if (id !== null) {
+      const badge = idBadge(id)
+      addTooltip(view, wrapper, badge, () => idTooltip(id))
+      overlay.appendChild(badge)
+    }
+    const trash = trashButton(view, wrapper, this.path)
+    addTooltip(view, wrapper, trash, () => trashTooltip(trash.closest('.dez-image-missing') !== null))
+    overlay.appendChild(trash)
     const cached = naturalSizes.get(this.path)
     if (cached) setBoxSize(img, cached)
     // A load or an error changes the line's height in place, which CM does
@@ -324,10 +381,142 @@ export async function deleteImage(view: EditorView, from: number, path: string):
   if (range) syncDomSelection(view)
 }
 
+/** The tooltip of an overlay item (the id badge or the trash) of the image
+ *  whose reference starts at `from`. */
+export interface ImageTooltip {
+  from: number
+  /** The image's path and id, so that the tooltip goes when they change. */
+  path: string
+  id: string | null
+  tooltip: Tooltip
+}
+
+/** Shows an overlay item's tooltip (its `from` is in the doc before the
+ *  transaction's changes), or hides it (null). */
+export const setImageTooltip = StateEffect.define<ImageTooltip | null>()
+
+/** The overlay item tooltip, if one shows. CM's `hoverTooltip` (the link
+ *  tooltip) finds a tooltip from a doc position only, and both items are in
+ *  one widget at one position, so the items show and hide theirs
+ *  (`imageTooltipHover`). It never outlives its image: it follows the image
+ *  through edits around it (a stream in another section), and goes when the
+ *  image's reference changes or goes, as its widget is drawn again then, and
+ *  with the state (a tab switch, `setState`). While it follows, its view
+ *  and DOM stay (CM keeps a tooltip view while its `create` is the same). */
+const imageTooltipField = StateField.define<ImageTooltip | null>({
+  create: () => null,
+  update(value, tr) {
+    let next = value
+    for (const effect of tr.effects) if (effect.is(setImageTooltip)) next = effect.value
+    if (!next || (next === value && !tr.docChanged)) return next
+    const from = tr.changes.mapPos(next.from, 1)
+    if (from !== next.from) next = { ...next, from, tooltip: { ...next.tooltip, pos: from } }
+    const { path, id } = next
+    return renderedImages(tr.state).some((image) => image.from === from && image.path === path && image.id === id) ? next : null
+  },
+  provide: (field) => showTooltip.from(field, (value) => value?.tooltip ?? null),
+})
+
+/** The overlay item tooltip that shows in `state`, if any. */
+export function imageTooltip(state: EditorState): ImageTooltip | null {
+  return state.field(imageTooltipField, false) ?? null
+}
+
+/** How long the pointer rests on an overlay item before its tooltip shows:
+ *  the hover time of CM's `hoverTooltip`, as for the link URL tooltip. */
+const IMAGE_TOOLTIP_DELAY_MS = 300
+
+/** The wait before an overlay item's tooltip shows when the pointer comes
+ *  onto the item at `now`. There is none for a short time after the
+ *  pointer left an item whose tooltip showed (`lastHiddenAt`), so that a
+ *  move from the id badge to the trash shows the next tooltip at once. */
+export function imageTooltipDelay(now: number, lastHiddenAt: number): number {
+  return now - lastHiddenAt < IMAGE_TOOLTIP_DELAY_MS ? 0 : IMAGE_TOOLTIP_DELAY_MS
+}
+
+/** The gap between a tooltip and the toolbar of its item. */
+const IMAGE_TOOLTIP_GAP_PX = 6
+
+/** A rect outside of every editor: CM hides a tooltip anchored there
+ *  (`Tooltip.clip`). */
+const OFF_SCREEN: Rect = { left: -1e5, right: -1e5, top: -1e5, bottom: -1e5 }
+
+/** The rect that CM places the tooltip `dom` of `item` against (above, or
+ *  below when there is no room above): the toolbar's top and bottom, so
+ *  that the tooltip never covers the item, and the tooltip's width
+ *  centered on the item. CM keeps it inside the window. An item that is no
+ *  longer in the editor (its widget was drawn again, or scrolled out of
+ *  the viewport) hides the tooltip. */
+function tooltipAnchor(item: HTMLElement, dom: HTMLElement): Rect {
+  if (!item.isConnected) return OFF_SCREEN
+  const { left, right } = item.getBoundingClientRect()
+  const { top, bottom } = (item.closest('.dez-image__overlay') ?? item).getBoundingClientRect()
+  const halfWidth = dom.getBoundingClientRect().width / 2
+  const center = (left + right) / 2
+  return { left: center - halfWidth, right: center + halfWidth, top, bottom }
+}
+
+/** Shows and hides the overlay item tooltips (`imageTooltipField`) as the
+ *  pointer comes onto an item and leaves it (`addTooltip`), and hides them
+ *  when the trash is pressed (`trashButton`). */
+class ImageTooltipHover implements PluginValue {
+  // `number`, the browser's timer id type (see `closeTimer` in
+  // ToastCard.vue).
+  private timer: number | null = null
+  private lastHiddenAt = -Infinity
+
+  constructor(private readonly view: EditorView) {}
+
+  enter(widget: HTMLElement, item: HTMLElement, content: () => HTMLElement): void {
+    this.cancel()
+    const show = (): void => {
+      this.timer = null
+      if (!this.view.contentDOM.contains(widget)) return
+      const from = this.view.posAtDOM(widget)
+      const image = renderedImages(this.view.state).find((image) => image.from === from)
+      if (!image) return
+      // A new `create` each time, so CM makes a new tooltip view.
+      const tooltip: Tooltip = {
+        pos: from,
+        above: true,
+        create: () => {
+          const dom = content()
+          return { dom, offset: { x: 0, y: IMAGE_TOOLTIP_GAP_PX }, getCoords: () => tooltipAnchor(item, dom) }
+        },
+      }
+      this.view.dispatch({ effects: setImageTooltip.of({ from, path: image.path, id: image.id, tooltip }) })
+    }
+    const delay = imageTooltipDelay(Date.now(), this.lastHiddenAt)
+    if (delay === 0) show()
+    else this.timer = window.setTimeout(show, delay)
+  }
+
+  leave(): void {
+    if (imageTooltip(this.view.state)) this.lastHiddenAt = Date.now()
+    this.hide()
+  }
+
+  hide(): void {
+    this.cancel()
+    if (imageTooltip(this.view.state)) this.view.dispatch({ effects: setImageTooltip.of(null) })
+  }
+
+  destroy(): void {
+    this.cancel()
+  }
+
+  private cancel(): void {
+    if (this.timer !== null) window.clearTimeout(this.timer)
+    this.timer = null
+  }
+}
+
+const imageTooltipHover = ViewPlugin.fromClass(ImageTooltipHover)
+
 /** Images for the thread editor (`buildState()` in `ThreadEditor.vue`).
  *  The Backspace and Delete rules (`deleteImageParen`, `deleteImageBang`)
  *  are in its `sectionKeymap`, and find skips the hidden source
  *  (`protectedRanges` in `find.ts`). The CSS is in `dezTheme`. */
 export function markdownImages(): Extension {
-  return [imageDecorationsField, pendingRanges()]
+  return [imageDecorationsField, pendingRanges(), imageTooltipField, imageTooltipHover]
 }

@@ -1782,8 +1782,9 @@ export const dezTheme = EditorView.theme({
     textDecoration: 'underline',
     cursor: 'pointer',
   },
-  // CodeMirror tooltips (the link URL tooltip of links.ts). CM's base theme
-  // gives them light colors only, as Dez does not use CM's dark theme flag.
+  // CodeMirror tooltips (the link URL tooltip of links.ts and the image
+  // overlay tooltips of images.ts). CM's base theme gives them light colors
+  // only, as Dez does not use CM's dark theme flag.
   '.cm-tooltip': {
     border: '1px solid var(--color-border, #333)',
     borderRadius: editorSize(6),
@@ -1800,6 +1801,33 @@ export const dezTheme = EditorView.theme({
     fontSize: editorSize(12),
     lineHeight: '1.4',
     overflowWrap: 'anywhere',
+  },
+  // The tooltip of an image overlay item (images.ts): its name, then what it
+  // is for. The pointer goes through it, so it never takes the hover from
+  // its item.
+  '.dez-image-tooltip': {
+    maxWidth: `min(${editorSize(280)}, calc(100vw - 32px))`,
+    padding: editorSize(6, 10, 7),
+    fontFamily:
+      "ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif",
+    fontSize: editorSize(12),
+    lineHeight: '1.4',
+    pointerEvents: 'none',
+  },
+  '.dez-image-tooltip__title': {
+    fontWeight: '600',
+  },
+  '.dez-image-tooltip__text': {
+    marginTop: editorSize(2),
+    opacity: '0.8',
+  },
+  '.dez-image-tooltip code': {
+    padding: editorSize(0, 3),
+    borderRadius: editorSize(3),
+    background: 'rgba(127, 127, 127, 0.18)',
+    fontFamily:
+      "ui-monospace, SFMono-Regular, Menlo, Consolas, 'Liberation Mono', monospace",
+    fontSize: '0.95em',
   },
   // Find highlights (src/view/editor/find.ts). Amber, so they differ from the
   // blue selection. They are text backgrounds, so they draw over the

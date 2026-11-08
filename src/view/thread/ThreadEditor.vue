@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed, onBeforeUnmount, onMounted, ref, watch, nextTick } from 'vue'
 import { Compartment, EditorSelection, EditorState, Prec, type Extension } from '@codemirror/state'
-import { EditorView, drawSelection, keymap, type Command, type KeyBinding } from '@codemirror/view'
+import { EditorView, drawSelection, keymap, tooltips, type Command, type KeyBinding } from '@codemirror/view'
 import { history, historyKeymap, defaultKeymap, redo, selectAll, undo } from '@codemirror/commands'
 import sbp from '@sbp/sbp'
 import { useModelState, type Prompt } from '../modelState'
@@ -851,6 +851,17 @@ function buildState(expandedThinking: ReadonlySet<string> = new Set()): EditorSt
       EditorView.lineWrapping,
       dezLanguageSupport(),
       dezTheme,
+      // Tooltips (link URLs, image overlay items) stay across the text
+      // column (`contentDOM`) and a little in from the window's top and
+      // bottom. CM's default space is the whole window, where a tooltip can
+      // touch the window's side and cover the scrollbar.
+      tooltips({
+        tooltipSpace: (v) => {
+          const { left, right } = v.contentDOM.getBoundingClientRect()
+          const gap = 8
+          return { left, right, top: gap, bottom: v.dom.ownerDocument.documentElement.clientHeight - gap }
+        },
+      }),
       findExtension(activeFindQuery()),
       markdownTables(),
       markdownImages(),

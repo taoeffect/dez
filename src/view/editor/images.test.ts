@@ -4,7 +4,7 @@ import { EditorSelection, EditorState, type Transaction, type TransactionSpec } 
 import type { EditorView } from '@codemirror/view'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { SECTION_SEP, encodePrompt } from '../thread/cmEditor'
-import { deleteImage, deleteImageBang, deleteImageParen, imageRemovalRange, markdownImages, renderedImages } from './images'
+import { deleteImage, deleteImageBang, deleteImageParen, imageRemovalRange, imageTooltip, imageTooltipDelay, markdownImages, renderedImages, setImageTooltip } from './images'
 
 interface ConfirmCall {
   message: string
@@ -347,5 +347,65 @@ describe('deleteImage (the image trash)', () => {
     fileDelete.finish()
     await done
     expect(editor.doc()).toBe(doc)
+  })
+})
+
+describe('image overlay tooltips', () => {
+  const redA = `![${RED}](id=a)`
+  const blueB = `![${BLUE}](id=b)`
+
+  /** The state with the tooltip of an overlay item of the shown image
+   *  `index`, as the hover shows it. */
+  function hover(state: EditorState, index: number): EditorState {
+    const { from, path, id } = renderedImages(state)[index]
+    const tooltip = { pos: from, create: () => ({ dom: {} as HTMLElement }) }
+    return state.update({ effects: setImageTooltip.of({ from, path, id, tooltip }) }).state
+  }
+
+  function edit(state: EditorState, spec: TransactionSpec): EditorState {
+    return state.update(spec).state
+  }
+
+  it('follows its image through edits around it, and keeps its tooltip view', () => {
+    const doc = `x ${redA}\n${blueB}`
+    const state = hover(createState(doc), 1)
+    const shownTooltip = imageTooltip(state)?.tooltip
+    // Text before the image (also right at its start), and a stream after it.
+    const next = edit(state, { changes: [{ from: 0, insert: 'new ' }, { from: doc.indexOf(blueB), insert: 'y' }, { from: doc.length, insert: ' streamed' }] })
+    const from = next.doc.toString().indexOf(blueB)
+    expect(imageTooltip(next)).toMatchObject({ from, path: BLUE, id: 'b', tooltip: { pos: from } })
+    expect(imageTooltip(next)?.tooltip.create).toBe(shownTooltip?.create)
+    expect(imageTooltip(edit(next, { selection: { anchor: 0 } }))).toBe(imageTooltip(next))
+  })
+
+  it('goes when its image changes or goes', () => {
+    const doc = `x ${redA} y`
+    const from = doc.indexOf(redA)
+    const to = from + redA.length
+    const state = hover(createState(doc, to), 0)
+    const changed = [
+      // Backspace after the image: its source shows.
+      runCommand(state, deleteImageParen).state,
+      // Another id, another file, and no reference.
+      edit(state, { changes: { from: to - 2, to: to - 1, insert: 'c' } }),
+      edit(state, { changes: { from, to, insert: `![${BLUE}](id=a)` } }),
+      edit(state, { changes: { from, to } }),
+    ]
+    for (const next of changed) expect(imageTooltip(next)).toBeNull()
+  })
+
+  it('hides on the hide effect, and never shows away from its image', () => {
+    const state = hover(createState(redA), 0)
+    expect(imageTooltip(state)).not.toBeNull()
+    expect(imageTooltip(edit(state, { effects: setImageTooltip.of(null) }))).toBeNull()
+    const tooltip = { pos: 1, create: () => ({ dom: {} as HTMLElement }) }
+    const wrongPlace = edit(createState(` ${redA}`), { effects: setImageTooltip.of({ from: 0, path: RED, id: 'a', tooltip }) })
+    expect(imageTooltip(wrongPlace)).toBeNull()
+  })
+
+  it('waits the hover time, except right after the pointer left a shown tooltip', () => {
+    expect(imageTooltipDelay(1000, -Infinity)).toBe(300)
+    expect(imageTooltipDelay(1000, 800)).toBe(0)
+    expect(imageTooltipDelay(1000, 700)).toBe(300)
   })
 })
