@@ -90,7 +90,7 @@ async function nativeChatStream(
   refreshCopilot = false,
 ): Promise<{ result: NativeHttpStreamResult, thinking: ProviderChatRequest['thinking'] }> {
   const secretValue = await requestSecret(provider, refreshCopilot)
-  const { request, thinking } = provider.chatRequest(messages, input.modelId, secretValue, input.providerSettings)
+  const { request, thinking } = provider.chatRequest(messages, input.modelId, secretValue, input.providerSettings, input.conversationId)
   return { result: await sbp('dez.http/stream', request, requestId) as NativeHttpStreamResult, thinking }
 }
 

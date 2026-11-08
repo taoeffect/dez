@@ -13,6 +13,8 @@ export interface ProviderStreamChatInput {
   modelId: string
   messages: ProviderChatInputMessage[]
   requestId?: string
+  // The conversation of the request; see ProviderConfig.promptCacheKey.
+  conversationId?: string
   // Sparse user overrides for this provider's settings
   // (ProviderConfig.settings) and its Thinking toggle; missing keys fall
   // back to the defaults.

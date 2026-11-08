@@ -32,6 +32,7 @@ export default sbp('sbp/selectors/register', {
 
     await sbp('dez.stream/start', {
       tabId,
+      conversationId: tab.conversationId,
       sectionId: agentSection.id,
       model,
       messages,

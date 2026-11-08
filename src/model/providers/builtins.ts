@@ -17,6 +17,11 @@ export const BUILT_IN_PROVIDER_CONFIGS: readonly ProviderConfig[] = [
     fetchModels: true,
     modelImageInput: { path: 'architecture.input_modalities' },
     auth: 'apiKey',
+    // OpenRouter passes the marks on to the models that cache only a marked
+    // prompt (Claude, Gemini, Qwen), and makes OpenAI's own marks of them for
+    // GPT-5.6 and later.
+    // https://openrouter.ai/docs/guides/best-practices/prompt-caching
+    cacheBreakpoints: true,
     // OpenRouter drops a field that the routed model does not take, so the
     // request is safe for every model. Some models must think, so there is no
     // off field.
@@ -51,6 +56,13 @@ export const BUILT_IN_PROVIDER_CONFIGS: readonly ProviderConfig[] = [
     fetchModels: true,
     modelImageInput: { path: 'model_spec.capabilities.supportsVision' },
     auth: 'apiKey',
+    // The Venice docs say that Venice adds the marks for Claude, but a live
+    // check got no Claude cache hits without them. Its other models take the
+    // marks with no error (also checked live).
+    cacheBreakpoints: true,
+    // In a live check, Qwen3-VL cached nothing without it.
+    // https://docs.venice.ai/guides/features/prompt-caching
+    promptCacheKey: true,
     // Every request sends all four `venice_parameters`, with these defaults
     // when the user has not changed a toggle in the provider settings popup.
     settings: [

@@ -169,6 +169,15 @@ export const providerConfigSchema = z.object({
   imageRequestHeaders: headersSchema.optional(),
   // Anthropic `max_tokens`; the OpenAI format ignores it.
   maxOutputTokens: z.number().int().positive().optional(),
+  // OpenAI format: mark the last two user messages with Anthropic's
+  // `cache_control`, for a server that passes the marks on to the models
+  // that cache only a marked prompt (Claude). The Anthropic format always
+  // marks them (apiFormats.ts).
+  cacheBreakpoints: z.boolean().optional(),
+  // OpenAI format: send the conversation id as `prompt_cache_key`, so the
+  // server sends all the requests of a conversation to the machine that
+  // holds its prompt cache.
+  promptCacheKey: z.boolean().optional(),
   settings: z.array(providerSettingDefSchema).optional(),
   thinking: thinkingConfigSchema.optional(),
 })

@@ -124,6 +124,7 @@ Rules:
 - Provider ids must pass `isValidProviderId` (`config.ts`).
 - Chat and model HTTP stays in TypeScript (`dez.provider/*`, `dez.http/*`), not in Rust.
 - Thinking support, toggle, and send-back: `thinking.ts`, `apiFormats.ts`.
+- Prompt cache: earlier messages must stay the same bytes in every later request. The Anthropic format always adds cache marks; OpenAI-format marks and `prompt_cache_key` come from config (`cacheBreakpoints`, `promptCacheKey`; `apiFormats.ts`, `provider.ts`).
 
 ### Toasts
 

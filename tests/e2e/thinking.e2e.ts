@@ -59,6 +59,12 @@ function claudeAnswer (n: number): string {
   return `Claude answer ${n}.`
 }
 
+// A user message that the Anthropic format marks as a cache breakpoint: the
+// last two user messages of each request.
+function claudeMarked (text: string): unknown {
+  return { role: 'user', content: [{ type: 'text', text, cache_control: { type: 'ephemeral' } }] }
+}
+
 // The thinking that the store holds for the nth Claude reply: the shown text
 // and the signed replay with the prefix hash of the messages before it.
 function claudeThinking (n: number): unknown {
@@ -641,7 +647,7 @@ describe('thinking', () => {
       stream: true,
       max_tokens: 32000,
       thinking: { type: 'adaptive', display: 'summarized' },
-      messages: [{ role: 'user', content: 'Claude question 1' }],
+      messages: [claudeMarked('Claude question 1')],
     })
     expect(await storedThinking()).toEqual([null, claudeThinking(1), null])
     expect((await pillThinking(1))?.slot).toBe('disclosure')
@@ -655,9 +661,9 @@ describe('thinking', () => {
       { role: 'user', text: '' },
     ])
     expect(requestBodies(CLAUDE_CHAT)[1].messages).toEqual([
-      { role: 'user', content: 'Claude question 1' },
+      claudeMarked('Claude question 1'),
       { role: 'assistant', content: [claudeBlock(1), { type: 'text', text: claudeAnswer(1) }] },
-      { role: 'user', content: 'Claude question 2' },
+      claudeMarked('Claude question 2'),
     ])
     // Both replies hold a signed replay, so a text-only send after the edit
     // comes from the prefix check.
@@ -678,9 +684,9 @@ describe('thinking', () => {
     expect(requestBodies(CLAUDE_CHAT)[2].messages).toEqual([
       { role: 'user', content: 'Claude question 1 (edited)' },
       { role: 'assistant', content: claudeAnswer(1) },
-      { role: 'user', content: 'Claude question 2' },
+      claudeMarked('Claude question 2'),
       { role: 'assistant', content: claudeAnswer(2) },
-      { role: 'user', content: 'Claude question 3' },
+      claudeMarked('Claude question 3'),
     ])
 
     // The third reply came after the edit, so its thinking goes back.
@@ -701,9 +707,9 @@ describe('thinking', () => {
       { role: 'assistant', content: claudeAnswer(1) },
       { role: 'user', content: 'Claude question 2' },
       { role: 'assistant', content: claudeAnswer(2) },
-      { role: 'user', content: 'Claude question 3' },
+      claudeMarked('Claude question 3'),
       { role: 'assistant', content: [claudeBlock(3), { type: 'text', text: claudeAnswer(3) }] },
-      { role: 'user', content: 'Claude question 4' },
+      claudeMarked('Claude question 4'),
     ])
   })
 

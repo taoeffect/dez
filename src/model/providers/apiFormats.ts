@@ -37,10 +37,13 @@ export interface ApiFormat {
   createStreamParser(thinking: boolean): SseStreamParser
 }
 
+// A message as the provider gets it.
+type WireMessage = Record<string, unknown>
+
 // The wire message of an agent reply that sends its thinking back, or
 // undefined when the format has no shape for the replay's kind: the replay
 // came from the other format (a custom provider's format was changed).
-type ReplayMessage = (content: string, text: string, replay: ThinkingReplay) => Record<string, unknown> | undefined
+type ReplayMessage = (content: string, text: string, replay: ThinkingReplay) => WireMessage | undefined
 
 // The wire block of one image of a user message.
 type ImageBlock = (image: Extract<ChatPart, { type: 'image' }>) => Record<string, unknown>
@@ -67,12 +70,12 @@ function wireContent(content: string | ChatPart[], imageBlock: ImageBlock): unkn
 // Thinking off, another model), so a later replay that matches is still the
 // one that the provider signed. A `field` replay is plain text that nothing
 // checks, so an edit before it only costs cache hits.
-function chatMessagesBody(messages: ChatMessage[], model: string, replayMessage: ReplayMessage, imageBlock: ImageBlock): ChatBody {
+function chatMessagesBody(messages: ChatMessage[], model: string, replayMessage: ReplayMessage, imageBlock: ImageBlock): ChatBody & { body: { messages: WireMessage[] } } {
   const prefix = new ThinkingPrefixHasher()
   const wireMessages = messages.map((message) => {
     const role = message.role === 'agent' ? 'assistant' : message.role
     const content = message.content
-    let wireMessage: Record<string, unknown> = { role, content: wireContent(content, imageBlock) }
+    let wireMessage: WireMessage = { role, content: wireContent(content, imageBlock) }
     const thinking = message.role === 'agent' ? message.thinking : undefined
     // An agent message is always a string (ChatMessage), so the string check
     // only narrows the type.
@@ -119,6 +122,39 @@ const anthropicImageBlock: ImageBlock = (image) => ({
   source: { type: 'base64', media_type: image.mediaType, data: image.data },
 })
 
+// Anthropic caches a prompt prefix only up to a block marked with
+// `cache_control` (a cache breakpoint). A mark on the last user message
+// stores the whole conversation for the next request. A mark on the user
+// message before it is where the previous request stored it, so this
+// request reads that entry even when it adds more than the 20 blocks that a
+// cache read looks back (each image is one block). The marks are added
+// after the prefix hash: a user message loses its mark two turns later, and
+// that must not drop a signed replay. Anthropic does not compare the marks
+// when it matches a prefix, and a string content is the same prompt as one
+// text block. `markedBlock` gives the index of the block to mark, or -1
+// when the message has none; such a message gets no mark.
+// https://platform.claude.com/docs/en/build-with-claude/prompt-caching
+function withCacheBreakpoints(messages: WireMessage[], markedBlock: (blocks: WireMessage[]) => number): WireMessage[] {
+  const marks = new Map<number, number>()
+  for (let index = messages.length - 1; index >= 0 && marks.size < 2; index--) {
+    const block = messages[index].role === 'user' ? markedBlock(contentBlocks(messages[index])) : -1
+    if (block >= 0) marks.set(index, block)
+  }
+  return messages.map((message, index) => {
+    const marked = marks.get(index)
+    if (marked === undefined) return message
+    const content = contentBlocks(message).map((block, blockIndex) =>
+      blockIndex === marked ? { ...block, cache_control: { type: 'ephemeral' } } : block)
+    return { ...message, content }
+  })
+}
+
+function contentBlocks(message: WireMessage): WireMessage[] {
+  return typeof message.content === 'string'
+    ? [{ type: 'text', text: message.content }]
+    : message.content as WireMessage[]
+}
+
 // OpenAI SDK style: the base URL already includes the version, e.g.
 // http://localhost:11434/v1.
 const openAiFormat: ApiFormat = {
@@ -126,7 +162,15 @@ const openAiFormat: ApiFormat = {
   modelsUrl: (baseUrl) => `${trimTrailingSlashes(baseUrl)}/models`,
   headers: {},
   authHeaders: (secret) => ({ Authorization: `Bearer ${secret.reveal()}` }),
-  chatBody: (messages, modelId) => chatMessagesBody(messages, modelId, openAiReplayMessage, openAiImageBlock),
+  chatBody: (messages, modelId, config) => {
+    const chat = chatMessagesBody(messages, modelId, openAiReplayMessage, openAiImageBlock)
+    // Venice drops a mark on an `image_url` part (checked live), so the
+    // mark goes on the last text part.
+    if (config.cacheBreakpoints) {
+      chat.body.messages = withCacheBreakpoints(chat.body.messages, (blocks) => blocks.findLastIndex((block) => block.type === 'text'))
+    }
+    return chat
+  },
   // A generic field such as `reasoning_effort` gives a 400 on Ollama, Groq
   // and GitHub Copilot models that do not think, and most OpenAI-compatible
   // models that do think, think without one.
@@ -151,6 +195,7 @@ const anthropicFormat: ApiFormat = {
   authHeaders: (secret) => ({ 'x-api-key': secret.reveal() }),
   chatBody: (messages, modelId, config) => {
     const chat = chatMessagesBody(messages, modelId, anthropicReplayMessage, anthropicImageBlock)
+    chat.body.messages = withCacheBreakpoints(chat.body.messages, (blocks) => blocks.length - 1)
     chat.body.max_tokens = config.maxOutputTokens ?? DEFAULT_ANTHROPIC_MAX_TOKENS
     return chat
   },

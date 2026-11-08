@@ -1,12 +1,12 @@
 import { describe, expect, it } from 'vitest'
-import type { AnthropicThinkingBlock } from '../chat/types'
+import type { AnthropicThinkingBlock, ThinkingReplay } from '../chat/types'
 import type { NativeHttpRequest } from '../../utils/protocol/nativeHttp'
 import { secret } from '../../utils/secret'
 import { BUILT_IN_PROVIDER_CONFIGS } from './builtins'
 import { customProviderConfigSchema } from './config'
 import { Provider } from './provider'
 import { ThinkingPrefixHasher } from './thinking'
-import type { ChatMessage } from './types'
+import type { ChatMessage, ChatPart } from './types'
 
 const messages: ChatMessage[] = [
   { role: 'user', content: 'Search the web for current info.' },
@@ -15,6 +15,15 @@ const messages: ChatMessage[] = [
 
 const apiMessages = [
   { role: 'user', content: 'Search the web for current info.' },
+  { role: 'assistant', content: 'I can help with that.' },
+]
+
+// The Anthropic format, and an OpenAI-format config with `cacheBreakpoints`,
+// mark the last two user messages as cache breakpoints; a marked string
+// becomes one text block.
+const CACHE = { type: 'ephemeral' }
+const markedApiMessages = [
+  { role: 'user', content: [{ type: 'text', text: 'Search the web for current info.', cache_control: CACHE }] },
   { role: 'assistant', content: 'I can help with that.' },
 ]
 
@@ -97,7 +106,7 @@ describe('Anthropic format requests', () => {
     const defaultBody = requestBody(customProvider({ apiFormat: 'anthropic' }).chatRequest(messages, 'claude', key).request)
     const minimaxRequest = builtInProvider('minimax').chatRequest(messages, 'MiniMax-M2.7', key).request
 
-    expect(defaultBody).toEqual({ model: 'claude', messages: apiMessages, stream: true, max_tokens: 32000 })
+    expect(defaultBody).toEqual({ model: 'claude', messages: markedApiMessages, stream: true, max_tokens: 32000 })
     expect(minimaxRequest.url).toBe('https://api.minimax.io/anthropic/v1/messages')
     expect(requestBody(minimaxRequest).max_tokens).toBe(65536)
   })
@@ -164,7 +173,7 @@ describe('image parts', () => {
         role: 'user',
         content: [
           { type: 'text', text: 'Which color?' },
-          { type: 'image', source: { type: 'base64', media_type: 'image/png', data: 'iVBORw0K' } },
+          { type: 'image', source: { type: 'base64', media_type: 'image/png', data: 'iVBORw0K' }, cache_control: CACHE },
         ],
       },
       { role: 'assistant', content: 'Red.' },
@@ -193,6 +202,86 @@ describe('image parts', () => {
   })
 })
 
+describe('prompt cache', () => {
+  const anthropic = customProvider({ apiFormat: 'anthropic' })
+  const openAi = customProvider({ cacheBreakpoints: true })
+  const image = (data: string): ChatPart => ({ type: 'image', mediaType: 'image/png', data })
+  const text = (text: string): ChatPart => ({ type: 'text', text })
+  const sentMessages = (provider: Provider, sent: ChatMessage[]) =>
+    requestBody(provider.chatRequest(sent, 'm', key).request).messages as Array<Record<string, unknown>>
+  // The prompt that the server caches: the blocks without their marks, a
+  // string being one text block.
+  const prompt = (wire: Array<Record<string, unknown>>) => wire.map(({ role, content }) => ({
+    role,
+    content: (typeof content === 'string' ? [{ type: 'text', text: content }] : content as Array<Record<string, unknown>>)
+      .map(({ cache_control: _mark, ...block }) => block),
+  }))
+
+  it('marks the last block of the last two user messages in the Anthropic format', () => {
+    const imageBlock = (data: string) => ({ type: 'image', source: { type: 'base64', media_type: 'image/png', data } })
+
+    expect(sentMessages(anthropic, [
+      { role: 'user', content: 'Q1' },
+      { role: 'agent', content: 'A1' },
+      { role: 'user', content: [image('AA'), text('Q2'), image('BB')] },
+      { role: 'agent', content: 'A2' },
+      { role: 'user', content: 'Q3' },
+    ])).toEqual([
+      { role: 'user', content: 'Q1' },
+      { role: 'assistant', content: 'A1' },
+      { role: 'user', content: [imageBlock('AA'), { type: 'text', text: 'Q2' }, { ...imageBlock('BB'), cache_control: CACHE }] },
+      { role: 'assistant', content: 'A2' },
+      { role: 'user', content: [{ type: 'text', text: 'Q3', cache_control: CACHE }] },
+    ])
+  })
+
+  it('marks the last text part of the last two user messages with text in the OpenAI format', () => {
+    const imagePart = (data: string) => ({ type: 'image_url', image_url: { url: `data:image/png;base64,${data}` } })
+
+    expect(sentMessages(openAi, [
+      { role: 'user', content: 'Q1' },
+      { role: 'agent', content: 'A1' },
+      { role: 'user', content: [text('Q2'), image('AA')] },
+      { role: 'agent', content: 'A2' },
+      { role: 'user', content: [image('BB')] },
+    ])).toEqual([
+      { role: 'user', content: [{ type: 'text', text: 'Q1', cache_control: CACHE }] },
+      { role: 'assistant', content: 'A1' },
+      { role: 'user', content: [{ type: 'text', text: 'Q2', cache_control: CACHE }, imagePart('AA')] },
+      { role: 'assistant', content: 'A2' },
+      { role: 'user', content: [imagePart('BB')] },
+    ])
+  })
+
+  it('sends the prompt of each request again and marks where that request stored it, also after a turn of more than 20 blocks', () => {
+    // Turn 2 adds 25 blocks: more than a cache read looks back.
+    const manyImages = Array.from({ length: 12 }, (_, n) => [text(`Picture ${n}:`), image(`I${n}`)]).flat()
+    const turns: ChatMessage[][] = [[{ role: 'user', content: [text('Q1'), image('AA')] }]]
+    turns.push([...turns[0], { role: 'agent', content: 'A1' }, { role: 'user', content: [...manyImages, text('Q2')] }])
+    turns.push([...turns[1], { role: 'agent', content: 'A2' }, { role: 'user', content: [image('BB')] }])
+    turns.push([...turns[2], { role: 'agent', content: 'A3' }, { role: 'user', content: 'Q4' }])
+
+    for (const provider of [anthropic, openAi]) {
+      for (let turn = 1; turn < turns.length; turn++) {
+        const previous = sentMessages(provider, turns[turn - 1])
+        const current = sentMessages(provider, turns[turn])
+        const stored = previous.findLastIndex((message) => JSON.stringify(message).includes('cache_control'))
+
+        expect(prompt(current.slice(0, previous.length))).toEqual(prompt(previous))
+        expect(current[stored]).toEqual(previous[stored])
+      }
+    }
+  })
+
+  it('sends the conversation id as prompt_cache_key only for a config with promptCacheKey', () => {
+    const keyed = customProvider({ promptCacheKey: true })
+
+    expect(requestBody(keyed.chatRequest(messages, 'm', key, {}, 'conv-1').request).prompt_cache_key).toBe('conv-1')
+    expect(requestBody(keyed.chatRequest(messages, 'm', key).request)).not.toHaveProperty('prompt_cache_key')
+    expect(requestBody(openAi.chatRequest(messages, 'm', key, {}, 'conv-1').request)).not.toHaveProperty('prompt_cache_key')
+  })
+})
+
 describe('declarative provider settings', () => {
   it('writes every Venice parameter from the defaults', () => {
     const body = requestBody(venice.chatRequest(messages, 'venice-uncensored', key).request)
@@ -203,7 +292,7 @@ describe('declarative provider settings', () => {
       enable_x_search: true,
       enable_web_scraping: true,
     })
-    expect(body).toMatchObject({ model: 'venice-uncensored', messages: apiMessages, stream: true })
+    expect(body).toMatchObject({ model: 'venice-uncensored', messages: markedApiMessages, stream: true })
   })
 
   it('applies sparse overrides, including the web search string values', () => {
@@ -246,11 +335,12 @@ describe('thinking request bodies', () => {
   const bodyWith = (provider: Provider, overrides: Record<string, boolean> = {}) =>
     requestBody(provider.chatRequest(messages, 'm', key, overrides).request)
   const base = { model: 'm', messages: apiMessages, stream: true }
+  const markedBase = { ...base, messages: markedApiMessages }
 
   it('merges each built-in enabledBody when the toggle is on, the default', () => {
-    expect(bodyWith(builtInProvider('openrouter'))).toEqual({ ...base, reasoning: { enabled: true } })
+    expect(bodyWith(builtInProvider('openrouter'))).toEqual({ ...markedBase, reasoning: { enabled: true } })
     expect(bodyWith(builtInProvider('zai'))).toEqual({ ...base, thinking: { type: 'enabled' } })
-    expect(bodyWith(builtInProvider('minimax'))).toEqual({ ...base, max_tokens: 65536, thinking: { type: 'adaptive' } })
+    expect(bodyWith(builtInProvider('minimax'))).toEqual({ ...markedBase, max_tokens: 65536, thinking: { type: 'adaptive' } })
     expect(bodyWith(builtInProvider('venice')).reasoning).toEqual({ enabled: true })
   })
 
@@ -258,18 +348,19 @@ describe('thinking request bodies', () => {
     expect(bodyWith(builtInProvider('charm_hyper'))).toEqual(base)
     expect(bodyWith(builtInProvider('copilot'))).toEqual(base)
     expect(bodyWith(builtInProvider('kimi'))).toEqual({
-      ...base,
+      ...markedBase,
       max_tokens: 32000,
       thinking: { type: 'adaptive', display: 'summarized' },
     })
   })
 
   it('sends no thinking fields when the toggle is off, except a disabledBody', () => {
-    for (const id of ['openrouter', 'zai', 'charm_hyper', 'copilot']) {
+    for (const id of ['zai', 'charm_hyper', 'copilot']) {
       expect(bodyWith(builtInProvider(id), { thinking: false })).toEqual(base)
     }
-    expect(bodyWith(builtInProvider('minimax'), { thinking: false })).toEqual({ ...base, max_tokens: 65536 })
-    expect(bodyWith(builtInProvider('kimi'), { thinking: false })).toEqual({ ...base, max_tokens: 32000 })
+    expect(bodyWith(builtInProvider('openrouter'), { thinking: false })).toEqual(markedBase)
+    expect(bodyWith(builtInProvider('minimax'), { thinking: false })).toEqual({ ...markedBase, max_tokens: 65536 })
+    expect(bodyWith(builtInProvider('kimi'), { thinking: false })).toEqual({ ...markedBase, max_tokens: 32000 })
   })
 
   it('merges the Venice disabledBody into the venice_parameters that the settings wrote', () => {
@@ -287,7 +378,7 @@ describe('thinking request bodies', () => {
 
   it('uses the format default when a custom config has no enabledBody', () => {
     expect(bodyWith(customProvider({ apiFormat: 'anthropic', thinking: {} }))).toEqual({
-      ...base,
+      ...markedBase,
       max_tokens: 32000,
       thinking: { type: 'adaptive', display: 'summarized' },
     })
@@ -311,7 +402,7 @@ describe('thinking request bodies', () => {
   })
 
   it('returns the prefix hash of the sent messages only when it asks for thinking', () => {
-    const provider = builtInProvider('openrouter')
+    const provider = customProvider({ thinking: {} })
     const on = provider.chatRequest(messages, 'm', key)
     const sent = new ThinkingPrefixHasher()
     for (const message of requestBody(on.request).messages as unknown[]) sent.add(message)
@@ -378,10 +469,28 @@ describe('thinking send-back', () => {
     }
 
     expect(wireMessages(anthropicThinker, [user('Q1'), a1, user('Q2')])).toEqual([
-      { role: 'user', content: 'Q1' },
+      { role: 'user', content: [{ type: 'text', text: 'Q1', cache_control: CACHE }] },
       { role: 'assistant', content: [...blocks, { type: 'text', text: 'A1' }] },
-      { role: 'user', content: 'Q2' },
+      { role: 'user', content: [{ type: 'text', text: 'Q2', cache_control: CACHE }] },
     ])
+  })
+
+  it('still sends a signed replay after its user message lost its cache breakpoint', () => {
+    const blocks: AnthropicThinkingBlock[] = [{ type: 'thinking', thinking: 'Plan', signature: 'sig' }]
+    const details = [{ type: 'reasoning.text', text: 'Plan', signature: 'sig', index: 0 }]
+    const openAiMarker = customProvider({ cacheBreakpoints: true, thinking: {} })
+    const cases: Array<[Provider, (prefixHash: string) => ThinkingReplay, unknown]> = [
+      [anthropicThinker, (prefixHash) => ({ kind: 'anthropicBlocks', blocks, prefixHash }), { role: 'assistant', content: [...blocks, { type: 'text', text: 'A1' }] }],
+      [openAiMarker, (prefixHash) => ({ kind: 'reasoningDetails', details, prefixHash }), { role: 'assistant', content: 'A1', reasoning_details: details }],
+    ]
+
+    for (const [provider, replay, sentReply] of cases) {
+      // Made by the request that marked Q1 as a cache breakpoint.
+      const a1: ChatMessage = { role: 'agent', content: 'A1', thinking: { text: 'Plan', replay: replay(prefixHash(provider, [user('Q1')])) } }
+      const sent = wireMessages(provider, [user('Q1'), a1, user('Q2'), { role: 'agent', content: 'A2' }, user('Q3')]) as unknown[]
+
+      expect(sent.slice(0, 2)).toEqual([{ role: 'user', content: 'Q1' }, sentReply])
+    }
   })
 
   it('sends a replay of the other format as text only', () => {
@@ -395,7 +504,10 @@ describe('thinking send-back', () => {
       },
     }
 
-    expect(wireMessages(anthropicThinker, [user('Q1'), fieldReply])).toEqual([{ role: 'user', content: 'Q1' }, { role: 'assistant', content: 'A1' }])
+    expect(wireMessages(anthropicThinker, [user('Q1'), fieldReply])).toEqual([
+      { role: 'user', content: [{ type: 'text', text: 'Q1', cache_control: CACHE }] },
+      { role: 'assistant', content: 'A1' },
+    ])
     expect(wireMessages(openAiThinker, [user('Q1'), blocksReply])).toEqual([{ role: 'user', content: 'Q1' }, { role: 'assistant', content: 'A1' }])
   })
 

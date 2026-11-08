@@ -21,6 +21,7 @@ import {
 
 interface StreamStartArgs {
   tabId: string
+  conversationId: string
   sectionId: string
   model: ActiveModel
   messages: StreamMessage[]
@@ -107,6 +108,7 @@ export default sbp('sbp/selectors/register', {
     try {
       const result = await sbp('dez.provider/streamChat', {
         providerId: args.model.providerId,
+        conversationId: args.conversationId,
         modelId: args.model.modelId,
         messages: args.messages.map((message) => ({
           role: message.role,

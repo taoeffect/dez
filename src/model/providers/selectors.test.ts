@@ -221,6 +221,20 @@ describe('images in chat streams', () => {
     expect(imageReads).toEqual([])
     expect(streamRequests).toEqual([])
   })
+
+  it('sends the messages of an earlier turn again as the same text, images included', async () => {
+    const image = { type: 'image', path: `${APP_DIR}/assets/images/red.png` }
+    const turn1 = [{ role: 'user', content: [{ type: 'text', text: 'Which color?' }, image] }]
+    const turn2 = [...turn1, { role: 'agent', content: 'Red.' }, { role: 'user', content: [image, { type: 'text', text: 'And this one?' }] }]
+    for (const messages of [turn1, turn2]) {
+      await sbp('dez.provider/streamChat', { providerId: 'local', modelId: 'm', messages, onToken: () => {} })
+    }
+    const [first, second] = streamRequests.map((request) => JSON.parse(request.body as string).messages as unknown[])
+
+    // OpenAI-format providers reuse their prompt cache only for a prefix of
+    // the same text.
+    expect(JSON.stringify(second.slice(0, first.length))).toBe(JSON.stringify(first))
+  })
 })
 
 describe('provider error messages', () => {
