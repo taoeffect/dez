@@ -270,7 +270,44 @@ describe('inserting the saved images', () => {
     expect(editor.doc()).toBe('first tab')
   })
 
-  it('stores an image of another type as a PNG, and leaves it out with a warning when it cannot be decoded', async () => {
+  it('stores an image of another type as a PNG, drawn at its own size', async () => {
+    vi.stubGlobal('Image', class {
+      src = ''
+      naturalWidth = 40
+      naturalHeight = 30
+      decode(): Promise<void> {
+        return Promise.resolve()
+      }
+    })
+    // Unit tests have no DOM: a stand-in canvas whose PNG starts with byte
+    // 7, so the saved file name tells the PNG from the BMP (byte 66).
+    const drawnPngs: string[] = []
+    vi.stubGlobal('document', {
+      createElement: () => {
+        const canvas = {
+          width: 300,
+          height: 150,
+          getContext: () => ({ drawImage() {} }),
+          toBlob(callback: (blob: Blob | null) => void, type: string) {
+            drawnPngs.push(`${canvas.width}x${canvas.height} ${type}`)
+            callback(new Blob([new Uint8Array([7, ...PNG_BYTES.subarray(1)])], { type }))
+          },
+        }
+        return canvas
+      },
+    })
+    const editor = createEditor('', 0)
+    const bitmap = new File([new Uint8Array([66, 77])], 'scan.bmp', { type: 'image/bmp' })
+
+    paste(editor.view, { files: [bitmap] })
+
+    await vi.waitFor(() => expect(editor.doc()).toBe(reference(7)))
+    expect(saveCalls.map((call) => call.mediaType)).toEqual(['image/png'])
+    expect(drawnPngs).toEqual(['40x30 image/png'])
+    expect(toasts).toEqual([])
+  })
+
+  it('leaves out an image of another type that the webview cannot decode, with a warning', async () => {
     vi.stubGlobal('Image', class {
       src = ''
       decode(): Promise<void> {
