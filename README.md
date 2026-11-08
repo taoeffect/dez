@@ -31,39 +31,6 @@ Talk with AI in a fully editable plaintext document. Inspired by Zed's text thre
 - **Open Dez Folder** - a button in Settings › General opens the folder where Dez keeps its data (`~/.config/dez/`)
 - **Cross-platform** — macOS and Linux
 
-## UI
-
-The main window contains a tab bar for conversations and buttons to access saved prompts, settings, and conversation history.
-
-Dez opens its window at the size where you left it. On macOS and on X11 (also the AppImage, which runs through Xwayland in a Wayland session), it also opens at the place where you left it. In a Wayland session, Dez is a Wayland app: a Wayland app cannot read or set the place of its window, so the desktop picks the place.
-
-## Notifications
-
-When a reply finishes or fails while you are not looking at it, Dez plays a short sound and shows a system notification. You are not looking at a reply when its tab is in the background, when you use another window, or when you have been away from the computer for more than 1 minute (no keyboard, mouse, or touch input). Click the notification to bring Dez to the front and go to the tab of the reply. A reply that you stop gives no alert.
-
-Settings › Notifications turns the sound and the notification on or off, and sets the volume of the sound. When you let go of the volume slider after a click or a drag, Dez plays the sound at the new volume. The sound and the notification are on by default.
-
-To know if you are away, Dez asks the system for the time since your last input. On Linux, this works on KDE Plasma, on GNOME, on other Wayland desktops that support the `ext-idle-notify` protocol (such as Sway, Hyprland, niri, and COSMIC), and in X11 sessions. On other Wayland desktops, Dez cannot tell if you are away, so only a reply in a background tab or a reply while you use another window gives an alert.
-
-On Linux, Dez plays the sound with GStreamer. The AppImage includes the GStreamer plugins. Other Linux builds, such as `npm run tauri dev`, need the GStreamer base and good plugins on the system (Debian/Ubuntu: `gstreamer1.0-plugins-base` and `gstreamer1.0-plugins-good`; Fedora: `gstreamer1-plugins-base` and `gstreamer1-plugins-good`).
-
-## Images
-
-Paste an image into a conversation, or drop image files on its text. Dez copies each image to `~/.config/dez/assets/images/` and puts a Markdown reference to the copy in the text: `![<full path of the copy>](id=a)`. The editor shows the image in place of the reference. Dez keeps PNG, JPEG, GIF, and WebP images as they are, and changes other image types to PNG. When the clipboard holds text and an image, a paste puts in the text.
-
-Each image in a conversation has a short id: `a`, `b`, … `z`, `aa`, `ab`, and so on. Put the pointer on an image to see a small toolbar in its top-right corner, with the image's id and a trash button. Keep the pointer on the id or on the trash button to see what it is for. A new image gets the id after the highest id in the conversation. When you paste text with an image reference that has no id, or that has the id of a different image in the conversation, Dez gives that image a new id. Dez does not change the ids that are already in a conversation. Images from before Dez gave ids have no id. In a message, you can refer to an image by its id, for example `image @a`.
-
-The reference is text, so you can copy, cut, and undo it as other text. To see the reference of an image:
-
-- Press <kbd>Backspace</kbd> (<kbd>delete</kbd> on a Mac) just after the image. Dez removes the last `)` and shows the reference. Type `)` to show the image again.
-- Press <kbd>Delete</kbd> just before the image. Dez removes the first `!` and shows the reference. Type `!` to show the image again.
-
-Dez sends the images in your messages to the model. Dez never sends the path of an image file: the model gets each image reference as `![image](id=a)`, with the image's id and no path, right before the image. A reference that shows its source, a path in plain text, and an image in a reply of the model also go with `image` in place of the path. As the start of a path in plain text is not known, Dez replaces all text from the first `/` before the path on its line (after the last `[` or `]`). Dez replaces only paths into a `.config/dez/assets/images/` folder: a path into the `assets/images` folder of a web project, for example `src/assets/images/logo.png`, goes as you wrote it. Venice, OpenRouter, and GitHub Copilot tell Dez which of their models read images. A model that does not read images gets only the text of each reference, and Dez shows a warning. Dez sends images to all other models; if a model cannot read them, the server's error shows. For a custom provider, you can set which models read images (`imageInput`, `modelImageInput` in [Custom providers](#custom-providers)).
-
-To delete an image, put the pointer on it and click the trash button. Dez asks: "Are you sure you want to delete this image?" Click **Yes** or press <kbd>Enter</kbd> to delete the image file from `~/.config/dez/assets/images/` and remove the reference from the text. Click **No**, press <kbd>Esc</kbd>, or click outside the question to keep the image. You cannot undo the delete. Other references to the same file, for example a copied reference in a different conversation, then show "Image not found". An "Image not found" box has a trash button too, which removes only the reference. When a reference points to an image in a different Dez folder, the trash removes only the reference and deletes no file.
-
-Dez deletes an image file only when you click its trash button. An image stays in `~/.config/dez/assets/images/` when you remove its reference with the keyboard or delete the conversation. A conversation refers to its images by full path, so the images do not show if you move the Dez folder to a different home folder.
-
 ## Custom providers
 
 A custom provider is any server that speaks the OpenAI chat completions API or the Anthropic messages API. This includes local servers such as llama-server, LM Studio, Ollama, and vLLM, and hosted APIs that are compatible with one of the two.
@@ -187,24 +154,6 @@ git push origin HEAD v0.1.0
 The workflow first checks that the version files hold the tag's version (`npm run bump-version -- --check v0.1.0` runs the same check on your machine). The bundles get their names from `src-tauri/tauri.conf.json`, and the app shows the `package.json` version in About and in the update check, so on a mismatch the workflow stops before any build and makes no release. Then delete the tag (`git tag -d v0.1.0 && git push origin :refs/tags/v0.1.0`), bump and commit, and tag again.
 
 When the check passes, the workflow builds Linux x86_64 and Linux ARM64 AppImages on Ubuntu, builds the Apple Silicon DMG on macOS, writes the release notes, creates the GitHub Release for the tag if needed, and attaches all release assets. Linux downloads are labeled by architecture, for example `Dez_0.1.0_linux_x86_64.AppImage` and `Dez_0.1.0_linux_arm64.AppImage`; ARM users should choose the `arm64` AppImage. The macOS download is `Dez_0.1.0_aarch64.dmg`.
-
-### Release notes
-
-The release notes start with the text of `.github/release-notes-template.md`. Then an AI model writes a `## Changes` part from the commit messages since the previous release, with **NEW**, **ENHANCEMENT**, and **FIXES** groups, and the last line names the model. If the release has no new commits, or the model finds no change that needs a note, the notes are the template text only. The workflow reads the model settings and the API key from the GitHub environment `Default` (Settings › Environments):
-
-- Variable `REVIEW_MODEL`: the model id, for example `glm-5.3`.
-- Variable `REVIEW_PROVIDER`: the API endpoint. Now the only value is `zai-coding-plan` (the Z.ai coding plan).
-- Secret `ZAI_API_KEY`: the Z.ai API key. The repository also has a repository secret with this name, so the environment does not keep the key from other jobs. Only the "Write release notes" step uses it, and it gets the `Default` value: an environment secret wins over a repository secret with the same name.
-
-If the release notes job fails, the workflow makes no release. Click **Re-run failed jobs** to try again; the builds do not run again.
-
-A release that already exists keeps its notes, because you may have edited them. Then the workflow does not ask the AI model for notes; it only attaches the assets. To write new notes for a release, run the script on your machine with `ZAI_API_KEY` set in your shell. The script needs `gh` and a clone with all tags:
-
-```bash
-REVIEW_MODEL=glm-5.3 REVIEW_PROVIDER=zai-coding-plan \
-  node scripts/release-notes.js v0.1.0 --out notes.md
-gh release edit v0.1.0 --notes-file notes.md
-```
 
 ## macOS unsigned build note
 
