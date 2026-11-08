@@ -50,6 +50,7 @@ import { measureTextSize } from './editorMeasure'
 import { findExtension, findMatchStatus, findNextMatch, findQueryField, selectMatchSpec, setFindQueryEffect } from '../editor/find'
 import { markdownTables } from '../editor/tables'
 import { deleteImageBang, deleteImageParen, markdownImages } from '../editor/images'
+import { imagePasteAndDrop } from '../editor/imageInsert'
 import { focusKeepingScrollOnMouseDown } from '../editor/focus'
 import { activeFindQuery, findState } from '../editor/findState'
 import { isModalOpen } from '../composables/useKeyboardShortcuts'
@@ -853,6 +854,7 @@ function buildState(expandedThinking: ReadonlySet<string> = new Set()): EditorSt
       findExtension(activeFindQuery()),
       markdownTables(),
       markdownImages(),
+      imagePasteAndDrop(),
       // The find dropdown floats over the top of the scroller. Count it as
       // hidden space so matches (and anything else CM scrolls to) are not
       // scrolled under it.

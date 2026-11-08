@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import { onMounted, onUnmounted } from "vue";
 import sbp from "@sbp/sbp";
 import { useKeyboardShortcuts } from "../composables/useKeyboardShortcuts";
 import { useModelState } from "../modelState";
@@ -13,6 +14,26 @@ import { shortcutKeyText } from "../../model/shortcuts";
 
 useKeyboardShortcuts();
 const { settings, shortcuts } = useModelState();
+
+// Native file drops are off (`dragDropEnabled: false` in tauri.conf.json),
+// so a file dragged in from the desktop reaches the page as HTML5 drag
+// events. The editor takes the ones over its text (`imagePasteAndDrop`).
+// Anywhere else the webview could open the dropped file in place of the
+// app, so a file drag that no handler took is refused here.
+function refuseFileDrag(event: DragEvent) {
+  if (event.defaultPrevented || !event.dataTransfer?.types.includes("Files")) return;
+  event.preventDefault();
+  if (event.type === "dragover") event.dataTransfer.dropEffect = "none";
+}
+
+onMounted(() => {
+  window.addEventListener("dragover", refuseFileDrag);
+  window.addEventListener("drop", refuseFileDrag);
+});
+onUnmounted(() => {
+  window.removeEventListener("dragover", refuseFileDrag);
+  window.removeEventListener("drop", refuseFileDrag);
+});
 </script>
 
 <template>
