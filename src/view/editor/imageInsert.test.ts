@@ -215,6 +215,35 @@ describe('inserting the saved images', () => {
     expect(editor.view.state.selection.main.head).toBe(8 + reference().length)
   })
 
+  it('keeps both images of two pastes over one selection, in the order their saves end', async () => {
+    holdSaves = true
+    const editor = createEditor('Look at this: here', 14, 18)
+
+    paste(editor.view, { files: [png('a.png', 1)] })
+    paste(editor.view, { files: [png('b.png', 2)] })
+    await vi.waitFor(() => expect(saveCalls).toHaveLength(2))
+    editor.view.dispatch({ changes: { from: 0, insert: '> ' } })
+    saveCallOf(2).finish()
+    await vi.waitFor(() => expect(editor.doc()).toBe(`> Look at this: ${reference(2)}`))
+    saveCallOf(1).finish()
+
+    await vi.waitFor(() => expect(editor.doc()).toBe(`> Look at this: ${reference(2)}${reference(1, 'b')}`))
+    expect(editor.view.state.selection.main.head).toBe(editor.doc().length)
+  })
+
+  it('keeps text typed over the selection during the save, and puts the image after it', async () => {
+    holdSaves = true
+    const editor = createEditor('Look at this: here', 14, 18)
+
+    paste(editor.view, { files: [png()] })
+    await vi.waitFor(() => expect(saveCalls).toHaveLength(1))
+    editor.view.dispatch({ changes: { from: 14, to: 18, insert: 'there' }, selection: { anchor: 19 } })
+    saveCalls[0].finish()
+
+    await vi.waitFor(() => expect(editor.doc()).toBe(`Look at this: there${reference()}`))
+    expect(editor.view.state.selection.main.head).toBe(editor.doc().length)
+  })
+
   it('inserts nothing in a state rebuilt during the save, and says so', async () => {
     holdSaves = true
     const editor = createEditor('first tab', 9)

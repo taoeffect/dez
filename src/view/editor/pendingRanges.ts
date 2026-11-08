@@ -13,9 +13,11 @@ const removePendingRangeEffect = StateEffect.define<string>()
  *  insert after its files are saved, an image delete after its prompt and
  *  file delete), by id. A range moves with the edits made meanwhile; text
  *  typed at either edge stays out of it, so text typed at the point of an
- *  empty range goes before it. A new state (tab switch, the rebuild at the
- *  end of a stream) starts with no ranges, so work whose id is gone knows
- *  that its doc is gone. */
+ *  empty range goes before it. But a change that replaces text from the
+ *  start of a range puts its new text in the range (`ChangeDesc.mapPos`),
+ *  so check the range's text before replacing it. A new state (tab switch,
+ *  the rebuild at the end of a stream) starts with no ranges, so work whose
+ *  id is gone knows that its doc is gone. */
 const pendingRangesField = StateField.define<ReadonlyMap<string, DocRange>>({
   create: () => new Map(),
   update(ranges, tr) {

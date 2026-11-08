@@ -124,7 +124,8 @@ function insertionText(state: EditorState, { from, to }: DocRange, text: string)
 /** Stores the image files, then puts their references (one per line, in
  *  file order) in place of `range` in one transaction, with the caret after
  *  them. The saves are async: the range follows the edits made meanwhile
- *  (`addPendingRange`). When the view no longer shows the doc of the
+ *  (`addPendingRange`), and when its text changed, the images go after it
+ *  and the new text stays. When the view no longer shows the doc of the
  *  paste or drop (another tab, or a rebuilt state), the images stay saved
  *  but are not inserted, and a toast says so. The active tab id is checked
  *  too, because right after a tab switch the view holds the old tab's
@@ -135,6 +136,7 @@ function insertionText(state: EditorState, { from, to }: DocRange, text: string)
  *  id. */
 async function insertImages(view: EditorView, files: ReadonlyArray<File | Promise<File | null>>, range: DocRange, userEvent: 'input.paste' | 'input.drop'): Promise<void> {
   const tabId = sbp('dez.model/tabs/activeId') as string
+  const replacedText = view.state.sliceDoc(range.from, range.to)
   const id = addPendingRange(view, range)
   const saved = await Promise.all(files.map(saveImageFile))
   const paths = saved.filter((path) => path !== null)
@@ -154,10 +156,14 @@ async function insertImages(view: EditorView, files: ReadonlyArray<File | Promis
     view.dispatch({ effects: removePendingRange(id) })
     return
   }
-  const { insert, caret } = insertionText(view.state, pending, paths.map((path) => imageMarkdown(path)).join('\n'))
+  // An edit during the save that replaced the selection (typing, a text
+  // paste, another image paste) maps the range onto its own new text
+  // (ChangeDesc.mapPos): keep that text, and put the images after it.
+  const target = view.state.sliceDoc(pending.from, pending.to) === replacedText ? pending : { from: pending.to, to: pending.to }
+  const { insert, caret } = insertionText(view.state, target, paths.map((path) => imageMarkdown(path)).join('\n'))
   view.dispatch({
-    changes: { from: pending.from, to: pending.to, insert },
-    selection: { anchor: pending.from + caret },
+    changes: { from: target.from, to: target.to, insert },
+    selection: { anchor: target.from + caret },
     effects: removePendingRange(id),
     scrollIntoView: true,
     userEvent,
