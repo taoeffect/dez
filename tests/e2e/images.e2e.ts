@@ -176,6 +176,15 @@ describe('images', () => {
     ))
   }
 
+  // Closes every toast, so that a test sees only the toasts it causes (the
+  // non-image toast of one drop test stays open into the next).
+  async function closeToasts (): Promise<void> {
+    await browser.execute(() => {
+      document.querySelectorAll<HTMLElement>('.toast-card:not(.toast-card--closing) .toast-close').forEach((button) => button.click())
+    })
+    await waitForValue(browser, 'toasts closed', () => browser.execute(() => document.querySelectorAll('.toast-card').length), 0)
+  }
+
   // A viewport point just inside the char after doc position `pos`, on the
   // middle of its line: CodeMirror maps it back to `pos`.
   async function docPoint (pos: number): Promise<Point> {
@@ -231,6 +240,43 @@ describe('images', () => {
     }, point, files)
   }
 
+  // Sends the drop event of Tauri's native file drop to the page, as wry
+  // sends it when a file manager drops `paths` at `point` (CSS px). The
+  // native drop is on only on Linux (src-tauri/tauri.linux.conf.json), and
+  // WebDriver cannot drive an OS drag, so the page emits the event itself.
+  // Unlike a real drop, this event adds no path to the asset-protocol
+  // scope: a dropped image must be in the image folder, which is always in
+  // the scope.
+  async function nativeDrop (point: Point, paths: string[]): Promise<void> {
+    await browser.execute(async (at: Point, dropped: string[]) => {
+      const internals = Reflect.get(window, '__TAURI_INTERNALS__') as { invoke: (command: string, args: unknown) => Promise<unknown> }
+      await internals.invoke('plugin:event|emit_to', {
+        target: { kind: 'Webview', label: 'main' },
+        event: 'tauri://drag-drop',
+        payload: { paths: dropped, position: at },
+      })
+    }, point, paths)
+  }
+
+  // Waits for the drop of DROPPED_PNG into the doc `Before after`, after
+  // `Before `. Checks that the reference is there with the caret after it,
+  // that the image is a new file in the image folder with the dropped bytes,
+  // and that the editor shows it. `before` is the image folder before the
+  // drop.
+  async function expectDroppedImage (before: string[]): Promise<void> {
+    await waitForValue(browser, 'dropped reference', async () => REFERENCE.test((await editorState()).doc), true)
+    const { doc, caret } = await editorState()
+    const reference = doc.slice('Before '.length, doc.length - 'after'.length)
+    expect(doc).toBe(`Before ${reference}after`)
+    expect(reference).toMatch(new RegExp(`^${REFERENCE.source}$`))
+    expect(caret).toBe('Before '.length + reference.length)
+    const fileName = path.basename(reference.slice(2, -3))
+    expect(reference.slice(2, -3)).toBe(path.join(imagesDir(), fileName))
+    expect(await storedImages()).toEqual([...before, fileName].sort())
+    expect(await fs.promises.readFile(path.join(imagesDir(), fileName))).toEqual(DROPPED_PNG)
+    await waitForValue(browser, 'shown image', shownImages, [{ alt: fileName, width: 40, height: 24 }])
+  }
+
   async function newTab (): Promise<void> {
     await sbpCall(browser, 'dez.model/tabs/create')
     await waitForValue(browser, 'new tab', () => threadSections(browser), [{ role: 'user', text: '' }])
@@ -274,6 +320,7 @@ describe('images', () => {
 
   beforeEach(async () => {
     await resetConsoleErrors(browser)
+    await closeToasts()
   })
 
   afterEach(async (ctx) => {
@@ -378,18 +425,7 @@ describe('images', () => {
       { name: 'blue.png', type: 'image/png', base64: DROPPED_PNG.toString('base64') },
     ])
     expect(accepted).toEqual({ dragover: true, drop: true })
-
-    await waitForValue(browser, 'dropped reference', async () => REFERENCE.test((await editorState()).doc), true)
-    const { doc, caret } = await editorState()
-    const reference = doc.slice('Before '.length, doc.length - 'after'.length)
-    expect(doc).toBe(`Before ${reference}after`)
-    expect(reference).toMatch(new RegExp(`^${REFERENCE.source}$`))
-    expect(caret).toBe('Before '.length + reference.length)
-    const fileName = path.basename(reference.slice(2, -3))
-    expect(reference.slice(2, -3)).toBe(path.join(imagesDir(), fileName))
-    expect(await storedImages()).toEqual([...before, fileName].sort())
-    expect(await fs.promises.readFile(path.join(imagesDir(), fileName))).toEqual(DROPPED_PNG)
-    await waitForValue(browser, 'shown image', shownImages, [{ alt: fileName, width: 40, height: 24 }])
+    await expectDroppedImage(before)
   })
 
   it('stores and inserts no dropped file that is not an image, and says so', async () => {
@@ -414,6 +450,40 @@ describe('images', () => {
     ])
     expect(refused).toEqual({ dragover: true, drop: true })
     expect((await editorState()).doc).toBe('Some text')
+    expect(await storedImages()).toEqual(before)
+  })
+
+  it('puts an image of a native file drop at the drop point', async () => {
+    // A file outside the image folder in a real drop; see `nativeDrop`.
+    await fs.promises.mkdir(imagesDir(), { recursive: true })
+    const source = path.join(imagesDir(), 'native-drop-source.png')
+    await fs.promises.writeFile(source, DROPPED_PNG)
+    const before = await storedImages()
+    await newTab()
+    await focusEditor(browser)
+    await typeKeys(browser, 'Before after')
+    await waitForValue(browser, 'typed text', async () => (await editorState()).doc, 'Before after')
+
+    await nativeDrop(await docPoint('Before '.length), [source])
+    await expectDroppedImage(before)
+  })
+
+  it('leaves out a native-dropped file that is not an image, and puts a dropped link in as text', async () => {
+    await newTab()
+    await focusEditor(browser)
+    await typeKeys(browser, 'Some text')
+    await waitForValue(browser, 'typed text', async () => (await editorState()).doc, 'Some text')
+    const before = await storedImages()
+
+    await nativeDrop(await docPoint('Some '.length), [path.join(setup.app.home, 'notes.txt')])
+    await waitForValue(browser, 'toast', async () => (await openToastMessages()).includes(NOT_AN_IMAGE_MESSAGE), true)
+    expect((await editorState()).doc).toBe('Some text')
+    expect(await storedImages()).toEqual(before)
+
+    // wry passes on a URI that is not a `file://` URI as it is.
+    const link = 'https://example.com/page'
+    await nativeDrop(await docPoint('Some '.length), [link])
+    await waitForValue(browser, 'dropped link', editorState, { doc: `Some ${link}text`, caret: 'Some '.length + link.length })
     expect(await storedImages()).toEqual(before)
   })
 
@@ -454,11 +524,13 @@ describe('images', () => {
 
     const request = await sendRequest()
     expect(request.path).toBe(mockChatPath(CLAUDE))
+    // The last block of the last user message carries a cache breakpoint
+    // (`withCacheBreakpoints` in src/model/providers/apiFormats.ts).
     expect(request.body).toHaveProperty('messages', [{
       role: 'user',
       content: [
         { type: 'image', source: { type: 'base64', media_type: 'image/png', data: PASTED_PNG.toString('base64') } },
-        { type: 'text', text: QUESTION },
+        { type: 'text', text: QUESTION, cache_control: { type: 'ephemeral' } },
       ],
     }])
     sendAnthropicReply(request.reply, CLAUDE.modelName)
