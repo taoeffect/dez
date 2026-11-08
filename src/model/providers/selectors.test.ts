@@ -239,9 +239,15 @@ describe('images in chat streams', () => {
     }
     const [first, second] = streamRequests.map((request) => JSON.parse(request.body as string).messages as unknown[])
 
+    expect(first).toEqual([{
+      role: 'user',
+      content: [
+        { type: 'text', text: 'Which color? ![image](id=a)' },
+        { type: 'image_url', image_url: { url: `data:image/png;base64,${Buffer.from(STORED_IMAGE).toString('base64')}` } },
+      ],
+    }])
     // OpenAI-format providers reuse their prompt cache only for a prefix of
     // the same text.
-    expect(first).toHaveLength(1)
     expect(JSON.stringify(second.slice(0, first.length))).toBe(JSON.stringify(first))
   })
 })
