@@ -1245,6 +1245,9 @@ const TABLE_DELIMITER_ROW_EM = 0.6
  *  in px at the default font size. */
 export const IMAGE_MAX_HEIGHT_PX = 320
 
+const UI_FONT_FAMILY = "ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif"
+const MONO_FONT_FAMILY = "ui-monospace, SFMono-Regular, Menlo, Consolas, 'Liberation Mono', monospace"
+
 export const dezTheme = EditorView.theme({
   '&': {
     height: '100%',
@@ -1253,8 +1256,7 @@ export const dezTheme = EditorView.theme({
     fontSize: EDITOR_FONT_SIZE_VAR,
   },
   '.cm-scroller': {
-    fontFamily:
-      "ui-monospace, SFMono-Regular, Menlo, Consolas, 'Liberation Mono', monospace",
+    fontFamily: MONO_FONT_FAMILY,
     lineHeight: '1.6',
     padding: `${SCROLLER_PADDING_PX}px ${TEXT_GUTTER}`,
   },
@@ -1277,8 +1279,7 @@ export const dezTheme = EditorView.theme({
     border: '1px solid var(--color-border, #333)',
     background: 'var(--color-bg-subtle, rgba(127,127,127,0.08))',
     color: 'var(--color-muted, #888)',
-    fontFamily:
-      "ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif",
+    fontFamily: UI_FONT_FAMILY,
     fontSize: editorSize(11),
     letterSpacing: '0.08em',
     textTransform: 'uppercase',
@@ -1310,8 +1311,7 @@ export const dezTheme = EditorView.theme({
     userSelect: 'none',
     color: 'var(--color-muted, #888)',
     fontSize: editorSize(11),
-    fontFamily:
-      "ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif",
+    fontFamily: UI_FONT_FAMILY,
     letterSpacing: '0.08em',
     textTransform: 'uppercase',
   },
@@ -1587,8 +1587,7 @@ export const dezTheme = EditorView.theme({
     color: 'var(--color-link, #4a9eff)',
     cursor: 'pointer',
     userSelect: 'none',
-    fontFamily:
-      "ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif",
+    fontFamily: UI_FONT_FAMILY,
     fontSize: editorSize(12),
     lineHeight: '1.4',
     verticalAlign: 'baseline',
@@ -1646,8 +1645,7 @@ export const dezTheme = EditorView.theme({
     borderRadius: editorSize(6),
     border: '1px dashed var(--color-border, #333)',
     color: 'var(--color-muted, #888)',
-    fontFamily:
-      "ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif",
+    fontFamily: UI_FONT_FAMILY,
     fontSize: editorSize(12),
     lineHeight: '1.4',
     userSelect: 'none',
@@ -1688,8 +1686,7 @@ export const dezTheme = EditorView.theme({
     boxShadow: '0 1px 2px rgba(0, 0, 0, 0.22), 0 6px 18px rgba(0, 0, 0, 0.24)',
     WebkitBackdropFilter: 'blur(14px) saturate(130%)',
     backdropFilter: 'blur(14px) saturate(130%)',
-    fontFamily:
-      "ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif",
+    fontFamily: UI_FONT_FAMILY,
     fontSize: editorSize(12.5),
     lineHeight: '1',
     whiteSpace: 'nowrap',
@@ -1793,23 +1790,23 @@ export const dezTheme = EditorView.theme({
     cursor: 'pointer',
   },
   // CodeMirror tooltips (the link URL tooltip of links.ts and the image
-  // overlay tooltips of images.ts). CM's base theme gives them light colors
-  // only, as Dez does not use CM's dark theme flag.
+  // overlay tooltips of images.ts), with the text style they share. CM's
+  // base theme gives them light colors only, as Dez does not use CM's dark
+  // theme flag.
   '.cm-tooltip': {
     border: '1px solid var(--color-border, #333)',
     borderRadius: editorSize(6),
     backgroundColor: 'var(--color-bg, #1e1e1e)',
     color: 'var(--color-text)',
     boxShadow: '0 4px 16px rgba(0, 0, 0, 0.2)',
+    fontFamily: UI_FONT_FAMILY,
+    fontSize: editorSize(12),
+    lineHeight: '1.4',
   },
   // A long URL wraps at any char, as most URLs have no spaces.
   '.dez-link-tooltip': {
     maxWidth: `min(${editorSize(480)}, calc(100vw - 32px))`,
     padding: editorSize(3, 8),
-    fontFamily:
-      "ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif",
-    fontSize: editorSize(12),
-    lineHeight: '1.4',
     overflowWrap: 'anywhere',
   },
   // The tooltip of an image overlay item (images.ts): its name, then what it
@@ -1818,10 +1815,6 @@ export const dezTheme = EditorView.theme({
   '.dez-image-tooltip': {
     maxWidth: `min(${editorSize(280)}, calc(100vw - 32px))`,
     padding: editorSize(6, 10, 7),
-    fontFamily:
-      "ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif",
-    fontSize: editorSize(12),
-    lineHeight: '1.4',
     pointerEvents: 'none',
   },
   '.dez-image-tooltip__title': {
@@ -1835,8 +1828,7 @@ export const dezTheme = EditorView.theme({
     padding: editorSize(0, 3),
     borderRadius: editorSize(3),
     background: 'rgba(127, 127, 127, 0.18)',
-    fontFamily:
-      "ui-monospace, SFMono-Regular, Menlo, Consolas, 'Liberation Mono', monospace",
+    fontFamily: MONO_FONT_FAMILY,
     fontSize: '0.95em',
   },
   // Find highlights (src/view/editor/find.ts). Amber, so they differ from the
