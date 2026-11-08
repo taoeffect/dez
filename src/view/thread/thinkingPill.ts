@@ -217,11 +217,11 @@ function sizeLabel(chars: number): string {
  *  text, so the pill is at the end also when the lines were in the middle. */
 function renderEncryptedPill(panel: HTMLElement, readable: ReadableThinking): boolean {
   let pill = directChild(panel, ENCRYPTED_CLASS)
-  if (readable.encryptedBlocks === 0) {
+  if (readable.encryptedLines === 0) {
     pill?.remove()
     return pill !== null
   }
-  const blocks = readable.encryptedBlocks > 1 ? ` · ${readable.encryptedBlocks} blocks` : ''
+  const blocks = readable.encryptedLines > 1 ? ` · ${readable.encryptedLines} blocks` : ''
   const label = `Encrypted reasoning hidden · ${sizeLabel(readable.encryptedChars)}${blocks}`
   if (pill?.textContent === label) return false
   if (!pill) {

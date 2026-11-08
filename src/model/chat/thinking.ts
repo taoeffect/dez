@@ -54,7 +54,7 @@ export interface ReadableThinking {
   /** The thinking text without its encrypted lines. */
   text: string
   /** How many encrypted lines `text` leaves out. */
-  encryptedBlocks: number
+  encryptedLines: number
   /** The total length of those lines. */
   encryptedChars: number
 }
@@ -93,7 +93,7 @@ export function readableThinking(text: string, streaming: boolean): ReadableThin
   let gapStart = 0
   let shownReadableLine = false
   let gapFollowsEncryptedLine = false
-  let encryptedBlocks = 0
+  let encryptedLines = 0
   let encryptedChars = 0
   let lineStart = 0
   for (;;) {
@@ -101,7 +101,7 @@ export function readableThinking(text: string, streaming: boolean): ReadableThin
     const isLast = newline === -1
     const lineEnd = isLast ? text.length : newline
     if (startsEncryptedLine(text, lineStart)) {
-      encryptedBlocks++
+      encryptedLines++
       encryptedChars += lineEnd - lineStart
       shown += text.slice(keepFrom, gapStart)
       keepFrom = lineEnd
@@ -122,5 +122,5 @@ export function readableThinking(text: string, streaming: boolean): ReadableThin
     if (isLast) break
     lineStart = newline + 1
   }
-  return { text: shown + text.slice(keepFrom), encryptedBlocks, encryptedChars }
+  return { text: shown + text.slice(keepFrom), encryptedLines, encryptedChars }
 }
