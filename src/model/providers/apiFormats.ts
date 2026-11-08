@@ -27,7 +27,8 @@ export interface ApiFormat {
   headers: Record<string, string>
   // Sent only when a key is stored.
   authHeaders(secret: Secret<string>): Record<string, string>
-  chatBody(messages: ChatMessage[], modelId: string, config: ProviderConfig): ChatBody
+  // `conversationId`: the conversation of the request (`promptCacheKey`).
+  chatBody(messages: ChatMessage[], modelId: string, config: ProviderConfig, conversationId?: string): ChatBody
   // Merged into the chat body when the Thinking toggle is on and the config
   // sets no `thinking.enabledBody`.
   thinkingBody: JsonObject
@@ -162,13 +163,14 @@ const openAiFormat: ApiFormat = {
   modelsUrl: (baseUrl) => `${trimTrailingSlashes(baseUrl)}/models`,
   headers: {},
   authHeaders: (secret) => ({ Authorization: `Bearer ${secret.reveal()}` }),
-  chatBody: (messages, modelId, config) => {
+  chatBody: (messages, modelId, config, conversationId) => {
     const chat = chatMessagesBody(messages, modelId, openAiReplayMessage, openAiImageBlock)
     // Venice drops a mark on an `image_url` part (checked live), so the
     // mark goes on the last text part.
     if (config.cacheBreakpoints) {
       chat.body.messages = withCacheBreakpoints(chat.body.messages, (blocks) => blocks.findLastIndex((block) => block.type === 'text'))
     }
+    if (config.promptCacheKey && conversationId) chat.body.prompt_cache_key = conversationId
     return chat
   },
   // A generic field such as `reasoning_effort` gives a 400 on Ollama, Groq

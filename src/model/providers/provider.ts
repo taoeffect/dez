@@ -145,8 +145,7 @@ export class Provider {
     const thinkingOn = thinking !== undefined && isThinkingEnabled(overrides)
     // Earlier thinking goes back only in a request that asks for thinking.
     const sentMessages = thinkingOn ? messages : messages.map(({ role, content }) => ({ role, content }))
-    const { body, prefixHash } = this.format.chatBody(sentMessages, modelId, this.config)
-    if (this.config.promptCacheKey && conversationId) body.prompt_cache_key = conversationId
+    const { body, prefixHash } = this.format.chatBody(sentMessages, modelId, this.config, conversationId)
 
     // Every setting is written, also the ones hidden for this model, so the
     // body does not depend on which toggles the popup shows.

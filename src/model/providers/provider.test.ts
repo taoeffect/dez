@@ -273,12 +273,14 @@ describe('prompt cache', () => {
     }
   })
 
-  it('sends the conversation id as prompt_cache_key only for a config with promptCacheKey', () => {
+  it('sends the conversation id as prompt_cache_key only for an OpenAI-format config with promptCacheKey', () => {
     const keyed = customProvider({ promptCacheKey: true })
+    const keyedAnthropic = customProvider({ apiFormat: 'anthropic', promptCacheKey: true })
 
     expect(requestBody(keyed.chatRequest(messages, 'm', key, {}, 'conv-1').request).prompt_cache_key).toBe('conv-1')
     expect(requestBody(keyed.chatRequest(messages, 'm', key).request)).not.toHaveProperty('prompt_cache_key')
     expect(requestBody(openAi.chatRequest(messages, 'm', key, {}, 'conv-1').request)).not.toHaveProperty('prompt_cache_key')
+    expect(requestBody(keyedAnthropic.chatRequest(messages, 'm', key, {}, 'conv-1').request)).not.toHaveProperty('prompt_cache_key')
   })
 })
 

@@ -176,7 +176,7 @@ export const providerConfigSchema = z.object({
   cacheBreakpoints: z.boolean().optional(),
   // OpenAI format: send the conversation id as `prompt_cache_key`, so the
   // server sends all the requests of a conversation to the machine that
-  // holds its prompt cache.
+  // holds its prompt cache. The Anthropic format ignores it.
   promptCacheKey: z.boolean().optional(),
   settings: z.array(providerSettingDefSchema).optional(),
   thinking: thinkingConfigSchema.optional(),
