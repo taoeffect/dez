@@ -112,6 +112,9 @@ interface MockState {
   /** An OpenAI reply waits at each of its pause points for the next of
    *  these promises, while any are left. */
   pauses: Array<Promise<void>>
+  /** The thinking parts of the next OpenAI reply, in place of
+   *  `thinkingParts(n)`; that reply sets it back to null. */
+  nextThinkingParts: string[] | null
 }
 
 /** What the thinking parts of one role pill show. */
@@ -138,12 +141,14 @@ function gate (): Gate {
   return { opened, open }
 }
 
-// Streams the nth reply of an OpenAI route: the two thinking parts as
+// Streams the nth reply of an OpenAI route: the thinking parts as
 // `reasoning_content`, then the answer with a `finish_reason`, then
 // `[DONE]`. It pauses before each part and before the answer.
 async function sendOpenAiReply (res: http.ServerResponse, n: number, state: MockState): Promise<void> {
   startEventStream(res)
-  for (const part of thinkingParts(n)) {
+  const parts = state.nextThinkingParts ?? thinkingParts(n)
+  state.nextThinkingParts = null
+  for (const part of parts) {
     await state.pauses.shift()
     writeChatFrame(res, { reasoning_content: part })
   }
@@ -178,7 +183,7 @@ describe('thinking', () => {
   let app: RunningApp
   let browser: E2EBrowser
   let server: MockServer
-  const mock: MockState = { requests: [], pauses: [] }
+  const mock: MockState = { requests: [], pauses: [], nextThinkingParts: null }
 
   function requestBodies (path: string): Array<Record<string, unknown>> {
     return mock.requests.filter((request) => request.path === path).map((request) => request.body)
@@ -858,5 +863,44 @@ describe('thinking', () => {
       [seededMarker, ...ENCRYPTED_THINKING.split('\n'), '</dez:pill>', 'Encrypted answer 2', ''],
       savedThinkerReply(n),
     ])
+  })
+
+  // While a reply streams, the panel can hold back all of its thinking so
+  // far (`readableThinking`): here `_` can still grow into the encrypted
+  // marker, and then the whole text is one encrypted line. More text can
+  // still come, so only a finished reply says that it has no readable text.
+  it('says that the provider sent no readable thinking only after the stream', async () => {
+    await newTab(THINKER.name, THINKER.modelName)
+    const encryptedOnly = '__ENCRYPTED_REASONING__v1:{"items":[]}'
+    const n = requestBodies(THINKER_CHAT).length + 1
+    const panelField = (): Promise<{ text: string, placeholder: string } | null> => browser.execute(() => {
+      const field = document.querySelector<HTMLTextAreaElement>('.cm-content .dez-role-separator[data-section-index="1"] .dez-role-separator__thinking-text')
+      return field ? { text: field.value, placeholder: field.placeholder } : null
+    })
+    const gates = [gate(), gate(), gate()]
+    mock.pauses = gates.map((g) => g.opened)
+    mock.nextThinkingParts = [encryptedOnly.slice(0, 1), encryptedOnly.slice(1)]
+    try {
+      await submit(browser, 'Unreadable question')
+      gates[0].open()
+      await waitForValue(browser, 'triangle', async () => (await pillThinking(1))?.slot ?? null, 'disclosure')
+      await pressRolePill(browser, 1, '.dez-role-separator__disclosure')
+      await waitForValue(browser, 'panel of the held-back start', panelField, { text: '', placeholder: '' })
+      gates[1].open()
+      await waitForValue(browser, 'encrypted pill while streaming', async () => (await encryptedPill(1))?.label ?? null, `Encrypted reasoning hidden · ${encryptedOnly.length} B`)
+      expect(await panelField()).toEqual({ text: '', placeholder: '' })
+      expect(await activeTabStreaming(browser)).toBe(true)
+    } finally {
+      for (const g of gates) g.open()
+      mock.pauses = []
+      mock.nextThinkingParts = null
+    }
+
+    await waitForThread(browser, [
+      { role: 'user', text: 'Unreadable question' },
+      { role: 'agent', text: answerText(n) },
+      { role: 'user', text: '' },
+    ])
+    await waitForValue(browser, 'panel after the stream', panelField, { text: '', placeholder: 'The provider sent no readable thinking.' })
   })
 })

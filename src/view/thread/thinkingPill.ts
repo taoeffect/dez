@@ -85,6 +85,7 @@ const TEXT_CLASS = 'dez-role-separator__thinking-text'
 const ENCRYPTED_CLASS = 'dez-role-separator__thinking-encrypted'
 const DISCLOSURE_CLASS = 'dez-role-separator__disclosure'
 const SPINNER_CLASS = 'dez-role-separator__spinner'
+const NO_READABLE_THINKING = 'The provider sent no readable thinking.'
 /** A streaming panel this close to its bottom counts as at the bottom. */
 const PANEL_BOTTOM_SLACK_PX = 8
 
@@ -152,7 +153,6 @@ function createPanel(): HTMLElement {
   field.readOnly = true
   field.rows = 1
   field.spellcheck = false
-  field.placeholder = 'The provider sent no readable thinking.'
   field.setAttribute('aria-label', 'Thinking')
   panel.append(mirror, field)
   panel.addEventListener('scroll', () => {
@@ -187,6 +187,19 @@ function setPanelText(panel: HTMLElement, text: string): boolean {
     // Shorter text can move the panel up; that is not a scroll by the user.
     panelFollowScrollTop.delete(panel)
   }
+  return true
+}
+
+/** Shows the "no readable thinking" placeholder only after the stream:
+ *  while it streams, `readableThinking` can hold back all the text so far
+ *  (an empty last line, or the start of a marker), and more can come.
+ *  Returns whether it changed, as with `field-sizing: content` the
+ *  placeholder sets the height of an empty field. */
+function setPanelPlaceholder(panel: HTMLElement, streaming: boolean): boolean {
+  const field = directChild(panel, TEXT_CLASS)
+  const placeholder = streaming ? '' : NO_READABLE_THINKING
+  if (!(field instanceof HTMLTextAreaElement) || field.placeholder === placeholder) return false
+  field.placeholder = placeholder
   return true
 }
 
@@ -259,7 +272,8 @@ export function renderPillThinking(separator: HTMLElement, label: HTMLElement, t
   const readable = readableThinking(thinking.text, thinking.streaming)
   const textChanged = setPanelText(panel, readable.text)
   const pillChanged = renderEncryptedPill(panel, readable)
-  if (existing && !textChanged && !pillChanged) return
+  const placeholderChanged = setPanelPlaceholder(panel, thinking.streaming)
+  if (existing && !textChanged && !pillChanged && !placeholderChanged) return
   measureLineHeights(view)
   if (thinking.streaming && !panelsScrolledUp.has(panel)) {
     view.requestMeasure({
