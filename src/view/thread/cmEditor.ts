@@ -1629,11 +1629,13 @@ export const dezTheme = EditorView.theme({
     lineHeight: '1.4',
     userSelect: 'none',
   },
-  // The id badge of an image (`ImageWidget`): shown only while the pointer
-  // is over the image, and never a part of the layout, so a hover changes
-  // no size. Over an image, it is positioned from a zero-size corner box
-  // that sits after the image on the line's bottom. In the "Image not
-  // found" box, it follows the text and keeps its room while hidden.
+  // The overlay of an image (`ImageWidget`): its id badge and its trash
+  // button, shown only while the pointer is over the image, and never a
+  // part of the layout, so a hover changes no size. Over an image, it is
+  // positioned from a zero-size corner box that sits after the image on the
+  // line's bottom. In the "Image not found" box, it follows the text and
+  // keeps its room while hidden; it is top-aligned and shorter than the
+  // box's line, so it does not make the box taller.
   '.dez-image__corner': {
     display: 'inline-block',
     position: 'relative',
@@ -1641,32 +1643,64 @@ export const dezTheme = EditorView.theme({
     height: '0',
     verticalAlign: 'bottom',
   },
-  '.dez-image__id': {
-    display: 'inline-block',
-    padding: editorSize(0, 6),
-    borderRadius: '999px',
-    background: 'rgba(0, 0, 0, 0.62)',
-    color: '#fff',
+  '.dez-image__overlay': {
+    display: 'inline-flex',
+    alignItems: 'center',
+    gap: editorSize(4),
     fontFamily:
       "ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif",
     fontSize: editorSize(11),
     lineHeight: '1.4',
     whiteSpace: 'nowrap',
-    pointerEvents: 'none',
     userSelect: 'none',
     opacity: '0',
     transition: 'opacity 0.12s ease',
   },
-  '.dez-image__corner > .dez-image__id': {
+  '.dez-image__corner > .dez-image__overlay': {
     position: 'absolute',
     right: editorSize(6),
     bottom: editorSize(6),
   },
-  '.dez-image-missing > .dez-image__id': {
+  '.dez-image-missing > .dez-image__overlay': {
     marginLeft: editorSize(6),
+    verticalAlign: 'top',
   },
-  '.dez-image:hover .dez-image__id': {
+  '.dez-image:hover .dez-image__overlay': {
     opacity: '1',
+  },
+  '.dez-image__id': {
+    padding: editorSize(0, 6),
+    borderRadius: '999px',
+    background: 'rgba(0, 0, 0, 0.62)',
+    color: '#fff',
+    pointerEvents: 'none',
+  },
+  // A circle as tall as the id badge (one line of the overlay's text), so
+  // the overlay stays small over a small image.
+  '.dez-image__trash': {
+    display: 'inline-flex',
+    alignItems: 'center',
+    justifyContent: 'center',
+    boxSizing: 'border-box',
+    width: '1.4em',
+    height: '1.4em',
+    margin: '0',
+    padding: '0',
+    border: 'none',
+    borderRadius: '50%',
+    background: 'rgba(0, 0, 0, 0.62)',
+    color: '#fff',
+    font: 'inherit',
+    cursor: 'pointer',
+    transition: 'background-color 0.1s ease',
+  },
+  '.dez-image__trash svg': {
+    display: 'block',
+    width: '1em',
+    height: '1em',
+  },
+  '.dez-image__trash:hover': {
+    background: '#f44336',
   },
   // Find highlights (src/view/editor/find.ts). Amber, so they differ from the
   // blue selection. They are text backgrounds, so they draw over the

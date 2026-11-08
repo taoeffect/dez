@@ -1,14 +1,53 @@
+import sbp from '@sbp/sbp'
 import { history, undo } from '@codemirror/commands'
 import { EditorSelection, EditorState, type Transaction, type TransactionSpec } from '@codemirror/state'
 import type { EditorView } from '@codemirror/view'
-import { describe, expect, it } from 'vitest'
+import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { SECTION_SEP, encodePrompt } from '../thread/cmEditor'
-import { deleteImageBang, deleteImageParen, markdownImages, renderedImages } from './images'
+import { deleteImage, deleteImageBang, deleteImageParen, imageRemovalRange, markdownImages, renderedImages } from './images'
+
+interface ConfirmCall {
+  message: string
+  answer: (confirmed: boolean) => void
+}
+
+interface DeleteCall {
+  path: string
+  finish: () => void
+  fail: () => void
+}
 
 const RED = '/home/u/.config/dez/assets/images/red.png'
 const BLUE = '/home/u/.config/dez/assets/images/blue.jpg'
 const red = `![${RED}]()`
 const blue = `![${BLUE}]()`
+
+let confirmCalls: ConfirmCall[] = []
+let deleteCalls: DeleteCall[] = []
+let activeTabId = 'tab-1'
+
+// Each prompt and each file delete waits until the test answers or ends it.
+sbp('sbp/selectors/register', {
+  'dez.ui/confirm' ({ message }: { message: string }): Promise<boolean> {
+    return new Promise((resolve) => {
+      confirmCalls.push({ message, answer: resolve })
+    })
+  },
+  'dez.controller/images/delete' (path: string): Promise<void> {
+    return new Promise((resolve, reject) => {
+      deleteCalls.push({ path, finish: resolve, fail: () => reject(new Error('Permission denied')) })
+    })
+  },
+  'dez.model/tabs/activeId' (): string {
+    return activeTabId
+  },
+})
+
+beforeEach(() => {
+  confirmCalls = []
+  deleteCalls = []
+  activeTabId = 'tab-1'
+})
 
 function createState(doc: string, ...carets: number[]): EditorState {
   return EditorState.create({
@@ -153,5 +192,160 @@ describe('Delete before an image', () => {
     for (const state of cases) {
       expect(runCommand(state, deleteImageBang)).toEqual({ handled: false, state })
     }
+  })
+})
+
+describe('imageRemovalRange', () => {
+  /** The doc after the first shown image is taken out. */
+  function removeImage(doc: string): string {
+    const state = createState(doc)
+    return state.update({ changes: imageRemovalRange(state.doc, renderedImages(state)[0]) }).state.doc.toString()
+  }
+
+  it('takes only the reference when its line has other text', () => {
+    expect(removeImage(`look ${red} here`)).toBe('look  here')
+    expect(removeImage(`${red}${blue}`)).toBe(blue)
+  })
+
+  it('takes the whole line of a reference that is alone on it (white space aside), with one line break', () => {
+    expect(removeImage(['before', red, 'after'].join('\n'))).toBe('before\nafter')
+    expect(removeImage(['before', `  ${red} `, 'after'].join('\n'))).toBe('before\nafter')
+    expect(removeImage(['before', red].join('\n'))).toBe('before')
+    expect(removeImage([red, 'after'].join('\n'))).toBe('after')
+  })
+
+  it('keeps the line breaks that frame a section separator', () => {
+    expect(removeImage(['x', SECTION_SEP, red, 'more', SECTION_SEP, 'y'].join('\n'))).toBe(['x', SECTION_SEP, 'more', SECTION_SEP, 'y'].join('\n'))
+    expect(removeImage(['x', SECTION_SEP, 'more', red, SECTION_SEP, 'y'].join('\n'))).toBe(['x', SECTION_SEP, 'more', SECTION_SEP, 'y'].join('\n'))
+    // The only line of its section stays, as an empty line.
+    expect(removeImage(['x', SECTION_SEP, red, SECTION_SEP, 'y'].join('\n'))).toBe(['x', SECTION_SEP, '', SECTION_SEP, 'y'].join('\n'))
+    expect(removeImage([` ${red}`, SECTION_SEP, 'y'].join('\n'))).toBe(['', SECTION_SEP, 'y'].join('\n'))
+    expect(removeImage(['x', SECTION_SEP, red].join('\n'))).toBe(['x', SECTION_SEP, ''].join('\n'))
+    expect(removeImage(red)).toBe('')
+  })
+})
+
+describe('deleteImage (the image trash)', () => {
+  interface FakeEditor {
+    view: EditorView
+    doc: () => string
+    edit: (spec: TransactionSpec) => void
+    /** Stands for `view.setState` on a tab switch or a stream-end rebuild. */
+    replaceState: (next: EditorState) => void
+  }
+
+  /** A view stand-in that `deleteImage` reads and dispatches to. */
+  function createEditor(doc: string): FakeEditor {
+    let state = createState(doc)
+    const view = {
+      get state() {
+        return state
+      },
+      dispatch(spec: TransactionSpec) {
+        state = state.update(spec).state
+      },
+    } as unknown as EditorView
+    return {
+      view,
+      doc: () => state.doc.toString(),
+      edit: (spec: TransactionSpec) => view.dispatch(spec),
+      replaceState(next: EditorState) {
+        state = next
+      },
+    }
+  }
+
+  async function nextDeleteCall(): Promise<DeleteCall> {
+    await vi.waitFor(() => expect(deleteCalls).toHaveLength(1))
+    return deleteCalls[0]
+  }
+
+  it('asks first; on "Yes" deletes the file, and then the reference with its line, in a step that undo skips', async () => {
+    const editor = createEditor(['before', red, 'after'].join('\n'))
+    editor.edit({ changes: { from: editor.doc().length, insert: '!' }, userEvent: 'input.type' })
+    const done = deleteImage(editor.view, 'before\n'.length, RED)
+    expect(confirmCalls.map((call) => call.message)).toEqual(['Are you sure you want to delete this image?'])
+    confirmCalls[0].answer(true)
+    const fileDelete = await nextDeleteCall()
+    expect(fileDelete.path).toBe(RED)
+    expect(editor.doc()).toBe(['before', red, 'after!'].join('\n'))
+    fileDelete.finish()
+    await done
+    expect(editor.doc()).toBe('before\nafter!')
+
+    // The undo takes back the typed `!`, not the delete.
+    let undone = editor.view.state
+    expect(undo({ state: undone, dispatch: (tr) => { undone = tr.state } })).toBe(true)
+    expect(undone.doc.toString()).toBe('before\nafter')
+  })
+
+  it('changes nothing on "No", or when the file delete fails', async () => {
+    const doc = `a ${red} b`
+    const editor = createEditor(doc)
+    const refused = deleteImage(editor.view, 2, RED)
+    confirmCalls[0].answer(false)
+    await refused
+    expect(deleteCalls).toEqual([])
+    expect(editor.doc()).toBe(doc)
+
+    const failed = deleteImage(editor.view, 2, RED)
+    confirmCalls[1].answer(true)
+    ;(await nextDeleteCall()).fail()
+    await failed
+    expect(editor.doc()).toBe(doc)
+  })
+
+  it('takes only the reference whose trash was pressed, when two show the same file', async () => {
+    const editor = createEditor(`${red}\n${red} b`)
+    const done = deleteImage(editor.view, red.length + 1, RED)
+    confirmCalls[0].answer(true)
+    ;(await nextDeleteCall()).finish()
+    await done
+    expect(editor.doc()).toBe(`${red}\n b`)
+  })
+
+  it('follows the reference through the edits made while the prompt is open', async () => {
+    const editor = createEditor(['before', red, 'after'].join('\n'))
+    const done = deleteImage(editor.view, 'before\n'.length, RED)
+    editor.edit({ changes: [{ from: 0, insert: 'new\n' }, { from: editor.doc().length, insert: ' streamed' }] })
+    confirmCalls[0].answer(true)
+    ;(await nextDeleteCall()).finish()
+    await done
+    expect(editor.doc()).toBe('new\nbefore\nafter streamed')
+  })
+
+  it('deletes no file when the reference is gone before the answer', async () => {
+    const doc = `a ${red}`
+    const changes: Array<(editor: FakeEditor) => void> = [
+      // Its source shows: the `)` was deleted.
+      (editor) => editor.edit({ changes: { from: doc.length - 1, to: doc.length } }),
+      // Another state: a tab switch, or the rebuild at the end of a stream.
+      (editor) => editor.replaceState(createState(doc)),
+      // The tab changed while the view still holds its state.
+      () => { activeTabId = 'tab-2' },
+    ]
+    for (const change of changes) {
+      const editor = createEditor(doc)
+      const done = deleteImage(editor.view, 2, RED)
+      change(editor)
+      const docBeforeAnswer = editor.doc()
+      confirmCalls.at(-1)?.answer(true)
+      await done
+      expect(deleteCalls).toEqual([])
+      expect(editor.doc()).toBe(docBeforeAnswer)
+      activeTabId = 'tab-1'
+    }
+  })
+
+  it('keeps the text of a reference that goes while its file is being deleted', async () => {
+    const doc = `a ${red}`
+    const editor = createEditor(doc)
+    const done = deleteImage(editor.view, 2, RED)
+    confirmCalls[0].answer(true)
+    const fileDelete = await nextDeleteCall()
+    editor.replaceState(createState(doc))
+    fileDelete.finish()
+    await done
+    expect(editor.doc()).toBe(doc)
   })
 })

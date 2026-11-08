@@ -1,54 +1,19 @@
 import sbp from '@sbp/sbp'
-import { EditorState, StateEffect, StateField, type Extension } from '@codemirror/state'
+import { EditorState, type Extension } from '@codemirror/state'
 import { EditorView, dropCursor } from '@codemirror/view'
 import { SENTINEL_CHAR } from '../../model/chat/content'
 import { imageMarkdown, isImageMediaType, pastedImageIdChanges, type ImageMediaType } from '../../model/chat/images'
 import { focusKeepingScroll } from './focus'
-
-interface InsertRange {
-  from: number
-  to: number
-}
+import { addPendingRange, pendingRange, pendingRanges, removePendingRange, type DocRange } from './pendingRanges'
 
 interface StorableImage {
   bytes: Uint8Array
   mediaType: ImageMediaType
 }
 
-const addPendingInsert = StateEffect.define<{ id: string, range: InsertRange }>()
-const removePendingInsert = StateEffect.define<string>()
-
 /** The dropped files, by path, that are read as images. A dropped file can
  *  be large, so the other files are left out without being read. */
 const IMAGE_FILE_PATH = /\.(?:png|jpe?g|jfif|gif|webp|bmp|tiff?|avif|svg|ico|heic|heif|jxl)$/i
-
-/** The doc ranges that pasted or dropped images replace once their files
- *  are saved, by insert id. A range moves with the edits made during the
- *  save; text typed at its point goes before the images. A new state (tab
- *  switch, the rebuild at the end of a stream) starts with no ranges, so an
- *  insert whose id is gone knows that its doc is gone. */
-const pendingInsertsField = StateField.define<ReadonlyMap<string, InsertRange>>({
-  create: () => new Map(),
-  update(ranges, tr) {
-    let next = ranges
-    if (tr.docChanged && next.size > 0) {
-      next = new Map(Array.from(next, ([id, range]) => {
-        const from = tr.changes.mapPos(range.from, 1)
-        return [id, { from, to: Math.max(from, tr.changes.mapPos(range.to, -1)) }]
-      }))
-    }
-    for (const effect of tr.effects) {
-      if (effect.is(addPendingInsert)) {
-        next = new Map(next).set(effect.value.id, effect.value.range)
-      } else if (effect.is(removePendingInsert) && next.has(effect.value)) {
-        const copy = new Map(next)
-        copy.delete(effect.value)
-        next = copy
-      }
-    }
-    return next
-  },
-})
 
 /** Gives each image reference that a paste or a drop brings into the doc
  *  an id of its own (`pastedImageIdChanges`), in the same transaction, so
@@ -59,7 +24,7 @@ const pendingInsertsField = StateField.define<ReadonlyMap<string, InsertRange>>(
  *  `move.drop`: its images keep their ids. */
 const pastedImageIds = EditorState.transactionFilter.of((tr) => {
   if (!tr.docChanged || !(tr.isUserEvent('input.paste') || tr.isUserEvent('input.drop'))) return tr
-  const pasted: InsertRange[] = []
+  const pasted: DocRange[] = []
   tr.changes.iterChangedRanges((_fromA, _toA, fromB, toB) => {
     if (toB > fromB) pasted.push({ from: fromB, to: toB })
   })
@@ -147,7 +112,7 @@ async function saveImageFile(source: File | Promise<File | null>): Promise<strin
  *  in images.ts), so there the text gets lines of its own. This also keeps
  *  a drop on a role pill out of the separator line, which must hold only
  *  the separator. */
-function insertionText(state: EditorState, { from, to }: InsertRange, text: string): { insert: string, caret: number } {
+function insertionText(state: EditorState, { from, to }: DocRange, text: string): { insert: string, caret: number } {
   const before = state.sliceDoc(state.doc.lineAt(from).from, from)
   const after = state.sliceDoc(to, state.doc.lineAt(to).to)
   if (!SENTINEL_CHAR.test(before + after)) return { insert: text, caret: text.length }
@@ -159,7 +124,7 @@ function insertionText(state: EditorState, { from, to }: InsertRange, text: stri
 /** Stores the image files, then puts their references (one per line, in
  *  file order) in place of `range` in one transaction, with the caret after
  *  them. The saves are async: the range follows the edits made meanwhile
- *  (`pendingInsertsField`). When the view no longer shows the doc of the
+ *  (`addPendingRange`). When the view no longer shows the doc of the
  *  paste or drop (another tab, or a rebuilt state), the images stay saved
  *  but are not inserted, and a toast says so. The active tab id is checked
  *  too, because right after a tab switch the view holds the old tab's
@@ -168,13 +133,12 @@ function insertionText(state: EditorState, { from, to }: InsertRange, text: stri
  *  `pastedImageIds` gives each one the next id in this same transaction,
  *  from the doc as it is then, so two inserts in flight never take the same
  *  id. */
-async function insertImages(view: EditorView, files: ReadonlyArray<File | Promise<File | null>>, range: InsertRange, userEvent: 'input.paste' | 'input.drop'): Promise<void> {
-  const id = crypto.randomUUID()
+async function insertImages(view: EditorView, files: ReadonlyArray<File | Promise<File | null>>, range: DocRange, userEvent: 'input.paste' | 'input.drop'): Promise<void> {
   const tabId = sbp('dez.model/tabs/activeId') as string
-  view.dispatch({ effects: addPendingInsert.of({ id, range }) })
+  const id = addPendingRange(view, range)
   const saved = await Promise.all(files.map(saveImageFile))
   const paths = saved.filter((path) => path !== null)
-  const pending = view.state.field(pendingInsertsField, false)?.get(id)
+  const pending = pendingRange(view.state, id)
   if (!pending || sbp('dez.model/tabs/activeId') !== tabId) {
     if (paths.length > 0) {
       sbp('dez.ui/toast', 'app-global', {
@@ -187,14 +151,14 @@ async function insertImages(view: EditorView, files: ReadonlyArray<File | Promis
     return
   }
   if (paths.length === 0) {
-    view.dispatch({ effects: removePendingInsert.of(id) })
+    view.dispatch({ effects: removePendingRange(id) })
     return
   }
   const { insert, caret } = insertionText(view.state, pending, paths.map((path) => imageMarkdown(path)).join('\n'))
   view.dispatch({
     changes: { from: pending.from, to: pending.to, insert },
     selection: { anchor: pending.from + caret },
-    effects: removePendingInsert.of(id),
+    effects: removePendingRange(id),
     scrollIntoView: true,
     userEvent,
   })
@@ -284,7 +248,7 @@ export function dropFilePaths(view: EditorView, paths: readonly string[], point:
  *  window refuses file drops outside the editor (AppLayout.vue). */
 export function imagePasteAndDrop(): Extension {
   return [
-    pendingInsertsField,
+    pendingRanges(),
     pastedImageIds,
     dropCursor(),
     EditorView.domEventHandlers({

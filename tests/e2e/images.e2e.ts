@@ -163,14 +163,16 @@ describe('images', () => {
   }
 
   // The badge of each image that the editor shows (or of its "Image not
-  // found" box), in doc order. A badge is shown when it is fully opaque
-  // (`.dez-image__id` in dezTheme).
+  // found" box), in doc order. A badge is shown when its overlay is fully
+  // opaque (`.dez-image__overlay` in dezTheme).
   async function imageBadges (): Promise<ImageBadge[]> {
     return browser.execute(() => Array.from(
       document.querySelectorAll('.cm-content .dez-image'),
       (image) => {
         const badge = image.querySelector('.dez-image__id')
-        return { id: badge?.textContent ?? null, shown: badge !== null && getComputedStyle(badge).opacity === '1' }
+        const overlay = image.querySelector('.dez-image__overlay')
+        const shown = badge !== null && overlay !== null && getComputedStyle(overlay).opacity === '1'
+        return { id: badge?.textContent ?? null, shown }
       },
     ))
   }
@@ -439,23 +441,21 @@ describe('images', () => {
     const layout = await browser.execute(() => {
       const wrapper = document.querySelectorAll('.cm-content .dez-image')[1]
       const image = wrapper?.querySelector('.dez-image__img')?.getBoundingClientRect()
-      const badge = wrapper?.querySelector('.dez-image__id')?.getBoundingClientRect()
+      const overlay = wrapper?.querySelector('.dez-image__overlay')?.getBoundingClientRect()
       const line = wrapper?.closest('.cm-line')?.getBoundingClientRect()
-      if (!image || !badge || !line) throw new Error('layout: image b, its badge, or its line not found')
+      if (!image || !overlay || !line) throw new Error('layout: image b, its overlay, or its line not found')
       return {
-        left: badge.left - image.left,
-        top: badge.top - image.top,
-        right: image.right - badge.right,
-        bottom: image.bottom - badge.bottom,
+        top: overlay.top - image.top,
+        right: image.right - overlay.right,
+        bottom: image.bottom - overlay.bottom,
         imageHeight: image.height,
         lineHeight: line.height,
       }
     })
     // On the image's bottom-right corner, as far from its right edge as
-    // from its bottom edge; and the badge adds no height to the line.
+    // from its bottom edge; and the overlay adds no height to the line.
     expect(layout.right).toBeGreaterThan(0)
     expect(layout.right).toBeCloseTo(layout.bottom, 1)
-    expect(layout.left).toBeGreaterThan(layout.right)
     expect(layout.top).toBeGreaterThan(0)
     expect(layout.lineHeight).toBe(layout.imageHeight)
 
