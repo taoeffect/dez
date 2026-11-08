@@ -1527,17 +1527,21 @@ export const dezTheme = EditorView.theme({
     color: 'inherit',
     cursor: 'text',
   },
-  // "Generating" state of the pill whose response is streaming
-  // (`data-streaming`): a soft ring around the pill breathes in and out,
-  // and a highlight sweeps across the model name, both in the agent accent.
-  // All of it is motion, so it applies only when the user has not asked for
-  // reduced motion. The ring is a pseudo-element that animates only its
-  // opacity. The name shimmer is a gradient clipped to the text: twice the
-  // name's width, so each loop is one sweep plus a pause. Streamed text
-  // tokens keep the widget (`eq`), and `pillThinkingUpdater` changes the
-  // thinking parts in place, so the animations run without restarts until
-  // the stream ends. The left-slot spinner turns only here too.
+  // Rules that move things on screen are only in this block, so they apply
+  // only when the user has not asked for reduced motion. The base rules of
+  // the same elements keep what does not move (fades, colors). The theme is
+  // one object, which can hold this key only once, so the block also holds
+  // the motion of elements styled further down.
   '@media (prefers-reduced-motion: no-preference)': {
+    // "Generating" state of the pill whose response is streaming
+    // (`data-streaming`): a soft ring around the pill breathes in and out,
+    // and a highlight sweeps across the model name, both in the agent
+    // accent. The ring is a pseudo-element that animates only its opacity.
+    // The name shimmer is a gradient clipped to the text: twice the name's
+    // width, so each loop is one sweep plus a pause. Streamed text tokens
+    // keep the widget (`eq`), and `pillThinkingUpdater` changes the thinking
+    // parts in place, so the animations run without restarts until the
+    // stream ends. The left-slot spinner turns here too.
     '.dez-role-separator__spinner': {
       animation: 'dez-role-pill-spin 0.9s linear infinite',
     },
@@ -1562,6 +1566,19 @@ export const dezTheme = EditorView.theme({
       WebkitBackgroundClip: 'text',
       backgroundClip: 'text',
       animation: 'dez-role-pill-shimmer 2.4s linear infinite',
+    },
+    // The image toolbar (`.dez-image__overlay` below) drops into place from
+    // its top-right corner as it fades in, and its trash gets a little
+    // smaller while pressed.
+    '.dez-image__overlay': {
+      transform: `translateY(${editorSize(-4)}) scale(0.97)`,
+      transformOrigin: 'top right',
+    },
+    '.dez-image:hover .dez-image__overlay': {
+      transform: 'none',
+    },
+    '.dez-image__trash:active': {
+      transform: 'scale(0.92)',
     },
   },
   '@keyframes dez-role-pill-glow': {
@@ -1694,15 +1711,15 @@ export const dezTheme = EditorView.theme({
     pointerEvents: 'auto',
     cursor: 'default',
     opacity: '0',
-    // The entrance: it fades in and drops into place from its top-right
-    // corner. Under reduced motion it only fades (below).
-    transform: `translateY(${editorSize(-4)}) scale(0.97)`,
-    transformOrigin: 'top right',
+    // The entrance: a fade, and a slide in the
+    // `prefers-reduced-motion: no-preference` block above. That block comes
+    // first in the stylesheet, so a `transition` there would lose to this
+    // one. This one names `transform` too, which moves nothing when no
+    // transform is set.
     transition: 'opacity 0.14s ease, transform 0.2s cubic-bezier(0.2, 0.8, 0.2, 1)',
   },
   '.dez-image:hover .dez-image__overlay': {
     opacity: '1',
-    transform: 'none',
   },
   // In the "Image not found" box, the toolbar follows the text and keeps
   // its room while hidden. It is taller than the box's line; its negative
@@ -1767,19 +1784,10 @@ export const dezTheme = EditorView.theme({
     background: 'var(--color-error-fill, #c4302b)',
     color: '#fff',
   },
-  // Pressed: a little smaller, and the fill a little darker.
+  // Pressed: the fill a little darker (and the button a little smaller, in
+  // the `prefers-reduced-motion: no-preference` block above).
   '.dez-image__trash:active': {
     boxShadow: 'inset 0 0 0 999px rgba(0, 0, 0, 0.16)',
-    transform: 'scale(0.92)',
-  },
-  '@media (prefers-reduced-motion: reduce)': {
-    '.dez-image__overlay': {
-      transform: 'none',
-      transition: 'opacity 0.14s ease',
-    },
-    '.dez-image__trash:active': {
-      transform: 'none',
-    },
   },
   // Rendered links (src/view/editor/links.ts): only the link text shows. An
   // autolink's address has the `t.url` style of `dezHighlightStyle`, which
