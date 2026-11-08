@@ -18,6 +18,7 @@ import {
 import { findHistory } from './findHistory'
 import { findState } from './findState'
 import { focusKeepingScroll } from './focus'
+import { dropFilePaths } from './imageInsert'
 import { isModalOpen } from '../composables/useKeyboardShortcuts'
 import { findShortcut, keyEventInit, type Shortcut, type ShortcutIdOfScope } from '../../model/shortcuts'
 
@@ -129,6 +130,19 @@ export default sbp('sbp/selectors/register', {
     const view = activeView
     if (!view || isModalOpen()) return false
     if (!view.hasFocus) focusKeepingScroll(view)
+    return true
+  },
+
+  /** A drop from Tauri's native file drop (Linux only,
+   *  `dez.controller/images/watchFileDrops`) at `point`, in CSS pixels of
+   *  the page. As with HTML5 drops, the editor takes only a drop on its
+   *  text, and puts the image files at the drop point (`dropFilePaths`).
+   *  Returns whether it took the drop. */
+  'dez.editor/dropFiles' (paths: readonly string[], point: { x: number, y: number }): boolean {
+    const view = activeView
+    const target = document.elementFromPoint(point.x, point.y)
+    if (!view || !target || !view.contentDOM.contains(target)) return false
+    dropFilePaths(view, paths, point)
     return true
   },
 

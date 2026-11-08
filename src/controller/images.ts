@@ -1,6 +1,9 @@
 import sbp from '@sbp/sbp'
-import { convertFileSrc } from '@tauri-apps/api/core'
+import { convertFileSrc, isTauri } from '@tauri-apps/api/core'
+import { getCurrentWebview } from '@tauri-apps/api/webview'
 import { IMAGE_FOLDER, imageExtension, isImagePath, type ImageMediaType } from '../model/chat/images'
+
+let fileDropsWatched = false
 
 export default sbp('sbp/selectors/register', {
   // Stores the bytes of a pasted or dropped image under a new name, and
@@ -36,5 +39,36 @@ export default sbp('sbp/selectors/register', {
   // protocol. Views use this selector because they may not import Tauri APIs.
   'dez.controller/images/displayUrl' (path: string): string {
     return convertFileSrc(path)
+  },
+
+  // Reads an image file by its absolute path through the asset protocol: a
+  // file in the image folder, or a file of a native file drop (Tauri adds
+  // each dropped path to the protocol's scope). The protocol takes the type
+  // from the bytes. Rejects when the file cannot be read.
+  async 'dez.controller/images/readFile' (path: string): Promise<File> {
+    const response = await fetch(convertFileSrc(path))
+    if (!response.ok) throw new Error(`Failed to read ${path}: HTTP ${response.status}`)
+    const blob = await response.blob()
+    return new File([blob], path.slice(path.lastIndexOf('/') + 1), { type: blob.type })
+  },
+
+  // Tauri's native file drop is on only on Linux (tauri.linux.conf.json; see
+  // run() in src-tauri/src/lib.rs). Its drop event gives the paths of the
+  // dropped files and the drop point; the editor takes the drop when the
+  // point is on its text.
+  async 'dez.controller/images/watchFileDrops' (): Promise<void> {
+    if (fileDropsWatched || !isTauri()) return
+    fileDropsWatched = true
+    try {
+      await getCurrentWebview().onDragDropEvent(({ payload }) => {
+        if (payload.type !== 'drop') return
+        // The type says physical pixels, but wry on Linux gives GTK widget
+        // coordinates, which are CSS pixels of the page (at page zoom 1).
+        sbp('dez.editor/dropFiles', payload.paths, { x: payload.position.x, y: payload.position.y })
+      })
+    } catch (error) {
+      fileDropsWatched = false
+      console.error('Failed to watch file drops:', error)
+    }
   },
 })

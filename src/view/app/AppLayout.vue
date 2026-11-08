@@ -15,9 +15,10 @@ import { shortcutKeyText } from "../../model/shortcuts";
 useKeyboardShortcuts();
 const { settings, shortcuts } = useModelState();
 
-// Native file drops are off (`dragDropEnabled: false` in tauri.conf.json),
-// so a file dragged in from the desktop reaches the page as HTML5 drag
-// events. The editor takes the ones over its text (`imagePasteAndDrop`).
+// Native file drops are off except on Linux (tauri.linux.conf.json; see run()
+// in src-tauri/src/lib.rs), so on macOS a file dragged in from the desktop
+// reaches the page as HTML5 drag events. The editor takes the ones over its
+// text (`imagePasteAndDrop`).
 // Anywhere else the webview could open the dropped file in place of the
 // app, so a file drag that no handler took is refused here.
 function refuseFileDrag(event: DragEvent) {

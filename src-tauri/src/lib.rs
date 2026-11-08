@@ -91,13 +91,47 @@ pub fn run() {
         Ok(())
     });
     // Reads tauri.conf.json, whose `"csp": null` is on purpose during
-    // development. Its `"dragDropEnabled": false` turns Tauri's native file
-    // drop off, so HTML5 drops with the dropped files reach the page (images
-    // dropped into the editor). Its `assetProtocol` scope lets the webview
-    // show the images in `$HOME/.config/dez/assets/images/` by
-    // `convertFileSrc` URLs; it must name the folder that `base_dir()` in
-    // persistence.rs builds (both read `$HOME`).
+    // development. Its `assetProtocol` scope lets the webview show the images
+    // in `$HOME/.config/dez/assets/images/` by `convertFileSrc` URLs; it must
+    // name the folder that `base_dir()` in persistence.rs builds (both read
+    // `$HOME`). Tauri adds each path of a native file drop to that scope too.
+    //
+    // Its `"dragDropEnabled": false` turns Tauri's native file drop off, so
+    // HTML5 drops with the dropped files reach the page. On macOS the native
+    // drop would take every drag, text too, so it stays off there. On Linux,
+    // tauri.linux.conf.json turns it on: WebKitGTK gives the page no `File`
+    // for a file dropped from a file manager, only its `file://` URI as text
+    // (WebKit bug 323277), so the frontend reads the paths of the native drop
+    // event (`dez.controller/images/watchFileDrops`). wry on Linux takes only
+    // drags that carry a URI list, so text dragged in the editor still
+    // reaches the page. The Linux file replaces the whole `windows` list
+    // (JSON merge patch), so its main window must match the one in
+    // tauri.conf.json except for `dragDropEnabled` (see the test below).
+    // Do not build the window in `setup` instead: with the native drop on, a
+    // window built there stays on about:blank under WebDriver automation.
+    // https://bugs.webkit.org/show_bug.cgi?id=323277
     builder
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
+}
+
+#[cfg(test)]
+mod tests {
+    use serde_json::Value;
+
+    fn main_window(config: &str) -> serde_json::Map<String, Value> {
+        let config: Value = serde_json::from_str(config).expect("config is JSON");
+        let windows = config["app"]["windows"].as_array().expect("windows list");
+        assert_eq!(windows.len(), 1, "one window");
+        windows[0].as_object().expect("window object").clone()
+    }
+
+    #[test]
+    fn linux_main_window_differs_only_in_drag_drop() {
+        let mut base = main_window(include_str!("../tauri.conf.json"));
+        let mut linux = main_window(include_str!("../tauri.linux.conf.json"));
+        assert_eq!(base.remove("dragDropEnabled"), Some(Value::Bool(false)));
+        assert_eq!(linux.remove("dragDropEnabled"), Some(Value::Bool(true)));
+        assert_eq!(base, linux);
+    }
 }

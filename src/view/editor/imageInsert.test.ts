@@ -4,7 +4,7 @@ import type { EditorView } from '@codemirror/view'
 import { afterEach, beforeEach, describe, expect, it, vi, type MockInstance } from 'vitest'
 import { imageMarkdown } from '../../model/chat/images'
 import { SECTION_SEP, encodePrompt } from '../thread/cmEditor'
-import { dropImages, imagePasteAndDrop, pasteImages } from './imageInsert'
+import { dropFilePaths, dropImages, imagePasteAndDrop, pasteImages } from './imageInsert'
 import { markdownImages, renderedImages } from './images'
 
 interface SaveCall {
@@ -27,6 +27,10 @@ let saveCalls: SaveCall[] = []
 let holdSaves = false
 let toasts: Toast[] = []
 let activeTabId = 'tab-1'
+/** The files that `dez.controller/images/readFile` reads, by path; any
+ *  other path fails to read. */
+let localFiles = new Map<string, File>()
+let readPaths: string[] = []
 let consoleError: MockInstance<typeof console.error>
 
 sbp('sbp/selectors/register', {
@@ -46,6 +50,11 @@ sbp('sbp/selectors/register', {
   },
   'dez.model/tabs/activeId' (): string {
     return activeTabId
+  },
+  'dez.controller/images/readFile' (path: string): Promise<File> {
+    readPaths.push(path)
+    const file = localFiles.get(path)
+    return file ? Promise.resolve(file) : Promise.reject(new Error(`Failed to read ${path}: HTTP 404`))
   },
 })
 
@@ -128,6 +137,8 @@ beforeEach(() => {
   holdSaves = false
   toasts = []
   activeTabId = 'tab-1'
+  localFiles = new Map()
+  readPaths = []
   consoleError = vi.spyOn(console, 'error').mockImplementation(() => {})
 })
 
@@ -297,5 +308,41 @@ describe('dropImages', () => {
     const editor = createEditor('', 0)
 
     expect(drop(editor.view, 0, { text: 'moved text' })).toBe(false)
+  })
+})
+
+describe('dropFilePaths', () => {
+  it('reads the dropped image files by path and puts them at the drop point, without reading the other files', async () => {
+    localFiles = new Map([['/home/u/Pictures/a.png', png('a.png', 1)], ['/home/u/Pictures/b.JPG', jpeg('b.JPG')]])
+    const editor = createEditor('one two', 0)
+
+    dropFilePaths(editor.view, ['/home/u/Pictures/a.png', '/home/u/notes.txt', '/home/u/Pictures/b.JPG'], { x: 4, y: 0 })
+
+    const references = `${reference(1)}\n${reference(255, 'jpg')}`
+    await vi.waitFor(() => expect(editor.doc()).toBe(`one ${references}two`))
+    expect(editor.view.state.selection.main.head).toBe(4 + references.length)
+    expect(readPaths).toEqual(['/home/u/Pictures/a.png', '/home/u/Pictures/b.JPG'])
+    expect(toasts.map((toast) => toast.message)).toEqual(['Only image files can be dropped into a conversation.'])
+  })
+
+  it('leaves out an image that cannot be read, with a warning', async () => {
+    localFiles = new Map([['/tmp/a.png', png('a.png', 1)]])
+    const editor = createEditor('', 0)
+
+    dropFilePaths(editor.view, ['/tmp/gone.png', '/tmp/a.png'], { x: 0, y: 0 })
+
+    await vi.waitFor(() => expect(editor.doc()).toBe(reference(1)))
+    expect(toasts).toEqual([expect.objectContaining({ title: 'Image not added', message: 'Dez cannot read gone.png.', variant: 'warning' })])
+  })
+
+  it('puts a drop of links, with no local file, in as text', () => {
+    const editor = createEditor('see ', 0)
+
+    dropFilePaths(editor.view, ['https://example.com/a'], { x: 4, y: 0 })
+
+    expect(editor.doc()).toBe('see https://example.com/a')
+    expect(editor.view.state.selection.main.head).toBe(editor.doc().length)
+    expect(readPaths).toEqual([])
+    expect(toasts).toEqual([])
   })
 })

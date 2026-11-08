@@ -18,6 +18,10 @@ interface StorableImage {
 const addPendingInsert = StateEffect.define<{ id: string, range: InsertRange }>()
 const removePendingInsert = StateEffect.define<string>()
 
+/** The dropped files, by path, that are read as images. A dropped file can
+ *  be large, so the other files are left out without being read. */
+const IMAGE_FILE_PATH = /\.(?:png|jpe?g|jfif|gif|webp|bmp|tiff?|avif|svg|ico|heic|heif|jxl)$/i
+
 /** The doc ranges that pasted or dropped images replace once their files
  *  are saved, by insert id. A range moves with the edits made during the
  *  save; text typed at its point goes before the images. A new state (tab
@@ -103,9 +107,11 @@ async function storableImage(file: File): Promise<StorableImage | null> {
   }
 }
 
-/** Stores one image file. Null when it was not stored; the user has seen a
- *  toast. */
-async function saveImageFile(file: File): Promise<string | null> {
+/** Stores one image file, or the file that `source` gives. Null when it was
+ *  not stored; the user has seen a toast. */
+async function saveImageFile(source: File | Promise<File | null>): Promise<string | null> {
+  const file = await source
+  if (!file) return null
   const image = await storableImage(file)
   if (!image) return null
   try {
@@ -116,18 +122,19 @@ async function saveImageFile(file: File): Promise<string | null> {
   }
 }
 
-/** The text that puts `references` in place of `from`..`to`, and the caret
- *  offset in it. A line with a sentinel (a section separator, a prompt
- *  pill) shows no image (`findRenderedImages` in images.ts), so there the
- *  references get lines of their own. This also keeps a drop on a role
- *  pill out of the separator line, which must hold only the separator. */
-function insertionText(state: EditorState, { from, to }: InsertRange, references: string): { insert: string, caret: number } {
+/** The text that puts `text` (image references, or dropped links) in place
+ *  of `from`..`to`, and the caret offset in it. A line with a sentinel (a
+ *  section separator, a prompt pill) shows no image (`findRenderedImages`
+ *  in images.ts), so there the text gets lines of its own. This also keeps
+ *  a drop on a role pill out of the separator line, which must hold only
+ *  the separator. */
+function insertionText(state: EditorState, { from, to }: InsertRange, text: string): { insert: string, caret: number } {
   const before = state.sliceDoc(state.doc.lineAt(from).from, from)
   const after = state.sliceDoc(to, state.doc.lineAt(to).to)
-  if (!SENTINEL_CHAR.test(before + after)) return { insert: references, caret: references.length }
+  if (!SENTINEL_CHAR.test(before + after)) return { insert: text, caret: text.length }
   const prefix = before ? '\n' : ''
   const suffix = after ? '\n' : ''
-  return { insert: prefix + references + suffix, caret: prefix.length + references.length }
+  return { insert: prefix + text + suffix, caret: prefix.length + text.length }
 }
 
 /** Stores the image files, then puts their references (one per line, in
@@ -139,7 +146,7 @@ function insertionText(state: EditorState, { from, to }: InsertRange, references
  *  too, because right after a tab switch the view holds the old tab's
  *  state for a tick, and its edits would go to the new tab
  *  (`syncDocToStore` in ThreadEditor.vue). */
-async function insertImages(view: EditorView, files: readonly File[], range: InsertRange, userEvent: 'input.paste' | 'input.drop'): Promise<void> {
+async function insertImages(view: EditorView, files: ReadonlyArray<File | Promise<File | null>>, range: InsertRange, userEvent: 'input.paste' | 'input.drop'): Promise<void> {
   const id = crypto.randomUUID()
   const tabId = sbp('dez.model/tabs/activeId') as string
   view.dispatch({ effects: addPendingInsert.of({ id, range }) })
@@ -187,6 +194,13 @@ export function pasteImages(event: ClipboardEvent, view: EditorView): boolean {
   return true
 }
 
+function showNonImageDropToast(): void {
+  sbp('dez.ui/toast', 'app-global', {
+    message: 'Only image files can be dropped into a conversation.',
+    duration: 5000,
+  })
+}
+
 /** A drop of files puts the image files at the drop point, and leaves out
  *  every other file with a toast. CodeMirror's own drop would insert each
  *  file as text, so a file drop never reaches it. A drag with no files
@@ -196,18 +210,51 @@ export function dropImages(event: DragEvent, view: EditorView): boolean {
   if (!hasFiles(data)) return false
   const files = transferredFiles(data)
   const images = files.filter((file) => file.type.startsWith('image/'))
-  if (images.length === 0 || images.length < files.length) {
-    sbp('dez.ui/toast', 'app-global', {
-      message: 'Only image files can be dropped into a conversation.',
-      duration: 5000,
-    })
-  }
+  if (images.length === 0 || images.length < files.length) showNonImageDropToast()
   if (images.length > 0) {
     const pos = view.posAtCoords({ x: event.clientX, y: event.clientY }, false)
     focusKeepingScroll(view)
     void insertImages(view, images, { from: pos, to: pos }, 'input.drop')
   }
   return true
+}
+
+/** Reads a dropped image file by its path. Null, after a warning toast,
+ *  when it cannot be read. */
+async function readDroppedImage(path: string): Promise<File | null> {
+  try {
+    return await sbp('dez.controller/images/readFile', path) as File
+  } catch (error) {
+    console.error('Failed to read the dropped image:', error)
+    sbp('dez.ui/toast', 'app-global', {
+      title: 'Image not added',
+      message: `Dez cannot read ${path.slice(path.lastIndexOf('/') + 1)}.`,
+      variant: 'warning',
+      duration: 8000,
+    })
+    return null
+  }
+}
+
+/** A drop from Tauri's native file drop (Linux only: tauri.linux.conf.json,
+ *  see run() in src-tauri/src/lib.rs), at `point` in the page. As in
+ *  `dropImages`, the image files go to the drop point and every other file
+ *  is left out with a toast; the images are read by path. wry passes a URI
+ *  that is not a `file://` URI as it is: a drop with no local path (a link
+ *  dragged from a browser) goes in as text, as WebKit's own drop does. */
+export function dropFilePaths(view: EditorView, paths: readonly string[], point: { x: number, y: number }): void {
+  if (paths.length === 0) return
+  const pos = view.posAtCoords(point, false)
+  focusKeepingScroll(view)
+  const localPaths = paths.filter((path) => path.startsWith('/'))
+  if (localPaths.length === 0) {
+    const { insert, caret } = insertionText(view.state, { from: pos, to: pos }, paths.join('\n'))
+    view.dispatch({ changes: { from: pos, insert }, selection: { anchor: pos + caret }, scrollIntoView: true, userEvent: 'input.drop' })
+    return
+  }
+  const images = localPaths.filter((path) => IMAGE_FILE_PATH.test(path))
+  if (images.length < paths.length) showNonImageDropToast()
+  if (images.length > 0) void insertImages(view, images.map(readDroppedImage), { from: pos, to: pos }, 'input.drop')
 }
 
 /** Paste and drop of images for the thread editor (`buildState()` in

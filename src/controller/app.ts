@@ -92,6 +92,7 @@ export default sbp('sbp/selectors/register', {
       sbp('dez.controller/window/startTracking')
       initialized = true
       void sbp('dez.controller/menu/install')
+      void sbp('dez.controller/images/watchFileDrops')
       // Warm the cache against real availability in the background so the model
       // selector reconciles after startup without blocking init.
       void sbp('dez.controller/modelCache/refresh')
