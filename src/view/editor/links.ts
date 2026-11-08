@@ -23,8 +23,10 @@ export interface MarkdownLink {
 
 /** The URLs that `dez.controller/openUrl` can open: the URL scope of the
  *  opener plugin's `opener:default` permission
- *  (`src-tauri/capabilities/default.json`). Other links stay source text. */
-const OPENABLE_URL = /^(?:https?:\/\/|mailto:|tel:)/i
+ *  (`src-tauri/capabilities/default.json`). Other links stay source text.
+ *  Like the plugin, it matches case-sensitively; link URLs get a lower-case
+ *  scheme first (`withLowerCaseScheme`). */
+const OPENABLE_URL = /^(?:https?:\/\/|mailto:|tel:)/
 
 /** The scheme of a CommonMark URI autolink. An autolink without one is an
  *  email autolink, whose destination is `mailto:` + the address. */
@@ -32,6 +34,13 @@ const URI_SCHEME = /^[a-z][a-z0-9+.-]{1,31}:/i
 
 /** A CommonMark backslash escape of an ASCII punctuation char. */
 const BACKSLASH_ESCAPE = /\\([!-/:-@[-`{-~])/g
+
+/** `url` with its scheme in lower case. A scheme does not depend on case
+ *  (RFC 3986 §3.1), but the opener plugin matches its URL scope
+ *  (`https://*`, …) case-sensitively, so `HTTPS://…` would not open. */
+function withLowerCaseScheme(url: string): string {
+  return url.replace(/^[a-z][a-z0-9+.-]*:/i, (scheme) => scheme.toLowerCase())
+}
 
 /** An inline link, `[text](url "title")`. Its link marks are `[`, `]`, `(`,
  *  and `)`; a reference link (`[text][ref]`, `[text]`) has no `(`. The
@@ -43,7 +52,7 @@ function inlineLink(state: EditorState, node: SyntaxNode): MarkdownLink | null {
   if (marks.length !== 4 || !url || state.sliceDoc(marks[2].from, marks[2].to) !== '(') return null
   const destination = state.sliceDoc(url.from, url.to)
   const unbracketed = destination.startsWith('<') ? destination.slice(1, -1) : destination
-  return { from: node.from, to: node.to, textFrom: marks[0].to, textTo: marks[1].from, url: unbracketed.replace(BACKSLASH_ESCAPE, '$1') }
+  return { from: node.from, to: node.to, textFrom: marks[0].to, textTo: marks[1].from, url: withLowerCaseScheme(unbracketed.replace(BACKSLASH_ESCAPE, '$1')) }
 }
 
 /** An autolink, `<url>` or `<address>`. Backslash escapes do not work in
@@ -52,7 +61,7 @@ function autolink(state: EditorState, node: SyntaxNode): MarkdownLink | null {
   const url = node.getChild('URL')
   if (!url) return null
   const address = state.sliceDoc(url.from, url.to)
-  return { from: node.from, to: node.to, textFrom: url.from, textTo: url.to, url: URI_SCHEME.test(address) ? address : `mailto:${address}` }
+  return { from: node.from, to: node.to, textFrom: url.from, textTo: url.to, url: URI_SCHEME.test(address) ? withLowerCaseScheme(address) : `mailto:${address}` }
 }
 
 const tableRowStartsByDoc = new WeakMap<Text, ReadonlySet<number>>()

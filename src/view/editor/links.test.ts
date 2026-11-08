@@ -64,8 +64,21 @@ describe('renderedLinks', () => {
 
   it('leaves links that Dez cannot open as source', () => {
     const doc = 'See [a](ftp://example.org), [b](javascript:alert(1)), [c](file:///etc/passwd), [d](docs/a.md), ' +
-      '[e](#top), [f](http:example.com), <irc:dez>, [g](<>), [h][ref], [i], [j](), and [ok](HTTPS://EXAMPLE.COM).'
+      '[e](#top), [f](http:example.com), <irc:dez>, [g](<>), [h][ref], [i], [j](), and [ok](https://example.com).'
     expect(shownTexts(createState(doc))).toEqual(['ok'])
+  })
+
+  // The opener plugin matches its URL scope (`https://*`, …) case-sensitively.
+  it('opens a link with an upper-case scheme with its scheme in lower case', () => {
+    const doc = 'See [a](HTTPS://Example.com/A_B), <Http://Example.com/C>, [mail](MailTo:Me@Example.com), ' +
+      '<MAILTO:Me@Example.com>, and [call](TEL:+15551234).'
+    expect(shown(createState(doc)).map((link) => link.url)).toEqual([
+      'https://Example.com/A_B',
+      'http://Example.com/C',
+      'mailto:Me@Example.com',
+      'mailto:Me@Example.com',
+      'tel:+15551234',
+    ])
   })
 
   it('leaves a Dez image reference without its `!` as source, and never renders a link in an image description', () => {
