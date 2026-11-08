@@ -11,9 +11,10 @@ import { createSession, destroySession, type E2EBrowser } from './harness/sessio
 import { activeTabStreaming, maskPillDuration, pickModel, pressRolePill, sbpCall, submit, threadSections, waitForThread } from './harness/thread'
 
 // Model thinking, driven through the real app against a mock server in this
-// process: the thinking parts of the agent pill, the saved container marker,
-// the send-back of earlier thinking, both Thinking toggles, the "Supports
-// thinking" checkbox of custom providers, and Copy Markdown.
+// process: the thinking parts of the agent pill, the encrypted pill of the
+// panel, the saved container marker, the send-back of earlier thinking, both
+// Thinking toggles, the "Supports thinking" checkbox of custom providers,
+// and Copy Markdown.
 //
 // Three custom providers share the mock, each under its own path prefix.
 // "Thinker Mock" (OpenAI format) and "Claude Mock" (Anthropic format) are
@@ -35,6 +36,20 @@ const PLAIN_CHAT = '/plain/v1/chat/completions'
 const CLAUDE_CHAT = '/claude/v1/messages'
 
 const FIELD_REPLAY = { kind: 'field', field: 'reasoning_content' }
+
+// A thinking text that ends in an encrypted-reasoning line, as some servers
+// send it (`readableThinking` in src/model/chat/thinking.ts). The panel
+// shows only the readable part and an encrypted pill, but the store, the
+// requests, and the saved file keep the whole text. The line is 3072 chars
+// long, so the pill reads "3 KB".
+const READABLE_PLAN = 'Readable plan.\n\n- check the data'
+const ENCRYPTED_LINE = (() => {
+  const head = '__ENCRYPTED_REASONING__v1:{"format":"xai-responses-v1","items":[{"id":"rs_1","content":"'
+  const tail = '"}]}'
+  return head + 'Q'.repeat(3072 - head.length - tail.length) + tail
+})()
+const ENCRYPTED_THINKING = `${READABLE_PLAN}\n\n${ENCRYPTED_LINE}`
+const PLAIN_SEEDED_THINKING = 'Plain plan.\nNo encrypted line.'
 
 // The two parts of the thinking of the nth reply of an OpenAI route, in
 // stream order. The second part adds lines, so an open panel grows while
@@ -244,6 +259,23 @@ describe('thinking', () => {
     }, index)
   }
 
+  // The encrypted pill in the thinking panel of section `index`, or null
+  // when the panel has none: its label, its tooltip, and whether it is
+  // drawn below the text field.
+  async function encryptedPill (index: number): Promise<{ label: string, title: string, belowText: boolean } | null> {
+    return browser.execute((sectionIndex: number) => {
+      const panel = document.querySelector(`.cm-content .dez-role-separator[data-section-index="${sectionIndex}"] .dez-role-separator__thinking`)
+      const pill = panel?.querySelector<HTMLElement>('.dez-role-separator__thinking-encrypted')
+      const field = panel?.querySelector('.dez-role-separator__thinking-text')
+      if (!pill || !field) return null
+      return {
+        label: pill.textContent ?? '',
+        title: pill.title,
+        belowText: pill.getBoundingClientRect().top >= field.getBoundingClientRect().bottom - 0.5,
+      }
+    }, index)
+  }
+
   // Where a click near the left edge of the first line of section `index`
   // lands: "same line" when CodeMirror maps it to that line. A stale height
   // of the pill above it would move the click to another line. The lookup
@@ -372,6 +404,27 @@ describe('thinking', () => {
             thinking: { text: 'Seeded plan.\nSecond line.', replay: { kind: 'field', field: 'reasoning_content' } },
           },
           { role: 'user', nodes: [{ kind: 'text', text: 'Follow-up' }] },
+        ],
+      }))
+      await seedConversation(app.home, makeConversation({
+        id: 'encrypted-source',
+        title: 'Encrypted source',
+        sections: [
+          { role: 'user', nodes: [{ kind: 'text', text: 'Encrypted question 1' }] },
+          {
+            role: 'agent',
+            nodes: [{ kind: 'text', text: 'Encrypted answer 1' }],
+            model: { providerId: THINKER.id, modelId: THINKER.modelId },
+            thinking: { text: PLAIN_SEEDED_THINKING, replay: { kind: 'field', field: 'reasoning_content' } },
+          },
+          { role: 'user', nodes: [{ kind: 'text', text: 'Encrypted question 2' }] },
+          {
+            role: 'agent',
+            nodes: [{ kind: 'text', text: 'Encrypted answer 2' }],
+            model: { providerId: THINKER.id, modelId: THINKER.modelId },
+            thinking: { text: ENCRYPTED_THINKING, replay: { kind: 'field', field: 'reasoning_content' } },
+          },
+          { role: 'user', nodes: [] },
         ],
       }))
       browser = await createSession(app.binary, app.port)
@@ -741,5 +794,69 @@ describe('thinking', () => {
     await browser.keys([Key.Control, 'a'])
     await browser.keys([Key.Control, Key.Shift, 'c'])
     await waitForValue(browser, 'copied thinking', copiedTexts, [tabMarkdown, 'Seeded plan.\nSecond line.'])
+  })
+
+  it('shows an encrypted line of the thinking as a pill, and sends and saves the thinking as the provider sent it', async () => {
+    await sbpCall(browser, 'dez.model/tabs/openConversation', 'encrypted-source')
+    const seededThread = [
+      { role: 'user', text: 'Encrypted question 1' },
+      { role: 'agent', text: 'Encrypted answer 1' },
+      { role: 'user', text: 'Encrypted question 2' },
+      { role: 'agent', text: 'Encrypted answer 2' },
+    ]
+    await waitForValue(browser, 'seeded thread', () => threadSections(browser), [...seededThread, { role: 'user', text: '' }])
+
+    // The panel leaves out the encrypted line, with the blank lines before
+    // it, and shows the encrypted pill below the text in its place.
+    await pressRolePill(browser, 3, '.dez-role-separator__disclosure')
+    await waitForValue(browser, 'panel without the encrypted line', async () => (await pillThinking(3))?.panelText ?? null, READABLE_PLAN)
+    expect(await encryptedPill(3)).toEqual({
+      label: 'Encrypted reasoning hidden · 3 KB',
+      title: 'The provider sent this reasoning encrypted. Dez keeps it with the reply but does not show it.',
+      belowText: true,
+    })
+    // A reply without an encrypted line gets no encrypted pill.
+    await pressRolePill(browser, 1, '.dez-role-separator__disclosure')
+    await waitForValue(browser, 'panel of the reply without the line', async () => (await pillThinking(1))?.panelText ?? null, PLAIN_SEEDED_THINKING)
+    expect(await encryptedPill(1)).toBeNull()
+    // Only the panel changes: the store keeps the text as the provider sent it.
+    expect(await storedThinking()).toEqual([
+      null,
+      { text: PLAIN_SEEDED_THINKING, replay: FIELD_REPLAY },
+      null,
+      { text: ENCRYPTED_THINKING, replay: FIELD_REPLAY },
+      null,
+    ])
+
+    // The prompt cache guard: the next request to the same model sends the
+    // stored thinking back unchanged, encrypted line and all.
+    await pickModel(browser, THINKER.name, THINKER.modelName)
+    const n = requestBodies(THINKER_CHAT).length + 1
+    await submit(browser, 'Encrypted question 3')
+    await waitForThread(browser, [
+      ...seededThread,
+      { role: 'user', text: 'Encrypted question 3' },
+      { role: 'agent', text: answerText(n) },
+      { role: 'user', text: '' },
+    ])
+    expect(requestBodies(THINKER_CHAT)[n - 1]).toEqual({
+      model: THINKER.modelId,
+      stream: true,
+      messages: [
+        { role: 'user', content: 'Encrypted question 1' },
+        { role: 'assistant', content: 'Encrypted answer 1', reasoning_content: PLAIN_SEEDED_THINKING },
+        { role: 'user', content: 'Encrypted question 2' },
+        { role: 'assistant', content: 'Encrypted answer 2', reasoning_content: ENCRYPTED_THINKING },
+        { role: 'user', content: 'Encrypted question 3' },
+      ],
+    })
+    // The app saves the conversation again after the reply; the file still
+    // holds the encrypted line.
+    const seededMarker = `<dez:pill type="agent" model="${THINKER.id}/${THINKER.modelId}" replay="{&quot;kind&quot;:&quot;field&quot;,&quot;field&quot;:&quot;reasoning_content&quot;}">`
+    await waitForValue(browser, 'saved replies', savedAgentReplies, [
+      [seededMarker, ...PLAIN_SEEDED_THINKING.split('\n'), '</dez:pill>', 'Encrypted answer 1', ''],
+      [seededMarker, ...ENCRYPTED_THINKING.split('\n'), '</dez:pill>', 'Encrypted answer 2', ''],
+      savedThinkerReply(n),
+    ])
   })
 })
