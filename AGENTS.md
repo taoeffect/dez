@@ -83,6 +83,7 @@ ThreadEditor (CodeMirror doc) syncs to the active tab's sections
 - `controller/window.ts`, `windowFit.ts`: restore and save the window size and position.
 - `view/app/AppLayout.vue`: layout and bottom bar (`ModelSelector.vue`, `view/thread/SubmitButton.vue`).
 - `view/history/HistoryPanel.vue`: saved conversations.
+- `view/confirm/`: `dez.ui/confirm`, the in-app yes/no prompt (`ConfirmDialog.vue`, mounted in `AppLayout.vue`); `isModalOpen()` (`useKeyboardShortcuts.ts`) counts it.
 - `view/prompts/PromptManager.vue`, `view/thread/PromptAutocomplete.vue`: saved prompts and `/prompt ` insertion.
 - `view/settings/SettingsView.vue`, `ProviderManager.vue`, `ShortcutManager.vue`: settings, the providers page, and Settings › Shortcuts with its key recorder (Help › Keyboard Shortcuts opens it).
 - `view/tabs/TabBar.vue`: tabs, colored busy/done by `dez.model/tabs/activity`, pointer drag to reorder (`dez.model/tabs/move`). The `+` button, keys, and File menu create tabs with `dez.controller/newTab` (`controller/tabs.ts`), which focuses the editor (`dez.editor/focus`). `dez.model/tabs/reopenClosed` brings back a closed tab from a session-only list (`model/state/tabs.ts`).
@@ -101,7 +102,7 @@ ThreadEditor (CodeMirror doc) syncs to the active tab's sections
 - `dez.native/*`: `src/controller/native.ts`, the only frontend module that calls Tauri `invoke()`
 - `dez.diagnostics/*`: `src/controller/diagnostics/` (sanitized probes only)
 - `dez.editor/*`: `src/view/editor/selectors.ts`
-- `dez.ui/*`: `src/view/toast/selectors.ts`, `src/view/theme.ts`, `src/view/clipboard.ts`, `src/view/sound.ts`
+- `dez.ui/*`: `src/view/toast/selectors.ts`, `src/view/confirm/selectors.ts`, `src/view/theme.ts`, `src/view/clipboard.ts`, `src/view/sound.ts`
 
 Rules:
 

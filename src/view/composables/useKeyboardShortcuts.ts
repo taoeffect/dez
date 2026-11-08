@@ -1,28 +1,38 @@
 import { computed, onMounted, onUnmounted } from "vue";
 import sbp from "@sbp/sbp";
 import { findState } from "../editor/findState";
+import { answerConfirm, confirmRequest } from "../confirm/selectors";
 import { useModelState } from "../modelState";
 import { matchShortcut, type ShortcutIdOfScope } from "../../model/shortcuts";
 
-// While Settings or History is open, Esc closes it first, so the find Esc
-// handlers in the editor and in the dropdown pass Esc on to this handler.
-// The find selectors also do nothing while one of them covers the editor.
+// While the confirm prompt, Settings, or History is open, Esc closes it
+// first, so the find Esc handlers in the editor and in the dropdown pass Esc
+// on to this handler. The find selectors also do nothing while one of them
+// covers the editor.
 export function isModalOpen(): boolean {
-  return (sbp("dez.model/settings/isOpen") as boolean) || (sbp("dez.model/settings/isHistoryOpen") as boolean);
+  return (
+    confirmRequest.value !== null ||
+    (sbp("dez.model/settings/isOpen") as boolean) ||
+    (sbp("dez.model/settings/isHistoryOpen") as boolean)
+  );
 }
 
 // Esc closes the innermost open thing first: the model dropdown
-// (ModelSelector.vue takes the key before this handler), Settings or
-// History, the prompt autocomplete, find. With none open, it is the Stop
-// key (Esc by default). tests/e2e/submit-stop.e2e.ts covers the order.
+// (ModelSelector.vue takes the key before this handler), the confirm prompt
+// (it can sit on top of Settings or History), Settings or History, the
+// prompt autocomplete, find. With none open, it is the Stop key (Esc by
+// default). tests/e2e/submit-stop.e2e.ts covers the order.
 //
-// Only this handler closes Settings and History on Esc. An Esc handler on a
-// modal would run first when the focus is inside it, and this handler would
-// then see no modal and also close find or stop the stream.
+// Only this handler closes the prompt, Settings, and History on Esc. An Esc
+// handler on a modal would run first when the focus is inside it, and this
+// handler would then see no modal and also close find or stop the stream.
 //
 // Returns whether one of them was open.
 function closeOnEscape(e: KeyboardEvent): boolean {
-  if (sbp("dez.model/settings/isOpen") as boolean) {
+  if (confirmRequest.value) {
+    e.preventDefault();
+    answerConfirm(false);
+  } else if (sbp("dez.model/settings/isOpen") as boolean) {
     e.preventDefault();
     sbp("dez.model/settings/close");
   } else if (sbp("dez.model/settings/isHistoryOpen") as boolean) {

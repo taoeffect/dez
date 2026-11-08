@@ -1,4 +1,5 @@
 import './toast/selectors'
+import './confirm/selectors'
 import './editor/selectors'
 import './theme'
 import './clipboard'

@@ -10,6 +10,7 @@ import SubmitButton from "../thread/SubmitButton.vue";
 import TabBar from "../tabs/TabBar.vue";
 import HistoryPanel from "../history/HistoryPanel.vue";
 import ToastContainer from "../toast/ToastContainer.vue";
+import ConfirmDialog from "../confirm/ConfirmDialog.vue";
 import { shortcutKeyText } from "../../model/shortcuts";
 
 useKeyboardShortcuts();
@@ -75,6 +76,7 @@ onUnmounted(() => {
 
     <HistoryPanel v-if="settings.historyOpen" @close="sbp('dez.model/settings/historyClose')" />
     <SettingsView v-if="settings.settingsOpen" />
+    <ConfirmDialog />
     <ToastContainer area="app-global" />
   </div>
 </template>

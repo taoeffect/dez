@@ -119,8 +119,8 @@ export default sbp('sbp/selectors/register', {
   },
 
   /** Puts the caret in the active editor, so the user can type at once.
-   *  Does nothing while Settings or History covers the editor. Returns
-   *  whether it focused the editor.
+   *  Does nothing while a modal (the confirm prompt, Settings, or History)
+   *  covers the editor. Returns whether it focused the editor.
    *
    *  Right after a tab switch the view still shows the old tab: the
    *  `activeTabId` watcher in `ThreadEditor.vue` swaps its state a tick
@@ -198,7 +198,7 @@ export default sbp('sbp/selectors/register', {
 
   /** Cmd/Ctrl+F: open the find dropdown (or refocus it), prefilled from the
    *  editor selection when `findPrefillText` allows it. Does nothing while
-   *  Settings or History covers the editor. Returns whether it opened. */
+   *  a modal covers the editor (`isModalOpen`). Returns whether it opened. */
   'dez.editor/openFind' (): boolean {
     const view = activeView
     if (!view || isModalOpen()) return false
@@ -240,7 +240,7 @@ export default sbp('sbp/selectors/register', {
   /** Next/previous match from the main selection, wrapping around the doc.
    *  The match becomes the new origin for typing in the search field. The
    *  search goes into the history even without a match. Does nothing while
-   *  find is closed or Settings or History covers the editor. Returns
+   *  find is closed or a modal covers the editor (`isModalOpen`). Returns
    *  whether it searched. */
   'dez.editor/selectFindMatch' (direction: 'next' | 'previous'): boolean {
     const view = activeView
@@ -289,8 +289,8 @@ export default sbp('sbp/selectors/register', {
    *  splits). On Linux a menu accelerator takes the key before the page
    *  sees it, so the menu item must do what the key would do where focus
    *  is; see `TextFieldAction`. Without a focused text field, every action
-   *  except `'editor'` focuses the editor before the binding runs. While
-   *  Settings or History covers the editor, the binding runs only if the
+   *  except `'editor'` focuses the editor before the binding runs. While a
+   *  modal covers the editor (`isModalOpen`), the binding runs only if the
    *  editor still has focus, as a key press would. Returns whether anything
    *  ran. */
   'dez.editor/runKeyBinding' (id: ShortcutIdOfScope<'editor'>, inTextField: TextFieldAction = 'editor'): boolean {
