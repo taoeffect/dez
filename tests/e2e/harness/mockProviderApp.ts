@@ -17,20 +17,29 @@ export interface MockProviderApp {
   stop: () => Promise<void>
 }
 
+export interface MockProviderAppOptions extends AppOptions {
+  /** More custom providers on the same mock, after the main one. `config`
+   *  adds to or replaces fields of the provider's config. */
+  moreProviders?: ReadonlyArray<{ provider: MockProvider, config?: Record<string, unknown> }>
+}
+
 /**
  * The setup of a spec file whose tests answer each chat request
- * themselves: starts a holding chat mock for `provider`, then the app with
- * `provider` as its only custom provider, and picks the provider's model.
- * `config` adds to or replaces fields of the provider's config, such as
- * `thinking`. `appOptions` goes to `startApp`. One app session then serves
- * the whole file. On a failure it stops what it started, then throws.
+ * themselves: starts a holding chat mock for `provider` (and
+ * `options.moreProviders`), then the app with them as its only custom
+ * providers, and picks `provider`'s model. `config` adds to or replaces
+ * fields of `provider`'s config, such as `thinking`. The other options go
+ * to `startApp`. One app session then serves the whole file. On a failure
+ * it stops what it started, then throws.
  */
 export async function startMockProviderApp (
   provider: MockProvider,
   config: Record<string, unknown> = {},
-  appOptions: AppOptions = {},
+  options: MockProviderAppOptions = {},
 ): Promise<MockProviderApp> {
-  const mock = await startHoldingChatMock(mockChatPath(provider))
+  const { moreProviders = [], ...appOptions } = options
+  const providers = [{ provider, config }, ...moreProviders]
+  const mock = await startHoldingChatMock(providers.map((entry) => mockChatPath(entry.provider)))
   let app: RunningApp | undefined
   let browser: E2EBrowser | undefined
   const stop = async (): Promise<void> => {
@@ -40,7 +49,9 @@ export async function startMockProviderApp (
   }
   try {
     app = await startApp(appOptions)
-    await seedRawAppState(app.home, { customProviders: [{ ...mockProviderConfig(provider, mock.url), ...config }] })
+    await seedRawAppState(app.home, {
+      customProviders: providers.map((entry) => ({ ...mockProviderConfig(entry.provider, mock.url), ...entry.config })),
+    })
     browser = await createSession(app.binary, app.port)
     await waitFor(browser, 'header.tab-bar', 60_000)
     await pickModel(browser, provider.name, provider.modelName)

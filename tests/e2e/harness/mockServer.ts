@@ -56,6 +56,8 @@ export async function startChatMock (chatPaths: readonly string[], onChat: MockH
 /** A chat request whose response the mock keeps open, with nothing sent,
  *  until the test answers it. */
 export interface HeldRequest {
+  /** The request path, e.g. `mockChatPath(provider)`. */
+  path: string
   /** The request body as UTF-8 text. */
   body: string
   reply: http.ServerResponse
@@ -77,13 +79,14 @@ export interface HoldingChatMock extends MockServer {
   dropOpenReplies: (browser: E2EBrowser) => Promise<void>
 }
 
-/** Starts a chat mock for POST `chatPath` that holds each request for the
- *  test: the test takes it with `waitForRequest` and answers it. */
-export async function startHoldingChatMock (chatPath: string): Promise<HoldingChatMock> {
+/** Starts a chat mock for POST to each of `chatPaths` that holds each
+ *  request for the test: the test takes it with `waitForRequest` and
+ *  answers it. */
+export async function startHoldingChatMock (chatPaths: readonly string[]): Promise<HoldingChatMock> {
   const sinceDrop: HeldRequest[] = []
   const waiting: HeldRequest[] = []
-  const server = await startChatMock([chatPath], (_req, res, body) => {
-    const request: HeldRequest = { body, reply: res, closed: false }
+  const server = await startChatMock(chatPaths, (req, res, body) => {
+    const request: HeldRequest = { path: req.url ?? '', body, reply: res, closed: false }
     res.on('close', () => { request.closed = !res.writableEnded })
     sinceDrop.push(request)
     waiting.push(request)
@@ -113,28 +116,35 @@ export async function startHoldingChatMock (chatPath: string): Promise<HoldingCh
   }
 }
 
-/** A custom provider in the OpenAI format with one model, served by a mock
- *  server under `/<id>/v1`. */
+/** A custom provider with one model, served by a mock server under
+ *  `/<id>`. */
 export interface MockProvider {
   id: string
   name: string
   modelId: string
   modelName: string
+  /** The wire format; OpenAI when absent. */
+  apiFormat?: 'openai' | 'anthropic'
 }
 
 /** The path of the provider's chat requests on its mock server. */
 export function mockChatPath (provider: MockProvider): string {
-  return `/${provider.id}/v1/chat/completions`
+  return provider.apiFormat === 'anthropic'
+    ? `/${provider.id}/v1/messages`
+    : `/${provider.id}/v1/chat/completions`
 }
 
 /** The `customProviders` entry of `provider` on the mock server at
  *  `serverUrl`. The app fetches no model list for it. */
 export function mockProviderConfig (provider: MockProvider, serverUrl: string): Record<string, unknown> {
+  const apiFormat = provider.apiFormat ?? 'openai'
   return {
     id: provider.id,
     name: provider.name,
-    baseUrl: `${serverUrl}/${provider.id}/v1`,
-    apiFormat: 'openai',
+    // The app adds `/chat/completions` to an OpenAI base URL, and
+    // `/v1/messages` to an Anthropic one (SDK style).
+    baseUrl: apiFormat === 'anthropic' ? `${serverUrl}/${provider.id}` : `${serverUrl}/${provider.id}/v1`,
+    apiFormat,
     fetchModels: false,
     models: [{ id: provider.modelId, name: provider.modelName }],
   }
@@ -170,4 +180,23 @@ export async function sendChatReply (res: http.ServerResponse, name: string, hol
   for (const token of replyTokens(name)) writeChatFrame(res, { content: token })
   if (hold) await hold
   res.end('data: [DONE]\n\n')
+}
+
+/** Streams the reply that `sendChatReply(res, name)` streams, as Anthropic
+ *  Messages SSE events: one text block in several deltas. */
+export function sendAnthropicReply (res: http.ServerResponse, name: string): void {
+  startEventStream(res)
+  const event = (data: Record<string, unknown>): void => {
+    res.write(`event: ${String(data.type)}\ndata: ${JSON.stringify(data)}\n\n`)
+  }
+  event({
+    type: 'message_start',
+    message: { id: 'msg_mock', type: 'message', role: 'assistant', content: [], stop_reason: null, usage: { input_tokens: 1, output_tokens: 1 } },
+  })
+  event({ type: 'content_block_start', index: 0, content_block: { type: 'text', text: '' } })
+  for (const token of replyTokens(name)) event({ type: 'content_block_delta', index: 0, delta: { type: 'text_delta', text: token } })
+  event({ type: 'content_block_stop', index: 0 })
+  event({ type: 'message_delta', delta: { stop_reason: 'end_turn' }, usage: { output_tokens: 4 } })
+  event({ type: 'message_stop' })
+  res.end()
 }
