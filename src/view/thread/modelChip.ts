@@ -60,12 +60,11 @@ export const streamingSectionField = StateField.define<string | null>({
 })
 
 /** The model part of each section's pill, by section index; null means the
- *  pill shows no model. Only agent sections with a model get one: a user
- *  section can still hold a model in memory after a role toggle. The switch
- *  cue compares with the nearest earlier agent section that has a model, so
- *  a legacy agent section (no model) between two responses of one model
- *  shows no switch. The section with id `streamingSectionId` is
- *  `streaming`. */
+ *  pill shows no model. Only agent sections with a model get one (the model
+ *  is agent-only). The switch cue compares with the nearest earlier agent
+ *  section that has a model, so a legacy agent section (no model) between
+ *  two responses of one model shows no switch. The section with id
+ *  `streamingSectionId` is `streaming`. */
 export function sectionModelChips(
   sections: readonly { id: string; role: Role; model?: ModelRef }[],
   names: ModelDisplayNames,

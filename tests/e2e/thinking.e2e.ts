@@ -8,7 +8,7 @@ import { click, closeSettings, consoleErrors, resetConsoleErrors, screenshotOnFa
 import { conversationFilePath, makeConversation, readAppState, seedConversation, seedRawAppState } from './harness/fixtures'
 import { startChatMock, startEventStream, writeChatFrame, type MockServer } from './harness/mockServer'
 import { createSession, destroySession, type E2EBrowser } from './harness/session'
-import { activeTabStreaming, maskPillDuration, pickModel, sbpCall, submit, threadSections, waitForThread } from './harness/thread'
+import { activeTabStreaming, maskPillDuration, pickModel, pressRolePill, sbpCall, submit, threadSections, waitForThread } from './harness/thread'
 
 // Model thinking, driven through the real app against a mock server in this
 // process: the thinking parts of the agent pill, the saved container marker,
@@ -247,16 +247,6 @@ describe('thinking', () => {
     }, index)
   }
 
-  // A mousedown on the disclosure triangle of the pill before section
-  // `index`, as a click gives.
-  async function toggleThinking (index: number): Promise<void> {
-    await browser.execute((sectionIndex: number) => {
-      const target = document.querySelector(`.cm-content .dez-role-separator[data-section-index="${sectionIndex}"] .dez-role-separator__disclosure`)
-      if (!target) throw new Error(`toggleThinking: no triangle for section ${sectionIndex}`)
-      target.dispatchEvent(new MouseEvent('mousedown', { bubbles: true, cancelable: true, button: 0 }))
-    }, index)
-  }
-
   // Where a click near the left edge of the first line of section `index`
   // lands: "same line" when CodeMirror maps it to that line. A stale height
   // of the pill above it would move the click to another line. The lookup
@@ -436,7 +426,7 @@ describe('thinking', () => {
         return { model: pill?.hasAttribute('data-model-key') ?? false, inImage: !!pill?.querySelector('.dez-role-separator__disclosure')?.closest('[role="img"]') }
       })).toEqual({ model: true, inImage: false })
       // A mousedown on the triangle opens the panel and keeps the role.
-      await toggleThinking(1)
+      await pressRolePill(browser, 1, '.dez-role-separator__disclosure')
       await waitForValue(browser, 'open panel', () => pillThinking(1), {
         role: 'agent', slot: 'disclosure', expanded: 'true', open: true, panelText: thinkingParts(1)[0],
       })
@@ -473,7 +463,9 @@ describe('thinking', () => {
       messages: [{ role: 'user', content: 'Question 1' }],
     }])
 
-    await toggleThinking(1)
+    // A mousedown anywhere else on a pill with a triangle opens or closes
+    // the panel too: here on the role word, then on the model name.
+    await pressRolePill(browser, 1)
     await waitForValue(browser, 'closed panel', () => pillThinking(1), {
       role: 'agent', slot: 'disclosure', expanded: 'false', open: false, panelText: null,
     })
@@ -486,7 +478,7 @@ describe('thinking', () => {
     await waitForValue(browser, 'click on the last line', () => lineHitBelowPill(2), 'same line')
     // Opening the panel makes the pill taller with no doc change. A click
     // on the answer below it must still land on the answer line.
-    await toggleThinking(1)
+    await pressRolePill(browser, 1, '.dez-role-separator__model-name')
     await waitForValue(browser, 'opened again', async () => (await pillThinking(1))?.panelText ?? null, thinkingText(1))
     await waitForValue(browser, 'click below the open pill', () => lineHitBelowPill(1), 'same line')
   })
@@ -746,7 +738,7 @@ describe('thinking', () => {
 
     // In the thinking panel, select all selects the panel text, and Copy
     // Markdown copies it unchanged.
-    await toggleThinking(1)
+    await pressRolePill(browser, 1, '.dez-role-separator__disclosure')
     await waitForValue(browser, 'open panel', async () => (await pillThinking(1))?.panelText ?? null, 'Seeded plan.\nSecond line.')
     await browser.execute(() => document.querySelector<HTMLTextAreaElement>('.dez-role-separator__thinking-text')?.focus())
     await browser.keys([Key.Control, 'a'])

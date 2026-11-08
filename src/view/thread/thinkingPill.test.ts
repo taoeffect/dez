@@ -11,10 +11,9 @@ const REPLAY_ONLY: SectionThinking = { text: '', replay: { kind: 'copilot', opaq
 describe('sectionThinkingView', () => {
   const open = new Set(['u', 'a', 'r', 'e', 's'])
 
-  // A section toggled to user keeps its thinking in memory; its pill must
-  // not show it.
+  // Thinking is agent-only: a user section that holds some shows none.
   it('gives thinking parts only to agent sections that have thinking', () => {
-    expect(sectionThinkingView({ id: 'u', role: 'user', thinking: { text: 'kept after a role toggle' } }, open, null)).toBeNull()
+    expect(sectionThinkingView({ id: 'u', role: 'user', thinking: { text: 'held by a user section' } }, open, null)).toBeNull()
     expect(sectionThinkingView({ id: 'a', role: 'agent', thinking: { text: 'plan' } }, open, null))
       .toStrictEqual({ text: 'plan', hasReplay: false, expanded: true, streaming: false })
     expect(sectionThinkingView({ id: 'b', role: 'agent' }, open, null)).toBeNull()

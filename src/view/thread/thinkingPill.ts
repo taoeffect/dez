@@ -17,9 +17,10 @@ export interface PillThinkingView {
   streaming: boolean
 }
 
-/** A replay without text (redacted or encrypted thinking) counts as
- *  thinking too: the pill gets a triangle, and the panel a placeholder. */
-function hasThinking(thinking: PillThinkingView): boolean {
+/** The pill shows a disclosure triangle (not a spinner). A replay without
+ *  text (redacted or encrypted thinking) counts as thinking too: the pill
+ *  gets a triangle, and the panel a placeholder. */
+export function hasThinking(thinking: PillThinkingView): boolean {
   return thinking.text !== '' || thinking.hasReplay
 }
 
@@ -57,10 +58,9 @@ export const thinkingExpandedField = StateField.define<ReadonlySet<string>>({
 })
 
 /** The thinking parts of a section's pill; null means the pill shows none.
- *  Only agent sections get them, because a user section can still hold
- *  thinking in memory after a role toggle. A section that streams gets them
- *  too, so its pill shows a spinner until thinking arrives, for every
- *  model. */
+ *  Only agent sections get them (thinking is agent-only). A section that
+ *  streams gets them too, so its pill shows a spinner until thinking
+ *  arrives, for every model. */
 export function sectionThinkingView(
   section: { id: string; role: Role; thinking?: SectionThinking } | undefined,
   expanded: ReadonlySet<string>,

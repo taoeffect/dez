@@ -4,7 +4,7 @@ import { click, consoleErrors, openHistoryPanel, resetConsoleErrors, screenshotO
 import { makeConversation, seedConversation, seedRawAppState } from './harness/fixtures'
 import { replyText, sendChatReply, startChatMock, type MockServer } from './harness/mockServer'
 import { createSession, destroySession, type E2EBrowser } from './harness/session'
-import { activeTabStreaming, maskPillDuration, pickModel, rolePillHeights, savedPillLines, sbpCall, submit, threadSections, toggleRole, waitForThread } from './harness/thread'
+import { activeTabStreaming, maskPillDuration, pickModel, pressRolePill, rolePillHeights, savedPillLines, sbpCall, submit, threadSections, waitForThread } from './harness/thread'
 
 // The model on agent role pills and the model names in history rows,
 // driven through the real app against a mock OpenAI-compatible server in this
@@ -289,40 +289,17 @@ describe('model names', () => {
     ])
   })
 
-  it('keeps the model of a response through a role toggle', async () => {
-    // As a user section, the Alpha One response shows no model and the file
-    // drops its model. Beta Two then has no earlier model to switch from.
-    // A mousedown on the model name toggles the role, as one anywhere on
-    // the pill does.
-    await toggleRole(browser, 1, '.dez-role-separator__model-name')
-    await waitForValue(browser, 'separators as user', separators, [
-      { index: 1, role: 'user', chip: null },
-      { index: 2, role: 'user', chip: null },
-      { index: 3, role: 'agent', chip: expectedChip(BETA.key, BETA.name, PROVIDER.name) },
-      { index: 4, role: 'user', chip: null },
-    ])
-    await waitForValue(browser, 'saved pills as user', activeTabPillLines, [
-      '<dez:pill type="user"/>',
-      '<dez:pill type="user"/>',
-      '<dez:pill type="user"/>',
-      `<dez:pill type="agent" model="${BETA.key}" duration-ms="#"/>`,
-      '<dez:pill type="user"/>',
-    ])
-
-    // Back to agent: the section still knows its model.
-    await toggleRole(browser, 1)
-    await waitForValue(browser, 'separators as agent', separators, [
+  it('keeps the role of a pill that a press lands on', async () => {
+    // A press on a pill with no thinking triangle does nothing: no part of
+    // a pill changes its role. The handler runs in the press, so a change
+    // would show at once.
+    await pressRolePill(browser, 1, '.dez-role-separator__model-name')
+    await pressRolePill(browser, 2)
+    expect(await separators()).toEqual([
       { index: 1, role: 'agent', chip: expectedChip(ALPHA.key, ALPHA.name, PROVIDER.name) },
       { index: 2, role: 'user', chip: null },
       { index: 3, role: 'agent', chip: expectedChip(BETA.key, BETA.name, PROVIDER.name, { switchedFrom: `${ALPHA.name} (${PROVIDER.name})` }) },
       { index: 4, role: 'user', chip: null },
-    ])
-    await waitForValue(browser, 'saved pills as agent', activeTabPillLines, [
-      '<dez:pill type="user"/>',
-      `<dez:pill type="agent" model="${ALPHA.key}" duration-ms="#"/>`,
-      '<dez:pill type="user"/>',
-      `<dez:pill type="agent" model="${BETA.key}" duration-ms="#"/>`,
-      '<dez:pill type="user"/>',
     ])
   })
 

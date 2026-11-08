@@ -38,7 +38,6 @@ import {
   sectionsField,
   serializeSelectionForClipboard,
   TEXT_GUTTER,
-  toggleRoleEffect,
   setPillsEffect,
   setSectionsEffect,
   splitSectionEffect,
@@ -863,10 +862,7 @@ function buildState(expandedThinking: ReadonlySet<string> = new Set()): EditorSt
         return dropdown ? { top: dropdown.offsetTop + dropdown.offsetHeight } : null
       }),
       EditorView.updateListener.of((update) => {
-        const roleChanged = update.transactions.some((tr) =>
-          tr.effects.some((effect) => effect.is(toggleRoleEffect)),
-        )
-        if ((update.docChanged || roleChanged) && !syncingViewStructure) {
+        if (update.docChanged && !syncingViewStructure) {
           syncDocToStore(true)
         }
         if (update.docChanged || update.selectionSet || update.focusChanged) {

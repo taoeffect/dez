@@ -15,6 +15,7 @@ import { escapeMarkerAttribute, unescapeMarkerAttribute } from '../../utils/mark
 import { addModelToPill, modelDisplayNamesField, sameModelChip, sectionModelChips, streamingSectionField, type ModelChip } from './modelChip'
 import { addDurationToPill } from './pillDuration'
 import {
+  hasThinking,
   isThinkingPanelEvent,
   renderPillThinking,
   sameThinkingView,
@@ -164,7 +165,7 @@ export function keymapHasPlatformBinding(
 }
 
 /** The first section is always `user`. It has no separator line in the
- *  doc, so it has no role pill that could toggle it. */
+ *  doc; its fixed User pill is the editor's `::before`. */
 function normalizeSectionModels(models: SectionModel[]): SectionModel[] {
   if (models.length === 0) return [{ id: crypto.randomUUID(), role: 'user' }]
   if (models[0].role === 'user') return models
@@ -423,7 +424,6 @@ export function removedSeparatorModelIndexes(tr: Transaction): number[] {
 
 /* ──────────────────────────  Effects  ────────────────────────── */
 
-export const toggleRoleEffect = StateEffect.define<{ index: number }>()
 export const splitSectionEffect = StateEffect.define<{
   afterIndex: number
   newId?: string
@@ -475,13 +475,6 @@ export const sectionsField = StateField.define<SectionModel[]>({
       if (e.is(setSectionsEffect)) {
         next = e.value.slice()
         sectionModelsManagedByEffect = true
-      } else if (e.is(toggleRoleEffect)) {
-        if (e.value.index > 0 && e.value.index < next.length) {
-          const copy = next.slice()
-          const old = copy[e.value.index]
-          copy[e.value.index] = { ...old, role: old.role === 'user' ? 'agent' : 'user' }
-          next = copy
-        }
       } else if (e.is(splitSectionEffect)) {
         const { afterIndex, newId, newRole } = e.value
         const insertAt = Math.max(0, Math.min(afterIndex + 1, next.length))
@@ -667,8 +660,7 @@ const pillThinkingUpdater = ViewPlugin.define(() => ({
  *  index). With `chips` null, the ranges have no widget (atomic ranges
  *  only). Separator n (counting from 1) starts section n, so the index of
  *  a pill is the section after it; section 0 has no separator. Only agent
- *  pills show a reply time: a user section can still hold one in memory
- *  after a role toggle. */
+ *  pills show a reply time (it is agent-only). */
 function buildSeparatorDecorations(
   doc: string,
   models: SectionModel[],
@@ -726,10 +718,11 @@ export const roleSeparatorAtomicRanges = EditorView.atomicRanges.of((view) =>
   ),
 )
 
-/** Click handler: a mousedown on the disclosure triangle of a role pill
- *  opens or closes its thinking panel. A mousedown anywhere else on the
- *  pill, its model part too, toggles the role of the section that the
- *  separator precedes. */
+/** Click handler: a mousedown anywhere on an agent pill that shows a
+ *  disclosure triangle, its model part and reply time too, opens or closes
+ *  its thinking panel. A press on any other pill does nothing. Every pill
+ *  takes the mousedown, so a press on a pill keeps the caret and the focus
+ *  where they are. */
 export const roleSeparatorMouseHandler = EditorView.domEventHandlers({
   mousedown(event, view) {
     const target = event.target as Element | null
@@ -743,12 +736,11 @@ export const roleSeparatorMouseHandler = EditorView.domEventHandlers({
     const index = Number(idxStr)
     if (!Number.isFinite(index)) return false
     event.preventDefault()
-    if (target.closest('.dez-role-separator__disclosure')) {
-      const sectionId = view.state.field(sectionsField)[index]?.id
-      if (sectionId) view.dispatch({ effects: toggleThinkingExpandedEffect.of(sectionId) })
-      return true
+    const thinking = pillThinkingAt(view.state, index)
+    const sectionId = view.state.field(sectionsField)[index]?.id
+    if (thinking && hasThinking(thinking) && sectionId) {
+      view.dispatch({ effects: toggleThinkingExpandedEffect.of(sectionId) })
     }
-    view.dispatch({ effects: toggleRoleEffect.of({ index }) })
     return true
   },
 })
@@ -1317,6 +1309,11 @@ export const dezTheme = EditorView.theme({
     borderRadius: '999px',
     border: '1px solid var(--color-border, #333)',
     background: 'var(--color-bg-subtle, rgba(127,127,127,0.08))',
+    cursor: 'default',
+  },
+  // Only a pill with a thinking triangle does something on a click
+  // (`roleSeparatorMouseHandler`): the whole pill opens or closes the panel.
+  '.dez-role-separator__label:has(> .dez-role-separator__disclosure)': {
     cursor: 'pointer',
   },
   '.dez-role-separator[data-role="agent"] .dez-role-separator__label': {

@@ -115,12 +115,12 @@ export async function rolePillHeights (browser: E2EBrowser): Promise<number[]> {
   )
 }
 
-/** A mousedown on `part` of a role pill toggles the role of the section
- *  after it. */
-export async function toggleRole (browser: E2EBrowser, index: number, part = '.dez-role-separator__label'): Promise<void> {
+/** A mousedown on `part` of the role pill before section `index`, as a
+ *  click gives. */
+export async function pressRolePill (browser: E2EBrowser, index: number, part = '.dez-role-separator__label'): Promise<void> {
   await browser.execute((sectionIndex: number, selector: string) => {
-    const target = document.querySelector(`.dez-role-separator[data-section-index="${sectionIndex}"] ${selector}`)
-    if (!target) throw new Error(`toggleRole: no ${selector} for section ${sectionIndex}`)
+    const target = document.querySelector(`.cm-content .dez-role-separator[data-section-index="${sectionIndex}"] ${selector}`)
+    if (!target) throw new Error(`pressRolePill: no ${selector} for section ${sectionIndex}`)
     target.dispatchEvent(new MouseEvent('mousedown', { bubbles: true, cancelable: true, button: 0 }))
   }, index, part)
 }

@@ -28,7 +28,7 @@ describe('sectionModelChips', () => {
       { role: 'user' },
       { role: 'agent', model: ALPHA },
       { role: 'agent' },
-      // A role toggle keeps the model on a user section in memory.
+      // The model is agent-only: a user section that holds one shows none.
       { role: 'user', model: BETA },
     ), NAMES, null)
 
