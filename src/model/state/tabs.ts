@@ -3,10 +3,12 @@ import { ref, computed, watch } from 'vue'
 import type { Tab } from '../chat/types'
 import { emptyContent } from '../chat/content'
 
+export const NEW_TAB_TITLE = 'New Tab'
+
 function createDefaultTab(): Tab {
   return {
     id: crypto.randomUUID(),
-    title: 'New Tab',
+    title: NEW_TAB_TITLE,
     conversationId: crypto.randomUUID(),
     sections: [{ id: crypto.randomUUID(), role: 'user', content: emptyContent() }],
     activeModel: null,

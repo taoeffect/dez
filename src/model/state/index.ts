@@ -12,7 +12,7 @@ import { useSettingsStore, type DefaultModel, type SettingsSection, type Theme, 
 import { clampEditorFontSize } from '../editorFontSize'
 import { clampDoneSoundVolume } from '../doneSoundVolume'
 import { currentShortcutPlatform, findShortcut, normalizeShortcutKey, validateShortcutKey, type Shortcut, type ShortcutId, type ShortcutOverrides } from '../shortcuts'
-import { MAX_CLOSED_TABS, useTabStore } from './tabs'
+import { MAX_CLOSED_TABS, NEW_TAB_TITLE, useTabStore } from './tabs'
 import type { AppStatePayload, CachedProvider, ConversationSearchOutcome, ModelCache } from '../persistence/types'
 import { emptyModelCache } from '../persistence/modelCache'
 import type { ProviderConfig, ProviderThinkingConfig } from '../providers/config'
@@ -284,7 +284,7 @@ function defaultActiveModel(settings = useSettingsStore()): ActiveModel | null {
 function createDefaultTab(): Tab {
   return {
     id: crypto.randomUUID(),
-    title: 'New Tab',
+    title: NEW_TAB_TITLE,
     conversationId: crypto.randomUUID(),
     sections: [{ id: crypto.randomUUID(), role: 'user', content: emptyContent() }],
     activeModel: null,
@@ -299,7 +299,7 @@ function createDefaultTab(): Tab {
 // back to the new-tab title, so a deleted message never names the tab.
 function tabTitle(sections: Section[]): string {
   const firstContent = sections.find((section) => section.role === 'user' && sectionVisibleText(section).trim())
-  if (!firstContent) return 'New Tab'
+  if (!firstContent) return NEW_TAB_TITLE
   const text = labelImageReferences(sectionVisibleText(firstContent)).trim()
   return text.length > 30 ? text.slice(0, 30) + '…' : text
 }
@@ -318,7 +318,7 @@ function tabFromConversation(conv: ConversationData, overrides: Partial<Tab> = {
   }
   return {
     id: overrides.id ?? crypto.randomUUID(),
-    title: overrides.title ?? (conv.title || 'New Tab'),
+    title: overrides.title ?? (conv.title || NEW_TAB_TITLE),
     conversationId: overrides.conversationId ?? conv.id,
     sections,
     activeModel: overrides.activeModel ?? conv.activeModel ?? null,
@@ -698,7 +698,7 @@ export default sbp('sbp/selectors/register', {
         const conversation = await sbp('dez.persistence/loadConversation', tabData.conversationId) as ConversationData
         restored.push(tabFromConversation(conversation, {
           id: tabData.id,
-          title: tabData.title || conversation.title || 'New Tab',
+          title: tabData.title || conversation.title || NEW_TAB_TITLE,
           conversationId: tabData.conversationId,
           activeModel: tabData.activeModel ?? conversation.activeModel ?? null,
           createdAt: tabData.createdAt || conversation.created_at || Date.now(),
@@ -706,7 +706,7 @@ export default sbp('sbp/selectors/register', {
       } catch {
         restored.push({
           id: tabData.id,
-          title: tabData.title || 'New Tab',
+          title: tabData.title || NEW_TAB_TITLE,
           conversationId: tabData.conversationId,
           sections: [{ id: crypto.randomUUID(), role: 'user', content: emptyContent() }],
           activeModel: tabData.activeModel ?? null,
