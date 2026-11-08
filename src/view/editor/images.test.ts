@@ -17,6 +17,12 @@ interface DeleteCall {
   fail: () => void
 }
 
+interface Toast {
+  title?: string
+  message: string
+  variant?: string
+}
+
 const RED = '/home/u/.config/dez/assets/images/red.png'
 const BLUE = '/home/u/.config/dez/assets/images/blue.jpg'
 const red = `![${RED}]()`
@@ -24,6 +30,7 @@ const blue = `![${BLUE}]()`
 
 let confirmCalls: ConfirmCall[] = []
 let deleteCalls: DeleteCall[] = []
+let toasts: Toast[] = []
 let activeTabId = 'tab-1'
 
 // Each prompt and each file delete waits until the test answers or ends it.
@@ -38,6 +45,9 @@ sbp('sbp/selectors/register', {
       deleteCalls.push({ path, finish: resolve, fail: () => reject(new Error('Permission denied')) })
     })
   },
+  'dez.ui/toast' (_area: string, toast: Toast): void {
+    toasts.push(toast)
+  },
   'dez.model/tabs/activeId' (): string {
     return activeTabId
   },
@@ -46,6 +56,7 @@ sbp('sbp/selectors/register', {
 beforeEach(() => {
   confirmCalls = []
   deleteCalls = []
+  toasts = []
   activeTabId = 'tab-1'
 })
 
@@ -293,6 +304,7 @@ describe('deleteImage (the image trash)', () => {
     ;(await nextDeleteCall()).fail()
     await failed
     expect(editor.doc()).toBe(doc)
+    expect(toasts).toEqual([])
   })
 
   it('takes only the reference whose trash was pressed, when two show the same file', async () => {
@@ -314,17 +326,43 @@ describe('deleteImage (the image trash)', () => {
     expect(editor.doc()).toBe('new\nbefore\nafter streamed')
   })
 
-  it('deletes no file when the reference is gone before the answer', async () => {
+  it('finds the reference again by its path and id in a new state of the same tab (the stream-end rebuild)', async () => {
+    const redA = `![${RED}](id=a)`
+    const redB = `![${RED}](id=b)`
+    const doc = [redA, redB, 'after'].join('\n')
+    // The store got the end of the reply and a new user section.
+    const rebuilt = `${doc} streamed\n${SECTION_SEP}\n`
+    for (const rebuildDuringFileDelete of [false, true]) {
+      confirmCalls = []
+      deleteCalls = []
+      const editor = createEditor(doc)
+      const done = deleteImage(editor.view, redA.length + 1, RED)
+      if (!rebuildDuringFileDelete) editor.replaceState(createState(rebuilt))
+      confirmCalls[0].answer(true)
+      const fileDelete = await nextDeleteCall()
+      expect(fileDelete.path).toBe(RED)
+      if (rebuildDuringFileDelete) editor.replaceState(createState(rebuilt))
+      fileDelete.finish()
+      await done
+      expect(editor.doc()).toBe(`${redA}\nafter streamed\n${SECTION_SEP}\n`)
+      expect(toasts).toEqual([])
+    }
+  })
+
+  it('deletes no file, and says so, when the reference is gone before the answer', async () => {
     const doc = `a ${red}`
     const changes: Array<(editor: FakeEditor) => void> = [
       // Its source shows: the `)` was deleted.
       (editor) => editor.edit({ changes: { from: doc.length - 1, to: doc.length } }),
-      // Another state: a tab switch, or the rebuild at the end of a stream.
-      (editor) => editor.replaceState(createState(doc)),
       // The tab changed while the view still holds its state.
       () => { activeTabId = 'tab-2' },
+      // A new state with no shown reference to the file with the same id.
+      (editor) => editor.replaceState(createState('a ')),
+      // A new state in which two shown references have them (no id here).
+      (editor) => editor.replaceState(createState(`${doc}\n${red}`)),
     ]
     for (const change of changes) {
+      toasts = []
       const editor = createEditor(doc)
       const done = deleteImage(editor.view, 2, RED)
       change(editor)
@@ -333,6 +371,7 @@ describe('deleteImage (the image trash)', () => {
       await done
       expect(deleteCalls).toEqual([])
       expect(editor.doc()).toBe(docBeforeAnswer)
+      expect(toasts).toEqual([expect.objectContaining({ title: 'Image not deleted', variant: 'warning' })])
       activeTabId = 'tab-1'
     }
   })
@@ -343,10 +382,10 @@ describe('deleteImage (the image trash)', () => {
     const done = deleteImage(editor.view, 2, RED)
     confirmCalls[0].answer(true)
     const fileDelete = await nextDeleteCall()
-    editor.replaceState(createState(doc))
+    editor.edit({ changes: { from: doc.length - 1, to: doc.length } })
     fileDelete.finish()
     await done
-    expect(editor.doc()).toBe(doc)
+    expect(editor.doc()).toBe(doc.slice(0, -1))
   })
 })
 

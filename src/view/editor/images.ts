@@ -339,10 +339,13 @@ export function imageRemovalRange(doc: Text, { from, to }: DocRange): DocRange {
  *  reference starts at `from`, and on "Yes" deletes its file
  *  (`dez.controller/images/delete`), then takes the reference out of the
  *  doc (`imageRemovalRange`). The doc can change while the prompt is open
- *  or the file is being deleted (a stream, a tab switch), so the reference
- *  is followed (`addPendingRange`): when it is gone (its text changed,
- *  another state, another tab), no file is deleted. A failed file delete
- *  (the controller has shown a toast) keeps the reference. If the reference
+ *  or the file is being deleted (a stream), so the reference is followed
+ *  (`addPendingRange`). A new state of the same tab (the rebuild at the end
+ *  of a stream) has no pending ranges: there the reference is found again
+ *  by its path and id, when exactly one shown image has them. When the
+ *  reference is gone (its text changed, another tab, no single match), no
+ *  file is deleted, and a toast tells the user. A failed file delete (the
+ *  controller has shown a toast) keeps the reference. If the reference
  *  goes while its file is being deleted, its text stays and shows "Image
  *  not found". The removal is not in the undo history: the file is gone,
  *  so an undo could only bring back a broken reference. Other references
@@ -351,16 +354,29 @@ export async function deleteImage(view: EditorView, from: number, path: string):
   const image = renderedImages(view.state).find((image) => image.from === from && image.path === path)
   if (!image) return
   const tabId = sbp('dez.model/tabs/activeId') as string
-  const id = addPendingRange(view, image)
+  let rangeId = addPendingRange(view, image)
   const currentRange = (): DocRange | null => {
-    const range = pendingRange(view.state, id)
-    if (!range || sbp('dez.model/tabs/activeId') !== tabId) return null
-    const same = renderedImages(view.state).some((image) => image.from === range.from && image.to === range.to && image.path === path)
-    return same ? range : null
+    if (sbp('dez.model/tabs/activeId') !== tabId) return null
+    const shown = renderedImages(view.state)
+    const range = pendingRange(view.state, rangeId)
+    if (range) {
+      return shown.some((other) => other.from === range.from && other.to === range.to && other.path === path) ? range : null
+    }
+    const matches = shown.filter((other) => other.path === path && other.id === image.id)
+    if (matches.length !== 1) return null
+    rangeId = addPendingRange(view, matches[0])
+    return matches[0]
   }
   let range: DocRange | null = null
   const confirmed = await sbp('dez.ui/confirm', { message: 'Are you sure you want to delete this image?' }) as boolean
-  if (confirmed && currentRange()) {
+  if (confirmed && !currentRange()) {
+    sbp('dez.ui/toast', 'app-global', {
+      title: 'Image not deleted',
+      message: 'The conversation changed while the prompt was open. Try again.',
+      variant: 'warning',
+      duration: 8000,
+    })
+  } else if (confirmed) {
     try {
       await sbp('dez.controller/images/delete', path)
       range = currentRange()
@@ -369,13 +385,13 @@ export async function deleteImage(view: EditorView, from: number, path: string):
     }
   }
   // In another state the range is gone already.
-  if (!pendingRange(view.state, id)) return
+  if (!pendingRange(view.state, rangeId)) return
   view.dispatch({
     ...(range && {
       changes: imageRemovalRange(view.state.doc, range),
       annotations: Transaction.addToHistory.of(false),
     }),
-    effects: removePendingRange(id),
+    effects: removePendingRange(rangeId),
   })
   // The prompt gave the focus back a few ms ago (`syncDomSelection`).
   if (range) syncDomSelection(view)
