@@ -150,6 +150,26 @@ describe('searchConversationFiles', () => {
     expect(result.messageCount).toBe(2)
   })
 
+  it('neither searches image paths nor shows them in snippets and previews', () => {
+    const image = (name: string) => `/home/user/.config/dez/assets/images/${name}.png`
+    const file = fileFor(
+      conversation('a', 'Notes', [
+        section('user', [
+          textNode(`Look at![${image('3f2a9c1e')}]()this chart`),
+          promptNode('compare', `with ![${image('7d4b0e52')}]()`),
+        ]),
+      ]),
+      1000,
+    )
+
+    for (const term of ['png', 'images', 'config', '3f2a9c1e', '7d4b0e52', 'image', '![']) {
+      expect(searchConversationFiles([file], term), term).toEqual([])
+    }
+    const [result] = searchConversationFiles([file], 'chart')
+    expect(joined(result.snippet)).toBe('Look at this chart compare with')
+    expect(result.preview).toBe('Look at[image]this chart with [image]')
+  })
+
   it('merges overlapping term highlights into one segment', () => {
     const file = fileFor(conversation('a', 'Notes', [section('user', [textNode('the foundation stands')])]), 1000)
     const [result] = searchConversationFiles([file], 'foun undation')

@@ -26,6 +26,7 @@ import {
   sectionVisibleText,
 } from '../chat/content'
 import { durationField } from '../chat/duration'
+import { labelImageReferences } from '../chat/images'
 import { modelRefField, modelRefKey } from '../chat/modelRef'
 import { thinkingField } from '../chat/thinking'
 import { cloneJsonObject } from '../../utils/json'
@@ -289,10 +290,13 @@ function createDefaultTab(): Tab {
   }
 }
 
+// The tab title: the start of the first user message that has text. An image
+// reference shows as `[image]`, never as its path. The label is not empty, so
+// the section that the `find` picks still has a title.
 function firstUserTitle(sections: Section[]): string | null {
   const firstContent = sections.find((section) => section.role === 'user' && sectionVisibleText(section).trim())
   if (!firstContent) return null
-  const text = sectionVisibleText(firstContent).trim()
+  const text = labelImageReferences(sectionVisibleText(firstContent)).trim()
   return text.length > 30 ? text.slice(0, 30) + '…' : text
 }
 

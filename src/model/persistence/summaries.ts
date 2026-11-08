@@ -1,8 +1,11 @@
+import { labelImageReferences } from '../chat/images'
 import { cloneModelRef } from '../chat/modelRef'
 import type { ConversationData, ConversationSummary, SectionData } from './types'
 
+// An image reference shows as `[image]`, never as its path. Prompt bodies
+// too: their references are sent as images.
 function nodePlainText(node: SectionData['nodes'][number]): string {
-  return node.kind === 'text' ? node.text : node.body
+  return labelImageReferences(node.kind === 'text' ? node.text : node.body)
 }
 
 function sectionHasVisibleContent(section: SectionData): boolean {

@@ -1,3 +1,4 @@
+import { labelImageReferences } from '../chat/images'
 import { modelRefKey } from '../chat/modelRef'
 import { parseConversation } from './conversationFormat'
 import { conversationSummary } from './summaries'
@@ -34,9 +35,15 @@ export function clearConversationSearchCache(): void {
 }
 
 // Search text for one node: prompt pills contribute their visible name plus
-// their body, both of which read as conversation content in the UI.
+// their body, both of which read as conversation content in the UI. Image
+// references are left out (a space keeps the words around one apart): their
+// path (`config`, `dez`, `images`, `png`, a uuid) would match every
+// conversation with an image. The snippet then shows no `[image]` label
+// where the preview does; a label would make `image` match them all too.
 function nodeSearchText(node: ContentNodeData): string {
-  return node.kind === 'text' ? node.text : `${node.name} ${node.body}`
+  return node.kind === 'text'
+    ? labelImageReferences(node.text, ' ')
+    : `${node.name} ${labelImageReferences(node.body, ' ')}`
 }
 
 // Flatten a conversation into one searchable line. Whitespace is collapsed

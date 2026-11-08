@@ -118,6 +118,23 @@ world
     expect(textContent(parsed.sections[1].nodes[0])).toBe('\nworld')
   })
 
+  it('round-trips image references, also right after a pill and alone in a section', () => {
+    const image = '/home/user/.config/dez/assets/images/0b5c9a2e-4a8f-4c1e-9d3b-2f6e7a1c8d40.png'
+    const data: ConversationData = {
+      id: 'conversation',
+      title: '[image] What color is it?',
+      sections: [
+        section('user', [textNode(`![${image}]()\nWhat color is it? ![${image}]()`)]),
+        section('agent', [textNode('Red.')]),
+        section('user', [textNode(`![${image}]()`)]),
+      ],
+      activeModel: null,
+      created_at: 1000,
+    }
+
+    expect(parseConversation('conversation', serializeConversation(data))).toEqual(data)
+  })
+
   it('parses prompt blocks inside a conversation section', () => {
     const content = '<!-- title: t | model:  | created: 1 -->\n\n<dez:pill type="agent"/>\n\nHi there! today?\n<dez:prompt name="code-review">\nthis is a multi-line\n\nbody of many things\n</dez:prompt>\n\nrest of text\n'
     const parsed = parseConversation('c', content)
