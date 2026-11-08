@@ -32,30 +32,48 @@ function setBoxSize(img: HTMLImageElement, size: ImageSize): void {
   img.style.setProperty('--dez-image-height', String(size.height))
 }
 
-/** The badge with an image's id (`.dez-image__id` in `dezTheme`). */
+const SVG_NS = 'http://www.w3.org/2000/svg'
+
+/** An inline SVG icon in `currentColor`, from the tag and attributes of
+ *  each of its shapes. */
+function svgIcon(viewBox: string, shapes: ReadonlyArray<readonly [string, Record<string, string>]>): SVGSVGElement {
+  const svg = document.createElementNS(SVG_NS, 'svg')
+  svg.setAttribute('viewBox', viewBox)
+  svg.setAttribute('aria-hidden', 'true')
+  for (const [tag, attributes] of shapes) {
+    const shape = document.createElementNS(SVG_NS, tag)
+    for (const [name, value] of Object.entries(attributes)) shape.setAttribute(name, value)
+    svg.appendChild(shape)
+  }
+  return svg
+}
+
+const ROUND_STROKE = { fill: 'none', stroke: 'currentColor', 'stroke-linecap': 'round', 'stroke-linejoin': 'round' }
+
+/** A picture frame with a sun and hills, so that the id badge reads as the
+ *  label of the image. */
+function imageIcon(): SVGSVGElement {
+  return svgIcon('0 0 16 16', [
+    ['rect', { x: '2', y: '3', width: '12', height: '10', rx: '2', ...ROUND_STROKE, 'stroke-width': '1.3' }],
+    ['circle', { cx: '6', cy: '6.5', r: '1.2', fill: 'currentColor' }],
+    ['path', { d: 'M2.6 11.6l3.4-3.3 2.4 2.3 1.9-1.8 3.1 3', ...ROUND_STROKE, 'stroke-width': '1.3' }],
+  ])
+}
+
+/** The badge with an image's id (`.dez-image__id` in `dezTheme`). Its text
+ *  is only the id. */
 function idBadge(id: string): HTMLElement {
   const badge = document.createElement('span')
   badge.className = 'dez-image__id'
-  badge.textContent = id
+  badge.append(imageIcon(), id)
   return badge
 }
 
-const SVG_NS = 'http://www.w3.org/2000/svg'
-
 /** The trash can of the History and Prompts lists. */
 function trashIcon(): SVGSVGElement {
-  const svg = document.createElementNS(SVG_NS, 'svg')
-  svg.setAttribute('viewBox', '0 0 12 12')
-  svg.setAttribute('aria-hidden', 'true')
-  const path = document.createElementNS(SVG_NS, 'path')
-  path.setAttribute('d', 'M2.5 3.5h7m-5.5 0V2.5a.5.5 0 01.5-.5h2a.5.5 0 01.5.5V3.5m-3 0v6a.5.5 0 00.5.5h4a.5.5 0 00.5-.5v-6')
-  path.setAttribute('fill', 'none')
-  path.setAttribute('stroke', 'currentColor')
-  path.setAttribute('stroke-width', '1.1')
-  path.setAttribute('stroke-linecap', 'round')
-  path.setAttribute('stroke-linejoin', 'round')
-  svg.appendChild(path)
-  return svg
+  return svgIcon('0 0 12 12', [
+    ['path', { d: 'M2.5 3.5h7m-5.5 0V2.5a.5.5 0 01.5-.5h2a.5.5 0 01.5.5V3.5m-3 0v6a.5.5 0 00.5.5h4a.5.5 0 00.5-.5v-6', ...ROUND_STROKE, 'stroke-width': '1.1' }],
+  ])
 }
 
 /** The button that deletes the image of `widget` (`deleteImage`). Its
@@ -79,9 +97,10 @@ function trashButton(view: EditorView, widget: HTMLElement, path: string): HTMLB
 }
 
 /** An image, with an overlay that shows while the pointer is over the
- *  image: its id (null for an old reference with no id) in a badge, and a
- *  trash button. A reference to a file that does not load shows an "Image
- *  not found" box with the same overlay, so that its text can go too. */
+ *  image: a small toolbar in its top-right corner with its id (null for an
+ *  old reference with no id) in a badge, and a trash button. A reference to
+ *  a file that does not load shows an "Image not found" box with the same
+ *  overlay after its text, so that its text can go too. */
 class ImageWidget extends WidgetType {
   constructor(readonly path: string, readonly id: string | null) {
     super()
@@ -90,9 +109,10 @@ class ImageWidget extends WidgetType {
     return other instanceof ImageWidget && other.path === this.path && other.id === this.id
   }
   toDOM(view: EditorView): HTMLElement {
-    // The image is in an inline wrapper, so that the widget's root element
-    // stays the same when an image that fails to load becomes a box, and so
-    // that a `%` width of the image is a part of the line's width.
+    // The image is in a wrapper, so that the widget's root element stays the
+    // same when an image that fails to load becomes a box. The wrapper is as
+    // big as the image (`.dez-image` in `dezTheme`), so the overlay can be
+    // placed over the image.
     const wrapper = document.createElement('span')
     wrapper.className = 'dez-image'
     const img = document.createElement('img')
@@ -118,7 +138,7 @@ class ImageWidget extends WidgetType {
       const box = document.createElement('span')
       box.className = 'dez-image-missing'
       box.textContent = `Image not found: ${img.alt}`
-      // The box is one short line of text, so an overlay over a corner
+      // The box is one short line of text, so an overlay over its corner
       // would hide a part of it: the overlay goes after the text, in the
       // box.
       box.append(overlay)
@@ -126,15 +146,12 @@ class ImageWidget extends WidgetType {
       measureLineHeights(view)
     })
     img.src = sbp('dez.controller/images/displayUrl', this.path) as string
-    // A zero-size box right after the image, with its bottom on the image's
-    // bottom (both on the line's bottom): the overlay is positioned from it,
-    // so it is over the image's bottom-right corner and changes no size.
-    // The inline wrapper cannot hold it: the box of an inline element is
-    // only as tall as its text, not as its image.
-    const corner = document.createElement('span')
-    corner.className = 'dez-image__corner'
-    corner.appendChild(overlay)
-    wrapper.append(img, corner)
+    // The row along the image's top edge in which the overlay sits, at the
+    // right end (`.dez-image__overlay-row` in `dezTheme`).
+    const row = document.createElement('span')
+    row.className = 'dez-image__overlay-row'
+    row.appendChild(overlay)
+    wrapper.append(img, row)
     return wrapper
   }
   // CM uses this for the lines that it has not drawn yet. The real box can

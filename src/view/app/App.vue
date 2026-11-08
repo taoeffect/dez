@@ -49,10 +49,17 @@ onUnmounted(() => {
   --color-error: #c4302b;
   --color-error-bg: #fdeeed;
   --color-error-border: #f0b9b5;
+  /* A solid danger fill under a white icon (the image trash on hover). */
+  --color-error-fill: #c4302b;
   /* Tab bar backgrounds (TabBar.vue): a tab whose reply streams (busy), and
      a tab whose reply ended in the background (done). */
   --color-tab-busy: #f7dc9b;
   --color-tab-done: #c2e5c4;
+  /* The image overlay toolbar (dezTheme in cmEditor.ts): a dark glass
+     surface with white text in both themes, so that it reads on any image,
+     and its hairline border and divider. */
+  --color-image-toolbar: rgba(18, 18, 22, 0.72);
+  --color-image-toolbar-border: rgba(255, 255, 255, 0.18);
 
   font-family: Inter, Avenir, Helvetica, Arial, sans-serif;
   font-size: 16px;
@@ -85,8 +92,11 @@ onUnmounted(() => {
     --color-error: #ff7b72;
     --color-error-bg: #3a2224;
     --color-error-border: #6b3236;
+    --color-error-fill: #da3633;
     --color-tab-busy: #5b4716;
     --color-tab-done: #234d2e;
+    --color-image-toolbar: rgba(40, 40, 46, 0.8);
+    --color-image-toolbar-border: rgba(255, 255, 255, 0.14);
   }
 }
 
@@ -105,7 +115,10 @@ onUnmounted(() => {
   --color-error: #ff7b72;
   --color-error-bg: #3a2224;
   --color-error-border: #6b3236;
+  --color-error-fill: #da3633;
   --color-tab-busy: #5b4716;
   --color-tab-done: #234d2e;
+  --color-image-toolbar: rgba(40, 40, 46, 0.8);
+  --color-image-toolbar-border: rgba(255, 255, 255, 0.14);
 }
 </style>

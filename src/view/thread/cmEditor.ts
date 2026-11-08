@@ -1600,16 +1600,29 @@ export const dezTheme = EditorView.theme({
   '.dez-prompt-body': {
     color: 'var(--color-text)',
   },
-  // Images (src/view/editor/images.ts). Once the natural size of an image is
-  // known, the widget sets it as `--dez-image-width` / `--dez-image-height`,
-  // and the box gets its size from it even before the image loads (a widget
-  // drawn again): as wide as the image, the line, or the width that gives
-  // the max height, whichever is smallest, at the image's aspect ratio.
-  // Before that, the variables are unset, so `width` and `aspect-ratio` are
-  // invalid and fall back to `auto`, and the max sizes fit the image.
-  '.dez-image__img': {
+  // Images (src/view/editor/images.ts). The widget's root is an inline-block
+  // as big as its image, so that the overlay can sit over the image. Its
+  // `max-width` keeps it inside the line, and as a shrink-to-fit box it is
+  // as wide as the image's own width (limited by the max height through the
+  // aspect ratio), so the image's `100%` is never wider than the line: a
+  // wide image still shrinks to the line, and a tall one keeps its ratio
+  // (checked in WebKitGTK 2.54). It is bottom-aligned, and the image in it
+  // is a block, so the line is exactly as tall as the image.
+  '.dez-image': {
     display: 'inline-block',
+    position: 'relative',
+    maxWidth: '100%',
     verticalAlign: 'bottom',
+  },
+  // Once the natural size of an image is known, the widget sets it as
+  // `--dez-image-width` / `--dez-image-height`, and the box gets its size
+  // from it even before the image loads (a widget drawn again): as wide as
+  // the image, the line, or the width that gives the max height, whichever
+  // is smallest, at the image's aspect ratio. Before that, the variables are
+  // unset, so `width` and `aspect-ratio` are invalid and fall back to
+  // `auto`, and the max sizes fit the image.
+  '.dez-image__img': {
+    display: 'block',
     maxWidth: '100%',
     maxHeight: editorSize(IMAGE_MAX_HEIGHT_PX),
     width: `min(calc(var(--dez-image-width) * 1px), 100%, calc(${editorSize(IMAGE_MAX_HEIGHT_PX)} * var(--dez-image-width) / var(--dez-image-height)))`,
@@ -1629,78 +1642,137 @@ export const dezTheme = EditorView.theme({
     lineHeight: '1.4',
     userSelect: 'none',
   },
-  // The overlay of an image (`ImageWidget`): its id badge and its trash
-  // button, shown only while the pointer is over the image, and never a
-  // part of the layout, so a hover changes no size. Over an image, it is
-  // positioned from a zero-size corner box that sits after the image on the
-  // line's bottom. In the "Image not found" box, it follows the text and
-  // keeps its room while hidden; it is top-aligned and shorter than the
-  // box's line, so it does not make the box taller.
-  '.dez-image__corner': {
-    display: 'inline-block',
-    position: 'relative',
-    width: '0',
-    height: '0',
-    verticalAlign: 'bottom',
+  // The overlay of an image (`ImageWidget`): one small floating toolbar with
+  // the id badge and the trash button, shown only while the pointer is over
+  // the image, and never a part of the layout, so a hover changes no size.
+  // Its glass surface is dark in both themes, with white text, a hairline
+  // border, and a shadow, so it reads on light, dark, and busy images.
+  //
+  // Over an image, it sits at the right end of a row along the image's top
+  // edge, inset as far from the top as from the right, and draws over the
+  // lines below. Over an image narrower than the toolbar, its auto margin
+  // becomes 0: it starts at the image's left inset and hangs out on the
+  // right. Images are mostly at the start of their line, where a toolbar
+  // that hung out on the left would go out of the editor. Anything that
+  // hangs out of the scroller on the right (a small image at a line's end in
+  // a narrow window) adds a horizontal scrollbar, even while it is hidden.
+  '.dez-image__overlay-row': {
+    position: 'absolute',
+    top: editorSize(8),
+    left: editorSize(8),
+    right: editorSize(8),
+    zIndex: '2',
+    display: 'flex',
+    pointerEvents: 'none',
   },
   '.dez-image__overlay': {
     display: 'inline-flex',
     alignItems: 'center',
-    gap: editorSize(4),
+    gap: editorSize(3),
+    marginLeft: 'auto',
+    padding: editorSize(3),
+    borderRadius: editorSize(9),
+    border: '1px solid var(--color-image-toolbar-border, rgba(255, 255, 255, 0.18))',
+    background: 'var(--color-image-toolbar, rgba(18, 18, 22, 0.72))',
+    color: '#fff',
+    boxShadow: '0 1px 2px rgba(0, 0, 0, 0.22), 0 6px 18px rgba(0, 0, 0, 0.24)',
+    WebkitBackdropFilter: 'blur(14px) saturate(130%)',
+    backdropFilter: 'blur(14px) saturate(130%)',
     fontFamily:
       "ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif",
-    fontSize: editorSize(11),
-    lineHeight: '1.4',
+    fontSize: editorSize(12.5),
+    lineHeight: '1',
     whiteSpace: 'nowrap',
     userSelect: 'none',
+    pointerEvents: 'auto',
+    cursor: 'default',
     opacity: '0',
-    transition: 'opacity 0.12s ease',
-  },
-  '.dez-image__corner > .dez-image__overlay': {
-    position: 'absolute',
-    right: editorSize(6),
-    bottom: editorSize(6),
-  },
-  '.dez-image-missing > .dez-image__overlay': {
-    marginLeft: editorSize(6),
-    verticalAlign: 'top',
+    // The entrance: it fades in and drops into place from its top-right
+    // corner. Under reduced motion it only fades (below).
+    transform: `translateY(${editorSize(-4)}) scale(0.97)`,
+    transformOrigin: 'top right',
+    transition: 'opacity 0.14s ease, transform 0.2s cubic-bezier(0.2, 0.8, 0.2, 1)',
   },
   '.dez-image:hover .dez-image__overlay': {
     opacity: '1',
+    transform: 'none',
   },
+  // In the "Image not found" box, the toolbar follows the text and keeps
+  // its room while hidden. It is taller than the box's line; its negative
+  // margins keep it from making the box taller, so it overlaps the box's
+  // top and bottom edges.
+  '.dez-image-missing > .dez-image__overlay': {
+    margin: editorSize(-9, 0, -9, 8),
+    verticalAlign: 'middle',
+  },
+  // The id reads as a label of the image: an image icon, then the id. The
+  // `::after` is the divider in the middle of the gap before the trash.
   '.dez-image__id': {
-    padding: editorSize(0, 6),
-    borderRadius: '999px',
-    background: 'rgba(0, 0, 0, 0.62)',
-    color: '#fff',
-    pointerEvents: 'none',
+    position: 'relative',
+    display: 'inline-flex',
+    alignItems: 'center',
+    gap: editorSize(5),
+    boxSizing: 'border-box',
+    height: editorSize(24),
+    padding: editorSize(0, 8, 0, 7),
+    fontWeight: '600',
+    letterSpacing: '0.02em',
   },
-  // A circle as tall as the id badge (one line of the overlay's text), so
-  // the overlay stays small over a small image.
+  '.dez-image__id svg': {
+    display: 'block',
+    width: editorSize(14),
+    height: editorSize(14),
+    opacity: '0.72',
+  },
+  '.dez-image__id::after': {
+    content: '""',
+    position: 'absolute',
+    top: '25%',
+    bottom: '25%',
+    right: `calc(${editorSize(-1.5)} - 0.5px)`,
+    width: '1px',
+    background: 'var(--color-image-toolbar-border, rgba(255, 255, 255, 0.18))',
+  },
+  // Its corners follow the toolbar's: toolbar radius minus its padding.
   '.dez-image__trash': {
     display: 'inline-flex',
     alignItems: 'center',
     justifyContent: 'center',
     boxSizing: 'border-box',
-    width: '1.4em',
-    height: '1.4em',
+    width: editorSize(24),
+    height: editorSize(24),
     margin: '0',
     padding: '0',
     border: 'none',
-    borderRadius: '50%',
-    background: 'rgba(0, 0, 0, 0.62)',
-    color: '#fff',
+    borderRadius: editorSize(6),
+    background: 'transparent',
+    color: 'rgba(255, 255, 255, 0.92)',
     font: 'inherit',
     cursor: 'pointer',
-    transition: 'background-color 0.1s ease',
+    transition: 'background-color 0.12s ease, color 0.12s ease, transform 0.08s ease',
   },
   '.dez-image__trash svg': {
     display: 'block',
-    width: '1em',
-    height: '1em',
+    width: editorSize(15),
+    height: editorSize(15),
   },
   '.dez-image__trash:hover': {
-    background: '#f44336',
+    background: 'var(--color-error-fill, #c4302b)',
+    color: '#fff',
+  },
+  // Pressed: a little smaller, and the fill a little darker.
+  '.dez-image__trash:active': {
+    boxShadow: 'inset 0 0 0 999px rgba(0, 0, 0, 0.16)',
+    transform: 'scale(0.92)',
+  },
+  '@media (prefers-reduced-motion: reduce)': {
+    '.dez-image__overlay': {
+      transform: 'none',
+      transition: 'opacity 0.14s ease',
+    },
+    '.dez-image__trash:active': {
+      transform: 'none',
+    },
   },
   // Rendered links (src/view/editor/links.ts): only the link text shows. An
   // autolink's address has the `t.url` style of `dezHighlightStyle`, which
