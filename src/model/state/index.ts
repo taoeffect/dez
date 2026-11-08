@@ -34,7 +34,7 @@ import {
   endStreamSection,
   ensureTrailingAgentSection,
 } from '../streams/sections'
-import type { EndedStreamSession, StreamMessage } from '../streams/types'
+import type { EndedStreamSession, RequestMessages } from '../streams/types'
 import type { ModelSnapshot } from '../snapshot'
 
 export interface SettingsSnapshot {
@@ -778,11 +778,17 @@ export default sbp('sbp/selectors/register', {
     return true
   },
 
-  // `model`: the model the request goes to, which decides what earlier
-  // thinking goes back with it.
-  'dez.model/streamMessagesForTab' (tabId: string, model: ModelRef): StreamMessage[] {
+  // `model`: the model the request goes to. It decides what earlier thinking
+  // goes back, and whether the images go: a model that the model cache
+  // knows not to read images gets the text `[image]` for each. An unknown
+  // model (no flag, or not in the cache yet) gets the images.
+  'dez.model/streamMessagesForTab' (tabId: string, model: ModelRef): RequestMessages {
     const tab = useTabStore().tabs.find((candidate) => candidate.id === tabId)
-    return tab ? sectionsToStreamMessages(tab.sections, model).map((message) => ({ ...message })) : []
+    if (!tab) return { messages: [], imagesLeftOut: 0 }
+
+    const cachedModel = useModelCacheStore().cache.providers[model.providerId]?.models
+      .find((candidate) => candidate.id === model.modelId)
+    return sectionsToStreamMessages(tab.sections, model, cachedModel?.imageInput !== false)
   },
 
   // Stamps the agent section with the model of the request that will fill it.

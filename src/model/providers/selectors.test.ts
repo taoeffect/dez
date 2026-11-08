@@ -14,6 +14,11 @@ const KEY_STORE_ERROR = 'API error: Failed to parse provider_keys.json (line 1, 
 // Requests the stubs below received, in order.
 let httpRequests: NativeHttpRequest[] = []
 let streamRequests: NativeHttpRequest[] = []
+let imageReads: string[] = []
+
+// The app folder and its one stored image.
+const APP_DIR = '/home/u/.config/dez'
+const STORED_IMAGE = Uint8Array.from([137, 80, 78, 71, 13, 10, 26, 10, 0, 255])
 
 // Requests to this base URL get HTTP 404; every other server answers.
 const FAILING_BASE_URL = 'http://localhost:9090/v1'
@@ -40,6 +45,14 @@ sbp('sbp/selectors/register', {
     const body = new TextEncoder().encode(JSON.stringify({ data: [{ id: 'served-model' }] }))
     return { status: 200, headers: {}, body: Array.from(body) }
   },
+  async 'dez.native/getAppDir' (): Promise<string> {
+    return APP_DIR
+  },
+  async 'dez.native/loadAppFileBytes' (path: string): Promise<Uint8Array> {
+    imageReads.push(path)
+    if (path === 'assets/images/red.png') return STORED_IMAGE
+    throw `Failed to read ${path}: No such file or directory (os error 2)`
+  },
   async 'dez.http/stream' (request: NativeHttpRequest, requestId: string): Promise<NativeHttpStreamResult> {
     streamRequests.push(request)
     const failing = request.url.startsWith(FAILING_BASE_URL)
@@ -61,6 +74,7 @@ beforeEach(() => {
   setActivePinia(createPinia())
   httpRequests = []
   streamRequests = []
+  imageReads = []
   vi.spyOn(console, 'error').mockImplementation(() => {})
   sbp('dez.model/customProviders/save', {
     id: 'local',
@@ -170,6 +184,42 @@ describe('thinking in chat streams', () => {
 
     expect(calls).toEqual(['token:Hello'])
     expect(result).toStrictEqual({ requestId: 'request-2' })
+  })
+})
+
+describe('images in chat streams', () => {
+  function streamImage(path: string) {
+    return sbp('dez.provider/streamChat', {
+      providerId: 'local',
+      modelId: 'm',
+      messages: [{ role: 'user', content: [{ type: 'text', text: 'Which color?' }, { type: 'image', path }] }],
+      onToken: () => {},
+    })
+  }
+
+  it('sends the bytes of a stored image as base64, read through the app folder', async () => {
+    await streamImage(`${APP_DIR}/assets/images/red.png`)
+
+    expect(imageReads).toEqual(['assets/images/red.png'])
+    expect(streamRequests).toHaveLength(1)
+    expect(JSON.parse(streamRequests[0].body as string).messages[0].content[1]).toEqual({
+      type: 'image_url',
+      image_url: { url: `data:image/png;base64,${Buffer.from(STORED_IMAGE).toString('base64')}` },
+    })
+  })
+
+  it('fails before the request when the image file is missing', async () => {
+    await expect(streamImage(`${APP_DIR}/assets/images/gone.png`)).rejects.toThrow('Image not found: gone.png')
+
+    expect(imageReads).toEqual(['assets/images/gone.png'])
+    expect(streamRequests).toEqual([])
+  })
+
+  it('reads no file for an image of another Dez folder', async () => {
+    await expect(streamImage('/home/other/.config/dez/assets/images/red.png')).rejects.toThrow('Image not found: red.png')
+
+    expect(imageReads).toEqual([])
+    expect(streamRequests).toEqual([])
   })
 })
 

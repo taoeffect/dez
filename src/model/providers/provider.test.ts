@@ -137,6 +137,62 @@ describe('static headers', () => {
   })
 })
 
+describe('image parts', () => {
+  const imageMessages: ChatMessage[] = [
+    { role: 'user', content: [{ type: 'text', text: 'Which color?' }, { type: 'image', mediaType: 'image/png', data: 'iVBORw0K' }] },
+    { role: 'agent', content: 'Red.' },
+  ]
+
+  it('sends OpenAI text parts and image_url parts with a base64 data URL', () => {
+    expect(requestBody(customProvider({}).chatRequest(imageMessages, 'm', key).request).messages).toEqual([
+      {
+        role: 'user',
+        content: [
+          { type: 'text', text: 'Which color?' },
+          { type: 'image_url', image_url: { url: 'data:image/png;base64,iVBORw0K' } },
+        ],
+      },
+      { role: 'assistant', content: 'Red.' },
+    ])
+  })
+
+  it('sends Anthropic text blocks and base64 image blocks', () => {
+    const provider = customProvider({ apiFormat: 'anthropic' })
+
+    expect(requestBody(provider.chatRequest(imageMessages, 'm', key).request).messages).toEqual([
+      {
+        role: 'user',
+        content: [
+          { type: 'text', text: 'Which color?' },
+          { type: 'image', source: { type: 'base64', media_type: 'image/png', data: 'iVBORw0K' } },
+        ],
+      },
+      { role: 'assistant', content: 'Red.' },
+    ])
+  })
+
+  it('sends the image headers only on a request with an image, after the static headers and before the key', () => {
+    const copilot = builtInProvider('copilot')
+    const provider = customProvider({
+      headers: { 'X-Vision': 'off' },
+      imageRequestHeaders: { 'x-vision': 'on', Authorization: 'Bearer image' },
+    })
+
+    expect(copilot.chatRequest(imageMessages, 'gpt-4o', key).request.headers).toMatchObject({ 'Copilot-Vision-Request': 'true' })
+    expect(copilot.chatRequest(messages, 'gpt-4o', key).request.headers).not.toHaveProperty('Copilot-Vision-Request')
+    expect(provider.chatRequest(imageMessages, 'm', key).request.headers).toEqual({
+      'Content-Type': 'application/json',
+      'x-vision': 'on',
+      Authorization: 'Bearer sk-test',
+    })
+    expect(provider.chatRequest(messages, 'm', key).request.headers).toEqual({
+      'Content-Type': 'application/json',
+      'X-Vision': 'off',
+      Authorization: 'Bearer sk-test',
+    })
+  })
+})
+
 describe('declarative provider settings', () => {
   it('writes every Venice parameter from the defaults', () => {
     const body = requestBody(venice.chatRequest(messages, 'venice-uncensored', key).request)
@@ -390,6 +446,17 @@ describe('thinking send-back', () => {
       const a3 = reply([user('Q1'), a1, user('Q2'), a2, user('Q3')], 'A3')
 
       expect(sentOpaques([user('Q1'), a1, user('Q2'), a2, user('Q3'), a3, user('Q4')])).toEqual(['A1 opaque', null, 'A3 opaque'])
+    })
+
+    it('sends a replay made after a message with an image, until the image changes', () => {
+      const withImage = (data: string): ChatMessage => ({
+        role: 'user',
+        content: [{ type: 'text', text: 'Q1' }, { type: 'image', mediaType: 'image/png', data }],
+      })
+      const a1 = reply([withImage('AAAA')], 'A1')
+
+      expect(sentOpaques([withImage('AAAA'), a1, user('Q2')])).toEqual(['A1 opaque'])
+      expect(sentOpaques([withImage('BBBB'), a1, user('Q2')])).toEqual([null])
     })
   })
 })

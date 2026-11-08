@@ -1,3 +1,4 @@
+import type { ImageMediaType } from '../chat/images'
 import type { Role, SectionThinking, ThinkingReplay } from '../chat/types'
 import type { ApiFormatId, ProviderAuth, ProviderSettingDef } from './config'
 
@@ -60,9 +61,17 @@ export interface ProviderModelsResult {
   error?: string
 }
 
+// One part of a user message, as both wire formats need it: text, or the
+// bytes of a stored image in base64 (apiFormats.ts writes the wire block).
+export type ChatPart =
+  | { type: 'text', text: string }
+  | { type: 'image', mediaType: ImageMediaType, data: string }
+
 export interface ChatMessage {
   role: Role
-  content: string
+  // Parts only for a user message with images: both formats take images
+  // only from the user. An agent message is always a string.
+  content: string | ChatPart[]
   // The earlier thinking of an agent message, for a request to the model
   // that wrote it. The request sends it back only in the shape of its
   // replay, and only when the provider asks for thinking.

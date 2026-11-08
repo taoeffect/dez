@@ -30,6 +30,11 @@ const MEDIA_TYPE_BY_EXTENSION: Record<string, ImageMediaType> = {
   webp: 'image/webp',
 }
 
+/** The folder of the stored images, relative to the app folder. The asset
+ *  protocol scope in tauri.conf.json serves only the files directly in it,
+ *  and `IMAGE_PATH_SOURCE` below spells the same folder. */
+export const IMAGE_FOLDER = 'assets/images'
+
 // An absolute path whose last two folders are `assets/images`. The path may
 // not hold `[`, `]`, or a line break: `]` would end the alt text early, and
 // with `[` excluded too, a search from one `![` stops at the next bracket, so

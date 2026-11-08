@@ -1,14 +1,17 @@
 import sbp from '@sbp/sbp'
+import { IMAGE_FOLDER, imageMediaType } from '../chat/images'
+import type { MessagePart } from '../chat/types'
 import { modelRefKey } from '../chat/modelRef'
 import type { ModelCache } from '../persistence/types'
+import { bytesToBase64 } from '../../utils/base64'
 import { secret, type Secret } from '../../utils/secret'
 import { nativeResponseJson, nativeResponseText, type NativeHttpResponse, type NativeHttpStreamResult } from '../../utils/protocol/nativeHttp'
 import { assertProviderResponseOk } from './errors'
 import type { Provider, ProviderChatRequest } from './provider'
 import { getProvider, listProviders, requireProvider } from './registry'
 import { streamProviderTokens } from './streaming'
-import type { ProviderStreamChatInput, ProviderStreamChatResult } from './streamTypes'
-import { ProviderNotConfiguredError, type ModelDisplayNames, type ProviderId, type ProviderInfo, type ProviderModelsResult, type ProviderSettingsDescriptor } from './types'
+import type { ProviderChatInputMessage, ProviderStreamChatInput, ProviderStreamChatResult } from './streamTypes'
+import { ProviderNotConfiguredError, type ChatMessage, type ChatPart, type ModelDisplayNames, type ProviderId, type ProviderInfo, type ProviderModelsResult, type ProviderSettingsDescriptor } from './types'
 
 // The stored key, or null when there is none. Throws for GitHub Copilot when
 // the user is not signed in.
@@ -42,14 +45,52 @@ async function requestSecret(provider: Provider, refreshCopilot = false): Promis
   return value
 }
 
+// The messages with the bytes of each image part, read once for the request
+// and its Copilot retry. The app folder is read only when a message has an
+// image.
+async function readMessageImages(messages: ProviderChatInputMessage[]): Promise<ChatMessage[]> {
+  let imageFolder: Promise<string> | undefined
+  const readPart = async (part: MessagePart): Promise<ChatPart> => {
+    if (part.type === 'text') return part
+    imageFolder ??= (sbp('dez.native/getAppDir') as Promise<string>).then((appDir) => `${appDir}/${IMAGE_FOLDER}/`)
+    return readImagePart(part.path, await imageFolder)
+  }
+
+  return Promise.all(messages.map(async ({ content, ...message }) => ({
+    ...message,
+    content: typeof content === 'string' ? content : await Promise.all(content.map(readPart)),
+  })))
+}
+
+// Only a stored image of this Dez folder is read: the folder that
+// dez.controller/images/save writes and the asset protocol serves. So a
+// reference copied from another home or machine fails like a missing file,
+// as it shows in the editor. The error names only the file, like the
+// editor's broken-image box; the log has the cause.
+async function readImagePart(path: string, imageFolder: string): Promise<ChatPart> {
+  const fileName = path.slice(path.lastIndexOf('/') + 1)
+  try {
+    const mediaType = imageMediaType(path)
+    if (!mediaType || path !== `${imageFolder}${fileName}`) {
+      throw new Error(`The image is not in the image folder ${imageFolder}`)
+    }
+    const bytes = await sbp('dez.native/loadAppFileBytes', `${IMAGE_FOLDER}/${fileName}`) as Uint8Array
+    return { type: 'image', mediaType, data: bytesToBase64(bytes) }
+  } catch (error) {
+    console.error(`Failed to read the image ${path}:`, error)
+    throw new Error(`Image not found: ${fileName}`)
+  }
+}
+
 async function nativeChatStream(
   provider: Provider,
   input: ProviderStreamChatInput,
+  messages: ChatMessage[],
   requestId: string,
   refreshCopilot = false,
 ): Promise<{ result: NativeHttpStreamResult, thinking: ProviderChatRequest['thinking'] }> {
   const secretValue = await requestSecret(provider, refreshCopilot)
-  const { request, thinking } = provider.chatRequest(input.messages, input.modelId, secretValue, input.providerSettings)
+  const { request, thinking } = provider.chatRequest(messages, input.modelId, secretValue, input.providerSettings)
   return { result: await sbp('dez.http/stream', request, requestId) as NativeHttpStreamResult, thinking }
 }
 
@@ -129,14 +170,15 @@ export default sbp('sbp/selectors/register', {
   async 'dez.provider/streamChat' (input: ProviderStreamChatInput): Promise<ProviderStreamChatResult> {
     const provider = requireProvider(input.providerId)
     const requestId = input.requestId ?? crypto.randomUUID()
-    let stream = await nativeChatStream(provider, input, requestId)
+    const messages = await readMessageImages(input.messages)
+    let stream = await nativeChatStream(provider, input, messages, requestId)
 
     // A 401 can mean the cached Copilot chat token expired early; get a fresh
     // one and retry once. The refused response is never parsed, so its
     // thinking cannot mix with the retry's.
     if (provider.config.auth === 'githubCopilot' && stream.result.response.status === 401) {
       await sbp('dez.http/cancelStream', stream.result.requestId)
-      stream = await nativeChatStream(provider, input, requestId, true)
+      stream = await nativeChatStream(provider, input, messages, requestId, true)
     }
 
     const thinkingReplay = await streamProviderTokens(provider, input, stream.result, stream.thinking)

@@ -23,6 +23,13 @@ export interface PromptNode {
 
 export type ContentNode = TextNode | PromptNode
 
+/** One part of a user message to a model: text, or a stored image by its
+ *  absolute path (an image reference, `images.ts`). `dez.provider/streamChat`
+ *  reads the bytes. */
+export type MessagePart =
+  | { type: 'text'; text: string }
+  | { type: 'image'; path: string }
+
 /** A provider and a model, e.g. `openrouter` + `anthropic/claude-sonnet-4.5`. */
 export interface ModelRef {
   providerId: string

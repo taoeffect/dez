@@ -4,7 +4,7 @@ import { afterEach, beforeEach, describe, expect, it, vi, type MockInstance } fr
 import type { ActiveModel, Section, SectionThinking, Tab } from '../model/chat/types'
 import { sectionVisibleText } from '../model/chat/content'
 import type { ConversationData } from '../model/persistence/types'
-import type { ChatMessage, ProviderStreamChatInput, ProviderStreamChatResult } from '../model/providers'
+import type { ProviderChatInputMessage, ProviderStreamChatInput, ProviderStreamChatResult } from '../model/providers'
 import type { ToastData } from '../view/toast/selectors'
 // Side-effect imports: register the dez.model/* selectors and the selectors
 // under test.
@@ -460,7 +460,7 @@ describe('dez.controller/submitTab thinking send-back', () => {
       { id: 'a3', role: 'agent', content: [{ kind: 'text', text: 'No replay' }], model, thinking: { text: 'Pasted' } },
       { id: 'u2', role: 'user', content: [{ kind: 'text', text: 'Was agent' }], model, thinking: { text: 'Toggled', replay }, durationMs: 900 },
     ])
-    let sent: ChatMessage[] = []
+    let sent: ProviderChatInputMessage[] = []
     streamChat = async (input) => {
       sent = input.messages
       return { requestId: input.requestId as string }
@@ -475,5 +475,67 @@ describe('dez.controller/submitTab thinking send-back', () => {
       { role: 'agent', content: 'No replay' },
       { role: 'user', content: 'Was agent' },
     ])
+  })
+})
+
+describe('dez.controller/submitTab images', () => {
+  const image = (name: string) => `/home/u/.config/dez/assets/images/${name}`
+  let sent: ProviderChatInputMessage[] = []
+
+  beforeEach(() => {
+    sent = []
+    streamChat = async (input) => {
+      sent = input.messages
+      return { requestId: input.requestId as string }
+    }
+    sbp('dez.model/setActiveModel', model.providerId, model.modelId, model.modelName)
+    sbp('dez.model/tabs/replaceSections', activeTab().id, [
+      { id: 'u1', role: 'user', content: [{ kind: 'text', text: `Look:\n![${image('one.png')}]()\n![${image('two.jpg')}]()\nWhich is brighter?` }] },
+      { id: 'a1', role: 'agent', content: [{ kind: 'text', text: `This one: ![${image('one.png')}]()` }], model },
+      { id: 'u2', role: 'user', content: [{ kind: 'text', text: `![${image('three.webp')}]()` }] },
+    ])
+  })
+
+  it('sends the images of user sections as parts in doc order, and agent text as it is', async () => {
+    await sbp('dez.controller/submitTab', activeTab().id)
+
+    expect(sent).toStrictEqual([
+      {
+        role: 'user',
+        content: [
+          { type: 'text', text: 'Look:\n' },
+          { type: 'image', path: image('one.png') },
+          { type: 'image', path: image('two.jpg') },
+          { type: 'text', text: '\nWhich is brighter?' },
+        ],
+      },
+      { role: 'agent', content: `This one: ![${image('one.png')}]()` },
+      { role: 'user', content: [{ type: 'image', path: image('three.webp') }] },
+    ])
+    expect(toasts).toEqual([])
+  })
+
+  it('sends [image] in place of each user image to a model that does not read images, and says so', async () => {
+    sbp('dez.model/modelCache/applyProviderResult', model.providerId, {
+      ok: true,
+      models: [{ id: model.modelId, name: model.modelName, provider: model.providerId, imageInput: false }],
+    })
+
+    await sbp('dez.controller/submitTab', activeTab().id)
+
+    expect(sent).toStrictEqual([
+      { role: 'user', content: 'Look:\n[image]\n[image]\nWhich is brighter?' },
+      { role: 'agent', content: `This one: ![${image('one.png')}]()` },
+      { role: 'user', content: '[image]' },
+    ])
+    expect(toasts).toStrictEqual([{
+      area: 'app-global',
+      data: {
+        variant: 'warning',
+        title: 'Images not sent',
+        message: 'M does not read images, so 3 images were left out of the request.',
+        duration: 8000,
+      },
+    }])
   })
 })

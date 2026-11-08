@@ -159,11 +159,15 @@ export class Provider {
     const thinkingBody = thinkingOn ? (thinking.enabledBody ?? this.format.thinkingBody) : thinking?.disabledBody
     if (thinkingBody) mergeBodyPart(body, thinkingBody)
 
+    // Some providers need a header to accept images (GitHub Copilot).
+    const hasImages = messages.some((message) =>
+      typeof message.content !== 'string' && message.content.some((part) => part.type === 'image'))
+
     return {
       request: {
         method: 'POST',
         url: this.format.chatUrl(this.config.baseUrl),
-        headers: this.requestHeaders(secret, { 'Content-Type': 'application/json' }),
+        headers: this.requestHeaders(secret, { 'Content-Type': 'application/json' }, hasImages ? this.config.imageRequestHeaders : undefined),
         body: JSON.stringify(body),
       },
       ...(thinkingOn && { thinking: { prefixHash } }),
@@ -178,13 +182,19 @@ export class Provider {
   // The native bridge appends every header entry and header names are
   // case-insensitive, so the layers merge by lower-cased name to never send
   // a name twice. Later layers win: request defaults, the format's fixed
-  // headers, the config's static headers, then the stored key, so a static
+  // headers, the config's static headers, the config's image headers (only
+  // on a chat request with an image), then the stored key, so a static
   // header never replaces a key the user saved.
-  private requestHeaders(secret: Secret<string> | null, requestDefaults: NativeHttpHeaders): NativeHttpHeaders {
+  private requestHeaders(
+    secret: Secret<string> | null,
+    requestDefaults: NativeHttpHeaders,
+    imageHeaders: NativeHttpHeaders = {},
+  ): NativeHttpHeaders {
     const layers = [
       requestDefaults,
       this.format.headers,
       this.config.headers ?? {},
+      imageHeaders,
       secret ? this.format.authHeaders(secret) : {},
     ]
     const merged = new Map<string, [string, string]>()

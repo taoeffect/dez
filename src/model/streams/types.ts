@@ -1,4 +1,4 @@
-import type { ActiveModel, Role, SectionThinking } from '../chat/types'
+import type { ActiveModel, MessagePart, Role, SectionThinking } from '../chat/types'
 
 export type StreamStatus = 'idle' | 'streaming' | 'finished' | 'error' | 'cancelled'
 
@@ -6,10 +6,19 @@ export type StreamEndStatus = Exclude<StreamStatus, 'idle' | 'streaming'>
 
 export interface StreamMessage {
   role: Role
-  content: string
+  // Parts only for a user message with image references
+  // (sectionsToStreamMessages); a string otherwise.
+  content: string | MessagePart[]
   // Set only on an agent message whose thinking can go back to the request
   // model (sectionsToStreamMessages).
   thinking?: SectionThinking
+}
+
+export interface RequestMessages {
+  messages: StreamMessage[]
+  // The image references that went as the text `[image]`, because the
+  // request model does not read images.
+  imagesLeftOut: number
 }
 
 export interface StreamStartInput {

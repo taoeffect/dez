@@ -1,10 +1,6 @@
 import sbp from '@sbp/sbp'
 import { convertFileSrc } from '@tauri-apps/api/core'
-import { imageExtension, isImagePath, type ImageMediaType } from '../model/chat/images'
-
-// Relative to the app folder. The asset protocol scope in tauri.conf.json
-// serves only the files directly in this folder.
-const IMAGE_FOLDER = 'assets/images'
+import { IMAGE_FOLDER, imageExtension, isImagePath, type ImageMediaType } from '../model/chat/images'
 
 export default sbp('sbp/selectors/register', {
   // Stores the bytes of a pasted or dropped image under a new name, and
