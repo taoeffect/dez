@@ -76,7 +76,7 @@ function referencePath (reference: string): string {
   return reference.slice(2, reference.indexOf(']('))
 }
 
-interface EditorState {
+interface DocAndCaret {
   doc: string
   caret: number
 }
@@ -142,7 +142,7 @@ interface InsertedImage {
   to: number
 }
 
-function pastedImageView (image: InsertedImage): ShownImage {
+function shownPastedImage (image: InsertedImage): ShownImage {
   return { alt: path.basename(image.path), width: 48, height: 32 }
 }
 
@@ -165,10 +165,10 @@ describe('images', () => {
     }
   }
 
-  async function editorState (): Promise<EditorState> {
+  async function docAndCaret (): Promise<DocAndCaret> {
     return browser.execute(() => {
       const content = document.querySelector('.cm-content')
-      if (!content) throw new Error('editorState: .cm-content not found')
+      if (!content) throw new Error('docAndCaret: .cm-content not found')
       const view = Reflect.get(Reflect.get(content, 'cmTile'), 'root').view as EditorView
       return { doc: view.state.doc.toString(), caret: view.state.selection.main.head }
     })
@@ -408,7 +408,7 @@ describe('images', () => {
   // drop.
   async function expectDroppedImage (before: string[]): Promise<void> {
     await waitForValue(browser, 'dropped reference', async () => REFERENCE.test(await editorDoc(browser)), true)
-    const { doc, caret } = await editorState()
+    const { doc, caret } = await docAndCaret()
     const reference = doc.slice('Before '.length, doc.length - 'after'.length)
     expect(doc).toBe(`Before ${reference}after`)
     expect(caret).toBe('Before '.length + reference.length)
@@ -433,7 +433,7 @@ describe('images', () => {
     await typeKeys(browser, before)
     await pasteImage(PASTED_PNG)
     await waitForValue(browser, 'pasted reference', async () => REFERENCE.test(await editorDoc(browser)), true)
-    const pasted = await editorState()
+    const pasted = await docAndCaret()
     const reference = pasted.doc.slice(before.length)
     expect(pasted.doc.slice(0, before.length)).toBe(before)
     expect(reference).toBe(`![${referencePath(reference)}](id=a)`)
@@ -487,7 +487,7 @@ describe('images', () => {
     expect(image.path).toBe(path.join(imagesDir(), fileName))
     expect(await storedImages()).toEqual([...before, fileName].sort())
     expect(await fs.promises.readFile(image.path)).toEqual(PASTED_PNG)
-    await waitForValue(browser, 'shown image', shownImages, [pastedImageView(image)])
+    await waitForValue(browser, 'shown image', shownImages, [shownPastedImage(image)])
   })
 
   it('gives each image of a conversation its own id, shown with a trash at its top-right corner while the pointer is on the image', async () => {
@@ -508,7 +508,7 @@ describe('images', () => {
     await fs.promises.writeFile(wide, WIDE_PNG)
     await typeAtEnd(`\n![${wide}]()\n![${path.join(imagesDir(), 'gone.png')}](id=c)`)
     await waitForValue(browser, 'shown images', shownImages, [
-      pastedImageView(first),
+      shownPastedImage(first),
       { alt: path.basename(secondPath), width: 48, height: 32 },
       { alt: 'wide.png', width: 200, height: 60 },
     ])
@@ -604,7 +604,7 @@ describe('images', () => {
   it('asks before the trash deletes an image, and keeps it on No, Esc, or a click outside the prompt', async () => {
     await newTab()
     const image = await insertPastedImage('See ', ' here')
-    const shown = [pastedImageView(image)]
+    const shown = [shownPastedImage(image)]
     await waitForValue(browser, 'shown image', shownImages, shown)
     // The trash takes its own press, so the caret stays where it is.
     const unchanged = { doc: `See ${image.reference} here`, caret: 2 }
@@ -623,11 +623,11 @@ describe('images', () => {
         buttons: ['No', 'Yes'],
         focus: 'yes',
       })
-      expect(await editorState()).toEqual(unchanged)
+      expect(await docAndCaret()).toEqual(unchanged)
 
       await cancel()
       await waitForValue(browser, `prompt after ${label}`, promptState, { message: null, buttons: [], focus: 'editor' })
-      expect(await editorState()).toEqual(unchanged)
+      expect(await docAndCaret()).toEqual(unchanged)
       expect(await storedImages()).toContain(path.basename(image.path))
       expect(await shownImages()).toEqual(shown)
     }
@@ -638,7 +638,7 @@ describe('images', () => {
     const image = await insertPastedImage('See ', ' here')
     const gone = `![${path.join(imagesDir(), 'gone.png')}]()`
     await typeAtEnd(`\n${gone}`)
-    await waitForValue(browser, 'shown image', shownImages, [pastedImageView(image)])
+    await waitForValue(browser, 'shown image', shownImages, [shownPastedImage(image)])
     await waitForValue(browser, 'missing image box', () => browser.execute(
       () => document.querySelector('.cm-content .dez-image-missing')?.firstChild?.textContent ?? null,
     ), 'Image not found: gone.png')
@@ -653,7 +653,7 @@ describe('images', () => {
     await clickTrash(0)
     await waitForValue(browser, 'prompt', async () => (await promptState()).focus, 'yes')
     await pointerClick(browser, '.confirm-btn--confirm')
-    await waitForValue(browser, 'doc after Yes', editorState, { doc: `See  here\n${gone}`, caret: 2 })
+    await waitForValue(browser, 'doc after Yes', docAndCaret, { doc: `See  here\n${gone}`, caret: 2 })
     expect(await storedImages()).toEqual(otherImages)
     expect(await shownImages()).toEqual([])
     await waitForValue(browser, 'prompt after Yes', promptState, closed)
@@ -663,7 +663,7 @@ describe('images', () => {
     await clickTrash(0)
     await waitForValue(browser, 'prompt', async () => (await promptState()).focus, 'yes')
     await browser.keys(Key.Enter)
-    await waitForValue(browser, 'doc after Enter', editorState, { doc: 'See  here', caret: 2 })
+    await waitForValue(browser, 'doc after Enter', docAndCaret, { doc: 'See  here', caret: 2 })
     expect(await storedImages()).toEqual(otherImages)
     await waitForValue(browser, 'prompt after Enter', promptState, closed)
 
@@ -676,7 +676,7 @@ describe('images', () => {
   it('shows the source on Backspace after an image, and the image again on `)`, undo, and redo', async () => {
     await newTab()
     const image = await insertPastedImage('See ', ' here')
-    const shown = [pastedImageView(image)]
+    const shown = [shownPastedImage(image)]
     const withImage = { doc: `See ${image.reference} here`, caret: image.to }
     const source = { doc: `See ${image.reference.slice(0, -1)} here`, caret: image.to - 1 }
     await waitForValue(browser, 'shown image', shownImages, shown)
@@ -684,35 +684,35 @@ describe('images', () => {
 
     await browser.pause(UNDO_STEP_MS)
     await browser.keys(Key.Backspace)
-    await waitForValue(browser, 'doc after Backspace', editorState, source)
+    await waitForValue(browser, 'doc after Backspace', docAndCaret, source)
     await waitForValue(browser, 'images after Backspace', shownImages, [])
 
     await browser.pause(UNDO_STEP_MS)
     await typeKeys(browser, ')')
-    await waitForValue(browser, 'doc after `)`', editorState, withImage)
+    await waitForValue(browser, 'doc after `)`', docAndCaret, withImage)
     await waitForValue(browser, 'images after `)`', shownImages, shown)
 
     // Undo the `)`, then the Backspace; redo both.
     await browser.keys([Key.Control, 'z'])
-    await waitForValue(browser, 'doc after one undo', editorState, source)
+    await waitForValue(browser, 'doc after one undo', docAndCaret, source)
     await waitForValue(browser, 'images after one undo', shownImages, [])
     await browser.keys([Key.Control, 'z'])
-    await waitForValue(browser, 'doc after two undos', editorState, withImage)
+    await waitForValue(browser, 'doc after two undos', docAndCaret, withImage)
     await waitForValue(browser, 'images after two undos', shownImages, shown)
     await browser.keys([Key.Control, Key.Shift, 'z'])
-    await waitForValue(browser, 'doc after one redo', editorState, source)
+    await waitForValue(browser, 'doc after one redo', docAndCaret, source)
     await waitForValue(browser, 'images after one redo', shownImages, [])
     await browser.keys([Key.Control, Key.Shift, 'z'])
-    await waitForValue(browser, 'doc after two redos', editorState, withImage)
+    await waitForValue(browser, 'doc after two redos', docAndCaret, withImage)
     await waitForValue(browser, 'images after two redos', shownImages, shown)
   })
 
   it('moves the caret over an image with one arrow key press', async () => {
     await newTab()
     const image = await insertPastedImage('See ', ' here')
-    await waitForValue(browser, 'shown image', shownImages, [pastedImageView(image)])
+    await waitForValue(browser, 'shown image', shownImages, [shownPastedImage(image)])
     await setCaret(browser, image.from)
-    const caret = async (): Promise<number> => (await editorState()).caret
+    const caret = async (): Promise<number> => (await docAndCaret()).caret
 
     await browser.keys(Key.ArrowRight)
     await waitForValue(browser, 'caret after one ArrowRight', caret, image.to)
@@ -727,12 +727,12 @@ describe('images', () => {
   it('shows the source on Delete before an image, and the image again when `!` is typed', async () => {
     await newTab()
     const image = await insertPastedImage('See ', ' here')
-    const shown = [pastedImageView(image)]
+    const shown = [shownPastedImage(image)]
     await waitForValue(browser, 'shown image', shownImages, shown)
     await setCaret(browser, image.from)
 
     await browser.keys(Key.Delete)
-    await waitForValue(browser, 'doc after Delete', editorState, { doc: `See ${image.reference.slice(1)} here`, caret: image.from })
+    await waitForValue(browser, 'doc after Delete', docAndCaret, { doc: `See ${image.reference.slice(1)} here`, caret: image.from })
     await waitForValue(browser, 'images after Delete', shownImages, [])
 
     await typeKeys(browser, '!')
@@ -809,7 +809,7 @@ describe('images', () => {
     // wry passes on a URI that is not a `file://` URI as it is.
     const link = 'https://example.com/page'
     await nativeDrop(await docPoint('Some '.length), [link])
-    await waitForValue(browser, 'dropped link', editorState, { doc: `Some ${link}text`, caret: 'Some '.length + link.length })
+    await waitForValue(browser, 'dropped link', docAndCaret, { doc: `Some ${link}text`, caret: 'Some '.length + link.length })
     expect(await storedImages()).toEqual(before)
   })
 
@@ -900,7 +900,7 @@ describe('images', () => {
     await waitForValue(browser, 'restored active tab', activeConversationId, lastActive)
     await sbpCall(browser, 'dez.model/tabs/openConversation', conversationId)
     await waitForValue(browser, 'reopened conversation', async () => (await threadSections(browser))[0]?.text ?? null, image.reference + QUESTION)
-    await waitForValue(browser, 'shown image', shownImages, [pastedImageView(image)])
+    await waitForValue(browser, 'shown image', shownImages, [shownPastedImage(image)])
     expect(await activeTabTitle()).toBe(`[image]${QUESTION}`)
   })
 })
