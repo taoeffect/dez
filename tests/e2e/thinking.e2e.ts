@@ -6,7 +6,7 @@ import { Key } from 'webdriverio'
 import { startApp, type RunningApp } from './harness/app'
 import { click, closeSettings, consoleErrors, resetConsoleErrors, screenshotOnFailure, waitFor, waitForValue } from './harness/dom'
 import { conversationFilePath, makeConversation, readAppState, seedConversation, seedRawAppState } from './harness/fixtures'
-import { startChatMock, startEventStream, writeChatFrame, type MockServer } from './harness/mockServer'
+import { startChatMock, startEventStream, writeAnthropicEvent, writeChatFrame, type MockServer } from './harness/mockServer'
 import { createSession, destroySession, type E2EBrowser } from './harness/session'
 import { activeTabStreaming, maskPillDuration, pickModel, pressRolePill, sbpCall, submit, threadSections, waitForThread } from './harness/thread'
 
@@ -140,25 +140,22 @@ async function sendOpenAiReply (res: http.ServerResponse, n: number, state: Mock
 
 // Streams the nth reply of the Anthropic route: one signed thinking block,
 // then the answer block.
-function sendAnthropicReply (res: http.ServerResponse, n: number): void {
+function sendClaudeReply (res: http.ServerResponse, n: number): void {
   startEventStream(res)
-  const event = (data: Record<string, unknown>): void => {
-    res.write(`event: ${String(data.type)}\ndata: ${JSON.stringify(data)}\n\n`)
-  }
   const block = claudeBlock(n)
-  event({
+  writeAnthropicEvent(res, {
     type: 'message_start',
     message: { id: `msg_${n}`, type: 'message', role: 'assistant', model: CLAUDE.modelId, content: [], stop_reason: null, usage: { input_tokens: 1, output_tokens: 1 } },
   })
-  event({ type: 'content_block_start', index: 0, content_block: { type: 'thinking', thinking: '', signature: '' } })
-  event({ type: 'content_block_delta', index: 0, delta: { type: 'thinking_delta', thinking: block.thinking } })
-  event({ type: 'content_block_delta', index: 0, delta: { type: 'signature_delta', signature: block.signature } })
-  event({ type: 'content_block_stop', index: 0 })
-  event({ type: 'content_block_start', index: 1, content_block: { type: 'text', text: '' } })
-  event({ type: 'content_block_delta', index: 1, delta: { type: 'text_delta', text: claudeAnswer(n) } })
-  event({ type: 'content_block_stop', index: 1 })
-  event({ type: 'message_delta', delta: { stop_reason: 'end_turn' }, usage: { output_tokens: 5 } })
-  event({ type: 'message_stop' })
+  writeAnthropicEvent(res, { type: 'content_block_start', index: 0, content_block: { type: 'thinking', thinking: '', signature: '' } })
+  writeAnthropicEvent(res, { type: 'content_block_delta', index: 0, delta: { type: 'thinking_delta', thinking: block.thinking } })
+  writeAnthropicEvent(res, { type: 'content_block_delta', index: 0, delta: { type: 'signature_delta', signature: block.signature } })
+  writeAnthropicEvent(res, { type: 'content_block_stop', index: 0 })
+  writeAnthropicEvent(res, { type: 'content_block_start', index: 1, content_block: { type: 'text', text: '' } })
+  writeAnthropicEvent(res, { type: 'content_block_delta', index: 1, delta: { type: 'text_delta', text: claudeAnswer(n) } })
+  writeAnthropicEvent(res, { type: 'content_block_stop', index: 1 })
+  writeAnthropicEvent(res, { type: 'message_delta', delta: { stop_reason: 'end_turn' }, usage: { output_tokens: 5 } })
+  writeAnthropicEvent(res, { type: 'message_stop' })
   res.end()
 }
 
@@ -341,7 +338,7 @@ describe('thinking', () => {
       const path = req.url ?? ''
       mock.requests.push({ path, body: JSON.parse(body) as Record<string, unknown> })
       const n = mock.requests.filter((request) => request.path === path).length
-      if (path === CLAUDE_CHAT) sendAnthropicReply(res, n)
+      if (path === CLAUDE_CHAT) sendClaudeReply(res, n)
       else await sendOpenAiReply(res, n, mock)
     })
     app = await startApp()

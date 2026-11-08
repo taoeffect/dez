@@ -5,7 +5,7 @@ import { click, consoleErrors, openHistoryPanel, pointerClick, pointerDoubleClic
 import { startMockProviderApp } from './harness/mockProviderApp'
 import { replyText, sendChatReply, startEventStream, writeChatFrame, type HeldRequest, type HoldingChatMock, type MockProvider } from './harness/mockServer'
 import type { E2EBrowser } from './harness/session'
-import { activeTabStreaming, editorDoc, focusEditor, focusedArea, openErrorToasts, openPicker, sbpCall, submit, threadSections, waitForThread } from './harness/thread'
+import { activeTabStreaming, editorDoc, focusEditor, focusedArea, openPicker, openToasts, sbpCall, submit, threadSections, waitForThread } from './harness/thread'
 
 // Esc and the Submit/Stop button of the bottom bar stop the stream of the
 // active tab, through the real app against a mock server in this process.
@@ -419,6 +419,6 @@ describe('submit and stop a streaming reply', () => {
     expect(layout.buttonHit, 'the button center is clickable').toBe(true)
 
     await click(browser, '.toast-card--error .toast-close')
-    await waitForValue(browser, 'open error toasts', () => openErrorToasts(browser), [])
+    await waitForValue(browser, 'open error toasts', () => openToasts(browser, 'error'), [])
   })
 })

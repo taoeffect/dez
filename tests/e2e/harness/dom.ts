@@ -143,8 +143,14 @@ export async function click (browser: E2EBrowser, selector: string): Promise<voi
   }, selector)
 }
 
-/** The center of an element in viewport px, for WebDriver pointer actions. */
-async function elementCenter (browser: E2EBrowser, selector: string): Promise<{ x: number, y: number }> {
+/** A point in viewport px, for WebDriver pointer actions. */
+export interface Point {
+  x: number
+  y: number
+}
+
+/** The center of an element in viewport px, rounded. */
+export async function elementCenter (browser: E2EBrowser, selector: string): Promise<Point> {
   return browser.execute((sel: string) => {
     const el = document.querySelector(sel)
     if (!el) throw new Error(`elementCenter: element not found: ${sel}`)
@@ -153,22 +159,33 @@ async function elementCenter (browser: E2EBrowser, selector: string): Promise<{ 
   }, selector)
 }
 
-/**
- * Click the center of an element with WebDriver pointer actions: a real
- * mousedown, mouseup, and click, with the browser's default actions (the
- * focus moves unless the page prevents the mousedown). WebKitWebDriver
- * accepts pointer actions, unlike the `element/click` endpoint (see
- * `click`). Each call starts a new click series (`event.detail` is 1), also
- * right after another call at the same place; for a double-click, use
- * `pointerDoubleClick`.
- */
-export async function pointerClick (browser: E2EBrowser, selector: string): Promise<void> {
-  const center = await elementCenter(browser, selector)
+/** Move the mouse pointer to `point`, with no button down. */
+export async function movePointer (browser: E2EBrowser, point: Point): Promise<void> {
   await browser.action('pointer', { parameters: { pointerType: 'mouse' } })
-    .move({ x: center.x, y: center.y, origin: 'viewport' })
-    .down({ button: 0 })
-    .up({ button: 0 })
+    .move({ x: Math.round(point.x), y: Math.round(point.y), origin: 'viewport' })
     .perform()
+}
+
+/**
+ * Click at `point` with WebDriver pointer actions: a real mousedown,
+ * mouseup, and click, with the browser's default actions (the focus moves
+ * unless the page prevents the mousedown). WebKitWebDriver accepts pointer
+ * actions, unlike the `element/click` endpoint (see `click`). `count`
+ * clicks with no pause between them: 2 is a double-click, 3 a triple-click.
+ * Each call starts a new click series (`event.detail` is 1), also right
+ * after another call at the same place; for a double-click with a set gap,
+ * use `pointerDoubleClick`.
+ */
+export async function pointerClickAt (browser: E2EBrowser, point: Point, count = 1): Promise<void> {
+  let action = browser.action('pointer', { parameters: { pointerType: 'mouse' } })
+    .move({ x: Math.round(point.x), y: Math.round(point.y), origin: 'viewport' })
+  for (let i = 0; i < count; i++) action = action.down({ button: 0 }).up({ button: 0 })
+  await action.perform()
+}
+
+/** Click the center of an element with `pointerClickAt`. */
+export async function pointerClick (browser: E2EBrowser, selector: string): Promise<void> {
+  await pointerClickAt(browser, await elementCenter(browser, selector))
 }
 
 /**

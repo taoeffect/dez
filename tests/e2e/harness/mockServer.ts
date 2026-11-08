@@ -161,6 +161,11 @@ export function writeChatFrame (res: http.ServerResponse, delta: Record<string, 
   res.write(`data: ${JSON.stringify({ choices: [{ index: 0, delta, finish_reason: finishReason }] })}\n\n`)
 }
 
+/** Writes one Anthropic Messages SSE event; its `type` names the event. */
+export function writeAnthropicEvent (res: http.ServerResponse, data: Record<string, unknown>): void {
+  res.write(`event: ${String(data.type)}\ndata: ${JSON.stringify(data)}\n\n`)
+}
+
 // The reply streams in several chunks and names `name`, so a test can see
 // which request a reply answers.
 function replyTokens (name: string): string[] {
@@ -186,17 +191,14 @@ export async function sendChatReply (res: http.ServerResponse, name: string, hol
  *  Messages SSE events: one text block in several deltas. */
 export function sendAnthropicReply (res: http.ServerResponse, name: string): void {
   startEventStream(res)
-  const event = (data: Record<string, unknown>): void => {
-    res.write(`event: ${String(data.type)}\ndata: ${JSON.stringify(data)}\n\n`)
-  }
-  event({
+  writeAnthropicEvent(res, {
     type: 'message_start',
     message: { id: 'msg_mock', type: 'message', role: 'assistant', content: [], stop_reason: null, usage: { input_tokens: 1, output_tokens: 1 } },
   })
-  event({ type: 'content_block_start', index: 0, content_block: { type: 'text', text: '' } })
-  for (const token of replyTokens(name)) event({ type: 'content_block_delta', index: 0, delta: { type: 'text_delta', text: token } })
-  event({ type: 'content_block_stop', index: 0 })
-  event({ type: 'message_delta', delta: { stop_reason: 'end_turn' }, usage: { output_tokens: 4 } })
-  event({ type: 'message_stop' })
+  writeAnthropicEvent(res, { type: 'content_block_start', index: 0, content_block: { type: 'text', text: '' } })
+  for (const token of replyTokens(name)) writeAnthropicEvent(res, { type: 'content_block_delta', index: 0, delta: { type: 'text_delta', text: token } })
+  writeAnthropicEvent(res, { type: 'content_block_stop', index: 0 })
+  writeAnthropicEvent(res, { type: 'message_delta', delta: { stop_reason: 'end_turn' }, usage: { output_tokens: 4 } })
+  writeAnthropicEvent(res, { type: 'message_stop' })
   res.end()
 }

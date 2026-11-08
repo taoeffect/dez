@@ -1,23 +1,16 @@
 import { afterAll, afterEach, beforeAll, describe, expect, it } from 'vitest'
 import { startApp, type RunningApp } from './harness/app'
-import { screenshotOnFailure, waitFor, waitForValue } from './harness/dom'
+import { movePointer, screenshotOnFailure, waitFor, waitForValue, type Point } from './harness/dom'
 import { seedAppState } from './harness/fixtures'
 import { createSession, destroySession, type E2EBrowser } from './harness/session'
+import { openToasts } from './harness/thread'
 
 const DURATION_MS = 2000
 const MESSAGE = 'Toast hover e2e'
-
-// Messages of the toasts that are shown and not closing.
-async function openToastMessages (browser: E2EBrowser): Promise<string[]> {
-  return browser.execute(() => Array.from(
-    document.querySelectorAll('.toast-card:not(.toast-card--closing) .toast-message'),
-    (el) => el.textContent ?? ''
-  ))
-}
-
-async function movePointerOffToasts (browser: E2EBrowser): Promise<void> {
-  await browser.action('pointer').move({ x: 20, y: 300, origin: 'viewport' }).perform()
-}
+// The toast as `openToasts` reads it: it has no title.
+const SHOWN = [{ title: '', message: MESSAGE }]
+// Far from the toasts, which show at the lower right.
+const OFF_TOASTS: Point = { x: 20, y: 300 }
 
 describe('toast hover', () => {
   let app: RunningApp
@@ -45,20 +38,20 @@ describe('toast hover', () => {
   })
 
   it('pauses a self-closing toast while the pointer is on it', async () => {
-    await movePointerOffToasts(browser)
+    await movePointer(browser, OFF_TOASTS)
     await browser.execute((message: string, duration: number) => {
       const sbp = Reflect.get(window, 'sbp') as (selector: string, ...args: unknown[]) => unknown
       sbp('dez.ui/toast', 'app-global', { message, duration })
     }, MESSAGE, DURATION_MS)
-    await waitForValue(browser, 'toast shown', () => openToastMessages(browser), [MESSAGE])
+    await waitForValue(browser, 'toast shown', () => openToasts(browser), SHOWN)
 
     await (await browser.$('.toast-card')).moveTo()
     await browser.pause(DURATION_MS + 1000)
-    expect(await openToastMessages(browser), 'toast open while hovered').toEqual([MESSAGE])
+    expect(await openToasts(browser), 'toast open while hovered').toEqual(SHOWN)
 
     // The timer continues from where it paused, so some time remains.
-    await movePointerOffToasts(browser)
-    expect(await openToastMessages(browser), 'toast open right after the pointer leaves').toEqual([MESSAGE])
-    await waitForValue(browser, 'toast closed after the remaining time', () => openToastMessages(browser), [])
+    await movePointer(browser, OFF_TOASTS)
+    expect(await openToasts(browser), 'toast open right after the pointer leaves').toEqual(SHOWN)
+    await waitForValue(browser, 'toast closed after the remaining time', () => openToasts(browser), [])
   })
 })

@@ -4,7 +4,7 @@ import type { EditorView } from '@codemirror/view'
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from 'vitest'
 import { Key } from 'webdriverio'
 import { startApp, type RunningApp } from './harness/app'
-import { consoleErrors, resetConsoleErrors, screenshotOnFailure, waitFor, waitForValue } from './harness/dom'
+import { consoleErrors, resetConsoleErrors, screenshotOnFailure, waitFor, waitForValue, type Point } from './harness/dom'
 import { makeConversation, seedAppState, seedConversation } from './harness/fixtures'
 import { createSession, destroySession, type E2EBrowser } from './harness/session'
 import { focusEditor } from './harness/thread'
@@ -45,11 +45,6 @@ const DRAG_TO_LINE = 285
 const CLICK_LINE = 5
 
 const LONG_TEXT = Array.from({ length: 300 }, (_, i) => `Line ${i} with some words to make it a bit longer.`).join('\n')
-
-interface Point {
-  x: number
-  y: number
-}
 
 interface EditorSnapshot {
   scrollTop: number

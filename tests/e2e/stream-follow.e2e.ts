@@ -7,7 +7,7 @@ import { consoleErrors, resetConsoleErrors, screenshotOnFailure, waitFor, waitFo
 import { makeConversation, seedConversation, seedRawAppState } from './harness/fixtures'
 import { mockChatPath, mockProviderConfig, startChatMock, startEventStream, writeChatFrame, type MockProvider, type MockServer } from './harness/mockServer'
 import { createSession, destroySession, type E2EBrowser } from './harness/session'
-import { activeTabStreaming, openErrorToasts, pickModel, sbpCall, submit, threadSections } from './harness/thread'
+import { activeTabStreaming, openToasts, pickModel, sbpCall, submit, threadSections } from './harness/thread'
 
 // How the thread editor scrolls while a reply streams, driven through the
 // real app against a mock server in this process:
@@ -140,7 +140,7 @@ describe('stream follow', () => {
   async function waitForReplyEnd (): Promise<void> {
     await waitForValue(browser, 'streaming', () => activeTabStreaming(browser), false)
     await waitForValue(browser, 'trailing user section', async () => (await threadSections(browser)).at(-1), { role: 'user', text: '' })
-    expect(await openErrorToasts(browser)).toEqual([])
+    expect(await openToasts(browser, 'error')).toEqual([])
     // The editor rebuilds its state from the store a tick after the end,
     // then scrolls in a later frame. Give a wrong scroll time to happen.
     await browser.pause(300)

@@ -231,7 +231,7 @@ Brief comments are encouraged above functions that do anything non-trivial expla
 - E2E cannot send real clipboard data or OS file drags: `tests/e2e/images.e2e.ts` builds paste and drop events in the page and emits `tauri://drag-drop`; the manual recipe for real ones is in `vitest.e2e.config.ts`.
 - E2E specs that restart the app use `MockProviderApp.relaunch()` (`tests/e2e/harness/mockProviderApp.ts`).
 - E2E seeds turn the reply-end alerts off (`quietAppState`, `tests/e2e/harness/fixtures.ts`). Alert specs use the fake notification server (`tests/e2e/harness/notificationServer.ts`) and `setUserIdleMs` (`tests/e2e/notifications.e2e.ts`).
-- E2E clicks: never use webdriverio's `.click()`; use `click()` or `pointerClick()` from `tests/e2e/harness/dom.ts`.
+- E2E clicks: never use webdriverio's `.click()`; use `click()`, `pointerClick()`, or `pointerClickAt()` from `tests/e2e/harness/dom.ts`. Shared spec helpers (pointer, caret, doc, toasts, mock replies) are in `tests/e2e/harness/`; never copy one into a spec.
 - E2E specs that open a URL stop `dez.controller/openUrl` with an SBP filter, so no browser opens (`tests/e2e/links.e2e.ts`).
 - **No display server** (every spec fails with `Hook timed out in 120000ms` in `beforeAll`): run under headless `kwin_wayland`; the recipe is in `vitest.e2e.config.ts`.
 - For UI changes beyond unit-testable logic, also check by hand with `npm run tauri dev`.

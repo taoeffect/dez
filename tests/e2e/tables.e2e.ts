@@ -3,7 +3,7 @@ import { OVERLAY_SCROLLBAR_PX } from '../../src/view/editor/tables'
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from 'vitest'
 import { Key } from 'webdriverio'
 import { startApp, type RunningApp } from './harness/app'
-import { consoleErrors, resetConsoleErrors, screenshotOnFailure, typeKeys, waitFor, waitForValue } from './harness/dom'
+import { consoleErrors, pointerClickAt, resetConsoleErrors, screenshotOnFailure, typeKeys, waitFor, waitForValue, type Point } from './harness/dom'
 import { makeConversation, seedAppState, seedConversation } from './harness/fixtures'
 import { createSession, destroySession, type E2EBrowser } from './harness/session'
 import { focusEditor } from './harness/thread'
@@ -113,11 +113,6 @@ const USER_TABLE_TEXT = ['User table fixture.', '', ...[
 const MID_WORD = 'm'.repeat(30)
 const LONG_WORD = 'l'.repeat(150)
 const LONG_WORDS_TEXT = ['Long words fixture.', '', '| Id | Mid | Long |', '|----|-----|------|', `| abcdef | ${MID_WORD} | ${LONG_WORD} |`].join('\n')
-
-interface Point {
-  x: number
-  y: number
-}
 
 interface Box {
   left: number
@@ -353,14 +348,6 @@ describe('markdown tables', () => {
     expect(box.bottom).toBeLessThanOrEqual(outer.bottom + 0.5)
   }
 
-  // `count` clicks at one point: 2 is a double-click, 3 a triple-click.
-  async function clickAt (point: Point, count = 1): Promise<void> {
-    let action = browser.action('pointer', { parameters: { pointerType: 'mouse' } })
-      .move({ x: Math.round(point.x), y: Math.round(point.y), origin: 'viewport' })
-    for (let i = 0; i < count; i++) action = action.down({ button: 0 }).up({ button: 0 })
-    await action.perform()
-  }
-
   // Seed `text` as the user section of a new conversation, open it in a new
   // tab, and put the cursor at the doc start. The agent section ends with
   // the fixture id, so the wait cannot match an older tab's editor.
@@ -454,7 +441,7 @@ describe('markdown tables', () => {
     // Click on the right half of the last "n" of "Ann": caret after it.
     const afterAnn = await docPos(ANN_ROW, '| Ann'.length)
     const point = await pointAt(afterAnn, -1)
-    await clickAt({ x: point.x - 2, y: point.y })
+    await pointerClickAt(browser, { x: point.x - 2, y: point.y })
     await waitForValue(browser, 'caret after the click', caret, afterAnn)
 
     await typeKeys(browser, 'ie')
@@ -471,7 +458,7 @@ describe('markdown tables', () => {
     // Click on the left half of the "S" of "Score", then step back over the
     // space: the caret is right after the pipe that starts the cell.
     const point = await pointAt(pipe + 2, 1)
-    await clickAt({ x: point.x + 2, y: point.y })
+    await pointerClickAt(browser, { x: point.x + 2, y: point.y })
     await waitForValue(browser, 'caret before "Score"', caret, pipe + 2)
     await browser.keys(Key.ArrowLeft)
     await waitForValue(browser, 'caret after the pipe', caret, pipe + 1)
@@ -587,7 +574,7 @@ describe('markdown tables', () => {
     // is drawn as one rect over the whole cell.
     const rowFrom = await docPos(WRAP_ROW)
     const wCell = await pointAt(rowFrom + 2, 1)
-    await clickAt({ x: wCell.x + 2, y: wCell.y }, 3)
+    await pointerClickAt(browser, { x: wCell.x + 2, y: wCell.y }, 3)
     await waitForValue(browser, 'row selection', async () => {
       const { anchor, head } = await editorSnapshot()
       return [Math.min(anchor, head), Math.max(anchor, head)]
@@ -820,7 +807,7 @@ describe('markdown tables', () => {
     const clickBeside = async (column: number, side: 'left' | 'right', edge: number, typed: string): Promise<void> => {
       const cell = (await rowCellBoxes(' |  Ann'))[column]
       const point = await pointAt(edge, side === 'left' ? 1 : -1)
-      await clickAt({ x: side === 'left' ? (cell.left + point.x) / 2 : (point.x + cell.right) / 2, y: point.y })
+      await pointerClickAt(browser, { x: side === 'left' ? (cell.left + point.x) / 2 : (point.x + cell.right) / 2, y: point.y })
       await waitForValue(browser, `caret after a click ${side} of the text in column ${column}`, caret, edge)
       const before = (await editorSnapshot()).doc
       await typeKeys(browser, typed)
@@ -908,7 +895,7 @@ describe('markdown tables', () => {
     // A triple-click on the line right above the header selects that line
     // up to the table start. Nothing in the header row is selected.
     const intro = await pointAt(introFrom + 2, 1)
-    await clickAt({ x: intro.x + 2, y: intro.y }, 3)
+    await pointerClickAt(browser, { x: intro.x + 2, y: intro.y }, 3)
     await waitForValue(browser, 'intro line selection', selection, [introFrom, tableFrom])
     expect(await headerBandBoxes()).toEqual([])
 
@@ -954,9 +941,9 @@ describe('markdown tables', () => {
     }, rowY, OVERLAY_SCROLLBAR_PX)
     expect(margins).toMatchObject({ leftHitsScroller: true, rightHitsScroller: true })
 
-    await clickAt(margins.left)
+    await pointerClickAt(browser, margins.left)
     await waitForValue(browser, 'caret after a click left of the row', caret, rowFrom)
-    await clickAt(margins.right)
+    await pointerClickAt(browser, margins.right)
     await waitForValue(browser, 'caret after a click right of the row', caret, rowTo)
     expect(await lineState(BOB_ROW)).toBe('table')
   })

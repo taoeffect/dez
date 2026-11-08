@@ -4,12 +4,12 @@ import zlib from 'node:zlib'
 import type { EditorView } from '@codemirror/view'
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from 'vitest'
 import { Key } from 'webdriverio'
-import { consoleErrors, pointerClick, resetConsoleErrors, screenshotOnFailure, typeKeys, waitForValue } from './harness/dom'
+import { consoleErrors, elementCenter, movePointer, pointerClick, pointerClickAt, resetConsoleErrors, screenshotOnFailure, typeKeys, waitForValue, type Point } from './harness/dom'
 import { conversationFilePath } from './harness/fixtures'
 import { startMockProviderApp, type MockProviderApp } from './harness/mockProviderApp'
 import { mockChatPath, replyText, sendAnthropicReply, sendChatReply, type HeldRequest, type MockProvider } from './harness/mockServer'
 import type { E2EBrowser } from './harness/session'
-import { activeTabId, focusEditor, pickModel, sbpCall, threadSections, waitForThread } from './harness/thread'
+import { activeTabId, editorDoc, focusEditor, openToasts, pickModel, sbpCall, setCaret, threadSections, waitForThread } from './harness/thread'
 
 // Images in a conversation, driven through the real app: a paste or a drop
 // stores the file and puts its reference, with a new image id, in the doc,
@@ -133,11 +133,6 @@ interface DroppedFile {
   base64: string
 }
 
-interface Point {
-  x: number
-  y: number
-}
-
 interface InsertedImage {
   path: string
   /** `![<path>](id=a)`: each test puts it in a new tab, so its id is `a`. */
@@ -179,15 +174,6 @@ describe('images', () => {
     })
   }
 
-  async function setCaret (pos: number): Promise<void> {
-    await browser.execute((anchor: number) => {
-      const content = document.querySelector('.cm-content')
-      if (!content) throw new Error('setCaret: .cm-content not found')
-      const view = Reflect.get(Reflect.get(content, 'cmTile'), 'root').view as EditorView
-      view.dispatch({ selection: { anchor } })
-    }, pos)
-  }
-
   async function shownImages (): Promise<ShownImage[]> {
     return browser.execute(() => Array.from(
       document.querySelectorAll<HTMLImageElement>('.cm-content .dez-image__img'),
@@ -223,22 +209,6 @@ describe('images', () => {
     }, index)
   }
 
-  // Moves the mouse pointer to `point` (viewport px), with no button down.
-  async function movePointer (point: Point): Promise<void> {
-    await browser.action('pointer', { parameters: { pointerType: 'mouse' } })
-      .move({ x: Math.round(point.x), y: Math.round(point.y), origin: 'viewport' })
-      .perform()
-  }
-
-  // Clicks at `point` (viewport px) with real pointer events.
-  async function clickAt (point: Point): Promise<void> {
-    await browser.action('pointer', { parameters: { pointerType: 'mouse' } })
-      .move({ x: Math.round(point.x), y: Math.round(point.y), origin: 'viewport' })
-      .down({ button: 0 })
-      .up({ button: 0 })
-      .perform()
-  }
-
   // The center of the overlay item `selector` (`.dez-image__id` or
   // `.dez-image__trash`) of the image (or of the "Image not found" box) at
   // `index`, in doc order.
@@ -255,15 +225,15 @@ describe('images', () => {
   // the "Image not found" box) at `index`, in doc order. The pointer first
   // goes onto the image, as a user's does, which shows the overlay.
   async function hoverOverlayItem (index: number, selector: string): Promise<void> {
-    await movePointer(await imageCenter(index))
-    await movePointer(await overlayItemCenter(index, selector))
+    await movePointer(browser, await imageCenter(index))
+    await movePointer(browser, await overlayItemCenter(index, selector))
   }
 
   // Clicks the trash of the image (or of the "Image not found" box) at
   // `index`, in doc order, after the pointer went onto the image.
   async function clickTrash (index: number): Promise<void> {
-    await movePointer(await imageCenter(index))
-    await clickAt(await overlayItemCenter(index, '.dez-image__trash'))
+    await movePointer(browser, await imageCenter(index))
+    await pointerClickAt(browser, await overlayItemCenter(index, '.dez-image__trash'))
   }
 
   // Where the overlay of the image at `index` (doc order) sits, once the
@@ -358,24 +328,6 @@ describe('images', () => {
     return tab.conversationId
   }
 
-  // Messages of the toasts that are shown and not closing.
-  async function openToastMessages (): Promise<string[]> {
-    return browser.execute(() => Array.from(
-      document.querySelectorAll('.toast-card:not(.toast-card--closing) .toast-message'),
-      (el) => el.textContent ?? '',
-    ))
-  }
-
-  async function openWarningToasts (): Promise<Array<{ title: string, message: string }>> {
-    return browser.execute(() => Array.from(
-      document.querySelectorAll('.toast-card--warning:not(.toast-card--closing)'),
-      (card) => ({
-        title: card.querySelector('.toast-title')?.textContent ?? '',
-        message: card.querySelector('.toast-message')?.textContent ?? '',
-      }),
-    ))
-  }
-
   // Closes every toast, so that a test sees only the toasts it causes (the
   // non-image toast of one drop test stays open into the next).
   async function closeToasts (): Promise<void> {
@@ -396,15 +348,6 @@ describe('images', () => {
       if (!coords) throw new Error(`docPoint: no coords for ${target}`)
       return { x: coords.left + 1, y: (coords.top + coords.bottom) / 2 }
     }, pos)
-  }
-
-  async function elementCenter (selector: string): Promise<Point> {
-    return browser.execute((wanted: string) => {
-      const element = document.querySelector(wanted)
-      if (!element) throw new Error(`elementCenter: ${wanted} not found`)
-      const box = element.getBoundingClientRect()
-      return { x: box.left + box.width / 2, y: box.top + box.height / 2 }
-    }, selector)
   }
 
   // Pastes a PNG file with no text, as an image copied in an image viewer
@@ -464,7 +407,7 @@ describe('images', () => {
   // and that the editor shows it. `before` is the image folder before the
   // drop.
   async function expectDroppedImage (before: string[]): Promise<void> {
-    await waitForValue(browser, 'dropped reference', async () => REFERENCE.test((await editorState()).doc), true)
+    await waitForValue(browser, 'dropped reference', async () => REFERENCE.test(await editorDoc(browser)), true)
     const { doc, caret } = await editorState()
     const reference = doc.slice('Before '.length, doc.length - 'after'.length)
     expect(doc).toBe(`Before ${reference}after`)
@@ -489,14 +432,14 @@ describe('images', () => {
     await focusEditor(browser)
     await typeKeys(browser, before)
     await pasteImage(PASTED_PNG)
-    await waitForValue(browser, 'pasted reference', async () => REFERENCE.test((await editorState()).doc), true)
+    await waitForValue(browser, 'pasted reference', async () => REFERENCE.test(await editorDoc(browser)), true)
     const pasted = await editorState()
     const reference = pasted.doc.slice(before.length)
     expect(pasted.doc.slice(0, before.length)).toBe(before)
     expect(reference).toBe(`![${referencePath(reference)}](id=a)`)
     expect(pasted.caret).toBe(pasted.doc.length)
     await typeKeys(browser, after)
-    await waitForValue(browser, 'text after the image', async () => (await editorState()).doc, before + reference + after)
+    await waitForValue(browser, 'text after the image', () => editorDoc(browser), before + reference + after)
     return { path: referencePath(reference), reference, from: before.length, to: before.length + reference.length }
   }
 
@@ -552,8 +495,8 @@ describe('images', () => {
     const first = await insertPastedImage('', ' and ')
     const firstLine = `${first.reference} and `
     await pasteImage(PASTED_PNG)
-    await waitForValue(browser, 'second reference', async () => (await editorState()).doc.length > firstLine.length, true)
-    const second = (await editorState()).doc.slice(firstLine.length)
+    await waitForValue(browser, 'second reference', async () => (await editorDoc(browser)).length > firstLine.length, true)
+    const second = (await editorDoc(browser)).slice(firstLine.length)
     const secondPath = referencePath(second)
     expect(second).toBe(`![${secondPath}](id=b)`)
     expect(secondPath).not.toBe(first.path)
@@ -576,10 +519,10 @@ describe('images', () => {
     const overlays = (hovered: number | null): ImageOverlay[] => ['a', 'b', null, 'c'].map(
       (id, index) => ({ id, trash: true, shown: index === hovered }),
     )
-    await movePointer(await elementCenter('header.tab-bar'))
+    await movePointer(browser, await elementCenter(browser, 'header.tab-bar'))
     await waitForValue(browser, 'overlays with the pointer off the images', imageOverlays, overlays(null))
 
-    await movePointer(await imageCenter(1))
+    await movePointer(browser, await imageCenter(1))
     await waitForValue(browser, 'overlays with the pointer on image b', imageOverlays, overlays(1))
     // Image b is narrower than its overlay: the overlay starts as far from
     // the image's left edge as from its top edge, and hangs out on the
@@ -590,7 +533,7 @@ describe('images', () => {
     expect(narrow.right).toBeLessThan(0)
     expect(narrow.lineHeight).toBe(narrow.imageHeight)
 
-    await movePointer(await imageCenter(2))
+    await movePointer(browser, await imageCenter(2))
     await waitForValue(browser, 'overlays with the pointer on the image with no id', imageOverlays, overlays(2))
     // On a wide image, in its top-right corner, as far from its right edge
     // as from its top edge.
@@ -600,9 +543,9 @@ describe('images', () => {
     expect(onWide.left).toBeGreaterThan(onWide.right)
     expect(onWide.lineHeight).toBe(onWide.imageHeight)
 
-    await movePointer(await imageCenter(3))
+    await movePointer(browser, await imageCenter(3))
     await waitForValue(browser, 'overlays with the pointer on the box of image c', imageOverlays, overlays(3))
-    await movePointer(await elementCenter('header.tab-bar'))
+    await movePointer(browser, await elementCenter(browser, 'header.tab-bar'))
     await waitForValue(browser, 'overlays after the pointer left', imageOverlays, overlays(null))
   })
 
@@ -617,7 +560,7 @@ describe('images', () => {
     // tooltip next to Dez's.
     expect(await browser.execute(() => document.querySelectorAll('.cm-content .dez-image [title]').length)).toBe(0)
 
-    const offImages = await elementCenter('header.tab-bar')
+    const offImages = await elementCenter(browser, 'header.tab-bar')
     const trashTooltip: OverlayTooltip = {
       title: 'Delete image',
       text: 'Removes the image from the conversation and deletes its file from the Dez folder. Dez asks you first. You cannot undo this.',
@@ -641,7 +584,7 @@ describe('images', () => {
       // CM puts a new tooltip at top: -10000px and moves it into place in
       // its next measure (an animation frame), after the text is there.
       await waitForValue(browser, `place of the tooltip on ${label}`, () => tooltipPlacement(index), { inEditor: true, clearOfToolbar: true })
-      await movePointer(offImages)
+      await movePointer(browser, offImages)
       await waitForValue(browser, `tooltip after the pointer left ${label}`, overlayTooltips, [])
     }
 
@@ -649,12 +592,12 @@ describe('images', () => {
     // outlive.
     await hoverOverlayItem(0, '.dez-image__trash')
     await waitForValue(browser, 'tooltip on the trash before the press', overlayTooltips, [trashTooltip])
-    await clickAt(await overlayItemCenter(0, '.dez-image__trash'))
+    await pointerClickAt(browser, await overlayItemCenter(0, '.dez-image__trash'))
     await waitForValue(browser, 'prompt', async () => (await promptState()).focus, 'yes')
     expect(await overlayTooltips()).toEqual([])
     await browser.keys(Key.Escape)
     await waitForValue(browser, 'prompt after Esc', async () => (await promptState()).message, null)
-    await movePointer(offImages)
+    await movePointer(browser, offImages)
     await waitForValue(browser, 'tooltip after the pointer left the trash', overlayTooltips, [])
   })
 
@@ -665,13 +608,13 @@ describe('images', () => {
     await waitForValue(browser, 'shown image', shownImages, shown)
     // The trash takes its own press, so the caret stays where it is.
     const unchanged = { doc: `See ${image.reference} here`, caret: 2 }
-    await setCaret(unchanged.caret)
+    await setCaret(browser, unchanged.caret)
 
     const cancels: Array<[string, () => Promise<unknown>]> = [
       ['No', () => pointerClick(browser, '.confirm-btn--cancel')],
       ['Esc', () => browser.keys(Key.Escape)],
       // Off the dialog, on the overlay around it.
-      ['a click outside', () => clickAt({ x: 20, y: 300 })],
+      ['a click outside', () => pointerClickAt(browser, { x: 20, y: 300 })],
     ]
     for (const [label, cancel] of cancels) {
       await clickTrash(0)
@@ -702,7 +645,7 @@ describe('images', () => {
     // The caret in the first text of the doc, which the removal right after
     // the prompt moved to the doc start before `syncDomSelection`
     // (src/view/editor/focus.ts).
-    await setCaret(2)
+    await setCaret(browser, 2)
     const otherImages = (await storedImages()).filter((name) => name !== path.basename(image.path))
     const closed: PromptState = { message: null, buttons: [], focus: 'editor' }
 
@@ -727,7 +670,7 @@ describe('images', () => {
     // The removals are not undo steps: undo takes back the typed ` here`
     // (the last typed text that is left), and no reference comes back.
     await browser.keys([Key.Control, 'z'])
-    await waitForValue(browser, 'doc after undo', async () => (await editorState()).doc, 'See ')
+    await waitForValue(browser, 'doc after undo', () => editorDoc(browser), 'See ')
   })
 
   it('shows the source on Backspace after an image, and the image again on `)`, undo, and redo', async () => {
@@ -737,7 +680,7 @@ describe('images', () => {
     const withImage = { doc: `See ${image.reference} here`, caret: image.to }
     const source = { doc: `See ${image.reference.slice(0, -1)} here`, caret: image.to - 1 }
     await waitForValue(browser, 'shown image', shownImages, shown)
-    await setCaret(image.to)
+    await setCaret(browser, image.to)
 
     await browser.pause(UNDO_STEP_MS)
     await browser.keys(Key.Backspace)
@@ -768,7 +711,7 @@ describe('images', () => {
     await newTab()
     const image = await insertPastedImage('See ', ' here')
     await waitForValue(browser, 'shown image', shownImages, [pastedImageView(image)])
-    await setCaret(image.from)
+    await setCaret(browser, image.from)
     const caret = async (): Promise<number> => (await editorState()).caret
 
     await browser.keys(Key.ArrowRight)
@@ -786,14 +729,14 @@ describe('images', () => {
     const image = await insertPastedImage('See ', ' here')
     const shown = [pastedImageView(image)]
     await waitForValue(browser, 'shown image', shownImages, shown)
-    await setCaret(image.from)
+    await setCaret(browser, image.from)
 
     await browser.keys(Key.Delete)
     await waitForValue(browser, 'doc after Delete', editorState, { doc: `See ${image.reference.slice(1)} here`, caret: image.from })
     await waitForValue(browser, 'images after Delete', shownImages, [])
 
     await typeKeys(browser, '!')
-    await waitForValue(browser, 'doc after `!`', async () => (await editorState()).doc, `See ${image.reference} here`)
+    await waitForValue(browser, 'doc after `!`', () => editorDoc(browser), `See ${image.reference} here`)
     await waitForValue(browser, 'images after `!`', shownImages, shown)
   })
 
@@ -802,7 +745,7 @@ describe('images', () => {
     await newTab()
     await focusEditor(browser)
     await typeKeys(browser, 'Before after')
-    await waitForValue(browser, 'typed text', async () => (await editorState()).doc, 'Before after')
+    await waitForValue(browser, 'typed text', () => editorDoc(browser), 'Before after')
 
     const accepted = await dropFiles(await docPoint('Before '.length), [
       { name: 'blue.png', type: 'image/png', base64: DROPPED_PNG.toString('base64') },
@@ -815,24 +758,24 @@ describe('images', () => {
     await newTab()
     await focusEditor(browser)
     await typeKeys(browser, 'Some text')
-    await waitForValue(browser, 'typed text', async () => (await editorState()).doc, 'Some text')
+    await waitForValue(browser, 'typed text', () => editorDoc(browser), 'Some text')
     const before = await storedImages()
 
     const accepted = await dropFiles(await docPoint('Some '.length), [
       { name: 'notes.txt', type: 'text/plain', base64: Buffer.from('notes').toString('base64') },
     ])
     expect(accepted).toEqual({ dragover: true, drop: true })
-    await waitForValue(browser, 'toast', async () => (await openToastMessages()).includes(NOT_AN_IMAGE_MESSAGE), true)
-    expect((await editorState()).doc).toBe('Some text')
+    await waitForValue(browser, 'toast', async () => (await openToasts(browser)).some((toast) => toast.message === NOT_AN_IMAGE_MESSAGE), true)
+    expect(await editorDoc(browser)).toBe('Some text')
     expect(await storedImages()).toEqual(before)
 
     // Outside the editor, the window refuses every file drop, so the
     // webview does not open the file in place of the app.
-    const refused = await dropFiles(await elementCenter('header.tab-bar'), [
+    const refused = await dropFiles(await elementCenter(browser, 'header.tab-bar'), [
       { name: 'red.png', type: 'image/png', base64: PASTED_PNG.toString('base64') },
     ])
     expect(refused).toEqual({ dragover: true, drop: true })
-    expect((await editorState()).doc).toBe('Some text')
+    expect(await editorDoc(browser)).toBe('Some text')
     expect(await storedImages()).toEqual(before)
   })
 
@@ -845,7 +788,7 @@ describe('images', () => {
     await newTab()
     await focusEditor(browser)
     await typeKeys(browser, 'Before after')
-    await waitForValue(browser, 'typed text', async () => (await editorState()).doc, 'Before after')
+    await waitForValue(browser, 'typed text', () => editorDoc(browser), 'Before after')
 
     await nativeDrop(await docPoint('Before '.length), [source])
     await expectDroppedImage(before)
@@ -855,12 +798,12 @@ describe('images', () => {
     await newTab()
     await focusEditor(browser)
     await typeKeys(browser, 'Some text')
-    await waitForValue(browser, 'typed text', async () => (await editorState()).doc, 'Some text')
+    await waitForValue(browser, 'typed text', () => editorDoc(browser), 'Some text')
     const before = await storedImages()
 
     await nativeDrop(await docPoint('Some '.length), [path.join(setup.app.home, 'notes.txt')])
-    await waitForValue(browser, 'toast', async () => (await openToastMessages()).includes(NOT_AN_IMAGE_MESSAGE), true)
-    expect((await editorState()).doc).toBe('Some text')
+    await waitForValue(browser, 'toast', async () => (await openToasts(browser)).some((toast) => toast.message === NOT_AN_IMAGE_MESSAGE), true)
+    expect(await editorDoc(browser)).toBe('Some text')
     expect(await storedImages()).toEqual(before)
 
     // wry passes on a URI that is not a `file://` URI as it is.
@@ -932,7 +875,7 @@ describe('images', () => {
     const request = await sendRequest()
     expect(request.path).toBe(mockChatPath(VISION))
     expect(request.body).toHaveProperty('messages', [{ role: 'user', content: `[image]${QUESTION}` }])
-    expect(await openWarningToasts()).toEqual([{
+    expect(await openToasts(browser, 'warning')).toEqual([{
       title: 'Image not sent',
       message: `${TEXT_MODEL.name} does not read images, so 1 image was left out of the request.`,
     }])

@@ -2,10 +2,10 @@ import type { EditorView } from '@codemirror/view'
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from 'vitest'
 import { Key } from 'webdriverio'
 import { startApp, type RunningApp } from './harness/app'
-import { consoleErrors, resetConsoleErrors, screenshotOnFailure, typeKeys, waitFor, waitForValue } from './harness/dom'
+import { consoleErrors, elementCenter, movePointer, pointerClickAt, resetConsoleErrors, screenshotOnFailure, typeKeys, waitFor, waitForValue, type Point } from './harness/dom'
 import { makeConversation, seedAppState, seedConversation } from './harness/fixtures'
 import { createSession, destroySession, type E2EBrowser } from './harness/session'
-import { focusEditor, focusedArea } from './harness/thread'
+import { focusEditor, focusedArea, setCaret } from './harness/thread'
 
 // Markdown links in the thread editor, driven through the real app.
 //
@@ -44,11 +44,6 @@ const RENDERED = ['the docs', 'https://example.org/a', 'ann@example.com', 'suppo
 // target (`hoverTime`). A check that no tooltip opens waits well past that.
 const NO_TOOLTIP_WAIT_MS = 800
 
-interface Point {
-  x: number
-  y: number
-}
-
 interface LinkBox extends Point {
   top: number
 }
@@ -83,18 +78,6 @@ describe('markdown links', () => {
     }, text)
     if (index < 0) throw new Error(`docPos: ${JSON.stringify(text)} is not in the doc`)
     return index + offset
-  }
-
-  // Puts the caret at doc position `pos`, as code does: the tests move it
-  // with real keys from there.
-  async function setCaret (pos: number): Promise<void> {
-    await browser.execute((anchor: number) => {
-      const content = document.querySelector('.cm-content')
-      if (!content) throw new Error('setCaret: .cm-content not found')
-      const view = Reflect.get(Reflect.get(content, 'cmTile'), 'root').view as EditorView
-      view.dispatch({ selection: { anchor } })
-    }, pos)
-    await waitForValue(browser, `caret at ${pos}`, caret, pos)
   }
 
   // Viewport point at doc position `pos`: x is the caret position (`side`
@@ -156,31 +139,10 @@ describe('markdown links', () => {
     return browser.execute(() => [...Reflect.get(window, '__e2eOpenedUrls') as string[]])
   }
 
-  // Moves the mouse pointer to `point` (viewport px), with no button down.
-  async function movePointer (point: Point): Promise<void> {
-    await browser.action('pointer', { parameters: { pointerType: 'mouse' } })
-      .move({ x: Math.round(point.x), y: Math.round(point.y), origin: 'viewport' })
-      .perform()
-  }
-
-  // Clicks at `point` (viewport px) with real pointer events.
-  async function clickAt (point: Point): Promise<void> {
-    await browser.action('pointer', { parameters: { pointerType: 'mouse' } })
-      .move({ x: Math.round(point.x), y: Math.round(point.y), origin: 'viewport' })
-      .down({ button: 0 })
-      .up({ button: 0 })
-      .perform()
-  }
-
   // A point off the editor text, where no tooltip can open: the middle of
   // the tab bar.
   async function offTextPoint (): Promise<Point> {
-    return browser.execute(() => {
-      const bar = document.querySelector('header.tab-bar')
-      if (!bar) throw new Error('offTextPoint: header.tab-bar not found')
-      const box = bar.getBoundingClientRect()
-      return { x: (box.left + box.right) / 2, y: (box.top + box.bottom) / 2 }
-    })
+    return elementCenter(browser, 'header.tab-bar')
   }
 
   // Seeds TEXT as the user section and REPLY_SOURCE as the agent section of
@@ -279,7 +241,7 @@ describe('markdown links', () => {
     // stays rendered.
     const docsSource = `Read ${DOCS_LINK} and https://example.org/a now.`
 
-    await setCaret(from - 1)
+    await setCaret(browser, from - 1)
     expect(await shownLine('Read')).toBe(READ_SHOWN)
     await browser.keys(Key.ArrowRight)
     await waitForValue(browser, 'line with the caret at the link start', () => shownLine('Read'), docsSource)
@@ -287,7 +249,7 @@ describe('markdown links', () => {
     await browser.keys(Key.ArrowLeft)
     await waitForValue(browser, 'line with the caret left of the link', () => shownLine('Read'), READ_SHOWN)
 
-    await setCaret(to + 1)
+    await setCaret(browser, to + 1)
     expect(await shownLine('Read')).toBe(READ_SHOWN)
     await browser.keys(Key.ArrowLeft)
     await waitForValue(browser, 'line with the caret at the link end', () => shownLine('Read'), docsSource)
@@ -296,7 +258,7 @@ describe('markdown links', () => {
     await waitForValue(browser, 'line with the caret right of the link', () => shownLine('Read'), READ_SHOWN)
 
     // An edit in the source shows in the link once the caret leaves it.
-    await setCaret(from)
+    await setCaret(browser, from)
     await browser.keys(Key.ArrowRight)
     await typeKeys(browser, 'all ')
     await waitForValue(browser, 'line after typing in the link', () => shownLine('Read'), docsSource.replace('[the', '[all the'))
@@ -309,49 +271,49 @@ describe('markdown links', () => {
 
   it('shows the full URL in a tooltip above a rendered link while the pointer is on it', async () => {
     await openFixture()
-    await movePointer(await offTextPoint())
+    await movePointer(browser, await offTextPoint())
     await waitForValue(browser, 'no tooltip', tooltip, null)
 
     // A link that shows its source gets no tooltip.
     const raw = await docPos('[file]', 2)
-    await movePointer(await pointAt(raw, 1))
+    await movePointer(browser, await pointAt(raw, 1))
     await browser.pause(NO_TOOLTIP_WAIT_MS)
     expect(await tooltip()).toBeNull()
 
     const docs = await linkBox('the docs')
-    await movePointer(docs)
+    await movePointer(browser, docs)
     await waitForValue(browser, 'tooltip on the docs link', tooltipText, 'https://example.com/docs')
     expect((await tooltip())?.bottom).toBeLessThanOrEqual(docs.top + 1)
-    await movePointer(await offTextPoint())
+    await movePointer(browser, await offTextPoint())
     await waitForValue(browser, 'tooltip after the pointer left', tooltip, null)
 
     // An email autolink opens as `mailto:`, so its tooltip says so.
-    await movePointer(await linkBox('ann@example.com'))
+    await movePointer(browser, await linkBox('ann@example.com'))
     await waitForValue(browser, 'tooltip on the email link', tooltipText, 'mailto:ann@example.com')
 
     // The caret going into the link shows its source and closes the tooltip.
     const mail = await docPos('<ann@')
-    await setCaret(mail - 1)
+    await setCaret(browser, mail - 1)
     expect(await tooltipText()).toBe('mailto:ann@example.com')
     await browser.keys(Key.ArrowRight)
     await waitForValue(browser, 'tooltip with the caret in the link', tooltip, null)
     expect(await shownLine('Mail')).toBe('Mail <ann@example.com> or call support.')
-    await movePointer(await offTextPoint())
+    await movePointer(browser, await offTextPoint())
   })
 
   it('opens a rendered link on a plain click and keeps the caret and the focus where they are', async () => {
     await openFixture()
-    await setCaret(3)
+    await setCaret(browser, 3)
 
-    await clickAt(await linkBox('the docs'))
+    await pointerClickAt(browser, await linkBox('the docs'))
     await waitForValue(browser, 'opened URLs', openedUrls, ['https://example.com/docs'])
     expect(await caret()).toBe(3)
     expect(await focusedArea(browser)).toBe('editor')
     expect(await renderedLinkTexts()).toEqual(RENDERED)
 
-    await clickAt(await linkBox('ann@example.com'))
-    await clickAt(await linkBox('support'))
-    await clickAt(await linkBox('a reply link'))
+    await pointerClickAt(browser, await linkBox('ann@example.com'))
+    await pointerClickAt(browser, await linkBox('support'))
+    await pointerClickAt(browser, await linkBox('a reply link'))
     await waitForValue(browser, 'opened URLs', openedUrls, [
       'https://example.com/docs',
       'mailto:ann@example.com',
@@ -370,7 +332,7 @@ describe('markdown links', () => {
       .up({ button: 0 })
       .perform()
     // A click after it shows that the released press opened nothing.
-    await clickAt(await linkBox('support'))
+    await pointerClickAt(browser, await linkBox('support'))
     await waitForValue(browser, 'opened URLs after a release off the link', async () => (await openedUrls()).length, 5)
     expect((await openedUrls()).at(-1)).toBe('tel:+15551234')
     expect(await caret()).toBe(3)
@@ -381,14 +343,14 @@ describe('markdown links', () => {
       (document.activeElement as HTMLElement | null)?.blur()
     })
     expect(await focusedArea(browser)).toBe('body')
-    await clickAt(await linkBox('the docs'))
+    await pointerClickAt(browser, await linkBox('the docs'))
     await waitForValue(browser, 'opened URLs after a click with no focus', async () => (await openedUrls()).length, 6)
     expect(await focusedArea(browser)).toBe('body')
   })
 
   it('leaves a Shift+click on a link to the editor, which selects into the link and shows its source', async () => {
     await openFixture()
-    await setCaret(3)
+    await setCaret(browser, 3)
     const docs = await linkBox('the docs')
     // One `actions` call, so Shift is down for the whole click.
     await browser.actions([

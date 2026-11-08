@@ -7,7 +7,7 @@ import { conversationFilePath } from './harness/fixtures'
 import { startMockProviderApp } from './harness/mockProviderApp'
 import { startEventStream, writeChatFrame, type HeldRequest, type HoldingChatMock, type MockProvider } from './harness/mockServer'
 import type { E2EBrowser } from './harness/session'
-import { activeTabId, activeTabStreaming, editorDoc, openErrorToasts, sbpCall, submit, threadSections } from './harness/thread'
+import { activeTabId, activeTabStreaming, editorDoc, openToasts, sbpCall, submit, threadSections } from './harness/thread'
 
 // Errors of a chat request, driven through the real app against a mock
 // server in this process:
@@ -119,7 +119,7 @@ describe('stream errors', () => {
     await submit(browser, 'who are you now?')
     answerStatus(await mock.waitForRequest(browser), 401, '{"error":"Authentication failed"}')
 
-    await waitForValue(browser, 'error toast', () => openErrorToasts(browser), [
+    await waitForValue(browser, 'error toast', () => openToasts(browser, 'error'), [
       { title: 'Request failed', message: 'Errors Mock returned HTTP 401: {"error":"Authentication failed"}' },
     ])
     await waitForValue(browser, 'streaming', () => activeTabStreaming(browser), false)
@@ -153,7 +153,7 @@ describe('stream errors', () => {
     expect(box.width).toBeLessThanOrEqual(560)
 
     await click(browser, '.toast-card--error .toast-close')
-    await waitForValue(browser, 'error toast closed', () => openErrorToasts(browser), [])
+    await waitForValue(browser, 'error toast closed', () => openToasts(browser, 'error'), [])
   })
 
   it('keeps the answer text that came before an error, with no error text, and adds a user section', async () => {
@@ -165,7 +165,7 @@ describe('stream errors', () => {
     // The connection drops in the middle of the body.
     reply.destroy()
 
-    await waitForValue(browser, 'error toasts', async () => (await openErrorToasts(browser)).map((toast) => toast.title), ['Request failed'])
+    await waitForValue(browser, 'error toasts', async () => (await openToasts(browser, 'error')).map((toast) => toast.title), ['Request failed'])
     await waitForValue(browser, 'streaming', () => activeTabStreaming(browser), false)
     expect(await threadSections(browser)).toEqual([
       { role: 'user', text: 'Question' },
@@ -184,7 +184,7 @@ describe('stream errors', () => {
     const page = [doctype, ...Array.from({ length: 120 }, (_, i) => `<p>line ${i + 1}</p>`)].join('\n')
     answerStatus(await mock.waitForRequest(browser), 502, page)
 
-    await waitForValue(browser, 'error toasts', async () => (await openErrorToasts(browser)).length, 1)
+    await waitForValue(browser, 'error toasts', async () => (await openToasts(browser, 'error')).length, 1)
     const box = await toastBox()
     expectInWindow(box)
     expect(box.width).toBeCloseTo(Math.min(560, box.windowWidth - 32), 0)
@@ -199,7 +199,7 @@ describe('stream errors', () => {
     await sbpCall(browser, 'dez.model/tabs/create')
 
     answerStatus(request, 500, '{"error":"Server error"}')
-    await waitForValue(browser, 'error toasts', () => openErrorToasts(browser), [
+    await waitForValue(browser, 'error toasts', () => openToasts(browser, 'error'), [
       { title: 'Request failed in "Background question"', message: 'Errors Mock returned HTTP 500: {"error":"Server error"}' },
     ])
     await waitForValue(browser, 'background tab sections', async () => {

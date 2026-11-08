@@ -2,6 +2,7 @@ import fs from 'node:fs'
 import type { EditorView } from '@codemirror/view'
 import { expect } from 'vitest'
 import { Key } from 'webdriverio'
+import type { ToastVariant } from '../../../src/view/toast/selectors'
 import { click, typeKeys, waitFor, waitForValue } from './dom'
 import { conversationFilePath } from './fixtures'
 import type { E2EBrowser } from './session'
@@ -108,6 +109,17 @@ export async function editorDoc (browser: E2EBrowser): Promise<string> {
   })
 }
 
+/** Puts the active editor's caret at doc position `pos` with a selection
+ *  transaction, as code does. */
+export async function setCaret (browser: E2EBrowser, pos: number): Promise<void> {
+  await browser.execute((anchor: number) => {
+    const content = document.querySelector('.cm-content')
+    if (!content) throw new Error('setCaret: .cm-content not found')
+    const view = Reflect.get(Reflect.get(content, 'cmTile'), 'root').view as EditorView
+    view.dispatch({ selection: { anchor } })
+  }, pos)
+}
+
 /** The height of every role pill of the active editor. */
 export async function rolePillHeights (browser: E2EBrowser): Promise<number[]> {
   return browser.execute(() =>
@@ -159,15 +171,16 @@ export async function activeTabStreaming (browser: E2EBrowser): Promise<boolean>
   })
 }
 
-/** Title and message of each open (not closing) error toast. */
-export async function openErrorToasts (browser: E2EBrowser): Promise<Array<{ title: string, message: string }>> {
-  return browser.execute(() => Array.from(
-    document.querySelectorAll('.toast-card--error:not(.toast-card--closing)'),
+/** Title and message of each open (not closing) toast of `variant`, or of
+ *  every variant when it is not given. A toast with no title gives ''. */
+export async function openToasts (browser: E2EBrowser, variant?: ToastVariant): Promise<Array<{ title: string, message: string }>> {
+  return browser.execute((selector: string) => Array.from(
+    document.querySelectorAll(`${selector}:not(.toast-card--closing)`),
     (card) => ({
       title: card.querySelector('.toast-title')?.textContent ?? '',
       message: card.querySelector('.toast-message')?.textContent ?? '',
     })
-  ))
+  ), variant ? `.toast-card--${variant}` : '.toast-card')
 }
 
 /** Waits until the active tab holds `expected` and no stream runs, then
@@ -175,5 +188,5 @@ export async function openErrorToasts (browser: E2EBrowser): Promise<Array<{ tit
 export async function waitForThread (browser: E2EBrowser, expected: ThreadSection[]): Promise<void> {
   await waitForValue(browser, 'thread sections', () => threadSections(browser), expected)
   await waitForValue(browser, 'streaming', () => activeTabStreaming(browser), false)
-  expect(await openErrorToasts(browser)).toEqual([])
+  expect(await openToasts(browser, 'error')).toEqual([])
 }
