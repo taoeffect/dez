@@ -3,10 +3,10 @@ import { OVERLAY_SCROLLBAR_PX } from '../../src/view/editor/tables'
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from 'vitest'
 import { Key } from 'webdriverio'
 import { startApp, type RunningApp } from './harness/app'
-import { consoleErrors, pointerClickAt, resetConsoleErrors, screenshotOnFailure, typeKeys, waitFor, waitForValue, type Point } from './harness/dom'
+import { consoleErrors, pointerClickAt, resetConsoleErrors, screenshotOnFailure, typeKeys, waitFor, waitForValue } from './harness/dom'
 import { makeConversation, seedAppState, seedConversation } from './harness/fixtures'
 import { createSession, destroySession, type E2EBrowser } from './harness/session'
-import { focusEditor } from './harness/thread'
+import { docPos, docPosPoint, editorCaret, focusEditor } from './harness/thread'
 
 // Markdown tables in the thread editor, driven through the real app.
 //
@@ -157,30 +157,6 @@ describe('markdown tables', () => {
       const { anchor, head } = view.state.selection.main
       return { doc: String(view.state.doc), anchor, head }
     })
-  }
-
-  async function caret (): Promise<number> {
-    return (await editorSnapshot()).head
-  }
-
-  // Doc position of `text` plus `offset`; fails if `text` is not in the doc.
-  async function docPos (text: string, offset = 0): Promise<number> {
-    const index = (await editorSnapshot()).doc.indexOf(text)
-    if (index < 0) throw new Error(`docPos: ${JSON.stringify(text)} is not in the doc`)
-    return index + offset
-  }
-
-  // Viewport point at doc position `pos`: x is the caret position (`side`
-  // picks the char before or after it), y the middle of its line.
-  async function pointAt (pos: number, side: -1 | 1): Promise<Point> {
-    return browser.execute((target: number, bias: -1 | 1) => {
-      const content = document.querySelector('.cm-content')
-      if (!content) throw new Error('pointAt: .cm-content not found')
-      const view = Reflect.get(Reflect.get(content, 'cmTile'), 'root').view as EditorView
-      const coords = view.coordsAtPos(target, bias)
-      if (!coords) throw new Error(`pointAt: no coords for ${target}`)
-      return { x: coords.left, y: (coords.top + coords.bottom) / 2 }
-    }, pos, side)
   }
 
   // The rows of each rendered table, in doc order, with their cell boxes.
@@ -368,7 +344,7 @@ describe('markdown tables', () => {
     await waitForValue(browser, `fixture ${id} open`, async () => (await editorSnapshot()).doc.endsWith(`\n${id}`), true)
     await focusEditor(browser)
     await browser.keys([Key.Control, Key.Home])
-    await waitForValue(browser, 'caret at the doc start', caret, 0)
+    await waitForValue(browser, 'caret at the doc start', () => editorCaret(browser), 0)
   }
 
   beforeAll(async () => {
@@ -439,10 +415,10 @@ describe('markdown tables', () => {
   it('keeps the table rendered while the user types in a cell', async () => {
     await openFixture(MAIN_TEXT)
     // Click on the right half of the last "n" of "Ann": caret after it.
-    const afterAnn = await docPos(ANN_ROW, '| Ann'.length)
-    const point = await pointAt(afterAnn, -1)
+    const afterAnn = await docPos(browser, ANN_ROW, '| Ann'.length)
+    const point = await docPosPoint(browser, afterAnn, -1)
     await pointerClickAt(browser, { x: point.x - 2, y: point.y })
-    await waitForValue(browser, 'caret after the click', caret, afterAnn)
+    await waitForValue(browser, 'caret after the click', () => editorCaret(browser), afterAnn)
 
     await typeKeys(browser, 'ie')
     await waitForValue(browser, 'edited row', () => lineState('| Annie | 10 | ok |'), 'table')
@@ -454,14 +430,14 @@ describe('markdown tables', () => {
 
   it('shows the raw source when an edit breaks the syntax and the table again when it is fixed', async () => {
     await openFixture(MAIN_TEXT)
-    const pipe = await docPos('| Score')
+    const pipe = await docPos(browser, '| Score')
     // Click on the left half of the "S" of "Score", then step back over the
     // space: the caret is right after the pipe that starts the cell.
-    const point = await pointAt(pipe + 2, 1)
+    const point = await docPosPoint(browser, pipe + 2, 1)
     await pointerClickAt(browser, { x: point.x + 2, y: point.y })
-    await waitForValue(browser, 'caret before "Score"', caret, pipe + 2)
+    await waitForValue(browser, 'caret before "Score"', () => editorCaret(browser), pipe + 2)
     await browser.keys(Key.ArrowLeft)
-    await waitForValue(browser, 'caret after the pipe', caret, pipe + 1)
+    await waitForValue(browser, 'caret after the pipe', () => editorCaret(browser), pipe + 1)
 
     // Without that pipe the header has 2 cells and the delimiter row 3, so
     // no table: every line shows its source.
@@ -470,12 +446,12 @@ describe('markdown tables', () => {
     await waitForValue(browser, 'broken header', () => lineState(brokenHeader), 'raw')
     expect(await renderedTables()).toEqual([])
     for (const line of [DELIMITER, ANN_ROW, BOB_ROW]) expect(await lineState(line), line).toBe('raw')
-    expect(await caret()).toBe(pipe)
+    expect(await editorCaret(browser)).toBe(pipe)
 
     await browser.keys([Key.Control, 'z'])
     await waitForValue(browser, 'header after undo', () => lineState(HEADER), 'table')
     expect((await renderedTables()).map((rows) => rows.map((row) => row.text))).toEqual([[HEADER, DELIMITER, ANN_ROW, BOB_ROW]])
-    expect(await caret()).toBe(pipe + 1)
+    expect(await editorCaret(browser)).toBe(pipe + 1)
 
     // Typing the pipe back fixes the syntax too.
     await browser.keys(Key.Backspace)
@@ -531,7 +507,7 @@ describe('markdown tables', () => {
 
   it('draws a selection in a wrapped cell over that cell only', async () => {
     await openFixture(WRAP_TEXT)
-    const textFrom = await docPos(LONG_CELL)
+    const textFrom = await docPos(browser, LONG_CELL)
     // Doc positions where the cell text starts a new visual line.
     const lineStarts = await browser.execute((from: number, length: number) => {
       const content = document.querySelector('.cm-content')
@@ -551,8 +527,8 @@ describe('markdown tables', () => {
     // Drag from the first visual line of the cell into its second one.
     const start = lineStarts[0] + 3
     const end = lineStarts[1] + 3
-    const from = await pointAt(start, 1)
-    const to = await pointAt(end, 1)
+    const from = await docPosPoint(browser, start, 1)
+    const to = await docPosPoint(browser, end, 1)
     await browser.action('pointer', { parameters: { pointerType: 'mouse' } })
       .move({ x: Math.round(from.x + 2), y: Math.round(from.y), origin: 'viewport' })
       .down({ button: 0 })
@@ -572,8 +548,8 @@ describe('markdown tables', () => {
 
     // A triple-click selects the whole row: each cell is fully selected and
     // is drawn as one rect over the whole cell.
-    const rowFrom = await docPos(WRAP_ROW)
-    const wCell = await pointAt(rowFrom + 2, 1)
+    const rowFrom = await docPos(browser, WRAP_ROW)
+    const wCell = await docPosPoint(browser, rowFrom + 2, 1)
     await pointerClickAt(browser, { x: wCell.x + 2, y: wCell.y }, 3)
     await waitForValue(browser, 'row selection', async () => {
       const { anchor, head } = await editorSnapshot()
@@ -594,8 +570,8 @@ describe('markdown tables', () => {
   // that pipe.
   it('lines up the wrapped lines of a cell and gives a cell the same inset on both sides', async () => {
     await openFixture(HANG_TEXT)
-    const rowFrom = await docPos(HANG_ROW)
-    const keyFrom = await docPos('| Key', 2)
+    const rowFrom = await docPos(browser, HANG_ROW)
+    const keyFrom = await docPos(browser, '| Key', 2)
     const leftFrom = rowFrom + HANG_ROW.indexOf(LONG_CELL)
     const rightFrom = rowFrom + HANG_ROW.lastIndexOf(LONG_CELL)
     const [key, left, right] = await browser.execute((texts: Array<{ from: number, to: number }>) => {
@@ -664,15 +640,15 @@ describe('markdown tables', () => {
   // space after it takes no room.
   it('opens the first cell at the leading pipe of a body row that starts with a tab', async () => {
     await openFixture(TAB_TEXT)
-    const rowFrom = await docPos(TAB_ROW)
-    const keyFrom = await docPos('| Key')
-    const headerPipe = await pointAt(keyFrom, 1)
-    const charWidth = (await pointAt(keyFrom + 3, 1)).x - (await pointAt(keyFrom + 2, 1)).x
+    const rowFrom = await docPos(browser, TAB_ROW)
+    const keyFrom = await docPos(browser, '| Key')
+    const headerPipe = await docPosPoint(browser, keyFrom, 1)
+    const charWidth = (await docPosPoint(browser, keyFrom + 3, 1)).x - (await docPosPoint(browser, keyFrom + 2, 1)).x
     const [tab, pipe, space, text] = [
-      await pointAt(rowFrom, 1),
-      await pointAt(rowFrom + 1, 1),
-      await pointAt(rowFrom + 2, 1),
-      await pointAt(rowFrom + 3, 1),
+      await docPosPoint(browser, rowFrom, 1),
+      await docPosPoint(browser, rowFrom + 1, 1),
+      await docPosPoint(browser, rowFrom + 2, 1),
+      await docPosPoint(browser, rowFrom + 3, 1),
     ]
     expect(tab.x, 'start of the tab').toBeCloseTo(headerPipe.x, 0)
     expect(charWidth, 'width of a header char').toBeGreaterThan(1)
@@ -802,13 +778,13 @@ describe('markdown tables', () => {
   // at the edge of the cell's text.
   it('types at the text edge after a click in the blank part of a padded cell', async () => {
     await openFixture(PADDED_TEXT)
-    const rowFrom = await docPos(PADDED_ANN_ROW)
+    const rowFrom = await docPos(browser, PADDED_ANN_ROW)
     // Click halfway between the text edge at `edge` and the cell border.
     const clickBeside = async (column: number, side: 'left' | 'right', edge: number, typed: string): Promise<void> => {
       const cell = (await rowCellBoxes(' |  Ann'))[column]
-      const point = await pointAt(edge, side === 'left' ? 1 : -1)
+      const point = await docPosPoint(browser, edge, side === 'left' ? 1 : -1)
       await pointerClickAt(browser, { x: side === 'left' ? (cell.left + point.x) / 2 : (point.x + cell.right) / 2, y: point.y })
-      await waitForValue(browser, `caret after a click ${side} of the text in column ${column}`, caret, edge)
+      await waitForValue(browser, `caret after a click ${side} of the text in column ${column}`, () => editorCaret(browser), edge)
       const before = (await editorSnapshot()).doc
       await typeKeys(browser, typed)
       const after = `${before.slice(0, edge)}${typed}${before.slice(edge)}`
@@ -879,8 +855,8 @@ describe('markdown tables', () => {
 
   it('draws no selection from above a table into its header row', async () => {
     await openFixture(INTRO_TEXT)
-    const introFrom = await docPos(INTRO_LINE)
-    const tableFrom = await docPos(HEADER)
+    const introFrom = await docPos(browser, INTRO_LINE)
+    const tableFrom = await docPos(browser, HEADER)
     const cells = await rowCellBoxes(HEADER)
     const headerTop = Math.min(...cells.map((cell) => cell.top))
     const headerBottom = Math.max(...cells.map((cell) => cell.bottom))
@@ -894,7 +870,7 @@ describe('markdown tables', () => {
 
     // A triple-click on the line right above the header selects that line
     // up to the table start. Nothing in the header row is selected.
-    const intro = await pointAt(introFrom + 2, 1)
+    const intro = await docPosPoint(browser, introFrom + 2, 1)
     await pointerClickAt(browser, { x: intro.x + 2, y: intro.y }, 3)
     await waitForValue(browser, 'intro line selection', selection, [introFrom, tableFrom])
     expect(await headerBandBoxes()).toEqual([])
@@ -916,9 +892,9 @@ describe('markdown tables', () => {
 
   it('puts the caret at the row start or end for a click in the margin beside a table row', async () => {
     await openFixture(MAIN_TEXT)
-    const rowFrom = await docPos(BOB_ROW)
+    const rowFrom = await docPos(browser, BOB_ROW)
     const rowTo = rowFrom + BOB_ROW.length
-    const rowY = (await pointAt(rowFrom + 2, 1)).y
+    const rowY = (await docPosPoint(browser, rowFrom + 2, 1)).y
     // Points in the scroller's side margins (its padding), outside
     // `.cm-content`. The right one stays left of the strip at the right
     // edge where WebKitGTK draws its overlay scrollbar.
@@ -942,9 +918,9 @@ describe('markdown tables', () => {
     expect(margins).toMatchObject({ leftHitsScroller: true, rightHitsScroller: true })
 
     await pointerClickAt(browser, margins.left)
-    await waitForValue(browser, 'caret after a click left of the row', caret, rowFrom)
+    await waitForValue(browser, 'caret after a click left of the row', () => editorCaret(browser), rowFrom)
     await pointerClickAt(browser, margins.right)
-    await waitForValue(browser, 'caret after a click right of the row', caret, rowTo)
+    await waitForValue(browser, 'caret after a click right of the row', () => editorCaret(browser), rowTo)
     expect(await lineState(BOB_ROW)).toBe('table')
   })
 })

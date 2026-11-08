@@ -5,7 +5,7 @@ import { startApp, type RunningApp } from './harness/app'
 import { consoleErrors, elementCenter, movePointer, pointerClickAt, resetConsoleErrors, screenshotOnFailure, typeKeys, waitFor, waitForValue, type Point } from './harness/dom'
 import { makeConversation, seedAppState, seedConversation } from './harness/fixtures'
 import { createSession, destroySession, type E2EBrowser } from './harness/session'
-import { focusEditor, focusedArea, setCaret } from './harness/thread'
+import { docPos, docPosPoint, editorCaret, focusEditor, focusedArea, setCaret } from './harness/thread'
 
 // Markdown links in the thread editor, driven through the real app.
 //
@@ -58,40 +58,6 @@ let fixtureCount = 0
 describe('markdown links', () => {
   let app: RunningApp
   let browser: E2EBrowser
-
-  async function caret (): Promise<number> {
-    return browser.execute(() => {
-      const content = document.querySelector('.cm-content')
-      if (!content) throw new Error('caret: .cm-content not found')
-      const view = Reflect.get(Reflect.get(content, 'cmTile'), 'root').view as EditorView
-      return view.state.selection.main.head
-    })
-  }
-
-  // Doc position of `text` plus `offset`; fails if `text` is not in the doc.
-  async function docPos (text: string, offset = 0): Promise<number> {
-    const index = await browser.execute((wanted: string) => {
-      const content = document.querySelector('.cm-content')
-      if (!content) throw new Error('docPos: .cm-content not found')
-      const view = Reflect.get(Reflect.get(content, 'cmTile'), 'root').view as EditorView
-      return String(view.state.doc).indexOf(wanted)
-    }, text)
-    if (index < 0) throw new Error(`docPos: ${JSON.stringify(text)} is not in the doc`)
-    return index + offset
-  }
-
-  // Viewport point at doc position `pos`: x is the caret position (`side`
-  // picks the char before or after it), y the middle of its line.
-  async function pointAt (pos: number, side: -1 | 1): Promise<Point> {
-    return browser.execute((target: number, bias: -1 | 1) => {
-      const content = document.querySelector('.cm-content')
-      if (!content) throw new Error('pointAt: .cm-content not found')
-      const view = Reflect.get(Reflect.get(content, 'cmTile'), 'root').view as EditorView
-      const coords = view.coordsAtPos(target, bias)
-      if (!coords) throw new Error(`pointAt: no coords for ${target}`)
-      return { x: coords.left, y: (coords.top + coords.bottom) / 2 }
-    }, pos, side)
-  }
 
   // The text of each rendered link, in doc order.
   async function renderedLinkTexts (): Promise<string[]> {
@@ -163,10 +129,10 @@ describe('markdown links', () => {
       const sbp = Reflect.get(window, 'sbp') as (selector: string, ...args: unknown[]) => unknown
       void sbp('dez.model/tabs/openConversation', conversationId)
     }, id)
-    await waitForValue(browser, `fixture ${id} open`, () => docPos(`\n${id}`).then(() => true, () => false), true)
+    await waitForValue(browser, `fixture ${id} open`, () => docPos(browser, `\n${id}`).then(() => true, () => false), true)
     await focusEditor(browser)
     await browser.keys([Key.Control, Key.Home])
-    await waitForValue(browser, 'caret at the doc start', caret, 0)
+    await waitForValue(browser, 'caret at the doc start', () => editorCaret(browser), 0)
     await waitForValue(browser, 'rendered links', renderedLinkTexts, RENDERED)
   }
 
@@ -229,13 +195,13 @@ describe('markdown links', () => {
     }, TABLE_ROW)
     expect(row).toEqual({ inTable: true, links: 0 })
     // The doc keeps every link's source.
-    expect(await docPos(TEXT)).toBeGreaterThanOrEqual(0)
-    expect(await docPos(REPLY_SOURCE)).toBeGreaterThan(0)
+    expect(await docPos(browser, TEXT)).toBeGreaterThanOrEqual(0)
+    expect(await docPos(browser, REPLY_SOURCE)).toBeGreaterThan(0)
   })
 
   it('shows the source of a link while the caret touches it and renders the link again when the caret leaves', async () => {
     await openFixture()
-    const from = await docPos(DOCS_LINK)
+    const from = await docPos(browser, DOCS_LINK)
     const to = from + DOCS_LINK.length
     // Only the touched link shows its source; the autolink on the same line
     // stays rendered.
@@ -245,7 +211,7 @@ describe('markdown links', () => {
     expect(await shownLine('Read')).toBe(READ_SHOWN)
     await browser.keys(Key.ArrowRight)
     await waitForValue(browser, 'line with the caret at the link start', () => shownLine('Read'), docsSource)
-    expect(await caret()).toBe(from)
+    expect(await editorCaret(browser)).toBe(from)
     await browser.keys(Key.ArrowLeft)
     await waitForValue(browser, 'line with the caret left of the link', () => shownLine('Read'), READ_SHOWN)
 
@@ -253,7 +219,7 @@ describe('markdown links', () => {
     expect(await shownLine('Read')).toBe(READ_SHOWN)
     await browser.keys(Key.ArrowLeft)
     await waitForValue(browser, 'line with the caret at the link end', () => shownLine('Read'), docsSource)
-    expect(await caret()).toBe(to)
+    expect(await editorCaret(browser)).toBe(to)
     await browser.keys(Key.ArrowRight)
     await waitForValue(browser, 'line with the caret right of the link', () => shownLine('Read'), READ_SHOWN)
 
@@ -263,7 +229,7 @@ describe('markdown links', () => {
     await typeKeys(browser, 'all ')
     await waitForValue(browser, 'line after typing in the link', () => shownLine('Read'), docsSource.replace('[the', '[all the'))
     for (let i = 0; i < 5; i++) await browser.keys(Key.ArrowLeft)
-    await waitForValue(browser, 'caret at the edited link start', caret, from)
+    await waitForValue(browser, 'caret at the edited link start', () => editorCaret(browser), from)
     expect(await shownLine('Read')).toBe(docsSource.replace('[the', '[all the'))
     await browser.keys(Key.ArrowLeft)
     await waitForValue(browser, 'line after the caret left the edited link', () => shownLine('Read'), 'Read all the docs and https://example.org/a now.')
@@ -275,8 +241,8 @@ describe('markdown links', () => {
     await waitForValue(browser, 'no tooltip', tooltip, null)
 
     // A link that shows its source gets no tooltip.
-    const raw = await docPos('[file]', 2)
-    await movePointer(browser, await pointAt(raw, 1))
+    const raw = await docPos(browser, '[file]', 2)
+    await movePointer(browser, await docPosPoint(browser, raw, 1))
     await browser.pause(NO_TOOLTIP_WAIT_MS)
     expect(await tooltip()).toBeNull()
 
@@ -292,7 +258,7 @@ describe('markdown links', () => {
     await waitForValue(browser, 'tooltip on the email link', tooltipText, 'mailto:ann@example.com')
 
     // The caret going into the link shows its source and closes the tooltip.
-    const mail = await docPos('<ann@')
+    const mail = await docPos(browser, '<ann@')
     await setCaret(browser, mail - 1)
     expect(await tooltipText()).toBe('mailto:ann@example.com')
     await browser.keys(Key.ArrowRight)
@@ -307,7 +273,7 @@ describe('markdown links', () => {
 
     await pointerClickAt(browser, await linkBox('the docs'))
     await waitForValue(browser, 'opened URLs', openedUrls, ['https://example.com/docs'])
-    expect(await caret()).toBe(3)
+    expect(await editorCaret(browser)).toBe(3)
     expect(await focusedArea(browser)).toBe('editor')
     expect(await renderedLinkTexts()).toEqual(RENDERED)
 
@@ -320,11 +286,11 @@ describe('markdown links', () => {
       'tel:+15551234',
       'https://example.com/reply',
     ])
-    expect(await caret()).toBe(3)
+    expect(await editorCaret(browser)).toBe(3)
 
     // A press on a link that is released off it opens nothing.
     const docs = await linkBox('the docs')
-    const offLink = await pointAt(1, 1)
+    const offLink = await docPosPoint(browser, 1, 1)
     await browser.action('pointer', { parameters: { pointerType: 'mouse' } })
       .move({ x: Math.round(docs.x), y: Math.round(docs.y), origin: 'viewport' })
       .down({ button: 0 })
@@ -335,7 +301,7 @@ describe('markdown links', () => {
     await pointerClickAt(browser, await linkBox('support'))
     await waitForValue(browser, 'opened URLs after a release off the link', async () => (await openedUrls()).length, 5)
     expect((await openedUrls()).at(-1)).toBe('tel:+15551234')
-    expect(await caret()).toBe(3)
+    expect(await editorCaret(browser)).toBe(3)
 
     // With the focus off the editor, a click opens the link and leaves the
     // focus off the editor.
@@ -369,7 +335,7 @@ describe('markdown links', () => {
       const { anchor, head } = view.state.selection.main
       return { anchor, head }
     })
-    const from = await docPos(DOCS_LINK)
+    const from = await docPos(browser, DOCS_LINK)
     expect(selection.anchor).toBe(3)
     expect(selection.head).toBeGreaterThan(from)
     expect(selection.head).toBeLessThan(from + DOCS_LINK.length)

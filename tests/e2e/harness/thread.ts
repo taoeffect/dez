@@ -3,7 +3,7 @@ import type { EditorView } from '@codemirror/view'
 import { expect } from 'vitest'
 import { Key } from 'webdriverio'
 import type { ToastVariant } from '../../../src/view/toast/selectors'
-import { click, typeKeys, waitFor, waitForValue } from './dom'
+import { click, typeKeys, waitFor, waitForValue, type Point } from './dom'
 import { conversationFilePath } from './fixtures'
 import type { E2EBrowser } from './session'
 
@@ -118,6 +118,37 @@ export async function setCaret (browser: E2EBrowser, pos: number): Promise<void>
     const view = Reflect.get(Reflect.get(content, 'cmTile'), 'root').view as EditorView
     view.dispatch({ selection: { anchor } })
   }, pos)
+}
+
+/** The head of the active editor's main selection. */
+export async function editorCaret (browser: E2EBrowser): Promise<number> {
+  return browser.execute(() => {
+    const content = document.querySelector('.cm-content')
+    if (!content) throw new Error('editorCaret: .cm-content not found')
+    const view = Reflect.get(Reflect.get(content, 'cmTile'), 'root').view as EditorView
+    return view.state.selection.main.head
+  })
+}
+
+/** Doc position of `text` in the active editor plus `offset`; fails if
+ *  `text` is not in the doc. */
+export async function docPos (browser: E2EBrowser, text: string, offset = 0): Promise<number> {
+  const index = (await editorDoc(browser)).indexOf(text)
+  if (index < 0) throw new Error(`docPos: ${JSON.stringify(text)} is not in the doc`)
+  return index + offset
+}
+
+/** Viewport point at doc position `pos`: x is the caret position (`side`
+ *  picks the char before or after it), y the middle of its line. */
+export async function docPosPoint (browser: E2EBrowser, pos: number, side: -1 | 1): Promise<Point> {
+  return browser.execute((target: number, bias: -1 | 1) => {
+    const content = document.querySelector('.cm-content')
+    if (!content) throw new Error('docPosPoint: .cm-content not found')
+    const view = Reflect.get(Reflect.get(content, 'cmTile'), 'root').view as EditorView
+    const coords = view.coordsAtPos(target, bias)
+    if (!coords) throw new Error(`docPosPoint: no coords for ${target}`)
+    return { x: coords.left, y: (coords.top + coords.bottom) / 2 }
+  }, pos, side)
 }
 
 /** The height of every role pill of the active editor. */

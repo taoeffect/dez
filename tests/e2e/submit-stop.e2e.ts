@@ -5,7 +5,7 @@ import { click, consoleErrors, openHistoryPanel, pointerClick, pointerDoubleClic
 import { startMockProviderApp } from './harness/mockProviderApp'
 import { replyText, sendChatReply, startEventStream, writeChatFrame, type HeldRequest, type HoldingChatMock, type MockProvider } from './harness/mockServer'
 import type { E2EBrowser } from './harness/session'
-import { activeTabStreaming, editorDoc, focusEditor, focusedArea, openPicker, openToasts, sbpCall, submit, threadSections, waitForThread } from './harness/thread'
+import { activeTabStreaming, editorCaret, editorDoc, focusEditor, focusedArea, openPicker, openToasts, sbpCall, submit, threadSections, waitForThread } from './harness/thread'
 
 // Esc and the Submit/Stop button of the bottom bar stop the stream of the
 // active tab, through the real app against a mock server in this process.
@@ -70,15 +70,6 @@ describe('submit and stop a streaming reply', () => {
       if (!content) throw new Error('selectionRangeCount: .cm-content not found')
       const view = Reflect.get(Reflect.get(content, 'cmTile'), 'root').view as EditorView
       return view.state.selection.ranges.length
-    })
-  }
-
-  async function caretOffset (): Promise<number> {
-    return browser.execute(() => {
-      const content = document.querySelector('.cm-content')
-      if (!content) throw new Error('caretOffset: .cm-content not found')
-      const view = Reflect.get(Reflect.get(content, 'cmTile'), 'root').view as EditorView
-      return view.state.selection.main.head
     })
   }
 
@@ -297,7 +288,7 @@ describe('submit and stop a streaming reply', () => {
     await expectStopped(request, [{ role: 'user', text: question }])
     // The editor rebuilds its state from the store a tick after the stop.
     await waitForValue(browser, 'editor doc', () => editorDoc(browser), question)
-    expect(await caretOffset()).toBe(question.length)
+    expect(await editorCaret(browser)).toBe(question.length)
 
     await typeKeys(browser, ' again')
     await waitForValue(browser, 'thread after typing', () => threadSections(browser), [{ role: 'user', text: `${question} again` }])

@@ -9,7 +9,7 @@ import { conversationFilePath } from './harness/fixtures'
 import { startMockProviderApp, type MockProviderApp } from './harness/mockProviderApp'
 import { mockChatPath, replyText, sendAnthropicReply, sendChatReply, type HeldRequest, type MockProvider } from './harness/mockServer'
 import type { E2EBrowser } from './harness/session'
-import { activeTabId, editorDoc, focusEditor, openToasts, pickModel, sbpCall, setCaret, threadSections, waitForThread } from './harness/thread'
+import { activeTabId, docPosPoint, editorCaret, editorDoc, focusEditor, openToasts, pickModel, sbpCall, setCaret, threadSections, waitForThread } from './harness/thread'
 
 // Images in a conversation, driven through the real app: a paste or a drop
 // stores the file and puts its reference, with a new image id, in the doc,
@@ -170,12 +170,7 @@ describe('images', () => {
   }
 
   async function docAndCaret (): Promise<DocAndCaret> {
-    return browser.execute(() => {
-      const content = document.querySelector('.cm-content')
-      if (!content) throw new Error('docAndCaret: .cm-content not found')
-      const view = Reflect.get(Reflect.get(content, 'cmTile'), 'root').view as EditorView
-      return { doc: view.state.doc.toString(), caret: view.state.selection.main.head }
-    })
+    return { doc: await editorDoc(browser), caret: await editorCaret(browser) }
   }
 
   async function shownImages (): Promise<ShownImage[]> {
@@ -344,14 +339,8 @@ describe('images', () => {
   // A viewport point just inside the char after doc position `pos`, on the
   // middle of its line: CodeMirror maps it back to `pos`.
   async function docPoint (pos: number): Promise<Point> {
-    return browser.execute((target: number) => {
-      const content = document.querySelector('.cm-content')
-      if (!content) throw new Error('docPoint: .cm-content not found')
-      const view = Reflect.get(Reflect.get(content, 'cmTile'), 'root').view as EditorView
-      const coords = view.coordsAtPos(target, 1)
-      if (!coords) throw new Error(`docPoint: no coords for ${target}`)
-      return { x: coords.left + 1, y: (coords.top + coords.bottom) / 2 }
-    }, pos)
+    const point = await docPosPoint(browser, pos, 1)
+    return { x: point.x + 1, y: point.y }
   }
 
   // Pastes a PNG file with no text, as an image copied in an image viewer
@@ -728,16 +717,15 @@ describe('images', () => {
     const image = await insertPastedImage('See ', ' here')
     await waitForValue(browser, 'shown image', shownImages, [shownPastedImage(image)])
     await setCaret(browser, image.from)
-    const caret = async (): Promise<number> => (await docAndCaret()).caret
 
     await browser.keys(Key.ArrowRight)
-    await waitForValue(browser, 'caret after one ArrowRight', caret, image.to)
+    await waitForValue(browser, 'caret after one ArrowRight', () => editorCaret(browser), image.to)
     await browser.keys(Key.ArrowRight)
-    await waitForValue(browser, 'caret after two ArrowRights', caret, image.to + 1)
+    await waitForValue(browser, 'caret after two ArrowRights', () => editorCaret(browser), image.to + 1)
     await browser.keys(Key.ArrowLeft)
-    await waitForValue(browser, 'caret after one ArrowLeft', caret, image.to)
+    await waitForValue(browser, 'caret after one ArrowLeft', () => editorCaret(browser), image.to)
     await browser.keys(Key.ArrowLeft)
-    await waitForValue(browser, 'caret after two ArrowLefts', caret, image.from)
+    await waitForValue(browser, 'caret after two ArrowLefts', () => editorCaret(browser), image.from)
   })
 
   it('shows the source on Delete before an image, and the image again when `!` is typed', async () => {
