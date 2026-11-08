@@ -294,10 +294,12 @@ function createDefaultTab(): Tab {
 
 // The tab title: the start of the first user message that has text. An image
 // reference shows as `[image]`, never as its path. The label is not empty, so
-// the section that the `find` picks still has a title.
-function firstUserTitle(sections: Section[]): string | null {
+// the section that the `find` picks still has a title. With no user text left
+// (the user deleted it all, also an image-only first message), the title goes
+// back to the new-tab title, so a deleted message never names the tab.
+function tabTitle(sections: Section[]): string {
   const firstContent = sections.find((section) => section.role === 'user' && sectionVisibleText(section).trim())
-  if (!firstContent) return null
+  if (!firstContent) return 'New Tab'
   const text = labelImageReferences(sectionVisibleText(firstContent)).trim()
   return text.length > 30 ? text.slice(0, 30) + '…' : text
 }
@@ -375,8 +377,7 @@ export function finalizeStreamSectionForTab(session: EndedStreamSession): void {
   if (!found) return
   const { tab, section } = found
   endStreamSection(tab.sections, section, session.status, Math.max(0, session.finishedAt - session.startedAt))
-  const title = firstUserTitle(tab.sections)
-  if (title) tab.title = title
+  tab.title = tabTitle(tab.sections)
 }
 
 export function settingsCheckForUpdates(): boolean {
@@ -779,8 +780,7 @@ export default sbp('sbp/selectors/register', {
       ...thinkingField(section.thinking),
       ...durationField(section.durationMs),
     })))
-    const title = firstUserTitle(tab.sections)
-    if (title) tab.title = title
+    tab.title = tabTitle(tab.sections)
     return true
   },
 

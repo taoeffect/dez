@@ -673,6 +673,18 @@ describe('images', () => {
     await waitForValue(browser, 'doc after undo', () => editorDoc(browser), 'See ')
   })
 
+  it('puts back the New Tab title when the trash deletes the only content of a tab, an image', async () => {
+    await newTab()
+    await insertPastedImage('', '')
+    await waitForValue(browser, 'title with the image', activeTabTitle, '[image]')
+
+    await clickTrash(0)
+    await waitForValue(browser, 'prompt', async () => (await promptState()).focus, 'yes')
+    await browser.keys(Key.Enter)
+    await waitForValue(browser, 'doc after Enter', () => editorDoc(browser), '')
+    await waitForValue(browser, 'title after the delete', activeTabTitle, 'New Tab')
+  })
+
   it('shows the source on Backspace after an image, and the image again on `)`, undo, and redo', async () => {
     await newTab()
     const image = await insertPastedImage('See ', ' here')

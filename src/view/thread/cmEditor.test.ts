@@ -930,7 +930,7 @@ describe('broken prompt pills', () => {
       // Every marker char left in the doc belongs to a well-formed pill.
       expect(markerChars).toHaveLength(3 * scanPills(doc).length)
       expect(sections.map((section) => section.content)).toEqual(edit.sections)
-      // `firstUserTitle` builds the tab title from this text.
+      // `tabTitle` builds the tab title from this text.
       expect(sectionVisibleText(sections[0])).not.toMatch(SENTINEL_CHAR)
     })
 

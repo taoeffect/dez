@@ -298,6 +298,15 @@ describe('tab titles', () => {
     expect(titleFor(`Compare ![${image('a')}]() and ![${image('b')}]()`)).toBe('Compare [image] and [image]')
     expect(titleFor(`![${image('a')}]() ![${image('b')}]() Which one is brighter?`)).toBe('[image] [image] Which one is b…')
   })
+
+  it('goes back to New Tab when no user text is left', () => {
+    const image = '/home/user/.config/dez/assets/images/a.png'
+
+    expect(titleFor(`![${image}](id=a)`)).toBe('[image]')
+    expect(titleFor('')).toBe('New Tab')
+    expect(titleFor('hi')).toBe('hi')
+    expect(titleFor(' \n ')).toBe('New Tab')
+  })
 })
 
 describe('section models', () => {
