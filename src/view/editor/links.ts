@@ -1,11 +1,11 @@
 import sbp from '@sbp/sbp'
 import { syntaxTree } from '@codemirror/language'
-import { Prec, type EditorState, type Extension, type Text } from '@codemirror/state'
+import { Prec, type EditorState, type Extension } from '@codemirror/state'
 import { Decoration, EditorView, ViewPlugin, hoverTooltip, type DecorationSet, type ViewUpdate } from '@codemirror/view'
 import type { SyntaxNode } from '@lezer/common'
 import { SENTINEL_CHAR } from '../../model/chat/content'
 import { renderedImages } from './images'
-import { findMarkdownTables } from './tables'
+import { tableRowStarts } from './tables'
 
 /** A markdown link that the editor can show as a link. */
 export interface MarkdownLink {
@@ -62,19 +62,6 @@ function autolink(state: EditorState, node: SyntaxNode): MarkdownLink | null {
   if (!url) return null
   const address = state.sliceDoc(url.from, url.to)
   return { from: node.from, to: node.to, textFrom: url.from, textTo: url.to, url: URI_SCHEME.test(address) ? withLowerCaseScheme(address) : `mailto:${address}` }
-}
-
-const tableRowStartsByDoc = new WeakMap<Text, ReadonlySet<number>>()
-
-/** The start of each table row line in `doc`. A doc is immutable, so the
- *  scan of the whole doc runs once per doc, not on each selection change. */
-function tableRowStarts(doc: Text): ReadonlySet<number> {
-  let starts = tableRowStartsByDoc.get(doc)
-  if (!starts) {
-    starts = new Set(findMarkdownTables(doc).flatMap((table) => table.rows.map((row) => row.from)))
-    tableRowStartsByDoc.set(doc, starts)
-  }
-  return starts
 }
 
 /** Whether the lines of `link` let it render. Not, so left as source text:

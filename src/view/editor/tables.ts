@@ -219,6 +219,20 @@ export function findMarkdownTables(doc: Text): MarkdownTable[] {
   return tables
 }
 
+const tableRowStartsByDoc = new WeakMap<Text, ReadonlySet<number>>()
+
+/** The start of each table row line in `doc`. Images and links leave these
+ *  lines as source (see `tableDecorationsField`). A doc is immutable, so
+ *  the scan of the whole doc runs once per doc, for both of them. */
+export function tableRowStarts(doc: Text): ReadonlySet<number> {
+  let starts = tableRowStartsByDoc.get(doc)
+  if (!starts) {
+    starts = new Set(findMarkdownTables(doc).flatMap((table) => table.rows.map((row) => row.from)))
+    tableRowStartsByDoc.set(doc, starts)
+  }
+  return starts
+}
+
 interface TableDecorations {
   /** Outer marks: one `dez-table-cell` per cell. */
   cells: DecorationSet

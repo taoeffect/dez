@@ -7,7 +7,7 @@ import { IMAGE_MAX_HEIGHT_PX, SECTION_SEP } from '../thread/cmEditor'
 import { measureLineHeights } from '../thread/editorMeasure'
 import { syncDomSelection } from './focus'
 import { addPendingRange, pendingRange, pendingRanges, removePendingRange, type DocRange } from './pendingRanges'
-import { findMarkdownTables } from './tables'
+import { tableRowStarts } from './tables'
 
 interface ImageDecorations {
   /** In doc order. */
@@ -228,13 +228,11 @@ class ImageWidget extends WidgetType {
  *  shown, so left as source text:
  *  - a reference on a line with a sentinel (a section separator or a pill
  *    marker), whose widgets and atomic ranges must stay the only ones there;
- *  - a reference on a table row line (`findMarkdownTables`): a widget there
+ *  - a reference on a table row line (`tableRowStarts`): a widget there
  *    becomes an extra table cell (see `tableDecorationsField` in
  *    `tables.ts`). */
 function findRenderedImages(doc: Text): ImageReference[] {
   const images: ImageReference[] = []
-  // Only a doc with an image reference needs the table scan.
-  let tableRowStarts: Set<number> | null = null
   let lineFrom = 0
   for (const text of doc.iterLines()) {
     const from = lineFrom
@@ -242,8 +240,7 @@ function findRenderedImages(doc: Text): ImageReference[] {
     if (!text.includes('![') || SENTINEL_CHAR.test(text)) continue
     const references = findImageReferences(text)
     if (references.length === 0) continue
-    tableRowStarts ??= new Set(findMarkdownTables(doc).flatMap((table) => table.rows.map((row) => row.from)))
-    if (tableRowStarts.has(from)) continue
+    if (tableRowStarts(doc).has(from)) continue
     for (const reference of references) images.push({ ...reference, from: from + reference.from, to: from + reference.to })
   }
   return images
