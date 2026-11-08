@@ -1238,6 +1238,10 @@ function editorSize(...px: number[]): string {
 // draws no text, but tall enough for a caret that the user can see.
 const TABLE_DELIMITER_ROW_EM = 0.6
 
+/** The max height of an image in the editor (`src/view/editor/images.ts`),
+ *  in px at the default font size. */
+export const IMAGE_MAX_HEIGHT_PX = 320
+
 export const dezTheme = EditorView.theme({
   '&': {
     height: '100%',
@@ -1597,6 +1601,35 @@ export const dezTheme = EditorView.theme({
   },
   '.dez-prompt-body': {
     color: 'var(--color-text)',
+  },
+  // Images (src/view/editor/images.ts). Once the natural size of an image is
+  // known, the widget sets it as `--dez-image-width` / `--dez-image-height`,
+  // and the box gets its size from it even before the image loads (a widget
+  // drawn again): as wide as the image, the line, or the width that gives
+  // the max height, whichever is smallest, at the image's aspect ratio.
+  // Before that, the variables are unset, so `width` and `aspect-ratio` are
+  // invalid and fall back to `auto`, and the max sizes fit the image.
+  '.dez-image__img': {
+    display: 'inline-block',
+    verticalAlign: 'bottom',
+    maxWidth: '100%',
+    maxHeight: editorSize(IMAGE_MAX_HEIGHT_PX),
+    width: `min(calc(var(--dez-image-width) * 1px), 100%, calc(${editorSize(IMAGE_MAX_HEIGHT_PX)} * var(--dez-image-width) / var(--dez-image-height)))`,
+    height: 'auto',
+    aspectRatio: 'var(--dez-image-width) / var(--dez-image-height)',
+    borderRadius: editorSize(6),
+  },
+  '.dez-image-missing': {
+    display: 'inline-block',
+    padding: editorSize(1, 8),
+    borderRadius: editorSize(6),
+    border: '1px dashed var(--color-border, #333)',
+    color: 'var(--color-muted, #888)',
+    fontFamily:
+      "ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif",
+    fontSize: editorSize(12),
+    lineHeight: '1.4',
+    userSelect: 'none',
   },
   // Find highlights (src/view/editor/find.ts). Amber, so they differ from the
   // blue selection. They are text backgrounds, so they draw over the

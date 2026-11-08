@@ -49,6 +49,7 @@ import { thinkingExpandedField } from './thinkingPill'
 import { measureTextSize } from './editorMeasure'
 import { findExtension, findMatchStatus, findNextMatch, findQueryField, selectMatchSpec, setFindQueryEffect } from '../editor/find'
 import { markdownTables } from '../editor/tables'
+import { deleteImageBang, deleteImageParen, markdownImages } from '../editor/images'
 import { focusKeepingScrollOnMouseDown } from '../editor/focus'
 import { activeFindQuery, findState } from '../editor/findState'
 import { isModalOpen } from '../composables/useKeyboardShortcuts'
@@ -760,7 +761,8 @@ function buildState(expandedThinking: ReadonlySet<string> = new Set()): EditorSt
     ]),
   )
   // Fixed cursor moves and deletes: the Linux line navigation, and the keys
-  // that know about the section separators and the prompt pills.
+  // that know about the section separators, the prompt pills, and the
+  // images. It runs before the markdown and default keymaps.
   const sectionKeymap = Prec.high(
     keymap.of([
       ...linuxLineNavigationKeymap(),
@@ -811,11 +813,11 @@ function buildState(expandedThinking: ReadonlySet<string> = new Set()): EditorSt
       },
       {
         key: 'Backspace',
-        run: (v) => mergeWithPreviousSection(v) || strictMultiCursorBackspace(v),
+        run: (v) => mergeWithPreviousSection(v) || deleteImageParen(v) || strictMultiCursorBackspace(v),
       },
       {
         key: 'Delete',
-        run: mergeWithNextSection,
+        run: (v) => deleteImageBang(v) || mergeWithNextSection(v),
       },
     ]),
   )
@@ -850,6 +852,7 @@ function buildState(expandedThinking: ReadonlySet<string> = new Set()): EditorSt
       dezTheme,
       findExtension(activeFindQuery()),
       markdownTables(),
+      markdownImages(),
       // The find dropdown floats over the top of the scroller. Count it as
       // hidden space so matches (and anything else CM scrolls to) are not
       // scrolled under it.

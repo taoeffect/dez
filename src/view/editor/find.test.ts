@@ -16,6 +16,7 @@ import {
   replaceMatchTransaction,
   type FindTransaction,
 } from './find'
+import { markdownImages } from './images'
 
 function createState(doc: string, selection?: [number, number], extensions: Extension[] = []): EditorState {
   return EditorState.create({
@@ -87,6 +88,15 @@ describe('find match filter', () => {
   it('treats pills without metadata as collapsed', () => {
     const state = createState(`a ${encodePrompt('p1', 'secret', false)} b`)
     expect(matchTexts(state, plain('secret'))).toEqual([])
+  })
+
+  it('skips the hidden source of shown images but matches a broken image reference', () => {
+    const path = '/home/u/.config/dez/assets/images/a.png'
+    const doc = `png ![${path}]() ![${path}](`
+    const state = createState(doc, undefined, [markdownImages()])
+    const broken = doc.lastIndexOf(path)
+    expect(matchRanges(state, plain('png'))).toEqual([[0, 3], [broken + path.length - 3, broken + path.length]])
+    expect(matchTexts(state, plain('png ![/home'))).toEqual([])
   })
 
   it('never yields empty regex matches', () => {

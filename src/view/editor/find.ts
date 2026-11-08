@@ -15,6 +15,7 @@ import {
 import { Decoration, EditorView, ViewPlugin, type DecorationSet, type ViewUpdate } from '@codemirror/view'
 import { SENTINEL_CHAR } from '../../model/chat/content'
 import { SECTION_SEP, pillsField, scanPills, type PillMetadata } from '../thread/cmEditor'
+import { renderedImages } from './images'
 
 /** Status counting stops here; the UI shows `1000+`. */
 export const FIND_COUNT_LIMIT = 1000
@@ -90,6 +91,7 @@ interface DocRange {
 
 interface ProtectedRangesCacheEntry {
   pills: Map<string, PillMetadata> | undefined
+  images: readonly DocRange[]
   ranges: DocRange[]
 }
 
@@ -101,14 +103,17 @@ const protectedRangesCache = new WeakMap<Text, ProtectedRangesCacheEntry>()
  *    `buildSeparatorDecorations` then draws no separator widget;
  *  - pill markers and id slots. Changing them orphans pill metadata;
  *  - collapsed pill bodies. They are hidden, and a real `\n` written into
- *    one breaks the single-line pill decoration.
+ *    one breaks the single-line pill decoration;
+ *  - images that the editor shows (`renderedImages`). Their source is
+ *    hidden; a raw (broken) image reference stays searchable.
  *  Pills without metadata (or a state without `pillsField`) count as
  *  collapsed, matching `decodeSectionContent`. Cached per doc + pill map
- *  because the highlighter asks on every viewport change. */
+ *  + images because the highlighter asks on every viewport change. */
 function protectedRanges(state: EditorState): DocRange[] {
   const pills = state.field(pillsField, false)
+  const images = renderedImages(state)
   const cached = protectedRangesCache.get(state.doc)
-  if (cached && cached.pills === pills) return cached.ranges
+  if (cached && cached.pills === pills && cached.images === images) return cached.ranges
 
   const doc = state.doc.toString()
   const raw: DocRange[] = []
@@ -123,6 +128,7 @@ function protectedRanges(state: EditorState): DocRange[] {
       raw.push({ from: pill.from, to: pill.to })
     }
   }
+  for (const { from, to } of images) raw.push({ from, to })
   raw.sort((a, b) => a.from - b.from)
 
   const ranges: DocRange[] = []
@@ -131,7 +137,7 @@ function protectedRanges(state: EditorState): DocRange[] {
     if (last && range.from <= last.to) last.to = Math.max(last.to, range.to)
     else ranges.push({ ...range })
   }
-  protectedRangesCache.set(state.doc, { pills, ranges })
+  protectedRangesCache.set(state.doc, { pills, images, ranges })
   return ranges
 }
 
