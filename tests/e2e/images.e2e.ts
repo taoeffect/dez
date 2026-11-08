@@ -4,7 +4,7 @@ import zlib from 'node:zlib'
 import type { EditorView } from '@codemirror/view'
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from 'vitest'
 import { Key } from 'webdriverio'
-import { consoleErrors, resetConsoleErrors, screenshotOnFailure, typeKeys, waitForValue } from './harness/dom'
+import { consoleErrors, pointerClick, resetConsoleErrors, screenshotOnFailure, typeKeys, waitForValue } from './harness/dom'
 import { conversationFilePath } from './harness/fixtures'
 import { startMockProviderApp, type MockProviderApp } from './harness/mockProviderApp'
 import { mockChatPath, replyText, sendAnthropicReply, sendChatReply, type HeldRequest, type MockProvider } from './harness/mockServer'
@@ -13,10 +13,12 @@ import { activeTabId, focusEditor, pickModel, sbpCall, threadSections, waitForTh
 
 // Images in a conversation, driven through the real app: a paste or a drop
 // stores the file and puts its reference, with a new image id, in the doc,
-// the editor shows the image (through the asset protocol) with its id in a
-// hover badge and keeps its delete rules, both API formats get the image in
-// the request body, a model that does not read images gets `[image]` and
-// the user a warning, and a relaunch shows the saved image again.
+// the editor shows the image (through the asset protocol) with its id and a
+// trash button in a hover overlay and keeps its delete rules, the trash
+// asks first and then deletes the file and the reference, both API formats
+// get the image in the request body, a model that does not read images
+// gets `[image]` and the user a warning, and a relaunch shows the saved
+// image again.
 //
 // WebDriver can send neither clipboard data nor an OS drag, so the paste
 // and drop events are synthetic DOM events built in the page. The PNG bytes
@@ -84,13 +86,24 @@ interface ShownImage {
   height: number
 }
 
-/** The id badge of an image that the editor shows, or of its "Image not
- *  found" box. */
-interface ImageBadge {
-  /** Null for an image with no badge. */
+/** The hover overlay of an image that the editor shows, or of its "Image
+ *  not found" box. */
+interface ImageOverlay {
+  /** The id in its badge; null for an image with no id. */
   id: string | null
-  /** Whether the badge can be seen. */
+  /** Whether it has a trash button. */
+  trash: boolean
+  /** Whether the overlay can be seen. */
   shown: boolean
+}
+
+/** The confirm prompt (`dez.ui/confirm`) and the focus. */
+interface PromptState {
+  /** The prompt's text; null when no prompt is open. */
+  message: string | null
+  /** The labels of its buttons, in page order. */
+  buttons: string[]
+  focus: 'yes' | 'no' | 'editor' | 'other'
 }
 
 /** A file for `dropFiles`. */
@@ -162,17 +175,19 @@ describe('images', () => {
     ))
   }
 
-  // The badge of each image that the editor shows (or of its "Image not
-  // found" box), in doc order. A badge is shown when its overlay is fully
-  // opaque (`.dez-image__overlay` in dezTheme).
-  async function imageBadges (): Promise<ImageBadge[]> {
+  // The overlay of each image that the editor shows (or of its "Image not
+  // found" box), in doc order. It is shown when it is fully opaque
+  // (`.dez-image__overlay` in dezTheme).
+  async function imageOverlays (): Promise<ImageOverlay[]> {
     return browser.execute(() => Array.from(
       document.querySelectorAll('.cm-content .dez-image'),
       (image) => {
-        const badge = image.querySelector('.dez-image__id')
         const overlay = image.querySelector('.dez-image__overlay')
-        const shown = badge !== null && overlay !== null && getComputedStyle(overlay).opacity === '1'
-        return { id: badge?.textContent ?? null, shown }
+        return {
+          id: overlay?.querySelector('.dez-image__id')?.textContent ?? null,
+          trash: overlay?.querySelector('button.dez-image__trash') != null,
+          shown: overlay !== null && getComputedStyle(overlay).opacity === '1',
+        }
       },
     ))
   }
@@ -193,6 +208,45 @@ describe('images', () => {
     await browser.action('pointer', { parameters: { pointerType: 'mouse' } })
       .move({ x: Math.round(point.x), y: Math.round(point.y), origin: 'viewport' })
       .perform()
+  }
+
+  // Clicks at `point` (viewport px) with real pointer events.
+  async function clickAt (point: Point): Promise<void> {
+    await browser.action('pointer', { parameters: { pointerType: 'mouse' } })
+      .move({ x: Math.round(point.x), y: Math.round(point.y), origin: 'viewport' })
+      .down({ button: 0 })
+      .up({ button: 0 })
+      .perform()
+  }
+
+  // Clicks the trash of the image (or of the "Image not found" box) at
+  // `index`, in doc order. The pointer first goes onto the image, as a
+  // user's does, which shows the overlay.
+  async function clickTrash (index: number): Promise<void> {
+    await movePointer(await imageCenter(index))
+    await clickAt(await browser.execute((at: number) => {
+      const trash = document.querySelectorAll('.cm-content .dez-image')[at]?.querySelector('.dez-image__trash')
+      if (!trash) throw new Error(`clickTrash: no trash on image ${at}`)
+      const rect = trash.getBoundingClientRect()
+      return { x: rect.left + rect.width / 2, y: rect.top + rect.height / 2 }
+    }, index))
+  }
+
+  async function promptState (): Promise<PromptState> {
+    return browser.execute(() => {
+      const dialog = document.querySelector('.confirm-dialog')
+      const active = document.activeElement
+      const focus: PromptState['focus'] = active?.matches('.confirm-btn--confirm')
+        ? 'yes'
+        : active?.matches('.confirm-btn--cancel')
+          ? 'no'
+          : active?.closest('.cm-editor') ? 'editor' : 'other'
+      return {
+        message: dialog?.querySelector('.confirm-message')?.textContent ?? null,
+        buttons: Array.from(dialog?.querySelectorAll('button') ?? [], (button) => button.textContent?.trim() ?? ''),
+        focus,
+      }
+    })
   }
 
   // Puts `text` at the end of the doc as typed text, which gets no image ids
@@ -405,7 +459,7 @@ describe('images', () => {
     await waitForValue(browser, 'shown image', shownImages, [pastedImageView(image)])
   })
 
-  it('gives each image of a conversation its own id, shown in a badge while the pointer is on the image', async () => {
+  it('gives each image of a conversation its own id, shown with a trash while the pointer is on the image', async () => {
     await newTab()
     const first = await insertPastedImage('', ' and ')
     const firstLine = `${first.reference} and `
@@ -416,8 +470,8 @@ describe('images', () => {
     expect(second).toBe(`![${secondPath}](id=b)`)
     expect(secondPath).not.toBe(first.path)
 
-    // A reference with no id, as saved before ids existed, shows no badge.
-    // The badge of an image whose file is gone is in its box.
+    // A reference with no id, as saved before ids existed, gets only the
+    // trash. The overlay of an image whose file is gone is in its box.
     await typeAtEnd(`\n![${first.path}]()\n![${path.join(imagesDir(), 'gone.png')}](id=c)`)
     await waitForValue(browser, 'shown images', shownImages, [
       pastedImageView(first),
@@ -427,17 +481,15 @@ describe('images', () => {
     await waitForValue(browser, 'missing image box', () => browser.execute(
       () => document.querySelector('.cm-content .dez-image-missing')?.firstChild?.textContent ?? null,
     ), 'Image not found: gone.png')
-    const badges = (shown: string | null): ImageBadge[] => [
-      { id: 'a', shown: shown === 'a' },
-      { id: 'b', shown: shown === 'b' },
-      { id: null, shown: false },
-      { id: 'c', shown: shown === 'c' },
-    ]
+    // `hovered`: the index of the image under the pointer.
+    const overlays = (hovered: number | null): ImageOverlay[] => ['a', 'b', null, 'c'].map(
+      (id, index) => ({ id, trash: true, shown: index === hovered }),
+    )
     await movePointer(await elementCenter('header.tab-bar'))
-    await waitForValue(browser, 'badges with the pointer off the images', imageBadges, badges(null))
+    await waitForValue(browser, 'overlays with the pointer off the images', imageOverlays, overlays(null))
 
     await movePointer(await imageCenter(1))
-    await waitForValue(browser, 'badges with the pointer on image b', imageBadges, badges('b'))
+    await waitForValue(browser, 'overlays with the pointer on image b', imageOverlays, overlays(1))
     const layout = await browser.execute(() => {
       const wrapper = document.querySelectorAll('.cm-content .dez-image')[1]
       const image = wrapper?.querySelector('.dez-image__img')?.getBoundingClientRect()
@@ -459,10 +511,84 @@ describe('images', () => {
     expect(layout.top).toBeGreaterThan(0)
     expect(layout.lineHeight).toBe(layout.imageHeight)
 
+    await movePointer(await imageCenter(2))
+    await waitForValue(browser, 'overlays with the pointer on the image with no id', imageOverlays, overlays(2))
     await movePointer(await imageCenter(3))
-    await waitForValue(browser, 'badges with the pointer on the box of image c', imageBadges, badges('c'))
+    await waitForValue(browser, 'overlays with the pointer on the box of image c', imageOverlays, overlays(3))
     await movePointer(await elementCenter('header.tab-bar'))
-    await waitForValue(browser, 'badges after the pointer left', imageBadges, badges(null))
+    await waitForValue(browser, 'overlays after the pointer left', imageOverlays, overlays(null))
+  })
+
+  it('asks before the trash deletes an image, and keeps it on No, Esc, or a click outside the prompt', async () => {
+    await newTab()
+    const image = await insertPastedImage('See ', ' here')
+    const shown = [pastedImageView(image)]
+    await waitForValue(browser, 'shown image', shownImages, shown)
+    // The trash takes its own press, so the caret stays where it is.
+    const unchanged = { doc: `See ${image.reference} here`, caret: 2 }
+    await setCaret(unchanged.caret)
+
+    const cancels: Array<[string, () => Promise<unknown>]> = [
+      ['No', () => pointerClick(browser, '.confirm-btn--cancel')],
+      ['Esc', () => browser.keys(Key.Escape)],
+      // Off the dialog, on the overlay around it.
+      ['a click outside', () => clickAt({ x: 20, y: 300 })],
+    ]
+    for (const [label, cancel] of cancels) {
+      await clickTrash(0)
+      await waitForValue(browser, `prompt before ${label}`, promptState, {
+        message: 'Are you sure you want to delete this image?',
+        buttons: ['No', 'Yes'],
+        focus: 'yes',
+      })
+      expect(await editorState()).toEqual(unchanged)
+
+      await cancel()
+      await waitForValue(browser, `prompt after ${label}`, promptState, { message: null, buttons: [], focus: 'editor' })
+      expect(await editorState()).toEqual(unchanged)
+      expect(await storedImages()).toContain(path.basename(image.path))
+      expect(await shownImages()).toEqual(shown)
+    }
+  })
+
+  it('deletes the file and the reference of an image on Yes or Enter, with no undo, and the text of a missing image', async () => {
+    await newTab()
+    const image = await insertPastedImage('See ', ' here')
+    const gone = `![${path.join(imagesDir(), 'gone.png')}]()`
+    await typeAtEnd(`\n${gone}`)
+    await waitForValue(browser, 'shown image', shownImages, [pastedImageView(image)])
+    await waitForValue(browser, 'missing image box', () => browser.execute(
+      () => document.querySelector('.cm-content .dez-image-missing')?.firstChild?.textContent ?? null,
+    ), 'Image not found: gone.png')
+    // The caret in the first text of the doc, which the removal right after
+    // the prompt moved to the doc start before `syncDomSelection`
+    // (src/view/editor/focus.ts).
+    await setCaret(2)
+    const otherImages = (await storedImages()).filter((name) => name !== path.basename(image.path))
+    const closed: PromptState = { message: null, buttons: [], focus: 'editor' }
+
+    // The file goes, then the reference; the rest of its line stays.
+    await clickTrash(0)
+    await waitForValue(browser, 'prompt', async () => (await promptState()).focus, 'yes')
+    await pointerClick(browser, '.confirm-btn--confirm')
+    await waitForValue(browser, 'doc after Yes', editorState, { doc: `See  here\n${gone}`, caret: 2 })
+    expect(await storedImages()).toEqual(otherImages)
+    expect(await shownImages()).toEqual([])
+    await waitForValue(browser, 'prompt after Yes', promptState, closed)
+
+    // A missing image has no file to delete: only its text goes, with its
+    // line, as it is the only text there.
+    await clickTrash(0)
+    await waitForValue(browser, 'prompt', async () => (await promptState()).focus, 'yes')
+    await browser.keys(Key.Enter)
+    await waitForValue(browser, 'doc after Enter', editorState, { doc: 'See  here', caret: 2 })
+    expect(await storedImages()).toEqual(otherImages)
+    await waitForValue(browser, 'prompt after Enter', promptState, closed)
+
+    // The removals are not undo steps: undo takes back the typed ` here`
+    // (the last typed text that is left), and no reference comes back.
+    await browser.keys([Key.Control, 'z'])
+    await waitForValue(browser, 'doc after undo', async () => (await editorState()).doc, 'See ')
   })
 
   it('shows the source on Backspace after an image, and the image again on `)`, undo, and redo', async () => {

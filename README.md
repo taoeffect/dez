@@ -51,7 +51,7 @@ On Linux, Dez plays the sound with GStreamer. The AppImage includes the GStreame
 
 Paste an image into a conversation, or drop image files on its text. Dez copies each image to `~/.config/dez/assets/images/` and puts a Markdown reference to the copy in the text: `![<full path of the copy>](id=a)`. The editor shows the image in place of the reference. Dez keeps PNG, JPEG, GIF, and WebP images as they are, and changes other image types to PNG. When the clipboard holds text and an image, a paste puts in the text.
 
-Each image in a conversation has a short id: `a`, `b`, … `z`, `aa`, `ab`, and so on. Put the pointer on an image to see its id. A new image gets the id after the highest id in the conversation. When you paste text with an image reference that has no id, or that has the id of a different image in the conversation, Dez gives that image a new id. Dez does not change the ids that are already in a conversation. Images from before Dez gave ids have no id.
+Each image in a conversation has a short id: `a`, `b`, … `z`, `aa`, `ab`, and so on. Put the pointer on an image to see its id and a trash button. A new image gets the id after the highest id in the conversation. When you paste text with an image reference that has no id, or that has the id of a different image in the conversation, Dez gives that image a new id. Dez does not change the ids that are already in a conversation. Images from before Dez gave ids have no id.
 
 The reference is text, so you can copy, cut, and undo it as other text. To see the reference of an image:
 
@@ -60,7 +60,9 @@ The reference is text, so you can copy, cut, and undo it as other text. To see t
 
 Dez sends the images in your messages to the model. Venice, OpenRouter, and GitHub Copilot tell Dez which of their models read images. A model that does not read images gets the text `[image]` in place of each image, and Dez shows a warning. Dez sends images to all other models; if a model cannot read them, the server's error shows. For a custom provider, you can set which models read images (`imageInput`, `modelImageInput` in [Custom providers](#custom-providers)).
 
-Dez does not delete image files. An image stays in `~/.config/dez/assets/images/` when you remove it from a conversation or delete the conversation. A conversation refers to its images by full path, so the images do not show if you move the Dez folder to a different home folder.
+To delete an image, put the pointer on it and click the trash button. Dez asks: "Are you sure you want to delete this image?" Click **Yes** or press <kbd>Enter</kbd> to delete the image file from `~/.config/dez/assets/images/` and remove the reference from the text. Click **No**, press <kbd>Esc</kbd>, or click outside the question to keep the image. You cannot undo the delete. Other references to the same file, for example a copied reference in a different conversation, then show "Image not found". An "Image not found" box has a trash button too, which removes only the reference. When a reference points to an image in a different Dez folder, the trash removes only the reference and deletes no file.
+
+Dez deletes an image file only when you click its trash button. An image stays in `~/.config/dez/assets/images/` when you remove its reference with the keyboard or delete the conversation. A conversation refers to its images by full path, so the images do not show if you move the Dez folder to a different home folder.
 
 ## Custom providers
 

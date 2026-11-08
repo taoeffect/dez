@@ -5,6 +5,7 @@ import { SENTINEL_CHAR } from '../../model/chat/content'
 import { findImageReferences, type ImageReference } from '../../model/chat/images'
 import { IMAGE_MAX_HEIGHT_PX, SECTION_SEP } from '../thread/cmEditor'
 import { measureLineHeights } from '../thread/editorMeasure'
+import { syncDomSelection } from './focus'
 import { addPendingRange, pendingRange, pendingRanges, removePendingRange, type DocRange } from './pendingRanges'
 import { findMarkdownTables } from './tables'
 
@@ -302,6 +303,8 @@ export async function deleteImage(view: EditorView, from: number, path: string):
     }),
     effects: removePendingRange(id),
   })
+  // The prompt gave the focus back a few ms ago (`syncDomSelection`).
+  if (range) syncDomSelection(view)
 }
 
 /** Images for the thread editor (`buildState()` in `ThreadEditor.vue`).

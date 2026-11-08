@@ -31,6 +31,32 @@ export function focusKeepingScroll(view: EditorView): void {
   }
 }
 
+/** Puts the DOM selection back where the editor state has it, after a
+ *  change that code dispatched while the editor has the focus.
+ *
+ *  Why: when text next to a text node goes, CodeMirror rewrites the whole
+ *  value of that node, and the browser then moves a DOM caret in it to the
+ *  node's start. CodeMirror normally reads that back and writes its caret
+ *  again. But for 200 ms after the editor gets the focus, it takes a caret
+ *  at the very start of the editor for the one that WebKit puts there on
+ *  focus, and it writes nothing, because its record of the DOM selection
+ *  still matches the state. The next `selectionchange` then moves the
+ *  state's caret to the doc start. So a change that comes right after the
+ *  focus comes back (the image trash, after its confirm prompt) moved a
+ *  caret on the first line to the doc start (@codemirror/view 6.41.1,
+ *  `readSelectionRange`). A selection that is already right is left as it
+ *  is. */
+export function syncDomSelection(view: EditorView): void {
+  const selection = view.hasFocus ? document.getSelection() : null
+  const { anchorNode, focusNode } = selection ?? {}
+  if (!selection || !anchorNode || !focusNode || !view.contentDOM.contains(anchorNode) || !view.contentDOM.contains(focusNode)) return
+  const { main } = view.state.selection
+  if (view.posAtDOM(anchorNode, selection.anchorOffset) === main.anchor && view.posAtDOM(focusNode, selection.focusOffset) === main.head) return
+  const anchor = view.domAtPos(main.anchor)
+  const head = view.domAtPos(main.head)
+  selection.setBaseAndExtent(anchor.node, anchor.offset, head.node, head.offset)
+}
+
 /** A primary-button press in the text of an editor without focus: focus it
  *  with `focusKeepingScroll` before CodeMirror's own mousedown handler
  *  runs. That handler then sees an editor with focus, does not focus it a

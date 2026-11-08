@@ -71,9 +71,9 @@ ThreadEditor (CodeMirror doc) syncs to the active tab's sections
 - `view/editor/selectors.ts`: `dez.editor/*`, the active-editor bridge (stream patching, scroll follow, Copy Markdown, `runKeyBinding`).
 - `view/editor/find.ts`, `findState.ts`, `findHistory.ts`, `view/thread/FindDropdown.vue`: find and replace.
 - `view/editor/tables.ts`: GFM tables shown as tables, in place.
-- `view/editor/focus.ts`: focus the editor and keep its scroll; use `focusKeepingScroll`, not `view.focus()`.
-- `view/editor/images.ts`, `imageInsert.ts`: images shown in place of their references (with the id badge on hover and the Backspace and Delete rules), and image paste and drop (which give image ids).
-- `controller/images.ts`: `dez.controller/images/*`: store an image, its display URL, read a dropped file, Linux native file drops.
+- `view/editor/focus.ts`: focus the editor and keep its scroll; use `focusKeepingScroll`, not `view.focus()`. `syncDomSelection`: fix the caret after code changes the doc right after the editor gets the focus.
+- `view/editor/images.ts`, `imageInsert.ts`: images shown in place of their references (with a hover overlay: the id badge and a trash that deletes the image after a `dez.ui/confirm` prompt; and the Backspace and Delete rules), and image paste and drop (which give image ids). `pendingRanges.ts`: doc ranges that the async insert and delete flows follow.
+- `controller/images.ts`: `dez.controller/images/*`: store and delete an image, its display URL, read a dropped file, Linux native file drops.
 - `model/chat/`: `Section` / `ContentNode` types and helpers (`content.ts`, `modelRef.ts`, `thinking.ts`, `markdown.ts`, `pillMarker.ts`, `images.ts`).
 - `model/state/`: Pinia stores (internal) and `dez.model/*` selectors; views read state through `view/modelState.ts`.
 - `controller/stream.ts`, `model/state/streams.ts`, `controller/http.ts`: stream lifecycle, per-tab sessions, native HTTP streams.
@@ -155,7 +155,7 @@ All app data is under `~/.config/dez/`. TypeScript owns every format; Rust only 
 - `conversations/<sanitized-id>.md`: conversations (format: `src/model/persistence/conversationFormat.ts`; pill markers: `src/model/chat/pillMarker.ts`).
 - `prompts.json`: saved prompt templates (`src/model/persistence/prompts.ts`).
 - `model_cache.json`: last-known model lists, no secrets (`src/model/persistence/modelCache.ts`).
-- `assets/images/<uuid>.<ext>`: pasted and dropped images; conversations refer to them by absolute path (`src/controller/images.ts`). Nothing deletes them yet.
+- `assets/images/<uuid>.<ext>`: pasted and dropped images; conversations refer to them by absolute path (`src/controller/images.ts`). Only the image trash deletes them; a text edit or a conversation delete leaves the file.
 - `provider_keys.json`: API keys and Copilot tokens (`src-tauri/src/key_store.rs`).
 
 Do not ever read, view, print, or `cat` `~/.config/dez/provider_keys.json`; it can contain API keys and OAuth tokens.
