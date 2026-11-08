@@ -852,14 +852,17 @@ function buildState(expandedThinking: ReadonlySet<string> = new Set()): EditorSt
       dezLanguageSupport(),
       dezTheme,
       // Tooltips (link URLs, image overlay items) stay across the text
-      // column (`contentDOM`) and a little in from the window's top and
+      // column (`contentDOM`) and a little in from the scroller's top and
       // bottom. CM's default space is the whole window, where a tooltip can
-      // touch the window's side and cover the scrollbar.
+      // touch the window's side, cover the scrollbar, or go up under the tab
+      // bar, which hides its top (a tooltip above an image on the first
+      // line). With no room above, CM shows it below its item.
       tooltips({
         tooltipSpace: (v) => {
           const { left, right } = v.contentDOM.getBoundingClientRect()
+          const { top, bottom } = v.scrollDOM.getBoundingClientRect()
           const gap = 8
-          return { left, right, top: gap, bottom: v.dom.ownerDocument.documentElement.clientHeight - gap }
+          return { left, right, top: top + gap, bottom: bottom - gap }
         },
       }),
       findExtension(activeFindQuery()),

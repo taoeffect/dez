@@ -14,7 +14,8 @@ import { activeTabId, focusEditor, pickModel, sbpCall, threadSections, waitForTh
 // Images in a conversation, driven through the real app: a paste or a drop
 // stores the file and puts its reference, with a new image id, in the doc,
 // the editor shows the image (through the asset protocol) with its id and a
-// trash button in a hover overlay and keeps its delete rules, the trash
+// trash button in a hover toolbar at its top-right corner, each with a
+// tooltip that says what it is for, and keeps its delete rules, the trash
 // asks first and then deletes the file and the reference, both API formats
 // get the image in the request body, a model that does not read images
 // gets `[image]` and the user a warning, and a relaunch shows the saved
@@ -64,6 +65,8 @@ function solidPng (width: number, height: number, rgb: readonly [number, number,
 
 const PASTED_PNG = solidPng(48, 32, [220, 40, 40])
 const DROPPED_PNG = solidPng(40, 24, [40, 90, 220])
+// Wider than an image's overlay toolbar, which is wider than PASTED_PNG.
+const WIDE_PNG = solidPng(200, 60, [30, 30, 30])
 
 /** A Dez image reference in the doc, `![<absolute path>](id=<letters>)`. */
 const REFERENCE = /!\[[^\]\n]+\]\(id=[a-z]+\)/
@@ -95,6 +98,23 @@ interface ImageOverlay {
   trash: boolean
   /** Whether the overlay can be seen. */
   shown: boolean
+}
+
+/** Where an image's overlay sits on the image, in px from each image edge
+ *  (negative: out past that edge), and the heights of the image and its
+ *  line. */
+interface OverlayLayout {
+  top: number
+  left: number
+  right: number
+  imageHeight: number
+  lineHeight: number
+}
+
+/** The tooltip of an overlay item: the id badge or a trash. */
+interface OverlayTooltip {
+  title: string
+  text: string
 }
 
 /** The confirm prompt (`dez.ui/confirm`) and the focus. */
@@ -219,17 +239,85 @@ describe('images', () => {
       .perform()
   }
 
+  // The center of the overlay item `selector` (`.dez-image__id` or
+  // `.dez-image__trash`) of the image (or of the "Image not found" box) at
+  // `index`, in doc order.
+  async function overlayItemCenter (index: number, selector: string): Promise<Point> {
+    return browser.execute((at: number, wanted: string) => {
+      const item = document.querySelectorAll('.cm-content .dez-image')[at]?.querySelector(wanted)
+      if (!item) throw new Error(`overlayItemCenter: no ${wanted} on image ${at}`)
+      const rect = item.getBoundingClientRect()
+      return { x: rect.left + rect.width / 2, y: rect.top + rect.height / 2 }
+    }, index, selector)
+  }
+
+  // Moves the pointer onto the overlay item `selector` of the image (or of
+  // the "Image not found" box) at `index`, in doc order. The pointer first
+  // goes onto the image, as a user's does, which shows the overlay.
+  async function hoverOverlayItem (index: number, selector: string): Promise<void> {
+    await movePointer(await imageCenter(index))
+    await movePointer(await overlayItemCenter(index, selector))
+  }
+
   // Clicks the trash of the image (or of the "Image not found" box) at
-  // `index`, in doc order. The pointer first goes onto the image, as a
-  // user's does, which shows the overlay.
+  // `index`, in doc order, after the pointer went onto the image.
   async function clickTrash (index: number): Promise<void> {
     await movePointer(await imageCenter(index))
-    await clickAt(await browser.execute((at: number) => {
-      const trash = document.querySelectorAll('.cm-content .dez-image')[at]?.querySelector('.dez-image__trash')
-      if (!trash) throw new Error(`clickTrash: no trash on image ${at}`)
-      const rect = trash.getBoundingClientRect()
-      return { x: rect.left + rect.width / 2, y: rect.top + rect.height / 2 }
-    }, index))
+    await clickAt(await overlayItemCenter(index, '.dez-image__trash'))
+  }
+
+  // Where the overlay of the image at `index` (doc order) sits, once the
+  // pointer is on the image and the overlay's entrance (a short fade and
+  // slide, `.dez-image__overlay` in dezTheme) is over.
+  async function overlayLayout (index: number): Promise<OverlayLayout> {
+    await waitForValue(browser, `overlay of image ${index} in place`, () => browser.execute((at: number) => {
+      const overlay = document.querySelectorAll('.cm-content .dez-image')[at]?.querySelector('.dez-image__overlay')
+      if (!overlay) return false
+      const style = getComputedStyle(overlay)
+      return style.opacity === '1' && style.transform === 'none'
+    }, index), true)
+    return browser.execute((at: number) => {
+      const wrapper = document.querySelectorAll('.cm-content .dez-image')[at]
+      const image = wrapper?.querySelector('.dez-image__img')?.getBoundingClientRect()
+      const overlay = wrapper?.querySelector('.dez-image__overlay')?.getBoundingClientRect()
+      const line = wrapper?.closest('.cm-line')?.getBoundingClientRect()
+      if (!image || !overlay || !line) throw new Error(`overlayLayout: image ${at}, its overlay, or its line not found`)
+      return {
+        top: overlay.top - image.top,
+        left: overlay.left - image.left,
+        right: image.right - overlay.right,
+        imageHeight: image.height,
+        lineHeight: line.height,
+      }
+    }, index)
+  }
+
+  // The overlay item tooltips that show (`.dez-image-tooltip`; at most one).
+  async function overlayTooltips (): Promise<OverlayTooltip[]> {
+    return browser.execute(() => Array.from(
+      document.querySelectorAll('.cm-tooltip.dez-image-tooltip'),
+      (tip) => ({
+        title: tip.querySelector('.dez-image-tooltip__title')?.textContent ?? '',
+        text: tip.querySelector('.dez-image-tooltip__text')?.textContent ?? '',
+      }),
+    ))
+  }
+
+  // Whether the overlay item tooltip that shows is inside the editor's
+  // visible area (its scroller; the tab bar above it would hide a part of
+  // the tooltip), and clear of the toolbar of the image at `index`, so that
+  // it never covers the item it explains.
+  async function tooltipPlacement (index: number): Promise<{ inEditor: boolean, clearOfToolbar: boolean }> {
+    return browser.execute((at: number) => {
+      const tip = document.querySelector('.cm-tooltip.dez-image-tooltip')?.getBoundingClientRect()
+      const editor = document.querySelector('.cm-scroller')?.getBoundingClientRect()
+      const toolbar = document.querySelectorAll('.cm-content .dez-image')[at]?.querySelector('.dez-image__overlay')?.getBoundingClientRect()
+      if (!tip || !editor || !toolbar) throw new Error(`tooltipPlacement: no tooltip, no editor, or no toolbar on image ${at}`)
+      return {
+        inEditor: tip.left >= editor.left && tip.top >= editor.top && tip.right <= editor.right && tip.bottom <= editor.bottom,
+        clearOfToolbar: tip.bottom <= toolbar.top || tip.top >= toolbar.bottom,
+      }
+    }, index)
   }
 
   async function promptState (): Promise<PromptState> {
@@ -459,7 +547,7 @@ describe('images', () => {
     await waitForValue(browser, 'shown image', shownImages, [pastedImageView(image)])
   })
 
-  it('gives each image of a conversation its own id, shown with a trash while the pointer is on the image', async () => {
+  it('gives each image of a conversation its own id, shown with a trash at its top-right corner while the pointer is on the image', async () => {
     await newTab()
     const first = await insertPastedImage('', ' and ')
     const firstLine = `${first.reference} and `
@@ -471,12 +559,15 @@ describe('images', () => {
     expect(secondPath).not.toBe(first.path)
 
     // A reference with no id, as saved before ids existed, gets only the
-    // trash. The overlay of an image whose file is gone is in its box.
-    await typeAtEnd(`\n![${first.path}]()\n![${path.join(imagesDir(), 'gone.png')}](id=c)`)
+    // trash; this one is to an image wider than its overlay. The overlay of
+    // an image whose file is gone is in its box.
+    const wide = path.join(imagesDir(), 'wide.png')
+    await fs.promises.writeFile(wide, WIDE_PNG)
+    await typeAtEnd(`\n![${wide}]()\n![${path.join(imagesDir(), 'gone.png')}](id=c)`)
     await waitForValue(browser, 'shown images', shownImages, [
       pastedImageView(first),
       { alt: path.basename(secondPath), width: 48, height: 32 },
-      pastedImageView(first),
+      { alt: 'wide.png', width: 200, height: 60 },
     ])
     await waitForValue(browser, 'missing image box', () => browser.execute(
       () => document.querySelector('.cm-content .dez-image-missing')?.firstChild?.textContent ?? null,
@@ -490,33 +581,79 @@ describe('images', () => {
 
     await movePointer(await imageCenter(1))
     await waitForValue(browser, 'overlays with the pointer on image b', imageOverlays, overlays(1))
-    const layout = await browser.execute(() => {
-      const wrapper = document.querySelectorAll('.cm-content .dez-image')[1]
-      const image = wrapper?.querySelector('.dez-image__img')?.getBoundingClientRect()
-      const overlay = wrapper?.querySelector('.dez-image__overlay')?.getBoundingClientRect()
-      const line = wrapper?.closest('.cm-line')?.getBoundingClientRect()
-      if (!image || !overlay || !line) throw new Error('layout: image b, its overlay, or its line not found')
-      return {
-        top: overlay.top - image.top,
-        right: image.right - overlay.right,
-        bottom: image.bottom - overlay.bottom,
-        imageHeight: image.height,
-        lineHeight: line.height,
-      }
-    })
-    // On the image's bottom-right corner, as far from its right edge as
-    // from its bottom edge; and the overlay adds no height to the line.
-    expect(layout.right).toBeGreaterThan(0)
-    expect(layout.right).toBeCloseTo(layout.bottom, 1)
-    expect(layout.top).toBeGreaterThan(0)
-    expect(layout.lineHeight).toBe(layout.imageHeight)
+    // Image b is narrower than its overlay: the overlay starts as far from
+    // the image's left edge as from its top edge, and hangs out on the
+    // right. It adds no height to the line.
+    const narrow = await overlayLayout(1)
+    expect(narrow.top).toBeGreaterThan(0)
+    expect(narrow.left).toBeCloseTo(narrow.top, 1)
+    expect(narrow.right).toBeLessThan(0)
+    expect(narrow.lineHeight).toBe(narrow.imageHeight)
 
     await movePointer(await imageCenter(2))
     await waitForValue(browser, 'overlays with the pointer on the image with no id', imageOverlays, overlays(2))
+    // On a wide image, in its top-right corner, as far from its right edge
+    // as from its top edge.
+    const onWide = await overlayLayout(2)
+    expect(onWide.top).toBeGreaterThan(0)
+    expect(onWide.right).toBeCloseTo(onWide.top, 1)
+    expect(onWide.left).toBeGreaterThan(onWide.right)
+    expect(onWide.lineHeight).toBe(onWide.imageHeight)
+
     await movePointer(await imageCenter(3))
     await waitForValue(browser, 'overlays with the pointer on the box of image c', imageOverlays, overlays(3))
     await movePointer(await elementCenter('header.tab-bar'))
     await waitForValue(browser, 'overlays after the pointer left', imageOverlays, overlays(null))
+  })
+
+  it('explains the id badge and the trash in tooltips while the pointer is on them', async () => {
+    await newTab()
+    await insertPastedImage('See ', ' here')
+    await typeAtEnd(`\n![${path.join(imagesDir(), 'gone.png')}](id=b)`)
+    await waitForValue(browser, 'missing image box', () => browser.execute(
+      () => document.querySelector('.cm-content .dez-image-missing')?.firstChild?.textContent ?? null,
+    ), 'Image not found: gone.png')
+    // No overlay item has a native `title`, which would show a second
+    // tooltip next to Dez's.
+    expect(await browser.execute(() => document.querySelectorAll('.cm-content .dez-image [title]').length)).toBe(0)
+
+    const offImages = await elementCenter('header.tab-bar')
+    const trashTooltip: OverlayTooltip = {
+      title: 'Delete image',
+      text: 'Removes the image from the conversation and deletes its file from the Dez folder. Dez asks you first. You cannot undo this.',
+    }
+    // [what, its image's index in doc order, its selector, its tooltip]
+    const items: Array<[string, number, string, OverlayTooltip]> = [
+      ['the id badge', 0, '.dez-image__id', {
+        title: 'Image id: a',
+        text: 'The short name of this image in this conversation. It is saved in the image\u2019s markdown as id=a.',
+      }],
+      ['the trash', 0, '.dez-image__trash', trashTooltip],
+      // The file is gone, so the trash can remove only the text.
+      ['the trash of the missing image', 1, '.dez-image__trash', {
+        title: 'Delete image',
+        text: 'The image file is not found, so this removes only the image from the conversation. Dez asks you first. You cannot undo this.',
+      }],
+    ]
+    for (const [label, index, selector, tooltip] of items) {
+      await hoverOverlayItem(index, selector)
+      await waitForValue(browser, `tooltip on ${label}`, overlayTooltips, [tooltip])
+      expect(await tooltipPlacement(index)).toEqual({ inEditor: true, clearOfToolbar: true })
+      await movePointer(offImages)
+      await waitForValue(browser, `tooltip after the pointer left ${label}`, overlayTooltips, [])
+    }
+
+    // A press on the trash opens the prompt, which the tooltip does not
+    // outlive.
+    await hoverOverlayItem(0, '.dez-image__trash')
+    await waitForValue(browser, 'tooltip on the trash before the press', overlayTooltips, [trashTooltip])
+    await clickAt(await overlayItemCenter(0, '.dez-image__trash'))
+    await waitForValue(browser, 'prompt', async () => (await promptState()).focus, 'yes')
+    expect(await overlayTooltips()).toEqual([])
+    await browser.keys(Key.Escape)
+    await waitForValue(browser, 'prompt after Esc', async () => (await promptState()).message, null)
+    await movePointer(offImages)
+    await waitForValue(browser, 'tooltip after the pointer left the trash', overlayTooltips, [])
   })
 
   it('asks before the trash deletes an image, and keeps it on No, Esc, or a click outside the prompt', async () => {

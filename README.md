@@ -51,7 +51,7 @@ On Linux, Dez plays the sound with GStreamer. The AppImage includes the GStreame
 
 Paste an image into a conversation, or drop image files on its text. Dez copies each image to `~/.config/dez/assets/images/` and puts a Markdown reference to the copy in the text: `![<full path of the copy>](id=a)`. The editor shows the image in place of the reference. Dez keeps PNG, JPEG, GIF, and WebP images as they are, and changes other image types to PNG. When the clipboard holds text and an image, a paste puts in the text.
 
-Each image in a conversation has a short id: `a`, `b`, … `z`, `aa`, `ab`, and so on. Put the pointer on an image to see its id and a trash button. A new image gets the id after the highest id in the conversation. When you paste text with an image reference that has no id, or that has the id of a different image in the conversation, Dez gives that image a new id. Dez does not change the ids that are already in a conversation. Images from before Dez gave ids have no id.
+Each image in a conversation has a short id: `a`, `b`, … `z`, `aa`, `ab`, and so on. Put the pointer on an image to see a small toolbar in its top-right corner, with the image's id and a trash button. Keep the pointer on the id or on the trash button to see what it is for. A new image gets the id after the highest id in the conversation. When you paste text with an image reference that has no id, or that has the id of a different image in the conversation, Dez gives that image a new id. Dez does not change the ids that are already in a conversation. Images from before Dez gave ids have no id.
 
 The reference is text, so you can copy, cut, and undo it as other text. To see the reference of an image:
 
