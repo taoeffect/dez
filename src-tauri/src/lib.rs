@@ -60,6 +60,7 @@ pub fn run() {
             commands::delete_conversation_file,
             commands::save_app_file,
             commands::load_app_file,
+            commands::load_app_file_bytes,
             commands::get_app_dir,
             commands::is_window_fullscreen,
             commands::monitors,
@@ -90,7 +91,12 @@ pub fn run() {
         Ok(())
     });
     // Reads tauri.conf.json, whose `"csp": null` is on purpose during
-    // development.
+    // development. Its `"dragDropEnabled": false` turns Tauri's native file
+    // drop off, so HTML5 drops with the dropped files reach the page (images
+    // dropped into the editor). Its `assetProtocol` scope lets the webview
+    // show the images in `$HOME/.config/dez/assets/images/` by
+    // `convertFileSrc` URLs; it must name the folder that `base_dir()` in
+    // persistence.rs builds (both read `$HOME`).
     builder
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

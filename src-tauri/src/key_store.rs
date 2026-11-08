@@ -105,7 +105,7 @@ fn load_keys_from(path: &Path) -> Result<KeyStoreData, String> {
 // command. It also creates the file with mode 0600 from the start.
 fn save_keys_to(path: &Path, data: &KeyStoreData) -> Result<(), String> {
     let json = serde_json::to_string_pretty(data).map_err(|e| format!("Serialize error: {}", e))?;
-    crate::persistence::write_private_file(path, &json)
+    crate::persistence::write_private_file(path, json.as_bytes())
 }
 
 // The charset rule of `isValidProviderId` in src/model/providers/config.ts.

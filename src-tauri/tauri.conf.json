@@ -18,11 +18,16 @@
         "height": 700,
         "minWidth": 600,
         "minHeight": 400,
-        "visible": false
+        "visible": false,
+        "dragDropEnabled": false
       }
     ],
     "security": {
-      "csp": null
+      "csp": null,
+      "assetProtocol": {
+        "enable": true,
+        "scope": ["$HOME/.config/dez/assets/images/*"]
+      }
     }
   },
   "bundle": {

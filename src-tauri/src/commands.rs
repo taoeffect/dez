@@ -1,4 +1,7 @@
+use std::borrow::Cow;
+
 use tauri::State;
+use tauri::ipc::InvokeBody;
 
 use crate::copilot::{CopilotChatToken, DeviceFlowResponse};
 use crate::native_error::NativeError;
@@ -141,6 +144,30 @@ mod tests {
         assert_eq!(gdk_backend_name("GdkDisplay"), None);
         assert_eq!(gdk_backend_name("MyDisplay"), None);
     }
+
+    #[test]
+    fn reads_app_file_bytes_from_a_raw_or_a_number_array_body() {
+        let bytes = vec![0x89, b'P', b'N', b'G', 0x00, 0xFF];
+        let raw = InvokeBody::Raw(bytes.clone());
+        let array = InvokeBody::Json(serde_json::json!([0x89, b'P', b'N', b'G', 0x00, 0xFF]));
+
+        assert_eq!(invoke_body_bytes(&raw).expect("raw body").as_ref(), bytes);
+        assert_eq!(invoke_body_bytes(&array).expect("array body").as_ref(), bytes);
+    }
+
+    #[test]
+    fn rejects_an_app_file_body_that_is_not_bytes() {
+        for body in [
+            serde_json::json!([1, 256]),
+            serde_json::json!([1, -1]),
+            serde_json::json!([1, 2.5]),
+            serde_json::json!(["a"]),
+            serde_json::json!({ "content": "text" }),
+            serde_json::json!("text"),
+        ] {
+            assert!(invoke_body_bytes(&InvokeBody::Json(body.clone())).is_err(), "{body}");
+        }
+    }
 }
 
 #[tauri::command]
@@ -178,14 +205,50 @@ pub async fn delete_conversation_file(id: String) -> Result<(), String> {
     crate::persistence::delete_conversation_file(&id)
 }
 
+// The one writer command for app files, text or bytes (`dez.native/saveAppFile`
+// sends it). The content is the raw IPC body, so bytes never go as a JSON
+// number array, which is several times larger. The relative path is in the
+// `path` header, as plugin-fs `writeFile` does it.
 #[tauri::command]
-pub async fn save_app_file(name: String, content: String) -> Result<(), String> {
-    crate::persistence::save_app_file(&name, &content)
+pub async fn save_app_file(request: tauri::ipc::Request<'_>) -> Result<(), String> {
+    let path = request
+        .headers()
+        .get("path")
+        .ok_or("Missing app file path")?
+        .to_str()
+        .map_err(|_| "Invalid app file path header".to_string())?;
+    let content = invoke_body_bytes(request.body())?;
+    crate::persistence::save_app_file(path, &content)
+}
+
+// The bytes of a raw IPC body. When the webview cannot use Tauri's custom
+// protocol IPC, Tauri falls back to postMessage, which sends a Uint8Array as
+// a JSON number array (process-ipc-message-fn.js in the tauri crate). Each
+// number must be a byte; anything else is an error, never truncated.
+fn invoke_body_bytes(body: &InvokeBody) -> Result<Cow<'_, [u8]>, String> {
+    let not_bytes = || "App file content is not bytes".to_string();
+    match body {
+        InvokeBody::Raw(bytes) => Ok(Cow::Borrowed(bytes)),
+        InvokeBody::Json(serde_json::Value::Array(values)) => values
+            .iter()
+            .map(|value| value.as_u64().and_then(|n| u8::try_from(n).ok()))
+            .collect::<Option<Vec<u8>>>()
+            .map(Cow::Owned)
+            .ok_or_else(not_bytes),
+        InvokeBody::Json(_) => Err(not_bytes()),
+    }
 }
 
 #[tauri::command]
-pub async fn load_app_file(name: String) -> Result<String, String> {
-    crate::persistence::load_app_file(&name)
+pub async fn load_app_file(path: String) -> Result<String, String> {
+    crate::persistence::load_app_file(&path)
+}
+
+// Returns raw bytes, which arrive in JavaScript as an ArrayBuffer, not as a
+// JSON number array.
+#[tauri::command]
+pub async fn load_app_file_bytes(path: String) -> Result<tauri::ipc::Response, String> {
+    crate::persistence::load_app_file_bytes(&path).map(tauri::ipc::Response::new)
 }
 
 #[tauri::command]

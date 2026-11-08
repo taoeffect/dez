@@ -131,7 +131,7 @@ Rules:
 
 ### Backend (`src-tauri/src/`)
 
-- **Keep Rust barebones**: a thin, generic OS interface, not a per-feature API. Reuse or generalize an existing command (e.g. `load_app_file(name)` / `save_app_file(name, content)`) instead of adding a near-copy, so frontend features rarely need Rust changes.
+- **Keep Rust barebones**: a thin, generic OS interface, not a per-feature API. Reuse or generalize an existing command (e.g. `load_app_file(path)` / `save_app_file`, text or bytes at a path relative to the app folder) instead of adding a near-copy, so frontend features rarely need Rust changes.
 - `commands.rs`, `http_bridge.rs`, `notification.rs`, `idle.rs`: Tauri commands, registered in `lib.rs`. `open_devtools` (Help › Developer Console) needs the `devtools` feature of the `tauri` crate in release builds (`Cargo.toml`).
 - `http_bridge.rs`: generic `http_request`, `stream_http`, `cancel_http_stream`.
 - `notification.rs`: `show_notification`, a system notification whose click brings the window to the front and calls back (zbus on Linux, NSUserNotificationCenter through objc2 on macOS).

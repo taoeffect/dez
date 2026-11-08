@@ -1,8 +1,9 @@
-//! Raw private-file I/O under `~/.config/dez/`, plus id and file-name
+//! Raw private-file I/O under `~/.config/dez/`, plus id and app-file path
 //! sanitization. TypeScript owns every file format (app state, prompts,
 //! conversations, model cache); Rust never parses them. The generic
-//! `save_app_file`/`load_app_file` commands take the file name from
-//! TypeScript, so a new JSON file needs no new command.
+//! `save_app_file`/`load_app_file`/`load_app_file_bytes` commands take a
+//! path relative to that folder from TypeScript, so a new file needs no new
+//! command.
 
 use serde::{Deserialize, Serialize};
 use std::io::Write;
@@ -22,7 +23,8 @@ pub struct ConversationFile {
 
 // All app data is under `$HOME/.config/dez/` on every OS. The path comes from
 // $HOME on purpose, not from Tauri's path API. `key_store_path` in
-// key_store.rs builds the same folder.
+// key_store.rs builds the same folder, and so does the `assetProtocol` scope
+// in tauri.conf.json (`$HOME/.config/dez/assets/images/*`).
 fn base_dir() -> PathBuf {
     let home = std::env::var("HOME").unwrap_or_else(|_| ".".into());
     PathBuf::from(home).join(".config").join("dez")
@@ -36,26 +38,31 @@ fn conversation_path(id: &str) -> PathBuf {
     conversations_dir().join(format!("{}.md", sanitize_id(id)))
 }
 
-// Sanitizes a single-file name used by the generic app-file commands so a
-// buggy/malicious caller cannot escape `~/.config/dez/`. We allow only ascii
-// alphanumerics plus `-`, `_`, `.`, which excludes path separators and rules
-// out `..` traversal (a name of all dots like ".." would still be rejected
-// below). Returns an error rather than silently coercing so callers don't
-// accidentally read/write the wrong file.
-fn sanitize_app_file_name(name: &str) -> Result<String, String> {
-    let valid = !name.is_empty()
-        && name != "."
-        && name != ".."
-        && name
-            .chars()
-            .all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_' || c == '.');
+// Turns a path relative to the app folder, as the generic app-file commands
+// get it from TypeScript (`app_state.json`, `assets/images/<uuid>.png`), into
+// a full path, so a buggy or malicious caller cannot leave `~/.config/dez/`.
+// Segments are separated by `/` only. Each segment allows only ASCII
+// alphanumerics plus `-`, `_`, `.`, and may not be empty, `.`, or `..`. That
+// rules out absolute paths, backslashes, drive prefixes, and `..` traversal.
+// It also keeps the path safe to send as an IPC header value
+// (`save_app_file` in commands.rs). Returns an error rather than silently
+// coercing so callers don't accidentally read/write the wrong file.
+fn app_file_path(relative: &str) -> Result<PathBuf, String> {
+    let valid = relative.split('/').all(|segment| {
+        !segment.is_empty()
+            && segment != "."
+            && segment != ".."
+            && segment
+                .chars()
+                .all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_' || c == '.')
+    });
     if !valid {
-        return Err(format!("Invalid app file name: {}", name));
+        return Err(format!("Invalid app file path: {}", relative));
     }
-    Ok(name.to_string())
+    Ok(base_dir().join(relative))
 }
 
-// Conversation ids become file names. Unlike `sanitize_app_file_name`, this
+// Conversation ids become file names. Unlike `app_file_path`, this
 // drops other characters and does not fail.
 fn sanitize_id(id: &str) -> String {
     id.chars()
@@ -91,7 +98,7 @@ static TEMP_FILE_COUNTER: AtomicU64 = AtomicU64::new(0);
 // The process id in its name keeps two running Dez apps apart, and the
 // counter keeps two saves in this process apart: the save commands are async
 // and take no lock, so they can overlap.
-pub(crate) fn write_private_file(path: &Path, content: &str) -> Result<(), String> {
+pub(crate) fn write_private_file(path: &Path, content: &[u8]) -> Result<(), String> {
     if let Some(parent) = path.parent() {
         ensure_dir(parent)?;
     }
@@ -115,7 +122,7 @@ pub(crate) fn write_private_file(path: &Path, content: &str) -> Result<(), Strin
     options
         .open(&temp_path)
         .and_then(|mut file| {
-            file.write_all(content.as_bytes())?;
+            file.write_all(content)?;
             // Flush to disk before the rename, so a power loss cannot leave an
             // empty file under the real name.
             file.sync_all()
@@ -129,7 +136,7 @@ pub(crate) fn write_private_file(path: &Path, content: &str) -> Result<(), Strin
 
 pub fn save_conversation_file(id: &str, content: &str) -> Result<(), String> {
     let path = conversation_path(id);
-    write_private_file(&path, content)
+    write_private_file(&path, content.as_bytes())
 }
 
 pub fn load_conversation_file(id: &str) -> Result<String, String> {
@@ -194,15 +201,22 @@ pub fn delete_conversation_file(id: &str) -> Result<(), String> {
     Ok(())
 }
 
-pub fn load_app_file(name: &str) -> Result<String, String> {
-    let safe = sanitize_app_file_name(name)?;
-    let path = base_dir().join(safe);
+// A missing file reads as "": a first launch has no app state, prompts, or
+// model cache yet, and their loaders parse "" as the defaults.
+pub fn load_app_file(relative: &str) -> Result<String, String> {
+    let path = app_file_path(relative)?;
     Ok(std::fs::read_to_string(path).unwrap_or_default())
 }
 
-pub fn save_app_file(name: &str, content: &str) -> Result<(), String> {
-    let safe = sanitize_app_file_name(name)?;
-    let path = base_dir().join(safe);
+// Unlike `load_app_file`, a missing file is an error: a file that is gone
+// (an image) must not read as an empty one.
+pub fn load_app_file_bytes(relative: &str) -> Result<Vec<u8>, String> {
+    let path = app_file_path(relative)?;
+    std::fs::read(path).map_err(|e| format!("Failed to read {}: {}", relative, e))
+}
+
+pub fn save_app_file(relative: &str, content: &[u8]) -> Result<(), String> {
+    let path = app_file_path(relative)?;
     write_private_file(&path, content)
 }
 
@@ -256,7 +270,7 @@ mod tests {
         std::fs::write(&path, "old").expect("write old file");
         std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o644)).expect("chmod");
 
-        write_private_file(&path, "new").expect("write");
+        write_private_file(&path, b"new").expect("write");
 
         let mode = std::fs::metadata(&path).expect("stat").permissions().mode();
         assert_eq!(mode & 0o777, 0o600);
@@ -270,7 +284,7 @@ mod tests {
     fn overlapping_writes_each_leave_a_whole_file() {
         let dir = TempDir::new("overlapping");
         let path = dir.0.join("conversation.md");
-        let contents = ["a".repeat(64 * 1024), "b".repeat(64 * 1024)];
+        let contents = ["a".repeat(64 * 1024).into_bytes(), "b".repeat(64 * 1024).into_bytes()];
         let start = std::sync::Barrier::new(contents.len());
 
         std::thread::scope(|scope| {
@@ -285,8 +299,50 @@ mod tests {
             }
         });
 
-        let saved = std::fs::read_to_string(&path).expect("read");
+        let saved = std::fs::read(&path).expect("read");
         assert!(contents.contains(&saved), "file mixes both writes");
         assert_eq!(dir.file_names(), ["conversation.md"]);
+    }
+
+    // Image bytes are not UTF-8. They must reach the disk unchanged, in a
+    // subfolder that does not exist yet, as a private file.
+    #[cfg(unix)]
+    #[test]
+    fn write_creates_missing_folders_and_keeps_any_bytes() {
+        use std::os::unix::fs::PermissionsExt;
+        let dir = TempDir::new("bytes");
+        let path = dir.0.join("assets").join("images").join("image.png");
+        let bytes = [0x89, b'P', b'N', b'G', 0x0D, 0x0A, 0x1A, 0x0A, 0x00, 0xFF, 0xFE];
+
+        write_private_file(&path, &bytes).expect("write");
+
+        assert_eq!(std::fs::read(&path).expect("read"), bytes);
+        let mode = std::fs::metadata(&path).expect("stat").permissions().mode();
+        assert_eq!(mode & 0o777, 0o600);
+    }
+
+    #[test]
+    fn app_file_paths_stay_inside_the_app_folder() {
+        for valid in ["app_state.json", "assets/images/0b7e-4c1f_a.png", ".hidden"] {
+            assert_eq!(app_file_path(valid), Ok(base_dir().join(valid)), "{valid}");
+        }
+        let invalid = [
+            "",
+            ".",
+            "..",
+            "../app_state.json",
+            "assets/../../secret",
+            "assets/./images/x.png",
+            "/etc/passwd",
+            "assets//x.png",
+            "assets/images/",
+            "assets\\images\\x.png",
+            "C:x.png",
+            "assets/images/ü.png",
+            "assets/images/x y.png",
+        ];
+        for path in invalid {
+            assert!(app_file_path(path).is_err(), "{path:?} must be rejected");
+        }
     }
 }
