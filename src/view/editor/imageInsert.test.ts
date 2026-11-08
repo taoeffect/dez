@@ -1,9 +1,10 @@
 import sbp from '@sbp/sbp'
+import { history, undo } from '@codemirror/commands'
 import { EditorSelection, EditorState, type TransactionSpec } from '@codemirror/state'
 import type { EditorView } from '@codemirror/view'
 import { afterEach, beforeEach, describe, expect, it, vi, type MockInstance } from 'vitest'
 import { imageMarkdown } from '../../model/chat/images'
-import { SECTION_SEP, encodePrompt } from '../thread/cmEditor'
+import { SECTION_SEP, clipboardPasteTransaction, encodePrompt, pillsField, sectionsField } from '../thread/cmEditor'
 import { dropFilePaths, dropImages, imagePasteAndDrop, pasteImages } from './imageInsert'
 import { markdownImages, renderedImages } from './images'
 
@@ -62,8 +63,10 @@ function savedPath(firstByte: number, extension = 'png'): string {
   return `${IMAGE_FOLDER}/img${firstByte}.${extension}`
 }
 
-function reference(firstByte = PNG_BYTES[0], extension = 'png'): string {
-  return imageMarkdown(savedPath(firstByte, extension))
+/** The reference that an insert of the image saved as `img<firstByte>`
+ *  puts in the doc, with its id. */
+function reference(firstByte = PNG_BYTES[0], id = 'a', extension = 'png'): string {
+  return imageMarkdown(savedPath(firstByte, extension), [{ key: 'id', value: id }])
 }
 
 function saveCallOf(firstByte: number): SaveCall {
@@ -195,7 +198,7 @@ describe('inserting the saved images', () => {
     saveCallOf(255).fail()
     saveCallOf(1).finish()
 
-    await vi.waitFor(() => expect(editor.doc()).toBe(`${reference(1)}\n${reference(3)}`))
+    await vi.waitFor(() => expect(editor.doc()).toBe(`${reference(1)}\n${reference(3, 'b')}`))
   })
 
   it('puts the images where the paste point moved during the save, after text typed there', async () => {
@@ -286,7 +289,7 @@ describe('dropImages', () => {
     await vi.waitFor(() => expect(editor.doc()).toBe(`question\n${reference(1)}\n${SECTION_SEP}\nanswer`))
     drop(editor.view, editor.doc().indexOf(SECTION_SEP) + 1, { files: [png('b.png', 2)] })
 
-    await vi.waitFor(() => expect(editor.doc()).toBe(`question\n${reference(1)}\n${SECTION_SEP}\n${reference(2)}\nanswer`))
+    await vi.waitFor(() => expect(editor.doc()).toBe(`question\n${reference(1)}\n${SECTION_SEP}\n${reference(2, 'b')}\nanswer`))
   })
 
   it('leaves out the files that are not images, with a toast', async () => {
@@ -318,7 +321,7 @@ describe('dropFilePaths', () => {
 
     dropFilePaths(editor.view, ['/home/u/Pictures/a.png', '/home/u/notes.txt', '/home/u/Pictures/b.JPG'], { x: 4, y: 0 })
 
-    const references = `${reference(1)}\n${reference(255, 'jpg')}`
+    const references = `${reference(1)}\n${reference(255, 'b', 'jpg')}`
     await vi.waitFor(() => expect(editor.doc()).toBe(`one ${references}two`))
     expect(editor.view.state.selection.main.head).toBe(4 + references.length)
     expect(readPaths).toEqual(['/home/u/Pictures/a.png', '/home/u/Pictures/b.JPG'])
@@ -344,5 +347,71 @@ describe('dropFilePaths', () => {
     expect(editor.view.state.selection.main.head).toBe(editor.doc().length)
     expect(readPaths).toEqual([])
     expect(toasts).toEqual([])
+  })
+})
+
+describe('image ids', () => {
+  const stored = (name: string, id?: string) => imageMarkdown(`${IMAGE_FOLDER}/${name}.png`, id ? [{ key: 'id', value: id }] : [])
+
+  /** A one-section state with undo history, with the caret at the end. */
+  function historyState(doc: string): EditorState {
+    return EditorState.create({
+      doc,
+      selection: EditorSelection.cursor(doc.length),
+      extensions: [imagePasteAndDrop(), history(), sectionsField.init(() => [{ id: 's1', role: 'user' }]), pillsField.init(() => new Map())],
+    })
+  }
+
+  function undoOnce(state: EditorState): EditorState {
+    let next = state
+    expect(undo({ state, dispatch: (tr) => { next = tr.state } })).toBe(true)
+    return next
+  }
+
+  it('gives images from saves in flight the next ids, in the order they go in', async () => {
+    holdSaves = true
+    const doc = `${stored('kept', 'b')} `
+    const editor = createEditor(doc, doc.length)
+
+    paste(editor.view, { files: [png('one.png', 1)] })
+    paste(editor.view, { files: [png('two.png', 2)] })
+    await vi.waitFor(() => expect(saveCalls).toHaveLength(2))
+    saveCallOf(2).finish()
+    await vi.waitFor(() => expect(editor.doc()).toBe(doc + reference(2, 'c')))
+    saveCallOf(1).finish()
+
+    await vi.waitFor(() => expect(editor.doc()).toBe(doc + reference(2, 'c') + reference(1, 'd')))
+  })
+
+  it.each(['input.paste', 'input.drop'])('gives the images of an %s new ids where they have none or clash, in one undo step', (userEvent) => {
+    const doc = `${stored('a', 'a')}\n`
+    const state = historyState(doc)
+    const text = `${stored('b', 'a')} ${stored('a', 'a')} ${stored('c')}`
+
+    const pasted = state.update({ changes: { from: doc.length, insert: text }, selection: { anchor: doc.length + text.length }, userEvent }).state
+
+    expect(pasted.doc.toString()).toBe(`${doc}${stored('b', 'b')} ${stored('a', 'a')} ${stored('c', 'c')}`)
+    expect(pasted.selection.main.head).toBe(pasted.doc.length)
+    expect(undoOnce(pasted).doc.toString()).toBe(doc)
+  })
+
+  it('gives new ids in a Dez clipboard paste with section markers', () => {
+    const doc = `${stored('a', 'a')}\n`
+    const state = historyState(doc)
+
+    const pasted = state.update(clipboardPasteTransaction(state, `note\n<dez:pill type="agent"/>\n${stored('b', 'a')}`)).state
+
+    expect(pasted.doc.toString()).toBe(`${doc}note\n${SECTION_SEP}\n${stored('b', 'b')}`)
+    expect(pasted.field(sectionsField).map((section) => section.role)).toEqual(['user', 'agent'])
+    expect(undoOnce(pasted).doc.toString()).toBe(doc)
+  })
+
+  it.each(['input.type', 'move.drop'])('leaves the images of an %s as they are', (userEvent) => {
+    const doc = `${stored('b')} ${stored('a', 'a')} `
+    const state = historyState(doc)
+
+    const moved = state.update({ changes: [{ from: 0, to: stored('b').length }, { from: doc.length, insert: stored('b') }], userEvent }).state
+
+    expect(moved.doc.toString()).toBe(` ${stored('a', 'a')} ${stored('b')}`)
   })
 })

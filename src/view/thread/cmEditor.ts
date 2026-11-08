@@ -1178,6 +1178,7 @@ export function clipboardPasteTransaction(state: EditorState, text: string): Tra
     selection: { anchor: range.from + pasteText.length },
     effects,
     scrollIntoView: true,
+    userEvent: 'input.paste',
   }
 }
 

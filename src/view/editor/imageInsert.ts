@@ -1,8 +1,8 @@
 import sbp from '@sbp/sbp'
-import { StateEffect, StateField, type EditorState, type Extension } from '@codemirror/state'
+import { EditorState, StateEffect, StateField, type Extension } from '@codemirror/state'
 import { EditorView, dropCursor } from '@codemirror/view'
 import { SENTINEL_CHAR } from '../../model/chat/content'
-import { imageMarkdown, isImageMediaType, type ImageMediaType } from '../../model/chat/images'
+import { imageMarkdown, isImageMediaType, pastedImageIdChanges, type ImageMediaType } from '../../model/chat/images'
 import { focusKeepingScroll } from './focus'
 
 interface InsertRange {
@@ -48,6 +48,25 @@ const pendingInsertsField = StateField.define<ReadonlyMap<string, InsertRange>>(
     }
     return next
   },
+})
+
+/** Gives each image reference that a paste or a drop brings into the doc
+ *  an id of its own (`pastedImageIdChanges`), in the same transaction, so
+ *  one undo removes the paste and its ids. This covers every paste and drop
+ *  path: the images that `insertImages` puts in (with no id yet), the Dez
+ *  clipboard paste and the plain-text paste (ThreadEditor.vue), and
+ *  CodeMirror's own paste and text drop. A text drag inside the doc is a
+ *  `move.drop`: its images keep their ids. */
+const pastedImageIds = EditorState.transactionFilter.of((tr) => {
+  if (!tr.docChanged || !(tr.isUserEvent('input.paste') || tr.isUserEvent('input.drop'))) return tr
+  const pasted: InsertRange[] = []
+  tr.changes.iterChangedRanges((_fromA, _toA, fromB, toB) => {
+    if (toB > fromB) pasted.push({ from: fromB, to: toB })
+  })
+  // Only a paste with an image reference needs the whole-doc scan.
+  if (!pasted.some(({ from, to }) => tr.newDoc.sliceString(from, to).includes('!['))) return tr
+  const changes = pastedImageIdChanges(tr.newDoc.toString(), pasted)
+  return changes.length === 0 ? tr : [tr, { changes, sequential: true }]
 })
 
 function hasFiles(data: DataTransfer | null): data is DataTransfer {
@@ -145,7 +164,10 @@ function insertionText(state: EditorState, { from, to }: InsertRange, text: stri
  *  but are not inserted, and a toast says so. The active tab id is checked
  *  too, because right after a tab switch the view holds the old tab's
  *  state for a tick, and its edits would go to the new tab
- *  (`syncDocToStore` in ThreadEditor.vue). */
+ *  (`syncDocToStore` in ThreadEditor.vue). The references go in with no id:
+ *  `pastedImageIds` gives each one the next id in this same transaction,
+ *  from the doc as it is then, so two inserts in flight never take the same
+ *  id. */
 async function insertImages(view: EditorView, files: ReadonlyArray<File | Promise<File | null>>, range: InsertRange, userEvent: 'input.paste' | 'input.drop'): Promise<void> {
   const id = crypto.randomUUID()
   const tabId = sbp('dez.model/tabs/activeId') as string
@@ -168,7 +190,7 @@ async function insertImages(view: EditorView, files: ReadonlyArray<File | Promis
     view.dispatch({ effects: removePendingInsert.of(id) })
     return
   }
-  const { insert, caret } = insertionText(view.state, pending, paths.map(imageMarkdown).join('\n'))
+  const { insert, caret } = insertionText(view.state, pending, paths.map((path) => imageMarkdown(path)).join('\n'))
   view.dispatch({
     changes: { from: pending.from, to: pending.to, insert },
     selection: { anchor: pending.from + caret },
@@ -258,11 +280,12 @@ export function dropFilePaths(view: EditorView, paths: readonly string[], point:
 }
 
 /** Paste and drop of images for the thread editor (`buildState()` in
- *  `ThreadEditor.vue`). The window refuses file drops outside the editor
- *  (AppLayout.vue). */
+ *  `ThreadEditor.vue`), and the ids of pasted and dropped images. The
+ *  window refuses file drops outside the editor (AppLayout.vue). */
 export function imagePasteAndDrop(): Extension {
   return [
     pendingInsertsField,
+    pastedImageIds,
     dropCursor(),
     EditorView.domEventHandlers({
       paste: pasteImages,

@@ -102,7 +102,7 @@ function findRenderedImages(doc: Text): ImageReference[] {
     if (references.length === 0) continue
     tableRowStarts ??= new Set(findMarkdownTables(doc).flatMap((table) => table.rows.map((row) => row.from)))
     if (tableRowStarts.has(from)) continue
-    for (const reference of references) images.push({ from: from + reference.from, to: from + reference.to, path: reference.path })
+    for (const reference of references) images.push({ ...reference, from: from + reference.from, to: from + reference.to })
   }
   return images
 }
@@ -138,7 +138,8 @@ export function renderedImages(state: EditorState): readonly ImageReference[] {
 }
 
 /** Backspace with one caret right after an image deletes only the image's
- *  `)`, so the source shows with the caret after the `(`: `![path](|`.
+ *  `)`, so the source shows with the caret in place of the `)`:
+ *  `![path](id=a|`.
  *  Typing `)` shows the image again. Without this rule, CM's Backspace
  *  deletes the whole atomic range. With many carets,
  *  `strictMultiCursorBackspace` (`cmEditor.ts`) also deletes one char at
@@ -159,7 +160,7 @@ export function deleteImageParen(view: EditorView): boolean {
 }
 
 /** Delete with one caret right before an image deletes only the image's
- *  `!`, so the source shows as `[path]()` and typing `!` shows the image
+ *  `!`, so the source shows as `[path](id=a)` and typing `!` shows the image
  *  again: one key deletes one source char on both sides of an image. */
 export function deleteImageBang(view: EditorView): boolean {
   const { selection } = view.state

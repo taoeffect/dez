@@ -7,6 +7,7 @@ import {
   isImageMediaType,
   isImagePath,
   labelImageReferences,
+  pastedImageIdChanges,
   splitImageReferences,
 } from './images'
 
@@ -14,15 +15,36 @@ const PNG = '/home/ann/.config/dez/assets/images/5f1c2a9e-0b7d-4c3e-9a51-2d8f6e4
 const JPG = '/home/ann/.config/dez/assets/images/a1.jpg'
 
 describe('findImageReferences', () => {
-  it('finds each reference with its offsets and path', () => {
-    const text = `Look ![${PNG}]() and\n![${JPG}]()!`
+  it('finds each reference with its offsets, path, and id', () => {
+    const text = `Look ![${PNG}](id=a) and\n![${JPG}]()!`
     const first = text.indexOf('![')
     const second = text.indexOf('![', first + 1)
 
     expect(findImageReferences(text)).toEqual([
-      { from: first, to: first + PNG.length + 5, path: PNG },
-      { from: second, to: second + JPG.length + 5, path: JPG },
+      { from: first, to: first + PNG.length + 9, path: PNG, id: 'a', metadata: [{ key: 'id', value: 'a' }] },
+      { from: second, to: second + JPG.length + 5, path: JPG, id: null, metadata: [] },
     ])
+  })
+
+  it('reads the metadata items in order, with unknown keys and escaped values', () => {
+    const text = String.raw`![${PNG}](desc=a \| b \(c\) \\ d=e|id=zz|alt_2-x=)`
+    const [reference] = findImageReferences(text)
+
+    expect(reference.to).toBe(text.length)
+    expect(reference.id).toBe('zz')
+    expect(reference.metadata).toEqual([
+      { key: 'desc', value: String.raw`a | b (c) \ d=e` },
+      { key: 'id', value: 'zz' },
+      { key: 'alt_2-x', value: '' },
+    ])
+  })
+
+  it('builds references whose metadata reads back the same', () => {
+    const metadata = [{ key: 'id', value: 'b' }, { key: 'desc', value: String.raw`my (great) image | \ ok` }]
+    const text = imageMarkdown(PNG, metadata)
+
+    expect(findImageReferences(text)).toEqual([{ from: 0, to: text.length, path: PNG, id: 'b', metadata }])
+    expect(imageMarkdown(PNG)).toBe(`![${PNG}]()`)
   })
 
   it('takes a home folder with spaces, parentheses, and non-ASCII names', () => {
@@ -48,6 +70,16 @@ describe('findImageReferences', () => {
     ['a dot in the file name', '![/home/ann/.config/dez/assets/images/x.y.png]()'],
     ['a line break in the path', '![/home/ann\n/.config/dez/assets/images/x.png]()'],
     ['a bracket in the path', '![/home/a]b/.config/dez/assets/images/x.png]()'],
+    ['an item with no `=`', `![${PNG}](id)`],
+    ['an upper-case key', `![${PNG}](ID=a)`],
+    ['an empty item', `![${PNG}](id=a|)`],
+    ['a key given twice', `![${PNG}](id=a|id=b)`],
+    ['an id with an upper-case letter', `![${PNG}](id=A)`],
+    ['an id with a digit', `![${PNG}](id=a1)`],
+    ['an empty id', `![${PNG}](id=)`],
+    ['an unescaped paren in a value', `![${PNG}](desc=a(b))`],
+    ['a backslash that escapes nothing', String.raw`![${PNG}](desc=a\b)`],
+    ['a line break in the metadata', `![${PNG}](id=a\n)`],
   ])('leaves %s as plain text', (_case, text) => {
     expect(findImageReferences(text)).toEqual([])
   })
@@ -57,8 +89,15 @@ describe('findImageReferences', () => {
     const text = `![/notes] see ${reference}`
 
     expect(findImageReferences(text)).toEqual([
-      { from: text.indexOf(reference), to: text.length, path: PNG },
+      { from: text.indexOf(reference), to: text.length, path: PNG, id: null, metadata: [] },
     ])
+  })
+
+  it('finds a reference that starts in the metadata of one that is not valid', () => {
+    const inner = '![/a)/assets/images/b.png]()'
+    const text = `![${PNG}](id=A|x=${inner}`
+
+    expect(findImageReferences(text).map((ref) => text.slice(ref.from, ref.to))).toEqual([inner])
   })
 })
 
@@ -77,7 +116,7 @@ describe('isImagePath', () => {
 
 describe('splitImageReferences', () => {
   it('gives text and image pieces in order, with no empty text pieces', () => {
-    expect(splitImageReferences(`![${PNG}]()![${JPG}]() What is this?\n`)).toEqual([
+    expect(splitImageReferences(`![${PNG}](id=a)![${JPG}]() What is this?\n`)).toEqual([
       { kind: 'image', path: PNG },
       { kind: 'image', path: JPG },
       { kind: 'text', text: ' What is this?\n' },
@@ -103,13 +142,67 @@ describe('splitImageReferences', () => {
 
 describe('labelImageReferences', () => {
   it('replaces each reference with [image] and keeps other images', () => {
-    expect(labelImageReferences(`![${PNG}]() vs ![${JPG}]() vs ![x](y.png)`))
-      .toBe('[image] vs [image] vs ![x](y.png)')
+    expect(labelImageReferences(`![${PNG}](id=a) vs ![${JPG}]() vs ![x](y.png) vs ![${PNG}](id=A)`))
+      .toBe(`[image] vs [image] vs ![x](y.png) vs ![${PNG}](id=A)`)
   })
 
   it('uses a given label as plain text', () => {
     expect(labelImageReferences(`a ![${PNG}]() b`, '$&')).toBe('a $& b')
     expect(labelImageReferences(`a ![${PNG}]() b`, '')).toBe('a  b')
+  })
+})
+
+describe('pastedImageIdChanges', () => {
+  const image = (name: string) => `/home/ann/.config/dez/assets/images/${name}.png`
+
+  /** `before` + `pasted` + `after` as the conversation after the paste,
+   *  with the id changes applied. */
+  function paste(pasted: string, before = '', after = ''): string {
+    const text = before + pasted + after
+    const changes = pastedImageIdChanges(text, [{ from: before.length, to: before.length + pasted.length }])
+    return changes.reduceRight((result, { from, to, insert }) => result.slice(0, from) + insert + result.slice(to), text)
+  }
+
+  it('gives pasted images with no id the ids after the highest one in the conversation, and keeps their other items', () => {
+    const before = `![${image('a')}](id=a) ![${image('c')}](id=c)\n`
+
+    expect(paste(`![${image('d')}]()\n![${image('e')}](desc=x)`, before))
+      .toBe(`${before}![${image('d')}](id=d)\n![${image('e')}](id=e|desc=x)`)
+  })
+
+  it('keeps a pasted id that no other image has, and the id of the same image', () => {
+    const before = `![${image('a')}](id=a) `
+    const pasted = `![${image('a')}](id=a) ![${image('k')}](id=k)`
+
+    expect(paste(pasted, before)).toBe(before + pasted)
+  })
+
+  it('gives a pasted image the next id when another image has its id, in the conversation or earlier in the paste', () => {
+    const before = `![${image('a')}](id=a) `
+
+    expect(paste(`![${image('x')}](desc=x|id=a) ![${image('y')}](id=c) ![${image('z')}](id=c)`, before))
+      .toBe(`${before}![${image('x')}](desc=x|id=d) ![${image('y')}](id=c) ![${image('z')}](id=e)`)
+  })
+
+  it.each([
+    [['b'], 'c'],
+    [['z'], 'aa'],
+    [['ab'], 'ac'],
+    [['az'], 'ba'],
+    [['zz'], 'aaa'],
+    [['y', 'ab'], 'ac'],
+  ])('counts ids like spreadsheet columns: after %j comes %s', (ids, next) => {
+    const before = ids.map((id, index) => `![${image(`old${index}`)}](id=${id})\n`).join('')
+
+    expect(paste(`![${image('new')}]()`, before)).toBe(`${before}![${image('new')}](id=${next})`)
+  })
+
+  it('changes no reference that was not pasted whole', () => {
+    // An old reference with no id, a reference that the paste only
+    // completed, and a hand-edited clash all stay as they are.
+    const before = `![${image('a')}]() ![${image('b')}](id=x) ![${image('c')}](id=x) ![${image('d')}](`
+
+    expect(paste(')', before)).toBe(`${before})`)
   })
 })
 
