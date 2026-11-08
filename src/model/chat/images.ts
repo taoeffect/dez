@@ -1,3 +1,5 @@
+import { fileNameOf } from '../../utils/fileName'
+
 // A Dez image reference is plain text in a text node:
 // `![<absolute path>](<metadata>)`. The path is the alt text, in the exact
 // form that the user asked for. The parens (the link destination) hold the
@@ -147,7 +149,7 @@ export function isImagePath(path: string): boolean {
  *  another home: a file of that name in this folder is another image, so
  *  Dez must neither send nor delete it. */
 export function storedImageFile(path: string, appDir: string): string | null {
-  const file = `${IMAGE_FOLDER}/${path.slice(path.lastIndexOf('/') + 1)}`
+  const file = `${IMAGE_FOLDER}/${fileNameOf(path)}`
   return isImagePath(path) && path === `${appDir}/${file}` ? file : null
 }
 

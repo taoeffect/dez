@@ -4,6 +4,7 @@ import type { MessagePart } from '../chat/types'
 import { modelRefKey } from '../chat/modelRef'
 import type { ModelCache } from '../persistence/types'
 import { bytesToBase64 } from '../../utils/base64'
+import { fileNameOf } from '../../utils/fileName'
 import { secret, type Secret } from '../../utils/secret'
 import { nativeResponseJson, nativeResponseText, type NativeHttpResponse, type NativeHttpStreamResult } from '../../utils/protocol/nativeHttp'
 import { assertProviderResponseOk } from './errors'
@@ -68,7 +69,6 @@ async function readMessageImages(messages: ProviderChatInputMessage[]): Promise<
 // missing file, as it shows in the editor. The error names only the file,
 // like the editor's broken-image box; the log has the cause.
 async function readImagePart(path: string, appDir: string): Promise<ChatPart> {
-  const fileName = path.slice(path.lastIndexOf('/') + 1)
   try {
     const file = storedImageFile(path, appDir)
     const mediaType = imageMediaType(path)
@@ -79,7 +79,7 @@ async function readImagePart(path: string, appDir: string): Promise<ChatPart> {
     return { type: 'image', mediaType, data: bytesToBase64(bytes) }
   } catch (error) {
     console.error(`Failed to read the image ${path}:`, error)
-    throw new Error(`Image not found: ${fileName}`)
+    throw new Error(`Image not found: ${fileNameOf(path)}`)
   }
 }
 

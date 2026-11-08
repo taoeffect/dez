@@ -3,6 +3,7 @@ import { StateEffect, StateField, Transaction, type EditorState, type Extension,
 import { Decoration, EditorView, ViewPlugin, WidgetType, showTooltip, type DecorationSet, type PluginValue, type Rect, type Tooltip } from '@codemirror/view'
 import { SENTINEL_CHAR } from '../../model/chat/content'
 import { findImageReferences, type ImageReference } from '../../model/chat/images'
+import { fileNameOf } from '../../utils/fileName'
 import { IMAGE_MAX_HEIGHT_PX, SECTION_SEP, editorSizePx } from '../thread/cmEditor'
 import { measureLineHeights } from '../thread/editorMeasure'
 import { syncDomSelection } from './focus'
@@ -167,7 +168,7 @@ class ImageWidget extends WidgetType {
     wrapper.className = 'dez-image'
     const img = document.createElement('img')
     img.className = 'dez-image__img'
-    img.alt = this.path.slice(this.path.lastIndexOf('/') + 1)
+    img.alt = fileNameOf(this.path)
     img.draggable = false
     const overlay = document.createElement('span')
     overlay.className = 'dez-image__overlay'

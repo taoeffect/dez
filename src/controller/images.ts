@@ -2,6 +2,7 @@ import sbp from '@sbp/sbp'
 import { convertFileSrc, isTauri } from '@tauri-apps/api/core'
 import { getCurrentWebview } from '@tauri-apps/api/webview'
 import { IMAGE_FOLDER, imageExtension, isImagePath, storedImageFile, type ImageMediaType } from '../model/chat/images'
+import { fileNameOf } from '../utils/fileName'
 
 let fileDropsWatched = false
 
@@ -70,7 +71,7 @@ export default sbp('sbp/selectors/register', {
     const response = await fetch(convertFileSrc(path))
     if (!response.ok) throw new Error(`Failed to read ${path}: HTTP ${response.status}`)
     const blob = await response.blob()
-    return new File([blob], path.slice(path.lastIndexOf('/') + 1), { type: blob.type })
+    return new File([blob], fileNameOf(path), { type: blob.type })
   },
 
   // Tauri's native file drop is on only on Linux (tauri.linux.conf.json; see

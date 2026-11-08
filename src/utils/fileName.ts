@@ -14,3 +14,8 @@ export function safeFileName(name: string, fallback: string): string {
     .replace(/^[\s.]+|[\s.]+$/g, '')
   return safe || fallback
 }
+
+/** The last segment of a `/`-separated path: `/a/b/c.png` → `c.png`. */
+export function fileNameOf(path: string): string {
+  return path.slice(path.lastIndexOf('/') + 1)
+}

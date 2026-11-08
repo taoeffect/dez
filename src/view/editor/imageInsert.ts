@@ -3,6 +3,7 @@ import { EditorState, type Extension } from '@codemirror/state'
 import { EditorView, dropCursor } from '@codemirror/view'
 import { SENTINEL_CHAR } from '../../model/chat/content'
 import { imageMarkdown, isImageMediaType, pastedImageIdChanges, type ImageMediaType } from '../../model/chat/images'
+import { fileNameOf } from '../../utils/fileName'
 import { focusKeepingScroll } from './focus'
 import { addPendingRange, pendingRange, pendingRanges, removePendingRange, type DocRange } from './pendingRanges'
 
@@ -71,6 +72,10 @@ async function convertToPng(file: Blob): Promise<Uint8Array> {
   }
 }
 
+function showImageNotAddedToast(message: string): void {
+  sbp('dez.ui/toast', 'app-global', { title: 'Image not added', message, variant: 'warning', duration: 8000 })
+}
+
 /** The bytes to store for an image file: the file as it is for a type that
  *  Dez stores (`isImageMediaType`), else a PNG of any other image that the
  *  webview can decode (BMP, TIFF, AVIF, SVG, …). Null, after a warning
@@ -81,12 +86,7 @@ async function storableImage(file: File): Promise<StorableImage | null> {
     return { bytes: await convertToPng(file), mediaType: 'image/png' }
   } catch (error) {
     console.error('Failed to read the image:', error)
-    sbp('dez.ui/toast', 'app-global', {
-      title: 'Image not added',
-      message: `Dez cannot read ${file.name || 'the image'} (${file.type}).`,
-      variant: 'warning',
-      duration: 8000,
-    })
+    showImageNotAddedToast(`Dez cannot read ${file.name || 'the image'} (${file.type}).`)
     return null
   }
 }
@@ -214,12 +214,7 @@ async function readDroppedImage(path: string): Promise<File | null> {
     return await sbp('dez.controller/images/readFile', path) as File
   } catch (error) {
     console.error('Failed to read the dropped image:', error)
-    sbp('dez.ui/toast', 'app-global', {
-      title: 'Image not added',
-      message: `Dez cannot read ${path.slice(path.lastIndexOf('/') + 1)}.`,
-      variant: 'warning',
-      duration: 8000,
-    })
+    showImageNotAddedToast(`Dez cannot read ${fileNameOf(path)}.`)
     return null
   }
 }
