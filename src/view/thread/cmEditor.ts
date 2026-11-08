@@ -1457,9 +1457,9 @@ export const dezTheme = EditorView.theme({
   // own row below the pill. A hidden mirror of the text and the read-only
   // textarea share one grid cell, so the cell, and with it the textarea, is
   // as tall as the text. Both need the same font, padding and wrapping
-  // rules for that. Past its max height the panel scrolls. The separator
-  // row is uppercase, letter-spaced and not selectable; the panel resets
-  // all three.
+  // rules for that. The encrypted pill, when there is one, takes the next
+  // row. Past its max height the panel scrolls. The separator row is
+  // uppercase, letter-spaced and not selectable; the panel resets all three.
   '.dez-role-separator[data-thinking-open]': {
     flexWrap: 'wrap',
   },
@@ -1525,6 +1525,26 @@ export const dezTheme = EditorView.theme({
     background: 'transparent',
     color: 'inherit',
     cursor: 'text',
+  },
+  // The encrypted pill stands in for the encrypted lines that the panel
+  // leaves out. Small and muted with a rounded border, like the secondary
+  // parts of the role pill, and left-aligned with the text. A block with
+  // `fit-content` width keeps that shape in a grid or a block panel.
+  // WebKitGTK 2.54 reads only the prefixed `user-select`.
+  '.dez-role-separator__thinking-encrypted': {
+    display: 'block',
+    gridRow: '2',
+    width: 'fit-content',
+    margin: editorSize(0, 12, 8),
+    padding: editorSize(1, 8),
+    border: '1px solid var(--color-border, #333)',
+    borderRadius: '999px',
+    color: 'var(--color-muted, #888)',
+    fontSize: editorSize(11),
+    lineHeight: '1.5',
+    cursor: 'default',
+    userSelect: 'none',
+    WebkitUserSelect: 'none',
   },
   // Rules that move things on screen are only in this block, so they apply
   // only when the user has not asked for reduced motion. The base rules of
