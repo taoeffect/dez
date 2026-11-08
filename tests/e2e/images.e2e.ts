@@ -638,7 +638,9 @@ describe('images', () => {
     for (const [label, index, selector, tooltip] of items) {
       await hoverOverlayItem(index, selector)
       await waitForValue(browser, `tooltip on ${label}`, overlayTooltips, [tooltip])
-      expect(await tooltipPlacement(index)).toEqual({ inEditor: true, clearOfToolbar: true })
+      // CM puts a new tooltip at top: -10000px and moves it into place in
+      // its next measure (an animation frame), after the text is there.
+      await waitForValue(browser, `place of the tooltip on ${label}`, () => tooltipPlacement(index), { inEditor: true, clearOfToolbar: true })
       await movePointer(offImages)
       await waitForValue(browser, `tooltip after the pointer left ${label}`, overlayTooltips, [])
     }
