@@ -166,8 +166,9 @@ function createPanel(): HTMLElement {
 }
 
 /** Shows `text` in the panel; returns whether it changed. The mirror holds
- *  the same text, and its text node is the record of what is shown. Both
- *  are found by class, as the encrypted pill can come after them. */
+ *  the same text, and its text node is the record of what is shown, also
+ *  where the CSS gives the mirror no layout (`field-sizing`). Both are found
+ *  by class, as the encrypted pill can come after them. */
 function setPanelText(panel: HTMLElement, text: string): boolean {
   const mirror = directChild(panel, MIRROR_CLASS)?.firstChild
   const field = directChild(panel, TEXT_CLASS)
@@ -229,14 +230,16 @@ function renderEncryptedPill(panel: HTMLElement, readable: ReadableThinking): bo
  *  encrypted lines, the encrypted pill; the stored text does not change, as
  *  replays send it back to the provider. Only an open panel computes them.
  *
- *  The panel is a CSS grid with two items in one cell: a hidden mirror of
- *  the text, and the read-only textarea. The mirror's height sets the cell's
- *  height, so the textarea always fits its text without script measuring.
- *  The encrypted pill takes the next row. The panel has a max height and
- *  scrolls; while the section streams, it stays at the bottom unless the
- *  user scrolled up. A change of the panel's height makes CodeMirror
- *  measure the line heights again, so the caret and clicks below the pill
- *  stay on the right line. */
+ *  The read-only textarea is as tall as its text, and the panel has a max
+ *  height and scrolls. Where the engine has `field-sizing` (the panel CSS in
+ *  `cmEditor.ts`), the textarea sizes itself in a block panel, and the
+ *  hidden mirror of the text gets no layout. Elsewhere the panel is a CSS
+ *  grid with the mirror and the textarea in one cell: the mirror's height
+ *  sets the cell's height, so the textarea fits its text without script
+ *  measuring. The encrypted pill comes after the text. While the section
+ *  streams, the panel stays at the bottom unless the user scrolled up. A
+ *  change of the panel's height makes CodeMirror measure the line heights
+ *  again, so the caret and clicks below the pill stay on the right line. */
 export function renderPillThinking(separator: HTMLElement, label: HTMLElement, thinking: PillThinkingView | null, view: EditorView): void {
   renderSlot(label, thinking)
   const existing = directChild(separator, PANEL_CLASS)

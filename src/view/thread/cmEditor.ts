@@ -1454,12 +1454,15 @@ export const dezTheme = EditorView.theme({
     transform: 'rotate(90deg)',
   },
   // The thinking panel (`renderPillThinking` in thinkingPill.ts) takes its
-  // own row below the pill. A hidden mirror of the text and the read-only
-  // textarea share one grid cell, so the cell, and with it the textarea, is
-  // as tall as the text. Both need the same font, padding and wrapping
-  // rules for that. The encrypted pill, when there is one, takes the next
-  // row. Past its max height the panel scrolls. The separator row is
-  // uppercase, letter-spaced and not selectable; the panel resets all three.
+  // own row below the pill. Its read-only textarea is as tall as its text,
+  // so the panel scrolls past its max height, not the textarea. Where the
+  // engine has `field-sizing`, the textarea sizes itself (the `@supports`
+  // block below). Elsewhere (WKWebView before Safari 26.2), a hidden mirror
+  // of the text and the textarea share one grid cell, so the cell, and with
+  // it the textarea, is as tall as the text; both need the same font,
+  // padding and wrapping rules for that. The encrypted pill, when there is
+  // one, comes after the text. The separator row is uppercase,
+  // letter-spaced and not selectable; the panel resets all three.
   '.dez-role-separator[data-thinking-open]': {
     flexWrap: 'wrap',
   },
@@ -1545,6 +1548,26 @@ export const dezTheme = EditorView.theme({
     cursor: 'default',
     userSelect: 'none',
     WebkitUserSelect: 'none',
+  },
+  // One text layout where the engine has `field-sizing`: the textarea grows
+  // to fit its text and the mirror gets no layout, so a panel open lays out
+  // the text once, not twice. The mirror's layout was the slower one, as
+  // WebKit wraps a long run with no break points slowly. The panel must be
+  // a block: in a grid, `field-sizing` gave the textarea a wrong height
+  // (WebKitGTK 2.54). `setPanelText` keeps the mirror's text as the record
+  // of the shown text on both paths.
+  '@supports (field-sizing: content)': {
+    '.dez-role-separator__thinking': {
+      display: 'block',
+    },
+    '.dez-role-separator__thinking-mirror': {
+      display: 'none',
+    },
+    '.dez-role-separator__thinking-text': {
+      display: 'block',
+      height: 'auto',
+      fieldSizing: 'content',
+    },
   },
   // Rules that move things on screen are only in this block, so they apply
   // only when the user has not asked for reduced motion. The base rules of
