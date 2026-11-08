@@ -168,6 +168,7 @@ Do not ever read, view, print, or `cat` `~/.config/dez/provider_keys.json`; it c
 - **`model`, `thinking`, and `durationMs` are agent-only**: show, save, or send them only when `role === 'agent'` (`durationMs` is never sent); copy them only when set (`modelRefField`, `thinkingField`, `durationField`).
 - **Per-section fields flow through the editor**: the editor writes sections back to the store on every doc change; a new field must follow `SectionModel` in `cmEditor.ts`.
 - **Thinking has two copies during a stream** (store and visible editor); see `dez.editor/setSectionThinkingIfVisible`.
+- **The thinking panel does not show the stored thinking as it is**: it shows `readableThinking` (`src/model/chat/thinking.ts`) and an encrypted pill in place of encrypted lines (`thinkingPill.ts`). Never change the stored thinking: `field` and `copilot` replays send it back, and the prompt cache needs the same bytes.
 - **Agent pill DOM changes in place**: see `RoleSeparatorWidget.eq` and `pillThinkingUpdater` in `cmEditor.ts`.
 - **Streams patch only the visible editor**: the store gets every token; the editor only when its tab is active (`dez.editor/appendTokenIfVisible`).
 - **Stream scroll follow**: never add code that scrolls an editor view up (`src/view/editor/selectors.ts`).
