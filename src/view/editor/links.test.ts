@@ -2,7 +2,7 @@ import { EditorSelection, EditorState } from '@codemirror/state'
 import { describe, expect, it } from 'vitest'
 import { SECTION_SEP, dezLanguageSupport, encodePrompt } from '../thread/cmEditor'
 import { markdownImages } from './images'
-import { renderedLinks } from './links'
+import { renderedLinkAt, renderedLinks } from './links'
 
 const RED = '/home/u/.config/dez/assets/images/red.png'
 
@@ -149,5 +149,53 @@ describe('renderedLinks', () => {
     const second = state.doc.line(2)
     expect(shownTexts(state)).toEqual(['a', 'b', 'c'])
     expect(shown(state, second.from, second.to).map((link) => link.text)).toEqual(['b'])
+  })
+})
+
+describe('renderedLinkAt', () => {
+  /** The URL of the link under a pointer that CodeMirror reads as `side` of
+   *  `pos`, or `null`. */
+  function urlAt(state: EditorState, pos: number, side: -1 | 1): string | null {
+    return renderedLinkAt(state, pos, side)?.url ?? null
+  }
+
+  it('finds the link under the pointer at the edges of its text, from any position of its hidden markup', () => {
+    const doc = 'See [docs](https://a.example) now.'
+    const state = createState(doc, doc.length)
+    const from = doc.indexOf('[')
+    const textFrom = from + 1
+    const textTo = doc.indexOf(']')
+    const to = doc.indexOf(')') + 1
+    // Over the first char of `docs`, or over the space before the link.
+    for (const pos of [from, textFrom]) {
+      expect(urlAt(state, pos, 1)).toBe('https://a.example')
+      expect(urlAt(state, pos, -1)).toBeNull()
+    }
+    // Over the last char of `docs`, or over the space after the link.
+    for (const pos of [textTo, textTo + 2, to]) {
+      expect(urlAt(state, pos, -1)).toBe('https://a.example')
+      expect(urlAt(state, pos, 1)).toBeNull()
+    }
+    // Inside the text, either side is on the link.
+    expect(urlAt(state, textFrom + 2, -1)).toBe('https://a.example')
+    expect(urlAt(state, textFrom + 2, 1)).toBe('https://a.example')
+    expect(urlAt(state, from - 1, 1)).toBeNull()
+    expect(urlAt(state, to + 1, -1)).toBeNull()
+  })
+
+  it('tells two links that touch apart by the side', () => {
+    const doc = 'See [a](https://a.example)<https://b.example>'
+    const between = doc.indexOf('<')
+    const state = createState(doc)
+    expect(urlAt(state, between, -1)).toBe('https://a.example')
+    expect(urlAt(state, between, 1)).toBe('https://b.example')
+  })
+
+  it('finds no link where the source shows', () => {
+    const doc = 'See [docs](https://a.example) and [path](id=a).'
+    const inDocs = doc.indexOf('docs') + 2
+    expect(urlAt(createState(doc, inDocs), inDocs, 1)).toBeNull()
+    const inPath = doc.indexOf('path') + 2
+    expect(urlAt(createState(doc, doc.length), inPath, 1)).toBeNull()
   })
 })

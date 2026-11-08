@@ -1,6 +1,7 @@
+import sbp from '@sbp/sbp'
 import { syntaxTree } from '@codemirror/language'
-import type { EditorState, Extension, Text } from '@codemirror/state'
-import { Decoration, ViewPlugin, type DecorationSet, type EditorView, type ViewUpdate } from '@codemirror/view'
+import { Prec, type EditorState, type Extension, type Text } from '@codemirror/state'
+import { Decoration, EditorView, ViewPlugin, hoverTooltip, type DecorationSet, type ViewUpdate } from '@codemirror/view'
 import type { SyntaxNode } from '@lezer/common'
 import { SENTINEL_CHAR } from '../../model/chat/content'
 import { renderedImages } from './images'
@@ -130,6 +131,19 @@ export function renderedLinks(state: EditorState, from = 0, to = state.doc.lengt
   return findRenderableLinks(state, from, to).filter((link) => !ranges.some((range) => range.from <= link.to && range.to >= link.from))
 }
 
+/** The rendered link under the pointer, from a doc position and a side as
+ *  CodeMirror gives them (`hoverTooltip`): `side` is -1 when the pointer is
+ *  before `pos`, 1 when it is after. All the positions of a link's hidden
+ *  markup show at one point, the edge of its text, so at those positions
+ *  only the side tells the link from the char next to it. */
+export function renderedLinkAt(state: EditorState, pos: number, side: -1 | 1): MarkdownLink | null {
+  return renderedLinks(state, pos, pos).find((link) =>
+    (link.textFrom < pos && pos < link.textTo) ||
+    (side > 0 && link.from <= pos && pos <= link.textFrom) ||
+    (side < 0 && link.textTo <= pos && pos <= link.to),
+  ) ?? null
+}
+
 const hiddenMarkup = Decoration.replace({})
 const linkText = Decoration.mark({ class: 'dez-link' })
 
@@ -170,8 +184,70 @@ const linkRenderer = ViewPlugin.fromClass(
   { decorations: (plugin) => plugin.decorations },
 )
 
+/** The rendered link whose text holds `target`, a `.dez-link` mark or an
+ *  element in it. */
+function renderedLinkAtElement(view: EditorView, target: EventTarget | null): MarkdownLink | null {
+  const text = target instanceof Element ? target.closest('.dez-link') : null
+  if (!text || !view.contentDOM.contains(text)) return null
+  return renderedLinkAt(view.state, view.posAtDOM(text), 1)
+}
+
+/** A plain primary-button press on a rendered link opens its URL when the
+ *  button goes up on the same link. The handler takes the press, so the
+ *  caret does not go into the link (which would show its source under the
+ *  pointer) and the focus stays where it is, as for a press on a pill. A
+ *  press with a modifier key (Ctrl/Cmd adds a selection range, Shift
+ *  extends the selection) or with another button is left to CodeMirror.
+ *  The button can go up outside the editor, so the window watches the
+ *  release. */
+const linkClicks = EditorView.domEventHandlers({
+  mousedown(event, view) {
+    if (event.button !== 0 || event.ctrlKey || event.metaKey || event.shiftKey || event.altKey) return false
+    const pressed = renderedLinkAtElement(view, event.target)
+    if (!pressed) return false
+    const onMouseUp = (release: MouseEvent) => {
+      if (release.button !== 0) return
+      window.removeEventListener('mouseup', onMouseUp, true)
+      const released = renderedLinkAtElement(view, release.target)
+      if (released && released.from === pressed.from && released.url === pressed.url) {
+        sbp('dez.controller/openUrl', pressed.url)
+      }
+    }
+    window.addEventListener('mouseup', onMouseUp, true)
+    return true
+  },
+})
+
+/** Hovering a rendered link shows its full URL in a tooltip above it, not
+ *  below, where the hand of the pointer cursor would cover its start. A
+ *  link that shows its source shows its URL already, so it gets none, and
+ *  the tooltip goes when its link stops being rendered (a selection
+ *  touches it, or an edit changes it). */
+const linkUrlTooltip = hoverTooltip(
+  (view, pos, side) => {
+    const link = renderedLinkAt(view.state, pos, side)
+    if (!link) return null
+    return {
+      pos: link.textFrom,
+      end: link.textTo,
+      above: true,
+      create: () => {
+        const dom = document.createElement('div')
+        dom.className = 'dez-link-tooltip'
+        dom.textContent = link.url
+        return { dom }
+      },
+    }
+  },
+  { hideOn: (tr, tooltip) => renderedLinkAt(tr.state, tr.changes.mapPos(tooltip.pos), 1) === null },
+)
+
 /** Markdown links for the thread editor (`buildState()` in
- *  `ThreadEditor.vue`). The CSS is in `dezTheme`. */
+ *  `ThreadEditor.vue`): rendered, opened by a click, and their URL shown on
+ *  hover. The CSS is in `dezTheme`. */
 export function markdownLinks(): Extension {
-  return linkRenderer
+  // High precedence: the link press must run before
+  // `focusKeepingScrollOnMouseDown` (focus.ts), which focuses an editor
+  // that does not have the focus.
+  return [linkRenderer, Prec.high(linkClicks), linkUrlTooltip]
 }

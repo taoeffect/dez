@@ -1710,6 +1710,25 @@ export const dezTheme = EditorView.theme({
     textDecoration: 'underline',
     cursor: 'pointer',
   },
+  // CodeMirror tooltips (the link URL tooltip of links.ts). CM's base theme
+  // gives them light colors only, as Dez does not use CM's dark theme flag.
+  '.cm-tooltip': {
+    border: '1px solid var(--color-border, #333)',
+    borderRadius: editorSize(6),
+    backgroundColor: 'var(--color-bg, #1e1e1e)',
+    color: 'var(--color-text)',
+    boxShadow: '0 4px 16px rgba(0, 0, 0, 0.2)',
+  },
+  // A long URL wraps at any char, as most URLs have no spaces.
+  '.dez-link-tooltip': {
+    maxWidth: `min(${editorSize(480)}, calc(100vw - 32px))`,
+    padding: editorSize(3, 8),
+    fontFamily:
+      "ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif",
+    fontSize: editorSize(12),
+    lineHeight: '1.4',
+    overflowWrap: 'anywhere',
+  },
   // Find highlights (src/view/editor/find.ts). Amber, so they differ from the
   // blue selection. They are text backgrounds, so they draw over the
   // selection layer, and their translucent colors mix with it: a selected
