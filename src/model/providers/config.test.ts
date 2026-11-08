@@ -120,6 +120,22 @@ describe('provider config schema', () => {
     expect(withKey('thinking')).toBe(false)
   })
 
+  it('keeps the image fields, and rejects a bad image path, model flag, or header', () => {
+    const parse = (fields: Record<string, unknown>) =>
+      providerConfigSchema.safeParse({ id: 'p', name: 'P', baseUrl: 'http://h', ...fields })
+    const fields = {
+      models: [{ id: 'm', imageInput: false }],
+      modelImageInput: { path: 'architecture.input_modalities' },
+      imageRequestHeaders: { 'X-Vision': 'true' },
+    }
+
+    expect(parse(fields).data).toMatchObject(fields)
+    expect(parse({ modelImageInput: { path: 'architecture..input_modalities' } }).success).toBe(false)
+    expect(parse({ modelImageInput: { path: '' } }).success).toBe(false)
+    expect(parse({ models: [{ id: 'm', imageInput: 'yes' }] }).success).toBe(false)
+    expect(parse({ imageRequestHeaders: { 'Bad Name': 'true' } }).success).toBe(false)
+  })
+
   it('keeps an empty thinking object and accepts only JSON objects as bodies', () => {
     const parse = (thinking: unknown) => providerConfigSchema.safeParse({ id: 'p', name: 'P', baseUrl: 'http://h', thinking })
     const bodies = {

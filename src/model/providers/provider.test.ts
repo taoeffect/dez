@@ -441,6 +441,78 @@ describe('provider models', () => {
     ])
   })
 
+  it('reads the image flag at the config path: a boolean, or a list that holds "image"', () => {
+    const provider = customProvider({ modelImageInput: { path: 'caps.input' } })
+    const models = provider.parseModels({
+      data: [
+        { id: 'yes', caps: { input: true } },
+        { id: 'no', caps: { input: false } },
+        { id: 'list-yes', caps: { input: ['text', 'image'] } },
+        { id: 'list-no', caps: { input: ['text', 'file'] } },
+        { id: 'string', caps: { input: 'image' } },
+        { id: 'number', caps: { input: 1 } },
+        { id: 'null', caps: { input: null } },
+        { id: 'missing', caps: {} },
+        { id: 'not-object', caps: 'image' },
+        { id: 'no-caps' },
+      ],
+    })
+
+    // toStrictEqual: an unknown flag leaves the key out.
+    expect(models).toStrictEqual([
+      { id: 'yes', name: 'yes', provider: 'local', imageInput: true },
+      { id: 'no', name: 'no', provider: 'local', imageInput: false },
+      { id: 'list-yes', name: 'list-yes', provider: 'local', imageInput: true },
+      { id: 'list-no', name: 'list-no', provider: 'local', imageInput: false },
+      ...['string', 'number', 'null', 'missing', 'not-object', 'no-caps']
+        .map((id) => ({ id, name: id, provider: 'local' })),
+    ])
+  })
+
+  it('reads no image flag when the config has no path', () => {
+    const entry = { id: 'm', vision: true, architecture: { input_modalities: ['image'] } }
+
+    expect(customProvider({}).parseModels({ data: [entry] })).toStrictEqual([{ id: 'm', name: 'm', provider: 'local' }])
+  })
+
+  it('lets a config image flag win over the fetched one, and keeps unknown flags out', () => {
+    const provider = customProvider({
+      modelImageInput: { path: 'vision' },
+      models: [{ id: 'off', imageInput: false }, { id: 'fetched' }, { id: 'on', imageInput: true }, { id: 'unknown' }],
+    })
+    const fetched = provider.parseModels({
+      data: [{ id: 'off', vision: true }, { id: 'fetched', vision: true }, { id: 'unknown' }, { id: 'extra', vision: false }],
+    })
+
+    expect(provider.mergeModels(fetched)).toStrictEqual([
+      { id: 'off', name: 'off', provider: 'local', imageInput: false },
+      { id: 'fetched', name: 'fetched', provider: 'local', imageInput: true },
+      { id: 'on', name: 'on', provider: 'local', imageInput: true },
+      { id: 'unknown', name: 'unknown', provider: 'local' },
+      { id: 'extra', name: 'extra', provider: 'local', imageInput: false },
+    ])
+  })
+
+  // Entry shapes as each API reports them: Venice and OpenRouter /models
+  // (checked live 2026-11-07), Copilot from VS Code's Copilot Chat types.
+  it('reads the image flag of the built-ins from their /models entry shapes', () => {
+    const flags = (id: string, data: unknown[]) =>
+      builtInProvider(id).parseModels({ data }).map((model) => model.imageInput)
+
+    expect(flags('venice', [
+      { id: 'v1', model_spec: { capabilities: { supportsVision: true } } },
+      { id: 'v2', model_spec: { capabilities: { supportsVision: false } } },
+    ])).toEqual([true, false])
+    expect(flags('openrouter', [
+      { id: 'o1', architecture: { input_modalities: ['text', 'image', 'file'] } },
+      { id: 'o2', architecture: { input_modalities: ['text'] } },
+    ])).toEqual([true, false])
+    expect(flags('copilot', [
+      { id: 'c1', capabilities: { supports: { vision: true, streaming: true } } },
+      { id: 'c2', capabilities: { supports: { streaming: true } } },
+    ])).toEqual([true, undefined])
+  })
+
   it('builds no model-list request when fetchModels is off', () => {
     expect(customProvider({ fetchModels: false }).modelListRequest(key)).toBeNull()
   })

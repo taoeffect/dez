@@ -175,8 +175,8 @@ function cloneProviderSettings(
 // app_state.json.
 function cloneProviderConfig(config: ProviderConfig): ProviderConfig {
   const {
-    id, name, baseUrl, apiFormat, models, fetchModels, auth,
-    headers, maxOutputTokens, settings, thinking,
+    id, name, baseUrl, apiFormat, models, fetchModels, modelImageInput, auth,
+    headers, imageRequestHeaders, maxOutputTokens, settings, thinking,
     ...uncopied
   } = config
   // A compile error when ProviderConfig gets a field that this clone does not
@@ -191,7 +191,9 @@ function cloneProviderConfig(config: ProviderConfig): ProviderConfig {
     fetchModels,
     auth,
   }
+  if (modelImageInput) clone.modelImageInput = { ...modelImageInput }
   if (headers) clone.headers = { ...headers }
+  if (imageRequestHeaders) clone.imageRequestHeaders = { ...imageRequestHeaders }
   if (maxOutputTokens !== undefined) clone.maxOutputTokens = maxOutputTokens
   if (settings) clone.settings = settings.map((setting) => ({ ...setting }))
   // Last: dez.controller/providers/save compares configs as JSON text and

@@ -9,6 +9,9 @@ export interface ModelInfo {
   id: string
   name: string
   provider: ProviderId
+  // true: the model reads images; false: it does not. Missing: unknown, and
+  // the request sends the images.
+  imageInput?: boolean
 }
 
 // Display names for agent role pills and history rows: provider id ->
@@ -115,6 +118,8 @@ export class ProviderNotConfiguredError extends ProviderError {
   }
 }
 
-export function providerModel(provider: ProviderId, id: string, name: string): ModelInfo {
-  return { id, name, provider }
+// Leaves `imageInput` out when it is unknown, so the model cache file and
+// whole-object comparisons hold no `undefined` field.
+export function providerModel(provider: ProviderId, id: string, name: string, imageInput?: boolean): ModelInfo {
+  return imageInput === undefined ? { id, name, provider } : { id, name, provider, imageInput }
 }

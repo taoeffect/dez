@@ -3,7 +3,7 @@ import type { NativeHttpHeaders, NativeHttpRequest } from '../../utils/protocol/
 import type { Secret } from '../../utils/secret'
 import { API_FORMATS, type ApiFormat } from './apiFormats'
 import { FORBIDDEN_BODY_KEYS, type ProviderConfig, type ProviderSettingDef } from './config'
-import { isRecord, modelData } from './modelParsing'
+import { isRecord, modelData, modelImageInput } from './modelParsing'
 import { isThinkingEnabled } from './thinking'
 import { providerModel, type ChatMessage, type ModelInfo, type ProviderInfo } from './types'
 
@@ -83,24 +83,27 @@ export class Provider {
 
   // Reads the `{ data: [...] }` model list both formats return. The name
   // falls back from `name` (OpenAI-style servers) to `display_name`
-  // (Anthropic-style) to the id (servers that report only ids).
+  // (Anthropic-style) to the id (servers that report only ids). The image
+  // flag is read only where the config's `modelImageInput` points.
   parseModels(data: unknown): ModelInfo[] {
     const models: ModelInfo[] = []
+    const imageInputPath = this.config.modelImageInput?.path
 
     for (const model of modelData(data)) {
       if (typeof model.id !== 'string' || model.id.length === 0) continue
 
       const name = [model.name, model.display_name]
         .find((value): value is string => typeof value === 'string' && value.trim().length > 0)
-      models.push(providerModel(this.id, model.id, name?.trim() ?? model.id))
+      const imageInput = imageInputPath === undefined ? undefined : modelImageInput(model, imageInputPath)
+      models.push(providerModel(this.id, model.id, name?.trim() ?? model.id, imageInput))
     }
 
     return models
   }
 
   // Config models come first, in config order, then the fetched models the
-  // config does not list. Each id appears once. A name set in the config
-  // wins over the fetched name for the same id.
+  // config does not list. Each id appears once. A name or image flag set in
+  // the config wins over the fetched one for the same id.
   mergeModels(fetched: ModelInfo[]): ModelInfo[] {
     const fetchedById = new Map<string, ModelInfo>()
     for (const model of fetched) {
@@ -111,12 +114,14 @@ export class Provider {
     for (const model of this.config.models) {
       if (merged.has(model.id)) continue
 
-      const name = model.name ?? fetchedById.get(model.id)?.name ?? model.id
-      merged.set(model.id, providerModel(this.id, model.id, name))
+      const fetchedModel = fetchedById.get(model.id)
+      const name = model.name ?? fetchedModel?.name ?? model.id
+      const imageInput = model.imageInput ?? fetchedModel?.imageInput
+      merged.set(model.id, providerModel(this.id, model.id, name, imageInput))
     }
 
     for (const [id, model] of fetchedById) {
-      if (!merged.has(id)) merged.set(id, providerModel(this.id, id, model.name))
+      if (!merged.has(id)) merged.set(id, providerModel(this.id, id, model.name, model.imageInput))
     }
 
     return [...merged.values()]

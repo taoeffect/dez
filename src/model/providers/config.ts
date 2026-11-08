@@ -50,6 +50,9 @@ export const providerModelConfigSchema = z.object({
   id: z.string().trim().min(1, 'Model id must not be empty'),
   // Display name; the id is shown when it is missing.
   name: z.string().trim().min(1).optional(),
+  // Whether the model reads images. Wins over the flag the server reports
+  // (`modelImageInput`); missing: the server's flag, or unknown.
+  imageInput: z.boolean().optional(),
 })
 
 const settingBodyValueSchema = z.union([z.string(), z.number(), z.boolean()])
@@ -129,6 +132,17 @@ const thinkingConfigSchema = z.object({
   disabledBody: requestBodyPartSchema.optional(),
 })
 
+// Where a `/models` entry says whether the model reads images, as a dot path
+// such as 'architecture.input_modalities'. A boolean there is the flag; a
+// list means "reads images" when it holds "image"; anything else, or no
+// value, is unknown.
+const modelImageInputSchema = z.object({
+  path: z.string().refine(
+    (path) => path.split('.').every((segment) => segment.length > 0),
+    'Model image input path must be dot-separated names, none empty',
+  ),
+})
+
 // The whole definition of a provider. Built-ins are literals of this type and
 // custom providers are the same JSON in app_state.json, so one Provider class
 // serves both. Put every difference between providers in this data (headers,
@@ -147,9 +161,12 @@ export const providerConfigSchema = z.object({
   models: z.array(providerModelConfigSchema).default(() => []),
   // false: never call the models endpoint, list only `models`.
   fetchModels: z.boolean().default(true),
+  modelImageInput: modelImageInputSchema.optional(),
   auth: z.enum(['apiKey', 'githubCopilot']).default('apiKey'),
   // Static headers added to every request.
   headers: headersSchema.optional(),
+  // Added only to a chat request that sends an image, after `headers`.
+  imageRequestHeaders: headersSchema.optional(),
   // Anthropic `max_tokens`; the OpenAI format ignores it.
   maxOutputTokens: z.number().int().positive().optional(),
   settings: z.array(providerSettingDefSchema).optional(),

@@ -27,6 +27,22 @@ describe('model cache persistence format', () => {
     expect(serializeModelCacheJson(parsed)).toBe(JSON.stringify(parsed, null, 2))
   })
 
+  it('round-trips image flags and reads a model without one as unknown', () => {
+    const models = [
+      { id: 'vision', name: 'Vision', provider: 'venice', imageInput: true },
+      { id: 'text', name: 'Text', provider: 'venice', imageInput: false },
+      // A cache written before the field existed.
+      { id: 'old', name: 'Old', provider: 'venice' },
+    ]
+    const parsed = parseModelCacheJson(JSON.stringify({
+      version: MODEL_CACHE_VERSION,
+      providers: { venice: { models, working: true, updatedAt: 1, lastCheckedAt: 2 } },
+    }))
+
+    expect(parsed.providers.venice?.models).toStrictEqual(models)
+    expect(parseModelCacheJson(serializeModelCacheJson(parsed))).toStrictEqual(parsed)
+  })
+
   it('keeps custom provider ids and drops keys that are not valid provider ids', () => {
     const parsed = parseModelCacheJson(JSON.stringify({
       version: MODEL_CACHE_VERSION,

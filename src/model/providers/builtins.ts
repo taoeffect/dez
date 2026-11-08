@@ -15,6 +15,7 @@ export const BUILT_IN_PROVIDER_CONFIGS: readonly ProviderConfig[] = [
     apiFormat: 'openai',
     models: [],
     fetchModels: true,
+    modelImageInput: { path: 'architecture.input_modalities' },
     auth: 'apiKey',
     // OpenRouter drops a field that the routed model does not take, so the
     // request is safe for every model. Some models must think, so there is no
@@ -48,6 +49,7 @@ export const BUILT_IN_PROVIDER_CONFIGS: readonly ProviderConfig[] = [
     apiFormat: 'openai',
     models: [],
     fetchModels: true,
+    modelImageInput: { path: 'model_spec.capabilities.supportsVision' },
     auth: 'apiKey',
     // Every request sends all four `venice_parameters`, with these defaults
     // when the user has not changed a toggle in the provider settings popup.
@@ -153,6 +155,9 @@ export const BUILT_IN_PROVIDER_CONFIGS: readonly ProviderConfig[] = [
     apiFormat: 'openai',
     models: [],
     fetchModels: true,
+    // VS Code's Copilot Chat (microsoft/vscode, extensions/copilot) reads the
+    // same flag, and sends the same header on requests with images.
+    modelImageInput: { path: 'capabilities.supports.vision' },
     auth: 'githubCopilot',
     // The Copilot API expects the headers of a supported editor integration.
     headers: {
@@ -161,6 +166,7 @@ export const BUILT_IN_PROVIDER_CONFIGS: readonly ProviderConfig[] = [
       'User-Agent': 'GitHubCopilotChat/0.24.2',
       'Copilot-Integration-Id': 'vscode-chat',
     },
+    imageRequestHeaders: { 'Copilot-Vision-Request': 'true' },
     // Copilot documents no thinking field, and `reasoning_effort` gives a 400
     // on models that do not list it. Its Claude and Gemini models stream
     // thinking without a field.
