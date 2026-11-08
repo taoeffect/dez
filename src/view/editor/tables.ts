@@ -219,15 +219,28 @@ export function findMarkdownTables(doc: Text): MarkdownTable[] {
   return tables
 }
 
+const markdownTablesByDoc = new WeakMap<Text, readonly MarkdownTable[]>()
+
+/** `findMarkdownTables`, once per doc (a doc is immutable): for the table
+ *  decorations, the images, and the links. */
+function markdownTablesOf(doc: Text): readonly MarkdownTable[] {
+  let tables = markdownTablesByDoc.get(doc)
+  if (!tables) {
+    tables = findMarkdownTables(doc)
+    markdownTablesByDoc.set(doc, tables)
+  }
+  return tables
+}
+
 const tableRowStartsByDoc = new WeakMap<Text, ReadonlySet<number>>()
 
 /** The start of each table row line in `doc`. Images and links leave these
- *  lines as source (see `tableDecorationsField`). A doc is immutable, so
- *  the scan of the whole doc runs once per doc, for both of them. */
+ *  lines as source (see `tableDecorationsField`). Cached per doc, as the
+ *  images ask once per line with a reference. */
 export function tableRowStarts(doc: Text): ReadonlySet<number> {
   let starts = tableRowStartsByDoc.get(doc)
   if (!starts) {
-    starts = new Set(findMarkdownTables(doc).flatMap((table) => table.rows.map((row) => row.from)))
+    starts = new Set(markdownTablesOf(doc).flatMap((table) => table.rows.map((row) => row.from)))
     tableRowStartsByDoc.set(doc, starts)
   }
   return starts
@@ -553,7 +566,7 @@ function buildTableDecorations(state: EditorState): TableDecorations {
   const wrappers = new RangeSetBuilder<BlockWrapper>()
   const cellMarks = new Map<string, Decoration>()
   const caretZones: CaretZone[] = []
-  for (const table of findMarkdownTables(doc)) {
+  for (const table of markdownTablesOf(doc)) {
     wrappers.add(table.from, table.to, TABLE_WRAPPER)
     const shapes = table.rows.map((row) => row.cells.map((cell) => cellShape(doc, cell)))
     const widths = columnWidths(state.tabSize, table, shapes)
