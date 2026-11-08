@@ -127,21 +127,17 @@ function insertionText(state: EditorState, { from, to }: DocRange, text: string)
  *  (`addPendingRange`), and when its text changed, the images go after it
  *  and the new text stays. When the view no longer shows the doc of the
  *  paste or drop (another tab, or a rebuilt state), the images stay saved
- *  but are not inserted, and a toast says so. The active tab id is checked
- *  too, because right after a tab switch the view holds the old tab's
- *  state for a tick, and its edits would go to the new tab
- *  (`syncDocToStore` in ThreadEditor.vue). The references go in with no id:
- *  `pastedImageIds` gives each one the next id in this same transaction,
- *  from the doc as it is then, so two inserts in flight never take the same
- *  id. */
+ *  but are not inserted, and a toast says so. The references go in with no
+ *  id: `pastedImageIds` gives each one the next id in this same
+ *  transaction, from the doc as it is then, so two inserts in flight never
+ *  take the same id. */
 async function insertImages(view: EditorView, files: ReadonlyArray<File | Promise<File | null>>, range: DocRange, userEvent: 'input.paste' | 'input.drop'): Promise<void> {
-  const tabId = sbp('dez.model/tabs/activeId') as string
   const replacedText = view.state.sliceDoc(range.from, range.to)
   const id = addPendingRange(view, range)
   const saved = await Promise.all(files.map(saveImageFile))
   const paths = saved.filter((path) => path !== null)
   const pending = pendingRange(view.state, id)
-  if (!pending || sbp('dez.model/tabs/activeId') !== tabId) {
+  if (!pending) {
     if (paths.length > 0) {
       sbp('dez.ui/toast', 'app-global', {
         title: paths.length === 1 ? 'Image not inserted' : 'Images not inserted',

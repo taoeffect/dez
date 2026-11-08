@@ -353,13 +353,15 @@ export async function deleteImage(view: EditorView, from: number, path: string):
   const tabId = sbp('dez.model/tabs/activeId') as string
   let rangeId = addPendingRange(view, image)
   const currentRange = (): DocRange | null => {
-    if (sbp('dez.model/tabs/activeId') !== tabId) return null
-    const shown = renderedImages(view.state)
     const range = pendingRange(view.state, rangeId)
     if (range) {
-      return shown.some((other) => other.from === range.from && other.to === range.to && other.path === path) ? range : null
+      return renderedImages(view.state).some((other) => other.from === range.from && other.to === range.to && other.path === path) ? range : null
     }
-    const matches = shown.filter((other) => other.path === path && other.id === image.id)
+    // `pendingRange` gives no range while another tab is active either, and
+    // right after a tab switch the view still holds this tab's state: find
+    // the reference again only while this tab is active.
+    if (sbp('dez.model/tabs/activeId') !== tabId) return null
+    const matches = renderedImages(view.state).filter((other) => other.path === path && other.id === image.id)
     if (matches.length !== 1) return null
     rangeId = addPendingRange(view, matches[0])
     return matches[0]
@@ -381,7 +383,7 @@ export async function deleteImage(view: EditorView, from: number, path: string):
       // The controller has logged the failure and shown a toast.
     }
   }
-  // In another state the range is gone already.
+  // In another state, or while another tab is active, there is no range.
   if (!pendingRange(view.state, rangeId)) return
   view.dispatch({
     ...(range && {
