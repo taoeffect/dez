@@ -251,6 +251,12 @@ pub async fn load_app_file_bytes(path: String) -> Result<tauri::ipc::Response, S
     crate::persistence::load_app_file_bytes(&path).map(tauri::ipc::Response::new)
 }
 
+// A missing file is not an error.
+#[tauri::command]
+pub async fn delete_app_file(path: String) -> Result<(), String> {
+    crate::persistence::delete_app_file(&path)
+}
+
 #[tauri::command]
 pub async fn get_app_dir() -> Result<String, String> {
     crate::persistence::app_dir()

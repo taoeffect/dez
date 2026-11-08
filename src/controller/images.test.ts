@@ -17,6 +17,8 @@ interface Toast {
 let appDir: string
 let savedFiles: SavedFile[] = []
 let saveAppFile: (file: SavedFile) => Promise<void>
+let deletedFiles: string[] = []
+let deleteAppFile: (path: string) => Promise<void>
 let toasts: Toast[] = []
 let consoleError: MockInstance<typeof console.error>
 
@@ -26,6 +28,9 @@ sbp('sbp/selectors/register', {
   },
   'dez.native/saveAppFile' (path: string, content: Uint8Array): Promise<void> {
     return saveAppFile({ path, content })
+  },
+  'dez.native/deleteAppFile' (path: string): Promise<void> {
+    return deleteAppFile(path)
   },
   'dez.ui/toast' (_area: string, toast: Toast): void {
     toasts.push(toast)
@@ -41,6 +46,10 @@ beforeEach(() => {
   savedFiles = []
   saveAppFile = async (file) => {
     savedFiles.push(file)
+  }
+  deletedFiles = []
+  deleteAppFile = async (path) => {
+    deletedFiles.push(path)
   }
   toasts = []
   consoleError = vi.spyOn(console, 'error').mockImplementation(() => {})
@@ -91,5 +100,40 @@ describe('dez.controller/images/save', () => {
 
     expect(savedFiles).toEqual([])
     expect(toasts).toMatchObject([{ title: 'Could not save the image', variant: 'error' }])
+  })
+})
+
+describe('dez.controller/images/delete', () => {
+  function deleteImage(path: string): Promise<void> {
+    return sbp('dez.controller/images/delete', path) as Promise<void>
+  }
+
+  it('deletes a stored image of this Dez folder by its app-file path', async () => {
+    await deleteImage(`${appDir}/assets/images/red.png`)
+
+    expect(deletedFiles).toEqual(['assets/images/red.png'])
+    expect(toasts).toEqual([])
+  })
+
+  it('deletes no file for an image of another Dez folder, even with a file of that name here', async () => {
+    await deleteImage('/home/bob/.config/dez/assets/images/red.png')
+
+    expect(deletedFiles).toEqual([])
+    expect(toasts).toEqual([])
+  })
+
+  it('logs, shows an error toast, and rejects when the delete fails', async () => {
+    deleteAppFile = async () => {
+      throw 'Failed to delete assets/images/red.png: Permission denied (os error 13)'
+    }
+
+    await expect(deleteImage(`${appDir}/assets/images/red.png`)).rejects.toBe('Failed to delete assets/images/red.png: Permission denied (os error 13)')
+
+    expect(consoleError).toHaveBeenCalledWith(`Failed to delete the image ${appDir}/assets/images/red.png:`, 'Failed to delete assets/images/red.png: Permission denied (os error 13)')
+    expect(toasts).toEqual([{
+      title: 'Could not delete the image',
+      message: 'Failed to delete assets/images/red.png: Permission denied (os error 13)',
+      variant: 'error',
+    }])
   })
 })

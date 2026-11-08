@@ -99,6 +99,11 @@ export default sbp('sbp/selectors/register', {
     return new Uint8Array(await invoke<ArrayBuffer>('load_app_file_bytes', { path }))
   },
 
+  // A missing file is not an error.
+  'dez.native/deleteAppFile' (path: string): Promise<void> {
+    return invoke('delete_app_file', { path })
+  },
+
   'dez.native/getAppDir' (): Promise<string> {
     return invoke<string>('get_app_dir')
   },

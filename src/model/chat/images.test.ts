@@ -9,6 +9,7 @@ import {
   labelImageReferences,
   pastedImageIdChanges,
   splitImageReferences,
+  storedImageFile,
 } from './images'
 
 const PNG = '/home/ann/.config/dez/assets/images/5f1c2a9e-0b7d-4c3e-9a51-2d8f6e4b7c10.png'
@@ -110,6 +111,31 @@ describe('isImagePath', () => {
     for (const path of ['C:\\Users\\ann\\.config\\dez/assets/images/x.png', './.config/dez/assets/images/x.png', '/home/[ann]/.config/dez/assets/images/x.png', `${PNG}\n`]) {
       expect(isImagePath(path)).toBe(false)
       expect(findImageReferences(imageMarkdown(path)).map((ref) => ref.path)).not.toEqual([path])
+    }
+  })
+})
+
+describe('storedImageFile', () => {
+  const appDir = '/home/ann/.config/dez'
+
+  it('gives the app-file path of an image directly in the image folder of this app folder', () => {
+    expect(storedImageFile(PNG, appDir)).toBe('assets/images/5f1c2a9e-0b7d-4c3e-9a51-2d8f6e4b7c10.png')
+    expect(storedImageFile(JPG, appDir)).toBe('assets/images/a1.jpg')
+  })
+
+  it('gives null for any other path, so that no other file is read or deleted', () => {
+    for (const path of [
+      '/home/bob/.config/dez/assets/images/a1.jpg',
+      '/home/ann/.config/dez2/assets/images/a1.jpg',
+      '/home/ann/.config/dez/x/.config/dez/assets/images/a1.jpg',
+      '/home/ann/.config/dez/assets/images/../assets/images/a1.jpg',
+      '/home/ann/.config/dez/assets/images/sub/a1.jpg',
+      '/home/ann/.config/dez/assets/images/.a1.jpg',
+      '/home/ann/.config/dez/assets/images/a1.bmp',
+      '/home/ann/.config/dez/app_state.json',
+      'assets/images/a1.jpg',
+    ]) {
+      expect(storedImageFile(path, appDir), path).toBeNull()
     }
   })
 })

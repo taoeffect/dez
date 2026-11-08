@@ -1,5 +1,5 @@
 import sbp from '@sbp/sbp'
-import { IMAGE_FOLDER, imageMediaType } from '../chat/images'
+import { IMAGE_FOLDER, imageMediaType, storedImageFile } from '../chat/images'
 import type { MessagePart } from '../chat/types'
 import { modelRefKey } from '../chat/modelRef'
 import type { ModelCache } from '../persistence/types'
@@ -49,11 +49,11 @@ async function requestSecret(provider: Provider, refreshCopilot = false): Promis
 // and its Copilot retry. The app folder is read only when a message has an
 // image.
 async function readMessageImages(messages: ProviderChatInputMessage[]): Promise<ChatMessage[]> {
-  let imageFolder: Promise<string> | undefined
+  let appDir: Promise<string> | undefined
   const readPart = async (part: MessagePart): Promise<ChatPart> => {
     if (part.type === 'text') return part
-    imageFolder ??= (sbp('dez.native/getAppDir') as Promise<string>).then((appDir) => `${appDir}/${IMAGE_FOLDER}/`)
-    return readImagePart(part.path, await imageFolder)
+    appDir ??= sbp('dez.native/getAppDir') as Promise<string>
+    return readImagePart(part.path, await appDir)
   }
 
   return Promise.all(messages.map(async ({ content, ...message }) => ({
@@ -62,19 +62,20 @@ async function readMessageImages(messages: ProviderChatInputMessage[]): Promise<
   })))
 }
 
-// Only a stored image of this Dez folder is read: the folder that
-// dez.controller/images/save writes and the asset protocol serves. So a
-// reference copied from another home or machine fails like a missing file,
-// as it shows in the editor. The error names only the file, like the
-// editor's broken-image box; the log has the cause.
-async function readImagePart(path: string, imageFolder: string): Promise<ChatPart> {
+// Only a stored image of this Dez folder is read (`storedImageFile`): the
+// folder that dez.controller/images/save writes and the asset protocol
+// serves. So a reference copied from another home or machine fails like a
+// missing file, as it shows in the editor. The error names only the file,
+// like the editor's broken-image box; the log has the cause.
+async function readImagePart(path: string, appDir: string): Promise<ChatPart> {
   const fileName = path.slice(path.lastIndexOf('/') + 1)
   try {
+    const file = storedImageFile(path, appDir)
     const mediaType = imageMediaType(path)
-    if (!mediaType || path !== `${imageFolder}${fileName}`) {
-      throw new Error(`The image is not in the image folder ${imageFolder}`)
+    if (!file || !mediaType) {
+      throw new Error(`The image is not in the image folder ${appDir}/${IMAGE_FOLDER}`)
     }
-    const bytes = await sbp('dez.native/loadAppFileBytes', `${IMAGE_FOLDER}/${fileName}`) as Uint8Array
+    const bytes = await sbp('dez.native/loadAppFileBytes', file) as Uint8Array
     return { type: 'image', mediaType, data: bytesToBase64(bytes) }
   } catch (error) {
     console.error(`Failed to read the image ${path}:`, error)

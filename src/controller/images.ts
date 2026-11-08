@@ -1,7 +1,7 @@
 import sbp from '@sbp/sbp'
 import { convertFileSrc, isTauri } from '@tauri-apps/api/core'
 import { getCurrentWebview } from '@tauri-apps/api/webview'
-import { IMAGE_FOLDER, imageExtension, isImagePath, type ImageMediaType } from '../model/chat/images'
+import { IMAGE_FOLDER, imageExtension, isImagePath, storedImageFile, type ImageMediaType } from '../model/chat/images'
 
 let fileDropsWatched = false
 
@@ -28,6 +28,27 @@ export default sbp('sbp/selectors/register', {
       console.error('Failed to save the image:', error)
       sbp('dez.ui/toast', 'app-global', {
         title: 'Could not save the image',
+        message: String(error),
+        variant: 'error',
+      })
+      throw error
+    }
+  },
+
+  // Deletes the file of an image reference's path. Only a stored image of
+  // this Dez folder is deleted (`storedImageFile`); any other path (a
+  // reference copied from another home) deletes no file, as the file of
+  // that name here belongs to another image. A missing file is not an
+  // error. A failure is logged, shows an error toast, and rejects, so the
+  // caller keeps the reference.
+  async 'dez.controller/images/delete' (path: string): Promise<void> {
+    try {
+      const file = storedImageFile(path, await sbp('dez.native/getAppDir') as string)
+      if (file) await sbp('dez.native/deleteAppFile', file)
+    } catch (error) {
+      console.error(`Failed to delete the image ${path}:`, error)
+      sbp('dez.ui/toast', 'app-global', {
+        title: 'Could not delete the image',
         message: String(error),
         variant: 'error',
       })

@@ -141,6 +141,16 @@ export function isImagePath(path: string): boolean {
   return IMAGE_PATH.test(path)
 }
 
+/** The app-file path (`assets/images/<file>`, relative to the app folder) of
+ *  an image path that is directly in the image folder of the app folder
+ *  `appDir`. Null for any other path, such as a reference copied from
+ *  another home: a file of that name in this folder is another image, so
+ *  Dez must neither send nor delete it. */
+export function storedImageFile(path: string, appDir: string): string | null {
+  const file = `${IMAGE_FOLDER}/${path.slice(path.lastIndexOf('/') + 1)}`
+  return isImagePath(path) && path === `${appDir}/${file}` ? file : null
+}
+
 /** The reference text of an image path, with its metadata items in this
  *  order. Each value must be one line; `|`, `(`, `)`, and `\` in it are
  *  escaped. */

@@ -1,9 +1,9 @@
 //! Raw private-file I/O under `~/.config/dez/`, plus id and app-file path
 //! sanitization. TypeScript owns every file format (app state, prompts,
 //! conversations, model cache); Rust never parses them. The generic
-//! `save_app_file`/`load_app_file`/`load_app_file_bytes` commands take a
-//! path relative to that folder from TypeScript, so a new file needs no new
-//! command.
+//! `save_app_file`/`load_app_file`/`load_app_file_bytes`/`delete_app_file`
+//! commands take a path relative to that folder from TypeScript, so a new
+//! file needs no new command.
 
 use serde::{Deserialize, Serialize};
 use std::io::Write;
@@ -194,11 +194,17 @@ pub fn list_conversation_files(include_content: bool) -> Vec<ConversationFile> {
 }
 
 pub fn delete_conversation_file(id: &str) -> Result<(), String> {
-    let path = conversation_path(id);
-    if path.exists() {
-        std::fs::remove_file(&path).map_err(|e| format!("Delete error: {}", e))?;
+    remove_file_if_present(&conversation_path(id)).map_err(|e| format!("Delete error: {}", e))
+}
+
+// A missing file is not an error for the delete commands: no file at the
+// path is the goal either way. Removing first, rather than checking that
+// the file exists, leaves no gap in which another process can remove it.
+fn remove_file_if_present(path: &Path) -> std::io::Result<()> {
+    match std::fs::remove_file(path) {
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(()),
+        result => result,
     }
-    Ok(())
 }
 
 // A missing file reads as "": a first launch has no app state, prompts, or
@@ -218,6 +224,11 @@ pub fn load_app_file_bytes(relative: &str) -> Result<Vec<u8>, String> {
 pub fn save_app_file(relative: &str, content: &[u8]) -> Result<(), String> {
     let path = app_file_path(relative)?;
     write_private_file(&path, content)
+}
+
+pub fn delete_app_file(relative: &str) -> Result<(), String> {
+    let path = app_file_path(relative)?;
+    remove_file_if_present(&path).map_err(|e| format!("Failed to delete {}: {}", relative, e))
 }
 
 // Returns the data folder for callers that hand it to the OS, e.g. to open it
@@ -344,5 +355,30 @@ mod tests {
         for path in invalid {
             assert!(app_file_path(path).is_err(), "{path:?} must be rejected");
         }
+    }
+
+    #[test]
+    fn remove_if_present_removes_a_file_and_accepts_a_missing_one() {
+        let dir = TempDir::new("remove");
+        let path = dir.0.join("image.png");
+        std::fs::write(&path, b"png").expect("write");
+
+        remove_file_if_present(&path).expect("remove");
+        assert!(dir.file_names().is_empty());
+        remove_file_if_present(&path).expect("remove a missing file");
+
+        // A folder is not a file: its delete fails and the folder stays.
+        let folder = dir.0.join("assets");
+        std::fs::create_dir(&folder).expect("create folder");
+        assert!(remove_file_if_present(&folder).is_err());
+        assert!(folder.is_dir());
+    }
+
+    // The delete command must never reach outside the app folder. The path
+    // names no file, so even a broken path rule would delete nothing.
+    #[test]
+    fn delete_app_file_rejects_a_path_outside_the_app_folder() {
+        assert!(delete_app_file("../dez-test-no-such-file").is_err());
+        assert!(delete_app_file("/tmp/dez-test-no-such-file").is_err());
     }
 }
