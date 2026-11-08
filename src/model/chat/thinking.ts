@@ -44,10 +44,11 @@ export function sameThinking(a: SectionThinking | undefined, b: SectionThinking 
 // leaves it out, as WebKit takes about half a second to wrap 80 KB with no
 // break points.
 const ENCRYPTED_MARKER_PREFIX = '__ENCRYPTED_REASONING__v'
-const ENCRYPTED_MARKER = /__ENCRYPTED_REASONING__v\d+:/y
+// The regexes take the prefix as it is: it has no regex metacharacters.
+const ENCRYPTED_MARKER = new RegExp(`${ENCRYPTED_MARKER_PREFIX}\\d+:`, 'y')
 // A last line that the stream can still turn into the marker, past its
 // fixed part. A shorter one is a prefix of `ENCRYPTED_MARKER_PREFIX`.
-const ENCRYPTED_MARKER_SO_FAR = /__ENCRYPTED_REASONING__v\d*$/y
+const ENCRYPTED_MARKER_SO_FAR = new RegExp(`${ENCRYPTED_MARKER_PREFIX}\\d*$`, 'y')
 
 export interface ReadableThinking {
   /** The thinking text without its encrypted lines. */
