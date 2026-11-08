@@ -12,11 +12,11 @@ import type { E2EBrowser } from './harness/session'
 import { activeTabId, focusEditor, pickModel, sbpCall, threadSections, waitForThread } from './harness/thread'
 
 // Images in a conversation, driven through the real app: a paste or a drop
-// stores the file and puts its reference in the doc, the editor shows the
-// image (through the asset protocol) and keeps its delete rules, both API
-// formats get the image in the request body, a model that does not read
-// images gets `[image]` and the user a warning, and a relaunch shows the
-// saved image again.
+// stores the file and puts its reference, with a new image id, in the doc,
+// the editor shows the image (through the asset protocol) with its id in a
+// hover badge and keeps its delete rules, both API formats get the image in
+// the request body, a model that does not read images gets `[image]` and
+// the user a warning, and a relaunch shows the saved image again.
 //
 // WebDriver can send neither clipboard data nor an OS drag, so the paste
 // and drop events are synthetic DOM events built in the page. The PNG bytes
@@ -63,8 +63,13 @@ function solidPng (width: number, height: number, rgb: readonly [number, number,
 const PASTED_PNG = solidPng(48, 32, [220, 40, 40])
 const DROPPED_PNG = solidPng(40, 24, [40, 90, 220])
 
-/** A Dez image reference in the doc, `![<absolute path>]()`. */
-const REFERENCE = /!\[[^\]\n]+\]\(\)/
+/** A Dez image reference in the doc, `![<absolute path>](id=<letters>)`. */
+const REFERENCE = /!\[[^\]\n]+\]\(id=[a-z]+\)/
+
+/** The path in a reference, `![<path>](…)`. */
+function referencePath (reference: string): string {
+  return reference.slice(2, reference.indexOf(']('))
+}
 
 interface EditorState {
   doc: string
@@ -77,6 +82,15 @@ interface ShownImage {
   alt: string
   width: number
   height: number
+}
+
+/** The id badge of an image that the editor shows, or of its "Image not
+ *  found" box. */
+interface ImageBadge {
+  /** Null for an image with no badge. */
+  id: string | null
+  /** Whether the badge can be seen. */
+  shown: boolean
 }
 
 /** A file for `dropFiles`. */
@@ -93,7 +107,7 @@ interface Point {
 
 interface InsertedImage {
   path: string
-  /** `![<path>]()`. */
+  /** `![<path>](id=a)`: each test puts it in a new tab, so its id is `a`. */
   reference: string
   /** The doc range of the reference. */
   from: number
@@ -146,6 +160,48 @@ describe('images', () => {
       document.querySelectorAll<HTMLImageElement>('.cm-content .dez-image__img'),
       (img) => ({ alt: img.alt, width: img.naturalWidth, height: img.naturalHeight }),
     ))
+  }
+
+  // The badge of each image that the editor shows (or of its "Image not
+  // found" box), in doc order. A badge is shown when it is fully opaque
+  // (`.dez-image__id` in dezTheme).
+  async function imageBadges (): Promise<ImageBadge[]> {
+    return browser.execute(() => Array.from(
+      document.querySelectorAll('.cm-content .dez-image'),
+      (image) => {
+        const badge = image.querySelector('.dez-image__id')
+        return { id: badge?.textContent ?? null, shown: badge !== null && getComputedStyle(badge).opacity === '1' }
+      },
+    ))
+  }
+
+  // The center of the image (or of its "Image not found" box) that the
+  // editor shows at `index`, in doc order.
+  async function imageCenter (index: number): Promise<Point> {
+    return browser.execute((at: number) => {
+      const box = document.querySelectorAll('.cm-content .dez-image')[at]?.firstElementChild
+      if (!box) throw new Error(`imageCenter: no image ${at}`)
+      const rect = box.getBoundingClientRect()
+      return { x: rect.left + rect.width / 2, y: rect.top + rect.height / 2 }
+    }, index)
+  }
+
+  // Moves the mouse pointer to `point` (viewport px), with no button down.
+  async function movePointer (point: Point): Promise<void> {
+    await browser.action('pointer', { parameters: { pointerType: 'mouse' } })
+      .move({ x: Math.round(point.x), y: Math.round(point.y), origin: 'viewport' })
+      .perform()
+  }
+
+  // Puts `text` at the end of the doc as typed text, which gets no image ids
+  // (only a paste or a drop does), as in a reference saved before ids.
+  async function typeAtEnd (text: string): Promise<void> {
+    await browser.execute((insert: string) => {
+      const content = document.querySelector('.cm-content')
+      if (!content) throw new Error('typeAtEnd: .cm-content not found')
+      const view = Reflect.get(Reflect.get(content, 'cmTile'), 'root').view as EditorView
+      view.dispatch({ changes: { from: view.state.doc.length, insert }, userEvent: 'input.type' })
+    }, text)
   }
 
   async function activeTabTitle (): Promise<string | null> {
@@ -268,10 +324,9 @@ describe('images', () => {
     const { doc, caret } = await editorState()
     const reference = doc.slice('Before '.length, doc.length - 'after'.length)
     expect(doc).toBe(`Before ${reference}after`)
-    expect(reference).toMatch(new RegExp(`^${REFERENCE.source}$`))
     expect(caret).toBe('Before '.length + reference.length)
-    const fileName = path.basename(reference.slice(2, -3))
-    expect(reference.slice(2, -3)).toBe(path.join(imagesDir(), fileName))
+    const fileName = path.basename(referencePath(reference))
+    expect(reference).toBe(`![${path.join(imagesDir(), fileName)}](id=a)`)
     expect(await storedImages()).toEqual([...before, fileName].sort())
     expect(await fs.promises.readFile(path.join(imagesDir(), fileName))).toEqual(DROPPED_PNG)
     await waitForValue(browser, 'shown image', shownImages, [{ alt: fileName, width: 40, height: 24 }])
@@ -283,8 +338,9 @@ describe('images', () => {
   }
 
   // Types `before` in the empty active tab, pastes PASTED_PNG, waits for
-  // its reference, then types `after`, which lands after the image only
-  // when the paste left the caret there.
+  // its reference (the tab's first image, so its id is `a`), then types
+  // `after`, which lands after the image only when the paste left the caret
+  // there.
   async function insertPastedImage (before: string, after: string): Promise<InsertedImage> {
     await focusEditor(browser)
     await typeKeys(browser, before)
@@ -293,11 +349,11 @@ describe('images', () => {
     const pasted = await editorState()
     const reference = pasted.doc.slice(before.length)
     expect(pasted.doc.slice(0, before.length)).toBe(before)
-    expect(reference).toMatch(new RegExp(`^${REFERENCE.source}$`))
+    expect(reference).toBe(`![${referencePath(reference)}](id=a)`)
     expect(pasted.caret).toBe(pasted.doc.length)
     await typeKeys(browser, after)
     await waitForValue(browser, 'text after the image', async () => (await editorState()).doc, before + reference + after)
-    return { path: reference.slice(2, -3), reference, from: before.length, to: before.length + reference.length }
+    return { path: referencePath(reference), reference, from: before.length, to: before.length + reference.length }
   }
 
   // Sends the active tab with Ctrl+Enter and takes its request, with the
@@ -345,6 +401,68 @@ describe('images', () => {
     expect(await storedImages()).toEqual([...before, fileName].sort())
     expect(await fs.promises.readFile(image.path)).toEqual(PASTED_PNG)
     await waitForValue(browser, 'shown image', shownImages, [pastedImageView(image)])
+  })
+
+  it('gives each image of a conversation its own id, shown in a badge while the pointer is on the image', async () => {
+    await newTab()
+    const first = await insertPastedImage('', ' and ')
+    const firstLine = `${first.reference} and `
+    await pasteImage(PASTED_PNG)
+    await waitForValue(browser, 'second reference', async () => (await editorState()).doc.length > firstLine.length, true)
+    const second = (await editorState()).doc.slice(firstLine.length)
+    const secondPath = referencePath(second)
+    expect(second).toBe(`![${secondPath}](id=b)`)
+    expect(secondPath).not.toBe(first.path)
+
+    // A reference with no id, as saved before ids existed, shows no badge.
+    // The badge of an image whose file is gone is in its box.
+    await typeAtEnd(`\n![${first.path}]()\n![${path.join(imagesDir(), 'gone.png')}](id=c)`)
+    await waitForValue(browser, 'shown images', shownImages, [
+      pastedImageView(first),
+      { alt: path.basename(secondPath), width: 48, height: 32 },
+      pastedImageView(first),
+    ])
+    await waitForValue(browser, 'missing image box', () => browser.execute(
+      () => document.querySelector('.cm-content .dez-image-missing')?.firstChild?.textContent ?? null,
+    ), 'Image not found: gone.png')
+    const badges = (shown: string | null): ImageBadge[] => [
+      { id: 'a', shown: shown === 'a' },
+      { id: 'b', shown: shown === 'b' },
+      { id: null, shown: false },
+      { id: 'c', shown: shown === 'c' },
+    ]
+    await movePointer(await elementCenter('header.tab-bar'))
+    await waitForValue(browser, 'badges with the pointer off the images', imageBadges, badges(null))
+
+    await movePointer(await imageCenter(1))
+    await waitForValue(browser, 'badges with the pointer on image b', imageBadges, badges('b'))
+    const layout = await browser.execute(() => {
+      const wrapper = document.querySelectorAll('.cm-content .dez-image')[1]
+      const image = wrapper?.querySelector('.dez-image__img')?.getBoundingClientRect()
+      const badge = wrapper?.querySelector('.dez-image__id')?.getBoundingClientRect()
+      const line = wrapper?.closest('.cm-line')?.getBoundingClientRect()
+      if (!image || !badge || !line) throw new Error('layout: image b, its badge, or its line not found')
+      return {
+        left: badge.left - image.left,
+        top: badge.top - image.top,
+        right: image.right - badge.right,
+        bottom: image.bottom - badge.bottom,
+        imageHeight: image.height,
+        lineHeight: line.height,
+      }
+    })
+    // On the image's bottom-right corner, as far from its right edge as
+    // from its bottom edge; and the badge adds no height to the line.
+    expect(layout.right).toBeGreaterThan(0)
+    expect(layout.right).toBeCloseTo(layout.bottom, 1)
+    expect(layout.left).toBeGreaterThan(layout.right)
+    expect(layout.top).toBeGreaterThan(0)
+    expect(layout.lineHeight).toBe(layout.imageHeight)
+
+    await movePointer(await imageCenter(3))
+    await waitForValue(browser, 'badges with the pointer on the box of image c', imageBadges, badges('c'))
+    await movePointer(await elementCenter('header.tab-bar'))
+    await waitForValue(browser, 'badges after the pointer left', imageBadges, badges(null))
   })
 
   it('shows the source on Backspace after an image, and the image again on `)`, undo, and redo', async () => {

@@ -72,7 +72,7 @@ ThreadEditor (CodeMirror doc) syncs to the active tab's sections
 - `view/editor/find.ts`, `findState.ts`, `findHistory.ts`, `view/thread/FindDropdown.vue`: find and replace.
 - `view/editor/tables.ts`: GFM tables shown as tables, in place.
 - `view/editor/focus.ts`: focus the editor and keep its scroll; use `focusKeepingScroll`, not `view.focus()`.
-- `view/editor/images.ts`, `imageInsert.ts`: images shown in place of their references (with the Backspace and Delete rules), and image paste and drop.
+- `view/editor/images.ts`, `imageInsert.ts`: images shown in place of their references (with the id badge on hover and the Backspace and Delete rules), and image paste and drop (which give image ids).
 - `controller/images.ts`: `dez.controller/images/*`: store an image, its display URL, read a dropped file, Linux native file drops.
 - `model/chat/`: `Section` / `ContentNode` types and helpers (`content.ts`, `modelRef.ts`, `thinking.ts`, `markdown.ts`, `pillMarker.ts`, `images.ts`).
 - `model/state/`: Pinia stores (internal) and `dez.model/*` selectors; views read state through `view/modelState.ts`.
@@ -176,7 +176,7 @@ Do not ever read, view, print, or `cat` `~/.config/dez/provider_keys.json`; it c
 - **The window starts hidden**: `dez.controller/window/restore` shows it, so a frontend failure before init shows no window; read the Vite output. On macOS, `lib.rs` shows it at launch so that it comes to the front.
 - **Saved window position units differ by platform**: logical points on macOS, physical px elsewhere (`src/controller/window.ts`).
 - **Wayland windows have no place**: GTK's Wayland backend cannot read or set the window position (`dez.native/gdkBackend`, `src/controller/window.ts`). The AppImage runs on X11.
-- **Image references are plain text**: `![<absolute path>]()` in a text node; `src/model/chat/images.ts` is the one recognizer (editor, requests, titles, search), and only files directly in `assets/images/` count.
+- **Image references are plain text**: `![<absolute path>](id=a)` in a text node (old ones have empty parens); `src/model/chat/images.ts` is the one recognizer (editor, requests, titles, search), and only files directly in `assets/images/` count. Only a paste or a drop gives ids (`pastedImageIds`, `imageInsert.ts`); never renumber an id in the doc.
 - **The asset scope must match the app folder**: the `assetProtocol` scope in `tauri.conf.json` names the folder that `base_dir()` (`persistence.rs`) builds.
 - **File drops differ by platform**: WebKitGTK gives the page no dropped `File`, so Linux uses Tauri's native drop (`tauri.linux.conf.json`, `dez.controller/images/watchFileDrops`); macOS keeps HTML5 drops, as the native drop would take text drags too. `AppLayout.vue` refuses file drops that no handler took.
 - **Read monitors with `dez.native/monitors`**, never the window API's `availableMonitors()`, `primaryMonitor()`, or `currentMonitor()`: in Tauri 2.10 those call GDK off the main thread and can crash the app on X11 (`monitors` in `commands.rs`).

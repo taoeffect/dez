@@ -1629,6 +1629,45 @@ export const dezTheme = EditorView.theme({
     lineHeight: '1.4',
     userSelect: 'none',
   },
+  // The id badge of an image (`ImageWidget`): shown only while the pointer
+  // is over the image, and never a part of the layout, so a hover changes
+  // no size. Over an image, it is positioned from a zero-size corner box
+  // that sits after the image on the line's bottom. In the "Image not
+  // found" box, it follows the text and keeps its room while hidden.
+  '.dez-image__corner': {
+    display: 'inline-block',
+    position: 'relative',
+    width: '0',
+    height: '0',
+    verticalAlign: 'bottom',
+  },
+  '.dez-image__id': {
+    display: 'inline-block',
+    padding: editorSize(0, 6),
+    borderRadius: '999px',
+    background: 'rgba(0, 0, 0, 0.62)',
+    color: '#fff',
+    fontFamily:
+      "ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif",
+    fontSize: editorSize(11),
+    lineHeight: '1.4',
+    whiteSpace: 'nowrap',
+    pointerEvents: 'none',
+    userSelect: 'none',
+    opacity: '0',
+    transition: 'opacity 0.12s ease',
+  },
+  '.dez-image__corner > .dez-image__id': {
+    position: 'absolute',
+    right: editorSize(6),
+    bottom: editorSize(6),
+  },
+  '.dez-image-missing > .dez-image__id': {
+    marginLeft: editorSize(6),
+  },
+  '.dez-image:hover .dez-image__id': {
+    opacity: '1',
+  },
   // Find highlights (src/view/editor/find.ts). Amber, so they differ from the
   // blue selection. They are text backgrounds, so they draw over the
   // selection layer, and their translucent colors mix with it: a selected

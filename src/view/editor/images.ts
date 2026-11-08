@@ -30,12 +30,22 @@ function setBoxSize(img: HTMLImageElement, size: ImageSize): void {
   img.style.setProperty('--dez-image-height', String(size.height))
 }
 
+/** The badge with an image's id (`.dez-image__id` in `dezTheme`). */
+function idBadge(id: string): HTMLElement {
+  const badge = document.createElement('span')
+  badge.className = 'dez-image__id'
+  badge.textContent = id
+  return badge
+}
+
+/** An image, with its id (null for an old reference with no id) in a
+ *  badge that shows while the pointer is over the image. */
 class ImageWidget extends WidgetType {
-  constructor(readonly path: string) {
+  constructor(readonly path: string, readonly id: string | null) {
     super()
   }
   eq(other: WidgetType): boolean {
-    return other instanceof ImageWidget && other.path === this.path
+    return other instanceof ImageWidget && other.path === this.path && other.id === this.id
   }
   toDOM(view: EditorView): HTMLElement {
     // The image is in an inline wrapper, so that the widget's root element
@@ -47,6 +57,7 @@ class ImageWidget extends WidgetType {
     img.className = 'dez-image__img'
     img.alt = this.path.slice(this.path.lastIndexOf('/') + 1)
     img.draggable = false
+    const badge = this.id === null ? null : idBadge(this.id)
     const cached = naturalSizes.get(this.path)
     if (cached) setBoxSize(img, cached)
     // A load or an error changes the line's height in place, which CM does
@@ -62,11 +73,25 @@ class ImageWidget extends WidgetType {
       const box = document.createElement('span')
       box.className = 'dez-image-missing'
       box.textContent = `Image not found: ${img.alt}`
+      // The box is one short line of text, so a badge over a corner would
+      // hide a part of it: the badge goes after the text, in the box.
+      if (badge) box.append(badge)
       wrapper.replaceChildren(box)
       measureLineHeights(view)
     })
     img.src = sbp('dez.controller/images/displayUrl', this.path) as string
     wrapper.appendChild(img)
+    if (badge) {
+      // A zero-size box right after the image, with its bottom on the
+      // image's bottom (both on the line's bottom): the badge is positioned
+      // from it, so it is over the image's bottom-right corner and changes
+      // no size. The inline wrapper cannot hold it: the box of an inline
+      // element is only as tall as its text, not as its image.
+      const corner = document.createElement('span')
+      corner.className = 'dez-image__corner'
+      corner.appendChild(badge)
+      wrapper.appendChild(corner)
+    }
     return wrapper
   }
   // CM uses this for the lines that it has not drawn yet. The real box can
@@ -109,7 +134,7 @@ function findRenderedImages(doc: Text): ImageReference[] {
 
 function buildImageDecorations(doc: Text): ImageDecorations {
   const images = findRenderedImages(doc)
-  const decorations = Decoration.set(images.map((image) => Decoration.replace({ widget: new ImageWidget(image.path) }).range(image.from, image.to)))
+  const decorations = Decoration.set(images.map((image) => Decoration.replace({ widget: new ImageWidget(image.path, image.id) }).range(image.from, image.to)))
   return { images, decorations }
 }
 
