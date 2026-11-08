@@ -119,12 +119,12 @@ function tooltipContent(title: string, ...text: Array<string | Node>): HTMLEleme
   return dom
 }
 
-/** The id badge's tooltip. The id only names the image for now (models do
- *  not get ids), so the text promises nothing more. */
+/** The id badge's tooltip. Models get the id in the image's text
+ *  (`withoutImagePaths`), so a message can name the image by it. */
 function idTooltip(id: string): HTMLElement {
   const source = document.createElement('code')
-  source.textContent = `id=${id}`
-  return tooltipContent(`Image id: ${id}`, 'The short name of this image in this conversation. It is saved in the image\u2019s markdown as ', source, '.')
+  source.textContent = `image @${id}`
+  return tooltipContent(`Image id: ${id}`, 'Refer to this image in a message as ', source, '.')
 }
 
 /** The trash's tooltip. The "Image not found" box has no file to delete

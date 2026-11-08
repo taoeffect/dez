@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import {
   findImageReferences,
+  holdsImagePath,
   imageExtension,
   imageMarkdown,
   imageMediaType,
@@ -10,6 +11,7 @@ import {
   pastedImageIdChanges,
   splitImageReferences,
   storedImageFile,
+  withoutImagePaths,
 } from './images'
 
 const PNG = '/home/ann/.config/dez/assets/images/5f1c2a9e-0b7d-4c3e-9a51-2d8f6e4b7c10.png'
@@ -143,8 +145,8 @@ describe('storedImageFile', () => {
 describe('splitImageReferences', () => {
   it('gives text and image pieces in order, with no empty text pieces', () => {
     expect(splitImageReferences(`![${PNG}](id=a)![${JPG}]() What is this?\n`)).toEqual([
-      { kind: 'image', path: PNG },
-      { kind: 'image', path: JPG },
+      { kind: 'image', path: PNG, source: `![${PNG}](id=a)` },
+      { kind: 'image', path: JPG, source: `![${JPG}]()` },
       { kind: 'text', text: ' What is this?\n' },
     ])
   })
@@ -152,9 +154,9 @@ describe('splitImageReferences', () => {
   it('keeps whitespace-only text between images', () => {
     expect(splitImageReferences(`a\n![${PNG}]()\n\n![${JPG}]()`)).toEqual([
       { kind: 'text', text: 'a\n' },
-      { kind: 'image', path: PNG },
+      { kind: 'image', path: PNG, source: `![${PNG}]()` },
       { kind: 'text', text: '\n\n' },
-      { kind: 'image', path: JPG },
+      { kind: 'image', path: JPG, source: `![${JPG}]()` },
     ])
   })
 
@@ -175,6 +177,75 @@ describe('labelImageReferences', () => {
   it('uses a given label as plain text', () => {
     expect(labelImageReferences(`a ![${PNG}]() b`, '$&')).toBe('a $& b')
     expect(labelImageReferences(`a ![${PNG}]() b`, '')).toBe('a  b')
+  })
+})
+
+describe('withoutImagePaths', () => {
+  it.each([
+    ['empty parens', `![${PNG}]()`, '![image]()'],
+    ['an id', `![${PNG}](id=a)`, '![image](id=a)'],
+    ['unknown keys and escaped values', String.raw`![${PNG}](id=b|desc=a \| b \(c\) \\ d|x=)`, String.raw`![image](id=b|desc=a \| b \(c\) \\ d|x=)`],
+    ['a home folder with spaces, parentheses, and non-ASCII names', '![/Users/Zoë Ann (work)/.config/dez/assets/images/x_1-2.webp](id=a)', '![image](id=a)'],
+  ])('sends a reference with %s as ![image] and its metadata as it is', (_case, text, sent) => {
+    expect(withoutImagePaths(text)).toBe(sent)
+  })
+
+  it.each([
+    ['the source that the Backspace rule leaves', `![${PNG}](id=a`, '![image](id=a'],
+    ['the link that the Delete rule leaves', `[${PNG}](id=a)`, '[image](id=a)'],
+    ['a reference with an id that is not valid', `![${PNG}](id=A)`, '![image](id=A)'],
+    ['a reference with a key given twice', `![${PNG}](id=a|id=b)`, '![image](id=a|id=b)'],
+    ['a bare path', `see ${PNG} now`, 'see image now'],
+  ])('takes the path out of %s', (_case, text, sent) => {
+    expect(withoutImagePaths(text)).toBe(sent)
+  })
+
+  it('takes the paths in metadata values and every path on a line', () => {
+    expect(withoutImagePaths(`![${PNG}](id=a|desc=a /x/assets/images/b.png) and ![${JPG}](id=b)`))
+      .toBe('![image](id=a|desc=a image) and ![image](id=b)')
+  })
+
+  it.each(['jpg', 'jpeg', 'gif', 'webp'])('takes a path with the extension %s', (extension) => {
+    expect(withoutImagePaths(`![/home/ann/.config/dez/assets/images/x.${extension}](id=a)`)).toBe('![image](id=a)')
+  })
+
+  it('leaves no part of a path in prose, also when it takes the prose before it', () => {
+    for (const text of [`Compare a/b with ${PNG}.`, `See https://example.com/x and ${JPG}`, `file://${PNG}`, `${PNG}\n${JPG}`]) {
+      const sent = withoutImagePaths(text)
+      expect(sent, text).not.toContain('assets/images')
+      expect(sent, text).not.toContain('/home/ann')
+    }
+  })
+
+  it('gives a text with no image path back as it is', () => {
+    for (const text of ['', 'Hi\n', '![x](https://example.com/x.png)', '/home/ann/Pictures/x.png', 'assets/images/x.png']) {
+      expect(withoutImagePaths(text)).toBe(text)
+    }
+  })
+
+  // A regex that rescans a line from each `/` takes seconds on a long line,
+  // and every send scrubs every message.
+  it('takes linear time on a long line with many slashes', () => {
+    const line = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/'.repeat(16 * 1024)
+    const started = performance.now()
+    const sent = withoutImagePaths(`${line} ${PNG}`)
+
+    expect(performance.now() - started).toBeLessThan(1000)
+    expect(sent).toBe(`${line.slice(0, line.indexOf('/'))}image`)
+  })
+})
+
+describe('holdsImagePath', () => {
+  it('finds an image path in a reference, in prose, and in JSON, on every call', () => {
+    for (let call = 0; call < 2; call++) {
+      expect(holdsImagePath(`a ![${PNG}](id=a)`)).toBe(true)
+      expect(holdsImagePath(`a [${PNG}](id=a)`)).toBe(true)
+      expect(holdsImagePath(JSON.stringify({ thinking: `The user sent\n${JPG}` }))).toBe(true)
+    }
+  })
+
+  it('finds no path in other text', () => {
+    expect(holdsImagePath('/home/ann/Pictures/x.png and assets/images/x.png')).toBe(false)
   })
 })
 

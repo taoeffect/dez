@@ -20,7 +20,7 @@ export default sbp('sbp/selectors/register', {
     const agentSection = sbp('dez.model/ensureTrailingAgentSectionForTab', tabId, model)
     if (!agentSection) return
 
-    // The request still goes, with the text `[image]` in place of each image.
+    // The request still goes, with only the text of each image reference.
     if (imagesLeftOut > 0) {
       sbp('dez.ui/toast', 'app-global', {
         variant: 'warning',

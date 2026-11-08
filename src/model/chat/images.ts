@@ -13,7 +13,8 @@ import { fileNameOf } from '../../utils/fileName'
 // plain text: it is not rendered and not sent as an image. So what Dez shows
 // and sends matches what the asset protocol scope (tauri.conf.json) and the
 // Rust app-file path rule allow. The editor, the request builder, and the
-// title, preview, and search text all use this one recognizer.
+// title, preview, and search text all use this one recognizer. Providers get
+// no path, only the reference's metadata (`withoutImagePaths`).
 
 // The image types that Dez stores as they are; the paste and drop code
 // converts other image types to PNG. OpenAI, Anthropic, and Venice accept
@@ -42,12 +43,25 @@ const MEDIA_TYPE_BY_EXTENSION: Record<string, ImageMediaType> = {
  *  and `IMAGE_PATH_SOURCE` below spells the same folder. */
 export const IMAGE_FOLDER = 'assets/images'
 
+// The end of every image path: the image folder and a stored file name.
+const IMAGE_PATH_END_SOURCE = String.raw`assets\/images\/[A-Za-z0-9_-]+\.(?:${Object.keys(MEDIA_TYPE_BY_EXTENSION).join('|')})`
 // An absolute path whose last two folders are `assets/images`. The path may
 // not hold `[`, `]`, or a line break: `]` would end the alt text early, and
 // with `[` excluded too, a search from one `![` stops at the next bracket, so
 // a long line cannot make the regex slow.
-const IMAGE_PATH_SOURCE = String.raw`\/(?:[^\[\]\r\n]*\/)?assets\/images\/[A-Za-z0-9_-]+\.(?:${Object.keys(MEDIA_TYPE_BY_EXTENSION).join('|')})`
+const IMAGE_PATH_SOURCE = String.raw`\/(?:[^\[\]\r\n]*\/)?${IMAGE_PATH_END_SOURCE}`
 const IMAGE_PATH = new RegExp(`^${IMAGE_PATH_SOURCE}$`)
+// A text holds an image path exactly when it holds one of these ends.
+// Global for `matchAll` only, which copies the regex and keeps no state in it.
+const IMAGE_PATH_END = new RegExp(String.raw`\/${IMAGE_PATH_END_SOURCE}`, 'g')
+// Not global, so `test` keeps no `lastIndex` state between calls.
+const ANY_IMAGE_PATH_END = new RegExp(String.raw`\/${IMAGE_PATH_END_SOURCE}`)
+// A run of text with no bracket or line break, the chars that no image path
+// holds.
+const BRACKET_FREE_RUN = /[^\[\]\r\n]+/g
+
+/** The word that stands for each image path in a text for a provider. */
+const IMAGE_PATH_STAND_IN = 'image'
 
 // One metadata item: a lower-case key, `=`, and a one-line value in which a
 // `\` escapes `|`, `(`, `)`, or `\`; every other char stands for itself. An
@@ -61,9 +75,8 @@ const IMAGE_REFERENCE = new RegExp(String.raw`!\[(${IMAGE_PATH_SOURCE})\]\((${ME
 /** An image id: lower-case letters, given in the order of `nextImageId`. */
 const IMAGE_ID = /^[a-z]+$/
 
-/** The text that stands for an image where a path would be noise: tab
- *  titles, history previews, and the message to a model that cannot read
- *  images. */
+/** The text that stands for a whole image reference in tab titles and
+ *  history previews. */
 export const IMAGE_LABEL = '[image]'
 
 /** One `key=value` item of a reference's metadata, with no escapes. */
@@ -85,10 +98,11 @@ export interface ImageReference {
   metadata: readonly ImageMetadataItem[]
 }
 
-/** A run of a text: plain text, or one image reference. */
+/** A run of a text: plain text, or one image reference with its text
+ *  (`source`) as it is in the text. */
 export type ImageTextPiece =
   | { kind: 'text'; text: string }
-  | { kind: 'image'; path: string }
+  | { kind: 'image'; path: string; source: string }
 
 /** The items of a metadata text that `IMAGE_REFERENCE` matched, with the
  *  escapes removed. Null when a key comes twice, or when the id is not
@@ -231,7 +245,7 @@ export function splitImageReferences(text: string): ImageTextPiece[] {
   let start = 0
   for (const { from, to, path } of findImageReferences(text)) {
     if (from > start) pieces.push({ kind: 'text', text: text.slice(start, from) })
-    pieces.push({ kind: 'image', path })
+    pieces.push({ kind: 'image', path, source: text.slice(from, to) })
     start = to
   }
   if (start < text.length) pieces.push({ kind: 'text', text: text.slice(start) })
@@ -241,6 +255,35 @@ export function splitImageReferences(text: string): ImageTextPiece[] {
 /** A text with each image reference replaced by `label`. */
 export function labelImageReferences(text: string, label = IMAGE_LABEL): string {
   return splitImageReferences(text).map((piece) => (piece.kind === 'text' ? piece.text : label)).join('')
+}
+
+/** True when a text holds an image path, in a reference or not. */
+export function holdsImagePath(text: string): boolean {
+  return ANY_IMAGE_PATH_END.test(text)
+}
+
+/** A text for a provider, with each image path replaced by the word
+ *  `image`. A provider must never get a path: it holds the user's name and
+ *  folders. So a reference goes as `![image](id=a)`, with its metadata as it
+ *  is in the text, and a reference that is not valid (the Backspace rule's
+ *  `![<path>](id=a`, bad metadata), a bare path, and a path in a metadata
+ *  value lose their paths too. A text with no image path comes back as it
+ *  is, so text-only request bodies keep their bytes (prompt cache).
+ *
+ *  A path's start in prose is not known (a home folder can hold spaces), so
+ *  each run with no bracket or line break loses all from its first `/` to
+ *  the end of its last image path: some prose or a URL before a path can go
+ *  too, but never a part of the path. That is what a global
+ *  `IMAGE_PATH_SOURCE` regex would replace, in linear time: the regex
+ *  rescans the rest of the run from each `/`, which took 0.5 s on a 200 KB
+ *  base64 line. */
+export function withoutImagePaths(text: string): string {
+  if (!holdsImagePath(text)) return text
+  return text.replace(BRACKET_FREE_RUN, (run) => {
+    let end = -1
+    for (const match of run.matchAll(IMAGE_PATH_END)) end = match.index + match[0].length
+    return end < 0 ? run : `${run.slice(0, run.indexOf('/'))}${IMAGE_PATH_STAND_IN}${run.slice(end)}`
+  })
 }
 
 /** True for an image type that Dez stores as it is. */

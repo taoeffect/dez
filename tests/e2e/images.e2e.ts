@@ -17,9 +17,11 @@ import { activeTabId, editorDoc, focusEditor, openToasts, pickModel, sbpCall, se
 // trash button in a hover toolbar at its top-right corner, each with a
 // tooltip that says what it is for, and keeps its delete rules, the trash
 // asks first and then deletes the file and the reference, both API formats
-// get the image in the request body, a model that does not read images
-// gets `[image]` and the user a warning, and a relaunch shows the saved
-// image again.
+// get the image in the request body after its reference's text with the id
+// and no path, a model that does not read images gets only that text and
+// the user a warning, no request holds an image path (also not a reference
+// that shows its source or an image in a reply), and a relaunch shows the
+// saved image again.
 //
 // WebDriver can send neither clipboard data nor an OS drag, so the paste
 // and drop events are synthetic DOM events built in the page. The PNG bytes
@@ -65,6 +67,8 @@ function solidPng (width: number, height: number, rgb: readonly [number, number,
 
 const PASTED_PNG = solidPng(48, 32, [220, 40, 40])
 const DROPPED_PNG = solidPng(40, 24, [40, 90, 220])
+// PASTED_PNG as an OpenAI-format image part.
+const PASTED_IMAGE_URL_PART = { type: 'image_url', image_url: { url: `data:image/png;base64,${PASTED_PNG.toString('base64')}` } }
 // Wider than an image's overlay toolbar, which is wider than PASTED_PNG.
 const WIDE_PNG = solidPng(200, 60, [30, 30, 30])
 
@@ -444,11 +448,11 @@ describe('images', () => {
   }
 
   // Sends the active tab with Ctrl+Enter and takes its request, with the
-  // body parsed.
-  async function sendRequest (): Promise<{ path: string, body: unknown, reply: HeldRequest['reply'] }> {
+  // body as sent and parsed.
+  async function sendRequest (): Promise<{ path: string, rawBody: string, body: unknown, reply: HeldRequest['reply'] }> {
     await browser.keys([Key.Control, Key.Enter])
     const request = await setup.mock.waitForRequest(browser)
-    return { path: request.path, body: JSON.parse(request.body), reply: request.reply }
+    return { path: request.path, rawBody: request.body, body: JSON.parse(request.body), reply: request.reply }
   }
 
   beforeAll(async () => {
@@ -569,7 +573,7 @@ describe('images', () => {
     const items: Array<[string, number, string, OverlayTooltip]> = [
       ['the id badge', 0, '.dez-image__id', {
         title: 'Image id: a',
-        text: 'The short name of this image in this conversation. It is saved in the image\u2019s markdown as id=a.',
+        text: 'Refer to this image in a message as image @a.',
       }],
       ['the trash', 0, '.dez-image__trash', trashTooltip],
       // The file is gone, so the trash can remove only the text.
@@ -835,7 +839,8 @@ describe('images', () => {
     expect(request.body).toHaveProperty('messages', [{
       role: 'user',
       content: [
-        { type: 'image_url', image_url: { url: `data:image/png;base64,${PASTED_PNG.toString('base64')}` } },
+        { type: 'text', text: '![image](id=a)' },
+        PASTED_IMAGE_URL_PART,
         { type: 'text', text: QUESTION },
       ],
     }])
@@ -867,6 +872,7 @@ describe('images', () => {
     expect(request.body).toHaveProperty('messages', [{
       role: 'user',
       content: [
+        { type: 'text', text: '![image](id=a)' },
         { type: 'image', source: { type: 'base64', media_type: 'image/png', data: PASTED_PNG.toString('base64') } },
         { type: 'text', text: QUESTION, cache_control: { type: 'ephemeral' } },
       ],
@@ -879,14 +885,14 @@ describe('images', () => {
     ])
   })
 
-  it('sends [image] in place of the image to a model that does not read images, and warns', async () => {
+  it('sends only the text of an image reference, with no path, to a model that does not read images, and warns', async () => {
     await newTab()
     await pickModel(browser, VISION.name, TEXT_MODEL.name)
     const image = await insertPastedImage('', QUESTION)
 
     const request = await sendRequest()
     expect(request.path).toBe(mockChatPath(VISION))
-    expect(request.body).toHaveProperty('messages', [{ role: 'user', content: `[image]${QUESTION}` }])
+    expect(request.body).toHaveProperty('messages', [{ role: 'user', content: `![image](id=a)${QUESTION}` }])
     expect(await openToasts(browser, 'warning')).toEqual([{
       title: 'Image not sent',
       message: `${TEXT_MODEL.name} does not read images, so 1 image was left out of the request.`,
@@ -895,6 +901,82 @@ describe('images', () => {
     await waitForThread(browser, [
       { role: 'user', text: image.reference + QUESTION },
       { role: 'agent', text: replyText(TEXT_MODEL.name) },
+      { role: 'user', text: '' },
+    ])
+  })
+
+  it('sends no image path, also for a reference that shows its source and an image in a reply', async () => {
+    await newTab()
+    await pickModel(browser, VISION.name, VISION.modelName)
+    const first = await insertPastedImage('', ' and ')
+    const firstLine = `${first.reference} and `
+    await pasteImage(PASTED_PNG)
+    await waitForValue(browser, 'second reference', async () => (await editorDoc(browser)).length > firstLine.length, true)
+    const second = (await editorDoc(browser)).slice(firstLine.length)
+    expect(second).toBe(`![${referencePath(second)}](id=b)`)
+
+    const firstRequest = await sendRequest()
+    expect(firstRequest.body).toHaveProperty('messages', [{
+      role: 'user',
+      content: [
+        { type: 'text', text: '![image](id=a)' },
+        PASTED_IMAGE_URL_PART,
+        { type: 'text', text: ' and ![image](id=b)' },
+        PASTED_IMAGE_URL_PART,
+      ],
+    }])
+    const reply = replyText(VISION.modelName)
+    await sendChatReply(firstRequest.reply, VISION.modelName)
+    await waitForThread(browser, [
+      { role: 'user', text: firstLine + second },
+      { role: 'agent', text: reply },
+      { role: 'user', text: '' },
+    ])
+
+    // An image pasted at the end of the reply.
+    const replyEnd = (await editorDoc(browser)).indexOf(reply) + reply.length
+    await focusEditor(browser)
+    await setCaret(browser, replyEnd)
+    await pasteImage(PASTED_PNG)
+    await waitForValue(browser, 'reference in the reply', async () => (await editorDoc(browser)).includes('](id=c)'), true)
+    const withThird = await editorDoc(browser)
+    const third = withThird.slice(replyEnd, withThird.indexOf('](id=c)') + '](id=c)'.length)
+    expect(third).toBe(`![${referencePath(third)}](id=c)`)
+
+    // Image b shows its source, `![<path>](id=b`.
+    await setCaret(browser, firstLine.length + second.length)
+    await browser.keys(Key.Backspace)
+    await waitForValue(browser, 'source of image b', async () => (await threadSections(browser))[0]?.text ?? null, firstLine + second.slice(0, -1))
+
+    await setCaret(browser, (await editorDoc(browser)).length)
+    await typeKeys(browser, 'Compare.')
+    await waitForValue(browser, 'thread before the second send', () => threadSections(browser), [
+      { role: 'user', text: firstLine + second.slice(0, -1) },
+      { role: 'agent', text: reply + third },
+      { role: 'user', text: 'Compare.' },
+    ])
+
+    const request = await sendRequest()
+    expect(request.rawBody).not.toContain('assets/images')
+    expect(request.rawBody).not.toContain(setup.app.home)
+    expect(request.body).toHaveProperty('messages', [
+      {
+        role: 'user',
+        content: [
+          { type: 'text', text: '![image](id=a)' },
+          PASTED_IMAGE_URL_PART,
+          { type: 'text', text: ' and ![image](id=b' },
+        ],
+      },
+      { role: 'assistant', content: `${reply}![image](id=c)` },
+      { role: 'user', content: 'Compare.' },
+    ])
+    await sendChatReply(request.reply, VISION.modelName)
+    await waitForThread(browser, [
+      { role: 'user', text: firstLine + second.slice(0, -1) },
+      { role: 'agent', text: reply + third },
+      { role: 'user', text: 'Compare.' },
+      { role: 'agent', text: reply },
       { role: 'user', text: '' },
     ])
   })

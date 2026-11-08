@@ -786,8 +786,8 @@ export default sbp('sbp/selectors/register', {
 
   // `model`: the model the request goes to. It decides what earlier thinking
   // goes back, and whether the images go: a model that the model cache
-  // knows not to read images gets the text `[image]` for each. An unknown
-  // model (no flag, or not in the cache yet) gets the images.
+  // knows not to read images gets only the text of each reference, with no
+  // path. An unknown model (no flag, or not in the cache yet) gets the images.
   'dez.model/streamMessagesForTab' (tabId: string, model: ModelRef): RequestMessages {
     const tab = useTabStore().tabs.find((candidate) => candidate.id === tabId)
     if (!tab) return { messages: [], imagesLeftOut: 0 }

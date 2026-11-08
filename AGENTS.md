@@ -129,7 +129,7 @@ Rules:
 - Chat and model HTTP stays in TypeScript (`dez.provider/*`, `dez.http/*`), not in Rust.
 - Thinking support, toggle, and send-back: `thinking.ts`, `apiFormats.ts`.
 - Prompt cache: earlier messages must stay the same bytes in every later request. The Anthropic format always adds cache marks; OpenAI-format marks and `prompt_cache_key` come from config (`cacheBreakpoints`, `promptCacheKey`; `apiFormats.ts`, `provider.ts`).
-- Images: a user message with image references becomes text and image parts (`model/streams/messages.ts`); `dez.provider/streamChat` reads the files and base64-encodes them. Which models read images is config data (`models[].imageInput`, `modelImageInput`, `imageRequestHeaders`; `config.ts`); a model known not to read them gets `[image]` text.
+- Images: a user message with image references becomes text and image parts (`model/streams/messages.ts`); `dez.provider/streamChat` reads the files and base64-encodes them. A reference goes as `![image](<metadata>)` before its image part, so models get ids but no path. Which models read images is config data (`models[].imageInput`, `modelImageInput`, `imageRequestHeaders`; `config.ts`); a model known not to read them gets only that text.
 
 ### Toasts
 
@@ -179,6 +179,7 @@ Do not ever read, view, print, or `cat` `~/.config/dez/provider_keys.json`; it c
 - **Saved window position units differ by platform**: logical points on macOS, physical px elsewhere (`src/controller/window.ts`).
 - **Wayland windows have no place**: GTK's Wayland backend cannot read or set the window position (`dez.native/gdkBackend`, `src/controller/window.ts`). The AppImage runs on X11.
 - **Image references are plain text**: `![<absolute path>](id=a)` in a text node (old ones have empty parens); `src/model/chat/images.ts` is the one recognizer (editor, requests, titles, search), and only files directly in `assets/images/` count. Only a paste or a drop gives ids (`pastedImageIds`, `imageInsert.ts`); never renumber an id in the doc.
+- **No image path to providers**: every request text (user and agent text, prompt bodies) goes through `withoutImagePaths` (`src/model/chat/images.ts`) in `sectionsToStreamMessages`, and thinking that holds a path is not sent back; a new request text needs the same.
 - **The asset scope must match the app folder**: the `assetProtocol` scope in `tauri.conf.json` names the folder that `base_dir()` (`persistence.rs`) builds.
 - **File drops differ by platform**: WebKitGTK gives the page no dropped `File`, so Linux uses Tauri's native drop (`tauri.linux.conf.json`, `dez.controller/images/watchFileDrops`); macOS keeps HTML5 drops, as the native drop would take text drags too. `AppLayout.vue` refuses file drops that no handler took.
 - **Read monitors with `dez.native/monitors`**, never the window API's `availableMonitors()`, `primaryMonitor()`, or `currentMonitor()`: in Tauri 2.10 those call GDK off the main thread and can crash the app on X11 (`monitors` in `commands.rs`).

@@ -1,7 +1,7 @@
 import sbp from '@sbp/sbp'
 import { createPinia, setActivePinia } from 'pinia'
 import { afterEach, beforeEach, describe, expect, it, vi, type MockInstance } from 'vitest'
-import type { ActiveModel, Section, SectionThinking, Tab } from '../model/chat/types'
+import type { ActiveModel, Section, SectionThinking, Tab, ThinkingReplay } from '../model/chat/types'
 import { sectionVisibleText } from '../model/chat/content'
 import type { ConversationData } from '../model/persistence/types'
 import type { ProviderChatInputMessage, ProviderStreamChatInput, ProviderStreamChatResult } from '../model/providers'
@@ -490,32 +490,50 @@ describe('dez.controller/submitTab images', () => {
     }
     sbp('dez.model/setActiveModel', model.providerId, model.modelId, model.modelName)
     sbp('dez.model/tabs/replaceSections', activeTab().id, [
-      { id: 'u1', role: 'user', content: [{ kind: 'text', text: `Look:\n![${image('one.png')}]()\n![${image('two.jpg')}]()\nWhich is brighter?` }] },
-      { id: 'a1', role: 'agent', content: [{ kind: 'text', text: `This one: ![${image('one.png')}]()` }], model },
-      { id: 'u2', role: 'user', content: [{ kind: 'text', text: `![${image('three.webp')}]()` }] },
+      { id: 'u1', role: 'user', content: [{ kind: 'text', text: `Look:\n![${image('one.png')}](id=a)\n![${image('two.jpg')}](id=b)\nWhich is brighter?` }] },
+      { id: 'a1', role: 'agent', content: [{ kind: 'text', text: `This one: ![${image('one.png')}](id=a)` }], model },
+      {
+        id: 'u2',
+        role: 'user',
+        content: [
+          // The second reference lost its `)` to the Backspace rule.
+          { kind: 'text', text: `![${image('three.webp')}](id=c) and ![${image('two.jpg')}](id=b\n` },
+          { kind: 'prompt', id: 'p1', promptId: null, name: 'Compare', body: `Compare with ![${image('one.png')}](id=a)`, expanded: false },
+          { kind: 'text', text: '' },
+        ],
+      },
     ])
   })
 
-  it('sends the images of user sections as parts in doc order, and agent text as it is', async () => {
+  it('sends each user image as a part after its reference text with no path, and agent images as that text only', async () => {
     await sbp('dez.controller/submitTab', activeTab().id)
 
     expect(sent).toStrictEqual([
       {
         role: 'user',
         content: [
-          { type: 'text', text: 'Look:\n' },
+          { type: 'text', text: 'Look:\n![image](id=a)' },
           { type: 'image', path: image('one.png') },
+          { type: 'text', text: '\n![image](id=b)' },
           { type: 'image', path: image('two.jpg') },
           { type: 'text', text: '\nWhich is brighter?' },
         ],
       },
-      { role: 'agent', content: `This one: ![${image('one.png')}]()` },
-      { role: 'user', content: [{ type: 'image', path: image('three.webp') }] },
+      { role: 'agent', content: 'This one: ![image](id=a)' },
+      {
+        role: 'user',
+        content: [
+          { type: 'text', text: '![image](id=c)' },
+          { type: 'image', path: image('three.webp') },
+          { type: 'text', text: ' and ![image](id=b\nCompare with ![image](id=a)' },
+          { type: 'image', path: image('one.png') },
+        ],
+      },
     ])
     expect(toasts).toEqual([])
   })
 
-  it('sends [image] in place of each user image to a model that does not read images, and says so', async () => {
+  it('sends only the reference text with no path to a model that does not read images, and counts only the user images', async () => {
     sbp('dez.model/modelCache/applyProviderResult', model.providerId, {
       ok: true,
       models: [{ id: model.modelId, name: model.modelName, provider: model.providerId, imageInput: false }],
@@ -524,18 +542,46 @@ describe('dez.controller/submitTab images', () => {
     await sbp('dez.controller/submitTab', activeTab().id)
 
     expect(sent).toStrictEqual([
-      { role: 'user', content: 'Look:\n[image]\n[image]\nWhich is brighter?' },
-      { role: 'agent', content: `This one: ![${image('one.png')}]()` },
-      { role: 'user', content: '[image]' },
+      { role: 'user', content: 'Look:\n![image](id=a)\n![image](id=b)\nWhich is brighter?' },
+      { role: 'agent', content: 'This one: ![image](id=a)' },
+      { role: 'user', content: '![image](id=c) and ![image](id=b\nCompare with ![image](id=a)' },
     ])
     expect(toasts).toStrictEqual([{
       area: 'app-global',
       data: {
         variant: 'warning',
         title: 'Images not sent',
-        message: 'M does not read images, so 3 images were left out of the request.',
+        message: 'M does not read images, so 4 images were left out of the request.',
         duration: 8000,
       },
     }])
+  })
+
+  it('sends back no thinking that holds an image path, in its text or in its replay', async () => {
+    const field = { kind: 'field', field: 'reasoning_content' } as const
+    const blocks = (thinking: string): ThinkingReplay => ({ kind: 'anthropicBlocks', blocks: [{ type: 'thinking', thinking, signature: 's' }], prefixHash: 'h' })
+    const agent = (id: string, thinking: SectionThinking): Section => ({ id, role: 'agent', content: [{ kind: 'text', text: 'A cat.' }], model, thinking })
+    const user = (id: string): Section => ({ id, role: 'user', content: [{ kind: 'text', text: 'And?' }] })
+    sbp('dez.model/tabs/replaceSections', activeTab().id, [
+      user('u1'),
+      agent('a1', { text: `The user sent ${image('one.png')}.`, replay: field }),
+      user('u2'),
+      agent('a2', { text: 'Blocks.', replay: blocks(`![${image('one.png')}](id=a) is a cat.`) }),
+      user('u3'),
+      agent('a3', { text: 'It is a cat.', replay: field }),
+      user('u4'),
+      agent('a4', { text: 'Blocks.', replay: blocks('It is a cat.') }),
+      user('u5'),
+    ])
+
+    await sbp('dez.controller/submitTab', activeTab().id)
+
+    expect(sent.map((message) => message.thinking)).toStrictEqual([
+      undefined, undefined,
+      undefined, undefined,
+      undefined, { text: 'It is a cat.', replay: field },
+      undefined, { text: 'Blocks.', replay: blocks('It is a cat.') },
+      undefined,
+    ])
   })
 })

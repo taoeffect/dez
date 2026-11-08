@@ -1,6 +1,8 @@
 import sbp from '@sbp/sbp'
 import { createPinia, setActivePinia } from 'pinia'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
+import type { ModelRef, Section } from '../chat/types'
+import { sectionsToStreamMessages } from '../streams/messages'
 import type { NativeHttpRequest, NativeHttpResponse, NativeHttpStreamResult } from '../../utils/protocol/nativeHttp'
 import type { ModelDisplayNames, ProviderModelsResult } from './types'
 // Side-effect imports: register the dez.model/* selectors and the selectors
@@ -222,18 +224,80 @@ describe('images in chat streams', () => {
     expect(streamRequests).toEqual([])
   })
 
-  it('sends the messages of an earlier turn again as the same text, images included', async () => {
-    const image = { type: 'image', path: `${APP_DIR}/assets/images/red.png` }
-    const turn1 = [{ role: 'user', content: [{ type: 'text', text: 'Which color?' }, image] }]
-    const turn2 = [...turn1, { role: 'agent', content: 'Red.' }, { role: 'user', content: [image, { type: 'text', text: 'And this one?' }] }]
-    for (const messages of [turn1, turn2]) {
+  it('sends the messages of an earlier turn again as the same bytes, with images and their ids', async () => {
+    const model = { providerId: 'local', modelId: 'm' }
+    const path = `${APP_DIR}/assets/images/red.png`
+    const turn1: Section[] = [{ id: 'u1', role: 'user', content: [{ kind: 'text', text: `Which color? ![${path}](id=a)` }] }]
+    const turn2: Section[] = [
+      ...turn1,
+      { id: 'a1', role: 'agent', model, content: [{ kind: 'text', text: `Red, as here: ![${path}](id=b)` }] },
+      { id: 'u2', role: 'user', content: [{ kind: 'text', text: `![${path}](id=c) And this one?` }] },
+    ]
+    for (const sections of [turn1, turn2]) {
+      const { messages } = sectionsToStreamMessages(sections, model, true)
       await sbp('dez.provider/streamChat', { providerId: 'local', modelId: 'm', messages, onToken: () => {} })
     }
     const [first, second] = streamRequests.map((request) => JSON.parse(request.body as string).messages as unknown[])
 
     // OpenAI-format providers reuse their prompt cache only for a prefix of
     // the same text.
+    expect(first).toHaveLength(1)
     expect(JSON.stringify(second.slice(0, first.length))).toBe(JSON.stringify(first))
+  })
+})
+
+describe('chat streams with image paths', () => {
+  const path = `${APP_DIR}/assets/images/red.png`
+  // Every form of an image path in a conversation: valid references, broken
+  // ones, a bare path, a path in metadata, in a prompt body, in agent text,
+  // and in thinking that would go back.
+  const sections = (model: ModelRef): Section[] => [
+    { id: 'u1', role: 'user', content: [{ kind: 'text', text: `Look: ![${path}](id=a) Why?` }] },
+    {
+      id: 'a1',
+      role: 'agent',
+      model,
+      content: [{ kind: 'text', text: `This: ![${path}](id=a)` }],
+      thinking: { text: `The user sent ${path}.`, replay: { kind: 'field', field: 'reasoning_content' } },
+    },
+    {
+      id: 'u2',
+      role: 'user',
+      content: [
+        { kind: 'text', text: [`![${path}](id=b)`, `![${path}](id=a`, `[${path}](id=b)`, `see ${path} now`, `![${path}](id=b|desc=a /x/assets/images/b.png)`, ''].join('\n') },
+        { kind: 'prompt', id: 'p1', promptId: null, name: 'Ask', body: `Prompt: ![${path}](id=a)`, expanded: false },
+        { kind: 'text', text: '' },
+      ],
+    },
+  ]
+
+  it.each([
+    ['openai', true],
+    ['openai', false],
+    ['anthropic', true],
+    ['anthropic', false],
+  ] as const)('sends no path in the %s format (images sent: %s), and sends the ids', async (apiFormat, sendImages) => {
+    sbp('dez.model/customProviders/save', {
+      id: apiFormat,
+      name: apiFormat,
+      baseUrl: `http://localhost:6060/${apiFormat}`,
+      apiFormat,
+      models: [],
+      fetchModels: true,
+      auth: 'apiKey',
+      thinking: {},
+    })
+    const model = { providerId: apiFormat, modelId: 'm' }
+    const { messages } = sectionsToStreamMessages(sections(model), model, sendImages)
+
+    await sbp('dez.provider/streamChat', { providerId: apiFormat, modelId: 'm', messages, onToken: () => {} })
+
+    const body = streamRequests[0].body as string
+    expect(body).not.toContain('assets/images')
+    expect(body).not.toContain('/home/u')
+    expect(body).toContain('id=a')
+    expect(body).toContain('id=b')
+    expect(body.includes(Buffer.from(STORED_IMAGE).toString('base64'))).toBe(sendImages)
   })
 })
 

@@ -16,8 +16,8 @@ export interface StreamMessage {
 
 export interface RequestMessages {
   messages: StreamMessage[]
-  // The image references that went as the text `[image]`, because the
-  // request model does not read images.
+  // The image references of user sections that went as text only, because
+  // the request model does not read images.
   imagesLeftOut: number
 }
 
