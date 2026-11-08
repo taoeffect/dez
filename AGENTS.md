@@ -71,6 +71,7 @@ ThreadEditor (CodeMirror doc) syncs to the active tab's sections
 - `view/editor/selectors.ts`: `dez.editor/*`, the active-editor bridge (stream patching, scroll follow, Copy Markdown, `runKeyBinding`).
 - `view/editor/find.ts`, `findState.ts`, `findHistory.ts`, `view/thread/FindDropdown.vue`: find and replace.
 - `view/editor/tables.ts`: GFM tables shown as tables, in place.
+- `view/editor/links.ts`: markdown links (`http`, `https`, `mailto`, `tel`) shown as links, with their source while a selection touches them; a plain click opens one (`dez.controller/openUrl`), and hover shows its URL in a tooltip.
 - `view/editor/focus.ts`: focus the editor and keep its scroll; use `focusKeepingScroll`, not `view.focus()`. `syncDomSelection`: fix the caret after code changes the doc right after the editor gets the focus.
 - `view/editor/images.ts`, `imageInsert.ts`: images shown in place of their references (with a hover overlay: the id badge and a trash that deletes the image after a `dez.ui/confirm` prompt; and the Backspace and Delete rules), and image paste and drop (which give image ids). `pendingRanges.ts`: doc ranges that the async insert and delete flows follow.
 - `controller/images.ts`: `dez.controller/images/*`: store and delete an image, its display URL, read a dropped file, Linux native file drops.
@@ -231,5 +232,6 @@ Brief comments are encouraged above functions that do anything non-trivial expla
 - E2E specs that restart the app use `MockProviderApp.relaunch()` (`tests/e2e/harness/mockProviderApp.ts`).
 - E2E seeds turn the reply-end alerts off (`quietAppState`, `tests/e2e/harness/fixtures.ts`). Alert specs use the fake notification server (`tests/e2e/harness/notificationServer.ts`) and `setUserIdleMs` (`tests/e2e/notifications.e2e.ts`).
 - E2E clicks: never use webdriverio's `.click()`; use `click()` or `pointerClick()` from `tests/e2e/harness/dom.ts`.
+- E2E specs that open a URL stop `dez.controller/openUrl` with an SBP filter, so no browser opens (`tests/e2e/links.e2e.ts`).
 - **No display server** (every spec fails with `Hook timed out in 120000ms` in `beforeAll`): run under headless `kwin_wayland`; the recipe is in `vitest.e2e.config.ts`.
 - For UI changes beyond unit-testable logic, also check by hand with `npm run tauri dev`.
