@@ -55,6 +55,17 @@ Start the app with `env -u WAYLAND_DISPLAY DISPLAY=:5 GDK_BACKEND=x11`. Send
 real keys with XTest (`libXtst`). Click menu items through AT-SPI inside
 `dbus-run-session`; start `/usr/libexec/at-spi-bus-launcher
 --launch-immediately` and `/usr/libexec/at-spi2-registryd` first.
+
+Image paste and OS file drops (manual check)
+--------------------------------------------
+WebDriver sends no clipboard data and no OS drag, so tests/e2e/images.e2e.ts
+builds those events in the page. For a real paste, run the app or a
+throwaway spec on the kwin compositor above, put a PNG on the clipboard with
+`WAYLAND_DISPLAY=wayland-dez wl-copy --type image/png < a.png`, and press
+Ctrl+V. For a real file drop (the Linux native drop path), use the rootful
+Xwayland above: a GTK3 drag source (python `gi`) that offers
+`text/uri-list`, moved with XTest. Run the drag source with `GDK_SCALE=1`,
+even when the app runs with `GDK_SCALE=2`, or its window goes off-screen.
 */
 
 import { defineConfig } from "vitest/config";

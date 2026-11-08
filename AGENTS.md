@@ -72,7 +72,9 @@ ThreadEditor (CodeMirror doc) syncs to the active tab's sections
 - `view/editor/find.ts`, `findState.ts`, `findHistory.ts`, `view/thread/FindDropdown.vue`: find and replace.
 - `view/editor/tables.ts`: GFM tables shown as tables, in place.
 - `view/editor/focus.ts`: focus the editor and keep its scroll; use `focusKeepingScroll`, not `view.focus()`.
-- `model/chat/`: `Section` / `ContentNode` types and helpers (`content.ts`, `modelRef.ts`, `thinking.ts`, `markdown.ts`, `pillMarker.ts`).
+- `view/editor/images.ts`, `imageInsert.ts`: images shown in place of their references (with the Backspace and Delete rules), and image paste and drop.
+- `controller/images.ts`: `dez.controller/images/*`: store an image, its display URL, read a dropped file, Linux native file drops.
+- `model/chat/`: `Section` / `ContentNode` types and helpers (`content.ts`, `modelRef.ts`, `thinking.ts`, `markdown.ts`, `pillMarker.ts`, `images.ts`).
 - `model/state/`: Pinia stores (internal) and `dez.model/*` selectors; views read state through `view/modelState.ts`.
 - `controller/stream.ts`, `model/state/streams.ts`, `controller/http.ts`: stream lifecycle, per-tab sessions, native HTTP streams.
 - `controller/notifications.ts`: the reply-end alerts (sound, system notification; a click opens the reply's tab). `view/sound.ts`: `dez.ui/playDoneSound`. `assets/sounds/`: sound files (Git LFS).
@@ -125,6 +127,7 @@ Rules:
 - Chat and model HTTP stays in TypeScript (`dez.provider/*`, `dez.http/*`), not in Rust.
 - Thinking support, toggle, and send-back: `thinking.ts`, `apiFormats.ts`.
 - Prompt cache: earlier messages must stay the same bytes in every later request. The Anthropic format always adds cache marks; OpenAI-format marks and `prompt_cache_key` come from config (`cacheBreakpoints`, `promptCacheKey`; `apiFormats.ts`, `provider.ts`).
+- Images: a user message with image references becomes text and image parts (`model/streams/messages.ts`); `dez.provider/streamChat` reads the files and base64-encodes them. Which models read images is config data (`models[].imageInput`, `modelImageInput`, `imageRequestHeaders`; `config.ts`); a model known not to read them gets `[image]` text.
 
 ### Toasts
 
@@ -138,18 +141,20 @@ Rules:
 - `notification.rs`: `show_notification`, a system notification whose click brings the window to the front and calls back (zbus on Linux, NSUserNotificationCenter through objc2 on macOS).
 - `idle.rs`: `user_idle_ms`, the time since the last user input on the computer, or `null` when unknown.
 - `session_bus.rs`: the one shared Linux D-Bus session connection (zbus) for `notification.rs` and `idle.rs`.
-- `persistence.rs`: raw private-file I/O and id sanitization; write every private file with `write_private_file`.
+- `persistence.rs`: raw private-file I/O, the app-file path rule (subfolders such as `assets/images/`), and id sanitization; write every private file with `write_private_file`.
 - `key_store.rs`: `provider_keys.json`. `copilot.rs`: Copilot device flow and token refresh.
 - `lib.rs`: plugins, permission reasons, app bootstrap.
+- `../tauri.linux.conf.json`: the Linux copy of the main window, with Tauri's native file drop on (a test in `lib.rs` keeps the two windows the same otherwise).
 
 ## Persistence layout
 
-All app data is under `~/.config/dez/`. TypeScript owns every format; Rust only moves raw strings. App code uses `dez.persistence/*` only.
+All app data is under `~/.config/dez/`. TypeScript owns every format; Rust only moves raw strings and bytes. App code uses `dez.persistence/*` only.
 
 - `app_state.json`: tabs, settings (with shortcut overrides), window geometry, provider toggles, custom providers (`src/model/persistence/appState.ts`).
 - `conversations/<sanitized-id>.md`: conversations (format: `src/model/persistence/conversationFormat.ts`; pill markers: `src/model/chat/pillMarker.ts`).
 - `prompts.json`: saved prompt templates (`src/model/persistence/prompts.ts`).
 - `model_cache.json`: last-known model lists, no secrets (`src/model/persistence/modelCache.ts`).
+- `assets/images/<uuid>.<ext>`: pasted and dropped images; conversations refer to them by absolute path (`src/controller/images.ts`). Nothing deletes them yet.
 - `provider_keys.json`: API keys and Copilot tokens (`src-tauri/src/key_store.rs`).
 
 Do not ever read, view, print, or `cat` `~/.config/dez/provider_keys.json`; it can contain API keys and OAuth tokens.
@@ -171,6 +176,9 @@ Do not ever read, view, print, or `cat` `~/.config/dez/provider_keys.json`; it c
 - **The window starts hidden**: `dez.controller/window/restore` shows it, so a frontend failure before init shows no window; read the Vite output. On macOS, `lib.rs` shows it at launch so that it comes to the front.
 - **Saved window position units differ by platform**: logical points on macOS, physical px elsewhere (`src/controller/window.ts`).
 - **Wayland windows have no place**: GTK's Wayland backend cannot read or set the window position (`dez.native/gdkBackend`, `src/controller/window.ts`). The AppImage runs on X11.
+- **Image references are plain text**: `![<absolute path>]()` in a text node; `src/model/chat/images.ts` is the one recognizer (editor, requests, titles, search), and only files directly in `assets/images/` count.
+- **The asset scope must match the app folder**: the `assetProtocol` scope in `tauri.conf.json` names the folder that `base_dir()` (`persistence.rs`) builds.
+- **File drops differ by platform**: WebKitGTK gives the page no dropped `File`, so Linux uses Tauri's native drop (`tauri.linux.conf.json`, `dez.controller/images/watchFileDrops`); macOS keeps HTML5 drops, as the native drop would take text drags too. `AppLayout.vue` refuses file drops that no handler took.
 - **Read monitors with `dez.native/monitors`**, never the window API's `availableMonitors()`, `primaryMonitor()`, or `currentMonitor()`: in Tauri 2.10 those call GDK off the main thread and can crash the app on X11 (`monitors` in `commands.rs`).
 - **Shortcut key order differs by platform**: on Linux the menu accelerator gets the key first; put context checks in the selector both paths call, never only in a key handler.
 - **Never hard-code a shortcut key**: every binding path (window handler, CodeMirror keymap, find field, menu accelerators, button titles and keycaps) reads the effective keys from `src/model/shortcuts.ts` and the settings store.
@@ -218,6 +226,7 @@ Brief comments are encouraged above functions that do anything non-trivial expla
 - Run `npm run test:e2e` after UI behavior changes covered by `tests/e2e/`. It runs the existing debug binary: rebuild first (`tests/e2e/harness/app.ts`).
 - Run `npm run typecheck:e2e` after changing the e2e harness or specs.
 - E2E keys skip GTK, so specs never test Linux menu accelerators; the manual recipe is in `vitest.e2e.config.ts`.
+- E2E cannot send real clipboard data or OS file drags: `tests/e2e/images.e2e.ts` builds paste and drop events in the page and emits `tauri://drag-drop`; the manual recipe for real ones is in `vitest.e2e.config.ts`.
 - E2E specs that restart the app use `MockProviderApp.relaunch()` (`tests/e2e/harness/mockProviderApp.ts`).
 - E2E seeds turn the reply-end alerts off (`quietAppState`, `tests/e2e/harness/fixtures.ts`). Alert specs use the fake notification server (`tests/e2e/harness/notificationServer.ts`) and `setUserIdleMs` (`tests/e2e/notifications.e2e.ts`).
 - E2E clicks: never use webdriverio's `.click()`; use `click()` or `pointerClick()` from `tests/e2e/harness/dom.ts`.

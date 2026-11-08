@@ -26,6 +26,7 @@ Talk with AI in a fully editable plaintext document. Inspired by Zed's text thre
 - **Multiple cursors** - <kbd>Ctrl+Shift+Up</kbd> and <kbd>Ctrl+Shift+Down</kbd> adds cursors above and below
 - **Find & replace** - <kbd>Cmd/Ctrl+F</kbd> opens a find bar with live highlights
 - **Markdown tables** - Renders GFM-flavored markdown tables inline
+- **Images** - paste or drop images, they're rendered inline and image-ready models can view them
 - **Native menubar** - File, Edit, Conversation, View, Window, and Help menus with an item for every keyboard shortcut
 - **Open Dez Folder** - a button in Settings › General opens the folder where Dez keeps its data (`~/.config/dez/`)
 - **Cross-platform** — macOS and Linux
@@ -45,6 +46,19 @@ Settings › Notifications turns the sound and the notification on or off, and s
 To know if you are away, Dez asks the system for the time since your last input. On Linux, this works on KDE Plasma, on GNOME, on other Wayland desktops that support the `ext-idle-notify` protocol (such as Sway, Hyprland, niri, and COSMIC), and in X11 sessions. On other Wayland desktops, Dez cannot tell if you are away, so only a reply in a background tab or a reply while you use another window gives an alert.
 
 On Linux, Dez plays the sound with GStreamer. The AppImage includes the GStreamer plugins. Other Linux builds, such as `npm run tauri dev`, need the GStreamer base and good plugins on the system (Debian/Ubuntu: `gstreamer1.0-plugins-base` and `gstreamer1.0-plugins-good`; Fedora: `gstreamer1-plugins-base` and `gstreamer1-plugins-good`).
+
+## Images
+
+Paste an image into a conversation, or drop image files on its text. Dez copies each image to `~/.config/dez/assets/images/` and puts a Markdown reference to the copy in the text: `![<full path of the copy>]()`. The editor shows the image in place of the reference. Dez keeps PNG, JPEG, GIF, and WebP images as they are, and changes other image types to PNG. When the clipboard holds text and an image, a paste puts in the text.
+
+The reference is text, so you can copy, cut, and undo it as other text. To see the reference of an image:
+
+- Press <kbd>Backspace</kbd> (<kbd>delete</kbd> on a Mac) just after the image. Dez removes the last `)` and shows the reference. Type `)` to show the image again.
+- Press <kbd>Delete</kbd> just before the image. Dez removes the first `!` and shows the reference. Type `!` to show the image again.
+
+Dez sends the images in your messages to the model. Venice, OpenRouter, and GitHub Copilot tell Dez which of their models read images. A model that does not read images gets the text `[image]` in place of each image, and Dez shows a warning. Dez sends images to all other models; if a model cannot read them, the server's error shows. For a custom provider, you can set which models read images (`imageInput`, `modelImageInput` in [Custom providers](#custom-providers)).
+
+Dez does not delete image files. An image stays in `~/.config/dez/assets/images/` when you remove it from a conversation or delete the conversation. A conversation refers to its images by full path, so the images do not show if you move the Dez folder to a different home folder.
 
 ## Custom providers
 
@@ -80,11 +94,15 @@ You can also add custom providers by hand in `~/.config/dez/app_state.json`. **C
 | `name` | yes | The name in the model picker and in Settings. |
 | `baseUrl` | yes | An `http://` or `https://` URL with no query (`?`), fragment (`#`), user name, or password. See the base URL rule below. |
 | `apiFormat` | no | `openai` (default) or `anthropic`. |
-| `models` | no | Models that always show, as `{ "id": "...", "name": "..." }`. The name is optional. |
+| `models` | no | Models that always show, as `{ "id": "...", "name": "..." }`. The name is optional. Add `"imageInput": true` or `false` to tell Dez if the model reads images (see [Images](#images)); it has priority over `modelImageInput`. |
 | `fetchModels` | no | `true` (default) also lists the models that the server reports. `false` never asks the server. |
+| `modelImageInput` | no | Where the server's model list tells if a model reads images, as `{ "path": "..." }`: a dot path in each model entry, e.g. `architecture.input_modalities`. A `true` or `false` there is the answer; a list there means "reads images" when it holds `"image"`. |
 | `apiKey` | no | When Dez starts, it moves the key into `~/.config/dez/provider_keys.json` and removes it from `app_state.json`. |
 | `headers` | no | Extra HTTP headers for every request, as `{ "Name": "value" }`. A name may use only letters, digits, and ``!#$%&'*+-.^_`\|~``. A value must not contain a line break or a control character other than tab. Dez stores headers as plain text in `app_state.json`, so put an API key in `apiKey`, not in a header. |
+| `imageRequestHeaders` | no | Extra HTTP headers only for a chat request that sends an image, with the same rules as `headers`. |
 | `maxOutputTokens` | no | `max_tokens` for the Anthropic format (default 32000). |
+| `cacheBreakpoints` | no | OpenAI format: `true` marks the last two user messages with Anthropic's `cache_control`, for a server that passes the marks on to models that cache only a marked prompt (such as Claude). The Anthropic format always adds the marks. |
+| `promptCacheKey` | no | OpenAI format: `true` sends the conversation id as `prompt_cache_key`, so the server can send all the requests of a conversation to the machine that holds its prompt cache. |
 | `settings` | no | On/off toggles for the provider settings popup in the model picker. Each toggle writes a value into the chat request. See the Venice `settings` in [`src/model/providers/builtins.ts`](src/model/providers/builtins.ts). The key `thinking` is reserved for the Thinking toggle. |
 | `thinking` | no | Set it when the server's models think. See [Thinking](#thinking). Checking **Supports thinking** writes `{}`; unchecking it removes the field. |
 
