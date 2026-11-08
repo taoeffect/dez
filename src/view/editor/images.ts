@@ -3,7 +3,7 @@ import { StateEffect, StateField, Transaction, type EditorState, type Extension,
 import { Decoration, EditorView, ViewPlugin, WidgetType, showTooltip, type DecorationSet, type PluginValue, type Rect, type Tooltip } from '@codemirror/view'
 import { SENTINEL_CHAR } from '../../model/chat/content'
 import { findImageReferences, type ImageReference } from '../../model/chat/images'
-import { IMAGE_MAX_HEIGHT_PX, SECTION_SEP } from '../thread/cmEditor'
+import { IMAGE_MAX_HEIGHT_PX, SECTION_SEP, editorSizePx } from '../thread/cmEditor'
 import { measureLineHeights } from '../thread/editorMeasure'
 import { syncDomSelection } from './focus'
 import { addPendingRange, pendingRange, pendingRanges, removePendingRange, type DocRange } from './pendingRanges'
@@ -211,11 +211,12 @@ class ImageWidget extends WidgetType {
     wrapper.append(img, row)
     return wrapper
   }
-  // CM uses this for the lines that it has not drawn yet. The real box can
-  // be smaller (a narrow editor, a smaller font size).
+  // CM uses this for the lines that it has not drawn yet: the image's box at
+  // the editor font size of now, as `dezTheme` scales its max height. The
+  // real box can be smaller (an editor narrower than the image).
   get estimatedHeight(): number {
     const size = naturalSizes.get(this.path)
-    return size ? Math.min(size.height, IMAGE_MAX_HEIGHT_PX) : -1
+    return size ? Math.min(size.height, editorSizePx(IMAGE_MAX_HEIGHT_PX)) : -1
   }
   // CM takes the mouse events, so a click on an image puts the caret before
   // or after it. The trash button takes its own (`trashButton`).

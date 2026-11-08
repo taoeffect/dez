@@ -1221,10 +1221,20 @@ export const TEXT_GUTTER = `clamp(${SCROLLER_PADDING_PX}px, calc(8% - 32px), 80p
 // `editorSize(px)` is `px` at the default font size and scales with the font
 // size. The text and the spacing around it scale; hairline borders and the
 // scroller padding (`SCROLLER_PADDING_PX`, `TEXT_GUTTER`) do not.
-const EDITOR_FONT_SIZE_VAR = `var(--dez-editor-font-size, ${EDITOR_FONT_SIZE_DEFAULT}px)`
+const EDITOR_FONT_SIZE_PROPERTY = '--dez-editor-font-size'
+const EDITOR_FONT_SIZE_VAR = `var(${EDITOR_FONT_SIZE_PROPERTY}, ${EDITOR_FONT_SIZE_DEFAULT}px)`
 
 function editorSize(...px: number[]): string {
   return px.map((value) => `calc(${EDITOR_FONT_SIZE_VAR} * ${value} / ${EDITOR_FONT_SIZE_DEFAULT})`).join(' ')
+}
+
+/** `editorSize(px)` as a number, at the editor font size of now, for code
+ *  that needs the size in JS. It reads the inline style that
+ *  `dez.ui/applyEditorFontSize` puts on `<html>`, so it causes no style
+ *  recalculation. With no style yet, it is `px`, like the CSS fallback. */
+export function editorSizePx(px: number): number {
+  const fontSize = parseFloat(document.documentElement.style.getPropertyValue(EDITOR_FONT_SIZE_PROPERTY)) || EDITOR_FONT_SIZE_DEFAULT
+  return px * fontSize / EDITOR_FONT_SIZE_DEFAULT
 }
 
 // Height of a table's delimiter row in em of the editor font. Thin, as it
