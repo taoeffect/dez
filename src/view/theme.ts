@@ -1,5 +1,6 @@
 import sbp from '@sbp/sbp'
 import type { Theme } from '../model/state/settings'
+import { EDITOR_FONT_SIZE_PROPERTY } from '../model/editorFontSize'
 
 export default sbp('sbp/selectors/register', {
   'dez.ui/applyTheme' (theme: Theme): void {
@@ -15,6 +16,6 @@ export default sbp('sbp/selectors/register', {
   // this variable. The open editor measures its text again by itself
   // (ThreadEditor.vue watches the setting).
   'dez.ui/applyEditorFontSize' (px: number): void {
-    document.documentElement.style.setProperty('--dez-editor-font-size', `${px}px`)
+    document.documentElement.style.setProperty(EDITOR_FONT_SIZE_PROPERTY, `${px}px`)
   },
 })

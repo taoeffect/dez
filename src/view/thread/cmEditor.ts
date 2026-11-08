@@ -10,7 +10,7 @@ import { PILL_MARKER, parsePillMarkerMatch, pillMarkerText } from '../../model/c
 import { thinkingField } from '../../model/chat/thinking'
 import { messagesAsMarkdown, type MarkdownMessage } from '../../model/chat/markdown'
 import { SENTINEL_CHAR, normalizeContent, stripLiveSentinels, textNode } from '../../model/chat/content'
-import { EDITOR_FONT_SIZE_DEFAULT } from '../../model/editorFontSize'
+import { EDITOR_FONT_SIZE_DEFAULT, EDITOR_FONT_SIZE_PROPERTY } from '../../model/editorFontSize'
 import { escapeMarkerAttribute, unescapeMarkerAttribute } from '../../utils/markerAttribute'
 import { addModelToPill, modelDisplayNamesField, sameModelChip, sectionModelChips, streamingSectionField, type ModelChip } from './modelChip'
 import { addDurationToPill } from './pillDuration'
@@ -1216,12 +1216,11 @@ export const SCROLLER_PADDING_PX = 16
 export const TEXT_GUTTER = `clamp(${SCROLLER_PADDING_PX}px, calc(8% - 32px), 80px)`
 
 // Every size in the editor follows the user's editor font size
-// (`--dez-editor-font-size`, set by `dez.ui/applyEditorFontSize`), so text,
+// (`EDITOR_FONT_SIZE_PROPERTY`, set by `dez.ui/applyEditorFontSize`), so text,
 // pills, the thinking panel and tables grow and shrink together.
 // `editorSize(px)` is `px` at the default font size and scales with the font
 // size. The text and the spacing around it scale; hairline borders and the
 // scroller padding (`SCROLLER_PADDING_PX`, `TEXT_GUTTER`) do not.
-const EDITOR_FONT_SIZE_PROPERTY = '--dez-editor-font-size'
 const EDITOR_FONT_SIZE_VAR = `var(${EDITOR_FONT_SIZE_PROPERTY}, ${EDITOR_FONT_SIZE_DEFAULT}px)`
 
 function editorSize(...px: number[]): string {
