@@ -206,6 +206,21 @@ describe('find prefill', () => {
     expect(findPrefillText(createState(sectioned('a', 'b'), [0, 5]), false)).toBeNull()
   })
 
+  it('takes nothing when the selection touches the hidden source of a shown image', () => {
+    const reference = '![/home/u/.config/dez/assets/images/a.png](id=a)'
+    const doc = `look ${reference} here`
+    const from = doc.indexOf(reference)
+    const to = from + reference.length
+    const prefill = (selection: [number, number]) => findPrefillText(createState(doc, selection, [markdownImages()]), false)
+    expect(prefill([from, to])).toBeNull()
+    expect(prefill([0, doc.length])).toBeNull()
+    expect(prefill([to - 1, doc.length])).toBeNull()
+    expect(prefill([0, from])).toBe('look ')
+    expect(prefill([to, doc.length])).toBe(' here')
+    const broken = reference.slice(0, -1)
+    expect(findPrefillText(createState(broken, [0, broken.length], [markdownImages()]), false)).toBe(broken)
+  })
+
   it('escapes regex syntax so the pattern compiles with the u flag and matches the selection', () => {
     const text = 'a-b (c) [d] {e} $f ^g .h *i +j ?k |l \\m /n "o" #p'
     const state = createState(`x ${text} y`, [2, 2 + text.length])
