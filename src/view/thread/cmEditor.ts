@@ -1702,6 +1702,14 @@ export const dezTheme = EditorView.theme({
   '.dez-image__trash:hover': {
     background: '#f44336',
   },
+  // Rendered links (src/view/editor/links.ts): only the link text shows. An
+  // autolink's address has the `t.url` style of `dezHighlightStyle`, which
+  // has no underline, so the underline is set here too.
+  '.dez-link': {
+    color: 'var(--color-link, #4a9eff)',
+    textDecoration: 'underline',
+    cursor: 'pointer',
+  },
   // Find highlights (src/view/editor/find.ts). Amber, so they differ from the
   // blue selection. They are text backgrounds, so they draw over the
   // selection layer, and their translucent colors mix with it: a selected
