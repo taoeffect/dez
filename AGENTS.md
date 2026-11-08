@@ -219,6 +219,7 @@ Brief comments are encouraged above functions that do anything non-trivial expla
 - When using the 'tasks' skill, if while working you discover that the steps in a `STEP-*` file are wrong, incomplete, or not the best approach, rewrite that step file to follow the better approach before continuing.
 - Any errors should be logged with `console.error` (in addition to being thrown when throwing is still needed).
 - Never modify the features list in the project README without explicit user request.
+- Dez should avoid taking actions on its own that would result in the user's private info (like file paths) being exposed to providers. It's fine if users type them manually themselves, but for example, when designing features like image drag and drop, the image's file path shouldn't be sent to providers.
 
 ## Testing approach
 
