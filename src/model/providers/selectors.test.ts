@@ -264,7 +264,7 @@ describe('chat streams with image paths', () => {
       id: 'u2',
       role: 'user',
       content: [
-        { kind: 'text', text: [`![${path}](id=b)`, `![${path}](id=a`, `[${path}](id=b)`, `see ${path} now`, `![${path}](id=b|desc=a /x/assets/images/b.png)`, ''].join('\n') },
+        { kind: 'text', text: [`![${path}](id=b)`, `![${path}](id=a`, `[${path}](id=b)`, `see ${path} now`, `![${path}](id=b|desc=a /home/bob/.config/dez/assets/images/b.png)`, ''].join('\n') },
         { kind: 'prompt', id: 'p1', promptId: null, name: 'Ask', body: `Prompt: ![${path}](id=a)`, expanded: false },
         { kind: 'text', text: '' },
       ],

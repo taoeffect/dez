@@ -200,8 +200,8 @@ describe('withoutImagePaths', () => {
     expect(withoutImagePaths(text)).toBe(sent)
   })
 
-  it('takes the paths in metadata values and every path on a line', () => {
-    expect(withoutImagePaths(`![${PNG}](id=a|desc=a /x/assets/images/b.png) and ![${JPG}](id=b)`))
+  it('takes the paths in metadata values and every path on a line, also of another home', () => {
+    expect(withoutImagePaths(`![${PNG}](id=a|desc=a /home/bob/.config/dez/assets/images/b.png) and ![${JPG}](id=b)`))
       .toBe('![image](id=a|desc=a image) and ![image](id=b)')
   })
 
@@ -219,6 +219,21 @@ describe('withoutImagePaths', () => {
 
   it('gives a text with no image path back as it is', () => {
     for (const text of ['', 'Hi\n', '![x](https://example.com/x.png)', '/home/ann/Pictures/x.png', 'assets/images/x.png']) {
+      expect(withoutImagePaths(text)).toBe(text)
+    }
+  })
+
+  // Many web projects have an `assets/images` folder; only Dez's own folder
+  // is private.
+  it('leaves the paths of an assets/images folder that is not Dez\'s as they are', () => {
+    for (const text of [
+      'import logo from \'../assets/images/logo.png\'',
+      'cp ~/Downloads/hero.jpg app/assets/images/hero.jpg',
+      '<link href="/css/main.css"><img src="/assets/images/logo.png" alt="logo">',
+      'my logo at src/assets/images/logo.png doesn\'t load',
+      'https://example.com/assets/images/logo.png',
+      '/home/ann/.config/dez2/assets/images/a1.jpg',
+    ]) {
       expect(withoutImagePaths(text)).toBe(text)
     }
   })
@@ -246,6 +261,7 @@ describe('holdsImagePath', () => {
 
   it('finds no path in other text', () => {
     expect(holdsImagePath('/home/ann/Pictures/x.png and assets/images/x.png')).toBe(false)
+    expect(holdsImagePath(JSON.stringify({ thinking: 'The logo is in /var/www/app/assets/images/logo.png' }))).toBe(false)
   })
 })
 

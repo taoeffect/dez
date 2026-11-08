@@ -51,11 +51,17 @@ const IMAGE_PATH_END_SOURCE = String.raw`assets\/images\/[A-Za-z0-9_-]+\.(?:${Ob
 // a long line cannot make the regex slow.
 const IMAGE_PATH_SOURCE = String.raw`\/(?:[^\[\]\r\n]*\/)?${IMAGE_PATH_END_SOURCE}`
 const IMAGE_PATH = new RegExp(`^${IMAGE_PATH_SOURCE}$`)
-// A text holds an image path exactly when it holds one of these ends.
+// The end of every image path that Dez writes, on any machine and in any
+// home: `$HOME/.config/dez/assets/images/<file>` (`base_dir()` in
+// persistence.rs). Many web projects have an `assets/images` folder too
+// (Angular, Rails, Hugo); the scrub leaves their paths as they are, so code
+// and commands go to the model as the user wrote them.
+const DEZ_IMAGE_PATH_END_SOURCE = String.raw`\/\.config\/dez\/${IMAGE_PATH_END_SOURCE}`
+// A text holds a Dez image path exactly when it holds one of these ends.
 // Global for `matchAll` only, which copies the regex and keeps no state in it.
-const IMAGE_PATH_END = new RegExp(String.raw`\/${IMAGE_PATH_END_SOURCE}`, 'g')
+const DEZ_IMAGE_PATH_END = new RegExp(DEZ_IMAGE_PATH_END_SOURCE, 'g')
 // Not global, so `test` keeps no `lastIndex` state between calls.
-const ANY_IMAGE_PATH_END = new RegExp(String.raw`\/${IMAGE_PATH_END_SOURCE}`)
+const ANY_DEZ_IMAGE_PATH_END = new RegExp(DEZ_IMAGE_PATH_END_SOURCE)
 // A run of text with no bracket or line break, the chars that no image path
 // holds.
 const BRACKET_FREE_RUN = /[^\[\]\r\n]+/g
@@ -257,31 +263,33 @@ export function labelImageReferences(text: string, label = IMAGE_LABEL): string 
   return splitImageReferences(text).map((piece) => (piece.kind === 'text' ? piece.text : label)).join('')
 }
 
-/** True when a text holds an image path, in a reference or not. */
+/** True when a text holds a Dez image path, in a reference or not. */
 export function holdsImagePath(text: string): boolean {
-  return ANY_IMAGE_PATH_END.test(text)
+  return ANY_DEZ_IMAGE_PATH_END.test(text)
 }
 
-/** A text for a provider, with each image path replaced by the word
+/** A text for a provider, with each Dez image path replaced by the word
  *  `image`. A provider must never get a path: it holds the user's name and
  *  folders. So a reference goes as `![image](id=a)`, with its metadata as it
  *  is in the text, and a reference that is not valid (the Backspace rule's
  *  `![<path>](id=a`, bad metadata), a bare path, and a path in a metadata
- *  value lose their paths too. A text with no image path comes back as it
- *  is, so text-only request bodies keep their bytes (prompt cache).
+ *  value lose their paths too. A text with no Dez image path comes back as
+ *  it is, so text-only request bodies keep their bytes (prompt cache). A
+ *  hand-written reference into an `assets/images` folder outside a
+ *  `.config/dez` folder keeps its path: Dez never writes one, and a request
+ *  that sends it as an image fails first ("Image not found").
  *
  *  A path's start in prose is not known (a home folder can hold spaces), so
  *  each run with no bracket or line break loses all from its first `/` to
- *  the end of its last image path: some prose or a URL before a path can go
- *  too, but never a part of the path. That is what a global
- *  `IMAGE_PATH_SOURCE` regex would replace, in linear time: the regex
- *  rescans the rest of the run from each `/`, which took 0.5 s on a 200 KB
- *  base64 line. */
+ *  the end of its last Dez image path: some prose or a URL before a path can
+ *  go too, but never a part of the path. That is what a global regex for a
+ *  whole path would replace, in linear time: such a regex rescans the rest
+ *  of the run from each `/`, which took 0.5 s on a 200 KB base64 line. */
 export function withoutImagePaths(text: string): string {
   if (!holdsImagePath(text)) return text
   return text.replace(BRACKET_FREE_RUN, (run) => {
     let end = -1
-    for (const match of run.matchAll(IMAGE_PATH_END)) end = match.index + match[0].length
+    for (const match of run.matchAll(DEZ_IMAGE_PATH_END)) end = match.index + match[0].length
     return end < 0 ? run : `${run.slice(0, run.indexOf('/'))}${IMAGE_PATH_STAND_IN}${run.slice(end)}`
   })
 }
