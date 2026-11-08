@@ -195,9 +195,11 @@ describe('Delete before an image', () => {
   })
 
   it('leaves other Deletes to the next commands', () => {
+    // Not right before an image, a selection whose head is there, many carets.
     const cases = [
       createState(`x ${red}`, 0),
       createState(red, red.length),
+      EditorState.create({ doc: red, selection: EditorSelection.single(red.length, 0), extensions: markdownImages() }),
       createState(`${red}\n${red}`, 0, red.length + 1),
     ]
     for (const state of cases) {
