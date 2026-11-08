@@ -36,6 +36,8 @@ const PLAIN_CHAT = '/plain/v1/chat/completions'
 const CLAUDE_CHAT = '/claude/v1/messages'
 
 const FIELD_REPLAY = { kind: 'field', field: 'reasoning_content' }
+// `FIELD_REPLAY` as the conversation file writes it in a pill marker.
+const FIELD_REPLAY_ATTRIBUTE = 'replay="{&quot;kind&quot;:&quot;field&quot;,&quot;field&quot;:&quot;reasoning_content&quot;}"'
 
 // A thinking text that ends in an encrypted-reasoning line, as some servers
 // send it (`readableThinking` in src/model/chat/thinking.ts). The panel
@@ -94,7 +96,7 @@ function claudeThinking (n: number): unknown {
 // answer. The last line is the blank line before the next marker.
 function savedThinkerReply (n: number): string[] {
   return [
-    `<dez:pill type="agent" model="${THINKER.id}/${THINKER.modelId}" duration-ms="#" replay="{&quot;kind&quot;:&quot;field&quot;,&quot;field&quot;:&quot;reasoning_content&quot;}">`,
+    `<dez:pill type="agent" model="${THINKER.id}/${THINKER.modelId}" duration-ms="#" ${FIELD_REPLAY_ATTRIBUTE}>`,
     ...thinkingText(n).split('\n'),
     '</dez:pill>',
     answerText(n),
@@ -857,7 +859,7 @@ describe('thinking', () => {
     })
     // The app saves the conversation again after the reply; the file still
     // holds the encrypted line.
-    const seededMarker = `<dez:pill type="agent" model="${THINKER.id}/${THINKER.modelId}" replay="{&quot;kind&quot;:&quot;field&quot;,&quot;field&quot;:&quot;reasoning_content&quot;}">`
+    const seededMarker = `<dez:pill type="agent" model="${THINKER.id}/${THINKER.modelId}" ${FIELD_REPLAY_ATTRIBUTE}>`
     await waitForValue(browser, 'saved replies', savedAgentReplies, [
       [seededMarker, ...PLAIN_SEEDED_THINKING.split('\n'), '</dez:pill>', 'Encrypted answer 1', ''],
       [seededMarker, ...ENCRYPTED_THINKING.split('\n'), '</dez:pill>', 'Encrypted answer 2', ''],
