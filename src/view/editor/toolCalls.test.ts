@@ -60,6 +60,13 @@ function insert(state: EditorState, text: string, userEvent = 'input.type'): Edi
   return state.update({ changes: { from, to, insert: text }, selection: { anchor: from + text.length }, userEvent }).state
 }
 
+/** A text drag inside the doc, made as CodeMirror's `dropText` makes it:
+ *  the dragged range `from`–`to` moves to `dropPos` and stays selected. */
+function drag(state: EditorState, from: number, to: number, dropPos: number): EditorState {
+  const changes = state.changes([{ from, to }, { from: dropPos, insert: state.sliceDoc(from, to) }])
+  return state.update({ changes, selection: { anchor: changes.mapPos(dropPos, -1), head: changes.mapPos(dropPos, 1) }, userEvent: 'move.drop' }).state
+}
+
 describe('renderedToolCalls', () => {
   it('shows blocks of agent sections only, at their doc offsets', () => {
     const state = createState([`user\n${block('u')}`, `${block('a')}\nafter`, block('u2'), `before\n${block('b', 'error', 'boom')}`], ['user', 'agent', 'user', 'agent'])
@@ -257,6 +264,20 @@ describe('text typed next to a chip', () => {
   it('gets no extra line break when it has one at the chip', () => {
     expect(insert(createState(texts, ['user', 'agent'], { carets: [to] }), '\nxy').doc.toString()).toBe(withLine(['before', call, 'xy', 'after']))
     expect(insert(createState(texts, ['user', 'agent'], { carets: [from] }), 'xy\n').doc.toString()).toBe(withLine(['before', 'xy', call, 'after']))
+  })
+
+  it('goes on its own line when it is dragged to the chip', () => {
+    const state = createState(texts, ['user', 'agent'])
+    const afterAt = doc.indexOf('after')
+    const toStart = drag(state, afterAt, afterAt + 'after'.length, from)
+    expect(toStart.doc.toString()).toBe(withLine(['before', 'after', call, '']))
+    expect(toStart.sliceDoc(toStart.selection.main.from, toStart.selection.main.to)).toBe('after')
+    expect(shown(toStart).map(([id]) => id)).toEqual(['a'])
+    const beforeAt = doc.indexOf('before')
+    const toEnd = drag(state, beforeAt, beforeAt + 'before'.length, to)
+    expect(toEnd.doc.toString()).toBe(withLine(['', call, 'before', 'after']))
+    expect(toEnd.sliceDoc(toEnd.selection.main.from, toEnd.selection.main.to)).toBe('before')
+    expect(shown(toEnd).map(([id]) => id)).toEqual(['a'])
   })
 
   it('is left alone when it is not user input, or is an IME composition', () => {

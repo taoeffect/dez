@@ -314,13 +314,14 @@ const toolCallOpenUpdater = ViewPlugin.define(() => ({
   },
 }))
 
-/** Text typed or pasted right at a chip's start or end would join the
- *  block's first or last line, and the block would show as its source. This
- *  puts a line break between the new text and the chip instead. An IME
+/** Text typed, pasted, or dragged right at a chip's start or end would join
+ *  the block's first or last line, and the block would show as its source.
+ *  This puts a line break between the new text and the chip instead. A text
+ *  drag inside the doc is a `move.drop`, not an `input` event. An IME
  *  composition is left alone: a change to its text would disturb the
  *  composition. */
 const keepTextOffChipLines = EditorState.transactionFilter.of((tr) => {
-  if (!tr.docChanged || !tr.isUserEvent('input') || tr.isUserEvent('input.type.compose')) return tr
+  if (!tr.docChanged || !(tr.isUserEvent('input') || tr.isUserEvent('move.drop')) || tr.isUserEvent('input.type.compose')) return tr
   const calls = renderedToolCalls(tr.startState)
   if (calls.length === 0) return tr
   const lineBreaks: ChangeSpec[] = []
