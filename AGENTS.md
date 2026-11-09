@@ -30,8 +30,8 @@ cd src-tauri && cargo test
 - Tauri build scripts first run `npm run clean:rust` (`scripts/clean-rust.js`).
 - `build:linux:appimage` runs `scripts/build-linux-appimage.js`; the AppImage bundles the build host's GStreamer plugins.
 - macOS builds need Xcode 26+: `build:macos:*` first run `scripts/build-macos-icon.js`, which compiles `src-tauri/icons/Dez.icon` into the gitignored `src-tauri/icons/Assets.car` (icon name set in `src-tauri/Info.plist`). A bare `tauri build` on macOS fails without that file.
-- Releases: run `npm run bump-version` and commit before you tag. A pushed `v*` tag runs `.github/workflows/release-desktop.yml` (version check against the tag, e2e gate, Linux AppImages, macOS DMG, release notes from `scripts/release-notes.js`, GitHub Release). The rules are in the comments of those files.
-- CI rules (details in the workflow comments): every job removes the compromised eMudhra CA roots in its first step, and only the "Write release notes" step may reference `ZAI_API_KEY`.
+- Releases: run `npm run bump-version` and commit before you tag. A pushed `v*` tag runs `.github/workflows/release-desktop.yml` (version check against the tag, e2e gate, Linux AppImages, macOS DMG and its minisign signature, release notes from `scripts/release-notes.js`, GitHub Release). The rules are in the comments of those files.
+- CI rules (details in the workflow comments): every job removes the compromised eMudhra CA roots in its first step, only the "Write release notes" step may reference `ZAI_API_KEY`, and only the "Sign DMG" step may reference `MINISIGN_SECRET_KEY`.
 
 ## Git conventions
 

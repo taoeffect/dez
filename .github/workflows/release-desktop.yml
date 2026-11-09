@@ -14,6 +14,10 @@ permissions:
 # job env. The macOS job runs its own inline fix. A new job must do the
 # same. The e2e gate gets the fix and NODE_OPTIONS from e2e.yml.
 #
+# Secrets: only the "Write release notes" step may reference ZAI_API_KEY,
+# and only the "Sign DMG" step may reference MINISIGN_SECRET_KEY. The
+# comments above the release-notes and sign-macos-dmg jobs give the reasons.
+#
 # Each job's timeout-minutes is 3x its run time in the v0.13.0 release,
 # rounded up, so a stuck step (an apt install once hung for 25 minutes)
 # fails in minutes, not after GitHub's 6-hour default. The e2e gate's
@@ -239,6 +243,100 @@ jobs:
           path: src-tauri/target/aarch64-apple-darwin/release/bundle/dmg/*.dmg
           if-no-files-found: error
 
+  # Signs the DMG for the macOS updater. An installed Dez downloads
+  # Dez_<version>_aarch64.dmg and its .minisig from the release, and it
+  # installs the DMG only if the signature verifies against the public key
+  # that it compiles in from src-tauri/updater/minisign.pub. So a release
+  # with no .minisig cannot update macOS installs, and publish-release waits
+  # for this job.
+  #
+  # MINISIGN_SECRET_KEY is a secret of the Default environment: the text of
+  # the unencrypted secret key file that `minisign -G -W` writes. Only the
+  # "Sign DMG" step may reference it. Never reference it, or use
+  # `secrets: inherit`, in another job. The signing is a job of its own, so
+  # that the key never shares a runner with npm ci or the build: this job
+  # runs only the CA fix, GitHub's checkout and artifact actions, and
+  # Ubuntu's minisign. Ubuntu 24.04, because its minisign is 0.11, the first
+  # version that reads a key with no password; 22.04 has 0.9.
+  #
+  # The job is newer than the v0.13.0 release, so its timeout is a guess
+  # (two apt runs and a DMG download), not 3x a measured run.
+  sign-macos-dmg:
+    name: Sign macOS DMG
+    runs-on: ubuntu-24.04
+    needs: build-macos-dmg
+    timeout-minutes: 5
+    environment: Default
+    permissions:
+      contents: read
+
+    # The first step and NODE_OPTIONS: see build-linux-appimage.
+    env:
+      NODE_OPTIONS: --use-openssl-ca
+
+    steps:
+      - name: Fix Ubuntu runner CA root bundle
+        uses: okTurtles/libcheloniajs/.github/actions/fix-ubuntu-ca-roots@main
+
+      # Only for src-tauri/updater/minisign.pub: the verify step checks the
+      # signature against the key that the app compiles in.
+      - name: Checkout
+        uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+
+      - name: Install minisign
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y minisign
+          minisign -v
+
+      - name: Download DMG artifact
+        uses: actions/download-artifact@v8
+        with:
+          name: dez-macos-aarch64-dmg
+          path: dmg
+
+      # The key goes into a mktemp file (mode 0600) under RUNNER_TEMP, and
+      # the EXIT trap deletes it when the step ends, also on a failure.
+      # stdin is /dev/null, so a key that has a password fails the step
+      # instead of waiting for the password.
+      - name: Sign DMG
+        env:
+          MINISIGN_SECRET_KEY: ${{ secrets.MINISIGN_SECRET_KEY }}
+        run: |
+          version="${GITHUB_REF_NAME#v}"
+          dmg="dmg/Dez_${version}_aarch64.dmg"
+          if [ ! -f "$dmg" ]; then
+            echo "Expected $dmg, found:"
+            ls -l dmg
+            exit 1
+          fi
+          if [ -z "$MINISIGN_SECRET_KEY" ]; then
+            echo "::error::The Default environment has no MINISIGN_SECRET_KEY secret"
+            exit 1
+          fi
+          key="$(mktemp "$RUNNER_TEMP/minisign-key.XXXXXX")"
+          trap 'rm -f "$key"' EXIT
+          printf '%s\n' "$MINISIGN_SECRET_KEY" > "$key"
+          minisign -S -s "$key" -m "$dmg" \
+            -t "Dez ${version} Dez_${version}_aarch64.dmg" < /dev/null
+
+      # -H rejects a legacy (not prehashed) signature, as the app does.
+      # minisign has made prehashed signatures by default since 0.10.
+      - name: Verify signature
+        run: |
+          version="${GITHUB_REF_NAME#v}"
+          minisign -V -H -p src-tauri/updater/minisign.pub \
+            -m "dmg/Dez_${version}_aarch64.dmg"
+
+      - name: Upload signature artifact
+        uses: actions/upload-artifact@v7
+        with:
+          name: dez-macos-aarch64-dmg-minisig
+          path: dmg/*.minisig
+          if-no-files-found: error
+
   # Writes the release body: the notes template, then the changes that the
   # REVIEW_MODEL model writes from the commits since the previous release
   # (scripts/release-notes.js). REVIEW_MODEL and REVIEW_PROVIDER are
@@ -324,6 +422,7 @@ jobs:
     needs:
       - build-linux-appimage
       - build-macos-dmg
+      - sign-macos-dmg
       - release-notes
     timeout-minutes: 3
 
@@ -354,6 +453,12 @@ jobs:
         uses: actions/download-artifact@v8
         with:
           name: dez-macos-aarch64-dmg
+          path: release-assets
+
+      - name: Download DMG signature artifact
+        uses: actions/download-artifact@v8
+        with:
+          name: dez-macos-aarch64-dmg-minisig
           path: release-assets
 
       - name: Download release notes artifact
