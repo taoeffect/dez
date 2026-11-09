@@ -99,12 +99,15 @@ function installUpdate() {
   void sbp('dez.controller/updates/install')
 }
 
+// Made once: every install progress message renders the release list again,
+// with two `formatDate` calls per release.
+const dateFormat = new Intl.DateTimeFormat(undefined, { dateStyle: 'medium' })
+
 // GitHub's `published_at`, as a date in the user's locale.
 function formatDate(publishedAt: string | null): string | null {
   if (!publishedAt) return null
   const date = new Date(publishedAt)
-  if (Number.isNaN(date.getTime())) return null
-  return new Intl.DateTimeFormat(undefined, { dateStyle: 'medium' }).format(date)
+  return Number.isNaN(date.getTime()) ? null : dateFormat.format(date)
 }
 
 // A click on the overlay closes the window, unless the press started in it.
