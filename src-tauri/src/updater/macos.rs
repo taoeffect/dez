@@ -845,6 +845,35 @@ mod tests {
         names
     }
 
+    // Whether `dmg` is attached. An unmounted image can still be attached,
+    // so this does not look at mount points: each attached image is an
+    // `AppleDiskImageDevice` in the I/O Registry, with the URL of its file.
+    // The temp paths of the tests need no percent-encoding in that URL.
+    fn is_attached(dmg: &Path) -> bool {
+        let devices = output_of(Command::new("/usr/sbin/ioreg").args([
+            "-r",
+            "-c",
+            "AppleDiskImageDevice",
+            "-a",
+            "-d",
+            "1",
+        ]))
+        .expect("ioreg");
+        // ioreg prints nothing, not an empty plist, when no image is attached.
+        if devices.is_empty() {
+            return false;
+        }
+        let url = format!("file://{}", dmg.display());
+        plist::Value::from_reader_xml(devices.as_slice())
+            .expect("ioreg plist")
+            .as_array()
+            .expect("device list")
+            .iter()
+            .filter_map(plist::Value::as_dictionary)
+            .filter_map(|device| device.get("DiskImageURL")?.as_string())
+            .any(|image| image == url)
+    }
+
     // Dez 0.15.1 installed in a fake Applications folder, Dez 0.16.0 in a
     // folder laid out as the release DMG, the private dir, and a fake Trash.
     struct Setup {
@@ -976,7 +1005,7 @@ mod tests {
         assert_eq!(short_version(&setup.trash.join("Dez.app")), "0.15.1");
         // No staging folder is left, and the image is detached.
         assert_eq!(setup.applications(), ["Dez.app"]);
-        assert_eq!(names_in(&setup.private_dir.join("mnt")), Vec::<String>::new());
+        assert!(!is_attached(&dmg));
     }
 
     #[test]
@@ -987,13 +1016,15 @@ mod tests {
         let image = DiskImage::attach(&dmg, &mount_point).expect("attach");
         let device = |path: &Path| fs::metadata(path).expect("stat").dev();
         assert_ne!(device(&mount_point), device(&setup.private_dir), "mounted");
+        assert!(is_attached(&dmg), "attached");
         // The open file makes the plain eject fail.
         let _open = fs::File::open(mount_point.join(DMG_APP).join("Contents/Info.plist"))
             .expect("open");
 
         image.detach().expect("detach");
 
-        assert_eq!(device(&mount_point), device(&setup.private_dir));
+        // Ejected, not only unmounted.
+        assert!(!is_attached(&dmg));
         // Detached already: Drop would only fail again.
         std::mem::forget(image);
     }
