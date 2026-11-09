@@ -2,6 +2,7 @@
 import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import sbp from '@sbp/sbp'
 import { useModelState } from '../modelState'
+import { restoreFocus, useOverlayDismiss } from '../composables/modal'
 import { isMacPlatform } from '../../utils/platform'
 
 const { updates } = useModelState()
@@ -47,30 +48,17 @@ const downloadFraction = computed(() => {
 
 const dialog = ref<HTMLElement | null>(null)
 
-// The element that had the focus before the window opened, as in
-// ConfirmDialog.vue. The dialog takes the focus, so keys never go to the
-// editor behind the overlay, and the focus goes back when it closes.
+// The element that had the focus before the window opened. The dialog takes
+// the focus, so keys never go to the editor behind the overlay, and the
+// focus goes back when it closes (`restoreFocus`).
 let opener: Element | null = null
-
-// Whether the last press started on the overlay itself. A drag that starts
-// in the window (a text selection) and ends outside it also gives the
-// overlay a click; only a press that started outside closes it.
-let pressOnOverlay = false
 
 onMounted(() => {
   opener = document.activeElement
   dialog.value?.focus({ preventScroll: true })
 })
 
-onBeforeUnmount(() => {
-  const element = opener
-  opener = null
-  if (!(element instanceof HTMLElement) || !element.isConnected) return
-  // `dez.editor/focus` puts back the editor's scroll, which WebKit can move
-  // when the editor gets the focus again (focus.ts).
-  if (element.closest('.cm-editor')) sbp('dez.editor/focus')
-  else element.focus({ preventScroll: true })
-})
+onBeforeUnmount(() => restoreFocus(opener))
 
 // The clicked button goes away while the install runs. The focus moves to
 // the dialog first, so it stays in the window and keys never reach the
@@ -109,16 +97,10 @@ function formatDate(publishedAt: string | null): string | null {
   return new Intl.DateTimeFormat(undefined, { dateStyle: 'medium' }).format(date)
 }
 
-function onOverlayMouseDown(event: MouseEvent) {
-  pressOnOverlay = event.target === event.currentTarget
-}
-
+// A click on the overlay closes the window, unless the press started in it.
 // Esc is not here: only the window handler closes modals on Esc
 // (`closeOnEscape` in useKeyboardShortcuts.ts).
-function onOverlayClick(event: MouseEvent) {
-  if (pressOnOverlay && event.target === event.currentTarget) close()
-  pressOnOverlay = false
-}
+const { onOverlayMouseDown, onOverlayClick } = useOverlayDismiss(close)
 </script>
 
 <template>

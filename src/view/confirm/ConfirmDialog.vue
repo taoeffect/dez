@@ -1,19 +1,17 @@
 <script setup lang="ts">
 import { ref, watch } from 'vue'
-import sbp from '@sbp/sbp'
+import { restoreFocus, useOverlayDismiss } from '../composables/modal'
 import { answerConfirm, confirmRequest } from './selectors'
 
 const cancelButton = ref<HTMLButtonElement | null>(null)
 const confirmButton = ref<HTMLButtonElement | null>(null)
 
 // The element that had the focus before the prompt opened. It gets the
-// focus back when the prompt closes, so the user can go on typing.
+// focus back when the prompt closes (`restoreFocus`).
 let opener: Element | null = null
 
-// Whether the last press started on the overlay itself. A drag that starts
-// in the dialog (a text selection) and ends outside it also gives the
-// overlay a click; only a press that started outside cancels.
-let pressOnOverlay = false
+// A click on the overlay cancels, unless the press started in the dialog.
+const { onOverlayMouseDown, onOverlayClick } = useOverlayDismiss(() => answerConfirm(false))
 
 // `post`: the dialog is in the DOM when this runs, so its button can take
 // the focus. A prompt that takes the place of an open one keeps the first
@@ -23,19 +21,10 @@ watch(confirmRequest, (request, previous) => {
     if (!previous) opener = document.activeElement
     confirmButton.value?.focus()
   } else {
-    restoreFocus()
+    restoreFocus(opener)
+    opener = null
   }
 }, { flush: 'post' })
-
-function restoreFocus() {
-  const element = opener
-  opener = null
-  if (!(element instanceof HTMLElement) || !element.isConnected) return
-  // `dez.editor/focus` puts back the editor's scroll, which WebKit can move
-  // when the editor gets the focus again (focus.ts).
-  if (element.closest('.cm-editor')) sbp('dez.editor/focus')
-  else element.focus({ preventScroll: true })
-}
 
 // Esc is not here: only the window handler closes modals on Esc
 // (`closeOnEscape` in useKeyboardShortcuts.ts).
@@ -53,15 +42,6 @@ function onKeydown(event: KeyboardEvent) {
     const next = document.activeElement === confirmButton.value ? cancelButton : confirmButton
     next.value?.focus()
   }
-}
-
-function onOverlayMouseDown(event: MouseEvent) {
-  pressOnOverlay = event.target === event.currentTarget
-}
-
-function onOverlayClick(event: MouseEvent) {
-  if (pressOnOverlay && event.target === event.currentTarget) answerConfirm(false)
-  pressOnOverlay = false
 }
 </script>
 
