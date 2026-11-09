@@ -108,8 +108,12 @@ const protectedRangesCache = new WeakMap<Text, ProtectedRangesCacheEntry>()
  *    one breaks the single-line pill decoration;
  *  - images that the editor shows (`renderedImages`). Their source is
  *    hidden; a raw (broken) image reference stays searchable;
- *  - tool call blocks that the editor shows as chips (`renderedToolCalls`).
- *    Their source is hidden, and a replace in one could break its block.
+ *  - tool call blocks that the editor shows as chips (`renderedToolCalls`),
+ *    plus the line breaks on both sides. Their source is hidden, and a
+ *    replace in one could break its block. Replacing a framing `\n` with
+ *    nothing puts text on the block's first or last line, and the block
+ *    then shows as its source; `keepTextOffChipLines` (toolCalls.ts) adds
+ *    a line break back only for a non-empty insert.
  *  Pills without metadata (or a state without `pillsField`) count as
  *  collapsed, matching `decodeSectionContent`. Cached per doc + pill map
  *  + images + tool calls because the highlighter asks on every viewport
@@ -134,7 +138,8 @@ function protectedRanges(state: EditorState): DocRange[] {
       raw.push({ from: pill.from, to: pill.to })
     }
   }
-  for (const { from, to } of [...images, ...toolCalls]) raw.push({ from, to })
+  for (const { from, to } of images) raw.push({ from, to })
+  for (const { from, to } of toolCalls) raw.push({ from: Math.max(0, from - 1), to: Math.min(doc.length, to + 1) })
   raw.sort((a, b) => a.from - b.from)
 
   const ranges: DocRange[] = []

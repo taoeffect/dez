@@ -18,7 +18,7 @@ import {
   type FindTransaction,
 } from './find'
 import { markdownImages } from './images'
-import { markdownToolCalls } from './toolCalls'
+import { markdownToolCalls, renderedToolCalls } from './toolCalls'
 
 function createState(doc: string, selection?: [number, number], extensions: Extension[] = []): EditorState {
   return EditorState.create({
@@ -119,6 +119,13 @@ describe('find match filter', () => {
     expect(matchRanges(state, plain('gemini'))).toEqual([[first, first + 6], [last, last + 6]])
     const user = createState(text, undefined, [markdownToolCalls()])
     expect(matchTexts(user, plain('gemini'))).toHaveLength(4)
+  })
+
+  it('skips the line breaks that frame a tool call chip, so replacing line breaks with nothing keeps the chip', () => {
+    const state = agentState(`a\nb\n${TOOL_BLOCK}\nc\nd`)
+    const next = apply(state, replaceAllMatchesTransaction(state, regex('\\n')))
+    expect(next.doc.toString()).toBe(`ask\n${SECTION_SEP}\nab\n${TOOL_BLOCK}\ncd`)
+    expect(renderedToolCalls(next)).toHaveLength(1)
   })
 
   it('never yields empty regex matches', () => {
