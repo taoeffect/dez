@@ -3,7 +3,7 @@ import { sectionIsEmpty, sectionPlainText } from '../chat/content'
 import { findImageReferences, holdsImagePath, splitImageReferences, withoutImagePaths } from '../chat/images'
 import { sameModelRef } from '../chat/modelRef'
 import { thinkingField } from '../chat/thinking'
-import { splitToolBlocks, unescapeModelText, type ToolBlock } from '../chat/toolBlocks'
+import { EMPTY_TOOL_RESULT, INTERRUPTED_TOOL_RESULT, splitToolBlocks, unescapeModelText, type ToolBlock } from '../chat/toolBlocks'
 import type { ToolCall, ToolResult } from '../tools/types'
 import type { RequestMessages, StreamMessage } from './types'
 
@@ -149,12 +149,11 @@ function toolCall(block: ToolBlock): ToolCall {
 }
 
 // Every call gets a result. A `running` block in a request was loaded from a
-// file: the app stopped while the tool ran. A blank result gets a text, as
-// Anthropic refuses an error result with no content.
+// file: the app stopped while the tool ran.
 function toolResult(block: ToolBlock): ToolResult {
-  if (block.status === 'running') return { callId: block.id, content: 'Interrupted.', isError: true }
+  if (block.status === 'running') return { callId: block.id, content: INTERRUPTED_TOOL_RESULT, isError: true }
   const content = withoutImagePaths(block.result)
-  return { callId: block.id, content: content.trim() === '' ? 'No result.' : content, isError: block.status === 'error' }
+  return { callId: block.id, content: content.trim() === '' ? EMPTY_TOOL_RESULT : content, isError: block.status === 'error' }
 }
 
 // The section text with each block in place as plain text, for a request

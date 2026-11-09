@@ -8,6 +8,7 @@ import { IMAGE_MAX_HEIGHT_PX, SECTION_SEP, editorSizePx } from '../thread/cmEdit
 import { measureLineHeights } from '../thread/editorMeasure'
 import { syncDomSelection } from './focus'
 import { addPendingRange, pendingRange, pendingRanges, removePendingRange, type DocRange } from './pendingRanges'
+import { ROUND_STROKE, svgIcon } from './svgIcon'
 import { tableRowStarts } from './tables'
 
 interface ImageDecorations {
@@ -32,24 +33,6 @@ function setBoxSize(img: HTMLImageElement, size: ImageSize): void {
   img.style.setProperty('--dez-image-width', String(size.width))
   img.style.setProperty('--dez-image-height', String(size.height))
 }
-
-const SVG_NS = 'http://www.w3.org/2000/svg'
-
-/** An inline SVG icon in `currentColor`, from the tag and attributes of
- *  each of its shapes. */
-function svgIcon(viewBox: string, shapes: ReadonlyArray<readonly [string, Record<string, string>]>): SVGSVGElement {
-  const svg = document.createElementNS(SVG_NS, 'svg')
-  svg.setAttribute('viewBox', viewBox)
-  svg.setAttribute('aria-hidden', 'true')
-  for (const [tag, attributes] of shapes) {
-    const shape = document.createElementNS(SVG_NS, tag)
-    for (const [name, value] of Object.entries(attributes)) shape.setAttribute(name, value)
-    svg.appendChild(shape)
-  }
-  return svg
-}
-
-const ROUND_STROKE = { fill: 'none', stroke: 'currentColor', 'stroke-linecap': 'round', 'stroke-linejoin': 'round' }
 
 /** A picture frame with a sun and hills, so that the id badge reads as the
  *  label of the image. */

@@ -2,7 +2,8 @@ import { history, undo, undoDepth } from '@codemirror/commands'
 import type { SearchQuery } from '@codemirror/search'
 import { EditorSelection, EditorState, type Extension } from '@codemirror/state'
 import { describe, expect, it } from 'vitest'
-import { PILL_NL, PILL_OPEN, SECTION_SEP, encodePrompt, pillsField, scanPills, type PillMetadata } from '../thread/cmEditor'
+import { PILL_NL, PILL_OPEN, SECTION_SEP, encodePrompt, pillsField, scanPills, sectionsField, type PillMetadata } from '../thread/cmEditor'
+import { toolBlockText } from '../../model/chat/toolBlocks'
 import {
   FIND_COUNT_LIMIT,
   createFindQuery,
@@ -17,6 +18,7 @@ import {
   type FindTransaction,
 } from './find'
 import { markdownImages } from './images'
+import { markdownToolCalls } from './toolCalls'
 
 function createState(doc: string, selection?: [number, number], extensions: Extension[] = []): EditorState {
   return EditorState.create({
@@ -25,6 +27,15 @@ function createState(doc: string, selection?: [number, number], extensions: Exte
     extensions,
   })
 }
+
+/** A doc of a user section and an agent section with `agentText`, so that
+ *  the tool blocks in `agentText` show as chips. */
+function agentState(agentText: string, selection?: [number, number]): EditorState {
+  const sections = [{ id: 's0', role: 'user' as const }, { id: 's1', role: 'agent' as const }]
+  return createState(`ask\n${SECTION_SEP}\n${agentText}`, selection, [sectionsField.init(() => sections), markdownToolCalls()])
+}
+
+const TOOL_BLOCK = toolBlockText({ id: 'call_1', name: 'model_list', status: 'success', arguments: { filter: 'gemini' }, result: 'gemini-3-pro' })
 
 function plain(search: string, replace = ''): SearchQuery {
   return createFindQuery({ search, regexp: false, caseSensitive: false }, replace)
@@ -97,6 +108,17 @@ describe('find match filter', () => {
     const broken = doc.lastIndexOf(path)
     expect(matchRanges(state, plain('png'))).toEqual([[0, 3], [broken + path.length - 3, broken + path.length]])
     expect(matchTexts(state, plain('png ![/home'))).toEqual([])
+  })
+
+  it('skips the hidden source of tool call chips, but not a block in a user section', () => {
+    const text = `gemini\n${TOOL_BLOCK}\ngemini`
+    const state = agentState(text)
+    const doc = state.doc.toString()
+    const first = doc.indexOf('gemini')
+    const last = doc.lastIndexOf('gemini')
+    expect(matchRanges(state, plain('gemini'))).toEqual([[first, first + 6], [last, last + 6]])
+    const user = createState(text, undefined, [markdownToolCalls()])
+    expect(matchTexts(user, plain('gemini'))).toHaveLength(4)
   })
 
   it('never yields empty regex matches', () => {
@@ -219,6 +241,18 @@ describe('find prefill', () => {
     expect(prefill([to, doc.length])).toBe(' here')
     const broken = reference.slice(0, -1)
     expect(findPrefillText(createState(broken, [0, broken.length], [markdownImages()]), false)).toBe(broken)
+  })
+
+  it('takes nothing when the selection touches a tool call chip', () => {
+    const doc = agentState(`look\n${TOOL_BLOCK}\nhere`).doc.toString()
+    const look = doc.indexOf('look')
+    const from = doc.indexOf(TOOL_BLOCK)
+    const to = from + TOOL_BLOCK.length
+    const prefill = (selection: [number, number]) => findPrefillText(agentState(`look\n${TOOL_BLOCK}\nhere`, selection), false)
+    expect(prefill([from, to])).toBeNull()
+    expect(prefill([look, from + 1])).toBeNull()
+    expect(prefill([look, from])).toBe('look\n')
+    expect(prefill([to, doc.length])).toBe('\nhere')
   })
 
   it('escapes regex syntax so the pattern compiles with the u flag and matches the selection', () => {

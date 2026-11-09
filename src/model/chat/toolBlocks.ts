@@ -36,6 +36,15 @@ import { stripLiveSentinels } from './content'
  *  result is an error message. */
 export type ToolBlockStatus = 'success' | 'error' | 'running'
 
+/** The error result of a `running` block that no reply runs: the app stopped
+ *  while the tool ran. Requests send it, and the editor shows it. */
+export const INTERRUPTED_TOOL_RESULT = 'Interrupted.'
+
+/** The result of a block whose result is blank. Requests send it, as
+ *  Anthropic refuses an error result with no content, and the editor shows
+ *  it. */
+export const EMPTY_TOOL_RESULT = 'No result.'
+
 /** One tool call and its result, as a block holds them. */
 export interface ToolBlockData {
   id: string

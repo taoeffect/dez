@@ -1429,7 +1429,8 @@ export const dezTheme = EditorView.theme({
   // word, so the pill keeps its height. The triangle has padding with a
   // negative margin: a larger target that does not grow the pill. Under
   // reduced motion the spinner does not turn (see the media query below).
-  '.dez-role-separator__spinner': {
+  // A running tool call chip (`toolCalls.ts`) has the same spinner.
+  '.dez-role-separator__spinner, .dez-tool-call__spinner': {
     display: 'inline-block',
     flex: 'none',
     alignSelf: 'center',
@@ -1465,7 +1466,9 @@ export const dezTheme = EditorView.theme({
   // it the textarea, is as tall as the text; both need the same font,
   // padding and wrapping rules for that. The encrypted pill, when there is
   // one, comes after the text. The separator row is uppercase,
-  // letter-spaced and not selectable; the panel resets all three.
+  // letter-spaced and not selectable; the panel resets all three. The
+  // result field of a tool call panel (`.dez-tool-call__result`, further
+  // down) shares the field rules.
   '.dez-role-separator[data-thinking-open]': {
     flexWrap: 'wrap',
   },
@@ -1497,10 +1500,10 @@ export const dezTheme = EditorView.theme({
   // WebKitGTK that is a strong blue, and the muted panel text on it is
   // unreadable, so the panel uses the editor's selection color instead. One
   // more class than CM's `.cm-content :focus::selection` makes this win.
-  '.cm-content .dez-role-separator__thinking-text:focus::selection': {
+  '.cm-content .dez-role-separator__thinking-text:focus::selection, .cm-content .dez-tool-call__result-text:focus::selection': {
     backgroundColor: 'var(--color-selection, #d7d4f0) !important',
   },
-  '.dez-role-separator__thinking-mirror, .dez-role-separator__thinking-text': {
+  '.dez-role-separator__thinking-mirror, .dez-role-separator__thinking-text, .dez-tool-call__result-mirror, .dez-tool-call__result-text': {
     gridArea: '1 / 1',
     boxSizing: 'border-box',
     minWidth: '0',
@@ -1513,15 +1516,15 @@ export const dezTheme = EditorView.theme({
     overflowWrap: 'anywhere',
     wordBreak: 'normal',
   },
-  '.dez-role-separator__thinking-mirror': {
+  '.dez-role-separator__thinking-mirror, .dez-tool-call__result-mirror': {
     visibility: 'hidden',
   },
   // A text that ends in a newline shows an empty last line in the textarea,
   // but in the mirror only when something follows the newline.
-  '.dez-role-separator__thinking-mirror::after': {
+  '.dez-role-separator__thinking-mirror::after, .dez-tool-call__result-mirror::after': {
     content: '" "',
   },
-  '.dez-role-separator__thinking-text': {
+  '.dez-role-separator__thinking-text, .dez-tool-call__result-text': {
     width: '100%',
     height: '100%',
     minHeight: '0',
@@ -1560,13 +1563,13 @@ export const dezTheme = EditorView.theme({
   // (WebKitGTK 2.54). `setPanelText` keeps the mirror's text as the record
   // of the shown text on both paths.
   '@supports (field-sizing: content)': {
-    '.dez-role-separator__thinking': {
+    '.dez-role-separator__thinking, .dez-tool-call__result': {
       display: 'block',
     },
-    '.dez-role-separator__thinking-mirror': {
+    '.dez-role-separator__thinking-mirror, .dez-tool-call__result-mirror': {
       display: 'none',
     },
-    '.dez-role-separator__thinking-text': {
+    '.dez-role-separator__thinking-text, .dez-tool-call__result-text': {
       display: 'block',
       height: 'auto',
       fieldSizing: 'content',
@@ -1586,8 +1589,9 @@ export const dezTheme = EditorView.theme({
     // width, so each loop is one sweep plus a pause. Streamed text tokens
     // keep the widget (`eq`), and `pillThinkingUpdater` changes the thinking
     // parts in place, so the animations run without restarts until the
-    // stream ends. The left-slot spinner turns here too.
-    '.dez-role-separator__spinner': {
+    // stream ends. The left-slot spinner turns here too, and so do the
+    // spinner and the name shimmer of a running tool call chip.
+    '.dez-role-separator__spinner, .dez-tool-call__spinner': {
       animation: 'dez-role-pill-spin 0.9s linear infinite',
     },
     '.dez-role-separator__label[data-streaming]::after': {
@@ -1603,7 +1607,7 @@ export const dezTheme = EditorView.theme({
       pointerEvents: 'none',
       animation: 'dez-role-pill-glow 1.8s ease-in-out infinite',
     },
-    '.dez-role-separator__label[data-streaming] .dez-role-separator__model-name': {
+    '.dez-role-separator__label[data-streaming] .dez-role-separator__model-name, .dez-tool-call[data-state="running"] .dez-tool-call__name': {
       color: 'transparent',
       backgroundImage:
         'linear-gradient(90deg, var(--color-text) 40%, var(--color-link, #4a9eff) 50%, var(--color-text) 60%)',
@@ -1833,6 +1837,160 @@ export const dezTheme = EditorView.theme({
   // the `prefers-reduced-motion: no-preference` block above).
   '.dez-image__trash:active': {
     boxShadow: 'inset 0 0 0 999px rgba(0, 0, 0, 0.16)',
+  },
+  // Tool call chips (src/view/editor/toolCalls.ts). The widget is the only
+  // thing on its line: a column as wide as the line, with the chip, and
+  // under it the panel while open. The chip is quiet, as most calls are not
+  // read: no border, a faint fill, muted text, and only the tool name in
+  // the text color. The widget is not selectable (WebKitGTK 2.54 reads only
+  // the prefixed `user-select`), except for the result field.
+  '.dez-tool-call': {
+    display: 'inline-flex',
+    flexDirection: 'column',
+    alignItems: 'flex-start',
+    boxSizing: 'border-box',
+    width: '100%',
+    padding: editorSize(2, 0),
+    verticalAlign: 'top',
+    fontFamily: UI_FONT_FAMILY,
+    lineHeight: '1.5',
+    letterSpacing: 'normal',
+    whiteSpace: 'normal',
+    cursor: 'default',
+    userSelect: 'none',
+    WebkitUserSelect: 'none',
+  },
+  '.dez-tool-call__chip': {
+    display: 'inline-flex',
+    alignItems: 'center',
+    gap: editorSize(6),
+    boxSizing: 'border-box',
+    maxWidth: '100%',
+    padding: editorSize(2, 10, 2, 8),
+    borderRadius: editorSize(6),
+    background: 'color-mix(in srgb, var(--color-text) 5%, transparent)',
+    color: 'var(--color-muted, #888)',
+    fontSize: editorSize(13),
+    whiteSpace: 'nowrap',
+    cursor: 'pointer',
+    outline: 'none',
+    transition: 'background-color 0.12s ease',
+  },
+  '.dez-tool-call__chip:hover': {
+    background: 'color-mix(in srgb, var(--color-text) 9%, transparent)',
+  },
+  '.dez-tool-call__chip:focus-visible': {
+    boxShadow: '0 0 0 2px var(--color-link, #4a9eff)',
+  },
+  // The spinner shares the role pill spinner's rules (above); in the chip,
+  // the gap spaces it.
+  '.dez-tool-call__spinner': {
+    marginRight: '0',
+  },
+  '.dez-tool-call__disclosure': {
+    flex: 'none',
+    width: editorSize(9),
+    fontSize: editorSize(9),
+    lineHeight: '1',
+    textAlign: 'center',
+  },
+  '.dez-tool-call[data-open] .dez-tool-call__disclosure': {
+    transform: 'rotate(90deg)',
+  },
+  '.dez-tool-call__icon': {
+    display: 'inline-flex',
+    flex: 'none',
+  },
+  '.dez-tool-call__icon svg': {
+    display: 'block',
+    width: editorSize(13),
+    height: editorSize(13),
+  },
+  '.dez-tool-call__name': {
+    flex: 'none',
+    color: 'var(--color-text)',
+    fontFamily: MONO_FONT_FAMILY,
+    fontWeight: '600',
+  },
+  '.dez-tool-call__summary': {
+    minWidth: '0',
+    overflow: 'hidden',
+    textOverflow: 'ellipsis',
+    fontFamily: MONO_FONT_FAMILY,
+  },
+  // Only a failed call, or a call that the app stopped while it ran
+  // (`interrupted`, which requests send as an error), has a state word.
+  // These show the word, the wrench, and the name in the error color.
+  '.dez-tool-call__state': {
+    flex: 'none',
+    color: 'var(--color-error, #d9534f)',
+    fontSize: editorSize(11.5),
+  },
+  '.dez-tool-call[data-state="error"] .dez-tool-call__icon, .dez-tool-call[data-state="error"] .dez-tool-call__name, .dez-tool-call[data-state="interrupted"] .dez-tool-call__icon, .dez-tool-call[data-state="interrupted"] .dez-tool-call__name': {
+    color: 'var(--color-error, #d9534f)',
+  },
+  // The panel hangs from the disclosure triangle by a thin rule: the
+  // parameters as name and value rows, then the result in a read-only
+  // field. The field scrolls past about 16 lines.
+  '.dez-tool-call__panel': {
+    display: 'flex',
+    flexDirection: 'column',
+    alignSelf: 'stretch',
+    gap: editorSize(4),
+    margin: editorSize(6, 0, 4, 12),
+    padding: editorSize(0, 0, 2, 13),
+    borderLeft: '1px solid var(--color-border, #333)',
+    color: 'var(--color-muted, #888)',
+    fontSize: editorSize(13),
+  },
+  '.dez-tool-call__heading': {
+    fontSize: editorSize(11),
+    fontWeight: '600',
+    letterSpacing: '0.06em',
+    textTransform: 'uppercase',
+  },
+  '.dez-tool-call__heading:not(:first-child)': {
+    marginTop: editorSize(6),
+  },
+  '.dez-tool-call__parameters': {
+    display: 'grid',
+    gridTemplateColumns: 'max-content minmax(0, 1fr)',
+    columnGap: editorSize(16),
+    rowGap: editorSize(2),
+    fontFamily: MONO_FONT_FAMILY,
+    fontSize: editorSize(12.5),
+  },
+  '.dez-tool-call__parameter-value': {
+    color: 'var(--color-text)',
+    whiteSpace: 'pre-wrap',
+    overflowWrap: 'anywhere',
+  },
+  '.dez-tool-call__result': {
+    display: 'grid',
+    alignSelf: 'stretch',
+    minWidth: '0',
+    maxHeight: '24em',
+    overflowY: 'auto',
+    overflowAnchor: 'none',
+    boxSizing: 'border-box',
+    border: '1px solid var(--color-border, #333)',
+    borderRadius: editorSize(8),
+    background: 'var(--color-bg-subtle, rgba(127,127,127,0.08))',
+    color: 'var(--color-text)',
+    fontFamily: MONO_FONT_FAMILY,
+    fontSize: editorSize(12.5),
+    lineHeight: '1.5',
+    cursor: 'auto',
+    userSelect: 'text',
+    WebkitUserSelect: 'text',
+  },
+  '.dez-tool-call__result:focus-within': {
+    borderColor: 'var(--color-link, #4a9eff)',
+  },
+  '.dez-tool-call__result[data-error]': {
+    borderColor: 'var(--color-error-border, #d9534f)',
+    background: 'var(--color-error-bg, rgba(217,83,79,0.08))',
+    color: 'var(--color-error, #d9534f)',
   },
   // Rendered links (src/view/editor/links.ts): only the link text shows. An
   // autolink's address has the `t.url` style of `dezHighlightStyle`, which

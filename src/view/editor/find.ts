@@ -16,6 +16,7 @@ import { Decoration, EditorView, ViewPlugin, type DecorationSet, type ViewUpdate
 import { SENTINEL_CHAR } from '../../model/chat/content'
 import { SECTION_SEP, pillsField, scanPills, type PillMetadata } from '../thread/cmEditor'
 import { renderedImages } from './images'
+import { renderedToolCalls } from './toolCalls'
 
 /** Status counting stops here; the UI shows `1000+`. */
 export const FIND_COUNT_LIMIT = 1000
@@ -92,6 +93,7 @@ interface DocRange {
 interface ProtectedRangesCacheEntry {
   pills: Map<string, PillMetadata> | undefined
   images: readonly DocRange[]
+  toolCalls: readonly DocRange[]
   ranges: DocRange[]
 }
 
@@ -105,15 +107,19 @@ const protectedRangesCache = new WeakMap<Text, ProtectedRangesCacheEntry>()
  *  - collapsed pill bodies. They are hidden, and a real `\n` written into
  *    one breaks the single-line pill decoration;
  *  - images that the editor shows (`renderedImages`). Their source is
- *    hidden; a raw (broken) image reference stays searchable.
+ *    hidden; a raw (broken) image reference stays searchable;
+ *  - tool call blocks that the editor shows as chips (`renderedToolCalls`).
+ *    Their source is hidden, and a replace in one could break its block.
  *  Pills without metadata (or a state without `pillsField`) count as
  *  collapsed, matching `decodeSectionContent`. Cached per doc + pill map
- *  + images because the highlighter asks on every viewport change. */
+ *  + images + tool calls because the highlighter asks on every viewport
+ *  change. */
 function protectedRanges(state: EditorState): DocRange[] {
   const pills = state.field(pillsField, false)
   const images = renderedImages(state)
+  const toolCalls = renderedToolCalls(state)
   const cached = protectedRangesCache.get(state.doc)
-  if (cached && cached.pills === pills && cached.images === images) return cached.ranges
+  if (cached && cached.pills === pills && cached.images === images && cached.toolCalls === toolCalls) return cached.ranges
 
   const doc = state.doc.toString()
   const raw: DocRange[] = []
@@ -128,7 +134,7 @@ function protectedRanges(state: EditorState): DocRange[] {
       raw.push({ from: pill.from, to: pill.to })
     }
   }
-  for (const { from, to } of images) raw.push({ from, to })
+  for (const { from, to } of [...images, ...toolCalls]) raw.push({ from, to })
   raw.sort((a, b) => a.from - b.from)
 
   const ranges: DocRange[] = []
@@ -137,7 +143,7 @@ function protectedRanges(state: EditorState): DocRange[] {
     if (last && range.from <= last.to) last.to = Math.max(last.to, range.to)
     else ranges.push({ ...range })
   }
-  protectedRangesCache.set(state.doc, { pills, images, ranges })
+  protectedRangesCache.set(state.doc, { pills, images, toolCalls, ranges })
   return ranges
 }
 
@@ -253,17 +259,18 @@ const REGEXP_SYNTAX_CHARS = /[\^$\\.*+?()[\]{}|/]/g
 
 /** Search text that Cmd/Ctrl+F takes from the main selection, escaped in
  *  regex mode. `null` (keep the current search) when the selection is
- *  empty, longer than 3 lines, holds a sentinel, overlaps a shown image
- *  (its source is hidden and never matches, see `protectedRanges`), or
- *  already is a match of the open query: the match text would replace a
- *  regex that the user typed. */
+ *  empty, longer than 3 lines, holds a sentinel, overlaps a shown image or
+ *  tool call chip (their source is hidden and never matches, see
+ *  `protectedRanges`), or already is a match of the open query: the match
+ *  text would replace a regex that the user typed. */
 export function findPrefillText(state: EditorState, regexp: boolean): string | null {
   const { from, to } = state.selection.main
   if (from === to) return null
   if (state.doc.lineAt(to).number - state.doc.lineAt(from).number >= PREFILL_MAX_LINES) return null
   const text = state.sliceDoc(from, to)
   if (SENTINEL_CHAR.test(text)) return null
-  if (renderedImages(state).some((image) => image.from < to && image.to > from)) return null
+  const overlaps = (range: DocRange) => range.from < to && range.to > from
+  if (renderedImages(state).some(overlaps) || renderedToolCalls(state).some(overlaps)) return null
   const query = state.field(findQueryField, false)
   if (query && findMatchAt(state, query, from, to)) return null
   return regexp ? text.replace(REGEXP_SYNTAX_CHARS, '\\$&') : text

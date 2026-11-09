@@ -49,6 +49,7 @@ import { measureTextSize } from './editorMeasure'
 import { findExtension, findMatchStatus, findNextMatch, findQueryField, selectMatchSpec, setFindQueryEffect } from '../editor/find'
 import { markdownTables } from '../editor/tables'
 import { deleteImageBang, deleteImageParen, markdownImages } from '../editor/images'
+import { deleteToolCallBackward, deleteToolCallForward, markdownToolCalls, openToolCalls } from '../editor/toolCalls'
 import { imagePasteAndDrop } from '../editor/imageInsert'
 import { markdownLinks } from '../editor/links'
 import { focusKeepingScrollOnMouseDown } from '../editor/focus'
@@ -676,9 +677,16 @@ function editorShortcutKeymap(): Extension {
   return Prec.highest(keymap.of(bindings))
 }
 
-/** A new editor state for the active tab. `expandedThinking` is the set of
- *  open thinking panels to keep; without it, all start closed. */
-function buildState(expandedThinking: ReadonlySet<string> = new Set()): EditorState {
+/** The open panels that a new editor state keeps; without them, all start
+ *  closed. `thinking` holds section ids and `toolCalls` call ids. */
+interface OpenPanels {
+  thinking: ReadonlySet<string>
+  toolCalls: ReadonlySet<string>
+}
+
+/** A new editor state for the active tab, with the panels of `openPanels`
+ *  open. */
+function buildState(openPanels?: OpenPanels): EditorState {
   const sections = activeSections.value
   const models = initialSectionModels(sections)
   const pillMeta = initialPillMetadata(sections)
@@ -814,11 +822,11 @@ function buildState(expandedThinking: ReadonlySet<string> = new Set()): EditorSt
       },
       {
         key: 'Backspace',
-        run: (v) => mergeWithPreviousSection(v) || deleteImageParen(v) || strictMultiCursorBackspace(v),
+        run: (v) => mergeWithPreviousSection(v) || deleteToolCallBackward(v) || deleteImageParen(v) || strictMultiCursorBackspace(v),
       },
       {
         key: 'Delete',
-        run: (v) => deleteImageBang(v) || mergeWithNextSection(v),
+        run: (v) => deleteImageBang(v) || deleteToolCallForward(v) || mergeWithNextSection(v),
       },
     ]),
   )
@@ -830,7 +838,7 @@ function buildState(expandedThinking: ReadonlySet<string> = new Set()): EditorSt
       modelDisplayNamesField.init(() => modelDisplayNames.value),
       streamingSectionField.init(() => activeTabStreamingSectionId.value),
       pillsField.init(() => pillMeta),
-      thinkingExpandedField.init(() => expandedThinking),
+      thinkingExpandedField.init(() => openPanels?.thinking ?? new Set()),
       roleSeparators,
       roleSeparatorAtomicRanges,
       roleSeparatorMouseHandler,
@@ -868,6 +876,7 @@ function buildState(expandedThinking: ReadonlySet<string> = new Set()): EditorSt
       findExtension(activeFindQuery()),
       markdownTables(),
       markdownImages(),
+      markdownToolCalls(openPanels?.toolCalls),
       markdownLinks(),
       imagePasteAndDrop(),
       // The find dropdown floats over the top of the scroller. Count it as
@@ -944,13 +953,13 @@ function resetViewToActiveTab(streamEnd?: { followBottom: boolean }) {
   // swap would insert a pill at a wrong position.
   closeAutocomplete()
   // A rebuild of the same tab, such as the reset at the end of each
-  // stream, keeps the open thinking panels; another tab starts with all
-  // closed.
+  // stream, keeps the open thinking and tool call panels; another tab
+  // starts with all closed.
   const sameTab = viewTabId === activeTabId.value
   // The new state has no line heights yet, so its scrollTop would show
   // other lines. The snapshot holds the top line and its offset instead.
   const scrollSnapshot = streamEnd && !streamEnd.followBottom ? view.scrollSnapshot() : null
-  const state = buildState(sameTab ? view.state.field(thinkingExpandedField) : undefined)
+  const state = buildState(sameTab ? { thinking: view.state.field(thinkingExpandedField), toolCalls: openToolCalls(view.state) } : undefined)
   view.setState(state)
   viewTabId = activeTabId.value
   viewConversationId = activeConversationId.value
