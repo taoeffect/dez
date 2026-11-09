@@ -184,9 +184,6 @@ export default sbp('sbp/selectors/register', {
       stream = await nativeChatStream(provider, input, messages, requestId, true)
     }
 
-    const thinkingReplay = await streamProviderTokens(provider, input, stream.result, stream.thinking)
-    return thinkingReplay
-      ? { requestId: stream.result.requestId, thinkingReplay }
-      : { requestId: stream.result.requestId }
+    return { requestId: stream.result.requestId, ...await streamProviderTokens(provider, input, stream.result, stream.thinking) }
   },
 })

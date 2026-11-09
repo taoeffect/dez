@@ -217,3 +217,63 @@ describe('OpenAiStreamParser inline tags', () => {
     expect(end.replay).toStrictEqual({ kind: 'field', field: 'reasoning_content' })
   })
 })
+
+describe('OpenAiStreamParser tool calls', () => {
+  const toolCalls = (pieces: Delta[], finishReason: string | null = null) => chunk({ tool_calls: pieces }, finishReason)
+
+  it.each([true, false])('joins the argument pieces of two calls by index, in stream order (thinking %s)', (thinking) => {
+    const { events, end } = run([
+      chunk({ content: 'Let me look.' }),
+      toolCalls([{ index: 0, id: 'call_a', type: 'function', function: { name: 'model_list', arguments: '' } }]),
+      toolCalls([{ index: 0, function: { arguments: '{"fil' } }]),
+      toolCalls([{ index: 1, id: 'call_b', type: 'function', function: { name: 'model_list', arguments: '{}' } }]),
+      toolCalls([{ index: 0, function: { arguments: 'ter":"gemini"}' } }]),
+      chunk({}, 'tool_calls'),
+      '[DONE]',
+    ], thinking)
+
+    expect(events).toStrictEqual([{ kind: 'token', token: 'Let me look.' }, { kind: 'done' }])
+    expect(end).toStrictEqual({
+      events: [],
+      toolCalls: [
+        { id: 'call_a', name: 'model_list', argumentsText: '{"filter":"gemini"}' },
+        { id: 'call_b', name: 'model_list', argumentsText: '{}' },
+      ],
+    })
+  })
+
+  it('starts a new call when a new id comes at the same index', () => {
+    const { end } = run([
+      toolCalls([{ index: 0, id: 'a', function: { name: 'model_list', arguments: '{"filter":' } }]),
+      toolCalls([{ index: 0, function: { arguments: '"x"}' } }]),
+      toolCalls([{ index: 0, id: 'b', function: { name: 'model_list', arguments: '{}' } }], 'tool_calls'),
+    ])
+
+    expect(end.toolCalls).toStrictEqual([
+      { id: 'a', name: 'model_list', argumentsText: '{"filter":"x"}' },
+      { id: 'b', name: 'model_list', argumentsText: '{}' },
+    ])
+  })
+
+  it('goes on with the last call for a piece with no index, and takes a repeated id and name once', () => {
+    const { end } = run([
+      toolCalls([{ id: 'a', function: { name: 'model_list', arguments: '{"filter"' } }]),
+      toolCalls([{ id: 'a', function: { name: 'model_list', arguments: ':"x"}' } }]),
+      toolCalls([{ id: 'b', function: { name: 'model_list' } }]),
+      // Some servers end a reply with tool calls with `stop`.
+      chunk({}, 'stop'),
+    ])
+
+    expect(end.toolCalls).toStrictEqual([
+      { id: 'a', name: 'model_list', argumentsText: '{"filter":"x"}' },
+      { id: 'b', name: 'model_list', argumentsText: '' },
+    ])
+  })
+
+  it('gives no calls from a stream that was cut off or failed', () => {
+    const call = toolCalls([{ index: 0, id: 'a', function: { name: 'model_list', arguments: '{"filter":"ge' } }])
+
+    expect(run([call]).end).toStrictEqual({ events: [] })
+    expect(run([call, chunk({}, 'error')]).end).toStrictEqual({ events: [] })
+  })
+})

@@ -25,15 +25,17 @@ const STORED_IMAGE = Uint8Array.from([137, 80, 78, 71, 13, 10, 26, 10, 0, 255])
 
 // Requests to this base URL get HTTP 404; every other server answers.
 const FAILING_BASE_URL = 'http://localhost:9090/v1'
-// This server thinks before it answers.
+// This server thinks before it answers, then calls a tool.
 const REASONING_BASE_URL = 'http://localhost:7070/v1'
 
 const REASONING_STREAM = [
   'data: {"choices":[{"delta":{"reasoning_content":"Plan"}}]}',
   'data: {"choices":[{"delta":{"reasoning_content":" it."}}]}',
-  'data: {"choices":[{"delta":{"content":"Hello"},"finish_reason":"stop"}]}',
+  'data: {"choices":[{"delta":{"content":"Hello"}}]}',
+  'data: {"choices":[{"delta":{"tool_calls":[{"index":0,"id":"call_1","type":"function","function":{"name":"model_list","arguments":"{}"}}]},"finish_reason":"tool_calls"}]}',
   'data: [DONE]',
 ].join('\n\n') + '\n\n'
+const STREAMED_TOOL_CALLS = [{ id: 'call_1', name: 'model_list', argumentsText: '{}' }]
 
 // Stand-ins for the native layer: the key store cannot be read.
 sbp('sbp/selectors/register', {
@@ -148,21 +150,22 @@ describe('thinking in chat streams', () => {
     return { calls, result }
   }
 
-  it('sends the thinking and the answer to their callbacks and returns the replay', async () => {
+  it('sends the thinking and the answer to their callbacks and returns the replay and the tool calls', async () => {
     const { calls, result } = await streamThinker()
 
     expect(calls).toEqual(['thinking:Plan', 'thinking: it.', 'token:Hello'])
     expect(result).toStrictEqual({
       requestId: 'request-1',
       thinkingReplay: { kind: 'field', field: 'reasoning_content' },
+      toolCalls: STREAMED_TOOL_CALLS,
     })
   })
 
-  it('drops the thinking and returns no replay when the toggle is off', async () => {
+  it('drops the thinking and returns no replay, but the tool calls, when the toggle is off', async () => {
     const { calls, result } = await streamThinker({ thinking: false })
 
     expect(calls).toEqual(['token:Hello'])
-    expect(result).toStrictEqual({ requestId: 'request-1' })
+    expect(result).toStrictEqual({ requestId: 'request-1', toolCalls: STREAMED_TOOL_CALLS })
   })
 
   it('shows no thinking for a provider without thinking support', async () => {
@@ -186,7 +189,7 @@ describe('thinking in chat streams', () => {
     })
 
     expect(calls).toEqual(['token:Hello'])
-    expect(result).toStrictEqual({ requestId: 'request-2' })
+    expect(result).toStrictEqual({ requestId: 'request-2', toolCalls: STREAMED_TOOL_CALLS })
   })
 })
 

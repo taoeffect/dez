@@ -1,4 +1,5 @@
 import type { JsonObject } from '../../utils/json'
+import type { StreamedToolCall } from '../tools/types'
 import { FORBIDDEN_BODY_KEYS } from './config'
 import { isRecord } from './modelParsing'
 import type { SseStreamEnd, SseStreamParser, SseTokenEvent, StreamedThinkingReplay } from './types'
@@ -10,6 +11,7 @@ interface OpenAiChoiceDelta {
   reasoning_text?: unknown
   reasoning_details?: unknown
   reasoning_opaque?: unknown
+  tool_calls?: unknown
 }
 
 interface OpenAiChoice {
@@ -167,13 +169,17 @@ function reasoningDetailsText(details: Record<string, unknown>[]): string {
 
 // Chat Completions streams. With `thinking`, it also reads the reasoning:
 // the text, the OpenRouter/Venice `reasoning_details` and the GitHub Copilot
-// `reasoning_opaque`, which `finish()` turns into the replay.
+// `reasoning_opaque`, which `finish()` turns into the replay. It always
+// collects the tool calls, which `finish()` gives too.
 export class OpenAiStreamParser implements SseStreamParser {
   private readonly inline: InlineThinkingSplitter | null
   // OpenRouter streams each detail in pieces with the same `index`; the
   // pieces are merged into one entry, in stream order.
   private readonly details: JsonObject[] = []
   private readonly detailsByIndex = new Map<number, JsonObject>()
+  // In stream order, and by the `index` of their pieces.
+  private readonly toolCalls: StreamedToolCall[] = []
+  private readonly toolCallsByIndex = new Map<number, StreamedToolCall>()
   private opaque = ''
   private firstTextField: ReasoningTextField | null = null
   // `[DONE]` or a `finish_reason` arrived. Without `failed`, the reasoning
@@ -209,6 +215,8 @@ export class OpenAiStreamParser implements SseStreamParser {
         }
       }
 
+      if (Array.isArray(delta?.tool_calls)) this.readToolCalls(delta.tool_calls.filter(isRecord))
+
       if (choice.finish_reason === 'error') this.failed = true
       else if (choice.finish_reason !== undefined && choice.finish_reason !== null) this.complete = true
     }
@@ -216,11 +224,14 @@ export class OpenAiStreamParser implements SseStreamParser {
     return events
   }
 
+  // The tool calls of a stream that was cut off or failed may have cut-off
+  // arguments, so such a stream gives none.
   finish(): SseStreamEnd {
     const events: SseTokenEvent[] = []
     this.inline?.flush(events)
     const replay = this.replay()
-    return replay ? { events, replay } : { events }
+    const toolCalls = this.complete && !this.failed && this.toolCalls.length > 0 ? this.toolCalls : undefined
+    return { events, ...(replay && { replay }), ...(toolCalls && { toolCalls }) }
   }
 
   private readReasoning(delta: OpenAiChoiceDelta, events: SseTokenEvent[]): void {
@@ -237,6 +248,30 @@ export class OpenAiStreamParser implements SseStreamParser {
 
     if (field) this.firstTextField ??= field
     events.push({ kind: 'thinking', token: text })
+  }
+
+  // The first piece of a call has its `id` and `function.name`; later pieces
+  // have its `index` and more of the arguments JSON text. Some servers give
+  // every call index 0, so a new `id` at a known index starts a new call.
+  // Some send no `index`, so a piece without one goes on with the last call.
+  private readToolCalls(pieces: Record<string, unknown>[]): void {
+    for (const piece of pieces) {
+      const index = typeof piece.index === 'number' ? piece.index : undefined
+      const id = nonEmptyString(piece.id) ? piece.id : ''
+      const fn: Record<string, unknown> = isRecord(piece.function) ? piece.function : {}
+
+      let call = index === undefined ? this.toolCalls.at(-1) : this.toolCallsByIndex.get(index)
+      if (!call || (id !== '' && call.id !== '' && id !== call.id)) {
+        call = { id: '', name: '', argumentsText: '' }
+        this.toolCalls.push(call)
+      }
+      if (index !== undefined) this.toolCallsByIndex.set(index, call)
+
+      if (id !== '') call.id = id
+      // Some servers repeat the name in every piece, so it is set, not joined.
+      if (nonEmptyString(fn.name)) call.name = fn.name
+      if (typeof fn.arguments === 'string') call.argumentsText += fn.arguments
+    }
   }
 
   // Pieces of one entry join their `text` and `summary`; any other field

@@ -1,6 +1,6 @@
 import type { ImageMediaType } from '../chat/images'
 import type { RequestMessage, ThinkingReplay } from '../chat/types'
-import type { ToolDefinition } from '../tools/types'
+import type { StreamedToolCall, ToolDefinition } from '../tools/types'
 import type { ApiFormatId, ProviderAuth, ProviderSettingDef } from './config'
 
 // Any id that passes `isValidProviderId()` in `config.ts`: built-in ids plus
@@ -110,6 +110,10 @@ export interface SseStreamEnd {
   // Absent when there was no thinking to send back, or when it is not
   // complete (the stream ended early).
   replay?: StreamedThinkingReplay
+  // The tool calls of the reply, in stream order. Absent when there are
+  // none, or when the stream was cut off or reported a failure: the
+  // arguments of a call could then be cut off too.
+  toolCalls?: StreamedToolCall[]
 }
 
 // Reads the SSE payloads of one response, in order. Parsers keep state

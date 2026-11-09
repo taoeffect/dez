@@ -39,6 +39,19 @@ export interface ToolCall {
   arguments: JsonObject
 }
 
+/** A call as a reply stream gave it, before any check. The controller turns
+ *  it into a `<dez:tool>` block. */
+export interface StreamedToolCall {
+  /** The provider's call id; `''` when the server sent none. */
+  id: string
+  /** The tool name as the model wrote it; `''` when the server sent none. */
+  name: string
+  /** The arguments JSON text as it streamed; blank means `{}`
+   *  (`parseToolArguments`). It can be invalid JSON, for example when the
+   *  reply hit its token limit. */
+  argumentsText: string
+}
+
 /** The result of one call, as requests send it. */
 export interface ToolResult {
   /** The `ToolCall.id` of its call. */

@@ -1,4 +1,5 @@
 import type { MessagePart, RequestMessage, ThinkingReplay } from '../chat/types'
+import type { StreamedToolCall } from '../tools/types'
 import type { ChatRequestContext, ProviderId } from './types'
 
 // A message as dez.provider/streamChat takes it: an image part holds the
@@ -28,4 +29,8 @@ export interface ProviderStreamChatResult {
   // What the next request can send back of this reply's thinking. Absent
   // when there is none, or when the thinking is not complete.
   thinkingReplay?: ThinkingReplay
+  // The tool calls of the reply, in stream order (SseStreamEnd.toolCalls).
+  // The tool loop runs them whatever the finish reason says: some servers
+  // end a reply with tool calls with `stop`.
+  toolCalls?: StreamedToolCall[]
 }

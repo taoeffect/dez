@@ -10,6 +10,9 @@ const signatureDelta = (index: number, signature: string) => event({ type: 'cont
 const textStart = (index: number) => event({ type: 'content_block_start', index, content_block: { type: 'text', text: '' } })
 const textDelta = (index: number, text: string) => event({ type: 'content_block_delta', index, delta: { type: 'text_delta', text } })
 const stop = (index: number) => event({ type: 'content_block_stop', index })
+const toolUseStart = (index: number, id: string) => event({ type: 'content_block_start', index, content_block: { type: 'tool_use', id, name: 'model_list', input: {} } })
+const inputDelta = (index: number, partialJson: string) => event({ type: 'content_block_delta', index, delta: { type: 'input_json_delta', partial_json: partialJson } })
+const messageDelta = event({ type: 'message_delta', delta: { stop_reason: 'tool_use', stop_sequence: null }, usage: { output_tokens: 20 } })
 const messageStop = event({ type: 'message_stop' })
 
 function run(payloads: string[], thinking = true): { events: SseTokenEvent[], end: SseStreamEnd } {
@@ -99,6 +102,52 @@ describe('AnthropicStreamParser', () => {
     ], false)
 
     expect(events).toStrictEqual([{ kind: 'token', token: 'Answer.' }, { kind: 'done' }])
+    expect(end).toStrictEqual({ events: [] })
+  })
+})
+
+describe('AnthropicStreamParser tool calls', () => {
+  it.each([true, false])('collects two tool_use blocks with their input pieces after the text (thinking %s)', (thinking) => {
+    const { events, end } = run([
+      event({ type: 'message_start', message: { id: 'msg' } }),
+      textStart(0), textDelta(0, 'Let me look.'), stop(0),
+      toolUseStart(1, 'toolu_a'), inputDelta(1, ''), inputDelta(1, '{"filter": '), inputDelta(1, '"gemini"}'), stop(1),
+      toolUseStart(2, 'toolu_b'), stop(2),
+      messageDelta,
+      messageStop,
+    ], thinking)
+
+    expect(events).toStrictEqual([{ kind: 'token', token: 'Let me look.' }, { kind: 'done' }])
+    expect(end).toStrictEqual({
+      events: [],
+      toolCalls: [
+        { id: 'toolu_a', name: 'model_list', argumentsText: '{"filter": "gemini"}' },
+        { id: 'toolu_b', name: 'model_list', argumentsText: '' },
+      ],
+    })
+  })
+
+  it('keeps the thinking of a round for the replay next to its tool calls', () => {
+    const { end } = run([
+      thinkingStart(0), thinkingDelta(0, 'Look it up.'), signatureDelta(0, 's0'), stop(0),
+      toolUseStart(1, 'toolu_a'), inputDelta(1, '{}'), stop(1),
+      messageDelta,
+      messageStop,
+    ])
+
+    expect(end).toStrictEqual({
+      events: [],
+      replay: { kind: 'anthropicBlocks', blocks: [{ type: 'thinking', thinking: 'Look it up.', signature: 's0' }] },
+      toolCalls: [{ id: 'toolu_a', name: 'model_list', argumentsText: '{}' }],
+    })
+  })
+
+  it('gives no calls when a tool_use block never stopped', () => {
+    const { end } = run([
+      toolUseStart(0, 'toolu_a'), inputDelta(0, '{}'), stop(0),
+      toolUseStart(1, 'toolu_b'), inputDelta(1, '{"filter":"ge'),
+    ])
+
     expect(end).toStrictEqual({ events: [] })
   })
 })
