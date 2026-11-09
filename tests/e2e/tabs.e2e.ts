@@ -1,11 +1,15 @@
 import type { EditorView } from '@codemirror/view'
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from 'vitest'
 import { Key } from 'webdriverio'
+import type { ModelRef, Tab } from '../../src/model/chat/types'
+import type { SectionData } from '../../src/model/persistence/types'
 import { startApp, type RunningApp } from './harness/app'
 import {
   click,
   consoleErrors,
+  openHistoryPanel,
   pointerClick,
+  pointerClickAt,
   pointerDrag,
   pointerRelease,
   resetConsoleErrors,
@@ -13,10 +17,21 @@ import {
   typeKeys,
   waitFor,
   waitForValue,
+  type Point,
 } from './harness/dom'
 import { makeConversation, readAppState, seedAppState, seedConversation } from './harness/fixtures'
 import { createSession, destroySession, type E2EBrowser } from './harness/session'
-import { editorDoc, focusEditor, focusedArea, sbpCall, threadSections } from './harness/thread'
+import {
+  activeConversationId,
+  activeTabId,
+  editorDoc,
+  focusEditor,
+  focusedArea,
+  newTab,
+  savedPillLines,
+  sbpCall,
+  threadSections,
+} from './harness/thread'
 
 const MAX_CLICKS = 40
 // Clicks to make while the tabs overflow the strip, counting the click that
@@ -123,6 +138,64 @@ async function viewPlace (browser: E2EBrowser): Promise<{ topLine: number, caret
       resolve({ topLine: view.state.doc.lineAt(block.from).number, caret: view.state.selection.main.head })
     }))
   }))
+}
+
+// A tab's sections as the store holds them, with the fields that the
+// editor's section models carry (id, role, model, thinking) and the text.
+async function tabSections (browser: E2EBrowser, tabId: string): Promise<Array<{
+  id: string
+  role: string
+  text: string
+  model: ModelRef | null
+  thinking: string | null
+}>> {
+  const tab = await sbpCall(browser, 'dez.model/tab', tabId) as Tab | null
+  if (!tab) throw new Error(`tabSections: no tab ${tabId}`)
+  return tab.sections.map((section) => ({
+    id: section.id,
+    role: section.role,
+    text: section.content.map((node) => node.kind === 'text' ? node.text : '').join(''),
+    model: section.model ?? null,
+    thinking: section.thinking?.text ?? null,
+  }))
+}
+
+// The center of the title of the History row titled `title`, or null while
+// the panel shows no such row.
+async function historyRowCenter (browser: E2EBrowser, title: string): Promise<Point | null> {
+  return browser.execute((wanted: string) => {
+    const heading = Array.from(document.querySelectorAll('.history-row h3')).find((h3) => h3.textContent === wanted)
+    if (!heading) return null
+    const rect = heading.getBoundingClientRect()
+    return { x: Math.round(rect.left + rect.width / 2), y: Math.round(rect.top + rect.height / 2) }
+  }, title)
+}
+
+// Opens a saved conversation as the user does: a click on its History row.
+async function openFromHistory (browser: E2EBrowser, title: string): Promise<void> {
+  await openHistoryPanel(browser)
+  await waitForValue(browser, `History row "${title}"`, async () => (await historyRowCenter(browser, title)) !== null, true)
+  const row = await historyRowCenter(browser, title)
+  if (!row) throw new Error(`openFromHistory: no History row "${title}"`)
+  await pointerClickAt(browser, row)
+  await waitForValue(browser, 'History panel closed', async () => (await browser.$('.history-overlay')).isExisting(), false)
+}
+
+// Questions and answers that end with an empty user section, as a saved
+// reply leaves a thread. Each answer has `model` and its own thinking.
+function questionsAndAnswers (name: string, turns: number, model: ModelRef): SectionData[] {
+  const sections: SectionData[] = []
+  for (let turn = 1; turn <= turns; turn++) {
+    sections.push({ role: 'user', nodes: [{ kind: 'text', text: `${name} question ${turn}` }] })
+    sections.push({
+      role: 'agent',
+      nodes: [{ kind: 'text', text: `${name} answer ${turn}` }],
+      model,
+      thinking: { text: `${name} thinking ${turn}` },
+    })
+  }
+  sections.push({ role: 'user', nodes: [] })
+  return sections
 }
 
 const VISIBLE = {
@@ -446,5 +519,97 @@ describe('tab drag', () => {
 
     await pointerRelease(browser)
     await waitForValue(browser, 'tabs after the drop', () => tabIds(browser), [...ids.slice(1), ids[0]])
+  })
+})
+
+// Regression: a tab change that also adds a tab (History opens a
+// conversation that no tab has, Reopen Closed Tab) gave the tab left behind
+// the section models of the new tab, when the new tab had at least as many
+// sections. A blank tab then showed the new tab's role pills with no text,
+// and a tab with text was saved with the other conversation's models,
+// thinking, and extra empty sections.
+describe('tab change that adds a tab', () => {
+  const HISTORY_THREAD = makeConversation({
+    id: 'tab-change-history',
+    title: 'History thread',
+    sections: questionsAndAnswers('History', 2, { providerId: 'seeded', modelId: 'history-model' }),
+  })
+  const SAVED_THREAD = makeConversation({
+    id: 'tab-change-saved',
+    title: 'Saved thread',
+    sections: questionsAndAnswers('Saved', 1, { providerId: 'seeded', modelId: 'saved-model' }),
+  })
+  const CLOSED_THREAD = makeConversation({
+    id: 'tab-change-closed',
+    title: 'Closed thread',
+    sections: questionsAndAnswers('Closed', 2, { providerId: 'seeded', modelId: 'closed-model' }),
+  })
+  // Leaving a tab saves it at once, and the editor's own saves wait 1 s, so
+  // a wrong save of the tab left behind is on disk after this pause.
+  const SAVES_DONE_MS = 1500
+  let app: RunningApp
+  let browser: E2EBrowser
+
+  beforeAll(async () => {
+    app = await startApp()
+    try {
+      await seedAppState(app.home)
+      for (const conversation of [HISTORY_THREAD, SAVED_THREAD, CLOSED_THREAD]) {
+        await seedConversation(app.home, conversation)
+      }
+      browser = await createSession(app.binary, app.port)
+    } catch (err) {
+      await app.stop()
+      throw err
+    }
+    await waitFor(browser, 'header.tab-bar', 60_000)
+  })
+
+  afterEach(async (ctx) => {
+    await screenshotOnFailure(browser, ctx)
+  })
+
+  afterAll(async () => {
+    await destroySession(browser)
+    await app?.stop()
+  })
+
+  it('leaves a blank tab blank when History opens a longer conversation', async () => {
+    await newTab(browser)
+    const blankTabId = await activeTabId(browser)
+    const blank = await tabSections(browser, blankTabId)
+
+    await openFromHistory(browser, HISTORY_THREAD.title)
+    await waitForValue(browser, 'History thread open', () => activeConversationId(browser), HISTORY_THREAD.id)
+
+    await click(browser, `.tab-strip > .tab:nth-child(${(await tabIds(browser)).indexOf(blankTabId) + 1})`)
+    await waitForValue(browser, 'blank tab after the switch back', async () => ({
+      doc: await editorDoc(browser),
+      sections: await tabSections(browser, blankTabId),
+    }), { doc: '', sections: blank })
+  })
+
+  it('keeps a saved tab as it is when Reopen Closed Tab brings back a longer tab', async () => {
+    // From a blank tab, so that the saved tab is not the tab left behind.
+    await newTab(browser)
+    const closedTab = await sbpCall(browser, 'dez.model/tabs/openConversation', CLOSED_THREAD.id) as Tab
+    await sbpCall(browser, 'dez.controller/closeTab', closedTab.id)
+    await waitForValue(browser, 'longer tab closed', async () => (await conversationIds(browser)).includes(CLOSED_THREAD.id), false)
+
+    const savedTab = await sbpCall(browser, 'dez.model/tabs/openConversation', SAVED_THREAD.id) as Tab
+    await waitForValue(browser, 'saved tab in the editor', async () => (await editorDoc(browser)).startsWith('Saved question 1'), true)
+    const saved = {
+      sections: await tabSections(browser, savedTab.id),
+      pillLines: await savedPillLines(app.home, SAVED_THREAD.id),
+    }
+
+    await focusEditor(browser)
+    await browser.keys([Key.Control, Key.Shift, 't'])
+    await waitForValue(browser, 'longer tab reopened', () => activeConversationId(browser), CLOSED_THREAD.id)
+    await browser.pause(SAVES_DONE_MS)
+    expect({
+      sections: await tabSections(browser, savedTab.id),
+      pillLines: await savedPillLines(app.home, SAVED_THREAD.id),
+    }).toEqual(saved)
   })
 })
