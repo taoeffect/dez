@@ -61,7 +61,7 @@ export const PILL_NL = '\u{E003}'
  *  (id), role, the AI model that wrote the section (`model`, absent when
  *  unknown), its thinking (`thinking`, never doc text), and its reply
  *  duration (`durationMs`). The editor writes this field back to the store
- *  on every doc change (`syncDocToTab`), so a section field missing here is
+ *  on every doc change (`syncDocToStore`), so a section field missing here is
  *  lost there. A new per-section field must also go in
  *  `initialSectionModels`, `docToSections`, `sectionModelsEqual`
  *  (ThreadEditor.vue) and `dez.model/thread/sectionsIdentity`, or the store

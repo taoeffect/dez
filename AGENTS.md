@@ -178,6 +178,7 @@ Do not ever read, view, print, or `cat` `~/.config/dez/provider_keys.json`; it c
 - **`model`, `thinking`, and `durationMs` are agent-only**: show, save, or send them only when `role === 'agent'` (`durationMs` is never sent); copy them only when set (`modelRefField`, `thinkingField`, `durationField`).
 - **Per-section fields flow through the editor**: the editor writes sections back to the store on every doc change; a new field must follow `SectionModel` in `cmEditor.ts`.
 - **Section models are not doc text**: undo and redo put back the role and data of the sections they re-insert through `sectionsField`'s history hook (`cmEditor.ts`).
+- **The editor holds the old tab for a tick after a switch**: write the view back only to `viewTabId`, and never give it another tab's section models (`ThreadEditor.vue`).
 - **Each section is its own markdown text**: `sectionSeparatorMarkdown` (`cmEditor.ts`) ends paragraphs, quotes, and lists at a section separator; code fences and HTML blocks still run into the next sections.
 - **Thinking has two copies during a stream** (store and visible editor); see `dez.editor/setSectionThinkingIfVisible`.
 - **The thinking panel does not show the stored thinking as it is**: it shows `readableThinking` (`src/model/chat/thinking.ts`) and an encrypted pill in place of encrypted lines (`thinkingPill.ts`). Never change the stored thinking: `field` and `copilot` replays send it back, and the prompt cache needs the same bytes.

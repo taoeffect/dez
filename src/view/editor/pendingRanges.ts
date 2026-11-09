@@ -25,9 +25,10 @@ const removePendingRangeEffect = StateEffect.define<string>()
  *  so check the range's text before replacing it. A new state (tab switch,
  *  the rebuild at the end of a stream) starts with no ranges, so work whose
  *  id is gone knows that its doc is gone. Right after a tab switch, the view
- *  holds the old tab's state for a tick, and its edits would go to the new
- *  tab (`syncDocToStore` in ThreadEditor.vue): so each range keeps its tab,
- *  and `pendingRange` gives no range while another tab is active. */
+ *  holds the old tab's state for a tick, until the `activeTabId` watcher in
+ *  ThreadEditor.vue rebuilds it: so each range keeps its tab, and
+ *  `pendingRange` gives no range while another tab is active. Work that
+ *  ends in that tick then acts as it does after the rebuild. */
 const pendingRangesField = StateField.define<ReadonlyMap<string, PendingRange>>({
   create: () => new Map(),
   update(ranges, tr) {

@@ -75,7 +75,10 @@ const hostRef = ref<HTMLDivElement | null>(null)
 // from store sections. Fix editor behavior through CodeMirror state and
 // extensions, not by changing its DOM.
 let view: EditorView | null = null
-// The tab whose content the view's state holds.
+// The tab whose content the view's state holds. Right after a tab switch it
+// is still the old tab for a tick, until the `activeTabId` watcher rebuilds
+// the view from the store. So the view writes back only to this tab, and
+// takes section models only from it.
 let viewTabId: string | null = null
 // The conversation of that tab.
 let viewConversationId: string | null = null
@@ -461,8 +464,6 @@ function addDocumentLineCursor(v: EditorView, forward: boolean): boolean {
   return true
 }
 
-/** Flatten CM doc back into the given tab's `sections[]` using the live
- *  sectionsField for id + role preservation. */
 function persistTab(tabId: string) {
   void sbp('dez.model/tabs/save', tabId)
   void sbp('dez.model/appState/save')
@@ -500,9 +501,12 @@ function sectionModelsEqual(left: ReturnType<typeof initialSectionModels>, right
   })
 }
 
-function syncDocToTab(tabId: string, persist = false) {
-  if (!view) return
-  const tab = sbp('dez.model/tab', tabId)
+// Writes the view's doc back into the sections of `viewTabId`, with the ids,
+// roles and data of `sectionsField`. Never into `activeTabId`: right after a
+// tab switch, that is a tab whose doc the view does not hold.
+function syncDocToStore(persist = false) {
+  if (!view || !viewTabId) return
+  const tab = sbp('dez.model/tab', viewTabId)
   if (!tab) return
   const doc = view.state.doc.toString()
   const models = view.state.field(sectionsField)
@@ -513,12 +517,8 @@ function syncDocToTab(tabId: string, persist = false) {
   }
   const meta = view.state.field(pillsField)
   const sections = docToSections(doc, reconciledModels, meta)
-  sbp('dez.model/tabs/replaceSections', tabId, sections)
-  if (persist) schedulePersistTab(tabId)
-}
-
-function syncDocToStore(persist = false) {
-  syncDocToTab(activeTabId.value, persist)
+  sbp('dez.model/tabs/replaceSections', viewTabId, sections)
+  if (persist) schedulePersistTab(viewTabId)
 }
 
 /** Recount matches for the find dropdown status. */
@@ -997,16 +997,22 @@ function onEditorStreamFinished(tabId: string, followBottom: boolean) {
 }
 
 function syncViewStructureToStoreSections() {
-  if (!view) return
+  // Right after a tab switch the view still holds the old tab's doc. The
+  // active tab's models do not belong to it: with them, the next write-back
+  // would give the old tab the other tab's section ids, roles, models and
+  // thinking, and extra empty sections. A switch that also adds a tab
+  // (History, Reopen Closed Tab, New Tab) runs this watcher before the
+  // `activeTabId` watcher. The rebuild a tick later reads the store anyway.
+  if (!view || viewTabId !== activeTabId.value) return
   const models = initialSectionModels(activeSections.value)
   const current = view.state.field(sectionsField)
   if (sectionModelsEqual(current, models)) return
   // The store has fewer sections than the view only right before a rebuild
   // of the whole view state from the store, in the same microtask run, so no
   // input event comes between: a failed or stopped stream removed its empty
-  // agent section (the stream-end rebuild follows), or the active tab changed.
-  // Until then the view keeps the models that match its doc; fewer models
-  // would leave a separator without one.
+  // agent section (the stream-end rebuild follows). Until then the view
+  // keeps the models that match its doc; fewer models would leave a
+  // separator without one.
   if (models.length < current.length) return
   syncingViewStructure = true
   try {
@@ -1034,7 +1040,7 @@ onMounted(() => {
 onBeforeUnmount(() => {
   syncDocToStore()
   flushPendingPersist()
-  persistTab(activeTabId.value)
+  if (viewTabId) persistTab(viewTabId)
   unregisterActiveView()
   sbp('okTurtles.events/off', 'dez.editor.stream-finished', onEditorStreamFinished)
   refreshFindStatusDebounced.clear()
@@ -1042,15 +1048,16 @@ onBeforeUnmount(() => {
   view = null
 })
 
-// Rebuild state when the active tab changes — the CM doc is per-tab.
+// Rebuild state when the active tab changes — the CM doc is per-tab. Until
+// the rebuild, the view holds the old tab (`viewTabId`): save it first.
 watch(
   () => activeTabId.value,
   (_newId, oldId) => {
     if (oldId) {
       rememberViewPlace()
-      syncDocToTab(oldId)
+      syncDocToStore()
       flushPendingPersist()
-      persistTab(oldId)
+      if (viewTabId) persistTab(viewTabId)
       unregisterActiveView(oldId)
     }
     nextTick(() => {
