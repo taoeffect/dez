@@ -1,6 +1,7 @@
 import * as z from 'zod'
 import { MARKER_ATTRIBUTES, escapeMarkerAttribute, markerAttributes } from '../../utils/markerAttribute'
 import { modelRefKey, parseModelRefKey } from './modelRef'
+import { tagEscape } from './tagEscape'
 import type { ModelRef, Role, Section, SectionThinking, ThinkingReplay, ThinkingRound } from './types'
 
 // The `<dez:pill …/>` marker starts a section in conversation files and in
@@ -78,19 +79,12 @@ function parseDurationMs(value: string | undefined): number | null {
 
 // A marker in the thinking text would end the container early, so the text
 // holds none: `</dez:pill>` is written as `<\/dez:pill>`, and `<dez:pill` as
-// `<\dez:pill`. Each `<`, `\`…, optional `/`, `dez:pill` run gets one more
-// `\` on write and loses one on read, so text that already holds
+// `<\dez:pill`, with the `tagEscape` rule, so text that already holds
 // `<\/dez:pill>` also reads back unchanged. A marker inside an open
 // container then proves that a hand edit lost its closing line. The `field`
 // replay sends the text back to the provider, so it must round-trip exactly;
 // the prompt escaping in conversationFormat.ts cannot do that.
-function escapeThinkingText(text: string): string {
-  return text.replace(/<(\\*)(\/?)dez:pill/g, '<\\$1$2dez:pill')
-}
-
-function unescapeThinkingText(body: string): string {
-  return body.replace(/<\\(\\*)(\/?)dez:pill/g, '<$1$2dez:pill')
-}
+const thinkingTextEscape = tagEscape('dez:pill')
 
 /** The marker text of a section: one self-closing tag, or a container when
  *  an agent section has thinking. The container body is the exact thinking
@@ -106,7 +100,7 @@ export function pillMarkerText(section: Pick<Section, 'role' | 'model' | 'thinki
   if (!thinking) return `${tag}/>`
   if (thinking.replay) tag += ` replay="${escapeMarkerAttribute(JSON.stringify(thinking.replay))}"`
   if (thinking.rounds) tag += ` rounds="${escapeMarkerAttribute(JSON.stringify(thinking.rounds))}"`
-  return `${tag}>\n${escapeThinkingText(thinking.text)}\n${PILL_CLOSE_TAG}`
+  return `${tag}>\n${thinkingTextEscape.escape(thinking.text)}\n${PILL_CLOSE_TAG}`
 }
 
 /** One whole marker inside other text, such as clipboard text: a
@@ -114,7 +108,7 @@ export function pillMarkerText(section: Pick<Section, 'role' | 'model' | 'thinki
  *  closing tag before the next marker, which reads as a self-closing tag,
  *  as in conversation files. A container body is the lines between the
  *  opening tag and the closing tag line, as in conversation files.
- *  `escapeThinkingText` leaves no `<dez:pill` or `</dez:pill` in a body, so
+ *  `thinkingTextEscape` leaves no `<dez:pill` or `</dez:pill` in a body, so
  *  the body stops at the first one: a lone opening tag never runs on to the
  *  closing tag of a later container. The lazy `??` tries "no body lines"
  *  first, for `<dez:pill …>\n</dez:pill>`. It has no capture groups, so
@@ -161,7 +155,7 @@ export function parsePillMarker(text: string): PillMarker | null {
  *  dropped. */
 export function containerThinking(marker: PillMarker, body: string): SectionThinking | undefined {
   if (marker.role !== 'agent') return undefined
-  const text = unescapeThinkingText(body)
+  const text = thinkingTextEscape.unescape(body)
   const { replay, rounds } = marker
   // Rounds that are not valid or do not fit the text (a hand edit) cannot
   // tell where each round's text starts, the first round's too. Its replay

@@ -2,6 +2,7 @@ import { MARKER_ATTRIBUTES, escapeMarkerAttribute, markerAttributes } from '../.
 import { fitsParameterType, toolDefinition } from '../tools/registry'
 import type { ToolArguments, ToolArgumentValue, ToolParameterType } from '../tools/types'
 import { stripLiveSentinels } from './content'
+import { tagEscape } from './tagEscape'
 
 // A Dez tool call is plain text in an agent section, as an image reference
 // is: no content node kind and no sentinel. Conversation files and clipboard
@@ -24,7 +25,7 @@ import { stripLiveSentinels } from './content'
 //   argument is written as it is, a number or boolean as its JSON text; on
 //   read, the tool's definition gives the type back. Values are escaped
 //   (`escapeMarkerAttribute`), so the tag stays on one line.
-// - The body is the result, escaped (`escapeResult`) so that no body line
+// - The body is the result, escaped (`resultEscape`) so that no body line
 //   can end the block or read as a pill or prompt line in a conversation
 //   file.
 // - Blocks count in agent sections only; in a user section the same text is
@@ -84,20 +85,12 @@ const OPENING_LINE = new RegExp(String.raw`^<dez:tool${MARKER_ATTRIBUTES}>$`)
 // `lastIndex`, which each use sets first.
 const ANY_TAG = /<\/?dez:/g
 
-// Each `<`, `\`…, optional `/`, `dez:` run gets one more `\` after the `<`
-// on write and loses one on read (the rule of `escapeThinkingText` in
-// pillMarker.ts, for every `dez:` tag), so any result reads back exactly,
-// also one that already holds the escaped form. A body then holds no
-// `</dez:tool>` closing line, and no `<dez:pill` or `<dez:prompt` line that
-// would start a section or a prompt in a conversation file or clipboard
-// text.
-function escapeResult(text: string): string {
-  return text.replace(/<(\\*)(\/?)dez:/g, '<\\$1$2dez:')
-}
-
-function unescapeResult(body: string): string {
-  return body.replace(/<\\(\\*)(\/?)dez:/g, '<$1$2dez:')
-}
+// Every `dez:` tag run in a result gets the `tagEscape` escape, so any result
+// reads back exactly, also one that already holds the escaped form. A body
+// then holds no `</dez:tool>` closing line, and no `<dez:pill` or
+// `<dez:prompt` line that would start a section or a prompt in a
+// conversation file or clipboard text.
+const resultEscape = tagEscape('dez:')
 
 // Live sentinels in doc text break the editor's section and pill scan, and
 // tool values come from a model or a tool, so the writer removes them.
@@ -126,7 +119,7 @@ export function toolBlockText(block: ToolBlockData): string {
   for (const [name, value] of inDefinitionOrder(block.name, Object.entries(block.arguments))) {
     tag += ` ${name}="${attributeValue(typeof value === 'string' ? value : JSON.stringify(value))}"`
   }
-  const result = escapeResult(stripLiveSentinels(block.result))
+  const result = resultEscape.escape(stripLiveSentinels(block.result))
   return `${tag}>\n${result === '' ? '' : `${result}\n`}${CLOSE_TAG}`
 }
 
@@ -194,7 +187,7 @@ function readBlock(text: string, from: number): ToolBlock | null {
     name,
     status: readStatus(attributes.get('status')),
     arguments: readArguments(name, attributes),
-    result: unescapeResult(body.slice(0, -1)),
+    result: resultEscape.unescape(body.slice(0, -1)),
   }
 }
 
@@ -246,22 +239,16 @@ export function withoutToolBlocks(text: string): string {
   return kept.join('\n\n')
 }
 
-// Model answer text gets one more `\` after the `<` of each `<`, `\`…,
-// optional `/`, `dez:tool` run, so no answer can hold a block's opening or
-// closing tag. Requests remove the escape (`unescapeModelText`), so the
-// provider gets the model's own bytes. The escape covers `dez:tool` only:
-// prose about other tags keeps its bytes.
+// Model answer text gets the `tagEscape` escape for `dez:tool`, so no answer
+// can hold a block's opening or closing tag. Requests remove the escape
+// (`unescapeModelText`), so the provider gets the model's own bytes. The
+// escape covers `dez:tool` only: prose about other tags keeps its bytes.
 const MODEL_TEXT_TAG = 'dez:tool'
-
-function escapeModelText(text: string): string {
-  return text.replace(/<(\\*)(\/?)dez:tool/g, '<\\$1$2dez:tool')
-}
+const modelTextEscape = tagEscape(MODEL_TEXT_TAG)
 
 /** Answer text as the model wrote it: the text of an agent section outside
  *  its tool blocks, with the `ModelTextEscaper` escape removed. */
-export function unescapeModelText(text: string): string {
-  return text.replace(/<\\(\\*)(\/?)dez:tool/g, '<$1$2dez:tool')
-}
+export const unescapeModelText = modelTextEscape.unescape
 
 // True when `text`, which starts with `<`, can still grow into an escaped
 // run: `<`, `\`…, an optional `/`, and a proper start of `dez:tool`.
@@ -288,7 +275,7 @@ export class ModelTextEscaper {
     const last = text.lastIndexOf('<')
     const holdFrom = last >= 0 && couldGrowIntoTag(text.slice(last)) ? last : text.length
     this.held = text.slice(holdFrom)
-    return escapeModelText(text.slice(0, holdFrom))
+    return modelTextEscape.escape(text.slice(0, holdFrom))
   }
 
   /** The held text, at the end of a request round. It holds no whole run, so
