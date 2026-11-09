@@ -1,6 +1,6 @@
 import { defaultKeymap, deleteCharForward, history, redo, undo, undoDepth } from '@codemirror/commands'
 import { ensureSyntaxTree } from '@codemirror/language'
-import { EditorSelection, EditorState, type Transaction, type TransactionSpec } from '@codemirror/state'
+import { EditorSelection, EditorState, Transaction, type TransactionSpec } from '@codemirror/state'
 import { EditorView, keymap, runScopeHandlers } from '@codemirror/view'
 import { describe, expect, it } from 'vitest'
 import {
@@ -221,6 +221,36 @@ describe('section models in the undo history', () => {
     expect(undone.doc.toString()).toBe(DOC)
     expect(undone.field(sectionsField)).toStrictEqual(MODELS)
     expect(dispatchCommand(undone, redo).field(sectionsField)).toStrictEqual(pastedModels)
+  })
+
+  // The image trash deletes an image reference outside the undo history.
+  // The history then maps the saved separator positions in the wrong doc
+  // (see `restoreSectionModelsEffect`).
+  function withoutHistory(state: EditorState, from: number, to: number): EditorState {
+    return state.update({ changes: { from, to }, annotations: Transaction.addToHistory.of(false) }).state
+  }
+
+  it('puts back the sections that a delete at the doc end removed, after a change outside the undo history', () => {
+    const deleted = historyState().update({ changes: { from: DOC.indexOf('two') + 'two'.length, to: DOC.length }, userEvent: 'delete.selection' }).state
+    const trashed = withoutHistory(deleted, 1, 3)
+
+    const undone = dispatchCommand(trashed, undo)
+
+    expect(undone.doc.toString()).toBe(`o${DOC.slice(3)}`)
+    expect(undone.field(sectionsField)).toStrictEqual(MODELS)
+  })
+
+  it('puts back a deleted section after a change outside the undo history deletes the text at its old place', () => {
+    // Deletes the separator of s3, at 10; `three` then starts at 6, and its
+    // `ree` holds 10.
+    const deleted = historyState().update({ changes: { from: DOC.indexOf('two') + 1, to: DOC.indexOf('three') + 1 }, userEvent: 'delete.selection' }).state
+    const ree = deleted.doc.toString().indexOf('ree')
+    const trashed = withoutHistory(deleted, ree, ree + 'ree'.length)
+
+    const undone = dispatchCommand(trashed, undo)
+
+    expect(undone.doc.toString()).toBe(DOC.replace('three', 'th'))
+    expect(undone.field(sectionsField)).toStrictEqual(MODELS)
   })
 })
 

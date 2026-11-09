@@ -457,25 +457,39 @@ export const updatePillMetaEffect = StateEffect.define<{
 }>()
 export const togglePillExpandedEffect = StateEffect.define<{ id: string }>()
 
-/** A section model that an undo or redo puts back, with the position of
- *  its separator in the doc after that undo or redo. */
+/** A section model that an undo or redo puts back. `pos` is the position
+ *  of its separator in the doc after that undo or redo; only the order of
+ *  the entries can be trusted (see `restoreSectionModelsEffect`). */
 interface RestoredSectionModel {
   pos: number
   model: SectionModel
+  /** A later change deleted the character after `pos`. */
+  mappedAway?: boolean
 }
 
 /** Carried by an undo or redo that puts deleted separators back in the
  *  doc: their models, for `sectionsField` (see its `provide`). While the
- *  effect waits in the undo history, CodeMirror maps it through later
- *  changes; an entry whose separator a later change deleted is dropped. */
+ *  effect waits in the undo history, CodeMirror maps it in two ways:
+ *  - When it joins two events, it maps the newer effect through the older
+ *    event's undo, in the right doc. A mapped-away entry is then a
+ *    separator that the older edit inserted: the joined undo does not put
+ *    it back.
+ *  - Through a doc change that is not in the history (the image trash), it
+ *    maps the effect in the coordinates of the current doc, not those of
+ *    the doc after the undo (`mapEvent` in `@codemirror/commands`). So
+ *    `pos` can be past the end of that change, or move to a wrong place
+ *    and be mapped away, but the undo still puts the separator back.
+ *  So no entry is dropped here, and mapping keeps the entries' order:
+ *  `withRestoredSectionModels` takes the places from the undo's changes. */
 const restoreSectionModelsEffect = StateEffect.define<RestoredSectionModel[]>({
-  map: (entries, mapping) => {
-    const mapped = entries.flatMap(({ pos, model }) => {
-      const next = mapping.mapPos(pos, 1, MapMode.TrackAfter)
-      return next === null ? [] : [{ pos: next, model }]
-    })
-    return mapped.length > 0 ? mapped : undefined
-  },
+  map: (entries, mapping) => entries.map((entry) => {
+    // Past the end of the change: move it with the doc end, so that it
+    // stays after the entries in range.
+    if (entry.pos > mapping.length) return { ...entry, pos: entry.pos - mapping.length + mapping.newLength }
+    const tracked = mapping.mapPos(entry.pos, 1, MapMode.TrackAfter)
+    if (tracked !== null) return { ...entry, pos: tracked }
+    return { ...entry, pos: mapping.mapPos(entry.pos, 1), mappedAway: true }
+  }),
 })
 
 /* ──────────────────────  sectionsField  ─────────────────────── */
@@ -504,16 +518,29 @@ export function reconcileSectionModelsToDoc(
 /** `models` with the models that the undo or redo `tr` puts back, each at
  *  the index of the section that its separator starts in the new doc.
  *  `models` already holds, in order, the models of the new doc's other
- *  separators, so inserting by ascending position puts each one at its
- *  final index. */
+ *  separators, so inserting in doc order puts each one at its final index.
+ *  The places are those of the separators that `tr`'s changes insert,
+ *  which the history maps right; the entries give only the order. */
 function withRestoredSectionModels(models: SectionModel[], tr: Transaction): SectionModel[] {
-  const restored = tr.effects.flatMap((effect) => (effect.is(restoreSectionModelsEffect) ? effect.value : []))
+  const restored = tr.effects
+    .flatMap((effect) => (effect.is(restoreSectionModelsEffect) ? effect.value : []))
+    .sort((a, b) => a.pos - b.pos)
   if (restored.length === 0) return models
+  const inserted: number[] = []
+  tr.changes.iterChanges((_fromA, _toA, fromB, _toB, text) => {
+    const str = text.toString()
+    for (let i = str.indexOf(SECTION_SEP); i >= 0; i = str.indexOf(SECTION_SEP, i + 1)) inserted.push(fromB + i)
+  })
+  // After a doc change that is not in the history, every entry has its
+  // separator; after a join, only those not mapped away do (see
+  // `restoreSectionModelsEffect`). With both, the entries cannot be paired
+  // with the separators: put back none.
+  const kept = restored.filter((entry) => !entry.mappedAway)
+  const matched = [restored, kept].find((entries) => entries.length === inserted.length)
+  if (!matched) return models
   const doc = tr.newDoc.toString()
   const copy = models.slice()
-  for (const { pos, model } of restored.sort((a, b) => a.pos - b.pos)) {
-    if (doc.charCodeAt(pos) === 0x1e) copy.splice(sectionIndexAtOffset(doc, pos) + 1, 0, model)
-  }
+  matched.forEach(({ model }, i) => copy.splice(sectionIndexAtOffset(doc, inserted[i]) + 1, 0, model))
   return copy
 }
 
