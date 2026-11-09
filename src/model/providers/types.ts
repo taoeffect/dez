@@ -1,5 +1,5 @@
 import type { ImageMediaType } from '../chat/images'
-import type { Role, SectionThinking, ThinkingReplay } from '../chat/types'
+import type { RequestMessage, ThinkingReplay } from '../chat/types'
 import type { ToolDefinition } from '../tools/types'
 import type { ApiFormatId, ProviderAuth, ProviderSettingDef } from './config'
 
@@ -73,16 +73,9 @@ export type ChatPart =
   | { type: 'text', text: string }
   | { type: 'image', mediaType: ImageMediaType, data: string }
 
-export interface ChatMessage {
-  role: Role
-  // Parts only for a user message with images: both formats take images
-  // only from the user. An agent message is always a string.
-  content: string | ChatPart[]
-  // The earlier thinking of an agent message, for a request to the model
-  // that wrote it. The request sends it back only in the shape of its
-  // replay, and only when the provider asks for thinking.
-  thinking?: SectionThinking
-}
+// A request message as the wire formats take it: an image part holds the
+// image bytes.
+export type ChatMessage = RequestMessage<ChatPart>
 
 // What a chat request sends besides its messages. Every field is optional:
 // a diagnostics probe sends none of them.

@@ -1,6 +1,6 @@
 import type { ThinkingReplay } from '../chat/types'
 import { toolJsonSchema } from '../tools/registry'
-import type { ToolDefinition } from '../tools/types'
+import type { ToolCall, ToolDefinition, ToolResult } from '../tools/types'
 import type { JsonObject } from '../../utils/json'
 import type { Secret } from '../../utils/secret'
 import { AnthropicStreamParser } from './anthropicSse'
@@ -43,10 +43,17 @@ export interface ApiFormat {
 // A message as the provider gets it.
 type WireMessage = Record<string, unknown>
 
-// The wire message of an agent reply that sends its thinking back, or
-// undefined when the format has no shape for the replay's kind: the replay
-// came from the other format (a custom provider's format was changed).
-type ReplayMessage = (content: string, text: string, replay: ThinkingReplay) => WireMessage | undefined
+// The wire message of an agent message: its text and its tool calls (an
+// empty list when it has none).
+type AgentMessage = (content: string, toolCalls: readonly ToolCall[]) => WireMessage
+
+// The agent wire message with its round's thinking sent back, or undefined
+// when the format has no shape for the replay's kind: the replay came from
+// the other format (a custom provider's format was changed).
+type ReplayMessage = (message: WireMessage, text: string, replay: ThinkingReplay) => WireMessage | undefined
+
+// The wire messages of the results of one group of tool calls.
+type ToolResultMessages = (results: readonly ToolResult[]) => WireMessage[]
 
 // The wire block of one image of a user message.
 type ImageBlock = (image: Extract<ChatPart, { type: 'image' }>) => Record<string, unknown>
@@ -56,7 +63,9 @@ type WireTool = (tool: ToolDefinition) => Record<string, unknown>
 
 // The shapes of the things that both formats send but write differently.
 interface WireShapes {
+  agentMessage: AgentMessage
   replayMessage: ReplayMessage
+  toolResults: ToolResultMessages
   imageBlock: ImageBlock
   tool: WireTool
 }
@@ -78,9 +87,9 @@ function wireContent(content: string | ChatPart[], imageBlock: ImageBlock): unkn
     : content.map((part) => part.type === 'text' ? { type: 'text', text: part.text } : imageBlock(part))
 }
 
-// Both formats send the same message list; only the replay shapes, the image
-// blocks, the tool entries, and the extras differ. A message carries thinking
-// only when the request asks for thinking (Provider.chatRequest).
+// Both formats send the same message list; only the shapes above and the
+// extras differ. A message carries thinking only when the request asks for
+// thinking (Provider.chatRequest).
 //
 // A signed replay (every kind except `field`) is sent only while the request
 // before it hashes to its `prefixHash`, the hash of what the provider signed
@@ -91,7 +100,9 @@ function wireContent(content: string | ChatPart[], imageBlock: ImageBlock): unkn
 // dropped as stale or it never had one (cancelled, Thinking off, another
 // model), so a later replay that matches is still the one that the provider
 // signed. A `field` replay is plain text that nothing checks, so an edit
-// before it only costs cache hits.
+// before it only costs cache hits. Each round of a reply that called tools
+// is its own agent message with its own replay, so the replay of a later
+// round covers the calls and results before it.
 //
 // The provider reads the tools and the system prompt before the messages, so
 // the prefix starts with them, in fixed places (null when absent): a signed
@@ -102,43 +113,97 @@ function wireChat(messages: ChatMessage[], context: ChatRequestContext, shapes: 
   prefix.add(context.system ?? null)
   prefix.add(tools ?? null)
 
-  const wireMessages = messages.map((message) => {
-    const role = message.role === 'agent' ? 'assistant' : message.role
-    const content = message.content
-    let wireMessage: WireMessage = { role, content: wireContent(content, shapes.imageBlock) }
-    const thinking = message.role === 'agent' ? message.thinking : undefined
-    // An agent message is always a string (ChatMessage), so the string check
-    // only narrows the type.
-    const replayed = thinking?.replay && typeof content === 'string' && shapes.replayMessage(content, thinking.text, thinking.replay)
-
-    if (thinking?.replay && replayed && (thinking.replay.kind === 'field' || prefix.digest() === thinking.replay.prefixHash)) {
-      wireMessage = replayed
-    }
-
-    prefix.add(wireMessage)
-    return wireMessage
+  const wireMessages = messages.flatMap((message) => {
+    const sent = message.role === 'user'
+      ? [{ role: 'user', content: wireContent(message.content, shapes.imageBlock) }]
+      : message.role === 'agent'
+        ? [agentWireMessage(message, prefix, shapes)]
+        : shapes.toolResults(message.results)
+    for (const wireMessage of sent) prefix.add(wireMessage)
+    return sent
   })
 
   return { messages: wireMessages, ...(tools && { tools }), prefixHash: prefix.digest() }
 }
 
-const openAiReplayMessage: ReplayMessage = (content, text, replay) => {
+// `prefix` holds the messages before this one.
+function agentWireMessage(message: Extract<ChatMessage, { role: 'agent' }>, prefix: ThinkingPrefixHasher, shapes: WireShapes): WireMessage {
+  const plain = shapes.agentMessage(message.content, message.toolCalls ?? [])
+  const { thinking } = message
+  if (!thinking?.replay) return plain
+  if (thinking.replay.kind !== 'field' && prefix.digest() !== thinking.replay.prefixHash) return plain
+  return shapes.replayMessage(plain, thinking.text, thinking.replay) ?? plain
+}
+
+// Empty text with tool calls stays `""`: strict servers refuse a `null`
+// content.
+const openAiAgentMessage: AgentMessage = (content, toolCalls) => toolCalls.length === 0
+  ? { role: 'assistant', content }
+  : {
+      role: 'assistant',
+      content,
+      tool_calls: toolCalls.map((call) => ({
+        id: call.id,
+        type: 'function',
+        function: { name: call.name, arguments: JSON.stringify(call.arguments) },
+      })),
+    }
+
+const openAiReplayMessage: ReplayMessage = (message, text, replay) => {
   switch (replay.kind) {
     case 'field':
-      return { role: 'assistant', content, [replay.field]: text }
+      return { ...message, [replay.field]: text }
     case 'reasoningDetails':
-      return { role: 'assistant', content, reasoning_details: replay.details }
+      return { ...message, reasoning_details: replay.details }
     case 'copilot':
-      return { role: 'assistant', content, reasoning_text: text, reasoning_opaque: replay.opaque }
+      return { ...message, reasoning_text: text, reasoning_opaque: replay.opaque }
     case 'anthropicBlocks':
       return undefined
   }
 }
 
-// The blocks go back unchanged and in stream order, before the answer text.
-const anthropicReplayMessage: ReplayMessage = (content, _text, replay) => replay.kind === 'anthropicBlocks'
-  ? { role: 'assistant', content: [...replay.blocks, { type: 'text', text: content }] }
+// One `tool` message per result. The format has no error flag: the result
+// text says what failed.
+const openAiToolResults: ToolResultMessages = (results) =>
+  results.map((result) => ({ role: 'tool', tool_call_id: result.callId, content: result.content }))
+
+// Anthropic takes tool call ids that match `^[a-zA-Z0-9_-]+$`. A call that an
+// OpenAI-format provider made can hold other characters (Kimi:
+// `functions.model_list:0`); each one becomes `_`, the same in the call and
+// in its result.
+function anthropicToolId(id: string): string {
+  return id.replace(/[^a-zA-Z0-9_-]/g, '_')
+}
+
+// A message with no tool calls keeps the plain string of the time before
+// tools (saved prefix hashes depend on it). With calls, the text goes only
+// when it has visible text: Anthropic refuses a blank text block.
+const anthropicAgentMessage: AgentMessage = (content, toolCalls) => toolCalls.length === 0
+  ? { role: 'assistant', content }
+  : {
+      role: 'assistant',
+      content: [
+        ...(content.trim() === '' ? [] : [{ type: 'text', text: content }]),
+        ...toolCalls.map((call) => ({ type: 'tool_use', id: anthropicToolId(call.id), name: call.name, input: call.arguments })),
+      ],
+    }
+
+// The blocks go back unchanged and in stream order, before the answer text
+// and the tool calls.
+const anthropicReplayMessage: ReplayMessage = (message, _text, replay) => replay.kind === 'anthropicBlocks'
+  ? { ...message, content: [...replay.blocks, ...contentBlocks(message)] }
   : undefined
+
+// One user message with every result of the group, in call order.
+const anthropicToolResults: ToolResultMessages = (results) => [{
+  role: 'user',
+  content: results.map((result) => ({
+    type: 'tool_result',
+    tool_use_id: anthropicToolId(result.callId),
+    content: result.content,
+    ...(result.isError && { is_error: true }),
+  })),
+}]
 
 // The image as a base64 data URL in an `image_url` part (checked live on
 // Venice).
@@ -165,8 +230,20 @@ const anthropicTool: WireTool = (tool) => ({
   input_schema: toolJsonSchema(tool),
 })
 
-const openAiShapes: WireShapes = { replayMessage: openAiReplayMessage, imageBlock: openAiImageBlock, tool: openAiTool }
-const anthropicShapes: WireShapes = { replayMessage: anthropicReplayMessage, imageBlock: anthropicImageBlock, tool: anthropicTool }
+const openAiShapes: WireShapes = {
+  agentMessage: openAiAgentMessage,
+  replayMessage: openAiReplayMessage,
+  toolResults: openAiToolResults,
+  imageBlock: openAiImageBlock,
+  tool: openAiTool,
+}
+const anthropicShapes: WireShapes = {
+  agentMessage: anthropicAgentMessage,
+  replayMessage: anthropicReplayMessage,
+  toolResults: anthropicToolResults,
+  imageBlock: anthropicImageBlock,
+  tool: anthropicTool,
+}
 
 // Anthropic caches a prompt prefix only up to a block marked with
 // `cache_control` (a cache breakpoint). A mark on the last user message
@@ -178,14 +255,18 @@ const anthropicShapes: WireShapes = { replayMessage: anthropicReplayMessage, ima
 // too. The marks are added after the prefix hash: a user message loses its
 // mark two turns later, and that must not drop a signed replay. Anthropic
 // does not compare the marks when it matches a prefix, and a string content
-// is the same prompt as one text block. `markedBlock` gives the index of the
-// block to mark, or -1 when the message has none; such a message gets no
-// mark.
+// is the same prompt as one text block. The results of a tool round count as
+// a user message: Anthropic's are one, and the OpenAI format's are one `tool`
+// message per result, of which the last one gets the mark. `markedBlock`
+// gives the index of the block to mark, or -1 when the message has none;
+// such a message gets no mark.
 // https://platform.claude.com/docs/en/build-with-claude/prompt-caching
 function withCacheBreakpoints(messages: WireMessage[], markedBlock: (blocks: WireMessage[]) => number): WireMessage[] {
   const marks = new Map<number, number>()
   for (let index = messages.length - 1; index >= 0 && marks.size < 2; index--) {
-    const block = messages[index].role === 'user' ? markedBlock(contentBlocks(messages[index])) : -1
+    const { role } = messages[index]
+    const turnEnd = role === 'user' || (role === 'tool' && messages[index + 1]?.role !== 'tool')
+    const block = turnEnd ? markedBlock(contentBlocks(messages[index])) : -1
     if (block >= 0) marks.set(index, block)
   }
   return messages.map((message, index) => {
@@ -201,6 +282,23 @@ function contentBlocks(message: WireMessage): WireMessage[] {
   return typeof message.content === 'string'
     ? [{ type: 'text', text: message.content }]
     : message.content as WireMessage[]
+}
+
+// Anthropic roles alternate, and the results of a tool round must start the
+// user message after the calls, so a user message right after a results
+// message joins it, after the results. The prefix hash covers the messages
+// before the join: every request builds them the same way.
+function withResultsJoined(messages: WireMessage[]): WireMessage[] {
+  const joined: WireMessage[] = []
+  for (const message of messages) {
+    const previous = joined[joined.length - 1]
+    if (message.role === 'user' && previous?.role === 'user' && contentBlocks(previous)[0]?.type === 'tool_result') {
+      joined[joined.length - 1] = { role: 'user', content: [...contentBlocks(previous), ...contentBlocks(message)] }
+    } else {
+      joined.push(message)
+    }
+  }
+  return joined
 }
 
 // OpenAI SDK style: the base URL already includes the version, e.g.
@@ -257,7 +355,7 @@ const anthropicFormat: ApiFormat = {
     const body: Record<string, unknown> = {
       model: modelId,
       ...(context.system !== undefined && { system: context.system }),
-      messages: withCacheBreakpoints(chat.messages, (blocks) => blocks.length - 1),
+      messages: withCacheBreakpoints(withResultsJoined(chat.messages), (blocks) => blocks.length - 1),
       stream: true,
     }
     if (chat.tools) body.tools = chat.tools

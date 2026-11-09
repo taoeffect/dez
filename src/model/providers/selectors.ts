@@ -57,10 +57,11 @@ async function readMessageImages(messages: ProviderChatInputMessage[]): Promise<
     return readImagePart(part.path, await appDir)
   }
 
-  return Promise.all(messages.map(async ({ content, ...message }) => ({
-    ...message,
-    content: typeof content === 'string' ? content : await Promise.all(content.map(readPart)),
-  })))
+  return Promise.all(messages.map(async (message): Promise<ChatMessage> => {
+    if (message.role !== 'user') return message
+    const { content } = message
+    return { role: 'user', content: typeof content === 'string' ? content : await Promise.all(content.map(readPart)) }
+  }))
 }
 
 // Only a stored image of this Dez folder is read (`storedImageFile`): the

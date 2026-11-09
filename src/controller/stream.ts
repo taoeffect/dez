@@ -115,11 +115,7 @@ export default sbp('sbp/selectors/register', {
         conversationId: args.conversationId,
         system,
         modelId: args.model.modelId,
-        messages: args.messages.map((message) => ({
-          role: message.role,
-          content: message.content,
-          ...(message.thinking && { thinking: message.thinking }),
-        })),
+        messages: args.messages,
         requestId,
         providerSettings,
         onToken: (token: string) => {

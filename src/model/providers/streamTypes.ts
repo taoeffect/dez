@@ -1,12 +1,10 @@
-import type { MessagePart, ThinkingReplay } from '../chat/types'
-import type { ChatMessage, ChatRequestContext, ProviderId } from './types'
+import type { MessagePart, RequestMessage, ThinkingReplay } from '../chat/types'
+import type { ChatRequestContext, ProviderId } from './types'
 
 // A message as dez.provider/streamChat takes it: an image part holds the
 // path of a stored image, and streamChat reads its bytes before it builds
 // the request.
-export interface ProviderChatInputMessage extends Omit<ChatMessage, 'content'> {
-  content: string | MessagePart[]
-}
+export type ProviderChatInputMessage = RequestMessage<MessagePart>
 
 // `conversationId`, `system`, and `tools` go into the request body
 // (ChatRequestContext).

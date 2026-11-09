@@ -576,7 +576,7 @@ describe('dez.controller/submitTab images', () => {
 
     await sbp('dez.controller/submitTab', activeTab().id)
 
-    expect(sent.map((message) => message.thinking)).toStrictEqual([
+    expect(sent.map((message) => message.role === 'agent' ? message.thinking : undefined)).toStrictEqual([
       undefined, undefined,
       undefined, undefined,
       undefined, { text: 'It is a cat.', replay: field },

@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import type { AnthropicThinkingBlock, ThinkingReplay } from '../chat/types'
-import type { ToolDefinition } from '../tools/types'
+import type { ToolCall, ToolDefinition } from '../tools/types'
 import type { NativeHttpRequest } from '../../utils/protocol/nativeHttp'
 import { secret } from '../../utils/secret'
 import { BUILT_IN_PROVIDER_CONFIGS } from './builtins'
@@ -26,6 +26,11 @@ const markedApiMessages = [
   { role: 'user', content: [{ type: 'text', text: 'Search the web for current info.', cache_control: CACHE }] },
   { role: 'assistant', content: 'I can help with that.' },
 ]
+
+// A call of the model list tool, and its wire forms.
+const toolCall = (id: string, filter: string): ToolCall => ({ id, name: 'model_list', arguments: { filter } })
+const openAiToolCall = (id: string, filter: string) => ({ id, type: 'function', function: { name: 'model_list', arguments: `{"filter":"${filter}"}` } })
+const anthropicToolUse = (id: string, filter: string) => ({ type: 'tool_use', id, name: 'model_list', input: { filter } })
 
 const key = secret('sk-test')
 
@@ -253,13 +258,36 @@ describe('prompt cache', () => {
     ])
   })
 
-  it('sends the prompt of each request again and marks where that request stored it, also after a turn of more than 20 blocks', () => {
+  it('marks the last tool message of a tool round in the OpenAI format', () => {
+    const sent = sentMessages(openAi, [
+      { role: 'user', content: 'Q1' },
+      { role: 'agent', content: '', toolCalls: [toolCall('call_1', 'a'), toolCall('call_2', 'b')] },
+      { role: 'tool', results: [{ callId: 'call_1', content: 'R1', isError: false }, { callId: 'call_2', content: 'R2', isError: false }] },
+    ])
+
+    expect(sent.map(({ role, content }) => ({ role, content }))).toStrictEqual([
+      { role: 'user', content: [{ type: 'text', text: 'Q1', cache_control: CACHE }] },
+      { role: 'assistant', content: '' },
+      { role: 'tool', content: 'R1' },
+      { role: 'tool', content: [{ type: 'text', text: 'R2', cache_control: CACHE }] },
+    ])
+  })
+
+  it('sends the prompt of each request again and marks where that request stored it, also after a turn of more than 20 blocks and in tool rounds', () => {
     // Turn 2 adds 25 blocks: more than a cache read looks back.
     const manyImages = Array.from({ length: 12 }, (_, n) => [text(`Picture ${n}:`), image(`I${n}`)]).flat()
+    const modelList = (id: string): ChatMessage[] => [
+      { role: 'agent', content: '', toolCalls: [toolCall(id, id)] },
+      { role: 'tool', results: [{ callId: id, content: `${id} models`, isError: false }] },
+    ]
     const turns: ChatMessage[][] = [[{ role: 'user', content: [text('Q1'), image('AA')] }]]
     turns.push([...turns[0], { role: 'agent', content: 'A1' }, { role: 'user', content: [...manyImages, text('Q2')] }])
     turns.push([...turns[1], { role: 'agent', content: 'A2' }, { role: 'user', content: [image('BB')] }])
     turns.push([...turns[2], { role: 'agent', content: 'A3' }, { role: 'user', content: 'Q4' }])
+    // Two tool rounds of one reply, then the next turn.
+    turns.push([...turns[3], ...modelList('call_1')])
+    turns.push([...turns[4], ...modelList('call_2')])
+    turns.push([...turns[5], { role: 'agent', content: 'A4' }, { role: 'user', content: 'Q5' }])
 
     for (const provider of [anthropic, openAi]) {
       for (let turn = 1; turn < turns.length; turn++) {
@@ -666,6 +694,142 @@ describe('thinking send-back', () => {
       expect(sentOpaques([withImage('AAAA'), a1, user('Q2')])).toEqual(['A1 opaque'])
       expect(sentOpaques([withImage('BBBB'), a1, user('Q2')])).toEqual([null])
     })
+  })
+
+  describe('tool rounds', () => {
+    const thinkingBlocks = (plan: string): AnthropicThinkingBlock[] => [{ type: 'thinking', thinking: plan, signature: `${plan} signature` }]
+    const details = (plan: string) => [{ type: 'reasoning.text', text: plan, signature: `${plan} signature`, index: 0 }]
+    const openAiReplay = (plan: string, prefixHash: string): ThinkingReplay => ({ kind: 'reasoningDetails', details: details(plan), prefixHash })
+    // The requests of one reply with two tool rounds, and of the next turn.
+    // The replay of each round was made by the request before it.
+    function requests(provider: Provider, replay: (plan: string, prefixHash: string) => ThinkingReplay) {
+      const withRound = (before: ChatMessage[], plan: string, content: string, filter: string): ChatMessage[] => [
+        ...before,
+        { role: 'agent', content, thinking: { text: plan, replay: replay(plan, prefixHash(provider, before)) }, toolCalls: [toolCall(`call_${filter}`, filter)] },
+        { role: 'tool', results: [{ callId: `call_${filter}`, content: `${filter} models`, isError: false }] },
+      ]
+      const round2 = withRound([user('Q1')], 'Plan 1', 'Let me look.', 'gemini')
+      const round3 = withRound(round2, 'Plan 2', '', 'mistral')
+      const nextTurn: ChatMessage[] = [...round3, { role: 'agent', content: 'A1' }, user('Q2')]
+      return { round2, round3, nextTurn }
+    }
+    // The OpenAI-format messages of `nextTurn`, with the replay fields that
+    // each tool round adds.
+    const openAiNextTurn = (round1Replay: Record<string, unknown>, round2Replay: Record<string, unknown>) => [
+      { role: 'user', content: 'Q1' },
+      { role: 'assistant', content: 'Let me look.', tool_calls: [openAiToolCall('call_gemini', 'gemini')], ...round1Replay },
+      { role: 'tool', tool_call_id: 'call_gemini', content: 'gemini models' },
+      { role: 'assistant', content: '', tool_calls: [openAiToolCall('call_mistral', 'mistral')], ...round2Replay },
+      { role: 'tool', tool_call_id: 'call_mistral', content: 'mistral models' },
+      { role: 'assistant', content: 'A1' },
+      { role: 'user', content: 'Q2' },
+    ]
+
+    it('sends the OpenAI replay fields with the tool calls of each round, and each request starts with the bytes of the request before it', () => {
+      const { round2, round3, nextTurn } = requests(openAiThinker, openAiReplay)
+      const sent = [round2, round3, nextTurn].map((messages) => JSON.stringify(wireMessages(openAiThinker, messages)))
+
+      expect(JSON.parse(sent[2])).toStrictEqual(openAiNextTurn({ reasoning_details: details('Plan 1') }, { reasoning_details: details('Plan 2') }))
+      expect(sent[1].startsWith(sent[0].slice(0, -1))).toBe(true)
+      expect(sent[2].startsWith(sent[1].slice(0, -1))).toBe(true)
+    })
+
+    it('sends the Anthropic thinking blocks of each round before its text and tool_use blocks, in every later request', () => {
+      const { round3, nextTurn } = requests(anthropicThinker, (plan, prefixHash) => ({ kind: 'anthropicBlocks', blocks: thinkingBlocks(plan), prefixHash }))
+
+      for (const messages of [round3, nextTurn]) {
+        const sent = wireMessages(anthropicThinker, messages) as unknown[]
+
+        expect([sent[1], sent[3]]).toStrictEqual([
+          { role: 'assistant', content: [...thinkingBlocks('Plan 1'), { type: 'text', text: 'Let me look.' }, anthropicToolUse('call_gemini', 'gemini')] },
+          { role: 'assistant', content: [...thinkingBlocks('Plan 2'), anthropicToolUse('call_mistral', 'mistral')] },
+        ])
+      }
+    })
+
+    it('keeps the tool calls and results in a request that asks for no thinking', () => {
+      const { nextTurn } = requests(openAiThinker, openAiReplay)
+
+      expect(wireMessages(openAiThinker, nextTurn, { thinking: false })).toStrictEqual(openAiNextTurn({}, {}))
+    })
+  })
+})
+
+describe('tool calls and results', () => {
+  const sentMessages = (provider: Provider, sent: ChatMessage[]) => requestBody(provider.chatRequest(sent, 'm', key).request).messages
+  const twoResults: ChatMessage = {
+    role: 'tool',
+    results: [{ callId: 'call_1', content: '1 model', isError: false }, { callId: 'call_2', content: 'Bad filter.', isError: true }],
+  }
+
+  it('sends OpenAI tool calls with JSON arguments and empty text, and one tool message per result', () => {
+    expect(sentMessages(customProvider({}), [
+      { role: 'user', content: 'Q1' },
+      { role: 'agent', content: '', toolCalls: [toolCall('call_1', 'gemini'), toolCall('call_2', 'mistral')] },
+      twoResults,
+      { role: 'agent', content: 'A1' },
+      { role: 'user', content: 'Q2' },
+    ])).toStrictEqual([
+      { role: 'user', content: 'Q1' },
+      { role: 'assistant', content: '', tool_calls: [openAiToolCall('call_1', 'gemini'), openAiToolCall('call_2', 'mistral')] },
+      { role: 'tool', tool_call_id: 'call_1', content: '1 model' },
+      { role: 'tool', tool_call_id: 'call_2', content: 'Bad filter.' },
+      { role: 'assistant', content: 'A1' },
+      { role: 'user', content: 'Q2' },
+    ])
+  })
+
+  it('sends Anthropic tool_use blocks and one tool_result message, with an error flag only on errors and a marked last result', () => {
+    expect(sentMessages(customProvider({ apiFormat: 'anthropic' }), [
+      { role: 'user', content: 'Q1' },
+      { role: 'agent', content: 'Let me look.', toolCalls: [toolCall('call_1', 'gemini'), toolCall('call_2', 'mistral')] },
+      twoResults,
+      { role: 'agent', content: 'A1' },
+      { role: 'user', content: 'Q2' },
+    ])).toStrictEqual([
+      { role: 'user', content: 'Q1' },
+      {
+        role: 'assistant',
+        content: [{ type: 'text', text: 'Let me look.' }, anthropicToolUse('call_1', 'gemini'), anthropicToolUse('call_2', 'mistral')],
+      },
+      {
+        role: 'user',
+        content: [
+          { type: 'tool_result', tool_use_id: 'call_1', content: '1 model' },
+          { type: 'tool_result', tool_use_id: 'call_2', content: 'Bad filter.', is_error: true, cache_control: CACHE },
+        ],
+      },
+      { role: 'assistant', content: 'A1' },
+      { role: 'user', content: [{ type: 'text', text: 'Q2', cache_control: CACHE }] },
+    ])
+  })
+
+  it('sends an OpenAI-format call id to Anthropic with each invalid char as _, in the call and its result', () => {
+    const id = 'functions.model_list:0'
+    const sent = sentMessages(customProvider({ apiFormat: 'anthropic' }), [
+      { role: 'user', content: 'Q1' },
+      { role: 'agent', content: 'Let me look.', toolCalls: [toolCall(id, 'gemini')] },
+      { role: 'tool', results: [{ callId: id, content: '1 model', isError: false }] },
+    ]) as Array<{ content: Array<Record<string, unknown>> }>
+
+    expect(sent[1].content[1].id).toBe('functions_model_list_0')
+    expect(sent[2].content[0].tool_use_id).toBe('functions_model_list_0')
+  })
+
+  it('sends no blank Anthropic text block, and puts a user message right after the results in the results message', () => {
+    expect(sentMessages(customProvider({ apiFormat: 'anthropic' }), [
+      { role: 'user', content: 'Q1' },
+      { role: 'agent', content: '\n', toolCalls: [toolCall('call_1', 'gemini')] },
+      { role: 'tool', results: [{ callId: 'call_1', content: '1 model', isError: false }] },
+      { role: 'user', content: 'Q2' },
+    ])).toStrictEqual([
+      { role: 'user', content: [{ type: 'text', text: 'Q1', cache_control: CACHE }] },
+      { role: 'assistant', content: [anthropicToolUse('call_1', 'gemini')] },
+      {
+        role: 'user',
+        content: [{ type: 'tool_result', tool_use_id: 'call_1', content: '1 model' }, { type: 'text', text: 'Q2', cache_control: CACHE }],
+      },
+    ])
   })
 })
 

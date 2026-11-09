@@ -1,18 +1,12 @@
-import type { ActiveModel, MessagePart, Role, SectionThinking } from '../chat/types'
+import type { ActiveModel, MessagePart, RequestMessage } from '../chat/types'
 
 export type StreamStatus = 'idle' | 'streaming' | 'finished' | 'error' | 'cancelled'
 
 export type StreamEndStatus = Exclude<StreamStatus, 'idle' | 'streaming'>
 
-export interface StreamMessage {
-  role: Role
-  // Parts only for a user message with image references
-  // (sectionsToStreamMessages); a string otherwise.
-  content: string | MessagePart[]
-  // Set only on an agent message whose thinking can go back to the request
-  // model (sectionsToStreamMessages).
-  thinking?: SectionThinking
-}
+// A request message before `dez.provider/streamChat` reads its image bytes
+// (sectionsToStreamMessages).
+export type StreamMessage = RequestMessage<MessagePart>
 
 export interface RequestMessages {
   messages: StreamMessage[]

@@ -150,7 +150,7 @@ export class Provider {
     const thinking = this.config.thinking
     const thinkingOn = thinking !== undefined && isThinkingEnabled(overrides)
     // Earlier thinking goes back only in a request that asks for thinking.
-    const sentMessages = thinkingOn ? messages : messages.map(({ role, content }) => ({ role, content }))
+    const sentMessages = thinkingOn ? messages : messages.map(withoutThinking)
     const { body, prefixHash } = this.format.chatBody(sentMessages, modelId, this.config, context)
     if (this.config.requestBody) mergeBodyPart(body, this.config.requestBody)
 
@@ -169,7 +169,7 @@ export class Provider {
 
     // Some providers need a header to accept images (GitHub Copilot).
     const hasImages = messages.some((message) =>
-      typeof message.content !== 'string' && message.content.some((part) => part.type === 'image'))
+      message.role === 'user' && typeof message.content !== 'string' && message.content.some((part) => part.type === 'image'))
 
     return {
       request: {
@@ -215,6 +215,13 @@ export class Provider {
 
     return Object.fromEntries(merged.values())
   }
+}
+
+// The message without its thinking; its text and tool calls stay.
+function withoutThinking(message: ChatMessage): ChatMessage {
+  if (message.role !== 'agent' || !message.thinking) return message
+  const { thinking: _dropped, ...rest } = message
+  return rest
 }
 
 // Writes `value` at a dot path such as 'venice_parameters.enable_web_search',

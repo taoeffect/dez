@@ -822,7 +822,8 @@ export default sbp('sbp/selectors/register', {
       .find((candidate) => candidate.id === model.modelId)
     const sendTools = isToolsEnabled(useSettingsStore().providerSettings[model.providerId]) &&
       cachedModel?.toolCalling !== false
-    return { ...sectionsToStreamMessages(tab.sections, model, cachedModel?.imageInput !== false), sendTools }
+    const sendImages = cachedModel?.imageInput !== false
+    return { ...sectionsToStreamMessages(tab.sections, model, { sendImages, sendTools }), sendTools }
   },
 
   // Stamps the agent section with the model of the request that will fill it.

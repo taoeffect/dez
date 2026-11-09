@@ -1,3 +1,4 @@
+import type { ToolCall, ToolResult } from '../tools/types'
 import type { JsonObject } from '../../utils/json'
 
 export type Role = 'user' | 'agent'
@@ -29,6 +30,23 @@ export type ContentNode = TextNode | PromptNode
 export type MessagePart =
   | { type: 'text'; text: string }
   | { type: 'image'; path: string }
+
+/** One message of a chat request, in request order. `Part` is the part type
+ *  of a user message: `MessagePart` until `dez.provider/streamChat` reads the
+ *  image bytes, then the provider's `ChatPart`.
+ *  - `user`: parts only when the text has image references; a string
+ *    otherwise.
+ *  - `agent`: `thinking` is the thinking of the request round that wrote
+ *    this message, set only when it can go back to the request model.
+ *    `toolCalls` (never empty) end the round.
+ *  - `tool`: the results of the calls of the agent message before it, in
+ *    the same order.
+ *  `agentSectionMessages` (`streams/messages.ts`) builds the agent and tool
+ *  messages. */
+export type RequestMessage<Part> =
+  | { role: 'user'; content: string | Part[] }
+  | { role: 'agent'; content: string; thinking?: SectionThinking; toolCalls?: ToolCall[] }
+  | { role: 'tool'; results: ToolResult[] }
 
 /** A provider and a model, e.g. `openrouter` + `anthropic/claude-sonnet-4.5`. */
 export interface ModelRef {

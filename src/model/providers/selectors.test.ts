@@ -2,6 +2,7 @@ import sbp from '@sbp/sbp'
 import { createPinia, setActivePinia } from 'pinia'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import type { ModelRef, Section } from '../chat/types'
+import { toolBlockText } from '../chat/toolBlocks'
 import { sectionsToStreamMessages } from '../streams/messages'
 import type { NativeHttpRequest, NativeHttpResponse, NativeHttpStreamResult } from '../../utils/protocol/nativeHttp'
 import type { ModelDisplayNames, ProviderModelsResult } from './types'
@@ -234,7 +235,7 @@ describe('images in chat streams', () => {
       { id: 'u2', role: 'user', content: [{ kind: 'text', text: `![${path}](id=c) And this one?` }] },
     ]
     for (const sections of [turn1, turn2]) {
-      const { messages } = sectionsToStreamMessages(sections, model, true)
+      const { messages } = sectionsToStreamMessages(sections, model, { sendImages: true, sendTools: true })
       await sbp('dez.provider/streamChat', { providerId: 'local', modelId: 'm', messages, onToken: () => {} })
     }
     const [first, second] = streamRequests.map((request) => JSON.parse(request.body as string).messages as unknown[])
@@ -256,14 +257,22 @@ describe('chat streams with image paths', () => {
   const path = `${APP_DIR}/assets/images/red.png`
   // Every form of an image path in a conversation: valid references, broken
   // ones, a bare path, a path in metadata, in a prompt body, in agent text,
-  // and in thinking that would go back.
+  // in a tool call's arguments and result, and in thinking that would go
+  // back.
+  const toolCall = toolBlockText({
+    id: 'call_1',
+    name: 'model_list',
+    status: 'success',
+    arguments: { filter: `![${path}](id=a)` },
+    result: `Found ${path}.`,
+  })
   const sections = (model: ModelRef): Section[] => [
     { id: 'u1', role: 'user', content: [{ kind: 'text', text: `Look: ![${path}](id=a) Why?` }] },
     {
       id: 'a1',
       role: 'agent',
       model,
-      content: [{ kind: 'text', text: `This: ![${path}](id=a)` }],
+      content: [{ kind: 'text', text: `This: ![${path}](id=a)\n${toolCall}\nDone.` }],
       thinking: { text: `The user sent ${path}.`, replay: { kind: 'field', field: 'reasoning_content' } },
     },
     {
@@ -278,11 +287,11 @@ describe('chat streams with image paths', () => {
   ]
 
   it.each([
-    ['openai', true],
-    ['openai', false],
-    ['anthropic', true],
-    ['anthropic', false],
-  ] as const)('sends no path in the %s format (images sent: %s), and sends the ids', async (apiFormat, sendImages) => {
+    ['openai', true, true],
+    ['openai', false, false],
+    ['anthropic', true, false],
+    ['anthropic', false, true],
+  ] as const)('sends no path in the %s format (images sent: %s, tools sent: %s), and sends the ids', async (apiFormat, sendImages, sendTools) => {
     sbp('dez.model/customProviders/save', {
       id: apiFormat,
       name: apiFormat,
@@ -294,7 +303,7 @@ describe('chat streams with image paths', () => {
       thinking: {},
     })
     const model = { providerId: apiFormat, modelId: 'm' }
-    const { messages } = sectionsToStreamMessages(sections(model), model, sendImages)
+    const { messages } = sectionsToStreamMessages(sections(model), model, { sendImages, sendTools })
 
     await sbp('dez.provider/streamChat', { providerId: apiFormat, modelId: 'm', messages, onToken: () => {} })
 
@@ -303,6 +312,7 @@ describe('chat streams with image paths', () => {
     expect(body).not.toContain('/home/u')
     expect(body).toContain('id=a')
     expect(body).toContain('id=b')
+    expect(body).toContain('model_list')
     expect(body.includes(Buffer.from(STORED_IMAGE).toString('base64'))).toBe(sendImages)
   })
 })
