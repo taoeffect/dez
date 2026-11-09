@@ -28,7 +28,10 @@ describe('renderTemplate', () => {
   })
 
   it('throws on braces that do not form a placeholder', () => {
-    for (const template of ['{{Name}}', '{{ two words }}', '{{name', 'name}}', '{{}}', '{{1x}}']) {
+    for (const template of [
+      '{{Name}}', '{{ two words }}', '{{name', 'name}}', '{{}}', '{{1x}}',
+      '{{{name}}}', '{{name}}}', '{{{name}}', 'a{{name}}}b',
+    ]) {
       expect(() => renderTemplate(template, { name: 'x' }), template).toThrow('outside a {{name}} placeholder')
     }
   })

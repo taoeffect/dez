@@ -18,9 +18,13 @@ function templateError(message: string): Error {
 export function renderTemplate(template: string, values: Readonly<Record<string, string>>): string {
   // With a capture group, `split` gives literal text at the even indexes and
   // placeholder names at the odd ones.
-  return template.split(PLACEHOLDER).map((part, index) => {
+  return template.split(PLACEHOLDER).map((part, index, parts) => {
     if (index % 2 === 0) {
-      if (part.includes('{{') || part.includes('}}')) {
+      // A `{` just before a placeholder or a `}` just after one makes a `{{`
+      // or `}}` with the placeholder's own braces (`{{{name}}}`), which the
+      // split hides from the `includes` checks.
+      const strayBrace = (index > 0 && part.startsWith('}')) || (index < parts.length - 1 && part.endsWith('{'))
+      if (part.includes('{{') || part.includes('}}') || strayBrace) {
         throw templateError(`"{{" or "}}" outside a {{name}} placeholder in ${JSON.stringify(part)}`)
       }
       return part
