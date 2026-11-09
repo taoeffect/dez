@@ -4,7 +4,7 @@ import { startApp, type RunningApp } from './harness/app'
 import { consoleErrors, resetConsoleErrors, screenshotOnFailure, waitFor, waitForValue } from './harness/dom'
 import { makeConversation, seedAppState, seedConversation } from './harness/fixtures'
 import { createSession, destroySession, type E2EBrowser } from './harness/session'
-import { focusEditor, misplacedLines, threadSections, type ThreadSection } from './harness/thread'
+import { focusEditor, misplacedLines, sbpCall, threadSections, type ThreadSection } from './harness/thread'
 
 // How the thread editor styles markdown, read as computed styles in the
 // real app.
@@ -92,10 +92,7 @@ describe('markdown styles', () => {
       title: id,
       sections: sections.map(({ role, text }) => ({ role: role as 'user' | 'agent', nodes: [{ kind: 'text', text }] })),
     }))
-    await browser.execute((conversationId: string) => {
-      const sbp = Reflect.get(window, 'sbp') as (selector: string, ...args: unknown[]) => unknown
-      void sbp('dez.model/tabs/openConversation', conversationId)
-    }, id)
+    await sbpCall(browser, 'dez.model/tabs/openConversation', id)
     await waitForValue(browser, `fixture ${id} open`, () => threadSections(browser), sections)
   }
 

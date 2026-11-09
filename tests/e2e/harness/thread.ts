@@ -122,15 +122,15 @@ export async function editorDoc (browser: E2EBrowser): Promise<string> {
   })
 }
 
-/** Puts the active editor's caret at doc position `pos` with a selection
- *  transaction, as code does. */
-export async function setCaret (browser: E2EBrowser, pos: number): Promise<void> {
-  await browser.execute((anchor: number) => {
+/** Sets the active editor's main selection to `anchor`…`head` (a caret
+ *  when `head` is left out) with a selection transaction, as code does. */
+export async function setCaret (browser: E2EBrowser, anchor: number, head = anchor): Promise<void> {
+  await browser.execute((from: number, to: number) => {
     const content = document.querySelector('.cm-content')
     if (!content) throw new Error('setCaret: .cm-content not found')
     const view = Reflect.get(Reflect.get(content, 'cmTile'), 'root').view as EditorView
-    view.dispatch({ selection: { anchor } })
-  }, pos)
+    view.dispatch({ selection: { anchor: from, head: to } })
+  }, anchor, head)
 }
 
 /** The head of the active editor's main selection. */

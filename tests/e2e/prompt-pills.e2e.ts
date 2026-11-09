@@ -1,11 +1,10 @@
-import type { EditorView } from '@codemirror/view'
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from 'vitest'
 import { Key } from 'webdriverio'
 import { startApp, type RunningApp } from './harness/app'
 import { consoleErrors, pointerClick, resetConsoleErrors, screenshotOnFailure, waitFor, waitForValue } from './harness/dom'
 import { makeConversation, seedAppState, seedConversation } from './harness/fixtures'
 import { createSession, destroySession, type E2EBrowser } from './harness/session'
-import { docPos, editorCaret, savedPillLines, sbpCall } from './harness/thread'
+import { docPos, editorCaret, editorDoc, focusEditor, savedPillLines, sbpCall, setCaret } from './harness/thread'
 import type { ConversationData } from '../../src/model/persistence/types'
 
 // Prompt pills in the real app: an expanded pill stays a pill when Delete
@@ -90,10 +89,7 @@ describe('prompt pills', () => {
   // presses Delete over a selection from the doc end back to the end of the
   // pill's body. Returns the end of the body.
   async function deleteFromBodyEndToDocEnd (conversationId: string): Promise<number> {
-    await browser.execute((id: string) => {
-      const sbp = Reflect.get(window, 'sbp') as (selector: string, ...args: unknown[]) => unknown
-      void sbp('dez.model/tabs/openConversation', id)
-    }, conversationId)
+    await sbpCall(browser, 'dez.model/tabs/openConversation', conversationId)
     await waitForValue(browser, 'thread open', sectionNodes, THREAD_NODES)
     await pointerClick(browser, '.dez-prompt-pill')
     await waitFor(browser, '.dez-prompt-pill[data-expanded="1"]', 10_000)
@@ -102,13 +98,8 @@ describe('prompt pills', () => {
     // gives. Set by code, so that it starts exactly at the body end, next
     // to the hidden close marker.
     const bodyEnd = await docPos(browser, PROMPT_BODY, PROMPT_BODY.length)
-    await browser.execute((head: number) => {
-      const content = document.querySelector('.cm-content')
-      if (!content) throw new Error('select: .cm-content not found')
-      const view = Reflect.get(Reflect.get(content, 'cmTile'), 'root').view as EditorView
-      view.focus()
-      view.dispatch({ selection: { anchor: view.state.doc.length, head } })
-    }, bodyEnd)
+    await focusEditor(browser)
+    await setCaret(browser, (await editorDoc(browser)).length, bodyEnd)
     await browser.keys([Key.Delete])
 
     await waitForValue(browser, 'thread after Delete', sectionNodes, [{ role: 'user', nodes: [PROMPT_NODE] }])
