@@ -12,6 +12,8 @@ import type {
   CopilotChatToken,
   CopilotDeviceFlowResponse,
   NativeMonitors,
+  UpdateDownloadProgress,
+  UpdateInstallMode,
 } from './nativeTypes'
 
 // TODO: in the future, use the star selector here to just directly invoke these
@@ -134,6 +136,34 @@ export default sbp('sbp/selectors/register', {
   // when this desktop gives no idle time (src-tauri/src/idle.rs).
   'dez.native/userIdleMs' (): Promise<number | null> {
     return invoke<number | null>('user_idle_ms')
+  },
+
+  // The macOS updater (src-tauri/src/updater/mod.rs). Rust builds the
+  // download URL, holds the public key, and keeps every path; the webview
+  // passes only a version and the `.minisig` text. Their errors are
+  // sentences that the update window shows as they are.
+
+  // Why this Dez cannot install an update by itself, or null when it can.
+  'dez.native/canInstallUpdate' (): Promise<string | null> {
+    return invoke<string | null>('can_install_update')
+  },
+
+  // Downloads the DMG of `version` and checks it against `signature` as the
+  // bytes arrive. After any failure nothing of the download is left.
+  'dez.native/downloadUpdate' (version: string, signature: string, onProgress: Channel<UpdateDownloadProgress>): Promise<void> {
+    return invoke('download_update', { version, signature, onProgress })
+  },
+
+  // Installs the download of `version`. After any failure the download is
+  // gone: download it again before a retry.
+  'dez.native/installUpdate' (version: string): Promise<UpdateInstallMode> {
+    return invoke<UpdateInstallMode>('install_update', { version })
+  },
+
+  // Starts the helper that finishes the install, then quits Dez: save the
+  // app state before this.
+  'dez.native/relaunchAfterUpdate' (): Promise<void> {
+    return invoke('relaunch_after_update')
   },
 
   // Returns the chosen path, or null when the user cancels. The dialog

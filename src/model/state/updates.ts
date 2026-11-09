@@ -6,9 +6,27 @@ import type { Release } from '../updates/releases'
 // starts, then `checking`, then the outcome of the last check.
 export type UpdateCheckStatus = 'idle' | 'checking' | 'upToDate' | 'available' | 'failed'
 
-// Internal model implementation detail: the update check and the update
-// window, for this session only (nothing here is saved). Mutations live in
-// the dez.model/updates/* selectors; dez.controller/checkForUpdates drives
+// Where the install of the newest release is (dez.controller/updates/install):
+// `idle` before it starts and after the window closes, then each step in
+// turn, or `failed` with the message that the window shows. `total` is null
+// when the server sends no length.
+export type UpdateInstall =
+  | { phase: 'idle' }
+  | { phase: 'downloading', received: number, total: number | null }
+  | { phase: 'installing' }
+  | { phase: 'relaunching' }
+  | { phase: 'failed', error: string }
+
+// An install in these phases must run to its end: the window stays open,
+// and no update check runs.
+export function installIsBusy(install: UpdateInstall): boolean {
+  return install.phase === 'downloading' || install.phase === 'installing' || install.phase === 'relaunching'
+}
+
+// Internal model implementation detail: the update check, the update
+// window, and the install, for this session only (nothing here is saved).
+// Mutations live in the dez.model/updates/* selectors;
+// dez.controller/checkForUpdates and dez.controller/updates/install drive
 // them.
 export const useUpdatesStore = defineStore('updates', () => {
   const status = ref<UpdateCheckStatus>('idle')
@@ -18,11 +36,18 @@ export const useUpdatesStore = defineStore('updates', () => {
   // check that succeeded.
   const releases = ref<Release[]>([])
   const windowOpen = ref(false)
+  const install = ref<UpdateInstall>({ phase: 'idle' })
+  // Why this Dez cannot install an update by itself (`can_install_update`
+  // in src-tauri/src/updater/mod.rs), or null when it can. Only macOS asks;
+  // elsewhere it stays null, and the window offers the release page.
+  const installBlockedReason = ref<string | null>(null)
 
   return {
     status,
     error,
     releases,
     windowOpen,
+    install,
+    installBlockedReason,
   }
 })

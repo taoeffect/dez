@@ -1,7 +1,8 @@
 <script setup lang="ts">
-import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
+import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import sbp from '@sbp/sbp'
 import { useModelState } from '../modelState'
+import { isMacPlatform } from '../../utils/platform'
 
 const { updates } = useModelState()
 
@@ -11,6 +12,38 @@ const releases = computed(() => updates.value.releases)
 // only with one (`dez.model/updates/openWindow`), and a check that finds
 // none closes it.
 const newest = computed(() => releases.value[0])
+
+const install = computed(() => updates.value.install)
+// While the install runs, the window has no buttons and cannot close
+// (`dez.model/updates/closeWindow` refuses).
+const busy = computed(() => updates.value.installBusy)
+// Only macOS installs updates; elsewhere the store has no reason, and the
+// window just offers the release page.
+const hasSignedDmg = computed(() => Boolean(newest.value.dmgAsset && newest.value.signatureAsset))
+const canInstall = computed(() => isMacPlatform && !updates.value.installBlockedReason && hasSignedDmg.value)
+// Why a macOS Dez offers the release page instead of the install.
+const installUnavailableNote = computed(() => {
+  if (!isMacPlatform || canInstall.value) return null
+  return updates.value.installBlockedReason ??
+    `Dez ${newest.value.version} has no signed macOS download, so Dez cannot install it by itself.`
+})
+
+// The step that runs, as "Downloading… 4.2 of 9.5 MB".
+const progressText = computed(() => {
+  const state = install.value
+  if (state.phase === 'downloading') {
+    if (state.total) return `Downloading… ${megabytes(state.received)} of ${megabytes(state.total)} MB`
+    return state.received ? `Downloading… ${megabytes(state.received)} MB` : 'Downloading…'
+  }
+  if (state.phase === 'installing') return 'Installing…'
+  if (state.phase === 'relaunching') return 'Restarting…'
+  return null
+})
+// The share of the download that arrived, or null with no known length.
+const downloadFraction = computed(() => {
+  const state = install.value
+  return state.phase === 'downloading' && state.total ? Math.min(1, state.received / state.total) : null
+})
 
 const dialog = ref<HTMLElement | null>(null)
 
@@ -39,6 +72,18 @@ onBeforeUnmount(() => {
   else element.focus({ preventScroll: true })
 })
 
+// The clicked button goes away while the install runs. The focus moves to
+// the dialog first, so it stays in the window and keys never reach the
+// editor behind it.
+watch(busy, (isBusy) => {
+  if (isBusy) dialog.value?.focus({ preventScroll: true })
+})
+
+// Decimal megabytes with one decimal, as Finder shows file sizes.
+function megabytes(bytes: number): string {
+  return (bytes / 1_000_000).toFixed(1)
+}
+
 function close() {
   sbp('dez.model/updates/closeWindow')
 }
@@ -50,6 +95,10 @@ function openRelease(url: string) {
 function viewOnGitHub() {
   openRelease(newest.value.url)
   close()
+}
+
+function installUpdate() {
+  void sbp('dez.controller/updates/install')
 }
 
 // GitHub's `published_at`, as a date in the user's locale.
@@ -87,7 +136,7 @@ function onOverlayClick(event: MouseEvent) {
           <h2 id="update-title">Dez {{ newest.version }} is available</h2>
           <p>You have Dez {{ appVersion }}.</p>
         </div>
-        <button class="update-close" title="Close (Esc)" @click="close">×</button>
+        <button v-if="!busy" class="update-close" title="Close (Esc)" @click="close">×</button>
       </div>
 
       <!-- Text bindings only: the change notes come from GitHub, so they are
@@ -113,8 +162,31 @@ function onOverlayClick(event: MouseEvent) {
       </div>
 
       <div class="update-footer">
-        <button class="update-btn" @click="close">Later</button>
-        <button class="update-btn update-btn--primary" @click="viewOnGitHub">View on GitHub</button>
+        <div v-if="busy" class="update-progress" role="status">
+          <span>{{ progressText }}</span>
+          <div v-if="downloadFraction !== null" class="update-progress-track">
+            <div class="update-progress-fill" :style="{ width: `${downloadFraction * 100}%` }" />
+          </div>
+        </div>
+        <p v-else-if="install.phase === 'failed'" class="update-note update-note--error" role="alert">
+          {{ install.error }}
+        </p>
+        <p v-else-if="installUnavailableNote" class="update-note">{{ installUnavailableNote }}</p>
+        <div v-if="!busy" class="update-buttons">
+          <button class="update-btn" @click="close">Later</button>
+          <!-- After a failure, the release page is the way out besides a retry. -->
+          <button
+            v-if="!canInstall || install.phase === 'failed'"
+            class="update-btn"
+            :class="{ 'update-btn--primary': !canInstall }"
+            @click="viewOnGitHub"
+          >
+            View on GitHub
+          </button>
+          <button v-if="canInstall" class="update-btn update-btn--primary" @click="installUpdate">
+            {{ install.phase === 'failed' ? 'Try Again' : 'Download and Install' }}
+          </button>
+        </div>
       </div>
     </div>
   </div>
@@ -265,12 +337,60 @@ function onOverlayClick(event: MouseEvent) {
   margin-top: 3px;
 }
 
+/* The note or progress on the left, the buttons on the right. */
 .update-footer {
   display: flex;
-  justify-content: flex-end;
-  gap: 8px;
+  align-items: center;
+  gap: 16px;
   padding: 12px 20px;
   border-top: 1px solid var(--color-border);
+}
+
+.update-buttons {
+  display: flex;
+  flex-shrink: 0;
+  gap: 8px;
+  margin-left: auto;
+}
+
+.update-note {
+  flex: 1;
+  min-width: 0;
+  margin: 0;
+  font-size: 12px;
+  line-height: 1.4;
+  color: var(--color-muted);
+  /* An error can hold a path or a long word. */
+  overflow-wrap: anywhere;
+}
+
+.update-note--error {
+  color: var(--color-error);
+}
+
+/* The footer keeps its height while the buttons are gone. */
+.update-progress {
+  flex: 1;
+  min-width: 0;
+  min-height: 30px;
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  gap: 6px;
+  font-size: 13px;
+}
+
+.update-progress-track {
+  height: 4px;
+  border-radius: 2px;
+  background: var(--color-border);
+  overflow: hidden;
+}
+
+.update-progress-fill {
+  height: 100%;
+  background: var(--color-accent);
+  transition: width 0.2s;
 }
 
 .update-btn {

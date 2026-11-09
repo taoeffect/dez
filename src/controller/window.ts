@@ -16,6 +16,9 @@ const WINDOW_MIN_SIZE = { width: 600, height: 400 }
 // not one to open with, and an unmaximize must return to this one.
 let lastNormalGeometry: WindowGeometry | null = null
 let stopWindowTracking: (() => void) | null = null
+// Reads the geometry now in place of a pending debounced read; set while the
+// tracker runs.
+let flushWindowGeometry: (() => Promise<void>) | null = null
 
 // With GTK client-side decorations (Linux, mostly Wayland), the size that
 // `innerSize()` reads includes the invisible shadow and the header bar, but
@@ -152,8 +155,8 @@ export default sbp('sbp/selectors/register', {
     const setWindowGeometry = async (geometry: WindowGeometry): Promise<void> => {
       sbp('dez.model/settings/setWindowGeometry', await positionsReadable ? geometry : withStoredPosition(geometry))
     }
-    // A drag sends many events; only the geometry at its end is saved.
-    const saveGeometry = debounce(async () => {
+    // Reads the geometry into the settings store.
+    const readGeometry = async (): Promise<void> => {
       try {
         // A fullscreen size is not one to open with, and the store already
         // holds the geometry from before it. `appWindow.isFullscreen()`
@@ -195,16 +198,23 @@ export default sbp('sbp/selectors/register', {
       } catch (error) {
         console.error('Failed to read the window size and position:', error)
       }
-    }, 500)
+    }
+    // A drag sends many events; only the geometry at its end is saved.
+    const saveGeometry = debounce(readGeometry, 500)
     const listeners = [appWindow.onMoved(() => saveGeometry()), appWindow.onResized(() => saveGeometry())]
       .map((listener) => listener.catch((error: unknown) => {
         console.error('Failed to track the window size and position:', error)
         return null
       }))
     saveGeometry()
+    flushWindowGeometry = async () => {
+      saveGeometry.clear()
+      await readGeometry()
+    }
     stopWindowTracking = () => {
       // A pending save is dropped, so a move just before quit can be lost.
       saveGeometry.clear()
+      flushWindowGeometry = null
       for (const listener of listeners) void listener.then((unlisten) => unlisten?.())
     }
   },
@@ -212,5 +222,13 @@ export default sbp('sbp/selectors/register', {
   'dez.controller/window/stopTracking' (): void {
     stopWindowTracking?.()
     stopWindowTracking = null
+  },
+
+  // Reads the window geometry into the settings store now, not after the
+  // debounce of a move or resize, and waits for it: Dez is about to quit
+  // for an update (dez.controller/updates/install). Save the settings after
+  // this (dez.model/persistence/flush).
+  async 'dez.controller/window/flushGeometry' (): Promise<void> {
+    await flushWindowGeometry?.()
   },
 })

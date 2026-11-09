@@ -13,7 +13,7 @@ import { clampEditorFontSize } from '../editorFontSize'
 import { clampDoneSoundVolume } from '../doneSoundVolume'
 import { currentShortcutPlatform, findShortcut, normalizeShortcutKey, validateShortcutKey, type Shortcut, type ShortcutId, type ShortcutOverrides } from '../shortcuts'
 import { MAX_CLOSED_TABS, NEW_TAB_TITLE, useTabStore } from './tabs'
-import { useUpdatesStore, type UpdateCheckStatus } from './updates'
+import { installIsBusy, useUpdatesStore, type UpdateCheckStatus, type UpdateInstall } from './updates'
 import type { AppStatePayload, CachedProvider, ConversationSearchOutcome, ModelCache } from '../persistence/types'
 import { emptyModelCache } from '../persistence/modelCache'
 import type { ProviderConfig, ProviderThinkingConfig } from '../providers/config'
@@ -67,12 +67,17 @@ export interface SettingsSnapshot {
 // tab is active again.
 export type TabActivity = 'busy' | 'done'
 
-// The update check and the update window (src/model/state/updates.ts).
+// The update check, the update window, and the install
+// (src/model/state/updates.ts). `installBusy`: the install runs, so the
+// window cannot close and no check runs.
 export interface UpdatesSnapshot {
   status: UpdateCheckStatus
   error: string | null
   releases: Release[]
   windowOpen: boolean
+  install: UpdateInstall
+  installBusy: boolean
+  installBlockedReason: string | null
 }
 
 type ContentNodeData =
@@ -738,6 +743,26 @@ export default sbp('sbp/selectors/register', {
     }
   },
 
+  // Writes everything that waits to be saved, and waits for the writes: Dez
+  // is about to quit (dez.controller/updates/install relaunches it), and a
+  // save that a debounce still holds would be lost. The editor needs no
+  // flush of its own: it writes its doc to the tab store on every change
+  // (ThreadEditor.vue), so saving each tab here covers its debounced save.
+  // As in the debounced savers, settings, prompts, and the model cache are
+  // saved only once their persistence has started (dez.controller/app/init).
+  // Each save logs its own failure and never throws.
+  async 'dez.model/persistence/flush' (): Promise<void> {
+    persistSettings.clear()
+    persistPrompts.clear()
+    persistModelCache.clear()
+    await Promise.all([
+      ...useTabStore().tabs.map((tab) => sbp('dez.model/tabs/save', tab.id) as Promise<void>),
+      settingsPersistenceReady && sbp('dez.model/appState/save') as Promise<void>,
+      promptsPersistenceReady && savePrompts(),
+      modelCachePersistenceReady && saveModelCache(),
+    ])
+  },
+
   async 'dez.model/appState/restore' (appState: unknown): Promise<void> {
     const state = appState as { tabs?: TabData[]; activeTabId?: string | null }
     if (!Array.isArray(state.tabs) || state.tabs.length === 0) return
@@ -1299,6 +1324,9 @@ export default sbp('sbp/selectors/register', {
       error: store.error,
       releases: store.releases.map(cloneRelease),
       windowOpen: store.windowOpen,
+      install: { ...store.install },
+      installBusy: installIsBusy(store.install),
+      installBlockedReason: store.installBlockedReason,
     }
   },
 
@@ -1308,13 +1336,16 @@ export default sbp('sbp/selectors/register', {
 
   // The outcome of a check that succeeded: the releases newer than the
   // running one, newest first. With none, the update window has nothing to
-  // show, so it closes.
+  // show, so it closes. While an install runs, the window keeps the
+  // releases that it shows: a check that started before the install can
+  // end during it (dez.controller/checkForUpdates starts none then).
   'dez.model/updates/setReleases' (releases: Release[]): void {
     const store = useUpdatesStore()
     store.status = releases.length ? 'available' : 'upToDate'
     store.error = null
+    if (installIsBusy(store.install)) return
     store.releases = releases.map(cloneRelease)
-    if (!releases.length) store.windowOpen = false
+    if (!releases.length) sbp('dez.model/updates/closeWindow')
   },
 
   // A failed check keeps the releases of the last good one: they are still
@@ -1335,8 +1366,23 @@ export default sbp('sbp/selectors/register', {
     if (store.releases.length) store.windowOpen = true
   },
 
+  // Does nothing while the install runs: the user waits for it to end or
+  // fail, so the window stays open for every caller (Esc, ×, a notification
+  // click). A failed install is forgotten, so the window opens the next time
+  // with no old error.
   'dez.model/updates/closeWindow' (): void {
-    useUpdatesStore().windowOpen = false
+    const store = useUpdatesStore()
+    if (installIsBusy(store.install)) return
+    store.windowOpen = false
+    store.install = { phase: 'idle' }
+  },
+
+  'dez.model/updates/setInstall' (install: UpdateInstall): void {
+    useUpdatesStore().install = { ...install }
+  },
+
+  'dez.model/updates/setInstallBlockedReason' (reason: string | null): void {
+    useUpdatesStore().installBlockedReason = reason
   },
 
   // Error-handling boundary for the history panel: full-text search (empty

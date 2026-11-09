@@ -2,6 +2,7 @@ import sbp from '@sbp/sbp'
 import { parseAppStateJson, serializeAppStateJson } from './appState'
 import { parseConversation, serializeConversation, serializeConversationAsMarkdown } from './conversationFormat'
 import { parseModelCacheJson, serializeModelCacheJson } from './modelCache'
+import { parsePendingUpdateJson, serializePendingUpdateJson } from './pendingUpdate'
 import { parsePromptsJson, serializePromptsJson } from './prompts'
 import { searchConversationFiles, staleConversationIds } from './search'
 import type { AppStatePayload, ConversationData, ConversationFile, ConversationSearchOutcome, ModelCache, PromptData } from './types'
@@ -10,6 +11,7 @@ import type { AppStatePayload, ConversationData, ConversationFile, ConversationS
 const APP_STATE_FILE = 'app_state.json'
 const PROMPTS_FILE = 'prompts.json'
 const MODEL_CACHE_FILE = 'model_cache.json'
+const PENDING_UPDATE_FILE = 'updates/pending.json'
 
 // App code reads and writes the files under ~/.config/dez/ only through
 // these selectors, which own the file formats. They reach the disk only
@@ -151,6 +153,31 @@ export default sbp('sbp/selectors/register', {
       return parseModelCacheJson(content)
     } catch (error) {
       console.error('Failed to load model cache:', error)
+      throw error
+    }
+  },
+
+  async 'dez.persistence/savePendingUpdate' (version: string): Promise<void> {
+    try {
+      await sbp('dez.native/saveAppFile', PENDING_UPDATE_FILE, serializePendingUpdateJson(version))
+    } catch (error) {
+      console.error('Failed to save the pending update:', error)
+      throw error
+    }
+  },
+
+  // Reads and deletes the pending-update file, so each install is reported
+  // once. Gives its version, or null when there is no file or it is
+  // malformed. When the delete fails, it rejects and gives no version: a
+  // report at every startup would be worse than none.
+  async 'dez.persistence/takePendingUpdate' (): Promise<string | null> {
+    try {
+      const content = await sbp('dez.native/loadAppFile', PENDING_UPDATE_FILE) as string
+      if (!content) return null
+      await sbp('dez.native/deleteAppFile', PENDING_UPDATE_FILE)
+      return parsePendingUpdateJson(content)
+    } catch (error) {
+      console.error('Failed to read the pending update:', error)
       throw error
     }
   },

@@ -16,3 +16,16 @@ export interface NativeMonitors {
   monitors: MonitorInfo[]
   primary: MonitorInfo | null
 }
+
+// One message on the progress channel of `download_update`
+// (src-tauri/src/updater/mod.rs `DownloadProgress`): one at 0, then one per
+// 256 KiB, and a last one when the download succeeded. `total` is null when
+// the server sends no length.
+export interface UpdateDownloadProgress {
+  received: number
+  total: number | null
+}
+
+// What `install_update` did: `replaced` the app, or staged its new
+// executable for the relaunch helper (`binary`).
+export type UpdateInstallMode = 'replaced' | 'binary'
