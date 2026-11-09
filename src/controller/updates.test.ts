@@ -2,6 +2,7 @@ import sbp from '@sbp/sbp'
 import { createPinia, setActivePinia } from 'pinia'
 import { afterEach, beforeEach, describe, expect, it, vi, type MockInstance } from 'vitest'
 import type { UpdatesSnapshot } from '../model/state'
+import type { WindowGeometry } from '../model/state/settings'
 import { cancelStreamSession, startStreamSession, streamIsStreaming } from '../model/state/streams'
 import type { ToastData } from '../view/toast/selectors'
 import type { NativeHttpRequest, NativeHttpResponse } from '../utils/protocol/nativeHttp'
@@ -27,6 +28,8 @@ interface ProgressChannel {
 }
 
 const APP_DIR = '/Users/someone/.config/dez'
+// The geometry that the stub window gives the settings store.
+const WINDOW: WindowGeometry = { width: 1100, height: 760, x: 120, y: 80, maximized: false }
 // The `.minisig` text that the stub GitHub serves for every release.
 const SIGNATURE = 'untrusted comment: signature from minisign secret key\nRUQf6LRCGA9i5\n'
 
@@ -47,8 +50,11 @@ let relaunch: () => Promise<void>
 let blockedReason: () => Promise<string | null>
 let downloadedSignature: string | null
 let saveError: unknown
+let deleteError: unknown
 let confirmAnswer: boolean
 let confirms = 0
+// Runs while the stub prompt is open, before the user answers.
+let onConfirm: () => void
 
 sbp('sbp/selectors/register', {
   'dez.native/httpRequest' (request: NativeHttpRequest): Promise<NativeHttpResponse> {
@@ -89,6 +95,7 @@ sbp('sbp/selectors/register', {
     files.set(path, content)
   },
   async 'dez.native/deleteAppFile' (path: string): Promise<void> {
+    if (deleteError) throw deleteError
     files.delete(path)
   },
   async 'dez.native/saveConversationFile' (): Promise<void> {
@@ -96,15 +103,23 @@ sbp('sbp/selectors/register', {
   },
   async 'dez.ui/confirm' (): Promise<boolean> {
     confirms++
+    onConfirm()
     return confirmAnswer
   },
   async 'dez.stream/stop' (tabId: string): Promise<void> {
     calls.push('stop reply')
     cancelStreamSession(tabId)
   },
+  // Like the real one, it reads the window (asynchronously), then writes
+  // the geometry to the settings store; the settings save writes the file.
   async 'dez.controller/window/flushGeometry' (): Promise<void> {
+    await Promise.resolve()
+    sbp('dez.model/settings/setWindowGeometry', WINDOW)
     calls.push('save window')
   },
+  // For dez.model/settings/init.
+  'dez.ui/applyTheme' (): void {},
+  'dez.ui/applyEditorFontSize' (): void {},
 })
 
 // GitHub's release list with one published release per version, each with
@@ -151,12 +166,16 @@ beforeEach(() => {
   blockedReason = async () => null
   downloadedSignature = null
   saveError = null
+  deleteError = null
   confirmAnswer = true
   confirms = 0
+  onConfirm = () => {}
 })
 
 afterEach(() => {
   consoleError.mockRestore()
+  // Module state that a new Pinia does not reset; settings/init sets it.
+  sbp('dez.model/settings/stopPersistence')
 })
 
 describe('dez.controller/checkForUpdates', () => {
@@ -374,6 +393,26 @@ describe('dez.controller/updates/install', () => {
     expect(updates()).toMatchObject({ install: { phase: 'relaunching' }, installBusy: true, windowOpen: true })
   })
 
+  // The relaunched Dez opens its window where app_state.json says, so the
+  // geometry must reach the settings store before the settings save.
+  it('saves app_state.json with the window geometry that it read just before', async () => {
+    // Starts the settings persistence, as at app startup.
+    await sbp('dez.model/settings/init')
+    await openWindow()
+
+    await installUpdate()
+
+    expect(calls).toEqual([
+      'download 99.0.0',
+      'install 99.0.0',
+      `save ${PENDING_FILE}`,
+      'save window',
+      'save app_state.json',
+      'relaunch',
+    ])
+    expect(JSON.parse(files.get('app_state.json') ?? '')).toMatchObject({ window: WINDOW })
+  })
+
   it('with a reply in progress, asks first, and Cancel changes nothing', async () => {
     await openWindow()
     const tabId = startReply()
@@ -384,6 +423,21 @@ describe('dez.controller/updates/install', () => {
     expect(confirms).toBe(1)
     expect(calls).toEqual([])
     expect(updates().install).toEqual({ phase: 'idle' })
+    expect(streamIsStreaming(tabId)).toBe(true)
+  })
+
+  // A notification click can close the window while the prompt is open; the
+  // steps would then show nowhere.
+  it('with a reply in progress, does nothing when the window closes during the prompt', async () => {
+    await openWindow()
+    const tabId = startReply()
+    onConfirm = () => sbp('dez.model/updates/closeWindow')
+
+    await installUpdate()
+
+    expect(confirms).toBe(1)
+    expect(calls).toEqual([])
+    expect(updates()).toMatchObject({ install: { phase: 'idle' }, windowOpen: false })
     expect(streamIsStreaming(tabId)).toBe(true)
   })
 
@@ -573,5 +627,16 @@ describe('dez.controller/updates/reportLastInstall', () => {
 
     expect(toasts).toEqual([])
     expect(files.has(PENDING_FILE)).toBe(false)
+  })
+
+  // A file that stays would give the same report at every startup.
+  it('when the file cannot be deleted, no report', async () => {
+    files.set(PENDING_FILE, JSON.stringify({ version: '99.0.0' }))
+    deleteError = 'Failed to delete updates/pending.json: Permission denied (os error 13)'
+
+    await report()
+
+    expect(toasts).toEqual([])
+    expect(consoleError).toHaveBeenCalled()
   })
 })
