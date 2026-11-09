@@ -41,6 +41,14 @@ reqwest = { version = "=0.12.28", features = ["json", "stream"] }
 tokio = { version = "=1.52.0", features = ["full"] }
 thiserror = "=2.0.18"
 futures = "=0.3.32"
+# The macOS updater (src/updater/). minisign-verify: checks the minisign
+# signature of an update DMG; zero dependencies, by the minisign author, and
+# what Tauri's updater uses. semver: the version that Tauri already uses, so
+# it compares with `PackageInfo::version`. tempfile: the version already in
+# Cargo.lock; makes the private download dir and removes it when dropped.
+minisign-verify = "=0.3.0"
+semver = "=1.0.28"
+tempfile = "=3.27.0"
 
 # The gtk version that tauri uses, so its `gtk_window()` type matches. The
 # zbus version that tauri-plugin-opener already pulls in: notification.rs
@@ -63,4 +71,9 @@ x11rb = { version = "=0.14.0", features = ["screensaver"] }
 mac-notification-sys = "=0.6.15"
 objc2 = "=0.6.4"
 objc2-foundation = "=0.3.2"
+# plist, libc: the versions already in Cargo.lock. The updater
+# (src/updater/macos.rs) reads the Info.plist of an app bundle with plist,
+# and asks with libc whether the app is on a read-only volume.
+plist = "=1.8.0"
+libc = "=0.2.185"
 

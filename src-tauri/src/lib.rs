@@ -8,6 +8,7 @@ mod notification;
 mod persistence;
 #[cfg(target_os = "linux")]
 mod session_bus;
+mod updater;
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
@@ -38,6 +39,7 @@ pub fn run() {
         .plugin(tauri_plugin_store::Builder::default().build())
         .manage(reqwest::Client::new())
         .manage(http_bridge::HttpStreamState::new())
+        .manage(updater::UpdaterState::default())
         // The frontend invokes these only from the `dez.native/*` selectors in
         // src/controller/native.ts. App commands need no capability entry:
         // build.rs declares no app command list, so the webview may call each
@@ -68,6 +70,8 @@ pub fn run() {
             commands::open_devtools,
             notification::show_notification,
             idle::user_idle_ms,
+            updater::can_install_update,
+            updater::download_update,
         ]);
     // macOS brings the app to the front when it starts, and with it each
     // window that is visible at that time. The main window starts hidden
