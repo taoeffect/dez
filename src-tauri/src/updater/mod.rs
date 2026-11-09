@@ -41,8 +41,6 @@ use macos::spawn_helper;
 
 const ONLY_ON_MACOS: &str = "Updates install only on macOS.";
 const BUSY: &str = "Dez is already downloading or installing an update.";
-const ALREADY_INSTALLED: &str =
-    "Dez has already installed an update. Quit Dez and open it again to finish.";
 
 /// The helper's log, relative to the app folder (`~/.config/dez`). The
 /// frontend names it when an update did not finish.
@@ -133,6 +131,21 @@ impl Finish {
             Finish::Binary { .. } => InstallMode::Binary,
         }
     }
+
+    // What the user can do once this install ran but Dez did not relaunch:
+    // Dez refuses a new download or install in this session. A replaced app
+    // is in place, so a restart opens it. Staged files need the relaunch
+    // helper; a plain quit leaves the old app, so it must install again.
+    fn advice(&self) -> &'static str {
+        match self {
+            Finish::Replaced { .. } => {
+                "Dez has already installed an update. Quit Dez and open it again to finish."
+            }
+            Finish::Binary { .. } => {
+                "Dez could not finish the update. Quit Dez, open it again, and install the update again."
+            }
+        }
+    }
 }
 
 /// What `install_update` did: `replaced` the app, or staged its new
@@ -190,8 +203,8 @@ pub async fn download_update(
     let key = verify::release_public_key()?;
     let mut job = state.lock_job()?;
     // The running app is already replaced, or its new files are staged.
-    if matches!(*job, Some(Job::Installed(_))) {
-        return Err(ALREADY_INSTALLED.into());
+    if let Some(Job::Installed(installed)) = &*job {
+        return Err(installed.finish.advice().into());
     }
     *job = None;
 
@@ -243,8 +256,9 @@ pub async fn install_update(
     let download = match job.take() {
         Some(Job::Downloaded(download)) if download.version.to_string() == version => download,
         Some(Job::Installed(installed)) => {
+            let advice = installed.finish.advice();
             *job = Some(Job::Installed(installed));
-            return Err(ALREADY_INSTALLED.into());
+            return Err(advice.into());
         }
         _ => {
             return Err(format!(
@@ -281,8 +295,11 @@ pub async fn relaunch_after_update(
     let Some(Job::Installed(installed)) = &*job else {
         return Err("Dez has not installed an update yet.".into());
     };
-    let log = crate::persistence::app_file_path(UPDATE_LOG)?;
-    spawn_helper(&installed.finish, installed.dir.path(), &log)?;
+    // A failure here leaves the install in place, and the window offers no
+    // retry, so the error says what the user can do instead.
+    crate::persistence::app_file_path(UPDATE_LOG)
+        .and_then(|log| spawn_helper(&installed.finish, installed.dir.path(), &log))
+        .map_err(|error| format!("{error}. {}", installed.finish.advice()))?;
     // The helper removes the private dir. Dropping the TempDir as Dez quits
     // would remove the staged files before the helper moves them.
     if let Some(Job::Installed(installed)) = job.take() {

@@ -9,13 +9,14 @@ export type UpdateCheckStatus = 'idle' | 'checking' | 'upToDate' | 'available' |
 // Where the install of the newest release is (dez.controller/updates/install):
 // `idle` before it starts and after the window closes, then each step in
 // turn, or `failed` with the message that the window shows. `total` is null
-// when the server sends no length.
+// when the server sends no length. `retry` is false once the install ran:
+// Rust then refuses a new download until Dez restarts.
 export type UpdateInstall =
   | { phase: 'idle' }
   | { phase: 'downloading', received: number, total: number | null }
   | { phase: 'installing' }
   | { phase: 'relaunching' }
-  | { phase: 'failed', error: string }
+  | { phase: 'failed', error: string, retry: boolean }
 
 // An install in these phases must run to its end: the window stays open,
 // and no update check runs.

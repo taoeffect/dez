@@ -29,6 +29,14 @@ const installUnavailableNote = computed(() => {
     `Dez ${newest.value.version} has no signed macOS download, so Dez cannot install it by itself.`
 })
 
+// The install button, or "Try Again" after a failure that a new download
+// can fix. Once the install ran, Rust refuses a new download until Dez
+// restarts, and the failure's message says what to do instead.
+const showInstallButton = computed(() => {
+  const state = install.value
+  return canInstall.value && (state.phase !== 'failed' || state.retry)
+})
+
 // The step that runs, as "Downloading… 4.2 of 9.5 MB".
 const progressText = computed(() => {
   const state = install.value
@@ -160,12 +168,12 @@ const { onOverlayMouseDown, onOverlayClick } = useOverlayDismiss(close)
           <button
             v-if="!canInstall || install.phase === 'failed'"
             class="update-btn"
-            :class="{ 'update-btn--primary': !canInstall }"
+            :class="{ 'update-btn--primary': !showInstallButton }"
             @click="viewOnGitHub"
           >
             View on GitHub
           </button>
-          <button v-if="canInstall" class="update-btn update-btn--primary" @click="installUpdate">
+          <button v-if="showInstallButton" class="update-btn update-btn--primary" @click="installUpdate">
             {{ install.phase === 'failed' ? 'Try Again' : 'Download and Install' }}
           </button>
         </div>

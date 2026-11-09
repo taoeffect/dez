@@ -39,10 +39,11 @@ let consoleError: MockInstance<typeof console.error>
 const files = new Map<string, string>()
 // The install steps that ran, in order.
 let calls: string[] = []
-// What the stub Rust download, install, and install check do; set by each
-// test.
+// What the stub Rust download, install, relaunch, and install check do; set
+// by each test.
 let download: (progress: ProgressChannel) => Promise<void>
 let install: () => Promise<void>
+let relaunch: () => Promise<void>
 let blockedReason: () => Promise<string | null>
 let downloadedSignature: string | null
 let saveError: unknown
@@ -72,8 +73,9 @@ sbp('sbp/selectors/register', {
     calls.push(`install ${version}`)
     return install()
   },
-  async 'dez.native/relaunchAfterUpdate' (): Promise<void> {
+  'dez.native/relaunchAfterUpdate' (): Promise<void> {
     calls.push('relaunch')
+    return relaunch()
   },
   async 'dez.native/getAppDir' (): Promise<string> {
     return APP_DIR
@@ -145,6 +147,7 @@ beforeEach(() => {
   calls = []
   download = async () => {}
   install = async () => {}
+  relaunch = async () => {}
   blockedReason = async () => null
   downloadedSignature = null
   saveError = null
@@ -432,7 +435,7 @@ describe('dez.controller/updates/install', () => {
     await installUpdate()
 
     expect(calls).toEqual(steps)
-    expect(updates()).toMatchObject({ install: { phase: 'failed', error }, installBusy: false, windowOpen: true })
+    expect(updates()).toMatchObject({ install: { phase: 'failed', error, retry: true }, installBusy: false, windowOpen: true })
     expect(streamIsStreaming(tabId)).toBe(true)
     expect(files.has(PENDING_FILE)).toBe(false)
     expect(consoleError).toHaveBeenCalled()
@@ -456,6 +459,22 @@ describe('dez.controller/updates/install', () => {
       'save window',
       'relaunch',
     ])
+  })
+
+  // After the install, Rust refuses a new download until Dez restarts, so
+  // "Try Again" would only fail.
+  it('a failed relaunch shows its message with no retry', async () => {
+    await openWindow()
+    const error = 'Dez could not start its update helper: Permission denied (os error 13). ' +
+      'Dez has already installed an update. Quit Dez and open it again to finish.'
+    relaunch = async () => {
+      throw error
+    }
+
+    await installUpdate()
+
+    expect(calls.at(-1)).toBe('relaunch')
+    expect(updates()).toMatchObject({ install: { phase: 'failed', error, retry: false }, installBusy: false, windowOpen: true })
   })
 
   it('after a failure, closing the window clears the error', async () => {

@@ -261,10 +261,12 @@ export default sbp('sbp/selectors/register', {
   // "Download and Install" in the update window: installs the newest
   // release and relaunches Dez. The window shows each step
   // (dez.model/updates/setInstall), or the message of a failure. After a
-  // failure the running app is as it was, and a retry downloads again: Rust
-  // keeps nothing of a failed download or install. Replies in progress
-  // stop, after the user agrees, once the new app is in place: a failed
-  // download or install stops none.
+  // failed download or install the running app is as it was, and a retry
+  // downloads again: Rust keeps nothing of either. After the install, Rust
+  // refuses a new download until Dez restarts, so a failed relaunch offers
+  // no retry; its message says what to do. Replies in progress stop, after
+  // the user agrees, once the new app is in place: a failed download or
+  // install stops none.
   async 'dez.controller/updates/install' (): Promise<void> {
     const ready = (): Release | null => {
       const { releases, windowOpen, installBusy } = sbp('dez.model/updates/snapshot') as UpdatesSnapshot
@@ -276,8 +278,10 @@ export default sbp('sbp/selectors/register', {
     const release = ready()
     if (!release) return
     sbp('dez.model/updates/setInstall', { phase: 'downloading', received: 0, total: null })
+    let installed = false
     try {
       await downloadAndInstall(release)
+      installed = true
       await Promise.all(streamingTabIds().map((tabId) => sbp('dez.stream/stop', tabId) as Promise<void>))
       // The file only feeds the report at the next startup
       // (dez.controller/updates/reportLastInstall), so a failed write
@@ -294,7 +298,7 @@ export default sbp('sbp/selectors/register', {
       await sbp('dez.native/relaunchAfterUpdate')
     } catch (error) {
       console.error('Update install failed', error)
-      sbp('dez.model/updates/setInstall', { phase: 'failed', error: sanitizeErrorText(error) })
+      sbp('dez.model/updates/setInstall', { phase: 'failed', error: sanitizeErrorText(error), retry: !installed })
     }
   },
 
