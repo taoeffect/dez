@@ -178,6 +178,10 @@ export const providerConfigSchema = z.object({
   // server sends all the requests of a conversation to the machine that
   // holds its prompt cache. The Anthropic format ignores it.
   promptCacheKey: z.boolean().optional(),
+  // A fixed part of every chat request body, merged right after the API
+  // format's body and before the settings and the thinking body, so those can
+  // add keys to the same objects.
+  requestBody: requestBodyPartSchema.optional(),
   settings: z.array(providerSettingDefSchema).optional(),
   thinking: thinkingConfigSchema.optional(),
 })

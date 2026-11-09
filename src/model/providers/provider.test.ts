@@ -298,25 +298,46 @@ describe('declarative provider settings', () => {
   })
 
   it('applies sparse overrides, including the web search string values', () => {
-    const body = requestBody(venice.chatRequest(messages, 'grok-4-20', key, { webSearch: false, veniceSystemPrompt: true }).request)
+    const body = requestBody(venice.chatRequest(messages, 'grok-4-20', key, { webSearch: false }).request)
 
     expect(body.venice_parameters).toEqual({
-      include_venice_system_prompt: true,
+      include_venice_system_prompt: false,
       enable_web_search: 'off',
       enable_x_search: true,
       enable_web_scraping: true,
     })
   })
 
-  it('maps every toggle flipped away from its default', () => {
-    const flipped = Object.fromEntries((venice.config.settings ?? []).map((setting) => [setting.key, !setting.default]))
+  it('maps every toggle flipped away from its default, and always turns the Venice system prompt off', () => {
+    // An app_state.json from before the toggle was removed can still hold
+    // `veniceSystemPrompt: true`.
+    const flipped = {
+      ...Object.fromEntries((venice.config.settings ?? []).map((setting) => [setting.key, !setting.default])),
+      veniceSystemPrompt: true,
+    }
 
     expect(requestBody(venice.chatRequest(messages, 'grok-4-20', key, flipped).request).venice_parameters).toEqual({
-      include_venice_system_prompt: true,
+      include_venice_system_prompt: false,
       enable_web_search: 'off',
       enable_x_search: false,
       enable_web_scraping: false,
     })
+  })
+
+  it('merges a config requestBody before the settings and the thinking body, and never changes the config', () => {
+    const provider = customProvider({
+      requestBody: { extra: { fixed: 1, flag: 'base' }, top: 'kept' },
+      settings: [{ key: 'flag', label: 'Flag', type: 'boolean', default: true, bodyPath: 'extra.flag' }],
+      thinking: { disabledBody: { extra: { thinkingOff: true } } },
+    })
+    const original = structuredClone(provider.config.requestBody)
+
+    expect(requestBody(provider.chatRequest(messages, 'm', key, { thinking: false }).request)).toMatchObject({
+      top: 'kept',
+      extra: { fixed: 1, flag: true, thinkingOff: true },
+    })
+    expect(requestBody(provider.chatRequest(messages, 'm', key, { flag: false }).request).extra).toEqual({ fixed: 1, flag: false })
+    expect(provider.config.requestBody).toEqual(original)
   })
 
   it('adds no venice_parameters to a provider without settings', () => {
@@ -328,8 +349,8 @@ describe('declarative provider settings', () => {
   it('shows prefix-gated settings only for matching model ids', () => {
     const visibleKeys = (modelId: string) => venice.visibleSettings(modelId).map((setting) => setting.key)
 
-    expect(visibleKeys('grok-4-20')).toEqual(['webSearch', 'xSearch', 'webScraping', 'veniceSystemPrompt'])
-    expect(visibleKeys('llama-3.3-70b')).toEqual(['webSearch', 'webScraping', 'veniceSystemPrompt'])
+    expect(visibleKeys('grok-4-20')).toEqual(['webSearch', 'xSearch', 'webScraping'])
+    expect(visibleKeys('llama-3.3-70b')).toEqual(['webSearch', 'webScraping'])
   })
 })
 

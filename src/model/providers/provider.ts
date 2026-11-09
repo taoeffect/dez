@@ -146,6 +146,7 @@ export class Provider {
     // Earlier thinking goes back only in a request that asks for thinking.
     const sentMessages = thinkingOn ? messages : messages.map(({ role, content }) => ({ role, content }))
     const { body, prefixHash } = this.format.chatBody(sentMessages, modelId, this.config, conversationId)
+    if (this.config.requestBody) mergeBodyPart(body, this.config.requestBody)
 
     // Every setting is written, also the ones hidden for this model, so the
     // body does not depend on which toggles the popup shows.

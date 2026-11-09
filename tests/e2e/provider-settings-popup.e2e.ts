@@ -41,7 +41,7 @@ describe('provider settings popup', () => {
     app = await startApp()
     try {
       // Seed a restored tab whose activeModel is a Grok Venice model (Grok
-      // keeps all four Venice setting rows visible; non-Grok hides the X
+      // keeps all three Venice setting rows visible; non-Grok hides the X
       // search row). The app's initial default tab is created before
       // settings load, so defaultNewTabModel alone would leave activeModel
       // null.
@@ -96,23 +96,23 @@ describe('provider settings popup', () => {
         (el) => el.textContent?.trim() ?? ''
       )
     )
-    expect(labels).toEqual(['Thinking', 'Web search', 'X search', 'Web scraping', 'Venice system prompt'])
+    expect(labels).toEqual(['Thinking', 'Web search', 'X search', 'Web scraping'])
 
-    // Defaults: thinking on, web search on, Venice system prompt off.
+    // Defaults: every row on.
     expect(await rowChecked(0)).toBe('true')
     expect(await rowChecked(1)).toBe('true')
-    expect(await rowChecked(4)).toBe('false')
+    expect(await rowChecked(3)).toBe('true')
 
-    // Flip all three and confirm the switch state updates in the UI.
+    // Flip three rows and confirm the switch state updates in the UI.
     await browser.execute(() => {
       const rows = document.querySelectorAll<HTMLButtonElement>('.provider-settings-row')
       rows[0].click()
       rows[1].click()
-      rows[4].click()
+      rows[3].click()
     })
     expect(await rowChecked(0)).toBe('false')
     expect(await rowChecked(1)).toBe('false')
-    expect(await rowChecked(4)).toBe('true')
+    expect(await rowChecked(3)).toBe('false')
 
     // Escape closes the popup.
     await pressEscape()
@@ -122,7 +122,7 @@ describe('provider settings popup', () => {
     await browser.waitUntil(
       async () => {
         const venice = (await readAppState(app.home))?.providerSettings?.venice
-        return venice?.thinking === false && venice.webSearch === false && venice.veniceSystemPrompt === true
+        return venice?.thinking === false && venice.webSearch === false && venice.webScraping === false
       },
       { timeout: 10_000, timeoutMsg: 'providerSettings.venice was not persisted to app_state.json' }
     )
@@ -138,7 +138,7 @@ describe('provider settings popup', () => {
     expect(await rowChecked(0)).toBe('false')
     expect(await rowChecked(1)).toBe('false')
     expect(await rowChecked(2)).toBe('true')
-    expect(await rowChecked(4)).toBe('true')
+    expect(await rowChecked(3)).toBe('false')
     await pressEscape()
   })
 
@@ -152,13 +152,11 @@ describe('provider settings popup', () => {
     try {
       await click(browser, '.provider-settings-reset')
 
-      // Switch states fall back to the defaults: Thinking and the first
-      // three Venice rows on, Venice system prompt off.
+      // Switch states fall back to the defaults: every row on.
       expect(await rowChecked(0)).toBe('true')
       expect(await rowChecked(1)).toBe('true')
       expect(await rowChecked(2)).toBe('true')
       expect(await rowChecked(3)).toBe('true')
-      expect(await rowChecked(4)).toBe('false')
     } finally {
       // Keep the popup closed for the next test even if an assertion fails.
       await pressEscape()
@@ -189,7 +187,7 @@ describe('provider settings popup', () => {
         (el) => el.textContent?.trim() ?? ''
       )
     )
-    expect(nonGrokLabels).toEqual(['Thinking', 'Web search', 'Web scraping', 'Venice system prompt'])
+    expect(nonGrokLabels).toEqual(['Thinking', 'Web search', 'Web scraping'])
     await pressEscape()
 
     // Switch back to a Grok model: the X search row returns.
@@ -205,7 +203,7 @@ describe('provider settings popup', () => {
         (el) => el.textContent?.trim() ?? ''
       )
     )
-    expect(grokLabels).toEqual(['Thinking', 'Web search', 'X search', 'Web scraping', 'Venice system prompt'])
+    expect(grokLabels).toEqual(['Thinking', 'Web search', 'X search', 'Web scraping'])
     await pressEscape()
   })
 

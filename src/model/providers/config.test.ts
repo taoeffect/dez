@@ -151,20 +151,23 @@ describe('provider config schema', () => {
     expect(parse({ disabledBody: { when: () => false } }).success).toBe(false)
   })
 
-  it('rejects thinking body keys that name Object.prototype members, at any depth', () => {
+  it('rejects body part keys that name Object.prototype members, at any depth', () => {
     // JSON.parse makes `__proto__` an own key, as in a hand-edited app_state.json.
-    const parseJson = (thinking: string) => providerConfigSchema.safeParse({
+    const parseJson = (fields: string) => providerConfigSchema.safeParse({
       id: 'p',
       name: 'P',
       baseUrl: 'http://h',
-      thinking: JSON.parse(thinking),
+      ...JSON.parse(fields),
     })
 
-    expect(parseJson('{"enabledBody":{"reasoning":{"enabled":true}}}').success).toBe(true)
-    expect(parseJson('{"enabledBody":{"__proto__":{"polluted":true}}}').success).toBe(false)
-    expect(parseJson('{"enabledBody":{"a":{"__proto__":{"polluted":true}}}}').success).toBe(false)
-    expect(parseJson('{"disabledBody":{"constructor":{"prototype":1}}}').success).toBe(false)
-    expect(parseJson('{"disabledBody":{"list":[{"prototype":1}]}}').success).toBe(false)
+    expect(parseJson('{"thinking":{"enabledBody":{"reasoning":{"enabled":true}}}}').success).toBe(true)
+    expect(parseJson('{"thinking":{"enabledBody":{"__proto__":{"polluted":true}}}}').success).toBe(false)
+    expect(parseJson('{"thinking":{"enabledBody":{"a":{"__proto__":{"polluted":true}}}}}').success).toBe(false)
+    expect(parseJson('{"thinking":{"disabledBody":{"constructor":{"prototype":1}}}}').success).toBe(false)
+    expect(parseJson('{"thinking":{"disabledBody":{"list":[{"prototype":1}]}}}').success).toBe(false)
+    expect(parseJson('{"requestBody":{"options":{"fixed":true}}}').data?.requestBody).toEqual({ options: { fixed: true } })
+    expect(parseJson('{"requestBody":{"options":{"__proto__":{"polluted":true}}}}').success).toBe(false)
+    expect(parseJson('{"requestBody":["options"]}').success).toBe(false)
   })
 
   it('writes every built-in exactly as the schema would produce it', () => {

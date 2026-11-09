@@ -74,6 +74,7 @@ You can also add custom providers by hand in `~/.config/dez/app_state.json`. **C
 | `maxOutputTokens` | no | `max_tokens` for the Anthropic format (default 32000). |
 | `cacheBreakpoints` | no | OpenAI format: `true` marks the last two user messages with Anthropic's `cache_control`, for a server that passes the marks on to models that cache only a marked prompt (such as Claude). The Anthropic format always adds the marks. |
 | `promptCacheKey` | no | OpenAI format: `true` sends the conversation id as `prompt_cache_key`, so the server can send all the requests of a conversation to the machine that holds its prompt cache. |
+| `requestBody` | no | A JSON object that Dez merges into every chat request, before `settings` and `thinking`: objects merge key by key, and other values replace. |
 | `settings` | no | On/off toggles for the provider settings popup in the model picker. Each toggle writes a value into the chat request. See the Venice `settings` in [`src/model/providers/builtins.ts`](src/model/providers/builtins.ts). The key `thinking` is reserved for the Thinking toggle. |
 | `thinking` | no | Set it when the server's models think. See [Thinking](#thinking). Checking **Supports thinking** writes `{}`; unchecking it removes the field. |
 
