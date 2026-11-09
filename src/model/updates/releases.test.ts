@@ -90,18 +90,35 @@ describe('release list', () => {
     })
   })
 
-  it('has no DMG or signature when the release lacks the exact asset names', () => {
+  it('finds the DMG and signature only by their exact names', () => {
     const download = `${REPO}/releases/download/v0.16.0`
     const [release] = parse([githubRelease('v0.16.0', {
-      body: null,
       assets: [
-        { name: 'Dez_0.16.0_aarch64.dmg', browser_download_url: `${download}/Dez_0.16.0_aarch64.dmg` },
+        { name: 'Dez_0.16.0_x64.dmg', browser_download_url: `${download}/Dez_0.16.0_x64.dmg` },
+        { name: 'Dez_0.15.1_aarch64.dmg', browser_download_url: `${download}/Dez_0.15.1_aarch64.dmg` },
         { name: 'Dez_0.15.1_aarch64.dmg.minisig', browser_download_url: `${download}/Dez_0.15.1_aarch64.dmg.minisig` },
         { name: 'Dez_0.16.0_x64.dmg.minisig', browser_download_url: `${download}/Dez_0.16.0_x64.dmg.minisig` },
       ],
     })])
-    expect(release.dmgAsset?.name).toBe('Dez_0.16.0_aarch64.dmg')
+    expect(release.dmgAsset).toBeNull()
     expect(release.signatureAsset).toBeNull()
+  })
+
+  // Releases from before the `sign-macos-dmg` CI job have a DMG and no
+  // `.minisig`; the update window then links to GitHub.
+  it('has a DMG and no signature when the release has only the DMG', () => {
+    const download = `${REPO}/releases/download/v0.16.0`
+    const [release] = parse([githubRelease('v0.16.0', {
+      assets: [{ name: 'Dez_0.16.0_aarch64.dmg', browser_download_url: `${download}/Dez_0.16.0_aarch64.dmg` }],
+    })])
+    expect(release.dmgAsset).toEqual({ name: 'Dez_0.16.0_aarch64.dmg', url: `${download}/Dez_0.16.0_aarch64.dmg` })
+    expect(release.signatureAsset).toBeNull()
+  })
+
+  // GitHub sends `body: null` for a release with no notes; the list must
+  // still parse.
+  it('gives no change notes for a release whose body is null', () => {
+    const [release] = parse([githubRelease('v0.16.0', { body: null })])
     expect(release.changes).toEqual([])
   })
 
