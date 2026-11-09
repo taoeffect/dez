@@ -16,6 +16,9 @@ export const BUILT_IN_PROVIDER_CONFIGS: readonly ProviderConfig[] = [
     models: [],
     fetchModels: true,
     modelImageInput: { path: 'architecture.input_modalities' },
+    // A list of request fields that the model takes; it holds "tools" for a
+    // model that calls tools.
+    modelToolCalling: { path: 'supported_parameters' },
     auth: 'apiKey',
     // OpenRouter passes the marks on to the models that cache only a marked
     // prompt (Claude, Gemini, Qwen), and makes OpenAI's own marks of them for
@@ -55,6 +58,7 @@ export const BUILT_IN_PROVIDER_CONFIGS: readonly ProviderConfig[] = [
     models: [],
     fetchModels: true,
     modelImageInput: { path: 'model_spec.capabilities.supportsVision' },
+    modelToolCalling: { path: 'model_spec.capabilities.supportsFunctionCalling' },
     auth: 'apiKey',
     // The Venice docs say that Venice adds the marks for Claude, but a live
     // check got no Claude cache hits without them. Its other models take the
@@ -164,8 +168,11 @@ export const BUILT_IN_PROVIDER_CONFIGS: readonly ProviderConfig[] = [
     models: [],
     fetchModels: true,
     // VS Code's Copilot Chat (microsoft/vscode, extensions/copilot) reads the
-    // same flag, and sends the same header on requests with images.
+    // same flags. It sends the same header on requests with images, and it
+    // sends no `tools` to a model without `tool_calls`
+    // (src/platform/endpoint/node/chatEndpoint.ts).
     modelImageInput: { path: 'capabilities.supports.vision' },
+    modelToolCalling: { path: 'capabilities.supports.tool_calls' },
     auth: 'githubCopilot',
     // The Copilot API expects the headers of a supported editor integration.
     headers: {

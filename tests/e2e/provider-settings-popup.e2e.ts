@@ -5,12 +5,14 @@ import { makeConversation, readAppState, seedAppState, seedConversation } from '
 import { createSession, destroySession, type E2EBrowser } from './harness/session'
 
 // Drives the real app: the gear button toggles the popup, the Venice
-// toggles (after the Thinking row, which comes first for every provider
-// with thinking) change the persisted providerSettings, the settings survive
-// an app restart, OpenRouter shows only the Thinking row, and a custom
-// provider without thinking shows the empty state. All interaction goes
-// through executed JS (harness click()/dispatched KeyboardEvent) because
-// wry's automation session rejects native WebDriver click/sendKeys.
+// toggles (after the Thinking row, first for every provider with thinking,
+// and the Tools row, which every provider has) change the persisted
+// providerSettings, the settings survive an app restart, OpenRouter shows
+// only the Thinking and Tools rows, a custom provider without thinking or
+// settings shows only the Tools row, and an unknown provider shows the empty
+// state. All interaction goes through executed JS (harness
+// click()/dispatched KeyboardEvent) because wry's automation session rejects
+// native WebDriver click/sendKeys.
 describe('provider settings popup', () => {
   let app: RunningApp
   let browser: E2EBrowser
@@ -96,23 +98,24 @@ describe('provider settings popup', () => {
         (el) => el.textContent?.trim() ?? ''
       )
     )
-    expect(labels).toEqual(['Thinking', 'Web search', 'X search', 'Web scraping'])
+    expect(labels).toEqual(['Thinking', 'Tools', 'Web search', 'X search', 'Web scraping'])
 
     // Defaults: every row on.
-    expect(await rowChecked(0)).toBe('true')
-    expect(await rowChecked(1)).toBe('true')
-    expect(await rowChecked(3)).toBe('true')
+    for (const row of [0, 1, 2, 3, 4]) expect(await rowChecked(row)).toBe('true')
 
-    // Flip three rows and confirm the switch state updates in the UI.
+    // Flip four rows and confirm the switch state updates in the UI.
     await browser.execute(() => {
       const rows = document.querySelectorAll<HTMLButtonElement>('.provider-settings-row')
       rows[0].click()
       rows[1].click()
-      rows[3].click()
+      rows[2].click()
+      rows[4].click()
     })
     expect(await rowChecked(0)).toBe('false')
     expect(await rowChecked(1)).toBe('false')
-    expect(await rowChecked(3)).toBe('false')
+    expect(await rowChecked(2)).toBe('false')
+    expect(await rowChecked(3)).toBe('true')
+    expect(await rowChecked(4)).toBe('false')
 
     // Escape closes the popup.
     await pressEscape()
@@ -122,7 +125,8 @@ describe('provider settings popup', () => {
     await browser.waitUntil(
       async () => {
         const venice = (await readAppState(app.home))?.providerSettings?.venice
-        return venice?.thinking === false && venice.webSearch === false && venice.webScraping === false
+        return venice?.thinking === false && venice.tools === false &&
+          venice.webSearch === false && venice.webScraping === false
       },
       { timeout: 10_000, timeoutMsg: 'providerSettings.venice was not persisted to app_state.json' }
     )
@@ -137,8 +141,9 @@ describe('provider settings popup', () => {
     await waitFor(browser, '.provider-settings-popup')
     expect(await rowChecked(0)).toBe('false')
     expect(await rowChecked(1)).toBe('false')
-    expect(await rowChecked(2)).toBe('true')
-    expect(await rowChecked(3)).toBe('false')
+    expect(await rowChecked(2)).toBe('false')
+    expect(await rowChecked(3)).toBe('true')
+    expect(await rowChecked(4)).toBe('false')
     await pressEscape()
   })
 
@@ -153,10 +158,7 @@ describe('provider settings popup', () => {
       await click(browser, '.provider-settings-reset')
 
       // Switch states fall back to the defaults: every row on.
-      expect(await rowChecked(0)).toBe('true')
-      expect(await rowChecked(1)).toBe('true')
-      expect(await rowChecked(2)).toBe('true')
-      expect(await rowChecked(3)).toBe('true')
+      for (const row of [0, 1, 2, 3, 4]) expect(await rowChecked(row)).toBe('true')
     } finally {
       // Keep the popup closed for the next test even if an assertion fails.
       await pressEscape()
@@ -187,7 +189,7 @@ describe('provider settings popup', () => {
         (el) => el.textContent?.trim() ?? ''
       )
     )
-    expect(nonGrokLabels).toEqual(['Thinking', 'Web search', 'Web scraping'])
+    expect(nonGrokLabels).toEqual(['Thinking', 'Tools', 'Web search', 'Web scraping'])
     await pressEscape()
 
     // Switch back to a Grok model: the X search row returns.
@@ -203,11 +205,11 @@ describe('provider settings popup', () => {
         (el) => el.textContent?.trim() ?? ''
       )
     )
-    expect(grokLabels).toEqual(['Thinking', 'Web search', 'X search', 'Web scraping'])
+    expect(grokLabels).toEqual(['Thinking', 'Tools', 'Web search', 'X search', 'Web scraping'])
     await pressEscape()
   })
 
-  it('shows only the Thinking row for OpenRouter, and the empty state for a provider without settings', async () => {
+  it('shows the Thinking and Tools rows for OpenRouter, only Tools for a provider without settings, and the empty state for an unknown provider', async () => {
     // Switch the active tab's model through the SBP bridge (window.sbp is
     // exposed by src/main.ts). OpenRouter has no settings of its own, but it
     // supports thinking.
@@ -216,14 +218,16 @@ describe('provider settings popup', () => {
       w.sbp('dez.model/setActiveModel', 'openrouter', 'some/model', 'Some Model')
     })
 
-    await click(browser, '.model-selector-gear')
-    await waitFor(browser, '.provider-settings-popup')
-    const openRouterView = await browser.execute(() => ({
+    const popupView = () => browser.execute(() => ({
       header: document.querySelector('.provider-settings-header')?.textContent?.trim() ?? null,
       labels: Array.from(document.querySelectorAll('.provider-settings-label')).map((el) => el.textContent?.trim() ?? ''),
     }))
-    expect(openRouterView).toEqual({ header: 'OpenRouter', labels: ['Thinking'] })
+
+    await click(browser, '.model-selector-gear')
+    await waitFor(browser, '.provider-settings-popup')
+    expect(await popupView()).toEqual({ header: 'OpenRouter', labels: ['Thinking', 'Tools'] })
     expect(await rowChecked(0)).toBe('true')
+    expect(await rowChecked(1)).toBe('true')
     await pressEscape()
 
     await browser.execute(() => {
@@ -232,11 +236,22 @@ describe('provider settings popup', () => {
     })
 
     await click(browser, '.model-selector-gear')
+    await waitFor(browser, '.provider-settings-popup')
+    expect(await popupView()).toEqual({ header: 'Plain Mock', labels: ['Tools'] })
+    await pressEscape()
+
+    // A tab can keep the model of a provider that was removed.
+    await browser.execute(() => {
+      const w = window as unknown as { sbp: (sel: string, ...args: unknown[]) => unknown }
+      w.sbp('dez.model/setActiveModel', 'removed', 'gone-model', 'gone-model')
+    })
+
+    await click(browser, '.model-selector-gear')
     await waitFor(browser, '.provider-settings-empty')
     const text = await browser.execute(
       () => document.querySelector('.provider-settings-empty')?.textContent?.trim() ?? ''
     )
-    expect(text).toBe('No Settings for Plain Mock')
+    expect(text).toBe('No Settings for removed')
     expect(await browser.execute(() => document.querySelector('.provider-settings-row') !== null)).toBe(false)
     await pressEscape()
   })

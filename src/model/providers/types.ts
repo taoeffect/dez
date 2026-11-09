@@ -14,7 +14,12 @@ export interface ModelInfo {
   // true: the model reads images; false: it does not. Missing: unknown, and
   // the request sends the images.
   imageInput?: boolean
+  // true: the model calls tools; false: it does not, and the request sends
+  // no tools. Missing: unknown, and the request sends the tools.
+  toolCalling?: boolean
 }
+
+export type ModelCapabilities = Pick<ModelInfo, 'imageInput' | 'toolCalling'>
 
 // Display names for agent role pills and history rows: provider id ->
 // provider name, and `modelRefKey` -> model name. Maps, not plain objects,
@@ -140,8 +145,11 @@ export class ProviderNotConfiguredError extends ProviderError {
   }
 }
 
-// Leaves `imageInput` out when it is unknown, so the model cache file and
+// Leaves each capability out when it is unknown, so the model cache file and
 // whole-object comparisons hold no `undefined` field.
-export function providerModel(provider: ProviderId, id: string, name: string, imageInput?: boolean): ModelInfo {
-  return imageInput === undefined ? { id, name, provider } : { id, name, provider, imageInput }
+export function providerModel(provider: ProviderId, id: string, name: string, capabilities: ModelCapabilities = {}): ModelInfo {
+  const model: ModelInfo = { id, name, provider }
+  if (capabilities.imageInput !== undefined) model.imageInput = capabilities.imageInput
+  if (capabilities.toolCalling !== undefined) model.toolCalling = capabilities.toolCalling
+  return model
 }

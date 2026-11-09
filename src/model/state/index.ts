@@ -17,6 +17,7 @@ import type { AppStatePayload, CachedProvider, ConversationSearchOutcome, ModelC
 import { emptyModelCache } from '../persistence/modelCache'
 import type { ProviderConfig, ProviderThinkingConfig } from '../providers/config'
 import type { ProviderId, ProviderModelsResult } from '../providers/types'
+import { isToolsEnabled } from '../providers/toolsSetting'
 import type { ActiveModel, ContentNode, ModelRef, Section, SectionThinking, Tab, ThinkingReplay } from '../chat/types'
 import {
   appendStreamingText,
@@ -176,7 +177,7 @@ function cloneProviderSettings(
 // app_state.json.
 function cloneProviderConfig(config: ProviderConfig): ProviderConfig {
   const {
-    id, name, baseUrl, apiFormat, models, fetchModels, modelImageInput, auth,
+    id, name, baseUrl, apiFormat, models, fetchModels, modelImageInput, modelToolCalling, auth,
     headers, imageRequestHeaders, maxOutputTokens, cacheBreakpoints, promptCacheKey, requestBody, settings, thinking,
     ...uncopied
   } = config
@@ -193,6 +194,7 @@ function cloneProviderConfig(config: ProviderConfig): ProviderConfig {
     auth,
   }
   if (modelImageInput) clone.modelImageInput = { ...modelImageInput }
+  if (modelToolCalling) clone.modelToolCalling = { ...modelToolCalling }
   if (headers) clone.headers = { ...headers }
   if (imageRequestHeaders) clone.imageRequestHeaders = { ...imageRequestHeaders }
   if (maxOutputTokens !== undefined) clone.maxOutputTokens = maxOutputTokens
@@ -786,16 +788,21 @@ export default sbp('sbp/selectors/register', {
   },
 
   // `model`: the model the request goes to. It decides what earlier thinking
-  // goes back, and whether the images go: a model that the model cache
-  // knows not to read images gets only the text of each reference, with no
-  // path. An unknown model (no flag, or not in the cache yet) gets the images.
+  // goes back, whether the images go, and whether the tools go. A model that
+  // the model cache knows not to read images gets only the text of each
+  // reference, with no path; one that it knows not to call tools gets no
+  // tools, as does any model of a provider whose Tools toggle is off. An
+  // unknown model (no flag, or not in the cache yet) gets the images and the
+  // tools.
   'dez.model/streamMessagesForTab' (tabId: string, model: ModelRef): RequestMessages {
     const tab = useTabStore().tabs.find((candidate) => candidate.id === tabId)
-    if (!tab) return { messages: [], imagesLeftOut: 0 }
+    if (!tab) return { messages: [], imagesLeftOut: 0, sendTools: false }
 
     const cachedModel = useModelCacheStore().cache.providers[model.providerId]?.models
       .find((candidate) => candidate.id === model.modelId)
-    return sectionsToStreamMessages(tab.sections, model, cachedModel?.imageInput !== false)
+    const sendTools = isToolsEnabled(useSettingsStore().providerSettings[model.providerId]) &&
+      cachedModel?.toolCalling !== false
+    return { ...sectionsToStreamMessages(tab.sections, model, cachedModel?.imageInput !== false), sendTools }
   },
 
   // Stamps the agent section with the model of the request that will fill it.

@@ -27,11 +27,13 @@ describe('model cache persistence format', () => {
     expect(serializeModelCacheJson(parsed)).toBe(JSON.stringify(parsed, null, 2))
   })
 
-  it('round-trips image flags and reads a model without one as unknown', () => {
+  it('round-trips capability flags and reads a model without one as unknown', () => {
     const models = [
-      { id: 'vision', name: 'Vision', provider: 'venice', imageInput: true },
-      { id: 'text', name: 'Text', provider: 'venice', imageInput: false },
-      // A cache written before the field existed.
+      { id: 'vision', name: 'Vision', provider: 'venice', imageInput: true, toolCalling: true },
+      { id: 'text', name: 'Text', provider: 'venice', imageInput: false, toolCalling: false },
+      // A cache written before the tool flag existed.
+      { id: 'image-only', name: 'Image only', provider: 'venice', imageInput: true },
+      // A cache written before the flags existed.
       { id: 'old', name: 'Old', provider: 'venice' },
     ]
     const parsed = parseModelCacheJson(JSON.stringify({

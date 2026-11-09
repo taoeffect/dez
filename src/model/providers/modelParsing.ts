@@ -10,12 +10,16 @@ export function modelData<T extends Record<string, unknown>>(data: unknown): T[]
   return data.data.filter(isRecord) as T[]
 }
 
-// Reads whether a `/models` entry's model reads images, at the config's dot
-// path (`modelImageInput.path` in config.ts): a boolean is the flag, and a
-// list means true when it holds "image". Anything else is unknown. Only own
+// Reads a model capability from a `/models` entry, at a config dot path
+// (`modelImageInput.path`, `modelToolCalling.path` in config.ts): a boolean
+// is the flag, and a list means true when it holds `listValue` (such as
+// "image" in OpenRouter's `architecture.input_modalities`, or "tools" in its
+// `supported_parameters`). Anything else, or no path, is unknown. Only own
 // properties are read, so a segment such as 'constructor' never reaches an
 // inherited member.
-export function modelImageInput(model: Record<string, unknown>, path: string): boolean | undefined {
+export function modelCapability(model: Record<string, unknown>, path: string | undefined, listValue: string): boolean | undefined {
+  if (path === undefined) return undefined
+
   let value: unknown = model
   for (const segment of path.split('.')) {
     if (!isRecord(value) || !Object.hasOwn(value, segment)) return undefined
@@ -23,6 +27,6 @@ export function modelImageInput(model: Record<string, unknown>, path: string): b
   }
 
   if (typeof value === 'boolean') return value
-  if (Array.isArray(value)) return value.includes('image')
+  if (Array.isArray(value)) return value.includes(listValue)
   return undefined
 }

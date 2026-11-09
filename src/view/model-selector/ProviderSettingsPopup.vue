@@ -4,6 +4,7 @@ import sbp from '@sbp/sbp'
 import { useModelState } from '../modelState'
 import type { ProviderSettingsDescriptor } from '../../model/providers'
 import { THINKING_DEFAULT, THINKING_SETTING_KEY } from '../../model/providers/thinking'
+import { TOOLS_DEFAULT, TOOLS_SETTING_KEY } from '../../model/providers/toolsSetting'
 
 const { activeModel, settings } = useModelState()
 
@@ -21,13 +22,18 @@ const providerName = computed(
   () => descriptor.value?.name ?? activeModel.value?.providerId ?? '',
 )
 
-// The Thinking toggle comes first. It is stored with the config's toggles,
-// so the rows share one code path, and "Reset to defaults" resets it too.
+// Dez's own toggles come first: Thinking (only for a provider with thinking),
+// then Tools (every provider). They are stored with the config's toggles, so
+// the rows share one code path, and "Reset to defaults" resets them too. An
+// unknown provider (no descriptor) gets no rows.
 const settingDefs = computed(() => {
-  const defs = descriptor.value?.settings ?? []
-  return descriptor.value?.supportsThinking
-    ? [{ key: THINKING_SETTING_KEY, label: 'Thinking', default: THINKING_DEFAULT }, ...defs]
-    : defs
+  const current = descriptor.value
+  if (!current) return []
+  return [
+    ...(current.supportsThinking ? [{ key: THINKING_SETTING_KEY, label: 'Thinking', default: THINKING_DEFAULT }] : []),
+    { key: TOOLS_SETTING_KEY, label: 'Tools', default: TOOLS_DEFAULT },
+    ...current.settings,
+  ]
 })
 
 // Effective value: stored override if the user ever flipped the toggle,

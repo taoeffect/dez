@@ -21,7 +21,7 @@ import type { RequestMessages, StreamMessage } from './types'
 // `sendImages` false (the request model does not read images), only their
 // text goes. An agent section's images go as text only: both formats take
 // images only from the user.
-export function sectionsToStreamMessages(sections: Section[], requestModel: ModelRef, sendImages: boolean): RequestMessages {
+export function sectionsToStreamMessages(sections: Section[], requestModel: ModelRef, sendImages: boolean): Omit<RequestMessages, 'sendTools'> {
   let imagesLeftOut = 0
   const messages = sections
     .filter((section) => !sectionIsEmpty(section))

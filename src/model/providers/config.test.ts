@@ -108,7 +108,7 @@ describe('provider config schema', () => {
     expect(withPath('')).toBe(false)
   })
 
-  it('reserves the Thinking toggle key for settings', () => {
+  it('reserves the Thinking and Tools toggle keys for settings', () => {
     const withKey = (key: string) => providerConfigSchema.safeParse({
       id: 'p',
       name: 'P',
@@ -118,21 +118,25 @@ describe('provider config schema', () => {
 
     expect(withKey('reasoning')).toBe(true)
     expect(withKey('thinking')).toBe(false)
+    expect(withKey('tools')).toBe(false)
   })
 
-  it('keeps the image fields, and rejects a bad image path, model flag, or header', () => {
+  it('keeps the image and tool fields, and rejects a bad capability path, model flag, or header', () => {
     const parse = (fields: Record<string, unknown>) =>
       providerConfigSchema.safeParse({ id: 'p', name: 'P', baseUrl: 'http://h', ...fields })
     const fields = {
-      models: [{ id: 'm', imageInput: false }],
+      models: [{ id: 'm', imageInput: false, toolCalling: false }],
       modelImageInput: { path: 'architecture.input_modalities' },
+      modelToolCalling: { path: 'supported_parameters' },
       imageRequestHeaders: { 'X-Vision': 'true' },
     }
 
     expect(parse(fields).data).toMatchObject(fields)
     expect(parse({ modelImageInput: { path: 'architecture..input_modalities' } }).success).toBe(false)
     expect(parse({ modelImageInput: { path: '' } }).success).toBe(false)
+    expect(parse({ modelToolCalling: { path: 'capabilities.' } }).success).toBe(false)
     expect(parse({ models: [{ id: 'm', imageInput: 'yes' }] }).success).toBe(false)
+    expect(parse({ models: [{ id: 'm', toolCalling: 1 }] }).success).toBe(false)
     expect(parse({ imageRequestHeaders: { 'Bad Name': 'true' } }).success).toBe(false)
   })
 

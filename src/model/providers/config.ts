@@ -1,6 +1,7 @@
 import * as z from 'zod'
 import { BUILT_IN_PROVIDER_IDS } from './builtins'
 import { THINKING_SETTING_KEY } from './thinking'
+import { TOOLS_SETTING_KEY } from './toolsSetting'
 
 // Provider ids are JSON keys in provider_keys.json, the `provider` half of a
 // conversation header's `model: provider/model` (split at the first `/`), and
@@ -53,19 +54,21 @@ export const providerModelConfigSchema = z.object({
   // Whether the model reads images. Wins over the flag the server reports
   // (`modelImageInput`); missing: the server's flag, or unknown.
   imageInput: z.boolean().optional(),
+  // Whether the model calls tools. Wins over the flag the server reports
+  // (`modelToolCalling`); missing: the server's flag, or unknown.
+  toolCalling: z.boolean().optional(),
 })
 
 const settingBodyValueSchema = z.union([z.string(), z.number(), z.boolean()])
 
 // One toggle in the model picker's provider settings popup. The toggle state
 // is stored under `key` in settings.providerSettings[providerId], and every
-// chat request writes the matching value at `bodyPath`. The Thinking toggle
-// is stored there too, so its key is reserved.
+// chat request writes the matching value at `bodyPath`. The Thinking and
+// Tools toggles are stored there too, so their keys are reserved.
 const providerSettingDefSchema = z.object({
-  key: z.string().min(1).refine(
-    (key) => key !== THINKING_SETTING_KEY,
-    `Setting key "${THINKING_SETTING_KEY}" is reserved for the Thinking toggle`,
-  ),
+  key: z.string().min(1)
+    .refine((key) => key !== THINKING_SETTING_KEY, `Setting key "${THINKING_SETTING_KEY}" is reserved for the Thinking toggle`)
+    .refine((key) => key !== TOOLS_SETTING_KEY, `Setting key "${TOOLS_SETTING_KEY}" is reserved for the Tools toggle`),
   label: z.string().trim().min(1),
   type: z.literal('boolean'),
   default: z.boolean(),
@@ -132,14 +135,15 @@ const thinkingConfigSchema = z.object({
   disabledBody: requestBodyPartSchema.optional(),
 })
 
-// Where a `/models` entry says whether the model reads images, as a dot path
-// such as 'architecture.input_modalities'. A boolean there is the flag; a
-// list means "reads images" when it holds "image"; anything else, or no
-// value, is unknown.
-const modelImageInputSchema = z.object({
+// Where a `/models` entry says whether the model has a capability, as a dot
+// path such as 'architecture.input_modalities'. A boolean there is the flag;
+// a list means "has it" when it holds the capability's list value ("image"
+// for `modelImageInput`, "tools" for `modelToolCalling`); anything else, or
+// no value, is unknown (modelParsing.ts).
+const modelCapabilityPathSchema = z.object({
   path: z.string().refine(
     (path) => path.split('.').every((segment) => segment.length > 0),
-    'Model image input path must be dot-separated names, none empty',
+    'Model capability path must be dot-separated names, none empty',
   ),
 })
 
@@ -161,7 +165,8 @@ export const providerConfigSchema = z.object({
   models: z.array(providerModelConfigSchema).default(() => []),
   // false: never call the models endpoint, list only `models`.
   fetchModels: z.boolean().default(true),
-  modelImageInput: modelImageInputSchema.optional(),
+  modelImageInput: modelCapabilityPathSchema.optional(),
+  modelToolCalling: modelCapabilityPathSchema.optional(),
   auth: z.enum(['apiKey', 'githubCopilot']).default('apiKey'),
   // Static headers added to every request.
   headers: headersSchema.optional(),

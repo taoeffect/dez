@@ -5,6 +5,7 @@ import type { ActiveModel, ContentNode, ModelRef, Section, SectionThinking, Tab 
 import type { AppStatePayload, ConversationData, ModelCache } from '../persistence/types'
 import type { ProviderConfig } from '../providers/config'
 import type { SettingsSnapshot } from './index'
+import type { RequestMessages } from '../streams/types'
 import type { Shortcut, ShortcutId } from '../shortcuts'
 // Side-effect import: registers the dez.model/* selectors under test.
 import './index'
@@ -641,5 +642,38 @@ describe('dez.model/modelCache errors', () => {
     sbp('dez.model/modelCache/removeProvider', 'other')
     expect(errors()).toEqual({})
     expect(Object.keys((sbp('dez.model/modelCache/snapshot') as ModelCache).providers)).toEqual(['local'])
+  })
+})
+
+describe('dez.model/streamMessagesForTab tools', () => {
+  const model: ModelRef = { providerId: 'local', modelId: 'm' }
+  const sendTools = () => (sbp('dez.model/streamMessagesForTab', activeId(), model) as RequestMessages).sendTools
+  const cacheModel = (toolCalling?: boolean) => sbp('dez.model/modelCache/applyProviderResult', 'local', {
+    ok: true,
+    models: [{ id: 'm', name: 'M', provider: 'local', ...(toolCalling === undefined ? {} : { toolCalling }) }],
+  })
+
+  it('sends the tools unless the cache knows the model cannot call them', () => {
+    // Not in the cache yet.
+    expect(sendTools()).toBe(true)
+    cacheModel()
+    expect(sendTools()).toBe(true)
+    cacheModel(true)
+    expect(sendTools()).toBe(true)
+    cacheModel(false)
+    expect(sendTools()).toBe(false)
+  })
+
+  it('sends no tools while the provider\'s Tools toggle is off', () => {
+    cacheModel(true)
+    sbp('dez.model/settings/setProviderSetting', 'other', 'tools', false)
+    sbp('dez.model/settings/setProviderSetting', 'local', 'thinking', false)
+    expect(sendTools()).toBe(true)
+
+    sbp('dez.model/settings/setProviderSetting', 'local', 'tools', false)
+    expect(sendTools()).toBe(false)
+
+    sbp('dez.model/settings/resetProviderSettings', 'local')
+    expect(sendTools()).toBe(true)
   })
 })

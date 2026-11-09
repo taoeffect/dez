@@ -3,7 +3,7 @@ import type { NativeHttpHeaders, NativeHttpRequest } from '../../utils/protocol/
 import type { Secret } from '../../utils/secret'
 import { API_FORMATS, type ApiFormat } from './apiFormats'
 import { FORBIDDEN_BODY_KEYS, type ProviderConfig, type ProviderSettingDef } from './config'
-import { isRecord, modelData, modelImageInput } from './modelParsing'
+import { isRecord, modelCapability, modelData } from './modelParsing'
 import { isThinkingEnabled } from './thinking'
 import { providerModel, type ChatMessage, type ChatRequestContext, type ModelInfo, type ProviderInfo } from './types'
 
@@ -84,26 +84,30 @@ export class Provider {
   // Reads the `{ data: [...] }` model list both formats return. The name
   // falls back from `name` (OpenAI-style servers) to `display_name`
   // (Anthropic-style) to the id (servers that report only ids). The image
-  // flag is read only where the config's `modelImageInput` points.
+  // and tool flags are read only where the config's `modelImageInput` and
+  // `modelToolCalling` point.
   parseModels(data: unknown): ModelInfo[] {
     const models: ModelInfo[] = []
     const imageInputPath = this.config.modelImageInput?.path
+    const toolCallingPath = this.config.modelToolCalling?.path
 
     for (const model of modelData(data)) {
       if (typeof model.id !== 'string' || model.id.length === 0) continue
 
       const name = [model.name, model.display_name]
         .find((value): value is string => typeof value === 'string' && value.trim().length > 0)
-      const imageInput = imageInputPath === undefined ? undefined : modelImageInput(model, imageInputPath)
-      models.push(providerModel(this.id, model.id, name?.trim() ?? model.id, imageInput))
+      models.push(providerModel(this.id, model.id, name?.trim() ?? model.id, {
+        imageInput: modelCapability(model, imageInputPath, 'image'),
+        toolCalling: modelCapability(model, toolCallingPath, 'tools'),
+      }))
     }
 
     return models
   }
 
   // Config models come first, in config order, then the fetched models the
-  // config does not list. Each id appears once. A name or image flag set in
-  // the config wins over the fetched one for the same id.
+  // config does not list. Each id appears once. A name or capability flag set
+  // in the config wins over the fetched one for the same id.
   mergeModels(fetched: ModelInfo[]): ModelInfo[] {
     const fetchedById = new Map<string, ModelInfo>()
     for (const model of fetched) {
@@ -116,12 +120,14 @@ export class Provider {
 
       const fetchedModel = fetchedById.get(model.id)
       const name = model.name ?? fetchedModel?.name ?? model.id
-      const imageInput = model.imageInput ?? fetchedModel?.imageInput
-      merged.set(model.id, providerModel(this.id, model.id, name, imageInput))
+      merged.set(model.id, providerModel(this.id, model.id, name, {
+        imageInput: model.imageInput ?? fetchedModel?.imageInput,
+        toolCalling: model.toolCalling ?? fetchedModel?.toolCalling,
+      }))
     }
 
     for (const [id, model] of fetchedById) {
-      if (!merged.has(id)) merged.set(id, providerModel(this.id, id, model.name, model.imageInput))
+      if (!merged.has(id)) merged.set(id, providerModel(this.id, id, model.name, model))
     }
 
     return [...merged.values()]

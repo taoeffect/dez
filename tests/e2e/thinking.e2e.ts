@@ -562,9 +562,9 @@ describe('thinking', () => {
 
   it('changes one Thinking value from the gear popup and Settings › Providers, and drops thinking while it is off', async () => {
     await openGear()
-    expect(await gearRows()).toEqual({ header: THINKER.name, rows: [['Thinking', 'true']] })
+    expect(await gearRows()).toEqual({ header: THINKER.name, rows: [['Thinking', 'true'], ['Tools', 'true']] })
     await click(browser, '.provider-settings-row')
-    expect(await gearRows()).toEqual({ header: THINKER.name, rows: [['Thinking', 'false']] })
+    expect(await gearRows()).toEqual({ header: THINKER.name, rows: [['Thinking', 'false'], ['Tools', 'true']] })
     await closeGear()
     await waitForValue(browser, 'saved toggle', () => savedProviderSettings(THINKER.id), { thinking: false })
 
@@ -577,7 +577,7 @@ describe('thinking', () => {
     await waitForValue(browser, 'switch after a second click', thinkingSwitch, 'false')
     await closeSettings(browser)
     await openGear()
-    expect(await gearRows()).toEqual({ header: THINKER.name, rows: [['Thinking', 'false']] })
+    expect(await gearRows()).toEqual({ header: THINKER.name, rows: [['Thinking', 'false'], ['Tools', 'true']] })
     await closeGear()
 
     // Off: the request sends no thinking back, and the reasoning of the
@@ -624,7 +624,7 @@ describe('thinking', () => {
     // "Reset to defaults" turns thinking on again and drops the saved value.
     await openGear()
     await click(browser, '.provider-settings-reset')
-    expect(await gearRows()).toEqual({ header: THINKER.name, rows: [['Thinking', 'true']] })
+    expect(await gearRows()).toEqual({ header: THINKER.name, rows: [['Thinking', 'true'], ['Tools', 'true']] })
     await closeGear()
     await waitForValue(browser, 'saved toggle after the reset', () => savedProviderSettings(THINKER.id), null)
   })
@@ -650,7 +650,7 @@ describe('thinking', () => {
     await waitForValue(browser, 'saved config with thinking', () => savedCustomProvider(PLAIN.id), { ...savedPlainConfig(), thinking: {} })
     await closeSettings(browser)
     await openGear()
-    expect(await gearRows()).toEqual({ header: PLAIN.name, rows: [['Thinking', 'true']] })
+    expect(await gearRows()).toEqual({ header: PLAIN.name, rows: [['Thinking', 'true'], ['Tools', 'true']] })
     await closeGear()
 
     await submit(browser, 'Plain question 2')

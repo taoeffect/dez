@@ -9,9 +9,10 @@ const modelInfoSchema = z.object({
   id: z.string(),
   name: z.string(),
   provider: z.string().refine(isValidProviderId, 'invalid provider id'),
-  // Optional with no version bump: a cache written before this field reads
-  // as "unknown" until the next model check.
+  // Optional with no version bump: a cache written before a flag existed
+  // reads it as "unknown" until the next model check.
   imageInput: z.boolean().optional(),
+  toolCalling: z.boolean().optional(),
 })
 
 // Individually drop invalid models (e.g. a bad provider id) instead of failing
