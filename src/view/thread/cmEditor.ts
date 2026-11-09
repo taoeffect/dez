@@ -1191,15 +1191,20 @@ export function buildInitialDoc(sections: Section[]): string {
   return sectionsToDoc(sections)
 }
 
+// A block node (`Blockquote/...`, `BulletList/...`, `ATXHeading1/...`) adds
+// its class to every span inside it, and every rule here has the same CSS
+// specificity, so when two rules set the same property the later rule wins.
+// The block rules come first so that inline code and links keep their own
+// color inside lists, quotes, and headings.
 export const dezHighlightStyle = HighlightStyle.define([
   { tag: t.heading, color: 'var(--color-text)', fontWeight: '600' },
+  { tag: t.quote, color: 'var(--color-muted, #888)', fontStyle: 'italic' },
+  { tag: t.list, color: 'var(--color-text)' },
   { tag: t.strong, fontWeight: '600' },
   { tag: t.emphasis, fontStyle: 'italic' },
   { tag: t.link, color: 'var(--color-link, #4a9eff)', textDecoration: 'underline' },
   { tag: t.url, color: 'var(--color-link, #4a9eff)' },
   { tag: t.monospace, fontFamily: 'inherit', color: 'var(--color-code, #c792ea)' },
-  { tag: t.quote, color: 'var(--color-muted, #888)', fontStyle: 'italic' },
-  { tag: t.list, color: 'var(--color-text)' },
   { tag: t.strikethrough, textDecoration: 'line-through' },
   { tag: t.meta, color: 'var(--color-muted, #888)' },
 ])
