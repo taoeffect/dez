@@ -1,13 +1,39 @@
-//! The macOS part of the updater: which app bundle Dez runs from, and
-//! whether Dez may replace that bundle in place.
+//! The macOS part of the updater: which app bundle Dez runs from, whether
+//! Dez may replace that bundle in place, the install from the mounted DMG,
+//! and the relaunch helper that finishes the install once Dez has quit.
 
 use std::ffi::CString;
+use std::fs;
 use std::io;
 use std::os::unix::ffi::OsStrExt;
+use std::os::unix::fs::OpenOptionsExt;
+use std::os::unix::process::CommandExt;
 use std::path::{Component, Path, PathBuf};
+use std::process::{Command, Stdio};
+
+use objc2::rc::autoreleasepool;
+use objc2_foundation::{NSFileManager, NSURL};
+use semver::Version;
+
+use super::Finish;
 
 const MOVE_TO_APPLICATIONS: &str =
     "Move Dez to the Applications folder, open it from there, and try again.";
+
+const APP_MANAGEMENT: &str = "macOS did not let Dez replace its app. Allow Dez in System Settings › Privacy & Security › App Management, and check that your account may change the folder Dez is in. Then try again, or install the update from its release page.";
+
+// The app at the root of a release DMG, named after `productName` in
+// tauri.conf.json.
+const DMG_APP: &str = "Dez.app";
+
+// The system tools that the installer runs, by absolute path.
+const HDIUTIL: &str = "/usr/bin/hdiutil";
+const DITTO: &str = "/usr/bin/ditto";
+const XATTR: &str = "/usr/bin/xattr";
+const CODESIGN: &str = "/usr/bin/codesign";
+// Opens the app through LaunchServices, as Finder does, rather than as a
+// child of a process that is about to end.
+const OPEN: &str = "/usr/bin/open";
 
 /// Why Dez cannot install an update in place, or `None` when it can. The
 /// update window shows the reason and offers the release page instead.
@@ -103,8 +129,7 @@ fn location_problem(bundle: &Path) -> Option<String> {
 // sealed system volume, which is read-only, while `/Applications` resolves
 // to the writable data volume; so ask about the bundle itself, never `/`.
 fn is_on_read_only_volume(path: &Path) -> io::Result<bool> {
-    let path = CString::new(path.as_os_str().as_bytes())
-        .map_err(|_| io::Error::from(io::ErrorKind::InvalidInput))?;
+    let path = c_path(path)?;
     let mut stats = std::mem::MaybeUninit::<libc::statvfs>::uninit();
     // SAFETY: `path` is a NUL-terminated C string that outlives the call,
     // and `stats` points to writable memory of the type statvfs fills.
@@ -134,9 +159,545 @@ fn info_plist_string(bundle: &Path, key: &str) -> Result<String, String> {
         .ok_or_else(|| format!("{} has no {key}.", path.display()))
 }
 
+fn c_path(path: &Path) -> io::Result<CString> {
+    CString::new(path.as_os_str().as_bytes())
+        .map_err(|_| io::Error::from(io::ErrorKind::InvalidInput))
+}
+
+/// Replaces the running app with the app in `dmg`, the verified download of
+/// `version` in the private dir (`install_app` has the steps). `identifier`
+/// is the bundle identifier from tauri.conf.json.
+pub fn install(
+    dmg: &Path,
+    private_dir: &Path,
+    version: &Version,
+    identifier: &str,
+) -> Result<Finish, String> {
+    // The webview may call install_update without can_install_update first.
+    if let Some(reason) = install_blocked_reason(identifier) {
+        return Err(reason);
+    }
+    let bundle = running_bundle()?;
+    install_with(dmg, &bundle, private_dir, version, identifier, trash)
+}
+
+// `install` for any app at `bundle`, so that tests can use a fake app and a
+// fake Trash.
+fn install_with(
+    dmg: &Path,
+    bundle: &Path,
+    private_dir: &Path,
+    version: &Version,
+    identifier: &str,
+    trash: impl Fn(&Path) -> Result<(), String>,
+) -> Result<Finish, String> {
+    // Detaches when it is dropped, after the install, on every path.
+    let image = DiskImage::attach(dmg, &private_dir.join("mnt"))?;
+    install_app(
+        &image.mount_point.join(DMG_APP),
+        bundle,
+        private_dir,
+        version,
+        identifier,
+        trash,
+    )
+}
+
+// A DMG attached read-only at a folder in the private dir. Dropping it
+// detaches it.
+struct DiskImage {
+    mount_point: PathBuf,
+}
+
+impl DiskImage {
+    fn attach(dmg: &Path, mount_point: &Path) -> Result<Self, String> {
+        let failed = |error: String| format!("Dez could not open the update's disk image: {error}");
+        fs::create_dir(mount_point).map_err(|error| failed(error.to_string()))?;
+        // -nobrowse hides the volume in Finder; -noautoopen opens no Finder
+        // window. macOS 27 deprecates hdiutil attach and detach for
+        // `diskutil image`, which older macOS does not have; -quiet keeps
+        // the deprecation warning out of the output.
+        run(Command::new(HDIUTIL)
+            .args([
+                "attach",
+                "-quiet",
+                "-readonly",
+                "-nobrowse",
+                "-noautoopen",
+                "-mountpoint",
+            ])
+            .arg(mount_point)
+            .arg(dmg))
+        .map_err(failed)?;
+        Ok(Self {
+            mount_point: mount_point.to_path_buf(),
+        })
+    }
+}
+
+impl Drop for DiskImage {
+    fn drop(&mut self) {
+        let detach = |force: bool| {
+            let mut command = Command::new(HDIUTIL);
+            command.args(["detach", "-quiet"]);
+            if force {
+                command.arg("-force");
+            }
+            run(command.arg(&self.mount_point))
+        };
+        // A process can keep the volume busy for a moment (Spotlight
+        // indexing it, for one); -force detaches it anyway.
+        if let Err(error) = detach(false).or_else(|_| detach(true)) {
+            eprintln!(
+                "Dez could not detach the update's disk image at {}: {error}",
+                self.mount_point.display()
+            );
+        }
+    }
+}
+
+// Runs a system tool and waits for it. On failure the error is the tool's
+// own message (its stderr), or its exit status when it printed none.
+fn run(command: &mut Command) -> Result<(), String> {
+    let program = command.get_program().to_string_lossy().into_owned();
+    let output = command
+        .stdin(Stdio::null())
+        .output()
+        .map_err(|error| format!("{program} did not start: {error}"))?;
+    if output.status.success() {
+        return Ok(());
+    }
+    // hdiutil on macOS 27 puts a deprecation warning before each error,
+    // even with -quiet; it is not the error.
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    let message = stderr
+        .lines()
+        .map(str::trim)
+        .filter(|line| !line.is_empty() && !line.contains(": WARNING: "))
+        .collect::<Vec<_>>()
+        .join(" ");
+    Err(if message.is_empty() {
+        format!("{program} failed ({})", output.status)
+    } else {
+        message
+    })
+}
+
+// Replaces the app at `bundle` with `new_app`, the app in the mounted DMG:
+// 1. Checks that `new_app` is the requested release (`check_new_app`).
+// 2. Copies it with ditto into a staging folder next to `bundle`. On the
+//    same volume, the swap below is a rename.
+// 3. Clears the copy's extended attributes (the README's manual
+//    `xattr -cr`) and checks its code signature.
+// 4. Swaps the copy and the app at `bundle` (`swap`), so there is never a
+//    moment without an app at `bundle`.
+// 5. Moves the old app to the Trash, or removes it.
+// When macOS denies step 2 or 4 (App Management, or a folder that the user
+// may not change), it stages the new executable for the relaunch helper
+// instead (`stage_binary`).
+fn install_app(
+    new_app: &Path,
+    bundle: &Path,
+    private_dir: &Path,
+    version: &Version,
+    identifier: &str,
+    trash: impl Fn(&Path) -> Result<(), String>,
+) -> Result<Finish, String> {
+    check_new_app(new_app, identifier, version)?;
+    match replace_bundle(new_app, bundle, trash) {
+        Ok(leftover) => Ok(Finish::Replaced {
+            bundle: bundle.to_path_buf(),
+            leftover,
+        }),
+        Err(Replace::Denied(error)) => {
+            eprintln!("macOS did not let Dez swap its app ({error}); Dez stages the new executable.");
+            stage_binary(new_app, bundle, private_dir)
+        }
+        Err(Replace::Failed(error)) => Err(error),
+    }
+}
+
+// Whether `app`, the app at the root of the mounted DMG, is the requested
+// release: a real folder (not a link out of the image) with Dez's bundle
+// identifier and `version`. The signature ties the DMG to some release; the
+// version check stops an older signed DMG, a downgrade, from passing as the
+// requested one.
+fn check_new_app(app: &Path, identifier: &str, version: &Version) -> Result<(), String> {
+    if !fs::symlink_metadata(app).is_ok_and(|metadata| metadata.is_dir()) {
+        return Err("The update's disk image has no Dez.app.".into());
+    }
+    let found = info_plist_string(app, "CFBundleIdentifier")?;
+    if found != identifier {
+        return Err(format!(
+            "The app in the update has the identifier {found}, not {identifier}."
+        ));
+    }
+    let found = info_plist_string(app, "CFBundleShortVersionString")?;
+    if found != version.to_string() {
+        return Err(format!(
+            "The app in the update is Dez {found}, not Dez {version}."
+        ));
+    }
+    Ok(())
+}
+
+// Why `replace_bundle` failed.
+#[derive(Debug)]
+enum Replace {
+    // macOS denied a change (EACCES or EPERM), and nothing changed.
+    Denied(io::Error),
+    // Any other failure. When the old app is not at its place, the message
+    // says where it is.
+    Failed(String),
+}
+
+// EACCES and EPERM (both `PermissionDenied`) mean that App Management or the
+// folder's permissions forbid the change; the binary fallback may still work.
+fn denied_or_failed(error: io::Error, context: &str) -> Replace {
+    if error.kind() == io::ErrorKind::PermissionDenied {
+        Replace::Denied(error)
+    } else {
+        Replace::Failed(format!("{context}: {error}"))
+    }
+}
+
+// Steps 2 to 5 of `install_app`. Returns the staging folder when the old
+// app is still in it (the trash and the removal both failed), so that the
+// relaunch helper removes it.
+fn replace_bundle(
+    new_app: &Path,
+    bundle: &Path,
+    trash: impl Fn(&Path) -> Result<(), String>,
+) -> Result<Option<PathBuf>, Replace> {
+    let (Some(folder), Some(name)) = (bundle.parent(), bundle.file_name()) else {
+        return Err(Replace::Failed(format!(
+            "{} is not an app bundle.",
+            bundle.display()
+        )));
+    };
+    // A dot folder, hidden in Finder. Dropping it removes the copy after a
+    // failure.
+    let staging = tempfile::Builder::new()
+        .prefix(".dez-update-")
+        .tempdir_in(folder)
+        .map_err(|error| denied_or_failed(error, "Dez could not make a folder next to its app"))?;
+    let staged = staging.path().join(name);
+    run(Command::new(DITTO).arg(new_app).arg(&staged))
+        .map_err(|error| Replace::Failed(format!("Dez could not copy the update: {error}")))?;
+    // A quarantine attribute left here would make macOS refuse to open the
+    // ad-hoc signed app ("damaged"). On macOS 27, xattr -c leaves
+    // com.apple.provenance in place and still succeeds.
+    run(Command::new(XATTR).arg("-cr").arg(&staged)).map_err(|error| {
+        Replace::Failed(format!(
+            "Dez could not clear the update's extended attributes: {error}"
+        ))
+    })?;
+    check_code_signature(&staged).map_err(Replace::Failed)?;
+
+    let old_app = match swap(&staged, bundle, &staging.path().join("old").join(name)) {
+        Ok(old_app) => old_app,
+        Err(error) => {
+            // The two renames failed and so did the undo: the old app is
+            // only in the staging folder now, so keep that folder.
+            if fs::symlink_metadata(bundle).is_err() {
+                let _ = staging.keep();
+            }
+            return Err(error);
+        }
+    };
+    // Dez keeps running from the old app after it moves; macOS runs a moved
+    // executable fine, and Dez quits soon.
+    if let Err(error) = trash(&old_app) {
+        eprintln!("Dez could not move its old app to the Trash, so it removes it: {error}");
+    }
+    let staging_path = staging.path().to_path_buf();
+    // Removes the staging folder, with the old app in it when the trash
+    // failed.
+    match staging.close() {
+        Ok(()) => Ok(None),
+        Err(error) => {
+            eprintln!("Dez could not remove {}: {error}", staging_path.display());
+            Ok(Some(staging_path))
+        }
+    }
+}
+
+// Puts `staged` at `bundle`, and returns where the old app is now.
+// renamex_np(RENAME_SWAP) swaps the two in one step and leaves the old app
+// at `staged`. On volumes that cannot swap, `swap_by_renames` does it in
+// two steps.
+fn swap(staged: &Path, bundle: &Path, backup: &Path) -> Result<PathBuf, Replace> {
+    match rename_swap(staged, bundle) {
+        Ok(()) => Ok(staged.to_path_buf()),
+        Err(error) if error.kind() == io::ErrorKind::PermissionDenied => {
+            Err(Replace::Denied(error))
+        }
+        Err(error) => {
+            eprintln!("Dez could not swap its app in one step ({error}); it renames it in two.");
+            swap_by_renames(staged, bundle, backup)
+        }
+    }
+}
+
+fn rename_swap(from: &Path, to: &Path) -> io::Result<()> {
+    let (from, to) = (c_path(from)?, c_path(to)?);
+    // SAFETY: both are NUL-terminated C strings that outlive the call.
+    if unsafe { libc::renamex_np(from.as_ptr(), to.as_ptr(), libc::RENAME_SWAP) } != 0 {
+        return Err(io::Error::last_os_error());
+    }
+    Ok(())
+}
+
+// Renames the app at `bundle` to `backup`, then `staged` to `bundle`, and
+// returns `backup`. When the second rename fails, it renames the old app
+// back. If even that fails, the old app stays at `backup`, and the error
+// says so.
+fn swap_by_renames(staged: &Path, bundle: &Path, backup: &Path) -> Result<PathBuf, Replace> {
+    if let Some(folder) = backup.parent() {
+        fs::create_dir_all(folder).map_err(|error| {
+            denied_or_failed(error, "Dez could not make a folder for its old app")
+        })?;
+    }
+    fs::rename(bundle, backup)
+        .map_err(|error| denied_or_failed(error, "Dez could not move its app aside"))?;
+    if let Err(error) = fs::rename(staged, bundle) {
+        return Err(match fs::rename(backup, bundle) {
+            Ok(()) => denied_or_failed(error, "Dez could not move the update into place"),
+            Err(undo_error) => Replace::Failed(format!(
+                "Dez could not move the update into place ({error}), nor its old app back ({undo_error}). The old app is at {}.",
+                backup.display()
+            )),
+        });
+    }
+    Ok(backup.to_path_buf())
+}
+
+// Moves `path` to the user's Trash, as Finder does, so that the old app can
+// still be put back from there.
+fn trash(path: &Path) -> Result<(), String> {
+    let url = NSURL::from_file_path(path)
+        .ok_or_else(|| format!("{} is not a valid path.", path.display()))?;
+    autoreleasepool(|_| {
+        NSFileManager::defaultManager()
+            .trashItemAtURL_resultingItemURL_error(&url, None)
+            .map_err(|error| error.localizedDescription().to_string())
+    })
+}
+
+// The fallback when macOS denies the swap: Dez copies the new executable
+// and Info.plist into the private dir, and the relaunch helper moves them
+// over the old ones once Dez has quit. The frontend is inside the
+// executable; the rest of the old app stays. It works only where Dez may
+// add files to its own app, which a probe checks first.
+fn stage_binary(new_app: &Path, bundle: &Path, private_dir: &Path) -> Result<Finish, String> {
+    let executable = info_plist_string(bundle, "CFBundleExecutable")?;
+    if info_plist_string(new_app, "CFBundleExecutable")? != executable {
+        return Err("The update renames Dez's executable, so Dez cannot install it in place. Install it from its release page.".into());
+    }
+    let contents = bundle.join("Contents");
+    let executable_dir = contents.join("MacOS");
+    for dir in [&executable_dir, &contents] {
+        if let Err(error) = probe_writable(dir) {
+            eprintln!("Dez may not add files to {}: {error}", dir.display());
+            return Err(APP_MANAGEMENT.into());
+        }
+    }
+    check_code_signature(new_app)?;
+
+    let staged_dir = private_dir.join("staged");
+    let stage_error = |error: io::Error| format!("Dez could not stage the update: {error}");
+    fs::create_dir(&staged_dir).map_err(stage_error)?;
+    let mut files = Vec::new();
+    for (source, staged_name, target) in [
+        (
+            new_app.join("Contents/MacOS").join(&executable),
+            "executable",
+            executable_dir.join(&executable),
+        ),
+        (
+            new_app.join("Contents/Info.plist"),
+            "Info.plist",
+            contents.join("Info.plist"),
+        ),
+    ] {
+        let staged = staged_dir.join(staged_name);
+        fs::copy(&source, &staged).map_err(stage_error)?;
+        files.push((staged, target));
+    }
+    Ok(Finish::Binary {
+        bundle: bundle.to_path_buf(),
+        files,
+    })
+}
+
+// Whether the code signature of the app at `app` holds, with every file
+// that it seals.
+fn check_code_signature(app: &Path) -> Result<(), String> {
+    run(Command::new(CODESIGN)
+        .args(["--verify", "--deep", "--strict"])
+        .arg(app))
+    .map_err(|error| format!("The app in the update failed its code signature check: {error}"))
+}
+
+// Whether Dez may add a file to `dir`: makes one, then removes it.
+fn probe_writable(dir: &Path) -> io::Result<()> {
+    tempfile::Builder::new()
+        .prefix(".dez-update-probe-")
+        .tempfile_in(dir)?
+        .close()
+}
+
+// The relaunch helper. /bin/sh runs it with these positional parameters:
+//   <pid> <private dir> <bundle> <opener> replaced [<leftover>]
+//   <pid> <private dir> <bundle> <opener> binary [<staged> <target>]...
+// It waits up to 30 s for Dez (`pid`) to quit, finishes the install, removes
+// the private dir, and opens the app with `opener`. It logs each step, as
+// nobody sees its errors otherwise.
+//
+// Binary mode first copies each staged file next to its target, so that a
+// failed copy changes nothing, then renames the copies over the targets. A
+// rename gives the target a new inode: writing into the old executable
+// instead gets a process that still runs it killed (`Killed: 9`). Then it
+// clears the app's extended attributes and signs the app again ad hoc,
+// since the new files broke the old signature's seal.
+//
+// `kill -0` sees a zombie as running; launchd reaps Dez as soon as it ends.
+const HELPER_SCRIPT: &str = r#"
+log() { echo "$(/bin/date '+%Y-%m-%d %H:%M:%S') $*"; }
+pid=$1 private=$2 bundle=$3 opener=$4 mode=$5
+shift 5
+log "Finishing the update of $bundle ($mode mode). Waiting for Dez (process $pid) to quit."
+tries=0
+while kill -0 "$pid" 2>/dev/null; do
+  if [ "$tries" -ge 300 ]; then
+    log "Dez did not quit within 30 seconds. Going on."
+    break
+  fi
+  /bin/sleep 0.1
+  tries=$((tries + 1))
+done
+
+copy_staged() {
+  while [ "$#" -ge 2 ]; do
+    log "Copying $1 to $2.dez-update"
+    /bin/cp -p "$1" "$2.dez-update" || return 1
+    shift 2
+  done
+}
+move_copies() {
+  while [ "$#" -ge 2 ]; do
+    log "Moving $2.dez-update over $2"
+    /bin/mv -f "$2.dez-update" "$2" || return 1
+    shift 2
+  done
+}
+remove_copies() {
+  while [ "$#" -ge 2 ]; do
+    /bin/rm -f "$2.dez-update"
+    shift 2
+  done
+}
+
+case $mode in
+binary)
+  if copy_staged "$@"; then
+    move_copies "$@" || log "A move failed."
+    log "Clearing the extended attributes of $bundle and signing it again."
+    /usr/bin/xattr -cr "$bundle" || log "xattr failed."
+    /usr/bin/codesign --force --sign - "$bundle" || log "codesign failed."
+  else
+    log "A copy failed, so Dez stays at its old version."
+  fi
+  remove_copies "$@"
+  ;;
+replaced)
+  for leftover in "$@"; do
+    log "Removing $leftover"
+    /bin/rm -rf "$leftover" || log "Could not remove $leftover."
+  done
+  ;;
+esac
+
+log "Removing $private"
+/bin/rm -rf "$private" || log "Could not remove $private."
+log "Opening $bundle"
+"$opener" "$bundle" || log "Could not open $bundle."
+log "Done."
+"#;
+
+/// Starts the relaunch helper for `finish` and leaves it running; it waits
+/// for this process to end. Its output goes to a new file at `log`.
+pub fn spawn_helper(finish: &Finish, private_dir: &Path, log: &Path) -> Result<(), String> {
+    let failed = |error: io::Error| format!("Dez could not start its update helper: {error}");
+    let log = open_log(log).map_err(failed)?;
+    let mut command = helper_command(finish, std::process::id(), private_dir, Path::new(OPEN));
+    command
+        .stdin(Stdio::null())
+        .stdout(log.try_clone().map_err(failed)?)
+        .stderr(log);
+    // In a session of its own, the helper is out of Dez's process group and
+    // terminal, so nothing sent to those as Dez quits reaches it.
+    // SAFETY: setsid is async-signal-safe, so it may run between fork and
+    // exec.
+    unsafe {
+        command.pre_exec(|| {
+            if libc::setsid() == -1 {
+                return Err(io::Error::last_os_error());
+            }
+            Ok(())
+        });
+    }
+    // Nobody waits for the helper: it outlives Dez, and launchd reaps it.
+    command.spawn().map(drop).map_err(failed)
+}
+
+// A private file, emptied for each update.
+fn open_log(path: &Path) -> io::Result<fs::File> {
+    if let Some(folder) = path.parent() {
+        fs::create_dir_all(folder)?;
+    }
+    fs::OpenOptions::new()
+        .write(true)
+        .create(true)
+        .truncate(true)
+        .mode(0o600)
+        .open(path)
+}
+
+// The helper's command. Every value is a positional parameter, never part
+// of the script text, so no path can inject a command. Tests pass another
+// `opener` than `OPEN`, so that they open no app.
+fn helper_command(finish: &Finish, pid: u32, private_dir: &Path, opener: &Path) -> Command {
+    let mut command = Command::new("/bin/sh");
+    command
+        .args(["-c", HELPER_SCRIPT, "sh"])
+        .arg(pid.to_string())
+        .arg(private_dir);
+    match finish {
+        Finish::Replaced { bundle, leftover } => {
+            command
+                .arg(bundle)
+                .arg(opener)
+                .arg("replaced")
+                .args(leftover);
+        }
+        Finish::Binary { bundle, files } => {
+            command.arg(bundle).arg(opener).arg("binary");
+            for (staged, target) in files {
+                command.arg(staged).arg(target);
+            }
+        }
+    }
+    command
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::os::unix::fs::{MetadataExt, PermissionsExt, symlink};
+    use tempfile::TempDir;
+
+    const ID: &str = "com.taoeffect.dez";
 
     #[test]
     fn finds_the_bundle_of_an_executable() {
@@ -212,5 +773,337 @@ mod tests {
         );
         assert!(info_plist_string(&bundle, "CFBundleVersion").is_err());
         assert!(info_plist_string(&bundle, "CFBundleShortVersionString").is_err());
+    }
+
+    // A fake Dez at `app`, built as release apps are: an Info.plist, a copy
+    // of /usr/bin/true as its executable, and an ad-hoc signature.
+    fn make_app(app: &Path, identifier: &str, version: &str) {
+        fs::create_dir_all(app.join("Contents/MacOS")).expect("app folders");
+        fs::copy("/usr/bin/true", app.join("Contents/MacOS/dez")).expect("executable");
+        let mut info = plist::Dictionary::new();
+        for (key, value) in [
+            ("CFBundleIdentifier", identifier),
+            ("CFBundleShortVersionString", version),
+            ("CFBundleExecutable", "dez"),
+            ("CFBundlePackageType", "APPL"),
+        ] {
+            info.insert(key.into(), value.into());
+        }
+        plist::Value::Dictionary(info)
+            .to_file_xml(app.join("Contents/Info.plist"))
+            .expect("Info.plist");
+        run(Command::new(CODESIGN)
+            .args(["--force", "--sign", "-"])
+            .arg(app))
+        .expect("sign");
+    }
+
+    fn short_version(app: &Path) -> String {
+        info_plist_string(app, "CFBundleShortVersionString").expect("version")
+    }
+
+    fn names_in(dir: &Path) -> Vec<String> {
+        let mut names: Vec<String> = fs::read_dir(dir)
+            .expect("list")
+            .map(|entry| entry.expect("entry").file_name().to_string_lossy().into())
+            .collect();
+        names.sort();
+        names
+    }
+
+    // Dez 0.15.1 installed in a fake Applications folder, Dez 0.16.0 in a
+    // folder laid out as the release DMG, the private dir, and a fake Trash.
+    struct Setup {
+        root: TempDir,
+        bundle: PathBuf,
+        image: PathBuf,
+        new_app: PathBuf,
+        private_dir: PathBuf,
+        trash: PathBuf,
+    }
+
+    impl Setup {
+        fn new() -> Self {
+            let root = tempfile::tempdir().expect("temp dir");
+            let bundle = root.path().join("Applications/Dez.app");
+            make_app(&bundle, ID, "0.15.1");
+            let image = root.path().join("image");
+            let new_app = image.join(DMG_APP);
+            make_app(&new_app, ID, "0.16.0");
+            symlink("/Applications", image.join("Applications")).expect("link");
+            let private_dir = root.path().join("private");
+            let trash = root.path().join("Trash");
+            for dir in [&private_dir, &trash] {
+                fs::create_dir(dir).expect("folder");
+            }
+            Self {
+                root,
+                bundle,
+                image,
+                new_app,
+                private_dir,
+                trash,
+            }
+        }
+
+        // Moves the item into the fake Trash.
+        fn trash(&self) -> impl Fn(&Path) -> Result<(), String> {
+            let trash = self.trash.clone();
+            move |path| {
+                fs::rename(path, trash.join(path.file_name().expect("name")))
+                    .map_err(|error| error.to_string())
+            }
+        }
+
+        fn install(&self, app: &Path, version: &str) -> Result<Finish, String> {
+            let version = Version::parse(version).expect("version");
+            install_app(app, &self.bundle, &self.private_dir, &version, ID, self.trash())
+        }
+
+        fn applications(&self) -> Vec<String> {
+            names_in(self.bundle.parent().expect("folder"))
+        }
+
+        // Runs the relaunch helper for `finish` while a stand-in for Dez
+        // quits after a moment, and returns the helper's log. The opener is
+        // echo, so the log shows what the helper would open.
+        fn run_helper(&self, finish: &Finish) -> String {
+            let log = self.root.path().join("update.log");
+            let output = fs::File::create(&log).expect("log");
+            let mut dez = Command::new("/bin/sleep")
+                .arg("0.3")
+                .spawn()
+                .expect("start Dez");
+            let mut helper =
+                helper_command(finish, dez.id(), &self.private_dir, Path::new("/bin/echo"))
+                    .stdout(output.try_clone().expect("log"))
+                    .stderr(output)
+                    .spawn()
+                    .expect("start the helper");
+            // Reaps Dez as it quits, as launchd does for the real one.
+            assert!(dez.wait().expect("Dez").success());
+            assert!(helper.wait().expect("helper").success());
+            fs::read_to_string(&log).expect("read log")
+        }
+    }
+
+    // Takes the write permission of `dir` away until dropped, as for a
+    // folder that the user may not change.
+    struct ReadOnly(PathBuf);
+
+    impl ReadOnly {
+        fn new(dir: &Path) -> Self {
+            fs::set_permissions(dir, fs::Permissions::from_mode(0o555)).expect("chmod");
+            Self(dir.to_path_buf())
+        }
+    }
+
+    impl Drop for ReadOnly {
+        fn drop(&mut self) {
+            let _ = fs::set_permissions(&self.0, fs::Permissions::from_mode(0o755));
+        }
+    }
+
+    #[test]
+    fn installs_the_app_of_a_disk_image_in_place_of_the_old_one() {
+        let setup = Setup::new();
+        let dmg = setup.root.path().join("Dez_0.16.0_aarch64.dmg");
+        run(Command::new(HDIUTIL)
+            .args(["create", "-quiet", "-format", "UDZO", "-volname", "Dez"])
+            .arg("-srcfolder")
+            .arg(&setup.image)
+            .arg(&dmg))
+        .expect("make DMG");
+
+        let finish = install_with(
+            &dmg,
+            &setup.bundle,
+            &setup.private_dir,
+            &Version::new(0, 16, 0),
+            ID,
+            setup.trash(),
+        );
+
+        assert_eq!(
+            finish,
+            Ok(Finish::Replaced {
+                bundle: setup.bundle.clone(),
+                leftover: None
+            })
+        );
+        assert_eq!(short_version(&setup.bundle), "0.16.0");
+        check_code_signature(&setup.bundle).expect("signature");
+        assert_eq!(short_version(&setup.trash.join("Dez.app")), "0.15.1");
+        // No staging folder is left, and the image is detached.
+        assert_eq!(setup.applications(), ["Dez.app"]);
+        assert_eq!(names_in(&setup.private_dir.join("mnt")), Vec::<String>::new());
+    }
+
+    #[test]
+    fn refuses_an_app_that_is_not_the_requested_release() {
+        let setup = Setup::new();
+        let other = setup.image.join("Other.app");
+        make_app(&other, "com.example.other", "0.16.0");
+        let link = setup.image.join("Link.app");
+        symlink(&setup.new_app, &link).expect("link");
+
+        let no_app = Err("The update's disk image has no Dez.app.".to_string());
+        assert_eq!(
+            setup.install(&setup.image.join("Missing.app"), "0.16.0"),
+            no_app
+        );
+        // A link out of the image, even to a real app.
+        assert_eq!(setup.install(&link, "0.16.0"), no_app);
+        assert_eq!(
+            setup.install(&other, "0.16.0"),
+            Err("The app in the update has the identifier com.example.other, not com.taoeffect.dez.".into())
+        );
+        // A signed release other than the requested one, such as an older
+        // one replayed as a downgrade.
+        assert_eq!(
+            setup.install(&setup.new_app, "0.16.1"),
+            Err("The app in the update is Dez 0.16.0, not Dez 0.16.1.".into())
+        );
+
+        assert_eq!(short_version(&setup.bundle), "0.15.1");
+        assert_eq!(setup.applications(), ["Dez.app"]);
+    }
+
+    #[test]
+    fn refuses_an_app_whose_code_signature_is_broken() {
+        let setup = Setup::new();
+        // Changed after signing, as a damaged or altered app is.
+        let info_path = setup.new_app.join("Contents/Info.plist");
+        let mut info = plist::Value::from_file(&info_path).expect("read");
+        info.as_dictionary_mut()
+            .expect("dictionary")
+            .insert("Changed".into(), true.into());
+        info.to_file_xml(&info_path).expect("write");
+
+        let result = setup.install(&setup.new_app, "0.16.0");
+
+        assert!(
+            result.as_ref().is_err_and(|error| error
+                .starts_with("The app in the update failed its code signature check")),
+            "{result:?}"
+        );
+        assert_eq!(short_version(&setup.bundle), "0.15.1");
+        assert_eq!(setup.applications(), ["Dez.app"]);
+    }
+
+    #[test]
+    fn stages_the_new_executable_when_the_app_folder_is_read_only() {
+        let setup = Setup::new();
+        let _folder = ReadOnly::new(setup.bundle.parent().expect("folder"));
+
+        let finish = setup.install(&setup.new_app, "0.16.0");
+
+        let staged = setup.private_dir.join("staged");
+        assert_eq!(
+            finish,
+            Ok(Finish::Binary {
+                bundle: setup.bundle.clone(),
+                files: vec![
+                    (
+                        staged.join("executable"),
+                        setup.bundle.join("Contents/MacOS/dez")
+                    ),
+                    (
+                        staged.join("Info.plist"),
+                        setup.bundle.join("Contents/Info.plist")
+                    ),
+                ],
+            })
+        );
+        for (staged_name, new_file) in [
+            ("executable", "Contents/MacOS/dez"),
+            ("Info.plist", "Contents/Info.plist"),
+        ] {
+            assert_eq!(
+                fs::read(staged.join(staged_name)).ok(),
+                fs::read(setup.new_app.join(new_file)).ok(),
+                "{staged_name}"
+            );
+        }
+        assert_eq!(short_version(&setup.bundle), "0.15.1");
+        assert_eq!(setup.applications(), ["Dez.app"]);
+    }
+
+    #[test]
+    fn asks_for_app_management_when_dez_may_not_change_its_own_app() {
+        let setup = Setup::new();
+        let _folder = ReadOnly::new(setup.bundle.parent().expect("folder"));
+        let _executables = ReadOnly::new(&setup.bundle.join("Contents/MacOS"));
+
+        assert_eq!(
+            setup.install(&setup.new_app, "0.16.0"),
+            Err(APP_MANAGEMENT.into())
+        );
+        assert!(!setup.private_dir.join("staged").exists());
+        assert_eq!(short_version(&setup.bundle), "0.15.1");
+    }
+
+    #[test]
+    fn swaps_in_two_renames_and_undoes_the_first_when_the_second_fails() {
+        let setup = Setup::new();
+        let backup = setup.private_dir.join("old/Dez.app");
+
+        let missing = setup.image.join("Missing.app");
+        assert!(matches!(
+            swap_by_renames(&missing, &setup.bundle, &backup),
+            Err(Replace::Failed(_))
+        ));
+        assert_eq!(short_version(&setup.bundle), "0.15.1");
+        assert!(!backup.exists());
+
+        assert_eq!(
+            swap_by_renames(&setup.new_app, &setup.bundle, &backup).ok(),
+            Some(backup.clone())
+        );
+        assert_eq!(short_version(&setup.bundle), "0.16.0");
+        assert_eq!(short_version(&backup), "0.15.1");
+    }
+
+    #[test]
+    fn helper_moves_the_staged_files_into_the_app_once_dez_has_quit() {
+        let setup = Setup::new();
+        let executable = setup.bundle.join("Contents/MacOS/dez");
+        let old_inode = fs::metadata(&executable).expect("stat").ino();
+        let finish = stage_binary(&setup.new_app, &setup.bundle, &setup.private_dir)
+            .expect("stage");
+
+        let log = setup.run_helper(&finish);
+
+        assert_eq!(short_version(&setup.bundle), "0.16.0");
+        // A new file in place of the old one, not the old one written over.
+        assert_ne!(fs::metadata(&executable).expect("stat").ino(), old_inode);
+        check_code_signature(&setup.bundle).expect("signed again");
+        assert_eq!(names_in(&setup.bundle.join("Contents/MacOS")), ["dez"]);
+        assert!(!setup.private_dir.exists());
+        assert!(
+            log.lines().any(|line| Path::new(line) == setup.bundle),
+            "{log}"
+        );
+    }
+
+    #[test]
+    fn helper_removes_an_old_app_that_dez_could_not_remove() {
+        let setup = Setup::new();
+        let leftover = setup.bundle.with_file_name(".dez-update-test");
+        make_app(&leftover.join("Dez.app"), ID, "0.15.0");
+        let finish = Finish::Replaced {
+            bundle: setup.bundle.clone(),
+            leftover: Some(leftover.clone()),
+        };
+
+        let log = setup.run_helper(&finish);
+
+        assert!(!leftover.exists());
+        assert!(!setup.private_dir.exists());
+        assert_eq!(short_version(&setup.bundle), "0.15.1");
+        assert!(
+            log.lines().any(|line| Path::new(line) == setup.bundle),
+            "{log}"
+        );
     }
 }

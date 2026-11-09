@@ -13,6 +13,11 @@
 //! Only macOS installs updates. On other platforms the commands refuse at
 //! once; the platform-neutral parts still compile there, so their tests run
 //! on every OS.
+//!
+//! The flow, one command after the other: `download_update` keeps a
+//! verified DMG, `install_update` puts the new app in place (or stages its
+//! files), and `relaunch_after_update` starts a helper and quits Dez. The
+//! helper finishes the install once Dez has quit and opens the new Dez.
 
 #[cfg(target_os = "macos")]
 mod macos;
@@ -27,10 +32,21 @@ use semver::Version;
 use tauri::ipc::Channel;
 use tauri::{AppHandle, State};
 use tempfile::TempDir;
-use tokio::io::AsyncWriteExt;
+use tokio::io::{AsyncReadExt, AsyncWriteExt};
+use tokio::sync::MutexGuard;
 use tokio::time::timeout;
 
+#[cfg(target_os = "macos")]
+use macos::spawn_helper;
+
 const ONLY_ON_MACOS: &str = "Updates install only on macOS.";
+const BUSY: &str = "Dez is already downloading or installing an update.";
+const ALREADY_INSTALLED: &str =
+    "Dez has already installed an update. Quit Dez and open it again to finish.";
+
+/// The helper's log, relative to the app folder (`~/.config/dez`). The
+/// frontend names it when an update did not finish.
+const UPDATE_LOG: &str = "updates/update.log";
 
 // A release DMG is about 10 MB. The cap stops a server that never ends the
 // body from filling the disk.
@@ -50,21 +66,82 @@ const TOO_LARGE: &str = "The update download is larger than any Dez release.";
 /// Managed by Tauri; the webview never sees what it holds.
 #[derive(Default)]
 pub struct UpdaterState {
-    // One download or install at a time. Holds the last verified download.
-    job: tokio::sync::Mutex<Option<Download>>,
+    // One download or install at a time.
+    job: tokio::sync::Mutex<Option<Job>>,
+}
+
+impl UpdaterState {
+    // The commands fail at once instead of waiting for a running download
+    // or install.
+    fn lock_job(&self) -> Result<MutexGuard<'_, Option<Job>>, String> {
+        self.job.try_lock().map_err(|_| BUSY.to_string())
+    }
+}
+
+enum Job {
+    // The last verified download.
+    Downloaded(Download),
+    // The new app is in place, or its files are staged: only the relaunch
+    // helper's part is left.
+    Installed(Installed),
 }
 
 // A DMG whose bytes matched their signature as they arrived.
-#[expect(
-    dead_code,
-    reason = "install_update reads it; it comes with the installer"
-)]
 struct Download {
     // Dropping it removes the private dir and the DMG in it.
     dir: TempDir,
     version: Version,
     dmg: PathBuf,
     signature: Signature,
+}
+
+struct Installed {
+    // The private dir of the download. In binary mode it holds the staged
+    // files; the helper removes it once Dez has quit.
+    dir: TempDir,
+    finish: Finish,
+}
+
+/// What the relaunch helper does once Dez has quit (`HELPER_SCRIPT` in
+/// macos.rs).
+#[derive(Debug, PartialEq)]
+#[cfg_attr(
+    not(target_os = "macos"),
+    allow(dead_code, reason = "only macos.rs installs updates")
+)]
+enum Finish {
+    /// The new app is in place of the old one at `bundle`. `leftover` is a
+    /// staging folder with the old app in it, when Dez could neither trash
+    /// nor remove it.
+    Replaced {
+        bundle: PathBuf,
+        leftover: Option<PathBuf>,
+    },
+    /// macOS did not let Dez swap its app. The helper moves each staged file
+    /// over its target in `bundle`, then signs `bundle` again (ad hoc).
+    /// `files` are (staged, target) pairs.
+    Binary {
+        bundle: PathBuf,
+        files: Vec<(PathBuf, PathBuf)>,
+    },
+}
+
+impl Finish {
+    fn mode(&self) -> InstallMode {
+        match self {
+            Finish::Replaced { .. } => InstallMode::Replaced,
+            Finish::Binary { .. } => InstallMode::Binary,
+        }
+    }
+}
+
+/// What `install_update` did: `replaced` the app, or staged its new
+/// executable for the relaunch helper (`binary`).
+#[derive(Clone, Copy, Debug, PartialEq, serde::Serialize)]
+#[serde(rename_all = "lowercase")]
+pub enum InstallMode {
+    Replaced,
+    Binary,
 }
 
 /// One message on the `on_progress` channel of `download_update`. `total`
@@ -111,10 +188,11 @@ pub async fn download_update(
     let version = verify::update_version(&version, &app.package_info().version)?;
     let signature = verify::decode_signature(&signature)?;
     let key = verify::release_public_key()?;
-    let mut job = state
-        .job
-        .try_lock()
-        .map_err(|_| "Dez is already downloading or installing an update.".to_string())?;
+    let mut job = state.lock_job()?;
+    // The running app is already replaced, or its new files are staged.
+    if matches!(*job, Some(Job::Installed(_))) {
+        return Err(ALREADY_INSTALLED.into());
+    }
     *job = None;
 
     let dir = private_dir(&std::env::temp_dir())?;
@@ -135,13 +213,126 @@ pub async fn download_update(
         },
     )
     .await?;
-    *job = Some(Download {
+    *job = Some(Job::Downloaded(Download {
         dir,
         version,
         dmg,
         signature,
-    });
+    }));
     Ok(())
+}
+
+/// Installs the download of `download_update`, which must be of `version`.
+/// It checks the DMG on disk against its signature again, then replaces the
+/// running app with the app in the DMG (`macos::install`). Returns
+/// `replaced` when the new app is in place, or `binary` when macOS denied
+/// the swap and the new executable waits in the private dir. Either way the
+/// old app keeps running until `relaunch_after_update`. After a failure the
+/// app is as it was, and the download is gone.
+#[tauri::command]
+pub async fn install_update(
+    app: AppHandle,
+    version: String,
+    state: State<'_, UpdaterState>,
+) -> Result<InstallMode, String> {
+    if !cfg!(target_os = "macos") {
+        return Err(ONLY_ON_MACOS.into());
+    }
+
+    let mut job = state.lock_job()?;
+    let download = match job.take() {
+        Some(Job::Downloaded(download)) if download.version.to_string() == version => download,
+        Some(Job::Installed(installed)) => {
+            *job = Some(Job::Installed(installed));
+            return Err(ALREADY_INSTALLED.into());
+        }
+        _ => {
+            return Err(format!(
+                "Dez has no checked download of Dez {version}. Download it again."
+            ));
+        }
+    };
+    let key = verify::release_public_key()?;
+    verify_file(&download.dmg, &key, &download.signature).await?;
+    let finish = install_dmg(&app, &download).await?;
+    let mode = finish.mode();
+    *job = Some(Job::Installed(Installed {
+        dir: download.dir,
+        finish,
+    }));
+    Ok(mode)
+}
+
+/// Starts the helper that finishes the install of `install_update` once Dez
+/// has quit, then quits Dez. The helper waits for this process to end, moves
+/// the staged files into place (binary mode) or removes what is left of the
+/// old app (replaced mode), removes the private dir, and opens the app. Its
+/// log is `UPDATE_LOG`.
+#[tauri::command]
+pub async fn relaunch_after_update(
+    app: AppHandle,
+    state: State<'_, UpdaterState>,
+) -> Result<(), String> {
+    if !cfg!(target_os = "macos") {
+        return Err(ONLY_ON_MACOS.into());
+    }
+
+    let mut job = state.lock_job()?;
+    let Some(Job::Installed(installed)) = &*job else {
+        return Err("Dez has not installed an update yet.".into());
+    };
+    let log = crate::persistence::app_file_path(UPDATE_LOG)?;
+    spawn_helper(&installed.finish, installed.dir.path(), &log)?;
+    // The helper removes the private dir. Dropping the TempDir as Dez quits
+    // would remove the staged files before the helper moves them.
+    if let Some(Job::Installed(installed)) = job.take() {
+        let _ = installed.dir.keep();
+    }
+    app.exit(0);
+    Ok(())
+}
+
+// Replaces the running app with the app in the verified DMG. hdiutil, ditto,
+// and codesign take seconds, so this runs on a blocking thread, not on an
+// async worker.
+#[cfg(target_os = "macos")]
+async fn install_dmg(app: &AppHandle, download: &Download) -> Result<Finish, String> {
+    let identifier = app.config().identifier.clone();
+    let dmg = download.dmg.clone();
+    let dir = download.dir.path().to_path_buf();
+    let version = download.version.clone();
+    tokio::task::spawn_blocking(move || macos::install(&dmg, &dir, &version, &identifier))
+        .await
+        .map_err(|error| format!("The update install stopped: {error}"))?
+}
+
+#[cfg(not(target_os = "macos"))]
+async fn install_dmg(_app: &AppHandle, _download: &Download) -> Result<Finish, String> {
+    Err(ONLY_ON_MACOS.into())
+}
+
+#[cfg(not(target_os = "macos"))]
+fn spawn_helper(_finish: &Finish, _private_dir: &Path, _log: &Path) -> Result<(), String> {
+    Err(ONLY_ON_MACOS.into())
+}
+
+// Checks the downloaded file against `signature` again, right before the
+// install. The DMG waited in the private dir since its download; this
+// catches a file that changed there before hdiutil reads it.
+async fn verify_file(path: &Path, key: &PublicKey, signature: &Signature) -> Result<(), String> {
+    let mut verifier = verify::stream_verifier(key, signature)?;
+    let read_error =
+        |error: std::io::Error| format!("Dez could not read the downloaded update: {error}");
+    let mut file = tokio::fs::File::open(path).await.map_err(read_error)?;
+    let mut buffer = vec![0; 256 * 1024];
+    loop {
+        let read = file.read(&mut buffer).await.map_err(read_error)?;
+        if read == 0 {
+            break;
+        }
+        verifier.update(&buffer[..read]);
+    }
+    verifier.finalize().map_err(verify::signature_error)
 }
 
 // The private dir of one update, `<parent>/dez-update-<random>` with mode
@@ -238,7 +429,6 @@ mod test_fixtures {
 mod tests {
     use super::test_fixtures::*;
     use super::*;
-    use tokio::io::AsyncReadExt;
     use tokio::net::TcpListener;
 
     // Answers the first request on a local port with `head` and `body`, then
@@ -381,6 +571,29 @@ mod tests {
             fetch.result
         );
         assert_eq!(fetch.file, None);
+    }
+
+    #[tokio::test]
+    async fn checks_the_downloaded_file_again_before_the_install() {
+        let key = PublicKey::decode(TEST_KEY).expect("test key");
+        let signature = verify::decode_signature(SIGNATURE).expect("signature");
+        let dir = tempfile::tempdir().expect("temp dir");
+        let dmg = dir.path().join("Dez_0.16.0_aarch64.dmg");
+
+        std::fs::write(&dmg, PAYLOAD).expect("write");
+        assert_eq!(verify_file(&dmg, &key, &signature).await, Ok(()));
+
+        // A file that changed after its download.
+        let mut changed = PAYLOAD.to_vec();
+        changed[4000] ^= 1;
+        std::fs::write(&dmg, changed).expect("write");
+        assert_eq!(
+            verify_file(&dmg, &key, &signature).await,
+            Err("The update does not match its signature.".into())
+        );
+
+        std::fs::remove_file(&dmg).expect("remove");
+        assert!(verify_file(&dmg, &key, &signature).await.is_err());
     }
 
     #[cfg(unix)]

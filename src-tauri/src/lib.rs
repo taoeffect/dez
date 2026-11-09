@@ -72,6 +72,8 @@ pub fn run() {
             idle::user_idle_ms,
             updater::can_install_update,
             updater::download_update,
+            updater::install_update,
+            updater::relaunch_after_update,
         ]);
     // macOS brings the app to the front when it starts, and with it each
     // window that is visible at that time. The main window starts hidden

@@ -46,8 +46,9 @@ fn conversation_path(id: &str) -> PathBuf {
 // rules out absolute paths, backslashes, drive prefixes, and `..` traversal.
 // It also keeps the path safe to send as an IPC header value
 // (`save_app_file` in commands.rs). Returns an error rather than silently
-// coercing so callers don't accidentally read/write the wrong file.
-fn app_file_path(relative: &str) -> Result<PathBuf, String> {
+// coercing so callers don't accidentally read/write the wrong file. The
+// updater builds its log path with it too (`UPDATE_LOG`, updater/mod.rs).
+pub(crate) fn app_file_path(relative: &str) -> Result<PathBuf, String> {
     let valid = relative.split('/').all(|segment| {
         !segment.is_empty()
             && segment != "."
