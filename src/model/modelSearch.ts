@@ -63,8 +63,9 @@ export function searchTerms(query: string): string[] {
  *  Mini. The user types two words instead (`gpt mini`). */
 export function modelMatches(provider: ProviderInfo, model: ModelInfo, terms: readonly string[]): boolean {
   const fields = [provider.name, provider.id, model.name, model.id]
-  return terms.every((term) => fields.some((field) =>
-    normalizeSearchText(field).includes(term) || startsConsecutiveWords(fieldWords(field), term)))
+    .map((field) => ({ text: normalizeSearchText(field), words: fieldWords(field) }))
+  return terms.every((term) => fields.some(({ text, words }) =>
+    text.includes(term) || startsConsecutiveWords(words, term)))
 }
 
 /** The models that the user can pick, in model cache order: the cached

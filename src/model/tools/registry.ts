@@ -33,7 +33,7 @@ export function toolJsonSchema(definition: ToolDefinition): JsonObject {
 // value. `Number.isInteger` already refuses it.
 const TYPE_RULES: Record<ToolParameterType, { matches: (value: unknown) => value is ToolArgumentValue; text: string }> = {
   string: { matches: (value): value is string => typeof value === 'string', text: 'a string' },
-  number: { matches: (value): value is number => typeof value === 'number' && Number.isFinite(value), text: 'a number' },
+  number: { matches: (value): value is number => Number.isFinite(value), text: 'a number' },
   integer: { matches: (value): value is number => Number.isInteger(value), text: 'an integer' },
   boolean: { matches: (value): value is boolean => typeof value === 'boolean', text: 'true or false' },
 }
