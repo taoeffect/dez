@@ -590,7 +590,8 @@ describe('tab change that adds a tab', () => {
   })
 
   it('keeps a saved tab as it is when Reopen Closed Tab brings back a longer tab', async () => {
-    // From a blank tab, so that the saved tab is not the tab left behind.
+    // Open and close the longer thread from a blank tab, so that the setup
+    // does not depend on the tab that the previous test left active.
     await newTab(browser)
     const closedTab = await sbpCall(browser, 'dez.model/tabs/openConversation', CLOSED_THREAD.id) as Tab
     await sbpCall(browser, 'dez.controller/closeTab', closedTab.id)
