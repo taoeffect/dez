@@ -124,6 +124,9 @@ let stopPromptsPersistWatch: WatchStopHandle | null = null
 let modelCachePersistenceReady = false
 let stopModelCachePersistWatch: WatchStopHandle | null = null
 
+// The conversation saves that have not ended yet (dez.model/tabs/save).
+const tabSavesInFlight = new Set<Promise<void>>()
+
 const persistSettings = debounce(() => {
   if (settingsPersistenceReady) void sbp('dez.model/appState/save')
 }, 1000)
@@ -633,14 +636,18 @@ export default sbp('sbp/selectors/register', {
     }
   },
 
+  // Each save stays in tabSavesInFlight until it ends: most callers do not
+  // wait for it (a reply end, a tab switch), and dez.model/persistence/flush
+  // must, before Dez quits.
   async 'dez.model/tabs/save' (tabId: string): Promise<void> {
     const data = sbp('dez.model/tabs/conversationData', tabId) as ConversationData | null
     if (!data) return
-    try {
-      await sbp('dez.persistence/saveConversation', data)
-    } catch (error) {
+    const save = (sbp('dez.persistence/saveConversation', data) as Promise<void>).catch((error: unknown) => {
       console.error('Failed to save conversation', error)
-    }
+    })
+    tabSavesInFlight.add(save)
+    await save
+    tabSavesInFlight.delete(save)
   },
 
   // An open tab is the newest copy of its conversation, and two tabs with one
@@ -745,18 +752,28 @@ export default sbp('sbp/selectors/register', {
 
   // Writes everything that waits to be saved, and waits for the writes: Dez
   // is about to quit (dez.controller/updates/install relaunches it), and a
-  // save that a debounce still holds would be lost. The editor needs no
-  // flush of its own: it writes its doc to the tab store on every change
-  // (ThreadEditor.vue), so saving each tab here covers its debounced save.
-  // As in the debounced savers, settings, prompts, and the model cache are
-  // saved only once their persistence has started (dez.controller/app/init).
+  // save that a debounce still holds, or that no caller waits for, would be
+  // lost.
+  // - Tabs: a reply saves its tab when it ends or stops (dez.stream/stop),
+  //   and the editor saves a tab when the user leaves it, both without
+  //   waiting. This waits for those saves first, so that none of them lands
+  //   after the save below (two writes of one file can land in either
+  //   order). A tab in the background changes only through a reply, so only
+  //   the active tab can still have unsaved changes. The editor writes its
+  //   doc to the tab store on every change (ThreadEditor.vue), so saving
+  //   the active tab covers the editor's debounced save. The other tabs are
+  //   not saved again: History lists conversations by the time of their
+  //   last save, and a save would move them all to the top.
+  // - As in the debounced savers, settings, prompts, and the model cache are
+  //   saved only once their persistence has started (dez.controller/app/init).
   // Each save logs its own failure and never throws.
   async 'dez.model/persistence/flush' (): Promise<void> {
+    await Promise.all(tabSavesInFlight)
     persistSettings.clear()
     persistPrompts.clear()
     persistModelCache.clear()
     await Promise.all([
-      ...useTabStore().tabs.map((tab) => sbp('dez.model/tabs/save', tab.id) as Promise<void>),
+      sbp('dez.model/tabs/save', useTabStore().activeTabId) as Promise<void>,
       settingsPersistenceReady && sbp('dez.model/appState/save') as Promise<void>,
       promptsPersistenceReady && savePrompts(),
       modelCachePersistenceReady && saveModelCache(),

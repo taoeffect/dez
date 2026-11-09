@@ -24,6 +24,12 @@ const diskConversations = new Map<string, ConversationData>()
 let diskAppState: AppStatePayload = {}
 let savedAppStates: AppStatePayload[] = []
 
+// The ids of the conversations that the stub save below wrote, in order,
+// and a promise that holds back each save that starts while it is set, as
+// a slow disk would. Reset in beforeEach.
+let savedConversationIds: string[] = []
+let holdSaves: Promise<void> | null = null
+
 // Stub the persistence selectors that the tab and settings selectors call.
 // src/model/persistence/index.ts is never imported by this test, so these are
 // the only dez.persistence/* registrations in the test process.
@@ -48,6 +54,11 @@ sbp('sbp/selectors/register', {
     // which structuredClone refuses.
     savedAppStates.push(JSON.parse(JSON.stringify(state)) as AppStatePayload)
   },
+  async 'dez.persistence/saveConversation' (data: ConversationData): Promise<void> {
+    const hold = holdSaves
+    if (hold) await hold
+    savedConversationIds.push(data.id)
+  },
   async 'dez.persistence/deleteConversation' (): Promise<void> {},
   // dez.model/settings/init applies the loaded theme and font size.
   'dez.ui/applyTheme' (): void {},
@@ -62,6 +73,18 @@ function activeId (): string {
   return sbp('dez.model/tabs/activeId') as string
 }
 
+// What the editor does when the user types: the text and the title change
+// in the store only; nothing is saved to disk.
+function typeText (tabId: string, text: string): void {
+  sbp('dez.model/tabs/replaceSections', tabId, [{ id: crypto.randomUUID(), role: 'user', content: [{ kind: 'text', text }] }])
+}
+
+function tabWithText (text: string): Tab {
+  const tab = sbp('dez.model/tabs/create') as Tab
+  typeText(tab.id, text)
+  return tab
+}
+
 async function openConversation (id: string): Promise<Tab | null> {
   return await sbp('dez.model/tabs/openConversation', id) as Tab | null
 }
@@ -72,6 +95,8 @@ beforeEach(() => {
   diskConversations.clear()
   diskAppState = {}
   savedAppStates = []
+  savedConversationIds = []
+  holdSaves = null
 })
 
 describe('dez.model/tabs/openConversation', () => {
@@ -130,18 +155,6 @@ describe('dez.model/tabs/reopenClosed', () => {
 
   function close (tabId: string): void {
     sbp('dez.model/tabs/close', tabId)
-  }
-
-  // What the editor does when the user types: the text and the title change
-  // in the store only; nothing is saved to disk.
-  function typeText (tabId: string, text: string): void {
-    sbp('dez.model/tabs/replaceSections', tabId, [{ id: crypto.randomUUID(), role: 'user', content: [{ kind: 'text', text }] }])
-  }
-
-  function tabWithText (text: string): Tab {
-    const tab = sbp('dez.model/tabs/create') as Tab
-    typeText(tab.id, text)
-    return tab
   }
 
   function titles (): string[] {
@@ -280,6 +293,32 @@ describe('dez.model/tabs/move', () => {
     move('missing', 0)
     move(ids[2], 2)
     expect(order()).toEqual(ids)
+  })
+})
+
+describe('dez.model/persistence/flush', () => {
+  // Dez quits right after the flush, and a reply that ends or stops saves
+  // its tab without waiting (dez.stream/stop), so the flush waits for that
+  // save; its own save of the active tab then comes last. History lists
+  // conversations by the time of their last save, so a save of a tab with
+  // no change would move it to the top.
+  it('waits for a tab save that runs, then saves the active tab and no other', async () => {
+    tabWithText('untouched')
+    const replied = tabWithText('replied')
+    const active = tabWithText('draft')
+    let finishSave!: () => void
+    holdSaves = new Promise((resolve) => {
+      finishSave = resolve
+    })
+    void sbp('dez.model/tabs/save', replied.id)
+    holdSaves = null
+
+    // A flush that did not wait would write the active tab at once, before
+    // the held save ends.
+    const flush = sbp('dez.model/persistence/flush') as Promise<void>
+    finishSave()
+    await flush
+    expect(savedConversationIds).toEqual([replied.conversationId, active.conversationId])
   })
 })
 
