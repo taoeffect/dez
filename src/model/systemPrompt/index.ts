@@ -18,7 +18,10 @@ function toolItem(tool: ToolDefinition): string {
  *  Dez tools that the request sends. The model goes in by its id, as Dez
  *  lists it. The provider goes in by `providerName`, its display name, and
  *  by its id: a provider added in Settings has a random UUID id, which the
- *  model could not name to the user.
+ *  model could not name to the user. The name schema trims only its ends,
+ *  so a hand-edited `app_state.json` can hold a line break that would split
+ *  the prompt's first line: each run of white space goes in as one space,
+ *  as in `model_list` (`columnText`).
  *
  *  The prompt holds no date, count, or other changing value, and the file's
  *  last newline is dropped: the same model, provider name, and tools always
@@ -28,7 +31,7 @@ export function buildSystemPrompt(model: ModelRef, providerName: string, tools: 
   return renderTemplate(SYSTEM_PROMPT_TEMPLATE.trimEnd(), {
     model_id: model.modelId,
     provider_id: model.providerId,
-    provider_name: providerName,
+    provider_name: providerName.replace(/\s+/g, ' '),
     tools_list: tools.length > 0 ? tools.map(toolItem).join('\n') : 'None.',
   })
 }

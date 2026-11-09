@@ -27,6 +27,13 @@ describe('buildSystemPrompt', () => {
     expect(prompt).toContain('`3f2c9a1e-7b4d-4c8e-9f60-2a5b8d1c7e43`')
   })
 
+  it('keeps a provider name with line breaks on the first line, with one space for each run of white space', () => {
+    // The Settings field is one line, but a hand-edited app_state.json can hold any name.
+    const firstLine = buildSystemPrompt(MODEL, 'Home\n\tserver\r\nbox', []).split('\n')[0]
+
+    expect(firstLine).toContain('"Home server box" (id `openrouter`)')
+  })
+
   it('lists each tool in order, with the type and use of each parameter', () => {
     const lines = buildSystemPrompt(MODEL, PROVIDER_NAME, [SEARCH, CLOCK]).split('\n')
     const first = lines.indexOf('- `search`: Search the notes. Parameters:')
