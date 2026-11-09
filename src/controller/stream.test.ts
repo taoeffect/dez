@@ -729,6 +729,8 @@ describe('dez.stream/start tool loop', () => {
 
     expect(requests).toHaveLength(1)
     expect(sectionVisibleText(agentSection())).toBe('Checking.\n')
+    expect(sbp('dez.model/streams/isStreaming', activeTab().id)).toBe(false)
+    expect(savedConversations).toHaveLength(1)
     expect(toasts).toStrictEqual([])
     expect(alerts).toStrictEqual([])
   })
