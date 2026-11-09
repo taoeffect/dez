@@ -39,42 +39,40 @@ const OPEN: &str = "/usr/bin/open";
 /// update window shows the reason and offers the release page instead.
 /// `identifier` is the bundle identifier from tauri.conf.json.
 pub fn install_blocked_reason(identifier: &str) -> Option<String> {
+    installable_bundle(identifier).err()
+}
+
+// The app bundle of the running executable, when Dez may replace it in
+// place; else why it may not. `install` replaces the path that passed these
+// checks, never a second lookup of it.
+fn installable_bundle(identifier: &str) -> Result<PathBuf, String> {
     if cfg!(debug_assertions) {
-        return Some("Development builds do not install updates.".into());
+        return Err("Development builds do not install updates.".into());
     }
     // Releases have only Apple Silicon DMGs (`verify::dmg_file_name`). A
     // build made from source for an Intel Mac would install an app that it
     // cannot run.
     if !cfg!(target_arch = "aarch64") {
-        return Some("Dez releases are built only for Apple Silicon Macs.".into());
+        return Err("Dez releases are built only for Apple Silicon Macs.".into());
     }
-    let bundle = match running_bundle() {
-        Ok(bundle) => bundle,
-        Err(error) => return Some(error),
-    };
+    let bundle = running_bundle()?;
     if let Some(problem) = location_problem(&bundle) {
-        return Some(problem);
+        return Err(problem);
     }
-    match is_on_read_only_volume(&bundle) {
-        Ok(false) => {}
-        Ok(true) => {
-            return Some(format!(
-                "Dez is on a read-only volume. {MOVE_TO_APPLICATIONS}"
-            ));
-        }
-        Err(error) => {
-            return Some(format!(
-                "Dez could not check the volume it runs from: {error}"
-            ));
-        }
+    let read_only = is_on_read_only_volume(&bundle)
+        .map_err(|error| format!("Dez could not check the volume it runs from: {error}"))?;
+    if read_only {
+        return Err(format!(
+            "Dez is on a read-only volume. {MOVE_TO_APPLICATIONS}"
+        ));
     }
-    match info_plist_string(&bundle, "CFBundleIdentifier") {
-        Ok(found) if found == identifier => None,
-        Ok(found) => Some(format!(
+    let found = info_plist_string(&bundle, "CFBundleIdentifier")?;
+    if found != identifier {
+        return Err(format!(
             "Dez's app bundle has the identifier {found}, not {identifier}."
-        )),
-        Err(error) => Some(error),
+        ));
     }
+    Ok(bundle)
 }
 
 // The app bundle of the running executable. The path is canonical, so a
@@ -174,10 +172,7 @@ pub fn install(
     identifier: &str,
 ) -> Result<Finish, String> {
     // The webview may call install_update without can_install_update first.
-    if let Some(reason) = install_blocked_reason(identifier) {
-        return Err(reason);
-    }
-    let bundle = running_bundle()?;
+    let bundle = installable_bundle(identifier)?;
     install_with(dmg, &bundle, private_dir, version, identifier, trash)
 }
 
