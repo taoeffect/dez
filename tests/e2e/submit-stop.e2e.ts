@@ -363,6 +363,33 @@ describe('submit and stop a streaming reply', () => {
     ])
   })
 
+  // The app holds back an answer end that could still grow into a tool tag,
+  // such as a final `<`. A submit during the reply writes it into the
+  // reply's section before the new agent section exists, and sends it.
+  it('a submit during a reply keeps and sends its held-back end, and the new reply gets its own section', async () => {
+    await submit(browser, 'Submit again')
+    const first = await mock.waitForRequest(browser)
+    startEventStream(first.reply)
+    writeChatFrame(first.reply, { content: 'Is a <' })
+    await waitForValue(browser, 'answer so far', async () => (await threadSections(browser)).at(-1), { role: 'agent', text: 'Is a ' })
+
+    await browser.keys([Key.Control, Key.Enter])
+    const second = await mock.waitForRequest(browser)
+    expect(JSON.parse(second.body).messages).toEqual([
+      openAiSystemMessage(PROVIDER),
+      { role: 'user', content: 'Submit again' },
+      { role: 'assistant', content: 'Is a <' },
+    ])
+    await waitForValue(browser, 'first request closed by the app', async () => first.closed, true)
+    await sendChatReply(second.reply, 'the second submit')
+    await waitForThread(browser, [
+      { role: 'user', text: 'Submit again' },
+      { role: 'agent', text: 'Is a <' },
+      { role: 'agent', text: replyText('the second submit') },
+      { role: 'user', text: '' },
+    ])
+  })
+
   it('submits the editor text with the button when the focus is outside the editor', async () => {
     await focusEditor(browser)
     await browser.keys([Key.Control, Key.End])

@@ -14,8 +14,17 @@ export default sbp('sbp/selectors/register', {
     }
 
     // The messages, the stamp and the request use the same model read.
-    const { messages, imagesLeftOut, sendTools } = sbp('dez.model/streamMessagesForTab', tabId, model) as RequestMessages
-    if (messages.length === 0) return
+    let request = sbp('dez.model/streamMessagesForTab', tabId, model) as RequestMessages
+    if (request.messages.length === 0) return
+
+    // A reply that still streams in the tab ends its output here, before the
+    // new agent section exists (`dez.stream/endOutput`). The request must
+    // send what the tab then stores, else the next request changes these
+    // bytes (prompt cache, replay prefix hashes).
+    if (sbp('dez.stream/endOutput', tabId)) {
+      request = sbp('dez.model/streamMessagesForTab', tabId, model) as RequestMessages
+    }
+    const { messages, imagesLeftOut, sendTools } = request
 
     const agentSection = sbp('dez.model/ensureTrailingAgentSectionForTab', tabId, model)
     if (!agentSection) return

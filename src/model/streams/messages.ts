@@ -152,8 +152,8 @@ function toolCall(block: ToolBlock): ToolCall {
 
 // Every call gets a result. A `running` block in a request has no tool run
 // that will end it: the app stopped while the tool ran, or the user pasted
-// the block. A submit during a tool run sends the blocks that the stop
-// wrote (`dez.stream/start`).
+// the block. A submit during a tool run sends the final blocks that
+// `dez.stream/endOutput` wrote.
 function toolResult(block: ToolBlock): ToolResult {
   if (block.status === 'running') return { callId: block.id, content: INTERRUPTED_TOOL_RESULT, isError: true }
   const content = withoutImagePaths(block.result)

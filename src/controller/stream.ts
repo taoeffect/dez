@@ -14,7 +14,7 @@ import {
   toolGroupText,
   type CheckedToolCall,
 } from '../model/streams/toolRound'
-import type { EndedStreamSession, RequestMessages, StreamMessage } from '../model/streams/types'
+import type { EndedStreamSession, StreamMessage } from '../model/streams/types'
 import {
   appendThinkingToTabSection,
   appendTokenToTabSection,
@@ -69,6 +69,10 @@ interface ReplyRuntime {
   requestId: string
   cancelling: boolean
   toolRun: ToolRun | null
+  // Model text never forms a block (toolBlocks.ts). A tag can be split
+  // across tokens, so the escaper holds such an end back until the next
+  // token, the round end, or the reply end.
+  escaper: ModelTextEscaper
 }
 
 // The reply of each tab, so tabs stream at the same time and a new start or
@@ -130,6 +134,16 @@ function receiveToken(tabId: string, sectionId: string, token: string): void {
   receiveStreamToken(tabId, token)
 }
 
+// Writes the answer text that the reply's escaper still holds back. Call it
+// at a round end and before the reply ends, while the stream session still
+// writes the section. True when it wrote text.
+function flushModelText(tabId: string, reply: ReplyRuntime): boolean {
+  const held = reply.escaper.flush()
+  if (!held || !streamWritesSection(tabId, reply.sectionId)) return false
+  receiveToken(tabId, reply.sectionId, held)
+  return true
+}
+
 // `change` updates the thinking of the streaming section in the store; the
 // editor then gets the new thinking in the same tick, so the editor's
 // section watcher finds both copies equal. Thinking is not answer text, so
@@ -149,11 +163,12 @@ function replaceToolRun(tabId: string, sectionId: string, run: ToolRun, text: st
   return true
 }
 
-// Ends the tool run of a reply that the user stopped, or that a new start in
-// the tab replaced: aborts the running tool, and writes the final blocks at
-// once, while the stream session still writes the section. Calls that ended
-// keep their results; the others get "Stopped.". The round loop finds the
-// run gone and writes nothing more. True when it wrote the blocks.
+// Ends the tool run of a reply that the user stopped, or whose output a
+// submit ended (`dez.stream/endOutput`): aborts the running tool, and
+// writes the final blocks at once, while the stream session still writes
+// the section. Calls that ended keep their results; the others get
+// "Stopped.". The round loop finds the run gone and writes nothing more.
+// True when it wrote the blocks.
 function stopToolRun(tabId: string, reply: ReplyRuntime): boolean {
   const run = reply.toolRun
   if (!run) return false
@@ -168,8 +183,9 @@ function stopToolRun(tabId: string, reply: ReplyRuntime): boolean {
 // refused call gets its error block at once), runs each call, then replaces
 // the running blocks with the final ones. Nothing else of the reply writes
 // the section meanwhile. Returns the section after the round, or null when
-// the run did not end here: the user stopped the reply (stopToolRun wrote
-// the blocks), or deleted the running blocks.
+// the run did not end here: the user stopped the reply, or a submit ended
+// its output (stopToolRun wrote the blocks), or the user deleted the
+// running blocks.
 async function runToolRound(tabId: string, reply: ReplyRuntime, calls: CheckedToolCall[], sectionText: string): Promise<Section | null> {
   const run: ToolRun = {
     calls,
@@ -204,23 +220,15 @@ export default sbp('sbp/selectors/register', {
   // section, save).
   async 'dez.stream/start' (args: StreamStartArgs): Promise<void> {
     const previousReply = repliesByTab.get(args.tabId)
-    let startMessages = args.messages
     if (previousReply) {
+      // The submit ended its output (`dez.stream/endOutput`) before it built
+      // `args.messages`; the new reply ends its request.
       previousReply.cancelling = true
-      // The submit built the messages while the earlier reply's tool run
-      // still held its running blocks, which a request sends as
-      // "Interrupted.". The stop wrote other blocks, so the messages are
-      // built again: a request must send what the tab stores, else the next
-      // request changes these bytes (prompt cache, replay prefix hashes).
-      // The new agent section is still empty, so it is left out.
-      if (stopToolRun(args.tabId, previousReply)) {
-        startMessages = (sbp('dez.model/streamMessagesForTab', args.tabId, args.model) as RequestMessages).messages
-      }
       await sbp('dez.http/cancelStream', previousReply.requestId).catch(() => {})
       if (repliesByTab.get(args.tabId) === previousReply) repliesByTab.delete(args.tabId)
     }
 
-    const reply: ReplyRuntime = { sectionId: args.sectionId, requestId: '', cancelling: false, toolRun: null }
+    const reply: ReplyRuntime = { sectionId: args.sectionId, requestId: '', cancelling: false, toolRun: null, escaper: new ModelTextEscaper() }
     repliesByTab.set(args.tabId, reply)
     const replyIsCurrent = () => repliesByTab.get(args.tabId) === reply && !reply.cancelling
 
@@ -228,7 +236,7 @@ export default sbp('sbp/selectors/register', {
       tabId: args.tabId,
       sectionId: args.sectionId,
       model: args.model,
-      messages: startMessages,
+      messages: args.messages,
     })
     sbp('dez.editor/startStreamingFollowIfVisible', args.tabId)
 
@@ -243,7 +251,7 @@ export default sbp('sbp/selectors/register', {
     try {
       // Inside the try: a template error must end the stream session.
       const system = buildSystemPrompt(args.model, tools)
-      let messages = startMessages
+      let messages = args.messages
       // The first call id of the group that ended the round before: it names
       // the thinking round of every later round (SectionThinking.rounds).
       let afterToolCall: string | undefined
@@ -253,9 +261,6 @@ export default sbp('sbp/selectors/register', {
         reply.requestId = requestId
         const roundIsCurrent = () => repliesByTab.get(args.tabId) === reply && reply.requestId === requestId
         const roundAfterToolCall = afterToolCall
-        // Model text never forms a block (toolBlocks.ts); a tag can be split
-        // across tokens, so the escaper holds such an end back.
-        const escaper = new ModelTextEscaper()
         const result = await sbp('dez.provider/streamChat', {
           providerId: args.model.providerId,
           conversationId: args.conversationId,
@@ -267,7 +272,7 @@ export default sbp('sbp/selectors/register', {
           providerSettings,
           onToken: (token: string) => {
             if (!roundIsCurrent()) return
-            const text = escaper.push(token)
+            const text = reply.escaper.push(token)
             if (text) receiveToken(args.tabId, args.sectionId, text)
           },
           onThinking: (token: string) => {
@@ -278,8 +283,7 @@ export default sbp('sbp/selectors/register', {
         if (!replyIsCurrent()) return
 
         // Before the blocks and the finish, which saves the conversation.
-        const held = escaper.flush()
-        if (held) receiveToken(args.tabId, args.sectionId, held)
+        flushModelText(args.tabId, reply)
         const replay = result.thinkingReplay
         if (replay) {
           updateStreamThinking(args.tabId, args.sectionId, () => setThinkingReplayForTabSection(args.tabId, args.sectionId, replay, roundAfterToolCall))
@@ -316,11 +320,12 @@ export default sbp('sbp/selectors/register', {
           return
         }
         afterToolCall = calls[0].id
-        messages = [...startMessages, ...agentSectionMessages(roundsSoFar, args.model, true)]
+        messages = [...args.messages, ...agentSectionMessages(roundsSoFar, args.model, true)]
       }
     } catch (error) {
       if (replyIsCurrent()) {
         console.error('Chat request failed:', error)
+        flushModelText(args.tabId, reply)
         finalizeStream(args.tabId, errorStreamSession(args.tabId))
         // The toast refuses an empty message.
         showReplyError(args.tabId, 'Request failed', (error instanceof Error ? error.message : String(error)) || 'Unknown error')
@@ -328,6 +333,23 @@ export default sbp('sbp/selectors/register', {
     } finally {
       if (repliesByTab.get(args.tabId) === reply) repliesByTab.delete(args.tabId)
     }
+  },
+
+  // A submit during a reply in the tab calls this before it builds its
+  // request messages and adds the new agent section; the new start then
+  // cancels the reply's request. A running tool stops with its final blocks,
+  // and the answer text that the escaper holds is written. These writes
+  // must come before the new section is in the store: the editor gets it
+  // only in Vue's next watcher flush, and a doc change before then writes
+  // the editor's sections back to the store, with no new section. True
+  // when it wrote text, which the messages must then hold.
+  'dez.stream/endOutput' (tabId: string): boolean {
+    const reply = repliesByTab.get(tabId)
+    if (!reply) return false
+    reply.cancelling = true
+    const wroteBlocks = stopToolRun(tabId, reply)
+    const wroteText = flushModelText(tabId, reply)
+    return wroteBlocks || wroteText
   },
 
   async 'dez.stream/stop' (tabId: string): Promise<void> {
@@ -346,6 +368,8 @@ export default sbp('sbp/selectors/register', {
       if (repliesByTab.get(tabId) === reply) {
         repliesByTab.delete(tabId)
       }
+      // After the cancel: a token can still come while it runs.
+      if (reply) flushModelText(tabId, reply)
       finalizeStream(tabId, cancelStreamSession(tabId))
     }
   },

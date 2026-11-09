@@ -547,6 +547,55 @@ describe('dez.stream/start tool loop', () => {
     expect(editorTokens.join('')).toBe('See <\\dez:tool id="x" name="y"> and <')
   })
 
+  // The escaper holds back a text end that can still grow into a tag, such
+  // as a final `<`; a reply that ends with no round end must write it.
+  it.each([
+    ['a stop', async (tabId: string) => {
+      await sbp('dez.stream/stop', tabId)
+      throw new Error('cancelled')
+    }],
+    ['an error', async () => {
+      throw new Error('connection reset')
+    }],
+  ])('keeps the text that the escaper holds at %s', async (_end, endReply) => {
+    replyRounds([
+      async (input) => {
+        await input.onToken('Is a <')
+        return await endReply(activeTab().id)
+      },
+    ])
+
+    await startStream()
+
+    expect(sectionVisibleText(agentSection())).toBe('Is a <')
+    expect(editorTokens.join('')).toBe('Is a <')
+    expect(savedConversations.at(-1)?.sections[1].nodes).toStrictEqual(agentSection().content)
+  })
+
+  it('sends and keeps the text that the escaper holds when a new submit in the tab ends the reply', async () => {
+    const tabId = activeTab().id
+    sbp('dez.model/setActiveModel', model.providerId, model.modelId, model.modelName)
+    replyRounds([
+      async (input) => {
+        await input.onToken('Is a <')
+        await sbp('dez.controller/submitTab', tabId)
+        throw new Error('cancelled')
+      },
+      async (input) => {
+        await input.onToken('Answer.')
+        return { requestId: input.requestId as string }
+      },
+    ])
+
+    await startStream()
+
+    expect(requests).toHaveLength(2)
+    expect(sent[1].at(-1)).toStrictEqual({ role: 'agent', content: 'Is a <' })
+    expect(sectionVisibleText(agentSection())).toBe('Is a <')
+    const stored = (sbp('dez.model/streamMessagesForTab', tabId, model) as RequestMessages).messages
+    expect(stored.slice(0, sent[1].length)).toStrictEqual(sent[1])
+  })
+
   it('ignores tool calls when the request offered no tools', async () => {
     replyRounds([
       async (input) => {
@@ -625,8 +674,8 @@ describe('dez.stream/start tool loop', () => {
   })
 
   // The submit builds its messages while the running blocks are still in the
-  // section; the new start then writes the final blocks. The request must
-  // send what the tab stores, or the next request changes earlier bytes.
+  // section; `dez.stream/endOutput` then writes the final blocks. The request
+  // must send what the tab stores, or the next request changes earlier bytes.
   it('sends the final blocks of a tool run that a new submit in the tab stopped', async () => {
     const tabId = activeTab().id
     sbp('dez.model/setActiveModel', model.providerId, model.modelId, model.modelName)
