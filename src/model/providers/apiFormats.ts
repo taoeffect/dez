@@ -137,17 +137,17 @@ function agentWireMessage(message: Extract<ChatMessage, { role: 'agent' }>, pref
 
 // Empty text with tool calls stays `""`: strict servers refuse a `null`
 // content.
-const openAiAgentMessage: AgentMessage = (content, toolCalls) => toolCalls.length === 0
-  ? { role: 'assistant', content }
-  : {
-      role: 'assistant',
-      content,
-      tool_calls: toolCalls.map((call) => ({
-        id: call.id,
-        type: 'function',
-        function: { name: call.name, arguments: JSON.stringify(call.arguments) },
-      })),
-    }
+const openAiAgentMessage: AgentMessage = (content, toolCalls) => ({
+  role: 'assistant',
+  content,
+  ...(toolCalls.length > 0 && {
+    tool_calls: toolCalls.map((call) => ({
+      id: call.id,
+      type: 'function',
+      function: { name: call.name, arguments: JSON.stringify(call.arguments) },
+    })),
+  }),
+})
 
 const openAiReplayMessage: ReplayMessage = (message, text, replay) => {
   switch (replay.kind) {
