@@ -341,7 +341,7 @@ describe('section thinking', () => {
     expect(storedThinking(pasted)).toStrictEqual(['none', THINKING, 'none'])
   })
 
-  it('round-trips exact thinking text and a signed replay through copy and paste', () => {
+  it('round-trips exact thinking text, a signed replay, and rounds through copy and paste', () => {
     const texts = [
       '',
       '\n',
@@ -366,6 +366,7 @@ describe('section thinking', () => {
           blocks: [{ type: 'thinking', thinking: `${text} > "q" & <x/>`, signature: 'sig' }, { type: 'redacted_thinking', data: 'opaque' }],
           prefixHash: 'h1',
         },
+        rounds: [{ afterToolCall: 'call_1', from: text.length, replay: { kind: 'copilot', opaque: `${text} "&`, prefixHash: 'h2' } }],
       }
       const pasted = pasteAfterFirst(serializeSelectionForClipboard(thinkingState(thinking, WHOLE_DOC)))
 

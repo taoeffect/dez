@@ -9,30 +9,41 @@ import type { SectionThinking } from '../../model/chat/types'
 const REPLAY_ONLY: SectionThinking = { text: '', replay: { kind: 'copilot', opaque: 'opaque', prefixHash: 'hash' } }
 
 describe('sectionThinkingView', () => {
-  const open = new Set(['u', 'a', 'r', 'e', 's'])
+  const open = new Set(['u', 'a', 'r', 'e', 's', 'w'])
 
   // Thinking is agent-only: a user section that holds some shows none.
   it('gives thinking parts only to agent sections that have thinking', () => {
     expect(sectionThinkingView({ id: 'u', role: 'user', thinking: { text: 'held by a user section' } }, open, null)).toBeNull()
     expect(sectionThinkingView({ id: 'a', role: 'agent', thinking: { text: 'plan' } }, open, null))
-      .toStrictEqual({ text: 'plan', hasReplay: false, expanded: true, streaming: false })
+      .toStrictEqual({ text: 'plan', roundStarts: [], hasReplay: false, expanded: true, streaming: false })
     expect(sectionThinkingView({ id: 'b', role: 'agent' }, open, null)).toBeNull()
     expect(sectionThinkingView(undefined, open, null)).toBeNull()
   })
 
   it('counts a replay without text as thinking, and empty text without a replay as none', () => {
     expect(sectionThinkingView({ id: 'r', role: 'agent', thinking: REPLAY_ONLY }, open, null))
-      .toStrictEqual({ text: '', hasReplay: true, expanded: true, streaming: false })
+      .toStrictEqual({ text: '', roundStarts: [], hasReplay: true, expanded: true, streaming: false })
     expect(sectionThinkingView({ id: 'e', role: 'agent', thinking: { text: '' } }, open, null)).toBeNull()
+  })
+
+  // Only a later round of a tool reply may have thinking: the first round's
+  // replay is then absent, and the pill must still get its triangle.
+  it('gives the round starts and counts the replay of a later round', () => {
+    const thinking: SectionThinking = {
+      text: '',
+      rounds: [{ afterToolCall: 'call_1', from: 0, replay: { kind: 'copilot', opaque: 'opaque', prefixHash: 'hash' } }],
+    }
+    expect(sectionThinkingView({ id: 'w', role: 'agent', thinking }, open, null))
+      .toStrictEqual({ text: '', roundStarts: [0], hasReplay: true, expanded: true, streaming: false })
   })
 
   // The spinner shows for every streaming section, and a panel cannot be
   // open before there is thinking to show.
   it('gives a streaming section without thinking closed parts', () => {
     expect(sectionThinkingView({ id: 's', role: 'agent' }, open, 's'))
-      .toStrictEqual({ text: '', hasReplay: false, expanded: false, streaming: true })
+      .toStrictEqual({ text: '', roundStarts: [], hasReplay: false, expanded: false, streaming: true })
     expect(sectionThinkingView({ id: 't', role: 'agent', thinking: { text: 'done' } }, open, 's'))
-      .toStrictEqual({ text: 'done', hasReplay: false, expanded: false, streaming: false })
+      .toStrictEqual({ text: 'done', roundStarts: [], hasReplay: false, expanded: false, streaming: false })
   })
 })
 

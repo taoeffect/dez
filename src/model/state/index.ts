@@ -18,7 +18,7 @@ import { emptyModelCache } from '../persistence/modelCache'
 import type { ProviderConfig, ProviderThinkingConfig } from '../providers/config'
 import type { ProviderId, ProviderModelsResult } from '../providers/types'
 import { isToolsEnabled } from '../providers/toolsSetting'
-import type { ActiveModel, ContentNode, ModelRef, Section, SectionThinking, Tab, ThinkingReplay } from '../chat/types'
+import type { ActiveModel, ContentNode, ModelRef, Section, SectionThinking, Tab, ThinkingReplay, ThinkingRound } from '../chat/types'
 import {
   appendStreamingText,
   emptyContent,
@@ -349,25 +349,42 @@ export function appendTokenToTabSection(tabId: string, sectionId: string, token:
   return true
 }
 
+// The entry of the later request round after the tool call `afterToolCall`.
+// It is made when the round's first thinking token or its replay comes, at
+// the end of the text so far, so a round with neither gets none. Rounds
+// stream one after another: only the last entry can be the current round's.
+// `thinking` is the store's reactive object, and the entry is read back
+// through it, so a later write to the entry notifies watchers. The list is
+// set in one write, so a sync watcher never sees an empty list.
+function thinkingRoundAfter(thinking: SectionThinking, afterToolCall: string): ThinkingRound {
+  const last = thinking.rounds?.at(-1)
+  if (last?.afterToolCall === afterToolCall) return last
+  thinking.rounds = [...(thinking.rounds ?? []), { afterToolCall, from: thinking.text.length }]
+  return thinking.rounds[thinking.rounds.length - 1]
+}
+
 // Returns the section's thinking after the append, or null when the tab or
-// the section is gone. The editor makes its own copy of it.
-export function appendThinkingToTabSection(tabId: string, sectionId: string, token: string): SectionThinking | null {
+// the section is gone. The editor makes its own copy of it. A token of a
+// later request round passes `afterToolCall`: the id of the first tool call
+// of the group that ended the round before it.
+export function appendThinkingToTabSection(tabId: string, sectionId: string, token: string, afterToolCall?: string): SectionThinking | null {
   const section = findTabSection(tabId, sectionId)?.section
   if (!section) return null
-  if (section.thinking) {
-    section.thinking.text += token
-  } else {
-    section.thinking = { text: token }
-  }
+  if (!section.thinking) section.thinking = { text: '' }
+  if (afterToolCall !== undefined) thinkingRoundAfter(section.thinking, afterToolCall)
+  section.thinking.text += token
   return section.thinking
 }
 
 // A reply can have a replay without shown text (encrypted reasoning only),
-// so this makes the thinking when there is none.
-export function setThinkingReplayForTabSection(tabId: string, sectionId: string, replay: ThinkingReplay): SectionThinking | null {
+// so this makes the thinking when there is none. `afterToolCall` names a
+// later request round, as in appendThinkingToTabSection.
+export function setThinkingReplayForTabSection(tabId: string, sectionId: string, replay: ThinkingReplay, afterToolCall?: string): SectionThinking | null {
   const section = findTabSection(tabId, sectionId)?.section
   if (!section) return null
-  section.thinking = { text: section.thinking?.text ?? '', replay }
+  if (!section.thinking) section.thinking = { text: '' }
+  if (afterToolCall === undefined) section.thinking.replay = replay
+  else thinkingRoundAfter(section.thinking, afterToolCall).replay = replay
   return section.thinking
 }
 
@@ -755,15 +772,18 @@ export default sbp('sbp/selectors/register', {
   // on a reused empty agent section (same id and role) still reaches the
   // editor before the first token; else the editor's write-back on every
   // token (`replaceSections`) would erase the stamp. For the same reason it
-  // marks whether a section has thinking and a replay: a reused section loses
-  // its old thinking, and the editor must lose it too. The thinking text is
-  // left out, so a streamed thinking token does not trigger this sync. The
-  // duration is part of it as well: it is stamped after the last token and
-  // dropped from a reused section.
+  // marks whether a section has thinking and a replay, and how many request
+  // rounds its thinking has: a reused section loses its old thinking, and
+  // the editor must lose it too. The thinking text is left out, so a
+  // streamed thinking token does not trigger this sync. The duration is part
+  // of it as well: it is stamped after the last token and dropped from a
+  // reused section.
   'dez.model/thread/sectionsIdentity' (): string {
     return useTabStore().activeTab.sections
       .map((section) => {
-        const thinking = section.thinking ? (section.thinking.replay ? 'replay' : 'text') : ''
+        const thinking = section.thinking
+          ? `${section.thinking.replay ? 'replay' : 'text'}${section.thinking.rounds?.length ?? ''}`
+          : ''
         const model = section.model ? modelRefKey(section.model) : ''
         return `${section.id}:${section.role}:${model}:${thinking}:${section.durationMs ?? ''}`
       })

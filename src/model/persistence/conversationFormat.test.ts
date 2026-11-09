@@ -478,6 +478,67 @@ describe('agent thinking containers', () => {
     expect(parsed.sections.slice(1).map((s) => textContent(s.nodes[0]))).toEqual(badReplays.map((_, index) => `answer ${index}`))
   })
 
+  it('round-trips the rounds of a reply with tool calls in a one-line rounds attribute after replay', () => {
+    const thinking: SectionThinking = {
+      text: 'Plan.\nLook "again" & <b>.',
+      replay: { kind: 'field', field: 'reasoning_content' },
+      rounds: [
+        { afterToolCall: 'call_1', from: 6, replay: { kind: 'anthropicBlocks', blocks: [{ type: 'thinking', thinking: 'a\n"b"', signature: 's' }], prefixHash: 'h' } },
+        { afterToolCall: 'functions.x:0', from: 6 },
+        { afterToolCall: 'call_3', from: 24, replay: { kind: 'field', field: 'reasoning_content' } },
+      ],
+    }
+    const data = conversation([thinkingSection('answer', thinking)])
+
+    const serialized = serializeConversation(data)
+    const [openingTag] = serialized.split('\n').filter((line) => line.startsWith('<dez:pill type="agent"'))
+
+    expect(openingTag).toMatch(/^<dez:pill type="agent" model="zai\/glm-4.6" replay="[^"]*" rounds="\[\{&quot;afterToolCall&quot;:&quot;call_1&quot;,&quot;from&quot;:6,[^"]*\]">$/)
+    expect(parseConversation('conversation', serialized)).toStrictEqual(data)
+  })
+
+  // Without valid rounds, Dez cannot tell where the first round's text ends,
+  // so no replay goes back for the section, not even the first round's.
+  it('keeps the thinking text but no replay or rounds when the rounds attribute is not valid', () => {
+    const replay = '{&quot;kind&quot;:&quot;field&quot;,&quot;field&quot;:&quot;reasoning&quot;}'
+    const round = (fields: string) => `{&quot;afterToolCall&quot;:&quot;c&quot;,${fields}}`
+    const badRounds = [
+      'not json',
+      '{}',
+      `[${round('&quot;from&quot;:1.5')}]`,
+      `[${round('&quot;from&quot;:-1')}]`,
+      `[${round('&quot;from&quot;:&quot;1&quot;')}]`,
+      `[{&quot;from&quot;:1}]`,
+      `[${round('&quot;from&quot;:3')},${round('&quot;from&quot;:2')}]`,
+      `[${round('&quot;from&quot;:10')}]`,
+      `[${round(`&quot;from&quot;:1,&quot;replay&quot;:{&quot;kind&quot;:&quot;unknown&quot;}`)}]`,
+    ]
+    const content = file(['<dez:pill type="user"/>', 'hi', ...badRounds.flatMap((rounds, index) => [
+      `<dez:pill type="agent" replay="${replay}" rounds="${rounds}">`,
+      `thought ${index}`,
+      '</dez:pill>',
+      `answer ${index}`,
+    ])])
+
+    const parsed = parseConversation('conversation', content)
+
+    expect(parsed.sections.slice(1).map((s) => s.thinking)).toStrictEqual(badRounds.map((_, index) => ({ text: `thought ${index}` })))
+  })
+
+  it('reads empty rounds as none and keeps the replay', () => {
+    const content = file([
+      '<dez:pill type="user"/>',
+      'hi',
+      '<dez:pill type="agent" replay="{&quot;kind&quot;:&quot;field&quot;,&quot;field&quot;:&quot;reasoning&quot;}" rounds="[]">',
+      'thought',
+      '</dez:pill>',
+      'answer',
+    ])
+
+    expect(parseConversation('conversation', content).sections[1].thinking)
+      .toStrictEqual({ text: 'thought', replay: { kind: 'field', field: 'reasoning' } })
+  })
+
   it('reads a container without a model, and no thinking from a self-closing tag with a replay', () => {
     const content = file([
       '<dez:pill type="user"/>',

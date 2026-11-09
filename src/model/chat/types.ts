@@ -56,16 +56,35 @@ export type ThinkingReplay =
   | { kind: 'reasoningDetails'; details: JsonObject[]; prefixHash: string }
   | { kind: 'copilot'; opaque: string; prefixHash: string }
 
+/** The thinking of one request round after the first. A reply that calls
+ *  tools makes one request per round, and each round streams its own
+ *  thinking and gets its own replay; the reply stays one agent section. */
+export interface ThinkingRound {
+  /** The id of the first tool call of the group that ended the round
+   *  before this one. */
+  afterToolCall: string
+  /** Where this round's thinking starts in `SectionThinking.text`, in
+   *  UTF-16 code units. */
+  from: number
+  /** Absent when this round's thinking cannot go back (see
+   *  `SectionThinking.replay`). */
+  replay?: ThinkingReplay
+}
+
 /** The reasoning a model streamed before its answer. It is not in the
  *  section content or the CodeMirror doc: the editor shows it in the agent
  *  pill, and requests, previews, titles, search, find, Save As Markdown, and
  *  Copy Markdown never read it as message text. */
 export interface SectionThinking {
-  /** Every streamed thinking part, joined in stream order. */
+  /** Every streamed thinking part of every request round, joined in stream
+   *  order with no separator. */
   text: string
-  /** Absent when the thinking cannot go back: it was cut off, pasted, or
-   *  came from inline `<think>` tags. */
+  /** The replay of the first request round. Absent when the thinking cannot
+   *  go back: it was cut off, pasted, or came from inline `<think>` tags. */
   replay?: ThinkingReplay
+  /** The later request rounds that have thinking text or a replay, in
+   *  order. Absent when there are none; never empty. */
+  rounds?: ThinkingRound[]
 }
 
 export interface Section {

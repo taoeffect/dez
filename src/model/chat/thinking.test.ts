@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest'
-import { readableThinking } from './thinking'
+import { readableThinking, readableThinkingRounds, sameThinking, thinkingField } from './thinking'
+import type { SectionThinking } from './types'
 
 const ENCRYPTED = '__ENCRYPTED_REASONING__v1:{"format":"xai-responses-v1","items":[{"id":"rs_1","content":"QUJDRA=="}]}'
 const ENCRYPTED_2 = '__ENCRYPTED_REASONING__v12:{"items":[]}'
@@ -68,6 +69,75 @@ describe('readableThinking', () => {
     let shown = ''
     for (let end = 0; end <= full.length; end++) {
       const next = readableThinking(full.slice(0, end), true).text
+      expect(next.startsWith(shown), `streamed text after ${end} chars`).toBe(true)
+      expect(finished.startsWith(next), `finished text after ${end} chars`).toBe(true)
+      shown = next
+    }
+  })
+})
+
+describe('thinking copies', () => {
+  const ROUNDS: SectionThinking = {
+    text: 'Plan.Check the list.',
+    replay: { kind: 'field', field: 'reasoning_content' },
+    rounds: [
+      { afterToolCall: 'call_1', from: 5, replay: { kind: 'anthropicBlocks', blocks: [{ type: 'redacted_thinking', data: 'enc' }], prefixHash: 'h' } },
+      { afterToolCall: 'call_2', from: 20 },
+    ],
+  }
+
+  // The store and the editor each keep a copy; a shared round would let one
+  // change the other's replay.
+  it('copies the rounds deeply, with no key for an absent replay', () => {
+    const copy = thinkingField(ROUNDS).thinking
+
+    expect(copy).toStrictEqual(ROUNDS)
+    expect(copy?.rounds?.[0]).not.toBe(ROUNDS.rounds?.[0])
+    expect(copy?.rounds?.[0].replay).not.toBe(ROUNDS.rounds?.[0].replay)
+    expect(thinkingField({ text: 'x' }).thinking).toStrictEqual({ text: 'x' })
+  })
+
+  it('finds thinking with other rounds different', () => {
+    const { rounds = [] } = ROUNDS
+    expect(sameThinking(ROUNDS, thinkingField(ROUNDS).thinking)).toBe(true)
+    expect(sameThinking(ROUNDS, { ...ROUNDS, rounds: rounds.slice(0, 1) })).toBe(false)
+    expect(sameThinking(ROUNDS, { ...ROUNDS, rounds: [rounds[0], { ...rounds[1], from: 19 }] })).toBe(false)
+    expect(sameThinking(ROUNDS, { ...ROUNDS, rounds: [rounds[0], { ...rounds[1], replay: { kind: 'field', field: 'reasoning' } }] })).toBe(false)
+    expect(sameThinking({ text: 'a' }, { text: 'a', rounds: [{ afterToolCall: 'c', from: 1 }] })).toBe(false)
+  })
+})
+
+describe('readableThinkingRounds', () => {
+  const RULE = '─'.repeat(16)
+
+  it('gives the text as it is with no later round', () => {
+    expect(readableThinkingRounds('Plan.\n', [], false)).toStrictEqual(readableThinking('Plan.\n', false))
+  })
+
+  it('puts a rule line between rounds that show text, with no blank lines next to it', () => {
+    expect(readableThinkingRounds('Plan.\n\nLook.\n\nDone.', [7, 13], false).text).toBe(`Plan.\n${RULE}\nLook.\n${RULE}\nDone.`)
+    expect(readableThinkingRounds('Plan.Look.', [5], false).text).toBe(`Plan.\n${RULE}\nLook.`)
+  })
+
+  // A round with only a replay, or only encrypted lines, shows no text.
+  it('draws no rule next to a round that shows no text', () => {
+    expect(readableThinkingRounds('Look.', [0], false).text).toBe('Look.')
+    expect(readableThinkingRounds('Plan.', [5, 5], false).text).toBe('Plan.')
+    expect(readableThinkingRounds(`Plan.${ENCRYPTED}Done.`, [5, 5 + ENCRYPTED.length], false))
+      .toStrictEqual({ text: `Plan.\n${RULE}\nDone.`, encryptedLines: 1, encryptedChars: ENCRYPTED.length })
+  })
+
+  // Only the last round streams, so a held-back tail of an earlier round
+  // shows once a later round starts.
+  it('gives each streamed text a prefix of the next one across a round start', () => {
+    const full = 'Plan:\n- read\n\nNext:\n\n- write\n'
+    const roundStart = 'Plan:\n- read\n\n'.length
+    const finished = readableThinkingRounds(full, [roundStart], false).text
+    expect(finished).toBe(`Plan:\n- read\n${RULE}\nNext:\n\n- write\n`)
+
+    let shown = ''
+    for (let end = 0; end <= full.length; end++) {
+      const next = readableThinkingRounds(full.slice(0, end), end > roundStart ? [roundStart] : [], true).text
       expect(next.startsWith(shown), `streamed text after ${end} chars`).toBe(true)
       expect(finished.startsWith(next), `finished text after ${end} chars`).toBe(true)
       shown = next

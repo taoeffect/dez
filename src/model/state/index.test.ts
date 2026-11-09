@@ -1,7 +1,7 @@
 import sbp from '@sbp/sbp'
 import { createPinia, setActivePinia } from 'pinia'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import type { ActiveModel, ContentNode, ModelRef, Section, SectionThinking, Tab } from '../chat/types'
+import type { ActiveModel, ContentNode, ModelRef, Section, SectionThinking, Tab, ThinkingReplay } from '../chat/types'
 import type { AppStatePayload, ConversationData, ModelCache } from '../persistence/types'
 import type { ProviderConfig } from '../providers/config'
 import type { SettingsSnapshot } from './index'
@@ -9,7 +9,7 @@ import type { RequestMessages } from '../streams/types'
 import type { Shortcut, ShortcutId } from '../shortcuts'
 // Side-effect import: registers the dez.model/* selectors under test.
 import './index'
-import { appendTokenToTabSection, finalizeStreamSectionForTab } from './index'
+import { appendThinkingToTabSection, appendTokenToTabSection, finalizeStreamSectionForTab, setThinkingReplayForTabSection } from './index'
 
 // Conversation ids that the stub disk load below was asked for. Reset in
 // beforeEach.
@@ -387,8 +387,9 @@ describe('section models', () => {
 
   it('keeps section thinking through edits, conversationData and a reload of the conversation', async () => {
     const thinking: SectionThinking = {
-      text: 'step one\n',
+      text: 'step one\nstep two',
       replay: { kind: 'reasoningDetails', details: [{ type: 'reasoning.text', text: 'step one\n', index: 0 }], prefixHash: 'h' },
+      rounds: [{ afterToolCall: 'call_1', from: 9, replay: { kind: 'field', field: 'reasoning' } }],
     }
     sbp('dez.model/tabs/replaceSections', activeId(), [
       { id: 'u1', role: 'user', content: text('question') },
@@ -419,24 +420,60 @@ describe('section models', () => {
     expect(stored(threadSections(), 'durationMs')).toStrictEqual(['none', 'none'])
   })
 
-  it('changes the identity when a section gains thinking, gains a replay, or loses its thinking on reuse', () => {
+  // A reply that calls tools makes several request rounds. A later round's
+  // thinking and replay go to its own entry, which starts where the text so
+  // far ends; a round with neither gets no entry.
+  it('adds a later round on its first thinking or replay and sets the replay of each round', () => {
+    typeIntoLastSection('question')
+    const agent = ensureAgentSection(alpha)
+    const first: ThinkingReplay = { kind: 'field', field: 'reasoning_content' }
+    const later: ThinkingReplay = { kind: 'copilot', opaque: 'op', prefixHash: 'h' }
+
+    appendThinkingToTabSection(activeId(), agent.id, 'Plan.')
+    setThinkingReplayForTabSection(activeId(), agent.id, first)
+    appendThinkingToTabSection(activeId(), agent.id, 'Look', 'call_2')
+    appendThinkingToTabSection(activeId(), agent.id, ' again.', 'call_2')
+    setThinkingReplayForTabSection(activeId(), agent.id, later, 'call_2')
+    setThinkingReplayForTabSection(activeId(), agent.id, later, 'call_3')
+
+    expect(stored(threadSections(), 'thinking')).toStrictEqual(['none', {
+      text: 'Plan.Look again.',
+      replay: first,
+      rounds: [{ afterToolCall: 'call_2', from: 5, replay: later }, { afterToolCall: 'call_3', from: 16, replay: later }],
+    }])
+  })
+
+  it('makes the thinking of a later round when the first round had none', () => {
+    typeIntoLastSection('question')
+    const agent = ensureAgentSection(alpha)
+
+    appendThinkingToTabSection(activeId(), agent.id, 'Look.', 'call_1')
+
+    expect(stored(threadSections(), 'thinking')).toStrictEqual(['none', { text: 'Look.', rounds: [{ afterToolCall: 'call_1', from: 0 }] }])
+  })
+
+  it('changes the identity when a section gains thinking, a replay, or a round, or loses its thinking on reuse', () => {
     const sections = (thinking?: SectionThinking): Section[] => [
       { id: 'u1', role: 'user', content: text('question') },
       { id: 'a1', role: 'agent', content: text(''), model: alpha, ...(thinking ? { thinking } : {}) },
     ]
     const identity = (): string => sbp('dez.model/thread/sectionsIdentity') as string
+    const replay: ThinkingReplay = { kind: 'field', field: 'reasoning' }
     sbp('dez.model/tabs/replaceSections', activeId(), sections())
     const withoutThinking = identity()
     sbp('dez.model/tabs/replaceSections', activeId(), sections({ text: 'cut off' }))
     const withText = identity()
-    sbp('dez.model/tabs/replaceSections', activeId(), sections({ text: 'cut off', replay: { kind: 'field', field: 'reasoning' } }))
+    sbp('dez.model/tabs/replaceSections', activeId(), sections({ text: 'cut off', replay }))
     const withReplay = identity()
+    sbp('dez.model/tabs/replaceSections', activeId(), sections({ text: 'cut off', replay, rounds: [{ afterToolCall: 'call_1', from: 3 }] }))
+    const withRound = identity()
 
     ensureAgentSection(alpha)
 
     expect(withText).not.toBe(withoutThinking)
     expect(withReplay).not.toBe(withText)
-    expect(identity()).not.toBe(withReplay)
+    expect(withRound).not.toBe(withReplay)
+    expect(identity()).not.toBe(withRound)
   })
 
   it('keeps section durations through edits, conversationData and a reload of the conversation', async () => {

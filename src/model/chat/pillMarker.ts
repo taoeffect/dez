@@ -1,18 +1,20 @@
 import * as z from 'zod'
 import { MARKER_ATTRIBUTES, escapeMarkerAttribute, markerAttributes } from '../../utils/markerAttribute'
 import { modelRefKey, parseModelRefKey } from './modelRef'
-import type { ModelRef, Role, Section, SectionThinking, ThinkingReplay } from './types'
+import type { ModelRef, Role, Section, SectionThinking, ThinkingReplay, ThinkingRound } from './types'
 
 // The `<dez:pill …/>` marker starts a section in conversation files and in
 // clipboard text. An agent section with thinking gets a container instead,
 // with the thinking text as its body:
 //
-//   <dez:pill type="agent" model="provider/model" duration-ms="4213" replay="{…}">
+//   <dez:pill type="agent" model="provider/model" duration-ms="4213" replay="{…}" rounds="[…]">
 //   thinking text
 //   </dez:pill>
 //
-// `duration-ms` is the reply duration (`Section.durationMs`). Both formats
-// write and read the markers only here, so they cannot drift apart.
+// `duration-ms` is the reply duration (`Section.durationMs`). `replay` is the
+// first request round's replay, and `rounds` the JSON of the later rounds
+// (`SectionThinking.rounds`). Both formats write and read the markers only
+// here, so they cannot drift apart.
 
 export interface PillMarker {
   role: Role
@@ -27,6 +29,9 @@ export interface PillMarker {
    *  or is not a known shape: the thinking then never goes back to the
    *  provider, which is not an error. */
   replay: ThinkingReplay | null
+  /** The `rounds` attribute of an agent container; empty when it is
+   *  missing. Null when it is not a valid list (`containerThinking`). */
+  rounds: ThinkingRound[] | null
 }
 
 export const PILL_CLOSE_TAG = '</dez:pill>'
@@ -43,14 +48,23 @@ const thinkingReplaySchema = z.discriminatedUnion('kind', [
   z.object({ kind: z.literal('copilot'), opaque: z.string(), prefixHash: z.string() }),
 ])
 
-function parseThinkingReplay(json: string): ThinkingReplay | null {
+// Rounds come in stream order, so their `from` offsets never go down. The
+// text bounds of each `from` are checked in containerThinking, which has
+// the text.
+const thinkingRoundsSchema = z.array(z.object({
+  afterToolCall: z.string(),
+  from: z.number().int().nonnegative(),
+  replay: thinkingReplaySchema.optional(),
+})).refine((rounds) => rounds.every((round, index) => index === 0 || rounds[index - 1].from <= round.from))
+
+function parseJsonAttribute<T>(json: string, schema: z.ZodType<T>): T | null {
   let value: unknown
   try {
     value = JSON.parse(json)
   } catch {
     return null
   }
-  const parsed = thinkingReplaySchema.safeParse(value)
+  const parsed = schema.safeParse(value)
   return parsed.success ? parsed.data : null
 }
 
@@ -91,6 +105,7 @@ export function pillMarkerText(section: Pick<Section, 'role' | 'model' | 'thinki
   const { thinking } = section
   if (!thinking) return `${tag}/>`
   if (thinking.replay) tag += ` replay="${escapeMarkerAttribute(JSON.stringify(thinking.replay))}"`
+  if (thinking.rounds) tag += ` rounds="${escapeMarkerAttribute(JSON.stringify(thinking.rounds))}"`
   return `${tag}>\n${escapeThinkingText(thinking.text)}\n${PILL_CLOSE_TAG}`
 }
 
@@ -117,24 +132,26 @@ const CONTAINER_START = new RegExp(String.raw`^<dez:pill${MARKER_ATTRIBUTES}>\n`
  *  `<dez:pill`. Null when `type` is not `user` or `agent`: the text is then
  *  not a marker. Attribute order and spacing do not matter. A `model` or
  *  `duration-ms` on a user pill is ignored, and a bad `model`,
- *  `duration-ms`, or `replay` value means "none", not an error, so files
- *  edited by hand still open. Pass only the tag: the attributes are read
- *  from the whole text. */
+ *  `duration-ms`, `replay`, or `rounds` value means "none", not an error,
+ *  so files edited by hand still open. Pass only the tag: the attributes
+ *  are read from the whole text. */
 export function parsePillMarker(text: string): PillMarker | null {
   if (!text.startsWith('<dez:pill')) return null
   const attributes = markerAttributes(text.slice('<dez:pill'.length))
   const role = attributes.get('type')
   const container = OPENING_TAG.test(text)
-  if (role === 'user') return { role, model: null, durationMs: null, container, replay: null }
+  if (role === 'user') return { role, model: null, durationMs: null, container, replay: null, rounds: [] }
   if (role !== 'agent') return null
   const model = attributes.get('model')
   const replay = attributes.get('replay')
+  const rounds = attributes.get('rounds')
   return {
     role,
     model: model === undefined ? null : parseModelRefKey(model),
     durationMs: parseDurationMs(attributes.get('duration-ms')),
     container,
-    replay: container && replay !== undefined ? parseThinkingReplay(replay) : null,
+    replay: container && replay !== undefined ? parseJsonAttribute(replay, thinkingReplaySchema) : null,
+    rounds: container && rounds !== undefined ? parseJsonAttribute(rounds, thinkingRoundsSchema) : [],
   }
 }
 
@@ -145,7 +162,16 @@ export function parsePillMarker(text: string): PillMarker | null {
 export function containerThinking(marker: PillMarker, body: string): SectionThinking | undefined {
   if (marker.role !== 'agent') return undefined
   const text = unescapeThinkingText(body)
-  return marker.replay ? { text, replay: marker.replay } : { text }
+  const { replay, rounds } = marker
+  // Rounds that are not valid or do not fit the text (a hand edit) cannot
+  // tell where each round's text starts, the first round's too. Its replay
+  // could then go back with the wrong text, so no thinking of the section
+  // goes back; the text stays.
+  if (rounds === null || rounds.some((round) => round.from > text.length)) return { text }
+  const thinking: SectionThinking = { text }
+  if (replay) thinking.replay = replay
+  if (rounds.length > 0) thinking.rounds = rounds
+  return thinking
 }
 
 /** The marker and thinking of one whole `PILL_MARKER` match. Null when

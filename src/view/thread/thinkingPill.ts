@@ -1,6 +1,6 @@
 import { StateEffect, StateField } from '@codemirror/state'
 import type { EditorView } from '@codemirror/view'
-import { readableThinking, type ReadableThinking } from '../../model/chat/thinking'
+import { readableThinkingRounds, type ReadableThinking } from '../../model/chat/thinking'
 import type { Role, SectionThinking } from '../../model/chat/types'
 import { measureLineHeights } from './editorMeasure'
 
@@ -9,8 +9,12 @@ import { measureLineHeights } from './editorMeasure'
 export interface PillThinkingView {
   /** The thinking text; '' when the section has none. */
   text: string
-  /** The thinking can go back to the provider. A replay without text
-   *  (redacted or encrypted thinking) still counts as thinking. */
+  /** Where each later request round starts in `text`
+   *  (`ThinkingRound.from`); the panel draws a rule between rounds. */
+  roundStarts: readonly number[]
+  /** The thinking of some request round can go back to the provider. A
+   *  replay without text (redacted or encrypted thinking) still counts as
+   *  thinking. */
   hasReplay: boolean
   /** The thinking panel is open. Never true for a pill without thinking. */
   expanded: boolean
@@ -31,6 +35,8 @@ export function sameThinkingView(a: PillThinkingView | null, b: PillThinkingView
   if (!a || !b) return !a && !b
   return (
     a.text === b.text &&
+    a.roundStarts.length === b.roundStarts.length &&
+    a.roundStarts.every((from, index) => from === b.roundStarts[index]) &&
     a.hasReplay === b.hasReplay &&
     a.expanded === b.expanded &&
     a.streaming === b.streaming
@@ -68,9 +74,11 @@ export function sectionThinkingView(
   streamingSectionId: string | null,
 ): PillThinkingView | null {
   if (section?.role !== 'agent') return null
+  const rounds = section.thinking?.rounds ?? []
   const view: PillThinkingView = {
     text: section.thinking?.text ?? '',
-    hasReplay: section.thinking?.replay !== undefined,
+    roundStarts: rounds.map((round) => round.from),
+    hasReplay: section.thinking?.replay !== undefined || rounds.some((round) => round.replay !== undefined),
     expanded: false,
     streaming: section.id === streamingSectionId,
   }
@@ -239,9 +247,10 @@ function renderEncryptedPill(panel: HTMLElement, readable: ReadableThinking): bo
  *  `separator`. It changes only the parts that differ, so a thinking token
  *  keeps the pill, its animations and the text field's selection.
  *
- *  The panel shows the readable text (`readableThinking`) and, in place of
- *  encrypted lines, the encrypted pill; the stored text does not change, as
- *  replays send it back to the provider. Only an open panel computes them.
+ *  The panel shows the readable text (`readableThinkingRounds`, with a rule
+ *  line between request rounds) and, in place of encrypted lines, the
+ *  encrypted pill; the stored text does not change, as replays send it back
+ *  to the provider. Only an open panel computes them.
  *
  *  The read-only textarea is as tall as its text, and the panel has a max
  *  height and scrolls. Where the engine has `field-sizing` (the panel CSS in
@@ -269,7 +278,7 @@ export function renderPillThinking(separator: HTMLElement, label: HTMLElement, t
     separator.appendChild(panel)
     separator.setAttribute('data-thinking-open', '1')
   }
-  const readable = readableThinking(thinking.text, thinking.streaming)
+  const readable = readableThinkingRounds(thinking.text, thinking.roundStarts, thinking.streaming)
   const textChanged = setPanelText(panel, readable.text)
   const pillChanged = renderEncryptedPill(panel, readable)
   const placeholderChanged = setPanelPlaceholder(panel, thinking.streaming)

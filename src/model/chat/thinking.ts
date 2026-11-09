@@ -1,5 +1,5 @@
 import { cloneJsonObject } from '../../utils/json'
-import type { SectionThinking, ThinkingReplay } from './types'
+import type { SectionThinking, ThinkingReplay, ThinkingRound } from './types'
 
 function cloneThinkingReplay(replay: ThinkingReplay): ThinkingReplay {
   switch (replay.kind) {
@@ -14,25 +14,31 @@ function cloneThinkingReplay(replay: ThinkingReplay): ThinkingReplay {
   }
 }
 
+function cloneThinkingRound(round: ThinkingRound): ThinkingRound {
+  const { afterToolCall, from, replay } = round
+  return replay ? { afterToolCall, from, replay: cloneThinkingReplay(replay) } : { afterToolCall, from }
+}
+
 /** For object spreads: `{ thinking }` with a copy, or `{}` without one,
  *  because a copy of a section must never write `thinking: undefined`. */
 export function thinkingField(thinking: SectionThinking | undefined): { thinking?: SectionThinking } {
   if (!thinking) return {}
-  return {
-    thinking: thinking.replay
-      ? { text: thinking.text, replay: cloneThinkingReplay(thinking.replay) }
-      : { text: thinking.text },
-  }
+  const copy: SectionThinking = { text: thinking.text }
+  if (thinking.replay) copy.replay = cloneThinkingReplay(thinking.replay)
+  if (thinking.rounds) copy.rounds = thinking.rounds.map(cloneThinkingRound)
+  return { thinking: copy }
 }
 
 /** Two absent values are equal. The store and the editor each keep their own
- *  copy (`thinkingField`), so this compares by value. The replay is compared
- *  as JSON: every copy keeps the key order of its source, and a false
- *  mismatch only costs one extra editor update. */
+ *  copy (`thinkingField`), so this compares by value. The replays and rounds
+ *  are compared as JSON: every copy keeps the key order of its source, and a
+ *  false mismatch only costs one extra editor update. */
 export function sameThinking(a: SectionThinking | undefined, b: SectionThinking | undefined): boolean {
   if (a === b) return true
   if (!a || !b) return false
-  return a.text === b.text && JSON.stringify(a.replay) === JSON.stringify(b.replay)
+  return a.text === b.text &&
+    JSON.stringify(a.replay) === JSON.stringify(b.replay) &&
+    JSON.stringify(a.rounds) === JSON.stringify(b.rounds)
 }
 
 // Some servers (seen with a Grok model through Venice) write the encrypted
@@ -123,4 +129,34 @@ export function readableThinking(text: string, streaming: boolean): ReadableThin
     lineStart = newline + 1
   }
   return { text: shown + text.slice(keepFrom), encryptedLines, encryptedChars }
+}
+
+// The line that the thinking panel shows between the thinking of two
+// request rounds. Display text only: the stored text has no separator.
+const ROUND_RULE = '─'.repeat(16)
+
+/** `readableThinking` of a reply with request rounds, for the thinking
+ *  panel: each round's text on its own (`roundStarts` are the
+ *  `ThinkingRound.from` offsets), with a rule line between two rounds that
+ *  show text, and no blank lines next to the rule. Only the last round can
+ *  still stream, so each streamed result is still a prefix of the next
+ *  one. */
+export function readableThinkingRounds(text: string, roundStarts: readonly number[], streaming: boolean): ReadableThinking {
+  const starts = [0, ...roundStarts]
+  let shown = ''
+  let encryptedLines = 0
+  let encryptedChars = 0
+  for (let index = 0; index < starts.length; index++) {
+    const isLast = index === starts.length - 1
+    const round = readableThinking(text.slice(starts[index], isLast ? text.length : starts[index + 1]), streaming && isLast)
+    encryptedLines += round.encryptedLines
+    encryptedChars += round.encryptedChars
+    if (shown === '') {
+      shown = round.text
+      continue
+    }
+    const roundText = round.text.replace(/^\n+/, '')
+    if (roundText !== '') shown = `${shown.replace(/\n+$/, '')}\n${ROUND_RULE}\n${roundText}`
+  }
+  return { text: shown, encryptedLines, encryptedChars }
 }
