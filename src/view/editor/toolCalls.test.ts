@@ -4,7 +4,7 @@ import type { EditorView } from '@codemirror/view'
 import { describe, expect, it } from 'vitest'
 import type { Role } from '../../model/chat/types'
 import { toolBlockText, type ToolBlockStatus } from '../../model/chat/toolBlocks'
-import { PILL_OPEN, SECTION_SEP, sectionsField, setSectionThinkingEffect } from '../thread/cmEditor'
+import { PILL_OPEN, SECTION_SEP, sectionsField, setSectionsEffect, setSectionThinkingEffect } from '../thread/cmEditor'
 import { setStreamingSectionEffect, streamingSectionField } from '../thread/modelChip'
 import { deleteToolCallBackward, deleteToolCallForward, joinsToolCallLine, markdownToolCalls, renderedToolCalls, toolCallSummary } from './toolCalls'
 
@@ -92,6 +92,15 @@ describe('renderedToolCalls', () => {
     expect(shown(state).map(([id, state]) => [id, state])).toEqual([['a', 'interrupted'], ['b', 'running']])
     const ended = state.update({ effects: setStreamingSectionEffect.of(null) }).state
     expect(shown(ended).map(([id, state]) => [id, state])).toEqual([['a', 'interrupted'], ['b', 'interrupted']])
+  })
+
+  it('shows and hides the chips when only the section roles change', () => {
+    const state = createState(['ask', block('a')], ['user', 'user'])
+    expect(shown(state)).toEqual([])
+    const agent = state.update({ effects: setSectionsEffect.of([{ id: 's0', role: 'user' }, { id: 's1', role: 'agent' }]) }).state
+    expect(shown(agent)).toEqual([['a', 'success', block('a')]])
+    const user = agent.update({ effects: setSectionsEffect.of([{ id: 's0', role: 'user' }, { id: 's1', role: 'user' }]) }).state
+    expect(shown(user)).toEqual([])
   })
 
   it('keeps the same array until a change can change the chips', () => {

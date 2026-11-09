@@ -490,6 +490,7 @@ describe('dez.stream/start tool loop', () => {
 
   it('runs the calls of a round, sends the reply so far in the next round, and finalizes once', async () => {
     const replay = { kind: 'field', field: 'reasoning_content' } as const
+    const roundReplay = { kind: 'field', field: 'reasoning' } as const
     let savesBeforeLastRound = -1
     replyRounds([
       async (input) => {
@@ -501,7 +502,7 @@ describe('dez.stream/start tool loop', () => {
         savesBeforeLastRound = savedConversations.length
         await input.onThinking('Found.')
         await input.onToken('None.')
-        return { requestId: input.requestId as string }
+        return { requestId: input.requestId as string, thinkingReplay: roundReplay }
       },
     ])
 
@@ -509,6 +510,10 @@ describe('dez.stream/start tool loop', () => {
 
     expect(requests.map((input) => input.tools?.map((tool) => tool.name))).toStrictEqual([['model_list'], ['model_list']])
     expect(requests[0].requestId).not.toBe(requests[1].requestId)
+    // The prompt cache needs the same system prompt and tools in each round.
+    expect(requests[0].system).toEqual(expect.any(String))
+    expect(requests[1].system).toBe(requests[0].system)
+    expect(requests[1].tools).toStrictEqual(requests[0].tools)
     expect(sent[1]).toStrictEqual([
       { role: 'user', content: 'Hi' },
       {
@@ -525,7 +530,9 @@ describe('dez.stream/start tool loop', () => {
       { role: 'user', text: '' },
     ])
     expect(editorReplaces).toStrictEqual([{ tail: running, text: done }])
-    expect(agentSection().thinking).toStrictEqual({ text: 'Look.Found.', replay, rounds: [{ afterToolCall: 'c1', from: 5 }] })
+    const thinking = { text: 'Look.Found.', replay, rounds: [{ afterToolCall: 'c1', from: 5, replay: roundReplay }] }
+    expect(agentSection().thinking).toStrictEqual(thinking)
+    expect(editorThinking.at(-1)).toStrictEqual(thinking)
     expect(savesBeforeLastRound).toBe(0)
     expect(savedConversations).toHaveLength(1)
     expect(alerts).toStrictEqual([{ tabId: activeTab().id, status: 'finished' }])

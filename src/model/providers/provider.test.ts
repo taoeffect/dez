@@ -214,10 +214,10 @@ describe('prompt cache', () => {
   const text = (text: string): ChatPart => ({ type: 'text', text })
   const sentMessages = (provider: Provider, sent: ChatMessage[]) =>
     requestBody(provider.chatRequest(sent, 'm', key).request).messages as Array<Record<string, unknown>>
-  // The prompt that the server caches: the blocks without their marks, a
-  // string being one text block.
-  const prompt = (wire: Array<Record<string, unknown>>) => wire.map(({ role, content }) => ({
-    role,
+  // The prompt that the server caches: every message field and block
+  // without its mark, a string being one text block.
+  const prompt = (wire: Array<Record<string, unknown>>) => wire.map(({ cache_control: _messageMark, content, ...fields }) => ({
+    ...fields,
     content: (typeof content === 'string' ? [{ type: 'text', text: content }] : content as Array<Record<string, unknown>>)
       .map(({ cache_control: _mark, ...block }) => block),
   }))
@@ -304,7 +304,7 @@ describe('prompt cache', () => {
     turns.push([...turns[4], ...modelList('call_2')])
     turns.push([...turns[5], { role: 'agent', content: 'A4' }, { role: 'user', content: 'Q5' }])
 
-    for (const provider of [anthropic, openAi]) {
+    for (const provider of [anthropic, openAi, customProvider({ cacheBreakpoints: true, toolMessageCacheMark: 'message' })]) {
       for (let turn = 1; turn < turns.length; turn++) {
         const previous = sentMessages(provider, turns[turn - 1])
         const current = sentMessages(provider, turns[turn])
@@ -445,7 +445,7 @@ describe('declarative provider settings', () => {
 
   it('merges a config requestBody before the settings and the thinking body, and never changes the config', () => {
     const provider = customProvider({
-      requestBody: { extra: { fixed: 1, flag: 'base' }, top: 'kept' },
+      requestBody: { extra: { fixed: 1, flag: 'base', thinkingOff: false }, top: 'kept' },
       settings: [{ key: 'flag', label: 'Flag', type: 'boolean', default: true, bodyPath: 'extra.flag' }],
       thinking: { disabledBody: { extra: { thinkingOff: true } } },
     })
@@ -455,7 +455,7 @@ describe('declarative provider settings', () => {
       top: 'kept',
       extra: { fixed: 1, flag: true, thinkingOff: true },
     })
-    expect(requestBody(provider.chatRequest(messages, 'm', key, { flag: false }).request).extra).toEqual({ fixed: 1, flag: false })
+    expect(requestBody(provider.chatRequest(messages, 'm', key, { flag: false }).request).extra).toEqual({ fixed: 1, flag: false, thinkingOff: false })
     expect(provider.config.requestBody).toEqual(original)
   })
 
