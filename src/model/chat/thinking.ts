@@ -138,9 +138,11 @@ const ROUND_RULE = '─'.repeat(16)
 /** `readableThinking` of a reply with request rounds, for the thinking
  *  panel: each round's text on its own (`roundStarts` are the
  *  `ThinkingRound.from` offsets), with a rule line between two rounds that
- *  show text, and no blank lines next to the rule. Only the last round can
- *  still stream, so each streamed result is still a prefix of the next
- *  one. */
+ *  show text, and no blank lines next to the rule. A round of only blank
+ *  lines shows no text. Only the last round can still stream, and while it
+ *  shows no text, the blank lines at the end of the text before it wait,
+ *  as a rule can take their place; so each streamed result is still a
+ *  prefix of the next one. */
 export function readableThinkingRounds(text: string, roundStarts: readonly number[], streaming: boolean): ReadableThinking {
   const starts = [0, ...roundStarts]
   let shown = ''
@@ -151,12 +153,14 @@ export function readableThinkingRounds(text: string, roundStarts: readonly numbe
     const round = readableThinking(text.slice(starts[index], isLast ? text.length : starts[index + 1]), streaming && isLast)
     encryptedLines += round.encryptedLines
     encryptedChars += round.encryptedChars
-    if (shown === '') {
+    const before = shown.replace(/\n+$/, '')
+    if (before === '') {
       shown = round.text
       continue
     }
     const roundText = round.text.replace(/^\n+/, '')
-    if (roundText !== '') shown = `${shown.replace(/\n+$/, '')}\n${ROUND_RULE}\n${roundText}`
+    if (roundText !== '') shown = `${before}\n${ROUND_RULE}\n${roundText}`
+    else if (streaming && isLast) shown = before
   }
   return { text: shown, encryptedLines, encryptedChars }
 }

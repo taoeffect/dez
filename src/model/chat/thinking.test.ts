@@ -128,19 +128,23 @@ describe('readableThinkingRounds', () => {
   })
 
   // Only the last round streams, so a held-back tail of an earlier round
-  // shows once a later round starts.
-  it('gives each streamed text a prefix of the next one across a round start', () => {
-    const full = 'Plan:\n- read\n\nNext:\n\n- write\n'
-    const roundStart = 'Plan:\n- read\n\n'.length
-    const finished = readableThinkingRounds(full, [roundStart], false).text
-    expect(finished).toBe(`Plan:\n- read\n${RULE}\nNext:\n\n- write\n`)
+  // shows once a later round starts. A round's entry comes with its first
+  // thinking token, or before it with a replay.
+  it.each([
+    { name: 'text', first: 'Plan:\n- read\n\n', later: '\nNext:\n\n- write\n', finished: `Plan:\n- read\n${RULE}\nNext:\n\n- write\n` },
+    { name: 'only blank lines', first: '\n\n', later: '\nNext:\n', finished: '\nNext:\n' },
+  ])('gives each streamed text a prefix of the next one after a first round of $name', ({ first, later, finished }) => {
+    const full = first + later
+    expect(readableThinkingRounds(full, [first.length], false).text).toBe(finished)
 
-    let shown = ''
-    for (let end = 0; end <= full.length; end++) {
-      const next = readableThinkingRounds(full.slice(0, end), end > roundStart ? [roundStart] : [], true).text
-      expect(next.startsWith(shown), `streamed text after ${end} chars`).toBe(true)
-      expect(finished.startsWith(next), `finished text after ${end} chars`).toBe(true)
-      shown = next
+    for (const entryAt of [first.length, first.length + 1]) {
+      let shown = ''
+      for (let end = 0; end <= full.length; end++) {
+        const next = readableThinkingRounds(full.slice(0, end), end >= entryAt ? [first.length] : [], true).text
+        expect(next.startsWith(shown), `streamed text after ${end} chars, round entry at ${entryAt}`).toBe(true)
+        expect(finished.startsWith(next), `finished text after ${end} chars, round entry at ${entryAt}`).toBe(true)
+        shown = next
+      }
     }
   })
 })
