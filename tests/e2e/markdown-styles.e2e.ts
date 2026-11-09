@@ -1,9 +1,10 @@
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from 'vitest'
+import { Key } from 'webdriverio'
 import { startApp, type RunningApp } from './harness/app'
 import { consoleErrors, resetConsoleErrors, screenshotOnFailure, waitFor, waitForValue } from './harness/dom'
 import { makeConversation, seedAppState, seedConversation } from './harness/fixtures'
 import { createSession, destroySession, type E2EBrowser } from './harness/session'
-import { threadSections, type ThreadSection } from './harness/thread'
+import { focusEditor, misplacedLines, threadSections, type ThreadSection } from './harness/thread'
 
 // How the thread editor styles markdown, read as computed styles in the
 // real app.
@@ -27,6 +28,48 @@ const INLINE_TEXT = [
   '',
   'Plain [paragraph link](https://example.com/para).',
 ].join('\n')
+
+// Every heading level, as ATX and setext headings, then body text.
+const ATX_HEADINGS = [
+  '# Heading one',
+  '## Heading two',
+  '### Heading three',
+  '#### Heading four',
+  '##### Heading five',
+  '###### Heading six',
+]
+const SETEXT_ONE = 'Setext one'
+const SETEXT_TWO = 'Setext two'
+const BODY = 'Body text'
+const HEADING_LINES = [...ATX_HEADINGS, SETEXT_ONE, SETEXT_TWO, BODY]
+const HEADING_TEXT = [...ATX_HEADINGS, '', SETEXT_ONE, '==========', '', SETEXT_TWO, '----------', '', BODY].join('\n')
+
+// What breaks the heading scale in `sizes` (from `lineFontSizes`), or [].
+// Each ATX level is smaller than the level above it, level 6 is the body
+// size, level 1 is at most 1.5 times the body size, and a setext heading
+// is the size of its ATX level.
+function headingScaleProblems (sizes: Record<string, number | string>): string[] {
+  const notes = Object.entries(sizes).filter(([, size]) => typeof size === 'string')
+  if (notes.length > 0) return notes.map(([line, note]) => `${line}: ${note}`)
+  const px = sizes as Record<string, number>
+  const sized = (line: string): string => `${line} (${px[line]}px)`
+  const problems: string[] = []
+  ATX_HEADINGS.slice(1).forEach((line, index) => {
+    if (px[line] >= px[ATX_HEADINGS[index]]) problems.push(`${sized(line)} is not smaller than ${sized(ATX_HEADINGS[index])}`)
+  })
+  if (px[ATX_HEADINGS[5]] !== px[BODY]) problems.push(`${sized(ATX_HEADINGS[5])} is not the body size, ${sized(BODY)}`)
+  if (px[ATX_HEADINGS[0]] > 1.5 * px[BODY]) problems.push(`${sized(ATX_HEADINGS[0])} is more than 1.5 times ${sized(BODY)}`)
+  if (px[SETEXT_ONE] !== px[ATX_HEADINGS[0]]) problems.push(`${sized(SETEXT_ONE)} is not the size of ${sized(ATX_HEADINGS[0])}`)
+  if (px[SETEXT_TWO] !== px[ATX_HEADINGS[1]]) problems.push(`${sized(SETEXT_TWO)} is not the size of ${sized(ATX_HEADINGS[1])}`)
+  return problems
+}
+
+// The size of each line in `sizes` (from `lineFontSizes`) relative to the
+// body text, to two decimals: the scale must stay the same at every
+// editor font size.
+function relativeSizes (sizes: Record<string, number | string>): Record<string, number> {
+  return Object.fromEntries(Object.entries(sizes).map(([line, size]) => [line, Math.round(Number(size) / Number(sizes[BODY]) * 100) / 100]))
+}
 
 interface ThemeColors {
   text: string
@@ -90,6 +133,32 @@ describe('markdown styles', () => {
       }
       return styles
     }, texts)
+  }
+
+  // The computed font size, in px, of the text of each drawn editor line
+  // whose whole text is one of `lines`; 'missing' when no such line is
+  // drawn, or the sizes when its text has more than one size.
+  async function lineFontSizes (lines: string[]): Promise<Record<string, number | string>> {
+    return browser.execute((wanted: string[]) => {
+      const content = document.querySelector('.cm-content')
+      if (!content) throw new Error('lineFontSizes: no editor')
+      const drawn = [...content.querySelectorAll<HTMLElement>(':scope > .cm-line')]
+      const sizes: Record<string, number | string> = {}
+      for (const text of wanted) {
+        const line = drawn.find((el) => el.textContent === text)
+        if (!line) {
+          sizes[text] = 'missing'
+          continue
+        }
+        const found = new Set<number>()
+        const walker = document.createTreeWalker(line, NodeFilter.SHOW_TEXT)
+        for (let node = walker.nextNode(); node; node = walker.nextNode()) {
+          if (node.parentElement) found.add(parseFloat(getComputedStyle(node.parentElement).fontSize))
+        }
+        sizes[text] = found.size === 1 ? [...found][0] : `sizes ${[...found].join(', ')}`
+      }
+      return sizes
+    }, lines)
   }
 
   beforeAll(async () => {
@@ -183,5 +252,33 @@ describe('markdown styles', () => {
       'finish the quote': `${colors.text} normal`,
       'Why do you keep cutting it off?': `${colors.text} normal`,
     })
+  })
+
+  // The whole heading line scales, hash marks too. Taller lines must also
+  // be in CodeMirror's height map, or the caret and clicks land on the
+  // wrong line; the doc is shorter than the editor, the case where
+  // CodeMirror sees no size change by itself (see font-size.e2e.ts).
+  it('sizes each heading level, and the sizes follow the editor font size', async () => {
+    await openFixture([
+      { role: 'user', text: 'Show me every heading' },
+      { role: 'agent', text: HEADING_TEXT },
+      { role: 'user', text: 'Thanks' },
+    ])
+    await waitForValue(browser, 'heading scale', async () => headingScaleProblems(await lineFontSizes(HEADING_LINES)), [])
+    const sizes = await lineFontSizes(HEADING_LINES)
+    expect(sizes[BODY]).toBe(15)
+    await waitForValue(browser, 'height map', () => misplacedLines(browser), [])
+
+    await focusEditor(browser)
+    await browser.keys([Key.Control, '='])
+    await waitForValue(browser, 'heading scale after Ctrl+=', async () => {
+      const larger = await lineFontSizes(HEADING_LINES)
+      return { body: larger[BODY], scale: relativeSizes(larger) }
+    }, { body: 16, scale: relativeSizes(sizes) })
+    await waitForValue(browser, 'height map after Ctrl+=', () => misplacedLines(browser), [])
+
+    // Back to the default size, which the other tests expect.
+    await browser.keys([Key.Control, '-'])
+    await waitForValue(browser, 'body size after Ctrl+-', async () => (await lineFontSizes([BODY]))[BODY], 15)
   })
 })

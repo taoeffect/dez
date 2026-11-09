@@ -5,7 +5,7 @@ import { startApp, type RunningApp } from './harness/app'
 import { consoleErrors, resetConsoleErrors, screenshotOnFailure, waitFor, waitForValue } from './harness/dom'
 import { makeConversation, readAppState, seedAppState, seedConversation } from './harness/fixtures'
 import { createSession, destroySession, type E2EBrowser } from './harness/session'
-import { focusEditor, sbpCall, threadSections } from './harness/thread'
+import { focusEditor, misplacedLines, sbpCall, threadSections } from './harness/thread'
 
 // Cmd/Ctrl+= and Cmd/Ctrl+- change the font size of the thread editor in
 // every tab, the size survives a relaunch, and the app chrome keeps its
@@ -39,24 +39,16 @@ interface EditorMetrics {
 }
 
 async function editorMetrics (browser: E2EBrowser): Promise<EditorMetrics> {
-  return browser.execute(() => {
+  const metrics = await browser.execute(() => {
     const content = document.querySelector<HTMLElement>('.cm-content')
     const pill = document.querySelector('.dez-role-separator')
     const chrome = document.querySelector('.model-selector-btn')
     if (!content || !pill || !chrome) throw new Error('editorMetrics: editor, role pill or model button not found')
     const view = Reflect.get(Reflect.get(content, 'cmTile'), 'root').view as EditorView
-    const misplacedLines: string[] = []
+    // Lines with a role pill are taller; the shortest line is one row.
     let rowHeight = Infinity
     for (const line of content.querySelectorAll<HTMLElement>(':scope > .cm-line')) {
-      const rect = line.getBoundingClientRect()
-      // Lines with a role pill are taller; the shortest line is one row.
-      rowHeight = Math.min(rowHeight, rect.height)
-      const block = view.lineBlockAt(view.posAtDOM(line))
-      const top = view.documentTop + block.top
-      if (Math.abs(top - rect.top) > 1 || Math.abs(block.height - rect.height) > 1) {
-        const number = view.state.doc.lineAt(block.from).number
-        misplacedLines.push(`line ${number}: map ${Math.round(top)}+${Math.round(block.height)}, DOM ${Math.round(rect.top)}+${Math.round(rect.height)}`)
-      }
+      rowHeight = Math.min(rowHeight, line.getBoundingClientRect().height)
     }
     const lineHeightMismatch = Math.abs(view.defaultLineHeight - rowHeight) > 0.5
       ? `CodeMirror ${view.defaultLineHeight}, DOM ${rowHeight}`
@@ -65,10 +57,10 @@ async function editorMetrics (browser: E2EBrowser): Promise<EditorMetrics> {
       fontSize: parseFloat(getComputedStyle(content).fontSize),
       pillFontSize: Math.round(parseFloat(getComputedStyle(pill).fontSize) * 10) / 10,
       lineHeightMismatch,
-      misplacedLines,
       chromeFontSize: parseFloat(getComputedStyle(chrome).fontSize),
     }
   })
+  return { ...metrics, misplacedLines: await misplacedLines(browser) }
 }
 
 // What the editor shows at `px`: the pill words are 11px at the default

@@ -1192,24 +1192,6 @@ export function buildInitialDoc(sections: Section[]): string {
   return sectionsToDoc(sections)
 }
 
-// A block node (`Blockquote/...`, `BulletList/...`, `ATXHeading1/...`) adds
-// its class to every span inside it, and every rule here has the same CSS
-// specificity, so when two rules set the same property the later rule wins.
-// The block rules come first so that inline code and links keep their own
-// color inside lists, quotes, and headings.
-export const dezHighlightStyle = HighlightStyle.define([
-  { tag: t.heading, color: 'var(--color-text)', fontWeight: '600' },
-  { tag: t.quote, color: 'var(--color-muted, #888)', fontStyle: 'italic' },
-  { tag: t.list, color: 'var(--color-text)' },
-  { tag: t.strong, fontWeight: '600' },
-  { tag: t.emphasis, fontStyle: 'italic' },
-  { tag: t.link, color: 'var(--color-link, #4a9eff)', textDecoration: 'underline' },
-  { tag: t.url, color: 'var(--color-link, #4a9eff)' },
-  { tag: t.monospace, fontFamily: 'inherit', color: 'var(--color-code, #c792ea)' },
-  { tag: t.strikethrough, textDecoration: 'line-through' },
-  { tag: t.meta, color: 'var(--color-muted, #888)' },
-])
-
 /** The padding above and below the doc inside the editor scroller. */
 export const SCROLLER_PADDING_PX = 16
 
@@ -1244,6 +1226,36 @@ export function editorSizePx(px: number): number {
   const fontSize = parseFloat(document.documentElement.style.getPropertyValue(EDITOR_FONT_SIZE_PROPERTY)) || EDITOR_FONT_SIZE_DEFAULT
   return px * fontSize / EDITOR_FONT_SIZE_DEFAULT
 }
+
+// Each heading level has its own tag (`t.heading1` to `t.heading6`), and a
+// highlight style uses only the most specific rule of a tag, so each level
+// rule sets the heading color and weight too. Its size is on every span of
+// the heading line, hash marks included, so the whole line scales. The
+// level 1 size is 1.4 times the body text; level 6 is the body size.
+const HEADING_STYLE = { color: 'var(--color-text)', fontWeight: '600' }
+
+// A block node (`Blockquote/...`, `BulletList/...`, `ATXHeading1/...`) adds
+// its class to every span inside it, and every rule here has the same CSS
+// specificity, so when two rules set the same property the later rule wins.
+// The block rules come first so that inline code and links keep their own
+// color inside lists, quotes, and headings.
+export const dezHighlightStyle = HighlightStyle.define([
+  { tag: t.heading1, ...HEADING_STYLE, fontSize: editorSize(21) },
+  { tag: t.heading2, ...HEADING_STYLE, fontSize: editorSize(19.5) },
+  { tag: t.heading3, ...HEADING_STYLE, fontSize: editorSize(18) },
+  { tag: t.heading4, ...HEADING_STYLE, fontSize: editorSize(17) },
+  { tag: t.heading5, ...HEADING_STYLE, fontSize: editorSize(16) },
+  { tag: t.heading6, ...HEADING_STYLE, fontSize: editorSize(15) },
+  { tag: t.quote, color: 'var(--color-muted, #888)', fontStyle: 'italic' },
+  { tag: t.list, color: 'var(--color-text)' },
+  { tag: t.strong, fontWeight: '600' },
+  { tag: t.emphasis, fontStyle: 'italic' },
+  { tag: t.link, color: 'var(--color-link, #4a9eff)', textDecoration: 'underline' },
+  { tag: t.url, color: 'var(--color-link, #4a9eff)' },
+  { tag: t.monospace, fontFamily: 'inherit', color: 'var(--color-code, #c792ea)' },
+  { tag: t.strikethrough, textDecoration: 'line-through' },
+  { tag: t.meta, color: 'var(--color-muted, #888)' },
+])
 
 // Height of a table's delimiter row in em of the editor font. Thin, as it
 // draws no text, but tall enough for a caret that the user can see.

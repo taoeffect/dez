@@ -171,6 +171,29 @@ export async function rolePillHeights (browser: E2EBrowser): Promise<number[]> {
   )
 }
 
+/** The drawn lines of the active editor whose place in CodeMirror's height
+ *  map is not where the DOM draws them, as `line N: map top+height, DOM
+ *  top+height`. On such a line the caret and clicks land on the wrong
+ *  line. */
+export async function misplacedLines (browser: E2EBrowser): Promise<string[]> {
+  return browser.execute(() => {
+    const content = document.querySelector<HTMLElement>('.cm-content')
+    if (!content) throw new Error('misplacedLines: .cm-content not found')
+    const view = Reflect.get(Reflect.get(content, 'cmTile'), 'root').view as EditorView
+    const misplaced: string[] = []
+    for (const line of content.querySelectorAll<HTMLElement>(':scope > .cm-line')) {
+      const rect = line.getBoundingClientRect()
+      const block = view.lineBlockAt(view.posAtDOM(line))
+      const top = view.documentTop + block.top
+      if (Math.abs(top - rect.top) > 1 || Math.abs(block.height - rect.height) > 1) {
+        const number = view.state.doc.lineAt(block.from).number
+        misplaced.push(`line ${number}: map ${Math.round(top)}+${Math.round(block.height)}, DOM ${Math.round(rect.top)}+${Math.round(rect.height)}`)
+      }
+    }
+    return misplaced
+  })
+}
+
 /** A mousedown on `part` of the role pill before section `index`, as a
  *  click gives. */
 export async function pressRolePill (browser: E2EBrowser, index: number, part = '.dez-role-separator__label'): Promise<void> {
