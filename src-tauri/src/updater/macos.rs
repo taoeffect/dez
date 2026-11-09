@@ -2,7 +2,7 @@
 //! Dez may replace that bundle in place, the install from the mounted DMG,
 //! and the relaunch helper that finishes the install once Dez has quit.
 
-use std::ffi::CString;
+use std::ffi::{CString, OsStr};
 use std::fs;
 use std::io;
 use std::os::unix::ffi::OsStrExt;
@@ -27,7 +27,7 @@ const APP_MANAGEMENT: &str = "macOS did not let Dez replace its app. Allow Dez i
 const DMG_APP: &str = "Dez.app";
 
 // The system tools that the installer runs, by absolute path.
-const HDIUTIL: &str = "/usr/bin/hdiutil";
+const DISKUTIL: &str = "/usr/sbin/diskutil";
 const DITTO: &str = "/usr/bin/ditto";
 const XATTR: &str = "/usr/bin/xattr";
 const CODESIGN: &str = "/usr/bin/codesign";
@@ -205,6 +205,12 @@ fn install_with(
 
 // A DMG attached read-only at a folder in the private dir. Dropping it
 // detaches it.
+//
+// It uses `diskutil`, because macOS 27 deprecates `hdiutil`. `diskutil
+// image` came in macOS 13, Dez's minimum (`minimumSystemVersion` in
+// tauri.conf.json). The flags have one hyphen (`-readOnly`): macOS 13 takes
+// only that form, and later versions, which show two hyphens in their help,
+// still take it.
 struct DiskImage {
     mount_point: PathBuf,
 }
@@ -212,20 +218,11 @@ struct DiskImage {
 impl DiskImage {
     fn attach(dmg: &Path, mount_point: &Path) -> Result<Self, String> {
         let failed = |error: String| format!("Dez could not open the update's disk image: {error}");
+        // diskutil before macOS 27 needs the mount point to exist.
         fs::create_dir(mount_point).map_err(|error| failed(error.to_string()))?;
-        // -nobrowse hides the volume in Finder; -noautoopen opens no Finder
-        // window. macOS 27 deprecates hdiutil attach and detach for
-        // `diskutil image`, which older macOS does not have; -quiet keeps
-        // the deprecation warning out of the output.
-        run(Command::new(HDIUTIL)
-            .args([
-                "attach",
-                "-quiet",
-                "-readonly",
-                "-nobrowse",
-                "-noautoopen",
-                "-mountpoint",
-            ])
+        // -nobrowse hides the volume in Finder.
+        run(Command::new(DISKUTIL)
+            .args(["image", "attach", "-readOnly", "-nobrowse", "-mountPoint"])
             .arg(mount_point)
             .arg(dmg))
         .map_err(failed)?;
@@ -233,21 +230,25 @@ impl DiskImage {
             mount_point: mount_point.to_path_buf(),
         })
     }
+
+    // `diskutil image` has no detach: ejecting the image's disk detaches
+    // it. A file open in the volume (Spotlight indexing it, for one) makes
+    // the eject fail ("Unmount was dissented by PID …"). `diskutil eject
+    // force` is newer than macOS 13, so then this forces the unmount and
+    // ejects the disk, with verbs that every version has.
+    fn detach(&self) -> Result<(), String> {
+        let eject = |target: &OsStr| run(Command::new(DISKUTIL).arg("eject").arg(target));
+        eject(self.mount_point.as_os_str()).or_else(|_| {
+            let disk = whole_disk(&self.mount_point)?;
+            run(Command::new(DISKUTIL).args(["unmountDisk", "force", &disk]))?;
+            eject(disk.as_ref())
+        })
+    }
 }
 
 impl Drop for DiskImage {
     fn drop(&mut self) {
-        let detach = |force: bool| {
-            let mut command = Command::new(HDIUTIL);
-            command.args(["detach", "-quiet"]);
-            if force {
-                command.arg("-force");
-            }
-            run(command.arg(&self.mount_point))
-        };
-        // A process can keep the volume busy for a moment (Spotlight
-        // indexing it, for one); -force detaches it anyway.
-        if let Err(error) = detach(false).or_else(|_| detach(true)) {
+        if let Err(error) = self.detach() {
             eprintln!(
                 "Dez could not detach the update's disk image at {}: {error}",
                 self.mount_point.display()
@@ -256,24 +257,42 @@ impl Drop for DiskImage {
     }
 }
 
+// The whole disk (such as `disk5`) of the volume mounted at `mount_point`.
+// For an APFS image it is the container disk that APFS synthesizes;
+// ejecting that one detaches the image too.
+fn whole_disk(mount_point: &Path) -> Result<String, String> {
+    let info = output_of(Command::new(DISKUTIL).args(["info", "-plist"]).arg(mount_point))?;
+    plist::Value::from_reader_xml(info.as_slice())
+        .ok()
+        .as_ref()
+        .and_then(plist::Value::as_dictionary)
+        .and_then(|info| info.get("ParentWholeDisk"))
+        .and_then(plist::Value::as_string)
+        .map(str::to_string)
+        .ok_or_else(|| format!("diskutil found no disk at {}.", mount_point.display()))
+}
+
 // Runs a system tool and waits for it. On failure the error is the tool's
 // own message (its stderr), or its exit status when it printed none.
 fn run(command: &mut Command) -> Result<(), String> {
+    output_of(command).map(drop)
+}
+
+// `run`, which also returns what the tool printed on stdout.
+fn output_of(command: &mut Command) -> Result<Vec<u8>, String> {
     let program = command.get_program().to_string_lossy().into_owned();
     let output = command
         .stdin(Stdio::null())
         .output()
         .map_err(|error| format!("{program} did not start: {error}"))?;
     if output.status.success() {
-        return Ok(());
+        return Ok(output.stdout);
     }
-    // hdiutil on macOS 27 puts a deprecation warning before each error,
-    // even with -quiet; it is not the error.
     let stderr = String::from_utf8_lossy(&output.stderr);
     let message = stderr
         .lines()
         .map(str::trim)
-        .filter(|line| !line.is_empty() && !line.contains(": WARNING: "))
+        .filter(|line| !line.is_empty())
         .collect::<Vec<_>>()
         .join(" ");
     Err(if message.is_empty() {
@@ -559,7 +578,10 @@ fn probe_writable(dir: &Path) -> io::Result<()> {
 // rename gives the target a new inode: writing into the old executable
 // instead gets a process that still runs it killed (`Killed: 9`). Then it
 // clears the app's extended attributes and signs the app again ad hoc,
-// since the new files broke the old signature's seal.
+// since the new files broke the old signature's seal. The new executable's
+// own signature has the release's flags (hardened runtime) and
+// entitlements; `--preserve-metadata` keeps them, which a plain
+// `--sign -` drops.
 //
 // `kill -0` sees a zombie as running; launchd reaps Dez as soon as it ends.
 const HELPER_SCRIPT: &str = r#"
@@ -604,7 +626,7 @@ binary)
     move_copies "$@" || log "A move failed."
     log "Clearing the extended attributes of $bundle and signing it again."
     /usr/bin/xattr -cr "$bundle" || log "xattr failed."
-    /usr/bin/codesign --force --sign - "$bundle" || log "codesign failed."
+    /usr/bin/codesign --force --sign - --preserve-metadata=entitlements,flags,runtime "$bundle" || log "codesign failed."
   else
     log "A copy failed, so Dez stays at its old version."
   fi
@@ -776,7 +798,8 @@ mod tests {
     }
 
     // A fake Dez at `app`, built as release apps are: an Info.plist, a copy
-    // of /usr/bin/true as its executable, and an ad-hoc signature.
+    // of /usr/bin/true as its executable, and an ad-hoc signature with the
+    // hardened runtime (Tauri's bundler signs with `--options runtime`).
     fn make_app(app: &Path, identifier: &str, version: &str) {
         fs::create_dir_all(app.join("Contents/MacOS")).expect("app folders");
         fs::copy("/usr/bin/true", app.join("Contents/MacOS/dez")).expect("executable");
@@ -793,9 +816,24 @@ mod tests {
             .to_file_xml(app.join("Contents/Info.plist"))
             .expect("Info.plist");
         run(Command::new(CODESIGN)
-            .args(["--force", "--sign", "-"])
+            .args(["--force", "--sign", "-", "--options", "runtime"])
             .arg(app))
         .expect("sign");
+    }
+
+    // Whether the code signature of `app` turns on the hardened runtime.
+    fn has_hardened_runtime(app: &Path) -> bool {
+        let output = Command::new(CODESIGN)
+            .arg("--display")
+            .arg("--verbose")
+            .arg(app)
+            .output()
+            .expect("codesign");
+        // codesign prints the details on stderr, e.g.
+        // `CodeDirectory v=20500 … flags=0x10002(adhoc,runtime) …`.
+        String::from_utf8_lossy(&output.stderr)
+            .lines()
+            .any(|line| line.starts_with("CodeDirectory") && line.contains("runtime"))
     }
 
     fn short_version(app: &Path) -> String {
@@ -855,6 +893,18 @@ mod tests {
             }
         }
 
+        // A DMG of the image folder. `diskutil image create` needs macOS
+        // 14; these tests run only on developer Macs.
+        fn make_dmg(&self) -> PathBuf {
+            let dmg = self.root.path().join("Dez_0.16.0_aarch64.dmg");
+            run(Command::new(DISKUTIL)
+                .args(["image", "create", "from"])
+                .arg(&self.image)
+                .arg(&dmg))
+            .expect("make DMG");
+            dmg
+        }
+
         fn install(&self, app: &Path, version: &str) -> Result<Finish, String> {
             let version = Version::parse(version).expect("version");
             install_app(app, &self.bundle, &self.private_dir, &version, ID, self.trash())
@@ -907,13 +957,7 @@ mod tests {
     #[test]
     fn installs_the_app_of_a_disk_image_in_place_of_the_old_one() {
         let setup = Setup::new();
-        let dmg = setup.root.path().join("Dez_0.16.0_aarch64.dmg");
-        run(Command::new(HDIUTIL)
-            .args(["create", "-quiet", "-format", "UDZO", "-volname", "Dez"])
-            .arg("-srcfolder")
-            .arg(&setup.image)
-            .arg(&dmg))
-        .expect("make DMG");
+        let dmg = setup.make_dmg();
 
         let finish = install_with(
             &dmg,
@@ -937,6 +981,25 @@ mod tests {
         // No staging folder is left, and the image is detached.
         assert_eq!(setup.applications(), ["Dez.app"]);
         assert_eq!(names_in(&setup.private_dir.join("mnt")), Vec::<String>::new());
+    }
+
+    #[test]
+    fn detaches_a_disk_image_with_a_file_open_in_it() {
+        let setup = Setup::new();
+        let dmg = setup.make_dmg();
+        let mount_point = setup.private_dir.join("mnt");
+        let image = DiskImage::attach(&dmg, &mount_point).expect("attach");
+        let device = |path: &Path| fs::metadata(path).expect("stat").dev();
+        assert_ne!(device(&mount_point), device(&setup.private_dir), "mounted");
+        // The open file makes the plain eject fail.
+        let _open = fs::File::open(mount_point.join(DMG_APP).join("Contents/Info.plist"))
+            .expect("open");
+
+        image.detach().expect("detach");
+
+        assert_eq!(device(&mount_point), device(&setup.private_dir));
+        // Detached already: Drop would only fail again.
+        std::mem::forget(image);
     }
 
     #[test]
@@ -1078,6 +1141,8 @@ mod tests {
         // A new file in place of the old one, not the old one written over.
         assert_ne!(fs::metadata(&executable).expect("stat").ino(), old_inode);
         check_code_signature(&setup.bundle).expect("signed again");
+        // As the release signed it, not a plain `--sign -`.
+        assert!(has_hardened_runtime(&setup.bundle));
         assert_eq!(names_in(&setup.bundle.join("Contents/MacOS")), ["dez"]);
         assert!(!setup.private_dir.exists());
         assert!(

@@ -10,10 +10,31 @@ use semver::Version;
 // The public key of the release signing key. The `sign-macos-dmg` job in
 // .github/workflows/release-desktop.yml signs each DMG with its secret key
 // and checks the signature against this same file.
+#[cfg(not(feature = "updater-test-hooks"))]
 const RELEASE_PUBLIC_KEY: &str = include_str!("../../updater/minisign.pub");
 
 /// Release assets are at `<base>/v<version>/<file>`.
+#[cfg(not(feature = "updater-test-hooks"))]
 pub const RELEASE_DOWNLOAD_BASE: &str = "https://github.com/taoeffect/dez/releases/download";
+
+// The macOS smoke test (the cargo feature `updater-test-hooks`, which
+// release builds never enable) installs DMGs that a throwaway key signed,
+// from a local server. Both are read when the app compiles:
+// - DEZ_UPDATER_TEST_PUBLIC_KEY: the absolute path of that key's `.pub`
+//   file.
+// - DEZ_UPDATER_TEST_DOWNLOAD_BASE: the server's stand-in for the GitHub
+//   download base, such as `http://127.0.0.1:8765`.
+#[cfg(feature = "updater-test-hooks")]
+const RELEASE_PUBLIC_KEY: &str = include_str!(env!(
+    "DEZ_UPDATER_TEST_PUBLIC_KEY",
+    "the updater-test-hooks feature needs DEZ_UPDATER_TEST_PUBLIC_KEY"
+));
+
+#[cfg(feature = "updater-test-hooks")]
+pub const RELEASE_DOWNLOAD_BASE: &str = env!(
+    "DEZ_UPDATER_TEST_DOWNLOAD_BASE",
+    "the updater-test-hooks feature needs DEZ_UPDATER_TEST_DOWNLOAD_BASE"
+);
 
 pub fn release_public_key() -> Result<PublicKey, String> {
     PublicKey::decode(RELEASE_PUBLIC_KEY)
@@ -161,6 +182,8 @@ mod tests {
         }
     }
 
+    // A smoke-test build downloads from its local server instead.
+    #[cfg(not(feature = "updater-test-hooks"))]
     #[test]
     fn builds_the_release_dmg_url() {
         let version = Version::parse("0.16.0").expect("version");

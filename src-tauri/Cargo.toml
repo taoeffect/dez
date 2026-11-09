@@ -17,6 +17,12 @@ crate-type = ["staticlib", "cdylib", "rlib"]
 [build-dependencies]
 tauri-build = { version = "=2.5.6", features = [] }
 
+[features]
+# For the macOS update smoke test only; release builds never enable it. The
+# updater then trusts a throwaway key and downloads from a local server,
+# both set at compile time (src/updater/verify.rs).
+updater-test-hooks = []
+
 [dependencies]
 # `devtools` lets release builds open the Web Inspector: Help › Developer
 # Console calls `open_devtools` (commands.rs). Debug builds have it anyway.

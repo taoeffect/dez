@@ -292,7 +292,7 @@ pub async fn relaunch_after_update(
     Ok(())
 }
 
-// Replaces the running app with the app in the verified DMG. hdiutil, ditto,
+// Replaces the running app with the app in the verified DMG. diskutil, ditto,
 // and codesign take seconds, so this runs on a blocking thread, not on an
 // async worker.
 #[cfg(target_os = "macos")]
@@ -318,7 +318,7 @@ fn spawn_helper(_finish: &Finish, _private_dir: &Path, _log: &Path) -> Result<()
 
 // Checks the downloaded file against `signature` again, right before the
 // install. The DMG waited in the private dir since its download; this
-// catches a file that changed there before hdiutil reads it.
+// catches a file that changed there before diskutil reads it.
 async fn verify_file(path: &Path, key: &PublicKey, signature: &Signature) -> Result<(), String> {
     let mut verifier = verify::stream_verifier(key, signature)?;
     let read_error =
