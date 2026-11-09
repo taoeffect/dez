@@ -4,12 +4,12 @@ import type { EditorView } from '@codemirror/view'
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from 'vitest'
 import { Key } from 'webdriverio'
 import { startApp, type RunningApp } from './harness/app'
-import { anthropicChatBody, openAiChatBody } from './harness/chatBody'
+import { anthropicChatBody, anthropicMarkedUser, openAiChatBody } from './harness/chatBody'
 import { click, closeSettings, consoleErrors, resetConsoleErrors, screenshotOnFailure, waitFor, waitForValue } from './harness/dom'
 import { conversationFilePath, makeConversation, readAppState, seedConversation, seedRawAppState } from './harness/fixtures'
 import { startChatMock, startEventStream, writeAnthropicEvent, writeChatFrame, type MockServer } from './harness/mockServer'
 import { createSession, destroySession, type E2EBrowser } from './harness/session'
-import { activeTabStreaming, maskPillDuration, pickModel, pressRolePill, sbpCall, submit, threadSections, waitForThread } from './harness/thread'
+import { activeTabStreaming, maskPillDuration, newTab, pickModel, pressRolePill, sbpCall, submit, threadSections, waitForThread } from './harness/thread'
 
 // Model thinking, driven through the real app against a mock server in this
 // process: the thinking parts of the agent pill, the encrypted pill of the
@@ -75,12 +75,6 @@ function claudeBlock (n: number): { type: 'thinking', thinking: string, signatur
 
 function claudeAnswer (n: number): string {
   return `Claude answer ${n}.`
-}
-
-// A user message that the Anthropic format marks as a cache breakpoint: the
-// last two user messages of each request.
-function claudeMarked (text: string): unknown {
-  return { role: 'user', content: [{ type: 'text', text, cache_control: { type: 'ephemeral' } }] }
 }
 
 // The thinking that the store holds for the nth Claude reply: the shown text
@@ -366,9 +360,8 @@ describe('thinking', () => {
     return browser.execute(() => document.querySelector<HTMLInputElement>('input.provider-supports-thinking-checkbox')?.checked ?? null)
   }
 
-  async function newTab (providerName: string, modelName: string): Promise<void> {
-    await sbpCall(browser, 'dez.model/tabs/create')
-    await waitForValue(browser, 'new tab', () => threadSections(browser), [{ role: 'user', text: '' }])
+  async function newTabWithModel (providerName: string, modelName: string): Promise<void> {
+    await newTab(browser)
     await pickModel(browser, providerName, modelName)
   }
 
@@ -619,7 +612,7 @@ describe('thinking', () => {
   })
 
   it('turns thinking on and off for a custom provider with the Supports thinking checkbox', async () => {
-    await newTab(PLAIN.name, PLAIN.modelName)
+    await newTabWithModel(PLAIN.name, PLAIN.modelName)
     // Without thinking support, the reasoning in the reply is ignored.
     await submit(browser, 'Plain question 1')
     await waitForThread(browser, [
@@ -668,7 +661,7 @@ describe('thinking', () => {
   })
 
   it('sends signed Anthropic thinking back only while the messages before it are unchanged', async () => {
-    await newTab(CLAUDE.name, CLAUDE.modelName)
+    await newTabWithModel(CLAUDE.name, CLAUDE.modelName)
     await submit(browser, 'Claude question 1')
     await waitForThread(browser, [
       { role: 'user', text: 'Claude question 1' },
@@ -677,7 +670,7 @@ describe('thinking', () => {
     ])
     // The Anthropic format asks for adaptive, summarized thinking by default.
     expect(requestBodies(CLAUDE_CHAT)[0]).toEqual({
-      ...anthropicChatBody(CLAUDE, [claudeMarked('Claude question 1')]),
+      ...anthropicChatBody(CLAUDE, [anthropicMarkedUser('Claude question 1')]),
       thinking: { type: 'adaptive', display: 'summarized' },
     })
     expect(await storedThinking()).toEqual([null, claudeThinking(1), null])
@@ -692,9 +685,9 @@ describe('thinking', () => {
       { role: 'user', text: '' },
     ])
     expect(requestBodies(CLAUDE_CHAT)[1].messages).toEqual([
-      claudeMarked('Claude question 1'),
+      anthropicMarkedUser('Claude question 1'),
       { role: 'assistant', content: [claudeBlock(1), { type: 'text', text: claudeAnswer(1) }] },
-      claudeMarked('Claude question 2'),
+      anthropicMarkedUser('Claude question 2'),
     ])
     // Both replies hold a signed replay, so a text-only send after the edit
     // comes from the prefix check.
@@ -715,9 +708,9 @@ describe('thinking', () => {
     expect(requestBodies(CLAUDE_CHAT)[2].messages).toEqual([
       { role: 'user', content: 'Claude question 1 (edited)' },
       { role: 'assistant', content: claudeAnswer(1) },
-      claudeMarked('Claude question 2'),
+      anthropicMarkedUser('Claude question 2'),
       { role: 'assistant', content: claudeAnswer(2) },
-      claudeMarked('Claude question 3'),
+      anthropicMarkedUser('Claude question 3'),
     ])
 
     // The third reply came after the edit, so its thinking goes back.
@@ -738,9 +731,9 @@ describe('thinking', () => {
       { role: 'assistant', content: claudeAnswer(1) },
       { role: 'user', content: 'Claude question 2' },
       { role: 'assistant', content: claudeAnswer(2) },
-      claudeMarked('Claude question 3'),
+      anthropicMarkedUser('Claude question 3'),
       { role: 'assistant', content: [claudeBlock(3), { type: 'text', text: claudeAnswer(3) }] },
-      claudeMarked('Claude question 4'),
+      anthropicMarkedUser('Claude question 4'),
     ])
   })
 
@@ -850,7 +843,7 @@ describe('thinking', () => {
   // marker, and then the whole text is one encrypted line. More text can
   // still come, so only a finished reply says that it has no readable text.
   it('says that the provider sent no readable thinking only after the stream', async () => {
-    await newTab(THINKER.name, THINKER.modelName)
+    await newTabWithModel(THINKER.name, THINKER.modelName)
     const encryptedOnly = '__ENCRYPTED_REASONING__v1:{"items":[]}'
     const n = requestBodies(THINKER_CHAT).length + 1
     const panelField = (): Promise<{ text: string, placeholder: string } | null> => browser.execute(() => {

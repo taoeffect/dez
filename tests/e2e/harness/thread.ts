@@ -29,6 +29,19 @@ export async function activeTabId (browser: E2EBrowser): Promise<string> {
   return await sbpCall(browser, 'dez.model/tabs/activeId') as string
 }
 
+/** The conversation id of the active tab. */
+export async function activeConversationId (browser: E2EBrowser): Promise<string> {
+  // `dez.model/tab` returns the tab record of the store.
+  const tab = await sbpCall(browser, 'dez.model/tab', await activeTabId(browser)) as { conversationId: string }
+  return tab.conversationId
+}
+
+/** Opens a new tab and waits until it shows its one empty user section. */
+export async function newTab (browser: E2EBrowser): Promise<void> {
+  await sbpCall(browser, 'dez.model/tabs/create')
+  await waitForValue(browser, 'new tab', () => threadSections(browser), [{ role: 'user', text: '' }])
+}
+
 /** The active tab's sections as role and plain text. */
 export async function threadSections (browser: E2EBrowser): Promise<ThreadSection[]> {
   return browser.execute(() => {

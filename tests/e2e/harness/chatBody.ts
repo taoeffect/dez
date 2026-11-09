@@ -51,3 +51,9 @@ export function openAiChatBody (model: ChatModel, messages: unknown[]): Record<s
 export function anthropicChatBody (model: ChatModel, messages: unknown[]): Record<string, unknown> {
   return { model: model.modelId, stream: true, max_tokens: 32000, system: systemPrompt(model), tools: ANTHROPIC_TOOLS, messages }
 }
+
+/** A user message that the Anthropic format marks as a cache breakpoint:
+ *  the last two user messages of each request. */
+export function anthropicMarkedUser (text: string): Record<string, unknown> {
+  return { role: 'user', content: [{ type: 'text', text, cache_control: { type: 'ephemeral' } }] }
+}

@@ -10,7 +10,7 @@ import { conversationFilePath } from './harness/fixtures'
 import { startMockProviderApp, type MockProviderApp } from './harness/mockProviderApp'
 import { mockChatPath, replyText, sendAnthropicReply, sendChatReply, type HeldRequest, type MockProvider } from './harness/mockServer'
 import type { E2EBrowser } from './harness/session'
-import { activeTabId, docPosPoint, editorCaret, editorDoc, focusEditor, openToasts, pickModel, sbpCall, setCaret, threadSections, waitForThread } from './harness/thread'
+import { activeConversationId, docPosPoint, editorCaret, editorDoc, focusEditor, newTab, openToasts, pickModel, sbpCall, setCaret, threadSections, waitForThread } from './harness/thread'
 
 // Images in a conversation, driven through the real app: a paste or a drop
 // stores the file and puts its reference, with a new image id, in the doc,
@@ -322,12 +322,6 @@ describe('images', () => {
     return browser.execute(() => document.querySelector('.tab--active .tab-title')?.textContent ?? null)
   }
 
-  async function activeConversationId (): Promise<string> {
-    // `dez.model/tab` returns the tab record of the store.
-    const tab = await sbpCall(browser, 'dez.model/tab', await activeTabId(browser)) as { conversationId: string }
-    return tab.conversationId
-  }
-
   // Closes every toast, so that a test sees only the toasts it causes (the
   // non-image toast of one drop test stays open into the next).
   async function closeToasts (): Promise<void> {
@@ -413,11 +407,6 @@ describe('images', () => {
     await waitForValue(browser, 'shown image', shownImages, [{ alt: fileName, width: 40, height: 24 }])
   }
 
-  async function newTab (): Promise<void> {
-    await sbpCall(browser, 'dez.model/tabs/create')
-    await waitForValue(browser, 'new tab', () => threadSections(browser), [{ role: 'user', text: '' }])
-  }
-
   // Types `before` in the empty active tab, pastes PASTED_PNG, waits for
   // its reference (the tab's first image, so its id is `a`), then types
   // `after`, which lands after the image only when the paste left the caret
@@ -473,7 +462,7 @@ describe('images', () => {
 
   it('stores a pasted image, puts its reference at the caret, and shows the image', async () => {
     const before = await storedImages()
-    await newTab()
+    await newTab(browser)
     const image = await insertPastedImage('See ', ' here')
 
     const fileName = path.basename(image.path)
@@ -485,7 +474,7 @@ describe('images', () => {
   })
 
   it('gives each image of a conversation its own id, shown with a trash at its top-right corner while the pointer is on the image', async () => {
-    await newTab()
+    await newTab(browser)
     const first = await insertPastedImage('', ' and ')
     const firstLine = `${first.reference} and `
     await pasteImage(PASTED_PNG)
@@ -544,7 +533,7 @@ describe('images', () => {
   })
 
   it('explains the id badge and the trash in tooltips while the pointer is on them', async () => {
-    await newTab()
+    await newTab(browser)
     await insertPastedImage('See ', ' here')
     await typeAtEnd(`\n![${path.join(imagesDir(), 'gone.png')}](id=b)`)
     await waitForValue(browser, 'missing image box', () => browser.execute(
@@ -596,7 +585,7 @@ describe('images', () => {
   })
 
   it('asks before the trash deletes an image, and keeps it on No, Esc, or a click outside the prompt', async () => {
-    await newTab()
+    await newTab(browser)
     const image = await insertPastedImage('See ', ' here')
     const shown = [shownPastedImage(image)]
     await waitForValue(browser, 'shown image', shownImages, shown)
@@ -628,7 +617,7 @@ describe('images', () => {
   })
 
   it('deletes the file and the reference of an image on Yes or Enter, with no undo, and the text of a missing image', async () => {
-    await newTab()
+    await newTab(browser)
     const image = await insertPastedImage('See ', ' here')
     const gone = `![${path.join(imagesDir(), 'gone.png')}]()`
     await typeAtEnd(`\n${gone}`)
@@ -668,7 +657,7 @@ describe('images', () => {
   })
 
   it('puts back the New Tab title when the trash deletes the only content of a tab, an image', async () => {
-    await newTab()
+    await newTab(browser)
     await insertPastedImage('', '')
     await waitForValue(browser, 'title with the image', activeTabTitle, '[image]')
 
@@ -680,7 +669,7 @@ describe('images', () => {
   })
 
   it('shows the source on Backspace after an image, and the image again on `)`, undo, and redo', async () => {
-    await newTab()
+    await newTab(browser)
     const image = await insertPastedImage('See ', ' here')
     const shown = [shownPastedImage(image)]
     const withImage = { doc: `See ${image.reference} here`, caret: image.to }
@@ -714,7 +703,7 @@ describe('images', () => {
   })
 
   it('moves the caret over an image with one arrow key press', async () => {
-    await newTab()
+    await newTab(browser)
     const image = await insertPastedImage('See ', ' here')
     await waitForValue(browser, 'shown image', shownImages, [shownPastedImage(image)])
     await setCaret(browser, image.from)
@@ -730,7 +719,7 @@ describe('images', () => {
   })
 
   it('shows the source on Delete before an image, and the image again when `!` is typed', async () => {
-    await newTab()
+    await newTab(browser)
     const image = await insertPastedImage('See ', ' here')
     const shown = [shownPastedImage(image)]
     await waitForValue(browser, 'shown image', shownImages, shown)
@@ -747,7 +736,7 @@ describe('images', () => {
 
   it('puts a dropped image at the drop point', async () => {
     const before = await storedImages()
-    await newTab()
+    await newTab(browser)
     await focusEditor(browser)
     await typeKeys(browser, 'Before after')
     await waitForValue(browser, 'typed text', () => editorDoc(browser), 'Before after')
@@ -760,7 +749,7 @@ describe('images', () => {
   })
 
   it('stores and inserts no dropped file that is not an image, and says so', async () => {
-    await newTab()
+    await newTab(browser)
     await focusEditor(browser)
     await typeKeys(browser, 'Some text')
     await waitForValue(browser, 'typed text', () => editorDoc(browser), 'Some text')
@@ -790,7 +779,7 @@ describe('images', () => {
     const source = path.join(imagesDir(), 'native-drop-source.png')
     await fs.promises.writeFile(source, DROPPED_PNG)
     const before = await storedImages()
-    await newTab()
+    await newTab(browser)
     await focusEditor(browser)
     await typeKeys(browser, 'Before after')
     await waitForValue(browser, 'typed text', () => editorDoc(browser), 'Before after')
@@ -800,7 +789,7 @@ describe('images', () => {
   })
 
   it('leaves out a native-dropped file that is not an image, and puts a dropped link in as text', async () => {
-    await newTab()
+    await newTab(browser)
     await focusEditor(browser)
     await typeKeys(browser, 'Some text')
     await waitForValue(browser, 'typed text', () => editorDoc(browser), 'Some text')
@@ -819,7 +808,7 @@ describe('images', () => {
   })
 
   it('sends a pasted image to an OpenAI-format model as a data URL, and titles the tab with [image]', async () => {
-    await newTab()
+    await newTab(browser)
     await pickModel(browser, VISION.name, VISION.modelName)
     const image = await insertPastedImage('', QUESTION)
 
@@ -841,7 +830,7 @@ describe('images', () => {
     ])
     expect(await activeTabTitle()).toBe(`[image]${QUESTION}`)
 
-    const conversationId = await activeConversationId()
+    const conversationId = await activeConversationId(browser)
     await waitForValue(browser, 'saved reference', async () => {
       const content = await fs.promises.readFile(conversationFilePath(setup.app.home, conversationId), 'utf8').catch(() => '')
       return content.split('\n').includes(image.reference + QUESTION)
@@ -850,7 +839,7 @@ describe('images', () => {
   })
 
   it('sends a pasted image to an Anthropic-format model as an image block', async () => {
-    await newTab()
+    await newTab(browser)
     await pickModel(browser, CLAUDE.name, CLAUDE.modelName)
     const image = await insertPastedImage('', QUESTION)
 
@@ -875,7 +864,7 @@ describe('images', () => {
   })
 
   it('sends only the text of an image reference, with no path, to a model that does not read images, and warns', async () => {
-    await newTab()
+    await newTab(browser)
     await pickModel(browser, VISION.name, TEXT_MODEL.name)
     const image = await insertPastedImage('', QUESTION)
 
@@ -898,7 +887,7 @@ describe('images', () => {
   })
 
   it('sends no image path, also for a reference that shows its source and an image in a reply', async () => {
-    await newTab()
+    await newTab(browser)
     await pickModel(browser, VISION.name, VISION.modelName)
     const first = await insertPastedImage('', ' and ')
     const firstLine = `${first.reference} and `
@@ -977,14 +966,14 @@ describe('images', () => {
   it('shows the saved image and the [image] tab title after a relaunch', async () => {
     if (!sentImage) throw new Error('The OpenAI test saved no conversation with an image')
     const { image, conversationId } = sentImage
-    const lastActive = await activeConversationId()
+    const lastActive = await activeConversationId(browser)
     browser = await setup.relaunch()
     // A new page: the record that beforeEach started is gone.
     await resetConsoleErrors(browser)
 
     // The restore sets the active tab after the tab bar shows; switch only
     // after it, or the restore switches back.
-    await waitForValue(browser, 'restored active tab', activeConversationId, lastActive)
+    await waitForValue(browser, 'restored active tab', () => activeConversationId(browser), lastActive)
     await sbpCall(browser, 'dez.model/tabs/openConversation', conversationId)
     await waitForValue(browser, 'reopened conversation', async () => (await threadSections(browser))[0]?.text ?? null, image.reference + QUESTION)
     await waitForValue(browser, 'shown image', shownImages, [shownPastedImage(image)])

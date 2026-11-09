@@ -1,13 +1,13 @@
 import fs from 'node:fs'
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from 'vitest'
 import { Key } from 'webdriverio'
-import { anthropicChatBody, openAiChatBody } from './harness/chatBody'
+import { anthropicChatBody, anthropicMarkedUser, openAiChatBody } from './harness/chatBody'
 import { consoleErrors, pointerClick, resetConsoleErrors, screenshotOnFailure, waitForValue } from './harness/dom'
 import { conversationFilePath, makeConversation, seedConversation } from './harness/fixtures'
 import { startMockProviderApp, type MockProviderApp } from './harness/mockProviderApp'
 import { mockChatPath, replyText, sendAnthropicReply, sendChatReply, startEventStream, writeAnthropicEvent, writeChatFrame, type MockProvider } from './harness/mockServer'
 import type { E2EBrowser } from './harness/session'
-import { activeTabId, activeTabStreaming, docPos, editorCaret, editorDoc, focusEditor, focusedArea, pickModel, sbpCall, setCaret, submit, threadSections, waitForThread, type ThreadSection } from './harness/thread'
+import { activeConversationId, activeTabStreaming, docPos, editorCaret, editorDoc, focusEditor, focusedArea, newTab, pickModel, sbpCall, setCaret, submit, threadSections, waitForThread, type ThreadSection } from './harness/thread'
 
 // Tool calls, driven through the real app against a mock server in this
 // process: a model of each API format calls the `model_list` tool, the app
@@ -43,11 +43,6 @@ function modelListBlock (id: string, filter: string, result: string): string {
 /** A `model_list` call in an OpenAI-format assistant message. */
 function openAiModelListCall (id: string, filter: string): Record<string, unknown> {
   return { id, type: 'function', function: { name: 'model_list', arguments: JSON.stringify({ filter }) } }
-}
-
-/** A user message that the Anthropic format marks as a cache breakpoint. */
-function claudeMarked (text: string): Record<string, unknown> {
-  return { role: 'user', content: [{ type: 'text', text, cache_control: EPHEMERAL }] }
 }
 
 // Each message of an OpenAI-format request body as JSON text, in the key
@@ -143,17 +138,6 @@ describe('tool calls', () => {
     }, index)
   }
 
-  async function activeConversationId (): Promise<string> {
-    // `dez.model/tab` returns the tab record of the store.
-    const tab = await sbpCall(browser, 'dez.model/tab', await activeTabId(browser)) as { conversationId: string }
-    return tab.conversationId
-  }
-
-  async function newTab (): Promise<void> {
-    await sbpCall(browser, 'dez.model/tabs/create')
-    await waitForValue(browser, 'new tab', () => threadSections(browser), [{ role: 'user', text: '' }])
-  }
-
   beforeAll(async () => {
     setup = await startMockProviderApp(TOOLER, {}, { moreProviders: [{ provider: CLAUDE }] })
     browser = setup.browser
@@ -239,7 +223,7 @@ describe('tool calls', () => {
     expect(await browser.execute(() => document.activeElement?.matches('.dez-tool-call__chip') ?? false)).toBe(true)
     expect(await threadSections(browser)).toEqual(sections)
 
-    const conversationId = await activeConversationId()
+    const conversationId = await activeConversationId(browser)
     const file = conversationFilePath(setup.app.home, conversationId)
     await waitForValue(browser, 'saved call', async () => (await fs.promises.readFile(file, 'utf8').catch(() => '')).includes(sections[1].text), true)
     openAiRound = { conversationId, sections, lastBody: second.body }
@@ -252,7 +236,7 @@ describe('tool calls', () => {
     // A new page: the record that beforeEach started is gone.
     await resetConsoleErrors(browser)
 
-    await waitForValue(browser, 'restored active tab', activeConversationId, conversationId)
+    await waitForValue(browser, 'restored active tab', () => activeConversationId(browser), conversationId)
     await waitForValue(browser, 'restored thread', () => threadSections(browser), sections)
     // The open state is view state, so the panel starts closed.
     await waitForValue(browser, 'restored chip', toolChips, [closedChip('"tool"')])
@@ -277,13 +261,13 @@ describe('tool calls', () => {
   })
 
   it('runs a model_list call of an Anthropic-format model, and sends the call and its result back as tool_use and tool_result blocks', async () => {
-    await newTab()
+    await newTab(browser)
     await pickModel(browser, CLAUDE.name, CLAUDE.modelName)
     const question = 'Which Claude models are there?'
     await submit(browser, question)
     const first = await setup.mock.waitForRequest(browser)
     expect(first.path).toBe(mockChatPath(CLAUDE))
-    expect(JSON.parse(first.body)).toEqual(anthropicChatBody(CLAUDE, [claudeMarked(question)]))
+    expect(JSON.parse(first.body)).toEqual(anthropicChatBody(CLAUDE, [anthropicMarkedUser(question)]))
 
     // A text block, then a tool_use block whose input comes in two parts.
     startEventStream(first.reply)
@@ -306,7 +290,7 @@ describe('tool calls', () => {
     // the last user message.
     const second = await setup.mock.waitForRequest(browser)
     expect(JSON.parse(second.body)).toEqual(anthropicChatBody(CLAUDE, [
-      claudeMarked(question),
+      anthropicMarkedUser(question),
       {
         role: 'assistant',
         content: [
@@ -327,7 +311,7 @@ describe('tool calls', () => {
   })
 
   it('keeps the call when Stop ends the reply while the next round waits, and sends it back with its result', async () => {
-    await newTab()
+    await newTab(browser)
     await pickModel(browser, TOOLER.name, TOOLER.modelName)
     const question = 'List the tool models.'
     await submit(browser, question)
