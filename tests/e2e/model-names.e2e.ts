@@ -4,21 +4,21 @@ import { click, consoleErrors, openHistoryPanel, resetConsoleErrors, screenshotO
 import { makeConversation, seedConversation, seedRawAppState } from './harness/fixtures'
 import { replyText, sendChatReply, startChatMock, type MockServer } from './harness/mockServer'
 import { createSession, destroySession, type E2EBrowser } from './harness/session'
-import { activeConversationId, activeTabStreaming, maskPillDuration, newTab, pickModel, pressRolePill, rolePillHeights, savedPillLines, sbpCall, submit, threadSections, waitForThread } from './harness/thread'
+import { activeConversationId, activeTabStreaming, maskPillDuration, newTab, openPicker, pickModel, pressRolePill, rolePillHeights, savedPillLines, sbpCall, submit, threadSections, waitForThread } from './harness/thread'
 
-// The model on agent role pills and the model names in history rows,
-// driven through the real app against a mock OpenAI-compatible server in this
-// process.
+// The model on agent role pills, the model names in history rows, and the
+// full model names as tooltips in the model picker, driven through the real
+// app against a mock OpenAI-compatible server in this process.
 //
-// One custom provider ("Mock Provider") has two named config models. Its id
+// One custom provider ("Mock Provider") has three named config models. Its id
 // is a UUID, as the id of a provider added in Settings is, so a check can see
 // that no row shows it. Its model ids hold a `/`, as OpenRouter ids do, so
 // the `provider/model` key in pills and files has two slashes.
 // `fetchModels: false` keeps the model list to the config, so the mock serves
 // only chat requests.
 //
-// One app session serves the whole file. The tests after the seeded one
-// run in order in one tab: each builds on the replies of the one before.
+// One app session serves the whole file. The tests from the model switch
+// on run in order in one tab: each builds on the replies of the one before.
 
 /** The model part of an agent role pill. */
 interface ChipView {
@@ -145,6 +145,21 @@ describe('model names', () => {
     ), titles)
   }
 
+  // Each model row of the open picker's Mock Provider group: the shown
+  // name, its tooltip, and whether the row cuts the name off.
+  async function pickerRows (): Promise<Array<{ name: string, title: string, clipped: boolean }>> {
+    return browser.execute((provider: string) => {
+      const group = Array.from(document.querySelectorAll('.model-dropdown .model-group')).find(
+        (candidate) => candidate.querySelector('.model-group-header')?.textContent?.trim() === provider
+      )
+      return Array.from(group?.querySelectorAll<HTMLElement>('.model-item-name') ?? []).map((name) => ({
+        name: name.textContent?.trim() ?? '',
+        title: name.title,
+        clipped: name.scrollWidth > name.clientWidth,
+      }))
+    }, PROVIDER.name)
+  }
+
   beforeAll(async () => {
     // Answers only chat requests to `/mock/v1`, and records their models.
     server = await startChatMock(['/mock/v1/chat/completions'], async (_req, res, body) => {
@@ -247,6 +262,24 @@ describe('model names', () => {
     const [first, ...rest] = await rolePillHeights(browser)
     expect(rest).toHaveLength(6)
     for (const height of rest) expect(height).toBeCloseTo(first, 1)
+  })
+
+  it('shows the full model name as the tooltip of each picker row', async () => {
+    await openPicker(browser)
+    // The model button toggles the picker, so the next test's `pickModel`
+    // needs it closed even when a check here fails.
+    try {
+      // The long name does not fit its row, so only its tooltip shows all
+      // of it.
+      await waitForValue(browser, 'picker rows', pickerRows, [
+        { name: ALPHA.name, title: ALPHA.name, clipped: false },
+        { name: BETA.name, title: BETA.name, clipped: false },
+        { name: LONG.name, title: LONG.name, clipped: true },
+      ])
+    } finally {
+      await click(browser, '.model-selector-btn')
+    }
+    await waitForValue(browser, 'picker open', () => browser.execute(() => document.querySelector('.model-dropdown') !== null), false)
   })
 
   it('labels each response with the model that wrote it across a model switch', async () => {
