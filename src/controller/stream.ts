@@ -344,15 +344,16 @@ export default sbp('sbp/selectors/register', {
     }
   },
 
-  // A submit during a reply in the tab calls this before it builds its
-  // request messages and adds the new agent section; the new start then
-  // cancels the reply's request. A running tool stops with its final blocks,
-  // and the answer text that the escaper holds is written. These writes
-  // must come before the new section is in the store: the editor gets it
-  // only in Vue's next watcher flush, and a doc change before then writes
-  // the editor's sections back to the store, with no new section. Output of
-  // the request after this is dropped. True when it wrote text, which the
-  // messages must then hold.
+  // A submit during a reply in the tab calls this after it builds its
+  // request messages (so a submit with no messages leaves the reply alone)
+  // and before it adds the new agent section; the new start then cancels
+  // the reply's request. A running tool stops with its final blocks, and
+  // the answer text that the escaper holds is written. These writes must
+  // come before the new section is in the store: the editor gets it only in
+  // Vue's next watcher flush, and a doc change before then writes the
+  // editor's sections back to the store, with no new section. Output of the
+  // request after this is dropped. True when it wrote text: the caller must
+  // then build its messages again.
   'dez.stream/endOutput' (tabId: string): boolean {
     const reply = repliesByTab.get(tabId)
     if (!reply) return false
