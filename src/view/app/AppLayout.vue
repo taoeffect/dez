@@ -11,10 +11,11 @@ import TabBar from "../tabs/TabBar.vue";
 import HistoryPanel from "../history/HistoryPanel.vue";
 import ToastContainer from "../toast/ToastContainer.vue";
 import ConfirmDialog from "../confirm/ConfirmDialog.vue";
+import UpdateWindow from "../updates/UpdateWindow.vue";
 import { shortcutKeyText } from "../../model/shortcuts";
 
 useKeyboardShortcuts();
-const { settings, shortcuts } = useModelState();
+const { settings, shortcuts, updates } = useModelState();
 
 // Native file drops are off except on Linux (tauri.linux.conf.json; see run()
 // in src-tauri/src/lib.rs), so on macOS a file dragged in from the desktop
@@ -76,6 +77,7 @@ onUnmounted(() => {
 
     <HistoryPanel v-if="settings.historyOpen" @close="sbp('dez.model/settings/historyClose')" />
     <SettingsView v-if="settings.settingsOpen" />
+    <UpdateWindow v-if="updates.windowOpen" />
     <ConfirmDialog />
     <ToastContainer area="app-global" />
   </div>

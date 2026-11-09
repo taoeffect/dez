@@ -50,6 +50,7 @@ function showReplyTab(tabId: string): void {
   if (!sbp('dez.model/tab', tabId)) return
   sbp('dez.model/settings/close')
   sbp('dez.model/settings/historyClose')
+  sbp('dez.model/updates/closeWindow')
   sbp('dez.model/tabs/switch', tabId)
   sbp('dez.editor/focus')
 }

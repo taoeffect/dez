@@ -25,6 +25,8 @@ export interface ToastData {
   closeable?: boolean
   actionLabel?: string
   sbpInvocation?: ToastSbpInvocation | [string, ...unknown[]]
+  // A click that runs `sbpInvocation` also closes the toast.
+  closeOnClick?: boolean
 }
 
 export default sbp('sbp/selectors/register', {

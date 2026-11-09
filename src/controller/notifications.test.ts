@@ -55,7 +55,9 @@ sbp('sbp/selectors/register', {
   'dez.editor/focus' (): boolean {
     editorFocuses.push({
       activeTabId: activeTabId(),
-      panelOpen: (sbp('dez.model/settings/isOpen') as boolean) || (sbp('dez.model/settings/isHistoryOpen') as boolean),
+      panelOpen: (sbp('dez.model/settings/isOpen') as boolean) ||
+        (sbp('dez.model/settings/isHistoryOpen') as boolean) ||
+        (sbp('dez.model/updates/isWindowOpen') as boolean),
     })
     return true
   },
@@ -81,6 +83,20 @@ async function alertReplyEnded(tabId: string, status: 'finished' | 'error' = 'fi
 function clickNotification(): void {
   expect(notifications).toHaveLength(1)
   notifications[0].onClick.onmessage(null)
+}
+
+// The update window opens only once a check has found a newer release.
+function openUpdateWindow(): void {
+  sbp('dez.model/updates/setReleases', [{
+    version: '99.0.0',
+    tag: 'v99.0.0',
+    url: 'https://github.com/taoeffect/dez/releases/tag/v99.0.0',
+    publishedAt: null,
+    changes: [],
+    dmgAsset: null,
+    signatureAsset: null,
+  }])
+  sbp('dez.model/updates/openWindow')
 }
 
 beforeEach(() => {
@@ -278,16 +294,21 @@ describe('dez.controller/alertReplyEnded', () => {
   })
 
   // The editor takes no focus while a panel covers it.
-  it.each(['dez.model/settings/open', 'dez.model/settings/historyOpen'])('a click closes the panel of %s, opens the tab, and then focuses the editor', async (openPanel) => {
+  it.each([
+    { panel: 'Settings', openPanel: () => sbp('dez.model/settings/open') },
+    { panel: 'History', openPanel: () => sbp('dez.model/settings/historyOpen') },
+    { panel: 'the update window', openPanel: openUpdateWindow },
+  ])('a click closes $panel, opens the tab, and then focuses the editor', async ({ openPanel }) => {
     const tabId = backgroundTabId()
     await alertReplyEnded(tabId)
-    sbp(openPanel)
+    openPanel()
 
     clickNotification()
 
     expect(activeTabId()).toBe(tabId)
     expect(sbp('dez.model/settings/isOpen')).toBe(false)
     expect(sbp('dez.model/settings/isHistoryOpen')).toBe(false)
+    expect(sbp('dez.model/updates/isWindowOpen')).toBe(false)
     expect(editorFocuses).toEqual([{ activeTabId: tabId, panelOpen: false }])
   })
 

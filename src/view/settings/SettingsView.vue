@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, onMounted, onUnmounted, nextTick, ref } from 'vue'
+import { computed, onMounted, onUnmounted, nextTick, ref, watch } from 'vue'
 import sbp from '@sbp/sbp'
 import { useModelState, type SettingsSection, type Theme } from '../modelState'
 import type { ModelInfo } from '../../model/providers'
@@ -8,7 +8,7 @@ import ProviderManager from './ProviderManager.vue'
 import ModelPicker from '../model-selector/ModelPicker.vue'
 import ShortcutManager from './ShortcutManager.vue'
 
-const { settings, modelCache } = useModelState()
+const { settings, modelCache, updates } = useModelState()
 
 // Searchable picker for the "Default model for new tabs" setting, replacing the
 // old unsearchable native <select>. Reuses the same ModelPicker as the
@@ -62,7 +62,19 @@ const sections: SettingsSection[] = ['general', 'providers', 'prompts', 'appeara
 // would only add an empty strip next to theirs.
 const contentScrolls = computed(() => settings.value.settingsSection !== 'providers' && settings.value.settingsSection !== 'prompts')
 
-const checkingUpdates = ref(false)
+// With the setting on, General shows where updates stand as soon as it
+// opens. The daily check runs at most once a day, not at each launch, so
+// when no check has run this session, a quiet one fills the status; it opens
+// no window and shows no toast.
+watch(
+  () => [settings.value.settingsSection === 'general', settings.value.checkForUpdates] as const,
+  ([general, checkForUpdates]) => {
+    if (general && checkForUpdates && updates.value.status === 'idle') {
+      void sbp('dez.controller/checkForUpdates', { report: 'quiet' })
+    }
+  },
+  { immediate: true },
+)
 
 const themes: { value: Theme; label: string }[] = [
   { value: 'system', label: 'System' },
@@ -77,15 +89,6 @@ onMounted(() => {
 onUnmounted(() => {
   document.removeEventListener('mousedown', onDefaultModelClickOutside)
 })
-
-async function manuallyCheckForUpdates() {
-  checkingUpdates.value = true
-  try {
-    await sbp('dez.controller/checkForUpdates')
-  } finally {
-    checkingUpdates.value = false
-  }
-}
 
 // Each slider step saves the volume, so the label follows the thumb. The
 // preview plays only when the user commits a value: `change` fires on the
@@ -253,13 +256,30 @@ function onOverlayClick(e: MouseEvent) {
               </button>
             </div>
 
-            <div class="settings-row settings-row--end">
+            <div class="settings-row">
+              <div class="update-status">
+                <template v-if="updates.status === 'checking'">Checking…</template>
+                <template v-else-if="updates.status === 'upToDate'">
+                  <svg class="update-status-check" width="14" height="14" viewBox="0 0 14 14" fill="none" aria-hidden="true">
+                    <path d="M2.5 7.5l3 3 6-7" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/>
+                  </svg>
+                  You're up-to-date
+                </template>
+                <!-- `available` always has a release (dez.model/updates/setReleases). -->
+                <template v-else-if="updates.status === 'available'">
+                  Dez {{ updates.releases[0].version }} is available
+                  <button class="settings-btn settings-btn--sm" @click="sbp('dez.model/updates/openWindow')">View</button>
+                </template>
+                <span v-else-if="updates.status === 'failed'" class="settings-error">
+                  Update check failed: {{ updates.error }}
+                </span>
+              </div>
               <button
                 class="settings-btn settings-btn--sm"
-                :disabled="checkingUpdates"
-                @click="manuallyCheckForUpdates()"
+                :disabled="updates.status === 'checking'"
+                @click="sbp('dez.controller/checkForUpdates', { report: 'settings' })"
               >
-                {{ checkingUpdates ? 'Checking…' : 'Check for updates' }}
+                Check for updates
               </button>
             </div>
 
@@ -541,6 +561,23 @@ function onOverlayClick(e: MouseEvent) {
   display: flex;
   flex-direction: column;
   z-index: 50;
+}
+
+/* The update check's status, left of its button. A long failure message
+   wraps; the button keeps its size. */
+.update-status {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px 8px;
+  min-width: 0;
+  font-size: 13px;
+}
+
+/* The green of the success toast (ToastCard.vue). */
+.update-status-check {
+  flex-shrink: 0;
+  color: #219653;
 }
 </style>
 

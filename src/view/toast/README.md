@@ -85,6 +85,7 @@ sbp('dez.ui/toast', 'app-global', {
 | `closeable` | No | `boolean` | Shows or hides the close button. |
 | `actionLabel` | No | `string` | Renders a text-button action inside the toast. |
 | `sbpInvocation` | No | `{ selector: string, args?: unknown[] }` or `[string, ...unknown[]]` | Invoked when the toast body or action is clicked: `[selector, ...args]` calls `sbp(selector, ...args)`. The selector may be async. A selector that throws or rejects is logged with `console.error`. |
+| `closeOnClick` | No | `boolean` | A click that runs `sbpInvocation` also closes the toast. |
 
 Defaults applied by `dez.ui/toast`:
 
@@ -104,7 +105,7 @@ Defaults applied by `dez.ui/toast`:
 - A layout with a bar at the bottom sets the CSS variable `--toast-inset-bottom` to the bar's height, and the container keeps every toast above it. `AppLayout.vue` sets it, so the bottom toasts never cover the bottom bar and its Submit/Stop button.
 - `duration` adds a progress bar and auto-dismisses the toast when the timer completes.
 - Hover pauses the progress animation and timer; leaving the toast resumes them.
-- A toast with `sbpInvocation` shows a pointer cursor. A click on it runs the invocation and does not close the toast; a click on the close button does not run it. An invocation that opens an external URL uses `['dez.controller/openUrl', url]`.
+- A toast with `sbpInvocation` shows a pointer cursor. A click on it runs the invocation and does not close the toast, unless `closeOnClick` is set; a click on the close button does not run it. An invocation that opens an external URL uses `['dez.controller/openUrl', url]`.
 - `closeable: false` hides the close button, but the toast can still close by timeout or max-count eviction.
 - `error` toasts have a red tint, a red stripe on the left, and a red icon and title, from the theme variables `--color-error`, `--color-error-bg`, and `--color-error-border` in `App.vue` (light and dark values). The card grows with its text from the normal 360 px up to 560 px (never wider than the window less 32 px). A message taller than 40% of the window scrolls inside the card. The message text is selectable, so the user can copy it.
 - Errors of a chat request (`dez.stream/start`) and a send with no model (`dez.controller/submitTab`) are `error` toasts with no `duration`, so they stay until the user closes them. The thread shows no error text. E2E specs read open error toasts with `openErrorToasts` in `tests/e2e/harness/thread.ts`.

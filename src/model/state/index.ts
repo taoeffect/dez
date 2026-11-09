@@ -13,6 +13,7 @@ import { clampEditorFontSize } from '../editorFontSize'
 import { clampDoneSoundVolume } from '../doneSoundVolume'
 import { currentShortcutPlatform, findShortcut, normalizeShortcutKey, validateShortcutKey, type Shortcut, type ShortcutId, type ShortcutOverrides } from '../shortcuts'
 import { MAX_CLOSED_TABS, NEW_TAB_TITLE, useTabStore } from './tabs'
+import { useUpdatesStore, type UpdateCheckStatus } from './updates'
 import type { AppStatePayload, CachedProvider, ConversationSearchOutcome, ModelCache } from '../persistence/types'
 import { emptyModelCache } from '../persistence/modelCache'
 import type { ProviderConfig, ProviderThinkingConfig } from '../providers/config'
@@ -39,6 +40,7 @@ import {
 } from '../streams/sections'
 import type { EndedStreamSession, RequestMessages } from '../streams/types'
 import type { ModelSnapshot } from '../snapshot'
+import type { Release } from '../updates/releases'
 
 export interface SettingsSnapshot {
   theme: Theme
@@ -64,6 +66,14 @@ export interface SettingsSnapshot {
 // `done` after a reply ended while the tab was in the background, until the
 // tab is active again.
 export type TabActivity = 'busy' | 'done'
+
+// The update check and the update window (src/model/state/updates.ts).
+export interface UpdatesSnapshot {
+  status: UpdateCheckStatus
+  error: string | null
+  releases: Release[]
+  windowOpen: boolean
+}
 
 type ContentNodeData =
   | { kind: 'text'; text: string }
@@ -443,6 +453,15 @@ function cloneModelCache(cache: ModelCache): ModelCache {
     }
   }
   return { providers, version: cache.version }
+}
+
+function cloneRelease(release: Release): Release {
+  return {
+    ...release,
+    changes: release.changes.map((block) => block.kind === 'list' ? { ...block, items: [...block.items] } : { ...block }),
+    dmgAsset: release.dmgAsset && { ...release.dmgAsset },
+    signatureAsset: release.signatureAsset && { ...release.signatureAsset },
+  }
 }
 
 export async function saveModelCache(): Promise<void> {
@@ -1271,6 +1290,53 @@ export default sbp('sbp/selectors/register', {
       lastCheckedAt: now,
     }
     store.errors[providerId] = result.error ?? 'The model list request failed'
+  },
+
+  'dez.model/updates/snapshot' (): UpdatesSnapshot {
+    const store = useUpdatesStore()
+    return {
+      status: store.status,
+      error: store.error,
+      releases: store.releases.map(cloneRelease),
+      windowOpen: store.windowOpen,
+    }
+  },
+
+  'dez.model/updates/setChecking' (): void {
+    useUpdatesStore().status = 'checking'
+  },
+
+  // The outcome of a check that succeeded: the releases newer than the
+  // running one, newest first. With none, the update window has nothing to
+  // show, so it closes.
+  'dez.model/updates/setReleases' (releases: Release[]): void {
+    const store = useUpdatesStore()
+    store.status = releases.length ? 'available' : 'upToDate'
+    store.error = null
+    store.releases = releases.map(cloneRelease)
+    if (!releases.length) store.windowOpen = false
+  },
+
+  // A failed check keeps the releases of the last good one: they are still
+  // newer than the running version, and an open update window keeps them.
+  'dez.model/updates/setFailed' (message: string): void {
+    const store = useUpdatesStore()
+    store.status = 'failed'
+    store.error = message
+  },
+
+  'dez.model/updates/isWindowOpen' (): boolean {
+    return useUpdatesStore().windowOpen
+  },
+
+  // Does nothing until a check has found a newer release.
+  'dez.model/updates/openWindow' (): void {
+    const store = useUpdatesStore()
+    if (store.releases.length) store.windowOpen = true
+  },
+
+  'dez.model/updates/closeWindow' (): void {
+    useUpdatesStore().windowOpen = false
   },
 
   // Error-handling boundary for the history panel: full-text search (empty

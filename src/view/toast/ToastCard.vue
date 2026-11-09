@@ -69,6 +69,7 @@ function onToastClick (): void {
   void (async () => { await sbp(selector, ...args) })().catch((error: unknown) => {
     console.error(`Toast click: "${selector}" failed:`, error)
   })
+  if (props.data.closeOnClick) closeToast()
 }
 
 onUnmounted(() => {

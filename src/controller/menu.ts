@@ -112,7 +112,7 @@ export default sbp('sbp/selectors/register', {
     menuInstalled = true
     const checkForUpdates: MenuItemOptions = {
       text: 'Check for Updates…',
-      action: () => void sbp('dez.controller/checkForUpdates'),
+      action: () => void sbp('dez.controller/checkForUpdates', { report: 'menu' }),
     }
     // macOS gets no icon: AppKit's About panel shows the app icon by itself.
     const aboutIcon = isMacPlatform

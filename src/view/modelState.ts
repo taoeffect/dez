@@ -3,7 +3,7 @@ import sbp from '@sbp/sbp'
 import type { ActiveModel, Section } from '../model/chat/types'
 import type { Prompt } from '../model/state/prompts'
 import type { DefaultModel, SettingsSection, Theme } from '../model/state/settings'
-import type { SettingsSnapshot, TabActivity } from '../model/state'
+import type { SettingsSnapshot, TabActivity, UpdatesSnapshot } from '../model/state'
 import type { ModelSnapshot } from '../model/snapshot'
 import type { ModelCache } from '../model/persistence/types'
 import type { ModelDisplayNames } from '../model/providers/types'
@@ -27,6 +27,7 @@ export interface ViewModelState {
   activeTabStreamingSectionId: ComputedRef<string | null>
   tabActivity: ComputedRef<Record<string, TabActivity>>
   shortcuts: ComputedRef<readonly Shortcut[]>
+  updates: ComputedRef<UpdatesSnapshot>
 }
 
 // View components need reactive reads without owning Pinia stores directly;
@@ -71,6 +72,9 @@ export function useModelState(): ViewModelState {
     tabActivity: computed(() => sbp('dez.model/tabs/activity') as Record<string, TabActivity>),
     // Every shortcut with its effective key; changes when the user sets a key.
     shortcuts: computed(() => sbp('dez.model/settings/shortcuts') as readonly Shortcut[]),
+    // The update check's status and the newer releases (UpdateWindow.vue,
+    // Settings › General).
+    updates: computed(() => sbp('dez.model/updates/snapshot') as UpdatesSnapshot),
   }
 }
 
