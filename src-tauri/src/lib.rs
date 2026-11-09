@@ -51,7 +51,6 @@ pub fn run() {
             http_bridge::http_request,
             http_bridge::stream_http,
             http_bridge::cancel_http_stream,
-            commands::get_latest_release,
             commands::copilot_start_device_flow,
             commands::copilot_poll_device_flow,
             commands::save_conversation_file,

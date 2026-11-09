@@ -8,6 +8,11 @@ declare global {
   interface Window {
     sbp: typeof sbp
   }
+
+  interface ImportMetaEnv {
+    // A smoke-test build's update check source (src/controller/updates.ts).
+    readonly VITE_DEZ_RELEASES_API_URL?: string
+  }
 }
 
 declare module "*.vue" {

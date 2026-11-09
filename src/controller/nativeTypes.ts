@@ -1,10 +1,5 @@
 import type { MonitorInfo } from './windowFit'
 
-export interface LatestRelease {
-  version: string
-  url: string
-}
-
 export interface CopilotDeviceFlowResponse {
   user_code: string
   verification_uri: string

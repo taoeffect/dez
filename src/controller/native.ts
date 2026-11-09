@@ -11,7 +11,6 @@ import type { ConversationFile } from '../model/persistence/types'
 import type {
   CopilotChatToken,
   CopilotDeviceFlowResponse,
-  LatestRelease,
   NativeMonitors,
 } from './nativeTypes'
 
@@ -49,10 +48,6 @@ export default sbp('sbp/selectors/register', {
 
   'dez.native/cancelHttpStream' (requestId: string): Promise<void> {
     return invoke('cancel_http_stream', { requestId })
-  },
-
-  'dez.native/getLatestRelease' (): Promise<LatestRelease> {
-    return invoke<LatestRelease>('get_latest_release')
   },
 
   'dez.native/copilotStartDeviceFlow' (): Promise<CopilotDeviceFlowResponse> {
