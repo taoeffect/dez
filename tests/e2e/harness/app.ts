@@ -32,7 +32,10 @@ export interface RunningApp {
  *
  * The binary must be the self-contained `tauri build --debug --no-bundle`
  * output (frontend embedded). A plain `cargo build` binary uses devUrl and
- * would require a Vite server on port 1420, which e2e does not manage.
+ * would require a Vite server on port 1420, which e2e does not manage. So
+ * does the binary of `npm run tauri dev`, which writes this same path: after
+ * a `tauri dev` run every spec fails with "the app window did not show
+ * within 60 s" until the binary is rebuilt.
  */
 export function resolveBinary (): string {
   const override = process.env.DEZ_E2E_BINARY

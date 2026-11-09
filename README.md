@@ -65,17 +65,19 @@ You can also add custom providers by hand in `~/.config/dez/app_state.json`. **C
 | `name` | yes | The name in the model picker and in Settings. |
 | `baseUrl` | yes | An `http://` or `https://` URL with no query (`?`), fragment (`#`), user name, or password. See the base URL rule below. |
 | `apiFormat` | no | `openai` (default) or `anthropic`. |
-| `models` | no | Models that always show, as `{ "id": "...", "name": "..." }`. The name is optional. Add `"imageInput": true` or `false` to tell Dez if the model reads images (see [Images](#images)); it has priority over `modelImageInput`. |
+| `models` | no | Models that always show, as `{ "id": "...", "name": "..." }`. The name is optional. Add `"imageInput": true` or `false` to tell Dez if the model reads images; it has priority over `modelImageInput`. Add `"toolCalling": true` or `false` to tell Dez if the model calls tools; it has priority over `modelToolCalling`. |
 | `fetchModels` | no | `true` (default) also lists the models that the server reports. `false` never asks the server. |
 | `modelImageInput` | no | Where the server's model list tells if a model reads images, as `{ "path": "..." }`: a dot path in each model entry, e.g. `architecture.input_modalities`. A `true` or `false` there is the answer; a list there means "reads images" when it holds `"image"`. |
+| `modelToolCalling` | no | Where the server's model list tells if a model calls tools, as `{ "path": "..." }`, e.g. `supported_parameters`. A `true` or `false` there is the answer; a list there means "calls tools" when it holds `"tools"`. Dez offers its tools to a model unless it knows that the model cannot call them. |
 | `apiKey` | no | When Dez starts, it moves the key into `~/.config/dez/provider_keys.json` and removes it from `app_state.json`. |
 | `headers` | no | Extra HTTP headers for every request, as `{ "Name": "value" }`. A name may use only letters, digits, and ``!#$%&'*+-.^_`\|~``. A value must not contain a line break or a control character other than tab. Dez stores headers as plain text in `app_state.json`, so put an API key in `apiKey`, not in a header. |
 | `imageRequestHeaders` | no | Extra HTTP headers only for a chat request that sends an image, with the same rules as `headers`. |
 | `maxOutputTokens` | no | `max_tokens` for the Anthropic format (default 32000). |
-| `cacheBreakpoints` | no | OpenAI format: `true` marks the last two user messages with Anthropic's `cache_control`, for a server that passes the marks on to models that cache only a marked prompt (such as Claude). The Anthropic format always adds the marks. |
+| `cacheBreakpoints` | no | OpenAI format: `true` marks the last two user messages with Anthropic's `cache_control` (the last result of a tool round counts as a user message), for a server that passes the marks on to models that cache only a marked prompt (such as Claude). The Anthropic format always adds the marks. |
+| `toolMessageCacheMark` | no | OpenAI format with `cacheBreakpoints`: where a tool result message takes its mark. `part` (default) puts it on the content as one text part; `message` puts it on the message itself. Venice needs `message`. |
 | `promptCacheKey` | no | OpenAI format: `true` sends the conversation id as `prompt_cache_key`, so the server can send all the requests of a conversation to the machine that holds its prompt cache. |
 | `requestBody` | no | A JSON object that Dez merges into every chat request, before `settings` and `thinking`: objects merge key by key, and other values replace. |
-| `settings` | no | On/off toggles for the provider settings popup in the model picker. Each toggle writes a value into the chat request. See the Venice `settings` in [`src/model/providers/builtins.ts`](src/model/providers/builtins.ts). The key `thinking` is reserved for the Thinking toggle. |
+| `settings` | no | On/off toggles for the provider settings popup in the model picker. Each toggle writes a value into the chat request. See the Venice `settings` in [`src/model/providers/builtins.ts`](src/model/providers/builtins.ts). The keys `thinking` and `tools` are reserved for the Thinking and Tools toggles. |
 | `thinking` | no | Set it when the server's models think. See [Thinking](#thinking). Checking **Supports thinking** writes `{}`; unchecking it removes the field. |
 
 The base URL rule:

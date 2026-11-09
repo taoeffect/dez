@@ -3,7 +3,7 @@ import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from
 import { Key } from 'webdriverio'
 import { anthropicChatBody, openAiChatBody } from './harness/chatBody'
 import { consoleErrors, pointerClick, resetConsoleErrors, screenshotOnFailure, waitForValue } from './harness/dom'
-import { conversationFilePath } from './harness/fixtures'
+import { conversationFilePath, makeConversation, seedConversation } from './harness/fixtures'
 import { startMockProviderApp, type MockProviderApp } from './harness/mockProviderApp'
 import { mockChatPath, replyText, sendAnthropicReply, sendChatReply, startEventStream, writeAnthropicEvent, writeChatFrame, type MockProvider } from './harness/mockServer'
 import type { E2EBrowser } from './harness/session'
@@ -17,7 +17,8 @@ import { activeTabId, activeTabStreaming, editorCaret, focusedArea, pickModel, s
 // prompt and tools, and a later request starts with the same bytes as the
 // one before it (the prompt cache). A relaunch reads the saved call back
 // from the conversation file. A Stop while the round after a call waits
-// keeps the call, and the next request sends it with its result.
+// keeps the call, and the next request sends it with its result. A long
+// result scrolls in its field under the wheel.
 //
 // One app session serves the whole file. The relaunch test reopens the tab
 // of the OpenAI test, so it runs right after it.
@@ -368,5 +369,41 @@ describe('tool calls', () => {
       { role: 'agent', text: replyText('go on') },
       { role: 'user', text: '' },
     ])
+  })
+
+  it('scrolls a result that is taller than its field under the wheel, not the doc', async () => {
+    // Text after the block makes the doc taller than the window, so a wheel
+    // that the field does not take would scroll the doc.
+    const result = Array.from({ length: 120 }, (_, index) => `result line ${index + 1}`).join('\n')
+    const after = Array.from({ length: 80 }, (_, index) => `after ${index + 1}`).join('\n')
+    await seedConversation(setup.app.home, makeConversation({
+      id: 'long-result',
+      title: 'Long result',
+      sections: [
+        { role: 'user', nodes: [{ kind: 'text', text: 'All models?' }] },
+        { role: 'agent', nodes: [{ kind: 'text', text: `${modelListBlock('call_long', 'x', result)}\n${after}` }] },
+      ],
+    }))
+    await sbpCall(browser, 'dez.model/tabs/openConversation', 'long-result')
+    await waitForValue(browser, 'chip of the long result', async () => (await toolChips()).length, 1)
+    await pointerClick(browser, '.cm-content .dez-tool-call__chip')
+    await waitForValue(browser, 'long result in the panel', async () => (await toolPanel(0))?.result, result)
+
+    const scrollTops = async (): Promise<{ field: number, doc: number }> => browser.execute(() => ({
+      field: document.querySelector('.cm-content .dez-tool-call__result')?.scrollTop ?? -1,
+      doc: document.querySelector('.cm-scroller')?.scrollTop ?? -1,
+    }))
+    const field = await browser.execute(() => {
+      const box = document.querySelector('.cm-content .dez-tool-call__result')
+      if (!box) throw new Error('no result field')
+      box.scrollIntoView({ block: 'center' })
+      const rect = box.getBoundingClientRect()
+      return { x: Math.round(rect.left + rect.width / 2), y: Math.round(rect.top + rect.height / 2) }
+    })
+    const before = await scrollTops()
+    expect(before.field).toBe(0)
+    await browser.action('wheel').scroll({ x: field.x, y: field.y, deltaY: 300 }).perform()
+    await waitForValue(browser, 'result field scrolled', async () => (await scrollTops()).field > 0, true)
+    expect((await scrollTops()).doc).toBe(before.doc)
   })
 })

@@ -1473,7 +1473,6 @@ export const dezTheme = EditorView.theme({
     flexWrap: 'wrap',
   },
   '.dez-role-separator__thinking': {
-    display: 'grid',
     flex: '1 0 100%',
     minWidth: '0',
     maxHeight: '20em',
@@ -1494,6 +1493,13 @@ export const dezTheme = EditorView.theme({
   },
   '.dez-role-separator__thinking:focus-within': {
     borderColor: 'var(--color-link, #4a9eff)',
+  },
+  // Both panels are a grid for the mirror path. This rule must come before
+  // the `@supports` block below, which makes them blocks: a later rule of
+  // the same weight would put the grid back, and the result would get the
+  // wrong `field-sizing` height and could not scroll.
+  '.dez-role-separator__thinking, .dez-tool-call__result': {
+    display: 'grid',
   },
   // CM's `hideNativeSelection` paints the native selection of a focused
   // field in the editor with the OS `Highlight` color, `!important`. In
@@ -1850,7 +1856,7 @@ export const dezTheme = EditorView.theme({
     alignItems: 'flex-start',
     boxSizing: 'border-box',
     width: '100%',
-    padding: editorSize(2, 0),
+    padding: editorSize(5, 0),
     verticalAlign: 'top',
     fontFamily: UI_FONT_FAMILY,
     lineHeight: '1.5',
@@ -1966,7 +1972,6 @@ export const dezTheme = EditorView.theme({
     overflowWrap: 'anywhere',
   },
   '.dez-tool-call__result': {
-    display: 'grid',
     alignSelf: 'stretch',
     minWidth: '0',
     maxHeight: '24em',
