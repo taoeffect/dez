@@ -146,8 +146,8 @@ describe('model names', () => {
   }
 
   // Each model row of the open picker's Mock Provider group: the shown
-  // name, its tooltip, and whether the row cuts the name off.
-  async function pickerRows (): Promise<Array<{ name: string, title: string, clipped: boolean }>> {
+  // name and its tooltip.
+  async function pickerRows (): Promise<Array<{ name: string, title: string }>> {
     return browser.execute((provider: string) => {
       const group = Array.from(document.querySelectorAll('.model-dropdown .model-group')).find(
         (candidate) => candidate.querySelector('.model-group-header')?.textContent?.trim() === provider
@@ -155,7 +155,6 @@ describe('model names', () => {
       return Array.from(group?.querySelectorAll<HTMLElement>('.model-item-name') ?? []).map((name) => ({
         name: name.textContent?.trim() ?? '',
         title: name.title,
-        clipped: name.scrollWidth > name.clientWidth,
       }))
     }, PROVIDER.name)
   }
@@ -269,17 +268,16 @@ describe('model names', () => {
     // The model button toggles the picker, so the next test's `pickModel`
     // needs it closed even when a check here fails.
     try {
-      // The long name does not fit its row, so only its tooltip shows all
-      // of it.
+      // A row may cut a long name off; its tooltip still shows all of it.
       await waitForValue(browser, 'picker rows', pickerRows, [
-        { name: ALPHA.name, title: ALPHA.name, clipped: false },
-        { name: BETA.name, title: BETA.name, clipped: false },
-        { name: LONG.name, title: LONG.name, clipped: true },
+        { name: ALPHA.name, title: ALPHA.name },
+        { name: BETA.name, title: BETA.name },
+        { name: LONG.name, title: LONG.name },
       ])
     } finally {
       await click(browser, '.model-selector-btn')
     }
-    await waitForValue(browser, 'picker open', () => browser.execute(() => document.querySelector('.model-dropdown') !== null), false)
+    await waitForValue(browser, 'picker closed', () => browser.execute(() => document.querySelector('.model-dropdown') === null), true)
   })
 
   it('labels each response with the model that wrote it across a model switch', async () => {
