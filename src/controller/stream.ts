@@ -69,6 +69,11 @@ interface ReplyRuntime {
   // The request of the current round; a stop cancels it.
   requestId: string
   cancelling: boolean
+  // A submit ended the reply's output (`dez.stream/endOutput`): the later
+  // tokens and thinking of its request are dropped, as the new request
+  // already holds the section. A stop keeps them, so this is not
+  // `cancelling`.
+  outputEnded: boolean
   toolRun: ToolRun | null
   // Model text never forms a block (toolBlocks.ts). A tag can be split
   // across tokens, so the escaper holds such an end back until the next
@@ -230,7 +235,7 @@ export default sbp('sbp/selectors/register', {
       if (repliesByTab.get(args.tabId) === previousReply) repliesByTab.delete(args.tabId)
     }
 
-    const reply: ReplyRuntime = { sectionId: args.sectionId, requestId: '', cancelling: false, toolRun: null, escaper: new ModelTextEscaper() }
+    const reply: ReplyRuntime = { sectionId: args.sectionId, requestId: '', cancelling: false, outputEnded: false, toolRun: null, escaper: new ModelTextEscaper() }
     repliesByTab.set(args.tabId, reply)
     const replyIsCurrent = () => repliesByTab.get(args.tabId) === reply && !reply.cancelling
 
@@ -263,7 +268,7 @@ export default sbp('sbp/selectors/register', {
       for (let toolRounds = 0; ; toolRounds++) {
         const requestId = crypto.randomUUID()
         reply.requestId = requestId
-        const roundIsCurrent = () => repliesByTab.get(args.tabId) === reply && reply.requestId === requestId
+        const roundIsCurrent = () => repliesByTab.get(args.tabId) === reply && reply.requestId === requestId && !reply.outputEnded
         const roundAfterToolCall = afterToolCall
         const result = await sbp('dez.provider/streamChat', {
           providerId: args.model.providerId,
@@ -345,12 +350,14 @@ export default sbp('sbp/selectors/register', {
   // and the answer text that the escaper holds is written. These writes
   // must come before the new section is in the store: the editor gets it
   // only in Vue's next watcher flush, and a doc change before then writes
-  // the editor's sections back to the store, with no new section. True
-  // when it wrote text, which the messages must then hold.
+  // the editor's sections back to the store, with no new section. Output of
+  // the request after this is dropped. True when it wrote text, which the
+  // messages must then hold.
   'dez.stream/endOutput' (tabId: string): boolean {
     const reply = repliesByTab.get(tabId)
     if (!reply) return false
     reply.cancelling = true
+    reply.outputEnded = true
     const wroteBlocks = stopToolRun(tabId, reply)
     const wroteText = flushModelText(tabId, reply)
     return wroteBlocks || wroteText

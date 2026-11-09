@@ -31,6 +31,9 @@ let toasts: Array<{ area: string, data: ToastData }> = []
 let alerts: { tabId: string, status: string }[] = []
 // What the `model_list` tool reads as the provider list. Set by each test.
 let providerInfos: () => Promise<ProviderInfo[]>
+// Runs while `dez.http/cancelStream` cancels a request, as the late output
+// of that request does. Set by a test.
+let cancelStream: () => Promise<void>
 let consoleError: MockInstance<typeof console.error>
 
 // Stand-ins for the provider, the editor and the disk. The editor stub
@@ -60,7 +63,9 @@ sbp('sbp/selectors/register', {
     return false
   },
   'dez.editor/reconcileAfterStreamFinish' (): void {},
-  async 'dez.http/cancelStream' (): Promise<void> {},
+  async 'dez.http/cancelStream' (): Promise<void> {
+    await cancelStream()
+  },
   async 'dez.persistence/saveConversation' (data: ConversationData): Promise<void> {
     savedConversations.push(structuredClone(data))
   },
@@ -106,6 +111,7 @@ beforeEach(() => {
   toasts = []
   alerts = []
   providerInfos = async () => []
+  cancelStream = async () => {}
   consoleError = vi.spyOn(console, 'error').mockImplementation(() => {})
   // `dez.stream/start` names the provider in the system prompt, so the stub
   // model's provider must exist.
@@ -603,6 +609,46 @@ describe('dez.stream/start tool loop', () => {
     expect(requests).toHaveLength(2)
     expect(sent[1].at(-1)).toStrictEqual({ role: 'agent', content: 'Is a <' })
     expect(sectionVisibleText(agentSection())).toBe('Is a <')
+    const stored = (sbp('dez.model/streamMessagesForTab', tabId, model) as RequestMessages).messages
+    expect(stored.slice(0, sent[1].length)).toStrictEqual(sent[1])
+  })
+
+  // `dez.http/cancelStream` closes the byte stream at once, and the parser
+  // then gives the text that it still held while the new start waits for
+  // the cancel. The new request already holds the old section, so that
+  // output must not reach it, and the flushed escaper must not let a split
+  // tag through.
+  it('drops the output of the old request that comes after a new submit in the tab ended the reply', async () => {
+    const tabId = activeTab().id
+    sbp('dez.model/setActiveModel', model.providerId, model.modelId, model.modelName)
+    replyRounds([
+      async (input) => {
+        await input.onThinking('Plan.')
+        await input.onToken('See <dez')
+        cancelStream = async () => {
+          await input.onToken(':tool id="x" name="y">')
+          await input.onThinking(' Late.')
+        }
+        await sbp('dez.controller/submitTab', tabId)
+        throw new Error('cancelled')
+      },
+      async (input) => {
+        await input.onToken('Answer.')
+        return { requestId: input.requestId as string }
+      },
+    ])
+
+    await startStream()
+
+    expect(requests).toHaveLength(2)
+    expect(sectionTexts()).toStrictEqual([
+      { role: 'user', text: 'Hi' },
+      { role: 'agent', text: 'See <dez' },
+      { role: 'agent', text: 'Answer.' },
+      { role: 'user', text: '' },
+    ])
+    expect(agentSection().thinking).toStrictEqual({ text: 'Plan.' })
+    expect(editorTokens.join('')).toBe('See <dezAnswer.')
     const stored = (sbp('dez.model/streamMessagesForTab', tabId, model) as RequestMessages).messages
     expect(stored.slice(0, sent[1].length)).toStrictEqual(sent[1])
   })
