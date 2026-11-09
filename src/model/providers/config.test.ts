@@ -127,7 +127,7 @@ describe('provider config schema', () => {
     const fields = {
       models: [{ id: 'm', imageInput: false, toolCalling: false }],
       modelImageInput: { path: 'architecture.input_modalities' },
-      modelToolCalling: { path: 'supported_parameters' },
+      modelToolCalling: { path: 'supported_parameters', missing: false },
       imageRequestHeaders: { 'X-Vision': 'true' },
     }
 
@@ -135,6 +135,7 @@ describe('provider config schema', () => {
     expect(parse({ modelImageInput: { path: 'architecture..input_modalities' } }).success).toBe(false)
     expect(parse({ modelImageInput: { path: '' } }).success).toBe(false)
     expect(parse({ modelToolCalling: { path: 'capabilities.' } }).success).toBe(false)
+    expect(parse({ modelToolCalling: { path: 'tools', missing: 'no' } }).success).toBe(false)
     expect(parse({ models: [{ id: 'm', imageInput: 'yes' }] }).success).toBe(false)
     expect(parse({ models: [{ id: 'm', toolCalling: 1 }] }).success).toBe(false)
     expect(parse({ imageRequestHeaders: { 'Bad Name': 'true' } }).success).toBe(false)

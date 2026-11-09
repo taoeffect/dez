@@ -138,13 +138,16 @@ const thinkingConfigSchema = z.object({
 // Where a `/models` entry says whether the model has a capability, as a dot
 // path such as 'architecture.input_modalities'. A boolean there is the flag;
 // a list means "has it" when it holds the capability's list value ("image"
-// for `modelImageInput`, "tools" for `modelToolCalling`); anything else, or
-// no value, is unknown (modelParsing.ts).
+// for `modelImageInput`, "tools" for `modelToolCalling`); anything else is
+// unknown (modelParsing.ts). `missing` is the flag of an entry with no value
+// at the path, for a server that leaves out a capability the model lacks;
+// without it, no value is unknown.
 const modelCapabilityPathSchema = z.object({
   path: z.string().refine(
     (path) => path.split('.').every((segment) => segment.length > 0),
     'Model capability path must be dot-separated names, none empty',
   ),
+  missing: z.boolean().optional(),
 })
 
 // The whole definition of a provider. Built-ins are literals of this type and
@@ -222,4 +225,5 @@ export type ApiFormatId = (typeof API_FORMAT_IDS)[number]
 export type ProviderSettingDef = z.infer<typeof providerSettingDefSchema>
 export type ProviderConfig = z.infer<typeof providerConfigSchema>
 export type ProviderThinkingConfig = z.infer<typeof thinkingConfigSchema>
+export type ModelCapabilityPath = z.infer<typeof modelCapabilityPathSchema>
 export type ProviderAuth = ProviderConfig['auth']

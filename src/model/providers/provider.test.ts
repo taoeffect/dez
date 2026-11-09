@@ -930,6 +930,24 @@ describe('provider models', () => {
     ])
   })
 
+  it.each(capabilities)('gives $flag the config\'s `missing` flag only when the entry has no value at the path', ({ pathField, flag, listValue }) => {
+    const flags = (missing: boolean) => customProvider({ [pathField]: { path: 'caps.input', missing } })
+      .parseModels({
+        data: [
+          { id: 'missing', caps: {} },
+          { id: 'no-caps' },
+          { id: 'not-object', caps: listValue },
+          { id: 'reported', caps: { input: !missing } },
+          { id: 'list', caps: { input: [listValue] } },
+          { id: 'null', caps: { input: null } },
+        ],
+      })
+      .map((model) => model[flag])
+
+    expect(flags(false)).toEqual([false, false, false, true, true, undefined])
+    expect(flags(true)).toEqual([true, true, true, false, true, undefined])
+  })
+
   it('reads no capability flag when the config has no path', () => {
     const entry = {
       id: 'm',
@@ -988,10 +1006,11 @@ describe('provider models', () => {
       { id: 'o1', architecture: { input_modalities: ['text', 'image', 'file'] }, supported_parameters: ['max_tokens', 'tool_choice', 'tools'] },
       { id: 'o2', architecture: { input_modalities: ['text'] }, supported_parameters: ['max_tokens', 'temperature'] },
     ])).toEqual([[true, true], [false, false]])
+    // As in VS Code, a Copilot model without `tool_calls` cannot call tools.
     expect(flags('copilot', [
       { id: 'c1', capabilities: { supports: { vision: true, tool_calls: true, streaming: true } } },
       { id: 'c2', capabilities: { supports: { streaming: true } } },
-    ])).toEqual([[true, true], [undefined, undefined]])
+    ])).toEqual([[true, true], [undefined, false]])
   })
 
   it('builds no model-list request when fetchModels is off', () => {

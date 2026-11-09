@@ -174,9 +174,11 @@ export const BUILT_IN_PROVIDER_CONFIGS: readonly ProviderConfig[] = [
     // VS Code's Copilot Chat (microsoft/vscode, extensions/copilot) reads the
     // same flags. It sends the same header on requests with images, and it
     // sends no `tools` to a model without `tool_calls`
-    // (src/platform/endpoint/node/chatEndpoint.ts).
+    // (src/platform/endpoint/node/chatEndpoint.ts). `missing: false` does the
+    // same here: some models in the list, such as the embedding models, have
+    // no `tool_calls` flag.
     modelImageInput: { path: 'capabilities.supports.vision' },
-    modelToolCalling: { path: 'capabilities.supports.tool_calls' },
+    modelToolCalling: { path: 'capabilities.supports.tool_calls', missing: false },
     auth: 'githubCopilot',
     // The Copilot API expects the headers of a supported editor integration.
     headers: {

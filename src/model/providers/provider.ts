@@ -88,8 +88,6 @@ export class Provider {
   // `modelToolCalling` point.
   parseModels(data: unknown): ModelInfo[] {
     const models: ModelInfo[] = []
-    const imageInputPath = this.config.modelImageInput?.path
-    const toolCallingPath = this.config.modelToolCalling?.path
 
     for (const model of modelData(data)) {
       if (typeof model.id !== 'string' || model.id.length === 0) continue
@@ -97,8 +95,8 @@ export class Provider {
       const name = [model.name, model.display_name]
         .find((value): value is string => typeof value === 'string' && value.trim().length > 0)
       models.push(providerModel(this.id, model.id, name?.trim() ?? model.id, {
-        imageInput: modelCapability(model, imageInputPath, 'image'),
-        toolCalling: modelCapability(model, toolCallingPath, 'tools'),
+        imageInput: modelCapability(model, this.config.modelImageInput, 'image'),
+        toolCalling: modelCapability(model, this.config.modelToolCalling, 'tools'),
       }))
     }
 
