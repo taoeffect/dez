@@ -343,6 +343,16 @@ function toolCallRemovalRange(doc: Text, { from, to }: DocRange): DocRange {
   return { from, to }
 }
 
+/** Whether deleting the doc range `from`–`to` would join a chip's first or
+ *  last line to text on one line, so that the block would show as its
+ *  source. A section merge (`ThreadEditor.vue`) keeps a line break there. */
+export function joinsToolCallLine(state: EditorState, from: number, to: number): boolean {
+  const { doc } = state
+  const textBefore = doc.lineAt(from).from < from
+  const textAfter = to < doc.lineAt(to).to
+  return renderedToolCalls(state).some((call) => (call.to === from && textAfter) || (call.from === to && textBefore))
+}
+
 function deleteToolCall(view: EditorView, forward: boolean): boolean {
   const { doc, selection } = view.state
   if (selection.ranges.length !== 1 || !selection.main.empty) return false
@@ -350,28 +360,45 @@ function deleteToolCall(view: EditorView, forward: boolean): boolean {
   // On an empty line, CM's own key only takes that line away, and the block
   // keeps its own lines.
   const besideLineWithText = doc.lineAt(caret).length > 0
-  const call = renderedToolCalls(view.state).find((call) => forward
+  const calls = renderedToolCalls(view.state)
+  const call = calls.find((call) => forward
     ? call.from === caret || (besideLineWithText && call.from === caret + 1 && doc.sliceString(caret, call.from) === '\n')
     : call.to === caret || (besideLineWithText && call.to === caret - 1 && doc.sliceString(call.to, caret) === '\n'))
-  if (!call) return false
-  view.dispatch({
-    changes: toolCallRemovalRange(doc, call),
-    scrollIntoView: true,
-    userEvent: forward ? 'delete.forward' : 'delete.backward',
-  })
+  if (call) {
+    view.dispatch({
+      changes: toolCallRemovalRange(doc, call),
+      scrollIntoView: true,
+      userEvent: forward ? 'delete.forward' : 'delete.backward',
+    })
+    return true
+  }
+  // Backspace at a chip's start, or Delete at its end: CM's own key would
+  // delete the line break there and join the block's line to the text
+  // beside it. The caret goes over the line break instead, as it goes over
+  // a prompt pill. An empty line there goes away under CM's own key, and a
+  // separator line is the section merge's.
+  const across = forward ? caret + 1 : caret - 1
+  if (across < 0 || across > doc.length || !calls.some((other) => (forward ? other.to : other.from) === caret)) return false
+  const line = doc.lineAt(across)
+  if (line.length === 0 || line.text.includes(SECTION_SEP)) return false
+  view.dispatch({ selection: { anchor: across }, scrollIntoView: true, userEvent: 'select' })
   return true
 }
 
 /** Backspace with one caret right after a chip, or at the start of a line
  *  with text after it, deletes the whole block. CM's own Backspace would
  *  delete the line break at that line start, and so join the line's text to
- *  the block's closing line, which breaks the block into its source. */
+ *  the block's closing line, which breaks the block into its source. Right
+ *  before a chip, with text on the line above, it moves the caret to the end
+ *  of that line. */
 export function deleteToolCallBackward(view: EditorView): boolean {
   return deleteToolCall(view, false)
 }
 
 /** Delete with one caret right before a chip, or at the end of a line with
- *  text before it, deletes the whole block (see `deleteToolCallBackward`). */
+ *  text before it, deletes the whole block (see `deleteToolCallBackward`).
+ *  Right after a chip, with text on the line below, it moves the caret to
+ *  the start of that line. */
 export function deleteToolCallForward(view: EditorView): boolean {
   return deleteToolCall(view, true)
 }
@@ -379,9 +406,10 @@ export function deleteToolCallForward(view: EditorView): boolean {
 /** Tool call chips for the thread editor (`buildState()` in
  *  `ThreadEditor.vue`), with the panels of `openCalls` open. The Backspace
  *  and Delete rules (`deleteToolCallBackward`, `deleteToolCallForward`) are
- *  in its `sectionKeymap`, and find skips the hidden text (`protectedRanges`
- *  in `find.ts`). The CSS is in `dezTheme`. The state needs `sectionsField`
- *  and `streamingSectionField`. */
+ *  in its `sectionKeymap`, its section merges check `joinsToolCallLine`, and
+ *  find skips the hidden text (`protectedRanges` in `find.ts`). The CSS is
+ *  in `dezTheme`. The state needs `sectionsField` and
+ *  `streamingSectionField`. */
 export function markdownToolCalls(openCalls?: ReadonlySet<string>): Extension {
   return [
     toolCallDecorationsField,

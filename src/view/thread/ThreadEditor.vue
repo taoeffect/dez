@@ -49,7 +49,7 @@ import { measureTextSize } from './editorMeasure'
 import { findExtension, findMatchStatus, findNextMatch, findQueryField, selectMatchSpec, setFindQueryEffect } from '../editor/find'
 import { markdownTables } from '../editor/tables'
 import { deleteImageBang, deleteImageParen, markdownImages } from '../editor/images'
-import { deleteToolCallBackward, deleteToolCallForward, markdownToolCalls, openToolCalls } from '../editor/toolCalls'
+import { deleteToolCallBackward, deleteToolCallForward, joinsToolCallLine, markdownToolCalls, openToolCalls } from '../editor/toolCalls'
 import { imagePasteAndDrop } from '../editor/imageInsert'
 import { markdownLinks } from '../editor/links'
 import { focusKeepingScrollOnMouseDown } from '../editor/focus'
@@ -260,9 +260,12 @@ function mergeWithPreviousSection(v: EditorView): boolean {
   const target = lastEditableLineOfPreviousSection(state, currentLine.number)
   if (!target) return false
   const removeIndex = sectionIndexAtPos(state.doc.toString(), currentLine.from)
+  // A tool call chip at the join keeps its own line. The caret stays before
+  // the text that it was before.
+  const lineBreak = joinsToolCallLine(state, target.to, currentLine.from) ? '\n' : ''
   v.dispatch({
-    changes: { from: target.to, to: currentLine.from, insert: '' },
-    selection: { anchor: target.to },
+    changes: { from: target.to, to: currentLine.from, insert: lineBreak },
+    selection: { anchor: target.to + lineBreak.length },
     effects: mergeSectionEffect.of({ removeIndex }),
     scrollIntoView: true,
     userEvent: 'delete.backward',
@@ -282,8 +285,9 @@ function mergeWithNextSection(v: EditorView): boolean {
   const target = firstEditableLineOfNextSection(state, currentLine.number)
   if (!target) return false
   const removeIndex = sectionIndexAtPos(state.doc.toString(), target.from)
+  // A tool call chip at the join keeps its own line.
   v.dispatch({
-    changes: { from: currentLine.to, to: target.from, insert: '' },
+    changes: { from: currentLine.to, to: target.from, insert: joinsToolCallLine(state, currentLine.to, target.from) ? '\n' : '' },
     selection: { anchor: currentLine.to },
     effects: mergeSectionEffect.of({ removeIndex }),
     scrollIntoView: true,

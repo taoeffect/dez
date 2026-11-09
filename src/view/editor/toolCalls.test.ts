@@ -6,7 +6,7 @@ import type { Role } from '../../model/chat/types'
 import { toolBlockText, type ToolBlockStatus } from '../../model/chat/toolBlocks'
 import { PILL_OPEN, SECTION_SEP, sectionsField, setSectionThinkingEffect } from '../thread/cmEditor'
 import { setStreamingSectionEffect, streamingSectionField } from '../thread/modelChip'
-import { deleteToolCallBackward, deleteToolCallForward, markdownToolCalls, renderedToolCalls, toolCallSummary } from './toolCalls'
+import { deleteToolCallBackward, deleteToolCallForward, joinsToolCallLine, markdownToolCalls, renderedToolCalls, toolCallSummary } from './toolCalls'
 
 function block(id: string, status: ToolBlockStatus = 'success', result = 'ok'): string {
   return toolBlockText({ id, name: 'model_list', status, arguments: { filter: 'gemini' }, result: status === 'running' ? '' : result })
@@ -137,30 +137,57 @@ describe('deleteToolCallBackward and deleteToolCallForward', () => {
     }
   })
 
+  it('move the caret over the line break on the chip\'s other side', () => {
+    const cases: [number, (view: EditorView) => boolean, number][] = [
+      [from, deleteToolCallBackward, from - 1],
+      [to, deleteToolCallForward, to + 1],
+    ]
+    for (const [caret, command, moved] of cases) {
+      const { handled, state } = runCommand(createState(texts, ['user', 'agent'], { carets: [caret] }), command)
+      expect(handled).toBe(true)
+      expect(state.doc.toString()).toBe(doc)
+      expect(state.selection.main.head).toBe(moved)
+    }
+  })
+
   it('leave other carets to the next key rule', () => {
     const cases: [number[], (view: EditorView) => boolean][] = [
       [[to + 2], deleteToolCallBackward],
-      [[from], deleteToolCallBackward],
       [[from - 2], deleteToolCallForward],
-      [[to], deleteToolCallForward],
       [[to, 1], deleteToolCallBackward],
+      [[from, 1], deleteToolCallBackward],
     ]
     for (const [carets, command] of cases) {
       const { handled, state } = runCommand(createState(texts, ['user', 'agent'], { carets }), command)
       expect(handled).toBe(false)
       expect(state.doc.toString()).toBe(doc)
     }
-    const user = createState(texts, ['user', 'user'], { carets: [to] })
-    expect(runCommand(user, deleteToolCallBackward).handled).toBe(false)
+    for (const caret of [from, to]) {
+      expect(runCommand(createState(texts, ['user', 'user'], { carets: [caret] }), deleteToolCallBackward).handled).toBe(false)
+    }
   })
 
-  it('leave a caret on an empty line beside the chip to the next key rule', () => {
+  it('leave an empty line beside the chip to the next key rule', () => {
     const spaced = ['ask', ['before', '', call, '', 'after'].join('\n')]
     const spacedDoc = joinSections(spaced)
     const callFrom = spacedDoc.indexOf(call)
     const callTo = callFrom + call.length
-    expect(runCommand(createState(spaced, ['user', 'agent'], { carets: [callTo + 1] }), deleteToolCallBackward).handled).toBe(false)
-    expect(runCommand(createState(spaced, ['user', 'agent'], { carets: [callFrom - 1] }), deleteToolCallForward).handled).toBe(false)
+    const cases: [number, (view: EditorView) => boolean][] = [
+      [callTo + 1, deleteToolCallBackward],
+      [callFrom - 1, deleteToolCallForward],
+      [callFrom, deleteToolCallBackward],
+      [callTo, deleteToolCallForward],
+    ]
+    for (const [caret, command] of cases) {
+      expect(runCommand(createState(spaced, ['user', 'agent'], { carets: [caret] }), command).handled).toBe(false)
+    }
+  })
+
+  it('leave a separator beside the chip to the section merge', () => {
+    const start = joinSections(['ask', '']).length
+    const state = (caret: number) => createState(['ask', call, 'next'], ['user', 'agent', 'user'], { carets: [caret] })
+    expect(runCommand(state(start), deleteToolCallBackward).handled).toBe(false)
+    expect(runCommand(state(start + call.length), deleteToolCallForward).handled).toBe(false)
   })
 
   it('take the line break before a block at the end of its section', () => {
@@ -181,6 +208,27 @@ describe('deleteToolCallBackward and deleteToolCallForward', () => {
     expect(undo({ state, dispatch: (tr) => { restored = tr.state } })).toBe(true)
     expect(restored.doc.toString()).toBe(doc)
     expect(shown(restored).map(([id]) => id)).toEqual(['a'])
+  })
+})
+
+describe('joinsToolCallLine', () => {
+  const call = block('a')
+
+  /** Whether a merge of section `index` into the section before it, which
+   *  deletes the separator line and its line breaks, joins a chip line to
+   *  text. */
+  function mergeJoins(texts: string[], roles: Role[], index: number): boolean {
+    const separator = joinSections(texts.slice(0, index)).length + 1
+    return joinsToolCallLine(createState(texts, roles), separator - 1, separator + SECTION_SEP.length + 1)
+  }
+
+  it('tells whether a section merge would put a chip line on one line with text', () => {
+    expect(mergeJoins(['ask', `before\n${call}`, 'next'], ['user', 'agent', 'user'], 2)).toBe(true)
+    expect(mergeJoins(['ask', `before\n${call}`, 'next'], ['user', 'agent', 'user'], 1)).toBe(false)
+    expect(mergeJoins(['ask', 'text', call], ['user', 'agent', 'agent'], 2)).toBe(true)
+    expect(mergeJoins(['ask', call, ''], ['user', 'agent', 'user'], 2)).toBe(false)
+    expect(mergeJoins(['ask', '', call], ['user', 'agent', 'agent'], 2)).toBe(false)
+    expect(mergeJoins(['ask', call, 'next'], ['user', 'user', 'user'], 2)).toBe(false)
   })
 })
 

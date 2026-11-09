@@ -7,7 +7,7 @@ import { conversationFilePath, makeConversation, seedConversation } from './harn
 import { startMockProviderApp, type MockProviderApp } from './harness/mockProviderApp'
 import { mockChatPath, replyText, sendAnthropicReply, sendChatReply, startEventStream, writeAnthropicEvent, writeChatFrame, type MockProvider } from './harness/mockServer'
 import type { E2EBrowser } from './harness/session'
-import { activeTabId, activeTabStreaming, editorCaret, focusedArea, pickModel, sbpCall, submit, threadSections, waitForThread, type ThreadSection } from './harness/thread'
+import { activeTabId, activeTabStreaming, docPos, editorCaret, editorDoc, focusEditor, focusedArea, pickModel, sbpCall, setCaret, submit, threadSections, waitForThread, type ThreadSection } from './harness/thread'
 
 // Tool calls, driven through the real app against a mock server in this
 // process: a model of each API format calls the `model_list` tool, the app
@@ -18,7 +18,8 @@ import { activeTabId, activeTabStreaming, editorCaret, focusedArea, pickModel, s
 // one before it (the prompt cache). A relaunch reads the saved call back
 // from the conversation file. A Stop while the round after a call waits
 // keeps the call, and the next request sends it with its result. A long
-// result scrolls in its field under the wheel.
+// result scrolls in its field under the wheel. Backspace and Delete next to
+// a chip never join its block to other text.
 //
 // One app session serves the whole file. The relaunch test reopens the tab
 // of the OpenAI test, so it runs right after it.
@@ -405,5 +406,62 @@ describe('tool calls', () => {
     await browser.action('wheel').scroll({ x: field.x, y: field.y, deltaY: 300 }).perform()
     await waitForValue(browser, 'result field scrolled', async () => (await scrollTops()).field > 0, true)
     expect((await scrollTops()).doc).toBe(before.doc)
+  })
+
+  it('keeps each chip on its own lines under Backspace before it, Delete after it, and section merges', async () => {
+    const first = modelListBlock('call_keys_a', 'a', 'one')
+    const ending = modelListBlock('call_keys_b', 'b', 'two')
+    const alone = modelListBlock('call_keys_c', 'c', 'three')
+    const reply = `before\n${first}\nafter\n${ending}`
+    await seedConversation(setup.app.home, makeConversation({
+      id: 'chip-keys',
+      title: 'Chip keys',
+      sections: [
+        { role: 'user', nodes: [{ kind: 'text', text: 'Ask' }] },
+        { role: 'agent', nodes: [{ kind: 'text', text: reply }] },
+        { role: 'user', nodes: [{ kind: 'text', text: 'next' }] },
+        { role: 'agent', nodes: [{ kind: 'text', text: alone }] },
+        { role: 'user', nodes: [{ kind: 'text', text: 'last' }] },
+      ],
+    }))
+    await sbpCall(browser, 'dez.model/tabs/openConversation', 'chip-keys')
+    await waitForValue(browser, 'chips', async () => (await toolChips()).length, 3)
+    const doc = await editorDoc(browser)
+    const docAndCaret = async (): Promise<{ doc: string, caret: number }> => ({ doc: await editorDoc(browser), caret: await editorCaret(browser) })
+    const from = await docPos(browser, first)
+    const to = from + first.length
+    await focusEditor(browser)
+
+    // ArrowLeft from after the chip puts the caret at its start. Backspace
+    // there and Delete at the chip end go over the line break.
+    await setCaret(browser, to)
+    await browser.keys(Key.ArrowLeft)
+    await waitForValue(browser, 'caret after ArrowLeft', docAndCaret, { doc, caret: from })
+    await browser.keys(Key.Backspace)
+    await waitForValue(browser, 'after Backspace at the chip start', docAndCaret, { doc, caret: from - 1 })
+    await setCaret(browser, to)
+    await browser.keys(Key.Delete)
+    await waitForValue(browser, 'after Delete at the chip end', docAndCaret, { doc, caret: to + 1 })
+
+    // Section merges keep a line break at the chip.
+    await setCaret(browser, await docPos(browser, 'next'))
+    await browser.keys(Key.Backspace)
+    await waitForValue(browser, 'sections after Backspace at the next section', () => threadSections(browser), [
+      { role: 'user', text: 'Ask' },
+      { role: 'agent', text: `${reply}\nnext` },
+      { role: 'agent', text: alone },
+      { role: 'user', text: 'last' },
+    ])
+    expect(await editorCaret(browser)).toBe(await docPos(browser, 'next'))
+    const aloneTo = (await docPos(browser, alone)) + alone.length
+    await setCaret(browser, aloneTo)
+    await browser.keys(Key.Delete)
+    await waitForValue(browser, 'sections after Delete at the chip end', () => threadSections(browser), [
+      { role: 'user', text: 'Ask' },
+      { role: 'agent', text: `${reply}\nnext` },
+      { role: 'agent', text: `${alone}\nlast` },
+    ])
+    expect(await editorCaret(browser)).toBe(aloneTo)
+    expect((await toolChips()).length).toBe(3)
   })
 })
