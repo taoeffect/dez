@@ -263,7 +263,7 @@ function onOverlayClick(e: MouseEvent) {
                   <svg class="update-status-check" width="14" height="14" viewBox="0 0 14 14" fill="none" aria-hidden="true">
                     <path d="M2.5 7.5l3 3 6-7" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/>
                   </svg>
-                  You're up-to-date
+                  You're up to date
                 </template>
                 <!-- `available` always has a release (dez.model/updates/setReleases). -->
                 <template v-else-if="updates.status === 'available'">
