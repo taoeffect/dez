@@ -18,9 +18,9 @@ export const MODEL_LIST_TOOL: ToolDefinition = {
       type: 'string',
       description: 'Words that select models, as in the Dez model picker. '
         + 'A model matches when every word matches, in any word order. '
-        + 'A word matches when its letters and digits occur in the same order in the text '
-        + '"provider name, provider id, model name, model id": a substring matches, '
-        + 'and so does "gem3pro" for "gemini-3-pro". Case and punctuation do not count. '
+        + 'A word matches when it is part of the provider name, the provider id, the model name, or the model id, '
+        + 'or when it is made of the starts of consecutive words of one of them: "gem3pro" matches "gemini-3-pro". '
+        + 'To match two of them, use two words, as in "venice claude". Case and punctuation do not count. '
         + 'Leave it out to list every model.',
       required: false,
     },

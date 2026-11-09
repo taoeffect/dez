@@ -51,20 +51,39 @@ describe('modelMatches', () => {
     expect(modelMatches(ACME, mini, searchTerms('mini max'))).toBe(false)
   })
 
-  it('matches a term whose characters occur in order, with others between', () => {
-    expect(modelMatches(ACME, mini, ['gp4'])).toBe(true)
-    expect(modelMatches(ACME, mini, ['4pg'])).toBe(false)
-  })
-
-  it('reads the provider and model names and ids as one text', () => {
-    // `acmecloud` spans the two words of the provider name; `cloudgpt`
-    // spans the provider name and the model name.
-    expect(modelMatches(ACME, mini, ['acmecloud'])).toBe(true)
-    expect(modelMatches(ACME, mini, ['cloudgpt'])).toBe(true)
+  it('matches a term that is a substring of one field', () => {
+    expect(modelMatches(ACME, mini, ['ini'])).toBe(true)
+    expect(modelMatches(ACME, mini, ['me'])).toBe(true)
     // The provider id and the model id count too: `3` is only in the
     // provider id `c3`, and `meta` only in the model id.
     expect(modelMatches(providerInfo('c3', 'Cobalt'), { id: 'one', name: 'One', provider: 'c3' }, ['c3'])).toBe(true)
     expect(modelMatches(BETA, BETA_MODELS[0], ['meta'])).toBe(true)
+  })
+
+  it('matches a term made of the starts of consecutive words of one field', () => {
+    expect(modelMatches(ACME, mini, ['acmecloud'])).toBe(true)
+    expect(modelMatches(ACME, mini, ['gpt4omini'])).toBe(true)
+    expect(modelMatches(ACME, mini, ['gp4om'])).toBe(true)
+    expect(modelMatches(ACME, mini, ['4pg'])).toBe(false)
+  })
+
+  it('starts a word at a lower-to-upper case change and at a letter-digit change', () => {
+    const deepSeek = { id: 'deepseek-v3.1', name: 'DeepSeek V3.1', provider: ACME.id }
+    expect(modelMatches(ACME, deepSeek, ['dsv31'])).toBe(true)
+    const qwen = { id: 'qwen3-coder', name: 'Qwen3 Coder', provider: ACME.id }
+    expect(modelMatches(ACME, qwen, ['q3c'])).toBe(true)
+  })
+
+  it('never lets a term skip a word or span two fields', () => {
+    // `g4m` skips the `o` of `gpt-4o-mini`; `cloudgpt` spans the provider
+    // name and the model name.
+    expect(modelMatches(ACME, mini, ['g4m'])).toBe(false)
+    expect(modelMatches(ACME, mini, ['cloudgpt'])).toBe(false)
+    // Junk that looser rules give on a real model list.
+    expect(modelMatches(ACME, { id: 'pareto-code-router', name: 'Pareto Code Router', provider: ACME.id }, ['pro'])).toBe(false)
+    const openRouter = providerInfo('openrouter', 'OpenRouter')
+    const gpt5Mini = { id: 'openai/gpt-5-mini', name: 'OpenAI: GPT-5 Mini', provider: openRouter.id }
+    expect(modelMatches(openRouter, gpt5Mini, ['gemini'])).toBe(false)
   })
 
   it('ignores case and punctuation in the query and the fields', () => {

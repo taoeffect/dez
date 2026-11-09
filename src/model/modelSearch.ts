@@ -16,14 +16,32 @@ function normalizeSearchText(value: string): string {
   return value.toLowerCase().replace(/[^a-z0-9]+/g, ' ').trim()
 }
 
-// True when the characters of `term` occur in `text` in the same order,
-// with any characters between them: `gp4` is in `gpt 4o`.
-function includesInOrder(text: string, term: string): boolean {
-  let termIndex = 0
-  for (let textIndex = 0; textIndex < text.length && termIndex < term.length; textIndex += 1) {
-    if (text[textIndex] === term[termIndex]) termIndex += 1
+// The lower-case words of a field. A word starts after a character other
+// than `A-Za-z0-9`, at a change from lower to upper case, and at a change
+// between letters and digits: `DeepSeek-V3.1` gives `deep seek v 3 1`, and
+// `gpt-4o` gives `gpt 4 o`. Capitals and the lower-case letters after them
+// stay one word (`GPTs`).
+function fieldWords(field: string): string[] {
+  return (field.match(/[a-z]+|[A-Z]+[a-z]*|[0-9]+/g) ?? []).map((word) => word.toLowerCase())
+}
+
+// True when `term` splits into pieces that each start a word, in
+// consecutive words: `gem3pro` in `gemini 3 pro`. `reached` holds the term
+// offsets that a match can be at when the next word starts; 0 is always one
+// of them, as a match can start at any word.
+function startsConsecutiveWords(words: readonly string[], term: string): boolean {
+  let reached = new Set([0])
+  for (const word of words) {
+    const next = new Set([0])
+    for (const offset of reached) {
+      for (let length = 1; length <= word.length && term[offset + length - 1] === word[length - 1]; length += 1) {
+        if (offset + length === term.length) return true
+        next.add(offset + length)
+      }
+    }
+    reached = next
   }
-  return termIndex === term.length
+  return false
 }
 
 /** The normalized words of a search query, in query order. A blank query
@@ -32,13 +50,21 @@ export function searchTerms(query: string): string[] {
   return normalizeSearchText(query).split(' ').filter(Boolean)
 }
 
-/** True when every term occurs, in order of its characters, in the text
- *  "provider name, provider id, model name, model id". The text is one
- *  string, so a term can start in one field and end in the next, and a
- *  substring is the simplest match. No terms match every model. */
+/** True when every term matches one of the fields "provider name, provider
+ *  id, model name, model id". A term matches a field when it is a substring
+ *  of the field (`mini` in `gpt-4o-mini`), or when it splits into pieces
+ *  that each start a word, in consecutive words of the field (`gpt4o` in
+ *  `gpt-4o`, `dsv4` in `DeepSeek V4`). No terms match every model.
+ *
+ *  This is the VS Code command palette rule with fixed limits: a term never
+ *  spans two fields, and its pieces never skip a word. Either one lets
+ *  short terms match long texts by chance: with skips, `pro` finds "Pareto
+ *  Code Router"; as letters in order over all fields, `gemini` finds GPT-5
+ *  Mini. The user types two words instead (`gpt mini`). */
 export function modelMatches(provider: ProviderInfo, model: ModelInfo, terms: readonly string[]): boolean {
-  const text = normalizeSearchText([provider.name, provider.id, model.name, model.id].join(' '))
-  return terms.every((term) => includesInOrder(text, term))
+  const fields = [provider.name, provider.id, model.name, model.id]
+  return terms.every((term) => fields.some((field) =>
+    normalizeSearchText(field).includes(term) || startsConsecutiveWords(fieldWords(field), term)))
 }
 
 /** The models that the user can pick, in model cache order: the cached
@@ -55,9 +81,8 @@ export function availableModels(cache: ModelCache, providers: readonly ProviderI
 
 /** The `models` (from `availableModels`) that match `terms`, grouped by
  *  provider in `providers` order, each group in `models` order. Providers
- *  with no match are left out. The provider's name and id lead the text
- *  that `modelMatches` reads, so terms that match a provider keep all its
- *  models. */
+ *  with no match are left out. `modelMatches` reads the provider's name and
+ *  id, so terms that match a provider keep all its models. */
 export function matchingModelsByProvider(
   providers: readonly ProviderInfo[],
   models: readonly ModelInfo[],
