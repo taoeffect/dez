@@ -58,7 +58,14 @@ const STALL_TIMEOUT: Duration = Duration::from_secs(60);
 // start and once at the end, so a 10 MB download sends about 40 messages.
 const PROGRESS_STEP_BYTES: u64 = 256 * 1024;
 
-const STALLED: &str = "The update download stopped: the server sent nothing for 60 seconds.";
+// Built from `STALL_TIMEOUT`, so the message follows any change to it.
+fn stalled() -> String {
+    format!(
+        "The update download stopped: the server sent nothing for {} seconds.",
+        STALL_TIMEOUT.as_secs()
+    )
+}
+
 const TOO_LARGE: &str = "The update download is larger than any Dez release.";
 
 /// Managed by Tauri; the webview never sees what it holds.
@@ -387,7 +394,7 @@ async fn fetch_verified(
         .header(reqwest::header::USER_AGENT, "dez-updater");
     let response = timeout(STALL_TIMEOUT, request.send())
         .await
-        .map_err(|_| STALLED.to_string())?
+        .map_err(|_| stalled())?
         .and_then(reqwest::Response::error_for_status)
         .map_err(|error| format!("The update download failed: {error}"))?;
     let total = response.content_length();
@@ -404,7 +411,7 @@ async fn fetch_verified(
     let (mut received, mut reported) = (0, 0);
     while let Some(chunk) = timeout(STALL_TIMEOUT, body.next())
         .await
-        .map_err(|_| STALLED.to_string())?
+        .map_err(|_| stalled())?
     {
         let chunk = chunk.map_err(|error| format!("The update download failed: {error}"))?;
         received += chunk.len() as u64;
