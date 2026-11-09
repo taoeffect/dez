@@ -7,7 +7,7 @@ import { conversationFilePath } from './harness/fixtures'
 import { startMockProviderApp } from './harness/mockProviderApp'
 import { startEventStream, writeChatFrame, type HeldRequest, type HoldingChatMock, type MockProvider } from './harness/mockServer'
 import type { E2EBrowser } from './harness/session'
-import { activeTabId, activeTabStreaming, editorDoc, openToasts, sbpCall, submit, threadSections } from './harness/thread'
+import { activeConversationId, activeTabId, activeTabStreaming, editorDoc, openToasts, sbpCall, submit, threadSections } from './harness/thread'
 
 // Errors of a chat request, driven through the real app against a mock
 // server in this process:
@@ -128,8 +128,7 @@ describe('stream errors', () => {
     await waitForValue(browser, 'editor doc', () => editorDoc(browser), 'who are you now?')
 
     // The save at the stream end writes only the user section.
-    const tab = await sbpCall(browser, 'dez.model/tab', await activeTabId(browser)) as { conversationId: string }
-    const file = conversationFilePath(app.home, tab.conversationId)
+    const file = conversationFilePath(app.home, await activeConversationId(browser))
     await waitForValue(browser, 'saved section markers', async () => {
       const text = await fs.promises.readFile(file, 'utf8').catch(() => '')
       return text.includes('who are you now?') ? text.match(/<dez:pill [^>]*>/g) : null

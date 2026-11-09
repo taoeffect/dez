@@ -9,7 +9,7 @@ import { click, closeSettings, consoleErrors, resetConsoleErrors, screenshotOnFa
 import { conversationFilePath, makeConversation, readAppState, seedConversation, seedRawAppState } from './harness/fixtures'
 import { startChatMock, startEventStream, writeAnthropicEvent, writeChatFrame, type MockServer } from './harness/mockServer'
 import { createSession, destroySession, type E2EBrowser } from './harness/session'
-import { activeTabStreaming, maskPillDuration, newTab, pickModel, pressRolePill, sbpCall, submit, threadSections, waitForThread } from './harness/thread'
+import { activeConversationId, activeTabStreaming, maskPillDuration, newTab, pickModel, pressRolePill, sbpCall, submit, threadSections, waitForThread } from './harness/thread'
 
 // Model thinking, driven through the real app against a mock server in this
 // process: the thinking parts of the agent pill, the encrypted pill of the
@@ -212,10 +212,10 @@ describe('thinking', () => {
   // not exist. The reply time changes from run to run, so its digits read
   // as `#`.
   async function savedAgentReplies (): Promise<string[][] | null> {
-    const tab = await sbpCall(browser, 'dez.model/tab', await sbpCall(browser, 'dez.model/tabs/activeId')) as { conversationId: string }
+    const conversationId = await activeConversationId(browser)
     let content: string
     try {
-      content = await fs.promises.readFile(conversationFilePath(app.home, tab.conversationId), 'utf8')
+      content = await fs.promises.readFile(conversationFilePath(app.home, conversationId), 'utf8')
     } catch {
       return null
     }

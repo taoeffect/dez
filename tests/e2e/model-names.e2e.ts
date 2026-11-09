@@ -4,7 +4,7 @@ import { click, consoleErrors, openHistoryPanel, resetConsoleErrors, screenshotO
 import { makeConversation, seedConversation, seedRawAppState } from './harness/fixtures'
 import { replyText, sendChatReply, startChatMock, type MockServer } from './harness/mockServer'
 import { createSession, destroySession, type E2EBrowser } from './harness/session'
-import { activeTabStreaming, maskPillDuration, pickModel, pressRolePill, rolePillHeights, savedPillLines, sbpCall, submit, threadSections, waitForThread } from './harness/thread'
+import { activeConversationId, activeTabStreaming, maskPillDuration, newTab, pickModel, pressRolePill, rolePillHeights, savedPillLines, sbpCall, submit, threadSections, waitForThread } from './harness/thread'
 
 // The model on agent role pills and the model names in history rows,
 // driven through the real app against a mock OpenAI-compatible server in this
@@ -127,8 +127,7 @@ describe('model names', () => {
   // or null while the file does not exist. The reply time changes from run
   // to run, so its digits read as `#`.
   async function activeTabPillLines (): Promise<string[] | null> {
-    const tab = await sbpCall(browser, 'dez.model/tab', await sbpCall(browser, 'dez.model/tabs/activeId')) as { conversationId: string }
-    return (await savedPillLines(app.home, tab.conversationId))?.map(maskPillDuration) ?? null
+    return (await savedPillLines(app.home, await activeConversationId(browser)))?.map(maskPillDuration) ?? null
   }
 
   // The model part of the history row of each title in `titles`.
@@ -251,8 +250,7 @@ describe('model names', () => {
   })
 
   it('labels each response with the model that wrote it across a model switch', async () => {
-    await sbpCall(browser, 'dez.model/tabs/create')
-    await waitForValue(browser, 'new tab', () => threadSections(browser), [{ role: 'user', text: '' }])
+    await newTab(browser)
     await pickModel(browser, PROVIDER.name, ALPHA.name)
     await submit(browser, 'Hello alpha')
     await waitForThread(browser, [

@@ -5,7 +5,7 @@ import { makeConversation, seedConversation } from './harness/fixtures'
 import { startMockProviderApp, type MockProviderApp } from './harness/mockProviderApp'
 import { replyText, sendChatReply, type MockProvider } from './harness/mockServer'
 import type { E2EBrowser } from './harness/session'
-import { activeTabStreaming, rolePillHeights, savedPillLines, sbpCall, submit, threadSections, waitForThread } from './harness/thread'
+import { activeTabStreaming, newTab, rolePillHeights, savedPillLines, sbpCall, submit, threadSections, waitForThread } from './harness/thread'
 
 // The reply time at the end of agent role pills, through the real app
 // against a mock server in this process: no time while a reply streams, the
@@ -129,8 +129,7 @@ describe('reply duration', () => {
   it('shows the time in a pill with no model, and none for a reply without one', async () => {
     // A tab of its own: the relaunch test needs the first test's tab as it
     // was.
-    await sbpCall(browser, 'dez.model/tabs/create')
-    await waitForValue(browser, 'new tab', () => threadSections(browser), [{ role: 'user', text: '' }])
+    await newTab(browser)
     await seedConversation(setup.app.home, makeConversation({
       id: 'timed',
       title: 'Timed',

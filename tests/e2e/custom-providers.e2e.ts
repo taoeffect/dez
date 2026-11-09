@@ -7,7 +7,7 @@ import { click, closeSettings, consoleErrors, resetConsoleErrors, screenshotOnFa
 import { readAppState, seedRawAppState } from './harness/fixtures'
 import { replyText, sendChatReply, startMockServer, type MockServer } from './harness/mockServer'
 import { createSession, destroySession, type E2EBrowser } from './harness/session'
-import { editorDoc, openPicker, pickerGroups, pickModel, sbpCall, submit, threadSections, waitForThread } from './harness/thread'
+import { editorDoc, newTab, openPicker, pickerGroups, pickModel, sbpCall, submit, waitForThread } from './harness/thread'
 
 // Custom providers, driven through the real app against a mock
 // OpenAI-compatible server in this process.
@@ -270,8 +270,7 @@ describe('custom providers', () => {
   })
 
   it('sends the stored key to a provider whose key came from app_state.json', async () => {
-    await sbpCall(browser, 'dez.model/tabs/create')
-    await waitForValue(browser, 'new tab', () => threadSections(browser), [{ role: 'user', text: '' }])
+    await newTab(browser)
     await pickModel(browser, 'Keyed Mock', 'fetched-model')
     await submit(browser, 'Hello keyed')
     await waitForThread(browser, [
