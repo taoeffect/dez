@@ -148,8 +148,10 @@ function toolCall(block: ToolBlock): ToolCall {
   return { id: block.id, name: block.name, arguments: Object.fromEntries(args) }
 }
 
-// Every call gets a result. A `running` block in a request was loaded from a
-// file: the app stopped while the tool ran.
+// Every call gets a result. A `running` block in a request has no tool run
+// that will end it: the app stopped while the tool ran, or the user pasted
+// the block. A submit during a tool run sends the blocks that the stop
+// wrote (`dez.stream/start`).
 function toolResult(block: ToolBlock): ToolResult {
   if (block.status === 'running') return { callId: block.id, content: INTERRUPTED_TOOL_RESULT, isError: true }
   const content = withoutImagePaths(block.result)

@@ -6,6 +6,7 @@ import { sectionVisibleText } from '../model/chat/content'
 import { findToolBlocks } from '../model/chat/toolBlocks'
 import type { ConversationData } from '../model/persistence/types'
 import type { ProviderChatInputMessage, ProviderInfo, ProviderStreamChatInput, ProviderStreamChatResult } from '../model/providers'
+import type { RequestMessages } from '../model/streams/types'
 import type { ToastData } from '../view/toast/selectors'
 // Side-effect imports: register the dez.model/* selectors and the selectors
 // under test.
@@ -621,6 +622,42 @@ describe('dez.stream/start tool loop', () => {
     expect(savedConversations[0].sections[1].nodes).toStrictEqual(agentSection().content)
     expect(toasts).toStrictEqual([])
     expect(alerts).toStrictEqual([])
+  })
+
+  // The submit builds its messages while the running blocks are still in the
+  // section; the new start then writes the final blocks. The request must
+  // send what the tab stores, or the next request changes earlier bytes.
+  it('sends the final blocks of a tool run that a new submit in the tab stopped', async () => {
+    const tabId = activeTab().id
+    sbp('dez.model/setActiveModel', model.providerId, model.modelId, model.modelName)
+    providerInfos = async () => {
+      runs++
+      if (runs === 2) await sbp('dez.controller/submitTab', tabId)
+      return []
+    }
+    replyRounds([
+      async (input) => {
+        await input.onToken('Checking.')
+        return { requestId: input.requestId as string, toolCalls: [geminiCall, { ...geminiCall, id: 'c2' }] }
+      },
+      async (input) => {
+        await input.onToken('Answer.')
+        return { requestId: input.requestId as string }
+      },
+    ])
+
+    await startStream({ sendTools: true })
+
+    expect(requests).toHaveLength(2)
+    expect(sent[1].at(-1)).toStrictEqual({
+      role: 'tool',
+      results: [
+        { callId: 'c1', content: 'No models are available.', isError: false },
+        { callId: 'c2', content: 'Stopped.', isError: true },
+      ],
+    })
+    const stored = (sbp('dez.model/streamMessagesForTab', tabId, model) as RequestMessages).messages
+    expect(stored.slice(0, sent[1].length)).toStrictEqual(sent[1])
   })
 
   it('ends the reply as a stop when the user deletes the running blocks', async () => {

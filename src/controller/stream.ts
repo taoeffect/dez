@@ -14,7 +14,7 @@ import {
   toolGroupText,
   type CheckedToolCall,
 } from '../model/streams/toolRound'
-import type { EndedStreamSession, StreamMessage } from '../model/streams/types'
+import type { EndedStreamSession, RequestMessages, StreamMessage } from '../model/streams/types'
 import {
   appendThinkingToTabSection,
   appendTokenToTabSection,
@@ -42,8 +42,9 @@ interface StreamStartArgs {
   conversationId: string
   sectionId: string
   model: ActiveModel
-  // The request messages of the sections before `sectionId`, fixed at the
-  // submit: each round sends them, then the rounds of the reply so far.
+  // The request messages of the sections before `sectionId`, built by
+  // `dez.model/streamMessagesForTab` at the submit: each round sends them,
+  // then the rounds of the reply so far.
   messages: StreamMessage[]
   // Offer the Dez tools (RequestMessages.sendTools).
   sendTools: boolean
@@ -152,15 +153,15 @@ function replaceToolRun(tabId: string, sectionId: string, run: ToolRun, text: st
 // the tab replaced: aborts the running tool, and writes the final blocks at
 // once, while the stream session still writes the section. Calls that ended
 // keep their results; the others get "Stopped.". The round loop finds the
-// run gone and writes nothing more.
-function stopToolRun(tabId: string, reply: ReplyRuntime): void {
+// run gone and writes nothing more. True when it wrote the blocks.
+function stopToolRun(tabId: string, reply: ReplyRuntime): boolean {
   const run = reply.toolRun
-  if (!run) return
+  if (!run) return false
   reply.toolRun = null
   run.abort.abort()
-  if (!streamWritesSection(tabId, reply.sectionId)) return
+  if (!streamWritesSection(tabId, reply.sectionId)) return false
   const blocks = run.calls.map((call, index) => toolCallBlock(call, run.results[index] ?? STOPPED_TOOL_RESULT))
-  replaceToolRun(tabId, reply.sectionId, run, toolGroupText(blocks))
+  return replaceToolRun(tabId, reply.sectionId, run, toolGroupText(blocks))
 }
 
 // Runs the calls of one round, in order: appends their running blocks (a
@@ -203,9 +204,18 @@ export default sbp('sbp/selectors/register', {
   // section, save).
   async 'dez.stream/start' (args: StreamStartArgs): Promise<void> {
     const previousReply = repliesByTab.get(args.tabId)
+    let startMessages = args.messages
     if (previousReply) {
       previousReply.cancelling = true
-      stopToolRun(args.tabId, previousReply)
+      // The submit built the messages while the earlier reply's tool run
+      // still held its running blocks, which a request sends as
+      // "Interrupted.". The stop wrote other blocks, so the messages are
+      // built again: a request must send what the tab stores, else the next
+      // request changes these bytes (prompt cache, replay prefix hashes).
+      // The new agent section is still empty, so it is left out.
+      if (stopToolRun(args.tabId, previousReply)) {
+        startMessages = (sbp('dez.model/streamMessagesForTab', args.tabId, args.model) as RequestMessages).messages
+      }
       await sbp('dez.http/cancelStream', previousReply.requestId).catch(() => {})
       if (repliesByTab.get(args.tabId) === previousReply) repliesByTab.delete(args.tabId)
     }
@@ -218,7 +228,7 @@ export default sbp('sbp/selectors/register', {
       tabId: args.tabId,
       sectionId: args.sectionId,
       model: args.model,
-      messages: args.messages,
+      messages: startMessages,
     })
     sbp('dez.editor/startStreamingFollowIfVisible', args.tabId)
 
@@ -233,7 +243,7 @@ export default sbp('sbp/selectors/register', {
     try {
       // Inside the try: a template error must end the stream session.
       const system = buildSystemPrompt(args.model, tools)
-      let messages = args.messages
+      let messages = startMessages
       // The first call id of the group that ended the round before: it names
       // the thinking round of every later round (SectionThinking.rounds).
       let afterToolCall: string | undefined
@@ -306,7 +316,7 @@ export default sbp('sbp/selectors/register', {
           return
         }
         afterToolCall = calls[0].id
-        messages = [...args.messages, ...agentSectionMessages(roundsSoFar, args.model, true)]
+        messages = [...startMessages, ...agentSectionMessages(roundsSoFar, args.model, true)]
       }
     } catch (error) {
       if (replyIsCurrent()) {
