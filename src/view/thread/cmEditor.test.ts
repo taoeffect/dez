@@ -1,4 +1,4 @@
-import { defaultKeymap, history, undo, undoDepth } from '@codemirror/commands'
+import { defaultKeymap, deleteCharForward, history, undo, undoDepth } from '@codemirror/commands'
 import { ensureSyntaxTree } from '@codemirror/language'
 import { EditorSelection, EditorState, type Transaction, type TransactionSpec } from '@codemirror/state'
 import { EditorView, keymap, runScopeHandlers } from '@codemirror/view'
@@ -910,19 +910,25 @@ describe('broken prompt pills', () => {
   const PILL_ID = 'bdbf417c-2282-4d77-991c-2ac65e1f0a11'
   const NESTED_ID = '7f1c2d3e-4b5a-4c6d-8e9f-0a1b2c3d4e5f'
   const BODY = 'Summarize\nthis'
-  // An expanded pill (real newlines in the body) at the doc start, then text.
-  const DOC = `${encodePrompt(PILL_ID, BODY, false)} tail`
+  // An expanded pill (real newlines in the body).
+  const PILL = encodePrompt(PILL_ID, BODY, false)
+  // The pill at the doc start, then text.
+  const DOC = `${PILL} tail`
   const BODY_FROM = `${PILL_OPEN}${PILL_ID}${PILL_BODY}`.length
   const BODY_TO = BODY_FROM + BODY.length
   const PILL_TO = BODY_TO + 1
   const META: PillMetadata = { promptId: 'saved', name: 'Summary', expanded: true }
+  const PILL_NODE: ContentNode = { kind: 'prompt', id: PILL_ID, promptId: 'saved', name: 'Summary', body: BODY, expanded: true }
 
-  function pillState(): EditorState {
+  function pillState(
+    { doc = DOC, models = [{ id: 's1', role: 'user' }], selection }: { doc?: string, models?: SectionModel[], selection?: { anchor: number, head?: number } } = {},
+  ): EditorState {
     return EditorState.create({
-      doc: DOC,
+      doc,
+      selection,
       extensions: [
         history(),
-        sectionsField.init(() => [{ id: 's1', role: 'user' }]),
+        sectionsField.init(() => models),
         pillsField.init(() => new Map([[PILL_ID, META]])),
         unwrapBrokenPills,
       ],
@@ -995,6 +1001,38 @@ describe('broken prompt pills', () => {
       expect(restored.field(pillsField).get(PILL_ID)).toEqual(META)
     })
   }
+
+  // The issue's thread: the pill is the whole first user section, then an
+  // agent reply and an empty user section. The selection holds the hidden
+  // close marker, but no body text.
+  it('keeps the pill when Delete removes a selection from the end of its body to the doc end', () => {
+    const thread = `${PILL}\n${SECTION_SEP}\nHi!\n${SECTION_SEP}\n`
+    const start = pillState({
+      doc: thread,
+      models: [{ id: 'u1', role: 'user' }, { id: 'a1', role: 'agent' }, { id: 'u2', role: 'user' }],
+      selection: { anchor: thread.length, head: BODY_TO },
+    })
+
+    const state = dispatchCommand(start, deleteCharForward)
+
+    expect(state.doc.toString()).toBe(PILL)
+    // The caret stays at the end of the body, inside the pill.
+    expect(state.selection.main.head).toBe(BODY_TO)
+    expect(docToSections(state.doc.toString(), state.field(sectionsField), state.field(pillsField)).map((section) => section.content)).toEqual([[textNode(''), PILL_NODE, textNode('')]])
+    expect(undoDepth(state)).toBe(1)
+    expect(dispatchCommand(state, undo).doc.toString()).toBe(thread)
+  })
+
+  it('keeps the pill and puts the typed text after it when typing over a selection from the end of its body', () => {
+    const state = pillState().update({
+      changes: { from: BODY_TO, to: PILL_TO + 2, insert: 'X' },
+      selection: { anchor: BODY_TO + 1 },
+    }).state
+
+    expect(state.doc.toString()).toBe(`${PILL}Xail`)
+    expect(state.selection.main.head).toBe(PILL_TO + 1)
+    expect(docToSections(state.doc.toString(), state.field(sectionsField), state.field(pillsField))[0].content).toEqual([textNode(''), PILL_NODE, textNode('Xail')])
+  })
 
   it('decodes and copies leftover broken markers as text without the pill id', () => {
     const doc = `x${PILL_CLOSE} ${PILL_OPEN}${PILL_ID}${PILL_BODY}a${PILL_NL}b${PILL_BODY}`

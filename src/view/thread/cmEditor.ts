@@ -1,7 +1,7 @@
 import { HighlightStyle, syntaxHighlighting } from '@codemirror/language'
 import { markdown } from '@codemirror/lang-markdown'
 import { Decoration, EditorView, ViewPlugin, WidgetType, type DecorationSet, type KeyBinding, type ViewUpdate } from '@codemirror/view'
-import { EditorSelection, EditorState, StateEffect, StateField, findClusterBreak, type Extension, type Transaction, type TransactionSpec } from '@codemirror/state'
+import { ChangeSet, EditorSelection, EditorState, StateEffect, StateField, findClusterBreak, type Extension, type Transaction, type TransactionSpec } from '@codemirror/state'
 import { tags as t } from '@lezer/highlight'
 import type { MarkdownConfig } from '@lezer/markdown'
 import type { ContentNode, ModelRef, Role, Section, SectionThinking } from '../../model/chat/types'
@@ -564,7 +564,18 @@ export const pillsField = StateField.define<Map<string, PillMetadata>>({
  *  selection, paste, Shift+Enter, default keymap commands), so the repair
  *  is a filter and not a check in each key handler. A pill only breaks
  *  when a sentinel is deleted or inserted, so other edits (typing,
- *  streamed tokens) skip the full-doc scan. */
+ *  streamed tokens) skip the full-doc scan.
+ *
+ *  A change that starts at the end of a pill's body and deletes past the
+ *  pill keeps the pill: it removes the hidden close marker, but no body
+ *  text. A selection from the end of an expanded body to after the pill
+ *  gives such a change (Delete, cut, typing over it), because CodeMirror
+ *  only moves a selection end that is strictly inside an atomic range,
+ *  and the close marker's range starts at the body end. The filter puts
+ *  the marker back at the change start, before any inserted text (which
+ *  can hold separators or pills that would break the pill again), so the
+ *  caret stays at the body end. A change that deletes only the close
+ *  marker (Backspace after it) still unwraps the pill. */
 export const unwrapBrokenPills = EditorState.transactionFilter.of((tr) => {
   if (!tr.docChanged) return tr
   let touchesSentinel = false
@@ -572,8 +583,17 @@ export const unwrapBrokenPills = EditorState.transactionFilter.of((tr) => {
     touchesSentinel ||= SENTINEL_CHAR.test(tr.startState.sliceDoc(fromA, toA)) || SENTINEL_CHAR.test(inserted.toString())
   })
   if (!touchesSentinel) return tr
-  const changes = brokenPillMarkerChanges(tr.newDoc.toString())
-  return changes.length === 0 ? tr : [tr, { changes, sequential: true }]
+  const startPills = scanPills(tr.startState.doc.toString())
+  const keptCloseMarkers: { from: number; insert: string }[] = []
+  tr.changes.iterChanges((fromA, toA, fromB) => {
+    if (startPills.some((pill) => pill.bodyTo === fromA && toA > pill.to)) keptCloseMarkers.push({ from: fromB, insert: PILL_CLOSE })
+  })
+  const keep = ChangeSet.of(keptCloseMarkers, tr.newDoc.length)
+  const unwrap = brokenPillMarkerChanges(keep.apply(tr.newDoc).toString())
+  const specs: TransactionSpec[] = [tr]
+  if (!keep.empty) specs.push({ changes: keep, sequential: true })
+  if (unwrap.length > 0) specs.push({ changes: unwrap, sequential: true })
+  return specs
 })
 
 /* ──────────────────────  Role separator widget  ─────────────── */
