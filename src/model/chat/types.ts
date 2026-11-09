@@ -89,10 +89,11 @@ export interface ThinkingRound {
   replay?: ThinkingReplay
 }
 
-/** The reasoning a model streamed before its answer. It is not in the
- *  section content or the CodeMirror doc: the editor shows it in the agent
- *  pill, and requests, previews, titles, search, find, Save As Markdown, and
- *  Copy Markdown never read it as message text. */
+/** The reasoning a model streamed in a reply: before its answer, and in a
+ *  reply with tool rounds also between answer text and tool calls. It is
+ *  not in the section content or the CodeMirror doc: the editor shows it in
+ *  the agent pill, and requests, previews, titles, search, find, Save As
+ *  Markdown, and Copy Markdown never read it as message text. */
 export interface SectionThinking {
   /** Every streamed thinking part of every request round, joined in stream
    *  order with no separator. */

@@ -56,6 +56,11 @@ function requestBody(request: NativeHttpRequest): Record<string, unknown> {
   return JSON.parse(request.body as string) as Record<string, unknown>
 }
 
+// The wire messages of the chat request that sends `sent`.
+function sentMessages(provider: Provider, sent: ChatMessage[], overrides: Record<string, boolean> = {}): Array<Record<string, unknown>> {
+  return requestBody(provider.chatRequest(sent, 'm', key, overrides).request).messages as Array<Record<string, unknown>>
+}
+
 describe('OpenAI format requests', () => {
   it('sends a Bearer key, JSON content type, and assistant roles', () => {
     const { request } = customProvider({}).chatRequest(messages, 'llama3', key)
@@ -158,7 +163,7 @@ describe('image parts', () => {
   ]
 
   it('sends OpenAI text parts and image_url parts with a base64 data URL', () => {
-    expect(requestBody(customProvider({}).chatRequest(imageMessages, 'm', key).request).messages).toEqual([
+    expect(sentMessages(customProvider({}), imageMessages)).toEqual([
       {
         role: 'user',
         content: [
@@ -173,7 +178,7 @@ describe('image parts', () => {
   it('sends Anthropic text blocks and base64 image blocks', () => {
     const provider = customProvider({ apiFormat: 'anthropic' })
 
-    expect(requestBody(provider.chatRequest(imageMessages, 'm', key).request).messages).toEqual([
+    expect(sentMessages(provider, imageMessages)).toEqual([
       {
         role: 'user',
         content: [
@@ -212,8 +217,6 @@ describe('prompt cache', () => {
   const openAi = customProvider({ cacheBreakpoints: true })
   const image = (data: string): ChatPart => ({ type: 'image', mediaType: 'image/png', data })
   const text = (text: string): ChatPart => ({ type: 'text', text })
-  const sentMessages = (provider: Provider, sent: ChatMessage[]) =>
-    requestBody(provider.chatRequest(sent, 'm', key).request).messages as Array<Record<string, unknown>>
   // The prompt that the server caches: every message field and block
   // without its mark, a string being one text block.
   const prompt = (wire: Array<Record<string, unknown>>) => wire.map(({ cache_control: _messageMark, content, ...fields }) => ({
@@ -566,8 +569,6 @@ describe('thinking send-back', () => {
   const user = (content: string): ChatMessage => ({ role: 'user', content })
   // The prefix hash that the request which sent `sent` gives its reply.
   const prefixHash = (provider: Provider, sent: ChatMessage[]) => provider.chatRequest(sent, 'm', key).thinking?.prefixHash ?? ''
-  const wireMessages = (provider: Provider, sent: ChatMessage[], overrides: Record<string, boolean> = {}) =>
-    requestBody(provider.chatRequest(sent, 'm', key, overrides).request).messages
 
   it('sends each OpenAI replay kind in its assistant-message fields', () => {
     const details = [{ type: 'reasoning.text', text: 'Plan B', signature: 'sig', index: 0 }]
@@ -585,7 +586,7 @@ describe('thinking send-back', () => {
       thinking: { text: 'Plan C', replay: { kind: 'copilot', opaque: 'op', prefixHash: prefixHash(openAiThinker, beforeA3) } },
     }
 
-    expect(wireMessages(openAiThinker, [...beforeA3, a3, user('Q4')])).toEqual([
+    expect(sentMessages(openAiThinker, [...beforeA3, a3, user('Q4')])).toEqual([
       { role: 'user', content: 'Q1' },
       { role: 'assistant', content: 'A1', reasoning_content: 'Plan A' },
       { role: 'user', content: 'Q2' },
@@ -607,7 +608,7 @@ describe('thinking send-back', () => {
       thinking: { text: 'Plan', replay: { kind: 'anthropicBlocks', blocks, prefixHash: prefixHash(anthropicThinker, [user('Q1')]) } },
     }
 
-    expect(wireMessages(anthropicThinker, [user('Q1'), a1, user('Q2')])).toEqual([
+    expect(sentMessages(anthropicThinker, [user('Q1'), a1, user('Q2')])).toEqual([
       { role: 'user', content: [{ type: 'text', text: 'Q1', cache_control: CACHE }] },
       { role: 'assistant', content: [...blocks, { type: 'text', text: 'A1' }] },
       { role: 'user', content: [{ type: 'text', text: 'Q2', cache_control: CACHE }] },
@@ -626,7 +627,7 @@ describe('thinking send-back', () => {
     for (const [provider, replay, sentReply] of cases) {
       // Made by the request that marked Q1 as a cache breakpoint.
       const a1: ChatMessage = { role: 'agent', content: 'A1', thinking: { text: 'Plan', replay: replay(prefixHash(provider, [user('Q1')])) } }
-      const sent = wireMessages(provider, [user('Q1'), a1, user('Q2'), { role: 'agent', content: 'A2' }, user('Q3')]) as unknown[]
+      const sent = sentMessages(provider, [user('Q1'), a1, user('Q2'), { role: 'agent', content: 'A2' }, user('Q3')])
 
       expect(sent.slice(0, 2)).toEqual([{ role: 'user', content: 'Q1' }, sentReply])
     }
@@ -643,19 +644,19 @@ describe('thinking send-back', () => {
       },
     }
 
-    expect(wireMessages(anthropicThinker, [user('Q1'), fieldReply])).toEqual([
+    expect(sentMessages(anthropicThinker, [user('Q1'), fieldReply])).toEqual([
       { role: 'user', content: [{ type: 'text', text: 'Q1', cache_control: CACHE }] },
       { role: 'assistant', content: 'A1' },
     ])
-    expect(wireMessages(openAiThinker, [user('Q1'), blocksReply])).toEqual([{ role: 'user', content: 'Q1' }, { role: 'assistant', content: 'A1' }])
+    expect(sentMessages(openAiThinker, [user('Q1'), blocksReply])).toEqual([{ role: 'user', content: 'Q1' }, { role: 'assistant', content: 'A1' }])
   })
 
   it('sends thinking only in a request that asks for thinking', () => {
     const reply: ChatMessage = { role: 'agent', content: 'A1', thinking: { text: 'Plan', replay: { kind: 'field', field: 'reasoning_content' } } }
     const textOnly = [{ role: 'user', content: 'Q1' }, { role: 'assistant', content: 'A1' }]
 
-    expect(wireMessages(openAiThinker, [user('Q1'), reply], { thinking: false })).toEqual(textOnly)
-    expect(wireMessages(customProvider({}), [user('Q1'), reply])).toEqual(textOnly)
+    expect(sentMessages(openAiThinker, [user('Q1'), reply], { thinking: false })).toEqual(textOnly)
+    expect(sentMessages(customProvider({}), [user('Q1'), reply])).toEqual(textOnly)
   })
 
   describe('signed replay prefixes', () => {
@@ -666,7 +667,7 @@ describe('thinking send-back', () => {
       thinking: { text: `${content} plan`, replay: { kind: 'copilot', opaque: `${content} opaque`, prefixHash: prefixHash(openAiThinker, sent) } },
     })
     // The opaque value that each assistant message sends, or null.
-    const sentOpaques = (sent: ChatMessage[]) => (wireMessages(openAiThinker, sent) as Record<string, unknown>[])
+    const sentOpaques = (sent: ChatMessage[]) => sentMessages(openAiThinker, sent)
       .filter((message) => message.role === 'assistant')
       .map((message) => message.reasoning_opaque ?? null)
 
@@ -742,7 +743,7 @@ describe('thinking send-back', () => {
 
     it('sends the OpenAI replay fields with the tool calls of each round, and each request starts with the bytes of the request before it', () => {
       const { round2, round3, nextTurn } = requests(openAiThinker, openAiReplay)
-      const sent = [round2, round3, nextTurn].map((messages) => JSON.stringify(wireMessages(openAiThinker, messages)))
+      const sent = [round2, round3, nextTurn].map((messages) => JSON.stringify(sentMessages(openAiThinker, messages)))
 
       expect(JSON.parse(sent[2])).toStrictEqual(openAiNextTurn({ reasoning_details: details('Plan 1') }, { reasoning_details: details('Plan 2') }))
       expect(sent[1].startsWith(sent[0].slice(0, -1))).toBe(true)
@@ -753,7 +754,7 @@ describe('thinking send-back', () => {
       const { round3, nextTurn } = requests(anthropicThinker, (plan, prefixHash) => ({ kind: 'anthropicBlocks', blocks: thinkingBlocks(plan), prefixHash }))
 
       for (const messages of [round3, nextTurn]) {
-        const sent = wireMessages(anthropicThinker, messages) as unknown[]
+        const sent = sentMessages(anthropicThinker, messages)
 
         expect([sent[1], sent[3]]).toStrictEqual([
           { role: 'assistant', content: [...thinkingBlocks('Plan 1'), { type: 'text', text: 'Let me look.' }, anthropicToolUse('call_gemini', 'gemini')] },
@@ -765,13 +766,12 @@ describe('thinking send-back', () => {
     it('keeps the tool calls and results in a request that asks for no thinking', () => {
       const { nextTurn } = requests(openAiThinker, openAiReplay)
 
-      expect(wireMessages(openAiThinker, nextTurn, { thinking: false })).toStrictEqual(openAiNextTurn({}, {}))
+      expect(sentMessages(openAiThinker, nextTurn, { thinking: false })).toStrictEqual(openAiNextTurn({}, {}))
     })
   })
 })
 
 describe('tool calls and results', () => {
-  const sentMessages = (provider: Provider, sent: ChatMessage[]) => requestBody(provider.chatRequest(sent, 'm', key).request).messages
   const twoResults: ChatMessage = {
     role: 'tool',
     results: [{ callId: 'call_1', content: '1 model', isError: false }, { callId: 'call_2', content: 'Bad filter.', isError: true }],

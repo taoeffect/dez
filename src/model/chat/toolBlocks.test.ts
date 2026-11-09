@@ -181,11 +181,10 @@ describe('toolBlockText and findToolBlocks', () => {
   })
 
   it('removes live sentinels from every value it writes', () => {
-    const text = toolBlockText({ ...MODEL_LIST_CALL, id: 'a\u001Eb', arguments: { filter: 'x\uE003y' }, result: 'one\u001E\ntwo\uE003' })
+    const withSentinels = { ...MODEL_LIST_CALL, id: 'a\u001Eb', arguments: { filter: 'x\uE003y' }, result: 'one\u001E\ntwo\uE003' }
 
-    expect(text).not.toMatch(SENTINEL_CHAR)
-    expect(readBack({ ...MODEL_LIST_CALL, id: 'a\u001Eb', arguments: { filter: 'x\uE003y' }, result: 'one\u001E\ntwo\uE003' }))
-      .toStrictEqual([{ ...MODEL_LIST_CALL, id: 'ab', arguments: { filter: 'x\ny' }, result: 'one\ntwo\n' }])
+    expect(toolBlockText(withSentinels)).not.toMatch(SENTINEL_CHAR)
+    expect(readBack(withSentinels)).toStrictEqual([{ ...MODEL_LIST_CALL, id: 'ab', arguments: { filter: 'x\ny' }, result: 'one\ntwo\n' }])
   })
 })
 

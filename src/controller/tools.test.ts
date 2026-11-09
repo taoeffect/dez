@@ -1,6 +1,7 @@
 import sbp from '@sbp/sbp'
 import { createPinia, setActivePinia } from 'pinia'
 import { afterEach, beforeEach, describe, expect, it, vi, type MockInstance } from 'vitest'
+import { providerInfo } from '../model/providers/testing'
 import type { ProviderInfo } from '../model/providers/types'
 import { TOOL_DEFINITIONS } from '../model/tools/registry'
 import type { ToolRunResult } from '../model/tools/types'
@@ -10,21 +11,7 @@ import type { ToolRunCall } from './tools'
 import '../model/state/index'
 import './tools'
 
-function provider(id: string, name: string, configured: boolean): ProviderInfo {
-  return {
-    id,
-    name,
-    builtIn: false,
-    auth: 'apiKey',
-    apiFormat: 'openai',
-    baseUrl: 'http://localhost:8080/v1',
-    hasKey: configured,
-    configured,
-    supportsThinking: false,
-  }
-}
-
-const providers = [provider('venice', 'Venice', true), provider('closed', 'Closed', false)]
+const providers = [providerInfo('venice', 'Venice'), providerInfo('closed', 'Closed', false)]
 
 sbp('sbp/selectors/register', {
   async 'dez.provider/infos' (): Promise<ProviderInfo[]> {

@@ -1,18 +1,15 @@
 import { describe, expect, it } from 'vitest'
 import { availableModels, matchingModelsByProvider, modelMatches, searchTerms } from './modelSearch'
 import type { CachedProvider, ModelCache } from './persistence/types'
+import { providerInfo } from './providers/testing'
 import type { ModelInfo, ProviderInfo } from './providers/types'
-
-function provider (id: string, name: string, configured = true): ProviderInfo {
-  return { id, name, builtIn: false, auth: 'apiKey', apiFormat: 'openai', baseUrl: 'http://localhost/v1', hasKey: configured, configured, supportsThinking: false }
-}
 
 function cached (models: ModelInfo[], working = true): CachedProvider {
   return { models, working, updatedAt: 0, lastCheckedAt: 0 }
 }
 
-const ACME = provider('acme-cloud', 'Acme Cloud')
-const BETA = provider('beta_hub', 'Beta Hub')
+const ACME = providerInfo('acme-cloud', 'Acme Cloud')
+const BETA = providerInfo('beta_hub', 'Beta Hub')
 const ACME_MODELS: ModelInfo[] = [
   { id: 'gpt-4o', name: 'GPT-4o', provider: ACME.id },
   { id: 'gpt-4o-mini', name: 'GPT-4o Mini', provider: ACME.id },
@@ -66,7 +63,7 @@ describe('modelMatches', () => {
     expect(modelMatches(ACME, mini, ['cloudgpt'])).toBe(true)
     // The provider id and the model id count too: `3` is only in the
     // provider id `c3`, and `meta` only in the model id.
-    expect(modelMatches(provider('c3', 'Cobalt'), { id: 'one', name: 'One', provider: 'c3' }, ['c3'])).toBe(true)
+    expect(modelMatches(providerInfo('c3', 'Cobalt'), { id: 'one', name: 'One', provider: 'c3' }, ['c3'])).toBe(true)
     expect(modelMatches(BETA, BETA_MODELS[0], ['meta'])).toBe(true)
   })
 
@@ -78,8 +75,8 @@ describe('modelMatches', () => {
 
 describe('availableModels', () => {
   it('lists the cached models of configured providers whose last fetch worked, in cache order', () => {
-    const offline = provider('offline', 'Offline')
-    const keyless = provider('keyless', 'Keyless', false)
+    const offline = providerInfo('offline', 'Offline')
+    const keyless = providerInfo('keyless', 'Keyless', false)
     const cache: ModelCache = {
       version: 1,
       providers: {
@@ -90,7 +87,7 @@ describe('availableModels', () => {
       },
     }
     // `uncached` has no cache entry and gives no models.
-    const providers = [ACME, BETA, offline, keyless, provider('uncached', 'Uncached')]
+    const providers = [ACME, BETA, offline, keyless, providerInfo('uncached', 'Uncached')]
     expect(availableModels(cache, providers)).toStrictEqual([...BETA_MODELS, ...ACME_MODELS])
   })
 })

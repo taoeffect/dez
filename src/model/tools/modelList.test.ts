@@ -1,11 +1,8 @@
 import { describe, expect, it } from 'vitest'
 import type { ModelCache } from '../persistence/types'
+import { providerInfo } from '../providers/testing'
 import type { ModelInfo, ProviderInfo } from '../providers/types'
 import { MODEL_LIST_LIMIT, modelListText } from './modelList'
-
-function provider(id: string, name: string, configured = true): ProviderInfo {
-  return { id, name, builtIn: false, auth: 'apiKey', apiFormat: 'openai', baseUrl: 'http://localhost/v1', hasKey: configured, configured, supportsThinking: false }
-}
 
 function cache(...entries: [ProviderInfo, ModelInfo[]][]): ModelCache {
   return {
@@ -14,8 +11,8 @@ function cache(...entries: [ProviderInfo, ModelInfo[]][]): ModelCache {
   }
 }
 
-const VENICE = provider('venice', 'Venice')
-const OPENROUTER = provider('openrouter', 'OpenRouter')
+const VENICE = providerInfo('venice', 'Venice')
+const OPENROUTER = providerInfo('openrouter', 'OpenRouter')
 const VENICE_MODELS: ModelInfo[] = [
   { id: 'gemini-3-pro-preview', name: 'Gemini 3 Pro Preview', provider: VENICE.id },
   { id: 'mistral-small', name: 'Mistral Small', provider: VENICE.id },
@@ -69,7 +66,7 @@ describe('modelListText', () => {
 
   it('says so when the user can use no model, whatever the filter', () => {
     expect(modelListText(cache(), PROVIDERS)).toBe('No models are available.')
-    expect(modelListText(CACHE, [provider('venice', 'Venice', false)], 'gemini')).toBe('No models are available.')
+    expect(modelListText(CACHE, [providerInfo('venice', 'Venice', false)], 'gemini')).toBe('No models are available.')
   })
 
   it(`stops after ${MODEL_LIST_LIMIT} models and counts the rest`, () => {
@@ -87,14 +84,14 @@ describe('modelListText', () => {
 
   it('keeps each model on one line when a name holds a line break', () => {
     const models = [{ id: 'odd', name: 'Odd\nName  ', provider: VENICE.id }]
-    expect(modelListText(cache([provider('venice', 'Ven\r\nice'), models]), [provider('venice', 'Ven\r\nice')])).toBe([
+    expect(modelListText(cache([providerInfo('venice', 'Ven\r\nice'), models]), [providerInfo('venice', 'Ven\r\nice')])).toBe([
       '1 model (full id | name | provider):',
       'venice/odd | Odd Name | Ven ice',
     ].join('\n'))
   })
 
   it('keeps three columns when a name holds a |', () => {
-    const piped = provider('venice', 'Ven|ice')
+    const piped = providerInfo('venice', 'Ven|ice')
     const models = [{ id: 'odd', name: 'Odd | Name', provider: VENICE.id }]
     expect(modelListText(cache([piped, models]), [piped])).toBe([
       '1 model (full id | name | provider):',

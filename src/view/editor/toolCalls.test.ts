@@ -89,9 +89,9 @@ describe('renderedToolCalls', () => {
 
   it('shows a running block as running only in the streaming section', () => {
     const state = createState(['ask', block('a', 'running'), block('b', 'running')], ['user', 'agent', 'agent'], { streaming: 's2' })
-    expect(shown(state).map(([id, state]) => [id, state])).toEqual([['a', 'interrupted'], ['b', 'running']])
+    expect(shown(state).map(([id, callState]) => [id, callState])).toEqual([['a', 'interrupted'], ['b', 'running']])
     const ended = state.update({ effects: setStreamingSectionEffect.of(null) }).state
-    expect(shown(ended).map(([id, state]) => [id, state])).toEqual([['a', 'interrupted'], ['b', 'interrupted']])
+    expect(shown(ended).map(([id, callState]) => [id, callState])).toEqual([['a', 'interrupted'], ['b', 'interrupted']])
   })
 
   it('shows and hides the chips when only the section roles change', () => {
