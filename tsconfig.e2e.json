@@ -1,1 +1,1 @@
-{"extends": "./tsconfig.json", "compilerOptions": {"types": ["node"]}, "include": ["tests/e2e/**/*.ts", "vitest.e2e.config.ts"]}
+{"extends": "./tsconfig.json", "compilerOptions": {"types": ["node", "vite/client"]}, "include": ["tests/e2e/**/*.ts", "vitest.e2e.config.ts"]}

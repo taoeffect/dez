@@ -156,8 +156,9 @@ export function startEventStream (res: http.ServerResponse): void {
   res.flushHeaders()
 }
 
-/** Writes one chat completion SSE frame with one choice. */
-export function writeChatFrame (res: http.ServerResponse, delta: Record<string, string>, finishReason: string | null = null): void {
+/** Writes one chat completion SSE frame with one choice. `delta` holds text
+ *  fields such as `content`, or `tool_calls` pieces. */
+export function writeChatFrame (res: http.ServerResponse, delta: Record<string, unknown>, finishReason: string | null = null): void {
   res.write(`data: ${JSON.stringify({ choices: [{ index: 0, delta, finish_reason: finishReason }] })}\n\n`)
 }
 

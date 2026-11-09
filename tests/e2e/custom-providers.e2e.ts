@@ -2,6 +2,7 @@ import fs from 'node:fs'
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from 'vitest'
 import { Key } from 'webdriverio'
 import { startApp, type RunningApp } from './harness/app'
+import { openAiChatBody } from './harness/chatBody'
 import { click, closeSettings, consoleErrors, resetConsoleErrors, screenshotOnFailure, typeInto, waitFor, waitForValue } from './harness/dom'
 import { readAppState, seedRawAppState } from './harness/fixtures'
 import { replyText, sendChatReply, startMockServer, type MockServer } from './harness/mockServer'
@@ -259,20 +260,13 @@ describe('custom providers', () => {
 
     const chats = requestsTo('/local/v1/chat/completions')
     expect(chats.map((request) => [request.method, request.authorization])).toEqual([['POST', null], ['POST', null]])
-    expect(chats[0].body).toEqual({
-      model: 'shared-model',
-      stream: true,
-      messages: [{ role: 'user', content: 'Hello mock' }],
-    })
-    expect(chats[1].body).toEqual({
-      model: 'shared-model',
-      stream: true,
-      messages: [
-        { role: 'user', content: 'Hello mock' },
-        { role: 'assistant', content: replyText('local') },
-        { role: 'user', content: 'And again' },
-      ],
-    })
+    const localModel = { id: 'local', modelId: 'shared-model' }
+    expect(chats[0].body).toEqual(openAiChatBody(localModel, [{ role: 'user', content: 'Hello mock' }]))
+    expect(chats[1].body).toEqual(openAiChatBody(localModel, [
+      { role: 'user', content: 'Hello mock' },
+      { role: 'assistant', content: replyText('local') },
+      { role: 'user', content: 'And again' },
+    ]))
   })
 
   it('sends the stored key to a provider whose key came from app_state.json', async () => {
@@ -288,11 +282,7 @@ describe('custom providers', () => {
 
     const chats = requestsTo('/keyed/v1/chat/completions')
     expect(chats.map((request) => request.authorization)).toEqual([`Bearer ${KEYED_API_KEY}`])
-    expect(chats[0].body).toEqual({
-      model: 'fetched-model',
-      stream: true,
-      messages: [{ role: 'user', content: 'Hello keyed' }],
-    })
+    expect(chats[0].body).toEqual(openAiChatBody({ id: 'keyed', modelId: 'fetched-model' }, [{ role: 'user', content: 'Hello keyed' }]))
   })
 
   it('shows built-ins with a badge and no delete control in Settings › Providers', async () => {

@@ -1,6 +1,7 @@
 import type { EditorView } from '@codemirror/view'
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from 'vitest'
 import { Key } from 'webdriverio'
+import { openAiSystemMessage } from './harness/chatBody'
 import { click, consoleErrors, openHistoryPanel, pointerClick, pointerDoubleClick, resetConsoleErrors, screenshotOnFailure, typeInto, typeKeys, waitFor, waitForValue } from './harness/dom'
 import { startMockProviderApp } from './harness/mockProviderApp'
 import { replyText, sendChatReply, startEventStream, writeChatFrame, type HeldRequest, type HoldingChatMock, type MockProvider } from './harness/mockServer'
@@ -302,7 +303,7 @@ describe('submit and stop a streaming reply', () => {
     await pointerClick(browser, '.submit-button')
 
     const request = await mock.waitForRequest(browser)
-    expect(JSON.parse(request.body).messages).toEqual([{ role: 'user', content: 'Sent by the button' }])
+    expect(JSON.parse(request.body).messages).toEqual([openAiSystemMessage(PROVIDER), { role: 'user', content: 'Sent by the button' }])
     expect(await focusedArea(browser), 'focus after the click').toBe('editor')
     await waitForValue(browser, 'button while streaming', submitButtonFace, STOP_FACE)
     const stopButtons = await browser.execute(() => Array.from(document.querySelectorAll('button')).filter(
@@ -344,7 +345,7 @@ describe('submit and stop a streaming reply', () => {
     await pointerDoubleClick(browser, '.submit-button', DOUBLE_CLICK_GAP_MS)
 
     const request = await mock.waitForRequest(browser)
-    expect(JSON.parse(request.body).messages).toEqual([{ role: 'user', content: 'Double-click Submit' }])
+    expect(JSON.parse(request.body).messages).toEqual([openAiSystemMessage(PROVIDER), { role: 'user', content: 'Double-click Submit' }])
     startEventStream(request.reply)
     writeChatFrame(request.reply, { content: 'Partial' })
     await waitForValue(browser, 'first answer part', async () => (await threadSections(browser)).at(-1), { role: 'agent', text: 'Partial' })
@@ -370,7 +371,7 @@ describe('submit and stop a streaming reply', () => {
     await pointerClick(browser, '.submit-button')
 
     const request = await mock.waitForRequest(browser)
-    expect(JSON.parse(request.body).messages).toEqual([{ role: 'user', content: 'Sent from outside' }])
+    expect(JSON.parse(request.body).messages).toEqual([openAiSystemMessage(PROVIDER), { role: 'user', content: 'Sent from outside' }])
     await sendChatReply(request.reply, 'the button')
     await waitForThread(browser, [
       { role: 'user', text: 'Sent from outside' },

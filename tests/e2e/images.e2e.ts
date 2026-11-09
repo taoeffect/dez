@@ -4,6 +4,7 @@ import zlib from 'node:zlib'
 import type { EditorView } from '@codemirror/view'
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from 'vitest'
 import { Key } from 'webdriverio'
+import { openAiSystemMessage } from './harness/chatBody'
 import { consoleErrors, elementCenter, movePointer, pointerClick, pointerClickAt, resetConsoleErrors, screenshotOnFailure, typeKeys, waitForValue, type Point } from './harness/dom'
 import { conversationFilePath } from './harness/fixtures'
 import { startMockProviderApp, type MockProviderApp } from './harness/mockProviderApp'
@@ -824,7 +825,7 @@ describe('images', () => {
 
     const request = await sendRequest()
     expect(request.path).toBe(mockChatPath(VISION))
-    expect(request.body).toHaveProperty('messages', [{
+    expect(request.body).toHaveProperty('messages', [openAiSystemMessage(VISION), {
       role: 'user',
       content: [
         { type: 'text', text: '![image](id=a)' },
@@ -880,7 +881,10 @@ describe('images', () => {
 
     const request = await sendRequest()
     expect(request.path).toBe(mockChatPath(VISION))
-    expect(request.body).toHaveProperty('messages', [{ role: 'user', content: `![image](id=a)${QUESTION}` }])
+    expect(request.body).toHaveProperty('messages', [
+      openAiSystemMessage({ id: VISION.id, modelId: TEXT_MODEL.id }),
+      { role: 'user', content: `![image](id=a)${QUESTION}` },
+    ])
     expect(await openToasts(browser, 'warning')).toEqual([{
       title: 'Image not sent',
       message: `${TEXT_MODEL.name} does not read images, so 1 image was left out of the request.`,
@@ -904,7 +908,7 @@ describe('images', () => {
     expect(second).toBe(`![${referencePath(second)}](id=b)`)
 
     const firstRequest = await sendRequest()
-    expect(firstRequest.body).toHaveProperty('messages', [{
+    expect(firstRequest.body).toHaveProperty('messages', [openAiSystemMessage(VISION), {
       role: 'user',
       content: [
         { type: 'text', text: '![image](id=a)' },
@@ -948,6 +952,7 @@ describe('images', () => {
     expect(request.rawBody).not.toContain('assets/images')
     expect(request.rawBody).not.toContain(setup.app.home)
     expect(request.body).toHaveProperty('messages', [
+      openAiSystemMessage(VISION),
       {
         role: 'user',
         content: [

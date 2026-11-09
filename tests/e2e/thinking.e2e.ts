@@ -4,6 +4,7 @@ import type { EditorView } from '@codemirror/view'
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from 'vitest'
 import { Key } from 'webdriverio'
 import { startApp, type RunningApp } from './harness/app'
+import { anthropicChatBody, openAiChatBody } from './harness/chatBody'
 import { click, closeSettings, consoleErrors, resetConsoleErrors, screenshotOnFailure, waitFor, waitForValue } from './harness/dom'
 import { conversationFilePath, makeConversation, readAppState, seedConversation, seedRawAppState } from './harness/fixtures'
 import { startChatMock, startEventStream, writeAnthropicEvent, writeChatFrame, type MockServer } from './harness/mockServer'
@@ -514,11 +515,7 @@ describe('thinking', () => {
     expect(await storedThinking()).toEqual([null, { text: thinkingText(1), replay: FIELD_REPLAY }, null])
     await waitForValue(browser, 'saved reply', savedAgentReplies, [savedThinkerReply(1)])
     // The OpenAI format asks for no thinking fields by default.
-    expect(requestBodies(THINKER_CHAT)).toEqual([{
-      model: THINKER.modelId,
-      stream: true,
-      messages: [{ role: 'user', content: 'Question 1' }],
-    }])
+    expect(requestBodies(THINKER_CHAT)).toEqual([openAiChatBody(THINKER, [{ role: 'user', content: 'Question 1' }])])
 
     // A mousedown anywhere else on a pill with a triangle opens or closes
     // the panel too: here on the role word, then on the model name.
@@ -549,15 +546,11 @@ describe('thinking', () => {
       { role: 'agent', text: answerText(2) },
       { role: 'user', text: '' },
     ])
-    expect(requestBodies(THINKER_CHAT)[1]).toEqual({
-      model: THINKER.modelId,
-      stream: true,
-      messages: [
-        { role: 'user', content: 'Question 1' },
-        { role: 'assistant', content: answerText(1), reasoning_content: thinkingText(1) },
-        { role: 'user', content: 'Question 2' },
-      ],
-    })
+    expect(requestBodies(THINKER_CHAT)[1]).toEqual(openAiChatBody(THINKER, [
+      { role: 'user', content: 'Question 1' },
+      { role: 'assistant', content: answerText(1), reasoning_content: thinkingText(1) },
+      { role: 'user', content: 'Question 2' },
+    ]))
   })
 
   it('changes one Thinking value from the gear popup and Settings › Providers, and drops thinking while it is off', async () => {
@@ -592,17 +585,13 @@ describe('thinking', () => {
       { role: 'agent', text: answerText(3) },
       { role: 'user', text: '' },
     ])
-    expect(requestBodies(THINKER_CHAT)[2]).toEqual({
-      model: THINKER.modelId,
-      stream: true,
-      messages: [
-        { role: 'user', content: 'Question 1' },
-        { role: 'assistant', content: answerText(1) },
-        { role: 'user', content: 'Question 2' },
-        { role: 'assistant', content: answerText(2) },
-        { role: 'user', content: 'Question 3' },
-      ],
-    })
+    expect(requestBodies(THINKER_CHAT)[2]).toEqual(openAiChatBody(THINKER, [
+      { role: 'user', content: 'Question 1' },
+      { role: 'assistant', content: answerText(1) },
+      { role: 'user', content: 'Question 2' },
+      { role: 'assistant', content: answerText(2) },
+      { role: 'user', content: 'Question 3' },
+    ]))
     expect(await storedThinking()).toEqual([
       null,
       { text: thinkingText(1), replay: FIELD_REPLAY },
@@ -664,15 +653,11 @@ describe('thinking', () => {
     expect(await storedThinking()).toEqual([null, null, null, { text: thinkingText(2), replay: FIELD_REPLAY }, null])
     expect((await pillThinking(3))?.slot).toBe('disclosure')
     // The checkbox asks for nothing more than the OpenAI format default.
-    expect(requestBodies(PLAIN_CHAT)[1]).toEqual({
-      model: PLAIN.modelId,
-      stream: true,
-      messages: [
-        { role: 'user', content: 'Plain question 1' },
-        { role: 'assistant', content: answerText(1) },
-        { role: 'user', content: 'Plain question 2' },
-      ],
-    })
+    expect(requestBodies(PLAIN_CHAT)[1]).toEqual(openAiChatBody(PLAIN, [
+      { role: 'user', content: 'Plain question 1' },
+      { role: 'assistant', content: answerText(1) },
+      { role: 'user', content: 'Plain question 2' },
+    ]))
 
     await openProviderDetail(PLAIN.id, PLAIN.name)
     await click(browser, 'input.provider-supports-thinking-checkbox')
@@ -692,11 +677,8 @@ describe('thinking', () => {
     ])
     // The Anthropic format asks for adaptive, summarized thinking by default.
     expect(requestBodies(CLAUDE_CHAT)[0]).toEqual({
-      model: CLAUDE.modelId,
-      stream: true,
-      max_tokens: 32000,
+      ...anthropicChatBody(CLAUDE, [claudeMarked('Claude question 1')]),
       thinking: { type: 'adaptive', display: 'summarized' },
-      messages: [claudeMarked('Claude question 1')],
     })
     expect(await storedThinking()).toEqual([null, claudeThinking(1), null])
     expect((await pillThinking(1))?.slot).toBe('disclosure')
@@ -846,17 +828,13 @@ describe('thinking', () => {
       { role: 'agent', text: answerText(n) },
       { role: 'user', text: '' },
     ])
-    expect(requestBodies(THINKER_CHAT)[n - 1]).toEqual({
-      model: THINKER.modelId,
-      stream: true,
-      messages: [
-        { role: 'user', content: 'Encrypted question 1' },
-        { role: 'assistant', content: 'Encrypted answer 1', reasoning_content: PLAIN_SEEDED_THINKING },
-        { role: 'user', content: 'Encrypted question 2' },
-        { role: 'assistant', content: 'Encrypted answer 2', reasoning_content: ENCRYPTED_THINKING },
-        { role: 'user', content: 'Encrypted question 3' },
-      ],
-    })
+    expect(requestBodies(THINKER_CHAT)[n - 1]).toEqual(openAiChatBody(THINKER, [
+      { role: 'user', content: 'Encrypted question 1' },
+      { role: 'assistant', content: 'Encrypted answer 1', reasoning_content: PLAIN_SEEDED_THINKING },
+      { role: 'user', content: 'Encrypted question 2' },
+      { role: 'assistant', content: 'Encrypted answer 2', reasoning_content: ENCRYPTED_THINKING },
+      { role: 'user', content: 'Encrypted question 3' },
+    ]))
     // The app saves the conversation again after the reply; the file still
     // holds the encrypted line.
     const seededMarker = `<dez:pill type="agent" model="${THINKER.id}/${THINKER.modelId}" ${FIELD_REPLAY_ATTRIBUTE}>`
