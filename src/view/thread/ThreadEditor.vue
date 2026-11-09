@@ -521,6 +521,14 @@ function syncDocToStore(persist = false) {
   if (persist) schedulePersistTab(viewTabId)
 }
 
+// Writes the view's doc back into `viewTabId` and saves that tab now: the
+// view is about to drop its doc (tab switch, unmount).
+function saveViewTabNow() {
+  syncDocToStore()
+  flushPendingPersist()
+  if (viewTabId) persistTab(viewTabId)
+}
+
 /** Recount matches for the find dropdown status. */
 function refreshFindStatus() {
   if (!view) return
@@ -1038,9 +1046,7 @@ onMounted(() => {
 })
 
 onBeforeUnmount(() => {
-  syncDocToStore()
-  flushPendingPersist()
-  if (viewTabId) persistTab(viewTabId)
+  saveViewTabNow()
   unregisterActiveView()
   sbp('okTurtles.events/off', 'dez.editor.stream-finished', onEditorStreamFinished)
   refreshFindStatusDebounced.clear()
@@ -1055,9 +1061,7 @@ watch(
   (_newId, oldId) => {
     if (oldId) {
       rememberViewPlace()
-      syncDocToStore()
-      flushPendingPersist()
-      if (viewTabId) persistTab(viewTabId)
+      saveViewTabNow()
       unregisterActiveView(oldId)
     }
     nextTick(() => {
