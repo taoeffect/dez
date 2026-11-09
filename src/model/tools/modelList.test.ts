@@ -92,4 +92,13 @@ describe('modelListText', () => {
       'venice/odd | Odd Name | Ven ice',
     ].join('\n'))
   })
+
+  it('keeps three columns when a name holds a |', () => {
+    const piped = provider('venice', 'Ven|ice')
+    const models = [{ id: 'odd', name: 'Odd | Name', provider: VENICE.id }]
+    expect(modelListText(cache([piped, models]), [piped])).toBe([
+      '1 model (full id | name | provider):',
+      'venice/odd | Odd / Name | Ven/ice',
+    ].join('\n'))
+  })
 })

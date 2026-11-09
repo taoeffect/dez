@@ -30,9 +30,11 @@ export const MODEL_LIST_TOOL: ToolDefinition = {
 const COLUMNS = '(full id | name | provider)'
 
 // Names come from provider APIs and user input. A line break in one would
-// split its model over two lines of the result.
-function oneLine(value: string): string {
-  return value.replace(/\s+/g, ' ').trim()
+// split its model over two lines of the result, and a `|` would read as one
+// more column; `/` takes its place, as in conversation titles. The full id
+// stays as it is: the model must be able to give it back byte for byte.
+function columnText(value: string): string {
+  return value.replace(/\s+/g, ' ').trim().replaceAll('|', '/')
 }
 
 /** The `model_list` result: the models that the user can pick (as the model
@@ -49,7 +51,7 @@ export function modelListText(cache: ModelCache, providers: readonly ProviderInf
   const lines = matchingModelsByProvider(providers, models, terms).flatMap(({ provider, models: matches }) =>
     matches.map((model) => {
       const fullId = modelRefKey({ providerId: provider.id, modelId: model.id })
-      return `${fullId} | ${oneLine(model.name)} | ${oneLine(provider.name)}`
+      return `${fullId} | ${columnText(model.name)} | ${columnText(provider.name)}`
     }))
   const count = lines.length
   if (count === 0) return `No models match ${quotedFilter}.`
