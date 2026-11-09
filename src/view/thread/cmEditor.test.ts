@@ -1,4 +1,4 @@
-import { defaultKeymap, deleteCharForward, history, undo, undoDepth } from '@codemirror/commands'
+import { defaultKeymap, deleteCharForward, history, redo, undo, undoDepth } from '@codemirror/commands'
 import { ensureSyntaxTree } from '@codemirror/language'
 import { EditorSelection, EditorState, type Transaction, type TransactionSpec } from '@codemirror/state'
 import { EditorView, keymap, runScopeHandlers } from '@codemirror/view'
@@ -11,18 +11,19 @@ import {
   SECTION_SEP,
   clipboardPasteTransaction,
   cutSelectedRangesTransaction,
+  deletedSeparators,
   docToSections,
   dezLanguageSupport,
   encodePrompt,
   initialSectionModels,
   keymapHasPlatformBinding,
   linuxLineNavigationKeymap,
+  mergeSectionEffect,
   parseClipboardText,
   physicalLineBoundarySelection,
   pillsField,
   plainTextPasteTransaction,
   reconcileSectionModelsToDoc,
-  removedSeparatorModelIndexes,
   scanPills,
   sectionsField,
   sectionsToDoc,
@@ -126,7 +127,7 @@ describe('CodeMirror section role reconciliation', () => {
     const tr = state.update({ changes: { from: separatorFrom, to: separatorTo, insert: '' } })
     const nextState = tr.state
 
-    expect(removedSeparatorModelIndexes(tr)).toEqual([1])
+    expect(deletedSeparators(tr)).toEqual([{ pos: separatorFrom, index: 1 }])
     expect(nextState.field(sectionsField).map((model) => model.role)).toEqual(['user', 'user'])
     expect(nextState.field(sectionsField).map((model) => model.id)).toEqual(['s1', 's3'])
     expect(
@@ -134,6 +135,92 @@ describe('CodeMirror section role reconciliation', () => {
         (candidate) => candidate.role,
       ),
     ).toEqual(['user', 'user'])
+  })
+})
+
+describe('section models in the undo history', () => {
+  const MODEL: ModelRef = { providerId: 'openrouter', modelId: 'anthropic/claude-sonnet-4.5' }
+  const THINKING: SectionThinking = { text: 'plan the answer', replay: { kind: 'field', field: 'reasoning_content' } }
+  const MODELS: SectionModel[] = [
+    { id: 's1', role: 'user' },
+    { id: 's2', role: 'agent', model: MODEL, thinking: THINKING, durationMs: 1200 },
+    { id: 's3', role: 'user' },
+    { id: 's4', role: 'agent', model: MODEL, durationMs: 800 },
+    { id: 's5', role: 'user' },
+  ]
+  const DOC = ['one', 'two', 'three', 'four', 'five'].join(`\n${SECTION_SEP}\n`)
+  // From inside `two` to inside `four`: the selection holds the separators
+  // of sections s3 and s4.
+  const MIDDLE = EditorSelection.single(DOC.indexOf('two') + 1, DOC.indexOf('four') + 1)
+
+  function historyState(selection?: EditorSelection): EditorState {
+    return EditorState.create({
+      doc: DOC,
+      selection,
+      extensions: [history(), sectionsField.init(() => MODELS), pillsField.init(() => new Map())],
+    })
+  }
+
+  it('puts back the sections that a delete in the middle of the doc removed, at their places, and removes them again on redo', () => {
+    const deleted = historyState().update({ changes: { from: MIDDLE.main.from, to: MIDDLE.main.to }, userEvent: 'delete.selection' }).state
+    expect(deleted.field(sectionsField).map((model) => model.id)).toEqual(['s1', 's2', 's5'])
+
+    const undone = dispatchCommand(deleted, undo)
+
+    expect(undone.doc.toString()).toBe(DOC)
+    expect(undone.field(sectionsField)).toStrictEqual(MODELS)
+
+    const redone = dispatchCommand(undone, redo)
+
+    expect(redone.field(sectionsField)).toStrictEqual(deleted.field(sectionsField))
+    expect(dispatchCommand(redone, undo).field(sectionsField)).toStrictEqual(MODELS)
+  })
+
+  it('puts back an agent section that Backspace at its start merged into the section before', () => {
+    const separator = DOC.indexOf(SECTION_SEP)
+    // The transaction of `mergeWithPreviousSection` (ThreadEditor.vue).
+    const merged = historyState().update({
+      changes: { from: separator - 1, to: separator + 2 },
+      effects: mergeSectionEffect.of({ removeIndex: 1 }),
+      userEvent: 'delete.backward',
+    }).state
+    expect(merged.field(sectionsField).map((model) => model.id)).toEqual(['s1', 's3', 's4', 's5'])
+
+    expect(dispatchCommand(merged, undo).field(sectionsField)).toStrictEqual(MODELS)
+  })
+
+  // The history joins quick adjacent edits into one undo step, and moves
+  // the merge's saved separator position through the typing before it.
+  it('puts back a section that Delete merged right after typing, with one undo of both', () => {
+    const separator = DOC.indexOf(SECTION_SEP)
+    const typed = historyState().update({ changes: { from: separator - 1, insert: '!!' }, userEvent: 'input.type' }).state
+    // The transaction of `mergeWithNextSection` (ThreadEditor.vue) at the
+    // end of `one!!`.
+    const merged = typed.update({
+      changes: { from: separator + 1, to: separator + 4 },
+      effects: mergeSectionEffect.of({ removeIndex: 1 }),
+      userEvent: 'delete.forward',
+    }).state
+    expect(merged.doc.toString().startsWith('one!!two')).toBe(true)
+    expect(undoDepth(merged)).toBe(1)
+
+    const undone = dispatchCommand(merged, undo)
+
+    expect(undone.doc.toString()).toBe(DOC)
+    expect(undone.field(sectionsField)).toStrictEqual(MODELS)
+  })
+
+  it('keeps the replaced and the pasted sections through undo and redo of a paste with a section marker', () => {
+    const state = historyState(MIDDLE)
+    const pasted = state.update(clipboardPasteTransaction(state, `x\n<dez:pill type="agent" model="openrouter/anthropic/claude-sonnet-4.5"/>\npasted`)).state
+    const pastedModels = pasted.field(sectionsField)
+    expect(pastedModels.map((model) => [model.role, model.model])).toEqual([['user', undefined], ['agent', MODEL], ['agent', MODEL], ['user', undefined]])
+
+    const undone = dispatchCommand(pasted, undo)
+
+    expect(undone.doc.toString()).toBe(DOC)
+    expect(undone.field(sectionsField)).toStrictEqual(MODELS)
+    expect(dispatchCommand(undone, redo).field(sectionsField)).toStrictEqual(pastedModels)
   })
 })
 
@@ -1005,22 +1092,38 @@ describe('broken prompt pills', () => {
   // The issue's thread: the pill is the whole first user section, then an
   // agent reply and an empty user section. The selection holds the hidden
   // close marker, but no body text.
-  it('keeps the pill when Delete removes a selection from the end of its body to the doc end', () => {
-    const thread = `${PILL}\n${SECTION_SEP}\nHi!\n${SECTION_SEP}\n`
-    const start = pillState({
-      doc: thread,
-      models: [{ id: 'u1', role: 'user' }, { id: 'a1', role: 'agent' }, { id: 'u2', role: 'user' }],
-      selection: { anchor: thread.length, head: BODY_TO },
-    })
+  const THREAD = `${PILL}\n${SECTION_SEP}\nHi!\n${SECTION_SEP}\n`
+  const THREAD_MODELS: SectionModel[] = [
+    { id: 'u1', role: 'user' },
+    { id: 'a1', role: 'agent', model: { providerId: 'zai', modelId: 'glm-5.2' }, durationMs: 1500 },
+    { id: 'u2', role: 'user' },
+  ]
 
-    const state = dispatchCommand(start, deleteCharForward)
+  function deleteFromBodyEndToThreadEnd(): EditorState {
+    const start = pillState({ doc: THREAD, models: THREAD_MODELS, selection: { anchor: THREAD.length, head: BODY_TO } })
+    return dispatchCommand(start, deleteCharForward)
+  }
+
+  it('keeps the pill when Delete removes a selection from the end of its body to the doc end', () => {
+    const state = deleteFromBodyEndToThreadEnd()
 
     expect(state.doc.toString()).toBe(PILL)
     // The caret stays at the end of the body, inside the pill.
     expect(state.selection.main.head).toBe(BODY_TO)
     expect(docToSections(state.doc.toString(), state.field(sectionsField), state.field(pillsField)).map((section) => section.content)).toEqual([[textNode(''), PILL_NODE, textNode('')]])
     expect(undoDepth(state)).toBe(1)
-    expect(dispatchCommand(state, undo).doc.toString()).toBe(thread)
+    expect(dispatchCommand(state, undo).doc.toString()).toBe(THREAD)
+  })
+
+  it('brings back the removed agent section with its data on undo of that Delete, and removes it again on redo', () => {
+    const undone = dispatchCommand(deleteFromBodyEndToThreadEnd(), undo)
+
+    expect(undone.field(sectionsField)).toStrictEqual(THREAD_MODELS)
+
+    const redone = dispatchCommand(undone, redo)
+
+    expect(redone.doc.toString()).toBe(PILL)
+    expect(redone.field(sectionsField)).toStrictEqual([THREAD_MODELS[0]])
   })
 
   it('keeps the pill and puts the typed text after it when typing over a selection from the end of its body', () => {

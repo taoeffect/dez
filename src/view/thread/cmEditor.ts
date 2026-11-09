@@ -1,7 +1,8 @@
+import { invertedEffects } from '@codemirror/commands'
 import { HighlightStyle, syntaxHighlighting } from '@codemirror/language'
 import { markdown } from '@codemirror/lang-markdown'
 import { Decoration, EditorView, ViewPlugin, WidgetType, type DecorationSet, type KeyBinding, type ViewUpdate } from '@codemirror/view'
-import { ChangeSet, EditorSelection, EditorState, StateEffect, StateField, findClusterBreak, type Extension, type Transaction, type TransactionSpec } from '@codemirror/state'
+import { ChangeSet, EditorSelection, EditorState, MapMode, StateEffect, StateField, findClusterBreak, type Extension, type Transaction, type TransactionSpec } from '@codemirror/state'
 import { tags as t } from '@lezer/highlight'
 import type { MarkdownConfig } from '@lezer/markdown'
 import type { ContentNode, ModelRef, Role, Section, SectionThinking } from '../../model/chat/types'
@@ -412,16 +413,27 @@ function sectionIndexAtOffset(doc: string, pos: number): number {
   return index
 }
 
-export function removedSeparatorModelIndexes(tr: Transaction): number[] {
-  const oldDoc = tr.startState.doc.toString()
-  const indexes: number[] = []
+/** A separator that a transaction deletes: its position in the start doc,
+ *  and the index of the section that it starts there. */
+export interface DeletedSeparator {
+  pos: number
+  index: number
+}
+
+export function deletedSeparators(tr: Transaction): DeletedSeparator[] {
+  const deleted: DeletedSeparator[] = []
+  // Most changes delete no separator: only those read the whole doc.
+  let startDoc: string | null = null
   tr.changes.iterChanges((fromA, toA) => {
-    let removeIndex = sectionIndexAtOffset(oldDoc, fromA) + 1
-    for (let i = fromA; i < toA; i++) {
-      if (oldDoc.charCodeAt(i) === 0x1e) indexes.push(removeIndex++)
+    const text = tr.startState.sliceDoc(fromA, toA)
+    if (!text.includes(SECTION_SEP)) return
+    startDoc ??= tr.startState.doc.toString()
+    let index = sectionIndexAtOffset(startDoc, fromA)
+    for (let i = 0; i < text.length; i++) {
+      if (text.charCodeAt(i) === 0x1e) deleted.push({ pos: fromA + i, index: ++index })
     }
   })
-  return indexes
+  return deleted
 }
 
 /* ──────────────────────────  Effects  ────────────────────────── */
@@ -445,6 +457,27 @@ export const updatePillMetaEffect = StateEffect.define<{
 }>()
 export const togglePillExpandedEffect = StateEffect.define<{ id: string }>()
 
+/** A section model that an undo or redo puts back, with the position of
+ *  its separator in the doc after that undo or redo. */
+interface RestoredSectionModel {
+  pos: number
+  model: SectionModel
+}
+
+/** Carried by an undo or redo that puts deleted separators back in the
+ *  doc: their models, for `sectionsField` (see its `provide`). While the
+ *  effect waits in the undo history, CodeMirror maps it through later
+ *  changes; an entry whose separator a later change deleted is dropped. */
+const restoreSectionModelsEffect = StateEffect.define<RestoredSectionModel[]>({
+  map: (entries, mapping) => {
+    const mapped = entries.flatMap(({ pos, model }) => {
+      const next = mapping.mapPos(pos, 1, MapMode.TrackAfter)
+      return next === null ? [] : [{ pos: next, model }]
+    })
+    return mapped.length > 0 ? mapped : undefined
+  },
+})
+
 /* ──────────────────────  sectionsField  ─────────────────────── */
 
 export function reconcileSectionModelsToDoc(
@@ -466,6 +499,22 @@ export function reconcileSectionModelsToDoc(
     }
   }
   return normalizeSectionModels(reconciled)
+}
+
+/** `models` with the models that the undo or redo `tr` puts back, each at
+ *  the index of the section that its separator starts in the new doc.
+ *  `models` already holds, in order, the models of the new doc's other
+ *  separators, so inserting by ascending position puts each one at its
+ *  final index. */
+function withRestoredSectionModels(models: SectionModel[], tr: Transaction): SectionModel[] {
+  const restored = tr.effects.flatMap((effect) => (effect.is(restoreSectionModelsEffect) ? effect.value : []))
+  if (restored.length === 0) return models
+  const doc = tr.newDoc.toString()
+  const copy = models.slice()
+  for (const { pos, model } of restored.sort((a, b) => a.pos - b.pos)) {
+    if (doc.charCodeAt(pos) === 0x1e) copy.splice(sectionIndexAtOffset(doc, pos) + 1, 0, model)
+  }
+  return copy
 }
 
 export const sectionsField = StateField.define<SectionModel[]>({
@@ -509,7 +558,7 @@ export const sectionsField = StateField.define<SectionModel[]>({
     }
     if (tr.docChanged) {
       if (!sectionModelsManagedByEffect) {
-        const removed = removedSeparatorModelIndexes(tr).sort((a, b) => b - a)
+        const removed = deletedSeparators(tr).map((separator) => separator.index).sort((a, b) => b - a)
         if (removed.length > 0) {
           const copy = next.slice()
           for (const index of removed) {
@@ -517,11 +566,28 @@ export const sectionsField = StateField.define<SectionModel[]>({
           }
           next = copy
         }
+        next = withRestoredSectionModels(next, tr)
       }
       next = reconcileSectionModelsToDoc(next, tr.newDoc.toString())
     }
     return normalizeSectionModels(next)
   },
+  // Section models are not doc text, so the undo history alone puts back
+  // only the separator of a deleted section: `reconcileSectionModelsToDoc`
+  // then pads a new User model at the end of the list (an Agent section
+  // came back as User, and the sections after it got the wrong models).
+  // So the history keeps the model of each separator that a change deletes
+  // (Delete, Backspace merges, cut, paste over sections, an undo of a paste
+  // or a split), and the undo or redo that puts the separator back puts the
+  // model back. This runs inside the history's update: only `tr.startState`
+  // holds the deleted models.
+  provide: (field) => invertedEffects.of((tr) => {
+    const separators = deletedSeparators(tr)
+    if (separators.length === 0) return []
+    const models = tr.startState.field(field)
+    const restored = separators.flatMap(({ pos, index }) => (models[index] ? [{ pos, model: models[index] }] : []))
+    return restored.length > 0 ? [restoreSectionModelsEffect.of(restored)] : []
+  }),
 })
 
 /* ──────────────────────────  pillsField  ───────────────────── */

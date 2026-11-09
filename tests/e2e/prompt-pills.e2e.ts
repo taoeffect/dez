@@ -5,13 +5,16 @@ import { startApp, type RunningApp } from './harness/app'
 import { consoleErrors, pointerClick, resetConsoleErrors, screenshotOnFailure, waitFor, waitForValue } from './harness/dom'
 import { makeConversation, seedAppState, seedConversation } from './harness/fixtures'
 import { createSession, destroySession, type E2EBrowser } from './harness/session'
-import { docPos, editorCaret, sbpCall } from './harness/thread'
+import { docPos, editorCaret, savedPillLines, sbpCall } from './harness/thread'
+import type { ConversationData } from '../../src/model/persistence/types'
 
 // Prompt pills in the real app: an expanded pill stays a pill when Delete
 // removes a selection that starts at the end of its body and runs into the
-// next sections.
+// next sections, and an undo of that Delete brings the sections back with
+// their roles and data.
 //
-// One app session serves the whole file.
+// One app session serves the whole file. Each test opens its own copy of
+// the thread: a Delete saves its conversation.
 
 const PROMPT_NAME = 'say-hi'
 const PROMPT_BODY = 'this is just a test, say hi'
@@ -19,15 +22,35 @@ const PROMPT_NODE = `prompt ${PROMPT_NAME}: ${PROMPT_BODY}`
 
 // The issue's thread: a user section that is only the pill, the reply,
 // and the empty user section after it.
-const THREAD = makeConversation({
-  id: 'prompt-pills-e2e',
-  title: 'Prompt pills',
-  sections: [
-    { role: 'user', nodes: [{ kind: 'prompt', id: 'p1', promptId: null, name: PROMPT_NAME, body: PROMPT_BODY }] },
-    { role: 'agent', nodes: [{ kind: 'text', text: 'Hi!' }] },
-    { role: 'user', nodes: [{ kind: 'text', text: '' }] },
-  ],
-})
+function issueThread (id: string): ConversationData {
+  return makeConversation({
+    id,
+    title: 'Prompt pills',
+    sections: [
+      { role: 'user', nodes: [{ kind: 'prompt', id: 'p1', promptId: null, name: PROMPT_NAME, body: PROMPT_BODY }] },
+      {
+        role: 'agent',
+        nodes: [{ kind: 'text', text: 'Hi!' }],
+        model: { providerId: 'openrouter', modelId: 'anthropic/claude-sonnet-4.5' },
+        durationMs: 1500,
+      },
+      { role: 'user', nodes: [{ kind: 'text', text: '' }] },
+    ],
+  })
+}
+
+const DELETE_THREAD = issueThread('prompt-pills-delete-e2e')
+const UNDO_THREAD = issueThread('prompt-pills-undo-e2e')
+const THREAD_NODES = [
+  { role: 'user', nodes: [PROMPT_NODE] },
+  { role: 'agent', nodes: ['text Hi!'] },
+  { role: 'user', nodes: [] },
+]
+const THREAD_PILL_LINES = [
+  '<dez:pill type="user"/>',
+  '<dez:pill type="agent" model="openrouter/anthropic/claude-sonnet-4.5" duration-ms="1500"/>',
+  '<dez:pill type="user"/>',
+]
 
 interface SectionNodes {
   role: string
@@ -54,13 +77,52 @@ describe('prompt pills', () => {
     }))
   }
 
+  // The roles of the drawn role pills, from the second section on (the
+  // first section's User pill is not a widget).
+  async function drawnPillRoles (): Promise<string[]> {
+    return browser.execute(() => Array.from(
+      document.querySelectorAll('.cm-content .dez-role-separator'),
+      (pill) => pill.getAttribute('data-role') ?? '',
+    ))
+  }
+
+  // Opens `conversationId` (the issue's thread), expands its pill, and
+  // presses Delete over a selection from the doc end back to the end of the
+  // pill's body. Returns the end of the body.
+  async function deleteFromBodyEndToDocEnd (conversationId: string): Promise<number> {
+    await browser.execute((id: string) => {
+      const sbp = Reflect.get(window, 'sbp') as (selector: string, ...args: unknown[]) => unknown
+      void sbp('dez.model/tabs/openConversation', id)
+    }, conversationId)
+    await waitForValue(browser, 'thread open', sectionNodes, THREAD_NODES)
+    await pointerClick(browser, '.dez-prompt-pill')
+    await waitFor(browser, '.dez-prompt-pill[data-expanded="1"]', 10_000)
+
+    // From the doc end back to the end of "hi", as a drag or Shift+click
+    // gives. Set by code, so that it starts exactly at the body end, next
+    // to the hidden close marker.
+    const bodyEnd = await docPos(browser, PROMPT_BODY, PROMPT_BODY.length)
+    await browser.execute((head: number) => {
+      const content = document.querySelector('.cm-content')
+      if (!content) throw new Error('select: .cm-content not found')
+      const view = Reflect.get(Reflect.get(content, 'cmTile'), 'root').view as EditorView
+      view.focus()
+      view.dispatch({ selection: { anchor: view.state.doc.length, head } })
+    }, bodyEnd)
+    await browser.keys([Key.Delete])
+
+    await waitForValue(browser, 'thread after Delete', sectionNodes, [{ role: 'user', nodes: [PROMPT_NODE] }])
+    return bodyEnd
+  }
+
   beforeAll(async () => {
     app = await startApp()
     try {
       // Seed app_state.json (checkForUpdates: false) BEFORE the session so
       // startup never fires the update checker's network fetch/toast.
       await seedAppState(app.home)
-      await seedConversation(app.home, THREAD)
+      await seedConversation(app.home, DELETE_THREAD)
+      await seedConversation(app.home, UNDO_THREAD)
       browser = await createSession(app.binary, app.port)
     } catch (err) {
       await app.stop()
@@ -88,33 +150,21 @@ describe('prompt pills', () => {
   })
 
   it('keeps an expanded pill when Delete removes a selection from the end of its body to the doc end', async () => {
-    await browser.execute((conversationId: string) => {
-      const sbp = Reflect.get(window, 'sbp') as (selector: string, ...args: unknown[]) => unknown
-      void sbp('dez.model/tabs/openConversation', conversationId)
-    }, THREAD.id)
-    await waitForValue(browser, 'thread open', sectionNodes, [
-      { role: 'user', nodes: [PROMPT_NODE] },
-      { role: 'agent', nodes: ['text Hi!'] },
-      { role: 'user', nodes: [] },
-    ])
-    await pointerClick(browser, '.dez-prompt-pill')
-    await waitFor(browser, '.dez-prompt-pill[data-expanded="1"]', 10_000)
+    const bodyEnd = await deleteFromBodyEndToDocEnd(DELETE_THREAD.id)
 
-    // From the doc end back to the end of "hi", as a drag or Shift+click
-    // gives. Set by code, so that it starts exactly at the body end, next
-    // to the hidden close marker.
-    const bodyEnd = await docPos(browser, PROMPT_BODY, PROMPT_BODY.length)
-    await browser.execute((head: number) => {
-      const content = document.querySelector('.cm-content')
-      if (!content) throw new Error('select: .cm-content not found')
-      const view = Reflect.get(Reflect.get(content, 'cmTile'), 'root').view as EditorView
-      view.focus()
-      view.dispatch({ selection: { anchor: view.state.doc.length, head } })
-    }, bodyEnd)
-    await browser.keys([Key.Delete])
-
-    await waitForValue(browser, 'thread after Delete', sectionNodes, [{ role: 'user', nodes: [PROMPT_NODE] }])
     await waitFor(browser, '.dez-prompt-pill[data-expanded="1"]', 10_000)
     expect(await editorCaret(browser)).toBe(bodyEnd)
+  })
+
+  it('brings back the removed sections with their roles and data on undo of that Delete', async () => {
+    await deleteFromBodyEndToDocEnd(UNDO_THREAD.id)
+    // The Delete's save, so that the check after the undo sees a new save.
+    await waitForValue(browser, 'saved pills after Delete', () => savedPillLines(app.home, UNDO_THREAD.id), ['<dez:pill type="user"/>'])
+
+    await browser.keys([Key.Control, 'z'])
+
+    await waitForValue(browser, 'thread after undo', sectionNodes, THREAD_NODES)
+    expect(await drawnPillRoles()).toEqual(['agent', 'user'])
+    await waitForValue(browser, 'saved pills after undo', () => savedPillLines(app.home, UNDO_THREAD.id), THREAD_PILL_LINES)
   })
 })
