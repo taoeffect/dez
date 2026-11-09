@@ -47,6 +47,8 @@ Dez follows an SBP MVC pattern: selectors are the cross-layer API, and code live
 - `src/utils/`: cross-layer utilities only.
 - `src-tauri/`: Rust commands, native HTTP bridge, persistence file I/O, credential storage, and app bootstrap.
 
+ Always build code cleanly, modularly, and with proper architecture and separation of concerns.
+
 ### Runtime data flow
 
 ```text
