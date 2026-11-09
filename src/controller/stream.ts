@@ -3,6 +3,7 @@ import type { ActiveModel, Section, SectionThinking, Tab } from '../model/chat/t
 import { sectionPlainText } from '../model/chat/content'
 import { findToolBlocks, ModelTextEscaper } from '../model/chat/toolBlocks'
 import type { ProviderStreamChatResult } from '../model/providers'
+import { requireProvider } from '../model/providers/registry'
 import { agentSectionMessages } from '../model/streams/messages'
 import {
   checkToolCalls,
@@ -249,8 +250,10 @@ export default sbp('sbp/selectors/register', {
     const tools = args.sendTools ? TOOL_DEFINITIONS : []
 
     try {
-      // Inside the try: a template error must end the stream session.
-      const system = buildSystemPrompt(args.model, tools)
+      // Inside the try: a template error or a deleted provider must end the
+      // stream session. Built once per reply, so a provider rename during
+      // the reply does not change the prompt of its later rounds.
+      const system = buildSystemPrompt(args.model, requireProvider(args.model.providerId).name, tools)
       let messages = args.messages
       // The first call id of the group that ended the round before: it names
       // the thinking round of every later round (SectionThinking.rounds).

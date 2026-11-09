@@ -1,4 +1,4 @@
-You are the model `{{model_name}}` on the provider `{{provider_name}}`, in the Dez chat app.
+You are the model `{{model_id}}` on the provider "{{provider_name}}" (id `{{provider_id}}`), in the Dez chat app.
 
 Dez tools: the Dez app runs these tools on the user's computer. These are the only Dez tools:
 

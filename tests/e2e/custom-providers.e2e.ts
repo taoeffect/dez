@@ -260,7 +260,7 @@ describe('custom providers', () => {
 
     const chats = requestsTo('/local/v1/chat/completions')
     expect(chats.map((request) => [request.method, request.authorization])).toEqual([['POST', null], ['POST', null]])
-    const localModel = { id: 'local', modelId: 'shared-model' }
+    const localModel = { id: 'local', name: 'Local Mock', modelId: 'shared-model' }
     expect(chats[0].body).toEqual(openAiChatBody(localModel, [{ role: 'user', content: 'Hello mock' }]))
     expect(chats[1].body).toEqual(openAiChatBody(localModel, [
       { role: 'user', content: 'Hello mock' },
@@ -282,7 +282,7 @@ describe('custom providers', () => {
 
     const chats = requestsTo('/keyed/v1/chat/completions')
     expect(chats.map((request) => request.authorization)).toEqual([`Bearer ${KEYED_API_KEY}`])
-    expect(chats[0].body).toEqual(openAiChatBody({ id: 'keyed', modelId: 'fetched-model' }, [{ role: 'user', content: 'Hello keyed' }]))
+    expect(chats[0].body).toEqual(openAiChatBody({ id: 'keyed', name: 'Keyed Mock', modelId: 'fetched-model' }, [{ role: 'user', content: 'Hello keyed' }]))
   })
 
   it('shows built-ins with a badge and no delete control in Settings › Providers', async () => {

@@ -9,17 +9,18 @@ import { TOOL_DEFINITIONS, toolJsonSchema } from '../../../src/model/tools/regis
 // the text (src/model/systemPrompt/index.test.ts) and the wire shapes
 // (src/model/providers/provider.test.ts).
 
-/** A provider id and the id of one of its models, as `MockProvider` has
- *  them. */
+/** A provider id and name and the id of one of its models, as
+ *  `MockProvider` has them. */
 export interface ChatModel {
   id: string
+  name: string
   modelId: string
 }
 
 /** Dez's system prompt in a chat request to `model` that offers the Dez
  *  tools. */
 export function systemPrompt (model: ChatModel): string {
-  return buildSystemPrompt({ providerId: model.id, modelId: model.modelId }, TOOL_DEFINITIONS)
+  return buildSystemPrompt({ providerId: model.id, modelId: model.modelId }, model.name, TOOL_DEFINITIONS)
 }
 
 /** The first message of an OpenAI-format chat request to `model`. */

@@ -5,6 +5,7 @@ import type { ActiveModel, Section, SectionThinking, Tab, ThinkingReplay } from 
 import { sectionVisibleText } from '../model/chat/content'
 import { findToolBlocks } from '../model/chat/toolBlocks'
 import type { ConversationData } from '../model/persistence/types'
+import { customProviderConfigSchema } from '../model/providers/config'
 import type { ProviderChatInputMessage, ProviderInfo, ProviderStreamChatInput, ProviderStreamChatResult } from '../model/providers'
 import type { RequestMessages } from '../model/streams/types'
 import type { ToastData } from '../view/toast/selectors'
@@ -106,6 +107,9 @@ beforeEach(() => {
   alerts = []
   providerInfos = async () => []
   consoleError = vi.spyOn(console, 'error').mockImplementation(() => {})
+  // `dez.stream/start` names the provider in the system prompt, so the stub
+  // model's provider must exist.
+  sbp('dez.model/customProviders/save', customProviderConfigSchema.parse({ id: model.providerId, name: 'Thinker', baseUrl: 'http://localhost:8080/v1' }))
   sbp('dez.model/tabs/replaceSections', activeTab().id, [
     { id: 'u1', role: 'user', content: [{ kind: 'text', text: 'Hi' }] },
     { id: 'a1', role: 'agent', content: [{ kind: 'text', text: '' }], model },

@@ -871,7 +871,7 @@ describe('images', () => {
     const request = await sendRequest()
     expect(request.path).toBe(mockChatPath(VISION))
     expect(request.body).toHaveProperty('messages', [
-      openAiSystemMessage({ id: VISION.id, modelId: TEXT_MODEL.id }),
+      openAiSystemMessage({ ...VISION, modelId: TEXT_MODEL.id }),
       { role: 'user', content: `![image](id=a)${QUESTION}` },
     ])
     expect(await openToasts(browser, 'warning')).toEqual([{
