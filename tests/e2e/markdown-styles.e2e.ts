@@ -29,6 +29,7 @@ const INLINE_TEXT = [
 ].join('\n')
 
 interface ThemeColors {
+  text: string
   muted: string
   link: string
   code: string
@@ -65,7 +66,7 @@ describe('markdown styles', () => {
         probe.style.color = `var(${variable})`
         return getComputedStyle(probe).color
       }
-      const colors = { muted: resolve('--color-muted'), link: resolve('--color-link'), code: resolve('--color-code') }
+      const colors = { text: resolve('--color-text'), muted: resolve('--color-muted'), link: resolve('--color-link'), code: resolve('--color-code') }
       probe.remove()
       return colors
     })
@@ -158,6 +159,29 @@ describe('markdown styles', () => {
       'list link': link,
       'https://example.com/auto': link,
       'quote link': quoteLink,
+    })
+  })
+
+  // The issue's conversation: replies cut off inside a quote, once inside
+  // a list item. The quotes end with their sections.
+  it('styles no user text as a quote after a reply that ends in a quote', async () => {
+    await openFixture([
+      { role: 'user', text: 'Is there a quote by George Orwell about thoughtcrime?' },
+      { role: 'agent', text: 'Here are the quotes:\n\n*   **On the goal of Newspeak:**\n    > "In the end we shall make thoughtcrime impossible. Every' },
+      { role: 'user', text: 'finish the quote' },
+      { role: 'agent', text: 'Here is all of it:\n\n> "In the end we shall make thoughtcrime literally impossible, because' },
+      { role: 'user', text: 'Why do you keep cutting it off?' },
+    ])
+    const colors = await themeColors()
+
+    await waitForValue(browser, 'quote and user text styles', () => textStyles([
+      'literally impossible',
+      'finish the quote',
+      'Why do you keep cutting it off?',
+    ]), {
+      'literally impossible': `${colors.muted} italic`,
+      'finish the quote': `${colors.text} normal`,
+      'Why do you keep cutting it off?': `${colors.text} normal`,
     })
   })
 })

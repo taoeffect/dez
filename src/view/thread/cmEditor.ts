@@ -3,6 +3,7 @@ import { markdown } from '@codemirror/lang-markdown'
 import { Decoration, EditorView, ViewPlugin, WidgetType, type DecorationSet, type KeyBinding, type ViewUpdate } from '@codemirror/view'
 import { EditorSelection, EditorState, StateEffect, StateField, findClusterBreak, type Extension, type Transaction, type TransactionSpec } from '@codemirror/state'
 import { tags as t } from '@lezer/highlight'
+import type { MarkdownConfig } from '@lezer/markdown'
 import type { ContentNode, ModelRef, Role, Section, SectionThinking } from '../../model/chat/types'
 import { durationField } from '../../model/chat/duration'
 import { modelRefField } from '../../model/chat/modelRef'
@@ -2157,6 +2158,34 @@ export const dezTheme = EditorView.theme({
   },
 })
 
+// The editor parses all sections as one markdown text, but each section is
+// its own markdown text. Without this extension an open paragraph runs on
+// through a separator line into the next sections (lezer's lazy paragraph
+// continuation), and so does the quote or list item that holds it: a reply
+// that ends in `> quote` shows the next user message as a quote. A
+// separator line ends the open paragraph (`endLeaf`); the quotes and lists
+// around it then close, as the line has none of their markup. The line
+// itself becomes a `SectionSeparator` block, so the next section's first
+// line never joins it (a `---` there is a rule, not a setext underline).
+// `findMarkdownTables` (`tables.ts`) splits sections the same way.
+// An unclosed code fence or HTML block still runs into the next sections:
+// lezer reads their lines in its own loop, which stops only at their end
+// or at the end of a quote or list around them, never at `endLeaf`.
+const sectionSeparatorMarkdown: MarkdownConfig = {
+  defineNodes: [{ name: 'SectionSeparator', block: true }],
+  parseBlock: [{
+    name: 'SectionSeparator',
+    before: 'LinkReference',
+    parse(cx, line) {
+      if (line.text !== SECTION_SEP) return false
+      cx.addElement(cx.elt('SectionSeparator', cx.lineStart, cx.lineStart + line.text.length))
+      cx.nextLine()
+      return true
+    },
+    endLeaf: (_cx, line) => line.text === SECTION_SEP,
+  }],
+}
+
 export function dezLanguageSupport(): Extension {
-  return [markdown(), syntaxHighlighting(dezHighlightStyle)]
+  return [markdown({ extensions: sectionSeparatorMarkdown }), syntaxHighlighting(dezHighlightStyle)]
 }

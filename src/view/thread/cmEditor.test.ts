@@ -1,4 +1,5 @@
 import { defaultKeymap, history, undo, undoDepth } from '@codemirror/commands'
+import { ensureSyntaxTree } from '@codemirror/language'
 import { EditorSelection, EditorState, type Transaction, type TransactionSpec } from '@codemirror/state'
 import { EditorView, keymap, runScopeHandlers } from '@codemirror/view'
 import { describe, expect, it } from 'vitest'
@@ -11,6 +12,7 @@ import {
   clipboardPasteTransaction,
   cutSelectedRangesTransaction,
   docToSections,
+  dezLanguageSupport,
   encodePrompt,
   initialSectionModels,
   keymapHasPlatformBinding,
@@ -1003,5 +1005,45 @@ describe('broken prompt pills', () => {
 
     expect(sections.map((section) => section.content)).toEqual([[textNode('x a\nb')]])
     expect(copied).toBe('<dez:pill type="user"/>\nx a\nb')
+  })
+})
+
+describe('markdown sections', () => {
+  /** Each top-level block of the editor's markdown parse of `sections`:
+   *  its node name and its text. */
+  function topBlocks(...sections: string[]): string[] {
+    const state = EditorState.create({ doc: sections.join(`\n${SECTION_SEP}\n`), extensions: [dezLanguageSupport()] })
+    const blocks: string[] = []
+    for (let node = ensureSyntaxTree(state, state.doc.length, 5000)!.topNode.firstChild; node; node = node.nextSibling) {
+      blocks.push(`${node.name}: ${state.sliceDoc(node.from, node.to)}`)
+    }
+    return blocks
+  }
+
+  it('ends a quote at the end of its section', () => {
+    expect(topBlocks('To finish:\n\n> "In the end we shall', 'Why do you keep cutting it off?')).toEqual([
+      'Paragraph: To finish:',
+      'Blockquote: > "In the end we shall',
+      `SectionSeparator: ${SECTION_SEP}`,
+      'Paragraph: Why do you keep cutting it off?',
+    ])
+  })
+
+  it('ends a list, and a quote inside it, at the end of its section', () => {
+    expect(topBlocks('*   **On Newspeak:**\n    > "In the end', 'finish the quote')).toEqual([
+      'BulletList: *   **On Newspeak:**\n    > "In the end',
+      `SectionSeparator: ${SECTION_SEP}`,
+      'Paragraph: finish the quote',
+    ])
+  })
+
+  it('never makes a setext heading out of the line before a separator', () => {
+    expect(topBlocks('answer', '---', '===')).toEqual([
+      'Paragraph: answer',
+      `SectionSeparator: ${SECTION_SEP}`,
+      'HorizontalRule: ---',
+      `SectionSeparator: ${SECTION_SEP}`,
+      'Paragraph: ===',
+    ])
   })
 })
