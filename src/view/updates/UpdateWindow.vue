@@ -37,16 +37,22 @@ const showInstallButton = computed(() => {
   return canInstall.value && (state.phase !== 'failed' || state.retry)
 })
 
-// The step that runs, as "Downloading… 4.2 of 9.5 MB".
-const progressText = computed(() => {
-  const state = install.value
-  if (state.phase === 'downloading') {
-    if (state.total) return `Downloading… ${megabytes(state.received)} of ${megabytes(state.total)} MB`
-    return state.received ? `Downloading… ${megabytes(state.received)} MB` : 'Downloading…'
-  }
-  if (state.phase === 'installing') return 'Installing…'
-  if (state.phase === 'relaunching') return 'Restarting…'
+// The step that runs. Only this text is in the window's live region, so a
+// screen reader says each step once, not each progress message (one per
+// 256 KiB of the download).
+const phaseText = computed(() => {
+  const phase = install.value.phase
+  if (phase === 'downloading') return 'Downloading…'
+  if (phase === 'installing') return 'Installing…'
+  if (phase === 'relaunching') return 'Restarting…'
   return null
+})
+// How much of the download arrived, as "4.2 of 9.5 MB", or null.
+const byteText = computed(() => {
+  const state = install.value
+  if (state.phase !== 'downloading') return null
+  if (state.total) return `${megabytes(state.received)} of ${megabytes(state.total)} MB`
+  return state.received ? `${megabytes(state.received)} MB` : null
 })
 // The share of the download that arrived, or null with no known length.
 const downloadFraction = computed(() => {
@@ -158,11 +164,22 @@ const { onOverlayMouseDown, onOverlayClick } = useOverlayDismiss(close)
       </div>
 
       <div class="update-footer">
-        <div v-if="busy" class="update-progress" role="status">
-          <span>{{ progressText }}</span>
-          <div v-if="downloadFraction !== null" class="update-progress-track">
-            <div class="update-progress-fill" :style="{ width: `${downloadFraction * 100}%` }" />
+        <!-- The byte counts change with every progress message, so they stay
+             out of the live region, and the <progress> gives screen readers
+             the share. The byte counts are not aria-hidden: with no known
+             length there is no bar, and they are all there is. -->
+        <div v-if="busy" class="update-progress">
+          <div class="update-progress-text">
+            <span role="status">{{ phaseText }}</span>
+            <span v-if="byteText">{{ byteText }}</span>
           </div>
+          <progress
+            v-if="downloadFraction !== null"
+            class="update-progress-track"
+            :value="downloadFraction"
+            max="1"
+            aria-label="Download progress"
+          />
         </div>
         <p v-else-if="install.phase === 'failed'" class="update-note update-note--error" role="alert">
           {{ install.error }}
@@ -376,15 +393,31 @@ const { onOverlayMouseDown, onOverlayClick } = useOverlayDismiss(close)
   font-size: 13px;
 }
 
-.update-progress-track {
-  height: 4px;
-  border-radius: 2px;
-  background: var(--color-border);
-  overflow: hidden;
+.update-progress-text {
+  display: flex;
+  gap: 4px;
 }
 
-.update-progress-fill {
-  height: 100%;
+/* A native <progress>, so screen readers get its value. WebKit draws it with
+   the styles below only once `appearance` is off; the track and the filled
+   part are its two pseudo-elements. */
+.update-progress-track {
+  -webkit-appearance: none;
+  appearance: none;
+  display: block;
+  width: 100%;
+  height: 4px;
+  border: none;
+  border-radius: 2px;
+  overflow: hidden;
+  background: var(--color-border);
+}
+
+.update-progress-track::-webkit-progress-bar {
+  background: var(--color-border);
+}
+
+.update-progress-track::-webkit-progress-value {
   background: var(--color-accent);
   transition: width 0.2s;
 }
