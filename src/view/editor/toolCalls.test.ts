@@ -6,7 +6,7 @@ import type { Role } from '../../model/chat/types'
 import { toolBlockText, type ToolBlockStatus } from '../../model/chat/toolBlocks'
 import { PILL_OPEN, SECTION_SEP, sectionsField, setSectionsEffect, setSectionThinkingEffect } from '../thread/cmEditor'
 import { setStreamingSectionEffect, streamingSectionField } from '../thread/modelChip'
-import { deleteToolCallBackward, deleteToolCallForward, joinsToolCallLine, markdownToolCalls, renderedToolCalls, toolCallSummary } from './toolCalls'
+import { deleteToolCallBackward, deleteToolCallForward, joinsToolCallLine, markdownToolCalls, renderedToolCalls, toolCallLabel, toolCallSummary } from './toolCalls'
 
 function block(id: string, status: ToolBlockStatus = 'success', result = 'ok'): string {
   return toolBlockText({ id, name: 'model_list', status, arguments: { filter: 'gemini' }, result: status === 'running' ? '' : result })
@@ -128,6 +128,16 @@ describe('toolCallSummary', () => {
     expect(toolCallSummary({ filter: 'a'.repeat(40) })).toBe(`"${'a'.repeat(40)}"`)
     expect(toolCallSummary({ filter: 'a'.repeat(41) })).toBe(`"${'a'.repeat(39)}…"`)
     expect(toolCallSummary({ filter: '😀'.repeat(41) })).toBe(`"${'😀'.repeat(39)}…"`)
+  })
+})
+
+describe('toolCallLabel', () => {
+  it('names the call, its summary, and a state that the chip shows by a word or the spinner', () => {
+    expect(toolCallLabel('model_list', '"gemini"', 'success')).toBe('Tool call model_list, "gemini"')
+    expect(toolCallLabel('model_list', '"gemini"', 'running')).toBe('Tool call model_list, "gemini", running')
+    expect(toolCallLabel('model_list', '"gemini"', 'error')).toBe('Tool call model_list, "gemini", failed')
+    expect(toolCallLabel('model_list', '', 'interrupted')).toBe('Tool call model_list, interrupted')
+    expect(toolCallLabel('model_list', '', 'success')).toBe('Tool call model_list')
   })
 })
 

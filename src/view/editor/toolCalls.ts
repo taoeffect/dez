@@ -139,11 +139,19 @@ function span(className: string, text?: string): HTMLSpanElement {
 
 const STATE_WORDS: Partial<Record<ToolCallState, string>> = { error: 'failed', interrupted: 'interrupted' }
 
+/** The chip's accessible name. Its `aria-label` replaces the text of the
+ *  chip's parts, so it holds the summary and the state word too, and
+ *  "running" stands for the spinner, which screen readers skip. Empty parts
+ *  are left out. */
+export function toolCallLabel(name: string, summary: string, state: ToolCallState): string {
+  const word = state === 'running' ? 'running' : STATE_WORDS[state]
+  return [`Tool call ${name}`, summary, word].filter(Boolean).join(', ')
+}
+
 function createChip(view: EditorView, call: RenderedToolCall): HTMLElement {
   const chip = span(CHIP_CLASS)
   chip.setAttribute('role', 'button')
   chip.tabIndex = 0
-  chip.setAttribute('aria-label', `Tool call ${call.name}`)
   // The spinner element stays as long as the widget, so its animation runs
   // without restarts until the call ends.
   const slot = call.state === 'running' ? span('dez-tool-call__spinner') : span('dez-tool-call__disclosure', '▶')
@@ -155,6 +163,7 @@ function createChip(view: EditorView, call: RenderedToolCall): HTMLElement {
   if (summary !== '') chip.appendChild(span('dez-tool-call__summary', summary))
   const word = STATE_WORDS[call.state]
   if (word) chip.appendChild(span('dez-tool-call__state', word))
+  chip.setAttribute('aria-label', toolCallLabel(call.name, summary, call.state))
   const toggle = () => view.dispatch({ effects: toggleToolCallOpenEffect.of(call.id) })
   chip.addEventListener('mousedown', (event) => {
     if (event.button === 0) toggle()

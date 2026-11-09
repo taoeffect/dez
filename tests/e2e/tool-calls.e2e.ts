@@ -90,7 +90,7 @@ interface ToolPanelView {
 function closedChip (summary: string): ToolChipView {
   return {
     state: 'success',
-    label: 'Tool call model_list',
+    label: `Tool call model_list, ${summary}`,
     name: 'model_list',
     summary,
     stateWord: null,
