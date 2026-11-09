@@ -60,7 +60,6 @@ describe('release list', () => {
     expect(releases.map((release) => [release.version, release.tag])).toEqual([
       ['0.100.0', 'v0.100.0'],
       ['0.16.0', 'v0.16.0'],
-      ['0.15.2', '0.15.2'],
     ])
   })
 

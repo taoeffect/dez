@@ -45,9 +45,10 @@ const releaseListSchema = z.array(z.object({
   })),
 }))
 
-// Only plain `X.Y.Z` tags are offered: the Rust installer accepts no build
+// Only plain `vX.Y.Z` tags are offered: the Rust installer downloads from
+// the `v<version>` tag (updater/verify.rs `dmg_url`) and accepts no build
 // metadata, and Dez does not offer prerelease versions, flagged or not.
-const STABLE_TAG = /^v?((?:0|[1-9]\d*)\.(?:0|[1-9]\d*)\.(?:0|[1-9]\d*))$/
+const STABLE_TAG = /^v((?:0|[1-9]\d*)\.(?:0|[1-9]\d*)\.(?:0|[1-9]\d*))$/
 
 // Returns the releases in a GitHub "list releases" response that are newer
 // than the running version, newest first, without drafts and prereleases.
