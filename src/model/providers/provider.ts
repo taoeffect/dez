@@ -5,7 +5,7 @@ import { API_FORMATS, type ApiFormat } from './apiFormats'
 import { FORBIDDEN_BODY_KEYS, type ProviderConfig, type ProviderSettingDef } from './config'
 import { isRecord, modelData, modelImageInput } from './modelParsing'
 import { isThinkingEnabled } from './thinking'
-import { providerModel, type ChatMessage, type ModelInfo, type ProviderInfo } from './types'
+import { providerModel, type ChatMessage, type ChatRequestContext, type ModelInfo, type ProviderInfo } from './types'
 
 export interface ProviderOptions {
   builtIn: boolean
@@ -139,13 +139,13 @@ export class Provider {
     modelId: string,
     secret: Secret<string> | null,
     overrides: Record<string, boolean> = {},
-    conversationId?: string,
+    context: ChatRequestContext = {},
   ): ProviderChatRequest {
     const thinking = this.config.thinking
     const thinkingOn = thinking !== undefined && isThinkingEnabled(overrides)
     // Earlier thinking goes back only in a request that asks for thinking.
     const sentMessages = thinkingOn ? messages : messages.map(({ role, content }) => ({ role, content }))
-    const { body, prefixHash } = this.format.chatBody(sentMessages, modelId, this.config, conversationId)
+    const { body, prefixHash } = this.format.chatBody(sentMessages, modelId, this.config, context)
     if (this.config.requestBody) mergeBodyPart(body, this.config.requestBody)
 
     // Every setting is written, also the ones hidden for this model, so the

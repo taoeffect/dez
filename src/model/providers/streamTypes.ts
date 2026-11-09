@@ -1,5 +1,5 @@
 import type { MessagePart, ThinkingReplay } from '../chat/types'
-import type { ChatMessage, ProviderId } from './types'
+import type { ChatMessage, ChatRequestContext, ProviderId } from './types'
 
 // A message as dez.provider/streamChat takes it: an image part holds the
 // path of a stored image, and streamChat reads its bytes before it builds
@@ -8,13 +8,13 @@ export interface ProviderChatInputMessage extends Omit<ChatMessage, 'content'> {
   content: string | MessagePart[]
 }
 
-export interface ProviderStreamChatInput {
+// `conversationId`, `system`, and `tools` go into the request body
+// (ChatRequestContext).
+export interface ProviderStreamChatInput extends ChatRequestContext {
   providerId: ProviderId
   modelId: string
   messages: ProviderChatInputMessage[]
   requestId?: string
-  // The conversation of the request; see ProviderConfig.promptCacheKey.
-  conversationId?: string
   // Sparse user overrides for this provider's settings
   // (ProviderConfig.settings) and its Thinking toggle; missing keys fall
   // back to the defaults.

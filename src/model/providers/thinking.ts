@@ -17,21 +17,22 @@ export function isThinkingEnabled(overrides: Readonly<Record<string, boolean>> |
   return typeof stored === 'boolean' ? stored : THINKING_DEFAULT
 }
 
-// The prefix hash of a signed replay: a hash of the JSON text of the array
-// of wire `messages` that went before the reply that made it. Providers
-// refuse such a replay once anything before it changed, so a later request
-// sends it only while the messages it builds before it hash the same.
+// The prefix hash of a signed replay: a hash of the JSON text of an array of
+// what went before the reply that made it: the system prompt, the wire tools,
+// and the wire messages (ApiFormat.chatBody). Providers refuse such a replay
+// once anything before it changed, so a later request sends it only while
+// what it builds before it hashes the same.
 //
-// The list grows one message at a time. A request checks the prefix of every
-// replay it sends, so this hashes each message once instead of the whole
-// prefix again at every replay. The same hasher makes the hash that a reply
-// keeps (ApiFormat.chatBody), so the stored and checked hashes always agree.
+// The list grows one item at a time. A request checks the prefix of every
+// replay it sends, so this hashes each item once instead of the whole prefix
+// again at every replay. The same hasher makes the hash that a reply keeps
+// (ApiFormat.chatBody), so the stored and checked hashes always agree.
 export class ThinkingPrefixHasher {
   private readonly hash = new Cyrb53()
   private empty = true
 
-  add(wireMessage: unknown): void {
-    this.hash.feed(this.empty ? '[' : ',').feed(JSON.stringify(wireMessage) ?? 'null')
+  add(item: unknown): void {
+    this.hash.feed(this.empty ? '[' : ',').feed(JSON.stringify(item) ?? 'null')
     this.empty = false
   }
 

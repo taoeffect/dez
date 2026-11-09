@@ -9,6 +9,7 @@ import {
   setThinkingReplayForTabSection,
   type SettingsSnapshot,
 } from '../model/state'
+import { buildSystemPrompt } from '../model/systemPrompt'
 import {
   cancelStreamSession,
   errorStreamSession,
@@ -106,9 +107,13 @@ export default sbp('sbp/selectors/register', {
       .providerSettings[args.model.providerId]
 
     try {
+      // The request offers no Dez tools, so the prompt lists none. Inside
+      // the try: a template error must end the stream session.
+      const system = buildSystemPrompt(args.model, [])
       const result = await sbp('dez.provider/streamChat', {
         providerId: args.model.providerId,
         conversationId: args.conversationId,
+        system,
         modelId: args.model.modelId,
         messages: args.messages.map((message) => ({
           role: message.role,

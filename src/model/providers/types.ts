@@ -1,5 +1,6 @@
 import type { ImageMediaType } from '../chat/images'
 import type { Role, SectionThinking, ThinkingReplay } from '../chat/types'
+import type { ToolDefinition } from '../tools/types'
 import type { ApiFormatId, ProviderAuth, ProviderSettingDef } from './config'
 
 // Any id that passes `isValidProviderId()` in `config.ts`: built-in ids plus
@@ -76,6 +77,18 @@ export interface ChatMessage {
   // that wrote it. The request sends it back only in the shape of its
   // replay, and only when the provider asks for thinking.
   thinking?: SectionThinking
+}
+
+// What a chat request sends besides its messages. Every field is optional:
+// a diagnostics probe sends none of them.
+export interface ChatRequestContext {
+  // The conversation of the request; see ProviderConfig.promptCacheKey.
+  conversationId?: string
+  // Dez's system prompt (src/model/systemPrompt).
+  system?: string
+  // The Dez tools that the model may call. None or an empty list sends no
+  // `tools` field.
+  tools?: readonly ToolDefinition[]
 }
 
 // One parsed SSE `data:` payload yields zero or more of these, in either

@@ -1,12 +1,12 @@
 import { describe, expect, it } from 'vitest'
 import type { AnthropicThinkingBlock, ThinkingReplay } from '../chat/types'
+import type { ToolDefinition } from '../tools/types'
 import type { NativeHttpRequest } from '../../utils/protocol/nativeHttp'
 import { secret } from '../../utils/secret'
 import { BUILT_IN_PROVIDER_CONFIGS } from './builtins'
 import { customProviderConfigSchema } from './config'
 import { Provider } from './provider'
-import { ThinkingPrefixHasher } from './thinking'
-import type { ChatMessage, ChatPart } from './types'
+import type { ChatMessage, ChatPart, ChatRequestContext } from './types'
 
 const messages: ChatMessage[] = [
   { role: 'user', content: 'Search the web for current info.' },
@@ -277,10 +277,86 @@ describe('prompt cache', () => {
     const keyed = customProvider({ promptCacheKey: true })
     const keyedAnthropic = customProvider({ apiFormat: 'anthropic', promptCacheKey: true })
 
-    expect(requestBody(keyed.chatRequest(messages, 'm', key, {}, 'conv-1').request).prompt_cache_key).toBe('conv-1')
+    expect(requestBody(keyed.chatRequest(messages, 'm', key, {}, { conversationId: 'conv-1' }).request).prompt_cache_key).toBe('conv-1')
     expect(requestBody(keyed.chatRequest(messages, 'm', key).request)).not.toHaveProperty('prompt_cache_key')
-    expect(requestBody(openAi.chatRequest(messages, 'm', key, {}, 'conv-1').request)).not.toHaveProperty('prompt_cache_key')
-    expect(requestBody(keyedAnthropic.chatRequest(messages, 'm', key, {}, 'conv-1').request)).not.toHaveProperty('prompt_cache_key')
+    expect(requestBody(openAi.chatRequest(messages, 'm', key, {}, { conversationId: 'conv-1' }).request)).not.toHaveProperty('prompt_cache_key')
+    expect(requestBody(keyedAnthropic.chatRequest(messages, 'm', key, {}, { conversationId: 'conv-1' }).request)).not.toHaveProperty('prompt_cache_key')
+  })
+})
+
+describe('system prompt and tools', () => {
+  const SEARCH: ToolDefinition = {
+    name: 'search',
+    description: 'Search the notes.',
+    parameters: [{ name: 'query', type: 'string', description: 'The words to find.', required: true }],
+  }
+  const searchSchema = {
+    type: 'object',
+    properties: { query: { type: 'string', description: 'The words to find.' } },
+    required: ['query'],
+  }
+  const context = { system: 'You are m.', tools: [SEARCH] }
+
+  it('sends the OpenAI-format system prompt as the first message and the tools as functions', () => {
+    expect(requestBody(customProvider({}).chatRequest(messages, 'm', key, {}, context).request)).toEqual({
+      model: 'm',
+      messages: [{ role: 'system', content: 'You are m.' }, ...apiMessages],
+      stream: true,
+      tools: [{ type: 'function', function: { name: 'search', description: 'Search the notes.', parameters: searchSchema } }],
+    })
+  })
+
+  it('sends the Anthropic-format system prompt as the top-level system field and the tools with input_schema', () => {
+    expect(requestBody(customProvider({ apiFormat: 'anthropic' }).chatRequest(messages, 'm', key, {}, context).request)).toEqual({
+      model: 'm',
+      system: 'You are m.',
+      messages: markedApiMessages,
+      stream: true,
+      tools: [{ name: 'search', description: 'Search the notes.', input_schema: searchSchema }],
+      max_tokens: 32000,
+    })
+  })
+
+  it('puts no cache mark on the OpenAI-format system message', () => {
+    const sent = requestBody(customProvider({ cacheBreakpoints: true }).chatRequest(messages, 'm', key, {}, context).request).messages
+
+    expect(sent).toEqual([{ role: 'system', content: 'You are m.' }, ...markedApiMessages])
+  })
+
+  it('sends no tools field for an empty tool list', () => {
+    for (const apiFormat of ['openai', 'anthropic']) {
+      const body = requestBody(customProvider({ apiFormat }).chatRequest(messages, 'm', key, {}, { system: 'S', tools: [] }).request)
+
+      expect(body, apiFormat).not.toHaveProperty('tools')
+    }
+  })
+
+  it('sends a signed replay only with the system prompt and the tools that its request had', () => {
+    const q1: ChatMessage = { role: 'user', content: 'Q1' }
+    const q2: ChatMessage = { role: 'user', content: 'Q2' }
+    const plainReply = { role: 'assistant', content: 'A1' }
+    const otherTools = [{ ...SEARCH, description: 'Search the files.' }]
+    const contexts: ChatRequestContext[] = [{}, { system: context.system }, context, { ...context, system: 'You are n.' }, { ...context, tools: otherTools }]
+    const cases: Array<[Provider, (prefixHash: string) => ThinkingReplay]> = [
+      [customProvider({ thinking: {} }), (prefixHash) => ({ kind: 'copilot', opaque: 'op', prefixHash })],
+      [
+        customProvider({ apiFormat: 'anthropic', thinking: {} }),
+        (prefixHash) => ({ kind: 'anthropicBlocks', blocks: [{ type: 'thinking', thinking: 'Plan', signature: 'sig' }], prefixHash }),
+      ],
+    ]
+
+    for (const [provider, replay] of cases) {
+      for (const made of contexts) {
+        const prefixHash = provider.chatRequest([q1], 'm', key, {}, made).thinking?.prefixHash ?? ''
+        const a1: ChatMessage = { role: 'agent', content: 'A1', thinking: { text: 'Plan', replay: replay(prefixHash) } }
+        for (const sent of contexts) {
+          const wire = requestBody(provider.chatRequest([q1, a1, q2], 'm', key, {}, sent).request).messages as unknown[]
+          const reply = wire.find((message) => (message as Record<string, unknown>).role === 'assistant')
+
+          expect(JSON.stringify(reply) !== JSON.stringify(plainReply), JSON.stringify({ made, sent })).toBe(made === sent)
+        }
+      }
+    }
   })
 })
 
@@ -424,13 +500,10 @@ describe('thinking request bodies', () => {
     expect(bodyWith(provider).options).toEqual({ raw: true, think: true, stop: ['</s>'] })
   })
 
-  it('returns the prefix hash of the sent messages only when it asks for thinking', () => {
+  it('returns a prefix hash only when it asks for thinking', () => {
     const provider = customProvider({ thinking: {} })
-    const on = provider.chatRequest(messages, 'm', key)
-    const sent = new ThinkingPrefixHasher()
-    for (const message of requestBody(on.request).messages as unknown[]) sent.add(message)
 
-    expect(on.thinking).toEqual({ prefixHash: sent.digest() })
+    expect(provider.chatRequest(messages, 'm', key).thinking).toEqual({ prefixHash: expect.any(String) })
     expect(provider.chatRequest(messages, 'm', key, { thinking: false })).not.toHaveProperty('thinking')
     expect(customProvider({}).chatRequest(messages, 'm', key)).not.toHaveProperty('thinking')
   })

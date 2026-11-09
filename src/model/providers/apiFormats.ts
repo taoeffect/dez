@@ -1,19 +1,22 @@
 import type { ThinkingReplay } from '../chat/types'
+import { toolJsonSchema } from '../tools/registry'
+import type { ToolDefinition } from '../tools/types'
 import type { JsonObject } from '../../utils/json'
 import type { Secret } from '../../utils/secret'
 import { AnthropicStreamParser } from './anthropicSse'
 import { trimTrailingSlashes, type ApiFormatId, type ProviderConfig } from './config'
 import { OpenAiStreamParser } from './openaiSse'
 import { ThinkingPrefixHasher } from './thinking'
-import type { ChatMessage, ChatPart, SseStreamParser } from './types'
+import type { ChatMessage, ChatPart, ChatRequestContext, SseStreamParser } from './types'
 
 // Anthropic requires `max_tokens` on every /v1/messages request; current
 // Claude 4.x models accept this value.
 const DEFAULT_ANTHROPIC_MAX_TOKENS = 32000
 
-// A chat request body, and the prefix hash (thinking.ts) of all its
-// messages: a signed replay of the reply keeps it. The hasher that makes it
-// also checks the replays of later requests, so the two always agree.
+// A chat request body, and the prefix hash (thinking.ts) of its system
+// prompt, tools, and messages: a signed replay of the reply keeps it. The
+// hasher that makes it also checks the replays of later requests, so the two
+// always agree.
 export interface ChatBody {
   body: Record<string, unknown>
   prefixHash: string
@@ -27,8 +30,7 @@ export interface ApiFormat {
   headers: Record<string, string>
   // Sent only when a key is stored.
   authHeaders(secret: Secret<string>): Record<string, string>
-  // `conversationId`: the conversation of the request (`promptCacheKey`).
-  chatBody(messages: ChatMessage[], modelId: string, config: ProviderConfig, conversationId?: string): ChatBody
+  chatBody(messages: ChatMessage[], modelId: string, config: ProviderConfig, context: ChatRequestContext): ChatBody
   // Merged into the chat body when the Thinking toggle is on and the config
   // sets no `thinking.enabledBody`.
   thinkingBody: JsonObject
@@ -49,6 +51,25 @@ type ReplayMessage = (content: string, text: string, replay: ThinkingReplay) => 
 // The wire block of one image of a user message.
 type ImageBlock = (image: Extract<ChatPart, { type: 'image' }>) => Record<string, unknown>
 
+// The entry of one Dez tool in the request's `tools` array.
+type WireTool = (tool: ToolDefinition) => Record<string, unknown>
+
+// The shapes of the things that both formats send but write differently.
+interface WireShapes {
+  replayMessage: ReplayMessage
+  imageBlock: ImageBlock
+  tool: WireTool
+}
+
+// What both formats build the same way, before each one puts it in its own
+// body: the wire messages, the wire tools (absent when the request offers
+// none), and the prefix hash of the request.
+interface WireChat {
+  messages: WireMessage[]
+  tools?: Record<string, unknown>[]
+  prefixHash: string
+}
+
 // The parts and the blocks that each one becomes, the same at every build:
 // the prefix hash of a signed replay covers the messages before it.
 function wireContent(content: string | ChatPart[], imageBlock: ImageBlock): unknown {
@@ -58,29 +79,37 @@ function wireContent(content: string | ChatPart[], imageBlock: ImageBlock): unkn
 }
 
 // Both formats send the same message list; only the replay shapes, the image
-// blocks, and the extras differ. A message carries thinking only when the
-// request asks for thinking (Provider.chatRequest).
+// blocks, the tool entries, and the extras differ. A message carries thinking
+// only when the request asks for thinking (Provider.chatRequest).
 //
-// A signed replay (every kind except `field`) is sent only while the wire
-// messages before it hash to its `prefixHash`, the hash of the messages that
-// the provider signed it with: the provider refuses it once anything before
-// it changed. No other rule is needed. Anthropic's "drop no block in the
-// middle" rule follows from this check, because a dropped block changes the
-// prefix of every later block. And a plain agent message is the same bytes
-// whether its replay was dropped as stale or it never had one (cancelled,
-// Thinking off, another model), so a later replay that matches is still the
-// one that the provider signed. A `field` replay is plain text that nothing
-// checks, so an edit before it only costs cache hits.
-function chatMessagesBody(messages: ChatMessage[], model: string, replayMessage: ReplayMessage, imageBlock: ImageBlock): ChatBody & { body: { messages: WireMessage[] } } {
+// A signed replay (every kind except `field`) is sent only while the request
+// before it hashes to its `prefixHash`, the hash of what the provider signed
+// it with: the provider refuses it once anything before it changed. No other
+// rule is needed. Anthropic's "drop no block in the middle" rule follows from
+// this check, because a dropped block changes the prefix of every later
+// block. And a plain agent message is the same bytes whether its replay was
+// dropped as stale or it never had one (cancelled, Thinking off, another
+// model), so a later replay that matches is still the one that the provider
+// signed. A `field` replay is plain text that nothing checks, so an edit
+// before it only costs cache hits.
+//
+// The provider reads the tools and the system prompt before the messages, so
+// the prefix starts with them, in fixed places (null when absent): a signed
+// replay goes back only with the same system prompt and tools.
+function wireChat(messages: ChatMessage[], context: ChatRequestContext, shapes: WireShapes): WireChat {
+  const tools = context.tools?.length ? context.tools.map(shapes.tool) : undefined
   const prefix = new ThinkingPrefixHasher()
+  prefix.add(context.system ?? null)
+  prefix.add(tools ?? null)
+
   const wireMessages = messages.map((message) => {
     const role = message.role === 'agent' ? 'assistant' : message.role
     const content = message.content
-    let wireMessage: WireMessage = { role, content: wireContent(content, imageBlock) }
+    let wireMessage: WireMessage = { role, content: wireContent(content, shapes.imageBlock) }
     const thinking = message.role === 'agent' ? message.thinking : undefined
     // An agent message is always a string (ChatMessage), so the string check
     // only narrows the type.
-    const replayed = thinking?.replay && typeof content === 'string' && replayMessage(content, thinking.text, thinking.replay)
+    const replayed = thinking?.replay && typeof content === 'string' && shapes.replayMessage(content, thinking.text, thinking.replay)
 
     if (thinking?.replay && replayed && (thinking.replay.kind === 'field' || prefix.digest() === thinking.replay.prefixHash)) {
       wireMessage = replayed
@@ -90,7 +119,7 @@ function chatMessagesBody(messages: ChatMessage[], model: string, replayMessage:
     return wireMessage
   })
 
-  return { body: { model, messages: wireMessages, stream: true }, prefixHash: prefix.digest() }
+  return { messages: wireMessages, ...(tools && { tools }), prefixHash: prefix.digest() }
 }
 
 const openAiReplayMessage: ReplayMessage = (content, text, replay) => {
@@ -123,17 +152,35 @@ const anthropicImageBlock: ImageBlock = (image) => ({
   source: { type: 'base64', media_type: image.mediaType, data: image.data },
 })
 
+// Both entries take the same JSON schema (toolJsonSchema), with a fixed key
+// order, so the tools array is the same bytes in every request.
+const openAiTool: WireTool = (tool) => ({
+  type: 'function',
+  function: { name: tool.name, description: tool.description, parameters: toolJsonSchema(tool) },
+})
+
+const anthropicTool: WireTool = (tool) => ({
+  name: tool.name,
+  description: tool.description,
+  input_schema: toolJsonSchema(tool),
+})
+
+const openAiShapes: WireShapes = { replayMessage: openAiReplayMessage, imageBlock: openAiImageBlock, tool: openAiTool }
+const anthropicShapes: WireShapes = { replayMessage: anthropicReplayMessage, imageBlock: anthropicImageBlock, tool: anthropicTool }
+
 // Anthropic caches a prompt prefix only up to a block marked with
 // `cache_control` (a cache breakpoint). A mark on the last user message
 // stores the whole conversation for the next request. A mark on the user
 // message before it is where the previous request stored it, so this
 // request reads that entry even when it adds more than the 20 blocks that a
-// cache read looks back (each image is one block). The marks are added
-// after the prefix hash: a user message loses its mark two turns later, and
-// that must not drop a signed replay. Anthropic does not compare the marks
-// when it matches a prefix, and a string content is the same prompt as one
-// text block. `markedBlock` gives the index of the block to mark, or -1
-// when the message has none; such a message gets no mark.
+// cache read looks back (each image is one block). The provider reads the
+// tools and the system prompt before the messages, so the marks cover them
+// too. The marks are added after the prefix hash: a user message loses its
+// mark two turns later, and that must not drop a signed replay. Anthropic
+// does not compare the marks when it matches a prefix, and a string content
+// is the same prompt as one text block. `markedBlock` gives the index of the
+// block to mark, or -1 when the message has none; such a message gets no
+// mark.
 // https://platform.claude.com/docs/en/build-with-claude/prompt-caching
 function withCacheBreakpoints(messages: WireMessage[], markedBlock: (blocks: WireMessage[]) => number): WireMessage[] {
   const marks = new Map<number, number>()
@@ -163,15 +210,23 @@ const openAiFormat: ApiFormat = {
   modelsUrl: (baseUrl) => `${trimTrailingSlashes(baseUrl)}/models`,
   headers: {},
   authHeaders: (secret) => ({ Authorization: `Bearer ${secret.reveal()}` }),
-  chatBody: (messages, modelId, config, conversationId) => {
-    const chat = chatMessagesBody(messages, modelId, openAiReplayMessage, openAiImageBlock)
+  // The system prompt is the first message. Tools go in `tools`, as
+  // functions.
+  chatBody: (messages, modelId, config, context) => {
+    const chat = wireChat(messages, context, openAiShapes)
     // Venice drops a mark on an `image_url` part (checked live), so the
     // mark goes on the last text part.
-    if (config.cacheBreakpoints) {
-      chat.body.messages = withCacheBreakpoints(chat.body.messages, (blocks) => blocks.findLastIndex((block) => block.type === 'text'))
+    const conversation = config.cacheBreakpoints
+      ? withCacheBreakpoints(chat.messages, (blocks) => blocks.findLastIndex((block) => block.type === 'text'))
+      : chat.messages
+    const body: Record<string, unknown> = {
+      model: modelId,
+      messages: context.system === undefined ? conversation : [{ role: 'system', content: context.system }, ...conversation],
+      stream: true,
     }
-    if (config.promptCacheKey && conversationId) chat.body.prompt_cache_key = conversationId
-    return chat
+    if (chat.tools) body.tools = chat.tools
+    if (config.promptCacheKey && context.conversationId) body.prompt_cache_key = context.conversationId
+    return { body, prefixHash: chat.prefixHash }
   },
   // A generic field such as `reasoning_effort` gives a 400 on Ollama, Groq
   // and GitHub Copilot models that do not think, and most OpenAI-compatible
@@ -195,11 +250,19 @@ const anthropicFormat: ApiFormat = {
   // Required by the Anthropic API on every request, the model list included.
   headers: { 'anthropic-version': '2023-06-01' },
   authHeaders: (secret) => ({ 'x-api-key': secret.reveal() }),
-  chatBody: (messages, modelId, config) => {
-    const chat = chatMessagesBody(messages, modelId, anthropicReplayMessage, anthropicImageBlock)
-    chat.body.messages = withCacheBreakpoints(chat.body.messages, (blocks) => blocks.length - 1)
-    chat.body.max_tokens = config.maxOutputTokens ?? DEFAULT_ANTHROPIC_MAX_TOKENS
-    return chat
+  // The system prompt is the top-level `system` field; Anthropic has no
+  // system role.
+  chatBody: (messages, modelId, config, context) => {
+    const chat = wireChat(messages, context, anthropicShapes)
+    const body: Record<string, unknown> = {
+      model: modelId,
+      ...(context.system !== undefined && { system: context.system }),
+      messages: withCacheBreakpoints(chat.messages, (blocks) => blocks.length - 1),
+      stream: true,
+    }
+    if (chat.tools) body.tools = chat.tools
+    body.max_tokens = config.maxOutputTokens ?? DEFAULT_ANTHROPIC_MAX_TOKENS
+    return { body, prefixHash: chat.prefixHash }
   },
   // Claude 4.7+ and 5.x send no thinking text without `display`, and
   // `adaptive` lets each model decide how much to think. Claude 4.5 models

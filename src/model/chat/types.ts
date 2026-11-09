@@ -47,8 +47,9 @@ export type AnthropicThinkingBlock =
  *  - `field`: `SectionThinking.text` goes back in this assistant-message
  *    field, so the text must stay byte for byte as it streamed.
  *  - The other kinds carry signed or opaque parts that the provider checks.
- *    `prefixHash` is the hash of the request messages before this turn; the
- *    replay is sent only while that prefix is unchanged. */
+ *    `prefixHash` is the hash of the system prompt, the tools, and the
+ *    request messages before this turn; the replay is sent only while that
+ *    prefix is unchanged. */
 export type ThinkingReplay =
   | { kind: 'field'; field: 'reasoning_content' | 'reasoning' }
   | { kind: 'anthropicBlocks'; blocks: AnthropicThinkingBlock[]; prefixHash: string }
