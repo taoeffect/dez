@@ -49,16 +49,27 @@ export class AnthropicStreamParser implements SseStreamParser {
   private readonly thinkingBlocks = new Map<number, StreamedBlock<AnthropicThinkingBlock>>()
   private readonly toolUses = new Map<number, StreamedBlock<StreamedToolCall>>()
   private thinkingShown = false
+  // `message_stop` (or `[DONE]`) arrived: the stream was not cut off.
+  private stopped = false
+  // The server sent an `error` event inside the stream.
+  private failed = false
 
   constructor(private readonly thinking: boolean) {}
 
   parse(data: string): SseTokenEvent[] {
-    if (data.trim() === '[DONE]') return [{ kind: 'done' }]
+    if (data.trim() === '[DONE]') {
+      this.stopped = true
+      return [{ kind: 'done' }]
+    }
 
     const chunk = JSON.parse(data) as AnthropicChunk
     const delta = chunk.delta
 
-    if (chunk.type === 'message_stop') return [{ kind: 'done' }]
+    if (chunk.type === 'message_stop') {
+      this.stopped = true
+      return [{ kind: 'done' }]
+    }
+    if (chunk.type === 'error') this.failed = true
 
     if (chunk.type === 'content_block_delta' && delta?.type === 'text_delta' && typeof delta.text === 'string' && delta.text.length > 0) {
       return [{ kind: 'token', token: delta.text }]
@@ -104,12 +115,13 @@ export class AnthropicStreamParser implements SseStreamParser {
   // Every thinking block must be complete: a block cut off before its
   // signature would be refused. The signature itself may be empty, because
   // compatible servers (MiniMax) may send none and the blocks go back as
-  // they came. Every tool_use block must be complete too, or its input may
-  // be cut off.
+  // they came. The tool calls of a stream that was cut off or failed may
+  // have cut-off input, so such a stream gives none; every tool_use block
+  // must be complete too.
   finish(): SseStreamEnd {
     const blocks = completeBlocks(this.thinkingBlocks)
     const replay: StreamedThinkingReplay | undefined = blocks && { kind: 'anthropicBlocks', blocks }
-    const toolCalls = completeBlocks(this.toolUses)
+    const toolCalls = this.stopped && !this.failed ? completeBlocks(this.toolUses) : undefined
     return { events: [], ...(replay && { replay }), ...(toolCalls && { toolCalls }) }
   }
 

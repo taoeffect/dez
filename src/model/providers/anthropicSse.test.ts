@@ -146,8 +146,28 @@ describe('AnthropicStreamParser tool calls', () => {
     const { end } = run([
       toolUseStart(0, 'toolu_a'), inputDelta(0, '{}'), stop(0),
       toolUseStart(1, 'toolu_b'), inputDelta(1, '{"filter":"ge'),
+      messageStop,
     ])
 
     expect(end).toStrictEqual({ events: [] })
+  })
+
+  const overloaded = event({ type: 'error', error: { type: 'overloaded_error', message: 'Overloaded' } })
+  const completeCall = [toolUseStart(0, 'toolu_a'), inputDelta(0, '{}'), stop(0)]
+
+  it.each([
+    ['the stream was cut off before message_stop', [...completeCall, messageDelta]],
+    ['an error event came', [...completeCall, overloaded]],
+    ['an error event came before message_stop', [...completeCall, overloaded, messageStop]],
+    ['an error event came before [DONE]', [...completeCall, overloaded, '[DONE]']],
+  ])('gives no calls when %s', (_case, payloads) => {
+    expect(run(payloads).end).toStrictEqual({ events: [] })
+  })
+
+  it('gives the calls when [DONE] ends the stream', () => {
+    expect(run([...completeCall, '[DONE]']).end).toStrictEqual({
+      events: [],
+      toolCalls: [{ id: 'toolu_a', name: 'model_list', argumentsText: '{}' }],
+    })
   })
 })
