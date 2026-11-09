@@ -1,5 +1,5 @@
 import * as z from 'zod'
-import { escapeMarkerAttribute, unescapeMarkerAttribute } from '../../utils/markerAttribute'
+import { MARKER_ATTRIBUTES, escapeMarkerAttribute, markerAttributes } from '../../utils/markerAttribute'
 import { modelRefKey, parseModelRefKey } from './modelRef'
 import type { ModelRef, Role, Section, SectionThinking, ThinkingReplay } from './types'
 
@@ -94,12 +94,6 @@ export function pillMarkerText(section: Pick<Section, 'role' | 'model' | 'thinki
   return `${tag}>\n${escapeThinkingText(thinking.text)}\n${PILL_CLOSE_TAG}`
 }
 
-// One `name="value"` attribute. Escaped values never hold `"`
-// (`escapeMarkerAttribute`), so a value ends at the next `"`, even when it
-// holds `/>` or `>`. `ATTRIBUTES` uses the same rule without capture groups.
-const ATTRIBUTE = /([A-Za-z_][\w.:-]*)\s*=\s*"([^"]*)"/g
-const ATTRIBUTES = String.raw`(?:\s+[A-Za-z_][\w.:-]*\s*=\s*"[^"]*")*\s*`
-
 /** One whole marker inside other text, such as clipboard text: a
  *  self-closing tag, a container with its body, or an opening tag with no
  *  closing tag before the next marker, which reads as a self-closing tag,
@@ -110,14 +104,14 @@ const ATTRIBUTES = String.raw`(?:\s+[A-Za-z_][\w.:-]*\s*=\s*"[^"]*")*\s*`
  *  closing tag of a later container. The lazy `??` tries "no body lines"
  *  first, for `<dez:pill …>\n</dez:pill>`. It has no capture groups, so
  *  callers can join its `source` into a larger pattern. */
-export const PILL_MARKER = new RegExp(String.raw`<dez:pill${ATTRIBUTES}(?:\/>|>\n(?:(?:(?!<\/?dez:pill)[\s\S])*?\n)??<\/dez:pill>|>)`)
+export const PILL_MARKER = new RegExp(String.raw`<dez:pill${MARKER_ATTRIBUTES}(?:\/>|>\n(?:(?:(?!<\/?dez:pill)[\s\S])*?\n)??<\/dez:pill>|>)`)
 
-const OPENING_TAG = new RegExp(String.raw`^<dez:pill${ATTRIBUTES}>$`)
+const OPENING_TAG = new RegExp(String.raw`^<dez:pill${MARKER_ATTRIBUTES}>$`)
 
 // The opening tag and the newline after it, at the start of a container.
 // An attribute value can hold `>` and the tag can span lines, so the tag end
 // is found with the attribute rule, not at the first `>` or `\n`.
-const CONTAINER_START = new RegExp(String.raw`^<dez:pill${ATTRIBUTES}>\n`)
+const CONTAINER_START = new RegExp(String.raw`^<dez:pill${MARKER_ATTRIBUTES}>\n`)
 
 /** Role, model, duration, and container state of a text that starts with
  *  `<dez:pill`. Null when `type` is not `user` or `agent`: the text is then
@@ -128,10 +122,7 @@ const CONTAINER_START = new RegExp(String.raw`^<dez:pill${ATTRIBUTES}>\n`)
  *  from the whole text. */
 export function parsePillMarker(text: string): PillMarker | null {
   if (!text.startsWith('<dez:pill')) return null
-  const attributes = new Map<string, string>()
-  for (const [, name, value] of text.slice('<dez:pill'.length).matchAll(ATTRIBUTE)) {
-    if (!attributes.has(name)) attributes.set(name, value)
-  }
+  const attributes = markerAttributes(text.slice('<dez:pill'.length))
   const role = attributes.get('type')
   const container = OPENING_TAG.test(text)
   if (role === 'user') return { role, model: null, durationMs: null, container, replay: null }
@@ -140,10 +131,10 @@ export function parsePillMarker(text: string): PillMarker | null {
   const replay = attributes.get('replay')
   return {
     role,
-    model: model === undefined ? null : parseModelRefKey(unescapeMarkerAttribute(model)),
+    model: model === undefined ? null : parseModelRefKey(model),
     durationMs: parseDurationMs(attributes.get('duration-ms')),
     container,
-    replay: container && replay !== undefined ? parseThinkingReplay(unescapeMarkerAttribute(replay)) : null,
+    replay: container && replay !== undefined ? parseThinkingReplay(replay) : null,
   }
 }
 

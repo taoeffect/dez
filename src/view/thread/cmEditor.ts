@@ -9,6 +9,7 @@ import { modelRefField } from '../../model/chat/modelRef'
 import { PILL_MARKER, parsePillMarkerMatch, pillMarkerText } from '../../model/chat/pillMarker'
 import { thinkingField } from '../../model/chat/thinking'
 import { messagesAsMarkdown, type MarkdownMessage } from '../../model/chat/markdown'
+import { withoutToolBlocks } from '../../model/chat/toolBlocks'
 import { SENTINEL_CHAR, normalizeContent, stripLiveSentinels, textNode } from '../../model/chat/content'
 import { EDITOR_FONT_SIZE_DEFAULT, EDITOR_FONT_SIZE_PROPERTY } from '../../model/editorFontSize'
 import { escapeMarkerAttribute, unescapeMarkerAttribute } from '../../utils/markerAttribute'
@@ -979,7 +980,8 @@ export function serializeSelectionForClipboard(state: EditorState): string {
 }
 
 /** Copy Markdown text of one doc range: what the model reads, with no `dez:`
- *  markers and no thinking. A prompt pill, whole or in part, gives its body
+ *  markers, no thinking, and no tool blocks in agent text
+ *  (`withoutToolBlocks`). A prompt pill, whole or in part, gives its body
  *  text. A range that holds a role pill gives its section parts as
  *  `messagesAsMarkdown` gives them, so a whole tab copies as Save As
  *  Markdown saves it (without the title): a part gets its role heading only
@@ -1005,9 +1007,10 @@ function serializeDocRangeAsMarkdown(doc: string, from: number, to: number, mode
     cursor = Math.min(p.to, to)
   }
   if (cursor < to) appendDocText(cursor, to)
-  if (from > 0 && parts.length === 1) return parts[0]
   const firstSection = sectionIndexAtOffset(doc, from)
-  return messagesAsMarkdown(parts.map((text, index): MarkdownMessage => {
+  const texts = parts.map((text, index) => (models[firstSection + index]?.role === 'agent' ? withoutToolBlocks(text) : text))
+  if (from > 0 && texts.length === 1) return texts[0]
+  return messagesAsMarkdown(texts.map((text, index): MarkdownMessage => {
     if (index > 0) return { role: models[firstSection + index]?.role ?? 'user', text }
     return from === 0 ? { role: 'user', text } : { text }
   }))

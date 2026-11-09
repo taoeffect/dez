@@ -1,5 +1,7 @@
 import { labelImageReferences } from '../chat/images'
 import { modelRefKey } from '../chat/modelRef'
+import { labelToolBlocks } from '../chat/toolBlocks'
+import type { Role } from '../chat/types'
 import { parseConversation } from './conversationFormat'
 import { conversationSummary } from './summaries'
 import type {
@@ -40,9 +42,11 @@ export function clearConversationSearchCache(): void {
 // path (`config`, `dez`, `images`, `png`, a uuid) would match every
 // conversation with an image. The snippet then shows no `[image]` label
 // where the preview does; a label would make `image` match them all too.
-function nodeSearchText(node: ContentNodeData): string {
+// Tool blocks in agent text are left out the same way: their markup (`dez`,
+// `tool`, call ids) and tool results are not reply text.
+function nodeSearchText(node: ContentNodeData, role: Role): string {
   return node.kind === 'text'
-    ? labelImageReferences(node.text, ' ')
+    ? labelImageReferences(role === 'agent' ? labelToolBlocks(node.text, ' ') : node.text, ' ')
     : `${node.name} ${labelImageReferences(node.body, ' ')}`
 }
 
@@ -51,8 +55,7 @@ function nodeSearchText(node: ContentNodeData): string {
 // result is NFC-normalized so it compares canonically against queries.
 export function conversationPlainText(sections: SectionData[]): string {
   const text = sections
-    .flatMap((section) => section.nodes)
-    .map(nodeSearchText)
+    .flatMap((section) => section.nodes.map((node) => nodeSearchText(node, section.role)))
     .join(' ')
   return text.split(/\s+/).filter(Boolean).join(' ').normalize('NFC')
 }

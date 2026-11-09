@@ -1,11 +1,15 @@
 import { labelImageReferences } from '../chat/images'
 import { cloneModelRef } from '../chat/modelRef'
+import { labelToolBlocks } from '../chat/toolBlocks'
+import type { Role } from '../chat/types'
 import type { ConversationData, ConversationSummary, SectionData } from './types'
 
 // An image reference shows as `[image]`, never as its path. Prompt bodies
-// too: their references are sent as images.
-function nodePlainText(node: SectionData['nodes'][number]): string {
-  return labelImageReferences(node.kind === 'text' ? node.text : node.body)
+// too: their references are sent as images. A tool block in agent text
+// gives a space: its markup and its result are not reply text.
+function nodePlainText(node: SectionData['nodes'][number], role: Role): string {
+  if (node.kind === 'prompt') return labelImageReferences(node.body)
+  return labelImageReferences(role === 'agent' ? labelToolBlocks(node.text, ' ') : node.text)
 }
 
 function sectionHasVisibleContent(section: SectionData): boolean {
@@ -21,8 +25,7 @@ export function messageCount(sections: SectionData[]): number {
 
 export function conversationPreview(sections: SectionData[]): string {
   const text = sections
-    .flatMap((section) => section.nodes)
-    .map(nodePlainText)
+    .flatMap((section) => section.nodes.map((node) => nodePlainText(node, section.role)))
     .join(' ')
   const normalized = text.split(/\s+/).filter(Boolean).join(' ')
   const maxPreviewChars = 160

@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest'
+import { RESERVED_TOOL_ATTRIBUTES } from '../chat/toolBlocks'
 import { parseToolArguments, TOOL_DEFINITIONS, toolDefinition, toolJsonSchema } from './registry'
 import type { ToolDefinition } from './types'
 
@@ -18,9 +19,8 @@ const NO_PARAMETERS: ToolDefinition = { name: 'bare', description: 'No parameter
 describe('TOOL_DEFINITIONS', () => {
   // Tool and parameter names go into `<dez:tool>` blocks: the tool name as the
   // `name` attribute, each parameter as one more attribute. The block writes
-  // `id`, `name`, and `status` itself, so no parameter may use those names.
+  // `RESERVED_TOOL_ATTRIBUTES` itself, so no parameter may use those names.
   const NAME = /^[a-z][a-z0-9_]*$/
-  const RESERVED_PARAMETER_NAMES = ['id', 'name', 'status']
 
   it('gives each tool a unique name that providers and blocks accept', () => {
     const names = TOOL_DEFINITIONS.map((tool) => tool.name)
@@ -37,7 +37,7 @@ describe('TOOL_DEFINITIONS', () => {
       expect(new Set(names).size).toBe(names.length)
       for (const name of names) {
         expect(name).toMatch(NAME)
-        expect(RESERVED_PARAMETER_NAMES).not.toContain(name)
+        expect(RESERVED_TOOL_ATTRIBUTES).not.toContain(name)
       }
     }
   })

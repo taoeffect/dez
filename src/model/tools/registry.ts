@@ -35,6 +35,11 @@ const TYPE_RULES: Record<ToolParameterType, { matches: (value: unknown) => value
   boolean: { matches: (value): value is boolean => typeof value === 'boolean', text: 'true or false' },
 }
 
+/** True when a JSON value is of a parameter's type, with no coercion. */
+export function fitsParameterType(type: ToolParameterType, value: unknown): value is ToolArgumentValue {
+  return TYPE_RULES[type].matches(value)
+}
+
 export type ToolArgumentsParse =
   | { ok: true; arguments: ToolArguments }
   | { ok: false; error: string }

@@ -3,6 +3,7 @@ import { durationField } from '../chat/duration'
 import { messagesAsMarkdown } from '../chat/markdown'
 import { modelRefKey, parseModelRefKey } from '../chat/modelRef'
 import { PILL_CLOSE_TAG, containerThinking, parsePillMarker, pillMarkerText, type PillMarker } from '../chat/pillMarker'
+import { withoutToolBlocks } from '../chat/toolBlocks'
 import type { ActiveModel, SectionThinking } from '../chat/types'
 import type { ContentNodeData, ConversationData, SectionData } from './types'
 
@@ -30,6 +31,9 @@ import type { ContentNodeData, ConversationData, SectionData } from './types'
 // - A literal `</dez:prompt>` in a prompt body is written as `<\/dez:prompt>`.
 //   The prompt name is written as is, without escapeMarkerAttribute.
 // - The prompt `expanded` UI state is not saved: loaded prompts are collapsed.
+// - Agent text can hold `<dez:tool …>` blocks (toolBlocks.ts). They are
+//   section text here: their bodies are escaped, so no body line starts a
+//   section or a prompt.
 
 function escapeTitle(value: string): string {
   return value.replaceAll('|', '/').replaceAll('\n', ' ').replaceAll('\r', ' ')
@@ -76,15 +80,16 @@ export function serializeConversation(data: ConversationData): string {
 // The history format above does not render: a CommonMark tag name cannot
 // hold `:`, so viewers show `<dez:pill …/>` as text. Each message gets its
 // role heading (`messagesAsMarkdown`, which Copy Markdown also uses) and
-// holds what the model received: its text with prompt bodies inline, without
-// the agent thinking. Dez cannot read this format back.
+// holds what the model received: its text with prompt bodies inline. The
+// agent thinking and the tool calls are left out (`withoutToolBlocks`). Dez
+// cannot read this format back.
 export function serializeConversationAsMarkdown(data: ConversationData): string {
-  const messages = messagesAsMarkdown(data.sections.map((section) => ({
-    role: section.role,
-    text: section.nodes
+  const messages = messagesAsMarkdown(data.sections.map((section) => {
+    const text = section.nodes
       .map((node) => stripLiveSentinels(node.kind === 'text' ? node.text : node.body))
-      .join(''),
-  })))
+      .join('')
+    return { role: section.role, text: section.role === 'agent' ? withoutToolBlocks(text) : text }
+  }))
   const title = `# ${data.title.replace(/\s+/g, ' ').trim() || 'Conversation'}\n`
   return messages === '' ? title : `${title}\n${messages}`
 }

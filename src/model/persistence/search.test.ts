@@ -1,5 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { parseModelRefKey } from '../chat/modelRef'
+import { toolBlockText } from '../chat/toolBlocks'
 import { serializeConversation } from './conversationFormat'
 import { clearConversationSearchCache, conversationPlainText, searchConversationFiles, staleConversationIds } from './search'
 import type { ContentNodeData, ConversationData, ConversationFile, SectionData, SnippetSegment } from './types'
@@ -48,6 +49,17 @@ describe('conversationPlainText', () => {
       section('agent', [promptNode('greeting', 'Prompt body\nwith spacing')]),
     ]
     expect(conversationPlainText(sections)).toBe('Hello there greeting Prompt body with spacing')
+  })
+
+  it('leaves out the tool blocks of agent text and keeps the same text in user text', () => {
+    const block = toolBlockText({ id: 'call_1', name: 'model_list', status: 'success', arguments: { filter: 'gemini' }, result: 'venice/gemini-3-pro' })
+    const sections = [
+      section('user', [textNode(`Like:\n${block}`)]),
+      section('agent', [textNode(`Checking.\n${block}\nFound it.`)]),
+    ]
+
+    expect(conversationPlainText(sections))
+      .toBe('Like: <dez:tool id="call_1" name="model_list" filter="gemini"> venice/gemini-3-pro </dez:tool> Checking. Found it.')
   })
 })
 

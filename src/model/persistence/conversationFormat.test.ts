@@ -1,5 +1,6 @@
 import { commonmarkLanguage } from '@codemirror/lang-markdown'
 import { describe, expect, it } from 'vitest'
+import { toolBlockText } from '../chat/toolBlocks'
 import type { ModelRef, SectionThinking, ThinkingReplay } from '../chat/types'
 import { parseConversation, serializeConversation, serializeConversationAsMarkdown } from './conversationFormat'
 import type { ContentNodeData, ConversationData, SectionData } from './types'
@@ -133,6 +134,35 @@ world
     }
 
     expect(parseConversation('conversation', serializeConversation(data))).toEqual(data)
+  })
+
+  // Tool results are escaped, so no result line reads as a pill or prompt
+  // line, and requests rebuild earlier calls from these exact bytes.
+  it('round-trips agent text with tool blocks byte for byte', () => {
+    const call = (id: string, result: string) => toolBlockText({ id, name: 'model_list', status: 'success', arguments: { filter: 'a "b"' }, result })
+    const data: ConversationData = {
+      id: 'conversation',
+      title: 'Tools',
+      sections: [
+        section('user', [textNode('Like this?\n<dez:tool id="u" name="model_list">\n</dez:tool>')]),
+        section('agent', [textNode([
+          'Let me check.',
+          call('call_1', '<dez:pill type="user"/>\n<dez:prompt name="p">\nbody\n</dez:prompt>\n</dez:pill>\n</dez:tool>'),
+          call('call_2', ''),
+          toolBlockText({ id: 'call_3', name: 'model_list', status: 'running', arguments: {}, result: '' }),
+          'There are two.',
+        ].join('\n'))]),
+        section('user', [textNode('Thanks')]),
+      ],
+      activeModel: null,
+      created_at: 1000,
+    }
+
+    const file = serializeConversation(data)
+    const parsed = parseConversation('conversation', file)
+
+    expect(parsed).toStrictEqual(data)
+    expect(serializeConversation(parsed)).toBe(file)
   })
 
   it('parses prompt blocks inside a conversation section', () => {
@@ -713,5 +743,23 @@ describe('conversation Markdown export', () => {
     }
 
     expect(serializeConversationAsMarkdown(data)).toBe('# Chat\n\n## User\n\nQuestion?\n\n## Agent\n\nAnswer.\n')
+  })
+
+  it('leaves out the tool calls of agent text, and keeps the same text in a user message', () => {
+    const block = toolBlockText({ id: 'call_1', name: 'model_list', status: 'success', arguments: {}, result: '12 models' })
+    const data: ConversationData = {
+      id: 'conversation',
+      title: 'Chat',
+      sections: [
+        section('user', [textNode(`Like this?\n${block}`)]),
+        section('agent', [textNode(`Let me check.\n${block}\nThere are 12.`)]),
+        section('agent', [textNode(block)]),
+      ],
+      activeModel: null,
+      created_at: 1000,
+    }
+
+    expect(serializeConversationAsMarkdown(data))
+      .toBe(`# Chat\n\n## User\n\nLike this?\n${block}\n\n## Agent\n\nLet me check.\n\nThere are 12.\n`)
   })
 })
