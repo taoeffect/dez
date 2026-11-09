@@ -301,20 +301,25 @@ export function deleteImageBang(view: EditorView): boolean {
   return true
 }
 
+/** The range to delete to take the whole lines `from`..`to` out of `doc`,
+ *  with one of their line breaks, so no empty line stays. Lines that are the
+ *  only text of their section keep their place as an empty line: their line
+ *  breaks frame the section separators (`sectionsToDoc` in cmEditor.ts). */
+export function linesRemovalRange(doc: Text, { from, to }: DocRange): DocRange {
+  const isSectionText = (number: number): boolean => number >= 1 && number <= doc.lines && !doc.line(number).text.includes(SECTION_SEP)
+  if (isSectionText(doc.lineAt(to).number + 1)) return { from, to: to + 1 }
+  if (isSectionText(doc.lineAt(from).number - 1)) return { from: from - 1, to }
+  return { from, to }
+}
+
 /** The doc range to delete to take the image reference at `range` out of
  *  `doc`. When the reference is the only text on its line (white space
- *  aside), the line goes too, with one of its line breaks, so no empty line
- *  stays. A line that is the only one of its section keeps its place as an
- *  empty line: its line breaks frame the section separators
- *  (`sectionsToDoc` in cmEditor.ts). */
+ *  aside), the whole line goes (`linesRemovalRange`). */
 export function imageRemovalRange(doc: Text, { from, to }: DocRange): DocRange {
   const line = doc.lineAt(from)
   const rest = line.text.slice(0, from - line.from) + line.text.slice(to - line.from)
   if (rest.trim() !== '') return { from, to }
-  const isSectionText = (number: number): boolean => number >= 1 && number <= doc.lines && !doc.line(number).text.includes(SECTION_SEP)
-  if (isSectionText(line.number + 1)) return { from: line.from, to: line.to + 1 }
-  if (isSectionText(line.number - 1)) return { from: line.from - 1, to: line.to }
-  return { from: line.from, to: line.to }
+  return linesRemovalRange(doc, line)
 }
 
 /** The image trash (`trashButton`): asks whether to delete the image whose

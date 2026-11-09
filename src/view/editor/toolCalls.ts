@@ -1,4 +1,4 @@
-import { EditorState, StateEffect, StateField, type ChangeSpec, type Extension, type Text } from '@codemirror/state'
+import { EditorState, StateEffect, StateField, type ChangeSpec, type Extension } from '@codemirror/state'
 import { Decoration, EditorView, ViewPlugin, WidgetType, type DecorationSet, type ViewUpdate } from '@codemirror/view'
 import { SENTINEL_CHAR } from '../../model/chat/content'
 import { EMPTY_TOOL_RESULT, INTERRUPTED_TOOL_RESULT, findToolBlocks, type ToolBlock } from '../../model/chat/toolBlocks'
@@ -6,6 +6,7 @@ import type { ToolArguments } from '../../model/tools/types'
 import { SECTION_SEP, sectionsField, type SectionModel } from '../thread/cmEditor'
 import { measureLineHeights } from '../thread/editorMeasure'
 import { streamingSectionField } from '../thread/modelChip'
+import { linesRemovalRange } from './images'
 import type { DocRange } from './pendingRanges'
 import { ROUND_STROKE, svgIcon } from './svgIcon'
 
@@ -333,17 +334,6 @@ const keepTextOffChipLines = EditorState.transactionFilter.of((tr) => {
   return lineBreaks.length === 0 ? tr : [tr, { changes: lineBreaks, sequential: true }]
 })
 
-/** The doc range to delete to take the block at `range` out of `doc`, with
- *  one of its line breaks, so no empty line stays. A block that is the only
- *  text of its section keeps its place as an empty line: its line breaks
- *  frame the section separators (`sectionsToDoc` in cmEditor.ts). */
-function toolCallRemovalRange(doc: Text, { from, to }: DocRange): DocRange {
-  const isSectionText = (number: number): boolean => number >= 1 && number <= doc.lines && !doc.line(number).text.includes(SECTION_SEP)
-  if (isSectionText(doc.lineAt(to).number + 1)) return { from, to: to + 1 }
-  if (isSectionText(doc.lineAt(from).number - 1)) return { from: from - 1, to }
-  return { from, to }
-}
-
 /** Whether deleting the doc range `from`–`to` would join a chip's first or
  *  last line to text on one line, so that the block would show as its
  *  source. A section merge (`ThreadEditor.vue`) keeps a line break there. */
@@ -367,7 +357,7 @@ function deleteToolCall(view: EditorView, forward: boolean): boolean {
     : call.to === caret || (besideLineWithText && call.to === caret - 1 && doc.sliceString(call.to, caret) === '\n'))
   if (call) {
     view.dispatch({
-      changes: toolCallRemovalRange(doc, call),
+      changes: linesRemovalRange(doc, call),
       scrollIntoView: true,
       userEvent: forward ? 'delete.forward' : 'delete.backward',
     })
