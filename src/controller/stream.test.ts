@@ -3,14 +3,16 @@ import { createPinia, setActivePinia } from 'pinia'
 import { afterEach, beforeEach, describe, expect, it, vi, type MockInstance } from 'vitest'
 import type { ActiveModel, Section, SectionThinking, Tab, ThinkingReplay } from '../model/chat/types'
 import { sectionVisibleText } from '../model/chat/content'
+import { findToolBlocks } from '../model/chat/toolBlocks'
 import type { ConversationData } from '../model/persistence/types'
-import type { ProviderChatInputMessage, ProviderStreamChatInput, ProviderStreamChatResult } from '../model/providers'
+import type { ProviderChatInputMessage, ProviderInfo, ProviderStreamChatInput, ProviderStreamChatResult } from '../model/providers'
 import type { ToastData } from '../view/toast/selectors'
 // Side-effect imports: register the dez.model/* selectors and the selectors
 // under test.
 import '../model/state/index'
 import './stream'
 import './thread'
+import './tools'
 
 const model: ActiveModel = { providerId: 'thinker', modelId: 'm', modelName: 'M' }
 
@@ -19,10 +21,14 @@ let streamChat: (input: ProviderStreamChatInput) => Promise<ProviderStreamChatRe
 // Each thinking that the editor got, as it was at the call.
 let editorThinking: (SectionThinking | undefined)[] = []
 let editorTokens: string[] = []
+// Each tail replace that the editor got.
+let editorReplaces: { tail: string, text: string }[] = []
 let savedConversations: ConversationData[] = []
 let toasts: Array<{ area: string, data: ToastData }> = []
 // The tab and end status of each reply-end alert.
 let alerts: { tabId: string, status: string }[] = []
+// What the `model_list` tool reads as the provider list. Set by each test.
+let providerInfos: () => Promise<ProviderInfo[]>
 let consoleError: MockInstance<typeof console.error>
 
 // Stand-ins for the provider, the editor and the disk. The editor stub
@@ -38,6 +44,13 @@ sbp('sbp/selectors/register', {
   'dez.editor/appendTokenIfVisible' (_tabId: string, _sectionId: string, token: string): boolean {
     editorTokens.push(token)
     return false
+  },
+  'dez.editor/replaceStreamTailIfVisible' (_tabId: string, _sectionId: string, tail: string, text: string): boolean {
+    editorReplaces.push({ tail, text })
+    return false
+  },
+  async 'dez.provider/infos' (): Promise<ProviderInfo[]> {
+    return await providerInfos()
   },
   'dez.editor/setSectionThinkingIfVisible' (_tabId: string, _sectionId: string, thinking?: SectionThinking): boolean {
     // The store's thinking is a reactive proxy, which structuredClone refuses.
@@ -72,12 +85,13 @@ function sectionTexts(): Array<{ role: string, text: string }> {
   return activeTab().sections.map((section) => ({ role: section.role, text: sectionVisibleText(section) }))
 }
 
-async function startStream(): Promise<void> {
+async function startStream({ sendTools = false } = {}): Promise<void> {
   await sbp('dez.stream/start', {
     tabId: activeTab().id,
     sectionId: 'a1',
     model,
     messages: [{ role: 'user', content: 'Hi' }],
+    sendTools,
   })
 }
 
@@ -85,9 +99,11 @@ beforeEach(() => {
   setActivePinia(createPinia())
   editorThinking = []
   editorTokens = []
+  editorReplaces = []
   savedConversations = []
   toasts = []
   alerts = []
+  providerInfos = async () => []
   consoleError = vi.spyOn(console, 'error').mockImplementation(() => {})
   sbp('dez.model/tabs/replaceSections', activeTab().id, [
     { id: 'u1', role: 'user', content: [{ kind: 'text', text: 'Hi' }] },
@@ -435,6 +451,251 @@ describe('reply duration', () => {
 
     expect(agentSection().durationMs).toBe(2500)
     expect(durations(savedConversations.at(-1)?.sections)).toStrictEqual(['none', 2500, 'none'])
+  })
+})
+
+describe('dez.stream/start tool loop', () => {
+  const running = '<dez:tool id="c1" name="model_list" status="running" filter="gemini">\n</dez:tool>\n'
+  const done = '<dez:tool id="c1" name="model_list" filter="gemini">\nNo models are available.\n</dez:tool>\n'
+  const geminiCall = { id: 'c1', name: 'model_list', argumentsText: '{"filter":"gemini"}' }
+  // The request messages of each round, as plain data at the call.
+  let sent: ProviderChatInputMessage[][] = []
+  let requests: ProviderStreamChatInput[] = []
+  // How many times a `model_list` call ran.
+  let runs = 0
+
+  // `rounds[n]` answers the request of round n.
+  function replyRounds(rounds: Array<(input: ProviderStreamChatInput) => Promise<ProviderStreamChatResult>>): void {
+    streamChat = async (input) => {
+      requests.push(input)
+      sent.push(JSON.parse(JSON.stringify(input.messages)) as ProviderChatInputMessage[])
+      return await rounds[requests.length - 1](input)
+    }
+  }
+
+  function blocks(): Array<{ id: string, status: string, result: string }> {
+    return findToolBlocks(sectionVisibleText(agentSection())).map(({ id, status, result }) => ({ id, status, result }))
+  }
+
+  beforeEach(() => {
+    sent = []
+    requests = []
+    runs = 0
+    providerInfos = async () => {
+      runs++
+      return []
+    }
+  })
+
+  it('runs the calls of a round, sends the reply so far in the next round, and finalizes once', async () => {
+    const replay = { kind: 'field', field: 'reasoning_content' } as const
+    let savesBeforeLastRound = -1
+    replyRounds([
+      async (input) => {
+        await input.onThinking('Look.')
+        await input.onToken('Checking.')
+        return { requestId: input.requestId as string, thinkingReplay: replay, toolCalls: [geminiCall] }
+      },
+      async (input) => {
+        savesBeforeLastRound = savedConversations.length
+        await input.onThinking('Found.')
+        await input.onToken('None.')
+        return { requestId: input.requestId as string }
+      },
+    ])
+
+    await startStream({ sendTools: true })
+
+    expect(requests.map((input) => input.tools?.map((tool) => tool.name))).toStrictEqual([['model_list'], ['model_list']])
+    expect(requests[0].requestId).not.toBe(requests[1].requestId)
+    expect(sent[1]).toStrictEqual([
+      { role: 'user', content: 'Hi' },
+      {
+        role: 'agent',
+        content: 'Checking.',
+        thinking: { text: 'Look.', replay },
+        toolCalls: [{ id: 'c1', name: 'model_list', arguments: { filter: 'gemini' } }],
+      },
+      { role: 'tool', results: [{ callId: 'c1', content: 'No models are available.', isError: false }] },
+    ])
+    expect(sectionTexts()).toStrictEqual([
+      { role: 'user', text: 'Hi' },
+      { role: 'agent', text: `Checking.\n${done}None.` },
+      { role: 'user', text: '' },
+    ])
+    expect(editorReplaces).toStrictEqual([{ tail: running, text: done }])
+    expect(agentSection().thinking).toStrictEqual({ text: 'Look.Found.', replay, rounds: [{ afterToolCall: 'c1', from: 5 }] })
+    expect(savesBeforeLastRound).toBe(0)
+    expect(savedConversations).toHaveLength(1)
+    expect(alerts).toStrictEqual([{ tabId: activeTab().id, status: 'finished' }])
+  })
+
+  it('escapes a tag that the model splits across tokens', async () => {
+    replyRounds([
+      async (input) => {
+        await input.onToken('See <dez')
+        await input.onToken(':tool id="x" name="y">')
+        await input.onToken(' and <')
+        return { requestId: input.requestId as string }
+      },
+    ])
+
+    await startStream()
+
+    expect(sectionVisibleText(agentSection())).toBe('See <\\dez:tool id="x" name="y"> and <')
+    expect(editorTokens.join('')).toBe('See <\\dez:tool id="x" name="y"> and <')
+  })
+
+  it('ignores tool calls when the request offered no tools', async () => {
+    replyRounds([
+      async (input) => {
+        await input.onToken('Answer')
+        return { requestId: input.requestId as string, toolCalls: [geminiCall] }
+      },
+    ])
+
+    await startStream()
+
+    expect(requests[0].tools).toStrictEqual([])
+    expect(runs).toBe(0)
+    expect(sectionVisibleText(agentSection())).toBe('Answer')
+    expect(alerts).toStrictEqual([{ tabId: activeTab().id, status: 'finished' }])
+  })
+
+  it('runs no unknown tool or call with invalid arguments, and gives a taken call id a new one', async () => {
+    replyRounds([
+      async (input) => ({
+        requestId: input.requestId as string,
+        toolCalls: [
+          { id: 'c1', name: 'web_search', argumentsText: '{}' },
+          { id: 'c2', name: 'model_list', argumentsText: '{"filter":1}' },
+          { id: 'c1', name: 'model_list', argumentsText: '' },
+        ],
+      }),
+      async (input) => {
+        await input.onToken('Sorry.')
+        return { requestId: input.requestId as string }
+      },
+    ])
+
+    await startStream({ sendTools: true })
+
+    expect(runs).toBe(1)
+    const [unknown, invalid, renamed] = blocks()
+    expect(unknown).toStrictEqual({ id: 'c1', status: 'error', result: 'Unknown tool: "web_search".' })
+    expect(invalid.status).toBe('error')
+    expect(invalid.result).toMatch(/^Invalid arguments: .+\. Received: \{"filter":1\}$/)
+    expect(renamed.id).toMatch(/^call_[0-9a-f]{12}$/)
+    expect(renamed.status).toBe('success')
+    expect(sent[1].at(-1)).toStrictEqual({
+      role: 'tool',
+      results: [
+        { callId: 'c1', content: unknown.result, isError: true },
+        { callId: 'c2', content: invalid.result, isError: true },
+        { callId: renamed.id, content: 'No models are available.', isError: false },
+      ],
+    })
+  })
+
+  it('ends a stop during a tool as a stop: ended calls keep their results, the others get "Stopped."', async () => {
+    providerInfos = async () => {
+      runs++
+      if (runs === 2) await sbp('dez.stream/stop', activeTab().id)
+      return []
+    }
+    replyRounds([
+      async (input) => {
+        await input.onToken('Checking.')
+        return { requestId: input.requestId as string, toolCalls: [geminiCall, { ...geminiCall, id: 'c2' }] }
+      },
+    ])
+
+    await startStream({ sendTools: true })
+
+    expect(requests).toHaveLength(1)
+    expect(blocks()).toStrictEqual([
+      { id: 'c1', status: 'success', result: 'No models are available.' },
+      { id: 'c2', status: 'error', result: 'Stopped.' },
+    ])
+    expect(savedConversations).toHaveLength(1)
+    expect(savedConversations[0].sections[1].nodes).toStrictEqual(agentSection().content)
+    expect(toasts).toStrictEqual([])
+    expect(alerts).toStrictEqual([])
+  })
+
+  it('ends the reply as a stop when the user deletes the running blocks', async () => {
+    providerInfos = async () => {
+      runs++
+      sbp('dez.model/tabs/replaceSections', activeTab().id, [
+        { id: 'u1', role: 'user', content: [{ kind: 'text', text: 'Hi' }] },
+        { id: 'a1', role: 'agent', content: [{ kind: 'text', text: 'Checking.\n' }], model },
+      ])
+      return []
+    }
+    replyRounds([
+      async (input) => {
+        await input.onToken('Checking.')
+        return { requestId: input.requestId as string, toolCalls: [geminiCall] }
+      },
+    ])
+
+    await startStream({ sendTools: true })
+
+    expect(requests).toHaveLength(1)
+    expect(sectionVisibleText(agentSection())).toBe('Checking.\n')
+    expect(toasts).toStrictEqual([])
+    expect(alerts).toStrictEqual([])
+  })
+
+  it('runs 20 tool rounds, then ends with an error and runs no call of the next request', async () => {
+    streamChat = async (input) => {
+      requests.push(input)
+      return { requestId: input.requestId as string, toolCalls: [{ ...geminiCall, id: `c${requests.length}` }] }
+    }
+
+    await startStream({ sendTools: true })
+
+    expect(requests).toHaveLength(21)
+    expect(runs).toBe(20)
+    expect(blocks().map((block) => block.result)).toStrictEqual([
+      ...Array<string>(20).fill('No models are available.'),
+      'Not run: the reply reached the limit of 20 tool rounds.',
+    ])
+    expect(blocks().at(-1)?.status).toBe('error')
+    expect(toasts).toStrictEqual([{
+      area: 'app-global',
+      data: {
+        variant: 'error',
+        title: 'Tool limit reached',
+        message: 'The reply reached the limit of 20 tool rounds, so Dez did not run its last tool calls.',
+      },
+    }])
+    expect(alerts).toStrictEqual([{ tabId: activeTab().id, status: 'error' }])
+  })
+
+  it('keeps the blocks of earlier rounds when a later round fails, and shows an error toast', async () => {
+    replyRounds([
+      async (input) => {
+        await input.onToken('Checking.')
+        return { requestId: input.requestId as string, toolCalls: [geminiCall] }
+      },
+      async () => {
+        throw new Error('connection reset')
+      },
+    ])
+
+    await startStream({ sendTools: true })
+
+    expect(sectionTexts()).toStrictEqual([
+      { role: 'user', text: 'Hi' },
+      { role: 'agent', text: `Checking.\n${done}` },
+      { role: 'user', text: '' },
+    ])
+    expect(toasts).toStrictEqual([{
+      area: 'app-global',
+      data: { variant: 'error', title: 'Request failed', message: 'connection reset' },
+    }])
+    expect(alerts).toStrictEqual([{ tabId: activeTab().id, status: 'error' }])
   })
 })
 

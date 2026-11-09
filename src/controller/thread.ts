@@ -14,7 +14,7 @@ export default sbp('sbp/selectors/register', {
     }
 
     // The messages, the stamp and the request use the same model read.
-    const { messages, imagesLeftOut } = sbp('dez.model/streamMessagesForTab', tabId, model) as RequestMessages
+    const { messages, imagesLeftOut, sendTools } = sbp('dez.model/streamMessagesForTab', tabId, model) as RequestMessages
     if (messages.length === 0) return
 
     const agentSection = sbp('dez.model/ensureTrailingAgentSectionForTab', tabId, model)
@@ -36,6 +36,7 @@ export default sbp('sbp/selectors/register', {
       sectionId: agentSection.id,
       model,
       messages,
+      sendTools,
     })
   },
 

@@ -126,6 +126,24 @@ export function appendStreamingText(section: Section, token: string): void {
   }
 }
 
+/** Replace the last copy of `tail` in a section's text nodes with `text`,
+ *  mutating in place for Vue reactivity. The stream controller replaces the
+ *  running tool blocks that it appended (`dez.stream/start`). The user can
+ *  type in a streaming section, also after those blocks, so the copy is the
+ *  section's end only most of the time. Returns false when no text node
+ *  holds `tail` (the user deleted it). */
+export function replaceStreamingTail(section: Section, tail: string, text: string): boolean {
+  for (let index = section.content.length - 1; index >= 0; index--) {
+    const node = section.content[index]
+    if (node.kind !== 'text') continue
+    const at = node.text.lastIndexOf(tail)
+    if (at < 0) continue
+    node.text = node.text.slice(0, at) + text + node.text.slice(at + tail.length)
+    return true
+  }
+  return false
+}
+
 /** Replace a section's content with a single text node (used when reading plain text from the DOM). */
 export function setSectionPlainText(section: Section, text: string): void {
   // Mutate in place so array identity stays stable for reactivity consumers.

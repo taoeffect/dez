@@ -169,6 +169,23 @@ export default sbp('sbp/selectors/register', {
     return true
   },
 
+  /** Replaces the running tool blocks that a stream appended to the
+   *  registered view of `tabId` with their final text. The streaming
+   *  section is the doc's last section, so the blocks are the last copy of
+   *  `tail` in the doc: the doc end, unless the user typed after them.
+   *  `sectionId` is not used, as in `appendTokenIfVisible`. Does nothing
+   *  and returns false when another tab is visible, or when the doc no
+   *  longer holds `tail`; the store has its own copy. */
+  'dez.editor/replaceStreamTailIfVisible' (tabId: string, _sectionId: string, tail: string, text: string): boolean {
+    if (!activeView || activeViewTabId !== tabId) return false
+    const from = activeView.state.doc.toString().lastIndexOf(tail)
+    if (from < 0) return false
+    dispatchStreamChange(activeView, tabId, {
+      changes: { from, to: from + tail.length, insert: text },
+    })
+    return true
+  },
+
   /** Shows the new thinking of a streaming section in the registered view
    *  of `tabId`, or removes it when `thinking` is absent. Does nothing and
    *  returns false when another tab is visible. The store holds thinking

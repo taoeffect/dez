@@ -1,15 +1,31 @@
 import sbp from '@sbp/sbp'
-import type { ActiveModel, SectionThinking, Tab } from '../model/chat/types'
+import type { ActiveModel, Section, SectionThinking, Tab } from '../model/chat/types'
+import { sectionPlainText } from '../model/chat/content'
+import { findToolBlocks, ModelTextEscaper } from '../model/chat/toolBlocks'
 import type { ProviderStreamChatResult } from '../model/providers'
+import { agentSectionMessages } from '../model/streams/messages'
+import {
+  checkToolCalls,
+  MAX_TOOL_ROUNDS,
+  ROUND_LIMIT_TOOL_RESULT,
+  STOPPED_TOOL_RESULT,
+  toolCallBlock,
+  toolGroupStart,
+  toolGroupText,
+  type CheckedToolCall,
+} from '../model/streams/toolRound'
 import type { EndedStreamSession, StreamMessage } from '../model/streams/types'
 import {
   appendThinkingToTabSection,
   appendTokenToTabSection,
   finalizeStreamSectionForTab,
+  replaceStreamTailInTabSection,
   setThinkingReplayForTabSection,
   type SettingsSnapshot,
 } from '../model/state'
 import { buildSystemPrompt } from '../model/systemPrompt'
+import { TOOL_DEFINITIONS } from '../model/tools/registry'
+import type { ToolRunResult } from '../model/tools/types'
 import {
   cancelStreamSession,
   errorStreamSession,
@@ -19,25 +35,47 @@ import {
   streamIsStreaming,
   streamSession,
 } from '../model/state/streams'
+import type { ToolRunCall } from './tools'
 
 interface StreamStartArgs {
   tabId: string
   conversationId: string
   sectionId: string
   model: ActiveModel
+  // The request messages of the sections before `sectionId`, fixed at the
+  // submit: each round sends them, then the rounds of the reply so far.
   messages: StreamMessage[]
+  // Offer the Dez tools (RequestMessages.sendTools).
+  sendTools: boolean
 }
 
-interface NativeStreamRuntime {
+// The calls of one tool round while they run. Their blocks stay in the
+// section as `runningText` until the round, or a stop, replaces them with
+// the final blocks.
+interface ToolRun {
+  calls: CheckedToolCall[]
+  // The result of each call that ended, by call index.
+  results: (ToolRunResult | undefined)[]
+  runningText: string
+  abort: AbortController
+}
+
+// One reply: one stream session, and one request round per group of tool
+// calls, each with its own native HTTP request.
+interface ReplyRuntime {
+  sectionId: string
+  // The request of the current round; a stop cancels it.
   requestId: string
   cancelling: boolean
+  toolRun: ToolRun | null
 }
 
-// The native HTTP request of each tab's stream, so tabs stream at the same
-// time and a new start or a stop cancels only its own tab's request.
+// The reply of each tab, so tabs stream at the same time and a new start or
+// a stop ends only its own tab's reply. A reply is current while it is its
+// tab's entry; a round's request id changes, so checks compare the reply.
 // http_bridge.rs keeps the global map of request ids that does the native
 // cancel.
-const nativeStreamsByTab = new Map<string, NativeStreamRuntime>()
+const repliesByTab = new Map<string, ReplyRuntime>()
 
 function finalizeStream(tabId: string, session: EndedStreamSession | null): void {
   if (!session) return
@@ -53,16 +91,41 @@ function finalizeStream(tabId: string, session: EndedStreamSession | null): void
   sbp('dez.model/appState/save')
 }
 
+// The error shows only in this toast, never as thread text. Sticky (no
+// duration): the user closes it. For a tab in the background the title names
+// the tab, else the user cannot tell where the error came from. Call it after
+// the stream end, which sets the title of a new tab.
+function showReplyError(tabId: string, title: string, message: string): void {
+  const tab = sbp('dez.model/tab', tabId) as Tab | null
+  const inBackground = !!tab && tab.id !== sbp('dez.model/tabs/activeId')
+  sbp('dez.ui/toast', 'app-global', {
+    variant: 'error',
+    title: inBackground ? `${title} in "${tab.title}"` : title,
+    message,
+  })
+}
+
 // The tab's stream session still writes into `sectionId`.
 function streamWritesSection(tabId: string, sectionId: string): boolean {
   const session = streamSession(tabId)
   return !!session && session.sectionId === sectionId && session.status === 'streaming'
 }
 
+function streamingSection(tabId: string, sectionId: string): Section | null {
+  const tab = sbp('dez.model/tab', tabId) as Tab | null
+  return tab?.sections.find((section) => section.id === sectionId) ?? null
+}
+
+// Appends text to the streaming section in the store, and in the editor when
+// the tab is visible.
+function writeStreamText(tabId: string, sectionId: string, text: string): void {
+  appendTokenToTabSection(tabId, sectionId, text)
+  sbp('dez.editor/appendTokenIfVisible', tabId, sectionId, text)
+}
+
 function receiveToken(tabId: string, sectionId: string, token: string): void {
   if (!streamWritesSection(tabId, sectionId)) return
-  appendTokenToTabSection(tabId, sectionId, token)
-  sbp('dez.editor/appendTokenIfVisible', tabId, sectionId, token)
+  writeStreamText(tabId, sectionId, token)
   receiveStreamToken(tabId, token)
 }
 
@@ -77,20 +140,79 @@ function updateStreamThinking(tabId: string, sectionId: string, change: () => Se
   if (thinking) sbp('dez.editor/setSectionThinkingIfVisible', tabId, sectionId, thinking)
 }
 
+// Replaces the running blocks of `run` with `text`, in the store and in the
+// visible editor. False when the section no longer holds them.
+function replaceToolRun(tabId: string, sectionId: string, run: ToolRun, text: string): boolean {
+  if (!replaceStreamTailInTabSection(tabId, sectionId, run.runningText, text)) return false
+  sbp('dez.editor/replaceStreamTailIfVisible', tabId, sectionId, run.runningText, text)
+  return true
+}
+
+// Ends the tool run of a reply that the user stopped, or that a new start in
+// the tab replaced: aborts the running tool, and writes the final blocks at
+// once, while the stream session still writes the section. Calls that ended
+// keep their results; the others get "Stopped.". The round loop finds the
+// run gone and writes nothing more.
+function stopToolRun(tabId: string, reply: ReplyRuntime): void {
+  const run = reply.toolRun
+  if (!run) return
+  reply.toolRun = null
+  run.abort.abort()
+  if (!streamWritesSection(tabId, reply.sectionId)) return
+  const blocks = run.calls.map((call, index) => toolCallBlock(call, run.results[index] ?? STOPPED_TOOL_RESULT))
+  replaceToolRun(tabId, reply.sectionId, run, toolGroupText(blocks))
+}
+
+// Runs the calls of one round, in order: appends their running blocks (a
+// refused call gets its error block at once), runs each call, then replaces
+// the running blocks with the final ones. Nothing else of the reply writes
+// the section meanwhile. Returns the section after the round, or null when
+// the run did not end here: the user stopped the reply (stopToolRun wrote
+// the blocks), or deleted the running blocks.
+async function runToolRound(tabId: string, reply: ReplyRuntime, calls: CheckedToolCall[], sectionText: string): Promise<Section | null> {
+  const run: ToolRun = {
+    calls,
+    results: [],
+    runningText: toolGroupText(calls.map((call) => toolCallBlock(call))),
+    abort: new AbortController(),
+  }
+  writeStreamText(tabId, reply.sectionId, toolGroupStart(sectionText) + run.runningText)
+  reply.toolRun = run
+
+  for (const [index, call] of calls.entries()) {
+    if (call.refusal !== undefined) continue
+    const toolCall: ToolRunCall = { name: call.name, arguments: call.arguments }
+    const result = await sbp('dez.controller/tools/run', toolCall, run.abort.signal) as ToolRunResult
+    if (reply.toolRun !== run) return null
+    run.results[index] = result
+  }
+
+  reply.toolRun = null
+  const blocks = calls.map((call, index) => toolCallBlock(call, run.results[index]))
+  if (!replaceToolRun(tabId, reply.sectionId, run, toolGroupText(blocks))) return null
+  return streamingSection(tabId, reply.sectionId)
+}
+
 export default sbp('sbp/selectors/register', {
+  // One reply: request rounds until a round ends with no tool calls. Each
+  // round streams its answer text and thinking into the agent section; a
+  // round that ends with tool calls adds their blocks, runs them, and sends
+  // the next round with the reply so far. The stream session, the busy
+  // state, the start time, and the scroll follow span the whole reply, and
+  // only the reply's end finalizes it (duration, alerts, trailing user
+  // section, save).
   async 'dez.stream/start' (args: StreamStartArgs): Promise<void> {
-    const previousStream = nativeStreamsByTab.get(args.tabId)
-    if (previousStream) {
-      previousStream.cancelling = true
-      await sbp('dez.http/cancelStream', previousStream.requestId).catch(() => {})
-      if (nativeStreamsByTab.get(args.tabId)?.requestId === previousStream.requestId) {
-        nativeStreamsByTab.delete(args.tabId)
-      }
+    const previousReply = repliesByTab.get(args.tabId)
+    if (previousReply) {
+      previousReply.cancelling = true
+      stopToolRun(args.tabId, previousReply)
+      await sbp('dez.http/cancelStream', previousReply.requestId).catch(() => {})
+      if (repliesByTab.get(args.tabId) === previousReply) repliesByTab.delete(args.tabId)
     }
 
-    const requestId = crypto.randomUUID()
-    nativeStreamsByTab.set(args.tabId, { requestId, cancelling: false })
-    const isCurrentRequest = () => nativeStreamsByTab.get(args.tabId)?.requestId === requestId
+    const reply: ReplyRuntime = { sectionId: args.sectionId, requestId: '', cancelling: false, toolRun: null }
+    repliesByTab.set(args.tabId, reply)
+    const replyIsCurrent = () => repliesByTab.get(args.tabId) === reply && !reply.cancelling
 
     startStreamSession({
       tabId: args.tabId,
@@ -105,78 +227,114 @@ export default sbp('sbp/selectors/register', {
     // retries — picks up the user's current settings consistently.
     const providerSettings = (sbp('dez.model/settings/snapshot') as SettingsSnapshot)
       .providerSettings[args.model.providerId]
+    // The prompt lists exactly the tools that the request offers.
+    const tools = args.sendTools ? TOOL_DEFINITIONS : []
 
     try {
-      // The request offers no Dez tools, so the prompt lists none. Inside
-      // the try: a template error must end the stream session.
-      const system = buildSystemPrompt(args.model, [])
-      const result = await sbp('dez.provider/streamChat', {
-        providerId: args.model.providerId,
-        conversationId: args.conversationId,
-        system,
-        modelId: args.model.modelId,
-        messages: args.messages,
-        requestId,
-        providerSettings,
-        onToken: (token: string) => {
-          if (!isCurrentRequest()) return
-          receiveToken(args.tabId, args.sectionId, token)
-        },
-        onThinking: (token: string) => {
-          if (!isCurrentRequest()) return
-          updateStreamThinking(args.tabId, args.sectionId, () => appendThinkingToTabSection(args.tabId, args.sectionId, token))
-        },
-      }) as ProviderStreamChatResult
+      // Inside the try: a template error must end the stream session.
+      const system = buildSystemPrompt(args.model, tools)
+      let messages = args.messages
+      // The first call id of the group that ended the round before: it names
+      // the thinking round of every later round (SectionThinking.rounds).
+      let afterToolCall: string | undefined
 
-      const currentStream = nativeStreamsByTab.get(args.tabId)
-      if (currentStream?.requestId === requestId && !currentStream.cancelling) {
-        // Before the finish, which saves the conversation.
+      for (let toolRounds = 0; ; toolRounds++) {
+        const requestId = crypto.randomUUID()
+        reply.requestId = requestId
+        const roundIsCurrent = () => repliesByTab.get(args.tabId) === reply && reply.requestId === requestId
+        const roundAfterToolCall = afterToolCall
+        // Model text never forms a block (toolBlocks.ts); a tag can be split
+        // across tokens, so the escaper holds such an end back.
+        const escaper = new ModelTextEscaper()
+        const result = await sbp('dez.provider/streamChat', {
+          providerId: args.model.providerId,
+          conversationId: args.conversationId,
+          system,
+          tools,
+          modelId: args.model.modelId,
+          messages,
+          requestId,
+          providerSettings,
+          onToken: (token: string) => {
+            if (!roundIsCurrent()) return
+            const text = escaper.push(token)
+            if (text) receiveToken(args.tabId, args.sectionId, text)
+          },
+          onThinking: (token: string) => {
+            if (!roundIsCurrent()) return
+            updateStreamThinking(args.tabId, args.sectionId, () => appendThinkingToTabSection(args.tabId, args.sectionId, token, roundAfterToolCall))
+          },
+        }) as ProviderStreamChatResult
+        if (!replyIsCurrent()) return
+
+        // Before the blocks and the finish, which saves the conversation.
+        const held = escaper.flush()
+        if (held) receiveToken(args.tabId, args.sectionId, held)
         const replay = result.thinkingReplay
         if (replay) {
-          updateStreamThinking(args.tabId, args.sectionId, () => setThinkingReplayForTabSection(args.tabId, args.sectionId, replay))
+          updateStreamThinking(args.tabId, args.sectionId, () => setThinkingReplayForTabSection(args.tabId, args.sectionId, replay, roundAfterToolCall))
         }
-        finalizeStream(args.tabId, finishStreamSession(args.tabId))
+
+        // A request that offers no tools gets no calls. Calls that a server
+        // sends anyway are left out: the next request could not send them
+        // back with no tool definitions. A section that is gone (the user
+        // merged it into the one before) takes no blocks.
+        const streamedCalls = tools.length > 0 ? result.toolCalls ?? [] : []
+        const section = streamingSection(args.tabId, args.sectionId)
+        if (streamedCalls.length === 0 || !section) {
+          finalizeStream(args.tabId, finishStreamSession(args.tabId))
+          return
+        }
+
+        const sectionText = sectionPlainText(section)
+        const calls = checkToolCalls(streamedCalls, findToolBlocks(sectionText).map((block) => block.id))
+        if (toolRounds >= MAX_TOOL_ROUNDS) {
+          const blocks = calls.map((call) => toolCallBlock(call, ROUND_LIMIT_TOOL_RESULT))
+          writeStreamText(args.tabId, args.sectionId, toolGroupStart(sectionText) + toolGroupText(blocks))
+          console.error(`The reply reached the limit of ${MAX_TOOL_ROUNDS} tool rounds`)
+          finalizeStream(args.tabId, errorStreamSession(args.tabId))
+          showReplyError(args.tabId, 'Tool limit reached', `The reply reached the limit of ${MAX_TOOL_ROUNDS} tool rounds, so Dez did not run its last tool calls.`)
+          return
+        }
+
+        const roundsSoFar = await runToolRound(args.tabId, reply, calls, sectionText)
+        if (!roundsSoFar) {
+          // Still current only when the user deleted the running blocks:
+          // with no calls to send back, the reply cannot go on, so it ends
+          // as a stop does.
+          if (replyIsCurrent()) finalizeStream(args.tabId, cancelStreamSession(args.tabId))
+          return
+        }
+        afterToolCall = calls[0].id
+        messages = [...args.messages, ...agentSectionMessages(roundsSoFar, args.model, true)]
       }
     } catch (error) {
-      const currentStream = nativeStreamsByTab.get(args.tabId)
-      if (currentStream?.requestId === requestId && !currentStream.cancelling) {
+      if (replyIsCurrent()) {
         console.error('Chat request failed:', error)
         finalizeStream(args.tabId, errorStreamSession(args.tabId))
-        // The error shows only in this toast, never as thread text.
-        // Sticky (no duration): the user closes it. For a tab in the
-        // background the title names the tab, else the user cannot tell
-        // where the error came from. Read after the stream end, which sets
-        // the title of a new tab.
-        const tab = sbp('dez.model/tab', args.tabId) as Tab | null
-        const inBackground = !!tab && tab.id !== sbp('dez.model/tabs/activeId')
-        sbp('dez.ui/toast', 'app-global', {
-          variant: 'error',
-          title: inBackground ? `Request failed in "${tab.title}"` : 'Request failed',
-          // The toast refuses an empty message.
-          message: (error instanceof Error ? error.message : String(error)) || 'Unknown error',
-        })
+        // The toast refuses an empty message.
+        showReplyError(args.tabId, 'Request failed', (error instanceof Error ? error.message : String(error)) || 'Unknown error')
       }
     } finally {
-      if (isCurrentRequest()) {
-        nativeStreamsByTab.delete(args.tabId)
-      }
+      if (repliesByTab.get(args.tabId) === reply) repliesByTab.delete(args.tabId)
     }
   },
 
   async 'dez.stream/stop' (tabId: string): Promise<void> {
     if (!streamIsStreaming(tabId)) return
-    const currentStream = nativeStreamsByTab.get(tabId)
-    if (currentStream) {
-      currentStream.cancelling = true
+    const reply = repliesByTab.get(tabId)
+    if (reply) {
+      reply.cancelling = true
+      stopToolRun(tabId, reply)
     }
 
     try {
-      if (currentStream) {
-        await sbp('dez.http/cancelStream', currentStream.requestId)
+      if (reply) {
+        await sbp('dez.http/cancelStream', reply.requestId)
       }
     } finally {
-      if (nativeStreamsByTab.get(tabId)?.requestId === currentStream?.requestId) {
-        nativeStreamsByTab.delete(tabId)
+      if (repliesByTab.get(tabId) === reply) {
+        repliesByTab.delete(tabId)
       }
       finalizeStream(tabId, cancelStreamSession(tabId))
     }

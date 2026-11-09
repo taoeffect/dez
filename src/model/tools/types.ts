@@ -61,3 +61,9 @@ export interface ToolResult {
   content: string
   isError: boolean
 }
+
+/** What running one call gave, before it goes into its block. */
+export interface ToolRunResult {
+  content: string
+  isError: boolean
+}

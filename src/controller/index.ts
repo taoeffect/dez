@@ -1,6 +1,7 @@
 import './native'
 import './http'
 import './stream'
+import './tools'
 import './thread'
 import './tabs'
 import './images'

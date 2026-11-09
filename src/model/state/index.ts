@@ -23,6 +23,7 @@ import {
   appendStreamingText,
   emptyContent,
   normalizeContent,
+  replaceStreamingTail,
   sectionIsEmpty,
   sectionVisibleText,
 } from '../chat/content'
@@ -347,6 +348,14 @@ export function appendTokenToTabSection(tabId: string, sectionId: string, token:
   if (!section) return false
   appendStreamingText(section, token)
   return true
+}
+
+// Replaces the running tool blocks that the stream appended
+// (replaceStreamingTail). Returns false when the tab, the section, or the
+// blocks are gone.
+export function replaceStreamTailInTabSection(tabId: string, sectionId: string, tail: string, text: string): boolean {
+  const section = findTabSection(tabId, sectionId)?.section
+  return !!section && replaceStreamingTail(section, tail, text)
 }
 
 // The entry of the later request round after the tool call `afterToolCall`.
