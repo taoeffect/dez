@@ -211,7 +211,7 @@ Do not ever read, view, print, or `cat` `~/.config/dez/provider_keys.json`; it c
 - **The updater trusts only Rust-side inputs**: the webview passes only a version and the `.minisig` text; Rust builds the download URL, holds the key, and keeps every path in its own state and private temp dir, never under `~/.config/dez`. Never add an updater input that is a path or a URL.
 - **macOS can refuse the self-update**: `can_install_update` refuses dev builds, App Translocation, and disk-image or read-only volumes; App Management (TCC) can deny writes to the app's folder (then the binary fallback, then an error that names App Management). Each build has a new ad-hoc code identity, so TCC grants can reset after an update.
 - **Never write into a running binary**: macOS kills a process whose executable changes in place (`Killed: 9`). The relaunch helper copies to a new file and `mv`s it over (`HELPER_SCRIPT`, `macos.rs`).
-- **Save before Dez quits itself**: a quit loses the saves that debounces still hold, so the update relaunch first calls `dez.model/persistence/flush` and `dez.controller/window/flushGeometry`.
+- **Save before Dez quits itself**: a quit loses the saves that debounces still hold, so the update relaunch first calls `dez.controller/window/flushGeometry`, then `dez.model/persistence/flush` (which saves the geometry that the first one puts into the settings).
 - **Minimum macOS 13.0** (`bundle.macOS.minimumSystemVersion`, `tauri.conf.json`): the updater mounts the DMG with `diskutil image attach`, as `hdiutil` is deprecated on macOS 27.
 - When using the `agentic_fetch` tool:
   - If searching the web, *ALWAYS* tell the tool to never use local tools like Grep, and only search the web
