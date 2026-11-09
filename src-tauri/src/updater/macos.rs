@@ -566,7 +566,8 @@ fn probe_writable(dir: &Path) -> io::Result<()> {
 //   <pid> <private dir> <bundle> <opener> binary [<staged> <target>]...
 // It waits up to 30 s for Dez (`pid`) to quit, finishes the install, removes
 // the private dir, and opens the app with `opener`. It logs each step, as
-// nobody sees its errors otherwise.
+// nobody sees its errors otherwise. `log` uses `printf`, as `sh`'s `echo`
+// reads backslashes in a path as escapes (`\c` cuts the line off).
 //
 // Binary mode first copies each staged file next to its target, so that a
 // failed copy changes nothing, then renames the copies over the targets. A
@@ -580,7 +581,7 @@ fn probe_writable(dir: &Path) -> io::Result<()> {
 //
 // `kill -0` sees a zombie as running; launchd reaps Dez as soon as it ends.
 const HELPER_SCRIPT: &str = r#"
-log() { echo "$(/bin/date '+%Y-%m-%d %H:%M:%S') $*"; }
+log() { printf '%s %s\n' "$(/bin/date '+%Y-%m-%d %H:%M:%S')" "$*"; }
 pid=$1 private=$2 bundle=$3 opener=$4 mode=$5
 shift 5
 log "Finishing the update of $bundle ($mode mode). Waiting for Dez (process $pid) to quit."
@@ -1165,5 +1166,22 @@ mod tests {
             log.lines().any(|line| Path::new(line) == setup.bundle),
             "{log}"
         );
+    }
+
+    #[test]
+    fn helper_logs_paths_with_backslashes_as_they_are() {
+        let setup = Setup::new();
+        // `echo` in `sh` reads `\t` as a tab and `\c` as "print no more".
+        let leftover = setup.bundle.with_file_name(r".dez-update-a\tb\cc");
+        fs::create_dir(&leftover).expect("folder");
+        let finish = Finish::Replaced {
+            bundle: setup.bundle.clone(),
+            leftover: Some(leftover.clone()),
+        };
+
+        let log = setup.run_helper(&finish);
+
+        let removing = format!(" Removing {}", leftover.display());
+        assert!(log.lines().any(|line| line.ends_with(&removing)), "{log}");
     }
 }
