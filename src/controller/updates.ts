@@ -8,10 +8,10 @@ import {
   type TabActivity,
   type UpdatesSnapshot,
 } from '../model/state'
-import { parseReleaseList, type Release, type ReleaseAsset } from '../model/updates/releases'
+import { parseReleaseList, type Release } from '../model/updates/releases'
 import { isMacPlatform } from '../utils/platform'
 import { nativeResponseText, type NativeHttpResponse } from '../utils/protocol/nativeHttp'
-import { sanitizeErrorText } from '../utils/protocol/errors'
+import { responseOk, sanitizeErrorText } from '../utils/protocol/errors'
 import { isNewerVersion } from '../utils/version'
 import type { UpdateDownloadProgress } from './nativeTypes'
 
@@ -39,8 +39,7 @@ type UpdateCheckOutcome = { releases: Release[] } | { error: string }
 
 const ONE_DAY_MS = 24 * 60 * 60 * 1000
 const CHECK_INTERVAL_MS = 60 * 60 * 1000
-const RELEASE_CHECK_TIMEOUT_MS = 30_000
-const SIGNATURE_TIMEOUT_MS = 30_000
+const GITHUB_TIMEOUT_MS = 30_000
 
 // The relaunch helper's log, relative to the app folder (`UPDATE_LOG` in
 // src-tauri/src/updater/mod.rs).
@@ -59,26 +58,30 @@ export function stopUpdateCheckerService(): void {
   stopUpdateChecker?.()
 }
 
+// GETs `url` (GitHub, or the smoke-test server) and returns the body text.
+// `what` names the request in the error of a non-2xx answer.
+async function fetchGitHubText(url: string, what: string, headers: Record<string, string> = {}): Promise<string> {
+  const response = await sbp('dez.native/httpRequest', {
+    method: 'GET',
+    url,
+    // GitHub's API refuses requests without a User-Agent.
+    headers: { ...headers, 'User-Agent': 'dez-update-checker' },
+    timeoutMs: GITHUB_TIMEOUT_MS,
+  }) as NativeHttpResponse
+  if (!responseOk(response)) throw new Error(`GitHub answered ${what} with HTTP ${response.status}`)
+  return nativeResponseText(response)
+}
+
 // Returns the Dez releases that are newer than the running one, newest first.
 // A smoke-test build sets VITE_DEZ_RELEASES_API_URL to a local server, and
 // then takes that server's asset URLs. That is harmless: the Rust installer
 // builds the download URL itself and checks the signature with its own key.
 async function fetchNewerReleases(): Promise<Release[]> {
   const apiOverride = import.meta.env.VITE_DEZ_RELEASES_API_URL
-  const response = await sbp('dez.native/httpRequest', {
-    method: 'GET',
-    url: apiOverride || RELEASES_API_URL,
-    headers: {
-      Accept: 'application/vnd.github+json',
-      // GitHub's API refuses requests without a User-Agent.
-      'User-Agent': 'dez-update-checker',
-    },
-    timeoutMs: RELEASE_CHECK_TIMEOUT_MS,
-  }) as NativeHttpResponse
-  if (response.status < 200 || response.status >= 300) {
-    throw new Error(`GitHub answered the update check with HTTP ${response.status}`)
-  }
-  return parseReleaseList(nativeResponseText(response), {
+  const body = await fetchGitHubText(apiOverride || RELEASES_API_URL, 'the update check', {
+    Accept: 'application/vnd.github+json',
+  })
+  return parseReleaseList(body, {
     currentVersion: __APP_VERSION__,
     releaseUrlPrefix: `${DEZ_REPO_URL}/releases/`,
     assetUrlPrefix: apiOverride ? `${new URL(apiOverride).origin}/` : `${DEZ_REPO_URL}/releases/download/`,
@@ -116,21 +119,6 @@ async function checkReleases(): Promise<UpdateCheckOutcome> {
   }
 }
 
-// The text of a release's `.minisig` file. The release parser already
-// checked that its URL is on GitHub's release download path.
-async function fetchSignature(asset: ReleaseAsset): Promise<string> {
-  const response = await sbp('dez.native/httpRequest', {
-    method: 'GET',
-    url: asset.url,
-    headers: { 'User-Agent': 'dez-update-checker' },
-    timeoutMs: SIGNATURE_TIMEOUT_MS,
-  }) as NativeHttpResponse
-  if (response.status < 200 || response.status >= 300) {
-    throw new Error(`GitHub answered the download of the update signature with HTTP ${response.status}`)
-  }
-  return nativeResponseText(response)
-}
-
 // The tabs whose replies are streaming.
 function streamingTabIds(): string[] {
   const activity = sbp('dez.model/tabs/activity') as Record<string, TabActivity>
@@ -158,7 +146,9 @@ async function downloadAndInstall(release: Release): Promise<void> {
   if (!release.dmgAsset || !release.signatureAsset) {
     throw new Error(`Dez ${release.version} has no signed macOS download. Get it from GitHub.`)
   }
-  const signature = await fetchSignature(release.signatureAsset)
+  // The text of the release's `.minisig` file. The release parser already
+  // checked that its URL is on GitHub's release download path.
+  const signature = await fetchGitHubText(release.signatureAsset.url, 'the download of the update signature')
   const onProgress = new Channel<UpdateDownloadProgress>()
   onProgress.onmessage = ({ received, total }) => {
     sbp('dez.model/updates/setInstall', { phase: 'downloading', received, total })
