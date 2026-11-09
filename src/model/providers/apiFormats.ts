@@ -257,25 +257,30 @@ const anthropicShapes: WireShapes = {
 // does not compare the marks when it matches a prefix, and a string content
 // is the same prompt as one text block. The results of a tool round count as
 // a user message: Anthropic's are one, and the OpenAI format's are one `tool`
-// message per result, of which the last one gets the mark. `markedBlock`
-// gives the index of the block to mark, or -1 when the message has none;
+// message per result, of which the last one gets the mark. `mark` gives the
+// message with its mark, or null when the message has nothing to take one;
 // such a message gets no mark.
 // https://platform.claude.com/docs/en/build-with-claude/prompt-caching
-function withCacheBreakpoints(messages: WireMessage[], markedBlock: (blocks: WireMessage[]) => number): WireMessage[] {
-  const marks = new Map<number, number>()
-  for (let index = messages.length - 1; index >= 0 && marks.size < 2; index--) {
+function withCacheBreakpoints(messages: WireMessage[], mark: (message: WireMessage) => WireMessage | null): WireMessage[] {
+  const marked = new Map<number, WireMessage>()
+  for (let index = messages.length - 1; index >= 0 && marked.size < 2; index--) {
     const { role } = messages[index]
     const turnEnd = role === 'user' || (role === 'tool' && messages[index + 1]?.role !== 'tool')
-    const block = turnEnd ? markedBlock(contentBlocks(messages[index])) : -1
-    if (block >= 0) marks.set(index, block)
+    const markedMessage = turnEnd ? mark(messages[index]) : null
+    if (markedMessage) marked.set(index, markedMessage)
   }
-  return messages.map((message, index) => {
-    const marked = marks.get(index)
-    if (marked === undefined) return message
-    const content = contentBlocks(message).map((block, blockIndex) =>
-      blockIndex === marked ? { ...block, cache_control: { type: 'ephemeral' } } : block)
-    return { ...message, content }
-  })
+  return messages.map((message, index) => marked.get(index) ?? message)
+}
+
+const CACHE_MARK = { type: 'ephemeral' }
+
+// The message with the mark on the block that `pick` gives (a string content
+// becomes one text block), or null when `pick` gives -1.
+function withMarkedBlock(message: WireMessage, pick: (blocks: WireMessage[]) => number): WireMessage | null {
+  const blocks = contentBlocks(message)
+  const marked = pick(blocks)
+  if (marked < 0) return null
+  return { ...message, content: blocks.map((block, index) => index === marked ? { ...block, cache_control: CACHE_MARK } : block) }
 }
 
 function contentBlocks(message: WireMessage): WireMessage[] {
@@ -313,9 +318,12 @@ const openAiFormat: ApiFormat = {
   chatBody: (messages, modelId, config, context) => {
     const chat = wireChat(messages, context, openAiShapes)
     // Venice drops a mark on an `image_url` part (checked live), so the
-    // mark goes on the last text part.
+    // mark goes on the last text part. A tool message takes its mark where
+    // the config says (ProviderConfig.toolMessageCacheMark).
     const conversation = config.cacheBreakpoints
-      ? withCacheBreakpoints(chat.messages, (blocks) => blocks.findLastIndex((block) => block.type === 'text'))
+      ? withCacheBreakpoints(chat.messages, (message) => message.role === 'tool' && config.toolMessageCacheMark === 'message'
+        ? { ...message, cache_control: CACHE_MARK }
+        : withMarkedBlock(message, (blocks) => blocks.findLastIndex((block) => block.type === 'text')))
       : chat.messages
     const body: Record<string, unknown> = {
       model: modelId,
@@ -355,7 +363,7 @@ const anthropicFormat: ApiFormat = {
     const body: Record<string, unknown> = {
       model: modelId,
       ...(context.system !== undefined && { system: context.system }),
-      messages: withCacheBreakpoints(withResultsJoined(chat.messages), (blocks) => blocks.length - 1),
+      messages: withCacheBreakpoints(withResultsJoined(chat.messages), (message) => withMarkedBlock(message, (blocks) => blocks.length - 1)),
       stream: true,
     }
     if (chat.tools) body.tools = chat.tools

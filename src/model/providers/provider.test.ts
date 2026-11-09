@@ -273,6 +273,21 @@ describe('prompt cache', () => {
     ])
   })
 
+  it('marks the last tool message itself, keeping its string content, for a config with toolMessageCacheMark "message"', () => {
+    const sent = sentMessages(customProvider({ cacheBreakpoints: true, toolMessageCacheMark: 'message' }), [
+      { role: 'user', content: 'Q1' },
+      { role: 'agent', content: '', toolCalls: [toolCall('call_1', 'a'), toolCall('call_2', 'b')] },
+      { role: 'tool', results: [{ callId: 'call_1', content: 'R1', isError: false }, { callId: 'call_2', content: 'R2', isError: false }] },
+    ])
+
+    expect(sent).toStrictEqual([
+      { role: 'user', content: [{ type: 'text', text: 'Q1', cache_control: CACHE }] },
+      { role: 'assistant', content: '', tool_calls: [openAiToolCall('call_1', 'a'), openAiToolCall('call_2', 'b')] },
+      { role: 'tool', tool_call_id: 'call_1', content: 'R1' },
+      { role: 'tool', tool_call_id: 'call_2', content: 'R2', cache_control: CACHE },
+    ])
+  })
+
   it('sends the prompt of each request again and marks where that request stored it, also after a turn of more than 20 blocks and in tool rounds', () => {
     // Turn 2 adds 25 blocks: more than a cache read looks back.
     const manyImages = Array.from({ length: 12 }, (_, n) => [text(`Picture ${n}:`), image(`I${n}`)]).flat()

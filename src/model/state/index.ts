@@ -179,7 +179,8 @@ function cloneProviderSettings(
 function cloneProviderConfig(config: ProviderConfig): ProviderConfig {
   const {
     id, name, baseUrl, apiFormat, models, fetchModels, modelImageInput, modelToolCalling, auth,
-    headers, imageRequestHeaders, maxOutputTokens, cacheBreakpoints, promptCacheKey, requestBody, settings, thinking,
+    headers, imageRequestHeaders, maxOutputTokens, cacheBreakpoints, toolMessageCacheMark, promptCacheKey,
+    requestBody, settings, thinking,
     ...uncopied
   } = config
   // A compile error when ProviderConfig gets a field that this clone does not
@@ -200,6 +201,7 @@ function cloneProviderConfig(config: ProviderConfig): ProviderConfig {
   if (imageRequestHeaders) clone.imageRequestHeaders = { ...imageRequestHeaders }
   if (maxOutputTokens !== undefined) clone.maxOutputTokens = maxOutputTokens
   if (cacheBreakpoints !== undefined) clone.cacheBreakpoints = cacheBreakpoints
+  if (toolMessageCacheMark) clone.toolMessageCacheMark = toolMessageCacheMark
   if (promptCacheKey !== undefined) clone.promptCacheKey = promptCacheKey
   if (requestBody) clone.requestBody = cloneJsonObject(requestBody)
   if (settings) clone.settings = settings.map((setting) => ({ ...setting }))

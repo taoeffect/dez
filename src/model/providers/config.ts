@@ -174,11 +174,19 @@ export const providerConfigSchema = z.object({
   imageRequestHeaders: headersSchema.optional(),
   // Anthropic `max_tokens`; the OpenAI format ignores it.
   maxOutputTokens: z.number().int().positive().optional(),
-  // OpenAI format: mark the last two user messages with Anthropic's
-  // `cache_control`, for a server that passes the marks on to the models
-  // that cache only a marked prompt (Claude). The Anthropic format always
-  // marks them (apiFormats.ts).
+  // OpenAI format: mark the last two user messages (or tool results) with
+  // Anthropic's `cache_control`, for a server that passes the marks on to the
+  // models that cache only a marked prompt (Claude). The Anthropic format
+  // always marks them (apiFormats.ts).
   cacheBreakpoints: z.boolean().optional(),
+  // OpenAI format with `cacheBreakpoints`: where a `tool` message takes its
+  // mark. `part` (the default): on its content as one text part, as a user
+  // message does. `message`: on the message itself, the content staying a
+  // string. Servers differ: Venice drops a part mark on a tool message and
+  // uses a message mark (checked live); OpenRouter uses a part mark, and a
+  // message mark on a tool message can hang the request there (live report:
+  // https://github.com/NousResearch/hermes-agent/issues/57845).
+  toolMessageCacheMark: z.enum(['part', 'message']).optional(),
   // OpenAI format: send the conversation id as `prompt_cache_key`, so the
   // server sends all the requests of a conversation to the machine that
   // holds its prompt cache. The Anthropic format ignores it.

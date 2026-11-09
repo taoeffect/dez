@@ -64,6 +64,10 @@ export const BUILT_IN_PROVIDER_CONFIGS: readonly ProviderConfig[] = [
     // check got no Claude cache hits without them. Its other models take the
     // marks with no error (also checked live).
     cacheBreakpoints: true,
+    // A live check with Claude Haiku 5.5: a mark on a tool message's text
+    // part stored nothing, a mark on the message stored the prompt up to it.
+    // Its other models took the message mark with no error.
+    toolMessageCacheMark: 'message',
     // In a live check, Qwen3-VL cached nothing without it.
     // https://docs.venice.ai/guides/features/prompt-caching
     promptCacheKey: true,
