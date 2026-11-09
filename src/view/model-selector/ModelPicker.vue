@@ -2,6 +2,7 @@
 import { ref, computed, onMounted, nextTick } from 'vue'
 import sbp from '@sbp/sbp'
 import { useModelState } from '../modelState'
+import { availableModels, matchingModelsByProvider, modelMatches, searchTerms } from '../../model/modelSearch'
 import type { ModelInfo, ProviderInfo } from '../../model/providers'
 
 interface DisplayModel extends ModelInfo {
@@ -49,88 +50,30 @@ const searchQuery = ref('')
 const searchInput = ref<HTMLInputElement | null>(null)
 const providers = ref<ProviderInfo[]>([])
 
-// Models to show right now, derived reactively from the persisted cache: only
-// providers that are currently configured AND whose cached `working !== false`.
-// Computed locally because it must reactively combine the cache snapshot with
-// the async-loaded `providers` ref.
-const visibleModels = computed<ModelInfo[]>(() => {
-  const configured = new Set<string>(
-    providers.value.filter((provider) => provider.configured).map((provider) => provider.id),
-  )
-  const models: ModelInfo[] = []
-  for (const [providerId, entry] of Object.entries(modelCache.value.providers)) {
-    if (!entry || entry.working === false) continue
-    if (!configured.has(providerId)) continue
-    models.push(...entry.models)
-  }
-  return models
-})
-
-function normalizeSearchText(value: string) {
-  return value.toLowerCase().replace(/[^a-z0-9]+/g, ' ').trim()
-}
-
-function fuzzyIncludes(text: string, query: string) {
-  let queryIndex = 0
-  for (let textIndex = 0; textIndex < text.length && queryIndex < query.length; textIndex += 1) {
-    if (text[textIndex] === query[queryIndex]) queryIndex += 1
-  }
-  return queryIndex === query.length
-}
-
-function fieldMatches(fields: string[], queryTerms: string[]) {
-  if (!queryTerms.length) return true
-  const normalizedFields = fields.map(normalizeSearchText).filter(Boolean)
-  const combined = normalizedFields.join(' ')
-
-  return queryTerms.every((term) =>
-    normalizedFields.some((field) => field.includes(term) || fuzzyIncludes(field, term)) ||
-    combined.includes(term) ||
-    fuzzyIncludes(combined, term),
-  )
-}
+const visibleModels = computed(() => availableModels(modelCache.value, providers.value))
 
 const filteredGrouped = computed<GroupedModels[]>(() => {
-  const queryTerms = normalizeSearchText(searchQuery.value).split(/\s+/).filter(Boolean)
+  const terms = searchTerms(searchQuery.value)
   const groups: GroupedModels[] = []
-
-  const providerById = new Map(providers.value.map((provider) => [provider.id, provider]))
-  const providerMatches = (provider: ProviderInfo) =>
-    fieldMatches([provider.name, provider.id], queryTerms)
-  const modelMatches = (m: ModelInfo, provider: ProviderInfo | undefined) => {
-    const fields = provider
-      ? [provider.name, provider.id, m.name, m.id]
-      : [m.provider, m.name, m.id]
-    return fieldMatches(fields, queryTerms)
-  }
-  const toDisplayModel = (m: ModelInfo): DisplayModel => ({
-    ...m,
-    providerName: providerById.get(m.provider)?.name ?? m.provider,
-  })
 
   if (props.showFavorites) {
     const favModels: DisplayModel[] = []
     for (const fav of settings.value.favorites) {
-      const m = visibleModels.value.find(
-        (x) => x.provider === fav.providerId && x.id === fav.modelId,
-      )
-      if (m && modelMatches(m, providerById.get(m.provider))) favModels.push(toDisplayModel(m))
+      const provider = providers.value.find((p) => p.id === fav.providerId)
+      const m = visibleModels.value.find((x) => x.provider === fav.providerId && x.id === fav.modelId)
+      if (provider && m && modelMatches(provider, m, terms)) favModels.push({ ...m, providerName: provider.name })
     }
     if (favModels.length > 0) {
       groups.push({ providerId: '__favorites__', providerName: 'Favorites', models: favModels })
     }
   }
 
-  for (const provider of providers.value) {
-    if (!provider.configured) continue
-    const matchesProvider = providerMatches(provider)
-    const models = visibleModels.value
-      .filter((m) => m.provider === provider.id)
-      .filter((m) => matchesProvider || modelMatches(m, provider))
-      .map(toDisplayModel)
-    if (models.length > 0) {
-      groups.push({ providerId: provider.id, providerName: provider.name, models })
-    }
+  for (const { provider, models } of matchingModelsByProvider(providers.value, visibleModels.value, terms)) {
+    groups.push({
+      providerId: provider.id,
+      providerName: provider.name,
+      models: models.map((m) => ({ ...m, providerName: provider.name })),
+    })
   }
   return groups
 })
