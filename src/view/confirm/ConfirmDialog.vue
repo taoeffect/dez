@@ -1,9 +1,8 @@
 <script setup lang="ts">
 import { ref, watch } from 'vue'
-import { restoreFocus, useOverlayDismiss } from '../composables/modal'
+import { keepTabInModal, restoreFocus, useOverlayDismiss } from '../composables/modal'
 import { answerConfirm, confirmRequest } from './selectors'
 
-const cancelButton = ref<HTMLButtonElement | null>(null)
 const confirmButton = ref<HTMLButtonElement | null>(null)
 
 // The element that had the focus before the prompt opened. It gets the
@@ -31,16 +30,13 @@ watch(confirmRequest, (request, previous) => {
 //
 // Enter on a button clicks that button. Enter anywhere else in the dialog
 // (after a click on its text) picks the default button. Tab and Shift+Tab
-// move only between the two buttons, so the focus never goes to the editor
-// behind the overlay.
+// move only between the two buttons (`keepTabInModal`).
 function onKeydown(event: KeyboardEvent) {
   if (event.key === 'Enter' && !(event.target instanceof HTMLButtonElement)) {
     event.preventDefault()
     answerConfirm(true)
-  } else if (event.key === 'Tab') {
-    event.preventDefault()
-    const next = document.activeElement === confirmButton.value ? cancelButton : confirmButton
-    next.value?.focus()
+  } else {
+    keepTabInModal(event)
   }
 }
 </script>
@@ -57,7 +53,7 @@ function onKeydown(event: KeyboardEvent) {
     >
       <p id="confirm-message" class="confirm-message">{{ confirmRequest.message }}</p>
       <div class="confirm-actions">
-        <button ref="cancelButton" class="confirm-btn confirm-btn--cancel" @click="answerConfirm(false)">
+        <button class="confirm-btn confirm-btn--cancel" @click="answerConfirm(false)">
           {{ confirmRequest.cancelLabel }}
         </button>
         <button ref="confirmButton" class="confirm-btn confirm-btn--confirm" @click="answerConfirm(true)">

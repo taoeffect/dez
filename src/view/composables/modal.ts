@@ -13,6 +13,26 @@ export function restoreFocus(element: Element | null): void {
   else element.focus({ preventScroll: true })
 }
 
+// Tab and Shift+Tab (with any modifier: in WebKit on macOS, Option+Tab
+// moves the focus too) move only between the modal's enabled buttons, so
+// the focus never goes to the editor behind the overlay, where a key could
+// start a reply. Use it in a keydown listener on the modal element (the
+// event's `currentTarget`). From no button (the modal itself has the
+// focus), Tab goes to the first and Shift+Tab to the last, as a browser
+// does. With no button, the focus stays where it is.
+export function keepTabInModal(event: KeyboardEvent): void {
+  if (event.key !== 'Tab' || !(event.currentTarget instanceof HTMLElement)) return
+  event.preventDefault()
+  const buttons = [...event.currentTarget.querySelectorAll<HTMLButtonElement>('button:not(:disabled)')]
+  if (!buttons.length) return
+  const index = buttons.indexOf(document.activeElement as HTMLButtonElement)
+  const step = event.shiftKey ? -1 : 1
+  const next = index === -1
+    ? (event.shiftKey ? buttons.length - 1 : 0)
+    : (index + step + buttons.length) % buttons.length
+  buttons[next].focus()
+}
+
 // Overlay handlers that dismiss the modal only for a press that started on
 // the overlay itself. A drag that starts in the modal (a text selection) and
 // ends outside it also gives the overlay a click; that click keeps it open.

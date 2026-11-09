@@ -2,7 +2,7 @@
 import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import sbp from '@sbp/sbp'
 import { useModelState } from '../modelState'
-import { restoreFocus, useOverlayDismiss } from '../composables/modal'
+import { keepTabInModal, restoreFocus, useOverlayDismiss } from '../composables/modal'
 import { isMacPlatform } from '../../utils/platform'
 
 const { updates } = useModelState()
@@ -57,8 +57,9 @@ const downloadFraction = computed(() => {
 const dialog = ref<HTMLElement | null>(null)
 
 // The element that had the focus before the window opened. The dialog takes
-// the focus, so keys never go to the editor behind the overlay, and the
-// focus goes back when it closes (`restoreFocus`).
+// the focus, and Tab keeps it in the window (`keepTabInModal`), so keys
+// never go to the editor behind the overlay. The focus goes back when the
+// window closes (`restoreFocus`).
 let opener: Element | null = null
 
 onMounted(() => {
@@ -70,7 +71,8 @@ onBeforeUnmount(() => restoreFocus(opener))
 
 // The clicked button goes away while the install runs. The focus moves to
 // the dialog first, so it stays in the window and keys never reach the
-// editor behind it.
+// editor behind it: a reply started there during the download would stop
+// with no prompt once the install is done.
 watch(busy, (isBusy) => {
   if (isBusy) dialog.value?.focus({ preventScroll: true })
 })
@@ -120,6 +122,7 @@ const { onOverlayMouseDown, onOverlayClick } = useOverlayDismiss(close)
       aria-modal="true"
       aria-labelledby="update-title"
       tabindex="-1"
+      @keydown="keepTabInModal"
     >
       <div class="update-header">
         <div>
