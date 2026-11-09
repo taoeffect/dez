@@ -43,12 +43,15 @@ pub const RELEASE_DOWNLOAD_BASE: &str = "https://github.com/taoeffect/dez/releas
 //    (src/model/updates/releases.ts): `html_url` on the real GitHub
 //    releases page, and both assets with URLs on the local server. Serve
 //    the folder with `python3 -m http.server 8765 --bind 127.0.0.1`.
-// 4. Install the old Dez in /Applications and use Check for Updates….
-//    For the binary fallback, run the old Dez from a folder made read-only
-//    with `chmod a-w`. To install a CI-built app, serve a real release
-//    DMG with a `.minisig` from the test key as the new Dez (the old Dez
-//    needs a lower version). Afterwards, remove the installed apps and
-//    ~/.config/dez.
+// 4. First quit any Dez you use, and move /Applications/Dez.app and
+//    ~/.config/dez aside: the test apps have no folder of their own, so
+//    they read and save the same ~/.config/dez (conversations, prompts,
+//    API keys). Install the old Dez in /Applications and use Check for
+//    Updates…. For the binary fallback, run the old Dez from a folder made
+//    read-only with `chmod a-w`. To install a CI-built app, serve a real
+//    release DMG with a `.minisig` from the test key as the new Dez (the
+//    old Dez needs a lower version). Afterwards, remove the test apps and
+//    the test ~/.config/dez, and move yours back.
 #[cfg(feature = "updater-test-hooks")]
 const RELEASE_PUBLIC_KEY: &str = include_str!(env!(
     "DEZ_UPDATER_TEST_PUBLIC_KEY",
