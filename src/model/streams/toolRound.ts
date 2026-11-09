@@ -71,18 +71,18 @@ export function toolCallBlock(call: CheckedToolCall, result?: ToolRunResult): To
   return { ...block, status: result.isError ? 'error' : 'success', result: result.content }
 }
 
-/** The text that starts a group of blocks in a section with `sectionText`:
- *  one `\n`, also after text that ends with one, and none in an empty
- *  section. The request builder drops one `\n` next to a block, so the
- *  model's own line breaks go back as they came, and after a round that
- *  wrote no text this gives the blank line that keeps two groups apart
- *  (`agentRounds` in `messages.ts`). */
-export function toolGroupStart(sectionText: string): string {
-  return sectionText === '' ? '' : '\n'
-}
-
 /** The text of a group of blocks: each block and a `\n` after it, as
  *  `agentRounds` reads them. */
 export function toolGroupText(blocks: readonly ToolBlockData[]): string {
   return blocks.map((block) => `${toolBlockText(block)}\n`).join('')
+}
+
+/** The text that adds a group of blocks to a section with `sectionText`:
+ *  one `\n` first, also after text that ends with one, and none in an
+ *  empty section; then the group text. The request builder drops one `\n`
+ *  next to a block, so the model's own line breaks go back as they came,
+ *  and after a round that wrote no text this gives the blank line that
+ *  keeps two groups apart (`agentRounds` in `messages.ts`). */
+export function toolGroupAppendText(sectionText: string, blocks: readonly ToolBlockData[]): string {
+  return (sectionText === '' ? '' : '\n') + toolGroupText(blocks)
 }

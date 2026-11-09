@@ -105,7 +105,7 @@ describe('tool calls', () => {
   let setup: MockProviderApp
   let browser: E2EBrowser
   // The tab of the OpenAI test, for the relaunch test.
-  let openAiRound: { conversationId: string, sections: ThreadSection[], lastBody: string } | null = null
+  let openAiTab: { conversationId: string, sections: ThreadSection[], lastBody: string } | null = null
 
   async function toolChips (): Promise<ToolChipView[]> {
     return browser.execute(() => Array.from(document.querySelectorAll<HTMLElement>('.cm-content .dez-tool-call'), (root) => {
@@ -226,12 +226,12 @@ describe('tool calls', () => {
     const conversationId = await activeConversationId(browser)
     const file = conversationFilePath(setup.app.home, conversationId)
     await waitForValue(browser, 'saved call', async () => (await fs.promises.readFile(file, 'utf8').catch(() => '')).includes(sections[1].text), true)
-    openAiRound = { conversationId, sections, lastBody: second.body }
+    openAiTab = { conversationId, sections, lastBody: second.body }
   })
 
   it('shows the saved call again after a relaunch, and sends it back with the same bytes', async () => {
-    if (!openAiRound) throw new Error('The OpenAI test saved no tool call')
-    const { conversationId, sections, lastBody } = openAiRound
+    if (!openAiTab) throw new Error('The OpenAI test saved no tool call')
+    const { conversationId, sections, lastBody } = openAiTab
     browser = await setup.relaunch()
     // A new page: the record that beforeEach started is gone.
     await resetConsoleErrors(browser)
@@ -370,7 +370,7 @@ describe('tool calls', () => {
       ],
     }))
     await sbpCall(browser, 'dez.model/tabs/openConversation', 'long-result')
-    await waitForValue(browser, 'chip of the long result', async () => (await toolChips()).length, 1)
+    await waitForValue(browser, 'chip of the long result', toolChips, [closedChip('"x"')])
     await pointerClick(browser, '.cm-content .dez-tool-call__chip')
     await waitForValue(browser, 'long result in the panel', async () => (await toolPanel(0))?.result, result)
 

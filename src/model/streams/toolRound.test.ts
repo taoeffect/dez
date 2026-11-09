@@ -8,8 +8,7 @@ import {
   ROUND_LIMIT_TOOL_RESULT,
   STOPPED_TOOL_RESULT,
   toolCallBlock,
-  toolGroupStart,
-  toolGroupText,
+  toolGroupAppendText,
   type CheckedToolCall,
 } from './toolRound'
 
@@ -89,7 +88,7 @@ describe('the group text and the request builder', () => {
     let text = ''
     for (const round of rounds) {
       text += round.text
-      if (round.blocks.length > 0) text += toolGroupStart(text) + toolGroupText(round.blocks)
+      if (round.blocks.length > 0) text += toolGroupAppendText(text, round.blocks)
     }
     return { id: 'a1', role: 'agent', model, content: [{ kind: 'text', text }] }
   }

@@ -11,7 +11,7 @@ import {
   ROUND_LIMIT_TOOL_RESULT,
   STOPPED_TOOL_RESULT,
   toolCallBlock,
-  toolGroupStart,
+  toolGroupAppendText,
   toolGroupText,
   type CheckedToolCall,
 } from '../model/streams/toolRound'
@@ -188,13 +188,14 @@ function stopToolRun(tabId: string, reply: ReplyRuntime): boolean {
 // its output (stopToolRun wrote the blocks), or the user deleted the
 // running blocks.
 async function runToolRound(tabId: string, reply: ReplyRuntime, calls: CheckedToolCall[], sectionText: string): Promise<Section | null> {
+  const runningBlocks = calls.map((call) => toolCallBlock(call))
   const run: ToolRun = {
     calls,
     results: [],
-    runningText: toolGroupText(calls.map((call) => toolCallBlock(call))),
+    runningText: toolGroupText(runningBlocks),
     abort: new AbortController(),
   }
-  writeStreamText(tabId, reply.sectionId, toolGroupStart(sectionText) + run.runningText)
+  writeStreamText(tabId, reply.sectionId, toolGroupAppendText(sectionText, runningBlocks))
   reply.toolRun = run
 
   for (const [index, call] of calls.entries()) {
@@ -307,15 +308,15 @@ export default sbp('sbp/selectors/register', {
         const calls = checkToolCalls(streamedCalls, findToolBlocks(sectionText).map((block) => block.id))
         if (toolRounds >= MAX_TOOL_ROUNDS) {
           const blocks = calls.map((call) => toolCallBlock(call, ROUND_LIMIT_TOOL_RESULT))
-          writeStreamText(args.tabId, args.sectionId, toolGroupStart(sectionText) + toolGroupText(blocks))
+          writeStreamText(args.tabId, args.sectionId, toolGroupAppendText(sectionText, blocks))
           console.error(`The reply reached the limit of ${MAX_TOOL_ROUNDS} tool rounds`)
           finalizeStream(args.tabId, errorStreamSession(args.tabId))
           showReplyError(args.tabId, 'Tool limit reached', `The reply reached the limit of ${MAX_TOOL_ROUNDS} tool rounds, so Dez did not run its last tool calls.`)
           return
         }
 
-        const roundsSoFar = await runToolRound(args.tabId, reply, calls, sectionText)
-        if (!roundsSoFar) {
+        const replySoFar = await runToolRound(args.tabId, reply, calls, sectionText)
+        if (!replySoFar) {
           // Still current only when the user deleted the running blocks:
           // with no calls to send back, the reply cannot go on, so it ends
           // as a stop does.
@@ -323,7 +324,7 @@ export default sbp('sbp/selectors/register', {
           return
         }
         afterToolCall = calls[0].id
-        messages = [...args.messages, ...agentSectionMessages(roundsSoFar, args.model, true)]
+        messages = [...args.messages, ...agentSectionMessages(replySoFar, args.model, true)]
       }
     } catch (error) {
       if (replyIsCurrent()) {
