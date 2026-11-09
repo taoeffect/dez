@@ -61,7 +61,9 @@ export function sectionsToStreamMessages(sections: Section[], requestModel: Mode
 export function agentSectionMessages(section: Section, requestModel: ModelRef, sendTools: boolean): StreamMessage[] {
   const text = sectionPlainText(section)
   const rounds = agentRounds(text)
-  if (rounds.length > 1 && !sendTools) return [{ role: 'agent', content: textWithToolCalls(text) }]
+  // The first group's blocks are always in the first round; a section that
+  // ends at its first group has only that round.
+  if (!sendTools && rounds[0].blocks.length > 0) return [{ role: 'agent', content: textWithToolCalls(text) }]
 
   return rounds.flatMap((round, index): StreamMessage[] => {
     const content = withoutImagePaths(unescapeModelText(round.text))

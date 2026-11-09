@@ -111,6 +111,18 @@ describe('agentSectionMessages', () => {
     expect(JSON.stringify(agentSectionMessages(agent(text), model, false))).not.toContain('assets/images')
   })
 
+  // A loaded section has no `\n` after its last block (conversationFormat.ts
+  // drops trailing newlines), so all its blocks are in one round.
+  it('sends a section that ends with its only group as text, with no thinking, in a request with no tools', () => {
+    const text = `Let me look.\n${block('call_1', 'gemini', '1 model')}`
+    const thinking: SectionThinking = { text: 'Plan', replay: blocksReplay('Plan', 'h1') }
+
+    expect(agentSectionMessages(agent(text, thinking), model, false)).toStrictEqual([{
+      role: 'agent',
+      content: 'Let me look.\n[Tool call: model_list {"filter":"gemini"}]\n1 model\n[End of tool result]',
+    }])
+  })
+
   describe('thinking of each round', () => {
     const text = [
       'Look.',
