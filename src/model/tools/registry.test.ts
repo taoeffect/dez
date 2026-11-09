@@ -118,6 +118,11 @@ describe('parseToolArguments', () => {
     expect(parseToolArguments(SAMPLE, '{"query":"a","exact":"true"}')).toStrictEqual({ ok: false, error: '"exact" must be true or false' })
   })
 
+  it('refuses a number too large for a finite value', () => {
+    expect(parseToolArguments(SAMPLE, '{"query":"a","ratio":1e999}')).toStrictEqual({ ok: false, error: '"ratio" must be a number' })
+    expect(parseToolArguments(SAMPLE, '{"query":"a","ratio":-1e999}')).toStrictEqual({ ok: false, error: '"ratio" must be a number' })
+  })
+
   it('accepts a whole number written with a fraction as an integer', () => {
     expect(parseToolArguments(SAMPLE, '{"query":"a","limit":2.0}')).toStrictEqual({ ok: true, arguments: { query: 'a', limit: 2 } })
   })

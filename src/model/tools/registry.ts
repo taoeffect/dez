@@ -28,9 +28,12 @@ export function toolJsonSchema(definition: ToolDefinition): JsonObject {
   return { type: 'object', properties, ...(required.length > 0 ? { required } : {}) }
 }
 
+// `number` needs a finite value: `JSON.parse('1e999')` gives `Infinity`, and
+// `JSON.stringify` writes it as `null`, so a block would read back another
+// value. `Number.isInteger` already refuses it.
 const TYPE_RULES: Record<ToolParameterType, { matches: (value: unknown) => value is ToolArgumentValue; text: string }> = {
   string: { matches: (value): value is string => typeof value === 'string', text: 'a string' },
-  number: { matches: (value): value is number => typeof value === 'number', text: 'a number' },
+  number: { matches: (value): value is number => typeof value === 'number' && Number.isFinite(value), text: 'a number' },
   integer: { matches: (value): value is number => Number.isInteger(value), text: 'an integer' },
   boolean: { matches: (value): value is boolean => typeof value === 'boolean', text: 'true or false' },
 }
