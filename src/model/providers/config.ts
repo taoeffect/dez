@@ -65,7 +65,7 @@ const settingBodyValueSchema = z.union([z.string(), z.number(), z.boolean()])
 // is stored under `key` in settings.providerSettings[providerId], and every
 // chat request writes the matching value at `bodyPath`. The Thinking and
 // Tools toggles are stored there too, so their keys are reserved.
-const providerSettingDefSchema = z.object({
+export const providerSettingDefSchema = z.object({
   key: z.string().min(1)
     .refine((key) => key !== THINKING_SETTING_KEY, `Setting key "${THINKING_SETTING_KEY}" is reserved for the Thinking toggle`)
     .refine((key) => key !== TOOLS_SETTING_KEY, `Setting key "${TOOLS_SETTING_KEY}" is reserved for the Tools toggle`),

@@ -1,5 +1,11 @@
 import * as z from 'zod'
-import { configIssueText, customProviderConfigSchema, providerModelConfigSchema, type ProviderConfig } from '../providers/config'
+import {
+  configIssueText,
+  customProviderConfigSchema,
+  providerModelConfigSchema,
+  providerSettingDefSchema,
+  type ProviderConfig,
+} from '../providers/config'
 import type { AppStatePayload } from './types'
 import type { DefaultModel, Theme, WindowGeometry } from '../state/settings'
 import { EDITOR_FONT_SIZE_DEFAULT, clampEditorFontSize } from '../editorFontSize'
@@ -76,18 +82,27 @@ function providerSettings(value: unknown): Record<string, Record<string, boolean
   return output
 }
 
-// Drops the invalid items of a hand-edited `models` list one at a time, so
-// one bad model does not drop the whole provider.
-function withValidModels(entry: unknown, entryIndex: number): unknown {
-  if (!isRecord(entry) || !Array.isArray(entry.models)) return entry
-  const models = entry.models.filter((model, modelIndex) => {
-    const result = providerModelConfigSchema.safeParse(model)
+// Drops the invalid items of a hand-edited list one at a time, so one bad
+// item does not drop the whole provider.
+function validItems(list: unknown[], schema: z.ZodType, itemName: string, entryIndex: number): unknown[] {
+  return list.filter((item, itemIndex) => {
+    const result = schema.safeParse(item)
     if (!result.success) {
-      console.error(`Dropped model ${modelIndex} of custom provider ${entryIndex} in app_state.json: ${configIssueText(result.error)}`)
+      console.error(`Dropped ${itemName} ${itemIndex} of custom provider ${entryIndex} in app_state.json: ${configIssueText(result.error)}`)
     }
     return result.success
   })
-  return { ...entry, models }
+}
+
+// The `models` and `settings` lists of a custom provider, checked one item
+// at a time. A setting whose key a later Dez reserves for its own toggle
+// (`tools`) is such a bad item.
+function withValidLists(entry: unknown, entryIndex: number): unknown {
+  if (!isRecord(entry)) return entry
+  const output = { ...entry }
+  if (Array.isArray(entry.models)) output.models = validItems(entry.models, providerModelConfigSchema, 'model', entryIndex)
+  if (Array.isArray(entry.settings)) output.settings = validItems(entry.settings, providerSettingDefSchema, 'setting', entryIndex)
+  return output
 }
 
 // Custom providers are parsed one entry at a time: an invalid entry, a
@@ -107,7 +122,7 @@ function customProviders(value: unknown): { configs: ProviderConfig[]; apiKeys: 
     return { configs, apiKeys }
   }
   value.forEach((entry, index) => {
-    const result = customProviderConfigSchema.safeParse(withValidModels(entry, index))
+    const result = customProviderConfigSchema.safeParse(withValidLists(entry, index))
     if (!result.success) {
       console.error(`Dropped custom provider ${index} in app_state.json: ${configIssueText(result.error)}`)
       return

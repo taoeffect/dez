@@ -179,6 +179,31 @@ describe('custom providers in app state', () => {
     expect(consoleError).toHaveBeenCalledTimes(7)
   })
 
+  // A setting key that a later Dez reserves for its own toggle, such as
+  // `tools`, must not drop the whole provider that an older build saved.
+  it('drops bad settings one at a time and keeps the provider', () => {
+    const webSearch = { key: 'web', label: 'Web search', type: 'boolean', default: false, bodyPath: 'web' }
+    const state = parseAppStateJson(JSON.stringify({
+      customProviders: [{
+        ...local,
+        settings: [
+          { ...webSearch, key: 'tools', label: 'Tools' },
+          webSearch,
+          { ...webSearch, key: 'thinking', label: 'Thinking' },
+          { ...webSearch, key: 'proto', bodyPath: 'a.__proto__' },
+        ],
+      }],
+    }))
+
+    expect(state.customProviders?.map((config) => config.settings)).toEqual([[webSearch]])
+    expect(consoleError).toHaveBeenCalledTimes(3)
+    expect(consoleError.mock.calls.map(([message]) => message)).toEqual([
+      expect.stringContaining('Dropped setting 0 of custom provider 0'),
+      expect.stringContaining('Dropped setting 2 of custom provider 0'),
+      expect.stringContaining('Dropped setting 3 of custom provider 0'),
+    ])
+  })
+
   it('falls back to no custom providers when the field is not a list', () => {
     expect(parseAppStateJson('{ "customProviders": { "id": "local" } }').customProviders).toEqual([])
     expect(parseAppStateJson('{}').customProviders).toEqual([])
