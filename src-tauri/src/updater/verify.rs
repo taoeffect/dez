@@ -24,6 +24,31 @@ pub const RELEASE_DOWNLOAD_BASE: &str = "https://github.com/taoeffect/dez/releas
 //   file.
 // - DEZ_UPDATER_TEST_DOWNLOAD_BASE: the server's stand-in for the GitHub
 //   download base, such as `http://127.0.0.1:8765`.
+//
+// The smoke test, on a Mac with Xcode 26+ (never sign with the release key):
+// 1. Make a throwaway key with no password:
+//    `minisign -G -W -p <dir>/test.pub -s <dir>/test.key`.
+// 2. Build an "old" and a "new" Dez, each after a temporary
+//    `npm run bump-version -- <version>` (revert it afterwards):
+//      CI=true APPLE_SIGNING_IDENTITY=- \
+//      DEZ_UPDATER_TEST_PUBLIC_KEY=<dir>/test.pub \
+//      DEZ_UPDATER_TEST_DOWNLOAD_BASE=http://127.0.0.1:8765 \
+//      VITE_DEZ_RELEASES_API_URL=http://127.0.0.1:8765/releases.json \
+//      npm run build:macos:dmg -- --features updater-test-hooks
+//    `CI=true` skips the Finder AppleScript of Tauri's DMG script; the
+//    ad-hoc identity `-` lets `codesign --verify` pass.
+// 3. In a folder, put `v<version>/Dez_<version>_aarch64.dmg`, its
+//    `.minisig` (`minisign -S -s <dir>/test.key -m <dmg>`), and a
+//    `releases.json` in the shape of GitHub's release list
+//    (src/model/updates/releases.ts): `html_url` on the real GitHub
+//    releases page, and both assets with URLs on the local server. Serve
+//    the folder with `python3 -m http.server 8765 --bind 127.0.0.1`.
+// 4. Install the old Dez in /Applications and use Check for Updates….
+//    For the binary fallback, run the old Dez from a folder made read-only
+//    with `chmod a-w`. To install a CI-built app, serve a real release
+//    DMG with a `.minisig` from the test key as the new Dez (the old Dez
+//    needs a lower version). Afterwards, remove the installed apps and
+//    ~/.config/dez.
 #[cfg(feature = "updater-test-hooks")]
 const RELEASE_PUBLIC_KEY: &str = include_str!(env!(
     "DEZ_UPDATER_TEST_PUBLIC_KEY",

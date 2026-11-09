@@ -1,6 +1,6 @@
 # Desktop builds
 
-Linux AppImage and Apple Silicon macOS DMG builds are attached to this release.
+Linux AppImage and Apple Silicon macOS DMG builds are attached to this release. The `.minisig` file is the DMG's signature, which Dez checks when it updates itself.
 
 ## Running the macOS app
 
@@ -12,4 +12,6 @@ After copying `Dez.app` to `/Applications`, run:
 xattr -cr /Applications/Dez.app
 ```
 
-Then open Dez from `/Applications`.
+Then open Dez from `/Applications`. Dez needs macOS 13 or later.
+
+You need these steps only once: after that, Dez updates itself (Dez › Check for Updates…, then **Download and Install**).

@@ -45,7 +45,7 @@ Dez follows an SBP MVC pattern: selectors are the cross-layer API, and code live
 - `src/controller/`: user workflows, startup/shutdown, native/Tauri boundaries, the native menubar, HTTP runtime orchestration, updates, and diagnostics.
 - `src/view/`: Vue UI, view composables, CodeMirror editor services, toast/theme/clipboard UI selectors, and reactive read adapters.
 - `src/utils/`: cross-layer utilities only.
-- `src-tauri/`: Rust commands, native HTTP bridge, persistence file I/O, credential storage, and app bootstrap.
+- `src-tauri/`: Rust commands, native HTTP bridge, persistence file I/O, credential storage, the macOS updater, and app bootstrap.
 
  Always build code cleanly, modularly, and with proper architecture and separation of concerns.
 
@@ -95,6 +95,7 @@ ThreadEditor (CodeMirror doc) syncs to the active tab's sections
 - `view/confirm/`: `dez.ui/confirm`, the in-app yes/no prompt (`ConfirmDialog.vue`, mounted in `AppLayout.vue`); `isModalOpen()` (`useKeyboardShortcuts.ts`) counts it.
 - `view/prompts/PromptManager.vue`, `view/thread/PromptAutocomplete.vue`: saved prompts and `/prompt ` insertion.
 - `view/settings/SettingsView.vue`, `ProviderManager.vue`, `ShortcutManager.vue`: settings, the providers page, and Settings › Shortcuts with its key recorder (Help › Keyboard Shortcuts opens it).
+- `controller/updates.ts`: the update check and its reports (`dez.controller/checkForUpdates`), the macOS install (`dez.controller/updates/install`: download, install, save, relaunch), and the startup report of the last install (`dez.controller/updates/reportLastInstall`). `model/updates/`: Zod parsing of GitHub's release list and of each release's change notes. `model/state/updates.ts`: the store behind `dez.model/updates/*`. `view/updates/UpdateWindow.vue`: the update window (the changes of each newer release, Download and Install, progress); Settings › General shows the check status.
 - `view/tabs/TabBar.vue`: tabs, colored busy/done by `dez.model/tabs/activity`, pointer drag to reorder (`dez.model/tabs/move`). The `+` button, keys, and File menu create tabs with `dez.controller/newTab` (`controller/tabs.ts`), which focuses the editor (`dez.editor/focus`). `dez.model/tabs/reopenClosed` brings back a closed tab from a session-only list (`model/state/tabs.ts`).
 - `view/modelLabel.ts`: model display names. `view/theme.ts`: theme and editor font size.
 
@@ -147,7 +148,7 @@ Rules:
 
 ### Backend (`src-tauri/src/`)
 
-- **Keep Rust barebones**: a thin, generic OS interface, not a per-feature API. Reuse or generalize an existing command (e.g. `load_app_file(path)` / `save_app_file`, text or bytes at a path relative to the app folder) instead of adding a near-copy, so frontend features rarely need Rust changes.
+- **Keep Rust barebones**: a thin, generic OS interface, not a per-feature API. Reuse or generalize an existing command (e.g. `load_app_file(path)` / `save_app_file`, text or bytes at a path relative to the app folder) instead of adding a near-copy, so frontend features rarely need Rust changes. The one exception is the macOS updater (`updater/`).
 - `commands.rs`, `http_bridge.rs`, `notification.rs`, `idle.rs`: Tauri commands, registered in `lib.rs`. `open_devtools` (Help › Developer Console) needs the `devtools` feature of the `tauri` crate in release builds (`Cargo.toml`).
 - `http_bridge.rs`: generic `http_request`, `stream_http`, `cancel_http_stream`.
 - `notification.rs`: `show_notification`, a system notification whose click brings the window to the front and calls back (zbus on Linux, NSUserNotificationCenter through objc2 on macOS).
@@ -155,6 +156,7 @@ Rules:
 - `session_bus.rs`: the one shared Linux D-Bus session connection (zbus) for `notification.rs` and `idle.rs`.
 - `persistence.rs`: raw private-file I/O, the app-file path rule (subfolders such as `assets/images/`), and id sanitization; write every private file with `write_private_file`.
 - `key_store.rs`: `provider_keys.json`. `copilot.rs`: Copilot device flow and token refresh.
+- `updater/`: the macOS self-updater. It is a feature of its own because a generic "replace a file" or "run a process" command would let a compromised webview install code (module docs in `mod.rs`). `mod.rs`: the commands `can_install_update`, `download_update`, `install_update`, `relaunch_after_update`; `verify.rs`: the key, URL, version, and signature rules; `macos.rs`: mount, bundle checks, swap, binary fallback, and the relaunch helper. The release public key is `src-tauri/updater/minisign.pub`; test fixtures are in `src-tauri/updater/test-fixtures/`.
 - `lib.rs`: plugins, permission reasons, app bootstrap.
 - `../tauri.linux.conf.json`: the Linux copy of the main window, with Tauri's native file drop on (a test in `lib.rs` keeps the two windows the same otherwise).
 
@@ -167,6 +169,7 @@ All app data is under `~/.config/dez/`. TypeScript owns every format; Rust only 
 - `prompts.json`: saved prompt templates (`src/model/persistence/prompts.ts`).
 - `model_cache.json`: last-known model lists, no secrets (`src/model/persistence/modelCache.ts`).
 - `assets/images/<uuid>.<ext>`: pasted and dropped images; conversations refer to them by absolute path (`src/controller/images.ts`). Only the image trash deletes them; a text edit or a conversation delete leaves the file.
+- `updates/pending.json`: the version that an update install relaunched Dez into; the next startup reads and deletes it and reports the result (`src/model/persistence/pendingUpdate.ts`). `updates/update.log`: the log of the update's relaunch helper, which Rust writes (`UPDATE_LOG`, `src-tauri/src/updater/mod.rs`).
 - `provider_keys.json`: API keys and Copilot tokens (`src-tauri/src/key_store.rs`).
 
 Do not ever read, view, print, or `cat` `~/.config/dez/provider_keys.json`; it can contain API keys and OAuth tokens.
@@ -204,6 +207,12 @@ Do not ever read, view, print, or `cat` `~/.config/dez/provider_keys.json`; it c
 - **`@tauri-apps/plugin-store` is unused**: app files use Dez's own Rust file I/O.
 - **Secrets wrapper is not a vault**: `src/utils/secret.ts`; never log provider headers, native HTTP payloads, or diagnostics without sanitization.
 - **Sounds are in Git LFS**: clone with LFS (`git lfs pull`); CI checkouts use `lfs: true`. A pointer file builds with no error, and only `play()` fails (the e2e guard in `tests/e2e/notifications.e2e.ts` catches it).
+- **Every release needs a `.minisig`**: an installed macOS Dez installs a DMG only when its minisign signature verifies against the compiled-in `src-tauri/updater/minisign.pub` (CI's "Sign DMG" step). A release without one cannot update macOS installs, and a new key locks out every installed Dez that has the old one.
+- **The updater trusts only Rust-side inputs**: the webview passes only a version and the `.minisig` text; Rust builds the download URL, holds the key, and keeps every path in its own state and private temp dir, never under `~/.config/dez`. Never add an updater input that is a path or a URL.
+- **macOS can refuse the self-update**: `can_install_update` refuses dev builds, App Translocation, and disk-image or read-only volumes; App Management (TCC) can deny writes to the app's folder (then the binary fallback, then an error that names App Management). Each build has a new ad-hoc code identity, so TCC grants can reset after an update.
+- **Never write into a running binary**: macOS kills a process whose executable changes in place (`Killed: 9`). The relaunch helper copies to a new file and `mv`s it over (`HELPER_SCRIPT`, `macos.rs`).
+- **Save before Dez quits itself**: a quit loses the saves that debounces still hold, so the update relaunch first calls `dez.model/persistence/flush` and `dez.controller/window/flushGeometry`.
+- **Minimum macOS 13.0** (`bundle.macOS.minimumSystemVersion`, `tauri.conf.json`): the updater mounts the DMG with `diskutil image attach`, as `hdiutil` is deprecated on macOS 27.
 - When using the `agentic_fetch` tool:
   - If searching the web, *ALWAYS* tell the tool to never use local tools like Grep, and only search the web
   - If searching local folders, *ALWAYS* tell the tool to restrict its searches to this folder only and to never search outside of it
@@ -237,10 +246,11 @@ Brief comments are encouraged above functions that do anything non-trivial expla
 
 ## Testing approach
 
-- Unit tests: Vitest with colocated `*.test.ts` files; `npm test` also runs `scripts/*.test.js`. Rust unit tests are in the `src-tauri/src/*.rs` files.
+- Unit tests: Vitest with colocated `*.test.ts` files; `npm test` also runs `scripts/*.test.js`. Rust unit tests are in the `src-tauri/src/` files.
 - Run `npm run build` at the end of a task step with frontend changes (it type-checks), not after every edit.
 - Run `npm test` after frontend logic changes.
 - Run `cd src-tauri && cargo check` after significant Rust changes, and `cargo test` when touching Rust logic with tests.
+- The macOS updater has no e2e: its Rust tests build a fake app and DMG (macOS 14+), and the end-to-end check is a manual smoke test with test-hook builds (cargo feature `updater-test-hooks`, `VITE_DEZ_RELEASES_API_URL`); the recipe is in `src-tauri/src/updater/verify.rs`.
 - Run `npm run test:e2e` after UI behavior changes covered by `tests/e2e/`. It runs the existing debug binary: rebuild first (`tests/e2e/harness/app.ts`).
 - Run `npm run typecheck:e2e` after changing the e2e harness or specs.
 - E2E keys skip GTK, so specs never test Linux menu accelerators; the manual recipe is in `vitest.e2e.config.ts`.

@@ -180,6 +180,8 @@ If macOS reports a permission error, run:
 sudo xattr -cr /Applications/Dez.app
 ```
 
+Dez needs macOS 13 or later. You need these steps only for the first install: after it, Dez updates itself (Dez › Check for Updates…).
+
 Developer ID signing and notarization can be added later to avoid this quarantine workaround for downloaded builds.
 
 ## Tech Stack
