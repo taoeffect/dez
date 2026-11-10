@@ -30,7 +30,8 @@
           "$HOME/.config/dez/assets/images/*",
           "$HOME/.config/dez/assets/generated/images/*",
           "$HOME/.config/dez/assets/generated/audio/*",
-          "$HOME/.config/dez/assets/generated/video/*"
+          "$HOME/.config/dez/assets/generated/video/*",
+          "$CACHE/dez/media/*"
         ]
       }
     }

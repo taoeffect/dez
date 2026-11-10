@@ -5,7 +5,7 @@ use tauri::ipc::InvokeBody;
 
 use crate::copilot::{CopilotChatToken, DeviceFlowResponse};
 use crate::native_error::NativeError;
-use crate::persistence::ConversationFile;
+use crate::persistence::{AppFileEntry, ConversationFile, FileRoot};
 
 const RELEASES_URL: &str = "https://github.com/taoeffect/dez/releases";
 const LATEST_RELEASE_API: &str = "https://api.github.com/repos/taoeffect/dez/releases/latest";
@@ -253,13 +253,28 @@ pub async fn load_app_file_bytes(path: String) -> Result<tauri::ipc::Response, S
 
 // A missing file is not an error.
 #[tauri::command]
-pub async fn delete_app_file(path: String) -> Result<(), String> {
-    crate::persistence::delete_app_file(&path)
+pub async fn delete_app_file(root: FileRoot, path: String) -> Result<(), String> {
+    crate::persistence::delete_app_file(root, &path)
 }
 
 #[tauri::command]
-pub async fn get_app_dir() -> Result<String, String> {
-    crate::persistence::app_dir()
+pub async fn move_app_file(
+    from_root: FileRoot,
+    from_path: String,
+    to_root: FileRoot,
+    to_path: String,
+) -> Result<(), String> {
+    crate::persistence::move_app_file(from_root, &from_path, to_root, &to_path)
+}
+
+#[tauri::command]
+pub async fn list_app_files(root: FileRoot, path: String) -> Result<Vec<AppFileEntry>, String> {
+    crate::persistence::list_app_files(root, &path)
+}
+
+#[tauri::command]
+pub async fn get_app_dir(root: FileRoot) -> Result<String, String> {
+    crate::persistence::app_dir(root)
 }
 
 // On Linux, tao 0.34 reads fullscreen only from its own `set_fullscreen`

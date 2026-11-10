@@ -22,6 +22,24 @@ export interface NativeHttpResponse extends NativeHttpResponseHead {
   body: number[]
 }
 
+// What `dez.native/downloadAppFile` writes to its file (`DownloadRule` in
+// src-tauri/src/http_bridge.rs).
+export interface NativeDownloadRule {
+  // The largest body that is saved, in bytes. A larger one is an error.
+  maxBytes: number
+  // When set, only a body whose content type starts with one of these (lower
+  // case, such as `video/`) is saved.
+  contentTypes?: string[]
+}
+
+// The result of `dez.native/downloadAppFile`. `saved` is true when the body
+// is in the file. If not, `body` is the start of the body (at most 64 KiB):
+// an error text or a JSON status.
+export interface NativeHttpDownload extends NativeHttpResponseHead {
+  saved: boolean
+  body: number[]
+}
+
 export interface NativeHttpStreamHeadersEvent {
   kind: 'Headers'
   data: NativeHttpResponseHead

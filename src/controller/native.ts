@@ -3,12 +3,17 @@ import { invoke, type Channel } from '@tauri-apps/api/core'
 import { save, type SaveDialogOptions } from '@tauri-apps/plugin-dialog'
 import { writeTextFile } from '@tauri-apps/plugin-fs'
 import type {
+  NativeDownloadRule,
+  NativeHttpDownload,
   NativeHttpRequest,
   NativeHttpResponse,
   NativeHttpStreamEvent,
 } from '../utils/protocol/nativeHttp'
 import type { ConversationFile } from '../model/persistence/types'
 import type {
+  AppFileEntry,
+  AppFileRef,
+  AppFileRoot,
   CopilotChatToken,
   CopilotDeviceFlowResponse,
   LatestRelease,
@@ -47,8 +52,18 @@ export default sbp('sbp/selectors/register', {
     return invoke('stream_http', { request, requestId, onEvent })
   },
 
+  // Stops a `streamHttp` or a `downloadAppFile` request.
   'dez.native/cancelHttpStream' (requestId: string): Promise<void> {
     return invoke('cancel_http_stream', { requestId })
+  },
+
+  // Sends a request and writes the response body to `file`, so the bytes of
+  // a clip do not pass through the webview. Only a response that the rule
+  // accepts is saved (`download_app_file` in src-tauri/src/http_bridge.rs);
+  // read `saved` of the result. Rejects on a network error, a body over
+  // `rule.maxBytes`, and a cancel.
+  'dez.native/downloadAppFile' (request: NativeHttpRequest, requestId: string, file: AppFileRef, rule: NativeDownloadRule): Promise<NativeHttpDownload> {
+    return invoke<NativeHttpDownload>('download_app_file', { request, requestId, root: file.root, path: file.path, rule })
   },
 
   'dez.native/getLatestRelease' (): Promise<LatestRelease> {
@@ -100,12 +115,25 @@ export default sbp('sbp/selectors/register', {
   },
 
   // A missing file is not an error.
-  'dez.native/deleteAppFile' (path: string): Promise<void> {
-    return invoke('delete_app_file', { path })
+  'dez.native/deleteAppFile' (path: string, root: AppFileRoot = 'app'): Promise<void> {
+    return invoke('delete_app_file', { root, path })
   },
 
-  'dez.native/getAppDir' (): Promise<string> {
-    return invoke<string>('get_app_dir')
+  // Moves a file, also from one root to the other. A file at `to` is
+  // replaced; a missing file at `from` rejects.
+  'dez.native/moveAppFile' (from: AppFileRef, to: AppFileRef): Promise<void> {
+    return invoke('move_app_file', { fromRoot: from.root, fromPath: from.path, toRoot: to.root, toPath: to.path })
+  },
+
+  // The files directly in a folder, in no fixed order. A missing folder
+  // lists as empty.
+  'dez.native/listAppFiles' (path: string, root: AppFileRoot = 'app'): Promise<AppFileEntry[]> {
+    return invoke<AppFileEntry[]>('list_app_files', { root, path })
+  },
+
+  // The absolute path of a root folder.
+  'dez.native/getAppDir' (root: AppFileRoot = 'app'): Promise<string> {
+    return invoke<string>('get_app_dir', { root })
   },
 
   'dez.native/isWindowFullscreen' (): Promise<boolean> {

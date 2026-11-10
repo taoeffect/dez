@@ -51,6 +51,7 @@ pub fn run() {
             http_bridge::http_request,
             http_bridge::stream_http,
             http_bridge::cancel_http_stream,
+            http_bridge::download_app_file,
             commands::get_latest_release,
             commands::copilot_start_device_flow,
             commands::copilot_poll_device_flow,
@@ -62,6 +63,8 @@ pub fn run() {
             commands::load_app_file,
             commands::load_app_file_bytes,
             commands::delete_app_file,
+            commands::move_app_file,
+            commands::list_app_files,
             commands::get_app_dir,
             commands::is_window_fullscreen,
             commands::monitors,
@@ -93,11 +96,13 @@ pub fn run() {
     });
     // Reads tauri.conf.json, whose `"csp": null` is on purpose during
     // development. Its `assetProtocol` scope lets the webview show the files
-    // directly in `$HOME/.config/dez/assets/images/` and in the
-    // `assets/generated/{images,audio,video}/` folders by `convertFileSrc`
-    // URLs; it must name the folders that `base_dir()` in persistence.rs
-    // builds (both read `$HOME`). Tauri adds each path of a native file drop
-    // to that scope too.
+    // directly in `$HOME/.config/dez/assets/images/`, in the
+    // `assets/generated/{images,audio,video}/` folders, and in
+    // `$CACHE/dez/media/` (the temp copies of clips) by `convertFileSrc`
+    // URLs; it must name the folders that `base_dir()` and `root_dir()` in
+    // persistence.rs build. Each folder has its own entry, because `*` does
+    // not go into a subfolder. Tauri adds each path of a native file drop to
+    // that scope too.
     //
     // Its `"dragDropEnabled": false` turns Tauri's native file drop off, so
     // HTML5 drops with the dropped files reach the page. On macOS the native

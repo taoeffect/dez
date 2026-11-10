@@ -716,6 +716,7 @@ dependencies = [
 name = "dez"
 version = "0.15.1"
 dependencies = [
+ "dirs",
  "futures",
  "gtk",
  "mac-notification-sys",

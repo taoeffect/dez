@@ -21,8 +21,8 @@ import { IMAGE_ID_SOURCE } from './images'
 //   - `type`: the media type, such as `video/mp4`.
 //   - `src`: the source that plays now: the saved file (an absolute path in
 //     a folder of `MEDIA_FOLDERS`), else the temp copy (an absolute path in
-//     `MEDIA_CACHE_FOLDER`), else the value of `url`. A clip that has no
-//     source any more has no `src`.
+//     `MEDIA_CACHE_FOLDER` of the cache root), else the value of `url`. A
+//     clip that has no source any more has no `src`.
 //   - `url`: the provider's URL of the clip, when the provider gave one. It
 //     never changes, so that a clip can go back to it when its saved file
 //     is deleted. It is a signed URL, which is a secret.
@@ -55,10 +55,16 @@ export const MEDIA_FOLDERS = {
   video: 'assets/generated/video',
 } as const satisfies Record<MediaTagKind, string>
 
+// The name of Dez's folder in the OS cache folder (`~/.cache` on Linux):
+// the `cache` root of the app-file selectors. `root_dir` in
+// src-tauri/src/persistence.rs builds the same folder.
+const CACHE_ROOT_NAME = 'dez'
+
 /** The folder of the temp copies of the clips that are not saved, relative
- *  to the OS cache folder (`~/.cache` on Linux). It is outside the app
- *  folder, so that clips that the user did not save do not fill it. */
-export const MEDIA_CACHE_FOLDER = 'dez/media'
+ *  to the cache root. It is outside the app folder, so that clips that the
+ *  user did not save do not fill it. The asset protocol scope in
+ *  tauri.conf.json serves only the files directly in it. */
+export const MEDIA_CACHE_FOLDER = 'media'
 
 // A stored file name with any extension. The path scrub must not depend on
 // the list of the media types that Dez can save.
@@ -76,11 +82,24 @@ export const SAVED_MEDIA_PATH_END_SOURCES: Readonly<Record<MediaTagKind, string>
 }
 
 /** Regex source of the end of every temp copy's path. No capture groups. */
-export const MEDIA_CACHE_PATH_END_SOURCE = pathEndSource(MEDIA_CACHE_FOLDER)
+export const MEDIA_CACHE_PATH_END_SOURCE = pathEndSource(`${CACHE_ROOT_NAME}/${MEDIA_CACHE_FOLDER}`)
 
-// The path of a saved clip: an absolute path, on one line, to a file
-// directly in a media folder. A temp copy and a URL are not one.
-const SAVED_MEDIA_PATH = new RegExp(String.raw`^\/(?:[^\r\n]*\/)?(?:${Object.values(SAVED_MEDIA_PATH_END_SOURCES).join('|')})$`)
+// An absolute path, on one line, that ends with `endSource`.
+const absolutePath = (endSource: string) => new RegExp(String.raw`^\/(?:[^\r\n]*\/)?(?:${endSource})$`)
+const SAVED_MEDIA_PATH = absolutePath(Object.values(SAVED_MEDIA_PATH_END_SOURCES).join('|'))
+const TEMP_MEDIA_PATH = absolutePath(MEDIA_CACHE_PATH_END_SOURCE)
+
+/** True for the path of a saved clip: an absolute path to a file directly
+ *  in a media folder. A temp copy and a URL are not one. */
+export function isSavedMediaPath(path: string): boolean {
+  return SAVED_MEDIA_PATH.test(path)
+}
+
+/** True for the path of a temp copy: an absolute path to a file directly in
+ *  the media folder of a cache root. */
+export function isTempMediaPath(path: string): boolean {
+  return TEMP_MEDIA_PATH.test(path)
+}
 
 /** One attribute of a tag that Dez does not know here. */
 export interface MediaTagAttribute {
@@ -246,7 +265,7 @@ export function mediaTagsAsLinks(text: string): string {
   return splitMediaTags(text).map((piece) => {
     if (piece.kind === 'text') return piece.text
     const { kind, src, url } = piece.tag
-    const target = src !== null && SAVED_MEDIA_PATH.test(src) ? src : url
+    const target = src !== null && isSavedMediaPath(src) ? src : url
     const destination = target === null ? null : linkDestination(target)
     return destination === null ? MEDIA_TAG_LABELS[kind] : `${MEDIA_TAG_LABELS[kind]}(${destination})`
   }).join('')

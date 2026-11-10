@@ -149,6 +149,10 @@ export interface AppOptions {
  *   it before $HOME/.config, and GitHub's Ubuntu runners set it to the
  *   runner's own ~/.config, so GTK settings seeded in the temp HOME would be
  *   ignored and GLib would write into the runner's profile;
+ * - XDG_CACHE_HOME set to the temp HOME's `.cache`, for the same reason: the
+ *   app keeps the temp copies of clips in `<cache>/dez/media`, and deletes
+ *   the old ones there when it starts, so a run must never get the real
+ *   cache folder;
  * - TAURI_WEBVIEW_AUTOMATION=true inherited down the spawn chain
  *   (tauri-driver -> WebKitWebDriver -> app) to enable wry's automation
  *   session — without it, new-session requests hang forever;
@@ -179,6 +183,7 @@ export async function startApp (options: AppOptions = {}): Promise<RunningApp> {
       ...options.env,
       HOME: home,
       XDG_CONFIG_HOME: path.join(home, '.config'),
+      XDG_CACHE_HOME: path.join(home, '.cache'),
       TAURI_WEBVIEW_AUTOMATION: 'true'
     },
     stdio: ['ignore', 'pipe', 'pipe']
