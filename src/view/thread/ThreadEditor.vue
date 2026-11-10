@@ -50,7 +50,9 @@ import { measureTextSize } from './editorMeasure'
 import { findExtension, findMatchStatus, findNextMatch, findQueryField, selectMatchSpec, setFindQueryEffect } from '../editor/find'
 import { markdownTables } from '../editor/tables'
 import { deleteImageBang, deleteImageParen, markdownImages } from '../editor/images'
-import { deleteToolCallBackward, deleteToolCallForward, joinsToolCallLine, markdownToolCalls, openToolCalls } from '../editor/toolCalls'
+import { markdownToolCalls, openToolCalls } from '../editor/toolCalls'
+import { markdownMedia } from '../editor/media'
+import { deleteLineBlockBackward, deleteLineBlockForward, joinsLineBlock } from '../editor/lineBlocks'
 import { imagePasteAndDrop } from '../editor/imageInsert'
 import { markdownLinks } from '../editor/links'
 import { focusKeepingScrollOnMouseDown } from '../editor/focus'
@@ -264,9 +266,9 @@ function mergeWithPreviousSection(v: EditorView): boolean {
   const target = lastEditableLineOfPreviousSection(state, currentLine.number)
   if (!target) return false
   const removeIndex = sectionIndexAtPos(state.doc.toString(), currentLine.from)
-  // A tool call chip at the join keeps its own line. The caret stays before
-  // the text that it was before.
-  const lineBreak = joinsToolCallLine(state, target.to, currentLine.from) ? '\n' : ''
+  // A line block (a tool call chip, a media player) at the join keeps its
+  // own line. The caret stays before the text that it was before.
+  const lineBreak = joinsLineBlock(state, target.to, currentLine.from) ? '\n' : ''
   v.dispatch({
     changes: { from: target.to, to: currentLine.from, insert: lineBreak },
     selection: { anchor: target.to + lineBreak.length },
@@ -289,9 +291,9 @@ function mergeWithNextSection(v: EditorView): boolean {
   const target = firstEditableLineOfNextSection(state, currentLine.number)
   if (!target) return false
   const removeIndex = sectionIndexAtPos(state.doc.toString(), target.from)
-  // A tool call chip at the join keeps its own line.
+  // A line block at the join keeps its own line.
   v.dispatch({
-    changes: { from: currentLine.to, to: target.from, insert: joinsToolCallLine(state, currentLine.to, target.from) ? '\n' : '' },
+    changes: { from: currentLine.to, to: target.from, insert: joinsLineBlock(state, currentLine.to, target.from) ? '\n' : '' },
     selection: { anchor: currentLine.to },
     effects: mergeSectionEffect.of({ removeIndex }),
     scrollIntoView: true,
@@ -835,11 +837,11 @@ function buildState(openPanels?: OpenPanels): EditorState {
       },
       {
         key: 'Backspace',
-        run: (v) => mergeWithPreviousSection(v) || deleteToolCallBackward(v) || deleteImageParen(v) || strictMultiCursorBackspace(v),
+        run: (v) => mergeWithPreviousSection(v) || deleteLineBlockBackward(v) || deleteImageParen(v) || strictMultiCursorBackspace(v),
       },
       {
         key: 'Delete',
-        run: (v) => deleteImageBang(v) || deleteToolCallForward(v) || mergeWithNextSection(v),
+        run: (v) => deleteImageBang(v) || deleteLineBlockForward(v) || mergeWithNextSection(v),
       },
     ]),
   )
@@ -890,6 +892,7 @@ function buildState(openPanels?: OpenPanels): EditorState {
       markdownTables(),
       markdownImages(),
       markdownToolCalls(openPanels?.toolCalls),
+      markdownMedia(),
       markdownLinks(),
       imagePasteAndDrop(),
       // The find dropdown floats over the top of the scroller. Count it as
@@ -947,9 +950,10 @@ function mountView() {
   view = new EditorView({ state: buildState(), parent: hostRef.value })
   viewTabId = activeTabId.value
   viewConversationId = activeConversationId.value
-  // `load` does not bubble, so the scroller hears the loads of its images
-  // in the capture phase.
-  view.scrollDOM.addEventListener('load', onScrollerImageLoad, true)
+  // `load` and `loadedmetadata` do not bubble, so the scroller hears the
+  // loads of its images and videos in the capture phase.
+  view.scrollDOM.addEventListener('load', onScrollerLateLoad, true)
+  view.scrollDOM.addEventListener('loadedmetadata', onScrollerLateLoad, true)
   view.scrollDOM.addEventListener('scroll', checkScrollUp)
   registerActiveView()
 }
@@ -961,25 +965,28 @@ function mountView() {
 // bottom only when the view is at its bottom when it measures, and the
 // image moved the bottom before that. So while this is set, each image
 // load in the view scrolls to the bottom again. A scroll up by the user
-// and every other rebuild end it.
-// `tests/e2e/image-generation.e2e.ts` covers this.
-let keepBottomOnImageLoad = false
+// and every other rebuild end it. A video is the same: its player gets the
+// video's height when the metadata loads (`MediaPlayer.vue`).
+// `tests/e2e/image-generation.e2e.ts` covers this for an image.
+let keepBottomOnLateLoad = false
 // The scroller's scrollTop at the last `checkScrollUp`.
 let lastScrollerTop = 0
-const KEEP_BOTTOM_MEASURE_KEY = 'dez-keep-bottom-on-image-load'
+const KEEP_BOTTOM_MEASURE_KEY = 'dez-keep-bottom-on-late-load'
 
-function onScrollerImageLoad(event: Event) {
-  if (!view || !(event.target instanceof HTMLImageElement)) return
+function onScrollerLateLoad(event: Event) {
+  if (!view || !(event.target instanceof HTMLImageElement || event.target instanceof HTMLVideoElement)) return
   checkScrollUp()
-  if (!keepBottomOnImageLoad) return
-  // The image's own load handler (`images.ts`) runs after this one and asks
-  // CodeMirror to measure the new line height; the write runs after that
-  // measure, so CodeMirror's scroll anchoring does not undo it.
+  if (!keepBottomOnLateLoad) return
+  // The line gets its new height after this handler: from the image's own
+  // load handler (`images.ts`), or when Vue draws the player again. Both
+  // come before CodeMirror's next measure. The write runs after the read
+  // phase of that measure, so CodeMirror's scroll anchoring does not undo
+  // it.
   view.requestMeasure({
     key: KEEP_BOTTOM_MEASURE_KEY,
     read: () => {
       checkScrollUp()
-      return keepBottomOnImageLoad
+      return keepBottomOnLateLoad
     },
     write: (keepBottom, v) => {
       if (keepBottom) v.scrollDOM.scrollTop = v.scrollDOM.scrollHeight
@@ -987,18 +994,18 @@ function onScrollerImageLoad(event: Event) {
   })
 }
 
-// Ends `keepBottomOnImageLoad` after a scroll up by the user. Only the user
+// Ends `keepBottomOnLateLoad` after a scroll up by the user. Only the user
 // moves the view up while it is not at its bottom (see `handleVisibleScroll`
 // in `editor/selectors.ts`), and a taller doc does not move it, so a growing
-// image does not end it. This runs on scroll events, and at once before an
-// image load scrolls: a scroll and a load can come before the scroll event.
+// image does not end it. This runs on scroll events, and at once before a
+// late load scrolls: a scroll and a load can come before the scroll event.
 function checkScrollUp() {
   if (!view) return
   const scroll = view.scrollDOM
   const movedUp = scroll.scrollTop < lastScrollerTop
   lastScrollerTop = scroll.scrollTop
   if (movedUp && scroll.scrollHeight - scroll.scrollTop - scroll.clientHeight > AT_BOTTOM_PX) {
-    keepBottomOnImageLoad = false
+    keepBottomOnLateLoad = false
   }
 }
 
@@ -1009,7 +1016,7 @@ function scrollViewToBottomAfterLayout(v: EditorView) {
     // Set here, not before the frame: scroll events of the rebuild come
     // before this frame and could end it at once.
     lastScrollerTop = v.scrollDOM.scrollTop
-    keepBottomOnImageLoad = true
+    keepBottomOnLateLoad = true
   })
 }
 
@@ -1021,7 +1028,7 @@ function resetViewToActiveTab(streamEnd?: { followBottom: boolean }) {
   // The autocomplete range points into the old doc; accepting it after the
   // swap would insert a pill at a wrong position.
   closeAutocomplete()
-  keepBottomOnImageLoad = false
+  keepBottomOnLateLoad = false
   // A rebuild of the same tab, such as the reset at the end of each
   // stream, keeps the open thinking and tool call panels; another tab
   // starts with all closed.

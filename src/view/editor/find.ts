@@ -16,6 +16,7 @@ import { Decoration, EditorView, ViewPlugin, type DecorationSet, type ViewUpdate
 import { SENTINEL_CHAR } from '../../model/chat/content'
 import { SECTION_SEP, pillsField, scanPills, type PillMetadata } from '../thread/cmEditor'
 import { renderedImages } from './images'
+import { renderedMedia } from './media'
 import { renderedToolCalls } from './toolCalls'
 
 /** Status counting stops here; the UI shows `1000+`. */
@@ -94,6 +95,7 @@ interface ProtectedRangesCacheEntry {
   pills: Map<string, PillMetadata> | undefined
   images: readonly DocRange[]
   toolCalls: readonly DocRange[]
+  media: readonly DocRange[]
   ranges: DocRange[]
 }
 
@@ -108,22 +110,24 @@ const protectedRangesCache = new WeakMap<Text, ProtectedRangesCacheEntry>()
  *    one breaks the single-line pill decoration;
  *  - images that the editor shows (`renderedImages`). Their source is
  *    hidden; a raw (broken) image reference stays searchable;
- *  - tool call blocks that the editor shows as chips (`renderedToolCalls`),
- *    plus the line breaks on both sides. Their source is hidden, and a
- *    replace in one could break its block. Replacing a framing `\n` with
- *    nothing puts text on the block's first or last line, and the block
- *    then shows as its source; `keepTextOffChipLines` (toolCalls.ts) adds
- *    a line break back only for a non-empty insert.
+ *  - the line blocks (`lineBlocks.ts`) that the editor shows: tool call
+ *    chips (`renderedToolCalls`) and media players (`renderedMedia`), plus
+ *    the line breaks on both sides. Their source is hidden, and a replace
+ *    in one could break it. Replacing a framing `\n` with nothing puts text
+ *    on the block's first or last line, and the block then shows as its
+ *    source; `keepTextOffLineBlocks` (lineBlocks.ts) adds a line break
+ *    back only for a non-empty insert.
  *  Pills without metadata (or a state without `pillsField`) count as
  *  collapsed, matching `decodeSectionContent`. Cached per doc + pill map
- *  + images + tool calls because the highlighter asks on every viewport
- *  change. */
+ *  + images + tool calls + media because the highlighter asks on every
+ *  viewport change. */
 function protectedRanges(state: EditorState): DocRange[] {
   const pills = state.field(pillsField, false)
   const images = renderedImages(state)
   const toolCalls = renderedToolCalls(state)
+  const media = renderedMedia(state)
   const cached = protectedRangesCache.get(state.doc)
-  if (cached && cached.pills === pills && cached.images === images && cached.toolCalls === toolCalls) return cached.ranges
+  if (cached && cached.pills === pills && cached.images === images && cached.toolCalls === toolCalls && cached.media === media) return cached.ranges
 
   const doc = state.doc.toString()
   const raw: DocRange[] = []
@@ -139,7 +143,9 @@ function protectedRanges(state: EditorState): DocRange[] {
     }
   }
   for (const { from, to } of images) raw.push({ from, to })
-  for (const { from, to } of toolCalls) raw.push({ from: Math.max(0, from - 1), to: Math.min(doc.length, to + 1) })
+  for (const blocks of [toolCalls, media]) {
+    for (const { from, to } of blocks) raw.push({ from: Math.max(0, from - 1), to: Math.min(doc.length, to + 1) })
+  }
   raw.sort((a, b) => a.from - b.from)
 
   const ranges: DocRange[] = []
@@ -148,7 +154,7 @@ function protectedRanges(state: EditorState): DocRange[] {
     if (last && range.from <= last.to) last.to = Math.max(last.to, range.to)
     else ranges.push({ ...range })
   }
-  protectedRangesCache.set(state.doc, { pills, images, toolCalls, ranges })
+  protectedRangesCache.set(state.doc, { pills, images, toolCalls, media, ranges })
   return ranges
 }
 
@@ -264,10 +270,10 @@ const REGEXP_SYNTAX_CHARS = /[\^$\\.*+?()[\]{}|/]/g
 
 /** Search text that Cmd/Ctrl+F takes from the main selection, escaped in
  *  regex mode. `null` (keep the current search) when the selection is
- *  empty, longer than 3 lines, holds a sentinel, overlaps a shown image or
- *  tool call chip (their source is hidden and never matches, see
- *  `protectedRanges`), or already is a match of the open query: the match
- *  text would replace a regex that the user typed. */
+ *  empty, longer than 3 lines, holds a sentinel, overlaps a shown image,
+ *  tool call chip, or media player (their source is hidden and never
+ *  matches, see `protectedRanges`), or already is a match of the open
+ *  query: the match text would replace a regex that the user typed. */
 export function findPrefillText(state: EditorState, regexp: boolean): string | null {
   const { from, to } = state.selection.main
   if (from === to) return null
@@ -275,7 +281,7 @@ export function findPrefillText(state: EditorState, regexp: boolean): string | n
   const text = state.sliceDoc(from, to)
   if (SENTINEL_CHAR.test(text)) return null
   const overlaps = (range: DocRange) => range.from < to && range.to > from
-  if (renderedImages(state).some(overlaps) || renderedToolCalls(state).some(overlaps)) return null
+  if (renderedImages(state).some(overlaps) || renderedToolCalls(state).some(overlaps) || renderedMedia(state).some(overlaps)) return null
   const query = state.field(findQueryField, false)
   if (query && findMatchAt(state, query, from, to)) return null
   return regexp ? text.replace(REGEXP_SYNTAX_CHARS, '\\$&') : text

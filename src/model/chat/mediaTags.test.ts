@@ -6,7 +6,9 @@ import {
   mediaTagRequestText,
   mediaTagText,
   mediaTagsAsLinks,
+  savedMediaTag,
   splitMediaTags,
+  unsavedMediaTag,
   type MediaTagData,
 } from './mediaTags'
 
@@ -185,6 +187,29 @@ describe('findMediaTags', () => {
     const text = `<dez:audio id="B2" type="audio/mpeg"/>\nprose <dez:video\n${mediaTagText(AUDIO)}`
 
     expect(read(text)).toStrictEqual([AUDIO])
+  })
+})
+
+describe('savedMediaTag and unsavedMediaTag', () => {
+  const other = [{ name: 'job', value: 'q-1' }]
+
+  it('keeps the URL and its end through a save and a delete', () => {
+    const fromUrl: MediaTagData = { ...VIDEO, src: URL, other }
+    const saved = savedMediaTag(fromUrl, SAVED_VIDEO)
+    expect(saved).toStrictEqual({ ...fromUrl, src: SAVED_VIDEO })
+    expect(unsavedMediaTag(saved)).toStrictEqual(fromUrl)
+  })
+
+  it('drops the end of a temp copy at the save, and the source at the delete', () => {
+    const fromCopy: MediaTagData = { ...VIDEO, src: CACHED_VIDEO, url: null, other }
+    const saved = savedMediaTag(fromCopy, SAVED_VIDEO)
+    expect(saved).toStrictEqual({ ...fromCopy, src: SAVED_VIDEO, expires: null })
+    expect(unsavedMediaTag(saved)).toStrictEqual({ ...fromCopy, src: null, expires: null })
+  })
+
+  it('keeps the offsets of a tag in a text', () => {
+    const [tag] = findMediaTags(mediaTagText({ ...VIDEO, src: URL }))
+    expect(savedMediaTag(tag, SAVED_VIDEO)).toStrictEqual({ ...tag, src: SAVED_VIDEO })
   })
 })
 

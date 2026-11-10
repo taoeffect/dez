@@ -2131,6 +2131,29 @@ export const dezTheme = EditorView.theme({
     background: 'var(--color-error-bg, rgba(217,83,79,0.08))',
     color: 'var(--color-error, #d9534f)',
   },
+  // Media players (src/view/editor/media.ts). The widget is the only thing
+  // on its line, as a tool call chip is. The player inside is a Vue
+  // component with its own scoped CSS (src/view/media/MediaPlayer.vue),
+  // which does not import this module: these two variables give it the
+  // editor font scale, and the max height that an image has too.
+  '.dez-media': {
+    '--dez-media-unit': editorSize(1),
+    '--dez-media-max-height': editorSize(IMAGE_MAX_HEIGHT_PX),
+    display: 'inline-flex',
+    flexDirection: 'column',
+    alignItems: 'flex-start',
+    boxSizing: 'border-box',
+    width: '100%',
+    padding: editorSize(6, 0),
+    verticalAlign: 'top',
+    fontFamily: UI_FONT_FAMILY,
+    lineHeight: '1.5',
+    letterSpacing: 'normal',
+    whiteSpace: 'normal',
+    cursor: 'default',
+    userSelect: 'none',
+    WebkitUserSelect: 'none',
+  },
   // Rendered links (src/view/editor/links.ts): only the link text shows. An
   // autolink's address has the `t.url` style of `dezHighlightStyle`, which
   // has no underline, so the underline is set here too.

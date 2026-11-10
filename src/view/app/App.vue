@@ -51,6 +51,9 @@ onUnmounted(() => {
   --color-error-border: #f0b9b5;
   /* A solid danger fill under a white icon (the image trash on hover). */
   --color-error-fill: #c4302b;
+  /* A thing that went well: the "Saved" state of a clip's Save control
+     (MediaPlayer.vue). As text it is 4.5:1 or more on the background. */
+  --color-success: #1a7f37;
   /* Tab bar backgrounds (TabBar.vue): a tab whose reply streams (busy), and
      a tab whose reply ended in the background (done). */
   --color-tab-busy: #f7dc9b;
@@ -93,6 +96,7 @@ onUnmounted(() => {
     --color-error-bg: #3a2224;
     --color-error-border: #6b3236;
     --color-error-fill: #da3633;
+    --color-success: #3fb950;
     --color-tab-busy: #5b4716;
     --color-tab-done: #234d2e;
     --color-image-toolbar: rgba(40, 40, 46, 0.8);
@@ -116,6 +120,7 @@ onUnmounted(() => {
   --color-error-bg: #3a2224;
   --color-error-border: #6b3236;
   --color-error-fill: #da3633;
+  --color-success: #3fb950;
   --color-tab-busy: #5b4716;
   --color-tab-done: #234d2e;
   --color-image-toolbar: rgba(40, 40, 46, 0.8);

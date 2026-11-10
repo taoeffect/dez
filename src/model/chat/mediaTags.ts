@@ -177,6 +177,23 @@ export function mediaTagRequestText(tag: Pick<MediaTagData, 'kind' | 'id' | 'typ
   return tagText(tag.kind, [['id', tag.id], ['type', tag.type]])
 }
 
+// `expires` tells the end of the source that is not saved. Both functions
+// below keep it only with a `url`: it is then the end of that URL, which
+// the clip needs again when its saved file is deleted. The end of a temp
+// copy means nothing once the copy is a saved file.
+
+/** The tag of a clip after its file was saved at `path` (Save): the saved
+ *  file is the source that plays. */
+export function savedMediaTag<T extends MediaTagData>(tag: T, path: string): T {
+  return { ...tag, src: path, expires: tag.url === null ? null : tag.expires }
+}
+
+/** The tag of a saved clip after its file was deleted: the clip plays from
+ *  its `url` again, and a clip with no `url` has no source any more. */
+export function unsavedMediaTag<T extends MediaTagData>(tag: T): T {
+  return { ...tag, src: tag.url, expires: tag.url === null ? null : tag.expires }
+}
+
 // The tag that is the whole of `line`; null when the line is not a tag. An
 // attribute with an empty value reads as one that is not there.
 function readTag(line: string): MediaTagData | null {

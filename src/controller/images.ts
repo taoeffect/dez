@@ -68,10 +68,11 @@ export default sbp('sbp/selectors/register', {
     return convertFileSrc(path)
   },
 
-  // Reads an image file by its absolute path through the asset protocol: a
-  // file in an image folder, or a file of a native file drop (Tauri adds
-  // each dropped path to the protocol's scope). The protocol takes the type
-  // from the bytes. Rejects when the file cannot be read.
+  // Reads a file by its absolute path through the asset protocol: a file in
+  // an app folder that the protocol's scope has (a stored image, a media
+  // clip), or a file of a native file drop (Tauri adds each dropped path to
+  // the scope). The protocol takes the type from the bytes. Rejects when
+  // the file cannot be read.
   async 'dez.controller/images/readFile' (path: string): Promise<File> {
     const response = await fetch(convertFileSrc(path))
     if (!response.ok) throw new Error(`Failed to read ${path}: HTTP ${response.status}`)
