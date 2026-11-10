@@ -55,7 +55,7 @@ sbp('sbp/selectors/register', {
   },
   async 'dez.native/loadAppFileBytes' (path: string): Promise<Uint8Array> {
     imageReads.push(path)
-    if (path === 'assets/images/red.png') return STORED_IMAGE
+    if (path === 'assets/images/red.png' || path === 'assets/generated/images/red.png') return STORED_IMAGE
     throw `Failed to read ${path}: No such file or directory (os error 2)`
   },
   async 'dez.http/stream' (request: NativeHttpRequest, requestId: string): Promise<NativeHttpStreamResult> {
@@ -207,10 +207,10 @@ describe('images in chat streams', () => {
     })
   }
 
-  it('sends the bytes of a stored image as base64, read through the app folder', async () => {
-    await streamImage(`${APP_DIR}/assets/images/red.png`)
+  it.each(['assets/images', 'assets/generated/images'])('sends the bytes of a stored image in %s as base64, read through the app folder', async (folder) => {
+    await streamImage(`${APP_DIR}/${folder}/red.png`)
 
-    expect(imageReads).toEqual(['assets/images/red.png'])
+    expect(imageReads).toEqual([`${folder}/red.png`])
     expect(streamRequests).toHaveLength(1)
     expect(JSON.parse(streamRequests[0].body as string).messages[0].content[1]).toEqual({
       type: 'image_url',

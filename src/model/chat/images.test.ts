@@ -8,6 +8,7 @@ import {
   isImageMediaType,
   isImagePath,
   labelImageReferences,
+  newImageIds,
   pastedImageIdChanges,
   splitImageReferences,
   storedImageFile,
@@ -16,6 +17,7 @@ import {
 
 const PNG = '/home/ann/.config/dez/assets/images/5f1c2a9e-0b7d-4c3e-9a51-2d8f6e4b7c10.png'
 const JPG = '/home/ann/.config/dez/assets/images/a1.jpg'
+const GENERATED = '/home/ann/.config/dez/assets/generated/images/0c4e7a51-9b2d-4f6a-8e13-5d7c9a2b4f60.webp'
 
 describe('findImageReferences', () => {
   it('finds each reference with its offsets, path, and id', () => {
@@ -59,12 +61,20 @@ describe('findImageReferences', () => {
     expect(findImageReferences('![/assets/images/x.gif]()')).toHaveLength(1)
   })
 
+  it('takes an image directly in the generated image folder', () => {
+    expect(findImageReferences(`![${GENERATED}](id=b)`).map((ref) => ref.path)).toEqual([GENERATED])
+  })
+
   it.each([
     ['a URL', '![https://example.com/assets/images/x.png]()'],
     ['a relative path', '![assets/images/x.png]()'],
     ['another folder', '![/home/ann/Pictures/x.png]()'],
     ['a folder name that only ends in "assets"', '![/home/ann/myassets/images/x.png]()'],
     ['a subfolder of the image folder', '![/home/ann/.config/dez/assets/images/sub/x.png]()'],
+    ['the generated folder itself', '![/home/ann/.config/dez/assets/generated/x.png]()'],
+    ['a subfolder of the generated image folder', '![/home/ann/.config/dez/assets/generated/images/sub/x.png]()'],
+    ['the generated video folder', '![/home/ann/.config/dez/assets/generated/video/x.png]()'],
+    ['a generated folder outside assets', '![/home/ann/.config/dez/generated/images/x.png]()'],
     ['a destination', `![${PNG}](${PNG})`],
     ['a broken destination', `![${PNG}](`],
     ['no `!`', `[${PNG}]()`],
@@ -106,7 +116,7 @@ describe('findImageReferences', () => {
 
 describe('isImagePath', () => {
   it('accepts exactly the paths whose markdown the recognizer finds', () => {
-    for (const path of [PNG, JPG, '/assets/images/x.jpeg']) {
+    for (const path of [PNG, JPG, GENERATED, '/assets/images/x.jpeg']) {
       expect(isImagePath(path)).toBe(true)
       expect(findImageReferences(imageMarkdown(path)).map((ref) => ref.path)).toEqual([path])
     }
@@ -120,9 +130,10 @@ describe('isImagePath', () => {
 describe('storedImageFile', () => {
   const appDir = '/home/ann/.config/dez'
 
-  it('gives the app-file path of an image directly in the image folder of this app folder', () => {
+  it('gives the app-file path of an image directly in an image folder of this app folder', () => {
     expect(storedImageFile(PNG, appDir)).toBe('assets/images/5f1c2a9e-0b7d-4c3e-9a51-2d8f6e4b7c10.png')
     expect(storedImageFile(JPG, appDir)).toBe('assets/images/a1.jpg')
+    expect(storedImageFile(GENERATED, appDir)).toBe('assets/generated/images/0c4e7a51-9b2d-4f6a-8e13-5d7c9a2b4f60.webp')
   })
 
   it('gives null for any other path, so that no other file is read or deleted', () => {
@@ -132,6 +143,10 @@ describe('storedImageFile', () => {
       '/home/ann/.config/dez/x/.config/dez/assets/images/a1.jpg',
       '/home/ann/.config/dez/assets/images/../assets/images/a1.jpg',
       '/home/ann/.config/dez/assets/images/sub/a1.jpg',
+      '/home/bob/.config/dez/assets/generated/images/a1.jpg',
+      '/home/ann/.config/dez/assets/generated/images/../../images/a1.jpg',
+      '/home/ann/.config/dez/assets/images/generated/images/a1.jpg',
+      '/home/ann/.config/dez/assets/generated/a1.jpg',
       '/home/ann/.config/dez/assets/images/.a1.jpg',
       '/home/ann/.config/dez/assets/images/a1.bmp',
       '/home/ann/.config/dez/app_state.json',
@@ -186,6 +201,7 @@ describe('withoutImagePaths', () => {
     ['an id', `![${PNG}](id=a)`, '![image](id=a)'],
     ['unknown keys and escaped values', String.raw`![${PNG}](id=b|desc=a \| b \(c\) \\ d|x=)`, String.raw`![image](id=b|desc=a \| b \(c\) \\ d|x=)`],
     ['a home folder with spaces, parentheses, and non-ASCII names', '![/Users/Zoë Ann (work)/.config/dez/assets/images/x_1-2.webp](id=a)', '![image](id=a)'],
+    ['a generated image', `![${GENERATED}](id=b)`, '![image](id=b)'],
   ])('sends a reference with %s as ![image] and its metadata as it is', (_case, text, sent) => {
     expect(withoutImagePaths(text)).toBe(sent)
   })
@@ -196,6 +212,7 @@ describe('withoutImagePaths', () => {
     ['a reference with an id that is not valid', `![${PNG}](id=A)`, '![image](id=A)'],
     ['a reference with a key given twice', `![${PNG}](id=a|id=b)`, '![image](id=a|id=b)'],
     ['a bare path', `see ${PNG} now`, 'see image now'],
+    ['a bare generated path', `see ${GENERATED} now`, 'see image now'],
   ])('takes the path out of %s', (_case, text, sent) => {
     expect(withoutImagePaths(text)).toBe(sent)
   })
@@ -256,6 +273,7 @@ describe('holdsImagePath', () => {
       expect(holdsImagePath(`a ![${PNG}](id=a)`)).toBe(true)
       expect(holdsImagePath(`a [${PNG}](id=a)`)).toBe(true)
       expect(holdsImagePath(JSON.stringify({ thinking: `The user sent\n${JPG}` }))).toBe(true)
+      expect(holdsImagePath(`made ${GENERATED}`)).toBe(true)
     }
   })
 
@@ -316,6 +334,23 @@ describe('pastedImageIdChanges', () => {
     const before = `![${image('a')}]() ![${image('b')}](id=x) ![${image('c')}](id=x) ![${image('d')}](`
 
     expect(paste(')', before)).toBe(`${before})`)
+  })
+})
+
+describe('newImageIds', () => {
+  const image = (name: string, id: string) => `![/home/ann/.config/dez/assets/images/${name}.png](id=${id})`
+
+  it('gives the ids after the highest one in all the texts of the conversation, in order', () => {
+    expect(newImageIds([`${image('a', 'b')} ${image('b', 'y')}`, '', `see ${image('c', 'c')}`], 3)).toEqual(['z', 'aa', 'ab'])
+  })
+
+  it('starts at a when no reference has an id, and skips text that is not a reference', () => {
+    expect(newImageIds([`![${PNG}]() ![${PNG}](id=Q) ![x](id=zz)`], 2)).toEqual(['a', 'b'])
+    expect(newImageIds([], 1)).toEqual(['a'])
+  })
+
+  it('gives no id for a count of zero', () => {
+    expect(newImageIds([image('a', 'a')], 0)).toEqual([])
   })
 })
 

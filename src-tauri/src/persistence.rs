@@ -24,7 +24,8 @@ pub struct ConversationFile {
 // All app data is under `$HOME/.config/dez/` on every OS. The path comes from
 // $HOME on purpose, not from Tauri's path API. `key_store_path` in
 // key_store.rs builds the same folder, and so does the `assetProtocol` scope
-// in tauri.conf.json (`$HOME/.config/dez/assets/images/*`).
+// in tauri.conf.json (`$HOME/.config/dez/assets/images/*` and the
+// `assets/generated/` folders).
 fn base_dir() -> PathBuf {
     let home = std::env::var("HOME").unwrap_or_else(|_| ".".into());
     PathBuf::from(home).join(".config").join("dez")

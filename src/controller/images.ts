@@ -1,21 +1,26 @@
 import sbp from '@sbp/sbp'
 import { convertFileSrc, isTauri } from '@tauri-apps/api/core'
 import { getCurrentWebview } from '@tauri-apps/api/webview'
-import { IMAGE_FOLDER, imageExtension, isImagePath, storedImageFile, type ImageMediaType } from '../model/chat/images'
+import { IMAGE_FOLDERS, imageExtension, isImagePath, storedImageFile, type ImageFolder, type ImageMediaType } from '../model/chat/images'
 import { fileNameOf } from '../utils/fileName'
 
 let fileDropsWatched = false
 
 export default sbp('sbp/selectors/register', {
-  // Stores the bytes of a pasted or dropped image under a new name, and
-  // returns the absolute path for its reference (`imageMarkdown` in
-  // src/model/chat/images.ts). A failure is logged, shows an error toast,
-  // and rejects, so the caller inserts no reference.
-  async 'dez.controller/images/save' (bytes: Uint8Array, mediaType: ImageMediaType): Promise<string> {
+  // Stores the bytes of an image under a new name in an image folder
+  // (`pasted` for pasted and dropped images, `generated` for the images that
+  // image models make), and returns the absolute path for its reference
+  // (`imageMarkdown` in src/model/chat/images.ts). A failure is logged,
+  // shows an error toast, and rejects, so the caller inserts no reference.
+  async 'dez.controller/images/save' (
+    bytes: Uint8Array,
+    mediaType: ImageMediaType,
+    { folder = 'pasted' }: { folder?: ImageFolder } = {},
+  ): Promise<string> {
     try {
-      const fileName = `${crypto.randomUUID()}.${imageExtension(mediaType)}`
+      const file = `${IMAGE_FOLDERS[folder]}/${crypto.randomUUID()}.${imageExtension(mediaType)}`
       const appDir = await sbp('dez.native/getAppDir') as string
-      const path = `${appDir}/${IMAGE_FOLDER}/${fileName}`
+      const path = `${appDir}/${file}`
       // The recognizer takes only absolute paths with no brackets or line
       // breaks (e.g. not `./.config/dez` when $HOME is not set). A reference
       // to another path would show as plain text and never reach a model,
@@ -23,7 +28,7 @@ export default sbp('sbp/selectors/register', {
       if (!isImagePath(path)) {
         throw new Error(`Images cannot be stored in this Dez folder: ${appDir}`)
       }
-      await sbp('dez.native/saveAppFile', `${IMAGE_FOLDER}/${fileName}`, bytes)
+      await sbp('dez.native/saveAppFile', file, bytes)
       return path
     } catch (error) {
       console.error('Failed to save the image:', error)
@@ -37,11 +42,11 @@ export default sbp('sbp/selectors/register', {
   },
 
   // Deletes the file of an image reference's path. Only a stored image of
-  // this Dez folder is deleted (`storedImageFile`); any other path (a
-  // reference copied from another home) deletes no file, as the file of
-  // that name here belongs to another image. A missing file is not an
-  // error. A failure is logged, shows an error toast, and rejects, so the
-  // caller keeps the reference.
+  // this Dez folder, pasted or generated, is deleted (`storedImageFile`); any
+  // other path (a reference copied from another home) deletes no file, as
+  // the file of that name here belongs to another image. A missing file is
+  // not an error. A failure is logged, shows an error toast, and rejects, so
+  // the caller keeps the reference.
   async 'dez.controller/images/delete' (path: string): Promise<void> {
     try {
       const file = storedImageFile(path, await sbp('dez.native/getAppDir') as string)
@@ -64,7 +69,7 @@ export default sbp('sbp/selectors/register', {
   },
 
   // Reads an image file by its absolute path through the asset protocol: a
-  // file in the image folder, or a file of a native file drop (Tauri adds
+  // file in an image folder, or a file of a native file drop (Tauri adds
   // each dropped path to the protocol's scope). The protocol takes the type
   // from the bytes. Rejects when the file cannot be read.
   async 'dez.controller/images/readFile' (path: string): Promise<File> {

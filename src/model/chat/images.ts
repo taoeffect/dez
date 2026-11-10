@@ -6,15 +6,16 @@ import { fileNameOf } from '../../utils/fileName'
 // image's metadata: nothing (references saved before ids existed), or
 // `key=value` items joined by `|`, such as `id=a`, and later perhaps
 // `id=a|desc=my great image`. The `id` is the image's short name in its
-// conversation (`pastedImageIdChanges`), so that a later feature can name
-// one image. Only paths into an app image folder
-// (`…/assets/images/<name>.<ext>`, as `dez.controller/images/save` writes
-// them) count. Any other markdown image (a URL, a hand-written path) stays
-// plain text: it is not rendered and not sent as an image. So what Dez shows
-// and sends matches what the asset protocol scope (tauri.conf.json) and the
-// Rust app-file path rule allow. The editor, the request builder, and the
-// title, preview, and search text all use this one recognizer. Providers get
-// no path, only the reference's metadata (`withoutImagePaths`).
+// conversation (`pastedImageIdChanges`, `newImageIds`), so that a later
+// feature can name one image. Only paths into an app image folder
+// (`…/assets/images/<name>.<ext>` or `…/assets/generated/images/…`, as
+// `dez.controller/images/save` writes them) count. Any other markdown image
+// (a URL, a hand-written path) stays plain text: it is not rendered and not
+// sent as an image. So what Dez shows and sends matches what the asset
+// protocol scope (tauri.conf.json) and the Rust app-file path rule allow.
+// The editor, the request builder, and the title, preview, and search text
+// all use this one recognizer. Providers get no path, only the reference's
+// metadata (`withoutImagePaths`).
 
 // The image types that Dez stores as they are; the paste and drop code
 // converts other image types to PNG. OpenAI, Anthropic, and Venice accept
@@ -38,21 +39,29 @@ const MEDIA_TYPE_BY_EXTENSION: Record<string, ImageMediaType> = {
   webp: 'image/webp',
 }
 
-/** The folder of the stored images, relative to the app folder. The asset
- *  protocol scope in tauri.conf.json serves only the files directly in it,
- *  and `IMAGE_PATH_SOURCE` below spells the same folder. */
-export const IMAGE_FOLDER = 'assets/images'
+/** The folders of the stored images, relative to the app folder: `pasted`
+ *  for pasted and dropped images, `generated` for the images that image
+ *  models make. The asset protocol scope in tauri.conf.json serves only the
+ *  files directly in them, and the path regexes below are built from these
+ *  names, so nothing else spells them. */
+export const IMAGE_FOLDERS = {
+  pasted: 'assets/images',
+  generated: 'assets/generated/images',
+} as const
 
-// The end of every image path: the image folder and a stored file name.
-const IMAGE_PATH_END_SOURCE = String.raw`assets\/images\/[A-Za-z0-9_-]+\.(?:${Object.keys(MEDIA_TYPE_BY_EXTENSION).join('|')})`
-// An absolute path whose last two folders are `assets/images`. The path may
-// not hold `[`, `]`, or a line break: `]` would end the alt text early, and
-// with `[` excluded too, a search from one `![` stops at the next bracket, so
-// a long line cannot make the regex slow.
+export type ImageFolder = keyof typeof IMAGE_FOLDERS
+
+// The end of every image path: an image folder and a stored file name. The
+// folder names hold only letters and `/`, which a regex takes as they are.
+const IMAGE_PATH_END_SOURCE = String.raw`(?:${Object.values(IMAGE_FOLDERS).join('|')})\/[A-Za-z0-9_-]+\.(?:${Object.keys(MEDIA_TYPE_BY_EXTENSION).join('|')})`
+// An absolute path whose last folders are an image folder. The path may not
+// hold `[`, `]`, or a line break: `]` would end the alt text early, and with
+// `[` excluded too, a search from one `![` stops at the next bracket, so a
+// long line cannot make the regex slow.
 const IMAGE_PATH_SOURCE = String.raw`\/(?:[^\[\]\r\n]*\/)?${IMAGE_PATH_END_SOURCE}`
 const IMAGE_PATH = new RegExp(`^${IMAGE_PATH_SOURCE}$`)
 // The end of every image path that Dez writes, on any machine and in any
-// home: `$HOME/.config/dez/assets/images/<file>` (`base_dir()` in
+// home: `$HOME/.config/dez/<image folder>/<file>` (`base_dir()` in
 // persistence.rs). Many web projects have an `assets/images` folder too
 // (Angular, Rails, Hugo); the scrub leaves their paths as they are, so code
 // and commands go to the model as the user wrote them.
@@ -163,14 +172,18 @@ export function isImagePath(path: string): boolean {
   return IMAGE_PATH.test(path)
 }
 
-/** The app-file path (`assets/images/<file>`, relative to the app folder) of
- *  an image path that is directly in the image folder of the app folder
- *  `appDir`. Null for any other path, such as a reference copied from
- *  another home: a file of that name in this folder is another image, so
- *  Dez must neither send nor delete it. */
+/** The app-file path (`assets/images/<file>` or
+ *  `assets/generated/images/<file>`, relative to the app folder) of an image
+ *  path that is directly in an image folder of the app folder `appDir`. Null
+ *  for any other path, such as a reference copied from another home: a file
+ *  of that name in this folder is another image, so Dez must neither send
+ *  nor delete it. */
 export function storedImageFile(path: string, appDir: string): string | null {
-  const file = `${IMAGE_FOLDER}/${fileNameOf(path)}`
-  return isImagePath(path) && path === `${appDir}/${file}` ? file : null
+  if (!isImagePath(path)) return null
+  const name = fileNameOf(path)
+  return Object.values(IMAGE_FOLDERS)
+    .map((folder) => `${folder}/${name}`)
+    .find((file) => path === `${appDir}/${file}`) ?? null
 }
 
 /** The reference text of an image path, with its metadata items in this
@@ -197,6 +210,24 @@ function nextImageId(id: string | null): string {
   return id.slice(0, index) + String.fromCharCode(id.charCodeAt(index) + 1) + 'a'.repeat(id.length - index - 1)
 }
 
+/** The highest of these ids (`compareImageIds`); null when there is none. */
+function highestImageId(ids: Iterable<string | null>): string | null {
+  let highest: string | null = null
+  for (const id of ids) {
+    if (id !== null && (highest === null || compareImageIds(id, highest) > 0)) highest = id
+  }
+  return highest
+}
+
+/** `count` ids, in order, for the image references that Dez itself adds to a
+ *  conversation (a generated image): the ids after the highest one in
+ *  `texts`, the texts of the whole conversation. The caller must write the
+ *  references in the same tick, so that no paste in between takes an id. */
+export function newImageIds(texts: readonly string[], count: number): string[] {
+  let id = highestImageId(texts.flatMap((text) => findImageReferences(text).map((reference) => reference.id)))
+  return Array.from({ length: count }, () => (id = nextImageId(id)))
+}
+
 /** The changes to `text`, a whole conversation after a paste or a drop
  *  (the editor doc of one tab), that give the image references that the
  *  paste brought in an id of their own. `pasted` holds the ranges of `text`
@@ -217,12 +248,9 @@ export function pastedImageIdChanges(text: string, pasted: readonly { from: numb
     if (paths) paths.add(path)
     else pathsById.set(id, new Set([path]))
   }
-  let highest: string | null = null
+  let highest = highestImageId(references.map((reference) => reference.id))
   for (const reference of references) {
-    const { id } = reference
-    if (id === null) continue
-    if (highest === null || compareImageIds(id, highest) > 0) highest = id
-    if (!isPasted(reference)) claim(id, reference.path)
+    if (reference.id !== null && !isPasted(reference)) claim(reference.id, reference.path)
   }
   const changes: { from: number, to: number, insert: string }[] = []
   for (const reference of references.filter(isPasted)) {

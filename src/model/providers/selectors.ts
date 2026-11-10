@@ -1,5 +1,5 @@
 import sbp from '@sbp/sbp'
-import { IMAGE_FOLDER, imageMediaType, storedImageFile } from '../chat/images'
+import { IMAGE_FOLDERS, imageMediaType, storedImageFile } from '../chat/images'
 import type { MessagePart } from '../chat/types'
 import { modelRefKey } from '../chat/modelRef'
 import type { ModelCache } from '../persistence/types'
@@ -65,7 +65,7 @@ async function readMessageImages(messages: ProviderChatInputMessage[]): Promise<
 }
 
 // Only a stored image of this Dez folder is read (`storedImageFile`): the
-// folder that dez.controller/images/save writes and the asset protocol
+// folders that dez.controller/images/save writes and the asset protocol
 // serves. So a reference copied from another home or machine fails like a
 // missing file, as it shows in the editor. The error names only the file,
 // like the editor's broken-image box; the log has the cause.
@@ -74,7 +74,7 @@ async function readImagePart(path: string, appDir: string): Promise<ChatPart> {
     const file = storedImageFile(path, appDir)
     const mediaType = imageMediaType(path)
     if (!file || !mediaType) {
-      throw new Error(`The image is not in the image folder ${appDir}/${IMAGE_FOLDER}`)
+      throw new Error(`The image is not in an image folder of ${appDir} (${Object.values(IMAGE_FOLDERS).join(', ')})`)
     }
     const bytes = await sbp('dez.native/loadAppFileBytes', file) as Uint8Array
     return { type: 'image', mediaType, data: bytesToBase64(bytes) }

@@ -25,8 +25,9 @@ tauri-build = { version = "=2.5.6", features = [] }
 # item. WebKit keeps console messages from before the inspector opens, so
 # the console shows earlier logs too. On macOS it uses a private WebKit API,
 # which only blocks App Store distribution.
-# `protocol-asset` serves the images in `~/.config/dez/assets/images/` to the
-# webview by `convertFileSrc` URLs (`assetProtocol` in tauri.conf.json).
+# `protocol-asset` serves the images in `~/.config/dez/assets/images/` and
+# the media in `~/.config/dez/assets/generated/` to the webview by
+# `convertFileSrc` URLs (`assetProtocol` in tauri.conf.json).
 tauri = { version = "=2.10.3", features = ["devtools", "protocol-asset"] }
 tauri-plugin-opener = "=2.5.3"
 tauri-plugin-store = "=2.4.2"

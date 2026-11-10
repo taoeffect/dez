@@ -27,7 +27,10 @@
       "assetProtocol": {
         "enable": true,
         "scope": [
-          "$HOME/.config/dez/assets/images/*"
+          "$HOME/.config/dez/assets/images/*",
+          "$HOME/.config/dez/assets/generated/images/*",
+          "$HOME/.config/dez/assets/generated/audio/*",
+          "$HOME/.config/dez/assets/generated/video/*"
         ]
       }
     }

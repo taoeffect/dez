@@ -92,10 +92,12 @@ pub fn run() {
         Ok(())
     });
     // Reads tauri.conf.json, whose `"csp": null` is on purpose during
-    // development. Its `assetProtocol` scope lets the webview show the images
-    // in `$HOME/.config/dez/assets/images/` by `convertFileSrc` URLs; it must
-    // name the folder that `base_dir()` in persistence.rs builds (both read
-    // `$HOME`). Tauri adds each path of a native file drop to that scope too.
+    // development. Its `assetProtocol` scope lets the webview show the files
+    // directly in `$HOME/.config/dez/assets/images/` and in the
+    // `assets/generated/{images,audio,video}/` folders by `convertFileSrc`
+    // URLs; it must name the folders that `base_dir()` in persistence.rs
+    // builds (both read `$HOME`). Tauri adds each path of a native file drop
+    // to that scope too.
     //
     // Its `"dragDropEnabled": false` turns Tauri's native file drop off, so
     // HTML5 drops with the dropped files reach the page. On macOS the native

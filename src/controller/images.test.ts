@@ -1,6 +1,6 @@
 import sbp from '@sbp/sbp'
 import { afterEach, beforeEach, describe, expect, it, vi, type MockInstance } from 'vitest'
-import { findImageReferences, imageMarkdown, type ImageMediaType } from '../model/chat/images'
+import { findImageReferences, imageMarkdown, storedImageFile, type ImageFolder, type ImageMediaType } from '../model/chat/images'
 import './images'
 
 interface SavedFile {
@@ -37,8 +37,8 @@ sbp('sbp/selectors/register', {
   },
 })
 
-function save(bytes: Uint8Array, mediaType: ImageMediaType): Promise<string> {
-  return sbp('dez.controller/images/save', bytes, mediaType) as Promise<string>
+function save(bytes: Uint8Array, mediaType: ImageMediaType, options?: { folder?: ImageFolder }): Promise<string> {
+  return sbp('dez.controller/images/save', bytes, mediaType, options) as Promise<string>
 }
 
 beforeEach(() => {
@@ -73,6 +73,17 @@ describe('dez.controller/images/save', () => {
     expect(first.slice(0, -4)).not.toBe(second.slice(0, -4))
     expect(findImageReferences(imageMarkdown(first)).map((ref) => ref.path)).toEqual([first])
     expect(toasts).toEqual([])
+  })
+
+  it('writes a generated image to the generated image folder, where the reader and the trash find it', async () => {
+    const bytes = new Uint8Array([82, 73, 70, 70])
+
+    const path = await save(bytes, 'image/webp', { folder: 'generated' })
+
+    expect(path).toMatch(/^\/home\/ann\/\.config\/dez\/assets\/generated\/images\/[0-9a-f-]{36}\.webp$/)
+    expect(savedFiles).toEqual([{ path: path.slice(appDir.length + 1), content: bytes }])
+    expect(storedImageFile(path, appDir)).toBe(savedFiles[0].path)
+    expect(findImageReferences(imageMarkdown(path)).map((ref) => ref.path)).toEqual([path])
   })
 
   it('logs, shows an error toast, and rejects when the write fails', async () => {
@@ -112,6 +123,13 @@ describe('dez.controller/images/delete', () => {
     await deleteImage(`${appDir}/assets/images/red.png`)
 
     expect(deletedFiles).toEqual(['assets/images/red.png'])
+    expect(toasts).toEqual([])
+  })
+
+  it('deletes a generated image of this Dez folder by its app-file path', async () => {
+    await deleteImage(`${appDir}/assets/generated/images/red.webp`)
+
+    expect(deletedFiles).toEqual(['assets/generated/images/red.webp'])
     expect(toasts).toEqual([])
   })
 
