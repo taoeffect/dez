@@ -236,6 +236,20 @@ describe('a release in a throwaway repo', { timeout: 30_000 }, () => {
     expect(box.state()).toEqual(before);
   });
 
+  // The push at the end uses the push URL, which can differ from the fetch
+  // URL. Here the fetch URL still works, so a check that asks it gets as
+  // far as the bump.
+  it('changes nothing when only the push URL cannot be reached', () => {
+    const box = sandbox();
+    const before = box.state();
+    box.git('remote', 'set-url', '--push', 'origin', join(box.root, 'missing.git'));
+
+    const result = box.script('0.2.0');
+    expect(result.status).toBe(1);
+    expect(result.stderr).toContain('Your SSH keys are not able to push to "origin".\nNothing was changed.');
+    expect(box.state()).toEqual(before);
+  });
+
   it('changes nothing when the tag exists, on the remote or here', () => {
     const box = sandbox();
     box.git('tag', 'v0.2.0');
