@@ -94,7 +94,8 @@ function openUpdateWindow(): void {
     publishedAt: null,
     changes: [],
     dmgAsset: null,
-    signatureAsset: null,
+    manifestAsset: null,
+    manifestSignatureAsset: null,
   }])
   sbp('dez.model/updates/openWindow')
 }

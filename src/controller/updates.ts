@@ -8,7 +8,8 @@ import {
   type TabActivity,
   type UpdatesSnapshot,
 } from '../model/state'
-import { parseReleaseList, type Release } from '../model/updates/releases'
+import { failedCheck, refusalReport } from '../model/updates/refusal'
+import { hasSignedMacDownload, parseReleaseList, type Release } from '../model/updates/releases'
 import { isMacPlatform } from '../utils/platform'
 import { nativeResponseText, type NativeHttpResponse } from '../utils/protocol/nativeHttp'
 import { responseOk, sanitizeErrorText } from '../utils/protocol/errors'
@@ -75,7 +76,7 @@ async function fetchGitHubText(url: string, what: string, headers: Record<string
 // Returns the Dez releases that are newer than the running one, newest first.
 // A smoke-test build sets VITE_DEZ_RELEASES_API_URL to a local server, and
 // then takes that server's asset URLs. That is harmless: the Rust installer
-// builds the download URL itself and checks the signature with its own key.
+// builds the download URL itself and checks the release with its own keys.
 async function fetchNewerReleases(): Promise<Release[]> {
   const apiOverride = import.meta.env.VITE_DEZ_RELEASES_API_URL
   const body = await fetchGitHubText(apiOverride || RELEASES_API_URL, 'the update check', {
@@ -139,22 +140,29 @@ async function confirmStoppingReplies(): Promise<boolean> {
   }) as boolean
 }
 
-// Downloads the DMG of `release`, checks its signature, and puts the new
-// app in place (or stages its files for the relaunch helper). The download
-// progress goes to the update window.
+// Checks `release`, downloads its DMG, and puts the new app in place (or
+// stages its files for the relaunch helper). Rust makes the four checks of
+// the release and rejects with a refusal when one fails (`failedCheck`).
+// The download progress goes to the update window.
 async function downloadAndInstall(release: Release): Promise<void> {
-  if (!release.dmgAsset || !release.signatureAsset) {
+  if (!hasSignedMacDownload(release)) {
     throw new Error(`Dez ${release.version} has no signed macOS download. Get it from GitHub.`)
   }
-  // The text of the release's `.minisig` file. The release parser already
-  // checked that its URL is on GitHub's release download path.
-  const signature = await fetchGitHubText(release.signatureAsset.url, 'the download of the update signature')
+  // The texts of the release's manifest and of the manifest's `.minisig`
+  // file, as they are: the signature covers the manifest's bytes. The
+  // release parser already checked that both URLs are on GitHub's release
+  // download path. A fetch that fails is a plain failure, not a refusal:
+  // Rust has then checked nothing.
+  const [manifest, manifestSignature] = await Promise.all([
+    fetchGitHubText(release.manifestAsset.url, 'the download of the update manifest'),
+    fetchGitHubText(release.manifestSignatureAsset.url, "the download of the update manifest's signature"),
+  ])
   const onProgress = new Channel<UpdateDownloadProgress>()
   onProgress.onmessage = ({ received, total }) => {
     sbp('dez.model/updates/setInstall', { phase: 'downloading', received, total })
   }
   try {
-    await sbp('dez.native/downloadUpdate', release.version, signature, onProgress)
+    await sbp('dez.native/downloadUpdate', release.version, manifest, manifestSignature, onProgress)
   } finally {
     // A message that comes after the download ended must not move the
     // window back to the download.
@@ -267,6 +275,10 @@ export default sbp('sbp/selectors/register', {
   // no retry; its message says what to do. Replies in progress stop, after
   // the user agrees, once the new app is in place: a failed download or
   // install stops none.
+  //
+  // A release that fails one of its four checks may be compromised. Then
+  // Rust installs nothing, and the refusal dialog opens in place of a
+  // failure message (dez.model/updates/setRefusal).
   async 'dez.controller/updates/install' (): Promise<void> {
     const ready = (): Release | null => {
       const { releases, windowOpen, installBusy } = sbp('dez.model/updates/snapshot') as UpdatesSnapshot
@@ -298,8 +310,33 @@ export default sbp('sbp/selectors/register', {
       await sbp('dez.native/relaunchAfterUpdate')
     } catch (error) {
       console.error('Update install failed', error)
-      sbp('dez.model/updates/setInstall', { phase: 'failed', error: sanitizeErrorText(error), retry: !installed })
+      const failed = failedCheck(error)
+      if (failed) {
+        sbp('dez.model/updates/setRefusal', {
+          version: release.version,
+          check: failed.check,
+          // The length limit of every other failure text.
+          message: sanitizeErrorText(failed.message),
+        })
+      } else {
+        sbp('dez.model/updates/setInstall', { phase: 'failed', error: sanitizeErrorText(error), retry: !installed })
+      }
     }
+  },
+
+  // "Report on GitHub" in the refusal dialog: opens a new issue in Dez's
+  // issue tracker with the report of the refused update filled in, for the
+  // user to send. The report has two versions, the name of the failed
+  // check, and what Rust found (a version, a SHA-256, or a parse problem),
+  // so the link holds nothing private.
+  'dez.controller/updates/reportRefusal' (): void {
+    const { refusal } = sbp('dez.model/updates/snapshot') as UpdatesSnapshot
+    if (!refusal) return
+    const issue = new URLSearchParams({
+      title: `Dez refused the update to Dez ${refusal.version} (${refusal.check})`,
+      body: refusalReport(refusal, __APP_VERSION__),
+    })
+    sbp('dez.controller/openUrl', `${DEZ_REPO_URL}/issues/new?${issue}`)
   },
 
   // At startup, tells the user how the last update install ended, from the

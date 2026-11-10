@@ -139,19 +139,30 @@ export default sbp('sbp/selectors/register', {
   },
 
   // The macOS updater (src-tauri/src/updater/mod.rs). Rust builds the
-  // download URL, holds the public key, and keeps every path; the webview
-  // passes only a version and the `.minisig` text. Their errors are
-  // sentences that the update window shows as they are.
+  // download URL, holds the two public keys, and keeps every path; the
+  // webview passes only a version and two texts (the release manifest and
+  // the manifest's `.minisig` file). The download and the install reject
+  // with an object, `{ check, message }`, when the release fails one of its
+  // four checks (`failedCheck`, src/model/updates/refusal.ts). Every other
+  // error is a sentence that the update window shows as it is.
 
   // Why this Dez cannot install an update by itself, or null when it can.
   'dez.native/canInstallUpdate' (): Promise<string | null> {
     return invoke<string | null>('can_install_update')
   },
 
-  // Downloads the DMG of `version` and checks it against `signature` as the
-  // bytes arrive. After any failure nothing of the download is left.
-  'dez.native/downloadUpdate' (version: string, signature: string, onProgress: Channel<UpdateDownloadProgress>): Promise<void> {
-    return invoke('download_update', { version, signature, onProgress })
+  // Checks the release of `version` and downloads its DMG. `manifest` is
+  // the text of the release's manifest as it was fetched (its signature
+  // covers those bytes, so never parse it and write it again), and
+  // `manifestSignature` the text of the manifest's `.minisig` file. After
+  // any failure nothing of the download is left.
+  'dez.native/downloadUpdate' (
+    version: string,
+    manifest: string,
+    manifestSignature: string,
+    onProgress: Channel<UpdateDownloadProgress>,
+  ): Promise<void> {
+    return invoke('download_update', { version, manifest, manifestSignature, onProgress })
   },
 
   // Installs the download of `version`. After any failure the download is

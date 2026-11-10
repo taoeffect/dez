@@ -12,6 +12,7 @@ import HistoryPanel from "../history/HistoryPanel.vue";
 import ToastContainer from "../toast/ToastContainer.vue";
 import ConfirmDialog from "../confirm/ConfirmDialog.vue";
 import UpdateWindow from "../updates/UpdateWindow.vue";
+import UpdateRefusedDialog from "../updates/UpdateRefusedDialog.vue";
 import { shortcutKeyText } from "../../model/shortcuts";
 
 useKeyboardShortcuts();
@@ -78,6 +79,7 @@ onUnmounted(() => {
     <HistoryPanel v-if="settings.historyOpen" @close="sbp('dez.model/settings/historyClose')" />
     <SettingsView v-if="settings.settingsOpen" />
     <UpdateWindow v-if="updates.windowOpen" />
+    <UpdateRefusedDialog v-if="updates.refusal" :refusal="updates.refusal" />
     <ConfirmDialog />
     <ToastContainer area="app-global" />
   </div>

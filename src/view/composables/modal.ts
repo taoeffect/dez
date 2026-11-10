@@ -1,7 +1,7 @@
 import sbp from '@sbp/sbp'
 
-// Shared by the in-app modals (ConfirmDialog.vue, UpdateWindow.vue), so a
-// fix to either rule reaches every modal.
+// Shared by the in-app modals (ConfirmDialog.vue, UpdateWindow.vue,
+// UpdateRefusedDialog.vue), so a fix to either rule reaches every modal.
 
 // Gives the focus back to the element that had it before a modal opened, so
 // the user can go on typing. Does nothing when that element left the DOM.

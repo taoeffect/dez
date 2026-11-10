@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { parseReleaseList, type ReleaseListOptions } from './releases'
+import { hasSignedMacDownload, parseReleaseList, type ReleaseListOptions } from './releases'
 
 const REPO = 'https://github.com/taoeffect/dez'
 
@@ -17,8 +17,14 @@ interface ReleaseFields {
   assets?: { name: string, browser_download_url: string }[]
 }
 
+// One asset of a release, as GitHub lists it: a file `name` in `folder`.
+function asset(name: string, folder = `${REPO}/releases/download/v0.16.0`) {
+  return { name, browser_download_url: `${folder}/${name}` }
+}
+
 // A release as GitHub's "list releases" API sends it (the fields Dez reads
-// and a few that it ignores), with the DMG and signature that CI uploads.
+// and a few that it ignores), with the DMG, the manifest, and the
+// manifest's signature that CI uploads.
 function githubRelease(tag: string, fields: ReleaseFields = {}) {
   const version = tag.replace(/^v/, '')
   const download = `${REPO}/releases/download/${tag}`
@@ -32,9 +38,10 @@ function githubRelease(tag: string, fields: ReleaseFields = {}) {
     published_at: fields.draft ? null : '2026-11-09T01:46:04Z',
     body: fields.body === undefined ? '' : fields.body,
     assets: fields.assets ?? [
-      { name: `Dez_${version}_aarch64.dmg`, browser_download_url: `${download}/Dez_${version}_aarch64.dmg`, size: 9531159 },
-      { name: `Dez_${version}_aarch64.dmg.minisig`, browser_download_url: `${download}/Dez_${version}_aarch64.dmg.minisig`, size: 300 },
-      { name: `Dez_${version}_linux_x86_64.AppImage`, browser_download_url: `${download}/Dez_${version}_linux_x86_64.AppImage`, size: 95316472 },
+      { ...asset(`Dez_${version}_aarch64.dmg`, download), size: 9531159 },
+      { ...asset(`Dez_${version}_aarch64.dmg.manifest.json`, download), size: 420 },
+      { ...asset(`Dez_${version}_aarch64.dmg.manifest.json.minisig`, download), size: 340 },
+      { ...asset(`Dez_${version}_linux_x86_64.AppImage`, download), size: 95316472 },
     ],
   }
 }
@@ -68,7 +75,7 @@ describe('release list', () => {
     expect(releases.map((release) => release.version)).toEqual(['0.16.0'])
   })
 
-  it('gives the page, date, change notes, DMG, and signature of a release', () => {
+  it('gives the page, date, change notes, DMG, manifest, and manifest signature of a release', () => {
     const [release] = parse([githubRelease('v0.16.0', { body: '## Changes\r\n\r\n**NEW**\r\n\r\n- Self-update on macOS' })])
     expect(release).toEqual({
       version: '0.16.0',
@@ -83,36 +90,44 @@ describe('release list', () => {
         name: 'Dez_0.16.0_aarch64.dmg',
         url: `${REPO}/releases/download/v0.16.0/Dez_0.16.0_aarch64.dmg`,
       },
-      signatureAsset: {
-        name: 'Dez_0.16.0_aarch64.dmg.minisig',
-        url: `${REPO}/releases/download/v0.16.0/Dez_0.16.0_aarch64.dmg.minisig`,
+      manifestAsset: {
+        name: 'Dez_0.16.0_aarch64.dmg.manifest.json',
+        url: `${REPO}/releases/download/v0.16.0/Dez_0.16.0_aarch64.dmg.manifest.json`,
+      },
+      manifestSignatureAsset: {
+        name: 'Dez_0.16.0_aarch64.dmg.manifest.json.minisig',
+        url: `${REPO}/releases/download/v0.16.0/Dez_0.16.0_aarch64.dmg.manifest.json.minisig`,
       },
     })
   })
 
-  it('finds the DMG and signature only by their exact names', () => {
-    const download = `${REPO}/releases/download/v0.16.0`
+  // Another architecture's files, another version's files, and a signature
+  // of the DMG itself (which CI no longer makes) are not these assets.
+  it('finds the DMG, the manifest, and its signature only by their exact names', () => {
     const [release] = parse([githubRelease('v0.16.0', {
       assets: [
-        { name: 'Dez_0.16.0_x64.dmg', browser_download_url: `${download}/Dez_0.16.0_x64.dmg` },
-        { name: 'Dez_0.15.1_aarch64.dmg', browser_download_url: `${download}/Dez_0.15.1_aarch64.dmg` },
-        { name: 'Dez_0.15.1_aarch64.dmg.minisig', browser_download_url: `${download}/Dez_0.15.1_aarch64.dmg.minisig` },
-        { name: 'Dez_0.16.0_x64.dmg.minisig', browser_download_url: `${download}/Dez_0.16.0_x64.dmg.minisig` },
+        asset('Dez_0.16.0_x64.dmg'),
+        asset('Dez_0.16.0_x64.dmg.manifest.json'),
+        asset('Dez_0.16.0_x64.dmg.manifest.json.minisig'),
+        asset('Dez_0.15.1_aarch64.dmg'),
+        asset('Dez_0.15.1_aarch64.dmg.manifest.json'),
+        asset('Dez_0.15.1_aarch64.dmg.manifest.json.minisig'),
+        asset('Dez_0.16.0_aarch64.dmg.minisig'),
       ],
     })])
-    expect(release.dmgAsset).toBeNull()
-    expect(release.signatureAsset).toBeNull()
+    expect(release).toMatchObject({ dmgAsset: null, manifestAsset: null, manifestSignatureAsset: null })
   })
 
-  // Releases from before the `sign-macos-dmg` CI job have a DMG and no
-  // `.minisig`; the update window then links to GitHub.
-  it('has a DMG and no signature when the release has only the DMG', () => {
-    const download = `${REPO}/releases/download/v0.16.0`
-    const [release] = parse([githubRelease('v0.16.0', {
-      assets: [{ name: 'Dez_0.16.0_aarch64.dmg', browser_download_url: `${download}/Dez_0.16.0_aarch64.dmg` }],
-    })])
-    expect(release.dmgAsset).toEqual({ name: 'Dez_0.16.0_aarch64.dmg', url: `${download}/Dez_0.16.0_aarch64.dmg` })
-    expect(release.signatureAsset).toBeNull()
+  // Releases from before the `sign-macos-manifest` CI job have a DMG and
+  // no manifest; the update window then links to GitHub.
+  it('has a DMG and no manifest when the release has only the DMG', () => {
+    const dmg = asset('Dez_0.16.0_aarch64.dmg')
+    const [release] = parse([githubRelease('v0.16.0', { assets: [dmg] })])
+    expect(release).toMatchObject({
+      dmgAsset: { name: dmg.name, url: dmg.browser_download_url },
+      manifestAsset: null,
+      manifestSignatureAsset: null,
+    })
   })
 
   // GitHub sends `body: null` for a release with no notes; the list must
@@ -133,16 +148,20 @@ describe('release list', () => {
     }
   })
 
-  it('refuses a newer release whose signature is outside the asset prefix', () => {
-    const assets = [{ name: 'Dez_0.16.0_aarch64.dmg.minisig', browser_download_url: 'https://evil.example/Dez_0.16.0_aarch64.dmg.minisig' }]
+  // The install fetches both files from these URLs.
+  it.each([
+    'Dez_0.16.0_aarch64.dmg.manifest.json',
+    'Dez_0.16.0_aarch64.dmg.manifest.json.minisig',
+  ])('refuses a newer release whose %s is outside the asset prefix', (name) => {
+    const assets = [asset(name, 'https://evil.example')]
     expect(() => parse([githubRelease('v0.16.0', { assets })])).toThrow('outside the Dez repository')
   })
 
   it('accepts assets under another prefix, as a smoke-test server serves them', () => {
     const server = 'http://127.0.0.1:8765/'
-    const assets = [{ name: 'Dez_0.16.0_aarch64.dmg.minisig', browser_download_url: `${server}v0.16.0/Dez_0.16.0_aarch64.dmg.minisig` }]
+    const assets = [asset('Dez_0.16.0_aarch64.dmg.manifest.json', `${server}v0.16.0`)]
     const [release] = parse([githubRelease('v0.16.0', { assets })], { ...OPTIONS, assetUrlPrefix: server })
-    expect(release.signatureAsset?.url).toBe(`${server}v0.16.0/Dez_0.16.0_aarch64.dmg.minisig`)
+    expect(release.manifestAsset?.url).toBe(`${server}v0.16.0/Dez_0.16.0_aarch64.dmg.manifest.json`)
   })
 
   it('ignores a bad URL of a release that is not offered', () => {
@@ -156,5 +175,26 @@ describe('release list', () => {
     expect(() => parseReleaseList(JSON.stringify({ message: 'API rate limit exceeded' }), OPTIONS)).toThrow('unexpected release list')
     const { tag_name: _tagName, ...withoutTag } = githubRelease('v0.16.0')
     expect(() => parse([withoutTag])).toThrow('unexpected release list (0.tag_name')
+  })
+})
+
+describe('hasSignedMacDownload', () => {
+  const NAMES = [
+    'Dez_0.16.0_aarch64.dmg',
+    'Dez_0.16.0_aarch64.dmg.manifest.json',
+    'Dez_0.16.0_aarch64.dmg.manifest.json.minisig',
+  ]
+
+  it('is true for a release with the DMG, the manifest, and the manifest signature', () => {
+    const [release] = parse([githubRelease('v0.16.0', { assets: NAMES.map((name) => asset(name)) })])
+    expect(hasSignedMacDownload(release)).toBe(true)
+  })
+
+  // Rust needs all three: it downloads the DMG and checks it against the
+  // manifest, which it trusts only with its signature.
+  it.each(NAMES)('is false for a release without %s', (missing) => {
+    const assets = NAMES.filter((name) => name !== missing).map((name) => asset(name))
+    const [release] = parse([githubRelease('v0.16.0', { assets })])
+    expect(hasSignedMacDownload(release)).toBe(false)
   })
 })

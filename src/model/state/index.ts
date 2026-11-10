@@ -40,6 +40,7 @@ import {
 } from '../streams/sections'
 import type { EndedStreamSession, RequestMessages } from '../streams/types'
 import type { ModelSnapshot } from '../snapshot'
+import type { UpdateRefusal } from '../updates/refusal'
 import type { Release } from '../updates/releases'
 
 export interface SettingsSnapshot {
@@ -67,9 +68,10 @@ export interface SettingsSnapshot {
 // tab is active again.
 export type TabActivity = 'busy' | 'done'
 
-// The update check, the update window, and the install
+// The update check, the update window, the install, and the refusal dialog
 // (src/model/state/updates.ts). `installBusy`: the install runs, so the
-// window cannot close and no check runs.
+// window cannot close and no check runs. `refusal`: the update that Dez
+// refused, while its dialog is open.
 export interface UpdatesSnapshot {
   status: UpdateCheckStatus
   error: string | null
@@ -78,6 +80,7 @@ export interface UpdatesSnapshot {
   install: UpdateInstall
   installBusy: boolean
   installBlockedReason: string | null
+  refusal: UpdateRefusal | null
 }
 
 type ContentNodeData =
@@ -468,7 +471,8 @@ function cloneRelease(release: Release): Release {
     ...release,
     changes: release.changes.map((block) => block.kind === 'list' ? { ...block, items: [...block.items] } : { ...block }),
     dmgAsset: release.dmgAsset && { ...release.dmgAsset },
-    signatureAsset: release.signatureAsset && { ...release.signatureAsset },
+    manifestAsset: release.manifestAsset && { ...release.manifestAsset },
+    manifestSignatureAsset: release.manifestSignatureAsset && { ...release.manifestSignatureAsset },
   }
 }
 
@@ -1344,6 +1348,7 @@ export default sbp('sbp/selectors/register', {
       install: { ...store.install },
       installBusy: installIsBusy(store.install),
       installBlockedReason: store.installBlockedReason,
+      refusal: store.refusal && { ...store.refusal },
     }
   },
 
@@ -1385,8 +1390,9 @@ export default sbp('sbp/selectors/register', {
 
   // Does nothing while the install runs: the user waits for it to end or
   // fail, so the window stays open for every caller (Esc, ×, a notification
-  // click). A failed install is forgotten, so the window opens the next time
-  // with no old error.
+  // click). A failed or refused install is forgotten, so the window opens
+  // the next time with no old error. An open refusal dialog stays
+  // (dez.model/updates/closeRefusal).
   'dez.model/updates/closeWindow' (): void {
     const store = useUpdatesStore()
     if (installIsBusy(store.install)) return
@@ -1400,6 +1406,29 @@ export default sbp('sbp/selectors/register', {
 
   'dez.model/updates/setInstallBlockedReason' (reason: string | null): void {
     useUpdatesStore().installBlockedReason = reason
+  },
+
+  // The install ended because the release failed one of its four checks.
+  // Opens the refusal dialog over the update window, which shows no button
+  // from then on (the `refused` phase, updates.ts).
+  'dez.model/updates/setRefusal' (refusal: UpdateRefusal): void {
+    const store = useUpdatesStore()
+    store.refusal = { ...refusal }
+    store.install = { phase: 'refused' }
+  },
+
+  'dez.model/updates/isRefusalOpen' (): boolean {
+    return useUpdatesStore().refusal !== null
+  },
+
+  // Closes the refusal dialog, and with it the update window whose install
+  // was refused: that window has nothing more to offer. A window that
+  // closed under the dialog and opened again since then has a new install
+  // state, and stays.
+  'dez.model/updates/closeRefusal' (): void {
+    const store = useUpdatesStore()
+    store.refusal = null
+    if (store.install.phase === 'refused') sbp('dez.model/updates/closeWindow')
   },
 
   // Error-handling boundary for the history panel: full-text search (empty

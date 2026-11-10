@@ -16,10 +16,24 @@ export interface Release {
   url: string
   publishedAt: string | null
   changes: ChangeBlock[]
-  // The Apple Silicon DMG and its minisign signature. A release without both
-  // cannot update a macOS install; the update window then links to GitHub.
+  // What a macOS Dez needs to install the release by itself: the Apple
+  // Silicon DMG, the release manifest (the version that the developer
+  // signed, that signature, and the DMG's SHA-256), and the manifest's
+  // minisign signature. A release without all three cannot update a macOS
+  // install; the update window then links to GitHub.
   dmgAsset: ReleaseAsset | null
-  signatureAsset: ReleaseAsset | null
+  manifestAsset: ReleaseAsset | null
+  manifestSignatureAsset: ReleaseAsset | null
+}
+
+// A release that has the three assets of a macOS update.
+export type SignedMacRelease = Release & {
+  [Asset in 'dmgAsset' | 'manifestAsset' | 'manifestSignatureAsset']: ReleaseAsset
+}
+
+// Whether a macOS Dez can install `release` by itself (see `Release`).
+export function hasSignedMacDownload(release: Release): release is SignedMacRelease {
+  return Boolean(release.dmgAsset && release.manifestAsset && release.manifestSignatureAsset)
 }
 
 export interface ReleaseListOptions {
@@ -27,7 +41,8 @@ export interface ReleaseListOptions {
   currentVersion: string
   // Every release page URL must start with this; end it with `/`.
   releaseUrlPrefix: string
-  // The DMG and signature URLs must start with this; end it with `/`.
+  // The DMG, manifest, and signature URLs must start with this; end it
+  // with `/`.
   assetUrlPrefix: string
 }
 
@@ -73,9 +88,10 @@ export function parseReleaseList(text: string, options: ReleaseListOptions): Rel
     const version = STABLE_TAG.exec(release.tag_name)?.[1]
     if (!version || !isNewerVersion(version, options.currentVersion)) continue
 
-    // The names that `build-macos-dmg` and `sign-macos-dmg` upload
+    // The names that `build-macos-dmg` and `sign-macos-manifest` upload
     // (.github/workflows/release-desktop.yml).
     const dmgName = `Dez_${version}_aarch64.dmg`
+    const manifestName = `${dmgName}.manifest.json`
     const asset = (name: string): ReleaseAsset | null => {
       const found = release.assets.find((candidate) => candidate.name === name)
       return found ? { name, url: checkedUrl(found.browser_download_url, options.assetUrlPrefix) } : null
@@ -87,7 +103,8 @@ export function parseReleaseList(text: string, options: ReleaseListOptions): Rel
       publishedAt: release.published_at,
       changes: releaseChanges(release.body),
       dmgAsset: asset(dmgName),
-      signatureAsset: asset(`${dmgName}.minisig`),
+      manifestAsset: asset(manifestName),
+      manifestSignatureAsset: asset(`${manifestName}.minisig`),
     })
   }
   return releases.sort((a, b) => {
@@ -97,9 +114,10 @@ export function parseReleaseList(text: string, options: ReleaseListOptions): Rel
 }
 
 // Returns `url` normalized, or throws when it is not under `prefix`. The
-// update window opens release pages in the browser and fetches the signature
-// from its asset URL, so a corrupt response must not send either elsewhere.
-// Normalizing first stops a `..` segment from leaving the prefix.
+// update window opens release pages in the browser, and the install fetches
+// the manifest and its signature from their asset URLs, so a corrupt
+// response must not send any of them elsewhere. Normalizing first stops a
+// `..` segment from leaving the prefix.
 function checkedUrl(url: string, prefix: string): string {
   let href: string | null = null
   try {

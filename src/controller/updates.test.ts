@@ -4,6 +4,7 @@ import { afterEach, beforeEach, describe, expect, it, vi, type MockInstance } fr
 import type { UpdatesSnapshot } from '../model/state'
 import type { WindowGeometry } from '../model/state/settings'
 import { cancelStreamSession, startStreamSession, streamIsStreaming } from '../model/state/streams'
+import { refusalReport, type UpdateRefusal } from '../model/updates/refusal'
 import type { ToastData } from '../view/toast/selectors'
 import type { NativeHttpRequest, NativeHttpResponse } from '../utils/protocol/nativeHttp'
 import type { UpdateDownloadProgress } from './nativeTypes'
@@ -30,11 +31,21 @@ interface ProgressChannel {
 const APP_DIR = '/Users/someone/.config/dez'
 // The geometry that the stub window gives the settings store.
 const WINDOW: WindowGeometry = { width: 1100, height: 760, x: 120, y: 80, maximized: false }
-// The `.minisig` text that the stub GitHub serves for every release.
+// The texts that the stub GitHub serves for every release: the manifest,
+// with the line breaks and spaces that jq writes, and the manifest's
+// `.minisig` file.
+const MANIFEST = '{\n  "version": "99.0.0",\n  "versionSignature": "untrusted comment: signature\\nRUQa1\\n",\n  "dmgSha256": "5e1f"\n}\n'
 const SIGNATURE = 'untrusted comment: signature from minisign secret key\nRUQf6LRCGA9i5\n'
 
-// What the stub GitHub request answers; set by each test.
+function textResponse(text: string): NativeHttpResponse {
+  return { status: 200, headers: {}, body: [...new TextEncoder().encode(text)] }
+}
+
+// What the stub GitHub answers to the release list request and to the
+// request of a release's manifest; set by each test.
 let answer: () => Promise<NativeHttpResponse>
+let manifestAnswer: () => Promise<NativeHttpResponse>
+// The release list requests.
 let requests = 0
 let toasts: ToastData[] = []
 let consoleError: MockInstance<typeof console.error>
@@ -48,7 +59,9 @@ let download: (progress: ProgressChannel) => Promise<void>
 let install: () => Promise<void>
 let relaunch: () => Promise<void>
 let blockedReason: () => Promise<string | null>
-let downloadedSignature: string | null
+// The two texts that the stub Rust download got.
+let downloaded: { manifest: string, manifestSignature: string } | null
+let openedUrls: string[] = []
 let saveError: unknown
 let deleteError: unknown
 let confirmAnswer: boolean
@@ -58,9 +71,8 @@ let onConfirm: () => void
 
 sbp('sbp/selectors/register', {
   'dez.native/httpRequest' (request: NativeHttpRequest): Promise<NativeHttpResponse> {
-    if (request.url.endsWith('.minisig')) {
-      return Promise.resolve({ status: 200, headers: {}, body: [...new TextEncoder().encode(SIGNATURE)] })
-    }
+    if (request.url.endsWith('.manifest.json')) return manifestAnswer()
+    if (request.url.endsWith('.manifest.json.minisig')) return Promise.resolve(textResponse(SIGNATURE))
     requests++
     return answer()
   },
@@ -70,9 +82,9 @@ sbp('sbp/selectors/register', {
   'dez.native/canInstallUpdate' (): Promise<string | null> {
     return blockedReason()
   },
-  'dez.native/downloadUpdate' (version: string, signature: string, progress: ProgressChannel): Promise<void> {
+  'dez.native/downloadUpdate' (version: string, manifest: string, manifestSignature: string, progress: ProgressChannel): Promise<void> {
     calls.push(`download ${version}`)
-    downloadedSignature = signature
+    downloaded = { manifest, manifestSignature }
     return download(progress)
   },
   'dez.native/installUpdate' (version: string): Promise<void> {
@@ -110,6 +122,9 @@ sbp('sbp/selectors/register', {
     calls.push('stop reply')
     cancelStreamSession(tabId)
   },
+  'dez.controller/openUrl' (url: string): void {
+    openedUrls.push(url)
+  },
   // Like the real one, it reads the window (asynchronously), then writes
   // the geometry to the settings store; the settings save writes the file.
   async 'dez.controller/window/flushGeometry' (): Promise<void> {
@@ -123,8 +138,9 @@ sbp('sbp/selectors/register', {
 })
 
 // GitHub's release list with one published release per version, each with
-// the DMG and signature that the install downloads. The running version is
-// package.json's (`__APP_VERSION__`), so 99.0.0 is newer and 0.0.1 is older.
+// the DMG, the manifest, and the manifest signature of an install. The
+// running version is package.json's (`__APP_VERSION__`), so 99.0.0 is newer
+// and 0.0.1 is older.
 function releaseList(...versions: string[]): NativeHttpResponse {
   const releases = versions.map((version) => {
     const dmg = `Dez_${version}_aarch64.dmg`
@@ -135,13 +151,13 @@ function releaseList(...versions: string[]): NativeHttpResponse {
       prerelease: false,
       published_at: '2026-11-01T12:00:00Z',
       body: null,
-      assets: [dmg, `${dmg}.minisig`].map((name) => ({
+      assets: [dmg, `${dmg}.manifest.json`, `${dmg}.manifest.json.minisig`].map((name) => ({
         name,
         browser_download_url: `https://github.com/taoeffect/dez/releases/download/v${version}/${name}`,
       })),
     }
   })
-  return { status: 200, headers: {}, body: [...new TextEncoder().encode(JSON.stringify(releases))] }
+  return textResponse(JSON.stringify(releases))
 }
 
 function check(report: UpdateCheckReport): Promise<void> {
@@ -155,6 +171,7 @@ function updates(): UpdatesSnapshot {
 beforeEach(() => {
   setActivePinia(createPinia())
   answer = async () => releaseList('0.0.1')
+  manifestAnswer = async () => textResponse(MANIFEST)
   requests = 0
   toasts = []
   consoleError = vi.spyOn(console, 'error').mockImplementation(() => {})
@@ -164,7 +181,8 @@ beforeEach(() => {
   install = async () => {}
   relaunch = async () => {}
   blockedReason = async () => null
-  downloadedSignature = null
+  downloaded = null
+  openedUrls = []
   saveError = null
   deleteError = null
   confirmAnswer = true
@@ -351,7 +369,9 @@ describe('dez.controller/updates/install', () => {
     return tabId
   }
 
-  it('installs the newest release with its signature, then saves everything, then relaunches', async () => {
+  // The manifest's signature covers its bytes, so Rust must get the text as
+  // GitHub served it.
+  it('installs the newest release with its manifest and signature as served, then saves everything, then relaunches', async () => {
     await openWindow()
     // A draft that only the tab store has: the editor's debounced save may
     // not have written it yet.
@@ -375,7 +395,7 @@ describe('dez.controller/updates/install', () => {
     await installUpdate()
 
     expect(confirms).toBe(0)
-    expect(downloadedSignature).toBe(SIGNATURE)
+    expect(downloaded).toEqual({ manifest: MANIFEST, manifestSignature: SIGNATURE })
     expect(phases).toEqual([
       { phase: 'downloading', received: 0, total: null },
       { phase: 'downloading', received: 4_200_000, total: 9_500_000 },
@@ -465,11 +485,11 @@ describe('dez.controller/updates/install', () => {
       step: 'download',
       fail: () => {
         download = async () => {
-          throw 'The download does not match its signature.'
+          throw 'error sending request for url (https://github.com/taoeffect/dez/releases/download/v99.0.0/Dez_99.0.0_aarch64.dmg)'
         }
       },
       steps: ['download 99.0.0'],
-      error: 'The download does not match its signature.',
+      error: 'error sending request for url (https://github.com/taoeffect/dez/releases/download/v99.0.0/Dez_99.0.0_aarch64.dmg)',
     },
     {
       step: 'install',
@@ -493,6 +513,20 @@ describe('dez.controller/updates/install', () => {
     expect(streamIsStreaming(tabId)).toBe(true)
     expect(files.has(PENDING_FILE)).toBe(false)
     expect(consoleError).toHaveBeenCalled()
+  })
+
+  // Rust has then checked nothing, so nothing says that the release is bad.
+  it('a manifest that GitHub does not serve is a failure with a retry, not a refusal', async () => {
+    await openWindow()
+    manifestAnswer = async () => ({ status: 404, headers: {}, body: [] })
+
+    await installUpdate()
+
+    expect(calls).toEqual([])
+    expect(updates()).toMatchObject({
+      install: { phase: 'failed', error: 'GitHub answered the download of the update manifest with HTTP 404', retry: true },
+      refusal: null,
+    })
   })
 
   it('after a failure, Try Again downloads again', async () => {
@@ -579,6 +613,112 @@ describe('dez.controller/updates/install', () => {
     finishDownload()
     await running
     expect(calls.at(-1)).toBe('relaunch')
+  })
+
+  describe('a release that fails a check', () => {
+    // Rust rejects with this object, not with a string.
+    const FAILED = {
+      check: 'versionSignature',
+      message: "The signature of the update's version is from a key that Dez does not trust.",
+    } as const
+    const REFUSAL: UpdateRefusal = { version: '99.0.0', ...FAILED }
+
+    // The update window after the download of 99.0.0 was refused.
+    async function refuseDownload(): Promise<void> {
+      await openWindow()
+      download = async () => {
+        throw FAILED
+      }
+      await installUpdate()
+    }
+
+    it.each([
+      {
+        step: 'download',
+        refuse: () => {
+          download = async () => {
+            throw FAILED
+          }
+        },
+        steps: ['download 99.0.0'],
+      },
+      {
+        step: 'install',
+        refuse: () => {
+          install = async () => {
+            throw FAILED
+          }
+        },
+        steps: ['download 99.0.0', 'install 99.0.0'],
+      },
+    ])('in the $step: the refusal dialog opens over the window, which offers no retry; no reply stops', async ({ refuse, steps }) => {
+      await openWindow()
+      const tabId = startReply()
+      refuse()
+
+      await installUpdate()
+
+      expect(calls).toEqual(steps)
+      expect(updates()).toMatchObject({ refusal: REFUSAL, install: { phase: 'refused' }, installBusy: false, windowOpen: true })
+      expect(sbp('dez.model/updates/isRefusalOpen')).toBe(true)
+      expect(streamIsStreaming(tabId)).toBe(true)
+      expect(files.has(PENDING_FILE)).toBe(false)
+      expect(consoleError).toHaveBeenCalled()
+    })
+
+    it('closing the dialog closes the window too, and the window opens the next time with a new install', async () => {
+      await refuseDownload()
+
+      sbp('dez.model/updates/closeRefusal')
+      expect(updates()).toMatchObject({ refusal: null, windowOpen: false })
+      expect(sbp('dez.model/updates/isRefusalOpen')).toBe(false)
+      sbp('dez.model/updates/openWindow')
+
+      expect(updates()).toMatchObject({ refusal: null, windowOpen: true, install: { phase: 'idle' } })
+    })
+
+    // A notification click closes the window; only the user closes the
+    // warning.
+    it('the dialog stays when the window closes under it', async () => {
+      await refuseDownload()
+
+      sbp('dez.model/updates/closeWindow')
+
+      expect(updates()).toMatchObject({ refusal: REFUSAL, windowOpen: false })
+    })
+
+    // "Check for Updates…" in the menu can open the window again under the
+    // dialog.
+    it('closing the dialog leaves a window that opened again under it', async () => {
+      await refuseDownload()
+      sbp('dez.model/updates/closeWindow')
+      sbp('dez.model/updates/openWindow')
+
+      sbp('dez.model/updates/closeRefusal')
+
+      expect(updates()).toMatchObject({ refusal: null, windowOpen: true, install: { phase: 'idle' } })
+    })
+  })
+})
+
+describe('dez.controller/updates/reportRefusal', () => {
+  // The report has line breaks, quotes, and an apostrophe, which must come
+  // out of the link as they went in.
+  it('opens a new issue of the Dez repository with the report filled in', () => {
+    const refusal: UpdateRefusal = {
+      version: '99.0.0',
+      check: 'version',
+      message: 'The update\'s manifest is for version "98.0.0", not for Dez 99.0.0.',
+    }
+    sbp('dez.model/updates/setRefusal', refusal)
+
+    sbp('dez.controller/updates/reportRefusal')
+
+    expect(openedUrls).toHaveLength(1)
+    const url = new URL(openedUrls[0])
+    expect(`${url.origin}${url.pathname}`).toBe('https://github.com/taoeffect/dez/issues/new')
+    expect(url.searchParams.get('title')).toBe('Dez refused the update to Dez 99.0.0 (version)')
+    expect(url.searchParams.get('body')).toBe(refusalReport(refusal, __APP_VERSION__))
   })
 })
 

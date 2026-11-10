@@ -3,6 +3,7 @@ import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import sbp from '@sbp/sbp'
 import { useModelState } from '../modelState'
 import { keepTabInModal, restoreFocus, useOverlayDismiss } from '../composables/modal'
+import { hasSignedMacDownload } from '../../model/updates/releases'
 import { isMacPlatform } from '../../utils/platform'
 
 const { updates } = useModelState()
@@ -18,10 +19,16 @@ const install = computed(() => updates.value.install)
 // While the install runs, the window has no buttons and cannot close
 // (`dez.model/updates/closeWindow` refuses).
 const busy = computed(() => updates.value.installBusy)
+// The release failed one of its checks, and the refusal dialog is open over
+// this window (UpdateRefusedDialog.vue). The window then has no buttons
+// either: a retry or the release page would only give the user the files
+// that failed. It closes with the dialog (`dez.model/updates/closeRefusal`).
+const refused = computed(() => install.value.phase === 'refused')
 // Only macOS installs updates; elsewhere the store has no reason, and the
 // window just offers the release page.
-const hasSignedDmg = computed(() => Boolean(newest.value.dmgAsset && newest.value.signatureAsset))
-const canInstall = computed(() => isMacPlatform && !updates.value.installBlockedReason && hasSignedDmg.value)
+const canInstall = computed(() => (
+  isMacPlatform && !updates.value.installBlockedReason && hasSignedMacDownload(newest.value)
+))
 // Why a macOS Dez offers the release page instead of the install.
 const installUnavailableNote = computed(() => {
   if (!isMacPlatform || canInstall.value) return null
@@ -138,7 +145,7 @@ const { onOverlayMouseDown, onOverlayClick } = useOverlayDismiss(close)
           <h2 id="update-title">Dez {{ newest.version }} is available</h2>
           <p>You have Dez {{ appVersion }}.</p>
         </div>
-        <button v-if="!busy" class="update-close" title="Close (Esc)" @click="close">×</button>
+        <button v-if="!busy && !refused" class="update-close" title="Close (Esc)" @click="close">×</button>
       </div>
 
       <!-- Text bindings only: the change notes come from GitHub, so they are
@@ -184,8 +191,10 @@ const { onOverlayMouseDown, onOverlayClick } = useOverlayDismiss(close)
         <p v-else-if="install.phase === 'failed'" class="update-note update-note--error" role="alert">
           {{ install.error }}
         </p>
+        <!-- No role="alert": the refusal dialog over the window is the alert. -->
+        <p v-else-if="refused" class="update-note update-note--error">Dez refused this update.</p>
         <p v-else-if="installUnavailableNote" class="update-note">{{ installUnavailableNote }}</p>
-        <div v-if="!busy" class="update-buttons">
+        <div v-if="!busy && !refused" class="update-buttons">
           <button class="update-btn" @click="close">Later</button>
           <!-- After a failure, the release page is the way out besides a retry. -->
           <button
