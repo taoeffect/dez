@@ -17,8 +17,9 @@ export function isModalOpen(): boolean {
   );
 }
 
-// Esc closes the innermost open thing first: the model dropdown
-// (ModelSelector.vue takes the key before this handler), the confirm prompt
+// Esc closes the innermost open thing first: a model picker's output filter
+// dropdown and the model dropdown (ModelOutputFilter.vue and
+// ModelSelector.vue take the key before this handler), the confirm prompt
 // (it can sit on top of Settings or History), Settings or History, the
 // prompt autocomplete, find. With none open, it is the Stop key (Esc by
 // default). tests/e2e/submit-stop.e2e.ts covers the order.

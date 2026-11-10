@@ -11,6 +11,7 @@ import type { DefaultModel, Theme, WindowGeometry } from '../state/settings'
 import { EDITOR_FONT_SIZE_DEFAULT, clampEditorFontSize } from '../editorFontSize'
 import { DONE_SOUND_VOLUME_DEFAULT, clampDoneSoundVolume } from '../doneSoundVolume'
 import { currentShortcutPlatform, parseShortcutOverrides } from '../shortcuts'
+import { normalizeOutputs } from '../modelOutputs'
 
 const themeSchema = z.enum(['light', 'dark', 'system'])
 const defaultModelSchema = z.object({
@@ -149,6 +150,7 @@ export function defaultAppState(): AppStatePayload {
     defaultNewTabModel: null,
     lastUsedModel: null,
     favorites: [],
+    modelOutputFilter: [],
     providerSettings: {},
     checkForUpdates: true,
     lastUpdateCheckAt: null,
@@ -189,6 +191,10 @@ export function parseAppStateJson(content: string): AppStatePayload {
       favorites: Array.isArray(parsed.favorites)
         ? parsed.favorites.map(defaultModel).filter((item): item is DefaultModel => item !== null)
         : fallback.favorites,
+      // Unknown types are dropped, so a hand edit never hides every model.
+      modelOutputFilter: Array.isArray(parsed.modelOutputFilter)
+        ? normalizeOutputs(parsed.modelOutputFilter)
+        : fallback.modelOutputFilter,
       providerSettings: providerSettings(parsed.providerSettings),
       checkForUpdates: typeof parsed.checkForUpdates === 'boolean'
         ? parsed.checkForUpdates

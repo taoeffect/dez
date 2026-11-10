@@ -5,6 +5,7 @@ import {
   normalizeOutputs,
   outputLetters,
   parseOutputLetters,
+  toggleOutputFilter,
   type ModelOutput,
 } from './modelOutputs'
 
@@ -63,6 +64,16 @@ describe('model outputs', () => {
     expect(matchesOutputFilter(unknown, ['text'])).toBe(true)
     expect(matchesOutputFilter(unknown, ['image'])).toBe(false)
     expect(matchesOutputFilter(none, ['text', 'image', 'audio', 'video'])).toBe(false)
+  })
+
+  it('toggles one type of the filter; an empty filter is "All"', () => {
+    // A first type replaces "All".
+    expect(toggleOutputFilter([], 'video')).toStrictEqual(['video'])
+    // More types stay in table order.
+    expect(toggleOutputFilter(['video'], 'text')).toStrictEqual(['text', 'video'])
+    expect(toggleOutputFilter(['text', 'video'], 'text')).toStrictEqual(['video'])
+    // The removal of the last type gives "All" again.
+    expect(toggleOutputFilter(['video'], 'video')).toStrictEqual([])
   })
 
   it('normalizes a list to known outputs, once each, in table order', () => {

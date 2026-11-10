@@ -631,6 +631,34 @@ describe('dez.model/settings reply-end alerts', () => {
   })
 })
 
+describe('dez.model/settings/setModelOutputFilter', () => {
+  const filter = () => (sbp('dez.model/settings/snapshot') as SettingsSnapshot).modelOutputFilter
+
+  afterEach(() => {
+    sbp('dez.model/settings/stopPersistence')
+    vi.useRealTimers()
+  })
+
+  it('keeps the known types, once each, in table order', () => {
+    sbp('dez.model/settings/setModelOutputFilter', ['video', 'speech', 'text', 'video'])
+    expect(filter()).toStrictEqual(['text', 'video'])
+    sbp('dez.model/settings/setModelOutputFilter', [])
+    expect(filter()).toStrictEqual([])
+  })
+
+  it('loads the saved filter, and saves a change', async () => {
+    diskAppState = { modelOutputFilter: ['image'] }
+    await sbp('dez.model/settings/init')
+    expect(filter()).toStrictEqual(['image'])
+
+    vi.useFakeTimers()
+    sbp('dez.model/settings/startPersistence')
+    sbp('dez.model/settings/setModelOutputFilter', ['audio', 'image'])
+    await vi.advanceTimersByTimeAsync(1000)
+    expect(savedAppStates.at(-1)?.modelOutputFilter).toStrictEqual(['image', 'audio'])
+  })
+})
+
 describe('dez.model/settings shortcuts', () => {
   const overrides = () => (sbp('dez.model/settings/snapshot') as SettingsSnapshot).shortcutOverrides
   const keyOf = (id: ShortcutId) => (sbp('dez.model/settings/shortcuts') as Shortcut[]).find((shortcut) => shortcut.id === id)?.keys

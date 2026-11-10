@@ -1,6 +1,7 @@
 import { defineStore } from 'pinia'
 import { computed, ref } from 'vue'
 import type { ProviderConfig } from '../providers/config'
+import type { ModelOutput } from '../modelOutputs'
 import { EDITOR_FONT_SIZE_DEFAULT } from '../editorFontSize'
 import { DONE_SOUND_VOLUME_DEFAULT } from '../doneSoundVolume'
 import { currentShortcutPlatform, resolveShortcuts, type ShortcutOverrides } from '../shortcuts'
@@ -40,6 +41,9 @@ export const useSettingsStore = defineStore('settings', () => {
   const defaultNewTabModel = ref<DefaultModel | null>(null)
   const lastUsedModel = ref<DefaultModel | null>(null)
   const favorites = ref<DefaultModel[]>([])
+  // The model pickers' output filter (both pickers share it): the output
+  // types to show, in table order; empty shows every model.
+  const modelOutputFilter = ref<ModelOutput[]>([])
   // Sparse per-provider setting overrides keyed by provider id then setting
   // key; effective value = stored value ?? provider descriptor default.
   const providerSettings = ref<Record<string, Record<string, boolean>>>({})
@@ -124,6 +128,7 @@ export const useSettingsStore = defineStore('settings', () => {
     defaultNewTabModel,
     lastUsedModel,
     favorites,
+    modelOutputFilter,
     providerSettings,
     checkForUpdates,
     lastUpdateCheckAt,

@@ -48,7 +48,7 @@ export function modelListText(cache: ModelCache, providers: readonly ProviderInf
 
   const terms = searchTerms(filter ?? '')
   const quotedFilter = terms.length > 0 ? JSON.stringify(filter) : null
-  const lines = matchingModelsByProvider(providers, models, terms).flatMap(({ provider, models: matches }) =>
+  const lines = matchingModelsByProvider(providers, models, { terms, outputs: [] }).flatMap(({ provider, models: matches }) =>
     matches.map((model) => {
       const fullId = modelRefKey({ providerId: provider.id, modelId: model.id })
       return `${fullId} | ${columnText(model.name)} | ${columnText(provider.name)}`

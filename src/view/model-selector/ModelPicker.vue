@@ -2,8 +2,9 @@
 import { ref, computed, onMounted, nextTick } from 'vue'
 import sbp from '@sbp/sbp'
 import { useModelState } from '../modelState'
-import { availableModels, matchingModelsByProvider, modelMatches, searchTerms } from '../../model/modelSearch'
+import { availableModels, matchingModelsByProvider, modelMatchesQuery, searchTerms, type ModelQuery } from '../../model/modelSearch'
 import type { ModelInfo, ProviderInfo } from '../../model/providers'
+import ModelOutputFilter from './ModelOutputFilter.vue'
 
 interface DisplayModel extends ModelInfo {
   providerName: string
@@ -52,8 +53,10 @@ const providers = ref<ProviderInfo[]>([])
 
 const visibleModels = computed(() => availableModels(modelCache.value, providers.value))
 
+// The search and the output filter (a setting that both pickers share) apply
+// to every group, Favorites too.
 const filteredGrouped = computed<GroupedModels[]>(() => {
-  const terms = searchTerms(searchQuery.value)
+  const query: ModelQuery = { terms: searchTerms(searchQuery.value), outputs: settings.value.modelOutputFilter }
   const groups: GroupedModels[] = []
 
   if (props.showFavorites) {
@@ -61,14 +64,14 @@ const filteredGrouped = computed<GroupedModels[]>(() => {
     for (const fav of settings.value.favorites) {
       const provider = providers.value.find((p) => p.id === fav.providerId)
       const m = visibleModels.value.find((x) => x.provider === fav.providerId && x.id === fav.modelId)
-      if (provider && m && modelMatches(provider, m, terms)) favModels.push({ ...m, providerName: provider.name })
+      if (provider && m && modelMatchesQuery(provider, m, query)) favModels.push({ ...m, providerName: provider.name })
     }
     if (favModels.length > 0) {
       groups.push({ providerId: '__favorites__', providerName: 'Favorites', models: favModels })
     }
   }
 
-  for (const { provider, models } of matchingModelsByProvider(providers.value, visibleModels.value, terms)) {
+  for (const { provider, models } of matchingModelsByProvider(providers.value, visibleModels.value, query)) {
     groups.push({
       providerId: provider.id,
       providerName: provider.name,
@@ -131,6 +134,10 @@ onMounted(async () => {
         placeholder="Search models…"
         @keydown.escape.stop="$emit('configure')"
       />
+      <ModelOutputFilter
+        :model-value="settings.modelOutputFilter"
+        @update:model-value="sbp('dez.model/settings/setModelOutputFilter', $event)"
+      />
     </div>
     <div class="model-picker-list">
       <button
@@ -188,20 +195,27 @@ onMounted(async () => {
 </template>
 
 <style scoped>
+/* At least as tall as the search row plus the output filter's dropdown,
+   which hangs over the model list: with few models (or none that pass the
+   filter) the picker would else end above the dropdown's last rows, and in
+   the bottom bar those rows would leave the window. */
 .model-picker {
   display: flex;
   flex-direction: column;
-  min-height: 0;
+  min-height: 200px;
   height: 100%;
 }
 
 .model-picker-search {
+  display: flex;
+  gap: 6px;
   padding: 8px;
   border-bottom: 1px solid var(--color-border);
 }
 
 .model-picker-input {
-  width: 100%;
+  flex: 1;
+  min-width: 0;
   padding: 6px 8px;
   border: 1px solid var(--color-border);
   border-radius: 6px;

@@ -10,6 +10,7 @@ import { useModelCacheStore } from './modelCache'
 import { usePromptsStore, type Prompt } from './prompts'
 import { useSettingsStore, type DefaultModel, type SettingsSection, type Theme, type WindowGeometry } from './settings'
 import { clampEditorFontSize } from '../editorFontSize'
+import { normalizeOutputs, type ModelOutput } from '../modelOutputs'
 import { clampDoneSoundVolume } from '../doneSoundVolume'
 import { currentShortcutPlatform, findShortcut, normalizeShortcutKey, validateShortcutKey, type Shortcut, type ShortcutId, type ShortcutOverrides } from '../shortcuts'
 import { MAX_CLOSED_TABS, NEW_TAB_TITLE, useTabStore } from './tabs'
@@ -48,6 +49,7 @@ export interface SettingsSnapshot {
   defaultNewTabModel: DefaultModel | null
   lastUsedModel: DefaultModel | null
   favorites: DefaultModel[]
+  modelOutputFilter: ModelOutput[]
   providerSettings: Record<string, Record<string, boolean>>
   checkForUpdates: boolean
   lastUpdateCheckAt: number | null
@@ -242,6 +244,7 @@ function cloneSettings(settings = useSettingsStore()): SettingsSnapshot {
     defaultNewTabModel: cloneDefaultModel(settings.defaultNewTabModel),
     lastUsedModel: cloneDefaultModel(settings.lastUsedModel),
     favorites: settings.favorites.map((favorite) => ({ ...favorite })),
+    modelOutputFilter: [...settings.modelOutputFilter],
     providerSettings: cloneProviderSettings(settings.providerSettings),
     checkForUpdates: settings.checkForUpdates,
     lastUpdateCheckAt: settings.lastUpdateCheckAt,
@@ -722,6 +725,7 @@ export default sbp('sbp/selectors/register', {
         defaultNewTabModel: settings.defaultNewTabModel,
         lastUsedModel: settings.lastUsedModel,
         favorites: settings.favorites,
+        modelOutputFilter: settings.modelOutputFilter,
         providerSettings: settings.providerSettings,
         checkForUpdates: settings.checkForUpdates,
         lastUpdateCheckAt: settings.lastUpdateCheckAt,
@@ -872,6 +876,7 @@ export default sbp('sbp/selectors/register', {
       if (state.defaultNewTabModel !== undefined) settings.defaultNewTabModel = state.defaultNewTabModel
       if (state.lastUsedModel !== undefined) settings.lastUsedModel = state.lastUsedModel
       if (Array.isArray(state.favorites)) settings.favorites = state.favorites
+      if (Array.isArray(state.modelOutputFilter)) settings.modelOutputFilter = state.modelOutputFilter
       if (state.providerSettings) settings.providerSettings = state.providerSettings
       if (typeof state.checkForUpdates === 'boolean') settings.checkForUpdates = state.checkForUpdates
       if (typeof state.lastUpdateCheckAt === 'number') settings.lastUpdateCheckAt = state.lastUpdateCheckAt
@@ -906,6 +911,7 @@ export default sbp('sbp/selectors/register', {
         () => settings.defaultNewTabModel,
         () => settings.lastUsedModel,
         () => settings.favorites,
+        () => settings.modelOutputFilter,
         () => settings.providerSettings,
         () => settings.checkForUpdates,
         () => settings.lastUpdateCheckAt,
@@ -1096,6 +1102,12 @@ export default sbp('sbp/selectors/register', {
     } else {
       favorites.push({ providerId, modelId })
     }
+  },
+
+  // The output filter of both model pickers: the output types to show;
+  // empty shows every model. Unknown types are dropped.
+  'dez.model/settings/setModelOutputFilter' (outputs: readonly ModelOutput[]): void {
+    useSettingsStore().modelOutputFilter = normalizeOutputs(outputs)
   },
 
   'dez.model/customProviders/list' (): ProviderConfig[] {

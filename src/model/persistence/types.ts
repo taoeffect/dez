@@ -1,4 +1,5 @@
 import type { ActiveModel, ModelRef, SectionThinking } from '../chat/types'
+import type { ModelOutput } from '../modelOutputs'
 import type { ProviderConfig } from '../providers/config'
 import type { ModelInfo, ProviderId } from '../providers/types'
 import type { Prompt } from '../state/prompts'
@@ -109,6 +110,8 @@ export interface AppStatePayload {
   defaultNewTabModel?: DefaultModel | null
   lastUsedModel?: DefaultModel | null
   favorites?: DefaultModel[]
+  // The model pickers' output filter; empty (or missing) shows every model.
+  modelOutputFilter?: ModelOutput[]
   providerSettings?: Record<string, Record<string, boolean>>
   checkForUpdates?: boolean
   lastUpdateCheckAt?: number | null

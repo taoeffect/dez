@@ -1,4 +1,5 @@
 import type { ActiveModel, ContentNode, ModelRef, SectionThinking } from './chat/types'
+import type { ModelOutput } from './modelOutputs'
 import type { ProviderConfig } from './providers/config'
 import type { Prompt } from './state/prompts'
 import type { DefaultModel, Theme, WindowGeometry } from './state/settings'
@@ -30,6 +31,7 @@ export interface ModelSnapshot {
     defaultNewTabModel: DefaultModel | null
     lastUsedModel: DefaultModel | null
     favorites: DefaultModel[]
+    modelOutputFilter: ModelOutput[]
     providerSettings: Record<string, Record<string, boolean>>
     checkForUpdates: boolean
     lastUpdateCheckAt: number | null

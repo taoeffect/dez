@@ -61,6 +61,14 @@ export function matchesOutputFilter(model: Pick<ModelInfo, 'outputs'>, filter: r
   return filter.length === 0 || effectiveOutputs(model).some((output) => filter.includes(output))
 }
 
+/** The output filter after a click on the checkbox of `output`: the click
+ *  adds the type, or removes it when the filter has it. An empty filter is
+ *  "All", so a first type replaces "All", and the removal of the last type
+ *  gives "All" again. */
+export function toggleOutputFilter(filter: readonly ModelOutput[], output: ModelOutput): ModelOutput[] {
+  return normalizeOutputs(filter.includes(output) ? filter.filter((id) => id !== output) : [...filter, output])
+}
+
 /** The known output types in `values`, each once, in table order. Other
  *  values (from a hand-edited file) are dropped. */
 export function normalizeOutputs(values: readonly unknown[]): ModelOutput[] {

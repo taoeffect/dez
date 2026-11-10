@@ -54,14 +54,14 @@ export async function threadSections (browser: E2EBrowser): Promise<ThreadSectio
   })
 }
 
-/** The open picker's groups: provider name and model names, in order. */
-export async function pickerGroups (browser: E2EBrowser): Promise<Array<{ provider: string, models: string[] }>> {
-  return browser.execute(() =>
-    Array.from(document.querySelectorAll('.model-dropdown .model-group')).map((group) => ({
+/** The open picker's groups: provider name and model names, in order. The
+ *  picker of the bottom bar, or the one inside `root`. */
+export async function pickerGroups (browser: E2EBrowser, root = '.model-dropdown'): Promise<Array<{ provider: string, models: string[] }>> {
+  return browser.execute((rootSelector: string) =>
+    Array.from(document.querySelectorAll(`${rootSelector} .model-group`)).map((group) => ({
       provider: group.querySelector('.model-group-header')?.textContent?.trim() ?? '',
       models: Array.from(group.querySelectorAll('.model-item-name')).map((name) => name.textContent?.trim() ?? ''),
-    }))
-  )
+    })), root)
 }
 
 export async function openPicker (browser: E2EBrowser): Promise<void> {

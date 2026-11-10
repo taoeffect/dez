@@ -25,6 +25,7 @@ describe('app state persistence format', () => {
       defaultNewTabModel: { providerId: 'openrouter', modelId: 'model' },
       lastUsedModel: { providerId: 'zai', modelId: 'chat' },
       favorites: [{ providerId: 'venice', modelId: 'llm' }, null],
+      modelOutputFilter: ['video', 'image'],
       providerSettings: { venice: { webSearch: false, veniceSystemPrompt: true } },
       checkForUpdates: false,
       lastUpdateCheckAt: 12,
@@ -48,6 +49,7 @@ describe('app state persistence format', () => {
     expect(state.defaultNewTabModel).toEqual({ providerId: 'openrouter', modelId: 'model' })
     expect(state.lastUsedModel).toEqual({ providerId: 'zai', modelId: 'chat' })
     expect(state.favorites).toEqual([{ providerId: 'venice', modelId: 'llm' }])
+    expect(state.modelOutputFilter).toEqual(['image', 'video'])
     expect(state.providerSettings).toEqual({ venice: { webSearch: false, veniceSystemPrompt: true } })
     expect(state.checkForUpdates).toBe(false)
     expect(state.lastUpdateCheckAt).toBe(12)
@@ -75,6 +77,15 @@ describe('app state persistence format', () => {
       venice: { webSearch: false },
       openrouter: { someFlag: true },
     })
+  })
+
+  it('keeps the known output types of a hand-edited modelOutputFilter, and ignores a bad type', () => {
+    const parseFilter = (value: unknown) => parseAppStateJson(JSON.stringify({ modelOutputFilter: value })).modelOutputFilter
+    expect(parseAppStateJson('{}').modelOutputFilter).toEqual([])
+    expect(parseFilter(['audio', 'speech', 'audio', 3, 'Text'])).toEqual(['audio'])
+    // Only unknown types: every model shows, not none.
+    expect(parseFilter(['speech'])).toEqual([])
+    expect(parseFilter('image')).toEqual([])
   })
 
   it('rounds and clamps a hand-edited editorFontSize, and ignores a bad type', () => {
