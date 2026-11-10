@@ -1391,13 +1391,16 @@ export default sbp('sbp/selectors/register', {
   // Does nothing while the install runs: the user waits for it to end or
   // fail, so the window stays open for every caller (Esc, ×, a notification
   // click). A failed or refused install is forgotten, so the window opens
-  // the next time with no old error. An open refusal dialog stays
-  // (dez.model/updates/closeRefusal).
+  // the next time with no old error, except a failure with no retry: after
+  // the install ran, Rust refuses every new download until Dez restarts, so
+  // that message and its advice stay for the next opening. An open refusal
+  // dialog stays (dez.model/updates/closeRefusal).
   'dez.model/updates/closeWindow' (): void {
     const store = useUpdatesStore()
-    if (installIsBusy(store.install)) return
+    const install = store.install
+    if (installIsBusy(install)) return
     store.windowOpen = false
-    store.install = { phase: 'idle' }
+    if (install.phase !== 'failed' || install.retry) store.install = { phase: 'idle' }
   },
 
   'dez.model/updates/setInstall' (install: UpdateInstall): void {

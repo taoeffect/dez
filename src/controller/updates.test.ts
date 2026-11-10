@@ -565,6 +565,20 @@ describe('dez.controller/updates/install', () => {
     expect(updates()).toMatchObject({ install: { phase: 'failed', error, retry: false }, installBusy: false, windowOpen: true })
   })
 
+  it('after a failed relaunch, a window that opens again still offers no retry', async () => {
+    await openWindow()
+    relaunch = async () => {
+      throw 'Dez has already installed an update. Quit Dez and open it again to finish.'
+    }
+    await installUpdate()
+
+    sbp('dez.model/updates/closeWindow')
+    expect(updates().windowOpen).toBe(false)
+    sbp('dez.model/updates/openWindow')
+
+    expect(updates()).toMatchObject({ windowOpen: true, install: { phase: 'failed', retry: false } })
+  })
+
   it('after a failure, closing the window clears the error', async () => {
     await openWindow()
     download = async () => {

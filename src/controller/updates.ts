@@ -272,9 +272,9 @@ export default sbp('sbp/selectors/register', {
   // failed download or install the running app is as it was, and a retry
   // downloads again: Rust keeps nothing of either. After the install, Rust
   // refuses a new download until Dez restarts, so a failed relaunch offers
-  // no retry; its message says what to do. Replies in progress stop, after
-  // the user agrees, once the new app is in place: a failed download or
-  // install stops none.
+  // no retry, also when the window opens again; its message says what to
+  // do. Replies in progress stop, after the user agrees, once the new app
+  // is in place: a failed download or install stops none.
   //
   // A release that fails one of its four checks may be compromised. Then
   // Rust installs nothing, and the refusal dialog opens in place of a

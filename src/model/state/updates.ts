@@ -11,7 +11,8 @@ export type UpdateCheckStatus = 'idle' | 'checking' | 'upToDate' | 'available' |
 // `idle` before it starts and after the window closes, then each step in
 // turn, and at the end one of two:
 // - `failed`, with the message that the window shows. `retry` is false once
-//   the install ran: Rust then refuses a new download until Dez restarts.
+//   the install ran: Rust then refuses a new download until Dez restarts, so
+//   this failure stays when the window closes.
 // - `refused`: the release failed one of its four checks. The refusal
 //   dialog is then open over the window (`refusal` in the store), and the
 //   window offers nothing: no retry, and no manual download, because the
