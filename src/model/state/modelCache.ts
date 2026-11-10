@@ -1,5 +1,5 @@
 import { defineStore } from 'pinia'
-import { ref } from 'vue'
+import { ref, shallowRef } from 'vue'
 import { emptyModelCache } from '../persistence/modelCache'
 import type { ModelCache } from '../persistence/types'
 import type { ProviderId } from '../providers/types'
@@ -19,11 +19,18 @@ export const useModelCacheStore = defineStore('modelCache', () => {
   // "Checking…" status in Settings › Providers. Set via
   // dez.model/modelCache/setChecking.
   const checking = ref<Record<ProviderId, true>>({})
+  // The raw model-list entry of each model, by provider id and then model id
+  // (`ProviderModelsResult.entries`), for the `model_info` tool. Memory only,
+  // never in model_cache.json or the snapshot: entries are large, and prices
+  // change. Shallow, so Vue never makes the hundreds of entries reactive;
+  // nothing renders them. Set by dez.model/modelCache/applyProviderResult.
+  const rawModels = shallowRef(new Map<ProviderId, ReadonlyMap<string, unknown>>())
 
   return {
     cache,
     refreshing,
     errors,
     checking,
+    rawModels,
   }
 })

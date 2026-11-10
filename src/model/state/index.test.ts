@@ -710,6 +710,36 @@ describe('dez.model/modelCache errors', () => {
   })
 })
 
+describe('dez.model/modelCache raw model entries', () => {
+  const rawModel = (modelId: string) => sbp('dez.model/modelCache/rawModel', 'local', modelId) as unknown
+  const entry = () => ({ id: 'm', pricing: { prompt: '0.1' } })
+
+  it('keeps the entries of the last successful check in memory only, and drops them with the provider', () => {
+    sbp('dez.model/modelCache/applyProviderResult', 'local', {
+      ok: true,
+      models: [{ id: 'm', name: 'M', provider: 'local' }],
+      entries: new Map([['m', entry()]]),
+    })
+    expect(rawModel('m')).toStrictEqual(entry())
+    expect(rawModel('other')).toBeUndefined()
+    // Neither model_cache.json nor any snapshot reader gets them.
+    expect((sbp('dez.model/modelCache/snapshot') as ModelCache).providers.local?.models)
+      .toStrictEqual([{ id: 'm', name: 'M', provider: 'local' }])
+
+    // A copy: a reader cannot change the stored entry.
+    const copy = rawModel('m') as { pricing: { prompt: string } }
+    copy.pricing.prompt = 'changed'
+    expect(rawModel('m')).toStrictEqual(entry())
+
+    // A failed check keeps the last-known entries, as it keeps the models.
+    sbp('dez.model/modelCache/applyProviderResult', 'local', { ok: false, models: [], error: 'HTTP 500' })
+    expect(rawModel('m')).toStrictEqual(entry())
+
+    sbp('dez.model/modelCache/removeProvider', 'local')
+    expect(rawModel('m')).toBeUndefined()
+  })
+})
+
 describe('dez.model/streamMessagesForTab tools', () => {
   const model: ModelRef = { providerId: 'local', modelId: 'm' }
   const sendTools = () => (sbp('dez.model/streamMessagesForTab', activeId(), model) as RequestMessages).sendTools

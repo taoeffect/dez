@@ -92,11 +92,12 @@ export class Provider {
     const models: ModelInfo[] = []
 
     for (const model of modelData(data)) {
-      if (typeof model.id !== 'string' || model.id.length === 0) continue
+      const id = entryId(model)
+      if (id === null) continue
 
       const name = [model.name, model.display_name]
         .find((value): value is string => typeof value === 'string' && value.trim().length > 0)
-      models.push(providerModel(this.id, model.id, name?.trim() ?? model.id, {
+      models.push(providerModel(this.id, id, name?.trim() ?? id, {
         imageInput: modelCapability(model, this.config.modelImageInput, 'image'),
         toolCalling: modelCapability(model, this.config.modelToolCalling, 'tools'),
         ...modelOutputsAndRequest(model, this.config.modelOutputs),
@@ -140,6 +141,26 @@ export class Provider {
 
   configModels(): ModelInfo[] {
     return this.mergeModels([])
+  }
+
+  // The raw entry of each model of `models` (a `mergeModels` list), by model
+  // id, for the `model_info` tool: the first entry of its id in the
+  // `/models` response `data` (the one that `parseModels` and `mergeModels`
+  // read), else the model's config entry (a model that only the config
+  // lists, also when there is no response).
+  modelEntries(models: readonly ModelInfo[], data?: unknown): Map<string, unknown> {
+    const fetched = new Map<string, Record<string, unknown>>()
+    for (const entry of modelData(data)) {
+      const id = entryId(entry)
+      if (id !== null && !fetched.has(id)) fetched.set(id, entry)
+    }
+
+    const entries = new Map<string, unknown>()
+    for (const model of models) {
+      const entry = fetched.get(model.id) ?? this.config.models.find((configModel) => configModel.id === model.id)
+      if (entry !== undefined) entries.set(model.id, entry)
+    }
+    return entries
   }
 
   // `overrides` are the user's stored toggle values for this provider
@@ -220,6 +241,13 @@ export class Provider {
 
     return Object.fromEntries(merged.values())
   }
+}
+
+// The model id of a `/models` entry; null when it has none, and the entry
+// is not a model. `parseModels` and `modelEntries` must agree on it, so that
+// every listed model has its entry.
+function entryId(entry: Record<string, unknown>): string | null {
+  return typeof entry.id === 'string' && entry.id.length > 0 ? entry.id : null
 }
 
 // The message without its thinking; its text and tool calls stay.

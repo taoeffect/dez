@@ -1086,6 +1086,34 @@ describe('provider models', () => {
     ])
   })
 
+  it('gives each listed model its first /models entry, else its config entry, and no entry to a model it left out', () => {
+    const provider = customProvider({
+      modelOutputs: { path: 'type', values: { text: { outputs: ['text'], request: 'chat' }, embed: { outputs: [] } } },
+      models: [{ id: 'both', name: 'Config Both' }, { id: 'config-only', outputs: ['image'], request: 'image' }, { id: 'config-only', name: 'Duplicate' }],
+    })
+    const data = {
+      data: [
+        { id: 'both', type: 'text', pricing: { input: 1 } },
+        { id: 'fetched', type: 'text', context_length: 8192 },
+        { id: 'fetched', type: 'text', context_length: 1 },
+        { id: 'embed', type: 'embed' },
+        { name: 'no id' },
+      ],
+    }
+    const models = provider.mergeModels(provider.parseModels(data))
+
+    expect([...provider.modelEntries(models, data)]).toStrictEqual([
+      ['both', { id: 'both', type: 'text', pricing: { input: 1 } }],
+      ['config-only', { id: 'config-only', outputs: ['image'], request: 'image' }],
+      ['fetched', { id: 'fetched', type: 'text', context_length: 8192 }],
+    ])
+    // A provider that does not fetch models lists its config models only.
+    expect([...provider.modelEntries(provider.configModels())]).toStrictEqual([
+      ['both', { id: 'both', name: 'Config Both' }],
+      ['config-only', { id: 'config-only', outputs: ['image'], request: 'image' }],
+    ])
+  })
+
   // Entry shapes as each API reports them: Venice and OpenRouter /models
   // (checked live 2026-11-07 and 2026-11-08), Copilot from VS Code's Copilot
   // Chat types and a logged Copilot /models entry.

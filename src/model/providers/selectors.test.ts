@@ -96,7 +96,11 @@ describe('provider requests when provider_keys.json cannot be read', () => {
   it('still checks the models of a provider that needs no key, without a key', async () => {
     const result = await sbp('dez.provider/listModelsResult', 'local') as ProviderModelsResult
 
-    expect(result).toEqual({ ok: true, models: [{ id: 'served-model', name: 'served-model', provider: 'local' }] })
+    expect(result).toEqual({
+      ok: true,
+      models: [{ id: 'served-model', name: 'served-model', provider: 'local' }],
+      entries: new Map([['served-model', { id: 'served-model' }]]),
+    })
     expect(httpRequests).toHaveLength(1)
     expect(httpRequests[0].url).toBe('http://localhost:8080/v1/models')
     expect(httpRequests[0].headers).not.toHaveProperty('Authorization')

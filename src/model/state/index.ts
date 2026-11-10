@@ -1272,12 +1272,21 @@ export default sbp('sbp/selectors/register', {
     const store = useModelCacheStore()
     delete store.cache.providers[providerId]
     delete store.errors[providerId]
+    store.rawModels.delete(providerId)
   },
 
-  // Reconciliation primitive: on success replace models, mark working, bump
-  // both timestamps, and clear the error; on failure keep the last-known
-  // models but mark the provider not-working, bump only the attempt
-  // timestamp, and record the error.
+  // A copy of the raw model-list entry of a model (the store's `rawModels`),
+  // for the `model_info` tool. Undefined when Dez has none in memory: after
+  // a start, until the provider's next successful model check.
+  'dez.model/modelCache/rawModel' (providerId: ProviderId, modelId: string): unknown {
+    const entry = useModelCacheStore().rawModels.get(providerId)?.get(modelId)
+    return entry === undefined ? undefined : structuredClone(entry)
+  },
+
+  // Reconciliation primitive: on success replace models and raw entries,
+  // mark working, bump both timestamps, and clear the error; on failure keep
+  // the last-known models and raw entries but mark the provider not-working,
+  // bump only the attempt timestamp, and record the error.
   'dez.model/modelCache/applyProviderResult' (providerId: ProviderId, result: ProviderModelsResult): void {
     const store = useModelCacheStore()
     const now = Date.now()
@@ -1290,6 +1299,8 @@ export default sbp('sbp/selectors/register', {
         lastCheckedAt: now,
       }
       delete store.errors[providerId]
+      if (result.entries) store.rawModels.set(providerId, result.entries)
+      else store.rawModels.delete(providerId)
       return
     }
     store.cache.providers[providerId] = {

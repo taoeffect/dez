@@ -8,6 +8,7 @@ import type { ConversationData } from '../model/persistence/types'
 import { customProviderConfigSchema } from '../model/providers/config'
 import type { ProviderChatInputMessage, ProviderInfo, ProviderStreamChatInput, ProviderStreamChatResult } from '../model/providers'
 import type { RequestMessages } from '../model/streams/types'
+import { TOOL_DEFINITIONS } from '../model/tools/registry'
 import type { ToastData } from '../view/toast/selectors'
 // Side-effect imports: register the dez.model/* selectors and the selectors
 // under test.
@@ -518,7 +519,8 @@ describe('dez.stream/start tool loop', () => {
 
     await startStream({ sendTools: true })
 
-    expect(requests.map((input) => input.tools?.map((tool) => tool.name))).toStrictEqual([['model_list'], ['model_list']])
+    const toolNames = TOOL_DEFINITIONS.map((tool) => tool.name)
+    expect(requests.map((input) => input.tools?.map((tool) => tool.name))).toStrictEqual([toolNames, toolNames])
     expect(requests[0].requestId).not.toBe(requests[1].requestId)
     // The prompt cache needs the same system prompt and tools in each round.
     expect(requests[0].system).toEqual(expect.any(String))

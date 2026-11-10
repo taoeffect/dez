@@ -1,9 +1,10 @@
 import type { JsonObject } from '../../utils/json'
+import { MODEL_INFO_TOOL } from './modelInfo'
 import { MODEL_LIST_TOOL } from './modelList'
 import type { ToolArguments, ToolArgumentValue, ToolDefinition, ToolParameterType } from './types'
 
 /** Every Dez tool, in the order that requests list them. */
-export const TOOL_DEFINITIONS: readonly ToolDefinition[] = [MODEL_LIST_TOOL]
+export const TOOL_DEFINITIONS: readonly ToolDefinition[] = [MODEL_LIST_TOOL, MODEL_INFO_TOOL]
 
 /** The Dez tool with this name; undefined when no Dez tool has it. */
 export function toolDefinition(name: string): ToolDefinition | undefined {

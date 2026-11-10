@@ -156,12 +156,15 @@ export default sbp('sbp/selectors/register', {
     try {
       const request = provider.modelListRequest(await requestSecret(provider))
       if (!request) {
-        return { ok: true, models: provider.configModels() }
+        const models = provider.configModels()
+        return { ok: true, models, entries: provider.modelEntries(models) }
       }
 
       const response = await sbp('dez.native/httpRequest', request) as NativeHttpResponse
       assertProviderResponseOk(response, provider, nativeResponseText(response))
-      return { ok: true, models: provider.mergeModels(provider.parseModels(nativeResponseJson<unknown>(response))) }
+      const data = nativeResponseJson<unknown>(response)
+      const models = provider.mergeModels(provider.parseModels(data))
+      return { ok: true, models, entries: provider.modelEntries(models, data) }
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error)
       console.error(`Failed to list models for provider ${providerId}:`, error)

@@ -78,6 +78,10 @@ export interface ProviderSettingsDescriptor {
 export interface ProviderModelsResult {
   ok: boolean
   models: ModelInfo[]
+  // On success: the raw entry of each model, by model id
+  // (`Provider.modelEntries`), for the `model_info` tool. The model cache
+  // keeps it in memory only.
+  entries?: ReadonlyMap<string, unknown>
   error?: string
 }
 

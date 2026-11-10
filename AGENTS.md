@@ -83,7 +83,7 @@ ThreadEditor (CodeMirror doc) syncs to the active tab's sections
 - `model/chat/`: `Section` / `ContentNode` types and helpers (`content.ts`, `modelRef.ts`, `thinking.ts`, `markdown.ts`, `pillMarker.ts`, `images.ts`, `toolBlocks.ts`).
 - `model/state/`: Pinia stores (internal) and `dez.model/*` selectors; views read state through `view/modelState.ts`.
 - `controller/stream.ts`, `model/state/streams.ts`, `controller/http.ts`: stream lifecycle (one reply, one request round per group of tool calls), per-tab sessions, native HTTP streams.
-- `model/tools/`: the Dez tools (tools that Dez runs for a model, not a provider's own tools such as web search): definitions, `registry.ts` (`TOOL_DEFINITIONS`, JSON schemas, argument checks), `modelList.ts` (`model_list`). `controller/tools.ts`: `dez.controller/tools/run`, the code of each tool. `model/streams/toolRound.ts`: the pure parts of the tool loop.
+- `model/tools/`: the Dez tools (tools that Dez runs for a model, not a provider's own tools such as web search): definitions, `registry.ts` (`TOOL_DEFINITIONS`, JSON schemas, argument checks), `modelList.ts` (`model_list`), `modelInfo.ts` (`model_info`). `controller/tools.ts`: `dez.controller/tools/run`, the code of each tool. `model/streams/toolRound.ts`: the pure parts of the tool loop.
 - `model/systemPrompt/`: Dez's system prompt (`systemPrompt.md` with `{{name}}` placeholders, `template.ts`), sent with every chat request.
 - `model/modelSearch.ts`: the model filter of the model picker and `model_list`.
 - `controller/notifications.ts`: the reply-end alerts (sound, system notification; a click opens the reply's tab). `view/sound.ts`: `dez.ui/playDoneSound`. `assets/sounds/`: sound files (Git LFS).
