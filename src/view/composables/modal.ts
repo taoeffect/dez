@@ -1,7 +1,8 @@
 import sbp from '@sbp/sbp'
 
 // Shared by the in-app modals (ConfirmDialog.vue, UpdateWindow.vue,
-// UpdateRefusedDialog.vue), so a fix to either rule reaches every modal.
+// UpdateRefusedDialog.vue), so a fix to a rule reaches each modal that uses
+// it. The refusal dialog uses no overlay dismissal.
 
 // Gives the focus back to the element that had it before a modal opened, so
 // the user can go on typing. Does nothing when that element left the DOM.
