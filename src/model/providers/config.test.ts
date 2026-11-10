@@ -162,7 +162,11 @@ describe('provider config schema', () => {
       modelListQuery: { type: 'all' },
       // A type that makes nothing (embeddings) needs an empty list, unlike a
       // config model's outputs.
-      modelOutputs: { path: 'arch.out', values: { text: { outputs: ['text'], request: 'chat' }, embed: { outputs: [] } } },
+      modelOutputs: {
+        path: 'arch.out',
+        values: { text: { outputs: ['text'], request: 'chat' }, image: { outputs: ['image'], requiredPath: 'price.image' }, embed: { outputs: [] } },
+      },
+      imageOutputBody: { modalities: ['image', 'text'] },
       mediaApi: { format: 'venice' },
     }
 
@@ -174,6 +178,8 @@ describe('provider config schema', () => {
     expect(outputs({ tts: { outputs: 'audio' } })).toBe(false)
     expect(outputs({ tts: { request: 'chat' } })).toBe(false)
     expect(outputs({ video: { outputs: ['video'], request: 'video' } })).toBe(false)
+    expect(outputs({ image: { outputs: ['image'], requiredPath: 'price..image' } })).toBe(false)
+    expect(parse({ imageOutputBody: ['image'] }).success).toBe(false)
     expect(parse({ mediaApi: { format: 'openai' } }).success).toBe(false)
     expect(parse({ mediaApi: {} }).success).toBe(false)
   })
@@ -210,6 +216,7 @@ describe('provider config schema', () => {
     expect(parseJson('{"requestBody":{"options":{"fixed":true}}}').data?.requestBody).toEqual({ options: { fixed: true } })
     expect(parseJson('{"requestBody":{"options":{"__proto__":{"polluted":true}}}}').success).toBe(false)
     expect(parseJson('{"requestBody":["options"]}').success).toBe(false)
+    expect(parseJson('{"imageOutputBody":{"image_config":{"__proto__":{"polluted":true}}}}').success).toBe(false)
   })
 
   it('writes every built-in exactly as the schema would produce it', () => {

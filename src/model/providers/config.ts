@@ -178,6 +178,12 @@ const modelOutputsConfigSchema = z.object({
   values: z.record(z.string(), z.object({
     outputs: z.array(z.enum(MODEL_OUTPUT_IDS)),
     request: z.enum(MODEL_REQUESTS).optional(),
+    // The type counts only for an entry that has a value at this path;
+    // else it is skipped, like a type that `values` does not name. For a
+    // server that reports a type that the model cannot make: OpenRouter's
+    // routers (`openrouter/auto`) report "image", but they have no image
+    // price, and they refuse a request that asks for image output.
+    requiredPath: modelEntryPathSchema.optional(),
   })),
 })
 
@@ -234,6 +240,12 @@ export const providerConfigSchema = z.object({
   // format's body and before the settings and the thinking body, so those can
   // add keys to the same objects.
   requestBody: requestBodyPartSchema.optional(),
+  // Merged into the body of a chat request to a model whose known outputs
+  // hold `image` (ModelInfo.outputs), right after `requestBody`: the part
+  // asks the server for image output (OpenRouter's `modalities`). Missing:
+  // no chat request asks for images. Only the OpenAI format reads the
+  // images of a reply (openaiSse.ts).
+  imageOutputBody: requestBodyPartSchema.optional(),
   // The wire format of the provider's own image, audio, and video requests.
   // Missing: the provider has none, so its media models get no requests.
   mediaApi: z.object({ format: z.enum(MEDIA_API_FORMAT_IDS) }).optional(),

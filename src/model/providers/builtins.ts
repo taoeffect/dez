@@ -21,13 +21,18 @@ export const BUILT_IN_PROVIDER_CONFIGS: readonly ProviderConfig[] = [
     // A list of request fields that the model takes; it holds "tools" for a
     // model that calls tools.
     modelToolCalling: { path: 'supported_parameters' },
-    // A list; "text" with "image" is a chat model that can also send images.
-    // Image-only, audio, and video models get no request yet.
+    // A list; "text" with "image" is a chat model that also makes images
+    // (`imageOutputBody`). Image-only models answer only through
+    // OpenRouter's Image API (their `endpoints` have no chat route), and
+    // audio and video models have their own APIs too, so they get no
+    // request yet. "image" counts only with an image price: the routers
+    // (`openrouter/auto`) report it too, but none of their models makes
+    // images (checked live, 2026-11-10).
     modelOutputs: {
       path: 'architecture.output_modalities',
       values: {
         text: { outputs: ['text'], request: 'chat' },
-        image: { outputs: ['image'] },
+        image: { outputs: ['image'], requiredPath: 'pricing.image_output' },
         audio: { outputs: ['audio'] },
         speech: { outputs: ['audio'] },
         video: { outputs: ['video'] },
@@ -43,6 +48,13 @@ export const BUILT_IN_PROVIDER_CONFIGS: readonly ProviderConfig[] = [
     // GPT-5.6 and later.
     // https://openrouter.ai/docs/guides/best-practices/prompt-caching
     cacheBreakpoints: true,
+    // Unlike other fields, OpenRouter does not drop this one for a model
+    // that cannot make images: it answers 404 "No endpoints found that
+    // support the requested output modalities" (checked live with
+    // `openrouter/auto`, 2026-11-10). So it goes only to the models whose
+    // outputs hold `image`. The streamed images are in `delta.images`.
+    // https://openrouter.ai/docs/api/api-reference/chat/create-a-chat-completion
+    imageOutputBody: { modalities: ['image', 'text'] },
     // OpenRouter drops a field that the routed model does not take, so the
     // request is safe for every model. Some models must think, so there is no
     // off field.

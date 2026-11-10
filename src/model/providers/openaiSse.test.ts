@@ -17,13 +17,13 @@ function run(payloads: string[], thinking = true): { events: SseTokenEvent[], en
   return { events: [...events, ...end.events], end }
 }
 
-// Joins neighboring events of one kind, so tests do not depend on how the
-// parser cuts the text.
+// Joins neighboring text events of one kind, so tests do not depend on how
+// the parser cuts the text.
 function joined(events: SseTokenEvent[]): SseTokenEvent[] {
   const result: SseTokenEvent[] = []
   for (const event of events) {
     const last = result[result.length - 1]
-    if (event.kind !== 'done' && last && last.kind === event.kind) {
+    if (event.kind !== 'done' && event.kind !== 'image' && last && last.kind === event.kind) {
       result[result.length - 1] = { kind: event.kind, token: last.token + event.token }
     } else {
       result.push(event)
@@ -275,5 +275,58 @@ describe('OpenAiStreamParser tool calls', () => {
 
     expect(run([call]).end).toStrictEqual({ events: [] })
     expect(run([call, chunk({}, 'error')]).end).toStrictEqual({ events: [] })
+  })
+})
+
+describe('OpenAiStreamParser images', () => {
+  const image = (url: unknown) => ({ type: 'image_url', image_url: { url } })
+
+  // The chunks of a live OpenRouter reply, in their order
+  // (google/gemini-3.1-flash-lite-image, 2026-11-10), with short values.
+  it.each([true, false])('gives the image of `delta.images` at its place in the answer (thinking %s)', (thinking) => {
+    const { events } = run([
+      chunk({ role: 'assistant', content: 'A red apple on a white table.' }),
+      chunk({ role: 'assistant', content: '', reasoning: null, reasoning_details: [{ type: 'reasoning.encrypted', data: 'c2lnbmF0dXJl', format: 'google-gemini-v1', index: 0 }] }),
+      chunk({ role: 'assistant', content: '', images: [image('data:image/jpeg;base64,/9j/4AAQ')] }),
+      chunk({ role: 'assistant', content: '' }, 'stop'),
+      '[DONE]',
+    ], thinking)
+
+    expect(events).toStrictEqual([
+      { kind: 'token', token: 'A red apple on a white table.' },
+      { kind: 'image', url: 'data:image/jpeg;base64,/9j/4AAQ' },
+      { kind: 'done' },
+    ])
+  })
+
+  it('puts the images of a chunk after its text, in list order, and skips an entry with no URL', () => {
+    const { events } = run([
+      chunk({
+        content: 'Two views:',
+        images: [image('https://cdn.example.com/a.png'), { type: 'image_url' }, image(''), image(7), 'data:image/png;base64,AAAA', image('data:image/png;base64,BBBB')],
+      }),
+      chunk({ content: ' Done.' }, 'stop'),
+    ], false)
+
+    expect(events).toStrictEqual([
+      { kind: 'token', token: 'Two views:' },
+      { kind: 'image', url: 'https://cdn.example.com/a.png' },
+      { kind: 'image', url: 'data:image/png;base64,BBBB' },
+      { kind: 'token', token: ' Done.' },
+    ])
+  })
+
+  it('gives the text that it held back as a possible inline tag before an image', () => {
+    const { events } = run([
+      chunk({ content: '<th' }),
+      chunk({ images: [image('data:image/png;base64,AAAA')] }),
+      chunk({ content: 'ink> is a tag.' }, 'stop'),
+    ])
+
+    expect(events).toStrictEqual([
+      { kind: 'token', token: '<th' },
+      { kind: 'image', url: 'data:image/png;base64,AAAA' },
+      { kind: 'token', token: 'ink> is a tag.' },
+    ])
   })
 })

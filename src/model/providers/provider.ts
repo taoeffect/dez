@@ -180,6 +180,9 @@ export class Provider {
     const sentMessages = thinkingOn ? messages : messages.map(withoutThinking)
     const { body, prefixHash } = this.format.chatBody(sentMessages, modelId, this.config, context)
     if (this.config.requestBody) mergeBodyPart(body, this.config.requestBody)
+    // A fixed part for a model, so the body stays the same in every request
+    // of a conversation with that model (the prompt cache).
+    if (context.imageOutput && this.config.imageOutputBody) mergeBodyPart(body, this.config.imageOutputBody)
 
     // Every setting is written, also the ones hidden for this model, so the
     // body does not depend on which toggles the popup shows.

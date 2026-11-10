@@ -114,6 +114,7 @@ async function startStream({ sendTools = false } = {}): Promise<void> {
     request: 'chat',
     messages: [{ role: 'user', content: 'Hi' }],
     sendTools,
+    imageOutput: false,
   })
 }
 
@@ -1170,6 +1171,169 @@ describe('dez.stream/start media round', () => {
     expect(deletedImages).toStrictEqual([generated('g1.png'), generated('g2.png')])
     expect(sectionTexts()).toStrictEqual(conversation())
     expect(toasts).toStrictEqual([])
+  })
+})
+
+describe('dez.stream/start images of a chat reply', () => {
+  const image = (name: string) => `/home/u/.config/dez/assets/images/${name}`
+  const generated = (name: string) => `/home/u/.config/dez/assets/generated/images/${name}`
+  const png = { bytes: new Uint8Array([1, 2, 3]), mediaType: 'image/png' } as const
+  // The options of each save; the saves give the files g1.png, g2.png, ….
+  let saves: unknown[] = []
+
+  beforeEach(() => {
+    saves = []
+    saveImage = async (_mediaType, options) => {
+      saves.push(options)
+      return generated(`g${saves.length}.png`)
+    }
+    sbp('dez.model/tabs/replaceSections', activeTab().id, [
+      { id: 'u1', role: 'user', content: [{ kind: 'text', text: `A fox: ![${image('fox.png')}](id=a)` }] },
+      { id: 'a1', role: 'agent', content: [{ kind: 'text', text: '' }], model },
+    ])
+  })
+
+  it('saves each image in the generated folder and writes its reference, with a new id, as a paragraph between the text around it', async () => {
+    streamChat = async (input) => {
+      await input.onToken('Two views.')
+      await input.onImage(png)
+      await input.onImage(png)
+      await input.onToken('\nThe last one:\n')
+      await input.onImage(png)
+      await input.onToken('\n')
+      return { requestId: input.requestId as string }
+    }
+
+    await startStream()
+
+    const text = `Two views.\n\n![${generated('g1.png')}](id=b)\n\n![${generated('g2.png')}](id=c)\n\nThe last one:\n\n![${generated('g3.png')}](id=d)`
+    expect(saves).toStrictEqual([{ folder: 'generated' }, { folder: 'generated' }, { folder: 'generated' }])
+    expect(sectionVisibleText(agentSection())).toBe(text)
+    expect(editorTokens.join('')).toBe(text)
+    expect(savedConversations).toHaveLength(1)
+    expect(alerts).toStrictEqual([{ tabId: activeTab().id, status: 'finished' }])
+    expect(deletedImages).toStrictEqual([])
+  })
+
+  // The text that the escaper holds came before the image, and the
+  // reference between the two parts keeps them from forming a tag.
+  it('writes the text that the escaper holds before the image', async () => {
+    streamChat = async (input) => {
+      await input.onToken('See <dez')
+      await input.onImage(png)
+      await input.onToken(':tool id="x" name="y">')
+      return { requestId: input.requestId as string }
+    }
+
+    await startStream()
+
+    expect(sectionVisibleText(agentSection())).toBe(`See <dez\n\n![${generated('g1.png')}](id=b)\n\n:tool id="x" name="y">`)
+    expect(findToolBlocks(sectionVisibleText(agentSection()))).toStrictEqual([])
+  })
+
+  it('asks for image output only when the model makes images', async () => {
+    const asked: unknown[] = []
+    streamChat = async (input) => {
+      asked.push(input.imageOutput)
+      return { requestId: input.requestId as string }
+    }
+    const submitWithOutputs = async (outputs: string[]) => {
+      sbp('dez.model/modelCache/applyProviderResult', model.providerId, {
+        ok: true,
+        models: [{ id: model.modelId, name: model.modelName, provider: model.providerId, outputs, request: 'chat' }],
+      })
+      await sbp('dez.controller/submitTab', activeTab().id)
+    }
+    sbp('dez.model/setActiveModel', model.providerId, model.modelId, model.modelName)
+
+    // A model that the cache does not have is a text model.
+    await sbp('dez.controller/submitTab', activeTab().id)
+    await submitWithOutputs(['text'])
+    await submitWithOutputs(['text', 'image'])
+
+    expect(asked).toStrictEqual([false, false, true])
+  })
+
+  // images/save logs the failure and shows its own toast.
+  it('leaves out an image whose save fails, and goes on with the reply', async () => {
+    saveImage = async (_mediaType, options) => {
+      saves.push(options)
+      if (saves.length === 1) throw new Error('Disk full')
+      return generated(`g${saves.length}.png`)
+    }
+    streamChat = async (input) => {
+      await input.onToken('First.')
+      await input.onImage(png)
+      await input.onToken(' Second.')
+      await input.onImage(png)
+      return { requestId: input.requestId as string }
+    }
+
+    await startStream()
+
+    expect(sectionVisibleText(agentSection())).toBe(`First. Second.\n\n![${generated('g2.png')}](id=b)`)
+    expect(alerts).toStrictEqual([{ tabId: activeTab().id, status: 'finished' }])
+    expect(toasts).toStrictEqual([])
+    expect(deletedImages).toStrictEqual([])
+  })
+
+  it.each([
+    ['the user stops the reply', () => sbp('dez.stream/stop', activeTab().id)],
+    ['the user merges the section into the one before', () => sbp('dez.model/tabs/replaceSections', activeTab().id, activeTab().sections.slice(0, -1))],
+  ])('deletes the saved image and writes no reference when %s during the save', async (_case, during) => {
+    saveImage = async () => {
+      await during()
+      return generated('g1.png')
+    }
+    streamChat = async (input) => {
+      await input.onToken('Before.')
+      await input.onImage(png)
+      return { requestId: input.requestId as string }
+    }
+
+    await startStream()
+
+    expect(deletedImages).toStrictEqual([generated('g1.png')])
+    expect(sectionTexts().map(({ text }) => text).join('')).not.toContain('g1.png')
+    expect(toasts).toStrictEqual([])
+  })
+
+  // A stop keeps the late text of its request, but takes no late image.
+  it('saves no image that comes after the user stopped the reply', async () => {
+    streamChat = async (input) => {
+      await input.onToken('Before.')
+      cancelStream = async () => {
+        await input.onImage(png)
+        await input.onToken(' Late.')
+      }
+      await sbp('dez.stream/stop', activeTab().id)
+      throw new Error('cancelled')
+    }
+
+    await startStream()
+
+    expect(saves).toStrictEqual([])
+    expect(sectionVisibleText(agentSection())).toBe('Before. Late.')
+  })
+
+  it('sends the image of a tool round back as text with no path, and starts no new paragraph after the tool blocks', async () => {
+    const block = '<dez:tool id="c1" name="model_list" filter="gemini">\nNo models are available.\n</dez:tool>\n'
+    const sent: string[] = []
+    streamChat = async (input) => {
+      sent.push(JSON.stringify(input.messages))
+      if (sent.length === 2) {
+        await input.onToken('None.')
+        return { requestId: input.requestId as string }
+      }
+      await input.onImage(png)
+      return { requestId: input.requestId as string, toolCalls: [{ id: 'c1', name: 'model_list', argumentsText: '{"filter":"gemini"}' }] }
+    }
+
+    await startStream({ sendTools: true })
+
+    expect(sectionVisibleText(agentSection())).toBe(`![${generated('g1.png')}](id=b)\n${block}None.`)
+    expect(sent[1]).toContain('![image](id=b)')
+    expect(sent[1]).not.toContain('/home/u')
   })
 })
 

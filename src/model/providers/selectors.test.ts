@@ -7,7 +7,7 @@ import { sectionsToStreamMessages } from '../streams/messages'
 import { bytesToBase64 } from '../../utils/base64'
 import type { NativeHttpRequest, NativeHttpResponse, NativeHttpStreamResult } from '../../utils/protocol/nativeHttp'
 import type { ProviderGenerateMediaResult } from './streamTypes'
-import type { ModelDisplayNames, ProviderModelsResult } from './types'
+import type { GeneratedMedia, ModelDisplayNames, ProviderModelsResult } from './types'
 // Side-effect imports: register the dez.model/* selectors and the selectors
 // under test.
 import '../state/index'
@@ -41,13 +41,33 @@ const REASONING_STREAM = [
 const STREAMED_TOOL_CALLS = [{ id: 'call_1', name: 'model_list', argumentsText: '{}' }]
 
 // This media server answers a generate request with JSON and an edit with the
-// image's bytes, each in two chunks.
+// image's bytes, each in two chunks. The file host answers the same way.
 const MEDIA_BASE_URL = 'http://localhost:5050/api/v1'
 const WEBP_IMAGE = new TextEncoder().encode('RIFF\x0c\x00\x00\x00WEBPVP8 ')
+const JPEG_IMAGE = Uint8Array.from([0xff, 0xd8, 0xff, 0xe0, 0, 1])
+const HOSTED_IMAGE_URL = 'https://files.example.com/cat.jpg'
+const HOSTED_PAGE_URL = 'https://files.example.com/cat.html'
 const MEDIA_ANSWERS = new Map([
   [`${MEDIA_BASE_URL}/image/generate`, { contentType: 'application/json', body: new TextEncoder().encode(JSON.stringify({ images: [bytesToBase64(WEBP_IMAGE)] })) }],
   [`${MEDIA_BASE_URL}/image/multi-edit`, { contentType: 'image/png', body: STORED_IMAGE }],
+  [HOSTED_IMAGE_URL, { contentType: 'image/jpeg', body: JPEG_IMAGE }],
+  [HOSTED_PAGE_URL, { contentType: 'image/jpeg', body: new TextEncoder().encode('<html>Not here</html>') }],
 ])
+
+// The reply of this chat server is text, then one image for each of
+// `painterImageUrls` (each in a chunk of its own, as OpenRouter sends
+// them), then more text.
+const PAINTER_BASE_URL = 'http://localhost:6060/v1'
+let painterImageUrls: string[] = []
+function painterStream(): string {
+  const chunk = (delta: Record<string, unknown>) => `data: ${JSON.stringify({ choices: [{ delta }] })}`
+  return [
+    chunk({ content: 'Two cats.' }),
+    ...painterImageUrls.map((url) => chunk({ content: '', images: [{ type: 'image_url', image_url: { url } }] })),
+    chunk({ content: 'Done.' }),
+    'data: [DONE]',
+  ].join('\n\n') + '\n\n'
+}
 
 // Stand-ins for the native layer: the key store cannot be read.
 sbp('sbp/selectors/register', {
@@ -94,7 +114,9 @@ sbp('sbp/selectors/register', {
           ? 'Not found'
           : request.url.startsWith(REASONING_BASE_URL)
             ? REASONING_STREAM
-            : 'data: {"choices":[{"delta":{"content":"Hello"}}]}\n\ndata: [DONE]\n\n')
+            : request.url.startsWith(PAINTER_BASE_URL)
+              ? painterStream()
+              : 'data: {"choices":[{"delta":{"content":"Hello"}}]}\n\ndata: [DONE]\n\n')
       })(),
     }
   },
@@ -347,6 +369,78 @@ describe('chat streams with image paths', () => {
     expect(body).toContain('id=b')
     expect(body).toContain('model_list')
     expect(body.includes(Buffer.from(STORED_IMAGE).toString('base64'))).toBe(sendImages)
+  })
+})
+
+describe('images of a chat reply', () => {
+  // A RIFF file that is not an image.
+  const WAV = new TextEncoder().encode('RIFF\x0c\x00\x00\x00WAVEfmt ')
+
+  // A provider whose chat models can make images, with a header that only
+  // its own server may get.
+  beforeEach(() => {
+    sbp('dez.model/customProviders/save', {
+      id: 'painter',
+      name: 'Painter',
+      baseUrl: PAINTER_BASE_URL,
+      apiFormat: 'openai',
+      models: [],
+      fetchModels: true,
+      auth: 'apiKey',
+      headers: { 'X-Team': 'blue' },
+      imageOutputBody: { modalities: ['image', 'text'] },
+    })
+  })
+
+  // The answer text and the images, in the order that the callbacks got
+  // them. `onImage` ends a macrotask later, as the save of a file does: a
+  // stream that did not wait for it would give all its later text first.
+  // The timer has no duration, so the test does not depend on speed.
+  async function streamPainter(imageUrls: string[]): Promise<unknown[]> {
+    painterImageUrls = imageUrls
+    const calls: unknown[] = []
+    await sbp('dez.provider/streamChat', {
+      providerId: 'painter',
+      modelId: 'm',
+      messages: [{ role: 'user', content: 'Two cats' }],
+      imageOutput: true,
+      onToken: (token: string) => { calls.push(token) },
+      onImage: async (image: GeneratedMedia) => {
+        await new Promise((resolve) => setTimeout(resolve, 0))
+        calls.push(image)
+      },
+    })
+    return calls
+  }
+
+  it('gives each image as bytes with the type of its bytes, in stream order with the text', async () => {
+    const calls = await streamPainter([`data:image/webp;base64,${bytesToBase64(STORED_IMAGE)}`, HOSTED_IMAGE_URL])
+
+    expect(calls).toStrictEqual([
+      'Two cats.',
+      { bytes: STORED_IMAGE, mediaType: 'image/png' },
+      { bytes: JPEG_IMAGE, mediaType: 'image/jpeg' },
+      'Done.',
+    ])
+  })
+
+  it('fetches an image URL once, with no header of the provider', async () => {
+    await streamPainter([HOSTED_IMAGE_URL])
+
+    expect(streamRequests).toHaveLength(2)
+    expect(streamRequests[0].headers).toMatchObject({ 'X-Team': 'blue' })
+    expect(streamRequests[1]).toStrictEqual({ method: 'GET', url: HOSTED_IMAGE_URL })
+  })
+
+  it.each([
+    ['bytes that are not an image', `data:image/png;base64,${bytesToBase64(WAV)}`, 'not a PNG, JPEG, GIF, or WebP image'],
+    ['a data URL whose data is not base64', 'data:image/png;base64,***', 'not base64 text'],
+    ['a data URL with no base64 mark', 'data:image/svg+xml,<svg/>', 'neither a base64 data URL nor an http(s) URL'],
+    ['a URL of another scheme', 'file:///etc/passwd', 'neither a base64 data URL nor an http(s) URL'],
+    ['a URL whose file is not an image', HOSTED_PAGE_URL, 'not a PNG, JPEG, GIF, or WebP image'],
+    ['a URL that its server refuses', `${FAILING_BASE_URL}/cat.png`, 'Painter returned HTTP 404: Not found'],
+  ])('fails the chat for %s', async (_name, url, message) => {
+    await expect(streamPainter([url])).rejects.toThrow(message)
   })
 })
 

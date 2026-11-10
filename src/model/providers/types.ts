@@ -117,13 +117,20 @@ export interface ChatRequestContext {
   // The Dez tools that the model may call. None or an empty list sends no
   // `tools` field.
   tools?: readonly ToolDefinition[]
+  // The model's known outputs hold `image` (ModelInfo.outputs): the body
+  // gets the config's `imageOutputBody`, which asks for image output.
+  imageOutput?: boolean
 }
 
 // One parsed SSE `data:` payload yields zero or more of these, in either
 // API format. `token` is answer text and `thinking` is reasoning text.
+// `image` is an image that the model made, at its place in the answer; its
+// URL is a `data:` URL or an http(s) URL (`generatedImageFromUrl` in
+// generatedImages.ts reads it).
 export type SseTokenEvent =
   | { kind: 'token', token: string }
   | { kind: 'thinking', token: string }
+  | { kind: 'image', url: string }
   | { kind: 'done' }
 
 // Omit from each member of a union, not from the union as a whole.

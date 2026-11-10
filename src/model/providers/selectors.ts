@@ -8,6 +8,7 @@ import { fileNameOf } from '../../utils/fileName'
 import { secret, type Secret } from '../../utils/secret'
 import { nativeResponseJson, nativeResponseText, readNativeChunkBytes, type NativeHttpResponse, type NativeHttpStreamResult } from '../../utils/protocol/nativeHttp'
 import { assertProviderResponseOk } from './errors'
+import { generatedImageFromUrl } from './generatedImages'
 import type { Provider, ProviderChatRequest } from './provider'
 import { getProvider, listProviders, requireProvider } from './registry'
 import { assertStreamResponseOk, streamProviderTokens } from './streaming'
@@ -94,6 +95,15 @@ async function nativeChatStream(
   const secretValue = await requestSecret(provider, refreshCopilot)
   const { request, thinking } = provider.chatRequest(messages, input.modelId, secretValue, input.providerSettings, input)
   return { result: await sbp('dez.http/stream', request, requestId) as NativeHttpStreamResult, thinking }
+}
+
+// The bytes of an image that a reply names by an http(s) URL. The request
+// has no provider headers: the URL can name any host, and the API key must
+// not go there.
+async function fetchReplyImage(provider: Provider, url: string): Promise<Uint8Array> {
+  const { response, chunks } = await sbp('dez.http/stream', { method: 'GET', url }) as NativeHttpStreamResult
+  await assertStreamResponseOk(provider, response, chunks)
+  return readNativeChunkBytes(chunks)
 }
 
 export default sbp('sbp/selectors/register', {
@@ -186,7 +196,11 @@ export default sbp('sbp/selectors/register', {
       stream = await nativeChatStream(provider, input, messages, requestId, true)
     }
 
-    return { requestId: stream.result.requestId, ...await streamProviderTokens(provider, input, stream.result, stream.thinking) }
+    return {
+      requestId: stream.result.requestId,
+      ...await streamProviderTokens(provider, input, stream.result, stream.thinking,
+        (url) => generatedImageFromUrl(url, (imageUrl) => fetchReplyImage(provider, imageUrl))),
+    }
   },
 
   // Makes media with a model of the provider's media API (`mediaApi`): an

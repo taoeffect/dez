@@ -12,6 +12,13 @@ interface OpenAiChoiceDelta {
   reasoning_details?: unknown
   reasoning_opaque?: unknown
   tool_calls?: unknown
+  // OpenRouter: the images that the model made, each
+  // `{ type: "image_url", image_url: { url } }`. A whole image comes in
+  // one chunk, as a `data:` URL (checked live, 2026-11-10); the docs also
+  // allow a plain URL. The docs name only the `message.images` of an
+  // answer that is not streamed.
+  // https://openrouter.ai/docs/api/api-reference/chat/create-a-chat-completion
+  images?: unknown
 }
 
 interface OpenAiChoice {
@@ -215,6 +222,8 @@ export class OpenAiStreamParser implements SseStreamParser {
         }
       }
 
+      if (Array.isArray(delta?.images)) this.readImages(delta.images.filter(isRecord), events)
+
       if (Array.isArray(delta?.tool_calls)) this.readToolCalls(delta.tool_calls.filter(isRecord))
 
       if (choice.finish_reason === 'error') this.failed = true
@@ -232,6 +241,18 @@ export class OpenAiStreamParser implements SseStreamParser {
     const replay = this.replay()
     const toolCalls = this.complete && !this.failed && this.toolCalls.length > 0 ? this.toolCalls : undefined
     return { events, ...(replay && { replay }), ...(toolCalls && { toolCalls }) }
+  }
+
+  // The images of one chunk go after its text, so the text that the model
+  // wrote before an image stays before it. Text held back as a possible
+  // inline tag is answer text once an image comes.
+  private readImages(images: Record<string, unknown>[], events: SseTokenEvent[]): void {
+    for (const image of images) {
+      const url = isRecord(image.image_url) ? image.image_url.url : undefined
+      if (!nonEmptyString(url)) continue
+      this.inline?.stopLooking(events)
+      events.push({ kind: 'image', url })
+    }
   }
 
   private readReasoning(delta: OpenAiChoiceDelta, events: SseTokenEvent[]): void {

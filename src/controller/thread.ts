@@ -71,6 +71,7 @@ export default sbp('sbp/selectors/register', {
       request: kind,
       messages,
       sendTools,
+      imageOutput: effectiveOutputs(cachedModel).includes('image'),
     })
   },
 

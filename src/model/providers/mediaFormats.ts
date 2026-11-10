@@ -1,7 +1,6 @@
-import type { ImageMediaType } from '../chat/images'
-import { base64ToBytes } from '../../utils/base64'
 import type { NativeHttpResponseHead } from '../../utils/protocol/nativeHttp'
 import { trimTrailingSlashes, type MediaApiFormatId } from './config'
+import { generatedBase64Image, generatedImage } from './generatedImages'
 import { isRecord } from './modelParsing'
 import type { ChatImagePart, GeneratedMedia, MediaKind } from './types'
 
@@ -26,26 +25,6 @@ export interface MediaFormat {
   // The media of a 2xx response to a request of `kind`. Throws when the body
   // holds none.
   parseResponse(kind: MediaKind, head: NativeHttpResponseHead, body: Uint8Array): GeneratedMedia[]
-}
-
-// The first bytes of each image type that Dez stores (`isImageMediaType` in
-// src/model/chat/images.ts); null matches any byte. WebP is a RIFF file (the
-// 4 bytes after `RIFF` are its size) with `WEBP` at offset 8.
-const IMAGE_SIGNATURES: readonly { mediaType: ImageMediaType, bytes: readonly (number | null)[] }[] = [
-  { mediaType: 'image/png', bytes: [0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a] },
-  { mediaType: 'image/jpeg', bytes: [0xff, 0xd8, 0xff] },
-  { mediaType: 'image/gif', bytes: [0x47, 0x49, 0x46, 0x38] },
-  { mediaType: 'image/webp', bytes: [0x52, 0x49, 0x46, 0x46, null, null, null, null, 0x57, 0x45, 0x42, 0x50] },
-]
-
-// The type of an image comes from its bytes, not from the response: a JSON
-// answer does not name it, and a server may send another type than the one
-// that the request asked for.
-function generatedImage(data: Uint8Array): GeneratedMedia {
-  const signature = IMAGE_SIGNATURES.find(({ bytes }) =>
-    data.length >= bytes.length && bytes.every((byte, index) => byte === null || data[index] === byte))
-  if (!signature) throw new Error('The provider sent an image that is not a PNG, JPEG, GIF, or WebP image.')
-  return { bytes: data, mediaType: signature.mediaType }
 }
 
 // Response header names are lower case (reqwest), but a test server or a
@@ -99,16 +78,7 @@ const veniceFormat: MediaFormat = {
     const data = jsonBody(body)
     const images = isRecord(data) && Array.isArray(data.images) ? data.images : []
     if (images.length === 0) throw new Error('The provider sent no image.')
-    return images.map((image) => {
-      let bytes: Uint8Array | null = null
-      try {
-        if (typeof image === 'string') bytes = base64ToBytes(image)
-      } catch {
-        // Not base64 text: the error below.
-      }
-      if (!bytes) throw new Error('The provider sent an image that is not base64 text.')
-      return generatedImage(bytes)
-    })
+    return images.map((image) => generatedBase64Image(image))
   },
 }
 

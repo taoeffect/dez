@@ -43,10 +43,17 @@ export function modelCapability(model: Record<string, unknown>, capability: Mode
   return undefined
 }
 
+// A JSON null counts as no value.
+function hasValueAtPath(model: Record<string, unknown>, path: string): boolean {
+  const value = valueAtPath(model, path)
+  return value !== undefined && value !== null
+}
+
 // What a `/models` entry's model makes and how Dez sends it a request, from
 // the raw types at the config's `modelOutputs.path` (a string, or a list of
 // them, such as OpenRouter's `architecture.output_modalities`). Types that
-// `values` does not name are skipped; with no known type, both stay unknown.
+// `values` does not name are skipped, as is a type whose `requiredPath` has
+// no value in the entry (or null); with no known type, both stay unknown.
 // The outputs are the union of the known types' outputs. The request kind is
 // `chat` when one type gives it, so an image+text model stays a chat model;
 // else the first other kind in list order; else `none`, the kind of a type
@@ -61,6 +68,7 @@ export function modelOutputsAndRequest(model: Record<string, unknown>, mapping: 
   const known = types
     .filter((type): type is string => typeof type === 'string' && Object.hasOwn(mapping.values, type))
     .map((type) => mapping.values[type])
+    .filter((entry) => entry.requiredPath === undefined || hasValueAtPath(model, entry.requiredPath))
   if (known.length === 0) return {}
 
   const requests: ModelRequest[] = known.map((entry) => entry.request ?? 'none')

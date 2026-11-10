@@ -3,7 +3,7 @@ import type { ActiveModel, Section, SectionThinking, Tab } from '../model/chat/t
 import { sectionPlainText } from '../model/chat/content'
 import { imageMarkdown, newImageIds } from '../model/chat/images'
 import { findToolBlocks, ModelTextEscaper } from '../model/chat/toolBlocks'
-import type { MediaKind, ModelRequest, ProviderGenerateMediaResult, ProviderStreamChatResult } from '../model/providers'
+import type { GeneratedMedia, MediaKind, ModelRequest, ProviderGenerateMediaResult, ProviderStreamChatResult } from '../model/providers'
 import { requireProvider } from '../model/providers/registry'
 import { agentSectionMessages, mediaRequestInput } from '../model/streams/messages'
 import {
@@ -54,6 +54,9 @@ interface StreamStartArgs {
   messages: StreamMessage[]
   // Offer the Dez tools (RequestMessages.sendTools).
   sendTools: boolean
+  // The model's known outputs hold `image`: its chat requests ask for
+  // image output (ChatRequestContext.imageOutput).
+  imageOutput: boolean
 }
 
 // The calls of one tool round while they run. Their blocks stay in the
@@ -84,6 +87,10 @@ interface ReplyRuntime {
   // across tokens, so the escaper holds such an end back until the next
   // token, the round end, or the reply end.
   escaper: ModelTextEscaper
+  // The last write of the reply was an image reference (`writeReplyImage`):
+  // the answer text that comes next starts a new paragraph
+  // (`writeModelText`).
+  afterImage: boolean
 }
 
 // The reply of each tab, so tabs stream at the same time and a new start or
@@ -145,14 +152,28 @@ function receiveToken(tabId: string, sectionId: string, token: string): void {
   receiveStreamToken(tabId, token)
 }
 
+// Writes escaped answer text of the model. Right after an image reference
+// of the reply, the text starts a new paragraph: one blank line takes the
+// place of the line breaks that the text starts with, and a text of only
+// line breaks is dropped, so a reply never ends with an empty paragraph.
+// True when it wrote text.
+function writeModelText(tabId: string, reply: ReplyRuntime, text: string): boolean {
+  let written = text
+  if (reply.afterImage) {
+    const rest = text.replace(/^\n+/, '')
+    written = rest === '' ? '' : `\n\n${rest}`
+  }
+  if (written === '' || !streamWritesSection(tabId, reply.sectionId)) return false
+  reply.afterImage = false
+  receiveToken(tabId, reply.sectionId, written)
+  return true
+}
+
 // Writes the answer text that the reply's escaper still holds back. Call it
 // at a round end and before the reply ends, while the stream session still
 // writes the section. True when it wrote text.
 function flushModelText(tabId: string, reply: ReplyRuntime): boolean {
-  const held = reply.escaper.flush()
-  if (!held || !streamWritesSection(tabId, reply.sectionId)) return false
-  receiveToken(tabId, reply.sectionId, held)
-  return true
+  return writeModelText(tabId, reply, reply.escaper.flush())
 }
 
 // `change` updates the thinking of the streaming section in the store; the
@@ -206,6 +227,8 @@ async function runToolRound(tabId: string, reply: ReplyRuntime, calls: CheckedTo
     abort: new AbortController(),
   }
   writeStreamText(tabId, reply.sectionId, toolGroupAppendText(sectionText, runningBlocks))
+  // The next round's text comes after the blocks, not after an image.
+  reply.afterImage = false
   reply.toolRun = run
 
   for (const [index, call] of calls.entries()) {
@@ -225,6 +248,43 @@ async function runToolRound(tabId: string, reply: ReplyRuntime, calls: CheckedTo
 // The reply is still its tab's reply, and no stop or submit ended it.
 function replyIsCurrent(tabId: string, reply: ReplyRuntime): boolean {
   return repliesByTab.get(tabId) === reply && !reply.cancelling
+}
+
+// Puts an image of a chat reply at the end of its section: saves the file
+// in the generated image folder, then writes its reference, with a new
+// image id, as a paragraph of its own. No answer text comes meanwhile:
+// dez.provider/streamChat waits for this. A failed save leaves the image
+// out, and the reply goes on.
+async function writeReplyImage(tabId: string, reply: ReplyRuntime, image: GeneratedMedia): Promise<void> {
+  let path: string
+  try {
+    path = await sbp('dez.controller/images/save', image.bytes, image.mediaType, { folder: 'generated' }) as string
+  } catch {
+    // images/save logged the failure and showed its error toast.
+    return
+  }
+
+  // While the file was saved, the reply could end, or the user could merge
+  // its section into the one before. A file that no reference names is
+  // deleted; images/delete logs and shows its own failures.
+  const current = replyIsCurrent(tabId, reply)
+  // Text that the escaper holds is answer text from before the image. The
+  // reference itself is not model text, so it gets no escape.
+  if (current) flushModelText(tabId, reply)
+  const sections = (sbp('dez.model/tab', tabId) as Tab | null)?.sections ?? []
+  const texts = sections.map(sectionPlainText)
+  const sectionText = texts[sections.findIndex((section) => section.id === reply.sectionId)]
+  if (!current || sectionText === undefined) {
+    await sbp('dez.controller/images/delete', path).catch(() => {})
+    return
+  }
+
+  // The id and the write in one tick, so that no paste takes the id (the
+  // editor gives ids only to pasted and dropped references).
+  const [id] = newImageIds(texts, 1)
+  const gap = sectionText === '' || sectionText.endsWith('\n\n') ? '' : sectionText.endsWith('\n') ? '\n' : '\n\n'
+  receiveToken(tabId, reply.sectionId, gap + imageMarkdown(path, [{ key: 'id', value: id }]))
+  reply.afterImage = true
 }
 
 // The chat rounds of a reply: request rounds until a round ends with no
@@ -259,18 +319,23 @@ async function runChatRounds(args: StreamStartArgs, reply: ReplyRuntime): Promis
       conversationId: args.conversationId,
       system,
       tools,
+      imageOutput: args.imageOutput,
       modelId: args.model.modelId,
       messages,
       requestId,
       providerSettings,
       onToken: (token: string) => {
         if (!roundIsCurrent()) return
-        const text = reply.escaper.push(token)
-        if (text) receiveToken(args.tabId, args.sectionId, text)
+        writeModelText(args.tabId, reply, reply.escaper.push(token))
       },
       onThinking: (token: string) => {
         if (!roundIsCurrent()) return
         updateStreamThinking(args.tabId, args.sectionId, () => appendThinkingToTabSection(args.tabId, args.sectionId, token, roundAfterToolCall))
+      },
+      // Not after a stop, unlike the text: the save is not instant, and a
+      // stopped reply must not grow later.
+      onImage: async (image: GeneratedMedia) => {
+        if (replyIsCurrent(args.tabId, reply)) await writeReplyImage(args.tabId, reply, image)
       },
     }) as ProviderStreamChatResult
     if (!replyIsCurrent(args.tabId, reply)) return
@@ -383,7 +448,15 @@ export default sbp('sbp/selectors/register', {
       if (repliesByTab.get(args.tabId) === previousReply) repliesByTab.delete(args.tabId)
     }
 
-    const reply: ReplyRuntime = { sectionId: args.sectionId, requestId: '', cancelling: false, outputEnded: false, toolRun: null, escaper: new ModelTextEscaper() }
+    const reply: ReplyRuntime = {
+      sectionId: args.sectionId,
+      requestId: '',
+      cancelling: false,
+      outputEnded: false,
+      toolRun: null,
+      escaper: new ModelTextEscaper(),
+      afterImage: false,
+    }
     repliesByTab.set(args.tabId, reply)
 
     startStreamSession({

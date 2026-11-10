@@ -182,7 +182,7 @@ function cloneProviderConfig(config: ProviderConfig): ProviderConfig {
   const {
     id, name, baseUrl, apiFormat, models, fetchModels, modelListQuery, modelImageInput, modelToolCalling,
     modelOutputs, auth, headers, imageRequestHeaders, maxOutputTokens, cacheBreakpoints, toolMessageCacheMark,
-    promptCacheKey, requestBody, mediaApi, settings, thinking,
+    promptCacheKey, requestBody, imageOutputBody, mediaApi, settings, thinking,
     ...uncopied
   } = config
   // A compile error when ProviderConfig gets a field that this clone does not
@@ -208,6 +208,7 @@ function cloneProviderConfig(config: ProviderConfig): ProviderConfig {
   if (toolMessageCacheMark) clone.toolMessageCacheMark = toolMessageCacheMark
   if (promptCacheKey !== undefined) clone.promptCacheKey = promptCacheKey
   if (requestBody) clone.requestBody = cloneJsonObject(requestBody)
+  if (imageOutputBody) clone.imageOutputBody = cloneJsonObject(imageOutputBody)
   if (mediaApi) clone.mediaApi = { ...mediaApi }
   if (settings) clone.settings = settings.map((setting) => ({ ...setting }))
   // Last: dez.controller/providers/save compares configs as JSON text and

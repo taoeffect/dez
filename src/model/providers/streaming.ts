@@ -4,7 +4,7 @@ import { decodeSseData } from '../../utils/protocol/sse'
 import { providerStatusError } from './errors'
 import type { Provider, ProviderChatRequest } from './provider'
 import type { ProviderStreamChatInput, ProviderStreamChatResult } from './streamTypes'
-import type { SseTokenEvent } from './types'
+import type { GeneratedMedia, SseTokenEvent } from './types'
 
 // A refused response's body is read to its end; its first 1000 characters
 // go into the error.
@@ -15,10 +15,11 @@ export async function assertStreamResponseOk(provider: Provider, response: Nativ
   throw providerStatusError(provider, response, bodyText)
 }
 
-// Sends the answer text to `onToken` and, when the request asked for
-// thinking (`requestThinking`), the thinking to `onThinking`. Returns the
-// replay of a complete thinking, for the next request, and the tool calls,
-// with the Thinking toggle on or off.
+// Sends the answer text to `onToken`, each image to `onImage` (`readImage`
+// gives the bytes of its URL), and, when the request asked for thinking
+// (`requestThinking`), the thinking to `onThinking`. Returns the replay of a
+// complete thinking, for the next request, and the tool calls, with the
+// Thinking toggle on or off.
 //
 // A provider that supports thinking always has its thinking split from the
 // answer text, so with the Thinking toggle off its thinking is dropped, not
@@ -28,6 +29,7 @@ export async function streamProviderTokens(
   input: ProviderStreamChatInput,
   result: NativeHttpStreamResult,
   requestThinking: ProviderChatRequest['thinking'],
+  readImage: (url: string) => Promise<GeneratedMedia>,
 ): Promise<Omit<ProviderStreamChatResult, 'requestId'>> {
   await assertStreamResponseOk(provider, result.response, result.chunks)
 
@@ -38,6 +40,8 @@ export async function streamProviderTokens(
       if (event.kind === 'done') return true
       if (event.kind === 'token') {
         await input.onToken(event.token)
+      } else if (event.kind === 'image') {
+        await input.onImage(await readImage(event.url))
       } else if (requestThinking) {
         await input.onThinking(event.token)
       }

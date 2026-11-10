@@ -7,8 +7,8 @@ import type { ChatRequestContext, GeneratedMedia, MediaKind, ProviderId } from '
 // the request.
 export type ProviderChatInputMessage = RequestMessage<MessagePart>
 
-// `conversationId`, `system`, and `tools` go into the request body
-// (ChatRequestContext).
+// `conversationId`, `system`, `tools`, and `imageOutput` go into the request
+// body (ChatRequestContext).
 export interface ProviderStreamChatInput extends ChatRequestContext {
   providerId: ProviderId
   modelId: string
@@ -22,6 +22,10 @@ export interface ProviderStreamChatInput extends ChatRequestContext {
   // Each piece of thinking text, in stream order. Called only when the
   // provider supports thinking and the Thinking toggle is on.
   onThinking(token: string): void | Promise<void>
+  // Each image of the reply, as bytes, in stream order with the answer
+  // text: the next `onToken` call comes after this one ends. A reply has
+  // images only when the request asked for them (`imageOutput`).
+  onImage(image: GeneratedMedia): void | Promise<void>
 }
 
 export interface ProviderStreamChatResult {

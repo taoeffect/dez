@@ -66,7 +66,7 @@ export function selectProbeModel(
 }
 
 // Thinking text counts too: a model that thinks first sends it before any
-// answer text.
+// answer text. So does an image, for a reply that starts with one.
 export async function readFirstToken(provider: Provider, chunks: AsyncIterable<Uint8Array>): Promise<boolean> {
   const parser = provider.format.createStreamParser(provider.supportsThinking)
   let ended = false
@@ -76,7 +76,7 @@ export async function readFirstToken(provider: Provider, chunks: AsyncIterable<U
         ended = true
         return false
       }
-      if (event.token.length > 0) return true
+      if (event.kind === 'image' || event.token.length > 0) return true
     }
     return false
   }

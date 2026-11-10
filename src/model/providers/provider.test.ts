@@ -462,6 +462,22 @@ describe('declarative provider settings', () => {
     expect(provider.config.requestBody).toEqual(original)
   })
 
+  it('merges the imageOutputBody after the requestBody, only into a request that asks for image output', () => {
+    const provider = customProvider({
+      requestBody: { modalities: ['text'], top: 'kept' },
+      imageOutputBody: { modalities: ['image', 'text'] },
+    })
+    const body = (sender: Provider, context?: ChatRequestContext) => requestBody(sender.chatRequest(messages, 'm', key, {}, context).request)
+
+    expect(body(provider, { imageOutput: true })).toMatchObject({ modalities: ['image', 'text'], top: 'kept' })
+    expect(body(provider, { imageOutput: false }).modalities).toEqual(['text'])
+    expect(body(provider).modalities).toEqual(['text'])
+    expect(body(customProvider({}), { imageOutput: true })).not.toHaveProperty('modalities')
+    // OpenRouter refuses `modalities` for a model that cannot make images.
+    expect(body(builtInProvider('openrouter'), { imageOutput: true }).modalities).toEqual(['image', 'text'])
+    expect(body(builtInProvider('openrouter'))).not.toHaveProperty('modalities')
+  })
+
   it('adds no venice_parameters to a provider without settings', () => {
     const body = requestBody(builtInProvider('openrouter').chatRequest(messages, 'm', key, { webSearch: false }).request)
 
@@ -1030,6 +1046,7 @@ describe('provider models', () => {
           gen: { outputs: ['image'], request: 'image' },
           edit: { outputs: ['image'], request: 'imageEdit' },
           video: { outputs: ['video'] },
+          priced: { outputs: ['image'], requiredPath: 'price.image' },
           embed: { outputs: [] },
         },
       },
@@ -1047,6 +1064,9 @@ describe('provider models', () => {
         { id: 'inherited', arch: { out: 'constructor' } },
         { id: 'number', arch: { out: 1 } },
         { id: 'missing', arch: {} },
+        { id: 'required-value', arch: { out: ['text', 'priced'] }, price: { image: '0.00003' } },
+        { id: 'required-missing', arch: { out: ['text', 'priced'] }, price: {} },
+        { id: 'required-null', arch: { out: ['priced'] }, price: { image: null } },
       ],
     })
 
@@ -1060,6 +1080,10 @@ describe('provider models', () => {
       // Still in the parsed list, so the diagnostics report shows it.
       listed('makes-nothing', { outputs: [], request: 'none' }),
       ...['unknown-only', 'empty-list', 'inherited', 'number', 'missing'].map((id) => listed(id)),
+      // A type counts only with a value at its `requiredPath`.
+      listed('required-value', { outputs: ['text', 'image'], request: 'chat' }),
+      listed('required-missing', { outputs: ['text'], request: 'chat' }),
+      listed('required-null'),
     ])
   })
 
@@ -1157,18 +1181,21 @@ describe('provider models', () => {
       ['edit', ['image'], 'imageEdit'],
       ['video', ['video'], 'none'],
     ])
-    // OpenRouter makes images only through chat: an image+text model stays a
-    // chat model, and an image-only model gets no request.
+    // OpenRouter: an image+text model is a chat model that also makes
+    // images; an image-only model gets no request (its API is not chat); a
+    // router lists "image" but has no image price, so it is a text model.
     expect(kinds('openrouter', [
-      { id: 'text', architecture: { output_modalities: ['text'] } },
-      { id: 'text-image', architecture: { output_modalities: ['image', 'text'] } },
-      { id: 'image', architecture: { output_modalities: ['image'] } },
+      { id: 'text', architecture: { output_modalities: ['text'] }, pricing: { prompt: '0.000001', completion: '0.000002' } },
+      { id: 'text-image', architecture: { output_modalities: ['image', 'text'] }, pricing: { image_output: '0.00003' } },
+      { id: 'image', architecture: { output_modalities: ['image'] }, pricing: { image_output: '0.00003' } },
+      { id: 'router', architecture: { output_modalities: ['text', 'image'] }, pricing: { prompt: '-1', completion: '-1' } },
       { id: 'speech', architecture: { output_modalities: ['speech'] } },
       { id: 'rerank', architecture: { output_modalities: ['rerank'] } },
     ])).toEqual([
       ['text', ['text'], 'chat'],
       ['text-image', ['text', 'image'], 'chat'],
       ['image', ['image'], 'none'],
+      ['router', ['text'], 'chat'],
       ['speech', ['audio'], 'none'],
     ])
     expect(kinds('copilot', [

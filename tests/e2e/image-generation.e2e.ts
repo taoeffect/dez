@@ -3,16 +3,18 @@ import type http from 'node:http'
 import path from 'node:path'
 import type { EditorView } from '@codemirror/view'
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from 'vitest'
+import { openAiChatBody } from './harness/chatBody'
 import { click, consoleErrors, pointerClick, resetConsoleErrors, screenshotOnFailure, waitForValue } from './harness/dom'
 import { conversationFilePath } from './harness/fixtures'
 import { shownImages, solidPng } from './harness/images'
 import { startMockProviderApp, type MockProviderApp } from './harness/mockProviderApp'
-import type { MockProvider } from './harness/mockServer'
+import { mockChatPath, startEventStream, writeChatFrame, type MockProvider } from './harness/mockServer'
 import type { E2EBrowser } from './harness/session'
 import { activeConversationId, newTab, openToasts, pickModel, submit, threadSections, waitForThread } from './harness/thread'
 
 // Image replies, driven through the real app against a mock of Venice's
-// media API (`mediaApi: { format: 'venice' }`):
+// media API (`mediaApi: { format: 'venice' }`) and of a chat API that
+// makes images (`imageOutputBody`):
 // - a reply of an image model is one request to `/image/generate` with the
 //   last user message as its prompt, and with Venice's watermark and safe
 //   mode off; each image of the answer is saved in the generated image
@@ -23,6 +25,12 @@ import { activeConversationId, newTab, openToasts, pickModel, submit, threadSect
 //   with no path;
 // - an edit whose message names an image with `@a` takes that image, not
 //   the newest one;
+// - a chat model that also makes images gets the config's image output
+//   fields in its chat request; each image of its streamed reply is saved
+//   in the generated image folder and shown as a paragraph between the
+//   reply's text, with a new image id; a later request sends it as text
+//   with its id and no path, and as an image part when the user names it
+//   with `@a`;
 // - when the view followed a reply to its end, it stays at its bottom when
 //   the reply's image loads after the end;
 // - Stop during the request leaves no file and no agent section;
@@ -34,6 +42,8 @@ import { activeConversationId, newTab, openToasts, pickModel, submit, threadSect
 const PAINTER: MockProvider = { id: 'painter', name: 'Painter Mock', modelId: 'paint-model', modelName: 'Paint Model' }
 const EDIT_MODEL = { id: 'edit-model', name: 'Edit Model' }
 const UPSCALE_MODEL = { id: 'upscale-model', name: 'Upscale Model' }
+// A chat model that writes text and makes images in one reply.
+const CHAT_MODEL = { id: 'chat-paint-model', name: 'Chat Paint Model' }
 const GENERATE_PATH = `/${PAINTER.id}/v1/image/generate`
 const EDIT_PATH = `/${PAINTER.id}/v1/image/multi-edit`
 
@@ -123,10 +133,12 @@ describe('image generation', () => {
   beforeAll(async () => {
     setup = await startMockProviderApp(PAINTER, {
       mediaApi: { format: 'venice' },
+      imageOutputBody: { modalities: ['image', 'text'] },
       models: [
         { id: PAINTER.modelId, name: PAINTER.modelName, outputs: ['image'], request: 'image' },
         { id: EDIT_MODEL.id, name: EDIT_MODEL.name, outputs: ['image'], request: 'imageEdit' },
         { id: UPSCALE_MODEL.id, name: UPSCALE_MODEL.name, outputs: ['image'], request: 'none' },
+        { id: CHAT_MODEL.id, name: CHAT_MODEL.name, outputs: ['text', 'image'], request: 'chat' },
       ],
     }, { heldPaths: [GENERATE_PATH, EDIT_PATH] })
     browser = setup.browser
@@ -249,6 +261,90 @@ describe('image generation', () => {
       { role: 'agent', text: `![${path.join(generatedDir(), editedName)}](id=c)` },
       { role: 'user', text: '' },
     ])
+    expect(await consoleErrors(browser)).toEqual([])
+  })
+
+  it('shows the image of a chat reply between its text, and sends it back by its id', async () => {
+    const chatModel = { ...PAINTER, modelId: CHAT_MODEL.id }
+    // An image of a chat reply, as OpenRouter streams it: whole, in one
+    // chunk.
+    const imageFrame = (png: Buffer) => ({
+      content: '',
+      images: [{ type: 'image_url', image_url: { url: `data:image/png;base64,${png.toString('base64')}` } }],
+    })
+    const before = await generatedImages()
+    await pickModel(browser, PAINTER.name, CHAT_MODEL.name)
+    await submit(browser, 'Draw a fox')
+
+    const first = await setup.mock.waitForRequest(browser)
+    expect(first.path).toBe(mockChatPath(PAINTER))
+    expect(JSON.parse(first.body)).toEqual({
+      ...openAiChatBody(chatModel, [{ role: 'user', content: 'Draw a fox' }]),
+      modalities: ['image', 'text'],
+    })
+    startEventStream(first.reply)
+    writeChatFrame(first.reply, { content: 'Here is a fox.' })
+    writeChatFrame(first.reply, imageFrame(GENERATED_PNG))
+    writeChatFrame(first.reply, { content: 'It is green.' })
+    writeChatFrame(first.reply, {}, 'stop')
+    first.reply.end('data: [DONE]\n\n')
+
+    const [foxName] = await newGeneratedImages(before, 1)
+    expect(foxName).toMatch(STORED_IMAGE_NAME)
+    const foxPath = path.join(generatedDir(), foxName)
+    expect(await fs.promises.readFile(foxPath)).toEqual(GENERATED_PNG)
+    const foxReply = [
+      { role: 'user', text: 'Draw a fox' },
+      { role: 'agent', text: `Here is a fox.\n\n![${foxPath}](id=a)\n\nIt is green.` },
+    ]
+    await waitForThread(browser, [...foxReply, { role: 'user', text: '' }])
+    await waitForValue(browser, 'shown image', () => shownImages(browser), [{ alt: foxName, width: 36, height: 20 }])
+
+    await submit(browser, 'Make @a orange')
+
+    // The reply's image goes back as text only; the mention adds the image
+    // part to the user message.
+    const second = await setup.mock.waitForRequest(browser)
+    expect(JSON.parse(second.body)).toEqual({
+      ...openAiChatBody(chatModel, [
+        { role: 'user', content: 'Draw a fox' },
+        { role: 'assistant', content: 'Here is a fox.\n\n![image](id=a)\n\nIt is green.' },
+        {
+          role: 'user',
+          content: [
+            { type: 'text', text: 'Make @a' },
+            { type: 'image_url', image_url: { url: `data:image/png;base64,${GENERATED_PNG.toString('base64')}` } },
+            { type: 'text', text: ' orange' },
+          ],
+        },
+      ]),
+      modalities: ['image', 'text'],
+    })
+    expect(second.body).not.toContain(setup.app.home)
+    // A reply with an image and no text.
+    startEventStream(second.reply)
+    writeChatFrame(second.reply, imageFrame(EDITED_PNG))
+    writeChatFrame(second.reply, {}, 'stop')
+    second.reply.end('data: [DONE]\n\n')
+
+    const [editedName] = await newGeneratedImages([...before, foxName], 1)
+    const editedPath = path.join(generatedDir(), editedName)
+    expect(await fs.promises.readFile(editedPath)).toEqual(EDITED_PNG)
+    await waitForThread(browser, [
+      ...foxReply,
+      { role: 'user', text: 'Make @a orange' },
+      { role: 'agent', text: `![${editedPath}](id=b)` },
+      { role: 'user', text: '' },
+    ])
+    await waitForValue(browser, 'shown images', () => shownImages(browser), [
+      { alt: foxName, width: 36, height: 20 },
+      { alt: editedName, width: 20, height: 36 },
+    ])
+    const file = conversationFilePath(setup.app.home, await activeConversationId(browser))
+    await waitForValue(browser, 'saved references', async () => {
+      const content = await fs.promises.readFile(file, 'utf8').catch(() => '')
+      return content.includes(`![${foxPath}](id=a)`) && content.includes(`![${editedPath}](id=b)`)
+    }, true)
     expect(await consoleErrors(browser)).toEqual([])
   })
 
