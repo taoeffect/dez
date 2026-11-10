@@ -13,6 +13,7 @@ import { debounce, throttle } from 'turtledash'
 import PromptAutocomplete from './PromptAutocomplete.vue'
 import FindDropdown from './FindDropdown.vue'
 import {
+  AT_BOTTOM_PX,
   SECTION_SEP,
   buildInitialDoc,
   clipboardPasteTransaction,
@@ -946,13 +947,69 @@ function mountView() {
   view = new EditorView({ state: buildState(), parent: hostRef.value })
   viewTabId = activeTabId.value
   viewConversationId = activeConversationId.value
+  // `load` does not bubble, so the scroller hears the loads of its images
+  // in the capture phase.
+  view.scrollDOM.addEventListener('load', onScrollerImageLoad, true)
+  view.scrollDOM.addEventListener('scroll', checkScrollUp)
   registerActiveView()
+}
+
+// After a reply that the view followed to its end, the rebuild scrolls the
+// view to its bottom, often before the reply's new image has loaded: the
+// image has no size yet, so its line is short. The load makes the line
+// taller, and CodeMirror then keeps the top line in place: it keeps the
+// bottom only when the view is at its bottom when it measures, and the
+// image moved the bottom before that. So while this is set, each image
+// load in the view scrolls to the bottom again. A scroll up by the user
+// and every other rebuild end it.
+// `tests/e2e/image-generation.e2e.ts` covers this.
+let keepBottomOnImageLoad = false
+// The scroller's scrollTop at the last `checkScrollUp`.
+let lastScrollerTop = 0
+const KEEP_BOTTOM_MEASURE_KEY = 'dez-keep-bottom-on-image-load'
+
+function onScrollerImageLoad(event: Event) {
+  if (!view || !(event.target instanceof HTMLImageElement)) return
+  checkScrollUp()
+  if (!keepBottomOnImageLoad) return
+  // The image's own load handler (`images.ts`) runs after this one and asks
+  // CodeMirror to measure the new line height; the write runs after that
+  // measure, so CodeMirror's scroll anchoring does not undo it.
+  view.requestMeasure({
+    key: KEEP_BOTTOM_MEASURE_KEY,
+    read: () => {
+      checkScrollUp()
+      return keepBottomOnImageLoad
+    },
+    write: (keepBottom, v) => {
+      if (keepBottom) v.scrollDOM.scrollTop = v.scrollDOM.scrollHeight
+    },
+  })
+}
+
+// Ends `keepBottomOnImageLoad` after a scroll up by the user. Only the user
+// moves the view up while it is not at its bottom (see `handleVisibleScroll`
+// in `editor/selectors.ts`), and a taller doc does not move it, so a growing
+// image does not end it. This runs on scroll events, and at once before an
+// image load scrolls: a scroll and a load can come before the scroll event.
+function checkScrollUp() {
+  if (!view) return
+  const scroll = view.scrollDOM
+  const movedUp = scroll.scrollTop < lastScrollerTop
+  lastScrollerTop = scroll.scrollTop
+  if (movedUp && scroll.scrollHeight - scroll.scrollTop - scroll.clientHeight > AT_BOTTOM_PX) {
+    keepBottomOnImageLoad = false
+  }
 }
 
 function scrollViewToBottomAfterLayout(v: EditorView) {
   requestAnimationFrame(() => {
     if (view !== v) return
     v.scrollDOM.scrollTop = v.scrollDOM.scrollHeight
+    // Set here, not before the frame: scroll events of the rebuild come
+    // before this frame and could end it at once.
+    lastScrollerTop = v.scrollDOM.scrollTop
+    keepBottomOnImageLoad = true
   })
 }
 
@@ -964,6 +1021,7 @@ function resetViewToActiveTab(streamEnd?: { followBottom: boolean }) {
   // The autocomplete range points into the old doc; accepting it after the
   // swap would insert a pill at a wrong position.
   closeAutocomplete()
+  keepBottomOnImageLoad = false
   // A rebuild of the same tab, such as the reset at the end of each
   // stream, keeps the open thinking and tool call panels; another tab
   // starts with all closed.

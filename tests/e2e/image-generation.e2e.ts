@@ -1,6 +1,7 @@
 import fs from 'node:fs'
 import type http from 'node:http'
 import path from 'node:path'
+import type { EditorView } from '@codemirror/view'
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from 'vitest'
 import { click, consoleErrors, pointerClick, resetConsoleErrors, screenshotOnFailure, waitForValue } from './harness/dom'
 import { conversationFilePath } from './harness/fixtures'
@@ -19,6 +20,8 @@ import { activeConversationId, newTab, openToasts, pickModel, submit, threadSect
 // - an edit model's request to `/image/multi-edit` takes the newest image of
 //   the conversation when the last user message has none, as a data URL
 //   with no path;
+// - when the view followed a reply to its end, it stays at its bottom when
+//   the reply's image loads after the end;
 // - Stop during the request leaves no file and no agent section;
 // - a model that Dez has no request for gets an error toast, and no request
 //   goes.
@@ -33,7 +36,12 @@ const EDIT_PATH = `/${PAINTER.id}/v1/image/multi-edit`
 
 const GENERATED_PNG = solidPng(36, 20, [40, 160, 60])
 const EDITED_PNG = solidPng(20, 36, [200, 120, 20])
+const TALL_PNG = solidPng(40, 300, [60, 90, 200])
 const STORED_IMAGE_NAME = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\.png$/
+
+/** What a view at its bottom may still have below it: scroll positions
+ *  can be fractions of a pixel. */
+const AT_BOTTOM_PX = 1
 
 describe('image generation', () => {
   let setup: MockProviderApp
@@ -64,6 +72,50 @@ describe('image generation', () => {
     reply.end(body)
   }
 
+  // Keeps the generated images that the editor shows from loading until
+  // `releaseImageLoads`: their `src` waits in the page. So a test decides
+  // when an image gets its size, which is otherwise a race with the
+  // editor's own work.
+  async function holdImageLoads (): Promise<void> {
+    await browser.execute(() => {
+      const src = Object.getOwnPropertyDescriptor(HTMLImageElement.prototype, 'src')
+      const setSrc = src?.set
+      if (!src || !setSrc) throw new Error('holdImageLoads: no src setter')
+      const held: Array<[HTMLImageElement, string]> = []
+      Object.defineProperty(HTMLImageElement.prototype, 'src', {
+        ...src,
+        set (this: HTMLImageElement, url: string) {
+          if (url.includes('generated')) held.push([this, url])
+          else setSrc.call(this, url)
+        },
+      })
+      Reflect.set(window, '__e2eReleaseImageLoads', () => {
+        Object.defineProperty(HTMLImageElement.prototype, 'src', src)
+        for (const [img, url] of held) img.src = url
+      })
+    })
+  }
+
+  async function releaseImageLoads (): Promise<void> {
+    await browser.execute(() => {
+      const release = Reflect.get(window, '__e2eReleaseImageLoads') as (() => void) | undefined
+      Reflect.deleteProperty(window, '__e2eReleaseImageLoads')
+      release?.()
+    })
+  }
+
+  // The distance from the bottom of the editor's view to the bottom of its
+  // scrollable area, read two frames after the last change.
+  async function viewFromBottom (): Promise<number> {
+    return browser.execute(() => new Promise<number>((resolve, reject) => {
+      requestAnimationFrame(() => requestAnimationFrame(() => {
+        const scroll = document.querySelector<HTMLElement>('.cm-scroller')
+        if (!scroll) reject(new Error('viewFromBottom: .cm-scroller not found'))
+        else resolve(scroll.scrollHeight - scroll.scrollTop - scroll.clientHeight)
+      }))
+    }))
+  }
+
   beforeAll(async () => {
     setup = await startMockProviderApp(PAINTER, {
       mediaApi: { format: 'venice' },
@@ -83,6 +135,7 @@ describe('image generation', () => {
 
   afterEach(async (ctx) => {
     await screenshotOnFailure(browser, ctx)
+    await releaseImageLoads()
     await setup.mock.dropOpenReplies(browser)
   })
 
@@ -143,6 +196,41 @@ describe('image generation', () => {
       { alt: generatedName, width: 36, height: 20 },
       { alt: editedName, width: 20, height: 36 },
     ])
+    expect(await consoleErrors(browser)).toEqual([])
+  })
+
+  it('keeps the view at its bottom when the image of a followed reply loads after the reply ended', async () => {
+    // A question taller than the editor, so the view can scroll.
+    const question = Array.from({ length: 40 }, (_, i) => `Question line ${i + 1}`).join('\n')
+    await browser.execute((text: string) => {
+      const content = document.querySelector('.cm-content')
+      if (!content) throw new Error('.cm-content not found')
+      const view = Reflect.get(Reflect.get(content, 'cmTile'), 'root').view as EditorView
+      view.dispatch({ changes: { from: 0, insert: text } })
+    }, `${question}\n`)
+    const before = await generatedImages()
+    await pickModel(browser, PAINTER.name, PAINTER.modelName)
+    await holdImageLoads()
+    await submit(browser, 'Draw a tall fox')
+
+    const request = await setup.mock.waitForRequest(browser)
+    answer(request.reply, 'application/json', JSON.stringify({ images: [TALL_PNG.toString('base64')] }))
+    const [name] = await newGeneratedImages(before, 1)
+    await waitForThread(browser, [
+      { role: 'user', text: `${question}\nDraw a tall fox` },
+      { role: 'agent', text: `![${path.join(generatedDir(), name)}](id=a)` },
+      { role: 'user', text: '' },
+    ])
+    // The rebuild at the end of the reply scrolls in a later frame.
+    await browser.pause(300)
+    expect(await shownImages(browser), 'image before its load').toEqual([{ alt: name, width: 0, height: 0 }])
+    expect(await viewFromBottom(), 'distance from the bottom before the load').toBeLessThanOrEqual(AT_BOTTOM_PX)
+
+    await releaseImageLoads()
+    await waitForValue(browser, 'shown image', () => shownImages(browser), [{ alt: name, width: 40, height: 300 }])
+    // The load event and the editor's measure come in later frames.
+    await browser.pause(300)
+    expect(await viewFromBottom(), 'distance from the bottom after the load').toBeLessThanOrEqual(AT_BOTTOM_PX)
     expect(await consoleErrors(browser)).toEqual([])
   })
 

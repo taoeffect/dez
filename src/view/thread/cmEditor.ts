@@ -1308,6 +1308,10 @@ export function buildInitialDoc(sections: Section[]): string {
 /** The padding above and below the doc inside the editor scroller. */
 export const SCROLLER_PADDING_PX = 16
 
+/** Scroll positions can be fractions of a pixel: a view this close to its
+ *  bottom is at its bottom. */
+export const AT_BOTTOM_PX = 1
+
 // The side gutter of the text column: the scroller's left and right
 // padding. The column has no max width (the user wants the window to
 // decide how wide the text is), so the gutter grows with the editor width

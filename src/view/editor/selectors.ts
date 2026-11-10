@@ -2,7 +2,7 @@ import sbp from '@sbp/sbp'
 import { EditorSelection, Transaction, type TransactionSpec } from '@codemirror/state'
 import { EditorView, runScopeHandlers } from '@codemirror/view'
 import type { SectionThinking } from '../../model/chat/types'
-import { SCROLLER_PADDING_PX, serializeSelectionAsMarkdown, setSectionThinkingEffect } from '../thread/cmEditor'
+import { AT_BOTTOM_PX, SCROLLER_PADDING_PX, serializeSelectionAsMarkdown, setSectionThinkingEffect } from '../thread/cmEditor'
 import {
   createFindQuery,
   findMatchAt,
@@ -21,10 +21,6 @@ import { focusKeepingScroll } from './focus'
 import { dropFilePaths } from './imageInsert'
 import { isModalOpen } from '../composables/useKeyboardShortcuts'
 import { findShortcut, keyEventInit, type Shortcut, type ShortcutIdOfScope } from '../../model/shortcuts'
-
-/** Scroll positions can be fractions of a pixel: a view this close to its
- *  bottom is at its bottom. */
-const AT_BOTTOM_PX = 1
 
 /** A scroll down that ends this close to the bottom starts the follow
  *  again: the last line then shows in full. Ctrl+End stops in this zone,
