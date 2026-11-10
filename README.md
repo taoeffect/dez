@@ -194,3 +194,11 @@ Developer ID signing and notarization can be added later to avoid this quarantin
 ## License
 
 AGPL-3.0. See [`LICENSE`](LICENSE) for license details.
+
+## Release signature
+
+The macOS DMG of each release is signed with [minisign](https://jedisct1.github.io/minisign/) and this public key: `RWS6gAnb0vnjQ7T83fKgSY5FBFm1yKek6p7vW4Qu31q5PRfZO8EUCMH3`. To check a DMG, download its `.minisig` file into the same folder and run (with your download's version in place of `X.Y.Z`):
+
+```bash
+minisign -Vm Dez_X.Y.Z_aarch64.dmg -P RWS6gAnb0vnjQ7T83fKgSY5FBFm1yKek6p7vW4Qu31q5PRfZO8EUCMH3
+```
