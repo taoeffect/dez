@@ -28,9 +28,11 @@ const TOOLER: MockProvider = { id: 'tooler', name: 'Tool Mock', modelId: 'tool-m
 const CLAUDE: MockProvider = { id: 'claude', name: 'Claude Mock', modelId: 'claude-model', modelName: 'Claude Model', apiFormat: 'anthropic' }
 
 // The `model_list` results for the filters of the tests. The mock providers
-// are the only configured ones: built-ins have no key in the test HOME.
-const TOOLER_LIST = `1 model matches "tool" (full id | name | provider):\n${TOOLER.id}/${TOOLER.modelId} | ${TOOLER.modelName} | ${TOOLER.name}`
-const CLAUDE_LIST = `1 model matches "claude" (full id | name | provider):\n${CLAUDE.id}/${CLAUDE.modelId} | ${CLAUDE.modelName} | ${CLAUDE.name}`
+// are the only configured ones: built-ins have no key in the test HOME. Their
+// models do not say what they make, so the lines have no outputs column.
+const LIST_COLUMNS = '(full id | name | provider | outputs). Outputs: t text, i image, a audio, v video.'
+const TOOLER_LIST = `1 model matches "tool" ${LIST_COLUMNS}\n${TOOLER.id}/${TOOLER.modelId} | ${TOOLER.modelName} | ${TOOLER.name}`
+const CLAUDE_LIST = `1 model matches "claude" ${LIST_COLUMNS}\n${CLAUDE.id}/${CLAUDE.modelId} | ${CLAUDE.modelName} | ${CLAUDE.name}`
 
 const EPHEMERAL = { type: 'ephemeral' }
 

@@ -10,9 +10,9 @@ import { tagEscape } from './tagEscape'
 // recognizes it; requests, the editor, and the search, preview, and Markdown
 // text all call it.
 //
-//   <dez:tool id="call_7Qx" name="model_list" filter="gemini">
-//   3 models match "gemini" (full id | name | provider):
-//   venice/gemini-3-pro-preview | Gemini 3 Pro Preview | Venice
+//   <dez:tool id="call_7Qx" name="model_list" filter="gemini 3 pro">
+//   1 model matches "gemini 3 pro" (full id | name | provider | outputs). …
+//   venice/gemini-3-pro-preview | Gemini 3 Pro Preview | Venice | t
 //   </dez:tool>
 //
 // - The opening tag is one whole line, and so is the closing tag: a block

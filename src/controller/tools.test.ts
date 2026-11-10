@@ -44,14 +44,23 @@ afterEach(() => {
 })
 
 describe('dez.controller/tools/run', () => {
+  const columns = '(full id | name | provider | outputs). Outputs: t text, i image, a audio, v video.'
+
   it('lists the cached models of the configured providers that match the filter', async () => {
     expect(await run({ name: 'model_list', arguments: { filter: 'gemini' } })).toStrictEqual({
-      content: '1 model matches "gemini" (full id | name | provider):\nvenice/venice-gemini-3-pro | Gemini 3 Pro | Venice',
+      content: `1 model matches "gemini" ${columns}\nvenice/venice-gemini-3-pro | Gemini 3 Pro | Venice`,
       isError: false,
     })
     expect(await run({ name: 'model_list', arguments: {} })).toStrictEqual({
-      content: '2 models (full id | name | provider):\nvenice/venice-gemini-3-pro | Gemini 3 Pro | Venice\nvenice/venice-glm-5 | GLM 5 | Venice',
+      content: `2 models ${columns}\nvenice/venice-gemini-3-pro | Gemini 3 Pro | Venice\nvenice/venice-glm-5 | GLM 5 | Venice`,
       isError: false,
+    })
+  })
+
+  it('gives an error result that names the valid letters for outputs with an unknown letter', async () => {
+    expect(await run({ name: 'model_list', arguments: { outputs: 'q' } })).toStrictEqual({
+      content: 'The tool failed: Unknown output letter "q". Valid letters: t text, i image, a audio, v video.',
+      isError: true,
     })
   })
 

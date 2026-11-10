@@ -1,16 +1,23 @@
 import { modelRefKey } from '../chat/modelRef'
+import { OUTPUT_LETTER_LEGEND, outputLetters, parseOutputLetters } from '../modelOutputs'
 import { availableModels, matchingModelsByProvider, searchTerms } from '../modelSearch'
 import type { ModelCache } from '../persistence/types'
 import type { ProviderInfo } from '../providers/types'
-import type { ToolDefinition } from './types'
+import type { ToolArguments, ToolDefinition } from './types'
 
 /** The most model lines that one `model_list` result holds. */
 export const MODEL_LIST_LIMIT = 50
 
+// The description and the legend come from static tables only (no counts,
+// no dates): the tools array is in the provider's prompt cache.
 export const MODEL_LIST_TOOL: ToolDefinition = {
   name: 'model_list',
-  description: 'List the models that the user can use in Dez. After a first line with the count, '
-    + 'each line gives one model: its full id (`provider/model`), its name, and the name of its provider. '
+  description: 'List the models that the user can use in Dez. '
+    + 'The first line gives the count, the column names, and what the output letters mean. '
+    + 'Then each line gives one model: its full id (`provider/model`), its name, the name of its provider, '
+    + 'and the letters of the outputs that it makes. '
+    + 'The output letters show only when the provider reports what the model makes. '
+    + 'With no `filter` and no `outputs`, the list has every model. '
     + `The list stops after ${MODEL_LIST_LIMIT} models.`,
   parameters: [
     {
@@ -20,14 +27,23 @@ export const MODEL_LIST_TOOL: ToolDefinition = {
         + 'A model matches when every word matches, in any word order. '
         + 'A word matches when it is part of the provider name, the provider id, the model name, or the model id, '
         + 'or when it is made of the starts of consecutive words of one of them: "gem3pro" matches "gemini-3-pro". '
-        + 'To match two of them, use two words, as in "venice claude". Case and punctuation do not count. '
-        + 'Leave it out to list every model.',
+        + 'To match two of them, use two words, as in "venice claude". Case and punctuation do not count.',
+      required: false,
+    },
+    {
+      name: 'outputs',
+      type: 'string',
+      description: `Output letters that select models by what they make (${OUTPUT_LETTER_LEGEND}), as in "iv" or "i,v". `
+        + 'A model matches when it makes at least one of them. '
+        + 'A model whose provider does not report what it makes counts as a text model. '
+        + 'Use it alone or with `filter`.',
       required: false,
     },
   ],
 }
 
-const COLUMNS = '(full id | name | provider)'
+const COLUMNS = '(full id | name | provider | outputs)'
+const LEGEND = `Outputs: ${OUTPUT_LETTER_LEGEND}.`
 
 // Names come from provider APIs and user input. A line break in one would
 // split its model over two lines of the result, and a `|` would read as one
@@ -37,30 +53,43 @@ function columnText(value: string): string {
   return value.replace(/\s+/g, ' ').trim().replaceAll('|', '/')
 }
 
-/** The `model_list` result: the models that the user can pick (as the model
- *  picker shows them, with no Favorites group) that match `filter`, in
- *  provider order, then model cache order. A first line gives the count; the
- *  full id of each model leads its line. A filter with no letters or digits
- *  lists every model, as it does in the picker. */
-export function modelListText(cache: ModelCache, providers: readonly ProviderInfo[], filter?: string): string {
+/** The `model_list` result for the arguments of a call: the models that the
+ *  user can pick (as the model picker shows them, with no Favorites group)
+ *  that match `filter` and `outputs`, in provider order, then model cache
+ *  order. A first line gives the count, the columns, and the output letter
+ *  legend; the full id of each model leads its line. A model whose outputs
+ *  are unknown (or empty) has no outputs column. A `filter` or `outputs`
+ *  with no letters or digits selects every model, as in the picker.
+ *
+ *  Throws for an `outputs` value with an unknown letter; the error names the
+ *  valid letters, for the model to read. */
+export function modelListText(cache: ModelCache, providers: readonly ProviderInfo[], args: ToolArguments = {}): string {
+  const filter = typeof args.filter === 'string' ? args.filter : ''
+  const parsedOutputs = parseOutputLetters(typeof args.outputs === 'string' ? args.outputs : '')
+  if (!parsedOutputs.ok) throw new Error(parsedOutputs.error)
+  const { outputs } = parsedOutputs
+
   const models = availableModels(cache, providers)
   if (models.length === 0) return 'No models are available.'
 
-  const terms = searchTerms(filter ?? '')
-  const quotedFilter = terms.length > 0 ? JSON.stringify(filter) : null
-  const lines = matchingModelsByProvider(providers, models, { terms, outputs: [] }).flatMap(({ provider, models: matches }) =>
+  const terms = searchTerms(filter)
+  const criteria = [
+    ...(terms.length > 0 ? [JSON.stringify(filter)] : []),
+    ...(outputs.length > 0 ? [`outputs ${outputLetters(outputs)}`] : []),
+  ].join(' and ')
+  const lines = matchingModelsByProvider(providers, models, { terms, outputs }).flatMap(({ provider, models: matches }) =>
     matches.map((model) => {
-      const fullId = modelRefKey({ providerId: provider.id, modelId: model.id })
-      return `${fullId} | ${columnText(model.name)} | ${columnText(provider.name)}`
+      const columns = [modelRefKey({ providerId: provider.id, modelId: model.id }), columnText(model.name), columnText(provider.name)]
+      const letters = outputLetters(model.outputs ?? [])
+      if (letters !== '') columns.push(letters)
+      return columns.join(' | ')
     }))
   const count = lines.length
-  if (count === 0) return `No models match ${quotedFilter}.`
+  if (count === 0) return `No models match ${criteria}.`
 
   const counted = `${count} ${count === 1 ? 'model' : 'models'}`
-  const header = quotedFilter === null
-    ? `${counted} ${COLUMNS}:`
-    : `${counted} ${count === 1 ? 'matches' : 'match'} ${quotedFilter} ${COLUMNS}:`
+  const matched = criteria === '' ? counted : `${counted} ${count === 1 ? 'matches' : 'match'} ${criteria}`
   const shown = lines.slice(0, MODEL_LIST_LIMIT)
   if (count > MODEL_LIST_LIMIT) shown.push(`… and ${count - MODEL_LIST_LIMIT} more. Use a narrower filter.`)
-  return [header, ...shown].join('\n')
+  return [`${matched} ${COLUMNS}. ${LEGEND}`, ...shown].join('\n')
 }

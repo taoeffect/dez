@@ -22,7 +22,7 @@ const TOOL_RUNNERS: Record<string, ToolRunner> = {
   async model_list (args) {
     const providers = await sbp('dez.provider/infos') as ProviderInfo[]
     const cache = sbp('dez.model/modelCache/snapshot') as ModelCache
-    return modelListText(cache, providers, typeof args.filter === 'string' ? args.filter : undefined)
+    return modelListText(cache, providers, args)
   },
 }
 
