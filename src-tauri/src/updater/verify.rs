@@ -64,16 +64,33 @@ pub const RELEASE_DOWNLOAD_BASE: &str = "https://github.com/taoeffect/dez/releas
 //    src-tauri/updater/test-fixtures/make-fixtures.sh: `sign_version` with
 //    the commit test key, then `write_manifest`, then `sign_manifest` with
 //    the release test key. Serve the folder with
-//    `python3 -m http.server 8765 --bind 127.0.0.1`.
+//    `python3 -m http.server 8765 --bind 127.0.0.1`. Keep one release in
+//    `releases.json` at a time: Dez installs the newest one of the list.
 // 4. First quit any Dez you use, and move /Applications/Dez.app and
 //    ~/.config/dez aside: the test apps have no folder of their own, so
 //    they read and save the same ~/.config/dez (conversations, prompts,
 //    API keys). Install the old Dez in /Applications and use Check for
-//    Updates…. For the binary fallback, run the old Dez from a folder made
+//    Updates…. Dez must relaunch as the new version with the toast "Dez
+//    updated", and ~/.config/dez/updates/update.log must end with "Done.".
+//    For the binary fallback, run the old Dez from a folder made
 //    read-only with `chmod a-w`. To install a CI-built app, serve a real
 //    release DMG with a manifest from the test keys as the new Dez (the
-//    old Dez needs a lower version). Afterwards, remove the test apps and
-//    the test ~/.config/dez, and move yours back.
+//    old Dez needs a lower version).
+// 5. The releases that Dez must refuse. Each is a copy of the new Dez's
+//    DMG under a higher version, with a manifest made for that version as
+//    in step 3 and one thing wrong:
+//    - `dmgSha256`: a byte added to the DMG after the manifest was made.
+//    - `manifestSignature`: the manifest changed after it was signed.
+//    - `versionSignature`: the version signed with the release test key.
+//    - `version`: the manifest and the `.minisig` of another version, as
+//      they are.
+//    For each, the dialog "Dez refused this update" must name that check,
+//    and the installed Dez must stay as it was. The server's log must show
+//    a DMG request only for `dmgSha256`. A manifest that the server does
+//    not have is not a refusal: the update window must show the HTTP 404
+//    with Try Again.
+// 6. Afterwards, remove the test apps and the test ~/.config/dez, and move
+//    yours back.
 #[cfg(feature = "updater-test-hooks")]
 const RELEASE_PUBLIC_KEY: &str = include_str!(env!(
     "DEZ_UPDATER_TEST_RELEASE_PUBLIC_KEY",
