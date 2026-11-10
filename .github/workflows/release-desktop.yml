@@ -56,7 +56,7 @@ jobs:
 
       # The script uses only Node built-ins, so no npm ci.
       - name: Check version files
-        run: node scripts/bump-version.js --check "$GITHUB_REF_NAME"
+        run: node scripts/bump-version-and-release.js --check "$GITHUB_REF_NAME"
 
   # Gate all release builds on the E2E UI tests passing for the tagged
   # commit; builds below only start when this reusable workflow succeeds.

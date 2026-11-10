@@ -15,7 +15,7 @@
     "test:e2e": "vitest run --config vitest.e2e.config.ts",
     "typecheck:e2e": "tsc -p tsconfig.e2e.json --noEmit",
     "test:watch": "vitest",
-    "bump-version": "node scripts/bump-version.js",
+    "bump-version": "node scripts/bump-version-and-release.js",
     "preview": "vite preview",
     "tauri": "npm run clean:rust && tauri"
   },

@@ -20,7 +20,8 @@ npm run build:desktop          # native bundle for the current platform
 npm run build:linux:appimage   # Linux AppImage for the host arch; Linux only; needs patchelf
 npm run build:macos:dmg        # Apple Silicon macOS DMG; macOS only
 npm run build:macos:app        # Apple Silicon macOS .app; macOS only
-npm run bump-version -- [--check] <version>          # npm, Tauri, and Cargo version files; --check only checks
+npm run bump-version -- <version>                    # a real release: bumps the version files, signs, commits, tags, pushes
+npm run bump-version -- [--check | --files-only] <version>   # only check, or only bump, the npm, Tauri, and Cargo version files
 node scripts/release-notes.js <tag> [--out <file>]   # release notes body for a tag
 npm run preview                # preview the built frontend
 cd src-tauri && cargo check
@@ -30,7 +31,7 @@ cd src-tauri && cargo test
 - Tauri build scripts first run `npm run clean:rust` (`scripts/clean-rust.js`).
 - `build:linux:appimage` runs `scripts/build-linux-appimage.js`; the AppImage bundles the build host's GStreamer plugins.
 - macOS builds need Xcode 26+: `build:macos:*` first run `scripts/build-macos-icon.js`, which compiles `src-tauri/icons/Dez.icon` into the gitignored `src-tauri/icons/Assets.car` (icon name set in `src-tauri/Info.plist`). A bare `tauri build` on macOS fails without that file.
-- Releases: run `npm run bump-version` and commit before you tag. A pushed `v*` tag runs `.github/workflows/release-desktop.yml` (version check against the tag, e2e gate, Linux AppImages, macOS DMG and its minisign signature, release notes from `scripts/release-notes.js`, GitHub Release). The rules are in the comments of those files.
+- Releases: `npm run bump-version -- <version>` (`scripts/bump-version-and-release.js`) makes the whole release: it bumps the version files, signs the version with the developer's commit key (public key: `src-tauri/updater/dez-commit-key.pub`), commits, tags `v<version>`, and pushes. Never run it for a test or a temporary bump; use `--files-only`. A pushed `v*` tag runs `.github/workflows/release-desktop.yml` (version check against the tag, e2e gate, Linux AppImages, macOS DMG and its minisign signature, release notes from `scripts/release-notes.js`, GitHub Release). The rules are in the comments of those files.
 - CI rules (details in the workflow comments): every job removes the compromised eMudhra CA roots in its first step, only the "Write release notes" step may reference `ZAI_API_KEY`, only the "Sign DMG" step may reference `MINISIGN_SECRET_KEY`, and its job (`sign-macos-dmg`) pins every action to a commit SHA.
 
 ## Git conventions

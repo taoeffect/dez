@@ -29,7 +29,9 @@ pub const RELEASE_DOWNLOAD_BASE: &str = "https://github.com/taoeffect/dez/releas
 // 1. Make a throwaway key with no password:
 //    `minisign -G -W -p <dir>/test.pub -s <dir>/test.key`.
 // 2. Build an "old" and a "new" Dez, each after a temporary
-//    `npm run bump-version -- <version>` (revert it afterwards):
+//    `npm run bump-version -- --files-only <version>` (revert it
+//    afterwards). Never leave out `--files-only`: without it the command
+//    makes a real release (it signs, commits, tags, and pushes). The build:
 //      CI=true APPLE_SIGNING_IDENTITY=- \
 //      DEZ_UPDATER_TEST_PUBLIC_KEY=<dir>/test.pub \
 //      DEZ_UPDATER_TEST_DOWNLOAD_BASE=http://127.0.0.1:8765 \
