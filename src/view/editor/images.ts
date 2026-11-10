@@ -103,7 +103,7 @@ function tooltipContent(title: string, ...text: Array<string | Node>): HTMLEleme
 }
 
 /** The id badge's tooltip. Models get the id in the image's text
- *  (`withoutImagePaths`), so a message can name the image by it. */
+ *  (`withoutStoredFilePaths`), so a message can name the image by it. */
 function idTooltip(id: string): HTMLElement {
   const source = document.createElement('code')
   source.textContent = `image @${id}`

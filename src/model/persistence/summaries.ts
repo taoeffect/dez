@@ -1,4 +1,5 @@
 import { labelImageReferences } from '../chat/images'
+import { labelMediaTags } from '../chat/mediaTags'
 import { cloneModelRef } from '../chat/modelRef'
 import { labelToolBlocks } from '../chat/toolBlocks'
 import type { Role } from '../chat/types'
@@ -6,10 +7,11 @@ import type { ConversationData, ConversationSummary, SectionData } from './types
 
 // An image reference shows as `[image]`, never as its path. Prompt bodies
 // too: their references are sent as images. A tool block in agent text
-// gives a space: its markup and its result are not reply text.
+// gives a space: its markup and its result are not reply text. A media tag
+// in agent text shows as `[audio]` or `[video]`.
 function nodePlainText(node: SectionData['nodes'][number], role: Role): string {
   if (node.kind === 'prompt') return labelImageReferences(node.body)
-  return labelImageReferences(role === 'agent' ? labelToolBlocks(node.text, ' ') : node.text)
+  return labelImageReferences(role === 'agent' ? labelMediaTags(labelToolBlocks(node.text, ' ')) : node.text)
 }
 
 function sectionHasVisibleContent(section: SectionData): boolean {

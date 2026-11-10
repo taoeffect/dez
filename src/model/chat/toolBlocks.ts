@@ -2,6 +2,7 @@ import { MARKER_ATTRIBUTES, escapeMarkerAttribute, markerAttributes } from '../.
 import { fitsParameterType, toolDefinition } from '../tools/registry'
 import type { ToolArguments, ToolArgumentValue, ToolParameterType } from '../tools/types'
 import { stripLiveSentinels } from './content'
+import { MEDIA_TAG_NAMES, mediaTagRequestText, splitMediaTags } from './mediaTags'
 import { tagEscape } from './tagEscape'
 
 // A Dez tool call is plain text in an agent section, as an image reference
@@ -239,25 +240,39 @@ export function withoutToolBlocks(text: string): string {
   return kept.join('\n\n')
 }
 
-// Model answer text gets the `tagEscape` escape for `dez:tool`, so no answer
-// can hold a block's opening or closing tag. Requests remove the escape
-// (`unescapeModelText`), so the provider gets the model's own bytes. The
-// escape covers `dez:tool` only: prose about other tags keeps its bytes.
-const MODEL_TEXT_TAG = 'dez:tool'
-const modelTextEscape = tagEscape(MODEL_TEXT_TAG)
+// Model answer text gets the `tagEscape` escape for the tags that Dez itself
+// writes into agent text: `dez:tool` and the media tags (mediaTags.ts). So
+// no answer can hold a block's opening or closing tag, or a media tag.
+// Requests remove the escape (`agentTextForRequest`), so the provider gets
+// the model's own bytes. Prose about other tags (`dez:pill`) keeps its
+// bytes.
+//
+// Text that a model wrote before a tag was in this list has no escape for
+// it, and no way tells the two apart. So a line of such a text that has
+// the form of a media tag reads as one, and an old `<\dez:audio` loses its
+// `\` in a request. Stored text never changes.
+const MODEL_TEXT_TAGS: readonly string[] = ['dez:tool', ...MEDIA_TAG_NAMES]
+const modelTextEscape = tagEscape(...MODEL_TEXT_TAGS)
 
-/** Answer text as the model wrote it: the text of an agent section outside
- *  its tool blocks, with the `ModelTextEscaper` escape removed. */
-export const unescapeModelText = modelTextEscape.unescape
+/** The text of an agent section outside its tool blocks, as a provider
+ *  gets it: the answer text as the model wrote it (the `ModelTextEscaper`
+ *  escape removed), and each media tag in its request form. The tags are
+ *  found first: after the unescape, a tag that a model wrote would read as
+ *  one that Dez wrote. */
+export function agentTextForRequest(text: string): string {
+  return splitMediaTags(text)
+    .map((piece) => (piece.kind === 'text' ? modelTextEscape.unescape(piece.text) : mediaTagRequestText(piece.tag)))
+    .join('')
+}
 
 // True when `text`, which starts with `<`, can still grow into an escaped
-// run: `<`, `\`…, an optional `/`, and a proper start of `dez:tool`.
+// run: `<`, `\`…, an optional `/`, and a proper start of a tag name.
 function couldGrowIntoTag(text: string): boolean {
   let index = 1
   while (text[index] === '\\') index++
   if (text[index] === '/') index++
   const rest = text.slice(index)
-  return rest.length < MODEL_TEXT_TAG.length && MODEL_TEXT_TAG.startsWith(rest)
+  return MODEL_TEXT_TAGS.some((tag) => rest.length < tag.length && tag.startsWith(rest))
 }
 
 /** Escapes a model's answer text as it streams in. A tag can be split across

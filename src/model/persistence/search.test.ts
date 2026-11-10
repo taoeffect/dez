@@ -61,6 +61,16 @@ describe('conversationPlainText', () => {
     expect(conversationPlainText(sections))
       .toBe('Like: <dez:tool id="call_1" name="model_list" filter="gemini"> venice/gemini-3-pro </dez:tool> Checking. Found it.')
   })
+
+  it('leaves out the media tags of agent text, with no label, and keeps the same text in user text', () => {
+    const tag = '<dez:video id="b" type="video/mp4" src="/home/u/.config/dez/assets/generated/video/v1.mp4"/>'
+    const sections = [
+      section('user', [textNode(`Like:\n<dez:audio id="c" type="audio/mpeg"/>`)]),
+      section('agent', [textNode(`Here it is.\n${tag}\nDone.`)]),
+    ]
+
+    expect(conversationPlainText(sections)).toBe('Like: <dez:audio id="c" type="audio/mpeg"/> Here it is. Done.')
+  })
 })
 
 describe('searchConversationFiles', () => {

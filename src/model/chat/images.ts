@@ -6,17 +6,17 @@ import { fileNameOf } from '../../utils/fileName'
 // image's metadata: nothing (references saved before ids existed), or
 // `key=value` items joined by `|`, such as `id=a`, and later perhaps
 // `id=a|desc=my great image`. The `id` is the image's short name in its
-// conversation (`pastedImageIdChanges`, `newImageIds`): the user names one
-// image with it in a message (`@a`, imageMentions.ts), and models read it
-// in the reference text. Only paths into an app image folder
-// (`…/assets/images/<name>.<ext>` or `…/assets/generated/images/…`, as
-// `dez.controller/images/save` writes them) count. Any other markdown image
+// conversation, from the one id sequence that clips use too (mediaIds.ts):
+// the user names one image with it in a message (`@a`, imageMentions.ts),
+// and models read it in the reference text. Only paths into an app image
+// folder (`…/assets/images/<name>.<ext>` or `…/assets/generated/images/…`,
+// as `dez.controller/images/save` writes them) count. Any other markdown image
 // (a URL, a hand-written path) stays plain text: it is not rendered and not
 // sent as an image. So what Dez shows and sends matches what the asset
 // protocol scope (tauri.conf.json) and the Rust app-file path rule allow.
 // The editor, the request builder, and the title, preview, and search text
 // all use this one recognizer. Providers get no path, only the reference's
-// metadata (`withoutImagePaths`).
+// metadata (`withoutStoredFilePaths`, storedFilePaths.ts).
 
 // The image types that Dez stores as they are; the paste and drop code
 // converts other image types to PNG. OpenAI, Anthropic, and Venice accept
@@ -52,32 +52,16 @@ export const IMAGE_FOLDERS = {
 
 export type ImageFolder = keyof typeof IMAGE_FOLDERS
 
-// The end of every image path: an image folder and a stored file name. The
-// folder names hold only letters and `/`, which a regex takes as they are.
-const IMAGE_PATH_END_SOURCE = String.raw`(?:${Object.values(IMAGE_FOLDERS).join('|')})\/[A-Za-z0-9_-]+\.(?:${Object.keys(MEDIA_TYPE_BY_EXTENSION).join('|')})`
+/** Regex source of the end of every image path: an image folder and a
+ *  stored file name. No capture groups. The folder names hold only letters
+ *  and `/`, which a regex takes as they are. */
+export const IMAGE_PATH_END_SOURCE = String.raw`(?:${Object.values(IMAGE_FOLDERS).join('|')})\/[A-Za-z0-9_-]+\.(?:${Object.keys(MEDIA_TYPE_BY_EXTENSION).join('|')})`
 // An absolute path whose last folders are an image folder. The path may not
 // hold `[`, `]`, or a line break: `]` would end the alt text early, and with
 // `[` excluded too, a search from one `![` stops at the next bracket, so a
 // long line cannot make the regex slow.
 const IMAGE_PATH_SOURCE = String.raw`\/(?:[^\[\]\r\n]*\/)?${IMAGE_PATH_END_SOURCE}`
 const IMAGE_PATH = new RegExp(`^${IMAGE_PATH_SOURCE}$`)
-// The end of every image path that Dez writes, on any machine and in any
-// home: `$HOME/.config/dez/<image folder>/<file>` (`base_dir()` in
-// persistence.rs). Many web projects have an `assets/images` folder too
-// (Angular, Rails, Hugo); the scrub leaves their paths as they are, so code
-// and commands go to the model as the user wrote them.
-const DEZ_IMAGE_PATH_END_SOURCE = String.raw`\/\.config\/dez\/${IMAGE_PATH_END_SOURCE}`
-// A text holds a Dez image path exactly when it holds one of these ends.
-// Global for `matchAll` only, which copies the regex and keeps no state in it.
-const DEZ_IMAGE_PATH_END = new RegExp(DEZ_IMAGE_PATH_END_SOURCE, 'g')
-// Not global, so `test` keeps no `lastIndex` state between calls.
-const ANY_DEZ_IMAGE_PATH_END = new RegExp(DEZ_IMAGE_PATH_END_SOURCE)
-// A run of text with no bracket or line break, the chars that no image path
-// holds.
-const BRACKET_FREE_RUN = /[^\[\]\r\n]+/g
-
-/** The word that stands for each image path in a text for a provider. */
-const IMAGE_PATH_STAND_IN = 'image'
 
 // One metadata item: a lower-case key, `=`, and a one-line value in which a
 // `\` escapes `|`, `(`, `)`, or `\`; every other char stands for itself. An
@@ -88,8 +72,9 @@ const METADATA_ITEM_SOURCE = String.raw`[a-z][a-z0-9_-]*=(?:[^\\|()\r\n]|\\[\\|(
 // Global and shared: `findImageReferences` resets `lastIndex` on each call.
 const IMAGE_REFERENCE = new RegExp(String.raw`!\[(${IMAGE_PATH_SOURCE})\]\((${METADATA_ITEM_SOURCE}(?:\|${METADATA_ITEM_SOURCE})*)?\)`, 'g')
 
-/** An image id: lower-case letters, given in the order of `nextImageId`.
- *  The `@id` mentions (imageMentions.ts) use the same source. */
+/** An image id: lower-case letters, given in the order of the one id
+ *  sequence (mediaIds.ts). The `@id` mentions (imageMentions.ts) and the
+ *  media tags (mediaTags.ts) use the same source. */
 export const IMAGE_ID_SOURCE = '[a-z]+'
 const IMAGE_ID = new RegExp(`^${IMAGE_ID_SOURCE}$`)
 
@@ -196,83 +181,15 @@ export function imageMarkdown(path: string, metadata: readonly ImageMetadataItem
   return `![${path}](${metadataText(metadata)})`
 }
 
-/** Image ids in their order (`nextImageId`): shorter first, then by
- *  letters. */
-function compareImageIds(a: string, b: string): number {
-  if (a.length !== b.length) return a.length - b.length
-  return a < b ? -1 : a > b ? 1 : 0
-}
-
-/** The id after `id`: `a` … `z`, `aa`, `ab`, … `zz`, `aaa`, … (like
- *  spreadsheet columns). `a` after null. */
-function nextImageId(id: string | null): string {
-  if (id === null) return 'a'
-  let index = id.length - 1
-  while (index >= 0 && id[index] === 'z') index--
-  if (index < 0) return 'a'.repeat(id.length + 1)
-  return id.slice(0, index) + String.fromCharCode(id.charCodeAt(index) + 1) + 'a'.repeat(id.length - index - 1)
-}
-
-/** The highest of these ids (`compareImageIds`); null when there is none. */
-function highestImageId(ids: Iterable<string | null>): string | null {
-  let highest: string | null = null
-  for (const id of ids) {
-    if (id !== null && (highest === null || compareImageIds(id, highest) > 0)) highest = id
-  }
-  return highest
-}
-
-/** `count` ids, in order, for the image references that Dez itself adds to a
- *  conversation (a generated image): the ids after the highest one in
- *  `texts`, the texts of the whole conversation. The caller must write the
- *  references in the same tick, so that no paste in between takes an id. */
-export function newImageIds(texts: readonly string[], count: number): string[] {
-  let id = highestImageId(texts.flatMap((text) => findImageReferences(text).map((reference) => reference.id)))
-  return Array.from({ length: count }, () => (id = nextImageId(id)))
-}
-
-/** The changes to `text`, a whole conversation after a paste or a drop
- *  (the editor doc of one tab), that give the image references that the
- *  paste brought in an id of their own. `pasted` holds the ranges of `text`
- *  that the paste inserted; a reference whose whole text is in one of them
- *  is pasted. A pasted reference with no id, or with an id that an image
- *  with another path already has, gets the id after the highest one in
- *  `text`. The same path with the same id is the same image, so it keeps
- *  its id. Other references are never changed: a later tool history will
- *  name images by these ids, and a change to an earlier message would also
- *  break the prompt cache. Each change replaces only the text in the
- *  parens, and keeps the other items. */
-export function pastedImageIdChanges(text: string, pasted: readonly { from: number, to: number }[]): { from: number, to: number, insert: string }[] {
-  const references = findImageReferences(text)
-  const isPasted = (reference: ImageReference) => pasted.some((range) => range.from <= reference.from && reference.to <= range.to)
-  const pathsById = new Map<string, Set<string>>()
-  const claim = (id: string, path: string) => {
-    const paths = pathsById.get(id)
-    if (paths) paths.add(path)
-    else pathsById.set(id, new Set([path]))
-  }
-  let highest = highestImageId(references.map((reference) => reference.id))
-  for (const reference of references) {
-    if (reference.id !== null && !isPasted(reference)) claim(reference.id, reference.path)
-  }
-  const changes: { from: number, to: number, insert: string }[] = []
-  for (const reference of references.filter(isPasted)) {
-    const { id, path, metadata } = reference
-    const owners = id === null ? undefined : pathsById.get(id)
-    if (id !== null && (!owners || Array.from(owners).every((owner) => owner === path))) {
-      claim(id, path)
-      continue
-    }
-    const newId = nextImageId(highest)
-    highest = newId
-    claim(newId, path)
-    const withId = id === null
-      ? [{ key: 'id', value: newId }, ...metadata]
-      : metadata.map((item) => (item.key === 'id' ? { key: 'id', value: newId } : item))
-    // The parens start after `![`, the path, and `](`.
-    changes.push({ from: reference.from + path.length + 4, to: reference.to - 1, insert: metadataText(withId) })
-  }
-  return changes
+/** The change to the text of `reference` that gives it the id `id`. It
+ *  replaces only the text in the parens, and keeps the other items. */
+export function imageIdChange(reference: ImageReference, id: string): { from: number, to: number, insert: string } {
+  const { metadata, path } = reference
+  const withId = reference.id === null
+    ? [{ key: 'id', value: id }, ...metadata]
+    : metadata.map((item) => (item.key === 'id' ? { key: 'id', value: id } : item))
+  // The parens start after `![`, the path, and `](`.
+  return { from: reference.from + path.length + 4, to: reference.to - 1, insert: metadataText(withId) }
 }
 
 /** A text as its plain-text and image pieces, in order. Empty text pieces are
@@ -292,37 +209,6 @@ export function splitImageReferences(text: string): ImageTextPiece[] {
 /** A text with each image reference replaced by `label`. */
 export function labelImageReferences(text: string, label = IMAGE_LABEL): string {
   return splitImageReferences(text).map((piece) => (piece.kind === 'text' ? piece.text : label)).join('')
-}
-
-/** True when a text holds a Dez image path, in a reference or not. */
-export function holdsImagePath(text: string): boolean {
-  return ANY_DEZ_IMAGE_PATH_END.test(text)
-}
-
-/** A text for a provider, with each Dez image path replaced by the word
- *  `image`. A provider must never get a path: it holds the user's name and
- *  folders. So a reference goes as `![image](id=a)`, with its metadata as it
- *  is in the text, and a reference that is not valid (the Backspace rule's
- *  `![<path>](id=a`, bad metadata), a bare path, and a path in a metadata
- *  value lose their paths too. A text with no Dez image path comes back as
- *  it is, so text-only request bodies keep their bytes (prompt cache). A
- *  hand-written reference into an `assets/images` folder outside a
- *  `.config/dez` folder keeps its path: Dez never writes one, and a request
- *  that sends it as an image fails first ("Image not found").
- *
- *  A path's start in prose is not known (a home folder can hold spaces), so
- *  each run with no bracket or line break loses all from its first `/` to
- *  the end of its last Dez image path: some prose or a URL before a path can
- *  go too, but never a part of the path. That is what a global regex for a
- *  whole path would replace, in linear time: such a regex rescans the rest
- *  of the run from each `/`, which took 0.5 s on a 200 KB base64 line. */
-export function withoutImagePaths(text: string): string {
-  if (!holdsImagePath(text)) return text
-  return text.replace(BRACKET_FREE_RUN, (run) => {
-    let end = -1
-    for (const match of run.matchAll(DEZ_IMAGE_PATH_END)) end = match.index + match[0].length
-    return end < 0 ? run : `${run.slice(0, run.indexOf('/'))}${IMAGE_PATH_STAND_IN}${run.slice(end)}`
-  })
 }
 
 /** True for an image type that Dez stores as it is. */

@@ -1,7 +1,8 @@
 import sbp from '@sbp/sbp'
 import type { ActiveModel, Section, SectionThinking, Tab } from '../model/chat/types'
 import { sectionPlainText } from '../model/chat/content'
-import { imageMarkdown, newImageIds } from '../model/chat/images'
+import { imageMarkdown } from '../model/chat/images'
+import { newMediaIds } from '../model/chat/mediaIds'
 import { findToolBlocks, ModelTextEscaper } from '../model/chat/toolBlocks'
 import type { GeneratedMedia, MediaKind, ModelRequest, ProviderGenerateMediaResult, ProviderStreamChatResult } from '../model/providers'
 import { requireProvider } from '../model/providers/registry'
@@ -281,7 +282,7 @@ async function writeReplyImage(tabId: string, reply: ReplyRuntime, image: Genera
 
   // The id and the write in one tick, so that no paste takes the id (the
   // editor gives ids only to pasted and dropped references).
-  const [id] = newImageIds(texts, 1)
+  const [id] = newMediaIds(texts, 1)
   const gap = sectionText === '' || sectionText.endsWith('\n\n') ? '' : sectionText.endsWith('\n') ? '\n' : '\n\n'
   receiveToken(tabId, reply.sectionId, gap + imageMarkdown(path, [{ key: 'id', value: id }]))
   reply.afterImage = true
@@ -427,7 +428,7 @@ async function runMediaRound(args: StreamStartArgs, reply: ReplyRuntime, kind: M
   }
   // The ids and the write in one tick, so that no paste takes one of the
   // ids (the editor gives ids only to pasted and dropped references).
-  const ids = newImageIds(sections.map(sectionPlainText), paths.length)
+  const ids = newMediaIds(sections.map(sectionPlainText), paths.length)
   receiveToken(args.tabId, args.sectionId, paths.map((path, index) => imageMarkdown(path, [{ key: 'id', value: ids[index] }])).join('\n\n'))
   finalizeStream(args.tabId, finishStreamSession(args.tabId))
 }

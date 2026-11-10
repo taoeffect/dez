@@ -1,10 +1,11 @@
 import type { MessagePart, ModelRef, Section, SectionThinking, ThinkingReplay } from '../chat/types'
 import { sectionIsEmpty, sectionPlainText } from '../chat/content'
 import { findImageMentions } from '../chat/imageMentions'
-import { findImageReferences, holdsImagePath, withoutImagePaths, type ImageReference } from '../chat/images'
+import { findImageReferences, type ImageReference } from '../chat/images'
 import { sameModelRef } from '../chat/modelRef'
+import { holdsStoredFilePath, withoutStoredFilePaths } from '../chat/storedFilePaths'
 import { thinkingField } from '../chat/thinking'
-import { EMPTY_TOOL_RESULT, INTERRUPTED_TOOL_RESULT, splitToolBlocks, unescapeModelText, type ToolBlock } from '../chat/toolBlocks'
+import { EMPTY_TOOL_RESULT, INTERRUPTED_TOOL_RESULT, agentTextForRequest, splitToolBlocks, type ToolBlock } from '../chat/toolBlocks'
 import type { MediaKind } from '../providers/types'
 import type { ToolCall, ToolResult } from '../tools/types'
 import type { RequestMessages, StreamMessage } from './types'
@@ -19,13 +20,16 @@ export interface RequestOptions {
   sendTools: boolean
 }
 
-// The request messages: every section that has text, in order. No image path
-// ever goes to a provider: every text (user and agent text, prompt bodies,
-// tool arguments and results) goes through `withoutImagePaths`, so a
-// reference goes as `![image](id=a)`, with the ids and other metadata that
-// later requests can name. Each message is built from its own section and,
-// for the images that it mentions, the sections before it. So an earlier
-// message is the same bytes in every later request (prompt cache).
+// The request messages: every section that has text, in order. No path of a
+// file that Dez stores ever goes to a provider: every text (user and agent
+// text, prompt bodies, tool arguments and results) goes through
+// `withoutStoredFilePaths`, so an image reference goes as `![image](id=a)`,
+// with the ids and other metadata that later requests can name. A clip in
+// an agent section goes as its tag with only the id and the type
+// (`agentTextForRequest`): no path and no signed URL. Each message is built
+// from its own section and, for the images that it mentions, the sections
+// before it. So an earlier message is the same bytes in every later request
+// (prompt cache).
 //
 // The images of a user section also go as image parts, unless `sendImages`
 // is false: its image references, and the images that it names with an
@@ -54,7 +58,7 @@ export function sectionsToStreamMessages(sections: Section[], requestModel: Mode
       // The count is of the image parts that the message has for a model
       // that reads images, so the toast and the request always agree.
       if (typeof content !== 'string') imagesLeftOut += content.filter((part) => part.type === 'image').length
-      return [{ role: 'user', content: withoutImagePaths(text) }]
+      return [{ role: 'user', content: withoutStoredFilePaths(text) }]
     })
 
   return { messages, imagesLeftOut }
@@ -104,7 +108,7 @@ export function agentSectionMessages(section: Section, requestModel: ModelRef, s
   if (!sendTools && rounds[0].blocks.length > 0) return [{ role: 'agent', content: textWithToolCalls(text) }]
 
   return rounds.flatMap((round, index): StreamMessage[] => {
-    const content = withoutImagePaths(unescapeModelText(round.text))
+    const content = withoutStoredFilePaths(agentTextForRequest(round.text))
     const thinking = roundThinking(section, requestModel, rounds, index)
     if (round.blocks.length === 0) return content.trim() === '' ? [] : [{ role: 'agent', content, ...thinking }]
     return [
@@ -152,7 +156,7 @@ function agentRounds(text: string): AgentRound[] {
 }
 
 // The thinking of one round goes back only when `requestModel` wrote the
-// section, the round has a replay, and neither holds an image path: a
+// section, the round has a replay, and neither holds a stored file path: a
 // replay is valid only for the model that made it, a signed replay cannot be
 // changed, and thinking with no replay (pasted, cut off, or split from
 // inline tags) never goes back. A `field` replay sends the thinking text; the
@@ -177,14 +181,14 @@ function roundThinking(section: Section, requestModel: ModelRef, rounds: AgentRo
 }
 
 function sentThinking(text: string, replay: ThinkingReplay | undefined): { thinking?: SectionThinking } {
-  if (!replay || holdsImagePath(text) || holdsImagePath(JSON.stringify(replay))) return {}
+  if (!replay || holdsStoredFilePath(text) || holdsStoredFilePath(JSON.stringify(replay))) return {}
   return thinkingField({ text, replay })
 }
 
 // A block's arguments are in definition order (toolBlocks.ts), so their JSON
 // is the same bytes in every request.
 function toolCall(block: ToolBlock): ToolCall {
-  const args = Object.entries(block.arguments).map(([name, value]) => [name, typeof value === 'string' ? withoutImagePaths(value) : value])
+  const args = Object.entries(block.arguments).map(([name, value]) => [name, typeof value === 'string' ? withoutStoredFilePaths(value) : value])
   return { id: block.id, name: block.name, arguments: Object.fromEntries(args) }
 }
 
@@ -194,7 +198,7 @@ function toolCall(block: ToolBlock): ToolCall {
 // `dez.stream/endOutput` wrote.
 function toolResult(block: ToolBlock): ToolResult {
   if (block.status === 'running') return { callId: block.id, content: INTERRUPTED_TOOL_RESULT, isError: true }
-  const content = withoutImagePaths(block.result)
+  const content = withoutStoredFilePaths(block.result)
   return { callId: block.id, content: content.trim() === '' ? EMPTY_TOOL_RESULT : content, isError: block.status === 'error' }
 }
 
@@ -202,11 +206,11 @@ function toolResult(block: ToolBlock): ToolResult {
 // with no tools.
 function textWithToolCalls(text: string): string {
   const parts = splitToolBlocks(text).map((piece) => {
-    if (piece.kind === 'text') return unescapeModelText(piece.text)
+    if (piece.kind === 'text') return agentTextForRequest(piece.text)
     const call = toolCall(piece.block)
     return `[Tool call: ${call.name} ${JSON.stringify(call.arguments)}]\n${toolResult(piece.block).content}\n[End of tool result]`
   })
-  return withoutImagePaths(parts.join(''))
+  return withoutStoredFilePaths(parts.join(''))
 }
 
 // The content of one user message: text and image parts in doc order.
@@ -235,7 +239,7 @@ function userMessageContent(text: string, references: readonly ImageReference[],
   // Takes in the text between two references (or a text end), with an
   // image part after each mention that adds one.
   const addText = (from: number, to: number) => {
-    const scrubbed = withoutImagePaths(text.slice(from, to))
+    const scrubbed = withoutStoredFilePaths(text.slice(from, to))
     let start = 0
     for (const mention of findImageMentions(scrubbed)) {
       const path = imagesById.get(mention.id)
@@ -251,7 +255,7 @@ function userMessageContent(text: string, references: readonly ImageReference[],
   let end = 0
   for (const { from, to, path } of references) {
     addText(end, from)
-    parts.push({ type: 'text', text: pendingText + withoutImagePaths(text.slice(from, to)) }, { type: 'image', path })
+    parts.push({ type: 'text', text: pendingText + withoutStoredFilePaths(text.slice(from, to)) }, { type: 'image', path })
     pendingText = ''
     end = to
   }

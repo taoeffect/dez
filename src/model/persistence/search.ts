@@ -1,4 +1,5 @@
 import { labelImageReferences } from '../chat/images'
+import { labelMediaTags } from '../chat/mediaTags'
 import { modelRefKey } from '../chat/modelRef'
 import { labelToolBlocks } from '../chat/toolBlocks'
 import type { Role } from '../chat/types'
@@ -43,10 +44,12 @@ export function clearConversationSearchCache(): void {
 // conversation with an image. The snippet then shows no `[image]` label
 // where the preview does; a label would make `image` match them all too.
 // Tool blocks in agent text are left out the same way: their markup (`dez`,
-// `tool`, call ids) and tool results are not reply text.
+// `tool`, call ids) and tool results are not reply text. So are the media
+// tags in agent text: their markup, path, and URL, and a label too (`video`
+// would match every conversation with a clip).
 function nodeSearchText(node: ContentNodeData, role: Role): string {
   return node.kind === 'text'
-    ? labelImageReferences(role === 'agent' ? labelToolBlocks(node.text, ' ') : node.text, ' ')
+    ? labelImageReferences(role === 'agent' ? labelMediaTags(labelToolBlocks(node.text, ' '), ' ') : node.text, ' ')
     : `${node.name} ${labelImageReferences(node.body, ' ')}`
 }
 

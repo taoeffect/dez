@@ -1,18 +1,14 @@
 import { describe, expect, it } from 'vitest'
 import {
   findImageReferences,
-  holdsImagePath,
   imageExtension,
   imageMarkdown,
   imageMediaType,
   isImageMediaType,
   isImagePath,
   labelImageReferences,
-  newImageIds,
-  pastedImageIdChanges,
   splitImageReferences,
   storedImageFile,
-  withoutImagePaths,
 } from './images'
 
 const PNG = '/home/ann/.config/dez/assets/images/5f1c2a9e-0b7d-4c3e-9a51-2d8f6e4b7c10.png'
@@ -120,7 +116,15 @@ describe('isImagePath', () => {
       expect(isImagePath(path)).toBe(true)
       expect(findImageReferences(imageMarkdown(path)).map((ref) => ref.path)).toEqual([path])
     }
-    for (const path of ['C:\\Users\\ann\\.config\\dez/assets/images/x.png', './.config/dez/assets/images/x.png', '/home/[ann]/.config/dez/assets/images/x.png', `${PNG}\n`]) {
+    for (const path of [
+      'C:\\Users\\ann\\.config\\dez/assets/images/x.png',
+      './.config/dez/assets/images/x.png',
+      '/home/[ann]/.config/dez/assets/images/x.png',
+      `${PNG}\n`,
+      '/home/ann/.config/dez/assets/generated/audio/x.mp3',
+      '/home/ann/.config/dez/assets/generated/video/x.mp4',
+      '/home/ann/.cache/dez/media/x.png',
+    ]) {
       expect(isImagePath(path)).toBe(false)
       expect(findImageReferences(imageMarkdown(path)).map((ref) => ref.path)).not.toEqual([path])
     }
@@ -192,165 +196,6 @@ describe('labelImageReferences', () => {
   it('uses a given label as plain text', () => {
     expect(labelImageReferences(`a ![${PNG}]() b`, '$&')).toBe('a $& b')
     expect(labelImageReferences(`a ![${PNG}]() b`, '')).toBe('a  b')
-  })
-})
-
-describe('withoutImagePaths', () => {
-  it.each([
-    ['empty parens', `![${PNG}]()`, '![image]()'],
-    ['an id', `![${PNG}](id=a)`, '![image](id=a)'],
-    ['unknown keys and escaped values', String.raw`![${PNG}](id=b|desc=a \| b \(c\) \\ d|x=)`, String.raw`![image](id=b|desc=a \| b \(c\) \\ d|x=)`],
-    ['a home folder with spaces, parentheses, and non-ASCII names', '![/Users/Zoë Ann (work)/.config/dez/assets/images/x_1-2.webp](id=a)', '![image](id=a)'],
-    ['a generated image', `![${GENERATED}](id=b)`, '![image](id=b)'],
-  ])('sends a reference with %s as ![image] and its metadata as it is', (_case, text, sent) => {
-    expect(withoutImagePaths(text)).toBe(sent)
-  })
-
-  it.each([
-    ['the source that the Backspace rule leaves', `![${PNG}](id=a`, '![image](id=a'],
-    ['the link that the Delete rule leaves', `[${PNG}](id=a)`, '[image](id=a)'],
-    ['a reference with an id that is not valid', `![${PNG}](id=A)`, '![image](id=A)'],
-    ['a reference with a key given twice', `![${PNG}](id=a|id=b)`, '![image](id=a|id=b)'],
-    ['a bare path', `see ${PNG} now`, 'see image now'],
-    ['a bare generated path', `see ${GENERATED} now`, 'see image now'],
-  ])('takes the path out of %s', (_case, text, sent) => {
-    expect(withoutImagePaths(text)).toBe(sent)
-  })
-
-  it('takes the paths in metadata values and every path on a line, also of another home', () => {
-    expect(withoutImagePaths(`![${PNG}](id=a|desc=a /home/bob/.config/dez/assets/images/b.png) and ![${JPG}](id=b)`))
-      .toBe('![image](id=a|desc=a image) and ![image](id=b)')
-  })
-
-  it.each(['jpg', 'jpeg', 'gif', 'webp'])('takes a path with the extension %s', (extension) => {
-    expect(withoutImagePaths(`![/home/ann/.config/dez/assets/images/x.${extension}](id=a)`)).toBe('![image](id=a)')
-  })
-
-  it('leaves no part of a path in prose, also when it takes the prose before it', () => {
-    for (const text of [`Compare a/b with ${PNG}.`, `See https://example.com/x and ${JPG}`, `file://${PNG}`, `${PNG}\n${JPG}`]) {
-      const sent = withoutImagePaths(text)
-      expect(sent, text).not.toContain('assets/images')
-      expect(sent, text).not.toContain('/home/ann')
-    }
-  })
-
-  it('gives a text with no image path back as it is', () => {
-    for (const text of ['', 'Hi\n', '![x](https://example.com/x.png)', '/home/ann/Pictures/x.png', 'assets/images/x.png']) {
-      expect(withoutImagePaths(text)).toBe(text)
-    }
-  })
-
-  // Many web projects have an `assets/images` folder; only Dez's own folder
-  // is private.
-  it('leaves the paths of an assets/images folder that is not Dez\'s as they are', () => {
-    for (const text of [
-      'import logo from \'../assets/images/logo.png\'',
-      'cp ~/Downloads/hero.jpg app/assets/images/hero.jpg',
-      '<link href="/css/main.css"><img src="/assets/images/logo.png" alt="logo">',
-      'my logo at src/assets/images/logo.png doesn\'t load',
-      'https://example.com/assets/images/logo.png',
-      '/home/ann/.config/dez2/assets/images/a1.jpg',
-    ]) {
-      expect(withoutImagePaths(text)).toBe(text)
-    }
-  })
-
-  // A regex that rescans a line from each `/` takes seconds on a long line,
-  // and every send scrubs every message.
-  it('takes linear time on a long line with many slashes', () => {
-    const line = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/'.repeat(16 * 1024)
-    const started = performance.now()
-    const sent = withoutImagePaths(`${line} ${PNG}`)
-
-    expect(performance.now() - started).toBeLessThan(1000)
-    expect(sent).toBe(`${line.slice(0, line.indexOf('/'))}image`)
-  })
-})
-
-describe('holdsImagePath', () => {
-  it('finds an image path in a reference, in prose, and in JSON, on every call', () => {
-    for (let call = 0; call < 2; call++) {
-      expect(holdsImagePath(`a ![${PNG}](id=a)`)).toBe(true)
-      expect(holdsImagePath(`a [${PNG}](id=a)`)).toBe(true)
-      expect(holdsImagePath(JSON.stringify({ thinking: `The user sent\n${JPG}` }))).toBe(true)
-      expect(holdsImagePath(`made ${GENERATED}`)).toBe(true)
-    }
-  })
-
-  it('finds no path in other text', () => {
-    expect(holdsImagePath('/home/ann/Pictures/x.png and assets/images/x.png')).toBe(false)
-    expect(holdsImagePath(JSON.stringify({ thinking: 'The logo is in /var/www/app/assets/images/logo.png' }))).toBe(false)
-  })
-})
-
-describe('pastedImageIdChanges', () => {
-  const image = (name: string) => `/home/ann/.config/dez/assets/images/${name}.png`
-
-  /** `before` + `pasted` + `after` as the conversation after the paste,
-   *  with the id changes applied. */
-  function paste(pasted: string, before = '', after = ''): string {
-    const text = before + pasted + after
-    const changes = pastedImageIdChanges(text, [{ from: before.length, to: before.length + pasted.length }])
-    return changes.reduceRight((result, { from, to, insert }) => result.slice(0, from) + insert + result.slice(to), text)
-  }
-
-  it('gives pasted images with no id the ids after the highest one in the conversation, and keeps their other items', () => {
-    const before = `![${image('a')}](id=a) ![${image('c')}](id=c)\n`
-
-    expect(paste(`![${image('d')}]()\n![${image('e')}](desc=x)`, before))
-      .toBe(`${before}![${image('d')}](id=d)\n![${image('e')}](id=e|desc=x)`)
-  })
-
-  it('keeps a pasted id that no other image has, and the id of the same image', () => {
-    const before = `![${image('a')}](id=a) `
-    const pasted = `![${image('a')}](id=a) ![${image('k')}](id=k)`
-
-    expect(paste(pasted, before)).toBe(before + pasted)
-  })
-
-  it('gives a pasted image the next id when another image has its id, in the conversation or earlier in the paste', () => {
-    const before = `![${image('a')}](id=a) `
-
-    expect(paste(`![${image('x')}](desc=x|id=a) ![${image('y')}](id=c) ![${image('z')}](id=c)`, before))
-      .toBe(`${before}![${image('x')}](desc=x|id=d) ![${image('y')}](id=c) ![${image('z')}](id=e)`)
-  })
-
-  it.each([
-    [['b'], 'c'],
-    [['z'], 'aa'],
-    [['ab'], 'ac'],
-    [['az'], 'ba'],
-    [['zz'], 'aaa'],
-    [['y', 'ab'], 'ac'],
-  ])('counts ids like spreadsheet columns: after %j comes %s', (ids, next) => {
-    const before = ids.map((id, index) => `![${image(`old${index}`)}](id=${id})\n`).join('')
-
-    expect(paste(`![${image('new')}]()`, before)).toBe(`${before}![${image('new')}](id=${next})`)
-  })
-
-  it('changes no reference that was not pasted whole', () => {
-    // An old reference with no id, a reference that the paste only
-    // completed, and a hand-edited clash all stay as they are.
-    const before = `![${image('a')}]() ![${image('b')}](id=x) ![${image('c')}](id=x) ![${image('d')}](`
-
-    expect(paste(')', before)).toBe(`${before})`)
-  })
-})
-
-describe('newImageIds', () => {
-  const image = (name: string, id: string) => `![/home/ann/.config/dez/assets/images/${name}.png](id=${id})`
-
-  it('gives the ids after the highest one in all the texts of the conversation, in order', () => {
-    expect(newImageIds([`${image('a', 'b')} ${image('b', 'y')}`, '', `see ${image('c', 'c')}`], 3)).toEqual(['z', 'aa', 'ab'])
-  })
-
-  it('starts at a when no reference has an id, and skips text that is not a reference', () => {
-    expect(newImageIds([`![${PNG}]() ![${PNG}](id=Q) ![x](id=zz)`], 2)).toEqual(['a', 'b'])
-    expect(newImageIds([], 1)).toEqual(['a'])
-  })
-
-  it('gives no id for a count of zero', () => {
-    expect(newImageIds([image('a', 'a')], 0)).toEqual([])
   })
 })
 

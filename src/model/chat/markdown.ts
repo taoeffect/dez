@@ -1,4 +1,6 @@
 import { closesFence, fenceOpener, type Fence } from '../../utils/markdownFence'
+import { mediaTagsAsLinks } from './mediaTags'
+import { withoutToolBlocks } from './toolBlocks'
 import type { Role } from './types'
 
 /** One message of a plain Markdown export: plain text (prompt bodies inline,
@@ -6,6 +8,13 @@ import type { Role } from './types'
 export interface MarkdownMessage {
   role?: Role
   text: string
+}
+
+/** The text of an agent section for people to read (Save As Markdown, Copy
+ *  Markdown): its tool blocks are left out, as the agent thinking is, and
+ *  each clip is a Markdown link. */
+export function agentTextAsMarkdown(text: string): string {
+  return mediaTagsAsLinks(withoutToolBlocks(text))
 }
 
 // CommonMark ends an unclosed fence only at the end of the document, so a

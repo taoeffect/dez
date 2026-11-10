@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest'
+import { mediaTagText, type MediaTagData } from '../chat/mediaTags'
 import { toolBlockText, type ToolBlockStatus } from '../chat/toolBlocks'
 import type { ModelRef, Section, SectionThinking, ThinkingReplay } from '../chat/types'
 import { agentSectionMessages, mediaRequestInput, sectionsToStreamMessages } from './messages'
@@ -109,6 +110,89 @@ describe('agentSectionMessages', () => {
       { role: 'agent', content: 'See ![image](id=a).' },
     ])
     expect(JSON.stringify(agentSectionMessages(agent(text), model, false))).not.toContain('assets/images')
+  })
+
+  describe('clips', () => {
+    const CLIP: MediaTagData = {
+      kind: 'video',
+      id: 'b',
+      type: 'video/mp4',
+      src: '/home/u/.config/dez/assets/generated/video/v1.mp4',
+      url: 'https://cdn.example/v.mp4?sig=secret',
+      expires: '2026-11-11T09:30:00.000Z',
+      other: [{ name: 'job', value: 'j-1' }],
+    }
+    const SOUND: MediaTagData = { kind: 'audio', id: 'c', type: 'audio/mpeg', src: '/home/u/.cache/dez/media/s1.mp3', url: null, expires: null, other: [] }
+    const SENT_CLIP = '<dez:video id="b" type="video/mp4"/>'
+    const SENT_SOUND = '<dez:audio id="c" type="audio/mpeg"/>'
+
+    it('sends a clip as its tag with only the id and the type, with or without tools', () => {
+      const section = agent(`Here it is:\n\n${mediaTagText(CLIP)}\n\nDo you like it?`)
+      const expected = [{ role: 'agent', content: `Here it is:\n\n${SENT_CLIP}\n\nDo you like it?` }]
+
+      expect(agentSectionMessages(section, model, true)).toStrictEqual(expected)
+      expect(agentSectionMessages(section, model, false)).toStrictEqual(expected)
+    })
+
+    it('sends the same bytes after a save, a delete, or an expiry of the clip', () => {
+      const states: MediaTagData[] = [
+        CLIP,
+        { ...CLIP, src: '/home/u/.cache/dez/media/v1.mp4' },
+        { ...CLIP, src: CLIP.url },
+        { ...CLIP, src: null, expires: null },
+        { ...CLIP, src: null, url: null, expires: null, other: [] },
+      ]
+
+      for (const state of states) {
+        expect(agentSectionMessages(agent(`Done.\n${mediaTagText(state)}`), model, true), mediaTagText(state))
+          .toStrictEqual([{ role: 'agent', content: `Done.\n${SENT_CLIP}` }])
+      }
+    })
+
+    it('sends the clips of each round with that round, and as text in a request with no tools', () => {
+      const text = `${mediaTagText(CLIP)}\n${block('call_1', 'gemini', '1 model')}\n${mediaTagText(SOUND)}\nDone.`
+
+      expect(agentSectionMessages(agent(text), model, true)).toStrictEqual([
+        { role: 'agent', content: SENT_CLIP, toolCalls: [call('call_1', 'gemini')] },
+        { role: 'tool', results: [result('call_1', '1 model')] },
+        { role: 'agent', content: `${SENT_SOUND}\nDone.` },
+      ])
+      expect(agentSectionMessages(agent(text), model, false)).toStrictEqual([{
+        role: 'agent',
+        content: `${SENT_CLIP}\n[Tool call: model_list {"filter":"gemini"}]\n1 model\n[End of tool result]\n${SENT_SOUND}\nDone.`,
+      }])
+    })
+
+    it('sends no path, no URL, and no other attribute of a clip', () => {
+      const text = `${mediaTagText(CLIP)}\n${block('call_1', 'gemini', '1 model')}\n${mediaTagText(SOUND)}`
+
+      for (const sendTools of [true, false]) {
+        const sent = JSON.stringify(agentSectionMessages(agent(text), model, sendTools))
+        for (const secret of ['/home/u', 'assets/generated', 'dez/media', 'cdn.example', 'sig=secret', '2026-11-11', 'j-1']) {
+          expect(sent, `${secret}, sendTools ${sendTools}`).not.toContain(secret)
+        }
+      }
+    })
+
+    it('sends a tag that a model wrote as the model wrote it', () => {
+      const text = `Like this:\n<\\dez:video id="z" type="video/mp4" url="https://x.example/z"/>\n${mediaTagText(CLIP)}`
+
+      expect(agentSectionMessages(agent(text), model, true)).toStrictEqual([
+        { role: 'agent', content: `Like this:\n<dez:video id="z" type="video/mp4" url="https://x.example/z"/>\n${SENT_CLIP}` },
+      ])
+    })
+
+    it('sends a reply that holds only a clip, and no path of a tag line in a user message', () => {
+      const sections: Section[] = [
+        { id: 'u1', role: 'user', content: [{ kind: 'text', text: `What is this?\n${mediaTagText(CLIP)}` }] },
+        agent(mediaTagText(CLIP)),
+      ]
+      const { messages } = sectionsToStreamMessages(sections, model, { sendImages: true, sendTools: true })
+
+      expect(messages[1]).toStrictEqual({ role: 'agent', content: SENT_CLIP })
+      expect(JSON.stringify(messages)).not.toContain('/home/u')
+      expect(JSON.stringify(messages)).not.toContain('assets/generated')
+    })
   })
 
   // A loaded section has no `\n` after its last block (conversationFormat.ts
