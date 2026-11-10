@@ -15,24 +15,43 @@ permissions:
 # same. The e2e gate gets the fix and NODE_OPTIONS from e2e.yml.
 #
 # Secrets: only the "Write release notes" step may reference ZAI_API_KEY,
-# and only the "Sign DMG" step may reference MINISIGN_SECRET_KEY. The
-# comments above the release-notes and sign-macos-dmg jobs give the reasons.
+# and only the "Sign manifest" step may reference MINISIGN_SECRET_KEY. The
+# comments above the release-notes and sign-macos-manifest jobs give the
+# reasons.
 #
 # Each job's timeout-minutes is 3x its run time in the v0.13.0 release,
 # rounded up, so a stuck step (an apt install once hung for 25 minutes)
 # fails in minutes, not after GitHub's 6-hour default. The e2e gate's
 # timeout is in e2e.yml.
 jobs:
-  # Stops a release whose tag does not match the version files. Tauri names
-  # the bundles (the DMG too) with the tauri.conf.json version, and the app
-  # shows the package.json version in About and in the update check, so a
-  # tag pushed without `npm run bump-version` gives binaries of the old
-  # version: v0.12.1 shipped Dez_0.12.0_aarch64.dmg, and its binaries
-  # offered v0.12.1 as an update. Runs first, so a wrong tag fails fast.
+  # Stops a release that `npm run bump-version` did not make, before any
+  # build. It checks two things in the tagged commit:
+  #
+  # - The version files hold the tag's version. Tauri names the bundles (the
+  #   DMG too) with the tauri.conf.json version, and the app shows the
+  #   package.json version in About and in the update check, so a tag pushed
+  #   without the script gives binaries of the old version: v0.12.1 shipped
+  #   Dez_0.12.0_aarch64.dmg, and its binaries offered v0.12.1 as an update.
+  # - The release message (src-tauri/updater/release-version.txt) is the
+  #   tag's version, and its signature verifies against the developer's
+  #   commit public key (src-tauri/updater/dez-commit-key.pub). The macOS
+  #   updater installs a release only with that signature, which
+  #   sign-macos-manifest puts into the release manifest.
+  #
+  # The signature check only makes a bad tag fail fast. It protects nothing:
+  # whoever can change this file or the committed public key gets past it.
+  # The check that counts is the one in Dez, with the key that it compiles in.
+  #
+  # Ubuntu 24.04, because its minisign is 0.11. There -H makes -V refuse a
+  # legacy (not prehashed) signature, as Dez does. With the minisign 0.9 of
+  # 22.04, -H is an option of -S only, and -V accepts a legacy signature.
+  #
+  # The minisign install is newer than the v0.13.0 release, so the timeout
+  # is a guess: the 2 minutes from before it, and 2 more for its apt run.
   version-check:
-    name: Check version files against the tag
-    runs-on: ubuntu-22.04
-    timeout-minutes: 2
+    name: Check version files and version signature
+    runs-on: ubuntu-24.04
+    timeout-minutes: 4
     permissions:
       contents: read
 
@@ -57,6 +76,20 @@ jobs:
       # The script uses only Node built-ins, so no npm ci.
       - name: Check version files
         run: node scripts/bump-version-and-release.js --check "$GITHUB_REF_NAME"
+
+      - name: Install minisign
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y minisign
+          minisign -v
+
+      # minisign reads the signature from release-version.txt.minisig, next
+      # to the message. "Check version files" has already checked that the
+      # message is the tag's version.
+      - name: Check version signature
+        run: |
+          minisign -V -H -p src-tauri/updater/dez-commit-key.pub \
+            -m src-tauri/updater/release-version.txt
 
   # Gate all release builds on the E2E UI tests passing for the tagged
   # commit; builds below only start when this reusable workflow succeeds.
@@ -243,32 +276,51 @@ jobs:
           path: src-tauri/target/aarch64-apple-darwin/release/bundle/dmg/*.dmg
           if-no-files-found: error
 
-  # Signs the DMG for the macOS updater. An installed Dez downloads
-  # Dez_<version>_aarch64.dmg and its .minisig from the release, and it
-  # installs the DMG only if the signature verifies against the public key
-  # that it compiles in from src-tauri/updater/minisign.pub. So a release
-  # with no .minisig cannot update macOS installs, and publish-release waits
-  # for this job.
+  # Signs the release manifest for the macOS updater. The manifest is the
+  # JSON file Dez_<version>_aarch64.dmg.manifest.json, with three strings:
+  #
+  # - version: the release message of the tagged commit
+  #   (src-tauri/updater/release-version.txt), which is the version alone.
+  # - versionSignature: the text of the message's .minisig. The developer's
+  #   commit key made it (scripts/bump-version-and-release.js), and its
+  #   secret key is only on the developer's machine. No job here has it.
+  # - dmgSha256: the SHA-256 of Dez_<version>_aarch64.dmg, in lowercase hex.
+  #
+  # This job signs the manifest, not the DMG, with the release key
+  # (MINISIGN_SECRET_KEY). An installed Dez downloads the DMG, the manifest,
+  # and the manifest's .minisig from the release. It installs the DMG only
+  # if all of these hold: the manifest's signature verifies against
+  # src-tauri/updater/minisign.pub, versionSignature verifies against
+  # src-tauri/updater/dez-commit-key.pub (Dez compiles in both keys),
+  # version is the version that Dez updates to, and the DMG has the SHA-256.
+  # So the release key alone, and so control of GitHub alone, cannot release
+  # a version that the developer did not sign. The developer's signature
+  # covers the version only, not the DMG. A release with no signed manifest
+  # cannot update macOS installs, and publish-release waits for this job.
+  #
+  # The job does not check the message or versionSignature: version-check
+  # did, on this same commit, before any build.
   #
   # MINISIGN_SECRET_KEY is a secret of the Default environment: the text of
   # the unencrypted secret key file that `minisign -G -W` writes. Only the
-  # "Sign DMG" step may reference it. Never reference it, or use
+  # "Sign manifest" step may reference it. Never reference it, or use
   # `secrets: inherit`, in another job. The signing is a job of its own, so
   # that the key never shares a runner with npm ci or the build: this job
-  # runs only the CA fix, GitHub's checkout and artifact actions, and
-  # Ubuntu's minisign. Ubuntu 24.04, because its minisign is 0.11, the first
-  # version that reads a key with no password; 22.04 has 0.9.
+  # runs only the CA fix, GitHub's checkout and artifact actions, the
+  # runner's own jq and sha256sum, and Ubuntu's minisign. Ubuntu 24.04,
+  # because its minisign is 0.11, the first version that reads a key with
+  # no password; 22.04 has 0.9.
   #
   # Every action here is pinned to a full commit SHA (its version in a
   # comment), not to a tag or branch: an earlier step can take the key from
-  # "Sign DMG" (a fake minisign on GITHUB_PATH, or a process that reads its
-  # environ), so a ref that moves upstream must not change what runs here.
-  # Bump the SHAs by hand.
+  # "Sign manifest" (a fake minisign on GITHUB_PATH, or a process that reads
+  # its environ), so a ref that moves upstream must not change what runs
+  # here. Bump the SHAs by hand.
   #
   # The job is newer than the v0.13.0 release, so its timeout is a guess
   # (two apt runs and a DMG download), not 3x a measured run.
-  sign-macos-dmg:
-    name: Sign macOS DMG
+  sign-macos-manifest:
+    name: Sign macOS release manifest
     runs-on: ubuntu-24.04
     needs: build-macos-dmg
     timeout-minutes: 5
@@ -284,13 +336,18 @@ jobs:
       - name: Fix Ubuntu runner CA root bundle
         uses: okTurtles/libcheloniajs/.github/actions/fix-ubuntu-ca-roots@287765ef4119498372ae00e261bbb97d5ed84fbe # main, 2026-11-04
 
-      # Only for src-tauri/updater/minisign.pub: the verify step checks the
-      # signature against the key that the app compiles in.
+      # Only three files of src-tauri/updater/: the release message and its
+      # signature, which go into the manifest, and minisign.pub, because
+      # the verify step checks the new signature against the key that the
+      # app compiles in.
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
-          sparse-checkout: src-tauri/updater/minisign.pub
+          sparse-checkout: |
+            src-tauri/updater/minisign.pub
+            src-tauri/updater/release-version.txt
+            src-tauri/updater/release-version.txt.minisig
           sparse-checkout-cone-mode: false
 
       - name: Install minisign
@@ -305,21 +362,42 @@ jobs:
           name: dez-macos-aarch64-dmg
           path: dmg
 
-      # The key goes into a mktemp file (mode 0600) under RUNNER_TEMP, and
-      # the EXIT trap deletes it when the step ends, also on a failure.
-      # stdin is /dev/null, so a key that has a password fails the step
-      # instead of waiting for the password.
-      - name: Sign DMG
-        env:
-          MINISIGN_SECRET_KEY: ${{ secrets.MINISIGN_SECRET_KEY }}
+      # --rawfile puts each file into its JSON string as it is, so Dez gets
+      # every byte that the developer signed, and every byte of the
+      # signature. The SHA-256 is an assignment of its own, so that a
+      # failed sha256sum stops the step: bash's -e does not see a failure
+      # inside an argument. sha256sum reads stdin, so its output is the
+      # hash and " -", with no file name to escape. The cat is for the log.
+      - name: Write manifest
         run: |
           version="${GITHUB_REF_NAME#v}"
           dmg="dmg/Dez_${version}_aarch64.dmg"
+          manifest="manifest/Dez_${version}_aarch64.dmg.manifest.json"
           if [ ! -f "$dmg" ]; then
             echo "Expected $dmg, found:"
             ls -l dmg
             exit 1
           fi
+          sha256="$(sha256sum < "$dmg")"
+          mkdir manifest
+          jq -n \
+            --rawfile version src-tauri/updater/release-version.txt \
+            --rawfile versionSignature src-tauri/updater/release-version.txt.minisig \
+            --arg dmgSha256 "${sha256%% *}" \
+            '{ version: $version, versionSignature: $versionSignature, dmgSha256: $dmgSha256 }' \
+            > "$manifest"
+          cat "$manifest"
+
+      # The key goes into a mktemp file (mode 0600) under RUNNER_TEMP, and
+      # the EXIT trap deletes it when the step ends, also on a failure.
+      # stdin is /dev/null, so a key that has a password fails the step
+      # instead of waiting for the password.
+      - name: Sign manifest
+        env:
+          MINISIGN_SECRET_KEY: ${{ secrets.MINISIGN_SECRET_KEY }}
+        run: |
+          version="${GITHUB_REF_NAME#v}"
+          manifest="Dez_${version}_aarch64.dmg.manifest.json"
           if [ -z "$MINISIGN_SECRET_KEY" ]; then
             echo "::error::The Default environment has no MINISIGN_SECRET_KEY secret"
             exit 1
@@ -327,8 +405,8 @@ jobs:
           key="$(mktemp "$RUNNER_TEMP/minisign-key.XXXXXX")"
           trap 'rm -f "$key"' EXIT
           printf '%s\n' "$MINISIGN_SECRET_KEY" > "$key"
-          minisign -S -s "$key" -m "$dmg" \
-            -t "Dez ${version} Dez_${version}_aarch64.dmg" < /dev/null
+          minisign -S -s "$key" -m "manifest/$manifest" \
+            -t "Dez ${version} ${manifest}" < /dev/null
 
       # -H rejects a legacy (not prehashed) signature, as the app does.
       # minisign has made prehashed signatures by default since 0.10.
@@ -336,13 +414,14 @@ jobs:
         run: |
           version="${GITHUB_REF_NAME#v}"
           minisign -V -H -p src-tauri/updater/minisign.pub \
-            -m "dmg/Dez_${version}_aarch64.dmg"
+            -m "manifest/Dez_${version}_aarch64.dmg.manifest.json"
 
-      - name: Upload signature artifact
+      # The manifest and its .minisig.
+      - name: Upload manifest artifact
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
-          name: dez-macos-aarch64-dmg-minisig
-          path: dmg/*.minisig
+          name: dez-macos-aarch64-manifest
+          path: manifest/*
           if-no-files-found: error
 
   # Writes the release body: the notes template, then the changes that the
@@ -430,7 +509,7 @@ jobs:
     needs:
       - build-linux-appimage
       - build-macos-dmg
-      - sign-macos-dmg
+      - sign-macos-manifest
       - release-notes
     timeout-minutes: 3
 
@@ -463,10 +542,12 @@ jobs:
           name: dez-macos-aarch64-dmg
           path: release-assets
 
-      - name: Download DMG signature artifact
+      # The release manifest and its .minisig. The DMG has no .minisig of
+      # its own: the signed manifest holds the DMG's SHA-256.
+      - name: Download manifest artifact
         uses: actions/download-artifact@v8
         with:
-          name: dez-macos-aarch64-dmg-minisig
+          name: dez-macos-aarch64-manifest
           path: release-assets
 
       - name: Download release notes artifact

@@ -7,9 +7,10 @@
 use minisign_verify::{PublicKey, Signature, StreamVerifier};
 use semver::Version;
 
-// The public key of the release signing key. The `sign-macos-dmg` job in
-// .github/workflows/release-desktop.yml signs each DMG with its secret key
-// and checks the signature against this same file.
+// The public key of the release signing key. The `sign-macos-manifest` job
+// in .github/workflows/release-desktop.yml signs the manifest of each
+// release with its secret key and checks the signature against this same
+// file.
 #[cfg(not(feature = "updater-test-hooks"))]
 const RELEASE_PUBLIC_KEY: &str = include_str!("../../updater/minisign.pub");
 

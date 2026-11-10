@@ -32,7 +32,7 @@ cd src-tauri && cargo test
 - `build:linux:appimage` runs `scripts/build-linux-appimage.js`; the AppImage bundles the build host's GStreamer plugins.
 - macOS builds need Xcode 26+: `build:macos:*` first run `scripts/build-macos-icon.js`, which compiles `src-tauri/icons/Dez.icon` into the gitignored `src-tauri/icons/Assets.car` (icon name set in `src-tauri/Info.plist`). A bare `tauri build` on macOS fails without that file.
 - Releases: `npm run bump-version -- <version>` (`scripts/bump-version-and-release.js`) makes the whole release: it bumps the version files, signs the version with the developer's commit key (public key: `src-tauri/updater/dez-commit-key.pub`), commits, tags `v<version>`, and pushes. Never run it for a test or a temporary bump; use `--files-only`. A pushed `v*` tag runs `.github/workflows/release-desktop.yml` (version check against the tag, e2e gate, Linux AppImages, macOS DMG and its minisign signature, release notes from `scripts/release-notes.js`, GitHub Release). The rules are in the comments of those files.
-- CI rules (details in the workflow comments): every job removes the compromised eMudhra CA roots in its first step, only the "Write release notes" step may reference `ZAI_API_KEY`, only the "Sign DMG" step may reference `MINISIGN_SECRET_KEY`, and its job (`sign-macos-dmg`) pins every action to a commit SHA.
+- CI rules (details in the workflow comments): every job removes the compromised eMudhra CA roots in its first step, only the "Write release notes" step may reference `ZAI_API_KEY`, only the "Sign manifest" step may reference `MINISIGN_SECRET_KEY`, and its job (`sign-macos-manifest`) pins every action to a commit SHA.
 
 ## Git conventions
 
