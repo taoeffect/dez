@@ -1,14 +1,16 @@
-//! The macOS updater: Dez downloads the DMG of a newer release, checks its
-//! minisign signature, and replaces its own app bundle with the app in it.
+//! The macOS updater: Dez downloads the DMG of a newer release, checks that
+//! the developer released it (the four checks of `verify::Check`), and
+//! replaces its own app bundle with the app in it.
 //!
 //! The webview runs with `"csp": null`, renders model output, and can write
 //! any file under `~/.config/dez` (`save_app_file`). A compromised webview
 //! must not be able to install code, so the installer is this dedicated
 //! feature rather than generic "replace a file" or "run a process" commands,
 //! and it trusts only what Rust picks itself. The webview passes a version
-//! and the text of the `.minisig` file. Rust builds the download URL, holds
-//! the public key, downloads into a private temp dir (never under
-//! `~/.config/dez`), and keeps every path in `UpdaterState`.
+//! and two texts: the release manifest and the manifest's `.minisig` file.
+//! Rust builds the download URL, holds the two public keys, downloads into
+//! a private temp dir (never under `~/.config/dez`), and keeps every path
+//! in `UpdaterState`.
 //!
 //! Only macOS installs updates. On other platforms the commands refuse at
 //! once; the platform-neutral parts still compile there, so their tests run
@@ -27,8 +29,8 @@ use std::path::{Path, PathBuf};
 use std::time::Duration;
 
 use futures::StreamExt;
-use minisign_verify::{PublicKey, Signature};
 use semver::Version;
+use sha2::{Digest, Sha256};
 use tauri::ipc::Channel;
 use tauri::{AppHandle, State};
 use tempfile::TempDir;
@@ -38,6 +40,7 @@ use tokio::time::timeout;
 
 #[cfg(target_os = "macos")]
 use macos::spawn_helper;
+use verify::{Refusal, Sha256Hex};
 
 const ONLY_ON_MACOS: &str = "Updates install only on macOS.";
 const BUSY: &str = "Dez is already downloading or installing an update.";
@@ -91,13 +94,14 @@ enum Job {
     Installed(Installed),
 }
 
-// A DMG whose bytes matched their signature as they arrived.
+// A DMG whose bytes had the SHA-256 of a checked manifest as they arrived.
 struct Download {
     // Dropping it removes the private dir and the DMG in it.
     dir: TempDir,
     version: Version,
     dmg: PathBuf,
-    signature: Signature,
+    // What the manifest names. The install checks the file against it again.
+    dmg_sha256: Sha256Hex,
 }
 
 struct Installed {
@@ -172,6 +176,41 @@ pub struct DownloadProgress {
     total: Option<u64>,
 }
 
+/// Why `download_update` or `install_update` failed. The webview gets a
+/// refusal as an object, `{ check, message }`, and every other failure as
+/// its text, like the errors of the other commands. So it tells a refusal
+/// by the shape of the error, never by the words of a message.
+#[derive(Debug, PartialEq, thiserror::Error, serde::Serialize)]
+#[serde(untagged)]
+pub enum UpdateError {
+    /// One of the four checks of the release failed (`verify::Check`): the
+    /// release may be compromised.
+    #[error("{}", .0.message)]
+    Refused(Refusal),
+    /// Any other failure, as a sentence for the user: the network, the
+    /// disk, the mount, the checks of the app in the DMG.
+    #[error("{0}")]
+    Failed(String),
+}
+
+impl From<Refusal> for UpdateError {
+    fn from(refusal: Refusal) -> Self {
+        Self::Refused(refusal)
+    }
+}
+
+impl From<String> for UpdateError {
+    fn from(message: String) -> Self {
+        Self::Failed(message)
+    }
+}
+
+impl From<&str> for UpdateError {
+    fn from(message: &str) -> Self {
+        Self::Failed(message.into())
+    }
+}
+
 /// Why this Dez cannot install an update by itself, or null when it can.
 /// The update window then offers the release page instead.
 #[cfg(target_os = "macos")]
@@ -188,73 +227,73 @@ pub async fn can_install_update() -> Option<String> {
 }
 
 /// Downloads the DMG of release `version`, which must be newer than the
-/// running Dez, and checks it against `signature`, the text of the release's
-/// `.minisig` file, as the bytes arrive. Reports progress on `on_progress`.
-/// On success Rust keeps the DMG for the install; after any failure nothing
-/// of this download is left. A new download replaces the last one.
+/// running Dez. `manifest` is the text of the release's manifest, and
+/// `manifest_signature` the text of the manifest's `.minisig` file. Before
+/// the download, the two must pass the first three checks
+/// (`verify::check_manifest`); the DMG's bytes must then have the SHA-256
+/// that the manifest names. A failed check is `UpdateError::Refused`.
+/// Reports progress on `on_progress`. On success Rust keeps the DMG for the
+/// install; after any failure nothing of this download is left. A new
+/// download replaces the last one.
 #[tauri::command]
 pub async fn download_update(
     app: AppHandle,
     version: String,
-    signature: String,
+    manifest: String,
+    manifest_signature: String,
     on_progress: Channel<DownloadProgress>,
     client: State<'_, reqwest::Client>,
     state: State<'_, UpdaterState>,
-) -> Result<(), String> {
+) -> Result<(), UpdateError> {
     if !cfg!(target_os = "macos") {
         return Err(ONLY_ON_MACOS.into());
     }
 
     let version = verify::update_version(&version, &app.package_info().version)?;
-    let signature = verify::decode_signature(&signature)?;
-    let key = verify::release_public_key()?;
+    let keys = verify::trusted_keys()?;
     let mut job = state.lock_job()?;
     // The running app is already replaced, or its new files are staged.
     if let Some(Job::Installed(installed)) = &*job {
         return Err(installed.finish.advice().into());
     }
     *job = None;
+    // The first three checks, before any request: a refused manifest costs
+    // no download. The download makes the fourth.
+    let dmg_sha256 = verify::check_manifest(&manifest, &manifest_signature, &version, &keys)?;
 
     let dir = private_dir(&std::env::temp_dir())?;
     let dmg = dir.path().join(verify::dmg_file_name(&version));
     let url = verify::dmg_url(verify::RELEASE_DOWNLOAD_BASE, &version);
     // On failure `dir` is dropped on return, which removes the partial DMG.
-    fetch_verified(
-        &client,
-        &url,
-        &dmg,
-        &key,
-        &signature,
-        MAX_DMG_BYTES,
-        |progress| {
-            on_progress
-                .send(progress)
-                .map_err(|error| format!("Dez could not report the download progress: {error}"))
-        },
-    )
-    .await?;
+    let report = |progress| {
+        on_progress
+            .send(progress)
+            .map_err(|error| format!("Dez could not report the download progress: {error}"))
+    };
+    fetch_verified(&client, &url, &dmg, &dmg_sha256, MAX_DMG_BYTES, report).await?;
     *job = Some(Job::Downloaded(Download {
         dir,
         version,
         dmg,
-        signature,
+        dmg_sha256,
     }));
     Ok(())
 }
 
 /// Installs the download of `download_update`, which must be of `version`.
-/// It checks the DMG on disk against its signature again, then replaces the
-/// running app with the app in the DMG (`macos::install`). Returns
-/// `replaced` when the new app is in place, or `binary` when macOS denied
-/// the swap and the new executable waits in the private dir. Either way the
-/// old app keeps running until `relaunch_after_update`. After a failure the
-/// app is as it was, and the download is gone.
+/// It checks the SHA-256 of the DMG on disk again (a failure is
+/// `UpdateError::Refused`), then replaces the running app with the app in
+/// the DMG (`macos::install`). Returns `replaced` when the new app is in
+/// place, or `binary` when macOS denied the swap and the new executable
+/// waits in the private dir. Either way the old app keeps running until
+/// `relaunch_after_update`. After a failure the app is as it was, and the
+/// download is gone.
 #[tauri::command]
 pub async fn install_update(
     app: AppHandle,
     version: String,
     state: State<'_, UpdaterState>,
-) -> Result<InstallMode, String> {
+) -> Result<InstallMode, UpdateError> {
     if !cfg!(target_os = "macos") {
         return Err(ONLY_ON_MACOS.into());
     }
@@ -270,11 +309,11 @@ pub async fn install_update(
         _ => {
             return Err(format!(
                 "Dez has no checked download of Dez {version}. Download it again."
-            ));
+            )
+            .into());
         }
     };
-    let key = verify::release_public_key()?;
-    verify_file(&download.dmg, &key, &download.signature).await?;
+    verify_file(&download.dmg, &download.dmg_sha256).await?;
     let finish = install_dmg(&app, &download).await?;
     let mode = finish.mode();
     *job = Some(Job::Installed(Installed {
@@ -340,23 +379,23 @@ fn spawn_helper(_finish: &Finish, _private_dir: &Path, _log: &Path) -> Result<()
     Err(ONLY_ON_MACOS.into())
 }
 
-// Checks the downloaded file against `signature` again, right before the
+// Checks the SHA-256 of the downloaded file again, right before the
 // install. The DMG waited in the private dir since its download; this
 // catches a file that changed there before diskutil reads it.
-async fn verify_file(path: &Path, key: &PublicKey, signature: &Signature) -> Result<(), String> {
-    let mut verifier = verify::stream_verifier(key, signature)?;
+async fn verify_file(path: &Path, sha256: &Sha256Hex) -> Result<(), UpdateError> {
     let read_error =
         |error: std::io::Error| format!("Dez could not read the downloaded update: {error}");
     let mut file = tokio::fs::File::open(path).await.map_err(read_error)?;
+    let mut hasher = Sha256::new();
     let mut buffer = vec![0; 256 * 1024];
     loop {
         let read = file.read(&mut buffer).await.map_err(read_error)?;
         if read == 0 {
             break;
         }
-        verifier.update(&buffer[..read]);
+        hasher.update(&buffer[..read]);
     }
-    verifier.finalize().map_err(verify::signature_error)
+    Ok(verify::check_dmg_sha256(hasher, sha256)?)
 }
 
 // The private dir of one update, `<parent>/dez-update-<random>` with mode
@@ -373,21 +412,19 @@ fn private_dir(parent: &Path) -> Result<TempDir, String> {
         .map_err(|error| format!("Dez could not make a folder for the update: {error}"))
 }
 
-// Streams `url` into a new file at `path` and checks the bytes against
-// `signature` as they arrive. Fails on an HTTP error status, a stall, more
-// than `max_bytes`, or bytes that do not match. A failure can leave a
-// partial file; the caller removes its dir.
+// Streams `url` into a new file at `path` and hashes the bytes as they
+// arrive. Fails on an HTTP error status, a stall, more than `max_bytes`, or
+// bytes whose SHA-256 is not `sha256` (the fourth check, a refusal). A
+// failure can leave a partial file; the caller removes its dir.
 async fn fetch_verified(
     client: &reqwest::Client,
     url: &str,
     path: &Path,
-    key: &PublicKey,
-    signature: &Signature,
+    sha256: &Sha256Hex,
     max_bytes: u64,
     mut on_progress: impl FnMut(DownloadProgress) -> Result<(), String>,
-) -> Result<(), String> {
-    // Fails before any request for a signature made with another key.
-    let mut verifier = verify::stream_verifier(key, signature)?;
+) -> Result<(), UpdateError> {
+    let mut hasher = Sha256::new();
     // The client follows GitHub's redirect to its asset host.
     let request = client
         .get(url)
@@ -418,14 +455,14 @@ async fn fetch_verified(
         if received > max_bytes {
             return Err(TOO_LARGE.into());
         }
-        verifier.update(&chunk);
+        hasher.update(&chunk);
         file.write_all(&chunk).await.map_err(save_error)?;
         if received - reported >= PROGRESS_STEP_BYTES {
             reported = received;
             on_progress(DownloadProgress { received, total })?;
         }
     }
-    verifier.finalize().map_err(verify::signature_error)?;
+    verify::check_dmg_sha256(hasher, sha256)?;
     // tokio's File can still be writing the last chunk in the background.
     file.flush().await.map_err(save_error)?;
     if reported != received {
@@ -434,24 +471,84 @@ async fn fetch_verified(
     Ok(())
 }
 
+// Release manifests and their signatures, which
+// src-tauri/updater/test-fixtures/make-fixtures.sh makes with the commands of
+// a real release and two throwaway keys. The script deletes the secret keys,
+// so a new fixture needs a run of it, which makes every fixture again.
 #[cfg(test)]
 mod test_fixtures {
-    // Signed with a throwaway minisign key whose secret key was deleted; only
-    // its public key is committed. To add a fixture, make a new key and sign
-    // every fixture again with it.
-    pub const TEST_KEY: &str = include_str!("../../updater/test-fixtures/test-key.pub");
-    pub const WRONG_KEY: &str = include_str!("../../updater/test-fixtures/wrong-key.pub");
+    use minisign_verify::PublicKey;
+    use semver::Version;
+
+    use super::verify::{self, Sha256Hex, TrustedKeys};
+
+    // The text of the fixture file whose name the parts make together.
+    macro_rules! fixture {
+        ($($part:literal),+) => {
+            include_str!(concat!("../../updater/test-fixtures/", $($part),+))
+        };
+    }
+
+    // A manifest and the good signature of the release test key for it, as
+    // (manifest, signature).
+    macro_rules! signed_manifest {
+        ($name:literal) => {
+            (
+                fixture!($name, ".manifest.json"),
+                fixture!($name, ".manifest.json.minisig"),
+            )
+        };
+    }
+
+    const RELEASE_KEY: &str = fixture!("release-key.pub");
+    const COMMIT_KEY: &str = fixture!("commit-key.pub");
+    // Stands in for the DMG: 4096 random bytes.
     pub const PAYLOAD: &[u8] = include_bytes!("../../updater/test-fixtures/payload.bin");
-    pub const SIGNATURE: &str = include_str!("../../updater/test-fixtures/payload.bin.minisig");
-    pub const LEGACY_SIGNATURE: &str =
-        include_str!("../../updater/test-fixtures/payload.bin.legacy.minisig");
-    pub const WRONG_KEY_SIGNATURE: &str =
-        include_str!("../../updater/test-fixtures/payload.bin.wrong-key.minisig");
+
+    // The release of Dez 0.16.0 with PAYLOAD as its DMG: it passes every
+    // check.
+    pub const MANIFEST: &str = fixture!("good.manifest.json");
+    pub const MANIFEST_SIGNATURE: &str = fixture!("good.manifest.json.minisig");
+    // Signatures of MANIFEST that must not pass: the commit key's, and a
+    // legacy (not prehashed) one of the release key.
+    pub const MANIFEST_SIGNATURE_BY_COMMIT_KEY: &str =
+        fixture!("good.manifest.json.commit-key.minisig");
+    pub const MANIFEST_LEGACY_SIGNATURE: &str = fixture!("good.manifest.json.legacy.minisig");
+
+    // Each of these differs from MANIFEST in one thing, and the release key
+    // signed it, as whoever controls GitHub can.
+    // `versionSignature` is the release key's signature of the version.
+    pub const VERSION_SIGNED_BY_RELEASE_KEY: (&str, &str) =
+        signed_manifest!("version-signed-by-release-key");
+    // `versionSignature` is a legacy signature of the commit key.
+    pub const VERSION_SIGNED_LEGACY: (&str, &str) = signed_manifest!("version-signed-legacy");
+    // `versionSignature` is the commit key's signature of 0.15.2.
+    pub const VERSION_SIGNATURE_OF_OTHER_VERSION: (&str, &str) =
+        signed_manifest!("version-signature-of-other-version");
+    // There is no `versionSignature`.
+    pub const NO_VERSION_SIGNATURE: (&str, &str) = signed_manifest!("no-version-signature");
+    // `dmgSha256` lacks its last character.
+    pub const SHORT_SHA256: (&str, &str) = signed_manifest!("short-sha256");
+
+    pub fn test_keys() -> TrustedKeys {
+        TrustedKeys {
+            release: PublicKey::decode(RELEASE_KEY).expect("release test key"),
+            commit: PublicKey::decode(COMMIT_KEY).expect("commit test key"),
+        }
+    }
+
+    // The SHA-256 that MANIFEST names, which is PAYLOAD's.
+    pub fn payload_sha256() -> Sha256Hex {
+        let version = Version::parse("0.16.0").expect("version");
+        verify::check_manifest(MANIFEST, MANIFEST_SIGNATURE, &version, &test_keys())
+            .expect("manifest")
+    }
 }
 
 #[cfg(test)]
 mod tests {
     use super::test_fixtures::*;
+    use super::verify::Check;
     use super::*;
     use tokio::net::TcpListener;
 
@@ -486,23 +583,23 @@ mod tests {
     }
 
     struct Fetch {
-        result: Result<(), String>,
+        result: Result<(), UpdateError>,
         progress: Vec<DownloadProgress>,
         file: Option<Vec<u8>>,
     }
 
-    async fn fetch(url: &str, signature: &str, max_bytes: u64) -> Fetch {
+    // Downloads `url` as the DMG that MANIFEST names.
+    async fn fetch(url: &str, max_bytes: u64) -> Fetch {
         // No proxy: a system proxy must not see the local test server.
         let client = reqwest::Client::builder()
             .no_proxy()
             .build()
             .expect("client");
-        let key = PublicKey::decode(TEST_KEY).expect("test key");
-        let signature = verify::decode_signature(signature).expect("signature");
         let dir = tempfile::tempdir().expect("temp dir");
         let path = dir.path().join("Dez_0.16.0_aarch64.dmg");
         let mut progress = Vec::new();
-        let result = fetch_verified(&client, url, &path, &key, &signature, max_bytes, |event| {
+        let sha256 = payload_sha256();
+        let result = fetch_verified(&client, url, &path, &sha256, max_bytes, |event| {
             progress.push(event);
             Ok(())
         })
@@ -514,10 +611,18 @@ mod tests {
         }
     }
 
+    // The check that refused, or None for success and for other failures.
+    fn refused_check(result: &Result<(), UpdateError>) -> Option<Check> {
+        match result {
+            Err(UpdateError::Refused(refusal)) => Some(refusal.check),
+            _ => None,
+        }
+    }
+
     #[tokio::test]
-    async fn fetches_a_file_that_matches_its_signature() {
+    async fn fetches_the_file_that_the_manifest_names() {
         let url = serve_once(ok_head(Some(PAYLOAD.len())), PAYLOAD.to_vec()).await;
-        let fetch = fetch(&url, SIGNATURE, MAX_DMG_BYTES).await;
+        let fetch = fetch(&url, MAX_DMG_BYTES).await;
 
         assert_eq!(fetch.result, Ok(()));
         assert_eq!(fetch.file.as_deref(), Some(PAYLOAD));
@@ -535,33 +640,18 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn fails_when_the_bytes_do_not_match_the_signature() {
+    async fn refuses_bytes_that_do_not_have_the_manifests_sha256() {
         let mut tampered = PAYLOAD.to_vec();
         tampered[0] ^= 1;
         let url = serve_once(ok_head(None), tampered).await;
-        let fetch = fetch(&url, SIGNATURE, MAX_DMG_BYTES).await;
+        let fetch = fetch(&url, MAX_DMG_BYTES).await;
 
         assert_eq!(
-            fetch.result,
-            Err("The update does not match its signature.".into())
+            refused_check(&fetch.result),
+            Some(Check::DmgSha256),
+            "{:?}",
+            fetch.result
         );
-    }
-
-    #[tokio::test]
-    async fn refuses_a_signature_from_another_key_before_any_request() {
-        // Nothing listens there, so a request would fail with another error.
-        let fetch = fetch(
-            "http://127.0.0.1:9/Dez.dmg",
-            WRONG_KEY_SIGNATURE,
-            MAX_DMG_BYTES,
-        )
-        .await;
-
-        assert_eq!(
-            fetch.result,
-            Err("The update is signed with a key that Dez does not trust.".into())
-        );
-        assert!(fetch.progress.is_empty());
     }
 
     #[tokio::test]
@@ -570,27 +660,25 @@ mod tests {
 
         // A server that sends its length is refused before the body.
         let url = serve_once(ok_head(Some(PAYLOAD.len())), PAYLOAD.to_vec()).await;
-        let fetch_with_length = fetch(&url, SIGNATURE, max_bytes).await;
+        let fetch_with_length = fetch(&url, max_bytes).await;
         assert_eq!(fetch_with_length.result, Err(TOO_LARGE.into()));
         assert_eq!(fetch_with_length.file, None);
 
         // One that does not is stopped once the bytes pass the cap.
         let url = serve_once(ok_head(None), PAYLOAD.to_vec()).await;
-        let fetch_without_length = fetch(&url, SIGNATURE, max_bytes).await;
+        let fetch_without_length = fetch(&url, max_bytes).await;
         assert_eq!(fetch_without_length.result, Err(TOO_LARGE.into()));
     }
 
+    // Not a refusal: a failed request says nothing about the release.
     #[tokio::test]
     async fn fails_on_an_http_error_status() {
         let head = "HTTP/1.1 404 Not Found\r\nContent-Length: 9\r\nConnection: close\r\n\r\n";
         let url = serve_once(head.into(), b"Not Found".to_vec()).await;
-        let fetch = fetch(&url, SIGNATURE, MAX_DMG_BYTES).await;
+        let fetch = fetch(&url, MAX_DMG_BYTES).await;
 
         assert!(
-            fetch
-                .result
-                .as_ref()
-                .is_err_and(|error| error.contains("404")),
+            matches!(&fetch.result, Err(UpdateError::Failed(error)) if error.contains("404")),
             "{:?}",
             fetch.result
         );
@@ -599,25 +687,58 @@ mod tests {
 
     #[tokio::test]
     async fn checks_the_downloaded_file_again_before_the_install() {
-        let key = PublicKey::decode(TEST_KEY).expect("test key");
-        let signature = verify::decode_signature(SIGNATURE).expect("signature");
+        let sha256 = payload_sha256();
         let dir = tempfile::tempdir().expect("temp dir");
         let dmg = dir.path().join("Dez_0.16.0_aarch64.dmg");
 
         std::fs::write(&dmg, PAYLOAD).expect("write");
-        assert_eq!(verify_file(&dmg, &key, &signature).await, Ok(()));
+        assert_eq!(verify_file(&dmg, &sha256).await, Ok(()));
 
         // A file that changed after its download.
         let mut changed = PAYLOAD.to_vec();
         changed[4000] ^= 1;
         std::fs::write(&dmg, changed).expect("write");
-        assert_eq!(
-            verify_file(&dmg, &key, &signature).await,
-            Err("The update does not match its signature.".into())
-        );
+        let result = verify_file(&dmg, &sha256).await;
+        assert_eq!(refused_check(&result), Some(Check::DmgSha256), "{result:?}");
 
         std::fs::remove_file(&dmg).expect("remove");
-        assert!(verify_file(&dmg, &key, &signature).await.is_err());
+        let result = verify_file(&dmg, &sha256).await;
+        assert!(matches!(result, Err(UpdateError::Failed(_))), "{result:?}");
+    }
+
+    // The webview reads these shapes and names (`UpdateError`).
+    #[test]
+    fn sends_a_refusal_as_an_object_and_other_failures_as_text() {
+        let refused: UpdateError = Refusal {
+            check: Check::DmgSha256,
+            message: "Another file.".into(),
+        }
+        .into();
+        assert_eq!(
+            serde_json::to_value(&refused).expect("json"),
+            serde_json::json!({ "check": "dmgSha256", "message": "Another file." })
+        );
+        let checks = [
+            Check::ManifestSignature,
+            Check::VersionSignature,
+            Check::Version,
+            Check::DmgSha256,
+        ];
+        assert_eq!(
+            serde_json::to_value(checks).expect("json"),
+            serde_json::json!([
+                "manifestSignature",
+                "versionSignature",
+                "version",
+                "dmgSha256"
+            ])
+        );
+
+        let failed: UpdateError = "No network.".into();
+        assert_eq!(
+            serde_json::to_value(&failed).expect("json"),
+            serde_json::json!("No network.")
+        );
     }
 
     #[cfg(unix)]

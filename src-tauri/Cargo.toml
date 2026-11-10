@@ -19,8 +19,8 @@ tauri-build = { version = "=2.5.6", features = [] }
 
 [features]
 # For the macOS update smoke test only; release builds never enable it. The
-# updater then trusts a throwaway key and downloads from a local server,
-# both set at compile time (src/updater/verify.rs).
+# updater then trusts two throwaway keys and downloads from a local server,
+# all three set at compile time (src/updater/verify.rs).
 updater-test-hooks = []
 
 [dependencies]
@@ -47,14 +47,18 @@ reqwest = { version = "=0.12.28", features = ["json", "stream"] }
 tokio = { version = "=1.52.0", features = ["full"] }
 thiserror = "=2.0.18"
 futures = "=0.3.32"
-# The macOS updater (src/updater/). minisign-verify: checks the minisign
-# signature of an update DMG; zero dependencies, by the minisign author, and
-# what Tauri's updater uses. semver: the version that Tauri already uses, so
-# it compares with `PackageInfo::version`. tempfile: the version already in
-# Cargo.lock; makes the private download dir and removes it when dropped.
+# The macOS updater (src/updater/). minisign-verify: checks the two minisign
+# signatures of a release (of its manifest, and of its version); zero
+# dependencies, by the minisign author, and what Tauri's updater uses.
+# semver: the version that Tauri already uses, so it compares with
+# `PackageInfo::version`. tempfile: the version already in Cargo.lock; makes
+# the private download dir and removes it when dropped. sha2: the version
+# already in Cargo.lock (Tauri's crates use it); the SHA-256 of the update
+# DMG, which the release manifest names.
 minisign-verify = "=0.3.0"
 semver = "=1.0.28"
 tempfile = "=3.27.0"
+sha2 = "=0.10.9"
 
 # The gtk version that tauri uses, so its `gtk_window()` type matches. The
 # zbus version that tauri-plugin-opener already pulls in: notification.rs
