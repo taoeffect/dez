@@ -1,5 +1,5 @@
 import sbp from '@sbp/sbp'
-import { requireProvider, type ModelInfo, type Provider, type ProviderId, type ProviderInfo, type SseTokenEvent } from '../../model/providers'
+import { effectiveRequest, requireProvider, type ModelInfo, type Provider, type ProviderId, type ProviderInfo, type SseTokenEvent } from '../../model/providers'
 import { decodeSseData } from '../../utils/protocol/sse'
 import type { ProviderFetchProbeResult } from './providerFetchTypes'
 
@@ -40,6 +40,9 @@ function selectCopilotSpikeModel(models: ModelInfo[]): string | null {
   return gpt5?.id ?? null
 }
 
+// The model for the chat probe. Only chat models count: a full model list
+// (Venice `type=all`) can start with image or video models, and the
+// endpoint's list also holds models that make nothing (embeddings).
 export function selectProbeModel(
   provider: Provider,
   models: ModelInfo[],
@@ -50,14 +53,15 @@ export function selectProbeModel(
     return override
   }
 
+  const chatModels = models.filter((model) => effectiveRequest(model) === 'chat')
   if (provider.config.auth === 'githubCopilot') {
-    const copilotModel = selectCopilotSpikeModel(models)
+    const copilotModel = selectCopilotSpikeModel(chatModels)
     if (copilotModel) {
       return copilotModel
     }
   }
 
-  const listedModel = models[0] ?? provider.configModels()[0]
+  const listedModel = chatModels[0] ?? provider.configModels().find((model) => effectiveRequest(model) === 'chat')
   return listedModel?.id ?? ''
 }
 

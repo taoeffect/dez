@@ -29,7 +29,7 @@ export interface ModelInfo {
   // the provider does not tell, and Dez counts it as a text model
   // (`effectiveOutputs` in modelOutputs.ts).
   outputs?: ModelOutput[]
-  // How Dez sends the model a request. Missing: `chat`.
+  // How Dez sends the model a request. Missing: `chat` (`effectiveRequest`).
   request?: ModelRequest
 }
 
@@ -167,4 +167,10 @@ export function providerModel(provider: ProviderId, id: string, name: string, ca
   if (capabilities.outputs !== undefined) model.outputs = normalizeOutputs(capabilities.outputs)
   if (capabilities.request !== undefined) model.request = capabilities.request
   return model
+}
+
+/** How Dez sends the model a request; a model whose kind is unknown gets
+ *  chat requests. */
+export function effectiveRequest(model: Pick<ModelInfo, 'request'>): ModelRequest {
+  return model.request ?? 'chat'
 }

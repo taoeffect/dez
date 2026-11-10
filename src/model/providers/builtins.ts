@@ -15,10 +15,28 @@ export const BUILT_IN_PROVIDER_CONFIGS: readonly ProviderConfig[] = [
     apiFormat: 'openai',
     models: [],
     fetchModels: true,
+    // Without it, /models lists only the models that write text.
+    modelListQuery: { output_modalities: 'all' },
     modelImageInput: { path: 'architecture.input_modalities' },
     // A list of request fields that the model takes; it holds "tools" for a
     // model that calls tools.
     modelToolCalling: { path: 'supported_parameters' },
+    // A list; "text" with "image" is a chat model that can also send images.
+    // Image-only, audio, and video models get no request yet.
+    modelOutputs: {
+      path: 'architecture.output_modalities',
+      values: {
+        text: { outputs: ['text'], request: 'chat' },
+        image: { outputs: ['image'] },
+        audio: { outputs: ['audio'] },
+        speech: { outputs: ['audio'] },
+        video: { outputs: ['video'] },
+        transcription: { outputs: ['text'] },
+        embeddings: { outputs: [] },
+        rerank: { outputs: [] },
+        decisions: { outputs: [] },
+      },
+    },
     auth: 'apiKey',
     // OpenRouter passes the marks on to the models that cache only a marked
     // prompt (Claude, Gemini, Qwen), and makes OpenAI's own marks of them for
@@ -57,8 +75,27 @@ export const BUILT_IN_PROVIDER_CONFIGS: readonly ProviderConfig[] = [
     apiFormat: 'openai',
     models: [],
     fetchModels: true,
+    // Without it, /models lists only the text models.
+    modelListQuery: { type: 'all' },
     modelImageInput: { path: 'model_spec.capabilities.supportsVision' },
     modelToolCalling: { path: 'model_spec.capabilities.supportsFunctionCalling' },
+    // One `type` per model. `inpaint` models edit images; Dez does not run
+    // upscale, audio, video, or speech-to-text (`asr`) models yet.
+    modelOutputs: {
+      path: 'type',
+      values: {
+        text: { outputs: ['text'], request: 'chat' },
+        image: { outputs: ['image'], request: 'image' },
+        inpaint: { outputs: ['image'], request: 'imageEdit' },
+        upscale: { outputs: ['image'] },
+        tts: { outputs: ['audio'] },
+        music: { outputs: ['audio'] },
+        video: { outputs: ['video'] },
+        asr: { outputs: ['text'] },
+        embedding: { outputs: [] },
+        decision: { outputs: [] },
+      },
+    },
     auth: 'apiKey',
     // The Venice docs say that Venice adds the marks for Claude, but a live
     // check got no Claude cache hits without them. Its other models take the
@@ -179,6 +216,23 @@ export const BUILT_IN_PROVIDER_CONFIGS: readonly ProviderConfig[] = [
     // no `tool_calls` flag.
     modelImageInput: { path: 'capabilities.supports.vision' },
     modelToolCalling: { path: 'capabilities.supports.tool_calls', missing: false },
+    // VS Code's Copilot Chat tells `chat` models apart from `completion`
+    // (code completion) and `embeddings` models, and Zed lists only `chat`
+    // models. `image` and `decisions` are newer values that a third-party
+    // client reports from the live API.
+    // https://github.com/microsoft/vscode/blob/5e718f45a0486f73460d307540aff922a22eaca9/extensions/copilot/src/platform/endpoint/common/endpointProvider.ts#L39
+    // https://github.com/zed-industries/zed/blob/b36b283021c48f1712714b8a0e2ad6ffb578920b/crates/copilot_chat/src/copilot_chat.rs#L950-L955
+    // https://github.com/Ashesh3/copilot-api/pull/146
+    modelOutputs: {
+      path: 'capabilities.type',
+      values: {
+        chat: { outputs: ['text'], request: 'chat' },
+        completion: { outputs: [] },
+        embeddings: { outputs: [] },
+        decisions: { outputs: [] },
+        image: { outputs: ['image'] },
+      },
+    },
     auth: 'githubCopilot',
     // The Copilot API expects the headers of a supported editor integration.
     headers: {

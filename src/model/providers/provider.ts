@@ -3,7 +3,7 @@ import type { NativeHttpHeaders, NativeHttpRequest } from '../../utils/protocol/
 import type { Secret } from '../../utils/secret'
 import { API_FORMATS, type ApiFormat } from './apiFormats'
 import { FORBIDDEN_BODY_KEYS, type ProviderConfig, type ProviderSettingDef } from './config'
-import { isRecord, modelCapability, modelData } from './modelParsing'
+import { isRecord, modelCapability, modelData, modelOutputsAndRequest } from './modelParsing'
 import { isThinkingEnabled } from './thinking'
 import { providerModel, type ChatMessage, type ChatRequestContext, type ModelInfo, type ProviderInfo } from './types'
 
@@ -75,7 +75,7 @@ export class Provider {
 
     return {
       method: 'GET',
-      url: this.format.modelsUrl(this.config.baseUrl),
+      url: withQuery(this.format.modelsUrl(this.config.baseUrl), this.config.modelListQuery),
       headers: this.requestHeaders(secret, {}),
       timeoutMs: MODEL_LIST_TIMEOUT_MS,
     }
@@ -84,8 +84,10 @@ export class Provider {
   // Reads the `{ data: [...] }` model list both formats return. The name
   // falls back from `name` (OpenAI-style servers) to `display_name`
   // (Anthropic-style) to the id (servers that report only ids). The image
-  // and tool flags are read only where the config's `modelImageInput` and
-  // `modelToolCalling` point.
+  // and tool flags, the outputs, and the request kind are read only where
+  // the config's `modelImageInput`, `modelToolCalling`, and `modelOutputs`
+  // point. Models that make nothing stay in this list; `mergeModels` drops
+  // them, so the diagnostics report shows what the server sent.
   parseModels(data: unknown): ModelInfo[] {
     const models: ModelInfo[] = []
 
@@ -97,6 +99,7 @@ export class Provider {
       models.push(providerModel(this.id, model.id, name?.trim() ?? model.id, {
         imageInput: modelCapability(model, this.config.modelImageInput, 'image'),
         toolCalling: modelCapability(model, this.config.modelToolCalling, 'tools'),
+        ...modelOutputsAndRequest(model, this.config.modelOutputs),
       }))
     }
 
@@ -106,7 +109,8 @@ export class Provider {
   // Config models come first, in config order, then the fetched models the
   // config does not list. Each id appears once. A name, capability flag,
   // outputs list, or request kind set in the config wins over the fetched one
-  // for the same id.
+  // for the same id. A fetched model that is known to make none of the output
+  // types (embeddings, rerank) is left out; a config model is always listed.
   mergeModels(fetched: ModelInfo[]): ModelInfo[] {
     const fetchedById = new Map<string, ModelInfo>()
     for (const model of fetched) {
@@ -128,7 +132,7 @@ export class Provider {
     }
 
     for (const [id, model] of fetchedById) {
-      if (!merged.has(id)) merged.set(id, providerModel(this.id, id, model.name, model))
+      if (!merged.has(id) && model.outputs?.length !== 0) merged.set(id, providerModel(this.id, id, model.name, model))
     }
 
     return [...merged.values()]
@@ -265,4 +269,12 @@ function mergeBodyPart(target: Record<string, unknown>, part: JsonObject): void 
       target[key] = value
     }
   }
+}
+
+// Adds query parameters to a model-list URL, after the format's own query if
+// it has one (the Anthropic `?limit=1000`). No parameters: the URL as it is.
+function withQuery(url: string, query: Record<string, string> | undefined): string {
+  const search = new URLSearchParams(query).toString()
+  if (!search) return url
+  return `${url}${url.includes('?') ? '&' : '?'}${search}`
 }

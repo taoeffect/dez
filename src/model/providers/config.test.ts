@@ -154,6 +154,30 @@ describe('provider config schema', () => {
     expect(parseModel({ request: 'video' }).success).toBe(false)
   })
 
+  it('keeps the model list query, the output type mapping, and the media API, and rejects bad ones', () => {
+    const parse = (fields: Record<string, unknown>) =>
+      providerConfigSchema.safeParse({ id: 'p', name: 'P', baseUrl: 'http://h', ...fields })
+    const outputs = (values: unknown) => parse({ modelOutputs: { path: 'type', values } }).success
+    const fields = {
+      modelListQuery: { type: 'all' },
+      // A type that makes nothing (embeddings) needs an empty list, unlike a
+      // config model's outputs.
+      modelOutputs: { path: 'arch.out', values: { text: { outputs: ['text'], request: 'chat' }, embed: { outputs: [] } } },
+      mediaApi: { format: 'venice' },
+    }
+
+    expect(parse(fields).data).toMatchObject(fields)
+    expect(parse({ modelListQuery: { limit: 10 } }).success).toBe(false)
+    expect(parse({ modelOutputs: { path: 'arch..out', values: {} } }).success).toBe(false)
+    expect(parse({ modelOutputs: { path: 'type' } }).success).toBe(false)
+    expect(outputs({ tts: { outputs: ['speech'] } })).toBe(false)
+    expect(outputs({ tts: { outputs: 'audio' } })).toBe(false)
+    expect(outputs({ tts: { request: 'chat' } })).toBe(false)
+    expect(outputs({ video: { outputs: ['video'], request: 'video' } })).toBe(false)
+    expect(parse({ mediaApi: { format: 'openai' } }).success).toBe(false)
+    expect(parse({ mediaApi: {} }).success).toBe(false)
+  })
+
   it('keeps an empty thinking object and accepts only JSON objects as bodies', () => {
     const parse = (thinking: unknown) => providerConfigSchema.safeParse({ id: 'p', name: 'P', baseUrl: 'http://h', thinking })
     const bodies = {

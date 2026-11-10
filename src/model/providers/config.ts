@@ -44,6 +44,9 @@ export function trimTrailingSlashes(url: string): string {
 
 export const API_FORMAT_IDS = ['openai', 'anthropic'] as const
 
+// Wire formats of a provider's own image, audio, and video API (`mediaApi`).
+export const MEDIA_API_FORMAT_IDS = ['venice'] as const
+
 const providerIdSchema = z.string().refine(
   isValidProviderId,
   'Provider id must be 1-64 letters, digits, "-" or "_", and not a reserved name',
@@ -144,19 +147,38 @@ const thinkingConfigSchema = z.object({
   disabledBody: requestBodyPartSchema.optional(),
 })
 
-// Where a `/models` entry says whether the model has a capability, as a dot
-// path such as 'architecture.input_modalities'. A boolean there is the flag;
-// a list means "has it" when it holds the capability's list value ("image"
-// for `modelImageInput`, "tools" for `modelToolCalling`); anything else is
-// unknown (modelParsing.ts). `missing` is the flag of an entry with no value
-// at the path, for a server that leaves out a capability the model lacks;
-// without it, no value is unknown.
+// A dot path into one `/models` entry, such as
+// 'architecture.input_modalities' (modelParsing.ts).
+const modelEntryPathSchema = z.string().refine(
+  (path) => path.split('.').every((segment) => segment.length > 0),
+  'Model entry path must be dot-separated names, none empty',
+)
+
+// Where a `/models` entry says whether the model has a capability. A boolean
+// there is the flag; a list means "has it" when it holds the capability's
+// list value ("image" for `modelImageInput`, "tools" for
+// `modelToolCalling`); anything else is unknown (modelParsing.ts). `missing`
+// is the flag of an entry with no value at the path, for a server that
+// leaves out a capability the model lacks; without it, no value is unknown.
 const modelCapabilityPathSchema = z.object({
-  path: z.string().refine(
-    (path) => path.split('.').every((segment) => segment.length > 0),
-    'Model capability path must be dot-separated names, none empty',
-  ),
+  path: modelEntryPathSchema,
   missing: z.boolean().optional(),
+})
+
+// What a model makes and how Dez sends it a request, from the type that its
+// `/models` entry reports at `path` (a string is one type, a list is many).
+// `values` maps each raw type to its outputs and request kind. A type with
+// no `request` gives `none` (Dez cannot use the model yet); a model whose
+// types make no outputs (embeddings) is left out of the list. Types missing
+// from `values` are skipped, and an entry with no known type stays unknown
+// (a chat model, as with no config). How many types combine:
+// modelParsing.ts.
+const modelOutputsConfigSchema = z.object({
+  path: modelEntryPathSchema,
+  values: z.record(z.string(), z.object({
+    outputs: z.array(z.enum(MODEL_OUTPUT_IDS)),
+    request: z.enum(MODEL_REQUESTS).optional(),
+  })),
 })
 
 // The whole definition of a provider. Built-ins are literals of this type and
@@ -177,8 +199,13 @@ export const providerConfigSchema = z.object({
   models: z.array(providerModelConfigSchema).default(() => []),
   // false: never call the models endpoint, list only `models`.
   fetchModels: z.boolean().default(true),
+  // Query parameters of the model-list request, for a server that lists only
+  // its chat models unless asked (Venice `type=all`). A field of its own,
+  // because `baseUrl` may not hold a query.
+  modelListQuery: z.record(z.string(), z.string()).optional(),
   modelImageInput: modelCapabilityPathSchema.optional(),
   modelToolCalling: modelCapabilityPathSchema.optional(),
+  modelOutputs: modelOutputsConfigSchema.optional(),
   auth: z.enum(['apiKey', 'githubCopilot']).default('apiKey'),
   // Static headers added to every request.
   headers: headersSchema.optional(),
@@ -207,6 +234,9 @@ export const providerConfigSchema = z.object({
   // format's body and before the settings and the thinking body, so those can
   // add keys to the same objects.
   requestBody: requestBodyPartSchema.optional(),
+  // The wire format of the provider's own image, audio, and video requests.
+  // Missing: the provider has none, so its media models get no requests.
+  mediaApi: z.object({ format: z.enum(MEDIA_API_FORMAT_IDS) }).optional(),
   settings: z.array(providerSettingDefSchema).optional(),
   thinking: thinkingConfigSchema.optional(),
 })
@@ -235,4 +265,6 @@ export type ProviderSettingDef = z.infer<typeof providerSettingDefSchema>
 export type ProviderConfig = z.infer<typeof providerConfigSchema>
 export type ProviderThinkingConfig = z.infer<typeof thinkingConfigSchema>
 export type ModelCapabilityPath = z.infer<typeof modelCapabilityPathSchema>
+export type ModelOutputsConfig = z.infer<typeof modelOutputsConfigSchema>
+export type MediaApiFormatId = (typeof MEDIA_API_FORMAT_IDS)[number]
 export type ProviderAuth = ProviderConfig['auth']

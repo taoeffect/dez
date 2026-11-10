@@ -1018,6 +1018,74 @@ describe('provider models', () => {
     ])
   })
 
+  const listed = (id: string, fields: Record<string, unknown> = {}) => ({ id, name: id, provider: 'local', ...fields })
+
+  it('reads the outputs and request kind from the types at the modelOutputs path', () => {
+    const provider = customProvider({
+      modelOutputs: {
+        path: 'arch.out',
+        values: {
+          text: { outputs: ['text'], request: 'chat' },
+          image: { outputs: ['image'] },
+          gen: { outputs: ['image'], request: 'image' },
+          edit: { outputs: ['image'], request: 'imageEdit' },
+          video: { outputs: ['video'] },
+          embed: { outputs: [] },
+        },
+      },
+    })
+    const models = provider.parseModels({
+      data: [
+        { id: 'string', arch: { out: 'video' } },
+        { id: 'chat-wins', arch: { out: ['image', 'text'] } },
+        { id: 'first-kind', arch: { out: ['video', 'edit', 'gen'] } },
+        { id: 'union', arch: { out: ['video', 'image', 'video'] } },
+        { id: 'skips-unknown', arch: { out: ['speech', 7, 'gen'] } },
+        { id: 'makes-nothing', arch: { out: ['embed'] } },
+        { id: 'unknown-only', arch: { out: ['speech'] } },
+        { id: 'empty-list', arch: { out: [] } },
+        { id: 'inherited', arch: { out: 'constructor' } },
+        { id: 'number', arch: { out: 1 } },
+        { id: 'missing', arch: {} },
+      ],
+    })
+
+    // toStrictEqual: with no known type, both keys stay out (a chat model).
+    expect(models).toStrictEqual([
+      listed('string', { outputs: ['video'], request: 'none' }),
+      listed('chat-wins', { outputs: ['text', 'image'], request: 'chat' }),
+      listed('first-kind', { outputs: ['image', 'video'], request: 'imageEdit' }),
+      listed('union', { outputs: ['image', 'video'], request: 'none' }),
+      listed('skips-unknown', { outputs: ['image'], request: 'image' }),
+      // Still in the parsed list, so the diagnostics report shows it.
+      listed('makes-nothing', { outputs: [], request: 'none' }),
+      ...['unknown-only', 'empty-list', 'inherited', 'number', 'missing'].map((id) => listed(id)),
+    ])
+  })
+
+  it('leaves out the fetched models that make nothing, but always lists config models', () => {
+    const provider = customProvider({
+      modelOutputs: { path: 'type', values: { text: { outputs: ['text'], request: 'chat' }, embed: { outputs: [] } } },
+      models: [{ id: 'config-embed' }, { id: 'config-says-text', outputs: ['text'], request: 'chat' }],
+    })
+    const fetched = provider.parseModels({
+      data: [
+        { id: 'chat', type: 'text' },
+        { id: 'embed', type: 'embed' },
+        { id: 'config-embed', type: 'embed' },
+        { id: 'config-says-text', type: 'embed' },
+        { id: 'unknown' },
+      ],
+    })
+
+    expect(provider.mergeModels(fetched)).toStrictEqual([
+      listed('config-embed', { outputs: [], request: 'none' }),
+      listed('config-says-text', { outputs: ['text'], request: 'chat' }),
+      listed('chat', { outputs: ['text'], request: 'chat' }),
+      listed('unknown'),
+    ])
+  })
+
   // Entry shapes as each API reports them: Venice and OpenRouter /models
   // (checked live 2026-11-07 and 2026-11-08), Copilot from VS Code's Copilot
   // Chat types and a logged Copilot /models entry.
@@ -1040,8 +1108,65 @@ describe('provider models', () => {
     ])).toEqual([[true, true], [undefined, false]])
   })
 
+  // Type values as each API reports them: Venice and OpenRouter /models
+  // (checked live 2026-11-09), Copilot from VS Code's Copilot Chat and a
+  // third-party client that logs the live API.
+  it('reads the outputs and request kinds of the built-ins from their /models entry shapes', () => {
+    const kinds = (id: string, data: unknown[]) => {
+      const provider = builtInProvider(id)
+      return provider.mergeModels(provider.parseModels({ data })).map((model) => [model.id, model.outputs, model.request])
+    }
+
+    expect(kinds('venice', [
+      { id: 'text', type: 'text' },
+      { id: 'gen', type: 'image' },
+      { id: 'edit', type: 'inpaint' },
+      { id: 'video', type: 'video' },
+      { id: 'embed', type: 'embedding' },
+    ])).toEqual([
+      ['text', ['text'], 'chat'],
+      ['gen', ['image'], 'image'],
+      ['edit', ['image'], 'imageEdit'],
+      ['video', ['video'], 'none'],
+    ])
+    // OpenRouter makes images only through chat: an image+text model stays a
+    // chat model, and an image-only model gets no request.
+    expect(kinds('openrouter', [
+      { id: 'text', architecture: { output_modalities: ['text'] } },
+      { id: 'text-image', architecture: { output_modalities: ['image', 'text'] } },
+      { id: 'image', architecture: { output_modalities: ['image'] } },
+      { id: 'speech', architecture: { output_modalities: ['speech'] } },
+      { id: 'rerank', architecture: { output_modalities: ['rerank'] } },
+    ])).toEqual([
+      ['text', ['text'], 'chat'],
+      ['text-image', ['text', 'image'], 'chat'],
+      ['image', ['image'], 'none'],
+      ['speech', ['audio'], 'none'],
+    ])
+    expect(kinds('copilot', [
+      { id: 'chat', capabilities: { type: 'chat' } },
+      { id: 'completion', capabilities: { type: 'completion' } },
+      { id: 'image', capabilities: { type: 'image' } },
+      { id: 'new-type', capabilities: { type: 'new-type' } },
+    ])).toEqual([
+      ['chat', ['text'], 'chat'],
+      ['image', ['image'], 'none'],
+      ['new-type', undefined, undefined],
+    ])
+  })
+
   it('builds no model-list request when fetchModels is off', () => {
     expect(customProvider({ fetchModels: false }).modelListRequest(key)).toBeNull()
+  })
+
+  it('adds the model list query to the format\'s list URL, after its own query', () => {
+    const modelListQuery = { type: 'all', 'a b': 'c&d' }
+
+    expect(customProvider({ modelListQuery }).modelListRequest(null)?.url)
+      .toBe('http://localhost:8080/v1/models?type=all&a+b=c%26d')
+    expect(customProvider({ modelListQuery, apiFormat: 'anthropic', baseUrl: 'https://api.anthropic.com' }).modelListRequest(null)?.url)
+      .toBe('https://api.anthropic.com/v1/models?limit=1000&type=all&a+b=c%26d')
+    expect(customProvider({ modelListQuery: {} }).modelListRequest(null)?.url).toBe('http://localhost:8080/v1/models')
   })
 })
 

@@ -15,7 +15,7 @@ import { currentShortcutPlatform, findShortcut, normalizeShortcutKey, validateSh
 import { MAX_CLOSED_TABS, NEW_TAB_TITLE, useTabStore } from './tabs'
 import type { AppStatePayload, CachedProvider, ConversationSearchOutcome, ModelCache } from '../persistence/types'
 import { emptyModelCache } from '../persistence/modelCache'
-import type { ProviderConfig, ProviderThinkingConfig } from '../providers/config'
+import type { ModelOutputsConfig, ProviderConfig, ProviderThinkingConfig } from '../providers/config'
 import { providerModel, type ModelInfo, type ProviderId, type ProviderModelsResult } from '../providers/types'
 import { isToolsEnabled } from '../providers/toolsSetting'
 import type { ActiveModel, ContentNode, ModelRef, Section, SectionThinking, Tab, ThinkingReplay, ThinkingRound } from '../chat/types'
@@ -178,9 +178,9 @@ function cloneProviderSettings(
 // app_state.json.
 function cloneProviderConfig(config: ProviderConfig): ProviderConfig {
   const {
-    id, name, baseUrl, apiFormat, models, fetchModels, modelImageInput, modelToolCalling, auth,
-    headers, imageRequestHeaders, maxOutputTokens, cacheBreakpoints, toolMessageCacheMark, promptCacheKey,
-    requestBody, settings, thinking,
+    id, name, baseUrl, apiFormat, models, fetchModels, modelListQuery, modelImageInput, modelToolCalling,
+    modelOutputs, auth, headers, imageRequestHeaders, maxOutputTokens, cacheBreakpoints, toolMessageCacheMark,
+    promptCacheKey, requestBody, mediaApi, settings, thinking,
     ...uncopied
   } = config
   // A compile error when ProviderConfig gets a field that this clone does not
@@ -195,8 +195,10 @@ function cloneProviderConfig(config: ProviderConfig): ProviderConfig {
     fetchModels,
     auth,
   }
+  if (modelListQuery) clone.modelListQuery = { ...modelListQuery }
   if (modelImageInput) clone.modelImageInput = { ...modelImageInput }
   if (modelToolCalling) clone.modelToolCalling = { ...modelToolCalling }
+  if (modelOutputs) clone.modelOutputs = cloneModelOutputsConfig(modelOutputs)
   if (headers) clone.headers = { ...headers }
   if (imageRequestHeaders) clone.imageRequestHeaders = { ...imageRequestHeaders }
   if (maxOutputTokens !== undefined) clone.maxOutputTokens = maxOutputTokens
@@ -204,11 +206,19 @@ function cloneProviderConfig(config: ProviderConfig): ProviderConfig {
   if (toolMessageCacheMark) clone.toolMessageCacheMark = toolMessageCacheMark
   if (promptCacheKey !== undefined) clone.promptCacheKey = promptCacheKey
   if (requestBody) clone.requestBody = cloneJsonObject(requestBody)
+  if (mediaApi) clone.mediaApi = { ...mediaApi }
   if (settings) clone.settings = settings.map((setting) => ({ ...setting }))
   // Last: dez.controller/providers/save compares configs as JSON text and
   // relies on this key order.
   if (thinking) clone.thinking = cloneThinkingConfig(thinking)
   return clone
+}
+
+function cloneModelOutputsConfig({ path, values }: ModelOutputsConfig): ModelOutputsConfig {
+  return {
+    path,
+    values: Object.fromEntries(Object.entries(values).map(([type, value]) => [type, { ...value, outputs: [...value.outputs] }])),
+  }
 }
 
 // An empty object is kept: it means "supports thinking, with the default
