@@ -141,6 +141,19 @@ describe('provider config schema', () => {
     expect(parse({ imageRequestHeaders: { 'Bad Name': 'true' } }).success).toBe(false)
   })
 
+  it('keeps a model\'s outputs and request kind, and rejects unknown values or an empty outputs list', () => {
+    const parseModel = (model: Record<string, unknown>) =>
+      providerConfigSchema.safeParse({ id: 'p', name: 'P', baseUrl: 'http://h', models: [{ id: 'm', ...model }] })
+    const fields = { outputs: ['image', 'text'], request: 'imageEdit' }
+
+    expect(parseModel(fields).data?.models).toStrictEqual([{ id: 'm', ...fields }])
+    // A config model is always listed, so it must make something.
+    expect(parseModel({ outputs: [] }).success).toBe(false)
+    expect(parseModel({ outputs: ['speech'] }).success).toBe(false)
+    expect(parseModel({ outputs: 'image' }).success).toBe(false)
+    expect(parseModel({ request: 'video' }).success).toBe(false)
+  })
+
   it('keeps an empty thinking object and accepts only JSON objects as bodies', () => {
     const parse = (thinking: unknown) => providerConfigSchema.safeParse({ id: 'p', name: 'P', baseUrl: 'http://h', thinking })
     const bodies = {

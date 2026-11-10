@@ -1,11 +1,19 @@
 import type { ImageMediaType } from '../chat/images'
 import type { RequestMessage, ThinkingReplay } from '../chat/types'
+import { normalizeOutputs, type ModelOutput } from '../modelOutputs'
 import type { StreamedToolCall, ToolDefinition } from '../tools/types'
 import type { ApiFormatId, ProviderAuth, ProviderSettingDef } from './config'
 
 // Any id that passes `isValidProviderId()` in `config.ts`: built-in ids plus
 // user-defined custom provider ids.
 export type ProviderId = string
+
+// How Dez sends a request to a model. `chat`: the API format's chat request.
+// `image`, `imageEdit`: the provider's media API makes or edits an image.
+// `none`: Dez has no request for the model yet, so a submit is refused.
+export const MODEL_REQUESTS = ['chat', 'image', 'imageEdit', 'none'] as const
+
+export type ModelRequest = (typeof MODEL_REQUESTS)[number]
 
 export interface ModelInfo {
   id: string
@@ -17,9 +25,15 @@ export interface ModelInfo {
   // true: the model calls tools; false: it does not, and the request sends
   // no tools. Missing: unknown, and the request sends the tools.
   toolCalling?: boolean
+  // What the model makes, each type once, in MODEL_OUTPUTS order. Missing:
+  // the provider does not tell, and Dez counts it as a text model
+  // (`effectiveOutputs` in modelOutputs.ts).
+  outputs?: ModelOutput[]
+  // How Dez sends the model a request. Missing: `chat`.
+  request?: ModelRequest
 }
 
-export type ModelCapabilities = Pick<ModelInfo, 'imageInput' | 'toolCalling'>
+export type ModelCapabilities = Pick<ModelInfo, 'imageInput' | 'toolCalling' | 'outputs' | 'request'>
 
 // Display names for agent role pills and history rows: provider id ->
 // provider name, and `modelRefKey` -> model name. Maps, not plain objects,
@@ -143,10 +157,14 @@ export class ProviderNotConfiguredError extends ProviderError {
 }
 
 // Leaves each capability out when it is unknown, so the model cache file and
-// whole-object comparisons hold no `undefined` field.
+// whole-object comparisons hold no `undefined` field. `outputs` becomes a new
+// array in table order, so two models never share one (a store copy and its
+// snapshot, a config model and the cache).
 export function providerModel(provider: ProviderId, id: string, name: string, capabilities: ModelCapabilities = {}): ModelInfo {
   const model: ModelInfo = { id, name, provider }
   if (capabilities.imageInput !== undefined) model.imageInput = capabilities.imageInput
   if (capabilities.toolCalling !== undefined) model.toolCalling = capabilities.toolCalling
+  if (capabilities.outputs !== undefined) model.outputs = normalizeOutputs(capabilities.outputs)
+  if (capabilities.request !== undefined) model.request = capabilities.request
   return model
 }

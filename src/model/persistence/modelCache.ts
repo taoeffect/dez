@@ -1,6 +1,7 @@
 import * as z from 'zod'
+import { MODEL_OUTPUT_IDS } from '../modelOutputs'
 import { isValidProviderId } from '../providers/config'
-import type { ProviderId } from '../providers/types'
+import { MODEL_REQUESTS, type ProviderId } from '../providers/types'
 import type { CachedProvider, ModelCache } from './types'
 
 export const MODEL_CACHE_VERSION = 1
@@ -9,10 +10,12 @@ const modelInfoSchema = z.object({
   id: z.string(),
   name: z.string(),
   provider: z.string().refine(isValidProviderId, 'invalid provider id'),
-  // Optional with no version bump: a cache written before a flag existed
+  // Optional with no version bump: a cache written before a field existed
   // reads it as "unknown" until the next model check.
   imageInput: z.boolean().optional(),
   toolCalling: z.boolean().optional(),
+  outputs: z.array(z.enum(MODEL_OUTPUT_IDS)).optional(),
+  request: z.enum(MODEL_REQUESTS).optional(),
 })
 
 // Individually drop invalid models (e.g. a bad provider id) instead of failing

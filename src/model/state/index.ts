@@ -16,7 +16,7 @@ import { MAX_CLOSED_TABS, NEW_TAB_TITLE, useTabStore } from './tabs'
 import type { AppStatePayload, CachedProvider, ConversationSearchOutcome, ModelCache } from '../persistence/types'
 import { emptyModelCache } from '../persistence/modelCache'
 import type { ProviderConfig, ProviderThinkingConfig } from '../providers/config'
-import type { ProviderId, ProviderModelsResult } from '../providers/types'
+import { providerModel, type ModelInfo, type ProviderId, type ProviderModelsResult } from '../providers/types'
 import { isToolsEnabled } from '../providers/toolsSetting'
 import type { ActiveModel, ContentNode, ModelRef, Section, SectionThinking, Tab, ThinkingReplay, ThinkingRound } from '../chat/types'
 import {
@@ -191,7 +191,7 @@ function cloneProviderConfig(config: ProviderConfig): ProviderConfig {
     name,
     baseUrl,
     apiFormat,
-    models: models.map((model) => ({ ...model })),
+    models: models.map((model) => model.outputs ? { ...model, outputs: [...model.outputs] } : { ...model }),
     fetchModels,
     auth,
   }
@@ -431,12 +431,18 @@ export async function savePrompts(): Promise<void> {
   }
 }
 
+// A copy of a cached model that shares no array with it, so a snapshot
+// never holds a reactive array of the store.
+function cloneModelInfo(model: ModelInfo): ModelInfo {
+  return providerModel(model.provider, model.id, model.name, model)
+}
+
 function cloneModelCache(cache: ModelCache): ModelCache {
   const providers: Partial<Record<ProviderId, CachedProvider>> = {}
   for (const [key, entry] of Object.entries(cache.providers)) {
     if (!entry) continue
     providers[key] = {
-      models: entry.models.map((model) => ({ ...model })),
+      models: entry.models.map(cloneModelInfo),
       working: entry.working,
       updatedAt: entry.updatedAt,
       lastCheckedAt: entry.lastCheckedAt,
@@ -1256,7 +1262,7 @@ export default sbp('sbp/selectors/register', {
     const existing = store.cache.providers[providerId]
     if (result.ok) {
       store.cache.providers[providerId] = {
-        models: result.models.map((model) => ({ ...model })),
+        models: result.models.map(cloneModelInfo),
         working: true,
         updatedAt: now,
         lastCheckedAt: now,
@@ -1265,7 +1271,7 @@ export default sbp('sbp/selectors/register', {
       return
     }
     store.cache.providers[providerId] = {
-      models: existing ? existing.models.map((model) => ({ ...model })) : [],
+      models: existing ? existing.models.map(cloneModelInfo) : [],
       working: false,
       updatedAt: existing ? existing.updatedAt : 0,
       lastCheckedAt: now,

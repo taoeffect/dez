@@ -1,7 +1,9 @@
 import * as z from 'zod'
+import { MODEL_OUTPUT_IDS } from '../modelOutputs'
 import { BUILT_IN_PROVIDER_IDS } from './builtins'
 import { THINKING_SETTING_KEY } from './thinking'
 import { TOOLS_SETTING_KEY } from './toolsSetting'
+import { MODEL_REQUESTS } from './types'
 
 // Provider ids are JSON keys in provider_keys.json, the `provider` half of a
 // conversation header's `model: provider/model` (split at the first `/`), and
@@ -57,6 +59,13 @@ export const providerModelConfigSchema = z.object({
   // Whether the model calls tools. Wins over the flag the server reports
   // (`modelToolCalling`); missing: the server's flag, or unknown.
   toolCalling: z.boolean().optional(),
+  // What the model makes. Wins over what the server reports; missing: the
+  // server's outputs, or unknown. A config model is always listed, so it
+  // must make at least one type.
+  outputs: z.array(z.enum(MODEL_OUTPUT_IDS)).min(1, 'Model outputs must not be empty').optional(),
+  // How Dez sends the model a request. Wins over the server's kind; missing:
+  // the server's kind, or `chat`.
+  request: z.enum(MODEL_REQUESTS).optional(),
 })
 
 const settingBodyValueSchema = z.union([z.string(), z.number(), z.boolean()])

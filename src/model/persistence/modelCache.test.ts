@@ -45,6 +45,35 @@ describe('model cache persistence format', () => {
     expect(parseModelCacheJson(serializeModelCacheJson(parsed))).toStrictEqual(parsed)
   })
 
+  it('round-trips outputs and request kinds, and drops only a model with an unknown one', () => {
+    const models = [
+      { id: 'edit', name: 'Edit', provider: 'venice', outputs: ['image'], request: 'imageEdit' },
+      { id: 'chat', name: 'Chat', provider: 'venice', imageInput: true, outputs: ['text', 'image'], request: 'chat' },
+      // Known to make none of the types.
+      { id: 'embed', name: 'Embed', provider: 'venice', outputs: [], request: 'none' },
+      // A cache written before outputs and request kinds existed.
+      { id: 'old', name: 'Old', provider: 'venice' },
+    ]
+    const parsed = parseModelCacheJson(JSON.stringify({
+      version: MODEL_CACHE_VERSION,
+      providers: {
+        venice: {
+          models: [
+            ...models,
+            { id: 'new-output', name: 'New output', provider: 'venice', outputs: ['text', 'embedding'] },
+            { id: 'new-request', name: 'New request', provider: 'venice', request: 'speech' },
+          ],
+          working: true,
+          updatedAt: 1,
+          lastCheckedAt: 2,
+        },
+      },
+    }))
+
+    expect(parsed.providers.venice?.models).toStrictEqual(models)
+    expect(parseModelCacheJson(serializeModelCacheJson(parsed))).toStrictEqual(parsed)
+  })
+
   it('keeps custom provider ids and drops keys that are not valid provider ids', () => {
     const parsed = parseModelCacheJson(JSON.stringify({
       version: MODEL_CACHE_VERSION,

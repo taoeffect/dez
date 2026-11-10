@@ -104,8 +104,9 @@ export class Provider {
   }
 
   // Config models come first, in config order, then the fetched models the
-  // config does not list. Each id appears once. A name or capability flag set
-  // in the config wins over the fetched one for the same id.
+  // config does not list. Each id appears once. A name, capability flag,
+  // outputs list, or request kind set in the config wins over the fetched one
+  // for the same id.
   mergeModels(fetched: ModelInfo[]): ModelInfo[] {
     const fetchedById = new Map<string, ModelInfo>()
     for (const model of fetched) {
@@ -121,6 +122,8 @@ export class Provider {
       merged.set(model.id, providerModel(this.id, model.id, name, {
         imageInput: model.imageInput ?? fetchedModel?.imageInput,
         toolCalling: model.toolCalling ?? fetchedModel?.toolCalling,
+        outputs: model.outputs ?? fetchedModel?.outputs,
+        request: model.request ?? fetchedModel?.request,
       }))
     }
 

@@ -6,7 +6,7 @@ import { secret } from '../../utils/secret'
 import { BUILT_IN_PROVIDER_CONFIGS } from './builtins'
 import { customProviderConfigSchema } from './config'
 import { Provider } from './provider'
-import type { ChatMessage, ChatPart, ChatRequestContext } from './types'
+import { providerModel, type ChatMessage, type ChatPart, type ChatRequestContext } from './types'
 
 const messages: ChatMessage[] = [
   { role: 'user', content: 'Search the web for current info.' },
@@ -988,6 +988,33 @@ describe('provider models', () => {
 
     expect(provider.mergeModels(fetched)).toStrictEqual([
       { id: 'm', name: 'm', provider: 'local', imageInput: true, toolCalling: false },
+    ])
+  })
+
+  it('lets a config outputs list and request kind win over the fetched ones, and keeps unknown ones out', () => {
+    const provider = customProvider({
+      models: [
+        { id: 'config', outputs: ['video', 'image'], request: 'none' },
+        { id: 'fetched' },
+        { id: 'request-only', request: 'imageEdit' },
+        { id: 'unknown' },
+      ],
+    })
+    const fetched = [
+      providerModel('local', 'config', 'config', { outputs: ['text'], request: 'chat' }),
+      providerModel('local', 'fetched', 'fetched', { outputs: ['image'], request: 'image' }),
+      providerModel('local', 'request-only', 'request-only', { outputs: ['image'], request: 'image' }),
+      providerModel('local', 'unknown', 'unknown'),
+      providerModel('local', 'extra', 'extra', { outputs: ['audio', 'text'] }),
+    ]
+
+    // Outputs come in table order, whatever order the config lists them in.
+    expect(provider.mergeModels(fetched)).toStrictEqual([
+      { id: 'config', name: 'config', provider: 'local', outputs: ['image', 'video'], request: 'none' },
+      { id: 'fetched', name: 'fetched', provider: 'local', outputs: ['image'], request: 'image' },
+      { id: 'request-only', name: 'request-only', provider: 'local', outputs: ['image'], request: 'imageEdit' },
+      { id: 'unknown', name: 'unknown', provider: 'local' },
+      { id: 'extra', name: 'extra', provider: 'local', outputs: ['text', 'audio'] },
     ])
   })
 
