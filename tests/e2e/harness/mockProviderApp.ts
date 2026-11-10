@@ -21,6 +21,9 @@ export interface MockProviderAppOptions extends AppOptions {
   /** More custom providers on the same mock, after the main one. `config`
    *  adds to or replaces fields of the provider's config. */
   moreProviders?: ReadonlyArray<{ provider: MockProvider, config?: Record<string, unknown> }>
+  /** More POST paths that the mock holds for the test as it holds chat
+   *  requests, such as a media API path. */
+  heldPaths?: readonly string[]
 }
 
 /**
@@ -37,9 +40,9 @@ export async function startMockProviderApp (
   config: Record<string, unknown> = {},
   options: MockProviderAppOptions = {},
 ): Promise<MockProviderApp> {
-  const { moreProviders = [], ...appOptions } = options
+  const { moreProviders = [], heldPaths = [], ...appOptions } = options
   const providers = [{ provider, config }, ...moreProviders]
-  const mock = await startHoldingChatMock(providers.map((entry) => mockChatPath(entry.provider)))
+  const mock = await startHoldingChatMock([...providers.map((entry) => mockChatPath(entry.provider)), ...heldPaths])
   let app: RunningApp | undefined
   let browser: E2EBrowser | undefined
   const stop = async (): Promise<void> => {

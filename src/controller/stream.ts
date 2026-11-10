@@ -1,10 +1,11 @@
 import sbp from '@sbp/sbp'
 import type { ActiveModel, Section, SectionThinking, Tab } from '../model/chat/types'
 import { sectionPlainText } from '../model/chat/content'
+import { imageMarkdown, newImageIds } from '../model/chat/images'
 import { findToolBlocks, ModelTextEscaper } from '../model/chat/toolBlocks'
-import type { ProviderStreamChatResult } from '../model/providers'
+import type { MediaKind, ModelRequest, ProviderGenerateMediaResult, ProviderStreamChatResult } from '../model/providers'
 import { requireProvider } from '../model/providers/registry'
-import { agentSectionMessages } from '../model/streams/messages'
+import { agentSectionMessages, mediaRequestInput } from '../model/streams/messages'
 import {
   checkToolCalls,
   MAX_TOOL_ROUNDS,
@@ -43,9 +44,13 @@ interface StreamStartArgs {
   conversationId: string
   sectionId: string
   model: ActiveModel
+  // How the reply's requests go (ModelInfo.request): chat rounds, or one
+  // media request. `dez.controller/submitTab` refuses a `none` model.
+  request: Exclude<ModelRequest, 'none'>
   // The request messages of the sections before `sectionId`, built by
   // `dez.model/streamMessagesForTab` at the submit: each round sends them,
-  // then the rounds of the reply so far.
+  // then the rounds of the reply so far. A media request takes its prompt
+  // and input images from them (`mediaRequestInput`).
   messages: StreamMessage[]
   // Offer the Dez tools (RequestMessages.sendTools).
   sendTools: boolean
@@ -217,14 +222,157 @@ async function runToolRound(tabId: string, reply: ReplyRuntime, calls: CheckedTo
   return streamingSection(tabId, reply.sectionId)
 }
 
+// The reply is still its tab's reply, and no stop or submit ended it.
+function replyIsCurrent(tabId: string, reply: ReplyRuntime): boolean {
+  return repliesByTab.get(tabId) === reply && !reply.cancelling
+}
+
+// The chat rounds of a reply: request rounds until a round ends with no
+// tool calls. Each round streams its answer text and thinking into the
+// agent section; a round that ends with tool calls adds their blocks, runs
+// them, and sends the next round with the reply so far. Ends the reply,
+// except when it throws.
+async function runChatRounds(args: StreamStartArgs, reply: ReplyRuntime): Promise<void> {
+  // Read the provider's stored setting overrides at stream start (rather
+  // than threading them from submitTab) so every caller — including future
+  // retries — picks up the user's current settings consistently.
+  const providerSettings = (sbp('dez.model/settings/snapshot') as SettingsSnapshot)
+    .providerSettings[args.model.providerId]
+  // The prompt lists exactly the tools that the request offers.
+  const tools = args.sendTools ? TOOL_DEFINITIONS : []
+  // A template error or a deleted provider throws, which ends the stream
+  // session. Built once per reply, so a provider rename during the reply
+  // does not change the prompt of its later rounds.
+  const system = buildSystemPrompt(args.model, requireProvider(args.model.providerId).name, tools)
+  let messages = args.messages
+  // The first call id of the group that ended the round before: it names
+  // the thinking round of every later round (SectionThinking.rounds).
+  let afterToolCall: string | undefined
+
+  for (let toolRounds = 0; ; toolRounds++) {
+    const requestId = crypto.randomUUID()
+    reply.requestId = requestId
+    const roundIsCurrent = () => repliesByTab.get(args.tabId) === reply && reply.requestId === requestId && !reply.outputEnded
+    const roundAfterToolCall = afterToolCall
+    const result = await sbp('dez.provider/streamChat', {
+      providerId: args.model.providerId,
+      conversationId: args.conversationId,
+      system,
+      tools,
+      modelId: args.model.modelId,
+      messages,
+      requestId,
+      providerSettings,
+      onToken: (token: string) => {
+        if (!roundIsCurrent()) return
+        const text = reply.escaper.push(token)
+        if (text) receiveToken(args.tabId, args.sectionId, text)
+      },
+      onThinking: (token: string) => {
+        if (!roundIsCurrent()) return
+        updateStreamThinking(args.tabId, args.sectionId, () => appendThinkingToTabSection(args.tabId, args.sectionId, token, roundAfterToolCall))
+      },
+    }) as ProviderStreamChatResult
+    if (!replyIsCurrent(args.tabId, reply)) return
+
+    // Before the blocks and the finish, which saves the conversation.
+    flushModelText(args.tabId, reply)
+    const replay = result.thinkingReplay
+    if (replay) {
+      updateStreamThinking(args.tabId, args.sectionId, () => setThinkingReplayForTabSection(args.tabId, args.sectionId, replay, roundAfterToolCall))
+    }
+
+    // A request that offers no tools gets no calls. Calls that a server
+    // sends anyway are left out: the next request could not send them
+    // back with no tool definitions. A section that is gone (the user
+    // merged it into the one before) takes no blocks.
+    const streamedCalls = tools.length > 0 ? result.toolCalls ?? [] : []
+    const section = streamingSection(args.tabId, args.sectionId)
+    if (streamedCalls.length === 0 || !section) {
+      finalizeStream(args.tabId, finishStreamSession(args.tabId))
+      return
+    }
+
+    const sectionText = sectionPlainText(section)
+    const calls = checkToolCalls(streamedCalls, findToolBlocks(sectionText).map((block) => block.id))
+    if (toolRounds >= MAX_TOOL_ROUNDS) {
+      const blocks = calls.map((call) => toolCallBlock(call, ROUND_LIMIT_TOOL_RESULT))
+      writeStreamText(args.tabId, args.sectionId, toolGroupAppendText(sectionText, blocks))
+      console.error(`The reply reached the limit of ${MAX_TOOL_ROUNDS} tool rounds`)
+      finalizeStream(args.tabId, errorStreamSession(args.tabId))
+      showReplyError(args.tabId, 'Tool limit reached', `The reply reached the limit of ${MAX_TOOL_ROUNDS} tool rounds, so Dez did not run its last tool calls.`)
+      return
+    }
+
+    const replySoFar = await runToolRound(args.tabId, reply, calls, sectionText)
+    if (!replySoFar) {
+      // Still current only when the user deleted the running blocks:
+      // with no calls to send back, the reply cannot go on, so it ends
+      // as a stop does.
+      if (replyIsCurrent(args.tabId, reply)) finalizeStream(args.tabId, cancelStreamSession(args.tabId))
+      return
+    }
+    afterToolCall = calls[0].id
+    messages = [...args.messages, ...agentSectionMessages(replySoFar, args.model, true)]
+  }
+}
+
+// The one media request of a reply to an image model (ModelInfo.request
+// `image` or `imageEdit`), in place of the chat rounds: no system prompt,
+// tools, or thinking. The model's files are saved in the generated image
+// folder, and the section gets a reference to each, with new image ids.
+// Ends the reply, except when it throws.
+async function runMediaRound(args: StreamStartArgs, reply: ReplyRuntime, kind: MediaKind): Promise<void> {
+  const tab = sbp('dez.model/tab', args.tabId) as Tab | null
+  const { prompt, images } = mediaRequestInput(kind, args.messages, tab?.sections ?? [])
+  const requestId = crypto.randomUUID()
+  reply.requestId = requestId
+  const { media } = await sbp('dez.provider/generateMedia', {
+    providerId: args.model.providerId,
+    modelId: args.model.modelId,
+    kind,
+    prompt,
+    images,
+    requestId,
+  }) as ProviderGenerateMediaResult
+  // A stop or a new submit cancelled the request, which can end its body
+  // early: a cut image is never saved.
+  if (!replyIsCurrent(args.tabId, reply)) return
+
+  const paths: string[] = []
+  let saved = true
+  try {
+    for (const file of media) {
+      paths.push(await sbp('dez.controller/images/save', file.bytes, file.mediaType, { folder: 'generated' }) as string)
+    }
+  } catch {
+    // images/save logged the failure and showed its error toast.
+    saved = false
+  }
+
+  // While the files were saved, the reply could end, or the user could
+  // merge its section into the one before (as in a chat round). Files that
+  // no reference names are deleted; images/delete logs and shows its own
+  // failures.
+  const sections = (sbp('dez.model/tab', args.tabId) as Tab | null)?.sections ?? []
+  if (!saved || !replyIsCurrent(args.tabId, reply) || !sections.some((section) => section.id === args.sectionId)) {
+    await Promise.allSettled(paths.map((path) => sbp('dez.controller/images/delete', path)))
+    if (replyIsCurrent(args.tabId, reply)) finalizeStream(args.tabId, saved ? finishStreamSession(args.tabId) : errorStreamSession(args.tabId))
+    return
+  }
+  // The ids and the write in one tick, so that no paste takes one of the
+  // ids (the editor gives ids only to pasted and dropped references).
+  const ids = newImageIds(sections.map(sectionPlainText), paths.length)
+  receiveToken(args.tabId, args.sectionId, paths.map((path, index) => imageMarkdown(path, [{ key: 'id', value: ids[index] }])).join('\n\n'))
+  finalizeStream(args.tabId, finishStreamSession(args.tabId))
+}
+
 export default sbp('sbp/selectors/register', {
-  // One reply: request rounds until a round ends with no tool calls. Each
-  // round streams its answer text and thinking into the agent section; a
-  // round that ends with tool calls adds their blocks, runs them, and sends
-  // the next round with the reply so far. The stream session, the busy
-  // state, the start time, and the scroll follow span the whole reply, and
-  // only the reply's end finalizes it (duration, alerts, trailing user
-  // section, save).
+  // One reply: chat rounds (`runChatRounds`), or one media round
+  // (`runMediaRound`) for an image model. The stream session, the busy
+  // state, the start time, the scroll follow, Stop, and the error toast
+  // span the whole reply, and only the reply's end finalizes it (duration,
+  // alerts, trailing user section, save).
   async 'dez.stream/start' (args: StreamStartArgs): Promise<void> {
     const previousReply = repliesByTab.get(args.tabId)
     if (previousReply) {
@@ -237,7 +385,6 @@ export default sbp('sbp/selectors/register', {
 
     const reply: ReplyRuntime = { sectionId: args.sectionId, requestId: '', cancelling: false, outputEnded: false, toolRun: null, escaper: new ModelTextEscaper() }
     repliesByTab.set(args.tabId, reply)
-    const replyIsCurrent = () => repliesByTab.get(args.tabId) === reply && !reply.cancelling
 
     startStreamSession({
       tabId: args.tabId,
@@ -247,93 +394,12 @@ export default sbp('sbp/selectors/register', {
     })
     sbp('dez.editor/startStreamingFollowIfVisible', args.tabId)
 
-    // Read the provider's stored setting overrides at stream start (rather
-    // than threading them from submitTab) so every caller — including future
-    // retries — picks up the user's current settings consistently.
-    const providerSettings = (sbp('dez.model/settings/snapshot') as SettingsSnapshot)
-      .providerSettings[args.model.providerId]
-    // The prompt lists exactly the tools that the request offers.
-    const tools = args.sendTools ? TOOL_DEFINITIONS : []
-
     try {
-      // Inside the try: a template error or a deleted provider must end the
-      // stream session. Built once per reply, so a provider rename during
-      // the reply does not change the prompt of its later rounds.
-      const system = buildSystemPrompt(args.model, requireProvider(args.model.providerId).name, tools)
-      let messages = args.messages
-      // The first call id of the group that ended the round before: it names
-      // the thinking round of every later round (SectionThinking.rounds).
-      let afterToolCall: string | undefined
-
-      for (let toolRounds = 0; ; toolRounds++) {
-        const requestId = crypto.randomUUID()
-        reply.requestId = requestId
-        const roundIsCurrent = () => repliesByTab.get(args.tabId) === reply && reply.requestId === requestId && !reply.outputEnded
-        const roundAfterToolCall = afterToolCall
-        const result = await sbp('dez.provider/streamChat', {
-          providerId: args.model.providerId,
-          conversationId: args.conversationId,
-          system,
-          tools,
-          modelId: args.model.modelId,
-          messages,
-          requestId,
-          providerSettings,
-          onToken: (token: string) => {
-            if (!roundIsCurrent()) return
-            const text = reply.escaper.push(token)
-            if (text) receiveToken(args.tabId, args.sectionId, text)
-          },
-          onThinking: (token: string) => {
-            if (!roundIsCurrent()) return
-            updateStreamThinking(args.tabId, args.sectionId, () => appendThinkingToTabSection(args.tabId, args.sectionId, token, roundAfterToolCall))
-          },
-        }) as ProviderStreamChatResult
-        if (!replyIsCurrent()) return
-
-        // Before the blocks and the finish, which saves the conversation.
-        flushModelText(args.tabId, reply)
-        const replay = result.thinkingReplay
-        if (replay) {
-          updateStreamThinking(args.tabId, args.sectionId, () => setThinkingReplayForTabSection(args.tabId, args.sectionId, replay, roundAfterToolCall))
-        }
-
-        // A request that offers no tools gets no calls. Calls that a server
-        // sends anyway are left out: the next request could not send them
-        // back with no tool definitions. A section that is gone (the user
-        // merged it into the one before) takes no blocks.
-        const streamedCalls = tools.length > 0 ? result.toolCalls ?? [] : []
-        const section = streamingSection(args.tabId, args.sectionId)
-        if (streamedCalls.length === 0 || !section) {
-          finalizeStream(args.tabId, finishStreamSession(args.tabId))
-          return
-        }
-
-        const sectionText = sectionPlainText(section)
-        const calls = checkToolCalls(streamedCalls, findToolBlocks(sectionText).map((block) => block.id))
-        if (toolRounds >= MAX_TOOL_ROUNDS) {
-          const blocks = calls.map((call) => toolCallBlock(call, ROUND_LIMIT_TOOL_RESULT))
-          writeStreamText(args.tabId, args.sectionId, toolGroupAppendText(sectionText, blocks))
-          console.error(`The reply reached the limit of ${MAX_TOOL_ROUNDS} tool rounds`)
-          finalizeStream(args.tabId, errorStreamSession(args.tabId))
-          showReplyError(args.tabId, 'Tool limit reached', `The reply reached the limit of ${MAX_TOOL_ROUNDS} tool rounds, so Dez did not run its last tool calls.`)
-          return
-        }
-
-        const replySoFar = await runToolRound(args.tabId, reply, calls, sectionText)
-        if (!replySoFar) {
-          // Still current only when the user deleted the running blocks:
-          // with no calls to send back, the reply cannot go on, so it ends
-          // as a stop does.
-          if (replyIsCurrent()) finalizeStream(args.tabId, cancelStreamSession(args.tabId))
-          return
-        }
-        afterToolCall = calls[0].id
-        messages = [...args.messages, ...agentSectionMessages(replySoFar, args.model, true)]
-      }
+      if (args.request === 'chat') await runChatRounds(args, reply)
+      else await runMediaRound(args, reply, args.request)
     } catch (error) {
-      if (replyIsCurrent()) {
-        console.error('Chat request failed:', error)
+      if (replyIsCurrent(args.tabId, reply)) {
+        console.error(args.request === 'chat' ? 'Chat request failed:' : 'Media request failed:', error)
         flushModelText(args.tabId, reply)
         finalizeStream(args.tabId, errorStreamSession(args.tabId))
         // The toast refuses an empty message.

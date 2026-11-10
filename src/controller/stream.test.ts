@@ -6,7 +6,7 @@ import { sectionVisibleText } from '../model/chat/content'
 import { findToolBlocks } from '../model/chat/toolBlocks'
 import type { ConversationData } from '../model/persistence/types'
 import { customProviderConfigSchema } from '../model/providers/config'
-import type { ProviderChatInputMessage, ProviderInfo, ProviderStreamChatInput, ProviderStreamChatResult } from '../model/providers'
+import type { ModelRequest, ProviderChatInputMessage, ProviderGenerateMediaInput, ProviderGenerateMediaResult, ProviderInfo, ProviderStreamChatInput, ProviderStreamChatResult } from '../model/providers'
 import type { RequestMessages } from '../model/streams/types'
 import { TOOL_DEFINITIONS } from '../model/tools/registry'
 import type { ToastData } from '../view/toast/selectors'
@@ -35,6 +35,10 @@ let providerInfos: () => Promise<ProviderInfo[]>
 // Runs while `dez.http/cancelStream` cancels a request, as the late output
 // of that request does. Set by a test.
 let cancelStream: () => Promise<void>
+// What the stub media API and image store do. Set by the media tests.
+let generateMedia: (input: ProviderGenerateMediaInput) => Promise<ProviderGenerateMediaResult>
+let saveImage: (mediaType: string, options: unknown) => Promise<string>
+let deletedImages: string[] = []
 let consoleError: MockInstance<typeof console.error>
 
 // Stand-ins for the provider, the editor and the disk. The editor stub
@@ -43,6 +47,15 @@ let consoleError: MockInstance<typeof console.error>
 sbp('sbp/selectors/register', {
   async 'dez.provider/streamChat' (input: ProviderStreamChatInput): Promise<ProviderStreamChatResult> {
     return await streamChat(input)
+  },
+  async 'dez.provider/generateMedia' (input: ProviderGenerateMediaInput): Promise<ProviderGenerateMediaResult> {
+    return await generateMedia(input)
+  },
+  async 'dez.controller/images/save' (_bytes: Uint8Array, mediaType: string, options: unknown): Promise<string> {
+    return await saveImage(mediaType, options)
+  },
+  async 'dez.controller/images/delete' (path: string): Promise<void> {
+    deletedImages.push(path)
   },
   'dez.editor/startStreamingFollowIfVisible' (): boolean {
     return false
@@ -98,6 +111,7 @@ async function startStream({ sendTools = false } = {}): Promise<void> {
     tabId: activeTab().id,
     sectionId: 'a1',
     model,
+    request: 'chat',
     messages: [{ role: 'user', content: 'Hi' }],
     sendTools,
   })
@@ -113,6 +127,7 @@ beforeEach(() => {
   alerts = []
   providerInfos = async () => []
   cancelStream = async () => {}
+  deletedImages = []
   consoleError = vi.spyOn(console, 'error').mockImplementation(() => {})
   // `dez.stream/start` names the provider in the system prompt, so the stub
   // model's provider must exist.
@@ -991,5 +1006,196 @@ describe('dez.controller/submitTab images', () => {
       undefined, { text: 'Blocks.', replay: blocks('It is a cat.') },
       undefined,
     ])
+  })
+})
+
+describe('dez.stream/start media round', () => {
+  const image = (name: string) => `/home/u/.config/dez/assets/images/${name}`
+  const generated = (name: string) => `/home/u/.config/dez/assets/generated/images/${name}`
+  const png = { bytes: new Uint8Array([1, 2, 3]), mediaType: 'image/png' } as const
+  const conversation = (lastUserText = 'Make it red.') => [
+    { role: 'user', text: `A fox: ![${image('fox.png')}](id=a)` },
+    { role: 'agent', text: `![${generated('old.png')}](id=b)` },
+    { role: 'user', text: lastUserText },
+  ]
+  let mediaInputs: ProviderGenerateMediaInput[] = []
+  // The options of each save; the saves give the files g1.png, g2.png, ….
+  let saves: unknown[] = []
+
+  function useRequest(request: ModelRequest): void {
+    sbp('dez.model/modelCache/applyProviderResult', model.providerId, {
+      ok: true,
+      models: [{ id: model.modelId, name: model.modelName, provider: model.providerId, outputs: ['image'], request }],
+    })
+  }
+
+  function setConversation(lastUserText?: string): void {
+    const [u1, a1, u2] = conversation(lastUserText)
+    sbp('dez.model/tabs/replaceSections', activeTab().id, [
+      { id: 'u1', role: 'user', content: [{ kind: 'text', text: u1.text }] },
+      { id: 'a1', role: 'agent', content: [{ kind: 'text', text: a1.text }], model },
+      { id: 'u2', role: 'user', content: [{ kind: 'text', text: u2.text }] },
+    ])
+  }
+
+  beforeEach(() => {
+    mediaInputs = []
+    saves = []
+    generateMedia = async (input) => {
+      mediaInputs.push(input)
+      return { media: [png, png] }
+    }
+    saveImage = async (_mediaType, options) => {
+      saves.push(options)
+      return generated(`g${saves.length}.png`)
+    }
+    sbp('dez.model/setActiveModel', model.providerId, model.modelId, model.modelName)
+    useRequest('image')
+    setConversation()
+  })
+
+  it('saves each image in the generated folder, writes its reference with a new id, and finishes the reply', async () => {
+    await sbp('dez.controller/submitTab', activeTab().id)
+
+    expect(mediaInputs).toStrictEqual([{
+      providerId: model.providerId,
+      modelId: model.modelId,
+      kind: 'image',
+      prompt: 'Make it red.',
+      images: [],
+      requestId: expect.any(String),
+    }])
+    expect(saves).toStrictEqual([{ folder: 'generated' }, { folder: 'generated' }])
+    expect(sectionTexts()).toStrictEqual([
+      ...conversation(),
+      { role: 'agent', text: `![${generated('g1.png')}](id=c)\n\n![${generated('g2.png')}](id=d)` },
+      { role: 'user', text: '' },
+    ])
+    expect(savedConversations.at(-1)?.sections).toHaveLength(5)
+    expect(alerts).toStrictEqual([{ tabId: activeTab().id, status: 'finished' }])
+    expect(toasts).toStrictEqual([])
+    expect(deletedImages).toStrictEqual([])
+  })
+
+  it('edits the images of the last user message, with their stand-ins in the prompt', async () => {
+    useRequest('imageEdit')
+    setConversation(`Make ![${image('cat.png')}](id=c) red.`)
+
+    await sbp('dez.controller/submitTab', activeTab().id)
+
+    expect(mediaInputs[0]).toMatchObject({ kind: 'imageEdit', prompt: 'Make ![image](id=c) red.', images: [image('cat.png')] })
+  })
+
+  it('edits the newest image of the conversation when the last user message has none', async () => {
+    useRequest('imageEdit')
+
+    await sbp('dez.controller/submitTab', activeTab().id)
+
+    expect(mediaInputs[0]).toMatchObject({ kind: 'imageEdit', prompt: 'Make it red.', images: [generated('old.png')] })
+  })
+
+  it('removes the section and shows an error toast when the request fails', async () => {
+    generateMedia = async () => {
+      throw new Error('No image to edit')
+    }
+
+    await sbp('dez.controller/submitTab', activeTab().id)
+
+    expect(sectionTexts()).toStrictEqual(conversation())
+    expect(toasts).toStrictEqual([{ area: 'app-global', data: { variant: 'error', title: 'Request failed', message: 'No image to edit' } }])
+    expect(consoleError).toHaveBeenCalledWith('Media request failed:', new Error('No image to edit'))
+    expect(saves).toStrictEqual([])
+  })
+
+  it('saves nothing when the user stops the request', async () => {
+    generateMedia = async () => {
+      await sbp('dez.stream/stop', activeTab().id)
+      return { media: [png] }
+    }
+
+    await sbp('dez.controller/submitTab', activeTab().id)
+
+    expect(saves).toStrictEqual([])
+    expect(sectionTexts()).toStrictEqual(conversation())
+    expect(toasts).toStrictEqual([])
+  })
+
+  it('drops the images of a request that a new submit in the tab ended', async () => {
+    const tabId = activeTab().id
+    generateMedia = async (input) => {
+      mediaInputs.push(input)
+      if (mediaInputs.length === 1) await sbp('dez.controller/submitTab', tabId)
+      return { media: [png] }
+    }
+
+    await sbp('dez.controller/submitTab', tabId)
+
+    expect(mediaInputs).toHaveLength(2)
+    expect(saves).toHaveLength(1)
+    expect(sectionTexts()).toStrictEqual([
+      ...conversation(),
+      { role: 'agent', text: `![${generated('g1.png')}](id=c)` },
+      { role: 'user', text: '' },
+    ])
+  })
+
+  it('ends the reply as an error and deletes the saved images when a save fails', async () => {
+    saveImage = async (_mediaType, options) => {
+      saves.push(options)
+      if (saves.length === 2) throw new Error('Disk full')
+      return generated('g1.png')
+    }
+
+    await sbp('dez.controller/submitTab', activeTab().id)
+
+    expect(deletedImages).toStrictEqual([generated('g1.png')])
+    expect(sectionTexts()).toStrictEqual(conversation())
+    expect(alerts).toStrictEqual([{ tabId: activeTab().id, status: 'error' }])
+    // images/save shows its own toast.
+    expect(toasts).toStrictEqual([])
+  })
+
+  it.each([
+    ['the user stops the reply', () => sbp('dez.stream/stop', activeTab().id)],
+    ['the user merges the section into the one before', () => sbp('dez.model/tabs/replaceSections', activeTab().id, activeTab().sections.slice(0, -1))],
+  ])('deletes the saved images when %s during the save', async (_case, during) => {
+    saveImage = async (_mediaType, options) => {
+      saves.push(options)
+      if (saves.length === 2) await during()
+      return generated(`g${saves.length}.png`)
+    }
+
+    await sbp('dez.controller/submitTab', activeTab().id)
+
+    expect(deletedImages).toStrictEqual([generated('g1.png'), generated('g2.png')])
+    expect(sectionTexts()).toStrictEqual(conversation())
+    expect(toasts).toStrictEqual([])
+  })
+})
+
+describe('dez.controller/submitTab with a model that Dez cannot use', () => {
+  it('shows an error toast that names its outputs, and leaves the running reply and the sections alone', async () => {
+    const message = 'Dez cannot use M yet. It makes image and video output through an API that Dez does not support.'
+    sbp('dez.model/setActiveModel', model.providerId, model.modelId, model.modelName)
+    streamChat = async (input) => {
+      await input.onToken('Before.')
+      sbp('dez.model/modelCache/applyProviderResult', model.providerId, {
+        ok: true,
+        models: [{ id: model.modelId, name: model.modelName, provider: model.providerId, outputs: ['video', 'image'], request: 'none' }],
+      })
+      await sbp('dez.controller/submitTab', activeTab().id)
+      await input.onToken(' After.')
+      return { requestId: input.requestId as string }
+    }
+
+    await startStream()
+
+    expect(sectionTexts()).toStrictEqual([
+      { role: 'user', text: 'Hi' },
+      { role: 'agent', text: 'Before. After.' },
+      { role: 'user', text: '' },
+    ])
+    expect(toasts).toStrictEqual([{ area: 'app-global', data: { variant: 'error', title: 'Cannot send', message } }])
+    expect(consoleError).toHaveBeenCalledWith(`Cannot send: ${message}`)
   })
 })

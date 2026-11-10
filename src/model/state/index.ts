@@ -450,6 +450,12 @@ function cloneModelInfo(model: ModelInfo): ModelInfo {
   return providerModel(model.provider, model.id, model.name, model)
 }
 
+// The model cache's entry of a model: the store's object, not a copy.
+function cachedModel(model: ModelRef): ModelInfo | undefined {
+  return useModelCacheStore().cache.providers[model.providerId]?.models
+    .find((candidate) => candidate.id === model.modelId)
+}
+
 function cloneModelCache(cache: ModelCache): ModelCache {
   const providers: Partial<Record<ProviderId, CachedProvider>> = {}
   for (const [key, entry] of Object.entries(cache.providers)) {
@@ -849,11 +855,10 @@ export default sbp('sbp/selectors/register', {
     const tab = useTabStore().tabs.find((candidate) => candidate.id === tabId)
     if (!tab) return { messages: [], imagesLeftOut: 0, sendTools: false }
 
-    const cachedModel = useModelCacheStore().cache.providers[model.providerId]?.models
-      .find((candidate) => candidate.id === model.modelId)
+    const cached = cachedModel(model)
     const sendTools = isToolsEnabled(useSettingsStore().providerSettings[model.providerId]) &&
-      cachedModel?.toolCalling !== false
-    const sendImages = cachedModel?.imageInput !== false
+      cached?.toolCalling !== false
+    const sendImages = cached?.imageInput !== false
     return { ...sectionsToStreamMessages(tab.sections, model, { sendImages, sendTools }), sendTools }
   },
 
@@ -1281,6 +1286,13 @@ export default sbp('sbp/selectors/register', {
   'dez.model/modelCache/rawModel' (providerId: ProviderId, modelId: string): unknown {
     const entry = useModelCacheStore().rawModels.get(providerId)?.get(modelId)
     return entry === undefined ? undefined : structuredClone(entry)
+  },
+
+  // A copy of the cached model `modelId` of the provider, or null when the
+  // model cache does not have it (yet).
+  'dez.model/modelCache/model' (providerId: ProviderId, modelId: string): ModelInfo | null {
+    const model = cachedModel({ providerId, modelId })
+    return model ? cloneModelInfo(model) : null
   },
 
   // Reconciliation primitive: on success replace models and raw entries,

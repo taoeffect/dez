@@ -4,6 +4,7 @@ import { findImageReferences, holdsImagePath, splitImageReferences, withoutImage
 import { sameModelRef } from '../chat/modelRef'
 import { thinkingField } from '../chat/thinking'
 import { EMPTY_TOOL_RESULT, INTERRUPTED_TOOL_RESULT, splitToolBlocks, unescapeModelText, type ToolBlock } from '../chat/toolBlocks'
+import type { MediaKind } from '../providers/types'
 import type { ToolCall, ToolResult } from '../tools/types'
 import type { RequestMessages, StreamMessage } from './types'
 
@@ -42,6 +43,27 @@ export function sectionsToStreamMessages(sections: Section[], requestModel: Mode
     })
 
   return { messages, imagesLeftOut }
+}
+
+/** What a media reply (ModelInfo.request `image` or `imageEdit`) sends to
+ *  dez.provider/generateMedia. The prompt is the text of the last user
+ *  message of `messages` as a chat request sends it: with no path, and with
+ *  each image reference as its `![image](id=a)` text. An edit takes the
+ *  images of that message; when it has none, it takes the newest image
+ *  reference of `sections` (the tab's sections, in which the reply's own
+ *  section is still empty), so that "Make it blue" edits the image of the
+ *  reply before. An edit with no image gets no paths, and generateMedia
+ *  refuses it. */
+export function mediaRequestInput(kind: MediaKind, messages: StreamMessage[], sections: Section[]): { prompt: string, images: string[] } {
+  const content = messages.findLast((message): message is Extract<StreamMessage, { role: 'user' }> => message.role === 'user')?.content ?? ''
+  const parts: MessagePart[] = typeof content === 'string' ? [{ type: 'text', text: content }] : content
+  const prompt = parts.map((part) => (part.type === 'text' ? part.text : '')).join('').trim()
+  if (kind === 'image') return { prompt, images: [] }
+
+  const images = parts.flatMap((part) => (part.type === 'image' ? [part.path] : []))
+  if (images.length > 0) return { prompt, images }
+  const newest = sections.map((section) => findImageReferences(sectionPlainText(section)).at(-1)).findLast((reference) => reference !== undefined)
+  return { prompt, images: newest ? [newest.path] : [] }
 }
 
 /** The request messages of one agent section. A reply that called tools

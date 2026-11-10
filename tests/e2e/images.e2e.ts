@@ -1,12 +1,12 @@
 import fs from 'node:fs'
 import path from 'node:path'
-import zlib from 'node:zlib'
 import type { EditorView } from '@codemirror/view'
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from 'vitest'
 import { Key } from 'webdriverio'
 import { openAiSystemMessage } from './harness/chatBody'
 import { consoleErrors, elementCenter, movePointer, pointerClick, pointerClickAt, resetConsoleErrors, screenshotOnFailure, typeKeys, waitForValue, type Point } from './harness/dom'
 import { conversationFilePath } from './harness/fixtures'
+import { shownImages, solidPng, type ShownImage } from './harness/images'
 import { startMockProviderApp, type MockProviderApp } from './harness/mockProviderApp'
 import { mockChatPath, replyText, sendAnthropicReply, sendChatReply, type HeldRequest, type MockProvider } from './harness/mockServer'
 import type { E2EBrowser } from './harness/session'
@@ -43,29 +43,6 @@ const UNDO_STEP_MS = 600
 
 const QUESTION = ' What color?'
 const NOT_AN_IMAGE_MESSAGE = 'Only image files can be dropped into a conversation.'
-
-const PNG_SIGNATURE = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a])
-
-/** A PNG of one color: 8-bit RGB, no interlace, each row with filter 0. */
-function solidPng (width: number, height: number, rgb: readonly [number, number, number]): Buffer {
-  const chunk = (type: string, data: Buffer): Buffer => {
-    const typeAndData = Buffer.concat([Buffer.from(type, 'ascii'), data])
-    const length = Buffer.alloc(4)
-    length.writeUInt32BE(data.length)
-    const crc = Buffer.alloc(4)
-    crc.writeUInt32BE(zlib.crc32(typeAndData))
-    return Buffer.concat([length, typeAndData, crc])
-  }
-  const header = Buffer.alloc(13)
-  header.writeUInt32BE(width, 0)
-  header.writeUInt32BE(height, 4)
-  header[8] = 8 // bits per sample
-  header[9] = 2 // color type: RGB
-  const row = Buffer.from([0, ...Array.from({ length: width }, () => rgb).flat()])
-  const pixels = Buffer.concat(Array.from({ length: height }, () => row))
-  return Buffer.concat([PNG_SIGNATURE, chunk('IHDR', header), chunk('IDAT', zlib.deflateSync(pixels)), chunk('IEND', Buffer.alloc(0))])
-}
-
 const PASTED_PNG = solidPng(48, 32, [220, 40, 40])
 const DROPPED_PNG = solidPng(40, 24, [40, 90, 220])
 // PASTED_PNG as an OpenAI-format image part.
@@ -84,14 +61,6 @@ function referencePath (reference: string): string {
 interface DocAndCaret {
   doc: string
   caret: number
-}
-
-/** An image that the editor shows, with its natural size: 0 x 0 until the
- *  asset protocol has served the file. */
-interface ShownImage {
-  alt: string
-  width: number
-  height: number
 }
 
 /** The hover overlay of an image that the editor shows, or of its "Image
@@ -172,13 +141,6 @@ describe('images', () => {
 
   async function docAndCaret (): Promise<DocAndCaret> {
     return { doc: await editorDoc(browser), caret: await editorCaret(browser) }
-  }
-
-  async function shownImages (): Promise<ShownImage[]> {
-    return browser.execute(() => Array.from(
-      document.querySelectorAll<HTMLImageElement>('.cm-content .dez-image__img'),
-      (img) => ({ alt: img.alt, width: img.naturalWidth, height: img.naturalHeight }),
-    ))
   }
 
   // The overlay of each image that the editor shows (or of its "Image not
@@ -404,7 +366,7 @@ describe('images', () => {
     expect(reference).toBe(`![${path.join(imagesDir(), fileName)}](id=a)`)
     expect(await storedImages()).toEqual([...before, fileName].sort())
     expect(await fs.promises.readFile(path.join(imagesDir(), fileName))).toEqual(DROPPED_PNG)
-    await waitForValue(browser, 'shown image', shownImages, [{ alt: fileName, width: 40, height: 24 }])
+    await waitForValue(browser, 'shown image', () => shownImages(browser), [{ alt: fileName, width: 40, height: 24 }])
   }
 
   // Types `before` in the empty active tab, pastes PASTED_PNG, waits for
@@ -470,7 +432,7 @@ describe('images', () => {
     expect(image.path).toBe(path.join(imagesDir(), fileName))
     expect(await storedImages()).toEqual([...before, fileName].sort())
     expect(await fs.promises.readFile(image.path)).toEqual(PASTED_PNG)
-    await waitForValue(browser, 'shown image', shownImages, [shownPastedImage(image)])
+    await waitForValue(browser, 'shown image', () => shownImages(browser), [shownPastedImage(image)])
   })
 
   it('gives each image of a conversation its own id, shown with a trash at its top-right corner while the pointer is on the image', async () => {
@@ -490,7 +452,7 @@ describe('images', () => {
     const wide = path.join(imagesDir(), 'wide.png')
     await fs.promises.writeFile(wide, WIDE_PNG)
     await typeAtEnd(`\n![${wide}]()\n![${path.join(imagesDir(), 'gone.png')}](id=c)`)
-    await waitForValue(browser, 'shown images', shownImages, [
+    await waitForValue(browser, 'shown images', () => shownImages(browser), [
       shownPastedImage(first),
       { alt: path.basename(secondPath), width: 48, height: 32 },
       { alt: 'wide.png', width: 200, height: 60 },
@@ -588,7 +550,7 @@ describe('images', () => {
     await newTab(browser)
     const image = await insertPastedImage('See ', ' here')
     const shown = [shownPastedImage(image)]
-    await waitForValue(browser, 'shown image', shownImages, shown)
+    await waitForValue(browser, 'shown image', () => shownImages(browser), shown)
     // The trash takes its own press, so the caret stays where it is.
     const unchanged = { doc: `See ${image.reference} here`, caret: 2 }
     await setCaret(browser, unchanged.caret)
@@ -612,7 +574,7 @@ describe('images', () => {
       await waitForValue(browser, `prompt after ${label}`, promptState, { message: null, buttons: [], focus: 'editor' })
       expect(await docAndCaret()).toEqual(unchanged)
       expect(await storedImages()).toContain(path.basename(image.path))
-      expect(await shownImages()).toEqual(shown)
+      expect(await shownImages(browser)).toEqual(shown)
     }
   })
 
@@ -621,7 +583,7 @@ describe('images', () => {
     const image = await insertPastedImage('See ', ' here')
     const gone = `![${path.join(imagesDir(), 'gone.png')}]()`
     await typeAtEnd(`\n${gone}`)
-    await waitForValue(browser, 'shown image', shownImages, [shownPastedImage(image)])
+    await waitForValue(browser, 'shown image', () => shownImages(browser), [shownPastedImage(image)])
     await waitForValue(browser, 'missing image box', () => browser.execute(
       () => document.querySelector('.cm-content .dez-image-missing')?.firstChild?.textContent ?? null,
     ), 'Image not found: gone.png')
@@ -638,7 +600,7 @@ describe('images', () => {
     await pointerClick(browser, '.confirm-btn--confirm')
     await waitForValue(browser, 'doc after Yes', docAndCaret, { doc: `See  here\n${gone}`, caret: 2 })
     expect(await storedImages()).toEqual(otherImages)
-    expect(await shownImages()).toEqual([])
+    expect(await shownImages(browser)).toEqual([])
     await waitForValue(browser, 'prompt after Yes', promptState, closed)
 
     // A missing image has no file to delete: only its text goes, with its
@@ -674,38 +636,38 @@ describe('images', () => {
     const shown = [shownPastedImage(image)]
     const withImage = { doc: `See ${image.reference} here`, caret: image.to }
     const source = { doc: `See ${image.reference.slice(0, -1)} here`, caret: image.to - 1 }
-    await waitForValue(browser, 'shown image', shownImages, shown)
+    await waitForValue(browser, 'shown image', () => shownImages(browser), shown)
     await setCaret(browser, image.to)
 
     await browser.pause(UNDO_STEP_MS)
     await browser.keys(Key.Backspace)
     await waitForValue(browser, 'doc after Backspace', docAndCaret, source)
-    await waitForValue(browser, 'images after Backspace', shownImages, [])
+    await waitForValue(browser, 'images after Backspace', () => shownImages(browser), [])
 
     await browser.pause(UNDO_STEP_MS)
     await typeKeys(browser, ')')
     await waitForValue(browser, 'doc after `)`', docAndCaret, withImage)
-    await waitForValue(browser, 'images after `)`', shownImages, shown)
+    await waitForValue(browser, 'images after `)`', () => shownImages(browser), shown)
 
     // Undo the `)`, then the Backspace; redo both.
     await browser.keys([Key.Control, 'z'])
     await waitForValue(browser, 'doc after one undo', docAndCaret, source)
-    await waitForValue(browser, 'images after one undo', shownImages, [])
+    await waitForValue(browser, 'images after one undo', () => shownImages(browser), [])
     await browser.keys([Key.Control, 'z'])
     await waitForValue(browser, 'doc after two undos', docAndCaret, withImage)
-    await waitForValue(browser, 'images after two undos', shownImages, shown)
+    await waitForValue(browser, 'images after two undos', () => shownImages(browser), shown)
     await browser.keys([Key.Control, Key.Shift, 'z'])
     await waitForValue(browser, 'doc after one redo', docAndCaret, source)
-    await waitForValue(browser, 'images after one redo', shownImages, [])
+    await waitForValue(browser, 'images after one redo', () => shownImages(browser), [])
     await browser.keys([Key.Control, Key.Shift, 'z'])
     await waitForValue(browser, 'doc after two redos', docAndCaret, withImage)
-    await waitForValue(browser, 'images after two redos', shownImages, shown)
+    await waitForValue(browser, 'images after two redos', () => shownImages(browser), shown)
   })
 
   it('moves the caret over an image with one arrow key press', async () => {
     await newTab(browser)
     const image = await insertPastedImage('See ', ' here')
-    await waitForValue(browser, 'shown image', shownImages, [shownPastedImage(image)])
+    await waitForValue(browser, 'shown image', () => shownImages(browser), [shownPastedImage(image)])
     await setCaret(browser, image.from)
 
     await browser.keys(Key.ArrowRight)
@@ -722,16 +684,16 @@ describe('images', () => {
     await newTab(browser)
     const image = await insertPastedImage('See ', ' here')
     const shown = [shownPastedImage(image)]
-    await waitForValue(browser, 'shown image', shownImages, shown)
+    await waitForValue(browser, 'shown image', () => shownImages(browser), shown)
     await setCaret(browser, image.from)
 
     await browser.keys(Key.Delete)
     await waitForValue(browser, 'doc after Delete', docAndCaret, { doc: `See ${image.reference.slice(1)} here`, caret: image.from })
-    await waitForValue(browser, 'images after Delete', shownImages, [])
+    await waitForValue(browser, 'images after Delete', () => shownImages(browser), [])
 
     await typeKeys(browser, '!')
     await waitForValue(browser, 'doc after `!`', () => editorDoc(browser), `See ${image.reference} here`)
-    await waitForValue(browser, 'images after `!`', shownImages, shown)
+    await waitForValue(browser, 'images after `!`', () => shownImages(browser), shown)
   })
 
   it('puts a dropped image at the drop point', async () => {
@@ -976,7 +938,7 @@ describe('images', () => {
     await waitForValue(browser, 'restored active tab', () => activeConversationId(browser), lastActive)
     await sbpCall(browser, 'dez.model/tabs/openConversation', conversationId)
     await waitForValue(browser, 'reopened conversation', async () => (await threadSections(browser))[0]?.text ?? null, image.reference + QUESTION)
-    await waitForValue(browser, 'shown image', shownImages, [shownPastedImage(image)])
+    await waitForValue(browser, 'shown image', () => shownImages(browser), [shownPastedImage(image)])
     expect(await activeTabTitle()).toBe(`[image]${QUESTION}`)
   })
 })
