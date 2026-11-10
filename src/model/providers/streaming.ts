@@ -6,7 +6,9 @@ import type { Provider, ProviderChatRequest } from './provider'
 import type { ProviderStreamChatInput, ProviderStreamChatResult } from './streamTypes'
 import type { SseTokenEvent } from './types'
 
-async function assertStreamResponseOk(provider: Provider, response: NativeHttpResponseHead, chunks: AsyncIterable<Uint8Array>): Promise<void> {
+// A refused response's body is read to its end; its first 1000 characters
+// go into the error.
+export async function assertStreamResponseOk(provider: Provider, response: NativeHttpResponseHead, chunks: AsyncIterable<Uint8Array>): Promise<void> {
   if (responseOk(response)) return
 
   const bodyText = await readNativeChunkText(chunks)

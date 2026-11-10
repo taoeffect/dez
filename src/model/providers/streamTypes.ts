@@ -1,6 +1,6 @@
 import type { MessagePart, RequestMessage, ThinkingReplay } from '../chat/types'
 import type { StreamedToolCall } from '../tools/types'
-import type { ChatRequestContext, ProviderId } from './types'
+import type { ChatRequestContext, GeneratedMedia, MediaKind, ProviderId } from './types'
 
 // A message as dez.provider/streamChat takes it: an image part holds the
 // path of a stored image, and streamChat reads its bytes before it builds
@@ -33,4 +33,24 @@ export interface ProviderStreamChatResult {
   // The tool loop runs them whatever the finish reason says: some servers
   // end a reply with tool calls with `stop`.
   toolCalls?: StreamedToolCall[]
+}
+
+// The input of dez.provider/generateMedia. `kind` is the model's request
+// kind (ModelInfo.request).
+export interface ProviderGenerateMediaInput {
+  providerId: ProviderId
+  modelId: string
+  kind: MediaKind
+  prompt: string
+  // The absolute paths of stored images (`storedImageFile`): the inputs of
+  // an `imageEdit` request, the first one the image to edit. A request of
+  // another kind does not send them.
+  images?: readonly string[]
+  // dez.http/cancelStream with this id cancels the request.
+  requestId?: string
+}
+
+export interface ProviderGenerateMediaResult {
+  // The files that the model made, in the provider's order.
+  media: GeneratedMedia[]
 }

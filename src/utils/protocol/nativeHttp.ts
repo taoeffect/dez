@@ -93,6 +93,24 @@ export async function readNativeChunkText(chunks: AsyncIterable<Uint8Array>, max
   return text
 }
 
+/** The whole body of a response stream, in one array. */
+export async function readNativeChunkBytes(chunks: AsyncIterable<Uint8Array>): Promise<Uint8Array> {
+  const parts: Uint8Array[] = []
+  let length = 0
+  for await (const chunk of chunks) {
+    parts.push(chunk)
+    length += chunk.length
+  }
+
+  const bytes = new Uint8Array(length)
+  let offset = 0
+  for (const part of parts) {
+    bytes.set(part, offset)
+    offset += part.length
+  }
+  return bytes
+}
+
 export function createNativeHttpByteStream(): {
   stream: AsyncIterable<Uint8Array>
   pushEvent(event: NativeHttpStreamEvent): void

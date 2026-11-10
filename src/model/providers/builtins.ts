@@ -111,6 +111,8 @@ export const BUILT_IN_PROVIDER_CONFIGS: readonly ProviderConfig[] = [
     // Venice adds its own system prompt when this field is missing, so every
     // request turns it off.
     requestBody: { venice_parameters: { include_venice_system_prompt: false } },
+    // The image models (`image`, `inpaint`) take Venice's own image API.
+    mediaApi: { format: 'venice' },
     // Every request sends these `venice_parameters` too, with these defaults
     // when the user has not changed a toggle in the provider settings popup.
     settings: [

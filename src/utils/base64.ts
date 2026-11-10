@@ -11,3 +11,13 @@ export function bytesToBase64(bytes: Uint8Array): string {
   }
   return btoa(binary)
 }
+
+/** The bytes of standard base64 text. Throws when the text is not base64. */
+export function base64ToBytes(text: string): Uint8Array {
+  const binary = atob(text)
+  const bytes = new Uint8Array(binary.length)
+  for (let index = 0; index < binary.length; index++) {
+    bytes[index] = binary.charCodeAt(index)
+  }
+  return bytes
+}

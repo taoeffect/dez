@@ -6,13 +6,13 @@ import type { ModelCache } from '../persistence/types'
 import { bytesToBase64 } from '../../utils/base64'
 import { fileNameOf } from '../../utils/fileName'
 import { secret, type Secret } from '../../utils/secret'
-import { nativeResponseJson, nativeResponseText, type NativeHttpResponse, type NativeHttpStreamResult } from '../../utils/protocol/nativeHttp'
+import { nativeResponseJson, nativeResponseText, readNativeChunkBytes, type NativeHttpResponse, type NativeHttpStreamResult } from '../../utils/protocol/nativeHttp'
 import { assertProviderResponseOk } from './errors'
 import type { Provider, ProviderChatRequest } from './provider'
 import { getProvider, listProviders, requireProvider } from './registry'
-import { streamProviderTokens } from './streaming'
-import type { ProviderChatInputMessage, ProviderStreamChatInput, ProviderStreamChatResult } from './streamTypes'
-import { ProviderNotConfiguredError, type ChatMessage, type ChatPart, type ModelDisplayNames, type ProviderId, type ProviderInfo, type ProviderModelsResult, type ProviderSettingsDescriptor } from './types'
+import { assertStreamResponseOk, streamProviderTokens } from './streaming'
+import type { ProviderChatInputMessage, ProviderGenerateMediaInput, ProviderGenerateMediaResult, ProviderStreamChatInput, ProviderStreamChatResult } from './streamTypes'
+import { ProviderNotConfiguredError, type ChatImagePart, type ChatMessage, type ChatPart, type ModelDisplayNames, type ProviderId, type ProviderInfo, type ProviderModelsResult, type ProviderSettingsDescriptor } from './types'
 
 // The stored key, or null when there is none. Throws for GitHub Copilot when
 // the user is not signed in.
@@ -69,7 +69,7 @@ async function readMessageImages(messages: ProviderChatInputMessage[]): Promise<
 // serves. So a reference copied from another home or machine fails like a
 // missing file, as it shows in the editor. The error names only the file,
 // like the editor's broken-image box; the log has the cause.
-async function readImagePart(path: string, appDir: string): Promise<ChatPart> {
+async function readImagePart(path: string, appDir: string): Promise<ChatImagePart> {
   try {
     const file = storedImageFile(path, appDir)
     const mediaType = imageMediaType(path)
@@ -187,5 +187,24 @@ export default sbp('sbp/selectors/register', {
     }
 
     return { requestId: stream.result.requestId, ...await streamProviderTokens(provider, input, stream.result, stream.thinking) }
+  },
+
+  // Makes media with a model of the provider's media API (`mediaApi`): an
+  // image, or an edit of stored images. It needs no tab or editor, so a tool
+  // can call it too. The request goes through dez.http/stream with
+  // `requestId`, so dez.http/cancelStream cancels it. A cancel before the
+  // response headers rejects; a cancel after them ends the body early, so a
+  // caller that cancelled must drop the result.
+  async 'dez.provider/generateMedia' (input: ProviderGenerateMediaInput): Promise<ProviderGenerateMediaResult> {
+    const provider = requireProvider(input.providerId)
+    const paths = input.images ?? []
+    if (input.kind === 'imageEdit' && paths.length === 0) throw new Error('No image to edit')
+
+    const appDir = paths.length > 0 ? await sbp('dez.native/getAppDir') as string : ''
+    const images = await Promise.all(paths.map((path) => readImagePart(path, appDir)))
+    const request = provider.mediaRequest(input.kind, input.modelId, { prompt: input.prompt, images }, await requestSecret(provider))
+    const { response, chunks } = await sbp('dez.http/stream', request, input.requestId ?? crypto.randomUUID()) as NativeHttpStreamResult
+    await assertStreamResponseOk(provider, response, chunks)
+    return { media: provider.mediaResult(input.kind, response, await readNativeChunkBytes(chunks)) }
   },
 })

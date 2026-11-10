@@ -15,6 +15,16 @@ export const MODEL_REQUESTS = ['chat', 'image', 'imageEdit', 'none'] as const
 
 export type ModelRequest = (typeof MODEL_REQUESTS)[number]
 
+// The request kinds that go to the provider's media API (`mediaApi` in
+// config.ts, mediaFormats.ts) instead of its chat API.
+export type MediaKind = Exclude<ModelRequest, 'chat' | 'none'>
+
+// One file that a media model made.
+export interface GeneratedMedia {
+  bytes: Uint8Array
+  mediaType: ImageMediaType
+}
+
 export interface ModelInfo {
   id: string
   name: string
@@ -90,6 +100,8 @@ export interface ProviderModelsResult {
 export type ChatPart =
   | { type: 'text', text: string }
   | { type: 'image', mediaType: ImageMediaType, data: string }
+
+export type ChatImagePart = Extract<ChatPart, { type: 'image' }>
 
 // A request message as the wire formats take it: an image part holds the
 // image bytes.

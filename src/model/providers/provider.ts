@@ -1,11 +1,12 @@
 import type { JsonObject } from '../../utils/json'
-import type { NativeHttpHeaders, NativeHttpRequest } from '../../utils/protocol/nativeHttp'
+import type { NativeHttpHeaders, NativeHttpRequest, NativeHttpResponseHead } from '../../utils/protocol/nativeHttp'
 import type { Secret } from '../../utils/secret'
 import { API_FORMATS, type ApiFormat } from './apiFormats'
 import { FORBIDDEN_BODY_KEYS, type ProviderConfig, type ProviderSettingDef } from './config'
+import { MEDIA_FORMATS, type MediaFormat, type MediaInput } from './mediaFormats'
 import { isRecord, modelCapability, modelData, modelOutputsAndRequest } from './modelParsing'
 import { isThinkingEnabled } from './thinking'
-import { providerModel, type ChatMessage, type ChatRequestContext, type ModelInfo, type ProviderInfo } from './types'
+import { ProviderError, providerModel, type ChatMessage, type ChatRequestContext, type GeneratedMedia, type MediaKind, type ModelInfo, type ProviderInfo } from './types'
 
 export interface ProviderOptions {
   builtIn: boolean
@@ -208,9 +209,35 @@ export class Provider {
     }
   }
 
+  // A request to the provider's media API (`mediaApi`) for a model of
+  // request kind `kind`. It takes the headers of a chat request, but no
+  // `requestBody`, settings, or thinking body: those are chat fields.
+  mediaRequest(kind: MediaKind, modelId: string, input: MediaInput, secret: Secret<string> | null): NativeHttpRequest {
+    const { url, body } = this.mediaFormat().request(kind, this.config.baseUrl, modelId, input)
+    return {
+      method: 'POST',
+      url,
+      headers: this.requestHeaders(secret, { 'Content-Type': 'application/json' }),
+      body: JSON.stringify(body),
+    }
+  }
+
+  // The media of a 2xx response to `mediaRequest`.
+  mediaResult(kind: MediaKind, head: NativeHttpResponseHead, body: Uint8Array): GeneratedMedia[] {
+    return this.mediaFormat().parseResponse(kind, head, body)
+  }
+
   visibleSettings(modelId: string): ProviderSettingDef[] {
     return (this.config.settings ?? []).filter((setting) =>
       setting.modelIdPrefix === undefined || modelId.startsWith(setting.modelIdPrefix))
+  }
+
+  // A config can give a model a media request kind (`models[].request`)
+  // without a `mediaApi`; its requests then fail with this error.
+  private mediaFormat(): MediaFormat {
+    const mediaApi = this.config.mediaApi
+    if (!mediaApi) throw new ProviderError(`${this.name} has no media API that Dez can use.`, this.id)
+    return MEDIA_FORMATS[mediaApi.format]
   }
 
   // The native bridge appends every header entry and header names are

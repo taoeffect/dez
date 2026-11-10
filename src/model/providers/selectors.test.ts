@@ -4,7 +4,9 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 import type { ModelRef, Section } from '../chat/types'
 import { toolBlockText } from '../chat/toolBlocks'
 import { sectionsToStreamMessages } from '../streams/messages'
+import { bytesToBase64 } from '../../utils/base64'
 import type { NativeHttpRequest, NativeHttpResponse, NativeHttpStreamResult } from '../../utils/protocol/nativeHttp'
+import type { ProviderGenerateMediaResult } from './streamTypes'
 import type { ModelDisplayNames, ProviderModelsResult } from './types'
 // Side-effect imports: register the dez.model/* selectors and the selectors
 // under test.
@@ -17,6 +19,7 @@ const KEY_STORE_ERROR = 'API error: Failed to parse provider_keys.json (line 1, 
 // Requests the stubs below received, in order.
 let httpRequests: NativeHttpRequest[] = []
 let streamRequests: NativeHttpRequest[] = []
+let streamRequestIds: string[] = []
 let imageReads: string[] = []
 
 // The app folder and its one stored image.
@@ -36,6 +39,15 @@ const REASONING_STREAM = [
   'data: [DONE]',
 ].join('\n\n') + '\n\n'
 const STREAMED_TOOL_CALLS = [{ id: 'call_1', name: 'model_list', argumentsText: '{}' }]
+
+// This media server answers a generate request with JSON and an edit with the
+// image's bytes, each in two chunks.
+const MEDIA_BASE_URL = 'http://localhost:5050/api/v1'
+const WEBP_IMAGE = new TextEncoder().encode('RIFF\x0c\x00\x00\x00WEBPVP8 ')
+const MEDIA_ANSWERS = new Map([
+  [`${MEDIA_BASE_URL}/image/generate`, { contentType: 'application/json', body: new TextEncoder().encode(JSON.stringify({ images: [bytesToBase64(WEBP_IMAGE)] })) }],
+  [`${MEDIA_BASE_URL}/image/multi-edit`, { contentType: 'image/png', body: STORED_IMAGE }],
+])
 
 // Stand-ins for the native layer: the key store cannot be read.
 sbp('sbp/selectors/register', {
@@ -60,6 +72,19 @@ sbp('sbp/selectors/register', {
   },
   async 'dez.http/stream' (request: NativeHttpRequest, requestId: string): Promise<NativeHttpStreamResult> {
     streamRequests.push(request)
+    streamRequestIds.push(requestId)
+    const media = MEDIA_ANSWERS.get(request.url)
+    if (media) {
+      const half = media.body.length >> 1
+      return {
+        requestId,
+        response: { status: 200, headers: { 'content-type': media.contentType } },
+        chunks: (async function * () {
+          yield media.body.slice(0, half)
+          yield media.body.slice(half)
+        })(),
+      }
+    }
     const failing = request.url.startsWith(FAILING_BASE_URL)
     return {
       requestId,
@@ -79,6 +104,7 @@ beforeEach(() => {
   setActivePinia(createPinia())
   httpRequests = []
   streamRequests = []
+  streamRequestIds = []
   imageReads = []
   vi.spyOn(console, 'error').mockImplementation(() => {})
   sbp('dez.model/customProviders/save', {
@@ -321,6 +347,89 @@ describe('chat streams with image paths', () => {
     expect(body).toContain('id=b')
     expect(body).toContain('model_list')
     expect(body.includes(Buffer.from(STORED_IMAGE).toString('base64'))).toBe(sendImages)
+  })
+})
+
+describe('media requests', () => {
+  // A media API in the Venice format, and chat fields (`requestBody`,
+  // `settings`) that media requests must not take.
+  beforeEach(() => {
+    sbp('dez.model/customProviders/save', {
+      id: 'media',
+      name: 'Media server',
+      baseUrl: MEDIA_BASE_URL,
+      apiFormat: 'openai',
+      models: [],
+      fetchModels: true,
+      auth: 'apiKey',
+      headers: { 'X-Team': 'blue' },
+      requestBody: { venice_parameters: { include_venice_system_prompt: false } },
+      settings: [{ key: 'webSearch', label: 'Web search', type: 'boolean', default: true, bodyPath: 'venice_parameters.enable_web_search' }],
+      mediaApi: { format: 'venice' },
+    })
+  })
+
+  const generate = (input: Record<string, unknown>) =>
+    sbp('dez.provider/generateMedia', { providerId: 'media', modelId: 'm', prompt: 'A red fox', ...input }) as Promise<ProviderGenerateMediaResult>
+
+  it('makes an image through dez.http/stream with the request id and the config headers, and no chat fields', async () => {
+    const result = await generate({ kind: 'image', requestId: 'reply-1' })
+
+    expect(result).toStrictEqual({ media: [{ bytes: WEBP_IMAGE, mediaType: 'image/webp' }] })
+    expect(streamRequestIds).toEqual(['reply-1'])
+    expect(streamRequests).toStrictEqual([{
+      method: 'POST',
+      url: `${MEDIA_BASE_URL}/image/generate`,
+      headers: { 'Content-Type': 'application/json', 'X-Team': 'blue' },
+      body: JSON.stringify({ model: 'm', prompt: 'A red fox', format: 'webp' }),
+    }])
+    expect(imageReads).toEqual([])
+  })
+
+  it('edits stored images of both folders, sent as data URLs, and returns the whole image of a binary answer', async () => {
+    const result = await generate({ kind: 'imageEdit', images: [`${APP_DIR}/assets/generated/images/red.png`, `${APP_DIR}/assets/images/red.png`] })
+
+    const dataUrl = `data:image/png;base64,${bytesToBase64(STORED_IMAGE)}`
+    expect(result).toStrictEqual({ media: [{ bytes: STORED_IMAGE, mediaType: 'image/png' }] })
+    expect(imageReads).toEqual(['assets/generated/images/red.png', 'assets/images/red.png'])
+    expect(streamRequests.map((request) => [request.url, JSON.parse(request.body as string)])).toStrictEqual([
+      [`${MEDIA_BASE_URL}/image/multi-edit`, { modelId: 'm', prompt: 'A red fox', images: [dataUrl, dataUrl] }],
+    ])
+  })
+
+  it('refuses an edit with no image, before any request', async () => {
+    await expect(generate({ kind: 'imageEdit' })).rejects.toThrow('No image to edit')
+    await expect(generate({ kind: 'imageEdit', images: [] })).rejects.toThrow('No image to edit')
+
+    expect(streamRequests).toEqual([])
+  })
+
+  it('reads no file of another Dez folder, and sends nothing', async () => {
+    await expect(generate({ kind: 'imageEdit', images: ['/home/other/.config/dez/assets/images/red.png'] })).rejects.toThrow('Image not found: red.png')
+
+    expect(imageReads).toEqual([])
+    expect(streamRequests).toEqual([])
+  })
+
+  it('names the provider of a refused request, with the start of its answer', async () => {
+    sbp('dez.model/customProviders/save', {
+      id: 'broken',
+      name: 'Broken server',
+      baseUrl: FAILING_BASE_URL,
+      apiFormat: 'openai',
+      models: [],
+      fetchModels: true,
+      auth: 'apiKey',
+      mediaApi: { format: 'venice' },
+    })
+
+    await expect(generate({ providerId: 'broken', kind: 'image' })).rejects.toThrow('Broken server returned HTTP 404: Not found')
+  })
+
+  it('fails before any request for a provider with no media API', async () => {
+    await expect(generate({ providerId: 'local', kind: 'image' })).rejects.toThrow('Local has no media API that Dez can use.')
+
+    expect(streamRequests).toEqual([])
   })
 })
 
