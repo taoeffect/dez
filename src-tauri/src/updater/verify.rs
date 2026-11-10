@@ -369,11 +369,14 @@ mod tests {
     }
 
     // The chain needs two keys: with one key for both signatures, whoever
-    // holds the release key (GitHub) could sign any version.
+    // holds the release key (GitHub) could sign any version. The test
+    // compares the key lines of the two files, not the decoded keys, as
+    // `PublicKey`'s `==` also compares the untrusted comment (the first line).
     #[test]
     fn compiles_in_two_different_keys() {
-        let keys = trusted_keys().expect("keys");
-        assert_ne!(keys.release, keys.commit);
+        trusted_keys().expect("keys");
+        let key_line = |file: &'static str| file.lines().nth(1).map(str::trim);
+        assert_ne!(key_line(RELEASE_PUBLIC_KEY), key_line(COMMIT_PUBLIC_KEY));
     }
 
     #[test]
