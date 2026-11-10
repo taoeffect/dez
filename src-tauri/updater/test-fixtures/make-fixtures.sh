@@ -120,4 +120,16 @@ sign_manifest no-version-signature
 write_manifest short-sha256 good "${sha256%?}"
 sign_manifest short-sha256
 
+# No dmgSha256 at all.
+jq 'del(.dmgSha256)' good.manifest.json > no-sha256.manifest.json
+sign_manifest no-sha256
+
+# A dmgSha256 that is no string.
+jq '.dmgSha256 = null' good.manifest.json > null-sha256.manifest.json
+sign_manifest null-sha256
+
+# A field that this Dez does not know, as a later workflow can add.
+jq '. + { later: "field" }' good.manifest.json > unknown-field.manifest.json
+sign_manifest unknown-field
+
 ls -l

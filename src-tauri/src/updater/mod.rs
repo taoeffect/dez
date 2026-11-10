@@ -529,6 +529,12 @@ mod test_fixtures {
     pub const NO_VERSION_SIGNATURE: (&str, &str) = signed_manifest!("no-version-signature");
     // `dmgSha256` lacks its last character.
     pub const SHORT_SHA256: (&str, &str) = signed_manifest!("short-sha256");
+    // There is no `dmgSha256`.
+    pub const NO_SHA256: (&str, &str) = signed_manifest!("no-sha256");
+    // `dmgSha256` is `null`, which is no string.
+    pub const NULL_SHA256: (&str, &str) = signed_manifest!("null-sha256");
+    // One more field, which this Dez does not know.
+    pub const UNKNOWN_FIELD: (&str, &str) = signed_manifest!("unknown-field");
 
     pub fn test_keys() -> TrustedKeys {
         TrustedKeys {

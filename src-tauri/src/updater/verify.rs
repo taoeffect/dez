@@ -191,11 +191,11 @@ struct Manifest {
     // The whole text of release-version.txt.minisig.
     #[serde(rename = "versionSignature")]
     version_signature: String,
-    // `default`: a manifest without it fails the DMG's check
-    // (`Sha256Hex::parse` refuses the empty text), not the check of the
+    // Any JSON value, and `default` (null) when it is not there: a manifest
+    // with no string SHA-256 fails the DMG's check, not the check of the
     // version's signature, which a manifest that does not parse fails.
     #[serde(rename = "dmgSha256", default)]
-    dmg_sha256: String,
+    dmg_sha256: serde_json::Value,
 }
 
 /// Parses the version that the webview asks for. It must be plain semver:
@@ -281,11 +281,15 @@ pub fn check_manifest(
         });
     }
 
-    // Before the download: a text that is no SHA-256 matches no DMG.
-    Sha256Hex::parse(&manifest.dmg_sha256).ok_or_else(|| Refusal {
-        check: Check::DmgSha256,
-        message: "The update's manifest names no SHA-256 for the download.".into(),
-    })
+    // Before the download: a value that is no SHA-256 matches no DMG.
+    manifest
+        .dmg_sha256
+        .as_str()
+        .and_then(Sha256Hex::parse)
+        .ok_or_else(|| Refusal {
+            check: Check::DmgSha256,
+            message: "The update's manifest names no valid SHA-256 for the download.".into(),
+        })
 }
 
 /// The fourth check, `Check::DmgSha256`: `dmg`, which has taken every byte
@@ -447,11 +451,25 @@ mod tests {
 
     #[test]
     fn refuses_a_manifest_without_a_sha256_before_the_download() {
-        let (manifest, signature) = SHORT_SHA256;
-        assert_eq!(
-            refused(manifest, signature, "0.16.0", &test_keys()),
-            Some(Check::DmgSha256)
-        );
+        for (case, (manifest, signature)) in [
+            ("short", SHORT_SHA256),
+            ("missing", NO_SHA256),
+            ("null", NULL_SHA256),
+        ] {
+            assert_eq!(
+                refused(manifest, signature, "0.16.0", &test_keys()),
+                Some(Check::DmgSha256),
+                "{case}"
+            );
+        }
+    }
+
+    // A later workflow can add fields. A Dez that refused them could not
+    // update again.
+    #[test]
+    fn accepts_a_manifest_with_a_field_that_dez_does_not_know() {
+        let (manifest, signature) = UNKNOWN_FIELD;
+        assert_eq!(refused(manifest, signature, "0.16.0", &test_keys()), None);
     }
 
     #[test]
