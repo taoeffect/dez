@@ -524,7 +524,11 @@ describe('Linux line-navigation keymap', () => {
     expect(keymapHasPlatformBinding(bindings, 'mac', 'Ctrl-e')).toBe(false)
   })
 
-  it('consumes Linux Ctrl+A at physical line start before default select-all can run', () => {
+  // CodeMirror applies `linux:` bindings only when this same check on the
+  // host's `navigator.platform` passes. On another host, Ctrl+A goes to
+  // `defaultKeymap` (on macOS its emacs-style `cursorLineStart`, which the fake
+  // view below cannot run), so the Linux binding cannot be tested there.
+  it.skipIf(!/Linux|X11/.test(navigator.platform))('consumes Linux Ctrl+A at physical line start before default select-all can run', () => {
     let state = EditorState.create({
       doc: 'alpha\nbeta',
       selection: EditorSelection.cursor(0),
