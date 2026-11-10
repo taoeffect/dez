@@ -4,7 +4,7 @@ import { click, consoleErrors, openHistoryPanel, resetConsoleErrors, screenshotO
 import { makeConversation, seedConversation, seedRawAppState } from './harness/fixtures'
 import { replyText, sendChatReply, startChatMock, type MockServer } from './harness/mockServer'
 import { createSession, destroySession, type E2EBrowser } from './harness/session'
-import { activeConversationId, activeTabStreaming, maskPillDuration, newTab, openPicker, pickModel, pressRolePill, rolePillHeights, savedPillLines, sbpCall, submit, threadSections, waitForThread } from './harness/thread'
+import { activeConversationId, activeTabStreaming, maskPillDuration, newTab, openPicker, pickerRows, pickModel, pressRolePill, rolePillHeights, savedPillLines, sbpCall, submit, threadSections, waitForThread } from './harness/thread'
 
 // The model on agent role pills, the model names in history rows, and the
 // full model names as tooltips in the model picker, driven through the real
@@ -145,20 +145,6 @@ describe('model names', () => {
     ), titles)
   }
 
-  // Each model row of the open picker's Mock Provider group: the shown
-  // name and its tooltip.
-  async function pickerRows (): Promise<Array<{ name: string, title: string }>> {
-    return browser.execute((provider: string) => {
-      const group = Array.from(document.querySelectorAll('.model-dropdown .model-group')).find(
-        (candidate) => candidate.querySelector('.model-group-header')?.textContent?.trim() === provider
-      )
-      return Array.from(group?.querySelectorAll<HTMLElement>('.model-item-name') ?? []).map((name) => ({
-        name: name.textContent?.trim() ?? '',
-        title: name.title,
-      }))
-    }, PROVIDER.name)
-  }
-
   beforeAll(async () => {
     // Answers only chat requests to `/mock/v1`, and records their models.
     server = await startChatMock(['/mock/v1/chat/completions'], async (_req, res, body) => {
@@ -268,8 +254,11 @@ describe('model names', () => {
     // The model button toggles the picker, so the next test's `pickModel`
     // needs it closed even when a check here fails.
     try {
-      // A row may cut a long name off; its tooltip still shows all of it.
-      await waitForValue(browser, 'picker rows', pickerRows, [
+      // The shown name and the tooltip of each model row. A row may cut a
+      // long name off; its tooltip still shows all of it.
+      await waitForValue(browser, 'picker rows', async () => (await pickerRows(browser))
+        .filter((row) => row.kind === 'model')
+        .map((row) => ({ name: row.text, title: row.title })), [
         { name: ALPHA.name, title: ALPHA.name },
         { name: BETA.name, title: BETA.name },
         { name: LONG.name, title: LONG.name },

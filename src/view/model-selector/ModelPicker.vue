@@ -1,20 +1,17 @@
 <script setup lang="ts">
 import { ref, computed, onMounted, nextTick } from 'vue'
 import sbp from '@sbp/sbp'
+import { Virtualizer } from 'virtua/vue'
 import { useModelState } from '../modelState'
-import { availableModels, matchingModelsByProvider, modelMatchesQuery, searchTerms, type ModelQuery } from '../../model/modelSearch'
+import { availableModels, searchTerms } from '../../model/modelSearch'
 import type { ModelInfo, ProviderInfo } from '../../model/providers'
 import ModelOutputFilter from './ModelOutputFilter.vue'
+import { pickerRows } from './pickerRows'
 
-interface DisplayModel extends ModelInfo {
-  providerName: string
-}
-
-interface GroupedModels {
-  providerId: string
-  providerName: string
-  models: DisplayModel[]
-}
+// The padding of the list's scroll box, in px. The virtual list starts
+// below the top padding, and it must know that distance (`start-margin`) to
+// find the rows in view. The CSS reads the same value.
+const LIST_PADDING_PX = 4
 
 const props = withDefaults(defineProps<{
   // Currently-selected model, highlighted in the list. Parents own the meaning
@@ -53,33 +50,19 @@ const providers = ref<ProviderInfo[]>([])
 
 const visibleModels = computed(() => availableModels(modelCache.value, providers.value))
 
-// The search and the output filter (a setting that both pickers share) apply
-// to every group, Favorites too.
-const filteredGrouped = computed<GroupedModels[]>(() => {
-  const query: ModelQuery = { terms: searchTerms(searchQuery.value), outputs: settings.value.modelOutputFilter }
-  const groups: GroupedModels[] = []
+// The list as flat rows (pickerRows.ts). A provider can have thousands of
+// models, so a virtual list draws only the rows in view, and such a list
+// takes one flat array. The search and the output filter (a setting that
+// both pickers share) apply to every group, Favorites too.
+const rows = computed(() => pickerRows({
+  providers: providers.value,
+  models: visibleModels.value,
+  query: { terms: searchTerms(searchQuery.value), outputs: settings.value.modelOutputFilter },
+  favorites: props.showFavorites ? settings.value.favorites : null,
+  none: Boolean(props.noneLabel),
+}))
 
-  if (props.showFavorites) {
-    const favModels: DisplayModel[] = []
-    for (const fav of settings.value.favorites) {
-      const provider = providers.value.find((p) => p.id === fav.providerId)
-      const m = visibleModels.value.find((x) => x.provider === fav.providerId && x.id === fav.modelId)
-      if (provider && m && modelMatchesQuery(provider, m, query)) favModels.push({ ...m, providerName: provider.name })
-    }
-    if (favModels.length > 0) {
-      groups.push({ providerId: '__favorites__', providerName: 'Favorites', models: favModels })
-    }
-  }
-
-  for (const { provider, models } of matchingModelsByProvider(providers.value, visibleModels.value, query)) {
-    groups.push({
-      providerId: provider.id,
-      providerName: provider.name,
-      models: models.map((m) => ({ ...m, providerName: provider.name })),
-    })
-  }
-  return groups
-})
+const hasModels = computed(() => rows.value.some((row) => row.kind === 'model'))
 
 // Load the configured-provider set + group names. Provider "configured" status
 // depends on native key presence (async) and is not reactive, so it is
@@ -140,41 +123,49 @@ onMounted(async () => {
       />
     </div>
     <div class="model-picker-list">
-      <button
-        v-if="noneLabel"
-        class="model-item model-item--none"
-        :class="{ 'model-item--active': !selectedModelId }"
-        @click="$emit('selectNone')"
-      >
-        <span class="model-item-name">{{ noneLabel }}</span>
-      </button>
-      <template v-if="filteredGrouped.length">
-        <div v-for="group in filteredGrouped" :key="group.providerId" class="model-group">
-          <div class="model-group-header">{{ group.providerName }}</div>
-          <button
-            v-for="model in group.models"
-            :key="group.providerId + ':' + model.id"
-            class="model-item"
-            :class="{ 'model-item--active': isSelected(model) }"
-            @click="$emit('select', model)"
+      <!-- The virtual list (virtua). `Virtualizer` draws only the rows near
+           the visible part of its parent, the scroll box, and gives itself
+           the height of all rows. So the picker is as tall as its list, up
+           to the limit of its dropdown, as before. (virtua's `VList` is a
+           scroll box of its own with no content height: the dropdown would
+           not grow with the list.)
+           The slot must give exactly one element with a key: virtua follows
+           a row by that key, and it measures the row's height through the
+           wrapper that it puts around that one element. -->
+      <Virtualizer v-slot="{ item: row }" :data="rows" :start-margin="LIST_PADDING_PX">
+        <button
+          v-if="row.kind === 'none'"
+          :key="row.key"
+          class="model-item model-item--none"
+          :class="{ 'model-item--active': !selectedModelId }"
+          @click="$emit('selectNone')"
+        >
+          <span class="model-item-name">{{ noneLabel }}</span>
+        </button>
+        <div v-else-if="row.kind === 'header'" :key="row.key" class="model-group-header">{{ row.label }}</div>
+        <button
+          v-else
+          :key="row.key"
+          class="model-item"
+          :class="{ 'model-item--active': isSelected(row.model) }"
+          @click="$emit('select', row.model)"
+        >
+          <span
+            v-if="showFavorites"
+            class="model-item-star"
+            :class="{ 'model-item-star--on': isFavorite(row.model) }"
+            :title="isFavorite(row.model) ? 'Unfavorite' : 'Favorite'"
+            @click="toggleFavorite(row.model, $event)"
           >
-            <span
-              v-if="showFavorites"
-              class="model-item-star"
-              :class="{ 'model-item-star--on': isFavorite(model) }"
-              :title="isFavorite(model) ? 'Unfavorite' : 'Favorite'"
-              @click="toggleFavorite(model, $event)"
-            >
-              <svg width="12" height="12" viewBox="0 0 12 12" fill="none">
-                <path d="M6 1.5l1.4 2.9 3.1.4-2.3 2.2.6 3.1L6 8.6l-2.8 1.5.6-3.1L1.5 4.8l3.1-.4L6 1.5z" :fill="isFavorite(model) ? 'currentColor' : 'none'" stroke="currentColor" stroke-width="1" stroke-linejoin="round"/>
-              </svg>
-            </span>
-            <span class="model-item-name" :title="model.name">{{ model.name }}</span>
-            <span class="model-item-provider">{{ model.providerName }}</span>
-          </button>
-        </div>
-      </template>
-      <div v-else class="model-picker-empty">
+            <svg width="12" height="12" viewBox="0 0 12 12" fill="none">
+              <path d="M6 1.5l1.4 2.9 3.1.4-2.3 2.2.6 3.1L6 8.6l-2.8 1.5.6-3.1L1.5 4.8l3.1-.4L6 1.5z" :fill="isFavorite(row.model) ? 'currentColor' : 'none'" stroke="currentColor" stroke-width="1" stroke-linejoin="round"/>
+            </svg>
+          </span>
+          <span class="model-item-name" :title="row.model.name">{{ row.model.name }}</span>
+          <span class="model-item-provider">{{ row.providerName }}</span>
+        </button>
+      </Virtualizer>
+      <div v-if="!hasModels" class="model-picker-empty">
         No models found
       </div>
     </div>
@@ -234,7 +225,7 @@ onMounted(async () => {
 .model-picker-list {
   flex: 1;
   overflow-y: auto;
-  padding: 4px;
+  padding: v-bind("LIST_PADDING_PX + 'px'");
 }
 
 .model-group-header {
@@ -247,6 +238,10 @@ onMounted(async () => {
   padding: 6px 8px 2px;
 }
 
+/* `pointer-events`: virtua sets `pointer-events: none` on the box around
+   the rows while the list scrolls, and for 150 ms after the last scroll
+   event. The rows inherit it, so a click soon after the wheel stops did
+   nothing. The rows set the property back; they need no such rest. */
 .model-item {
   display: flex;
   align-items: center;
@@ -262,6 +257,7 @@ onMounted(async () => {
   cursor: pointer;
   text-align: left;
   transition: background 0.1s;
+  pointer-events: auto;
 }
 
 .model-item:hover {
