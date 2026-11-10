@@ -145,18 +145,15 @@ npm run build:desktop
 
 ## Tagged releases
 
-First set the version in the npm, Tauri, and Cargo files, and commit them. Then push a version tag on that commit to start the desktop release workflow:
+One command makes a release. It sets the version in the npm, Tauri, and Cargo files, signs the version with the developer's [minisign](https://jedisct1.github.io/minisign/) key (`~/.minisign/dez-tag-key.key`), commits, tags the commit, and pushes both, which starts the desktop release workflow:
 
 ```bash
 npm run bump-version -- 0.1.0
-git commit -m "v0.1.0" package.json package-lock.json src-tauri/tauri.conf.json src-tauri/Cargo.toml src-tauri/Cargo.lock
-git tag v0.1.0
-git push origin HEAD v0.1.0
 ```
 
-The workflow first checks that the version files hold the tag's version (`npm run bump-version -- --check v0.1.0` runs the same check on your machine). The bundles get their names from `src-tauri/tauri.conf.json`, and the app shows the `package.json` version in About and in the update check, so on a mismatch the workflow stops before any build and makes no release. Then delete the tag (`git tag -d v0.1.0 && git push origin :refs/tags/v0.1.0`), bump and commit, and tag again.
+The workflow first checks that the version files of the tagged commit hold the tag's version (`npm run bump-version -- --check v0.1.0` runs this check on your machine), and that the commit has the developer's signature of that version. The bundles get their names from `src-tauri/tauri.conf.json`, and the app shows the `package.json` version in About and in the update check, so when a check fails, as for a tag made by hand, the workflow stops before any build and makes no release. Then delete the tag (`git tag -d v0.1.0 && git push origin :refs/tags/v0.1.0`) and run the command above.
 
-When the check passes, the workflow builds Linux x86_64 and Linux ARM64 AppImages on Ubuntu, builds the Apple Silicon DMG on macOS, writes the release notes, creates the GitHub Release for the tag if needed, and attaches all release assets. Linux downloads are labeled by architecture, for example `Dez_0.1.0_linux_x86_64.AppImage` and `Dez_0.1.0_linux_arm64.AppImage`; ARM users should choose the `arm64` AppImage. The macOS download is `Dez_0.1.0_aarch64.dmg`.
+When the checks pass, the workflow builds Linux x86_64 and Linux ARM64 AppImages on Ubuntu, builds the Apple Silicon DMG on macOS, signs its manifest (see [Release signature](#release-signature)), writes the release notes, creates the GitHub Release for the tag if needed, and attaches all release assets. Linux downloads are labeled by architecture, for example `Dez_0.1.0_linux_x86_64.AppImage` and `Dez_0.1.0_linux_arm64.AppImage`; ARM users should choose the `arm64` AppImage. The macOS download is `Dez_0.1.0_aarch64.dmg`.
 
 ## macOS unsigned build note
 
@@ -197,8 +194,11 @@ AGPL-3.0. See [`LICENSE`](LICENSE) for license details.
 
 ## Release signature
 
-The macOS DMG of each release is signed with [minisign](https://jedisct1.github.io/minisign/) and this public key: `RWS6gAnb0vnjQ7T83fKgSY5FBFm1yKek6p7vW4Qu31q5PRfZO8EUCMH3`. To check a DMG, download its `.minisig` file into the same folder and run (with your download's version in place of `X.Y.Z`):
+Each release has a manifest, `Dez_X.Y.Z_aarch64.dmg.manifest.json`, that holds the SHA-256 of the macOS DMG. The manifest is signed with [minisign](https://jedisct1.github.io/minisign/) and this public key: `RWS6gAnb0vnjQ7T83fKgSY5FBFm1yKek6p7vW4Qu31q5PRfZO8EUCMH3`. To check a DMG, download the manifest and its `.minisig` file into the same folder as the DMG and run (with your download's version in place of `X.Y.Z`):
 
 ```bash
-minisign -Vm Dez_X.Y.Z_aarch64.dmg -P RWS6gAnb0vnjQ7T83fKgSY5FBFm1yKek6p7vW4Qu31q5PRfZO8EUCMH3
+minisign -Vm Dez_X.Y.Z_aarch64.dmg.manifest.json -P RWS6gAnb0vnjQ7T83fKgSY5FBFm1yKek6p7vW4Qu31q5PRfZO8EUCMH3
+shasum -a 256 Dez_X.Y.Z_aarch64.dmg
 ```
+
+The second command must print the `dmgSha256` value of the manifest. The manifest also holds the developer's signature of the version number, made with a second key ([`dez-commit-key.pub`](src-tauri/updater/dez-commit-key.pub)). Dez makes all of these checks itself before it installs an update.

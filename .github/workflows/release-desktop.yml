@@ -295,8 +295,10 @@ jobs:
   # version is the version that Dez updates to, and the DMG has the SHA-256.
   # So the release key alone, and so control of GitHub alone, cannot release
   # a version that the developer did not sign. The developer's signature
-  # covers the version only, not the DMG. A release with no signed manifest
-  # cannot update macOS installs, and publish-release waits for this job.
+  # covers the version only, not the DMG: whoever controls GitHub can still
+  # put another DMG under a version that the developer signed, and every
+  # older Dez accepts it. A release with no signed manifest cannot update
+  # macOS installs, and publish-release waits for this job.
   #
   # The job does not check the message or versionSignature: version-check
   # did, on this same commit, before any build.
