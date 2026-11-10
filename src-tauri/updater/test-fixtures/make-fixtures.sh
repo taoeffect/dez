@@ -5,7 +5,7 @@
 #
 #   bash src-tauri/updater/test-fixtures/make-fixtures.sh
 #
-# It needs minisign (0.10 or later, for -l), jq, and sha256sum.
+# It needs minisign (0.11 or later, for -W), jq, and sha256sum.
 #
 # The fixtures are release manifests and their signatures, made with the
 # commands of a real release: a version is signed as
@@ -24,6 +24,7 @@
 
 set -euo pipefail
 cd "$(dirname "$0")"
+fixtures="$PWD"
 
 # The version of the good release, and an earlier release of the developer.
 version=0.16.0
@@ -32,7 +33,11 @@ other_version=0.15.2
 work="$(mktemp -d)"
 trap 'rm -rf "$work"' EXIT
 
-rm -f ./*.pub ./*.minisig ./*.manifest.json
+# Every fixture is made in $work/fixtures and replaces the committed ones only
+# at the end, so a run that stops (a missing tool, a minisign older than 0.11)
+# leaves them as they are, and cargo test still compiles.
+mkdir "$work/fixtures"
+cd "$work/fixtures"
 
 # make_key <role>: a key pair with no password (-W). The secret key stays in
 # $work; the public key goes to <role>-key.pub, with a comment that says
@@ -78,7 +83,7 @@ make_key release
 make_key commit
 
 # As the workflow: sha256sum reads stdin, so its output is the hash and " -".
-sha256="$(sha256sum < payload.bin)"
+sha256="$(sha256sum < "$fixtures/payload.bin")"
 sha256="${sha256%% *}"
 
 # The release that passes every check.
@@ -132,4 +137,7 @@ sign_manifest null-sha256
 jq '. + { later: "field" }' good.manifest.json > unknown-field.manifest.json
 sign_manifest unknown-field
 
+cd "$fixtures"
+rm -f ./*.pub ./*.minisig ./*.manifest.json
+mv "$work/fixtures"/* .
 ls -l
