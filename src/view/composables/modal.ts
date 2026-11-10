@@ -36,11 +36,19 @@ export function keepTabInModal(event: KeyboardEvent): void {
 // Overlay handlers that dismiss the modal only for a press that started on
 // the overlay itself. A drag that starts in the modal (a text selection) and
 // ends outside it also gives the overlay a click; that click keeps it open.
+//
+// A press on the overlay keeps the focus in the modal: its default would
+// move the focus to the page, and Tab could then reach the editor behind
+// the overlay (`keepTabInModal` only sees keys in the modal). The update
+// window stays open while an install runs, so it would not get the focus
+// back. The click still comes after a prevented press. A press in the modal
+// keeps its default, so its text can be selected.
 export function useOverlayDismiss(dismiss: () => void) {
   let pressOnOverlay = false
   return {
     onOverlayMouseDown(event: MouseEvent) {
       pressOnOverlay = event.target === event.currentTarget
+      if (pressOnOverlay) event.preventDefault()
     },
     onOverlayClick(event: MouseEvent) {
       if (pressOnOverlay && event.target === event.currentTarget) dismiss()
