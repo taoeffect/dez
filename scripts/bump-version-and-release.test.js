@@ -91,6 +91,15 @@ describe('parseArgs', () => {
     expect(() => parseArgs(['--check', '--files-only', '0.6.1'])).toThrow('Expected at most one flag, got: --check --files-only');
     expect(() => parseArgs(['0.6'])).toThrow('Invalid version: 0.6');
   });
+
+  // npm 11 and earlier take a flag before "--" as their own option: the
+  // script gets the version alone, and the flag is in the environment.
+  it('refuses a flag that npm took, as the version alone would be a release', () => {
+    expect(() => parseArgs(['0.6.1'], { npm_config_files_only: 'true' })).toThrow('npm took --files-only as its own option');
+    expect(() => parseArgs(['--files-only', '0.6.1'], { npm_config_check: 'true' }))
+      .toThrow('npm run bump-version -- --check <version>');
+    expect(parseArgs(['0.6.1'], { npm_config_cache: '/tmp/npm' })).toEqual({ mode: 'release', version: '0.6.1' });
+  });
 });
 
 // The release itself runs git and minisign, so these tests run a copy of the
@@ -142,6 +151,14 @@ describe('a release in a throwaway repo', { timeout: 30_000 }, () => {
       mkdirSync(dirname(join(work, path)), { recursive: true });
       writeFileSync(join(work, path), text);
     };
+    // Runs the script copy with `extraEnv` added to `env`. stdin is empty, so
+    // nothing can wait for a prompt.
+    const runScript = (extraEnv, args) => spawnSync(process.execPath, [SCRIPT, ...args], {
+      cwd: work,
+      env: { ...env, ...extraEnv },
+      encoding: 'utf8',
+      input: ''
+    });
 
     mkdirSync(join(home, '.minisign'), { recursive: true });
     exec('git', ['init', '--quiet', '--bare', '--initial-branch=main', join(root, 'remote.git')], root);
@@ -171,8 +188,8 @@ describe('a release in a throwaway repo', { timeout: 30_000 }, () => {
       exec,
       git,
       write,
-      // Runs the script copy. stdin is empty, so nothing can wait for a prompt.
-      script: (...args) => spawnSync(process.execPath, [SCRIPT, ...args], { cwd: work, env, encoding: 'utf8', input: '' }),
+      script: (...args) => runScript({}, args),
+      scriptWithEnv: (extraEnv, ...args) => runScript(extraEnv, args),
       // What a failed run must leave as it was.
       state: () => ({
         head: git('rev-parse', 'HEAD'),
@@ -250,6 +267,19 @@ describe('a release in a throwaway repo', { timeout: 30_000 }, () => {
     const result = box.script('0.2.0');
     expect(result.status).toBe(1);
     expect(result.stderr).toContain('- package-lock.json\nNothing was changed.');
+    expect(box.state()).toEqual(before);
+  });
+
+  // What npm 11 and earlier run for "npm run bump-version --files-only
+  // 0.2.0". No commit key exists here, so the run also fails if it gets to
+  // signing.
+  it('changes nothing when npm took the flag', () => {
+    const box = sandbox();
+    const before = box.state();
+
+    const result = box.scriptWithEnv({ npm_config_files_only: 'true' }, '0.2.0');
+    expect(result.status).toBe(1);
+    expect(result.stderr).toContain('npm took --files-only as its own option');
     expect(box.state()).toEqual(before);
   });
 

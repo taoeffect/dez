@@ -131,11 +131,24 @@ export function bumpedFiles(version, texts) {
 
 const MODE_FLAGS = { '--check': 'check', '--files-only': 'files-only' };
 
+// npm 11 and earlier take a flag that comes before "--" (npm run
+// bump-version --files-only 1.2.3) as their own option: this script then
+// gets the version alone, which is a release. npm puts such a flag into the
+// script's environment, with "_" for "-", so the script can see it there.
+// npm 12 refuses the command.
+const npmFlagVariable = flag => `npm_config_${flag.slice(2).replaceAll('-', '_')}`;
+
 // The mode (`release` unless a flag names another one) and the version
 // without a leading `v`. A flag may come before or after the version.
 // Throws unless the arguments are exactly one valid version plus at most one
-// flag, so a mistyped flag never writes and never releases.
-export function parseArgs(args) {
+// flag, so a mistyped flag in the arguments never writes and never releases.
+// Throws too when `env` (the environment) shows that npm took a flag.
+export function parseArgs(args, env = {}) {
+  const flagTakenByNpm = Object.keys(MODE_FLAGS).find(flag => env[npmFlagVariable(flag)] !== undefined);
+  if (flagTakenByNpm) {
+    throw new Error(`npm took ${flagTakenByNpm} as its own option, so this script did not get it.
+Put "--" before the flag: npm run bump-version -- ${flagTakenByNpm} <version>`);
+  }
   const flags = args.filter(arg => Object.hasOwn(MODE_FLAGS, arg));
   const rest = args.filter(arg => !Object.hasOwn(MODE_FLAGS, arg));
   if (flags.length > 1) {
@@ -331,7 +344,7 @@ function main(args) {
 
   let mode, version;
   try {
-    ({ mode, version } = parseArgs(args));
+    ({ mode, version } = parseArgs(args, process.env));
   } catch (error) {
     fail(`${error.message}\n\n${USAGE}`);
   }
