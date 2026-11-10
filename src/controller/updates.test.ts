@@ -701,14 +701,19 @@ describe('dez.controller/updates/install', () => {
       expect(updates()).toMatchObject({ refusal: REFUSAL, windowOpen: false })
     })
 
-    // "Check for Updates…" in the menu can open the window again under the
-    // dialog.
-    it('closing the dialog leaves a window that opened again under it', async () => {
+    // "Check for Updates…" in the menu or a toast's "View changes" would
+    // open the window under the dialog, and the window would take the focus
+    // of the dialog.
+    it('the window does not open again under the dialog, and opens after it closes', async () => {
       await refuseDownload()
       sbp('dez.model/updates/closeWindow')
+
       sbp('dez.model/updates/openWindow')
+      expect(updates()).toMatchObject({ refusal: REFUSAL, windowOpen: false })
 
       sbp('dez.model/updates/closeRefusal')
+      expect(updates()).toMatchObject({ refusal: null, windowOpen: false })
+      sbp('dez.model/updates/openWindow')
 
       expect(updates()).toMatchObject({ refusal: null, windowOpen: true, install: { phase: 'idle' } })
     })

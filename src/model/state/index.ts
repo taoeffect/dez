@@ -1382,10 +1382,12 @@ export default sbp('sbp/selectors/register', {
     return useUpdatesStore().windowOpen
   },
 
-  // Does nothing until a check has found a newer release.
+  // Does nothing until a check has found a newer release, and while the
+  // refusal dialog is open: the window would open under the dialog and take
+  // its focus, and Tab would then reach buttons that the user cannot see.
   'dez.model/updates/openWindow' (): void {
     const store = useUpdatesStore()
-    if (store.releases.length) store.windowOpen = true
+    if (store.releases.length && !store.refusal) store.windowOpen = true
   },
 
   // Does nothing while the install runs: the user waits for it to end or
@@ -1425,13 +1427,12 @@ export default sbp('sbp/selectors/register', {
   },
 
   // Closes the refusal dialog, and with it the update window whose install
-  // was refused: that window has nothing more to offer. A window that
-  // closed under the dialog and opened again since then has a new install
-  // state, and stays.
+  // was refused: that window has nothing more to offer. A window under the
+  // dialog is always that one, because no window opens while the dialog is
+  // open (dez.model/updates/openWindow).
   'dez.model/updates/closeRefusal' (): void {
-    const store = useUpdatesStore()
-    store.refusal = null
-    if (store.install.phase === 'refused') sbp('dez.model/updates/closeWindow')
+    useUpdatesStore().refusal = null
+    sbp('dez.model/updates/closeWindow')
   },
 
   // Error-handling boundary for the history panel: full-text search (empty
