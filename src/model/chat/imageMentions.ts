@@ -1,0 +1,43 @@
+import { IMAGE_ID_SOURCE } from './images'
+
+// An image mention is `@` and an image id in a user message: `@a` names the
+// image whose reference has `id=a` (the badge on the image shows the id). The
+// user types it to say which image a request is about ("edit @a to add an
+// apple"). The request builder then sends that image with the message, at
+// the place of the mention (`sectionsToStreamMessages`, streams/messages.ts).
+// The mention itself stays in the text as the user typed it.
+//
+// Most `@` words are not mentions: an e-mail address, a user name, a
+// decorator in code. So a word counts only when it has the form below and
+// an image has its id; every other word is plain text, with no error. This
+// module finds the words of that form; the request builder knows the images.
+
+// The chars of a word, as the inside of a character class: the letters
+// (with their combining marks) and digits of any script, and `_`.
+const WORD_CHARS = String.raw`\p{L}\p{M}\p{N}_`
+// `@` and one whole id: no word char comes before the `@` (`bob@a.com` is an
+// address) or after the id (`@about` is the id `about`, never `a`, and `@a2`
+// is no id). The regex takes the char before the `@` into the match, in
+// place of a lookbehind, which older WebKit versions cannot parse. That char
+// is never part of the mention before it, as a mention ends with a letter.
+const MENTION = new RegExp(String.raw`(^|[^${WORD_CHARS}])@(${IMAGE_ID_SOURCE})(?![${WORD_CHARS}])`, 'gu')
+
+/** One word of a text that has the form of an image mention. */
+export interface ImageMention {
+  /** Offset of the `@`. */
+  from: number
+  /** Offset after the id. */
+  to: number
+  id: string
+}
+
+/** The words of `text` that have the form of an image mention, in order.
+ *  Give it only text outside image references: a path or a metadata value
+ *  can hold an `@`. */
+export function findImageMentions(text: string): ImageMention[] {
+  // `matchAll` copies the regex, so the shared one keeps no `lastIndex`.
+  return Array.from(text.matchAll(MENTION), (match) => {
+    const from = match.index + match[1].length
+    return { from, to: from + 1 + match[2].length, id: match[2] }
+  })
+}

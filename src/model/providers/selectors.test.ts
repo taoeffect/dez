@@ -381,7 +381,7 @@ describe('media requests', () => {
       method: 'POST',
       url: `${MEDIA_BASE_URL}/image/generate`,
       headers: { 'Content-Type': 'application/json', 'X-Team': 'blue' },
-      body: JSON.stringify({ model: 'm', prompt: 'A red fox', format: 'webp' }),
+      body: JSON.stringify({ model: 'm', prompt: 'A red fox', format: 'webp', hide_watermark: true, safe_mode: false }),
     }])
     expect(imageReads).toEqual([])
   })
@@ -393,7 +393,7 @@ describe('media requests', () => {
     expect(result).toStrictEqual({ media: [{ bytes: STORED_IMAGE, mediaType: 'image/png' }] })
     expect(imageReads).toEqual(['assets/generated/images/red.png', 'assets/images/red.png'])
     expect(streamRequests.map((request) => [request.url, JSON.parse(request.body as string)])).toStrictEqual([
-      [`${MEDIA_BASE_URL}/image/multi-edit`, { modelId: 'm', prompt: 'A red fox', images: [dataUrl, dataUrl] }],
+      [`${MEDIA_BASE_URL}/image/multi-edit`, { modelId: 'm', prompt: 'A red fox', images: [dataUrl, dataUrl], safe_mode: false }],
     ])
   })
 

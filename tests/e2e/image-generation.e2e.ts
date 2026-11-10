@@ -14,12 +14,15 @@ import { activeConversationId, newTab, openToasts, pickModel, submit, threadSect
 // Image replies, driven through the real app against a mock of Venice's
 // media API (`mediaApi: { format: 'venice' }`):
 // - a reply of an image model is one request to `/image/generate` with the
-//   last user message as its prompt; each image of the answer is saved in
-//   the generated image folder, the reply holds a reference to it with a
-//   new image id, and the editor shows it;
+//   last user message as its prompt, and with Venice's watermark and safe
+//   mode off; each image of the answer is saved in the generated image
+//   folder, the reply holds a reference to it with a new image id, and the
+//   editor shows it;
 // - an edit model's request to `/image/multi-edit` takes the newest image of
 //   the conversation when the last user message has none, as a data URL
 //   with no path;
+// - an edit whose message names an image with `@a` takes that image, not
+//   the newest one;
 // - when the view followed a reply to its end, it stays at its bottom when
 //   the reply's image loads after the end;
 // - Stop during the request leaves no file and no agent section;
@@ -36,6 +39,7 @@ const EDIT_PATH = `/${PAINTER.id}/v1/image/multi-edit`
 
 const GENERATED_PNG = solidPng(36, 20, [40, 160, 60])
 const EDITED_PNG = solidPng(20, 36, [200, 120, 20])
+const NEWEST_PNG = solidPng(28, 28, [150, 60, 180])
 const TALL_PNG = solidPng(40, 300, [60, 90, 200])
 const STORED_IMAGE_NAME = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\.png$/
 
@@ -150,7 +154,7 @@ describe('image generation', () => {
 
     const generate = await setup.mock.waitForRequest(browser)
     expect(generate.path).toBe(GENERATE_PATH)
-    expect(JSON.parse(generate.body)).toEqual({ model: PAINTER.modelId, prompt: 'Draw a fox', format: 'webp' })
+    expect(JSON.parse(generate.body)).toEqual({ model: PAINTER.modelId, prompt: 'Draw a fox', format: 'webp', hide_watermark: true, safe_mode: false })
     answer(generate.reply, 'application/json', JSON.stringify({ images: [GENERATED_PNG.toString('base64')] }))
 
     const [generatedName] = await newGeneratedImages(before, 1)
@@ -177,6 +181,7 @@ describe('image generation', () => {
       modelId: EDIT_MODEL.id,
       prompt: 'Make it orange',
       images: [`data:image/png;base64,${GENERATED_PNG.toString('base64')}`],
+      safe_mode: false,
     })
     expect(edit.body).not.toContain(setup.app.home)
     // The edit endpoint answers the bytes of one image.
@@ -195,6 +200,54 @@ describe('image generation', () => {
     await waitForValue(browser, 'shown images', () => shownImages(browser), [
       { alt: generatedName, width: 36, height: 20 },
       { alt: editedName, width: 20, height: 36 },
+    ])
+    expect(await consoleErrors(browser)).toEqual([])
+  })
+
+  it('edits the image that the message names with `@a`, not the newest one', async () => {
+    const before = await generatedImages()
+    await pickModel(browser, PAINTER.name, PAINTER.modelName)
+    await submit(browser, 'Draw a fox')
+    const fox = await setup.mock.waitForRequest(browser)
+    answer(fox.reply, 'application/json', JSON.stringify({ images: [GENERATED_PNG.toString('base64')] }))
+    const [foxName] = await newGeneratedImages(before, 1)
+    const foxReply = [
+      { role: 'user', text: 'Draw a fox' },
+      { role: 'agent', text: `![${path.join(generatedDir(), foxName)}](id=a)` },
+    ]
+    await waitForThread(browser, [...foxReply, { role: 'user', text: '' }])
+
+    await submit(browser, 'Draw a cat')
+    const cat = await setup.mock.waitForRequest(browser)
+    answer(cat.reply, 'application/json', JSON.stringify({ images: [NEWEST_PNG.toString('base64')] }))
+    const [catName] = await newGeneratedImages([...before, foxName], 1)
+    const catReply = [
+      { role: 'user', text: 'Draw a cat' },
+      { role: 'agent', text: `![${path.join(generatedDir(), catName)}](id=b)` },
+    ]
+    await waitForThread(browser, [...foxReply, ...catReply, { role: 'user', text: '' }])
+
+    await pickModel(browser, PAINTER.name, EDIT_MODEL.name)
+    await submit(browser, 'Edit @a to add an apple')
+
+    const edit = await setup.mock.waitForRequest(browser)
+    expect(edit.path).toBe(EDIT_PATH)
+    // The mention stays in the prompt, and only the fox goes.
+    expect(JSON.parse(edit.body)).toEqual({
+      modelId: EDIT_MODEL.id,
+      prompt: 'Edit @a to add an apple',
+      images: [`data:image/png;base64,${GENERATED_PNG.toString('base64')}`],
+      safe_mode: false,
+    })
+    answer(edit.reply, 'image/png', EDITED_PNG)
+
+    const [editedName] = await newGeneratedImages([...before, foxName, catName], 1)
+    await waitForThread(browser, [
+      ...foxReply,
+      ...catReply,
+      { role: 'user', text: 'Edit @a to add an apple' },
+      { role: 'agent', text: `![${path.join(generatedDir(), editedName)}](id=c)` },
+      { role: 'user', text: '' },
     ])
     expect(await consoleErrors(browser)).toEqual([])
   })

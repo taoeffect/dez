@@ -1,6 +1,7 @@
 import type { MessagePart, ModelRef, Section, SectionThinking, ThinkingReplay } from '../chat/types'
 import { sectionIsEmpty, sectionPlainText } from '../chat/content'
-import { findImageReferences, holdsImagePath, splitImageReferences, withoutImagePaths } from '../chat/images'
+import { findImageMentions } from '../chat/imageMentions'
+import { findImageReferences, holdsImagePath, withoutImagePaths, type ImageReference } from '../chat/images'
 import { sameModelRef } from '../chat/modelRef'
 import { thinkingField } from '../chat/thinking'
 import { EMPTY_TOOL_RESULT, INTERRUPTED_TOOL_RESULT, splitToolBlocks, unescapeModelText, type ToolBlock } from '../chat/toolBlocks'
@@ -10,7 +11,8 @@ import type { RequestMessages, StreamMessage } from './types'
 
 export interface RequestOptions {
   // False when the request model does not read images: a user section's
-  // image references then go as text only.
+  // images (its references and the images that it mentions) then go as
+  // text only.
   sendImages: boolean
   // False when the request offers no tools: an agent section's tool calls
   // then go as text (agentSectionMessages).
@@ -21,25 +23,38 @@ export interface RequestOptions {
 // ever goes to a provider: every text (user and agent text, prompt bodies,
 // tool arguments and results) goes through `withoutImagePaths`, so a
 // reference goes as `![image](id=a)`, with the ids and other metadata that
-// later requests can name. Each message is built from its own section only,
-// so an earlier message is the same bytes in every later request (prompt
-// cache).
+// later requests can name. Each message is built from its own section and,
+// for the images that it mentions, the sections before it. So an earlier
+// message is the same bytes in every later request (prompt cache).
 //
-// The image references of a user section also go as image parts, unless
-// `sendImages` is false. An agent section's images go as text only: both
-// formats take images only from the user.
+// The images of a user section also go as image parts, unless `sendImages`
+// is false: its image references, and the images that it names with an
+// `@id` mention (`userMessageContent`). An agent section's images go as
+// text only: both formats take images only from the user. So to show a
+// model an image that a model made, the user mentions it.
 export function sectionsToStreamMessages(sections: Section[], requestModel: ModelRef, options: RequestOptions): Omit<RequestMessages, 'sendTools'> {
   let imagesLeftOut = 0
+  // The images that a mention in the section at hand can name: the path of
+  // each image id in the references of that section and of the sections
+  // before it, user and agent. When two images have one id (a hand edit),
+  // the last one wins. Later sections are never read: a new image must not
+  // change the parts of an earlier message.
+  const imagesById = new Map<string, string>()
   const messages = sections
     .filter((section) => !sectionIsEmpty(section))
     .flatMap((section): StreamMessage[] => {
-      if (section.role === 'agent') return agentSectionMessages(section, requestModel, options.sendTools)
       const text = sectionPlainText(section)
-      if (!options.sendImages) {
-        imagesLeftOut += findImageReferences(text).length
-        return [{ role: 'user', content: withoutImagePaths(text) }]
+      const references = findImageReferences(text)
+      for (const { id, path } of references) {
+        if (id !== null) imagesById.set(id, path)
       }
-      return [{ role: 'user', content: userMessageContent(text) }]
+      if (section.role === 'agent') return agentSectionMessages(section, requestModel, options.sendTools)
+      const content = userMessageContent(text, references, imagesById)
+      if (options.sendImages) return [{ role: 'user', content }]
+      // The count is of the image parts that the message has for a model
+      // that reads images, so the toast and the request always agree.
+      if (typeof content !== 'string') imagesLeftOut += content.filter((part) => part.type === 'image').length
+      return [{ role: 'user', content: withoutImagePaths(text) }]
     })
 
   return { messages, imagesLeftOut }
@@ -49,18 +64,19 @@ export function sectionsToStreamMessages(sections: Section[], requestModel: Mode
  *  dez.provider/generateMedia. The prompt is the text of the last user
  *  message of `messages` as a chat request sends it: with no path, and with
  *  each image reference as its `![image](id=a)` text. An edit takes the
- *  images of that message; when it has none, it takes the newest image
- *  reference of `sections` (the tab's sections, in which the reply's own
- *  section is still empty), so that "Make it blue" edits the image of the
- *  reply before. An edit with no image gets no paths, and generateMedia
- *  refuses it. */
+ *  images of that message, in text order and each one once: the ones that
+ *  it holds and the ones that it names with an `@id` mention. When it has
+ *  none, the edit takes the newest image reference of `sections` (the
+ *  tab's sections, in which the reply's own section is still empty), so
+ *  that "Make it blue" edits the image of the reply before. An edit with no
+ *  image gets no paths, and generateMedia refuses it. */
 export function mediaRequestInput(kind: MediaKind, messages: StreamMessage[], sections: Section[]): { prompt: string, images: string[] } {
   const content = messages.findLast((message): message is Extract<StreamMessage, { role: 'user' }> => message.role === 'user')?.content ?? ''
   const parts: MessagePart[] = typeof content === 'string' ? [{ type: 'text', text: content }] : content
   const prompt = parts.map((part) => (part.type === 'text' ? part.text : '')).join('').trim()
   if (kind === 'image') return { prompt, images: [] }
 
-  const images = parts.flatMap((part) => (part.type === 'image' ? [part.path] : []))
+  const images = [...new Set(parts.flatMap((part) => (part.type === 'image' ? [part.path] : [])))]
   if (images.length > 0) return { prompt, images }
   const newest = sections.map((section) => findImageReferences(sectionPlainText(section)).at(-1)).findLast((reference) => reference !== undefined)
   return { prompt, images: newest ? [newest.path] : [] }
@@ -193,27 +209,56 @@ function textWithToolCalls(text: string): string {
   return withoutImagePaths(parts.join(''))
 }
 
-// Text and image parts in doc order. Each image part comes right after its
-// reference's text, `![image](id=a)`, at the end of the text part before it,
-// so that a model can name the image by its id. A text with no image
-// reference stays a string, so a text-only request body is the same bytes as
-// before images existed: the prefix hashes of saved thinking replays depend
-// on it. A whitespace-only text after the last image is left out: Anthropic
-// refuses a text block with no visible text.
-function userMessageContent(text: string): string | MessagePart[] {
-  const pieces = splitImageReferences(text)
-  if (!pieces.some((piece) => piece.kind === 'image')) return withoutImagePaths(text)
-
+// The content of one user message: text and image parts in doc order.
+// `references` are the image references of `text`. Each image part comes
+// right after its reference's text, `![image](id=a)`, at the end of the text
+// part before it, so that a model can name the image by its id.
+//
+// An `@id` mention (imageMentions.ts) that names an image of `imagesById`
+// counts as that image at that place: its image part comes right after the
+// mention, which stays in the text as the user typed it. A mentioned image
+// goes once, at its first mention. A mention of an image that the text
+// itself holds adds no part: the reference sends that image. Mentions are
+// read in the text as the provider gets it, after the path scrub: a bare
+// path can hold an `@`, and a cut there would send the start of the path.
+//
+// A text with no image stays a string, so a text-only request body is the
+// same bytes as before images existed: the prefix hashes of saved thinking
+// replays depend on it. A whitespace-only text after the last image is left
+// out: Anthropic refuses a text block with no visible text.
+function userMessageContent(text: string, references: readonly ImageReference[], imagesById: ReadonlyMap<string, string>): string | MessagePart[] {
   const parts: MessagePart[] = []
-  let textBefore = ''
-  for (const piece of pieces) {
-    if (piece.kind === 'text') {
-      textBefore = piece.text
-      continue
+  // The images that the message has a part for, or gets one for below.
+  const sentImages = new Set(references.map((reference) => reference.path))
+  // The scrubbed text since the last image part.
+  let pendingText = ''
+  // Takes in the text between two references (or a text end), with an
+  // image part after each mention that adds one.
+  const addText = (from: number, to: number) => {
+    const scrubbed = withoutImagePaths(text.slice(from, to))
+    let start = 0
+    for (const mention of findImageMentions(scrubbed)) {
+      const path = imagesById.get(mention.id)
+      if (path === undefined || sentImages.has(path)) continue
+      sentImages.add(path)
+      parts.push({ type: 'text', text: pendingText + scrubbed.slice(start, mention.to) }, { type: 'image', path })
+      pendingText = ''
+      start = mention.to
     }
-    parts.push({ type: 'text', text: withoutImagePaths(textBefore + piece.source) }, { type: 'image', path: piece.path })
-    textBefore = ''
+    pendingText += scrubbed.slice(start)
   }
-  if (textBefore.trim()) parts.push({ type: 'text', text: withoutImagePaths(textBefore) })
+
+  let end = 0
+  for (const { from, to, path } of references) {
+    addText(end, from)
+    parts.push({ type: 'text', text: pendingText + withoutImagePaths(text.slice(from, to)) }, { type: 'image', path })
+    pendingText = ''
+    end = to
+  }
+  addText(end, text.length)
+
+  // With no part, the pending text is the whole scrubbed text.
+  if (parts.length === 0) return pendingText
+  if (pendingText.trim()) parts.push({ type: 'text', text: pendingText })
   return parts
 }

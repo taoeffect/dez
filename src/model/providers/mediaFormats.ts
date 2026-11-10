@@ -63,8 +63,10 @@ function jsonBody(body: Uint8Array): unknown {
   }
 }
 
-// The Venice image API (https://docs.venice.ai/api-reference). Watermark and
-// safe mode keep Venice's defaults.
+// The Venice image API (https://docs.venice.ai/api-reference). The user's
+// choice for every image: no Venice watermark (it is on by default, at the
+// bottom left), and safe mode off (on by default: Venice blurs images that
+// it classes as adult content). These are fixed values, not settings.
 const veniceFormat: MediaFormat = {
   request: (kind, baseUrl, modelId, { prompt, images }) => {
     const base = trimTrailingSlashes(baseUrl)
@@ -72,15 +74,17 @@ const veniceFormat: MediaFormat = {
       case 'image':
         // WebP is Venice's default; it is set so that the files keep one
         // type if the default changes.
-        return { url: `${base}/image/generate`, body: { model: modelId, prompt, format: 'webp' } }
+        return { url: `${base}/image/generate`, body: { model: modelId, prompt, format: 'webp', hide_watermark: true, safe_mode: false } }
       case 'imageEdit':
         // This endpoint names the model `modelId`, not `model`. The first
         // image is the one to edit; the others are references. Each one
         // goes as a data URL, as Dez has no URL that a provider could fetch.
+        // It has `safe_mode` but no `hide_watermark`, and its schema allows
+        // no field that it does not name, so only `safe_mode` goes.
         // https://docs.venice.ai/api-reference/endpoint/image/multi-edit
         return {
           url: `${base}/image/multi-edit`,
-          body: { modelId, prompt, images: images.map((image) => `data:${image.mediaType};base64,${image.data}`) },
+          body: { modelId, prompt, images: images.map((image) => `data:${image.mediaType};base64,${image.data}`), safe_mode: false },
         }
     }
   },

@@ -18,14 +18,16 @@ const head = (contentType: string): NativeHttpResponseHead => ({ status: 200, he
 const json = (value: unknown) => new TextEncoder().encode(JSON.stringify(value))
 
 describe('venice media requests', () => {
-  it('asks /image/generate for a WebP image', () => {
+  it('asks /image/generate for a WebP image with no watermark and no safe mode', () => {
     expect(venice.request('image', 'https://api.venice.ai/api/v1/', 'z-image-turbo', { prompt: 'A red fox', images: [] })).toStrictEqual({
       url: 'https://api.venice.ai/api/v1/image/generate',
-      body: { model: 'z-image-turbo', prompt: 'A red fox', format: 'webp' },
+      body: { model: 'z-image-turbo', prompt: 'A red fox', format: 'webp', hide_watermark: true, safe_mode: false },
     })
   })
 
-  it('sends an edit to /image/multi-edit with `modelId` and the images as data URLs, in order', () => {
+  // The endpoint has no `hide_watermark` field, and its schema takes no
+  // unknown field.
+  it('sends an edit to /image/multi-edit with `modelId`, the images as data URLs in order, and no safe mode', () => {
     const images: ChatImagePart[] = [
       { type: 'image', mediaType: 'image/png', data: bytesToBase64(PNG) },
       { type: 'image', mediaType: 'image/jpeg', data: bytesToBase64(JPEG) },
@@ -37,6 +39,7 @@ describe('venice media requests', () => {
         modelId: 'qwen-image-2-1-turbo-edit',
         prompt: 'Make it blue',
         images: [`data:image/png;base64,${bytesToBase64(PNG)}`, `data:image/jpeg;base64,${bytesToBase64(JPEG)}`],
+        safe_mode: false,
       },
     })
   })

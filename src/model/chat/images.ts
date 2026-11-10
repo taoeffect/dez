@@ -6,8 +6,9 @@ import { fileNameOf } from '../../utils/fileName'
 // image's metadata: nothing (references saved before ids existed), or
 // `key=value` items joined by `|`, such as `id=a`, and later perhaps
 // `id=a|desc=my great image`. The `id` is the image's short name in its
-// conversation (`pastedImageIdChanges`, `newImageIds`), so that a later
-// feature can name one image. Only paths into an app image folder
+// conversation (`pastedImageIdChanges`, `newImageIds`): the user names one
+// image with it in a message (`@a`, imageMentions.ts), and models read it
+// in the reference text. Only paths into an app image folder
 // (`…/assets/images/<name>.<ext>` or `…/assets/generated/images/…`, as
 // `dez.controller/images/save` writes them) count. Any other markdown image
 // (a URL, a hand-written path) stays plain text: it is not rendered and not
@@ -87,8 +88,10 @@ const METADATA_ITEM_SOURCE = String.raw`[a-z][a-z0-9_-]*=(?:[^\\|()\r\n]|\\[\\|(
 // Global and shared: `findImageReferences` resets `lastIndex` on each call.
 const IMAGE_REFERENCE = new RegExp(String.raw`!\[(${IMAGE_PATH_SOURCE})\]\((${METADATA_ITEM_SOURCE}(?:\|${METADATA_ITEM_SOURCE})*)?\)`, 'g')
 
-/** An image id: lower-case letters, given in the order of `nextImageId`. */
-const IMAGE_ID = /^[a-z]+$/
+/** An image id: lower-case letters, given in the order of `nextImageId`.
+ *  The `@id` mentions (imageMentions.ts) use the same source. */
+export const IMAGE_ID_SOURCE = '[a-z]+'
+const IMAGE_ID = new RegExp(`^${IMAGE_ID_SOURCE}$`)
 
 /** The text that stands for a whole image reference in tab titles and
  *  history previews. */

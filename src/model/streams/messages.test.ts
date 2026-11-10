@@ -182,10 +182,123 @@ describe('agentSectionMessages', () => {
   })
 })
 
+const GENERATED = '/home/u/.config/dez/assets/generated/images/fox.webp'
+const user = (id: string, text: string): Section => ({ id, role: 'user', content: [{ kind: 'text', text }] })
+const reply = (id: string, text: string): Section => ({ id, role: 'agent', model, content: [{ kind: 'text', text }] })
+
+describe('sectionsToStreamMessages: images of user messages', () => {
+  const sent = (sections: Section[], sendImages = true) => sectionsToStreamMessages(sections, model, { sendImages, sendTools: false })
+  // The conversation before the message under test: a pasted image `a`,
+  // and a generated image `b` in the reply.
+  const earlier = [user('u1', `![${IMAGE}](id=a) A red fox`), reply('a1', `![${GENERATED}](id=b)`)]
+  const earlierMessages = [
+    { role: 'user', content: [{ type: 'text', text: '![image](id=a)' }, { type: 'image', path: IMAGE }, { type: 'text', text: ' A red fox' }] },
+    { role: 'agent', content: '![image](id=b)' },
+  ]
+
+  it('sends a mentioned image of an earlier section right after its mention, which stays in the text', () => {
+    expect(sent([...earlier, user('u2', 'Give @b a hat, like the one of @a.')])).toStrictEqual({
+      messages: [
+        ...earlierMessages,
+        {
+          role: 'user',
+          content: [
+            { type: 'text', text: 'Give @b' },
+            { type: 'image', path: GENERATED },
+            { type: 'text', text: ' a hat, like the one of @a' },
+            { type: 'image', path: IMAGE },
+            { type: 'text', text: '.' },
+          ],
+        },
+      ],
+      imagesLeftOut: 0,
+    })
+  })
+
+  it('sends a mentioned image once, at its first mention', () => {
+    expect(sent([...earlier, user('u2', '@b: is @b blue?')]).messages.at(-1)).toStrictEqual({
+      role: 'user',
+      content: [{ type: 'text', text: '@b' }, { type: 'image', path: GENERATED }, { type: 'text', text: ': is @b blue?' }],
+    })
+  })
+
+  it('adds no part for a mention of an image that the message itself holds', () => {
+    const other = '/home/u/.config/dez/assets/images/blue.png'
+
+    expect(sent([...earlier, user('u2', `Put @c on @b: ![${other}](id=c) Is @c right?`)]).messages.at(-1)).toStrictEqual({
+      role: 'user',
+      content: [
+        { type: 'text', text: 'Put @c on @b' },
+        { type: 'image', path: GENERATED },
+        { type: 'text', text: ': ![image](id=c)' },
+        { type: 'image', path: other },
+        { type: 'text', text: ' Is @c right?' },
+      ],
+    })
+  })
+
+  it.each([
+    ['an id that no image has', 'Mail @home or @c'],
+    ['an address', 'Mail bob@a.com and b@b'],
+    ['a longer word', 'What is @about and @b2?'],
+  ])('keeps %s as plain text, in a text-only message', (_name, text) => {
+    expect(sent([...earlier, user('u2', text)]).messages.at(-1)).toStrictEqual({ role: 'user', content: text })
+  })
+
+  it('reads no image of a later section, so an earlier message keeps its bytes when an image arrives', () => {
+    const first = user('u1', 'Draw @a')
+    const before = sent([first]).messages
+
+    const after = sent([first, reply('a1', `![${GENERATED}](id=a)`), user('u2', 'Now make @a blue')]).messages
+
+    expect(before).toStrictEqual([{ role: 'user', content: 'Draw @a' }])
+    expect(after).toStrictEqual([
+      ...before,
+      { role: 'agent', content: '![image](id=a)' },
+      { role: 'user', content: [{ type: 'text', text: 'Now make @a' }, { type: 'image', path: GENERATED }, { type: 'text', text: ' blue' }] },
+    ])
+  })
+
+  it('takes the last image with the id when two images have it', () => {
+    const sections = [user('u1', `![${IMAGE}](id=a)`), reply('a1', `![${GENERATED}](id=a)`), user('u2', 'Crop @a')]
+
+    expect(sent(sections).messages.at(-1)).toStrictEqual({ role: 'user', content: [{ type: 'text', text: 'Crop @a' }, { type: 'image', path: GENERATED }] })
+  })
+
+  it('reads no mention in a bare image path, and sends no part of the path', () => {
+    const text = 'Is /home/@b/.config/dez/assets/images/red.png the same as @b?'
+
+    expect(sent([...earlier, user('u2', text)]).messages.at(-1)).toStrictEqual({
+      role: 'user',
+      content: [{ type: 'text', text: 'Is image the same as @b' }, { type: 'image', path: GENERATED }, { type: 'text', text: '?' }],
+    })
+  })
+
+  it('scrubs a bare path before a reference and after it', () => {
+    const text = `See ${IMAGE}![${IMAGE}](id=c) and ${GENERATED}.`
+
+    expect(sent([user('u1', text)]).messages).toStrictEqual([{
+      role: 'user',
+      content: [{ type: 'text', text: 'See image![image](id=c)' }, { type: 'image', path: IMAGE }, { type: 'text', text: ' and image.' }],
+    }])
+  })
+
+  it('sends a model that reads no images the text only, and counts the references and the mentioned images', () => {
+    const sections = [...earlier, user('u2', `Mix @b, @b, and ![${IMAGE}](id=a) with @a and @c.`)]
+
+    expect(sent(sections, false)).toStrictEqual({
+      messages: [
+        { role: 'user', content: '![image](id=a) A red fox' },
+        { role: 'agent', content: '![image](id=b)' },
+        { role: 'user', content: 'Mix @b, @b, and ![image](id=a) with @a and @c.' },
+      ],
+      // `a` in the first message; `b` and `a` in the last one.
+      imagesLeftOut: 3,
+    })
+  })
+})
+
 describe('mediaRequestInput', () => {
-  const GENERATED = '/home/u/.config/dez/assets/generated/images/fox.webp'
-  const user = (id: string, text: string): Section => ({ id, role: 'user', content: [{ kind: 'text', text }] })
-  const reply = (id: string, text: string): Section => ({ id, role: 'agent', model, content: [{ kind: 'text', text }] })
   // The tab's sections at the start of a media reply: the reply's own
   // section is empty, so it gives no message.
   const input = (kind: 'image' | 'imageEdit', sections: Section[]) => {
@@ -209,6 +322,29 @@ describe('mediaRequestInput', () => {
     const sections = [user('u1', `![${GENERATED}](id=a)`), user('u2', `Mix ![${other}](id=b) and ![${IMAGE}](id=c)`)]
 
     expect(input('imageEdit', sections).images).toStrictEqual([other, IMAGE])
+  })
+
+  it('edits the image that the last user message mentions, not the newest one', () => {
+    const newest = '/home/u/.config/dez/assets/generated/images/cat.webp'
+    const sections = [
+      user('u1', 'A red fox'),
+      reply('a1', `![${GENERATED}](id=a)`),
+      user('u2', 'A cat'),
+      reply('a2', `![${newest}](id=b)`),
+      user('u3', 'Edit @a to add an apple'),
+    ]
+
+    expect(input('imageEdit', sections)).toStrictEqual({ prompt: 'Edit @a to add an apple', images: [GENERATED] })
+    expect(input('image', sections)).toStrictEqual({ prompt: 'Edit @a to add an apple', images: [] })
+  })
+
+  it('edits the pasted and the mentioned images of the last user message in text order, each one once', () => {
+    const sections = [
+      reply('a1', `![${GENERATED}](id=a)`),
+      user('u1', `Put ![${IMAGE}](id=b) and ![${IMAGE}](id=b) on @a. Keep @a and @b sharp.`),
+    ]
+
+    expect(input('imageEdit', sections).images).toStrictEqual([IMAGE, GENERATED])
   })
 
   it('edits the newest image of the conversation when the last user message has none', () => {
