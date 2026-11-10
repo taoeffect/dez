@@ -15,8 +15,9 @@ Usage:
   node scripts/bump-version-and-release.js [--check | --files-only] <version>
 
 With a version alone, it releases that version:
-  1. Checks with "git ls-remote" that your SSH keys can push. If they
-     cannot, it stops and changes nothing.
+  1. Checks that the version files have no uncommitted change other than
+     a version bump, and with "git ls-remote" that your SSH keys can
+     push. If a check fails, it stops and changes nothing.
   2. Bumps the version in the npm, Tauri, and Cargo files.
   3. Signs the version with minisign and ~/.minisign/dez-tag-key.key.
   4. Commits the version files, the signed version, and its signature.
@@ -192,10 +193,13 @@ function bumpFiles(version) {
 // Runs a command in the repo root and throws when it fails. The command
 // gets the terminal, so ssh, minisign, and git can ask for a passphrase
 // there and show their own errors. With `capture`, returns its stdout.
+// No output limit: a capture can be a whole version file, and
+// package-lock.json can grow past spawnSync's 1 MiB default.
 function run(command, args, { capture = false } = {}) {
   const result = spawnSync(command, args, {
     cwd: repoRoot,
     encoding: 'utf8',
+    maxBuffer: Infinity,
     stdio: ['inherit', capture ? 'pipe' : 'inherit', 'inherit']
   });
   if (result.error) {
@@ -240,6 +244,26 @@ function checkPush(tag) {
   }
 }
 
+// Throws when a version file holds an uncommitted change other than its
+// version. The release commit takes each version file whole, so such a
+// change (lockfile drift from `npm install` or a cargo build) would go into
+// the release with no word about it. Both sides get the same bump, so a
+// second run after a failed signature, when the files already hold the new
+// version, still passes.
+function checkVersionFilesMatchHead(version) {
+  const paths = Object.keys(VERSION_FILES);
+  const head = Object.fromEntries(paths.map(path =>
+    [path, run('git', ['cat-file', 'blob', `HEAD:${path}`], { capture: true })]));
+  const here = readTexts();
+  const fromHead = { ...head, ...bumpedFiles(version, head) };
+  const fromHere = { ...here, ...bumpedFiles(version, here) };
+  const changed = paths.filter(path => fromHead[path] !== fromHere[path]);
+  if (changed.length > 0) {
+    throw new Error(`These files hold changes other than the version. Commit or stash them first:
+${changed.map(path => `- ${path}`).join('\n')}`);
+  }
+}
+
 // Writes the message and signs it with the commit key. minisign asks for
 // the key's password, if it has one, on the terminal.
 function signVersion(version) {
@@ -266,6 +290,7 @@ function release(version) {
   const push = ['push', '--atomic', PUSH_REMOTE, 'HEAD', `refs/tags/${tag}`];
   let state = 'Nothing was changed.';
   try {
+    checkVersionFilesMatchHead(version);
     checkPush(tag);
 
     state = `Nothing was committed, but the version files, ${MESSAGE_PATH}, and its signature can hold changes.
@@ -274,7 +299,8 @@ Fix the problem and run this command again.`;
     signVersion(version);
     // `git add` because the message and the signature are new files in the
     // first release. The paths after `git commit` keep every other staged
-    // change out of the release commit.
+    // change out of the release commit, and checkVersionFilesMatchHead()
+    // keeps out other changes in the version files.
     run('git', ['add', '--', ...files]);
     run('git', ['commit', '-m', tag, '--', ...files]);
 

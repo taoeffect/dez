@@ -1,5 +1,5 @@
 import { spawnSync } from 'node:child_process';
-import { copyFileSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { copyFileSync, existsSync, mkdirSync, mkdtempSync, readFileSync, renameSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -237,6 +237,22 @@ describe('a release in a throwaway repo', { timeout: 30_000 }, () => {
     expect(box.state()).toEqual(remote);
   });
 
+  // No commit key exists here, so the run also fails if it gets to signing.
+  it('changes nothing when a version file holds another change', () => {
+    const box = sandbox();
+    box.write('package-lock.json', json({
+      name: 'dez',
+      version: '0.1.0',
+      packages: { '': { name: 'dez', version: '0.1.0' }, 'node_modules/drift': { version: '9.9.9' } }
+    }));
+    const before = box.state();
+
+    const result = box.script('0.2.0');
+    expect(result.status).toBe(1);
+    expect(result.stderr).toContain('- package-lock.json\nNothing was changed.');
+    expect(box.state()).toEqual(before);
+  });
+
   it.skipIf(!hasMinisign)('makes no commit when the signature is not from the committed key', () => {
     const box = sandbox({ keys: 'wrong' });
     const before = box.state();
@@ -246,6 +262,24 @@ describe('a release in a throwaway repo', { timeout: 30_000 }, () => {
     expect(result.stderr).toContain(`The new signature does not verify against ${PUBLIC_KEY}`);
     expect(result.stderr).toContain('Nothing was committed');
     expect(box.state()).toEqual({ ...before, changes: expect.stringContaining(MESSAGE_PATH) });
+  });
+
+  // The way on after a failed signature is to run the command again, when
+  // the version files already hold the new version. The check for other
+  // changes in those files must let that run through.
+  it.skipIf(!hasMinisign)('releases on a second run after the signing failed', () => {
+    const box = sandbox({ keys: true });
+    const key = join(box.root, 'home', '.minisign', 'dez-tag-key.key');
+    renameSync(key, `${key}.away`);
+    let result = box.script('0.2.0');
+    expect(result.status).toBe(1);
+    expect(result.stderr).toContain('Nothing was committed');
+
+    renameSync(`${key}.away`, key);
+    result = box.script('0.2.0');
+    expect(result.status, result.stderr).toBe(0);
+    expect(box.git('log', '-1', '--format=%s')).toBe('v0.2.0');
+    expect(box.git('status', '--porcelain')).toBe('');
   });
 
   it.skipIf(!hasMinisign)('keeps the tag off the remote when the remote refuses the branch', () => {
