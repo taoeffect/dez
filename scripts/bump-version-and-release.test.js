@@ -254,6 +254,19 @@ describe('a release in a throwaway repo', { timeout: 30_000 }, () => {
     expect(box.state()).toEqual(remote);
   });
 
+  // `git push origin HEAD` at the end needs a branch. No commit key exists
+  // here, so the run also fails if it gets to signing.
+  it('changes nothing on a detached HEAD', () => {
+    const box = sandbox();
+    box.git('checkout', '--quiet', '--detach');
+    const before = box.state();
+
+    const result = box.script('0.2.0');
+    expect(result.status).toBe(1);
+    expect(result.stderr).toContain('HEAD is detached. Check out the branch to release from.\nNothing was changed.');
+    expect(box.state()).toEqual(before);
+  });
+
   // No commit key exists here, so the run also fails if it gets to signing.
   it('changes nothing when a version file holds another change', () => {
     const box = sandbox();

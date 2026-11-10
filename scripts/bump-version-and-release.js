@@ -15,9 +15,10 @@ Usage:
   node scripts/bump-version-and-release.js [--check | --files-only] <version>
 
 With a version alone, it releases that version:
-  1. Checks that the version files have no uncommitted change other than
-     a version bump, and with "git ls-remote" that your SSH keys can
-     push. If a check fails, it stops and changes nothing.
+  1. Checks that HEAD is on a branch, that the version files have no
+     uncommitted change other than a version bump, and with
+     "git ls-remote" that your SSH keys can push. If a check fails, it
+     stops and changes nothing.
   2. Bumps the version in the npm, Tauri, and Cargo files.
   3. Signs the version with minisign and ~/.minisign/dez-tag-key.key.
   4. Commits the version files, the signed version, and its signature.
@@ -224,8 +225,8 @@ function run(command, args, { capture = false } = {}) {
   return result.stdout;
 }
 
-// Throws unless the push at the end of a release can work: the SSH keys
-// reach the remote, and the tag is new there and here.
+// Throws unless the push at the end of a release can work: HEAD is on a
+// branch, the SSH keys reach the remote, and the tag is new there and here.
 //
 // It asks with `git ls-remote` and never with `git push`: a push that works
 // changes the remote, and a pushed tag starts the release workflow. It asks
@@ -238,6 +239,12 @@ function run(command, args, { capture = false } = {}) {
 // public GitHub repo that is every account's key, so the push can still be
 // refused; release() then says what is left on this machine.
 function checkPush(tag) {
+  // `git push origin HEAD` needs a branch. On a detached HEAD it fails, and
+  // only after the commit and the tag exist.
+  const branch = spawnSync('git', ['symbolic-ref', '--quiet', 'HEAD'], { cwd: repoRoot, stdio: 'ignore' });
+  if (branch.status !== 0) {
+    throw new Error('HEAD is detached. Check out the branch to release from.');
+  }
   let remoteTag;
   try {
     const url = run('git', ['remote', 'get-url', '--push', PUSH_REMOTE], { capture: true }).trim();
