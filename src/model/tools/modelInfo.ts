@@ -3,6 +3,7 @@ import { MODEL_OUTPUT_IDS } from '../modelOutputs'
 import { availableModels } from '../modelSearch'
 import type { ModelCache } from '../persistence/types'
 import { MODEL_REQUESTS, type ModelInfo, type ProviderInfo } from '../providers/types'
+import { jsonWithoutLocalPaths } from './localPaths'
 import type { ToolArguments, ToolDefinition } from './types'
 
 /** The most characters of a `model_info` result with the provider's entry;
@@ -22,6 +23,8 @@ export const MODEL_INFO_TOOL: ToolDefinition = {
     + 'with no `request`, it sends chat requests; with no `imageInput` or `toolCalling`, it sends images and tools. '
     + '`providerEntry` is the model\'s entry in the provider\'s model list as the provider sent it, such as its prices and context length; '
     + 'for a model that only the Dez provider settings list, it is the model\'s entry there. '
+    + 'Dez hides the local file paths in `providerEntry` that can show a user name or a project name: '
+    + 'such a path keeps only its start, and `…` stands for the rest (for example `/home/…`). The `id` at the top is never changed. '
     + `A result over ${MODEL_INFO_SIZE_CAP} characters leaves \`providerEntry\` out and says so in \`note\`.`,
   parameters: [
     {
@@ -70,7 +73,14 @@ function prettyJson(value: unknown): string {
  *  provider, what Dez knows about it (`dez`), and `entry`, the raw entry of
  *  its provider's model list, as `providerEntry`. With no entry (undefined),
  *  or when the result would be over MODEL_INFO_SIZE_CAP characters, `note`
- *  takes the place of `providerEntry` and says why. */
+ *  takes the place of `providerEntry` and says why.
+ *
+ *  The local file paths in the entry go as stand-ins (localPaths.ts). This
+ *  is done here, and not when a request is built, because the result is
+ *  stored in its `<dez:tool>` block as it was sent, and the prompt cache
+ *  needs the same bytes in each later request. The model's own id and name
+ *  stay as they are, even when a local server uses a path as the id: Dez
+ *  needs the id to call the model, and `model_list` gives both. */
 export function modelInfoText(provider: ProviderInfo, model: ModelInfo, entry: unknown): string {
   const info = {
     id: modelRefKey({ providerId: provider.id, modelId: model.id }),
@@ -82,7 +92,7 @@ export function modelInfoText(provider: ProviderInfo, model: ModelInfo, entry: u
   }
   if (entry === undefined) return prettyJson({ ...info, note: 'Dez has no entry from the provider for this model now. Try again later.' })
 
-  const full = prettyJson({ ...info, providerEntry: entry })
+  const full = prettyJson({ ...info, providerEntry: jsonWithoutLocalPaths(entry) })
   if (full.length <= MODEL_INFO_SIZE_CAP) return full
   return prettyJson({ ...info, note: `providerEntry is left out: with it, the result has ${full.length} characters, over the limit of ${MODEL_INFO_SIZE_CAP}.` })
 }

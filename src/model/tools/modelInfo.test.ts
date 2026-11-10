@@ -83,4 +83,31 @@ describe('modelInfoText', () => {
     expect(over.note).toBe(`providerEntry is left out: with it, the result has ${MODEL_INFO_SIZE_CAP + 1} characters, over the limit of ${MODEL_INFO_SIZE_CAP}.`)
     expect(over.dez).toStrictEqual({ outputs: ['text', 'image'], request: 'chat', imageInput: true })
   })
+
+  // A local server can use a file path as the model id, and its entry can
+  // hold more paths (vLLM's `root`).
+  describe('with local file paths in the provider entry', () => {
+    const LOCAL = providerInfo('local', 'Local')
+    const path = '/home/alice/acme-bot/llama-3'
+    const served: ModelInfo = { id: path, name: path, provider: LOCAL.id }
+
+    it('sends a stand-in for each path of the entry, and keeps the model\'s own id and name', () => {
+      const result = modelInfoText(LOCAL, served, { id: path, object: 'model', root: path, parent: null, max_model_len: 8192 })
+
+      expect(JSON.parse(result)).toStrictEqual({
+        id: `local/${path}`,
+        name: path,
+        provider: { id: 'local', name: 'Local' },
+        dez: {},
+        providerEntry: { id: '/home/…', object: 'model', root: '/home/…', parent: null, max_model_len: 8192 },
+      })
+    })
+
+    it('counts the stand-ins, not the paths, for the size limit', () => {
+      const result = JSON.parse(modelInfoText(LOCAL, served, { root: `${path}/${'x'.repeat(MODEL_INFO_SIZE_CAP)}` })) as Record<string, unknown>
+
+      expect(result.providerEntry).toStrictEqual({ root: '/home/…' })
+      expect(result).not.toHaveProperty('note')
+    })
+  })
 })
