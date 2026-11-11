@@ -303,13 +303,22 @@ function selectTooltipLine(event: MouseEvent): void {
 }
 
 /** The faces of the Save control: `Save ⬇` → (saving) → `Saved ✓` → a green
- *  check, which is a trash under the pointer → (deleting) → `Save ⬇`. */
+ *  check in a circle, which is a trash under the pointer → (deleting) →
+ *  `Save ⬇`. */
 type SaveState = 'save' | 'saving' | 'just-saved' | 'saved' | 'deleting'
 
 // How long the word "Saved" shows before the control becomes the check.
 const SAVED_WORD_MS = 1000
 const justSaved = ref(false)
 let justSavedTimer: number | undefined
+
+// Whether the check plays its change from a filled disc to an outline
+// (`data-outlining`; the CSS has the animation). Only a Save in this player
+// starts it: a player that mounts with a saved clip (a tab switch makes new
+// players) shows the outline at once. It ends with the animation, or when
+// the trash hides the check and so stops the animation: the check would
+// play it again each time it shows.
+const outlining = ref(false)
 
 // Whether the check becomes the trash under the pointer or the focus. After
 // a Save, the pointer is still on the control; the trash right there would
@@ -323,10 +332,12 @@ const trashArmed = ref(false)
 watch(saved, (isSaved) => {
   window.clearTimeout(justSavedTimer)
   justSaved.value = isSaved
+  outlining.value = false
   trashArmed.value = false
   if (!isSaved) return
   justSavedTimer = window.setTimeout(() => {
     justSaved.value = false
+    outlining.value = true
   }, SAVED_WORD_MS)
 })
 
@@ -541,9 +552,19 @@ function onSaveClick(): void {
               <path d="M3.4 8.5l3 3 6.2-6.6" />
             </svg>
             <template v-else>
-              <svg class="media-player__icon media-player__save-done" viewBox="0 0 16 16" aria-hidden="true">
-                <circle cx="8" cy="8" r="7" />
-                <path class="media-player__save-done-check" d="M4.7 8.3l2.3 2.3 4.4-4.8" />
+              <svg
+                class="media-player__icon media-player__icon--line media-player__save-done"
+                :data-outlining="outlining ? '' : undefined"
+                viewBox="0 0 16 16"
+                aria-hidden="true"
+                @animationcancel="outlining = false"
+              >
+                <circle class="media-player__save-done-ring" cx="8" cy="8" r="6.4" />
+                <g class="media-player__save-done-fill">
+                  <circle cx="8" cy="8" r="6.4" />
+                  <path d="M4.7 8.3l2.3 2.3 4.4-4.8" />
+                </g>
+                <path class="media-player__save-done-check" d="M4.7 8.3l2.3 2.3 4.4-4.8" @animationend="outlining = false" />
               </svg>
               <svg class="media-player__icon media-player__icon--line media-player__save-trash" viewBox="0 0 16 16" aria-hidden="true">
                 <path d="M3 4.4h10M6.2 4.4V3.3c0-.39.31-.7.7-.7h2.2c.39 0 .7.31.7.7v1.1M4.3 4.4l.5 8.1c.03.5.45.9.95.9h4.5c.5 0 .92-.4.95-.9l.5-8.1M6.7 7v3.8M9.3 7v3.8" />
@@ -965,13 +986,38 @@ function onSaveClick(): void {
   height: calc(var(--u) * 18);
 }
 
-/* The check on the green disc has the color of the card behind it. */
+/* The check of a saved clip: a green circle and check, in outline, so that
+   it does not draw the eye from the clip. The ring's outer edge is at
+   radius 7. */
+.media-player__save-done-ring,
 .media-player__save-done-check {
-  fill: none;
+  stroke-width: 1.2;
+}
+
+/* The filled look of the check: a green disc, which with the ring is a disc
+   of radius 7, and the check in the color of the card behind it. It shows
+   only in the animation after a Save. */
+.media-player__save-done-fill {
+  opacity: 0;
+}
+
+.media-player__save-done-fill > circle {
+  fill: currentColor;
+  stroke: none;
+}
+
+.media-player__save-done-fill > path {
   stroke: var(--color-bg);
   stroke-width: 1.6;
-  stroke-linecap: round;
-  stroke-linejoin: round;
+}
+
+/* The check line is about 9.8 units long (its `d`). One dash longer than
+   the line, and a gap longer still, let the animation draw the line from
+   its start with `stroke-dashoffset`. At an offset past the dash's length,
+   all of the line is in the gap, with no dash end on it, which a round cap
+   would paint as a dot. */
+.media-player__save-done-check {
+  stroke-dasharray: 10 20;
 }
 
 .media-player__save > .media-player__save-trash {
@@ -1275,6 +1321,19 @@ function onSaveClick(): void {
     animation: media-player-pop 0.3s ease-out;
   }
 
+  /* After a Save, the check changes from the filled disc to the outline:
+     the pill becomes a circle (0.25 s, the `padding` transition), then the
+     fill fades and leaves the ring, then the check draws itself in green.
+     The old and the new check do not show at one time: in a cross-fade,
+     the check would melt into the half-faded disc. */
+  .media-player__save-done[data-outlining] > .media-player__save-done-fill {
+    animation: media-player-fill-out 0.3s ease 0.25s both;
+  }
+
+  .media-player__save-done[data-outlining] > .media-player__save-done-check {
+    animation: media-player-draw-check 0.3s ease-out 0.5s both;
+  }
+
   .media-player__spinner {
     animation: media-player-spin 0.9s linear infinite;
   }
@@ -1292,6 +1351,26 @@ function onSaveClick(): void {
 
   100% {
     transform: scale(1);
+  }
+}
+
+@keyframes media-player-fill-out {
+  from {
+    opacity: 1;
+  }
+
+  to {
+    opacity: 0;
+  }
+}
+
+@keyframes media-player-draw-check {
+  from {
+    stroke-dashoffset: 11;
+  }
+
+  to {
+    stroke-dashoffset: 0;
   }
 }
 
