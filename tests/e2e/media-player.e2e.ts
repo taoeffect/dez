@@ -8,7 +8,7 @@ import { WEBM_VIDEO, openPlayerTooltips, shownPlayers, silentWav, startClipServe
 import { startMockProviderApp, type MockProviderApp } from './harness/mockProviderApp'
 import { mockChatPath, replyText, sendChatReply, type MockProvider } from './harness/mockServer'
 import type { E2EBrowser } from './harness/session'
-import { newTab, pickModel, sbpCall, submit, threadSections, waitForThread, type ThreadSection } from './harness/thread'
+import { copySelection, editorDoc, newTab, pasteText, pickModel, sbpCall, setCaret, submit, threadSections, waitForThread, type ThreadSection } from './harness/thread'
 
 // The players of audio and video clips (media tags in agent sections),
 // driven through the real app. The clips come from a clip server of the
@@ -28,7 +28,10 @@ import { newTab, pickModel, sbpCall, submit, threadSections, waitForThread, type
 //   path;
 // - each player has an id badge that shows while the pointer is over the
 //   player (on a video at the top right of the picture, else beside the
-//   card), with a tooltip that tells how to name the clip.
+//   card), with a tooltip that tells how to name the clip;
+// - a clip that is pasted from another conversation gets a new id when the
+//   conversation has a clip with its id, and so do the pasted mentions of
+//   it.
 //
 // One app session serves the whole file; each test starts in a new tab.
 
@@ -54,12 +57,13 @@ function clipTag (kind: ClipKind, fields: { id: string, type: string, src?: stri
   return `<dez:${kind}${attributes.join('')}/>`
 }
 
-/** The thread of a seeded conversation whose one reply is `reply`. */
-function seededThread (reply: string): ThreadSection[] {
+/** The thread of a seeded conversation whose one reply is `reply`, with
+ *  `next` as the text of the user section after it. */
+function seededThread (reply: string, next = ''): ThreadSection[] {
   return [
     { role: 'user', text: 'Make clips' },
     { role: 'agent', text: reply },
-    { role: 'user', text: '' },
+    { role: 'user', text: next },
   ]
 }
 
@@ -93,19 +97,20 @@ describe('media player', () => {
   }
 
   // Seeds a conversation whose one reply is `reply`, as the app saves it
-  // after a reply (with the next user section), and opens it.
-  async function openReply (id: string, reply: string): Promise<void> {
+  // after a reply (with the next user section, whose text is `next`), and
+  // opens it.
+  async function openReply (id: string, reply: string, next = ''): Promise<void> {
     await seedConversation(setup.app.home, makeConversation({
       id,
       title: id,
       sections: [
         { role: 'user', nodes: [{ kind: 'text', text: 'Make clips' }] },
         { role: 'agent', nodes: [{ kind: 'text', text: reply }] },
-        { role: 'user', nodes: [{ kind: 'text', text: '' }] },
+        { role: 'user', nodes: [{ kind: 'text', text: next }] },
       ],
     }))
     await sbpCall(browser, 'dez.model/tabs/openConversation', id)
-    await waitForValue(browser, 'seeded thread', () => threadSections(browser), seededThread(reply))
+    await waitForValue(browser, 'seeded thread', () => threadSections(browser), seededThread(reply, next))
   }
 
   // The name of the first Save control, which tells what a click on it does.
@@ -371,6 +376,40 @@ describe('media player', () => {
     await movePointer(browser, OFF_PLAYERS)
     await waitForValue(browser, 'tooltips with the pointer off the players', () => openPlayerTooltips(browser), [])
     await waitForValue(browser, 'badges with the pointer off the players', badges, [videoBadge, audioBadge])
+    expect(await consoleErrors(browser)).toStrictEqual([])
+  })
+
+  it('gives a clip that is pasted from another conversation a new id, and the pasted mentions of it too, when the conversation has a clip with its id', async () => {
+    const audioUrl = clips.clipUrl('tone.wav')
+    const videoUrl = clips.clipUrl('video.webm')
+    const expires = new Date(Date.now() + HOUR_MS).toISOString()
+    const audio = { type: 'audio/wav', src: audioUrl, url: audioUrl, expires }
+
+    // The conversation that is copied whole: its clip is `a` there, and
+    // its last message names the clip.
+    await openReply('copied-clip', clipTag('audio', { id: 'a', ...audio }), 'Use audio @a, not @a-side')
+    await setCaret(browser, 0, (await editorDoc(browser)).length)
+    const copied = await copySelection(browser)
+
+    // The conversation that gets the paste has a clip `a` of its own.
+    const videoTag = clipTag('video', { id: 'a', type: 'video/webm', src: videoUrl, url: videoUrl, expires })
+    await openReply('own-clip', videoTag)
+    await setCaret(browser, (await editorDoc(browser)).length)
+    await pasteText(browser, copied)
+
+    // The paste starts in the empty last section. The pasted clip is `b`
+    // here, and so is its mention; `@a-side` is no mention.
+    await waitForValue(browser, 'thread after the paste', () => threadSections(browser), [
+      { role: 'user', text: 'Make clips' },
+      { role: 'agent', text: videoTag },
+      { role: 'user', text: 'Make clips' },
+      { role: 'agent', text: clipTag('audio', { id: 'b', ...audio }) },
+      { role: 'user', text: 'Use audio @b, not @a-side' },
+    ])
+    await waitForValue(browser, 'players after the paste', () => shownPlayers(browser), [
+      { kind: 'video', id: 'a', available: true, source: videoUrl, seconds: 2, picture: { width: 48, height: 36 }, clock: 'Not saved', save: 'save' },
+      { kind: 'audio', id: 'b', available: true, source: audioUrl, seconds: 2, picture: null, clock: 'Not saved', save: 'save' },
+    ])
     expect(await consoleErrors(browser)).toStrictEqual([])
   })
 })

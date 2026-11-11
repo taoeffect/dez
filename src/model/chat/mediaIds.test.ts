@@ -1,22 +1,23 @@
 import { describe, expect, it } from 'vitest'
-import { newMediaIds, pastedImageIdChanges } from './mediaIds'
+import { newMediaIds, pastedMediaIdChanges } from './mediaIds'
 import { mediaTagText } from './mediaTags'
 
 const PNG = '/home/ann/.config/dez/assets/images/5f1c2a9e-0b7d-4c3e-9a51-2d8f6e4b7c10.png'
 
-/** The tag of a clip with this id. */
-function clip(id: string, kind: 'audio' | 'video' = 'video'): string {
-  return mediaTagText({ kind, id, type: `${kind}/mp4`, src: null, url: 'https://cdn.example/clip', expires: null, other: [] })
+/** The tag of a clip with this id. Clips with the same kind and `url` are
+ *  the same clip. */
+function clip(id: string, kind: 'audio' | 'video' = 'video', url = 'https://cdn.example/clip'): string {
+  return mediaTagText({ kind, id, type: `${kind}/mp4`, src: null, url, expires: null, other: [] })
 }
 
-describe('pastedImageIdChanges', () => {
+describe('pastedMediaIdChanges', () => {
   const image = (name: string) => `/home/ann/.config/dez/assets/images/${name}.png`
 
   /** `before` + `pasted` + `after` as the conversation after the paste,
    *  with the id changes applied. */
   function paste(pasted: string, before = '', after = ''): string {
     const text = before + pasted + after
-    const changes = pastedImageIdChanges(text, [{ from: before.length, to: before.length + pasted.length }])
+    const changes = pastedMediaIdChanges(text, [{ from: before.length, to: before.length + pasted.length }])
     return changes.reduceRight((result, { from, to, insert }) => result.slice(0, from) + insert + result.slice(to), text)
   }
 
@@ -76,11 +77,87 @@ describe('pastedImageIdChanges', () => {
       .toBe(`${before}![${image('x')}](id=d) ![${image('y')}](id=e) ![${image('z')}](id=a)${after}`)
   })
 
-  it('never changes a media tag, also a pasted one with an id that is taken', () => {
-    const before = `![${image('a')}](id=a)\n${clip('b')}\n`
-    const pasted = `${clip('a')}\n${clip('b', 'audio')}\n`
+  it('gives a pasted clip the next id when an image or another clip has its id, and keeps its other attributes', () => {
+    const before = `![${image('a')}](id=a)\n\u001E\n${clip('b')}\n\u001E\n`
+    const tag = { kind: 'video', type: 'video/mp4', src: '/home/ann/.cache/dez/media/x.mp4', url: null, expires: '2026-11-11T09:30:00.000Z', other: [{ name: 'job', value: 'j "1"' }] } as const
+
+    expect(paste(`${clip('a', 'audio')}\n${mediaTagText({ ...tag, id: 'b' })}`, before))
+      .toBe(`${before}${clip('c', 'audio')}\n${mediaTagText({ ...tag, id: 'd' })}`)
+  })
+
+  it('keeps the id of a pasted copy of a clip, and a pasted id that no other image or clip has', () => {
+    const before = `${clip('a')}\n`
+    const pasted = `${clip('a')}\n${clip('k', 'audio')}`
 
     expect(paste(pasted, before)).toBe(before + pasted)
+  })
+
+  it('gives the new ids in doc order when a pasted clip and a pasted image both have a taken id', () => {
+    const before = `![${image('a')}](id=a)\n${clip('b')}\n`
+
+    expect(paste(`${clip('a', 'video', 'https://cdn.example/other')}\n![${image('x')}](id=b)`, before))
+      .toBe(`${before}${clip('c', 'video', 'https://cdn.example/other')}\n![${image('x')}](id=d)`)
+    expect(paste(`![${image('x')}](id=b)\n${clip('a', 'video', 'https://cdn.example/other')}`, before))
+      .toBe(`${before}![${image('x')}](id=c)\n${clip('d', 'video', 'https://cdn.example/other')}`)
+  })
+
+  it('lets the first of two pasted assets keep an id that both have', () => {
+    expect(paste(`![${image('x')}](id=a)\n${clip('a')}`)).toBe(`![${image('x')}](id=a)\n${clip('b')}`)
+    expect(paste(`${clip('a')}\n![${image('x')}](id=a)`)).toBe(`${clip('a')}\n![${image('x')}](id=b)`)
+  })
+
+  it('changes no tag that was not pasted whole', () => {
+    // A hand-made clash of two clips, and a tag that the paste only
+    // completed, stay as they are.
+    const before = `${clip('a')}\n${clip('a', 'audio')}\n${clip('a', 'video', 'https://cdn.example/other').slice(0, -2)}`
+
+    expect(paste('/>', before)).toBe(`${before}/>`)
+  })
+
+  it('leaves an image reference in an attribute of a pasted tag that gets a new id', () => {
+    const before = `![${image('a')}](id=a)\n`
+    const nested = `![${image('n')}](id=a)`
+
+    expect(paste(clip('a', 'video', nested), before)).toBe(before + clip('b', 'video', nested))
+  })
+
+  describe('mentions', () => {
+    const before = `![${image('a')}](id=a) and @a\n`
+
+    it('gives the pasted mentions of an id that changed the new id, before and after its image', () => {
+      expect(paste(`(@a: a duck) ![${image('x')}](id=a) edit @a, not @a-team or @k`, before, '\nthen @a'))
+        .toBe(`${before}(@b: a duck) ![${image('x')}](id=b) edit @b, not @a-team or @k\nthen @a`)
+    })
+
+    it('gives the pasted mentions of a clip its new id', () => {
+      expect(paste(`Make @a longer.\n${clip('a')}`, before)).toBe(`${before}Make @b longer.\n${clip('b')}`)
+    })
+
+    it('keeps a pasted mention whose image keeps its id, and one of an id that the paste has no image for', () => {
+      const pasted = `![${image('k')}](id=k) @k @a`
+
+      expect(paste(pasted, before)).toBe(before + pasted)
+    })
+
+    it('takes the last pasted image of an id for its mentions', () => {
+      expect(paste(`![${image('x')}](id=a) ![${image('y')}](id=a) @a`, before))
+        .toBe(`${before}![${image('x')}](id=b) ![${image('y')}](id=c) @c`)
+      // The last one is a copy of the conversation's own image `a`.
+      expect(paste(`![${image('x')}](id=a) ![${image('a')}](id=a) @a`, before))
+        .toBe(`${before}![${image('x')}](id=b) ![${image('a')}](id=a) @a`)
+    })
+
+    it('reads a pasted mention with the chars around it in the conversation', () => {
+      // `bob@a` is an address and `@abc` is another word.
+      expect(paste(`@a ![${image('x')}](id=a) @a`, `${before}bob`, 'bc'))
+        .toBe(`${before}bob@a ![${image('x')}](id=b) @abc`)
+    })
+
+    it('changes no `@` text inside a pasted reference or tag', () => {
+      const tag = clip('b', 'video', 'https://cdn.example/@a/clip')
+
+      expect(paste(`![${image('x')}](id=a|desc=see @a)\n${tag}`, before)).toBe(`${before}![${image('x')}](id=c|desc=see @a)\n${tag}`)
+    })
   })
 })
 

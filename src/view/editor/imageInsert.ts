@@ -3,7 +3,8 @@ import { EditorState, type Extension } from '@codemirror/state'
 import { EditorView, dropCursor } from '@codemirror/view'
 import { SENTINEL_CHAR } from '../../model/chat/content'
 import { imageMarkdown, isImageMediaType, type ImageMediaType } from '../../model/chat/images'
-import { pastedImageIdChanges } from '../../model/chat/mediaIds'
+import { pastedMediaIdChanges } from '../../model/chat/mediaIds'
+import { MEDIA_TAG_NAMES } from '../../model/chat/mediaTags'
 import { fileNameOf } from '../../utils/fileName'
 import { focusKeepingScroll } from './focus'
 import { addPendingRange, pendingRange, pendingRanges, removePendingRange, type DocRange } from './pendingRanges'
@@ -17,22 +18,32 @@ interface StorableImage {
  *  be large, so the other files are left out without being read. */
 const IMAGE_FILE_PATH = /\.(?:png|jpe?g|jfif|gif|webp|bmp|tiff?|avif|svg|ico|heic|heif|jxl)$/i
 
-/** Gives each image reference that a paste or a drop brings into the doc
- *  an id of its own (`pastedImageIdChanges`), in the same transaction, so
- *  one undo removes the paste and its ids. This covers every paste and drop
- *  path: the images that `insertImages` puts in (with no id yet), the Dez
- *  clipboard paste and the plain-text paste (ThreadEditor.vue), and
- *  CodeMirror's own paste and text drop. A text drag inside the doc is a
- *  `move.drop`: its images keep their ids. */
-const pastedImageIds = EditorState.transactionFilter.of((tr) => {
+/** The start of every text that has an id of the one id sequence: an image
+ *  reference, and a media tag of each kind. */
+const ASSET_STARTS: readonly string[] = ['![', ...MEDIA_TAG_NAMES.map((name) => `<${name}`)]
+
+/** Gives each image reference and each media tag that a paste or a drop
+ *  brings into the doc an id of its own (`pastedMediaIdChanges`), in the
+ *  same transaction, so one undo removes the paste and its ids. This covers
+ *  every paste and drop path: the images that `insertImages` puts in (with
+ *  no id yet), the Dez clipboard paste and the plain-text paste
+ *  (ThreadEditor.vue), which bring the ids of the tab that the text was
+ *  copied in, and CodeMirror's own paste and text drop. A text drag inside
+ *  the doc is a `move.drop`: its images and clips keep their ids. */
+const pastedMediaIds = EditorState.transactionFilter.of((tr) => {
   if (!tr.docChanged || !(tr.isUserEvent('input.paste') || tr.isUserEvent('input.drop'))) return tr
   const pasted: DocRange[] = []
   tr.changes.iterChangedRanges((_fromA, _toA, fromB, toB) => {
     if (toB > fromB) pasted.push({ from: fromB, to: toB })
   })
-  // Only a paste with an image reference needs the whole-doc scan.
-  if (!pasted.some(({ from, to }) => tr.newDoc.sliceString(from, to).includes('!['))) return tr
-  const changes = pastedImageIdChanges(tr.newDoc.toString(), pasted)
+  // Only a paste with an image reference or a media tag needs the whole-doc
+  // scan.
+  const holdsAsset = pasted.some(({ from, to }) => {
+    const text = tr.newDoc.sliceString(from, to)
+    return ASSET_STARTS.some((start) => text.includes(start))
+  })
+  if (!holdsAsset) return tr
+  const changes = pastedMediaIdChanges(tr.newDoc.toString(), pasted)
   return changes.length === 0 ? tr : [tr, { changes, sequential: true }]
 })
 
@@ -129,7 +140,7 @@ function insertionText(state: EditorState, { from, to }: DocRange, text: string)
  *  and the new text stays. When the view no longer shows the doc of the
  *  paste or drop (another tab, or a rebuilt state), the images stay saved
  *  but are not inserted, and a toast says so. The references go in with no
- *  id: `pastedImageIds` gives each one the next id in this same
+ *  id: `pastedMediaIds` gives each one the next id in this same
  *  transaction, from the doc as it is then, so two inserts in flight never
  *  take the same id. */
 async function insertImages(view: EditorView, files: ReadonlyArray<File | Promise<File | null>>, range: DocRange, userEvent: 'input.paste' | 'input.drop'): Promise<void> {
@@ -242,12 +253,13 @@ export function dropFilePaths(view: EditorView, paths: readonly string[], point:
 }
 
 /** Paste and drop of images for the thread editor (`buildState()` in
- *  `ThreadEditor.vue`), and the ids of pasted and dropped images. The
- *  window refuses file drops outside the editor (AppLayout.vue). */
+ *  `ThreadEditor.vue`), and the ids of the images and clips that a paste
+ *  or a drop brings in. The window refuses file drops outside the editor
+ *  (AppLayout.vue). */
 export function imagePasteAndDrop(): Extension {
   return [
     pendingRanges(),
-    pastedImageIds,
+    pastedMediaIds,
     dropCursor(),
     EditorView.domEventHandlers({
       paste: pasteImages,

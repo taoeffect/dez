@@ -17,10 +17,14 @@ import { IMAGE_ID_SOURCE } from './images'
 const WORD_CHARS = String.raw`\p{L}\p{M}\p{N}_`
 // `@` and one whole id: no word char comes before the `@` (`bob@a.com` is an
 // address) or after the id (`@about` is the id `about`, never `a`, and `@a2`
-// is no id). The regex takes the char before the `@` into the match, in
-// place of a lookbehind, which older WebKit versions cannot parse. That char
-// is never part of the mention before it, as a mention ends with a letter.
-const MENTION = new RegExp(String.raw`(^|[^${WORD_CHARS}])@(${IMAGE_ID_SOURCE})(?![${WORD_CHARS}])`, 'gu')
+// is no id). A `-` that joins the id to a word char makes one hyphenated
+// word, which is no mention either: `@a-team` and `@a-1` are plain text.
+// Every other char around a mention is fine: `(@a)`, `[@a]`, `@a, …`,
+// `@a. …`, `@a: …`, and a `-` with no word char after it (`@a - b`). The
+// regex takes the char before the `@` into the match, in place of a
+// lookbehind, which older WebKit versions cannot parse. That char is never
+// part of the mention before it, as a mention ends with a letter.
+const MENTION = new RegExp(String.raw`(^|[^${WORD_CHARS}])@(${IMAGE_ID_SOURCE})(?![${WORD_CHARS}]|-[${WORD_CHARS}])`, 'gu')
 
 /** One word of a text that has the form of an image mention. */
 export interface ImageMention {

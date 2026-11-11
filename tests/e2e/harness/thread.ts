@@ -253,6 +253,33 @@ export async function editorCaret (browser: E2EBrowser): Promise<number> {
   })
 }
 
+/** The clipboard text that a copy of the active editor's selection gives.
+ *  WebDriver cannot read the system clipboard, so the page sends the editor
+ *  a `copy` event with a `DataTransfer` of its own, which the editor's copy
+ *  handler fills. */
+export async function copySelection (browser: E2EBrowser): Promise<string> {
+  return browser.execute(() => {
+    const content = document.querySelector('.cm-content')
+    if (!content) throw new Error('copySelection: .cm-content not found')
+    const data = new DataTransfer()
+    content.dispatchEvent(new ClipboardEvent('copy', { clipboardData: data, bubbles: true, cancelable: true }))
+    return data.getData('text/plain')
+  })
+}
+
+/** Pastes `text` at the active editor's selection as clipboard text, with
+ *  a `paste` event that the page builds: WebDriver cannot write the system
+ *  clipboard. */
+export async function pasteText (browser: E2EBrowser, text: string): Promise<void> {
+  await browser.execute((pasted: string) => {
+    const content = document.querySelector('.cm-content')
+    if (!content) throw new Error('pasteText: .cm-content not found')
+    const data = new DataTransfer()
+    data.setData('text/plain', pasted)
+    content.dispatchEvent(new ClipboardEvent('paste', { clipboardData: data, bubbles: true, cancelable: true }))
+  }, text)
+}
+
 /** Doc position of `text` in the active editor plus `offset`; fails if
  *  `text` is not in the doc. */
 export async function docPos (browser: E2EBrowser, text: string, offset = 0): Promise<number> {

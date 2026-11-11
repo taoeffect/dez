@@ -4,6 +4,7 @@ import { EditorSelection, EditorState, type TransactionSpec } from '@codemirror/
 import type { EditorView } from '@codemirror/view'
 import { afterEach, beforeEach, describe, expect, it, vi, type MockInstance } from 'vitest'
 import { imageMarkdown } from '../../model/chat/images'
+import { mediaTagText } from '../../model/chat/mediaTags'
 import { SECTION_SEP, clipboardPasteTransaction, encodePrompt, pillsField, sectionsField } from '../thread/cmEditor'
 import { dropFilePaths, dropImages, imagePasteAndDrop, pasteImages } from './imageInsert'
 import { markdownImages, renderedImages } from './images'
@@ -416,7 +417,7 @@ describe('dropFilePaths', () => {
   })
 })
 
-describe('image ids', () => {
+describe('image and clip ids', () => {
   const stored = (name: string, id?: string) => imageMarkdown(`${IMAGE_FOLDER}/${name}.png`, id ? [{ key: 'id', value: id }] : [])
 
   /** A one-section state with undo history, with the caret at the end. */
@@ -469,6 +470,19 @@ describe('image ids', () => {
 
     expect(pasted.doc.toString()).toBe(`${doc}note\n${SECTION_SEP}\n${stored('b', 'b')}`)
     expect(pasted.field(sectionsField).map((section) => section.role)).toEqual(['user', 'agent'])
+    expect(undoOnce(pasted).doc.toString()).toBe(doc)
+  })
+
+  it('gives a pasted clip a new id where it clashes, and its pasted mentions too, in one undo step', () => {
+    const clip = (id: string) => mediaTagText({ kind: 'video', id, type: 'video/mp4', src: null, url: 'https://cdn.example/clip', expires: null, other: [] })
+    const doc = `${stored('a', 'a')}\n`
+    const state = historyState(doc)
+
+    // The paste holds no image reference, and its tag ends at the caret.
+    const pasted = state.update(clipboardPasteTransaction(state, `Make @a longer.\n<dez:pill type="agent"/>\n${clip('a')}`)).state
+
+    expect(pasted.doc.toString()).toBe(`${doc}Make @b longer.\n${SECTION_SEP}\n${clip('b')}`)
+    expect(pasted.selection.main.head).toBe(pasted.doc.length)
     expect(undoOnce(pasted).doc.toString()).toBe(doc)
   })
 

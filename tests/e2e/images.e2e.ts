@@ -10,14 +10,16 @@ import { shownImages, solidPng, type ShownImage } from './harness/images'
 import { startMockProviderApp, type MockProviderApp } from './harness/mockProviderApp'
 import { mockChatPath, replyText, sendAnthropicReply, sendChatReply, type HeldRequest, type MockProvider } from './harness/mockServer'
 import type { E2EBrowser } from './harness/session'
-import { activeConversationId, docPosPoint, editorCaret, editorDoc, focusEditor, newTab, openToasts, pickModel, sbpCall, setCaret, threadSections, waitForThread } from './harness/thread'
+import { activeConversationId, copySelection, docPosPoint, editorCaret, editorDoc, focusEditor, newTab, openToasts, pasteText, pickModel, sbpCall, setCaret, threadSections, waitForThread } from './harness/thread'
 
 // Images in a conversation, driven through the real app: a paste or a drop
 // stores the file and puts its reference, with a new image id, in the doc,
 // the editor shows the image (through the asset protocol) with its id and a
 // trash button in a hover toolbar at its top-right corner, each with a
 // tooltip that says what it is for, and keeps its delete rules, the trash
-// asks first and then deletes the file and the reference, both API formats
+// asks first and then deletes the file and the reference, an image that is
+// pasted as text from another tab gets a new id (as do the pasted mentions
+// of it) when the tab has an image with its id, both API formats
 // get the image in the request body after its reference's text with the id
 // and no path, a model that does not read images gets only that text and
 // the user a warning, no request holds an image path (also not a reference
@@ -492,6 +494,34 @@ describe('images', () => {
     await waitForValue(browser, 'overlays with the pointer on the box of image c', imageOverlays, overlays(3))
     await movePointer(browser, await elementCenter(browser, 'header.tab-bar'))
     await waitForValue(browser, 'overlays after the pointer left', imageOverlays, overlays(null))
+  })
+
+  it('gives an image that is pasted from another tab a new id, and the pasted mentions of it too, when the tab has an image with its id', async () => {
+    // The first tab: an image, which is `a` there, and text that names it.
+    await newTab(browser)
+    const copiedImage = await insertPastedImage('', ' edit @a, not @a-team')
+    await setCaret(browser, 0, (await editorDoc(browser)).length)
+    const copied = await copySelection(browser)
+    expect(copied).toContain(`${copiedImage.reference} edit @a, not @a-team`)
+
+    // The second tab has an image `a` of its own, and text that names it.
+    await newTab(browser)
+    const ownImage = await insertPastedImage('See @a: ', '')
+    await browser.keys(Key.Enter)
+    const beforePaste = `See @a: ${ownImage.reference}\n`
+    await waitForValue(browser, 'doc before the paste', () => editorDoc(browser), beforePaste)
+    await pasteText(browser, copied)
+
+    // The pasted image is `b` here, and so is its mention. `@a-team` is no
+    // mention, and the tab's own `@a` was not pasted.
+    const afterPaste = `${beforePaste}![${copiedImage.path}](id=b) edit @b, not @a-team`
+    await waitForValue(browser, 'doc after the paste', docAndCaret, { doc: afterPaste, caret: afterPaste.length })
+    await waitForValue(browser, 'shown images', () => shownImages(browser), [shownPastedImage(ownImage), shownPastedImage(copiedImage)])
+    expect((await imageOverlays()).map((overlay) => overlay.id)).toEqual(['a', 'b'])
+
+    // One undo takes back the paste and its new ids.
+    await browser.keys([Key.Control, 'z'])
+    await waitForValue(browser, 'doc after undo', () => editorDoc(browser), beforePaste)
   })
 
   it('explains the id badge and the trash in tooltips while the pointer is on them', async () => {
