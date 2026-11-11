@@ -1361,11 +1361,12 @@ export default sbp('sbp/selectors/register', {
   // the last-known models and raw entries but mark the provider not-working,
   // bump only the attempt timestamp, and record the error.
   //
-  // A success whose media list did not load (`mediaListFailed`) is between
-  // the two: the new models keep the last-known data of that list
-  // (`withKeptClipData`), so model_cache.json is the cache of it. The raw
-  // media entries are still removed: they hold prices, and `model_info`
-  // must not show old ones as the provider's answer.
+  // A success of which a media list did not load (`mediaListFailed`) is
+  // between the two: the new models keep the last-known data of the media
+  // lists (`withKeptClipData`), so model_cache.json is the cache of it.
+  // The raw media entries are only those of the lists that loaded: they
+  // hold prices, and `model_info` must not show old ones as the provider's
+  // answer.
   'dez.model/modelCache/applyProviderResult' (providerId: ProviderId, result: ProviderModelsResult): void {
     const store = useModelCacheStore()
     const now = Date.now()

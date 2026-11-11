@@ -121,14 +121,21 @@ export interface ModelInfo {
   // Dez checks no text.
   text?: ClipTextRules
   // What the model takes as the input images of a request (clipImages.ts):
-  // how many, and the size rules of each one. For a model of an edit or
-  // video request kind whose provider tells it. Missing: an `imageEdit`
-  // model takes every image, an `upscale` or `imageToVideo` model one
-  // image, and a `video` model none (`maxInputImages`).
+  // how many, and the size rules of each one. For a model of a media
+  // request kind whose provider tells it (an edit, a video, a new image
+  // from reference images). Missing: an `imageEdit` model takes every
+  // image, an `upscale` or `imageToVideo` model one image, and a `video`
+  // or `image` model none (`maxInputImages`).
   images?: InputImageRules
+  // The name of the file type of the images that the model makes (such as
+  // `SVG`), for a model of an image request kind that makes only types
+  // that Dez does not store (`ImageFormat.unstoredOutput`). Dez sends it
+  // no request (`unstoredOutputMessage`). Missing: it makes a type that
+  // Dez stores, as far as the provider tells.
+  unstoredOutput?: string
 }
 
-export type ModelCapabilities = Pick<ModelInfo, 'imageInput' | 'toolCalling' | 'thinking' | 'unsupportedSettings' | 'outputs' | 'request' | 'clipInput' | 'parameters' | 'text' | 'images'>
+export type ModelCapabilities = Pick<ModelInfo, 'imageInput' | 'toolCalling' | 'thinking' | 'unsupportedSettings' | 'outputs' | 'request' | 'clipInput' | 'parameters' | 'text' | 'images' | 'unstoredOutput'>
 
 // What a clip model takes as the input of a request, besides the values of
 // its parameters.
@@ -179,13 +186,15 @@ export interface ProviderModelsResult {
   // (`Provider.modelEntries`), for the `model_info` tool. The model cache
   // keeps it in memory only.
   entries?: ReadonlyMap<string, unknown>
-  // On success, for a provider whose media API has an own model list
-  // (`ClipFormat.modelList`) that answered: the raw entry of each model of
-  // that list, by model id. In memory only, like `entries`.
+  // On success, for a provider whose media API has own model lists
+  // (`MediaFormat.modelLists`) of which one or more answered: the raw
+  // entry of each model of those lists, by model id. In memory only, like
+  // `entries`.
   mediaEntries?: ReadonlyMap<string, unknown>
-  // On success: that list did not load, so `models` lack what only it
-  // tells (the lengths of the OpenRouter video models). The model cache
-  // then keeps what it knew of each model (keptClipData.ts).
+  // On success: one or more of those lists did not load, so `models` can
+  // lack what only they tell (the lengths of the OpenRouter video models).
+  // The model cache then keeps what it knew of each model
+  // (keptClipData.ts).
   mediaListFailed?: true
   error?: string
 }
@@ -297,6 +306,7 @@ export function providerModel(provider: ProviderId, id: string, name: string, ca
   if (capabilities.parameters !== undefined) model.parameters = capabilities.parameters.map(cloneModelParameter)
   if (capabilities.text !== undefined) model.text = cloneClipTextRules(capabilities.text)
   if (capabilities.images !== undefined) model.images = cloneInputImageRules(capabilities.images)
+  if (capabilities.unstoredOutput !== undefined) model.unstoredOutput = capabilities.unstoredOutput
   return model
 }
 

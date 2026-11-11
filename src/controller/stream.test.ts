@@ -9,7 +9,7 @@ import type { ConversationData } from '../model/persistence/types'
 import { missingImageProblem, TooManyImagesError } from '../model/providers/clipImages'
 import type { ClipTextRules } from '../model/providers/clipText'
 import { customProviderConfigSchema } from '../model/providers/config'
-import { unusableModelMessage } from '../model/providers/unusableModel'
+import { unstoredOutputMessage, unusableModelMessage } from '../model/providers/unusableModel'
 import type { GeneratedClip, ModelRequest, ProviderChatInputMessage, ProviderGenerateMediaInput, ProviderGenerateMediaResult, ProviderInfo, ProviderStreamChatInput, ProviderStreamChatResult } from '../model/providers'
 import type { RequestMessages } from '../model/streams/types'
 import { TOOL_DEFINITIONS } from '../model/tools/registry'
@@ -1147,9 +1147,15 @@ describe('dez.stream/start media round', () => {
   })
 
   // The reply would start, and then fail with an error of the request.
-  it('sends no edit request and shows an error toast when the conversation has no image', async () => {
-    const message = missingImageProblem(model.modelName, 'imageEdit', 0)
-    useRequest('imageEdit')
+  it.each([
+    ['an edit', 'imageEdit', undefined],
+    ['a new image of a model that needs a reference image', 'image', { maxImages: 1, minImages: 1 }],
+  ] as const)('sends no request for %s and shows an error toast when the conversation has no image', async (_name, request, images) => {
+    const message = missingImageProblem(model.modelName, request, 0, images)
+    sbp('dez.model/modelCache/applyProviderResult', model.providerId, {
+      ok: true,
+      models: [{ id: model.modelId, name: model.modelName, provider: model.providerId, outputs: ['image'], request, ...(images && { images }) }],
+    })
     sbp('dez.model/tabs/replaceSections', activeTab().id, [{ id: 'u1', role: 'user', content: [{ kind: 'text', text: 'Make it red.' }] }])
 
     await sbp('dez.controller/submitTab', activeTab().id)
@@ -1859,6 +1865,23 @@ describe('dez.controller/submitTab with a model that Dez cannot use', () => {
     await sbp('dez.controller/submitTab', activeTab().id)
 
     expect(sectionTexts()).toStrictEqual([{ role: 'user', text: 'Write this down.' }])
+    expect(toasts).toStrictEqual([{ area: 'app-global', data: { variant: 'error', title: 'Cannot send', message } }])
+    expect(consoleError).toHaveBeenCalledWith(`Cannot send: ${message}`)
+  })
+
+  // The provider would bill an image that Dez cannot store.
+  it('refuses a model that makes only a file type that Dez does not store', async () => {
+    const message = unstoredOutputMessage(model.modelName, 'SVG')
+    sbp('dez.model/setActiveModel', model.providerId, model.modelId, model.modelName)
+    sbp('dez.model/modelCache/applyProviderResult', model.providerId, {
+      ok: true,
+      models: [{ id: model.modelId, name: model.modelName, provider: model.providerId, outputs: ['image'], request: 'image', unstoredOutput: 'SVG' }],
+    })
+    sbp('dez.model/tabs/replaceSections', activeTab().id, [{ id: 'u1', role: 'user', content: [{ kind: 'text', text: 'Draw a fox.' }] }])
+
+    await sbp('dez.controller/submitTab', activeTab().id)
+
+    expect(sectionTexts()).toStrictEqual([{ role: 'user', text: 'Draw a fox.' }])
     expect(toasts).toStrictEqual([{ area: 'app-global', data: { variant: 'error', title: 'Cannot send', message } }])
     expect(consoleError).toHaveBeenCalledWith(`Cannot send: ${message}`)
   })

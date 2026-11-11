@@ -1391,10 +1391,10 @@ describe('provider models', () => {
       ['video-to-video', ['video'], 'none'],
     ])
     // OpenRouter: an image+text model is a chat model that also makes
-    // images; an image-only model gets no request (its API is not chat); a
-    // router lists "image" but has no image price, so it is a text model;
-    // speech and video models take the media API; a model that writes text
-    // and audio answers through chat.
+    // images; an image-only model takes the image API; a router lists
+    // "image" but has no image price, so it is a text model; speech and
+    // video models take the media API; a model that writes text and audio
+    // answers through chat.
     expect(kinds('openrouter', [
       { id: 'text', architecture: { output_modalities: ['text'] }, pricing: { prompt: '0.000001', completion: '0.000002' } },
       { id: 'text-image', architecture: { output_modalities: ['image', 'text'] }, pricing: { image_output: '0.00003' } },
@@ -1407,7 +1407,7 @@ describe('provider models', () => {
     ])).toEqual([
       ['text', ['text'], 'chat'],
       ['text-image', ['text', 'image'], 'chat'],
-      ['image', ['image'], 'none'],
+      ['image', ['image'], 'image'],
       ['router', ['text'], 'chat'],
       ['speech', ['audio'], 'tts'],
       ['video', ['video'], 'video'],
@@ -1448,12 +1448,8 @@ describe('provider models', () => {
     ])
     expect(clipInputs('openrouter', [
       { id: 'speech-to-text', architecture: { output_modalities: ['transcription'] } },
-      // An image-only model needs a text, through an API that Dez does not
-      // speak.
-      { id: 'image', architecture: { output_modalities: ['image'] }, pricing: { image_output: '0.00003' } },
     ])).toEqual([
       ['speech-to-text', 'none', 'audio'],
-      ['image', 'none', undefined],
     ])
   })
 
@@ -1476,25 +1472,45 @@ describe('media model data', () => {
   const openRouterLike = customProvider({ mediaApi: { format: 'openrouter' }, headers: { 'X-Title': 'Dez' } })
   const veniceLike = customProvider({ mediaApi: { format: 'venice' } })
 
-  it('asks for the model list of the media API, with the key and the time limit of a model list', () => {
-    expect(openRouterLike.mediaModelListRequest(key)).toStrictEqual({
-      method: 'GET',
-      url: 'http://localhost:8080/v1/videos/models',
-      headers: { 'X-Title': 'Dez', Authorization: 'Bearer sk-test' },
-      timeoutMs: 20_000,
-    })
+  it('asks for the model lists of the media API, with the key and the time limit of a model list', () => {
+    const request = (url: string) => ({ method: 'GET', url, headers: { 'X-Title': 'Dez', Authorization: 'Bearer sk-test' }, timeoutMs: 20_000 })
+
+    expect(openRouterLike.mediaModelListRequests(key)).toStrictEqual([
+      request('http://localhost:8080/v1/images/models'),
+      request('http://localhost:8080/v1/videos/models'),
+    ])
   })
 
   it('asks for no media model list when the media API has none, or there is no media API', () => {
-    expect([veniceLike, customProvider({})].map((provider) => provider.mediaModelListRequest(key))).toStrictEqual([null, null])
+    expect([veniceLike, customProvider({})].map((provider) => provider.mediaModelListRequests(key))).toStrictEqual([[], []])
   })
 
-  it('keeps the first entry of each id of the media model list', () => {
+  it('keeps the first entry of each id of the media model lists, in list order', () => {
     const first = { id: 'a', supported_durations: [1] }
 
-    expect(openRouterLike.mediaModelEntries({ data: [first, { id: 'b' }, { id: 'a', supported_durations: [9] }, { name: 'no id' }] }))
-      .toStrictEqual(new Map<string, unknown>([['a', first], ['b', { id: 'b' }]]))
-    expect(openRouterLike.mediaModelEntries('Not found')).toStrictEqual(new Map())
+    expect(openRouterLike.mediaModelEntries([
+      { data: [first, { id: 'b' }, { name: 'no id' }] },
+      'Not found',
+      { data: [{ id: 'a', supported_durations: [9] }, { id: 'c' }] },
+    ])).toStrictEqual(new Map<string, unknown>([['a', first], ['b', { id: 'b' }], ['c', { id: 'c' }]]))
+  })
+
+  // Entry shapes of the live image list (2026-11-11), with short lists.
+  it('gives an OpenRouter image model its parameters, its reference images, and the type that Dez cannot store, from its entry of the image list', () => {
+    const flux = providerModel('local', 'flux', 'Flux', { request: 'image' })
+    const vector = providerModel('local', 'vector', 'Vector', { request: 'image' })
+    const textOnly = providerModel('local', 'text-only', 'Text Only', { request: 'image' })
+    const mediaEntries = new Map<string, unknown>([
+      ['flux', { id: 'flux', supported_parameters: { resolution: { type: 'enum', values: ['768', '1k'] }, input_references: { type: 'range', min: 0, max: 4 }, seed: { type: 'boolean' } } }],
+      ['vector', { id: 'vector', supported_parameters: { output_format: { type: 'enum', values: ['svg'] }, input_references: { type: 'range', min: 1, max: 1 } } }],
+      ['text-only', { id: 'text-only', supported_parameters: { aspect_ratio: { type: 'enum', values: ['1:1'] } } }],
+    ])
+
+    expect(openRouterLike.withClipData([flux, vector, textOnly], new Map(), mediaEntries)).toStrictEqual([
+      { ...flux, parameters: [{ name: 'resolution', label: 'Resolution', options: ['768', '1k'] }], images: { maxImages: 4 } },
+      { ...vector, images: { maxImages: 1, minImages: 1 }, unstoredOutput: 'SVG' },
+      { ...textOnly, parameters: [{ name: 'aspect_ratio', label: 'Aspect ratio', options: ['1:1'] }] },
+    ])
   })
 
   it('gives each clip model its parameters from its two entries, and leaves other models as they are', () => {

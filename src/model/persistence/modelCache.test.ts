@@ -80,7 +80,7 @@ describe('model cache persistence format', () => {
     expect(parseModelCacheJson(serializeModelCacheJson(parsed))).toStrictEqual(parsed)
   })
 
-  it('round-trips the parameters, text rules, and image rules of a model, and drops only a model whose data is not valid', () => {
+  it('round-trips the parameters, text rules, image rules, and unstored file type of a model, and drops only a model whose data is not valid', () => {
     const models = [
       {
         id: 'film',
@@ -113,6 +113,7 @@ describe('model cache persistence format', () => {
         request: 'imageToVideo',
         images: { maxImages: 2, size: { minShortSide: 300, minAspectRatio: 0.4, maxAspectRatio: 2.5 } },
       },
+      { id: 'styles', name: 'Styles', provider: 'venice', request: 'image', images: { maxImages: 1, minImages: 1 }, unstoredOutput: 'SVG' },
       // A cache written before parameters existed.
       { id: 'old', name: 'Old', provider: 'venice', request: 'video' },
     ]
@@ -143,8 +144,8 @@ describe('model cache persistence format', () => {
     expect(parseModelCacheJson(serializeModelCacheJson(parsed))).toStrictEqual(parsed)
   })
 
-  it('drops a size rule of the input images that is not valid, and keeps the model and its other rules', () => {
-    const model = (id: string, size: unknown) => ({ id, name: id, provider: 'venice', request: 'imageToVideo', images: { maxImages: 2, size } })
+  it('drops a size rule or a fewest count of the input images that is not valid, and keeps the model and its other rules', () => {
+    const model = (id: string, size: unknown, minImages?: unknown) => ({ id, name: id, provider: 'venice', request: 'imageToVideo', images: { maxImages: 2, size, minImages } })
     const parsed = parseModelCacheJson(JSON.stringify({
       version: MODEL_CACHE_VERSION,
       providers: {
@@ -154,6 +155,8 @@ describe('model cache persistence format', () => {
             model('all-bad', { minShortSide: 'wide', maxPixels: 1.5 }),
             model('no-object', 300),
             model('ratios-apart', { minAspectRatio: 2.5, maxAspectRatio: 0.4, minShortSide: 240 }),
+            model('more-than-most', undefined, 3),
+            model('part-image', undefined, 1.5),
           ],
           working: true,
           updatedAt: 1,
@@ -167,6 +170,8 @@ describe('model cache persistence format', () => {
       ['all-bad', { maxImages: 2 }],
       ['no-object', { maxImages: 2 }],
       ['ratios-apart', { maxImages: 2, size: { minShortSide: 240 } }],
+      ['more-than-most', { maxImages: 2 }],
+      ['part-image', { maxImages: 2 }],
     ])
   })
 

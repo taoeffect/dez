@@ -2,6 +2,7 @@ import { byteSizeText } from '../../utils/byteSize'
 import { sanitizeErrorText } from '../../utils/protocol/errors'
 import { responseContentType, type NativeHttpResponseHead } from '../../utils/protocol/nativeHttp'
 import type { ImageSize } from '../chat/imageDrawing'
+import { isImageMediaType } from '../chat/images'
 import { trimTrailingSlashes, type MediaApiFormatId } from './config'
 import type { InputImageRules } from './clipImages'
 import type { ClipTextRules } from './clipText'
@@ -17,11 +18,12 @@ import { CLIP_KINDS, isClipKind, type ChatImagePart, type ClipKind, type Generat
 // `effectiveParameterValues`).
 export interface MediaInput {
   prompt: string
-  // The images of an edit, the one image of an upscale, or the frames of a
-  // video: the first image is the first frame, and the second one is the
-  // last frame. The caller gives a request no more images than the model
-  // takes (`MediaFormat.imageRules`). A request of a kind that takes no
-  // image does not send them.
+  // The images of an edit, the one image of an upscale, the reference
+  // images of a new image, or the frames of a video: the first image is
+  // the first frame, and the second one is the last frame. The caller
+  // gives a request no more images than the model takes
+  // (`MediaFormat.imageRules`). A request of a kind that takes no image
+  // does not send them.
   images: readonly ChatImagePart[]
   values: ParameterValues
 }
@@ -70,6 +72,13 @@ export interface ImageFormat {
   // What a request to a model of `kind` can set, as for
   // `ClipFormat.parameters`. Missing: no model of the API has parameters.
   parameters?(kind: ImageKind, entry: unknown, mediaEntry: unknown): ModelParameter[]
+  // The name of the file type that a model of `kind` makes, from the same
+  // two entries, when it makes only types that Dez does not store
+  // (generatedImages.ts), such as `SVG`; undefined when it makes a type
+  // that Dez stores, as far as the entries tell. Dez sends such a model no
+  // request (`ModelInfo.unstoredOutput`). Missing: every model of the API
+  // makes a type that Dez stores.
+  unstoredOutput?(kind: ImageKind, entry: unknown, mediaEntry: unknown): string | undefined
   request(kind: ImageKind, baseUrl: string, modelId: string, input: MediaInput): MediaWireRequest
   // The images of a 2xx response to a request of `kind`. Throws when the
   // body holds none.
@@ -102,14 +111,11 @@ export interface ClipQuoteFormat {
 // The clip requests (speech, music, video) of a media API. A 2xx response
 // to `request` is the clip's bytes, or JSON that names a job (`job`).
 export interface ClipFormat {
-  // The model list that only the media API has, for an API whose model data
-  // is not all in the provider's model list: a request whose response is
-  // `{ data: [...] }`, with an `id` in each entry.
-  modelList?(baseUrl: string): MediaWireRequest
   // What a request to a model of `kind` can set, from the model's entry in
-  // the provider's model list (`entry`) and in `modelList` (`mediaEntry`).
-  // Each one is undefined when its list does not have the model. The name
-  // of a parameter is the name of its request field.
+  // the provider's model list (`entry`) and in a list of the media API
+  // (`MediaFormat.modelLists`, `mediaEntry`). Each one is undefined when
+  // its list does not have the model. The name of a parameter is the name
+  // of its request field.
   parameters(kind: ClipKind, entry: unknown, mediaEntry: unknown): ModelParameter[]
   // What a model of `kind` takes as the text of a request, from the same
   // two entries; undefined when the API tells nothing about it.
@@ -145,8 +151,14 @@ export interface ClipFormat {
 export interface MediaFormat {
   images?: ImageFormat
   clips?: ClipFormat
+  // The model lists that only the media API has, for an API whose model
+  // data is not all in the provider's model list: requests whose responses
+  // are `{ data: [...] }`, with an `id` in each entry. A model is in one
+  // list at most (Provider.mediaModelEntries keeps the first entry of an
+  // id). Missing: the API has none.
+  modelLists?(baseUrl: string): MediaWireRequest[]
   // What a model of `kind` takes as input images, from its entry in the
-  // provider's model list (`entry`) and in `ClipFormat.modelList`
+  // provider's model list (`entry`) and in a list of `modelLists`
   // (`mediaEntry`; each one undefined when its list does not have the
   // model), with the size rules of each image when an entry tells them.
   // Undefined for a model that takes none, as far as the API tells.
@@ -648,14 +660,118 @@ const veniceFormat: MediaFormat = {
 // (`frame_type`), in the order of the input images.
 const OPENROUTER_FRAMES = ['first_frame', 'last_frame'] as const
 
-// The OpenRouter speech and video APIs. Its image-only models have an own
-// API too (`/images`), which Dez does not speak yet, and its music models
-// answer through chat.
+// The most reference images of one OpenRouter image request: the request
+// schema caps `input_references` at 16 (`maxItems`), and the image list
+// tells a higher count (20) for some models (2026-11-11).
+// https://openrouter.ai/docs/api/api-reference/images/generate-an-image
+const OPENROUTER_MAX_REFERENCES = 16
+
+// The values of the request field `name` that an entry of OpenRouter's
+// image list tells in its `supported_parameters`: the `values` of an
+// `enum` descriptor. A `range` descriptor gives none, and so does a
+// `boolean` one, which tells only that the model takes the field with any
+// value (`seed`, `size`), not that the field is a switch.
+// https://openrouter.ai/docs/guides/overview/multimodal/image-generation
+function openRouterImageOptions(mediaEntry: unknown, name: string): OptionValue[] {
+  return listedValues(valueAtPath(mediaEntry, `supported_parameters.${name}.values`))
+}
+
+// Whether an `output_format` value of OpenRouter's image list names a type
+// that Dez stores (`png`, `jpeg`, `webp`, `gif`; not `svg`).
+function isStoredImageFormat(format: OptionValue): boolean {
+  return typeof format === 'string' && isImageMediaType(`image/${format.toLowerCase()}`)
+}
+
+// The reference images that an OpenRouter image model takes: the range of
+// `input_references` in its entry of the image list (`{ type: 'range',
+// min, max }`, a count of images). A model with no such field takes none
+// (`meta/muse-image` reads images by its input modalities, but its entry
+// has no `input_references`, 2026-11-11), and a `min` of 1 (`krea/k3-edit`,
+// the Recraft styles models) tells that it makes nothing without one.
+function openRouterReferenceRules(mediaEntry: unknown): InputImageRules | undefined {
+  const range = valueAtPath(mediaEntry, 'supported_parameters.input_references')
+  const max = valueAtPath(range, 'max')
+  const min = valueAtPath(range, 'min')
+  if (typeof max !== 'number' || !Number.isInteger(max) || max < 1) return undefined
+  const maxImages = Math.min(max, OPENROUTER_MAX_REFERENCES)
+  const minImages = typeof min === 'number' && Number.isInteger(min) && min >= 1 ? Math.min(min, maxImages) : undefined
+  return { maxImages, ...(minImages !== undefined && { minImages }) }
+}
+
+// The OpenRouter image, speech, and video APIs. Its image-only models
+// answer only through the image API (`/images`); its image + text models
+// answer through chat (`imageOutputBody` in builtins.ts), and so do its
+// music models.
 const openRouterFormat: MediaFormat = {
+  // `POST /images` makes a new image from the prompt, with the input
+  // images as references (`input_references`, each one a data URL, as Dez
+  // has no URL that a provider could fetch). The fields that a model takes
+  // are in its entry of the image list (`supported_parameters`). Of those,
+  // Dez sends only the ones that change the image that the user gets
+  // (`parameters`); never `n` (each image costs), `size` (a free text
+  // that the API refuses with `resolution` or `aspect_ratio`), `seed` (a
+  // free number, for which Dez has no parameter type), `background`
+  // (`transparent` fails with `jpeg`), or `output_compression`. A failed
+  // image costs nothing ("all-or-nothing").
+  // https://openrouter.ai/docs/guides/overview/multimodal/image-generation
+  // https://openrouter.ai/docs/api/api-reference/images/generate-an-image
+  images: {
+    // No default for a field that a model takes from a list: the model's
+    // own default applies. The one exception: `output_format` holds only
+    // the types that Dez stores, and a model whose list also holds another
+    // type gets the first stored type, so that it never makes the other
+    // one.
+    parameters: (kind, _entry, mediaEntry) => {
+      if (kind === 'upscale') return []
+      const formats = openRouterImageOptions(mediaEntry, 'output_format')
+      const storedFormats = formats.filter(isStoredImageFormat)
+      return [
+        ...optionsParameter('resolution', 'Resolution', openRouterImageOptions(mediaEntry, 'resolution')),
+        ...optionsParameter('aspect_ratio', 'Aspect ratio', openRouterImageOptions(mediaEntry, 'aspect_ratio')),
+        ...optionsParameter('quality', 'Quality', openRouterImageOptions(mediaEntry, 'quality')),
+        ...optionsParameter('output_format', 'Format', storedFormats, storedFormats.length < formats.length ? storedFormats[0] : undefined),
+      ]
+    },
+    // The Recraft vector models list only `svg` (2026-11-11). The answer
+    // would be an SVG file, which Dez does not store, at the full price.
+    unstoredOutput: (kind, _entry, mediaEntry) => {
+      if (kind === 'upscale') return undefined
+      const formats = openRouterImageOptions(mediaEntry, 'output_format')
+      if (formats.length === 0 || formats.some(isStoredImageFormat)) return undefined
+      return new Intl.ListFormat('en', { type: 'disjunction' }).format(formats.map((format) => String(format).toUpperCase()))
+    },
+    request: (kind, baseUrl, modelId, { prompt, images, values }) => {
+      if (kind === 'upscale') throw new Error('This media API has no upscale request: choose another model.')
+      return {
+        url: `${trimTrailingSlashes(baseUrl)}/images`,
+        body: {
+          ...values,
+          model: modelId,
+          prompt,
+          ...(images.length > 0 && {
+            input_references: images.map((image) => ({ type: 'image_url', image_url: { url: imageDataUrl(image) } })),
+          }),
+        },
+      }
+    },
+    // The answer is JSON `{ data: [{ b64_json, media_type }], usage }`,
+    // one entry for each image (a request asks for one).
+    parseResponse: (_kind, _head, body) => {
+      const data = jsonBody(body)
+      const images = isRecord(data) && Array.isArray(data.data) ? data.data : []
+      if (images.length === 0) throw new Error('The provider sent no image.')
+      return images.map((image) => generatedBase64Image(isRecord(image) ? image.b64_json : undefined))
+    },
+  },
+  // The resolutions, aspect ratios, reference images, and file types of an
+  // image model are only in the list of the image API, and the lengths,
+  // resolutions, and prices of a video model only in the list of the video
+  // API. A model is in one of them at most.
+  modelLists: (baseUrl) => {
+    const base = trimTrailingSlashes(baseUrl)
+    return [{ url: `${base}/images/models` }, { url: `${base}/videos/models` }]
+  },
   clips: {
-    // The lengths, resolutions, and prices of a video model are only in
-    // the list of the video API.
-    modelList: (baseUrl) => ({ url: `${trimTrailingSlashes(baseUrl)}/videos/models` }),
     parameters: (kind, entry, mediaEntry) => {
       switch (kind) {
         case 'tts': {
@@ -775,13 +891,17 @@ const openRouterFormat: MediaFormat = {
     // https://openrouter.ai/docs/api/api-reference/tts/create-speech
     pcmSampleBits: 16,
   },
-  // The video list tells which frames a model takes an image for
+  // An image model: the reference images of its entry in the image list
+  // (`openRouterReferenceRules`). The docs tell no size that a reference
+  // image must have.
+  // A video model: the video list tells which frames it takes an image for
   // (`supported_frame_images`). The images of a request go in the order
   // of OPENROUTER_FRAMES, so a last frame counts only with a first one.
   // No size rules: `supported_sizes` and `supported_aspect_ratios` are
   // the sizes of the video, and the docs tell no size that a frame image
   // must have.
   imageRules: (kind, _entry, mediaEntry) => {
+    if (kind === 'image' || kind === 'imageEdit') return openRouterReferenceRules(mediaEntry)
     if (!isClipKind(kind) || CLIP_KINDS[kind] !== 'video') return undefined
     const frames = listedValues(valueAtPath(mediaEntry, 'supported_frame_images'))
     const firstMissing = OPENROUTER_FRAMES.findIndex((frame) => !frames.includes(frame))

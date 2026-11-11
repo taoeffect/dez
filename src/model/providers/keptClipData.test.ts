@@ -16,6 +16,14 @@ describe('withKeptClipData', () => {
       .toStrictEqual([model('film', { request: 'video', parameters: lengths, text, images })])
   })
 
+  // Else a request would go to it after a failed image list, and the
+  // provider would bill an image that Dez cannot store.
+  it('gives an image model the file type that Dez cannot store, which the cache has and the new list lacks', () => {
+    const cached = [model('vector', { request: 'image', images, unstoredOutput: 'SVG' })]
+
+    expect(withKeptClipData([model('vector', { request: 'image' })], cached)).toStrictEqual(cached)
+  })
+
   // The voices of a speech model come from the provider's own list, which
   // did load.
   it('lets the data of the new list win, field by field', () => {

@@ -2,9 +2,9 @@ import type { MediaTagKind } from '../chat/mediaTags'
 import { effectiveOutputs, MODEL_OUTPUTS } from '../modelOutputs'
 import type { ModelInfo } from './types'
 
-// The text of the refusal of a model that Dez has no request for
-// (ModelInfo.request `none`). The cause is data on the model, so no text
-// here names a model or a provider.
+// The texts of the refusal of a model that Dez has no request for
+// (ModelInfo.request `none`) or whose output Dez cannot store. The cause is
+// data on the model, so no text here names a model or a provider.
 
 const CLIP_INPUT_NAMES: Readonly<Record<MediaTagKind, string>> = {
   audio: 'an audio clip',
@@ -28,9 +28,18 @@ export function unusableModelMessage(modelName: string, model: Pick<ModelInfo, '
   const outputs = effectiveOutputs(model)
   const labels = MODEL_OUTPUTS.filter((output) => outputs.includes(output.id)).map((output) => output.label.toLowerCase())
   // MODEL_INVOKE: check this text too when model_invoke exists. A model of
-  // this group (an image-only model of another API, such as OpenRouter's
-  // image API) needs a request for its API first.
+  // this group (a model of an API that Dez does not speak, such as a
+  // custom provider's image-only model with no media API) needs a request
+  // for its API first.
   const cannotUse = `Dez cannot use ${modelName} yet.`
   if (labels.length === 0) return cannotUse
   return `${cannotUse} It makes ${new Intl.ListFormat('en', { type: 'conjunction' }).format(labels)} output through an API that Dez does not support.`
+}
+
+/** Why a submit to the model `modelName`, which makes only images of the
+ *  file type `fileType` (`ModelInfo.unstoredOutput`, such as `SVG`), is
+ *  refused, as text for the user. Dez would get an image that it cannot
+ *  store or show, and the provider bills it all the same. */
+export function unstoredOutputMessage(modelName: string, fileType: string): string {
+  return `${modelName} makes only ${fileType} images, and Dez cannot store ${fileType} images. Choose another image model.`
 }

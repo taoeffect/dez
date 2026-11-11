@@ -471,7 +471,7 @@ describe('mediaRequestInput', () => {
       user('u2', `\nLike ![${IMAGE}](id=b), but blue \n`),
     ]
 
-    expect(input('image', sections)).toStrictEqual({ prompt: 'Like ![image](id=b), but blue', images: [], imagesLeftOut: 0 })
+    expect(input('image', sections)).toStrictEqual({ prompt: 'Like ![image](id=b), but blue', images: [], imagesLeftOut: 1 })
     expect(input('imageEdit', sections)).toStrictEqual({ prompt: 'Like ![image](id=b), but blue', images: [IMAGE], imagesLeftOut: 0 })
   })
 
@@ -493,7 +493,7 @@ describe('mediaRequestInput', () => {
     ]
 
     expect(input('imageEdit', sections)).toStrictEqual({ prompt: 'Edit @a to add an apple', images: [GENERATED], imagesLeftOut: 0 })
-    expect(input('image', sections)).toStrictEqual({ prompt: 'Edit @a to add an apple', images: [], imagesLeftOut: 0 })
+    expect(input('image', sections)).toStrictEqual({ prompt: 'Edit @a to add an apple', images: [], imagesLeftOut: 1 })
   })
 
   it('edits the pasted and the mentioned images of the last user message in text order, each one once', () => {
@@ -534,12 +534,33 @@ describe('mediaRequestInput', () => {
     expect(input('imageEdit', [user('u1', 'Make it blue')])).toStrictEqual({ prompt: 'Make it blue', images: [], imagesLeftOut: 0 })
   })
 
-  // These requests have no place for a file, and a submit says nothing of
-  // the images.
-  it.each(['image', 'tts', 'music'] as const)('gives a %s request the prompt, and no image of the conversation', (kind) => {
+  // These requests have no place for a file, so the submit tells the user
+  // that the images of the message were left out.
+  it.each(['image', 'tts', 'music'] as const)('gives a %s request the prompt, no image of the conversation, and the count of the message\'s images', (kind) => {
     const sections = [reply('a1', `![${GENERATED}](id=a)`), user('u1', `Say what ![${IMAGE}](id=b) and @a show`)]
 
-    expect(input(kind, sections)).toStrictEqual({ prompt: 'Say what ![image](id=b) and @a show', images: [], imagesLeftOut: 0 })
+    expect(input(kind, sections)).toStrictEqual({ prompt: 'Say what ![image](id=b) and @a show', images: [], imagesLeftOut: 2 })
+  })
+
+  describe('the reference images of a new image', () => {
+    it('takes as many images of the last user message as the model takes, and counts the rest', () => {
+      const sections = [reply('a1', `![${GENERATED}](id=a)`), user('u1', `Mix ![${IMAGE}](id=b) and @a`)]
+
+      expect(input('image', sections, { images: { maxImages: 1 } })).toStrictEqual({ prompt: 'Mix ![image](id=b) and @a', images: [IMAGE], imagesLeftOut: 1 })
+    })
+
+    // "Make it blue" after an image: the image goes, as for an edit.
+    it('takes the newest image of the conversation for a model that needs one, and none for a model that does not', () => {
+      const sections = [user('u1', 'A red fox'), reply('a1', `![${GENERATED}](id=a)`), user('u2', 'Make it blue')]
+
+      expect([
+        input('image', sections, { images: { maxImages: 1, minImages: 1 } }),
+        input('image', sections, { images: { maxImages: 4 } }),
+      ]).toStrictEqual([
+        { prompt: 'Make it blue', images: [GENERATED], imagesLeftOut: 0 },
+        { prompt: 'Make it blue', images: [], imagesLeftOut: 0 },
+      ])
+    })
   })
 
   describe('the image of an upscale', () => {

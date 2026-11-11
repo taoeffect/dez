@@ -1,12 +1,12 @@
 import type { ImageSizeRules } from './imageSize'
-import { CLIP_KINDS, isClipKind, type MediaKind } from './types'
+import type { MediaKind } from './types'
 
-// The input images of a media request (an edit, an upscale, a video). What
-// a model takes is data on the model (`ModelInfo.images`), which a media
-// format reads from the provider's model data (`MediaFormat.imageRules` in
-// mediaFormats.ts). Also the refusal of a media request that has no image
-// and needs one, and the text of a request that the provider refused for
-// its count of images.
+// The input images of a media request (an edit, an upscale, a video, the
+// reference images of a new image). What a model takes is data on the
+// model (`ModelInfo.images`), which a media format reads from the
+// provider's model data (`MediaFormat.imageRules` in mediaFormats.ts).
+// Also the refusal of a media request that has too few images, and the
+// text of a request that the provider refused for its count of images.
 
 // The media kinds that make nothing without an input image, each with what
 // a model of the kind does, as the start of a sentence for the user.
@@ -16,15 +16,17 @@ const NEEDS_INPUT_IMAGE: Readonly<Partial<Record<MediaKind, string>>> = {
   imageToVideo: 'makes a video from an image',
 }
 
-/** Whether a request of `kind` makes nothing without an input image. */
-export function needsInputImage(kind: MediaKind): boolean {
-  return NEEDS_INPUT_IMAGE[kind] !== undefined
+/** The fewest images of a request of `kind` to a model with `rules`: 1
+ *  for each kind that makes nothing without an image, else what the
+ *  rules tell (an image model that needs a reference image), else 0. */
+export function minInputImages(kind: MediaKind, rules: InputImageRules | undefined): number {
+  return Math.max(NEEDS_INPUT_IMAGE[kind] === undefined ? 0 : 1, rules?.minImages ?? 0)
 }
 
-/** Whether a request of `kind` can carry input images: each kind that
- *  needs one, and a `video` model, which can take frames. */
-export function takesInputImages(kind: MediaKind): boolean {
-  return needsInputImage(kind) || (isClipKind(kind) && CLIP_KINDS[kind] === 'video')
+/** Whether a request of `kind` to a model with `rules` makes nothing
+ *  without an input image. */
+export function needsInputImage(kind: MediaKind, rules: InputImageRules | undefined): boolean {
+  return minInputImages(kind, rules) > 0
 }
 
 // What a model takes as input images.
@@ -33,6 +35,11 @@ export interface InputImageRules {
   // is the first frame, and the second one is the last frame. For an edit,
   // the first one is the image to edit, and the others are references.
   maxImages: number
+  // The fewest images of one request, 1 to `maxImages`, for a model whose
+  // kind can go with none but that needs an image all the same (an image
+  // model that makes its image from a reference image). Missing: 0, or 1
+  // for the kinds that need an image (`minInputImages`).
+  minImages?: number
   // The size rules of each image (imageSize.ts), for a model whose
   // provider tells some. Never empty.
   size?: ImageSizeRules
@@ -50,7 +57,7 @@ export function cloneInputImageRules(rules: InputImageRules): InputImageRules {
 export function maxInputImages(kind: MediaKind, rules: InputImageRules | undefined): number {
   if (rules) return rules.maxImages
   if (kind === 'imageEdit') return Infinity
-  return needsInputImage(kind) ? 1 : 0
+  return needsInputImage(kind, undefined) ? 1 : 0
 }
 
 function imagesText(count: number): string {
@@ -81,12 +88,17 @@ export function tooManyImagesMessage(modelName: string, error: TooManyImagesErro
 }
 
 /** Why a request of `kind` with `imageCount` images does not go to the
- *  model `modelName`, as a sentence for the user; null when it can go. An
- *  edit, an upscale, and a video from an image need an image. The check
+ *  model `modelName` with the image rules `rules`, as a sentence for the
+ *  user; null when it can go. An edit, an upscale, and a video from an
+ *  image need an image, and so does a model whose rules tell so. The check
  *  costs nothing, and it comes before the reply starts, so the user's
  *  message stays as it is. */
-export function missingImageProblem(modelName: string, kind: MediaKind, imageCount: number): string | null {
-  const does = NEEDS_INPUT_IMAGE[kind]
-  if (imageCount > 0 || does === undefined) return null
-  return `${modelName} ${does}. Paste an image, or name one with @id.`
+export function missingImageProblem(modelName: string, kind: MediaKind, imageCount: number, rules: InputImageRules | undefined): string | null {
+  const minImages = minInputImages(kind, rules)
+  if (imageCount >= minImages) return null
+  if (minImages > 1) {
+    return `${modelName} needs at least ${imagesText(minImages)}, and this message has ${imageCount}. `
+      + 'Paste more images, or name them with @id.'
+  }
+  return `${modelName} ${NEEDS_INPUT_IMAGE[kind] ?? 'needs an input image'}. Paste an image, or name one with @id.`
 }

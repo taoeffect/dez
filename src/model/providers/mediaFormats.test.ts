@@ -8,6 +8,7 @@ import type { ChatImagePart, ClipKind, MediaKind } from './types'
 const venice = MEDIA_FORMATS.venice.images as ImageFormat
 const veniceClips = MEDIA_FORMATS.venice.clips as ClipFormat
 const openRouterClips = MEDIA_FORMATS.openrouter.clips as ClipFormat
+const openRouterImages = MEDIA_FORMATS.openrouter.images as ImageFormat
 
 const VENICE_URL = 'https://api.venice.ai/api/v1'
 const OPENROUTER_URL = 'https://openrouter.ai/api/v1'
@@ -623,10 +624,6 @@ describe('venice clip jobs', () => {
 })
 
 describe('openrouter clip parameters', () => {
-  it('reads video lengths and sizes from the list of the video API', () => {
-    expect(openRouterClips.modelList?.(`${OPENROUTER_URL}/`)).toStrictEqual({ url: `${OPENROUTER_URL}/videos/models` })
-  })
-
   it('gives a speech model its voices, with the first one as the default', () => {
     expect(parameters(openRouterClips, 'tts', { id: 'hexgrad/kokoro-82m', supported_voices: ['af_alloy', 'af_bella'] })).toStrictEqual([
       { name: 'voice', options: ['af_alloy', 'af_bella'], default: 'af_alloy' },
@@ -703,6 +700,113 @@ describe('openrouter image rules', () => {
       rules('tts', ['first_frame']),
       rules('imageEdit', ['first_frame']),
     ]).toStrictEqual([undefined, undefined, undefined])
+  })
+})
+
+// Entry shapes of the live image list (2026-11-11), with short lists.
+describe('openrouter images', () => {
+  const entry = (supported: Record<string, unknown>) => ({ id: 'm', supported_parameters: supported })
+  const imageParameters = (kind: 'image' | 'imageEdit' | 'upscale', mediaEntry: unknown) =>
+    (openRouterImages.parameters?.(kind, { id: 'm' }, mediaEntry) ?? []).map(({ label: _label, ...parameter }) => parameter)
+  const references = (range: unknown) => MEDIA_FORMATS.openrouter.imageRules?.('image', { id: 'm' }, entry({ input_references: range }))
+
+  it('asks /images for one image from the prompt and the values, with no reference image', () => {
+    expect(openRouterImages.request('image', `${OPENROUTER_URL}/`, 'black-forest-labs/flux-3-image-klein', { prompt: 'A red fox', images: [], values: { resolution: '768' } })).toStrictEqual({
+      url: `${OPENROUTER_URL}/images`,
+      body: { resolution: '768', model: 'black-forest-labs/flux-3-image-klein', prompt: 'A red fox' },
+    })
+  })
+
+  it('sends the input images as reference data URLs, in order', () => {
+    expect(openRouterImages.request('imageEdit', OPENROUTER_URL, 'krea/k3-edit', { prompt: 'Make it blue', images: IMAGES, values: {} }).body).toStrictEqual({
+      model: 'krea/k3-edit',
+      prompt: 'Make it blue',
+      input_references: [
+        { type: 'image_url', image_url: { url: PNG_URL } },
+        { type: 'image_url', image_url: { url: JPEG_URL } },
+      ],
+    })
+  })
+
+  it('has no upscale request', () => {
+    expect(() => openRouterImages.request('upscale', OPENROUTER_URL, 'm', { prompt: '', images: IMAGES, values: {} })).toThrow('This media API has no upscale request: choose another model.')
+  })
+
+  it('takes the images of the answer, each with the type of its bytes', () => {
+    const body = json({ created: 1, data: [{ b64_json: bytesToBase64(PNG), media_type: 'image/webp' }, { b64_json: bytesToBase64(JPEG) }], usage: { cost: 0.008 } })
+
+    expect(openRouterImages.parseResponse('image', head('application/json'), body)).toStrictEqual([
+      { bytes: PNG, mediaType: 'image/png' },
+      { bytes: JPEG, mediaType: 'image/jpeg' },
+    ])
+  })
+
+  it.each([
+    ['an answer with no image', json({ created: 1, data: [] }), 'The provider sent no image.'],
+    ['an answer that is not JSON', PNG, 'The provider sent an image response that is not valid JSON.'],
+    ['an SVG image', json({ data: [{ b64_json: bytesToBase64(new TextEncoder().encode('<svg/>')), media_type: 'image/svg+xml' }] }), 'is not a PNG, JPEG, GIF, or WebP image'],
+    ['an image with no base64 text', json({ data: [{ url: 'https://example.com/a.png' }] }), 'The provider sent an image that is not base64 text.'],
+  ])('refuses %s', (_name, body, message) => {
+    expect(() => openRouterImages.parseResponse('image', head('application/json'), body)).toThrow(message)
+  })
+
+  // `seed` and `size` are `boolean` descriptors: free values, not switches.
+  // `n`, `background`, and `output_compression` never go.
+  it('gives an image model the resolutions, aspect ratios, qualities, and file types of its entry, with no default', () => {
+    const mediaEntry = entry({
+      resolution: { type: 'enum', values: ['1k', '2k'] },
+      aspect_ratio: { type: 'enum', values: ['1:1', '16:9'] },
+      quality: { type: 'enum', values: ['low', 'high'] },
+      output_format: { type: 'enum', values: ['png', 'webp'] },
+      n: { type: 'range', min: 1, max: 4 },
+      background: { type: 'enum', values: ['transparent', 'opaque'] },
+      output_compression: { type: 'range', min: 0, max: 100 },
+      seed: { type: 'boolean' },
+      size: { type: 'boolean' },
+    })
+
+    expect(imageParameters('image', mediaEntry)).toStrictEqual([
+      { name: 'resolution', options: ['1k', '2k'] },
+      { name: 'aspect_ratio', options: ['1:1', '16:9'] },
+      { name: 'quality', options: ['low', 'high'] },
+      { name: 'output_format', options: ['png', 'webp'] },
+    ])
+  })
+
+  it('offers only the file types that Dez stores, with the first one as the default when the model makes another type too', () => {
+    expect(imageParameters('image', entry({ output_format: { type: 'enum', values: ['svg', 'jpeg', 'png'] } }))).toStrictEqual([
+      { name: 'output_format', options: ['jpeg', 'png'], default: 'jpeg' },
+    ])
+  })
+
+  it.each([
+    ['the image list does not have', undefined],
+    ['lists only free values', entry({ seed: { type: 'boolean' }, size: { type: 'boolean' } })],
+  ])('gives an image model that %s no parameters', (_name, mediaEntry) => {
+    expect(imageParameters('image', mediaEntry)).toStrictEqual([])
+  })
+
+  it.each([
+    ['only SVG', ['svg'], 'SVG'],
+    ['two types that Dez does not store', ['svg', 'tiff'], 'SVG or TIFF'],
+    ['SVG and PNG', ['svg', 'png'], undefined],
+    ['no list', undefined, undefined],
+  ])('tells the unstored type of an image model that makes %s', (_name, formats, unstored) => {
+    const mediaEntry = entry(formats ? { output_format: { type: 'enum', values: formats } } : {})
+
+    expect(openRouterImages.unstoredOutput?.('image', { id: 'm' }, mediaEntry)).toBe(unstored)
+  })
+
+  it.each([
+    ['up to 4', { type: 'range', min: 0, max: 4 }, { maxImages: 4 }],
+    ['1, and needs it', { type: 'range', min: 1, max: 1 }, { maxImages: 1, minImages: 1 }],
+    // The request schema takes 16 at most.
+    ['more than the request takes', { type: 'range', min: 0, max: 20 }, { maxImages: 16 }],
+    ['none', { type: 'range', min: 0, max: 0 }, undefined],
+    ['a count that is not a number', { type: 'range', max: '4' }, undefined],
+    ['no count', undefined, undefined],
+  ])('takes reference images for an image model whose entry takes %s', (_name, range, rules) => {
+    expect(references(range)).toStrictEqual(rules)
   })
 })
 

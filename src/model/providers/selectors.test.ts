@@ -219,11 +219,13 @@ describe('provider requests when provider_keys.json cannot be read', () => {
   })
 })
 
-describe('model checks of a provider with a media model list', () => {
+describe('model checks of a provider with media model lists', () => {
   const ROUTER_URL = 'http://localhost:6161/api/v1'
   const speechEntry = { id: 'speech', supported_voices: ['af_alloy', 'af_bella'] }
   const videoEntry = { id: 'video' }
+  const imageEntry = { id: 'image' }
   const videoMediaEntry = { id: 'video', supported_durations: [4, 1], pricing_skus: { cents_per_video_output_second: '2' } }
+  const imageMediaEntry = { id: 'image', supported_parameters: { aspect_ratio: { type: 'enum', values: ['1:1', '16:9'] } } }
   const speech = {
     id: 'speech',
     name: 'speech',
@@ -233,6 +235,9 @@ describe('model checks of a provider with a media model list', () => {
   }
   const video = { id: 'video', name: 'video', provider: 'router', request: 'video' }
   const videoParameters = [{ name: 'duration', label: 'Length (seconds)', options: [1, 4], default: 1 }]
+  const image = { id: 'image', name: 'image', provider: 'router', request: 'image' }
+  const imageParameters = [{ name: 'aspect_ratio', label: 'Aspect ratio', options: ['1:1', '16:9'] }]
+  const listUrls = () => httpRequests.map(({ method, url }) => `${method} ${url}`).sort()
 
   function saveRouter(fetchModels = true) {
     sbp('dez.model/customProviders/save', {
@@ -240,7 +245,7 @@ describe('model checks of a provider with a media model list', () => {
       name: 'Router',
       baseUrl: ROUTER_URL,
       apiFormat: 'openai',
-      models: [{ id: 'speech', request: 'tts' }, { id: 'video', request: 'video' }],
+      models: [{ id: 'speech', request: 'tts' }, { id: 'video', request: 'video' }, { id: 'image', request: 'image' }],
       fetchModels,
       auth: 'apiKey',
       mediaApi: { format: 'openrouter' },
@@ -249,48 +254,59 @@ describe('model checks of a provider with a media model list', () => {
 
   beforeEach(() => {
     saveRouter()
-    httpAnswers.set(`${ROUTER_URL}/models`, { status: 200, json: { data: [speechEntry, videoEntry] } })
+    httpAnswers.set(`${ROUTER_URL}/models`, { status: 200, json: { data: [speechEntry, videoEntry, imageEntry] } })
+    httpAnswers.set(`${ROUTER_URL}/images/models`, { status: 200, json: { data: [imageMediaEntry] } })
     httpAnswers.set(`${ROUTER_URL}/videos/models`, { status: 200, json: { data: [videoMediaEntry, { id: 'not-in-the-model-list' }] } })
   })
 
-  it('reads both lists, and gives each clip model its parameters', async () => {
+  it('reads every list, and gives each media model its parameters', async () => {
     const result = await sbp('dez.provider/listModelsResult', 'router') as ProviderModelsResult
 
     expect(result).toStrictEqual({
       ok: true,
-      models: [speech, { ...video, parameters: videoParameters }],
-      entries: new Map([['speech', speechEntry], ['video', videoEntry]]),
-      mediaEntries: new Map<string, unknown>([['video', videoMediaEntry], ['not-in-the-model-list', { id: 'not-in-the-model-list' }]]),
+      models: [speech, { ...video, parameters: videoParameters }, { ...image, parameters: imageParameters }],
+      entries: new Map([['speech', speechEntry], ['video', videoEntry], ['image', imageEntry]]),
+      mediaEntries: new Map<string, unknown>([['image', imageMediaEntry], ['video', videoMediaEntry], ['not-in-the-model-list', { id: 'not-in-the-model-list' }]]),
     })
-    expect(httpRequests.map(({ method, url }) => `${method} ${url}`).sort()).toStrictEqual([`GET ${ROUTER_URL}/models`, `GET ${ROUTER_URL}/videos/models`])
+    expect(listUrls()).toStrictEqual([`GET ${ROUTER_URL}/images/models`, `GET ${ROUTER_URL}/models`, `GET ${ROUTER_URL}/videos/models`])
   })
 
-  // The chat models of the provider work without the media list.
-  it('still passes the check when only the media list fails, and tells so: its models then have no parameters', async () => {
+  // The chat models of the provider work without the media lists.
+  it('still passes the check when a media list fails, and tells so: the models of that list then have no parameters', async () => {
     httpAnswers.set(`${ROUTER_URL}/videos/models`, { status: 503, json: { error: 'Busy' } })
 
     const result = await sbp('dez.provider/listModelsResult', 'router') as ProviderModelsResult
 
     expect(result).toStrictEqual({
       ok: true,
-      models: [speech, video],
-      entries: new Map([['speech', speechEntry], ['video', videoEntry]]),
+      models: [speech, video, { ...image, parameters: imageParameters }],
+      entries: new Map([['speech', speechEntry], ['video', videoEntry], ['image', imageEntry]]),
+      mediaEntries: new Map<string, unknown>([['image', imageMediaEntry]]),
       mediaListFailed: true,
     })
     // The log also has the key store failure of this file's stand-in.
     expect(consoleError.mock.calls.map(([text]) => text)).toContain('Failed to list the media models of provider router:')
   })
 
+  it('gives no media entries when every media list fails', async () => {
+    httpAnswers.set(`${ROUTER_URL}/images/models`, { status: 503, json: { error: 'Busy' } })
+    httpAnswers.set(`${ROUTER_URL}/videos/models`, { status: 503, json: { error: 'Busy' } })
+
+    const result = await sbp('dez.provider/listModelsResult', 'router') as ProviderModelsResult
+
+    expect([result.models, result.mediaEntries, result.mediaListFailed]).toStrictEqual([[speech, video, image], undefined, true])
+  })
+
   // A video model with no lengths gets no request, so a media list that
   // fails once must not take away the lengths of an earlier check.
-  it('leaves in the model cache what an earlier check read from the media list, when that list then fails', async () => {
+  it('leaves in the model cache what an earlier check read from a media list, when that list then fails', async () => {
     const check = async () => sbp('dez.model/modelCache/applyProviderResult', 'router', await sbp('dez.provider/listModelsResult', 'router'))
     const cachedModels = () => (sbp('dez.model/modelCache/snapshot') as ModelCache).providers.router?.models
 
     await check()
     httpAnswers.set(`${ROUTER_URL}/videos/models`, { status: 503, json: { error: 'Busy' } })
     await check()
-    expect(cachedModels()).toStrictEqual([speech, { ...video, parameters: videoParameters }])
+    expect(cachedModels()).toStrictEqual([speech, { ...video, parameters: videoParameters }, { ...image, parameters: imageParameters }])
 
     // The next good list wins over what the cache kept.
     const longer = { id: 'video', supported_durations: [8] }
@@ -299,7 +315,7 @@ describe('model checks of a provider with a media model list', () => {
     expect(cachedModels()?.[1].parameters).toStrictEqual([{ name: 'duration', label: 'Length (seconds)', options: [8], default: 8 }])
   })
 
-  it('fails the check when the model list fails, whatever the media list says', async () => {
+  it('fails the check when the model list fails, whatever the media lists say', async () => {
     httpAnswers.set(`${ROUTER_URL}/models`, { status: 401, json: { error: 'No key' } })
 
     const result = await sbp('dez.provider/listModelsResult', 'router') as ProviderModelsResult
@@ -307,7 +323,7 @@ describe('model checks of a provider with a media model list', () => {
     expect({ ok: result.ok, models: result.models }).toStrictEqual({ ok: false, models: [] })
   })
 
-  it('reads the media list for a provider that does not fetch its models', async () => {
+  it('reads the media lists for a provider that does not fetch its models', async () => {
     saveRouter(false)
 
     const result = await sbp('dez.provider/listModelsResult', 'router') as ProviderModelsResult
@@ -316,8 +332,9 @@ describe('model checks of a provider with a media model list', () => {
     expect(result.models).toStrictEqual([
       { id: 'speech', name: 'speech', provider: 'router', request: 'tts' },
       { ...video, parameters: videoParameters },
+      { ...image, parameters: imageParameters },
     ])
-    expect(httpRequests.map(({ url }) => url)).toStrictEqual([`${ROUTER_URL}/videos/models`])
+    expect(listUrls()).toStrictEqual([`GET ${ROUTER_URL}/images/models`, `GET ${ROUTER_URL}/videos/models`])
   })
 })
 
@@ -733,6 +750,32 @@ describe('media requests', () => {
     expect(downloadRequests).toEqual([])
   })
 
+  // The image rules come from the model cache (an OpenRouter model whose
+  // `input_references` start at 1, mediaFormats.ts).
+  it.each([
+    [1, [], 'The model needs an input image, and the request has none.'],
+    [2, [`${APP_DIR}/assets/images/red.png`], 'The model needs at least 2 input images, and the request has 1.'],
+  ])('refuses an image request with fewer images than the %i that the model needs, before any request', async (minImages, images, message) => {
+    sbp('dez.model/modelCache/applyProviderResult', 'media', {
+      ok: true,
+      models: [{ id: 'm', name: 'Styles', provider: 'media', request: 'image', images: { maxImages: 4, minImages } }],
+    })
+
+    await expect(generate({ kind: 'image', images })).rejects.toThrow(message)
+    expect([imageReads, streamRequests]).toStrictEqual([[], []])
+  })
+
+  // The answer would be billed, and Dez could not store it.
+  it('refuses a request to a model that makes only a type that Dez does not store, before any request', async () => {
+    sbp('dez.model/modelCache/applyProviderResult', 'media', {
+      ok: true,
+      models: [{ id: 'm', name: 'Vector', provider: 'media', request: 'image', unstoredOutput: 'SVG' }],
+    })
+
+    await expect(generate({ kind: 'image' })).rejects.toThrow('Vector makes only SVG images, and Dez cannot store SVG images. Choose another image model.')
+    expect(streamRequests).toEqual([])
+  })
+
   it('reads no file of another Dez folder, and sends nothing', async () => {
     await expect(generate({ kind: 'imageEdit', images: ['/home/other/.config/dez/assets/images/red.png'] })).rejects.toThrow('Image not found: red.png')
 
@@ -755,21 +798,9 @@ describe('media requests', () => {
     await expect(generate({ providerId: 'broken', kind: 'image' })).rejects.toThrow('Broken server returned HTTP 404: Not found')
   })
 
-  it('fails before any request for a provider with no media API, or with one that makes no images', async () => {
-    sbp('dez.model/customProviders/save', {
-      id: 'clips-only',
-      name: 'Clip server',
-      baseUrl: MEDIA_BASE_URL,
-      apiFormat: 'openai',
-      models: [],
-      fetchModels: true,
-      auth: 'apiKey',
-      mediaApi: { format: 'openrouter' },
-    })
-
+  it('fails before any request for a provider with no media API', async () => {
     await expect(generate({ providerId: 'local', kind: 'image' })).rejects.toThrow('Local has no media API that Dez can use.')
     await expect(generate({ providerId: 'local', kind: 'tts' })).rejects.toThrow('Local has no media API that Dez can use.')
-    await expect(generate({ providerId: 'clips-only', kind: 'image' })).rejects.toThrow('Clip server has no image API that Dez can use.')
 
     expect(streamRequests).toEqual([])
   })

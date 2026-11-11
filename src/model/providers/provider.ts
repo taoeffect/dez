@@ -178,19 +178,21 @@ export class Provider {
     return entries
   }
 
-  // The request for the model list that only the media API has
-  // (`ClipFormat.modelList`), or null when it has none. It ends like a
+  // The requests for the model lists that only the media API has
+  // (`MediaFormat.modelLists`); none when it has none. Each one ends like a
   // model list request (`MODEL_LIST_TIMEOUT_MS`).
-  mediaModelListRequest(secret: Secret<string> | null): NativeHttpRequest | null {
-    const list = this.clipFormatOrNone()?.modelList?.(this.config.baseUrl)
-    return list ? { ...this.mediaApiRequest(list, secret), timeoutMs: MODEL_LIST_TIMEOUT_MS } : null
+  mediaModelListRequests(secret: Secret<string> | null): NativeHttpRequest[] {
+    const mediaApi = this.config.mediaApi
+    const lists = mediaApi ? MEDIA_FORMATS[mediaApi.format].modelLists?.(this.config.baseUrl) ?? [] : []
+    return lists.map((list) => ({ ...this.mediaApiRequest(list, secret), timeoutMs: MODEL_LIST_TIMEOUT_MS }))
   }
 
-  // The raw entries of the response `data` to `mediaModelListRequest`, by
-  // model id (the first entry of an id).
-  mediaModelEntries(data: unknown): Map<string, unknown> {
+  // The raw entries of the responses `lists` to `mediaModelListRequests`
+  // (the lists that loaded, in request order), by model id: the first
+  // entry of an id.
+  mediaModelEntries(lists: readonly unknown[]): Map<string, unknown> {
     const entries = new Map<string, unknown>()
-    for (const entry of modelData(data)) {
+    for (const entry of lists.flatMap((list) => modelData(list))) {
       const id = entryId(entry)
       if (id !== null && !entries.has(id)) entries.set(id, entry)
     }
@@ -199,13 +201,15 @@ export class Provider {
 
   // `models` (a `mergeModels` list), each model of a media request kind
   // with its parameters (`ImageFormat.parameters`, `ClipFormat.parameters`)
-  // and the rules of its input images (`MediaFormat.imageRules`), and each
-  // one of a clip request kind also with the rules of its text
-  // (`ClipFormat.textRules`), read from its raw entries (`modelEntries`,
-  // `mediaModelEntries`). This comes after the merge, because a config
-  // model can set the request kind. A new field here needs a line in
-  // `withKeptClipData` (keptClipData.ts), which keeps these fields when the
-  // media list does not load.
+  // and the rules of its input images (`MediaFormat.imageRules`), each one
+  // of a clip request kind also with the rules of its text
+  // (`ClipFormat.textRules`), and each one of an image request kind also
+  // with the file type that it makes when Dez cannot store it
+  // (`ImageFormat.unstoredOutput`), read from its raw entries
+  // (`modelEntries`, `mediaModelEntries`). This comes after the merge,
+  // because a config model can set the request kind. A new field here
+  // needs a line in `withKeptClipData` (keptClipData.ts), which keeps
+  // these fields when a media list does not load.
   withClipData(models: readonly ModelInfo[], entries: ReadonlyMap<string, unknown>, mediaEntries: ReadonlyMap<string, unknown>): ModelInfo[] {
     const mediaApi = this.config.mediaApi
     if (!mediaApi) return [...models]
@@ -218,7 +222,14 @@ export class Provider {
       const images = imageRules?.(kind, entry, mediaEntry)
       const parameters = (isClipKind(kind) ? clips?.parameters(kind, entry, mediaEntry) : imageFormat?.parameters?.(kind, entry, mediaEntry)) ?? []
       const text = isClipKind(kind) ? clips?.textRules?.(kind, entry, mediaEntry) : undefined
-      return { ...model, ...(parameters.length > 0 && { parameters }), ...(text && { text }), ...(images && { images }) }
+      const unstoredOutput = isClipKind(kind) ? undefined : imageFormat?.unstoredOutput?.(kind, entry, mediaEntry)
+      return {
+        ...model,
+        ...(parameters.length > 0 && { parameters }),
+        ...(text && { text }),
+        ...(images && { images }),
+        ...(unstoredOutput !== undefined && { unstoredOutput }),
+      }
     })
   }
 

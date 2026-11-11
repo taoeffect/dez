@@ -8,7 +8,7 @@ import { closePopup, openPopup, popupOpen, popupView, type ParameterRow } from '
 import type { E2EBrowser } from './harness/session'
 import { pickModel, sbpCall } from './harness/thread'
 
-// The parameters of a model whose provider has a model list of its media
+// The parameters of a model whose provider has model lists of its media
 // API, driven through the real app against a mock of OpenRouter's
 // (`mediaApi: { format: 'openrouter' }`): the lengths of a video model come
 // only from the list of the video API (`/videos/models`).
@@ -20,6 +20,7 @@ import { pickModel, sbpCall } from './harness/thread'
 const FILMS: MockProvider = { id: 'router-films', name: 'Router Films Mock', modelId: 'film-model', modelName: 'Film Model' }
 const MODEL_LIST_PATH = `/${FILMS.id}/v1/models`
 const VIDEO_LIST_PATH = `/${FILMS.id}/v1/videos/models`
+const IMAGE_LIST_PATH = `/${FILMS.id}/v1/images/models`
 const PROVIDER_ROW = `.provider-row[data-provider-id="${FILMS.id}"]`
 
 describe('model parameters after a media model list that fails', () => {
@@ -30,6 +31,7 @@ describe('model parameters after a media model list that fails', () => {
   const answers: Record<string, unknown> = {
     [MODEL_LIST_PATH]: { data: [{ id: FILMS.modelId, name: FILMS.modelName, type: 'video' }] },
     [VIDEO_LIST_PATH]: { data: [{ id: FILMS.modelId, supported_durations: [8, 4] }] },
+    [IMAGE_LIST_PATH]: { data: [] },
   }
 
   async function lastCheckedAt (): Promise<number> {

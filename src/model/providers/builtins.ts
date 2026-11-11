@@ -25,11 +25,13 @@ export const BUILT_IN_PROVIDER_CONFIGS: readonly ProviderConfig[] = [
     modelThinking: { path: 'supported_parameters' },
     // A list; "text" with "image" is a chat model that also makes images
     // (`imageOutputBody`). Image-only models answer only through
-    // OpenRouter's Image API (their `endpoints` have no chat route), which
-    // Dez does not speak, so they get no request yet. "image" counts only
-    // with an image price: the routers (`openrouter/auto`) report it too,
-    // but none of their models makes images (checked live, 2026-11-10).
-    // Speech and video-only models take the media API (`mediaApi`). No
+    // OpenRouter's Image API (their `endpoints` have no chat route, only
+    // `/api/v1/images`), so they take the media API (`mediaApi`). "image"
+    // counts only with an image price: the routers (`openrouter/auto`)
+    // report it too, but none of their models makes images (checked live,
+    // 2026-11-10); each of the 55 image-only models has the price (checked
+    // live, 2026-11-11).
+    // Speech and video-only models take the media API too. No
     // field tells that a video model needs an image, so each one has the
     // kind `video`, and the image of a message goes as a frame to a model
     // that takes frames (the video list, mediaFormats.ts). The few models
@@ -37,13 +39,13 @@ export const BUILT_IN_PROVIDER_CONFIGS: readonly ProviderConfig[] = [
     // "audio" comes only with "text": those models answer through chat.
     // "transcription" models write down a recording, which Dez cannot
     // send (`clipInput`).
-    // MODEL_INVOKE: the types with no `request` here (image-only,
-    // transcription) are the models that a `model_invoke` tool could run.
+    // MODEL_INVOKE: the types with no `request` here (transcription) are
+    // the models that a `model_invoke` tool could run.
     modelOutputs: {
       path: 'architecture.output_modalities',
       values: {
         text: { outputs: ['text'], request: 'chat' },
-        image: { outputs: ['image'], requiredPath: 'pricing.image_output' },
+        image: { outputs: ['image'], request: 'image', requiredPath: 'pricing.image_output' },
         audio: { outputs: ['audio'] },
         speech: { outputs: ['audio'], request: 'tts' },
         video: { outputs: ['video'], request: 'video' },
@@ -66,11 +68,11 @@ export const BUILT_IN_PROVIDER_CONFIGS: readonly ProviderConfig[] = [
     // outputs hold `image`. The streamed images are in `delta.images`.
     // https://openrouter.ai/docs/api/api-reference/chat/create-a-chat-completion
     imageOutputBody: { modalities: ['image', 'text'] },
-    // The speech and video models take OpenRouter's own speech and video
-    // APIs. A speech request asks for mp3. "HeyGen Voice and Gemini TTS
-    // only return `pcm` [...]; these return a 400 for the other format",
-    // and no field of a model entry tells it, so these parts do. Dez makes
-    // a WAV file of the raw PCM (pcmAudio.ts).
+    // The image-only, speech, and video models take OpenRouter's own image,
+    // speech, and video APIs. A speech request asks for mp3. "HeyGen Voice
+    // and Gemini TTS only return `pcm` [...]; these return a 400 for the
+    // other format", and no field of a model entry tells it, so these parts
+    // do. Dez makes a WAV file of the raw PCM (pcmAudio.ts).
     // https://openrouter.ai/docs/guides/overview/multimodal/tts
     mediaApi: {
       format: 'openrouter',

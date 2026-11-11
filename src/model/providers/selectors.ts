@@ -8,7 +8,7 @@ import { bytesToBase64 } from '../../utils/base64'
 import { fileNameOf } from '../../utils/fileName'
 import { secret, type Secret } from '../../utils/secret'
 import { nativeResponseJson, nativeResponseText, readNativeChunkBytes, type NativeHttpRequest, type NativeHttpResponse, type NativeHttpStreamResult } from '../../utils/protocol/nativeHttp'
-import { needsInputImage } from './clipImages'
+import { minInputImages } from './clipImages'
 import { CLIP_JOB_TIMEOUT_MS, clipPollDelay, sendClipRequest, type ClipRun } from './clipRequests'
 import { assertProviderResponseOk } from './errors'
 import { generatedImageFromUrl } from './generatedImages'
@@ -21,6 +21,7 @@ import { getProvider, listProviders, requireProvider } from './registry'
 import { assertStreamResponseOk, streamProviderTokens } from './streaming'
 import type { ProviderChatInputMessage, ProviderGenerateMediaInput, ProviderGenerateMediaResult, ProviderMediaQuoteInput, ProviderStreamChatInput, ProviderStreamChatResult } from './streamTypes'
 import { CLIP_KINDS, ProviderNotConfiguredError, isClipKind, type ChatImagePart, type ChatMessage, type ChatPart, type ModelDisplayNames, type ModelInfo, type ProviderId, type ProviderInfo, type ProviderModelsResult, type ProviderSettingsDescriptor } from './types'
+import { unstoredOutputMessage } from './unusableModel'
 
 // The file of a stored image.
 interface StoredImage {
@@ -226,36 +227,34 @@ export default sbp('sbp/selectors/register', {
   // Never throws for a known provider: every failure becomes `ok: false`, the
   // basis for the provider's "working" status in the model cache.
   //
-  // The model list and the list of the media API (`mediaModelListRequest`)
+  // The model list and the lists of the media API (`mediaModelListRequests`)
   // load at the same time. A failed list of the media API does not fail the
   // check, as the provider's other models work without it: the result says
   // so (`mediaListFailed`), and the model cache then keeps what it knew of
-  // each model from that list (`withKeptClipData`). A model that the cache
-  // did not know has no parameters then, and one that needs them gets no
-  // request until a later check (`ClipFormat.request`).
+  // each model from the media lists (`withKeptClipData`). A model that the
+  // cache did not know has no parameters then, and one that needs them gets
+  // no request until a later check (`ClipFormat.request`).
   async 'dez.provider/listModelsResult' (providerId: ProviderId): Promise<ProviderModelsResult> {
     const provider = requireProvider(providerId)
 
     try {
       const secretValue = await requestSecret(provider)
       const listRequest = provider.modelListRequest(secretValue)
-      const mediaListRequest = provider.mediaModelListRequest(secretValue)
-      const [data, mediaData] = await Promise.all([
+      const mediaListRequests = provider.mediaModelListRequests(secretValue)
+      const [data, ...mediaData] = await Promise.all([
         listRequest ? jsonResponse(provider, listRequest) : undefined,
-        mediaListRequest
-          ? jsonResponse(provider, mediaListRequest).catch((error: unknown) => {
-            console.error(`Failed to list the media models of provider ${providerId}:`, error)
-            return undefined
-          })
-          : undefined,
+        ...mediaListRequests.map((request) => jsonResponse(provider, request).catch((error: unknown) => {
+          console.error(`Failed to list the media models of provider ${providerId}:`, error)
+          return undefined
+        })),
       ])
-      // `undefined` is no JSON value: with a request, it tells that the
-      // request failed.
-      const mediaListFailed = mediaListRequest !== null && mediaData === undefined
+      // `undefined` is no JSON value: it tells that the request failed.
+      const loadedMediaData = mediaData.filter((list) => list !== undefined)
+      const mediaListFailed = loadedMediaData.length < mediaListRequests.length
       // With no model list, these are the config models.
       const merged = provider.mergeModels(provider.parseModels(data))
       const entries = provider.modelEntries(merged, data)
-      const mediaEntries = mediaData === undefined ? undefined : provider.mediaModelEntries(mediaData)
+      const mediaEntries = loadedMediaData.length > 0 ? provider.mediaModelEntries(loadedMediaData) : undefined
       const models = provider.withClipData(merged, entries, mediaEntries ?? new Map())
       return { ok: true, models, entries, ...(mediaEntries && { mediaEntries }), ...(mediaListFailed && { mediaListFailed }) }
     } catch (error) {
@@ -328,11 +327,18 @@ export default sbp('sbp/selectors/register', {
     let jobId: string | null = null
     try {
       const paths = input.images ?? []
-      // The submit refuses such a request with the model's name
-      // (`missingImageProblem`); this is for a caller that did not check.
-      if (needsInputImage(kind) && paths.length === 0) throw new Error('The model needs an input image, and the request has none.')
+      const cachedModel = sbp('dez.model/modelCache/model', provider.id, modelId) as ModelInfo | null
+      // The submit refuses such requests with the model's name
+      // (`unstoredOutputMessage`, `missingImageProblem`); this is for a
+      // caller that did not check.
+      if (cachedModel?.unstoredOutput !== undefined) throw new Error(unstoredOutputMessage(cachedModel.name, cachedModel.unstoredOutput))
+      const minImages = minInputImages(kind, cachedModel?.images)
+      if (paths.length < minImages) {
+        const needs = minImages === 1 ? 'an input image' : `at least ${minImages} input images`
+        throw new Error(`The model needs ${needs}, and the request has ${paths.length === 0 ? 'none' : paths.length}.`)
+      }
       const appDir = paths.length > 0 ? await sbp('dez.native/getAppDir') as string : ''
-      const sizeRules = provider.inputImageSize(kind, sbp('dez.model/modelCache/model', provider.id, modelId) as ModelInfo | null)
+      const sizeRules = provider.inputImageSize(kind, cachedModel)
       const images = await Promise.all(paths.map(async (path): Promise<ChatImagePart> => {
         const { bytes, mediaType, size } = await fittedImage(await readStoredImage(path, appDir), sizeRules)
         const problem = provider.inputImageProblem(kind, size, bytes.length)

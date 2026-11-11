@@ -3,7 +3,7 @@ import { effectiveOutputs } from '../model/modelOutputs'
 import { missingImageProblem } from '../model/providers/clipImages'
 import { clipTextProblem } from '../model/providers/clipText'
 import { effectiveRequest, type ModelInfo } from '../model/providers/types'
-import { unusableModelMessage } from '../model/providers/unusableModel'
+import { unstoredOutputMessage, unusableModelMessage } from '../model/providers/unusableModel'
 import { mediaRequestInput } from '../model/streams/messages'
 import type { RequestMessages } from '../model/streams/types'
 
@@ -37,24 +37,27 @@ export default sbp('sbp/selectors/register', {
     // A model that the cache does not have has no request kind, so it gets
     // a chat request, as before models had one. A refusal changes nothing,
     // so it comes before the end of a running reply's output.
-    const cachedModel: Pick<ModelInfo, 'outputs' | 'request' | 'clipInput' | 'text' | 'images'> = sbp('dez.model/modelCache/model', model.providerId, model.modelId) ?? {}
+    const cachedModel: Pick<ModelInfo, 'outputs' | 'request' | 'clipInput' | 'text' | 'images' | 'unstoredOutput'> = sbp('dez.model/modelCache/model', model.providerId, model.modelId) ?? {}
     const kind = effectiveRequest(cachedModel)
     let message: string | null = null
     // How many images of the message a media request takes and leaves out.
     let mediaImages = { sent: 0, leftOut: 0 }
     if (kind === 'none') {
       message = unusableModelMessage(model.modelName, cachedModel)
+    } else if (cachedModel.unstoredOutput !== undefined) {
+      // The provider would bill an image that Dez then cannot store.
+      message = unstoredOutputMessage(model.modelName, cachedModel.unstoredOutput)
     } else if (kind !== 'chat') {
       // An input that the model is known not to take (no image for a model
-      // that edits one, makes one larger, or makes its video from one; no
-      // lyrics for a model that needs them; a prompt that is too short or
-      // too long) gets no request: the check costs nothing, and it tells
-      // the user what to change. The end of a running reply's output
-      // changes no user message and adds no image, so the input that this
-      // checks is the input of the request. Only a clip model has text
-      // rules.
+      // that edits one, makes one larger, makes its video from one, or
+      // needs a reference image; no lyrics for a model that needs them; a
+      // prompt that is too short or too long) gets no request: the check
+      // costs nothing, and it tells the user what to change. The end of a
+      // running reply's output changes no user message and adds no image,
+      // so the input that this checks is the input of the request. Only a
+      // clip model has text rules.
       const input = mediaRequestInput(kind, request.messages, tab.sections, cachedModel)
-      message = missingImageProblem(model.modelName, kind, input.images.length) ?? clipTextProblem(model.modelName, cachedModel.text, input)
+      message = missingImageProblem(model.modelName, kind, input.images.length, cachedModel.images) ?? clipTextProblem(model.modelName, cachedModel.text, input)
       mediaImages = { sent: input.images.length, leftOut: input.imagesLeftOut }
     }
     if (message !== null) {

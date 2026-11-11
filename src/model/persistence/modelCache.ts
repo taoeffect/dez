@@ -33,11 +33,13 @@ const clipTextRulesSchema = z.object({
 
 // InputImageRules (src/model/providers/clipImages.ts). A bad size rule is
 // dropped alone (`imageSizeRules`), and the model stays: its images then
-// go as they are, and the provider checks them.
-const inputImageRulesSchema = z.object({ maxImages: z.number().int().positive(), size: z.unknown() })
-  .transform(({ maxImages, size }): InputImageRules => {
+// go as they are, and the provider checks them. A fewest count above the
+// most count is no rule, so it is dropped too.
+const inputImageRulesSchema = z.object({ maxImages: z.number().int().positive(), minImages: z.unknown(), size: z.unknown() })
+  .transform(({ maxImages, minImages, size }): InputImageRules => {
     const sizeRules = isRecord(size) ? imageSizeRules(size) : undefined
-    return { maxImages, ...(sizeRules && { size: sizeRules }) }
+    const fewest = typeof minImages === 'number' && Number.isInteger(minImages) && minImages > 0 && minImages <= maxImages ? minImages : undefined
+    return { maxImages, ...(fewest !== undefined && { minImages: fewest }), ...(sizeRules && { size: sizeRules }) }
   })
 
 const modelInfoSchema = z.object({
@@ -56,6 +58,7 @@ const modelInfoSchema = z.object({
   parameters: z.array(modelParameterSchema).min(1).optional(),
   text: clipTextRulesSchema.optional(),
   images: inputImageRulesSchema.optional(),
+  unstoredOutput: z.string().min(1).optional(),
 })
 
 // Individually drop invalid models (e.g. a bad provider id) instead of failing

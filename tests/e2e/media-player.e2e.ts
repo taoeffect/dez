@@ -66,6 +66,7 @@ const SPEECH_PATH = `/${SPEAKER.id}/v1/audio/speech`
 const RAW_SPEAKER: MockProvider = { id: 'raw', name: 'Raw Speech Mock', modelId: 'raw-voice', modelName: 'Raw Voice' }
 const RAW_SPEECH_PATH = `/${RAW_SPEAKER.id}/v1/audio/speech`
 const RAW_MODEL_LIST_PATH = `/${RAW_SPEAKER.id}/v1/videos/models`
+const RAW_IMAGE_LIST_PATH = `/${RAW_SPEAKER.id}/v1/images/models`
 
 // One second of a saw wave in 16-bit little-endian samples: each byte
 // differs from the bytes next to it, so a byte that moves shows.
@@ -326,7 +327,7 @@ describe('media player', () => {
         },
       }],
       heldPaths: [SPEECH_PATH, RAW_SPEECH_PATH],
-      jsonAnswers: { [RAW_MODEL_LIST_PATH]: { data: [] } },
+      jsonAnswers: { [RAW_MODEL_LIST_PATH]: { data: [] }, [RAW_IMAGE_LIST_PATH]: { data: [] } },
     })
     browser = setup.browser
   })
