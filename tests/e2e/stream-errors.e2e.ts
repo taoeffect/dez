@@ -7,7 +7,7 @@ import { conversationFilePath } from './harness/fixtures'
 import { startMockProviderApp } from './harness/mockProviderApp'
 import { startEventStream, writeChatFrame, type HeldRequest, type HoldingChatMock, type MockProvider } from './harness/mockServer'
 import type { E2EBrowser } from './harness/session'
-import { activeConversationId, activeTabId, activeTabStreaming, editorDoc, openToasts, sbpCall, submit, threadSections } from './harness/thread'
+import { activeConversationId, activeTabId, activeTabStreaming, editorDoc, openToasts, pickModel, sbpCall, submit, threadSections } from './harness/thread'
 
 // Errors of a chat request, driven through the real app against a mock
 // server in this process:
@@ -21,6 +21,13 @@ import { activeConversationId, activeTabId, activeTabStreaming, editorDoc, openT
 // One app session serves the whole file; each test starts in a new tab.
 
 const PROVIDER: MockProvider = { id: 'errors', name: 'Errors Mock', modelId: 'errors-model', modelName: 'Errors Model' }
+// A custom provider whose base URL names a port where no server listens.
+const CLOSED_PROVIDER: MockProvider = { id: 'closed', name: 'Closed Server', modelId: 'closed-model', modelName: 'Closed Model' }
+const CLOSED_BASE_URL = 'http://127.0.0.1:9/v1'
+// The start of the text of a request to a custom provider that got no
+// whole answer.
+const unreachedText = (name: string) => `Dez could not reach ${name}, or the connection broke before the answer was complete. Check the internet connection, then try again. `
+  + `If the error stays, check the base URL of ${name} in Settings › Providers (for a server on this computer: check that it runs).`
 
 interface ToastBox {
   left: number
@@ -89,7 +96,9 @@ describe('stream errors', () => {
   }
 
   beforeAll(async () => {
-    ({ app, browser, mock, stop: stopApp } = await startMockProviderApp(PROVIDER))
+    ({ app, browser, mock, stop: stopApp } = await startMockProviderApp(PROVIDER, {}, {
+      moreProviders: [{ provider: CLOSED_PROVIDER, config: { baseUrl: CLOSED_BASE_URL } }],
+    }))
   })
 
   beforeEach(async () => {
@@ -119,9 +128,10 @@ describe('stream errors', () => {
     await submit(browser, 'who are you now?')
     answerStatus(await mock.waitForRequest(browser), 401, '{"error":"Authentication failed"}')
 
-    await waitForValue(browser, 'error toast', () => openToasts(browser, 'error'), [
-      { title: 'Request failed', message: 'Errors Mock returned HTTP 401: Authentication failed. Check the API key of Errors Mock in Settings › Providers.' },
-    ])
+    await waitForValue(browser, 'error toast', () => openToasts(browser, 'error'), [{
+      title: 'Request failed',
+      message: 'Errors Mock did not accept the API key. Check the API key of Errors Mock in Settings › Providers.\n\nDetails: HTTP 401: Authentication failed',
+    }])
     await waitForValue(browser, 'streaming', () => activeTabStreaming(browser), false)
     expect(await threadSections(browser)).toEqual([{ role: 'user', text: 'who are you now?' }])
     // The editor rebuilds its state from the store a tick after the end.
@@ -164,7 +174,10 @@ describe('stream errors', () => {
     // The connection drops in the middle of the body.
     reply.destroy()
 
-    await waitForValue(browser, 'error toasts', async () => (await openToasts(browser, 'error')).map((toast) => toast.title), ['Request failed'])
+    // The native layer gives the details; Dez's explanation comes first.
+    await waitForValue(browser, 'error toasts', async () => (await openToasts(browser, 'error')).map((toast) => [toast.title, toast.message.split('\n\nDetails: ')[0]]), [
+      ['Request failed', unreachedText(PROVIDER.name)],
+    ])
     await waitForValue(browser, 'streaming', () => activeTabStreaming(browser), false)
     expect(await threadSections(browser)).toEqual([
       { role: 'user', text: 'Question' },
@@ -198,9 +211,10 @@ describe('stream errors', () => {
     await sbpCall(browser, 'dez.model/tabs/create')
 
     answerStatus(request, 500, '{"error":"Server error"}')
-    await waitForValue(browser, 'error toasts', () => openToasts(browser, 'error'), [
-      { title: 'Request failed in "Background question"', message: 'Errors Mock returned HTTP 500: Server error. This is a problem at Errors Mock: try again later.' },
-    ])
+    await waitForValue(browser, 'error toasts', () => openToasts(browser, 'error'), [{
+      title: 'Request failed in "Background question"',
+      message: 'This is a problem at Errors Mock, not in your message or in Dez. Try again later.\n\nDetails: HTTP 500: Server error',
+    }])
     await waitForValue(browser, 'background tab sections', async () => {
       const tab = await sbpCall(browser, 'dez.model/tab', backgroundTabId) as { sections: unknown[] }
       return tab.sections.length
@@ -209,5 +223,22 @@ describe('stream errors', () => {
     await sbpCall(browser, 'dez.model/tabs/switch', backgroundTabId)
     await waitForValue(browser, 'editor doc of the background tab', () => editorDoc(browser), 'Background question')
     expect(await threadSections(browser)).toEqual([{ role: 'user', text: 'Background question' }])
+  })
+
+  it('tells that Dez could not reach a custom provider whose server does not run, and to check its base URL', async () => {
+    await pickModel(browser, CLOSED_PROVIDER.name, CLOSED_PROVIDER.modelName)
+    try {
+      await submit(browser, 'Anyone there?')
+
+      await waitForValue(browser, 'error toasts', async () => (await openToasts(browser, 'error')).map((toast) => {
+        const [explanation, details] = toast.message.split('\n\nDetails: ')
+        return { title: toast.title, explanation, nativeTextNamesTheUrl: details?.includes(`${CLOSED_BASE_URL}/chat/completions`) }
+      }), [{ title: 'Request failed', explanation: unreachedText(CLOSED_PROVIDER.name), nativeTextNamesTheUrl: true }])
+      await waitForValue(browser, 'streaming', () => activeTabStreaming(browser), false)
+      expect(await threadSections(browser)).toEqual([{ role: 'user', text: 'Anyone there?' }])
+    } finally {
+      // A new tab gets the last used model.
+      await pickModel(browser, PROVIDER.name, PROVIDER.modelName)
+    }
   })
 })

@@ -90,6 +90,8 @@ afterEach(() => {
 })
 
 describe('dez.controller/unusedFiles/find', () => {
+  const READ_FAILURE = 'The system did not let Dez read all of its files, so Dez deletes no file. The details tell why (for example, Dez has no permission to read a file). Fix that, and try again.'
+
   it('gives the old files of the four folders that no text names, with their total size', async () => {
     folders = {
       'assets/images': [file('pasted-used.png', 1), file('pasted-free.png', 20), file('pasted-new.png', 300, OLD + 1)],
@@ -146,7 +148,7 @@ describe('dez.controller/unusedFiles/find', () => {
 
     await expect(find()).rejects.toBe(conversationsError)
 
-    expect(toasts).toStrictEqual([{ title: 'Could not look for unused files', message: conversationsError, variant: 'error' }])
+    expect(toasts).toStrictEqual([{ title: 'Could not look for unused files', message: `${READ_FAILURE}\n\nDetails: ${conversationsError}`, variant: 'error' }])
     expect(consoleError).toHaveBeenCalled()
   })
 
@@ -158,7 +160,7 @@ describe('dez.controller/unusedFiles/find', () => {
 
     await expect(find()).rejects.toThrow('Failed to list assets/generated/video')
 
-    expect(toasts).toStrictEqual([{ title: 'Could not look for unused files', message: 'Failed to list assets/generated/video', variant: 'error' }])
+    expect(toasts).toStrictEqual([{ title: 'Could not look for unused files', message: `${READ_FAILURE}\n\nDetails: Failed to list assets/generated/video`, variant: 'error' }])
     expect(conversationReads).toBe(0)
   })
 })

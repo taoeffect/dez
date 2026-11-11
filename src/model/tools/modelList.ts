@@ -3,7 +3,7 @@ import { OUTPUT_LETTER_LEGEND, outputLetters, parseOutputLetters } from '../mode
 import { availableModels, matchingModelsByProvider, searchTerms } from '../modelSearch'
 import type { ModelCache } from '../persistence/types'
 import type { ProviderInfo } from '../providers/types'
-import type { ToolArguments, ToolDefinition } from './types'
+import { ToolError, type ToolArguments, type ToolDefinition } from './types'
 
 /** The most model lines that one `model_list` result holds. */
 export const MODEL_LIST_LIMIT = 50
@@ -53,6 +53,10 @@ function columnText(value: string): string {
   return value.replace(/\s+/g, ' ').trim().replaceAll('|', '/')
 }
 
+/** The `model_list` result when the user can use no model at all. */
+export const NO_MODELS_TEXT = 'The user has no models that Dez can use: no provider is set up, or the model lists of the providers did not load. '
+  + 'Tell the user to add an API key in Settings › Providers, or to look there for a provider with an error.'
+
 /** The `model_list` result for the arguments of a call: the models that the
  *  user can pick (as the model picker shows them, with no Favorites group)
  *  that match `filter` and `outputs`, in provider order, then model cache
@@ -62,15 +66,16 @@ function columnText(value: string): string {
  *  with no letters or digits selects every model, as in the picker.
  *
  *  Throws for an `outputs` value with an unknown letter; the error names the
- *  valid letters, for the model to read. */
+ *  valid letters, for the model to read. With no model, or no match, the
+ *  result says why and what the model can do. */
 export function modelListText(cache: ModelCache, providers: readonly ProviderInfo[], args: ToolArguments = {}): string {
   const filter = typeof args.filter === 'string' ? args.filter : ''
   const parsedOutputs = parseOutputLetters(typeof args.outputs === 'string' ? args.outputs : '')
-  if (!parsedOutputs.ok) throw new Error(parsedOutputs.error)
+  if (!parsedOutputs.ok) throw new ToolError(parsedOutputs.error)
   const { outputs } = parsedOutputs
 
   const models = availableModels(cache, providers)
-  if (models.length === 0) return 'No models are available.'
+  if (models.length === 0) return NO_MODELS_TEXT
 
   const terms = searchTerms(filter)
   const criteria = [
@@ -85,7 +90,11 @@ export function modelListText(cache: ModelCache, providers: readonly ProviderInf
       return columns.join(' | ')
     }))
   const count = lines.length
-  if (count === 0) return `No models match ${criteria}.`
+  if (count === 0) {
+    const fixes = [...(terms.length > 0 ? ['fewer words in `filter`'] : []), ...(outputs.length > 0 ? ['other letters in `outputs`'] : [])]
+    const given = [...(terms.length > 0 ? ['`filter`'] : []), ...(outputs.length > 0 ? ['`outputs`'] : [])]
+    return `No models match ${criteria}. Call model_list again with ${fixes.join(' or ')}, or with no ${given.join(' and no ')} to list every model.`
+  }
 
   const counted = `${count} ${count === 1 ? 'model' : 'models'}`
   const matched = criteria === '' ? counted : `${counted} ${count === 1 ? 'matches' : 'match'} ${criteria}`

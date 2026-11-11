@@ -5,12 +5,14 @@ import type { MessagePart } from '../chat/types'
 import { modelRefKey } from '../chat/modelRef'
 import type { ModelCache } from '../persistence/types'
 import { bytesToBase64 } from '../../utils/base64'
+import { ExplainedError, explainedError, rawErrorText, REPORT_ADVICE } from '../../utils/errorText'
 import { fileNameOf } from '../../utils/fileName'
 import { secret, type Secret } from '../../utils/secret'
+import { sanitizeErrorText } from '../../utils/protocol/errors'
 import { nativeResponseJson, nativeResponseText, readNativeChunkBytes, type NativeHttpRequest, type NativeHttpResponse, type NativeHttpStreamResult } from '../../utils/protocol/nativeHttp'
-import { minInputImages } from './clipImages'
+import { missingImageProblem } from './clipImages'
 import { CLIP_JOB_TIMEOUT_MS, clipPollDelay, sendClipRequest, type ClipRun } from './clipRequests'
-import { assertProviderResponseOk } from './errors'
+import { assertProviderResponseOk, explainedProviderError, providerConnectionError, UnusableAnswerError } from './errors'
 import { generatedImageFromUrl } from './generatedImages'
 import { imageFit, type ImageSizeRules } from './imageSize'
 import type { MediaWireRequest } from './mediaFormats'
@@ -45,20 +47,32 @@ async function refreshCopilotSecret(): Promise<Secret<string>> {
 // when no key is stored, or when the key store cannot be read (like
 // dez.provider/infos, which then treats them as configured).
 async function requestSecret(provider: Provider, refreshCopilot = false): Promise<Secret<string> | null> {
+  const copilot = provider.config.auth === 'githubCopilot'
   let value: Secret<string> | null
   try {
     value = refreshCopilot ? await refreshCopilotSecret() : await providerSecret(provider.id)
   } catch (error) {
-    if (provider.requiresKey) throw error
     console.error(`Failed to read the API key of provider ${provider.id}:`, error)
+    if (provider.requiresKey) throw secretReadError(provider, copilot, error)
     value = null
   }
 
   if (!value && provider.requiresKey) {
-    throw new ProviderNotConfiguredError(provider.id, provider.name, provider.config.auth === 'githubCopilot')
+    throw new ProviderNotConfiguredError(provider.id, provider.name, copilot)
   }
 
   return value
+}
+
+// The native text does not tell the cause of a failed Copilot token
+// request (no sign-in, an expired one, or no connection), so the text names
+// each with its fix.
+function secretReadError(provider: Provider, copilot: boolean, error: unknown): ExplainedError {
+  const name = provider.name
+  const explanation = copilot
+    ? `Dez could not get a sign-in token from ${name}. If you did not sign in to ${name}, or the sign-in has expired, sign in to ${name} in Settings › Providers. Else check the internet connection, then try again.`
+    : `Dez could not read the API key of ${name}. Enter the API key of ${name} again in Settings › Providers. If Dez cannot save it either, its key file is damaged or locked: the details below tell what failed.`
+  return new ExplainedError(explanation, sanitizeErrorText(rawErrorText(error)), { cause: error })
 }
 
 // The messages with the bytes of each image part, read once for the request
@@ -95,7 +109,7 @@ async function readStoredImage(path: string, appDir: string): Promise<StoredImag
     return { bytes: await sbp('dez.native/loadAppFileBytes', file) as Uint8Array, mediaType }
   } catch (error) {
     console.error(`Failed to read the image ${path}:`, error)
-    throw new Error(`Image not found: ${fileNameOf(path)}. Paste the image again, or remove its reference.`)
+    throw new ExplainedError(`The image file ${fileNameOf(path)} is missing, or Dez cannot read it. Paste the image again, or remove its reference from the message.`)
   }
 }
 
@@ -156,11 +170,25 @@ async function fetchReplyImage(provider: Provider, url: string): Promise<Uint8Ar
 }
 
 // The JSON of the 2xx response to a request that is not a stream (a model
-// list, a price). Throws for any other status.
+// list, a price). Throws for any other status, for no answer, and for an
+// answer that is not JSON (a custom provider's base URL can name a web page
+// that answers 2xx with HTML).
 async function jsonResponse(provider: Provider, request: NativeHttpRequest): Promise<unknown> {
-  const response = await sbp('dez.native/httpRequest', request) as NativeHttpResponse
+  let response: NativeHttpResponse
+  try {
+    response = await sbp('dez.native/httpRequest', request) as NativeHttpResponse
+  } catch (error) {
+    throw providerConnectionError(provider, error)
+  }
   assertProviderResponseOk(response, provider, nativeResponseText(response))
-  return nativeResponseJson<unknown>(response)
+  try {
+    return nativeResponseJson<unknown>(response)
+  } catch (error) {
+    const fix = provider.builtIn
+      ? ` Try again later. ${REPORT_ADVICE}`
+      : ` Check the base URL of ${provider.name} in Settings › Providers.`
+    throw new ExplainedError(`${provider.name} sent an answer that is not JSON, so Dez cannot read it.${fix}`, rawErrorText(error), { cause: error })
+  }
 }
 
 // The value that a media request sends for each parameter of a model: the
@@ -272,30 +300,35 @@ export default sbp('sbp/selectors/register', {
       const models = provider.withClipData(merged, entries, mediaEntries ?? new Map())
       return { ok: true, models, entries, ...(mediaEntries && { mediaEntries }), ...(mediaListFailed && { mediaListFailed }) }
     } catch (error) {
-      const message = error instanceof Error ? error.message : String(error)
       console.error(`Failed to list models for provider ${providerId}:`, error)
-      return { ok: false, models: [], error: message }
+      return { ok: false, models: [], error: explainedError(error).message }
     }
   },
 
+  // A failed request rejects with a text for the user
+  // (`explainedProviderError`).
   async 'dez.provider/streamChat' (input: ProviderStreamChatInput): Promise<ProviderStreamChatResult> {
     const provider = requireProvider(input.providerId)
     const requestId = input.requestId ?? crypto.randomUUID()
     const messages = await readMessageImages(input.messages)
-    let stream = await nativeChatStream(provider, input, messages, requestId)
+    try {
+      let stream = await nativeChatStream(provider, input, messages, requestId)
 
-    // A 401 can mean the cached Copilot chat token expired early; get a fresh
-    // one and retry once. The refused response is never parsed, so its
-    // thinking cannot mix with the retry's.
-    if (provider.config.auth === 'githubCopilot' && stream.result.response.status === 401) {
-      await sbp('dez.http/cancelStream', stream.result.requestId)
-      stream = await nativeChatStream(provider, input, messages, requestId, true)
-    }
+      // A 401 can mean the cached Copilot chat token expired early; get a
+      // fresh one and retry once. The refused response is never parsed, so
+      // its thinking cannot mix with the retry's.
+      if (provider.config.auth === 'githubCopilot' && stream.result.response.status === 401) {
+        await sbp('dez.http/cancelStream', stream.result.requestId)
+        stream = await nativeChatStream(provider, input, messages, requestId, true)
+      }
 
-    return {
-      requestId: stream.result.requestId,
-      ...await streamProviderTokens(provider, input, stream.result, stream.thinking,
-        (url) => generatedImageFromUrl(url, (imageUrl) => fetchReplyImage(provider, imageUrl))),
+      return {
+        requestId: stream.result.requestId,
+        ...await streamProviderTokens(provider, input, stream.result, stream.thinking,
+          (url) => generatedImageFromUrl(url, (imageUrl) => fetchReplyImage(provider, imageUrl))),
+      }
+    } catch (error) {
+      throw explainedProviderError(provider, error)
     }
   },
 
@@ -345,18 +378,15 @@ export default sbp('sbp/selectors/register', {
       // The submit refuses such requests with the model's name
       // (`unstoredOutputMessage`, `missingImageProblem`); this is for a
       // caller that did not check.
-      if (cachedModel?.unstoredOutput !== undefined) throw new Error(unstoredOutputMessage(cachedModel.name, cachedModel.unstoredOutput))
-      const minImages = minInputImages(kind, cachedModel?.images)
-      if (paths.length < minImages) {
-        const needs = minImages === 1 ? 'an input image' : `at least ${minImages} input images`
-        throw new Error(`The model needs ${needs}, and the request has ${paths.length === 0 ? 'none' : paths.length}.`)
-      }
+      if (cachedModel?.unstoredOutput !== undefined) throw new ExplainedError(unstoredOutputMessage(cachedModel.name, cachedModel.unstoredOutput))
+      const missingImages = missingImageProblem(cachedModel?.name ?? modelId, kind, paths.length, cachedModel?.images)
+      if (missingImages !== null) throw new ExplainedError(missingImages)
       const appDir = paths.length > 0 ? await sbp('dez.native/getAppDir') as string : ''
       const sizeRules = provider.inputImageSize(kind, cachedModel)
       const images = await Promise.all(paths.map(async (path): Promise<ChatImagePart> => {
         const { bytes, mediaType, size } = await fittedImage(await readStoredImage(path, appDir), sizeRules)
         const problem = provider.inputImageProblem(kind, size, bytes.length)
-        if (problem !== undefined) throw new Error(problem)
+        if (problem !== undefined) throw new ExplainedError(problem)
         return { type: 'image', mediaType, data: bytesToBase64(bytes) }
       }))
       const values = parameterValues(provider.id, modelId, input.parameters)
@@ -413,16 +443,19 @@ export default sbp('sbp/selectors/register', {
         const keyed = 'download' in state
         const request: NativeHttpRequest = keyed ? apiRequest(state.download) : { method: 'GET', url: state.fileUrl }
         const download = await sendClipRequest(run, request, jobId, cacheDir, keyed)
-        if (!('clip' in download)) throw new Error('The provider sent no clip.')
+        if (!('clip' in download)) throw new UnusableAnswerError('The answer to the clip download holds no clip.')
         return { media: [], clips: [download.clip] }
       }
     } catch (error) {
-      if (jobId === null) throw error
+      const explained = explainedProviderError(provider, error)
+      if (jobId === null) throw explained
       const stopped = signal?.aborted === true
       console.error(`The clip job ${jobId} of ${provider.name} (model ${modelId}) ${stopped ? 'was stopped' : 'failed'}:`, error)
       if (stopped) throw error
-      const message = error instanceof Error ? error.message : String(error)
-      throw new Error(`${message}${/[.!?]$/.test(message) ? '' : '.'} To ask ${provider.name} about this clip, give its job id: ${jobId}.`, { cause: error })
+      // A provider takes the money for a job when it starts, so the text
+      // gives the job id, before the details.
+      const { explanation, details } = explainedError(explained)
+      throw new ExplainedError(`${explanation} To ask ${provider.name} about this clip, give its job id: ${jobId}.`, details, { cause: error })
     } finally {
       signal?.removeEventListener('abort', cancelRequest)
     }

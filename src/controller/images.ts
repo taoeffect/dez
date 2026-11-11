@@ -3,6 +3,7 @@ import { convertFileSrc, isTauri } from '@tauri-apps/api/core'
 import { getCurrentWebview } from '@tauri-apps/api/webview'
 import type { DrawnImage, DrawnMediaType, ImageDrawing, ImageSize } from '../model/chat/imageDrawing'
 import { IMAGE_FOLDERS, imageExtension, isImagePath, storedImageFile, type ImageFolder, type ImageMediaType } from '../model/chat/images'
+import { ExplainedError, errorText, rawErrorText } from '../utils/errorText'
 import { fileNameOf } from '../utils/fileName'
 
 // The quality of a drawn JPEG, from 0 to 1: high, so that a second
@@ -31,7 +32,7 @@ export default sbp('sbp/selectors/register', {
       // to another path would show as plain text and never reach a model,
       // so no file is written for it.
       if (!isImagePath(path)) {
-        throw new Error(`Images cannot be stored in this Dez folder: ${appDir}`)
+        throw new ExplainedError(`Dez cannot store images in the Dez folder ${appDir}. The path of this folder must start with "/" and must not hold "[", "]", or a line break. Start Dez with a HOME environment variable that gives such a path.`)
       }
       await sbp('dez.native/saveAppFile', file, bytes)
       return path
@@ -39,7 +40,9 @@ export default sbp('sbp/selectors/register', {
       console.error('Failed to save the image:', error)
       sbp('dez.ui/toast', 'app-global', {
         title: 'Could not save the image',
-        message: error instanceof Error ? error.message : String(error),
+        message: error instanceof ExplainedError
+          ? error.message
+          : errorText('The system did not let Dez write the image file. The details tell why (for example, the disk is full). Fix that, and try again.', rawErrorText(error)),
         variant: 'error',
       })
       throw error
@@ -60,7 +63,7 @@ export default sbp('sbp/selectors/register', {
       console.error(`Failed to delete the image ${path}:`, error)
       sbp('dez.ui/toast', 'app-global', {
         title: 'Could not delete the image',
-        message: error instanceof Error ? error.message : String(error),
+        message: errorText('The system did not let Dez delete the image file. The details tell why (for example, Dez has no permission to change the folder). Fix that, and try again.', rawErrorText(error)),
         variant: 'error',
       })
       throw error
@@ -77,10 +80,11 @@ export default sbp('sbp/selectors/register', {
   // an app folder that the protocol's scope has (a stored image, a media
   // clip), or a file of a native file drop (Tauri adds each dropped path to
   // the scope). The protocol takes the type from the bytes. Rejects when
-  // the file cannot be read.
+  // the file cannot be read; the error holds no path, as a tool can give
+  // its text to a chat provider.
   async 'dez.controller/images/readFile' (path: string): Promise<File> {
     const response = await fetch(convertFileSrc(path))
-    if (!response.ok) throw new Error(`Failed to read ${path}: HTTP ${response.status}`)
+    if (!response.ok) throw new Error(`The file cannot be read (HTTP ${response.status}).`)
     const blob = await response.blob()
     return new File([blob], fileNameOf(path), { type: blob.type })
   },

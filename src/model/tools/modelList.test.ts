@@ -88,11 +88,14 @@ describe('modelListText', () => {
     expect(modelListText(CACHE, PROVIDERS, { outputs: ' , ' })).toBe(modelListText(CACHE, PROVIDERS))
   })
 
-  it('says so when no model matches, with the filter as a JSON string', () => {
-    expect(modelListText(CACHE, PROVIDERS, { filter: 'xyz' })).toBe('No models match "xyz".')
-    expect(modelListText(CACHE, PROVIDERS, { filter: 'say "hi"' })).toBe('No models match "say \\"hi\\"".')
-    expect(modelListText(CACHE, PROVIDERS, { outputs: 'a' })).toBe('No models match outputs a.')
-    expect(modelListText(CACHE, PROVIDERS, { filter: 'mistral', outputs: 'av' })).toBe('No models match "mistral" and outputs a,v.')
+  it('says so when no model matches, with the filter as a JSON string, and tells how to widen the call', () => {
+    const filterFix = 'Call model_list again with fewer words in `filter`, or with no `filter` to list every model.'
+    const outputsFix = 'Call model_list again with other letters in `outputs`, or with no `outputs` to list every model.'
+    expect(modelListText(CACHE, PROVIDERS, { filter: 'xyz' })).toBe(`No models match "xyz". ${filterFix}`)
+    expect(modelListText(CACHE, PROVIDERS, { filter: 'say "hi"' })).toBe(`No models match "say \\"hi\\"". ${filterFix}`)
+    expect(modelListText(CACHE, PROVIDERS, { outputs: 'a' })).toBe(`No models match outputs a. ${outputsFix}`)
+    expect(modelListText(CACHE, PROVIDERS, { filter: 'mistral', outputs: 'av' })).toBe('No models match "mistral" and outputs a,v. '
+      + 'Call model_list again with fewer words in `filter` or other letters in `outputs`, or with no `filter` and no `outputs` to list every model.')
   })
 
   it('shows no outputs column for a model that makes none of the four outputs, and no outputs select it', () => {
@@ -101,7 +104,8 @@ describe('modelListText', () => {
       `1 model ${COLUMNS}`,
       'venice/embed | Embed | Venice',
     ].join('\n'))
-    expect(modelListText(cache([VENICE, models]), PROVIDERS, { outputs: 'tiav' })).toBe('No models match outputs t,i,a,v.')
+    expect(modelListText(cache([VENICE, models]), PROVIDERS, { outputs: 'tiav' }))
+      .toBe('No models match outputs t,i,a,v. Call model_list again with other letters in `outputs`, or with no `outputs` to list every model.')
   })
 
   it('refuses outputs with an unknown letter and names the valid letters, before it looks at the models', () => {
@@ -110,9 +114,11 @@ describe('modelListText', () => {
     expect(() => modelListText(cache(), PROVIDERS, { outputs: 'x' })).toThrow(error)
   })
 
-  it('says so when the user can use no model, whatever the filter', () => {
-    expect(modelListText(cache(), PROVIDERS)).toBe('No models are available.')
-    expect(modelListText(CACHE, [providerInfo('venice', 'Venice', false)], { filter: 'gemini', outputs: 't' })).toBe('No models are available.')
+  it('says so when the user can use no model, whatever the filter, and what the user can do', () => {
+    const none = 'The user has no models that Dez can use: no provider is set up, or the model lists of the providers did not load. '
+      + 'Tell the user to add an API key in Settings › Providers, or to look there for a provider with an error.'
+    expect(modelListText(cache(), PROVIDERS)).toBe(none)
+    expect(modelListText(CACHE, [providerInfo('venice', 'Venice', false)], { filter: 'gemini', outputs: 't' })).toBe(none)
   })
 
   it(`stops after ${MODEL_LIST_LIMIT} models and counts the rest`, () => {

@@ -6,6 +6,7 @@ import type { ApiFormatId, ProviderConfig, ProviderInfo } from '../../model/prov
 import { API_FORMATS } from '../../model/providers/apiFormats'
 import { customProviderConfigSchema } from '../../model/providers/config'
 import { isThinkingEnabled, THINKING_SETTING_KEY } from '../../model/providers/thinking'
+import { REPORT_ADVICE, explainedError } from '../../utils/errorText'
 
 interface CopilotDeviceFlowViewState {
   userCode: string
@@ -69,10 +70,6 @@ const keySaving = computed(() => selectedId.value !== null && keySavingIds.has(s
 const copilotDeviceFlow = ref<CopilotDeviceFlowViewState | null>(null)
 const copilotPolling = ref(false)
 const copilotError = ref<string | null>(null)
-
-function errorText(error: unknown): string {
-  return error instanceof Error ? error.message : String(error)
-}
 
 function health(info: ProviderInfo): ProviderHealth {
   if (!info.configured) return 'off'
@@ -158,7 +155,7 @@ function saveConfig(config: ProviderConfig) {
   try {
     sbp('dez.controller/providers/save', config)
   } catch (error) {
-    saveError.value = errorText(error)
+    saveError.value = explainedError(error).message
   }
   void loadInfos()
 }
@@ -246,7 +243,7 @@ async function updateKey(key: string | null) {
     if (selectedId.value === providerId) keyDraft.value = ''
   } catch (error) {
     if (selectedId.value === providerId) {
-      keyError.value = `Could not ${key ? 'save' : 'remove'} the key: ${errorText(error)}`
+      keyError.value = explainedError(error).message
     }
   } finally {
     keySavingIds.delete(providerId)
@@ -269,7 +266,7 @@ async function signInWithCopilot() {
       },
     })
   } catch (error) {
-    copilotError.value = `Copilot sign-in failed: ${errorText(error)}`
+    copilotError.value = explainedError(error).message
   } finally {
     copilotPolling.value = false
     copilotDeviceFlow.value = null
@@ -306,7 +303,7 @@ async function deleteProvider() {
   try {
     await sbp('dez.controller/providers/remove', info.id)
   } catch (error) {
-    saveError.value = `Could not delete the provider: ${errorText(error)}`
+    saveError.value = explainedError(error, `Dez could not delete the provider, because of an error that it did not expect. Try again. ${REPORT_ADVICE}`).message
   }
   await loadInfos()
 }
@@ -874,6 +871,8 @@ onBeforeUnmount(() => {
 .provider-models-status {
   font-size: 13px;
   overflow-wrap: anywhere;
+  /* A failed check shows its details as a paragraph of their own. */
+  white-space: pre-line;
 }
 
 .provider-models-status--error {

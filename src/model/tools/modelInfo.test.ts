@@ -5,6 +5,7 @@ import type { ModelInfo } from '../providers/types'
 import { unstoredOutputMessage, unusableModelMessage } from '../providers/unusableModel'
 import { MODEL_INFO_SIZE_CAP, modelInfoParameterValues, modelInfoPart, modelInfoTarget, modelInfoText, type ModelInfoFacts } from './modelInfo'
 import { modelUsage } from './modelUsage'
+import { ToolError } from './types'
 
 const OPENROUTER = providerInfo('openrouter', 'OpenRouter')
 const CLOSED = providerInfo('closed', 'Closed', false)
@@ -82,11 +83,12 @@ describe('modelInfoParameterValues', () => {
     ['a text for a number option', '{"duration": "5"}', 'The parameter "duration" takes one of: 1, 5, 10.'],
     ['a number out of the range', '{"duration_seconds": 31}', 'The parameter "duration_seconds" takes a whole number from 1 to 30.'],
   ])('refuses %s, and tells what the model takes', (_name, parameters, message) => {
-    expect(() => modelInfoParameterValues(VIDEO, { parameters })).toThrow(new Error(message))
+    expect(() => modelInfoParameterValues(VIDEO, { parameters })).toThrow(new ToolError(message))
   })
 
-  it('refuses a value for a model with no parameters', () => {
-    expect(() => modelInfoParameterValues(GEMINI, { parameters: '{"duration": 5}' })).toThrow(new Error('The model has no parameter "duration". It has no parameters.'))
+  it('refuses a value for a model with no parameters, and tells the model to leave them out', () => {
+    expect(() => modelInfoParameterValues(GEMINI, { parameters: '{"duration": 5}' }))
+      .toThrow(new ToolError('The model has no parameter "duration". It has no parameters: leave out `parameters`.'))
   })
 })
 

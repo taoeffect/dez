@@ -1,3 +1,5 @@
+import { NativeHttpError } from './errors'
+
 export type NativeHttpMethod = 'GET' | 'POST' | 'PUT' | 'PATCH' | 'DELETE'
 
 export type NativeHttpHeaders = Record<string, string>
@@ -145,7 +147,7 @@ export function createNativeHttpByteStream(): {
   const chunks: Uint8Array[] = []
   const waiters: (() => void)[] = []
   let closed = false
-  let error: Error | null = null
+  let error: NativeHttpError | null = null
 
   const wake = () => {
     const waiter = waiters.shift()
@@ -177,7 +179,7 @@ export function createNativeHttpByteStream(): {
       } else if (event.kind === 'Done') {
         closed = true
       } else if (event.kind === 'Error') {
-        error = new Error(event.data.message)
+        error = new NativeHttpError(event.data.message, event.data.status)
       }
 
       wake()

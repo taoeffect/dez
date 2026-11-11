@@ -12,8 +12,10 @@ import { customProviderConfigSchema } from '../model/providers/config'
 import { unstoredOutputMessage, unusableModelMessage } from '../model/providers/unusableModel'
 import type { GeneratedClip, ModelRequest, ProviderChatInputMessage, ProviderGenerateMediaInput, ProviderGenerateMediaResult, ProviderInfo, ProviderStreamChatInput, ProviderStreamChatResult } from '../model/providers'
 import type { RequestMessages } from '../model/streams/types'
+import { NO_MODELS_TEXT } from '../model/tools/modelList'
 import { TOOL_DEFINITIONS } from '../model/tools/registry'
 import type { ToastData } from '../view/toast/selectors'
+import { ExplainedError, UNEXPECTED_ERROR } from '../utils/errorText'
 // Side-effect imports: register the dez.model/* selectors and the selectors
 // under test.
 import '../model/state/index'
@@ -207,25 +209,28 @@ describe('dez.stream/start thinking', () => {
 })
 
 describe('dez.stream/start errors', () => {
-  const message = 'Venice returned HTTP 401: {"error":"Authentication failed"}'
+  const failure = new ExplainedError('Venice refused the API key.', 'HTTP 401: Authentication failed')
 
-  it('removes the agent section of a request that fails before any output, and shows a sticky error toast', async () => {
+  it('removes the agent section of a request that fails before any output, and shows the text of the error in a sticky error toast', async () => {
     streamChat = async () => {
-      throw new Error(message)
+      throw failure
     }
 
     await startStream()
 
     expect(sectionTexts()).toEqual([{ role: 'user', text: 'Hi' }])
     expect(savedConversations.at(-1)?.sections).toHaveLength(1)
-    expect(toasts).toStrictEqual([{ area: 'app-global', data: { variant: 'error', title: 'Request failed', message } }])
+    expect(toasts).toStrictEqual([{
+      area: 'app-global',
+      data: { variant: 'error', title: 'Request failed', message: 'Venice refused the API key.\n\nDetails: HTTP 401: Authentication failed' },
+    }])
     expect(consoleError).toHaveBeenCalled()
   })
 
   it('keeps the answer text that came before the error, with no error text, and adds a user section', async () => {
     streamChat = async (input) => {
       await input.onToken('Partial answer')
-      throw new Error('connection reset')
+      throw failure
     }
 
     await startStream()
@@ -235,17 +240,22 @@ describe('dez.stream/start errors', () => {
       { role: 'agent', text: 'Partial answer' },
       { role: 'user', text: '' },
     ])
-    expect(toasts.map((toast) => toast.data.message)).toEqual(['connection reset'])
+    expect(toasts.map((toast) => toast.data.message)).toEqual([failure.message])
   })
 
-  it('tells where to read the error of a failure with no text', async () => {
+  // No text of Dez explains an error that Dez did not expect, so the toast
+  // asks for a report and shows the raw text last.
+  it.each([
+    ['an error that Dez did not expect', new Error('Cannot read properties of undefined'), 'Cannot read properties of undefined'],
+    ['a failure with no text', new Error(''), 'The error has no text. Help › Developer Console shows it.'],
+  ])('tells the user to try again and report %s', async (_name, error, details) => {
     streamChat = async () => {
-      throw new Error('')
+      throw error
     }
 
     await startStream()
 
-    expect(toasts.map((toast) => toast.data.message)).toEqual(['The request failed, and its error has no text. Help › Developer Console shows the error.'])
+    expect(toasts.map((toast) => toast.data.message)).toEqual([`${UNEXPECTED_ERROR}\n\nDetails: ${details}`])
   })
 
   it('keeps a section that got only thinking before the error', async () => {
@@ -267,7 +277,7 @@ describe('dez.stream/start errors', () => {
   it('names the tab in the toast title when the tab is in the background', async () => {
     streamChat = async () => {
       sbp('dez.model/tabs/create')
-      throw new Error(message)
+      throw failure
     }
 
     await startStream()
@@ -519,7 +529,7 @@ describe('reply duration', () => {
 
 describe('dez.stream/start tool loop', () => {
   const running = '<dez:tool id="c1" name="model_list" status="running" filter="gemini">\n</dez:tool>\n'
-  const done = '<dez:tool id="c1" name="model_list" filter="gemini">\nNo models are available.\n</dez:tool>\n'
+  const done = `<dez:tool id="c1" name="model_list" filter="gemini">\n${NO_MODELS_TEXT}\n</dez:tool>\n`
   const geminiCall = { id: 'c1', name: 'model_list', argumentsText: '{"filter":"gemini"}' }
   // The request messages of each round, as plain data at the call.
   let sent: ProviderChatInputMessage[][] = []
@@ -585,7 +595,7 @@ describe('dez.stream/start tool loop', () => {
         thinking: { text: 'Look.', replay },
         toolCalls: [{ id: 'c1', name: 'model_list', arguments: { filter: 'gemini' } }],
       },
-      { role: 'tool', results: [{ callId: 'c1', content: 'No models are available.', isError: false }] },
+      { role: 'tool', results: [{ callId: 'c1', content: NO_MODELS_TEXT, isError: false }] },
     ])
     expect(sectionTexts()).toStrictEqual([
       { role: 'user', text: 'Hi' },
@@ -742,9 +752,13 @@ describe('dez.stream/start tool loop', () => {
 
     expect(runs).toBe(1)
     const [unknown, invalid, renamed] = blocks()
-    expect(unknown).toStrictEqual({ id: 'c1', status: 'error', result: 'Unknown tool: "web_search".' })
+    expect(unknown).toStrictEqual({
+      id: 'c1',
+      status: 'error',
+      result: 'Dez has no tool named "web_search". Call only the Dez tools, by their exact names: model_list, model_info, crop_scale_image.',
+    })
     expect(invalid.status).toBe('error')
-    expect(invalid.result).toMatch(/^Invalid arguments: .+\. Received: \{"filter":1\}$/)
+    expect(invalid.result).toMatch(/^Dez did not run this call\. .+\n\nDetails: The call sent \{"filter":1\}$/)
     expect(renamed.id).toMatch(/^call_[0-9a-f]{12}$/)
     expect(renamed.status).toBe('success')
     expect(sent[1].at(-1)).toStrictEqual({
@@ -752,7 +766,7 @@ describe('dez.stream/start tool loop', () => {
       results: [
         { callId: 'c1', content: unknown.result, isError: true },
         { callId: 'c2', content: invalid.result, isError: true },
-        { callId: renamed.id, content: 'No models are available.', isError: false },
+        { callId: renamed.id, content: NO_MODELS_TEXT, isError: false },
       ],
     })
   })
@@ -774,7 +788,7 @@ describe('dez.stream/start tool loop', () => {
 
     expect(requests).toHaveLength(1)
     expect(blocks()).toStrictEqual([
-      { id: 'c1', status: 'success', result: 'No models are available.' },
+      { id: 'c1', status: 'success', result: NO_MODELS_TEXT },
       { id: 'c2', status: 'error', result: 'Stopped.' },
     ])
     expect(savedConversations).toHaveLength(1)
@@ -811,7 +825,7 @@ describe('dez.stream/start tool loop', () => {
     expect(sent[1].at(-1)).toStrictEqual({
       role: 'tool',
       results: [
-        { callId: 'c1', content: 'No models are available.', isError: false },
+        { callId: 'c1', content: NO_MODELS_TEXT, isError: false },
         { callId: 'c2', content: 'Stopped.', isError: true },
       ],
     })
@@ -856,7 +870,7 @@ describe('dez.stream/start tool loop', () => {
     expect(requests).toHaveLength(21)
     expect(runs).toBe(20)
     expect(blocks().map((block) => block.result)).toStrictEqual([
-      ...Array<string>(20).fill('No models are available.'),
+      ...Array<string>(20).fill(NO_MODELS_TEXT),
       'Not run: the reply reached the limit of 20 tool rounds.',
     ])
     expect(blocks().at(-1)?.status).toBe('error')
@@ -865,7 +879,7 @@ describe('dez.stream/start tool loop', () => {
       data: {
         variant: 'error',
         title: 'Tool limit reached',
-        message: 'The reply reached the limit of 20 tool rounds, so Dez did not run its last tool calls.',
+        message: 'The reply reached the limit of 20 tool rounds, so Dez did not run its last tool calls. To let the model go on, send a new message (for example "Go on").',
       },
     }])
     expect(alerts).toStrictEqual([{ tabId: activeTab().id, status: 'error' }])
@@ -878,7 +892,7 @@ describe('dez.stream/start tool loop', () => {
         return { requestId: input.requestId as string, toolCalls: [geminiCall] }
       },
       async () => {
-        throw new Error('connection reset')
+        throw new ExplainedError('Dez could not reach Venice.', 'connection reset')
       },
     ])
 
@@ -891,7 +905,7 @@ describe('dez.stream/start tool loop', () => {
     ])
     expect(toasts).toStrictEqual([{
       area: 'app-global',
-      data: { variant: 'error', title: 'Request failed', message: 'connection reset' },
+      data: { variant: 'error', title: 'Request failed', message: 'Dez could not reach Venice.\n\nDetails: connection reset' },
     }])
     expect(alerts).toStrictEqual([{ tabId: activeTab().id, status: 'error' }])
   })
@@ -1168,15 +1182,16 @@ describe('dez.stream/start media round', () => {
   })
 
   it('removes the section and shows an error toast when the request fails', async () => {
+    const failure = new ExplainedError('Venice refused the request.', 'HTTP 400: No image to edit')
     generateMedia = async () => {
-      throw new Error('No image to edit')
+      throw failure
     }
 
     await sbp('dez.controller/submitTab', activeTab().id)
 
     expect(sectionTexts()).toStrictEqual(conversation())
-    expect(toasts).toStrictEqual([{ area: 'app-global', data: { variant: 'error', title: 'Request failed', message: 'No image to edit' } }])
-    expect(consoleError).toHaveBeenCalledWith('Media request failed:', new Error('No image to edit'))
+    expect(toasts).toStrictEqual([{ area: 'app-global', data: { variant: 'error', title: 'Request failed', message: failure.message } }])
+    expect(consoleError).toHaveBeenCalledWith('Media request failed:', failure)
     expect(saves).toStrictEqual([])
   })
 
@@ -1464,9 +1479,9 @@ describe('dez.stream/start media round', () => {
       'gets a style that is too short',
       { minPromptLength: 10, lyrics: { required: true } },
       'Jazz\nLyrics:\nLa la',
-      'M needs a prompt (the text before the "Lyrics:" line) of at least 10 characters. This one has 4.',
+      'M needs a prompt (the text before the "Lyrics:" line) of at least 10 characters. This one has 4. Write a longer prompt.',
     ],
-    ['gets a prompt that is too long', { maxPromptLength: 5 }, 'A long rain', 'M takes a prompt of at most 5 characters. This one has 11.'],
+    ['gets a prompt that is too long', { maxPromptLength: 5 }, 'A long rain', 'M takes a prompt of at most 5 characters. This one has 11. Make the prompt shorter.'],
   ])('sends no request and shows an error toast when the model %s', async (_name, text, lastUserText, message) => {
     useSongModel(text)
     setConversation(lastUserText)
@@ -1624,7 +1639,7 @@ describe('dez.stream/start images of a chat reply', () => {
   })
 
   it('sends the image of a tool round back as text with no path, and starts no new paragraph after the tool blocks', async () => {
-    const block = '<dez:tool id="c1" name="model_list" filter="gemini">\nNo models are available.\n</dez:tool>\n'
+    const block = `<dez:tool id="c1" name="model_list" filter="gemini">\n${NO_MODELS_TEXT}\n</dez:tool>\n`
     const sent: string[] = []
     streamChat = async (input) => {
       sent.push(JSON.stringify(input.messages))
@@ -1732,7 +1747,7 @@ describe('dez.stream/start images that a tool makes', () => {
   // group. That round calls a tool too: the request after it must hold its
   // thinking, and no request may end with an agent message.
   it('puts the image after the blocks of its round, and sends it at the start of the next round, which keeps its thinking', async () => {
-    const listBlock = '<dez:tool id="c2" name="model_list" filter="gemini">\nNo models are available.\n</dez:tool>\n'
+    const listBlock = `<dez:tool id="c2" name="model_list" filter="gemini">\n${NO_MODELS_TEXT}\n</dez:tool>\n`
     replyRounds([
       async (input) => {
         await input.onThinking('Plan.')
@@ -1772,7 +1787,7 @@ describe('dez.stream/start images that a tool makes', () => {
         thinking: { text: 'List.', replay: replay('two') },
         toolCalls: [{ id: 'c2', name: 'model_list', arguments: { filter: 'gemini' } }],
       },
-      { role: 'tool', results: [{ callId: 'c2', content: 'No models are available.', isError: false }] },
+      { role: 'tool', results: [{ callId: 'c2', content: NO_MODELS_TEXT, isError: false }] },
     ])
     // A later request sends the reply with the same bytes.
     const stored = (sbp('dez.model/streamMessagesForTab', activeTab().id, model) as RequestMessages).messages
@@ -1828,7 +1843,7 @@ describe('dez.stream/start images that a tool makes', () => {
 
 describe('dez.controller/submitTab with a model that Dez cannot use', () => {
   it('shows an error toast that names its outputs, and leaves the running reply and the sections alone', async () => {
-    const message = 'Dez cannot use M yet. It makes image and video output through an API that Dez does not support.'
+    const message = 'Dez cannot use M yet. It makes image and video output through an API that Dez does not support. Choose another model.'
     sbp('dez.model/setActiveModel', model.providerId, model.modelId, model.modelName)
     streamChat = async (input) => {
       await input.onToken('Before.')

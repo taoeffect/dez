@@ -68,22 +68,22 @@ describe('clipTextProblem', () => {
   })
 
   it.each([
-    ['a prompt that is too short', NO_LYRICS, { prompt: '' }, 'Voice needs a prompt of at least 1 character. This one has 0.'],
-    ['a prompt that is too long', NO_LYRICS, { prompt: 'a'.repeat(31) }, 'Voice takes a prompt of at most 30 characters. This one has 31.'],
+    ['a prompt that is too short', NO_LYRICS, { prompt: '' }, 'Voice needs a prompt of at least 1 character. This one has 0. Write a longer prompt.'],
+    ['a prompt that is too long', NO_LYRICS, { prompt: 'a'.repeat(31) }, 'Voice takes a prompt of at most 30 characters. This one has 31. Make the prompt shorter.'],
     [
       'a style that is too short',
       SONG,
       { prompt: 'Jazz', lyrics: 'La la' },
-      'Voice needs a prompt (the text before the "Lyrics:" line) of at least 10 characters. This one has 4.',
+      'Voice needs a prompt (the text before the "Lyrics:" line) of at least 10 characters. This one has 4. Write a longer prompt.',
     ],
     [
       'a style that is too long',
       SONG,
       { prompt: 'a'.repeat(31), lyrics: 'La la' },
-      'Voice takes a prompt (the text before the "Lyrics:" line) of at most 30 characters. This one has 31.',
+      'Voice takes a prompt (the text before the "Lyrics:" line) of at most 30 characters. This one has 31. Make the prompt shorter.',
     ],
-    ['lyrics that are too long', SONG, { prompt: 'Slow piano ballad', lyrics: 'b'.repeat(21) }, 'Voice takes lyrics of at most 20 characters. These have 21.'],
-  ])('names the limit and the length of %s', (_name, rules, text, message) => {
+    ['lyrics that are too long', SONG, { prompt: 'Slow piano ballad', lyrics: 'b'.repeat(21) }, 'Voice takes lyrics of at most 20 characters. These have 21. Make the lyrics shorter.'],
+  ])('names the limit and the length of %s, and tells the fix', (_name, rules, text, message) => {
     expect(clipTextProblem('Voice', rules, text)).toBe(message)
   })
 

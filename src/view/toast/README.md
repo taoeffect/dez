@@ -67,7 +67,7 @@ sbp('dez.ui/toast', 'app-global', {
 
 sbp('dez.ui/toast', 'app-global', {
   title: 'Request failed',
-  message: 'Venice returned HTTP 401: Authentication failed. Check the API key of Venice in Settings › Providers.',
+  message: 'Venice did not accept the API key. Check the API key of Venice in Settings › Providers.\n\nDetails: HTTP 401: Authentication failed',
   variant: 'error',
 })
 ```
@@ -108,4 +108,5 @@ Defaults applied by `dez.ui/toast`:
 - `closeable: false` hides the close button, but the toast can still close by timeout or max-count eviction.
 - `error` toasts have a red tint, a red stripe on the left, and a red icon and title, from the theme variables `--color-error`, `--color-error-bg`, and `--color-error-border` in `App.vue` (light and dark values). The card grows with its text from the normal 360 px up to 560 px (never wider than the window less 32 px). A message taller than 40% of the window scrolls inside the card. The message text is selectable, so the user can copy it.
 - Errors of a chat or media request (`dez.stream/start`), and a send with no model or with a model that Dez cannot use (`dez.controller/submitTab`), are `error` toasts with no `duration`, so they stay until the user closes them. The thread shows no error text. E2E specs read open error toasts with `openToasts(browser, 'error')` in `tests/e2e/harness/thread.ts`.
+- An error message is Dez's explanation first, then a blank line and `Details: <raw text>` (`errorText`, `src/utils/errorText.ts`). The message keeps its line breaks (`white-space: pre-wrap`), so the details are a paragraph of their own.
 - Toast title, message, and action text are rendered as Vue text bindings, not `v-html`, so HTML in toast content is not executed.

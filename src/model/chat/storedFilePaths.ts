@@ -51,7 +51,7 @@ export function holdsStoredFilePath(text: string): boolean {
  *  bodies keep their bytes (prompt cache). A hand-written reference into an
  *  `assets/images` folder outside a `.config/dez` folder keeps its path:
  *  Dez never writes one, and a request that sends it as an image fails
- *  first ("Image not found").
+ *  first (the missing image error of `readStoredImage`).
  *
  *  A path's start in prose is not known (a home folder can hold spaces), so
  *  each run with no bracket or line break loses all from its first `/` to

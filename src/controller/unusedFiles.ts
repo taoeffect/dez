@@ -8,6 +8,7 @@ import {
   type UnusedFiles,
   type UnusedFilesDeleted,
 } from '../model/chat/unusedFiles'
+import { REPORT_ADVICE, errorText, explainedError, rawErrorText } from '../utils/errorText'
 import { fileNameOf } from '../utils/fileName'
 import type { AppFileEntry } from './nativeTypes'
 
@@ -65,7 +66,7 @@ export default sbp('sbp/selectors/register', {
       console.error('Failed to look for unused files:', error)
       sbp('dez.ui/toast', 'app-global', {
         title: 'Could not look for unused files',
-        message: error instanceof Error ? error.message : String(error),
+        message: errorText('The system did not let Dez read all of its files, so Dez deletes no file. The details tell why (for example, Dez has no permission to read a file). Fix that, and try again.', rawErrorText(error)),
         variant: 'error',
       })
       throw error
@@ -107,10 +108,12 @@ export default sbp('sbp/selectors/register', {
         return result
       }) as UnusedFilesDeleted
     } catch (error) {
+      // A file that cannot be deleted is only counted (above), so this is a
+      // failure before the first delete.
       console.error('Failed to delete the unused files:', error)
       sbp('dez.ui/toast', 'app-global', {
         title: 'Could not delete the unused files',
-        message: error instanceof Error ? error.message : String(error),
+        message: explainedError(error, `Dez hit an error that it did not expect, and deleted no file. Try again. ${REPORT_ADVICE}`).message,
         variant: 'error',
       })
       throw error

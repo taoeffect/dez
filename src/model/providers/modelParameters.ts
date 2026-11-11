@@ -133,7 +133,7 @@ export function checkedParameterValues(parameters: readonly ModelParameter[], ch
     const parameter = parameters.find((candidate) => candidate.name === name)
     if (!parameter) {
       const names = parameters.map((candidate) => candidate.name).join(', ')
-      throw new Error(`The model has no parameter ${JSON.stringify(name)}. ${names === '' ? 'It has no parameters.' : `Its parameters: ${names}.`}`)
+      throw new Error(`The model has no parameter ${JSON.stringify(name)}. ${names === '' ? 'It has no parameters: leave out `parameters`.' : `Its parameters: ${names}.`}`)
     }
     if (!parameterTakes(parameter, value)) throw new Error(`The parameter ${JSON.stringify(name)} takes ${takesText(parameter)}.`)
     values[name] = value

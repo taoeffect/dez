@@ -1392,7 +1392,7 @@ export default sbp('sbp/selectors/register', {
       updatedAt: existing ? existing.updatedAt : 0,
       lastCheckedAt: now,
     }
-    store.errors[providerId] = result.error ?? 'The model list request failed'
+    store.errors[providerId] = result.error ?? 'The model check failed. Try again.'
   },
 
   // Error-handling boundary for the history panel: full-text search (empty

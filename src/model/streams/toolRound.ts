@@ -1,5 +1,6 @@
+import { errorText } from '../../utils/errorText'
 import { toolBlockText, type ToolBlockData } from '../chat/toolBlocks'
-import { parseToolArguments, toolDefinition } from '../tools/registry'
+import { parseToolArguments, toolDefinition, unknownToolText } from '../tools/registry'
 import type { StreamedToolCall, ToolArguments, ToolRunResult } from '../tools/types'
 
 // The pure parts of the tool loop of one reply (`dez.stream/start`): each
@@ -53,10 +54,12 @@ export function checkToolCalls(calls: readonly StreamedToolCall[], takenIds: Ite
     used.add(id)
 
     const definition = toolDefinition(call.name)
-    if (!definition) return { id, name: call.name, arguments: {}, refusal: `Unknown tool: ${JSON.stringify(call.name)}.` }
+    if (!definition) return { id, name: call.name, arguments: {}, refusal: unknownToolText(call.name) }
     const parsed = parseToolArguments(definition, call.argumentsText)
     if (!parsed.ok) {
-      return { id, name: call.name, arguments: {}, refusal: `Invalid arguments: ${parsed.error}. Received: ${call.argumentsText}` }
+      const sent = call.argumentsText.trim() === '' ? '' : `The call sent ${call.argumentsText}`
+      const refusal = errorText(`Dez did not run this call. ${parsed.error}`, sent)
+      return { id, name: call.name, arguments: {}, refusal }
     }
     return { id, name: call.name, arguments: parsed.arguments }
   })

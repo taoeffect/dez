@@ -1,7 +1,7 @@
 import sbp from '@sbp/sbp'
 import { sectionPlainText } from '../model/chat/content'
 import { drawnMediaType, type DrawnImage, type ImageSize } from '../model/chat/imageDrawing'
-import { findImageReferences, imageMediaType } from '../model/chat/images'
+import { findImageReferences, imageMediaType, type ImageReference } from '../model/chat/images'
 import { modelRefKey } from '../model/chat/modelRef'
 import type { Tab } from '../model/chat/types'
 import type { ModelCache } from '../model/persistence/types'
@@ -13,7 +13,9 @@ import type { SettingsSnapshot } from '../model/state'
 import { cropScaleDrawing, cropScaleImageId, cropScaleResultText, imageSizeText } from '../model/tools/cropScaleImage'
 import { modelInfoParameterValues, modelInfoPart, modelInfoText, modelInfoTarget, type ModelInfoFacts, type ModelInfoTarget } from '../model/tools/modelInfo'
 import { modelListText } from '../model/tools/modelList'
-import type { ToolArguments, ToolRunResult } from '../model/tools/types'
+import { unknownToolText } from '../model/tools/registry'
+import { ToolError, type ToolArguments, type ToolRunResult } from '../model/tools/types'
+import { rawErrorText } from '../utils/errorText'
 
 /** A call that Dez runs: a Dez tool and the arguments that its definition
  *  accepted (`checkToolCalls`). */
@@ -33,9 +35,18 @@ export interface ToolRunContext {
 }
 
 // The code of each Dez tool (TOOL_DEFINITIONS), by tool name. A runner gives
-// the result text, or throws for an error result. `signal` aborts when the
-// user stops the reply; a runner that waits on something must stop then.
+// the result text, or throws a `ToolError` for an error result. `signal`
+// aborts when the user stops the reply; a runner that waits on something
+// must stop then.
 type ToolRunner = (args: ToolArguments, signal: AbortSignal, context: ToolRunContext) => Promise<string>
+
+// The error result of a runner that threw an error that Dez did not expect.
+// It leaves out the error's text, which can hold a local path: the result
+// goes to the chat provider. The log has it.
+function unexpectedToolErrorText(name: string): string {
+  return `Dez hit an error that it did not expect while it ran ${name}. This is not a fault of the call. `
+    + 'Tell the user that the tool failed (Help › Developer Console shows the error), and do not call it again with the same arguments.'
+}
 
 // Waits for `work` until the user stops the reply; then rejects at once.
 // The work itself goes on: a model-list check still updates the model cache.
@@ -126,34 +137,59 @@ const TOOL_RUNNERS: Record<string, ToolRunner> = {
   // image, so that a model can ask before a crop.
   //
   // The errors and the result name images by their ids only: both go to the
-  // chat provider, which gets no path of a stored file. The causes are in
-  // the log.
+  // chat provider, which gets no path of a stored file. The causes of a read
+  // or a save failure are in the log.
   async crop_scale_image (args, signal, context) {
     const id = cropScaleImageId(args)
     const sections = (sbp('dez.model/tab', context.tabId) as Tab | null)?.sections ?? []
     // The newest reference with an id is its image, as for an `@id` mention
     // (`sectionsToStreamMessages`).
-    const source = sections.flatMap((section) => findImageReferences(sectionPlainText(section))).findLast((reference) => reference.id === id)
+    const images = new Map<string, ImageReference>()
+    for (const reference of sections.flatMap((section) => findImageReferences(sectionPlainText(section)))) {
+      if (reference.id !== null) images.set(reference.id, reference)
+    }
+    const source = images.get(id)
     const sourceType = source && imageMediaType(source.path)
-    if (!source || !sourceType) throw new Error(`No image of this conversation has the id @${id}.`)
+    if (!source || !sourceType) {
+      const ids = [...images].filter(([, reference]) => imageMediaType(reference.path)).map(([imageId]) => `@${imageId}`)
+      throw new ToolError(ids.length === 0
+        ? `This conversation has no images, so it has no image @${id}. Do not call crop_scale_image until the user adds an image to the conversation.`
+        : `No image of this conversation has the id @${id}. Its images are ${ids.join(', ')}: call again with one of these ids.`)
+    }
 
     let file: File
     try {
       file = await sbp('dez.controller/images/readFile', source.path) as File
     } catch (error) {
       console.error(`Failed to read the image @${id}:`, error)
-      throw new Error(`The file of the image @${id} cannot be read.`)
+      throw new ToolError(`Dez cannot read the file of the image @${id}: the file is gone, or Dez may not read it. `
+        + 'This is not a fault of the call. Tell the user, who can paste the image again (it then gets a new id).')
     }
 
-    // Set by the plan of a call that names no part and no size: only the
-    // plan gets the size of the image.
+    // The plan gives null for a call that names no part and no size (only
+    // the plan gets the size of the image, for the result) and for a call
+    // that it refuses, so that a failure of redraw is never the call's fault.
     let sizeText = ''
+    let callError: unknown
     const mediaType = drawnMediaType(sourceType)
-    const drawn = await sbp('dez.controller/images/redraw', file, (size: ImageSize) => {
-      const drawing = cropScaleDrawing(args, size)
-      if (!drawing) sizeText = imageSizeText(id, size)
-      return drawing
-    }, mediaType) as DrawnImage | null
+    let drawn: DrawnImage | null
+    try {
+      drawn = await sbp('dez.controller/images/redraw', file, (size: ImageSize) => {
+        try {
+          const drawing = cropScaleDrawing(args, size)
+          if (!drawing) sizeText = imageSizeText(id, size)
+          return drawing
+        } catch (error) {
+          callError = error
+          return null
+        }
+      }, mediaType) as DrawnImage | null
+    } catch (error) {
+      // The texts of redraw hold no path: it gets the file, not its path.
+      throw new ToolError(`Dez could not draw a new image from @${id}. This is not a fault of the call. `
+        + `Tell the user, and do not call crop_scale_image again for @${id}.`, rawErrorText(error), { cause: error })
+    }
+    if (callError !== undefined) throw callError
     if (!drawn) return sizeText
 
     signal.throwIfAborted()
@@ -162,13 +198,15 @@ const TOOL_RUNNERS: Record<string, ToolRunner> = {
       path = await sbp('dez.controller/images/save', drawn.bytes, mediaType, { folder: 'generated' }) as string
     } catch {
       // images/save logged the failure and showed its error toast.
-      throw new Error('Dez could not save the new image.')
+      throw new ToolError('Dez could not save the new image, so there is no new image. This is not a fault of the call, and Dez showed the user the cause. '
+        + 'Tell the user that the image was not made, and call crop_scale_image again only when the user asks for it.')
     }
     const newId = context.writeImage(path)
     if (newId === null) {
       // A file that no reference names; images/delete logs its own failures.
       await sbp('dez.controller/images/delete', path).catch(() => {})
-      throw new Error('The reply ended before the image was made.')
+      throw new ToolError('The reply stopped before Dez could add the new image to it, so there is no new image. This is not a fault of the call. '
+        + 'Call crop_scale_image again only when the user asks for the image again.')
     }
     return cropScaleResultText(id, newId, drawn)
   },
@@ -182,14 +220,14 @@ export default sbp('sbp/selectors/register', {
     const runner = Object.hasOwn(TOOL_RUNNERS, call.name) ? TOOL_RUNNERS[call.name] : undefined
     if (!runner) {
       console.error(`No runner for the tool ${JSON.stringify(call.name)}`)
-      return { content: `Unknown tool: ${JSON.stringify(call.name)}.`, isError: true }
+      return { content: unknownToolText(call.name), isError: true }
     }
     try {
       return { content: await runner(call.arguments, signal, context), isError: false }
     } catch (error) {
       // A run that the user stopped did not fail; the reply drops its result.
       if (!signal.aborted) console.error(`The tool ${call.name} failed:`, error)
-      return { content: `The tool failed: ${error instanceof Error ? error.message : String(error)}`, isError: true }
+      return { content: error instanceof ToolError ? error.message : unexpectedToolErrorText(call.name), isError: true }
     }
   },
 })

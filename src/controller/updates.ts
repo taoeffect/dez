@@ -1,5 +1,6 @@
 import sbp from '@sbp/sbp'
 import { watch } from 'vue'
+import { errorText, rawErrorText } from '../utils/errorText'
 import { isNewerVersion } from '../utils/version'
 import {
   settingsCheckForUpdates,
@@ -123,6 +124,15 @@ export default sbp('sbp/selectors/register', {
         }
       } catch (error) {
         console.error('Update check failed', error)
+        // Only a check that the user asked for tells its failure: a check
+        // in the background runs again later by itself.
+        if (notifyWhenCurrent) {
+          sbp('dez.ui/toast', 'app-global', {
+            title: 'Update check failed',
+            message: errorText(`Dez could not get the latest version from GitHub. The network or GitHub failed: the details tell which. Try again later, or look for a new version at ${DEZ_REPO_URL}/releases.`, rawErrorText(error)),
+            variant: 'error',
+          })
+        }
       }
     })()
 

@@ -329,7 +329,8 @@ async function saveClip(view: EditorView, root: HTMLElement, clip: MediaTagData)
   followed.end()
   if (path === null) return
   if (clipSourceKind(src) === 'temp') {
-    warnClipChanged(root, 'Clip saved, but not shown', 'The conversation changed while the clip was saved. Its player does not show the saved file.')
+    const shownPath = await sbp('dez.controller/displayPath', path) as string
+    warnClipChanged(root, 'Clip saved, but not shown', `The conversation changed while the clip was saved, so its player does not show the saved file. The file is at ${shownPath}.`)
     return
   }
   warnClipChanged(root, 'Clip not saved', 'The conversation changed while the clip was saved. Try again.')

@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import { RESERVED_TOOL_ATTRIBUTES } from '../chat/toolBlocks'
-import { parseToolArguments, TOOL_DEFINITIONS, toolDefinition, toolJsonSchema } from './registry'
+import { parseToolArguments, TOOL_DEFINITIONS, toolDefinition, toolJsonSchema, unknownToolText } from './registry'
 import type { ToolDefinition } from './types'
 
 const SAMPLE: ToolDefinition = {
@@ -15,6 +15,10 @@ const SAMPLE: ToolDefinition = {
 }
 
 const NO_PARAMETERS: ToolDefinition = { name: 'bare', description: 'No parameters.', parameters: [] }
+
+const SAMPLE_PARAMETERS = 'The parameters of sample are: query (string, required), limit (integer), ratio (number), exact (boolean).'
+const SAMPLE_FORM = `Send one JSON object, as in {"query": "..."}. ${SAMPLE_PARAMETERS}`
+const MISSING_QUERY = 'The required parameter "query" is missing. Add it as a string, as in {"query": "..."}.'
 
 describe('TOOL_DEFINITIONS', () => {
   // Tool and parameter names go into `<dez:tool>` blocks: the tool name as the
@@ -48,6 +52,14 @@ describe('toolDefinition', () => {
     expect(toolDefinition('model_list')?.name).toBe('model_list')
     expect(toolDefinition('Model_List')).toBeUndefined()
     expect(toolDefinition('web_search')).toBeUndefined()
+  })
+})
+
+describe('unknownToolText', () => {
+  it('names every Dez tool', () => {
+    expect(unknownToolText('web_search')).toBe(
+      'Dez has no tool named "web_search". Call only the Dez tools, by their exact names: model_list, model_info, crop_scale_image.',
+    )
   })
 })
 
@@ -85,24 +97,41 @@ describe('parseToolArguments', () => {
   it('reads blank text as no arguments', () => {
     expect(parseToolArguments(NO_PARAMETERS, '')).toStrictEqual({ ok: true, arguments: {} })
     expect(parseToolArguments(NO_PARAMETERS, ' \n')).toStrictEqual({ ok: true, arguments: {} })
-    expect(parseToolArguments(SAMPLE, '')).toStrictEqual({ ok: false, error: 'missing required parameter "query"' })
+    expect(parseToolArguments(SAMPLE, '')).toStrictEqual({ ok: false, error: MISSING_QUERY })
   })
 
   it('refuses a missing or null required value', () => {
-    expect(parseToolArguments(SAMPLE, '{}')).toStrictEqual({ ok: false, error: 'missing required parameter "query"' })
-    expect(parseToolArguments(SAMPLE, '{"query":null}')).toStrictEqual({ ok: false, error: 'missing required parameter "query"' })
+    expect(parseToolArguments(SAMPLE, '{}')).toStrictEqual({ ok: false, error: MISSING_QUERY })
+    expect(parseToolArguments(SAMPLE, '{"query":null}')).toStrictEqual({ ok: false, error: MISSING_QUERY })
   })
 
-  it('refuses text that is not a JSON object', () => {
-    expect(parseToolArguments(SAMPLE, '{"query":')).toStrictEqual({ ok: false, error: 'not valid JSON' })
+  it('refuses text that is not a JSON object, and gives an example call and the parameters', () => {
+    expect(parseToolArguments(SAMPLE, '{"query":')).toStrictEqual({ ok: false, error: `The arguments are not valid JSON. ${SAMPLE_FORM}` })
     for (const json of ['null', '[]', '"query"', '3']) {
-      expect(parseToolArguments(SAMPLE, json)).toStrictEqual({ ok: false, error: 'not a JSON object' })
+      expect(parseToolArguments(SAMPLE, json)).toStrictEqual({ ok: false, error: `The arguments are not a JSON object. ${SAMPLE_FORM}` })
     }
   })
 
-  it('refuses an unknown key, even one that names an Object.prototype member', () => {
-    expect(parseToolArguments(SAMPLE, '{"query":"a","Query":"b"}')).toStrictEqual({ ok: false, error: 'unknown parameter "Query"' })
-    expect(parseToolArguments(SAMPLE, '{"query":"a","__proto__":{}}')).toStrictEqual({ ok: false, error: 'unknown parameter "__proto__"' })
+  it('gives an example with the first parameter of a tool with no required one, and {} for a tool with none', () => {
+    const optional: ToolDefinition = { ...SAMPLE, parameters: SAMPLE.parameters.slice(1) }
+    expect(parseToolArguments(optional, '[]')).toStrictEqual({
+      ok: false,
+      error: 'The arguments are not a JSON object. Send one JSON object, as in {"limit": 1}. '
+        + 'The parameters of sample are: limit (integer), ratio (number), exact (boolean).',
+    })
+    expect(parseToolArguments(NO_PARAMETERS, '{')).toStrictEqual({
+      ok: false,
+      error: 'The arguments are not valid JSON. bare has no parameters: send {} as the arguments.',
+    })
+  })
+
+  it('refuses an unknown key, even one that names an Object.prototype member, and lists the parameters', () => {
+    expect(parseToolArguments(SAMPLE, '{"query":"a","Query":"b"}')).toStrictEqual({ ok: false, error: `sample has no parameter "Query". ${SAMPLE_PARAMETERS}` })
+    expect(parseToolArguments(SAMPLE, '{"query":"a","__proto__":{}}')).toStrictEqual({ ok: false, error: `sample has no parameter "__proto__". ${SAMPLE_PARAMETERS}` })
+    expect(parseToolArguments(NO_PARAMETERS, '{"query":"a"}')).toStrictEqual({
+      ok: false,
+      error: 'bare has no parameter "query". bare has no parameters: send {} as the arguments.',
+    })
   })
 
   it('does not read an absent parameter from Object.prototype', () => {
@@ -110,17 +139,19 @@ describe('parseToolArguments', () => {
     expect(parseToolArguments(tool, '{}')).toStrictEqual({ ok: true, arguments: {} })
   })
 
-  it('refuses a value of the wrong type, with no coercion', () => {
-    expect(parseToolArguments(SAMPLE, '{"query":3}')).toStrictEqual({ ok: false, error: '"query" must be a string' })
-    expect(parseToolArguments(SAMPLE, '{"query":"a","limit":"3"}')).toStrictEqual({ ok: false, error: '"limit" must be an integer' })
-    expect(parseToolArguments(SAMPLE, '{"query":"a","limit":1.5}')).toStrictEqual({ ok: false, error: '"limit" must be an integer' })
-    expect(parseToolArguments(SAMPLE, '{"query":"a","ratio":true}')).toStrictEqual({ ok: false, error: '"ratio" must be a number' })
-    expect(parseToolArguments(SAMPLE, '{"query":"a","exact":"true"}')).toStrictEqual({ ok: false, error: '"exact" must be true or false' })
+  it('refuses a value of the wrong type, with no coercion, and gives a value of the right type', () => {
+    const mustBe = (name: string, type: string, example: string) => ({ ok: false, error: `The parameter "${name}" must be ${type}, as in {"${name}": ${example}}.` })
+    expect(parseToolArguments(SAMPLE, '{"query":3}')).toStrictEqual(mustBe('query', 'a string', '"..."'))
+    expect(parseToolArguments(SAMPLE, '{"query":"a","limit":"3"}')).toStrictEqual(mustBe('limit', 'an integer', '1'))
+    expect(parseToolArguments(SAMPLE, '{"query":"a","limit":1.5}')).toStrictEqual(mustBe('limit', 'an integer', '1'))
+    expect(parseToolArguments(SAMPLE, '{"query":"a","ratio":true}')).toStrictEqual(mustBe('ratio', 'a number', '1.5'))
+    expect(parseToolArguments(SAMPLE, '{"query":"a","exact":"true"}')).toStrictEqual(mustBe('exact', 'true or false', 'true'))
   })
 
   it('refuses a number too large for a finite value', () => {
-    expect(parseToolArguments(SAMPLE, '{"query":"a","ratio":1e999}')).toStrictEqual({ ok: false, error: '"ratio" must be a number' })
-    expect(parseToolArguments(SAMPLE, '{"query":"a","ratio":-1e999}')).toStrictEqual({ ok: false, error: '"ratio" must be a number' })
+    const error = 'The parameter "ratio" must be a number, as in {"ratio": 1.5}.'
+    expect(parseToolArguments(SAMPLE, '{"query":"a","ratio":1e999}')).toStrictEqual({ ok: false, error })
+    expect(parseToolArguments(SAMPLE, '{"query":"a","ratio":-1e999}')).toStrictEqual({ ok: false, error })
   })
 
   it('accepts a whole number written with a fraction as an integer', () => {

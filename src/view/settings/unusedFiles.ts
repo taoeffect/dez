@@ -30,7 +30,9 @@ export function deleteQuestion(unused: UnusedFiles): string {
 export function deletedToast({ deleted, bytes, inUse, failed }: UnusedFilesDeleted): ToastData {
   const sentences = [deleted > 0 ? `Deleted ${counted(deleted, 'unused file')} (${byteSizeText(bytes)}).` : 'Deleted no files.']
   if (inUse > 0) sentences.push(`Kept ${counted(inUse, 'file')} now in use.`)
-  if (failed > 0) sentences.push(`Could not delete ${counted(failed, 'file')}.`)
+  if (failed > 0) {
+    sentences.push(`Could not delete ${counted(failed, 'file')}: the system did not let Dez delete ${failed === 1 ? 'it' : 'them'}. Help › Developer Console shows why. Fix that, and click Delete Unused Files again.`)
+  }
   const message = sentences.join(' ')
   if (failed > 0) return { title: 'Unused files', message, variant: 'warning' }
   return { message, variant: deleted > 0 ? 'success' : 'default', duration: 5000 }

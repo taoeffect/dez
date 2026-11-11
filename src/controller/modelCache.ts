@@ -1,6 +1,7 @@
 import sbp from '@sbp/sbp'
 import { getProvider, type ProviderId, type ProviderInfo, type ProviderModelsResult } from '../model/providers'
 import type { ModelCache } from '../model/persistence/types'
+import { explainedError } from '../utils/errorText'
 
 interface ModelCacheRefreshOptions {
   // Check only these providers.
@@ -79,7 +80,7 @@ export default sbp('sbp/selectors/register', {
             // listModelsResult already maps failures to ok=false, but guard the
             // await so an unexpected throw still marks the provider not-working.
             console.error(`Model cache refresh failed for ${provider.id}`, error)
-            result = { ok: false, models: [], error: String(error) }
+            result = { ok: false, models: [], error: explainedError(error).message }
           }
           if (newestChecks.get(provider.id) !== checkNumber) return
           newestChecks.delete(provider.id)

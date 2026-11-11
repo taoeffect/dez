@@ -41,28 +41,55 @@ describe('checkToolCalls', () => {
     expect(call.id).toMatch(/^call_[0-9a-f]{12}$/)
   })
 
-  it('refuses an unknown tool and arguments that the definition refuses, with the raw text for the model', () => {
+  it('refuses an unknown tool and arguments that the definition refuses, with the fix and the raw text for the model', () => {
     const calls = [
       streamed('c1', '{"query":"x"}', 'web_search'),
       streamed('c2', '{"filter":"gem'),
       streamed('c3', '{"filter":3}'),
       streamed('c4', '{"limit":3}'),
       streamed('c5', '{}', ''),
+      streamed('c6', ' ', 'model_info'),
     ]
+    const tools = 'Call only the Dez tools, by their exact names: model_list, model_info, crop_scale_image.'
+    const parameters = 'The parameters of model_list are: filter (string), outputs (string).'
 
     expect(checkToolCalls(calls, [])).toStrictEqual([
-      { id: 'c1', name: 'web_search', arguments: {}, refusal: 'Unknown tool: "web_search".' },
-      { id: 'c2', name: 'model_list', arguments: {}, refusal: 'Invalid arguments: not valid JSON. Received: {"filter":"gem' },
-      { id: 'c3', name: 'model_list', arguments: {}, refusal: 'Invalid arguments: "filter" must be a string. Received: {"filter":3}' },
-      { id: 'c4', name: 'model_list', arguments: {}, refusal: 'Invalid arguments: unknown parameter "limit". Received: {"limit":3}' },
-      { id: 'c5', name: '', arguments: {}, refusal: 'Unknown tool: "".' },
+      { id: 'c1', name: 'web_search', arguments: {}, refusal: `Dez has no tool named "web_search". ${tools}` },
+      {
+        id: 'c2',
+        name: 'model_list',
+        arguments: {},
+        refusal: `Dez did not run this call. The arguments are not valid JSON. Send one JSON object, as in {"filter": "..."}. ${parameters}`
+          + '\n\nDetails: The call sent {"filter":"gem',
+      },
+      {
+        id: 'c3',
+        name: 'model_list',
+        arguments: {},
+        refusal: 'Dez did not run this call. The parameter "filter" must be a string, as in {"filter": "..."}.\n\nDetails: The call sent {"filter":3}',
+      },
+      {
+        id: 'c4',
+        name: 'model_list',
+        arguments: {},
+        refusal: `Dez did not run this call. model_list has no parameter "limit". ${parameters}\n\nDetails: The call sent {"limit":3}`,
+      },
+      { id: 'c5', name: '', arguments: {}, refusal: `Dez has no tool named "". ${tools}` },
+      // Blank text is `{}`, so the refusal has no details.
+      {
+        id: 'c6',
+        name: 'model_info',
+        arguments: {},
+        refusal: 'Dez did not run this call. The required parameter "model" is missing. Add it as a string, as in {"model": "..."}.',
+      },
     ])
   })
 })
 
 describe('toolCallBlock', () => {
   const call: CheckedToolCall = { id: 'c1', name: 'model_list', arguments: { filter: 'gemini' } }
-  const refused: CheckedToolCall = { id: 'c2', name: 'web_search', arguments: {}, refusal: 'Unknown tool: "web_search".' }
+  const unknownTool = 'Dez has no tool named "web_search". Call only the Dez tools, by their exact names: model_list, model_info, crop_scale_image.'
+  const refused: CheckedToolCall = { id: 'c2', name: 'web_search', arguments: {}, refusal: unknownTool }
 
   it('runs a call until it has a result, then gives the result and its status', () => {
     expect(toolCallBlock(call)).toStrictEqual({ ...call, status: 'running', result: '' })
@@ -71,7 +98,7 @@ describe('toolCallBlock', () => {
   })
 
   it('keeps the refusal of a refused call, also past the round limit', () => {
-    const expected = { id: 'c2', name: 'web_search', arguments: {}, status: 'error', result: 'Unknown tool: "web_search".' }
+    const expected = { id: 'c2', name: 'web_search', arguments: {}, status: 'error', result: unknownTool }
     expect(toolCallBlock(refused)).toStrictEqual(expected)
     expect(toolCallBlock(refused, ROUND_LIMIT_TOOL_RESULT)).toStrictEqual(expected)
   })

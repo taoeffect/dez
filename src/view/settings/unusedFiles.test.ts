@@ -76,10 +76,12 @@ describe('deletedToast', () => {
   it('stays open as a warning when a file could not be deleted', () => {
     expect(deletedToast({ deleted: 3, bytes: 10, inUse: 1, failed: 2 })).toStrictEqual({
       title: 'Unused files',
-      message: 'Deleted 3 unused files (10 B). Kept 1 file now in use. Could not delete 2 files.',
+      message: 'Deleted 3 unused files (10 B). Kept 1 file now in use. Could not delete 2 files: the system did not let Dez delete them. '
+        + 'Help › Developer Console shows why. Fix that, and click Delete Unused Files again.',
       variant: 'warning',
     })
-    expect(deletedToast({ deleted: 0, bytes: 0, inUse: 0, failed: 1 }).message).toBe('Deleted no files. Could not delete 1 file.')
+    expect(deletedToast({ deleted: 0, bytes: 0, inUse: 0, failed: 1 }).message).toBe('Deleted no files. Could not delete 1 file: the system did not let Dez delete it. '
+      + 'Help › Developer Console shows why. Fix that, and click Delete Unused Files again.')
   })
 })
 

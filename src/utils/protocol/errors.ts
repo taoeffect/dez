@@ -1,5 +1,9 @@
-import type { NativeHttpResponse, NativeHttpResponseHead } from './nativeHttp'
+import type { NativeHttpResponseHead } from './nativeHttp'
 
+// A native HTTP request that got no whole answer: no connection, a timeout,
+// or a body that broke off (the `Error` event of a native stream). The
+// message is the native text. A provider turns it into a text for the user
+// (`providerConnectionError`).
 export class NativeHttpError extends Error {
   constructor(
     message: string,
@@ -26,15 +30,4 @@ export function sanitizeSensitiveErrorText(value: unknown, maxLength = 500, reda
 
 export function sanitizeErrorText(value: unknown, maxLength = 500): string {
   return sanitizeSensitiveErrorText(value, maxLength, '[REDACTED]')
-}
-
-export function assertNativeResponseOk(response: NativeHttpResponse): void {
-  if (responseOk(response)) return
-
-  throw new NativeHttpError(`HTTP ${response.status}`, response.status)
-}
-
-export function normalizeNativeHttpError(error: unknown): NativeHttpError {
-  if (error instanceof NativeHttpError) return error
-  return new NativeHttpError(sanitizeErrorText(error))
 }

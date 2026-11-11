@@ -1,9 +1,10 @@
 import sbp from '@sbp/sbp'
 import { MEDIA_TEMP_LIFETIME_MS, mediaFileExtension } from '../chat/mediaFiles'
 import { MEDIA_CACHE_FOLDER } from '../chat/mediaTags'
-import { responseOk } from '../../utils/protocol/errors'
+import { ExplainedError, rawErrorText } from '../../utils/errorText'
+import { responseOk, sanitizeErrorText } from '../../utils/protocol/errors'
 import { responseContentType, textFromNativeBody, type NativeHttpDownload, type NativeHttpRequest } from '../../utils/protocol/nativeHttp'
-import { providerStatusError } from './errors'
+import { providerStatusError, UnusableAnswerError } from './errors'
 import { pcmLayout, wavFile } from './pcmAudio'
 import type { Provider } from './provider'
 import { CLIP_KINDS, type ClipKind, type GeneratedClip } from './types'
@@ -52,25 +53,40 @@ export async function sendClipRequest(
   run.signal?.throwIfAborted()
   const startedAt = Date.now()
   const timeoutMs = run.deadline - startedAt
-  if (timeoutMs <= 0) throw new Error('The provider did not make the clip in time.')
+  if (timeoutMs <= 0) {
+    throw new ExplainedError(`${run.provider.name} did not make the clip in ${CLIP_JOB_TIMEOUT_MS / 60_000} minutes, the longest time that Dez waits. Send the request again later.`)
+  }
 
   // The file has no type in its name until the response tells one. The
   // cleanup of the temp copies also deletes a part file that stays.
   const name = crypto.randomUUID()
   const part = `${MEDIA_CACHE_FOLDER}/${name}.part`
-  const download = await sbp(
-    'dez.native/downloadAppFile',
-    { ...request, timeoutMs },
-    run.requestId,
-    { root: 'cache', path: part },
-    { maxBytes: MAX_CLIP_BYTES, contentTypes: [`${CLIP_KINDS[run.kind]}/`] },
-  ) as NativeHttpDownload
+  let download: NativeHttpDownload
+  try {
+    download = await sbp(
+      'dez.native/downloadAppFile',
+      { ...request, timeoutMs },
+      run.requestId,
+      { root: 'cache', path: part },
+      { maxBytes: MAX_CLIP_BYTES, contentTypes: [`${CLIP_KINDS[run.kind]}/`] },
+    ) as NativeHttpDownload
+  } catch (error) {
+    // A stop rejects too: the caller tells it by its signal.
+    if (run.signal?.aborted) throw error
+    // The native text does not tell which step failed: the connection, or
+    // the write of the file.
+    throw new ExplainedError(
+      `Dez could not get the answer of ${run.provider.name}: the connection broke, or Dez could not write the file. Check the internet connection and the free disk space, then send the request again.`,
+      sanitizeErrorText(rawErrorText(error)),
+      { cause: error },
+    )
+  }
   if (!responseOk(download)) throw providerStatusError(run.provider, download, textFromNativeBody(download.body), keyed)
   if (!download.saved) {
     try {
       return { data: JSON.parse(textFromNativeBody(download.body)) as unknown }
     } catch {
-      throw new Error('The provider sent no clip.')
+      throw new UnusableAnswerError(`The answer is neither a clip nor JSON (content type: ${sanitizeErrorText(responseContentType(download), 100) || 'none'}).`)
     }
   }
 
@@ -85,7 +101,10 @@ export async function sendClipRequest(
   const extension = mediaFileExtension(mediaType, null)
   if (extension === null) {
     await sbp('dez.native/deleteAppFile', part, 'cache')
-    throw new Error(`Dez does not know the file type of this clip (${contentType}).`)
+    throw new ExplainedError(
+      `${run.provider.name} sent the clip in a file type that Dez does not know. Choose another model, and report the file type at Help › Dez on GitHub.`,
+      `Content type: ${contentType}`,
+    )
   }
   const file = `${MEDIA_CACHE_FOLDER}/${name}.${extension}`
   if (pcm) {

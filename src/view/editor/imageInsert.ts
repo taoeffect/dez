@@ -6,6 +6,7 @@ import type { DrawnImage, ImageSize } from '../../model/chat/imageDrawing'
 import { imageMarkdown, isImageMediaType, type ImageMediaType } from '../../model/chat/images'
 import { pastedMediaIdChanges } from '../../model/chat/mediaIds'
 import { MEDIA_TAG_NAMES } from '../../model/chat/mediaTags'
+import { errorText, rawErrorText } from '../../utils/errorText'
 import { fileNameOf } from '../../utils/fileName'
 import { focusKeepingScroll } from './focus'
 import { addPendingRange, pendingRange, pendingRanges, removePendingRange, type DocRange } from './pendingRanges'
@@ -79,7 +80,10 @@ async function storableImage(file: File): Promise<StorableImage | null> {
     return { bytes: png.bytes, mediaType: 'image/png' }
   } catch (error) {
     console.error('Failed to read the image:', error)
-    showImageNotAddedToast(`Dez cannot read ${file.name || 'the image'} (${file.type}).`)
+    showImageNotAddedToast(errorText(
+      `Dez cannot read ${file.name || 'the image'} (${file.type}). The file can be damaged, or of a type that Dez cannot read. Save it as a PNG or JPEG file, and add it again.`,
+      rawErrorText(error),
+    ))
     return null
   }
 }
@@ -132,9 +136,11 @@ async function insertImages(view: EditorView, files: ReadonlyArray<File | Promis
   const pending = pendingRange(view.state, id)
   if (!pending) {
     if (paths.length > 0) {
+      const one = paths.length === 1
       sbp('dez.ui/toast', 'app-global', {
-        title: paths.length === 1 ? 'Image not inserted' : 'Images not inserted',
-        message: `The conversation changed while ${paths.length === 1 ? 'the image was' : 'the images were'} being saved.`,
+        title: one ? 'Image not inserted' : 'Images not inserted',
+        message: `The conversation changed while ${one ? 'the image was' : 'the images were'} being saved, so Dez did not insert ${one ? 'it' : 'them'}. `
+          + `${userEvent === 'input.paste' ? 'Paste' : 'Drop'} ${one ? 'it' : 'them'} again.`,
         variant: 'warning',
         duration: 8000,
       })
@@ -207,7 +213,10 @@ async function readDroppedImage(path: string): Promise<File | null> {
     return await sbp('dez.controller/images/readFile', path) as File
   } catch (error) {
     console.error('Failed to read the dropped image:', error)
-    showImageNotAddedToast(`Dez cannot read ${fileNameOf(path)}.`)
+    showImageNotAddedToast(errorText(
+      `Dez cannot read ${fileNameOf(path)}: the file was moved or deleted, or Dez has no permission to read it. Check the file, and drop it again.`,
+      rawErrorText(error),
+    ))
     return null
   }
 }

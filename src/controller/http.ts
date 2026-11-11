@@ -7,6 +7,7 @@ import {
   type NativeHttpStreamEvent,
   type NativeHttpStreamResult,
 } from '../utils/protocol/nativeHttp'
+import { NativeHttpError } from '../utils/protocol/errors'
 
 interface ActiveNativeHttpStream {
   byteStream: ReturnType<typeof createNativeHttpByteStream>
@@ -42,7 +43,7 @@ export default sbp('sbp/selectors/register', {
       }
 
       if (event.kind === 'Error' && !response) {
-        headersRejected(new Error(event.data.message))
+        headersRejected(new NativeHttpError(event.data.message, event.data.status))
       }
 
       byteStream.pushEvent(event)

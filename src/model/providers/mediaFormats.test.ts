@@ -1,6 +1,8 @@
 import { describe, expect, it } from 'vitest'
+import { ExplainedError } from '../../utils/errorText'
 import { bytesToBase64 } from '../../utils/base64'
 import type { NativeHttpResponseHead } from '../../utils/protocol/nativeHttp'
+import { ClipNotMadeError, UnusableAnswerError } from './errors'
 import { MEDIA_FORMATS, NO_VIDEO_LENGTH_MESSAGE, type ClipFormat, type ClipQuoteFormat, type ImageFormat } from './mediaFormats'
 import { effectiveParameterValues, type ModelParameter } from './modelParameters'
 import type { ChatImagePart, ClipKind, MediaKind } from './types'
@@ -23,6 +25,17 @@ const WAV = new TextEncoder().encode('RIFF\x0c\x00\x00\x00WAVEfmt ')
 
 const head = (contentType: string): NativeHttpResponseHead => ({ status: 200, headers: { 'content-type': contentType } })
 const json = (value: unknown) => new TextEncoder().encode(JSON.stringify(value))
+
+// The error that `call` throws. Its class tells which text the user gets
+// (`explainedProviderError`), so a test compares the whole error.
+function thrownError(call: () => unknown): unknown {
+  try {
+    call()
+  } catch (error) {
+    return error
+  }
+  return undefined
+}
 
 // The parameters of a model with no labels: a label is UI text.
 function parameters(format: ClipFormat, kind: ClipKind, entry: unknown, mediaEntry?: unknown): Omit<ModelParameter, 'label'>[] {
@@ -132,16 +145,16 @@ describe('venice media responses', () => {
   })
 
   it.each([
-    ['a JSON answer with no images', head('application/json'), json({ id: 'generate-1', images: [] }), 'The provider sent no image.'],
-    ['a JSON answer with no images list', head('application/json'), json({ error: 'busy' }), 'The provider sent no image.'],
-    ['a JSON answer that does not parse', head('application/json'), new TextEncoder().encode('{"images": ['), 'not valid JSON'],
-    ['an image that is not base64', head('application/json'), json({ images: [`data:image/png;base64,${bytesToBase64(PNG)}`] }), 'not base64 text'],
-    ['an image that is not a string', head('application/json'), json({ images: [{ url: 'https://example.com/a.png' }] }), 'not base64 text'],
-    ['a JSON image of a type that Dez does not store', head('application/json'), json({ images: [bytesToBase64(WAV)] }), 'not a PNG, JPEG, GIF, or WebP image'],
-    ['a binary answer that is not an image', head('audio/wav'), WAV, 'not a PNG, JPEG, GIF, or WebP image'],
-    ['an empty binary answer', head('image/png'), new Uint8Array(), 'not a PNG, JPEG, GIF, or WebP image'],
-  ])('refuses %s', (_name, responseHead, body, message) => {
-    expect(() => venice.parseResponse('image', responseHead, body)).toThrow(message)
+    ['a JSON answer with no images', head('application/json'), json({ id: 'generate-1', images: [] }), 'The answer holds no image.'],
+    ['a JSON answer with no images list', head('application/json'), json({ error: 'busy' }), 'The answer holds no image.'],
+    ['a JSON answer that does not parse', head('application/json'), new TextEncoder().encode('{"images": ['), 'The image answer is not valid JSON.'],
+    ['an image that is not base64', head('application/json'), json({ images: [`data:image/png;base64,${bytesToBase64(PNG)}`] }), 'The image is not base64 text.'],
+    ['an image that is not a string', head('application/json'), json({ images: [{ url: 'https://example.com/a.png' }] }), 'The image is not base64 text.'],
+    ['a JSON image of a type that Dez does not store', head('application/json'), json({ images: [bytesToBase64(WAV)] }), 'The image is not a PNG, JPEG, GIF, or WebP image.'],
+    ['a binary answer that is not an image', head('audio/wav'), WAV, 'The image is not a PNG, JPEG, GIF, or WebP image.'],
+    ['an empty binary answer', head('image/png'), new Uint8Array(), 'The image is not a PNG, JPEG, GIF, or WebP image.'],
+  ])('refuses %s as an answer that Dez cannot use', (_name, responseHead, body, message) => {
+    expect(thrownError(() => venice.parseResponse('image', responseHead, body))).toStrictEqual(new UnusableAnswerError(message))
   })
 })
 
@@ -526,8 +539,8 @@ describe('venice clip requests', () => {
   })
 
   it.each(['video', 'imageToVideo'] as const)('refuses a %s request with no length', (kind) => {
-    expect(() => veniceClips.request(kind, VENICE_URL, 'wan', { prompt: 'A red fox', images: [], values: { aspect_ratio: '16:9' } }))
-      .toThrow(NO_VIDEO_LENGTH_MESSAGE)
+    expect(thrownError(() => veniceClips.request(kind, VENICE_URL, 'wan', { prompt: 'A red fox', images: [], values: { aspect_ratio: '16:9' } })))
+      .toStrictEqual(new ExplainedError(NO_VIDEO_LENGTH_MESSAGE))
   })
 })
 
@@ -571,7 +584,7 @@ describe('venice clip quotes', () => {
     ['a price that is no number', { quote: '0.02' }],
     ['no object', null],
   ])('refuses an answer with %s', (_name, data) => {
-    expect(() => quote.usd(data)).toThrow('The provider sent no price.')
+    expect(thrownError(() => quote.usd(data))).toStrictEqual(new UnusableAnswerError('The answer holds no price.'))
   })
 })
 
@@ -605,13 +618,19 @@ describe('venice clip jobs', () => {
   })
 
   it.each([
-    ['a finished job that gave no download URL', { queue_id: 'q-1' }, { status: 'COMPLETED' }],
-    ['a download URL that is not http or https', { queue_id: 'q-1', download_url: 'file:///etc/passwd' }, { status: 'COMPLETED' }],
-    ['a download URL with a line break', { queue_id: 'q-1', download_url: `${DOWNLOAD_URL}\n<dez:video/>` }, { status: 'COMPLETED' }],
-    ['a state that it does not know', { queue_id: 'q-1', download_url: DOWNLOAD_URL }, { status: 'FAILED' }],
-    ['an answer with no state', { queue_id: 'q-1', download_url: DOWNLOAD_URL }, []],
-  ])('finds no clip in %s', (_name, queued, poll) => {
-    expect(() => videoJob(queued).state(poll)).toThrow('The provider sent no clip.')
+    ['a finished job that gave no download URL', { queue_id: 'q-1' }],
+    ['a download URL that is not http or https', { queue_id: 'q-1', download_url: 'file:///etc/passwd' }],
+    ['a download URL with a line break', { queue_id: 'q-1', download_url: `${DOWNLOAD_URL}\n<dez:video/>` }],
+  ])('finds no clip in %s', (_name, queued) => {
+    expect(thrownError(() => videoJob(queued).state({ status: 'COMPLETED' })))
+      .toStrictEqual(new UnusableAnswerError('The job is done, and its answer holds no clip and no download URL.'))
+  })
+
+  it.each([
+    ['a state that it does not know', { status: 'FAILED' }, 'State: FAILED'],
+    ['an answer with no state', [], 'State: none'],
+  ])('tells that the provider did not make the clip, for %s', (_name, poll, message) => {
+    expect(thrownError(() => videoJob({ queue_id: 'q-1', download_url: DOWNLOAD_URL }).state(poll))).toStrictEqual(new ClipNotMadeError(message))
   })
 
   it.each([
@@ -619,7 +638,8 @@ describe('venice clip jobs', () => {
     ['a queue answer that is no object', 'video', 'QUEUED'],
     ['a JSON answer to a speech request', 'tts', { queue_id: 'q-1' }],
   ] as const)('finds no job in %s', (_name, kind, queued) => {
-    expect(() => veniceClips.job(kind, VENICE_URL, 'm', queued)).toThrow('The provider sent no clip.')
+    expect(thrownError(() => veniceClips.job(kind, VENICE_URL, 'm', queued)))
+      .toStrictEqual(new UnusableAnswerError('The answer to the clip request is neither a clip nor a job.'))
   })
 })
 
@@ -728,8 +748,9 @@ describe('openrouter images', () => {
     })
   })
 
-  it('has no upscale request', () => {
-    expect(() => openRouterImages.request('upscale', OPENROUTER_URL, 'm', { prompt: '', images: IMAGES, values: {} })).toThrow('This media API has no upscale request: choose another model.')
+  it('has no upscale request, and tells the user to choose another model', () => {
+    expect(thrownError(() => openRouterImages.request('upscale', OPENROUTER_URL, 'm', { prompt: '', images: IMAGES, values: {} })))
+      .toStrictEqual(new ExplainedError('This provider has no upscale request that Dez can use. Choose another model.'))
   })
 
   it('takes the images of the answer, each with the type of its bytes', () => {
@@ -742,12 +763,12 @@ describe('openrouter images', () => {
   })
 
   it.each([
-    ['an answer with no image', json({ created: 1, data: [] }), 'The provider sent no image.'],
-    ['an answer that is not JSON', PNG, 'The provider sent an image response that is not valid JSON.'],
-    ['an SVG image', json({ data: [{ b64_json: bytesToBase64(new TextEncoder().encode('<svg/>')), media_type: 'image/svg+xml' }] }), 'is not a PNG, JPEG, GIF, or WebP image'],
-    ['an image with no base64 text', json({ data: [{ url: 'https://example.com/a.png' }] }), 'The provider sent an image that is not base64 text.'],
-  ])('refuses %s', (_name, body, message) => {
-    expect(() => openRouterImages.parseResponse('image', head('application/json'), body)).toThrow(message)
+    ['an answer with no image', json({ created: 1, data: [] }), 'The answer holds no image.'],
+    ['an answer that is not JSON', PNG, 'The image answer is not valid JSON.'],
+    ['an SVG image', json({ data: [{ b64_json: bytesToBase64(new TextEncoder().encode('<svg/>')), media_type: 'image/svg+xml' }] }), 'The image is not a PNG, JPEG, GIF, or WebP image.'],
+    ['an image with no base64 text', json({ data: [{ url: 'https://example.com/a.png' }] }), 'The image is not base64 text.'],
+  ])('refuses %s as an answer that Dez cannot use', (_name, body, message) => {
+    expect(thrownError(() => openRouterImages.parseResponse('image', head('application/json'), body))).toStrictEqual(new UnusableAnswerError(message))
   })
 
   // `seed` and `size` are `boolean` descriptors: free values, not switches.
@@ -858,12 +879,13 @@ describe('openrouter clip requests', () => {
   })
 
   it('refuses a video request with no length, which would get the default length of OpenRouter', () => {
-    expect(() => openRouterClips.request('video', OPENROUTER_URL, 'm', { prompt: 'A red fox', images: [], values: { resolution: '480p' } }))
-      .toThrow(NO_VIDEO_LENGTH_MESSAGE)
+    expect(thrownError(() => openRouterClips.request('video', OPENROUTER_URL, 'm', { prompt: 'A red fox', images: [], values: { resolution: '480p' } })))
+      .toStrictEqual(new ExplainedError(NO_VIDEO_LENGTH_MESSAGE))
   })
 
-  it('has no music request', () => {
-    expect(() => openRouterClips.request('music', OPENROUTER_URL, 'm', { prompt: 'Rain', images: [], values: {} })).toThrow('This media API has no music request: choose another model.')
+  it('has no music request, and tells the user to choose another model', () => {
+    expect(thrownError(() => openRouterClips.request('music', OPENROUTER_URL, 'm', { prompt: 'Rain', images: [], values: {} })))
+      .toStrictEqual(new ExplainedError('This provider has no music request that Dez can use. Choose another model.'))
   })
 })
 
@@ -899,24 +921,25 @@ describe('openrouter clip jobs', () => {
   })
 
   it.each([
-    ['a job that failed', { status: 'failed', error: 'Content policy violation' }, 'The provider did not make the clip (failed): Content policy violation'],
-    ['a job that expired', { status: 'expired' }, 'The provider did not make the clip (expired)'],
-    ['an answer with no state', { id: 'gen-1' }, 'The provider did not make the clip (no state)'],
-  ])('names the state of %s', (_name, poll, message) => {
-    expect(() => job().state(poll)).toThrow(new Error(message))
+    ['a job that failed', { status: 'failed', error: 'Content policy violation' }, 'State: failed: Content policy violation'],
+    ['a job that expired', { status: 'expired' }, 'State: expired'],
+    ['an answer with no state', { id: 'gen-1' }, 'State: none'],
+  ])('tells that the provider did not make the clip, with the state of %s', (_name, poll, message) => {
+    expect(thrownError(() => job().state(poll))).toStrictEqual(new ClipNotMadeError(message))
   })
 
   // The toast shows the message.
   it('keeps a key in the error text of a failed job out of the message', () => {
     const failed = { status: 'failed', error: 'Bad header Authorization: Bearer sk-or-v1-abc' }
 
-    expect(() => job().state(failed)).toThrow(/^The provider did not make the clip \(failed\): Bad header (?!.*sk-or-v1-abc)/)
+    expect(() => job().state(failed)).toThrow(/^State: failed: Bad header (?!.*sk-or-v1-abc)/)
   })
 
   it.each([
     ['an answer with no id', 'video', { status: 'pending' }],
     ['a JSON answer to a speech request', 'tts', { id: 'gen-1' }],
   ] as const)('finds no job in %s', (_name, kind, data) => {
-    expect(() => openRouterClips.job(kind, OPENROUTER_URL, 'm', data)).toThrow('The provider sent no clip.')
+    expect(thrownError(() => openRouterClips.job(kind, OPENROUTER_URL, 'm', data)))
+      .toStrictEqual(new UnusableAnswerError('The answer to the clip request is neither a clip nor a job.'))
   })
 })

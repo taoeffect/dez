@@ -98,7 +98,7 @@ describe('dez.controller/images/save', () => {
     expect(consoleError).toHaveBeenCalledWith('Failed to save the image:', 'Write error: No space left on device')
     expect(toasts).toEqual([{
       title: 'Could not save the image',
-      message: 'Write error: No space left on device',
+      message: 'The system did not let Dez write the image file. The details tell why (for example, the disk is full). Fix that, and try again.\n\nDetails: Write error: No space left on device',
       variant: 'error',
     }])
   })
@@ -152,7 +152,7 @@ describe('dez.controller/images/delete', () => {
     expect(consoleError).toHaveBeenCalledWith(`Failed to delete the image ${appDir}/assets/images/red.png:`, 'Failed to delete assets/images/red.png: Permission denied (os error 13)')
     expect(toasts).toEqual([{
       title: 'Could not delete the image',
-      message: 'Failed to delete assets/images/red.png: Permission denied (os error 13)',
+      message: 'The system did not let Dez delete the image file. The details tell why (for example, Dez has no permission to change the folder). Fix that, and try again.\n\nDetails: Failed to delete assets/images/red.png: Permission denied (os error 13)',
       variant: 'error',
     }])
   })

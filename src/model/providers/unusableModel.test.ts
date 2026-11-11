@@ -30,7 +30,7 @@ describe('unusableModelMessage', () => {
     expect(message).toContain(` ${names} output `)
   })
 
-  it('names no output of a model that makes none', () => {
-    expect(unusableModelMessage('Embedder', { outputs: [] })).toBe('Dez cannot use Embedder yet.')
+  it('names no output of a model that makes none, and tells the user to choose another model', () => {
+    expect(unusableModelMessage('Embedder', { outputs: [] })).toBe('Dez cannot use Embedder yet. Choose another model.')
   })
 })

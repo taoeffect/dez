@@ -2,6 +2,7 @@ import sbp from '@sbp/sbp'
 import type { ModelCache } from '../model/persistence/types'
 import { listProviders, type ProviderConfig, type ProviderId } from '../model/providers'
 import { configIssueText, customProviderConfigSchema } from '../model/providers/config'
+import { ExplainedError, rawErrorText } from '../utils/errorText'
 import type { CopilotDeviceFlowResponse } from './nativeTypes'
 
 interface CopilotDeviceFlowViewState {
@@ -44,7 +45,10 @@ export default sbp('sbp/selectors/register', {
   'dez.controller/providers/save' (config: ProviderConfig): ProviderConfig {
     const result = customProviderConfigSchema.safeParse(config)
     if (!result.success) {
-      const error = new Error(`Invalid provider: ${configIssueText(result.error)}`)
+      const error = new ExplainedError(
+        'Dez cannot save this provider, because a field has a value that is not valid. The details name the field. Change its value, and try again.',
+        configIssueText(result.error),
+      )
       console.error(error)
       throw error
     }
@@ -75,7 +79,10 @@ export default sbp('sbp/selectors/register', {
   // and the stored key. Built-in providers cannot be removed.
   async 'dez.controller/providers/remove' (providerId: ProviderId): Promise<void> {
     if (!sbp('dez.model/customProviders/remove', providerId)) {
-      const error = new Error(`Only a custom provider can be removed, not "${providerId}"`)
+      const error = new ExplainedError(
+        'Dez cannot delete the provider: only a custom provider can be deleted, and no custom provider has its id. If the provider is still in the list, report this at Help › Dez on GitHub.',
+        `Provider id: "${providerId}"`,
+      )
       console.error(error)
       throw error
     }
@@ -100,7 +107,11 @@ export default sbp('sbp/selectors/register', {
       else await sbp('dez.native/deleteProviderSecret', providerId)
     } catch (error) {
       console.error(`Failed to ${value ? 'save' : 'delete'} the API key of provider ${providerId}:`, error)
-      throw error
+      throw new ExplainedError(
+        `Dez could not ${value ? 'save' : 'remove'} the API key in its key file (provider_keys.json in the Dez folder). The system did not let Dez read or write the file, or the file is not valid JSON: the details tell which. Fix that, and try again.`,
+        rawErrorText(error),
+        { cause: error },
+      )
     }
 
     void sbp('dez.controller/modelCache/refresh', { providerIds: [providerId], force: true })
@@ -132,10 +143,16 @@ export default sbp('sbp/selectors/register', {
         }
       }
 
-      throw new Error('Copilot sign-in timed out. Please try again.')
+      throw new ExplainedError('The GitHub sign-in did not end within 5 minutes. Sign in again, and enter the code on GitHub within 5 minutes.')
     } catch (error) {
       console.error('Copilot sign-in failed:', error)
-      throw error
+      if (error instanceof ExplainedError) throw error
+      throw new ExplainedError(
+        'The GitHub sign-in failed. The details tell why: the network or GitHub failed, the sign-in was refused on GitHub, the GitHub account cannot use Copilot, '
+          + 'or the system did not let Dez read or write its key file (provider_keys.json in the Dez folder). Fix that, and sign in again.',
+        rawErrorText(error),
+        { cause: error },
+      )
     }
   },
 })

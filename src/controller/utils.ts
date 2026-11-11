@@ -1,5 +1,6 @@
 import sbp from '@sbp/sbp'
 import { openPath, openUrl, revealItemInDir } from '@tauri-apps/plugin-opener'
+import { errorText, rawErrorText } from '../utils/errorText'
 import { pathWithTilde } from '../utils/homePath'
 
 // The read of the user's home folder, kept: the folder does not change
@@ -28,7 +29,7 @@ export default sbp('sbp/selectors/register', {
       console.error('Failed to open the Dez folder:', error)
       sbp('dez.ui/toast', 'app-global', {
         title: 'Could not open the Dez folder',
-        message: error instanceof Error ? error.message : String(error),
+        message: errorText('The system did not open the Dez folder in a file manager. Open the folder ~/.config/dez by hand.', rawErrorText(error)),
         variant: 'error',
       })
     }
@@ -49,7 +50,7 @@ export default sbp('sbp/selectors/register', {
       // The path tells the user where to find the file by hand.
       sbp('dez.ui/toast', 'app-global', {
         title: 'Could not show the file',
-        message: `The file is at ${path}. The file manager answered: ${error instanceof Error ? error.message : String(error)}`,
+        message: errorText(`The file manager did not show the file. Find it by hand: it is at ${path}.`, rawErrorText(error)),
         variant: 'error',
       })
     }

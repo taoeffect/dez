@@ -73,14 +73,14 @@ export function clipTextProblem(modelName: string, rules: ClipTextRules | undefi
   // which part counts.
   const promptName = lyrics === undefined ? 'a prompt' : 'a prompt (the text before the "Lyrics:" line)'
   if (rules.minPromptLength !== undefined && prompt.length < rules.minPromptLength) {
-    return `${modelName} needs ${promptName} of at least ${characters(rules.minPromptLength)}. This one has ${prompt.length}.`
+    return `${modelName} needs ${promptName} of at least ${characters(rules.minPromptLength)}. This one has ${prompt.length}. Write a longer prompt.`
   }
   if (rules.maxPromptLength !== undefined && prompt.length > rules.maxPromptLength) {
-    return `${modelName} takes ${promptName} of at most ${characters(rules.maxPromptLength)}. This one has ${prompt.length}.`
+    return `${modelName} takes ${promptName} of at most ${characters(rules.maxPromptLength)}. This one has ${prompt.length}. Make the prompt shorter.`
   }
   const maxLyrics = rules.lyrics?.maxLength
   if (lyrics !== undefined && maxLyrics !== undefined && lyrics.length > maxLyrics) {
-    return `${modelName} takes lyrics of at most ${characters(maxLyrics)}. These have ${lyrics.length}.`
+    return `${modelName} takes lyrics of at most ${characters(maxLyrics)}. These have ${lyrics.length}. Make the lyrics shorter.`
   }
   return null
 }

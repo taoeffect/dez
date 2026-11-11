@@ -3,6 +3,7 @@ import { createPinia, setActivePinia } from 'pinia'
 import { afterEach, beforeEach, describe, expect, it, vi, type MockInstance } from 'vitest'
 import type { NativeDownloadRule, NativeHttpDownload, NativeHttpRequest, NativeHttpResponse } from '../../utils/protocol/nativeHttp'
 import { bytesToBase64 } from '../../utils/base64'
+import { ExplainedError } from '../../utils/errorText'
 import { TooManyImagesError } from './clipImages'
 import { NO_VIDEO_LENGTH_MESSAGE } from './mediaFormats'
 import type { ModelParameter } from './modelParameters'
@@ -38,6 +39,10 @@ const STARTED_AT = Date.parse('2026-11-10T09:30:00.000Z')
 const SECOND_MS = 1000
 const DAY_MS = 24 * 60 * 60 * SECOND_MS
 const JOB_TIMEOUT_MS = 30 * 60 * SECOND_MS
+// The start of the text of an answer of the venice-like provider that Dez
+// cannot use, and the advice of a failed job.
+const UNUSABLE_ANSWER = 'Media server sent an answer that Dez cannot use. Send the request again. If the error stays, report it at Help › Dez on GitHub.'
+const JOB_ADVICE = 'To ask Media server about this clip, give its job id: q-1.'
 const POST_HEADERS = { 'Content-Type': 'application/json', Authorization: 'Bearer sk-test' }
 
 // What the stand-ins received, in order.
@@ -197,7 +202,7 @@ describe('a clip that the first answer holds', () => {
   it('deletes the file of a clip whose type Dez cannot name, and fails with the whole content type', async () => {
     answers = [clip('audio/pcm;rate=24000')]
 
-    await expect(generate({ kind: 'tts' })).rejects.toThrow('Dez does not know the file type of this clip (audio/pcm;rate=24000).')
+    await expect(generate({ kind: 'tts' })).rejects.toThrow('Media server sent the clip in a file type that Dez does not know. Choose another model, and report the file type at Help › Dez on GitHub.\n\nDetails: Content type: audio/pcm;rate=24000')
 
     expect(deleted).toStrictEqual([tempFile(1, 'part')])
     expect([moves, loaded, saved]).toStrictEqual([[], [], []])
@@ -234,7 +239,7 @@ describe('a clip that the first answer holds', () => {
   it('makes no file of raw PCM whose answer does not tell its rate', async () => {
     answers = [clip('audio/pcm')]
 
-    await expect(generate({ providerId: 'router-like', kind: 'tts' })).rejects.toThrow('Dez does not know the file type of this clip (audio/pcm).')
+    await expect(generate({ providerId: 'router-like', kind: 'tts' })).rejects.toThrow('Details: Content type: audio/pcm')
 
     expect(deleted).toStrictEqual([tempFile(1, 'part')])
     expect([moves, loaded, saved]).toStrictEqual([[], [], []])
@@ -257,7 +262,7 @@ describe('a clip that the first answer holds', () => {
     it('fails with the second refusal, and sends no third request', async () => {
       answers = [pcmOnly, pcmOnly]
 
-      await expect(generate({ providerId: 'router-like', kind: 'tts' })).rejects.toThrow('Router returned HTTP 400: HeyGen Voice only supports response_format "pcm".')
+      await expect(generate({ providerId: 'router-like', kind: 'tts' })).rejects.toThrow('Details: HTTP 400: HeyGen Voice only supports response_format "pcm".')
 
       expect(downloads).toHaveLength(2)
     })
@@ -265,16 +270,16 @@ describe('a clip that the first answer holds', () => {
     it('sends nothing more after a refusal of another field', async () => {
       answers = [json({ error: { message: 'Unknown voice "x"', code: 400 } }, 400)]
 
-      await expect(generate({ providerId: 'router-like', kind: 'tts' })).rejects.toThrow('Router returned HTTP 400: Unknown voice "x"')
+      await expect(generate({ providerId: 'router-like', kind: 'tts' })).rejects.toThrow('Details: HTTP 400: Unknown voice "x"')
 
       expect(downloads).toHaveLength(1)
     })
   })
 
   it.each([
-    ['a refused request', { status: 402, headers: {}, saved: false, body: bytesOf('Insufficient balance') }, 'Media server returned HTTP 402: Insufficient balance. Check the credit of your Media server account.'],
-    ['an answer that is neither a clip nor JSON', { status: 200, headers: { 'content-type': 'text/html' }, saved: false, body: bytesOf('<html>') }, 'The provider sent no clip.'],
-    ['a JSON answer to a speech request', json({ queue_id: 'q-1' }), 'The provider sent no clip.'],
+    ['a refused request', { status: 402, headers: {}, saved: false, body: bytesOf('Insufficient balance') }, 'Your Media server account does not have enough credit. Add credit at Media server, then try again.\n\nDetails: HTTP 402: Insufficient balance'],
+    ['an answer that is neither a clip nor JSON', { status: 200, headers: { 'content-type': 'text/html' }, saved: false, body: bytesOf('<html>') }, `${UNUSABLE_ANSWER}\n\nDetails: The answer is neither a clip nor JSON (content type: text/html).`],
+    ['a JSON answer to a speech request', json({ queue_id: 'q-1' }), `${UNUSABLE_ANSWER}\n\nDetails: The answer to the clip request is neither a clip nor a job.`],
   ])('fails for %s, and names no job', async (_name, answer, message) => {
     answers = [answer]
 
@@ -285,6 +290,14 @@ describe('a clip that the first answer holds', () => {
 
     expect(downloads).toHaveLength(1)
     expect(moves).toEqual([])
+  })
+
+  // The native text does not tell whether the connection or the disk
+  // failed, so the text names both.
+  it('names both causes of a download that the native layer refuses, with the native text last', async () => {
+    answers = [() => Promise.reject('error decoding response body')]
+
+    await expect(generate({ kind: 'tts' })).rejects.toThrow('Dez could not get the answer of Media server: the connection broke, or Dez could not write the file. Check the internet connection and the free disk space, then send the request again.\n\nDetails: error decoding response body')
   })
 })
 
@@ -439,9 +452,9 @@ describe('a clip job', () => {
     expect(error).toBeInstanceOf(TooManyImagesError)
     expect(error).toMatchObject({ maxImages: 1, sentImages: 2 })
     expect(downloads).toHaveLength(1)
-    expect(consoleError.mock.calls.map(([text, logged]) => [text, (logged as Error).message])).toStrictEqual([[
+    expect(consoleError.mock.calls.map(([text, logged]) => [text, (logged as ExplainedError).details])).toStrictEqual([[
       'Media server refused the images of a request to m:',
-      'Media server returned HTTP 400: Invalid request parameters (end_image_url: This model does not support end_image_url)',
+      'HTTP 400: Invalid request parameters (end_image_url: This model does not support end_image_url)',
     ]])
   })
 
@@ -482,7 +495,7 @@ describe('a clip job', () => {
   // a price that no one saw.
   it.each(['venice-like', 'router-like'])('sends no video request to a %s model whose lengths the model cache does not have', async (providerId) => {
     await expect(generate({ providerId, kind: 'video', parameters: { duration: 1 } }))
-      .rejects.toThrow(new Error(NO_VIDEO_LENGTH_MESSAGE))
+      .rejects.toStrictEqual(new ExplainedError(NO_VIDEO_LENGTH_MESSAGE))
 
     expect(downloads).toEqual([])
     expect(httpRequests).toEqual([])
@@ -490,12 +503,16 @@ describe('a clip job', () => {
 
   // The provider took the money when the job started.
   it.each([
-    ['a refused state request', [json({ queue_id: 'q-1' }), { status: 500, headers: {}, saved: false, body: bytesOf('Busy') }], 'Media server returned HTTP 500: Busy. This is a problem at Media server: try again later. To ask Media server about this clip, give its job id: q-1.'],
-    ['a state that tells of no clip', [json({ queue_id: 'q-1' }), json({ status: 'FAILED' })], 'The provider sent no clip. To ask Media server about this clip, give its job id: q-1.'],
-  ])('names the job in the error and in the log after %s', async (_name, jobAnswers, message) => {
+    ['a refused state request', [json({ queue_id: 'q-1' }), { status: 500, headers: {}, saved: false, body: bytesOf('Busy') }], `This is a problem at Media server, not in your message or in Dez. Try again later. ${JOB_ADVICE}\n\nDetails: HTTP 500: Busy`],
+    [
+      'a state that tells of no clip',
+      [json({ queue_id: 'q-1' }), json({ status: 'FAILED' })],
+      `Media server did not make the clip. The cause can be the prompt (Media server can refuse a prompt) or a problem at Media server: the details below tell what Media server said. Change the prompt, or send the request again later. ${JOB_ADVICE}\n\nDetails: State: FAILED`,
+    ],
+  ])('names the job before the details of the error, and in the log, after %s', async (_name, jobAnswers, message) => {
     answers = jobAnswers
 
-    const failure = expect(generate({ kind: 'music' })).rejects.toThrow(new Error(message))
+    const failure = expect(generate({ kind: 'music' })).rejects.toThrow(message)
     await vi.advanceTimersByTimeAsync(5 * SECOND_MS)
     await failure
 
@@ -506,7 +523,7 @@ describe('a clip job', () => {
     cacheModel('router-like', OPENROUTER_VIDEO_PARAMETERS)
     answers = [json({ id: 'gen-1' }, 202), json({ status: 'completed' }), json({ error: 'Not ready' })]
 
-    const failure = expect(generate({ providerId: 'router-like', kind: 'video' })).rejects.toThrow(new Error('The provider sent no clip. To ask Router about this clip, give its job id: gen-1.'))
+    const failure = expect(generate({ providerId: 'router-like', kind: 'video' })).rejects.toThrow('Router sent an answer that Dez cannot use. Send the request again. If the error stays, report it at Help › Dez on GitHub. To ask Router about this clip, give its job id: gen-1.\n\nDetails: The answer to the clip download holds no clip.')
     await vi.advanceTimersByTimeAsync(5 * SECOND_MS)
     await failure
   })
@@ -514,7 +531,7 @@ describe('a clip job', () => {
   it('gives up on a job that does not end in 30 minutes', async () => {
     answers = [json({ queue_id: 'q-1' }), ...Array.from({ length: 400 }, () => json({ status: 'PROCESSING' }))]
 
-    const failure = expect(generate({ kind: 'music' })).rejects.toThrow(new Error('The provider did not make the clip in time. To ask Media server about this clip, give its job id: q-1.'))
+    const failure = expect(generate({ kind: 'music' })).rejects.toThrow(`Media server did not make the clip in 30 minutes, the longest time that Dez waits. Send the request again later. ${JOB_ADVICE}`)
     await vi.advanceTimersByTimeAsync(JOB_TIMEOUT_MS)
     await failure
 

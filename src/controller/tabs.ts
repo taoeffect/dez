@@ -1,6 +1,7 @@
 import sbp from '@sbp/sbp'
 import type { Tab } from '../model/chat/types'
 import type { ConversationData } from '../model/persistence/types'
+import { ExplainedError, errorText, rawErrorText } from '../utils/errorText'
 import { safeFileName } from '../utils/fileName'
 
 // True while the save dialog is open. A second Save request (for example the
@@ -41,6 +42,8 @@ export default sbp('sbp/selectors/register', {
       const path = await sbp('dez.native/showSaveDialog', {
         defaultPath: `${safeFileName(data.title, 'Conversation')}.md`,
         filters: [{ name: 'Markdown', extensions: ['md'] }],
+      }).catch((error: unknown) => {
+        throw new ExplainedError('The system did not open the save dialog. The details tell why. Fix that, and try again.', rawErrorText(error), { cause: error })
       }) as string | null
       if (!path) return
       // A response can stream into the tab while the dialog is open. Save
@@ -59,7 +62,9 @@ export default sbp('sbp/selectors/register', {
       console.error('Failed to save the conversation as Markdown:', error)
       sbp('dez.ui/toast', 'app-global', {
         title: 'Could not save the conversation',
-        message: error instanceof Error ? error.message : String(error),
+        message: error instanceof ExplainedError
+          ? error.message
+          : errorText('The system did not let Dez write the file. The details tell why (for example, Dez has no permission to write to that folder). Fix that, or pick another folder, and try again.', rawErrorText(error)),
         variant: 'error',
       })
     } finally {

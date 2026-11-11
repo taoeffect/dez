@@ -169,18 +169,24 @@ describe('dez.controller/media/save', () => {
     expect(path).not.toContain(NAME)
   })
 
-  it.each<[string, Clip]>([
-    ['a clip with no source', { kind: 'video', type: 'video/mp4', src: null, url: null }],
-    ['a temp copy of another computer and no URL', { kind: 'video', type: 'video/mp4', src: `/home/bob/.cache/dez/media/${NAME}.mp4`, url: null }],
-    ['a URL that is not http or https', { kind: 'video', type: 'video/mp4', src: null, url: 'file:///home/ann/.ssh/id_ed25519' }],
-    ['a saved file as the URL', { kind: 'video', type: 'video/mp4', src: null, url: `${APP_DIR}/assets/generated/video/${NAME}.mp4` }],
-    ['a clip of an unknown file type', { kind: 'video', type: 'application/octet-stream', src: CLIP_URL.replace('.mp4', ''), url: CLIP_URL.replace('.mp4', '') }],
-  ])('writes no file, shows an error toast, and rejects for %s', async (_case, clip) => {
-    await expect(save(clip)).rejects.toThrow()
+  const NO_SOURCE = 'Dez cannot save this clip: its temp copy is not on this computer, and it has no web address to download it from. Make the clip again.'
+
+  it.each<[string, Clip, string]>([
+    ['a clip with no source', { kind: 'video', type: 'video/mp4', src: null, url: null }, NO_SOURCE],
+    ['a temp copy of another computer and no URL', { kind: 'video', type: 'video/mp4', src: `/home/bob/.cache/dez/media/${NAME}.mp4`, url: null }, NO_SOURCE],
+    ['a URL that is not http or https', { kind: 'video', type: 'video/mp4', src: null, url: 'file:///home/ann/.ssh/id_ed25519' }, NO_SOURCE],
+    ['a saved file as the URL', { kind: 'video', type: 'video/mp4', src: null, url: `${APP_DIR}/assets/generated/video/${NAME}.mp4` }, NO_SOURCE],
+    [
+      'a clip of an unknown file type',
+      { kind: 'video', type: 'application/octet-stream', src: CLIP_URL.replace('.mp4', ''), url: CLIP_URL.replace('.mp4', '') },
+      'Dez does not know the file type of this clip (application/octet-stream), so it cannot save it. Report this at Help › Dez on GitHub.',
+    ],
+  ])('writes no file, shows an error toast, and rejects for %s', async (_case, clip, message) => {
+    await expect(save(clip)).rejects.toThrow(message)
 
     expect(moves).toEqual([])
     expect(downloads).toEqual([])
-    expect(toasts).toMatchObject([{ title: 'Could not save the clip', variant: 'error' }])
+    expect(toasts).toStrictEqual([{ title: 'Could not save the clip', message, variant: 'error' }])
     expect(consoleError).toHaveBeenCalledTimes(1)
   })
 
@@ -195,37 +201,43 @@ describe('dez.controller/media/save', () => {
   })
 
   it.each([
-    [410, 'The server of the clip answered HTTP 410. The clip is not on the server any more: make it again.'],
-    [503, 'The server of the clip answered HTTP 503. This is a problem at the server of the clip: try again later.'],
-    [400, 'The server of the clip answered HTTP 400.'],
+    [410, 'The clip is not on its server any more: its link has expired, or the provider deleted it. Make the clip again.\n\nDetails: HTTP 410'],
+    [503, 'The server of the clip has a problem. Try again later.\n\nDetails: HTTP 503'],
+    [400, 'The server of the clip refused to send it. Try again later. If the error stays, make the clip again.\n\nDetails: HTTP 400'],
   ])('logs, shows an error toast, and rejects when the server answers HTTP %i', async (status, message) => {
     downloadAppFile = async () => ({ status, statusText: '', headers: {}, saved: false, body: [] })
 
-    await expect(save({ kind: 'video', type: 'video/mp4', src: CLIP_URL, url: CLIP_URL })).rejects.toThrow(new Error(message))
+    await expect(save({ kind: 'video', type: 'video/mp4', src: CLIP_URL, url: CLIP_URL })).rejects.toThrow(message)
 
     expect(consoleError).toHaveBeenCalledWith('Failed to save the clip:', expect.any(Error))
     expect(toasts).toEqual([{ title: 'Could not save the clip', message, variant: 'error' }])
   })
 
   it('logs, shows an error toast, and rejects when the move or the download fails', async () => {
+    const moveError = 'Failed to move media/a.mp4 to assets/generated/video/a.mp4: No such file or directory (os error 2)'
+    const downloadError = 'The response is larger than 1073741824 bytes'
     moveAppFile = async () => {
-      throw 'Failed to move media/a.mp4 to assets/generated/video/a.mp4: No such file or directory (os error 2)'
+      throw moveError
     }
     downloadAppFile = async () => {
-      throw 'The response is larger than 1073741824 bytes'
+      throw downloadError
     }
+    const moveMessage = 'Dez could not move the temp copy of the clip into the Dez folder. The copy is gone, or the system did not let Dez write the file: the details tell which. If the copy is gone, make the clip again. Else fix the problem, and try again.'
+      + `\n\nDetails: ${moveError}`
+    const downloadMessage = 'Dez could not download the clip. The network failed, the clip is larger than 1.0 GB (the most that Dez saves), or the system did not let Dez write the file: the details tell which. Try again, unless the clip is too large.'
+      + `\n\nDetails: ${downloadError}`
 
     await expect(save({ kind: 'video', type: 'video/mp4', src: `${CACHE_DIR}/media/a.mp4`, url: CLIP_URL }))
-      .rejects.toBe('Failed to move media/a.mp4 to assets/generated/video/a.mp4: No such file or directory (os error 2)')
+      .rejects.toThrow(moveMessage)
     await expect(save({ kind: 'video', type: 'video/mp4', src: CLIP_URL, url: CLIP_URL }))
-      .rejects.toBe('The response is larger than 1073741824 bytes')
+      .rejects.toThrow(downloadMessage)
 
     // The move failed: the URL is not tried in its place.
     expect(downloads).toHaveLength(1)
-    expect(consoleError).toHaveBeenCalledWith('Failed to save the clip:', 'The response is larger than 1073741824 bytes')
+    expect(consoleError).toHaveBeenCalledWith('Failed to save the clip:', expect.objectContaining({ cause: downloadError }))
     expect(toasts).toEqual([
-      { title: 'Could not save the clip', message: 'Failed to move media/a.mp4 to assets/generated/video/a.mp4: No such file or directory (os error 2)', variant: 'error' },
-      { title: 'Could not save the clip', message: 'The response is larger than 1073741824 bytes', variant: 'error' },
+      { title: 'Could not save the clip', message: moveMessage, variant: 'error' },
+      { title: 'Could not save the clip', message: downloadMessage, variant: 'error' },
     ])
   })
 })
@@ -270,7 +282,7 @@ describe('dez.controller/media/delete', () => {
     expect(consoleError).toHaveBeenCalledWith(`Failed to delete the clip ${path}:`, 'Failed to delete the file: Permission denied (os error 13)')
     expect(toasts).toEqual([{
       title: 'Could not delete the clip',
-      message: 'Failed to delete the file: Permission denied (os error 13)',
+      message: 'The system did not let Dez delete the clip file. The details tell why (for example, Dez has no permission to change the folder). Fix that, and try again.\n\nDetails: Failed to delete the file: Permission denied (os error 13)',
       variant: 'error',
     }])
   })

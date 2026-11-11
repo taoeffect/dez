@@ -59,7 +59,7 @@ sbp('sbp/selectors/register', {
   'dez.controller/images/readFile' (path: string): Promise<File> {
     readPaths.push(path)
     const file = localFiles.get(path)
-    return file ? Promise.resolve(file) : Promise.reject(new Error(`Failed to read ${path}: HTTP 404`))
+    return file ? Promise.resolve(file) : Promise.reject(new Error('The file cannot be read (HTTP 404).'))
   },
   'dez.controller/images/redraw' (_file: Blob, plan: (size: ImageSize) => ImageDrawing | null, mediaType: string): Promise<DrawnImage | null> {
     return redraw(plan, mediaType)
@@ -385,7 +385,12 @@ describe('dropFilePaths', () => {
     dropFilePaths(editor.view, ['/tmp/gone.png', '/tmp/a.png'], { x: 0, y: 0 })
 
     await vi.waitFor(() => expect(editor.doc()).toBe(reference(1)))
-    expect(toasts).toEqual([expect.objectContaining({ title: 'Image not added', message: 'Dez cannot read gone.png.', variant: 'warning' })])
+    expect(toasts).toEqual([expect.objectContaining({
+      title: 'Image not added',
+      message: 'Dez cannot read gone.png: the file was moved or deleted, or Dez has no permission to read it. Check the file, and drop it again.'
+        + '\n\nDetails: The file cannot be read (HTTP 404).',
+      variant: 'warning',
+    })])
   })
 
   it('puts a drop of links, with no local file, in as text', () => {

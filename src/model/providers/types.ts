@@ -1,3 +1,4 @@
+import { ExplainedError } from '../../utils/errorText'
 import type { ImageMediaType } from '../chat/images'
 import type { MediaTagKind } from '../chat/mediaTags'
 import type { RequestMessage, ThinkingReplay } from '../chat/types'
@@ -277,7 +278,8 @@ export interface SseStreamParser {
   finish(): SseStreamEnd
 }
 
-export class ProviderError extends Error {
+// A text for the user about a provider (`ExplainedError`).
+export class ProviderError extends ExplainedError {
   constructor(
     message: string,
     readonly providerId: ProviderId,

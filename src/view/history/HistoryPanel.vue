@@ -4,6 +4,7 @@ import sbp from '@sbp/sbp'
 import { debounce } from 'turtledash'
 import type { ConversationSearchOutcome, ConversationSearchResult } from '../../model/persistence/types'
 import { modelRefKey } from '../../model/chat/modelRef'
+import { REPORT_ADVICE, errorText, rawErrorText } from '../../utils/errorText'
 import { modelLabel } from '../modelLabel'
 import { useModelState } from '../modelState'
 
@@ -87,7 +88,7 @@ async function loadConversations() {
     await runSearch()
   } catch (e) {
     console.error('Failed to load history:', e)
-    error.value = `Failed to load history: ${e}`
+    error.value = errorText(`Dez could not load the saved conversations, because of an error that it did not expect. Click Refresh to try again. ${REPORT_ADVICE}`, rawErrorText(e))
   } finally {
     loading.value = false
   }
@@ -360,6 +361,8 @@ function onOverlayClick(e: MouseEvent) {
   margin: 12px 20px 0;
   font-size: 12px;
   color: #f44336;
+  /* The details of the error show as a paragraph of their own. */
+  white-space: pre-line;
 }
 
 .history-empty {

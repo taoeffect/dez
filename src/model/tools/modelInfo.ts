@@ -1,3 +1,4 @@
+import { rawErrorText } from '../../utils/errorText'
 import { modelRefKey, parseModelRefKey } from '../chat/modelRef'
 import { effectiveOutputs, MODEL_OUTPUT_IDS } from '../modelOutputs'
 import { availableModels } from '../modelSearch'
@@ -8,7 +9,7 @@ import { effectiveRequest, MODEL_REQUESTS, type ModelInfo, type ProviderInfo, ty
 import { unstoredOutputMessage, unusableModelMessage } from '../providers/unusableModel'
 import { jsonWithoutLocalPaths } from './localPaths'
 import { modelUsage } from './modelUsage'
-import type { ToolArguments, ToolDefinition } from './types'
+import { ToolError, type ToolArguments, type ToolDefinition } from './types'
 
 /** The most characters of a `model_info` result. A result over it leaves
  *  out entries of the provider, which a call can get one at a time
@@ -123,13 +124,13 @@ const FIND_MODELS = 'Use model_list to find the full ids of the models that the 
 export function modelInfoTarget(cache: ModelCache, providers: readonly ProviderInfo[], args: ToolArguments): ModelInfoTarget {
   const fullId = typeof args.model === 'string' ? args.model : ''
   const ref = parseModelRefKey(fullId)
-  if (!ref) throw new Error(`${JSON.stringify(fullId)} is not a full model id (provider/model). ${FIND_MODELS}`)
+  if (!ref) throw new ToolError(`${JSON.stringify(fullId)} is not a full model id (provider/model). ${FIND_MODELS}`)
 
   const provider = providers.find((candidate) => candidate.id === ref.providerId)
-  if (!provider) throw new Error(`No provider has the id ${JSON.stringify(ref.providerId)}. ${FIND_MODELS}`)
+  if (!provider) throw new ToolError(`No provider has the id ${JSON.stringify(ref.providerId)}. ${FIND_MODELS}`)
 
   const model = availableModels(cache, [provider]).find((candidate) => candidate.id === ref.modelId)
-  if (!model) throw new Error(`The user cannot use the model ${JSON.stringify(fullId)}. ${FIND_MODELS}`)
+  if (!model) throw new ToolError(`The user cannot use the model ${JSON.stringify(fullId)}. ${FIND_MODELS}`)
 
   return { provider, model }
 }
@@ -149,9 +150,15 @@ export function modelInfoParameterValues(model: ModelInfo, args: ToolArguments):
     chosen = undefined
   }
   if (typeof chosen !== 'object' || chosen === null || Array.isArray(chosen)) {
-    throw new Error('`parameters` must be the text of a JSON object, for example {"duration": "5s"}.')
+    throw new ToolError('`parameters` must be the text of a JSON object, for example {"duration": "5s"}.')
   }
-  return checkedParameterValues(model.parameters ?? [], chosen as Record<string, unknown>)
+  try {
+    return checkedParameterValues(model.parameters ?? [], chosen as Record<string, unknown>)
+  } catch (error) {
+    // A provider module throws plain errors, but their texts tell the
+    // calling model which names and values the media model takes.
+    throw new ToolError(rawErrorText(error), '', { cause: error })
+  }
 }
 
 /** The entry that the `part` argument of a call names; undefined for a
@@ -160,7 +167,7 @@ export function modelInfoParameterValues(model: ModelInfo, args: ToolArguments):
 export function modelInfoPart(args: ToolArguments): ModelInfoPart | undefined {
   if (args.part === undefined) return undefined
   const part = MODEL_INFO_PARTS.find((name) => name === args.part)
-  if (!part) throw new Error(`${JSON.stringify(args.part)} is not an entry of a model_info result. Use one of: ${MODEL_INFO_PARTS.join(', ')}.`)
+  if (!part) throw new ToolError(`${JSON.stringify(args.part)} is not an entry of a model_info result. Use one of: ${MODEL_INFO_PARTS.join(', ')}.`)
   return part
 }
 
@@ -262,7 +269,7 @@ export function modelInfoText(provider: ProviderInfo, model: ModelInfo, facts: M
 
   if (part !== undefined) {
     const entry = entries.find(({ name }) => name === part)
-    if (!entry) throw new Error(`Dez has no ${part} for this model now. Call model_info without \`part\` to see which entries it has.`)
+    if (!entry) throw new ToolError(`Dez has no ${part} for this model now. Call model_info without \`part\` to see which entries it has.`)
     return partText(id, part, entry.value)
   }
 

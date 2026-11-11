@@ -1,5 +1,6 @@
 import type { ImageMediaType } from '../chat/images'
 import { base64ToBytes } from '../../utils/base64'
+import { UnusableAnswerError } from './errors'
 import type { GeneratedMedia } from './types'
 
 // The first bytes of each image type that Dez stores (`isImageMediaType` in
@@ -23,7 +24,7 @@ const BASE64_DATA_URL_HEAD = /^data:[^,]*;base64,/i
 export function generatedImage(data: Uint8Array): GeneratedMedia {
   const signature = IMAGE_SIGNATURES.find(({ bytes }) =>
     data.length >= bytes.length && bytes.every((byte, index) => byte === null || data[index] === byte))
-  if (!signature) throw new Error('The provider sent an image that is not a PNG, JPEG, GIF, or WebP image.')
+  if (!signature) throw new UnusableAnswerError('The image is not a PNG, JPEG, GIF, or WebP image.')
   return { bytes: data, mediaType: signature.mediaType }
 }
 
@@ -36,7 +37,7 @@ export function generatedBase64Image(text: unknown): GeneratedMedia {
   } catch {
     // Not base64 text: the error below.
   }
-  if (!bytes) throw new Error('The provider sent an image that is not base64 text.')
+  if (!bytes) throw new UnusableAnswerError('The image is not base64 text.')
   return generatedImage(bytes)
 }
 
@@ -47,5 +48,5 @@ export async function generatedImageFromUrl(url: string, fetchBytes: (url: strin
   const dataUrlHead = BASE64_DATA_URL_HEAD.exec(url)
   if (dataUrlHead) return generatedBase64Image(url.slice(dataUrlHead[0].length))
   if (/^https?:\/\//i.test(url)) return generatedImage(await fetchBytes(url))
-  throw new Error('The provider sent an image that is neither a base64 data URL nor an http(s) URL.')
+  throw new UnusableAnswerError('The image is neither a base64 data URL nor an http(s) URL.')
 }

@@ -11,11 +11,14 @@ const CLIP_INPUT_NAMES: Readonly<Record<MediaTagKind, string>> = {
   video: 'a video clip',
 }
 
+const CHOOSE_ANOTHER = 'Choose another model.'
+
 /** Why a submit to the model `modelName` is refused, as text for the user.
  *  A model that needs a clip as its input (`clipInput`) gets a text that
  *  names the clip, e.g. "Whisper needs an audio clip as its input. …". Each
  *  other model gets the general text, e.g. "Dez cannot use Painter yet. It
- *  makes image output through an API that Dez does not support." */
+ *  makes image output through an API that Dez does not support. Choose
+ *  another model." */
 export function unusableModelMessage(modelName: string, model: Pick<ModelInfo, 'outputs' | 'clipInput'>): string {
   if (model.clipInput !== undefined) {
     // A message in the editor cannot hold a clip as an input, so a person
@@ -23,7 +26,7 @@ export function unusableModelMessage(modelName: string, model: Pick<ModelInfo, '
     // MODEL_INVOKE: change this text when model_invoke exists. It must then
     // tell the user how to give the clip to the model (ask a chat model to
     // call the tool with the clip's `@id`).
-    return `${modelName} needs ${CLIP_INPUT_NAMES[model.clipInput]} as its input. Only a chat model can give it one, with the model_invoke tool, and Dez does not have this tool yet.`
+    return `${modelName} needs ${CLIP_INPUT_NAMES[model.clipInput]} as its input. Only a chat model can give it one, with the model_invoke tool, and Dez does not have this tool yet. ${CHOOSE_ANOTHER}`
   }
   const outputs = effectiveOutputs(model)
   const labels = MODEL_OUTPUTS.filter((output) => outputs.includes(output.id)).map((output) => output.label.toLowerCase())
@@ -32,8 +35,8 @@ export function unusableModelMessage(modelName: string, model: Pick<ModelInfo, '
   // custom provider's image-only model with no media API) needs a request
   // for its API first.
   const cannotUse = `Dez cannot use ${modelName} yet.`
-  if (labels.length === 0) return cannotUse
-  return `${cannotUse} It makes ${new Intl.ListFormat('en', { type: 'conjunction' }).format(labels)} output through an API that Dez does not support.`
+  if (labels.length === 0) return `${cannotUse} ${CHOOSE_ANOTHER}`
+  return `${cannotUse} It makes ${new Intl.ListFormat('en', { type: 'conjunction' }).format(labels)} output through an API that Dez does not support. ${CHOOSE_ANOTHER}`
 }
 
 /** Why a submit to the model `modelName`, which makes only images of the

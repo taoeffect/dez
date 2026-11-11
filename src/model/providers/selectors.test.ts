@@ -7,7 +7,9 @@ import { toolBlockText } from '../chat/toolBlocks'
 import type { ModelCache } from '../persistence/types'
 import { sectionsToStreamMessages } from '../streams/messages'
 import { bytesToBase64 } from '../../utils/base64'
+import { ExplainedError } from '../../utils/errorText'
 import type { NativeHttpDownload, NativeHttpRequest, NativeHttpResponse, NativeHttpStreamResult } from '../../utils/protocol/nativeHttp'
+import { NativeHttpError } from '../../utils/protocol/errors'
 import type { ProviderGenerateMediaResult, ProviderMediaQuote } from './streamTypes'
 import type { GeneratedMedia, ModelDisplayNames, ProviderModelsResult, ProviderSettingsDescriptor } from './types'
 // Side-effect imports: register the dez.model/* selectors and the selectors
@@ -17,6 +19,9 @@ import './selectors'
 
 // The text Rust sends when provider_keys.json does not parse.
 const KEY_STORE_ERROR = 'API error: Failed to parse provider_keys.json (line 1, column 2)'
+
+// The text of an image reference whose file Dez cannot read.
+const MISSING_IMAGE = (name: string) => `The image file ${name} is missing, or Dez cannot read it. Paste the image again, or remove its reference from the message.`
 
 // Requests the stubs below received, in order.
 let httpRequests: NativeHttpRequest[] = []
@@ -39,6 +44,10 @@ const DRAWN_IMAGE = Uint8Array.from([1, 2, 3, 4])
 
 // Requests to this base URL get HTTP 404; every other server answers.
 const FAILING_BASE_URL = 'http://localhost:9090/v1'
+// No server listens at this base URL, so the native layer gets no answer.
+const CLOSED_BASE_URL = 'http://localhost:9/v1'
+// This server answers every request with a web page.
+const HTML_BASE_URL = 'http://localhost:8181/v1'
 // This server thinks before it answers, then calls a tool.
 const REASONING_BASE_URL = 'http://localhost:7070/v1'
 
@@ -97,6 +106,10 @@ sbp('sbp/selectors/register', {
     httpRequests.push(request)
     const answer = httpAnswers.get(request.url)
     if (answer) return { status: answer.status, headers: {}, body: Array.from(new TextEncoder().encode(JSON.stringify(answer.json))) }
+    // As Rust does: a request that gets no answer rejects with the text of
+    // the error, which names the URL.
+    if (request.url.startsWith(CLOSED_BASE_URL)) throw `error sending request for url (${request.url})`
+    if (request.url.startsWith(HTML_BASE_URL)) return { status: 200, headers: {}, body: Array.from(new TextEncoder().encode('<html>Hi</html>')) }
     if (request.url.startsWith(FAILING_BASE_URL)) {
       return { status: 404, headers: {}, body: Array.from(new TextEncoder().encode('Not found')) }
     }
@@ -126,6 +139,7 @@ sbp('sbp/selectors/register', {
   async 'dez.http/stream' (request: NativeHttpRequest, requestId: string): Promise<NativeHttpStreamResult> {
     streamRequests.push(request)
     streamRequestIds.push(requestId)
+    if (request.url.startsWith(CLOSED_BASE_URL)) throw new NativeHttpError(`error sending request for url (${request.url})`)
     const media = MEDIA_ANSWERS.get(request.url)
     if (media) {
       const half = media.body.length >> 1
@@ -211,11 +225,52 @@ describe('provider requests when provider_keys.json cannot be read', () => {
     expect(streamRequests[0].headers).not.toHaveProperty('Authorization')
   })
 
-  it('fails the model check of a provider that needs a key with the key store error', async () => {
+  it('fails the model check of a provider that needs a key, with the fix first and the key store error last', async () => {
     const result = await sbp('dez.provider/listModelsResult', 'openrouter') as ProviderModelsResult
 
-    expect(result).toEqual({ ok: false, models: [], error: KEY_STORE_ERROR })
+    expect(result).toEqual({
+      ok: false,
+      models: [],
+      error: `Dez could not read the API key of OpenRouter. Enter the API key of OpenRouter again in Settings › Providers. If Dez cannot save it either, its key file is damaged or locked: the details below tell what failed.\n\nDetails: ${KEY_STORE_ERROR}`,
+    })
     expect(httpRequests).toEqual([])
+  })
+})
+
+describe('provider requests that get no answer that Dez can read', () => {
+  const saveProvider = (id: string, baseUrl: string) => {
+    sbp('dez.model/customProviders/save', { id, name: 'My server', baseUrl, apiFormat: 'openai', models: [], fetchModels: true, auth: 'apiKey' })
+  }
+  // A custom provider: the user wrote its base URL, so the text names it.
+  const UNREACHED = 'Dez could not reach My server, or the connection broke before the answer was complete. Check the internet connection, then try again. If the error stays, check the base URL of My server in Settings › Providers (for a server on this computer: check that it runs).'
+
+  it('tells that Dez could not reach the server of a chat, with the native text last', async () => {
+    saveProvider('closed', CLOSED_BASE_URL)
+
+    const failure = sbp('dez.provider/streamChat', {
+      providerId: 'closed',
+      modelId: 'm',
+      messages: [{ role: 'user', content: 'Hi' }],
+      onToken: () => {},
+    }) as Promise<void>
+
+    await expect(failure).rejects.toStrictEqual(new ExplainedError(UNREACHED, `error sending request for url (${CLOSED_BASE_URL}/chat/completions)`))
+  })
+
+  it('tells that Dez could not reach the server of a model check', async () => {
+    saveProvider('closed', CLOSED_BASE_URL)
+
+    const result = await sbp('dez.provider/listModelsResult', 'closed') as ProviderModelsResult
+
+    expect(result).toStrictEqual({ ok: false, models: [], error: `${UNREACHED}\n\nDetails: error sending request for url (${CLOSED_BASE_URL}/models)` })
+  })
+
+  it('tells the user to check the base URL of a custom provider whose server answers with no JSON', async () => {
+    saveProvider('html', HTML_BASE_URL)
+
+    const { ok, error } = await sbp('dez.provider/listModelsResult', 'html') as ProviderModelsResult
+
+    expect([ok, error?.split('\n\n')[0]]).toStrictEqual([false, 'My server sent an answer that is not JSON, so Dez cannot read it. Check the base URL of My server in Settings › Providers.'])
   })
 })
 
@@ -498,15 +553,15 @@ describe('images in chat streams', () => {
     })
   })
 
-  it('fails before the request when the image file is missing', async () => {
-    await expect(streamImage(`${APP_DIR}/assets/images/gone.png`)).rejects.toThrow('Image not found: gone.png')
+  it('fails before the request when the image file is missing, and tells how to fix the message', async () => {
+    await expect(streamImage(`${APP_DIR}/assets/images/gone.png`)).rejects.toThrow(MISSING_IMAGE('gone.png'))
 
     expect(imageReads).toEqual(['assets/images/gone.png'])
     expect(streamRequests).toEqual([])
   })
 
   it('reads no file for an image of another Dez folder', async () => {
-    await expect(streamImage('/home/other/.config/dez/assets/images/red.png')).rejects.toThrow('Image not found: red.png')
+    await expect(streamImage('/home/other/.config/dez/assets/images/red.png')).rejects.toThrow(MISSING_IMAGE('red.png'))
 
     expect(imageReads).toEqual([])
     expect(streamRequests).toEqual([])
@@ -682,7 +737,7 @@ describe('images of a chat reply', () => {
     ['a data URL with no base64 mark', 'data:image/svg+xml,<svg/>', 'neither a base64 data URL nor an http(s) URL'],
     ['a URL of another scheme', 'file:///etc/passwd', 'neither a base64 data URL nor an http(s) URL'],
     ['a URL whose file is not an image', HOSTED_PAGE_URL, 'not a PNG, JPEG, GIF, or WebP image'],
-    ['a URL that its server refuses', `${FAILING_BASE_URL}/cat.png`, 'Painter returned HTTP 404: Not found'],
+    ['a URL that its server refuses', `${FAILING_BASE_URL}/cat.png`, 'The file that Painter made is not at its link any more: the link can have expired. Send the request again to make a new one.\n\nDetails: HTTP 404: Not found'],
   ])('fails the chat for %s', async (_name, url, message) => {
     await expect(streamPainter([url])).rejects.toThrow(message)
   })
@@ -741,10 +796,15 @@ describe('media requests', () => {
     expect(streamRequests).toEqual([])
   })
 
-  // The submit refuses it first, with the model's name (thread.ts).
-  it.each(['imageEdit', 'upscale', 'imageToVideo'] as const)('refuses a %s request with no image, before any request', async (kind) => {
-    await expect(generate({ kind })).rejects.toThrow('The model needs an input image, and the request has none.')
-    await expect(generate({ kind, images: [] })).rejects.toThrow('The model needs an input image, and the request has none.')
+  // The submit refuses it first (thread.ts); the model is not in the model
+  // cache, so the text names it by its id.
+  it.each([
+    ['imageEdit', 'm edits an image. Paste an image, or name one with @id.'],
+    ['upscale', 'm makes an image larger. Paste an image, or name one with @id.'],
+    ['imageToVideo', 'm makes a video from an image. Paste an image, or name one with @id.'],
+  ] as const)('refuses a %s request with no image, before any request', async (kind, message) => {
+    await expect(generate({ kind })).rejects.toStrictEqual(new ExplainedError(message))
+    await expect(generate({ kind, images: [] })).rejects.toStrictEqual(new ExplainedError(message))
 
     expect(streamRequests).toEqual([])
     expect(downloadRequests).toEqual([])
@@ -753,15 +813,15 @@ describe('media requests', () => {
   // The image rules come from the model cache (an OpenRouter model whose
   // `input_references` start at 1, mediaFormats.ts).
   it.each([
-    [1, [], 'The model needs an input image, and the request has none.'],
-    [2, [`${APP_DIR}/assets/images/red.png`], 'The model needs at least 2 input images, and the request has 1.'],
+    [1, [], 'Styles needs an input image. Paste an image, or name one with @id.'],
+    [2, [`${APP_DIR}/assets/images/red.png`], 'Styles needs at least 2 images, and this message has 1. Paste more images, or name them with @id.'],
   ])('refuses an image request with fewer images than the %i that the model needs, before any request', async (minImages, images, message) => {
     sbp('dez.model/modelCache/applyProviderResult', 'media', {
       ok: true,
       models: [{ id: 'm', name: 'Styles', provider: 'media', request: 'image', images: { maxImages: 4, minImages } }],
     })
 
-    await expect(generate({ kind: 'image', images })).rejects.toThrow(message)
+    await expect(generate({ kind: 'image', images })).rejects.toStrictEqual(new ExplainedError(message))
     expect([imageReads, streamRequests]).toStrictEqual([[], []])
   })
 
@@ -777,13 +837,13 @@ describe('media requests', () => {
   })
 
   it('reads no file of another Dez folder, and sends nothing', async () => {
-    await expect(generate({ kind: 'imageEdit', images: ['/home/other/.config/dez/assets/images/red.png'] })).rejects.toThrow('Image not found: red.png')
+    await expect(generate({ kind: 'imageEdit', images: ['/home/other/.config/dez/assets/images/red.png'] })).rejects.toThrow(MISSING_IMAGE('red.png'))
 
     expect(imageReads).toEqual([])
     expect(streamRequests).toEqual([])
   })
 
-  it('names the provider of a refused request, with the start of its answer', async () => {
+  it('names the provider of a refused request first, with the start of its answer in the details', async () => {
     sbp('dez.model/customProviders/save', {
       id: 'broken',
       name: 'Broken server',
@@ -795,7 +855,9 @@ describe('media requests', () => {
       mediaApi: { format: 'venice' },
     })
 
-    await expect(generate({ providerId: 'broken', kind: 'image' })).rejects.toThrow('Broken server returned HTTP 404: Not found')
+    await expect(generate({ providerId: 'broken', kind: 'image' })).rejects.toThrow(
+      'Broken server has nothing for this request: the model can be gone, or it does not take this kind of request. Broken server tells its reason in the details below. Choose another model, or check the base URL of Broken server in Settings › Providers.\n\nDetails: HTTP 404: Not found',
+    )
   })
 
   it('fails before any request for a provider with no media API', async () => {
@@ -1002,7 +1064,7 @@ describe('the price of a clip', () => {
     cacheModel()
     httpAnswers.set(QUOTE_URL, { status: 400, json: { error: 'Bad model' } })
 
-    await expect(quote({})).rejects.toThrow('Media server returned HTTP 400')
+    await expect(quote({})).rejects.toThrow('Details: HTTP 400: Bad model')
   })
 })
 
@@ -1106,7 +1168,7 @@ describe('the price of an image', () => {
     it('rejects when the provider refuses the records request', async () => {
       httpAnswers.set(RECORDS_URL, { status: 404, json: { error: 'No model' } })
 
-      await expect(quote('routed', 'acme/pic', 'image')).rejects.toThrow('Media server returned HTTP 404')
+      await expect(quote('routed', 'acme/pic', 'image')).rejects.toThrow('Details: HTTP 404: No model')
     })
   })
 })

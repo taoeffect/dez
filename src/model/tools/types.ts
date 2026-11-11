@@ -1,3 +1,4 @@
+import { ExplainedError } from '../../utils/errorText'
 import type { JsonObject } from '../../utils/json'
 
 // The Dez tools: tools that the Dez app itself runs for a model, as opposed
@@ -66,4 +67,17 @@ export interface ToolResult {
 export interface ToolRunResult {
   content: string
   isError: boolean
+}
+
+/** An error whose text Dez wrote for the model that made a call: what is
+ *  wrong with the call and how to fix it, or a failure that is not the
+ *  call's fault and what the model can do. `dez.controller/tools/run` gives
+ *  its message as the error result; any other error of a tool is one that
+ *  Dez did not expect. Its text must hold no local path: it goes to the
+ *  chat provider. */
+export class ToolError extends ExplainedError {
+  constructor(explanation: string, details = '', options?: ErrorOptions) {
+    super(explanation, details, options)
+    this.name = 'ToolError'
+  }
 }

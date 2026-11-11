@@ -705,6 +705,8 @@ function onOverlayClick(e: MouseEvent) {
 .settings-error {
   font-size: 12px;
   color: #f44336;
+  /* An error text can end with its details as a paragraph of their own. */
+  white-space: pre-line;
 }
 
 /* A Settings pane that scrolls. A classic scrollbar (macOS with a mouse or

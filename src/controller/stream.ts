@@ -8,6 +8,7 @@ import { newMediaIds } from '../model/chat/mediaIds'
 import { mediaTagText } from '../model/chat/mediaTags'
 import { findToolBlocks, ModelTextEscaper } from '../model/chat/toolBlocks'
 import { TooManyImagesError, tooManyImagesMessage } from '../model/providers/clipImages'
+import { explainedError } from '../utils/errorText'
 import type { ClipInputRules, GeneratedClip, GeneratedMedia, MediaKind, ModelRequest, ProviderGenerateMediaResult, ProviderStreamChatResult } from '../model/providers'
 import { requireProvider } from '../model/providers/registry'
 import { agentSectionMessages, mediaRequestInput } from '../model/streams/messages'
@@ -143,12 +144,12 @@ function showReplyError(tabId: string, title: string, message: string): void {
   })
 }
 
-// The text of the error toast of a failed reply.
+// The text of the error toast of a failed reply. A text that Dez wrote for
+// the user (`ExplainedError`) shows as it is; any other error is one that
+// Dez did not expect, and its raw text goes into the details.
 function replyErrorMessage(error: unknown, model: ActiveModel): string {
   if (error instanceof TooManyImagesError) return tooManyImagesMessage(model.modelName, error)
-  const message = error instanceof Error ? error.message : String(error)
-  // The toast refuses an empty message.
-  return message || 'The request failed, and its error has no text. Help › Developer Console shows the error.'
+  return explainedError(error).message
 }
 
 // The tab's stream session still writes into `sectionId`.
@@ -439,7 +440,7 @@ async function runChatRounds(args: StreamStartArgs, reply: ReplyRuntime): Promis
       writeStreamText(args.tabId, args.sectionId, toolGroupAppendText(sectionText, blocks))
       console.error(`The reply reached the limit of ${MAX_TOOL_ROUNDS} tool rounds`)
       finalizeStream(args.tabId, errorStreamSession(args.tabId))
-      showReplyError(args.tabId, 'Tool limit reached', `The reply reached the limit of ${MAX_TOOL_ROUNDS} tool rounds, so Dez did not run its last tool calls.`)
+      showReplyError(args.tabId, 'Tool limit reached', `The reply reached the limit of ${MAX_TOOL_ROUNDS} tool rounds, so Dez did not run its last tool calls. To let the model go on, send a new message (for example "Go on").`)
       return
     }
 

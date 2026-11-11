@@ -37,6 +37,8 @@ let inputImageRules: ProviderInputImageRules
 let readImages: string[] = []
 let readImage: () => Promise<Blob>
 let storedImageSize: ImageSize
+// Set to make the webview fail to draw.
+let redrawError: Error | undefined
 let drawings: { drawing: ImageDrawing, mediaType: string }[] = []
 let savedImages: { mediaType: string, options: unknown }[] = []
 let saveImage: () => Promise<string>
@@ -65,6 +67,7 @@ sbp('sbp/selectors/register', {
     return await readImage()
   },
   async 'dez.controller/images/redraw' (_file: Blob, plan: (size: ImageSize) => ImageDrawing | null, mediaType: string): Promise<DrawnImage | null> {
+    if (redrawError) throw redrawError
     const drawing = plan(storedImageSize)
     if (!drawing) return null
     drawings.push({ drawing, mediaType })
@@ -100,6 +103,7 @@ beforeEach(() => {
   readImages = []
   readImage = async () => new Blob([])
   storedImageSize = { width: 1000, height: 500 }
+  redrawError = undefined
   drawings = []
   savedImages = []
   saveImage = async () => '/home/u/.config/dez/assets/generated/images/new.png'
@@ -134,16 +138,32 @@ describe('dez.controller/tools/run', () => {
 
   it('gives an error result that names the valid letters for outputs with an unknown letter', async () => {
     expect(await run({ name: 'model_list', arguments: { outputs: 'q' } })).toStrictEqual({
-      content: 'The tool failed: Unknown output letter "q". Valid letters: t text, i image, a audio, v video.',
+      content: 'Unknown output letter "q". Valid letters: t text, i image, a audio, v video.',
       isError: true,
     })
   })
 
   it('has a runner for every tool that requests offer', async () => {
     for (const definition of TOOL_DEFINITIONS) {
-      expect((await run({ name: definition.name, arguments: {} })).content).not.toMatch(/^Unknown tool/)
+      expect((await run({ name: definition.name, arguments: {} })).content).not.toMatch(/^Dez has no tool/)
     }
-    expect(await run({ name: 'toString', arguments: {} })).toStrictEqual({ content: 'Unknown tool: "toString".', isError: true })
+    expect(await run({ name: 'toString', arguments: {} })).toStrictEqual({
+      content: 'Dez has no tool named "toString". Call only the Dez tools, by their exact names: model_list, model_info, crop_scale_image.',
+      isError: true,
+    })
+  })
+
+  // The error's own text can hold a local path, and the result goes to the
+  // chat provider.
+  it('gives an error that Dez did not expect as such, without its text, and logs it', async () => {
+    refreshCheck = async () => { throw new Error('Failed to read /home/u/.config/dez/model_cache.json') }
+
+    expect(await run({ name: 'model_info', arguments: { model: 'venice/venice-gemini-3-pro' } })).toStrictEqual({
+      content: 'Dez hit an error that it did not expect while it ran model_info. This is not a fault of the call. '
+        + 'Tell the user that the tool failed (Help › Developer Console shows the error), and do not call it again with the same arguments.',
+      isError: true,
+    })
+    expect(consoleError).toHaveBeenCalledOnce()
   })
 
   describe('model_info', () => {
@@ -179,7 +199,7 @@ describe('dez.controller/tools/run', () => {
       }
 
       expect(await run({ name: 'model_info', arguments: { model: 'venice/venice-gemini-3-pro' } })).toStrictEqual({
-        content: 'The tool failed: The user cannot use the model "venice/venice-gemini-3-pro". '
+        content: 'The user cannot use the model "venice/venice-gemini-3-pro". '
           + 'Use model_list to find the full ids of the models that the user can use.',
         isError: true,
       })
@@ -253,7 +273,7 @@ describe('dez.controller/tools/run', () => {
 
       it('gives an error result, and asks for no price, for a value that the model does not take', async () => {
         expect(await info({ parameters: '{"duration": "5s"}' })).toStrictEqual({
-          content: 'The tool failed: The parameter "duration" takes one of: "4s", "8s", "12s".',
+          content: 'The parameter "duration" takes one of: "4s", "8s", "12s".',
           isError: true,
         })
         expect(quotes).toStrictEqual([])
@@ -280,7 +300,7 @@ describe('dez.controller/tools/run', () => {
           isError: false,
         })
         expect(await info({ part: 'dez' })).toStrictEqual({
-          content: 'The tool failed: "dez" is not an entry of a model_info result. Use one of: providerEntry, mediaEntry, priceEntry.',
+          content: '"dez" is not an entry of a model_info result. Use one of: providerEntry, mediaEntry, priceEntry.',
           isError: true,
         })
         expect(quotes).toHaveLength(1)
@@ -391,18 +411,29 @@ describe('dez.controller/tools/run', () => {
       expect(written).toStrictEqual([])
     })
 
-    it('gives an error result for an id that no image of the tab has, and reads no file', async () => {
+    it('gives an error result for an id that no image of the tab has, with the ids of its images, and reads no file', async () => {
       expect(await crop({ image: '@z', width: 10 })).toStrictEqual({
-        content: 'The tool failed: No image of this conversation has the id @z.',
+        content: 'No image of this conversation has the id @z. Its images are @a, @b: call again with one of these ids.',
         isError: true,
       })
 
       expect(readImages).toStrictEqual([])
     })
 
+    it('tells that the conversation has no images when it has none', async () => {
+      sbp('dez.model/tabs/replaceSections', tabId, [{ id: 'u1', role: 'user', content: [{ kind: 'text', text: 'Crop @a.' }] }])
+
+      expect(await crop({ image: 'a', width: 10 })).toStrictEqual({
+        content: 'This conversation has no images, so it has no image @a. Do not call crop_scale_image until the user adds an image to the conversation.',
+        isError: true,
+      })
+    })
+
     it('gives the error of a part that is not inside the image, and saves nothing', async () => {
       expect(await crop({ image: 'a', crop_x: 900, crop_y: 0, crop_width: 200, crop_height: 100 })).toStrictEqual({
-        content: 'The tool failed: The crop (x 900, y 0, 200x100 pixels) is not inside the image, which is 1000x500 pixels.',
+        content: 'The crop (x 900, y 0, 200x100 pixels) is not inside the image, which is 1000x500 pixels. '
+          + 'A crop inside it has crop_x and crop_y of 0 or more, crop_x + crop_width of 1000 or less, and crop_y + crop_height of 500 or less. '
+          + 'The nearest such crop is crop_x 800, crop_y 0, crop_width 200, crop_height 100.',
         isError: true,
       })
 
@@ -413,10 +444,12 @@ describe('dez.controller/tools/run', () => {
     it.each([
       ['the file cannot be read', () => {
         readImage = async () => { throw new Error(`Failed to read ${stored('fox.png')}: HTTP 404`) }
-      }, 'The tool failed: The file of the image @a cannot be read.'],
+      }, 'Dez cannot read the file of the image @a: the file is gone, or Dez may not read it. '
+        + 'This is not a fault of the call. Tell the user, who can paste the image again (it then gets a new id).'],
       ['the save fails', () => {
         saveImage = async () => { throw new Error('The Dez folder /home/u]/.config/dez cannot hold images') }
-      }, 'The tool failed: Dez could not save the new image.'],
+      }, 'Dez could not save the new image, so there is no new image. This is not a fault of the call, and Dez showed the user the cause. '
+        + 'Tell the user that the image was not made, and call crop_scale_image again only when the user asks for it.'],
     ])('gives an error result with no path when %s', async (_case, fail, content) => {
       fail()
 
@@ -424,10 +457,25 @@ describe('dez.controller/tools/run', () => {
       expect(written).toStrictEqual([])
     })
 
+    it('tells that a failed drawing is not the fault of the call, with the reason of the webview', async () => {
+      redrawError = new Error('The image cannot be decoded.')
+
+      expect(await crop({ image: 'a', width: 10 })).toStrictEqual({
+        content: 'Dez could not draw a new image from @a. This is not a fault of the call. Tell the user, and do not call crop_scale_image again for @a.'
+          + '\n\nDetails: The image cannot be decoded.',
+        isError: true,
+      })
+      expect(savedImages).toStrictEqual([])
+    })
+
     it('deletes the new file when the reply takes no image any more', async () => {
       newImageId = null
 
-      expect((await crop({ image: 'a', width: 10 })).isError).toBe(true)
+      expect(await crop({ image: 'a', width: 10 })).toStrictEqual({
+        content: 'The reply stopped before Dez could add the new image to it, so there is no new image. This is not a fault of the call. '
+          + 'Call crop_scale_image again only when the user asks for the image again.',
+        isError: true,
+      })
       expect(deletedImages).toStrictEqual([made])
     })
 

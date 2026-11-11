@@ -1,4 +1,5 @@
 import { byteSizeText } from '../../utils/byteSize'
+import { ExplainedError } from '../../utils/errorText'
 import { sanitizeErrorText } from '../../utils/protocol/errors'
 import { responseContentType, type NativeHttpResponseHead } from '../../utils/protocol/nativeHttp'
 import type { ImageSize } from '../chat/imageDrawing'
@@ -6,6 +7,7 @@ import { isImageMediaType } from '../chat/images'
 import { trimTrailingSlashes, type MediaApiFormatId } from './config'
 import type { InputImageRules } from './clipImages'
 import type { ClipTextRules } from './clipText'
+import { ClipNotMadeError, UnusableAnswerError } from './errors'
 import { generatedBase64Image, generatedImage } from './generatedImages'
 import { imageSizeRules, type ImageSizeRules, type InputImageLimits } from './imageSize'
 import { isOptionValue, parameterTakes, type ModelParameter, type OptionsParameter, type OptionValue, type ParameterValues, type RangeParameter } from './modelParameters'
@@ -194,7 +196,7 @@ function jsonBody(body: Uint8Array): unknown {
   try {
     return JSON.parse(new TextDecoder().decode(body))
   } catch {
-    throw new Error('The provider sent an image response that is not valid JSON.')
+    throw new UnusableAnswerError('The image answer is not valid JSON.')
   }
 }
 
@@ -432,7 +434,7 @@ const veniceFormat: MediaFormat = {
 
       const data = jsonBody(body)
       const images = isRecord(data) && Array.isArray(data.images) ? data.images : []
-      if (images.length === 0) throw new Error('The provider sent no image.')
+      if (images.length === 0) throw new UnusableAnswerError('The answer holds no image.')
       return images.map((image) => generatedBase64Image(image))
     },
     // edit: "For edit endpoints, images must be at least 256×256 pixels,
@@ -580,7 +582,7 @@ const veniceFormat: MediaFormat = {
           // last frame, each as a data URL ("a URL (http/https) or a data
           // URL").
           // https://docs.venice.ai/api-reference/endpoint/video/queue
-          if (values.duration === undefined) throw new Error(NO_VIDEO_LENGTH_MESSAGE)
+          if (values.duration === undefined) throw new ExplainedError(NO_VIDEO_LENGTH_MESSAGE)
           const [firstFrame, lastFrame] = images.map(imageDataUrl)
           return {
             url: `${base}/video/queue`,
@@ -623,7 +625,7 @@ const veniceFormat: MediaFormat = {
     // https://docs.venice.ai/api-reference/endpoint/video/retrieve
     job: (kind, baseUrl, modelId, data) => {
       const queueId = isRecord(data) ? data.queue_id : undefined
-      if (kind === 'tts' || typeof queueId !== 'string' || queueId === '') throw new Error('The provider sent no clip.')
+      if (kind === 'tts' || typeof queueId !== 'string' || queueId === '') throw new UnusableAnswerError('The answer to the clip request is neither a clip nor a job.')
       const downloadUrl = isRecord(data) && isClipUrl(data.download_url) ? data.download_url : null
       return {
         id: queueId,
@@ -634,7 +636,9 @@ const veniceFormat: MediaFormat = {
         state: (poll) => {
           const status = isRecord(poll) ? poll.status : undefined
           if (status === 'QUEUED' || status === 'PROCESSING') return 'running'
-          if (status !== 'COMPLETED' || downloadUrl === null) throw new Error('The provider sent no clip.')
+          // A state that is new, or that ends the job with no clip.
+          if (status !== 'COMPLETED') throw new ClipNotMadeError(`State: ${typeof status === 'string' ? sanitizeErrorText(status, 40) : 'none'}`)
+          if (downloadUrl === null) throw new UnusableAnswerError('The job is done, and its answer holds no clip and no download URL.')
           return { fileUrl: downloadUrl }
         },
       }
@@ -669,7 +673,7 @@ const veniceFormat: MediaFormat = {
       },
       usd: (data) => {
         const quote = isRecord(data) ? data.quote : undefined
-        if (typeof quote !== 'number' || !Number.isFinite(quote)) throw new Error('The provider sent no price.')
+        if (typeof quote !== 'number' || !Number.isFinite(quote)) throw new UnusableAnswerError('The answer holds no price.')
         return quote
       },
     },
@@ -839,7 +843,7 @@ const openRouterFormat: MediaFormat = {
       return new Intl.ListFormat('en', { type: 'disjunction' }).format(formats.map((format) => String(format).toUpperCase()))
     },
     request: (kind, baseUrl, modelId, { prompt, images, values }) => {
-      if (kind === 'upscale') throw new Error('This media API has no upscale request: choose another model.')
+      if (kind === 'upscale') throw new ExplainedError('This provider has no upscale request that Dez can use. Choose another model.')
       return {
         url: `${trimTrailingSlashes(baseUrl)}/images`,
         body: {
@@ -857,7 +861,7 @@ const openRouterFormat: MediaFormat = {
     parseResponse: (_kind, _head, body) => {
       const data = jsonBody(body)
       const images = isRecord(data) && Array.isArray(data.data) ? data.data : []
-      if (images.length === 0) throw new Error('The provider sent no image.')
+      if (images.length === 0) throw new UnusableAnswerError('The answer holds no image.')
       return images.map((image) => generatedBase64Image(isRecord(image) ? image.b64_json : undefined))
     },
     quote: {
@@ -927,7 +931,7 @@ const openRouterFormat: MediaFormat = {
           // reference-to-video request, is never sent.
           // https://openrouter.ai/docs/guides/overview/multimodal/video-generation
           // https://openrouter.ai/docs/cookbook/video-generation/image-to-video
-          if (values.duration === undefined) throw new Error(NO_VIDEO_LENGTH_MESSAGE)
+          if (values.duration === undefined) throw new ExplainedError(NO_VIDEO_LENGTH_MESSAGE)
           return {
             url: `${base}/videos`,
             body: {
@@ -944,7 +948,7 @@ const openRouterFormat: MediaFormat = {
             },
           }
         case 'music':
-          throw new Error('This media API has no music request: choose another model.')
+          throw new ExplainedError('This provider has no music request that Dez can use. Choose another model.')
       }
     },
     // A speech model that makes only PCM refuses mp3 with a 400 that names
@@ -966,7 +970,7 @@ const openRouterFormat: MediaFormat = {
     // https://openrouter.ai/docs/api/api-reference/video-generation/poll-video-generation-status
     job: (kind, baseUrl, _modelId, data) => {
       const id = isRecord(data) ? data.id : undefined
-      if (CLIP_KINDS[kind] !== 'video' || typeof id !== 'string' || id === '') throw new Error('The provider sent no clip.')
+      if (CLIP_KINDS[kind] !== 'video' || typeof id !== 'string' || id === '') throw new UnusableAnswerError('The answer to the clip request is neither a clip nor a job.')
       const jobUrl = `${trimTrailingSlashes(baseUrl)}/videos/${encodeURIComponent(id)}`
       return {
         id,
@@ -976,9 +980,10 @@ const openRouterFormat: MediaFormat = {
           if (status === 'pending' || status === 'in_progress') return 'running'
           if (!isRecord(poll) || status !== 'completed') {
             // `failed`, `cancelled`, `expired`, or a state that is new. The
-            // texts come from the provider and show in the error toast.
+            // texts come from the provider and show in the details of the
+            // error toast.
             const reason = isRecord(poll) && typeof poll.error === 'string' && poll.error !== '' ? `: ${sanitizeErrorText(poll.error)}` : ''
-            throw new Error(`The provider did not make the clip (${typeof status === 'string' ? sanitizeErrorText(status, 40) : 'no state'})${reason}`)
+            throw new ClipNotMadeError(`State: ${typeof status === 'string' ? sanitizeErrorText(status, 40) : 'none'}${reason}`)
           }
           const url = Array.isArray(poll.urls) ? poll.urls[0] : undefined
           // A time that a Date cannot hold has no ISO text for the clip's
