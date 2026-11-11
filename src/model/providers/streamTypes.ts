@@ -52,15 +52,15 @@ export interface ProviderGenerateMediaInput {
   // request of another kind does not send them.
   lyrics?: string
   // The absolute paths of stored images (`storedImageFile`): the inputs of
-  // an `imageEdit` request, the first one the image to edit; or the frames
-  // of a `video` or `imageToVideo` request, the first one the first frame
-  // and the second one the last frame, and no more of them than the model
-  // takes (`ModelInfo.images`). A request of another kind does not send
-  // them.
+  // an `imageEdit` request, the first one the image to edit; the one image
+  // of an `upscale` request; or the frames of a `video` or `imageToVideo`
+  // request, the first one the first frame and the second one the last
+  // frame. No more of them than the model takes (`ModelInfo.images`). A
+  // request of another kind does not send them.
   images?: readonly string[]
   // The values to set for the model's parameters (ModelInfo.parameters),
-  // by parameter name, for a clip kind. A parameter with no value here, or
-  // with one that the model does not take, gets its default.
+  // by parameter name. A parameter with no value here, or with one that
+  // the model does not take, gets its default.
   parameters?: Readonly<ParameterValues>
   // dez.http/cancelStream with this id cancels the request that runs. A
   // clip can take many requests, one after the other, and a wait between

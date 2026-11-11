@@ -1,12 +1,31 @@
 import type { ImageSizeRules } from './imageSize'
-import type { MediaKind } from './types'
+import { CLIP_KINDS, isClipKind, type MediaKind } from './types'
 
-// The input images of a media request (an edit, a video). What a model
-// takes is data on the model (`ModelInfo.images`), which a media format
-// reads from the provider's model data (`MediaFormat.imageRules` in
+// The input images of a media request (an edit, an upscale, a video). What
+// a model takes is data on the model (`ModelInfo.images`), which a media
+// format reads from the provider's model data (`MediaFormat.imageRules` in
 // mediaFormats.ts). Also the refusal of a media request that has no image
 // and needs one, and the text of a request that the provider refused for
 // its count of images.
+
+// The media kinds that make nothing without an input image, each with what
+// a model of the kind does, as the start of a sentence for the user.
+const NEEDS_INPUT_IMAGE: Readonly<Partial<Record<MediaKind, string>>> = {
+  imageEdit: 'edits an image',
+  upscale: 'makes an image larger',
+  imageToVideo: 'makes a video from an image',
+}
+
+/** Whether a request of `kind` makes nothing without an input image. */
+export function needsInputImage(kind: MediaKind): boolean {
+  return NEEDS_INPUT_IMAGE[kind] !== undefined
+}
+
+/** Whether a request of `kind` can carry input images: each kind that
+ *  needs one, and a `video` model, which can take frames. */
+export function takesInputImages(kind: MediaKind): boolean {
+  return needsInputImage(kind) || (isClipKind(kind) && CLIP_KINDS[kind] === 'video')
+}
 
 // What a model takes as input images.
 export interface InputImageRules {
@@ -26,12 +45,12 @@ export function cloneInputImageRules(rules: InputImageRules): InputImageRules {
 
 /** The most images that a request of `kind` carries, for a model with
  *  `rules`. A model with no rules: an edit takes every image (the provider
- *  checks the count), an `imageToVideo` model takes its one image, and
- *  every other model takes none. */
+ *  checks the count), an `upscale` or `imageToVideo` model takes its one
+ *  image, and every other model takes none. */
 export function maxInputImages(kind: MediaKind, rules: InputImageRules | undefined): number {
   if (rules) return rules.maxImages
   if (kind === 'imageEdit') return Infinity
-  return kind === 'imageToVideo' ? 1 : 0
+  return needsInputImage(kind) ? 1 : 0
 }
 
 function imagesText(count: number): string {
@@ -63,13 +82,11 @@ export function tooManyImagesMessage(modelName: string, error: TooManyImagesErro
 
 /** Why a request of `kind` with `imageCount` images does not go to the
  *  model `modelName`, as a sentence for the user; null when it can go. An
- *  edit and a video from an image need an image. The check costs nothing,
- *  and it comes before the reply starts, so the user's message stays as
- *  it is. */
+ *  edit, an upscale, and a video from an image need an image. The check
+ *  costs nothing, and it comes before the reply starts, so the user's
+ *  message stays as it is. */
 export function missingImageProblem(modelName: string, kind: MediaKind, imageCount: number): string | null {
-  if (imageCount > 0) return null
-  const how = 'Paste an image, or name one with @id.'
-  if (kind === 'imageEdit') return `${modelName} edits an image. ${how}`
-  if (kind === 'imageToVideo') return `${modelName} makes a video from an image. ${how}`
-  return null
+  const does = NEEDS_INPUT_IMAGE[kind]
+  if (imageCount > 0 || does === undefined) return null
+  return `${modelName} ${does}. Paste an image, or name one with @id.`
 }

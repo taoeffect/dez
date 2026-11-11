@@ -466,15 +466,16 @@ async function runChatRounds(args: StreamStartArgs, reply: ReplyRuntime): Promis
 
 // The one media request of a reply to a media model (a ModelInfo.request
 // of MEDIA_KINDS), in place of the chat rounds: no system prompt, tools, or
-// thinking. The files of an image model are saved in the generated image
-// folder, and the section gets a reference to each. A clip (audio, video)
-// is not saved: the section gets a media tag (mediaTags.ts) whose source
-// is the provider's URL, or a temp copy until
-// the user saves the clip. A clip request sets the model's parameters to
-// the values that the user chose in the provider settings popup, and sends
-// the lyrics that the message holds to a model that takes lyrics; a video
-// request sends the images of the message as frames. Images and clips get
-// new ids of the one id sequence. Ends the reply, except when it throws.
+// thinking. The files of an image model (an image, an edit, an upscale)
+// are saved in the generated image folder, and the section gets a
+// reference to each. A clip (audio, video) is not saved: the section gets
+// a media tag (mediaTags.ts) whose source is the provider's URL, or a temp
+// copy until the user saves the clip. The request sets the model's
+// parameters to the values that the user chose in the provider settings
+// popup, and sends the lyrics that the message holds to a model that
+// takes lyrics; an edit, an upscale, and a video request send the images
+// of the message (`mediaRequestInput`). Images and clips get new ids of
+// the one id sequence. Ends the reply, except when it throws.
 async function runMediaRound(args: StreamStartArgs, reply: ReplyRuntime, kind: MediaKind): Promise<void> {
   const tab = sbp('dez.model/tab', args.tabId) as Tab | null
   const { prompt, lyrics, images } = mediaRequestInput(kind, args.messages, tab?.sections ?? [], args.inputRules)

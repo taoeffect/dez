@@ -14,7 +14,7 @@ const CLIP_INPUT_NAMES: Readonly<Record<MediaTagKind, string>> = {
 /** Why a submit to the model `modelName` is refused, as text for the user.
  *  A model that needs a clip as its input (`clipInput`) gets a text that
  *  names the clip, e.g. "Whisper needs an audio clip as its input. …". Each
- *  other model gets the general text, e.g. "Dez cannot use Upscaler yet. It
+ *  other model gets the general text, e.g. "Dez cannot use Painter yet. It
  *  makes image output through an API that Dez does not support." */
 export function unusableModelMessage(modelName: string, model: Pick<ModelInfo, 'outputs' | 'clipInput'>): string {
   if (model.clipInput !== undefined) {
@@ -28,8 +28,8 @@ export function unusableModelMessage(modelName: string, model: Pick<ModelInfo, '
   const outputs = effectiveOutputs(model)
   const labels = MODEL_OUTPUTS.filter((output) => outputs.includes(output.id)).map((output) => output.label.toLowerCase())
   // MODEL_INVOKE: check this text too when model_invoke exists. A model of
-  // this group (an image upscaler, an image-only model of another API)
-  // needs a request for its API first.
+  // this group (an image-only model of another API, such as OpenRouter's
+  // image API) needs a request for its API first.
   const cannotUse = `Dez cannot use ${modelName} yet.`
   if (labels.length === 0) return cannotUse
   return `${cannotUse} It makes ${new Intl.ListFormat('en', { type: 'conjunction' }).format(labels)} output through an API that Dez does not support.`

@@ -4,7 +4,7 @@ import { readAppState } from './harness/fixtures'
 import { shownPlayers, silentWav } from './harness/media'
 import { startMockProviderApp, type MockProviderApp } from './harness/mockProviderApp'
 import type { MockProvider } from './harness/mockServer'
-import { closePopup, openPopup, popupOpen, popupView, type PopupView } from './harness/parameterPopup'
+import { changeParameterField, closePopup, openPopup, popupOpen, popupView, type PopupView } from './harness/parameterPopup'
 import type { E2EBrowser } from './harness/session'
 import { editorDoc, newTab, openToasts, pasteText, pickModel, setCaret, submit, threadSections, waitForThread } from './harness/thread'
 
@@ -73,25 +73,6 @@ describe('music models', () => {
   let setup: MockProviderApp
   let browser: E2EBrowser
 
-  // Gives the field of the parameter `name` the value `wanted` (for a list,
-  // the option with that text), then the `change` event that a user's edit
-  // ends with. wry's automation session takes no native keys for a field,
-  // so the page sets the value.
-  async function changeField (name: string, wanted: string, kind: 'option' | 'number'): Promise<void> {
-    await browser.execute((parameter: string, value: string, fieldKind: string) => {
-      const field = document.querySelector<HTMLInputElement | HTMLSelectElement>(`.provider-settings-popup [data-parameter="${parameter}"] .provider-settings-value`)
-      if (!field) throw new Error(`changeField: no field for ${parameter}`)
-      if (fieldKind === 'number') {
-        field.value = value
-      } else {
-        const option = Array.from((field as HTMLSelectElement).options).find((entry) => entry.text === value)
-        if (!option) throw new Error(`changeField: ${parameter} has no option ${value}`)
-        option.selected = true
-      }
-      field.dispatchEvent(new Event('change', { bubbles: true }))
-    }, name, wanted, kind)
-  }
-
   // The values that app_state.json holds for the model `modelId`, or null.
   async function storedParameters (modelId: string): Promise<unknown> {
     return (await readAppState(setup.app.home))?.modelParameters?.[`${SONGS.id}/${modelId}`] ?? null
@@ -142,9 +123,9 @@ describe('music models', () => {
     await openPopup(browser)
     await waitForValue(browser, 'popup of the song model', () => popupView(browser), defaults)
 
-    await changeField('duration_seconds', '90', 'option')
+    await changeParameterField(browser, 'duration_seconds', '90', 'option')
     // A number between two steps becomes the nearer step.
-    await changeField('speed', '1.33', 'number')
+    await changeParameterField(browser, 'speed', '1.33', 'number')
     await click(browser, '.provider-settings-popup [data-parameter="force_instrumental"]')
     await waitForValue(browser, 'popup with the values of the user', () => popupView(browser), {
       ...defaults,

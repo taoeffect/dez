@@ -1,5 +1,7 @@
+import { byteSizeText } from '../../utils/byteSize'
 import { sanitizeErrorText } from '../../utils/protocol/errors'
 import { responseContentType, type NativeHttpResponseHead } from '../../utils/protocol/nativeHttp'
+import type { ImageSize } from '../chat/imageDrawing'
 import { trimTrailingSlashes, type MediaApiFormatId } from './config'
 import type { InputImageRules } from './clipImages'
 import type { ClipTextRules } from './clipText'
@@ -9,26 +11,26 @@ import { isOptionValue, parameterTakes, type ModelParameter, type OptionsParamet
 import { isRecord, valueAtPath } from './modelParsing'
 import { CLIP_KINDS, isClipKind, type ChatImagePart, type ClipKind, type GeneratedMedia, type ImageKind, type MediaKind } from './types'
 
-// What one image request sends: the user's prompt, and the input images as
-// bytes, in the user's order.
+// What one media request sends: the user's prompt, the input images as
+// bytes, in the user's order, and the value of each parameter of the model
+// that has one (`ImageFormat.parameters`, `ClipFormat.parameters`,
+// `effectiveParameterValues`).
 export interface MediaInput {
   prompt: string
-  // The images of an edit, or the frames of a video: the first image is
-  // the first frame, and the second one is the last frame. The caller gives
-  // a request no more images than the model takes
-  // (`MediaFormat.imageRules`). A request of a kind that takes no image
-  // does not send them.
+  // The images of an edit, the one image of an upscale, or the frames of a
+  // video: the first image is the first frame, and the second one is the
+  // last frame. The caller gives a request no more images than the model
+  // takes (`MediaFormat.imageRules`). A request of a kind that takes no
+  // image does not send them.
   images: readonly ChatImagePart[]
+  values: ParameterValues
 }
 
-// What one clip request sends: the user's prompt (for speech, the text to
-// speak), the input images, the lyrics of a song when the user wrote some
-// (only for a model that takes lyrics, `ClipFormat.textRules`), and the
-// value of each parameter of the model that has one
-// (`ClipFormat.parameters`, `effectiveParameterValues`).
+// What one clip request sends: a media input (for speech, the prompt is
+// the text to speak), and the lyrics of a song when the user wrote some
+// (only for a model that takes lyrics, `ClipFormat.textRules`).
 export interface ClipInput extends MediaInput {
   lyrics?: string
-  values: ParameterValues
 }
 
 // The URL and the JSON body of one media request: a POST, or a GET when it
@@ -65,13 +67,24 @@ export interface ClipJob {
 
 // The image requests of a media API.
 export interface ImageFormat {
+  // What a request to a model of `kind` can set, as for
+  // `ClipFormat.parameters`. Missing: no model of the API has parameters.
+  parameters?(kind: ImageKind, entry: unknown, mediaEntry: unknown): ModelParameter[]
   request(kind: ImageKind, baseUrl: string, modelId: string, input: MediaInput): MediaWireRequest
   // The images of a 2xx response to a request of `kind`. Throws when the
   // body holds none.
   parseResponse(kind: ImageKind, head: NativeHttpResponseHead, body: Uint8Array): GeneratedMedia[]
-  // The size rules of each image of an `imageEdit` request, for an API
+  // The size rules of each input image of a request of a kind, for an API
   // whose docs tell them. They are rules of the request, not of a model.
-  editImageSize?: ImageSizeRules
+  inputImageSize?: Readonly<Partial<Record<ImageKind, ImageSizeRules>>>
+  // Why the API refuses an input image of a request of `kind`, as a
+  // sentence for the user; undefined when it takes it. The image is the
+  // one that goes, after the fit to `inputImageSize`: `size` is its size
+  // (null when it was not decoded), and `byteLength` the length of its
+  // file. For a limit that the docs tell and that no fit can meet. The
+  // text names no model and no message, because a tool can send a request
+  // too.
+  inputImageProblem?(kind: ImageKind, size: ImageSize | null, byteLength: number): string | undefined
 }
 
 // What a media API tells about the price of one clip before the request.
@@ -285,6 +298,20 @@ function veniceMusicText(entry: unknown): ClipTextRules | undefined {
 // with no file format; the docs do not tell the size of its samples, so Dez
 // cannot make a file of it (`pcmSampleBits`).
 const VENICE_SPEECH_FORMATS: ReadonlySet<OptionValue> = new Set(['mp3', 'wav', 'flac', 'aac', 'opus'])
+
+// The limits of the input image of a Venice upscale ("final dimensions
+// after scaling must not exceed 16777216 pixels. File size must be less
+// than 25MB"; the guide: "25 MB or smaller"). The server lowers the scale
+// of an image that would get larger than the pixel cap, so only an image
+// that is already at the cap cannot go. The docs do not tell which "MB",
+// so Dez refuses only a file that is too large in both readings; one
+// between the two gets the provider's answer. The text of the refusal
+// uses the same unit as `byteSizeText`.
+// https://docs.venice.ai/api-reference/endpoint/image/upscale
+// https://docs.venice.ai/guides/media/image-upscaling
+const VENICE_UPSCALE_MAX_PIXELS = 16_777_216
+const VENICE_UPSCALE_MAX_BYTES = 25 * 1024 ** 2
+
 // The Venice media API (https://docs.venice.ai/api-reference).
 const veniceFormat: MediaFormat = {
   // The user's choice for every image: no Venice watermark (it is on by
@@ -292,7 +319,22 @@ const veniceFormat: MediaFormat = {
   // blurs images that it classes as adult content). These are fixed values,
   // not settings.
   images: {
-    request: (kind, baseUrl, modelId, { prompt, images }) => {
+    // upscale: the two fields are rules of the request, which every model
+    // of the kind takes (one model, `upscaler`, 2026-11-11); its entry
+    // tells neither. `scale`: "Must be either 2 or 4" (other numbers are
+    // billed at the 4x rate; the prices of the entry are `2x` and `4x`).
+    // `creativity`: "0–0.02, default 0.01"; the API takes any number of
+    // the range, and the step gives the field's arrows a use.
+    // https://docs.venice.ai/api-reference/endpoint/image/upscale
+    // https://docs.venice.ai/guides/media/image-upscaling
+    parameters: (kind) => {
+      if (kind !== 'upscale') return []
+      return [
+        { name: 'scale', label: 'Scale', options: [2, 4], default: 2 },
+        { name: 'creativity', label: 'Creativity', min: 0, max: 0.02, step: 0.001, default: 0.01 },
+      ]
+    },
+    request: (kind, baseUrl, modelId, { prompt, images, values }) => {
       const base = trimTrailingSlashes(baseUrl)
       switch (kind) {
         case 'image':
@@ -311,13 +353,25 @@ const veniceFormat: MediaFormat = {
             url: `${base}/image/multi-edit`,
             body: { modelId, prompt, images: images.map(imageDataUrl), safe_mode: false },
           }
+        case 'upscale':
+          // The schema has no prompt and no model field: the endpoint has
+          // one model. (The curl of the model page sends `"model":
+          // "upscaler"`; that looks like the template of the page, so it
+          // does not go.) The image goes as bare base64, as in the docs'
+          // examples. generateMedia refuses a request with no image before
+          // this.
+          // https://docs.venice.ai/api-reference/endpoint/image/upscale
+          // https://docs.venice.ai/models/upscaler
+          return { url: `${base}/image/upscale`, body: { ...values, image: images[0].data } }
       }
     },
     // `/image/generate` answers JSON `{ images: [base64, …] }` (no URL
-    // form), and the edit endpoints answer the bytes of one image, with no
-    // JSON form ("The edit endpoints have no `response_format` parameter").
+    // form), and the edit and upscale endpoints answer the bytes of one
+    // image, with no JSON form ("The edit endpoints have no
+    // `response_format` parameter"; the upscale answer is `image/png`).
     // https://docs.venice.ai/api-reference/endpoint/image/generate
     // https://docs.venice.ai/guides/media/image-editing
+    // https://docs.venice.ai/api-reference/endpoint/image/upscale
     parseResponse: (_kind, head, body) => {
       if (!responseContentType(head).startsWith('application/json')) return [generatedImage(body)]
 
@@ -326,14 +380,32 @@ const veniceFormat: MediaFormat = {
       if (images.length === 0) throw new Error('The provider sent no image.')
       return images.map((image) => generatedBase64Image(image))
     },
-    // "For edit endpoints, images must be at least 256×256 pixels, and the
-    // total pixel count must not exceed 33,177,600 (8K resolution)." The
-    // API reference says "at least 65536 pixels" (256 × 256) in place of
-    // the first part; an image whose sides are both 256 or more passes
-    // both readings.
+    // edit: "For edit endpoints, images must be at least 256×256 pixels,
+    // and the total pixel count must not exceed 33,177,600 (8K
+    // resolution)." The API reference says "at least 65536 pixels" (256 ×
+    // 256) in place of the first part; an image whose sides are both 256 or
+    // more passes both readings.
+    // upscale: the same two readings of the least size ("Must be at least
+    // 256×256 pixels"; the reference: "at least 65536 pixels"). The most
+    // pixels are not a fit: a smaller copy would lose the detail that the
+    // user wants larger (`inputImageProblem`).
     // https://docs.venice.ai/guides/media/image-editing
     // https://docs.venice.ai/api-reference/endpoint/image/multi-edit
-    editImageSize: { minShortSide: 256, maxPixels: 33_177_600 },
+    // https://docs.venice.ai/guides/media/image-upscaling
+    inputImageSize: {
+      imageEdit: { minShortSide: 256, maxPixels: 33_177_600 },
+      upscale: { minShortSide: 256 },
+    },
+    inputImageProblem: (kind, size, byteLength) => {
+      if (kind !== 'upscale') return undefined
+      if (size && size.width * size.height >= VENICE_UPSCALE_MAX_PIXELS) {
+        return `The image has ${size.width} × ${size.height} pixels, and an upscale makes images of at most 16,777,216 pixels (4096 × 4096), so this image cannot get larger. Use an image with fewer pixels.`
+      }
+      if (byteLength > VENICE_UPSCALE_MAX_BYTES) {
+        return `The image file has ${byteSizeText(byteLength)}, and the upscale API takes files of at most 25 MB. Use a smaller file of the image, such as a JPEG.`
+      }
+      return undefined
+    },
   },
   clips: {
     // tts: the entry names no default voice, and each model has its own.

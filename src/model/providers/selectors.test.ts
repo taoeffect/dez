@@ -51,8 +51,9 @@ const REASONING_STREAM = [
 ].join('\n\n') + '\n\n'
 const STREAMED_TOOL_CALLS = [{ id: 'call_1', name: 'model_list', argumentsText: '{}' }]
 
-// This media server answers a generate request with JSON and an edit with the
-// image's bytes, each in two chunks. The file host answers the same way.
+// This media server answers a generate request with JSON, and an edit and
+// an upscale with the image's bytes, each in two chunks. The file host
+// answers the same way.
 const MEDIA_BASE_URL = 'http://localhost:5050/api/v1'
 const WEBP_IMAGE = new TextEncoder().encode('RIFF\x0c\x00\x00\x00WEBPVP8 ')
 const JPEG_IMAGE = Uint8Array.from([0xff, 0xd8, 0xff, 0xe0, 0, 1])
@@ -61,6 +62,7 @@ const HOSTED_PAGE_URL = 'https://files.example.com/cat.html'
 const MEDIA_ANSWERS = new Map([
   [`${MEDIA_BASE_URL}/image/generate`, { contentType: 'application/json', body: new TextEncoder().encode(JSON.stringify({ images: [bytesToBase64(WEBP_IMAGE)] })) }],
   [`${MEDIA_BASE_URL}/image/multi-edit`, { contentType: 'image/png', body: STORED_IMAGE }],
+  [`${MEDIA_BASE_URL}/image/upscale`, { contentType: 'image/png', body: STORED_IMAGE }],
   [HOSTED_IMAGE_URL, { contentType: 'image/jpeg', body: JPEG_IMAGE }],
   [HOSTED_PAGE_URL, { contentType: 'image/jpeg', body: new TextEncoder().encode('<html>Not here</html>') }],
 ])
@@ -722,11 +724,13 @@ describe('media requests', () => {
     expect(streamRequests).toEqual([])
   })
 
-  it('refuses an edit with no image, before any request', async () => {
-    await expect(generate({ kind: 'imageEdit' })).rejects.toThrow('No image to edit')
-    await expect(generate({ kind: 'imageEdit', images: [] })).rejects.toThrow('No image to edit')
+  // The submit refuses it first, with the model's name (thread.ts).
+  it.each(['imageEdit', 'upscale', 'imageToVideo'] as const)('refuses a %s request with no image, before any request', async (kind) => {
+    await expect(generate({ kind })).rejects.toThrow('The model needs an input image, and the request has none.')
+    await expect(generate({ kind, images: [] })).rejects.toThrow('The model needs an input image, and the request has none.')
 
     expect(streamRequests).toEqual([])
+    expect(downloadRequests).toEqual([])
   })
 
   it('reads no file of another Dez folder, and sends nothing', async () => {
@@ -843,6 +847,59 @@ describe('media requests', () => {
 
       expect(drawings).toStrictEqual([])
       expect(frames()).toStrictEqual([[dataUrl(STORED_IMAGE), undefined]])
+    })
+
+    // Puts the model `m` in the model cache as an upscale model with the
+    // parameters of the Venice format.
+    function useUpscaleModel(): void {
+      sbp('dez.model/modelCache/applyProviderResult', 'media', {
+        ok: true,
+        models: [{
+          id: 'm',
+          name: 'M',
+          provider: 'media',
+          outputs: ['image'],
+          request: 'upscale',
+          parameters: [
+            { name: 'scale', label: 'Scale', options: [2, 4], default: 2 },
+            { name: 'creativity', label: 'Creativity', min: 0, max: 0.02, step: 0.001, default: 0.01 },
+          ],
+        }],
+      })
+    }
+
+    // A value that the model does not take gets the default.
+    it('upscales a stored image with the chosen values that the model takes, else the defaults, and no prompt', async () => {
+      useUpscaleModel()
+
+      const result = await generate({ kind: 'upscale', images: [path], parameters: { scale: 4, creativity: 0.5 } })
+
+      expect(result).toStrictEqual({ media: [{ bytes: STORED_IMAGE, mediaType: 'image/png' }], clips: [] })
+      expect(streamRequests.map((request) => [request.url, JSON.parse(request.body as string)])).toStrictEqual([
+        [`${MEDIA_BASE_URL}/image/upscale`, { scale: 4, creativity: 0.01, image: bytesToBase64(STORED_IMAGE) }],
+      ])
+    })
+
+    it('sends an upscale image that is too small as a drawing with the least size of the upscale request', async () => {
+      useUpscaleModel()
+      storedImageSize = { width: 200, height: 100 }
+
+      await generate({ kind: 'upscale', images: [path] })
+
+      expect(drawings).toStrictEqual([[{ crop: { x: 0, y: 0, width: 200, height: 100 }, width: 512, height: 256 }, 'image/png']])
+      expect(bodyFields(streamRequests, ['image'])).toStrictEqual([[bytesToBase64(DRAWN_IMAGE)]])
+    })
+
+    // The size is the decoded one: no drawing makes an image smaller for an
+    // upscale.
+    it('refuses an upscale of an image at the pixel cap before any request, and tells what to do', async () => {
+      useUpscaleModel()
+      storedImageSize = { width: 4096, height: 4096 }
+
+      await expect(generate({ kind: 'upscale', images: [path] })).rejects.toThrow('The image has 4096 × 4096 pixels, and an upscale makes images of at most 16,777,216 pixels (4096 × 4096), so this image cannot get larger. Use an image with fewer pixels.')
+
+      expect(drawings).toStrictEqual([[null, 'image/png']])
+      expect(streamRequests).toEqual([])
     })
   })
 })

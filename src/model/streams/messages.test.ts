@@ -542,6 +542,24 @@ describe('mediaRequestInput', () => {
     expect(input(kind, sections)).toStrictEqual({ prompt: 'Say what ![image](id=b) and @a show', images: [], imagesLeftOut: 0 })
   })
 
+  describe('the image of an upscale', () => {
+    // A model with no rules takes one image (`maxInputImages`).
+    it('takes the first image of the last user message, and counts the rest', () => {
+      const sections = [reply('a1', `![${GENERATED}](id=a)`), user('u1', `![${IMAGE}](id=b) and @a`)]
+
+      expect(input('upscale', sections)).toStrictEqual({ prompt: '![image](id=b) and @a', images: [IMAGE], imagesLeftOut: 1 })
+    })
+
+    it('takes the newest image of the conversation when the last user message has none, and none when there is none', () => {
+      const sections = [user('u1', `![${IMAGE}](id=a) A red fox`), reply('a1', `![${GENERATED}](id=b)`), user('u2', 'Larger')]
+
+      expect([input('upscale', sections), input('upscale', [user('u1', 'Larger')])]).toStrictEqual([
+        { prompt: 'Larger', images: [GENERATED], imagesLeftOut: 0 },
+        { prompt: 'Larger', images: [], imagesLeftOut: 0 },
+      ])
+    })
+  })
+
   describe('the frames of a video', () => {
     const other = '/home/u/.config/dez/assets/images/blue.png'
     // A pasted image, a mentioned image, and each of them once more.

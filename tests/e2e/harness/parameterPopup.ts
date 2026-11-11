@@ -15,7 +15,7 @@ export type ParameterRow =
 export interface PopupView {
   headers: string[]
   rows: ParameterRow[]
-  /** The text of the "Lyrics" section. */
+  /** The text of the first hint section ("Input", "Lyrics"). */
   hint: string | null
   /** Whether the popup has the "Reset to defaults" button. */
   reset: boolean
@@ -55,4 +55,23 @@ export async function popupView (browser: E2EBrowser): Promise<PopupView> {
       reset: document.querySelector('.provider-settings-reset') !== null,
     }
   })
+}
+
+/** Gives the field of the parameter `name` the value `wanted` (for a list,
+ *  the option with that text), then the `change` event that a user's edit
+ *  ends with. wry's automation session takes no native keys for a field,
+ *  so the page sets the value. */
+export async function changeParameterField (browser: E2EBrowser, name: string, wanted: string, kind: 'option' | 'number'): Promise<void> {
+  await browser.execute((parameter: string, value: string, fieldKind: string) => {
+    const field = document.querySelector<HTMLInputElement | HTMLSelectElement>(`.provider-settings-popup [data-parameter="${parameter}"] .provider-settings-value`)
+    if (!field) throw new Error(`changeParameterField: no field for ${parameter}`)
+    if (fieldKind === 'number') {
+      field.value = value
+    } else {
+      const option = Array.from((field as HTMLSelectElement).options).find((entry) => entry.text === value)
+      if (!option) throw new Error(`changeParameterField: ${parameter} has no option ${value}`)
+      option.selected = true
+    }
+    field.dispatchEvent(new Event('change', { bubbles: true }))
+  }, name, wanted, kind)
 }

@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest'
 import { bytesToBase64 } from '../../utils/base64'
 import type { NativeHttpResponseHead } from '../../utils/protocol/nativeHttp'
 import { MEDIA_FORMATS, NO_VIDEO_LENGTH_MESSAGE, type ClipFormat, type ClipQuoteFormat, type ImageFormat } from './mediaFormats'
-import type { ModelParameter } from './modelParameters'
+import { effectiveParameterValues, type ModelParameter } from './modelParameters'
 import type { ChatImagePart, ClipKind, MediaKind } from './types'
 
 const venice = MEDIA_FORMATS.venice.images as ImageFormat
@@ -38,7 +38,7 @@ const JPEG_URL = `data:image/jpeg;base64,${bytesToBase64(JPEG)}`
 
 describe('venice media requests', () => {
   it('asks /image/generate for a WebP image with no watermark and no safe mode', () => {
-    expect(venice.request('image', 'https://api.venice.ai/api/v1/', 'z-image-turbo', { prompt: 'A red fox', images: [] })).toStrictEqual({
+    expect(venice.request('image', 'https://api.venice.ai/api/v1/', 'z-image-turbo', { prompt: 'A red fox', images: [], values: {} })).toStrictEqual({
       url: 'https://api.venice.ai/api/v1/image/generate',
       body: { model: 'z-image-turbo', prompt: 'A red fox', format: 'webp', hide_watermark: true, safe_mode: false },
     })
@@ -47,10 +47,62 @@ describe('venice media requests', () => {
   // The endpoint has no `hide_watermark` field, and its schema takes no
   // unknown field.
   it('sends an edit to /image/multi-edit with `modelId`, the images as data URLs in order, and no safe mode', () => {
-    expect(venice.request('imageEdit', 'https://api.venice.ai/api/v1', 'qwen-image-2-1-turbo-edit', { prompt: 'Make it blue', images: IMAGES })).toStrictEqual({
+    expect(venice.request('imageEdit', 'https://api.venice.ai/api/v1', 'qwen-image-2-1-turbo-edit', { prompt: 'Make it blue', images: IMAGES, values: {} })).toStrictEqual({
       url: 'https://api.venice.ai/api/v1/image/multi-edit',
       body: { modelId: 'qwen-image-2-1-turbo-edit', prompt: 'Make it blue', images: [PNG_URL, JPEG_URL], safe_mode: false },
     })
+  })
+
+  // The schema has no prompt and no model field.
+  it('sends an upscale to /image/upscale with the image as bare base64 and the values, and no prompt or model', () => {
+    const input = { prompt: 'Make it larger', images: [IMAGES[1]], values: { scale: 4, creativity: 0.005 } }
+
+    expect(venice.request('upscale', `${VENICE_URL}/`, 'upscaler', input)).toStrictEqual({
+      url: `${VENICE_URL}/image/upscale`,
+      body: { scale: 4, creativity: 0.005, image: bytesToBase64(JPEG) },
+    })
+  })
+})
+
+describe('venice image parameters', () => {
+  // Rules of the request (the docs), so a model with no entry has them too.
+  it('gives an upscale model a scale of 2 or 4 and a creativity of 0 to 0.02, whose defaults a request sends', () => {
+    const upscale = venice.parameters?.('upscale', undefined, undefined) ?? []
+
+    expect(upscale.map(({ label: _label, ...parameter }) => parameter)).toStrictEqual([
+      { name: 'scale', options: [2, 4], default: 2 },
+      { name: 'creativity', min: 0, max: 0.02, step: 0.001, default: 0.01 },
+    ])
+    expect(effectiveParameterValues(upscale)).toStrictEqual({ scale: 2, creativity: 0.01 })
+  })
+
+  it.each(['image', 'imageEdit'] as const)('gives a %s model no parameters', (kind) => {
+    expect(venice.parameters?.(kind, { id: 'm', model_spec: {} }, undefined)).toStrictEqual([])
+  })
+})
+
+describe('venice input image limits', () => {
+  const MAX_BYTES = 25 * 1024 ** 2
+
+  it.each([
+    ['an image just under the pixel cap', { width: 4096, height: 4095 }, MAX_BYTES],
+    ['an image whose size is not known', null, 1000],
+  ])('takes %s', (_name, size, byteLength) => {
+    expect(venice.inputImageProblem?.('upscale', size, byteLength)).toBeUndefined()
+  })
+
+  it('refuses an upscale of an image that is at the pixel cap, and tells what to do', () => {
+    expect(venice.inputImageProblem?.('upscale', { width: 2048, height: 8192 }, 1000))
+      .toBe('The image has 2048 × 8192 pixels, and an upscale makes images of at most 16,777,216 pixels (4096 × 4096), so this image cannot get larger. Use an image with fewer pixels.')
+  })
+
+  it('refuses an upscale of a file over 25 MB, and tells what to do', () => {
+    expect(venice.inputImageProblem?.('upscale', { width: 512, height: 512 }, MAX_BYTES + 200_000))
+      .toBe('The image file has 25.2 MB, and the upscale API takes files of at most 25 MB. Use a smaller file of the image, such as a JPEG.')
+  })
+
+  it('has no limit of its own for an edit', () => {
+    expect(venice.inputImageProblem?.('imageEdit', { width: 8192, height: 8192 }, MAX_BYTES * 2)).toBeUndefined()
   })
 })
 

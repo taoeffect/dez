@@ -1365,6 +1365,7 @@ describe('provider models', () => {
       { id: 'text', type: 'text' },
       { id: 'gen', type: 'image' },
       { id: 'edit', type: 'inpaint' },
+      { id: 'upscaler', type: 'upscale' },
       { id: 'video', type: 'video' },
       { id: 'speech', type: 'tts' },
       { id: 'song', type: 'music' },
@@ -1377,6 +1378,7 @@ describe('provider models', () => {
       ['text', ['text'], 'chat'],
       ['gen', ['image'], 'image'],
       ['edit', ['image'], 'imageEdit'],
+      ['upscaler', ['image'], 'upscale'],
       ['video', ['video'], 'none'],
       ['speech', ['audio'], 'tts'],
       ['song', ['audio'], 'music'],
@@ -1435,15 +1437,12 @@ describe('provider models', () => {
       { id: 'speech-to-text', type: 'asr' },
       { id: 'voice-changer', type: 'music', model_spec: { voice_changer: true } },
       { id: 'video-to-video', type: 'video', model_spec: { constraints: { model_type: 'video' } } },
-      // It needs an image, not a clip.
-      { id: 'upscaler', type: 'upscale' },
       { id: 'song', type: 'music', model_spec: { voice_changer: false } },
       { id: 'image-to-video', type: 'video', model_spec: { constraints: { model_type: 'image-to-video' } } },
     ])).toEqual([
       ['speech-to-text', 'none', 'audio'],
       ['voice-changer', 'none', 'audio'],
       ['video-to-video', 'none', 'video'],
-      ['upscaler', 'none', undefined],
       ['song', 'music', undefined],
       ['image-to-video', 'imageToVideo', undefined],
     ])
@@ -1522,6 +1521,22 @@ describe('media model data', () => {
     ])
   })
 
+  // The upscale parameters are rules of the request (mediaFormats.ts), so
+  // a config model with no entry gets them too.
+  it('gives an image model the parameters of the image API, and none when the media API makes no images', () => {
+    const image = providerModel('local', 'image', 'Image', { request: 'image' })
+    const upscale = providerModel('local', 'upscale', 'Upscale', { request: 'upscale' })
+    const names = (models: ModelInfo[]) => models.map((model) => [model.id, model.parameters?.map((parameter) => parameter.name)])
+
+    expect([
+      names(veniceLike.withClipData([image, upscale], new Map(), new Map())),
+      names(openRouterLike.withClipData([image, upscale], new Map(), new Map())),
+    ]).toStrictEqual([
+      [['image', undefined], ['upscale', ['scale', 'creativity']]],
+      [['image', undefined], ['upscale', undefined]],
+    ])
+  })
+
   it('gives no parameters for a provider with no media API', () => {
     const speech = providerModel('local', 'speech', 'Speech', { request: 'tts' })
 
@@ -1596,7 +1611,7 @@ describe('media model data', () => {
     })
   })
 
-  it('gives the size rules of the input images of a request: of the model for a video, of the edit request for an edit', () => {
+  it('gives the size rules of the input images of a request: of the model for a video, of the API\'s request for an edit and an upscale', () => {
     const size = { minShortSide: 300, minAspectRatio: 0.4, maxAspectRatio: 2.5 }
     const model = { images: { maxImages: 2, size } }
 
@@ -1604,6 +1619,8 @@ describe('media model data', () => {
       veniceLike.inputImageSize('imageToVideo', model),
       veniceLike.inputImageSize('video', model),
       veniceLike.inputImageSize('imageEdit', model),
+      // No upper limit: a smaller copy would lose detail.
+      veniceLike.inputImageSize('upscale', model),
       // An image request with no input image, and a clip of a model that
       // the model cache does not know or that tells no rules.
       veniceLike.inputImageSize('image', model),
@@ -1613,7 +1630,7 @@ describe('media model data', () => {
       // API has none.
       openRouterLike.inputImageSize('imageEdit', null),
       customProvider({}).inputImageSize('imageEdit', null),
-    ]).toStrictEqual([size, size, { minShortSide: 256, maxPixels: 33_177_600 }, undefined, undefined, undefined, undefined, undefined])
+    ]).toStrictEqual([size, size, { minShortSide: 256, maxPixels: 33_177_600 }, { minShortSide: 256 }, undefined, undefined, undefined, undefined, undefined])
   })
 
   it('merges the body parts of the config into the media requests of the kind and the models that they name, in list order', () => {

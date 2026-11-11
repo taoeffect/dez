@@ -424,14 +424,6 @@ describe('a clip job', () => {
     expect(downloads[0].request.body).not.toContain(appDir)
   })
 
-  it('refuses an image-to-video request with no image, before any request', async () => {
-    cacheModel('venice-like', VENICE_VIDEO_PARAMETERS)
-
-    await expect(generate({ kind: 'imageToVideo', images: [] })).rejects.toThrow('No image to make a video from')
-
-    expect(downloads).toEqual([])
-  })
-
   // Dez does not send the request again with one image: the user chooses
   // the image.
   it('fails with the count of the images after a refusal of the last frame, and sends no other request', async () => {

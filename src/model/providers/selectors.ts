@@ -8,6 +8,7 @@ import { bytesToBase64 } from '../../utils/base64'
 import { fileNameOf } from '../../utils/fileName'
 import { secret, type Secret } from '../../utils/secret'
 import { nativeResponseJson, nativeResponseText, readNativeChunkBytes, type NativeHttpRequest, type NativeHttpResponse, type NativeHttpStreamResult } from '../../utils/protocol/nativeHttp'
+import { needsInputImage } from './clipImages'
 import { CLIP_JOB_TIMEOUT_MS, clipPollDelay, sendClipRequest, type ClipRun } from './clipRequests'
 import { assertProviderResponseOk } from './errors'
 import { generatedImageFromUrl } from './generatedImages'
@@ -105,17 +106,23 @@ async function readStoredImage(path: string, appDir: string): Promise<StoredImag
 // passes the rules goes as it is, byte for byte, and so does every image
 // of a request with no rules, which is not even decoded. An image that
 // cannot be drawn (a file that the webview does not decode) also goes as
-// it is: the provider's answer then tells the user what is wrong.
-async function fittedImage(image: StoredImage, rules: ImageSizeRules | undefined): Promise<StoredImage> {
-  if (!rules) return image
+// it is: the provider's answer then tells the user what is wrong. `size`
+// is the size of the image that goes; null when it was not decoded.
+async function fittedImage(image: StoredImage, rules: ImageSizeRules | undefined): Promise<StoredImage & { size: ImageSize | null }> {
+  if (!rules) return { ...image, size: null }
   const mediaType = drawnMediaType(image.mediaType)
+  let decoded: ImageSize | null = null
   try {
     const file = new Blob([image.bytes], { type: image.mediaType })
-    const drawn = await sbp('dez.controller/images/redraw', file, (size: ImageSize) => imageFit(size, rules), mediaType) as DrawnImage | null
-    return drawn ? { bytes: drawn.bytes, mediaType } : image
+    const plan = (size: ImageSize) => {
+      decoded = { width: size.width, height: size.height }
+      return imageFit(size, rules)
+    }
+    const drawn = await sbp('dez.controller/images/redraw', file, plan, mediaType) as DrawnImage | null
+    return drawn ? { bytes: drawn.bytes, mediaType, size: { width: drawn.width, height: drawn.height } } : { ...image, size: decoded }
   } catch (error) {
     console.error('Failed to fit an image to the size rules of the request:', error)
-    return image
+    return { ...image, size: null }
   }
 }
 
@@ -155,10 +162,10 @@ async function jsonResponse(provider: Provider, request: NativeHttpRequest): Pro
   return nativeResponseJson<unknown>(response)
 }
 
-// The value that a clip request sends for each parameter of a model: the
+// The value that a media request sends for each parameter of a model: the
 // model's parameters are in the model cache (`ModelInfo.parameters`), and
 // `chosen` holds the values that the caller wants (`effectiveParameterValues`).
-function clipParameterValues(providerId: ProviderId, modelId: string, chosen: Readonly<ParameterValues> | undefined): ParameterValues {
+function parameterValues(providerId: ProviderId, modelId: string, chosen: Readonly<ParameterValues> | undefined): ParameterValues {
   const model = sbp('dez.model/modelCache/model', providerId, modelId) as ModelInfo | null
   return effectiveParameterValues(model?.parameters ?? [], chosen)
 }
@@ -284,23 +291,25 @@ export default sbp('sbp/selectors/register', {
   // with `requestId` cancels the request that runs, and `signal` does the
   // same and also ends the wait of a clip job. An input image that breaks
   // a size rule of the request goes as a drawing that passes it
-  // (`fittedImage`).
+  // (`fittedImage`); one that breaks a limit that no drawing meets rejects
+  // before any request (`Provider.inputImageProblem`). The request sets the
+  // model's parameters (a scale, the length of a clip, a voice):
+  // `input.parameters` where the model takes the value, else the
+  // parameter's default.
   //
-  // - An image, or an edit of stored images: one request through
-  //   dez.http/stream. A cancel before the response headers rejects; a
-  //   cancel after them ends the body early, so a caller that cancelled
-  //   must drop the result.
+  // - An image, or an edit or an upscale of stored images: one request
+  //   through dez.http/stream. A cancel before the response headers
+  //   rejects; a cancel after them ends the body early, so a caller that
+  //   cancelled must drop the result.
   // - A clip (speech, music, video): the answer to the first request is the
   //   clip, or a job. For a job, the provider is asked for its state each
   //   `CLIP_POLL_INTERVAL_MS` until the clip is there: in the answer to
   //   that request, at a URL that plays, at a URL to copy, or behind one
   //   more request. A clip that came as bytes is a temp copy in the cache
   //   root (`sendClipRequest`), which the caller must delete when it does
-  //   not keep the clip. A stop rejects. The request sets the model's
-  //   parameters (the length, the voice): `input.parameters` where the
-  //   model takes the value, else the parameter's default. A video request
-  //   sends the stored images of `input.images` as frames of the video. A
-  //   refusal that tells that the model takes fewer images rejects with a
+  //   not keep the clip. A stop rejects. A video request sends the stored
+  //   images of `input.images` as frames of the video. A refusal that
+  //   tells that the model takes fewer images rejects with a
   //   TooManyImagesError (`Provider.imageCountRefusal`).
   //
   // A provider takes the money for a job when it starts. So after that
@@ -319,17 +328,21 @@ export default sbp('sbp/selectors/register', {
     let jobId: string | null = null
     try {
       const paths = input.images ?? []
-      if (kind === 'imageEdit' && paths.length === 0) throw new Error('No image to edit')
-      if (kind === 'imageToVideo' && paths.length === 0) throw new Error('No image to make a video from')
+      // The submit refuses such a request with the model's name
+      // (`missingImageProblem`); this is for a caller that did not check.
+      if (needsInputImage(kind) && paths.length === 0) throw new Error('The model needs an input image, and the request has none.')
       const appDir = paths.length > 0 ? await sbp('dez.native/getAppDir') as string : ''
       const sizeRules = provider.inputImageSize(kind, sbp('dez.model/modelCache/model', provider.id, modelId) as ModelInfo | null)
       const images = await Promise.all(paths.map(async (path): Promise<ChatImagePart> => {
-        const { bytes, mediaType } = await fittedImage(await readStoredImage(path, appDir), sizeRules)
+        const { bytes, mediaType, size } = await fittedImage(await readStoredImage(path, appDir), sizeRules)
+        const problem = provider.inputImageProblem(kind, size, bytes.length)
+        if (problem !== undefined) throw new Error(problem)
         return { type: 'image', mediaType, data: bytesToBase64(bytes) }
       }))
+      const values = parameterValues(provider.id, modelId, input.parameters)
 
       if (!isClipKind(kind)) {
-        const request = provider.mediaRequest(kind, modelId, { prompt: input.prompt, images }, await requestSecret(provider))
+        const request = provider.mediaRequest(kind, modelId, { prompt: input.prompt, images, values }, await requestSecret(provider))
         signal?.throwIfAborted()
         const { response, chunks } = await sbp('dez.http/stream', request, requestId) as NativeHttpStreamResult
         await assertStreamResponseOk(provider, response, chunks)
@@ -342,7 +355,6 @@ export default sbp('sbp/selectors/register', {
       // A request of the media API, which gets the API key.
       const apiRequest = (wire: MediaWireRequest) => provider.mediaApiRequest(wire, secret)
       const cacheDir = await sbp('dez.native/getAppDir', 'cache') as string
-      const values = clipParameterValues(provider.id, modelId, input.parameters)
       const clipInput = { prompt: input.prompt, images, values, ...(input.lyrics !== undefined && { lyrics: input.lyrics }) }
       // A refusal that tells that the model takes fewer images: the user
       // gets Dez's text, with the count, and the console the provider's. A
@@ -405,7 +417,7 @@ export default sbp('sbp/selectors/register', {
     const { kind, modelId } = input
     if (!isClipKind(kind)) return null
 
-    const values = clipParameterValues(provider.id, modelId, input.parameters)
+    const values = parameterValues(provider.id, modelId, input.parameters)
     const entry = sbp('dez.model/modelCache/rawModel', provider.id, modelId) as unknown
     const quote = provider.clipQuote(kind, modelId, values, entry, await requestSecret(provider))
     return quote ? quote.usd(await jsonResponse(provider, quote.request)) : null

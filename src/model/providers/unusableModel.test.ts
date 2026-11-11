@@ -24,9 +24,9 @@ describe('unusableModelMessage', () => {
     // Unknown outputs count as text.
     [undefined, 'text'],
   ] as const)('names the outputs %j of a model that needs no clip as "%s"', (outputs, names) => {
-    const message = unusableModelMessage('Upscaler', outputs ? { outputs: [...outputs] } : {})
+    const message = unusableModelMessage('Painter', outputs ? { outputs: [...outputs] } : {})
 
-    expect(message.startsWith('Dez cannot use Upscaler yet.')).toBe(true)
+    expect(message.startsWith('Dez cannot use Painter yet.')).toBe(true)
     expect(message).toContain(` ${names} output `)
   })
 

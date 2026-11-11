@@ -1,6 +1,7 @@
 import type { JsonObject } from '../../utils/json'
 import type { NativeHttpHeaders, NativeHttpRequest, NativeHttpResponseHead } from '../../utils/protocol/nativeHttp'
 import type { Secret } from '../../utils/secret'
+import type { ImageSize } from '../chat/imageDrawing'
 import { API_FORMATS, type ApiFormat } from './apiFormats'
 import { TooManyImagesError } from './clipImages'
 import { FORBIDDEN_BODY_KEYS, type ProviderConfig } from './config'
@@ -197,9 +198,9 @@ export class Provider {
   }
 
   // `models` (a `mergeModels` list), each model of a media request kind
-  // with the rules of its input images (`MediaFormat.imageRules`), and
-  // each one of a clip request kind also with its parameters
-  // (`ClipFormat.parameters`) and the rules of its text
+  // with its parameters (`ImageFormat.parameters`, `ClipFormat.parameters`)
+  // and the rules of its input images (`MediaFormat.imageRules`), and each
+  // one of a clip request kind also with the rules of its text
   // (`ClipFormat.textRules`), read from its raw entries (`modelEntries`,
   // `mediaModelEntries`). This comes after the merge, because a config
   // model can set the request kind. A new field here needs a line in
@@ -208,14 +209,14 @@ export class Provider {
   withClipData(models: readonly ModelInfo[], entries: ReadonlyMap<string, unknown>, mediaEntries: ReadonlyMap<string, unknown>): ModelInfo[] {
     const mediaApi = this.config.mediaApi
     if (!mediaApi) return [...models]
-    const { clips, imageRules } = MEDIA_FORMATS[mediaApi.format]
+    const { images: imageFormat, clips, imageRules } = MEDIA_FORMATS[mediaApi.format]
     return models.map((model) => {
       const kind = effectiveRequest(model)
       if (kind === 'chat' || kind === 'none') return model
       const entry = entries.get(model.id)
       const mediaEntry = mediaEntries.get(model.id)
       const images = imageRules?.(kind, entry, mediaEntry)
-      const parameters = clips && isClipKind(kind) ? clips.parameters(kind, entry, mediaEntry) : []
+      const parameters = (isClipKind(kind) ? clips?.parameters(kind, entry, mediaEntry) : imageFormat?.parameters?.(kind, entry, mediaEntry)) ?? []
       const text = isClipKind(kind) ? clips?.textRules?.(kind, entry, mediaEntry) : undefined
       return { ...model, ...(parameters.length > 0 && { parameters }), ...(text && { text }), ...(images && { images }) }
     })
@@ -302,12 +303,23 @@ export class Provider {
 
   // The size rules (imageSize.ts) of each input image of a request of
   // `kind`: for a video, the rules of the model (`model`: what the model
-  // cache knows of it, or null); for an edit, the rules of the media API's
-  // edit request. Undefined when the provider tells none.
+  // cache knows of it, or null); for an edit or an upscale, the rules of
+  // the media API's request (`ImageFormat.inputImageSize`). Undefined when
+  // the provider tells none.
   inputImageSize(kind: MediaKind, model: Pick<ModelInfo, 'images'> | null): ImageSizeRules | undefined {
     if (isClipKind(kind)) return model?.images?.size
     const mediaApi = this.config.mediaApi
-    return kind === 'imageEdit' && mediaApi ? MEDIA_FORMATS[mediaApi.format].images?.editImageSize : undefined
+    return mediaApi ? MEDIA_FORMATS[mediaApi.format].images?.inputImageSize?.[kind] : undefined
+  }
+
+  // Why the media API refuses an input image of a request of `kind` that
+  // has the size `size` (null when not known) and a file of `byteLength`
+  // bytes (`ImageFormat.inputImageProblem`); undefined when it takes it, as
+  // far as Dez knows.
+  inputImageProblem(kind: MediaKind, size: ImageSize | null, byteLength: number): string | undefined {
+    const mediaApi = this.config.mediaApi
+    if (isClipKind(kind) || !mediaApi) return undefined
+    return MEDIA_FORMATS[mediaApi.format].images?.inputImageProblem?.(kind, size, byteLength)
   }
 
   // The parts of a clip request kind (`ClipFormat` in mediaFormats.ts), for

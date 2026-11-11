@@ -3,7 +3,7 @@ import { computed } from 'vue'
 import sbp from '@sbp/sbp'
 import { useModelState } from '../modelState'
 import { modelRefKey } from '../../model/chat/modelRef'
-import type { ModelInfo, ProviderSettingsDescriptor } from '../../model/providers'
+import { effectiveRequest, type ModelInfo, type ProviderSettingsDescriptor } from '../../model/providers'
 import {
   effectiveParameterValues,
   nearestRangeValue,
@@ -85,6 +85,15 @@ const lyricsHint = computed(() => {
     : 'To give lyrics, write the style, then a line "Lyrics:", then the lyrics.'
 })
 
+// An upscale takes an image and no text (`upscale` in
+// model/providers/types.ts), which a message does not show, so the popup
+// tells it.
+const inputHint = computed(() => {
+  const model = cachedModel.value
+  if (!model || effectiveRequest(model) !== 'upscale') return null
+  return 'This model makes an image larger. It takes one image (pasted, or named with @id); the text of the message is not sent.'
+})
+
 // The value that a request sends for each parameter now: the user's value,
 // else the parameter's default. A parameter with neither has no entry.
 const parameterValues = computed(() => {
@@ -150,7 +159,7 @@ function resetToDefaults() {
 
 <template>
   <div class="provider-settings-popup">
-    <template v-if="activeModel && (settingDefs.length > 0 || parameters.length > 0 || lyricsHint)">
+    <template v-if="activeModel && (settingDefs.length > 0 || parameters.length > 0 || lyricsHint || inputHint)">
       <template v-if="settingDefs.length > 0">
         <div class="provider-settings-header">{{ providerName }}</div>
         <div class="provider-settings-rows">
@@ -227,11 +236,15 @@ function resetToDefaults() {
           </template>
         </div>
       </template>
+      <template v-if="inputHint">
+        <div class="provider-settings-header">Input</div>
+        <div class="provider-settings-hint">{{ inputHint }}</div>
+      </template>
       <template v-if="lyricsHint">
         <div class="provider-settings-header">Lyrics</div>
         <div class="provider-settings-hint">{{ lyricsHint }}</div>
       </template>
-      <!-- A model with only the lyrics text has nothing to reset. -->
+      <!-- A model with only a hint has nothing to reset. -->
       <button
         v-if="settingDefs.length > 0 || parameters.length > 0"
         class="provider-settings-reset"

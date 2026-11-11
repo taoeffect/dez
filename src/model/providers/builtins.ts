@@ -117,26 +117,26 @@ export const BUILT_IN_PROVIDER_CONFIGS: readonly ProviderConfig[] = [
     modelImageInput: { path: 'model_spec.capabilities.supportsVision' },
     modelToolCalling: { path: 'model_spec.capabilities.supportsFunctionCalling' },
     modelThinking: { path: 'model_spec.capabilities.supportsReasoning' },
-    // One `type` per model. `inpaint` models edit images. `music` models
-    // also make sounds and speech; one of them is a voice changer
-    // (`model_spec.voice_changer`), which needs a recording and has an own
-    // endpoint, so it gets no request yet. Every video model has the type
-    // `video`, and `model_spec.constraints.model_type` tells what it needs:
-    // just a text (`text-to-video`), an image (`image-to-video`), or a
-    // video (`video`), which Dez does not send yet. Dez does not run
-    // upscale or speech-to-text (`asr`) models yet. `clipInput` and
-    // `clipInputs` name the clip that such a model needs, for the text of
-    // the refusal.
-    // MODEL_INVOKE: the types and values with no request here (upscale,
-    // asr, the voice changer, video-to-video) are the models that a
-    // `model_invoke` tool could run.
+    // One `type` per model. `inpaint` models edit images, and `upscale`
+    // models make an image larger. `music` models also make sounds and
+    // speech; one of them is a voice changer (`model_spec.voice_changer`),
+    // which needs a recording and has an own endpoint, so it gets no
+    // request yet. Every video model has the type `video`, and
+    // `model_spec.constraints.model_type` tells what it needs: just a text
+    // (`text-to-video`), an image (`image-to-video`), or a video (`video`),
+    // which Dez does not send yet. Dez does not run speech-to-text (`asr`)
+    // models yet. `clipInput` and `clipInputs` name the clip that such a
+    // model needs, for the text of the refusal.
+    // MODEL_INVOKE: the types and values with no request here (asr, the
+    // voice changer, video-to-video) are the models that a `model_invoke`
+    // tool could run.
     modelOutputs: {
       path: 'type',
       values: {
         text: { outputs: ['text'], request: 'chat' },
         image: { outputs: ['image'], request: 'image' },
         inpaint: { outputs: ['image'], request: 'imageEdit' },
-        upscale: { outputs: ['image'] },
+        upscale: { outputs: ['image'], request: 'upscale' },
         tts: { outputs: ['audio'], request: 'tts' },
         music: {
           outputs: ['audio'],

@@ -10,6 +10,7 @@ import { conversationFilePath } from './harness/fixtures'
 import { pasteImage, pngDataUrl, shownImages, solidPng } from './harness/images'
 import { startMockProviderApp, type MockProviderApp } from './harness/mockProviderApp'
 import { mockChatPath, startEventStream, writeChatFrame, type MockProvider } from './harness/mockServer'
+import { changeParameterField, closePopup, openPopup, popupOpen, popupView } from './harness/parameterPopup'
 import type { E2EBrowser } from './harness/session'
 import { activeConversationId, focusEditor, newTab, openToasts, pickModel, submit, threadSections, waitForThread } from './harness/thread'
 
@@ -38,6 +39,12 @@ import { activeConversationId, focusEditor, newTab, openToasts, pickModel, submi
 //   with `@a`;
 // - when the view followed a reply to its end, it stays at its bottom when
 //   the reply's image loads after the end;
+// - an upscale model's request to `/image/upscale` takes the image of the
+//   message as bare base64, with the scale that the user picked in the
+//   provider settings popup, the default creativity, and no text (the
+//   popup tells so); the reply holds the larger image with a new id. With
+//   no image in the conversation, an error toast tells what to do, and no
+//   request goes;
 // - Stop during the request leaves no file and no agent section;
 // - a model that Dez has no request for gets an error toast, and no request
 //   goes; the toast of a model that needs a clip as its input tells so.
@@ -47,13 +54,15 @@ import { activeConversationId, focusEditor, newTab, openToasts, pickModel, submi
 const PAINTER: MockProvider = { id: 'painter', name: 'Painter Mock', modelId: 'paint-model', modelName: 'Paint Model' }
 const EDIT_MODEL = { id: 'edit-model', name: 'Edit Model' }
 const UPSCALE_MODEL = { id: 'upscale-model', name: 'Upscale Model' }
+// An image model of an API that Dez does not speak.
+const SKETCH_MODEL = { id: 'sketch-model', name: 'Sketch Model' }
 // A model that writes down a recording: Dez cannot send it one.
 const LISTEN_MODEL = { id: 'listen-model', name: 'Listen Model' }
 // A chat model that writes text and makes images in one reply.
 const CHAT_MODEL = { id: 'chat-paint-model', name: 'Chat Paint Model' }
 const GENERATE_PATH = `/${PAINTER.id}/v1/image/generate`
 const EDIT_PATH = `/${PAINTER.id}/v1/image/multi-edit`
-
+const UPSCALE_PATH = `/${PAINTER.id}/v1/image/upscale`
 // The image that the edit requests take. Its shorter side has the 256
 // pixels that Venice's edit API asks for, so it goes as it is; Dez sends a
 // smaller image as a larger copy (tests/e2e/image-to-video.e2e.ts has the
@@ -62,6 +71,10 @@ const GENERATED_PNG = solidPng(320, 256, [40, 160, 60])
 const EDITED_PNG = solidPng(20, 36, [200, 120, 20])
 const NEWEST_PNG = solidPng(28, 28, [150, 60, 180])
 const TALL_PNG = solidPng(40, 300, [60, 90, 200])
+// Both sides have the 256 pixels that Venice's upscale API asks for, so the
+// image goes as it is.
+const UPSCALE_INPUT_PNG = solidPng(256, 256, [220, 60, 60])
+const UPSCALED_PNG = solidPng(512, 512, [220, 60, 60])
 const STORED_IMAGE_NAME = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\.png$/
 
 /** What a view at its bottom may still have below it: scroll positions
@@ -148,11 +161,12 @@ describe('image generation', () => {
       models: [
         { id: PAINTER.modelId, name: PAINTER.modelName, outputs: ['image'], request: 'image' },
         { id: EDIT_MODEL.id, name: EDIT_MODEL.name, outputs: ['image'], request: 'imageEdit' },
-        { id: UPSCALE_MODEL.id, name: UPSCALE_MODEL.name, outputs: ['image'], request: 'none' },
+        { id: UPSCALE_MODEL.id, name: UPSCALE_MODEL.name, outputs: ['image'], request: 'upscale' },
+        { id: SKETCH_MODEL.id, name: SKETCH_MODEL.name, outputs: ['image'], request: 'none' },
         { id: LISTEN_MODEL.id, name: LISTEN_MODEL.name, outputs: ['text'], request: 'none', clipInput: 'audio' },
         { id: CHAT_MODEL.id, name: CHAT_MODEL.name, outputs: ['text', 'image'], request: 'chat' },
       ],
-    }, { heldPaths: [GENERATE_PATH, EDIT_PATH] })
+    }, { heldPaths: [GENERATE_PATH, EDIT_PATH, UPSCALE_PATH] })
     browser = setup.browser
   })
 
@@ -163,6 +177,8 @@ describe('image generation', () => {
 
   afterEach(async (ctx) => {
     await screenshotOnFailure(browser, ctx)
+    // A test that fails can leave the popup open.
+    if (await popupOpen(browser)) await closePopup(browser)
     await releaseImageLoads()
     await setup.mock.dropOpenReplies(browser)
   })
@@ -427,6 +443,59 @@ describe('image generation', () => {
     expect(await consoleErrors(browser)).toEqual([])
   })
 
+  it('upscales the image of the message with the scale of the popup, and sends no text', async () => {
+    const before = await generatedImages()
+    await pickModel(browser, PAINTER.name, UPSCALE_MODEL.name)
+    await openPopup(browser)
+    const scale = (picked: string) => ({ name: 'scale', label: 'Scale', options: ['2', '4'], picked })
+    const popup = {
+      headers: ['Model Parameters', 'Input'],
+      rows: [scale('2'), { name: 'creativity', label: 'Creativity', number: '0.01', min: '0', max: '0.02', step: '0.001' }],
+      hint: 'This model makes an image larger. It takes one image (pasted, or named with @id); the text of the message is not sent.',
+      reset: true,
+    }
+    await waitForValue(browser, 'popup of the upscale model', () => popupView(browser), popup)
+    await changeParameterField(browser, 'scale', '4', 'option')
+    await waitForValue(browser, 'popup with the scale of the user', () => popupView(browser), { ...popup, rows: [scale('4'), popup.rows[1]] })
+    await closePopup(browser)
+
+    await focusEditor(browser)
+    await pasteImage(browser, UPSCALE_INPUT_PNG)
+    await waitForValue(browser, 'pasted reference', async () => /\]\(id=a\)$/.test((await threadSections(browser))[0]?.text ?? ''), true)
+    const reference = (await threadSections(browser))[0].text
+    await submit(browser, 'Make it larger')
+
+    const upscale = await setup.mock.waitForRequest(browser)
+    expect(upscale.path).toBe(UPSCALE_PATH)
+    expect(JSON.parse(upscale.body)).toEqual({ scale: 4, creativity: 0.01, image: UPSCALE_INPUT_PNG.toString('base64') })
+    answer(upscale.reply, 'image/png', UPSCALED_PNG)
+
+    const [upscaledName] = await newGeneratedImages(before, 1)
+    const upscaledPath = path.join(generatedDir(), upscaledName)
+    expect(await fs.promises.readFile(upscaledPath)).toEqual(UPSCALED_PNG)
+    await waitForThread(browser, [
+      { role: 'user', text: `${reference}Make it larger` },
+      { role: 'agent', text: `![${upscaledPath}](id=b)` },
+      { role: 'user', text: '' },
+    ])
+    await waitForValue(browser, 'shown image sizes', async () => (await shownImages(browser)).map(({ width, height }) => [width, height]), [[256, 256], [512, 512]])
+    expect(await consoleErrors(browser)).toEqual([])
+  })
+
+  it('refuses an upscale with no image in the conversation with an error toast that tells what to do, and sends nothing', async () => {
+    const message = `${UPSCALE_MODEL.name} makes an image larger. Paste an image, or name one with @id.`
+    await pickModel(browser, PAINTER.name, UPSCALE_MODEL.name)
+    await submit(browser, 'Make it larger')
+
+    await waitForValue(browser, 'error toast', () => openToasts(browser, 'error'), [{ title: 'Cannot send', message }])
+    expect(await threadSections(browser)).toEqual([{ role: 'user', text: 'Make it larger' }])
+    expect(setup.mock.hasWaitingRequest()).toBe(false)
+    expect(await consoleErrors(browser)).toEqual([`Cannot send: ${message}`])
+
+    await click(browser, '.toast-card--error:not(.toast-card--closing) .toast-close')
+    await waitForValue(browser, 'error toast closed', () => openToasts(browser, 'error'), [])
+  })
+
   it('leaves no file and no agent section when the user stops a request that has begun its answer', async () => {
     const before = await generatedImages()
     await pickModel(browser, PAINTER.name, PAINTER.modelName)
@@ -447,7 +516,7 @@ describe('image generation', () => {
 
   // What the config tells of each model (`beforeAll`) picks the text.
   it.each<[string, { id: string, name: string }, Parameters<typeof unusableModelMessage>[1]]>([
-    ['has an API that Dez does not support', UPSCALE_MODEL, { outputs: ['image'] }],
+    ['has an API that Dez does not support', SKETCH_MODEL, { outputs: ['image'] }],
     ['needs a clip as its input', LISTEN_MODEL, { clipInput: 'audio' }],
   ])('refuses a model that %s with an error toast that tells so, and sends nothing', async (_cause, model, facts) => {
     const message = unusableModelMessage(model.name, facts)

@@ -46,12 +46,13 @@ export default sbp('sbp/selectors/register', {
       message = unusableModelMessage(model.modelName, cachedModel)
     } else if (kind !== 'chat') {
       // An input that the model is known not to take (no image for a model
-      // that edits one or makes its video from one, no lyrics for a model
-      // that needs them, a prompt that is too short or too long) gets no
-      // request: the check costs nothing, and it tells the user what to
-      // change. The end of a running reply's output changes no user message
-      // and adds no image, so the input that this checks is the input of
-      // the request. Only a clip model has text rules.
+      // that edits one, makes one larger, or makes its video from one; no
+      // lyrics for a model that needs them; a prompt that is too short or
+      // too long) gets no request: the check costs nothing, and it tells
+      // the user what to change. The end of a running reply's output
+      // changes no user message and adds no image, so the input that this
+      // checks is the input of the request. Only a clip model has text
+      // rules.
       const input = mediaRequestInput(kind, request.messages, tab.sections, cachedModel)
       message = missingImageProblem(model.modelName, kind, input.images.length) ?? clipTextProblem(model.modelName, cachedModel.text, input)
       mediaImages = { sent: input.images.length, leftOut: input.imagesLeftOut }

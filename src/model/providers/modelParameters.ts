@@ -1,8 +1,9 @@
 // The parameters of a media model: what a request to it can set, such as
-// the length of a clip or the voice of speech. A media format reads them
-// from the provider's model data (`ClipFormat.parameters` in
-// mediaFormats.ts). The user sets values in the provider settings popup, and
-// the `model_info` tool shows the parameters to a chat model.
+// the scale of an upscale, the length of a clip, or the voice of speech. A
+// media format reads them from the provider's model data or its docs
+// (`ImageFormat.parameters`, `ClipFormat.parameters` in mediaFormats.ts).
+// The user sets values in the provider settings popup, and the `model_info`
+// tool shows the parameters to a chat model.
 
 // A value of a list of options.
 export type OptionValue = string | number

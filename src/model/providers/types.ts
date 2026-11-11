@@ -16,12 +16,14 @@ export type ProviderId = string
 // The request kinds that go to the provider's media API (`mediaApi` in
 // config.ts, mediaFormats.ts) instead of its chat API.
 // `image`, `imageEdit`: the media API makes or edits an image.
+// `upscale`: the media API makes one image larger. The request takes that
+// image and no text, so the text of the message does not go.
 // `tts`, `music`, `video`, `imageToVideo`: the media API makes a clip:
 // speech that reads the user's text, music or a sound, or a video. A
 // `video` model makes its video from the text, and some also take an image
 // as a frame of it (`ModelInfo.images`). An `imageToVideo` model makes no
 // video without an image.
-export const MEDIA_KINDS = ['image', 'imageEdit', 'tts', 'music', 'video', 'imageToVideo'] as const
+export const MEDIA_KINDS = ['image', 'imageEdit', 'upscale', 'tts', 'music', 'video', 'imageToVideo'] as const
 
 export type MediaKind = (typeof MEDIA_KINDS)[number]
 
@@ -110,7 +112,7 @@ export interface ModelInfo {
   // kind of its own in place of `none`.
   clipInput?: MediaTagKind
   // What a request to the model can set (modelParameters.ts), for a model
-  // of a clip request kind whose provider tells it. Never empty. Missing:
+  // of a media request kind whose provider tells it. Never empty. Missing:
   // none.
   parameters?: ModelParameter[]
   // What the model takes as the text of a request (clipText.ts): the
@@ -121,8 +123,8 @@ export interface ModelInfo {
   // What the model takes as the input images of a request (clipImages.ts):
   // how many, and the size rules of each one. For a model of an edit or
   // video request kind whose provider tells it. Missing: an `imageEdit`
-  // model takes every image, an `imageToVideo` model one image, and a
-  // `video` model none (`maxInputImages`).
+  // model takes every image, an `upscale` or `imageToVideo` model one
+  // image, and a `video` model none (`maxInputImages`).
   images?: InputImageRules
 }
 
