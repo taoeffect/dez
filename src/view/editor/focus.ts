@@ -43,7 +43,7 @@ export function focusKeepingScroll(view: EditorView): void {
  *  still matches the state. The next `selectionchange` then moves the
  *  state's caret to the doc start. So a change that comes right after the
  *  focus comes back (the image trash, after its confirm prompt) moved a
- *  caret on the first line to the doc start (@codemirror/view 6.41.1,
+ *  caret on the first line to the doc start (@codemirror/view 6.43.15,
  *  `readSelectionRange`). A selection that is already right is left as it
  *  is. */
 export function syncDomSelection(view: EditorView): void {

@@ -49,29 +49,6 @@ interface MountedPlayer {
 
 const mountedPlayers = new WeakMap<HTMLElement, MountedPlayer>()
 
-/** Keeps the player `root` in the document while CM draws its line again.
- *
- *  CM puts a widget buffer (a zero-width `img.cm-widgetBuffer`) on each side
- *  of an inline widget. When CM 6.41.1 builds the line again, it takes the
- *  two old buffers in the reverse order. To make the DOM agree, it takes
- *  every node before the buffer that is now first out of the line, the
- *  player too, and puts them back in (`CompositeTile.sync`). An element that
- *  leaves the document ends its fullscreen, so a Save in fullscreen ended
- *  the fullscreen.
- *
- *  CM calls `updateDOM` while it builds the line, before that step. With the
- *  old buffers out of the line, CM only has nodes to put in around the
- *  player, in any order, and the player stays where it is.
- *
- *  @codemirror/view 6.43.7 takes the buffers in doc order: this function can
- *  go when Dez uses that version or a later one (the e2e case "a Save in
- *  fullscreen" tells if the player still stays). */
-function detachWidgetBuffers(root: HTMLElement): void {
-  for (const sibling of [root.previousSibling, root.nextSibling]) {
-    if (sibling instanceof HTMLImageElement && sibling.classList.contains('cm-widgetBuffer')) sibling.remove()
-  }
-}
-
 /** The player of one clip. */
 class MediaWidget extends WidgetType {
   constructor(readonly tag: MediaTagData) {
@@ -152,11 +129,20 @@ class MediaWidget extends WidgetType {
   // gives the new tag to the drawn player instead: the clip is the same one
   // (its id never changes), and the player keeps its place in the clip over
   // a new source (`MediaPlayer.vue`).
+  //
+  // The player's element also stays in the document while CM draws its line
+  // again, which a player that fills the screen needs: an element that
+  // leaves the document ends its fullscreen. This rests on the order in
+  // which CM takes the line's old widget buffers (the zero-width
+  // `img.cm-widgetBuffer` on each side of an inline widget).
+  // @codemirror/view 6.43.15 takes them in doc order. 6.41.1 took them in
+  // the reverse order, and moved the player out of the line and back in to
+  // make the DOM agree, so a Save in fullscreen ended the fullscreen (the
+  // e2e case "keeps a video in fullscreen over a Save" covers it).
   updateDOM(dom: HTMLElement, _view: EditorView, from: MediaWidget): boolean {
     const player = mountedPlayers.get(dom)
     if (!player || from.tag.kind !== this.tag.kind || from.tag.id !== this.tag.id) return false
     player.tag.value = this.tag
-    detachWidgetBuffers(dom)
     return true
   }
   destroy(dom: HTMLElement): void {

@@ -267,7 +267,7 @@ function withModifiers (name: string, event: ShortcutKeyEvent, withShift: boolea
 }
 
 /** The key names that a CodeMirror keymap tries for this keydown, in its
- *  order (`runHandlers` in @codemirror/view 6.41), so that the window
+ *  order (`runHandlers` in @codemirror/view 6.43), so that the window
  *  handler and the find field pick the same binding as the editor:
  *  1. `keyName(event)` with the modifiers; Shift only for a key that types
  *     no character, because a character already shows Shift (`T`, `{`);
