@@ -1411,4 +1411,23 @@ export default sbp('sbp/selectors/register', {
     }
   },
 
+  // Every text in memory that can name a stored file (an image, a saved
+  // clip): the text and the prompt bodies of each section of the open tabs
+  // and of the closed tabs that can come back (`reopenClosed`), and the
+  // saved prompts. Some of it is not on disk: text that is not saved yet, a
+  // closed tab's unsent text. So the cleanup of unused stored files
+  // (src/controller/unusedFiles.ts) reads it together with the conversation
+  // files. Each node is a text of its own: in a joined text, the start of a
+  // node would make another name out of a file name that ends the node
+  // before it.
+  'dez.model/heldTexts' (): string[] {
+    const tabStore = useTabStore()
+    const tabs = [...tabStore.tabs, ...tabStore.closedTabs.map((closed) => closed.tab)]
+    const nodes = tabs.flatMap((tab) => tab.sections.flatMap((section) => section.content))
+    return [
+      ...nodes.map((node) => (node.kind === 'text' ? node.text : node.body)),
+      ...usePromptsStore().prompts.map((prompt) => prompt.content),
+    ]
+  },
+
 })

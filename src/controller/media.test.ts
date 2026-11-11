@@ -257,12 +257,12 @@ describe('dez.controller/media/startCleanup', () => {
     vi.useFakeTimers()
     vi.setSystemTime(start)
     let files: AppFileEntry[] = [
-      { name: 'old.mp4', updatedAt: start - MEDIA_TEMP_LIFETIME_MS - 1 },
-      { name: 'at-the-end.mp3', updatedAt: start - MEDIA_TEMP_LIFETIME_MS },
-      { name: 'one-ms-left.mp4', updatedAt: start - MEDIA_TEMP_LIFETIME_MS + 1 },
-      { name: 'new.mp4', updatedAt: start },
+      { name: 'old.mp4', updatedAt: start - MEDIA_TEMP_LIFETIME_MS - 1, size: 4 },
+      { name: 'at-the-end.mp3', updatedAt: start - MEDIA_TEMP_LIFETIME_MS, size: 4 },
+      { name: 'one-ms-left.mp4', updatedAt: start - MEDIA_TEMP_LIFETIME_MS + 1, size: 4 },
+      { name: 'new.mp4', updatedAt: start, size: 4 },
       // The temp file of a download that the app did not end.
-      { name: 'cut.mp4.4012.7.tmp', updatedAt: start - 2 * MEDIA_TEMP_LIFETIME_MS },
+      { name: 'cut.mp4.4012.7.tmp', updatedAt: start - 2 * MEDIA_TEMP_LIFETIME_MS, size: 4 },
     ]
     // The list is what the folder holds: a deleted file is not in it again.
     listAppFiles = async () => files.filter((file) => !deletedFiles.some((deleted) => deleted.path === `media/${file.name}`))
@@ -284,8 +284,8 @@ describe('dez.controller/media/startCleanup', () => {
 
     // A file that cannot be deleted does not stop the other deletes.
     files = [
-      { name: 'locked.mp4', updatedAt: 0 },
-      { name: 'free.mp4', updatedAt: 0 },
+      { name: 'locked.mp4', updatedAt: 0, size: 4 },
+      { name: 'free.mp4', updatedAt: 0, size: 4 },
     ]
     deleteAppFile = async (file) => {
       if (file.path === 'media/locked.mp4') throw 'Failed to delete media/locked.mp4: Permission denied (os error 13)'
@@ -305,7 +305,7 @@ describe('dez.controller/media/startCleanup', () => {
     expect(consoleError).toHaveBeenLastCalledWith('Failed to list the temp copies of clips:', 'Failed to list media: Permission denied (os error 13)')
 
     deleteAppFile = async () => {}
-    listAppFiles = async () => [{ name: 'locked.mp4', updatedAt: 0 }]
+    listAppFiles = async () => [{ name: 'locked.mp4', updatedAt: 0, size: 4 }]
     await vi.advanceTimersByTimeAsync(HOUR)
 
     expect(deletedFiles.slice(5)).toStrictEqual(cacheFiles('locked.mp4'))

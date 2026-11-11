@@ -2,6 +2,7 @@ import { StateEffect, StateField } from '@codemirror/state'
 import type { EditorView } from '@codemirror/view'
 import { readableThinkingRounds, type ReadableThinking } from '../../model/chat/thinking'
 import type { Role, SectionThinking } from '../../model/chat/types'
+import { byteSizeText } from '../../utils/byteSize'
 import { measureLineHeights } from './editorMeasure'
 
 /** What the thinking parts of an agent role pill show: the left slot (a
@@ -211,13 +212,6 @@ function setPanelPlaceholder(panel: HTMLElement, streaming: boolean): boolean {
   return true
 }
 
-function sizeLabel(chars: number): string {
-  if (chars < 1024) return `${chars} B`
-  const kilobytes = Math.round(chars / 1024)
-  if (kilobytes < 1024) return `${kilobytes} KB`
-  return `${(chars / (1024 * 1024)).toFixed(1)} MB`
-}
-
 /** Shows the encrypted pill after the panel text while `readable` leaves
  *  out encrypted lines, so that they never go without a trace; returns
  *  whether it changed. It is not part of the text field, so a copy from
@@ -230,7 +224,7 @@ function renderEncryptedPill(panel: HTMLElement, readable: ReadableThinking): bo
     return pill !== null
   }
   const blocks = readable.encryptedLines > 1 ? ` · ${readable.encryptedLines} blocks` : ''
-  const label = `Encrypted reasoning hidden · ${sizeLabel(readable.encryptedChars)}${blocks}`
+  const label = `Encrypted reasoning hidden · ${byteSizeText(readable.encryptedChars)}${blocks}`
   if (pill?.textContent === label) return false
   if (!pill) {
     pill = document.createElement('span')

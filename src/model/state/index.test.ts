@@ -237,6 +237,37 @@ describe('dez.model/tabs/reopenClosed', () => {
   })
 })
 
+describe('dez.model/heldTexts', () => {
+  it('gives each text and prompt body of the open and the closed tabs, and each saved prompt', () => {
+    sbp('dez.model/tabs/replaceSections', activeId(), [
+      {
+        id: 'u1',
+        role: 'user',
+        content: [
+          { kind: 'text', text: 'open /a/one.png' },
+          { kind: 'prompt', id: 'p1', promptId: 'saved', name: 'Review', body: 'body two.png' },
+          { kind: 'text', text: 'tail' },
+        ],
+      },
+      { id: 'a1', role: 'agent', content: [{ kind: 'text', text: 'reply three.png' }] },
+    ])
+    const closed = sbp('dez.model/tabs/create') as Tab
+    sbp('dez.model/tabs/replaceSections', closed.id, [{ id: 'u2', role: 'user', content: [{ kind: 'text', text: 'closed four.png' }] }])
+    sbp('dez.model/tabs/close', closed.id)
+    sbp('dez.model/prompts/add', 'Saved', 'prompt five.png')
+
+    // One text for each node: a joined text would read `one.pngbody`.
+    expect(sbp('dez.model/heldTexts')).toEqual([
+      'open /a/one.png',
+      'body two.png',
+      'tail',
+      'reply three.png',
+      'closed four.png',
+      'prompt five.png',
+    ])
+  })
+})
+
 describe('dez.model/tabs/move', () => {
   function move (tabId: string, toIndex: number): void {
     sbp('dez.model/tabs/move', tabId, toIndex)

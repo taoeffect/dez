@@ -34,8 +34,9 @@ export interface AppFileRef {
 }
 
 // One file of `dez.native/listAppFiles`. `updatedAt` is in milliseconds since
-// the Unix epoch.
+// the Unix epoch, and `size` is in bytes.
 export interface AppFileEntry {
   name: string
   updatedAt: number
+  size: number
 }

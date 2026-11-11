@@ -10,6 +10,14 @@ import type { AppStatePayload, ConversationData, ConversationFile, ConversationS
 const APP_STATE_FILE = 'app_state.json'
 const PROMPTS_FILE = 'prompts.json'
 const MODEL_CACHE_FILE = 'model_cache.json'
+// The folder of the conversation files, relative to the app folder.
+const CONVERSATIONS_FOLDER = 'conversations'
+
+// The stem of a file that Dez can open as a conversation. The native
+// conversation commands drop every other character from an id (`sanitize_id`
+// in src-tauri/src/persistence.rs), so no id opens a file whose stem holds
+// one (a file that the user put into the folder).
+const CONVERSATION_FILE_STEM = /^[A-Za-z0-9_-]*$/
 
 // App code reads and writes the files under ~/.config/dez/ only through
 // these selectors, which own the file formats. They reach the disk only
@@ -92,6 +100,39 @@ export default sbp('sbp/selectors/register', {
       await sbp('dez.native/deleteConversationFile', id)
     } catch (error) {
       console.error('Failed to delete conversation:', error)
+      throw error
+    }
+  },
+
+  // Gives the raw text of each saved conversation to `visit`, one file at a
+  // time: `index` counts from 0, and `count` is the number of files. It is
+  // for a reader that must see every conversation (the cleanup of unused
+  // stored files, src/controller/unusedFiles.ts). So any failure rejects: a
+  // part of the conversations must never pass for all of them. The text is
+  // not parsed, so a file that the parser refuses is read too.
+  async 'dez.persistence/eachConversationText' (visit: (text: string, index: number, count: number) => void): Promise<void> {
+    try {
+      // Two listings, because each one leaves something out. `listAppFiles`
+      // rejects when the folder cannot be read, but it lists no link.
+      // `listConversationFiles` lists a link too (Dez opens a conversation
+      // whose file is a link), but it gives an empty list for a folder that
+      // it cannot read.
+      const files = await sbp('dez.native/listAppFiles', CONVERSATIONS_FOLDER) as Array<{ name: string }>
+      const conversations = await sbp('dez.native/listConversationFiles', false) as ConversationFile[]
+      const names = new Set([
+        ...files.map((file) => file.name).filter((name) => name.endsWith('.md')),
+        ...conversations.filter((file) => CONVERSATION_FILE_STEM.test(file.id)).map((file) => `${file.id}.md`),
+      ])
+      // Not `loadConversationFile`: it rejects for a file that is not UTF-8.
+      // Here such bytes read as U+FFFD, and the rest of the text counts.
+      const decoder = new TextDecoder()
+      let index = 0
+      for (const name of names) {
+        const bytes = await sbp('dez.native/loadAppFileBytes', `${CONVERSATIONS_FOLDER}/${name}`) as Uint8Array
+        visit(decoder.decode(bytes), index++, names.size)
+      }
+    } catch (error) {
+      console.error('Failed to read the conversations:', error)
       throw error
     }
   },

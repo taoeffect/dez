@@ -44,6 +44,8 @@ pub struct AppFileEntry {
     // Milliseconds since the Unix epoch.
     #[serde(rename = "updatedAt")]
     pub updated_at: i64,
+    // Bytes.
+    pub size: u64,
 }
 
 // All app data is under `$HOME/.config/dez/` on every OS. The path comes from
@@ -376,7 +378,7 @@ fn list_files(dir: &Path) -> std::io::Result<Vec<AppFileEntry>> {
             continue;
         }
         if let Some(updated_at) = modified_ms(&metadata) {
-            files.push(AppFileEntry { name, updated_at });
+            files.push(AppFileEntry { name, updated_at, size: metadata.len() });
         }
     }
     Ok(files)
@@ -607,13 +609,14 @@ pub(crate) mod tests {
     }
 
     // The cleanup of old files deletes by this listing, so it must hold only
-    // plain files, each with its own time.
+    // plain files, each with its own time. The cleanup of unused files tells
+    // the user how much it frees, so each file has its own size.
     #[cfg(unix)]
     #[test]
-    fn list_gives_the_files_of_a_folder_with_their_times() {
+    fn list_gives_the_files_of_a_folder_with_their_times_and_sizes() {
         let dir = TempDir::new("list");
-        for name in ["old.mp4", "new.mp3", "bad name.mp4"] {
-            std::fs::write(dir.0.join(name), b"clip").expect("write");
+        for (name, content) in [("old.mp4", &b"clip"[..]), ("new.mp3", b"a longer clip"), ("bad name.mp4", b"clip")] {
+            std::fs::write(dir.0.join(name), content).expect("write");
         }
         std::fs::create_dir(dir.0.join("folder")).expect("create folder");
         std::os::unix::fs::symlink(dir.0.join("old.mp4"), dir.0.join("link.mp4")).expect("link");
@@ -635,6 +638,8 @@ pub(crate) mod tests {
         assert_eq!(names, ["new.mp3", "old.mp4"]);
         assert!((now - files[0].updated_at).abs() < 60_000, "{}", files[0].updated_at);
         assert_eq!(files[1].updated_at, 1_700_000_000_000);
+        let sizes: Vec<u64> = files.iter().map(|file| file.size).collect();
+        assert_eq!(sizes, [13, 4]);
     }
 
     #[test]

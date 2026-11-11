@@ -7,6 +7,7 @@ import PromptManager from '../prompts/PromptManager.vue'
 import ProviderManager from './ProviderManager.vue'
 import ModelPicker from '../model-selector/ModelPicker.vue'
 import ShortcutManager from './ShortcutManager.vue'
+import { deleteUnusedFiles, unusedFilesProgress } from './unusedFiles'
 
 const { settings, modelCache } = useModelState()
 
@@ -162,7 +163,7 @@ function onOverlayClick(e: MouseEvent) {
 
           <!-- Notifications -->
           <div v-if="settings.settingsSection === 'notifications'" class="settings-section">
-            <div class="notifications-group">
+            <div class="settings-group">
               <label class="settings-checkbox-row">
                 <input
                   type="checkbox"
@@ -191,7 +192,7 @@ function onOverlayClick(e: MouseEvent) {
               </div>
             </div>
 
-            <div class="notifications-group">
+            <div class="settings-group">
               <label class="settings-checkbox-row">
                 <input
                   type="checkbox"
@@ -201,10 +202,10 @@ function onOverlayClick(e: MouseEvent) {
                 />
                 Show a system notification when a reply ends
               </label>
-              <p class="notifications-indented notifications-hint">Click the notification to go to the tab of the reply.</p>
+              <p class="notifications-indented settings-hint">Click the notification to go to the tab of the reply.</p>
             </div>
 
-            <p class="notifications-hint">
+            <p class="settings-hint">
               Alerts come only for a reply that finishes or fails while you are not looking at it:
               in another tab, while you use another window, or when you have been away from the
               computer for more than 1 minute.
@@ -268,6 +269,35 @@ function onOverlayClick(e: MouseEvent) {
               <button class="settings-btn settings-btn--sm" @click="sbp('dez.controller/openAppFolder')">
                 Open Dez Folder
               </button>
+            </div>
+
+            <div class="settings-group">
+              <div class="settings-row">
+                <label class="settings-label">Unused files</label>
+                <button
+                  class="settings-btn settings-btn--sm unused-files-btn"
+                  :disabled="unusedFilesProgress !== null"
+                  @click="deleteUnusedFiles()"
+                >
+                  Delete Unused Files…
+                </button>
+              </div>
+              <p class="settings-hint">
+                Images, audio, and video that no conversation or prompt uses any more stay on disk.
+                This looks for them, tells you how many there are and how much space they take,
+                and deletes them if you agree.
+              </p>
+              <div
+                v-if="unusedFilesProgress !== null"
+                class="settings-progress"
+                role="progressbar"
+                aria-label="Looking for unused files"
+                aria-valuemin="0"
+                aria-valuemax="100"
+                :aria-valuenow="Math.round(unusedFilesProgress * 100)"
+              >
+                <div class="settings-progress-fill" :style="{ width: `${unusedFilesProgress * 100}%` }" />
+              </div>
             </div>
           </div>
         </div>
@@ -405,9 +435,9 @@ function onOverlayClick(e: MouseEvent) {
   opacity: 0.8;
 }
 
-/* A checkbox and the rows that belong to it, closer together than the
-   section's rows. */
-.notifications-group {
+/* A setting and the rows that belong to it (a hint, a row under a
+   checkbox), closer together than the section's rows. */
+.settings-group {
   display: flex;
   flex-direction: column;
   gap: 8px;
@@ -474,10 +504,24 @@ function onOverlayClick(e: MouseEvent) {
   font-variant-numeric: tabular-nums;
 }
 
-.notifications-hint {
+.settings-hint {
   font-size: 12px;
   line-height: 1.4;
   color: var(--color-muted);
+}
+
+/* The bar of a task that runs, drawn as the volume slider's track. */
+.settings-progress {
+  height: 4px;
+  border-radius: 2px;
+  background: var(--color-border);
+  overflow: hidden;
+}
+
+.settings-progress-fill {
+  height: 100%;
+  background: var(--color-accent);
+  transition: width 0.15s;
 }
 
 /* Searchable default-model picker (replaces the old native <select>). The
