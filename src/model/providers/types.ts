@@ -3,8 +3,9 @@ import type { MediaTagKind } from '../chat/mediaTags'
 import type { RequestMessage, ThinkingReplay } from '../chat/types'
 import { normalizeOutputs, type ModelOutput } from '../modelOutputs'
 import type { StreamedToolCall, ToolDefinition } from '../tools/types'
-import type { ApiFormatId, ProviderAuth, ProviderSettingDef } from './config'
+import type { ApiFormatId, ProviderAuth } from './config'
 import { cloneModelParameter, type ModelParameter } from './modelParameters'
+import type { ModelToggles } from './modelToggles'
 
 // Any id that passes `isValidProviderId()` in `config.ts`: built-in ids plus
 // user-defined custom provider ids.
@@ -75,6 +76,14 @@ export interface ModelInfo {
   // true: the model calls tools; false: it does not, and the request sends
   // no tools. Missing: unknown, and the request sends the tools.
   toolCalling?: boolean
+  // false: the model does not think, so it gets no Thinking toggle and its
+  // requests send no thinking fields. Missing: unknown, and the provider's
+  // `thinking` config decides, as for a model that thinks.
+  thinking?: boolean
+  // The keys of the provider's config toggles (`settings` in config.ts) that
+  // the model is known not to take: it gets neither their rows nor their
+  // request fields. Never empty. Missing: none is known.
+  unsupportedSettings?: string[]
   // What the model makes, each type once, in MODEL_OUTPUTS order. Missing:
   // the provider does not tell, and Dez counts it as a text model
   // (`effectiveOutputs` in modelOutputs.ts).
@@ -87,7 +96,7 @@ export interface ModelInfo {
   parameters?: ModelParameter[]
 }
 
-export type ModelCapabilities = Pick<ModelInfo, 'imageInput' | 'toolCalling' | 'outputs' | 'request' | 'parameters'>
+export type ModelCapabilities = Pick<ModelInfo, 'imageInput' | 'toolCalling' | 'thinking' | 'unsupportedSettings' | 'outputs' | 'request' | 'parameters'>
 
 // Display names for agent role pills and history rows: provider id ->
 // provider name, and `modelRefKey` -> model name. Maps, not plain objects,
@@ -117,12 +126,10 @@ export interface ProviderInfo {
   supportsThinking: boolean
 }
 
-// What the provider settings popup shows for one model: the provider's name,
-// its toggles for that model, and whether it adds the Thinking toggle.
-export interface ProviderSettingsDescriptor {
+// What the provider settings popup shows for one model: the provider's name
+// and the toggles that apply to the model.
+export interface ProviderSettingsDescriptor extends ModelToggles {
   name: string
-  settings: ProviderSettingDef[]
-  supportsThinking: boolean
 }
 
 // Result of a provider model fetch. `ok` is the basis for a provider's
@@ -229,12 +236,15 @@ export class ProviderNotConfiguredError extends ProviderError {
 
 // Leaves each capability out when it is unknown, so the model cache file and
 // whole-object comparisons hold no `undefined` field. `outputs` becomes a new
-// array in table order, and `parameters` a deep copy, so two models never
-// share one (a store copy and its snapshot, a config model and the cache).
+// array in table order, `unsupportedSettings` a new array, and `parameters`
+// a deep copy, so two models never share one (a store copy and its snapshot,
+// a config model and the cache).
 export function providerModel(provider: ProviderId, id: string, name: string, capabilities: ModelCapabilities = {}): ModelInfo {
   const model: ModelInfo = { id, name, provider }
   if (capabilities.imageInput !== undefined) model.imageInput = capabilities.imageInput
   if (capabilities.toolCalling !== undefined) model.toolCalling = capabilities.toolCalling
+  if (capabilities.thinking !== undefined) model.thinking = capabilities.thinking
+  if (capabilities.unsupportedSettings?.length) model.unsupportedSettings = [...capabilities.unsupportedSettings]
   if (capabilities.outputs !== undefined) model.outputs = normalizeOutputs(capabilities.outputs)
   if (capabilities.request !== undefined) model.request = capabilities.request
   if (capabilities.parameters !== undefined) model.parameters = capabilities.parameters.map(cloneModelParameter)

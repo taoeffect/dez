@@ -19,8 +19,10 @@ export const BUILT_IN_PROVIDER_CONFIGS: readonly ProviderConfig[] = [
     modelListQuery: { output_modalities: 'all' },
     modelImageInput: { path: 'architecture.input_modalities' },
     // A list of request fields that the model takes; it holds "tools" for a
-    // model that calls tools.
+    // model that calls tools, and "reasoning" for one that takes the
+    // `reasoning` field of `thinking` below.
     modelToolCalling: { path: 'supported_parameters' },
+    modelThinking: { path: 'supported_parameters' },
     // A list; "text" with "image" is a chat model that also makes images
     // (`imageOutputBody`). Image-only models answer only through
     // OpenRouter's Image API (their `endpoints` have no chat route), which
@@ -63,7 +65,8 @@ export const BUILT_IN_PROVIDER_CONFIGS: readonly ProviderConfig[] = [
     mediaApi: { format: 'openrouter' },
     // OpenRouter drops a field that the routed model does not take, so the
     // request is safe for every model. Some models must think, so there is no
-    // off field.
+    // off field. A model whose `supported_parameters` has no "reasoning"
+    // gets no field and no Thinking toggle (`modelThinking`).
     thinking: { enabledBody: { reasoning: { enabled: true } } },
   },
   {
@@ -97,6 +100,7 @@ export const BUILT_IN_PROVIDER_CONFIGS: readonly ProviderConfig[] = [
     modelListQuery: { type: 'all' },
     modelImageInput: { path: 'model_spec.capabilities.supportsVision' },
     modelToolCalling: { path: 'model_spec.capabilities.supportsFunctionCalling' },
+    modelThinking: { path: 'model_spec.capabilities.supportsReasoning' },
     // One `type` per model. `inpaint` models edit images. `music` models
     // also make sounds. Every video model has the type `video`: only the
     // ones that need just a text get requests; the others need an image or
@@ -138,8 +142,10 @@ export const BUILT_IN_PROVIDER_CONFIGS: readonly ProviderConfig[] = [
     // The image, speech, music, and video models take Venice's own media
     // API.
     mediaApi: { format: 'venice' },
-    // Every request sends these `venice_parameters` too, with these defaults
+    // A chat request sends these `venice_parameters` too, with these defaults
     // when the user has not changed a toggle in the provider settings popup.
+    // Each text model's `model_spec.capabilities` tells which searches it
+    // takes (`modelSupport`).
     settings: [
       {
         key: 'webSearch',
@@ -151,6 +157,7 @@ export const BUILT_IN_PROVIDER_CONFIGS: readonly ProviderConfig[] = [
         // are booleans.
         onValue: 'on',
         offValue: 'off',
+        modelSupport: { path: 'model_spec.capabilities.supportsWebSearch' },
       },
       {
         key: 'xSearch',
@@ -159,8 +166,12 @@ export const BUILT_IN_PROVIDER_CONFIGS: readonly ProviderConfig[] = [
         default: true,
         bodyPath: 'venice_parameters.enable_x_search',
         // X search applies only to Grok models, and every Grok model id
-        // Venice serves starts with `grok-` (e.g. grok-4-20).
+        // Venice serves starts with `grok-` (e.g. grok-4-20). The prefix
+        // is the rule for a model that the model cache does not have yet;
+        // the flag of the list then leaves out a Grok model with no X
+        // search (`grok-build-0-1`, 2026-11-10).
         modelIdPrefix: 'grok-',
+        modelSupport: { path: 'model_spec.capabilities.supportsXSearch' },
       },
       {
         key: 'webScraping',

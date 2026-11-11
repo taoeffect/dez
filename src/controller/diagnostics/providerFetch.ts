@@ -47,7 +47,8 @@ function chatRequestForProvider(
     throw providerSecretError()
   }
 
-  return provider.chatRequest(messages, modelId, providerSecretValue).request
+  // Only the id: a probe sends every toggle of the provider at its default.
+  return provider.chatRequest(messages, { id: modelId }, providerSecretValue).request
 }
 
 async function probeChat(

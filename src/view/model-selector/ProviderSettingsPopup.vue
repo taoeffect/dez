@@ -10,8 +10,8 @@ import { TOOLS_DEFAULT, TOOLS_SETTING_KEY } from '../../model/providers/toolsSet
 
 const { activeModel, settings } = useModelState()
 
-// Display name + the toggles shown for the active model, read through the
-// provider selector boundary (handles unknown/invalid provider ids by
+// Display name + the toggles that apply to the active model, read through
+// the provider selector boundary (handles unknown/invalid provider ids by
 // returning null) instead of importing the model registry into the view.
 const descriptor = computed(() => {
   const providerId = activeModel.value?.providerId
@@ -24,16 +24,19 @@ const providerName = computed(
   () => descriptor.value?.name ?? activeModel.value?.providerId ?? '',
 )
 
-// Dez's own toggles come first: Thinking (only for a provider with thinking),
-// then Tools (every provider). They are stored with the config's toggles, so
-// the rows share one code path, and "Reset to defaults" resets them too. An
-// unknown provider (no descriptor) gets no rows.
+// Dez's own toggles come first: Thinking, then Tools. They are stored with
+// the config's toggles, so the rows share one code path, and "Reset to
+// defaults" resets them too. Only the toggles that apply to the active model
+// show (`modelToggles` in model/providers/modelToggles.ts): a model that
+// takes no chat request gets none. A toggle that does not show keeps its
+// stored value, as the values are per provider. An unknown provider (no
+// descriptor) gets no rows.
 const settingDefs = computed(() => {
   const current = descriptor.value
   if (!current) return []
   return [
-    ...(current.supportsThinking ? [{ key: THINKING_SETTING_KEY, label: 'Thinking', default: THINKING_DEFAULT }] : []),
-    { key: TOOLS_SETTING_KEY, label: 'Tools', default: TOOLS_DEFAULT },
+    ...(current.thinking ? [{ key: THINKING_SETTING_KEY, label: 'Thinking', default: THINKING_DEFAULT }] : []),
+    ...(current.tools ? [{ key: TOOLS_SETTING_KEY, label: 'Tools', default: TOOLS_DEFAULT }] : []),
     ...current.settings,
   ]
 })
@@ -104,11 +107,11 @@ function chooseNumber(parameter: RangeParameter, event: Event) {
   input.value = rangeText(parameter)
 }
 
-// Resets the provider's toggles and the active model's parameters.
+// Resets the toggles that show and the active model's parameters.
 function resetToDefaults() {
   const model = activeModel.value
   if (!model) return
-  sbp('dez.model/settings/resetProviderSettings', model.providerId, model.modelId)
+  sbp('dez.model/settings/resetProviderSettings', model.providerId, settingDefs.value.map((def) => def.key), model.modelId)
 }
 </script>
 
@@ -178,8 +181,10 @@ function resetToDefaults() {
         Reset to defaults
       </button>
     </template>
+    <!-- A known provider has settings, but none for this model (a media
+         model with no parameters, a chat model that takes no toggle). -->
     <div v-else class="provider-settings-empty">
-      {{ activeModel ? `No Settings for ${providerName}` : 'No provider selected' }}
+      {{ !activeModel ? 'No provider selected' : descriptor ? 'No Settings for this model' : `No Settings for ${providerName}` }}
     </div>
   </div>
 </template>

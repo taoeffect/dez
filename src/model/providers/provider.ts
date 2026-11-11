@@ -2,10 +2,11 @@ import type { JsonObject } from '../../utils/json'
 import type { NativeHttpHeaders, NativeHttpRequest, NativeHttpResponseHead } from '../../utils/protocol/nativeHttp'
 import type { Secret } from '../../utils/secret'
 import { API_FORMATS, type ApiFormat } from './apiFormats'
-import { FORBIDDEN_BODY_KEYS, type ProviderConfig, type ProviderSettingDef } from './config'
+import { FORBIDDEN_BODY_KEYS, type ProviderConfig } from './config'
 import { MEDIA_FORMATS, type ClipFormat, type ClipInput, type ClipJob, type ImageFormat, type MediaFormat, type MediaInput, type MediaWireRequest } from './mediaFormats'
 import type { ParameterValues } from './modelParameters'
-import { isRecord, modelCapability, modelData, modelOutputsAndRequest } from './modelParsing'
+import { isRecord, modelCapability, modelData, modelOutputsAndRequest, unsupportedSettings } from './modelParsing'
+import { modelToggles, type ToggleModel } from './modelToggles'
 import { isThinkingEnabled } from './thinking'
 import { ProviderError, effectiveRequest, isClipKind, providerModel, type ChatMessage, type ChatRequestContext, type ClipKind, type GeneratedMedia, type ImageKind, type ModelInfo, type ProviderInfo } from './types'
 
@@ -85,11 +86,13 @@ export class Provider {
 
   // Reads the `{ data: [...] }` model list both formats return. The name
   // falls back from `name` (OpenAI-style servers) to `display_name`
-  // (Anthropic-style) to the id (servers that report only ids). The image
-  // and tool flags, the outputs, and the request kind are read only where
-  // the config's `modelImageInput`, `modelToolCalling`, and `modelOutputs`
-  // point. Models that make nothing stay in this list; `mergeModels` drops
-  // them, so the diagnostics report shows what the server sent.
+  // (Anthropic-style) to the id (servers that report only ids). The image,
+  // tool, and thinking flags, the toggles that the model does not take, the
+  // outputs, and the request kind are read only where the config's
+  // `modelImageInput`, `modelToolCalling`, `modelThinking`,
+  // `settings[].modelSupport`, and `modelOutputs` point. Models that make
+  // nothing stay in this list; `mergeModels` drops them, so the diagnostics
+  // report shows what the server sent.
   parseModels(data: unknown): ModelInfo[] {
     const models: ModelInfo[] = []
 
@@ -102,6 +105,8 @@ export class Provider {
       models.push(providerModel(this.id, id, name?.trim() ?? id, {
         imageInput: modelCapability(model, this.config.modelImageInput, 'image'),
         toolCalling: modelCapability(model, this.config.modelToolCalling, 'tools'),
+        thinking: modelCapability(model, this.config.modelThinking, 'reasoning'),
+        unsupportedSettings: unsupportedSettings(model, this.config.settings),
         ...modelOutputsAndRequest(model, this.config.modelOutputs),
       }))
     }
@@ -129,6 +134,8 @@ export class Provider {
       merged.set(model.id, providerModel(this.id, model.id, name, {
         imageInput: model.imageInput ?? fetchedModel?.imageInput,
         toolCalling: model.toolCalling ?? fetchedModel?.toolCalling,
+        thinking: model.thinking ?? fetchedModel?.thinking,
+        unsupportedSettings: fetchedModel?.unsupportedSettings,
         outputs: model.outputs ?? fetchedModel?.outputs,
         request: model.request ?? fetchedModel?.request,
       }))
@@ -198,29 +205,36 @@ export class Provider {
     })
   }
 
+  // `model`: the model of the request, with what the model cache knows of
+  // it; only its id for a model that the cache does not have, and for a
+  // diagnostics probe. The toggles that apply to it (`modelToggles`) decide
+  // the thinking and settings fields, so the body holds what the provider
+  // settings popup shows for the model.
+  //
   // `overrides` are the user's stored toggle values for this provider
   // (settings.providerSettings[id]); missing keys use the setting default.
   // The Thinking toggle is one of them (thinking.ts).
   chatRequest(
     messages: ChatMessage[],
-    modelId: string,
+    model: ToggleModel,
     secret: Secret<string> | null,
     overrides: Record<string, boolean> = {},
     context: ChatRequestContext = {},
   ): ProviderChatRequest {
-    const thinking = this.config.thinking
+    const toggles = modelToggles(this.config, model)
+    // A model that is known not to think is like a provider with no
+    // `thinking`: neither thinking body goes, and the reply keeps none.
+    const thinking = toggles.thinking ? this.config.thinking : undefined
     const thinkingOn = thinking !== undefined && isThinkingEnabled(overrides)
     // Earlier thinking goes back only in a request that asks for thinking.
     const sentMessages = thinkingOn ? messages : messages.map(withoutThinking)
-    const { body, prefixHash } = this.format.chatBody(sentMessages, modelId, this.config, context)
+    const { body, prefixHash } = this.format.chatBody(sentMessages, model.id, this.config, context)
     if (this.config.requestBody) mergeBodyPart(body, this.config.requestBody)
     // A fixed part for a model, so the body stays the same in every request
     // of a conversation with that model (the prompt cache).
     if (context.imageOutput && this.config.imageOutputBody) mergeBodyPart(body, this.config.imageOutputBody)
 
-    // Every setting is written, also the ones hidden for this model, so the
-    // body does not depend on which toggles the popup shows.
-    for (const setting of this.config.settings ?? []) {
+    for (const setting of toggles.settings) {
       const override = overrides[setting.key]
       const enabled = typeof override === 'boolean' ? override : setting.default
       writeBodyPath(body, setting.bodyPath, enabled ? (setting.onValue ?? true) : (setting.offValue ?? false))
@@ -298,11 +312,6 @@ export class Provider {
     const quote = this.clipFormatOrNone()?.quote
     const wire = quote?.request(kind, this.config.baseUrl, modelId, values, entry)
     return quote && wire ? { request: { ...this.mediaApiRequest(wire, secret), timeoutMs: MODEL_LIST_TIMEOUT_MS }, usd: quote.usd } : null
-  }
-
-  visibleSettings(modelId: string): ProviderSettingDef[] {
-    return (this.config.settings ?? []).filter((setting) =>
-      setting.modelIdPrefix === undefined || modelId.startsWith(setting.modelIdPrefix))
   }
 
   // A config can give a model a media request kind (`models[].request`)

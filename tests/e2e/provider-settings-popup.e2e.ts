@@ -1,16 +1,17 @@
 import { afterAll, beforeAll, describe, expect, it } from 'vitest'
 import { startApp, type RunningApp } from './harness/app'
-import { click, waitFor } from './harness/dom'
+import { click, waitFor, waitForValue } from './harness/dom'
 import { makeConversation, readAppState, seedAppState, seedConversation } from './harness/fixtures'
 import { createSession, destroySession, type E2EBrowser } from './harness/session'
+import { sbpCall } from './harness/thread'
 
 // Drives the real app: the gear button toggles the popup, the Venice
 // toggles (after the Thinking row, first for every provider with thinking,
-// and the Tools row, which every provider has) change the persisted
-// providerSettings, the settings survive an app restart, OpenRouter shows
-// only the Thinking and Tools rows, a custom provider without thinking or
-// settings shows only the Tools row, and an unknown provider shows the empty
-// state. All interaction goes through executed JS (harness
+// and the Tools row) change the persisted providerSettings, the settings
+// survive an app restart, OpenRouter shows only the Thinking and Tools rows,
+// a custom provider without thinking or settings shows only the Tools row,
+// a model gets only the toggles that apply to it, and an unknown provider
+// shows the empty state. All interaction goes through executed JS (harness
 // click()/dispatched KeyboardEvent) because wry's automation session rejects
 // native WebDriver click/sendKeys.
 describe('provider settings popup', () => {
@@ -39,6 +40,16 @@ describe('provider settings popup', () => {
     return browser.execute(() => document.querySelector('.provider-settings-popup') !== null)
   }
 
+  /** What the open popup shows: the header of the toggles, the row labels,
+   *  and the text of the empty state. */
+  async function popupView (): Promise<{ header: string | null, labels: string[], empty: string | null }> {
+    return browser.execute(() => ({
+      header: document.querySelector('.provider-settings-header')?.textContent?.trim() ?? null,
+      labels: Array.from(document.querySelectorAll('.provider-settings-label')).map((el) => el.textContent?.trim() ?? ''),
+      empty: document.querySelector('.provider-settings-empty')?.textContent?.trim() ?? null,
+    }))
+  }
+
   beforeAll(async () => {
     app = await startApp()
     try {
@@ -58,17 +69,37 @@ describe('provider settings popup', () => {
           createdAt: Date.now()
         }],
         activeTabId: 'tab-e2e',
-        // No settings and no thinking. It has no server, and with
-        // `fetchModels: false` the app never sends it a request.
-        customProviders: [{
-          id: 'plain',
-          name: 'Plain Mock',
-          baseUrl: 'http://127.0.0.1:9/v1',
-          apiFormat: 'openai',
-          models: [{ id: 'plain-model' }],
-          fetchModels: false,
-          auth: 'apiKey'
-        }]
+        // Neither has a server: with `fetchModels: false` the app never
+        // sends them a request, and the model cache holds their config
+        // models.
+        customProviders: [
+          // No settings and no thinking.
+          {
+            id: 'plain',
+            name: 'Plain Mock',
+            baseUrl: 'http://127.0.0.1:9/v1',
+            apiFormat: 'openai',
+            models: [{ id: 'plain-model' }],
+            fetchModels: false,
+            auth: 'apiKey'
+          },
+          // Thinking, and models that cannot use every toggle.
+          {
+            id: 'gated',
+            name: 'Gated Mock',
+            baseUrl: 'http://127.0.0.1:9/v1',
+            apiFormat: 'openai',
+            models: [
+              { id: 'chat-model' },
+              { id: 'no-tools-model', toolCalling: false },
+              { id: 'no-thinking-model', thinking: false },
+              { id: 'speech-model', outputs: ['audio'], request: 'tts' }
+            ],
+            fetchModels: false,
+            auth: 'apiKey',
+            thinking: {}
+          }
+        ]
       })
       browser = await createSession(app.binary, app.port)
     } catch (err) {
@@ -218,14 +249,9 @@ describe('provider settings popup', () => {
       w.sbp('dez.model/setActiveModel', 'openrouter', 'some/model', 'Some Model')
     })
 
-    const popupView = () => browser.execute(() => ({
-      header: document.querySelector('.provider-settings-header')?.textContent?.trim() ?? null,
-      labels: Array.from(document.querySelectorAll('.provider-settings-label')).map((el) => el.textContent?.trim() ?? ''),
-    }))
-
     await click(browser, '.model-selector-gear')
     await waitFor(browser, '.provider-settings-popup')
-    expect(await popupView()).toEqual({ header: 'OpenRouter', labels: ['Thinking', 'Tools'] })
+    expect(await popupView()).toEqual({ header: 'OpenRouter', labels: ['Thinking', 'Tools'], empty: null })
     expect(await rowChecked(0)).toBe('true')
     expect(await rowChecked(1)).toBe('true')
     await pressEscape()
@@ -237,7 +263,7 @@ describe('provider settings popup', () => {
 
     await click(browser, '.model-selector-gear')
     await waitFor(browser, '.provider-settings-popup')
-    expect(await popupView()).toEqual({ header: 'Plain Mock', labels: ['Tools'] })
+    expect(await popupView()).toEqual({ header: 'Plain Mock', labels: ['Tools'], empty: null })
     await pressEscape()
 
     // A tab can keep the model of a provider that was removed.
@@ -248,12 +274,55 @@ describe('provider settings popup', () => {
 
     await click(browser, '.model-selector-gear')
     await waitFor(browser, '.provider-settings-empty')
-    const text = await browser.execute(
-      () => document.querySelector('.provider-settings-empty')?.textContent?.trim() ?? ''
-    )
-    expect(text).toBe('No Settings for removed')
-    expect(await browser.execute(() => document.querySelector('.provider-settings-row') !== null)).toBe(false)
+    expect(await popupView()).toEqual({ header: null, labels: [], empty: 'No Settings for removed' })
     await pressEscape()
+  })
+
+  it('shows only the toggles that apply to the active model, and resets only those', async () => {
+    const views: Array<[string, { header: string | null, labels: string[], empty: string | null }]> = [
+      ['chat-model', { header: 'Gated Mock', labels: ['Thinking', 'Tools'], empty: null }],
+      ['no-tools-model', { header: 'Gated Mock', labels: ['Thinking'], empty: null }],
+      ['no-thinking-model', { header: 'Gated Mock', labels: ['Tools'], empty: null }],
+      // A media model with no parameters: no toggle does anything for it.
+      ['speech-model', { header: null, labels: [], empty: 'No Settings for this model' }],
+      // The model cache does not have it: every toggle of the provider.
+      ['not-listed-model', { header: 'Gated Mock', labels: ['Thinking', 'Tools'], empty: null }]
+    ]
+
+    await click(browser, '.model-selector-gear')
+    await waitFor(browser, '.provider-settings-popup')
+    try {
+      for (const [modelId, view] of views) {
+        await sbpCall(browser, 'dez.model/setActiveModel', 'gated', modelId, modelId)
+        // The popup stays open and follows the active model. The model
+        // cache gets the config models soon after the app starts.
+        await waitForValue(browser, `popup of ${modelId}`, popupView, view)
+      }
+
+      // The toggles keep their values while a model hides them: they are
+      // stored for the provider.
+      await sbpCall(browser, 'dez.model/setActiveModel', 'gated', 'chat-model', 'chat-model')
+      await waitForValue(browser, 'popup of chat-model', popupView, views[0][1])
+      await browser.execute(() => {
+        for (const row of document.querySelectorAll<HTMLButtonElement>('.provider-settings-row')) row.click()
+      })
+      expect([await rowChecked(0), await rowChecked(1)]).toEqual(['false', 'false'])
+
+      // "Reset to defaults" of a model with no Thinking row leaves the
+      // Thinking value.
+      await sbpCall(browser, 'dez.model/setActiveModel', 'gated', 'no-thinking-model', 'no-thinking-model')
+      await waitForValue(browser, 'Tools of no-thinking-model', () => rowChecked(0), 'false')
+      await click(browser, '.provider-settings-reset')
+      await waitForValue(browser, 'Tools after the reset', () => rowChecked(0), 'true')
+
+      await sbpCall(browser, 'dez.model/setActiveModel', 'gated', 'chat-model', 'chat-model')
+      await waitForValue(browser, 'rows of chat-model after the reset', async () => [await rowChecked(0), await rowChecked(1)], ['false', 'true'])
+    } finally {
+      // Keep the popup closed for the next test even if an assertion fails.
+      await pressEscape()
+    }
+
+    await waitForValue(browser, 'saved toggles', async () => (await readAppState(app.home))?.providerSettings?.gated ?? null, { thinking: false })
   })
 
   it('model dropdown and popup are mutually exclusive', async () => {

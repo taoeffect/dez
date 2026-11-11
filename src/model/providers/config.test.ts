@@ -121,13 +121,14 @@ describe('provider config schema', () => {
     expect(withKey('tools')).toBe(false)
   })
 
-  it('keeps the image and tool fields, and rejects a bad capability path, model flag, or header', () => {
+  it('keeps the image, tool, and thinking fields, and rejects a bad capability path, model flag, or header', () => {
     const parse = (fields: Record<string, unknown>) =>
       providerConfigSchema.safeParse({ id: 'p', name: 'P', baseUrl: 'http://h', ...fields })
     const fields = {
-      models: [{ id: 'm', imageInput: false, toolCalling: false }],
+      models: [{ id: 'm', imageInput: false, toolCalling: false, thinking: false }],
       modelImageInput: { path: 'architecture.input_modalities' },
       modelToolCalling: { path: 'supported_parameters', missing: false },
+      modelThinking: { path: 'supported_parameters', missing: true },
       imageRequestHeaders: { 'X-Vision': 'true' },
     }
 
@@ -136,9 +137,23 @@ describe('provider config schema', () => {
     expect(parse({ modelImageInput: { path: '' } }).success).toBe(false)
     expect(parse({ modelToolCalling: { path: 'capabilities.' } }).success).toBe(false)
     expect(parse({ modelToolCalling: { path: 'tools', missing: 'no' } }).success).toBe(false)
+    expect(parse({ modelThinking: { path: '.reasoning' } }).success).toBe(false)
+    expect(parse({ modelThinking: 'supported_parameters' }).success).toBe(false)
     expect(parse({ models: [{ id: 'm', imageInput: 'yes' }] }).success).toBe(false)
     expect(parse({ models: [{ id: 'm', toolCalling: 1 }] }).success).toBe(false)
+    expect(parse({ models: [{ id: 'm', thinking: 'off' }] }).success).toBe(false)
     expect(parse({ imageRequestHeaders: { 'Bad Name': 'true' } }).success).toBe(false)
+  })
+
+  it('keeps where the model list tells which models take a toggle, and rejects a bad path', () => {
+    const setting = { key: 'k', label: 'K', type: 'boolean', default: true, bodyPath: 'options.flag' }
+    const parse = (modelSupport: unknown) =>
+      providerConfigSchema.safeParse({ id: 'p', name: 'P', baseUrl: 'http://h', settings: [{ ...setting, modelSupport }] })
+
+    expect(parse({ path: 'caps.flag', missing: false }).data?.settings).toStrictEqual([{ ...setting, modelSupport: { path: 'caps.flag', missing: false } }])
+    expect(parse({ path: 'caps..flag' }).success).toBe(false)
+    expect(parse({ missing: true }).success).toBe(false)
+    expect(parse('caps.flag').success).toBe(false)
   })
 
   it('keeps a model\'s outputs and request kind, and rejects unknown values or an empty outputs list', () => {

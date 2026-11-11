@@ -4,6 +4,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import type { ActiveModel, ContentNode, ModelRef, Section, SectionThinking, Tab, ThinkingReplay } from '../chat/types'
 import type { AppStatePayload, ConversationData, ModelCache } from '../persistence/types'
 import type { ProviderConfig } from '../providers/config'
+import type { ModelRequest } from '../providers/types'
 import type { SettingsSnapshot } from './index'
 import type { RequestMessages } from '../streams/types'
 import type { Shortcut, ShortcutId } from '../shortcuts'
@@ -514,6 +515,37 @@ describe('section models', () => {
   })
 })
 
+describe('dez.model/customProviders/save', () => {
+  // A config object that the store shares with its caller would change with
+  // it (the Settings form edits its own copy).
+  it('keeps the per-model fields of a config, and shares no object with the caller', () => {
+    const config: ProviderConfig = {
+      id: 'local',
+      name: 'Local',
+      baseUrl: 'http://localhost:8080/v1',
+      apiFormat: 'openai',
+      models: [{ id: 'm', thinking: false }],
+      fetchModels: true,
+      modelThinking: { path: 'caps.thinks', missing: false },
+      auth: 'apiKey',
+      settings: [
+        { key: 'search', label: 'Search', type: 'boolean', default: true, bodyPath: 'search', modelSupport: { path: 'caps.search' } },
+        { key: 'plain', label: 'Plain', type: 'boolean', default: false, bodyPath: 'plain' },
+      ],
+      thinking: {},
+    }
+    const saved = structuredClone(config)
+
+    sbp('dez.model/customProviders/save', config)
+    // The caller changes its objects in place after the save.
+    Object.assign(config.modelThinking ?? {}, { path: 'changed' })
+    Object.assign(config.settings?.[0].modelSupport ?? {}, { path: 'changed' })
+
+    // toStrictEqual: a setting with no `modelSupport` gets no such key.
+    expect(sbp('dez.model/customProviders/list')).toStrictEqual([saved])
+  })
+})
+
 describe('dez.model/customProviders/remove', () => {
   const local: ProviderConfig = {
     id: 'local',
@@ -703,17 +735,30 @@ describe('dez.model/settings model parameters', () => {
     expect(values()).toStrictEqual({ 'venice/film': { duration: '4s' } })
   })
 
-  it('resets the toggles of the provider and the values of the one model', () => {
+  it('resets the given toggles of the provider and the values of the one model', () => {
     sbp('dez.model/settings/setProviderSetting', 'venice', 'webSearch', false)
+    sbp('dez.model/settings/setProviderSetting', 'venice', 'thinking', false)
     sbp('dez.model/settings/setProviderSetting', 'openrouter', 'thinking', false)
     set(film, 'duration', '4s')
     set(song, 'duration_seconds', 30)
+    const stored = () => {
+      const { providerSettings, modelParameters } = sbp('dez.model/settings/snapshot') as SettingsSnapshot
+      return { providerSettings, modelParameters }
+    }
 
-    sbp('dez.model/settings/resetProviderSettings', 'venice', 'film')
+    // A toggle that the popup does not show for the model keeps its value.
+    sbp('dez.model/settings/resetProviderSettings', 'venice', ['thinking', 'never-stored'], 'film')
+    expect(stored()).toStrictEqual({
+      providerSettings: { venice: { webSearch: false }, openrouter: { thinking: false } },
+      modelParameters: { 'venice/song': { duration_seconds: 30 } },
+    })
 
-    const snapshot = sbp('dez.model/settings/snapshot') as SettingsSnapshot
-    expect(snapshot.providerSettings).toStrictEqual({ openrouter: { thinking: false } })
-    expect(snapshot.modelParameters).toStrictEqual({ 'venice/song': { duration_seconds: 30 } })
+    // A provider with no value left has no entry.
+    sbp('dez.model/settings/resetProviderSettings', 'venice', ['webSearch'])
+    expect(stored()).toStrictEqual({
+      providerSettings: { openrouter: { thinking: false } },
+      modelParameters: { 'venice/song': { duration_seconds: 30 } },
+    })
   })
 
   it('loads the saved values, and saves a change', async () => {
@@ -832,9 +877,9 @@ describe('dez.model/modelCache raw model entries', () => {
 describe('dez.model/streamMessagesForTab tools', () => {
   const model: ModelRef = { providerId: 'local', modelId: 'm' }
   const sendTools = () => (sbp('dez.model/streamMessagesForTab', activeId(), model) as RequestMessages).sendTools
-  const cacheModel = (toolCalling?: boolean) => sbp('dez.model/modelCache/applyProviderResult', 'local', {
+  const cacheModel = (toolCalling?: boolean, request?: ModelRequest) => sbp('dez.model/modelCache/applyProviderResult', 'local', {
     ok: true,
-    models: [{ id: 'm', name: 'M', provider: 'local', ...(toolCalling === undefined ? {} : { toolCalling }) }],
+    models: [{ id: 'm', name: 'M', provider: 'local', ...(toolCalling === undefined ? {} : { toolCalling }), ...(request && { request }) }],
   })
 
   it('sends the tools unless the cache knows the model cannot call them', () => {
@@ -848,6 +893,16 @@ describe('dez.model/streamMessagesForTab tools', () => {
     expect(sendTools()).toBe(false)
   })
 
+  // The Tools toggle does not apply to a media model (modelToggles.ts).
+  it('sends the tools only to a model that takes chat requests', () => {
+    cacheModel(true, 'chat')
+    expect(sendTools()).toBe(true)
+    for (const request of ['image', 'tts', 'video', 'none'] as const) {
+      cacheModel(true, request)
+      expect(sendTools(), request).toBe(false)
+    }
+  })
+
   it('sends no tools while the provider\'s Tools toggle is off', () => {
     cacheModel(true)
     sbp('dez.model/settings/setProviderSetting', 'other', 'tools', false)
@@ -857,7 +912,7 @@ describe('dez.model/streamMessagesForTab tools', () => {
     sbp('dez.model/settings/setProviderSetting', 'local', 'tools', false)
     expect(sendTools()).toBe(false)
 
-    sbp('dez.model/settings/resetProviderSettings', 'local')
+    sbp('dez.model/settings/resetProviderSettings', 'local', ['tools'])
     expect(sendTools()).toBe(true)
   })
 })

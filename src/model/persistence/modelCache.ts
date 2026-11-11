@@ -23,6 +23,8 @@ const modelInfoSchema = z.object({
   // reads it as "unknown" until the next model check.
   imageInput: z.boolean().optional(),
   toolCalling: z.boolean().optional(),
+  thinking: z.boolean().optional(),
+  unsupportedSettings: z.array(z.string()).min(1).optional(),
   outputs: z.array(z.enum(MODEL_OUTPUT_IDS)).optional(),
   request: z.enum(MODEL_REQUESTS).optional(),
   parameters: z.array(modelParameterSchema).min(1).optional(),

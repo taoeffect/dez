@@ -58,12 +58,12 @@ function requestBody(request: NativeHttpRequest): Record<string, unknown> {
 
 // The wire messages of the chat request that sends `sent`.
 function sentMessages(provider: Provider, sent: ChatMessage[], overrides: Record<string, boolean> = {}): Array<Record<string, unknown>> {
-  return requestBody(provider.chatRequest(sent, 'm', key, overrides).request).messages as Array<Record<string, unknown>>
+  return requestBody(provider.chatRequest(sent, { id: 'm' }, key, overrides).request).messages as Array<Record<string, unknown>>
 }
 
 describe('OpenAI format requests', () => {
   it('sends a Bearer key, JSON content type, and assistant roles', () => {
-    const { request } = customProvider({}).chatRequest(messages, 'llama3', key)
+    const { request } = customProvider({}).chatRequest(messages, { id: 'llama3' }, key)
 
     expect(request.method).toBe('POST')
     expect(request.url).toBe('http://localhost:8080/v1/chat/completions')
@@ -77,7 +77,7 @@ describe('OpenAI format requests', () => {
   it('sends no Authorization header without a key', () => {
     const provider = customProvider({})
 
-    expect(provider.chatRequest(messages, 'llama3', null).request.headers).toEqual({ 'Content-Type': 'application/json' })
+    expect(provider.chatRequest(messages, { id: 'llama3' }, null).request.headers).toEqual({ 'Content-Type': 'application/json' })
     expect(provider.modelListRequest(null)).toEqual({
       method: 'GET',
       url: 'http://localhost:8080/v1/models',
@@ -92,7 +92,7 @@ describe('Anthropic format requests', () => {
     for (const baseUrl of ['https://api.anthropic.com', 'https://api.anthropic.com/', 'https://api.anthropic.com/v1', 'https://api.anthropic.com/v1/']) {
       const provider = customProvider({ apiFormat: 'anthropic', baseUrl })
 
-      expect(provider.chatRequest(messages, 'claude', key).request.url).toBe('https://api.anthropic.com/v1/messages')
+      expect(provider.chatRequest(messages, { id: 'claude' }, key).request.url).toBe('https://api.anthropic.com/v1/messages')
       expect(provider.modelListRequest(key)?.url).toBe('https://api.anthropic.com/v1/models?limit=1000')
     }
   })
@@ -100,7 +100,7 @@ describe('Anthropic format requests', () => {
   it('sends x-api-key and anthropic-version, never Authorization', () => {
     const provider = customProvider({ apiFormat: 'anthropic', baseUrl: 'https://api.anthropic.com' })
 
-    expect(provider.chatRequest(messages, 'claude', key).request.headers).toEqual({
+    expect(provider.chatRequest(messages, { id: 'claude' }, key).request.headers).toEqual({
       'Content-Type': 'application/json',
       'anthropic-version': '2023-06-01',
       'x-api-key': 'sk-test',
@@ -113,8 +113,8 @@ describe('Anthropic format requests', () => {
   })
 
   it('always sends max_tokens, from maxOutputTokens when set', () => {
-    const defaultBody = requestBody(customProvider({ apiFormat: 'anthropic' }).chatRequest(messages, 'claude', key).request)
-    const minimaxRequest = builtInProvider('minimax').chatRequest(messages, 'MiniMax-M2.7', key).request
+    const defaultBody = requestBody(customProvider({ apiFormat: 'anthropic' }).chatRequest(messages, { id: 'claude' }, key).request)
+    const minimaxRequest = builtInProvider('minimax').chatRequest(messages, { id: 'MiniMax-M2.7' }, key).request
 
     expect(defaultBody).toEqual({ model: 'claude', messages: markedApiMessages, stream: true, max_tokens: 32000 })
     expect(minimaxRequest.url).toBe('https://api.minimax.io/anthropic/v1/messages')
@@ -124,7 +124,7 @@ describe('Anthropic format requests', () => {
   it('sends Kimi chat and model-list requests under the /coding path', () => {
     const kimi = builtInProvider('kimi')
 
-    expect(kimi.chatRequest(messages, 'k3', key).request.url).toBe('https://api.kimi.com/coding/v1/messages')
+    expect(kimi.chatRequest(messages, { id: 'k3' }, key).request.url).toBe('https://api.kimi.com/coding/v1/messages')
     expect(kimi.modelListRequest(key)?.url).toBe('https://api.kimi.com/coding/v1/models?limit=1000')
   })
 })
@@ -138,18 +138,18 @@ describe('static headers', () => {
       Authorization: 'Bearer sk-test',
     }
 
-    expect(copilot.chatRequest(messages, 'gpt-4o', key).request.headers).toMatchObject(editorHeaders)
+    expect(copilot.chatRequest(messages, { id: 'gpt-4o' }, key).request.headers).toMatchObject(editorHeaders)
     expect(copilot.modelListRequest(key)?.headers).toMatchObject(editorHeaders)
   })
 
   it('lets a stored key replace a static Authorization header of any case', () => {
     const provider = customProvider({ headers: { authorization: 'Bearer static', 'content-type': 'text/plain' } })
 
-    expect(provider.chatRequest(messages, 'm', key).request.headers).toEqual({
+    expect(provider.chatRequest(messages, { id: 'm' }, key).request.headers).toEqual({
       'content-type': 'text/plain',
       Authorization: 'Bearer sk-test',
     })
-    expect(provider.chatRequest(messages, 'm', null).request.headers).toEqual({
+    expect(provider.chatRequest(messages, { id: 'm' }, null).request.headers).toEqual({
       'content-type': 'text/plain',
       authorization: 'Bearer static',
     })
@@ -197,14 +197,14 @@ describe('image parts', () => {
       imageRequestHeaders: { 'x-vision': 'on', Authorization: 'Bearer image' },
     })
 
-    expect(copilot.chatRequest(imageMessages, 'gpt-4o', key).request.headers).toMatchObject({ 'Copilot-Vision-Request': 'true' })
-    expect(copilot.chatRequest(messages, 'gpt-4o', key).request.headers).not.toHaveProperty('Copilot-Vision-Request')
-    expect(provider.chatRequest(imageMessages, 'm', key).request.headers).toEqual({
+    expect(copilot.chatRequest(imageMessages, { id: 'gpt-4o' }, key).request.headers).toMatchObject({ 'Copilot-Vision-Request': 'true' })
+    expect(copilot.chatRequest(messages, { id: 'gpt-4o' }, key).request.headers).not.toHaveProperty('Copilot-Vision-Request')
+    expect(provider.chatRequest(imageMessages, { id: 'm' }, key).request.headers).toEqual({
       'Content-Type': 'application/json',
       'x-vision': 'on',
       Authorization: 'Bearer sk-test',
     })
-    expect(provider.chatRequest(messages, 'm', key).request.headers).toEqual({
+    expect(provider.chatRequest(messages, { id: 'm' }, key).request.headers).toEqual({
       'Content-Type': 'application/json',
       'X-Vision': 'off',
       Authorization: 'Bearer sk-test',
@@ -323,10 +323,10 @@ describe('prompt cache', () => {
     const keyed = customProvider({ promptCacheKey: true })
     const keyedAnthropic = customProvider({ apiFormat: 'anthropic', promptCacheKey: true })
 
-    expect(requestBody(keyed.chatRequest(messages, 'm', key, {}, { conversationId: 'conv-1' }).request).prompt_cache_key).toBe('conv-1')
-    expect(requestBody(keyed.chatRequest(messages, 'm', key).request)).not.toHaveProperty('prompt_cache_key')
-    expect(requestBody(openAi.chatRequest(messages, 'm', key, {}, { conversationId: 'conv-1' }).request)).not.toHaveProperty('prompt_cache_key')
-    expect(requestBody(keyedAnthropic.chatRequest(messages, 'm', key, {}, { conversationId: 'conv-1' }).request)).not.toHaveProperty('prompt_cache_key')
+    expect(requestBody(keyed.chatRequest(messages, { id: 'm' }, key, {}, { conversationId: 'conv-1' }).request).prompt_cache_key).toBe('conv-1')
+    expect(requestBody(keyed.chatRequest(messages, { id: 'm' }, key).request)).not.toHaveProperty('prompt_cache_key')
+    expect(requestBody(openAi.chatRequest(messages, { id: 'm' }, key, {}, { conversationId: 'conv-1' }).request)).not.toHaveProperty('prompt_cache_key')
+    expect(requestBody(keyedAnthropic.chatRequest(messages, { id: 'm' }, key, {}, { conversationId: 'conv-1' }).request)).not.toHaveProperty('prompt_cache_key')
   })
 })
 
@@ -344,7 +344,7 @@ describe('system prompt and tools', () => {
   const context = { system: 'You are m.', tools: [SEARCH] }
 
   it('sends the OpenAI-format system prompt as the first message and the tools as functions', () => {
-    expect(requestBody(customProvider({}).chatRequest(messages, 'm', key, {}, context).request)).toEqual({
+    expect(requestBody(customProvider({}).chatRequest(messages, { id: 'm' }, key, {}, context).request)).toEqual({
       model: 'm',
       messages: [{ role: 'system', content: 'You are m.' }, ...apiMessages],
       stream: true,
@@ -353,7 +353,7 @@ describe('system prompt and tools', () => {
   })
 
   it('sends the Anthropic-format system prompt as the top-level system field and the tools with input_schema', () => {
-    expect(requestBody(customProvider({ apiFormat: 'anthropic' }).chatRequest(messages, 'm', key, {}, context).request)).toEqual({
+    expect(requestBody(customProvider({ apiFormat: 'anthropic' }).chatRequest(messages, { id: 'm' }, key, {}, context).request)).toEqual({
       model: 'm',
       system: 'You are m.',
       messages: markedApiMessages,
@@ -364,14 +364,14 @@ describe('system prompt and tools', () => {
   })
 
   it('puts no cache mark on the OpenAI-format system message', () => {
-    const sent = requestBody(customProvider({ cacheBreakpoints: true }).chatRequest(messages, 'm', key, {}, context).request).messages
+    const sent = requestBody(customProvider({ cacheBreakpoints: true }).chatRequest(messages, { id: 'm' }, key, {}, context).request).messages
 
     expect(sent).toEqual([{ role: 'system', content: 'You are m.' }, ...markedApiMessages])
   })
 
   it('sends no tools field for an empty tool list', () => {
     for (const apiFormat of ['openai', 'anthropic']) {
-      const body = requestBody(customProvider({ apiFormat }).chatRequest(messages, 'm', key, {}, { system: 'S', tools: [] }).request)
+      const body = requestBody(customProvider({ apiFormat }).chatRequest(messages, { id: 'm' }, key, {}, { system: 'S', tools: [] }).request)
 
       expect(body, apiFormat).not.toHaveProperty('tools')
     }
@@ -393,10 +393,10 @@ describe('system prompt and tools', () => {
 
     for (const [provider, replay] of cases) {
       for (const made of contexts) {
-        const prefixHash = provider.chatRequest([q1], 'm', key, {}, made).thinking?.prefixHash ?? ''
+        const prefixHash = provider.chatRequest([q1], { id: 'm' }, key, {}, made).thinking?.prefixHash ?? ''
         const a1: ChatMessage = { role: 'agent', content: 'A1', thinking: { text: 'Plan', replay: replay(prefixHash) } }
         for (const sent of contexts) {
-          const wire = requestBody(provider.chatRequest([q1, a1, q2], 'm', key, {}, sent).request).messages as unknown[]
+          const wire = requestBody(provider.chatRequest([q1, a1, q2], { id: 'm' }, key, {}, sent).request).messages as unknown[]
           const reply = wire.find((message) => (message as Record<string, unknown>).role === 'assistant')
 
           expect(JSON.stringify(reply) !== JSON.stringify(plainReply), JSON.stringify({ made, sent })).toBe(made === sent)
@@ -407,8 +407,8 @@ describe('system prompt and tools', () => {
 })
 
 describe('declarative provider settings', () => {
-  it('writes every Venice parameter from the defaults', () => {
-    const body = requestBody(venice.chatRequest(messages, 'venice-uncensored', key).request)
+  it('writes every Venice parameter from the defaults, for a model that every toggle applies to', () => {
+    const body = requestBody(venice.chatRequest(messages, { id: 'grok-4-20' }, key).request)
 
     expect(body.venice_parameters).toEqual({
       include_venice_system_prompt: false,
@@ -416,11 +416,11 @@ describe('declarative provider settings', () => {
       enable_x_search: true,
       enable_web_scraping: true,
     })
-    expect(body).toMatchObject({ model: 'venice-uncensored', messages: markedApiMessages, stream: true })
+    expect(body).toMatchObject({ model: 'grok-4-20', messages: markedApiMessages, stream: true })
   })
 
   it('applies sparse overrides, including the web search string values', () => {
-    const body = requestBody(venice.chatRequest(messages, 'grok-4-20', key, { webSearch: false }).request)
+    const body = requestBody(venice.chatRequest(messages, { id: 'grok-4-20' }, key, { webSearch: false }).request)
 
     expect(body.venice_parameters).toEqual({
       include_venice_system_prompt: false,
@@ -438,7 +438,7 @@ describe('declarative provider settings', () => {
       veniceSystemPrompt: true,
     }
 
-    expect(requestBody(venice.chatRequest(messages, 'grok-4-20', key, flipped).request).venice_parameters).toEqual({
+    expect(requestBody(venice.chatRequest(messages, { id: 'grok-4-20' }, key, flipped).request).venice_parameters).toEqual({
       include_venice_system_prompt: false,
       enable_web_search: 'off',
       enable_x_search: false,
@@ -454,11 +454,11 @@ describe('declarative provider settings', () => {
     })
     const original = structuredClone(provider.config.requestBody)
 
-    expect(requestBody(provider.chatRequest(messages, 'm', key, { thinking: false }).request)).toMatchObject({
+    expect(requestBody(provider.chatRequest(messages, { id: 'm' }, key, { thinking: false }).request)).toMatchObject({
       top: 'kept',
       extra: { fixed: 1, flag: true, thinkingOff: true },
     })
-    expect(requestBody(provider.chatRequest(messages, 'm', key, { flag: false }).request).extra).toEqual({ fixed: 1, flag: false, thinkingOff: false })
+    expect(requestBody(provider.chatRequest(messages, { id: 'm' }, key, { flag: false }).request).extra).toEqual({ fixed: 1, flag: false, thinkingOff: false })
     expect(provider.config.requestBody).toEqual(original)
   })
 
@@ -467,7 +467,7 @@ describe('declarative provider settings', () => {
       requestBody: { modalities: ['text'], top: 'kept' },
       imageOutputBody: { modalities: ['image', 'text'] },
     })
-    const body = (sender: Provider, context?: ChatRequestContext) => requestBody(sender.chatRequest(messages, 'm', key, {}, context).request)
+    const body = (sender: Provider, context?: ChatRequestContext) => requestBody(sender.chatRequest(messages, { id: 'm' }, key, {}, context).request)
 
     expect(body(provider, { imageOutput: true })).toMatchObject({ modalities: ['image', 'text'], top: 'kept' })
     expect(body(provider, { imageOutput: false }).modalities).toEqual(['text'])
@@ -479,22 +479,38 @@ describe('declarative provider settings', () => {
   })
 
   it('adds no venice_parameters to a provider without settings', () => {
-    const body = requestBody(builtInProvider('openrouter').chatRequest(messages, 'm', key, { webSearch: false }).request)
+    const body = requestBody(builtInProvider('openrouter').chatRequest(messages, { id: 'm' }, key, { webSearch: false }).request)
 
     expect(body).not.toHaveProperty('venice_parameters')
   })
 
-  it('shows prefix-gated settings only for matching model ids', () => {
-    const visibleKeys = (modelId: string) => venice.visibleSettings(modelId).map((setting) => setting.key)
+  // The rule of which toggles apply is tested in modelToggles.test.ts; these
+  // check that the request follows it.
+  it('writes a prefix-gated setting only for a matching model id', () => {
+    expect(requestBody(venice.chatRequest(messages, { id: 'grok-4-20' }, key).request).venice_parameters).toHaveProperty('enable_x_search', true)
+    expect(requestBody(venice.chatRequest(messages, { id: 'llama-3.3-70b' }, key).request).venice_parameters).toStrictEqual({
+      include_venice_system_prompt: false,
+      enable_web_search: 'on',
+      enable_web_scraping: true,
+    })
+  })
 
-    expect(visibleKeys('grok-4-20')).toEqual(['webSearch', 'xSearch', 'webScraping'])
-    expect(visibleKeys('llama-3.3-70b')).toEqual(['webSearch', 'webScraping'])
+  it('writes no field of a setting that the model is known not to take, whatever its stored value', () => {
+    const model = { id: 'grok-build-0-1', unsupportedSettings: ['webSearch', 'xSearch'] }
+    const stored: Array<Record<string, boolean>> = [{}, { webSearch: true, xSearch: true }, { webSearch: false, xSearch: false }]
+
+    for (const overrides of stored) {
+      expect(requestBody(venice.chatRequest(messages, model, key, overrides).request).venice_parameters).toStrictEqual({
+        include_venice_system_prompt: false,
+        enable_web_scraping: true,
+      })
+    }
   })
 })
 
 describe('thinking request bodies', () => {
   const bodyWith = (provider: Provider, overrides: Record<string, boolean> = {}) =>
-    requestBody(provider.chatRequest(messages, 'm', key, overrides).request)
+    requestBody(provider.chatRequest(messages, { id: 'm' }, key, overrides).request)
   const base = { model: 'm', messages: apiMessages, stream: true }
   const markedBase = { ...base, messages: markedApiMessages }
 
@@ -531,7 +547,6 @@ describe('thinking request bodies', () => {
     expect(body.venice_parameters).toEqual({
       include_venice_system_prompt: false,
       enable_web_search: 'on',
-      enable_x_search: true,
       enable_web_scraping: true,
       disable_thinking: true,
     })
@@ -553,6 +568,24 @@ describe('thinking request bodies', () => {
     }
   })
 
+  it('sends no thinking body to a model that is known not to think, whatever the toggle, and keeps no reply thinking', () => {
+    const provider = customProvider({
+      thinking: { enabledBody: { reasoning: { enabled: true } }, disabledBody: { reasoning: { enabled: false } } },
+    })
+    const toggles: Array<Record<string, boolean>> = [{}, { thinking: true }, { thinking: false }]
+
+    for (const overrides of toggles) {
+      const { request, thinking } = provider.chatRequest(messages, { id: 'm', thinking: false }, key, overrides)
+
+      expect(requestBody(request)).toStrictEqual(base)
+      expect(thinking).toBeUndefined()
+    }
+    // A model that thinks, and one that the list tells nothing of.
+    for (const model of [{ id: 'm', thinking: true }, { id: 'm' }]) {
+      expect(requestBody(provider.chatRequest(messages, model, key).request)).toStrictEqual({ ...base, reasoning: { enabled: true } })
+    }
+  })
+
   it('deep-merges an enabledBody into an object that a setting wrote', () => {
     const provider = customProvider({
       thinking: { enabledBody: { options: { think: true, stop: ['</s>'] } } },
@@ -565,17 +598,17 @@ describe('thinking request bodies', () => {
   it('returns a prefix hash only when it asks for thinking', () => {
     const provider = customProvider({ thinking: {} })
 
-    expect(provider.chatRequest(messages, 'm', key).thinking).toEqual({ prefixHash: expect.any(String) })
-    expect(provider.chatRequest(messages, 'm', key, { thinking: false })).not.toHaveProperty('thinking')
-    expect(customProvider({}).chatRequest(messages, 'm', key)).not.toHaveProperty('thinking')
+    expect(provider.chatRequest(messages, { id: 'm' }, key).thinking).toEqual({ prefixHash: expect.any(String) })
+    expect(provider.chatRequest(messages, { id: 'm' }, key, { thinking: false })).not.toHaveProperty('thinking')
+    expect(customProvider({}).chatRequest(messages, { id: 'm' }, key)).not.toHaveProperty('thinking')
   })
 
   it('gives a different prefix hash when an earlier message changes', () => {
     const provider = builtInProvider('openrouter')
     const edited: ChatMessage[] = [{ role: 'user', content: 'Search the web for older info.' }, messages[1]]
 
-    expect(provider.chatRequest(edited, 'm', key).thinking?.prefixHash)
-      .not.toBe(provider.chatRequest(messages, 'm', key).thinking?.prefixHash)
+    expect(provider.chatRequest(edited, { id: 'm' }, key).thinking?.prefixHash)
+      .not.toBe(provider.chatRequest(messages, { id: 'm' }, key).thinking?.prefixHash)
   })
 })
 
@@ -584,7 +617,7 @@ describe('thinking send-back', () => {
   const anthropicThinker = customProvider({ apiFormat: 'anthropic', thinking: {} })
   const user = (content: string): ChatMessage => ({ role: 'user', content })
   // The prefix hash that the request which sent `sent` gives its reply.
-  const prefixHash = (provider: Provider, sent: ChatMessage[]) => provider.chatRequest(sent, 'm', key).thinking?.prefixHash ?? ''
+  const prefixHash = (provider: Provider, sent: ChatMessage[]) => provider.chatRequest(sent, { id: 'm' }, key).thinking?.prefixHash ?? ''
 
   it('sends each OpenAI replay kind in its assistant-message fields', () => {
     const details = [{ type: 'reasoning.text', text: 'Plan B', signature: 'sig', index: 0 }]
@@ -673,6 +706,19 @@ describe('thinking send-back', () => {
 
     expect(sentMessages(openAiThinker, [user('Q1'), reply], { thinking: false })).toEqual(textOnly)
     expect(sentMessages(customProvider({}), [user('Q1'), reply])).toEqual(textOnly)
+  })
+
+  it('sends no earlier thinking to a model that is known not to think', () => {
+    const reply: ChatMessage = { role: 'agent', content: 'A1', thinking: { text: 'Plan', replay: { kind: 'field', field: 'reasoning_content' } } }
+    const cases = [
+      { model: { id: 'm', thinking: false }, sentReply: { role: 'assistant', content: 'A1' } },
+      { model: { id: 'm' }, sentReply: { role: 'assistant', content: 'A1', reasoning_content: 'Plan' } },
+    ]
+
+    for (const { model, sentReply } of cases) {
+      expect(requestBody(openAiThinker.chatRequest([user('Q1'), reply], model, key).request).messages)
+        .toEqual([{ role: 'user', content: 'Q1' }, sentReply])
+    }
   })
 
   describe('signed replay prefixes', () => {
@@ -911,11 +957,12 @@ describe('provider models', () => {
     ])
   })
 
-  // The image and tool flags share one reader; each has its own config path
-  // and list value.
+  // The image, tool, and thinking flags share one reader; each has its own
+  // config path and list value.
   const capabilities = [
     { pathField: 'modelImageInput', flag: 'imageInput', listValue: 'image', otherListValue: 'tools' },
     { pathField: 'modelToolCalling', flag: 'toolCalling', listValue: 'tools', otherListValue: 'image' },
+    { pathField: 'modelThinking', flag: 'thinking', listValue: 'reasoning', otherListValue: 'tools' },
   ] as const
 
   it.each(capabilities)('reads $flag at the config path: a boolean, or a list that holds "$listValue"', ({ pathField, flag, listValue, otherListValue }) => {
@@ -969,7 +1016,7 @@ describe('provider models', () => {
       id: 'm',
       vision: true,
       architecture: { input_modalities: ['image'] },
-      supported_parameters: ['tools'],
+      supported_parameters: ['tools', 'reasoning'],
       capabilities: { supports: { vision: true, tool_calls: true } },
     }
 
@@ -1005,6 +1052,47 @@ describe('provider models', () => {
     expect(provider.mergeModels(fetched)).toStrictEqual([
       { id: 'm', name: 'm', provider: 'local', imageInput: true, toolCalling: false },
     ])
+  })
+
+  it('lists the toggles that the entry says the model does not take: a false flag, or a list without the first name of the body path', () => {
+    const toggle = (key: string, bodyPath: string, path?: string) =>
+      ({ key, label: key, type: 'boolean', default: true, bodyPath, ...(path && { modelSupport: { path } }) })
+    const provider = customProvider({
+      settings: [toggle('flagged', 'extra.flagged', 'caps.flagged'), toggle('listed', 'search.depth', 'fields'), toggle('free', 'free')],
+    })
+    const models = provider.parseModels({
+      data: [
+        { id: 'takes-both', caps: { flagged: true }, fields: ['search', 'free'] },
+        { id: 'takes-none', caps: { flagged: false }, fields: ['depth', 'search.depth'] },
+        { id: 'no-flag', fields: ['search'] },
+        { id: 'empty-list', caps: { flagged: true }, fields: [] },
+        { id: 'unknown' },
+      ],
+    })
+
+    // toStrictEqual: a model with no such toggle has no `unsupportedSettings`.
+    expect(models).toStrictEqual([
+      { id: 'takes-both', name: 'takes-both', provider: 'local' },
+      { id: 'takes-none', name: 'takes-none', provider: 'local', unsupportedSettings: ['flagged', 'listed'] },
+      { id: 'no-flag', name: 'no-flag', provider: 'local' },
+      { id: 'empty-list', name: 'empty-list', provider: 'local', unsupportedSettings: ['listed'] },
+      { id: 'unknown', name: 'unknown', provider: 'local' },
+    ])
+  })
+
+  it('gives a config model the unsupported toggles of its fetched entry, in an array of its own', () => {
+    const provider = customProvider({
+      settings: [{ key: 'search', label: 'Search', type: 'boolean', default: true, bodyPath: 'search', modelSupport: { path: 'search' } }],
+      models: [{ id: 'm', name: 'Config' }, { id: 'config-only' }],
+    })
+    const fetched = provider.parseModels({ data: [{ id: 'm', search: false }] })
+    const merged = provider.mergeModels(fetched)
+
+    expect(merged).toStrictEqual([
+      { id: 'm', name: 'Config', provider: 'local', unsupportedSettings: ['search'] },
+      { id: 'config-only', name: 'config-only', provider: 'local' },
+    ])
+    expect(merged[0].unsupportedSettings).not.toBe(fetched[0].unsupportedSettings)
   })
 
   it('lets a config outputs list and request kind win over the fetched ones, and keeps unknown ones out', () => {
@@ -1154,25 +1242,37 @@ describe('provider models', () => {
   })
 
   // Entry shapes as each API reports them: Venice and OpenRouter /models
-  // (checked live 2026-11-07 and 2026-11-08), Copilot from VS Code's Copilot
-  // Chat types and a logged Copilot /models entry.
-  it('reads the image and tool flags of the built-ins from their /models entry shapes', () => {
+  // (checked live 2026-11-07, 2026-11-08, and 2026-11-10), Copilot from VS
+  // Code's Copilot Chat types and a logged Copilot /models entry.
+  it('reads the image, tool, and thinking flags and the unsupported toggles of the built-ins from their /models entry shapes', () => {
     const flags = (id: string, data: unknown[]) =>
-      builtInProvider(id).parseModels({ data }).map(({ imageInput, toolCalling }) => [imageInput, toolCalling])
+      builtInProvider(id).parseModels({ data })
+        .map(({ imageInput, toolCalling, thinking, unsupportedSettings }) => [imageInput, toolCalling, thinking, unsupportedSettings])
 
     expect(flags('venice', [
-      { id: 'v1', model_spec: { capabilities: { supportsVision: true, supportsFunctionCalling: true } } },
-      { id: 'v2', model_spec: { capabilities: { supportsVision: false, supportsFunctionCalling: false } } },
-    ])).toEqual([[true, true], [false, false]])
+      {
+        id: 'grok-4-20',
+        model_spec: { capabilities: { supportsVision: true, supportsFunctionCalling: true, supportsReasoning: true, supportsWebSearch: true, supportsXSearch: true } },
+      },
+      {
+        id: 'grok-build-0-1',
+        model_spec: { capabilities: { supportsVision: false, supportsFunctionCalling: false, supportsReasoning: false, supportsWebSearch: true, supportsXSearch: false } },
+      },
+      // A media entry has no `capabilities`: nothing is known.
+      { id: 'wan-video', type: 'video', model_spec: {} },
+    ])).toEqual([[true, true, true, undefined], [false, false, false, ['xSearch']], [undefined, undefined, undefined, undefined]])
     expect(flags('openrouter', [
-      { id: 'o1', architecture: { input_modalities: ['text', 'image', 'file'] }, supported_parameters: ['max_tokens', 'tool_choice', 'tools'] },
+      { id: 'o1', architecture: { input_modalities: ['text', 'image', 'file'] }, supported_parameters: ['max_tokens', 'reasoning', 'tool_choice', 'tools'] },
       { id: 'o2', architecture: { input_modalities: ['text'] }, supported_parameters: ['max_tokens', 'temperature'] },
-    ])).toEqual([[true, true], [false, false]])
+      // Some router models report an empty list.
+      { id: 'o3', architecture: { input_modalities: ['text'] }, supported_parameters: [] },
+    ])).toEqual([[true, true, true, undefined], [false, false, false, undefined], [false, false, false, undefined]])
     // As in VS Code, a Copilot model without `tool_calls` cannot call tools.
+    // The list does not tell which models think.
     expect(flags('copilot', [
       { id: 'c1', capabilities: { supports: { vision: true, tool_calls: true, streaming: true } } },
       { id: 'c2', capabilities: { supports: { streaming: true } } },
-    ])).toEqual([[true, true], [undefined, false]])
+    ])).toEqual([[true, true, undefined, undefined], [undefined, false, undefined, undefined]])
   })
 
   // Type values as each API reports them: Venice and OpenRouter /models

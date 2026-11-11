@@ -12,6 +12,7 @@ import { assertProviderResponseOk } from './errors'
 import { generatedImageFromUrl } from './generatedImages'
 import type { MediaWireRequest } from './mediaFormats'
 import { effectiveParameterValues, type ParameterValues } from './modelParameters'
+import { modelToggles, type ToggleModel } from './modelToggles'
 import type { Provider, ProviderChatRequest } from './provider'
 import { getProvider, listProviders, requireProvider } from './registry'
 import { assertStreamResponseOk, streamProviderTokens } from './streaming'
@@ -88,6 +89,13 @@ async function readImagePart(path: string, appDir: string): Promise<ChatImagePar
   }
 }
 
+// The model as the model cache knows it, for the rule of its toggles
+// (modelToggles.ts). A model that the cache does not have is only its id,
+// so every toggle of the provider applies to it.
+function toggleModel(providerId: ProviderId, modelId: string): ToggleModel {
+  return (sbp('dez.model/modelCache/model', providerId, modelId) as ModelInfo | null) ?? { id: modelId }
+}
+
 async function nativeChatStream(
   provider: Provider,
   input: ProviderStreamChatInput,
@@ -96,7 +104,7 @@ async function nativeChatStream(
   refreshCopilot = false,
 ): Promise<{ result: NativeHttpStreamResult, thinking: ProviderChatRequest['thinking'] }> {
   const secretValue = await requestSecret(provider, refreshCopilot)
-  const { request, thinking } = provider.chatRequest(messages, input.modelId, secretValue, input.providerSettings, input)
+  const { request, thinking } = provider.chatRequest(messages, toggleModel(provider.id, input.modelId), secretValue, input.providerSettings, input)
   return { result: await sbp('dez.http/stream', request, requestId) as NativeHttpStreamResult, thinking }
 }
 
@@ -140,14 +148,15 @@ export default sbp('sbp/selectors/register', {
     return listProviders().map((provider) => provider.info(keys))
   },
 
-  // Synchronous read for the provider settings popup: the provider's display
-  // name, the toggles shown for this model, and whether it has the Thinking
-  // toggle, instead of the whole Provider. Takes a plain string, so views need
-  // no id check; null for unknown ids.
+  // Synchronous and reactive read for the provider settings popup: the
+  // provider's display name and the toggles that apply to this model
+  // (`modelToggles`, the rule that the chat request follows too), instead of
+  // the whole Provider. Takes a plain string, so views need no id check;
+  // null for unknown ids.
   'dez.provider/settingsDescriptor' (providerId: string, modelId: string): ProviderSettingsDescriptor | null {
     const provider = getProvider(providerId)
     return provider
-      ? { name: provider.name, settings: provider.visibleSettings(modelId), supportsThinking: provider.supportsThinking }
+      ? { name: provider.name, ...modelToggles(provider.config, toggleModel(provider.id, modelId)) }
       : null
   },
 

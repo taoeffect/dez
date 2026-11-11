@@ -18,6 +18,7 @@ import type { AppStatePayload, CachedProvider, ConversationSearchOutcome, ModelC
 import { emptyModelCache } from '../persistence/modelCache'
 import type { ModelOutputsConfig, ProviderConfig, ProviderThinkingConfig } from '../providers/config'
 import type { ParameterValue, ParameterValues } from '../providers/modelParameters'
+import { toolsApply } from '../providers/modelToggles'
 import { providerModel, type ModelInfo, type ProviderId, type ProviderModelsResult } from '../providers/types'
 import { isToolsEnabled } from '../providers/toolsSetting'
 import type { ActiveModel, ContentNode, ModelRef, Section, SectionThinking, Tab, ThinkingReplay, ThinkingRound } from '../chat/types'
@@ -183,8 +184,8 @@ function cloneRecords<Value>(records: Record<string, Record<string, Value>>): Re
 function cloneProviderConfig(config: ProviderConfig): ProviderConfig {
   const {
     id, name, baseUrl, apiFormat, models, fetchModels, modelListQuery, modelImageInput, modelToolCalling,
-    modelOutputs, auth, headers, imageRequestHeaders, maxOutputTokens, cacheBreakpoints, toolMessageCacheMark,
-    promptCacheKey, requestBody, imageOutputBody, mediaApi, settings, thinking,
+    modelThinking, modelOutputs, auth, headers, imageRequestHeaders, maxOutputTokens, cacheBreakpoints,
+    toolMessageCacheMark, promptCacheKey, requestBody, imageOutputBody, mediaApi, settings, thinking,
     ...uncopied
   } = config
   // A compile error when ProviderConfig gets a field that this clone does not
@@ -202,6 +203,7 @@ function cloneProviderConfig(config: ProviderConfig): ProviderConfig {
   if (modelListQuery) clone.modelListQuery = { ...modelListQuery }
   if (modelImageInput) clone.modelImageInput = { ...modelImageInput }
   if (modelToolCalling) clone.modelToolCalling = { ...modelToolCalling }
+  if (modelThinking) clone.modelThinking = { ...modelThinking }
   if (modelOutputs) clone.modelOutputs = cloneModelOutputsConfig(modelOutputs)
   if (headers) clone.headers = { ...headers }
   if (imageRequestHeaders) clone.imageRequestHeaders = { ...imageRequestHeaders }
@@ -212,7 +214,9 @@ function cloneProviderConfig(config: ProviderConfig): ProviderConfig {
   if (requestBody) clone.requestBody = cloneJsonObject(requestBody)
   if (imageOutputBody) clone.imageOutputBody = cloneJsonObject(imageOutputBody)
   if (mediaApi) clone.mediaApi = { ...mediaApi }
-  if (settings) clone.settings = settings.map((setting) => ({ ...setting }))
+  if (settings) {
+    clone.settings = settings.map(({ modelSupport, ...setting }) => ({ ...setting, ...(modelSupport && { modelSupport: { ...modelSupport } }) }))
+  }
   // Last: dez.controller/providers/save compares configs as JSON text and
   // relies on this key order.
   if (thinking) clone.thinking = cloneThinkingConfig(thinking)
@@ -856,17 +860,17 @@ export default sbp('sbp/selectors/register', {
   // `model`: the model the request goes to. It decides what earlier thinking
   // goes back, whether the images go, and whether the tools go. A model that
   // the model cache knows not to read images gets only the text of each
-  // reference, with no path; one that it knows not to call tools gets no
-  // tools, as does any model of a provider whose Tools toggle is off. An
-  // unknown model (no flag, or not in the cache yet) gets the images and the
-  // tools.
+  // reference, with no path. The tools go only to a model that the Tools
+  // toggle applies to (`toolsApply`: not one that is known not to call
+  // tools, and no media model), and only while that toggle of its provider
+  // is on. An unknown model (no flag, or not in the cache yet) gets the
+  // images and the tools.
   'dez.model/streamMessagesForTab' (tabId: string, model: ModelRef): RequestMessages {
     const tab = useTabStore().tabs.find((candidate) => candidate.id === tabId)
     if (!tab) return { messages: [], imagesLeftOut: 0, sendTools: false }
 
     const cached = cachedModel(model)
-    const sendTools = isToolsEnabled(useSettingsStore().providerSettings[model.providerId]) &&
-      cached?.toolCalling !== false
+    const sendTools = toolsApply(cached ?? {}) && isToolsEnabled(useSettingsStore().providerSettings[model.providerId])
     const sendImages = cached?.imageInput !== false
     return { ...sectionsToStreamMessages(tab.sections, model, { sendImages, sendTools }), sendTools }
   },
@@ -1047,12 +1051,19 @@ export default sbp('sbp/selectors/register', {
     }
   },
 
-  // Clears all stored overrides for a provider; effective values fall back
-  // to the provider descriptor defaults at read/request-build time. With
-  // `modelId`, it also clears the parameter values of that model.
-  'dez.model/settings/resetProviderSettings' (providerId: string, modelId?: string): void {
+  // Clears the stored overrides of the given toggles of a provider; their
+  // effective values fall back to the defaults at read/request-build time.
+  // The provider settings popup gives the toggles that it shows, so a toggle
+  // that does not apply to the active model keeps its value. A provider
+  // with no override left has no entry. With `modelId`, it also clears the
+  // parameter values of that model.
+  'dez.model/settings/resetProviderSettings' (providerId: string, keys: readonly string[], modelId?: string): void {
     const settings = useSettingsStore()
-    delete settings.providerSettings[providerId]
+    const stored = settings.providerSettings[providerId]
+    if (stored) {
+      for (const key of keys) delete stored[key]
+      if (Object.keys(stored).length === 0) delete settings.providerSettings[providerId]
+    }
     if (modelId !== undefined) delete settings.modelParameters[modelRefKey({ providerId, modelId })]
   },
 

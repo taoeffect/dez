@@ -29,8 +29,11 @@ describe('model cache persistence format', () => {
 
   it('round-trips capability flags and reads a model without one as unknown', () => {
     const models = [
-      { id: 'vision', name: 'Vision', provider: 'venice', imageInput: true, toolCalling: true },
-      { id: 'text', name: 'Text', provider: 'venice', imageInput: false, toolCalling: false },
+      { id: 'vision', name: 'Vision', provider: 'venice', imageInput: true, toolCalling: true, thinking: true },
+      { id: 'text', name: 'Text', provider: 'venice', imageInput: false, toolCalling: false, thinking: false, unsupportedSettings: ['xSearch'] },
+      // A cache written before the thinking flag and the unsupported toggles
+      // existed.
+      { id: 'tools-only', name: 'Tools only', provider: 'venice', imageInput: true, toolCalling: true },
       // A cache written before the tool flag existed.
       { id: 'image-only', name: 'Image only', provider: 'venice', imageInput: true },
       // A cache written before the flags existed.

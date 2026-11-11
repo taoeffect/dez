@@ -63,6 +63,10 @@ export const providerModelConfigSchema = z.object({
   // Whether the model calls tools. Wins over the flag the server reports
   // (`modelToolCalling`); missing: the server's flag, or unknown.
   toolCalling: z.boolean().optional(),
+  // Whether the model thinks, for a provider with `thinking`. Wins over the
+  // flag the server reports (`modelThinking`); missing: the server's flag,
+  // or unknown.
+  thinking: z.boolean().optional(),
   // What the model makes. Wins over what the server reports; missing: the
   // server's outputs, or unknown. A config model is always listed, so it
   // must make at least one type.
@@ -72,12 +76,33 @@ export const providerModelConfigSchema = z.object({
   request: z.enum(MODEL_REQUESTS).optional(),
 })
 
+// A dot path into one `/models` entry, such as
+// 'architecture.input_modalities' (modelParsing.ts).
+const modelEntryPathSchema = z.string().refine(
+  (path) => path.split('.').every((segment) => segment.length > 0),
+  'Model entry path must be dot-separated names, none empty',
+)
+
+// Where a `/models` entry says whether the model has a capability. A boolean
+// there is the flag; a list means "has it" when it holds the capability's
+// list value ("image" for `modelImageInput`, "tools" for
+// `modelToolCalling`, "reasoning" for `modelThinking`, and the first name of
+// the toggle's `bodyPath` for `settings[].modelSupport`); anything else is
+// unknown (modelParsing.ts). `missing` is the flag of an entry with no value
+// at the path, for a server that leaves out a capability the model lacks;
+// without it, no value is unknown.
+const modelCapabilityPathSchema = z.object({
+  path: modelEntryPathSchema,
+  missing: z.boolean().optional(),
+})
+
 const settingBodyValueSchema = z.union([z.string(), z.number(), z.boolean()])
 
 // One toggle in the model picker's provider settings popup. The toggle state
-// is stored under `key` in settings.providerSettings[providerId], and every
-// chat request writes the matching value at `bodyPath`. The Thinking and
-// Tools toggles are stored there too, so their keys are reserved.
+// is stored under `key` in settings.providerSettings[providerId], and a chat
+// request to a model that the toggle applies to writes the matching value at
+// `bodyPath` (`modelToggles` in modelToggles.ts). The Thinking and Tools
+// toggles are stored there too, so their keys are reserved.
 export const providerSettingDefSchema = z.object({
   key: z.string().min(1)
     .refine((key) => key !== THINKING_SETTING_KEY, `Setting key "${THINKING_SETTING_KEY}" is reserved for the Thinking toggle`)
@@ -95,8 +120,12 @@ export const providerSettingDefSchema = z.object({
   // Written when the toggle is on (default true) / off (default false).
   onValue: settingBodyValueSchema.optional(),
   offValue: settingBodyValueSchema.optional(),
-  // Show the toggle only for model ids that start with this prefix.
+  // The toggle applies only to model ids that start with this prefix.
   modelIdPrefix: z.string().min(1).optional(),
+  // Where the server's model list says whether a model takes the toggle. It
+  // does not apply to a model that is known not to take it
+  // (`ModelInfo.unsupportedSettings`).
+  modelSupport: modelCapabilityPathSchema.optional(),
 })
 
 // The native HTTP bridge (reqwest) cannot send a header whose name is not an
@@ -146,24 +175,6 @@ const thinkingConfigSchema = z.object({
   // Merged when the toggle is off. Absent: nothing, because many models
   // refuse a request that turns thinking off.
   disabledBody: requestBodyPartSchema.optional(),
-})
-
-// A dot path into one `/models` entry, such as
-// 'architecture.input_modalities' (modelParsing.ts).
-const modelEntryPathSchema = z.string().refine(
-  (path) => path.split('.').every((segment) => segment.length > 0),
-  'Model entry path must be dot-separated names, none empty',
-)
-
-// Where a `/models` entry says whether the model has a capability. A boolean
-// there is the flag; a list means "has it" when it holds the capability's
-// list value ("image" for `modelImageInput`, "tools" for
-// `modelToolCalling`); anything else is unknown (modelParsing.ts). `missing`
-// is the flag of an entry with no value at the path, for a server that
-// leaves out a capability the model lacks; without it, no value is unknown.
-const modelCapabilityPathSchema = z.object({
-  path: modelEntryPathSchema,
-  missing: z.boolean().optional(),
 })
 
 // What a model makes and how Dez sends it a request, from the type that its
@@ -222,6 +233,9 @@ export const providerConfigSchema = z.object({
   modelListQuery: z.record(z.string(), z.string()).optional(),
   modelImageInput: modelCapabilityPathSchema.optional(),
   modelToolCalling: modelCapabilityPathSchema.optional(),
+  // Which models think, for a provider with `thinking`: a model that is known
+  // not to think gets no Thinking toggle and no thinking fields.
+  modelThinking: modelCapabilityPathSchema.optional(),
   modelOutputs: modelOutputsConfigSchema.optional(),
   auth: z.enum(['apiKey', 'githubCopilot']).default('apiKey'),
   // Static headers added to every request.

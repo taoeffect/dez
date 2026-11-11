@@ -13,8 +13,9 @@ export interface RequestMessages {
   // The image references of user sections that went as text only, because
   // the request model does not read images.
   imagesLeftOut: number
-  // The request offers the Dez tools: the provider's Tools toggle is on, and
-  // the model cache does not know the model as one that cannot call tools.
+  // The request offers the Dez tools: the Tools toggle applies to the model
+  // (`toolsApply` in providers/modelToggles.ts), and the provider's toggle
+  // is on.
   sendTools: boolean
 }
 

@@ -1,5 +1,5 @@
 import { normalizeOutputs } from '../modelOutputs'
-import type { ModelCapabilityPath, ModelOutputsConfig } from './config'
+import type { ModelCapabilityPath, ModelOutputsConfig, ProviderSettingDef } from './config'
 import type { ModelCapabilities, ModelRequest } from './types'
 
 export function isRecord(value: unknown): value is Record<string, unknown> {
@@ -28,9 +28,10 @@ export function valueAtPath(model: unknown, path: string): unknown {
 }
 
 // Reads a model capability from a `/models` entry, at a config dot path
-// (`modelImageInput`, `modelToolCalling` in config.ts): a boolean is the
-// flag, and a list means true when it holds `listValue` (such as "image" in
-// OpenRouter's `architecture.input_modalities`, or "tools" in its
+// (`modelImageInput`, `modelToolCalling`, `modelThinking`, and
+// `settings[].modelSupport` in config.ts): a boolean is the flag, and a list
+// means true when it holds `listValue` (such as "image" in OpenRouter's
+// `architecture.input_modalities`, or "tools" in its
 // `supported_parameters`). No value at the path gives the config's
 // `missing` flag. Anything else, or no config, is unknown.
 export function modelCapability(model: Record<string, unknown>, capability: ModelCapabilityPath | undefined, listValue: string): boolean | undefined {
@@ -41,6 +42,17 @@ export function modelCapability(model: Record<string, unknown>, capability: Mode
   if (typeof value === 'boolean') return value
   if (Array.isArray(value)) return value.includes(listValue)
   return undefined
+}
+
+// The keys of the config toggles (`settings`) that a `/models` entry says
+// its model does not take: each toggle whose flag at its `modelSupport` is
+// false. A list there holds the names of the request fields that the model
+// takes (OpenRouter's `supported_parameters`), so it means "takes it" when
+// it holds the first name of the toggle's `bodyPath`.
+export function unsupportedSettings(model: Record<string, unknown>, settings: readonly ProviderSettingDef[] | undefined): string[] {
+  return (settings ?? [])
+    .filter((setting) => modelCapability(model, setting.modelSupport, setting.bodyPath.split('.')[0]) === false)
+    .map((setting) => setting.key)
 }
 
 // A JSON null counts as no value.

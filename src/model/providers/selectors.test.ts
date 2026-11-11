@@ -7,7 +7,7 @@ import { sectionsToStreamMessages } from '../streams/messages'
 import { bytesToBase64 } from '../../utils/base64'
 import type { NativeHttpRequest, NativeHttpResponse, NativeHttpStreamResult } from '../../utils/protocol/nativeHttp'
 import type { ProviderGenerateMediaResult } from './streamTypes'
-import type { GeneratedMedia, ModelDisplayNames, ProviderModelsResult } from './types'
+import type { GeneratedMedia, ModelDisplayNames, ProviderModelsResult, ProviderSettingsDescriptor } from './types'
 // Side-effect imports: register the dez.model/* selectors and the selectors
 // under test.
 import '../state/index'
@@ -339,6 +339,77 @@ describe('thinking in chat streams', () => {
 
     expect(calls).toEqual(['token:Hello'])
     expect(result).toStrictEqual({ requestId: 'request-2', toolCalls: STREAMED_TOOL_CALLS })
+  })
+})
+
+// The popup's rows and the chat request read one rule (modelToggles.ts) with
+// the model of the model cache, so they agree for every model.
+describe('the toggles of the request model', () => {
+  const GATED_URL = 'http://localhost:4040/v1'
+  const search = { key: 'search', label: 'Search', type: 'boolean', default: true, bodyPath: 'extra.search', modelSupport: { path: 'caps.search' } }
+  const every = { name: 'Gated', thinking: true, tools: true, settings: [search] }
+  const none = { name: 'Gated', thinking: false, tools: false, settings: [] }
+  const descriptor = (modelId: string) => sbp('dez.provider/settingsDescriptor', 'gated', modelId) as ProviderSettingsDescriptor | null
+
+  async function sentBody(modelId: string, providerSettings: Record<string, boolean> = {}): Promise<Record<string, unknown>> {
+    streamRequests = []
+    await sbp('dez.provider/streamChat', { providerId: 'gated', modelId, messages: [{ role: 'user', content: 'Hi' }], providerSettings, onToken: () => {} })
+    return JSON.parse(streamRequests[0].body as string) as Record<string, unknown>
+  }
+
+  // The model check puts the facts of the server's list into the cache.
+  async function checkModels() {
+    sbp('dez.model/modelCache/applyProviderResult', 'gated', await sbp('dez.provider/listModelsResult', 'gated'))
+  }
+
+  beforeEach(() => {
+    sbp('dez.model/customProviders/save', {
+      id: 'gated',
+      name: 'Gated',
+      baseUrl: GATED_URL,
+      apiFormat: 'openai',
+      models: [{ id: 'speech', request: 'tts' }],
+      fetchModels: true,
+      modelToolCalling: { path: 'caps.tools' },
+      modelThinking: { path: 'caps.thinks' },
+      auth: 'apiKey',
+      settings: [search],
+      thinking: { enabledBody: { reasoning: { enabled: true } }, disabledBody: { reasoning: { enabled: false } } },
+    })
+    httpAnswers.set(`${GATED_URL}/models`, {
+      status: 200,
+      json: {
+        data: [
+          { id: 'full', caps: { tools: true, thinks: true, search: true } },
+          { id: 'bare', caps: { tools: false, thinks: false, search: false } },
+          { id: 'untold' },
+        ],
+      },
+    })
+  })
+
+  it('shows every toggle for a model that the cache does not have, and sends their fields', async () => {
+    expect(descriptor('bare')).toStrictEqual(every)
+    expect(await sentBody('bare')).toMatchObject({ model: 'bare', extra: { search: true }, reasoning: { enabled: true } })
+    expect(await sentBody('bare', { search: false, thinking: false })).toMatchObject({ extra: { search: false }, reasoning: { enabled: false } })
+  })
+
+  it('shows and sends only what the cached model can use', async () => {
+    await checkModels()
+
+    // `bare` takes chat requests but none of the toggles; `speech` takes no
+    // chat request.
+    expect(['full', 'untold', 'bare', 'speech', 'not-listed'].map(descriptor)).toStrictEqual([every, every, none, none, every])
+    expect(await sentBody('full')).toMatchObject({ extra: { search: true }, reasoning: { enabled: true } })
+    // Neither the on nor the off value goes, whatever the stored toggles say.
+    const storedValues: Array<Record<string, boolean>> = [{}, { search: true, thinking: true }, { search: false, thinking: false }]
+    for (const stored of storedValues) {
+      expect(await sentBody('bare', stored)).toStrictEqual({ model: 'bare', messages: [{ role: 'user', content: 'Hi' }], stream: true })
+    }
+  })
+
+  it('gives null for a provider that does not exist', () => {
+    expect(sbp('dez.provider/settingsDescriptor', 'no-such-provider', 'm')).toBeNull()
   })
 })
 
