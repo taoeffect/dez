@@ -7,6 +7,7 @@ import { conversationFilePath, makeConversation, seedConversation } from './harn
 import { WAV_SAMPLE_RATE, WEBM_VIDEO, monoWav, openPlayerTooltips, shownPlayers, silentWav, startClipServer, type ClipServer, type ShownPlayer } from './harness/media'
 import { startMockProviderApp, type MockProviderApp } from './harness/mockProviderApp'
 import { mockChatPath, replyText, sendChatReply, type MockProvider } from './harness/mockServer'
+import { threadCount, webProcessPid } from './harness/processes'
 import type { E2EBrowser } from './harness/session'
 import { copySelection, editorDoc, newTab, pasteText, pickModel, sbpCall, setCaret, submit, threadSections, waitForThread, type ThreadSection } from './harness/thread'
 
@@ -23,6 +24,8 @@ import { copySelection, editorDoc, newTab, pasteText, pickModel, sbpCall, setCar
 //   deletes it and gives the tag its URL back;
 // - Save moves the temp copy of a clip under its own name, and a clip whose
 //   file is gone shows the "not available" card;
+// - a player whose tab is left gives up its decoder, also when it leaves
+//   during its load;
 // - a speech model's reply is one request to `/audio/speech`; the audio is
 //   written as a temp copy, the reply holds its tag with a new id, and a
 //   later chat request gets only the id and the type of the clip, with no
@@ -304,6 +307,51 @@ describe('media player', () => {
 
     // Only the clip with no file gave an error, with no path in it.
     expect(await consoleErrors(browser)).toStrictEqual(['[MediaPlayer] The file of the clip could not be read'])
+  })
+
+  it('gives up the decoder of a clip whose tab is left', async () => {
+    await fs.promises.mkdir(tempDir(), { recursive: true })
+    const tempPath = path.join(tempDir(), 'left-copy.wav')
+    await fs.promises.writeFile(tempPath, TONE)
+    const expires = new Date(Date.now() + HOUR_MS).toISOString()
+    await openReply('left-clip', clipTag('audio', { id: 'a', type: 'audio/wav', src: tempPath, expires }))
+    const otherTabId = (await sbpCall(browser, 'dez.model/tabs/create') as { id: string }).id
+
+    // Shows the player again, waits for `shown`, and leaves its tab.
+    const showAndLeave = async (label: string, shown: (player: ShownPlayer | undefined) => boolean): Promise<void> => {
+      await sbpCall(browser, 'dez.model/tabs/openConversation', 'left-clip')
+      await waitForValue(browser, label, async () => shown((await shownPlayers(browser))[0]), true)
+      await sbpCall(browser, 'dez.model/tabs/switch', otherTabId)
+    }
+    const withMetadata = (): Promise<void> => showAndLeave('player with its metadata', (player) => player?.seconds === 2)
+    const withSource = (): Promise<void> => showAndLeave('player with its source', (player) => player?.source === 'blob')
+
+    // The decoder of a media element is a GStreamer pipeline, which has
+    // about 4 threads. A player that keeps it after it left shows as
+    // threads of the page's process that never end; before the release,
+    // each player that left kept them, and no clip loaded after about 120
+    // players. The first players start threads that stay (thread pools),
+    // so the count starts after them.
+    const ROUNDS = 10
+    const pid = webProcessPid(setup.app.home)
+    for (let round = 0; round < 2; round++) await withMetadata()
+    const before = threadCount(pid)
+    // The threads of a pipeline end a moment after its release.
+    const kept = async (): Promise<string> => {
+      const more = threadCount(pid) - before
+      return more < ROUNDS ? 'none' : `${more} threads more after ${ROUNDS} players`
+    }
+
+    for (let round = 0; round < ROUNDS; round++) await withMetadata()
+    await waitForValue(browser, 'decoders of players that left with their metadata', kept, 'none')
+
+    // A player that leaves during its load gives up its decoder when the
+    // load is past its start.
+    for (let round = 0; round < ROUNDS; round++) await withSource()
+    await waitForValue(browser, 'decoders of players that left during their load', kept, 'none')
+
+    expect(await consoleErrors(browser)).toStrictEqual([])
+    await fs.promises.rm(tempPath)
   })
 
   it('writes the audio of a speech reply as a tag, and sends a later request only its id and type', async () => {

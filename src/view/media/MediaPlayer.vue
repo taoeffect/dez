@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import sbp from '@sbp/sbp'
-import { computed, onBeforeUnmount, ref, shallowRef, watch } from 'vue'
+import { computed, onBeforeUnmount, ref, shallowRef, watch, type ObjectDirective } from 'vue'
 // Each import below defines one video.js custom element. Keep them equal to
 // the video.js tags of the template, and to `videoJsElements` in
 // vite.config.ts. `tooltip-label` and `tooltip-shortcut` are not in the
@@ -27,6 +27,7 @@ import '@videojs/html/ui/tooltip-label'
 import '@videojs/html/ui/tooltip-shortcut'
 import type { MediaTagKind } from '../../model/chat/mediaTags'
 import { clipSourceKind, expiryNotice } from './clipState'
+import { releaseRemovedMedia } from './releaseMedia'
 import { videoAspectRatios } from './videoSizes'
 
 // The player of one audio or video clip: a Dez skin made of the video.js UI
@@ -153,14 +154,17 @@ function release(source: LoadedSource | null | undefined): void {
 // The `post` flush: the media element has the next URL by then.
 watch(loaded, (_next, previous) => release(previous), { flush: 'post' })
 
-// Only the blob URL is released. Never release the source of the media
-// element here too (`removeAttribute('src')`, then `load()`): with that
-// call, the page hung in WebKitGTK 2.54.2 in 2 of 2 stress runs (once at
-// the 67th unmount, during a load).
+// Only the blob URL is released here. The media element gives up its
+// player when Vue removes it (`vReleaseOnRemove`).
 onBeforeUnmount(() => {
   unmounted = true
   release(loaded.value)
 })
+
+// Vue calls `unmounted` each time it removed the media element, after the
+// element left the document: at the unmount of the player, and at the
+// change to "not available". A removed element frees nothing by itself.
+const vReleaseOnRemove: ObjectDirective<HTMLMediaElement> = { unmounted: releaseRemovedMedia }
 
 function play(element: HTMLMediaElement): void {
   element.play().catch((error: unknown) => {
@@ -274,6 +278,7 @@ function onSaveClick(): void {
           <video
             v-if="kind === 'video'"
             ref="media"
+            v-release-on-remove
             class="media-player__video"
             :src="loaded?.url"
             preload="metadata"
@@ -285,6 +290,7 @@ function onSaveClick(): void {
           <audio
             v-else
             ref="media"
+            v-release-on-remove
             :src="loaded?.url"
             preload="metadata"
             @loadedmetadata="onLoadedMetadata"
