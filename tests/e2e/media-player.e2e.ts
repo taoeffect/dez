@@ -2,14 +2,14 @@ import fs from 'node:fs'
 import path from 'node:path'
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from 'vitest'
 import { openAiChatBody } from './harness/chatBody'
-import { consoleErrors, elementCenter, movePointer, pointerClick, resetConsoleErrors, screenshotOnFailure, waitForValue } from './harness/dom'
+import { click, consoleErrors, elementCenter, isOnTop, movePointer, pointerClick, resetConsoleErrors, screenshotOnFailure, waitForValue } from './harness/dom'
 import { conversationFilePath, makeConversation, seedConversation } from './harness/fixtures'
-import { WAV_SAMPLE_RATE, WEBM_VIDEO, monoWav, openPlayerTooltips, shownPlayers, silentWav, startClipServer, type ClipServer, type ShownPlayer } from './harness/media'
+import { WAV_SAMPLE_RATE, WEBM_VIDEO, monoWav, openPlayerTooltips, shownPlayers, silentWav, startClipServer, waitForPlayerFullscreen, type ClipServer, type ShownPlayer } from './harness/media'
 import { startMockProviderApp, type MockProviderApp } from './harness/mockProviderApp'
 import { mockChatPath, replyText, sendChatReply, type MockProvider } from './harness/mockServer'
 import { threadCount, webProcessPid } from './harness/processes'
 import type { E2EBrowser } from './harness/session'
-import { copySelection, editorDoc, newTab, pasteText, pickModel, sbpCall, setCaret, submit, threadSections, waitForThread, type ThreadSection } from './harness/thread'
+import { copySelection, editorDoc, focusedArea, newTab, openToasts, pasteText, pickModel, sbpCall, setCaret, submit, threadSections, waitForThread, type ThreadSection } from './harness/thread'
 
 // The players of audio and video clips (media tags in agent sections),
 // driven through the real app. The clips come from a clip server of the
@@ -22,8 +22,14 @@ import { copySelection, editorDoc, newTab, pasteText, pickModel, sbpCall, setCar
 //   the clock goes; the check becomes the trash only when the pointer comes
 //   to it anew; the trash asks first, keeps the file on "No", and on "Yes"
 //   deletes it and gives the tag its URL back;
-// - Save moves the temp copy of a clip under its own name, and a clip whose
-//   file is gone shows the "not available" card;
+// - Save moves the temp copy of a clip under its own name, the clock of a
+//   temp copy also tells where the file is (with `~` for the home folder),
+//   and a clip whose file is gone shows the "not available" card;
+// - a video that fills the screen stays so over a Save; it leaves
+//   fullscreen at a click on its fullscreen button, before the delete
+//   prompt shows, and when a Save fails, so that the prompt and the toast
+//   are not behind it; the largest video of its card has no source, so
+//   that macOS puts no text recognition view over the player;
 // - a player whose tab is left gives up its decoder, also when it leaves
 //   during its load;
 // - a speech model's reply is one request to `/audio/speech`; the audio is
@@ -135,8 +141,38 @@ describe('media player', () => {
     return browser.execute(() => document.querySelector('.cm-content .media-player__save')?.getAttribute('aria-label') ?? null)
   }
 
+  // `time` as the page writes it: in the locale and the time zone of the
+  // app.
+  async function pageTime (time: string): Promise<string> {
+    return browser.execute(
+      (iso: string) => new Intl.DateTimeFormat(undefined, { dateStyle: 'medium', timeStyle: 'short' }).format(new Date(iso)),
+      time,
+    )
+  }
+
   async function promptMessage (): Promise<string | null> {
     return browser.execute(() => document.querySelector('.confirm-dialog .confirm-message')?.textContent ?? null)
+  }
+
+  // The source of the video that WebKit on macOS would read text from when
+  // the first player fills the screen: the `<video>` with the largest box in
+  // the card, and the first one when two are equal (`updateMainVideoElement`
+  // in WebKit's WebFullScreenManager.cpp). '' is a video with no source.
+  // For a video with a source, macOS puts a native view over the page that
+  // takes the clicks on the player's bar (see `MediaPlayer.vue`). That view
+  // does not exist on Linux, so the spec checks what makes it.
+  async function textRecognitionVideoSource (): Promise<string | null> {
+    return browser.execute(() => {
+      let source: string | null = null
+      let largest = 0
+      for (const video of document.querySelectorAll<HTMLVideoElement>('.cm-content .media-player__card video')) {
+        const { width, height } = video.getBoundingClientRect()
+        if (width * height <= largest) continue
+        largest = width * height
+        source = video.currentSrc
+      }
+      return source
+    })
   }
 
   interface Badge {
@@ -216,15 +252,11 @@ describe('media player', () => {
     const remote: ShownPlayer = { kind: 'audio', id: 'a', available: true, source: url, seconds: 2, picture: null, clock: 'Not saved', save: 'save' }
     await waitForValue(browser, 'player of the URL', () => shownPlayers(browser), [remote])
 
-    // The clock tells until when the URL works, with the time as the page
-    // writes it: in the locale and the time zone of the app.
-    const until = await browser.execute(
-      (time: string) => new Intl.DateTimeFormat(undefined, { dateStyle: 'medium', timeStyle: 'short' }).format(new Date(time)),
-      expires,
-    )
+    // The clock tells until when the URL works. A clip that plays from a
+    // URL has no file to name.
     await movePointer(browser, await elementCenter(browser, '.media-player__clock'))
     await waitForValue(browser, 'clock tooltip', () => openPlayerTooltips(browser), [
-      `Not saved This clip is available until ${until}. Save it to keep it.`,
+      `Not saved This clip is available until ${await pageTime(expires)}. Save it to keep it.`,
     ])
 
     // Save downloads the clip, and its file becomes the source of the tag.
@@ -274,7 +306,7 @@ describe('media player', () => {
     expect(await consoleErrors(browser)).toStrictEqual([])
   })
 
-  it('moves the temp copy of a clip on Save, and tells that a clip with no file is not available', async () => {
+  it('tells where the temp copy of a clip is, moves it on Save, and tells that a clip with no file is not available', async () => {
     const savedBefore = await filesIn(savedDir('audio'))
     const tempBefore = await filesIn(tempDir())
     await fs.promises.mkdir(tempDir(), { recursive: true })
@@ -294,6 +326,14 @@ describe('media player', () => {
       () => Array.from(document.querySelectorAll('.cm-content .media-player__unavailable'), (card) => card.textContent?.trim() ?? ''),
     )).toStrictEqual(['This clip is no longer available.'])
 
+    // The clock of a temp copy also tells where the file is. The home
+    // folder of the app is the temp folder of this run, and `~` stands for
+    // it.
+    await movePointer(browser, await elementCenter(browser, '.media-player__clock'))
+    await waitForValue(browser, 'clock tooltip of the temp copy', () => openPlayerTooltips(browser), [
+      `Not saved This clip is available until ${await pageTime(expires)}. Save it to keep it. Temporary file: ~/.cache/dez/media/kept-copy.wav`,
+    ])
+
     // Save moves the copy under its name. The time of the temp copy means
     // nothing for the saved file, so the tag loses its `expires`.
     await pointerClick(browser, '.media-player__save')
@@ -307,6 +347,71 @@ describe('media player', () => {
 
     // Only the clip with no file gave an error, with no path in it.
     expect(await consoleErrors(browser)).toStrictEqual(['[MediaPlayer] The file of the clip could not be read'])
+  })
+
+  it('keeps a video in fullscreen over a Save, and leaves fullscreen for the delete prompt and at a click on its button', async () => {
+    const before = await filesIn(savedDir('video'))
+    const url = clips.clipUrl('video.webm')
+    const expires = new Date(Date.now() + HOUR_MS).toISOString()
+    await openReply('fullscreen-clip', clipTag('video', { id: 'a', type: 'video/webm', src: url, url, expires }))
+    await waitForValue(browser, 'length of the clip', async () => (await shownPlayers(browser))[0]?.seconds, 2)
+    expect(await textRecognitionVideoSource()).toBe('')
+    await pointerClick(browser, '.media-player__fullscreen')
+    await waitForPlayerFullscreen(browser, true)
+    expect(await textRecognitionVideoSource()).toBe('')
+
+    // Save rewrites the tag of the player. The player stays in the document
+    // over that, so it still fills the screen.
+    await pointerClick(browser, '.media-player__save')
+    await waitForValue(browser, 'Save control', async () => (await shownPlayers(browser))[0]?.save, 'saved')
+    expect(await newFiles(savedDir('video'), before, 1)).toHaveLength(1)
+    await waitForPlayerFullscreen(browser, true)
+
+    // The trash asks first. The prompt is not a part of the player, so the
+    // player leaves fullscreen, and the prompt shows over the page.
+    await movePointer(browser, await elementCenter(browser, '.media-player__play'))
+    await movePointer(browser, await elementCenter(browser, '.media-player__save'))
+    await waitForValue(browser, 'trash', saveLabel, 'Delete the saved file')
+    await pointerClick(browser, '.media-player__save')
+    await waitForValue(browser, 'prompt', promptMessage, DELETE_PROMPT)
+    await waitForPlayerFullscreen(browser, false)
+    expect(await isOnTop(browser, '.confirm-dialog')).toBe(true)
+    await pointerClick(browser, '.confirm-btn--cancel')
+    await waitForValue(browser, 'prompt after No', promptMessage, null)
+    expect(await focusedArea(browser)).toBe('editor')
+
+    // A click on the fullscreen button of a player that fills the screen
+    // ends the fullscreen, and the editor gets the focus back.
+    await pointerClick(browser, '.media-player__fullscreen')
+    await waitForPlayerFullscreen(browser, true)
+    expect(await focusedArea(browser)).toBe('media-container')
+    await pointerClick(browser, '.media-player__fullscreen')
+    await waitForPlayerFullscreen(browser, false)
+    await waitForValue(browser, 'focus after fullscreen', () => focusedArea(browser), 'editor')
+    expect(await consoleErrors(browser)).toStrictEqual([])
+  })
+
+  it('leaves fullscreen when a Save fails, so that its toast shows', async () => {
+    await fs.promises.mkdir(tempDir(), { recursive: true })
+    const tempPath = path.join(tempDir(), 'lost-copy.webm')
+    await fs.promises.writeFile(tempPath, WEBM_VIDEO)
+    const expires = new Date(Date.now() + HOUR_MS).toISOString()
+    await openReply('lost-clip', clipTag('video', { id: 'a', type: 'video/webm', src: tempPath, expires }))
+    await waitForValue(browser, 'length of the clip', async () => (await shownPlayers(browser))[0]?.seconds, 2)
+    await pointerClick(browser, '.media-player__fullscreen')
+    await waitForPlayerFullscreen(browser, true)
+
+    // The player has the bytes of the file, so it still plays when the file
+    // is gone. Save moves the file, which now fails.
+    await fs.promises.rm(tempPath)
+    await pointerClick(browser, '.media-player__save')
+    await waitForValue(browser, 'error toast', async () => (await openToasts(browser, 'error')).map((toast) => toast.title), ['Could not save the clip'])
+    await waitForPlayerFullscreen(browser, false)
+    expect(await isOnTop(browser, '.toast-card--error')).toBe(true)
+    expect((await shownPlayers(browser))[0]?.save).toBe('save')
+
+    await click(browser, '.toast-card--error .toast-close')
+    await waitForValue(browser, 'error toast closed', () => openToasts(browser, 'error'), [])
   })
 
   it('gives up the decoder of a clip whose tab is left', async () => {

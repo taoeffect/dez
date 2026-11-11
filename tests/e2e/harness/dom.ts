@@ -159,6 +159,19 @@ export async function elementCenter (browser: E2EBrowser, selector: string): Pro
   }, selector)
 }
 
+/** Whether the first element that matches `selector` is the top one at its
+ *  own center: no other layer (an overlay, a fullscreen element) covers it
+ *  there. False when no element matches. */
+export async function isOnTop (browser: E2EBrowser, selector: string): Promise<boolean> {
+  return browser.execute((sel: string) => {
+    const el = document.querySelector(sel)
+    if (!el) return false
+    const rect = el.getBoundingClientRect()
+    const hit = document.elementFromPoint(rect.left + rect.width / 2, rect.top + rect.height / 2)
+    return hit !== null && el.contains(hit)
+  }, selector)
+}
+
 /** Move the mouse pointer to `point`, with no button down. */
 export async function movePointer (browser: E2EBrowser, point: Point): Promise<void> {
   await browser.action('pointer', { parameters: { pointerType: 'mouse' } })

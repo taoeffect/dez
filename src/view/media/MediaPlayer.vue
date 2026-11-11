@@ -197,8 +197,28 @@ function togglePlay(): void {
 // time is read when the player is made, and each time the pointer or the
 // focus comes to the clock, which is when its tooltip shows.
 const now = ref(Date.now())
+
+// Where the clip's temp copy is, as the clock's tooltip shows it (`~` for
+// the home folder), so that the user can find the file. Null for a clip with
+// no temp copy, and until the path is read. The path is for the eye only:
+// it goes into no doc text, so no request holds it.
+const tempPath = ref<string | null>(null)
+watch(() => props.src, async (src) => {
+  tempPath.value = null
+  if (src === null || sourceKind.value !== 'temp') return
+  const path = await sbp('dez.controller/displayPath', src) as string
+  // The clip got another source while the path was read.
+  if (props.src === src) tempPath.value = path
+}, { immediate: true })
+
 // The clock goes away as soon as a Save starts, and comes back if it fails.
-const notice = computed(() => saved.value || props.busy ? null : expiryNotice(props.expires, now.value))
+const notice = computed(() => saved.value || props.busy ? null : expiryNotice(props.expires, now.value, tempPath.value))
+/** The words of the clock's tooltip as one text, for screen readers. */
+const noticeLabel = computed(() => {
+  const value = notice.value
+  if (!value) return undefined
+  return value.file === null ? `${value.title}. ${value.text}` : `${value.title}. ${value.text} ${value.file}`
+})
 
 /** The faces of the Save control: `Save ⬇` → (saving) → `Saved ✓` → a green
  *  check, which is a trash under the pointer → (deleting) → `Save ⬇`. */
@@ -369,7 +389,7 @@ function onSaveClick(): void {
                 :data-expired="notice.expired ? '' : undefined"
                 role="img"
                 tabindex="0"
-                :aria-label="`${notice.title}. ${notice.text}`"
+                :aria-label="noticeLabel"
                 @pointerenter="now = Date.now()"
                 @focus="now = Date.now()"
               >
@@ -381,6 +401,7 @@ function onSaveClick(): void {
               <media-tooltip class="media-player__tooltip media-player__tooltip--notice" boundary="viewport">
                 <span class="media-player__tooltip-title">{{ notice.title }}</span>
                 <span class="media-player__tooltip-text">{{ notice.text }}</span>
+                <span v-if="notice.file" class="media-player__tooltip-text media-player__tooltip-path">{{ notice.file }}</span>
               </media-tooltip>
             </template>
 
@@ -418,6 +439,39 @@ function onSaveClick(): void {
             </button>
             <media-tooltip class="media-player__tooltip" boundary="viewport">{{ saveHint }}</media-tooltip>
           </media-tooltip-group>
+          <!-- A second video element, empty and never shown. It has an
+               effect on macOS only.
+               In element fullscreen, WebKit on macOS reads the text in the
+               frame of a paused video (Live Text), and for that it puts a
+               native view over the whole web view. That view takes every
+               click. So, after the clip had played, no button of the bar
+               worked in fullscreen: the page got no pointer event at all.
+               (The dead clicks were seen on macOS; their cause is read
+               from WebKit's code.)
+               WebKit does this for one video only: the `<video>` with the
+               largest box under the fullscreen element (the first one, if
+               two are equal). And it does nothing for a video with no
+               source, which has no frame. This element is that video. Two
+               rules keep it so:
+               - It has no `src`, and nothing loads it.
+               - Its box is larger than the box of the clip's video: it has
+                 the size of the card, which is the video plus the bar.
+               It comes after the clip's video, because video.js takes the
+               first `video` in the player as its media.
+               WebKitGTK has no such view. An element with no source has no
+               media player (300 of them add no thread to the web process),
+               so it needs no `v-release-on-remove`.
+               The WebKit setting that turns the text recognition off is no
+               option: the web process then still asks for the recognition,
+               and WebKit ends the web process for it (the last URL).
+               https://github.com/WebKit/WebKit/blob/main/Source/WebKit/WebProcess/FullScreen/WebFullScreenManager.cpp
+               (`updateMainVideoElement`, `mainVideoElementTextRecognitionTimerFired`)
+               https://github.com/WebKit/WebKit/blob/main/Source/WebKit/WebProcess/WebPage/WebPage.cpp
+               (`beginTextRecognitionForVideoInElementFullScreen`)
+               https://github.com/WebKit/WebKit/blob/main/Source/WebKit/UIProcess/mac/WebViewImpl.mm
+               (`installImageAnalysisOverlayView`)
+               https://github.com/driceroland/Search/pull/794 -->
+          <video v-if="kind === 'video'" class="media-player__stand-in" />
         </template>
         <div v-else class="media-player__unavailable">
           <svg class="media-player__icon media-player__icon--line" viewBox="0 0 16 16" aria-hidden="true">
@@ -475,8 +529,10 @@ function onSaveClick(): void {
 
 /* video.js elements are custom elements with no styles of their own
    (inline, no size): every one that has a box gets its layout here.
-   `min-width: 0`: in a narrow line the card gets narrower, not the badge. */
+   `min-width: 0`: in a narrow line the card gets narrower, not the badge.
+   `position`: the card is the containing block of the stand-in video. */
 .media-player__card {
+  position: relative;
   display: flex;
   flex: 0 1 auto;
   flex-direction: column;
@@ -517,6 +573,17 @@ function onSaveClick(): void {
   object-fit: contain;
   background: #000;
   cursor: pointer;
+}
+
+/* The size of the card, out of the flow, with no picture and no pointer
+   events: see the comment at the element. */
+.media-player__stand-in {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  visibility: hidden;
+  pointer-events: none;
 }
 
 /* The bar is a size container: it hides parts when it is narrow (the
@@ -946,6 +1013,12 @@ function onSaveClick(): void {
   display: block;
   margin-top: calc(var(--u) * 2);
   opacity: 0.8;
+}
+
+/* A path has no spaces: it breaks at any character, so a long one stays
+   inside the tooltip. */
+.media-player__tooltip-path {
+  overflow-wrap: anywhere;
 }
 
 /* The code look of the image tooltips (`.dez-image-tooltip code` in

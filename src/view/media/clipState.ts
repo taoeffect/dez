@@ -24,19 +24,30 @@ export interface ExpiryNotice {
   expired: boolean
   title: string
   text: string
+  /** The line that names the clip's temp copy; null for a clip that has
+   *  none (it plays from the provider's URL). */
+  file: string | null
 }
 
 // The date and the time of day, in the user's locale and time zone.
 const LOCAL_TIME = new Intl.DateTimeFormat(undefined, { dateStyle: 'medium', timeStyle: 'short' })
 
 /** The notice for a tag's `expires` at the time `now` (ms); null when the
- *  tag gives no valid time, so the player shows no clock. `formatTime`
- *  gives the time as the user reads it. */
-export function expiryNotice(expires: string | null, now: number, formatTime: (time: Date) => string = (time) => LOCAL_TIME.format(time)): ExpiryNotice | null {
+ *  tag gives no valid time, so the player shows no clock. `tempPath` is the
+ *  path of the clip's temp copy as the user reads it (`~` for the home
+ *  folder), or null for a clip with no temp copy. `formatTime` gives the
+ *  time as the user reads it. */
+export function expiryNotice(
+  expires: string | null,
+  now: number,
+  tempPath: string | null,
+  formatTime: (time: Date) => string = (time) => LOCAL_TIME.format(time),
+): ExpiryNotice | null {
   if (expires === null) return null
   const time = new Date(expires)
   if (Number.isNaN(time.getTime())) return null
+  const file = tempPath === null ? null : `Temporary file: ${tempPath}`
   return time.getTime() <= now
-    ? { expired: true, title: 'Expired', text: `This clip was available until ${formatTime(time)}. It can stop playing at any time.` }
-    : { expired: false, title: 'Not saved', text: `This clip is available until ${formatTime(time)}. Save it to keep it.` }
+    ? { expired: true, title: 'Expired', text: `This clip was available until ${formatTime(time)}. It can stop playing at any time.`, file }
+    : { expired: false, title: 'Not saved', text: `This clip is available until ${formatTime(time)}. Save it to keep it.`, file }
 }

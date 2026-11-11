@@ -37,10 +37,11 @@ describe('expiryNotice', () => {
   const formatTime = (time: Date) => `<${time.toISOString()}>`
 
   it('tells until when a clip is available', () => {
-    expect(expiryNotice(expires, at - 1, formatTime)).toStrictEqual({
+    expect(expiryNotice(expires, at - 1, null, formatTime)).toStrictEqual({
       expired: false,
       title: 'Not saved',
       text: `This clip is available until <${expires}>. Save it to keep it.`,
+      file: null,
     })
   })
 
@@ -49,14 +50,26 @@ describe('expiryNotice', () => {
       expired: true,
       title: 'Expired',
       text: `This clip was available until <${expires}>. It can stop playing at any time.`,
+      file: null,
     }
-    expect(expiryNotice(expires, at, formatTime)).toStrictEqual(expired)
-    expect(expiryNotice(expires, at + 86_400_000, formatTime)).toStrictEqual(expired)
+    expect(expiryNotice(expires, at, null, formatTime)).toStrictEqual(expired)
+    expect(expiryNotice(expires, at + 86_400_000, null, formatTime)).toStrictEqual(expired)
+  })
+
+  it('names the temp copy of a clip, before and after its time is over', () => {
+    const tempPath = '~/.cache/dez/media/9f3c.mp4'
+    expect(expiryNotice(expires, at - 1, tempPath, formatTime)).toStrictEqual({
+      expired: false,
+      title: 'Not saved',
+      text: `This clip is available until <${expires}>. Save it to keep it.`,
+      file: 'Temporary file: ~/.cache/dez/media/9f3c.mp4',
+    })
+    expect(expiryNotice(expires, at, tempPath, formatTime)?.file).toBe('Temporary file: ~/.cache/dez/media/9f3c.mp4')
   })
 
   it('gives no notice for a tag with no time or with a time that is not valid', () => {
-    expect(expiryNotice(null, at, formatTime)).toBeNull()
-    expect(expiryNotice('soon', at, formatTime)).toBeNull()
-    expect(expiryNotice('', at, formatTime)).toBeNull()
+    expect(expiryNotice(null, at, null, formatTime)).toBeNull()
+    expect(expiryNotice('soon', at, null, formatTime)).toBeNull()
+    expect(expiryNotice('', at, '~/.cache/dez/media/9f3c.mp4', formatTime)).toBeNull()
   })
 })

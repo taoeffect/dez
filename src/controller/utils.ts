@@ -1,5 +1,10 @@
 import sbp from '@sbp/sbp'
 import { openPath, openUrl, revealItemInDir } from '@tauri-apps/plugin-opener'
+import { pathWithTilde } from '../utils/homePath'
+
+// The read of the user's home folder, kept: the folder does not change
+// while the app runs. A failed read is not kept.
+let homeDirRead: Promise<string> | null = null
 
 export default sbp('sbp/selectors/register', {
   'dez.controller/openUrl' (url: string): void {
@@ -46,6 +51,20 @@ export default sbp('sbp/selectors/register', {
         message: String(error),
         variant: 'error',
       })
+    }
+  },
+
+  // The absolute path `path` as the UI shows it: `~` in place of the user's
+  // home folder (`pathWithTilde`). When the home folder cannot be read, the
+  // path comes back as it is.
+  async 'dez.controller/displayPath' (path: string): Promise<string> {
+    try {
+      homeDirRead ??= sbp('dez.native/homeDir') as Promise<string>
+      return pathWithTilde(path, await homeDirRead)
+    } catch (error) {
+      homeDirRead = null
+      console.error('Failed to read the home folder:', error)
+      return path
     }
   },
 })

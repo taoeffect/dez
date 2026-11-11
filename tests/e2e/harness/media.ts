@@ -143,3 +143,27 @@ export async function openPlayerTooltips (browser: E2EBrowser): Promise<string[]
     (tooltip) => Array.from(tooltip.children, (part) => part.textContent?.trim() ?? '').join(' ') || (tooltip.textContent?.trim() ?? ''),
   ))
 }
+
+/** Waits until the card of a player fills the screen (`on`), or until
+ *  nothing does. The page is ready for a click only when the layout is at
+ *  rest: the fullscreen button has its new state (video.js sets it at
+ *  `fullscreenchange`), and two reads of the window size agree, because the
+ *  window gets its new size in steps. */
+export async function waitForPlayerFullscreen (browser: E2EBrowser, on: boolean): Promise<void> {
+  let state: { card: boolean, button: boolean, size: string } | undefined
+  let sizeBefore = ''
+  try {
+    await browser.waitUntil(async () => {
+      state = await browser.execute(() => ({
+        card: document.fullscreenElement?.matches('.cm-content .media-player__card') ?? false,
+        button: document.querySelector('.cm-content .media-player__fullscreen[data-fullscreen]') !== null,
+        size: `${window.innerWidth}x${window.innerHeight}`,
+      }))
+      const atRest = state.card === on && state.button === on && state.size === sizeBefore
+      sizeBefore = state.size
+      return atRest
+    }, { timeout: 10_000, interval: 150 })
+  } catch (err) {
+    throw new Error(`player fullscreen: expected ${on}, got ${JSON.stringify(state)}`, { cause: err })
+  }
+}

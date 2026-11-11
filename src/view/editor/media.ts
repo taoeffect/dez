@@ -49,6 +49,29 @@ interface MountedPlayer {
 
 const mountedPlayers = new WeakMap<HTMLElement, MountedPlayer>()
 
+/** Keeps the player `root` in the document while CM draws its line again.
+ *
+ *  CM puts a widget buffer (a zero-width `img.cm-widgetBuffer`) on each side
+ *  of an inline widget. When CM 6.41.1 builds the line again, it takes the
+ *  two old buffers in the reverse order. To make the DOM agree, it takes
+ *  every node before the buffer that is now first out of the line, the
+ *  player too, and puts them back in (`CompositeTile.sync`). An element that
+ *  leaves the document ends its fullscreen, so a Save in fullscreen ended
+ *  the fullscreen.
+ *
+ *  CM calls `updateDOM` while it builds the line, before that step. With the
+ *  old buffers out of the line, CM only has nodes to put in around the
+ *  player, in any order, and the player stays where it is.
+ *
+ *  @codemirror/view 6.43.7 takes the buffers in doc order: this function can
+ *  go when Dez uses that version or a later one (the e2e case "a Save in
+ *  fullscreen" tells if the player still stays). */
+function detachWidgetBuffers(root: HTMLElement): void {
+  for (const sibling of [root.previousSibling, root.nextSibling]) {
+    if (sibling instanceof HTMLImageElement && sibling.classList.contains('cm-widgetBuffer')) sibling.remove()
+  }
+}
+
 /** The player of one clip. */
 class MediaWidget extends WidgetType {
   constructor(readonly tag: MediaTagData) {
@@ -133,6 +156,7 @@ class MediaWidget extends WidgetType {
     const player = mountedPlayers.get(dom)
     if (!player || from.tag.kind !== this.tag.kind || from.tag.id !== this.tag.id) return false
     player.tag.value = this.tag
+    detachWidgetBuffers(dom)
     return true
   }
   destroy(dom: HTMLElement): void {
@@ -240,7 +264,24 @@ function followClip(view: EditorView, root: HTMLElement, clip: MediaTagData) {
   return { currentTag, end }
 }
 
-function warnClipChanged(title: string, message: string): void {
+/** Fullscreen shows only the card of a player. The delete prompt and the
+ *  toasts are outside the card (`AppLayout.vue`), so the user would not see
+ *  them, and a prompt that is not seen takes the keys. So the player `root`
+ *  leaves fullscreen before the prompt shows, and when a Save or a Delete
+ *  shows a toast. Resolves when the page shows again; at once for a player
+ *  that does not fill the screen. The root's `fullscreenchange` listener
+ *  then gives the focus back to the editor. */
+async function leaveFullscreen(root: HTMLElement): Promise<void> {
+  if (!root.contains(document.fullscreenElement)) return
+  try {
+    await document.exitFullscreen()
+  } catch (error) {
+    console.error('Failed to leave fullscreen:', error)
+  }
+}
+
+function warnClipChanged(root: HTMLElement, title: string, message: string): void {
+  void leaveFullscreen(root)
   sbp('dez.ui/toast', 'app-global', { title, message, variant: 'warning', duration: 8000 })
 }
 
@@ -263,6 +304,7 @@ async function saveClip(view: EditorView, root: HTMLElement, clip: MediaTagData)
     path = await sbp('dez.controller/media/save', { kind: clip.kind, type: clip.type, src, url: clip.url }) as string
   } catch {
     // The controller has logged the failure and shown a toast.
+    void leaveFullscreen(root)
   }
   const tag = path === null ? null : followed.currentTag()
   // In one synchronous block with the rewrite, so that the player goes from
@@ -275,10 +317,10 @@ async function saveClip(view: EditorView, root: HTMLElement, clip: MediaTagData)
   followed.end()
   if (path === null) return
   if (clipSourceKind(src) === 'temp') {
-    warnClipChanged('Clip saved, but not shown', 'The conversation changed while the clip was saved. Its player does not show the saved file.')
+    warnClipChanged(root, 'Clip saved, but not shown', 'The conversation changed while the clip was saved. Its player does not show the saved file.')
     return
   }
-  warnClipChanged('Clip not saved', 'The conversation changed while the clip was saved. Try again.')
+  warnClipChanged(root, 'Clip not saved', 'The conversation changed while the clip was saved. Try again.')
   try {
     await sbp('dez.controller/media/delete', path)
   } catch {
@@ -297,6 +339,7 @@ async function deleteSavedClip(view: EditorView, root: HTMLElement, clip: MediaT
   if (src === null || busyClips.has(src)) return
   const followed = followClip(view, root, clip)
   if (!followed) return
+  await leaveFullscreen(root)
   const confirmed = await sbp('dez.ui/confirm', {
     message: clip.url === null
       ? 'Are you sure you want to delete the saved file of this clip? The clip cannot be played again after that.'
@@ -308,7 +351,7 @@ async function deleteSavedClip(view: EditorView, root: HTMLElement, clip: MediaT
   }
   if (!followed.currentTag()) {
     followed.end()
-    warnClipChanged('Clip not deleted', 'The conversation changed while the prompt was open. Try again.')
+    warnClipChanged(root, 'Clip not deleted', 'The conversation changed while the prompt was open. Try again.')
     return
   }
   busyClips.add(src)
@@ -317,7 +360,9 @@ async function deleteSavedClip(view: EditorView, root: HTMLElement, clip: MediaT
     await sbp('dez.controller/media/delete', src)
     deleted = true
   } catch {
-    // The controller has logged the failure and shown a toast.
+    // The controller has logged the failure and shown a toast. The user can
+    // have gone to fullscreen again after the prompt.
+    void leaveFullscreen(root)
   }
   // When the tag went while its file was deleted, its text stays where it
   // is, and its player says that the clip is not available.

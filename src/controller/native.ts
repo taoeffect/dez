@@ -1,5 +1,6 @@
 import sbp from '@sbp/sbp'
 import { invoke, type Channel } from '@tauri-apps/api/core'
+import { homeDir } from '@tauri-apps/api/path'
 import { save, type SaveDialogOptions } from '@tauri-apps/plugin-dialog'
 import { writeTextFile } from '@tauri-apps/plugin-fs'
 import type {
@@ -135,6 +136,12 @@ export default sbp('sbp/selectors/register', {
   // The absolute path of a root folder.
   'dez.native/getAppDir' (root: AppFileRoot = 'app'): Promise<string> {
     return invoke<string>('get_app_dir', { root })
+  },
+
+  // The user's home folder (Tauri's path API, which `core:default` in
+  // src-tauri/capabilities/default.json allows).
+  'dez.native/homeDir' (): Promise<string> {
+    return homeDir()
   },
 
   'dez.native/isWindowFullscreen' (): Promise<boolean> {
