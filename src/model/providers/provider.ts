@@ -6,8 +6,8 @@ import { API_FORMATS, type ApiFormat } from './apiFormats'
 import { TooManyImagesError } from './clipImages'
 import { FORBIDDEN_BODY_KEYS, type ProviderConfig } from './config'
 import { ProviderHttpError } from './errors'
-import type { ImageSizeRules } from './imageSize'
-import { MEDIA_FORMATS, type ClipFormat, type ClipInput, type ClipJob, type ImageFormat, type MediaFormat, type MediaInput, type MediaWireRequest } from './mediaFormats'
+import type { ImageSizeRules, InputImageLimits } from './imageSize'
+import { MEDIA_FORMATS, type ClipFormat, type ClipInput, type ClipJob, type ImageFormat, type ImageQuoteFormat, type MediaFormat, type MediaInput, type MediaWireRequest } from './mediaFormats'
 import type { ParameterValues } from './modelParameters'
 import { isRecord, modelCapability, modelData, modelOutputsAndRequest, unsupportedSettings } from './modelParsing'
 import { modelToggles, type ToggleModel } from './modelToggles'
@@ -323,6 +323,15 @@ export class Provider {
     return mediaApi ? MEDIA_FORMATS[mediaApi.format].images?.inputImageSize?.[kind] : undefined
   }
 
+  // The limits of each input image of a request of `kind` that no fit can
+  // meet (`ImageFormat.inputImageLimits`); undefined when the provider
+  // tells none.
+  inputImageLimits(kind: MediaKind): InputImageLimits | undefined {
+    const mediaApi = this.config.mediaApi
+    if (isClipKind(kind) || !mediaApi) return undefined
+    return MEDIA_FORMATS[mediaApi.format].images?.inputImageLimits?.[kind]
+  }
+
   // Why the media API refuses an input image of a request of `kind` that
   // has the size `size` (null when not known) and a file of `byteLength`
   // bytes (`ImageFormat.inputImageProblem`); undefined when it takes it, as
@@ -386,6 +395,23 @@ export class Provider {
     const quote = this.clipFormatOrNone()?.quote
     const wire = quote?.request(kind, this.config.baseUrl, modelId, values, entry)
     return quote && wire ? { request: { ...this.mediaApiRequest(wire, secret), timeoutMs: MODEL_LIST_TIMEOUT_MS }, usd: quote.usd } : null
+  }
+
+  // How to tell the price of one image request of `kind`
+  // (`ImageQuoteFormat`): the request for the model's price records (it
+  // ends like a model list request), null when the entries hold the
+  // prices; and the reader of the price. Null when the provider tells no
+  // price of an image request.
+  imageQuote(
+    kind: ImageKind,
+    modelId: string,
+    secret: Secret<string> | null,
+  ): { request: NativeHttpRequest | null, usd: ImageQuoteFormat['usd'] } | null {
+    const mediaApi = this.config.mediaApi
+    const quote = mediaApi ? MEDIA_FORMATS[mediaApi.format].images?.quote : undefined
+    if (!quote) return null
+    const wire = quote.recordsRequest?.(kind, this.config.baseUrl, modelId) ?? null
+    return { request: wire && { ...this.mediaApiRequest(wire, secret), timeoutMs: MODEL_LIST_TIMEOUT_MS }, usd: quote.usd }
   }
 
   // `wire`, the request of a media format for an image or a clip of `kind`,

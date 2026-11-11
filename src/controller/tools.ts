@@ -6,10 +6,12 @@ import { modelRefKey } from '../model/chat/modelRef'
 import type { Tab } from '../model/chat/types'
 import type { ModelCache } from '../model/persistence/types'
 import { effectiveParameterValues } from '../model/providers/modelParameters'
-import { effectiveRequest, isClipKind, type ProviderInfo } from '../model/providers/types'
+import { toggleRows, toggleValue } from '../model/providers/modelToggles'
+import type { ProviderMediaQuote } from '../model/providers/streamTypes'
+import { effectiveRequest, type ProviderInfo, type ProviderInputImageRules, type ProviderSettingsDescriptor } from '../model/providers/types'
 import type { SettingsSnapshot } from '../model/state'
 import { cropScaleDrawing, cropScaleImageId, cropScaleResultText, imageSizeText } from '../model/tools/cropScaleImage'
-import { modelInfoParameterValues, modelInfoText, modelInfoTarget, type ModelInfoRequest, type ModelInfoTarget } from '../model/tools/modelInfo'
+import { modelInfoParameterValues, modelInfoPart, modelInfoText, modelInfoTarget, type ModelInfoFacts, type ModelInfoTarget } from '../model/tools/modelInfo'
 import { modelListText } from '../model/tools/modelList'
 import type { ToolArguments, ToolRunResult } from '../model/tools/types'
 
@@ -63,17 +65,20 @@ const TOOL_RUNNERS: Record<string, ToolRunner> = {
     const cache = sbp('dez.model/modelCache/snapshot') as ModelCache
     return modelListText(cache, providers, args)
   },
-  // All that Dez and the provider know about one model. The raw entries of
-  // the provider's model list are in memory only, so after a start they are
-  // missing until the provider's next model check; then this one runs a
-  // check of that provider now, and looks again (the model may be gone).
+  // All that Dez knows about one model. The raw entries of the provider's
+  // model list are in memory only, so after a start they are missing until
+  // the provider's next model check; then this one runs a check of that
+  // provider now, and looks again (the model may be gone).
   //
-  // For a model with parameters (a clip model), the result also tells the
-  // value that a request sends for each one now: the call's own value, else
-  // the user's (the provider settings popup), else the default. For those
-  // values it asks the provider for the price of one request, which costs
-  // nothing. A failed price request does not fail the call.
+  // The result also tells the value that a request sends for each
+  // parameter now (the call's own value, else the user's from the provider
+  // settings popup, else the default), the toggles that apply with their
+  // values, and the rules of an input image. For a media model it asks the
+  // provider for the price of one request with those values, or for the
+  // model's price records; that costs nothing. A failed price request does
+  // not fail the call.
   async model_info (args, signal) {
+    const part = modelInfoPart(args)
     let found = await modelInfoLookup(args)
     if (found.entry === undefined) {
       await untilAborted(sbp('dez.controller/modelCache/refresh', { providerIds: [found.provider.id], force: true }) as Promise<void>, signal)
@@ -82,26 +87,36 @@ const TOOL_RUNNERS: Record<string, ToolRunner> = {
     const { provider, model, entry } = found
     const ref = { providerId: provider.id, modelId: model.id }
     const called = modelInfoParameterValues(model, args)
-    const chosen = (sbp('dez.model/settings/snapshot') as SettingsSnapshot).modelParameters[modelRefKey(ref)]
-    const request: ModelInfoRequest = { values: effectiveParameterValues(model.parameters ?? [], { ...chosen, ...called }) }
+    const settings = sbp('dez.model/settings/snapshot') as SettingsSnapshot
+    const chosen = settings.modelParameters[modelRefKey(ref)]
+    const values = effectiveParameterValues(model.parameters ?? [], { ...chosen, ...called })
+    const descriptor = sbp('dez.provider/settingsDescriptor', provider.id, model.id) as ProviderSettingsDescriptor | null
+    const stored = settings.providerSettings[provider.id]
+    const facts: ModelInfoFacts = {
+      values,
+      toggles: descriptor ? toggleRows(descriptor).map((row) => ({ key: row.key, label: row.label, on: toggleValue(row, stored) })) : [],
+      inputImages: sbp('dez.provider/inputImageRules', provider.id, model.id) as ProviderInputImageRules,
+    }
+    if (entry !== undefined) facts.entry = entry
 
     const mediaEntry = sbp('dez.model/modelCache/rawModel', provider.id, model.id, 'media') as unknown
-    if (mediaEntry !== undefined) request.mediaEntry = mediaEntry
+    if (mediaEntry !== undefined) facts.mediaEntry = mediaEntry
 
     const kind = effectiveRequest(model)
-    if (isClipKind(kind)) {
+    if (kind !== 'chat' && kind !== 'none') {
       try {
-        const usd = await untilAborted(sbp('dez.provider/mediaQuote', { ...ref, kind, parameters: request.values }) as Promise<number | null>, signal)
-        if (usd !== null) request.cost = { usd }
+        const quote = await untilAborted(sbp('dez.provider/mediaQuote', { ...ref, kind, parameters: values }) as Promise<ProviderMediaQuote | null>, signal)
+        if (quote?.usd !== undefined) facts.cost = { usd: quote.usd }
+        if (quote?.records !== undefined) facts.priceEntry = quote.records
       } catch (error) {
         if (signal.aborted) throw error
         // The provider's error text stays in the log: it can echo details
         // of the user's account, and this result goes to a chat provider.
         console.error(`Failed to get the price of a ${model.id} request:`, error)
-        request.cost = { error: 'The provider did not answer the price request.' }
+        facts.cost = { error: 'The provider did not answer the price request.' }
       }
     }
-    return modelInfoText(provider, model, entry, request)
+    return modelInfoText(provider, model, facts, part)
   },
   // A new image from an image of the call's tab: a part of it, at another
   // size (`cropScaleDrawing`). The webview draws it (images/redraw), the

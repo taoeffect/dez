@@ -8,7 +8,7 @@ import type { ModelCache } from '../persistence/types'
 import { sectionsToStreamMessages } from '../streams/messages'
 import { bytesToBase64 } from '../../utils/base64'
 import type { NativeHttpDownload, NativeHttpRequest, NativeHttpResponse, NativeHttpStreamResult } from '../../utils/protocol/nativeHttp'
-import type { ProviderGenerateMediaResult } from './streamTypes'
+import type { ProviderGenerateMediaResult, ProviderMediaQuote } from './streamTypes'
 import type { GeneratedMedia, ModelDisplayNames, ProviderModelsResult, ProviderSettingsDescriptor } from './types'
 // Side-effect imports: register the dez.model/* selectors and the selectors
 // under test.
@@ -938,7 +938,7 @@ describe('media requests', () => {
 describe('the price of a clip', () => {
   const QUOTE_URL = `${MEDIA_BASE_URL}/video/quote`
   const quote = (input: Record<string, unknown>) =>
-    sbp('dez.provider/mediaQuote', { providerId: 'media', modelId: 'm', kind: 'video', ...input }) as Promise<number | null>
+    sbp('dez.provider/mediaQuote', { providerId: 'media', modelId: 'm', kind: 'video', ...input }) as Promise<ProviderMediaQuote | null>
 
   // The model `m` in the model cache, as a model check leaves it.
   function cacheModel(entry: unknown = { id: 'm' }) {
@@ -975,7 +975,7 @@ describe('the price of a clip', () => {
   it('asks the provider for the price of a request with the chosen values, and the defaults of the others', async () => {
     cacheModel()
 
-    expect(await quote({ parameters: { duration: '8s' } })).toBe(0.07)
+    expect(await quote({ parameters: { duration: '8s' } })).toStrictEqual({ usd: 0.07 })
     expect(httpRequests).toStrictEqual([{
       method: 'POST',
       url: QUOTE_URL,
@@ -1003,6 +1003,111 @@ describe('the price of a clip', () => {
     httpAnswers.set(QUOTE_URL, { status: 400, json: { error: 'Bad model' } })
 
     await expect(quote({})).rejects.toThrow('Media server returned HTTP 400')
+  })
+})
+
+describe('the price of an image', () => {
+  const quote = (providerId: string, modelId: string, kind: string, parameters: Record<string, unknown> = {}) =>
+    sbp('dez.provider/mediaQuote', { providerId, modelId, kind, parameters }) as Promise<ProviderMediaQuote | null>
+
+  // A model in the model cache, as a model check leaves it.
+  function cacheModel(providerId: string, model: Record<string, unknown>, entry: unknown, mediaEntry?: unknown) {
+    sbp('dez.model/modelCache/applyProviderResult', providerId, {
+      ok: true,
+      models: [{ name: 'M', provider: providerId, ...model }],
+      entries: new Map([[model.id, entry]]),
+      ...(mediaEntry !== undefined && { mediaEntries: new Map([[model.id, mediaEntry]]) }),
+    })
+  }
+
+  beforeEach(() => {
+    for (const [id, format] of [['media', 'venice'], ['routed', 'openrouter']]) {
+      sbp('dez.model/customProviders/save', {
+        id,
+        name: 'Media server',
+        baseUrl: MEDIA_BASE_URL,
+        apiFormat: 'openai',
+        models: [],
+        fetchModels: true,
+        auth: 'apiKey',
+        mediaApi: { format },
+      })
+    }
+  })
+
+  describe('from the prices of the model entry', () => {
+    // Every Venice image model repeats the upscale prices.
+    const upscale = { '2x': { usd: 0.02, diem: 0.02 }, '4x': { usd: 0.08, diem: 0.08 } }
+    const pricing = (prices: Record<string, unknown>) => ({ id: 'm', model_spec: { pricing: { ...prices, upscale } } })
+
+    it('gives the price of the scale of an upscale, and sends no request', async () => {
+      cacheModel('media', { id: 'm', request: 'upscale', parameters: [{ name: 'scale', label: 'Scale', options: [2, 4], default: 2 }] }, pricing({ generation: { usd: 0.01 } }))
+
+      expect([await quote('media', 'm', 'upscale'), await quote('media', 'm', 'upscale', { scale: 4 })]).toStrictEqual([{ usd: 0.02 }, { usd: 0.08 }])
+      expect(httpRequests).toStrictEqual([])
+    })
+
+    it('gives the one price of a new image or an edit', async () => {
+      cacheModel('media', { id: 'm', request: 'image' }, pricing({ generation: { usd: 0.01 }, inpaint: { usd: 0.04 } }))
+      expect(await quote('media', 'm', 'image')).toStrictEqual({ usd: 0.01 })
+
+      cacheModel('media', { id: 'm', request: 'imageEdit' }, pricing({ inpaint: { usd: 0.04 } }))
+      expect(await quote('media', 'm', 'imageEdit')).toStrictEqual({ usd: 0.04 })
+    })
+
+    // The price depends on a field that Dez does not send.
+    it('gives no price when the prices depend on more than the request', async () => {
+      cacheModel('media', { id: 'm', request: 'image' }, pricing({ generation: { usd: 0.01 }, resolutions: { '1K': { usd: 0.01 }, '4K': { usd: 0.05 } } }))
+
+      expect(await quote('media', 'm', 'image')).toBeNull()
+    })
+  })
+
+  describe('from the price records of the model', () => {
+    const RECORDS_URL = `${MEDIA_BASE_URL}/images/models/acme/pic/endpoints`
+    const mediaEntry = { id: 'acme/pic', supported_parameters: { resolution: { type: 'enum', values: ['1K', '2K', '4K'] } } }
+    const record = (cost: number, variant?: string) => ({ billable: 'output_image', unit: 'image', cost_usd: cost, ...(variant && { variant }) })
+    const endpoints = (pricing: unknown[]) => ({ id: 'acme/pic', endpoints: [{ pricing }, { pricing }] })
+
+    beforeEach(() => {
+      cacheModel('routed', { id: 'acme/pic', request: 'image', parameters: [{ name: 'resolution', label: 'Resolution', options: ['1K', '2K', '4K'] }] }, { id: 'acme/pic' }, mediaEntry)
+    })
+
+    it('asks for the records, and gives them with the price of the request\'s resolution, else of the resolutions with no record', async () => {
+      const records = endpoints([record(0.13), record(0.17, '4k'), { billable: 'input_image', unit: 'image', cost_usd: 0 }])
+      httpAnswers.set(RECORDS_URL, { status: 200, json: records })
+
+      expect([
+        await quote('routed', 'acme/pic', 'image', { resolution: '4K' }),
+        await quote('routed', 'acme/pic', 'image', { resolution: '2K' }),
+        await quote('routed', 'acme/pic', 'image'),
+      ]).toStrictEqual([{ usd: 0.17, records }, { usd: 0.13, records }, { usd: 0.13, records }])
+      expect(httpRequests.map(({ method, url, timeoutMs }) => [method, url, timeoutMs])).toStrictEqual(Array(3).fill(['GET', RECORDS_URL, 20_000]))
+    })
+
+    it.each([
+      ['a record that costs by another unit', [record(0.04), { billable: 'input_image', unit: 'image', cost_usd: 0.01 }]],
+      ['a variant that is no resolution of the model', [record(0.04), record(0.08, 'high_resolution')]],
+      ['two records of one variant', [record(0.04, '1k'), record(0.08, '1k')]],
+    ])('gives only the records for %s', async (_name, pricing) => {
+      const records = endpoints(pricing)
+      httpAnswers.set(RECORDS_URL, { status: 200, json: records })
+
+      expect(await quote('routed', 'acme/pic', 'image', { resolution: '1K' })).toStrictEqual({ records })
+    })
+
+    it('gives only the records when the providers of the model have different prices', async () => {
+      const records = { id: 'acme/pic', endpoints: [{ pricing: [record(0.04)] }, { pricing: [record(0.05)] }] }
+      httpAnswers.set(RECORDS_URL, { status: 200, json: records })
+
+      expect(await quote('routed', 'acme/pic', 'image')).toStrictEqual({ records })
+    })
+
+    it('rejects when the provider refuses the records request', async () => {
+      httpAnswers.set(RECORDS_URL, { status: 404, json: { error: 'No model' } })
+
+      await expect(quote('routed', 'acme/pic', 'image')).rejects.toThrow('Media server returned HTTP 404')
+    })
   })
 })
 

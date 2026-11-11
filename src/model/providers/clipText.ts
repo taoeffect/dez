@@ -47,6 +47,15 @@ export function clipText(rules: ClipTextRules | undefined, text: string): ClipTe
   return { prompt: text.slice(0, line.index).trim(), ...(lyrics !== '' && { lyrics }) }
 }
 
+// What to write for lyrics (`clipText`), after "write".
+const LYRICS_PARTS = 'the style, then a line "Lyrics:", then the lyrics'
+
+/** How to give lyrics to a model whose rules take them, as a sentence for
+ *  the user (the provider settings popup) and for a model (`model_info`). */
+export function lyricsHowTo(lyrics: NonNullable<ClipTextRules['lyrics']>): string {
+  return lyrics.required ? `This model needs lyrics. Write ${LYRICS_PARTS}.` : `To give lyrics, write ${LYRICS_PARTS}.`
+}
+
 function characters(count: number): string {
   return count === 1 ? '1 character' : `${count} characters`
 }
@@ -58,7 +67,7 @@ function characters(count: number): string {
 export function clipTextProblem(modelName: string, rules: ClipTextRules | undefined, { prompt, lyrics }: ClipText): string | null {
   if (!rules) return null
   if (rules.lyrics?.required && lyrics === undefined) {
-    return `${modelName} needs lyrics. Write the style, then a line "Lyrics:", then the lyrics.`
+    return `${modelName} needs lyrics. Write ${LYRICS_PARTS}.`
   }
   // A message with lyrics is longer than its prompt, so the text tells
   // which part counts.

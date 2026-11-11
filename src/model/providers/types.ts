@@ -5,6 +5,7 @@ import { normalizeOutputs, type ModelOutput } from '../modelOutputs'
 import type { StreamedToolCall, ToolDefinition } from '../tools/types'
 import { cloneInputImageRules, type InputImageRules } from './clipImages'
 import { cloneClipTextRules, type ClipTextRules } from './clipText'
+import type { ImageSizeRules, InputImageLimits } from './imageSize'
 import type { ApiFormatId, ProviderAuth } from './config'
 import { cloneModelParameter, type ModelParameter } from './modelParameters'
 import type { ModelToggles } from './modelToggles'
@@ -173,6 +174,16 @@ export interface ProviderInfo {
 // and the toggles that apply to the model.
 export interface ProviderSettingsDescriptor extends ModelToggles {
   name: string
+}
+
+// The rules of each input image of a request to one model that its
+// provider tells (dez.provider/inputImageRules). Each one is absent when
+// the provider tells none.
+export interface ProviderInputImageRules {
+  // Dez sends a fitted copy of an image that breaks them.
+  size?: ImageSizeRules
+  // Dez refuses an image that breaks them.
+  limits?: InputImageLimits
 }
 
 // Result of a provider model fetch. `ok` is the basis for a provider's

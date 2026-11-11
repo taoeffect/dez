@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import type { ProviderSettingDef } from './config'
-import { modelToggles, toolsApply, type ModelToggles, type ToggleModel } from './modelToggles'
+import { modelToggles, toggleRows, toggleValue, toolsApply, type ModelToggles, type ToggleModel } from './modelToggles'
 import { MODEL_REQUESTS } from './types'
 
 const setting = (key: string, more: Partial<ProviderSettingDef> = {}): ProviderSettingDef =>
@@ -63,5 +63,28 @@ describe('toolsApply', () => {
     for (const request of MODEL_REQUESTS.filter((kind) => kind !== 'chat')) {
       expect(toolsApply({ request, toolCalling: true }), request).toBe(false)
     }
+  })
+})
+
+describe('toggleRows', () => {
+  it('gives Thinking, then Tools, then the config toggles that apply, each with its default', () => {
+    const off = setting('off', { label: 'Off', default: false })
+
+    expect(toggleRows({ thinking: true, tools: true, settings: [search, off] })).toStrictEqual([
+      { key: 'thinking', label: 'Thinking', default: true },
+      { key: 'tools', label: 'Tools', default: true },
+      { key: 'search', label: 'search', default: true },
+      { key: 'off', label: 'Off', default: false },
+    ])
+    expect(toggleRows({ thinking: false, tools: false, settings: [] })).toStrictEqual([])
+  })
+})
+
+describe('toggleValue', () => {
+  it('gives the stored value of a flipped toggle, else the default', () => {
+    const row = { key: 'search', default: true }
+    const stored: (Record<string, boolean> | undefined)[] = [undefined, {}, { other: false }, { search: false }]
+
+    expect(stored.map((values) => toggleValue(row, values))).toStrictEqual([true, true, true, false])
   })
 })

@@ -60,7 +60,8 @@ export function maxInputImages(kind: MediaKind, rules: InputImageRules | undefin
   return needsInputImage(kind, undefined) ? 1 : 0
 }
 
-function imagesText(count: number): string {
+/** `1 image`, `2 images`. */
+export function imagesText(count: number): string {
   return count === 1 ? '1 image' : `${count} images`
 }
 

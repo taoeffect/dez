@@ -19,6 +19,16 @@ export interface ImageSizeRules {
   maxPixels?: number
 }
 
+// The limits of an input image that no fitted copy can meet, from the API
+// docs of a media request (`ImageFormat.inputImageLimits`). Dez refuses an
+// image that breaks one before the request (`ImageFormat.inputImageProblem`).
+export interface InputImageLimits {
+  // The image must have fewer pixels (width × height) than this.
+  pixelsBelow?: number
+  // The most bytes of the image file.
+  maxBytes?: number
+}
+
 /** The rules that the values of a provider's model data give, each under
  *  the name of its rule. A value that cannot be a limit (not a number above
  *  zero; pixels that are not whole) gives no rule, and neither do two

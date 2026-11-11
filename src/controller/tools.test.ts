@@ -2,10 +2,10 @@ import sbp from '@sbp/sbp'
 import { createPinia, setActivePinia } from 'pinia'
 import { afterEach, beforeEach, describe, expect, it, vi, type MockInstance } from 'vitest'
 import type { DrawnImage, ImageDrawing, ImageSize } from '../model/chat/imageDrawing'
-import type { ProviderMediaQuoteInput } from '../model/providers/streamTypes'
+import type { ProviderMediaQuote, ProviderMediaQuoteInput } from '../model/providers/streamTypes'
 import { providerInfo } from '../model/providers/testing'
-import type { ModelInfo, ProviderInfo } from '../model/providers/types'
-import { modelInfoText } from '../model/tools/modelInfo'
+import type { ModelInfo, ProviderInfo, ProviderInputImageRules, ProviderSettingsDescriptor } from '../model/providers/types'
+import { modelInfoText, type ModelInfoFacts } from '../model/tools/modelInfo'
 import { TOOL_DEFINITIONS } from '../model/tools/registry'
 import type { ToolRunResult } from '../model/tools/types'
 import type { ToolRunCall, ToolRunContext } from './tools'
@@ -26,7 +26,10 @@ let refreshes: unknown[] = []
 let refreshCheck: () => Promise<void>
 // The price requests, and what the provider answers to one.
 let quotes: ProviderMediaQuoteInput[] = []
-let quoteAnswer: () => Promise<number | null>
+let quoteAnswer: () => Promise<ProviderMediaQuote | null>
+// The toggles that apply to every model, and the rules of an input image.
+let descriptor: ProviderSettingsDescriptor | null
+let inputImageRules: ProviderInputImageRules
 // The stub image store and webview of `crop_scale_image`: the paths of the
 // files that were read, what a read and a save do, the size of every stored
 // image, each drawing with its file type, each save with its file type, and
@@ -43,9 +46,15 @@ sbp('sbp/selectors/register', {
   async 'dez.provider/infos' (): Promise<ProviderInfo[]> {
     return providers
   },
-  async 'dez.provider/mediaQuote' (input: ProviderMediaQuoteInput): Promise<number | null> {
+  async 'dez.provider/mediaQuote' (input: ProviderMediaQuoteInput): Promise<ProviderMediaQuote | null> {
     quotes.push(input)
     return quoteAnswer()
+  },
+  'dez.provider/settingsDescriptor' (): ProviderSettingsDescriptor | null {
+    return descriptor
+  },
+  'dez.provider/inputImageRules' (): ProviderInputImageRules {
+    return inputImageRules
   },
   async 'dez.controller/modelCache/refresh' (options: unknown): Promise<void> {
     refreshes.push(options)
@@ -85,7 +94,9 @@ beforeEach(() => {
   }
   refreshes = []
   quotes = []
-  quoteAnswer = async () => 0.07
+  quoteAnswer = async () => ({ usd: 0.07 })
+  descriptor = { name: 'Venice', thinking: true, tools: true, settings: [{ key: 'webSearch', label: 'Web search', type: 'boolean', default: true, bodyPath: 'venice_parameters.enable_web_search' }] }
+  inputImageRules = {}
   readImages = []
   readImage = async () => new Blob([])
   storedImageSize = { width: 1000, height: 500 }
@@ -136,7 +147,9 @@ describe('dez.controller/tools/run', () => {
   })
 
   describe('model_info', () => {
-    const gemini = (entry: unknown) => modelInfoText(providers[0], MODELS('venice')[0], entry)
+    // The toggles of the default descriptor, with their defaults.
+    const toggles = [{ key: 'thinking', label: 'Thinking', on: true }, { key: 'tools', label: 'Tools', on: true }, { key: 'webSearch', label: 'Web search', on: true }]
+    const gemini = (entry: unknown) => modelInfoText(providers[0], MODELS('venice')[0], { entry, values: {}, toggles, inputImages: {} })
 
     it('gives the raw entry in memory, with no model check', async () => {
       sbp('dez.model/modelCache/applyProviderResult', 'venice', {
@@ -201,6 +214,8 @@ describe('dez.controller/tools/run', () => {
       const entry = { id: 'wan' }
       const mediaEntry = { id: 'wan', pricing_skus: { per_second: '2' } }
       const info = (call: Record<string, string> = {}) => run({ name: 'model_info', arguments: { model: 'venice/wan', ...call } })
+      const facts = (values: Record<string, string>, more: ModelInfoFacts = {}): ModelInfoFacts =>
+        ({ entry, values, toggles: [], inputImages: inputImageRules, mediaEntry, ...more })
 
       beforeEach(() => {
         sbp('dez.model/modelCache/applyProviderResult', 'venice', {
@@ -212,13 +227,16 @@ describe('dez.controller/tools/run', () => {
         // The user's choice in the provider settings popup.
         sbp('dez.model/settings/setModelParameter', { providerId: 'venice', modelId: 'wan' }, 'duration', '8s')
         sbp('dez.model/settings/setModelParameter', { providerId: 'venice', modelId: 'wan' }, 'resolution', '720p')
+        // No toggle applies to a media model.
+        descriptor = { name: 'Venice', thinking: false, tools: false, settings: [] }
+        inputImageRules = { size: { minShortSide: 256 } }
       })
 
       it('gives the values that a request sends now, their price, and the entry of the media list', async () => {
         const values = { duration: '8s', resolution: '720p', aspect_ratio: '16:9' }
 
         expect(await info()).toStrictEqual({
-          content: modelInfoText(providers[0], VIDEO, entry, { values, cost: { usd: 0.07 }, mediaEntry }),
+          content: modelInfoText(providers[0], VIDEO, facts(values, { cost: { usd: 0.07 } })),
           isError: false,
         })
         expect(quotes).toStrictEqual([{ providerId: 'venice', modelId: 'wan', kind: 'video', parameters: values }])
@@ -228,7 +246,7 @@ describe('dez.controller/tools/run', () => {
         const values = { duration: '12s', resolution: '720p', aspect_ratio: '1:1' }
 
         expect((await info({ parameters: '{"duration": "12s", "aspect_ratio": "1:1"}' })).content)
-          .toBe(modelInfoText(providers[0], VIDEO, entry, { values, cost: { usd: 0.07 }, mediaEntry }))
+          .toBe(modelInfoText(providers[0], VIDEO, facts(values, { cost: { usd: 0.07 } })))
         expect(quotes.map(({ parameters }) => parameters)).toStrictEqual([values])
         expect(sbp('dez.model/settings/snapshot').modelParameters).toStrictEqual({ 'venice/wan': { duration: '8s', resolution: '720p' } })
       })
@@ -245,7 +263,27 @@ describe('dez.controller/tools/run', () => {
         quoteAnswer = async () => null
 
         expect((await info()).content)
-          .toBe(modelInfoText(providers[0], VIDEO, entry, { values: { duration: '8s', resolution: '720p', aspect_ratio: '16:9' }, mediaEntry }))
+          .toBe(modelInfoText(providers[0], VIDEO, facts({ duration: '8s', resolution: '720p', aspect_ratio: '16:9' })))
+      })
+
+      it('gives the price records of a provider that tells no one price', async () => {
+        const records = [{ billable_type: 'output_image', cost: 0.04 }, { billable_type: 'output_image', cost: 0.08, variant: '4k' }]
+        quoteAnswer = async () => ({ records })
+
+        expect((await info()).content)
+          .toBe(modelInfoText(providers[0], VIDEO, facts({ duration: '8s', resolution: '720p', aspect_ratio: '16:9' }, { priceEntry: records })))
+      })
+
+      it('gives the part that the call names, and asks for no price for a part that it does not know', async () => {
+        expect(await info({ part: 'mediaEntry' })).toStrictEqual({
+          content: JSON.stringify({ id: 'venice/wan', mediaEntry }, null, 2),
+          isError: false,
+        })
+        expect(await info({ part: 'dez' })).toStrictEqual({
+          content: 'The tool failed: "dez" is not an entry of a model_info result. Use one of: providerEntry, mediaEntry, priceEntry.',
+          isError: true,
+        })
+        expect(quotes).toHaveLength(1)
       })
 
       // The provider's text can echo details of the user's account.
@@ -273,10 +311,22 @@ describe('dez.controller/tools/run', () => {
       })
     })
 
-    it('asks for no price of a model that makes no clip', async () => {
+    it('asks for no price of a chat model', async () => {
       await run({ name: 'model_info', arguments: { model: 'venice/venice-gemini-3-pro' } })
 
       expect(quotes).toStrictEqual([])
+    })
+
+    it('gives each toggle that applies with the user\'s value, else its default', async () => {
+      sbp('dez.model/settings/setProviderSetting', 'venice', 'tools', false)
+      sbp('dez.model/settings/setProviderSetting', 'venice', 'xSearch', false)
+      const result = JSON.parse((await run({ name: 'model_info', arguments: { model: 'venice/venice-gemini-3-pro' } })).content) as { dez: { toggles: unknown } }
+
+      expect(result.dez.toggles).toStrictEqual([
+        { key: 'thinking', label: 'Thinking', on: true },
+        { key: 'tools', label: 'Tools', on: false },
+        { key: 'webSearch', label: 'Web search', on: true },
+      ])
     })
   })
 

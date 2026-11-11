@@ -19,8 +19,8 @@ import { modelToggles, type ToggleModel } from './modelToggles'
 import type { Provider, ProviderChatRequest } from './provider'
 import { getProvider, listProviders, requireProvider } from './registry'
 import { assertStreamResponseOk, streamProviderTokens } from './streaming'
-import type { ProviderChatInputMessage, ProviderGenerateMediaInput, ProviderGenerateMediaResult, ProviderMediaQuoteInput, ProviderStreamChatInput, ProviderStreamChatResult } from './streamTypes'
-import { CLIP_KINDS, ProviderNotConfiguredError, isClipKind, type ChatImagePart, type ChatMessage, type ChatPart, type ModelDisplayNames, type ModelInfo, type ProviderId, type ProviderInfo, type ProviderModelsResult, type ProviderSettingsDescriptor } from './types'
+import type { ProviderChatInputMessage, ProviderGenerateMediaInput, ProviderGenerateMediaResult, ProviderMediaQuote, ProviderMediaQuoteInput, ProviderStreamChatInput, ProviderStreamChatResult } from './streamTypes'
+import { CLIP_KINDS, ProviderNotConfiguredError, effectiveRequest, isClipKind, type ChatImagePart, type ChatMessage, type ChatPart, type ModelDisplayNames, type ModelInfo, type ProviderId, type ProviderInfo, type ProviderInputImageRules, type ProviderModelsResult, type ProviderSettingsDescriptor } from './types'
 import { unstoredOutputMessage } from './unusableModel'
 
 // The file of a stored image.
@@ -196,6 +196,20 @@ export default sbp('sbp/selectors/register', {
     return provider
       ? { name: provider.name, ...modelToggles(provider.config, toggleModel(provider.id, modelId)) }
       : null
+  },
+
+  // Synchronous: the rules of each input image of a request to the model
+  // that the provider tells, as dez.provider/generateMedia applies them
+  // (`Provider.inputImageSize`, `Provider.inputImageLimits`). Empty for a
+  // model that takes no media request, and for an unknown provider.
+  'dez.provider/inputImageRules' (providerId: string, modelId: string): ProviderInputImageRules {
+    const provider = getProvider(providerId)
+    const model = sbp('dez.model/modelCache/model', providerId, modelId) as ModelInfo | null
+    const kind = effectiveRequest(model ?? {})
+    if (!provider || kind === 'chat' || kind === 'none') return {}
+    const size = provider.inputImageSize(kind, model)
+    const limits = provider.inputImageLimits(kind)
+    return { ...(size && { size }), ...(limits && { limits }) }
   },
 
   // Synchronous and reactive: it reads the custom providers and the model
@@ -414,18 +428,28 @@ export default sbp('sbp/selectors/register', {
     }
   },
 
-  // The provider's price in USD of the clip that dez.provider/generateMedia
-  // with the same `parameters` asks for. Null when the provider tells no
-  // price before a request: its model entries hold the prices then. The
-  // request costs nothing. Rejects when it fails.
-  async 'dez.provider/mediaQuote' (input: ProviderMediaQuoteInput): Promise<number | null> {
+  // The provider's price in USD of the image or the clip that
+  // dez.provider/generateMedia with the same `parameters` asks for, as far
+  // as its data tells one, and the model's price records for a provider
+  // whose model lists hold no prices. Null when the provider tells neither:
+  // its model entries hold the prices then. The requests cost nothing.
+  // Rejects when one fails.
+  async 'dez.provider/mediaQuote' (input: ProviderMediaQuoteInput): Promise<ProviderMediaQuote | null> {
     const provider = requireProvider(input.providerId)
     const { kind, modelId } = input
-    if (!isClipKind(kind)) return null
-
     const values = parameterValues(provider.id, modelId, input.parameters)
     const entry = sbp('dez.model/modelCache/rawModel', provider.id, modelId) as unknown
-    const quote = provider.clipQuote(kind, modelId, values, entry, await requestSecret(provider))
-    return quote ? quote.usd(await jsonResponse(provider, quote.request)) : null
+    if (isClipKind(kind)) {
+      const quote = provider.clipQuote(kind, modelId, values, entry, await requestSecret(provider))
+      return quote ? { usd: quote.usd(await jsonResponse(provider, quote.request)) } : null
+    }
+
+    const quote = provider.imageQuote(kind, modelId, await requestSecret(provider))
+    if (!quote) return null
+    const records = quote.request ? await jsonResponse(provider, quote.request) : undefined
+    const mediaEntry = sbp('dez.model/modelCache/rawModel', provider.id, modelId, 'media') as unknown
+    const usd = quote.usd(kind, values, { entry, mediaEntry, records })
+    if (usd === undefined && records === undefined) return null
+    return { ...(usd !== undefined && { usd }), ...(records !== undefined && { records }) }
   },
 })

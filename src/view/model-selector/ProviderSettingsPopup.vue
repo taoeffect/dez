@@ -4,6 +4,7 @@ import sbp from '@sbp/sbp'
 import { useModelState } from '../modelState'
 import { modelRefKey } from '../../model/chat/modelRef'
 import { effectiveRequest, type ModelInfo, type ProviderSettingsDescriptor } from '../../model/providers'
+import { lyricsHowTo } from '../../model/providers/clipText'
 import {
   effectiveParameterValues,
   nearestRangeValue,
@@ -12,8 +13,7 @@ import {
   type RangeParameter,
   type SwitchParameter,
 } from '../../model/providers/modelParameters'
-import { THINKING_DEFAULT, THINKING_SETTING_KEY } from '../../model/providers/thinking'
-import { TOOLS_DEFAULT, TOOLS_SETTING_KEY } from '../../model/providers/toolsSetting'
+import { toggleRows, toggleValue } from '../../model/providers/modelToggles'
 
 const { activeModel, settings } = useModelState()
 
@@ -31,30 +31,17 @@ const providerName = computed(
   () => descriptor.value?.name ?? activeModel.value?.providerId ?? '',
 )
 
-// Dez's own toggles come first: Thinking, then Tools. They are stored with
-// the config's toggles, so the rows share one code path, and "Reset to
-// defaults" resets them too. Only the toggles that apply to the active model
-// show (`modelToggles` in model/providers/modelToggles.ts): a model that
-// takes no chat request gets none. A toggle that does not show keeps its
-// stored value, as the values are per provider. An unknown provider (no
+// The toggles that apply to the active model (`modelToggles` and
+// `toggleRows` in model/providers/modelToggles.ts): a model that takes no
+// chat request gets none. A toggle that does not show keeps its stored
+// value, as the values are per provider. An unknown provider (no
 // descriptor) gets no rows.
-const settingDefs = computed(() => {
-  const current = descriptor.value
-  if (!current) return []
-  return [
-    ...(current.thinking ? [{ key: THINKING_SETTING_KEY, label: 'Thinking', default: THINKING_DEFAULT }] : []),
-    ...(current.tools ? [{ key: TOOLS_SETTING_KEY, label: 'Tools', default: TOOLS_DEFAULT }] : []),
-    ...current.settings,
-  ]
-})
+const settingDefs = computed(() => (descriptor.value ? toggleRows(descriptor.value) : []))
 
-// Effective value: stored override if the user ever flipped the toggle,
-// otherwise the descriptor default (stored settings are sparse).
 function settingValue(key: string, defaultValue: boolean): boolean {
   const providerId = activeModel.value?.providerId
   if (!providerId) return defaultValue
-  const stored = settings.value.providerSettings[providerId]?.[key]
-  return typeof stored === 'boolean' ? stored : defaultValue
+  return toggleValue({ key, default: defaultValue }, settings.value.providerSettings[providerId])
 }
 
 function toggleSetting(key: string, defaultValue: boolean) {
@@ -79,10 +66,7 @@ const parameters = computed(() => cachedModel.value?.parameters ?? [])
 // takes lyrics, the popup tells how to write them.
 const lyricsHint = computed(() => {
   const lyrics = cachedModel.value?.text?.lyrics
-  if (!lyrics) return null
-  return lyrics.required
-    ? 'This model needs lyrics. Write the style, then a line "Lyrics:", then the lyrics.'
-    : 'To give lyrics, write the style, then a line "Lyrics:", then the lyrics.'
+  return lyrics ? lyricsHowTo(lyrics) : null
 })
 
 // An upscale takes an image and no text (`upscale` in

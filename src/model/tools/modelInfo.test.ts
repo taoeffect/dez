@@ -2,7 +2,9 @@ import { describe, expect, it } from 'vitest'
 import type { ModelCache } from '../persistence/types'
 import { providerInfo } from '../providers/testing'
 import type { ModelInfo } from '../providers/types'
-import { MODEL_INFO_SIZE_CAP, modelInfoParameterValues, modelInfoTarget, modelInfoText } from './modelInfo'
+import { unstoredOutputMessage, unusableModelMessage } from '../providers/unusableModel'
+import { MODEL_INFO_SIZE_CAP, modelInfoParameterValues, modelInfoPart, modelInfoTarget, modelInfoText, type ModelInfoFacts } from './modelInfo'
+import { modelUsage } from './modelUsage'
 
 const OPENROUTER = providerInfo('openrouter', 'OpenRouter')
 const CLOSED = providerInfo('closed', 'Closed', false)
@@ -88,57 +90,209 @@ describe('modelInfoParameterValues', () => {
   })
 })
 
+describe('modelInfoPart', () => {
+  it('reads the entry that `part` names, and none for a call with no `part`', () => {
+    expect(modelInfoPart({ model: 'openrouter/m', part: 'mediaEntry' })).toBe('mediaEntry')
+    expect(modelInfoPart({ model: 'openrouter/m' })).toBeUndefined()
+  })
+
+  it.each(['dez', 'usage', '', 'providerentry'])('refuses %j, which is no entry', (part) => {
+    expect(() => modelInfoPart({ part })).toThrow(`${JSON.stringify(part)} is not an entry of a model_info result. Use one of: providerEntry, mediaEntry, priceEntry.`)
+  })
+})
+
 describe('modelInfoText', () => {
   const entry = { id: 'google/gemini-3-pro', pricing: { prompt: '0.000002' }, context_length: 1048576 }
+  const chatFacts = { toggles: [], inputImages: {} }
+  const parsed = (text: string) => JSON.parse(text) as Record<string, unknown> & { dez: Record<string, unknown> }
 
-  it('gives the full id, the provider, the fields that Dez knows, and the provider entry as pretty JSON', () => {
-    expect(modelInfoText(OPENROUTER, GEMINI, entry)).toBe(JSON.stringify({
+  it('gives the full id, the provider, the facts that Dez uses, the usage, and the provider entry as pretty JSON', () => {
+    expect(modelInfoText(OPENROUTER, GEMINI, { entry })).toBe(JSON.stringify({
       id: 'openrouter/google/gemini-3-pro',
       name: 'Gemini 3 Pro',
       provider: { id: 'openrouter', name: 'OpenRouter' },
-      dez: { outputs: ['text', 'image'], request: 'chat', imageInput: true },
+      dez: { request: 'chat', outputs: ['text', 'image'], imageInput: true, toolCalling: true, thinking: true, unknown: ['toolCalling', 'thinking'] },
+      usage: modelUsage(GEMINI, chatFacts),
       providerEntry: entry,
     }, null, 2))
   })
 
-  it('leaves out every field that Dez does not know', () => {
-    expect(JSON.parse(modelInfoText(OPENROUTER, UNKNOWN, { id: 'mystery' })).dez).toStrictEqual({})
+  it('gives each fact that the provider does not tell the value that Dez acts on, and names it in `unknown`', () => {
+    expect(parsed(modelInfoText(OPENROUTER, UNKNOWN, { entry: { id: 'mystery' } })).dez).toStrictEqual({
+      request: 'chat',
+      outputs: ['text'],
+      imageInput: true,
+      toolCalling: true,
+      thinking: true,
+      unknown: ['request', 'outputs', 'imageInput', 'toolCalling', 'thinking'],
+    })
   })
 
-  it('says so in a note when Dez has no provider entry', () => {
-    const result = JSON.parse(modelInfoText(OPENROUTER, GEMINI, undefined)) as Record<string, unknown>
+  it('gives the toggles that apply, with their values, and the toggles that the model does not take', () => {
+    const model: ModelInfo = { ...GEMINI, toolCalling: false, thinking: false, unsupportedSettings: ['webSearch'] }
+    const toggles = [{ key: 'xSearch', label: 'X search', on: false }]
+
+    expect(parsed(modelInfoText(OPENROUTER, model, { entry, toggles })).dez).toStrictEqual({
+      request: 'chat',
+      outputs: ['text', 'image'],
+      imageInput: true,
+      toolCalling: false,
+      thinking: false,
+      toggles,
+      togglesNotTaken: ['webSearch'],
+    })
+  })
+
+  it('gives a media model its text and image rules, and tools and thinking only when the provider tells them', () => {
+    const edit: ModelInfo = {
+      id: 'edit',
+      name: 'Edit',
+      provider: OPENROUTER.id,
+      outputs: ['image'],
+      request: 'imageEdit',
+      imageInput: true,
+      toolCalling: false,
+      text: { maxPromptLength: 1000 },
+      images: { maxImages: 3, size: { minShortSide: 256 } },
+    }
+    const inputImages = { size: { minShortSide: 256, maxPixels: 4_000_000 }, limits: { maxBytes: 1000 } }
+
+    expect(parsed(modelInfoText(OPENROUTER, edit, { entry: { id: 'edit' }, inputImages })).dez).toStrictEqual({
+      request: 'imageEdit',
+      outputs: ['image'],
+      imageInput: true,
+      toolCalling: false,
+      text: { maxPromptLength: 1000 },
+      images: { minImages: 1, maxImages: 3, size: { minShortSide: 256, maxPixels: 4_000_000 }, limits: { maxBytes: 1000 } },
+    })
+  })
+
+  // JSON has no Infinity: an edit model with no image rules takes every
+  // image of the message.
+  it('gives no `maxImages` to a model that takes every image', () => {
+    const edit: ModelInfo = { id: 'edit', name: 'Edit', provider: OPENROUTER.id, outputs: ['image'], request: 'imageEdit', imageInput: true }
+
+    expect(parsed(modelInfoText(OPENROUTER, edit, { entry: { id: 'edit' } })).dez.images).toStrictEqual({ minImages: 1 })
+  })
+
+  it('tells why Dez sends no request to a model that it cannot use, or whose images it cannot store', () => {
+    const transcriber: ModelInfo = { id: 'whisper', name: 'Whisper', provider: OPENROUTER.id, outputs: ['text'], request: 'none', clipInput: 'audio' }
+    const svg: ModelInfo = { id: 'svg', name: 'SVG Maker', provider: OPENROUTER.id, outputs: ['image'], request: 'image', imageInput: false, unstoredOutput: 'SVG' }
+
+    expect(parsed(modelInfoText(OPENROUTER, transcriber, { entry: {} })).dez).toStrictEqual({
+      request: 'none',
+      outputs: ['text'],
+      imageInput: true,
+      unknown: ['imageInput'],
+      clipInput: 'audio',
+      cannotUse: unusableModelMessage('Whisper', transcriber),
+    })
+    expect(parsed(modelInfoText(OPENROUTER, svg, { entry: {} })).dez).toStrictEqual({
+      request: 'image',
+      outputs: ['image'],
+      imageInput: false,
+      images: { minImages: 0, maxImages: 0 },
+      unstoredOutput: 'SVG',
+      cannotUse: unstoredOutputMessage('SVG Maker', 'SVG'),
+    })
+  })
+
+  it('says so in a note when Dez has no provider entry, and keeps the other entries', () => {
+    const result = parsed(modelInfoText(OPENROUTER, VIDEO, { mediaEntry: { id: 'm' }, priceEntry: [{ cost: 1 }] }))
 
     expect(result).not.toHaveProperty('providerEntry')
+    expect(result.mediaEntry).toStrictEqual({ id: 'm' })
+    expect(result.priceEntry).toStrictEqual([{ cost: 1 }])
     expect(result.note).toBeTypeOf('string')
   })
 
-  it(`keeps the provider entry up to ${MODEL_INFO_SIZE_CAP} characters, and leaves it out with a note over that`, () => {
-    const withPadding = (padding: string) => modelInfoText(OPENROUTER, GEMINI, { ...entry, description: padding })
+  describe(`within ${MODEL_INFO_SIZE_CAP} characters`, () => {
+    const padded = (padding: string) => ({ ...entry, description: padding })
+    const withPadding = (padding: string, facts: ModelInfoFacts = {}) => modelInfoText(OPENROUTER, GEMINI, { entry: padded(padding), ...facts })
     const fitting = 'x'.repeat(MODEL_INFO_SIZE_CAP - withPadding('').length)
 
-    expect(withPadding(fitting)).toHaveLength(MODEL_INFO_SIZE_CAP)
-    expect(JSON.parse(withPadding(fitting)).providerEntry.description).toBe(fitting)
+    it('keeps an entry up to the limit', () => {
+      expect(withPadding(fitting)).toHaveLength(MODEL_INFO_SIZE_CAP)
+      expect(parsed(withPadding(fitting)).providerEntry).toStrictEqual(padded(fitting))
+    })
 
-    const over = JSON.parse(withPadding(`${fitting}x`)) as Record<string, unknown>
-    expect(over).not.toHaveProperty('providerEntry')
-    expect(over.note).toContain(`${MODEL_INFO_SIZE_CAP + 1} characters`)
-    expect(over.dez).toStrictEqual({ outputs: ['text', 'image'], request: 'chat', imageInput: true })
+    it('leaves out an entry over the limit, names it with its size in the note, and keeps `dez` and `usage`', () => {
+      const result = parsed(withPadding(`${fitting}x`))
+
+      expect(result).not.toHaveProperty('providerEntry')
+      expect(result.note).toContain(`providerEntry (${JSON.stringify(padded(`${fitting}x`), null, 2).length} characters)`)
+      expect(result.dez).toStrictEqual(parsed(withPadding('')).dez)
+      expect(result.usage).toStrictEqual(modelUsage(GEMINI, chatFacts))
+      expect(withPadding(`${fitting}x`).length).toBeLessThanOrEqual(MODEL_INFO_SIZE_CAP)
+    })
+
+    it('keeps a later entry that fits when an earlier one does not', () => {
+      const result = parsed(withPadding('x'.repeat(MODEL_INFO_SIZE_CAP), { mediaEntry: { id: 'm' }, priceEntry: [{ cost: 1 }] }))
+
+      expect(result).not.toHaveProperty('providerEntry')
+      expect(result.mediaEntry).toStrictEqual({ id: 'm' })
+      expect(result.priceEntry).toStrictEqual([{ cost: 1 }])
+      expect(result.note).not.toContain('mediaEntry')
+    })
+
+    it('keeps the entries in order while the result fits, and leaves out the rest', () => {
+      const half = 'x'.repeat(MODEL_INFO_SIZE_CAP / 2)
+      const text = modelInfoText(OPENROUTER, GEMINI, { entry, mediaEntry: { a: half }, priceEntry: { b: half } })
+      const result = parsed(text)
+
+      expect(result.providerEntry).toStrictEqual(entry)
+      expect(result.mediaEntry).toStrictEqual({ a: half })
+      expect(result).not.toHaveProperty('priceEntry')
+      expect(result.note).toContain('priceEntry')
+      expect(text.length).toBeLessThanOrEqual(MODEL_INFO_SIZE_CAP)
+    })
+  })
+
+  describe('with `part`', () => {
+    it('gives only the id and that entry', () => {
+      expect(modelInfoText(OPENROUTER, VIDEO, { entry: { id: 'v' }, mediaEntry: { id: 'm' } }, 'mediaEntry'))
+        .toBe(JSON.stringify({ id: 'openrouter/x-ai/grok-video', mediaEntry: { id: 'm' } }, null, 2))
+    })
+
+    it('refuses an entry that the model does not have', () => {
+      expect(() => modelInfoText(OPENROUTER, VIDEO, { entry: { id: 'v' } }, 'priceEntry'))
+        .toThrow('Dez has no priceEntry for this model now. Call model_info without `part` to see which entries it has.')
+    })
+
+    it('gives the longest start of the JSON text of an entry that is over the limit alone', () => {
+      const big = { lines: Array.from({ length: 5000 }, (_, index) => `"line" ${index}`) }
+      const whole = JSON.stringify(big, null, 2)
+      const text = modelInfoText(OPENROUTER, VIDEO, { entry: big }, 'providerEntry')
+      const result = JSON.parse(text) as { providerEntry: string, note: string }
+
+      expect(whole.length).toBeGreaterThan(MODEL_INFO_SIZE_CAP)
+      expect(whole.startsWith(result.providerEntry)).toBe(true)
+      expect(result.note).toContain(String(whole.length))
+      // One more character of the text is at most 2 more of the result
+      // (an escape such as `\n` or `\"`).
+      expect(text.length).toBeLessThanOrEqual(MODEL_INFO_SIZE_CAP)
+      expect(text.length).toBeGreaterThan(MODEL_INFO_SIZE_CAP - 2)
+    })
   })
 
   describe('for a model with parameters', () => {
     const videoEntry = { id: 'x-ai/grok-video' }
     const mediaEntry = { id: 'x-ai/grok-video', pricing_skus: { cents_per_video_output_second_480p: '2' } }
 
-    it('gives each parameter with the value that a request sends, the price, and the entry of the media list', () => {
-      const result = modelInfoText(OPENROUTER, VIDEO, videoEntry, { values: { duration: 5, duration_seconds: 5 }, cost: { usd: 0.1 }, mediaEntry })
+    it('gives each parameter with the value that a request sends, the price, and the entries of the media list and the prices', () => {
+      const priceEntry = [{ billable_type: 'output_image', cost: 0.04 }]
+      const result = modelInfoText(OPENROUTER, VIDEO, { entry: videoEntry, values: { duration: 5, duration_seconds: 5 }, cost: { usd: 0.1 }, mediaEntry, priceEntry })
 
       expect(JSON.parse(result)).toStrictEqual({
         id: 'openrouter/x-ai/grok-video',
         name: 'Grok Video',
         provider: { id: 'openrouter', name: 'OpenRouter' },
         dez: {
-          outputs: ['video'],
           request: 'video',
+          outputs: ['video'],
+          imageInput: true,
+          unknown: ['imageInput'],
+          images: { minImages: 0, maxImages: 0 },
           parameters: [
             { name: 'duration', label: 'Length (seconds)', options: [1, 5, 10], default: 1, value: 5 },
             // No value: the provider's own default applies.
@@ -147,35 +301,27 @@ describe('modelInfoText', () => {
           ],
           cost: { usd: 0.1 },
         },
+        usage: modelUsage(VIDEO, { toggles: [], inputImages: {} }),
         providerEntry: videoEntry,
         mediaEntry,
+        priceEntry,
       })
     })
 
     it('tells that the provider gave no price, and has no media entry for a provider with no media list', () => {
-      const result = JSON.parse(modelInfoText(OPENROUTER, VIDEO, videoEntry, { values: {}, cost: { error: 'No answer' } })) as { dez: Record<string, unknown> }
+      const result = parsed(modelInfoText(OPENROUTER, VIDEO, { entry: videoEntry, values: {}, cost: { error: 'No answer' } }))
 
       expect(result.dez.cost).toStrictEqual({ error: 'No answer' })
       expect(result).not.toHaveProperty('mediaEntry')
     })
 
-    it('leaves both entries out of a result over the limit, and keeps the parameters and the price', () => {
-      const request = { values: { duration: 1 }, cost: { usd: 0.02 }, mediaEntry: { id: 'x-ai/grok-video', description: 'x'.repeat(MODEL_INFO_SIZE_CAP) } }
-      const result = JSON.parse(modelInfoText(OPENROUTER, VIDEO, videoEntry, request)) as { dez: Record<string, unknown>, note: string }
-
-      expect(result).not.toHaveProperty('providerEntry')
-      expect(result).not.toHaveProperty('mediaEntry')
-      expect(result.note).toBeTypeOf('string')
-      expect(result.dez.cost).toStrictEqual({ usd: 0.02 })
-      expect(result.dez.parameters).toHaveLength(3)
-    })
-
-    it('sends a stand-in for a local file path in an option and in the media entry', () => {
+    it('sends a stand-in for a local file path in an option and in the media and price entries', () => {
       const local: ModelInfo = { ...VIDEO, parameters: [{ name: 'voice', label: 'Voice', options: ['/home/alice/voices/a.bin', 'af_alloy'] }] }
-      const result = JSON.parse(modelInfoText(OPENROUTER, local, videoEntry, { values: {}, mediaEntry: { root: '/home/alice/acme-bot' } })) as { dez: Record<string, unknown>, mediaEntry: unknown }
+      const result = parsed(modelInfoText(OPENROUTER, local, { entry: videoEntry, values: {}, mediaEntry: { root: '/home/alice/acme-bot' }, priceEntry: ['~/prices'] }))
 
       expect(result.dez.parameters).toStrictEqual([{ name: 'voice', label: 'Voice', options: ['/home/…', 'af_alloy'] }])
       expect(result.mediaEntry).toStrictEqual({ root: '/home/…' })
+      expect(result.priceEntry).toStrictEqual(['~/…'])
     })
   })
 
@@ -184,22 +330,23 @@ describe('modelInfoText', () => {
   describe('with local file paths in the provider entry', () => {
     const LOCAL = providerInfo('local', 'Local')
     const path = '/home/alice/acme-bot/llama-3'
-    const served: ModelInfo = { id: path, name: path, provider: LOCAL.id }
+    const served: ModelInfo = { id: path, name: path, provider: LOCAL.id, outputs: ['text'], request: 'chat', imageInput: false, toolCalling: false, thinking: false }
 
     it('sends a stand-in for each path of the entry, and keeps the model\'s own id and name', () => {
-      const result = modelInfoText(LOCAL, served, { id: path, object: 'model', root: path, parent: null, max_model_len: 8192 })
+      const result = modelInfoText(LOCAL, served, { entry: { id: path, object: 'model', root: path, parent: null, max_model_len: 8192 } })
 
       expect(JSON.parse(result)).toStrictEqual({
         id: `local/${path}`,
         name: path,
         provider: { id: 'local', name: 'Local' },
-        dez: {},
+        dez: { request: 'chat', outputs: ['text'], imageInput: false, toolCalling: false, thinking: false },
+        usage: modelUsage(served, { toggles: [], inputImages: {} }),
         providerEntry: { id: '/home/…', object: 'model', root: '/home/…', parent: null, max_model_len: 8192 },
       })
     })
 
     it('counts the stand-ins, not the paths, for the size limit', () => {
-      const result = JSON.parse(modelInfoText(LOCAL, served, { root: `${path}/${'x'.repeat(MODEL_INFO_SIZE_CAP)}` })) as Record<string, unknown>
+      const result = parsed(modelInfoText(LOCAL, served, { entry: { root: `${path}/${'x'.repeat(MODEL_INFO_SIZE_CAP)}` } }))
 
       expect(result.providerEntry).toStrictEqual({ root: '/home/…' })
       expect(result).not.toHaveProperty('note')

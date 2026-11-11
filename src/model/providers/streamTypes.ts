@@ -80,3 +80,13 @@ export interface ProviderGenerateMediaResult {
 // The input of dez.provider/mediaQuote: the fields of the
 // dez.provider/generateMedia input that set the price.
 export type ProviderMediaQuoteInput = Pick<ProviderGenerateMediaInput, 'providerId' | 'modelId' | 'kind' | 'parameters'>
+
+// What dez.provider/mediaQuote tells about the price of one request.
+export interface ProviderMediaQuote {
+  // The price in USD of one request with the input's parameter values.
+  // Absent when the provider's data tells no one price for it.
+  usd?: number
+  // The model's price records, as the provider sent them, for a provider
+  // whose model lists hold no prices (`ImageQuoteFormat.recordsRequest`).
+  records?: unknown
+}

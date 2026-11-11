@@ -20,6 +20,7 @@ import { activeConversationId, activeTabStreaming, docPos, editorCaret, editorDo
 // one before it (the prompt cache). A relaunch reads the saved call back
 // from the conversation file. A Stop while the round after a call waits
 // keeps the call, and the next request sends it with its result. A
+// `model_info` call gives the facts of the mock model as Dez knows them. A
 // `crop_scale_image` call makes a new image from a part of a pasted one:
 // the image goes into the reply after the call, and the requests name it
 // by its id, with no path. A long result scrolls in its field under the
@@ -366,6 +367,57 @@ describe('tool calls', () => {
       { role: 'agent', text: replyText('go on') },
       { role: 'user', text: '' },
     ])
+  })
+
+  it('runs a model_info call: the result holds the facts of the model as Dez knows them, and the panel shows it', async () => {
+    await newTab(browser)
+    await pickModel(browser, TOOLER.name, TOOLER.modelName)
+    const question = 'Tell me about the tool model.'
+    await submit(browser, question)
+    const first = await setup.mock.waitForRequest(browser)
+    const model = `${TOOLER.id}/${TOOLER.modelId}`
+    const call = { id: 'call_info', type: 'function', function: { name: 'model_info', arguments: JSON.stringify({ model }) } }
+    startEventStream(first.reply)
+    writeChatFrame(first.reply, { tool_calls: [{ index: 0, ...call }] }, 'tool_calls')
+    first.reply.end('data: [DONE]\n\n')
+
+    const second = await setup.mock.waitForRequest(browser)
+    const sent = JSON.parse(second.body) as { messages: Array<{ content: unknown }> }
+    const result = sent.messages.at(-1)?.content
+    if (typeof result !== 'string') throw new Error('The second request has no tool result text')
+    expect(JSON.parse(second.body)).toEqual(openAiChatBody(TOOLER, [
+      { role: 'user', content: question },
+      { role: 'assistant', content: '', tool_calls: [call] },
+      { role: 'tool', tool_call_id: 'call_info', content: result },
+    ]))
+    // The mock model's config tells only its id and name, so every fact is
+    // the value that Dez acts on when it does not know; the Tools toggle is
+    // the user's value. The usage texts are not wording that a test pins.
+    expect(JSON.parse(result)).toStrictEqual({
+      id: model,
+      name: TOOLER.modelName,
+      provider: { id: TOOLER.id, name: TOOLER.name },
+      dez: {
+        request: 'chat',
+        outputs: ['text'],
+        imageInput: true,
+        toolCalling: true,
+        thinking: true,
+        unknown: ['request', 'outputs', 'imageInput', 'toolCalling', 'thinking'],
+        toggles: [{ key: 'tools', label: 'Tools', on: true }],
+      },
+      usage: expect.any(Array),
+      providerEntry: { id: TOOLER.modelId, name: TOOLER.modelName },
+    })
+
+    await sendChatReply(second.reply, TOOLER.modelName)
+    await waitForThread(browser, [
+      { role: 'user', text: question },
+      { role: 'agent', text: `<dez:tool id="call_info" name="model_info" model="${model}">\n${result}\n</dez:tool>\n${replyText(TOOLER.modelName)}` },
+      { role: 'user', text: '' },
+    ])
+    await pointerClick(browser, '.cm-content .dez-tool-call__chip')
+    await waitForValue(browser, 'model_info panel', () => toolPanel(0), { parameters: [['model', model]], result, error: false })
   })
 
   it('runs a crop_scale_image call: the new image goes into the reply after the call, and the requests name it by its id', async () => {

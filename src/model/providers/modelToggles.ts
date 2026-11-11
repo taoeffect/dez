@@ -1,4 +1,6 @@
 import type { ProviderConfig, ProviderSettingDef } from './config'
+import { THINKING_DEFAULT, THINKING_SETTING_KEY } from './thinking'
+import { TOOLS_DEFAULT, TOOLS_SETTING_KEY } from './toolsSetting'
 import { effectiveRequest, type ModelInfo } from './types'
 
 // The model of a toggle question: its id, and what the model cache knows of
@@ -47,4 +49,32 @@ export function modelToggles(config: Pick<ProviderConfig, 'thinking' | 'settings
       (setting.modelIdPrefix === undefined || model.id.startsWith(setting.modelIdPrefix)) &&
       !model.unsupportedSettings?.includes(setting.key)),
   }
+}
+
+// One toggle that applies to a model, as the provider settings popup shows
+// it and `model_info` tells it.
+export interface ToggleRow {
+  key: string
+  label: string
+  default: boolean
+}
+
+/** The toggles of `toggles` as rows: Dez's own toggles first (Thinking,
+ *  then Tools), then the config's toggles. Dez's own toggles are stored
+ *  with the config's toggles, so the rows share one code path, and "Reset
+ *  to defaults" resets them too. */
+export function toggleRows(toggles: ModelToggles): ToggleRow[] {
+  return [
+    ...(toggles.thinking ? [{ key: THINKING_SETTING_KEY, label: 'Thinking', default: THINKING_DEFAULT }] : []),
+    ...(toggles.tools ? [{ key: TOOLS_SETTING_KEY, label: 'Tools', default: TOOLS_DEFAULT }] : []),
+    ...toggles.settings.map(({ key, label, default: defaultValue }) => ({ key, label, default: defaultValue })),
+  ]
+}
+
+/** The value of the toggle `row`: the user's value in `stored`
+ *  (settings.providerSettings[providerId]), else the row's default. The
+ *  stored toggles are sparse: only a flipped toggle has a value. */
+export function toggleValue(row: Pick<ToggleRow, 'key' | 'default'>, stored: Readonly<Record<string, boolean>> | undefined): boolean {
+  const value = stored?.[row.key]
+  return typeof value === 'boolean' ? value : row.default
 }

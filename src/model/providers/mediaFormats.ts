@@ -7,7 +7,7 @@ import { trimTrailingSlashes, type MediaApiFormatId } from './config'
 import type { InputImageRules } from './clipImages'
 import type { ClipTextRules } from './clipText'
 import { generatedBase64Image, generatedImage } from './generatedImages'
-import { imageSizeRules, type ImageSizeRules } from './imageSize'
+import { imageSizeRules, type ImageSizeRules, type InputImageLimits } from './imageSize'
 import { isOptionValue, parameterTakes, type ModelParameter, type OptionsParameter, type OptionValue, type ParameterValues, type RangeParameter } from './modelParameters'
 import { isRecord, valueAtPath } from './modelParsing'
 import { CLIP_KINDS, isClipKind, type ChatImagePart, type ClipKind, type GeneratedMedia, type ImageKind, type MediaKind } from './types'
@@ -86,14 +86,39 @@ export interface ImageFormat {
   // The size rules of each input image of a request of a kind, for an API
   // whose docs tell them. They are rules of the request, not of a model.
   inputImageSize?: Readonly<Partial<Record<ImageKind, ImageSizeRules>>>
+  // The limits of each input image of a request of a kind that no fit can
+  // meet (imageSize.ts), for an API whose docs tell them.
+  inputImageLimits?: Readonly<Partial<Record<ImageKind, InputImageLimits>>>
   // Why the API refuses an input image of a request of `kind`, as a
   // sentence for the user; undefined when it takes it. The image is the
   // one that goes, after the fit to `inputImageSize`: `size` is its size
   // (null when it was not decoded), and `byteLength` the length of its
-  // file. For a limit that the docs tell and that no fit can meet. The
-  // text names no model and no message, because a tool can send a request
-  // too.
+  // file. For a limit of `inputImageLimits`. The text names no model and no
+  // message, because a tool can send a request too.
   inputImageProblem?(kind: ImageKind, size: ImageSize | null, byteLength: number): string | undefined
+  quote?: ImageQuoteFormat
+}
+
+// The price records of an image model, for the price of one request.
+export interface ImageQuoteInput {
+  // The model's entry in the provider's model list, and in a list of the
+  // media API (`MediaFormat.modelLists`); each one undefined when Dez has
+  // none.
+  entry: unknown
+  mediaEntry: unknown
+  // The JSON of the 2xx response to `ImageQuoteFormat.recordsRequest`;
+  // undefined with no such request.
+  records: unknown
+}
+
+// What a media API tells about the price of one image request.
+export interface ImageQuoteFormat {
+  // The request for the price records of a model of `kind`, for an API
+  // whose model lists hold no prices. Null: the entries hold them.
+  recordsRequest?(kind: ImageKind, baseUrl: string, modelId: string): MediaWireRequest | null
+  // The price in USD of one request of `kind` with `values`; undefined
+  // when the entries and the records tell no one price for it.
+  usd(kind: ImageKind, values: ParameterValues, input: ImageQuoteInput): number | undefined
 }
 
 // What a media API tells about the price of one clip before the request.
@@ -321,8 +346,26 @@ const VENICE_SPEECH_FORMATS: ReadonlySet<OptionValue> = new Set(['mp3', 'wav', '
 // uses the same unit as `byteSizeText`.
 // https://docs.venice.ai/api-reference/endpoint/image/upscale
 // https://docs.venice.ai/guides/media/image-upscaling
-const VENICE_UPSCALE_MAX_PIXELS = 16_777_216
-const VENICE_UPSCALE_MAX_BYTES = 25 * 1024 ** 2
+const VENICE_UPSCALE_LIMITS = { pixelsBelow: 16_777_216, maxBytes: 25 * 1024 ** 2 } as const satisfies InputImageLimits
+
+// The price key of each Venice image kind with a price table, in the
+// model entry (`model_spec.pricing`), and the keys of the table that are
+// prices of other requests (every image model repeats the upscale table).
+// A table with any other key (`resolutions`, `quality`, `inputImages`)
+// has a price that depends on a field that Dez does not send, or on the
+// input images, so it tells no one price of a request. The entry of an
+// upscale model has the price of each scale (`upscale` → `2x`, `4x`).
+// https://docs.venice.ai/pricing
+const VENICE_IMAGE_PRICES: Readonly<Record<Exclude<ImageKind, 'upscale'>, { key: string, others: readonly string[] }>> = {
+  image: { key: 'generation', others: ['upscale', 'inpaint'] },
+  imageEdit: { key: 'inpaint', others: ['upscale', 'generation'] },
+}
+
+// The USD of one price of a Venice price table (`{ usd, diem }`).
+function veniceUsd(price: unknown): number | undefined {
+  const usd = valueAtPath(price, 'usd')
+  return typeof usd === 'number' && Number.isFinite(usd) && usd >= 0 ? usd : undefined
+}
 
 // The Venice media API (https://docs.venice.ai/api-reference).
 const veniceFormat: MediaFormat = {
@@ -408,15 +451,26 @@ const veniceFormat: MediaFormat = {
       imageEdit: { minShortSide: 256, maxPixels: 33_177_600 },
       upscale: { minShortSide: 256 },
     },
+    inputImageLimits: { upscale: VENICE_UPSCALE_LIMITS },
     inputImageProblem: (kind, size, byteLength) => {
       if (kind !== 'upscale') return undefined
-      if (size && size.width * size.height >= VENICE_UPSCALE_MAX_PIXELS) {
+      if (size && size.width * size.height >= VENICE_UPSCALE_LIMITS.pixelsBelow) {
         return `The image has ${size.width} × ${size.height} pixels, and an upscale makes images of at most 16,777,216 pixels (4096 × 4096), so this image cannot get larger. Use an image with fewer pixels.`
       }
-      if (byteLength > VENICE_UPSCALE_MAX_BYTES) {
+      if (byteLength > VENICE_UPSCALE_LIMITS.maxBytes) {
         return `The image file has ${byteSizeText(byteLength)}, and the upscale API takes files of at most 25 MB. Use a smaller file of the image, such as a JPEG.`
       }
       return undefined
+    },
+    quote: {
+      usd: (kind, values, { entry }) => {
+        const pricing = valueAtPath(entry, 'model_spec.pricing')
+        if (!isRecord(pricing)) return undefined
+        if (kind === 'upscale') return veniceUsd(valueAtPath(pricing, `upscale.${String(values.scale)}x`))
+        const { key, others } = VENICE_IMAGE_PRICES[kind]
+        if (Object.keys(pricing).some((name) => name !== key && !others.includes(name))) return undefined
+        return veniceUsd(pricing[key])
+      },
     },
   },
   clips: {
@@ -698,6 +752,50 @@ function openRouterReferenceRules(mediaEntry: unknown): InputImageRules | undefi
   return { maxImages, ...(minImages !== undefined && { minImages }) }
 }
 
+// The price in USD of one OpenRouter image request with `values`, from the
+// price records of the model (`records`: the answer to `GET
+// /images/models/<id>/endpoints`, `{ endpoints: [{ pricing: [{ billable,
+// unit, cost_usd, variant? }] }] }`, checked live 2026-11-11; the image
+// list has no prices). A request makes one image (Dez never sends `n`), so
+// the records tell one price only when they are plain: each endpoint (a
+// provider that serves the model) has the same records, each record that
+// costs something is the price of one output image, and each variant is a
+// resolution of the model in lower case (`1k` for `1K`). Any other record
+// (a price per token or per megapixel, a price of the input images, a
+// variant such as `high_resolution`) gives a price that depends on what
+// the model does with the request. Of plain records, the price is the one
+// that every resolution has, else the record of the request's resolution,
+// else the record with no variant (the one of the resolutions that have
+// no record of their own).
+function openRouterImageUsd(values: ParameterValues, mediaEntry: unknown, records: unknown): number | undefined {
+  const endpoints = valueAtPath(records, 'endpoints')
+  if (!Array.isArray(endpoints) || endpoints.length === 0) return undefined
+  const tables = endpoints.map((endpoint) => JSON.stringify(valueAtPath(endpoint, 'pricing') ?? null))
+  if (tables.some((table) => table !== tables[0])) return undefined
+  const pricing = valueAtPath(endpoints[0], 'pricing')
+  if (!Array.isArray(pricing)) return undefined
+
+  const resolutions = openRouterImageOptions(mediaEntry, 'resolution').map((resolution) => String(resolution).toLowerCase())
+  // Price by variant; the key `undefined` is the record with no variant.
+  const prices = new Map<string | undefined, number>()
+  for (const record of pricing) {
+    const cost = valueAtPath(record, 'cost_usd')
+    if (typeof cost !== 'number' || !Number.isFinite(cost) || cost < 0) return undefined
+    if (valueAtPath(record, 'billable') !== 'output_image' || valueAtPath(record, 'unit') !== 'image') {
+      if (cost > 0) return undefined
+      continue
+    }
+    const variant = valueAtPath(record, 'variant')
+    if (variant !== undefined && (typeof variant !== 'string' || !resolutions.includes(variant))) return undefined
+    if (prices.has(variant)) return undefined
+    prices.set(variant, cost)
+  }
+  const costs = new Set(prices.values())
+  if (costs.size === 1) return [...costs][0]
+  const resolution = values.resolution
+  return (resolution === undefined ? undefined : prices.get(String(resolution).toLowerCase())) ?? prices.get(undefined)
+}
+
 // The OpenRouter image, speech, and video APIs. Its image-only models
 // answer only through the image API (`/images`); its image + text models
 // answer through chat (`imageOutputBody` in builtins.ts), and so do its
@@ -761,6 +859,14 @@ const openRouterFormat: MediaFormat = {
       const images = isRecord(data) && Array.isArray(data.data) ? data.data : []
       if (images.length === 0) throw new Error('The provider sent no image.')
       return images.map((image) => generatedBase64Image(isRecord(image) ? image.b64_json : undefined))
+    },
+    quote: {
+      recordsRequest: (kind, baseUrl, modelId) => {
+        if (kind === 'upscale') return null
+        const path = modelId.split('/').map(encodeURIComponent).join('/')
+        return { url: `${trimTrailingSlashes(baseUrl)}/images/models/${path}/endpoints` }
+      },
+      usd: (_kind, values, { mediaEntry, records }) => openRouterImageUsd(values, mediaEntry, records),
     },
   },
   // The resolutions, aspect ratios, reference images, and file types of an
