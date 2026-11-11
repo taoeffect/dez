@@ -1,5 +1,6 @@
 import { MARKER_ATTRIBUTES, escapeMarkerAttribute, markerAttributes } from '../../utils/markerAttribute'
-import { fitsParameterType, toolDefinition } from '../tools/registry'
+import { fitsParameterType } from '../tools/arguments'
+import { toolDefinition } from '../tools/registry'
 import type { ToolArguments, ToolArgumentValue, ToolParameterType } from '../tools/types'
 import { stripLiveSentinels } from './content'
 import { MEDIA_TAG_NAMES, mediaTagRequestText, splitMediaTags } from './mediaTags'

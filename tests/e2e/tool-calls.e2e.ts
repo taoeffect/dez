@@ -6,6 +6,7 @@ import { anthropicChatBody, anthropicMarkedUser, openAiChatBody } from './harnes
 import { consoleErrors, pointerClick, resetConsoleErrors, screenshotOnFailure, typeKeys, waitForValue } from './harness/dom'
 import { conversationFilePath, makeConversation, seedConversation } from './harness/fixtures'
 import { decodedImage, pasteImage, pngDataUrl, shownImages, stripedPng, type Rgb } from './harness/images'
+import { WAV_SAMPLE_RATE, monoWav, shownPlayers } from './harness/media'
 import { startMockProviderApp, type MockProviderApp } from './harness/mockProviderApp'
 import { mockChatPath, replyText, sendAnthropicReply, sendChatReply, startEventStream, writeAnthropicEvent, writeChatFrame, type MockProvider } from './harness/mockServer'
 import type { E2EBrowser } from './harness/session'
@@ -23,9 +24,10 @@ import { activeConversationId, activeTabStreaming, docPos, editorCaret, editorDo
 // `model_info` call gives the facts of the mock model as Dez knows them. A
 // `crop_scale_image` call makes a new image from a part of a pasted one:
 // the image goes into the reply after the call, and the requests name it
-// by its id, with no path. A long result scrolls in its field under the
-// wheel. Backspace and Delete next to a chip never join its block to other
-// text.
+// by its id, with no path. An `audio` call cuts a part of a saved clip into
+// a new saved WAV clip, in the same way. A long result scrolls in its field
+// under the wheel. Backspace and Delete next to a chip never join its block
+// to other text.
 //
 // One app session serves the whole file. The relaunch test reopens the tab
 // of the OpenAI test, so it runs right after it.
@@ -37,6 +39,10 @@ const CLAUDE: MockProvider = { id: 'claude', name: 'Claude Mock', modelId: 'clau
 // `crop_scale_image` test.
 const GREEN: Rgb = [40, 160, 60]
 const STRIPES_PNG = stripedPng(30, 20, [[220, 40, 40], GREEN, [40, 90, 220]])
+
+// Two seconds of silence, 16-bit mono at 8 kHz: the clip of the `audio`
+// test. Silence, so a run makes no sound.
+const SONG_WAV = monoWav(Buffer.alloc(2 * WAV_SAMPLE_RATE * 2), 2)
 
 // The `model_list` results for the filters of the tests. The mock providers
 // are the only configured ones: built-ins have no key in the test HOME. Their
@@ -499,6 +505,99 @@ describe('tool calls', () => {
     await waitForThread(browser, [...sections, { role: 'user', text: 'Is @b green?' }, { role: 'agent', text: replyText('green') }, { role: 'user', text: '' }])
   })
 
+  it('runs an audio clip call: the cut is a new saved WAV clip in the reply after the call, and the requests name it by its id', async () => {
+    const audioDir = path.join(setup.app.home, '.config', 'dez', 'assets', 'generated', 'audio')
+    const songPath = path.join(audioDir, 'song.wav')
+    await fs.promises.mkdir(audioDir, { recursive: true })
+    await fs.promises.writeFile(songPath, SONG_WAV)
+    const songTag = `<dez:audio id="a" type="audio/wav" src="${songPath}"/>`
+    await seedConversation(setup.app.home, makeConversation({
+      id: 'audio-cut',
+      title: 'Audio cut',
+      sections: [
+        { role: 'user', nodes: [{ kind: 'text', text: 'Make a song.' }] },
+        { role: 'agent', nodes: [{ kind: 'text', text: songTag }] },
+        { role: 'user', nodes: [{ kind: 'text', text: '' }] },
+      ],
+    }))
+    await sbpCall(browser, 'dez.model/tabs/openConversation', 'audio-cut')
+    await waitForThread(browser, [{ role: 'user', text: 'Make a song.' }, { role: 'agent', text: songTag }, { role: 'user', text: '' }])
+    await pickModel(browser, TOOLER.name, TOOLER.modelName)
+    await submit(browser, 'Cut it.')
+    const first = await setup.mock.waitForRequest(browser)
+    const before = [
+      { role: 'user', content: 'Make a song.' },
+      { role: 'assistant', content: '<dez:audio id="a" type="audio/wav"/>' },
+      { role: 'user', content: 'Cut it.' },
+    ]
+    expect(JSON.parse(first.body)).toEqual(openAiChatBody(TOOLER, before))
+
+    const parameters = JSON.stringify({ clip: 'a', start: 0.5, end: 1 })
+    const call = { id: 'call_cut', type: 'function', function: { name: 'audio', arguments: JSON.stringify({ command: 'clip', parameters }) } }
+    startEventStream(first.reply)
+    writeChatFrame(first.reply, { tool_calls: [{ index: 0, ...call }] }, 'tool_calls')
+    first.reply.end('data: [DONE]\n\n')
+
+    // The tag of the new clip comes after the request of this round, so the
+    // request ends with the result.
+    const result = 'Made the audio clip @b from @a, from second 0.5 to second 1. The audio clip @b is 0.5 seconds long.'
+    const round = [
+      { role: 'assistant', content: '', tool_calls: [call] },
+      { role: 'tool', tool_call_id: 'call_cut', content: result },
+    ]
+    const second = await setup.mock.waitForRequest(browser)
+    expect(JSON.parse(second.body)).toEqual(openAiChatBody(TOOLER, [...before, ...round]))
+    expectSentPrefix(first.body, second.body)
+    await sendChatReply(second.reply, TOOLER.modelName)
+
+    // The new clip is a saved file of the generated audio, written into the
+    // reply after the call with the name of the tool that made it.
+    await waitForValue(browser, 'sections after the reply', async () => (await threadSections(browser)).length, 5)
+    const reply = (await threadSections(browser))[3].text
+    const madePath = /<dez:audio id="b" type="audio\/wav" src="([^"]+)"/.exec(reply)?.[1] ?? ''
+    expect(path.dirname(madePath)).toBe(audioDir)
+    expect(path.basename(madePath)).toMatch(/^[0-9a-f-]{36}\.wav$/)
+    const block = `<dez:tool id="call_cut" name="audio" command="clip" parameters="${parameters.replaceAll('"', '&quot;')}">\n${result}\n</dez:tool>`
+    const sections = [
+      { role: 'user', text: 'Make a song.' },
+      { role: 'agent', text: songTag },
+      { role: 'user', text: 'Cut it.' },
+      { role: 'agent', text: `${block}\n\n<dez:audio id="b" type="audio/wav" src="${madePath}" tool="audio"/>\n\n${replyText(TOOLER.modelName)}` },
+    ]
+    await waitForThread(browser, [...sections, { role: 'user', text: '' }])
+    await waitForValue(browser, 'players', async () => (await shownPlayers(browser)).map(({ id, available, seconds, save }) => ({ id, available, seconds, save })), [
+      { id: 'a', available: true, seconds: 2, save: 'saved' },
+      { id: 'b', available: true, seconds: 0.5, save: 'saved' },
+    ])
+
+    // A 16-bit WAV file at the rate of the cut (48 kHz), with the channel
+    // of the clip: half a second of it.
+    const made = await fs.promises.readFile(madePath)
+    expect({
+      riff: made.toString('ascii', 0, 4),
+      channels: made.readUInt16LE(22),
+      rate: made.readUInt32LE(24),
+      bits: made.readUInt16LE(34),
+      dataBytes: made.readUInt32LE(40),
+      length: made.length,
+    }).toStrictEqual({ riff: 'RIFF', channels: 1, rate: 48000, bits: 16, dataBytes: 48000, length: 44 + 48000 })
+    expect(await fs.promises.readFile(songPath)).toEqual(SONG_WAV)
+
+    // A later request holds the tag of the new clip in its request form:
+    // its id and type, with no path.
+    await submit(browser, 'Thanks.')
+    const third = await setup.mock.waitForRequest(browser)
+    expect(JSON.parse(third.body)).toEqual(openAiChatBody(TOOLER, [
+      ...before,
+      ...round,
+      { role: 'assistant', content: `\n<dez:audio id="b" type="audio/wav"/>\n\n${replyText(TOOLER.modelName)}` },
+      { role: 'user', content: 'Thanks.' },
+    ]))
+    expect(third.body).not.toContain(setup.app.home)
+    await sendChatReply(third.reply, 'welcome')
+    await waitForThread(browser, [...sections, { role: 'user', text: 'Thanks.' }, { role: 'agent', text: replyText('welcome') }, { role: 'user', text: '' }])
+  })
+
   it('scrolls a result that is taller than its field under the wheel, not the doc', async () => {
     // Text after the block makes the doc taller than the window, so a wheel
     // that the field does not take would scroll the doc.
@@ -514,6 +613,9 @@ describe('tool calls', () => {
     }))
     await sbpCall(browser, 'dez.model/tabs/openConversation', 'long-result')
     await waitForValue(browser, 'chip of the long result', toolChips, [closedChip('"x"')])
+    // A new tab keeps the scroll position of the tab before it (a tall
+    // reply of an earlier test), which can put the chip under the tab bar.
+    await browser.execute(() => document.querySelector('.cm-content .dez-tool-call__chip')?.scrollIntoView({ block: 'center' }))
     await pointerClick(browser, '.cm-content .dez-tool-call__chip')
     await waitForValue(browser, 'long result in the panel', async () => (await toolPanel(0))?.result, result)
 

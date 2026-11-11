@@ -78,3 +78,25 @@ export function mediaFileExtension(type: string, url: string | null): string | n
   return extension !== undefined && MEDIA_EXTENSIONS.has(extension) ? extension : null
 }
 
+/** Why `dez.controller/media/readClip` read no bytes of a clip:
+ *  - `deleted`: the clip has no source: its saved file was deleted, and it
+ *    has no URL.
+ *  - `expired`: no source gave the bytes, and the clip's `expires` time is
+ *    past.
+ *  - `unreadable`: no source gave the bytes for another cause (a missing
+ *    file, a network failure, a refusal of the server). */
+export type ClipReadProblem = 'deleted' | 'expired' | 'unreadable'
+
+/** The error of a clip whose bytes Dez could not read. Each caller words
+ *  the problem for its own reader (a model, or the user). `details` tell
+ *  what each source gave, with no path and no URL, so that a text with
+ *  them can go to a chat provider. */
+export class ClipReadError extends Error {
+  constructor(
+    readonly problem: ClipReadProblem,
+    readonly details = '',
+  ) {
+    super(`The clip cannot be read (${problem}).${details === '' ? '' : ` ${details}`}`)
+    this.name = 'ClipReadError'
+  }
+}

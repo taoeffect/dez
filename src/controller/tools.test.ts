@@ -1,7 +1,10 @@
 import sbp from '@sbp/sbp'
 import { createPinia, setActivePinia } from 'pinia'
 import { afterEach, beforeEach, describe, expect, it, vi, type MockInstance } from 'vitest'
+import type { AudioPart, CutAudio } from '../model/chat/audioCut'
 import type { DrawnImage, ImageDrawing, ImageSize } from '../model/chat/imageDrawing'
+import { ClipReadError } from '../model/chat/mediaFiles'
+import type { MediaTagData } from '../model/chat/mediaTags'
 import type { ProviderMediaQuote, ProviderMediaQuoteInput } from '../model/providers/streamTypes'
 import { providerInfo } from '../model/providers/testing'
 import type { ModelInfo, ProviderInfo, ProviderInputImageRules, ProviderSettingsDescriptor } from '../model/providers/types'
@@ -43,6 +46,18 @@ let drawings: { drawing: ImageDrawing, mediaType: string }[] = []
 let savedImages: { mediaType: string, options: unknown }[] = []
 let saveImage: () => Promise<string>
 let deletedImages: string[] = []
+// The stub clip store and webview of the `audio` tool: the source of each
+// clip that was read, what a read and a save do, the length of every clip,
+// each save, and the deleted files. Set in beforeEach and by the tests.
+let readClips: (string | null)[] = []
+let readClip: () => Promise<Blob>
+let clipDuration: number
+// Set to make the webview fail to decode.
+let cutError: Error | undefined
+let savedClips: { clip: unknown, bytes: Uint8Array }[] = []
+let saveClip: () => Promise<string>
+let deletedClips: string[] = []
+const CUT_BYTES = new Uint8Array([9])
 
 sbp('sbp/selectors/register', {
   async 'dez.provider/infos' (): Promise<ProviderInfo[]> {
@@ -80,6 +95,22 @@ sbp('sbp/selectors/register', {
   async 'dez.controller/images/delete' (path: string): Promise<void> {
     deletedImages.push(path)
   },
+  async 'dez.controller/media/readClip' (clip: MediaTagData): Promise<Blob> {
+    readClips.push(clip.src)
+    return await readClip()
+  },
+  async 'dez.controller/media/cutAudio' (_file: Blob, plan: (duration: number) => AudioPart | null): Promise<CutAudio | null> {
+    if (cutError) throw cutError
+    const part = plan(clipDuration)
+    return part && { part, bytes: CUT_BYTES, duration: part.end - part.start }
+  },
+  async 'dez.controller/media/save' (clip: unknown, { bytes }: { bytes: Uint8Array }): Promise<string> {
+    savedClips.push({ clip, bytes })
+    return await saveClip()
+  },
+  async 'dez.controller/media/delete' (path: string): Promise<void> {
+    deletedClips.push(path)
+  },
 })
 
 function run(call: ToolRunCall): Promise<ToolRunResult> {
@@ -108,6 +139,13 @@ beforeEach(() => {
   savedImages = []
   saveImage = async () => '/home/u/.config/dez/assets/generated/images/new.png'
   deletedImages = []
+  readClips = []
+  readClip = async () => new Blob([])
+  clipDuration = 10
+  cutError = undefined
+  savedClips = []
+  saveClip = async () => '/home/u/.config/dez/assets/generated/audio/new.wav'
+  deletedClips = []
   // A check that the provider passes, with an entry for each model.
   refreshCheck = async () => {
     sbp('dez.model/modelCache/applyProviderResult', 'venice', {
@@ -148,7 +186,7 @@ describe('dez.controller/tools/run', () => {
       expect((await run({ name: definition.name, arguments: {} })).content).not.toMatch(/^Dez has no tool/)
     }
     expect(await run({ name: 'toString', arguments: {} })).toStrictEqual({
-      content: 'Dez has no tool named "toString". Call only the Dez tools, by their exact names: model_list, model_info, crop_scale_image.',
+      content: 'Dez has no tool named "toString". Call only the Dez tools, by their exact names: model_list, model_info, crop_scale_image, audio.',
       isError: true,
     })
   })
@@ -365,6 +403,7 @@ describe('dez.controller/tools/run', () => {
           written.push(path)
           return newImageId
         },
+        writeClip: () => null,
       }
       return sbp('dez.controller/tools/run', { name: 'crop_scale_image', arguments: args }, signal, context) as Promise<ToolRunResult>
     }
@@ -488,6 +527,141 @@ describe('dez.controller/tools/run', () => {
 
       expect((await crop({ image: 'a', width: 10 }, abort.signal)).isError).toBe(true)
       expect(savedImages).toStrictEqual([])
+    })
+  })
+
+  describe('audio clip', () => {
+    const song = '/home/u/.config/dez/assets/generated/audio/song.mp3'
+    const made = '/home/u/.config/dez/assets/generated/audio/new.wav'
+    // The clips that the reply got a tag for, and the id that it gives.
+    let written: unknown[] = []
+    let newClipId: string | null
+    let tabId: string
+
+    function clip(parameters: Record<string, unknown>, signal = new AbortController().signal): Promise<ToolRunResult> {
+      const context: ToolRunContext = {
+        tabId,
+        writeImage: () => null,
+        writeClip: (data) => {
+          written.push(data)
+          return newClipId
+        },
+      }
+      const args = { command: 'clip', parameters: JSON.stringify(parameters) }
+      return sbp('dez.controller/tools/run', { name: 'audio', arguments: args }, signal, context) as Promise<ToolRunResult>
+    }
+
+    beforeEach(() => {
+      written = []
+      newClipId = 'c'
+      tabId = sbp('dez.model/tabs/activeId') as string
+      sbp('dez.model/tabs/replaceSections', tabId, [
+        { id: 'u1', role: 'user', content: [{ kind: 'text', text: 'A song.' }] },
+        { id: 'a1', role: 'agent', content: [{ kind: 'text', text: `<dez:audio id="b" type="audio/mpeg" src="${song}"/>` }] },
+        { id: 'u2', role: 'user', content: [{ kind: 'text', text: 'Cut it.' }] },
+        { id: 'a2', role: 'agent', content: [{ kind: 'text', text: '' }] },
+      ])
+    })
+
+    it('cuts the part into a WAV clip, saves it at once, and gives the reply its tag', async () => {
+      expect(await clip({ clip: '@b', start: 1, end: 3.5 })).toStrictEqual({
+        content: 'Made the audio clip @c from @b, from second 1 to second 3.5. The audio clip @c is 2.5 seconds long.',
+        isError: false,
+      })
+
+      expect(readClips).toStrictEqual([song])
+      const wav = { kind: 'audio', type: 'audio/wav', src: null, url: null, expires: null }
+      expect(savedClips).toStrictEqual([{ clip: wav, bytes: CUT_BYTES }])
+      expect(written).toStrictEqual([{ ...wav, src: made }])
+      expect(deletedClips).toStrictEqual([])
+    })
+
+    it('ends the part at the end of the clip for an end past it', async () => {
+      expect((await clip({ clip: 'b', start: 8, end: 60 })).content).toBe('Made the audio clip @c from @b, from second 8 to second 10. The audio clip @c is 2 seconds long.')
+    })
+
+    it('makes no clip for a call with only the clip, and gives the length of the clip', async () => {
+      clipDuration = 12.3456
+
+      expect(await clip({ clip: 'b' })).toStrictEqual({
+        content: 'The audio clip @b is 12.35 seconds long. Give a start, an end, or both to make a new clip from a part of it.',
+        isError: false,
+      })
+      expect(savedClips).toStrictEqual([])
+      expect(written).toStrictEqual([])
+    })
+
+    it('gives the error of a part that is not in the clip, and saves nothing', async () => {
+      expect(await clip({ clip: 'b', start: 12 })).toStrictEqual({
+        content: 'The audio clip @b is 10 seconds long, so "start" must be less than 10.',
+        isError: true,
+      })
+      expect(savedClips).toStrictEqual([])
+    })
+
+    // An error result goes to the chat provider: no path, no URL.
+    it.each([
+      [new ClipReadError('deleted'), 'The audio clip @b is gone: the user deleted its file, and it has no web address to download it from. '
+        + 'This is not a fault of the call. Tell the user, and do not call the audio tool again for @b.'],
+      [new ClipReadError('expired', 'The server of the clip answered HTTP 403.'), 'The audio clip @b has expired: the provider that made it does not keep it any more, and the user did not save it. '
+        + 'This is not a fault of the call. Tell the user, and do not call the audio tool again for @b.\n\nDetails: The server of the clip answered HTTP 403.'],
+      [new ClipReadError('unreadable', 'The file cannot be read (HTTP 404).'), 'Dez could not read the audio clip @b: its file is gone, Dez may not read it, or its server did not send it (the details tell which). '
+        + 'This is not a fault of the call. Tell the user, and call the audio tool again for @b only when the user asks for it.\n\nDetails: The file cannot be read (HTTP 404).'],
+    ])('gives an error result for a clip that cannot be read (%s)', async (error, content) => {
+      readClip = async () => {
+        throw error
+      }
+
+      expect(await clip({ clip: 'b', end: 5 })).toStrictEqual({ content, isError: true })
+      expect(savedClips).toStrictEqual([])
+      expect(consoleError).toHaveBeenCalledWith('The tool audio failed:', expect.objectContaining({ cause: error }))
+    })
+
+    it('tells that a failed decode is not the fault of the call, with the reason of the webview', async () => {
+      cutError = new Error('The audio cannot be decoded.')
+
+      expect(await clip({ clip: 'b', end: 5 })).toStrictEqual({
+        content: 'Dez could not decode the audio clip @b (audio/mpeg): this computer has no decoder for its file type, or the file is broken. '
+          + 'This is not a fault of the call. Tell the user, and do not call the audio tool again for @b.\n\nDetails: The audio cannot be decoded.',
+        isError: true,
+      })
+      expect(savedClips).toStrictEqual([])
+    })
+
+    it('gives an error result with no path when the save fails', async () => {
+      saveClip = async () => {
+        throw new Error(`Failed to write ${made}`)
+      }
+
+      expect(await clip({ clip: 'b', end: 5 })).toStrictEqual({
+        content: 'Dez could not save the new audio clip, so there is no new clip. This is not a fault of the call, and Dez showed the user the cause. '
+          + 'Tell the user that the clip was not made, and call the audio tool again only when the user asks for it.',
+        isError: true,
+      })
+      expect(written).toStrictEqual([])
+    })
+
+    it('deletes the new file when the reply takes no clip any more', async () => {
+      newClipId = null
+
+      expect(await clip({ clip: 'b', end: 5 })).toStrictEqual({
+        content: 'The reply stopped before Dez could add the new audio clip to it, so there is no new clip. This is not a fault of the call. '
+          + 'Call the audio tool again only when the user asks for the clip again.',
+        isError: true,
+      })
+      expect(deletedClips).toStrictEqual([made])
+    })
+
+    it('ends at once and saves no clip when the user stops the reply during the read', async () => {
+      const abort = new AbortController()
+      readClip = () => {
+        abort.abort()
+        return new Promise<Blob>(() => {})
+      }
+
+      expect((await clip({ clip: 'b', end: 5 }, abort.signal)).isError).toBe(true)
+      expect(savedClips).toStrictEqual([])
+      expect(consoleError).not.toHaveBeenCalled()
     })
   })
 })

@@ -1,16 +1,19 @@
 import sbp from '@sbp/sbp'
-import { MEDIA_TEMP_LIFETIME_MS, mediaFileExtension, savedMediaFile, tempMediaFile } from '../model/chat/mediaFiles'
-import { MEDIA_CACHE_FOLDER, MEDIA_FOLDERS, isSavedMediaPath, type MediaTagData } from '../model/chat/mediaTags'
+import { AUDIO_CUT_RATE, audioPartFrames, type AudioPart, type CutAudio } from '../model/chat/audioCut'
+import { ClipReadError, MEDIA_TEMP_LIFETIME_MS, mediaFileExtension, savedMediaFile, tempMediaFile } from '../model/chat/mediaFiles'
+import { MEDIA_CACHE_FOLDER, MEDIA_FOLDERS, isSavedMediaPath, isTempMediaPath, type MediaTagData } from '../model/chat/mediaTags'
+import { wavFileOfChannels } from '../model/providers/pcmAudio'
 import { byteSizeText } from '../utils/byteSize'
 import { ExplainedError, errorText, explainedError, rawErrorText } from '../utils/errorText'
 import { fileNameOf } from '../utils/fileName'
-import type { NativeHttpDownload, NativeHttpStreamResult } from '../utils/protocol/nativeHttp'
+import { readNativeChunkBytes, type NativeHttpDownload, type NativeHttpStreamResult } from '../utils/protocol/nativeHttp'
 import type { AppFileEntry } from './nativeTypes'
 
 // The largest clip that Save downloads from a URL.
 const MAX_SAVED_CLIP_BYTES = 1024 ** 3
-// The longest time that Save waits for the whole download. A server that
-// stops sending would keep the Save control busy with no end.
+// The longest time that Save, or a read of a clip from its URL, waits for
+// the whole download. A server that stops sending would keep the Save
+// control, or the tool that reads the clip, busy with no end.
 const SAVE_TIMEOUT_MS = 30 * 60 * 1000
 const CLEANUP_INTERVAL_MS = 60 * 60 * 1000
 // The longest time that `urlAnswers` waits for an answer. The player of the
@@ -41,6 +44,16 @@ async function deleteExpiredTempCopies(): Promise<void> {
   }
 }
 
+// The name of a new file for a clip of the media type `type`. Throws for a
+// type that Dez does not know, when the path of `url` names none either.
+function newClipFileName (type: string, url: string | null): string {
+  const extension = mediaFileExtension(type, url)
+  if (extension === null) {
+    throw new ExplainedError(`Dez does not know the file type of this clip (${type}), so it cannot save it. Report this at Help › Dez on GitHub.`)
+  }
+  return `${crypto.randomUUID()}.${extension}`
+}
+
 // The name of the file that Save downloads a clip into. Throws for a clip
 // that Save cannot download: no http or https URL, or a file type that Dez
 // does not know.
@@ -48,11 +61,7 @@ function downloadFileName ({ type, url }: Pick<MediaTagData, 'type' | 'url'>): s
   if (url === null || !/^https?:\/\//i.test(url)) {
     throw new ExplainedError('Dez cannot save this clip: its temp copy is not on this computer, and it has no web address to download it from. Make the clip again.')
   }
-  const extension = mediaFileExtension(type, url)
-  if (extension === null) {
-    throw new ExplainedError(`Dez does not know the file type of this clip (${type}), so it cannot save it. Report this at Help › Dez on GitHub.`)
-  }
-  return `${crypto.randomUUID()}.${extension}`
+  return newClipFileName(type, url)
 }
 
 // What went wrong when the server of a clip refused its download, and what
@@ -67,26 +76,69 @@ function clipDownloadRefusal (status: number): string {
   return 'The server of the clip refused to send it. Try again later. If the error stays, make the clip again.'
 }
 
+// The bytes of a clip from its http or https URL, with no provider header:
+// the URL is a signed one, and a key must not go to the host of a clip.
+// Throws an error whose text holds no URL, as the error of a failed
+// request can name it.
+async function readClipUrl (url: string, type: string): Promise<Blob> {
+  let result: NativeHttpStreamResult
+  try {
+    result = await sbp('dez.http/stream', { method: 'GET', url, timeoutMs: SAVE_TIMEOUT_MS }) as NativeHttpStreamResult
+  } catch {
+    throw new Error('The server of the clip gave no answer.')
+  }
+  const { status } = result.response
+  if (status < 200 || status >= 300) {
+    await sbp('dez.http/cancelStream', result.requestId).catch((error: unknown) => {
+      console.error('Failed to stop the answer of a clip URL:', error)
+    })
+    throw new Error(`The server of the clip answered HTTP ${status}.`)
+  }
+  try {
+    return new Blob([await readNativeChunkBytes(result.chunks)], { type })
+  } catch {
+    throw new Error('The answer of the server of the clip broke off.')
+  }
+}
+
 export default sbp('sbp/selectors/register', {
   // Keeps a clip: its file goes into the media folder of its kind in the app
   // folder, and the absolute path of that file comes back, for the `src` of
-  // the clip's tag (src/model/chat/mediaTags.ts). A clip whose `src` is a
-  // temp copy of this computer moves there under its name. Any other clip is
+  // the clip's tag (src/model/chat/mediaTags.ts). With `bytes` (a clip that
+  // Dez made, such as a cut of the `audio` tool), they go to a new file
+  // named for the clip's type. Else a clip whose `src` is a temp copy of
+  // this computer moves there under its name, and any other clip is
   // downloaded from its `url` (http and https only) with no provider header:
   // the URL is a signed one, and a key must not go to the host of a clip. A
   // failure is logged, shows an error toast, and rejects, so the caller keeps
   // the tag as it is.
-  async 'dez.controller/media/save' (clip: Pick<MediaTagData, 'kind' | 'type' | 'src' | 'url'>): Promise<string> {
+  async 'dez.controller/media/save' (
+    clip: Pick<MediaTagData, 'kind' | 'type' | 'src' | 'url'>,
+    { bytes }: { bytes?: Uint8Array } = {},
+  ): Promise<string> {
     try {
       const appDir = await sbp('dez.native/getAppDir') as string
-      const tempFile = clip.src === null ? null : tempMediaFile(clip.src, await sbp('dez.native/getAppDir', 'cache') as string)
-      const file = `${MEDIA_FOLDERS[clip.kind]}/${tempFile === null ? downloadFileName(clip) : fileNameOf(tempFile)}`
+      const tempFile = bytes !== undefined || clip.src === null ? null : tempMediaFile(clip.src, await sbp('dez.native/getAppDir', 'cache') as string)
+      const fileName = bytes !== undefined
+        ? newClipFileName(clip.type, null)
+        : tempFile !== null ? fileNameOf(tempFile) : downloadFileName(clip)
+      const file = `${MEDIA_FOLDERS[clip.kind]}/${fileName}`
       const path = `${appDir}/${file}`
       // The recognizer takes only absolute paths on one line (e.g. not
       // `./.config/dez` when $HOME is not set). A tag with another path
       // would not show as a saved clip, so no file is written for it.
       if (!isSavedMediaPath(path)) {
         throw new ExplainedError(`Dez cannot store clips in the Dez folder ${appDir}. The path of this folder must start with "/" and must not hold a line break. Start Dez with a HOME environment variable that gives such a path.`)
+      }
+      if (bytes !== undefined) {
+        await sbp('dez.native/saveAppFile', file, bytes).catch((error: unknown) => {
+          throw new ExplainedError(
+            'The system did not let Dez write the clip file. The details tell why (for example, the disk is full). Fix that, and try again.',
+            rawErrorText(error),
+            { cause: error },
+          )
+        })
+        return path
       }
       if (tempFile !== null) {
         await sbp('dez.native/moveAppFile', { root: 'cache', path: tempFile }, { root: 'app', path: file }).catch((error: unknown) => {
@@ -147,6 +199,55 @@ export default sbp('sbp/selectors/register', {
       })
       throw error
     }
+  },
+
+  // The bytes of a clip, for a tool or a request that uses the clip: from
+  // its `src`, else from its `url`. A saved file or a temp copy of this
+  // computer is read through the asset protocol; a URL (http or https) is
+  // downloaded with no provider header. Throws a `ClipReadError` when no
+  // source gives them (src/model/chat/mediaFiles.ts tells each problem); it
+  // holds no path and no URL. Nothing is logged here: the caller logs, and
+  // words the problem for its reader.
+  async 'dez.controller/media/readClip' (clip: Pick<MediaTagData, 'type' | 'src' | 'url' | 'expires'>): Promise<Blob> {
+    const sources = [...new Set([clip.src, clip.url])].filter((source): source is string => source !== null)
+    if (sources.length === 0) throw new ClipReadError('deleted')
+    const failures: string[] = []
+    for (const source of sources) {
+      try {
+        if (isSavedMediaPath(source) || isTempMediaPath(source)) return await sbp('dez.controller/images/readFile', source) as File
+        if (/^https?:\/\//i.test(source)) return await readClipUrl(source, clip.type)
+        failures.push('A source of the clip is not a file of Dez or a web address.')
+      } catch (error) {
+        failures.push(rawErrorText(error))
+      }
+    }
+    const expired = clip.expires !== null && Date.parse(clip.expires) <= Date.now()
+    throw new ClipReadError(expired ? 'expired' : 'unreadable', failures.join(' '))
+  },
+
+  // Cuts a part of an audio clip in the webview: decodes `file` (any audio
+  // type that the webview decodes) at `AUDIO_CUT_RATE`, asks `plan` which
+  // part to keep of audio of that length in seconds, and gives that part as
+  // a 16-bit WAV file. A part of the whole clip converts it to WAV. Null
+  // when `plan` gives null: nothing is cut. There is no Rust code for this:
+  // the webview has the decoders (Web Audio). Rejects when the webview
+  // cannot decode the file and when `plan` throws; the caller logs it, as
+  // each caller has its own answer to a failure.
+  async 'dez.controller/media/cutAudio' (file: Blob, plan: (duration: number) => AudioPart | null): Promise<CutAudio | null> {
+    // An offline context needs no sound device, and its decode resamples to
+    // its rate. Its own length and channel count are only for a render,
+    // which this context never does.
+    const context = new OfflineAudioContext(1, 1, AUDIO_CUT_RATE)
+    // A tool gives the message of this error to a model, so the message
+    // says what failed; the webview's own error is the cause.
+    const audio = await context.decodeAudioData(await file.arrayBuffer()).catch((error: unknown) => {
+      throw new Error('The audio cannot be decoded.', { cause: error })
+    })
+    const part = plan(audio.duration)
+    if (!part) return null
+    const { from, to } = audioPartFrames(part, audio.sampleRate, audio.length)
+    const channels = Array.from({ length: audio.numberOfChannels }, (_, index) => audio.getChannelData(index).subarray(from, to))
+    return { part, bytes: wavFileOfChannels(channels, audio.sampleRate), duration: (to - from) / audio.sampleRate }
   },
 
   // Whether the URL of a clip answers: one GET of its first byte, with no

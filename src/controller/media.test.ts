@@ -1,6 +1,7 @@
 import sbp from '@sbp/sbp'
 import { afterEach, beforeEach, describe, expect, it, vi, type MockInstance } from 'vitest'
-import { MEDIA_TEMP_LIFETIME_MS, savedMediaFile } from '../model/chat/mediaFiles'
+import type { AudioPart, CutAudio } from '../model/chat/audioCut'
+import { ClipReadError, MEDIA_TEMP_LIFETIME_MS, savedMediaFile } from '../model/chat/mediaFiles'
 import type { MediaTagData } from '../model/chat/mediaTags'
 import type {
   NativeDownloadRule,
@@ -47,6 +48,11 @@ let streams: NativeHttpRequest[] = []
 let streamAnswer: () => Promise<NativeHttpResponseHead>
 let cancelledStreams: string[] = []
 let cancelStream: () => Promise<void>
+let streamBody: AsyncIterable<Uint8Array>
+let savedFiles: Array<{ path: string, bytes: Uint8Array }> = []
+let saveAppFile: () => Promise<void>
+let readFiles: string[] = []
+let readFile: (path: string) => Promise<File>
 let consoleError: MockInstance<typeof console.error>
 
 // The body of a stream that the code under test must not read.
@@ -83,11 +89,19 @@ sbp('sbp/selectors/register', {
   async 'dez.http/stream' (request: NativeHttpRequest): Promise<NativeHttpStreamResult> {
     streams.push(request)
     const requestId = `stream-${streams.length}`
-    return { requestId, response: await streamAnswer(), chunks: UNREAD_BODY }
+    return { requestId, response: await streamAnswer(), chunks: streamBody }
   },
   async 'dez.http/cancelStream' (requestId: string): Promise<void> {
     cancelledStreams.push(requestId)
     await cancelStream()
+  },
+  async 'dez.native/saveAppFile' (path: string, bytes: Uint8Array): Promise<void> {
+    await saveAppFile()
+    savedFiles.push({ path, bytes })
+  },
+  async 'dez.controller/images/readFile' (path: string): Promise<File> {
+    readFiles.push(path)
+    return readFile(path)
   },
 })
 
@@ -106,6 +120,13 @@ beforeEach(() => {
   streamAnswer = async () => ({ status: 206, statusText: 'Partial Content', headers: { 'content-range': 'bytes 0-0/1000' } })
   cancelledStreams = []
   cancelStream = async () => {}
+  streamBody = UNREAD_BODY
+  savedFiles = []
+  saveAppFile = async () => {}
+  readFiles = []
+  readFile = async () => {
+    throw new Error('The file cannot be read (HTTP 404).')
+  }
   consoleError = vi.spyOn(console, 'error').mockImplementation(() => {})
 })
 
@@ -211,6 +232,33 @@ describe('dez.controller/media/save', () => {
 
     expect(consoleError).toHaveBeenCalledWith('Failed to save the clip:', expect.any(Error))
     expect(toasts).toEqual([{ title: 'Could not save the clip', message, variant: 'error' }])
+  })
+
+  it('writes the bytes of a clip that Dez made to a new file of its type, with no move and no download', async () => {
+    const bytes = Uint8Array.from([1, 2, 3])
+    const clip: Clip = { kind: 'audio', type: 'audio/wav', src: `${CACHE_DIR}/media/${NAME}.mp3`, url: CLIP_URL }
+    const path = await sbp('dez.controller/media/save', clip, { bytes }) as string
+
+    expect(path).toMatch(/^\/home\/ann\/\.config\/dez\/assets\/generated\/audio\/[0-9a-f-]{36}\.wav$/)
+    expect(savedFiles).toStrictEqual([{ path: path.slice(APP_DIR.length + 1), bytes }])
+    expect(moves).toEqual([])
+    expect(downloads).toEqual([])
+    expect(toasts).toEqual([])
+  })
+
+  it('logs, shows an error toast, and rejects when the bytes cannot be written', async () => {
+    const writeError = 'Failed to write assets/generated/audio/a.wav: No space left on device (os error 28)'
+    saveAppFile = async () => {
+      throw writeError
+    }
+    const message = 'The system did not let Dez write the clip file. The details tell why (for example, the disk is full). Fix that, and try again.'
+      + `\n\nDetails: ${writeError}`
+
+    await expect(sbp('dez.controller/media/save', { kind: 'audio', type: 'audio/wav', src: null, url: null }, { bytes: new Uint8Array(4) }))
+      .rejects.toThrow(message)
+
+    expect(consoleError).toHaveBeenCalledWith('Failed to save the clip:', expect.objectContaining({ cause: writeError }))
+    expect(toasts).toStrictEqual([{ title: 'Could not save the clip', message, variant: 'error' }])
   })
 
   it('logs, shows an error toast, and rejects when the move or the download fails', async () => {
@@ -343,6 +391,194 @@ describe('dez.controller/media/urlAnswers', () => {
 
     expect(await urlAnswers(CLIP_URL)).toBe(true)
     expect(consoleError.mock.calls).toStrictEqual([['Failed to stop the answer of a clip URL:', 'The stream was not found']])
+  })
+})
+
+describe('dez.controller/media/readClip', () => {
+  type ReadClip = Pick<MediaTagData, 'type' | 'src' | 'url' | 'expires'>
+  const SAVED_PATH = `${APP_DIR}/assets/generated/audio/${NAME}.mp3`
+  const TEMP_PATH = `${CACHE_DIR}/media/${NAME}.mp3`
+  const FUTURE = '2999-01-01T00:00:00.000Z'
+  const PAST = '2000-01-01T00:00:00.000Z'
+
+  function readClip(clip: ReadClip): Promise<Blob> {
+    return sbp('dez.controller/media/readClip', clip) as Promise<Blob>
+  }
+
+  async function readError(clip: ReadClip): Promise<ClipReadError> {
+    const error = await readClip(clip).then(() => undefined, (caught: unknown) => caught)
+    expect(error).toBeInstanceOf(ClipReadError)
+    return error as ClipReadError
+  }
+
+  async function bytesOf(blob: Blob): Promise<number[]> {
+    return [...new Uint8Array(await blob.arrayBuffer())]
+  }
+
+  function body(...parts: number[][]): AsyncIterable<Uint8Array> {
+    return (async function * () {
+      for (const part of parts) yield Uint8Array.from(part)
+    })()
+  }
+
+  it('reads a saved file or a temp copy through the asset protocol, before the URL', async () => {
+    readFile = async (path) => new File([Uint8Array.from([path.length])], 'clip.mp3', { type: 'audio/mpeg' })
+
+    expect(await bytesOf(await readClip({ type: 'audio/mpeg', src: SAVED_PATH, url: CLIP_URL, expires: null }))).toStrictEqual([SAVED_PATH.length])
+    expect(await bytesOf(await readClip({ type: 'audio/mpeg', src: TEMP_PATH, url: CLIP_URL, expires: FUTURE }))).toStrictEqual([TEMP_PATH.length])
+
+    expect(readFiles).toStrictEqual([SAVED_PATH, TEMP_PATH])
+    expect(streams).toEqual([])
+  })
+
+  it('downloads a clip that plays from its URL once, with no header, and gives the bytes with the clip type', async () => {
+    streamAnswer = async () => ({ status: 200, headers: { 'content-type': 'application/octet-stream' } })
+    streamBody = body([1, 2], [3])
+
+    const blob = await readClip({ type: 'audio/mpeg', src: CLIP_URL, url: CLIP_URL, expires: FUTURE })
+
+    expect(blob.type).toBe('audio/mpeg')
+    expect(await bytesOf(blob)).toStrictEqual([1, 2, 3])
+    expect(streams).toStrictEqual([{ method: 'GET', url: CLIP_URL, timeoutMs: expect.any(Number) }])
+    expect(readFiles).toEqual([])
+  })
+
+  it('downloads from the URL when the saved file cannot be read', async () => {
+    streamAnswer = async () => ({ status: 200, headers: {} })
+    streamBody = body([7])
+
+    expect(await bytesOf(await readClip({ type: 'audio/mpeg', src: SAVED_PATH, url: CLIP_URL, expires: FUTURE }))).toStrictEqual([7])
+    expect(readFiles).toStrictEqual([SAVED_PATH])
+    expect(streams.map((request) => request.url)).toStrictEqual([CLIP_URL])
+  })
+
+  it('throws "deleted" for a clip with no source', async () => {
+    expect((await readError({ type: 'audio/mpeg', src: null, url: null, expires: null })).problem).toBe('deleted')
+  })
+
+  it('throws "expired" when no source gives the bytes after the clip expired, else "unreadable", with details that hold no path or URL', async () => {
+    streamAnswer = async () => ({ status: 403, headers: {} })
+    const expired = await readError({ type: 'audio/mpeg', src: TEMP_PATH, url: CLIP_URL, expires: PAST })
+    expect([expired.problem, expired.details]).toStrictEqual(['expired', 'The file cannot be read (HTTP 404). The server of the clip answered HTTP 403.'])
+    expect(cancelledStreams).toStrictEqual(['stream-1'])
+
+    streamAnswer = async () => {
+      throw new Error(`error sending request for url (${CLIP_URL})`)
+    }
+    const unreadable = await readError({ type: 'audio/mpeg', src: CLIP_URL, url: CLIP_URL, expires: FUTURE })
+    expect([unreadable.problem, unreadable.details]).toStrictEqual(['unreadable', 'The server of the clip gave no answer.'])
+
+    // A path of another home is no file of Dez: it is never read.
+    const foreign = await readError({ type: 'audio/mpeg', src: '/home/bob/song.mp3', url: null, expires: null })
+    expect([foreign.problem, foreign.details]).toStrictEqual(['unreadable', 'A source of the clip is not a file of Dez or a web address.'])
+
+    for (const error of [expired, unreadable, foreign]) {
+      expect(error.message).not.toContain('/home/')
+      expect(error.message).not.toContain('cdn.example')
+    }
+    expect(readFiles).toStrictEqual([TEMP_PATH])
+    expect(consoleError).not.toHaveBeenCalled()
+  })
+
+  it('throws "unreadable" when the answer of the server breaks off', async () => {
+    streamAnswer = async () => ({ status: 200, headers: {} })
+    streamBody = (async function * () {
+      yield Uint8Array.from([1])
+      throw new Error(`connection reset: ${CLIP_URL}`)
+    })()
+
+    const error = await readError({ type: 'audio/mpeg', src: null, url: CLIP_URL, expires: null })
+    expect([error.problem, error.details]).toStrictEqual(['unreadable', 'The answer of the server of the clip broke off.'])
+  })
+})
+
+describe('dez.controller/media/cutAudio', () => {
+  const RATE = 48000
+  let decoded: Float32Array[] | Error
+  let contexts: number[][]
+  let decodedInputs: number[][]
+
+  // Web Audio's offline context, as the cut uses it: the decode gives the
+  // channels of `decoded` at the context's rate.
+  class FakeOfflineAudioContext {
+    readonly rate: number
+
+    constructor(channels: number, length: number, rate: number) {
+      contexts.push([channels, length, rate])
+      this.rate = rate
+    }
+
+    async decodeAudioData(data: ArrayBuffer) {
+      decodedInputs.push([...new Uint8Array(data)])
+      if (decoded instanceof Error) throw decoded
+      const channels = decoded
+      return {
+        sampleRate: this.rate,
+        length: channels[0].length,
+        duration: channels[0].length / this.rate,
+        numberOfChannels: channels.length,
+        getChannelData: (index: number) => channels[index],
+      }
+    }
+  }
+
+  function cutAudio(plan: (duration: number) => AudioPart | null): Promise<CutAudio | null> {
+    return sbp('dez.controller/media/cutAudio', new Blob([Uint8Array.from([5, 6])]), plan) as Promise<CutAudio | null>
+  }
+
+  beforeEach(() => {
+    contexts = []
+    decodedInputs = []
+    vi.stubGlobal('OfflineAudioContext', FakeOfflineAudioContext)
+  })
+
+  afterEach(() => {
+    vi.unstubAllGlobals()
+  })
+
+  it('decodes the file at 48 kHz, asks the plan with the length in seconds, and gives the part as a 16-bit WAV file', async () => {
+    // Two seconds of stereo; the first frame of the part is marked.
+    const left = new Float32Array(2 * RATE)
+    const right = new Float32Array(2 * RATE)
+    left[RATE / 2] = 0.5
+    right[RATE / 2] = -1
+    decoded = [left, right]
+    const durations: number[] = []
+
+    const cut = await cutAudio((duration) => {
+      durations.push(duration)
+      return { start: 0.5, end: 1 }
+    })
+
+    expect(contexts.map(([, , rate]) => rate)).toStrictEqual([RATE])
+    expect(decodedInputs).toStrictEqual([[5, 6]])
+    expect(durations).toStrictEqual([2])
+    expect([cut?.part, cut?.duration]).toStrictEqual([{ start: 0.5, end: 1 }, 0.5])
+    const wav = new DataView(cut!.bytes.buffer)
+    expect({
+      length: cut!.bytes.length,
+      channels: wav.getUint16(22, true),
+      rate: wav.getUint32(24, true),
+      firstFrame: [wav.getInt16(44, true), wav.getInt16(46, true)],
+    }).toStrictEqual({ length: 44 + RATE / 2 * 2 * 2, channels: 2, rate: RATE, firstFrame: [16384, -32768] })
+  })
+
+  it('cuts nothing when the plan gives null', async () => {
+    decoded = [new Float32Array(RATE)]
+
+    expect(await cutAudio(() => null)).toBeNull()
+  })
+
+  it('rejects with a text for a model when the webview cannot decode the file, and with the error of the plan', async () => {
+    const decodeError = new Error('Decoding failed')
+    decoded = decodeError
+    await expect(cutAudio(() => null)).rejects.toThrow(expect.objectContaining({ message: 'The audio cannot be decoded.', cause: decodeError }))
+
+    decoded = [new Float32Array(RATE)]
+    const planError = new Error('"start" must be 0 or more.')
+    await expect(cutAudio(() => {
+      throw planError
+    })).rejects.toBe(planError)
   })
 })
 

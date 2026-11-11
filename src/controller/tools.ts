@@ -1,7 +1,10 @@
 import sbp from '@sbp/sbp'
+import type { CutAudio } from '../model/chat/audioCut'
 import { sectionPlainText } from '../model/chat/content'
 import { drawnMediaType, type DrawnImage, type ImageSize } from '../model/chat/imageDrawing'
 import { findImageReferences, imageMediaType, type ImageReference } from '../model/chat/images'
+import { ClipReadError, type ClipReadProblem } from '../model/chat/mediaFiles'
+import type { MediaTagData } from '../model/chat/mediaTags'
 import { modelRefKey } from '../model/chat/modelRef'
 import type { Tab } from '../model/chat/types'
 import type { ModelCache } from '../model/persistence/types'
@@ -10,10 +13,12 @@ import { toggleRows, toggleValue } from '../model/providers/modelToggles'
 import type { ProviderMediaQuote } from '../model/providers/streamTypes'
 import { effectiveRequest, type ProviderInfo, type ProviderInputImageRules, type ProviderSettingsDescriptor } from '../model/providers/types'
 import type { SettingsSnapshot } from '../model/state'
+import { AUDIO_TOOL, audioClipId, audioClipOf, audioClipPart, audioCutResultText, audioLengthText } from '../model/tools/audioTool'
 import { cropScaleDrawing, cropScaleImageId, cropScaleResultText, imageSizeText } from '../model/tools/cropScaleImage'
 import { modelInfoParameterValues, modelInfoPart, modelInfoText, modelInfoTarget, type ModelInfoFacts, type ModelInfoTarget } from '../model/tools/modelInfo'
 import { modelListText } from '../model/tools/modelList'
 import { unknownToolText } from '../model/tools/registry'
+import { parseSubcommandCall, type SubcommandTool } from '../model/tools/subcommands'
 import { ToolError, type ToolArguments, type ToolRunResult } from '../model/tools/types'
 import { rawErrorText } from '../utils/errorText'
 
@@ -32,6 +37,11 @@ export interface ToolRunContext {
    *  takes no image any more (a stop ended the tool round): the runner
    *  then deletes the file. */
   writeImage(path: string): string | null
+  /** Writes the tag of a saved clip that the tool made into the reply, with
+   *  a new media id and the tool's name, and returns that id. Null when the
+   *  reply takes no clip any more (a stop ended the tool round): the runner
+   *  then deletes the file. */
+  writeClip(clip: Omit<MediaTagData, 'id' | 'other'>): string | null
 }
 
 // The code of each Dez tool (TOOL_DEFINITIONS), by tool name. A runner gives
@@ -66,6 +76,32 @@ async function modelInfoLookup(args: ToolArguments): Promise<ModelInfoTarget & {
   const providers = await sbp('dez.provider/infos') as ProviderInfo[]
   const target = modelInfoTarget(sbp('dez.model/modelCache/snapshot') as ModelCache, providers, args)
   return { ...target, entry: sbp('dez.model/modelCache/rawModel', target.provider.id, target.model.id) as unknown }
+}
+
+// The runner of a tool with subcommands (subcommands.ts): gives the list or
+// the help that a call asks for, else runs the runner of the subcommand
+// with the subcommand's own checked arguments.
+function subcommandRunner(tool: SubcommandTool, runners: Record<string, ToolRunner>): ToolRunner {
+  return async (args, signal, context) => {
+    const call = parseSubcommandCall(tool, args)
+    return call.kind === 'text' ? call.text : await runners[call.name](call.arguments, signal, context)
+  }
+}
+
+// The error result of an `audio` call whose clip Dez could not read
+// (`ClipReadError`), by its problem.
+function clipReadProblemText(id: string, problem: ClipReadProblem): string {
+  switch (problem) {
+    case 'deleted':
+      return `The audio clip @${id} is gone: the user deleted its file, and it has no web address to download it from. `
+        + `This is not a fault of the call. Tell the user, and do not call the audio tool again for @${id}.`
+    case 'expired':
+      return `The audio clip @${id} has expired: the provider that made it does not keep it any more, and the user did not save it. `
+        + `This is not a fault of the call. Tell the user, and do not call the audio tool again for @${id}.`
+    case 'unreadable':
+      return `Dez could not read the audio clip @${id}: its file is gone, Dez may not read it, or its server did not send it (the details tell which). `
+        + `This is not a fault of the call. Tell the user, and call the audio tool again for @${id} only when the user asks for it.`
+  }
 }
 
 const TOOL_RUNNERS: Record<string, ToolRunner> = {
@@ -210,6 +246,75 @@ const TOOL_RUNNERS: Record<string, ToolRunner> = {
     }
     return cropScaleResultText(id, newId, drawn)
   },
+
+  // The `audio` tool (audioTool.ts). `clip` cuts a part of an audio clip of
+  // the conversation into a new WAV clip in the reply: the webview decodes
+  // and cuts it (`dez.controller/media/cutAudio`), and the clip is saved at
+  // once, as it has no URL to save it from later. Its error texts name the
+  // clip by its id only; the result goes to the chat provider, which gets
+  // no path of a stored file and no signed URL. The causes are in the log.
+  audio: subcommandRunner(AUDIO_TOOL, {
+    async clip (args, signal, context) {
+      const id = audioClipId(args)
+      const sections = (sbp('dez.model/tab', context.tabId) as Tab | null)?.sections ?? []
+      const source = audioClipOf(sections, id)
+
+      let file: Blob
+      try {
+        // A download from the clip's URL can take long: a stop ends the run
+        // at once.
+        file = await untilAborted(sbp('dez.controller/media/readClip', source) as Promise<Blob>, signal)
+      } catch (error) {
+        if (!(error instanceof ClipReadError)) throw error
+        throw new ToolError(clipReadProblemText(id, error.problem), error.details, { cause: error })
+      }
+
+      // As for crop_scale_image: the plan gives null for a call that names
+      // no part (only the plan gets the length of the clip, for the result)
+      // and for a call that it refuses, so that a failure of the cut is
+      // never the call's fault.
+      let lengthText = ''
+      let callError: unknown
+      let cut: CutAudio | null
+      try {
+        cut = await sbp('dez.controller/media/cutAudio', file, (duration: number) => {
+          try {
+            const part = audioClipPart(id, args, duration)
+            if (!part) lengthText = audioLengthText(id, duration)
+            return part
+          } catch (error) {
+            callError = error
+            return null
+          }
+        }) as CutAudio | null
+      } catch (error) {
+        // The texts of cutAudio hold no path: it gets the bytes, not a path.
+        throw new ToolError(`Dez could not decode the audio clip @${id} (${source.type}): this computer has no decoder for its file type, or the file is broken. `
+          + `This is not a fault of the call. Tell the user, and do not call the audio tool again for @${id}.`, rawErrorText(error), { cause: error })
+      }
+      if (callError !== undefined) throw callError
+      if (!cut) return lengthText
+
+      signal.throwIfAborted()
+      const clip = { kind: 'audio', type: 'audio/wav', src: null, url: null, expires: null } as const
+      let path: string
+      try {
+        path = await sbp('dez.controller/media/save', clip, { bytes: cut.bytes }) as string
+      } catch {
+        // media/save logged the failure and showed its error toast.
+        throw new ToolError('Dez could not save the new audio clip, so there is no new clip. This is not a fault of the call, and Dez showed the user the cause. '
+          + 'Tell the user that the clip was not made, and call the audio tool again only when the user asks for it.')
+      }
+      const newId = context.writeClip({ ...clip, src: path })
+      if (newId === null) {
+        // A file that no tag names; media/delete logs its own failures.
+        await sbp('dez.controller/media/delete', path).catch(() => {})
+        throw new ToolError('The reply stopped before Dez could add the new audio clip to it, so there is no new clip. This is not a fault of the call. '
+          + 'Call the audio tool again only when the user asks for the clip again.')
+      }
+      return audioCutResultText(id, newId, cut.part, cut.duration)
+    },
+  }),
 }
 
 export default sbp('sbp/selectors/register', {

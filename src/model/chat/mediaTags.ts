@@ -121,6 +121,12 @@ export interface MediaTagData {
   other: readonly MediaTagAttribute[]
 }
 
+/** The attribute of a clip that a Dez tool made, as in
+ *  `<dez:audio id="c" type="audio/wav" src="…" tool="audio"/>`; its value
+ *  is the name of the tool. It is in an agent section, but it is no part of
+ *  what the model wrote, as `IMAGE_TOOL_KEY` (images.ts) for an image. */
+export const MEDIA_TOOL_ATTRIBUTE = 'tool'
+
 /** One tag in a text. */
 export interface MediaTag extends MediaTagData {
   /** Offset of the `<`. */

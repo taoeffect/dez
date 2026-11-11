@@ -2,6 +2,7 @@ import sbp from '@sbp/sbp'
 import { createPinia, setActivePinia } from 'pinia'
 import { afterEach, beforeEach, describe, expect, it, vi, type MockInstance } from 'vitest'
 import type { ActiveModel, Section, SectionThinking, Tab, ThinkingReplay } from '../model/chat/types'
+import type { AudioPart, CutAudio } from '../model/chat/audioCut'
 import { sectionVisibleText } from '../model/chat/content'
 import type { DrawnImage, ImageDrawing, ImageSize } from '../model/chat/imageDrawing'
 import { findToolBlocks } from '../model/chat/toolBlocks'
@@ -49,6 +50,10 @@ let deletedImages: string[] = []
 let readImages: string[] = []
 // Each file that was deleted from an app folder (the temp copies of clips).
 let deletedFiles: { path: string, root: string }[] = []
+// What the stub clip store does with the clip of an `audio` call, and the
+// clip files that were deleted. Every clip is 10 seconds long.
+let saveClip: () => Promise<string>
+let deletedClips: string[] = []
 let consoleError: MockInstance<typeof console.error>
 
 // Stand-ins for the provider, the editor and the disk. The editor stub
@@ -81,6 +86,19 @@ sbp('sbp/selectors/register', {
   },
   async 'dez.native/deleteAppFile' (path: string, root = 'app'): Promise<void> {
     deletedFiles.push({ path, root })
+  },
+  async 'dez.controller/media/readClip' (): Promise<Blob> {
+    return new Blob([])
+  },
+  async 'dez.controller/media/cutAudio' (_file: Blob, plan: (duration: number) => AudioPart | null): Promise<CutAudio | null> {
+    const part = plan(10)
+    return part && { part, bytes: new Uint8Array([1]), duration: part.end - part.start }
+  },
+  async 'dez.controller/media/save' (): Promise<string> {
+    return await saveClip()
+  },
+  async 'dez.controller/media/delete' (path: string): Promise<void> {
+    deletedClips.push(path)
   },
   'dez.editor/startStreamingFollowIfVisible' (): boolean {
     return false
@@ -755,7 +773,7 @@ describe('dez.stream/start tool loop', () => {
     expect(unknown).toStrictEqual({
       id: 'c1',
       status: 'error',
-      result: 'Dez has no tool named "web_search". Call only the Dez tools, by their exact names: model_list, model_info, crop_scale_image.',
+      result: 'Dez has no tool named "web_search". Call only the Dez tools, by their exact names: model_list, model_info, crop_scale_image, audio.',
     })
     expect(invalid.status).toBe('error')
     expect(invalid.result).toMatch(/^Dez did not run this call\. .+\n\nDetails: The call sent \{"filter":1\}$/)
@@ -1864,6 +1882,99 @@ describe('dez.stream/start images that a tool makes', () => {
     const stopped = '<dez:tool id="c2" name="crop_scale_image" status="error" image="a" height="100">\nStopped.\n</dez:tool>\n'
     expect(sectionVisibleText(agentSection())).toBe(`${widthBlock}${stopped}\n${reference('g1.png', 'b')}`)
     expect(deletedImages).toStrictEqual([generated('g2.png')])
+    expect(sent).toHaveLength(1)
+  })
+})
+
+describe('dez.stream/start clips that a tool makes', () => {
+  const song = '/home/u/.config/dez/assets/generated/audio/song.mp3'
+  const made = (name: string) => `/home/u/.config/dez/assets/generated/audio/${name}`
+  const clipTag = (name: string, id: string) => `<dez:audio id="${id}" type="audio/wav" src="${made(name)}" tool="audio"/>`
+  const clipCall = { id: 'c1', name: 'audio', argumentsText: JSON.stringify({ command: 'clip', parameters: JSON.stringify({ clip: 'a', end: 2 }) }) }
+  const clipResult = 'Made the audio clip @b from @a, from second 0 to second 2. The audio clip @b is 2 seconds long.'
+  const listCall = { id: 'c2', name: 'model_list', argumentsText: '{"filter":"gemini"}' }
+  const listBlock = `<dez:tool id="c2" name="model_list" filter="gemini">\n${NO_MODELS_TEXT}\n</dez:tool>\n`
+  // The request messages of each round, as plain data at the call.
+  let sent: ProviderChatInputMessage[][] = []
+  // The saves give the files g1.wav, g2.wav, ….
+  let saves = 0
+
+  // `rounds[n]` answers the request of round n.
+  function replyRounds(rounds: Array<(input: ProviderStreamChatInput) => Promise<ProviderStreamChatResult>>): void {
+    streamChat = async (input) => {
+      sent.push(JSON.parse(JSON.stringify(input.messages)) as ProviderChatInputMessage[])
+      return await rounds[sent.length - 1](input)
+    }
+  }
+
+  // The text of the reply after the block of the `audio` call.
+  function textAfterClipBlock(): string {
+    const text = sectionVisibleText(agentSection())
+    const blockEnd = '</dez:tool>\n'
+    return text.slice(text.indexOf(blockEnd) + blockEnd.length)
+  }
+
+  beforeEach(() => {
+    sent = []
+    saves = 0
+    saveClip = async () => made(`g${++saves}.wav`)
+    deletedClips = []
+    // A tag counts only in an agent section.
+    sbp('dez.model/tabs/replaceSections', activeTab().id, [
+      { id: 'u0', role: 'user', content: [{ kind: 'text', text: 'A song.' }] },
+      { id: 'a0', role: 'agent', content: [{ kind: 'text', text: `<dez:audio id="a" type="audio/mpeg" src="${song}"/>` }], model },
+      { id: 'u1', role: 'user', content: [{ kind: 'text', text: 'Cut it.' }] },
+      { id: 'a1', role: 'agent', content: [{ kind: 'text', text: '' }], model },
+    ])
+  })
+
+  it('puts the clip\'s tag after the blocks of its round, with a new id and the tool\'s name, and sends only its id and type', async () => {
+    replyRounds([
+      async (input) => ({ requestId: input.requestId as string, toolCalls: [clipCall] }),
+      async (input) => ({ requestId: input.requestId as string, toolCalls: [listCall] }),
+      async (input) => {
+        await input.onToken('Done.')
+        return { requestId: input.requestId as string }
+      },
+    ])
+
+    await startStream({ sendTools: true })
+
+    expect(textAfterClipBlock()).toBe(`\n${clipTag('g1.wav', 'b')}\n${listBlock}Done.`)
+    expect(sent[1].at(-1)).toStrictEqual({ role: 'tool', results: [{ callId: 'c1', content: clipResult, isError: false }] })
+    expect(sent[2].at(-2)).toStrictEqual({
+      role: 'agent',
+      content: '\n<dez:audio id="b" type="audio/wav"/>',
+      toolCalls: [{ id: 'c2', name: 'model_list', arguments: { filter: 'gemini' } }],
+    })
+    expect(deletedClips).toStrictEqual([])
+  })
+
+  it('starts the next text in a new paragraph after the tag, so that the tag stays a whole line', async () => {
+    replyRounds([
+      async (input) => ({ requestId: input.requestId as string, toolCalls: [clipCall] }),
+      async (input) => {
+        await input.onToken('Done.')
+        return { requestId: input.requestId as string }
+      },
+    ])
+
+    await startStream({ sendTools: true })
+
+    expect(textAfterClipBlock()).toBe(`\n${clipTag('g1.wav', 'b')}\n\nDone.`)
+  })
+
+  it('deletes the file of a clip whose call the user stopped', async () => {
+    saveClip = async () => {
+      await sbp('dez.stream/stop', activeTab().id)
+      return made(`g${++saves}.wav`)
+    }
+    replyRounds([async (input) => ({ requestId: input.requestId as string, toolCalls: [clipCall] })])
+
+    await startStream({ sendTools: true })
+
+    expect(sectionVisibleText(agentSection())).not.toContain('<dez:audio')
+    expect(deletedClips).toStrictEqual([made('g1.wav')])
     expect(sent).toHaveLength(1)
   })
 })

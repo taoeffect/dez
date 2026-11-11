@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { pcmLayout, wavFile } from './pcmAudio'
+import { pcmLayout, wavFile, wavFileOfChannels } from './pcmAudio'
 
 describe('pcmLayout', () => {
   // The content type of OpenRouter's HeyGen Voice answer.
@@ -106,5 +106,50 @@ describe('wavFile', () => {
     const file = wavFile(buffer.subarray(2, 6), { rate: 8000, channels: 1, sampleBits: 16 })
 
     expect([...file.subarray(44)]).toStrictEqual([1, 2, 3, 4])
+  })
+})
+
+describe('wavFileOfChannels', () => {
+  const samples = (file: Uint8Array) => {
+    const view = new DataView(file.buffer, 44)
+    return Array.from({ length: view.byteLength / 2 }, (_, index) => view.getInt16(index * 2, true))
+  }
+
+  it('writes a 16-bit header for the channels and the rate, and interleaves the frames', () => {
+    // The channels of a cut are views into larger decoded channels.
+    const left = Float32Array.from([9, 0, 0.5, -0.5, 9]).subarray(1, 4)
+    const right = Float32Array.from([9, 1, -1, 0.25, 9]).subarray(1, 4)
+    const file = wavFileOfChannels([left, right], 48000)
+    const header = new DataView(file.buffer)
+
+    expect({
+      channels: header.getUint16(22, true),
+      rate: header.getUint32(24, true),
+      bytesPerSecond: header.getUint32(28, true),
+      frameBytes: header.getUint16(32, true),
+      sampleBits: header.getUint16(34, true),
+      dataBytes: header.getUint32(40, true),
+      samples: samples(file),
+    }).toStrictEqual({
+      channels: 2,
+      rate: 48000,
+      bytesPerSecond: 192000,
+      frameBytes: 4,
+      sampleBits: 16,
+      dataBytes: 12,
+      samples: [0, 32767, 16384, -32768, -16384, 8192],
+    })
+  })
+
+  it('clips samples past -1 and 1, and writes silence for a sample that is not a number', () => {
+    const file = wavFileOfChannels([Float32Array.from([1.5, -2, Number.NaN])], 8000)
+
+    expect(samples(file)).toStrictEqual([32767, -32768, 0])
+  })
+
+  it('writes a header with no samples for channels with no frames', () => {
+    const file = wavFileOfChannels([new Float32Array(), new Float32Array()], 48000)
+
+    expect([file.length, new DataView(file.buffer).getUint16(22, true), new DataView(file.buffer).getUint32(40, true)]).toStrictEqual([44, 2, 0])
   })
 })

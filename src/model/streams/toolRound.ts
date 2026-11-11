@@ -1,6 +1,7 @@
 import { errorText } from '../../utils/errorText'
 import { toolBlockText, type ToolBlockData } from '../chat/toolBlocks'
-import { parseToolArguments, toolDefinition, unknownToolText } from '../tools/registry'
+import { parseToolArguments } from '../tools/arguments'
+import { toolDefinition, unknownToolText } from '../tools/registry'
 import type { StreamedToolCall, ToolArguments, ToolRunResult } from '../tools/types'
 
 // The pure parts of the tool loop of one reply (`dez.stream/start`): each

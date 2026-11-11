@@ -1,11 +1,11 @@
 import sbp from '@sbp/sbp'
 import type { ActiveModel, Section, SectionThinking, Tab } from '../model/chat/types'
 import { sectionPlainText } from '../model/chat/content'
-import { IMAGE_TOOL_KEY, imageMarkdown, type ImageMetadataItem } from '../model/chat/images'
+import { IMAGE_TOOL_KEY, imageMarkdown } from '../model/chat/images'
 import { modelRefKey } from '../model/chat/modelRef'
 import { tempMediaFile } from '../model/chat/mediaFiles'
 import { newMediaIds } from '../model/chat/mediaIds'
-import { mediaTagText } from '../model/chat/mediaTags'
+import { MEDIA_TOOL_ATTRIBUTE, mediaTagText } from '../model/chat/mediaTags'
 import { findToolBlocks, ModelTextEscaper } from '../model/chat/toolBlocks'
 import { TooManyImagesError, tooManyImagesMessage } from '../model/providers/clipImages'
 import { explainedError } from '../utils/errorText'
@@ -104,10 +104,10 @@ interface ReplyRuntime {
   // across tokens, so the escaper holds such an end back until the next
   // token, the round end, or the reply end.
   escaper: ModelTextEscaper
-  // The last write of the reply was an image reference (`writeReplyImage`):
-  // the answer text that comes next starts a new paragraph
+  // The last write of the reply was an image reference or a clip tag
+  // (`writeAsset`): the answer text that comes next starts a new paragraph
   // (`writeModelText`).
-  afterImage: boolean
+  afterAsset: boolean
 }
 
 // The reply of each tab, so tabs stream at the same time and a new start or
@@ -178,18 +178,19 @@ function receiveToken(tabId: string, sectionId: string, token: string): void {
 }
 
 // Writes escaped answer text of the model. Right after an image reference
-// of the reply, the text starts a new paragraph: one blank line takes the
-// place of the line breaks that the text starts with, and a text of only
-// line breaks is dropped, so a reply never ends with an empty paragraph.
-// True when it wrote text.
+// or a clip tag of the reply, the text starts a new paragraph: one blank
+// line takes the place of the line breaks that the text starts with, and a
+// text of only line breaks is dropped, so a reply never ends with an empty
+// paragraph. A clip's tag needs it: a tag counts only as a whole line
+// (mediaTags.ts). True when it wrote text.
 function writeModelText(tabId: string, reply: ReplyRuntime, text: string): boolean {
   let written = text
-  if (reply.afterImage) {
+  if (reply.afterAsset) {
     const rest = text.replace(/^\n+/, '')
     written = rest === '' ? '' : `\n\n${rest}`
   }
   if (written === '' || !streamWritesSection(tabId, reply.sectionId)) return false
-  reply.afterImage = false
+  reply.afterAsset = false
   receiveToken(tabId, reply.sectionId, written)
   return true
 }
@@ -239,18 +240,19 @@ function stopToolRun(tabId: string, reply: ReplyRuntime): boolean {
 // Runs the calls of one round, in order: appends their running blocks (a
 // refused call gets its error block at once), runs each call, then replaces
 // the running blocks with the final ones. Nothing else of the reply writes
-// the section meanwhile, but a tool can put an image after the blocks
-// (`ToolRunContext.writeImage`). Returns the section after the round, or
-// null when the run did not end here: the user stopped the reply, or a
-// submit ended its output (stopToolRun wrote the blocks), or the user
-// deleted the running blocks.
+// the section meanwhile, but a tool can put an image or a clip after the
+// blocks (`ToolRunContext.writeImage`, `writeClip`). Returns the section
+// after the round, or null when the run did not end here: the user stopped
+// the reply, or a submit ended its output (stopToolRun wrote the blocks),
+// or the user deleted the running blocks.
 //
-// The reference of a tool's image goes after the group, so it is the start
-// of the text of the next round, and has the name of its tool
-// (`IMAGE_TOOL_KEY`). The round that made the call keeps its text, and both
-// rounds keep their thinking: a request sends no thinking for a round whose
-// text holds an image of the model (`roundThinking`, streams/messages.ts),
-// and the request after a round of calls needs that round's thinking.
+// The reference of a tool's image or the tag of its clip goes after the
+// group, so it is the start of the text of the next round, and has the
+// name of its tool (`IMAGE_TOOL_KEY`, `MEDIA_TOOL_ATTRIBUTE`). The round
+// that made the call keeps its text, and both rounds keep their thinking:
+// a request sends no thinking for a round whose text holds an image of the
+// model (`roundThinking`, streams/messages.ts), and the request after a
+// round of calls needs that round's thinking.
 async function runToolRound(tabId: string, reply: ReplyRuntime, calls: CheckedToolCall[], sectionText: string): Promise<Section | null> {
   const runningBlocks = calls.map((call) => toolCallBlock(call))
   const run: ToolRun = {
@@ -260,8 +262,8 @@ async function runToolRound(tabId: string, reply: ReplyRuntime, calls: CheckedTo
     abort: new AbortController(),
   }
   writeStreamText(tabId, reply.sectionId, toolGroupAppendText(sectionText, runningBlocks))
-  // The next round's text comes after the blocks, not after an image.
-  reply.afterImage = false
+  // The next round's text comes after the blocks, not after an asset.
+  reply.afterAsset = false
   reply.toolRun = run
 
   for (const [index, call] of calls.entries()) {
@@ -270,7 +272,12 @@ async function runToolRound(tabId: string, reply: ReplyRuntime, calls: CheckedTo
     const context: ToolRunContext = {
       tabId,
       // Not after a stop (`stopToolRun`), as for an image of the model.
-      writeImage: (path) => (reply.toolRun === run ? writeImageReference(tabId, reply, path, [{ key: IMAGE_TOOL_KEY, value: call.name }]) : null),
+      writeImage: (path) => (reply.toolRun === run
+        ? writeAsset(tabId, reply, (id) => imageMarkdown(path, [{ key: 'id', value: id }, { key: IMAGE_TOOL_KEY, value: call.name }]))
+        : null),
+      writeClip: (clip) => (reply.toolRun === run
+        ? writeAsset(tabId, reply, (id) => mediaTagText({ ...clip, id, other: [{ name: MEDIA_TOOL_ATTRIBUTE, value: call.name }] }))
+        : null),
     }
     const result = await sbp('dez.controller/tools/run', toolCall, run.abort.signal, context) as ToolRunResult
     if (reply.toolRun !== run) return null
@@ -311,21 +318,21 @@ async function deleteTempCopies(clips: readonly GeneratedClip[]): Promise<void> 
   }
 }
 
-// Writes the reference of a stored image at the end of the reply's section,
-// as a paragraph of its own, with a new image id; `metadata` goes after the
-// id. Returns the id, or null when the section takes no text: the user
-// merged it into the one before, or the stream ended. The id and the write
-// are in one tick, so that no paste takes the id (the editor gives ids only
-// to pasted and dropped references). The model text that comes next starts
-// a new paragraph (`writeModelText`).
-function writeImageReference(tabId: string, reply: ReplyRuntime, path: string, metadata: readonly ImageMetadataItem[] = []): string | null {
+// Writes an image reference or a clip tag at the end of the reply's
+// section, as a paragraph of its own; `assetText` gives its text with a new
+// media id. Returns the id, or null when the section takes no text: the
+// user merged it into the one before, or the stream ended. The id and the
+// write are in one tick, so that no paste takes the id (the editor gives
+// ids only to pasted and dropped references). The model text that comes
+// next starts a new paragraph (`writeModelText`).
+function writeAsset(tabId: string, reply: ReplyRuntime, assetText: (id: string) => string): string | null {
   const sections = (sbp('dez.model/tab', tabId) as Tab | null)?.sections ?? []
   const texts = sections.map(sectionPlainText)
   const sectionText = texts[sections.findIndex((section) => section.id === reply.sectionId)]
   if (sectionText === undefined || !streamWritesSection(tabId, reply.sectionId)) return null
   const [id] = newMediaIds(texts, 1)
-  receiveToken(tabId, reply.sectionId, paragraphGap(sectionText) + imageMarkdown(path, [{ key: 'id', value: id }, ...metadata]))
-  reply.afterImage = true
+  receiveToken(tabId, reply.sectionId, paragraphGap(sectionText) + assetText(id))
+  reply.afterAsset = true
   return id
 }
 
@@ -349,7 +356,7 @@ async function writeReplyImage(tabId: string, reply: ReplyRuntime, image: Genera
   // Text that the escaper holds is answer text from before the image. The
   // reference itself is not model text, so it gets no escape.
   if (current) flushModelText(tabId, reply)
-  if (!current || writeImageReference(tabId, reply, path) === null) {
+  if (!current || writeAsset(tabId, reply, (id) => imageMarkdown(path, [{ key: 'id', value: id }])) === null) {
     await sbp('dez.controller/images/delete', path).catch(() => {})
   }
 }
@@ -573,7 +580,7 @@ export default sbp('sbp/selectors/register', {
       outputEnded: false,
       toolRun: null,
       escaper: new ModelTextEscaper(),
-      afterImage: false,
+      afterAsset: false,
     }
     repliesByTab.set(args.tabId, reply)
 
