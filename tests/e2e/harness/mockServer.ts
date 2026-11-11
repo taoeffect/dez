@@ -40,16 +40,24 @@ export async function startMockServer (handler: MockHandler): Promise<MockServer
   }
 }
 
-/** Answers 404 to every request that is not a POST to one of `chatPaths`,
- *  and passes the chat requests to `onChat`. */
-export async function startChatMock (chatPaths: readonly string[], onChat: MockHandler): Promise<MockServer> {
+/** Passes the chat requests (a POST to one of `chatPaths`) to `onChat`.
+ *  A GET to a path of `jsonAnswers` gets the value of that path as JSON at
+ *  once, such as a model list. Every other request gets a 404. */
+export async function startChatMock (
+  chatPaths: readonly string[],
+  onChat: MockHandler,
+  jsonAnswers: Readonly<Record<string, unknown>> = {},
+): Promise<MockServer> {
   return startMockServer((req, res, body) => {
-    if (req.method !== 'POST' || !chatPaths.includes(req.url ?? '')) {
-      res.writeHead(404, { 'Content-Type': 'text/plain' })
-      res.end('not found')
+    const path = req.url ?? ''
+    if (req.method === 'POST' && chatPaths.includes(path)) return onChat(req, res, body)
+    if (req.method === 'GET' && Object.hasOwn(jsonAnswers, path)) {
+      res.writeHead(200, { 'Content-Type': 'application/json' })
+      res.end(JSON.stringify(jsonAnswers[path]))
       return
     }
-    return onChat(req, res, body)
+    res.writeHead(404, { 'Content-Type': 'text/plain' })
+    res.end('not found')
   })
 }
 
@@ -81,8 +89,11 @@ export interface HoldingChatMock extends MockServer {
 
 /** Starts a chat mock for POST to each of `chatPaths` that holds each
  *  request for the test: the test takes it with `waitForRequest` and
- *  answers it. */
-export async function startHoldingChatMock (chatPaths: readonly string[]): Promise<HoldingChatMock> {
+ *  answers it. `jsonAnswers`: see `startChatMock`. */
+export async function startHoldingChatMock (
+  chatPaths: readonly string[],
+  jsonAnswers: Readonly<Record<string, unknown>> = {},
+): Promise<HoldingChatMock> {
   const sinceDrop: HeldRequest[] = []
   const waiting: HeldRequest[] = []
   const server = await startChatMock(chatPaths, (req, res, body) => {
@@ -90,7 +101,7 @@ export async function startHoldingChatMock (chatPaths: readonly string[]): Promi
     res.on('close', () => { request.closed = !res.writableEnded })
     sinceDrop.push(request)
     waiting.push(request)
-  })
+  }, jsonAnswers)
   return {
     ...server,
     async waitForRequest (browser) {

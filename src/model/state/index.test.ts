@@ -533,6 +533,7 @@ describe('dez.model/customProviders/save', () => {
         { key: 'plain', label: 'Plain', type: 'boolean', default: false, bodyPath: 'plain' },
       ],
       thinking: {},
+      mediaApi: { format: 'openrouter', modelRequestBodies: [{ request: 'tts', modelIdPrefix: 'heygen/', body: { response_format: 'pcm' } }] },
     }
     const saved = structuredClone(config)
 
@@ -540,6 +541,7 @@ describe('dez.model/customProviders/save', () => {
     // The caller changes its objects in place after the save.
     Object.assign(config.modelThinking ?? {}, { path: 'changed' })
     Object.assign(config.settings?.[0].modelSupport ?? {}, { path: 'changed' })
+    Object.assign(config.mediaApi?.modelRequestBodies?.[0].body ?? {}, { response_format: 'changed' })
 
     // toStrictEqual: a setting with no `modelSupport` gets no such key.
     expect(sbp('dez.model/customProviders/list')).toStrictEqual([saved])

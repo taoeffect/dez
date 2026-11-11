@@ -77,7 +77,7 @@ describe('model cache persistence format', () => {
     expect(parseModelCacheJson(serializeModelCacheJson(parsed))).toStrictEqual(parsed)
   })
 
-  it('round-trips the parameters of a model, and drops only a model whose parameters are not valid', () => {
+  it('round-trips the parameters and text rules of a model, and drops only a model whose data is not valid', () => {
     const models = [
       {
         id: 'film',
@@ -89,8 +89,19 @@ describe('model cache persistence format', () => {
           { name: 'seconds', label: 'Length (seconds)', options: [1, 5] },
           { name: 'duration_seconds', label: 'Length (seconds)', min: 1, max: 30, default: 5 },
           { name: 'steps', label: 'Steps', min: 1, max: 8 },
+          { name: 'speed', label: 'Speed', min: 0.7, max: 1.2, step: 0.05, default: 1 },
+          { name: 'loop', label: 'Loop' },
+          { name: 'enhance', label: 'Enhance', default: true },
         ],
       },
+      {
+        id: 'song',
+        name: 'Song',
+        provider: 'venice',
+        request: 'music',
+        text: { minPromptLength: 10, maxPromptLength: 300, lyrics: { required: true, maxLength: 3000 } },
+      },
+      { id: 'sound', name: 'Sound', provider: 'venice', request: 'music', text: { lyrics: { required: false } } },
       // A cache written before parameters existed.
       { id: 'old', name: 'Old', provider: 'venice', request: 'video' },
     ]
@@ -104,6 +115,10 @@ describe('model cache persistence format', () => {
             { id: 'bad-option', name: 'Bad option', provider: 'venice', parameters: [{ name: 'loop', label: 'Loop', options: [true, false] }] },
             { id: 'half-range', name: 'Half range', provider: 'venice', parameters: [{ name: 'seconds', label: 'Length', min: 1 }] },
             { id: 'no-list', name: 'No list', provider: 'venice', parameters: { name: 'voice', label: 'Voice', options: ['a'] } },
+            { id: 'no-step', name: 'No step', provider: 'venice', parameters: [{ name: 'speed', label: 'Speed', min: 1, max: 2, step: 0 }] },
+            { id: 'bad-switch', name: 'Bad switch', provider: 'venice', parameters: [{ name: 'loop', label: 'Loop', default: 'on' }] },
+            { id: 'bad-limit', name: 'Bad limit', provider: 'venice', text: { maxPromptLength: -1 } },
+            { id: 'bad-lyrics', name: 'Bad lyrics', provider: 'venice', text: { lyrics: true } },
           ],
           working: true,
           updatedAt: 1,

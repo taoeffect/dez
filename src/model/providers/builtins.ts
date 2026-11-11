@@ -61,8 +61,18 @@ export const BUILT_IN_PROVIDER_CONFIGS: readonly ProviderConfig[] = [
     // https://openrouter.ai/docs/api/api-reference/chat/create-a-chat-completion
     imageOutputBody: { modalities: ['image', 'text'] },
     // The speech and video models take OpenRouter's own speech and video
-    // APIs.
-    mediaApi: { format: 'openrouter' },
+    // APIs. A speech request asks for mp3. "HeyGen Voice and Gemini TTS
+    // only return `pcm` [...]; these return a 400 for the other format",
+    // and no field of a model entry tells it, so these parts do. Dez makes
+    // a WAV file of the raw PCM (pcmAudio.ts).
+    // https://openrouter.ai/docs/guides/overview/multimodal/tts
+    mediaApi: {
+      format: 'openrouter',
+      modelRequestBodies: [
+        { request: 'tts', modelIdPrefix: 'heygen/', body: { response_format: 'pcm' } },
+        { request: 'tts', modelIdPrefix: 'google/gemini-', body: { response_format: 'pcm' } },
+      ],
+    },
     // OpenRouter drops a field that the routed model does not take, so the
     // request is safe for every model. Some models must think, so there is no
     // off field. A model whose `supported_parameters` has no "reasoning"
@@ -102,10 +112,12 @@ export const BUILT_IN_PROVIDER_CONFIGS: readonly ProviderConfig[] = [
     modelToolCalling: { path: 'model_spec.capabilities.supportsFunctionCalling' },
     modelThinking: { path: 'model_spec.capabilities.supportsReasoning' },
     // One `type` per model. `inpaint` models edit images. `music` models
-    // also make sounds. Every video model has the type `video`: only the
-    // ones that need just a text get requests; the others need an image or
-    // a video, which Dez does not send yet. Dez does not run upscale or
-    // speech-to-text (`asr`) models yet.
+    // also make sounds and speech; one of them is a voice changer
+    // (`model_spec.voice_changer`), which needs a recording and has an own
+    // endpoint, so it gets no request yet. Every video model has the type
+    // `video`: only the ones that need just a text get requests; the others
+    // need an image or a video, which Dez does not send yet. Dez does not
+    // run upscale or speech-to-text (`asr`) models yet.
     modelOutputs: {
       path: 'type',
       values: {
@@ -114,7 +126,11 @@ export const BUILT_IN_PROVIDER_CONFIGS: readonly ProviderConfig[] = [
         inpaint: { outputs: ['image'], request: 'imageEdit' },
         upscale: { outputs: ['image'] },
         tts: { outputs: ['audio'], request: 'tts' },
-        music: { outputs: ['audio'], request: 'music' },
+        music: {
+          outputs: ['audio'],
+          request: 'music',
+          requestBy: { path: 'model_spec.voice_changer', values: { true: 'none' } },
+        },
         video: {
           outputs: ['video'],
           requestBy: { path: 'model_spec.constraints.model_type', values: { 'text-to-video': 'video' } },

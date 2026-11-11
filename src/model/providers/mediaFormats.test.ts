@@ -97,10 +97,13 @@ describe('venice media responses', () => {
 describe('venice clip parameters', () => {
   const spec = (modelSpec: Record<string, unknown>) => ({ id: 'm', model_spec: modelSpec })
   const videoModel = (constraints: Record<string, unknown>) => spec({ constraints: { model_type: 'text-to-video', ...constraints } })
+  // Every speech model takes the speed of the speech request's schema.
+  const SPEECH_SPEED = { name: 'speed', min: 0.25, max: 4, step: 0.05 }
 
   it('gives a speech model its voices, with no default voice', () => {
     expect(parameters(veniceClips, 'tts', spec({ voices: ['af_alloy', 'af_bella', 'af_alloy'] }))).toStrictEqual([
       { name: 'voice', options: ['af_alloy', 'af_bella'] },
+      SPEECH_SPEED,
     ])
   })
 
@@ -110,17 +113,77 @@ describe('venice clip parameters', () => {
     expect(parameters(veniceClips, 'tts', model)).toStrictEqual([
       { name: 'voice', options: ['af_alloy'] },
       { name: 'response_format', options: ['mp3', 'opus', 'aac', 'flac', 'wav'], default: 'wav' },
+      SPEECH_SPEED,
     ])
   })
 
   it('gives a speech format no default when the default of the model has no file type', () => {
     expect(parameters(veniceClips, 'tts', spec({ default_format: 'pcm', supported_formats: ['wav', 'pcm'] }))).toStrictEqual([
       { name: 'response_format', options: ['wav'] },
+      SPEECH_SPEED,
     ])
   })
 
-  it.each(['tts', 'music', 'video'] as const)('gives a %s model with no entry no parameters', (kind) => {
+  // The speed is a field of the speech request, not of the entry.
+  it('gives a speech model with no entry only the speed, with no default', () => {
+    expect(parameters(veniceClips, 'tts', undefined)).toStrictEqual([SPEECH_SPEED])
+  })
+
+  it.each(['music', 'video'] as const)('gives a %s model with no entry no parameters', (kind) => {
     expect(parameters(veniceClips, kind, undefined)).toStrictEqual([])
+  })
+
+  it('gives a music model the speed range of its entry, with its own default speed', () => {
+    expect(parameters(veniceClips, 'music', spec({ supports_speed: true, min_speed: 0.7, max_speed: 1.2, default_speed: 1 }))).toStrictEqual([
+      { name: 'speed', min: 0.7, max: 1.2, step: 0.05, default: 1 },
+    ])
+  })
+
+  it.each([
+    ['does not say that it takes a speed', { min_speed: 0.7, max_speed: 1.2, default_speed: 1 }],
+    ['says that it takes no speed', { supports_speed: false, min_speed: 0.7, max_speed: 1.2 }],
+    ['has only one end of the range', { supports_speed: true, min_speed: 0.7 }],
+    ['has a range that ends where it starts', { supports_speed: true, min_speed: 1, max_speed: 1 }],
+    ['has a range from zero', { supports_speed: true, min_speed: 0, max_speed: 2 }],
+  ])('gives a music model that %s no speed', (_name, modelSpec) => {
+    expect(parameters(veniceClips, 'music', spec(modelSpec))).toStrictEqual([])
+  })
+
+  it('gives a music speed no default when the default of the model is out of the range', () => {
+    expect(parameters(veniceClips, 'music', spec({ supports_speed: true, min_speed: 0.5, max_speed: 2, default_speed: 3 }))).toStrictEqual([
+      { name: 'speed', min: 0.5, max: 2, step: 0.05 },
+    ])
+  })
+
+  it('gives a music model a switch for each on/off field that its entry says it takes, with no default', () => {
+    const model = spec({ supports_force_instrumental: true, supports_lyrics_optimizer: true, supports_loop: true })
+
+    expect(parameters(veniceClips, 'music', model)).toStrictEqual([
+      { name: 'force_instrumental' },
+      { name: 'lyrics_optimizer' },
+      { name: 'loop' },
+    ])
+  })
+
+  // The API refuses a field that the model does not take.
+  it('gives a music model no switch for a field that its entry does not say it takes', () => {
+    const model = spec({ supports_force_instrumental: false, supports_lyrics_optimizer: 'yes', supports_lyrics: true, lyrics_required: true })
+
+    expect(parameters(veniceClips, 'music', model)).toStrictEqual([])
+  })
+
+  it('orders the parameters of a music model: length, voice, speed, switches', () => {
+    const model = spec({
+      supports_loop: true,
+      supports_speed: true,
+      min_speed: 0.5,
+      max_speed: 2,
+      voices: ['Aria'],
+      min_duration: 1,
+      max_duration: 22,
+    })
+
+    expect(parameters(veniceClips, 'music', model).map((parameter) => parameter.name)).toStrictEqual(['duration_seconds', 'voice', 'speed', 'loop'])
   })
 
   it('gives a music model each whole second of its range, with its own default length', () => {
@@ -190,6 +253,47 @@ describe('venice clip parameters', () => {
   })
 })
 
+describe('venice clip text rules', () => {
+  const spec = (modelSpec: Record<string, unknown>) => ({ id: 'm', model_spec: modelSpec })
+  const rules = (kind: ClipKind, entry: unknown) => veniceClips.textRules?.(kind, entry, undefined)
+
+  it('gives every speech model the text limits of the speech request', () => {
+    expect(rules('tts', undefined)).toStrictEqual({ minPromptLength: 1, maxPromptLength: 4096 })
+  })
+
+  it('reads the prompt and lyrics limits of a music model that needs lyrics', () => {
+    const model = spec({ supports_lyrics: true, lyrics_required: true, min_prompt_length: 10, prompt_character_limit: 300, lyrics_character_limit: 3000 })
+
+    expect(rules('music', model)).toStrictEqual({ minPromptLength: 10, maxPromptLength: 300, lyrics: { required: true, maxLength: 3000 } })
+  })
+
+  it('tells lyrics that a model takes from lyrics that it needs', () => {
+    expect(rules('music', spec({ supports_lyrics: true, lyrics_required: false }))).toStrictEqual({ lyrics: { required: false } })
+  })
+
+  it('gives a music model that takes no lyrics only its prompt limits, also when its entry has a lyrics limit', () => {
+    const model = spec({ supports_lyrics: false, min_prompt_length: 0, prompt_character_limit: 450, lyrics_character_limit: 3000 })
+
+    expect(rules('music', model)).toStrictEqual({ minPromptLength: 0, maxPromptLength: 450 })
+  })
+
+  it.each([
+    ['a text', '300'],
+    ['a part number', 300.5],
+    ['under zero', -1],
+  ])('does not know a limit that is %s', (_name, limit) => {
+    expect(rules('music', spec({ prompt_character_limit: limit, min_prompt_length: 10 }))).toStrictEqual({ minPromptLength: 10 })
+  })
+
+  it.each([
+    ['a music model whose entry tells nothing', 'music', spec({})],
+    ['a music model with no entry', 'music', undefined],
+    ['a video model', 'video', spec({ prompt_character_limit: 300 })],
+  ] as const)('has no rules for %s', (_name, kind, entry) => {
+    expect(rules(kind, entry)).toBeUndefined()
+  })
+})
+
 describe('venice clip requests', () => {
   it('sends speech text as `input`, with the voice and the format', () => {
     expect(veniceClips.request('tts', `${VENICE_URL}/`, 'tts-kokoro', { prompt: 'Hi', values: { voice: 'af_bella', response_format: 'mp3' } })).toStrictEqual({
@@ -203,6 +307,34 @@ describe('venice clip requests', () => {
       url: `${VENICE_URL}/audio/queue`,
       body: { model: 'mmaudio-v2-text-to-audio', prompt: 'Rain' },
     })
+  })
+
+  it('queues a song with the style as the prompt and the lyrics as `lyrics_prompt`', () => {
+    const input = { prompt: 'Slow piano ballad', lyrics: '[Verse]\nRain on the roof', values: { force_instrumental: false, duration_seconds: 60 } }
+
+    expect(veniceClips.request('music', VENICE_URL, 'minimax-music-v2', input)).toStrictEqual({
+      url: `${VENICE_URL}/audio/queue`,
+      body: { force_instrumental: false, duration_seconds: 60, model: 'minimax-music-v2', prompt: 'Slow piano ballad', lyrics_prompt: '[Verse]\nRain on the roof' },
+    })
+  })
+
+  // The API takes no `lyrics_prompt` with `lyrics_optimizer: true`.
+  it('leaves the lyrics optimizer out of a request that has lyrics, and keeps it in one that has none', () => {
+    const values = { lyrics_optimizer: true, loop: true }
+
+    expect([
+      veniceClips.request('music', VENICE_URL, 'm', { prompt: 'Pop', lyrics: 'La la', values }).body,
+      veniceClips.request('music', VENICE_URL, 'm', { prompt: 'Pop', values }).body,
+    ]).toStrictEqual([
+      { loop: true, model: 'm', prompt: 'Pop', lyrics_prompt: 'La la' },
+      { lyrics_optimizer: true, loop: true, model: 'm', prompt: 'Pop' },
+    ])
+  })
+
+  it.each(['tts', 'video'] as const)('sends no lyrics in a %s request', (kind) => {
+    const values = { duration: '5s', aspect_ratio: '16:9' }
+
+    expect(veniceClips.request(kind, VENICE_URL, 'm', { prompt: 'Hi', lyrics: 'La la', values }).body).not.toHaveProperty('lyrics_prompt')
   })
 
   it('queues a video with each value as its request field', () => {

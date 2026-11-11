@@ -299,13 +299,13 @@ pub fn load_app_file(relative: &str) -> Result<String, String> {
 
 // Unlike `load_app_file`, a missing file is an error: a file that is gone
 // (an image) must not read as an empty one.
-pub fn load_app_file_bytes(relative: &str) -> Result<Vec<u8>, String> {
-    let path = app_file_path(FileRoot::App, relative)?;
+pub fn load_app_file_bytes(root: FileRoot, relative: &str) -> Result<Vec<u8>, String> {
+    let path = app_file_path(root, relative)?;
     std::fs::read(path).map_err(|e| format!("Failed to read {}: {}", relative, e))
 }
 
-pub fn save_app_file(relative: &str, content: &[u8]) -> Result<(), String> {
-    let path = app_file_path(FileRoot::App, relative)?;
+pub fn save_app_file(root: FileRoot, relative: &str, content: &[u8]) -> Result<(), String> {
+    let path = app_file_path(root, relative)?;
     write_private_file(&path, content)
 }
 

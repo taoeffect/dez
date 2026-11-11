@@ -24,6 +24,9 @@ export interface MockProviderAppOptions extends AppOptions {
   /** More POST paths that the mock holds for the test as it holds chat
    *  requests, such as a media API path. */
   heldPaths?: readonly string[]
+  /** GET paths that the mock answers with JSON at once, such as the model
+   *  list of a provider whose config has `fetchModels: true`. */
+  jsonAnswers?: Readonly<Record<string, unknown>>
 }
 
 /**
@@ -40,9 +43,9 @@ export async function startMockProviderApp (
   config: Record<string, unknown> = {},
   options: MockProviderAppOptions = {},
 ): Promise<MockProviderApp> {
-  const { moreProviders = [], heldPaths = [], ...appOptions } = options
+  const { moreProviders = [], heldPaths = [], jsonAnswers = {}, ...appOptions } = options
   const providers = [{ provider, config }, ...moreProviders]
-  const mock = await startHoldingChatMock([...providers.map((entry) => mockChatPath(entry.provider)), ...heldPaths])
+  const mock = await startHoldingChatMock([...providers.map((entry) => mockChatPath(entry.provider)), ...heldPaths], jsonAnswers)
   let app: RunningApp | undefined
   let browser: E2EBrowser | undefined
   const stop = async (): Promise<void> => {

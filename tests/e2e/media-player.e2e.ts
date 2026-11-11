@@ -4,7 +4,7 @@ import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from
 import { openAiChatBody } from './harness/chatBody'
 import { consoleErrors, elementCenter, movePointer, pointerClick, resetConsoleErrors, screenshotOnFailure, waitForValue } from './harness/dom'
 import { conversationFilePath, makeConversation, seedConversation } from './harness/fixtures'
-import { WEBM_VIDEO, openPlayerTooltips, shownPlayers, silentWav, startClipServer, type ClipServer, type ShownPlayer } from './harness/media'
+import { WAV_SAMPLE_RATE, WEBM_VIDEO, monoWav, openPlayerTooltips, shownPlayers, silentWav, startClipServer, type ClipServer, type ShownPlayer } from './harness/media'
 import { startMockProviderApp, type MockProviderApp } from './harness/mockProviderApp'
 import { mockChatPath, replyText, sendChatReply, type MockProvider } from './harness/mockServer'
 import type { E2EBrowser } from './harness/session'
@@ -12,8 +12,9 @@ import { copySelection, editorDoc, newTab, pasteText, pickModel, sbpCall, setCar
 
 // The players of audio and video clips (media tags in agent sections),
 // driven through the real app. The clips come from a clip server of the
-// test, which stands for the CDN of a provider, and from a mock of Venice's
-// media API (`mediaApi: { format: 'venice' }`):
+// test, which stands for the CDN of a provider, from a mock of Venice's
+// media API (`mediaApi: { format: 'venice' }`), and from a mock of
+// OpenRouter's (`format: 'openrouter'`):
 // - a tag whose source is a URL shows a player that plays from it, with the
 //   clock that tells until when the URL works; Save downloads the clip into
 //   the folder of the saved clips and makes that file the tag's source, and
@@ -26,6 +27,8 @@ import { copySelection, editorDoc, newTab, pasteText, pickModel, sbpCall, setCar
 //   written as a temp copy, the reply holds its tag with a new id, and a
 //   later chat request gets only the id and the type of the clip, with no
 //   path;
+// - a speech reply that is raw samples (`audio/pcm`), from a model that
+//   the config gives the `pcm` format, becomes a WAV file of the samples;
 // - each player has an id badge that shows while the pointer is over the
 //   player (on a video at the top right of the picture, else beside the
 //   card), with a tooltip that tells how to name the clip;
@@ -38,6 +41,17 @@ import { copySelection, editorDoc, newTab, pasteText, pickModel, sbpCall, setCar
 const SPEAKER: MockProvider = { id: 'speaker', name: 'Speaker Mock', modelId: 'speak-model', modelName: 'Speak Model' }
 const CHAT_MODEL = { id: 'chat-model', name: 'Chat Model' }
 const SPEECH_PATH = `/${SPEAKER.id}/v1/audio/speech`
+
+// A speech model that makes only raw samples. The media API of this
+// provider has an own model list, which the mock answers with no models.
+const RAW_SPEAKER: MockProvider = { id: 'raw', name: 'Raw Speech Mock', modelId: 'raw-voice', modelName: 'Raw Voice' }
+const RAW_SPEECH_PATH = `/${RAW_SPEAKER.id}/v1/audio/speech`
+const RAW_MODEL_LIST_PATH = `/${RAW_SPEAKER.id}/v1/videos/models`
+
+// One second of a saw wave in 16-bit little-endian samples: each byte
+// differs from the bytes next to it, so a byte that moves shows.
+const RAW_SAMPLES = Buffer.alloc(WAV_SAMPLE_RATE * 2)
+for (let sample = 0; sample < WAV_SAMPLE_RATE; sample++) RAW_SAMPLES.writeInt16LE((sample % 50 - 25) * 100, sample * 2)
 
 const TONE = silentWav(2)
 const STORED_WAV_NAME = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\.wav$/
@@ -158,7 +172,20 @@ describe('media player', () => {
         { id: SPEAKER.modelId, name: SPEAKER.modelName, outputs: ['audio'], request: 'tts' },
         { id: CHAT_MODEL.id, name: CHAT_MODEL.name },
       ],
-    }, { heldPaths: [SPEECH_PATH] })
+    }, {
+      moreProviders: [{
+        provider: RAW_SPEAKER,
+        config: {
+          mediaApi: {
+            format: 'openrouter',
+            modelRequestBodies: [{ request: 'tts', modelIdPrefix: 'raw-', body: { response_format: 'pcm' } }],
+          },
+          models: [{ id: RAW_SPEAKER.modelId, name: RAW_SPEAKER.modelName, outputs: ['audio'], request: 'tts' }],
+        },
+      }],
+      heldPaths: [SPEECH_PATH, RAW_SPEECH_PATH],
+      jsonAnswers: { [RAW_MODEL_LIST_PATH]: { data: [] } },
+    })
     browser = setup.browser
   })
 
@@ -333,6 +360,34 @@ describe('media player', () => {
       { role: 'user', text: 'Thanks' },
       { role: 'agent', text: replyText('thanks') },
       { role: 'user', text: '' },
+    ])
+    expect(await consoleErrors(browser)).toStrictEqual([])
+  })
+
+  it('makes a WAV file of a speech reply that is raw samples', async () => {
+    const tempBefore = await filesIn(tempDir())
+    await pickModel(browser, RAW_SPEAKER.name, RAW_SPEAKER.modelName)
+    await submit(browser, 'Say hello')
+
+    // The config's body part for the model replaces the `mp3` of the format.
+    const speech = await setup.mock.waitForRequest(browser)
+    expect(speech.path).toBe(RAW_SPEECH_PATH)
+    expect(JSON.parse(speech.body)).toStrictEqual({ model: RAW_SPEAKER.modelId, input: 'Say hello', response_format: 'pcm' })
+    speech.reply.writeHead(200, { 'Content-Type': `audio/pcm;rate=${WAV_SAMPLE_RATE};channels=1` })
+    speech.reply.end(RAW_SAMPLES)
+
+    // The samples go into a `.part` file, which is gone when the reply
+    // ends: the one new file is the WAV file.
+    await waitForValue(browser, 'sections of the reply', async () => (await threadSections(browser)).map((section) => section.role), ['user', 'agent', 'user'])
+    const [name] = await newFiles(tempDir(), tempBefore, 1)
+    expect(name).toMatch(STORED_WAV_NAME)
+    const tempPath = path.join(tempDir(), name)
+    const reply = (await threadSections(browser))[1].text
+    const expires = /^<dez:audio id="a" type="audio\/wav" src="[^"]+" expires="([^"]+)"\/>$/.exec(reply)?.[1] ?? ''
+    expect(reply).toBe(clipTag('audio', { id: 'a', type: 'audio/wav', src: tempPath, expires }))
+    expect(await fs.promises.readFile(tempPath)).toStrictEqual(monoWav(RAW_SAMPLES, 2))
+    await waitForValue(browser, 'player of the reply', () => shownPlayers(browser), [
+      { kind: 'audio', id: 'a', available: true, source: 'blob', seconds: 1, picture: null, clock: 'Not saved', save: 'save' },
     ])
     expect(await consoleErrors(browser)).toStrictEqual([])
   })

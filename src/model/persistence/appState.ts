@@ -86,10 +86,10 @@ function providerSettings(value: unknown): Record<string, Record<string, boolean
 }
 
 // The parameter values that the user chose: full model id -> parameter
-// name -> text or number. Tolerant like `providerSettings`: a bad value
-// drops only its key, a bad record only its model. A key that is no full
-// model id (`modelRefKey`) is dropped too, so `__proto__` is never a key.
-// A model with no value left gets no entry.
+// name -> text, number, or switch state. Tolerant like `providerSettings`:
+// a bad value drops only its key, a bad record only its model. A key that
+// is no full model id (`modelRefKey`) is dropped too, so `__proto__` is
+// never a key. A model with no value left gets no entry.
 function modelParameters(value: unknown): Record<string, ParameterValues> {
   if (!isRecord(value)) return {}
   const output: Record<string, ParameterValues> = {}

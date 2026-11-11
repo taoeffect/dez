@@ -81,20 +81,20 @@ describe('app state persistence format', () => {
 
   it('keeps the chosen model parameters, and drops a bad value, model, or key alone', () => {
     const parse = (value: unknown) => parseAppStateJson(JSON.stringify({ modelParameters: value })).modelParameters
-    const saved = { 'venice/film': { duration: '5s', fps: 24 }, 'openrouter/x-ai/film': { duration: 1 } }
+    const saved = { 'venice/film': { duration: '5s', fps: 24 }, 'openrouter/x-ai/film': { duration: 1 }, 'venice/song': { loop: true, force_instrumental: false } }
 
     expect(parseAppStateJson('{}').modelParameters).toStrictEqual({})
     expect(parse(42)).toStrictEqual({})
     expect(parseAppStateJson(serializeAppStateJson({ modelParameters: saved })).modelParameters).toStrictEqual(saved)
     expect(parse({
-      'venice/film': { duration: '5s', loop: true, seed: null, sizes: ['480p'] },
+      'venice/film': { duration: '5s', loop: true, seed: null, sizes: ['480p'], voice: '' },
       'venice/song': 42,
       // No value is left for this model.
-      'venice/speech': { voice: false },
+      'venice/speech': { voice: null },
       // Not a full model id.
       film: { duration: '5s' },
       '/film': { duration: '5s' },
-    })).toStrictEqual({ 'venice/film': { duration: '5s' } })
+    })).toStrictEqual({ 'venice/film': { duration: '5s', loop: true } })
   })
 
   // JSON.parse makes `__proto__` an own key.

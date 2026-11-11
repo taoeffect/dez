@@ -504,4 +504,20 @@ describe('mediaRequestInput', () => {
 
     expect(input(kind, sections)).toStrictEqual({ prompt: 'Say what ![image](id=b) and @a show', images: [] })
   })
+
+  it('splits the last user message of a model that takes lyrics into the style and the lyrics', () => {
+    const tab = [user('u1', 'Slow piano ballad\nLyrics:\nRain on the roof'), reply('new', '')]
+    const messages = sectionsToStreamMessages(tab, model, { sendImages: true, sendTools: false }).messages
+
+    expect([
+      mediaRequestInput('music', messages, tab, { lyrics: { required: true } }),
+      // The rules of a model that takes none, and no rules.
+      mediaRequestInput('music', messages, tab, { maxPromptLength: 300 }),
+      mediaRequestInput('music', messages, tab),
+    ]).toStrictEqual([
+      { prompt: 'Slow piano ballad', lyrics: 'Rain on the roof', images: [] },
+      { prompt: 'Slow piano ballad\nLyrics:\nRain on the roof', images: [] },
+      { prompt: 'Slow piano ballad\nLyrics:\nRain on the roof', images: [] },
+    ])
+  })
 })

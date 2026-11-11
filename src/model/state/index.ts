@@ -213,7 +213,13 @@ function cloneProviderConfig(config: ProviderConfig): ProviderConfig {
   if (promptCacheKey !== undefined) clone.promptCacheKey = promptCacheKey
   if (requestBody) clone.requestBody = cloneJsonObject(requestBody)
   if (imageOutputBody) clone.imageOutputBody = cloneJsonObject(imageOutputBody)
-  if (mediaApi) clone.mediaApi = { ...mediaApi }
+  if (mediaApi) {
+    const { format, modelRequestBodies } = mediaApi
+    clone.mediaApi = {
+      format,
+      ...(modelRequestBodies && { modelRequestBodies: modelRequestBodies.map((part) => ({ ...part, body: cloneJsonObject(part.body) })) }),
+    }
+  }
   if (settings) {
     clone.settings = settings.map(({ modelSupport, ...setting }) => ({ ...setting, ...(modelSupport && { modelSupport: { ...modelSupport } }) }))
   }

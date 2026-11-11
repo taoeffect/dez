@@ -3,6 +3,7 @@ import { createPinia, setActivePinia } from 'pinia'
 import { afterEach, beforeEach, describe, expect, it, vi, type MockInstance } from 'vitest'
 import type { NativeDownloadRule, NativeHttpDownload, NativeHttpRequest, NativeHttpResponse } from '../../utils/protocol/nativeHttp'
 import type { ModelParameter } from './modelParameters'
+import { wavFile } from './pcmAudio'
 import type { ProviderGenerateMediaResult } from './streamTypes'
 // Side-effect imports: register the dez.model/* selectors and the selector
 // under test.
@@ -40,6 +41,12 @@ const POST_HEADERS = { 'Content-Type': 'application/json', Authorization: 'Beare
 let downloads: Download[] = []
 let moves: Array<{ from: FileRef, to: FileRef }> = []
 let deleted: FileRef[] = []
+let loaded: FileRef[] = []
+let saved: Array<FileRef & { content: Uint8Array }> = []
+// The bytes of every file that a test reads: raw PCM samples.
+const SAMPLES = Uint8Array.from([1, 0, 2, 0, 3, 0, 4, 0])
+// The error of the next delete of a file, if any.
+let deleteError: Error | null = null
 let cancelled: string[] = []
 let httpRequests: NativeHttpRequest[] = []
 // The answers of the media server to the clip requests, in order. A
@@ -75,6 +82,14 @@ sbp('sbp/selectors/register', {
   },
   async 'dez.native/deleteAppFile' (path: string, root = 'app'): Promise<void> {
     deleted.push({ root, path })
+    if (deleteError) throw deleteError
+  },
+  async 'dez.native/loadAppFileBytes' (path: string, root = 'app'): Promise<Uint8Array> {
+    loaded.push({ root, path })
+    return SAMPLES
+  },
+  async 'dez.native/saveAppFile' (path: string, content: Uint8Array, root = 'app'): Promise<void> {
+    saved.push({ root, path, content })
   },
   async 'dez.http/cancelStream' (requestId: string): Promise<void> {
     cancelled.push(requestId)
@@ -92,6 +107,9 @@ beforeEach(() => {
   downloads = []
   moves = []
   deleted = []
+  loaded = []
+  saved = []
+  deleteError = null
   cancelled = []
   httpRequests = []
   answers = []
@@ -172,13 +190,51 @@ describe('a clip that the first answer holds', () => {
     expect(clips.map(({ mediaType, src }) => [mediaType, src])).toStrictEqual([['audio/wav', tempPath(1, 'wav')]])
   })
 
-  it('deletes the file of a clip whose type Dez cannot name, and fails', async () => {
+  // The media server of this provider does not tell the size of a sample.
+  it('deletes the file of a clip whose type Dez cannot name, and fails with the whole content type', async () => {
     answers = [clip('audio/pcm;rate=24000')]
 
-    await expect(generate({ kind: 'tts' })).rejects.toThrow('Dez does not know the file type of this clip (audio/pcm).')
+    await expect(generate({ kind: 'tts' })).rejects.toThrow('Dez does not know the file type of this clip (audio/pcm;rate=24000).')
 
     expect(deleted).toStrictEqual([tempFile(1, 'part')])
+    expect([moves, loaded, saved]).toStrictEqual([[], [], []])
+  })
+
+  it('makes a WAV temp copy of raw PCM speech from the layout of the answer, and deletes the raw samples', async () => {
+    answers = [clip('audio/pcm;rate=44100;channels=1')]
+
+    const result = await generate({ providerId: 'router-like', kind: 'tts', prompt: 'Hi' })
+
+    expect(result).toStrictEqual({
+      media: [],
+      clips: [{ kind: 'audio', mediaType: 'audio/wav', src: tempPath(1, 'wav'), url: null, expires: isoAfter(DAY_MS), jobId: null }],
+    })
+    expect(loaded).toStrictEqual([tempFile(1, 'part')])
+    expect(saved).toStrictEqual([{ ...tempFile(1, 'wav'), content: wavFile(SAMPLES, { rate: 44100, channels: 1, sampleBits: 16 }) }])
+    expect(deleted).toStrictEqual([tempFile(1, 'part')])
     expect(moves).toEqual([])
+  })
+
+  // The clip is paid for, and the cleanup of the temp copies deletes the
+  // file later.
+  it('keeps a WAV clip when the delete of its raw samples fails', async () => {
+    answers = [clip('audio/pcm;rate=44100')]
+    deleteError = new Error('Permission denied')
+
+    const { clips } = await generate({ providerId: 'router-like', kind: 'tts' })
+
+    expect(clips.map(({ mediaType, src }) => [mediaType, src])).toStrictEqual([['audio/wav', tempPath(1, 'wav')]])
+    expect(consoleError).toHaveBeenCalledWith('Failed to delete the raw samples of a clip:', deleteError)
+  })
+
+  // A guessed rate would play the speech at a wrong speed.
+  it('makes no file of raw PCM whose answer does not tell its rate', async () => {
+    answers = [clip('audio/pcm')]
+
+    await expect(generate({ providerId: 'router-like', kind: 'tts' })).rejects.toThrow('Dez does not know the file type of this clip (audio/pcm).')
+
+    expect(deleted).toStrictEqual([tempFile(1, 'part')])
+    expect([moves, loaded, saved]).toStrictEqual([[], [], []])
   })
 
   it.each([
@@ -228,6 +284,29 @@ describe('a clip job', () => {
       { request: { ...retrieve, timeoutMs: JOB_TIMEOUT_MS - 10 * SECOND_MS }, requestId: 'reply-1', file: tempFile(3, 'part'), at: STARTED_AT + 10 * SECOND_MS },
     ])
     expect(moves).toStrictEqual([{ from: tempFile(3, 'part'), to: tempFile(3, 'wav') }])
+  })
+
+  it('queues a song with its lyrics, the switches that the user set, and the defaults of the other parameters', async () => {
+    cacheModel('venice-like', [
+      { name: 'duration_seconds', label: 'Length (seconds)', options: [60, 90], default: 60 },
+      { name: 'force_instrumental', label: 'Instrumental' },
+      { name: 'loop', label: 'Loop' },
+    ])
+    answers = [json({ model: 'm', queue_id: 'q-1', status: 'QUEUED' }), clip('audio/mpeg')]
+
+    const result = generate({ kind: 'music', prompt: 'Slow piano ballad', lyrics: 'Rain on the roof', parameters: { loop: true } })
+    await vi.advanceTimersByTimeAsync(5 * SECOND_MS)
+    await result
+
+    // A switch that no one set sends no value: the provider's own default
+    // applies.
+    expect(JSON.parse(downloads[0].request.body as string)).toStrictEqual({
+      duration_seconds: 60,
+      loop: true,
+      model: 'm',
+      prompt: 'Slow piano ballad',
+      lyrics_prompt: 'Rain on the roof',
+    })
   })
 
   // The URL comes from an answer of the provider: the request to it must

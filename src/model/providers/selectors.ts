@@ -214,7 +214,7 @@ export default sbp('sbp/selectors/register', {
       const merged = provider.mergeModels(provider.parseModels(data))
       const entries = provider.modelEntries(merged, data)
       const mediaEntries = mediaData === undefined ? undefined : provider.mediaModelEntries(mediaData)
-      const models = provider.withParameters(merged, entries, mediaEntries ?? new Map())
+      const models = provider.withClipData(merged, entries, mediaEntries ?? new Map())
       return { ok: true, models, entries, ...(mediaEntries && { mediaEntries }) }
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error)
@@ -298,7 +298,8 @@ export default sbp('sbp/selectors/register', {
       const apiRequest = (wire: MediaWireRequest) => provider.mediaApiRequest(wire, secret)
       const cacheDir = await sbp('dez.native/getAppDir', 'cache') as string
       const values = clipParameterValues(provider.id, modelId, input.parameters)
-      const first = await sendClipRequest(run, apiRequest(provider.clipRequest(kind, modelId, { prompt: input.prompt, values })), null, cacheDir)
+      const clipInput = { prompt: input.prompt, values, ...(input.lyrics !== undefined && { lyrics: input.lyrics }) }
+      const first = await sendClipRequest(run, apiRequest(provider.clipRequest(kind, modelId, clipInput)), null, cacheDir)
       if ('clip' in first) return { media: [], clips: [first.clip] }
 
       const job = provider.clipJob(kind, modelId, first.data)

@@ -4,7 +4,14 @@ import sbp from '@sbp/sbp'
 import { useModelState } from '../modelState'
 import { modelRefKey } from '../../model/chat/modelRef'
 import type { ModelInfo, ProviderSettingsDescriptor } from '../../model/providers'
-import { effectiveParameterValues, type OptionsParameter, type ParameterValue, type RangeParameter } from '../../model/providers/modelParameters'
+import {
+  effectiveParameterValues,
+  nearestRangeValue,
+  type OptionsParameter,
+  type ParameterValue,
+  type RangeParameter,
+  type SwitchParameter,
+} from '../../model/providers/modelParameters'
 import { THINKING_DEFAULT, THINKING_SETTING_KEY } from '../../model/providers/thinking'
 import { TOOLS_DEFAULT, TOOLS_SETTING_KEY } from '../../model/providers/toolsSetting'
 
@@ -56,13 +63,26 @@ function toggleSetting(key: string, defaultValue: boolean) {
   sbp('dez.model/settings/setProviderSetting', providerId, key, !settingValue(key, defaultValue))
 }
 
-// What a request to the active model can set (the length of a clip, a
-// voice): only media models have parameters. They come from the model
-// cache, so they change with the provider's model list.
-const parameters = computed(() => {
+// What the model cache knows of the active model, so it changes with the
+// provider's model list.
+const cachedModel = computed(() => {
   const model = activeModel.value
-  if (!model) return []
-  return (sbp('dez.model/modelCache/model', model.providerId, model.modelId) as ModelInfo | null)?.parameters ?? []
+  return model ? sbp('dez.model/modelCache/model', model.providerId, model.modelId) as ModelInfo | null : null
+})
+
+// What a request to the active model can set (the length of a clip, a
+// voice): only media models have parameters.
+const parameters = computed(() => cachedModel.value?.parameters ?? [])
+
+// Lyrics are a part of the message and not a parameter (`clipText` in
+// model/providers/clipText.ts), so no row sets them. For a model that
+// takes lyrics, the popup tells how to write them.
+const lyricsHint = computed(() => {
+  const lyrics = cachedModel.value?.text?.lyrics
+  if (!lyrics) return null
+  return lyrics.required
+    ? 'This model needs lyrics. Write the style, then a line "Lyrics:", then the lyrics.'
+    : 'To give lyrics, write the style, then a line "Lyrics:", then the lyrics.'
 })
 
 // The value that a request sends for each parameter now: the user's value,
@@ -82,7 +102,8 @@ function setParameter(name: string, value: ParameterValue | null) {
 // options, so that a number option stays a number (a DOM value is text).
 // -1 is the "Default" entry of a parameter with no default of its own.
 function optionIndex(parameter: OptionsParameter): number {
-  return parameter.options.indexOf(parameterValues.value[parameter.name])
+  const value = parameterValues.value[parameter.name]
+  return parameter.options.findIndex((option) => option === value)
 }
 
 function chooseOption(parameter: OptionsParameter, event: Event) {
@@ -95,16 +116,28 @@ function rangeText(parameter: RangeParameter): string {
   return value === undefined ? '' : String(value)
 }
 
-// An empty field removes the user's value. A number out of the range
-// becomes the nearest one in it.
+// An empty field removes the user's value. Any other number becomes the
+// nearest one that the range takes.
 function chooseNumber(parameter: RangeParameter, event: Event) {
   const input = event.target as HTMLInputElement
   const typed = input.value.trim() === '' ? Number.NaN : Number(input.value)
-  setParameter(parameter.name, Number.isFinite(typed) ? Math.min(parameter.max, Math.max(parameter.min, Math.round(typed))) : null)
+  setParameter(parameter.name, Number.isFinite(typed) ? nearestRangeValue(parameter, typed) : null)
   // Vue writes the field only when the bound value changes. It does not
   // when the new value is the old one (a second number over the range), so
   // the typed text would stay.
   input.value = rangeText(parameter)
+}
+
+function switchIsOn(parameter: SwitchParameter): boolean {
+  return parameterValues.value[parameter.name] === true
+}
+
+// Only a value that differs from the default is stored, as for the
+// provider toggles. A switch with no default is off, and then the request
+// has no field for it.
+function toggleSwitch(parameter: SwitchParameter) {
+  const on = !switchIsOn(parameter)
+  setParameter(parameter.name, on === (parameter.default ?? false) ? null : on)
 }
 
 // Resets the toggles that show and the active model's parameters.
@@ -117,7 +150,7 @@ function resetToDefaults() {
 
 <template>
   <div class="provider-settings-popup">
-    <template v-if="activeModel && (settingDefs.length > 0 || parameters.length > 0)">
+    <template v-if="activeModel && (settingDefs.length > 0 || parameters.length > 0 || lyricsHint)">
       <template v-if="settingDefs.length > 0">
         <div class="provider-settings-header">{{ providerName }}</div>
         <div class="provider-settings-rows">
@@ -143,37 +176,64 @@ function resetToDefaults() {
       <template v-if="parameters.length > 0">
         <div class="provider-settings-header">Model Parameters</div>
         <div class="provider-settings-rows">
-          <label
-            v-for="parameter in parameters"
-            :key="parameter.name"
-            class="provider-settings-parameter"
-            :data-parameter="parameter.name"
-          >
-            <span class="provider-settings-label">{{ parameter.label }}</span>
-            <select
-              v-if="'options' in parameter"
-              class="provider-settings-value provider-settings-select"
-              :value="optionIndex(parameter)"
-              @change="chooseOption(parameter, $event)"
+          <template v-for="parameter in parameters" :key="parameter.name">
+            <label
+              v-if="'options' in parameter || 'min' in parameter"
+              class="provider-settings-parameter"
+              :data-parameter="parameter.name"
             >
-              <option v-if="parameter.default === undefined" :value="-1">Default</option>
-              <option v-for="(option, index) in parameter.options" :key="index" :value="index">{{ option }}</option>
-            </select>
-            <input
+              <span class="provider-settings-label">{{ parameter.label }}</span>
+              <select
+                v-if="'options' in parameter"
+                class="provider-settings-value provider-settings-select"
+                :value="optionIndex(parameter)"
+                @change="chooseOption(parameter, $event)"
+              >
+                <option v-if="parameter.default === undefined" :value="-1">Default</option>
+                <option v-for="(option, index) in parameter.options" :key="index" :value="index">{{ option }}</option>
+              </select>
+              <!-- An empty field stands for the provider's own default, as
+                   the "Default" entry of a select does. -->
+              <input
+                v-else
+                class="provider-settings-value"
+                type="number"
+                :step="parameter.step ?? 1"
+                :min="parameter.min"
+                :max="parameter.max"
+                :value="rangeText(parameter)"
+                :placeholder="parameter.default === undefined ? 'Default' : ''"
+                :title="`${parameter.min} to ${parameter.max}`"
+                @change="chooseNumber(parameter, $event)"
+              >
+            </label>
+            <button
               v-else
-              class="provider-settings-value"
-              type="number"
-              step="1"
-              :min="parameter.min"
-              :max="parameter.max"
-              :value="rangeText(parameter)"
-              :title="`${parameter.min} to ${parameter.max}`"
-              @change="chooseNumber(parameter, $event)"
+              class="provider-settings-row"
+              type="button"
+              role="switch"
+              :data-parameter="parameter.name"
+              :aria-checked="switchIsOn(parameter)"
+              @click="toggleSwitch(parameter)"
             >
-          </label>
+              <span class="provider-settings-label">{{ parameter.label }}</span>
+              <span
+                class="provider-settings-switch"
+                :class="{ 'provider-settings-switch--on': switchIsOn(parameter) }"
+              >
+                <span class="provider-settings-knob"></span>
+              </span>
+            </button>
+          </template>
         </div>
       </template>
+      <template v-if="lyricsHint">
+        <div class="provider-settings-header">Lyrics</div>
+        <div class="provider-settings-hint">{{ lyricsHint }}</div>
+      </template>
+      <!-- A model with only the lyrics text has nothing to reset. -->
       <button
+        v-if="settingDefs.length > 0 || parameters.length > 0"
         class="provider-settings-reset"
         type="button"
         @click="resetToDefaults"
@@ -249,7 +309,7 @@ function resetToDefaults() {
 }
 
 /* A row of the "Model Parameters" section: the label, then a select or a
-   number field. */
+   number field. A switch parameter has the row of a provider toggle. */
 .provider-settings-parameter {
   display: flex;
   align-items: center;
@@ -342,6 +402,13 @@ function resetToDefaults() {
 
 .provider-settings-reset:hover {
   opacity: 1;
+}
+
+.provider-settings-hint {
+  padding: 4px 12px 10px;
+  font-size: 12px;
+  line-height: 1.4;
+  opacity: 0.7;
 }
 
 .provider-settings-empty {

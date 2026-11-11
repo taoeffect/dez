@@ -94,14 +94,15 @@ export default sbp('sbp/selectors/register', {
     return invoke('delete_conversation_file', { id })
   },
 
-  // `path` is relative to the app folder, with `/` between folders
-  // (`assets/images/<uuid>.png`). The content goes as the raw IPC body, so
-  // bytes are not sent as a JSON number array; text goes as UTF-8. The path
-  // goes unencoded in a header: the Rust path rule (`app_file_path` in
+  // `path` is relative to a root folder (the app folder when `root` is
+  // missing), with `/` between folders (`assets/images/<uuid>.png`). The
+  // content goes as the raw IPC body, so bytes are not sent as a JSON number
+  // array; text goes as UTF-8. The root and the path go unencoded in
+  // headers: the Rust path rule (`app_file_path` in
   // src-tauri/src/persistence.rs) allows only header-safe ASCII.
-  'dez.native/saveAppFile' (path: string, content: string | Uint8Array): Promise<void> {
+  'dez.native/saveAppFile' (path: string, content: string | Uint8Array, root: AppFileRoot = 'app'): Promise<void> {
     const body = typeof content === 'string' ? new TextEncoder().encode(content) : content
-    return invoke('save_app_file', body, { headers: { path } })
+    return invoke('save_app_file', body, { headers: { root, path } })
   },
 
   // A missing file reads as ''.
@@ -110,8 +111,8 @@ export default sbp('sbp/selectors/register', {
   },
 
   // Rejects when the file is missing.
-  async 'dez.native/loadAppFileBytes' (path: string): Promise<Uint8Array> {
-    return new Uint8Array(await invoke<ArrayBuffer>('load_app_file_bytes', { path }))
+  async 'dez.native/loadAppFileBytes' (path: string, root: AppFileRoot = 'app'): Promise<Uint8Array> {
+    return new Uint8Array(await invoke<ArrayBuffer>('load_app_file_bytes', { root, path }))
   },
 
   // A missing file is not an error.

@@ -64,11 +64,13 @@ function hasValueAtPath(model: Record<string, unknown>, path: string): boolean {
 // The request kind that one type of `modelOutputs.values` gives an entry:
 // the kind of the entry's value at the type's `requestBy.path` when
 // `requestBy.values` names that value, else the type's `request`, else
-// `none`.
+// `none`. The keys of `values` are JSON texts, so a boolean value of the
+// entry counts as its text, `true` or `false`.
 function typeRequest(model: Record<string, unknown>, { request, requestBy }: ModelOutputsConfig['values'][string]): ModelRequest {
   const value = requestBy === undefined ? undefined : valueAtPath(model, requestBy.path)
+  const name = typeof value === 'boolean' ? String(value) : value
   // Object.hasOwn: as for the raw types below.
-  if (requestBy !== undefined && typeof value === 'string' && Object.hasOwn(requestBy.values, value)) return requestBy.values[value]
+  if (requestBy !== undefined && typeof name === 'string' && Object.hasOwn(requestBy.values, name)) return requestBy.values[name]
   return request ?? 'none'
 }
 

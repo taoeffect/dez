@@ -3,6 +3,7 @@ import type { MediaTagKind } from '../chat/mediaTags'
 import type { RequestMessage, ThinkingReplay } from '../chat/types'
 import { normalizeOutputs, type ModelOutput } from '../modelOutputs'
 import type { StreamedToolCall, ToolDefinition } from '../tools/types'
+import { cloneClipTextRules, type ClipTextRules } from './clipText'
 import type { ApiFormatId, ProviderAuth } from './config'
 import { cloneModelParameter, type ModelParameter } from './modelParameters'
 import type { ModelToggles } from './modelToggles'
@@ -11,18 +12,20 @@ import type { ModelToggles } from './modelToggles'
 // user-defined custom provider ids.
 export type ProviderId = string
 
-// How Dez sends a request to a model. `chat`: the API format's chat request.
-// `image`, `imageEdit`: the provider's media API makes or edits an image.
-// `tts`, `music`, `video`: the provider's media API makes a clip from the
-// user's text: speech that reads it, music or a sound, or a video.
-// `none`: Dez has no request for the model yet, so a submit is refused.
-export const MODEL_REQUESTS = ['chat', 'image', 'imageEdit', 'tts', 'music', 'video', 'none'] as const
-
-export type ModelRequest = (typeof MODEL_REQUESTS)[number]
-
 // The request kinds that go to the provider's media API (`mediaApi` in
 // config.ts, mediaFormats.ts) instead of its chat API.
-export type MediaKind = Exclude<ModelRequest, 'chat' | 'none'>
+// `image`, `imageEdit`: the media API makes or edits an image.
+// `tts`, `music`, `video`: the media API makes a clip from the user's text:
+// speech that reads it, music or a sound, or a video.
+export const MEDIA_KINDS = ['image', 'imageEdit', 'tts', 'music', 'video'] as const
+
+export type MediaKind = (typeof MEDIA_KINDS)[number]
+
+// How Dez sends a request to a model. `chat`: the API format's chat request.
+// `none`: Dez has no request for the model yet, so a submit is refused.
+export const MODEL_REQUESTS = ['chat', ...MEDIA_KINDS, 'none'] as const
+
+export type ModelRequest = (typeof MODEL_REQUESTS)[number]
 
 // The media kinds that make a clip, each with the kind of its clip (the
 // name of the clip's tag, src/model/chat/mediaTags.ts).
@@ -94,9 +97,14 @@ export interface ModelInfo {
   // of a clip request kind whose provider tells it. Never empty. Missing:
   // none.
   parameters?: ModelParameter[]
+  // What the model takes as the text of a request (clipText.ts): the
+  // limits of the prompt's length, and whether it takes lyrics. For a model
+  // of a clip request kind whose provider tells it. Missing: unknown, and
+  // Dez checks no text.
+  text?: ClipTextRules
 }
 
-export type ModelCapabilities = Pick<ModelInfo, 'imageInput' | 'toolCalling' | 'thinking' | 'unsupportedSettings' | 'outputs' | 'request' | 'parameters'>
+export type ModelCapabilities = Pick<ModelInfo, 'imageInput' | 'toolCalling' | 'thinking' | 'unsupportedSettings' | 'outputs' | 'request' | 'parameters' | 'text'>
 
 // Display names for agent role pills and history rows: provider id ->
 // provider name, and `modelRefKey` -> model name. Maps, not plain objects,
@@ -237,8 +245,8 @@ export class ProviderNotConfiguredError extends ProviderError {
 // Leaves each capability out when it is unknown, so the model cache file and
 // whole-object comparisons hold no `undefined` field. `outputs` becomes a new
 // array in table order, `unsupportedSettings` a new array, and `parameters`
-// a deep copy, so two models never share one (a store copy and its snapshot,
-// a config model and the cache).
+// and `text` deep copies, so two models never share one (a store copy and
+// its snapshot, a config model and the cache).
 export function providerModel(provider: ProviderId, id: string, name: string, capabilities: ModelCapabilities = {}): ModelInfo {
   const model: ModelInfo = { id, name, provider }
   if (capabilities.imageInput !== undefined) model.imageInput = capabilities.imageInput
@@ -248,6 +256,7 @@ export function providerModel(provider: ProviderId, id: string, name: string, ca
   if (capabilities.outputs !== undefined) model.outputs = normalizeOutputs(capabilities.outputs)
   if (capabilities.request !== undefined) model.request = capabilities.request
   if (capabilities.parameters !== undefined) model.parameters = capabilities.parameters.map(cloneModelParameter)
+  if (capabilities.text !== undefined) model.text = cloneClipTextRules(capabilities.text)
   return model
 }
 

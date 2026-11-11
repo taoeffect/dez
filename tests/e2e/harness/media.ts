@@ -9,25 +9,32 @@ import type { E2EBrowser } from './session'
 // has the WAV parser and the WebM demuxer with the VP9 decoder. It has no
 // H.264 decoder, so no clip is an mp4.
 
-/** A WAV file with `seconds` of silence: 8-bit mono PCM at 8 kHz. */
-export function silentWav (seconds: number): Buffer {
-  const sampleRate = 8000
-  const samples = Math.round(seconds * sampleRate)
+/** The sample rate of the test audio, in samples a second. */
+export const WAV_SAMPLE_RATE = 8000
+
+/** A WAV file of `samples`: mono PCM at 8 kHz, with `sampleBytes` bytes in
+ *  each sample. */
+export function monoWav (samples: Buffer, sampleBytes: 1 | 2): Buffer {
   const header = Buffer.alloc(44)
   header.write('RIFF', 0, 'ascii')
-  header.writeUInt32LE(36 + samples, 4)
+  header.writeUInt32LE(36 + samples.length, 4)
   header.write('WAVEfmt ', 8, 'ascii')
   header.writeUInt32LE(16, 16) // size of the format chunk
   header.writeUInt16LE(1, 20) // format: PCM
   header.writeUInt16LE(1, 22) // channels
-  header.writeUInt32LE(sampleRate, 24)
-  header.writeUInt32LE(sampleRate, 28) // bytes per second
-  header.writeUInt16LE(1, 32) // bytes per sample of all channels
-  header.writeUInt16LE(8, 34) // bits per sample
+  header.writeUInt32LE(WAV_SAMPLE_RATE, 24)
+  header.writeUInt32LE(WAV_SAMPLE_RATE * sampleBytes, 28) // bytes per second
+  header.writeUInt16LE(sampleBytes, 32) // bytes per sample of all channels
+  header.writeUInt16LE(sampleBytes * 8, 34) // bits per sample
   header.write('data', 36, 'ascii')
-  header.writeUInt32LE(samples, 40)
+  header.writeUInt32LE(samples.length, 40)
+  return Buffer.concat([header, samples])
+}
+
+/** A WAV file with `seconds` of silence: 8-bit mono PCM at 8 kHz. */
+export function silentWav (seconds: number): Buffer {
   // 8-bit PCM has no sign: 128 is silence.
-  return Buffer.concat([header, Buffer.alloc(samples, 128)])
+  return monoWav(Buffer.alloc(Math.round(seconds * WAV_SAMPLE_RATE), 128), 1)
 }
 
 /** A VP9 WebM video of one color: 48 x 36 px (4:3), 2 s, no sound. Made

@@ -1,6 +1,8 @@
 import sbp from '@sbp/sbp'
 import { effectiveOutputs, MODEL_OUTPUTS, type ModelOutput } from '../model/modelOutputs'
-import { effectiveRequest, type ModelInfo } from '../model/providers/types'
+import { clipTextProblem } from '../model/providers/clipText'
+import { effectiveRequest, isClipKind, type ModelInfo } from '../model/providers/types'
+import { mediaRequestInput } from '../model/streams/messages'
 import type { RequestMessages } from '../model/streams/types'
 
 // The text of the refusal of a model that Dez has no request for
@@ -30,12 +32,22 @@ export default sbp('sbp/selectors/register', {
     if (request.messages.length === 0) return
 
     // A model that the cache does not have has no request kind, so it gets
-    // a chat request, as before models had one. The refusal changes
-    // nothing, so it comes before the end of a running reply's output.
-    const cachedModel: Pick<ModelInfo, 'outputs' | 'request'> = sbp('dez.model/modelCache/model', model.providerId, model.modelId) ?? {}
+    // a chat request, as before models had one. A refusal changes nothing,
+    // so it comes before the end of a running reply's output.
+    const cachedModel: Pick<ModelInfo, 'outputs' | 'request' | 'text'> = sbp('dez.model/modelCache/model', model.providerId, model.modelId) ?? {}
     const kind = effectiveRequest(cachedModel)
+    let message: string | null = null
     if (kind === 'none') {
-      const message = unusableModelMessage(model.modelName, effectiveOutputs(cachedModel))
+      message = unusableModelMessage(model.modelName, effectiveOutputs(cachedModel))
+    } else if (isClipKind(kind)) {
+      // A text that the model is known not to take (no lyrics for a model
+      // that needs them, a prompt that is too short or too long) gets no
+      // request: the check costs nothing, and it tells the user what to
+      // change. The end of a running reply's output changes no user
+      // message, so the text that this checks is the text of the request.
+      message = clipTextProblem(model.modelName, cachedModel.text, mediaRequestInput(kind, request.messages, tab.sections, cachedModel.text))
+    }
+    if (message !== null) {
       console.error(`Cannot send: ${message}`)
       sbp('dez.ui/toast', 'app-global', { variant: 'error', title: 'Cannot send', message })
       return
@@ -72,6 +84,7 @@ export default sbp('sbp/selectors/register', {
       messages,
       sendTools,
       imageOutput: effectiveOutputs(cachedModel).includes('image'),
+      ...(cachedModel.text && { textRules: cachedModel.text }),
     })
   },
 

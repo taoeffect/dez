@@ -3,7 +3,7 @@ import { MODEL_OUTPUT_IDS } from '../modelOutputs'
 import { BUILT_IN_PROVIDER_IDS } from './builtins'
 import { THINKING_SETTING_KEY } from './thinking'
 import { TOOLS_SETTING_KEY } from './toolsSetting'
-import { MODEL_REQUESTS } from './types'
+import { MEDIA_KINDS, MODEL_REQUESTS } from './types'
 
 // Provider ids are JSON keys in provider_keys.json, the `provider` half of a
 // conversation header's `model: provider/model` (split at the first `/`), and
@@ -198,10 +198,11 @@ const modelOutputsConfigSchema = z.object({
     requiredPath: modelEntryPathSchema.optional(),
     // For a server whose type does not tell the request kind: a second
     // value of the entry, at `path`, does. A value that `values` names
-    // gives its kind; any other value, or none, gives `request`. Venice
-    // reports every video model as `video`, and only
-    // `model_spec.constraints.model_type` tells a model that needs just a
-    // text (`text-to-video`) from one that needs an image or a video.
+    // gives its kind (a boolean value by its text, `true` or `false`); any
+    // other value, or none, gives `request`. Venice reports every video
+    // model as `video`, and only `model_spec.constraints.model_type` tells
+    // a model that needs just a text (`text-to-video`) from one that needs
+    // an image or a video.
     requestBy: z.object({
       path: modelEntryPathSchema,
       values: z.record(z.string(), z.enum(MODEL_REQUESTS)),
@@ -274,7 +275,21 @@ export const providerConfigSchema = z.object({
   // The wire format of the provider's own image, audio, and video requests.
   // Missing: the provider has none, so its media models get no requests. A
   // request of a kind that the format does not serve fails the same way.
-  mediaApi: z.object({ format: z.enum(MEDIA_API_FORMAT_IDS) }).optional(),
+  mediaApi: z.object({
+    format: z.enum(MEDIA_API_FORMAT_IDS),
+    // Fixed parts of the body of the request that asks for an image or a
+    // clip, for a fact about a model that no model list tells. A part is
+    // merged (as `requestBody` is) into a request of the kind `request` to a
+    // model whose id starts with `modelIdPrefix`, after the format's own
+    // fields and the values of the model's parameters, so it wins over
+    // both. The parts go in list order. OpenRouter's entries do not tell
+    // which speech models answer only with raw PCM.
+    modelRequestBodies: z.array(z.object({
+      request: z.enum(MEDIA_KINDS),
+      modelIdPrefix: z.string().min(1),
+      body: requestBodyPartSchema,
+    })).optional(),
+  }).optional(),
   settings: z.array(providerSettingDefSchema).optional(),
   thinking: thinkingConfigSchema.optional(),
 })

@@ -5,6 +5,7 @@ import type { ActiveModel, Section, SectionThinking, Tab, ThinkingReplay } from 
 import { sectionVisibleText } from '../model/chat/content'
 import { findToolBlocks } from '../model/chat/toolBlocks'
 import type { ConversationData } from '../model/persistence/types'
+import type { ClipTextRules } from '../model/providers/clipText'
 import { customProviderConfigSchema } from '../model/providers/config'
 import type { GeneratedClip, ModelRequest, ProviderChatInputMessage, ProviderGenerateMediaInput, ProviderGenerateMediaResult, ProviderInfo, ProviderStreamChatInput, ProviderStreamChatResult } from '../model/providers'
 import type { RequestMessages } from '../model/streams/types'
@@ -1037,6 +1038,14 @@ describe('dez.stream/start media round', () => {
     })
   }
 
+  // Puts the model in the cache as a song model with these text rules.
+  function useSongModel(text: ClipTextRules): void {
+    sbp('dez.model/modelCache/applyProviderResult', model.providerId, {
+      ok: true,
+      models: [{ id: model.modelId, name: model.modelName, provider: model.providerId, outputs: ['audio'], request: 'music', text }],
+    })
+  }
+
   function setConversation(lastUserText?: string): void {
     const [u1, a1, u2] = conversation(lastUserText)
     sbp('dez.model/tabs/replaceSections', activeTab().id, [
@@ -1257,6 +1266,56 @@ describe('dez.stream/start media round', () => {
     expect(sectionTexts()).toStrictEqual(conversation())
     expect(toasts).toStrictEqual([])
     expect(consoleError).not.toHaveBeenCalled()
+  })
+
+  it('sends the style of a song as the prompt, and the text after the `Lyrics:` line as the lyrics', async () => {
+    useSongModel({ minPromptLength: 10, lyrics: { required: true } })
+    setConversation('Slow piano ballad\nLyrics:\n[Verse]\nRain on the roof')
+    generateMedia = async (input) => {
+      mediaInputs.push(input)
+      return { media: [], clips: [speech] }
+    }
+
+    await sbp('dez.controller/submitTab', activeTab().id)
+
+    expect(mediaInputs.map(({ kind, prompt, lyrics }) => ({ kind, prompt, lyrics })))
+      .toStrictEqual([{ kind: 'music', prompt: 'Slow piano ballad', lyrics: '[Verse]\nRain on the roof' }])
+    expect(sectionTexts().at(-2)).toStrictEqual({ role: 'agent', text: speechTag('c') })
+  })
+
+  it('sends the whole message as the prompt, with no lyrics, when a model that can take lyrics gets none', async () => {
+    useSongModel({ lyrics: { required: false } })
+    setConversation('Rain on a tin roof')
+
+    await sbp('dez.controller/submitTab', activeTab().id)
+
+    expect(mediaInputs).toHaveLength(1)
+    expect(mediaInputs[0]).toMatchObject({ kind: 'music', prompt: 'Rain on a tin roof' })
+    expect(mediaInputs[0]).not.toHaveProperty('lyrics')
+  })
+
+  // The provider would answer with an error text that names its own
+  // field (`lyrics_prompt`), or make a paid clip of a cut prompt.
+  it.each([
+    ['needs lyrics and the message has none', { lyrics: { required: true } }, 'Slow piano ballad', 'M needs lyrics. Write the style, then a line "Lyrics:", then the lyrics.'],
+    [
+      'gets a style that is too short',
+      { minPromptLength: 10, lyrics: { required: true } },
+      'Jazz\nLyrics:\nLa la',
+      'M needs a prompt (the text before the "Lyrics:" line) of at least 10 characters. This one has 4.',
+    ],
+    ['gets a prompt that is too long', { maxPromptLength: 5 }, 'A long rain', 'M takes a prompt of at most 5 characters. This one has 11.'],
+  ])('sends no request and shows an error toast when the model %s', async (_name, text, lastUserText, message) => {
+    useSongModel(text)
+    setConversation(lastUserText)
+
+    await sbp('dez.controller/submitTab', activeTab().id)
+
+    expect(mediaInputs).toStrictEqual([])
+    expect(sectionTexts()).toStrictEqual(conversation(lastUserText))
+    expect(toasts).toStrictEqual([{ area: 'app-global', data: { variant: 'error', title: 'Cannot send', message } }])
+    expect(consoleError).toHaveBeenCalledWith(`Cannot send: ${message}`)
+    expect(alerts).toStrictEqual([])
   })
 })
 

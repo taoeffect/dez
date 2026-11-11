@@ -1,8 +1,9 @@
 import { sanitizeErrorText } from '../../utils/protocol/errors'
 import { responseContentType, type NativeHttpResponseHead } from '../../utils/protocol/nativeHttp'
 import { trimTrailingSlashes, type MediaApiFormatId } from './config'
+import type { ClipTextRules } from './clipText'
 import { generatedBase64Image, generatedImage } from './generatedImages'
-import { isParameterValue, parameterTakes, type ModelParameter, type OptionsParameter, type ParameterValue, type ParameterValues, type RangeParameter } from './modelParameters'
+import { isOptionValue, parameterTakes, type ModelParameter, type OptionsParameter, type OptionValue, type ParameterValues, type RangeParameter } from './modelParameters'
 import { isRecord, valueAtPath } from './modelParsing'
 import type { ChatImagePart, ClipKind, GeneratedMedia, ImageKind } from './types'
 
@@ -14,10 +15,13 @@ export interface MediaInput {
 }
 
 // What one clip request sends: the user's prompt (for speech, the text to
-// speak), and the value of each parameter of the model that has one
-// (`ClipFormat.parameters`, `effectiveParameterValues`).
+// speak), the lyrics of a song when the user wrote some (only for a model
+// that takes lyrics, `ClipFormat.textRules`), and the value of each
+// parameter of the model that has one (`ClipFormat.parameters`,
+// `effectiveParameterValues`).
 export interface ClipInput {
   prompt: string
+  lyrics?: string
   values: ParameterValues
 }
 
@@ -85,11 +89,19 @@ export interface ClipFormat {
   // Each one is undefined when its list does not have the model. The name
   // of a parameter is the name of its request field.
   parameters(kind: ClipKind, entry: unknown, mediaEntry: unknown): ModelParameter[]
+  // What a model of `kind` takes as the text of a request, from the same
+  // two entries; undefined when the API tells nothing about it.
+  textRules?(kind: ClipKind, entry: unknown, mediaEntry: unknown): ClipTextRules | undefined
   request(kind: ClipKind, baseUrl: string, modelId: string, input: ClipInput): MediaWireRequest
   // The job that the JSON of a 2xx response to `request` names. Throws when
   // it names none.
   job(kind: ClipKind, baseUrl: string, modelId: string, data: unknown): ClipJob
   quote?: ClipQuoteFormat
+  // The size in bits of one sample of the raw PCM audio (`audio/pcm`,
+  // pcmAudio.ts) that the API can answer with. A response tells the rate
+  // and the channels, but not this. Missing: the API's docs do not tell
+  // it, and Dez takes no raw PCM from the API.
+  pcmSampleBits?: number
 }
 
 // Everything that differs between the media APIs that a provider can speak
@@ -116,22 +128,44 @@ function isClipUrl(value: unknown): value is string {
 
 // The texts and numbers of a list in a model entry, each once, in the
 // list's order.
-function listedValues(list: unknown): ParameterValue[] {
-  return [...new Set((Array.isArray(list) ? list : []).filter(isParameterValue))]
+function listedValues(list: unknown): OptionValue[] {
+  return [...new Set((Array.isArray(list) ? list : []).filter(isOptionValue))]
 }
 
 // The parameter of a request field that takes one of `options`; none when
 // there is no option. `defaultValue` is its default when it is an option.
-function optionsParameter(name: string, label: string, options: ParameterValue[], defaultValue?: unknown): ModelParameter[] {
+function optionsParameter(name: string, label: string, options: OptionValue[], defaultValue?: unknown): ModelParameter[] {
   if (options.length === 0) return []
   const parameter: OptionsParameter = { name, label, options }
   if (parameterTakes(parameter, defaultValue)) parameter.default = defaultValue
   return [parameter]
 }
 
+// The step of a speed field. The APIs take any number of the range. A step
+// gives the arrows of the settings field a use, and `model_info` a list of
+// values that has an end.
+const SPEED_STEP = 0.05
+
+// The parameter of a `speed` field (1 is the normal speed) that takes the
+// numbers from `min` to `max`; none when they are no range. `defaultValue`
+// is its default when the range takes it.
+function speedParameter(min: unknown, max: unknown, defaultValue?: unknown): ModelParameter[] {
+  if (typeof min !== 'number' || typeof max !== 'number' || !(min > 0) || !(min < max)) return []
+  const range: RangeParameter = { name: 'speed', label: 'Speed', min, max, step: SPEED_STEP }
+  if (parameterTakes(range, defaultValue)) range.default = defaultValue
+  return [range]
+}
+
+// The switch of a request field that a model takes only when its entry
+// says so (`supported` is true). It has no default: a switch that the user
+// did not turn on puts no field into the request.
+function switchParameter(name: string, label: string, supported: unknown): ModelParameter[] {
+  return supported === true ? [{ name, label }] : []
+}
+
 // The seconds of a length, as a model list writes it: a number (OpenRouter)
 // or a text such as `5s` (Venice). NaN for any other entry, such as `auto`.
-function lengthSeconds(length: ParameterValue): number {
+function lengthSeconds(length: OptionValue): number {
   if (typeof length === 'number') return length > 0 ? length : Number.NaN
   const match = /^(\d+(?:\.\d+)?)s?$/i.exec(length)
   return match ? Number(match[1]) : Number.NaN
@@ -140,7 +174,7 @@ function lengthSeconds(length: ParameterValue): number {
 // The lines of a resolution: names of lines (`480p`, `768P`) and of
 // thousands (`2k`, `4K`) count. NaN for a name such as `2x` or
 // `true_1080p`, which has no place in the order.
-function resolutionLines(resolution: ParameterValue): number {
+function resolutionLines(resolution: OptionValue): number {
   const match = typeof resolution === 'string' ? /^(\d+)([pk])$/i.exec(resolution) : null
   return match ? Number(match[1]) * (match[2].toLowerCase() === 'k' ? 1000 : 1) : Number.NaN
 }
@@ -152,7 +186,7 @@ function resolutionLines(resolution: ParameterValue): number {
 // can cost 5 to 20 times more. The options go from low to high; the values
 // that `size` gives no number come last, in the list's order, and are never
 // the default.
-function lowestFirstParameter(name: string, label: string, list: unknown, size: (value: ParameterValue) => number): ModelParameter[] {
+function lowestFirstParameter(name: string, label: string, list: unknown, size: (value: OptionValue) => number): ModelParameter[] {
   const values = listedValues(list)
   const sized = values.filter((value) => !Number.isNaN(size(value))).sort((a, b) => size(a) - size(b))
   return optionsParameter(name, label, [...sized, ...values.filter((value) => Number.isNaN(size(value)))], sized[0])
@@ -175,14 +209,37 @@ function veniceMusicLength(entry: unknown): ModelParameter[] {
   const max = spec('max_duration')
   if (typeof min !== 'number' || typeof max !== 'number' || !Number.isInteger(min) || !Number.isInteger(max) || min > max) return []
   const range: RangeParameter = { name, label, min, max }
-  if (typeof defaultLength === 'number' && parameterTakes(range, defaultLength)) range.default = defaultLength
+  if (parameterTakes(range, defaultLength)) range.default = defaultLength
   return [range]
+}
+
+// What a Venice music model takes as text, from its entry: the least and
+// the most characters of the prompt, and whether it takes lyrics
+// (`lyrics_prompt`). A limit that is no count is not known.
+function veniceMusicText(entry: unknown): ClipTextRules | undefined {
+  const spec = (field: string) => valueAtPath(entry, `model_spec.${field}`)
+  const count = (field: string): number | undefined => {
+    const value = spec(field)
+    return typeof value === 'number' && Number.isInteger(value) && value >= 0 ? value : undefined
+  }
+  const rules: ClipTextRules = {}
+  const minPromptLength = count('min_prompt_length')
+  const maxPromptLength = count('prompt_character_limit')
+  const maxLyricsLength = count('lyrics_character_limit')
+  if (minPromptLength !== undefined) rules.minPromptLength = minPromptLength
+  if (maxPromptLength !== undefined) rules.maxPromptLength = maxPromptLength
+  const required = spec('lyrics_required') === true
+  if (required || spec('supports_lyrics') === true) {
+    rules.lyrics = { required, ...(maxLyricsLength !== undefined && { maxLength: maxLyricsLength }) }
+  }
+  return Object.keys(rules).length > 0 ? rules : undefined
 }
 
 // The speech formats that Dez asks Venice for: the ones that it has a file
 // type for (mediaFiles.ts). A model can also list `pcm`, which is samples
-// with no file format.
-const VENICE_SPEECH_FORMATS: ReadonlySet<ParameterValue> = new Set(['mp3', 'wav', 'flac', 'aac', 'opus'])
+// with no file format; the docs do not tell the size of its samples, so Dez
+// cannot make a file of it (`pcmSampleBits`).
+const VENICE_SPEECH_FORMATS: ReadonlySet<OptionValue> = new Set(['mp3', 'wav', 'flac', 'aac', 'opus'])
 // The Venice media API (https://docs.venice.ai/api-reference).
 const veniceFormat: MediaFormat = {
   // The user's choice for every image: no Venice watermark (it is on by
@@ -234,6 +291,14 @@ const veniceFormat: MediaFormat = {
     // header agrees with the audio (checked live, 2026-11-10).
     // video: the first aspect ratio is the model's main one (`16:9` for
     // most); some models list no resolution and take none.
+    // music: every field but the prompt and the lyrics is a parameter, and
+    // each one only when the entry says that the model takes it
+    // (`supports_…`, or a list or a range of values): the API refuses a
+    // field that the model does not take. Four models have no length
+    // field in their entries (`minimax-music-v2`, 2026-11-10), so they have
+    // no length to set. There is no format parameter (the queue request
+    // has no format field) and no language parameter (the API gives no
+    // list of the languages).
     parameters: (kind, entry) => {
       const spec = (field: string) => valueAtPath(entry, `model_spec.${field}`)
       switch (kind) {
@@ -242,10 +307,23 @@ const veniceFormat: MediaFormat = {
           return [
             ...optionsParameter('voice', 'Voice', listedValues(spec('voices'))),
             ...optionsParameter('response_format', 'Format', formats, spec('default_format')),
+            // The speech request takes 0.25 to 4 for every model (its
+            // schema); the entries hold no speed. No default: with no
+            // value, the API's own (1) applies.
+            ...speedParameter(0.25, 4),
           ]
         }
         case 'music':
-          return [...veniceMusicLength(entry), ...optionsParameter('voice', 'Voice', listedValues(spec('voices')), spec('default_voice'))]
+          return [
+            ...veniceMusicLength(entry),
+            ...optionsParameter('voice', 'Voice', listedValues(spec('voices')), spec('default_voice')),
+            ...(spec('supports_speed') === true ? speedParameter(spec('min_speed'), spec('max_speed'), spec('default_speed')) : []),
+            ...switchParameter('force_instrumental', 'Instrumental', spec('supports_force_instrumental')),
+            // The model writes the lyrics itself.
+            ...switchParameter('lyrics_optimizer', 'Lyrics from the prompt', spec('supports_lyrics_optimizer')),
+            // The end of the clip goes over into its start with no seam.
+            ...switchParameter('loop', 'Loop', spec('supports_loop')),
+          ]
         case 'video': {
           const aspectRatios = listedValues(spec('constraints.aspect_ratios'))
           return [
@@ -256,10 +334,23 @@ const veniceFormat: MediaFormat = {
         }
       }
     },
+    // tts: 1 to 4096 characters for every model (the speech request's
+    // schema). music: the limits are in the entry. video: the entries tell
+    // none.
+    textRules: (kind, entry) => {
+      switch (kind) {
+        case 'tts':
+          return { minPromptLength: 1, maxPromptLength: 4096 }
+        case 'music':
+          return veniceMusicText(entry)
+        case 'video':
+          return undefined
+      }
+    },
     // The schemas allow no field that they do not name, and a field that
     // the model does not take is an error. The values are the fields of the
     // model's own parameters, so they go as they are.
-    request: (kind, baseUrl, modelId, { prompt, values }) => {
+    request: (kind, baseUrl, modelId, { prompt, lyrics, values }) => {
       const base = trimTrailingSlashes(baseUrl)
       switch (kind) {
         case 'tts':
@@ -267,9 +358,15 @@ const veniceFormat: MediaFormat = {
           // names (see `parameters`).
           // https://docs.venice.ai/api-reference/endpoint/audio/speech
           return { url: `${base}/audio/speech`, body: { ...values, model: modelId, input: prompt } }
-        case 'music':
+        case 'music': {
+          // `lyrics_optimizer` tells the model to write the lyrics, and the
+          // API then takes no `lyrics_prompt` ("lyrics_prompt must be empty
+          // when this is true"). Lyrics that the user wrote are the newer
+          // and the clearer wish, so the switch does not go with them.
           // https://docs.venice.ai/api-reference/endpoint/audio/queue
-          return { url: `${base}/audio/queue`, body: { ...values, model: modelId, prompt } }
+          const fields = lyrics === undefined ? values : Object.fromEntries(Object.entries(values).filter(([name]) => name !== 'lyrics_optimizer'))
+          return { url: `${base}/audio/queue`, body: { ...fields, model: modelId, prompt, ...(lyrics !== undefined && { lyrics_prompt: lyrics }) } }
+        }
         case 'video':
           // `duration` and `aspect_ratio` have no default: a request with
           // none gets a 400 (checked live, 2026-11-10), and each model
@@ -379,8 +476,11 @@ const openRouterFormat: MediaFormat = {
       switch (kind) {
         case 'tts':
           // The answer is the audio. The default format is raw PCM, which
-          // no player plays, so the request asks for mp3; the few models
-          // that make only PCM (Gemini TTS, HeyGen Voice) answer 400.
+          // no player plays, so the request asks for mp3. A few models make
+          // only PCM (Gemini TTS, HeyGen Voice) and answer 400 to this; no
+          // field of a model entry tells which, so the provider's config
+          // names them and gives them `pcm` in place of `mp3`
+          // (`mediaApi.modelRequestBodies`).
           // https://openrouter.ai/docs/guides/overview/multimodal/tts
           return { url: `${base}/audio/speech`, body: { ...values, model: modelId, input: prompt, response_format: 'mp3' } }
         case 'video':
@@ -431,6 +531,9 @@ const openRouterFormat: MediaFormat = {
         },
       }
     },
+    // "audio/pcm for pcm — 16-bit little-endian"
+    // https://openrouter.ai/docs/api/api-reference/tts/create-speech
+    pcmSampleBits: 16,
   },
 }
 

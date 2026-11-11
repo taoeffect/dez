@@ -4,6 +4,7 @@ import { MEDIA_CACHE_FOLDER } from '../chat/mediaTags'
 import { responseOk } from '../../utils/protocol/errors'
 import { responseContentType, textFromNativeBody, type NativeHttpDownload, type NativeHttpRequest } from '../../utils/protocol/nativeHttp'
 import { providerStatusError } from './errors'
+import { pcmLayout, wavFile } from './pcmAudio'
 import type { Provider } from './provider'
 import { CLIP_KINDS, type ClipKind, type GeneratedClip } from './types'
 
@@ -36,7 +37,8 @@ export interface ClipRun {
 // time limit. A 2xx response with the content type of the clip's kind
 // (audio or video) is the clip: Rust writes it to a temp copy
 // (`MEDIA_CACHE_FOLDER` of the cache root, `cacheDir`), so no byte of a clip
-// comes through the webview, and the clip comes back with `jobId`. Any other
+// comes through the webview, and the clip comes back with `jobId`. Only raw
+// PCM audio comes through the webview, to get its file format. Any other
 // 2xx response is JSON, which comes back as `data`. Throws for any other
 // status, for a response that is neither, and when the clip's time is over.
 export async function sendClipRequest(
@@ -70,14 +72,34 @@ export async function sendClipRequest(
     }
   }
 
-  const mediaType = responseContentType(download).split(';', 1)[0].trim()
+  // Raw PCM (`audio/pcm`) is samples with no file format, and no player
+  // plays it: the temp copy is a WAV file of the samples. Dez asks for raw
+  // PCM only from speech models that make nothing else, and speech is
+  // small. A PCM response that does not tell its layout gets no file, and
+  // the error names its whole content type.
+  const contentType = responseContentType(download)
+  const pcm = pcmLayout(contentType, run.provider.pcmSampleBits())
+  const mediaType = pcm ? 'audio/wav' : contentType.split(';', 1)[0].trim()
   const extension = mediaFileExtension(mediaType, null)
   if (extension === null) {
     await sbp('dez.native/deleteAppFile', part, 'cache')
-    throw new Error(`Dez does not know the file type of this clip (${mediaType}).`)
+    throw new Error(`Dez does not know the file type of this clip (${contentType}).`)
   }
   const file = `${MEDIA_CACHE_FOLDER}/${name}.${extension}`
-  await sbp('dez.native/moveAppFile', { root: 'cache', path: part }, { root: 'cache', path: file })
+  if (pcm) {
+    try {
+      const samples = await sbp('dez.native/loadAppFileBytes', part, 'cache') as Uint8Array
+      await sbp('dez.native/saveAppFile', file, wavFile(samples, pcm), 'cache')
+    } finally {
+      // A delete that fails must not lose a clip that is paid for: the
+      // cleanup of the temp copies deletes the part file later.
+      await sbp('dez.native/deleteAppFile', part, 'cache').catch((error: unknown) => {
+        console.error('Failed to delete the raw samples of a clip:', error)
+      })
+    }
+  } else {
+    await sbp('dez.native/moveAppFile', { root: 'cache', path: part }, { root: 'cache', path: file })
+  }
   return {
     clip: {
       kind: CLIP_KINDS[run.kind],

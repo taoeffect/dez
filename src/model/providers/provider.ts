@@ -8,7 +8,7 @@ import type { ParameterValues } from './modelParameters'
 import { isRecord, modelCapability, modelData, modelOutputsAndRequest, unsupportedSettings } from './modelParsing'
 import { modelToggles, type ToggleModel } from './modelToggles'
 import { isThinkingEnabled } from './thinking'
-import { ProviderError, effectiveRequest, isClipKind, providerModel, type ChatMessage, type ChatRequestContext, type ClipKind, type GeneratedMedia, type ImageKind, type ModelInfo, type ProviderInfo } from './types'
+import { ProviderError, effectiveRequest, isClipKind, providerModel, type ChatMessage, type ChatRequestContext, type ClipKind, type GeneratedMedia, type ImageKind, type MediaKind, type ModelInfo, type ProviderInfo } from './types'
 
 export interface ProviderOptions {
   builtIn: boolean
@@ -192,16 +192,20 @@ export class Provider {
   }
 
   // `models` (a `mergeModels` list), each model of a clip request kind with
-  // its parameters (`ClipFormat.parameters`), read from its raw entries
-  // (`modelEntries`, `mediaModelEntries`). This comes after the merge,
-  // because a config model can set the request kind.
-  withParameters(models: readonly ModelInfo[], entries: ReadonlyMap<string, unknown>, mediaEntries: ReadonlyMap<string, unknown>): ModelInfo[] {
+  // its parameters (`ClipFormat.parameters`) and the rules of its text
+  // (`ClipFormat.textRules`), read from its raw entries (`modelEntries`,
+  // `mediaModelEntries`). This comes after the merge, because a config
+  // model can set the request kind.
+  withClipData(models: readonly ModelInfo[], entries: ReadonlyMap<string, unknown>, mediaEntries: ReadonlyMap<string, unknown>): ModelInfo[] {
     const clips = this.clipFormatOrNone()
     return models.map((model) => {
       const kind = effectiveRequest(model)
       if (!clips || !isClipKind(kind)) return model
-      const parameters = clips.parameters(kind, entries.get(model.id), mediaEntries.get(model.id))
-      return parameters.length > 0 ? { ...model, parameters } : model
+      const entry = entries.get(model.id)
+      const mediaEntry = mediaEntries.get(model.id)
+      const parameters = clips.parameters(kind, entry, mediaEntry)
+      const text = clips.textRules?.(kind, entry, mediaEntry)
+      return { ...model, ...(parameters.length > 0 && { parameters }), ...(text && { text }) }
     })
   }
 
@@ -276,7 +280,7 @@ export class Provider {
 
   // The request for a model of an image request kind.
   mediaRequest(kind: ImageKind, modelId: string, input: MediaInput, secret: Secret<string> | null): NativeHttpRequest {
-    return this.mediaApiRequest(this.imageFormat().request(kind, this.config.baseUrl, modelId, input), secret)
+    return this.mediaApiRequest(this.withModelBody(kind, modelId, this.imageFormat().request(kind, this.config.baseUrl, modelId, input)), secret)
   }
 
   // The images of a 2xx response to `mediaRequest`.
@@ -289,7 +293,13 @@ export class Provider {
   // requests through `mediaApiRequest`.
 
   clipRequest(kind: ClipKind, modelId: string, input: ClipInput): MediaWireRequest {
-    return this.clipFormat().request(kind, this.config.baseUrl, modelId, input)
+    return this.withModelBody(kind, modelId, this.clipFormat().request(kind, this.config.baseUrl, modelId, input))
+  }
+
+  // The size of a sample of the raw PCM audio that the media API can
+  // answer with (`ClipFormat.pcmSampleBits`).
+  pcmSampleBits(): number | undefined {
+    return this.clipFormatOrNone()?.pcmSampleBits
   }
 
   clipJob(kind: ClipKind, modelId: string, data: unknown): ClipJob {
@@ -312,6 +322,18 @@ export class Provider {
     const quote = this.clipFormatOrNone()?.quote
     const wire = quote?.request(kind, this.config.baseUrl, modelId, values, entry)
     return quote && wire ? { request: { ...this.mediaApiRequest(wire, secret), timeoutMs: MODEL_LIST_TIMEOUT_MS }, usd: quote.usd } : null
+  }
+
+  // `wire`, the request of a media format for an image or a clip of `kind`,
+  // with the fixed body parts that the config has for the model
+  // (`mediaApi.modelRequestBodies`).
+  private withModelBody(kind: MediaKind, modelId: string, wire: MediaWireRequest): MediaWireRequest {
+    const parts = (this.config.mediaApi?.modelRequestBodies ?? [])
+      .filter((part) => part.request === kind && modelId.startsWith(part.modelIdPrefix))
+    if (wire.body === undefined || parts.length === 0) return wire
+    const body = { ...wire.body }
+    for (const part of parts) mergeBodyPart(body, part.body)
+    return { ...wire, body }
   }
 
   // A config can give a model a media request kind (`models[].request`)

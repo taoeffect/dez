@@ -188,7 +188,7 @@ describe('provider config schema', () => {
         },
       },
       imageOutputBody: { modalities: ['image', 'text'] },
-      mediaApi: { format: 'openrouter' },
+      mediaApi: { format: 'openrouter', modelRequestBodies: [{ request: 'tts', modelIdPrefix: 'heygen/', body: { response_format: 'pcm' } }] },
     }
 
     expect(parse(fields).data).toMatchObject(fields)
@@ -206,6 +206,24 @@ describe('provider config schema', () => {
     expect(parse({ imageOutputBody: ['image'] }).success).toBe(false)
     expect(parse({ mediaApi: { format: 'openai' } }).success).toBe(false)
     expect(parse({ mediaApi: {} }).success).toBe(false)
+  })
+
+  it('takes a model request body only for a media kind, a model id prefix, and a JSON object', () => {
+    const parse = (part: Record<string, unknown>) => providerConfigSchema.safeParse({
+      id: 'p',
+      name: 'P',
+      baseUrl: 'http://h',
+      mediaApi: { format: 'venice', modelRequestBodies: [{ request: 'music', modelIdPrefix: 'song-', body: { loop: true }, ...part }] },
+    }).success
+
+    expect(parse({})).toBe(true)
+    // A chat request gets its fixed body part from `requestBody`.
+    expect(parse({ request: 'chat' })).toBe(false)
+    expect(parse({ request: 'none' })).toBe(false)
+    // An empty prefix would name every model.
+    expect(parse({ modelIdPrefix: '' })).toBe(false)
+    expect(parse({ body: ['pcm'] })).toBe(false)
+    expect(parse({ body: JSON.parse('{"__proto__":{"polluted":true}}') })).toBe(false)
   })
 
   it('keeps an empty thinking object and accepts only JSON objects as bodies', () => {

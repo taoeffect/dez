@@ -47,6 +47,10 @@ export interface ProviderGenerateMediaInput {
   modelId: string
   kind: MediaKind
   prompt: string
+  // The lyrics of a song, for a music model that takes them
+  // (`ModelInfo.text.lyrics`); `prompt` is then the style of the song. A
+  // request of another kind does not send them.
+  lyrics?: string
   // The absolute paths of stored images (`storedImageFile`): the inputs of
   // an `imageEdit` request, the first one the image to edit. A request of
   // another kind does not send them.

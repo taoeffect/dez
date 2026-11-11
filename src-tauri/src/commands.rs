@@ -1,5 +1,7 @@
 use std::borrow::Cow;
 
+use serde::Deserialize;
+use serde::de::IntoDeserializer;
 use tauri::State;
 use tauri::ipc::InvokeBody;
 
@@ -207,18 +209,25 @@ pub async fn delete_conversation_file(id: String) -> Result<(), String> {
 
 // The one writer command for app files, text or bytes (`dez.native/saveAppFile`
 // sends it). The content is the raw IPC body, so bytes never go as a JSON
-// number array, which is several times larger. The relative path is in the
-// `path` header, as plugin-fs `writeFile` does it.
+// number array, which is several times larger. A raw body leaves no place
+// for JSON arguments, so the root and the relative path are in the `root`
+// and `path` headers, as plugin-fs `writeFile` does it.
 #[tauri::command]
 pub async fn save_app_file(request: tauri::ipc::Request<'_>) -> Result<(), String> {
-    let path = request
-        .headers()
-        .get("path")
-        .ok_or("Missing app file path")?
-        .to_str()
-        .map_err(|_| "Invalid app file path header".to_string())?;
+    // The same names as the `root` argument of the JSON commands.
+    let root = FileRoot::deserialize(header_text(request.headers(), "root")?.into_deserializer())
+        .map_err(|_: serde::de::value::Error| "Invalid app file root header".to_string())?;
+    let path = header_text(request.headers(), "path")?;
     let content = invoke_body_bytes(request.body())?;
-    crate::persistence::save_app_file(path, &content)
+    crate::persistence::save_app_file(root, path, &content)
+}
+
+fn header_text<'a>(headers: &'a tauri::http::HeaderMap, name: &str) -> Result<&'a str, String> {
+    headers
+        .get(name)
+        .ok_or_else(|| format!("Missing app file {name} header"))?
+        .to_str()
+        .map_err(|_| format!("Invalid app file {name} header"))
 }
 
 // The bytes of a raw IPC body. When the webview cannot use Tauri's custom
@@ -247,8 +256,8 @@ pub async fn load_app_file(path: String) -> Result<String, String> {
 // Returns raw bytes, which arrive in JavaScript as an ArrayBuffer, not as a
 // JSON number array.
 #[tauri::command]
-pub async fn load_app_file_bytes(path: String) -> Result<tauri::ipc::Response, String> {
-    crate::persistence::load_app_file_bytes(&path).map(tauri::ipc::Response::new)
+pub async fn load_app_file_bytes(root: FileRoot, path: String) -> Result<tauri::ipc::Response, String> {
+    crate::persistence::load_app_file_bytes(root, &path).map(tauri::ipc::Response::new)
 }
 
 // A missing file is not an error.

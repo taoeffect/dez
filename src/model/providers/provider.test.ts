@@ -1137,6 +1137,8 @@ describe('provider models', () => {
           // The request kind comes from a second value of the entry.
           film: { outputs: ['video'], requestBy: { path: 'spec.kind', values: { fromText: 'video' } } },
           sound: { outputs: ['audio'], request: 'tts', requestBy: { path: 'spec.kind', values: { song: 'music' } } },
+          // A JSON key is a text: `true` names the boolean value.
+          voice: { outputs: ['audio'], request: 'music', requestBy: { path: 'spec.changer', values: { true: 'none' } } },
           priced: { outputs: ['image'], requiredPath: 'price.image' },
           embed: { outputs: [] },
         },
@@ -1163,6 +1165,8 @@ describe('provider models', () => {
         { id: 'by-no-value', arch: { out: 'film' } },
         { id: 'value-beats-request', arch: { out: 'sound' }, spec: { kind: 'song' } },
         { id: 'request-for-other-value', arch: { out: 'sound' }, spec: { kind: 'constructor' } },
+        { id: 'by-true', arch: { out: 'voice' }, spec: { changer: true } },
+        { id: 'by-false', arch: { out: 'voice' }, spec: { changer: false } },
       ],
     })
 
@@ -1187,6 +1191,8 @@ describe('provider models', () => {
       listed('by-no-value', { outputs: ['video'], request: 'none' }),
       listed('value-beats-request', { outputs: ['audio'], request: 'music' }),
       listed('request-for-other-value', { outputs: ['audio'], request: 'tts' }),
+      listed('by-true', { outputs: ['audio'], request: 'none' }),
+      listed('by-false', { outputs: ['audio'], request: 'music' }),
     ])
   })
 
@@ -1291,6 +1297,7 @@ describe('provider models', () => {
       { id: 'video', type: 'video' },
       { id: 'speech', type: 'tts' },
       { id: 'song', type: 'music' },
+      { id: 'voice-changer', type: 'music', model_spec: { voice_changer: true } },
       { id: 'text-to-video', type: 'video', model_spec: { constraints: { model_type: 'text-to-video' } } },
       { id: 'image-to-video', type: 'video', model_spec: { constraints: { model_type: 'image-to-video' } } },
       { id: 'embed', type: 'embedding' },
@@ -1301,6 +1308,8 @@ describe('provider models', () => {
       ['video', ['video'], 'none'],
       ['speech', ['audio'], 'tts'],
       ['song', ['audio'], 'music'],
+      // It needs a recording, which Dez does not send.
+      ['voice-changer', ['audio'], 'none'],
       // Only a video model that needs no input but text gets requests.
       ['text-to-video', ['video'], 'video'],
       ['image-to-video', ['video'], 'none'],
@@ -1394,7 +1403,7 @@ describe('media model data', () => {
     ])
     const mediaEntries = new Map<string, unknown>([['video', { id: 'video', supported_durations: [4, 1] }]])
 
-    expect(openRouterLike.withParameters([chat, image, speech, video, unlisted], entries, mediaEntries)).toStrictEqual([
+    expect(openRouterLike.withClipData([chat, image, speech, video, unlisted], entries, mediaEntries)).toStrictEqual([
       chat,
       image,
       { ...speech, parameters: [{ name: 'voice', label: 'Voice', options: ['af_alloy', 'af_bella'], default: 'af_alloy' }] },
@@ -1407,8 +1416,66 @@ describe('media model data', () => {
   it('gives no parameters for a provider with no media API', () => {
     const speech = providerModel('local', 'speech', 'Speech', { request: 'tts' })
 
-    expect(customProvider({}).withParameters([speech], new Map([['speech', { id: 'speech', supported_voices: ['af_alloy'] }]]), new Map()))
+    expect(customProvider({}).withClipData([speech], new Map([['speech', { id: 'speech', supported_voices: ['af_alloy'] }]]), new Map()))
       .toStrictEqual([speech])
+  })
+
+  it('gives each clip model the rules of its text from its entry, also a model with no parameters', () => {
+    const chat = providerModel('local', 'chat', 'Chat', { request: 'chat' })
+    const song = providerModel('local', 'song', 'Song', { request: 'music' })
+    const sound = providerModel('local', 'sound', 'Sound', { request: 'music' })
+    const lyrics = { supports_lyrics: true, lyrics_required: true, min_prompt_length: 10, prompt_character_limit: 300 }
+    const entries = new Map<string, unknown>([
+      // A chat model takes no clip text: Dez sends it chat requests.
+      ['chat', { id: 'chat', model_spec: lyrics }],
+      ['song', { id: 'song', model_spec: lyrics }],
+      ['sound', { id: 'sound', model_spec: { supports_loop: true } }],
+    ])
+
+    expect(veniceLike.withClipData([chat, song, sound], entries, new Map())).toStrictEqual([
+      chat,
+      { ...song, text: { minPromptLength: 10, maxPromptLength: 300, lyrics: { required: true } } },
+      // An entry that tells nothing of the text gives no `text` field.
+      { ...sound, parameters: [{ name: 'loop', label: 'Loop' }] },
+    ])
+  })
+
+  it('merges the body parts of the config into the media requests of the kind and the models that they name, in list order', () => {
+    const provider = customProvider({
+      mediaApi: {
+        format: 'openrouter',
+        modelRequestBodies: [
+          { request: 'tts', modelIdPrefix: 'heygen/', body: { response_format: 'pcm' } },
+          { request: 'tts', modelIdPrefix: 'heygen/heygen-voice-2', body: { response_format: 'wav', provider: { sort: 'price' } } },
+          { request: 'video', modelIdPrefix: 'heygen/', body: { resolution: '480p' } },
+        ],
+      },
+    })
+    const speech = (modelId: string) => provider.clipRequest('tts', modelId, { prompt: 'Hi', values: { voice: 'nadine' } }).body
+
+    expect([speech('heygen/heygen-voice-1'), speech('heygen/heygen-voice-2'), speech('hexgrad/kokoro-82m'), speech('other/heygen/voice')]).toStrictEqual([
+      { voice: 'nadine', model: 'heygen/heygen-voice-1', input: 'Hi', response_format: 'pcm' },
+      { voice: 'nadine', model: 'heygen/heygen-voice-2', input: 'Hi', response_format: 'wav', provider: { sort: 'price' } },
+      { voice: 'nadine', model: 'hexgrad/kokoro-82m', input: 'Hi', response_format: 'mp3' },
+      { voice: 'nadine', model: 'other/heygen/voice', input: 'Hi', response_format: 'mp3' },
+    ])
+  })
+
+  // The ids of the OpenRouter model list of 2026-11-10. Its guide names
+  // the models that make only PCM; no field of an entry does.
+  it('asks the OpenRouter speech models that make only raw PCM for PCM, and the others for mp3', () => {
+    const format = (modelId: string) => builtInProvider('openrouter').clipRequest('tts', modelId, { prompt: 'Hi', values: {} }).body?.response_format
+    const pcmOnly = [
+      'heygen/heygen-voice-1',
+      'heygen/heygen-voice-1-turbo',
+      'heygen/heygen-voice-1-turbo:free',
+      'google/gemini-3.8-flash-lite-tts',
+      'google/gemini-3.8-flash-tts',
+      'google/gemini-3.1-flash-tts-preview',
+    ]
+    const others = ['minimax/speech-2.8-hd', 'hexgrad/kokoro-82m', 'elevenlabs/eleven-v3', 'x-ai/grok-voice-tts-1.0']
+
+    expect([pcmOnly.map(format), others.map(format)]).toStrictEqual([pcmOnly.map(() => 'pcm'), others.map(() => 'mp3')])
   })
 
   it('asks for the price of a clip with the headers and the time limit of a model list, and reads it', () => {
