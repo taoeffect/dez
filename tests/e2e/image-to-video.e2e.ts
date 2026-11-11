@@ -32,13 +32,20 @@ import { editorDoc, focusEditor, newTab, openToasts, pickModel, setCaret, submit
 // - an image that passes the size rules of the model's entry goes as its
 //   own bytes (the tests above); one that breaks them goes as a copy that
 //   passes them (the part in its middle, scaled), and the stored file and
-//   the message stay as they are.
+//   the message stay as they are;
+// - a reference-to-video model (only its id tells it) gets the images of
+//   the message in `reference_image_urls`, not as frames, and its prompt
+//   names each image by its place in that list (`@Image1`), in place of
+//   the reference and of each mention.
 //
 // One app session serves the whole file; each test starts in a new tab.
 
 const FILMS: MockProvider = { id: 'films', name: 'Films Mock', modelId: 'frames-model', modelName: 'Frames Model' }
 const QUEUE_PATH = `/${FILMS.id}/v1/video/queue`
 const RETRIEVE_PATH = `/${FILMS.id}/v1/video/retrieve`
+// A Grok reference-to-video model: it takes 7 references, named `@Image1`
+// and on (veniceReferences.ts).
+const REFERENCES = { id: 'grok-imagine-reference-to-video-mock', name: 'References Model' }
 
 const MODEL_LIST = {
   object: 'list',
@@ -59,6 +66,19 @@ const MODEL_LIST = {
         reference_image_min_short_side_pixels: 32,
         reference_image_min_aspect_ratio: 0.4,
         reference_image_max_aspect_ratio: 2.5,
+      },
+    },
+  }, {
+    id: REFERENCES.id,
+    name: REFERENCES.name,
+    type: 'video',
+    model_spec: {
+      constraints: {
+        model_type: 'image-to-video',
+        durations: ['10s', '5s'],
+        resolutions: ['720p', '480p'],
+        aspect_ratios: [],
+        audio_configurable: true,
       },
     },
   }],
@@ -86,7 +106,8 @@ describe('image-to-video models', () => {
     await waitForValue(browser, `reference of the image ${id}`, async () => (await threadSections(browser)).at(-1)?.text.endsWith(`](id=${id})`), true)
   }
 
-  // Takes the queue request of a submit and checks its body.
+  // Takes the queue request of a submit and checks its body, which is for
+  // the frames model unless `body` names another.
   async function queueRequest (body: Record<string, unknown>): Promise<HeldRequest> {
     const queue = await setup.mock.waitForRequest(browser)
     expect(queue.path).toBe(QUEUE_PATH)
@@ -99,13 +120,13 @@ describe('image-to-video models', () => {
   // state of the job 5 seconds later, and the answer of a job that is done
   // is the clip. Returns the tag of the clip, which the reply `agentIndex`
   // then holds as its whole text.
-  async function answerJob (queue: HeldRequest, queueId: string, agentIndex: number): Promise<string> {
+  async function answerJob (queue: HeldRequest, queueId: string, agentIndex: number, modelId = FILMS.modelId): Promise<string> {
     queue.reply.writeHead(200, { 'Content-Type': 'application/json' })
-    queue.reply.end(JSON.stringify({ model: FILMS.modelId, queue_id: queueId, status: 'QUEUED' }))
+    queue.reply.end(JSON.stringify({ model: modelId, queue_id: queueId, status: 'QUEUED' }))
 
     const retrieve = await setup.mock.waitForRequest(browser)
     expect(retrieve.path).toBe(RETRIEVE_PATH)
-    expect(JSON.parse(retrieve.body)).toStrictEqual({ model: FILMS.modelId, queue_id: queueId })
+    expect(JSON.parse(retrieve.body)).toStrictEqual({ model: modelId, queue_id: queueId })
     retrieve.reply.writeHead(200, { 'Content-Type': 'video/webm' })
     retrieve.reply.end(WEBM_VIDEO)
 
@@ -323,6 +344,34 @@ describe('image-to-video models', () => {
     await waitForThread(browser, [{ role: 'user', text: message }, { role: 'agent', text: clip }, { role: 'user', text: '' }])
     const storedPath = message.slice('Wide: !['.length, message.indexOf(']('))
     expect(await fs.promises.readFile(storedPath)).toStrictEqual(WIDE_PNG)
+    expect(await consoleErrors(browser)).toStrictEqual([])
+  })
+
+  it('sends the images of a message to a reference-to-video model as its references, and names them in the prompt', async () => {
+    await pickModel(browser, FILMS.name, REFERENCES.name)
+    await focusEditor(browser)
+    await typeThenPaste('The fox ', FIRST_PNG, 'a')
+    await typeThenPaste(' meets the bird ', LAST_PNG, 'b')
+    await typeThenPaste(' in the park ', THIRD_PNG, 'c')
+    await typeKeys(browser, '. Keep @a in front.')
+    const message = (await threadSections(browser))[0].text
+    await submit(browser, '')
+
+    const queue = await queueRequest({
+      model: REFERENCES.id,
+      prompt: 'The fox @Image1 meets the bird @Image2 in the park @Image3. Keep @Image1 in front.',
+      duration: '5s',
+      resolution: '480p',
+      audio: true,
+      reference_image_urls: [pngDataUrl(FIRST_PNG), pngDataUrl(LAST_PNG), pngDataUrl(THIRD_PNG)],
+    })
+    const clip = await answerJob(queue, 'queue-5', 1, REFERENCES.id)
+
+    expect(clip).toMatch(/^<dez:video id="d" type="video\/webm" src="[^"]+\.webm" expires="[^"]+" job="queue-5"\/>$/)
+    // The message keeps its references and its mention.
+    await waitForThread(browser, [{ role: 'user', text: message }, { role: 'agent', text: clip }, { role: 'user', text: '' }])
+    expect(message).toMatch(/^The fox !\[[^\]]+\]\(id=a\) meets the bird !\[[^\]]+\]\(id=b\) in the park !\[[^\]]+\]\(id=c\)\. Keep @a in front\.$/)
+    expect(await openToasts(browser, 'warning')).toStrictEqual([])
     expect(await consoleErrors(browser)).toStrictEqual([])
   })
 })

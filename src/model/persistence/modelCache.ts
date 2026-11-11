@@ -34,12 +34,29 @@ const clipTextRulesSchema = z.object({
 // InputImageRules (src/model/providers/clipImages.ts). A bad size rule is
 // dropped alone (`imageSizeRules`), and the model stays: its images then
 // go as they are, and the provider checks them. A fewest count above the
-// most count is no rule, so it is dropped too.
-const inputImageRulesSchema = z.object({ maxImages: z.number().int().positive(), minImages: z.unknown(), size: z.unknown() })
-  .transform(({ maxImages, minImages, size }): InputImageRules => {
-    const sizeRules = isRecord(size) ? imageSizeRules(size) : undefined
-    const fewest = typeof minImages === 'number' && Number.isInteger(minImages) && minImages > 0 && minImages <= maxImages ? minImages : undefined
-    return { maxImages, ...(fewest !== undefined && { minImages: fewest }), ...(sizeRules && { size: sizeRules }) }
+// most count is no rule, so it is dropped too. So is a prompt name with no
+// `{n}` (the images then keep their ids in the prompt), and a bad
+// `whenParameter` (the model's own rules then apply).
+const ownImageRulesShape = { maxImages: z.number().int().positive(), minImages: z.unknown(), size: z.unknown(), references: z.unknown() }
+
+function ownImageRules({ maxImages, minImages, size, references }: { maxImages: number, minImages?: unknown, size?: unknown, references?: unknown }): Omit<InputImageRules, 'whenParameter'> {
+  const sizeRules = isRecord(size) ? imageSizeRules(size) : undefined
+  const fewest = typeof minImages === 'number' && Number.isInteger(minImages) && minImages > 0 && minImages <= maxImages ? minImages : undefined
+  const promptName = isRecord(references) && typeof references.promptName === 'string' && references.promptName.includes('{n}') ? references.promptName : undefined
+  return {
+    maxImages,
+    ...(fewest !== undefined && { minImages: fewest }),
+    ...(sizeRules && { size: sizeRules }),
+    ...(isRecord(references) && { references: promptName === undefined ? {} : { promptName } }),
+  }
+}
+
+const whenParameterSchema = z.object({ name: z.string().min(1), value: optionValueSchema, rules: z.object(ownImageRulesShape).transform(ownImageRules) })
+
+const inputImageRulesSchema = z.object({ ...ownImageRulesShape, whenParameter: z.unknown() })
+  .transform(({ whenParameter, ...own }): InputImageRules => {
+    const other = whenParameterSchema.safeParse(whenParameter)
+    return { ...ownImageRules(own), ...(other.success && { whenParameter: other.data }) }
   })
 
 const modelInfoSchema = z.object({

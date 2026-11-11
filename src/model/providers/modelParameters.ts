@@ -12,7 +12,9 @@ export type OptionValue = string | number
 export type ParameterValue = OptionValue | boolean
 
 interface ParameterBase {
-  // The name of the request field that gets the value.
+  // The name of the request field that gets the value. The one exception
+  // is a parameter that the format's request reads itself and sends as no
+  // field (OpenRouter's `images_as`, mediaFormats.ts).
   name: string
   // The name that the UI shows.
   label: string

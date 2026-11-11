@@ -1525,13 +1525,20 @@ describe('media model data', () => {
       ['speech', { id: 'speech', supported_voices: ['af_alloy', 'af_bella'] }],
       ['video', { id: 'video' }],
     ])
-    const mediaEntries = new Map<string, unknown>([['video', { id: 'video', supported_durations: [4, 1] }]])
+    const mediaEntries = new Map<string, unknown>([['video', { id: 'video', supported_durations: [4, 1], supported_frame_images: ['first_frame'] }]])
 
     expect(openRouterLike.withClipData([chat, image, speech, video, unlisted], entries, mediaEntries)).toStrictEqual([
       chat,
       image,
       { ...speech, parameters: [{ name: 'voice', label: 'Voice', options: ['af_alloy', 'af_bella'], default: 'af_alloy' }] },
-      { ...video, parameters: [{ name: 'duration', label: 'Length (seconds)', options: [1, 4], default: 1 }] },
+      {
+        ...video,
+        parameters: [
+          { name: 'duration', label: 'Length (seconds)', options: [1, 4], default: 1 },
+          { name: 'images_as', label: 'Images as', options: ['frames', 'references'], default: 'frames' },
+        ],
+        images: { maxImages: 1, whenParameter: { name: 'images_as', value: 'references', rules: { maxImages: 16, references: {} } } },
+      },
       // A model that the lists do not have gets no `parameters` field.
       unlisted,
     ])
@@ -1599,7 +1606,13 @@ describe('media model data', () => {
       imageRules(openRouterLike.withClipData([speech, edit, fromText, frames], entries, mediaEntries)),
     ]).toStrictEqual([
       [['speech', 'no field'], ['edit', { maxImages: 6 }], ['from-text', 'no field'], ['from-image', { maxImages: 2 }]],
-      [['speech', 'no field'], ['edit', 'no field'], ['from-text', 'no field'], ['frames', { maxImages: 2 }]],
+      [
+        ['speech', 'no field'],
+        ['edit', 'no field'],
+        // Every OpenRouter video model takes references (mediaFormats.ts).
+        ['from-text', { maxImages: 16, references: {} }],
+        ['frames', { maxImages: 2, whenParameter: { name: 'images_as', value: 'references', rules: { maxImages: 16, references: {} } } }],
+      ],
     ])
   })
 

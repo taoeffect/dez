@@ -6,7 +6,7 @@ import { modelToggles, toggleRows, toggleValue, toolsApply } from '../providers/
 import { isToolsEnabled } from '../providers/toolsSetting'
 import { MODEL_REQUESTS, type MediaKind, type ModelInfo, type ModelRequest } from '../providers/types'
 import { mediaRequestInput, sectionsToStreamMessages } from '../streams/messages'
-import { modelUsage, USAGE_TEXTS, type UsageFacts } from './modelUsage'
+import { modelUsage, referenceNamesUsage, USAGE_TEXTS, type UsageFacts } from './modelUsage'
 
 // Each choice of a usage text is checked against the code that builds the
 // request, so that a change of that code that the texts do not follow
@@ -21,7 +21,14 @@ const user = (id: string, text: string): Section => ({ id, role: 'user', content
 const reply = (id: string, text: string): Section => ({ id, role: 'agent', model: ref, content: [{ kind: 'text', text }] })
 
 const IMAGE_INPUTS = [undefined, true, false]
-const IMAGE_RULES: (InputImageRules | undefined)[] = [undefined, { maxImages: 1 }, { maxImages: 2, minImages: 1 }, { maxImages: 4 }]
+const IMAGE_RULES: (InputImageRules | undefined)[] = [
+  undefined,
+  { maxImages: 1 },
+  { maxImages: 2, minImages: 1 },
+  { maxImages: 4 },
+  { maxImages: 7, references: {} },
+  { maxImages: 7, references: { promptName: '@Image{n}' } },
+]
 const TEXT_RULES: (ClipTextRules | undefined)[] = [undefined, { maxPromptLength: 100 }, { lyrics: { required: false } }, { lyrics: { required: true, maxLength: 50 } }]
 
 // Each model of `request` that the rules above make.
@@ -97,6 +104,30 @@ describe('modelUsage', () => {
           expect(model.text?.lyrics !== undefined && usage.includes(lyricsHowTo(model.text.lyrics)), `${kind} ${JSON.stringify(model)}`).toBe(lyrics !== undefined)
         }
       }
+    })
+
+    // The names text shows the names of the first two images of the request.
+    // A model whose request sends no text (an upscale) names nothing.
+    it('tells the names of the images in the prompt exactly when a request gives them', () => {
+      for (const kind of mediaKinds) {
+        for (const model of models(kind)) {
+          const usage = modelUsage(model, NO_FACTS)
+          const { prompt, images } = mediaInput(kind, model, [user('u1', `Mix ![${FIRST}](id=a) and ![${SECOND}](id=b)`)])
+          const promptName = model.images?.references?.promptName
+          const named = promptName !== undefined && usage.includes(referenceNamesUsage(promptName))
+          const label = `${kind} ${JSON.stringify(model)}`
+
+          expect(named || usage.includes(USAGE_TEXTS.promptImages) || usage.includes(USAGE_TEXTS.noText), label).toBe(true)
+          expect(named, label).toBe(!usage.includes(USAGE_TEXTS.noText) && images.length > 0 && !prompt.includes('![image]'))
+          if (named) expect(prompt, label).toBe('Mix @Image1 and @Image2')
+        }
+      }
+    })
+
+    it('tells that the images of a model with reference rules are references, not frames', () => {
+      const usage = modelUsage({ id: 'm', name: 'M', provider: 'p', request: 'video', images: { maxImages: 7, references: {} } }, NO_FACTS)
+
+      expect([usage.includes(USAGE_TEXTS.videoReferences), usage.some((text) => text.includes('first frame'))]).toStrictEqual([true, false])
     })
 
     it('tells the rules of the input images only to a model that takes images', () => {

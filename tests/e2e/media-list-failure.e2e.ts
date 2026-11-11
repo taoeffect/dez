@@ -81,7 +81,10 @@ describe('model parameters after a media model list that fails', () => {
   })
 
   it('keeps the lengths of a video model while the list of the video API fails, also after a restart, until a list loads again', async () => {
-    const lengths: ParameterRow[] = [{ name: 'duration', label: 'Length (seconds)', options: ['4', '8'], picked: '4' }]
+    // The model's entry lists no frames, so it takes its images only as
+    // references.
+    const imagesAs: ParameterRow = { name: 'images_as', label: 'Images as', options: ['references'], picked: 'references' }
+    const lengths: ParameterRow[] = [{ name: 'duration', label: 'Length (seconds)', options: ['4', '8'], picked: '4' }, imagesAs]
     await resetConsoleErrors(browser)
     await waitForRows('lengths of the first check', lengths)
 
@@ -104,6 +107,6 @@ describe('model parameters after a media model list that fails', () => {
 
     answers[VIDEO_LIST_PATH] = { data: [{ id: FILMS.modelId, supported_durations: [6] }] }
     await checkAgain()
-    await waitForRows('lengths of the list that loaded', [{ name: 'duration', label: 'Length (seconds)', options: ['6'], picked: '6' }])
+    await waitForRows('lengths of the list that loaded', [{ name: 'duration', label: 'Length (seconds)', options: ['6'], picked: '6' }, imagesAs])
   })
 })

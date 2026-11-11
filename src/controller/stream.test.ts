@@ -1392,6 +1392,33 @@ describe('dez.stream/start media round', () => {
       expect(mediaInputs.map((input) => input.images)).toStrictEqual([[]])
       expect(toasts).toStrictEqual([])
     })
+
+    // An OpenRouter video model: two frames, or 16 references when the
+    // user chose them (mediaFormats.ts).
+    it.each([
+      ['frames by default', undefined, [image('cat.png'), image('fox.png')], leftOut('Image not sent', 'M takes only 2 images, so 1 image was left out of the request.')],
+      ['references that the user chose', 'references', [image('cat.png'), image('fox.png'), generated('old.png')], []],
+    ])('sends a model that takes its images as %s the images of those rules', async (_name, imagesAs, images, warnings) => {
+      sbp('dez.model/modelCache/applyProviderResult', model.providerId, {
+        ok: true,
+        models: [{
+          id: model.modelId,
+          name: model.modelName,
+          provider: model.providerId,
+          outputs: ['video'],
+          request: 'video',
+          parameters: [{ name: 'images_as', label: 'Images as', options: ['frames', 'references'], default: 'frames' }],
+          images: { maxImages: 2, whenParameter: { name: 'images_as', value: 'references', rules: { maxImages: 16, references: {} } } },
+        }],
+      })
+      if (imagesAs !== undefined) sbp('dez.model/settings/setModelParameter', { providerId: model.providerId, modelId: model.modelId }, 'images_as', imagesAs)
+      setConversation(`${twoImages} Not @b.`)
+
+      await sbp('dez.controller/submitTab', activeTab().id)
+
+      expect(mediaInputs.map((input) => input.images)).toStrictEqual([images])
+      expect(toasts).toStrictEqual(warnings)
+    })
   })
 
   // A clip can take minutes, and a tag counts only as a whole line.

@@ -289,7 +289,12 @@ describe('model checks of a provider with media model lists', () => {
     parameters: [{ name: 'voice', label: 'Voice', options: ['af_alloy', 'af_bella'], default: 'af_alloy' }],
   }
   const video = { id: 'video', name: 'video', provider: 'router', request: 'video' }
-  const videoParameters = [{ name: 'duration', label: 'Length (seconds)', options: [1, 4], default: 1 }]
+  // The video list entry tells no frame: the model takes only references.
+  const imagesAsReferences = { name: 'images_as', label: 'Images as', options: ['references'], default: 'references' }
+  const videoData = {
+    parameters: [{ name: 'duration', label: 'Length (seconds)', options: [1, 4], default: 1 }, imagesAsReferences],
+    images: { maxImages: 16, references: {} },
+  }
   const image = { id: 'image', name: 'image', provider: 'router', request: 'image' }
   const imageParameters = [{ name: 'aspect_ratio', label: 'Aspect ratio', options: ['1:1', '16:9'] }]
   const listUrls = () => httpRequests.map(({ method, url }) => `${method} ${url}`).sort()
@@ -319,7 +324,7 @@ describe('model checks of a provider with media model lists', () => {
 
     expect(result).toStrictEqual({
       ok: true,
-      models: [speech, { ...video, parameters: videoParameters }, { ...image, parameters: imageParameters }],
+      models: [speech, { ...video, ...videoData }, { ...image, parameters: imageParameters }],
       entries: new Map([['speech', speechEntry], ['video', videoEntry], ['image', imageEntry]]),
       mediaEntries: new Map<string, unknown>([['image', imageMediaEntry], ['video', videoMediaEntry], ['not-in-the-model-list', { id: 'not-in-the-model-list' }]]),
     })
@@ -361,13 +366,13 @@ describe('model checks of a provider with media model lists', () => {
     await check()
     httpAnswers.set(`${ROUTER_URL}/videos/models`, { status: 503, json: { error: 'Busy' } })
     await check()
-    expect(cachedModels()).toStrictEqual([speech, { ...video, parameters: videoParameters }, { ...image, parameters: imageParameters }])
+    expect(cachedModels()).toStrictEqual([speech, { ...video, ...videoData }, { ...image, parameters: imageParameters }])
 
     // The next good list wins over what the cache kept.
     const longer = { id: 'video', supported_durations: [8] }
     httpAnswers.set(`${ROUTER_URL}/videos/models`, { status: 200, json: { data: [longer] } })
     await check()
-    expect(cachedModels()?.[1].parameters).toStrictEqual([{ name: 'duration', label: 'Length (seconds)', options: [8], default: 8 }])
+    expect(cachedModels()?.[1].parameters).toStrictEqual([{ name: 'duration', label: 'Length (seconds)', options: [8], default: 8 }, imagesAsReferences])
   })
 
   it('fails the check when the model list fails, whatever the media lists say', async () => {
@@ -386,7 +391,7 @@ describe('model checks of a provider with media model lists', () => {
     // With no model list, the speech model has no entry with voices.
     expect(result.models).toStrictEqual([
       { id: 'speech', name: 'speech', provider: 'router', request: 'tts' },
-      { ...video, parameters: videoParameters },
+      { ...video, ...videoData },
       { ...image, parameters: imageParameters },
     ])
     expect(listUrls()).toStrictEqual([`GET ${ROUTER_URL}/images/models`, `GET ${ROUTER_URL}/videos/models`])

@@ -1,9 +1,12 @@
 import sbp from '@sbp/sbp'
+import { modelRefKey } from '../model/chat/modelRef'
 import { effectiveOutputs } from '../model/modelOutputs'
-import { missingImageProblem } from '../model/providers/clipImages'
+import { inputImageRulesFor, missingImageProblem } from '../model/providers/clipImages'
 import { clipTextProblem } from '../model/providers/clipText'
-import { effectiveRequest, type ModelInfo } from '../model/providers/types'
+import { effectiveParameterValues } from '../model/providers/modelParameters'
+import { effectiveRequest, type ClipInputRules, type ModelInfo } from '../model/providers/types'
 import { unstoredOutputMessage, unusableModelMessage } from '../model/providers/unusableModel'
+import type { SettingsSnapshot } from '../model/state'
 import { mediaRequestInput } from '../model/streams/messages'
 import type { RequestMessages } from '../model/streams/types'
 
@@ -37,17 +40,25 @@ export default sbp('sbp/selectors/register', {
     // A model that the cache does not have has no request kind, so it gets
     // a chat request, as before models had one. A refusal changes nothing,
     // so it comes before the end of a running reply's output.
-    const cachedModel: Pick<ModelInfo, 'outputs' | 'request' | 'clipInput' | 'text' | 'images' | 'unstoredOutput'> = sbp('dez.model/modelCache/model', model.providerId, model.modelId) ?? {}
+    const cachedModel: Pick<ModelInfo, 'outputs' | 'request' | 'clipInput' | 'text' | 'images' | 'parameters' | 'unstoredOutput'> = sbp('dez.model/modelCache/model', model.providerId, model.modelId) ?? {}
     const kind = effectiveRequest(cachedModel)
     let message: string | null = null
     // How many images of the message a media request takes and leaves out.
     let mediaImages = { sent: 0, leftOut: 0 }
+    // The text and image rules of a media request. The image rules can
+    // depend on the parameter values that the request sends (OpenRouter's
+    // "Images as"), so they are the rules of the user's values, which the
+    // request reads at its start too (`generateMedia`).
+    let inputRules: ClipInputRules = {}
     if (kind === 'none') {
       message = unusableModelMessage(model.modelName, cachedModel)
     } else if (cachedModel.unstoredOutput !== undefined) {
       // The provider would bill an image that Dez then cannot store.
       message = unstoredOutputMessage(model.modelName, cachedModel.unstoredOutput)
     } else if (kind !== 'chat') {
+      const chosen = (sbp('dez.model/settings/snapshot') as SettingsSnapshot).modelParameters[modelRefKey(model)]
+      const images = inputImageRulesFor(cachedModel.images, effectiveParameterValues(cachedModel.parameters ?? [], chosen))
+      inputRules = { ...(cachedModel.text && { text: cachedModel.text }), ...(images && { images }) }
       // An input that the model is known not to take (no image for a model
       // that edits one, makes one larger, makes its video from one, or
       // needs a reference image; no lyrics for a model that needs them; a
@@ -56,8 +67,8 @@ export default sbp('sbp/selectors/register', {
       // running reply's output changes no user message and adds no image,
       // so the input that this checks is the input of the request. Only a
       // clip model has text rules.
-      const input = mediaRequestInput(kind, request.messages, tab.sections, cachedModel)
-      message = missingImageProblem(model.modelName, kind, input.images.length, cachedModel.images) ?? clipTextProblem(model.modelName, cachedModel.text, input)
+      const input = mediaRequestInput(kind, request.messages, tab.sections, inputRules)
+      message = missingImageProblem(model.modelName, kind, input.images.length, images) ?? clipTextProblem(model.modelName, cachedModel.text, input)
       mediaImages = { sent: input.images.length, leftOut: input.imagesLeftOut }
     }
     if (message !== null) {
@@ -97,7 +108,7 @@ export default sbp('sbp/selectors/register', {
       messages,
       sendTools,
       imageOutput: effectiveOutputs(cachedModel).includes('image'),
-      inputRules: cachedModel,
+      inputRules,
     })
   },
 

@@ -4,7 +4,7 @@ import { providerInfo } from '../providers/testing'
 import type { ModelInfo } from '../providers/types'
 import { unstoredOutputMessage, unusableModelMessage } from '../providers/unusableModel'
 import { MODEL_INFO_SIZE_CAP, modelInfoParameterValues, modelInfoPart, modelInfoTarget, modelInfoText, type ModelInfoFacts } from './modelInfo'
-import { modelUsage } from './modelUsage'
+import { modelUsage, USAGE_TEXTS } from './modelUsage'
 import { ToolError } from './types'
 
 const OPENROUTER = providerInfo('openrouter', 'OpenRouter')
@@ -175,6 +175,29 @@ describe('modelInfoText', () => {
     const edit: ModelInfo = { id: 'edit', name: 'Edit', provider: OPENROUTER.id, outputs: ['image'], request: 'imageEdit', imageInput: true }
 
     expect(parsed(modelInfoText(OPENROUTER, edit, { entry: { id: 'edit' } })).dez.images).toStrictEqual({ minImages: 1 })
+  })
+
+  // The rules of an OpenRouter video model depend on its "Images as"
+  // value (mediaFormats.ts); `values` are the ones that a request sends.
+  it('gives the image rules and usage of the parameter values that a request sends', () => {
+    const video: ModelInfo = {
+      id: 'video',
+      name: 'Video',
+      provider: OPENROUTER.id,
+      outputs: ['video'],
+      request: 'video',
+      imageInput: true,
+      images: { maxImages: 2, whenParameter: { name: 'images_as', value: 'references', rules: { maxImages: 16, references: { promptName: '@Image{n}' } } } },
+    }
+    const info = (values: Record<string, string>) => parsed(modelInfoText(OPENROUTER, video, { entry: { id: 'video' }, values }))
+    const asFrames = info({ images_as: 'frames' })
+    const asReferences = info({ images_as: 'references' })
+
+    expect([asFrames.dez.images, asReferences.dez.images]).toStrictEqual([
+      { minImages: 0, maxImages: 2 },
+      { minImages: 0, maxImages: 16, references: true, promptName: '@Image{n}' },
+    ])
+    expect([asFrames, asReferences].map(({ usage }) => (usage as string[]).includes(USAGE_TEXTS.videoReferences))).toStrictEqual([false, true])
   })
 
   it('tells why Dez sends no request to a model that it cannot use, or whose images it cannot store', () => {

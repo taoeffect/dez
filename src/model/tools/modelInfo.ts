@@ -3,7 +3,7 @@ import { modelRefKey, parseModelRefKey } from '../chat/modelRef'
 import { effectiveOutputs, MODEL_OUTPUT_IDS } from '../modelOutputs'
 import { availableModels } from '../modelSearch'
 import type { ModelCache } from '../persistence/types'
-import { maxInputImages, minInputImages } from '../providers/clipImages'
+import { inputImageRulesFor, maxInputImages, minInputImages } from '../providers/clipImages'
 import { checkedParameterValues, type ParameterValues } from '../providers/modelParameters'
 import { effectiveRequest, MODEL_REQUESTS, type ModelInfo, type ProviderInfo, type ProviderInputImageRules } from '../providers/types'
 import { unstoredOutputMessage, unusableModelMessage } from '../providers/unusableModel'
@@ -178,7 +178,8 @@ function prettyJson(value: unknown): string {
 // The facts that Dez uses, as it uses them. A fact that the provider does
 // not tell gets the value that Dez acts on, and `unknown` names it. Thinking
 // and tools matter only to a chat request, so a model of another kind gets
-// them only when the provider tells them.
+// them only when the provider tells them. `model` holds the image rules of
+// the parameter values that a request sends (`modelInfoText`).
 function dezFacts(model: ModelInfo, facts: ModelInfoFacts): Record<string, unknown> {
   const kind = effectiveRequest(model)
   const chat = kind === 'chat'
@@ -202,11 +203,15 @@ function dezFacts(model: ModelInfo, facts: ModelInfoFacts): Record<string, unkno
     ...(model.unsupportedSettings && { togglesNotTaken: model.unsupportedSettings }),
     ...(model.text && { text: model.text }),
     // `maxImages` is left out when the request takes every image: JSON has
-    // no Infinity.
+    // no Infinity. `references`: the images go as references of a video,
+    // not as its frames, and `promptName` is the name of each in the prompt
+    // (`mediaRequestInput`).
     ...(mediaKind && {
       images: {
         minImages: minInputImages(mediaKind, model.images),
         ...(Number.isFinite(maxImages) && { maxImages }),
+        ...(model.images?.references && { references: true }),
+        ...(model.images?.references?.promptName !== undefined && { promptName: model.images.references.promptName }),
         ...(size && { size }),
         ...(limits && { limits }),
       },
@@ -273,12 +278,17 @@ export function modelInfoText(provider: ProviderInfo, model: ModelInfo, facts: M
     return partText(id, part, entry.value)
   }
 
+  // The image rules of a model can depend on its parameter values
+  // (`InputImageRules.whenParameter`): the facts and the usage tell the
+  // rules of the values that a request sends now.
+  const images = inputImageRulesFor(model.images, facts.values ?? {})
+  const requestModel: ModelInfo = { ...model, ...(images && { images }) }
   const info = {
     id,
     name: model.name,
     provider: { id: provider.id, name: provider.name },
-    dez: dezFacts(model, facts),
-    usage: modelUsage(model, { toggles: facts.toggles ?? [], inputImages: facts.inputImages ?? {} }),
+    dez: dezFacts(requestModel, facts),
+    usage: modelUsage(requestModel, { toggles: facts.toggles ?? [], inputImages: facts.inputImages ?? {} }),
   }
   const noEntry = facts.entry === undefined ? ['Dez has no entry from the provider\'s model list for this model now. Try again later.'] : []
   const sizes = new Map(entries.map(({ name, value }) => [name, prettyJson(value).length]))

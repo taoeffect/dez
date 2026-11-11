@@ -13,6 +13,7 @@ import { imageSizeRules, type ImageSizeRules, type InputImageLimits } from './im
 import { isOptionValue, parameterTakes, type ModelParameter, type OptionsParameter, type OptionValue, type ParameterValues, type RangeParameter } from './modelParameters'
 import { isRecord, valueAtPath } from './modelParsing'
 import { CLIP_KINDS, isClipKind, type ChatImagePart, type ClipKind, type GeneratedMedia, type ImageKind, type MediaKind } from './types'
+import { VENICE_REFERENCE_FIELDS, veniceReferenceBody, veniceReferenceFamily } from './veniceReferences'
 
 // What one media request sends: the user's prompt, the input images as
 // bytes, in the user's order, and the value of each parameter of the model
@@ -21,11 +22,12 @@ import { CLIP_KINDS, isClipKind, type ChatImagePart, type ClipKind, type Generat
 export interface MediaInput {
   prompt: string
   // The images of an edit, the one image of an upscale, the reference
-  // images of a new image, or the frames of a video: the first image is
-  // the first frame, and the second one is the last frame. The caller
-  // gives a request no more images than the model takes
-  // (`MediaFormat.imageRules`). A request of a kind that takes no image
-  // does not send them.
+  // images of a new image, or the images of a video: its frames, the first
+  // image the first frame and the second one the last frame, or its
+  // references (`InputImageRules.references`). The caller gives a request
+  // no more images than the model takes (`MediaFormat.imageRules`, for the
+  // values of `values`). A request of a kind that takes no image does not
+  // send them.
   images: readonly ChatImagePart[]
   values: ParameterValues
 }
@@ -142,7 +144,8 @@ export interface ClipFormat {
   // the provider's model list (`entry`) and in a list of the media API
   // (`MediaFormat.modelLists`, `mediaEntry`). Each one is undefined when
   // its list does not have the model. The name of a parameter is the name
-  // of its request field.
+  // of its request field, but for one that `request` reads itself
+  // (OpenRouter's `images_as`).
   parameters(kind: ClipKind, entry: unknown, mediaEntry: unknown): ModelParameter[]
   // What a model of `kind` takes as the text of a request, from the same
   // two entries; undefined when the API tells nothing about it.
@@ -579,19 +582,23 @@ const veniceFormat: MediaFormat = {
           // `duration` has no default: a request with none gets a 400
           // (checked live, 2026-11-10), and each model takes only the
           // values of its own entry. The images are the first and the
-          // last frame, each as a data URL ("a URL (http/https) or a data
-          // URL").
+          // last frame, or the references of a reference-to-video model
+          // (veniceReferences.ts), each as a data URL ("a URL (http/https)
+          // or a data URL").
           // https://docs.venice.ai/api-reference/endpoint/video/queue
           if (values.duration === undefined) throw new ExplainedError(NO_VIDEO_LENGTH_MESSAGE)
-          const [firstFrame, lastFrame] = images.map(imageDataUrl)
+          const urls = images.map(imageDataUrl)
+          const family = veniceReferenceFamily(modelId)
+          const [firstFrame, lastFrame] = urls
           return {
             url: `${base}/video/queue`,
             body: {
               ...values,
               model: modelId,
               prompt,
-              ...(firstFrame !== undefined && { image_url: firstFrame }),
-              ...(lastFrame !== undefined && { end_image_url: lastFrame }),
+              ...(family && urls.length > 0 && veniceReferenceBody(family, urls)),
+              ...(!family && firstFrame !== undefined && { image_url: firstFrame }),
+              ...(!family && lastFrame !== undefined && { end_image_url: lastFrame }),
             },
           }
         }
@@ -599,15 +606,26 @@ const veniceFormat: MediaFormat = {
     },
     // A model that takes no last frame refuses `end_image_url` with a 400
     // whose `details` (zod's error format: one entry per field) name the
-    // field: "This model does not support end_image_url". That is a
-    // validation error, so the request cost nothing (checked live,
-    // 2026-11-11). No field of an entry tells it before (see
+    // field: "This model does not support end_image_url". A
+    // reference-to-video model refuses more references than it takes in
+    // the same way: "reference_image_urls must have at most 7 images",
+    // "image_references must have at most 5 entries", "elements must have
+    // at most 4 items". Those are validation errors, so the request cost
+    // nothing (checked live, 2026-11-11). No field of an entry tells the
+    // last frame, and the counts of veniceReferences.ts can get old (see
     // `imageRules`).
     refusedImages: (kind, status, body) => {
       if (kind !== 'imageToVideo' || status !== 400) return undefined
-      const errors = valueAtPath(body, 'details.end_image_url._errors')
-      const refused = Array.isArray(errors) && errors.some((text) => typeof text === 'string' && text.includes('does not support'))
-      return refused ? 1 : undefined
+      const errors = (field: string) => {
+        const texts = valueAtPath(body, `details.${field}._errors`)
+        return Array.isArray(texts) ? texts.filter((text): text is string => typeof text === 'string') : []
+      }
+      if (errors('end_image_url').some((text) => text.includes('does not support'))) return 1
+      for (const text of VENICE_REFERENCE_FIELDS.flatMap(errors)) {
+        const most = /must have at most (\d+)/.exec(text)
+        if (most && Number(most[1]) > 0) return Number(most[1])
+      }
+      return undefined
     },
     // The queue endpoints answer `{ queue_id, … }`. Venice takes the money
     // at this time and has no list of jobs, so the id is the only way back
@@ -686,9 +704,9 @@ const veniceFormat: MediaFormat = {
   // video: an image-to-video request takes a first frame (`image_url`)
   // and a last frame (`end_image_url`). No field of an entry tells which
   // models take the last frame; one that takes none refuses the request
-  // (`refusedImages`). A text-to-video model takes no image. (The
-  // reference images of the "reference-to-video" models are other
-  // fields, which Dez does not send.)
+  // (`refusedImages`). A text-to-video model takes no image. A
+  // reference-to-video model takes references in place of frames, as many
+  // as its family takes, and its prompt names them (veniceReferences.ts).
   // Some video entries tell the size that an image must have
   // (`reference_image_…`): the least length of its shorter side, and the
   // limits of width / height, which the image must be between ("Image
@@ -710,6 +728,9 @@ const veniceFormat: MediaFormat = {
       minAspectRatio: constraint('reference_image_min_aspect_ratio'),
       maxAspectRatio: constraint('reference_image_max_aspect_ratio'),
     })
+    const id = valueAtPath(entry, 'id')
+    const family = typeof id === 'string' ? veniceReferenceFamily(id) : undefined
+    if (family) return { maxImages: family.maxImages, references: { promptName: family.promptName }, ...(size && { size }) }
     return { maxImages: 2, ...(size && { size }) }
   },
 }
@@ -723,6 +744,28 @@ const OPENROUTER_FRAMES = ['first_frame', 'last_frame'] as const
 // tells a higher count (20) for some models (2026-11-11).
 // https://openrouter.ai/docs/api/api-reference/images/generate-an-image
 const OPENROUTER_MAX_REFERENCES = 16
+
+// The parameter of an OpenRouter video model that tells how the images of
+// a request go: as frames of the video (`frame_images`), or as references
+// (`input_references`), which the model uses for the look of the video
+// ("Use frame_images when you need exact frame control"). The request
+// reads it and sends it as no field. The video list tells which models
+// take frames (`supported_frame_images`) and nothing of references, which
+// every video model takes ("Image references are supported by all
+// providers").
+// https://openrouter.ai/docs/cookbook/video-generation/reference-to-video
+// https://openrouter.ai/docs/api/api-reference/video-generation/create-videos
+const OPENROUTER_IMAGES_AS = 'images_as'
+const OPENROUTER_AS_FRAMES = 'frames'
+const OPENROUTER_AS_REFERENCES = 'references'
+
+// The frames of a video that an OpenRouter model takes an image for, in the
+// order of the input images: a last frame counts only with a first one.
+function openRouterFrameCount(mediaEntry: unknown): number {
+  const frames = listedValues(valueAtPath(mediaEntry, 'supported_frame_images'))
+  const firstMissing = OPENROUTER_FRAMES.findIndex((frame) => !frames.includes(frame))
+  return firstMissing === -1 ? OPENROUTER_FRAMES.length : firstMissing
+}
 
 // The values of the request field `name` that an entry of OpenRouter's
 // image list tells in its `supported_parameters`: the `values` of an
@@ -891,7 +934,14 @@ const openRouterFormat: MediaFormat = {
           return optionsParameter('voice', 'Voice', voices, voices[0])
         }
         case 'video':
-        case 'imageToVideo':
+        case 'imageToVideo': {
+          // Frames by default, as before the parameter came; a model that
+          // takes no frame has only references, so that the user sees it. A
+          // model that the list does not have gets none, as for the other
+          // parameters, so that its kept data stays (keptClipData.ts).
+          const imagesAs = !isRecord(mediaEntry)
+            ? []
+            : openRouterFrameCount(mediaEntry) > 0 ? [OPENROUTER_AS_FRAMES, OPENROUTER_AS_REFERENCES] : [OPENROUTER_AS_REFERENCES]
           return [
             ...lowestFirstParameter('duration', 'Length (seconds)', valueAtPath(mediaEntry, 'supported_durations'), lengthSeconds),
             ...lowestFirstParameter('resolution', 'Resolution', valueAtPath(mediaEntry, 'supported_resolutions'), resolutionLines),
@@ -902,7 +952,9 @@ const openRouterFormat: MediaFormat = {
             // ("Defaults to the endpoint's generate_audio capability
             // flag"). So the switch is on by default, as for Venice.
             ...switchParameter('generate_audio', 'Audio', valueAtPath(mediaEntry, 'generate_audio'), true),
+            ...optionsParameter(OPENROUTER_IMAGES_AS, 'Images as', imagesAs, imagesAs[0]),
           ]
+        }
         case 'music':
           return []
       }
@@ -921,32 +973,34 @@ const openRouterFormat: MediaFormat = {
           // https://openrouter.ai/docs/guides/overview/multimodal/tts
           return { url: `${base}/audio/speech`, body: { ...values, model: modelId, input: prompt, response_format: 'mp3' } }
         case 'video':
-        case 'imageToVideo':
+        case 'imageToVideo': {
           // A request with no length gets the provider's default length,
           // which can cost many times the shortest one. So a model whose
           // lengths Dez does not know (the video list does not have it, or
           // the list did not load) gets no request.
-          // The images are frames of the video (`frame_images`), each as a
-          // data URL. `input_references`, the images of a
-          // reference-to-video request, is never sent.
+          // The images are frames of the video (`frame_images`) or
+          // references (`input_references`), as the user chose
+          // (OPENROUTER_IMAGES_AS), each as a data URL; never both. Any
+          // value but `references` (a cache from before the parameter) sends
+          // frames, which the model's image rules then count.
           // https://openrouter.ai/docs/guides/overview/multimodal/video-generation
           // https://openrouter.ai/docs/cookbook/video-generation/image-to-video
-          if (values.duration === undefined) throw new ExplainedError(NO_VIDEO_LENGTH_MESSAGE)
+          // https://openrouter.ai/docs/cookbook/video-generation/reference-to-video
+          const { [OPENROUTER_IMAGES_AS]: imagesAs, ...fields } = values
+          if (fields.duration === undefined) throw new ExplainedError(NO_VIDEO_LENGTH_MESSAGE)
+          const imageUrls = images.map((image) => ({ type: 'image_url', image_url: { url: imageDataUrl(image) } }))
           return {
             url: `${base}/videos`,
             body: {
-              ...values,
+              ...fields,
               model: modelId,
               prompt,
-              ...(images.length > 0 && {
-                frame_images: OPENROUTER_FRAMES.slice(0, images.length).map((frame, index) => ({
-                  type: 'image_url',
-                  image_url: { url: imageDataUrl(images[index]) },
-                  frame_type: frame,
-                })),
-              }),
+              ...(imageUrls.length > 0 && (imagesAs === OPENROUTER_AS_REFERENCES
+                ? { input_references: imageUrls }
+                : { frame_images: OPENROUTER_FRAMES.slice(0, imageUrls.length).map((frame, index) => ({ ...imageUrls[index], frame_type: frame })) })),
             },
           }
+        }
         case 'music':
           throw new ExplainedError('This provider has no music request that Dez can use. Choose another model.')
       }
@@ -1005,19 +1059,22 @@ const openRouterFormat: MediaFormat = {
   // An image model: the reference images of its entry in the image list
   // (`openRouterReferenceRules`). The docs tell no size that a reference
   // image must have.
-  // A video model: the video list tells which frames it takes an image for
-  // (`supported_frame_images`). The images of a request go in the order
-  // of OPENROUTER_FRAMES, so a last frame counts only with a first one.
+  // A video model: the frames that it takes an image for
+  // (`openRouterFrameCount`), or, when the user chose references
+  // (OPENROUTER_IMAGES_AS), as many references as an image request takes:
+  // the video schema caps `input_references` at no count. A model that
+  // takes no frame has only references. A model that the video list does
+  // not have gets no rules, so that its kept rules stay (keptClipData.ts).
   // No size rules: `supported_sizes` and `supported_aspect_ratios` are
-  // the sizes of the video, and the docs tell no size that a frame image
-  // must have.
+  // the sizes of the video, and the docs tell no size that an image of a
+  // video request must have.
   imageRules: (kind, _entry, mediaEntry) => {
     if (kind === 'image' || kind === 'imageEdit') return openRouterReferenceRules(mediaEntry)
-    if (!isClipKind(kind) || CLIP_KINDS[kind] !== 'video') return undefined
-    const frames = listedValues(valueAtPath(mediaEntry, 'supported_frame_images'))
-    const firstMissing = OPENROUTER_FRAMES.findIndex((frame) => !frames.includes(frame))
-    const maxImages = firstMissing === -1 ? OPENROUTER_FRAMES.length : firstMissing
-    return maxImages > 0 ? { maxImages } : undefined
+    if (!isClipKind(kind) || CLIP_KINDS[kind] !== 'video' || !isRecord(mediaEntry)) return undefined
+    const frames = openRouterFrameCount(mediaEntry)
+    const references = { maxImages: OPENROUTER_MAX_REFERENCES, references: {} }
+    if (frames === 0) return references
+    return { maxImages: frames, whenParameter: { name: OPENROUTER_IMAGES_AS, value: OPENROUTER_AS_REFERENCES, rules: references } }
   },
 }
 

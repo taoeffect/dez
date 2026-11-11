@@ -50,6 +50,10 @@ const IMAGES: ChatImagePart[] = [
 const PNG_URL = `data:image/png;base64,${bytesToBase64(PNG)}`
 const JPEG_URL = `data:image/jpeg;base64,${bytesToBase64(JPEG)}`
 
+// The "Images as" parameter of an OpenRouter video model, with no label.
+const IMAGES_AS_FRAMES = { name: 'images_as', options: ['frames', 'references'], default: 'frames' }
+const IMAGES_AS_REFERENCES = { name: 'images_as', options: ['references'], default: 'references' }
+
 describe('venice media requests', () => {
   it('asks /image/generate for a WebP image with no watermark and no safe mode', () => {
     expect(venice.request('image', 'https://api.venice.ai/api/v1/', 'z-image-turbo', { prompt: 'A red fox', images: [], values: {} })).toStrictEqual({
@@ -365,6 +369,21 @@ describe('venice image rules', () => {
     expect(rules('imageToVideo')).toStrictEqual({ maxImages: 2 })
   })
 
+  // The counts and names of veniceReferences.ts; the entry tells neither.
+  it.each([
+    ['grok-imagine-1-5-reference-to-video', { maxImages: 7, references: { promptName: '@Image{n}' } }],
+    ['seedance-2-0-fast-reference-to-video', { maxImages: 9, references: { promptName: '<Image {n}>' } }],
+    ['seedance-2-5-reference-to-video', { maxImages: 30, references: { promptName: '<Image {n}>' } }],
+    ['kling-o3-pro-reference-to-video', { maxImages: 4, references: { promptName: '@Element{n}' } }],
+    ['wan-2-7-reference-to-video', { maxImages: 5, references: { promptName: '@Image{n}' } }],
+    // A family that the table does not know yet.
+    ['acme-1-reference-to-video', { maxImages: 30, references: { promptName: '@Image{n}' } }],
+  ])('takes the references of %s, with their names in the prompt', (id, expected) => {
+    const entry = { id, model_spec: { constraints: { model_type: 'image-to-video', reference_image_min_short_side_pixels: 300 } } }
+
+    expect(MEDIA_FORMATS.venice.imageRules?.('imageToVideo', entry, undefined)).toStrictEqual({ ...expected, size: { minShortSide: 300 } })
+  })
+
   it('reads the size rules of the images from the entry of the model', () => {
     expect([
       rules('imageToVideo', { reference_image_min_short_side_pixels: 300, reference_image_min_aspect_ratio: 0.4, reference_image_max_aspect_ratio: 2.5 }),
@@ -402,10 +421,20 @@ describe('venice refusals of images', () => {
     expect(veniceClips.refusedImages?.('imageToVideo', 400, refusal)).toBe(1)
   })
 
+  // Live texts (2026-11-11), one for each field that Dez sends.
+  it.each([
+    ['reference_image_urls', 'reference_image_urls must have at most 7 images', 7],
+    ['image_references', 'image_references must have at most 5 entries', 5],
+    ['elements', 'elements must have at most 4 items', 4],
+  ])('tells the count of a reference-to-video model that refuses more `%s`', (field, text, count) => {
+    expect(veniceClips.refusedImages?.('imageToVideo', 400, { details: { _errors: [], [field]: { _errors: [text] } }, error: 'Invalid request parameters' })).toBe(count)
+  })
+
   it.each([
     ['another status', 'imageToVideo', 422, refusal],
     ['another kind', 'video', 400, refusal],
     ['a refusal of another field', 'imageToVideo', 400, { details: { duration: { _errors: ['Invalid option'] } }, error: 'Invalid request parameters' }],
+    ['a count refusal of a field that Dez does not send', 'imageToVideo', 400, { details: { scene_image_urls: { _errors: ['scene_image_urls must have at most 4 images'] } }, error: 'Invalid request parameters' }],
     ['a body that is not JSON', 'imageToVideo', 400, undefined],
   ] as const)('tells nothing for %s', (_name, kind, status, body) => {
     expect(veniceClips.refusedImages?.(kind, status, body)).toBeUndefined()
@@ -538,6 +567,17 @@ describe('venice clip requests', () => {
     })
   })
 
+  // https://docs.venice.ai/api-reference/endpoint/video/queue
+  it.each([
+    ['grok-imagine-1-5-reference-to-video', { reference_image_urls: [PNG_URL, JPEG_URL] }],
+    ['wan-2-7-reference-to-video', { image_references: [{ image_url: PNG_URL }, { image_url: JPEG_URL }] }],
+    ['kling-o3-standard-reference-to-video', { elements: [{ frontal_image_url: PNG_URL }, { frontal_image_url: JPEG_URL }] }],
+  ])('queues the images of %s as references in the field of its family, and no frame', (modelId, references) => {
+    expect(veniceClips.request('imageToVideo', VENICE_URL, modelId, { prompt: '@Image1 meets @Image2', images: IMAGES, values: { duration: '5s' } }).body).toStrictEqual({
+      duration: '5s', model: modelId, prompt: '@Image1 meets @Image2', ...references,
+    })
+  })
+
   it.each(['video', 'imageToVideo'] as const)('refuses a %s request with no length', (kind) => {
     expect(thrownError(() => veniceClips.request(kind, VENICE_URL, 'wan', { prompt: 'A red fox', images: [], values: { aspect_ratio: '16:9' } })))
       .toStrictEqual(new ExplainedError(NO_VIDEO_LENGTH_MESSAGE))
@@ -663,6 +703,7 @@ describe('openrouter clip parameters', () => {
       supported_durations: [8, 1, 15, 4],
       supported_resolutions: ['720p', '480p'],
       supported_aspect_ratios: ['16:9', '1:1'],
+      supported_frame_images: ['first_frame'],
     }
 
     // The entry of the model list has no say.
@@ -670,23 +711,31 @@ describe('openrouter clip parameters', () => {
       { name: 'duration', options: [1, 4, 8, 15], default: 1 },
       { name: 'resolution', options: ['480p', '720p'], default: '480p' },
       { name: 'aspect_ratio', options: ['16:9', '1:1'] },
+      // Frames by default, as before the choice came.
+      IMAGES_AS_FRAMES,
     ])
   })
 
+  it('gives a video model that the video list does not have no parameters', () => {
+    expect(parameters(openRouterClips, 'video', { id: 'm' }, undefined)).toStrictEqual([])
+  })
+
+  // Every video model takes references; a model that lists no frame takes
+  // its images only as references.
   it.each([
-    ['the video list does not have', undefined],
-    ['lists nothing', { id: 'm', supported_durations: null, supported_resolutions: null, supported_aspect_ratios: [] }],
-  ])('gives a video model that %s no parameters', (_name, mediaEntry) => {
-    expect(parameters(openRouterClips, 'video', { id: 'm' }, mediaEntry)).toStrictEqual([])
+    ['lists nothing', { id: 'm', supported_durations: null, supported_resolutions: null, supported_aspect_ratios: [], supported_frame_images: null }],
+    ['lists only a last frame', { id: 'm', supported_frame_images: ['last_frame'] }],
+  ])('gives a video model that %s only references', (_name, mediaEntry) => {
+    expect(parameters(openRouterClips, 'video', { id: 'm' }, mediaEntry)).toStrictEqual([IMAGES_AS_REFERENCES])
   })
 
   // A request with no `generate_audio` field gets sound from such a model.
   it('gives a video model that can make sound an Audio switch that is on', () => {
-    expect(parameters(openRouterClips, 'video', { id: 'm' }, { id: 'm', generate_audio: true })).toStrictEqual([{ name: 'generate_audio', default: true }])
+    expect(parameters(openRouterClips, 'video', { id: 'm' }, { id: 'm', generate_audio: true })).toStrictEqual([{ name: 'generate_audio', default: true }, IMAGES_AS_REFERENCES])
   })
 
   it.each([false, null])('gives a video model whose `generate_audio` is %s no Audio switch', (generateAudio) => {
-    expect(parameters(openRouterClips, 'video', { id: 'm' }, { id: 'm', generate_audio: generateAudio })).toStrictEqual([])
+    expect(parameters(openRouterClips, 'video', { id: 'm' }, { id: 'm', generate_audio: generateAudio })).toStrictEqual([IMAGES_AS_REFERENCES])
   })
 
   it('has no price request: the prices are in the entries', () => {
@@ -696,13 +745,14 @@ describe('openrouter clip parameters', () => {
 
 describe('openrouter image rules', () => {
   const rules = (kind: MediaKind, frames: unknown) => MEDIA_FORMATS.openrouter.imageRules?.(kind, { id: 'm' }, { id: 'm', supported_frame_images: frames })
+  const REFERENCES = { maxImages: 16, references: {} }
 
   it.each([
     ['a first frame', ['first_frame'], 1],
     ['a first and a last frame', ['first_frame', 'last_frame'], 2],
     ['a last and a first frame', ['last_frame', 'first_frame'], 2],
-  ])('takes %s for a video model whose video list entry says so', (_name, frames, maxImages) => {
-    expect(rules('video', frames)).toStrictEqual({ maxImages })
+  ])('takes %s for a video model whose video list entry says so, and 16 references when the user chose them', (_name, frames, maxImages) => {
+    expect(rules('video', frames)).toStrictEqual({ maxImages, whenParameter: { name: 'images_as', value: 'references', rules: REFERENCES } })
   })
 
   // The images go in the order first frame, last frame.
@@ -710,8 +760,8 @@ describe('openrouter image rules', () => {
     ['lists no frame', null],
     ['lists only a last frame', ['last_frame']],
     ['lists an empty list', []],
-  ])('takes no image for a video model that %s', (_name, frames) => {
-    expect(rules('video', frames)).toBeUndefined()
+  ])('takes only references for a video model that %s', (_name, frames) => {
+    expect(rules('video', frames)).toStrictEqual(REFERENCES)
   })
 
   it('takes no image for a video model that the video list does not have, and none for speech or an image', () => {
@@ -866,8 +916,12 @@ describe('openrouter clip requests', () => {
     })
   })
 
-  it('sends a second image as the last frame', () => {
-    expect(openRouterClips.request('video', OPENROUTER_URL, 'm', { prompt: 'It runs', images: IMAGES, values: { duration: 1 } }).body).toStrictEqual({
+  // `images_as` is no request field. A value that is not `references`
+  // (none, or one of an old cache) sends frames.
+  it.each([undefined, 'frames', 'other'])('sends a second image as the last frame when the images go as %s', (imagesAs) => {
+    const values = { duration: 1, ...(imagesAs !== undefined && { images_as: imagesAs }) }
+
+    expect(openRouterClips.request('video', OPENROUTER_URL, 'm', { prompt: 'It runs', images: IMAGES, values }).body).toStrictEqual({
       duration: 1,
       model: 'm',
       prompt: 'It runs',
@@ -875,6 +929,23 @@ describe('openrouter clip requests', () => {
         { type: 'image_url', image_url: { url: PNG_URL }, frame_type: 'first_frame' },
         { type: 'image_url', image_url: { url: JPEG_URL }, frame_type: 'last_frame' },
       ],
+    })
+  })
+
+  it('sends every image as a reference, and no frame, when the user chose references', () => {
+    const images = [...IMAGES, IMAGES[0]]
+
+    expect(openRouterClips.request('video', OPENROUTER_URL, 'm', { prompt: 'They dance', images, values: { duration: 1, images_as: 'references' } }).body).toStrictEqual({
+      duration: 1,
+      model: 'm',
+      prompt: 'They dance',
+      input_references: [PNG_URL, JPEG_URL, PNG_URL].map((url) => ({ type: 'image_url', image_url: { url } })),
+    })
+  })
+
+  it('sends no images field for references when the request has no image', () => {
+    expect(openRouterClips.request('video', OPENROUTER_URL, 'm', { prompt: 'A red fox', images: [], values: { duration: 1, images_as: 'references' } }).body).toStrictEqual({
+      duration: 1, model: 'm', prompt: 'A red fox',
     })
   })
 

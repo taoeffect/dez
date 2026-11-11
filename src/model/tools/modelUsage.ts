@@ -39,11 +39,19 @@ export const USAGE_TEXTS = {
   newestImageOnly: 'It does not read images, so only the newest image of the conversation goes.',
   fitted: 'Dez sends a fitted copy (cropped or scaled) of an image that breaks `dez.images.size`.',
   limits: 'Dez refuses an image that breaks `dez.images.limits`.',
+  videoReferences: 'They are references for the video, not frames of it.',
   parameters: `Each request sends the \`value\` of each of \`dez.parameters\`; the user sets them under "Model Parameters" in ${SETTINGS_POPUP}.`,
   imageResult: 'It answers with an image, which goes into the reply with a new id (@id).',
   audioResult: 'It answers with an audio clip, which the reply shows as a player with a new id. Dez cannot send a clip to a model.',
   videoResult: 'It answers with a video clip, which the reply shows as a player with a new id. Dez cannot send a clip to a model.',
 } as const
+
+// The prompt of a model that names its reference images (`promptName`,
+// `mediaRequestInput`): the names of the first two images show the form.
+export function referenceNamesUsage(promptName: string): string {
+  const name = (n: number) => `\`${promptName.replaceAll('{n}', String(n))}\``
+  return `Each image that goes is named in the prompt as the model names it, ${name(1)} for the first, ${name(2)} for the second, and so on, in place of its id text (such as \`![image](id=a)\`) and its @id mentions; any other image goes into the prompt as its id text.`
+}
 
 // What the text of the message is to a model of each media kind (none:
 // the text does not go), and what its input images are (none: no model of
@@ -93,7 +101,7 @@ function inputImagesUsage(kind: MediaKind, model: ModelInfo): string[] {
   // image (`dez.model/streamMessagesForTab`), so only the fallback of
   // `mediaRequestInput` gives one.
   if (model.imageInput === false) return [needed ? USAGE_TEXTS.newestImageOnly : USAGE_TEXTS.noImagesRead]
-  const role = MEDIA_USAGE[kind].images
+  const role = model.images?.references ? USAGE_TEXTS.videoReferences : MEDIA_USAGE[kind].images
   return [
     `It takes ${takenImages(minInputImages(kind, model.images), max)} of the message (pasted, or named with @id)${max === 1 ? '' : ', in text order'}.`,
     ...(role === undefined ? [] : [role]),
@@ -106,9 +114,12 @@ function mediaUsage(kind: MediaKind, model: ModelInfo, facts: UsageFacts): strin
   const lyrics = model.text?.lyrics
   const lengths = model.text && (model.text.minPromptLength !== undefined || model.text.maxPromptLength !== undefined || lyrics?.maxLength !== undefined)
   const takesImages = maxInputImages(kind, model.images) > 0
+  // A message to a model that does not read images carries no image part
+  // (`inputImagesUsage`), so no image gets a name.
+  const promptName = takesImages && model.imageInput !== false ? model.images?.references?.promptName : undefined
   return [
     USAGE_TEXTS.mediaRequest,
-    ...(prompt === undefined ? [USAGE_TEXTS.noText] : [prompt, USAGE_TEXTS.promptImages]),
+    ...(prompt === undefined ? [USAGE_TEXTS.noText] : [prompt, promptName === undefined ? USAGE_TEXTS.promptImages : referenceNamesUsage(promptName)]),
     ...(lyrics ? [lyricsHowTo(lyrics)] : []),
     ...(lengths ? [USAGE_TEXTS.textLengths] : []),
     ...inputImagesUsage(kind, model),

@@ -114,6 +114,14 @@ describe('model cache persistence format', () => {
         images: { maxImages: 2, size: { minShortSide: 300, minAspectRatio: 0.4, maxAspectRatio: 2.5 } },
       },
       { id: 'styles', name: 'Styles', provider: 'venice', request: 'image', images: { maxImages: 1, minImages: 1 }, unstoredOutput: 'SVG' },
+      { id: 'references', name: 'References', provider: 'venice', request: 'imageToVideo', images: { maxImages: 7, references: { promptName: '@Image{n}' } } },
+      {
+        id: 'frames-or-references',
+        name: 'Frames or references',
+        provider: 'venice',
+        request: 'video',
+        images: { maxImages: 2, whenParameter: { name: 'images_as', value: 'references', rules: { maxImages: 16, references: {} } } },
+      },
       // A cache written before parameters existed.
       { id: 'old', name: 'Old', provider: 'venice', request: 'video' },
     ]
@@ -172,6 +180,39 @@ describe('model cache persistence format', () => {
       ['ratios-apart', { maxImages: 2, size: { minShortSide: 240 } }],
       ['more-than-most', { maxImages: 2 }],
       ['part-image', { maxImages: 2 }],
+    ])
+  })
+
+  it('drops a prompt name with no number or a parameter rule that is not valid, and keeps the model and its other rules', () => {
+    const model = (id: string, images: Record<string, unknown>) => ({ id, name: id, provider: 'venice', request: 'video', images: { maxImages: 2, ...images } })
+    const parsed = parseModelCacheJson(JSON.stringify({
+      version: MODEL_CACHE_VERSION,
+      providers: {
+        venice: {
+          models: [
+            model('no-number', { references: { promptName: '@Image' } }),
+            model('name-not-text', { references: { promptName: 1 } }),
+            model('no-name', { whenParameter: { value: 'references', rules: { maxImages: 16 } } }),
+            model('bad-value', { whenParameter: { name: 'images_as', value: true, rules: { maxImages: 16 } } }),
+            model('no-count', { whenParameter: { name: 'images_as', value: 'references', rules: { references: {} } } }),
+            // A bad part of the other rules is dropped alone, as in the
+            // model's own rules.
+            model('bad-name-inside', { whenParameter: { name: 'images_as', value: 'references', rules: { maxImages: 16, references: { promptName: '@Image' } } } }),
+          ],
+          working: true,
+          updatedAt: 1,
+          lastCheckedAt: 2,
+        },
+      },
+    }))
+
+    expect(parsed.providers.venice?.models.map(({ id, images }) => [id, images])).toStrictEqual([
+      ['no-number', { maxImages: 2, references: {} }],
+      ['name-not-text', { maxImages: 2, references: {} }],
+      ['no-name', { maxImages: 2 }],
+      ['bad-value', { maxImages: 2 }],
+      ['no-count', { maxImages: 2 }],
+      ['bad-name-inside', { maxImages: 2, whenParameter: { name: 'images_as', value: 'references', rules: { maxImages: 16, references: {} } } }],
     ])
   })
 

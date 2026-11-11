@@ -71,6 +71,11 @@ const IMAGE_PATH = new RegExp(`^${IMAGE_PATH_SOURCE}$`)
 const METADATA_ITEM_SOURCE = String.raw`[a-z][a-z0-9_-]*=(?:[^\\|()\r\n]|\\[\\|()])*`
 // Global and shared: `findImageReferences` resets `lastIndex` on each call.
 const IMAGE_REFERENCE = new RegExp(String.raw`!\[(${IMAGE_PATH_SOURCE})\]\((${METADATA_ITEM_SOURCE}(?:\|${METADATA_ITEM_SOURCE})*)?\)`, 'g')
+// A whole image reference at the end of a text of a request, in which a
+// word stands for its path (`withoutStoredFilePaths`: `![image](id=a)`).
+// The alt text has no bracket and no line break, as a path has none, so
+// the match cannot start in an earlier reference.
+const REQUEST_REFERENCE_AT_END = new RegExp(String.raw`!\[[^\[\]\r\n]*\]\((?:${METADATA_ITEM_SOURCE}(?:\|${METADATA_ITEM_SOURCE})*)?\)$`)
 
 /** An image id: lower-case letters, given in the order of the one id
  *  sequence (mediaIds.ts). The `@id` mentions (imageMentions.ts) and the
@@ -159,6 +164,13 @@ export function findImageReferences(text: string): ImageReference[] {
     })
   }
   return references
+}
+
+/** The offset of the image reference that ends `text`, a text of a request
+ *  in which a word stands for each stored image path (`![image](id=a)`,
+ *  storedFilePaths.ts); null when no reference ends it. */
+export function requestImageReferenceStart(text: string): number | null {
+  return REQUEST_REFERENCE_AT_END.exec(text)?.index ?? null
 }
 
 /** True when `imageMarkdown(path)` is a reference that the recognizer finds. */

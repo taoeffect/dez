@@ -10,7 +10,7 @@ import { fileNameOf } from '../../utils/fileName'
 import { secret, type Secret } from '../../utils/secret'
 import { sanitizeErrorText } from '../../utils/protocol/errors'
 import { nativeResponseJson, nativeResponseText, readNativeChunkBytes, type NativeHttpRequest, type NativeHttpResponse, type NativeHttpStreamResult } from '../../utils/protocol/nativeHttp'
-import { missingImageProblem } from './clipImages'
+import { inputImageRulesFor, missingImageProblem } from './clipImages'
 import { CLIP_JOB_TIMEOUT_MS, clipPollDelay, sendClipRequest, type ClipRun } from './clipRequests'
 import { assertProviderResponseOk, explainedProviderError, providerConnectionError, UnusableAnswerError } from './errors'
 import { generatedImageFromUrl } from './generatedImages'
@@ -354,8 +354,9 @@ export default sbp('sbp/selectors/register', {
   //   more request. A clip that came as bytes is a temp copy in the cache
   //   root (`sendClipRequest`), which the caller must delete when it does
   //   not keep the clip. A stop rejects. A video request sends the stored
-  //   images of `input.images` as frames of the video. A refusal that
-  //   tells that the model takes fewer images rejects with a
+  //   images of `input.images` as frames of the video, or as references
+  //   (a reference-to-video model, OpenRouter's "Images as"). A refusal
+  //   that tells that the model takes fewer images rejects with a
   //   TooManyImagesError (`Provider.imageCountRefusal`).
   //
   // A provider takes the money for a job when it starts. So after that
@@ -379,17 +380,18 @@ export default sbp('sbp/selectors/register', {
       // (`unstoredOutputMessage`, `missingImageProblem`); this is for a
       // caller that did not check.
       if (cachedModel?.unstoredOutput !== undefined) throw new ExplainedError(unstoredOutputMessage(cachedModel.name, cachedModel.unstoredOutput))
-      const missingImages = missingImageProblem(cachedModel?.name ?? modelId, kind, paths.length, cachedModel?.images)
+      const values = parameterValues(provider.id, modelId, input.parameters)
+      const imageRules = inputImageRulesFor(cachedModel?.images, values)
+      const missingImages = missingImageProblem(cachedModel?.name ?? modelId, kind, paths.length, imageRules)
       if (missingImages !== null) throw new ExplainedError(missingImages)
       const appDir = paths.length > 0 ? await sbp('dez.native/getAppDir') as string : ''
-      const sizeRules = provider.inputImageSize(kind, cachedModel)
+      const sizeRules = provider.inputImageSize(kind, { ...(imageRules && { images: imageRules }) })
       const images = await Promise.all(paths.map(async (path): Promise<ChatImagePart> => {
         const { bytes, mediaType, size } = await fittedImage(await readStoredImage(path, appDir), sizeRules)
         const problem = provider.inputImageProblem(kind, size, bytes.length)
         if (problem !== undefined) throw new ExplainedError(problem)
         return { type: 'image', mediaType, data: bytesToBase64(bytes) }
       }))
-      const values = parameterValues(provider.id, modelId, input.parameters)
 
       if (!isClipKind(kind)) {
         const request = provider.mediaRequest(kind, modelId, { prompt: input.prompt, images, values }, await requestSecret(provider))

@@ -1,7 +1,7 @@
 import type { MessagePart, ModelRef, Section, SectionThinking, ThinkingReplay } from '../chat/types'
 import { sectionIsEmpty, sectionPlainText } from '../chat/content'
 import { findImageMentions } from '../chat/imageMentions'
-import { findImageReferences, IMAGE_TOOL_KEY, type ImageReference } from '../chat/images'
+import { findImageReferences, IMAGE_TOOL_KEY, requestImageReferenceStart, type ImageReference } from '../chat/images'
 import { sameModelRef } from '../chat/modelRef'
 import { holdsStoredFilePath, withoutStoredFilePaths } from '../chat/storedFilePaths'
 import { thinkingField } from '../chat/thinking'
@@ -80,22 +80,26 @@ export function sectionsToStreamMessages(sections: Section[], requestModel: Mode
 
 /** What a media reply (a ModelInfo.request that is not `chat`) sends to
  *  dez.provider/generateMedia. `rules` is what the cache knows of the
- *  model's input (its ModelInfo).
+ *  model's input (its ModelInfo), with the image rules of the request's
+ *  parameter values (`inputImageRulesFor`).
  *
  *  The prompt is the text of the last user message of `messages` as a chat
  *  request sends it: with no path, and with each image reference as its
- *  `![image](id=a)` text. For a model that takes lyrics (`rules.text`), a
- *  `Lyrics:` line splits that text into the prompt and the lyrics
- *  (`clipText`).
+ *  `![image](id=a)` text. For a model whose prompt names its reference
+ *  images (`rules.images.references.promptName`), each image that goes
+ *  gets that name instead (`promptWithImageNames`). For a model that takes
+ *  lyrics (`rules.text`), a `Lyrics:` line splits that text into the
+ *  prompt and the lyrics (`clipText`).
  *
  *  The images are the images of that message, in text order and each one
  *  once: the ones that it holds and the ones that it names with an `@id`
  *  mention. A request takes as many as the model takes (`rules.images`,
  *  `maxInputImages`): for an edit, the first image is the one to edit;
  *  for a video, the first image is the first frame, and the second one is
- *  the last frame; a new image takes them as references. `imagesLeftOut`
- *  is the count of the message's images that the request does not take,
- *  so that the submit can tell the user.
+ *  the last frame, or each one is a reference (`rules.images.references`);
+ *  a new image takes them as references. `imagesLeftOut` is the count of
+ *  the message's images that the request does not take, so that the
+ *  submit can tell the user.
  *
  *  When the message has no image, a request that cannot go without one
  *  (`needsInputImage`) takes the newest image reference of `sections` (the
@@ -112,13 +116,53 @@ export function mediaRequestInput(
 ): { prompt: string, lyrics?: string, images: string[], imagesLeftOut: number } {
   const content = messages.findLast((message): message is Extract<StreamMessage, { role: 'user' }> => message.role === 'user')?.content ?? ''
   const parts: MessagePart[] = typeof content === 'string' ? [{ type: 'text', text: content }] : content
-  const text = clipText(rules.text, parts.map((part) => (part.type === 'text' ? part.text : '')).join('').trim())
   const messageImages = [...new Set(parts.flatMap((part) => (part.type === 'image' ? [part.path] : [])))]
   const images = messageImages.slice(0, maxInputImages(kind, rules.images))
   const imagesLeftOut = messageImages.length - images.length
+  const promptName = rules.images?.references?.promptName
+  const prompt = promptName === undefined
+    ? parts.map((part) => (part.type === 'text' ? part.text : '')).join('')
+    : promptWithImageNames(parts, images, promptName, sections)
+  const text = clipText(rules.text, prompt.trim())
   if (messageImages.length > 0 || !needsInputImage(kind, rules.images)) return { ...text, images, imagesLeftOut }
   const newest = sections.map((section) => findImageReferences(sectionPlainText(section)).at(-1)).findLast((reference) => reference !== undefined)
   return { ...text, images: newest ? [newest.path] : [], imagesLeftOut }
+}
+
+// The text of `parts` (the newest user message, `userMessageContent`) for
+// a model whose prompt names its reference images by their order in the
+// request: `promptName` with the number for `{n}` (`@Image1` for the
+// first of `images`). The name of an image takes the place of its
+// reference text (`![image](id=a)`) and of each @id mention of it, as the
+// guides of such models tell the user to write; the doc keeps the text as
+// the user wrote it. The image part of a reference or of a first mention
+// comes right after that text, at the end of the text part before it. An
+// image that does not go and a mention of no image stay as they are.
+// `sections` give the id of each image (the ids are unique in a tab).
+function promptWithImageNames(parts: MessagePart[], images: string[], promptName: string, sections: Section[]): string {
+  const names = new Map(images.map((path, index) => [path, promptName.replaceAll('{n}', String(index + 1))]))
+  const pathsById = new Map(sections.flatMap((section) => findImageReferences(sectionPlainText(section)).flatMap(({ id, path }) => (id === null ? [] : [[id, path] as const]))))
+  // `text` with each mention of an image that goes as its name. A mention
+  // ends with a letter, so it is never part of a reference that ends a text.
+  const withNamedMentions = (text: string) => {
+    let named = ''
+    let start = 0
+    for (const mention of findImageMentions(text)) {
+      const path = pathsById.get(mention.id)
+      const name = path === undefined ? undefined : names.get(path)
+      if (name === undefined) continue
+      named += text.slice(start, mention.from) + name
+      start = mention.to
+    }
+    return named + text.slice(start)
+  }
+  return parts.map((part, index) => {
+    if (part.type !== 'text') return ''
+    const next = parts[index + 1]
+    const referenceStart = next?.type === 'image' ? requestImageReferenceStart(part.text) : null
+    if (referenceStart === null || next?.type !== 'image') return withNamedMentions(part.text)
+    return withNamedMentions(part.text.slice(0, referenceStart)) + (names.get(next.path) ?? part.text.slice(referenceStart))
+  }).join('')
 }
 
 /** The request messages of one agent section. A reply that called tools
@@ -266,7 +310,7 @@ function textWithToolCalls(text: string): string {
 // text and image parts in doc order. `references` are the image references
 // of `text`. Each image part comes right after its reference's text,
 // `![image](id=a)`, at the end of the text part before it, so that a model
-// can name the image by its id.
+// can name the image by its id (and `promptWithImageNames` finds that text).
 //
 // An `@id` mention (imageMentions.ts) that names an image of `imagesById`
 // counts as that image at that place: its image part comes right after the

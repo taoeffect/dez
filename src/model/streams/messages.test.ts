@@ -627,6 +627,44 @@ describe('mediaRequestInput', () => {
     })
   })
 
+  describe('the references of a video', () => {
+    const references = (maxImages: number, promptName?: string): ClipInputRules => ({ images: { maxImages, references: promptName === undefined ? {} : { promptName } } })
+    // A pasted image, a mentioned image, each of them once more, and a
+    // mention of no image.
+    const twoImages = [reply('a1', `![${GENERATED}](id=a)`), user('u1', `From ![${IMAGE}](id=b) to @a. Keep @b and @a sharp, not @z.`)]
+
+    it.each([
+      ['@Image{n}', 'From @Image1 to @Image2. Keep @Image1 and @Image2 sharp, not @z.'],
+      ['<Image {n}>', 'From <Image 1> to <Image 2>. Keep <Image 1> and <Image 2> sharp, not @z.'],
+    ])('names each image in the prompt as %s, in the order of the request, in place of its reference and its mentions', (promptName, prompt) => {
+      expect(input('imageToVideo', twoImages, references(7, promptName))).toStrictEqual({ prompt, images: [IMAGE, GENERATED], imagesLeftOut: 0 })
+    })
+
+    it('keeps the reference and the mentions of an image that does not go', () => {
+      expect(input('imageToVideo', twoImages, references(1, '@Image{n}'))).toStrictEqual({
+        prompt: 'From @Image1 to @a. Keep @Image1 and @a sharp, not @z.',
+        images: [IMAGE],
+        imagesLeftOut: 1,
+      })
+    })
+
+    it('names an image whose reference has no id', () => {
+      const sections = [user('u1', `![${IMAGE}]() meets ![${GENERATED}](id=a)`)]
+
+      expect(input('imageToVideo', sections, references(7, '@Image{n}'))).toStrictEqual({ prompt: '@Image1 meets @Image2', images: [IMAGE, GENERATED], imagesLeftOut: 0 })
+    })
+
+    it('keeps the ids in the prompt of a model that tells no names', () => {
+      expect(input('imageToVideo', twoImages, references(7)).prompt).toBe('From ![image](id=b) to @a. Keep @b and @a sharp, not @z.')
+    })
+
+    it('names an image of an earlier message that the last user message mentions', () => {
+      const imageBefore = [user('u1', `![${IMAGE}](id=a) A red fox`), reply('a1', `![${GENERATED}](id=b)`), user('u2', 'Make @a run')]
+
+      expect(input('imageToVideo', imageBefore, references(7, '@Image{n}'))).toStrictEqual({ prompt: 'Make @Image1 run', images: [IMAGE], imagesLeftOut: 0 })
+    })
+  })
+
   it('splits the last user message of a model that takes lyrics into the style and the lyrics', () => {
     const tab = [user('u1', 'Slow piano ballad\nLyrics:\nRain on the roof'), reply('new', '')]
     const messages = sectionsToStreamMessages(tab, model, { sendImages: true, sendTools: false }).messages

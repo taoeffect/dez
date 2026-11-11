@@ -64,10 +64,11 @@ interface StreamStartArgs {
   // image output (ChatRequestContext.imageOutput).
   imageOutput: boolean
   // What the model takes as the input of a media request (its
-  // ModelInfo.text and ModelInfo.images): a model with lyrics gets them
-  // from the message, and a video model gets the message's images as
-  // frames (`mediaRequestInput`). It is the submit's read of the model, so
-  // the request sends the input that the submit checked.
+  // ModelInfo.text, and its ModelInfo.images for the parameter values of
+  // the request, `inputImageRulesFor`): a model with lyrics gets them from
+  // the message, and a video model gets the message's images as frames or
+  // references (`mediaRequestInput`). It is the submit's read of the model,
+  // so the request sends the input that the submit checked.
   inputRules?: ClipInputRules
 }
 

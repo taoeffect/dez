@@ -53,10 +53,12 @@ export interface ProviderGenerateMediaInput {
   lyrics?: string
   // The absolute paths of stored images (`storedImageFile`): the inputs of
   // an `imageEdit` request, the first one the image to edit; the one image
-  // of an `upscale` request; or the frames of a `video` or `imageToVideo`
-  // request, the first one the first frame and the second one the last
-  // frame. No more of them than the model takes (`ModelInfo.images`). A
-  // request of another kind does not send them.
+  // of an `upscale` request; or the images of a `video` or `imageToVideo`
+  // request: its frames, the first one the first frame and the second one
+  // the last frame, or its references (`InputImageRules.references`). No
+  // more of them than the model takes (`ModelInfo.images`, for the values
+  // of `parameters`: `inputImageRulesFor`). A request of another kind does
+  // not send them.
   images?: readonly string[]
   // The values to set for the model's parameters (ModelInfo.parameters),
   // by parameter name. A parameter with no value here, or with one that

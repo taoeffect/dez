@@ -1,4 +1,5 @@
 import type { ImageSizeRules } from './imageSize'
+import type { OptionValue, ParameterValues } from './modelParameters'
 import type { MediaKind } from './types'
 
 // The input images of a media request (an edit, an upscale, a video, the
@@ -29,11 +30,24 @@ export function needsInputImage(kind: MediaKind, rules: InputImageRules | undefi
   return minInputImages(kind, rules) > 0
 }
 
+// How the images of a request go to a model that takes them as
+// references (a reference-to-video model), not as the frames of a video.
+export interface ReferenceImages {
+  // The name that the model's prompt gives the n-th image of the request,
+  // with `{n}` for the number (1 for the first image): `@Image{n}`,
+  // `<Image {n}>`. The prompt of a request gets these names in place of
+  // the reference text and the @id mentions of each image that goes
+  // (`mediaRequestInput`). Missing: the provider tells no names, and the
+  // prompt keeps the ids.
+  promptName?: string
+}
+
 // What a model takes as input images.
 export interface InputImageRules {
   // The most images of one request, 1 or more. For a video, the first one
-  // is the first frame, and the second one is the last frame. For an edit,
-  // the first one is the image to edit, and the others are references.
+  // is the first frame, and the second one is the last frame (or each one
+  // is a reference, with `references`). For an edit, the first one is the
+  // image to edit, and the others are references.
   maxImages: number
   // The fewest images of one request, 1 to `maxImages`, for a model whose
   // kind can go with none but that needs an image all the same (an image
@@ -43,11 +57,37 @@ export interface InputImageRules {
   // The size rules of each image (imageSize.ts), for a model whose
   // provider tells some. Never empty.
   size?: ImageSizeRules
+  // Set for a video model that takes its images as references.
+  references?: ReferenceImages
+  // The rules that apply in place of these when the model parameter
+  // `name` has `value` (`inputImageRulesFor`): an OpenRouter video model
+  // takes its images as frames, or as references when the user chooses
+  // so (mediaFormats.ts).
+  whenParameter?: { name: string, value: OptionValue, rules: Omit<InputImageRules, 'whenParameter'> }
+}
+
+// A copy of rules with no `whenParameter`, which shares no object with them.
+function cloneOwnRules(rules: Omit<InputImageRules, 'whenParameter'>): Omit<InputImageRules, 'whenParameter'> {
+  return { ...rules, ...(rules.size && { size: { ...rules.size } }), ...(rules.references && { references: { ...rules.references } }) }
 }
 
 // A copy that shares no object with `rules`.
 export function cloneInputImageRules(rules: InputImageRules): InputImageRules {
-  return { ...rules, ...(rules.size && { size: { ...rules.size } }) }
+  const { whenParameter, ...own } = rules
+  return {
+    ...cloneOwnRules(own),
+    ...(whenParameter && { whenParameter: { ...whenParameter, rules: cloneOwnRules(whenParameter.rules) } }),
+  }
+}
+
+/** The image rules of a request to a model with `rules` that sends the
+ *  parameter values `values` (`effectiveParameterValues`): the rules of
+ *  `rules.whenParameter` when its parameter has its value, else `rules`.
+ *  Every check and count of a request's images reads these, so that the
+ *  submit, the request, and `model_info` agree. */
+export function inputImageRulesFor(rules: InputImageRules | undefined, values: Readonly<ParameterValues>): InputImageRules | undefined {
+  const other = rules?.whenParameter
+  return other !== undefined && values[other.name] === other.value ? other.rules : rules
 }
 
 /** The most images that a request of `kind` carries, for a model with
