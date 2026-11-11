@@ -2,14 +2,14 @@ import fs from 'node:fs'
 import path from 'node:path'
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from 'vitest'
 import { openAiChatBody } from './harness/chatBody'
-import { click, consoleErrors, elementCenter, isOnTop, movePointer, pointerClick, resetConsoleErrors, screenshotOnFailure, waitForValue } from './harness/dom'
+import { click, consoleErrors, elementCenter, isOnTop, movePointer, pointerClick, pointerClickAt, pointerDrag, resetConsoleErrors, screenshotOnFailure, waitForValue, type Point } from './harness/dom'
 import { conversationFilePath, makeConversation, seedConversation } from './harness/fixtures'
 import { WAV_SAMPLE_RATE, WEBM_VIDEO, monoWav, openPlayerTooltips, shownPlayers, silentWav, startClipServer, waitForPlayerFullscreen, type ClipServer, type ShownPlayer } from './harness/media'
 import { startMockProviderApp, type MockProviderApp } from './harness/mockProviderApp'
 import { mockChatPath, replyText, sendChatReply, type MockProvider } from './harness/mockServer'
 import { threadCount, webProcessPid } from './harness/processes'
 import type { E2EBrowser } from './harness/session'
-import { copySelection, editorDoc, focusedArea, newTab, openToasts, pasteText, pickModel, sbpCall, setCaret, submit, threadSections, waitForThread, type ThreadSection } from './harness/thread'
+import { copySelection, editorCaret, editorDoc, focusEditor, focusedArea, newTab, openToasts, pasteText, pickModel, sbpCall, setCaret, submit, threadSections, waitForThread, type ThreadSection } from './harness/thread'
 
 // The players of audio and video clips (media tags in agent sections),
 // driven through the real app. The clips come from a clip server of the
@@ -25,6 +25,10 @@ import { copySelection, editorDoc, focusedArea, newTab, openToasts, pasteText, p
 // - Save moves the temp copy of a clip under its own name, the clock of a
 //   temp copy also tells where the file is (with `~` for the home folder),
 //   and a clip whose file is gone shows the "not available" card;
+// - the clock's tooltip stays open while the pointer moves into it and
+//   rests there, also in fullscreen over the picture; a drag or a triple
+//   click in it selects its text and leaves the editor's caret and doc
+//   alone, and the editor gets the focus back when the tooltip closes;
 // - a video that fills the screen stays so over a Save; it leaves
 //   fullscreen at a click on its fullscreen button, before the delete
 //   prompt shows, and when a Save fails, so that the prompt and the toast
@@ -200,6 +204,90 @@ describe('media player', () => {
     }))
   }
 
+  interface ClockTooltipLayout {
+    clock: Point
+    /** The box of the clock, and of its tooltip, in viewport px. */
+    clockBox: DOMRectReadOnly
+    tooltip: DOMRectReadOnly
+    /** The side of the clock that the tooltip is on (video.js's
+     *  `data-side`). */
+    side: string | null
+    /** A point in the first character of each line of the tooltip. */
+    lines: Point[]
+    /** The points where a drag selects the path alone: at the left edge of
+     *  its first character and at the right edge of its last one. Null when
+     *  the tooltip names no file. */
+    path: { from: Point, to: Point } | null
+  }
+
+  // Where the first clock and its tooltip are.
+  async function clockTooltipLayout (): Promise<ClockTooltipLayout> {
+    return browser.execute(() => {
+      const tooltip = document.querySelector('.cm-content .media-player__clock + media-tooltip') as HTMLElement
+      const clockBox = (tooltip.previousElementSibling as Element).getBoundingClientRect()
+      const charBox = (text: Text, index: number): DOMRect => {
+        const range = document.createRange()
+        range.setStart(text, index)
+        range.setEnd(text, index + 1)
+        return range.getBoundingClientRect()
+      }
+      const lines = Array.from(tooltip.children, (line) => {
+        const box = charBox(line.firstChild as Text, 0)
+        return { x: (box.left + box.right) / 2, y: (box.top + box.bottom) / 2 }
+      })
+      const pathText = tooltip.querySelector('.media-player__tooltip-path')?.firstChild as Text | undefined
+      let path = null
+      if (pathText) {
+        const first = charBox(pathText, pathText.data.indexOf('~'))
+        const last = charBox(pathText, pathText.data.length - 1)
+        path = {
+          from: { x: first.left + 1, y: (first.top + first.bottom) / 2 },
+          to: { x: last.right - 1, y: (last.top + last.bottom) / 2 },
+        }
+      }
+      return {
+        clock: { x: (clockBox.left + clockBox.right) / 2, y: (clockBox.top + clockBox.bottom) / 2 },
+        clockBox: clockBox.toJSON() as DOMRectReadOnly,
+        tooltip: tooltip.getBoundingClientRect().toJSON() as DOMRectReadOnly,
+        side: tooltip.getAttribute('data-side'),
+        lines,
+        path,
+      }
+    })
+  }
+
+  // Moves the pointer from the clock's center straight into its tooltip,
+  // then on to `to`, in steps of 3 px, as a slow hand does. In the gap
+  // between the clock and the tooltip it stops for longer than the close
+  // delay, so only the bridge can keep the tooltip open there. Gives
+  // whether the tooltip was open after each step and after the stop.
+  async function walkIntoClockTooltip (to: Point): Promise<boolean[]> {
+    const { clock, clockBox, tooltip, side } = await clockTooltipLayout()
+    const below = side === 'bottom'
+    const gap = { x: clock.x, y: below ? (clockBox.bottom + tooltip.top) / 2 : (clockBox.top + tooltip.bottom) / 2 }
+    const inside = { x: clock.x, y: below ? tooltip.top + 4 : tooltip.bottom - 4 }
+    const tooltipOpen = async () => (await openPlayerTooltips(browser)).length === 1
+    const open: boolean[] = []
+    let at = clock
+    for (const stop of [gap, inside, to]) {
+      const steps = Math.max(1, Math.ceil(Math.hypot(stop.x - at.x, stop.y - at.y) / 3))
+      for (let step = 1; step <= steps; step++) {
+        await movePointer(browser, { x: at.x + (stop.x - at.x) * step / steps, y: at.y + (stop.y - at.y) * step / steps })
+        open.push(await tooltipOpen())
+      }
+      if (stop === gap) {
+        await browser.pause(400)
+        open.push(await tooltipOpen())
+      }
+      at = stop
+    }
+    return open
+  }
+
+  async function selectedText (): Promise<string> {
+    return browser.execute(() => window.getSelection()?.toString() ?? '')
+  }
+
   beforeAll(async () => {
     clips = await startClipServer({
       'tone.wav': { type: 'audio/wav', bytes: TONE },
@@ -329,10 +417,38 @@ describe('media player', () => {
     // The clock of a temp copy also tells where the file is. The home
     // folder of the app is the temp folder of this run, and `~` stands for
     // it.
+    await focusEditor(browser)
+    await setCaret(browser, 3)
+    const doc = await editorDoc(browser)
     await movePointer(browser, await elementCenter(browser, '.media-player__clock'))
     await waitForValue(browser, 'clock tooltip of the temp copy', () => openPlayerTooltips(browser), [
       `Not saved This clip is available until ${await pageTime(expires)}. Save it to keep it. Temporary file: ~/.cache/dez/media/kept-copy.wav`,
     ])
+
+    // The pointer can go from the clock into the tooltip, over the gap
+    // between them, and the tooltip stays open on the whole way. In it, a
+    // drag selects the path alone, and a triple click selects its line, not
+    // the editor lines after the player.
+    const layout = await clockTooltipLayout()
+    const pathLine = layout.lines[2]
+    expect(await walkIntoClockTooltip(pathLine)).not.toContain(false)
+    const { from, to } = layout.path!
+    await pointerDrag(browser, from, to.x, { toY: to.y })
+    await waitForValue(browser, 'selection after a drag over the path', selectedText, '~/.cache/dez/media/kept-copy.wav')
+    await pointerClickAt(browser, pathLine, 3)
+    await waitForValue(browser, 'selection after a triple click', selectedText, 'Temporary file: ~/.cache/dez/media/kept-copy.wav')
+    expect(await openPlayerTooltips(browser)).toHaveLength(1)
+
+    // The presses put the focus on the card (a focused editor would draw its
+    // own selection over the one in the tooltip), and they leave the
+    // editor's caret and doc as they were. When the pointer leaves, the
+    // tooltip closes, and the editor gets the focus back.
+    expect(await focusedArea(browser)).toBe('media-container')
+    await movePointer(browser, OFF_PLAYERS)
+    await waitForValue(browser, 'tooltips with the pointer off the clock', () => openPlayerTooltips(browser), [])
+    await waitForValue(browser, 'focus after the tooltip closed', () => focusedArea(browser), 'editor')
+    expect(await editorCaret(browser)).toBe(3)
+    expect(await editorDoc(browser)).toBe(doc)
 
     // Save moves the copy under its name. The time of the temp copy means
     // nothing for the saved file, so the tag loses its `expires`.
@@ -349,7 +465,7 @@ describe('media player', () => {
     expect(await consoleErrors(browser)).toStrictEqual(['[MediaPlayer] The file of the clip could not be read'])
   })
 
-  it('keeps a video in fullscreen over a Save, and leaves fullscreen for the delete prompt and at a click on its button', async () => {
+  it('keeps a video in fullscreen over a Save, lets the clock tooltip over its picture be selected, and leaves fullscreen for the delete prompt and at a click on its button', async () => {
     const before = await filesIn(savedDir('video'))
     const url = clips.clipUrl('video.webm')
     const expires = new Date(Date.now() + HOUR_MS).toISOString()
@@ -359,6 +475,18 @@ describe('media player', () => {
     await pointerClick(browser, '.media-player__fullscreen')
     await waitForPlayerFullscreen(browser, true)
     expect(await textRecognitionVideoSource()).toBe('')
+
+    // The clock's tooltip takes the pointer in fullscreen too. There it is
+    // over the picture, and a triple click in it selects its line and does
+    // not play the clip.
+    await movePointer(browser, await elementCenter(browser, '.media-player__clock'))
+    await waitForValue(browser, 'clock tooltip in fullscreen', async () => (await openPlayerTooltips(browser)).length, 1)
+    const { lines } = await clockTooltipLayout()
+    expect(await walkIntoClockTooltip(lines[1])).not.toContain(false)
+    await pointerClickAt(browser, lines[1], 3)
+    await waitForValue(browser, 'selection in fullscreen', selectedText, `This clip is available until ${await pageTime(expires)}. Save it to keep it.`)
+    expect(await browser.execute(() => document.querySelector<HTMLVideoElement>('.cm-content .media-player__video')?.paused)).toBe(true)
+    await waitForPlayerFullscreen(browser, true)
 
     // Save rewrites the tag of the player. The player stays in the document
     // over that, so it still fills the screen.

@@ -220,6 +220,23 @@ const noticeLabel = computed(() => {
   return value.file === null ? `${value.title}. ${value.text}` : `${value.title}. ${value.text} ${value.file}`
 })
 
+// How long the clock's tooltip stays after the pointer left it or the
+// clock. A move from the clock to the tooltip that leaves the clock through
+// its side misses the bridge for a moment.
+const SELECTABLE_TOOLTIP_CLOSE_DELAY_MS = 150
+
+// A triple click selects a paragraph, and WebKit's paragraph runs on past
+// the tooltip into the editor lines after the player (the tooltip is a DOM
+// child of the widget, inside the editor's text). So a triple click on a
+// line of the tooltip selects that line only, here.
+function selectTooltipLine(event: MouseEvent): void {
+  if (event.detail < 3 || !(event.target instanceof Element)) return
+  const line = event.target.closest('.media-player__tooltip-title, .media-player__tooltip-text')
+  if (!line) return
+  event.preventDefault()
+  window.getSelection()?.selectAllChildren(line)
+}
+
 /** The faces of the Save control: `Save ⬇` → (saving) → `Saved ✓` → a green
  *  check, which is a trash under the pointer → (deleting) → `Save ⬇`. */
 type SaveState = 'save' | 'saving' | 'just-saved' | 'saved' | 'deleting'
@@ -398,7 +415,21 @@ function onSaveClick(): void {
                   <path d="M8 4.7V8l2.2 1.5" />
                 </svg>
               </span>
-              <media-tooltip class="media-player__tooltip media-player__tooltip--notice" boundary="viewport">
+              <!-- The one tooltip that takes the pointer: the user moves into
+                   it and selects its text (the path of a temp copy). With
+                   `disableHoverablePopup` off, video.js keeps it open while the
+                   pointer is over it; the close delay keeps it open over a
+                   quick move that cuts the corner of the bridge (the
+                   `::after` in the styles). `src/view/editor/media.ts` keeps
+                   the mousedown of its text and gives the focus back when it
+                   closes. -->
+              <media-tooltip
+                class="media-player__tooltip media-player__tooltip--notice media-player__tooltip--selectable"
+                boundary="viewport"
+                :close-delay="SELECTABLE_TOOLTIP_CLOSE_DELAY_MS"
+                :disableHoverablePopup.prop="false"
+                @mousedown="selectTooltipLine"
+              >
                 <span class="media-player__tooltip-title">{{ notice.title }}</span>
                 <span class="media-player__tooltip-text">{{ notice.text }}</span>
                 <span v-if="notice.file" class="media-player__tooltip-text media-player__tooltip-path">{{ notice.file }}</span>
@@ -982,7 +1013,8 @@ function onSaveClick(): void {
   line-height: 1.4;
   white-space: nowrap;
   /* The pointer goes through it, so it never takes the hover from its
-     element. */
+     element, and a tooltip over the picture or over editor text takes no
+     click. The clock's tooltip is the one exception (`--selectable`). */
   pointer-events: none;
   /* The gap between the tooltip and its element (read by video.js). */
   --media-tooltip-side-offset: calc(var(--u) * 6);
@@ -1002,6 +1034,46 @@ function onSaveClick(): void {
   max-width: min(calc(var(--u) * 280), calc(100vw - 32px));
   padding: calc(var(--u) * 6) calc(var(--u) * 10) calc(var(--u) * 7);
   white-space: normal;
+}
+
+/* The clock's tooltip takes the pointer, and its text can be selected (the
+   user copies the path of a temp copy from it). `.dez-media` turns the
+   selection off for the rest of the player. */
+.media-player__tooltip--selectable {
+  pointer-events: auto;
+  cursor: auto;
+  user-select: text;
+  -webkit-user-select: text;
+}
+
+/* The bridge: an invisible strip over the gap between the tooltip and the
+   clock (the side offset), on the side of the clock. video.js counts it as
+   a part of the tooltip, so a pointer that moves straight from the clock
+   into the tooltip is always over one of them, and the tooltip stays open.
+   2px more than the gap, so the strip overlaps the clock's box. */
+.media-player__tooltip--selectable::after {
+  content: '';
+  position: absolute;
+  left: 0;
+  right: 0;
+  height: calc(var(--media-tooltip-side-offset) + 2px);
+}
+
+.media-player__tooltip--selectable[data-side='top']::after {
+  top: 100%;
+}
+
+.media-player__tooltip--selectable[data-side='bottom']::after {
+  bottom: 100%;
+}
+
+/* CM's `hideNativeSelection` makes the native selection in the editor's
+   lines transparent (and `Highlight` under a focused element: the card has
+   the focus after a press in the tooltip). The tooltip is in a line, so its
+   selection gets the editor's color back. Two classes more than CM's rules
+   make this win. */
+.cm-content .cm-line .media-player__tooltip--selectable ::selection {
+  background-color: var(--color-selection, #d7d4f0) !important;
 }
 
 .media-player__tooltip-title {

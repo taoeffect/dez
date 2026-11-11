@@ -20,6 +20,14 @@ import { addPendingRange, pendingRange, pendingRanges, removePendingRange } from
 
 const ROOT_CLASS = 'dez-media'
 
+/** The class of the player's one tooltip whose text can be selected: the
+ *  clock's tooltip (`MediaPlayer.vue`). */
+const SELECTABLE_TOOLTIP_CLASS = 'media-player__tooltip--selectable'
+
+function isInSelectableTooltip(target: EventTarget | null): boolean {
+  return target instanceof Element && target.closest(`.${SELECTABLE_TOOLTIP_CLASS}`) !== null
+}
+
 interface MediaDecorations {
   /** In doc order. */
   media: readonly MediaTag[]
@@ -99,22 +107,39 @@ class MediaWidget extends WidgetType {
     mountedPlayers.set(root, { app, tag, observer })
     // A press on the player keeps the caret and the focus where they are, as
     // a press on a tool call chip does. The controls work by pointer and
-    // click events, which this does not stop.
-    root.addEventListener('mousedown', (event) => event.preventDefault())
+    // click events, which this does not stop. A press on the text of the
+    // clock's tooltip keeps its default, so that the text can be selected.
+    root.addEventListener('mousedown', (event) => {
+      if (!isInSelectableTooltip(event.target)) event.preventDefault()
+    })
     // A video.js slider gives the focus to its thumb when a press starts on
     // it, with no regard to the line above. So when the editor had the
     // focus, it gets it back at the end of the press. The slider stops its
     // pointer events from going up, so only capture listeners get them.
+    //
+    // A press on the tooltip's text puts the focus on the card. There the
+    // give-back waits until the tooltip closes: a focused editor writes its
+    // own selection to the DOM, which would end the user's selection in the
+    // tooltip. So the debt stays over presses until a give-back pays it.
     let editorHadFocus = false
-    root.addEventListener('pointerdown', () => {
-      editorHadFocus = view.hasFocus
+    let pressInTooltip = false
+    root.addEventListener('pointerdown', (event) => {
+      if (view.hasFocus) editorHadFocus = true
+      pressInTooltip = isInSelectableTooltip(event.target)
     }, true)
     const giveFocusBack = () => {
       if (editorHadFocus && root.contains(document.activeElement)) focusKeepingScroll(view)
       editorHadFocus = false
     }
-    root.addEventListener('pointerup', giveFocusBack, true)
-    root.addEventListener('pointercancel', giveFocusBack, true)
+    const endPress = () => {
+      if (!pressInTooltip) giveFocusBack()
+    }
+    root.addEventListener('pointerup', endPress, true)
+    root.addEventListener('pointercancel', endPress, true)
+    root.addEventListener('open-change', (event) => {
+      const { open } = (event as CustomEvent<{ open: boolean }>).detail
+      if (!open && isInSelectableTooltip(event.target)) giveFocusBack()
+    }, true)
     // The card has the focus while the player fills the screen, so keys do
     // not go to the editor behind it. At the end, the editor gets the focus
     // back. The card is no Tab stop, so the focus is on it only then.

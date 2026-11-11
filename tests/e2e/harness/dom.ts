@@ -226,27 +226,30 @@ export async function pointerDoubleClick (browser: E2EBrowser, selector: string,
 const DRAG_POINTER = { id: 'dragMouse', parameters: { pointerType: 'mouse' } } as const
 
 /**
- * Drag an element with WebDriver pointer actions: press at its center and
- * move in a straight line to `toX` (viewport px) on the same row, or on row
- * `toY` when given, in steps of at most 10 px, one pointermove each, as a
- * real mouse sends them. Then release, unless `release` is false: the
- * button stays down until `pointerRelease`.
+ * Drag with WebDriver pointer actions: press at the center of the element
+ * `from` (a selector), or at the viewport point `from`, and move in a
+ * straight line to `toX` (viewport px) on the same row, or on row `toY` when
+ * given, in steps of at most 10 px, one pointermove each, as a real mouse
+ * sends them. Then release, unless `release` is false: the button stays
+ * down until `pointerRelease`.
  */
 export async function pointerDrag (
   browser: E2EBrowser,
-  fromSelector: string,
+  from: string | Point,
   toX: number,
   options: { release?: boolean, toY?: number } = {}
 ): Promise<void> {
-  const from = await elementCenter(browser, fromSelector)
-  const toY = options.toY ?? from.y
-  const steps = Math.max(1, Math.ceil(Math.hypot(toX - from.x, toY - from.y) / 10))
+  const start = typeof from === 'string' ? await elementCenter(browser, from) : from
+  const fromX = Math.round(start.x)
+  const fromY = Math.round(start.y)
+  const toY = options.toY ?? fromY
+  const steps = Math.max(1, Math.ceil(Math.hypot(toX - fromX, toY - fromY) / 10))
   let action = browser.action('pointer', DRAG_POINTER)
-    .move({ x: from.x, y: from.y, origin: 'viewport' })
+    .move({ x: fromX, y: fromY, origin: 'viewport' })
     .down({ button: 0 })
   for (let step = 1; step <= steps; step++) {
-    const x = Math.round(from.x + (toX - from.x) * step / steps)
-    const y = Math.round(from.y + (toY - from.y) * step / steps)
+    const x = Math.round(fromX + (toX - fromX) * step / steps)
+    const y = Math.round(fromY + (toY - fromY) * step / steps)
     action = action.move({ x, y, origin: 'viewport', duration: 10 })
   }
   if (options.release === false) {
