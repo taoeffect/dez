@@ -117,9 +117,10 @@ export class Provider {
 
   // Config models come first, in config order, then the fetched models the
   // config does not list. Each id appears once. A name, capability flag,
-  // outputs list, or request kind set in the config wins over the fetched one
-  // for the same id. A fetched model that is known to make none of the output
-  // types (embeddings, rerank) is left out; a config model is always listed.
+  // outputs list, request kind, or clip input set in the config wins over
+  // the fetched one for the same id. A fetched model that is known to make
+  // none of the output types (embeddings, rerank) is left out; a config
+  // model is always listed.
   mergeModels(fetched: ModelInfo[]): ModelInfo[] {
     const fetchedById = new Map<string, ModelInfo>()
     for (const model of fetched) {
@@ -139,6 +140,7 @@ export class Provider {
         unsupportedSettings: fetchedModel?.unsupportedSettings,
         outputs: model.outputs ?? fetchedModel?.outputs,
         request: model.request ?? fetchedModel?.request,
+        clipInput: model.clipInput ?? fetchedModel?.clipInput,
       }))
     }
 
@@ -197,6 +199,8 @@ export class Provider {
   // its input images (`ClipFormat.textRules`, `ClipFormat.imageRules`),
   // read from its raw entries (`modelEntries`, `mediaModelEntries`). This
   // comes after the merge, because a config model can set the request kind.
+  // A new field here needs a line in `withKeptClipData` (keptClipData.ts),
+  // which keeps these fields when the media list does not load.
   withClipData(models: readonly ModelInfo[], entries: ReadonlyMap<string, unknown>, mediaEntries: ReadonlyMap<string, unknown>): ModelInfo[] {
     const clips = this.clipFormatOrNone()
     return models.map((model) => {

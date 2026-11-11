@@ -3,6 +3,7 @@ import { createPinia, setActivePinia } from 'pinia'
 import { afterEach, beforeEach, describe, expect, it, vi, type MockInstance } from 'vitest'
 import type { NativeDownloadRule, NativeHttpDownload, NativeHttpRequest, NativeHttpResponse } from '../../utils/protocol/nativeHttp'
 import { bytesToBase64 } from '../../utils/base64'
+import { NO_VIDEO_LENGTH_MESSAGE } from './mediaFormats'
 import type { ModelParameter } from './modelParameters'
 import { wavFile } from './pcmAudio'
 import type { ProviderGenerateMediaResult } from './streamTypes'
@@ -436,7 +437,7 @@ describe('a clip job', () => {
   // a price that no one saw.
   it.each(['venice-like', 'router-like'])('sends no video request to a %s model whose lengths the model cache does not have', async (providerId) => {
     await expect(generate({ providerId, kind: 'video', parameters: { duration: 1 } }))
-      .rejects.toThrow(new Error('The model list does not tell which lengths this model takes.'))
+      .rejects.toThrow(new Error(NO_VIDEO_LENGTH_MESSAGE))
 
     expect(downloads).toEqual([])
     expect(httpRequests).toEqual([])

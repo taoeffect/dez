@@ -221,9 +221,11 @@ export default sbp('sbp/selectors/register', {
   //
   // The model list and the list of the media API (`mediaModelListRequest`)
   // load at the same time. A failed list of the media API does not fail the
-  // check, as the provider's other models work without it: its models then
-  // have no parameters, and a model that needs them gets no request until a
-  // later check (`ClipFormat.request`).
+  // check, as the provider's other models work without it: the result says
+  // so (`mediaListFailed`), and the model cache then keeps what it knew of
+  // each model from that list (`withKeptClipData`). A model that the cache
+  // did not know has no parameters then, and one that needs them gets no
+  // request until a later check (`ClipFormat.request`).
   async 'dez.provider/listModelsResult' (providerId: ProviderId): Promise<ProviderModelsResult> {
     const provider = requireProvider(providerId)
 
@@ -240,12 +242,15 @@ export default sbp('sbp/selectors/register', {
           })
           : undefined,
       ])
+      // `undefined` is no JSON value: with a request, it tells that the
+      // request failed.
+      const mediaListFailed = mediaListRequest !== null && mediaData === undefined
       // With no model list, these are the config models.
       const merged = provider.mergeModels(provider.parseModels(data))
       const entries = provider.modelEntries(merged, data)
       const mediaEntries = mediaData === undefined ? undefined : provider.mediaModelEntries(mediaData)
       const models = provider.withClipData(merged, entries, mediaEntries ?? new Map())
-      return { ok: true, models, entries, ...(mediaEntries && { mediaEntries }) }
+      return { ok: true, models, entries, ...(mediaEntries && { mediaEntries }), ...(mediaListFailed && { mediaListFailed }) }
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error)
       console.error(`Failed to list models for provider ${providerId}:`, error)

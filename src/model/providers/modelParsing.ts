@@ -61,28 +61,34 @@ function hasValueAtPath(model: Record<string, unknown>, path: string): boolean {
   return value !== undefined && value !== null
 }
 
-// The request kind that one type of `modelOutputs.values` gives an entry:
+// What one type of `modelOutputs.values` gives an entry. The request kind:
 // the kind of the entry's value at the type's `requestBy.path` when
 // `requestBy.values` names that value, else the type's `request`, else
-// `none`. The keys of `values` are JSON texts, so a boolean value of the
-// entry counts as its text, `true` or `false`.
-function typeRequest(model: Record<string, unknown>, { request, requestBy }: ModelOutputsConfig['values'][string]): ModelRequest {
+// `none`. The clip input, in the same way: the kind that
+// `requestBy.clipInputs` names for that value, else the type's `clipInput`.
+// The keys of both tables are JSON texts, so a boolean value of the entry
+// counts as its text, `true` or `false`.
+function typeRequest(model: Record<string, unknown>, { request, clipInput, requestBy }: ModelOutputsConfig['values'][string]): Pick<ModelCapabilities, 'clipInput'> & { request: ModelRequest } {
   const value = requestBy === undefined ? undefined : valueAtPath(model, requestBy.path)
   const name = typeof value === 'boolean' ? String(value) : value
+  if (requestBy === undefined || typeof name !== 'string') return { request: request ?? 'none', clipInput }
   // Object.hasOwn: as for the raw types below.
-  if (requestBy !== undefined && typeof name === 'string' && Object.hasOwn(requestBy.values, name)) return requestBy.values[name]
-  return request ?? 'none'
+  return {
+    request: Object.hasOwn(requestBy.values, name) ? requestBy.values[name] : request ?? 'none',
+    clipInput: requestBy.clipInputs !== undefined && Object.hasOwn(requestBy.clipInputs, name) ? requestBy.clipInputs[name] : clipInput,
+  }
 }
 
 // What a `/models` entry's model makes and how Dez sends it a request, from
 // the raw types at the config's `modelOutputs.path` (a string, or a list of
 // them, such as OpenRouter's `architecture.output_modalities`). Types that
 // `values` does not name are skipped, as is a type whose `requiredPath` has
-// no value in the entry (or null); with no known type, both stay unknown.
+// no value in the entry (or null); with no known type, all stay unknown.
 // The outputs are the union of the known types' outputs. The request kind is
 // `chat` when one type gives it (`typeRequest`), so an image+text model
 // stays a chat model; else the first other kind in list order; else `none`.
-export function modelOutputsAndRequest(model: Record<string, unknown>, mapping: ModelOutputsConfig | undefined): Pick<ModelCapabilities, 'outputs' | 'request'> {
+// A `none` model gets the clip input of its first type that has one.
+export function modelOutputsAndRequest(model: Record<string, unknown>, mapping: ModelOutputsConfig | undefined): Pick<ModelCapabilities, 'outputs' | 'request' | 'clipInput'> {
   if (mapping === undefined) return {}
 
   const value = valueAtPath(model, mapping.path)
@@ -96,8 +102,12 @@ export function modelOutputsAndRequest(model: Record<string, unknown>, mapping: 
   if (known.length === 0) return {}
 
   const requests = known.map((entry) => typeRequest(model, entry))
+  const kinds = requests.map((entry) => entry.request)
+  const request = kinds.includes('chat') ? 'chat' : kinds.find((kind) => kind !== 'none') ?? 'none'
+  const clipInput = request === 'none' ? requests.find((entry) => entry.clipInput !== undefined)?.clipInput : undefined
   return {
     outputs: normalizeOutputs(known.flatMap((entry) => entry.outputs)),
-    request: requests.includes('chat') ? 'chat' : requests.find((kind) => kind !== 'none') ?? 'none',
+    request,
+    ...(clipInput !== undefined && { clipInput }),
   }
 }

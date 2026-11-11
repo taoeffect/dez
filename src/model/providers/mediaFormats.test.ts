@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import { bytesToBase64 } from '../../utils/base64'
 import type { NativeHttpResponseHead } from '../../utils/protocol/nativeHttp'
-import { MEDIA_FORMATS, type ClipFormat, type ClipQuoteFormat, type ImageFormat } from './mediaFormats'
+import { MEDIA_FORMATS, NO_VIDEO_LENGTH_MESSAGE, type ClipFormat, type ClipQuoteFormat, type ImageFormat } from './mediaFormats'
 import type { ModelParameter } from './modelParameters'
 import type { ChatImagePart, ClipKind } from './types'
 
@@ -341,11 +341,22 @@ describe('venice clip text rules', () => {
     expect(rules('music', spec({ prompt_character_limit: limit, min_prompt_length: 10 }))).toStrictEqual({ minPromptLength: 10 })
   })
 
+  // A video entry has its limit under `constraints`, and no other rule.
+  it.each(['video', 'imageToVideo'] as const)('reads the prompt limit of a %s model', (kind) => {
+    expect(rules(kind, spec({ constraints: { prompt_character_limit: 2000 }, min_prompt_length: 10, supports_lyrics: true })))
+      .toStrictEqual({ maxPromptLength: 2000 })
+  })
+
   it.each([
     ['a music model whose entry tells nothing', 'music', spec({})],
     ['a music model with no entry', 'music', undefined],
-    ['a video model', 'video', spec({ prompt_character_limit: 300 })],
-    ['an image-to-video model', 'imageToVideo', spec({ prompt_character_limit: 300 })],
+    ['a video model whose entry tells no limit', 'video', spec({ constraints: { durations: ['5s'] } })],
+    ['a video model with no entry', 'video', undefined],
+    // No model takes no text at all.
+    ['a video model with a limit of 0', 'video', spec({ constraints: { prompt_character_limit: 0 } })],
+    ['a video model with a limit that is a text', 'imageToVideo', spec({ constraints: { prompt_character_limit: '2000' } })],
+    // Only a music entry has its limit at this place.
+    ['a video model with the limit of a music entry', 'imageToVideo', spec({ prompt_character_limit: 300 })],
   ] as const)('has no rules for %s', (_name, kind, entry) => {
     expect(rules(kind, entry)).toBeUndefined()
   })
@@ -426,7 +437,7 @@ describe('venice clip requests', () => {
 
   it.each(['video', 'imageToVideo'] as const)('refuses a %s request with no length', (kind) => {
     expect(() => veniceClips.request(kind, VENICE_URL, 'wan', { prompt: 'A red fox', images: [], values: { aspect_ratio: '16:9' } }))
-      .toThrow('The model list does not tell which lengths this model takes.')
+      .toThrow(NO_VIDEO_LENGTH_MESSAGE)
   })
 })
 
@@ -654,7 +665,7 @@ describe('openrouter clip requests', () => {
 
   it('refuses a video request with no length, which would get the default length of OpenRouter', () => {
     expect(() => openRouterClips.request('video', OPENROUTER_URL, 'm', { prompt: 'A red fox', images: [], values: { resolution: '480p' } }))
-      .toThrow('The model list does not tell which lengths this model takes.')
+      .toThrow(NO_VIDEO_LENGTH_MESSAGE)
   })
 
   it('has no music request', () => {

@@ -6,8 +6,10 @@ import { sectionVisibleText } from '../model/chat/content'
 import type { DrawnImage, ImageDrawing, ImageSize } from '../model/chat/imageDrawing'
 import { findToolBlocks } from '../model/chat/toolBlocks'
 import type { ConversationData } from '../model/persistence/types'
+import { missingImageProblem } from '../model/providers/clipImages'
 import type { ClipTextRules } from '../model/providers/clipText'
 import { customProviderConfigSchema } from '../model/providers/config'
+import { unusableModelMessage } from '../model/providers/unusableModel'
 import type { GeneratedClip, ModelRequest, ProviderChatInputMessage, ProviderGenerateMediaInput, ProviderGenerateMediaResult, ProviderInfo, ProviderStreamChatInput, ProviderStreamChatResult } from '../model/providers'
 import type { RequestMessages } from '../model/streams/types'
 import { TOOL_DEFINITIONS } from '../model/tools/registry'
@@ -1134,6 +1136,21 @@ describe('dez.stream/start media round', () => {
     expect(mediaInputs[0]).toMatchObject({ kind: 'imageEdit', prompt: 'Make it red.', images: [generated('old.png')] })
   })
 
+  // The reply would start, and then fail with an error of the request.
+  it('sends no edit request and shows an error toast when the conversation has no image', async () => {
+    const message = missingImageProblem(model.modelName, 'imageEdit', 0)
+    useRequest('imageEdit')
+    sbp('dez.model/tabs/replaceSections', activeTab().id, [{ id: 'u1', role: 'user', content: [{ kind: 'text', text: 'Make it red.' }] }])
+
+    await sbp('dez.controller/submitTab', activeTab().id)
+
+    expect(mediaInputs).toStrictEqual([])
+    expect(sectionTexts()).toStrictEqual([{ role: 'user', text: 'Make it red.' }])
+    expect(toasts).toStrictEqual([{ area: 'app-global', data: { variant: 'error', title: 'Cannot send', message } }])
+    expect(consoleError).toHaveBeenCalledWith(`Cannot send: ${message}`)
+    expect(alerts).toStrictEqual([])
+  })
+
   it('removes the section and shows an error toast when the request fails', async () => {
     generateMedia = async () => {
       throw new Error('No image to edit')
@@ -1794,6 +1811,23 @@ describe('dez.controller/submitTab with a model that Dez cannot use', () => {
       { role: 'agent', text: 'Before. After.' },
       { role: 'user', text: '' },
     ])
+    expect(toasts).toStrictEqual([{ area: 'app-global', data: { variant: 'error', title: 'Cannot send', message } }])
+    expect(consoleError).toHaveBeenCalledWith(`Cannot send: ${message}`)
+  })
+
+  // The general text would blame an API; the cause is the input.
+  it('tells the user of the clip that the model needs as its input', async () => {
+    const message = unusableModelMessage(model.modelName, { clipInput: 'audio' })
+    sbp('dez.model/setActiveModel', model.providerId, model.modelId, model.modelName)
+    sbp('dez.model/modelCache/applyProviderResult', model.providerId, {
+      ok: true,
+      models: [{ id: model.modelId, name: model.modelName, provider: model.providerId, outputs: ['text'], request: 'none', clipInput: 'audio' }],
+    })
+    sbp('dez.model/tabs/replaceSections', activeTab().id, [{ id: 'u1', role: 'user', content: [{ kind: 'text', text: 'Write this down.' }] }])
+
+    await sbp('dez.controller/submitTab', activeTab().id)
+
+    expect(sectionTexts()).toStrictEqual([{ role: 'user', text: 'Write this down.' }])
     expect(toasts).toStrictEqual([{ area: 'app-global', data: { variant: 'error', title: 'Cannot send', message } }])
     expect(consoleError).toHaveBeenCalledWith(`Cannot send: ${message}`)
   })

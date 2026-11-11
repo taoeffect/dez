@@ -102,8 +102,8 @@ export function sectionsToStreamMessages(sections: Section[], requestModel: Mode
  *  `sections` (the tab's sections, in which the reply's own section is
  *  still empty), so that "Make it blue" or "Make it move" uses the image
  *  of the reply before. With no image there either, it gets no paths: the
- *  submit refuses an `imageToVideo` request (`clipImageProblem`), and
- *  generateMedia refuses both. */
+ *  submit refuses the request (`missingImageProblem`), and generateMedia
+ *  refuses it too. */
 export function mediaRequestInput(
   kind: MediaKind,
   messages: StreamMessage[],

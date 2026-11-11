@@ -2,7 +2,7 @@ import fs from 'node:fs'
 import path from 'node:path'
 import { serializeConversation } from '../../../src/model/persistence/conversationFormat'
 import { defaultAppState, serializeAppStateJson } from '../../../src/model/persistence/appState'
-import type { AppStatePayload, ConversationData } from '../../../src/model/persistence/types'
+import type { AppStatePayload, ConversationData, ModelCache } from '../../../src/model/persistence/types'
 
 // Fixture seeding for the isolated per-run HOME created by `startApp()`.
 //
@@ -103,6 +103,18 @@ async function writeAppStateFile (home: string, content: string): Promise<string
 export async function readAppState (home: string): Promise<AppStatePayload | null> {
   try {
     return JSON.parse(await fs.promises.readFile(path.join(configDir(home), 'app_state.json'), 'utf8')) as AppStatePayload
+  } catch {
+    return null
+  }
+}
+
+/** `<home>/.config/dez/model_cache.json` as the app saved it, or null while
+ *  it is missing or half written. The app saves it a moment after a model
+ *  check (a debounce), so a spec that restarts the app waits for the check
+ *  in this file first. */
+export async function readModelCache (home: string): Promise<ModelCache | null> {
+  try {
+    return JSON.parse(await fs.promises.readFile(path.join(configDir(home), 'model_cache.json'), 'utf8')) as ModelCache
   } catch {
     return null
   }

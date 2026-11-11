@@ -212,6 +212,13 @@ function lowestFirstParameter(name: string, label: string, list: unknown, size: 
   return optionsParameter(name, label, [...sized, ...values.filter((value) => Number.isNaN(size(value)))], sized[0])
 }
 
+// The refusal of a video request with no length. A model has no length
+// when its entry in the model list tells none, or when the list that tells
+// it did not load at a model check and no earlier check knew the model
+// (`withKeptClipData` in keptClipData.ts). Only in the second case does a
+// new check help, and a format cannot tell the two apart.
+export const NO_VIDEO_LENGTH_MESSAGE = 'Dez does not know which lengths this model takes: the provider\'s model list did not tell them. Check the provider again (Settings › Providers, "Check again").'
+
 // The length of a Venice music clip, in seconds: one of the entry's
 // `duration_options` when it has them, else each whole second from
 // `min_duration` to `max_duration`. A model with neither takes no length.
@@ -233,15 +240,18 @@ function veniceMusicLength(entry: unknown): ModelParameter[] {
   return [range]
 }
 
+// A count of characters of a Venice entry; undefined for a value that is
+// no count.
+function veniceCharacterCount(value: unknown): number | undefined {
+  return typeof value === 'number' && Number.isInteger(value) && value >= 0 ? value : undefined
+}
+
 // What a Venice music model takes as text, from its entry: the least and
 // the most characters of the prompt, and whether it takes lyrics
 // (`lyrics_prompt`). A limit that is no count is not known.
 function veniceMusicText(entry: unknown): ClipTextRules | undefined {
   const spec = (field: string) => valueAtPath(entry, `model_spec.${field}`)
-  const count = (field: string): number | undefined => {
-    const value = spec(field)
-    return typeof value === 'number' && Number.isInteger(value) && value >= 0 ? value : undefined
-  }
+  const count = (field: string) => veniceCharacterCount(spec(field))
   const rules: ClipTextRules = {}
   const minPromptLength = count('min_prompt_length')
   const maxPromptLength = count('prompt_character_limit')
@@ -371,9 +381,11 @@ const veniceFormat: MediaFormat = {
       }
     },
     // tts: 1 to 4096 characters for every model (the speech request's
-    // schema). music: the limits are in the entry. video: Dez reads none
-    // (some entries have `constraints.prompt_character_limit`), so the API
-    // checks the text.
+    // schema). music: the limits are in the entry. video: some entries tell
+    // the most characters of the prompt
+    // (`constraints.prompt_character_limit`, 1000 to 26000); a longer text
+    // gets a 400 from the API, so Dez refuses it first. A limit of 0 is
+    // not a limit that a model can have.
     textRules: (kind, entry) => {
       switch (kind) {
         case 'tts':
@@ -381,8 +393,10 @@ const veniceFormat: MediaFormat = {
         case 'music':
           return veniceMusicText(entry)
         case 'video':
-        case 'imageToVideo':
-          return undefined
+        case 'imageToVideo': {
+          const maxPromptLength = veniceCharacterCount(valueAtPath(entry, 'model_spec.constraints.prompt_character_limit'))
+          return maxPromptLength ? { maxPromptLength } : undefined
+        }
       }
     },
     // An image-to-video request takes a first frame (`image_url`) and a
@@ -437,7 +451,7 @@ const veniceFormat: MediaFormat = {
           // last frame, each as a data URL ("a URL (http/https) or a data
           // URL").
           // https://docs.venice.ai/api-reference/endpoint/video/queue
-          if (values.duration === undefined) throw new Error('The model list does not tell which lengths this model takes.')
+          if (values.duration === undefined) throw new Error(NO_VIDEO_LENGTH_MESSAGE)
           const [firstFrame, lastFrame] = images.map(imageDataUrl)
           return {
             url: `${base}/video/queue`,
@@ -594,7 +608,7 @@ const openRouterFormat: MediaFormat = {
           // reference-to-video request, is never sent.
           // https://openrouter.ai/docs/guides/overview/multimodal/video-generation
           // https://openrouter.ai/docs/cookbook/video-generation/image-to-video
-          if (values.duration === undefined) throw new Error('The model list does not tell which lengths this model takes.')
+          if (values.duration === undefined) throw new Error(NO_VIDEO_LENGTH_MESSAGE)
           return {
             url: `${base}/videos`,
             body: {

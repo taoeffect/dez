@@ -17,6 +17,7 @@ import { MAX_CLOSED_TABS, NEW_TAB_TITLE, useTabStore } from './tabs'
 import type { AppStatePayload, CachedProvider, ConversationSearchOutcome, ModelCache } from '../persistence/types'
 import { emptyModelCache } from '../persistence/modelCache'
 import type { ModelOutputsConfig, ProviderConfig, ProviderThinkingConfig } from '../providers/config'
+import { withKeptClipData } from '../providers/keptClipData'
 import type { ParameterValue, ParameterValues } from '../providers/modelParameters'
 import { toolsApply } from '../providers/modelToggles'
 import { providerModel, type ModelInfo, type ProviderId, type ProviderModelsResult } from '../providers/types'
@@ -235,7 +236,13 @@ function cloneModelOutputsConfig({ path, values }: ModelOutputsConfig): ModelOut
     values: Object.fromEntries(Object.entries(values).map(([type, { requestBy, ...value }]) => [type, {
       ...value,
       outputs: [...value.outputs],
-      ...(requestBy && { requestBy: { path: requestBy.path, values: { ...requestBy.values } } }),
+      ...(requestBy && {
+        requestBy: {
+          path: requestBy.path,
+          values: { ...requestBy.values },
+          ...(requestBy.clipInputs && { clipInputs: { ...requestBy.clipInputs } }),
+        },
+      }),
     }])),
   }
 }
@@ -1353,13 +1360,20 @@ export default sbp('sbp/selectors/register', {
   // mark working, bump both timestamps, and clear the error; on failure keep
   // the last-known models and raw entries but mark the provider not-working,
   // bump only the attempt timestamp, and record the error.
+  //
+  // A success whose media list did not load (`mediaListFailed`) is between
+  // the two: the new models keep the last-known data of that list
+  // (`withKeptClipData`), so model_cache.json is the cache of it. The raw
+  // media entries are still removed: they hold prices, and `model_info`
+  // must not show old ones as the provider's answer.
   'dez.model/modelCache/applyProviderResult' (providerId: ProviderId, result: ProviderModelsResult): void {
     const store = useModelCacheStore()
     const now = Date.now()
     const existing = store.cache.providers[providerId]
     if (result.ok) {
+      const models = result.mediaListFailed && existing ? withKeptClipData(result.models, existing.models) : result.models
       store.cache.providers[providerId] = {
-        models: result.models.map(cloneModelInfo),
+        models: models.map(cloneModelInfo),
         working: true,
         updatedAt: now,
         lastCheckedAt: now,

@@ -4,6 +4,7 @@ import { afterEach, beforeEach, describe, expect, it, vi, type MockInstance } fr
 import type { DrawnImage, ImageDrawing, ImageSize } from '../chat/imageDrawing'
 import type { ModelRef, Section } from '../chat/types'
 import { toolBlockText } from '../chat/toolBlocks'
+import type { ModelCache } from '../persistence/types'
 import { sectionsToStreamMessages } from '../streams/messages'
 import { bytesToBase64 } from '../../utils/base64'
 import type { NativeHttpDownload, NativeHttpRequest, NativeHttpResponse, NativeHttpStreamResult } from '../../utils/protocol/nativeHttp'
@@ -263,7 +264,7 @@ describe('model checks of a provider with a media model list', () => {
   })
 
   // The chat models of the provider work without the media list.
-  it('still passes the check when only the media list fails: its models then have no parameters', async () => {
+  it('still passes the check when only the media list fails, and tells so: its models then have no parameters', async () => {
     httpAnswers.set(`${ROUTER_URL}/videos/models`, { status: 503, json: { error: 'Busy' } })
 
     const result = await sbp('dez.provider/listModelsResult', 'router') as ProviderModelsResult
@@ -272,9 +273,28 @@ describe('model checks of a provider with a media model list', () => {
       ok: true,
       models: [speech, video],
       entries: new Map([['speech', speechEntry], ['video', videoEntry]]),
+      mediaListFailed: true,
     })
     // The log also has the key store failure of this file's stand-in.
     expect(consoleError.mock.calls.map(([text]) => text)).toContain('Failed to list the media models of provider router:')
+  })
+
+  // A video model with no lengths gets no request, so a media list that
+  // fails once must not take away the lengths of an earlier check.
+  it('leaves in the model cache what an earlier check read from the media list, when that list then fails', async () => {
+    const check = async () => sbp('dez.model/modelCache/applyProviderResult', 'router', await sbp('dez.provider/listModelsResult', 'router'))
+    const cachedModels = () => (sbp('dez.model/modelCache/snapshot') as ModelCache).providers.router?.models
+
+    await check()
+    httpAnswers.set(`${ROUTER_URL}/videos/models`, { status: 503, json: { error: 'Busy' } })
+    await check()
+    expect(cachedModels()).toStrictEqual([speech, { ...video, parameters: videoParameters }])
+
+    // The next good list wins over what the cache kept.
+    const longer = { id: 'video', supported_durations: [8] }
+    httpAnswers.set(`${ROUTER_URL}/videos/models`, { status: 200, json: { data: [longer] } })
+    await check()
+    expect(cachedModels()?.[1].parameters).toStrictEqual([{ name: 'duration', label: 'Length (seconds)', options: [8], default: 8 }])
   })
 
   it('fails the check when the model list fails, whatever the media list says', async () => {

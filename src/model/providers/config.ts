@@ -1,4 +1,5 @@
 import * as z from 'zod'
+import { MEDIA_TAG_KINDS } from '../chat/mediaTags'
 import { MODEL_OUTPUT_IDS } from '../modelOutputs'
 import { BUILT_IN_PROVIDER_IDS } from './builtins'
 import { THINKING_SETTING_KEY } from './thinking'
@@ -53,6 +54,11 @@ const providerIdSchema = z.string().refine(
   'Provider id must be 1-64 letters, digits, "-" or "_", and not a reserved name',
 )
 
+// The kind of clip that a model needs as the input of every request
+// (`ModelInfo.clipInput` in types.ts). It counts only with the request
+// `none`, where it tells why Dez cannot use the model.
+const clipInputSchema = z.enum(MEDIA_TAG_KINDS)
+
 export const providerModelConfigSchema = z.object({
   id: z.string().trim().min(1, 'Model id must not be empty'),
   // Display name; the id is shown when it is missing.
@@ -74,6 +80,9 @@ export const providerModelConfigSchema = z.object({
   // How Dez sends the model a request. Wins over the server's kind; missing:
   // the server's kind, or `chat`.
   request: z.enum(MODEL_REQUESTS).optional(),
+  // With the request `none`: the model needs a clip of this kind as its
+  // input. Wins over the server's value.
+  clipInput: clipInputSchema.optional(),
 })
 
 // A dot path into one `/models` entry, such as
@@ -180,16 +189,18 @@ const thinkingConfigSchema = z.object({
 // What a model makes and how Dez sends it a request, from the type that its
 // `/models` entry reports at `path` (a string is one type, a list is many).
 // `values` maps each raw type to its outputs and request kind. A type with
-// no `request` gives `none` (Dez cannot use the model yet); a model whose
-// types make no outputs (embeddings) is left out of the list. Types missing
-// from `values` are skipped, and an entry with no known type stays unknown
-// (a chat model, as with no config). How many types combine:
-// modelParsing.ts.
+// no `request` gives `none` (Dez cannot use the model yet), and its
+// `clipInput` tells that the cause is a clip that the model needs as its
+// input; a model whose types make no outputs (embeddings) is left out of
+// the list. Types missing from `values` are skipped, and an entry with no
+// known type stays unknown (a chat model, as with no config). How many
+// types combine: modelParsing.ts.
 const modelOutputsConfigSchema = z.object({
   path: modelEntryPathSchema,
   values: z.record(z.string(), z.object({
     outputs: z.array(z.enum(MODEL_OUTPUT_IDS)),
     request: z.enum(MODEL_REQUESTS).optional(),
+    clipInput: clipInputSchema.optional(),
     // The type counts only for an entry that has a value at this path;
     // else it is skipped, like a type that `values` does not name. For a
     // server that reports a type that the model cannot make: OpenRouter's
@@ -202,10 +213,13 @@ const modelOutputsConfigSchema = z.object({
     // other value, or none, gives `request`. Venice reports every video
     // model as `video`, and only `model_spec.constraints.model_type` tells
     // a model that needs just a text (`text-to-video`) from one that needs
-    // an image or a video.
+    // an image or a video. `clipInputs` gives the clip input in the same
+    // way: a value that it names gives its kind, any other value the
+    // type's `clipInput`.
     requestBy: z.object({
       path: modelEntryPathSchema,
       values: z.record(z.string(), z.enum(MODEL_REQUESTS)),
+      clipInputs: z.record(z.string(), clipInputSchema).optional(),
     }).optional(),
   })),
 })

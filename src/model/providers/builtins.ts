@@ -35,6 +35,10 @@ export const BUILT_IN_PROVIDER_CONFIGS: readonly ProviderConfig[] = [
     // that takes frames (the video list, mediaFormats.ts). The few models
     // that need a video get the same request, and OpenRouter refuses it.
     // "audio" comes only with "text": those models answer through chat.
+    // "transcription" models write down a recording, which Dez cannot
+    // send (`clipInput`).
+    // MODEL_INVOKE: the types with no `request` here (image-only,
+    // transcription) are the models that a `model_invoke` tool could run.
     modelOutputs: {
       path: 'architecture.output_modalities',
       values: {
@@ -43,7 +47,7 @@ export const BUILT_IN_PROVIDER_CONFIGS: readonly ProviderConfig[] = [
         audio: { outputs: ['audio'] },
         speech: { outputs: ['audio'], request: 'tts' },
         video: { outputs: ['video'], request: 'video' },
-        transcription: { outputs: ['text'] },
+        transcription: { outputs: ['text'], clipInput: 'audio' },
         embeddings: { outputs: [] },
         rerank: { outputs: [] },
         decisions: { outputs: [] },
@@ -120,7 +124,12 @@ export const BUILT_IN_PROVIDER_CONFIGS: readonly ProviderConfig[] = [
     // `video`, and `model_spec.constraints.model_type` tells what it needs:
     // just a text (`text-to-video`), an image (`image-to-video`), or a
     // video (`video`), which Dez does not send yet. Dez does not run
-    // upscale or speech-to-text (`asr`) models yet.
+    // upscale or speech-to-text (`asr`) models yet. `clipInput` and
+    // `clipInputs` name the clip that such a model needs, for the text of
+    // the refusal.
+    // MODEL_INVOKE: the types and values with no request here (upscale,
+    // asr, the voice changer, video-to-video) are the models that a
+    // `model_invoke` tool could run.
     modelOutputs: {
       path: 'type',
       values: {
@@ -132,16 +141,17 @@ export const BUILT_IN_PROVIDER_CONFIGS: readonly ProviderConfig[] = [
         music: {
           outputs: ['audio'],
           request: 'music',
-          requestBy: { path: 'model_spec.voice_changer', values: { true: 'none' } },
+          requestBy: { path: 'model_spec.voice_changer', values: { true: 'none' }, clipInputs: { true: 'audio' } },
         },
         video: {
           outputs: ['video'],
           requestBy: {
             path: 'model_spec.constraints.model_type',
             values: { 'text-to-video': 'video', 'image-to-video': 'imageToVideo' },
+            clipInputs: { video: 'video' },
           },
         },
-        asr: { outputs: ['text'] },
+        asr: { outputs: ['text'], clipInput: 'audio' },
         embedding: { outputs: [] },
         decision: { outputs: [] },
       },
@@ -280,6 +290,9 @@ export const BUILT_IN_PROVIDER_CONFIGS: readonly ProviderConfig[] = [
     // (code completion) and `embeddings` models, and Zed lists only `chat`
     // models. `image` and `decisions` are newer values that a third-party
     // client reports from the live API.
+    // MODEL_INVOKE: `image` has no request (no client that Dez knows of
+    // shows the API of these models); a `model_invoke` tool could run
+    // them when it has one.
     // https://github.com/microsoft/vscode/blob/5e718f45a0486f73460d307540aff922a22eaca9/extensions/copilot/src/platform/endpoint/common/endpointProvider.ts#L39
     // https://github.com/zed-industries/zed/blob/b36b283021c48f1712714b8a0e2ad6ffb578920b/crates/copilot_chat/src/copilot_chat.rs#L950-L955
     // https://github.com/Ashesh3/copilot-api/pull/146

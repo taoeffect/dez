@@ -876,6 +876,31 @@ describe('dez.model/modelCache raw model entries', () => {
   })
 })
 
+describe('dez.model/modelCache clip data', () => {
+  // model_cache.json is the cache of what the media list told about each
+  // model: a video model with no lengths gets no request.
+  it('keeps the clip data of the last check only for a check whose media list did not load', () => {
+    const lengths = [{ name: 'duration', label: 'Length (seconds)', options: [4, 8], default: 4 }]
+    const film = { id: 'film', name: 'Film', provider: 'local', request: 'video' }
+    const cachedModels = () => (sbp('dez.model/modelCache/snapshot') as ModelCache).providers.local?.models
+    const apply = (result: Record<string, unknown>) => sbp('dez.model/modelCache/applyProviderResult', 'local', { ok: true, ...result })
+
+    // The cache does not have the provider yet: there is nothing to keep.
+    apply({ models: [film], mediaListFailed: true })
+    expect(cachedModels()).toStrictEqual([film])
+
+    apply({ models: [{ ...film, parameters: lengths }], mediaEntries: new Map([['film', { id: 'film', price: '2' }]]) })
+    apply({ models: [film], mediaListFailed: true })
+    expect(cachedModels()).toStrictEqual([{ ...film, parameters: lengths }])
+    // The raw entry has prices, which `model_info` must not show as new.
+    expect(sbp('dez.model/modelCache/rawModel', 'local', 'film', 'media')).toBeUndefined()
+
+    // A list that loaded and tells no lengths is the newer fact.
+    apply({ models: [film] })
+    expect(cachedModels()).toStrictEqual([film])
+  })
+})
+
 describe('dez.model/streamMessagesForTab tools', () => {
   const model: ModelRef = { providerId: 'local', modelId: 'm' }
   const sendTools = () => (sbp('dez.model/streamMessagesForTab', activeId(), model) as RequestMessages).sendTools

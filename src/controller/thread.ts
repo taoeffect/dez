@@ -1,20 +1,11 @@
 import sbp from '@sbp/sbp'
-import { effectiveOutputs, MODEL_OUTPUTS, type ModelOutput } from '../model/modelOutputs'
-import { clipImageProblem } from '../model/providers/clipImages'
+import { effectiveOutputs } from '../model/modelOutputs'
+import { missingImageProblem } from '../model/providers/clipImages'
 import { clipTextProblem } from '../model/providers/clipText'
-import { effectiveRequest, isClipKind, type ModelInfo } from '../model/providers/types'
+import { effectiveRequest, type ModelInfo } from '../model/providers/types'
+import { unusableModelMessage } from '../model/providers/unusableModel'
 import { mediaRequestInput } from '../model/streams/messages'
 import type { RequestMessages } from '../model/streams/types'
-
-// The text of the refusal of a model that Dez has no request for
-// (ModelInfo.request `none`), e.g. "Dez cannot use Upscaler yet. It makes
-// image output through an API that Dez does not support."
-function unusableModelMessage(modelName: string, outputs: readonly ModelOutput[]): string {
-  const labels = MODEL_OUTPUTS.filter((output) => outputs.includes(output.id)).map((output) => output.label.toLowerCase())
-  const cannotUse = `Dez cannot use ${modelName} yet.`
-  if (labels.length === 0) return cannotUse
-  return `${cannotUse} It makes ${new Intl.ListFormat('en', { type: 'conjunction' }).format(labels)} output through an API that Dez does not support.`
-}
 
 // Tells the user that the request goes with `count` fewer images than the
 // message has, because the model `reason` (e.g. "does not read images").
@@ -46,22 +37,23 @@ export default sbp('sbp/selectors/register', {
     // A model that the cache does not have has no request kind, so it gets
     // a chat request, as before models had one. A refusal changes nothing,
     // so it comes before the end of a running reply's output.
-    const cachedModel: Pick<ModelInfo, 'outputs' | 'request' | 'text' | 'images'> = sbp('dez.model/modelCache/model', model.providerId, model.modelId) ?? {}
+    const cachedModel: Pick<ModelInfo, 'outputs' | 'request' | 'clipInput' | 'text' | 'images'> = sbp('dez.model/modelCache/model', model.providerId, model.modelId) ?? {}
     const kind = effectiveRequest(cachedModel)
     let message: string | null = null
     // How many images of the message a video request takes and leaves out.
     let frames = { sent: 0, leftOut: 0 }
     if (kind === 'none') {
-      message = unusableModelMessage(model.modelName, effectiveOutputs(cachedModel))
-    } else if (isClipKind(kind)) {
+      message = unusableModelMessage(model.modelName, cachedModel)
+    } else if (kind !== 'chat') {
       // An input that the model is known not to take (no image for a model
-      // that makes its video from one, no lyrics for a model that needs
-      // them, a prompt that is too short or too long) gets no request: the
-      // check costs nothing, and it tells the user what to change. The end
-      // of a running reply's output changes no user message and adds no
-      // image, so the input that this checks is the input of the request.
+      // that edits one or makes its video from one, no lyrics for a model
+      // that needs them, a prompt that is too short or too long) gets no
+      // request: the check costs nothing, and it tells the user what to
+      // change. The end of a running reply's output changes no user message
+      // and adds no image, so the input that this checks is the input of
+      // the request. Only a clip model has text rules.
       const input = mediaRequestInput(kind, request.messages, tab.sections, cachedModel)
-      message = clipImageProblem(model.modelName, kind, input.images.length) ?? clipTextProblem(model.modelName, cachedModel.text, input)
+      message = missingImageProblem(model.modelName, kind, input.images.length) ?? clipTextProblem(model.modelName, cachedModel.text, input)
       frames = { sent: input.images.length, leftOut: input.imagesLeftOut }
     }
     if (message !== null) {

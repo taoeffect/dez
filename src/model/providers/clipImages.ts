@@ -1,9 +1,10 @@
 import type { ImageSizeRules } from './imageSize'
-import type { ClipKind } from './types'
+import type { ClipKind, MediaKind } from './types'
 
 // The input images of a video request. What a model takes is data on the
 // model (`ModelInfo.images`), which a media format reads from the
-// provider's model data (`ClipFormat.imageRules` in mediaFormats.ts).
+// provider's model data (`ClipFormat.imageRules` in mediaFormats.ts). Also
+// the refusal of a media request that has no image and needs one.
 
 // What a video model takes as input images.
 export interface ClipImageRules {
@@ -28,9 +29,14 @@ export function maxClipImages(kind: ClipKind, rules: ClipImageRules | undefined)
 }
 
 /** Why a request of `kind` with `imageCount` images does not go to the
- *  model `modelName`, as a sentence for the user; null when it can go. */
-export function clipImageProblem(modelName: string, kind: ClipKind, imageCount: number): string | null {
-  return kind === 'imageToVideo' && imageCount === 0
-    ? `${modelName} makes a video from an image. Paste an image, or name one with @id.`
-    : null
+ *  model `modelName`, as a sentence for the user; null when it can go. An
+ *  edit and a video from an image need an image. The check costs nothing,
+ *  and it comes before the reply starts, so the user's message stays as
+ *  it is. */
+export function missingImageProblem(modelName: string, kind: MediaKind, imageCount: number): string | null {
+  if (imageCount > 0) return null
+  const how = 'Paste an image, or name one with @id.'
+  if (kind === 'imageEdit') return `${modelName} edits an image. ${how}`
+  if (kind === 'imageToVideo') return `${modelName} makes a video from an image. ${how}`
+  return null
 }

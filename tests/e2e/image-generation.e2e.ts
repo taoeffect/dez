@@ -3,6 +3,7 @@ import type http from 'node:http'
 import path from 'node:path'
 import type { EditorView } from '@codemirror/view'
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from 'vitest'
+import { unusableModelMessage } from '../../src/model/providers/unusableModel'
 import { openAiChatBody } from './harness/chatBody'
 import { click, consoleErrors, pointerClick, resetConsoleErrors, screenshotOnFailure, waitForValue } from './harness/dom'
 import { conversationFilePath } from './harness/fixtures'
@@ -36,13 +37,15 @@ import { activeConversationId, newTab, openToasts, pickModel, submit, threadSect
 //   the reply's image loads after the end;
 // - Stop during the request leaves no file and no agent section;
 // - a model that Dez has no request for gets an error toast, and no request
-//   goes.
+//   goes; the toast of a model that needs a clip as its input tells so.
 //
 // One app session serves the whole file; each test starts in a new tab.
 
 const PAINTER: MockProvider = { id: 'painter', name: 'Painter Mock', modelId: 'paint-model', modelName: 'Paint Model' }
 const EDIT_MODEL = { id: 'edit-model', name: 'Edit Model' }
 const UPSCALE_MODEL = { id: 'upscale-model', name: 'Upscale Model' }
+// A model that writes down a recording: Dez cannot send it one.
+const LISTEN_MODEL = { id: 'listen-model', name: 'Listen Model' }
 // A chat model that writes text and makes images in one reply.
 const CHAT_MODEL = { id: 'chat-paint-model', name: 'Chat Paint Model' }
 const GENERATE_PATH = `/${PAINTER.id}/v1/image/generate`
@@ -143,6 +146,7 @@ describe('image generation', () => {
         { id: PAINTER.modelId, name: PAINTER.modelName, outputs: ['image'], request: 'image' },
         { id: EDIT_MODEL.id, name: EDIT_MODEL.name, outputs: ['image'], request: 'imageEdit' },
         { id: UPSCALE_MODEL.id, name: UPSCALE_MODEL.name, outputs: ['image'], request: 'none' },
+        { id: LISTEN_MODEL.id, name: LISTEN_MODEL.name, outputs: ['text'], request: 'none', clipInput: 'audio' },
         { id: CHAT_MODEL.id, name: CHAT_MODEL.name, outputs: ['text', 'image'], request: 'chat' },
       ],
     }, { heldPaths: [GENERATE_PATH, EDIT_PATH] })
@@ -406,17 +410,23 @@ describe('image generation', () => {
     expect(await consoleErrors(browser)).toEqual([])
   })
 
-  it('refuses a model that Dez has no request for with an error toast, and sends nothing', async () => {
-    const message = 'Dez cannot use Upscale Model yet. It makes image output through an API that Dez does not support.'
-    await pickModel(browser, PAINTER.name, UPSCALE_MODEL.name)
-    await submit(browser, 'Upscale it')
+  // What the config tells of each model (`beforeAll`) picks the text.
+  it.each<[string, { id: string, name: string }, Parameters<typeof unusableModelMessage>[1]]>([
+    ['has an API that Dez does not support', UPSCALE_MODEL, { outputs: ['image'] }],
+    ['needs a clip as its input', LISTEN_MODEL, { clipInput: 'audio' }],
+  ])('refuses a model that %s with an error toast that tells so, and sends nothing', async (_cause, model, facts) => {
+    const message = unusableModelMessage(model.name, facts)
+    await pickModel(browser, PAINTER.name, model.name)
+    await submit(browser, 'Work on it')
 
     await waitForValue(browser, 'error toast', () => openToasts(browser, 'error'), [{ title: 'Cannot send', message }])
-    expect(await threadSections(browser)).toEqual([{ role: 'user', text: 'Upscale it' }])
+    expect(await threadSections(browser)).toEqual([{ role: 'user', text: 'Work on it' }])
     expect(setup.mock.hasWaitingRequest()).toBe(false)
     expect(await consoleErrors(browser)).toEqual([`Cannot send: ${message}`])
 
-    await click(browser, '.toast-card--error .toast-close')
+    // The toast of the case before can still be in the page while it
+    // closes, so name the open one.
+    await click(browser, '.toast-card--error:not(.toast-card--closing) .toast-close')
     await waitForValue(browser, 'error toast closed', () => openToasts(browser, 'error'), [])
   })
 })

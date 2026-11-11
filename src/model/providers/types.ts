@@ -26,7 +26,8 @@ export const MEDIA_KINDS = ['image', 'imageEdit', 'tts', 'music', 'video', 'imag
 export type MediaKind = (typeof MEDIA_KINDS)[number]
 
 // How Dez sends a request to a model. `chat`: the API format's chat request.
-// `none`: Dez has no request for the model yet, so a submit is refused.
+// `none`: Dez has no request for the model yet, so a submit is refused
+// (unusableModel.ts has the texts).
 export const MODEL_REQUESTS = ['chat', ...MEDIA_KINDS, 'none'] as const
 
 export type ModelRequest = (typeof MODEL_REQUESTS)[number]
@@ -98,6 +99,16 @@ export interface ModelInfo {
   outputs?: ModelOutput[]
   // How Dez sends the model a request. Missing: `chat` (`effectiveRequest`).
   request?: ModelRequest
+  // The kind of clip that the model needs as the input of every request: a
+  // recording to write down or to change (speech-to-text, a voice changer),
+  // or a video to change. Dez has no request that carries a clip, so only a
+  // model with the request `none` has this, and it tells why a submit is
+  // refused. Missing: the model needs no clip, or the provider does not
+  // tell.
+  // MODEL_INVOKE: a `model_invoke` tool that can give a model a clip must
+  // read this to know what to send, and such a model then needs a request
+  // kind of its own in place of `none`.
+  clipInput?: MediaTagKind
   // What a request to the model can set (modelParameters.ts), for a model
   // of a clip request kind whose provider tells it. Never empty. Missing:
   // none.
@@ -114,7 +125,7 @@ export interface ModelInfo {
   images?: ClipImageRules
 }
 
-export type ModelCapabilities = Pick<ModelInfo, 'imageInput' | 'toolCalling' | 'thinking' | 'unsupportedSettings' | 'outputs' | 'request' | 'parameters' | 'text' | 'images'>
+export type ModelCapabilities = Pick<ModelInfo, 'imageInput' | 'toolCalling' | 'thinking' | 'unsupportedSettings' | 'outputs' | 'request' | 'clipInput' | 'parameters' | 'text' | 'images'>
 
 // What a clip model takes as the input of a request, besides the values of
 // its parameters.
@@ -169,6 +180,10 @@ export interface ProviderModelsResult {
   // (`ClipFormat.modelList`) that answered: the raw entry of each model of
   // that list, by model id. In memory only, like `entries`.
   mediaEntries?: ReadonlyMap<string, unknown>
+  // On success: that list did not load, so `models` lack what only it
+  // tells (the lengths of the OpenRouter video models). The model cache
+  // then keeps what it knew of each model (keptClipData.ts).
+  mediaListFailed?: true
   error?: string
 }
 
@@ -260,7 +275,9 @@ export class ProviderNotConfiguredError extends ProviderError {
 // whole-object comparisons hold no `undefined` field. `outputs` becomes a new
 // array in table order, `unsupportedSettings` a new array, and `parameters`,
 // `text`, and `images` deep copies, so two models never share one (a store
-// copy and its snapshot, a config model and the cache).
+// copy and its snapshot, a config model and the cache). `clipInput` stays
+// only with the request `none`: a config model can give a fetched model
+// another request kind, and its reason for `none` must not stay then.
 export function providerModel(provider: ProviderId, id: string, name: string, capabilities: ModelCapabilities = {}): ModelInfo {
   const model: ModelInfo = { id, name, provider }
   if (capabilities.imageInput !== undefined) model.imageInput = capabilities.imageInput
@@ -269,6 +286,7 @@ export function providerModel(provider: ProviderId, id: string, name: string, ca
   if (capabilities.unsupportedSettings?.length) model.unsupportedSettings = [...capabilities.unsupportedSettings]
   if (capabilities.outputs !== undefined) model.outputs = normalizeOutputs(capabilities.outputs)
   if (capabilities.request !== undefined) model.request = capabilities.request
+  if (capabilities.clipInput !== undefined && capabilities.request === 'none') model.clipInput = capabilities.clipInput
   if (capabilities.parameters !== undefined) model.parameters = capabilities.parameters.map(cloneModelParameter)
   if (capabilities.text !== undefined) model.text = cloneClipTextRules(capabilities.text)
   if (capabilities.images !== undefined) model.images = cloneClipImageRules(capabilities.images)
