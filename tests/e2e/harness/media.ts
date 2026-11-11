@@ -1,0 +1,138 @@
+import fs from 'node:fs'
+import { startMockServer, type MockServer } from './mockServer'
+import type { E2EBrowser } from './session'
+
+// Clips for the specs of the media player: the bytes of two short clips, a
+// server that serves them as the CDN of a provider does, and readers of the
+// players that the editor shows. The two formats are the ones that the
+// GStreamer of the CI image plays: its `gstreamer1.0-plugins-good` package
+// has the WAV parser and the WebM demuxer with the VP9 decoder. It has no
+// H.264 decoder, so no clip is an mp4.
+
+/** A WAV file with `seconds` of silence: 8-bit mono PCM at 8 kHz. */
+export function silentWav (seconds: number): Buffer {
+  const sampleRate = 8000
+  const samples = Math.round(seconds * sampleRate)
+  const header = Buffer.alloc(44)
+  header.write('RIFF', 0, 'ascii')
+  header.writeUInt32LE(36 + samples, 4)
+  header.write('WAVEfmt ', 8, 'ascii')
+  header.writeUInt32LE(16, 16) // size of the format chunk
+  header.writeUInt16LE(1, 20) // format: PCM
+  header.writeUInt16LE(1, 22) // channels
+  header.writeUInt32LE(sampleRate, 24)
+  header.writeUInt32LE(sampleRate, 28) // bytes per second
+  header.writeUInt16LE(1, 32) // bytes per sample of all channels
+  header.writeUInt16LE(8, 34) // bits per sample
+  header.write('data', 36, 'ascii')
+  header.writeUInt32LE(samples, 40)
+  // 8-bit PCM has no sign: 128 is silence.
+  return Buffer.concat([header, Buffer.alloc(samples, 128)])
+}
+
+/** A VP9 WebM video of one color: 48 x 36 px (4:3), 2 s, no sound. Made
+ *  with:
+ *
+ *    ffmpeg -f lavfi -i color=c=0x2a7fd4:size=48x36:rate=5:duration=2 \
+ *      -c:v libvpx-vp9 -b:v 0 -crf 50 -g 5 -an -pix_fmt yuv420p \
+ *      -fflags +bitexact -flags:v +bitexact video.webm */
+export const WEBM_VIDEO = fs.readFileSync(new URL('../fixtures/video.webm', import.meta.url))
+
+/** One file of a clip server. */
+export interface ServedClip {
+  /** The `Content-Type` of the answer. */
+  type: string
+  bytes: Buffer
+}
+
+export interface ClipServer extends MockServer {
+  /** The URL of the clip `name`. */
+  clipUrl: (name: string) => string
+}
+
+/** Starts a server that answers `GET /<name>` with the bytes of
+ *  `clips[name]`, and any other request with 404. A media element asks for
+ *  a clip in parts, so a request with a `Range` header gets that part of
+ *  the bytes in a 206 answer. */
+export async function startClipServer (clips: Readonly<Record<string, ServedClip>>): Promise<ClipServer> {
+  const server = await startMockServer((req, res) => {
+    const name = (req.url ?? '').slice(1)
+    const clip = Object.hasOwn(clips, name) ? clips[name] : undefined
+    if (!clip || (req.method !== 'GET' && req.method !== 'HEAD')) {
+      res.writeHead(404, { 'Content-Type': 'text/plain' })
+      res.end('not found')
+      return
+    }
+    const total = clip.bytes.length
+    const headers = { 'Content-Type': clip.type, 'Accept-Ranges': 'bytes' }
+    // `bytes=<first>-<last>`; with no last byte, the part goes to the end.
+    const range = /^bytes=(\d+)-(\d*)$/.exec(req.headers.range ?? '')
+    if (!range) {
+      res.writeHead(200, { ...headers, 'Content-Length': total })
+      res.end(req.method === 'HEAD' ? undefined : clip.bytes)
+      return
+    }
+    const first = Number(range[1])
+    const last = range[2] === '' ? total - 1 : Math.min(Number(range[2]), total - 1)
+    if (first > last) {
+      res.writeHead(416, { 'Content-Range': `bytes */${total}` })
+      res.end()
+      return
+    }
+    res.writeHead(206, { ...headers, 'Content-Range': `bytes ${first}-${last}/${total}`, 'Content-Length': last - first + 1 })
+    res.end(req.method === 'HEAD' ? undefined : clip.bytes.subarray(first, last + 1))
+  })
+  return { ...server, clipUrl: (name) => `${server.url}/${name}` }
+}
+
+/** One player of the active editor, as the page shows it. */
+export interface ShownPlayer {
+  kind: string | null
+  /** The text of the id badge. */
+  id: string
+  /** False for the card that says that the clip is no longer available. */
+  available: boolean
+  /** What the media element loads: the URL of a remote clip; 'blob' for a
+   *  local file, which the player reads into a blob URL; null for none. */
+  source: string | null
+  /** The length of the clip in s, to 1 decimal place; null until the media
+   *  element has the clip's metadata. */
+  seconds: number | null
+  /** The size of the video's picture in px; null for an audio clip, and
+   *  until the media element has the clip's metadata. */
+  picture: { width: number, height: number } | null
+  /** The clock of a clip that is not saved; null when it does not show. */
+  clock: 'Not saved' | 'Expired' | null
+  /** The face of the Save control (`data-state`); null when it does not
+   *  show. */
+  save: string | null
+}
+
+/** The players that the active editor shows, in doc order. */
+export async function shownPlayers (browser: E2EBrowser): Promise<ShownPlayer[]> {
+  return browser.execute(() => Array.from(document.querySelectorAll<HTMLElement>('.cm-content .media-player'), (player) => {
+    const media = player.querySelector<HTMLMediaElement>('video, audio')
+    const src = media?.getAttribute('src') ?? null
+    const clock = player.querySelector('.media-player__clock')
+    const loaded = media !== null && Number.isFinite(media.duration)
+    return {
+      kind: player.getAttribute('data-kind'),
+      id: player.querySelector('.media-player__id')?.textContent?.trim() ?? '',
+      available: !player.hasAttribute('data-unavailable'),
+      source: src?.startsWith('blob:') ? 'blob' : src,
+      seconds: loaded ? Math.round(media.duration * 10) / 10 : null,
+      picture: loaded && media instanceof HTMLVideoElement ? { width: media.videoWidth, height: media.videoHeight } : null,
+      clock: clock === null ? null : clock.hasAttribute('data-expired') ? 'Expired' : 'Not saved',
+      save: player.querySelector('.media-player__save')?.getAttribute('data-state') ?? null,
+    }
+  }))
+}
+
+/** The text of each player tooltip that is open, in doc order. */
+export async function openPlayerTooltips (browser: E2EBrowser): Promise<string[]> {
+  return browser.execute(() => Array.from(
+    document.querySelectorAll<HTMLElement>('.cm-content .media-player__tooltip[data-open]'),
+    // The title and the text of a notice are blocks with no space between.
+    (tooltip) => Array.from(tooltip.children, (part) => part.textContent?.trim() ?? '').join(' ') || (tooltip.textContent?.trim() ?? ''),
+  ))
+}

@@ -90,9 +90,11 @@ jobs:
         run: cargo install tauri-driver --locked
 
       # dbus-daemon and python3-gi run the fake notification server of
-      # tests/e2e/harness/notificationServer.py. WebKitGTK plays the
-      # reply-done sound with GStreamer; its MP3 decoder (mpg123audiodec) is
-      # in gstreamer1.0-plugins-good.
+      # tests/e2e/harness/notificationServer.py. WebKitGTK plays sound and
+      # video with GStreamer. gstreamer1.0-plugins-good has the MP3 decoder
+      # (mpg123audiodec) of the reply-done sound, and the WAV parser and the
+      # WebM demuxer with the VP9 decoder of the clips of
+      # tests/e2e/media-player.e2e.ts.
       - name: Install Tauri Linux dependencies
         run: |
           sudo apt-get update

@@ -70,9 +70,10 @@ class MediaWidget extends WidgetType {
       // The player gets the source as the tag has it, and makes the URL
       // that loads it.
       render: () => {
-        const { kind, src, expires } = tag.value
+        const { kind, id, src, expires } = tag.value
         return h(MediaPlayer, {
           kind,
+          id,
           src,
           expires,
           busy: src !== null && busyClips.has(src),

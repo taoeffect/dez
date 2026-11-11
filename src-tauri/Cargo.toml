@@ -28,7 +28,14 @@ tauri-build = { version = "=2.5.6", features = [] }
 # `protocol-asset` serves the images in `~/.config/dez/assets/images/` and
 # the media in `~/.config/dez/assets/generated/` to the webview by
 # `convertFileSrc` URLs (`assetProtocol` in tauri.conf.json).
-tauri = { version = "=2.10.3", features = ["devtools", "protocol-asset"] }
+# `macos-private-api` (with `macOSPrivateApi` in tauri.conf.json, which must
+# agree with it) makes wry set WKWebView's `fullScreenEnabled` preference,
+# which is off by default. Without it the fullscreen button of a video
+# player (MediaPlayer.vue) does nothing on macOS: `document.fullscreenEnabled`
+# is false, so `requestFullscreen()` is refused. It is a private WebKit API
+# too, as `devtools` is. It also lets a window be transparent, which Dez
+# does not use. Other platforms ignore it.
+tauri = { version = "=2.10.3", features = ["devtools", "macos-private-api", "protocol-asset"] }
 tauri-plugin-opener = "=2.5.3"
 tauri-plugin-store = "=2.4.2"
 # Later dialog (2.8+) and fs (2.6+) releases need tauri 2.12. The npm

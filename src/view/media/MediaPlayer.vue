@@ -39,6 +39,9 @@ import { videoAspectRatios } from './videoSizes'
 
 const props = defineProps<{
   kind: MediaTagKind
+  /** The clip's id in its conversation (the `id` of the clip's tag), which
+   *  the badge shows. */
+  id: string
   /** The clip's source, as its tag has it: the path of the saved file or of
    *  the temp copy, or a URL; null for a clip with no source. */
   src: string | null
@@ -54,6 +57,8 @@ const emit = defineEmits<{ save: [], delete: [] }>()
 const media = ref<HTMLMediaElement | null>(null)
 
 const sourceKind = computed(() => clipSourceKind(props.src))
+/** The kind, as the id badge and its tooltip name it. */
+const kindName = computed(() => props.kind === 'video' ? 'Video' : 'Audio')
 /** The clip plays from its saved file. */
 const saved = computed(() => sourceKind.value === 'saved')
 
@@ -71,7 +76,12 @@ const loaded = shallowRef<LoadedSource | null>(null)
 const failedSrc = ref<string | null>(null)
 const available = computed(() => sourceKind.value !== 'none' && props.src !== failedSrc.value)
 
-function onMediaError(): void {
+function onMediaError(event: Event): void {
+  // A media element that the player removed (at unmount, or when the clip
+  // became unavailable) keeps this listener, and it can still fire `error`:
+  // that was seen after a tab switch during the load of a local file, whose
+  // blob URL is revoked then. It is no failure of the clip that shows now.
+  if (event.target !== media.value) return
   // Only the code: the message can hold the URL, which can be a signed URL.
   console.error('[MediaPlayer] The clip did not load; media error code:', media.value?.error?.code)
   failedSrc.value = loaded.value?.src ?? null
@@ -241,16 +251,16 @@ function onSaveClick(): void {
 </script>
 
 <template>
-  <component :is="kind === 'video' ? 'video-player' : 'audio-player'" class="media-player">
+  <component
+    :is="kind === 'video' ? 'video-player' : 'audio-player'"
+    class="media-player"
+    :data-kind="kind"
+    :data-unavailable="available ? undefined : ''"
+    :style="{ '--media-player-ratio': aspectRatio }"
+  >
     <!-- `tabindex="-1"`: the card itself is no Tab stop (video.js gives it
          0); its buttons and sliders are. -->
-    <media-container
-      class="media-player__card"
-      :data-kind="kind"
-      :data-unavailable="available ? undefined : ''"
-      :style="{ '--media-player-ratio': aspectRatio }"
-      tabindex="-1"
-    >
+    <media-container class="media-player__card" tabindex="-1">
       <!-- `pointerup.stop`: video.js gives the focus to the container on each
            pointer release in it, which would take the focus from the editor
            on a click on Play. The parts get their own pointer events first,
@@ -408,6 +418,24 @@ function onSaveClick(): void {
         </div>
       </div>
     </media-container>
+    <!-- The id badge, as an image has one (`idBadge` in
+         src/view/editor/images.ts). A model gets the id in the request form
+         of the clip's tag (`mediaTagRequestText`), so a message can name
+         the clip by it. -->
+    <span class="media-player__id" role="img" :aria-label="`${kindName} id: ${id}`">
+      <svg v-if="kind === 'video'" class="media-player__icon media-player__icon--line" viewBox="0 0 16 16" aria-hidden="true">
+        <rect x="1.8" y="4" width="8.6" height="8" rx="1.8" />
+        <path d="M10.4 7.2l3.8-2.2v6l-3.8-2.2" />
+      </svg>
+      <svg v-else class="media-player__icon media-player__icon--line" viewBox="0 0 16 16" aria-hidden="true">
+        <path d="M3 6.5v3M5.5 4.4v7.2M8 2.8v10.4M10.5 5v6M13 6.7v2.6" />
+      </svg>
+      <span class="media-player__id-text">{{ id }}</span>
+    </span>
+    <media-tooltip class="media-player__tooltip media-player__tooltip--notice" boundary="viewport">
+      <span class="media-player__tooltip-title">{{ kindName }} id: {{ id }}</span>
+      <span class="media-player__tooltip-text">Refer to this clip in a message as <code>{{ kind }} @{{ id }}</code>.</span>
+    </media-tooltip>
   </component>
 </template>
 
@@ -415,25 +443,35 @@ function onSaveClick(): void {
 /* Sizes follow the editor font size, as all of the editor does: `--u` is
    1px at the default size. The editor gives the unit and the max height of
    a video (`.dez-media` in `dezTheme`, cmEditor.ts).
-   `width: 100%`: the player is a flex item of the editor's widget, and a
-   flex item is only as wide as its content. The card's width is a part of
-   that width (`min(100%, …)`), and the bar is a size container, which adds
-   no content width; so with no width here, the card would shrink to its
-   border. */
+   The player is a row: the card, then the id badge. It is a flex item of
+   the editor's widget, so with no width of its own it is as wide as that
+   row, and `max-width` keeps it in the line. Its box is the hover area
+   that shows the badge. */
 .media-player {
   --u: var(--dez-media-unit, 1px);
   --max-height: var(--dez-media-max-height, 320px);
-  display: block;
-  width: 100%;
+  position: relative;
+  display: flex;
+  align-items: center;
+  box-sizing: border-box;
+  max-width: 100%;
+}
+
+/* As wide as the video at its max height, but never narrower than the
+   control bar needs: a portrait video then has black bars beside it. */
+.media-player[data-kind="video"]:not([data-unavailable]) {
+  width: min(100%, max(calc(var(--u) * 340), calc(var(--max-height) * var(--media-player-ratio))));
 }
 
 /* video.js elements are custom elements with no styles of their own
-   (inline, no size): every one that has a box gets its layout here. */
+   (inline, no size): every one that has a box gets its layout here.
+   `min-width: 0`: in a narrow line the card gets narrower, not the badge. */
 .media-player__card {
   display: flex;
+  flex: 0 1 auto;
   flex-direction: column;
   box-sizing: border-box;
-  max-width: 100%;
+  min-width: 0;
   overflow: hidden;
   border: 1px solid var(--color-border);
   border-radius: calc(var(--u) * 8);
@@ -442,18 +480,17 @@ function onSaveClick(): void {
   outline: none;
 }
 
-/* As wide as the video at its max height, but never narrower than the
-   control bar needs: a portrait video then has black bars beside it. */
-.media-player__card[data-kind="video"] {
-  width: min(100%, max(calc(var(--u) * 340), calc(var(--max-height) * var(--media-player-ratio))));
+.media-player[data-kind="video"] > .media-player__card {
+  width: 100%;
 }
 
-.media-player__card[data-kind="audio"] {
-  width: min(100%, calc(var(--u) * 460));
+/* The bar is a size container, which adds no content width: with no width
+   here, the card would shrink to its border. */
+.media-player[data-kind="audio"] > .media-player__card {
+  width: calc(var(--u) * 460);
 }
 
-.media-player__card[data-unavailable] {
-  display: inline-flex;
+.media-player[data-unavailable] > .media-player__card {
   width: auto;
 }
 
@@ -784,6 +821,73 @@ function onSaveClick(): void {
   border-radius: 50%;
 }
 
+/* The id badge has the look of an image's id badge (`.dez-image__overlay`
+   and `.dez-image__id` in `dezTheme`, cmEditor.ts): dark glass with white
+   text in both themes, shown only while the pointer is over the player.
+   Beside an audio card and the "not available" card, it covers no control
+   of the bar, and it keeps its room while hidden, so a hover changes no
+   size; the rule below puts it over the picture of a video. It is outside
+   the card, which cuts its content (`overflow`); so the fullscreen view,
+   which is the card, has no badge. */
+.media-player__id {
+  z-index: 2;
+  display: inline-flex;
+  flex: none;
+  align-items: center;
+  gap: calc(var(--u) * 5);
+  box-sizing: border-box;
+  max-width: calc(var(--u) * 120);
+  height: calc(var(--u) * 30 + 2px);
+  margin-left: calc(var(--u) * 8);
+  padding: 0 calc(var(--u) * 11) 0 calc(var(--u) * 10);
+  border: 1px solid var(--color-image-toolbar-border, rgba(255, 255, 255, 0.18));
+  border-radius: calc(var(--u) * 9);
+  background: var(--color-image-toolbar, rgba(18, 18, 22, 0.72));
+  color: #fff;
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.22), 0 6px 18px rgba(0, 0, 0, 0.24);
+  -webkit-backdrop-filter: blur(14px) saturate(130%);
+  backdrop-filter: blur(14px) saturate(130%);
+  font-size: calc(var(--u) * 12.5);
+  font-weight: 600;
+  line-height: 1;
+  letter-spacing: 0.02em;
+  white-space: nowrap;
+  cursor: default;
+  opacity: 0;
+  transition: opacity 0.14s ease;
+}
+
+/* On a video, the badge is at the top-right corner of the picture, as on
+   an image. */
+.media-player[data-kind="video"]:not([data-unavailable]) > .media-player__id {
+  position: absolute;
+  top: calc(var(--u) * 8);
+  right: calc(var(--u) * 8);
+  margin: 0;
+}
+
+.media-player:hover > .media-player__id {
+  opacity: 1;
+}
+
+.media-player__id > .media-player__icon {
+  width: calc(var(--u) * 14);
+  height: calc(var(--u) * 14);
+  stroke-width: 1.3;
+  opacity: 0.72;
+}
+
+/* An id is one or two letters. A tag that a user wrote can have a long
+   one, which must not make the badge wider than its max width. The line
+   height keeps `overflow` from cutting the letters that go below the
+   line. */
+.media-player__id-text {
+  min-width: 0;
+  overflow: hidden;
+  line-height: 1.4;
+  text-overflow: ellipsis;
+}
+
 /* A video.js tooltip is a popover in the top layer, so the card's
    `overflow` and the editor's scroller do not cut it. The rules undo the
    browser's popover styles (centered by a margin, a thick border) and give
@@ -832,6 +936,16 @@ function onSaveClick(): void {
   display: block;
   margin-top: calc(var(--u) * 2);
   opacity: 0.8;
+}
+
+/* The code look of the image tooltips (`.dez-image-tooltip code` in
+   `dezTheme`). */
+.media-player__tooltip code {
+  padding: 0 calc(var(--u) * 3);
+  border-radius: calc(var(--u) * 3);
+  background: rgba(127, 127, 127, 0.18);
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, 'Liberation Mono', monospace;
+  font-size: 0.95em;
 }
 
 .media-player__unavailable {
@@ -886,6 +1000,18 @@ function onSaveClick(): void {
 
   .media-player__tooltip {
     transition: opacity 0.12s;
+  }
+
+  /* The badge drops into place from its top-right corner as it fades in,
+     as the image toolbar does. */
+  .media-player__id {
+    transform: translateY(calc(var(--u) * -4)) scale(0.97);
+    transform-origin: top right;
+    transition: opacity 0.14s ease, transform 0.2s cubic-bezier(0.2, 0.8, 0.2, 1);
+  }
+
+  .media-player:hover > .media-player__id {
+    transform: none;
   }
 
   .media-player__save {
