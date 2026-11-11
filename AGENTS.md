@@ -57,10 +57,15 @@ ThreadEditor (CodeMirror doc) syncs to the active tab's sections
     -> dez.model builds the request messages and stamps the trailing agent section
     -> dez.stream/start (Dez's system prompt and tools) -> dez.provider/streamChat -> dez.http/stream
       -> dez.native/streamHttp -> Rust http_bridge::stream_http (Headers/Chunk/Done/Error)
-    -> openaiSse.ts / anthropicSse.ts split answer tokens, thinking tokens, and tool calls
+    -> openaiSse.ts / anthropicSse.ts split answer tokens, thinking tokens, tool calls, and
+       (openaiSse.ts) reply images
     -> tokens go to the store, and to the editor if the tab is visible (dez.editor/*)
+    -> a reply image is saved in assets/generated/images/ and written as an image reference
     -> a round that ends with tool calls writes <dez:tool> blocks, runs them (dez.controller/tools/run),
        and sends the next round; one reply is one agent section
+    -> a model with a media request kind (image, imageEdit, tts, music, video) gets one media round
+       in place of the chat rounds: dez.provider/generateMedia (one request, or a queue, poll,
+       retrieve job for a clip), then an image reference or a <dez:audio> / <dez:video> tag
     -> the reply's finish/error/cancel reconciles the editor, adds a user section, and saves
     -> finish/error of a reply the user does not look at -> dez.controller/alertReplyEnded (sound, notification)
 ```
@@ -78,19 +83,23 @@ ThreadEditor (CodeMirror doc) syncs to the active tab's sections
 - `view/editor/links.ts`: markdown links (`http`, `https`, `mailto`, `tel`) shown as links, with their source while a selection touches them; a plain click opens one (`dez.controller/openUrl`), and hover shows its URL in a tooltip.
 - `view/editor/focus.ts`: focus the editor and keep its scroll; use `focusKeepingScroll`, not `view.focus()`. `syncDomSelection`: fix the caret after code changes the doc right after the editor gets the focus.
 - `view/editor/images.ts`, `imageInsert.ts`: images shown in place of their references (with a hover toolbar at the image's top-right corner: the id badge and a trash that deletes the image after a `dez.ui/confirm` prompt, each with a tooltip; and the Backspace and Delete rules), and image paste and drop (which give image ids). `pendingRanges.ts`: doc ranges that the async insert and delete flows follow.
-- `controller/images.ts`: `dez.controller/images/*`: store and delete an image, its display URL, read a dropped file, Linux native file drops.
+- `controller/images.ts`: `dez.controller/images/*`: store and delete an image (pasted or generated), its display URL, read a stored or dropped file, Linux native file drops.
+- `controller/media.ts`: `dez.controller/media/*`: save a clip (move its temp copy, else download its URL), delete a saved clip, and the cleanup of old temp copies.
 - `view/editor/toolCalls.ts`: `<dez:tool>` blocks shown as chips, each with a panel of its parameters and result.
-- `model/chat/`: `Section` / `ContentNode` types and helpers (`content.ts`, `modelRef.ts`, `thinking.ts`, `markdown.ts`, `pillMarker.ts`, `images.ts`, `toolBlocks.ts`).
+- `view/editor/media.ts`: `<dez:audio>` and `<dez:video>` tags of agent sections shown as players; the Save and Delete of a clip. `view/media/`: `MediaPlayer.vue` (the video.js parts in Dez's own skin: the Save control, the expiry clock, the id badge on hover, the not-available state), `clipState.ts`, `videoSizes.ts`.
+- `view/editor/lineBlocks.ts`: the rules that blocks of whole lines share (tool chips, players): text next to one, Backspace, Delete.
+- `model/chat/`: `Section` / `ContentNode` types and helpers (`content.ts`, `modelRef.ts`, `thinking.ts`, `markdown.ts`, `pillMarker.ts`, `images.ts`, `imageMentions.ts`, `toolBlocks.ts`, `mediaTags.ts`, `mediaFiles.ts`, `mediaIds.ts`, `storedFilePaths.ts`).
 - `model/state/`: Pinia stores (internal) and `dez.model/*` selectors; views read state through `view/modelState.ts`.
-- `controller/stream.ts`, `model/state/streams.ts`, `controller/http.ts`: stream lifecycle (one reply, one request round per group of tool calls), per-tab sessions, native HTTP streams.
-- `model/tools/`: the Dez tools (tools that Dez runs for a model, not a provider's own tools such as web search): definitions, `registry.ts` (`TOOL_DEFINITIONS`, JSON schemas, argument checks), `modelList.ts` (`model_list`), `modelInfo.ts` (`model_info`). `controller/tools.ts`: `dez.controller/tools/run`, the code of each tool. `model/streams/toolRound.ts`: the pure parts of the tool loop.
+- `controller/stream.ts`, `model/state/streams.ts`, `controller/http.ts`: stream lifecycle (one reply: one request round per group of tool calls, or one media round), per-tab sessions, native HTTP streams.
+- `model/tools/`: the Dez tools (tools that Dez runs for a model, not a provider's own tools such as web search): definitions, `registry.ts` (`TOOL_DEFINITIONS`, JSON schemas, argument checks), `modelList.ts` (`model_list`), `modelInfo.ts` (`model_info`), `localPaths.ts` (stand-ins for local paths in provider data). `controller/tools.ts`: `dez.controller/tools/run`, the code of each tool. `model/streams/toolRound.ts`: the pure parts of the tool loop.
 - `model/systemPrompt/`: Dez's system prompt (`systemPrompt.md` with `{{name}}` placeholders, `template.ts`), sent with every chat request.
-- `model/modelSearch.ts`: the model filter of the model picker and `model_list`.
+- `model/modelOutputs.ts`: the one table of the output types (text, image, audio, video). `model/modelSearch.ts`: the model filter (search terms and output types) of the model picker and `model_list`.
 - `controller/notifications.ts`: the reply-end alerts (sound, system notification; a click opens the reply's tab). `view/sound.ts`: `dez.ui/playDoneSound`. `assets/sounds/`: sound files (Git LFS).
 - `model/shortcuts.ts`: the editable shortcut registry (ids, default keys, key event matching, validation, labels, menu accelerators); user overrides are in the settings store.
 - `controller/menu.ts`: the native menubar (Tauri only); `dez.controller/menu/suspendAccelerators` turns its keys off while a key is recorded. `view/composables/useKeyboardShortcuts.ts`: app keys.
 - `controller/window.ts`, `windowFit.ts`: restore and save the window size and position.
 - `view/app/AppLayout.vue`: layout and bottom bar (`ModelSelector.vue`, `view/thread/SubmitButton.vue`).
+- `view/model-selector/`: `ModelPicker.vue` (a virtual list of the rows from `pickerRows.ts`), `ModelOutputFilter.vue` (the output type filter), `ProviderSettingsPopup.vue` (the provider toggles and the "Model Parameters" of the active model).
 - `view/history/HistoryPanel.vue`: saved conversations.
 - `view/confirm/`: `dez.ui/confirm`, the in-app yes/no prompt (`ConfirmDialog.vue`, mounted in `AppLayout.vue`); `isModalOpen()` (`useKeyboardShortcuts.ts`) counts it.
 - `view/prompts/PromptManager.vue`, `view/thread/PromptAutocomplete.vue`: saved prompts and `/prompt ` insertion.
@@ -127,6 +136,8 @@ Rules:
 - `@sbp/okturtles.eventqueue` to serialize async operations that must not race.
 - `turtledash` for lodash-style helpers; use its `debounce`, not ad hoc timers.
 - `w3c-keyname`, at the version CodeMirror uses, so that shortcut matching (`model/shortcuts.ts`) agrees with CodeMirror keymaps.
+- `virtua` (the virtual list of the model picker) and `@videojs/html` (the media player). The tag list `videoJsElements` in `vite.config.ts` must match the video.js elements in `MediaPlayer.vue`.
+- npm versions are exact pins, and `.npmrc` (`min-release-age`) refuses a version that is younger than 14 days: pin the newest version that it allows.
 
 ### Providers (`src/model/providers/`)
 
@@ -140,6 +151,11 @@ Rules:
 - Prompt cache: earlier messages, the system prompt, and the tools array must stay the same bytes in every later request. The Anthropic format always adds cache marks; OpenAI-format marks and `prompt_cache_key` come from config (`cacheBreakpoints`, `toolMessageCacheMark`, `promptCacheKey`; `apiFormats.ts`, `provider.ts`).
 - Images: a user message with image references becomes text and image parts (`model/streams/messages.ts`); `dez.provider/streamChat` reads the files and base64-encodes them. A reference goes as `![image](<metadata>)` before its image part, so models get ids but no path. Which models read images is config data (`models[].imageInput`, `modelImageInput`, `imageRequestHeaders`; `config.ts`); a model known not to read them gets only that text.
 - Tools: requests offer the Dez tools unless the provider's Tools toggle is off (`toolsSetting.ts`) or the model is known not to call tools (`models[].toolCalling`, `modelToolCalling`; `config.ts`); then the tool blocks go as text. Wire shapes of calls and results: `apiFormats.ts`; request messages: `model/streams/messages.ts`.
+- Outputs and request kinds: a model has `outputs` (what it makes) and a `request` kind (`MODEL_REQUESTS` in `types.ts`: `chat`, the media kinds, or `none` for a model that Dez cannot use yet). Config data gives them (`modelListQuery`, `modelOutputs`, `models[].outputs` and `request`; `modelParsing.ts`). Unknown outputs count as text; a fetched model that makes none of the four types is not listed.
+- Media: `mediaApi.format` names a wire format of `mediaFormats.ts` (`venice`, `openrouter`; a format holds no secrets). `dez.provider/generateMedia` sends an image request, or a clip request with its job loop (`clipRequests.ts`); it has no editor or tab dependency, so a later `model_invoke` tool can call it. `dez.provider/mediaQuote`: the price of a clip request. `generatedImages.ts`: image bytes and URLs to the image types that Dez stores.
+- Chat image output: `imageOutputBody` (`config.ts`) goes into a chat request only for a model whose outputs hold `image`; `openaiSse.ts` reads the images of the reply.
+- Model parameters (`modelParameters.ts`): what a clip request can set (length, resolution, voice) is data on the model, from the provider's model lists. The user's values are a setting (`modelParameters`); `model_info` shows them.
+- The API key goes only to URLs that Dez builds: a URL from a provider's response (a reply image, a clip) is fetched with no provider headers.
 
 ### Toasts
 
@@ -149,24 +165,28 @@ Rules:
 
 - **Keep Rust barebones**: a thin, generic OS interface, not a per-feature API. Reuse or generalize an existing command (e.g. `load_app_file(path)` / `save_app_file`, text or bytes at a path relative to the app folder) instead of adding a near-copy, so frontend features rarely need Rust changes.
 - `commands.rs`, `http_bridge.rs`, `notification.rs`, `idle.rs`: Tauri commands, registered in `lib.rs`. `open_devtools` (Help › Developer Console) needs the `devtools` feature of the `tauri` crate in release builds (`Cargo.toml`).
-- `http_bridge.rs`: generic `http_request`, `stream_http`, `cancel_http_stream`.
+- `http_bridge.rs`: generic `http_request`, `stream_http`, `cancel_http_stream`, and `download_app_file` (one response body streamed to a file).
 - `notification.rs`: `show_notification`, a system notification whose click brings the window to the front and calls back (zbus on Linux, NSUserNotificationCenter through objc2 on macOS).
 - `idle.rs`: `user_idle_ms`, the time since the last user input on the computer, or `null` when unknown.
 - `session_bus.rs`: the one shared Linux D-Bus session connection (zbus) for `notification.rs` and `idle.rs`.
-- `persistence.rs`: raw private-file I/O, the app-file path rule (subfolders such as `assets/images/`), and id sanitization; write every private file with `write_private_file`.
+- `persistence.rs`: the file roots (`FileRoot`: `app`, the app folder; `cache`, Dez's folder in the OS cache folder), raw private-file I/O, the app-file path rule (subfolders such as `assets/images/`), file move and folder listing, and id sanitization; write every private file with `write_private_file` or `PrivateFileWriter`.
 - `key_store.rs`: `provider_keys.json`. `copilot.rs`: Copilot device flow and token refresh.
 - `lib.rs`: plugins, permission reasons, app bootstrap.
 - `../tauri.linux.conf.json`: the Linux copy of the main window, with Tauri's native file drop on (a test in `lib.rs` keeps the two windows the same otherwise).
+- `../tauri.conf.json` `app.macOSPrivateApi` and the `macos-private-api` feature of the `tauri` crate (`Cargo.toml`) go together: they turn on element fullscreen in WKWebView, for the media player.
 
 ## Persistence layout
 
-All app data is under `~/.config/dez/`. TypeScript owns every format; Rust only moves raw strings and bytes. App code uses `dez.persistence/*` only.
+All app data is under `~/.config/dez/`, except the temp copies of clips. TypeScript owns every format; Rust only moves raw strings and bytes. App code uses `dez.persistence/*` only.
 
-- `app_state.json`: tabs, settings (with shortcut overrides), window geometry, provider toggles, custom providers (`src/model/persistence/appState.ts`).
+- `app_state.json`: tabs, settings (with shortcut overrides, the picker's output filter, and the user's model parameter values), window geometry, provider toggles, custom providers (`src/model/persistence/appState.ts`).
 - `conversations/<sanitized-id>.md`: conversations (format: `src/model/persistence/conversationFormat.ts`; pill markers: `src/model/chat/pillMarker.ts`; tool calls: `src/model/chat/toolBlocks.ts`).
 - `prompts.json`: saved prompt templates (`src/model/persistence/prompts.ts`).
-- `model_cache.json`: last-known model lists, no secrets (`src/model/persistence/modelCache.ts`).
+- `model_cache.json`: last-known model lists with each model's outputs, request kind, and parameters; no secrets and no raw provider entries (`src/model/persistence/modelCache.ts`).
 - `assets/images/<uuid>.<ext>`: pasted and dropped images; conversations refer to them by absolute path (`src/controller/images.ts`). Only the image trash deletes them; a text edit or a conversation delete leaves the file.
+- `assets/generated/images/<uuid>.<ext>`: images that models made; the rules of `assets/images/` apply.
+- `assets/generated/audio/<uuid>.<ext>`, `assets/generated/video/<uuid>.<ext>`: clips that the user saved with the player's Save control; only the player's trash deletes them (`src/controller/media.ts`).
+- `<OS cache>/dez/media/<uuid>.<ext>` (`~/.cache/dez/media/` on Linux; outside the app folder): temp copies of clips that are not saved. Dez deletes one 24 hours after its file time (`MEDIA_TEMP_LIFETIME_MS`, `src/model/chat/mediaFiles.ts`).
 - `provider_keys.json`: API keys and Copilot tokens (`src-tauri/src/key_store.rs`).
 
 Do not ever read, view, print, or `cat` `~/.config/dez/provider_keys.json`; it can contain API keys and OAuth tokens.
@@ -192,12 +212,20 @@ Do not ever read, view, print, or `cat` `~/.config/dez/provider_keys.json`; it c
 - **The window starts hidden**: `dez.controller/window/restore` shows it, so a frontend failure before init shows no window; read the Vite output. On macOS, `lib.rs` shows it at launch so that it comes to the front.
 - **Saved window position units differ by platform**: logical points on macOS, physical px elsewhere (`src/controller/window.ts`).
 - **Wayland windows have no place**: GTK's Wayland backend cannot read or set the window position (`dez.native/gdkBackend`, `src/controller/window.ts`). The AppImage runs on X11.
-- **Image references are plain text**: `![<absolute path>](id=a)` in a text node (old ones have empty parens); `src/model/chat/images.ts` is the one recognizer (editor, requests, titles, search), and only files directly in `assets/images/` count. Only a paste or a drop gives ids (`pastedImageIds`, `imageInsert.ts`); never renumber an id in the doc.
-- **No stored file path to providers**: every request text (user and agent text, prompt bodies, tool arguments and results) goes through `withoutStoredFilePaths` (`src/model/chat/storedFilePaths.ts`) in `sectionsToStreamMessages`, and thinking that holds a path is not sent back; a new request text needs the same.
+- **Image references are plain text**: `![<absolute path>](id=a)` in a text node (old ones have empty parens); `src/model/chat/images.ts` is the one recognizer (editor, requests, titles, search), and only files directly in `assets/images/` or `assets/generated/images/` count.
+- **One id sequence for images and clips** (`src/model/chat/mediaIds.ts`): only a paste, a drop (`pastedImageIds`, `imageInsert.ts`), or a reply that makes an image or a clip (`newMediaIds`, in the same tick as the write) gives an id; never renumber an id in the doc.
+- **`@id` mentions**: `@a` in a user message names the image `a` (`src/model/chat/imageMentions.ts`): the request gets that image at that place, and the text keeps the mention. A mention reads only its own and earlier sections, so an old message keeps its bytes (prompt cache). The id of a clip attaches nothing.
+- **No stored file path to providers**: every request text (user and agent text, prompt bodies, tool arguments and results) goes through `withoutStoredFilePaths` (`src/model/chat/storedFilePaths.ts`, which knows every asset folder and the cache media folder) in `sectionsToStreamMessages`, and thinking that holds a path is not sent back; a new request text or a new folder of stored files needs the same.
 - **Tool calls are plain text**: `<dez:tool>` blocks in agent sections, with the result as the body; `src/model/chat/toolBlocks.ts` is the one writer and recognizer. Model text is escaped so that it never forms a block (`ModelTextEscaper`). Find blocks in one agent section at a time, never in the whole doc.
+- **Media tags are plain text**: `<dez:audio …/>` and `<dez:video …/>`, each one whole line of an agent section; `src/model/chat/mediaTags.ts` is the one writer and recognizer, and a rewrite keeps unknown attributes. A request holds only the tag's request form (`id` and `type`; `agentTextForRequest`), so a Save, a Delete, or an expiry changes no request bytes, and no path or signed URL goes to a provider. `ModelTextEscaper` covers these tags too.
+- **Reply images and clips are written only while the reply is current** (`replyIsCurrent`, `controller/stream.ts`): a cancelled request can still give a response.
+- **Raw model entries are in memory only** (`dez.model/modelCache/rawModel`): never in `model_cache.json` or the snapshot, so there is none after an app start until the provider's next model check. Provider data that a tool result passes on goes through `jsonWithoutLocalPaths` (`src/model/tools/localPaths.ts`) when the result text is built: a tool result is stored as it was sent.
 - **One agent section per reply**: tool rounds stay in one section; its thinking keeps one entry per later round (`SectionThinking.rounds`, the `rounds` pill attribute), and each round's replay goes back after its own tool calls.
 - **The system prompt and the tools are in the cached prefix**: never put a date, a count, or a random value into `systemPrompt.md`, its placeholder values, or a tool definition.
-- **The asset scope must match the app folder**: the `assetProtocol` scope in `tauri.conf.json` names the folder that `base_dir()` (`persistence.rs`) builds.
+- **The asset scope must match the file roots**: the `assetProtocol` scope in `tauri.conf.json` names the folders that `root_dir()` (`persistence.rs`) builds. Its `*` does not cross `/`, so each folder of stored files needs its own entry.
+- **Clips come through Rust, and local clips play from a blob URL**: a clip response goes to a file with `dez.native/downloadAppFile`, never through `dez.http/stream` as bytes. WebKitGTK loads no media from the asset protocol, so `MediaPlayer.vue` reads a local file and plays a blob URL. A clip plays from a provider URL only when its server answers range requests; else Dez keeps a temp copy.
+- **A new editor state makes new players**: a stream end or a tab switch stops a clip that plays; other doc changes keep the player's DOM (`updateDOM`, `view/editor/media.ts`).
+- **The model picker draws only the rows in view** (`virtua`): a far row has no DOM. The rows set `pointer-events: auto`, because virtua turns pointer events off on its box for a moment after a scroll; a new clickable row kind needs the same.
 - **File drops differ by platform**: WebKitGTK gives the page no dropped `File`, so Linux uses Tauri's native drop (`tauri.linux.conf.json`, `dez.controller/images/watchFileDrops`); macOS keeps HTML5 drops, as the native drop would take text drags too. `AppLayout.vue` refuses file drops that no handler took.
 - **Read monitors with `dez.native/monitors`**, never the window API's `availableMonitors()`, `primaryMonitor()`, or `currentMonitor()`: in Tauri 2.10 those call GDK off the main thread and can crash the app on X11 (`monitors` in `commands.rs`).
 - **Shortcut key order differs by platform**: on Linux the menu accelerator gets the key first; put context checks in the selector both paths call, never only in a key handler.
@@ -246,12 +274,16 @@ Brief comments are encouraged above functions that do anything non-trivial expla
 - Run `cd src-tauri && cargo check` after significant Rust changes, and `cargo test` when touching Rust logic with tests.
 - Run `npm run test:e2e` after UI behavior changes covered by `tests/e2e/`. It runs the existing debug binary: rebuild first (`tests/e2e/harness/app.ts`).
 - Run `npm run typecheck:e2e` after changing the e2e harness or specs.
+- No test may call a real provider or run a paid generation: media specs use mock servers only (`tests/e2e/harness/mockServer.ts`, `media.ts`).
+- The e2e app has its own `HOME`, `XDG_CONFIG_HOME`, and `XDG_CACHE_HOME` in a temp folder (`tests/e2e/harness/app.ts`).
 - E2E keys skip GTK, so specs never test Linux menu accelerators; the manual recipe is in `vitest.e2e.config.ts`.
 - E2E cannot send real clipboard data or OS file drags: `tests/e2e/images.e2e.ts` builds paste and drop events in the page and emits `tauri://drag-drop`; the manual recipe for real ones is in `vitest.e2e.config.ts`.
 - E2E specs that restart the app use `MockProviderApp.relaunch()` (`tests/e2e/harness/mockProviderApp.ts`).
 - E2E seeds turn the reply-end alerts off (`quietAppState`, `tests/e2e/harness/fixtures.ts`). Alert specs use the fake notification server (`tests/e2e/harness/notificationServer.ts`) and `setUserIdleMs` (`tests/e2e/notifications.e2e.ts`).
 - E2E clicks: never use webdriverio's `.click()`; use `click()`, `pointerClick()`, or `pointerClickAt()` from `tests/e2e/harness/dom.ts`. Shared spec helpers (pointer, caret, doc, toasts, mock replies) are in `tests/e2e/harness/`; never copy one into a spec.
 - E2E specs that check a whole chat request body build the expected system prompt and tools with `tests/e2e/harness/chatBody.ts`.
+- E2E picker reads: use `pickerRows`, `pickerGroups`, and `pickModel` (`tests/e2e/harness/thread.ts`), which scroll the virtual list to read every row; `drawnPickerRows` reads only the rows in the DOM.
+- E2E clips (`tests/e2e/media-player.e2e.ts`, `tests/e2e/harness/media.ts`, `tests/e2e/fixtures/video.webm`): a test clip must be in a format that the CI GStreamer packages decode (VP9 webm, wav; `.github/workflows/e2e.yml`).
 - E2E specs that open a URL stop `dez.controller/openUrl` with an SBP filter, so no browser opens (`tests/e2e/links.e2e.ts`).
 - **No display server** (every spec fails with `Hook timed out in 120000ms` in `beforeAll`): run under headless `kwin_wayland`; the recipe is in `vitest.e2e.config.ts`.
 - For UI changes beyond unit-testable logic, also check by hand with `npm run tauri dev`.

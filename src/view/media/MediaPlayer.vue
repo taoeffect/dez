@@ -153,6 +153,10 @@ function release(source: LoadedSource | null | undefined): void {
 // The `post` flush: the media element has the next URL by then.
 watch(loaded, (_next, previous) => release(previous), { flush: 'post' })
 
+// Only the blob URL is released. Never release the source of the media
+// element here too (`removeAttribute('src')`, then `load()`): with that
+// call, the page hung in WebKitGTK 2.54.2 in 2 of 2 stress runs (once at
+// the 67th unmount, during a load).
 onBeforeUnmount(() => {
   unmounted = true
   release(loaded.value)

@@ -27,6 +27,7 @@ Talk with AI in a fully editable plaintext document. Inspired by Zed's text thre
 - **Find & replace** - <kbd>Cmd/Ctrl+F</kbd> opens a find bar with live highlights
 - **Markdown tables** - Renders GFM-flavored markdown tables inline
 - **Images** - paste or drop images. rendered inline. use with image-ready models. privacy-preserving, image paths never sent to provider
+- **Image, audio & video generation** - with Venice and OpenRouter models
 - **Native menubar** - File, Edit, Conversation, View, Window, and Help menus with an item for every keyboard shortcut
 - **Open Dez Folder** - a button in Settings › General opens the folder where Dez keeps its data (`~/.config/dez/`)
 - **Cross-platform** — macOS and Linux
