@@ -1031,10 +1031,19 @@ describe('dez.stream/start media round', () => {
   // The options of each save; the saves give the files g1.png, g2.png, ….
   let saves: unknown[] = []
 
-  function useRequest(request: ModelRequest): void {
+  // Puts the model in the cache with this request kind, and with the frames
+  // that a video model takes.
+  function useRequest(request: ModelRequest, maxFrames?: number): void {
     sbp('dez.model/modelCache/applyProviderResult', model.providerId, {
       ok: true,
-      models: [{ id: model.modelId, name: model.modelName, provider: model.providerId, outputs: ['image'], request }],
+      models: [{
+        id: model.modelId,
+        name: model.modelName,
+        provider: model.providerId,
+        outputs: ['image'],
+        request,
+        ...(maxFrames !== undefined && { images: { maxFrames } }),
+      }],
     })
   }
 
@@ -1215,6 +1224,92 @@ describe('dez.stream/start media round', () => {
     await sbp('dez.controller/submitTab', activeTab().id)
 
     expect(mediaInputs.map(({ kind, parameters }) => ({ kind, parameters }))).toStrictEqual([{ kind: 'video', parameters: { duration: '8s' } }])
+  })
+
+  describe('the frames of a video', () => {
+    const twoImages = `From ![${image('cat.png')}](id=c) to @a.`
+    const leftOut = (title: string, message: string) => [{ area: 'app-global', data: { variant: 'warning', title, message, duration: 8000 } }]
+
+    beforeEach(() => {
+      generateMedia = async (input) => {
+        mediaInputs.push(input)
+        return { media: [], clips: [film] }
+      }
+    })
+
+    it('makes a video from the images of the last user message, as the first and the last frame', async () => {
+      useRequest('imageToVideo', 2)
+      setConversation(twoImages)
+
+      await sbp('dez.controller/submitTab', activeTab().id)
+
+      expect(mediaInputs.map(({ kind, prompt, images }) => ({ kind, prompt, images })))
+        .toStrictEqual([{ kind: 'imageToVideo', prompt: 'From ![image](id=c) to @a.', images: [image('cat.png'), image('fox.png')] }])
+      expect(sectionTexts().at(-2)?.text).toContain('<dez:video id="d"')
+      expect(toasts).toStrictEqual([])
+    })
+
+    it('makes a video from the newest image of the conversation when the last user message has none', async () => {
+      useRequest('imageToVideo', 2)
+      setConversation('Make it run.')
+
+      await sbp('dez.controller/submitTab', activeTab().id)
+
+      expect(mediaInputs.map(({ prompt, images }) => ({ prompt, images }))).toStrictEqual([{ prompt: 'Make it run.', images: [generated('old.png')] }])
+      expect(toasts).toStrictEqual([])
+    })
+
+    // The request would cost money, or get an error text of the provider
+    // that names its own field.
+    it('sends no image-to-video request and shows an error toast when the conversation has no image', async () => {
+      const message = 'M makes a video from an image. Paste an image, or name one with @id.'
+      useRequest('imageToVideo', 2)
+      sbp('dez.model/tabs/replaceSections', activeTab().id, [{ id: 'u1', role: 'user', content: [{ kind: 'text', text: 'Make it run.' }] }])
+
+      await sbp('dez.controller/submitTab', activeTab().id)
+
+      expect(mediaInputs).toStrictEqual([])
+      expect(sectionTexts()).toStrictEqual([{ role: 'user', text: 'Make it run.' }])
+      expect(toasts).toStrictEqual([{ area: 'app-global', data: { variant: 'error', title: 'Cannot send', message } }])
+      expect(consoleError).toHaveBeenCalledWith(`Cannot send: ${message}`)
+    })
+
+    it.each([
+      ['an image-to-video model that takes one frame', 'imageToVideo', 1, [image('cat.png')], 'Image not sent', 'M takes only 1 image, so 1 image was left out of the request.'],
+      // The cache does not tell how many frames the model takes.
+      ['an image-to-video model with no frame count', 'imageToVideo', undefined, [image('cat.png')], 'Image not sent', 'M takes only 1 image, so 1 image was left out of the request.'],
+      ['a text-to-video model that takes one frame', 'video', 1, [image('cat.png')], 'Image not sent', 'M takes only 1 image, so 1 image was left out of the request.'],
+      ['a text-to-video model that takes no frame', 'video', undefined, [], 'Images not sent', 'M takes no image, so 2 images were left out of the request.'],
+    ] as const)('sends %s the images that it takes, and tells the user of the rest', async (_name, request, maxFrames, images, title, message) => {
+      useRequest(request, maxFrames)
+      setConversation(twoImages)
+
+      await sbp('dez.controller/submitTab', activeTab().id)
+
+      expect(mediaInputs.map((input) => input.images)).toStrictEqual([images])
+      expect(toasts).toStrictEqual(leftOut(title, message))
+    })
+
+    it('tells the user of a third image that a model with two frames does not take', async () => {
+      useRequest('imageToVideo', 2)
+      setConversation(`${twoImages} Not @b.`)
+
+      await sbp('dez.controller/submitTab', activeTab().id)
+
+      expect(mediaInputs.map((input) => input.images)).toStrictEqual([[image('cat.png'), image('fox.png')]])
+      expect(toasts).toStrictEqual(leftOut('Image not sent', 'M takes only 2 images, so 1 image was left out of the request.'))
+    })
+
+    // A text-to-video model works with no image.
+    it('gives a text-to-video model no image of an earlier message', async () => {
+      useRequest('video', 2)
+      setConversation('Make it run.')
+
+      await sbp('dez.controller/submitTab', activeTab().id)
+
+      expect(mediaInputs.map((input) => input.images)).toStrictEqual([[]])
+      expect(toasts).toStrictEqual([])
+    })
   })
 
   // A clip can take minutes, and a tag counts only as a whole line.

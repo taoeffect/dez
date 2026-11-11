@@ -1,26 +1,31 @@
 import { sanitizeErrorText } from '../../utils/protocol/errors'
 import { responseContentType, type NativeHttpResponseHead } from '../../utils/protocol/nativeHttp'
 import { trimTrailingSlashes, type MediaApiFormatId } from './config'
+import type { ClipImageRules } from './clipImages'
 import type { ClipTextRules } from './clipText'
 import { generatedBase64Image, generatedImage } from './generatedImages'
 import { isOptionValue, parameterTakes, type ModelParameter, type OptionsParameter, type OptionValue, type ParameterValues, type RangeParameter } from './modelParameters'
 import { isRecord, valueAtPath } from './modelParsing'
-import type { ChatImagePart, ClipKind, GeneratedMedia, ImageKind } from './types'
+import { CLIP_KINDS, type ChatImagePart, type ClipKind, type GeneratedMedia, type ImageKind } from './types'
 
-// What one image request sends: the user's prompt, and the input images of
-// an edit, as bytes.
+// What one image request sends: the user's prompt, and the input images as
+// bytes, in the user's order.
 export interface MediaInput {
   prompt: string
+  // The images of an edit, or the frames of a video: the first image is
+  // the first frame, and the second one is the last frame. The caller gives
+  // a video request no more images than the model takes
+  // (`ClipFormat.imageRules`). A request of a kind that takes no image
+  // does not send them.
   images: readonly ChatImagePart[]
 }
 
 // What one clip request sends: the user's prompt (for speech, the text to
-// speak), the lyrics of a song when the user wrote some (only for a model
-// that takes lyrics, `ClipFormat.textRules`), and the value of each
-// parameter of the model that has one (`ClipFormat.parameters`,
-// `effectiveParameterValues`).
-export interface ClipInput {
-  prompt: string
+// speak), the input images, the lyrics of a song when the user wrote some
+// (only for a model that takes lyrics, `ClipFormat.textRules`), and the
+// value of each parameter of the model that has one
+// (`ClipFormat.parameters`, `effectiveParameterValues`).
+export interface ClipInput extends MediaInput {
   lyrics?: string
   values: ParameterValues
 }
@@ -92,6 +97,10 @@ export interface ClipFormat {
   // What a model of `kind` takes as the text of a request, from the same
   // two entries; undefined when the API tells nothing about it.
   textRules?(kind: ClipKind, entry: unknown, mediaEntry: unknown): ClipTextRules | undefined
+  // What a model of `kind` takes as input images, from the same two
+  // entries; undefined for a model that takes none, as far as the API
+  // tells.
+  imageRules?(kind: ClipKind, entry: unknown, mediaEntry: unknown): ClipImageRules | undefined
   request(kind: ClipKind, baseUrl: string, modelId: string, input: ClipInput): MediaWireRequest
   // The job that the JSON of a 2xx response to `request` names. Throws when
   // it names none.
@@ -157,10 +166,17 @@ function speedParameter(min: unknown, max: unknown, defaultValue?: unknown): Mod
 }
 
 // The switch of a request field that a model takes only when its entry
-// says so (`supported` is true). It has no default: a switch that the user
-// did not turn on puts no field into the request.
-function switchParameter(name: string, label: string, supported: unknown): ModelParameter[] {
-  return supported === true ? [{ name, label }] : []
+// says so (`supported` is true). With no `defaultValue`, a switch that the
+// user did not turn on puts no field into the request.
+function switchParameter(name: string, label: string, supported: unknown, defaultValue?: boolean): ModelParameter[] {
+  if (supported !== true) return []
+  return [{ name, label, ...(defaultValue !== undefined && { default: defaultValue }) }]
+}
+
+// An input image as a data URL: Dez has no URL that a provider could
+// fetch.
+function imageDataUrl(image: ChatImagePart): string {
+  return `data:${image.mediaType};base64,${image.data}`
 }
 
 // The seconds of a length, as a model list writes it: a number (OpenRouter)
@@ -264,7 +280,7 @@ const veniceFormat: MediaFormat = {
           // https://docs.venice.ai/api-reference/endpoint/image/multi-edit
           return {
             url: `${base}/image/multi-edit`,
-            body: { modelId, prompt, images: images.map((image) => `data:${image.mediaType};base64,${image.data}`), safe_mode: false },
+            body: { modelId, prompt, images: images.map(imageDataUrl), safe_mode: false },
           }
       }
     },
@@ -290,7 +306,13 @@ const veniceFormat: MediaFormat = {
     // a clip's file after that header. With the format in the request, the
     // header agrees with the audio (checked live, 2026-11-10).
     // video: the first aspect ratio is the model's main one (`16:9` for
-    // most); some models list no resolution and take none.
+    // most). A model takes only the fields that its entry lists values
+    // for: some list no resolution, and half of the image-to-video models
+    // list no aspect ratio (the API then refuses the field, checked
+    // 2026-11-11). `audio` is a field only of the models with
+    // `audio_configurable` (the others refuse it). The switch is on by
+    // default, as the API's own default is, so that it shows what a
+    // request does; a video with no sound costs less for some models.
     // music: every field but the prompt and the lyrics is a parameter, and
     // each one only when the entry says that the model takes it
     // (`supports_…`, or a list or a range of values): the API refuses a
@@ -324,19 +346,22 @@ const veniceFormat: MediaFormat = {
             // The end of the clip goes over into its start with no seam.
             ...switchParameter('loop', 'Loop', spec('supports_loop')),
           ]
-        case 'video': {
+        case 'video':
+        case 'imageToVideo': {
           const aspectRatios = listedValues(spec('constraints.aspect_ratios'))
           return [
             ...lowestFirstParameter('duration', 'Length', spec('constraints.durations'), lengthSeconds),
             ...lowestFirstParameter('resolution', 'Resolution', spec('constraints.resolutions'), resolutionLines),
             ...optionsParameter('aspect_ratio', 'Aspect ratio', aspectRatios, aspectRatios[0]),
+            ...switchParameter('audio', 'Audio', spec('constraints.audio_configurable'), true),
           ]
         }
       }
     },
     // tts: 1 to 4096 characters for every model (the speech request's
-    // schema). music: the limits are in the entry. video: the entries tell
-    // none.
+    // schema). music: the limits are in the entry. video: Dez reads none
+    // (some entries have `constraints.prompt_character_limit`), so the API
+    // checks the text.
     textRules: (kind, entry) => {
       switch (kind) {
         case 'tts':
@@ -344,13 +369,21 @@ const veniceFormat: MediaFormat = {
         case 'music':
           return veniceMusicText(entry)
         case 'video':
+        case 'imageToVideo':
           return undefined
       }
     },
+    // An image-to-video request takes a first frame (`image_url`) and a
+    // last frame (`end_image_url`). No field of an entry tells which models
+    // take the last frame; one that takes none answers a 400 that names
+    // the field, and that request costs nothing. A text-to-video model
+    // takes no image. (The reference images of the "reference-to-video"
+    // models are other fields, which Dez does not send.)
+    imageRules: (kind) => (kind === 'imageToVideo' ? { maxFrames: 2 } : undefined),
     // The schemas allow no field that they do not name, and a field that
     // the model does not take is an error. The values are the fields of the
     // model's own parameters, so they go as they are.
-    request: (kind, baseUrl, modelId, { prompt, lyrics, values }) => {
+    request: (kind, baseUrl, modelId, { prompt, images, lyrics, values }) => {
       const base = trimTrailingSlashes(baseUrl)
       switch (kind) {
         case 'tts':
@@ -368,14 +401,26 @@ const veniceFormat: MediaFormat = {
           return { url: `${base}/audio/queue`, body: { ...fields, model: modelId, prompt, ...(lyrics !== undefined && { lyrics_prompt: lyrics }) } }
         }
         case 'video':
-          // `duration` and `aspect_ratio` have no default: a request with
-          // none gets a 400 (checked live, 2026-11-10), and each model
-          // takes only the values of its own entry.
+        case 'imageToVideo': {
+          // `duration` has no default: a request with none gets a 400
+          // (checked live, 2026-11-10), and each model takes only the
+          // values of its own entry. The images are the first and the
+          // last frame, each as a data URL ("a URL (http/https) or a data
+          // URL").
           // https://docs.venice.ai/api-reference/endpoint/video/queue
-          if (values.duration === undefined || values.aspect_ratio === undefined) {
-            throw new Error('The model list does not tell which lengths and aspect ratios this model takes.')
+          if (values.duration === undefined) throw new Error('The model list does not tell which lengths this model takes.')
+          const [firstFrame, lastFrame] = images.map(imageDataUrl)
+          return {
+            url: `${base}/video/queue`,
+            body: {
+              ...values,
+              model: modelId,
+              prompt,
+              ...(firstFrame !== undefined && { image_url: firstFrame }),
+              ...(lastFrame !== undefined && { end_image_url: lastFrame }),
+            },
           }
-          return { url: `${base}/video/queue`, body: { ...values, model: modelId, prompt } }
+        }
       }
     },
     // The queue endpoints answer `{ queue_id, … }`. Venice takes the money
@@ -399,7 +444,7 @@ const veniceFormat: MediaFormat = {
       return {
         id: queueId,
         poll: {
-          url: `${trimTrailingSlashes(baseUrl)}/${kind === 'video' ? 'video' : 'audio'}/retrieve`,
+          url: `${trimTrailingSlashes(baseUrl)}/${CLIP_KINDS[kind]}/retrieve`,
           body: { model: modelId, queue_id: queueId },
         },
         state: (poll) => {
@@ -432,6 +477,9 @@ const veniceFormat: MediaFormat = {
               body: { model: modelId, ...(values.duration_seconds !== undefined && { duration_seconds: values.duration_seconds }) },
             }
           case 'video':
+          case 'imageToVideo':
+            // The price does not depend on the input images, and the
+            // schema has no field for them.
             return { url: `${base}/video/quote`, body: { ...values, model: modelId } }
         }
       },
@@ -443,6 +491,10 @@ const veniceFormat: MediaFormat = {
     },
   },
 }
+
+// The frames of a video that an OpenRouter request can give an image for
+// (`frame_type`), in the order of the input images.
+const OPENROUTER_FRAMES = ['first_frame', 'last_frame'] as const
 
 // The OpenRouter speech and video APIs. Its image-only models have an own
 // API too (`/images`), which Dez does not speak yet, and its music models
@@ -461,17 +513,33 @@ const openRouterFormat: MediaFormat = {
           return optionsParameter('voice', 'Voice', voices, voices[0])
         }
         case 'video':
+        case 'imageToVideo':
           return [
             ...lowestFirstParameter('duration', 'Length (seconds)', valueAtPath(mediaEntry, 'supported_durations'), lengthSeconds),
             ...lowestFirstParameter('resolution', 'Resolution', valueAtPath(mediaEntry, 'supported_resolutions'), resolutionLines),
             // No default: the model's own aspect ratio applies.
             ...optionsParameter('aspect_ratio', 'Aspect ratio', listedValues(valueAtPath(mediaEntry, 'supported_aspect_ratios'))),
+            // `generate_audio` is true in the entry of a model that can
+            // make sound, and a request with no field then gets sound
+            // ("Defaults to the endpoint's generate_audio capability
+            // flag"). So the switch is on by default, as for Venice.
+            ...switchParameter('generate_audio', 'Audio', valueAtPath(mediaEntry, 'generate_audio'), true),
           ]
         case 'music':
           return []
       }
     },
-    request: (kind, baseUrl, modelId, { prompt, values }) => {
+    // The video list tells which frames a model takes an image for
+    // (`supported_frame_images`). The images of a request go in the order
+    // of OPENROUTER_FRAMES, so a last frame counts only with a first one.
+    imageRules: (kind, _entry, mediaEntry) => {
+      if (CLIP_KINDS[kind] !== 'video') return undefined
+      const frames = listedValues(valueAtPath(mediaEntry, 'supported_frame_images'))
+      const firstMissing = OPENROUTER_FRAMES.findIndex((frame) => !frames.includes(frame))
+      const maxFrames = firstMissing === -1 ? OPENROUTER_FRAMES.length : firstMissing
+      return maxFrames > 0 ? { maxFrames } : undefined
+    },
+    request: (kind, baseUrl, modelId, { prompt, images, values }) => {
       const base = trimTrailingSlashes(baseUrl)
       switch (kind) {
         case 'tts':
@@ -484,13 +552,32 @@ const openRouterFormat: MediaFormat = {
           // https://openrouter.ai/docs/guides/overview/multimodal/tts
           return { url: `${base}/audio/speech`, body: { ...values, model: modelId, input: prompt, response_format: 'mp3' } }
         case 'video':
+        case 'imageToVideo':
           // A request with no length gets the provider's default length,
           // which can cost many times the shortest one. So a model whose
           // lengths Dez does not know (the video list does not have it, or
           // the list did not load) gets no request.
+          // The images are frames of the video (`frame_images`), each as a
+          // data URL. `input_references`, the images of a
+          // reference-to-video request, is never sent.
           // https://openrouter.ai/docs/guides/overview/multimodal/video-generation
+          // https://openrouter.ai/docs/cookbook/video-generation/image-to-video
           if (values.duration === undefined) throw new Error('The model list does not tell which lengths this model takes.')
-          return { url: `${base}/videos`, body: { ...values, model: modelId, prompt } }
+          return {
+            url: `${base}/videos`,
+            body: {
+              ...values,
+              model: modelId,
+              prompt,
+              ...(images.length > 0 && {
+                frame_images: OPENROUTER_FRAMES.slice(0, images.length).map((frame, index) => ({
+                  type: 'image_url',
+                  image_url: { url: imageDataUrl(images[index]) },
+                  frame_type: frame,
+                })),
+              }),
+            },
+          }
         case 'music':
           throw new Error('This media API has no music request.')
       }
@@ -504,7 +591,7 @@ const openRouterFormat: MediaFormat = {
     // https://openrouter.ai/docs/api/api-reference/video-generation/poll-video-generation-status
     job: (kind, baseUrl, _modelId, data) => {
       const id = isRecord(data) ? data.id : undefined
-      if (kind !== 'video' || typeof id !== 'string' || id === '') throw new Error('The provider sent no clip.')
+      if (CLIP_KINDS[kind] !== 'video' || typeof id !== 'string' || id === '') throw new Error('The provider sent no clip.')
       const jobUrl = `${trimTrailingSlashes(baseUrl)}/videos/${encodeURIComponent(id)}`
       return {
         id,

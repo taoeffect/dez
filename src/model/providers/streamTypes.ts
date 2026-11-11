@@ -52,8 +52,11 @@ export interface ProviderGenerateMediaInput {
   // request of another kind does not send them.
   lyrics?: string
   // The absolute paths of stored images (`storedImageFile`): the inputs of
-  // an `imageEdit` request, the first one the image to edit. A request of
-  // another kind does not send them.
+  // an `imageEdit` request, the first one the image to edit; or the frames
+  // of a `video` or `imageToVideo` request, the first one the first frame
+  // and the second one the last frame, and no more of them than the model
+  // takes (`ModelInfo.images`). A request of another kind does not send
+  // them.
   images?: readonly string[]
   // The values to set for the model's parameters (ModelInfo.parameters),
   // by parameter name, for a clip kind. A parameter with no value here, or
@@ -66,8 +69,8 @@ export interface ProviderGenerateMediaInput {
   signal?: AbortSignal
 }
 
-// An image kind gives `media`, and a clip kind (tts, music, video) gives
-// `clips`; the other list is empty.
+// An image kind gives `media`, and a clip kind (CLIP_KINDS) gives `clips`;
+// the other list is empty.
 export interface ProviderGenerateMediaResult {
   // The image files that the model made, in the provider's order.
   media: GeneratedMedia[]

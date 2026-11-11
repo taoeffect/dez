@@ -77,7 +77,7 @@ describe('model cache persistence format', () => {
     expect(parseModelCacheJson(serializeModelCacheJson(parsed))).toStrictEqual(parsed)
   })
 
-  it('round-trips the parameters and text rules of a model, and drops only a model whose data is not valid', () => {
+  it('round-trips the parameters, text rules, and image rules of a model, and drops only a model whose data is not valid', () => {
     const models = [
       {
         id: 'film',
@@ -102,6 +102,7 @@ describe('model cache persistence format', () => {
         text: { minPromptLength: 10, maxPromptLength: 300, lyrics: { required: true, maxLength: 3000 } },
       },
       { id: 'sound', name: 'Sound', provider: 'venice', request: 'music', text: { lyrics: { required: false } } },
+      { id: 'frames', name: 'Frames', provider: 'venice', request: 'imageToVideo', images: { maxFrames: 2 } },
       // A cache written before parameters existed.
       { id: 'old', name: 'Old', provider: 'venice', request: 'video' },
     ]
@@ -119,6 +120,7 @@ describe('model cache persistence format', () => {
             { id: 'bad-switch', name: 'Bad switch', provider: 'venice', parameters: [{ name: 'loop', label: 'Loop', default: 'on' }] },
             { id: 'bad-limit', name: 'Bad limit', provider: 'venice', text: { maxPromptLength: -1 } },
             { id: 'bad-lyrics', name: 'Bad lyrics', provider: 'venice', text: { lyrics: true } },
+            { id: 'no-frame', name: 'No frame', provider: 'venice', images: { maxFrames: 0 } },
           ],
           working: true,
           updatedAt: 1,

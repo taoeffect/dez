@@ -27,6 +27,9 @@ const clipTextRulesSchema = z.object({
   lyrics: z.object({ required: z.boolean(), maxLength: textLengthSchema.optional() }).optional(),
 })
 
+// ClipImageRules (src/model/providers/clipImages.ts).
+const clipImageRulesSchema = z.object({ maxFrames: z.number().int().positive() })
+
 const modelInfoSchema = z.object({
   id: z.string(),
   name: z.string(),
@@ -41,6 +44,7 @@ const modelInfoSchema = z.object({
   request: z.enum(MODEL_REQUESTS).optional(),
   parameters: z.array(modelParameterSchema).min(1).optional(),
   text: clipTextRulesSchema.optional(),
+  images: clipImageRulesSchema.optional(),
 })
 
 // Individually drop invalid models (e.g. a bad provider id) instead of failing

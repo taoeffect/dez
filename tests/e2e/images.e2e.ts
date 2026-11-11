@@ -6,7 +6,7 @@ import { Key } from 'webdriverio'
 import { openAiSystemMessage } from './harness/chatBody'
 import { consoleErrors, elementCenter, movePointer, pointerClick, pointerClickAt, resetConsoleErrors, screenshotOnFailure, typeKeys, waitForValue, type Point } from './harness/dom'
 import { conversationFilePath } from './harness/fixtures'
-import { shownImages, solidPng, type ShownImage } from './harness/images'
+import { pasteImage, shownImages, solidPng, type ShownImage } from './harness/images'
 import { startMockProviderApp, type MockProviderApp } from './harness/mockProviderApp'
 import { mockChatPath, replyText, sendAnthropicReply, sendChatReply, type HeldRequest, type MockProvider } from './harness/mockServer'
 import type { E2EBrowser } from './harness/session'
@@ -304,18 +304,6 @@ describe('images', () => {
     return { x: point.x + 1, y: point.y }
   }
 
-  // Pastes a PNG file with no text, as an image copied in an image viewer
-  // gives it.
-  async function pasteImage (png: Buffer): Promise<void> {
-    await browser.execute((base64: string) => {
-      const content = document.querySelector('.cm-content')
-      if (!content) throw new Error('pasteImage: .cm-content not found')
-      const data = new DataTransfer()
-      data.items.add(new File([Uint8Array.from(atob(base64), (char) => char.charCodeAt(0))], 'image.png', { type: 'image/png' }))
-      content.dispatchEvent(new ClipboardEvent('paste', { clipboardData: data, bubbles: true, cancelable: true }))
-    }, png.toString('base64'))
-  }
-
   // Drags `files` over `point` and drops them there, on the element at that
   // point. Returns whether a handler canceled each event: a canceled
   // dragover accepts the drag, and a canceled drop keeps the webview from
@@ -380,7 +368,7 @@ describe('images', () => {
   async function insertPastedImage (before: string, after: string): Promise<InsertedImage> {
     await focusEditor(browser)
     await typeKeys(browser, before)
-    await pasteImage(PASTED_PNG)
+    await pasteImage(browser, PASTED_PNG)
     await waitForValue(browser, 'pasted reference', async () => REFERENCE.test(await editorDoc(browser)), true)
     const pasted = await docAndCaret()
     const reference = pasted.doc.slice(before.length)
@@ -443,7 +431,7 @@ describe('images', () => {
     await newTab(browser)
     const first = await insertPastedImage('', ' and ')
     const firstLine = `${first.reference} and `
-    await pasteImage(PASTED_PNG)
+    await pasteImage(browser, PASTED_PNG)
     await waitForValue(browser, 'second reference', async () => (await editorDoc(browser)).length > firstLine.length, true)
     const second = (await editorDoc(browser)).slice(firstLine.length)
     const secondPath = referencePath(second)
@@ -885,7 +873,7 @@ describe('images', () => {
     await pickModel(browser, VISION.name, VISION.modelName)
     const first = await insertPastedImage('', ' and ')
     const firstLine = `${first.reference} and `
-    await pasteImage(PASTED_PNG)
+    await pasteImage(browser, PASTED_PNG)
     await waitForValue(browser, 'second reference', async () => (await editorDoc(browser)).length > firstLine.length, true)
     const second = (await editorDoc(browser)).slice(firstLine.length)
     expect(second).toBe(`![${referencePath(second)}](id=b)`)
@@ -912,7 +900,7 @@ describe('images', () => {
     const replyEnd = (await editorDoc(browser)).indexOf(reply) + reply.length
     await focusEditor(browser)
     await setCaret(browser, replyEnd)
-    await pasteImage(PASTED_PNG)
+    await pasteImage(browser, PASTED_PNG)
     await waitForValue(browser, 'reference in the reply', async () => (await editorDoc(browser)).includes('](id=c)'), true)
     const withThird = await editorDoc(browser)
     const third = withThird.slice(replyEnd, withThird.indexOf('](id=c)') + '](id=c)'.length)

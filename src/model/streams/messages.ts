@@ -6,8 +6,9 @@ import { sameModelRef } from '../chat/modelRef'
 import { holdsStoredFilePath, withoutStoredFilePaths } from '../chat/storedFilePaths'
 import { thinkingField } from '../chat/thinking'
 import { EMPTY_TOOL_RESULT, INTERRUPTED_TOOL_RESULT, agentTextForRequest, splitToolBlocks, type ToolBlock } from '../chat/toolBlocks'
-import { clipText, type ClipTextRules } from '../providers/clipText'
-import type { MediaKind } from '../providers/types'
+import { maxClipImages } from '../providers/clipImages'
+import { clipText } from '../providers/clipText'
+import { CLIP_KINDS, isClipKind, type ClipInputRules, type MediaKind } from '../providers/types'
 import type { ToolCall, ToolResult } from '../tools/types'
 import type { RequestMessages, StreamMessage } from './types'
 
@@ -78,33 +79,49 @@ export function sectionsToStreamMessages(sections: Section[], requestModel: Mode
 }
 
 /** What a media reply (a ModelInfo.request that is not `chat`) sends to
- *  dez.provider/generateMedia. The prompt is the text of the last user
- *  message of `messages` as a chat request sends it: with no path, and with
- *  each image reference as its `![image](id=a)` text. For a model that
- *  takes lyrics (`textRules`, the model's ModelInfo.text), a `Lyrics:` line
- *  splits that text into the prompt and the lyrics (`clipText`). Only an
- *  edit (`imageEdit`) takes images: the images of that message, in text
- *  order and each one once: the ones that it holds and the ones that it
- *  names with an `@id` mention. When it has none, the edit takes the newest
- *  image reference of `sections` (the tab's sections, in which the reply's
- *  own section is still empty), so that "Make it blue" edits the image of
- *  the reply before. An edit with no image gets no paths, and
- *  generateMedia refuses it. */
+ *  dez.provider/generateMedia. `rules` is what the cache knows of the
+ *  model's input (its ModelInfo).
+ *
+ *  The prompt is the text of the last user message of `messages` as a chat
+ *  request sends it: with no path, and with each image reference as its
+ *  `![image](id=a)` text. For a model that takes lyrics (`rules.text`), a
+ *  `Lyrics:` line splits that text into the prompt and the lyrics
+ *  (`clipText`).
+ *
+ *  The images are the images of that message, in text order and each one
+ *  once: the ones that it holds and the ones that it names with an `@id`
+ *  mention. An edit (`imageEdit`) takes them all. A video request (`video`,
+ *  `imageToVideo`) takes as many as the model takes frames (`rules.images`,
+ *  `maxClipImages`): the first image is the first frame, and the second
+ *  one is the last frame. `imagesLeftOut` is the count of the message's
+ *  images that a video request does not take, so that the submit can tell
+ *  the user. A request of another kind takes no image.
+ *
+ *  When the message has no image, a request that cannot go without one
+ *  (`imageEdit`, `imageToVideo`) takes the newest image reference of
+ *  `sections` (the tab's sections, in which the reply's own section is
+ *  still empty), so that "Make it blue" or "Make it move" uses the image
+ *  of the reply before. With no image there either, it gets no paths: the
+ *  submit refuses an `imageToVideo` request (`clipImageProblem`), and
+ *  generateMedia refuses both. */
 export function mediaRequestInput(
   kind: MediaKind,
   messages: StreamMessage[],
   sections: Section[],
-  textRules?: ClipTextRules,
-): { prompt: string, lyrics?: string, images: string[] } {
+  rules: ClipInputRules = {},
+): { prompt: string, lyrics?: string, images: string[], imagesLeftOut: number } {
   const content = messages.findLast((message): message is Extract<StreamMessage, { role: 'user' }> => message.role === 'user')?.content ?? ''
   const parts: MessagePart[] = typeof content === 'string' ? [{ type: 'text', text: content }] : content
-  const text = clipText(textRules, parts.map((part) => (part.type === 'text' ? part.text : '')).join('').trim())
-  if (kind !== 'imageEdit') return { ...text, images: [] }
+  const text = clipText(rules.text, parts.map((part) => (part.type === 'text' ? part.text : '')).join('').trim())
+  const isVideo = isClipKind(kind) && CLIP_KINDS[kind] === 'video'
+  if (kind !== 'imageEdit' && !isVideo) return { ...text, images: [], imagesLeftOut: 0 }
 
-  const images = [...new Set(parts.flatMap((part) => (part.type === 'image' ? [part.path] : [])))]
-  if (images.length > 0) return { ...text, images }
+  const messageImages = [...new Set(parts.flatMap((part) => (part.type === 'image' ? [part.path] : [])))]
+  const images = isVideo ? messageImages.slice(0, maxClipImages(kind, rules.images)) : messageImages
+  const imagesLeftOut = messageImages.length - images.length
+  if (messageImages.length > 0 || kind === 'video') return { ...text, images, imagesLeftOut }
   const newest = sections.map((section) => findImageReferences(sectionPlainText(section)).at(-1)).findLast((reference) => reference !== undefined)
-  return { ...text, images: newest ? [newest.path] : [] }
+  return { ...text, images: newest ? [newest.path] : [], imagesLeftOut }
 }
 
 /** The request messages of one agent section. A reply that called tools

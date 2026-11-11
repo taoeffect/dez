@@ -29,10 +29,12 @@ export const BUILT_IN_PROVIDER_CONFIGS: readonly ProviderConfig[] = [
     // Dez does not speak, so they get no request yet. "image" counts only
     // with an image price: the routers (`openrouter/auto`) report it too,
     // but none of their models makes images (checked live, 2026-11-10).
-    // Speech and video-only models take the media API (`mediaApi`); the
-    // few video models that need a video or an image as input get the same
-    // request, and OpenRouter refuses it. "audio" comes only with "text":
-    // those models answer through chat.
+    // Speech and video-only models take the media API (`mediaApi`). No
+    // field tells that a video model needs an image, so each one has the
+    // kind `video`, and the image of a message goes as a frame to a model
+    // that takes frames (the video list, mediaFormats.ts). The few models
+    // that need a video get the same request, and OpenRouter refuses it.
+    // "audio" comes only with "text": those models answer through chat.
     modelOutputs: {
       path: 'architecture.output_modalities',
       values: {
@@ -115,9 +117,10 @@ export const BUILT_IN_PROVIDER_CONFIGS: readonly ProviderConfig[] = [
     // also make sounds and speech; one of them is a voice changer
     // (`model_spec.voice_changer`), which needs a recording and has an own
     // endpoint, so it gets no request yet. Every video model has the type
-    // `video`: only the ones that need just a text get requests; the others
-    // need an image or a video, which Dez does not send yet. Dez does not
-    // run upscale or speech-to-text (`asr`) models yet.
+    // `video`, and `model_spec.constraints.model_type` tells what it needs:
+    // just a text (`text-to-video`), an image (`image-to-video`), or a
+    // video (`video`), which Dez does not send yet. Dez does not run
+    // upscale or speech-to-text (`asr`) models yet.
     modelOutputs: {
       path: 'type',
       values: {
@@ -133,7 +136,10 @@ export const BUILT_IN_PROVIDER_CONFIGS: readonly ProviderConfig[] = [
         },
         video: {
           outputs: ['video'],
-          requestBy: { path: 'model_spec.constraints.model_type', values: { 'text-to-video': 'video' } },
+          requestBy: {
+            path: 'model_spec.constraints.model_type',
+            values: { 'text-to-video': 'video', 'image-to-video': 'imageToVideo' },
+          },
         },
         asr: { outputs: ['text'] },
         embedding: { outputs: [] },

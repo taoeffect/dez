@@ -1,5 +1,6 @@
 import sbp from '@sbp/sbp'
 import { effectiveOutputs, MODEL_OUTPUTS, type ModelOutput } from '../model/modelOutputs'
+import { clipImageProblem } from '../model/providers/clipImages'
 import { clipTextProblem } from '../model/providers/clipText'
 import { effectiveRequest, isClipKind, type ModelInfo } from '../model/providers/types'
 import { mediaRequestInput } from '../model/streams/messages'
@@ -13,6 +14,17 @@ function unusableModelMessage(modelName: string, outputs: readonly ModelOutput[]
   const cannotUse = `Dez cannot use ${modelName} yet.`
   if (labels.length === 0) return cannotUse
   return `${cannotUse} It makes ${new Intl.ListFormat('en', { type: 'conjunction' }).format(labels)} output through an API that Dez does not support.`
+}
+
+// Tells the user that the request goes with `count` fewer images than the
+// message has, because the model `reason` (e.g. "does not read images").
+function warnImagesLeftOut(modelName: string, reason: string, count: number): void {
+  sbp('dez.ui/toast', 'app-global', {
+    variant: 'warning',
+    title: count === 1 ? 'Image not sent' : 'Images not sent',
+    message: `${modelName} ${reason}, so ${count === 1 ? '1 image was' : `${count} images were`} left out of the request.`,
+    duration: 8000,
+  })
 }
 
 export default sbp('sbp/selectors/register', {
@@ -34,18 +46,23 @@ export default sbp('sbp/selectors/register', {
     // A model that the cache does not have has no request kind, so it gets
     // a chat request, as before models had one. A refusal changes nothing,
     // so it comes before the end of a running reply's output.
-    const cachedModel: Pick<ModelInfo, 'outputs' | 'request' | 'text'> = sbp('dez.model/modelCache/model', model.providerId, model.modelId) ?? {}
+    const cachedModel: Pick<ModelInfo, 'outputs' | 'request' | 'text' | 'images'> = sbp('dez.model/modelCache/model', model.providerId, model.modelId) ?? {}
     const kind = effectiveRequest(cachedModel)
     let message: string | null = null
+    // How many images of the message a video request takes and leaves out.
+    let frames = { sent: 0, leftOut: 0 }
     if (kind === 'none') {
       message = unusableModelMessage(model.modelName, effectiveOutputs(cachedModel))
     } else if (isClipKind(kind)) {
-      // A text that the model is known not to take (no lyrics for a model
-      // that needs them, a prompt that is too short or too long) gets no
-      // request: the check costs nothing, and it tells the user what to
-      // change. The end of a running reply's output changes no user
-      // message, so the text that this checks is the text of the request.
-      message = clipTextProblem(model.modelName, cachedModel.text, mediaRequestInput(kind, request.messages, tab.sections, cachedModel.text))
+      // An input that the model is known not to take (no image for a model
+      // that makes its video from one, no lyrics for a model that needs
+      // them, a prompt that is too short or too long) gets no request: the
+      // check costs nothing, and it tells the user what to change. The end
+      // of a running reply's output changes no user message and adds no
+      // image, so the input that this checks is the input of the request.
+      const input = mediaRequestInput(kind, request.messages, tab.sections, cachedModel)
+      message = clipImageProblem(model.modelName, kind, input.images.length) ?? clipTextProblem(model.modelName, cachedModel.text, input)
+      frames = { sent: input.images.length, leftOut: input.imagesLeftOut }
     }
     if (message !== null) {
       console.error(`Cannot send: ${message}`)
@@ -65,14 +82,14 @@ export default sbp('sbp/selectors/register', {
     const agentSection = sbp('dez.model/ensureTrailingAgentSectionForTab', tabId, model)
     if (!agentSection) return
 
-    // The request still goes, with only the text of each image reference.
+    // The request still goes. At most one of the two shows: a message whose
+    // images do not go as image parts has none for a video request to take.
     if (imagesLeftOut > 0) {
-      sbp('dez.ui/toast', 'app-global', {
-        variant: 'warning',
-        title: imagesLeftOut === 1 ? 'Image not sent' : 'Images not sent',
-        message: `${model.modelName} does not read images, so ${imagesLeftOut === 1 ? '1 image was' : `${imagesLeftOut} images were`} left out of the request.`,
-        duration: 8000,
-      })
+      // With only the text of each image reference.
+      warnImagesLeftOut(model.modelName, 'does not read images', imagesLeftOut)
+    } else if (frames.leftOut > 0) {
+      const takes = frames.sent === 0 ? 'takes no image' : `takes only ${frames.sent === 1 ? '1 image' : `${frames.sent} images`}`
+      warnImagesLeftOut(model.modelName, takes, frames.leftOut)
     }
 
     await sbp('dez.stream/start', {
@@ -84,7 +101,7 @@ export default sbp('sbp/selectors/register', {
       messages,
       sendTools,
       imageOutput: effectiveOutputs(cachedModel).includes('image'),
-      ...(cachedModel.text && { textRules: cachedModel.text }),
+      inputRules: cachedModel,
     })
   },
 

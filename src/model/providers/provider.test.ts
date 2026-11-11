@@ -6,7 +6,7 @@ import { secret } from '../../utils/secret'
 import { BUILT_IN_PROVIDER_CONFIGS } from './builtins'
 import { customProviderConfigSchema } from './config'
 import { Provider } from './provider'
-import { providerModel, type ChatMessage, type ChatPart, type ChatRequestContext } from './types'
+import { providerModel, type ChatMessage, type ChatPart, type ChatRequestContext, type ModelInfo } from './types'
 
 const messages: ChatMessage[] = [
   { role: 'user', content: 'Search the web for current info.' },
@@ -1300,6 +1300,7 @@ describe('provider models', () => {
       { id: 'voice-changer', type: 'music', model_spec: { voice_changer: true } },
       { id: 'text-to-video', type: 'video', model_spec: { constraints: { model_type: 'text-to-video' } } },
       { id: 'image-to-video', type: 'video', model_spec: { constraints: { model_type: 'image-to-video' } } },
+      { id: 'video-to-video', type: 'video', model_spec: { constraints: { model_type: 'video' } } },
       { id: 'embed', type: 'embedding' },
     ])).toEqual([
       ['text', ['text'], 'chat'],
@@ -1310,9 +1311,11 @@ describe('provider models', () => {
       ['song', ['audio'], 'music'],
       // It needs a recording, which Dez does not send.
       ['voice-changer', ['audio'], 'none'],
-      // Only a video model that needs no input but text gets requests.
+      // A video model gets requests when it needs only a text, or an
+      // image; Dez sends no video.
       ['text-to-video', ['video'], 'video'],
-      ['image-to-video', ['video'], 'none'],
+      ['image-to-video', ['video'], 'imageToVideo'],
+      ['video-to-video', ['video'], 'none'],
     ])
     // OpenRouter: an image+text model is a chat model that also makes
     // images; an image-only model gets no request (its API is not chat); a
@@ -1440,6 +1443,27 @@ describe('media model data', () => {
     ])
   })
 
+  it('gives each video model the rules of its input images from its entries, and no `images` field to a model that takes none', () => {
+    const speech = providerModel('local', 'speech', 'Speech', { request: 'tts' })
+    const fromText = providerModel('local', 'from-text', 'From Text', { request: 'video' })
+    const fromImage = providerModel('local', 'from-image', 'From Image', { request: 'imageToVideo' })
+    const frames = providerModel('local', 'frames', 'Frames', { request: 'video' })
+    const mediaEntries = new Map<string, unknown>([
+      ['from-text', { id: 'from-text', supported_frame_images: null }],
+      ['frames', { id: 'frames', supported_frame_images: ['first_frame', 'last_frame'] }],
+    ])
+
+    const imageRules = (models: ModelInfo[]) => models.map((model) => [model.id, 'images' in model ? model.images : 'no field'])
+
+    expect([
+      imageRules(veniceLike.withClipData([speech, fromText, fromImage], new Map(), new Map())),
+      imageRules(openRouterLike.withClipData([speech, fromText, frames], new Map(), mediaEntries)),
+    ]).toStrictEqual([
+      [['speech', 'no field'], ['from-text', 'no field'], ['from-image', { maxFrames: 2 }]],
+      [['speech', 'no field'], ['from-text', 'no field'], ['frames', { maxFrames: 2 }]],
+    ])
+  })
+
   it('merges the body parts of the config into the media requests of the kind and the models that they name, in list order', () => {
     const provider = customProvider({
       mediaApi: {
@@ -1451,7 +1475,7 @@ describe('media model data', () => {
         ],
       },
     })
-    const speech = (modelId: string) => provider.clipRequest('tts', modelId, { prompt: 'Hi', values: { voice: 'nadine' } }).body
+    const speech = (modelId: string) => provider.clipRequest('tts', modelId, { prompt: 'Hi', images: [], values: { voice: 'nadine' } }).body
 
     expect([speech('heygen/heygen-voice-1'), speech('heygen/heygen-voice-2'), speech('hexgrad/kokoro-82m'), speech('other/heygen/voice')]).toStrictEqual([
       { voice: 'nadine', model: 'heygen/heygen-voice-1', input: 'Hi', response_format: 'pcm' },
@@ -1464,7 +1488,7 @@ describe('media model data', () => {
   // The ids of the OpenRouter model list of 2026-11-10. Its guide names
   // the models that make only PCM; no field of an entry does.
   it('asks the OpenRouter speech models that make only raw PCM for PCM, and the others for mp3', () => {
-    const format = (modelId: string) => builtInProvider('openrouter').clipRequest('tts', modelId, { prompt: 'Hi', values: {} }).body?.response_format
+    const format = (modelId: string) => builtInProvider('openrouter').clipRequest('tts', modelId, { prompt: 'Hi', images: [], values: {} }).body?.response_format
     const pcmOnly = [
       'heygen/heygen-voice-1',
       'heygen/heygen-voice-1-turbo',

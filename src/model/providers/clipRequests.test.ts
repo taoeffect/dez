@@ -2,6 +2,7 @@ import sbp from '@sbp/sbp'
 import { createPinia, setActivePinia } from 'pinia'
 import { afterEach, beforeEach, describe, expect, it, vi, type MockInstance } from 'vitest'
 import type { NativeDownloadRule, NativeHttpDownload, NativeHttpRequest, NativeHttpResponse } from '../../utils/protocol/nativeHttp'
+import { bytesToBase64 } from '../../utils/base64'
 import type { ModelParameter } from './modelParameters'
 import { wavFile } from './pcmAudio'
 import type { ProviderGenerateMediaResult } from './streamTypes'
@@ -362,6 +363,42 @@ describe('a clip job', () => {
     expect(JSON.parse(downloads[0].request.body as string)).toStrictEqual({ model: 'm', prompt: 'A red fox', duration: '8s', aspect_ratio: '16:9', resolution: '480p' })
   })
 
+  // The bytes of the files go, never their paths.
+  it('sends the stored images of a video request as its first and last frame, as data URLs', async () => {
+    const appDir = '/home/u/.config/dez'
+    const data = bytesToBase64(SAMPLES)
+    cacheModel('venice-like', VENICE_VIDEO_PARAMETERS)
+    answers = [json({ queue_id: 'q-1' }), clip('video/mp4')]
+
+    const result = generate({
+      kind: 'imageToVideo',
+      prompt: 'It runs',
+      images: [`${appDir}/assets/images/fox.png`, `${appDir}/assets/generated/images/end.webp`],
+    })
+    await vi.advanceTimersByTimeAsync(5 * SECOND_MS)
+    await result
+
+    expect(loaded).toStrictEqual([{ root: 'app', path: 'assets/images/fox.png' }, { root: 'app', path: 'assets/generated/images/end.webp' }])
+    expect(JSON.parse(downloads[0].request.body as string)).toStrictEqual({
+      model: 'm',
+      prompt: 'It runs',
+      duration: '4s',
+      aspect_ratio: '16:9',
+      resolution: '480p',
+      image_url: `data:image/png;base64,${data}`,
+      end_image_url: `data:image/webp;base64,${data}`,
+    })
+    expect(downloads[0].request.body).not.toContain(appDir)
+  })
+
+  it('refuses an image-to-video request with no image, before any request', async () => {
+    cacheModel('venice-like', VENICE_VIDEO_PARAMETERS)
+
+    await expect(generate({ kind: 'imageToVideo', images: [] })).rejects.toThrow('No image to make a video from')
+
+    expect(downloads).toEqual([])
+  })
+
   it('makes a video through a job that answers 202, a GET poll, and a download of the content', async () => {
     cacheModel('router-like', OPENROUTER_VIDEO_PARAMETERS)
     answers = [
@@ -397,11 +434,9 @@ describe('a clip job', () => {
 
   // A request with no length would get the provider's default length, at
   // a price that no one saw.
-  it.each([
-    ['venice-like', 'The model list does not tell which lengths and aspect ratios this model takes.'],
-    ['router-like', 'The model list does not tell which lengths this model takes.'],
-  ])('sends no video request to a %s model whose lengths the model cache does not have', async (providerId, message) => {
-    await expect(generate({ providerId, kind: 'video', parameters: { duration: 1 } })).rejects.toThrow(new Error(message))
+  it.each(['venice-like', 'router-like'])('sends no video request to a %s model whose lengths the model cache does not have', async (providerId) => {
+    await expect(generate({ providerId, kind: 'video', parameters: { duration: 1 } }))
+      .rejects.toThrow(new Error('The model list does not tell which lengths this model takes.'))
 
     expect(downloads).toEqual([])
     expect(httpRequests).toEqual([])

@@ -261,7 +261,8 @@ export default sbp('sbp/selectors/register', {
   //   root (`sendClipRequest`), which the caller must delete when it does
   //   not keep the clip. A stop rejects. The request sets the model's
   //   parameters (the length, the voice): `input.parameters` where the
-  //   model takes the value, else the parameter's default.
+  //   model takes the value, else the parameter's default. A video request
+  //   sends the stored images of `input.images` as frames of the video.
   //
   // A provider takes the money for a job when it starts. So after that
   // point, a failure and a stop log the job id, and the message of a
@@ -278,12 +279,13 @@ export default sbp('sbp/selectors/register', {
     signal?.addEventListener('abort', cancelRequest)
     let jobId: string | null = null
     try {
-      if (!isClipKind(kind)) {
-        const paths = input.images ?? []
-        if (kind === 'imageEdit' && paths.length === 0) throw new Error('No image to edit')
+      const paths = input.images ?? []
+      if (kind === 'imageEdit' && paths.length === 0) throw new Error('No image to edit')
+      if (kind === 'imageToVideo' && paths.length === 0) throw new Error('No image to make a video from')
+      const appDir = paths.length > 0 ? await sbp('dez.native/getAppDir') as string : ''
+      const images = await Promise.all(paths.map((path) => readImagePart(path, appDir)))
 
-        const appDir = paths.length > 0 ? await sbp('dez.native/getAppDir') as string : ''
-        const images = await Promise.all(paths.map((path) => readImagePart(path, appDir)))
+      if (!isClipKind(kind)) {
         const request = provider.mediaRequest(kind, modelId, { prompt: input.prompt, images }, await requestSecret(provider))
         signal?.throwIfAborted()
         const { response, chunks } = await sbp('dez.http/stream', request, requestId) as NativeHttpStreamResult
@@ -298,7 +300,7 @@ export default sbp('sbp/selectors/register', {
       const apiRequest = (wire: MediaWireRequest) => provider.mediaApiRequest(wire, secret)
       const cacheDir = await sbp('dez.native/getAppDir', 'cache') as string
       const values = clipParameterValues(provider.id, modelId, input.parameters)
-      const clipInput = { prompt: input.prompt, values, ...(input.lyrics !== undefined && { lyrics: input.lyrics }) }
+      const clipInput = { prompt: input.prompt, images, values, ...(input.lyrics !== undefined && { lyrics: input.lyrics }) }
       const first = await sendClipRequest(run, apiRequest(provider.clipRequest(kind, modelId, clipInput)), null, cacheDir)
       if ('clip' in first) return { media: [], clips: [first.clip] }
 

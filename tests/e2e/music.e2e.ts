@@ -1,10 +1,10 @@
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from 'vitest'
-import { Key } from 'webdriverio'
-import { click, consoleErrors, resetConsoleErrors, screenshotOnFailure, waitFor, waitForValue } from './harness/dom'
+import { click, consoleErrors, resetConsoleErrors, screenshotOnFailure, waitForValue } from './harness/dom'
 import { readAppState } from './harness/fixtures'
 import { shownPlayers, silentWav } from './harness/media'
 import { startMockProviderApp, type MockProviderApp } from './harness/mockProviderApp'
 import type { MockProvider } from './harness/mockServer'
+import { closePopup, openPopup, popupOpen, popupView, type PopupView } from './harness/parameterPopup'
 import type { E2EBrowser } from './harness/session'
 import { editorDoc, newTab, openToasts, pasteText, pickModel, setCaret, submit, threadSections, waitForThread } from './harness/thread'
 
@@ -69,60 +69,9 @@ const TONE = silentWav(2)
 const STYLE = 'Slow piano ballad'
 const LYRICS = 'Rain on the roof\nAll night long'
 
-/** One row of the "Model Parameters" section, with what its control
- *  shows. */
-type ParameterRow =
-  | { name: string, label: string, options: string[], picked: string }
-  | { name: string, label: string, number: string, min: string, max: string, step: string }
-  | { name: string, label: string, on: boolean }
-
-interface PopupView {
-  headers: string[]
-  rows: ParameterRow[]
-  /** The text of the "Lyrics" section. */
-  hint: string | null
-  /** Whether the popup has the "Reset to defaults" button. */
-  reset: boolean
-}
-
 describe('music models', () => {
   let setup: MockProviderApp
   let browser: E2EBrowser
-
-  async function popupOpen (): Promise<boolean> {
-    return browser.execute(() => document.querySelector('.provider-settings-popup') !== null)
-  }
-
-  async function openPopup (): Promise<void> {
-    await click(browser, '.model-selector-gear')
-    await waitFor(browser, '.provider-settings-popup')
-  }
-
-  async function closePopup (): Promise<void> {
-    await browser.keys([Key.Escape])
-    await waitForValue(browser, 'popup open', popupOpen, false)
-  }
-
-  async function popupView (): Promise<PopupView> {
-    return browser.execute(() => {
-      const text = (el: Element | null): string => el?.textContent?.trim() ?? ''
-      const rows = Array.from(document.querySelectorAll<HTMLElement>('.provider-settings-popup [data-parameter]'), (row): ParameterRow => {
-        const base = { name: row.dataset.parameter ?? '', label: text(row.querySelector('.provider-settings-label')) }
-        const select = row.querySelector('select')
-        if (select) return { ...base, options: Array.from(select.options, (option) => option.text), picked: select.selectedOptions[0]?.text ?? '' }
-        const input = row.querySelector('input')
-        if (input) return { ...base, number: input.value, min: input.min, max: input.max, step: input.step }
-        return { ...base, on: row.getAttribute('aria-checked') === 'true' }
-      })
-      const hint = document.querySelector('.provider-settings-hint')
-      return {
-        headers: Array.from(document.querySelectorAll('.provider-settings-header'), (header) => text(header)),
-        rows,
-        hint: hint ? text(hint) : null,
-        reset: document.querySelector('.provider-settings-reset') !== null,
-      }
-    })
-  }
 
   // Gives the field of the parameter `name` the value `wanted` (for a list,
   // the option with that text), then the `change` event that a user's edit
@@ -170,7 +119,7 @@ describe('music models', () => {
   afterEach(async (ctx) => {
     await screenshotOnFailure(browser, ctx)
     // A test that fails can leave the popup open.
-    if (await popupOpen()) await closePopup()
+    if (await popupOpen(browser)) await closePopup(browser)
     await setup.mock.dropOpenReplies(browser)
   })
 
@@ -190,14 +139,14 @@ describe('music models', () => {
       reset: true,
     }
     await pickModel(browser, SONGS.name, SONGS.modelName)
-    await openPopup()
-    await waitForValue(browser, 'popup of the song model', popupView, defaults)
+    await openPopup(browser)
+    await waitForValue(browser, 'popup of the song model', () => popupView(browser), defaults)
 
     await changeField('duration_seconds', '90', 'option')
     // A number between two steps becomes the nearer step.
     await changeField('speed', '1.33', 'number')
     await click(browser, '.provider-settings-popup [data-parameter="force_instrumental"]')
-    await waitForValue(browser, 'popup with the values of the user', popupView, {
+    await waitForValue(browser, 'popup with the values of the user', () => popupView(browser), {
       ...defaults,
       rows: [
         { name: 'duration_seconds', label: 'Length (seconds)', options: ['60', '90'], picked: '90' },
@@ -212,20 +161,20 @@ describe('music models', () => {
     })
 
     await click(browser, '.provider-settings-reset')
-    await waitForValue(browser, 'popup after the reset', popupView, defaults)
+    await waitForValue(browser, 'popup after the reset', () => popupView(browser), defaults)
     await waitForValue(browser, 'stored values after the reset', () => storedParameters(SONGS.modelId), null)
-    await closePopup()
+    await closePopup(browser)
 
     // A model with no parameter has nothing to reset.
     await pickModel(browser, SONGS.name, LYRICS_MODEL.name)
-    await openPopup()
-    await waitForValue(browser, 'popup of the model that needs lyrics', popupView, {
+    await openPopup(browser)
+    await waitForValue(browser, 'popup of the model that needs lyrics', () => popupView(browser), {
       headers: ['Lyrics'],
       rows: [],
       hint: 'This model needs lyrics. Write the style, then a line "Lyrics:", then the lyrics.',
       reset: false,
     })
-    await closePopup()
+    await closePopup(browser)
     expect(await consoleErrors(browser)).toStrictEqual([])
   })
 

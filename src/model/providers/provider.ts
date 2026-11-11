@@ -192,10 +192,10 @@ export class Provider {
   }
 
   // `models` (a `mergeModels` list), each model of a clip request kind with
-  // its parameters (`ClipFormat.parameters`) and the rules of its text
-  // (`ClipFormat.textRules`), read from its raw entries (`modelEntries`,
-  // `mediaModelEntries`). This comes after the merge, because a config
-  // model can set the request kind.
+  // its parameters (`ClipFormat.parameters`) and the rules of its text and
+  // its input images (`ClipFormat.textRules`, `ClipFormat.imageRules`),
+  // read from its raw entries (`modelEntries`, `mediaModelEntries`). This
+  // comes after the merge, because a config model can set the request kind.
   withClipData(models: readonly ModelInfo[], entries: ReadonlyMap<string, unknown>, mediaEntries: ReadonlyMap<string, unknown>): ModelInfo[] {
     const clips = this.clipFormatOrNone()
     return models.map((model) => {
@@ -205,7 +205,8 @@ export class Provider {
       const mediaEntry = mediaEntries.get(model.id)
       const parameters = clips.parameters(kind, entry, mediaEntry)
       const text = clips.textRules?.(kind, entry, mediaEntry)
-      return { ...model, ...(parameters.length > 0 && { parameters }), ...(text && { text }) }
+      const images = clips.imageRules?.(kind, entry, mediaEntry)
+      return { ...model, ...(parameters.length > 0 && { parameters }), ...(text && { text }), ...(images && { images }) }
     })
   }
 

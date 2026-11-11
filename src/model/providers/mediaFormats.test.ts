@@ -28,6 +28,14 @@ function parameters(format: ClipFormat, kind: ClipKind, entry: unknown, mediaEnt
   return format.parameters(kind, entry, mediaEntry).map(({ label: _label, ...parameter }) => parameter)
 }
 
+// Two input images, and each one as the data URL that a request sends.
+const IMAGES: ChatImagePart[] = [
+  { type: 'image', mediaType: 'image/png', data: bytesToBase64(PNG) },
+  { type: 'image', mediaType: 'image/jpeg', data: bytesToBase64(JPEG) },
+]
+const PNG_URL = `data:image/png;base64,${bytesToBase64(PNG)}`
+const JPEG_URL = `data:image/jpeg;base64,${bytesToBase64(JPEG)}`
+
 describe('venice media requests', () => {
   it('asks /image/generate for a WebP image with no watermark and no safe mode', () => {
     expect(venice.request('image', 'https://api.venice.ai/api/v1/', 'z-image-turbo', { prompt: 'A red fox', images: [] })).toStrictEqual({
@@ -39,19 +47,9 @@ describe('venice media requests', () => {
   // The endpoint has no `hide_watermark` field, and its schema takes no
   // unknown field.
   it('sends an edit to /image/multi-edit with `modelId`, the images as data URLs in order, and no safe mode', () => {
-    const images: ChatImagePart[] = [
-      { type: 'image', mediaType: 'image/png', data: bytesToBase64(PNG) },
-      { type: 'image', mediaType: 'image/jpeg', data: bytesToBase64(JPEG) },
-    ]
-
-    expect(venice.request('imageEdit', 'https://api.venice.ai/api/v1', 'qwen-image-2-1-turbo-edit', { prompt: 'Make it blue', images })).toStrictEqual({
+    expect(venice.request('imageEdit', 'https://api.venice.ai/api/v1', 'qwen-image-2-1-turbo-edit', { prompt: 'Make it blue', images: IMAGES })).toStrictEqual({
       url: 'https://api.venice.ai/api/v1/image/multi-edit',
-      body: {
-        modelId: 'qwen-image-2-1-turbo-edit',
-        prompt: 'Make it blue',
-        images: [`data:image/png;base64,${bytesToBase64(PNG)}`, `data:image/jpeg;base64,${bytesToBase64(JPEG)}`],
-        safe_mode: false,
-      },
+      body: { modelId: 'qwen-image-2-1-turbo-edit', prompt: 'Make it blue', images: [PNG_URL, JPEG_URL], safe_mode: false },
     })
   })
 })
@@ -129,7 +127,7 @@ describe('venice clip parameters', () => {
     expect(parameters(veniceClips, 'tts', undefined)).toStrictEqual([SPEECH_SPEED])
   })
 
-  it.each(['music', 'video'] as const)('gives a %s model with no entry no parameters', (kind) => {
+  it.each(['music', 'video', 'imageToVideo'] as const)('gives a %s model with no entry no parameters', (kind) => {
     expect(parameters(veniceClips, kind, undefined)).toStrictEqual([])
   })
 
@@ -251,6 +249,43 @@ describe('venice clip parameters', () => {
       { name: 'aspect_ratio', options: ['auto'], default: 'auto' },
     ])
   })
+
+  // Half of the image-to-video models list no aspect ratio, and the API
+  // refuses the field for them.
+  it('gives an image-to-video model that lists no aspect ratio no aspect ratio parameter', () => {
+    const model = spec({ constraints: { model_type: 'image-to-video', durations: ['5s', '10s'], aspect_ratios: [], resolutions: ['720p', '1080p'] } })
+
+    expect(parameters(veniceClips, 'imageToVideo', model)).toStrictEqual([
+      { name: 'duration', options: ['5s', '10s'], default: '5s' },
+      { name: 'resolution', options: ['720p', '1080p'], default: '720p' },
+    ])
+  })
+
+  // The API makes sound when a request has no `audio` field.
+  it.each(['video', 'imageToVideo'] as const)('gives a %s model that can leave the sound out an Audio switch that is on', (kind) => {
+    expect(parameters(veniceClips, kind, videoModel({ audio: true, audio_configurable: true }))).toStrictEqual([{ name: 'audio', default: true }])
+  })
+
+  // The API refuses the field for these models.
+  it.each([
+    ['always makes sound', { audio: true, audio_configurable: false }],
+    ['makes no sound', { audio: false, audio_configurable: false }],
+    ['does not tell', { audio: true }],
+  ])('gives a video model that %s no Audio switch', (_name, constraints) => {
+    expect(parameters(veniceClips, 'video', videoModel(constraints))).toStrictEqual([])
+  })
+})
+
+describe('venice clip image rules', () => {
+  const rules = (kind: ClipKind) => veniceClips.imageRules?.(kind, undefined, undefined)
+
+  it('takes a first and a last frame for an image-to-video model', () => {
+    expect(rules('imageToVideo')).toStrictEqual({ maxFrames: 2 })
+  })
+
+  it.each(['video', 'tts', 'music'] as const)('takes no image for a %s model', (kind) => {
+    expect(rules(kind)).toBeUndefined()
+  })
 })
 
 describe('venice clip text rules', () => {
@@ -289,6 +324,7 @@ describe('venice clip text rules', () => {
     ['a music model whose entry tells nothing', 'music', spec({})],
     ['a music model with no entry', 'music', undefined],
     ['a video model', 'video', spec({ prompt_character_limit: 300 })],
+    ['an image-to-video model', 'imageToVideo', spec({ prompt_character_limit: 300 })],
   ] as const)('has no rules for %s', (_name, kind, entry) => {
     expect(rules(kind, entry)).toBeUndefined()
   })
@@ -296,21 +332,21 @@ describe('venice clip text rules', () => {
 
 describe('venice clip requests', () => {
   it('sends speech text as `input`, with the voice and the format', () => {
-    expect(veniceClips.request('tts', `${VENICE_URL}/`, 'tts-kokoro', { prompt: 'Hi', values: { voice: 'af_bella', response_format: 'mp3' } })).toStrictEqual({
+    expect(veniceClips.request('tts', `${VENICE_URL}/`, 'tts-kokoro', { prompt: 'Hi', images: [], values: { voice: 'af_bella', response_format: 'mp3' } })).toStrictEqual({
       url: `${VENICE_URL}/audio/speech`,
       body: { voice: 'af_bella', response_format: 'mp3', model: 'tts-kokoro', input: 'Hi' },
     })
   })
 
   it('queues music with only the model and the prompt when no parameter has a value', () => {
-    expect(veniceClips.request('music', VENICE_URL, 'mmaudio-v2-text-to-audio', { prompt: 'Rain', values: {} })).toStrictEqual({
+    expect(veniceClips.request('music', VENICE_URL, 'mmaudio-v2-text-to-audio', { prompt: 'Rain', images: [], values: {} })).toStrictEqual({
       url: `${VENICE_URL}/audio/queue`,
       body: { model: 'mmaudio-v2-text-to-audio', prompt: 'Rain' },
     })
   })
 
   it('queues a song with the style as the prompt and the lyrics as `lyrics_prompt`', () => {
-    const input = { prompt: 'Slow piano ballad', lyrics: '[Verse]\nRain on the roof', values: { force_instrumental: false, duration_seconds: 60 } }
+    const input = { prompt: 'Slow piano ballad', images: [], lyrics: '[Verse]\nRain on the roof', values: { force_instrumental: false, duration_seconds: 60 } }
 
     expect(veniceClips.request('music', VENICE_URL, 'minimax-music-v2', input)).toStrictEqual({
       url: `${VENICE_URL}/audio/queue`,
@@ -323,45 +359,63 @@ describe('venice clip requests', () => {
     const values = { lyrics_optimizer: true, loop: true }
 
     expect([
-      veniceClips.request('music', VENICE_URL, 'm', { prompt: 'Pop', lyrics: 'La la', values }).body,
-      veniceClips.request('music', VENICE_URL, 'm', { prompt: 'Pop', values }).body,
+      veniceClips.request('music', VENICE_URL, 'm', { prompt: 'Pop', images: [], lyrics: 'La la', values }).body,
+      veniceClips.request('music', VENICE_URL, 'm', { prompt: 'Pop', images: [], values }).body,
     ]).toStrictEqual([
       { loop: true, model: 'm', prompt: 'Pop', lyrics_prompt: 'La la' },
       { lyrics_optimizer: true, loop: true, model: 'm', prompt: 'Pop' },
     ])
   })
 
-  it.each(['tts', 'video'] as const)('sends no lyrics in a %s request', (kind) => {
+  it.each(['tts', 'video', 'imageToVideo'] as const)('sends no lyrics in a %s request', (kind) => {
     const values = { duration: '5s', aspect_ratio: '16:9' }
 
-    expect(veniceClips.request(kind, VENICE_URL, 'm', { prompt: 'Hi', lyrics: 'La la', values }).body).not.toHaveProperty('lyrics_prompt')
+    expect(veniceClips.request(kind, VENICE_URL, 'm', { prompt: 'Hi', images: [], lyrics: 'La la', values }).body).not.toHaveProperty('lyrics_prompt')
   })
 
-  it('queues a video with each value as its request field', () => {
-    const values = { duration: '5s', resolution: '480p', aspect_ratio: '16:9' }
+  it.each(['tts', 'music'] as const)('sends no image in a %s request', (kind) => {
+    const body = JSON.stringify(veniceClips.request(kind, VENICE_URL, 'm', { prompt: 'Hi', images: IMAGES, values: {} }).body)
 
-    expect(veniceClips.request('video', VENICE_URL, 'wan', { prompt: 'A red fox', values })).toStrictEqual({
+    expect(body).not.toContain('base64')
+  })
+
+  it('queues a video from a text with each value as its request field, and no image field', () => {
+    const values = { duration: '5s', resolution: '480p', aspect_ratio: '16:9', audio: false }
+
+    expect(veniceClips.request('video', VENICE_URL, 'wan', { prompt: 'A red fox', images: [], values })).toStrictEqual({
       url: `${VENICE_URL}/video/queue`,
-      body: { duration: '5s', resolution: '480p', aspect_ratio: '16:9', model: 'wan', prompt: 'A red fox' },
+      body: { duration: '5s', resolution: '480p', aspect_ratio: '16:9', audio: false, model: 'wan', prompt: 'A red fox' },
     })
   })
 
-  it.each([
-    ['length', { aspect_ratio: '16:9' }],
-    ['aspect ratio', { duration: '5s' }],
-  ])('refuses a video request with no %s', (_name, values) => {
-    expect(() => veniceClips.request('video', VENICE_URL, 'wan', { prompt: 'A red fox', values }))
-      .toThrow('The model list does not tell which lengths and aspect ratios this model takes.')
+  it('queues a video from an image with the image as a data URL in `image_url`, and no last frame', () => {
+    const values = { duration: '5s', resolution: '480p' }
+
+    expect(veniceClips.request('imageToVideo', VENICE_URL, 'wan-i2v', { prompt: 'It runs', images: [IMAGES[0]], values })).toStrictEqual({
+      url: `${VENICE_URL}/video/queue`,
+      body: { duration: '5s', resolution: '480p', model: 'wan-i2v', prompt: 'It runs', image_url: PNG_URL },
+    })
+  })
+
+  it('sends a second image as the last frame, in `end_image_url`', () => {
+    expect(veniceClips.request('imageToVideo', VENICE_URL, 'wan-i2v', { prompt: 'It runs', images: IMAGES, values: { duration: '5s' } }).body).toStrictEqual({
+      duration: '5s', model: 'wan-i2v', prompt: 'It runs', image_url: PNG_URL, end_image_url: JPEG_URL,
+    })
+  })
+
+  it.each(['video', 'imageToVideo'] as const)('refuses a %s request with no length', (kind) => {
+    expect(() => veniceClips.request(kind, VENICE_URL, 'wan', { prompt: 'A red fox', images: [], values: { aspect_ratio: '16:9' } }))
+      .toThrow('The model list does not tell which lengths this model takes.')
   })
 })
 
 describe('venice clip quotes', () => {
   const quote = veniceClips.quote as ClipQuoteFormat
 
-  it('asks the video quote endpoint with the fields of the video request, and no prompt', () => {
+  it.each(['video', 'imageToVideo'] as const)('asks the video quote endpoint with the fields of the %s request, and no prompt', (kind) => {
     const values = { duration: '5s', resolution: '480p', aspect_ratio: '16:9' }
 
-    expect(quote.request('video', `${VENICE_URL}/`, 'wan', values, undefined)).toStrictEqual({
+    expect(quote.request(kind, `${VENICE_URL}/`, 'wan', values, undefined)).toStrictEqual({
       url: `${VENICE_URL}/video/quote`,
       body: { duration: '5s', resolution: '480p', aspect_ratio: '16:9', model: 'wan' },
     })
@@ -406,6 +460,7 @@ describe('venice clip jobs', () => {
   it.each([
     ['music', 'audio'],
     ['video', 'video'],
+    ['imageToVideo', 'video'],
   ] as const)('asks the %s retrieve endpoint for the queue id of the job', (kind, path) => {
     const job = veniceClips.job(kind, VENICE_URL, 'm', { model: 'm', queue_id: 'q-1', status: 'QUEUED' })
 
@@ -487,41 +542,102 @@ describe('openrouter clip parameters', () => {
     expect(parameters(openRouterClips, 'video', { id: 'm' }, mediaEntry)).toStrictEqual([])
   })
 
+  // A request with no `generate_audio` field gets sound from such a model.
+  it('gives a video model that can make sound an Audio switch that is on', () => {
+    expect(parameters(openRouterClips, 'video', { id: 'm' }, { id: 'm', generate_audio: true })).toStrictEqual([{ name: 'generate_audio', default: true }])
+  })
+
+  it.each([false, null])('gives a video model whose `generate_audio` is %s no Audio switch', (generateAudio) => {
+    expect(parameters(openRouterClips, 'video', { id: 'm' }, { id: 'm', generate_audio: generateAudio })).toStrictEqual([])
+  })
+
   it('has no price request: the prices are in the entries', () => {
     expect(openRouterClips.quote).toBeUndefined()
   })
 })
 
+describe('openrouter clip image rules', () => {
+  const rules = (kind: ClipKind, frames: unknown) => openRouterClips.imageRules?.(kind, { id: 'm' }, { id: 'm', supported_frame_images: frames })
+
+  it.each([
+    ['a first frame', ['first_frame'], 1],
+    ['a first and a last frame', ['first_frame', 'last_frame'], 2],
+    ['a last and a first frame', ['last_frame', 'first_frame'], 2],
+  ])('takes %s for a video model whose video list entry says so', (_name, frames, maxFrames) => {
+    expect(rules('video', frames)).toStrictEqual({ maxFrames })
+  })
+
+  // The images go in the order first frame, last frame.
+  it.each([
+    ['lists no frame', null],
+    ['lists only a last frame', ['last_frame']],
+    ['lists an empty list', []],
+  ])('takes no image for a video model that %s', (_name, frames) => {
+    expect(rules('video', frames)).toBeUndefined()
+  })
+
+  it('takes no image for a video model that the video list does not have, and none for speech', () => {
+    expect([
+      openRouterClips.imageRules?.('video', { id: 'm' }, undefined),
+      rules('tts', ['first_frame']),
+    ]).toStrictEqual([undefined, undefined])
+  })
+})
+
 describe('openrouter clip requests', () => {
   it('asks for mp3 speech in the voice', () => {
-    expect(openRouterClips.request('tts', OPENROUTER_URL, 'hexgrad/kokoro-82m', { prompt: 'Hi', values: { voice: 'af_alloy' } })).toStrictEqual({
+    expect(openRouterClips.request('tts', OPENROUTER_URL, 'hexgrad/kokoro-82m', { prompt: 'Hi', images: [], values: { voice: 'af_alloy' } })).toStrictEqual({
       url: `${OPENROUTER_URL}/audio/speech`,
       body: { voice: 'af_alloy', model: 'hexgrad/kokoro-82m', input: 'Hi', response_format: 'mp3' },
     })
   })
 
   it('names no voice for a speech model with none', () => {
-    expect(openRouterClips.request('tts', OPENROUTER_URL, 'm', { prompt: 'Hi', values: {} }).body).toStrictEqual({
+    expect(openRouterClips.request('tts', OPENROUTER_URL, 'm', { prompt: 'Hi', images: IMAGES, values: {} }).body).toStrictEqual({
       model: 'm', input: 'Hi', response_format: 'mp3',
     })
   })
 
-  it('asks for a video with each value as its request field', () => {
-    const values = { duration: 1, resolution: '480p' }
+  it('asks for a video from a text with each value as its request field, and no frame', () => {
+    const values = { duration: 1, resolution: '480p', generate_audio: false }
 
-    expect(openRouterClips.request('video', OPENROUTER_URL, 'x-ai/grok-imagine-video-1.5-lite', { prompt: 'A red fox', values })).toStrictEqual({
+    expect(openRouterClips.request('video', OPENROUTER_URL, 'x-ai/grok-imagine-video-1.5-lite', { prompt: 'A red fox', images: [], values })).toStrictEqual({
       url: `${OPENROUTER_URL}/videos`,
-      body: { duration: 1, resolution: '480p', model: 'x-ai/grok-imagine-video-1.5-lite', prompt: 'A red fox' },
+      body: { duration: 1, resolution: '480p', generate_audio: false, model: 'x-ai/grok-imagine-video-1.5-lite', prompt: 'A red fox' },
+    })
+  })
+
+  it.each(['video', 'imageToVideo'] as const)('sends the image of a %s request as the first frame, as a data URL', (kind) => {
+    expect(openRouterClips.request(kind, OPENROUTER_URL, 'm', { prompt: 'It runs', images: [IMAGES[0]], values: { duration: 1 } })).toStrictEqual({
+      url: `${OPENROUTER_URL}/videos`,
+      body: {
+        duration: 1,
+        model: 'm',
+        prompt: 'It runs',
+        frame_images: [{ type: 'image_url', image_url: { url: PNG_URL }, frame_type: 'first_frame' }],
+      },
+    })
+  })
+
+  it('sends a second image as the last frame', () => {
+    expect(openRouterClips.request('video', OPENROUTER_URL, 'm', { prompt: 'It runs', images: IMAGES, values: { duration: 1 } }).body).toStrictEqual({
+      duration: 1,
+      model: 'm',
+      prompt: 'It runs',
+      frame_images: [
+        { type: 'image_url', image_url: { url: PNG_URL }, frame_type: 'first_frame' },
+        { type: 'image_url', image_url: { url: JPEG_URL }, frame_type: 'last_frame' },
+      ],
     })
   })
 
   it('refuses a video request with no length, which would get the default length of OpenRouter', () => {
-    expect(() => openRouterClips.request('video', OPENROUTER_URL, 'm', { prompt: 'A red fox', values: { resolution: '480p' } }))
+    expect(() => openRouterClips.request('video', OPENROUTER_URL, 'm', { prompt: 'A red fox', images: [], values: { resolution: '480p' } }))
       .toThrow('The model list does not tell which lengths this model takes.')
   })
 
   it('has no music request', () => {
-    expect(() => openRouterClips.request('music', OPENROUTER_URL, 'm', { prompt: 'Rain', values: {} })).toThrow('This media API has no music request.')
+    expect(() => openRouterClips.request('music', OPENROUTER_URL, 'm', { prompt: 'Rain', images: [], values: {} })).toThrow('This media API has no music request.')
   })
 })
 

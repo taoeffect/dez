@@ -7,8 +7,7 @@ import { tempMediaFile } from '../model/chat/mediaFiles'
 import { newMediaIds } from '../model/chat/mediaIds'
 import { mediaTagText } from '../model/chat/mediaTags'
 import { findToolBlocks, ModelTextEscaper } from '../model/chat/toolBlocks'
-import type { GeneratedClip, GeneratedMedia, MediaKind, ModelRequest, ProviderGenerateMediaResult, ProviderStreamChatResult } from '../model/providers'
-import type { ClipTextRules } from '../model/providers/clipText'
+import type { ClipInputRules, GeneratedClip, GeneratedMedia, MediaKind, ModelRequest, ProviderGenerateMediaResult, ProviderStreamChatResult } from '../model/providers'
 import { requireProvider } from '../model/providers/registry'
 import { agentSectionMessages, mediaRequestInput } from '../model/streams/messages'
 import {
@@ -62,11 +61,12 @@ interface StreamStartArgs {
   // The model's known outputs hold `image`: its chat requests ask for
   // image output (ChatRequestContext.imageOutput).
   imageOutput: boolean
-  // What the model takes as the text of a media request (ModelInfo.text):
-  // a model with lyrics gets them from the message (`mediaRequestInput`).
-  // It is the submit's read of the model, so the request sends the text
-  // that the submit checked.
-  textRules?: ClipTextRules
+  // What the model takes as the input of a media request (its
+  // ModelInfo.text and ModelInfo.images): a model with lyrics gets them
+  // from the message, and a video model gets the message's images as
+  // frames (`mediaRequestInput`). It is the submit's read of the model, so
+  // the request sends the input that the submit checked.
+  inputRules?: ClipInputRules
 }
 
 // The calls of one tool round while they run. Their blocks stay in the
@@ -427,20 +427,20 @@ async function runChatRounds(args: StreamStartArgs, reply: ReplyRuntime): Promis
   }
 }
 
-// The one media request of a reply to a media model (ModelInfo.request
-// `image`, `imageEdit`, `tts`, `music`, or `video`), in place of the chat
-// rounds: no system prompt, tools, or thinking. The files of an image model
-// are saved in the generated image folder, and the section gets a reference
-// to each. A clip (audio, video) is not saved: the section gets a media tag
-// (mediaTags.ts) whose source is the provider's URL, or a temp copy until
+// The one media request of a reply to a media model (a ModelInfo.request
+// of MEDIA_KINDS), in place of the chat rounds: no system prompt, tools, or
+// thinking. The files of an image model are saved in the generated image
+// folder, and the section gets a reference to each. A clip (audio, video)
+// is not saved: the section gets a media tag (mediaTags.ts) whose source
+// is the provider's URL, or a temp copy until
 // the user saves the clip. A clip request sets the model's parameters to
 // the values that the user chose in the provider settings popup, and sends
-// the lyrics that the message holds to a model that takes lyrics. Images
-// and clips get new ids of the one id sequence. Ends the reply, except when
-// it throws.
+// the lyrics that the message holds to a model that takes lyrics; a video
+// request sends the images of the message as frames. Images and clips get
+// new ids of the one id sequence. Ends the reply, except when it throws.
 async function runMediaRound(args: StreamStartArgs, reply: ReplyRuntime, kind: MediaKind): Promise<void> {
   const tab = sbp('dez.model/tab', args.tabId) as Tab | null
-  const { prompt, lyrics, images } = mediaRequestInput(kind, args.messages, tab?.sections ?? [], args.textRules)
+  const { prompt, lyrics, images } = mediaRequestInput(kind, args.messages, tab?.sections ?? [], args.inputRules)
   const parameters = (sbp('dez.model/settings/snapshot') as SettingsSnapshot).modelParameters[modelRefKey(args.model)]
   const requestId = crypto.randomUUID()
   reply.requestId = requestId
