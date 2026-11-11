@@ -377,7 +377,7 @@ describe('images in chat streams', () => {
     expect(streamRequests).toEqual([])
   })
 
-  it('sends the messages of an earlier turn again as the same bytes, with images and their ids', async () => {
+  it('sends the image of the newest user message only, and an earlier turn as the same bytes in every request after that', async () => {
     const model = { providerId: 'local', modelId: 'm' }
     const path = `${APP_DIR}/assets/images/red.png`
     const turn1: Section[] = [{ id: 'u1', role: 'user', content: [{ kind: 'text', text: `Which color? ![${path}](id=a)` }] }]
@@ -386,22 +386,34 @@ describe('images in chat streams', () => {
       { id: 'a1', role: 'agent', model, content: [{ kind: 'text', text: `Red, as here: ![${path}](id=b)` }] },
       { id: 'u2', role: 'user', content: [{ kind: 'text', text: `![${path}](id=c) And this one?` }] },
     ]
-    for (const sections of [turn1, turn2]) {
+    const turn3: Section[] = [
+      ...turn2,
+      { id: 'a2', role: 'agent', model, content: [{ kind: 'text', text: 'Red too.' }] },
+      { id: 'u3', role: 'user', content: [{ kind: 'text', text: 'Sure?' }] },
+    ]
+    for (const sections of [turn1, turn2, turn3]) {
       const { messages } = sectionsToStreamMessages(sections, model, { sendImages: true, sendTools: true })
       await sbp('dez.provider/streamChat', { providerId: 'local', modelId: 'm', messages, onToken: () => {} })
     }
-    const [first, second] = streamRequests.map((request) => JSON.parse(request.body as string).messages as unknown[])
+    const [first, second, third] = streamRequests.map((request) => JSON.parse(request.body as string).messages as unknown[])
+    const imagePart = { type: 'image_url', image_url: { url: `data:image/png;base64,${Buffer.from(STORED_IMAGE).toString('base64')}` } }
 
-    expect(first).toEqual([{
-      role: 'user',
-      content: [
-        { type: 'text', text: 'Which color? ![image](id=a)' },
-        { type: 'image_url', image_url: { url: `data:image/png;base64,${Buffer.from(STORED_IMAGE).toString('base64')}` } },
-      ],
-    }])
+    expect(first).toEqual([{ role: 'user', content: [{ type: 'text', text: 'Which color? ![image](id=a)' }, imagePart] }])
+    expect(second).toEqual([
+      { role: 'user', content: 'Which color? ![image](id=a)' },
+      { role: 'assistant', content: 'Red, as here: ![image](id=b)' },
+      { role: 'user', content: [{ type: 'text', text: '![image](id=c)' }, imagePart, { type: 'text', text: ' And this one?' }] },
+    ])
+    expect(third.slice(2)).toEqual([
+      { role: 'user', content: '![image](id=c) And this one?' },
+      { role: 'assistant', content: 'Red too.' },
+      { role: 'user', content: 'Sure?' },
+    ])
     // OpenAI-format providers reuse their prompt cache only for a prefix of
-    // the same text.
-    expect(JSON.stringify(second.slice(0, first.length))).toBe(JSON.stringify(first))
+    // the same text: a turn changes once, when it loses its image parts.
+    expect(JSON.stringify(third.slice(0, 2))).toBe(JSON.stringify(second.slice(0, 2)))
+    // The third request reads no image file.
+    expect(imageReads).toEqual(['assets/images/red.png', 'assets/images/red.png'])
   })
 })
 

@@ -21,10 +21,12 @@ import { activeConversationId, copySelection, docPosPoint, editorCaret, editorDo
 // pasted as text from another tab gets a new id (as do the pasted mentions
 // of it) when the tab has an image with its id, both API formats
 // get the image in the request body after its reference's text with the id
-// and no path, a model that does not read images gets only that text and
-// the user a warning, no request holds an image path (also not a reference
-// that shows its source or an image in a reply), and a relaunch shows the
-// saved image again.
+// and no path, only the newest user message of a request carries images
+// (an older image goes as its reference's text, and again as an image when
+// the newest message names it with `@a`), a model that does not read
+// images gets only that text and the user a warning, no request holds an
+// image path (also not a reference that shows its source or an image in a
+// reply), and a relaunch shows the saved image again.
 //
 // WebDriver can send neither clipboard data nor an OS drag, so the paste
 // and drop events are synthetic DOM events built in the page. The PNG bytes
@@ -932,16 +934,11 @@ describe('images', () => {
     const request = await sendRequest()
     expect(request.rawBody).not.toContain('assets/images')
     expect(request.rawBody).not.toContain(setup.app.home)
+    // Only the newest user message carries images: the first message goes
+    // as text.
     expect(request.body).toHaveProperty('messages', [
       openAiSystemMessage(VISION),
-      {
-        role: 'user',
-        content: [
-          { type: 'text', text: '![image](id=a)' },
-          PASTED_IMAGE_URL_PART,
-          { type: 'text', text: ' and ![image](id=b' },
-        ],
-      },
+      { role: 'user', content: '![image](id=a) and ![image](id=b' },
       { role: 'assistant', content: `${reply}![image](id=c)` },
       { role: 'user', content: 'Compare.' },
     ])
@@ -952,6 +949,63 @@ describe('images', () => {
       { role: 'user', text: 'Compare.' },
       { role: 'agent', text: reply },
       { role: 'user', text: '' },
+    ])
+  })
+
+  it('sends the image of an old message again only when the newest message names it with `@a`', async () => {
+    await newTab(browser)
+    await pickModel(browser, VISION.name, VISION.modelName)
+    const image = await insertPastedImage('', QUESTION)
+    const reply = replyText(VISION.modelName)
+    const assistant = { role: 'assistant', content: reply }
+    const thread = [{ role: 'user', text: image.reference + QUESTION }]
+    // Types the next user message at the end of the thread.
+    const typeMessage = async (text: string) => {
+      await setCaret(browser, (await editorDoc(browser)).length)
+      await typeKeys(browser, text)
+      thread.push({ role: 'user', text })
+      await waitForValue(browser, `thread with ${JSON.stringify(text)}`, () => threadSections(browser), thread)
+    }
+    // Sends the tab, checks the messages of the request after the system
+    // message, and answers it.
+    const sendTurn = async (messages: unknown[]) => {
+      const request = await sendRequest()
+      expect(request.body).toHaveProperty('messages', [openAiSystemMessage(VISION), ...messages])
+      await sendChatReply(request.reply, VISION.modelName)
+      thread.push({ role: 'agent', text: reply })
+      await waitForThread(browser, [...thread, { role: 'user', text: '' }])
+    }
+
+    await sendTurn([{
+      role: 'user',
+      content: [{ type: 'text', text: '![image](id=a)' }, PASTED_IMAGE_URL_PART, { type: 'text', text: QUESTION }],
+    }])
+
+    // The message with the image goes as text in every later request.
+    const earlier = [{ role: 'user', content: `![image](id=a)${QUESTION}` }, assistant, { role: 'user', content: 'Why?' }, assistant]
+    await typeMessage('Why?')
+    await sendTurn(earlier.slice(0, 3))
+    await typeMessage('Sure?')
+    await sendTurn([...earlier, { role: 'user', content: 'Sure?' }])
+
+    // A mention sends the image of the first message with the new message.
+    await typeMessage('Is @a red?')
+    await sendTurn([
+      ...earlier,
+      { role: 'user', content: 'Sure?' },
+      assistant,
+      { role: 'user', content: [{ type: 'text', text: 'Is @a' }, PASTED_IMAGE_URL_PART, { type: 'text', text: ' red?' }] },
+    ])
+
+    // The message with the mention goes as text in the next request.
+    await typeMessage('Thanks.')
+    await sendTurn([
+      ...earlier,
+      { role: 'user', content: 'Sure?' },
+      assistant,
+      { role: 'user', content: 'Is @a red?' },
+      assistant,
+      { role: 'user', content: 'Thanks.' },
     ])
   })
 

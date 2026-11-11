@@ -938,20 +938,11 @@ describe('dez.controller/submitTab images', () => {
     ])
   })
 
-  it('sends each user image as a part after its reference text with no path, and agent images as that text only', async () => {
+  it('sends the images of the newest user message as parts after their reference text with no path, and every other image as that text only', async () => {
     await sbp('dez.controller/submitTab', activeTab().id)
 
     expect(sent).toStrictEqual([
-      {
-        role: 'user',
-        content: [
-          { type: 'text', text: 'Look:\n![image](id=a)' },
-          { type: 'image', path: image('one.png') },
-          { type: 'text', text: '\n![image](id=b)' },
-          { type: 'image', path: image('two.jpg') },
-          { type: 'text', text: '\nWhich is brighter?' },
-        ],
-      },
+      { role: 'user', content: 'Look:\n![image](id=a)\n![image](id=b)\nWhich is brighter?' },
       { role: 'agent', content: 'This one: ![image](id=a)' },
       {
         role: 'user',
@@ -966,7 +957,7 @@ describe('dez.controller/submitTab images', () => {
     expect(toasts).toEqual([])
   })
 
-  it('sends only the reference text with no path to a model that does not read images, and counts only the user images', async () => {
+  it('sends only the reference text with no path to a model that does not read images, and counts the images of the newest user message', async () => {
     sbp('dez.model/modelCache/applyProviderResult', model.providerId, {
       ok: true,
       models: [{ id: model.modelId, name: model.modelName, provider: model.providerId, imageInput: false }],
@@ -984,7 +975,7 @@ describe('dez.controller/submitTab images', () => {
       data: {
         variant: 'warning',
         title: 'Images not sent',
-        message: 'M does not read images, so 4 images were left out of the request.',
+        message: 'M does not read images, so 2 images were left out of the request.',
         duration: 8000,
       },
     }])
@@ -1429,6 +1420,60 @@ describe('dez.stream/start images of a chat reply', () => {
     expect(sectionVisibleText(agentSection())).toBe(`![${generated('g1.png')}](id=b)\n${block}None.`)
     expect(sent[1]).toContain('![image](id=b)')
     expect(sent[1]).not.toContain('/home/u')
+  })
+
+  // The replay of a round with an image is the provider's signature of
+  // the image: about 1 MB that the conversation file and each later request
+  // would hold.
+  it('keeps no thinking for an image reply whose only thinking is its replay', async () => {
+    streamChat = async (input) => {
+      await input.onImage(png)
+      const thinkingReplay: ThinkingReplay = { kind: 'reasoningDetails', details: [{ type: 'reasoning.encrypted', data: 'signature' }], prefixHash: 'h' }
+      return { requestId: input.requestId as string, thinkingReplay }
+    }
+
+    await startStream()
+
+    expect(sectionVisibleText(agentSection())).toBe(`![${generated('g1.png')}](id=b)`)
+    expect(agentSection().thinking).toBeUndefined()
+    expect(savedConversations.at(-1)?.sections[1].thinking).toBeUndefined()
+    expect(editorThinking).toStrictEqual([])
+  })
+
+  it('keeps the thinking text of a round that made an image with no replay, and the replay of each other round at its own round', async () => {
+    const replay = (opaque: string): ThinkingReplay => ({ kind: 'copilot', opaque, prefixHash: 'h' })
+    const call = (id: string) => ({ id, name: 'model_list', argumentsText: '{"filter":"gemini"}' })
+    const sent: ProviderChatInputMessage[][] = []
+    streamChat = async (input) => {
+      sent.push(JSON.parse(JSON.stringify(input.messages)) as ProviderChatInputMessage[])
+      if (sent.length === 1) {
+        await input.onThinking('Plan.')
+        return { requestId: input.requestId as string, thinkingReplay: replay('one'), toolCalls: [call('c1')] }
+      }
+      if (sent.length === 2) {
+        await input.onThinking('Draw.')
+        await input.onImage(png)
+        return { requestId: input.requestId as string, thinkingReplay: replay('two'), toolCalls: [call('c2')] }
+      }
+      await input.onThinking('Check.')
+      await input.onToken('Done.')
+      return { requestId: input.requestId as string, thinkingReplay: replay('three') }
+    }
+
+    await startStream({ sendTools: true })
+
+    const thinking = {
+      text: 'Plan.Draw.Check.',
+      replay: replay('one'),
+      rounds: [{ afterToolCall: 'c1', from: 5 }, { afterToolCall: 'c2', from: 10, replay: replay('three') }],
+    }
+    expect(agentSection().thinking).toStrictEqual(thinking)
+    expect(savedConversations.at(-1)?.sections[1].thinking).toStrictEqual(thinking)
+    // The agent messages of the last round's request: the round with the
+    // image has no thinking.
+    expect(sent[2].flatMap((message) => message.role === 'agent' ? [message.thinking ?? null] : [])).toStrictEqual([
+      { text: 'Plan.', replay: replay('one') }, null,
+    ])
   })
 })
 

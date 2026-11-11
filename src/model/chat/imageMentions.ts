@@ -4,8 +4,9 @@ import { IMAGE_ID_SOURCE } from './images'
 // image whose reference has `id=a` (the badge on the image shows the id). The
 // user types it to say which image a request is about ("edit @a to add an
 // apple"). The request builder then sends that image with the message, at
-// the place of the mention (`sectionsToStreamMessages`, streams/messages.ts).
-// The mention itself stays in the text as the user typed it.
+// the place of the mention, while the message is the newest user message of
+// the request (`sectionsToStreamMessages`, streams/messages.ts). The
+// mention itself stays in the text as the user typed it.
 //
 // Most `@` words are not mentions: an e-mail address, a user name, a
 // decorator in code. So a word counts only when it has the form below and

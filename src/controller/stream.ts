@@ -344,6 +344,8 @@ async function runChatRounds(args: StreamStartArgs, reply: ReplyRuntime): Promis
     reply.requestId = requestId
     const roundIsCurrent = () => repliesByTab.get(args.tabId) === reply && reply.requestId === requestId && !reply.outputEnded
     const roundAfterToolCall = afterToolCall
+    // The round's reply held an image, saved or not.
+    let madeImage = false
     const result = await sbp('dez.provider/streamChat', {
       providerId: args.model.providerId,
       conversationId: args.conversationId,
@@ -365,6 +367,7 @@ async function runChatRounds(args: StreamStartArgs, reply: ReplyRuntime): Promis
       // Not after a stop, unlike the text: the save is not instant, and a
       // stopped reply must not grow later.
       onImage: async (image: GeneratedMedia) => {
+        madeImage = true
         if (replyIsCurrent(args.tabId, reply)) await writeReplyImage(args.tabId, reply, image)
       },
     }) as ProviderStreamChatResult
@@ -372,7 +375,13 @@ async function runChatRounds(args: StreamStartArgs, reply: ReplyRuntime): Promis
 
     // Before the blocks and the finish, which saves the conversation.
     flushModelText(args.tabId, reply)
-    const replay = result.thinkingReplay
+    // A round that made an image keeps no replay. Its replay is the
+    // provider's signature of the image (about 1 MB from a Gemini image
+    // model): it would go into the conversation file and into each later
+    // request, and a request holds the image only as its reference text,
+    // so no thinking of such a round goes back (`roundThinking`,
+    // streams/messages.ts). The thinking text of the round stays.
+    const replay = madeImage ? undefined : result.thinkingReplay
     if (replay) {
       updateStreamThinking(args.tabId, args.sectionId, () => setThinkingReplayForTabSection(args.tabId, args.sectionId, replay, roundAfterToolCall))
     }

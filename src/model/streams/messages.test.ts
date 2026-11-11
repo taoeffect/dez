@@ -245,6 +245,20 @@ describe('agentSectionMessages', () => {
       ])
     })
 
+    // The stream controller keeps no replay for a round that made an image;
+    // a conversation from before that rule holds one.
+    it('sends no thinking of a round that holds an image, and each other round keeps its own', () => {
+      const withImage = text.replace('More.', `More.\n\n![${IMAGE}](id=a)`)
+      const imageReply = agent(`![${IMAGE}](id=a)`, { text: '', replay: replay1 })
+
+      expect(agentSectionMessages(agent(withImage, thinking), model, true).filter((message) => message.role === 'agent')).toStrictEqual([
+        { role: 'agent', content: 'Look.', thinking: { text: 'Plan 1', replay: replay1 }, toolCalls: [call('call_1', 'gemini'), call('call_2', 'mistral')] },
+        { role: 'agent', content: 'More.\n\n![image](id=a)', toolCalls: [call('call_3', 'claude')] },
+        { role: 'agent', content: 'Done.' },
+      ])
+      expect(agentSectionMessages(imageReply, model, true)).toStrictEqual([{ role: 'agent', content: '![image](id=a)' }])
+    })
+
     it('sends no thinking to another model', () => {
       const sent = agentSectionMessages(agent(text, thinking), { providerId: 'local', modelId: 'other' }, true)
 
@@ -274,12 +288,49 @@ const reply = (id: string, text: string): Section => ({ id, role: 'agent', model
 describe('sectionsToStreamMessages: images of user messages', () => {
   const sent = (sections: Section[], sendImages = true) => sectionsToStreamMessages(sections, model, { sendImages, sendTools: false })
   // The conversation before the message under test: a pasted image `a`,
-  // and a generated image `b` in the reply.
+  // and a generated image `b` in the reply. An earlier user message sends
+  // its image as text only.
   const earlier = [user('u1', `![${IMAGE}](id=a) A red fox`), reply('a1', `![${GENERATED}](id=b)`)]
   const earlierMessages = [
-    { role: 'user', content: [{ type: 'text', text: '![image](id=a)' }, { type: 'image', path: IMAGE }, { type: 'text', text: ' A red fox' }] },
+    { role: 'user', content: '![image](id=a) A red fox' },
     { role: 'agent', content: '![image](id=b)' },
   ]
+
+  it('gives image parts only to the newest user message: an earlier one sends its references and mentions as text', () => {
+    const other = '/home/u/.config/dez/assets/images/blue.png'
+    const sections = [...earlier, user('u2', `Is @a like ![${other}](id=c)?`), reply('a2', 'Yes.'), user('u3', 'And @c?')]
+
+    expect(sent(sections)).toStrictEqual({
+      messages: [
+        ...earlierMessages,
+        { role: 'user', content: 'Is @a like ![image](id=c)?' },
+        { role: 'agent', content: 'Yes.' },
+        { role: 'user', content: [{ type: 'text', text: 'And @c' }, { type: 'image', path: other }, { type: 'text', text: '?' }] },
+      ],
+      imagesLeftOut: 0,
+    })
+  })
+
+  it('sends a mentioned image however far back it is, and no other image', () => {
+    const turns = Array.from({ length: 20 }, (_, index) => [user(`q${index}`, `Question ${index}`), reply(`r${index}`, `Answer ${index}`)]).flat()
+    const { messages } = sent([...earlier, ...turns, user('last', 'Make @a red')])
+
+    expect(messages.at(-1)).toStrictEqual({
+      role: 'user',
+      content: [{ type: 'text', text: 'Make @a' }, { type: 'image', path: IMAGE }, { type: 'text', text: ' red' }],
+    })
+    expect(messages.slice(0, -1).filter((message) => message.role === 'user' && typeof message.content !== 'string')).toStrictEqual([])
+  })
+
+  // A request with no new user text (a tool round of the reply, or a submit
+  // with an empty last section) must not change the message that the reply
+  // answers.
+  it('keeps the image parts of the newest user message when a reply comes after it', () => {
+    const message = { role: 'user', content: [{ type: 'text', text: '![image](id=a)' }, { type: 'image', path: IMAGE }, { type: 'text', text: ' A red fox' }] }
+
+    expect(sent([earlier[0]]).messages).toStrictEqual([message])
+    expect(sent([earlier[0], reply('a1', 'It is a fox.'), user('u2', '')]).messages).toStrictEqual([message, { role: 'agent', content: 'It is a fox.' }])
+  })
 
   it('sends a mentioned image of an earlier section right after its mention, which stays in the text', () => {
     expect(sent([...earlier, user('u2', 'Give @b a hat, like the one of @a.')])).toStrictEqual({
@@ -368,18 +419,19 @@ describe('sectionsToStreamMessages: images of user messages', () => {
     }])
   })
 
-  it('sends a model that reads no images the text only, and counts the references and the mentioned images', () => {
+  it('sends a model that reads no images the text only, and counts the images that the newest message would send', () => {
     const sections = [...earlier, user('u2', `Mix @b, @b, and ![${IMAGE}](id=a) with @a and @c.`)]
 
     expect(sent(sections, false)).toStrictEqual({
       messages: [
-        { role: 'user', content: '![image](id=a) A red fox' },
-        { role: 'agent', content: '![image](id=b)' },
+        ...earlierMessages,
         { role: 'user', content: 'Mix @b, @b, and ![image](id=a) with @a and @c.' },
       ],
-      // `a` in the first message; `b` and `a` in the last one.
-      imagesLeftOut: 3,
+      // `b` and `a` in the last message. The image of the first message
+      // goes to no model, so it does not count.
+      imagesLeftOut: 2,
     })
+    expect(sent([...earlier, user('u2', 'What is it?')], false).imagesLeftOut).toBe(0)
   })
 })
 

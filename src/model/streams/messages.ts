@@ -11,9 +11,9 @@ import type { ToolCall, ToolResult } from '../tools/types'
 import type { RequestMessages, StreamMessage } from './types'
 
 export interface RequestOptions {
-  // False when the request model does not read images: a user section's
-  // images (its references and the images that it mentions) then go as
-  // text only.
+  // False when the request model does not read images: the images of the
+  // newest user message (its references and the images that it mentions)
+  // then go as text only, as the images of every earlier message do.
   sendImages: boolean
   // False when the request offers no tools: an agent section's tool calls
   // then go as text (agentSectionMessages).
@@ -28,38 +28,50 @@ export interface RequestOptions {
 // an agent section goes as its tag with only the id and the type
 // (`agentTextForRequest`): no path and no signed URL. Each message is built
 // from its own section and, for the images that it mentions, the sections
-// before it. So an earlier message is the same bytes in every later request
-// (prompt cache).
+// before it.
 //
-// The images of a user section also go as image parts, unless `sendImages`
-// is false: its image references, and the images that it names with an
-// `@id` mention (`userMessageContent`). An agent section's images go as
-// text only: both formats take images only from the user. So to show a
-// model an image that a model made, the user mentions it.
+// Only the newest user message carries images (image parts), unless
+// `sendImages` is false: its image references, and the images that it
+// names with an `@id` mention, however far back they are
+// (`userMessageContent`). Every earlier user message goes as text only,
+// with each image as its `![image](id=a)` text, so a long conversation
+// does not send all its images again with each request. An agent section's
+// images go as text only too: both formats take images only from the user.
+// So to show a model an old image, or an image that a model made, the user
+// mentions it in the new message.
+//
+// Prompt cache: a message is the same bytes in every later request, with
+// one exception. A user message with image parts loses them when a newer
+// user message comes, so the first request after that reads it, and what
+// follows it, with no cache hit, and the signed thinking replays from there
+// on no longer go back (their prefix changed; `wireChat`, apiFormats.ts).
+// All request rounds of one reply have the same newest user message, so
+// the bytes hold inside a reply.
 export function sectionsToStreamMessages(sections: Section[], requestModel: ModelRef, options: RequestOptions): Omit<RequestMessages, 'sendTools'> {
   let imagesLeftOut = 0
   // The images that a mention in the section at hand can name: the path of
   // each image id in the references of that section and of the sections
   // before it, user and agent. When two images have one id (a hand edit),
-  // the last one wins. Later sections are never read: a new image must not
-  // change the parts of an earlier message.
+  // the last one wins. Later sections are never read: the newest user
+  // message must keep its parts while the reply after it grows.
   const imagesById = new Map<string, string>()
-  const messages = sections
-    .filter((section) => !sectionIsEmpty(section))
-    .flatMap((section): StreamMessage[] => {
-      const text = sectionPlainText(section)
-      const references = findImageReferences(text)
-      for (const { id, path } of references) {
-        if (id !== null) imagesById.set(id, path)
-      }
-      if (section.role === 'agent') return agentSectionMessages(section, requestModel, options.sendTools)
-      const content = userMessageContent(text, references, imagesById)
-      if (options.sendImages) return [{ role: 'user', content }]
-      // The count is of the image parts that the message has for a model
-      // that reads images, so the toast and the request always agree.
-      if (typeof content !== 'string') imagesLeftOut += content.filter((part) => part.type === 'image').length
-      return [{ role: 'user', content: withoutStoredFilePaths(text) }]
-    })
+  const sentSections = sections.filter((section) => !sectionIsEmpty(section))
+  const newestUser = sentSections.findLastIndex((section) => section.role === 'user')
+  const messages = sentSections.flatMap((section, index): StreamMessage[] => {
+    const text = sectionPlainText(section)
+    const references = findImageReferences(text)
+    for (const { id, path } of references) {
+      if (id !== null) imagesById.set(id, path)
+    }
+    if (section.role === 'agent') return agentSectionMessages(section, requestModel, options.sendTools)
+    if (index !== newestUser) return [{ role: 'user', content: withoutStoredFilePaths(text) }]
+    const content = userMessageContent(text, references, imagesById)
+    if (options.sendImages || typeof content === 'string') return [{ role: 'user', content }]
+    // The count is of the image parts that the request has for a model
+    // that reads images, so the toast and the request always agree.
+    imagesLeftOut = content.filter((part) => part.type === 'image').length
+    return [{ role: 'user', content: withoutStoredFilePaths(text) }]
+  })
 
   return { messages, imagesLeftOut }
 }
@@ -163,6 +175,13 @@ function agentRounds(text: string): AgentRound[] {
 // inline tags) never goes back. A `field` replay sends the thinking text; the
 // other kinds hold the thinking in their own JSON.
 //
+// The thinking of a round whose text holds an image never goes back. A
+// round that made an image has the provider's signature of that image as
+// its replay (about 1 MB from a Gemini image model), and the request holds
+// the image only as its reference text. The stream controller keeps no
+// replay for such a round (`runChatRounds`, controller/stream.ts);
+// conversations from before that rule still hold one.
+//
 // The first round has the section's `replay` and the text up to the first
 // `rounds` entry. A later round has the entry whose `afterToolCall` is the
 // first call of the group before it, and the text up to the next entry. A
@@ -170,6 +189,7 @@ function agentRounds(text: string): AgentRound[] {
 function roundThinking(section: Section, requestModel: ModelRef, rounds: AgentRound[], index: number): { thinking?: SectionThinking } {
   const { thinking } = section
   if (!thinking || !sameModelRef(section.model, requestModel)) return {}
+  if (findImageReferences(rounds[index].text).length > 0) return {}
 
   const entries = thinking.rounds ?? []
   const textUpTo = (entry: number) => entries[entry]?.from ?? thinking.text.length
@@ -214,10 +234,11 @@ function textWithToolCalls(text: string): string {
   return withoutStoredFilePaths(parts.join(''))
 }
 
-// The content of one user message: text and image parts in doc order.
-// `references` are the image references of `text`. Each image part comes
-// right after its reference's text, `![image](id=a)`, at the end of the text
-// part before it, so that a model can name the image by its id.
+// The content of the newest user message, the only one with image parts:
+// text and image parts in doc order. `references` are the image references
+// of `text`. Each image part comes right after its reference's text,
+// `![image](id=a)`, at the end of the text part before it, so that a model
+// can name the image by its id.
 //
 // An `@id` mention (imageMentions.ts) that names an image of `imagesById`
 // counts as that image at that place: its image part comes right after the
