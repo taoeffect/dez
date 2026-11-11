@@ -1,5 +1,6 @@
 import sbp from '@sbp/sbp'
-import { IMAGE_FOLDERS, imageMediaType, storedImageFile } from '../chat/images'
+import { drawnMediaType, type DrawnImage, type ImageSize } from '../chat/imageDrawing'
+import { IMAGE_FOLDERS, imageMediaType, storedImageFile, type ImageMediaType } from '../chat/images'
 import type { MessagePart } from '../chat/types'
 import { modelRefKey } from '../chat/modelRef'
 import type { ModelCache } from '../persistence/types'
@@ -10,6 +11,7 @@ import { nativeResponseJson, nativeResponseText, readNativeChunkBytes, type Nati
 import { CLIP_JOB_TIMEOUT_MS, clipPollDelay, sendClipRequest, type ClipRun } from './clipRequests'
 import { assertProviderResponseOk } from './errors'
 import { generatedImageFromUrl } from './generatedImages'
+import { imageFit, type ImageSizeRules } from './imageSize'
 import type { MediaWireRequest } from './mediaFormats'
 import { effectiveParameterValues, type ParameterValues } from './modelParameters'
 import { modelToggles, type ToggleModel } from './modelToggles'
@@ -18,6 +20,12 @@ import { getProvider, listProviders, requireProvider } from './registry'
 import { assertStreamResponseOk, streamProviderTokens } from './streaming'
 import type { ProviderChatInputMessage, ProviderGenerateMediaInput, ProviderGenerateMediaResult, ProviderMediaQuoteInput, ProviderStreamChatInput, ProviderStreamChatResult } from './streamTypes'
 import { CLIP_KINDS, ProviderNotConfiguredError, isClipKind, type ChatImagePart, type ChatMessage, type ChatPart, type ModelDisplayNames, type ModelInfo, type ProviderId, type ProviderInfo, type ProviderModelsResult, type ProviderSettingsDescriptor } from './types'
+
+// The file of a stored image.
+interface StoredImage {
+  bytes: Uint8Array
+  mediaType: ImageMediaType
+}
 
 // The stored key, or null when there is none. Throws for GitHub Copilot when
 // the user is not signed in.
@@ -59,7 +67,8 @@ async function readMessageImages(messages: ProviderChatInputMessage[]): Promise<
   const readPart = async (part: MessagePart): Promise<ChatPart> => {
     if (part.type === 'text') return part
     appDir ??= sbp('dez.native/getAppDir') as Promise<string>
-    return readImagePart(part.path, await appDir)
+    const { bytes, mediaType } = await readStoredImage(part.path, await appDir)
+    return { type: 'image', mediaType, data: bytesToBase64(bytes) }
   }
 
   return Promise.all(messages.map(async (message): Promise<ChatMessage> => {
@@ -74,18 +83,39 @@ async function readMessageImages(messages: ProviderChatInputMessage[]): Promise<
 // serves. So a reference copied from another home or machine fails like a
 // missing file, as it shows in the editor. The error names only the file,
 // like the editor's broken-image box; the log has the cause.
-async function readImagePart(path: string, appDir: string): Promise<ChatImagePart> {
+async function readStoredImage(path: string, appDir: string): Promise<StoredImage> {
   try {
     const file = storedImageFile(path, appDir)
     const mediaType = imageMediaType(path)
     if (!file || !mediaType) {
       throw new Error(`The image is not in an image folder of ${appDir} (${Object.values(IMAGE_FOLDERS).join(', ')})`)
     }
-    const bytes = await sbp('dez.native/loadAppFileBytes', file) as Uint8Array
-    return { type: 'image', mediaType, data: bytesToBase64(bytes) }
+    return { bytes: await sbp('dez.native/loadAppFileBytes', file) as Uint8Array, mediaType }
   } catch (error) {
     console.error(`Failed to read the image ${path}:`, error)
     throw new Error(`Image not found: ${fileNameOf(path)}`)
+  }
+}
+
+// The image that a media request sends for a stored image. A provider
+// refuses an image that breaks a size rule that it tells (`rules`,
+// imageSize.ts), so such an image goes as a new drawing that passes the
+// rules: a part of it, at another size (`imageFit`). Only the request gets
+// the drawing; the stored file and the doc keep the image. An image that
+// passes the rules goes as it is, byte for byte, and so does every image
+// of a request with no rules, which is not even decoded. An image that
+// cannot be drawn (a file that the webview does not decode) also goes as
+// it is: the provider's answer then tells the user what is wrong.
+async function fittedImage(image: StoredImage, rules: ImageSizeRules | undefined): Promise<StoredImage> {
+  if (!rules) return image
+  const mediaType = drawnMediaType(image.mediaType)
+  try {
+    const file = new Blob([image.bytes], { type: image.mediaType })
+    const drawn = await sbp('dez.controller/images/redraw', file, (size: ImageSize) => imageFit(size, rules), mediaType) as DrawnImage | null
+    return drawn ? { bytes: drawn.bytes, mediaType } : image
+  } catch (error) {
+    console.error('Failed to fit an image to the size rules of the request:', error)
+    return image
   }
 }
 
@@ -247,7 +277,9 @@ export default sbp('sbp/selectors/register', {
   // Makes media with a model of the provider's media API (`mediaApi`). It
   // needs no tab or editor, so a tool can call it too. dez.http/cancelStream
   // with `requestId` cancels the request that runs, and `signal` does the
-  // same and also ends the wait of a clip job.
+  // same and also ends the wait of a clip job. An input image that breaks
+  // a size rule of the request goes as a drawing that passes it
+  // (`fittedImage`).
   //
   // - An image, or an edit of stored images: one request through
   //   dez.http/stream. A cancel before the response headers rejects; a
@@ -283,7 +315,11 @@ export default sbp('sbp/selectors/register', {
       if (kind === 'imageEdit' && paths.length === 0) throw new Error('No image to edit')
       if (kind === 'imageToVideo' && paths.length === 0) throw new Error('No image to make a video from')
       const appDir = paths.length > 0 ? await sbp('dez.native/getAppDir') as string : ''
-      const images = await Promise.all(paths.map((path) => readImagePart(path, appDir)))
+      const sizeRules = provider.inputImageSize(kind, sbp('dez.model/modelCache/model', provider.id, modelId) as ModelInfo | null)
+      const images = await Promise.all(paths.map(async (path): Promise<ChatImagePart> => {
+        const { bytes, mediaType } = await fittedImage(await readStoredImage(path, appDir), sizeRules)
+        return { type: 'image', mediaType, data: bytesToBase64(bytes) }
+      }))
 
       if (!isClipKind(kind)) {
         const request = provider.mediaRequest(kind, modelId, { prompt: input.prompt, images }, await requestSecret(provider))

@@ -22,7 +22,8 @@ import { activeConversationId, newTab, openToasts, pickModel, submit, threadSect
 //   editor shows it;
 // - an edit model's request to `/image/multi-edit` takes the newest image of
 //   the conversation when the last user message has none, as a data URL
-//   with no path;
+//   with no path; an image that passes the size rule of that API goes as
+//   its own bytes;
 // - an edit whose message names an image with `@a` takes that image, not
 //   the newest one;
 // - a chat model that also makes images gets the config's image output
@@ -47,7 +48,11 @@ const CHAT_MODEL = { id: 'chat-paint-model', name: 'Chat Paint Model' }
 const GENERATE_PATH = `/${PAINTER.id}/v1/image/generate`
 const EDIT_PATH = `/${PAINTER.id}/v1/image/multi-edit`
 
-const GENERATED_PNG = solidPng(36, 20, [40, 160, 60])
+// The image that the edit requests take. Its shorter side has the 256
+// pixels that Venice's edit API asks for, so it goes as it is; Dez sends a
+// smaller image as a larger copy (tests/e2e/image-to-video.e2e.ts has the
+// test of such a copy).
+const GENERATED_PNG = solidPng(320, 256, [40, 160, 60])
 const EDITED_PNG = solidPng(20, 36, [200, 120, 20])
 const NEWEST_PNG = solidPng(28, 28, [150, 60, 180])
 const TALL_PNG = solidPng(40, 300, [60, 90, 200])
@@ -179,7 +184,7 @@ describe('image generation', () => {
       { role: 'agent', text: generatedReference },
       { role: 'user', text: '' },
     ])
-    await waitForValue(browser, 'shown image', () => shownImages(browser), [{ alt: generatedName, width: 36, height: 20 }])
+    await waitForValue(browser, 'shown image', () => shownImages(browser), [{ alt: generatedName, width: 320, height: 256 }])
     const file = conversationFilePath(setup.app.home, await activeConversationId(browser))
     await waitForValue(browser, 'saved reference', async () => (await fs.promises.readFile(file, 'utf8').catch(() => '')).includes(generatedReference), true)
 
@@ -210,7 +215,7 @@ describe('image generation', () => {
       { role: 'user', text: '' },
     ])
     await waitForValue(browser, 'shown images', () => shownImages(browser), [
-      { alt: generatedName, width: 36, height: 20 },
+      { alt: generatedName, width: 320, height: 256 },
       { alt: editedName, width: 20, height: 36 },
     ])
     expect(await consoleErrors(browser)).toEqual([])
@@ -298,7 +303,7 @@ describe('image generation', () => {
       { role: 'agent', text: `Here is a fox.\n\n![${foxPath}](id=a)\n\nIt is green.` },
     ]
     await waitForThread(browser, [...foxReply, { role: 'user', text: '' }])
-    await waitForValue(browser, 'shown image', () => shownImages(browser), [{ alt: foxName, width: 36, height: 20 }])
+    await waitForValue(browser, 'shown image', () => shownImages(browser), [{ alt: foxName, width: 320, height: 256 }])
 
     await submit(browser, 'Make @a orange')
 
@@ -337,7 +342,7 @@ describe('image generation', () => {
       { role: 'user', text: '' },
     ])
     await waitForValue(browser, 'shown images', () => shownImages(browser), [
-      { alt: foxName, width: 36, height: 20 },
+      { alt: foxName, width: 320, height: 256 },
       { alt: editedName, width: 20, height: 36 },
     ])
     const file = conversationFilePath(setup.app.home, await activeConversationId(browser))

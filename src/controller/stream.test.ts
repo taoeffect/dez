@@ -3,6 +3,7 @@ import { createPinia, setActivePinia } from 'pinia'
 import { afterEach, beforeEach, describe, expect, it, vi, type MockInstance } from 'vitest'
 import type { ActiveModel, Section, SectionThinking, Tab, ThinkingReplay } from '../model/chat/types'
 import { sectionVisibleText } from '../model/chat/content'
+import type { DrawnImage, ImageDrawing, ImageSize } from '../model/chat/imageDrawing'
 import { findToolBlocks } from '../model/chat/toolBlocks'
 import type { ConversationData } from '../model/persistence/types'
 import type { ClipTextRules } from '../model/providers/clipText'
@@ -40,6 +41,8 @@ let cancelStream: () => Promise<void>
 let generateMedia: (input: ProviderGenerateMediaInput) => Promise<ProviderGenerateMediaResult>
 let saveImage: (mediaType: string, options: unknown) => Promise<string>
 let deletedImages: string[] = []
+// The path of each stored image that a `crop_scale_image` call read.
+let readImages: string[] = []
 // Each file that was deleted from an app folder (the temp copies of clips).
 let deletedFiles: { path: string, root: string }[] = []
 let consoleError: MockInstance<typeof console.error>
@@ -59,6 +62,15 @@ sbp('sbp/selectors/register', {
   },
   async 'dez.controller/images/delete' (path: string): Promise<void> {
     deletedImages.push(path)
+  },
+  async 'dez.controller/images/readFile' (path: string): Promise<Blob> {
+    readImages.push(path)
+    return new Blob([])
+  },
+  // Every stored image is 1000 by 500 pixels.
+  async 'dez.controller/images/redraw' (_file: Blob, plan: (size: ImageSize) => ImageDrawing | null): Promise<DrawnImage | null> {
+    const drawing = plan({ width: 1000, height: 500 })
+    return drawing && { bytes: new Uint8Array([1]), width: drawing.width, height: drawing.height }
   },
   async 'dez.native/getAppDir' (root = 'app'): Promise<string> {
     return root === 'cache' ? '/home/u/.cache/dez' : '/home/u/.config/dez'
@@ -138,6 +150,7 @@ beforeEach(() => {
   providerInfos = async () => []
   cancelStream = async () => {}
   deletedImages = []
+  readImages = []
   deletedFiles = []
   consoleError = vi.spyOn(console, 'error').mockImplementation(() => {})
   // `dez.stream/start` names the provider in the system prompt, so the stub
@@ -1628,6 +1641,134 @@ describe('dez.stream/start images of a chat reply', () => {
     expect(sent[2].flatMap((message) => message.role === 'agent' ? [message.thinking ?? null] : [])).toStrictEqual([
       { text: 'Plan.', replay: replay('one') }, null,
     ])
+  })
+})
+
+describe('dez.stream/start images that a tool makes', () => {
+  const image = (name: string) => `/home/u/.config/dez/assets/images/${name}`
+  const generated = (name: string) => `/home/u/.config/dez/assets/generated/images/${name}`
+  const reference = (name: string, id: string) => `![${generated(name)}](id=${id}|tool=crop_scale_image)`
+  const replay = (opaque: string): ThinkingReplay => ({ kind: 'copilot', opaque, prefixHash: 'h' })
+  const widthCall = { id: 'c1', name: 'crop_scale_image', argumentsText: '{"image":"@a","width":400}' }
+  const widthBlock = '<dez:tool id="c1" name="crop_scale_image" image="@a" width="400">\nMade the image @b from @a. The image @b is 400x200 pixels.\n</dez:tool>\n'
+  // The request messages of each round, as plain data at the call.
+  let sent: ProviderChatInputMessage[][] = []
+  // The saves give the files g1.png, g2.png, ….
+  let saves = 0
+
+  // `rounds[n]` answers the request of round n.
+  function replyRounds(rounds: Array<(input: ProviderStreamChatInput) => Promise<ProviderStreamChatResult>>): void {
+    streamChat = async (input) => {
+      sent.push(JSON.parse(JSON.stringify(input.messages)) as ProviderChatInputMessage[])
+      return await rounds[sent.length - 1](input)
+    }
+  }
+
+  beforeEach(() => {
+    sent = []
+    saves = 0
+    saveImage = async () => generated(`g${++saves}.png`)
+    sbp('dez.model/tabs/replaceSections', activeTab().id, [
+      { id: 'u1', role: 'user', content: [{ kind: 'text', text: `A fox: ![${image('fox.png')}](id=a)` }] },
+      { id: 'a1', role: 'agent', content: [{ kind: 'text', text: '' }], model },
+    ])
+  })
+
+  // The reference is the start of the text of the round after the tool's
+  // group. That round calls a tool too: the request after it must hold its
+  // thinking, and no request may end with an agent message.
+  it('puts the image after the blocks of its round, and sends it at the start of the next round, which keeps its thinking', async () => {
+    const listBlock = '<dez:tool id="c2" name="model_list" filter="gemini">\nNo models are available.\n</dez:tool>\n'
+    replyRounds([
+      async (input) => {
+        await input.onThinking('Plan.')
+        await input.onToken('Cropping.')
+        return { requestId: input.requestId as string, thinkingReplay: replay('one'), toolCalls: [widthCall] }
+      },
+      async (input) => {
+        await input.onThinking('List.')
+        return { requestId: input.requestId as string, thinkingReplay: replay('two'), toolCalls: [{ id: 'c2', name: 'model_list', argumentsText: '{"filter":"gemini"}' }] }
+      },
+      async (input) => {
+        await input.onToken('Done.')
+        return { requestId: input.requestId as string }
+      },
+    ])
+
+    await startStream({ sendTools: true })
+
+    expect(readImages).toStrictEqual([image('fox.png')])
+    expect(sectionVisibleText(agentSection())).toBe(`Cropping.\n${widthBlock}\n${reference('g1.png', 'b')}\n${listBlock}Done.`)
+    const firstRound: ProviderChatInputMessage[] = [
+      {
+        role: 'agent',
+        content: 'Cropping.',
+        thinking: { text: 'Plan.', replay: replay('one') },
+        toolCalls: [{ id: 'c1', name: 'crop_scale_image', arguments: { image: '@a', width: 400 } }],
+      },
+      { role: 'tool', results: [{ callId: 'c1', content: 'Made the image @b from @a. The image @b is 400x200 pixels.', isError: false }] },
+    ]
+    expect(sent[1]).toStrictEqual([{ role: 'user', content: 'Hi' }, ...firstRound])
+    expect(sent[2]).toStrictEqual([
+      { role: 'user', content: 'Hi' },
+      ...firstRound,
+      {
+        role: 'agent',
+        content: '\n![image](id=b|tool=crop_scale_image)',
+        thinking: { text: 'List.', replay: replay('two') },
+        toolCalls: [{ id: 'c2', name: 'model_list', arguments: { filter: 'gemini' } }],
+      },
+      { role: 'tool', results: [{ callId: 'c2', content: 'No models are available.', isError: false }] },
+    ])
+    // A later request sends the reply with the same bytes.
+    const stored = (sbp('dez.model/streamMessagesForTab', activeTab().id, model) as RequestMessages).messages
+    expect(stored.slice(1, sent[2].length)).toStrictEqual(sent[2].slice(1))
+    expect(deletedImages).toStrictEqual([])
+  })
+
+  // The second call names the image that the first call made: it is in the
+  // section of the reply itself.
+  it('keeps the images of two calls of one group after the group, each with a new id, and starts the next text in a new paragraph', async () => {
+    const heightBlock = '<dez:tool id="c2" name="crop_scale_image" image="b" height="100">\nMade the image @c from @b. The image @c is 200x100 pixels.\n</dez:tool>\n'
+    replyRounds([
+      async (input) => ({
+        requestId: input.requestId as string,
+        toolCalls: [widthCall, { id: 'c2', name: 'crop_scale_image', argumentsText: '{"image":"b","height":100}' }],
+      }),
+      async (input) => {
+        await input.onToken('Both.')
+        return { requestId: input.requestId as string }
+      },
+    ])
+
+    await startStream({ sendTools: true })
+
+    expect(readImages).toStrictEqual([image('fox.png'), generated('g1.png')])
+    const text = `${widthBlock}${heightBlock}\n${reference('g1.png', 'b')}\n\n${reference('g2.png', 'c')}\n\nBoth.`
+    expect(sectionVisibleText(agentSection())).toBe(text)
+    expect(savedConversations.at(-1)?.sections[1].nodes).toStrictEqual([{ kind: 'text', text }])
+    expect(sent[1].map((message) => message.role)).toStrictEqual(['user', 'agent', 'tool'])
+  })
+
+  it('keeps the image of a call that ended, and deletes the file of a call that the user stopped', async () => {
+    saveImage = async () => {
+      saves++
+      if (saves === 2) await sbp('dez.stream/stop', activeTab().id)
+      return generated(`g${saves}.png`)
+    }
+    replyRounds([
+      async (input) => ({
+        requestId: input.requestId as string,
+        toolCalls: [widthCall, { id: 'c2', name: 'crop_scale_image', argumentsText: '{"image":"a","height":100}' }],
+      }),
+    ])
+
+    await startStream({ sendTools: true })
+
+    const stopped = '<dez:tool id="c2" name="crop_scale_image" status="error" image="a" height="100">\nStopped.\n</dez:tool>\n'
+    expect(sectionVisibleText(agentSection())).toBe(`${widthBlock}${stopped}\n${reference('g1.png', 'b')}`)
+    expect(deletedImages).toStrictEqual([generated('g2.png')])
+    expect(sent).toHaveLength(1)
   })
 })
 

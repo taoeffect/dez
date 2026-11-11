@@ -107,9 +107,10 @@ export interface ModelInfo {
   // of a clip request kind whose provider tells it. Missing: unknown, and
   // Dez checks no text.
   text?: ClipTextRules
-  // What the model takes as the input images of a request (clipImages.ts),
-  // for a model of a video request kind whose provider tells it. Missing:
-  // an `imageToVideo` model takes one image, and a `video` model none.
+  // What the model takes as the input images of a request (clipImages.ts):
+  // how many, and the size rules of each one. For a model of a video
+  // request kind whose provider tells it. Missing: an `imageToVideo` model
+  // takes one image, and a `video` model none.
   images?: ClipImageRules
 }
 

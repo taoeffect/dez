@@ -3,6 +3,7 @@ import type { NativeHttpHeaders, NativeHttpRequest, NativeHttpResponseHead } fro
 import type { Secret } from '../../utils/secret'
 import { API_FORMATS, type ApiFormat } from './apiFormats'
 import { FORBIDDEN_BODY_KEYS, type ProviderConfig } from './config'
+import type { ImageSizeRules } from './imageSize'
 import { MEDIA_FORMATS, type ClipFormat, type ClipInput, type ClipJob, type ImageFormat, type MediaFormat, type MediaInput, type MediaWireRequest } from './mediaFormats'
 import type { ParameterValues } from './modelParameters'
 import { isRecord, modelCapability, modelData, modelOutputsAndRequest, unsupportedSettings } from './modelParsing'
@@ -287,6 +288,16 @@ export class Provider {
   // The images of a 2xx response to `mediaRequest`.
   mediaResult(kind: ImageKind, head: NativeHttpResponseHead, body: Uint8Array): GeneratedMedia[] {
     return this.imageFormat().parseResponse(kind, head, body)
+  }
+
+  // The size rules (imageSize.ts) of each input image of a request of
+  // `kind`: for a video, the rules of the model (`model`: what the model
+  // cache knows of it, or null); for an edit, the rules of the media API's
+  // edit request. Undefined when the provider tells none.
+  inputImageSize(kind: MediaKind, model: Pick<ModelInfo, 'images'> | null): ImageSizeRules | undefined {
+    if (isClipKind(kind)) return model?.images?.size
+    const mediaApi = this.config.mediaApi
+    return kind === 'imageEdit' && mediaApi ? MEDIA_FORMATS[mediaApi.format].images?.editImageSize : undefined
   }
 
   // The parts of a clip request kind (`ClipFormat` in mediaFormats.ts), for

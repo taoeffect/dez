@@ -259,6 +259,27 @@ describe('agentSectionMessages', () => {
       expect(agentSectionMessages(imageReply, model, true)).toStrictEqual([{ role: 'agent', content: '![image](id=a)' }])
     })
 
+    // The reference of a tool's image is at the start of the text of the
+    // round after the tool's group; the replay of that round is not the
+    // signature of an image.
+    it('keeps the thinking of a round whose only image is one that a Dez tool made', () => {
+      const toolImage = `![${IMAGE}](id=a|tool=crop_scale_image)`
+      const second = (roundText: string) => agentSectionMessages(agent(text.replace('More.', roundText), thinking), model, true)[2]
+
+      expect(second(`\n${toolImage}\n\nMore.`)).toStrictEqual({
+        role: 'agent',
+        content: '\n![image](id=a|tool=crop_scale_image)\n\nMore.',
+        thinking: { text: 'Plan 2', replay: replay2 },
+        toolCalls: [call('call_3', 'claude')],
+      })
+      // The model made an image in that round too.
+      expect(second(`\n${toolImage}\n\n![${IMAGE}](id=b)`)).toStrictEqual({
+        role: 'agent',
+        content: '\n![image](id=a|tool=crop_scale_image)\n\n![image](id=b)',
+        toolCalls: [call('call_3', 'claude')],
+      })
+    })
+
     it('sends no thinking to another model', () => {
       const sent = agentSectionMessages(agent(text, thinking), { providerId: 'local', modelId: 'other' }, true)
 

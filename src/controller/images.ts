@@ -1,8 +1,13 @@
 import sbp from '@sbp/sbp'
 import { convertFileSrc, isTauri } from '@tauri-apps/api/core'
 import { getCurrentWebview } from '@tauri-apps/api/webview'
+import type { DrawnImage, DrawnMediaType, ImageDrawing, ImageSize } from '../model/chat/imageDrawing'
 import { IMAGE_FOLDERS, imageExtension, isImagePath, storedImageFile, type ImageFolder, type ImageMediaType } from '../model/chat/images'
 import { fileNameOf } from '../utils/fileName'
+
+// The quality of a drawn JPEG, from 0 to 1: high, so that a second
+// encoding of a photo shows no new marks.
+const JPEG_QUALITY = 0.95
 
 let fileDropsWatched = false
 
@@ -78,6 +83,50 @@ export default sbp('sbp/selectors/register', {
     if (!response.ok) throw new Error(`Failed to read ${path}: HTTP ${response.status}`)
     const blob = await response.blob()
     return new File([blob], fileNameOf(path), { type: blob.type })
+  },
+
+  // Draws an image again in the webview: decodes `file` (an image of any
+  // type that the webview reads), asks `plan` what to draw for an image of
+  // that size (a part of it, at another size), and gives the drawing as a
+  // file of `mediaType`. Null when `plan` gives null: the image stays as
+  // it is, and nothing is drawn. There is no Rust code for this: the
+  // webview has the decoders. Rejects when the webview cannot decode the
+  // image, when `plan` throws, and when the drawing cannot be made; the
+  // caller logs it, as each caller has its own answer to a failure.
+  async 'dez.controller/images/redraw' (
+    file: Blob,
+    plan: (size: ImageSize) => ImageDrawing | null,
+    mediaType: DrawnMediaType,
+  ): Promise<DrawnImage | null> {
+    const url = URL.createObjectURL(file)
+    try {
+      const img = new Image()
+      img.src = url
+      // A tool gives the message of this error to a model, so the message
+      // says what failed; the webview's own error is the cause.
+      await img.decode().catch((error: unknown) => {
+        throw new Error('The image cannot be decoded.', { cause: error })
+      })
+      // An SVG without a width and height has no size to draw at.
+      if (!img.naturalWidth || !img.naturalHeight) throw new Error('The image has no size.')
+      const drawing = plan({ width: img.naturalWidth, height: img.naturalHeight })
+      if (!drawing) return null
+
+      const canvas = document.createElement('canvas')
+      canvas.width = drawing.width
+      canvas.height = drawing.height
+      const context = canvas.getContext('2d')
+      if (!context) throw new Error('No canvas to draw the image on.')
+      context.imageSmoothingQuality = 'high'
+      const { crop } = drawing
+      context.drawImage(img, crop.x, crop.y, crop.width, crop.height, 0, 0, drawing.width, drawing.height)
+      const drawn = await new Promise<Blob | null>((resolve) => canvas.toBlob(resolve, mediaType, JPEG_QUALITY))
+      // A canvas that cannot write a type writes a PNG in its place.
+      if (!drawn || drawn.type !== mediaType) throw new Error(`The image could not be drawn as ${mediaType}.`)
+      return { bytes: new Uint8Array(await drawn.arrayBuffer()), width: drawing.width, height: drawing.height }
+    } finally {
+      URL.revokeObjectURL(url)
+    }
   },
 
   // Tauri's native file drop is on only on Linux (tauri.linux.conf.json; see

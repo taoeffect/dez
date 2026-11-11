@@ -1,7 +1,7 @@
 import type { MessagePart, ModelRef, Section, SectionThinking, ThinkingReplay } from '../chat/types'
 import { sectionIsEmpty, sectionPlainText } from '../chat/content'
 import { findImageMentions } from '../chat/imageMentions'
-import { findImageReferences, type ImageReference } from '../chat/images'
+import { findImageReferences, IMAGE_TOOL_KEY, type ImageReference } from '../chat/images'
 import { sameModelRef } from '../chat/modelRef'
 import { holdsStoredFilePath, withoutStoredFilePaths } from '../chat/storedFilePaths'
 import { thinkingField } from '../chat/thinking'
@@ -200,12 +200,17 @@ function agentRounds(text: string): AgentRound[] {
 // inline tags) never goes back. A `field` replay sends the thinking text; the
 // other kinds hold the thinking in their own JSON.
 //
-// The thinking of a round whose text holds an image never goes back. A
-// round that made an image has the provider's signature of that image as
-// its replay (about 1 MB from a Gemini image model), and the request holds
-// the image only as its reference text. The stream controller keeps no
-// replay for such a round (`runChatRounds`, controller/stream.ts);
-// conversations from before that rule still hold one.
+// The thinking of a round whose text holds an image of the model never goes
+// back. A round that made an image has the provider's signature of that
+// image as its replay (about 1 MB from a Gemini image model), and the
+// request holds the image only as its reference text. The stream controller
+// keeps no replay for such a round (`runChatRounds`, controller/stream.ts);
+// conversations from before that rule still hold one. An image that a Dez
+// tool made (`IMAGE_TOOL_KEY`) does not count: its reference is at the
+// start of the text of the round after the tool's group, and the replay of
+// that round is of the model's text only. That round can call a tool too,
+// and some providers refuse a request that holds the calls of a round with
+// no thinking.
 //
 // The first round has the section's `replay` and the text up to the first
 // `rounds` entry. A later round has the entry whose `afterToolCall` is the
@@ -214,7 +219,8 @@ function agentRounds(text: string): AgentRound[] {
 function roundThinking(section: Section, requestModel: ModelRef, rounds: AgentRound[], index: number): { thinking?: SectionThinking } {
   const { thinking } = section
   if (!thinking || !sameModelRef(section.model, requestModel)) return {}
-  if (findImageReferences(rounds[index].text).length > 0) return {}
+  const madeByModel = ({ metadata }: ImageReference) => metadata.every((item) => item.key !== IMAGE_TOOL_KEY)
+  if (findImageReferences(rounds[index].text).some(madeByModel)) return {}
 
   const entries = thinking.rounds ?? []
   const textUpTo = (entry: number) => entries[entry]?.from ?? thinking.text.length

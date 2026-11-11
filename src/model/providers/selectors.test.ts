@@ -1,11 +1,12 @@
 import sbp from '@sbp/sbp'
 import { createPinia, setActivePinia } from 'pinia'
 import { afterEach, beforeEach, describe, expect, it, vi, type MockInstance } from 'vitest'
+import type { DrawnImage, ImageDrawing, ImageSize } from '../chat/imageDrawing'
 import type { ModelRef, Section } from '../chat/types'
 import { toolBlockText } from '../chat/toolBlocks'
 import { sectionsToStreamMessages } from '../streams/messages'
 import { bytesToBase64 } from '../../utils/base64'
-import type { NativeHttpRequest, NativeHttpResponse, NativeHttpStreamResult } from '../../utils/protocol/nativeHttp'
+import type { NativeHttpDownload, NativeHttpRequest, NativeHttpResponse, NativeHttpStreamResult } from '../../utils/protocol/nativeHttp'
 import type { ProviderGenerateMediaResult } from './streamTypes'
 import type { GeneratedMedia, ModelDisplayNames, ProviderModelsResult, ProviderSettingsDescriptor } from './types'
 // Side-effect imports: register the dez.model/* selectors and the selectors
@@ -21,10 +22,19 @@ let httpRequests: NativeHttpRequest[] = []
 let streamRequests: NativeHttpRequest[] = []
 let streamRequestIds: string[] = []
 let imageReads: string[] = []
+let downloadRequests: NativeHttpRequest[] = []
 
 // The app folder and its one stored image.
 const APP_DIR = '/home/u/.config/dez'
 const STORED_IMAGE = Uint8Array.from([137, 80, 78, 71, 13, 10, 26, 10, 0, 255])
+
+// The stand-in of the webview's canvas (dez.controller/images/redraw):
+// every stored image has the size `storedImageSize` (null: a file that the
+// webview cannot decode), and every drawing is the file `DRAWN_IMAGE`.
+// `drawings` holds what each call drew, and the file type that it asked.
+let storedImageSize: ImageSize | null
+let drawings: Array<[ImageDrawing | null, string]> = []
+const DRAWN_IMAGE = Uint8Array.from([1, 2, 3, 4])
 
 // Requests to this base URL get HTTP 404; every other server answers.
 const FAILING_BASE_URL = 'http://localhost:9090/v1'
@@ -98,6 +108,18 @@ sbp('sbp/selectors/register', {
     if (path === 'assets/images/red.png' || path === 'assets/generated/images/red.png') return STORED_IMAGE
     throw `Failed to read ${path}: No such file or directory (os error 2)`
   },
+  async 'dez.controller/images/redraw' (_file: Blob, plan: (size: ImageSize) => ImageDrawing | null, mediaType: string): Promise<DrawnImage | null> {
+    if (!storedImageSize) throw new Error('unknown image format')
+    const drawing = plan(storedImageSize)
+    drawings.push([drawing, mediaType])
+    return drawing && { bytes: DRAWN_IMAGE, width: drawing.width, height: drawing.height }
+  },
+  // Every clip request gets the clip as its answer.
+  async 'dez.native/downloadAppFile' (request: NativeHttpRequest): Promise<NativeHttpDownload> {
+    downloadRequests.push(request)
+    return { status: 200, headers: { 'content-type': 'video/mp4' }, saved: true, body: [] }
+  },
+  async 'dez.native/moveAppFile' (): Promise<void> {},
   async 'dez.http/stream' (request: NativeHttpRequest, requestId: string): Promise<NativeHttpStreamResult> {
     streamRequests.push(request)
     streamRequestIds.push(requestId)
@@ -137,6 +159,9 @@ beforeEach(() => {
   streamRequests = []
   streamRequestIds = []
   imageReads = []
+  downloadRequests = []
+  storedImageSize = { width: 1024, height: 768 }
+  drawings = []
   consoleError = vi.spyOn(console, 'error').mockImplementation(() => {})
   sbp('dez.model/customProviders/save', {
     id: 'local',
@@ -723,6 +748,82 @@ describe('media requests', () => {
     await expect(generate({ providerId: 'clips-only', kind: 'image' })).rejects.toThrow('Clip server has no image API that Dez can use.')
 
     expect(streamRequests).toEqual([])
+  })
+
+  describe('input images and the size rules of the request', () => {
+    const path = `${APP_DIR}/assets/images/red.png`
+    const dataUrl = (bytes: Uint8Array) => `data:image/png;base64,${bytesToBase64(bytes)}`
+    // The fields `fields` of the JSON body of each request.
+    const bodyFields = (requests: NativeHttpRequest[], fields: string[]) => requests.map((request) => {
+      const body = JSON.parse(request.body as string) as Record<string, unknown>
+      return fields.map((field) => body[field])
+    })
+    const editImages = () => bodyFields(streamRequests, ['images']).flat()
+    const frames = () => bodyFields(downloadRequests, ['image_url', 'end_image_url'])
+
+    // Puts the model `m` in the model cache as an image-to-video model
+    // whose images have these size rules. The video request needs a
+    // length.
+    function useVideoModel(size?: Record<string, number>): void {
+      sbp('dez.model/modelCache/applyProviderResult', 'media', {
+        ok: true,
+        models: [{
+          id: 'm',
+          name: 'M',
+          provider: 'media',
+          outputs: ['video'],
+          request: 'imageToVideo',
+          parameters: [{ name: 'duration', label: 'Length', options: ['5s'], default: '5s' }],
+          images: { maxFrames: 2, ...(size && { size }) },
+        }],
+      })
+    }
+
+    it('sends an edit image that is too small as a drawing with the least size of the edit request', async () => {
+      storedImageSize = { width: 100, height: 50 }
+
+      await generate({ kind: 'imageEdit', images: [path] })
+
+      expect(drawings).toStrictEqual([[{ crop: { x: 0, y: 0, width: 100, height: 50 }, width: 512, height: 256 }, 'image/png']])
+      expect(editImages()).toStrictEqual([[dataUrl(DRAWN_IMAGE)]])
+    })
+
+    it('sends an edit image that passes the rules as it is', async () => {
+      await generate({ kind: 'imageEdit', images: [path] })
+
+      expect(drawings).toStrictEqual([[null, 'image/png']])
+      expect(editImages()).toStrictEqual([[dataUrl(STORED_IMAGE)]])
+    })
+
+    it('sends an image that the webview cannot decode as it is, and logs the cause', async () => {
+      storedImageSize = null
+
+      await generate({ kind: 'imageEdit', images: [path] })
+
+      expect(editImages()).toStrictEqual([[dataUrl(STORED_IMAGE)]])
+      expect(consoleError).toHaveBeenCalledWith('Failed to fit an image to the size rules of the request:', new Error('unknown image format'))
+    })
+
+    it('sends each frame of a video as a drawing that passes the size rules of the model', async () => {
+      useVideoModel({ minShortSide: 300, minAspectRatio: 0.4, maxAspectRatio: 2.5 })
+      storedImageSize = { width: 100, height: 1000 }
+
+      await generate({ kind: 'imageToVideo', images: [path, path] })
+
+      const drawing = { crop: { x: 0, y: 375, width: 100, height: 249 }, width: 300, height: 747 }
+      expect(drawings).toStrictEqual([[drawing, 'image/png'], [drawing, 'image/png']])
+      expect(frames()).toStrictEqual([[dataUrl(DRAWN_IMAGE), dataUrl(DRAWN_IMAGE)]])
+    })
+
+    it('sends the frame of a video model whose provider tells no size rule as it is, and does not decode it', async () => {
+      useVideoModel()
+      storedImageSize = { width: 100, height: 1000 }
+
+      await generate({ kind: 'imageToVideo', images: [path] })
+
+      expect(drawings).toStrictEqual([])
+      expect(frames()).toStrictEqual([[dataUrl(STORED_IMAGE), undefined]])
+    })
   })
 })
 

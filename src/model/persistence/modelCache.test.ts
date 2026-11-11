@@ -103,6 +103,13 @@ describe('model cache persistence format', () => {
       },
       { id: 'sound', name: 'Sound', provider: 'venice', request: 'music', text: { lyrics: { required: false } } },
       { id: 'frames', name: 'Frames', provider: 'venice', request: 'imageToVideo', images: { maxFrames: 2 } },
+      {
+        id: 'sized',
+        name: 'Sized',
+        provider: 'venice',
+        request: 'imageToVideo',
+        images: { maxFrames: 2, size: { minShortSide: 300, minAspectRatio: 0.4, maxAspectRatio: 2.5 } },
+      },
       // A cache written before parameters existed.
       { id: 'old', name: 'Old', provider: 'venice', request: 'video' },
     ]
@@ -131,6 +138,33 @@ describe('model cache persistence format', () => {
 
     expect(parsed.providers.venice?.models).toStrictEqual(models)
     expect(parseModelCacheJson(serializeModelCacheJson(parsed))).toStrictEqual(parsed)
+  })
+
+  it('drops a size rule of the input images that is not valid, and keeps the model and its other rules', () => {
+    const model = (id: string, size: unknown) => ({ id, name: id, provider: 'venice', request: 'imageToVideo', images: { maxFrames: 2, size } })
+    const parsed = parseModelCacheJson(JSON.stringify({
+      version: MODEL_CACHE_VERSION,
+      providers: {
+        venice: {
+          models: [
+            model('one-bad', { minShortSide: -5, maxAspectRatio: 2.5 }),
+            model('all-bad', { minShortSide: 'wide', maxPixels: 1.5 }),
+            model('no-object', 300),
+            model('ratios-apart', { minAspectRatio: 2.5, maxAspectRatio: 0.4, minShortSide: 240 }),
+          ],
+          working: true,
+          updatedAt: 1,
+          lastCheckedAt: 2,
+        },
+      },
+    }))
+
+    expect(parsed.providers.venice?.models.map(({ id, images }) => [id, images])).toStrictEqual([
+      ['one-bad', { maxFrames: 2, size: { maxAspectRatio: 2.5 } }],
+      ['all-bad', { maxFrames: 2 }],
+      ['no-object', { maxFrames: 2 }],
+      ['ratios-apart', { maxFrames: 2, size: { minShortSide: 240 } }],
+    ])
   })
 
   it('keeps custom provider ids and drops keys that are not valid provider ids', () => {

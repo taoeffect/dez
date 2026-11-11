@@ -1,3 +1,4 @@
+import type { ImageSizeRules } from './imageSize'
 import type { ClipKind } from './types'
 
 // The input images of a video request. What a model takes is data on the
@@ -9,11 +10,14 @@ export interface ClipImageRules {
   // The most images of one request, 1 or more: the first one is the first
   // frame of the video, and the second one is its last frame.
   maxFrames: number
+  // The size rules of each image (imageSize.ts), for a model whose
+  // provider tells some. Never empty.
+  size?: ImageSizeRules
 }
 
 // A copy that shares no object with `rules`.
 export function cloneClipImageRules(rules: ClipImageRules): ClipImageRules {
-  return { ...rules }
+  return { ...rules, ...(rules.size && { size: { ...rules.size } }) }
 }
 
 /** The most images that a request of `kind` carries, for a model with

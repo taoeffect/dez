@@ -1,6 +1,9 @@
 import * as z from 'zod'
 import { MODEL_OUTPUT_IDS } from '../modelOutputs'
+import type { ClipImageRules } from '../providers/clipImages'
 import { isValidProviderId } from '../providers/config'
+import { imageSizeRules } from '../providers/imageSize'
+import { isRecord } from '../providers/modelParsing'
 import { MODEL_REQUESTS, type ProviderId } from '../providers/types'
 import type { CachedProvider, ModelCache } from './types'
 
@@ -27,8 +30,14 @@ const clipTextRulesSchema = z.object({
   lyrics: z.object({ required: z.boolean(), maxLength: textLengthSchema.optional() }).optional(),
 })
 
-// ClipImageRules (src/model/providers/clipImages.ts).
-const clipImageRulesSchema = z.object({ maxFrames: z.number().int().positive() })
+// ClipImageRules (src/model/providers/clipImages.ts). A bad size rule is
+// dropped alone (`imageSizeRules`), and the model stays: its images then
+// go as they are, and the provider checks them.
+const clipImageRulesSchema = z.object({ maxFrames: z.number().int().positive(), size: z.unknown() })
+  .transform(({ maxFrames, size }): ClipImageRules => {
+    const sizeRules = isRecord(size) ? imageSizeRules(size) : undefined
+    return { maxFrames, ...(sizeRules && { size: sizeRules }) }
+  })
 
 const modelInfoSchema = z.object({
   id: z.string(),

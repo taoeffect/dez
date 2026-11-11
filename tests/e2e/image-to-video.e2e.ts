@@ -1,7 +1,8 @@
+import fs from 'node:fs'
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from 'vitest'
 import { click, consoleErrors, resetConsoleErrors, screenshotOnFailure, typeKeys, waitForValue } from './harness/dom'
 import { readAppState } from './harness/fixtures'
-import { pasteImage, solidPng } from './harness/images'
+import { decodedImage, pasteImage, pngDataUrl, solidPng, stripedPng, type Rgb } from './harness/images'
 import { WEBM_VIDEO, shownPlayers } from './harness/media'
 import { startMockProviderApp, type MockProviderApp } from './harness/mockProviderApp'
 import type { HeldRequest, MockProvider } from './harness/mockServer'
@@ -24,7 +25,11 @@ import { editorDoc, focusEditor, newTab, openToasts, pickModel, setCaret, submit
 //   for a list that is empty, and an "Audio" switch that is on until the
 //   user turns it off;
 // - the first two images of a message go as the first and the last frame,
-//   and a warning toast tells of a third one.
+//   and a warning toast tells of a third one;
+// - an image that passes the size rules of the model's entry goes as its
+//   own bytes (the tests above); one that breaks them goes as a copy that
+//   passes them (the part in its middle, scaled), and the stored file and
+//   the message stay as they are.
 //
 // One app session serves the whole file; each test starts in a new tab.
 
@@ -46,15 +51,25 @@ const MODEL_LIST = {
         // As for a model whose clip takes the shape of its first frame.
         aspect_ratios: [],
         audio_configurable: true,
+        // The size rules of a frame: a ratio (width / height) between the
+        // two limits. The 48 x 32 images of the tests pass them.
+        reference_image_min_short_side_pixels: 32,
+        reference_image_min_aspect_ratio: 0.4,
+        reference_image_max_aspect_ratio: 2.5,
       },
     },
   }],
 }
 
-const FIRST_PNG = solidPng(48, 32, [220, 40, 40])
-const LAST_PNG = solidPng(48, 32, [40, 90, 220])
-const THIRD_PNG = solidPng(48, 32, [40, 160, 60])
-const dataUrl = (png: Buffer): string => `data:image/png;base64,${png.toString('base64')}`
+const RED: Rgb = [220, 40, 40]
+const GREEN: Rgb = [40, 160, 60]
+const BLUE: Rgb = [40, 90, 220]
+const FIRST_PNG = solidPng(48, 32, RED)
+const LAST_PNG = solidPng(48, 32, BLUE)
+const THIRD_PNG = solidPng(48, 32, GREEN)
+// 90 x 20, in three stripes of 30 columns: wider than the model's rules
+// allow, and its shorter side is too short.
+const WIDE_PNG = stripedPng(30, 20, [RED, GREEN, BLUE])
 
 describe('image-to-video models', () => {
   let setup: MockProviderApp
@@ -159,7 +174,7 @@ describe('image-to-video models', () => {
       duration: '5s',
       resolution: '480p',
       audio: true,
-      image_url: dataUrl(FIRST_PNG),
+      image_url: pngDataUrl(FIRST_PNG),
     })
     const clip = await answerJob(queue, 'queue-1', 1)
 
@@ -174,7 +189,7 @@ describe('image-to-video models', () => {
     // The new message has no image: the clip is not one, so the pasted
     // image is the newest.
     await submit(browser, 'Now it jumps.')
-    const next = await queueRequest({ prompt: 'Now it jumps.', duration: '5s', resolution: '480p', audio: true, image_url: dataUrl(FIRST_PNG) })
+    const next = await queueRequest({ prompt: 'Now it jumps.', duration: '5s', resolution: '480p', audio: true, image_url: pngDataUrl(FIRST_PNG) })
     const nextClip = await answerJob(next, 'queue-2', 3)
 
     expect(nextClip).toMatch(/^<dez:video id="c" type="video\/webm" src="[^"]+\.webm" expires="[^"]+" job="queue-2"\/>$/)
@@ -218,8 +233,8 @@ describe('image-to-video models', () => {
       duration: '5s',
       resolution: '480p',
       audio: false,
-      image_url: dataUrl(FIRST_PNG),
-      end_image_url: dataUrl(LAST_PNG),
+      image_url: pngDataUrl(FIRST_PNG),
+      end_image_url: pngDataUrl(LAST_PNG),
     })
     await waitForValue(browser, 'warning toast', () => openToasts(browser, 'warning'), [{
       title: 'Image not sent',
@@ -233,6 +248,41 @@ describe('image-to-video models', () => {
     await waitForValue(browser, 'popup after the reset', () => popupView(browser), defaults)
     await waitForValue(browser, 'stored values after the reset', storedParameters, null)
     await closePopup(browser)
+    expect(await consoleErrors(browser)).toStrictEqual([])
+  })
+
+  it('sends a copy that passes the size rules of the model for an image that breaks them, and keeps the stored image', async () => {
+    await pickModel(browser, FILMS.name, FILMS.modelName)
+    await focusEditor(browser)
+    await typeThenPaste('Wide: ', WIDE_PNG, 'a')
+    const message = (await threadSections(browser))[0].text
+    await submit(browser, '')
+
+    const queue = await queueRequest({
+      prompt: 'Wide: ![image](id=a)',
+      duration: '5s',
+      resolution: '480p',
+      audio: true,
+      image_url: expect.stringMatching(/^data:image\/png;base64,[A-Za-z0-9+/]+=*$/),
+    })
+    // The copy is the 49 columns in the middle of the image (20 to 68: a
+    // ratio just under 2.5), scaled until the shorter side has 32 pixels.
+    // So it shows 10 red, 30 green, and 9 blue columns, each 78 / 49 times
+    // as wide: the green stripe goes from column 16 to column 63. A copy
+    // of the whole image, or of a part at one of its sides, has another
+    // color in column 4, 24, or 54.
+    const opaque = (rgb: Rgb): number[] => [...rgb, 255]
+    expect(await decodedImage(browser, JSON.parse(queue.body).image_url, [4, 24, 39, 54, 73])).toStrictEqual({
+      width: 78,
+      height: 32,
+      pixels: [opaque(RED), opaque(GREEN), opaque(GREEN), opaque(GREEN), opaque(BLUE)],
+    })
+
+    const clip = await answerJob(queue, 'queue-4', 1)
+    expect(clip).toMatch(/^<dez:video id="b" type="video\/webm" src="[^"]+\.webm" expires="[^"]+" job="queue-4"\/>$/)
+    await waitForThread(browser, [{ role: 'user', text: message }, { role: 'agent', text: clip }, { role: 'user', text: '' }])
+    const storedPath = message.slice('Wide: !['.length, message.indexOf(']('))
+    expect(await fs.promises.readFile(storedPath)).toStrictEqual(WIDE_PNG)
     expect(await consoleErrors(browser)).toStrictEqual([])
   })
 })

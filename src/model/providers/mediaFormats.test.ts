@@ -277,10 +277,31 @@ describe('venice clip parameters', () => {
 })
 
 describe('venice clip image rules', () => {
-  const rules = (kind: ClipKind) => veniceClips.imageRules?.(kind, undefined, undefined)
+  const rules = (kind: ClipKind, constraints?: Record<string, unknown>) =>
+    veniceClips.imageRules?.(kind, constraints && { id: 'm', model_spec: { constraints } }, undefined)
 
   it('takes a first and a last frame for an image-to-video model', () => {
     expect(rules('imageToVideo')).toStrictEqual({ maxFrames: 2 })
+  })
+
+  it('reads the size rules of the images from the entry of the model', () => {
+    expect([
+      rules('imageToVideo', { reference_image_min_short_side_pixels: 300, reference_image_min_aspect_ratio: 0.4, reference_image_max_aspect_ratio: 2.5 }),
+      rules('imageToVideo', { reference_image_min_short_side_pixels: 240, aspect_ratios: ['16:9'] }),
+    ]).toStrictEqual([
+      { maxFrames: 2, size: { minShortSide: 300, minAspectRatio: 0.4, maxAspectRatio: 2.5 } },
+      { maxFrames: 2, size: { minShortSide: 240 } },
+    ])
+  })
+
+  it('takes no size rule from a value that cannot be a limit, and keeps the other rules', () => {
+    expect([
+      rules('imageToVideo', { reference_image_min_short_side_pixels: '300', reference_image_max_aspect_ratio: 2.5 }),
+      rules('imageToVideo', { reference_image_min_short_side_pixels: 0, reference_image_min_aspect_ratio: null }),
+    ]).toStrictEqual([
+      { maxFrames: 2, size: { maxAspectRatio: 2.5 } },
+      { maxFrames: 2 },
+    ])
   })
 
   it.each(['video', 'tts', 'music'] as const)('takes no image for a %s model', (kind) => {

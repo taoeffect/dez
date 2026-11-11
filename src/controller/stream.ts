@@ -1,7 +1,7 @@
 import sbp from '@sbp/sbp'
 import type { ActiveModel, Section, SectionThinking, Tab } from '../model/chat/types'
 import { sectionPlainText } from '../model/chat/content'
-import { imageMarkdown } from '../model/chat/images'
+import { IMAGE_TOOL_KEY, imageMarkdown, type ImageMetadataItem } from '../model/chat/images'
 import { modelRefKey } from '../model/chat/modelRef'
 import { tempMediaFile } from '../model/chat/mediaFiles'
 import { newMediaIds } from '../model/chat/mediaIds'
@@ -41,7 +41,7 @@ import {
   streamIsStreaming,
   streamSession,
 } from '../model/state/streams'
-import type { ToolRunCall } from './tools'
+import type { ToolRunCall, ToolRunContext } from './tools'
 
 interface StreamStartArgs {
   tabId: string
@@ -228,10 +228,18 @@ function stopToolRun(tabId: string, reply: ReplyRuntime): boolean {
 // Runs the calls of one round, in order: appends their running blocks (a
 // refused call gets its error block at once), runs each call, then replaces
 // the running blocks with the final ones. Nothing else of the reply writes
-// the section meanwhile. Returns the section after the round, or null when
-// the run did not end here: the user stopped the reply, or a submit ended
-// its output (stopToolRun wrote the blocks), or the user deleted the
-// running blocks.
+// the section meanwhile, but a tool can put an image after the blocks
+// (`ToolRunContext.writeImage`). Returns the section after the round, or
+// null when the run did not end here: the user stopped the reply, or a
+// submit ended its output (stopToolRun wrote the blocks), or the user
+// deleted the running blocks.
+//
+// The reference of a tool's image goes after the group, so it is the start
+// of the text of the next round, and has the name of its tool
+// (`IMAGE_TOOL_KEY`). The round that made the call keeps its text, and both
+// rounds keep their thinking: a request sends no thinking for a round whose
+// text holds an image of the model (`roundThinking`, streams/messages.ts),
+// and the request after a round of calls needs that round's thinking.
 async function runToolRound(tabId: string, reply: ReplyRuntime, calls: CheckedToolCall[], sectionText: string): Promise<Section | null> {
   const runningBlocks = calls.map((call) => toolCallBlock(call))
   const run: ToolRun = {
@@ -248,7 +256,12 @@ async function runToolRound(tabId: string, reply: ReplyRuntime, calls: CheckedTo
   for (const [index, call] of calls.entries()) {
     if (call.refusal !== undefined) continue
     const toolCall: ToolRunCall = { name: call.name, arguments: call.arguments }
-    const result = await sbp('dez.controller/tools/run', toolCall, run.abort.signal) as ToolRunResult
+    const context: ToolRunContext = {
+      tabId,
+      // Not after a stop (`stopToolRun`), as for an image of the model.
+      writeImage: (path) => (reply.toolRun === run ? writeImageReference(tabId, reply, path, [{ key: IMAGE_TOOL_KEY, value: call.name }]) : null),
+    }
+    const result = await sbp('dez.controller/tools/run', toolCall, run.abort.signal, context) as ToolRunResult
     if (reply.toolRun !== run) return null
     run.results[index] = result
   }
@@ -287,11 +300,28 @@ async function deleteTempCopies(clips: readonly GeneratedClip[]): Promise<void> 
   }
 }
 
+// Writes the reference of a stored image at the end of the reply's section,
+// as a paragraph of its own, with a new image id; `metadata` goes after the
+// id. Returns the id, or null when the section takes no text: the user
+// merged it into the one before, or the stream ended. The id and the write
+// are in one tick, so that no paste takes the id (the editor gives ids only
+// to pasted and dropped references). The model text that comes next starts
+// a new paragraph (`writeModelText`).
+function writeImageReference(tabId: string, reply: ReplyRuntime, path: string, metadata: readonly ImageMetadataItem[] = []): string | null {
+  const sections = (sbp('dez.model/tab', tabId) as Tab | null)?.sections ?? []
+  const texts = sections.map(sectionPlainText)
+  const sectionText = texts[sections.findIndex((section) => section.id === reply.sectionId)]
+  if (sectionText === undefined || !streamWritesSection(tabId, reply.sectionId)) return null
+  const [id] = newMediaIds(texts, 1)
+  receiveToken(tabId, reply.sectionId, paragraphGap(sectionText) + imageMarkdown(path, [{ key: 'id', value: id }, ...metadata]))
+  reply.afterImage = true
+  return id
+}
+
 // Puts an image of a chat reply at the end of its section: saves the file
-// in the generated image folder, then writes its reference, with a new
-// image id, as a paragraph of its own. No answer text comes meanwhile:
-// dez.provider/streamChat waits for this. A failed save leaves the image
-// out, and the reply goes on.
+// in the generated image folder, then writes its reference. No answer text
+// comes meanwhile: dez.provider/streamChat waits for this. A failed save
+// leaves the image out, and the reply goes on.
 async function writeReplyImage(tabId: string, reply: ReplyRuntime, image: GeneratedMedia): Promise<void> {
   let path: string
   try {
@@ -308,19 +338,9 @@ async function writeReplyImage(tabId: string, reply: ReplyRuntime, image: Genera
   // Text that the escaper holds is answer text from before the image. The
   // reference itself is not model text, so it gets no escape.
   if (current) flushModelText(tabId, reply)
-  const sections = (sbp('dez.model/tab', tabId) as Tab | null)?.sections ?? []
-  const texts = sections.map(sectionPlainText)
-  const sectionText = texts[sections.findIndex((section) => section.id === reply.sectionId)]
-  if (!current || sectionText === undefined) {
+  if (!current || writeImageReference(tabId, reply, path) === null) {
     await sbp('dez.controller/images/delete', path).catch(() => {})
-    return
   }
-
-  // The id and the write in one tick, so that no paste takes the id (the
-  // editor gives ids only to pasted and dropped references).
-  const [id] = newMediaIds(texts, 1)
-  receiveToken(tabId, reply.sectionId, paragraphGap(sectionText) + imageMarkdown(path, [{ key: 'id', value: id }]))
-  reply.afterImage = true
 }
 
 // The chat rounds of a reply: request rounds until a round ends with no
@@ -423,7 +443,15 @@ async function runChatRounds(args: StreamStartArgs, reply: ReplyRuntime): Promis
       return
     }
     afterToolCall = calls[0].id
-    messages = [...args.messages, ...agentSectionMessages(replySoFar, args.model, true)]
+    // Only up to the results of the newest group. The text after that group
+    // (an image that a tool of the round made, or text that the user typed
+    // while the tools ran) is the start of the next round's message. A
+    // request that ends with an agent message asks the model to go on from
+    // that text, and many providers refuse it. Every later request sends
+    // that text at the start of the message of the next round, after these
+    // same bytes.
+    const soFar = agentSectionMessages(replySoFar, args.model, true)
+    messages = [...args.messages, ...soFar.slice(0, soFar.findLastIndex((message) => message.role === 'tool') + 1)]
   }
 }
 

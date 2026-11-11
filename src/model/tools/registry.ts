@@ -1,10 +1,13 @@
 import type { JsonObject } from '../../utils/json'
+import { CROP_SCALE_IMAGE_TOOL } from './cropScaleImage'
 import { MODEL_INFO_TOOL } from './modelInfo'
 import { MODEL_LIST_TOOL } from './modelList'
 import type { ToolArguments, ToolArgumentValue, ToolDefinition, ToolParameterType } from './types'
 
-/** Every Dez tool, in the order that requests list them. */
-export const TOOL_DEFINITIONS: readonly ToolDefinition[] = [MODEL_LIST_TOOL, MODEL_INFO_TOOL]
+/** Every Dez tool, in the order that requests list them. A new tool goes
+ *  at the end: the tools before it then keep their bytes in the tools
+ *  array (the provider's prompt cache). */
+export const TOOL_DEFINITIONS: readonly ToolDefinition[] = [MODEL_LIST_TOOL, MODEL_INFO_TOOL, CROP_SCALE_IMAGE_TOOL]
 
 /** The Dez tool with this name; undefined when no Dez tool has it. */
 export function toolDefinition(name: string): ToolDefinition | undefined {

@@ -1,9 +1,11 @@
 import fs from 'node:fs'
+import path from 'node:path'
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from 'vitest'
 import { Key } from 'webdriverio'
 import { anthropicChatBody, anthropicMarkedUser, openAiChatBody } from './harness/chatBody'
-import { consoleErrors, pointerClick, resetConsoleErrors, screenshotOnFailure, waitForValue } from './harness/dom'
+import { consoleErrors, pointerClick, resetConsoleErrors, screenshotOnFailure, typeKeys, waitForValue } from './harness/dom'
 import { conversationFilePath, makeConversation, seedConversation } from './harness/fixtures'
+import { decodedImage, pasteImage, pngDataUrl, shownImages, stripedPng, type Rgb } from './harness/images'
 import { startMockProviderApp, type MockProviderApp } from './harness/mockProviderApp'
 import { mockChatPath, replyText, sendAnthropicReply, sendChatReply, startEventStream, writeAnthropicEvent, writeChatFrame, type MockProvider } from './harness/mockServer'
 import type { E2EBrowser } from './harness/session'
@@ -17,15 +19,23 @@ import { activeConversationId, activeTabStreaming, docPos, editorCaret, editorDo
 // prompt and tools, and a later request starts with the same bytes as the
 // one before it (the prompt cache). A relaunch reads the saved call back
 // from the conversation file. A Stop while the round after a call waits
-// keeps the call, and the next request sends it with its result. A long
-// result scrolls in its field under the wheel. Backspace and Delete next to
-// a chip never join its block to other text.
+// keeps the call, and the next request sends it with its result. A
+// `crop_scale_image` call makes a new image from a part of a pasted one:
+// the image goes into the reply after the call, and the requests name it
+// by its id, with no path. A long result scrolls in its field under the
+// wheel. Backspace and Delete next to a chip never join its block to other
+// text.
 //
 // One app session serves the whole file. The relaunch test reopens the tab
 // of the OpenAI test, so it runs right after it.
 
 const TOOLER: MockProvider = { id: 'tooler', name: 'Tool Mock', modelId: 'tool-model', modelName: 'Tool Model' }
 const CLAUDE: MockProvider = { id: 'claude', name: 'Claude Mock', modelId: 'claude-model', modelName: 'Claude Model', apiFormat: 'anthropic' }
+
+// 90 x 20, in three stripes of 30 columns: the image of the
+// `crop_scale_image` test.
+const GREEN: Rgb = [40, 160, 60]
+const STRIPES_PNG = stripedPng(30, 20, [[220, 40, 40], GREEN, [40, 90, 220]])
 
 // The `model_list` results for the filters of the tests. The mock providers
 // are the only configured ones: built-ins have no key in the test HOME. Their
@@ -356,6 +366,85 @@ describe('tool calls', () => {
       { role: 'agent', text: replyText('go on') },
       { role: 'user', text: '' },
     ])
+  })
+
+  it('runs a crop_scale_image call: the new image goes into the reply after the call, and the requests name it by its id', async () => {
+    await newTab(browser)
+    await pickModel(browser, TOOLER.name, TOOLER.modelName)
+    await focusEditor(browser)
+    await typeKeys(browser, 'Crop ')
+    await pasteImage(browser, STRIPES_PNG)
+    await waitForValue(browser, 'reference of the pasted image', async () => (await threadSections(browser))[0].text.endsWith('](id=a)'), true)
+    const message = (await threadSections(browser))[0].text
+    await submit(browser, '')
+    const first = await setup.mock.waitForRequest(browser)
+    const withImage = { role: 'user', content: [{ type: 'text', text: 'Crop ![image](id=a)' }, { type: 'image_url', image_url: { url: pngDataUrl(STRIPES_PNG) } }] }
+    expect(JSON.parse(first.body)).toEqual(openAiChatBody(TOOLER, [withImage]))
+
+    // The green stripe (columns 30 to 59), at twice its size.
+    const call = {
+      id: 'call_crop',
+      type: 'function',
+      function: { name: 'crop_scale_image', arguments: JSON.stringify({ image: 'a', crop_x: 30, crop_y: 0, crop_width: 30, crop_height: 20, width: 60 }) },
+    }
+    startEventStream(first.reply)
+    writeChatFrame(first.reply, { content: 'Cropping.' })
+    writeChatFrame(first.reply, { tool_calls: [{ index: 0, ...call }] }, 'tool_calls')
+    first.reply.end('data: [DONE]\n\n')
+
+    // The result names the new image by its id and gives its size. The
+    // reference of the image comes after the request of this round, so the
+    // request ends with the result.
+    const result = 'Made the image @b from @a. The image @b is 60x40 pixels.'
+    const round = [
+      { role: 'assistant', content: 'Cropping.', tool_calls: [call] },
+      { role: 'tool', tool_call_id: 'call_crop', content: result },
+    ]
+    const second = await setup.mock.waitForRequest(browser)
+    expect(JSON.parse(second.body)).toEqual(openAiChatBody(TOOLER, [withImage, ...round]))
+    expectSentPrefix(first.body, second.body)
+    await sendChatReply(second.reply, TOOLER.modelName)
+
+    // The new image is a file of the generated images, written into the
+    // reply after the call with the name of the tool that made it. The
+    // text of the next round starts a new paragraph after it.
+    await waitForValue(browser, 'sections after the reply', async () => (await threadSections(browser)).length, 3)
+    const reply = (await threadSections(browser))[1].text
+    const madePath = reply.slice(reply.indexOf('![') + 2, reply.indexOf(']('))
+    const block = `<dez:tool id="call_crop" name="crop_scale_image" image="a" crop_x="30" crop_y="0" crop_width="30" crop_height="20" width="60">\n${result}\n</dez:tool>`
+    expect(path.dirname(madePath)).toBe(path.join(setup.app.home, '.config', 'dez', 'assets', 'generated', 'images'))
+    const sections = [
+      { role: 'user', text: message },
+      { role: 'agent', text: `Cropping.\n${block}\n\n![${madePath}](id=b|tool=crop_scale_image)\n\n${replyText(TOOLER.modelName)}` },
+    ]
+    await waitForThread(browser, [...sections, { role: 'user', text: '' }])
+    const pastedPath = message.slice('Crop !['.length, message.indexOf(']('))
+    await waitForValue(browser, 'shown images', () => shownImages(browser), [
+      { alt: path.basename(pastedPath), width: 90, height: 20 },
+      { alt: path.basename(madePath), width: 60, height: 40 },
+    ])
+    const made = await fs.promises.readFile(madePath)
+    expect(await decodedImage(browser, pngDataUrl(made), [10, 30, 50])).toEqual({
+      width: 60,
+      height: 40,
+      pixels: [[...GREEN, 255], [...GREEN, 255], [...GREEN, 255]],
+    })
+    expect(await fs.promises.readFile(pastedPath)).toEqual(STRIPES_PNG)
+
+    // A later request holds the reference of the new image as text with no
+    // path, at the start of the message after the result; a mention of its
+    // id sends the image.
+    await submit(browser, 'Is @b green?')
+    const third = await setup.mock.waitForRequest(browser)
+    expect(JSON.parse(third.body)).toEqual(openAiChatBody(TOOLER, [
+      { role: 'user', content: 'Crop ![image](id=a)' },
+      ...round,
+      { role: 'assistant', content: `\n![image](id=b|tool=crop_scale_image)\n\n${replyText(TOOLER.modelName)}` },
+      { role: 'user', content: [{ type: 'text', text: 'Is @b' }, { type: 'image_url', image_url: { url: pngDataUrl(made) } }, { type: 'text', text: ' green?' }] },
+    ]))
+    expect(third.body).not.toContain(setup.app.home)
+    await sendChatReply(third.reply, 'green')
+    await waitForThread(browser, [...sections, { role: 'user', text: 'Is @b green?' }, { role: 'agent', text: replyText('green') }, { role: 'user', text: '' }])
   })
 
   it('scrolls a result that is taller than its field under the wheel, not the doc', async () => {

@@ -3,6 +3,7 @@ import { history, undo } from '@codemirror/commands'
 import { EditorSelection, EditorState, type TransactionSpec } from '@codemirror/state'
 import type { EditorView } from '@codemirror/view'
 import { afterEach, beforeEach, describe, expect, it, vi, type MockInstance } from 'vitest'
+import type { DrawnImage, ImageDrawing, ImageSize } from '../../model/chat/imageDrawing'
 import { imageMarkdown } from '../../model/chat/images'
 import { mediaTagText } from '../../model/chat/mediaTags'
 import { SECTION_SEP, clipboardPasteTransaction, encodePrompt, pillsField, sectionsField } from '../thread/cmEditor'
@@ -33,6 +34,8 @@ let activeTabId = 'tab-1'
  *  other path fails to read. */
 let localFiles = new Map<string, File>()
 let readPaths: string[] = []
+/** What `dez.controller/images/redraw` does with the plan of its caller. */
+let redraw: (plan: (size: ImageSize) => ImageDrawing | null, mediaType: string) => Promise<DrawnImage | null>
 let consoleError: MockInstance<typeof console.error>
 
 sbp('sbp/selectors/register', {
@@ -57,6 +60,9 @@ sbp('sbp/selectors/register', {
     readPaths.push(path)
     const file = localFiles.get(path)
     return file ? Promise.resolve(file) : Promise.reject(new Error(`Failed to read ${path}: HTTP 404`))
+  },
+  'dez.controller/images/redraw' (_file: Blob, plan: (size: ImageSize) => ImageDrawing | null, mediaType: string): Promise<DrawnImage | null> {
+    return redraw(plan, mediaType)
   },
 })
 
@@ -143,12 +149,12 @@ beforeEach(() => {
   activeTabId = 'tab-1'
   localFiles = new Map()
   readPaths = []
+  redraw = () => Promise.reject(new Error('No image of another type in this test.'))
   consoleError = vi.spyOn(console, 'error').mockImplementation(() => {})
 })
 
 afterEach(() => {
   consoleError.mockRestore()
-  vi.unstubAllGlobals()
 })
 
 describe('pasteImages', () => {
@@ -271,32 +277,14 @@ describe('inserting the saved images', () => {
     expect(editor.doc()).toBe('first tab')
   })
 
-  it('stores an image of another type as a PNG, drawn at its own size', async () => {
-    vi.stubGlobal('Image', class {
-      src = ''
-      naturalWidth = 40
-      naturalHeight = 30
-      decode(): Promise<void> {
-        return Promise.resolve()
-      }
-    })
-    // Unit tests have no DOM: a stand-in canvas whose PNG starts with byte
-    // 7, so the saved file name tells the PNG from the BMP (byte 66).
-    const drawnPngs: string[] = []
-    vi.stubGlobal('document', {
-      createElement: () => {
-        const canvas = {
-          width: 300,
-          height: 150,
-          getContext: () => ({ drawImage() {} }),
-          toBlob(callback: (blob: Blob | null) => void, type: string) {
-            drawnPngs.push(`${canvas.width}x${canvas.height} ${type}`)
-            callback(new Blob([new Uint8Array([7, ...PNG_BYTES.subarray(1)])], { type }))
-          },
-        }
-        return canvas
-      },
-    })
+  it('stores an image of another type as a PNG, drawn whole at its own size', async () => {
+    // The drawn PNG starts with byte 7, so the saved file name tells the PNG
+    // from the BMP (byte 66).
+    const drawings: unknown[] = []
+    redraw = async (plan, mediaType) => {
+      drawings.push([plan({ width: 40, height: 30 }), mediaType])
+      return { bytes: new Uint8Array([7, ...PNG_BYTES.subarray(1)]), width: 40, height: 30 }
+    }
     const editor = createEditor('', 0)
     const bitmap = new File([new Uint8Array([66, 77])], 'scan.bmp', { type: 'image/bmp' })
 
@@ -304,17 +292,12 @@ describe('inserting the saved images', () => {
 
     await vi.waitFor(() => expect(editor.doc()).toBe(reference(7)))
     expect(saveCalls.map((call) => call.mediaType)).toEqual(['image/png'])
-    expect(drawnPngs).toEqual(['40x30 image/png'])
+    expect(drawings).toStrictEqual([[{ crop: { x: 0, y: 0, width: 40, height: 30 }, width: 40, height: 30 }, 'image/png']])
     expect(toasts).toEqual([])
   })
 
   it('leaves out an image of another type that the webview cannot decode, with a warning', async () => {
-    vi.stubGlobal('Image', class {
-      src = ''
-      decode(): Promise<void> {
-        return Promise.reject(new Error('unknown image format'))
-      }
-    })
+    redraw = () => Promise.reject(new Error('unknown image format'))
     const editor = createEditor('', 0)
     const bitmap = new File([new Uint8Array([66, 77])], 'scan.bmp', { type: 'image/bmp' })
 

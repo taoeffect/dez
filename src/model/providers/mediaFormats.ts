@@ -4,6 +4,7 @@ import { trimTrailingSlashes, type MediaApiFormatId } from './config'
 import type { ClipImageRules } from './clipImages'
 import type { ClipTextRules } from './clipText'
 import { generatedBase64Image, generatedImage } from './generatedImages'
+import { imageSizeRules, type ImageSizeRules } from './imageSize'
 import { isOptionValue, parameterTakes, type ModelParameter, type OptionsParameter, type OptionValue, type ParameterValues, type RangeParameter } from './modelParameters'
 import { isRecord, valueAtPath } from './modelParsing'
 import { CLIP_KINDS, type ChatImagePart, type ClipKind, type GeneratedMedia, type ImageKind } from './types'
@@ -68,6 +69,9 @@ export interface ImageFormat {
   // The images of a 2xx response to a request of `kind`. Throws when the
   // body holds none.
   parseResponse(kind: ImageKind, head: NativeHttpResponseHead, body: Uint8Array): GeneratedMedia[]
+  // The size rules of each image of an `imageEdit` request, for an API
+  // whose docs tell them. They are rules of the request, not of a model.
+  editImageSize?: ImageSizeRules
 }
 
 // What a media API tells about the price of one clip before the request.
@@ -98,8 +102,8 @@ export interface ClipFormat {
   // two entries; undefined when the API tells nothing about it.
   textRules?(kind: ClipKind, entry: unknown, mediaEntry: unknown): ClipTextRules | undefined
   // What a model of `kind` takes as input images, from the same two
-  // entries; undefined for a model that takes none, as far as the API
-  // tells.
+  // entries, with the size rules of each image when an entry tells them;
+  // undefined for a model that takes none, as far as the API tells.
   imageRules?(kind: ClipKind, entry: unknown, mediaEntry: unknown): ClipImageRules | undefined
   request(kind: ClipKind, baseUrl: string, modelId: string, input: ClipInput): MediaWireRequest
   // The job that the JSON of a 2xx response to `request` names. Throws when
@@ -297,6 +301,14 @@ const veniceFormat: MediaFormat = {
       if (images.length === 0) throw new Error('The provider sent no image.')
       return images.map((image) => generatedBase64Image(image))
     },
+    // "For edit endpoints, images must be at least 256×256 pixels, and the
+    // total pixel count must not exceed 33,177,600 (8K resolution)." The
+    // API reference says "at least 65536 pixels" (256 × 256) in place of
+    // the first part; an image whose sides are both 256 or more passes
+    // both readings.
+    // https://docs.venice.ai/guides/media/image-editing
+    // https://docs.venice.ai/api-reference/endpoint/image/multi-edit
+    editImageSize: { minShortSide: 256, maxPixels: 33_177_600 },
   },
   clips: {
     // tts: the entry names no default voice, and each model has its own.
@@ -379,7 +391,24 @@ const veniceFormat: MediaFormat = {
     // the field, and that request costs nothing. A text-to-video model
     // takes no image. (The reference images of the "reference-to-video"
     // models are other fields, which Dez does not send.)
-    imageRules: (kind) => (kind === 'imageToVideo' ? { maxFrames: 2 } : undefined),
+    // Some entries tell the size that an image must have
+    // (`reference_image_…`): the least length of its shorter side, and the
+    // limits of width / height, which the image must be between ("Image
+    // aspect ratio (W / H): exclusive (0.4, 2.5)"). The API refuses an
+    // image outside them with a 400; the Wan 3.0 models scale a small
+    // image up themselves, which gives the same image.
+    // https://docs.venice.ai/guides/media/seedance-2-0
+    // https://docs.venice.ai/guides/media/wan-3-0
+    imageRules: (kind, entry) => {
+      if (kind !== 'imageToVideo') return undefined
+      const limit = (field: string) => valueAtPath(entry, `model_spec.constraints.reference_image_${field}`)
+      const size = imageSizeRules({
+        minShortSide: limit('min_short_side_pixels'),
+        minAspectRatio: limit('min_aspect_ratio'),
+        maxAspectRatio: limit('max_aspect_ratio'),
+      })
+      return { maxFrames: 2, ...(size && { size }) }
+    },
     // The schemas allow no field that they do not name, and a field that
     // the model does not take is an error. The values are the fields of the
     // model's own parameters, so they go as they are.
@@ -532,6 +561,9 @@ const openRouterFormat: MediaFormat = {
     // The video list tells which frames a model takes an image for
     // (`supported_frame_images`). The images of a request go in the order
     // of OPENROUTER_FRAMES, so a last frame counts only with a first one.
+    // No size rules: `supported_sizes` and `supported_aspect_ratios` are
+    // the sizes of the video, and the docs tell no size that a frame image
+    // must have.
     imageRules: (kind, _entry, mediaEntry) => {
       if (CLIP_KINDS[kind] !== 'video') return undefined
       const frames = listedValues(valueAtPath(mediaEntry, 'supported_frame_images'))

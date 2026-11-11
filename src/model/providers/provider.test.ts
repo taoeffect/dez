@@ -1464,6 +1464,26 @@ describe('media model data', () => {
     ])
   })
 
+  it('gives the size rules of the input images of a request: of the model for a video, of the edit request for an edit', () => {
+    const size = { minShortSide: 300, minAspectRatio: 0.4, maxAspectRatio: 2.5 }
+    const model = { images: { maxFrames: 2, size } }
+
+    expect([
+      veniceLike.inputImageSize('imageToVideo', model),
+      veniceLike.inputImageSize('video', model),
+      veniceLike.inputImageSize('imageEdit', model),
+      // An image request with no input image, and a clip of a model that
+      // the model cache does not know or that tells no rules.
+      veniceLike.inputImageSize('image', model),
+      veniceLike.inputImageSize('imageToVideo', null),
+      veniceLike.inputImageSize('imageToVideo', { images: { maxFrames: 2 } }),
+      // The OpenRouter docs tell no rule, and a provider with no media
+      // API has none.
+      openRouterLike.inputImageSize('imageEdit', null),
+      customProvider({}).inputImageSize('imageEdit', null),
+    ]).toStrictEqual([size, size, { minShortSide: 256, maxPixels: 33_177_600 }, undefined, undefined, undefined, undefined, undefined])
+  })
+
   it('merges the body parts of the config into the media requests of the kind and the models that they name, in list order', () => {
     const provider = customProvider({
       mediaApi: {

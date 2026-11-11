@@ -1,9 +1,14 @@
 import sbp from '@sbp/sbp'
+import { sectionPlainText } from '../model/chat/content'
+import { drawnMediaType, type DrawnImage, type ImageSize } from '../model/chat/imageDrawing'
+import { findImageReferences, imageMediaType } from '../model/chat/images'
 import { modelRefKey } from '../model/chat/modelRef'
+import type { Tab } from '../model/chat/types'
 import type { ModelCache } from '../model/persistence/types'
 import { effectiveParameterValues } from '../model/providers/modelParameters'
 import { effectiveRequest, isClipKind, type ProviderInfo } from '../model/providers/types'
 import type { SettingsSnapshot } from '../model/state'
+import { cropScaleDrawing, cropScaleImageId, cropScaleResultText, imageSizeText } from '../model/tools/cropScaleImage'
 import { modelInfoParameterValues, modelInfoText, modelInfoTarget, type ModelInfoRequest, type ModelInfoTarget } from '../model/tools/modelInfo'
 import { modelListText } from '../model/tools/modelList'
 import type { ToolArguments, ToolRunResult } from '../model/tools/types'
@@ -15,10 +20,20 @@ export interface ToolRunCall {
   arguments: ToolArguments
 }
 
+/** What a runner gets of the reply that made its call. */
+export interface ToolRunContext {
+  tabId: string
+  /** Writes the reference of a stored image that the tool made into the
+   *  reply, with a new image id, and returns that id. Null when the reply
+   *  takes no image any more (a stop ended the tool round): the runner
+   *  then deletes the file. */
+  writeImage(path: string): string | null
+}
+
 // The code of each Dez tool (TOOL_DEFINITIONS), by tool name. A runner gives
 // the result text, or throws for an error result. `signal` aborts when the
 // user stops the reply; a runner that waits on something must stop then.
-type ToolRunner = (args: ToolArguments, signal: AbortSignal) => Promise<string>
+type ToolRunner = (args: ToolArguments, signal: AbortSignal, context: ToolRunContext) => Promise<string>
 
 // Waits for `work` until the user stops the reply; then rejects at once.
 // The work itself goes on: a model-list check still updates the model cache.
@@ -88,20 +103,74 @@ const TOOL_RUNNERS: Record<string, ToolRunner> = {
     }
     return modelInfoText(provider, model, entry, request)
   },
+  // A new image from an image of the call's tab: a part of it, at another
+  // size (`cropScaleDrawing`). The webview draws it (images/redraw), the
+  // file goes into the generated image folder, and the reply gets its
+  // reference. The image that the call names stays as it is. A call that
+  // names no part and no size draws nothing and tells the size of the
+  // image, so that a model can ask before a crop.
+  //
+  // The errors and the result name images by their ids only: both go to the
+  // chat provider, which gets no path of a stored file. The causes are in
+  // the log.
+  async crop_scale_image (args, signal, context) {
+    const id = cropScaleImageId(args)
+    const sections = (sbp('dez.model/tab', context.tabId) as Tab | null)?.sections ?? []
+    // The newest reference with an id is its image, as for an `@id` mention
+    // (`sectionsToStreamMessages`).
+    const source = sections.flatMap((section) => findImageReferences(sectionPlainText(section))).findLast((reference) => reference.id === id)
+    const sourceType = source && imageMediaType(source.path)
+    if (!source || !sourceType) throw new Error(`No image of this conversation has the id @${id}.`)
+
+    let file: File
+    try {
+      file = await sbp('dez.controller/images/readFile', source.path) as File
+    } catch (error) {
+      console.error(`Failed to read the image @${id}:`, error)
+      throw new Error(`The file of the image @${id} cannot be read.`)
+    }
+
+    // Set by the plan of a call that names no part and no size: only the
+    // plan gets the size of the image.
+    let sizeText = ''
+    const mediaType = drawnMediaType(sourceType)
+    const drawn = await sbp('dez.controller/images/redraw', file, (size: ImageSize) => {
+      const drawing = cropScaleDrawing(args, size)
+      if (!drawing) sizeText = imageSizeText(id, size)
+      return drawing
+    }, mediaType) as DrawnImage | null
+    if (!drawn) return sizeText
+
+    signal.throwIfAborted()
+    let path: string
+    try {
+      path = await sbp('dez.controller/images/save', drawn.bytes, mediaType, { folder: 'generated' }) as string
+    } catch {
+      // images/save logged the failure and showed its error toast.
+      throw new Error('Dez could not save the new image.')
+    }
+    const newId = context.writeImage(path)
+    if (newId === null) {
+      // A file that no reference names; images/delete logs its own failures.
+      await sbp('dez.controller/images/delete', path).catch(() => {})
+      throw new Error('The reply ended before the image was made.')
+    }
+    return cropScaleResultText(id, newId, drawn)
+  },
 }
 
 export default sbp('sbp/selectors/register', {
   /** Runs one call of a reply's tool round. Never throws: a tool with no
    *  runner and a runner that throws give an error result, which the model
    *  reads in the next round. */
-  async 'dez.controller/tools/run' (call: ToolRunCall, signal: AbortSignal): Promise<ToolRunResult> {
+  async 'dez.controller/tools/run' (call: ToolRunCall, signal: AbortSignal, context: ToolRunContext): Promise<ToolRunResult> {
     const runner = Object.hasOwn(TOOL_RUNNERS, call.name) ? TOOL_RUNNERS[call.name] : undefined
     if (!runner) {
       console.error(`No runner for the tool ${JSON.stringify(call.name)}`)
       return { content: `Unknown tool: ${JSON.stringify(call.name)}.`, isError: true }
     }
     try {
-      return { content: await runner(call.arguments, signal), isError: false }
+      return { content: await runner(call.arguments, signal, context), isError: false }
     } catch (error) {
       // A run that the user stopped did not fail; the reply drops its result.
       if (!signal.aborted) console.error(`The tool ${call.name} failed:`, error)

@@ -2,6 +2,7 @@ import sbp from '@sbp/sbp'
 import { EditorState, type Extension } from '@codemirror/state'
 import { EditorView, dropCursor } from '@codemirror/view'
 import { SENTINEL_CHAR } from '../../model/chat/content'
+import type { DrawnImage, ImageSize } from '../../model/chat/imageDrawing'
 import { imageMarkdown, isImageMediaType, type ImageMediaType } from '../../model/chat/images'
 import { pastedMediaIdChanges } from '../../model/chat/mediaIds'
 import { MEDIA_TAG_NAMES } from '../../model/chat/mediaTags'
@@ -61,41 +62,21 @@ function transferredFiles(data: DataTransfer): File[] {
   })
 }
 
-/** An image that the webview can decode, drawn again as a PNG. */
-async function convertToPng(file: Blob): Promise<Uint8Array> {
-  const url = URL.createObjectURL(file)
-  try {
-    const img = new Image()
-    img.src = url
-    await img.decode()
-    // An SVG without a width and height has no size to draw at.
-    if (!img.naturalWidth || !img.naturalHeight) throw new Error('The image has no size.')
-    const canvas = document.createElement('canvas')
-    canvas.width = img.naturalWidth
-    canvas.height = img.naturalHeight
-    const context = canvas.getContext('2d')
-    if (!context) throw new Error('No canvas to draw the image on.')
-    context.drawImage(img, 0, 0)
-    const png = await new Promise<Blob | null>((resolve) => canvas.toBlob(resolve, 'image/png'))
-    if (!png) throw new Error('The image could not be converted to PNG.')
-    return new Uint8Array(await png.arrayBuffer())
-  } finally {
-    URL.revokeObjectURL(url)
-  }
-}
-
 function showImageNotAddedToast(message: string): void {
   sbp('dez.ui/toast', 'app-global', { title: 'Image not added', message, variant: 'warning', duration: 8000 })
 }
 
 /** The bytes to store for an image file: the file as it is for a type that
  *  Dez stores (`isImageMediaType`), else a PNG of any other image that the
- *  webview can decode (BMP, TIFF, AVIF, SVG, …). Null, after a warning
- *  toast, when the file cannot be read or decoded. */
+ *  webview can decode (BMP, TIFF, AVIF, SVG, …), whole and at its own size.
+ *  Null, after a warning toast, when the file cannot be read or decoded. */
 async function storableImage(file: File): Promise<StorableImage | null> {
   try {
     if (isImageMediaType(file.type)) return { bytes: new Uint8Array(await file.arrayBuffer()), mediaType: file.type }
-    return { bytes: await convertToPng(file), mediaType: 'image/png' }
+    const wholeImage = ({ width, height }: ImageSize) => ({ crop: { x: 0, y: 0, width, height }, width, height })
+    // Never null: the plan gives a drawing for every size.
+    const png = await sbp('dez.controller/images/redraw', file, wholeImage, 'image/png') as DrawnImage
+    return { bytes: png.bytes, mediaType: 'image/png' }
   } catch (error) {
     console.error('Failed to read the image:', error)
     showImageNotAddedToast(`Dez cannot read ${file.name || 'the image'} (${file.type}).`)
