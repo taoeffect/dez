@@ -1,6 +1,7 @@
 import type { MessagePart, RequestMessage, ThinkingReplay } from '../chat/types'
 import type { StreamedToolCall } from '../tools/types'
-import type { ChatRequestContext, GeneratedMedia, MediaKind, ProviderId } from './types'
+import type { ParameterValues } from './modelParameters'
+import type { ChatRequestContext, GeneratedClip, GeneratedMedia, MediaKind, ProviderId } from './types'
 
 // A message as dez.provider/streamChat takes it: an image part holds the
 // path of a stored image, and streamChat reads its bytes before it builds
@@ -50,11 +51,25 @@ export interface ProviderGenerateMediaInput {
   // an `imageEdit` request, the first one the image to edit. A request of
   // another kind does not send them.
   images?: readonly string[]
-  // dez.http/cancelStream with this id cancels the request.
+  // The values to set for the model's parameters (ModelInfo.parameters),
+  // by parameter name, for a clip kind. A parameter with no value here, or
+  // with one that the model does not take, gets its default.
+  parameters?: Readonly<ParameterValues>
+  // dez.http/cancelStream with this id cancels the request that runs. A
+  // clip can take many requests, one after the other, and a wait between
+  // them; `signal` stops all of that.
   requestId?: string
+  signal?: AbortSignal
 }
 
+// An image kind gives `media`, and a clip kind (tts, music, video) gives
+// `clips`; the other list is empty.
 export interface ProviderGenerateMediaResult {
-  // The files that the model made, in the provider's order.
+  // The image files that the model made, in the provider's order.
   media: GeneratedMedia[]
+  clips: GeneratedClip[]
 }
+
+// The input of dez.provider/mediaQuote: the fields of the
+// dez.provider/generateMedia input that set the price.
+export type ProviderMediaQuoteInput = Pick<ProviderGenerateMediaInput, 'providerId' | 'modelId' | 'kind' | 'parameters'>

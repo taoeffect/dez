@@ -74,6 +74,45 @@ describe('model cache persistence format', () => {
     expect(parseModelCacheJson(serializeModelCacheJson(parsed))).toStrictEqual(parsed)
   })
 
+  it('round-trips the parameters of a model, and drops only a model whose parameters are not valid', () => {
+    const models = [
+      {
+        id: 'film',
+        name: 'Film',
+        provider: 'venice',
+        request: 'video',
+        parameters: [
+          { name: 'duration', label: 'Length', options: ['5s', '10s'], default: '5s' },
+          { name: 'seconds', label: 'Length (seconds)', options: [1, 5] },
+          { name: 'duration_seconds', label: 'Length (seconds)', min: 1, max: 30, default: 5 },
+          { name: 'steps', label: 'Steps', min: 1, max: 8 },
+        ],
+      },
+      // A cache written before parameters existed.
+      { id: 'old', name: 'Old', provider: 'venice', request: 'video' },
+    ]
+    const parsed = parseModelCacheJson(JSON.stringify({
+      version: MODEL_CACHE_VERSION,
+      providers: {
+        venice: {
+          models: [
+            ...models,
+            { id: 'no-options', name: 'No options', provider: 'venice', parameters: [{ name: 'voice', label: 'Voice', options: [] }] },
+            { id: 'bad-option', name: 'Bad option', provider: 'venice', parameters: [{ name: 'loop', label: 'Loop', options: [true, false] }] },
+            { id: 'half-range', name: 'Half range', provider: 'venice', parameters: [{ name: 'seconds', label: 'Length', min: 1 }] },
+            { id: 'no-list', name: 'No list', provider: 'venice', parameters: { name: 'voice', label: 'Voice', options: ['a'] } },
+          ],
+          working: true,
+          updatedAt: 1,
+          lastCheckedAt: 2,
+        },
+      },
+    }))
+
+    expect(parsed.providers.venice?.models).toStrictEqual(models)
+    expect(parseModelCacheJson(serializeModelCacheJson(parsed))).toStrictEqual(parsed)
+  })
+
   it('keeps custom provider ids and drops keys that are not valid provider ids', () => {
     const parsed = parseModelCacheJson(JSON.stringify({
       version: MODEL_CACHE_VERSION,

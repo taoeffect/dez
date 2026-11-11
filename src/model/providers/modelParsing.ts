@@ -14,11 +14,11 @@ export function modelData<T extends Record<string, unknown>>(data: unknown): T[]
   return data.data.filter(isRecord) as T[]
 }
 
-// The value at a config dot path in a `/models` entry, or undefined when the
-// entry has none (JSON has no undefined values, so this never hides one).
-// Only own properties are read, so a segment such as 'constructor' never
+// The value at a dot path in a `/models` entry, or undefined when the entry
+// has none (JSON has no undefined values, so this never hides one). Only
+// own properties are read, so a segment such as 'constructor' never
 // reaches an inherited member.
-function valueAtPath(model: Record<string, unknown>, path: string): unknown {
+export function valueAtPath(model: unknown, path: string): unknown {
   let value: unknown = model
   for (const segment of path.split('.')) {
     if (!isRecord(value) || !Object.hasOwn(value, segment)) return undefined
@@ -49,15 +49,25 @@ function hasValueAtPath(model: Record<string, unknown>, path: string): boolean {
   return value !== undefined && value !== null
 }
 
+// The request kind that one type of `modelOutputs.values` gives an entry:
+// the kind of the entry's value at the type's `requestBy.path` when
+// `requestBy.values` names that value, else the type's `request`, else
+// `none`.
+function typeRequest(model: Record<string, unknown>, { request, requestBy }: ModelOutputsConfig['values'][string]): ModelRequest {
+  const value = requestBy === undefined ? undefined : valueAtPath(model, requestBy.path)
+  // Object.hasOwn: as for the raw types below.
+  if (requestBy !== undefined && typeof value === 'string' && Object.hasOwn(requestBy.values, value)) return requestBy.values[value]
+  return request ?? 'none'
+}
+
 // What a `/models` entry's model makes and how Dez sends it a request, from
 // the raw types at the config's `modelOutputs.path` (a string, or a list of
 // them, such as OpenRouter's `architecture.output_modalities`). Types that
 // `values` does not name are skipped, as is a type whose `requiredPath` has
 // no value in the entry (or null); with no known type, both stay unknown.
 // The outputs are the union of the known types' outputs. The request kind is
-// `chat` when one type gives it, so an image+text model stays a chat model;
-// else the first other kind in list order; else `none`, the kind of a type
-// with no `request`.
+// `chat` when one type gives it (`typeRequest`), so an image+text model
+// stays a chat model; else the first other kind in list order; else `none`.
 export function modelOutputsAndRequest(model: Record<string, unknown>, mapping: ModelOutputsConfig | undefined): Pick<ModelCapabilities, 'outputs' | 'request'> {
   if (mapping === undefined) return {}
 
@@ -71,7 +81,7 @@ export function modelOutputsAndRequest(model: Record<string, unknown>, mapping: 
     .filter((entry) => entry.requiredPath === undefined || hasValueAtPath(model, entry.requiredPath))
   if (known.length === 0) return {}
 
-  const requests: ModelRequest[] = known.map((entry) => entry.request ?? 'none')
+  const requests = known.map((entry) => typeRequest(model, entry))
   return {
     outputs: normalizeOutputs(known.flatMap((entry) => entry.outputs)),
     request: requests.includes('chat') ? 'chat' : requests.find((kind) => kind !== 'none') ?? 'none',

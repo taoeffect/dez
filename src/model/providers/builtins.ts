@@ -23,19 +23,22 @@ export const BUILT_IN_PROVIDER_CONFIGS: readonly ProviderConfig[] = [
     modelToolCalling: { path: 'supported_parameters' },
     // A list; "text" with "image" is a chat model that also makes images
     // (`imageOutputBody`). Image-only models answer only through
-    // OpenRouter's Image API (their `endpoints` have no chat route), and
-    // audio and video models have their own APIs too, so they get no
-    // request yet. "image" counts only with an image price: the routers
-    // (`openrouter/auto`) report it too, but none of their models makes
-    // images (checked live, 2026-11-10).
+    // OpenRouter's Image API (their `endpoints` have no chat route), which
+    // Dez does not speak, so they get no request yet. "image" counts only
+    // with an image price: the routers (`openrouter/auto`) report it too,
+    // but none of their models makes images (checked live, 2026-11-10).
+    // Speech and video-only models take the media API (`mediaApi`); the
+    // few video models that need a video or an image as input get the same
+    // request, and OpenRouter refuses it. "audio" comes only with "text":
+    // those models answer through chat.
     modelOutputs: {
       path: 'architecture.output_modalities',
       values: {
         text: { outputs: ['text'], request: 'chat' },
         image: { outputs: ['image'], requiredPath: 'pricing.image_output' },
         audio: { outputs: ['audio'] },
-        speech: { outputs: ['audio'] },
-        video: { outputs: ['video'] },
+        speech: { outputs: ['audio'], request: 'tts' },
+        video: { outputs: ['video'], request: 'video' },
         transcription: { outputs: ['text'] },
         embeddings: { outputs: [] },
         rerank: { outputs: [] },
@@ -55,6 +58,9 @@ export const BUILT_IN_PROVIDER_CONFIGS: readonly ProviderConfig[] = [
     // outputs hold `image`. The streamed images are in `delta.images`.
     // https://openrouter.ai/docs/api/api-reference/chat/create-a-chat-completion
     imageOutputBody: { modalities: ['image', 'text'] },
+    // The speech and video models take OpenRouter's own speech and video
+    // APIs.
+    mediaApi: { format: 'openrouter' },
     // OpenRouter drops a field that the routed model does not take, so the
     // request is safe for every model. Some models must think, so there is no
     // off field.
@@ -91,8 +97,11 @@ export const BUILT_IN_PROVIDER_CONFIGS: readonly ProviderConfig[] = [
     modelListQuery: { type: 'all' },
     modelImageInput: { path: 'model_spec.capabilities.supportsVision' },
     modelToolCalling: { path: 'model_spec.capabilities.supportsFunctionCalling' },
-    // One `type` per model. `inpaint` models edit images; Dez does not run
-    // upscale, audio, video, or speech-to-text (`asr`) models yet.
+    // One `type` per model. `inpaint` models edit images. `music` models
+    // also make sounds. Every video model has the type `video`: only the
+    // ones that need just a text get requests; the others need an image or
+    // a video, which Dez does not send yet. Dez does not run upscale or
+    // speech-to-text (`asr`) models yet.
     modelOutputs: {
       path: 'type',
       values: {
@@ -100,9 +109,12 @@ export const BUILT_IN_PROVIDER_CONFIGS: readonly ProviderConfig[] = [
         image: { outputs: ['image'], request: 'image' },
         inpaint: { outputs: ['image'], request: 'imageEdit' },
         upscale: { outputs: ['image'] },
-        tts: { outputs: ['audio'] },
-        music: { outputs: ['audio'] },
-        video: { outputs: ['video'] },
+        tts: { outputs: ['audio'], request: 'tts' },
+        music: { outputs: ['audio'], request: 'music' },
+        video: {
+          outputs: ['video'],
+          requestBy: { path: 'model_spec.constraints.model_type', values: { 'text-to-video': 'video' } },
+        },
         asr: { outputs: ['text'] },
         embedding: { outputs: [] },
         decision: { outputs: [] },
@@ -123,7 +135,8 @@ export const BUILT_IN_PROVIDER_CONFIGS: readonly ProviderConfig[] = [
     // Venice adds its own system prompt when this field is missing, so every
     // request turns it off.
     requestBody: { venice_parameters: { include_venice_system_prompt: false } },
-    // The image models (`image`, `inpaint`) take Venice's own image API.
+    // The image, speech, music, and video models take Venice's own media
+    // API.
     mediaApi: { format: 'venice' },
     // Every request sends these `venice_parameters` too, with these defaults
     // when the user has not changed a toggle in the provider settings popup.

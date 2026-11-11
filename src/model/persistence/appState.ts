@@ -6,6 +6,8 @@ import {
   providerSettingDefSchema,
   type ProviderConfig,
 } from '../providers/config'
+import { isParameterValue, type ParameterValues } from '../providers/modelParameters'
+import { parseModelRefKey } from '../chat/modelRef'
 import type { AppStatePayload } from './types'
 import type { DefaultModel, Theme, WindowGeometry } from '../state/settings'
 import { EDITOR_FONT_SIZE_DEFAULT, clampEditorFontSize } from '../editorFontSize'
@@ -83,6 +85,22 @@ function providerSettings(value: unknown): Record<string, Record<string, boolean
   return output
 }
 
+// The parameter values that the user chose: full model id -> parameter
+// name -> text or number. Tolerant like `providerSettings`: a bad value
+// drops only its key, a bad record only its model. A key that is no full
+// model id (`modelRefKey`) is dropped too, so `__proto__` is never a key.
+// A model with no value left gets no entry.
+function modelParameters(value: unknown): Record<string, ParameterValues> {
+  if (!isRecord(value)) return {}
+  const output: Record<string, ParameterValues> = {}
+  for (const [modelKey, record] of Object.entries(value)) {
+    if (parseModelRefKey(modelKey) === null || !isRecord(record)) continue
+    const values = Object.entries(record).filter((entry): entry is [string, ParameterValues[string]] => isParameterValue(entry[1]))
+    if (values.length > 0) output[modelKey] = Object.fromEntries(values)
+  }
+  return output
+}
+
 // Drops the invalid items of a hand-edited list one at a time, so one bad
 // item does not drop the whole provider.
 function validItems(list: unknown[], schema: z.ZodType, itemName: string, entryIndex: number): unknown[] {
@@ -152,6 +170,7 @@ export function defaultAppState(): AppStatePayload {
     favorites: [],
     modelOutputFilter: [],
     providerSettings: {},
+    modelParameters: {},
     checkForUpdates: true,
     lastUpdateCheckAt: null,
     doneSound: true,
@@ -196,6 +215,7 @@ export function parseAppStateJson(content: string): AppStatePayload {
         ? normalizeOutputs(parsed.modelOutputFilter)
         : fallback.modelOutputFilter,
       providerSettings: providerSettings(parsed.providerSettings),
+      modelParameters: modelParameters(parsed.modelParameters),
       checkForUpdates: typeof parsed.checkForUpdates === 'boolean'
         ? parsed.checkForUpdates
         : fallback.checkForUpdates,

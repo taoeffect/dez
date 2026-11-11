@@ -1,8 +1,9 @@
 import sbp from '@sbp/sbp'
 import { createPinia, setActivePinia } from 'pinia'
 import { afterEach, beforeEach, describe, expect, it, vi, type MockInstance } from 'vitest'
+import type { ProviderMediaQuoteInput } from '../model/providers/streamTypes'
 import { providerInfo } from '../model/providers/testing'
-import type { ProviderInfo } from '../model/providers/types'
+import type { ModelInfo, ProviderInfo } from '../model/providers/types'
 import { modelInfoText } from '../model/tools/modelInfo'
 import { TOOL_DEFINITIONS } from '../model/tools/registry'
 import type { ToolRunResult } from '../model/tools/types'
@@ -22,10 +23,17 @@ const MODELS = (id: string) => [
 // beforeEach and by the tests.
 let refreshes: unknown[] = []
 let refreshCheck: () => Promise<void>
+// The price requests, and what the provider answers to one.
+let quotes: ProviderMediaQuoteInput[] = []
+let quoteAnswer: () => Promise<number | null>
 
 sbp('sbp/selectors/register', {
   async 'dez.provider/infos' (): Promise<ProviderInfo[]> {
     return providers
+  },
+  async 'dez.provider/mediaQuote' (input: ProviderMediaQuoteInput): Promise<number | null> {
+    quotes.push(input)
+    return quoteAnswer()
   },
   async 'dez.controller/modelCache/refresh' (options: unknown): Promise<void> {
     refreshes.push(options)
@@ -47,6 +55,8 @@ beforeEach(() => {
     sbp('dez.model/modelCache/applyProviderResult', id, { ok: true, models: MODELS(id) })
   }
   refreshes = []
+  quotes = []
+  quoteAnswer = async () => 0.07
   // A check that the provider passes, with an entry for each model.
   refreshCheck = async () => {
     sbp('dez.model/modelCache/applyProviderResult', 'venice', {
@@ -138,6 +148,99 @@ describe('dez.controller/tools/run', () => {
       expect((await result).isError).toBe(true)
       // A stop is not a failure.
       expect(consoleError).not.toHaveBeenCalled()
+    })
+
+    describe('for a model with parameters', () => {
+      const VIDEO: ModelInfo = {
+        id: 'wan',
+        name: 'Wan',
+        provider: 'venice',
+        request: 'video',
+        parameters: [
+          { name: 'duration', label: 'Length', options: ['4s', '8s', '12s'], default: '4s' },
+          { name: 'resolution', label: 'Resolution', options: ['480p', '720p'], default: '480p' },
+          { name: 'aspect_ratio', label: 'Aspect ratio', options: ['16:9', '1:1'], default: '16:9' },
+        ],
+      }
+      const entry = { id: 'wan' }
+      const mediaEntry = { id: 'wan', pricing_skus: { per_second: '2' } }
+      const info = (call: Record<string, string> = {}) => run({ name: 'model_info', arguments: { model: 'venice/wan', ...call } })
+
+      beforeEach(() => {
+        sbp('dez.model/modelCache/applyProviderResult', 'venice', {
+          ok: true,
+          models: [VIDEO],
+          entries: new Map([['wan', entry]]),
+          mediaEntries: new Map([['wan', mediaEntry]]),
+        })
+        // The user's choice in the provider settings popup.
+        sbp('dez.model/settings/setModelParameter', { providerId: 'venice', modelId: 'wan' }, 'duration', '8s')
+        sbp('dez.model/settings/setModelParameter', { providerId: 'venice', modelId: 'wan' }, 'resolution', '720p')
+      })
+
+      it('gives the values that a request sends now, their price, and the entry of the media list', async () => {
+        const values = { duration: '8s', resolution: '720p', aspect_ratio: '16:9' }
+
+        expect(await info()).toStrictEqual({
+          content: modelInfoText(providers[0], VIDEO, entry, { values, cost: { usd: 0.07 }, mediaEntry }),
+          isError: false,
+        })
+        expect(quotes).toStrictEqual([{ providerId: 'venice', modelId: 'wan', kind: 'video', parameters: values }])
+      })
+
+      it('lets a value of the call win over the user\'s value, for this call only', async () => {
+        const values = { duration: '12s', resolution: '720p', aspect_ratio: '1:1' }
+
+        expect((await info({ parameters: '{"duration": "12s", "aspect_ratio": "1:1"}' })).content)
+          .toBe(modelInfoText(providers[0], VIDEO, entry, { values, cost: { usd: 0.07 }, mediaEntry }))
+        expect(quotes.map(({ parameters }) => parameters)).toStrictEqual([values])
+        expect(sbp('dez.model/settings/snapshot').modelParameters).toStrictEqual({ 'venice/wan': { duration: '8s', resolution: '720p' } })
+      })
+
+      it('gives an error result, and asks for no price, for a value that the model does not take', async () => {
+        expect(await info({ parameters: '{"duration": "5s"}' })).toStrictEqual({
+          content: 'The tool failed: The parameter "duration" takes one of: "4s", "8s", "12s".',
+          isError: true,
+        })
+        expect(quotes).toStrictEqual([])
+      })
+
+      it('gives no price where the provider has no price request', async () => {
+        quoteAnswer = async () => null
+
+        expect((await info()).content)
+          .toBe(modelInfoText(providers[0], VIDEO, entry, { values: { duration: '8s', resolution: '720p', aspect_ratio: '16:9' }, mediaEntry }))
+      })
+
+      // The provider's text can echo details of the user's account.
+      it('still gives the model when the price request fails, without the provider\'s error text', async () => {
+        quoteAnswer = async () => { throw new Error('Venice returned HTTP 402: account u-123 has no funds') }
+
+        const result = await info()
+
+        expect(result.isError).toBe(false)
+        expect(result.content).not.toContain('u-123')
+        expect(JSON.parse(result.content).dez.cost).toStrictEqual({ error: expect.any(String) })
+        expect(consoleError).toHaveBeenCalledOnce()
+      })
+
+      it('stops waiting for the price when the user stops the reply', async () => {
+        quoteAnswer = () => new Promise(() => {})
+        const abort = new AbortController()
+        const result = sbp('dez.controller/tools/run', { name: 'model_info', arguments: { model: 'venice/wan' } }, abort.signal) as Promise<ToolRunResult>
+        await vi.waitFor(() => expect(quotes).toHaveLength(1))
+
+        abort.abort()
+
+        expect((await result).isError).toBe(true)
+        expect(consoleError).not.toHaveBeenCalled()
+      })
+    })
+
+    it('asks for no price of a model that makes no clip', async () => {
+      await run({ name: 'model_info', arguments: { model: 'venice/venice-gemini-3-pro' } })
+
+      expect(quotes).toStrictEqual([])
     })
   })
 })

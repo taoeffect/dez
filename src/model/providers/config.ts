@@ -44,8 +44,9 @@ export function trimTrailingSlashes(url: string): string {
 
 export const API_FORMAT_IDS = ['openai', 'anthropic'] as const
 
-// Wire formats of a provider's own image, audio, and video API (`mediaApi`).
-export const MEDIA_API_FORMAT_IDS = ['venice'] as const
+// Wire formats of a provider's own image, audio, and video API (`mediaApi`;
+// mediaFormats.ts tells which request kinds each one serves).
+export const MEDIA_API_FORMAT_IDS = ['venice', 'openrouter'] as const
 
 const providerIdSchema = z.string().refine(
   isValidProviderId,
@@ -184,6 +185,16 @@ const modelOutputsConfigSchema = z.object({
     // routers (`openrouter/auto`) report "image", but they have no image
     // price, and they refuse a request that asks for image output.
     requiredPath: modelEntryPathSchema.optional(),
+    // For a server whose type does not tell the request kind: a second
+    // value of the entry, at `path`, does. A value that `values` names
+    // gives its kind; any other value, or none, gives `request`. Venice
+    // reports every video model as `video`, and only
+    // `model_spec.constraints.model_type` tells a model that needs just a
+    // text (`text-to-video`) from one that needs an image or a video.
+    requestBy: z.object({
+      path: modelEntryPathSchema,
+      values: z.record(z.string(), z.enum(MODEL_REQUESTS)),
+    }).optional(),
   })),
 })
 
@@ -247,7 +258,8 @@ export const providerConfigSchema = z.object({
   // images of a reply (openaiSse.ts).
   imageOutputBody: requestBodyPartSchema.optional(),
   // The wire format of the provider's own image, audio, and video requests.
-  // Missing: the provider has none, so its media models get no requests.
+  // Missing: the provider has none, so its media models get no requests. A
+  // request of a kind that the format does not serve fails the same way.
   mediaApi: z.object({ format: z.enum(MEDIA_API_FORMAT_IDS) }).optional(),
   settings: z.array(providerSettingDefSchema).optional(),
   thinking: thinkingConfigSchema.optional(),

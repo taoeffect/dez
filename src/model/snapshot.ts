@@ -1,6 +1,7 @@
 import type { ActiveModel, ContentNode, ModelRef, SectionThinking } from './chat/types'
 import type { ModelOutput } from './modelOutputs'
 import type { ProviderConfig } from './providers/config'
+import type { ParameterValues } from './providers/modelParameters'
 import type { Prompt } from './state/prompts'
 import type { DefaultModel, Theme, WindowGeometry } from './state/settings'
 import type { ShortcutOverrides } from './shortcuts'
@@ -33,6 +34,7 @@ export interface ModelSnapshot {
     favorites: DefaultModel[]
     modelOutputFilter: ModelOutput[]
     providerSettings: Record<string, Record<string, boolean>>
+    modelParameters: Record<string, ParameterValues>
     checkForUpdates: boolean
     lastUpdateCheckAt: number | null
     doneSound: boolean

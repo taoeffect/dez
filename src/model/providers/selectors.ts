@@ -6,14 +6,17 @@ import type { ModelCache } from '../persistence/types'
 import { bytesToBase64 } from '../../utils/base64'
 import { fileNameOf } from '../../utils/fileName'
 import { secret, type Secret } from '../../utils/secret'
-import { nativeResponseJson, nativeResponseText, readNativeChunkBytes, type NativeHttpResponse, type NativeHttpStreamResult } from '../../utils/protocol/nativeHttp'
+import { nativeResponseJson, nativeResponseText, readNativeChunkBytes, type NativeHttpRequest, type NativeHttpResponse, type NativeHttpStreamResult } from '../../utils/protocol/nativeHttp'
+import { CLIP_JOB_TIMEOUT_MS, clipPollDelay, sendClipRequest, type ClipRun } from './clipRequests'
 import { assertProviderResponseOk } from './errors'
 import { generatedImageFromUrl } from './generatedImages'
+import type { MediaWireRequest } from './mediaFormats'
+import { effectiveParameterValues, type ParameterValues } from './modelParameters'
 import type { Provider, ProviderChatRequest } from './provider'
 import { getProvider, listProviders, requireProvider } from './registry'
 import { assertStreamResponseOk, streamProviderTokens } from './streaming'
-import type { ProviderChatInputMessage, ProviderGenerateMediaInput, ProviderGenerateMediaResult, ProviderStreamChatInput, ProviderStreamChatResult } from './streamTypes'
-import { ProviderNotConfiguredError, type ChatImagePart, type ChatMessage, type ChatPart, type ModelDisplayNames, type ProviderId, type ProviderInfo, type ProviderModelsResult, type ProviderSettingsDescriptor } from './types'
+import type { ProviderChatInputMessage, ProviderGenerateMediaInput, ProviderGenerateMediaResult, ProviderMediaQuoteInput, ProviderStreamChatInput, ProviderStreamChatResult } from './streamTypes'
+import { CLIP_KINDS, ProviderNotConfiguredError, isClipKind, type ChatImagePart, type ChatMessage, type ChatPart, type ModelDisplayNames, type ModelInfo, type ProviderId, type ProviderInfo, type ProviderModelsResult, type ProviderSettingsDescriptor } from './types'
 
 // The stored key, or null when there is none. Throws for GitHub Copilot when
 // the user is not signed in.
@@ -106,6 +109,22 @@ async function fetchReplyImage(provider: Provider, url: string): Promise<Uint8Ar
   return readNativeChunkBytes(chunks)
 }
 
+// The JSON of the 2xx response to a request that is not a stream (a model
+// list, a price). Throws for any other status.
+async function jsonResponse(provider: Provider, request: NativeHttpRequest): Promise<unknown> {
+  const response = await sbp('dez.native/httpRequest', request) as NativeHttpResponse
+  assertProviderResponseOk(response, provider, nativeResponseText(response))
+  return nativeResponseJson<unknown>(response)
+}
+
+// The value that a clip request sends for each parameter of a model: the
+// model's parameters are in the model cache (`ModelInfo.parameters`), and
+// `chosen` holds the values that the caller wants (`effectiveParameterValues`).
+function clipParameterValues(providerId: ProviderId, modelId: string, chosen: Readonly<ParameterValues> | undefined): ParameterValues {
+  const model = sbp('dez.model/modelCache/model', providerId, modelId) as ModelInfo | null
+  return effectiveParameterValues(model?.parameters ?? [], chosen)
+}
+
 export default sbp('sbp/selectors/register', {
   async 'dez.provider/infos' (): Promise<ProviderInfo[]> {
     let keyIds: string[] = []
@@ -160,21 +179,34 @@ export default sbp('sbp/selectors/register', {
 
   // Never throws for a known provider: every failure becomes `ok: false`, the
   // basis for the provider's "working" status in the model cache.
+  //
+  // The model list and the list of the media API (`mediaModelListRequest`)
+  // load at the same time. A failed list of the media API does not fail the
+  // check, as the provider's other models work without it: its models then
+  // have no parameters, and a model that needs them gets no request until a
+  // later check (`ClipFormat.request`).
   async 'dez.provider/listModelsResult' (providerId: ProviderId): Promise<ProviderModelsResult> {
     const provider = requireProvider(providerId)
 
     try {
-      const request = provider.modelListRequest(await requestSecret(provider))
-      if (!request) {
-        const models = provider.configModels()
-        return { ok: true, models, entries: provider.modelEntries(models) }
-      }
-
-      const response = await sbp('dez.native/httpRequest', request) as NativeHttpResponse
-      assertProviderResponseOk(response, provider, nativeResponseText(response))
-      const data = nativeResponseJson<unknown>(response)
-      const models = provider.mergeModels(provider.parseModels(data))
-      return { ok: true, models, entries: provider.modelEntries(models, data) }
+      const secretValue = await requestSecret(provider)
+      const listRequest = provider.modelListRequest(secretValue)
+      const mediaListRequest = provider.mediaModelListRequest(secretValue)
+      const [data, mediaData] = await Promise.all([
+        listRequest ? jsonResponse(provider, listRequest) : undefined,
+        mediaListRequest
+          ? jsonResponse(provider, mediaListRequest).catch((error: unknown) => {
+            console.error(`Failed to list the media models of provider ${providerId}:`, error)
+            return undefined
+          })
+          : undefined,
+      ])
+      // With no model list, these are the config models.
+      const merged = provider.mergeModels(provider.parseModels(data))
+      const entries = provider.modelEntries(merged, data)
+      const mediaEntries = mediaData === undefined ? undefined : provider.mediaModelEntries(mediaData)
+      const models = provider.withParameters(merged, entries, mediaEntries ?? new Map())
+      return { ok: true, models, entries, ...(mediaEntries && { mediaEntries }) }
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error)
       console.error(`Failed to list models for provider ${providerId}:`, error)
@@ -203,22 +235,107 @@ export default sbp('sbp/selectors/register', {
     }
   },
 
-  // Makes media with a model of the provider's media API (`mediaApi`): an
-  // image, or an edit of stored images. It needs no tab or editor, so a tool
-  // can call it too. The request goes through dez.http/stream with
-  // `requestId`, so dez.http/cancelStream cancels it. A cancel before the
-  // response headers rejects; a cancel after them ends the body early, so a
-  // caller that cancelled must drop the result.
+  // Makes media with a model of the provider's media API (`mediaApi`). It
+  // needs no tab or editor, so a tool can call it too. dez.http/cancelStream
+  // with `requestId` cancels the request that runs, and `signal` does the
+  // same and also ends the wait of a clip job.
+  //
+  // - An image, or an edit of stored images: one request through
+  //   dez.http/stream. A cancel before the response headers rejects; a
+  //   cancel after them ends the body early, so a caller that cancelled
+  //   must drop the result.
+  // - A clip (speech, music, video): the answer to the first request is the
+  //   clip, or a job. For a job, the provider is asked for its state each
+  //   `CLIP_POLL_INTERVAL_MS` until the clip is there: in the answer to
+  //   that request, at a URL that plays, at a URL to copy, or behind one
+  //   more request. A clip that came as bytes is a temp copy in the cache
+  //   root (`sendClipRequest`), which the caller must delete when it does
+  //   not keep the clip. A stop rejects. The request sets the model's
+  //   parameters (the length, the voice): `input.parameters` where the
+  //   model takes the value, else the parameter's default.
+  //
+  // A provider takes the money for a job when it starts. So after that
+  // point, a failure and a stop log the job id, and the message of a
+  // failure names it: with the id, the user can ask the provider for the
+  // clip.
   async 'dez.provider/generateMedia' (input: ProviderGenerateMediaInput): Promise<ProviderGenerateMediaResult> {
     const provider = requireProvider(input.providerId)
-    const paths = input.images ?? []
-    if (input.kind === 'imageEdit' && paths.length === 0) throw new Error('No image to edit')
+    const { kind, modelId, signal } = input
+    const requestId = input.requestId ?? crypto.randomUUID()
+    // The native cancel also ends a clip request (`downloadAppFile`).
+    const cancelRequest = () => {
+      sbp('dez.http/cancelStream', requestId).catch((error: unknown) => console.error('Failed to cancel a media request:', error))
+    }
+    signal?.addEventListener('abort', cancelRequest)
+    let jobId: string | null = null
+    try {
+      if (!isClipKind(kind)) {
+        const paths = input.images ?? []
+        if (kind === 'imageEdit' && paths.length === 0) throw new Error('No image to edit')
 
-    const appDir = paths.length > 0 ? await sbp('dez.native/getAppDir') as string : ''
-    const images = await Promise.all(paths.map((path) => readImagePart(path, appDir)))
-    const request = provider.mediaRequest(input.kind, input.modelId, { prompt: input.prompt, images }, await requestSecret(provider))
-    const { response, chunks } = await sbp('dez.http/stream', request, input.requestId ?? crypto.randomUUID()) as NativeHttpStreamResult
-    await assertStreamResponseOk(provider, response, chunks)
-    return { media: provider.mediaResult(input.kind, response, await readNativeChunkBytes(chunks)) }
+        const appDir = paths.length > 0 ? await sbp('dez.native/getAppDir') as string : ''
+        const images = await Promise.all(paths.map((path) => readImagePart(path, appDir)))
+        const request = provider.mediaRequest(kind, modelId, { prompt: input.prompt, images }, await requestSecret(provider))
+        signal?.throwIfAborted()
+        const { response, chunks } = await sbp('dez.http/stream', request, requestId) as NativeHttpStreamResult
+        await assertStreamResponseOk(provider, response, chunks)
+        return { media: provider.mediaResult(kind, response, await readNativeChunkBytes(chunks)), clips: [] }
+      }
+
+      const startedAt = Date.now()
+      const run: ClipRun = { provider, kind, requestId, deadline: startedAt + CLIP_JOB_TIMEOUT_MS, signal }
+      const secret = await requestSecret(provider)
+      // A request of the media API, which gets the API key.
+      const apiRequest = (wire: MediaWireRequest) => provider.mediaApiRequest(wire, secret)
+      const cacheDir = await sbp('dez.native/getAppDir', 'cache') as string
+      const values = clipParameterValues(provider.id, modelId, input.parameters)
+      const first = await sendClipRequest(run, apiRequest(provider.clipRequest(kind, modelId, { prompt: input.prompt, values })), null, cacheDir)
+      if ('clip' in first) return { media: [], clips: [first.clip] }
+
+      const job = provider.clipJob(kind, modelId, first.data)
+      jobId = job.id
+      for (;;) {
+        await clipPollDelay(signal)
+        const poll = await sendClipRequest(run, apiRequest(job.poll), jobId, cacheDir)
+        if ('clip' in poll) return { media: [], clips: [poll.clip] }
+
+        const state = job.state(poll.data)
+        if (state === 'running') continue
+        if ('url' in state) {
+          const clip = { kind: CLIP_KINDS[kind], mediaType: state.mediaType, src: state.url, url: state.url, expires: new Date(state.expires).toISOString(), jobId }
+          return { media: [], clips: [clip] }
+        }
+        // A file URL comes from a response and can name any host, so its
+        // request has no header: the API key goes only to the URLs that
+        // Dez builds.
+        const request: NativeHttpRequest = 'download' in state ? apiRequest(state.download) : { method: 'GET', url: state.fileUrl }
+        const download = await sendClipRequest(run, request, jobId, cacheDir)
+        if (!('clip' in download)) throw new Error('The provider sent no clip.')
+        return { media: [], clips: [download.clip] }
+      }
+    } catch (error) {
+      if (jobId === null) throw error
+      const stopped = signal?.aborted === true
+      console.error(`The clip job ${jobId} of ${provider.name} (model ${modelId}) ${stopped ? 'was stopped' : 'failed'}:`, error)
+      if (stopped) throw error
+      throw new Error(`${error instanceof Error ? error.message : String(error)} (job ${jobId})`, { cause: error })
+    } finally {
+      signal?.removeEventListener('abort', cancelRequest)
+    }
+  },
+
+  // The provider's price in USD of the clip that dez.provider/generateMedia
+  // with the same `parameters` asks for. Null when the provider tells no
+  // price before a request: its model entries hold the prices then. The
+  // request costs nothing. Rejects when it fails.
+  async 'dez.provider/mediaQuote' (input: ProviderMediaQuoteInput): Promise<number | null> {
+    const provider = requireProvider(input.providerId)
+    const { kind, modelId } = input
+    if (!isClipKind(kind)) return null
+
+    const values = clipParameterValues(provider.id, modelId, input.parameters)
+    const entry = sbp('dez.model/modelCache/rawModel', provider.id, modelId) as unknown
+    const quote = provider.clipQuote(kind, modelId, values, entry, await requestSecret(provider))
+    return quote ? quote.usd(await jsonResponse(provider, quote.request)) : null
   },
 })

@@ -2,9 +2,12 @@ import sbp from '@sbp/sbp'
 import type { ActiveModel, Section, SectionThinking, Tab } from '../model/chat/types'
 import { sectionPlainText } from '../model/chat/content'
 import { imageMarkdown } from '../model/chat/images'
+import { modelRefKey } from '../model/chat/modelRef'
+import { tempMediaFile } from '../model/chat/mediaFiles'
 import { newMediaIds } from '../model/chat/mediaIds'
+import { mediaTagText } from '../model/chat/mediaTags'
 import { findToolBlocks, ModelTextEscaper } from '../model/chat/toolBlocks'
-import type { GeneratedMedia, MediaKind, ModelRequest, ProviderGenerateMediaResult, ProviderStreamChatResult } from '../model/providers'
+import type { GeneratedClip, GeneratedMedia, MediaKind, ModelRequest, ProviderGenerateMediaResult, ProviderStreamChatResult } from '../model/providers'
 import { requireProvider } from '../model/providers/registry'
 import { agentSectionMessages, mediaRequestInput } from '../model/streams/messages'
 import {
@@ -77,6 +80,10 @@ interface ReplyRuntime {
   sectionId: string
   // The request of the current round; a stop cancels it.
   requestId: string
+  // Aborts when a stop or a new submit cancels the reply. A clip request
+  // (`runMediaRound`) can be a job of many requests with waits between
+  // them, which a cancel of `requestId` alone does not end.
+  abort: AbortController
   cancelling: boolean
   // A submit ended the reply's output (`dez.stream/endOutput`): the later
   // tokens and thinking of its request are dropped, as the new request
@@ -251,6 +258,29 @@ function replyIsCurrent(tabId: string, reply: ReplyRuntime): boolean {
   return repliesByTab.get(tabId) === reply && !reply.cancelling
 }
 
+// The line breaks that put a reference of the reply (an image, a clip) in
+// a paragraph of its own after `sectionText`. A clip's tag needs it: a tag
+// counts only as a whole line (mediaTags.ts).
+function paragraphGap(sectionText: string): string {
+  return sectionText === '' || sectionText.endsWith('\n\n') ? '' : sectionText.endsWith('\n') ? '\n' : '\n\n'
+}
+
+// Deletes the temp copies of clips that no tag will name. A failure is only
+// logged: the cleanup of the temp copies (controller/media.ts) deletes a
+// copy that stays.
+async function deleteTempCopies(clips: readonly GeneratedClip[]): Promise<void> {
+  if (clips.length === 0) return
+  try {
+    const cacheDir = await sbp('dez.native/getAppDir', 'cache') as string
+    for (const clip of clips) {
+      const file = tempMediaFile(clip.src, cacheDir)
+      if (file !== null) await sbp('dez.native/deleteAppFile', file, 'cache')
+    }
+  } catch (error) {
+    console.error('Failed to delete the temp copy of a clip:', error)
+  }
+}
+
 // Puts an image of a chat reply at the end of its section: saves the file
 // in the generated image folder, then writes its reference, with a new
 // image id, as a paragraph of its own. No answer text comes meanwhile:
@@ -283,8 +313,7 @@ async function writeReplyImage(tabId: string, reply: ReplyRuntime, image: Genera
   // The id and the write in one tick, so that no paste takes the id (the
   // editor gives ids only to pasted and dropped references).
   const [id] = newMediaIds(texts, 1)
-  const gap = sectionText === '' || sectionText.endsWith('\n\n') ? '' : sectionText.endsWith('\n') ? '\n' : '\n\n'
-  receiveToken(tabId, reply.sectionId, gap + imageMarkdown(path, [{ key: 'id', value: id }]))
+  receiveToken(tabId, reply.sectionId, paragraphGap(sectionText) + imageMarkdown(path, [{ key: 'id', value: id }]))
   reply.afterImage = true
 }
 
@@ -383,27 +412,39 @@ async function runChatRounds(args: StreamStartArgs, reply: ReplyRuntime): Promis
   }
 }
 
-// The one media request of a reply to an image model (ModelInfo.request
-// `image` or `imageEdit`), in place of the chat rounds: no system prompt,
-// tools, or thinking. The model's files are saved in the generated image
-// folder, and the section gets a reference to each, with new image ids.
-// Ends the reply, except when it throws.
+// The one media request of a reply to a media model (ModelInfo.request
+// `image`, `imageEdit`, `tts`, `music`, or `video`), in place of the chat
+// rounds: no system prompt, tools, or thinking. The files of an image model
+// are saved in the generated image folder, and the section gets a reference
+// to each. A clip (audio, video) is not saved: the section gets a media tag
+// (mediaTags.ts) whose source is the provider's URL, or a temp copy until
+// the user saves the clip. A clip request sets the model's parameters to
+// the values that the user chose in the provider settings popup. Images and
+// clips get new ids of the one id sequence. Ends the reply, except when it
+// throws.
 async function runMediaRound(args: StreamStartArgs, reply: ReplyRuntime, kind: MediaKind): Promise<void> {
   const tab = sbp('dez.model/tab', args.tabId) as Tab | null
   const { prompt, images } = mediaRequestInput(kind, args.messages, tab?.sections ?? [])
+  const parameters = (sbp('dez.model/settings/snapshot') as SettingsSnapshot).modelParameters[modelRefKey(args.model)]
   const requestId = crypto.randomUUID()
   reply.requestId = requestId
-  const { media } = await sbp('dez.provider/generateMedia', {
+  const { media, clips } = await sbp('dez.provider/generateMedia', {
     providerId: args.model.providerId,
     modelId: args.model.modelId,
     kind,
     prompt,
     images,
+    ...(parameters && { parameters }),
     requestId,
+    signal: reply.abort.signal,
   }) as ProviderGenerateMediaResult
   // A stop or a new submit cancelled the request, which can end its body
-  // early: a cut image is never saved.
-  if (!replyIsCurrent(args.tabId, reply)) return
+  // early: a cut image is never saved. A clip that still came is whole, but
+  // the reply takes no tag any more.
+  if (!replyIsCurrent(args.tabId, reply)) {
+    await deleteTempCopies(clips)
+    return
+  }
 
   const paths: string[] = []
   let saved = true
@@ -421,30 +462,48 @@ async function runMediaRound(args: StreamStartArgs, reply: ReplyRuntime, kind: M
   // no reference names are deleted; images/delete logs and shows its own
   // failures.
   const sections = (sbp('dez.model/tab', args.tabId) as Tab | null)?.sections ?? []
-  if (!saved || !replyIsCurrent(args.tabId, reply) || !sections.some((section) => section.id === args.sectionId)) {
-    await Promise.allSettled(paths.map((path) => sbp('dez.controller/images/delete', path)))
+  const texts = sections.map(sectionPlainText)
+  const sectionText = texts[sections.findIndex((section) => section.id === args.sectionId)]
+  if (!saved || !replyIsCurrent(args.tabId, reply) || sectionText === undefined) {
+    await Promise.allSettled([...paths.map((path) => sbp('dez.controller/images/delete', path)), deleteTempCopies(clips)])
     if (replyIsCurrent(args.tabId, reply)) finalizeStream(args.tabId, saved ? finishStreamSession(args.tabId) : errorStreamSession(args.tabId))
     return
   }
   // The ids and the write in one tick, so that no paste takes one of the
   // ids (the editor gives ids only to pasted and dropped references).
-  const ids = newMediaIds(sections.map(sectionPlainText), paths.length)
-  receiveToken(args.tabId, args.sectionId, paths.map((path, index) => imageMarkdown(path, [{ key: 'id', value: ids[index] }])).join('\n\n'))
+  const ids = newMediaIds(texts, paths.length + clips.length)
+  const references = [
+    ...paths.map((path, index) => imageMarkdown(path, [{ key: 'id', value: ids[index] }])),
+    // The job id is tag metadata: the provider took the money for the job,
+    // and with the id the user can ask it for the clip again.
+    ...clips.map((clip, index) => mediaTagText({
+      kind: clip.kind,
+      id: ids[paths.length + index],
+      type: clip.mediaType,
+      src: clip.src,
+      url: clip.url,
+      expires: clip.expires,
+      other: clip.jobId === null ? [] : [{ name: 'job', value: clip.jobId }],
+    })),
+  ]
+  // The user can type in the section while a clip is made.
+  receiveToken(args.tabId, args.sectionId, paragraphGap(sectionText) + references.join('\n\n'))
   finalizeStream(args.tabId, finishStreamSession(args.tabId))
 }
 
 export default sbp('sbp/selectors/register', {
   // One reply: chat rounds (`runChatRounds`), or one media round
-  // (`runMediaRound`) for an image model. The stream session, the busy
-  // state, the start time, the scroll follow, Stop, and the error toast
-  // span the whole reply, and only the reply's end finalizes it (duration,
-  // alerts, trailing user section, save).
+  // (`runMediaRound`) for a model that makes images or clips. The stream
+  // session, the busy state, the start time, the scroll follow, Stop, and
+  // the error toast span the whole reply, and only the reply's end
+  // finalizes it (duration, alerts, trailing user section, save).
   async 'dez.stream/start' (args: StreamStartArgs): Promise<void> {
     const previousReply = repliesByTab.get(args.tabId)
     if (previousReply) {
       // The submit ended its output (`dez.stream/endOutput`) before it built
       // `args.messages`; the new reply ends its request.
       previousReply.cancelling = true
+      previousReply.abort.abort()
       await sbp('dez.http/cancelStream', previousReply.requestId).catch(() => {})
       if (repliesByTab.get(args.tabId) === previousReply) repliesByTab.delete(args.tabId)
     }
@@ -452,6 +511,7 @@ export default sbp('sbp/selectors/register', {
     const reply: ReplyRuntime = {
       sectionId: args.sectionId,
       requestId: '',
+      abort: new AbortController(),
       cancelling: false,
       outputEnded: false,
       toolRun: null,
@@ -509,6 +569,7 @@ export default sbp('sbp/selectors/register', {
     const reply = repliesByTab.get(tabId)
     if (reply) {
       reply.cancelling = true
+      reply.abort.abort()
       stopToolRun(tabId, reply)
     }
 

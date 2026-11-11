@@ -93,6 +93,14 @@ export function nativeResponseJson<T>(response: NativeHttpResponse): T {
   return JSON.parse(nativeResponseText(response)) as T
 }
 
+// The content type of a response in lower case, with its parameters; empty
+// when the response names none. Response header names are lower case
+// (reqwest), but a test server or a proxy may differ.
+export function responseContentType(head: NativeHttpResponseHead): string {
+  const entry = Object.entries(head.headers).find(([name]) => name.toLowerCase() === 'content-type')
+  return entry?.[1].toLowerCase() ?? ''
+}
+
 export async function readNativeChunkText(chunks: AsyncIterable<Uint8Array>, maxLength = 1000): Promise<string> {
   const decoder = new TextDecoder()
   let text = ''

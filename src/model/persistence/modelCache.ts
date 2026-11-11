@@ -6,6 +6,15 @@ import type { CachedProvider, ModelCache } from './types'
 
 export const MODEL_CACHE_VERSION = 1
 
+const parameterValueSchema = z.union([z.string(), z.number()])
+
+// A ModelParameter (src/model/providers/modelParameters.ts): a list of
+// options, or a range.
+const modelParameterSchema = z.union([
+  z.object({ name: z.string(), label: z.string(), options: z.array(parameterValueSchema).min(1), default: parameterValueSchema.optional() }),
+  z.object({ name: z.string(), label: z.string(), min: z.number(), max: z.number(), default: z.number().optional() }),
+])
+
 const modelInfoSchema = z.object({
   id: z.string(),
   name: z.string(),
@@ -16,6 +25,7 @@ const modelInfoSchema = z.object({
   toolCalling: z.boolean().optional(),
   outputs: z.array(z.enum(MODEL_OUTPUT_IDS)).optional(),
   request: z.enum(MODEL_REQUESTS).optional(),
+  parameters: z.array(modelParameterSchema).min(1).optional(),
 })
 
 // Individually drop invalid models (e.g. a bad provider id) instead of failing

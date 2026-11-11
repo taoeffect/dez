@@ -25,6 +25,10 @@ export const useModelCacheStore = defineStore('modelCache', () => {
   // change. Shallow, so Vue never makes the hundreds of entries reactive;
   // nothing renders them. Set by dez.model/modelCache/applyProviderResult.
   const rawModels = shallowRef(new Map<ProviderId, ReadonlyMap<string, unknown>>())
+  // The same for the model list that only a provider's media API has
+  // (`ProviderModelsResult.mediaEntries`): the lengths and prices of the
+  // OpenRouter video models are only there.
+  const rawMediaModels = shallowRef(new Map<ProviderId, ReadonlyMap<string, unknown>>())
 
   return {
     cache,
@@ -32,5 +36,6 @@ export const useModelCacheStore = defineStore('modelCache', () => {
     errors,
     checking,
     rawModels,
+    rawMediaModels,
   }
 })

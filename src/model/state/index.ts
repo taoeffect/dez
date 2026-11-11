@@ -17,6 +17,7 @@ import { MAX_CLOSED_TABS, NEW_TAB_TITLE, useTabStore } from './tabs'
 import type { AppStatePayload, CachedProvider, ConversationSearchOutcome, ModelCache } from '../persistence/types'
 import { emptyModelCache } from '../persistence/modelCache'
 import type { ModelOutputsConfig, ProviderConfig, ProviderThinkingConfig } from '../providers/config'
+import type { ParameterValue, ParameterValues } from '../providers/modelParameters'
 import { providerModel, type ModelInfo, type ProviderId, type ProviderModelsResult } from '../providers/types'
 import { isToolsEnabled } from '../providers/toolsSetting'
 import type { ActiveModel, ContentNode, ModelRef, Section, SectionThinking, Tab, ThinkingReplay, ThinkingRound } from '../chat/types'
@@ -30,7 +31,7 @@ import {
 } from '../chat/content'
 import { durationField } from '../chat/duration'
 import { labelImageReferences } from '../chat/images'
-import { modelRefField, modelRefKey } from '../chat/modelRef'
+import { modelRefField, modelRefKey, parseModelRefKey } from '../chat/modelRef'
 import { thinkingField } from '../chat/thinking'
 import { cloneJsonObject } from '../../utils/json'
 import { sectionsToStreamMessages } from '../streams/messages'
@@ -51,6 +52,7 @@ export interface SettingsSnapshot {
   favorites: DefaultModel[]
   modelOutputFilter: ModelOutput[]
   providerSettings: Record<string, Record<string, boolean>>
+  modelParameters: Record<string, ParameterValues>
   checkForUpdates: boolean
   lastUpdateCheckAt: number | null
   doneSound: boolean
@@ -165,12 +167,12 @@ function clonePrompt(prompt: Prompt): Prompt {
   return { ...prompt }
 }
 
-function cloneProviderSettings(
-  providerSettings: Record<string, Record<string, boolean>>,
-): Record<string, Record<string, boolean>> {
-  const output: Record<string, Record<string, boolean>> = {}
-  for (const [providerId, record] of Object.entries(providerSettings)) {
-    output[providerId] = { ...record }
+// A copy of a settings table of records (`providerSettings`,
+// `modelParameters`) that shares no record with it.
+function cloneRecords<Value>(records: Record<string, Record<string, Value>>): Record<string, Record<string, Value>> {
+  const output: Record<string, Record<string, Value>> = {}
+  for (const [key, record] of Object.entries(records)) {
+    output[key] = { ...record }
   }
   return output
 }
@@ -220,7 +222,11 @@ function cloneProviderConfig(config: ProviderConfig): ProviderConfig {
 function cloneModelOutputsConfig({ path, values }: ModelOutputsConfig): ModelOutputsConfig {
   return {
     path,
-    values: Object.fromEntries(Object.entries(values).map(([type, value]) => [type, { ...value, outputs: [...value.outputs] }])),
+    values: Object.fromEntries(Object.entries(values).map(([type, { requestBy, ...value }]) => [type, {
+      ...value,
+      outputs: [...value.outputs],
+      ...(requestBy && { requestBy: { path: requestBy.path, values: { ...requestBy.values } } }),
+    }])),
   }
 }
 
@@ -246,7 +252,8 @@ function cloneSettings(settings = useSettingsStore()): SettingsSnapshot {
     lastUsedModel: cloneDefaultModel(settings.lastUsedModel),
     favorites: settings.favorites.map((favorite) => ({ ...favorite })),
     modelOutputFilter: [...settings.modelOutputFilter],
-    providerSettings: cloneProviderSettings(settings.providerSettings),
+    providerSettings: cloneRecords(settings.providerSettings),
+    modelParameters: cloneRecords(settings.modelParameters),
     checkForUpdates: settings.checkForUpdates,
     lastUpdateCheckAt: settings.lastUpdateCheckAt,
     doneSound: settings.doneSound,
@@ -734,6 +741,7 @@ export default sbp('sbp/selectors/register', {
         favorites: settings.favorites,
         modelOutputFilter: settings.modelOutputFilter,
         providerSettings: settings.providerSettings,
+        modelParameters: settings.modelParameters,
         checkForUpdates: settings.checkForUpdates,
         lastUpdateCheckAt: settings.lastUpdateCheckAt,
         doneSound: settings.doneSound,
@@ -884,6 +892,7 @@ export default sbp('sbp/selectors/register', {
       if (Array.isArray(state.favorites)) settings.favorites = state.favorites
       if (Array.isArray(state.modelOutputFilter)) settings.modelOutputFilter = state.modelOutputFilter
       if (state.providerSettings) settings.providerSettings = state.providerSettings
+      if (state.modelParameters) settings.modelParameters = state.modelParameters
       if (typeof state.checkForUpdates === 'boolean') settings.checkForUpdates = state.checkForUpdates
       if (typeof state.lastUpdateCheckAt === 'number') settings.lastUpdateCheckAt = state.lastUpdateCheckAt
       if (typeof state.doneSound === 'boolean') settings.doneSound = state.doneSound
@@ -919,6 +928,7 @@ export default sbp('sbp/selectors/register', {
         () => settings.favorites,
         () => settings.modelOutputFilter,
         () => settings.providerSettings,
+        () => settings.modelParameters,
         () => settings.checkForUpdates,
         () => settings.lastUpdateCheckAt,
         () => settings.doneSound,
@@ -1038,9 +1048,27 @@ export default sbp('sbp/selectors/register', {
   },
 
   // Clears all stored overrides for a provider; effective values fall back
-  // to the provider descriptor defaults at read/request-build time.
-  'dez.model/settings/resetProviderSettings' (providerId: string): void {
-    delete useSettingsStore().providerSettings[providerId]
+  // to the provider descriptor defaults at read/request-build time. With
+  // `modelId`, it also clears the parameter values of that model.
+  'dez.model/settings/resetProviderSettings' (providerId: string, modelId?: string): void {
+    const settings = useSettingsStore()
+    delete settings.providerSettings[providerId]
+    if (modelId !== undefined) delete settings.modelParameters[modelRefKey({ providerId, modelId })]
+  },
+
+  // Records the user's value for a parameter of a media model
+  // (`ModelInfo.parameters`); null removes it, so that the parameter has its
+  // default again. The value is not checked here: a value that the model
+  // does not take counts as none at request time
+  // (`effectiveParameterValues`).
+  'dez.model/settings/setModelParameter' (model: ModelRef, name: string, value: ParameterValue | null): void {
+    const modelParameters = useSettingsStore().modelParameters
+    const key = modelRefKey(model)
+    const values = { ...modelParameters[key] }
+    if (value === null) delete values[name]
+    else values[name] = value
+    if (Object.keys(values).length > 0) modelParameters[key] = values
+    else delete modelParameters[key]
   },
 
   // Every shortcut of this platform with its effective key (the user's key,
@@ -1142,6 +1170,9 @@ export default sbp('sbp/selectors/register', {
     if (settings.defaultNewTabModel?.providerId === providerId) settings.defaultNewTabModel = null
     if (settings.lastUsedModel?.providerId === providerId) settings.lastUsedModel = null
     delete settings.providerSettings[providerId]
+    for (const key of Object.keys(settings.modelParameters)) {
+      if (parseModelRefKey(key)?.providerId === providerId) delete settings.modelParameters[key]
+    }
     return true
   },
 
@@ -1279,13 +1310,18 @@ export default sbp('sbp/selectors/register', {
     delete store.cache.providers[providerId]
     delete store.errors[providerId]
     store.rawModels.delete(providerId)
+    store.rawMediaModels.delete(providerId)
   },
 
-  // A copy of the raw model-list entry of a model (the store's `rawModels`),
-  // for the `model_info` tool. Undefined when Dez has none in memory: after
-  // a start, until the provider's next successful model check.
-  'dez.model/modelCache/rawModel' (providerId: ProviderId, modelId: string): unknown {
-    const entry = useModelCacheStore().rawModels.get(providerId)?.get(modelId)
+  // A copy of the raw entry of a model, for the `model_info` tool and the
+  // price of a clip: its entry in the provider's model list (the store's
+  // `rawModels`), or with `list` `media`, in the list that only the
+  // provider's media API has (`rawMediaModels`). Undefined when Dez has
+  // none in memory: after a start, until the provider's next successful
+  // model check.
+  'dez.model/modelCache/rawModel' (providerId: ProviderId, modelId: string, list: 'provider' | 'media' = 'provider'): unknown {
+    const store = useModelCacheStore()
+    const entry = (list === 'media' ? store.rawMediaModels : store.rawModels).get(providerId)?.get(modelId)
     return entry === undefined ? undefined : structuredClone(entry)
   },
 
@@ -1314,6 +1350,8 @@ export default sbp('sbp/selectors/register', {
       delete store.errors[providerId]
       if (result.entries) store.rawModels.set(providerId, result.entries)
       else store.rawModels.delete(providerId)
+      if (result.mediaEntries) store.rawMediaModels.set(providerId, result.mediaEntries)
+      else store.rawMediaModels.delete(providerId)
       return
     }
     store.cache.providers[providerId] = {

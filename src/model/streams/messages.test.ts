@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest'
 import { mediaTagText, type MediaTagData } from '../chat/mediaTags'
 import { toolBlockText, type ToolBlockStatus } from '../chat/toolBlocks'
 import type { ModelRef, Section, SectionThinking, ThinkingReplay } from '../chat/types'
+import type { MediaKind } from '../providers/types'
 import { agentSectionMessages, mediaRequestInput, sectionsToStreamMessages } from './messages'
 
 const model: ModelRef = { providerId: 'local', modelId: 'm' }
@@ -385,7 +386,7 @@ describe('sectionsToStreamMessages: images of user messages', () => {
 describe('mediaRequestInput', () => {
   // The tab's sections at the start of a media reply: the reply's own
   // section is empty, so it gives no message.
-  const input = (kind: 'image' | 'imageEdit', sections: Section[]) => {
+  const input = (kind: MediaKind, sections: Section[]) => {
     const tab = [...sections, reply('new', '')]
     return mediaRequestInput(kind, sectionsToStreamMessages(tab, model, { sendImages: true, sendTools: false }).messages, tab)
   }
@@ -443,5 +444,12 @@ describe('mediaRequestInput', () => {
 
   it('gives an edit with no image in the conversation no images', () => {
     expect(input('imageEdit', [user('u1', 'Make it blue')])).toStrictEqual({ prompt: 'Make it blue', images: [] })
+  })
+
+  // Only an edit takes images: a clip request has no place for a file.
+  it.each(['tts', 'music', 'video'] as const)('gives a %s request the prompt, and no image of the conversation', (kind) => {
+    const sections = [reply('a1', `![${GENERATED}](id=a)`), user('u1', `Say what ![${IMAGE}](id=b) and @a show`)]
+
+    expect(input(kind, sections)).toStrictEqual({ prompt: 'Say what ![image](id=b) and @a show', images: [] })
   })
 })

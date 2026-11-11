@@ -1,7 +1,10 @@
 import sbp from '@sbp/sbp'
+import { modelRefKey } from '../model/chat/modelRef'
 import type { ModelCache } from '../model/persistence/types'
-import type { ProviderInfo } from '../model/providers/types'
-import { modelInfoTarget, modelInfoText, type ModelInfoTarget } from '../model/tools/modelInfo'
+import { effectiveParameterValues } from '../model/providers/modelParameters'
+import { effectiveRequest, isClipKind, type ProviderInfo } from '../model/providers/types'
+import type { SettingsSnapshot } from '../model/state'
+import { modelInfoParameterValues, modelInfoText, modelInfoTarget, type ModelInfoRequest, type ModelInfoTarget } from '../model/tools/modelInfo'
 import { modelListText } from '../model/tools/modelList'
 import type { ToolArguments, ToolRunResult } from '../model/tools/types'
 
@@ -49,13 +52,41 @@ const TOOL_RUNNERS: Record<string, ToolRunner> = {
   // the provider's model list are in memory only, so after a start they are
   // missing until the provider's next model check; then this one runs a
   // check of that provider now, and looks again (the model may be gone).
+  //
+  // For a model with parameters (a clip model), the result also tells the
+  // value that a request sends for each one now: the call's own value, else
+  // the user's (the provider settings popup), else the default. For those
+  // values it asks the provider for the price of one request, which costs
+  // nothing. A failed price request does not fail the call.
   async model_info (args, signal) {
     let found = await modelInfoLookup(args)
     if (found.entry === undefined) {
       await untilAborted(sbp('dez.controller/modelCache/refresh', { providerIds: [found.provider.id], force: true }) as Promise<void>, signal)
       found = await modelInfoLookup(args)
     }
-    return modelInfoText(found.provider, found.model, found.entry)
+    const { provider, model, entry } = found
+    const ref = { providerId: provider.id, modelId: model.id }
+    const called = modelInfoParameterValues(model, args)
+    const chosen = (sbp('dez.model/settings/snapshot') as SettingsSnapshot).modelParameters[modelRefKey(ref)]
+    const request: ModelInfoRequest = { values: effectiveParameterValues(model.parameters ?? [], { ...chosen, ...called }) }
+
+    const mediaEntry = sbp('dez.model/modelCache/rawModel', provider.id, model.id, 'media') as unknown
+    if (mediaEntry !== undefined) request.mediaEntry = mediaEntry
+
+    const kind = effectiveRequest(model)
+    if (isClipKind(kind)) {
+      try {
+        const usd = await untilAborted(sbp('dez.provider/mediaQuote', { ...ref, kind, parameters: request.values }) as Promise<number | null>, signal)
+        if (usd !== null) request.cost = { usd }
+      } catch (error) {
+        if (signal.aborted) throw error
+        // The provider's error text stays in the log: it can echo details
+        // of the user's account, and this result goes to a chat provider.
+        console.error(`Failed to get the price of a ${model.id} request:`, error)
+        request.cost = { error: 'The provider did not answer the price request.' }
+      }
+    }
+    return modelInfoText(provider, model, entry, request)
   },
 }
 

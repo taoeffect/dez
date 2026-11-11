@@ -6,7 +6,7 @@ import { sectionVisibleText } from '../model/chat/content'
 import { findToolBlocks } from '../model/chat/toolBlocks'
 import type { ConversationData } from '../model/persistence/types'
 import { customProviderConfigSchema } from '../model/providers/config'
-import type { ModelRequest, ProviderChatInputMessage, ProviderGenerateMediaInput, ProviderGenerateMediaResult, ProviderInfo, ProviderStreamChatInput, ProviderStreamChatResult } from '../model/providers'
+import type { GeneratedClip, ModelRequest, ProviderChatInputMessage, ProviderGenerateMediaInput, ProviderGenerateMediaResult, ProviderInfo, ProviderStreamChatInput, ProviderStreamChatResult } from '../model/providers'
 import type { RequestMessages } from '../model/streams/types'
 import { TOOL_DEFINITIONS } from '../model/tools/registry'
 import type { ToastData } from '../view/toast/selectors'
@@ -39,6 +39,8 @@ let cancelStream: () => Promise<void>
 let generateMedia: (input: ProviderGenerateMediaInput) => Promise<ProviderGenerateMediaResult>
 let saveImage: (mediaType: string, options: unknown) => Promise<string>
 let deletedImages: string[] = []
+// Each file that was deleted from an app folder (the temp copies of clips).
+let deletedFiles: { path: string, root: string }[] = []
 let consoleError: MockInstance<typeof console.error>
 
 // Stand-ins for the provider, the editor and the disk. The editor stub
@@ -56,6 +58,12 @@ sbp('sbp/selectors/register', {
   },
   async 'dez.controller/images/delete' (path: string): Promise<void> {
     deletedImages.push(path)
+  },
+  async 'dez.native/getAppDir' (root = 'app'): Promise<string> {
+    return root === 'cache' ? '/home/u/.cache/dez' : '/home/u/.config/dez'
+  },
+  async 'dez.native/deleteAppFile' (path: string, root = 'app'): Promise<void> {
+    deletedFiles.push({ path, root })
   },
   'dez.editor/startStreamingFollowIfVisible' (): boolean {
     return false
@@ -129,6 +137,7 @@ beforeEach(() => {
   providerInfos = async () => []
   cancelStream = async () => {}
   deletedImages = []
+  deletedFiles = []
   consoleError = vi.spyOn(console, 'error').mockImplementation(() => {})
   // `dez.stream/start` names the provider in the system prompt, so the stub
   // model's provider must exist.
@@ -1014,6 +1023,13 @@ describe('dez.stream/start media round', () => {
   const image = (name: string) => `/home/u/.config/dez/assets/images/${name}`
   const generated = (name: string) => `/home/u/.config/dez/assets/generated/images/${name}`
   const png = { bytes: new Uint8Array([1, 2, 3]), mediaType: 'image/png' } as const
+  const EXPIRES = '2026-11-11T09:30:00.000Z'
+  const FILM_URL = 'https://cdn.example.com/v/clip.mp4?sig=1'
+  // A clip that plays from a temp copy, and one that plays from the URL of
+  // a job of the provider.
+  const speech: GeneratedClip = { kind: 'audio', mediaType: 'audio/mpeg', src: '/home/u/.cache/dez/media/s1.mp3', url: null, expires: EXPIRES, jobId: null }
+  const film: GeneratedClip = { kind: 'video', mediaType: 'video/mp4', src: FILM_URL, url: FILM_URL, expires: EXPIRES, jobId: 'q-1' }
+  const speechTag = (id: string) => `<dez:audio id="${id}" type="audio/mpeg" src="${speech.src}" expires="${EXPIRES}"/>`
   const conversation = (lastUserText = 'Make it red.') => [
     { role: 'user', text: `A fox: ![${image('fox.png')}](id=a)` },
     { role: 'agent', text: `![${generated('old.png')}](id=b)` },
@@ -1044,7 +1060,7 @@ describe('dez.stream/start media round', () => {
     saves = []
     generateMedia = async (input) => {
       mediaInputs.push(input)
-      return { media: [png, png] }
+      return { media: [png, png], clips: [] }
     }
     saveImage = async (_mediaType, options) => {
       saves.push(options)
@@ -1065,6 +1081,7 @@ describe('dez.stream/start media round', () => {
       prompt: 'Make it red.',
       images: [],
       requestId: expect.any(String),
+      signal: expect.any(AbortSignal),
     }])
     expect(saves).toStrictEqual([{ folder: 'generated' }, { folder: 'generated' }])
     expect(sectionTexts()).toStrictEqual([
@@ -1111,7 +1128,7 @@ describe('dez.stream/start media round', () => {
   it('saves nothing when the user stops the request', async () => {
     generateMedia = async () => {
       await sbp('dez.stream/stop', activeTab().id)
-      return { media: [png] }
+      return { media: [png], clips: [] }
     }
 
     await sbp('dez.controller/submitTab', activeTab().id)
@@ -1126,13 +1143,15 @@ describe('dez.stream/start media round', () => {
     generateMedia = async (input) => {
       mediaInputs.push(input)
       if (mediaInputs.length === 1) await sbp('dez.controller/submitTab', tabId)
-      return { media: [png] }
+      return { media: [png], clips: [] }
     }
 
     await sbp('dez.controller/submitTab', tabId)
 
     expect(mediaInputs).toHaveLength(2)
     expect(saves).toHaveLength(1)
+    // The new submit told the first request to stop.
+    expect(mediaInputs.map((input) => input.signal?.aborted)).toStrictEqual([true, false])
     expect(sectionTexts()).toStrictEqual([
       ...conversation(),
       { role: 'agent', text: `![${generated('g1.png')}](id=c)` },
@@ -1171,6 +1190,82 @@ describe('dez.stream/start media round', () => {
     expect(deletedImages).toStrictEqual([generated('g1.png'), generated('g2.png')])
     expect(sectionTexts()).toStrictEqual(conversation())
     expect(toasts).toStrictEqual([])
+  })
+
+  it('writes a tag for each clip, with a new id, its source, and the id of its job', async () => {
+    useRequest('video')
+    generateMedia = async () => ({ media: [], clips: [film, speech] })
+
+    await sbp('dez.controller/submitTab', activeTab().id)
+
+    expect(sectionTexts()).toStrictEqual([
+      ...conversation(),
+      { role: 'agent', text: `<dez:video id="c" type="video/mp4" src="${FILM_URL}" url="${FILM_URL}" expires="${EXPIRES}" job="q-1"/>\n\n${speechTag('d')}` },
+      { role: 'user', text: '' },
+    ])
+    expect(alerts).toStrictEqual([{ tabId: activeTab().id, status: 'finished' }])
+    expect(deletedFiles).toStrictEqual([])
+  })
+
+  it('sends the values that the user chose for the model, and no value of another model', async () => {
+    useRequest('video')
+    sbp('dez.model/settings/setModelParameter', { providerId: model.providerId, modelId: model.modelId }, 'duration', '8s')
+    sbp('dez.model/settings/setModelParameter', { providerId: model.providerId, modelId: 'other' }, 'resolution', '4k')
+
+    await sbp('dez.controller/submitTab', activeTab().id)
+
+    expect(mediaInputs.map(({ kind, parameters }) => ({ kind, parameters }))).toStrictEqual([{ kind: 'video', parameters: { duration: '8s' } }])
+  })
+
+  // A clip can take minutes, and a tag counts only as a whole line.
+  it.each(['My note', 'My note\n', 'My note\n\n'])('puts the tag in a paragraph of its own after %j, which the user typed during the request', async (typed) => {
+    useRequest('tts')
+    generateMedia = async () => {
+      const tab = activeTab()
+      sbp('dez.model/tabs/replaceSections', tab.id, tab.sections.map((section, index) =>
+        index === tab.sections.length - 1 ? { ...section, content: [{ kind: 'text', text: typed }] } : section))
+      return { media: [], clips: [speech] }
+    }
+
+    await sbp('dez.controller/submitTab', activeTab().id)
+
+    expect(sectionTexts().at(-2)).toStrictEqual({ role: 'agent', text: `My note\n\n${speechTag('c')}` })
+  })
+
+  it.each([
+    ['the user stops the request', () => sbp('dez.stream/stop', activeTab().id)],
+    ['the user merges the section into the one before', () => sbp('dez.model/tabs/replaceSections', activeTab().id, activeTab().sections.slice(0, -1))],
+  ])('deletes the temp copy of a clip that gets no tag, and no other file, when %s', async (_case, during) => {
+    useRequest('video')
+    generateMedia = async () => {
+      await during()
+      return { media: [], clips: [speech, film] }
+    }
+
+    await sbp('dez.controller/submitTab', activeTab().id)
+
+    expect(deletedFiles).toStrictEqual([{ path: 'media/s1.mp3', root: 'cache' }])
+    expect(sectionTexts()).toStrictEqual(conversation())
+    expect(toasts).toStrictEqual([])
+  })
+
+  it('tells the request to stop when the user stops the reply, and shows no error for the request that then fails', async () => {
+    useRequest('music')
+    let abortedAtStart: boolean | undefined
+    generateMedia = async (input) => {
+      mediaInputs.push(input)
+      abortedAtStart = input.signal?.aborted
+      await sbp('dez.stream/stop', activeTab().id)
+      // As the provider layer does for a job that was stopped.
+      throw input.signal?.reason
+    }
+
+    await sbp('dez.controller/submitTab', activeTab().id)
+
+    expect([abortedAtStart, mediaInputs[0].signal?.aborted]).toStrictEqual([false, true])
+    expect(sectionTexts()).toStrictEqual(conversation())
+    expect(toasts).toStrictEqual([])
+    expect(consoleError).not.toHaveBeenCalled()
   })
 })
 

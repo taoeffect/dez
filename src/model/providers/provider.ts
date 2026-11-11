@@ -3,10 +3,11 @@ import type { NativeHttpHeaders, NativeHttpRequest, NativeHttpResponseHead } fro
 import type { Secret } from '../../utils/secret'
 import { API_FORMATS, type ApiFormat } from './apiFormats'
 import { FORBIDDEN_BODY_KEYS, type ProviderConfig, type ProviderSettingDef } from './config'
-import { MEDIA_FORMATS, type MediaFormat, type MediaInput } from './mediaFormats'
+import { MEDIA_FORMATS, type ClipFormat, type ClipInput, type ClipJob, type ImageFormat, type MediaFormat, type MediaInput, type MediaWireRequest } from './mediaFormats'
+import type { ParameterValues } from './modelParameters'
 import { isRecord, modelCapability, modelData, modelOutputsAndRequest } from './modelParsing'
 import { isThinkingEnabled } from './thinking'
-import { ProviderError, providerModel, type ChatMessage, type ChatRequestContext, type GeneratedMedia, type MediaKind, type ModelInfo, type ProviderInfo } from './types'
+import { ProviderError, effectiveRequest, isClipKind, providerModel, type ChatMessage, type ChatRequestContext, type ClipKind, type GeneratedMedia, type ImageKind, type ModelInfo, type ProviderInfo } from './types'
 
 export interface ProviderOptions {
   builtIn: boolean
@@ -164,6 +165,39 @@ export class Provider {
     return entries
   }
 
+  // The request for the model list that only the media API has
+  // (`ClipFormat.modelList`), or null when it has none. It ends like a
+  // model list request (`MODEL_LIST_TIMEOUT_MS`).
+  mediaModelListRequest(secret: Secret<string> | null): NativeHttpRequest | null {
+    const list = this.clipFormatOrNone()?.modelList?.(this.config.baseUrl)
+    return list ? { ...this.mediaApiRequest(list, secret), timeoutMs: MODEL_LIST_TIMEOUT_MS } : null
+  }
+
+  // The raw entries of the response `data` to `mediaModelListRequest`, by
+  // model id (the first entry of an id).
+  mediaModelEntries(data: unknown): Map<string, unknown> {
+    const entries = new Map<string, unknown>()
+    for (const entry of modelData(data)) {
+      const id = entryId(entry)
+      if (id !== null && !entries.has(id)) entries.set(id, entry)
+    }
+    return entries
+  }
+
+  // `models` (a `mergeModels` list), each model of a clip request kind with
+  // its parameters (`ClipFormat.parameters`), read from its raw entries
+  // (`modelEntries`, `mediaModelEntries`). This comes after the merge,
+  // because a config model can set the request kind.
+  withParameters(models: readonly ModelInfo[], entries: ReadonlyMap<string, unknown>, mediaEntries: ReadonlyMap<string, unknown>): ModelInfo[] {
+    const clips = this.clipFormatOrNone()
+    return models.map((model) => {
+      const kind = effectiveRequest(model)
+      if (!clips || !isClipKind(kind)) return model
+      const parameters = clips.parameters(kind, entries.get(model.id), mediaEntries.get(model.id))
+      return parameters.length > 0 ? { ...model, parameters } : model
+    })
+  }
+
   // `overrides` are the user's stored toggle values for this provider
   // (settings.providerSettings[id]); missing keys use the setting default.
   // The Thinking toggle is one of them (thinking.ts).
@@ -212,11 +246,12 @@ export class Provider {
     }
   }
 
-  // A request to the provider's media API (`mediaApi`) for a model of
-  // request kind `kind`. It takes the headers of a chat request, but no
-  // `requestBody`, settings, or thinking body: those are chat fields.
-  mediaRequest(kind: MediaKind, modelId: string, input: MediaInput, secret: Secret<string> | null): NativeHttpRequest {
-    const { url, body } = this.mediaFormat().request(kind, this.config.baseUrl, modelId, input)
+  // A request to the provider's media API (`mediaApi`): a POST of the JSON
+  // body, or a GET when it has none. It takes the headers of a chat
+  // request, but no `requestBody`, settings, or thinking body: those are
+  // chat fields.
+  mediaApiRequest({ url, body }: MediaWireRequest, secret: Secret<string> | null): NativeHttpRequest {
+    if (body === undefined) return { method: 'GET', url, headers: this.requestHeaders(secret, {}) }
     return {
       method: 'POST',
       url,
@@ -225,9 +260,44 @@ export class Provider {
     }
   }
 
-  // The media of a 2xx response to `mediaRequest`.
-  mediaResult(kind: MediaKind, head: NativeHttpResponseHead, body: Uint8Array): GeneratedMedia[] {
-    return this.mediaFormat().parseResponse(kind, head, body)
+  // The request for a model of an image request kind.
+  mediaRequest(kind: ImageKind, modelId: string, input: MediaInput, secret: Secret<string> | null): NativeHttpRequest {
+    return this.mediaApiRequest(this.imageFormat().request(kind, this.config.baseUrl, modelId, input), secret)
+  }
+
+  // The images of a 2xx response to `mediaRequest`.
+  mediaResult(kind: ImageKind, head: NativeHttpResponseHead, body: Uint8Array): GeneratedMedia[] {
+    return this.imageFormat().parseResponse(kind, head, body)
+  }
+
+  // The parts of a clip request kind (`ClipFormat` in mediaFormats.ts), for
+  // this provider's base URL. The selectors of the provider send their
+  // requests through `mediaApiRequest`.
+
+  clipRequest(kind: ClipKind, modelId: string, input: ClipInput): MediaWireRequest {
+    return this.clipFormat().request(kind, this.config.baseUrl, modelId, input)
+  }
+
+  clipJob(kind: ClipKind, modelId: string, data: unknown): ClipJob {
+    return this.clipFormat().job(kind, this.config.baseUrl, modelId, data)
+  }
+
+  // How to ask the provider for the price of the clip that `clipRequest`
+  // with the same values asks for (`ClipQuoteFormat`): the request (it ends
+  // like a model list request, `MODEL_LIST_TIMEOUT_MS`), and the reader of
+  // the JSON of its 2xx response, which gives the price in USD. Null when
+  // the provider tells no price this way. `entry`: the model's raw entry
+  // (`modelEntries`).
+  clipQuote(
+    kind: ClipKind,
+    modelId: string,
+    values: ParameterValues,
+    entry: unknown,
+    secret: Secret<string> | null,
+  ): { request: NativeHttpRequest, usd(data: unknown): number } | null {
+    const quote = this.clipFormatOrNone()?.quote
+    const wire = quote?.request(kind, this.config.baseUrl, modelId, values, entry)
+    return quote && wire ? { request: { ...this.mediaApiRequest(wire, secret), timeoutMs: MODEL_LIST_TIMEOUT_MS }, usd: quote.usd } : null
   }
 
   visibleSettings(modelId: string): ProviderSettingDef[] {
@@ -236,11 +306,30 @@ export class Provider {
   }
 
   // A config can give a model a media request kind (`models[].request`)
-  // without a `mediaApi`; its requests then fail with this error.
+  // without a `mediaApi`, or with one that does not serve the kind; its
+  // requests then fail with one of these errors.
   private mediaFormat(): MediaFormat {
     const mediaApi = this.config.mediaApi
     if (!mediaApi) throw new ProviderError(`${this.name} has no media API that Dez can use.`, this.id)
     return MEDIA_FORMATS[mediaApi.format]
+  }
+
+  private imageFormat(): ImageFormat {
+    const { images } = this.mediaFormat()
+    if (!images) throw new ProviderError(`${this.name} has no image API that Dez can use.`, this.id)
+    return images
+  }
+
+  private clipFormat(): ClipFormat {
+    const { clips } = this.mediaFormat()
+    if (!clips) throw new ProviderError(`${this.name} has no audio or video API that Dez can use.`, this.id)
+    return clips
+  }
+
+  // For the parts of a clip format that a provider can be without.
+  private clipFormatOrNone(): ClipFormat | undefined {
+    const mediaApi = this.config.mediaApi
+    return mediaApi ? MEDIA_FORMATS[mediaApi.format].clips : undefined
   }
 
   // The native bridge appends every header entry and header names are

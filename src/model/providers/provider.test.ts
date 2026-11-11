@@ -1046,6 +1046,9 @@ describe('provider models', () => {
           gen: { outputs: ['image'], request: 'image' },
           edit: { outputs: ['image'], request: 'imageEdit' },
           video: { outputs: ['video'] },
+          // The request kind comes from a second value of the entry.
+          film: { outputs: ['video'], requestBy: { path: 'spec.kind', values: { fromText: 'video' } } },
+          sound: { outputs: ['audio'], request: 'tts', requestBy: { path: 'spec.kind', values: { song: 'music' } } },
           priced: { outputs: ['image'], requiredPath: 'price.image' },
           embed: { outputs: [] },
         },
@@ -1067,6 +1070,11 @@ describe('provider models', () => {
         { id: 'required-value', arch: { out: ['text', 'priced'] }, price: { image: '0.00003' } },
         { id: 'required-missing', arch: { out: ['text', 'priced'] }, price: {} },
         { id: 'required-null', arch: { out: ['priced'] }, price: { image: null } },
+        { id: 'by-value', arch: { out: 'film' }, spec: { kind: 'fromText' } },
+        { id: 'by-other-value', arch: { out: 'film' }, spec: { kind: 'fromImage' } },
+        { id: 'by-no-value', arch: { out: 'film' } },
+        { id: 'value-beats-request', arch: { out: 'sound' }, spec: { kind: 'song' } },
+        { id: 'request-for-other-value', arch: { out: 'sound' }, spec: { kind: 'constructor' } },
       ],
     })
 
@@ -1084,6 +1092,13 @@ describe('provider models', () => {
       listed('required-value', { outputs: ['text', 'image'], request: 'chat' }),
       listed('required-missing', { outputs: ['text'], request: 'chat' }),
       listed('required-null'),
+      // `requestBy` names the kind by the entry's value at its path; any
+      // other value gets the type's `request`, else `none`.
+      listed('by-value', { outputs: ['video'], request: 'video' }),
+      listed('by-other-value', { outputs: ['video'], request: 'none' }),
+      listed('by-no-value', { outputs: ['video'], request: 'none' }),
+      listed('value-beats-request', { outputs: ['audio'], request: 'music' }),
+      listed('request-for-other-value', { outputs: ['audio'], request: 'tts' }),
     ])
   })
 
@@ -1174,29 +1189,44 @@ describe('provider models', () => {
       { id: 'gen', type: 'image' },
       { id: 'edit', type: 'inpaint' },
       { id: 'video', type: 'video' },
+      { id: 'speech', type: 'tts' },
+      { id: 'song', type: 'music' },
+      { id: 'text-to-video', type: 'video', model_spec: { constraints: { model_type: 'text-to-video' } } },
+      { id: 'image-to-video', type: 'video', model_spec: { constraints: { model_type: 'image-to-video' } } },
       { id: 'embed', type: 'embedding' },
     ])).toEqual([
       ['text', ['text'], 'chat'],
       ['gen', ['image'], 'image'],
       ['edit', ['image'], 'imageEdit'],
       ['video', ['video'], 'none'],
+      ['speech', ['audio'], 'tts'],
+      ['song', ['audio'], 'music'],
+      // Only a video model that needs no input but text gets requests.
+      ['text-to-video', ['video'], 'video'],
+      ['image-to-video', ['video'], 'none'],
     ])
     // OpenRouter: an image+text model is a chat model that also makes
     // images; an image-only model gets no request (its API is not chat); a
-    // router lists "image" but has no image price, so it is a text model.
+    // router lists "image" but has no image price, so it is a text model;
+    // speech and video models take the media API; a model that writes text
+    // and audio answers through chat.
     expect(kinds('openrouter', [
       { id: 'text', architecture: { output_modalities: ['text'] }, pricing: { prompt: '0.000001', completion: '0.000002' } },
       { id: 'text-image', architecture: { output_modalities: ['image', 'text'] }, pricing: { image_output: '0.00003' } },
       { id: 'image', architecture: { output_modalities: ['image'] }, pricing: { image_output: '0.00003' } },
       { id: 'router', architecture: { output_modalities: ['text', 'image'] }, pricing: { prompt: '-1', completion: '-1' } },
       { id: 'speech', architecture: { output_modalities: ['speech'] } },
+      { id: 'video', architecture: { output_modalities: ['video'] } },
+      { id: 'text-audio', architecture: { output_modalities: ['text', 'audio'] } },
       { id: 'rerank', architecture: { output_modalities: ['rerank'] } },
     ])).toEqual([
       ['text', ['text'], 'chat'],
       ['text-image', ['text', 'image'], 'chat'],
       ['image', ['image'], 'none'],
       ['router', ['text'], 'chat'],
-      ['speech', ['audio'], 'none'],
+      ['speech', ['audio'], 'tts'],
+      ['video', ['video'], 'video'],
+      ['text-audio', ['text', 'audio'], 'chat'],
     ])
     expect(kinds('copilot', [
       { id: 'chat', capabilities: { type: 'chat' } },
@@ -1222,6 +1252,84 @@ describe('provider models', () => {
     expect(customProvider({ modelListQuery, apiFormat: 'anthropic', baseUrl: 'https://api.anthropic.com' }).modelListRequest(null)?.url)
       .toBe('https://api.anthropic.com/v1/models?limit=1000&type=all&a+b=c%26d')
     expect(customProvider({ modelListQuery: {} }).modelListRequest(null)?.url).toBe('http://localhost:8080/v1/models')
+  })
+})
+
+describe('media model data', () => {
+  const openRouterLike = customProvider({ mediaApi: { format: 'openrouter' }, headers: { 'X-Title': 'Dez' } })
+  const veniceLike = customProvider({ mediaApi: { format: 'venice' } })
+
+  it('asks for the model list of the media API, with the key and the time limit of a model list', () => {
+    expect(openRouterLike.mediaModelListRequest(key)).toStrictEqual({
+      method: 'GET',
+      url: 'http://localhost:8080/v1/videos/models',
+      headers: { 'X-Title': 'Dez', Authorization: 'Bearer sk-test' },
+      timeoutMs: 20_000,
+    })
+  })
+
+  it('asks for no media model list when the media API has none, or there is no media API', () => {
+    expect([veniceLike, customProvider({})].map((provider) => provider.mediaModelListRequest(key))).toStrictEqual([null, null])
+  })
+
+  it('keeps the first entry of each id of the media model list', () => {
+    const first = { id: 'a', supported_durations: [1] }
+
+    expect(openRouterLike.mediaModelEntries({ data: [first, { id: 'b' }, { id: 'a', supported_durations: [9] }, { name: 'no id' }] }))
+      .toStrictEqual(new Map<string, unknown>([['a', first], ['b', { id: 'b' }]]))
+    expect(openRouterLike.mediaModelEntries('Not found')).toStrictEqual(new Map())
+  })
+
+  it('gives each clip model its parameters from its two entries, and leaves other models as they are', () => {
+    const chat = providerModel('local', 'chat', 'Chat', { request: 'chat' })
+    const image = providerModel('local', 'image', 'Image', { request: 'image' })
+    const speech = providerModel('local', 'speech', 'Speech', { request: 'tts' })
+    const video = providerModel('local', 'video', 'Video', { request: 'video' })
+    const unlisted = providerModel('local', 'unlisted', 'Unlisted', { request: 'video' })
+    const entries = new Map<string, unknown>([
+      // A chat model with voices takes no voice: Dez sends it chat requests.
+      ['chat', { id: 'chat', supported_voices: ['af_alloy'] }],
+      ['speech', { id: 'speech', supported_voices: ['af_alloy', 'af_bella'] }],
+      ['video', { id: 'video' }],
+    ])
+    const mediaEntries = new Map<string, unknown>([['video', { id: 'video', supported_durations: [4, 1] }]])
+
+    expect(openRouterLike.withParameters([chat, image, speech, video, unlisted], entries, mediaEntries)).toStrictEqual([
+      chat,
+      image,
+      { ...speech, parameters: [{ name: 'voice', label: 'Voice', options: ['af_alloy', 'af_bella'], default: 'af_alloy' }] },
+      { ...video, parameters: [{ name: 'duration', label: 'Length (seconds)', options: [1, 4], default: 1 }] },
+      // A model that the lists do not have gets no `parameters` field.
+      unlisted,
+    ])
+  })
+
+  it('gives no parameters for a provider with no media API', () => {
+    const speech = providerModel('local', 'speech', 'Speech', { request: 'tts' })
+
+    expect(customProvider({}).withParameters([speech], new Map([['speech', { id: 'speech', supported_voices: ['af_alloy'] }]]), new Map()))
+      .toStrictEqual([speech])
+  })
+
+  it('asks for the price of a clip with the headers and the time limit of a model list, and reads it', () => {
+    const quote = veniceLike.clipQuote('video', 'wan', { duration: '5s', aspect_ratio: '16:9' }, undefined, key)
+
+    expect(quote?.request).toStrictEqual({
+      method: 'POST',
+      url: 'http://localhost:8080/v1/video/quote',
+      headers: { 'Content-Type': 'application/json', Authorization: 'Bearer sk-test' },
+      body: JSON.stringify({ duration: '5s', aspect_ratio: '16:9', model: 'wan' }),
+      timeoutMs: 20_000,
+    })
+    expect(quote?.usd({ quote: 0.07 })).toBe(0.07)
+  })
+
+  it('has no price request for a kind or a provider whose media API gives none', () => {
+    expect([
+      veniceLike.clipQuote('tts', 'tts-kokoro', {}, undefined, key),
+      openRouterLike.clipQuote('video', 'm', { duration: 1 }, undefined, key),
+      customProvider({}).clipQuote('video', 'm', { duration: 1 }, undefined, key),
+    ]).toStrictEqual([null, null, null])
   })
 })
 

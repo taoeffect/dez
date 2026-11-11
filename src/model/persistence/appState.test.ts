@@ -79,6 +79,32 @@ describe('app state persistence format', () => {
     })
   })
 
+  it('keeps the chosen model parameters, and drops a bad value, model, or key alone', () => {
+    const parse = (value: unknown) => parseAppStateJson(JSON.stringify({ modelParameters: value })).modelParameters
+    const saved = { 'venice/film': { duration: '5s', fps: 24 }, 'openrouter/x-ai/film': { duration: 1 } }
+
+    expect(parseAppStateJson('{}').modelParameters).toStrictEqual({})
+    expect(parse(42)).toStrictEqual({})
+    expect(parseAppStateJson(serializeAppStateJson({ modelParameters: saved })).modelParameters).toStrictEqual(saved)
+    expect(parse({
+      'venice/film': { duration: '5s', loop: true, seed: null, sizes: ['480p'] },
+      'venice/song': 42,
+      // No value is left for this model.
+      'venice/speech': { voice: false },
+      // Not a full model id.
+      film: { duration: '5s' },
+      '/film': { duration: '5s' },
+    })).toStrictEqual({ 'venice/film': { duration: '5s' } })
+  })
+
+  // JSON.parse makes `__proto__` an own key.
+  it('reads no model parameters from a __proto__ key', () => {
+    const state = parseAppStateJson('{ "modelParameters": { "__proto__": { "duration": "5s" }, "venice/film": { "__proto__": "5s" } } }')
+
+    expect(Object.keys(state.modelParameters ?? {})).toStrictEqual(['venice/film'])
+    expect(Object.getPrototypeOf(state.modelParameters)).toBe(Object.prototype)
+  })
+
   it('keeps the known output types of a hand-edited modelOutputFilter, and ignores a bad type', () => {
     const parseFilter = (value: unknown) => parseAppStateJson(JSON.stringify({ modelOutputFilter: value })).modelOutputFilter
     expect(parseAppStateJson('{}').modelOutputFilter).toEqual([])

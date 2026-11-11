@@ -1,6 +1,7 @@
 import { defineStore } from 'pinia'
 import { computed, ref } from 'vue'
 import type { ProviderConfig } from '../providers/config'
+import type { ParameterValues } from '../providers/modelParameters'
 import type { ModelOutput } from '../modelOutputs'
 import { EDITOR_FONT_SIZE_DEFAULT } from '../editorFontSize'
 import { DONE_SOUND_VOLUME_DEFAULT } from '../doneSoundVolume'
@@ -47,6 +48,11 @@ export const useSettingsStore = defineStore('settings', () => {
   // Sparse per-provider setting overrides keyed by provider id then setting
   // key; effective value = stored value ?? provider descriptor default.
   const providerSettings = ref<Record<string, Record<string, boolean>>>({})
+  // The parameter values that the user chose for media models (the length
+  // of a clip, a voice), keyed by full model id (`modelRefKey`) then
+  // parameter name (`ModelParameter.name`). Sparse: a parameter with no
+  // entry has its default (`effectiveParameterValues`).
+  const modelParameters = ref<Record<string, ParameterValues>>({})
   const checkForUpdates = ref(true)
   const lastUpdateCheckAt = ref<number | null>(null)
   // The reply-end alerts (Settings › Notifications): a sound at
@@ -130,6 +136,7 @@ export const useSettingsStore = defineStore('settings', () => {
     favorites,
     modelOutputFilter,
     providerSettings,
+    modelParameters,
     checkForUpdates,
     lastUpdateCheckAt,
     doneSound,

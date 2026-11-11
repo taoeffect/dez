@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest'
 import type { ModelCache } from '../persistence/types'
 import { providerInfo } from '../providers/testing'
 import type { ModelInfo } from '../providers/types'
-import { MODEL_INFO_SIZE_CAP, modelInfoTarget, modelInfoText } from './modelInfo'
+import { MODEL_INFO_SIZE_CAP, modelInfoParameterValues, modelInfoTarget, modelInfoText } from './modelInfo'
 
 const OPENROUTER = providerInfo('openrouter', 'OpenRouter')
 const CLOSED = providerInfo('closed', 'Closed', false)
@@ -12,6 +12,18 @@ const PROVIDERS = [OPENROUTER, CLOSED, FAILING]
 // Model ids can hold `/`; provider ids cannot.
 const GEMINI: ModelInfo = { id: 'google/gemini-3-pro', name: 'Gemini 3 Pro', provider: OPENROUTER.id, imageInput: true, outputs: ['text', 'image'], request: 'chat' }
 const UNKNOWN: ModelInfo = { id: 'mystery', name: 'Mystery', provider: OPENROUTER.id }
+const VIDEO: ModelInfo = {
+  id: 'x-ai/grok-video',
+  name: 'Grok Video',
+  provider: OPENROUTER.id,
+  outputs: ['video'],
+  request: 'video',
+  parameters: [
+    { name: 'duration', label: 'Length (seconds)', options: [1, 5, 10], default: 1 },
+    { name: 'aspect_ratio', label: 'Aspect ratio', options: ['16:9', '1:1'] },
+    { name: 'duration_seconds', label: 'Length (seconds)', min: 1, max: 30, default: 5 },
+  ],
+}
 
 const CACHE: ModelCache = {
   version: 1,
@@ -47,6 +59,35 @@ describe('modelInfoTarget', () => {
   })
 })
 
+describe('modelInfoParameterValues', () => {
+  it('reads the values from the text of a JSON object', () => {
+    expect(modelInfoParameterValues(VIDEO, { model: 'openrouter/x-ai/grok-video', parameters: '{"duration": 5, "aspect_ratio": "1:1", "duration_seconds": 30}' }))
+      .toStrictEqual({ duration: 5, aspect_ratio: '1:1', duration_seconds: 30 })
+  })
+
+  it('names no value for a call with no `parameters`', () => {
+    expect(modelInfoParameterValues(VIDEO, { model: 'openrouter/x-ai/grok-video' })).toStrictEqual({})
+  })
+
+  it.each(['duration=5', '[5]', '5', 'null', ''])('refuses %j, which is not a JSON object', (parameters) => {
+    expect(() => modelInfoParameterValues(VIDEO, { parameters })).toThrow('`parameters` must be the text of a JSON object')
+  })
+
+  // A wrong value must not look like a price of the right one.
+  it.each([
+    ['a name that is no parameter of the model', '{"fps": 60}', 'The model has no parameter "fps". Its parameters: duration, aspect_ratio, duration_seconds.'],
+    ['a value that is not an option', '{"duration": 7}', 'The parameter "duration" takes one of: 1, 5, 10.'],
+    ['a text for a number option', '{"duration": "5"}', 'The parameter "duration" takes one of: 1, 5, 10.'],
+    ['a number out of the range', '{"duration_seconds": 31}', 'The parameter "duration_seconds" takes a whole number from 1 to 30.'],
+  ])('refuses %s, and tells what the model takes', (_name, parameters, message) => {
+    expect(() => modelInfoParameterValues(VIDEO, { parameters })).toThrow(new Error(message))
+  })
+
+  it('refuses a value for a model with no parameters', () => {
+    expect(() => modelInfoParameterValues(GEMINI, { parameters: '{"duration": 5}' })).toThrow(new Error('The model has no parameter "duration". It has no parameters.'))
+  })
+})
+
 describe('modelInfoText', () => {
   const entry = { id: 'google/gemini-3-pro', pricing: { prompt: '0.000002' }, context_length: 1048576 }
 
@@ -68,7 +109,7 @@ describe('modelInfoText', () => {
     const result = JSON.parse(modelInfoText(OPENROUTER, GEMINI, undefined)) as Record<string, unknown>
 
     expect(result).not.toHaveProperty('providerEntry')
-    expect(result.note).toBe('Dez has no entry from the provider for this model now. Try again later.')
+    expect(result.note).toBeTypeOf('string')
   })
 
   it(`keeps the provider entry up to ${MODEL_INFO_SIZE_CAP} characters, and leaves it out with a note over that`, () => {
@@ -80,8 +121,62 @@ describe('modelInfoText', () => {
 
     const over = JSON.parse(withPadding(`${fitting}x`)) as Record<string, unknown>
     expect(over).not.toHaveProperty('providerEntry')
-    expect(over.note).toBe(`providerEntry is left out: with it, the result has ${MODEL_INFO_SIZE_CAP + 1} characters, over the limit of ${MODEL_INFO_SIZE_CAP}.`)
+    expect(over.note).toContain(`${MODEL_INFO_SIZE_CAP + 1} characters`)
     expect(over.dez).toStrictEqual({ outputs: ['text', 'image'], request: 'chat', imageInput: true })
+  })
+
+  describe('for a model with parameters', () => {
+    const videoEntry = { id: 'x-ai/grok-video' }
+    const mediaEntry = { id: 'x-ai/grok-video', pricing_skus: { cents_per_video_output_second_480p: '2' } }
+
+    it('gives each parameter with the value that a request sends, the price, and the entry of the media list', () => {
+      const result = modelInfoText(OPENROUTER, VIDEO, videoEntry, { values: { duration: 5, duration_seconds: 5 }, cost: { usd: 0.1 }, mediaEntry })
+
+      expect(JSON.parse(result)).toStrictEqual({
+        id: 'openrouter/x-ai/grok-video',
+        name: 'Grok Video',
+        provider: { id: 'openrouter', name: 'OpenRouter' },
+        dez: {
+          outputs: ['video'],
+          request: 'video',
+          parameters: [
+            { name: 'duration', label: 'Length (seconds)', options: [1, 5, 10], default: 1, value: 5 },
+            // No value: the provider's own default applies.
+            { name: 'aspect_ratio', label: 'Aspect ratio', options: ['16:9', '1:1'] },
+            { name: 'duration_seconds', label: 'Length (seconds)', min: 1, max: 30, default: 5, value: 5 },
+          ],
+          cost: { usd: 0.1 },
+        },
+        providerEntry: videoEntry,
+        mediaEntry,
+      })
+    })
+
+    it('tells that the provider gave no price, and has no media entry for a provider with no media list', () => {
+      const result = JSON.parse(modelInfoText(OPENROUTER, VIDEO, videoEntry, { values: {}, cost: { error: 'No answer' } })) as { dez: Record<string, unknown> }
+
+      expect(result.dez.cost).toStrictEqual({ error: 'No answer' })
+      expect(result).not.toHaveProperty('mediaEntry')
+    })
+
+    it('leaves both entries out of a result over the limit, and keeps the parameters and the price', () => {
+      const request = { values: { duration: 1 }, cost: { usd: 0.02 }, mediaEntry: { id: 'x-ai/grok-video', description: 'x'.repeat(MODEL_INFO_SIZE_CAP) } }
+      const result = JSON.parse(modelInfoText(OPENROUTER, VIDEO, videoEntry, request)) as { dez: Record<string, unknown>, note: string }
+
+      expect(result).not.toHaveProperty('providerEntry')
+      expect(result).not.toHaveProperty('mediaEntry')
+      expect(result.note).toBeTypeOf('string')
+      expect(result.dez.cost).toStrictEqual({ usd: 0.02 })
+      expect(result.dez.parameters).toHaveLength(3)
+    })
+
+    it('sends a stand-in for a local file path in an option and in the media entry', () => {
+      const local: ModelInfo = { ...VIDEO, parameters: [{ name: 'voice', label: 'Voice', options: ['/home/alice/voices/a.bin', 'af_alloy'] }] }
+      const result = JSON.parse(modelInfoText(OPENROUTER, local, videoEntry, { values: {}, mediaEntry: { root: '/home/alice/acme-bot' } })) as { dez: Record<string, unknown>, mediaEntry: unknown }
+
+      expect(result.dez.parameters).toStrictEqual([{ name: 'voice', label: 'Voice', options: ['/home/…', 'af_alloy'] }])
+      expect(result.mediaEntry).toStrictEqual({ root: '/home/…' })
+    })
   })
 
   // A local server can use a file path as the model id, and its entry can

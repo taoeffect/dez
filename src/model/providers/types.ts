@@ -1,8 +1,10 @@
 import type { ImageMediaType } from '../chat/images'
+import type { MediaTagKind } from '../chat/mediaTags'
 import type { RequestMessage, ThinkingReplay } from '../chat/types'
 import { normalizeOutputs, type ModelOutput } from '../modelOutputs'
 import type { StreamedToolCall, ToolDefinition } from '../tools/types'
 import type { ApiFormatId, ProviderAuth, ProviderSettingDef } from './config'
+import { cloneModelParameter, type ModelParameter } from './modelParameters'
 
 // Any id that passes `isValidProviderId()` in `config.ts`: built-in ids plus
 // user-defined custom provider ids.
@@ -10,8 +12,10 @@ export type ProviderId = string
 
 // How Dez sends a request to a model. `chat`: the API format's chat request.
 // `image`, `imageEdit`: the provider's media API makes or edits an image.
+// `tts`, `music`, `video`: the provider's media API makes a clip from the
+// user's text: speech that reads it, music or a sound, or a video.
 // `none`: Dez has no request for the model yet, so a submit is refused.
-export const MODEL_REQUESTS = ['chat', 'image', 'imageEdit', 'none'] as const
+export const MODEL_REQUESTS = ['chat', 'image', 'imageEdit', 'tts', 'music', 'video', 'none'] as const
 
 export type ModelRequest = (typeof MODEL_REQUESTS)[number]
 
@@ -19,10 +23,46 @@ export type ModelRequest = (typeof MODEL_REQUESTS)[number]
 // config.ts, mediaFormats.ts) instead of its chat API.
 export type MediaKind = Exclude<ModelRequest, 'chat' | 'none'>
 
-// One file that a media model made.
+// The media kinds that make a clip, each with the kind of its clip (the
+// name of the clip's tag, src/model/chat/mediaTags.ts).
+export const CLIP_KINDS = {
+  tts: 'audio',
+  music: 'audio',
+  video: 'video',
+} as const satisfies Partial<Record<MediaKind, MediaTagKind>>
+
+export type ClipKind = keyof typeof CLIP_KINDS
+
+// The media kinds that make image files.
+export type ImageKind = Exclude<MediaKind, ClipKind>
+
+export function isClipKind(kind: ModelRequest): kind is ClipKind {
+  return Object.hasOwn(CLIP_KINDS, kind)
+}
+
+// One image file that a media model made.
 export interface GeneratedMedia {
   bytes: Uint8Array
   mediaType: ImageMediaType
+}
+
+// One clip (audio or video) that a media model made. Its bytes never come
+// through the webview, as a video is too large for the HTTP bridge: the
+// clip is at the provider's URL, or in a temp copy that Rust wrote.
+export interface GeneratedClip {
+  kind: MediaTagKind
+  // The media type, such as `video/mp4`.
+  mediaType: string
+  // The source that plays: `url` when the provider gave one, else the
+  // absolute path of the temp copy (`isTempMediaPath` in mediaTags.ts).
+  src: string
+  // The provider's URL of the clip. It is a signed URL, which is a secret.
+  url: string | null
+  // The ISO time after which `src` stops working.
+  expires: string
+  // The provider's id of the job that made the clip, when it had one. The
+  // provider can give the clip again for it while it keeps the clip.
+  jobId: string | null
 }
 
 export interface ModelInfo {
@@ -41,9 +81,13 @@ export interface ModelInfo {
   outputs?: ModelOutput[]
   // How Dez sends the model a request. Missing: `chat` (`effectiveRequest`).
   request?: ModelRequest
+  // What a request to the model can set (modelParameters.ts), for a model
+  // of a clip request kind whose provider tells it. Never empty. Missing:
+  // none.
+  parameters?: ModelParameter[]
 }
 
-export type ModelCapabilities = Pick<ModelInfo, 'imageInput' | 'toolCalling' | 'outputs' | 'request'>
+export type ModelCapabilities = Pick<ModelInfo, 'imageInput' | 'toolCalling' | 'outputs' | 'request' | 'parameters'>
 
 // Display names for agent role pills and history rows: provider id ->
 // provider name, and `modelRefKey` -> model name. Maps, not plain objects,
@@ -92,6 +136,10 @@ export interface ProviderModelsResult {
   // (`Provider.modelEntries`), for the `model_info` tool. The model cache
   // keeps it in memory only.
   entries?: ReadonlyMap<string, unknown>
+  // On success, for a provider whose media API has an own model list
+  // (`ClipFormat.modelList`) that answered: the raw entry of each model of
+  // that list, by model id. In memory only, like `entries`.
+  mediaEntries?: ReadonlyMap<string, unknown>
   error?: string
 }
 
@@ -181,14 +229,15 @@ export class ProviderNotConfiguredError extends ProviderError {
 
 // Leaves each capability out when it is unknown, so the model cache file and
 // whole-object comparisons hold no `undefined` field. `outputs` becomes a new
-// array in table order, so two models never share one (a store copy and its
-// snapshot, a config model and the cache).
+// array in table order, and `parameters` a deep copy, so two models never
+// share one (a store copy and its snapshot, a config model and the cache).
 export function providerModel(provider: ProviderId, id: string, name: string, capabilities: ModelCapabilities = {}): ModelInfo {
   const model: ModelInfo = { id, name, provider }
   if (capabilities.imageInput !== undefined) model.imageInput = capabilities.imageInput
   if (capabilities.toolCalling !== undefined) model.toolCalling = capabilities.toolCalling
   if (capabilities.outputs !== undefined) model.outputs = normalizeOutputs(capabilities.outputs)
   if (capabilities.request !== undefined) model.request = capabilities.request
+  if (capabilities.parameters !== undefined) model.parameters = capabilities.parameters.map(cloneModelParameter)
   return model
 }
 

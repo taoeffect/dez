@@ -151,7 +151,7 @@ describe('provider config schema', () => {
     expect(parseModel({ outputs: [] }).success).toBe(false)
     expect(parseModel({ outputs: ['speech'] }).success).toBe(false)
     expect(parseModel({ outputs: 'image' }).success).toBe(false)
-    expect(parseModel({ request: 'video' }).success).toBe(false)
+    expect(parseModel({ request: 'speech' }).success).toBe(false)
   })
 
   it('keeps the model list query, the output type mapping, and the media API, and rejects bad ones', () => {
@@ -164,10 +164,16 @@ describe('provider config schema', () => {
       // config model's outputs.
       modelOutputs: {
         path: 'arch.out',
-        values: { text: { outputs: ['text'], request: 'chat' }, image: { outputs: ['image'], requiredPath: 'price.image' }, embed: { outputs: [] } },
+        values: {
+          text: { outputs: ['text'], request: 'chat' },
+          image: { outputs: ['image'], requiredPath: 'price.image' },
+          // The request kind depends on a second value of the entry.
+          video: { outputs: ['video'], requestBy: { path: 'spec.kind', values: { 'text-to-video': 'video' } } },
+          embed: { outputs: [] },
+        },
       },
       imageOutputBody: { modalities: ['image', 'text'] },
-      mediaApi: { format: 'venice' },
+      mediaApi: { format: 'openrouter' },
     }
 
     expect(parse(fields).data).toMatchObject(fields)
@@ -177,7 +183,10 @@ describe('provider config schema', () => {
     expect(outputs({ tts: { outputs: ['speech'] } })).toBe(false)
     expect(outputs({ tts: { outputs: 'audio' } })).toBe(false)
     expect(outputs({ tts: { request: 'chat' } })).toBe(false)
-    expect(outputs({ video: { outputs: ['video'], request: 'video' } })).toBe(false)
+    expect(outputs({ video: { outputs: ['video'], request: 'speech' } })).toBe(false)
+    expect(outputs({ video: { outputs: ['video'], requestBy: { path: 'spec..kind', values: {} } } })).toBe(false)
+    expect(outputs({ video: { outputs: ['video'], requestBy: { path: 'spec.kind', values: { 'text-to-video': 'film' } } } })).toBe(false)
+    expect(outputs({ video: { outputs: ['video'], requestBy: { path: 'spec.kind' } } })).toBe(false)
     expect(outputs({ image: { outputs: ['image'], requiredPath: 'price..image' } })).toBe(false)
     expect(parse({ imageOutputBody: ['image'] }).success).toBe(false)
     expect(parse({ mediaApi: { format: 'openai' } }).success).toBe(false)

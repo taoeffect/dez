@@ -1,6 +1,7 @@
 import type { ActiveModel, ModelRef, SectionThinking } from '../chat/types'
 import type { ModelOutput } from '../modelOutputs'
 import type { ProviderConfig } from '../providers/config'
+import type { ParameterValues } from '../providers/modelParameters'
 import type { ModelInfo, ProviderId } from '../providers/types'
 import type { Prompt } from '../state/prompts'
 import type { DefaultModel, Theme, WindowGeometry } from '../state/settings'
@@ -113,6 +114,10 @@ export interface AppStatePayload {
   // The model pickers' output filter; empty (or missing) shows every model.
   modelOutputFilter?: ModelOutput[]
   providerSettings?: Record<string, Record<string, boolean>>
+  // The parameter values that the user chose for media models: full model
+  // id (`modelRefKey`) -> parameter name -> value. Only the choices; a
+  // parameter with no entry has its default.
+  modelParameters?: Record<string, ParameterValues>
   checkForUpdates?: boolean
   lastUpdateCheckAt?: number | null
   // The reply-end alerts; doneSoundVolume is an integer percent, 0-100.

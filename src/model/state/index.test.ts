@@ -536,6 +536,9 @@ describe('dez.model/customProviders/remove', () => {
     sbp('dez.model/settings/toggleFavorite', 'openrouter', 'm2')
     sbp('dez.model/settings/setProviderSetting', 'local', 'flag', true)
     sbp('dez.model/settings/setProviderSetting', 'venice', 'webSearch', false)
+    sbp('dez.model/settings/setModelParameter', { providerId: 'local', modelId: 'vendor/film' }, 'duration', 5)
+    // A model id of another provider that starts like this provider's id.
+    sbp('dez.model/settings/setModelParameter', { providerId: 'venice', modelId: 'local/film' }, 'duration', '5s')
     sbp('dez.model/settings/setDefaultNewTabModel', { providerId: 'local', modelId: 'm1' })
     sbp('dez.model/setActiveModel', 'local', 'm1', 'Model 1')
 
@@ -545,6 +548,7 @@ describe('dez.model/customProviders/remove', () => {
     expect(snapshot.customProviders.map((config) => config.id)).toEqual(['other'])
     expect(snapshot.favorites).toEqual([{ providerId: 'openrouter', modelId: 'm2' }])
     expect(snapshot.providerSettings).toEqual({ venice: { webSearch: false } })
+    expect(snapshot.modelParameters).toStrictEqual({ 'venice/local/film': { duration: '5s' } })
     expect(snapshot.defaultNewTabModel).toBeNull()
     expect(snapshot.lastUsedModel).toBeNull()
   })
@@ -659,6 +663,72 @@ describe('dez.model/settings/setModelOutputFilter', () => {
   })
 })
 
+describe('dez.model/settings model parameters', () => {
+  const film: ModelRef = { providerId: 'venice', modelId: 'film' }
+  const song: ModelRef = { providerId: 'venice', modelId: 'song' }
+  const values = () => (sbp('dez.model/settings/snapshot') as SettingsSnapshot).modelParameters
+  const set = (model: ModelRef, name: string, value: string | number | null) => sbp('dez.model/settings/setModelParameter', model, name, value)
+
+  afterEach(() => {
+    sbp('dez.model/settings/stopPersistence')
+    vi.useRealTimers()
+  })
+
+  it('keeps the values of each model apart, and replaces a value that is set again', () => {
+    set(film, 'duration', '4s')
+    set(film, 'resolution', '480p')
+    set(song, 'duration_seconds', 30)
+    set(film, 'duration', '8s')
+
+    expect(values()).toStrictEqual({ 'venice/film': { duration: '8s', resolution: '480p' }, 'venice/song': { duration_seconds: 30 } })
+  })
+
+  it('removes a value that is set to null, and the model with its last value', () => {
+    set(film, 'duration', '4s')
+    set(film, 'resolution', '480p')
+
+    set(film, 'duration', null)
+    expect(values()).toStrictEqual({ 'venice/film': { resolution: '480p' } })
+
+    set(film, 'resolution', null)
+    set(song, 'duration_seconds', null)
+    expect(values()).toStrictEqual({})
+  })
+
+  it('gives a snapshot that a reader cannot change the settings through', () => {
+    set(film, 'duration', '4s')
+
+    values()['venice/film'].duration = '60s'
+
+    expect(values()).toStrictEqual({ 'venice/film': { duration: '4s' } })
+  })
+
+  it('resets the toggles of the provider and the values of the one model', () => {
+    sbp('dez.model/settings/setProviderSetting', 'venice', 'webSearch', false)
+    sbp('dez.model/settings/setProviderSetting', 'openrouter', 'thinking', false)
+    set(film, 'duration', '4s')
+    set(song, 'duration_seconds', 30)
+
+    sbp('dez.model/settings/resetProviderSettings', 'venice', 'film')
+
+    const snapshot = sbp('dez.model/settings/snapshot') as SettingsSnapshot
+    expect(snapshot.providerSettings).toStrictEqual({ openrouter: { thinking: false } })
+    expect(snapshot.modelParameters).toStrictEqual({ 'venice/song': { duration_seconds: 30 } })
+  })
+
+  it('loads the saved values, and saves a change', async () => {
+    diskAppState = { modelParameters: { 'venice/film': { duration: '4s' } } }
+    await sbp('dez.model/settings/init')
+    expect(values()).toStrictEqual({ 'venice/film': { duration: '4s' } })
+
+    vi.useFakeTimers()
+    sbp('dez.model/settings/startPersistence')
+    set(song, 'duration_seconds', 30)
+    await vi.advanceTimersByTimeAsync(1000)
+    expect(savedAppStates.at(-1)?.modelParameters).toStrictEqual({ 'venice/film': { duration: '4s' }, 'venice/song': { duration_seconds: 30 } })
+  })
+})
+
 describe('dez.model/settings shortcuts', () => {
   const overrides = () => (sbp('dez.model/settings/snapshot') as SettingsSnapshot).shortcutOverrides
   const keyOf = (id: ShortcutId) => (sbp('dez.model/settings/shortcuts') as Shortcut[]).find((shortcut) => shortcut.id === id)?.keys
@@ -737,6 +807,25 @@ describe('dez.model/modelCache raw model entries', () => {
 
     sbp('dez.model/modelCache/removeProvider', 'local')
     expect(rawModel('m')).toBeUndefined()
+  })
+
+  it('keeps the entries of the media list apart, and drops them when a check gives none', () => {
+    const mediaEntry = { id: 'm', supported_durations: [1, 5] }
+    const media = (modelId: string) => sbp('dez.model/modelCache/rawModel', 'local', modelId, 'media') as unknown
+    const result = { ok: true, models: [{ id: 'm', name: 'M', provider: 'local' }], entries: new Map([['m', entry()]]) }
+
+    sbp('dez.model/modelCache/applyProviderResult', 'local', { ...result, mediaEntries: new Map([['m', mediaEntry]]) })
+    expect([rawModel('m'), media('m'), media('other')]).toStrictEqual([entry(), mediaEntry, undefined])
+
+    // A failed check keeps them; a check whose media list failed does not.
+    sbp('dez.model/modelCache/applyProviderResult', 'local', { ok: false, models: [], error: 'HTTP 500' })
+    expect(media('m')).toStrictEqual(mediaEntry)
+    sbp('dez.model/modelCache/applyProviderResult', 'local', result)
+    expect([rawModel('m'), media('m')]).toStrictEqual([entry(), undefined])
+
+    sbp('dez.model/modelCache/applyProviderResult', 'local', { ...result, mediaEntries: new Map([['m', mediaEntry]]) })
+    sbp('dez.model/modelCache/removeProvider', 'local')
+    expect(media('m')).toBeUndefined()
   })
 })
 

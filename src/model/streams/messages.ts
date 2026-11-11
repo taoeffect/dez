@@ -64,21 +64,22 @@ export function sectionsToStreamMessages(sections: Section[], requestModel: Mode
   return { messages, imagesLeftOut }
 }
 
-/** What a media reply (ModelInfo.request `image` or `imageEdit`) sends to
+/** What a media reply (a ModelInfo.request that is not `chat`) sends to
  *  dez.provider/generateMedia. The prompt is the text of the last user
  *  message of `messages` as a chat request sends it: with no path, and with
- *  each image reference as its `![image](id=a)` text. An edit takes the
- *  images of that message, in text order and each one once: the ones that
- *  it holds and the ones that it names with an `@id` mention. When it has
- *  none, the edit takes the newest image reference of `sections` (the
- *  tab's sections, in which the reply's own section is still empty), so
- *  that "Make it blue" edits the image of the reply before. An edit with no
- *  image gets no paths, and generateMedia refuses it. */
+ *  each image reference as its `![image](id=a)` text. Only an edit
+ *  (`imageEdit`) takes images: the images of that message, in text order
+ *  and each one once: the ones that it holds and the ones that it names
+ *  with an `@id` mention. When it has none, the edit takes the newest image
+ *  reference of `sections` (the tab's sections, in which the reply's own
+ *  section is still empty), so that "Make it blue" edits the image of the
+ *  reply before. An edit with no image gets no paths, and generateMedia
+ *  refuses it. */
 export function mediaRequestInput(kind: MediaKind, messages: StreamMessage[], sections: Section[]): { prompt: string, images: string[] } {
   const content = messages.findLast((message): message is Extract<StreamMessage, { role: 'user' }> => message.role === 'user')?.content ?? ''
   const parts: MessagePart[] = typeof content === 'string' ? [{ type: 'text', text: content }] : content
   const prompt = parts.map((part) => (part.type === 'text' ? part.text : '')).join('').trim()
-  if (kind === 'image') return { prompt, images: [] }
+  if (kind !== 'imageEdit') return { prompt, images: [] }
 
   const images = [...new Set(parts.flatMap((part) => (part.type === 'image' ? [part.path] : [])))]
   if (images.length > 0) return { prompt, images }
