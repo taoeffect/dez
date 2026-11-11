@@ -4,7 +4,9 @@ import type { ToolCall, ToolDefinition } from '../tools/types'
 import type { NativeHttpRequest } from '../../utils/protocol/nativeHttp'
 import { secret } from '../../utils/secret'
 import { BUILT_IN_PROVIDER_CONFIGS } from './builtins'
+import { TooManyImagesError } from './clipImages'
 import { customProviderConfigSchema } from './config'
+import { providerStatusError } from './errors'
 import { Provider } from './provider'
 import { providerModel, type ChatMessage, type ChatPart, type ChatRequestContext, type ModelInfo } from './types'
 
@@ -1547,11 +1549,13 @@ describe('media model data', () => {
     ])
   })
 
-  it('gives each video model the rules of its input images from its entries, and no `images` field to a model that takes none', () => {
+  it('gives each edit and video model the rules of its input images from its entries, and no `images` field to a model that takes none', () => {
     const speech = providerModel('local', 'speech', 'Speech', { request: 'tts' })
+    const edit = providerModel('local', 'edit', 'Edit', { request: 'imageEdit' })
     const fromText = providerModel('local', 'from-text', 'From Text', { request: 'video' })
     const fromImage = providerModel('local', 'from-image', 'From Image', { request: 'imageToVideo' })
     const frames = providerModel('local', 'frames', 'Frames', { request: 'video' })
+    const entries = new Map<string, unknown>([['edit', { id: 'edit', model_spec: { constraints: { maxInputImages: 6 } } }]])
     const mediaEntries = new Map<string, unknown>([
       ['from-text', { id: 'from-text', supported_frame_images: null }],
       ['frames', { id: 'frames', supported_frame_images: ['first_frame', 'last_frame'] }],
@@ -1560,17 +1564,41 @@ describe('media model data', () => {
     const imageRules = (models: ModelInfo[]) => models.map((model) => [model.id, 'images' in model ? model.images : 'no field'])
 
     expect([
-      imageRules(veniceLike.withClipData([speech, fromText, fromImage], new Map(), new Map())),
-      imageRules(openRouterLike.withClipData([speech, fromText, frames], new Map(), mediaEntries)),
+      imageRules(veniceLike.withClipData([speech, edit, fromText, fromImage], entries, new Map())),
+      imageRules(openRouterLike.withClipData([speech, edit, fromText, frames], entries, mediaEntries)),
     ]).toStrictEqual([
-      [['speech', 'no field'], ['from-text', 'no field'], ['from-image', { maxFrames: 2 }]],
-      [['speech', 'no field'], ['from-text', 'no field'], ['frames', { maxFrames: 2 }]],
+      [['speech', 'no field'], ['edit', { maxImages: 6 }], ['from-text', 'no field'], ['from-image', { maxImages: 2 }]],
+      [['speech', 'no field'], ['edit', 'no field'], ['from-text', 'no field'], ['frames', { maxImages: 2 }]],
     ])
+  })
+
+  describe('a refusal of the count of the images', () => {
+    const refusal = JSON.stringify({
+      details: { _errors: [], end_image_url: { _errors: ['This model does not support end_image_url'] } },
+      error: 'Invalid request parameters',
+    })
+    const refused = (provider: Provider, status: number, body: string) => providerStatusError(provider, { status, headers: {} }, body)
+
+    it('tells how many images the model takes, after a refusal that tells it', () => {
+      const error = veniceLike.imageCountRefusal('imageToVideo', refused(veniceLike, 400, refusal), 2)
+
+      expect(error).toBeInstanceOf(TooManyImagesError)
+      expect([error?.maxImages, error?.sentImages, error?.message]).toStrictEqual([1, 2, 'The model takes only 1 image, and the request had 2.'])
+    })
+
+    it.each([
+      ['a request that had no more images than the model takes', veniceLike, refused(veniceLike, 400, refusal), 1],
+      ['another refusal', veniceLike, refused(veniceLike, 400, '{"error":"Invalid request parameters"}'), 2],
+      ['an error that is not a refusal', veniceLike, new Error('Network down'), 2],
+      ['a format that tells no such refusal', openRouterLike, refused(openRouterLike, 400, refusal), 2],
+    ])('is null for %s', (_name, provider, error, imageCount) => {
+      expect(provider.imageCountRefusal('imageToVideo', error, imageCount)).toBeNull()
+    })
   })
 
   it('gives the size rules of the input images of a request: of the model for a video, of the edit request for an edit', () => {
     const size = { minShortSide: 300, minAspectRatio: 0.4, maxAspectRatio: 2.5 }
-    const model = { images: { maxFrames: 2, size } }
+    const model = { images: { maxImages: 2, size } }
 
     expect([
       veniceLike.inputImageSize('imageToVideo', model),
@@ -1580,7 +1608,7 @@ describe('media model data', () => {
       // the model cache does not know or that tells no rules.
       veniceLike.inputImageSize('image', model),
       veniceLike.inputImageSize('imageToVideo', null),
-      veniceLike.inputImageSize('imageToVideo', { images: { maxFrames: 2 } }),
+      veniceLike.inputImageSize('imageToVideo', { images: { maxImages: 2 } }),
       // The OpenRouter docs tell no rule, and a provider with no media
       // API has none.
       openRouterLike.inputImageSize('imageEdit', null),

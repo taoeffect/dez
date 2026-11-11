@@ -67,7 +67,7 @@ sbp('dez.ui/toast', 'app-global', {
 
 sbp('dez.ui/toast', 'app-global', {
   title: 'Request failed',
-  message: 'Venice returned HTTP 401: {"error":"Authentication failed"}',
+  message: 'Venice returned HTTP 401: Authentication failed. Check the API key of Venice in Settings › Providers.',
   variant: 'error',
 })
 ```

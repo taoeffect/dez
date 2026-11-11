@@ -2,7 +2,9 @@ import type { JsonObject } from '../../utils/json'
 import type { NativeHttpHeaders, NativeHttpRequest, NativeHttpResponseHead } from '../../utils/protocol/nativeHttp'
 import type { Secret } from '../../utils/secret'
 import { API_FORMATS, type ApiFormat } from './apiFormats'
+import { TooManyImagesError } from './clipImages'
 import { FORBIDDEN_BODY_KEYS, type ProviderConfig } from './config'
+import { ProviderHttpError } from './errors'
 import type { ImageSizeRules } from './imageSize'
 import { MEDIA_FORMATS, type ClipFormat, type ClipInput, type ClipJob, type ImageFormat, type MediaFormat, type MediaInput, type MediaWireRequest } from './mediaFormats'
 import type { ParameterValues } from './modelParameters'
@@ -194,23 +196,27 @@ export class Provider {
     return entries
   }
 
-  // `models` (a `mergeModels` list), each model of a clip request kind with
-  // its parameters (`ClipFormat.parameters`) and the rules of its text and
-  // its input images (`ClipFormat.textRules`, `ClipFormat.imageRules`),
-  // read from its raw entries (`modelEntries`, `mediaModelEntries`). This
-  // comes after the merge, because a config model can set the request kind.
-  // A new field here needs a line in `withKeptClipData` (keptClipData.ts),
-  // which keeps these fields when the media list does not load.
+  // `models` (a `mergeModels` list), each model of a media request kind
+  // with the rules of its input images (`MediaFormat.imageRules`), and
+  // each one of a clip request kind also with its parameters
+  // (`ClipFormat.parameters`) and the rules of its text
+  // (`ClipFormat.textRules`), read from its raw entries (`modelEntries`,
+  // `mediaModelEntries`). This comes after the merge, because a config
+  // model can set the request kind. A new field here needs a line in
+  // `withKeptClipData` (keptClipData.ts), which keeps these fields when the
+  // media list does not load.
   withClipData(models: readonly ModelInfo[], entries: ReadonlyMap<string, unknown>, mediaEntries: ReadonlyMap<string, unknown>): ModelInfo[] {
-    const clips = this.clipFormatOrNone()
+    const mediaApi = this.config.mediaApi
+    if (!mediaApi) return [...models]
+    const { clips, imageRules } = MEDIA_FORMATS[mediaApi.format]
     return models.map((model) => {
       const kind = effectiveRequest(model)
-      if (!clips || !isClipKind(kind)) return model
+      if (kind === 'chat' || kind === 'none') return model
       const entry = entries.get(model.id)
       const mediaEntry = mediaEntries.get(model.id)
-      const parameters = clips.parameters(kind, entry, mediaEntry)
-      const text = clips.textRules?.(kind, entry, mediaEntry)
-      const images = clips.imageRules?.(kind, entry, mediaEntry)
+      const images = imageRules?.(kind, entry, mediaEntry)
+      const parameters = clips && isClipKind(kind) ? clips.parameters(kind, entry, mediaEntry) : []
+      const text = isClipKind(kind) ? clips?.textRules?.(kind, entry, mediaEntry) : undefined
       return { ...model, ...(parameters.length > 0 && { parameters }), ...(text && { text }), ...(images && { images }) }
     })
   }
@@ -322,6 +328,25 @@ export class Provider {
     return this.clipFormat().job(kind, this.config.baseUrl, modelId, data)
   }
 
+  // The refusal `error` of a first clip request with `imageCount` input
+  // images, as the error that tells that the model takes fewer images
+  // (`ClipFormat.refusedImages`). Null for any other error.
+  imageCountRefusal(kind: ClipKind, error: unknown, imageCount: number): TooManyImagesError | null {
+    if (!(error instanceof ProviderHttpError)) return null
+    const maxImages = this.clipFormatOrNone()?.refusedImages?.(kind, error.status, error.bodyJson)
+    return maxImages !== undefined && maxImages < imageCount ? new TooManyImagesError(maxImages, imageCount, { cause: error }) : null
+  }
+
+  // `wire` (a first clip request) with the body fields that its refusal
+  // `error` tells (`ClipFormat.refusalBody`), to send once more. Null when
+  // the refusal tells none, or none that the body lacks.
+  clipRequestAfterRefusal(kind: ClipKind, wire: MediaWireRequest, error: unknown): MediaWireRequest | null {
+    if (!(error instanceof ProviderHttpError) || wire.body === undefined) return null
+    const fields = this.clipFormatOrNone()?.refusalBody?.(kind, error.status, error.bodyJson)
+    if (!fields || Object.entries(fields).every(([name, value]) => wire.body?.[name] === value)) return null
+    return { ...wire, body: { ...wire.body, ...fields } }
+  }
+
   // How to ask the provider for the price of the clip that `clipRequest`
   // with the same values asks for (`ClipQuoteFormat`): the request (it ends
   // like a model list request, `MODEL_LIST_TIMEOUT_MS`), and the reader of
@@ -354,22 +379,23 @@ export class Provider {
 
   // A config can give a model a media request kind (`models[].request`)
   // without a `mediaApi`, or with one that does not serve the kind; its
-  // requests then fail with one of these errors.
+  // requests then fail with one of these errors. The fix of the config is
+  // the `mediaApi` row of the README.
   private mediaFormat(): MediaFormat {
     const mediaApi = this.config.mediaApi
-    if (!mediaApi) throw new ProviderError(`${this.name} has no media API that Dez can use.`, this.id)
+    if (!mediaApi) throw new ProviderError(`${this.name} has no media API that Dez can use. Choose another model.`, this.id)
     return MEDIA_FORMATS[mediaApi.format]
   }
 
   private imageFormat(): ImageFormat {
     const { images } = this.mediaFormat()
-    if (!images) throw new ProviderError(`${this.name} has no image API that Dez can use.`, this.id)
+    if (!images) throw new ProviderError(`${this.name} has no image API that Dez can use. Choose another model.`, this.id)
     return images
   }
 
   private clipFormat(): ClipFormat {
     const { clips } = this.mediaFormat()
-    if (!clips) throw new ProviderError(`${this.name} has no audio or video API that Dez can use.`, this.id)
+    if (!clips) throw new ProviderError(`${this.name} has no audio or video API that Dez can use. Choose another model.`, this.id)
     return clips
   }
 

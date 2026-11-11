@@ -7,11 +7,11 @@ import { unusableModelMessage } from '../../src/model/providers/unusableModel'
 import { openAiChatBody } from './harness/chatBody'
 import { click, consoleErrors, pointerClick, resetConsoleErrors, screenshotOnFailure, waitForValue } from './harness/dom'
 import { conversationFilePath } from './harness/fixtures'
-import { shownImages, solidPng } from './harness/images'
+import { pasteImage, pngDataUrl, shownImages, solidPng } from './harness/images'
 import { startMockProviderApp, type MockProviderApp } from './harness/mockProviderApp'
 import { mockChatPath, startEventStream, writeChatFrame, type MockProvider } from './harness/mockServer'
 import type { E2EBrowser } from './harness/session'
-import { activeConversationId, newTab, openToasts, pickModel, submit, threadSections, waitForThread } from './harness/thread'
+import { activeConversationId, focusEditor, newTab, openToasts, pickModel, submit, threadSections, waitForThread } from './harness/thread'
 
 // Image replies, driven through the real app against a mock of Venice's
 // media API (`mediaApi: { format: 'venice' }`) and of a chat API that
@@ -27,6 +27,9 @@ import { activeConversationId, newTab, openToasts, pickModel, submit, threadSect
 //   its own bytes;
 // - an edit whose message names an image with `@a` takes that image, not
 //   the newest one;
+// - an edit of a message with more images than the model takes (3, when
+//   the model list tells no count: Venice's rule) sends the first ones, and
+//   a warning toast tells of the rest;
 // - a chat model that also makes images gets the config's image output
 //   fields in its chat request; each image of its streamed reply is saved
 //   in the generated image folder and shown as a paragraph between the
@@ -270,6 +273,38 @@ describe('image generation', () => {
       { role: 'agent', text: `![${path.join(generatedDir(), editedName)}](id=c)` },
       { role: 'user', text: '' },
     ])
+    expect(await consoleErrors(browser)).toEqual([])
+  })
+
+  it('sends an edit model the first 3 images of a message with 4, and tells of the one left out', async () => {
+    // The shorter side has 256 pixels, so each image goes as its own bytes.
+    const pngs = ([[200, 40, 40], [40, 160, 60], [40, 90, 220], [220, 200, 40]] as const)
+      .map((rgb) => solidPng(320, 256, [...rgb]))
+    await pickModel(browser, PAINTER.name, EDIT_MODEL.name)
+    await focusEditor(browser)
+    for (const [index, png] of pngs.entries()) {
+      await pasteImage(browser, png)
+      await waitForValue(browser, `reference ${index + 1}`, async () => ((await threadSections(browser))[0]?.text.match(/\]\(id=/g) ?? []).length, index + 1)
+    }
+    const message = (await threadSections(browser))[0].text
+    await submit(browser, '')
+
+    const edit = await setup.mock.waitForRequest(browser)
+    expect(edit.path).toBe(EDIT_PATH)
+    expect(JSON.parse(edit.body)).toEqual({
+      modelId: EDIT_MODEL.id,
+      prompt: '![image](id=a)![image](id=b)![image](id=c)![image](id=d)',
+      images: pngs.slice(0, 3).map(pngDataUrl),
+      safe_mode: false,
+    })
+    await waitForValue(browser, 'warning toast', () => openToasts(browser, 'warning'), [{
+      title: 'Image not sent',
+      message: `${EDIT_MODEL.name} takes only 3 images, so 1 image was left out of the request.`,
+    }])
+    answer(edit.reply, 'image/png', EDITED_PNG)
+
+    await waitForValue(browser, 'sections after the edit', async () => (await threadSections(browser)).length, 3)
+    expect((await threadSections(browser))[0].text).toBe(message)
     expect(await consoleErrors(browser)).toEqual([])
   })
 

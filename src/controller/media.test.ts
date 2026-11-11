@@ -2,7 +2,13 @@ import sbp from '@sbp/sbp'
 import { afterEach, beforeEach, describe, expect, it, vi, type MockInstance } from 'vitest'
 import { MEDIA_TEMP_LIFETIME_MS, savedMediaFile } from '../model/chat/mediaFiles'
 import type { MediaTagData } from '../model/chat/mediaTags'
-import type { NativeDownloadRule, NativeHttpDownload, NativeHttpRequest } from '../utils/protocol/nativeHttp'
+import type {
+  NativeDownloadRule,
+  NativeHttpDownload,
+  NativeHttpRequest,
+  NativeHttpResponseHead,
+  NativeHttpStreamResult,
+} from '../utils/protocol/nativeHttp'
 import type { AppFileEntry, AppFileRef } from './nativeTypes'
 import './media'
 
@@ -37,7 +43,18 @@ let deleteAppFile: (file: AppFileRef) => Promise<void>
 let listedFolders: AppFileRef[] = []
 let listAppFiles: () => Promise<AppFileEntry[]>
 let toasts: Toast[] = []
+let streams: NativeHttpRequest[] = []
+let streamAnswer: () => Promise<NativeHttpResponseHead>
+let cancelledStreams: string[] = []
+let cancelStream: () => Promise<void>
 let consoleError: MockInstance<typeof console.error>
+
+// The body of a stream that the code under test must not read.
+const UNREAD_BODY: AsyncIterable<Uint8Array> = {
+  [Symbol.asyncIterator] () {
+    throw new Error('The body was read')
+  },
+}
 
 sbp('sbp/selectors/register', {
   async 'dez.native/getAppDir' (root = 'app'): Promise<string> {
@@ -63,6 +80,15 @@ sbp('sbp/selectors/register', {
   'dez.ui/toast' (_area: string, toast: Toast): void {
     toasts.push(toast)
   },
+  async 'dez.http/stream' (request: NativeHttpRequest): Promise<NativeHttpStreamResult> {
+    streams.push(request)
+    const requestId = `stream-${streams.length}`
+    return { requestId, response: await streamAnswer(), chunks: UNREAD_BODY }
+  },
+  async 'dez.http/cancelStream' (requestId: string): Promise<void> {
+    cancelledStreams.push(requestId)
+    await cancelStream()
+  },
 })
 
 beforeEach(() => {
@@ -76,6 +102,10 @@ beforeEach(() => {
   listedFolders = []
   listAppFiles = async () => []
   toasts = []
+  streams = []
+  streamAnswer = async () => ({ status: 206, statusText: 'Partial Content', headers: { 'content-range': 'bytes 0-0/1000' } })
+  cancelledStreams = []
+  cancelStream = async () => {}
   consoleError = vi.spyOn(console, 'error').mockImplementation(() => {})
 })
 
@@ -164,17 +194,17 @@ describe('dez.controller/media/save', () => {
     expect(downloads).toEqual([])
   })
 
-  it('logs, shows an error toast, and rejects when the server does not give the clip', async () => {
-    downloadAppFile = async () => ({ status: 410, statusText: 'Gone', headers: {}, saved: false, body: [] })
+  it.each([
+    [410, 'The server of the clip answered HTTP 410. The clip is not on the server any more: make it again.'],
+    [503, 'The server of the clip answered HTTP 503. This is a problem at the server of the clip: try again later.'],
+    [400, 'The server of the clip answered HTTP 400.'],
+  ])('logs, shows an error toast, and rejects when the server answers HTTP %i', async (status, message) => {
+    downloadAppFile = async () => ({ status, statusText: '', headers: {}, saved: false, body: [] })
 
-    await expect(save({ kind: 'video', type: 'video/mp4', src: CLIP_URL, url: CLIP_URL })).rejects.toThrow('HTTP 410')
+    await expect(save({ kind: 'video', type: 'video/mp4', src: CLIP_URL, url: CLIP_URL })).rejects.toThrow(new Error(message))
 
     expect(consoleError).toHaveBeenCalledWith('Failed to save the clip:', expect.any(Error))
-    expect(toasts).toEqual([{
-      title: 'Could not save the clip',
-      message: 'The server of the clip answered HTTP 410',
-      variant: 'error',
-    }])
+    expect(toasts).toEqual([{ title: 'Could not save the clip', message, variant: 'error' }])
   })
 
   it('logs, shows an error toast, and rejects when the move or the download fails', async () => {
@@ -243,6 +273,64 @@ describe('dez.controller/media/delete', () => {
       message: 'Failed to delete the file: Permission denied (os error 13)',
       variant: 'error',
     }])
+  })
+})
+
+describe('dez.controller/media/urlAnswers', () => {
+  function urlAnswers(url: string): Promise<boolean> {
+    return sbp('dez.controller/media/urlAnswers', url) as Promise<boolean>
+  }
+
+  const NO_ANSWER_LOG = ['Failed to ask the URL of a clip whether it answers']
+
+  it('asks for the first byte with one GET, no other header, and a short time limit, and stops the answer unread', async () => {
+    expect(await urlAnswers(CLIP_URL)).toBe(true)
+
+    expect(streams).toStrictEqual([{ method: 'GET', url: CLIP_URL, headers: { Range: 'bytes=0-0' }, timeoutMs: expect.any(Number) }])
+    // The player waits for the answer.
+    expect(streams[0].timeoutMs).toBeGreaterThan(0)
+    expect(streams[0].timeoutMs).toBeLessThanOrEqual(30_000)
+    expect(cancelledStreams).toStrictEqual(['stream-1'])
+    expect(consoleError).not.toHaveBeenCalled()
+  })
+
+  it('takes each 2xx status as an answer, also the whole clip from a server that takes no ranges', async () => {
+    for (const status of [200, 206, 299]) {
+      streamAnswer = async () => ({ status, headers: {} })
+      expect(await urlAnswers(CLIP_URL), String(status)).toBe(true)
+    }
+    expect(cancelledStreams).toStrictEqual(['stream-1', 'stream-2', 'stream-3'])
+  })
+
+  it('takes any other status as no answer, and logs nothing for it', async () => {
+    const statuses = [199, 300, 403, 404, 410, 416, 500]
+    for (const status of statuses) {
+      streamAnswer = async () => ({ status, headers: {} })
+      expect(await urlAnswers(CLIP_URL), String(status)).toBe(false)
+    }
+    expect(cancelledStreams).toHaveLength(statuses.length)
+    expect(consoleError).not.toHaveBeenCalled()
+  })
+
+  it('gives no answer for a request that fails or times out, and logs neither the URL nor the error', async () => {
+    for (const error of [new Error(`error sending request for url (${CLIP_URL})`), 'operation timed out']) {
+      streamAnswer = async () => {
+        throw error
+      }
+      expect(await urlAnswers(CLIP_URL)).toBe(false)
+    }
+
+    expect(cancelledStreams).toStrictEqual([])
+    expect(consoleError.mock.calls).toStrictEqual([NO_ANSWER_LOG, NO_ANSWER_LOG])
+  })
+
+  it('still gives the answer when the stop of the answer fails', async () => {
+    cancelStream = async () => {
+      throw 'The stream was not found'
+    }
+
+    expect(await urlAnswers(CLIP_URL)).toBe(true)
+    expect(consoleError.mock.calls).toStrictEqual([['Failed to stop the answer of a clip URL:', 'The stream was not found']])
   })
 })
 

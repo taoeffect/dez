@@ -1,10 +1,10 @@
 import { effectiveRequest, type ModelInfo } from './types'
 
-// The clip data of a model: what a request to it can set, and the rules of
-// its text and its input images (`Provider.withClipData`). A media format
-// can read it from a model list that only the media API has
-// (`ClipFormat.modelList`), and that list can fail while the provider's
-// own model list loads.
+// The clip data of a model: what a clip request to it can set, the rules
+// of its text, and the rules of its input images, which an edit model has
+// too (`Provider.withClipData`). A media format can read it from a model
+// list that only the media API has (`ClipFormat.modelList`), and that list
+// can fail while the provider's own model list loads.
 
 /** `models`, the list of a model check whose media list did not load, each
  *  model with the clip data that it lacks and that `cached` (the models

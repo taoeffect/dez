@@ -1,7 +1,7 @@
 import * as z from 'zod'
 import { MEDIA_TAG_KINDS } from '../chat/mediaTags'
 import { MODEL_OUTPUT_IDS } from '../modelOutputs'
-import type { ClipImageRules } from '../providers/clipImages'
+import type { InputImageRules } from '../providers/clipImages'
 import { isValidProviderId } from '../providers/config'
 import { imageSizeRules } from '../providers/imageSize'
 import { isRecord } from '../providers/modelParsing'
@@ -31,13 +31,13 @@ const clipTextRulesSchema = z.object({
   lyrics: z.object({ required: z.boolean(), maxLength: textLengthSchema.optional() }).optional(),
 })
 
-// ClipImageRules (src/model/providers/clipImages.ts). A bad size rule is
+// InputImageRules (src/model/providers/clipImages.ts). A bad size rule is
 // dropped alone (`imageSizeRules`), and the model stays: its images then
 // go as they are, and the provider checks them.
-const clipImageRulesSchema = z.object({ maxFrames: z.number().int().positive(), size: z.unknown() })
-  .transform(({ maxFrames, size }): ClipImageRules => {
+const inputImageRulesSchema = z.object({ maxImages: z.number().int().positive(), size: z.unknown() })
+  .transform(({ maxImages, size }): InputImageRules => {
     const sizeRules = isRecord(size) ? imageSizeRules(size) : undefined
-    return { maxFrames, ...(sizeRules && { size: sizeRules }) }
+    return { maxImages, ...(sizeRules && { size: sizeRules }) }
   })
 
 const modelInfoSchema = z.object({
@@ -55,7 +55,7 @@ const modelInfoSchema = z.object({
   clipInput: z.enum(MEDIA_TAG_KINDS).optional(),
   parameters: z.array(modelParameterSchema).min(1).optional(),
   text: clipTextRulesSchema.optional(),
-  images: clipImageRulesSchema.optional(),
+  images: inputImageRulesSchema.optional(),
 })
 
 // Individually drop invalid models (e.g. a bad provider id) instead of failing

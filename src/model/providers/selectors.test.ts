@@ -794,7 +794,7 @@ describe('media requests', () => {
           outputs: ['video'],
           request: 'imageToVideo',
           parameters: [{ name: 'duration', label: 'Length', options: ['5s'], default: '5s' }],
-          images: { maxFrames: 2, ...(size && { size }) },
+          images: { maxImages: 2, ...(size && { size }) },
         }],
       })
     }

@@ -23,12 +23,13 @@ export function getProvider(providerId: ProviderId): Provider | null {
 
 // An unknown id usually belongs to a deleted custom provider that a tab still
 // uses. Its name is gone and its id is a UUID the user never saw, so the
-// message names neither; the log keeps the id. The message does not mention
-// a model, because model checks and the provider-fetch diagnostics use it too.
+// message names neither; the log keeps the id. Model checks and the
+// provider-fetch diagnostics use it too, but only a request can name a
+// provider that is not in the list, so the message tells what to do then.
 export function requireProvider(providerId: ProviderId): Provider {
   const provider = getProvider(providerId)
   if (!provider) {
-    const error = new ProviderError('This provider does not exist. It may have been deleted.', providerId)
+    const error = new ProviderError('This provider does not exist. It may have been deleted. Choose a model of another provider.', providerId)
     console.error(`Unknown provider ${providerId}:`, error)
     throw error
   }

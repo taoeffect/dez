@@ -59,7 +59,7 @@ export default sbp('sbp/selectors/register', {
       console.error('Failed to save the conversation as Markdown:', error)
       sbp('dez.ui/toast', 'app-global', {
         title: 'Could not save the conversation',
-        message: String(error),
+        message: error instanceof Error ? error.message : String(error),
         variant: 'error',
       })
     } finally {

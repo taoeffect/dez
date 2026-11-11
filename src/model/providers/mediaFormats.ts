@@ -1,13 +1,13 @@
 import { sanitizeErrorText } from '../../utils/protocol/errors'
 import { responseContentType, type NativeHttpResponseHead } from '../../utils/protocol/nativeHttp'
 import { trimTrailingSlashes, type MediaApiFormatId } from './config'
-import type { ClipImageRules } from './clipImages'
+import type { InputImageRules } from './clipImages'
 import type { ClipTextRules } from './clipText'
 import { generatedBase64Image, generatedImage } from './generatedImages'
 import { imageSizeRules, type ImageSizeRules } from './imageSize'
 import { isOptionValue, parameterTakes, type ModelParameter, type OptionsParameter, type OptionValue, type ParameterValues, type RangeParameter } from './modelParameters'
 import { isRecord, valueAtPath } from './modelParsing'
-import { CLIP_KINDS, type ChatImagePart, type ClipKind, type GeneratedMedia, type ImageKind } from './types'
+import { CLIP_KINDS, isClipKind, type ChatImagePart, type ClipKind, type GeneratedMedia, type ImageKind, type MediaKind } from './types'
 
 // What one image request sends: the user's prompt, and the input images as
 // bytes, in the user's order.
@@ -15,8 +15,8 @@ export interface MediaInput {
   prompt: string
   // The images of an edit, or the frames of a video: the first image is
   // the first frame, and the second one is the last frame. The caller gives
-  // a video request no more images than the model takes
-  // (`ClipFormat.imageRules`). A request of a kind that takes no image
+  // a request no more images than the model takes
+  // (`MediaFormat.imageRules`). A request of a kind that takes no image
   // does not send them.
   images: readonly ChatImagePart[]
 }
@@ -101,11 +101,20 @@ export interface ClipFormat {
   // What a model of `kind` takes as the text of a request, from the same
   // two entries; undefined when the API tells nothing about it.
   textRules?(kind: ClipKind, entry: unknown, mediaEntry: unknown): ClipTextRules | undefined
-  // What a model of `kind` takes as input images, from the same two
-  // entries, with the size rules of each image when an entry tells them;
-  // undefined for a model that takes none, as far as the API tells.
-  imageRules?(kind: ClipKind, entry: unknown, mediaEntry: unknown): ClipImageRules | undefined
   request(kind: ClipKind, baseUrl: string, modelId: string, input: ClipInput): MediaWireRequest
+  // The most input images that a model of `kind` takes, when `body` (the
+  // JSON of the provider's refusal of a first request with the status
+  // `status`, ProviderHttpError.bodyJson) tells that the request had too
+  // many; undefined when it tells nothing of the kind. For an API that
+  // tells this only in a refusal, not in its model data.
+  refusedImages?(kind: ClipKind, status: number, body: unknown): number | undefined
+  // The body fields with which a first request of `kind` that the provider
+  // refused (the same `status` and `body`) can go once more, when the
+  // refusal tells a field value that the model needs; undefined when it
+  // tells none. For a fact of a model that its entries do not tell. Only a
+  // refusal that costs nothing and a request for the same clip can use
+  // this: never a refusal of the images (see `refusedImages`).
+  refusalBody?(kind: ClipKind, status: number, body: unknown): Record<string, unknown> | undefined
   // The job that the JSON of a 2xx response to `request` names. Throws when
   // it names none.
   job(kind: ClipKind, baseUrl: string, modelId: string, data: unknown): ClipJob
@@ -123,6 +132,12 @@ export interface ClipFormat {
 export interface MediaFormat {
   images?: ImageFormat
   clips?: ClipFormat
+  // What a model of `kind` takes as input images, from its entry in the
+  // provider's model list (`entry`) and in `ClipFormat.modelList`
+  // (`mediaEntry`; each one undefined when its list does not have the
+  // model), with the size rules of each image when an entry tells them.
+  // Undefined for a model that takes none, as far as the API tells.
+  imageRules?(kind: MediaKind, entry: unknown, mediaEntry: unknown): InputImageRules | undefined
 }
 
 function jsonBody(body: Uint8Array): unknown {
@@ -399,30 +414,6 @@ const veniceFormat: MediaFormat = {
         }
       }
     },
-    // An image-to-video request takes a first frame (`image_url`) and a
-    // last frame (`end_image_url`). No field of an entry tells which models
-    // take the last frame; one that takes none answers a 400 that names
-    // the field, and that request costs nothing. A text-to-video model
-    // takes no image. (The reference images of the "reference-to-video"
-    // models are other fields, which Dez does not send.)
-    // Some entries tell the size that an image must have
-    // (`reference_image_…`): the least length of its shorter side, and the
-    // limits of width / height, which the image must be between ("Image
-    // aspect ratio (W / H): exclusive (0.4, 2.5)"). The API refuses an
-    // image outside them with a 400; the Wan 3.0 models scale a small
-    // image up themselves, which gives the same image.
-    // https://docs.venice.ai/guides/media/seedance-2-0
-    // https://docs.venice.ai/guides/media/wan-3-0
-    imageRules: (kind, entry) => {
-      if (kind !== 'imageToVideo') return undefined
-      const limit = (field: string) => valueAtPath(entry, `model_spec.constraints.reference_image_${field}`)
-      const size = imageSizeRules({
-        minShortSide: limit('min_short_side_pixels'),
-        minAspectRatio: limit('min_aspect_ratio'),
-        maxAspectRatio: limit('max_aspect_ratio'),
-      })
-      return { maxFrames: 2, ...(size && { size }) }
-    },
     // The schemas allow no field that they do not name, and a field that
     // the model does not take is an error. The values are the fields of the
     // model's own parameters, so they go as they are.
@@ -465,6 +456,18 @@ const veniceFormat: MediaFormat = {
           }
         }
       }
+    },
+    // A model that takes no last frame refuses `end_image_url` with a 400
+    // whose `details` (zod's error format: one entry per field) name the
+    // field: "This model does not support end_image_url". That is a
+    // validation error, so the request cost nothing (checked live,
+    // 2026-11-11). No field of an entry tells it before (see
+    // `imageRules`).
+    refusedImages: (kind, status, body) => {
+      if (kind !== 'imageToVideo' || status !== 400) return undefined
+      const errors = valueAtPath(body, 'details.end_image_url._errors')
+      const refused = Array.isArray(errors) && errors.some((text) => typeof text === 'string' && text.includes('does not support'))
+      return refused ? 1 : undefined
     },
     // The queue endpoints answer `{ queue_id, … }`. Venice takes the money
     // at this time and has no list of jobs, so the id is the only way back
@@ -533,6 +536,40 @@ const veniceFormat: MediaFormat = {
       },
     },
   },
+  // edit: the first image is the one to edit, and the others are
+  // references. "The maximum number of input images is model-specific.
+  // Read `model_spec.constraints.maxInputImages` … When the field is
+  // absent, the cap is 3, or 1 when `combineImages` is `false`."
+  // https://docs.venice.ai/api-reference/endpoint/image/multi-edit
+  // video: an image-to-video request takes a first frame (`image_url`)
+  // and a last frame (`end_image_url`). No field of an entry tells which
+  // models take the last frame; one that takes none refuses the request
+  // (`refusedImages`). A text-to-video model takes no image. (The
+  // reference images of the "reference-to-video" models are other
+  // fields, which Dez does not send.)
+  // Some video entries tell the size that an image must have
+  // (`reference_image_…`): the least length of its shorter side, and the
+  // limits of width / height, which the image must be between ("Image
+  // aspect ratio (W / H): exclusive (0.4, 2.5)"). The API refuses an
+  // image outside them with a 400; the Wan 3.0 models scale a small
+  // image up themselves, which gives the same image.
+  // https://docs.venice.ai/guides/media/seedance-2-0
+  // https://docs.venice.ai/guides/media/wan-3-0
+  imageRules: (kind, entry) => {
+    const constraint = (field: string) => valueAtPath(entry, `model_spec.constraints.${field}`)
+    if (kind === 'imageEdit') {
+      const maxImages = constraint('maxInputImages')
+      if (typeof maxImages === 'number' && Number.isInteger(maxImages) && maxImages > 0) return { maxImages }
+      return { maxImages: constraint('combineImages') === false ? 1 : 3 }
+    }
+    if (kind !== 'imageToVideo') return undefined
+    const size = imageSizeRules({
+      minShortSide: constraint('reference_image_min_short_side_pixels'),
+      minAspectRatio: constraint('reference_image_min_aspect_ratio'),
+      maxAspectRatio: constraint('reference_image_max_aspect_ratio'),
+    })
+    return { maxImages: 2, ...(size && { size }) }
+  },
 }
 
 // The frames of a video that an OpenRouter request can give an image for
@@ -572,19 +609,6 @@ const openRouterFormat: MediaFormat = {
           return []
       }
     },
-    // The video list tells which frames a model takes an image for
-    // (`supported_frame_images`). The images of a request go in the order
-    // of OPENROUTER_FRAMES, so a last frame counts only with a first one.
-    // No size rules: `supported_sizes` and `supported_aspect_ratios` are
-    // the sizes of the video, and the docs tell no size that a frame image
-    // must have.
-    imageRules: (kind, _entry, mediaEntry) => {
-      if (CLIP_KINDS[kind] !== 'video') return undefined
-      const frames = listedValues(valueAtPath(mediaEntry, 'supported_frame_images'))
-      const firstMissing = OPENROUTER_FRAMES.findIndex((frame) => !frames.includes(frame))
-      const maxFrames = firstMissing === -1 ? OPENROUTER_FRAMES.length : firstMissing
-      return maxFrames > 0 ? { maxFrames } : undefined
-    },
     request: (kind, baseUrl, modelId, { prompt, images, values }) => {
       const base = trimTrailingSlashes(baseUrl)
       switch (kind) {
@@ -594,7 +618,8 @@ const openRouterFormat: MediaFormat = {
           // only PCM (Gemini TTS, HeyGen Voice) and answer 400 to this; no
           // field of a model entry tells which, so the provider's config
           // names them and gives them `pcm` in place of `mp3`
-          // (`mediaApi.modelRequestBodies`).
+          // (`mediaApi.modelRequestBodies`), and the refusal of a new one
+          // sends the request again with `pcm` (`refusalBody`).
           // https://openrouter.ai/docs/guides/overview/multimodal/tts
           return { url: `${base}/audio/speech`, body: { ...values, model: modelId, input: prompt, response_format: 'mp3' } }
         case 'video':
@@ -625,8 +650,18 @@ const openRouterFormat: MediaFormat = {
             },
           }
         case 'music':
-          throw new Error('This media API has no music request.')
+          throw new Error('This media API has no music request: choose another model.')
       }
+    },
+    // A speech model that makes only PCM refuses mp3 with a 400 that names
+    // the field and its value: "HeyGen Voice only supports response_format
+    // \"pcm\"." (seen by the user, 2026-11). A refusal costs nothing, and
+    // the request with `pcm` asks for the same speech.
+    // https://openrouter.ai/docs/guides/overview/multimodal/tts
+    refusalBody: (kind, status, body) => {
+      const message = valueAtPath(body, 'error.message')
+      const pcmOnly = kind === 'tts' && status === 400 && typeof message === 'string' && message.includes('response_format') && message.includes('"pcm"')
+      return pcmOnly ? { response_format: 'pcm' } : undefined
     },
     // `POST /videos` answers `{ id, polling_url, status }`. The poll and
     // content URLs are built from the id, never taken from a response: they
@@ -667,6 +702,19 @@ const openRouterFormat: MediaFormat = {
     // "audio/pcm for pcm — 16-bit little-endian"
     // https://openrouter.ai/docs/api/api-reference/tts/create-speech
     pcmSampleBits: 16,
+  },
+  // The video list tells which frames a model takes an image for
+  // (`supported_frame_images`). The images of a request go in the order
+  // of OPENROUTER_FRAMES, so a last frame counts only with a first one.
+  // No size rules: `supported_sizes` and `supported_aspect_ratios` are
+  // the sizes of the video, and the docs tell no size that a frame image
+  // must have.
+  imageRules: (kind, _entry, mediaEntry) => {
+    if (!isClipKind(kind) || CLIP_KINDS[kind] !== 'video') return undefined
+    const frames = listedValues(valueAtPath(mediaEntry, 'supported_frame_images'))
+    const firstMissing = OPENROUTER_FRAMES.findIndex((frame) => !frames.includes(frame))
+    const maxImages = firstMissing === -1 ? OPENROUTER_FRAMES.length : firstMissing
+    return maxImages > 0 ? { maxImages } : undefined
   },
 }
 

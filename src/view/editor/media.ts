@@ -78,10 +78,11 @@ class MediaWidget extends WidgetType {
       // The player gets the source as the tag has it, and makes the URL
       // that loads it.
       render: () => {
-        const { kind, id, src, expires } = tag.value
+        const { kind, id, type, src, expires } = tag.value
         return h(MediaPlayer, {
           kind,
           id,
+          type,
           src,
           expires,
           busy: src !== null && busyClips.has(src),
@@ -92,8 +93,8 @@ class MediaWidget extends WidgetType {
     })
     app.mount(root)
     // The player changes its height in place (a video's size comes with its
-    // metadata, and the not-available box is small), which CM does not see
-    // (see `measureLineHeights`).
+    // metadata, and the card of a clip that does not play has its own
+    // size), which CM does not see (see `measureLineHeights`).
     let drawnHeight = 0
     const observer = new ResizeObserver(() => {
       const height = root.offsetHeight

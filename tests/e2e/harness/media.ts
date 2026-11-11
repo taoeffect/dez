@@ -45,6 +45,12 @@ export function silentWav (seconds: number): Buffer {
  *      -fflags +bitexact -flags:v +bitexact video.webm */
 export const WEBM_VIDEO = fs.readFileSync(new URL('../fixtures/video.webm', import.meta.url))
 
+/** Bytes that no computer decodes as a clip: plain text. A test of a clip
+ *  that the computer cannot play uses them in place of a real format that
+ *  only some computers decode, so that it gives the same result on each
+ *  host. */
+export const NOT_A_CLIP = Buffer.from('This text is no clip.\n')
+
 /** One file of a clip server. */
 export interface ServedClip {
   /** The `Content-Type` of the answer. */
@@ -97,7 +103,8 @@ export interface ShownPlayer {
   kind: string | null
   /** The text of the id badge. */
   id: string
-  /** False for the card that says that the clip is no longer available. */
+  /** False when the player shows a card in place of the clip (the clip is
+   *  gone, or this computer cannot play it; `problemCards` reads it). */
   available: boolean
   /** What the media element loads: the URL of a remote clip; 'blob' for a
    *  local file, which the player reads into a blob URL; null for none. */
@@ -142,6 +149,24 @@ export async function openPlayerTooltips (browser: E2EBrowser): Promise<string[]
     // The title and the text of a notice are blocks with no space between.
     (tooltip) => Array.from(tooltip.children, (part) => part.textContent?.trim() ?? '').join(' ') || (tooltip.textContent?.trim() ?? ''),
   ))
+}
+
+/** The card of a player that shows no clip. */
+export interface ProblemCard {
+  /** Why the clip does not play (`data-unavailable`): `gone` or
+   *  `cannot-play`. */
+  cause: string
+  /** The lines of the card's text. */
+  lines: string[]
+}
+
+/** The cards of the players of the active editor that show no clip, in doc
+ *  order. */
+export async function problemCards (browser: E2EBrowser): Promise<ProblemCard[]> {
+  return browser.execute(() => Array.from(document.querySelectorAll<HTMLElement>('.cm-content .media-player[data-unavailable]'), (player) => ({
+    cause: player.getAttribute('data-unavailable') ?? '',
+    lines: Array.from(player.querySelector('.media-player__unavailable-text')?.children ?? [], (line) => line.textContent?.trim() ?? ''),
+  })))
 }
 
 /** Waits until the card of a player fills the screen (`on`), or until

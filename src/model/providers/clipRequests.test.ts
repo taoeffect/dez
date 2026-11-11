@@ -3,6 +3,7 @@ import { createPinia, setActivePinia } from 'pinia'
 import { afterEach, beforeEach, describe, expect, it, vi, type MockInstance } from 'vitest'
 import type { NativeDownloadRule, NativeHttpDownload, NativeHttpRequest, NativeHttpResponse } from '../../utils/protocol/nativeHttp'
 import { bytesToBase64 } from '../../utils/base64'
+import { TooManyImagesError } from './clipImages'
 import { NO_VIDEO_LENGTH_MESSAGE } from './mediaFormats'
 import type { ModelParameter } from './modelParameters'
 import { wavFile } from './pcmAudio'
@@ -239,8 +240,39 @@ describe('a clip that the first answer holds', () => {
     expect([moves, loaded, saved]).toStrictEqual([[], [], []])
   })
 
+  describe('a speech model that makes only raw PCM', () => {
+    const pcmOnly = json({ error: { message: 'HeyGen Voice only supports response_format "pcm".', code: 400 } }, 400)
+
+    it('sends the request once more with pcm, which the refusal names', async () => {
+      answers = [pcmOnly, clip('audio/pcm;rate=24000;channels=1')]
+
+      const { clips } = await generate({ providerId: 'router-like', kind: 'tts', prompt: 'Hi' })
+
+      expect(downloads.map(({ request }) => JSON.parse(request.body as string).response_format)).toStrictEqual(['mp3', 'pcm'])
+      expect(clips.map(({ mediaType }) => mediaType)).toStrictEqual(['audio/wav'])
+      expect(consoleError).toHaveBeenCalledTimes(1)
+    })
+
+    // No loop of refusals.
+    it('fails with the second refusal, and sends no third request', async () => {
+      answers = [pcmOnly, pcmOnly]
+
+      await expect(generate({ providerId: 'router-like', kind: 'tts' })).rejects.toThrow('Router returned HTTP 400: HeyGen Voice only supports response_format "pcm".')
+
+      expect(downloads).toHaveLength(2)
+    })
+
+    it('sends nothing more after a refusal of another field', async () => {
+      answers = [json({ error: { message: 'Unknown voice "x"', code: 400 } }, 400)]
+
+      await expect(generate({ providerId: 'router-like', kind: 'tts' })).rejects.toThrow('Router returned HTTP 400: Unknown voice "x"')
+
+      expect(downloads).toHaveLength(1)
+    })
+  })
+
   it.each([
-    ['a refused request', { status: 402, headers: {}, saved: false, body: bytesOf('Insufficient balance') }, 'Media server returned HTTP 402: Insufficient balance'],
+    ['a refused request', { status: 402, headers: {}, saved: false, body: bytesOf('Insufficient balance') }, 'Media server returned HTTP 402: Insufficient balance. Check the credit of your Media server account.'],
     ['an answer that is neither a clip nor JSON', { status: 200, headers: { 'content-type': 'text/html' }, saved: false, body: bytesOf('<html>') }, 'The provider sent no clip.'],
     ['a JSON answer to a speech request', json({ queue_id: 'q-1' }), 'The provider sent no clip.'],
   ])('fails for %s, and names no job', async (_name, answer, message) => {
@@ -400,6 +432,27 @@ describe('a clip job', () => {
     expect(downloads).toEqual([])
   })
 
+  // Dez does not send the request again with one image: the user chooses
+  // the image.
+  it('fails with the count of the images after a refusal of the last frame, and sends no other request', async () => {
+    cacheModel('venice-like', VENICE_VIDEO_PARAMETERS)
+    answers = [json({
+      details: { _errors: [], end_image_url: { _errors: ['This model does not support end_image_url'] } },
+      error: 'Invalid request parameters',
+    }, 400)]
+
+    const error = await generate({ kind: 'imageToVideo', images: ['/home/u/.config/dez/assets/images/fox.png', '/home/u/.config/dez/assets/images/end.png'] })
+      .catch((failure: unknown) => failure)
+
+    expect(error).toBeInstanceOf(TooManyImagesError)
+    expect(error).toMatchObject({ maxImages: 1, sentImages: 2 })
+    expect(downloads).toHaveLength(1)
+    expect(consoleError.mock.calls.map(([text, logged]) => [text, (logged as Error).message])).toStrictEqual([[
+      'Media server refused the images of a request to m:',
+      'Media server returned HTTP 400: Invalid request parameters (end_image_url: This model does not support end_image_url)',
+    ]])
+  })
+
   it('makes a video through a job that answers 202, a GET poll, and a download of the content', async () => {
     cacheModel('router-like', OPENROUTER_VIDEO_PARAMETERS)
     answers = [
@@ -445,8 +498,8 @@ describe('a clip job', () => {
 
   // The provider took the money when the job started.
   it.each([
-    ['a refused state request', [json({ queue_id: 'q-1' }), { status: 500, headers: {}, saved: false, body: bytesOf('Busy') }], 'Media server returned HTTP 500: Busy (job q-1)'],
-    ['a state that tells of no clip', [json({ queue_id: 'q-1' }), json({ status: 'FAILED' })], 'The provider sent no clip. (job q-1)'],
+    ['a refused state request', [json({ queue_id: 'q-1' }), { status: 500, headers: {}, saved: false, body: bytesOf('Busy') }], 'Media server returned HTTP 500: Busy. This is a problem at Media server: try again later. To ask Media server about this clip, give its job id: q-1.'],
+    ['a state that tells of no clip', [json({ queue_id: 'q-1' }), json({ status: 'FAILED' })], 'The provider sent no clip. To ask Media server about this clip, give its job id: q-1.'],
   ])('names the job in the error and in the log after %s', async (_name, jobAnswers, message) => {
     answers = jobAnswers
 
@@ -461,7 +514,7 @@ describe('a clip job', () => {
     cacheModel('router-like', OPENROUTER_VIDEO_PARAMETERS)
     answers = [json({ id: 'gen-1' }, 202), json({ status: 'completed' }), json({ error: 'Not ready' })]
 
-    const failure = expect(generate({ providerId: 'router-like', kind: 'video' })).rejects.toThrow(new Error('The provider sent no clip. (job gen-1)'))
+    const failure = expect(generate({ providerId: 'router-like', kind: 'video' })).rejects.toThrow(new Error('The provider sent no clip. To ask Router about this clip, give its job id: gen-1.'))
     await vi.advanceTimersByTimeAsync(5 * SECOND_MS)
     await failure
   })
@@ -469,7 +522,7 @@ describe('a clip job', () => {
   it('gives up on a job that does not end in 30 minutes', async () => {
     answers = [json({ queue_id: 'q-1' }), ...Array.from({ length: 400 }, () => json({ status: 'PROCESSING' }))]
 
-    const failure = expect(generate({ kind: 'music' })).rejects.toThrow(new Error('The provider did not make the clip in time. (job q-1)'))
+    const failure = expect(generate({ kind: 'music' })).rejects.toThrow(new Error('The provider did not make the clip in time. To ask Media server about this clip, give its job id: q-1.'))
     await vi.advanceTimersByTimeAsync(JOB_TIMEOUT_MS)
     await failure
 

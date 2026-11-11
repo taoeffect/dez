@@ -48,7 +48,7 @@ function showAvailableUpdateToast(latestRelease: LatestRelease): void {
     console.error('GitHub API returned corrupt release URL:', latestRelease.url)
     sbp('dez.ui/toast', 'app-global', {
       title: 'Update check error',
-      message: `GitHub API returned a corrupt release URL: "${latestRelease.url}". Aborting for safety.`,
+      message: `The GitHub API named a release page outside the Dez repository ("${latestRelease.url}"), so Dez does not open it. Get the new version from ${DEZ_REPO_URL}/releases.`,
       variant: 'error',
     })
     return

@@ -3,7 +3,7 @@ import { bytesToBase64 } from '../../utils/base64'
 import type { NativeHttpResponseHead } from '../../utils/protocol/nativeHttp'
 import { MEDIA_FORMATS, NO_VIDEO_LENGTH_MESSAGE, type ClipFormat, type ClipQuoteFormat, type ImageFormat } from './mediaFormats'
 import type { ModelParameter } from './modelParameters'
-import type { ChatImagePart, ClipKind } from './types'
+import type { ChatImagePart, ClipKind, MediaKind } from './types'
 
 const venice = MEDIA_FORMATS.venice.images as ImageFormat
 const veniceClips = MEDIA_FORMATS.venice.clips as ClipFormat
@@ -276,12 +276,27 @@ describe('venice clip parameters', () => {
   })
 })
 
-describe('venice clip image rules', () => {
-  const rules = (kind: ClipKind, constraints?: Record<string, unknown>) =>
-    veniceClips.imageRules?.(kind, constraints && { id: 'm', model_spec: { constraints } }, undefined)
+describe('venice image rules', () => {
+  const rules = (kind: MediaKind, constraints?: Record<string, unknown>) =>
+    MEDIA_FORMATS.venice.imageRules?.(kind, constraints && { id: 'm', model_spec: { constraints } }, undefined)
+
+  // https://docs.venice.ai/api-reference/endpoint/image/multi-edit
+  it.each([
+    ['tells its count', { maxInputImages: 6, combineImages: true }, 6],
+    ['tells no count', { combineImages: true }, 3],
+    ['tells no count and combines no images', { combineImages: false }, 1],
+    ['tells a count that is not a whole number above 0', { maxInputImages: 0 }, 3],
+    ['tells a count that is text', { maxInputImages: '6', combineImages: false }, 1],
+  ])('takes as many images as the docs tell for an edit model that %s', (_name, constraints, maxImages) => {
+    expect(rules('imageEdit', constraints)).toStrictEqual({ maxImages })
+  })
+
+  it('takes 3 images for an edit model with no entry', () => {
+    expect(rules('imageEdit')).toStrictEqual({ maxImages: 3 })
+  })
 
   it('takes a first and a last frame for an image-to-video model', () => {
-    expect(rules('imageToVideo')).toStrictEqual({ maxFrames: 2 })
+    expect(rules('imageToVideo')).toStrictEqual({ maxImages: 2 })
   })
 
   it('reads the size rules of the images from the entry of the model', () => {
@@ -289,8 +304,8 @@ describe('venice clip image rules', () => {
       rules('imageToVideo', { reference_image_min_short_side_pixels: 300, reference_image_min_aspect_ratio: 0.4, reference_image_max_aspect_ratio: 2.5 }),
       rules('imageToVideo', { reference_image_min_short_side_pixels: 240, aspect_ratios: ['16:9'] }),
     ]).toStrictEqual([
-      { maxFrames: 2, size: { minShortSide: 300, minAspectRatio: 0.4, maxAspectRatio: 2.5 } },
-      { maxFrames: 2, size: { minShortSide: 240 } },
+      { maxImages: 2, size: { minShortSide: 300, minAspectRatio: 0.4, maxAspectRatio: 2.5 } },
+      { maxImages: 2, size: { minShortSide: 240 } },
     ])
   })
 
@@ -299,13 +314,35 @@ describe('venice clip image rules', () => {
       rules('imageToVideo', { reference_image_min_short_side_pixels: '300', reference_image_max_aspect_ratio: 2.5 }),
       rules('imageToVideo', { reference_image_min_short_side_pixels: 0, reference_image_min_aspect_ratio: null }),
     ]).toStrictEqual([
-      { maxFrames: 2, size: { maxAspectRatio: 2.5 } },
-      { maxFrames: 2 },
+      { maxImages: 2, size: { maxAspectRatio: 2.5 } },
+      { maxImages: 2 },
     ])
   })
 
-  it.each(['video', 'tts', 'music'] as const)('takes no image for a %s model', (kind) => {
-    expect(rules(kind)).toBeUndefined()
+  it.each(['image', 'video', 'tts', 'music'] as const)('takes no image for a %s model', (kind) => {
+    expect(rules(kind, { maxInputImages: 6 })).toBeUndefined()
+  })
+})
+
+describe('venice refusals of images', () => {
+  // The body of a live refusal (2026-11-11), with the details of the other
+  // fields cut.
+  const refusal = {
+    details: { _errors: [], end_image_url: { _errors: ['This model does not support end_image_url'] } },
+    error: 'Invalid request parameters',
+  }
+
+  it('tells that an image-to-video model that refuses a last frame takes only one image', () => {
+    expect(veniceClips.refusedImages?.('imageToVideo', 400, refusal)).toBe(1)
+  })
+
+  it.each([
+    ['another status', 'imageToVideo', 422, refusal],
+    ['another kind', 'video', 400, refusal],
+    ['a refusal of another field', 'imageToVideo', 400, { details: { duration: { _errors: ['Invalid option'] } }, error: 'Invalid request parameters' }],
+    ['a body that is not JSON', 'imageToVideo', 400, undefined],
+  ] as const)('tells nothing for %s', (_name, kind, status, body) => {
+    expect(veniceClips.refusedImages?.(kind, status, body)).toBeUndefined()
   })
 })
 
@@ -588,15 +625,15 @@ describe('openrouter clip parameters', () => {
   })
 })
 
-describe('openrouter clip image rules', () => {
-  const rules = (kind: ClipKind, frames: unknown) => openRouterClips.imageRules?.(kind, { id: 'm' }, { id: 'm', supported_frame_images: frames })
+describe('openrouter image rules', () => {
+  const rules = (kind: MediaKind, frames: unknown) => MEDIA_FORMATS.openrouter.imageRules?.(kind, { id: 'm' }, { id: 'm', supported_frame_images: frames })
 
   it.each([
     ['a first frame', ['first_frame'], 1],
     ['a first and a last frame', ['first_frame', 'last_frame'], 2],
     ['a last and a first frame', ['last_frame', 'first_frame'], 2],
-  ])('takes %s for a video model whose video list entry says so', (_name, frames, maxFrames) => {
-    expect(rules('video', frames)).toStrictEqual({ maxFrames })
+  ])('takes %s for a video model whose video list entry says so', (_name, frames, maxImages) => {
+    expect(rules('video', frames)).toStrictEqual({ maxImages })
   })
 
   // The images go in the order first frame, last frame.
@@ -608,11 +645,12 @@ describe('openrouter clip image rules', () => {
     expect(rules('video', frames)).toBeUndefined()
   })
 
-  it('takes no image for a video model that the video list does not have, and none for speech', () => {
+  it('takes no image for a video model that the video list does not have, and none for speech or an image', () => {
     expect([
-      openRouterClips.imageRules?.('video', { id: 'm' }, undefined),
+      MEDIA_FORMATS.openrouter.imageRules?.('video', { id: 'm' }, undefined),
       rules('tts', ['first_frame']),
-    ]).toStrictEqual([undefined, undefined])
+      rules('imageEdit', ['first_frame']),
+    ]).toStrictEqual([undefined, undefined, undefined])
   })
 })
 
@@ -669,7 +707,7 @@ describe('openrouter clip requests', () => {
   })
 
   it('has no music request', () => {
-    expect(() => openRouterClips.request('music', OPENROUTER_URL, 'm', { prompt: 'Rain', images: [], values: {} })).toThrow('This media API has no music request.')
+    expect(() => openRouterClips.request('music', OPENROUTER_URL, 'm', { prompt: 'Rain', images: [], values: {} })).toThrow('This media API has no music request: choose another model.')
   })
 })
 

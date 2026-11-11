@@ -28,7 +28,7 @@ export default sbp('sbp/selectors/register', {
       console.error('Failed to open the Dez folder:', error)
       sbp('dez.ui/toast', 'app-global', {
         title: 'Could not open the Dez folder',
-        message: String(error),
+        message: error instanceof Error ? error.message : String(error),
         variant: 'error',
       })
     }
@@ -46,9 +46,10 @@ export default sbp('sbp/selectors/register', {
       await revealItemInDir(path)
     } catch (error) {
       console.error('Failed to show the file in the file manager:', error)
+      // The path tells the user where to find the file by hand.
       sbp('dez.ui/toast', 'app-global', {
         title: 'Could not show the file',
-        message: String(error),
+        message: `The file is at ${path}. The file manager answered: ${error instanceof Error ? error.message : String(error)}`,
         variant: 'error',
       })
     }

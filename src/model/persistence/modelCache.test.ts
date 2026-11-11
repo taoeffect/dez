@@ -105,13 +105,13 @@ describe('model cache persistence format', () => {
         text: { minPromptLength: 10, maxPromptLength: 300, lyrics: { required: true, maxLength: 3000 } },
       },
       { id: 'sound', name: 'Sound', provider: 'venice', request: 'music', text: { lyrics: { required: false } } },
-      { id: 'frames', name: 'Frames', provider: 'venice', request: 'imageToVideo', images: { maxFrames: 2 } },
+      { id: 'frames', name: 'Frames', provider: 'venice', request: 'imageToVideo', images: { maxImages: 2 } },
       {
         id: 'sized',
         name: 'Sized',
         provider: 'venice',
         request: 'imageToVideo',
-        images: { maxFrames: 2, size: { minShortSide: 300, minAspectRatio: 0.4, maxAspectRatio: 2.5 } },
+        images: { maxImages: 2, size: { minShortSide: 300, minAspectRatio: 0.4, maxAspectRatio: 2.5 } },
       },
       // A cache written before parameters existed.
       { id: 'old', name: 'Old', provider: 'venice', request: 'video' },
@@ -130,7 +130,7 @@ describe('model cache persistence format', () => {
             { id: 'bad-switch', name: 'Bad switch', provider: 'venice', parameters: [{ name: 'loop', label: 'Loop', default: 'on' }] },
             { id: 'bad-limit', name: 'Bad limit', provider: 'venice', text: { maxPromptLength: -1 } },
             { id: 'bad-lyrics', name: 'Bad lyrics', provider: 'venice', text: { lyrics: true } },
-            { id: 'no-frame', name: 'No frame', provider: 'venice', images: { maxFrames: 0 } },
+            { id: 'no-frame', name: 'No frame', provider: 'venice', images: { maxImages: 0 } },
           ],
           working: true,
           updatedAt: 1,
@@ -144,7 +144,7 @@ describe('model cache persistence format', () => {
   })
 
   it('drops a size rule of the input images that is not valid, and keeps the model and its other rules', () => {
-    const model = (id: string, size: unknown) => ({ id, name: id, provider: 'venice', request: 'imageToVideo', images: { maxFrames: 2, size } })
+    const model = (id: string, size: unknown) => ({ id, name: id, provider: 'venice', request: 'imageToVideo', images: { maxImages: 2, size } })
     const parsed = parseModelCacheJson(JSON.stringify({
       version: MODEL_CACHE_VERSION,
       providers: {
@@ -163,10 +163,10 @@ describe('model cache persistence format', () => {
     }))
 
     expect(parsed.providers.venice?.models.map(({ id, images }) => [id, images])).toStrictEqual([
-      ['one-bad', { maxFrames: 2, size: { maxAspectRatio: 2.5 } }],
-      ['all-bad', { maxFrames: 2 }],
-      ['no-object', { maxFrames: 2 }],
-      ['ratios-apart', { maxFrames: 2, size: { minShortSide: 240 } }],
+      ['one-bad', { maxImages: 2, size: { maxAspectRatio: 2.5 } }],
+      ['all-bad', { maxImages: 2 }],
+      ['no-object', { maxImages: 2 }],
+      ['ratios-apart', { maxImages: 2, size: { minShortSide: 240 } }],
     ])
   })
 

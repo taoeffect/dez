@@ -41,11 +41,13 @@ export interface ClipRun {
 // PCM audio comes through the webview, to get its file format. Any other
 // 2xx response is JSON, which comes back as `data`. Throws for any other
 // status, for a response that is neither, and when the clip's time is over.
+// `keyed`: the request has the provider's key (`providerStatusError`).
 export async function sendClipRequest(
   run: ClipRun,
   request: NativeHttpRequest,
   jobId: string | null,
   cacheDir: string,
+  keyed = true,
 ): Promise<{ clip: GeneratedClip } | { data: unknown }> {
   run.signal?.throwIfAborted()
   const startedAt = Date.now()
@@ -63,7 +65,7 @@ export async function sendClipRequest(
     { root: 'cache', path: part },
     { maxBytes: MAX_CLIP_BYTES, contentTypes: [`${CLIP_KINDS[run.kind]}/`] },
   ) as NativeHttpDownload
-  if (!responseOk(download)) throw providerStatusError(run.provider, download, textFromNativeBody(download.body))
+  if (!responseOk(download)) throw providerStatusError(run.provider, download, textFromNativeBody(download.body), keyed)
   if (!download.saved) {
     try {
       return { data: JSON.parse(textFromNativeBody(download.body)) as unknown }

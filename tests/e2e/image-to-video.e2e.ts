@@ -26,6 +26,9 @@ import { editorDoc, focusEditor, newTab, openToasts, pickModel, setCaret, submit
 //   user turns it off;
 // - the first two images of a message go as the first and the last frame,
 //   and a warning toast tells of a third one;
+// - a model that refuses the last frame (Venice's 400 for
+//   `end_image_url`) gets an error toast that tells to keep one image, and
+//   the request does not go again;
 // - an image that passes the size rules of the model's entry goes as its
 //   own bytes (the tests above); one that breaks them goes as a copy that
 //   passes them (the part in its middle, scaled), and the stored file and
@@ -249,6 +252,43 @@ describe('image-to-video models', () => {
     await waitForValue(browser, 'stored values after the reset', storedParameters, null)
     await closePopup(browser)
     expect(await consoleErrors(browser)).toStrictEqual([])
+  })
+
+  it('tells to keep one image when the model refuses the last frame, and does not send the request again', async () => {
+    const message = `${FILMS.modelName} takes only 1 image, and this message has 2. Keep only 1 image in the message (pasted, or named with @id), and send it again.`
+    await pickModel(browser, FILMS.name, FILMS.modelName)
+    await focusEditor(browser)
+    await typeThenPaste('From ', FIRST_PNG, 'a')
+    await typeThenPaste(' to ', LAST_PNG, 'b')
+    const text = (await threadSections(browser))[0].text
+    await submit(browser, '')
+
+    const queue = await queueRequest({
+      prompt: 'From ![image](id=a) to ![image](id=b)',
+      duration: '5s',
+      resolution: '480p',
+      audio: true,
+      image_url: pngDataUrl(FIRST_PNG),
+      end_image_url: pngDataUrl(LAST_PNG),
+    })
+    // The answer of Venice to a model that has no last frame.
+    queue.reply.writeHead(400, { 'Content-Type': 'application/json' })
+    queue.reply.end(JSON.stringify({
+      details: { _errors: [], end_image_url: { _errors: ['This model does not support end_image_url'] } },
+      error: 'Invalid request parameters',
+    }))
+
+    await waitForValue(browser, 'error toast', () => openToasts(browser, 'error'), [{ title: 'Request failed', message }])
+    // Closed first, so that a later failure here leaves no toast for the
+    // next test (`waitForThread` wants none).
+    await click(browser, '.toast-card--error .toast-close')
+    await waitForValue(browser, 'error toast closed', () => openToasts(browser, 'error'), [])
+    await waitForThread(browser, [{ role: 'user', text }])
+    expect(setup.mock.hasWaitingRequest()).toBe(false)
+    expect(await consoleErrors(browser)).toStrictEqual([
+      expect.stringMatching(new RegExp(`^${FILMS.name} refused the images of a request to ${FILMS.modelId}: `)),
+      expect.stringMatching(/^Media request failed: /),
+    ])
   })
 
   it('sends a copy that passes the size rules of the model for an image that breaks them, and keeps the stored image', async () => {

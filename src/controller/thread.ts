@@ -26,7 +26,7 @@ export default sbp('sbp/selectors/register', {
     const model = sbp('dez.model/activeModelForTab', tabId)
     if (!model) {
       console.error('Cannot send: no model selected')
-      sbp('dez.ui/toast', 'app-global', { variant: 'error', title: 'Cannot send', message: 'No model selected' })
+      sbp('dez.ui/toast', 'app-global', { variant: 'error', title: 'Cannot send', message: 'No model is selected. Choose a model in the bottom bar, and send again.' })
       return
     }
 
@@ -40,8 +40,8 @@ export default sbp('sbp/selectors/register', {
     const cachedModel: Pick<ModelInfo, 'outputs' | 'request' | 'clipInput' | 'text' | 'images'> = sbp('dez.model/modelCache/model', model.providerId, model.modelId) ?? {}
     const kind = effectiveRequest(cachedModel)
     let message: string | null = null
-    // How many images of the message a video request takes and leaves out.
-    let frames = { sent: 0, leftOut: 0 }
+    // How many images of the message a media request takes and leaves out.
+    let mediaImages = { sent: 0, leftOut: 0 }
     if (kind === 'none') {
       message = unusableModelMessage(model.modelName, cachedModel)
     } else if (kind !== 'chat') {
@@ -54,7 +54,7 @@ export default sbp('sbp/selectors/register', {
       // the request. Only a clip model has text rules.
       const input = mediaRequestInput(kind, request.messages, tab.sections, cachedModel)
       message = missingImageProblem(model.modelName, kind, input.images.length) ?? clipTextProblem(model.modelName, cachedModel.text, input)
-      frames = { sent: input.images.length, leftOut: input.imagesLeftOut }
+      mediaImages = { sent: input.images.length, leftOut: input.imagesLeftOut }
     }
     if (message !== null) {
       console.error(`Cannot send: ${message}`)
@@ -75,13 +75,13 @@ export default sbp('sbp/selectors/register', {
     if (!agentSection) return
 
     // The request still goes. At most one of the two shows: a message whose
-    // images do not go as image parts has none for a video request to take.
+    // images do not go as image parts has none for a media request to take.
     if (imagesLeftOut > 0) {
       // With only the text of each image reference.
       warnImagesLeftOut(model.modelName, 'does not read images', imagesLeftOut)
-    } else if (frames.leftOut > 0) {
-      const takes = frames.sent === 0 ? 'takes no image' : `takes only ${frames.sent === 1 ? '1 image' : `${frames.sent} images`}`
-      warnImagesLeftOut(model.modelName, takes, frames.leftOut)
+    } else if (mediaImages.leftOut > 0) {
+      const takes = mediaImages.sent === 0 ? 'takes no image' : `takes only ${mediaImages.sent === 1 ? '1 image' : `${mediaImages.sent} images`}`
+      warnImagesLeftOut(model.modelName, takes, mediaImages.leftOut)
     }
 
     await sbp('dez.stream/start', {

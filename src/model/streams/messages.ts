@@ -6,7 +6,7 @@ import { sameModelRef } from '../chat/modelRef'
 import { holdsStoredFilePath, withoutStoredFilePaths } from '../chat/storedFilePaths'
 import { thinkingField } from '../chat/thinking'
 import { EMPTY_TOOL_RESULT, INTERRUPTED_TOOL_RESULT, agentTextForRequest, splitToolBlocks, type ToolBlock } from '../chat/toolBlocks'
-import { maxClipImages } from '../providers/clipImages'
+import { maxInputImages } from '../providers/clipImages'
 import { clipText } from '../providers/clipText'
 import { CLIP_KINDS, isClipKind, type ClipInputRules, type MediaKind } from '../providers/types'
 import type { ToolCall, ToolResult } from '../tools/types'
@@ -90,12 +90,13 @@ export function sectionsToStreamMessages(sections: Section[], requestModel: Mode
  *
  *  The images are the images of that message, in text order and each one
  *  once: the ones that it holds and the ones that it names with an `@id`
- *  mention. An edit (`imageEdit`) takes them all. A video request (`video`,
- *  `imageToVideo`) takes as many as the model takes frames (`rules.images`,
- *  `maxClipImages`): the first image is the first frame, and the second
- *  one is the last frame. `imagesLeftOut` is the count of the message's
- *  images that a video request does not take, so that the submit can tell
- *  the user. A request of another kind takes no image.
+ *  mention. An edit (`imageEdit`) and a video request (`video`,
+ *  `imageToVideo`) take as many as the model takes (`rules.images`,
+ *  `maxInputImages`): for an edit, the first image is the one to edit; for
+ *  a video, the first image is the first frame, and the second one is the
+ *  last frame. `imagesLeftOut` is the count of the message's images that
+ *  the request does not take, so that the submit can tell the user. A
+ *  request of another kind takes no image.
  *
  *  When the message has no image, a request that cannot go without one
  *  (`imageEdit`, `imageToVideo`) takes the newest image reference of
@@ -117,7 +118,7 @@ export function mediaRequestInput(
   if (kind !== 'imageEdit' && !isVideo) return { ...text, images: [], imagesLeftOut: 0 }
 
   const messageImages = [...new Set(parts.flatMap((part) => (part.type === 'image' ? [part.path] : [])))]
-  const images = isVideo ? messageImages.slice(0, maxClipImages(kind, rules.images)) : messageImages
+  const images = messageImages.slice(0, maxInputImages(kind, rules.images))
   const imagesLeftOut = messageImages.length - images.length
   if (messageImages.length > 0 || kind === 'video') return { ...text, images, imagesLeftOut }
   const newest = sections.map((section) => findImageReferences(sectionPlainText(section)).at(-1)).findLast((reference) => reference !== undefined)

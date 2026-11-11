@@ -2,7 +2,7 @@ import sbp from '@sbp/sbp'
 import { MEDIA_TEMP_LIFETIME_MS, mediaFileExtension, savedMediaFile, tempMediaFile } from '../model/chat/mediaFiles'
 import { MEDIA_CACHE_FOLDER, MEDIA_FOLDERS, isSavedMediaPath, type MediaTagData } from '../model/chat/mediaTags'
 import { fileNameOf } from '../utils/fileName'
-import type { NativeHttpDownload } from '../utils/protocol/nativeHttp'
+import type { NativeHttpDownload, NativeHttpStreamResult } from '../utils/protocol/nativeHttp'
 import type { AppFileEntry } from './nativeTypes'
 
 // The largest clip that Save downloads from a URL.
@@ -11,6 +11,9 @@ const MAX_SAVED_CLIP_BYTES = 1024 ** 3
 // stops sending would keep the Save control busy with no end.
 const SAVE_TIMEOUT_MS = 30 * 60 * 1000
 const CLEANUP_INTERVAL_MS = 60 * 60 * 1000
+// The longest time that `urlAnswers` waits for an answer. The player of the
+// clip waits for it to tell why the clip does not play.
+const URL_ANSWER_TIMEOUT_MS = 10 * 1000
 
 let cleanupStarted = false
 
@@ -50,6 +53,16 @@ function downloadFileName ({ type, url }: Pick<MediaTagData, 'type' | 'url'>): s
   return `${crypto.randomUUID()}.${extension}`
 }
 
+// What the user can do after the server of a clip refused its download.
+// The URL is one that the provider gave, and Save sends no key with it: so
+// an access refusal or a missing file tells that the link has expired or
+// that the clip was deleted, and not that a key is wrong.
+function clipDownloadAdvice (status: number): string {
+  if (status === 403 || status === 404 || status === 410) return ' The clip is not on the server any more: make it again.'
+  if (status >= 500) return ' This is a problem at the server of the clip: try again later.'
+  return ''
+}
+
 export default sbp('sbp/selectors/register', {
   // Keeps a clip: its file goes into the media folder of its kind in the app
   // folder, and the absolute path of that file comes back, for the `src` of
@@ -83,7 +96,7 @@ export default sbp('sbp/selectors/register', {
         { maxBytes: MAX_SAVED_CLIP_BYTES },
       ) as NativeHttpDownload
       if (!download.saved) {
-        throw new Error(`The server of the clip answered HTTP ${download.status}`)
+        throw new Error(`The server of the clip answered HTTP ${download.status}.${clipDownloadAdvice(download.status)}`)
       }
       return path
     } catch (error) {
@@ -116,6 +129,37 @@ export default sbp('sbp/selectors/register', {
       })
       throw error
     }
+  },
+
+  // Whether the URL of a clip answers: one GET of its first byte, with no
+  // provider header (the URL can be a signed one, and a key must not go to
+  // the host of a clip), and a short time limit. True for a 2xx status. The
+  // player asks this when its URL gave "source not supported", which tells
+  // no difference between a clip that it cannot decode and a URL that gives
+  // no clip (`clipProblem`, src/view/media/clipState.ts). A HEAD is no
+  // option: a URL that is signed for GET can refuse it. The body is not
+  // read: a server that does not take ranges would send the whole clip. The
+  // URL and the error of a failed request (which can name the URL) stay out
+  // of the log.
+  async 'dez.controller/media/urlAnswers' (url: string): Promise<boolean> {
+    let result: NativeHttpStreamResult
+    try {
+      result = await sbp('dez.http/stream', {
+        method: 'GET',
+        url,
+        headers: { Range: 'bytes=0-0' },
+        timeoutMs: URL_ANSWER_TIMEOUT_MS,
+      }) as NativeHttpStreamResult
+    } catch {
+      console.error('Failed to ask the URL of a clip whether it answers')
+      return false
+    }
+    try {
+      await sbp('dez.http/cancelStream', result.requestId)
+    } catch (error) {
+      console.error('Failed to stop the answer of a clip URL:', error)
+    }
+    return result.response.status >= 200 && result.response.status < 300
   },
 
   // Deletes the old temp copies now, and then each hour while the app runs.

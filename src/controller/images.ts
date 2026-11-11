@@ -39,7 +39,7 @@ export default sbp('sbp/selectors/register', {
       console.error('Failed to save the image:', error)
       sbp('dez.ui/toast', 'app-global', {
         title: 'Could not save the image',
-        message: String(error),
+        message: error instanceof Error ? error.message : String(error),
         variant: 'error',
       })
       throw error
@@ -60,7 +60,7 @@ export default sbp('sbp/selectors/register', {
       console.error(`Failed to delete the image ${path}:`, error)
       sbp('dez.ui/toast', 'app-global', {
         title: 'Could not delete the image',
-        message: String(error),
+        message: error instanceof Error ? error.message : String(error),
         variant: 'error',
       })
       throw error

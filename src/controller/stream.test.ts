@@ -6,7 +6,7 @@ import { sectionVisibleText } from '../model/chat/content'
 import type { DrawnImage, ImageDrawing, ImageSize } from '../model/chat/imageDrawing'
 import { findToolBlocks } from '../model/chat/toolBlocks'
 import type { ConversationData } from '../model/persistence/types'
-import { missingImageProblem } from '../model/providers/clipImages'
+import { missingImageProblem, TooManyImagesError } from '../model/providers/clipImages'
 import type { ClipTextRules } from '../model/providers/clipText'
 import { customProviderConfigSchema } from '../model/providers/config'
 import { unusableModelMessage } from '../model/providers/unusableModel'
@@ -236,6 +236,16 @@ describe('dez.stream/start errors', () => {
       { role: 'user', text: '' },
     ])
     expect(toasts.map((toast) => toast.data.message)).toEqual(['connection reset'])
+  })
+
+  it('tells where to read the error of a failure with no text', async () => {
+    streamChat = async () => {
+      throw new Error('')
+    }
+
+    await startStream()
+
+    expect(toasts.map((toast) => toast.data.message)).toEqual(['The request failed, and its error has no text. Help › Developer Console shows the error.'])
   })
 
   it('keeps a section that got only thinking before the error', async () => {
@@ -894,7 +904,7 @@ describe('dez.controller/submitTab without a model', () => {
     await sbp('dez.controller/submitTab', activeTab().id)
 
     expect(sectionTexts()).toEqual([{ role: 'user', text: 'Hi' }])
-    expect(toasts).toStrictEqual([{ area: 'app-global', data: { variant: 'error', title: 'Cannot send', message: 'No model selected' } }])
+    expect(toasts).toStrictEqual([{ area: 'app-global', data: { variant: 'error', title: 'Cannot send', message: 'No model is selected. Choose a model in the bottom bar, and send again.' } }])
   })
 })
 
@@ -1048,7 +1058,7 @@ describe('dez.stream/start media round', () => {
 
   // Puts the model in the cache with this request kind, and with the frames
   // that a video model takes.
-  function useRequest(request: ModelRequest, maxFrames?: number): void {
+  function useRequest(request: ModelRequest, maxImages?: number): void {
     sbp('dez.model/modelCache/applyProviderResult', model.providerId, {
       ok: true,
       models: [{
@@ -1057,7 +1067,7 @@ describe('dez.stream/start media round', () => {
         provider: model.providerId,
         outputs: ['image'],
         request,
-        ...(maxFrames !== undefined && { images: { maxFrames } }),
+        ...(maxImages !== undefined && { images: { maxImages } }),
       }],
     })
   }
@@ -1304,14 +1314,35 @@ describe('dez.stream/start media round', () => {
       expect(consoleError).toHaveBeenCalledWith(`Cannot send: ${message}`)
     })
 
+    it('tells the user to keep only the images that the model takes when the provider refuses the rest', async () => {
+      useRequest('imageToVideo', 2)
+      setConversation(twoImages)
+      generateMedia = async () => {
+        throw new TooManyImagesError(1, 2)
+      }
+
+      await sbp('dez.controller/submitTab', activeTab().id)
+
+      expect(sectionTexts()).toStrictEqual(conversation(twoImages))
+      expect(toasts).toStrictEqual([{
+        area: 'app-global',
+        data: {
+          variant: 'error',
+          title: 'Request failed',
+          message: 'M takes only 1 image, and this message has 2. Keep only 1 image in the message (pasted, or named with @id), and send it again.',
+        },
+      }])
+    })
+
     it.each([
       ['an image-to-video model that takes one frame', 'imageToVideo', 1, [image('cat.png')], 'Image not sent', 'M takes only 1 image, so 1 image was left out of the request.'],
+      ['an edit model that takes one image', 'imageEdit', 1, [image('cat.png')], 'Image not sent', 'M takes only 1 image, so 1 image was left out of the request.'],
       // The cache does not tell how many frames the model takes.
       ['an image-to-video model with no frame count', 'imageToVideo', undefined, [image('cat.png')], 'Image not sent', 'M takes only 1 image, so 1 image was left out of the request.'],
       ['a text-to-video model that takes one frame', 'video', 1, [image('cat.png')], 'Image not sent', 'M takes only 1 image, so 1 image was left out of the request.'],
       ['a text-to-video model that takes no frame', 'video', undefined, [], 'Images not sent', 'M takes no image, so 2 images were left out of the request.'],
-    ] as const)('sends %s the images that it takes, and tells the user of the rest', async (_name, request, maxFrames, images, title, message) => {
-      useRequest(request, maxFrames)
+    ] as const)('sends %s the images that it takes, and tells the user of the rest', async (_name, request, maxImages, images, title, message) => {
+      useRequest(request, maxImages)
       setConversation(twoImages)
 
       await sbp('dez.controller/submitTab', activeTab().id)

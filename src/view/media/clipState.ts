@@ -18,6 +18,76 @@ export function clipSourceKind(src: string | null): ClipSourceKind {
   return /^https?:\/\/\S+$/i.test(src) ? 'remote' : 'none'
 }
 
+/** Why a clip does not play. `gone`: its bytes are not there any more (it
+ *  has no source, its file cannot be read, or its URL gives no clip).
+ *  `cannot-play`: its bytes are there, and this computer cannot decode
+ *  them. */
+export type ClipProblem = 'gone' | 'cannot-play'
+
+/** How the load of a clip's source failed. */
+export type ClipLoadFailure =
+  /** The file of a saved clip or of a temp copy could not be read. */
+  | { step: 'read' }
+  /** The media element gave an error, with the code of its `MediaError`. */
+  | { step: 'play', code: number | undefined }
+  /** After a "source not supported" error of a URL, the URL was asked
+   *  whether it answers (`dez.controller/media/urlAnswers`): `answers` is
+   *  true for a 2xx status. */
+  | { step: 'ask', answers: boolean }
+
+// The codes of `MediaError` (the unit tests run with no DOM, so the
+// constants of the class are not there).
+const MEDIA_ERR_DECODE = 3
+const MEDIA_ERR_SRC_NOT_SUPPORTED = 4
+
+/** The problem of a clip whose source is of the kind `source`, after its
+ *  load failed as `failure` (null: nothing failed). Null while the clip has
+ *  no problem. `ask`: the URL must be asked first. A media element gives
+ *  "source not supported" both for bytes that it cannot decode and for a
+ *  URL that it could not fetch (an HTTP error), when the error comes
+ *  before the clip's metadata (the resource fetch algorithm of the HTML
+ *  standard). So only an answer of the URL tells the two apart.
+ *  https://html.spec.whatwg.org/multipage/media.html#concept-media-load-resource */
+export function clipProblem(source: ClipSourceKind, failure: ClipLoadFailure | null): ClipProblem | 'ask' | null {
+  if (source === 'none') return 'gone'
+  if (failure === null) return null
+  if (failure.step === 'read') return 'gone'
+  if (failure.step === 'ask') return failure.answers ? 'cannot-play' : 'gone'
+  // A local file was read, so its bytes are there.
+  if (source !== 'remote') return 'cannot-play'
+  if (failure.code === MEDIA_ERR_DECODE) return 'cannot-play'
+  // A network error, and any other code: the URL gave no clip.
+  return failure.code === MEDIA_ERR_SRC_NOT_SUPPORTED ? 'ask' : 'gone'
+}
+
+/** The text of the card of a clip that does not play. */
+export interface ProblemCard {
+  /** What is wrong. */
+  text: string
+  /** What the user can do; null when nothing can be done. */
+  hint: string | null
+  /** The line that names the clip's saved file; null for a clip that is not
+   *  saved, and until the path is read. */
+  file: string | null
+}
+
+/** The card of a clip with `problem`. `type` is the media type of the
+ *  clip's tag (null: not known). `saved` tells that the clip's source is
+ *  its saved file, and `savedPath` is the path of that file as the user
+ *  reads it (`~` for the home folder), or null while it is not read. */
+export function problemCard(
+  problem: ClipProblem,
+  clip: { type: string | null, saved: boolean, savedPath: string | null },
+): ProblemCard {
+  if (problem === 'gone') return { text: 'This clip is no longer available.', hint: null, file: null }
+  const type = clip.type?.trim() ?? ''
+  const text = `This computer cannot play the format of this clip${type === '' ? '' : ` (${type})`}.`
+  if (!clip.saved) {
+    return { text, hint: 'Its file is still there. Save the clip to keep the file, then open the file with another app.', file: null }
+  }
+  return { text, hint: 'Its file is still there. Open the file with another app.', file: clip.savedPath === null ? null : `Saved file: ${clip.savedPath}` }
+}
+
 /** What the clock of a clip that is not saved tells. */
 export interface ExpiryNotice {
   /** The source's time is over: it can have stopped working. */

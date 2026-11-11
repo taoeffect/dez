@@ -4,7 +4,7 @@ import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from
 import { openAiChatBody } from './harness/chatBody'
 import { click, consoleErrors, elementCenter, isOnTop, movePointer, pointerClick, pointerClickAt, pointerDrag, resetConsoleErrors, screenshotOnFailure, waitForValue, type Point } from './harness/dom'
 import { conversationFilePath, makeConversation, seedConversation } from './harness/fixtures'
-import { WAV_SAMPLE_RATE, WEBM_VIDEO, monoWav, openPlayerTooltips, shownPlayers, silentWav, startClipServer, waitForPlayerFullscreen, type ClipServer, type ShownPlayer } from './harness/media'
+import { NOT_A_CLIP, WAV_SAMPLE_RATE, WEBM_VIDEO, monoWav, openPlayerTooltips, problemCards, shownPlayers, silentWav, startClipServer, waitForPlayerFullscreen, type ClipServer, type ProblemCard, type ShownPlayer } from './harness/media'
 import { startMockProviderApp, type MockProviderApp } from './harness/mockProviderApp'
 import { mockChatPath, replyText, sendChatReply, type MockProvider } from './harness/mockServer'
 import { threadCount, webProcessPid } from './harness/processes'
@@ -24,7 +24,13 @@ import { copySelection, editorCaret, editorDoc, focusEditor, focusedArea, newTab
 //   deletes it and gives the tag its URL back;
 // - Save moves the temp copy of a clip under its own name, the clock of a
 //   temp copy also tells where the file is (with `~` for the home folder),
-//   and a clip whose file is gone shows the "not available" card;
+//   and a clip whose file is gone shows the card that says so;
+// - a clip in a format that no computer decodes (text in a `.webm` file),
+//   from a temp copy or from a URL, shows the card that says that this
+//   computer cannot play it, under which the clock and Save stay; the card
+//   stays over a Save and then names the saved file, and after the Delete
+//   of a saved file that has no URL the clip is gone; a clip whose URL
+//   gives no clip (a 404) is gone;
 // - the clock's tooltip stays open while the pointer moves into it and
 //   rests there, also in fullscreen over the picture; a drag or a triple
 //   click in it selects its text and leaves the editor's caret and doc
@@ -70,6 +76,14 @@ const TONE = silentWav(2)
 const STORED_WAV_NAME = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\.wav$/
 const HOUR_MS = 60 * 60 * 1000
 const DELETE_PROMPT = 'Are you sure you want to delete the saved file of this clip?'
+// The prompt for a saved file with no URL to go back to.
+const DELETE_ONLY_COPY_PROMPT = `${DELETE_PROMPT} The clip cannot be played again after that.`
+
+// The cards of clips that do not play.
+const GONE_CARD: ProblemCard = { cause: 'gone', lines: ['This clip is no longer available.'] }
+const CANNOT_PLAY_WEBM = 'This computer cannot play the format of this clip (video/webm).'
+const SAVE_HINT = 'Its file is still there. Save the clip to keep the file, then open the file with another app.'
+const OPEN_HINT = 'Its file is still there. Open the file with another app.'
 
 // A point of the tab bar: over no player.
 const OFF_PLAYERS = { x: 5, y: 5 }
@@ -292,6 +306,7 @@ describe('media player', () => {
     clips = await startClipServer({
       'tone.wav': { type: 'audio/wav', bytes: TONE },
       'video.webm': { type: 'video/webm', bytes: WEBM_VIDEO },
+      'text.webm': { type: 'video/webm', bytes: NOT_A_CLIP },
     })
     setup = await startMockProviderApp(SPEAKER, {
       mediaApi: { format: 'venice' },
@@ -410,9 +425,7 @@ describe('media player', () => {
     const temp: ShownPlayer = { kind: 'audio', id: 'a', available: true, source: 'blob', seconds: 2, picture: null, clock: 'Not saved', save: 'save' }
     const gone: ShownPlayer = { kind: 'audio', id: 'b', available: false, source: null, seconds: null, picture: null, clock: null, save: null }
     await waitForValue(browser, 'players', () => shownPlayers(browser), [temp, gone])
-    expect(await browser.execute(
-      () => Array.from(document.querySelectorAll('.cm-content .media-player__unavailable'), (card) => card.textContent?.trim() ?? ''),
-    )).toStrictEqual(['This clip is no longer available.'])
+    expect(await problemCards(browser)).toStrictEqual([GONE_CARD])
 
     // The clock of a temp copy also tells where the file is. The home
     // folder of the app is the temp folder of this run, and `~` stands for
@@ -463,6 +476,89 @@ describe('media player', () => {
 
     // Only the clip with no file gave an error, with no path in it.
     expect(await consoleErrors(browser)).toStrictEqual(['[MediaPlayer] The file of the clip could not be read'])
+  })
+
+  // The error code of the clip's media element depends on the media stack
+  // of the host, so the tests below take each code that the HTML standard
+  // allows for the case.
+  it('tells that this computer cannot play the format of a temp copy, keeps that over a Save, and names the saved file', async () => {
+    const savedBefore = await filesIn(savedDir('video'))
+    const tempBefore = await filesIn(tempDir())
+    await fs.promises.mkdir(tempDir(), { recursive: true })
+    const tempPath = path.join(tempDir(), 'text-copy.webm')
+    await fs.promises.writeFile(tempPath, NOT_A_CLIP)
+    const expires = new Date(Date.now() + HOUR_MS).toISOString()
+    await openReply('text-copy', clipTag('video', { id: 'a', type: 'video/webm', src: tempPath, expires }))
+
+    // The file was read, so its bytes are there: the card names the format
+    // of the clip, and the bar keeps the clock and the Save.
+    const cannotPlay: ShownPlayer = { kind: 'video', id: 'a', available: false, source: null, seconds: null, picture: null, clock: 'Not saved', save: 'save' }
+    await waitForValue(browser, 'player of the text', () => shownPlayers(browser), [cannotPlay])
+    expect(await problemCards(browser)).toStrictEqual([{ cause: 'cannot-play', lines: [CANNOT_PLAY_WEBM, SAVE_HINT] }])
+    await movePointer(browser, await elementCenter(browser, '.media-player__clock'))
+    await waitForValue(browser, 'clock tooltip', () => openPlayerTooltips(browser), [
+      `Not saved This clip is available until ${await pageTime(expires)}. Save it to keep it. Temporary file: ~/.cache/dez/media/text-copy.webm`,
+    ])
+    await movePointer(browser, OFF_PLAYERS)
+    await waitForValue(browser, 'tooltips with the pointer off the clock', () => openPlayerTooltips(browser), [])
+
+    // Save moves the file. Its bytes are the same, so the card stays, and
+    // it names the saved file in place of the clock.
+    await pointerClick(browser, '.media-player__save')
+    const savedPath = path.join(savedDir('video'), 'text-copy.webm')
+    await waitForValue(browser, 'thread after Save', () => threadSections(browser), seededThread(clipTag('video', { id: 'a', type: 'video/webm', src: savedPath })))
+    expect(await filesIn(savedDir('video'))).toStrictEqual([...savedBefore, 'text-copy.webm'].sort())
+    expect(await fs.promises.readFile(savedPath)).toStrictEqual(NOT_A_CLIP)
+    expect(await filesIn(tempDir())).toStrictEqual(tempBefore)
+    await waitForValue(browser, 'player after Save', () => shownPlayers(browser), [{ ...cannotPlay, clock: null, save: 'saved' }])
+    await waitForValue(browser, 'card after Save', () => problemCards(browser), [{
+      cause: 'cannot-play',
+      lines: [CANNOT_PLAY_WEBM, OPEN_HINT, 'Saved file: ~/.config/dez/assets/generated/video/text-copy.webm'],
+    }])
+
+    // The trash shows when the pointer comes to the check anew, and it
+    // deletes the saved file. The tag has no URL to go back to, so the clip
+    // is then gone.
+    await movePointer(browser, OFF_PLAYERS)
+    await movePointer(browser, await elementCenter(browser, '.media-player__save'))
+    await waitForValue(browser, 'trash', saveLabel, 'Delete the saved file')
+    await pointerClick(browser, '.media-player__save')
+    await waitForValue(browser, 'prompt', promptMessage, DELETE_ONLY_COPY_PROMPT)
+    await pointerClick(browser, '.confirm-btn--confirm')
+    await waitForValue(browser, 'thread after the delete', () => threadSections(browser), seededThread(clipTag('video', { id: 'a', type: 'video/webm' })))
+    expect(await filesIn(savedDir('video'))).toStrictEqual(savedBefore)
+    await waitForValue(browser, 'prompt after Yes', promptMessage, null)
+    await waitForValue(browser, 'player after the delete', () => shownPlayers(browser), [{ ...cannotPlay, clock: null, save: null }])
+    expect(await problemCards(browser)).toStrictEqual([GONE_CARD])
+
+    // One error: the media element's, at the first load. The Save tried
+    // the bytes no second time.
+    expect(await consoleErrors(browser)).toStrictEqual([expect.stringMatching(/^\[MediaPlayer\] The clip did not load; media error code: [34]$/)])
+  })
+
+  it('tells that this computer cannot play the format of a clip whose URL answers', async () => {
+    const url = clips.clipUrl('text.webm')
+    const expires = new Date(Date.now() + HOUR_MS).toISOString()
+    await openReply('text-url', clipTag('video', { id: 'a', type: 'video/webm', src: url, url, expires }))
+
+    await waitForValue(browser, 'player of the text', () => shownPlayers(browser), [
+      { kind: 'video', id: 'a', available: false, source: null, seconds: null, picture: null, clock: 'Not saved', save: 'save' },
+    ])
+    expect(await problemCards(browser)).toStrictEqual([{ cause: 'cannot-play', lines: [CANNOT_PLAY_WEBM, SAVE_HINT] }])
+    expect(await consoleErrors(browser)).toStrictEqual([expect.stringMatching(/^\[MediaPlayer\] The clip did not load; media error code: [34]$/)])
+  })
+
+  it('tells that a clip whose URL gives no clip is no longer available', async () => {
+    const url = clips.clipUrl('missing.webm')
+    const expires = new Date(Date.now() + HOUR_MS).toISOString()
+    await openReply('missing-url', clipTag('video', { id: 'a', type: 'video/webm', src: url, url, expires }))
+
+    await waitForValue(browser, 'player of the missing clip', () => shownPlayers(browser), [
+      { kind: 'video', id: 'a', available: false, source: null, seconds: null, picture: null, clock: null, save: null },
+    ])
+    expect(await problemCards(browser)).toStrictEqual([GONE_CARD])
+    // The 404 of the question to the URL is no error of its own.
+    expect(await consoleErrors(browser)).toStrictEqual([expect.stringMatching(/^\[MediaPlayer\] The clip did not load; media error code: [24]$/)])
   })
 
   it('keeps a video in fullscreen over a Save, lets the clock tooltip over its picture be selected, and leaves fullscreen for the delete prompt and at a click on its button', async () => {

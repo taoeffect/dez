@@ -26,7 +26,7 @@ import '@videojs/html/ui/tooltip'
 import '@videojs/html/ui/tooltip-label'
 import '@videojs/html/ui/tooltip-shortcut'
 import type { MediaTagKind } from '../../model/chat/mediaTags'
-import { clipSourceKind, expiryNotice } from './clipState'
+import { clipProblem, clipSourceKind, expiryNotice, problemCard, type ClipLoadFailure, type ClipProblem } from './clipState'
 import { releaseRemovedMedia } from './releaseMedia'
 import { videoAspectRatios } from './videoSizes'
 
@@ -34,8 +34,10 @@ import { videoAspectRatios } from './videoSizes'
 // parts (a packaged video.js skin cannot get new controls), plus the Save
 // control and the clock of a clip that is not saved. video.js keeps the
 // playback state: `<video-player>` finds the plain media element inside it,
-// and each part shows or changes that state. The component knows no tag:
-// its owner gives the clip's source, and does the Save and the Delete
+// and each part shows or changes that state. A clip that does not play gets
+// a card in place of its media element, which tells why: the clip is gone,
+// or this computer cannot play its format. The component knows no tag: its
+// owner gives the clip's source, and does the Save and the Delete
 // (`src/view/editor/media.ts`).
 
 const props = defineProps<{
@@ -43,6 +45,9 @@ const props = defineProps<{
   /** The clip's id in its conversation (the `id` of the clip's tag), which
    *  the badge shows. */
   id: string
+  /** The clip's media type (the `type` of the clip's tag), which the card of
+   *  a clip that this computer cannot play names; null when not known. */
+  type: string | null
   /** The clip's source, as its tag has it: the path of the saved file or of
    *  the temp copy, or a URL; null for a clip with no source. */
   src: string | null
@@ -72,20 +77,59 @@ interface LoadedSource {
 
 const loaded = shallowRef<LoadedSource | null>(null)
 
-// The source that did not load. It is the source and not a flag, so that
-// the next source of the clip (after a Save or a Delete) gets its own try.
-const failedSrc = ref<string | null>(null)
-const available = computed(() => sourceKind.value !== 'none' && props.src !== failedSrc.value)
+let unmounted = false
+
+/** A source of the clip that did not load, and how its load failed. It is
+ *  the source and not a flag, so that the next source of the clip (after a
+ *  Save or a Delete) gets its own try. */
+interface FailedLoad {
+  src: string
+  failure: ClipLoadFailure
+}
+
+const failed = shallowRef<FailedLoad | null>(null)
+
+/** The problem of the clip while its source is `src` (`clipProblem`). */
+function problemOf(src: string | null): ClipProblem | 'ask' | null {
+  const entry = failed.value
+  return clipProblem(clipSourceKind(src), entry !== null && entry.src === src ? entry.failure : null)
+}
+
+/** Why the clip does not play: null while it plays, and while its URL is
+ *  asked (the player keeps its look until the answer). */
+const unavailable = computed(() => {
+  const problem = problemOf(props.src)
+  return problem === 'ask' ? null : problem
+})
+
+function fail(src: string, failure: ClipLoadFailure): void {
+  const entry = { src, failure }
+  failed.value = entry
+  // The URL is asked only when it is the source that the clip has now: the
+  // failure of a source of before shows nothing.
+  if (problemOf(props.src) === 'ask') void askUrl(entry)
+}
+
+// A URL that gave "source not supported": its answer tells whether the clip
+// is gone or this computer cannot decode it (`clipProblem`).
+async function askUrl(entry: FailedLoad): Promise<void> {
+  const answers = await sbp('dez.controller/media/urlAnswers', entry.src) as boolean
+  // The clip got another source, or failed again, or the player went, while
+  // the URL was asked.
+  if (unmounted || props.src !== entry.src || failed.value !== entry) return
+  failed.value = { src: entry.src, failure: { step: 'ask', answers } }
+}
 
 function onMediaError(event: Event): void {
-  // A media element that the player removed (at unmount, or when the clip
-  // became unavailable) keeps this listener, and it can still fire `error`:
+  // A media element that the player removed (at unmount, or when the card
+  // took its place) keeps this listener, and it can still fire `error`:
   // that was seen after a tab switch during the load of a local file, whose
   // blob URL is revoked then. It is no failure of the clip that shows now.
   if (event.target !== media.value) return
+  const code = media.value?.error?.code
   // Only the code: the message can hold the URL, which can be a signed URL.
-  console.error('[MediaPlayer] The clip did not load; media error code:', media.value?.error?.code)
-  failedSrc.value = loaded.value?.src ?? null
+  console.error('[MediaPlayer] The clip did not load; media error code:', code)
+  if (loaded.value) fail(loaded.value.src, { step: 'play', code })
 }
 
 // A video is 16:9 until it tells its size.
@@ -108,17 +152,18 @@ function load(next: LoadedSource | null): void {
   loaded.value = next
 }
 
-let unmounted = false
-
 // A provider URL loads as it is. A local file (the saved file or the temp
 // copy) loads from a blob URL of its bytes, and not from its asset protocol
 // URL: the media player of WebKitGTK (GStreamer) loads http, https, and blob
 // URLs only, and gives a "source not supported" error for the URL of a
 // custom protocol. `fetch` has no such limit, so the asset protocol still
 // reads the file. The whole file is in memory while the player shows it.
-// Until the file is read, the element keeps the source of before.
+// Until the file is read, the media element keeps the source of before. A
+// new media element (in place of a card) gets no source until then: so it
+// does not change its source at the start of its load, which can stop the
+// web process (the comment of `releaseRemovedMedia`).
 // https://github.com/tauri-apps/tauri/issues/3725
-watch(() => props.src, async (src) => {
+watch(() => props.src, async (src, previous) => {
   const kind = sourceKind.value
   if (src === null || kind === 'none') {
     load(null)
@@ -128,6 +173,18 @@ watch(() => props.src, async (src) => {
     load({ src, url: src })
     return
   }
+  // A Save keeps the bytes of a clip that this computer cannot play: the
+  // card stays, and the saved file is not read and tried again. (A hand
+  // edit of the tag that gives other bytes the path of a saved file shows
+  // this card too, until the next editor state makes a new player.)
+  const before = failed.value
+  if (kind === 'saved' && before !== null && before.src === previous
+    && clipSourceKind(previous) !== 'saved' && problemOf(previous) === 'cannot-play') {
+    failed.value = { src, failure: before.failure }
+    load(null)
+    return
+  }
+  if (media.value === null) load(null)
   let file: File | null = null
   try {
     file = await sbp('dez.controller/images/readFile', src) as File
@@ -139,7 +196,7 @@ watch(() => props.src, async (src) => {
   // read.
   if (unmounted || props.src !== src) return
   if (file === null) {
-    failedSrc.value = src
+    fail(src, { step: 'read' })
     load(null)
     return
   }
@@ -162,8 +219,9 @@ onBeforeUnmount(() => {
 })
 
 // Vue calls `unmounted` each time it removed the media element, after the
-// element left the document: at the unmount of the player, and at the
-// change to "not available". A removed element frees nothing by itself.
+// element left the document: at the unmount of the player, and when the
+// card of a clip that does not play took its place. A removed element
+// frees nothing by itself.
 const vReleaseOnRemove: ObjectDirective<HTMLMediaElement> = { unmounted: releaseRemovedMedia }
 
 function play(element: HTMLMediaElement): void {
@@ -198,21 +256,28 @@ function togglePlay(): void {
 // focus comes to the clock, which is when its tooltip shows.
 const now = ref(Date.now())
 
-// Where the clip's temp copy is, as the clock's tooltip shows it (`~` for
-// the home folder), so that the user can find the file. Null for a clip with
-// no temp copy, and until the path is read. The path is for the eye only:
-// it goes into no doc text, so no request holds it.
-const tempPath = ref<string | null>(null)
+// Where the clip's file (the temp copy or the saved file) is, as the user
+// reads it (`~` for the home folder): the clock's tooltip and the card of a
+// clip that cannot play show it, so that the user can find the file. Null
+// for a clip with no file, and until the path is read. The path is for the
+// eye only: it goes into no doc text, so no request holds it.
+const filePath = ref<string | null>(null)
 watch(() => props.src, async (src) => {
-  tempPath.value = null
-  if (src === null || sourceKind.value !== 'temp') return
+  filePath.value = null
+  const kind = sourceKind.value
+  if (src === null || (kind !== 'temp' && kind !== 'saved')) return
   const path = await sbp('dez.controller/displayPath', src) as string
   // The clip got another source while the path was read.
-  if (props.src === src) tempPath.value = path
+  if (props.src === src) filePath.value = path
 }, { immediate: true })
 
+// The text of the card that shows in place of a clip that does not play.
+const card = computed(() => unavailable.value === null
+  ? null
+  : problemCard(unavailable.value, { type: props.type, saved: saved.value, savedPath: saved.value ? filePath.value : null }))
+
 // The clock goes away as soon as a Save starts, and comes back if it fails.
-const notice = computed(() => saved.value || props.busy ? null : expiryNotice(props.expires, now.value, tempPath.value))
+const notice = computed(() => saved.value || props.busy ? null : expiryNotice(props.expires, now.value, filePath.value))
 /** The words of the clock's tooltip as one text, for screen readers. */
 const noticeLabel = computed(() => {
   const value = notice.value
@@ -300,7 +365,7 @@ function onSaveClick(): void {
     :is="kind === 'video' ? 'video-player' : 'audio-player'"
     class="media-player"
     :data-kind="kind"
-    :data-unavailable="available ? undefined : ''"
+    :data-unavailable="unavailable ?? undefined"
     :style="{ '--media-player-ratio': aspectRatio }"
   >
     <!-- `tabindex="-1"`: the card itself is no Tab stop (video.js gives it
@@ -311,7 +376,7 @@ function onSaveClick(): void {
            on a click on Play. The parts get their own pointer events first,
            so they still work. The div has no box (`display: contents`). -->
       <div class="media-player__parts" @pointerup.stop>
-        <template v-if="available">
+        <template v-if="!card">
           <video
             v-if="kind === 'video'"
             ref="media"
@@ -333,9 +398,25 @@ function onSaveClick(): void {
             @loadedmetadata="onLoadedMetadata"
             @error="onMediaError"
           />
-          <!-- One tooltip group: after the first tooltip, the next ones show
-               with no delay. A tooltip belongs to the element before it. -->
-          <media-tooltip-group class="media-player__bar">
+        </template>
+        <div v-else class="media-player__unavailable">
+          <svg class="media-player__icon media-player__icon--line" viewBox="0 0 16 16" aria-hidden="true">
+            <circle cx="8" cy="8" r="5.9" />
+            <path d="M3.9 3.9l8.2 8.2" />
+          </svg>
+          <span class="media-player__unavailable-text">
+            <span>{{ card.text }}</span>
+            <span v-if="card.hint">{{ card.hint }}</span>
+            <span v-if="card.file" class="media-player__unavailable-path">{{ card.file }}</span>
+          </span>
+        </div>
+        <!-- One tooltip group: after the first tooltip, the next ones show
+             with no delay. A tooltip belongs to the element before it. Under
+             the card of a clip that this computer cannot play, the bar keeps
+             the clock and the Save control: the file of the clip is still
+             there, and the user can keep it. -->
+        <media-tooltip-group v-if="unavailable !== 'gone'" class="media-player__bar">
+          <template v-if="!card">
             <media-play-button class="media-player__button media-player__play">
               <svg class="media-player__icon media-player__icon--play" viewBox="0 0 16 16" aria-hidden="true">
                 <path d="M5.2 3.1c0-.6.66-.96 1.16-.63l7.2 4.9c.44.3.44.96 0 1.26l-7.2 4.9c-.5.33-1.16-.03-1.16-.63z" />
@@ -399,118 +480,111 @@ function onSaveClick(): void {
               </media-fullscreen-button>
               <media-tooltip class="media-player__tooltip" boundary="viewport" />
             </template>
+          </template>
 
-            <template v-if="notice">
-              <span
-                class="media-player__clock"
-                :data-expired="notice.expired ? '' : undefined"
-                role="img"
-                tabindex="0"
-                :aria-label="noticeLabel"
-                @pointerenter="now = Date.now()"
-                @focus="now = Date.now()"
-              >
-                <svg class="media-player__icon media-player__icon--line" viewBox="0 0 16 16" aria-hidden="true">
-                  <circle cx="8" cy="8" r="5.9" />
-                  <path d="M8 4.7V8l2.2 1.5" />
-                </svg>
-              </span>
-              <!-- The one tooltip that takes the pointer: the user moves into
-                   it and selects its text (the path of a temp copy). With
-                   `disableHoverablePopup` off, video.js keeps it open while the
-                   pointer is over it; the close delay keeps it open over a
-                   quick move that cuts the corner of the bridge (the
-                   `::after` in the styles). `src/view/editor/media.ts` keeps
-                   the mousedown of its text and gives the focus back when it
-                   closes. -->
-              <media-tooltip
-                class="media-player__tooltip media-player__tooltip--notice media-player__tooltip--selectable"
-                boundary="viewport"
-                :close-delay="SELECTABLE_TOOLTIP_CLOSE_DELAY_MS"
-                :disableHoverablePopup.prop="false"
-                @mousedown="selectTooltipLine"
-              >
-                <span class="media-player__tooltip-title">{{ notice.title }}</span>
-                <span class="media-player__tooltip-text">{{ notice.text }}</span>
-                <span v-if="notice.file" class="media-player__tooltip-text media-player__tooltip-path">{{ notice.file }}</span>
-              </media-tooltip>
-            </template>
-
-            <!-- `aria-disabled`, not `disabled`: a disabled button gets no
-                 pointer events, so it would show no tooltip while a Save
-                 or a Delete runs. -->
-            <button
-              type="button"
-              class="media-player__save"
-              :data-state="saveState"
-              :data-armed="trashArmed ? '' : undefined"
-              :aria-disabled="busy ? 'true' : undefined"
-              :aria-label="saveHint"
-              @click="onSaveClick"
-              @pointerenter="armTrash"
-              @focus="armTrash"
+          <template v-if="notice">
+            <span
+              class="media-player__clock"
+              :data-expired="notice.expired ? '' : undefined"
+              role="img"
+              tabindex="0"
+              :aria-label="noticeLabel"
+              @pointerenter="now = Date.now()"
+              @focus="now = Date.now()"
             >
-              <span class="media-player__save-label">{{ saved ? 'Saved' : 'Save' }}</span>
-              <span v-if="busy" class="media-player__spinner" aria-hidden="true" />
-              <svg v-else-if="!saved" class="media-player__icon media-player__icon--line" viewBox="0 0 16 16" aria-hidden="true">
-                <path d="M8 2.6v7.6M4.9 7.3L8 10.4l3.1-3.1M3.2 13.2h9.6" />
+              <svg class="media-player__icon media-player__icon--line" viewBox="0 0 16 16" aria-hidden="true">
+                <circle cx="8" cy="8" r="5.9" />
+                <path d="M8 4.7V8l2.2 1.5" />
               </svg>
-              <svg v-else-if="justSaved" class="media-player__icon media-player__icon--line" viewBox="0 0 16 16" aria-hidden="true">
-                <path d="M3.4 8.5l3 3 6.2-6.6" />
+            </span>
+            <!-- The one tooltip that takes the pointer: the user moves into
+                 it and selects its text (the path of a temp copy). With
+                 `disableHoverablePopup` off, video.js keeps it open while the
+                 pointer is over it; the close delay keeps it open over a
+                 quick move that cuts the corner of the bridge (the
+                 `::after` in the styles). `src/view/editor/media.ts` keeps
+                 the mousedown of its text and gives the focus back when it
+                 closes. -->
+            <media-tooltip
+              class="media-player__tooltip media-player__tooltip--notice media-player__tooltip--selectable"
+              boundary="viewport"
+              :close-delay="SELECTABLE_TOOLTIP_CLOSE_DELAY_MS"
+              :disableHoverablePopup.prop="false"
+              @mousedown="selectTooltipLine"
+            >
+              <span class="media-player__tooltip-title">{{ notice.title }}</span>
+              <span class="media-player__tooltip-text">{{ notice.text }}</span>
+              <span v-if="notice.file" class="media-player__tooltip-text media-player__tooltip-path">{{ notice.file }}</span>
+            </media-tooltip>
+          </template>
+
+          <!-- `aria-disabled`, not `disabled`: a disabled button gets no
+               pointer events, so it would show no tooltip while a Save
+               or a Delete runs. -->
+          <button
+            type="button"
+            class="media-player__save"
+            :data-state="saveState"
+            :data-armed="trashArmed ? '' : undefined"
+            :aria-disabled="busy ? 'true' : undefined"
+            :aria-label="saveHint"
+            @click="onSaveClick"
+            @pointerenter="armTrash"
+            @focus="armTrash"
+          >
+            <span class="media-player__save-label">{{ saved ? 'Saved' : 'Save' }}</span>
+            <span v-if="busy" class="media-player__spinner" aria-hidden="true" />
+            <svg v-else-if="!saved" class="media-player__icon media-player__icon--line" viewBox="0 0 16 16" aria-hidden="true">
+              <path d="M8 2.6v7.6M4.9 7.3L8 10.4l3.1-3.1M3.2 13.2h9.6" />
+            </svg>
+            <svg v-else-if="justSaved" class="media-player__icon media-player__icon--line" viewBox="0 0 16 16" aria-hidden="true">
+              <path d="M3.4 8.5l3 3 6.2-6.6" />
+            </svg>
+            <template v-else>
+              <svg class="media-player__icon media-player__save-done" viewBox="0 0 16 16" aria-hidden="true">
+                <circle cx="8" cy="8" r="7" />
+                <path class="media-player__save-done-check" d="M4.7 8.3l2.3 2.3 4.4-4.8" />
               </svg>
-              <template v-else>
-                <svg class="media-player__icon media-player__save-done" viewBox="0 0 16 16" aria-hidden="true">
-                  <circle cx="8" cy="8" r="7" />
-                  <path class="media-player__save-done-check" d="M4.7 8.3l2.3 2.3 4.4-4.8" />
-                </svg>
-                <svg class="media-player__icon media-player__icon--line media-player__save-trash" viewBox="0 0 16 16" aria-hidden="true">
-                  <path d="M3 4.4h10M6.2 4.4V3.3c0-.39.31-.7.7-.7h2.2c.39 0 .7.31.7.7v1.1M4.3 4.4l.5 8.1c.03.5.45.9.95.9h4.5c.5 0 .92-.4.95-.9l.5-8.1M6.7 7v3.8M9.3 7v3.8" />
-                </svg>
-              </template>
-            </button>
-            <media-tooltip class="media-player__tooltip" boundary="viewport">{{ saveHint }}</media-tooltip>
-          </media-tooltip-group>
-          <!-- A second video element, empty and never shown. It has an
-               effect on macOS only.
-               In element fullscreen, WebKit on macOS reads the text in the
-               frame of a paused video (Live Text), and for that it puts a
-               native view over the whole web view. That view takes every
-               click. So, after the clip had played, no button of the bar
-               worked in fullscreen: the page got no pointer event at all.
-               (The dead clicks were seen on macOS; their cause is read
-               from WebKit's code.)
-               WebKit does this for one video only: the `<video>` with the
-               largest box under the fullscreen element (the first one, if
-               two are equal). And it does nothing for a video with no
-               source, which has no frame. This element is that video. Two
-               rules keep it so:
-               - It has no `src`, and nothing loads it.
-               - Its box is larger than the box of the clip's video: it has
-                 the size of the card, which is the video plus the bar.
-               It comes after the clip's video, because video.js takes the
-               first `video` in the player as its media.
-               WebKitGTK has no such view. An element with no source has no
-               media player (300 of them add no thread to the web process),
-               so it needs no `v-release-on-remove`.
-               The WebKit setting that turns the text recognition off is no
-               option: the web process then still asks for the recognition,
-               and WebKit ends the web process for it (the last URL).
-               https://github.com/WebKit/WebKit/blob/main/Source/WebKit/WebProcess/FullScreen/WebFullScreenManager.cpp
-               (`updateMainVideoElement`, `mainVideoElementTextRecognitionTimerFired`)
-               https://github.com/WebKit/WebKit/blob/main/Source/WebKit/WebProcess/WebPage/WebPage.cpp
-               (`beginTextRecognitionForVideoInElementFullScreen`)
-               https://github.com/WebKit/WebKit/blob/main/Source/WebKit/UIProcess/mac/WebViewImpl.mm
-               (`installImageAnalysisOverlayView`)
-               https://github.com/driceroland/Search/pull/794 -->
-          <video v-if="kind === 'video'" class="media-player__stand-in" />
-        </template>
-        <div v-else class="media-player__unavailable">
-          <svg class="media-player__icon media-player__icon--line" viewBox="0 0 16 16" aria-hidden="true">
-            <circle cx="8" cy="8" r="5.9" />
-            <path d="M3.9 3.9l8.2 8.2" />
-          </svg>
-          <span>This clip is no longer available.</span>
-        </div>
+              <svg class="media-player__icon media-player__icon--line media-player__save-trash" viewBox="0 0 16 16" aria-hidden="true">
+                <path d="M3 4.4h10M6.2 4.4V3.3c0-.39.31-.7.7-.7h2.2c.39 0 .7.31.7.7v1.1M4.3 4.4l.5 8.1c.03.5.45.9.95.9h4.5c.5 0 .92-.4.95-.9l.5-8.1M6.7 7v3.8M9.3 7v3.8" />
+              </svg>
+            </template>
+          </button>
+          <media-tooltip class="media-player__tooltip" boundary="viewport">{{ saveHint }}</media-tooltip>
+        </media-tooltip-group>
+        <!-- A second video element, empty and never shown. It has an
+             effect on macOS only.
+             In element fullscreen, WebKit on macOS reads the text in the
+             frame of a paused video (Live Text), and for that it puts a
+             native view over the whole web view. That view takes every
+             click. So, after the clip had played, no button of the bar
+             worked in fullscreen: the page got no pointer event at all.
+             (The dead clicks were seen on macOS; their cause is read
+             from WebKit's code.)
+             WebKit does this for one video only: the `<video>` with the
+             largest box under the fullscreen element (the first one, if
+             two are equal). And it does nothing for a video with no
+             source, which has no frame. This element is that video. Two
+             rules keep it so:
+             - It has no `src`, and nothing loads it.
+             - Its box is larger than the box of the clip's video: it has
+               the size of the card, which is the video plus the bar.
+             It comes after the clip's video, because video.js takes the
+             first `video` in the player as its media.
+             WebKitGTK has no such view. An element with no source has no
+             media player (300 of them add no thread to the web process),
+             so it needs no `v-release-on-remove`.
+             The WebKit setting that turns the text recognition off is no
+             option: the web process then still asks for the recognition,
+             and WebKit ends the web process for it (the last URL).
+             https://github.com/WebKit/WebKit/blob/main/Source/WebKit/WebProcess/FullScreen/WebFullScreenManager.cpp
+             (`updateMainVideoElement`, `mainVideoElementTextRecognitionTimerFired`)
+             https://github.com/WebKit/WebKit/blob/main/Source/WebKit/WebProcess/WebPage/WebPage.cpp
+             (`beginTextRecognitionForVideoInElementFullScreen`)
+             https://github.com/WebKit/WebKit/blob/main/Source/WebKit/UIProcess/mac/WebViewImpl.mm
+             (`installImageAnalysisOverlayView`)
+             https://github.com/driceroland/Search/pull/794 -->
+        <video v-if="kind === 'video' && !card" class="media-player__stand-in" />
       </div>
     </media-container>
     <!-- The id badge, as an image has one (`idBadge` in
@@ -932,11 +1006,11 @@ function onSaveClick(): void {
 /* The id badge has the look of an image's id badge (`.dez-image__overlay`
    and `.dez-image__id` in `dezTheme`, cmEditor.ts): dark glass with white
    text in both themes, shown only while the pointer is over the player.
-   Beside an audio card and the "not available" card, it covers no control
-   of the bar, and it keeps its room while hidden, so a hover changes no
-   size; the rule below puts it over the picture of a video. It is outside
-   the card, which cuts its content (`overflow`); so the fullscreen view,
-   which is the card, has no badge. */
+   Beside an audio card and the card of a clip that does not play, it
+   covers no control of the bar, and it keeps its room while hidden, so a
+   hover changes no size; the rule below puts it over the picture of a
+   video. It is outside the card, which cuts its content (`overflow`); so
+   the fullscreen view, which is the card, has no badge. */
 .media-player__id {
   z-index: 2;
   display: inline-flex;
@@ -1103,14 +1177,34 @@ function onSaveClick(): void {
   font-size: 0.95em;
 }
 
+/* The card of a clip that does not play: the icon, and the lines of its
+   text. */
 .media-player__unavailable {
   display: flex;
-  align-items: center;
+  align-items: flex-start;
   gap: calc(var(--u) * 7);
   padding: calc(var(--u) * 8) calc(var(--u) * 12) calc(var(--u) * 8) calc(var(--u) * 10);
   color: var(--color-muted);
   font-size: calc(var(--u) * 13);
   line-height: 1.3;
+}
+
+.media-player__unavailable-text {
+  display: flex;
+  flex-direction: column;
+  gap: calc(var(--u) * 2);
+  min-width: 0;
+}
+
+/* A long path breaks at any place, not only at its slashes. */
+.media-player__unavailable-path {
+  overflow-wrap: anywhere;
+}
+
+/* Under the card, the bar holds only the clock and the Save control, at
+   its end. */
+.media-player[data-unavailable] .media-player__bar {
+  justify-content: flex-end;
 }
 
 /* A narrow bar drops the volume slider first, then the total time. The

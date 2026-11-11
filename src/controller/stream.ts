@@ -7,6 +7,7 @@ import { tempMediaFile } from '../model/chat/mediaFiles'
 import { newMediaIds } from '../model/chat/mediaIds'
 import { mediaTagText } from '../model/chat/mediaTags'
 import { findToolBlocks, ModelTextEscaper } from '../model/chat/toolBlocks'
+import { TooManyImagesError, tooManyImagesMessage } from '../model/providers/clipImages'
 import type { ClipInputRules, GeneratedClip, GeneratedMedia, MediaKind, ModelRequest, ProviderGenerateMediaResult, ProviderStreamChatResult } from '../model/providers'
 import { requireProvider } from '../model/providers/registry'
 import { agentSectionMessages, mediaRequestInput } from '../model/streams/messages'
@@ -140,6 +141,14 @@ function showReplyError(tabId: string, title: string, message: string): void {
     title: inBackground ? `${title} in "${tab.title}"` : title,
     message,
   })
+}
+
+// The text of the error toast of a failed reply.
+function replyErrorMessage(error: unknown, model: ActiveModel): string {
+  if (error instanceof TooManyImagesError) return tooManyImagesMessage(model.modelName, error)
+  const message = error instanceof Error ? error.message : String(error)
+  // The toast refuses an empty message.
+  return message || 'The request failed, and its error has no text. Help › Developer Console shows the error.'
 }
 
 // The tab's stream session still writes into `sectionId`.
@@ -581,8 +590,7 @@ export default sbp('sbp/selectors/register', {
         console.error(args.request === 'chat' ? 'Chat request failed:' : 'Media request failed:', error)
         flushModelText(args.tabId, reply)
         finalizeStream(args.tabId, errorStreamSession(args.tabId))
-        // The toast refuses an empty message.
-        showReplyError(args.tabId, 'Request failed', (error instanceof Error ? error.message : String(error)) || 'Unknown error')
+        showReplyError(args.tabId, 'Request failed', replyErrorMessage(error, args.model))
       }
     } finally {
       if (repliesByTab.get(args.tabId) === reply) repliesByTab.delete(args.tabId)

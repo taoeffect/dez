@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { clipSourceKind, expiryNotice } from './clipState'
+import { clipProblem, clipSourceKind, expiryNotice, problemCard, type ClipSourceKind } from './clipState'
 
 describe('clipSourceKind', () => {
   it('tells a saved file, a temp copy, and a URL apart', () => {
@@ -28,6 +28,87 @@ describe('clipSourceKind', () => {
       'https://cdn.example/a b.mp4',
     ]
     for (const src of sources) expect(clipSourceKind(src), src).toBe('none')
+  })
+})
+
+describe('clipProblem', () => {
+  const LOCAL: ClipSourceKind[] = ['saved', 'temp']
+  const USABLE: ClipSourceKind[] = [...LOCAL, 'remote']
+
+  it('tells that a clip with no usable source is gone, whatever failed', () => {
+    expect(clipProblem('none', null)).toBe('gone')
+    expect(clipProblem('none', { step: 'play', code: 3 })).toBe('gone')
+    expect(clipProblem('none', { step: 'ask', answers: true })).toBe('gone')
+  })
+
+  it('gives no problem while nothing failed', () => {
+    for (const source of USABLE) expect(clipProblem(source, null), source).toBeNull()
+  })
+
+  it('tells that a local clip whose file cannot be read is gone', () => {
+    for (const source of LOCAL) expect(clipProblem(source, { step: 'read' }), source).toBe('gone')
+  })
+
+  it('tells that this computer cannot play a local file that was read, for any media error', () => {
+    for (const source of LOCAL) {
+      for (const code of [1, 2, 3, 4, undefined]) {
+        expect(clipProblem(source, { step: 'play', code }), `${source} ${code}`).toBe('cannot-play')
+      }
+    }
+  })
+
+  it('tells that this computer cannot play a URL that gave a decode error', () => {
+    expect(clipProblem('remote', { step: 'play', code: 3 })).toBe('cannot-play')
+  })
+
+  it('tells that a URL that gave a network error, or an error with no known code, is gone', () => {
+    for (const code of [1, 2, undefined]) expect(clipProblem('remote', { step: 'play', code }), String(code)).toBe('gone')
+  })
+
+  it('asks the URL when it was "not supported", and decides by its answer', () => {
+    expect(clipProblem('remote', { step: 'play', code: 4 })).toBe('ask')
+    expect(clipProblem('remote', { step: 'ask', answers: true })).toBe('cannot-play')
+    expect(clipProblem('remote', { step: 'ask', answers: false })).toBe('gone')
+  })
+})
+
+describe('problemCard', () => {
+  const GONE = { text: 'This clip is no longer available.', hint: null, file: null }
+  const CANNOT_PLAY = 'This computer cannot play the format of this clip (video/webm).'
+  const SAVE_HINT = 'Its file is still there. Save the clip to keep the file, then open the file with another app.'
+  const OPEN_HINT = 'Its file is still there. Open the file with another app.'
+
+  it('tells only that a gone clip is no longer available, saved or not', () => {
+    expect(problemCard('gone', { type: 'video/webm', saved: false, savedPath: null })).toStrictEqual(GONE)
+    expect(problemCard('gone', { type: 'video/webm', saved: true, savedPath: '~/v.webm' })).toStrictEqual(GONE)
+  })
+
+  it('names the format of a clip that cannot play, and tells to save it', () => {
+    expect(problemCard('cannot-play', { type: 'video/webm', saved: false, savedPath: null })).toStrictEqual({
+      text: CANNOT_PLAY,
+      hint: SAVE_HINT,
+      file: null,
+    })
+  })
+
+  it('names no format when the tag gives none', () => {
+    const text = 'This computer cannot play the format of this clip.'
+    expect(problemCard('cannot-play', { type: null, saved: false, savedPath: null }).text).toBe(text)
+    expect(problemCard('cannot-play', { type: ' ', saved: false, savedPath: null }).text).toBe(text)
+  })
+
+  it('names the saved file of a clip that cannot play, once its path is read', () => {
+    const savedPath = '~/.config/dez/assets/generated/video/9f3c.webm'
+    expect(problemCard('cannot-play', { type: 'video/webm', saved: true, savedPath })).toStrictEqual({
+      text: CANNOT_PLAY,
+      hint: OPEN_HINT,
+      file: 'Saved file: ~/.config/dez/assets/generated/video/9f3c.webm',
+    })
+    expect(problemCard('cannot-play', { type: 'video/webm', saved: true, savedPath: null })).toStrictEqual({
+      text: CANNOT_PLAY,
+      hint: OPEN_HINT,
+      file: null,
+    })
   })
 })
 

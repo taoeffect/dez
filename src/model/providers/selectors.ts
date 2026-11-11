@@ -53,7 +53,7 @@ async function requestSecret(provider: Provider, refreshCopilot = false): Promis
   }
 
   if (!value && provider.requiresKey) {
-    throw new ProviderNotConfiguredError(provider.id)
+    throw new ProviderNotConfiguredError(provider.id, provider.name, provider.config.auth === 'githubCopilot')
   }
 
   return value
@@ -93,7 +93,7 @@ async function readStoredImage(path: string, appDir: string): Promise<StoredImag
     return { bytes: await sbp('dez.native/loadAppFileBytes', file) as Uint8Array, mediaType }
   } catch (error) {
     console.error(`Failed to read the image ${path}:`, error)
-    throw new Error(`Image not found: ${fileNameOf(path)}`)
+    throw new Error(`Image not found: ${fileNameOf(path)}. Paste the image again, or remove its reference.`)
   }
 }
 
@@ -143,7 +143,7 @@ async function nativeChatStream(
 // not go there.
 async function fetchReplyImage(provider: Provider, url: string): Promise<Uint8Array> {
   const { response, chunks } = await sbp('dez.http/stream', { method: 'GET', url }) as NativeHttpStreamResult
-  await assertStreamResponseOk(provider, response, chunks)
+  await assertStreamResponseOk(provider, response, chunks, false)
   return readNativeChunkBytes(chunks)
 }
 
@@ -299,7 +299,9 @@ export default sbp('sbp/selectors/register', {
   //   not keep the clip. A stop rejects. The request sets the model's
   //   parameters (the length, the voice): `input.parameters` where the
   //   model takes the value, else the parameter's default. A video request
-  //   sends the stored images of `input.images` as frames of the video.
+  //   sends the stored images of `input.images` as frames of the video. A
+  //   refusal that tells that the model takes fewer images rejects with a
+  //   TooManyImagesError (`Provider.imageCountRefusal`).
   //
   // A provider takes the money for a job when it starts. So after that
   // point, a failure and a stop log the job id, and the message of a
@@ -342,7 +344,22 @@ export default sbp('sbp/selectors/register', {
       const cacheDir = await sbp('dez.native/getAppDir', 'cache') as string
       const values = clipParameterValues(provider.id, modelId, input.parameters)
       const clipInput = { prompt: input.prompt, images, values, ...(input.lyrics !== undefined && { lyrics: input.lyrics }) }
-      const first = await sendClipRequest(run, apiRequest(provider.clipRequest(kind, modelId, clipInput)), null, cacheDir)
+      // A refusal that tells that the model takes fewer images: the user
+      // gets Dez's text, with the count, and the console the provider's. A
+      // refusal that tells a field value that the model needs: the request
+      // goes once more with it (`Provider.clipRequestAfterRefusal`).
+      const firstRequest = provider.clipRequest(kind, modelId, clipInput)
+      const first = await sendClipRequest(run, apiRequest(firstRequest), null, cacheDir).catch(async (error: unknown) => {
+        const refusal = provider.imageCountRefusal(kind, error, images.length)
+        if (refusal) {
+          console.error(`${provider.name} refused the images of a request to ${modelId}:`, error)
+          throw refusal
+        }
+        const fixed = provider.clipRequestAfterRefusal(kind, firstRequest, error)
+        if (!fixed) throw error
+        console.error(`${provider.name} refused a request to ${modelId}, which goes once more with the fields that the refusal names:`, error)
+        return sendClipRequest(run, apiRequest(fixed), null, cacheDir)
+      })
       if ('clip' in first) return { media: [], clips: [first.clip] }
 
       const job = provider.clipJob(kind, modelId, first.data)
@@ -361,8 +378,9 @@ export default sbp('sbp/selectors/register', {
         // A file URL comes from a response and can name any host, so its
         // request has no header: the API key goes only to the URLs that
         // Dez builds.
-        const request: NativeHttpRequest = 'download' in state ? apiRequest(state.download) : { method: 'GET', url: state.fileUrl }
-        const download = await sendClipRequest(run, request, jobId, cacheDir)
+        const keyed = 'download' in state
+        const request: NativeHttpRequest = keyed ? apiRequest(state.download) : { method: 'GET', url: state.fileUrl }
+        const download = await sendClipRequest(run, request, jobId, cacheDir, keyed)
         if (!('clip' in download)) throw new Error('The provider sent no clip.')
         return { media: [], clips: [download.clip] }
       }
@@ -371,7 +389,8 @@ export default sbp('sbp/selectors/register', {
       const stopped = signal?.aborted === true
       console.error(`The clip job ${jobId} of ${provider.name} (model ${modelId}) ${stopped ? 'was stopped' : 'failed'}:`, error)
       if (stopped) throw error
-      throw new Error(`${error instanceof Error ? error.message : String(error)} (job ${jobId})`, { cause: error })
+      const message = error instanceof Error ? error.message : String(error)
+      throw new Error(`${message}${/[.!?]$/.test(message) ? '' : '.'} To ask ${provider.name} about this clip, give its job id: ${jobId}.`, { cause: error })
     } finally {
       signal?.removeEventListener('abort', cancelRequest)
     }

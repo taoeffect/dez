@@ -3,7 +3,7 @@ import type { MediaTagKind } from '../chat/mediaTags'
 import type { RequestMessage, ThinkingReplay } from '../chat/types'
 import { normalizeOutputs, type ModelOutput } from '../modelOutputs'
 import type { StreamedToolCall, ToolDefinition } from '../tools/types'
-import { cloneClipImageRules, type ClipImageRules } from './clipImages'
+import { cloneInputImageRules, type InputImageRules } from './clipImages'
 import { cloneClipTextRules, type ClipTextRules } from './clipText'
 import type { ApiFormatId, ProviderAuth } from './config'
 import { cloneModelParameter, type ModelParameter } from './modelParameters'
@@ -119,10 +119,11 @@ export interface ModelInfo {
   // Dez checks no text.
   text?: ClipTextRules
   // What the model takes as the input images of a request (clipImages.ts):
-  // how many, and the size rules of each one. For a model of a video
-  // request kind whose provider tells it. Missing: an `imageToVideo` model
-  // takes one image, and a `video` model none.
-  images?: ClipImageRules
+  // how many, and the size rules of each one. For a model of an edit or
+  // video request kind whose provider tells it. Missing: an `imageEdit`
+  // model takes every image, an `imageToVideo` model one image, and a
+  // `video` model none (`maxInputImages`).
+  images?: InputImageRules
 }
 
 export type ModelCapabilities = Pick<ModelInfo, 'imageInput' | 'toolCalling' | 'thinking' | 'unsupportedSettings' | 'outputs' | 'request' | 'clipInput' | 'parameters' | 'text' | 'images'>
@@ -264,9 +265,13 @@ export class ProviderError extends Error {
   }
 }
 
+// `signIn`: the provider takes a sign-in (`auth: 'githubCopilot'`), not an
+// API key.
 export class ProviderNotConfiguredError extends ProviderError {
-  constructor(providerId: ProviderId) {
-    super('Provider is not configured', providerId)
+  constructor(providerId: ProviderId, providerName: string, signIn: boolean) {
+    super(signIn
+      ? `You are not signed in to ${providerName}. Sign in with GitHub in Settings › Providers.`
+      : `${providerName} has no API key. Add one in Settings › Providers.`, providerId)
     this.name = 'ProviderNotConfiguredError'
   }
 }
@@ -289,7 +294,7 @@ export function providerModel(provider: ProviderId, id: string, name: string, ca
   if (capabilities.clipInput !== undefined && capabilities.request === 'none') model.clipInput = capabilities.clipInput
   if (capabilities.parameters !== undefined) model.parameters = capabilities.parameters.map(cloneModelParameter)
   if (capabilities.text !== undefined) model.text = cloneClipTextRules(capabilities.text)
-  if (capabilities.images !== undefined) model.images = cloneClipImageRules(capabilities.images)
+  if (capabilities.images !== undefined) model.images = cloneInputImageRules(capabilities.images)
   return model
 }
 

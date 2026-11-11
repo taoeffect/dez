@@ -6,13 +6,13 @@ import type { Provider, ProviderChatRequest } from './provider'
 import type { ProviderStreamChatInput, ProviderStreamChatResult } from './streamTypes'
 import type { GeneratedMedia, SseTokenEvent } from './types'
 
-// A refused response's body is read to its end; its first 1000 characters
-// go into the error.
-export async function assertStreamResponseOk(provider: Provider, response: NativeHttpResponseHead, chunks: AsyncIterable<Uint8Array>): Promise<void> {
+// A refused response's body is read to its end, and the error tells the
+// provider's text in it (`providerStatusError`; `keyed` too).
+export async function assertStreamResponseOk(provider: Provider, response: NativeHttpResponseHead, chunks: AsyncIterable<Uint8Array>, keyed = true): Promise<void> {
   if (responseOk(response)) return
 
   const bodyText = await readNativeChunkText(chunks)
-  throw providerStatusError(provider, response, bodyText)
+  throw providerStatusError(provider, response, bodyText, keyed)
 }
 
 // Sends the answer text to `onToken`, each image to `onImage` (`readImage`

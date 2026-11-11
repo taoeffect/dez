@@ -505,6 +505,21 @@ describe('mediaRequestInput', () => {
     expect(input('imageEdit', sections).images).toStrictEqual([IMAGE, GENERATED])
   })
 
+  it('gives an edit model that takes fewer images the first ones, the image to edit first, and counts the rest', () => {
+    const sections = [
+      reply('a1', `![${GENERATED}](id=a)`),
+      user('u1', `Put ![${IMAGE}](id=b) on @a`),
+    ]
+
+    expect([
+      input('imageEdit', sections, { images: { maxImages: 1 } }),
+      input('imageEdit', sections, { images: { maxImages: 3 } }),
+    ]).toStrictEqual([
+      { prompt: 'Put ![image](id=b) on @a', images: [IMAGE], imagesLeftOut: 1 },
+      { prompt: 'Put ![image](id=b) on @a', images: [IMAGE, GENERATED], imagesLeftOut: 0 },
+    ])
+  })
+
   it('edits the newest image of the conversation when the last user message has none', () => {
     const sections = [
       user('u1', `![${IMAGE}](id=a) A red fox`),
@@ -537,20 +552,20 @@ describe('mediaRequestInput', () => {
 
     it.each([
       ['a model with no rules one image', undefined, [IMAGE], 1],
-      ['a model that takes one frame one image', { images: { maxFrames: 1 } }, [IMAGE], 1],
-      ['a model that takes two frames both images, in text order', { images: { maxFrames: 2 } }, [IMAGE, GENERATED], 0],
+      ['a model that takes one frame one image', { images: { maxImages: 1 } }, [IMAGE], 1],
+      ['a model that takes two frames both images, in text order', { images: { maxImages: 2 } }, [IMAGE, GENERATED], 0],
     ])('gives %s of the last user message, and counts the rest', (_name, rules, images, imagesLeftOut) => {
       expect(input('imageToVideo', twoImages, rules)).toStrictEqual({ prompt: 'From ![image](id=b) to @a. Keep @b and @a sharp.', images, imagesLeftOut })
     })
 
     it('gives a model that takes two frames the first two of three images', () => {
-      const { images, imagesLeftOut } = input('imageToVideo', threeImages, { images: { maxFrames: 2 } })
+      const { images, imagesLeftOut } = input('imageToVideo', threeImages, { images: { maxImages: 2 } })
 
       expect({ images, imagesLeftOut }).toStrictEqual({ images: [IMAGE, other], imagesLeftOut: 1 })
     })
 
     it('makes the video from the newest image of the conversation when the last user message has none', () => {
-      expect(input('imageToVideo', imageBefore, { images: { maxFrames: 2 } })).toStrictEqual({ prompt: 'Make it run', images: [GENERATED], imagesLeftOut: 0 })
+      expect(input('imageToVideo', imageBefore, { images: { maxImages: 2 } })).toStrictEqual({ prompt: 'Make it run', images: [GENERATED], imagesLeftOut: 0 })
     })
 
     it('gives an image-to-video request with no image in the conversation no images', () => {
@@ -560,9 +575,9 @@ describe('mediaRequestInput', () => {
     // A text-to-video model works with no image, so it gets none that the
     // user did not put into the message.
     it('gives a text-to-video model that takes frames only the images of the last user message', () => {
-      const { images: fromMessage, imagesLeftOut } = input('video', twoImages, { images: { maxFrames: 1 } })
+      const { images: fromMessage, imagesLeftOut } = input('video', twoImages, { images: { maxImages: 1 } })
 
-      expect({ fromMessage, imagesLeftOut, fromConversation: input('video', imageBefore, { images: { maxFrames: 1 } }).images })
+      expect({ fromMessage, imagesLeftOut, fromConversation: input('video', imageBefore, { images: { maxImages: 1 } }).images })
         .toStrictEqual({ fromMessage: [IMAGE], imagesLeftOut: 1, fromConversation: [] })
     })
 

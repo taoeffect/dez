@@ -120,7 +120,7 @@ describe('stream errors', () => {
     answerStatus(await mock.waitForRequest(browser), 401, '{"error":"Authentication failed"}')
 
     await waitForValue(browser, 'error toast', () => openToasts(browser, 'error'), [
-      { title: 'Request failed', message: 'Errors Mock returned HTTP 401: {"error":"Authentication failed"}' },
+      { title: 'Request failed', message: 'Errors Mock returned HTTP 401: Authentication failed. Check the API key of Errors Mock in Settings › Providers.' },
     ])
     await waitForValue(browser, 'streaming', () => activeTabStreaming(browser), false)
     expect(await threadSections(browser)).toEqual([{ role: 'user', text: 'who are you now?' }])
@@ -199,7 +199,7 @@ describe('stream errors', () => {
 
     answerStatus(request, 500, '{"error":"Server error"}')
     await waitForValue(browser, 'error toasts', () => openToasts(browser, 'error'), [
-      { title: 'Request failed in "Background question"', message: 'Errors Mock returned HTTP 500: {"error":"Server error"}' },
+      { title: 'Request failed in "Background question"', message: 'Errors Mock returned HTTP 500: Server error. This is a problem at Errors Mock: try again later.' },
     ])
     await waitForValue(browser, 'background tab sections', async () => {
       const tab = await sbpCall(browser, 'dez.model/tab', backgroundTabId) as { sections: unknown[] }

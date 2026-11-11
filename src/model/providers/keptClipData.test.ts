@@ -6,7 +6,7 @@ describe('withKeptClipData', () => {
   const lengths = [{ name: 'duration', label: 'Length (seconds)', options: [4, 8], default: 4 }]
   const voices = [{ name: 'voice', label: 'Voice', options: ['alloy', 'bella'], default: 'alloy' }]
   const text = { maxPromptLength: 300 }
-  const images = { maxFrames: 2 }
+  const images = { maxImages: 2 }
   const model = (id: string, fields: Partial<ModelInfo> = {}): ModelInfo => ({ id, name: id, provider: 'p', ...fields })
 
   it('gives a model the parameters, text rules, and image rules that the cache has and the new list lacks', () => {
