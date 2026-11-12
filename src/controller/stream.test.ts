@@ -1987,8 +1987,8 @@ describe('dez.stream/start images that a tool makes', () => {
   // its block in the reply.
   const scaleArguments = (parameters: Record<string, unknown>) => ({ command: 'scale', parameters: JSON.stringify(parameters) })
   const scaleCall = (id: string, parameters: Record<string, unknown>) => ({ id, name: 'image', argumentsText: JSON.stringify(scaleArguments(parameters)) })
-  const scaleBlock = (id: string, parameters: Record<string, unknown>, result: string, status = '') =>
-    `<dez:tool id="${id}" name="image"${status} command="scale" parameters="${JSON.stringify(parameters).replaceAll('"', '&quot;')}">\n${result}\n</dez:tool>\n`
+  const scaleBlock = (id: string, parameters: Record<string, unknown>, result: string, status?: 'error') =>
+    `<dez:tool id="${id}" name="image"${status ? ` status="${status}"` : ''} command="scale" parameters="${JSON.stringify(parameters).replaceAll('"', '&quot;')}">\n${result}\n</dez:tool>\n`
   const widthCall = scaleCall('c1', { image: '@a', width: 400 })
   const widthBlock = scaleBlock('c1', { image: '@a', width: 400 }, 'Made the image @b from @a. The image @b is 400x200 pixels.')
   // The saves give the files g1.png, g2.png, ….
@@ -2094,7 +2094,7 @@ describe('dez.stream/start images that a tool makes', () => {
 
     await startStream({ sendTools: true })
 
-    const stopped = scaleBlock('c2', { image: 'a', height: 100 }, 'Stopped.', ' status="error"')
+    const stopped = scaleBlock('c2', { image: 'a', height: 100 }, 'Stopped.', 'error')
     expect(sectionVisibleText(agentSection())).toBe(`${widthBlock}${stopped}\n${reference('g1.png', 'b')}`)
     expect(deletedImages).toStrictEqual([generated('g2.png')])
     expect(sent).toHaveLength(1)
