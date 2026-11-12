@@ -251,7 +251,8 @@ export function imageIdArgument(args: ToolArguments): string {
   return assetIdArgument(args.image, 'an image', 'a')
 }
 
-/** A stored image of a conversation: its file and its file type. */
+/** An image of a conversation, stored or linked: its file and its file
+ *  type. */
 export interface ConversationImage {
   path: string
   mediaType: ImageMediaType
@@ -265,7 +266,7 @@ export function imageOf(sections: readonly Section[], id: string): ConversationI
   // A later reference with an id replaces an earlier one, and keeps the
   // place of the first one in the list of the error text.
   const images = new Map<string, ConversationImage>()
-  for (const reference of sections.flatMap((section) => findImageReferences(sectionPlainText(section)))) {
+  for (const reference of sections.flatMap((section) => findImageReferences(sectionPlainText(section), section.role))) {
     const mediaType = imageMediaType(reference.path)
     if (reference.id !== null && mediaType) images.set(reference.id, { path: reference.path, mediaType })
   }

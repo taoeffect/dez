@@ -1,7 +1,7 @@
 import sbp from '@sbp/sbp'
 import { AUDIO_CUT_RATE, audioPartFrames, type AudioPart, type CutAudio } from '../model/chat/audioCut'
 import { ClipReadError, MAX_SAVED_CLIP_BYTES, MEDIA_TEMP_LIFETIME_MS, mediaFileExtension, savedMediaFile, tempMediaFile } from '../model/chat/mediaFiles'
-import { MEDIA_CACHE_FOLDER, MEDIA_FOLDERS, isSavedMediaPath, isTempMediaPath, type MediaFolder, type MediaTagData } from '../model/chat/mediaTags'
+import { MEDIA_CACHE_FOLDER, MEDIA_FOLDERS, isLinkedMediaPath, isSavedMediaPath, isTempMediaPath, type MediaFolder, type MediaTagData } from '../model/chat/mediaTags'
 import { signedUrlGone } from '../model/providers/errors'
 import { wavFileOfChannels } from '../model/providers/pcmAudio'
 import { byteSizeText } from '../utils/byteSize'
@@ -225,14 +225,17 @@ export default sbp('sbp/selectors/register', {
   },
 
   // The bytes of a clip, for a tool or a request that uses the clip: from
-  // its `src`, else from its `url`. A saved file or a temp copy of this
-  // computer is read through the asset protocol; a URL (http or https) is
-  // downloaded with no provider header (`readClipUrl`), and a stop of
-  // `signal` ends that download. Throws a `ClipReadError` when no source
-  // gives them (src/model/chat/mediaFiles.ts tells each problem); it holds
-  // no path and no URL. After a stop, rejects with the stop instead. A
-  // failed read is not logged here: the caller logs, and words the problem
-  // for its reader.
+  // its `src`, else from its `url`. A saved file, a temp copy, or a linked
+  // file of this computer is read through the asset protocol; the caller
+  // gives a linked `src` only for a tag of a user section
+  // (`sectionClipSource`), and a linked file larger than
+  // `MAX_SAVED_CLIP_BYTES` is not read, as a dropped clip that Dez copies
+  // has that cap. A URL (http or https) is downloaded with no provider
+  // header (`readClipUrl`), and a stop of `signal` ends that download.
+  // Throws a `ClipReadError` when no source gives them
+  // (src/model/chat/mediaFiles.ts tells each problem); it holds no path and
+  // no URL. After a stop, rejects with the stop instead. A failed read is
+  // not logged here: the caller logs, and words the problem for its reader.
   async 'dez.controller/media/readClip' (
     clip: Pick<MediaTagData, 'type' | 'src' | 'url' | 'expires'>,
     { signal }: { signal?: AbortSignal } = {},
@@ -244,7 +247,8 @@ export default sbp('sbp/selectors/register', {
       try {
         if (isSavedMediaPath(source) || isTempMediaPath(source)) return await sbp('dez.controller/images/readFile', source) as File
         if (/^https?:\/\//i.test(source)) return await readClipUrl(source, clip.type, signal)
-        failures.push('A source of the clip is not a file of Dez or a web address.')
+        if (isLinkedMediaPath(source)) return await sbp('dez.controller/images/readFile', source, { maxBytes: MAX_SAVED_CLIP_BYTES }) as File
+        failures.push('A source of the clip is not a file of this computer or a web address.')
       } catch (error) {
         // A stop is no problem of the clip, and no later source is tried.
         signal?.throwIfAborted()

@@ -1,7 +1,7 @@
 import sbp from '@sbp/sbp'
 import type { CutAudio } from '../chat/audioCut'
 import { drawnMediaType, wholeImageDrawing, type DrawnImage, type ImageDrawing, type ImageSize } from '../chat/imageDrawing'
-import { IMAGE_FOLDERS, imageMediaType, storedImageFile, type ImageMediaType } from '../chat/images'
+import { IMAGE_FOLDERS, imageMediaType, isImageMediaType, isLinkedImagePath, storedImageFile, type ImageMediaType } from '../chat/images'
 import { canonicalMediaType, ClipReadError, type ClipReadProblem } from '../chat/mediaFiles'
 import { mp4DurationSeconds } from '../chat/mp4Duration'
 import type { MessagePart } from '../chat/types'
@@ -195,13 +195,25 @@ async function readMessageImages(messages: ProviderChatInputMessage[]): Promise<
   }))
 }
 
-// Only a stored image of this Dez folder is read (`storedImageFile`): the
-// folders that dez.controller/images/save writes and the asset protocol
-// serves. So a reference copied from another home or machine fails like a
-// missing file, as it shows in the editor. The error names only the file,
-// like the editor's broken-image box; the log has the cause.
-async function readStoredImage(path: string, appDir: string): Promise<StoredImage> {
+// The image of a reference: a stored image of this Dez folder
+// (`storedImageFile`), which the folders that dez.controller/images/save
+// writes hold, or a linked file (`isLinkedImagePath`), a dropped file that
+// Dez reads where it is. Only a user message has linked references
+// (`findImageReferences`). So a stored reference copied from another home
+// or machine fails like a missing file, as it shows in the editor. The
+// error names only the file, like the editor's broken-image box; the log
+// has the cause.
+async function readRequestImage(path: string, appDir: string): Promise<StoredImage> {
+  const linked = isLinkedImagePath(path)
   try {
+    if (linked) {
+      const file = await sbp('dez.controller/images/readFile', path) as File
+      // The asset protocol tells the type from the bytes, so a file whose
+      // extension does not match its bytes goes with the right type.
+      const mediaType = isImageMediaType(file.type) ? file.type : imageMediaType(path)
+      if (!mediaType) throw new Error(`The linked image has no image type that Dez sends (${file.type})`)
+      return { bytes: new Uint8Array(await file.arrayBuffer()), mediaType }
+    }
     const file = storedImageFile(path, appDir)
     const mediaType = imageMediaType(path)
     if (!file || !mediaType) {
@@ -210,7 +222,9 @@ async function readStoredImage(path: string, appDir: string): Promise<StoredImag
     return { bytes: await sbp('dez.native/loadAppFileBytes', file) as Uint8Array, mediaType }
   } catch (error) {
     console.error(`Failed to read the image ${path}:`, error)
-    throw new ExplainedError(`The image file ${fileNameOf(path)} is missing, or Dez cannot read it. Paste the image again, or remove its reference from the message.`)
+    throw new ExplainedError(linked
+      ? `The image file ${fileNameOf(path)} is gone or moved, or Dez cannot read it. Drop the image again, or remove its reference from the message.`
+      : `The image file ${fileNameOf(path)} is missing, or Dez cannot read it. Paste the image again, or remove its reference from the message.`)
   }
 }
 
@@ -232,7 +246,7 @@ async function readStoredImage(path: string, appDir: string): Promise<StoredImag
 // request, as no form of it can go. `size` is the size of the image that
 // goes; null when it was not decoded.
 async function requestImage(path: string, appDir: string, rules?: ImageSizeRules): Promise<StoredImage & { size: ImageSize | null }> {
-  const image = await readStoredImage(path, appDir)
+  const image = await readRequestImage(path, appDir)
   const svg = image.mediaType === 'image/svg+xml'
   if (!rules && !svg) return { ...image, size: null }
   let decoded: ImageSize | null = null

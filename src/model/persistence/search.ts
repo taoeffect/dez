@@ -49,8 +49,8 @@ export function clearConversationSearchCache(): void {
 // too (`video` would match every conversation with a clip).
 function nodeSearchText(node: ContentNodeData, role: Role): string {
   return node.kind === 'text'
-    ? labelImageReferences(labelMediaTags(role === 'agent' ? labelToolBlocks(node.text, ' ') : node.text, ' '), ' ')
-    : `${node.name} ${labelImageReferences(node.body, ' ')}`
+    ? labelImageReferences(labelMediaTags(role === 'agent' ? labelToolBlocks(node.text, ' ') : node.text, ' '), role, ' ')
+    : `${node.name} ${labelImageReferences(node.body, role, ' ')}`
 }
 
 // Flatten a conversation into one searchable line. Whitespace is collapsed

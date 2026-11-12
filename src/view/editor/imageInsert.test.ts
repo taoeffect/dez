@@ -48,6 +48,17 @@ let reads: [string, { maxBytes?: number }][] = []
 let clipSaves: ClipSave[] = []
 /** The first bytes of the clip files whose save fails. */
 let failingClipSaves = new Set<number>()
+/** The dropped paths that `dez.controller/images/linkPath` links; it gives
+ *  null (copy) for any other path. */
+let linkedPaths = new Set<string>()
+/** The sizes that `dez.controller/images/fileSize` gives, by path (null for
+ *  any other path); it throws for `unsizedPaths`. */
+let fileSizes = new Map<string, number>()
+let unsizedPaths = new Set<string>()
+/** The paths that `dez.controller/images/droppedFilePaths` gives for the
+ *  files of an HTML5 drop, by file name (null for any other file). */
+let draggedPaths = new Map<string, string>()
+let draggedFileReads: string[][] = []
 /** What `dez.controller/images/redraw` does with the plan of its caller. */
 let redraw: (plan: (size: ImageSize) => ImageDrawing | null, mediaType: DrawnMediaType) => Promise<DrawnImage | null>
 let consoleError: MockInstance<typeof console.error>
@@ -83,6 +94,17 @@ sbp('sbp/selectors/register', {
     clipSaves.push({ clip, options })
     if (failingClipSaves.has(options.bytes[0])) return Promise.reject(new Error('disk full'))
     return Promise.resolve(clipPath(clip.kind, options.bytes[0]))
+  },
+  async 'dez.controller/images/linkPath' (path: string): Promise<string | null> {
+    return linkedPaths.has(path) ? path : null
+  },
+  async 'dez.controller/images/fileSize' (path: string): Promise<number | null> {
+    if (unsizedPaths.has(path)) throw new Error('The file cannot be read (HTTP 404).')
+    return fileSizes.get(path) ?? null
+  },
+  async 'dez.controller/images/droppedFilePaths' (files: readonly File[]): Promise<(string | null)[]> {
+    draggedFileReads.push(files.map((file) => file.name))
+    return files.map((file) => draggedPaths.get(file.name) ?? null)
   },
   'dez.controller/images/redraw' (_file: Blob, plan: (size: ImageSize) => ImageDrawing | null, mediaType: DrawnMediaType): Promise<DrawnImage | null> {
     return redraw(plan, mediaType)
@@ -197,6 +219,11 @@ beforeEach(() => {
   reads = []
   clipSaves = []
   failingClipSaves = new Set()
+  linkedPaths = new Set()
+  fileSizes = new Map()
+  unsizedPaths = new Set()
+  draggedPaths = new Map()
+  draggedFileReads = []
   redraw = () => Promise.reject(new Error('No image of another type in this test.'))
   consoleError = vi.spyOn(console, 'error').mockImplementation(() => {})
 })
@@ -486,6 +513,25 @@ describe('dropFiles', () => {
 
     expect(drop(editor.view, 0, { text: 'moved text' })).toBe(false)
   })
+
+  it('links the files of a drop that have a path out of the temp and Dez folders, and copies the others, with one path read per drop', async () => {
+    draggedPaths = new Map([['a.png', '/Users/u/a.png'], ['dance.mp4', '/Users/u/dance.mp4'], ['b.png', '/private/tmp/b.png']])
+    linkedPaths = new Set(['/Users/u/a.png', '/Users/u/dance.mp4'])
+    fileSizes = new Map([['/Users/u/dance.mp4', 3]])
+    const notes = new File(['hi'], 'notes.txt', { type: 'text/plain' })
+    const editor = createEditor('one two', 0)
+
+    drop(editor.view, 4, { files: [png('a.png', 1), clipFile('dance.mp4', 'video/mp4', 21), png('b.png', 2), notes] })
+    drop(editor.view, 0, { files: [notes] })
+
+    const linkedImage = imageMarkdown('/Users/u/a.png', [{ key: 'id', value: 'a' }])
+    const linkedClip = mediaTagText({ kind: 'video', id: 'b', type: 'video/mp4', src: '/Users/u/dance.mp4', url: null, expires: null, other: [] })
+    await vi.waitFor(() => expect(editor.doc()).toBe(`one \n${linkedImage}\n${linkedClip}\n${reference(2, 'c')}\ntwo`))
+    expect(draggedFileReads).toStrictEqual([['a.png', 'dance.mp4', 'b.png', 'notes.txt']])
+    expect(saveCalls.map((call) => call.bytes[0])).toStrictEqual([2])
+    expect(clipSaves).toStrictEqual([])
+    expect(toasts.map((toast) => toast.message)).toStrictEqual([UNSUPPORTED_DROP_MESSAGE, UNSUPPORTED_DROP_MESSAGE])
+  })
 })
 
 describe('dropFilePaths', () => {
@@ -562,6 +608,56 @@ describe('dropFilePaths', () => {
     expect(editor.view.state.selection.main.head).toBe(editor.doc().length)
     expect(reads).toStrictEqual([])
     expect(toasts).toEqual([])
+  })
+
+  it('links a dropped image and clip that are out of the temp and Dez folders, without reading or storing them', async () => {
+    const photo = '/home/u/Pictures/My photo (1).JPG'
+    const dance = '/home/u/Videos/dance.mp4'
+    linkedPaths = new Set([photo, dance])
+    fileSizes = new Map([[dance, 3]])
+    const editor = createEditor('one two', 0)
+
+    dropFilePaths(editor.view, [photo, dance], { x: 4, y: 0 })
+
+    const linkedImage = imageMarkdown(photo, [{ key: 'id', value: 'a' }])
+    const linkedClip = mediaTagText({ kind: 'video', id: 'b', type: 'video/mp4', src: dance, url: null, expires: null, other: [] })
+    await vi.waitFor(() => expect(editor.doc()).toBe(`one \n${linkedImage}\n${linkedClip}\ntwo`))
+    expect(reads).toStrictEqual([])
+    expect(saveCalls).toStrictEqual([])
+    expect(clipSaves).toStrictEqual([])
+    expect(toasts).toStrictEqual([])
+  })
+
+  it('copies a dropped image of a type that Dez stores as a PNG, and a clip whose size it cannot read', async () => {
+    linkedPaths = new Set(['/home/u/scan.bmp', '/home/u/song.mp3'])
+    unsizedPaths = new Set(['/home/u/song.mp3'])
+    localFiles = new Map([
+      ['/home/u/scan.bmp', new File([new Uint8Array([66, 77])], 'scan.bmp', { type: 'image/bmp' })],
+      ['/home/u/song.mp3', clipFile('song.mp3', '', 22)],
+    ])
+    redraw = async (_plan, mediaType) => ({ bytes: new Uint8Array([7, ...PNG_BYTES.subarray(1)]), mediaType, width: 4, height: 3 })
+    const editor = createEditor('', 0)
+
+    dropFilePaths(editor.view, ['/home/u/scan.bmp', '/home/u/song.mp3'], { x: 0, y: 0 })
+
+    await vi.waitFor(() => expect(editor.doc()).toBe(`${reference(7)}\n${clipTag('audio', 'audio/mpeg', 22, 'b')}`))
+    expect(reads.map(([path]) => path)).toStrictEqual(['/home/u/scan.bmp', '/home/u/song.mp3'])
+    expect(consoleError).toHaveBeenCalledWith('Failed to read the size of a dropped clip:', expect.any(Error))
+    expect(toasts).toStrictEqual([])
+  })
+
+  it('leaves out a linked clip that is larger than the clips that Dez stores, without reading it', async () => {
+    linkedPaths = new Set(['/home/u/trip.mov', '/home/u/a.png'])
+    fileSizes = new Map([['/home/u/trip.mov', 1.5 * 1024 ** 3]])
+    const editor = createEditor('', 0)
+
+    dropFilePaths(editor.view, ['/home/u/trip.mov', '/home/u/a.png'], { x: 0, y: 0 })
+
+    await vi.waitFor(() => expect(editor.doc()).toBe(imageMarkdown('/home/u/a.png', [{ key: 'id', value: 'a' }])))
+    expect(reads).toStrictEqual([])
+    expect(toasts).toStrictEqual([expect.objectContaining({ title: 'Clip not added', variant: 'warning' })])
+    expect(toasts[0].message).toContain('trip.mov')
+    expect(toasts[0].message).toContain('1.5 GB')
   })
 })
 

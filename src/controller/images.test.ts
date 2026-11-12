@@ -30,10 +30,23 @@ let deletedFiles: string[] = []
 let deleteAppFile: (path: string) => Promise<void>
 let toasts: Toast[] = []
 let consoleError: MockInstance<typeof console.error>
+/** The canonical path of a path; it throws for a missing file. */
+let canonicalPath: (path: string) => string
+/** The paths that the drag pasteboard gives (macOS). */
+let draggedFilePaths: () => string[]
 
 sbp('sbp/selectors/register', {
-  async 'dez.native/getAppDir' (): Promise<string> {
-    return appDir
+  async 'dez.native/getAppDir' (root = 'app'): Promise<string> {
+    return root === 'cache' ? '/home/ann/.cache/dez' : appDir
+  },
+  async 'dez.native/tempFolders' (): Promise<string[]> {
+    return ['/tmp', '/var/tmp']
+  },
+  async 'dez.native/canonicalPath' (path: string): Promise<string> {
+    return canonicalPath(path)
+  },
+  async 'dez.native/draggedFilePaths' (): Promise<string[]> {
+    return draggedFilePaths()
   },
   'dez.native/saveAppFile' (path: string, content: Uint8Array): Promise<void> {
     return saveAppFile({ path, content })
@@ -61,6 +74,9 @@ beforeEach(() => {
     deletedFiles.push(path)
   }
   toasts = []
+  // As on Fedora Atomic, where `/home` is a link to `/var/home`.
+  canonicalPath = (path) => path.replace(/^\/home\//, '/var/home/')
+  draggedFilePaths = () => []
   consoleError = vi.spyOn(console, 'error').mockImplementation(() => {})
 })
 
@@ -81,7 +97,7 @@ describe('dez.controller/images/save', () => {
     expect(first).toMatch(/^\/home\/ann\/\.config\/dez\/assets\/images\/[0-9a-f-]{36}\.png$/)
     expect(second).toMatch(/^\/home\/ann\/\.config\/dez\/assets\/images\/[0-9a-f-]{36}\.jpg$/)
     expect(first.slice(0, -4)).not.toBe(second.slice(0, -4))
-    expect(findImageReferences(imageMarkdown(first)).map((ref) => ref.path)).toEqual([first])
+    expect(findImageReferences(imageMarkdown(first), 'agent').map((ref) => ref.path)).toEqual([first])
     expect(toasts).toEqual([])
   })
 
@@ -93,7 +109,7 @@ describe('dez.controller/images/save', () => {
     expect(path).toMatch(/^\/home\/ann\/\.config\/dez\/assets\/generated\/images\/[0-9a-f-]{36}\.webp$/)
     expect(savedFiles).toEqual([{ path: path.slice(appDir.length + 1), content: bytes }])
     expect(storedImageFile(path, appDir)).toBe(savedFiles[0].path)
-    expect(findImageReferences(imageMarkdown(path)).map((ref) => ref.path)).toEqual([path])
+    expect(findImageReferences(imageMarkdown(path), 'agent').map((ref) => ref.path)).toEqual([path])
   })
 
   it('logs, shows an error toast, and rejects when the write fails', async () => {
@@ -498,5 +514,70 @@ describe('dez.controller/images/readFile', () => {
 
     expect(requests).toStrictEqual([{ url: ASSET_URL, range: null }])
     expect(await file.text()).toBe('hello')
+  })
+})
+
+describe('dez.controller/images/linkPath', () => {
+  function linkPath(path: string): Promise<string | null> {
+    return sbp('dez.controller/images/linkPath', path) as Promise<string | null>
+  }
+
+  it('links a file out of the temp and Dez folders by the path that the drop gave', async () => {
+    for (const path of ['/home/ann/Pictures/a.png', '/home/ann/tmpx/b.png', '/home/ann/.config/dez2/c.png']) {
+      expect(await linkPath(path), path).toBe(path)
+    }
+  })
+
+  it('copies a file whose canonical path is in a temp folder, the app folder, or the cache root', async () => {
+    const shortcut = '/home/ann/Desktop/shot.png'
+    canonicalPath = (path) => (path === shortcut ? '/tmp/screenshots/shot.png' : path.replace(/^\/home\//, '/var/home/'))
+
+    for (const path of [shortcut, '/var/tmp/a.mp4', '/home/ann/.config/dez/assets/images/b.png', '/home/ann/.cache/dez/media/c.mp3']) {
+      expect(await linkPath(path), path).toBeNull()
+    }
+  })
+
+  it('copies a file whose canonical path cannot be read, and logs no path', async () => {
+    canonicalPath = () => {
+      throw 'No such file or directory (os error 2)'
+    }
+
+    expect(await linkPath('/home/ann/gone.png')).toBeNull()
+    expect(consoleError.mock.calls).toStrictEqual([['Failed to tell whether to link or copy a dropped file:', 'No such file or directory (os error 2)']])
+  })
+})
+
+describe('dez.controller/images/droppedFilePaths', () => {
+  /** Gives the size of each file of `sizes` (by path) to a size request. */
+  function stubSizes(sizes: Record<string, number>): string[] {
+    const asked: string[] = []
+    vi.stubGlobal('fetch', async (url: string) => {
+      const path = url.replace('asset://localhost', '')
+      asked.push(path)
+      return new Response(null, { status: 206, headers: { 'Content-Range': `bytes 0-0/${sizes[path]}` } })
+    })
+    return asked
+  }
+
+  const file = (name: string, size: number) => new File([new Uint8Array(size)], name)
+
+  it('pairs the dragged paths with the files by name and size, and reads only the sizes of paths with the name of a file', async () => {
+    const nfd = '/Users/ann/cafe\u0301.mp4'
+    draggedFilePaths = () => ['/Users/ann/a.png', '/Users/ann/notes.txt', nfd, '/Users/ann/old/b.png']
+    const asked = stubSizes({ '/Users/ann/a.png': 5, [nfd]: 3, '/Users/ann/old/b.png': 9 })
+
+    const paths = await sbp('dez.controller/images/droppedFilePaths', [file('a.png', 5), file('caf\u00e9.mp4', 3), file('b.png', 2)])
+
+    expect(paths).toStrictEqual(['/Users/ann/a.png', nfd, null])
+    expect(asked.toSorted()).toStrictEqual(['/Users/ann/a.png', '/Users/ann/old/b.png', nfd].toSorted())
+  })
+
+  it('gives no paths when the drag pasteboard cannot be read', async () => {
+    draggedFilePaths = () => {
+      throw 'The pasteboard is gone'
+    }
+
+    expect(await sbp('dez.controller/images/droppedFilePaths', [file('a.png', 5), file('b.png', 2)])).toStrictEqual([null, null])
+    expect(consoleError.mock.calls).toStrictEqual([['Failed to read the paths of the dragged files:', 'The pasteboard is gone']])
   })
 })

@@ -66,6 +66,9 @@ pub fn run() {
             commands::move_app_file,
             commands::list_app_files,
             commands::get_app_dir,
+            commands::temp_folders,
+            commands::canonical_path,
+            commands::dragged_file_paths,
             commands::is_window_fullscreen,
             commands::monitors,
             commands::gdk_backend,
@@ -95,14 +98,10 @@ pub fn run() {
         Ok(())
     });
     // Reads tauri.conf.json, whose `"csp": null` is on purpose during
-    // development. Its `assetProtocol` scope lets the webview show the files
-    // directly in `$HOME/.config/dez/assets/{images,audio,video}/`, in the
-    // `assets/generated/{images,audio,video}/` folders, and in
-    // `$CACHE/dez/media/` (the temp copies of clips) by `convertFileSrc`
-    // URLs; it must name the folders that `base_dir()` and `root_dir()` in
-    // persistence.rs build. Each folder has its own entry, because `*` does
-    // not go into a subfolder. Tauri adds each path of a native file drop to
-    // that scope too.
+    // development. Its `assetProtocol` scope lets the webview show any file
+    // by `convertFileSrc` URLs: the stored images and clips, the temp copies
+    // of clips, and the dropped files that Dez links in place, which can be
+    // anywhere (see the `protocol-asset` comment in Cargo.toml).
     //
     // Its `"dragDropEnabled": false` turns Tauri's native file drop off, so
     // HTML5 drops with the dropped files reach the page. On macOS the native

@@ -25,8 +25,9 @@ import '@videojs/html/ui/tooltip-group'
 import '@videojs/html/ui/tooltip'
 import '@videojs/html/ui/tooltip-label'
 import '@videojs/html/ui/tooltip-shortcut'
-import { mediaFileExtension } from '../../model/chat/mediaFiles'
+import { MAX_SAVED_CLIP_BYTES, mediaFileExtension } from '../../model/chat/mediaFiles'
 import { isPastedMediaPath, type MediaTagKind } from '../../model/chat/mediaTags'
+import type { Role } from '../../model/chat/types'
 import { assetFactsText } from '../assetFacts'
 import { clipFile, clipProblem, clipSourceKind, expiryNotice, problemCard, type ClipLoadFailure, type ClipProblem } from './clipState'
 import { releaseRemovedMedia } from './releaseMedia'
@@ -51,9 +52,13 @@ const props = defineProps<{
    *  a clip that this computer cannot play and the facts of the badge name;
    *  null when not known. */
   type: string | null
-  /** The clip's source, as its tag has it: the path of the saved file or of
-   *  the temp copy, or a URL; null for a clip with no source. */
+  /** The clip's source, as its tag has it: the path of the saved file, of
+   *  the temp copy, or of a linked file, or a URL; null for a clip with no
+   *  source. */
   src: string | null
+  /** The role of the tag's section: a linked file plays only in a user
+   *  section (`clipSourceKind`). */
+  role: Role
   /** The time after which a source that is not saved stops working (the
    *  `expires` of the clip's tag). */
   expires: string | null
@@ -65,11 +70,14 @@ const emit = defineEmits<{ save: [], delete: [] }>()
 
 const media = ref<HTMLMediaElement | null>(null)
 
-const sourceKind = computed(() => clipSourceKind(props.src))
+const sourceKind = computed(() => clipSourceKind(props.src, props.role))
 /** The kind, as the id badge and its tooltip name it. */
 const kindName = computed(() => props.kind === 'video' ? 'Video' : 'Audio')
 /** The clip plays from its saved file. */
 const saved = computed(() => sourceKind.value === 'saved')
+/** The clip plays from a linked file, which needs no Save: its Save
+ *  control shows the kept face, whose trash removes only the tag. */
+const linked = computed(() => sourceKind.value === 'linked')
 
 /** What the media element loads: a URL, and the source that it is the URL
  *  of. */
@@ -95,7 +103,7 @@ const failed = shallowRef<FailedLoad | null>(null)
 /** The problem of the clip while its source is `src` (`clipProblem`). */
 function problemOf(src: string | null): ClipProblem | 'ask' | null {
   const entry = failed.value
-  return clipProblem(clipSourceKind(src), entry !== null && entry.src === src ? entry.failure : null)
+  return clipProblem(clipSourceKind(src, props.role), entry !== null && entry.src === src ? entry.failure : null)
 }
 
 /** Why the clip does not play: null while it plays, and while its URL is
@@ -167,17 +175,19 @@ function load(next: LoadedSource | null): void {
  *  plays from its URL, and until the file is read. */
 const fileBytes = ref<number | null>(null)
 
-// A provider URL loads as it is. A local file (the saved file or the temp
-// copy) loads from a blob URL of its bytes, and not from its asset protocol
-// URL: the media player of WebKitGTK (GStreamer) loads http, https, and blob
-// URLs only, and gives a "source not supported" error for the URL of a
-// custom protocol. `fetch` has no such limit, so the asset protocol still
-// reads the file. The whole file is in memory while the media element has
-// it; the card of a clip that does not play gives it up (`onMediaError`).
-// Until the file is read, the media element keeps the source of before. A
-// new media element (in place of a card) gets no source until then: so it
-// does not change its source at the start of its load, which can stop the
-// web process (the comment of `releaseRemovedMedia`).
+// A provider URL loads as it is. A local file (the saved file, the temp
+// copy, or a linked file) loads from a blob URL of its bytes, and not from
+// its asset protocol URL: the media player of WebKitGTK (GStreamer) loads
+// http, https, and blob URLs only, and gives a "source not supported" error
+// for the URL of a custom protocol. `fetch` has no such limit, so the asset
+// protocol still reads the file. The whole file is in memory while the
+// media element has it; the card of a clip that does not play gives it up
+// (`onMediaError`). A linked file can be any size, so a file over the cap
+// of a dropped clip (`MAX_SAVED_CLIP_BYTES`) is not read: it shows the
+// "gone" card. Until the file is read, the media element keeps the source
+// of before. A new media element (in place of a card) gets no source until
+// then: so it does not change its source at the start of its load, which
+// can stop the web process (the comment of `releaseRemovedMedia`).
 // https://github.com/tauri-apps/tauri/issues/3725
 watch(() => props.src, async (src, previous) => {
   const kind = sourceKind.value
@@ -197,7 +207,7 @@ watch(() => props.src, async (src, previous) => {
   // this card too, until the next editor state makes a new player.)
   const before = failed.value
   if (kind === 'saved' && before !== null && before.src === previous
-    && clipSourceKind(previous) !== 'saved' && problemOf(previous) === 'cannot-play') {
+    && clipSourceKind(previous, props.role) !== 'saved' && problemOf(previous) === 'cannot-play') {
     failed.value = { src, failure: before.failure }
     load(null)
     return
@@ -205,7 +215,7 @@ watch(() => props.src, async (src, previous) => {
   if (media.value === null) load(null)
   let file: File | null = null
   try {
-    file = await sbp('dez.controller/images/readFile', src) as File
+    file = await sbp('dez.controller/images/readFile', src, kind === 'linked' ? { maxBytes: MAX_SAVED_CLIP_BYTES } : {}) as File
   } catch {
     // The error names the path of the file, which stays out of the log.
     console.error('[MediaPlayer] The file of the clip could not be read')
@@ -291,28 +301,32 @@ function togglePlay(): void {
 // focus comes to the clock, which is when its tooltip shows.
 const now = ref(Date.now())
 
-// Where the clip's file (the temp copy or the saved file) is, as the user
-// reads it (`~` for the home folder): the clock's tooltip and the card of a
-// clip that cannot play show it, so that the user can find the file. Null
-// for a clip with no file, and until the path is read. The path is for the
-// eye only: it goes into no doc text, so no request holds it.
+// Where the clip's file (the temp copy, the saved file, or the linked file)
+// is, as the user reads it (`~` for the home folder): the clock's tooltip
+// and the card of a clip that cannot play show it, so that the user can
+// find the file. Null for a clip with no file, and until the path is read.
+// The path is for the eye only: it goes into no doc text, so no request
+// holds it.
 const filePath = ref<string | null>(null)
 watch(() => props.src, async (src) => {
   filePath.value = null
   const kind = sourceKind.value
-  if (src === null || (kind !== 'temp' && kind !== 'saved')) return
+  if (src === null || (kind !== 'temp' && kind !== 'saved' && kind !== 'linked')) return
   const path = await sbp('dez.controller/displayPath', src) as string
   // The clip got another source while the path was read.
   if (props.src === src) filePath.value = path
 }, { immediate: true })
 
 // The text of the card that shows in place of a clip that does not play.
-const card = computed(() => unavailable.value === null
-  ? null
-  : problemCard(unavailable.value, { type: props.type, saved: saved.value, savedPath: saved.value ? filePath.value : null }))
+const card = computed(() => {
+  if (unavailable.value === null) return null
+  const file = saved.value ? 'saved' : linked.value ? 'linked' : null
+  return problemCard(unavailable.value, { type: props.type, file, path: file === null ? null : filePath.value })
+})
 
 // The clock goes away as soon as a Save starts, and comes back if it fails.
-const notice = computed(() => saved.value || props.busy ? null : expiryNotice(props.expires, now.value, filePath.value))
+// A linked file does not expire.
+const notice = computed(() => saved.value || linked.value || props.busy ? null : expiryNotice(props.expires, now.value, filePath.value))
 /** The words of the clock's tooltip as one text, for screen readers. */
 const noticeLabel = computed(() => {
   const value = notice.value
@@ -348,8 +362,12 @@ function selectTooltipLine(event: MouseEvent): void {
 
 /** The faces of the Save control: `Save ⬇` → (saving) → `Saved ✓` → a green
  *  check in a circle, which is a trash under the pointer → (deleting) →
- *  `Save ⬇`. */
+ *  `Save ⬇`. A linked clip has the check from the start: it needs no
+ *  Save, and its trash removes only its tag. */
 type SaveState = 'save' | 'saving' | 'just-saved' | 'saved' | 'deleting'
+
+/** The clip's file stays: it is saved, or it is a linked file. */
+const kept = computed(() => saved.value || linked.value)
 
 // How long the word "Saved" shows before the control becomes the check.
 const SAVED_WORD_MS = 1000
@@ -388,8 +406,8 @@ watch(saved, (isSaved) => {
 onBeforeUnmount(() => window.clearTimeout(justSavedTimer))
 
 const saveState = computed<SaveState>(() => {
-  if (props.busy) return saved.value ? 'deleting' : 'saving'
-  if (!saved.value) return 'save'
+  if (props.busy) return kept.value ? 'deleting' : 'saving'
+  if (!kept.value) return 'save'
   return justSaved.value ? 'just-saved' : 'saved'
 })
 
@@ -407,13 +425,20 @@ const SAVE_HINTS: Record<SaveState, string> = {
 }
 
 // The trash of a clip that the user pasted or dropped deletes the clip, and
-// not only a saved copy (`deleteSavedClip`, src/view/editor/media.ts).
-const trashHint = computed(() => props.src !== null && isPastedMediaPath(props.src) ? 'Delete this clip' : 'Delete the saved file')
-const saveHint = computed(() => saveState.value === 'saved' && trashArmed.value ? trashHint.value : SAVE_HINTS[saveState.value])
+// not only a saved copy, and the trash of a linked clip removes its tag and
+// keeps its file (`deleteSavedClip`, src/view/editor/media.ts).
+const trashHint = computed(() => {
+  if (linked.value) return 'Remove this clip (its file stays)'
+  return props.src !== null && isPastedMediaPath(props.src) ? 'Delete this clip' : 'Delete the saved file'
+})
+const saveHint = computed(() => {
+  if (saveState.value === 'saved' && trashArmed.value) return trashHint.value
+  return linked.value && saveState.value === 'saved' ? 'Linked file' : SAVE_HINTS[saveState.value]
+})
 
 function onSaveClick(): void {
   if (props.busy) return
-  if (!saved.value) emit('save')
+  if (!kept.value) emit('save')
   else if (trashArmed.value) emit('delete')
 }
 
@@ -426,7 +451,7 @@ function onSaveClick(): void {
 function onContextMenu(event: MouseEvent): void {
   if (event.target instanceof Element && event.target.closest('.media-player__tooltip--selectable') !== null) return
   event.preventDefault()
-  void sbp('dez.controller/menu/popupAsset', clipFile(props.src, unavailable.value, props.busy))
+  void sbp('dez.controller/menu/popupAsset', clipFile(props.src, props.role, unavailable.value, props.busy))
 }
 </script>
 
@@ -605,9 +630,9 @@ function onContextMenu(event: MouseEvent): void {
             @pointerenter="armTrash"
             @focus="armTrash"
           >
-            <span class="media-player__save-label">{{ saved ? 'Saved' : 'Save' }}</span>
+            <span class="media-player__save-label">{{ kept ? 'Saved' : 'Save' }}</span>
             <span v-if="busy" class="media-player__spinner" aria-hidden="true" />
-            <svg v-else-if="!saved" class="media-player__icon media-player__icon--line" viewBox="0 0 16 16" aria-hidden="true">
+            <svg v-else-if="!kept" class="media-player__icon media-player__icon--line" viewBox="0 0 16 16" aria-hidden="true">
               <path d="M8 2.6v7.6M4.9 7.3L8 10.4l3.1-3.1M3.2 13.2h9.6" />
             </svg>
             <svg v-else-if="justSaved" class="media-player__icon media-player__icon--line" viewBox="0 0 16 16" aria-hidden="true">

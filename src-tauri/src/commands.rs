@@ -170,6 +170,36 @@ mod tests {
             assert!(invoke_body_bytes(&InvokeBody::Json(body.clone())).is_err(), "{body}");
         }
     }
+
+    #[test]
+    fn lists_each_existing_temp_folder_once_by_its_canonical_path() {
+        let base = std::env::temp_dir().join(format!("dez-temp-folders-{}", std::process::id()));
+        let real = base.join("real");
+        std::fs::create_dir_all(&real).expect("real folder");
+        let missing = base.join("missing");
+        let mut candidates = vec![real.clone(), missing, real.join("..").join("real")];
+        #[cfg(unix)]
+        {
+            let link = base.join("link");
+            std::os::unix::fs::symlink(&real, &link).expect("symlink");
+            candidates.push(link);
+        }
+
+        let folders = canonical_folders(candidates);
+        let canonical = std::fs::canonicalize(&real).expect("canonical");
+        std::fs::remove_dir_all(&base).expect("cleanup");
+
+        assert_eq!(folders, vec![canonical.to_str().expect("UTF-8").to_string()]);
+    }
+
+    #[test]
+    fn the_temp_folders_hold_the_os_temp_folder() {
+        let folders = canonical_folders(temp_folder_candidates());
+        let temp = std::fs::canonicalize(std::env::temp_dir()).expect("temp folder");
+
+        assert!(folders.contains(&temp.to_str().expect("UTF-8").to_string()), "{folders:?}");
+        assert!(folders.iter().all(|folder| std::path::Path::new(folder).is_absolute()));
+    }
 }
 
 #[tauri::command]
@@ -284,6 +314,107 @@ pub async fn list_app_files(root: FileRoot, path: String) -> Result<Vec<AppFileE
 #[tauri::command]
 pub async fn get_app_dir(root: FileRoot) -> Result<String, String> {
     crate::persistence::app_dir(root)
+}
+
+// The OS temp folders that exist, each as its canonical path, with no
+// duplicate. The webview cannot read the environment (`$TMPDIR`,
+// `$XDG_RUNTIME_DIR`), and the frontend compares canonical paths: a file
+// that the user drops from one of these folders is copied, not linked in
+// place, because its program can delete it soon (a browser drag, an
+// archive manager, a screenshot tool).
+#[tauri::command]
+pub async fn temp_folders() -> Vec<String> {
+    canonical_folders(temp_folder_candidates())
+}
+
+// `std::env::temp_dir()` reads `$TMPDIR`. On Linux, `$XDG_RUNTIME_DIR`
+// (`/run/user/<uid>`, cleared at logout) holds the document portal folder
+// (`doc/`), whose paths a sandboxed program gives in a drop. On macOS,
+// `/private/var/folders` holds the `$TMPDIR` of every user and the other
+// per-user temp and cache folders of the system.
+fn temp_folder_candidates() -> Vec<std::path::PathBuf> {
+    let mut folders = vec![
+        std::env::temp_dir(),
+        std::path::PathBuf::from("/tmp"),
+        std::path::PathBuf::from("/var/tmp"),
+    ];
+    #[cfg(target_os = "linux")]
+    if let Some(runtime) = std::env::var_os("XDG_RUNTIME_DIR") {
+        folders.push(std::path::PathBuf::from(runtime));
+    }
+    #[cfg(target_os = "macos")]
+    folders.push(std::path::PathBuf::from("/private/var/folders"));
+    folders
+}
+
+// A folder that is missing, or whose path is not UTF-8, is left out.
+fn canonical_folders(candidates: Vec<std::path::PathBuf>) -> Vec<String> {
+    let mut folders: Vec<String> = Vec::new();
+    for candidate in candidates {
+        let Ok(path) = std::fs::canonicalize(&candidate) else { continue };
+        let Some(text) = path.to_str() else { continue };
+        if path.is_dir() && !folders.iter().any(|known| known == text) {
+            folders.push(text.to_string());
+        }
+    }
+    folders
+}
+
+// The absolute path of a file with no symlink, `.`, or `..` in it. The
+// frontend links a dropped file by this path, and compares it with the
+// temp and Dez folders. An error for a missing file and a path that is
+// not UTF-8.
+#[tauri::command]
+pub async fn canonical_path(path: String) -> Result<String, String> {
+    let canonical = std::fs::canonicalize(&path).map_err(|error| error.to_string())?;
+    canonical
+        .into_os_string()
+        .into_string()
+        .map_err(|_| "The path is not UTF-8 text".to_string())
+}
+
+// The paths of the files of the newest file drag, on macOS; an empty list
+// on other platforms. An HTML5 drop gives the page each file's bytes, name,
+// and size but not its path, and Tauri's native drop stays off on macOS
+// (lib.rs). The drag pasteboard keeps the dragged items until the next drag
+// starts, so the page can read them in its `drop` handler and pair them
+// with its `File`s by name and size. A command without `async` runs on the
+// main thread, as AppKit wants.
+#[tauri::command]
+pub fn dragged_file_paths() -> Vec<String> {
+    #[cfg(target_os = "macos")]
+    {
+        macos_dragged_file_paths()
+    }
+    #[cfg(not(target_os = "macos"))]
+    Vec::new()
+}
+
+// wry reads the paths of its native drop the same way (`collect_paths` in
+// wry's src/wkwebview/drag_drop.rs): the `NSFilenamesPboardType` property
+// list is an array of path strings. Apple deprecated that type in favor of
+// one file URL per pasteboard item, but it still gives every file of the
+// drag in one read.
+#[cfg(target_os = "macos")]
+#[allow(deprecated)]
+fn macos_dragged_file_paths() -> Vec<String> {
+    use objc2_app_kit::{NSFilenamesPboardType, NSPasteboard, NSPasteboardNameDrag};
+    use objc2_foundation::{NSArray, NSString};
+
+    // SAFETY: AppKit defines both constants; they are immutable NSStrings.
+    let (drag, filenames) = unsafe { (NSPasteboardNameDrag, NSFilenamesPboardType) };
+    let pasteboard = NSPasteboard::pasteboardWithName(drag);
+    let Some(list) = pasteboard.propertyListForType(filenames) else {
+        return Vec::new();
+    };
+    let Ok(paths) = list.downcast::<NSArray>() else {
+        return Vec::new();
+    };
+    paths
+        .iter()
+        .filter_map(|path| path.downcast::<NSString>().ok())
+        .map(|path| path.to_string())
+        .collect()
 }
 
 // On Linux, tao 0.34 reads fullscreen only from its own `set_fullscreen`

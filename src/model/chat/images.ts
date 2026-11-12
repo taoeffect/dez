@@ -1,4 +1,5 @@
 import { fileNameOf } from '../../utils/fileName'
+import type { Role } from './types'
 
 // A Dez image reference is plain text in a text node:
 // `![<absolute path>](<metadata>)`. The path is the alt text, in the exact
@@ -8,15 +9,21 @@ import { fileNameOf } from '../../utils/fileName'
 // `id=a|desc=my great image`. The `id` is the image's short name in its
 // conversation, from the one id sequence that clips use too (mediaIds.ts):
 // the user names one image with it in a message (`@a`, imageMentions.ts),
-// and models read it in the reference text. Only paths into an app image
-// folder (`…/assets/images/<name>.<ext>` or `…/assets/generated/images/…`,
-// as `dez.controller/images/save` writes them) count. Any other markdown image
-// (a URL, a hand-written path) stays plain text: it is not rendered and not
-// sent as an image. So what Dez shows and sends matches what the asset
-// protocol scope (tauri.conf.json) and the Rust app-file path rule allow.
-// The editor, the request builder, and the title, preview, and search text
-// all use this one recognizer. Providers get no path, only the reference's
-// metadata (`withoutStoredFilePaths`, storedFilePaths.ts).
+// and models read it in the reference text. Two forms of path count:
+// - Stored: a path into an app image folder (`…/assets/images/<name>.<ext>`
+//   or `…/assets/generated/images/…`, as `dez.controller/images/save`
+//   writes them). It counts in every section.
+// - Linked: any other absolute path with the extension of an image type
+//   that Dez stores as it is (`isLinkedImagePath`): a dropped file that Dez
+//   linked in place and did not copy (linkedFiles.ts). It counts only in a
+//   user section: a model can write any text in its reply, and a linked
+//   reference there would let the model choose a file of this computer
+//   that Dez then reads, and sends on an `@id` mention.
+// Any other markdown image (a URL, a relative path) stays plain text: it is
+// not rendered and not sent as an image. The editor, the request builder,
+// and the title, preview, and search text all use this one recognizer.
+// Providers get no path, only the reference's metadata
+// (`withoutStoredFilePaths`, storedFilePaths.ts).
 
 // The image types that Dez stores as they are; the paste and drop code
 // converts other image types to PNG. OpenAI, Anthropic, and Venice accept
@@ -46,10 +53,9 @@ const MEDIA_TYPE_BY_EXTENSION: Record<string, ImageMediaType> = {
 
 /** The folders of the stored images, relative to the app folder: `pasted`
  *  for pasted and dropped images, `generated` for the images that models
- *  make (image models and chat replies) and that Dez tools make. The asset
- *  protocol scope in tauri.conf.json serves only the files directly in
- *  them, and the path regexes below are built from these names, so nothing
- *  else spells them. */
+ *  make (image models and chat replies) and that Dez tools make. The path
+ *  regexes below are built from these names, so nothing else spells
+ *  them. */
 export const IMAGE_FOLDERS = {
   pasted: 'assets/images',
   generated: 'assets/generated/images',
@@ -68,14 +74,28 @@ export const IMAGE_PATH_END_SOURCE = String.raw`(?:${Object.values(IMAGE_FOLDERS
 const IMAGE_PATH_SOURCE = String.raw`\/(?:[^\[\]\r\n]*\/)?${IMAGE_PATH_END_SOURCE}`
 const IMAGE_PATH = new RegExp(`^${IMAGE_PATH_SOURCE}$`)
 
+// `png` as `[pP][nN][gG]`: an extension in any letter case, in a regex
+// with no `i` flag (the metadata keys must stay lower case).
+const anyCase = (word: string) => [...word].map((char) => `[${char.toLowerCase()}${char.toUpperCase()}]`).join('')
+/** Regex source of a linked image path (`isLinkedImagePath`), and of a
+ *  stored one too: an absolute path that ends with the extension of an
+ *  image type that Dez stores as it is, in any letter case (a camera names
+ *  its photos `IMG_0001.JPG`). The path holds no bracket, as a stored one
+ *  does not, and no control char or sentinel (content.ts), which would
+ *  break the editor's line and section scan. No capture groups. */
+export const LINKED_IMAGE_PATH_SOURCE = String.raw`\/[^\[\]\u0000-\u001F\u007F\uE000-\uE003]*\.(?:${Object.keys(MEDIA_TYPE_BY_EXTENSION).map(anyCase).join('|')})`
+const LINKED_IMAGE_PATH = new RegExp(`^${LINKED_IMAGE_PATH_SOURCE}$`)
+
 // One metadata item: a lower-case key, `=`, and a one-line value in which a
 // `\` escapes `|`, `(`, `)`, or `\`; every other char stands for itself. An
 // unescaped `(` or `)` cannot be in a value, so the scan of a reference stops
 // at its own `)`. A `|` or a space in a value is not valid in a CommonMark
 // destination, but other markdown viewers do not show Dez references anyway.
 const METADATA_ITEM_SOURCE = String.raw`[a-z][a-z0-9_-]*=(?:[^\\|()\r\n]|\\[\\|()])*`
-// Global and shared: `findImageReferences` resets `lastIndex` on each call.
-const IMAGE_REFERENCE = new RegExp(String.raw`!\[(${IMAGE_PATH_SOURCE})\]\((${METADATA_ITEM_SOURCE}(?:\|${METADATA_ITEM_SOURCE})*)?\)`, 'g')
+// Any absolute path as the alt text: `findImageReferences` then keeps the
+// stored and the linked paths that count in the section. Global and
+// shared: `findImageReferences` resets `lastIndex` on each call.
+const IMAGE_REFERENCE = new RegExp(String.raw`!\[(\/[^\[\]\r\n]*)\]\((${METADATA_ITEM_SOURCE}(?:\|${METADATA_ITEM_SOURCE})*)?\)`, 'g')
 // A whole image reference at the end of a text of a request, in which a
 // word stands for its path (`withoutStoredFilePaths`: `![image](id=a)`).
 // The alt text has no bracket and no line break, as a path has none, so
@@ -111,6 +131,9 @@ export interface ImageReference {
   /** Offset after the `)`. */
   to: number
   path: string
+  /** True for a linked path (`isLinkedImagePath`): the file is not one that
+   *  Dez stores, so Dez never deletes it. */
+  linked: boolean
   /** The value of the `id` item, or null for a reference with no id. */
   id: string | null
   /** All the items, in text order, with the keys that Dez does not know. */
@@ -147,15 +170,20 @@ function metadataText(metadata: readonly ImageMetadataItem[]): string {
   return metadata.map(({ key, value }) => `${key}=${value.replace(/[\\|()]/g, '\\$&')}`).join('|')
 }
 
-/** The image references in a text, in order. */
-export function findImageReferences(text: string): ImageReference[] {
+/** The image references in a text of a section with the role `role`, in
+ *  order: a linked path counts only in a user section (see the top of this
+ *  file). */
+export function findImageReferences(text: string, role: Role): ImageReference[] {
   const references: ImageReference[] = []
   IMAGE_REFERENCE.lastIndex = 0
   for (let match = IMAGE_REFERENCE.exec(text); match; match = IMAGE_REFERENCE.exec(text)) {
-    const metadata = parseImageMetadata(match[2] ?? '')
+    const path = match[1]
+    const linked = !isImagePath(path)
+    const metadata = linked && (role !== 'user' || !LINKED_IMAGE_PATH.test(path)) ? null : parseImageMetadata(match[2] ?? '')
     // A path may hold a `)`, so a reference can start in the metadata of a
-    // match that is not valid (`![p](id=X|x=![/a)/assets/images/b.png]()`):
-    // the scan goes on just after the `!`.
+    // match that does not count, for bad metadata or a path that is no
+    // image path (`![/a.txt](x=![/b)/c.png]()`): the scan goes on just
+    // after the `!`.
     if (!metadata) {
       IMAGE_REFERENCE.lastIndex = match.index + 1
       continue
@@ -163,7 +191,8 @@ export function findImageReferences(text: string): ImageReference[] {
     references.push({
       from: match.index,
       to: match.index + match[0].length,
-      path: match[1],
+      path,
+      linked,
       id: metadata.find((item) => item.key === 'id')?.value ?? null,
       metadata,
     })
@@ -178,9 +207,17 @@ export function requestImageReferenceStart(text: string): number | null {
   return REQUEST_REFERENCE_AT_END.exec(text)?.index ?? null
 }
 
-/** True when `imageMarkdown(path)` is a reference that the recognizer finds. */
+/** True for a stored image path: a path into an app image folder, which
+ *  counts as an image in every section (see the top of this file). */
 export function isImagePath(path: string): boolean {
   return IMAGE_PATH.test(path)
+}
+
+/** True for a linked image path: an absolute path with the extension of an
+ *  image type that Dez stores as it is (`LINKED_IMAGE_PATH_SOURCE`), and no
+ *  stored image path. It counts as an image in a user section only. */
+export function isLinkedImagePath(path: string): boolean {
+  return LINKED_IMAGE_PATH.test(path) && !isImagePath(path)
 }
 
 /** The app-file path (`assets/images/<file>` or
@@ -215,12 +252,12 @@ export function imageIdChange(reference: ImageReference, id: string): { from: nu
   return { from: reference.from + path.length + 4, to: reference.to - 1, insert: metadataText(withId) }
 }
 
-/** A text as its plain-text and image pieces, in order. Empty text pieces are
- *  left out; whitespace is kept. */
-export function splitImageReferences(text: string): ImageTextPiece[] {
+/** A text of a section with the role `role` as its plain-text and image
+ *  pieces, in order. Empty text pieces are left out; whitespace is kept. */
+export function splitImageReferences(text: string, role: Role): ImageTextPiece[] {
   const pieces: ImageTextPiece[] = []
   let start = 0
-  for (const { from, to, path } of findImageReferences(text)) {
+  for (const { from, to, path } of findImageReferences(text, role)) {
     if (from > start) pieces.push({ kind: 'text', text: text.slice(start, from) })
     pieces.push({ kind: 'image', path, source: text.slice(from, to) })
     start = to
@@ -229,9 +266,10 @@ export function splitImageReferences(text: string): ImageTextPiece[] {
   return pieces
 }
 
-/** A text with each image reference replaced by `label`. */
-export function labelImageReferences(text: string, label = IMAGE_LABEL): string {
-  return splitImageReferences(text).map((piece) => (piece.kind === 'text' ? piece.text : label)).join('')
+/** A text of a section with the role `role`, with each image reference
+ *  replaced by `label`. */
+export function labelImageReferences(text: string, role: Role, label = IMAGE_LABEL): string {
+  return splitImageReferences(text, role).map((piece) => (piece.kind === 'text' ? piece.text : label)).join('')
 }
 
 /** True for an image type that Dez stores as it is. */
@@ -244,11 +282,11 @@ export function imageExtension(mediaType: ImageMediaType): string {
   return EXTENSION_BY_MEDIA_TYPE[mediaType]
 }
 
-/** The media type of an image path, from its extension. Null for an
- *  extension that Dez does not store. */
+/** The media type of an image path, from its extension in any letter case.
+ *  Null for an extension that Dez does not store. */
 export function imageMediaType(path: string): ImageMediaType | null {
   const dot = path.lastIndexOf('.')
   if (dot < 0) return null
-  const extension = path.slice(dot + 1)
+  const extension = path.slice(dot + 1).toLowerCase()
   return Object.hasOwn(MEDIA_TYPE_BY_EXTENSION, extension) ? MEDIA_TYPE_BY_EXTENSION[extension] : null
 }

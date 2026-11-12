@@ -2,14 +2,15 @@ import fs from 'node:fs'
 import path from 'node:path'
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from 'vitest'
 import { openAiChatBody } from './harness/chatBody'
-import { click, consoleErrors, elementCenter, isOnTop, movePointer, pointerClick, pointerClickAt, pointerDrag, promptMessage, resetConsoleErrors, screenshotOnFailure, waitForValue, type Point } from './harness/dom'
+import { click, consoleErrors, elementCenter, isOnTop, movePointer, pointerClick, pointerClickAt, pointerDrag, promptMessage, resetConsoleErrors, screenshotOnFailure, typeKeys, waitForValue, type Point } from './harness/dom'
+import { linkedDropDir, nativeDrop } from './harness/drops'
 import { appFilePath, conversationFilePath, filesIn, mediaTempDir, newFileIn, storedFileName, writeTestFile } from './harness/fixtures'
 import { NOT_A_CLIP, WAV_SAMPLE_RATE, WEBM_VIDEO, clipTag, monoWav, openPlayerTooltips, problemCards, shownPlayers, silentWav, startClipServer, waitForPlayerFullscreen, type ClipKind, type ClipServer, type ProblemCard, type ShownPlayer } from './harness/media'
 import { startMockProviderApp, type MockProviderApp } from './harness/mockProviderApp'
 import { mockChatPath, replyText, sendChatReply, type MockProvider } from './harness/mockServer'
 import { threadCount, webProcessPid } from './harness/processes'
 import type { E2EBrowser } from './harness/session'
-import { copySelection, editorCaret, editorDoc, focusEditor, focusedArea, newTab, openSeededConversation, openToasts, pasteText, pickModel, sbpCall, setCaret, submit, threadSections, waitForThread } from './harness/thread'
+import { copySelection, docPosPoint, editorCaret, editorDoc, focusEditor, focusedArea, newTab, openSeededConversation, openToasts, pasteText, pickModel, sbpCall, setCaret, submit, threadSections, waitForThread, type ThreadSection } from './harness/thread'
 
 // The players of audio and video clips (media tags in agent sections),
 // driven through the real app. The clips come from a clip server of the
@@ -54,7 +55,11 @@ import { copySelection, editorCaret, editorDoc, focusEditor, focusedArea, newTab
 //   card), with a tooltip that tells how to name the clip;
 // - a clip that is pasted from another conversation gets a new id when the
 //   conversation has a clip with its id, and so do the pasted mentions of
-//   it.
+//   it;
+// - a native drop of a clip out of every temp folder links the file in
+//   place: its player has the check from the start, a chat request gets
+//   only the clip's id and type, and the trash asks first and removes only
+//   the tag.
 //
 // One app session serves the whole file; each test starts in a new tab.
 
@@ -105,6 +110,8 @@ describe('media player', () => {
   let setup: MockProviderApp
   let clips: ClipServer
   let browser: E2EBrowser
+  // The folder of the files that a drop links, out of every temp folder.
+  let linkedDir: string
 
   function savedDir (kind: ClipKind): string {
     return appFilePath(setup.app.home, 'assets', 'generated', kind)
@@ -345,6 +352,7 @@ describe('media player', () => {
       jsonAnswers: { [RAW_VIDEO_LIST_PATH]: { data: [] }, [RAW_IMAGE_LIST_PATH]: { data: [] } },
     })
     browser = setup.browser
+    linkedDir = await linkedDropDir('media-player')
   })
 
   beforeEach(async () => {
@@ -360,6 +368,7 @@ describe('media player', () => {
   afterAll(async () => {
     await setup?.stop()
     await clips?.stop()
+    if (linkedDir) await fs.promises.rm(linkedDir, { recursive: true, force: true })
   })
 
   it('plays a clip from its URL, saves it as a file, and deletes the file after a prompt', async () => {
@@ -420,6 +429,50 @@ describe('media player', () => {
     expect(await filesIn(savedDir('audio'))).toStrictEqual(before)
     await waitForValue(browser, 'prompt after Yes', () => promptMessage(browser), null)
     await waitForValue(browser, 'tag with the URL in the file', async () => (await fs.promises.readFile(file, 'utf8').catch(() => '')).includes(remoteTag), true)
+    expect(await consoleErrors(browser)).toStrictEqual([])
+  })
+
+  it('links a clip of a native file drop from a folder that is not a temp folder, sends no path, and removes only its tag after a prompt', async () => {
+    const source = await writeTestFile(path.join(linkedDir, 'My tone (1).wav'), TONE)
+    const pastedDir = appFilePath(setup.app.home, 'assets', 'audio')
+    const pastedBefore = await filesIn(pastedDir)
+    await focusEditor(browser)
+    await typeKeys(browser, 'Hear this')
+    await waitForValue(browser, 'typed text', () => editorDoc(browser), 'Hear this')
+
+    const point = await docPosPoint(browser, 0, 1)
+    await nativeDrop(browser, { x: point.x + 1, y: point.y }, [source])
+    const message = `${clipTag('audio', { id: 'a', type: 'audio/wav', src: source })}\nHear this`
+    await waitForValue(browser, 'linked tag', () => editorDoc(browser), message)
+    const linked: ShownPlayer = { kind: 'audio', id: 'a', available: true, source: 'blob', seconds: 2, picture: null, clock: null, save: 'saved' }
+    await waitForValue(browser, 'player of the linked file', () => shownPlayers(browser), [linked])
+    expect(await filesIn(pastedDir)).toStrictEqual(pastedBefore)
+    // A pointer that comes to the check arms the trash, so read it from away.
+    await movePointer(browser, OFF_PLAYERS)
+    await waitForValue(browser, 'label of the check', saveLabel, 'Linked file')
+
+    await pickModel(browser, SPEAKER.name, CHAT_MODEL.name)
+    await submit(browser, '')
+    const chat = await setup.mock.waitForRequest(browser)
+    expect(JSON.parse(chat.body)).toStrictEqual(openAiChatBody({ ...SPEAKER, modelId: CHAT_MODEL.id }, [
+      { role: 'user', content: '<dez:audio id="a" type="audio/wav"/>\nHear this' },
+    ]))
+    expect(chat.body).not.toContain(linkedDir)
+    await sendChatReply(chat.reply, 'heard')
+    const thread: ThreadSection[] = [{ role: 'user', text: message }, { role: 'agent', text: replyText('heard') }, { role: 'user', text: '' }]
+    await waitForThread(browser, thread)
+
+    // The trash shows when the pointer comes to the check anew, and asks.
+    await movePointer(browser, OFF_PLAYERS)
+    await movePointer(browser, await elementCenter(browser, '.media-player__save'))
+    await waitForValue(browser, 'trash', saveLabel, 'Remove this clip (its file stays)')
+    await pointerClick(browser, '.media-player__save')
+    await waitForValue(browser, 'prompt', () => promptMessage(browser), 'Are you sure you want to remove this clip from the conversation? Its file stays where it is.')
+    await pointerClick(browser, '.confirm-btn--confirm')
+    await waitForValue(browser, 'thread after the removal', () => threadSections(browser), [{ role: 'user', text: 'Hear this' }, ...thread.slice(1)])
+    await waitForValue(browser, 'prompt after Yes', () => promptMessage(browser), null)
+    expect(await shownPlayers(browser)).toStrictEqual([])
+    expect(await fs.promises.readFile(source)).toStrictEqual(TONE)
     expect(await consoleErrors(browser)).toStrictEqual([])
   })
 

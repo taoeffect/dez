@@ -81,6 +81,30 @@ describe('withoutStoredFilePaths', () => {
     }
   })
 
+  it('takes the path of a linked image from every image reference, also one that is not valid', () => {
+    const cases = [
+      ['![/home/ann/Pictures/My photo (1).JPG](id=a)', '![image](id=a)'],
+      ['Back ![/home/ann/a.png](id=a', 'Back ![image](id=a'],
+      ['Here ![/home/ann/x.webp](id=b|tool=image) and ![/home/ann/y.svg]()', 'Here ![image](id=b|tool=image) and ![image]()'],
+      ['[/home/ann/a.gif](https://example.com/a.gif)', '[image](https://example.com/a.gif)'],
+    ]
+    for (const [text, sent] of cases) expect(withoutStoredFilePaths(text), text).toBe(sent)
+  })
+
+  it('takes the path of a linked clip from the src of a media tag line, valid or not', () => {
+    const cases = [
+      ['<dez:video id="b" type="video/mp4" src="/home/ann/Videos/a b.mp4"/>', '<dez:video id="b" type="video/mp4" src="video"/>'],
+      ['Hi\n<dez:audio id="c" src = "/home/ann/x.mp3" type=audio/mpeg>\nmore', 'Hi\n<dez:audio id="c" src = "audio" type=audio/mpeg>\nmore'],
+    ]
+    for (const [text, sent] of cases) expect(withoutStoredFilePaths(text), text).toBe(sent)
+  })
+
+  it('leaves a linked path that the user typed out of a reference or a tag as it is', () => {
+    for (const text of ['Open /home/ann/Pictures/x.png', 'img src="/home/ann/a.png"', '<dez:image src="/home/ann/a.png"/>', '[x.png](/home/ann/x.png)']) {
+      expect(withoutStoredFilePaths(text)).toBe(text)
+    }
+  })
+
   it('gives a text with no stored file path back as it is', () => {
     for (const text of ['', 'Hi\n', '![x](https://example.com/x.png)', '/home/ann/Pictures/x.png', 'assets/images/x.png', 'https://cdn.example/video/x.mp4']) {
       expect(withoutStoredFilePaths(text)).toBe(text)

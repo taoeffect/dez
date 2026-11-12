@@ -348,7 +348,7 @@ function createDefaultTab(): Tab {
 function tabTitle(sections: Section[]): string {
   const firstContent = sections.find((section) => section.role === 'user' && sectionVisibleText(section).trim())
   if (!firstContent) return NEW_TAB_TITLE
-  const text = labelImageReferences(labelMediaTags(sectionVisibleText(firstContent))).trim()
+  const text = labelImageReferences(labelMediaTags(sectionVisibleText(firstContent)), firstContent.role).trim()
   return text.length > 30 ? text.slice(0, 30) + '…' : text
 }
 

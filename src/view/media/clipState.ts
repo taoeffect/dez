@@ -1,21 +1,26 @@
-import { isSavedMediaPath, isTempMediaPath } from '../../model/chat/mediaTags'
+import { isLinkedMediaPath, isSavedMediaPath, isTempMediaPath } from '../../model/chat/mediaTags'
+import type { Role } from '../../model/chat/types'
 
 // What the player (MediaPlayer.vue, src/view/editor/media.ts) shows for a
 // clip, from the fields of its tag (src/model/chat/mediaTags.ts).
 
-/** Where a clip plays from. `none`: the clip has no source that the player
- *  can load. */
-export type ClipSourceKind = 'saved' | 'temp' | 'remote' | 'none'
+/** Where a clip plays from. `linked`: a file that the user dropped, which
+ *  Dez reads where it is (linkedFiles.ts). `none`: the clip has no source
+ *  that the player can load. */
+export type ClipSourceKind = 'saved' | 'temp' | 'linked' | 'remote' | 'none'
 
-/** The kind of a tag's `src`. Only a file in a Dez media folder and an http
- *  or https URL play: a tag is plain text that a user can edit or paste, so
- *  any other value (another local file, a `data:` or `javascript:` URL)
- *  must not become the source of a media element. */
-export function clipSourceKind(src: string | null): ClipSourceKind {
+/** The kind of a tag's `src` in a section with the role `role`. Only a file
+ *  in a Dez media folder, a linked file in a user section, and an http or
+ *  https URL play: a tag is plain text that a user can edit or paste, so
+ *  any other value (a linked path in an agent section, a relative path, a
+ *  `data:` or `javascript:` URL) must not become the source of a media
+ *  element. */
+export function clipSourceKind(src: string | null, role: Role): ClipSourceKind {
   if (src === null) return 'none'
   if (isSavedMediaPath(src)) return 'saved'
   if (isTempMediaPath(src)) return 'temp'
-  return /^https?:\/\/\S+$/i.test(src) ? 'remote' : 'none'
+  if (/^https?:\/\/\S+$/i.test(src)) return 'remote'
+  return role === 'user' && isLinkedMediaPath(src) ? 'linked' : 'none'
 }
 
 /** Why a clip does not play. `gone`: its bytes are not there any more (it
@@ -26,7 +31,8 @@ export type ClipProblem = 'gone' | 'cannot-play'
 
 /** How the load of a clip's source failed. */
 export type ClipLoadFailure =
-  /** The file of a saved clip or of a temp copy could not be read. */
+  /** The file of a saved clip, of a temp copy, or of a linked clip could not
+   *  be read. */
   | { step: 'read' }
   /** The media element gave an error, with the code of its `MediaError`. */
   | { step: 'play', code: number | undefined }
@@ -66,39 +72,42 @@ export interface ProblemCard {
   text: string
   /** What the user can do; null when nothing can be done. */
   hint: string | null
-  /** The line that names the clip's saved file; null for a clip that is not
-   *  saved, and until the path is read. */
+  /** The line that names the clip's saved or linked file; null for a clip
+   *  with neither, and until the path is read. */
   file: string | null
 }
 
 /** The card of a clip with `problem`. `type` is the media type of the
- *  clip's tag (null: not known). `saved` tells that the clip's source is
- *  its saved file, and `savedPath` is the path of that file as the user
- *  reads it (`~` for the home folder), or null while it is not read. */
+ *  clip's tag (null: not known). `file` tells that the clip's source is its
+ *  saved file or a linked file (null: neither), and `path` is the path of
+ *  that file as the user reads it (`~` for the home folder), or null while
+ *  it is not read. */
 export function problemCard(
   problem: ClipProblem,
-  clip: { type: string | null, saved: boolean, savedPath: string | null },
+  clip: { type: string | null, file: 'saved' | 'linked' | null, path: string | null },
 ): ProblemCard {
   if (problem === 'gone') return { text: 'This clip is no longer available.', hint: null, file: null }
   const type = clip.type?.trim() ?? ''
   const text = `This computer cannot play the format of this clip${type === '' ? '' : ` (${type})`}.`
-  if (!clip.saved) {
+  if (clip.file === null) {
     return { text, hint: 'Its file is still there. Save the clip to keep the file, then open the file with another app.', file: null }
   }
-  return { text, hint: 'Its file is still there. Open the file with another app.', file: clip.savedPath === null ? null : `Saved file: ${clip.savedPath}` }
+  const label = clip.file === 'saved' ? 'Saved file' : 'File'
+  return { text, hint: 'Its file is still there. Open the file with another app.', file: clip.path === null ? null : `${label}: ${clip.path}` }
 }
 
 /** The clip's file on this computer, which the context menu of its player
  *  shows in the file manager (`dez.controller/menu/popupAsset`): the saved
- *  file or the temp copy, from the tag's `src`. Null when there is none: a
- *  clip that plays from its URL only or has no source, a file that cannot
- *  be read (`problem` is `gone`), and while a Save or a Delete moves or
- *  removes the file (`busy`). A file that this computer cannot play is
- *  there, so it counts. */
-export function clipFile(src: string | null, problem: ClipProblem | null, busy: boolean): string | null {
+ *  file, the temp copy, or the linked file, from the tag's `src` in a
+ *  section with the role `role`. Null when there is none: a clip that
+ *  plays from its URL only or has no source, a file that cannot be read
+ *  (`problem` is `gone`), and while a Save or a Delete moves or removes the
+ *  file (`busy`). A file that this computer cannot play is there, so it
+ *  counts. */
+export function clipFile(src: string | null, role: Role, problem: ClipProblem | null, busy: boolean): string | null {
   if (src === null || busy || problem === 'gone') return null
-  const source = clipSourceKind(src)
-  return source === 'saved' || source === 'temp' ? src : null
+  const source = clipSourceKind(src, role)
+  return source === 'saved' || source === 'temp' || source === 'linked' ? src : null
 }
 
 /** What the clock of a clip that is not saved tells. */

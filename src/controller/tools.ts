@@ -117,8 +117,8 @@ function clipReadProblemText(id: string, problem: ClipReadProblem): string {
 // that asks for it before a crop.
 //
 // The errors and the result name images by their ids only: both go to the
-// chat provider, which gets no path of a stored file. The causes of a read
-// or a save failure are in the log.
+// chat provider, which gets no path of a stored or linked file. The causes
+// of a read or a save failure are in the log.
 function imageRunner(plan: ImagePlan): ToolRunner {
   return async (args, signal, context) => {
     const id = imageIdArgument(args)
@@ -129,8 +129,8 @@ function imageRunner(plan: ImagePlan): ToolRunner {
       file = await sbp('dez.controller/images/readFile', source.path) as File
     } catch (error) {
       console.error(`Failed to read the image @${id}:`, error)
-      throw new ToolError(`Dez cannot read the file of the image @${id}: the file is gone, or Dez may not read it. `
-        + 'This is not a fault of the call. Tell the user, who can paste the image again (it then gets a new id).')
+      throw new ToolError(`Dez cannot read the file of the image @${id}: the file is gone or moved, or Dez may not read it. `
+        + 'This is not a fault of the call. Tell the user, who can paste or drop the image again (it then gets a new id).')
     }
 
     // Only redraw knows the size of the image, so the plan runs in it. For

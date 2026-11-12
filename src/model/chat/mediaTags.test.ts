@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest'
 import { SENTINEL_CHAR } from './content'
 import {
   findMediaTags,
+  isLinkedMediaPath,
   isPastedMediaPath,
   isSavedMediaPath,
   labelMediaTags,
@@ -9,6 +10,7 @@ import {
   mediaTagText,
   mediaTagsAsLinks,
   savedMediaTag,
+  sectionClipSource,
   splitMediaTags,
   unsavedMediaTag,
   type MediaTagData,
@@ -64,6 +66,23 @@ describe('isSavedMediaPath and isPastedMediaPath', () => {
     ]) {
       expect([isSavedMediaPath(path), isPastedMediaPath(path)], path).toStrictEqual([false, false])
     }
+  })
+})
+
+describe('isLinkedMediaPath and sectionClipSource', () => {
+  const LINKED = '/home/u/Videos/My clip (1).mp4'
+
+  it('takes an absolute path that is no stored clip and no temp copy as linked', () => {
+    for (const path of [LINKED, '/x', '/home/u/.config/dez/assets/video/sub/9f3c.mp4']) expect(isLinkedMediaPath(path), path).toBe(true)
+    for (const path of [SAVED_VIDEO, CACHED_VIDEO, CLIP_URL, 'Videos/a.mp4', '/home/u/a\n.mp4', '/home/u/a\uE001.mp4']) {
+      expect(isLinkedMediaPath(path), path).toBe(false)
+    }
+  })
+
+  it('keeps a linked source in a user section only, and every other source in every section', () => {
+    expect(sectionClipSource(LINKED, 'user')).toBe(LINKED)
+    expect(sectionClipSource(LINKED, 'agent')).toBeNull()
+    for (const src of [SAVED_VIDEO, CACHED_VIDEO, CLIP_URL, null]) expect(sectionClipSource(src, 'agent'), String(src)).toBe(src)
   })
 })
 
@@ -292,14 +311,11 @@ describe('mediaTagsAsLinks', () => {
     expect(mediaTagsAsLinks(mediaTagText({ ...VIDEO, src: CACHED_VIDEO, url: null }))).toBe('[video]')
   })
 
-  it('takes only a file directly in the media folder of the app as a saved file', () => {
-    for (const src of [
-      '/home/u/.config/dez/assets/generated/video/sub/9f3c.mp4',
-      'home/u/.config/dez/assets/generated/video/9f3c.mp4',
-      '/home/u/.config/dez/assets/generated/video/9f3c.mp4/more',
-    ]) {
-      expect(mediaTagsAsLinks(mediaTagText({ ...VIDEO, src, url: null })), src).toBe('[video]')
-    }
+  it('links to a linked file, and takes no relative path as a file', () => {
+    const nested = '/home/u/.config/dez/assets/generated/video/sub/9f3c.mp4'
+    expect(mediaTagsAsLinks(mediaTagText({ ...VIDEO, src: nested, url: null }))).toBe(`[video](${nested})`)
+    expect(mediaTagsAsLinks(mediaTagText({ ...VIDEO, src: '/home/u/Videos/clip (1).mp4', url: null }))).toBe('[video](</home/u/Videos/clip (1).mp4>)')
+    expect(mediaTagsAsLinks(mediaTagText({ ...VIDEO, src: 'home/u/.config/dez/assets/generated/video/9f3c.mp4', url: null }))).toBe('[video]')
   })
 
   it('gives only the label for a target with a line break', () => {

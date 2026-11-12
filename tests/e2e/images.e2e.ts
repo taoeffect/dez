@@ -5,7 +5,7 @@ import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from
 import { Key } from 'webdriverio'
 import { openAiSystemMessage } from './harness/chatBody'
 import { consoleErrors, elementCenter, movePointer, pointerClick, pointerClickAt, resetConsoleErrors, screenshotOnFailure, typeKeys, waitForValue, type Point } from './harness/dom'
-import { dropFiles, nativeDrop } from './harness/drops'
+import { dropFiles, linkedDropDir, nativeDrop } from './harness/drops'
 import { appFilePath, conversationFilePath, filesIn, storedFileName, writeTestFile } from './harness/fixtures'
 import { pasteImage, shownImages, solidPng, type ShownImage } from './harness/images'
 import { startMockProviderApp, type MockProviderApp } from './harness/mockProviderApp'
@@ -27,7 +27,9 @@ import { activeConversationId, copySelection, docPosPoint, editorCaret, editorDo
 // the newest message names it with `@a`), a model that does not read
 // images gets only that text and the user a warning, no request holds an
 // image path (also not a reference that shows its source or an image in a
-// reply), and a relaunch shows the saved image again.
+// reply), a native drop of a file out of every temp folder links the file
+// in place (shown, sent with no path, removed with no file delete), and a
+// relaunch shows the saved image and the linked image again.
 //
 // WebDriver can send neither clipboard data nor an OS drag, so the paste
 // and drop events are synthetic DOM events built in the page. The PNG bytes
@@ -124,6 +126,11 @@ describe('images', () => {
   let browser: E2EBrowser
   // The image and conversation of the OpenAI test, for the relaunch test.
   let sentImage: { image: InsertedImage, conversationId: string } | null = null
+  // The first user message and conversation of the linked image test, for
+  // the relaunch test.
+  let sentLinkedImage: { message: string, conversationId: string } | null = null
+  // The folder of the files that a drop links, out of every temp folder.
+  let linkedDir: string
 
   function imagesDir (): string {
     return appFilePath(setup.app.home, 'assets', 'images')
@@ -348,6 +355,7 @@ describe('images', () => {
       ],
     }, { moreProviders: [{ provider: CLAUDE }] })
     browser = setup.browser
+    linkedDir = await linkedDropDir('images')
   })
 
   beforeEach(async () => {
@@ -364,6 +372,7 @@ describe('images', () => {
 
   afterAll(async () => {
     await setup?.stop()
+    if (linkedDir) await fs.promises.rm(linkedDir, { recursive: true, force: true })
   })
 
   it('stores a pasted image, puts its reference at the caret, and shows the image', async () => {
@@ -708,7 +717,7 @@ describe('images', () => {
   })
 
   it('puts an image of a native file drop at the drop point', async () => {
-    // A file outside the image folder in a real drop; see `nativeDrop`.
+    // The app's home is in the temp folder, so the drop copies the file.
     const source = await writeTestFile(path.join(imagesDir(), 'native-drop-source.png'), DROPPED_PNG)
     const before = await storedImages()
     await newTab(browser)
@@ -737,6 +746,71 @@ describe('images', () => {
     await nativeDrop(browser, await docPoint('Some '.length), [link])
     await waitForValue(browser, 'dropped link', docAndCaret, { doc: `Some ${link}text`, caret: 'Some '.length + link.length })
     expect(await storedImages()).toEqual(before)
+  })
+
+  // A file in a dot folder, with a space and parens in its name: the asset
+  // scope takes every file, and the reference takes such a path.
+  it('links an image of a native file drop from a folder that is not a temp folder, shows it, and sends it with no path', async () => {
+    const source = await writeTestFile(path.join(linkedDir, '.dot folder', 'My photo (1).png'), DROPPED_PNG)
+    const before = await storedImages()
+    await newTab(browser)
+    await pickModel(browser, VISION.name, VISION.modelName)
+    await focusEditor(browser)
+    await typeKeys(browser, 'Before after')
+    await waitForValue(browser, 'typed text', () => editorDoc(browser), 'Before after')
+
+    await nativeDrop(browser, await docPoint('Before '.length), [source])
+    const message = `Before ![${source}](id=a)after`
+    await waitForValue(browser, 'linked reference', docAndCaret, { doc: message, caret: message.length - 'after'.length })
+    await waitForValue(browser, 'shown image', () => shownImages(browser), [{ alt: 'My photo (1).png', width: 40, height: 24 }])
+    expect(await storedImages()).toEqual(before)
+
+    const request = await sendRequest()
+    expect(request.rawBody).not.toContain(linkedDir)
+    expect(request.rawBody).not.toContain('My photo')
+    expect(request.body).toHaveProperty('messages', [openAiSystemMessage(VISION), {
+      role: 'user',
+      content: [
+        { type: 'text', text: 'Before ![image](id=a)' },
+        { type: 'image_url', image_url: { url: `data:image/png;base64,${DROPPED_PNG.toString('base64')}` } },
+        { type: 'text', text: 'after' },
+      ],
+    }])
+    await sendChatReply(request.reply, VISION.modelName)
+    await waitForThread(browser, [
+      { role: 'user', text: message },
+      { role: 'agent', text: replyText(VISION.modelName) },
+      { role: 'user', text: '' },
+    ])
+    const conversationId = await activeConversationId(browser)
+    await waitForValue(browser, 'saved reference', async () => {
+      const content = await fs.promises.readFile(conversationFilePath(setup.app.home, conversationId), 'utf8').catch(() => '')
+      return content.split('\n').includes(message)
+    }, true)
+    sentLinkedImage = { message, conversationId }
+  })
+
+  it('asks before the trash removes a linked image, and keeps its file', async () => {
+    const source = await writeTestFile(path.join(linkedDir, 'kept.png'), DROPPED_PNG)
+    await newTab(browser)
+    await focusEditor(browser)
+    await typeKeys(browser, 'See  here')
+    await waitForValue(browser, 'typed text', () => editorDoc(browser), 'See  here')
+    await nativeDrop(browser, await docPoint('See '.length), [source])
+    await waitForValue(browser, 'shown image', () => shownImages(browser), [{ alt: 'kept.png', width: 40, height: 24 }])
+    expect(await editorDoc(browser)).toBe(`See ![${source}](id=a) here`)
+    await setCaret(browser, 2)
+
+    await clickTrash(0)
+    await waitForValue(browser, 'prompt', promptState, {
+      message: 'Are you sure you want to remove this image from the conversation? Its file stays where it is.',
+      buttons: ['No', 'Yes'],
+      focus: 'yes',
+    })
+    await browser.keys(Key.Enter)
+    await waitForValue(browser, 'doc after Enter', docAndCaret, { doc: 'See  here', caret: 2 })
+    await waitForValue(browser, 'prompt after Enter', promptState, { message: null, buttons: [], focus: 'editor' })
+    expect(await fs.promises.readFile(source)).toEqual(DROPPED_PNG)
   })
 
   it('sends a pasted image to an OpenAI-format model as a data URL, and titles the tab with [image]', async () => {
@@ -947,8 +1021,9 @@ describe('images', () => {
     ])
   })
 
-  it('shows the saved image and the [image] tab title after a relaunch', async () => {
+  it('shows the saved image, the linked image, and the [image] tab title after a relaunch', async () => {
     if (!sentImage) throw new Error('The OpenAI test saved no conversation with an image')
+    if (!sentLinkedImage) throw new Error('The linked image test saved no conversation with an image')
     const { image, conversationId } = sentImage
     const lastActive = await activeConversationId(browser)
     browser = await setup.relaunch()
@@ -962,5 +1037,9 @@ describe('images', () => {
     await waitForValue(browser, 'reopened conversation', async () => (await threadSections(browser))[0]?.text ?? null, image.reference + QUESTION)
     await waitForValue(browser, 'shown image', () => shownImages(browser), [shownPastedImage(image)])
     expect(await activeTabTitle()).toBe(`[image]${QUESTION}`)
+
+    await sbpCall(browser, 'dez.model/tabs/openConversation', sentLinkedImage.conversationId)
+    await waitForValue(browser, 'reopened linked image conversation', async () => (await threadSections(browser))[0]?.text ?? null, sentLinkedImage.message)
+    await waitForValue(browser, 'shown linked image', () => shownImages(browser), [{ alt: 'My photo (1).png', width: 40, height: 24 }])
   })
 })

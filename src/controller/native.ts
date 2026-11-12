@@ -138,6 +138,24 @@ export default sbp('sbp/selectors/register', {
     return invoke<string>('get_app_dir', { root })
   },
 
+  // The canonical paths of the OS temp folders that exist
+  // (src-tauri/src/commands.rs `temp_folders`).
+  'dez.native/tempFolders' (): Promise<string[]> {
+    return invoke<string[]>('temp_folders')
+  },
+
+  // The absolute path of a file with no symlink, `.`, or `..` in it. Rejects
+  // for a missing file.
+  'dez.native/canonicalPath' (path: string): Promise<string> {
+    return invoke<string>('canonical_path', { path })
+  },
+
+  // The paths of the files of the newest file drag on macOS (the drag
+  // pasteboard); an empty list on other platforms.
+  'dez.native/draggedFilePaths' (): Promise<string[]> {
+    return invoke<string[]>('dragged_file_paths')
+  },
+
   // The user's home folder (Tauri's path API, which `core:default` in
   // src-tauri/capabilities/default.json allows).
   'dez.native/homeDir' (): Promise<string> {

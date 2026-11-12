@@ -1,7 +1,7 @@
 import type { AudioPart } from '../chat/audioCut'
 import { sectionPlainText } from '../chat/content'
 import { findImageReferences } from '../chat/images'
-import { findMediaTags, type MediaTag } from '../chat/mediaTags'
+import { findMediaTags, sectionClipSource, type MediaTag } from '../chat/mediaTags'
 import type { Section } from '../chat/types'
 import { assetIdArgument } from './arguments'
 import { subcommandToolDefinition, type SubcommandTool } from './subcommands'
@@ -53,15 +53,16 @@ export function audioClipId(args: ToolArguments): string {
 
 /** The audio clip `id` of a tab's `sections`: the newest media tag with that
  *  id in any section (a clip that a model made, or a clip file that the
- *  user pasted or dropped; mediaTags.ts). Throws for an id that names a
- *  video clip, an image, or nothing; the text tells the model the ids of
- *  the audio clips that it can name. */
+ *  user pasted or dropped; mediaTags.ts), with the `src` that counts in its
+ *  section (`sectionClipSource`). Throws for an id that names a video clip,
+ *  an image, or nothing; the text tells the model the ids of the audio
+ *  clips that it can name. */
 export function audioClipOf(sections: readonly Section[], id: string): MediaTag {
-  const tags = sections.flatMap((section) => findMediaTags(sectionPlainText(section)))
+  const tags = sections.flatMap((section) => findMediaTags(sectionPlainText(section)).map((tag) => ({ ...tag, src: sectionClipSource(tag.src, section.role) })))
   const tag = tags.findLast((candidate) => candidate.id === id)
   if (tag?.kind === 'audio') return tag
   if (tag?.kind === 'video') throw new ToolError(`@${id} is a video clip. The audio tool works on audio clips only.`)
-  if (sections.some((section) => findImageReferences(sectionPlainText(section)).some((reference) => reference.id === id))) {
+  if (sections.some((section) => findImageReferences(sectionPlainText(section), section.role).some((reference) => reference.id === id))) {
     throw new ToolError(`@${id} is an image. The audio tool works on audio clips only.`)
   }
   const ids = [...new Set(tags.filter((candidate) => candidate.kind === 'audio').map((candidate) => `@${candidate.id}`))]

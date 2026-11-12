@@ -1,6 +1,7 @@
 import { MARKER_ATTRIBUTES, escapeMarkerAttribute, markerAttributes } from '../../utils/markerAttribute'
 import { stripLiveSentinels } from './content'
 import { IMAGE_ID_SOURCE } from './images'
+import type { Role } from './types'
 
 // A clip (audio or video) is plain text, as an image reference and a tool
 // call are: no content node kind and no sentinel. It is one self-closing
@@ -24,7 +25,9 @@ import { IMAGE_ID_SOURCE } from './images'
 //   - `src`: the source that plays now: the stored file (an absolute path
 //     in a folder of `MEDIA_FOLDERS`), else the temp copy (an absolute path
 //     in `MEDIA_CACHE_FOLDER` of the cache root), else the value of `url`.
-//     A clip that has no source any more has no `src`.
+//     A clip that has no source any more has no `src`. In a user section
+//     it can also be a linked file (`isLinkedMediaPath`): a dropped file
+//     that Dez linked in place and did not copy (linkedFiles.ts).
 //   - `url`: the provider's URL of the clip, when the provider gave one. It
 //     never changes, so that a clip can go back to it when its saved file
 //     is deleted. It is a signed URL, which is a secret.
@@ -35,7 +38,9 @@ import { IMAGE_ID_SOURCE } from './images'
 //     known attributes and in its order.
 // - Tags count in every section, and callers find them in one section at a
 //   time. A tag in a user section comes from a paste or a drop of a clip
-//   file.
+//   file. A linked `src` counts only in a user section
+//   (`sectionClipSource`): a model must not choose a file of this computer
+//   that Dez then reads.
 // - Answer text from a model is escaped (`ModelTextEscaper`, toolBlocks.ts),
 //   so a model cannot write a tag.
 // - A provider gets only the request form (`mediaTagRequestText`): of a
@@ -53,10 +58,8 @@ export const MEDIA_TAG_NAMES: readonly string[] = MEDIA_TAG_KINDS.map((kind) => 
 /** The folders of the stored clips, relative to the app folder: the clips
  *  that the user saved of the ones that models and Dez tools made
  *  (`generated`), and the clips that the user pasted or dropped
- *  (`pasted`), as `IMAGE_FOLDERS` (images.ts) for images. The asset
- *  protocol scope in tauri.conf.json serves only the files directly in
- *  them, and the path regexes below are built from these names, so nothing
- *  else spells them. */
+ *  (`pasted`), as `IMAGE_FOLDERS` (images.ts) for images. The path regexes
+ *  below are built from these names, so nothing else spells them. */
 export const MEDIA_FOLDERS = {
   generated: { audio: 'assets/generated/audio', video: 'assets/generated/video' },
   pasted: { audio: 'assets/audio', video: 'assets/video' },
@@ -72,8 +75,7 @@ const CACHE_ROOT_NAME = 'dez'
 
 /** The folder of the temp copies of the clips that are not saved, relative
  *  to the cache root. It is outside the app folder, so that clips that the
- *  user did not save do not fill it. The asset protocol scope in
- *  tauri.conf.json serves only the files directly in it. */
+ *  user did not save do not fill it. */
 export const MEDIA_CACHE_FOLDER = 'media'
 
 // A stored file name with any extension. The path scrub must not depend on
@@ -118,6 +120,24 @@ export function isPastedMediaPath(path: string): boolean {
  *  the media folder of a cache root. */
 export function isTempMediaPath(path: string): boolean {
   return TEMP_MEDIA_PATH.test(path)
+}
+
+// An absolute path on one line, with no control char and no sentinel
+// (content.ts), which would break the editor's line and section scan.
+const LINKED_MEDIA_PATH = /^\/[^\u0000-\u001F\u007F\uE000-\uE003]*$/
+
+/** True for the path of a linked clip: an absolute path that is not a
+ *  stored clip or a temp copy. Dez reads such a file in place, and never
+ *  moves or deletes it. */
+export function isLinkedMediaPath(path: string): boolean {
+  return LINKED_MEDIA_PATH.test(path) && !isSavedMediaPath(path) && !isTempMediaPath(path)
+}
+
+/** The `src` of a clip's tag as a source that Dez reads, for a tag in a
+ *  section with the role `role`: null for a linked path in an agent
+ *  section, where it does not count (see the top of this file). */
+export function sectionClipSource(src: string | null, role: Role): string | null {
+  return src !== null && role !== 'user' && isLinkedMediaPath(src) ? null : src
 }
 
 /** One attribute of a tag that Dez does not know here. */
@@ -306,15 +326,15 @@ function linkDestination(target: string): string | null {
 }
 
 /** A text for people to read (Copy Markdown, Save As Markdown), with each
- *  media tag as a Markdown link, `[video](<target>)`: to the saved file
- *  when the clip has one, else to the provider's URL when it has one. A
- *  clip with neither gives only its label: a temp copy is not a lasting
- *  target. */
+ *  media tag as a Markdown link, `[video](<target>)`: to the saved file or
+ *  the linked file when the clip has one, else to the provider's URL when
+ *  it has one. A clip with neither gives only its label: a temp copy is
+ *  not a lasting target. */
 export function mediaTagsAsLinks(text: string): string {
   return splitMediaTags(text).map((piece) => {
     if (piece.kind === 'text') return piece.text
     const { kind, src, url } = piece.tag
-    const target = src !== null && isSavedMediaPath(src) ? src : url
+    const target = src !== null && (isSavedMediaPath(src) || isLinkedMediaPath(src)) ? src : url
     const destination = target === null ? null : linkDestination(target)
     return destination === null ? MEDIA_TAG_LABELS[kind] : `${MEDIA_TAG_LABELS[kind]}(${destination})`
   }).join('')

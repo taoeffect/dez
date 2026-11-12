@@ -263,8 +263,8 @@ describe('clips that a message names', () => {
     ])
     await pickModel(browser, FILMS.name, REFERENCES.name)
 
-    // A real native drop adds the file to the asset scope; this one does
-    // not, so the file is in the clip folder, which is always in it.
+    // The app's home is in the temp folder, so the drop copies the file
+    // (src/model/chat/linkedFiles.ts).
     const videoDir = appFilePath(setup.app.home, 'assets', 'video')
     const source = await writeTestFile(path.join(videoDir, 'dropped-dance.mp4'), MP4_VIDEO)
     const newest = (await editorDoc(browser)).length - 'The dancer moves to @a'.length

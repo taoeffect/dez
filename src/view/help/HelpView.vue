@@ -79,8 +79,10 @@ function onOverlayClick(e: MouseEvent) {
             <p>
               Paste or drop images, audio, and video into a message. Each one gets an id
               (<code>a</code>, <code>b</code>, …), which shows when you point at it: write
-              <code>@a</code> in a message to name it. A model that makes images, audio, or video
-              puts them in its reply. Type <code>/prompt</code> to insert a saved prompt
+              <code>@a</code> in a message to name it. Dez keeps a copy of a pasted file. A dropped
+              file stays where it is, and the message links to it, so do not move or delete it; Dez
+              keeps a copy only of a file from a temp folder. A model that makes images, audio, or
+              video puts them in its reply. Type <code>/prompt</code> to insert a saved prompt
               (Settings › Prompts).
             </p>
           </section>

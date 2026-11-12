@@ -2,23 +2,29 @@ import { describe, expect, it } from 'vitest'
 import { clipFile, clipProblem, clipSourceKind, expiryNotice, problemCard, type ClipSourceKind } from './clipState'
 
 describe('clipSourceKind', () => {
-  it('tells a saved file, a temp copy, and a URL apart', () => {
-    expect(clipSourceKind('/home/u/.config/dez/assets/generated/video/9f3c.mp4')).toBe('saved')
-    expect(clipSourceKind('/home/u/.config/dez/assets/generated/audio/9f3c.mp3')).toBe('saved')
-    expect(clipSourceKind('/home/u/.cache/dez/media/9f3c.mp4')).toBe('temp')
-    expect(clipSourceKind('https://cdn.example/v.mp4?sig=1')).toBe('remote')
-    expect(clipSourceKind('HTTP://cdn.example/v.mp4')).toBe('remote')
+  it('tells a saved file, a temp copy, and a URL apart, in any section', () => {
+    for (const role of ['user', 'agent'] as const) {
+      expect(clipSourceKind('/home/u/.config/dez/assets/generated/video/9f3c.mp4', role)).toBe('saved')
+      expect(clipSourceKind('/home/u/.config/dez/assets/generated/audio/9f3c.mp3', role)).toBe('saved')
+      expect(clipSourceKind('/home/u/.cache/dez/media/9f3c.mp4', role)).toBe('temp')
+      expect(clipSourceKind('https://cdn.example/v.mp4?sig=1', role)).toBe('remote')
+      expect(clipSourceKind('HTTP://cdn.example/v.mp4', role)).toBe('remote')
+    }
   })
 
   it('gives no source for a tag with no src', () => {
-    expect(clipSourceKind(null)).toBe('none')
+    expect(clipSourceKind(null, 'user')).toBe('none')
   })
 
-  it('takes no other file and no other URL scheme as a source', () => {
+  it('takes any other absolute path as a linked file in a user section only', () => {
+    for (const src of ['/home/u/Videos/clip.mp4', '/home/u/.config/dez/assets/generated/video/sub/9f3c.mp4']) {
+      expect(clipSourceKind(src, 'user'), src).toBe('linked')
+      expect(clipSourceKind(src, 'agent'), src).toBe('none')
+    }
+  })
+
+  it('takes no relative path and no other URL scheme as a source', () => {
     const sources = [
-      '/home/u/Videos/clip.mp4',
-      '/home/u/.config/dez/assets/images/9f3c.png',
-      '/home/u/.config/dez/assets/generated/video/sub/9f3c.mp4',
       'assets/generated/video/9f3c.mp4',
       'file:///home/u/.cache/dez/media/9f3c.mp4',
       'data:video/mp4;base64,AAAA',
@@ -27,12 +33,12 @@ describe('clipSourceKind', () => {
       'https://',
       'https://cdn.example/a b.mp4',
     ]
-    for (const src of sources) expect(clipSourceKind(src), src).toBe('none')
+    for (const src of sources) expect(clipSourceKind(src, 'user'), src).toBe('none')
   })
 })
 
 describe('clipProblem', () => {
-  const LOCAL: ClipSourceKind[] = ['saved', 'temp']
+  const LOCAL: ClipSourceKind[] = ['saved', 'temp', 'linked']
   const USABLE: ClipSourceKind[] = [...LOCAL, 'remote']
 
   it('tells that a clip with no usable source is gone, whatever failed', () => {
@@ -79,12 +85,13 @@ describe('problemCard', () => {
   const OPEN_HINT = 'Its file is still there. Open the file with another app.'
 
   it('tells only that a gone clip is no longer available, saved or not', () => {
-    expect(problemCard('gone', { type: 'video/webm', saved: false, savedPath: null })).toStrictEqual(GONE)
-    expect(problemCard('gone', { type: 'video/webm', saved: true, savedPath: '~/v.webm' })).toStrictEqual(GONE)
+    expect(problemCard('gone', { type: 'video/webm', file: null, path: null })).toStrictEqual(GONE)
+    expect(problemCard('gone', { type: 'video/webm', file: 'saved', path: '~/v.webm' })).toStrictEqual(GONE)
+    expect(problemCard('gone', { type: 'video/webm', file: 'linked', path: '~/v.webm' })).toStrictEqual(GONE)
   })
 
   it('names the format of a clip that cannot play, and tells to save it', () => {
-    expect(problemCard('cannot-play', { type: 'video/webm', saved: false, savedPath: null })).toStrictEqual({
+    expect(problemCard('cannot-play', { type: 'video/webm', file: null, path: null })).toStrictEqual({
       text: CANNOT_PLAY,
       hint: SAVE_HINT,
       file: null,
@@ -93,21 +100,29 @@ describe('problemCard', () => {
 
   it('names no format when the tag gives none', () => {
     const text = 'This computer cannot play the format of this clip.'
-    expect(problemCard('cannot-play', { type: null, saved: false, savedPath: null }).text).toBe(text)
-    expect(problemCard('cannot-play', { type: ' ', saved: false, savedPath: null }).text).toBe(text)
+    expect(problemCard('cannot-play', { type: null, file: null, path: null }).text).toBe(text)
+    expect(problemCard('cannot-play', { type: ' ', file: null, path: null }).text).toBe(text)
   })
 
   it('names the saved file of a clip that cannot play, once its path is read', () => {
-    const savedPath = '~/.config/dez/assets/generated/video/9f3c.webm'
-    expect(problemCard('cannot-play', { type: 'video/webm', saved: true, savedPath })).toStrictEqual({
+    const path = '~/.config/dez/assets/generated/video/9f3c.webm'
+    expect(problemCard('cannot-play', { type: 'video/webm', file: 'saved', path })).toStrictEqual({
       text: CANNOT_PLAY,
       hint: OPEN_HINT,
       file: 'Saved file: ~/.config/dez/assets/generated/video/9f3c.webm',
     })
-    expect(problemCard('cannot-play', { type: 'video/webm', saved: true, savedPath: null })).toStrictEqual({
+    expect(problemCard('cannot-play', { type: 'video/webm', file: 'saved', path: null })).toStrictEqual({
       text: CANNOT_PLAY,
       hint: OPEN_HINT,
       file: null,
+    })
+  })
+
+  it('names the linked file of a clip that cannot play, and does not tell to save it', () => {
+    expect(problemCard('cannot-play', { type: 'video/webm', file: 'linked', path: '~/Videos/a.webm' })).toStrictEqual({
+      text: CANNOT_PLAY,
+      hint: OPEN_HINT,
+      file: 'File: ~/Videos/a.webm',
     })
   })
 })
@@ -115,24 +130,25 @@ describe('problemCard', () => {
 describe('clipFile', () => {
   const SAVED = '/home/u/.config/dez/assets/generated/video/9f3c.webm'
   const TEMP = '/home/u/.cache/dez/media/9f3c.wav'
+  const LINKED = '/home/u/Videos/clip.mp4'
 
-  it('gives the saved file or the temp copy, also when this computer cannot play it', () => {
-    for (const src of [SAVED, TEMP]) {
-      expect(clipFile(src, null, false), src).toBe(src)
-      expect(clipFile(src, 'cannot-play', false), src).toBe(src)
+  it('gives the saved file, the temp copy, or the linked file, also when this computer cannot play it', () => {
+    for (const src of [SAVED, TEMP, LINKED]) {
+      expect(clipFile(src, 'user', null, false), src).toBe(src)
+      expect(clipFile(src, 'user', 'cannot-play', false), src).toBe(src)
     }
   })
 
-  it('gives no file for a clip that plays from its URL only, or that has no source', () => {
-    expect(clipFile('https://cdn.example/v.mp4?sig=1', null, false)).toBeNull()
-    expect(clipFile('/home/u/Videos/clip.mp4', null, false)).toBeNull()
-    expect(clipFile(null, 'gone', false)).toBeNull()
+  it('gives no file for a clip that plays from its URL only, that has no source, or that links a file in an agent section', () => {
+    expect(clipFile('https://cdn.example/v.mp4?sig=1', 'user', null, false)).toBeNull()
+    expect(clipFile(LINKED, 'agent', null, false)).toBeNull()
+    expect(clipFile(null, 'user', 'gone', false)).toBeNull()
   })
 
   it('gives no file when the file cannot be read, or while a Save or a Delete runs', () => {
-    for (const src of [SAVED, TEMP]) {
-      expect(clipFile(src, 'gone', false), src).toBeNull()
-      expect(clipFile(src, null, true), src).toBeNull()
+    for (const src of [SAVED, TEMP, LINKED]) {
+      expect(clipFile(src, 'user', 'gone', false), src).toBeNull()
+      expect(clipFile(src, 'user', null, true), src).toBeNull()
     }
   })
 })

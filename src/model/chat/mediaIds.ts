@@ -69,16 +69,20 @@ function highestMediaId(ids: Iterable<string | null>): string | null {
  *  the references and the tags in the same tick, so that no paste in
  *  between takes an id. */
 export function newMediaIds(texts: readonly string[], count: number): string[] {
+  // The ids of linked references count in every section (the `user` rule),
+  // so a new id is never the id of one.
   let id = highestMediaId(texts.flatMap((text) => [
-    ...findImageReferences(text).map((reference) => reference.id),
+    ...findImageReferences(text, 'user').map((reference) => reference.id),
     ...findMediaTags(text).map((tag) => tag.id),
   ]))
   return Array.from({ length: count }, () => (id = nextMediaId(id)))
 }
 
-/** The image references and the media tags of `text`, in doc order. */
+/** The image references and the media tags of `text`, in doc order. The
+ *  text can span sections, so linked references count in each (the `user`
+ *  rule): an id stays unique over every reference that has one. */
 function findAssets(text: string): Asset[] {
-  const references = findImageReferences(text).map((reference): Asset => ({
+  const references = findImageReferences(text, 'user').map((reference): Asset => ({
     from: reference.from,
     to: reference.to,
     id: reference.id,

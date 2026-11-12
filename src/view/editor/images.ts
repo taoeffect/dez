@@ -6,10 +6,11 @@ import { findImageReferences, imageExtension, imageMediaType, type ImageReferenc
 import { fileNameOf } from '../../utils/fileName'
 import { isMacPlatform } from '../../utils/platform'
 import { assetFactsText } from '../assetFacts'
-import { IMAGE_MAX_HEIGHT_PX, SECTION_SEP, editorSizePx } from '../thread/cmEditor'
+import { IMAGE_MAX_HEIGHT_PX, SECTION_SEP, editorSizePx, sectionsField } from '../thread/cmEditor'
 import { measureLineHeights } from '../thread/editorMeasure'
 import { selectedAssetLook } from './assetSelection'
 import { syncDomSelection } from './focus'
+import { sectionRolesChanged } from './lineBlocks'
 import { followShownRange, pendingRanges, type DocRange } from './pendingRanges'
 import { ROUND_STROKE, svgIcon } from './svgIcon'
 import { tableRowStarts } from './tables'
@@ -33,7 +34,8 @@ const naturalSizes = new Map<string, ImageSize>()
 /** The size in bytes of each image file whose size was read, by path, for
  *  the facts of the overlay. A stored image's path names one file for good
  *  (each new image gets a new file name, and no file is written again), so
- *  a widget that CM draws again needs no second read. */
+ *  a widget that CM draws again needs no second read. A linked file can
+ *  change in place, so its size is read at each load. */
 const fileSizes = new Map<string, number>()
 
 /** Gives the box of `img` the size that the theme computes from its natural
@@ -104,11 +106,11 @@ function trashIcon(): SVGSVGElement {
  *  CodeMirror. It is out of the Tab order, so Tab in the editor never lands
  *  on it while it is hidden. It has no native `title`: its tooltip is
  *  Dez's own (`trashTooltip`). */
-function trashButton(view: EditorView, widget: HTMLElement, path: string): HTMLButtonElement {
+function trashButton(view: EditorView, widget: HTMLElement, path: string, linked: boolean): HTMLButtonElement {
   const button = document.createElement('button')
   button.type = 'button'
   button.className = 'dez-image__trash'
-  button.setAttribute('aria-label', 'Delete image')
+  button.setAttribute('aria-label', linked ? 'Remove image' : 'Delete image')
   button.tabIndex = -1
   button.appendChild(trashIcon())
   button.addEventListener('mousedown', (event) => {
@@ -147,9 +149,16 @@ function idTooltip(id: string): HTMLElement {
 }
 
 /** The trash's tooltip. The "Image not found" box has no file to delete
- *  (`dez.controller/images/delete` deletes none), so its text says that
- *  only the image's text goes. */
-function trashTooltip(missing: boolean): HTMLElement {
+ *  (`dez.controller/images/delete` deletes none), and Dez never deletes a
+ *  linked file (linkedFiles.ts), so their texts say that only the image's
+ *  text goes. */
+function trashTooltip(missing: boolean, linked: boolean): HTMLElement {
+  if (linked) {
+    return tooltipContent(
+      'Remove image',
+      'Removes the image from the conversation. Its file stays where it is. Dez asks you first. You cannot undo this.',
+    )
+  }
   return tooltipContent(
     'Delete image',
     missing
@@ -200,13 +209,15 @@ function addAssetMenu(view: EditorView, wrapper: HTMLElement, path: string): voi
  *  old reference with no id) in a badge, the facts of the image, and a
  *  trash button; the badge and the trash have a tooltip. A reference to a
  *  file that does not load shows an "Image not found" box with the same
- *  overlay after its text, with no facts, so that its text can go too. */
+ *  overlay after its text, with no facts, so that its text can go too.
+ *  `linked`: the file is a linked file (linkedFiles.ts), which the trash
+ *  does not delete. */
 class ImageWidget extends WidgetType {
-  constructor(readonly path: string, readonly id: string | null) {
+  constructor(readonly path: string, readonly id: string | null, readonly linked: boolean) {
     super()
   }
   eq(other: WidgetType): boolean {
-    return other instanceof ImageWidget && other.path === this.path && other.id === this.id
+    return other instanceof ImageWidget && other.path === this.path && other.id === this.id && other.linked === this.linked
   }
   toDOM(view: EditorView): HTMLElement {
     // The image is in a wrapper, so that the widget's root element stays the
@@ -232,8 +243,8 @@ class ImageWidget extends WidgetType {
     facts.className = 'dez-image__facts'
     facts.textContent = imageFactsText(this.path)
     overlay.appendChild(facts)
-    const trash = trashButton(view, wrapper, this.path)
-    addTooltip(view, wrapper, trash, () => trashTooltip(trash.closest('.dez-image-missing') !== null))
+    const trash = trashButton(view, wrapper, this.path, this.linked)
+    addTooltip(view, wrapper, trash, () => trashTooltip(trash.closest('.dez-image-missing') !== null, this.linked))
     overlay.appendChild(trash)
     const cached = naturalSizes.get(this.path)
     if (cached) setBoxSize(img, cached)
@@ -244,7 +255,7 @@ class ImageWidget extends WidgetType {
       naturalSizes.set(this.path, size)
       setBoxSize(img, size)
       facts.textContent = imageFactsText(this.path)
-      if (!fileSizes.has(this.path)) void showFileSize(this.path, facts)
+      if (this.linked || !fileSizes.has(this.path)) void showFileSize(this.path, facts)
       if (!cached || cached.width !== size.width || cached.height !== size.height) measureLineHeights(view)
     })
     img.addEventListener('error', () => {
@@ -284,21 +295,31 @@ class ImageWidget extends WidgetType {
   }
 }
 
-/** The image references that the editor shows as images, in doc order. Not
- *  shown, so left as source text:
+/** The image references that the editor shows as images, in doc order, each
+ *  read with the role of its section (`findImageReferences`): a linked
+ *  reference shows only in a user section. With no `sectionsField`, every
+ *  line has the agent rule (stored paths only). Not shown, so left as
+ *  source text:
  *  - a reference on a line with a sentinel (a section separator or a pill
  *    marker), whose widgets and atomic ranges must stay the only ones there;
  *  - a reference on a table row line (`tableRowStarts`): a widget there
  *    becomes an extra table cell (see `tableDecorationsField` in
  *    `tables.ts`). */
-function findRenderedImages(doc: Text): ImageReference[] {
+function findRenderedImages(state: EditorState): ImageReference[] {
+  const { doc } = state
+  const sections = state.field(sectionsField, false)
   const images: ImageReference[] = []
   let lineFrom = 0
+  // The section of a line is the count of the separators before it
+  // (`sectionTexts` in lineBlocks.ts).
+  let section = 0
   for (const text of doc.iterLines()) {
     const from = lineFrom
     lineFrom += text.length + 1
+    const lineSection = section
+    if (text.includes(SECTION_SEP)) section += text.split(SECTION_SEP).length - 1
     if (!text.includes('![') || SENTINEL_CHAR.test(text)) continue
-    const references = findImageReferences(text)
+    const references = findImageReferences(text, sections?.[lineSection]?.role ?? 'agent')
     if (references.length === 0) continue
     if (tableRowStarts(doc).has(from)) continue
     for (const reference of references) images.push({ ...reference, from: from + reference.from, to: from + reference.to })
@@ -306,9 +327,9 @@ function findRenderedImages(doc: Text): ImageReference[] {
   return images
 }
 
-function buildImageDecorations(doc: Text): ImageDecorations {
-  const images = findRenderedImages(doc)
-  const decorations = Decoration.set(images.map((image) => Decoration.replace({ widget: new ImageWidget(image.path, image.id) }).range(image.from, image.to)))
+function buildImageDecorations(state: EditorState): ImageDecorations {
+  const images = findRenderedImages(state)
+  const decorations = Decoration.set(images.map((image) => Decoration.replace({ widget: new ImageWidget(image.path, image.id, image.linked) }).range(image.from, image.to)))
   return { images, decorations }
 }
 
@@ -319,8 +340,8 @@ function buildImageDecorations(doc: Text): ImageDecorations {
  *  `)`, an undo). The ranges are atomic, so the caret is never inside the
  *  hidden source. */
 const imageDecorationsField = StateField.define<ImageDecorations>({
-  create: (state) => buildImageDecorations(state.doc),
-  update: (value, tr) => tr.docChanged ? buildImageDecorations(tr.state.doc) : value,
+  create: buildImageDecorations,
+  update: (value, tr) => tr.docChanged || sectionRolesChanged(tr) ? buildImageDecorations(tr.state) : value,
   provide: (field) => [
     EditorView.decorations.from(field, (value) => value.decorations),
     EditorView.atomicRanges.of((view) => view.state.field(field).decorations),
@@ -400,31 +421,38 @@ export function imageRemovalRange(doc: Text, { from, to }: DocRange): DocRange {
 /** The image trash (`trashButton`): asks whether to delete the image whose
  *  reference starts at `from`, and on "Yes" deletes its file
  *  (`dez.controller/images/delete`), then takes the reference out of the
- *  doc (`imageRemovalRange`). The doc can change while the prompt is open
- *  or the file is being deleted (a stream), so the reference is followed
- *  (`followShownRange`). A new state of the same tab (the rebuild at the
- *  end of a stream) has no pending ranges: there the reference is found
- *  again by its path and id, when exactly one shown image has them. When the
- *  reference is gone (its text changed, another tab, no single match), no
- *  file is deleted, and a toast tells the user. A failed file delete (the
- *  controller has shown a toast) keeps the reference. If the reference
- *  goes while its file is being deleted, its text stays and shows "Image
- *  not found". The removal is not in the undo history: the file is gone,
- *  so an undo could only bring back a broken reference. Other references
- *  to the same file are left as they are. */
+ *  doc (`imageRemovalRange`). A linked image (linkedFiles.ts) keeps its
+ *  file: its prompt says so, and only its reference goes. The doc can
+ *  change while the prompt is open or the file is being deleted (a
+ *  stream), so the reference is followed (`followShownRange`). A new state
+ *  of the same tab (the rebuild at the end of a stream) has no pending
+ *  ranges: there the reference is found again by its path and id, when
+ *  exactly one shown image has them. When the reference is gone (its text
+ *  changed, another tab, no single match), no file is deleted, and a toast
+ *  tells the user. A failed file delete (the controller has shown a toast)
+ *  keeps the reference. If the reference goes while its file is being
+ *  deleted, its text stays and shows "Image not found". The removal is not
+ *  in the undo history: the file is gone, so an undo could only bring back
+ *  a broken reference. Other references to the same file are left as they
+ *  are. */
 export async function deleteImage(view: EditorView, from: number, path: string): Promise<void> {
   const image = renderedImages(view.state).find((image) => image.from === from && image.path === path)
   if (!image) return
   const followed = followShownRange(view, image, renderedImages, (other) => other.path === path && other.id === image.id)
   let range: DocRange | null = null
-  const confirmed = await sbp('dez.ui/confirm', { message: 'Are you sure you want to delete this image?' }) as boolean
+  const message = image.linked
+    ? 'Are you sure you want to remove this image from the conversation? Its file stays where it is.'
+    : 'Are you sure you want to delete this image?'
+  const confirmed = await sbp('dez.ui/confirm', { message }) as boolean
   if (confirmed && !followed.current()) {
     sbp('dez.ui/toast', 'app-global', {
-      title: 'Image not deleted',
+      title: image.linked ? 'Image not removed' : 'Image not deleted',
       message: 'The conversation changed while the prompt was open. Try again.',
       variant: 'warning',
       duration: 8000,
     })
+  } else if (confirmed && image.linked) {
+    range = followed.current()
   } else if (confirmed) {
     try {
       await sbp('dez.controller/images/delete', path)

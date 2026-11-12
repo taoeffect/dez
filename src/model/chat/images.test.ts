@@ -6,6 +6,7 @@ import {
   imageMediaType,
   isImageMediaType,
   isImagePath,
+  isLinkedImagePath,
   labelImageReferences,
   splitImageReferences,
   storedImageFile,
@@ -21,15 +22,15 @@ describe('findImageReferences', () => {
     const first = text.indexOf('![')
     const second = text.indexOf('![', first + 1)
 
-    expect(findImageReferences(text)).toEqual([
-      { from: first, to: first + PNG.length + 9, path: PNG, id: 'a', metadata: [{ key: 'id', value: 'a' }] },
-      { from: second, to: second + JPG.length + 5, path: JPG, id: null, metadata: [] },
+    expect(findImageReferences(text, 'agent')).toEqual([
+      { from: first, to: first + PNG.length + 9, path: PNG, linked: false, id: 'a', metadata: [{ key: 'id', value: 'a' }] },
+      { from: second, to: second + JPG.length + 5, path: JPG, linked: false, id: null, metadata: [] },
     ])
   })
 
   it('reads the metadata items in order, with unknown keys and escaped values', () => {
     const text = String.raw`![${PNG}](desc=a \| b \(c\) \\ d=e|id=zz|alt_2-x=)`
-    const [reference] = findImageReferences(text)
+    const [reference] = findImageReferences(text, 'agent')
 
     expect(reference.to).toBe(text.length)
     expect(reference.id).toBe('zz')
@@ -44,26 +45,26 @@ describe('findImageReferences', () => {
     const metadata = [{ key: 'id', value: 'b' }, { key: 'desc', value: String.raw`my (great) image | \ ok` }]
     const text = imageMarkdown(PNG, metadata)
 
-    expect(findImageReferences(text)).toEqual([{ from: 0, to: text.length, path: PNG, id: 'b', metadata }])
+    expect(findImageReferences(text, 'agent')).toEqual([{ from: 0, to: text.length, path: PNG, linked: false, id: 'b', metadata }])
     expect(imageMarkdown(PNG)).toBe(`![${PNG}]()`)
   })
 
   it('takes a home folder with spaces, parentheses, and non-ASCII names', () => {
     const path = '/Users/Zoë Ann (work)/.config/dez/assets/images/x_1-2.webp'
-    expect(findImageReferences(imageMarkdown(path)).map((ref) => ref.path)).toEqual([path])
+    expect(findImageReferences(imageMarkdown(path), 'agent').map((ref) => ref.path)).toEqual([path])
   })
 
   it('takes an image folder right under the root', () => {
-    expect(findImageReferences('![/assets/images/x.gif]()')).toHaveLength(1)
+    expect(findImageReferences('![/assets/images/x.gif]()', 'agent')).toHaveLength(1)
   })
 
   it('takes an image directly in the generated image folder', () => {
-    expect(findImageReferences(`![${GENERATED}](id=b)`).map((ref) => ref.path)).toEqual([GENERATED])
+    expect(findImageReferences(`![${GENERATED}](id=b)`, 'agent').map((ref) => ref.path)).toEqual([GENERATED])
   })
 
+  // In a user section these are linked references (see 'linked
+  // references' below); in an agent section they are plain text.
   it.each([
-    ['a URL', '![https://example.com/assets/images/x.png]()'],
-    ['a relative path', '![assets/images/x.png]()'],
     ['another folder', '![/home/ann/Pictures/x.png]()'],
     ['a folder name that only ends in "assets"', '![/home/ann/myassets/images/x.png]()'],
     ['a subfolder of the image folder', '![/home/ann/.config/dez/assets/images/sub/x.png]()'],
@@ -71,12 +72,20 @@ describe('findImageReferences', () => {
     ['a subfolder of the generated image folder', '![/home/ann/.config/dez/assets/generated/images/sub/x.png]()'],
     ['the generated video folder', '![/home/ann/.config/dez/assets/generated/video/x.png]()'],
     ['a generated folder outside assets', '![/home/ann/.config/dez/generated/images/x.png]()'],
+    ['an upper-case extension', '![/home/ann/.config/dez/assets/images/x.PNG]()'],
+    ['a dot in the file name', '![/home/ann/.config/dez/assets/images/x.y.png]()'],
+  ])('leaves %s as plain text in an agent section', (_case, text) => {
+    expect(findImageReferences(text, 'agent')).toEqual([])
+    expect(findImageReferences(text, 'user')).toHaveLength(1)
+  })
+
+  it.each([
+    ['a URL', '![https://example.com/assets/images/x.png]()'],
+    ['a relative path', '![assets/images/x.png]()'],
     ['a destination', `![${PNG}](${PNG})`],
     ['a broken destination', `![${PNG}](`],
     ['no `!`', `[${PNG}]()`],
     ['an unsupported extension', '![/home/ann/.config/dez/assets/images/x.bmp]()'],
-    ['an upper-case extension', '![/home/ann/.config/dez/assets/images/x.PNG]()'],
-    ['a dot in the file name', '![/home/ann/.config/dez/assets/images/x.y.png]()'],
     ['a line break in the path', '![/home/ann\n/.config/dez/assets/images/x.png]()'],
     ['a bracket in the path', '![/home/a]b/.config/dez/assets/images/x.png]()'],
     ['an item with no `=`', `![${PNG}](id)`],
@@ -89,16 +98,17 @@ describe('findImageReferences', () => {
     ['an unescaped paren in a value', `![${PNG}](desc=a(b))`],
     ['a backslash that escapes nothing', String.raw`![${PNG}](desc=a\b)`],
     ['a line break in the metadata', `![${PNG}](id=a\n)`],
-  ])('leaves %s as plain text', (_case, text) => {
-    expect(findImageReferences(text)).toEqual([])
+  ])('leaves %s as plain text in any section', (_case, text) => {
+    expect(findImageReferences(text, 'agent')).toEqual([])
+    expect(findImageReferences(text, 'user')).toEqual([])
   })
 
   it('does not join a bracketed text with a later reference on its line', () => {
     const reference = imageMarkdown(PNG)
     const text = `![/notes] see ${reference}`
 
-    expect(findImageReferences(text)).toEqual([
-      { from: text.indexOf(reference), to: text.length, path: PNG, id: null, metadata: [] },
+    expect(findImageReferences(text, 'user')).toEqual([
+      { from: text.indexOf(reference), to: text.length, path: PNG, linked: false, id: null, metadata: [] },
     ])
   })
 
@@ -106,15 +116,15 @@ describe('findImageReferences', () => {
     const inner = '![/a)/assets/images/b.png]()'
     const text = `![${PNG}](id=A|x=${inner}`
 
-    expect(findImageReferences(text).map((ref) => text.slice(ref.from, ref.to))).toEqual([inner])
+    expect(findImageReferences(text, 'agent').map((ref) => text.slice(ref.from, ref.to))).toEqual([inner])
   })
 })
 
 describe('isImagePath', () => {
-  it('accepts exactly the paths whose markdown the recognizer finds', () => {
+  it('accepts exactly the paths whose markdown the recognizer finds in an agent section', () => {
     for (const path of [PNG, JPG, GENERATED, '/assets/images/x.jpeg']) {
       expect(isImagePath(path)).toBe(true)
-      expect(findImageReferences(imageMarkdown(path)).map((ref) => ref.path)).toEqual([path])
+      expect(findImageReferences(imageMarkdown(path), 'agent').map((ref) => ref.path)).toEqual([path])
     }
     for (const path of [
       'C:\\Users\\ann\\.config\\dez/assets/images/x.png',
@@ -126,8 +136,51 @@ describe('isImagePath', () => {
       '/home/ann/.cache/dez/media/x.png',
     ]) {
       expect(isImagePath(path)).toBe(false)
-      expect(findImageReferences(imageMarkdown(path)).map((ref) => ref.path)).not.toEqual([path])
+      expect(findImageReferences(imageMarkdown(path), 'agent').map((ref) => ref.path)).not.toEqual([path])
     }
+  })
+})
+
+describe('linked references', () => {
+  const LINKED = '/home/ann/Pictures/Trip (2024)/IMG_0001.JPG'
+
+  it('counts a linked path in a user section only, with a `)` in its path and any letter case', () => {
+    const text = `See ![${LINKED}](id=c) and ![${PNG}](id=a)`
+
+    expect(findImageReferences(text, 'user').map(({ path, linked, id }) => ({ path, linked, id }))).toEqual([
+      { path: LINKED, linked: true, id: 'c' },
+      { path: PNG, linked: false, id: 'a' },
+    ])
+    expect(findImageReferences(text, 'agent').map((ref) => ref.path)).toEqual([PNG])
+  })
+
+  it('tells a linked path from a stored path and from a path that is no image', () => {
+    for (const path of [LINKED, '/x.webp', '/home/ann/a.b/c.svg']) expect(isLinkedImagePath(path), path).toBe(true)
+    for (const path of [
+      PNG,
+      GENERATED,
+      'Pictures/x.png',
+      '/home/ann/x.bmp',
+      '/home/ann/x.png/',
+      '/home/[ann]/x.png',
+      '/home/ann\n/x.png',
+      '/home/ann/x\uE000.png',
+    ]) {
+      expect(isLinkedImagePath(path), path).toBe(false)
+    }
+  })
+
+  it('splits and labels a linked reference only in a user section', () => {
+    const reference = `![${LINKED}]()`
+    const text = `a ${reference} b`
+
+    expect(splitImageReferences(text, 'user')).toEqual([
+      { kind: 'text', text: 'a ' },
+      { kind: 'image', path: LINKED, source: reference },
+      { kind: 'text', text: ' b' },
+    ])
+    expect(labelImageReferences(text, 'user')).toBe('a [image] b')
+    expect(labelImageReferences(text, 'agent')).toBe(text)
   })
 })
 
@@ -163,7 +216,7 @@ describe('storedImageFile', () => {
 
 describe('splitImageReferences', () => {
   it('gives text and image pieces in order, with no empty text pieces', () => {
-    expect(splitImageReferences(`![${PNG}](id=a)![${JPG}]() What is this?\n`)).toEqual([
+    expect(splitImageReferences(`![${PNG}](id=a)![${JPG}]() What is this?\n`, 'agent')).toEqual([
       { kind: 'image', path: PNG, source: `![${PNG}](id=a)` },
       { kind: 'image', path: JPG, source: `![${JPG}]()` },
       { kind: 'text', text: ' What is this?\n' },
@@ -171,7 +224,7 @@ describe('splitImageReferences', () => {
   })
 
   it('keeps whitespace-only text between images', () => {
-    expect(splitImageReferences(`a\n![${PNG}]()\n\n![${JPG}]()`)).toEqual([
+    expect(splitImageReferences(`a\n![${PNG}]()\n\n![${JPG}]()`, 'agent')).toEqual([
       { kind: 'text', text: 'a\n' },
       { kind: 'image', path: PNG, source: `![${PNG}]()` },
       { kind: 'text', text: '\n\n' },
@@ -180,22 +233,22 @@ describe('splitImageReferences', () => {
   })
 
   it('gives a text with no reference as one piece, and an empty text as none', () => {
-    expect(splitImageReferences('![x](https://example.com/x.png)')).toEqual([
+    expect(splitImageReferences('![x](https://example.com/x.png)', 'user')).toEqual([
       { kind: 'text', text: '![x](https://example.com/x.png)' },
     ])
-    expect(splitImageReferences('')).toEqual([])
+    expect(splitImageReferences('', 'user')).toEqual([])
   })
 })
 
 describe('labelImageReferences', () => {
   it('replaces each reference with [image] and keeps other images', () => {
-    expect(labelImageReferences(`![${PNG}](id=a) vs ![${JPG}]() vs ![x](y.png) vs ![${PNG}](id=A)`))
+    expect(labelImageReferences(`![${PNG}](id=a) vs ![${JPG}]() vs ![x](y.png) vs ![${PNG}](id=A)`, 'user'))
       .toBe(`[image] vs [image] vs ![x](y.png) vs ![${PNG}](id=A)`)
   })
 
   it('uses a given label as plain text', () => {
-    expect(labelImageReferences(`a ![${PNG}]() b`, '$&')).toBe('a $& b')
-    expect(labelImageReferences(`a ![${PNG}]() b`, '')).toBe('a  b')
+    expect(labelImageReferences(`a ![${PNG}]() b`, 'agent', '$&')).toBe('a $& b')
+    expect(labelImageReferences(`a ![${PNG}]() b`, 'agent', '')).toBe('a  b')
   })
 })
 
@@ -223,6 +276,8 @@ describe('image media types', () => {
     expect(imageMediaType('/a/assets/generated/images/x.svg')).toBe('image/svg+xml')
     expect(imageMediaType('/a/assets/images/x.bmp')).toBeNull()
     expect(imageMediaType('/a/assets/images/x.constructor')).toBeNull()
+    expect(imageMediaType('/home/ann/Photos/IMG_0001.JPG')).toBe('image/jpeg')
+    expect(imageMediaType('/home/ann/Photos/x.Png')).toBe('image/png')
     expect(imageMediaType('png')).toBeNull()
   })
 })

@@ -42,6 +42,9 @@ const jsonBody = (request: NativeHttpRequest) => JSON.parse(request.body as stri
 const APP_DIR = '/home/u/.config/dez'
 const STORED_IMAGE = Uint8Array.from([137, 80, 78, 71, 13, 10, 26, 10, 0, 255])
 const STORED_SVG = new TextEncoder().encode('<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 60 30"/>')
+// The linked files that dez.controller/images/readFile reads, by path, with
+// the type that the asset protocol gives; any other path fails to read.
+let linkedImages: Record<string, File> = {}
 
 const dataUrl = (mediaType: string, bytes: Uint8Array) => `data:${mediaType};base64,${bytesToBase64(bytes)}`
 
@@ -162,6 +165,12 @@ sbp('sbp/selectors/register', {
     if (path === 'assets/generated/images/logo.svg') return STORED_SVG
     throw `Failed to read ${path}: No such file or directory (os error 2)`
   },
+  async 'dez.controller/images/readFile' (path: string): Promise<File> {
+    imageReads.push(path)
+    const file = linkedImages[path]
+    if (!file) throw new Error('The file cannot be read (HTTP 404).')
+    return file
+  },
   async 'dez.controller/images/redraw' (_file: Blob, plan: (size: ImageSize) => ImageDrawing | null, mediaType: DrawnMediaType): Promise<DrawnImage | null> {
     if (!storedImageSize) throw new Error('unknown image format')
     const drawing = plan(storedImageSize)
@@ -228,6 +237,7 @@ beforeEach(() => {
   streamRequests = []
   streamRequestIds = []
   imageReads = []
+  linkedImages = {}
   downloadRequests = []
   storedImageSize = { width: 1024, height: 768 }
   drawings = []
@@ -645,6 +655,31 @@ describe('images in chat streams', () => {
     await expect(streamImage('/home/other/.config/dez/assets/images/red.png')).rejects.toThrow(MISSING_IMAGE('red.png'))
 
     expect(imageReads).toEqual([])
+    expect(streamRequests).toEqual([])
+  })
+
+  it('sends the bytes of a linked image, read where it is, with the type of its bytes, else of its extension', async () => {
+    linkedImages = {
+      '/home/u/Pictures/Fox (1).JPG': new File([STORED_IMAGE], 'Fox (1).JPG', { type: 'image/png' }),
+      '/home/u/Pictures/b.WEBP': new File([STORED_IMAGE], 'b.WEBP', { type: '' }),
+    }
+
+    await streamImage('/home/u/Pictures/Fox (1).JPG')
+    await streamImage('/home/u/Pictures/b.WEBP')
+
+    expect(imageReads).toStrictEqual(['/home/u/Pictures/Fox (1).JPG', '/home/u/Pictures/b.WEBP'])
+    expect(streamRequests.map((request) => JSON.parse(request.body as string).messages[0].content[1].image_url.url)).toStrictEqual([
+      dataUrl('image/png', STORED_IMAGE),
+      dataUrl('image/webp', STORED_IMAGE),
+    ])
+  })
+
+  it('fails before the request when a linked image is gone, and tells how to fix the message', async () => {
+    await expect(streamImage('/home/u/Pictures/gone.png')).rejects.toThrow(
+      'The image file gone.png is gone or moved, or Dez cannot read it. Drop the image again, or remove its reference from the message.',
+    )
+
+    expect(imageReads).toStrictEqual(['/home/u/Pictures/gone.png'])
     expect(streamRequests).toEqual([])
   })
 

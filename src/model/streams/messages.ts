@@ -2,7 +2,7 @@ import type { MessagePart, ModelRef, Section, SectionThinking, ThinkingReplay } 
 import { sectionIsEmpty, sectionPlainText } from '../chat/content'
 import { findAssetMentions, type AssetMention } from '../chat/imageMentions'
 import { findImageReferences, IMAGE_TOOL_KEY, requestImageReferenceStart, type ImageReference } from '../chat/images'
-import { findMediaTags, mediaTagRequestText, mediaTagsForRequest, splitMediaTags, type MediaTag, type MediaTagKind } from '../chat/mediaTags'
+import { findMediaTags, mediaTagRequestText, mediaTagsForRequest, sectionClipSource, splitMediaTags, type MediaTag, type MediaTagKind } from '../chat/mediaTags'
 import { sameModelRef } from '../chat/modelRef'
 import { holdsStoredFilePath, withoutStoredFilePaths } from '../chat/storedFilePaths'
 import { thinkingField } from '../chat/thinking'
@@ -25,8 +25,8 @@ export interface RequestOptions {
 }
 
 // The request messages: every section that has text, in order. No path of a
-// file that Dez stores ever goes to a provider: every text (user and agent
-// text, prompt bodies, tool arguments and results) goes through
+// file that Dez stores or links ever goes to a provider: every text (user
+// and agent text, prompt bodies, tool arguments and results) goes through
 // `withoutStoredFilePaths`, so an image reference goes as `![image](id=a)`,
 // with the ids and other metadata that later requests can name. A clip goes
 // as its tag with only the id and the type (`mediaTagRequestText`), in a
@@ -67,7 +67,7 @@ export function sectionsToStreamMessages(sections: Section[], requestModel: Mode
   const newestUser = sentSections.findLastIndex((section) => section.role === 'user')
   const messages = sentSections.flatMap((section, index): StreamMessage[] => {
     const text = sectionPlainText(section)
-    for (const { id, path } of findImageReferences(text)) {
+    for (const { id, path } of findImageReferences(text, section.role)) {
       if (id !== null) imagesById.set(id, path)
     }
     if (section.role === 'agent') return agentSectionMessages(section, requestModel, options.sendTools)
@@ -161,7 +161,7 @@ export function mediaRequestInput(
   const text = clipText(rules.text, prompt.trim())
   const input = { ...text, images, imagesLeftOut, clips, clipsLeftOut }
   if (messageImages.length > 0 || clips.some((clip) => clip.kind === 'video') || minInputImages(kind, rules.images) !== 1) return input
-  const newest = sections.map((section) => findImageReferences(sectionPlainText(section)).at(-1)).findLast((reference) => reference !== undefined)
+  const newest = sections.map((section) => findImageReferences(sectionPlainText(section), section.role).at(-1)).findLast((reference) => reference !== undefined)
   return { ...input, images: newest ? [newest.path] : [] }
 }
 
@@ -181,10 +181,12 @@ export function messageClips(sections: readonly Section[]): ClipAttachment[] {
   const clipsById = new Map<string, ClipAttachment>()
   for (const section of sections.slice(0, messageIndex + 1)) {
     const text = sectionPlainText(section)
-    for (const { id } of findImageReferences(text)) {
+    for (const { id } of findImageReferences(text, section.role)) {
       if (id !== null) imageIds.add(id)
     }
-    for (const { kind, id, type, src, url, expires } of findMediaTags(text)) clipsById.set(id, { kind, id, type, src, url, expires })
+    for (const { kind, id, type, src, url, expires } of findMediaTags(text)) {
+      clipsById.set(id, { kind, id, type, src: sectionClipSource(src, section.role), url, expires })
+    }
   }
 
   const clips = new Map<string, ClipAttachment>()
@@ -213,7 +215,7 @@ export function messageClips(sections: readonly Section[]): ClipAttachment[] {
 // nothing stay as they are. `sections` give the id of each image (the ids
 // are unique in a tab).
 function promptWithNames(parts: MessagePart[], imageNames: ReadonlyMap<string, string>, clipNames: ReadonlyMap<string, string>, sections: Section[]): string {
-  const pathsById = new Map(sections.flatMap((section) => findImageReferences(sectionPlainText(section)).flatMap(({ id, path }) => (id === null ? [] : [[id, path] as const]))))
+  const pathsById = new Map(sections.flatMap((section) => findImageReferences(sectionPlainText(section), section.role).flatMap(({ id, path }) => (id === null ? [] : [[id, path] as const]))))
   // `text` with each mention of an image or a clip that goes as its name.
   // A mention ends with a letter, so it is never part of a reference that
   // ends a text.
@@ -351,7 +353,7 @@ function roundThinking(section: Section, requestModel: ModelRef, rounds: AgentRo
   const { thinking } = section
   if (!thinking || !sameModelRef(section.model, requestModel)) return {}
   const madeByModel = ({ metadata }: ImageReference) => metadata.every((item) => item.key !== IMAGE_TOOL_KEY)
-  if (findImageReferences(rounds[index].text).some(madeByModel)) return {}
+  if (findImageReferences(rounds[index].text, 'agent').some(madeByModel)) return {}
 
   const entries = thinking.rounds ?? []
   const textUpTo = (entry: number) => entries[entry]?.from ?? thinking.text.length
@@ -477,7 +479,7 @@ function messageTextPieces(text: string): MessageTextPiece[] {
       pieces.push({ kind: 'gap', text: gap, mentions: findAssetMentions(gap) })
     }
     let end = 0
-    for (const { from, to, path } of findImageReferences(piece.text)) {
+    for (const { from, to, path } of findImageReferences(piece.text, 'user')) {
       addGap(end, from)
       pieces.push({ kind: 'reference', text: withoutStoredFilePaths(piece.text.slice(from, to)), path })
       end = to

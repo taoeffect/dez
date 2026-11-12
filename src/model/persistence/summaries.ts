@@ -10,8 +10,8 @@ import type { ConversationData, ConversationSummary, SectionData } from './types
 // gives a space: its markup and its result are not reply text. A media tag
 // shows as `[audio]` or `[video]`.
 function nodePlainText(node: SectionData['nodes'][number], role: Role): string {
-  if (node.kind === 'prompt') return labelImageReferences(node.body)
-  return labelImageReferences(labelMediaTags(role === 'agent' ? labelToolBlocks(node.text, ' ') : node.text))
+  if (node.kind === 'prompt') return labelImageReferences(node.body, role)
+  return labelImageReferences(labelMediaTags(role === 'agent' ? labelToolBlocks(node.text, ' ') : node.text), role)
 }
 
 function sectionHasVisibleContent(section: SectionData): boolean {

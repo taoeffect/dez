@@ -51,18 +51,14 @@ pub struct AppFileEntry {
 
 // All app data is under `$HOME/.config/dez/` on every OS. The path comes from
 // $HOME on purpose, not from Tauri's path API. `key_store_path` in
-// key_store.rs builds the same folder, and so does the `assetProtocol` scope
-// in tauri.conf.json (`$HOME/.config/dez/assets/images/*`, the pasted clip
-// folders `assets/audio/` and `assets/video/`, and the `assets/generated/`
-// folders).
+// key_store.rs builds the same folder. The `assetProtocol` scope in
+// tauri.conf.json allows every file, so it names no folder of this one.
 fn base_dir() -> PathBuf {
     let home = std::env::var("HOME").unwrap_or_else(|_| ".".into());
     PathBuf::from(home).join(".config").join("dez")
 }
 
-// The OS cache folder comes from the `dirs` crate, as Tauri's `$CACHE` does:
-// the `assetProtocol` scope in tauri.conf.json (`$CACHE/dez/media/*`) must
-// name the folder that this function builds.
+// The OS cache folder comes from the `dirs` crate, as Tauri's `$CACHE` does.
 fn root_dir(root: FileRoot) -> Result<PathBuf, String> {
     match root {
         FileRoot::App => Ok(base_dir()),
@@ -542,7 +538,8 @@ pub(crate) mod tests {
     }
 
     // The files that the user did not save must not fill the app folder. The
-    // asset scope in tauri.conf.json names the folder `dez` too.
+    // stored-file path rules of the frontend (storedFilePaths.ts) name the
+    // folder `dez` too.
     #[test]
     fn the_cache_root_is_a_dez_folder_outside_the_app_folder() {
         let cache = root_dir(FileRoot::Cache).expect("cache root");

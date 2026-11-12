@@ -544,8 +544,8 @@ describe('dez.controller/tools/run', () => {
     it.each([
       ['the file cannot be read', () => {
         readImage = async () => { throw new Error(`Failed to read ${stored('fox.png')}: HTTP 404`) }
-      }, 'Dez cannot read the file of the image @a: the file is gone, or Dez may not read it. '
-        + 'This is not a fault of the call. Tell the user, who can paste the image again (it then gets a new id).'],
+      }, 'Dez cannot read the file of the image @a: the file is gone or moved, or Dez may not read it. '
+        + 'This is not a fault of the call. Tell the user, who can paste or drop the image again (it then gets a new id).'],
       ['the save fails', () => {
         saveImage = async () => { throw new Error('The Dez folder /home/u/.config/dez cannot hold images') }
       }, 'Dez could not save the new image, so there is no new image. This is not a fault of the call, and Dez showed the user the cause. '

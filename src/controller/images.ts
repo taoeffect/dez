@@ -4,6 +4,7 @@ import { getCurrentWebview } from '@tauri-apps/api/webview'
 import { changeColors } from '../model/chat/imageColors'
 import { svgOfPng, UnwritableImageTypeError, type DrawnImage, type DrawnMediaType, type ImageDrawing, type ImageSize } from '../model/chat/imageDrawing'
 import { IMAGE_FOLDERS, imageExtension, isImagePath, storedImageFile, type ImageFolder, type ImageMediaType } from '../model/chat/images'
+import { dropCopiesFile, pairDroppedFiles } from '../model/chat/linkedFiles'
 import { FileTooLargeError } from '../model/chat/mediaFiles'
 import { ExplainedError, errorText, rawErrorText } from '../utils/errorText'
 import { fileNameOf } from '../utils/fileName'
@@ -13,6 +14,25 @@ import { fileNameOf } from '../utils/fileName'
 const LOSSY_QUALITY = 0.95
 
 let fileDropsWatched = false
+
+// The canonical folders whose dropped files Dez copies (`dropCopiesFile`):
+// the temp folders of the OS, the app folder, and the cache root. They do
+// not change while Dez runs, so they are read once; a failed read is tried
+// again at the next drop.
+let dropCopyFolders: Promise<string[]> | null = null
+
+function copyFolders(): Promise<string[]> {
+  dropCopyFolders ??= Promise.all([
+    sbp('dez.native/tempFolders') as Promise<string[]>,
+    ...(['app', 'cache'] as const).map(async (root) => {
+      const folder = await sbp('dez.native/getAppDir', root) as string
+      // The cache root can be missing until Dez writes a temp copy.
+      return await (sbp('dez.native/canonicalPath', folder) as Promise<string>).catch(() => folder)
+    }),
+  ]).then(([temp, ...dez]) => [...temp, ...dez])
+  dropCopyFolders.catch(() => { dropCopyFolders = null })
+  return dropCopyFolders
+}
 
 export default sbp('sbp/selectors/register', {
   // Stores the bytes of an image under a new name in an image folder
@@ -72,8 +92,9 @@ export default sbp('sbp/selectors/register', {
     }
   },
 
-  // The URL that loads a stored image in the webview through Tauri's asset
-  // protocol. Views use this selector because they may not import Tauri APIs.
+  // The URL that loads a stored or linked image in the webview through
+  // Tauri's asset protocol. Views use this selector because they may not
+  // import Tauri APIs.
   'dez.controller/images/displayUrl' (path: string): string {
     return convertFileSrc(path)
   },
@@ -94,11 +115,11 @@ export default sbp('sbp/selectors/register', {
     return total === undefined ? null : Number(total)
   },
 
-  // Reads a file by its absolute path through the asset protocol: a file in
-  // an app folder that the protocol's scope has (a stored image, a media
-  // clip), or a file of a native file drop (Tauri adds each dropped path to
-  // the scope). The protocol takes the type from the bytes, and for a file
-  // with no magic number, such as `.svg`, from the extension. With
+  // Reads a file by its absolute path through the asset protocol, whose
+  // scope is the whole file system (tauri.conf.json): a stored image, a
+  // media clip, a linked file (src/model/chat/linkedFiles.ts), or a file of
+  // a native file drop. The protocol takes the type from the bytes, and for
+  // a file with no magic number, such as `.svg`, from the extension. With
   // `maxBytes`, a larger file is not read: one request asks its size first
   // (`dez.controller/images/fileSize`), and when that gives no size, the
   // size of the bytes read is checked. Rejects when the file cannot be
@@ -116,6 +137,57 @@ export default sbp('sbp/selectors/register', {
     const blob = await response.blob()
     if (maxBytes !== undefined && blob.size > maxBytes) throw new FileTooLargeError(blob.size, maxBytes)
     return new File([blob], fileNameOf(path), { type: blob.type })
+  },
+
+  // The path by which a drop links the dropped file at `path` (an absolute
+  // path), or null when the drop must copy the file: it is in a temp folder
+  // or a folder of Dez (`dropCopiesFile`, src/model/chat/linkedFiles.ts),
+  // or its canonical path cannot be read (a missing file, which the copy
+  // then reports). The check reads the canonical paths, so a link or a `..`
+  // cannot hide a temp folder. The link keeps the path as the drop gave it,
+  // which is the path that the user knows (on Fedora Atomic, `/home` is a
+  // link to `/var/home`).
+  async 'dez.controller/images/linkPath' (path: string): Promise<string | null> {
+    try {
+      const [canonical, folders] = await Promise.all([
+        sbp('dez.native/canonicalPath', path) as Promise<string>,
+        copyFolders(),
+      ])
+      return dropCopiesFile(canonical, folders) ? null : path
+    } catch (error) {
+      // The native error names no path; the path stays out of the log.
+      console.error('Failed to tell whether to link or copy a dropped file:', error)
+      return null
+    }
+  },
+
+  // The paths of the files of an HTML5 drop (macOS), in the order of
+  // `files`; null for a file whose path is not known. The drop event gives
+  // no path, so the paths come from the drag pasteboard
+  // (`dez.native/draggedFilePaths`), and pair up with the files by name and
+  // size (`pairDroppedFiles`). Only the size of a path whose name is the
+  // name of a dropped file is read. A failure gives null paths: the drop
+  // then copies the files.
+  async 'dez.controller/images/droppedFilePaths' (files: readonly File[]): Promise<(string | null)[]> {
+    let paths: string[]
+    try {
+      paths = await sbp('dez.native/draggedFilePaths') as string[]
+    } catch (error) {
+      console.error('Failed to read the paths of the dragged files:', error)
+      return files.map(() => null)
+    }
+    const names = new Set(files.map((file) => file.name.normalize('NFC')))
+    const dragged = await Promise.all(paths
+      .filter((path) => names.has(fileNameOf(path).normalize('NFC')))
+      .map(async (path) => {
+        try {
+          return { path, size: await sbp('dez.controller/images/fileSize', path) as number | null }
+        } catch (error) {
+          console.error('Failed to read the size of a dragged file:', error)
+          return { path, size: null }
+        }
+      }))
+    return pairDroppedFiles(files, dragged)
   },
 
   // Draws an image again in the webview: decodes `file` (an image of any

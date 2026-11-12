@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { mediaTagText, type MediaTagData } from '../chat/mediaTags'
+import { mediaTagRequestText, mediaTagText, type MediaTagData } from '../chat/mediaTags'
 import { toolBlockText, type ToolBlockStatus } from '../chat/toolBlocks'
 import type { ModelRef, Section, SectionThinking, ThinkingReplay } from '../chat/types'
 import type { ClipInputRules, MediaKind } from '../providers/types'
@@ -366,6 +366,17 @@ describe('messageClips', () => {
 
     expect(messageClips(sections)).toStrictEqual([])
   })
+
+  // A model must not choose a file of this computer that Dez then reads.
+  it('gives the linked path of a clip in a user message, and no source for a linked path in a reply', () => {
+    const linked = '/home/u/Videos/dance (1).mp4'
+    const sections = [
+      reply('a1', mediaTagText({ ...SONG, src: '/home/u/Music/song.mp3' })),
+      user('u1', `${mediaTagText({ ...PASTED_DANCE, src: linked })}\nMix @f with @c`),
+    ]
+
+    expect(messageClips(sections)).toStrictEqual([attached({ ...PASTED_DANCE, src: linked }), attached({ ...SONG, src: null })])
+  })
 })
 
 describe('sectionsToStreamMessages: images of user messages', () => {
@@ -516,6 +527,25 @@ describe('sectionsToStreamMessages: images of user messages', () => {
       imagesLeftOut: 2,
     })
     expect(sent([...earlier, user('u2', 'What is it?')], false).imagesLeftOut).toBe(0)
+  })
+
+  it('sends a linked image of a user message as an image part, and no linked path in any text', () => {
+    const linked = '/home/u/Pictures/My fox (1).JPG'
+    const typed = '/home/u/Pictures/b.png'
+    const sections = [
+      user('u1', `![${linked}](id=a) A fox`),
+      reply('a1', `Not mine: ![${typed}](id=b|tool=image)\n${mediaTagText({ ...SONG, src: '/home/u/Music/s.mp3' })}`),
+      user('u2', `Like @a or @b?\n${mediaTagText({ ...PASTED_DANCE, src: '/home/u/Videos/d.mp4' })}`),
+    ]
+
+    expect(sent(sections).messages).toStrictEqual([
+      { role: 'user', content: '![image](id=a) A fox' },
+      { role: 'agent', content: `Not mine: ![image](id=b|tool=image)\n${mediaTagRequestText(SONG)}` },
+      { role: 'user', content: [{ type: 'text', text: 'Like @a' }, { type: 'image', path: linked }, { type: 'text', text: ` or @b?\n${SENT_DANCE}` }] },
+    ])
+    expect(sent([user('u1', `![${linked}](id=a) A fox`)]).messages).toStrictEqual([
+      { role: 'user', content: [{ type: 'text', text: '![image](id=a)' }, { type: 'image', path: linked }, { type: 'text', text: ' A fox' }] },
+    ])
   })
 })
 

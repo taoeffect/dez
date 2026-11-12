@@ -1,5 +1,10 @@
+import fs from 'node:fs'
+import path from 'node:path'
+import { fileURLToPath } from 'node:url'
 import type { Point } from './dom'
 import type { E2EBrowser } from './session'
+
+const linkedDropsDir = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../artifacts/linked-drops')
 
 /** A file for `dropFiles`. */
 export interface DroppedFile {
@@ -33,9 +38,10 @@ export async function dropFiles (browser: E2EBrowser, point: Point, files: Dropp
  *  sends it when a file manager drops `paths` at `point` (CSS px). The
  *  native drop is on only on Linux (src-tauri/tauri.linux.conf.json), and
  *  WebDriver cannot drive an OS drag, so the page emits the event itself.
- *  Unlike a real drop, this event adds no path to the asset-protocol
- *  scope: a dropped file must be in a folder of stored files (images,
- *  pasted clips), which are always in the scope. */
+ *  The asset-protocol scope has every file (src-tauri/tauri.conf.json), so
+ *  the app reads a dropped file at any path. The app's home is in the temp
+ *  folder (app.ts), so the app copies a file from there, and links a file
+ *  from any other folder (src/model/chat/linkedFiles.ts). */
 export async function nativeDrop (browser: E2EBrowser, point: Point, paths: string[]): Promise<void> {
   await browser.execute(async (at: Point, dropped: string[]) => {
     const internals = Reflect.get(window, '__TAURI_INTERNALS__') as { invoke: (command: string, args: unknown) => Promise<unknown> }
@@ -45,4 +51,16 @@ export async function nativeDrop (browser: E2EBrowser, point: Point, paths: stri
       payload: { paths: dropped, position: at },
     })
   }, point, paths)
+}
+
+/** A new, empty folder `name` for the files of a drop that the app links
+ *  in place (src/model/chat/linkedFiles.ts). It is in the gitignored
+ *  tests/e2e/artifacts/, so it is out of every temp folder (the app's home
+ *  is in one: app.ts) while the repository is. The spec removes it in
+ *  `afterAll`. */
+export async function linkedDropDir (name: string): Promise<string> {
+  const dir = path.join(linkedDropsDir, name)
+  await fs.promises.rm(dir, { recursive: true, force: true })
+  await fs.promises.mkdir(dir, { recursive: true })
+  return dir
 }

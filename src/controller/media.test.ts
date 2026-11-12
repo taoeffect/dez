@@ -54,6 +54,7 @@ let streamBody: AsyncIterable<Uint8Array>
 let savedFiles: Array<{ file: AppFileRef, bytes: Uint8Array }> = []
 let saveAppFile: () => Promise<void>
 let readFiles: string[] = []
+let readCaps: Array<number | undefined> = []
 let readFile: (path: string) => Promise<File>
 let consoleError: MockInstance<typeof console.error>
 
@@ -105,8 +106,9 @@ sbp('sbp/selectors/register', {
     await saveAppFile()
     savedFiles.push({ file: { root, path } as AppFileRef, bytes })
   },
-  async 'dez.controller/images/readFile' (path: string): Promise<File> {
+  async 'dez.controller/images/readFile' (path: string, { maxBytes }: { maxBytes?: number } = {}): Promise<File> {
     readFiles.push(path)
+    readCaps.push(maxBytes)
     return readFile(path)
   },
 })
@@ -132,6 +134,7 @@ beforeEach(() => {
   savedFiles = []
   saveAppFile = async () => {}
   readFiles = []
+  readCaps = []
   readFile = async () => {
     throw new Error('The file cannot be read (HTTP 404).')
   }
@@ -453,7 +456,17 @@ describe('dez.controller/media/readClip', () => {
     expect(await bytesOf(await readClip({ type: 'audio/mpeg', src: TEMP_PATH, url: CLIP_URL, expires: FUTURE }))).toStrictEqual([TEMP_PATH.length])
 
     expect(readFiles).toStrictEqual([SAVED_PATH, TEMP_PATH])
+    expect(readCaps).toStrictEqual([undefined, undefined])
     expect(downloads).toEqual([])
+  })
+
+  it('reads a linked file through the asset protocol, up to the size of a clip that Dez stores', async () => {
+    const linked = '/home/ann/Music/song (live).mp3'
+    readFile = async () => new File([Uint8Array.from([9])], 'song (live).mp3', { type: 'audio/mpeg' })
+
+    expect(await bytesOf(await readClip({ type: 'audio/mpeg', src: linked, url: null, expires: null }))).toStrictEqual([9])
+    expect(readFiles).toStrictEqual([linked])
+    expect(readCaps).toStrictEqual([MAX_SAVED_CLIP_BYTES])
   })
 
   it('downloads a clip that plays from its URL once, with no header, to a part file that it reads and deletes, and gives the bytes with the clip type', async () => {
@@ -533,11 +546,9 @@ describe('dez.controller/media/readClip', () => {
       'The download of the clip failed: its server gave no answer, the answer broke off, the clip is larger than 1.0 GB, or Dez could not write the file.',
     ])
 
-    // A path that is in no media folder is never read. A path of another
-    // home in the form of a media folder goes to the asset protocol, whose
-    // scope refuses it.
-    const foreign = await readError({ type: 'audio/mpeg', src: '/home/bob/song.mp3', url: null, expires: null })
-    expect([foreign.problem, foreign.details]).toStrictEqual(['unreadable', 'A source of the clip is not a file of Dez or a web address.'])
+    // A source that is no absolute path and no web address is never read.
+    const foreign = await readError({ type: 'audio/mpeg', src: 'Music/song.mp3', url: null, expires: null })
+    expect([foreign.problem, foreign.details]).toStrictEqual(['unreadable', 'A source of the clip is not a file of this computer or a web address.'])
 
     for (const error of [expired, unreadable, foreign]) {
       expect(error.message).not.toContain('/home/')

@@ -3,10 +3,10 @@ import { EditorState, type Extension } from '@codemirror/state'
 import { EditorView, dropCursor } from '@codemirror/view'
 import { SENTINEL_CHAR } from '../../model/chat/content'
 import { wholeImageDrawing, type DrawnImage } from '../../model/chat/imageDrawing'
-import { imageMarkdown, isImageMediaType, type ImageMediaType } from '../../model/chat/images'
+import { imageMarkdown, isImageMediaType, isLinkedImagePath, type ImageMediaType } from '../../model/chat/images'
 import { CLIP_FILE_EXTENSIONS, FileTooLargeError, MAX_SAVED_CLIP_BYTES, storableClip } from '../../model/chat/mediaFiles'
 import { newMediaIds, pastedMediaIdChanges } from '../../model/chat/mediaIds'
-import { MEDIA_TAG_NAMES, mediaTagText, type MediaTagKind } from '../../model/chat/mediaTags'
+import { MEDIA_TAG_NAMES, isLinkedMediaPath, mediaTagText, type MediaTagKind } from '../../model/chat/mediaTags'
 import { byteSizeText } from '../../utils/byteSize'
 import { errorText, rawErrorText } from '../../utils/errorText'
 import { fileNameOf } from '../../utils/fileName'
@@ -24,9 +24,9 @@ interface StorableClip {
   type: string
 }
 
-/** A pasted or dropped file that Dez stored: its absolute path, and the
- *  kind and media type of a clip (null for an image). */
-interface StoredFile {
+/** A pasted or dropped file that Dez stored or linked: its absolute path,
+ *  and the kind and media type of a clip (null for an image). */
+interface AddedFile {
   path: string
   clip: StorableClip | null
 }
@@ -117,7 +117,7 @@ async function storableImage(file: File): Promise<StorableImage | null> {
 
 /** Stores one image file, or the file that `source` gives. Null when it was
  *  not stored; the user has seen a toast. */
-async function storeImage(source: File | Promise<File | null>): Promise<StoredFile | null> {
+async function storeImage(source: File | Promise<File | null>): Promise<AddedFile | null> {
   const file = await source
   if (!file) return null
   const image = await storableImage(file)
@@ -134,7 +134,7 @@ async function storeImage(source: File | Promise<File | null>): Promise<StoredFi
  *  `clip` in the pasted clip folder of its kind. A file that is larger than
  *  the clips that Dez stores is not read. Null when it was not stored; the
  *  user has seen a toast. */
-async function storeClip(source: File | Promise<File | null>, clip: StorableClip): Promise<StoredFile | null> {
+async function storeClip(source: File | Promise<File | null>, clip: StorableClip): Promise<AddedFile | null> {
   const file = await source
   if (!file) return null
   if (file.size > MAX_SAVED_CLIP_BYTES) {
@@ -164,10 +164,47 @@ async function storeClip(source: File | Promise<File | null>, clip: StorableClip
 /** Starts to store a pasted or dropped file: an image (any `image/` type),
  *  or a clip (`storableClip`). Null for any other file, which Dez does not
  *  store. */
-function storeFile(file: File): Promise<StoredFile | null> | null {
+function storeFile(file: File): Promise<AddedFile | null> | null {
   if (file.type.startsWith('image/')) return storeImage(file)
   const clip = storableClip(file.type, file.name)
   return clip && storeClip(file, clip)
+}
+
+/** Gives the dropped file at `path` (or at the path that `path` gives;
+ *  null: not known) as a linked file (src/model/chat/linkedFiles.ts), the
+ *  image or the clip `clip` (null: an image), when it is not in a temp
+ *  folder or a folder of Dez (`dez.controller/images/linkPath`) and its
+ *  path has the linked form; an image of a type that Dez converts to PNG
+ *  has no linked form. Else gives the store that `store` starts, and Dez
+ *  copies the file. A clip larger than the clips that Dez stores is not
+ *  linked either: null, after a toast. */
+async function linkOrStore(path: string | Promise<string | null>, clip: StorableClip | null, store: () => Promise<AddedFile | null>): Promise<AddedFile | null> {
+  const dropped = await path
+  const linked = dropped === null ? null : await sbp('dez.controller/images/linkPath', dropped) as string | null
+  if (linked === null || !(clip === null ? isLinkedImagePath(linked) : isLinkedMediaPath(linked))) return await store()
+  if (clip !== null) {
+    let size: number | null
+    try {
+      size = await sbp('dez.controller/images/fileSize', linked) as number | null
+    } catch (error) {
+      // The copy reads the file, and tells the user why it cannot.
+      console.error('Failed to read the size of a dropped clip:', error)
+      return await store()
+    }
+    if (size !== null && size > MAX_SAVED_CLIP_BYTES) {
+      showClipTooLargeToast(fileNameOf(linked), size)
+      return null
+    }
+  }
+  return { path: linked, clip }
+}
+
+/** Starts to add a file of an HTML5 drop (macOS), as `storeFile` does,
+ *  but links it when `pathOf` gives its path (`linkOrStore`). */
+function dropFile(file: File, pathOf: () => Promise<string | null>): Promise<AddedFile | null> | null {
+  if (file.type.startsWith('image/')) return linkOrStore(pathOf(), null, () => storeImage(file))
+  const clip = storableClip(file.type, file.name)
+  return clip && linkOrStore(pathOf(), clip, () => storeClip(file, clip))
 }
 
 /** Reads a dropped file by its path; a clip only when it is not larger
@@ -190,18 +227,18 @@ async function readDroppedFile(path: string, asset: AssetKind): Promise<File | n
   }
 }
 
-/** Starts to store a dropped file by its path: an image by its extension
- *  (`IMAGE_FILE_PATH`), or a clip (`storableClip`). Null for any other
- *  file, which is not read. */
-function storePath(path: string): Promise<StoredFile | null> | null {
-  if (IMAGE_FILE_PATH.test(path)) return storeImage(readDroppedFile(path, 'image'))
+/** Starts to add a dropped file by its path: an image by its extension
+ *  (`IMAGE_FILE_PATH`), or a clip (`storableClip`), linked or stored
+ *  (`linkOrStore`). Null for any other file, which is not read. */
+function dropPath(path: string): Promise<AddedFile | null> | null {
+  if (IMAGE_FILE_PATH.test(path)) return linkOrStore(path, null, () => storeImage(readDroppedFile(path, 'image')))
   const clip = storableClip('', path)
-  return clip && storeClip(readDroppedFile(path, 'clip'), clip)
+  return clip && linkOrStore(path, clip, () => storeClip(readDroppedFile(path, 'clip'), clip))
 }
 
-/** The text of a stored file in the doc, with the id `id`: an image
+/** The text of an added file in the doc, with the id `id`: an image
  *  reference, or a media tag. */
-function storedFileText({ path, clip }: StoredFile, id: string): string {
+function addedFileText({ path, clip }: AddedFile, id: string): string {
   if (clip === null) return imageMarkdown(path, [{ key: 'id', value: id }])
   return mediaTagText({ kind: clip.kind, id, type: clip.type, src: path, url: null, expires: null, other: [] })
 }
@@ -223,9 +260,9 @@ function insertionText(state: EditorState, { from, to }: DocRange, text: string,
   return { insert: prefix + text + suffix, caret: prefix.length + text.length }
 }
 
-/** The warning for stored files that a paste or a drop did not insert,
+/** The warning for added files that a paste or a drop did not insert,
  *  worded for images, clips, or both. */
-function showNotInsertedToast(stored: readonly StoredFile[], userEvent: 'input.paste' | 'input.drop'): void {
+function showNotInsertedToast(stored: readonly AddedFile[], userEvent: 'input.paste' | 'input.drop'): void {
   const clipCount = stored.filter((file) => file.clip !== null).length
   const counted = (count: number, word: string) => (count === 0 ? [] : [count === 1 ? word : `${word}s`])
   const what = [...counted(stored.length - clipCount, 'image'), ...counted(clipCount, 'clip')].join(' and ')
@@ -239,18 +276,18 @@ function showNotInsertedToast(stored: readonly StoredFile[], userEvent: 'input.p
   })
 }
 
-/** Waits for the stores of the files of a paste or a drop (`storeFile`,
- *  `storePath`), then puts the image references and the media tags of the
- *  stored files (one per line, in file order) in place of `range` in one
- *  transaction, with the caret after them. The stores are async: the range
- *  follows the edits made meanwhile (`addPendingRange`), and when its text
- *  changed, the files go after it and the new text stays. When the view no
- *  longer shows the doc of the paste or drop (another tab, or a rebuilt
- *  state), the files stay stored but are not inserted, and a toast says
- *  so. Each file gets its id at the dispatch (`newMediaIds`, from the doc
- *  as it is then), as a tag with no id is no tag; so two inserts in flight
- *  never take the same id. */
-async function insertFiles(view: EditorView, stores: ReadonlyArray<Promise<StoredFile | null>>, range: DocRange, userEvent: 'input.paste' | 'input.drop'): Promise<void> {
+/** Waits for the stores and links of the files of a paste or a drop
+ *  (`storeFile`, `dropFile`, `dropPath`), then puts the image references
+ *  and the media tags of the added files (one per line, in file order) in
+ *  place of `range` in one transaction, with the caret after them. The
+ *  stores are async: the range follows the edits made meanwhile
+ *  (`addPendingRange`), and when its text changed, the files go after it
+ *  and the new text stays. When the view no longer shows the doc of the
+ *  paste or drop (another tab, or a rebuilt state), the stored files stay
+ *  stored but are not inserted, and a toast says so. Each file gets its id
+ *  at the dispatch (`newMediaIds`, from the doc as it is then), as a tag
+ *  with no id is no tag; so two inserts in flight never take the same id. */
+async function insertFiles(view: EditorView, stores: ReadonlyArray<Promise<AddedFile | null>>, range: DocRange, userEvent: 'input.paste' | 'input.drop'): Promise<void> {
   const replacedText = view.state.sliceDoc(range.from, range.to)
   const id = addPendingRange(view, range)
   const stored = (await Promise.all(stores)).filter((file) => file !== null)
@@ -268,7 +305,7 @@ async function insertFiles(view: EditorView, stores: ReadonlyArray<Promise<Store
   // (ChangeDesc.mapPos): keep that text, and put the files after it.
   const target = view.state.sliceDoc(pending.from, pending.to) === replacedText ? pending : { from: pending.to, to: pending.to }
   const ids = newMediaIds([view.state.doc.toString()], stored.length)
-  const text = stored.map((file, index) => storedFileText(file, ids[index])).join('\n')
+  const text = stored.map((file, index) => addedFileText(file, ids[index])).join('\n')
   const { insert, caret } = insertionText(view.state, target, text, stored.some((file) => file.clip !== null))
   view.dispatch({
     changes: { from: target.from, to: target.to, insert },
@@ -308,12 +345,20 @@ function showUnsupportedDropToast(): void {
 /** A drop of files puts the image and clip files at the drop point, and
  *  leaves out every other file with a toast. CodeMirror's own drop would
  *  insert each file as text, so a file drop never reaches it. A drag with
- *  no files (text dragged in the editor) is CodeMirror's. */
+ *  no files (text dragged in the editor) is CodeMirror's. The drop event
+ *  gives no paths, so they are read once per drop, and only when the drop
+ *  has an image or a clip (`dez.controller/images/droppedFilePaths`). */
 export function dropFiles(event: DragEvent, view: EditorView): boolean {
   const data = event.dataTransfer
   if (!hasFiles(data)) return false
   const files = transferredFiles(data)
-  const stores = files.map(storeFile).filter((store) => store !== null)
+  let paths: Promise<(string | null)[]> | undefined
+  const stores = files
+    .map((file, index) => dropFile(file, async () => {
+      paths ??= sbp('dez.controller/images/droppedFilePaths', files) as Promise<(string | null)[]>
+      return (await paths)[index]
+    }))
+    .filter((store) => store !== null)
   if (stores.length === 0 || stores.length < files.length) showUnsupportedDropToast()
   if (stores.length > 0) {
     const pos = view.posAtCoords({ x: event.clientX, y: event.clientY }, false)
@@ -326,10 +371,10 @@ export function dropFiles(event: DragEvent, view: EditorView): boolean {
 /** A drop from Tauri's native file drop (Linux only: tauri.linux.conf.json,
  *  see run() in src-tauri/src/lib.rs), at `point` in the page. As in
  *  `dropFiles`, the image and clip files go to the drop point and every
- *  other file is left out with a toast; the files are read by path. wry
- *  passes a URI that is not a `file://` URI as it is: a drop with no local
- *  path (a link dragged from a browser) goes in as text, as WebKit's own
- *  drop does. */
+ *  other file is left out with a toast; the files are linked, or read by
+ *  path (`dropPath`). wry passes a URI that is not a `file://` URI as it
+ *  is: a drop with no local path (a link dragged from a browser) goes in as
+ *  text, as WebKit's own drop does. */
 export function dropFilePaths(view: EditorView, paths: readonly string[], point: { x: number, y: number }): void {
   if (paths.length === 0) return
   const pos = view.posAtCoords(point, false)
@@ -340,7 +385,7 @@ export function dropFilePaths(view: EditorView, paths: readonly string[], point:
     view.dispatch({ changes: { from: pos, insert }, selection: { anchor: pos + caret }, scrollIntoView: true, userEvent: 'input.drop' })
     return
   }
-  const stores = localPaths.map(storePath).filter((store) => store !== null)
+  const stores = localPaths.map(dropPath).filter((store) => store !== null)
   if (stores.length < paths.length) showUnsupportedDropToast()
   if (stores.length > 0) void insertFiles(view, stores, { from: pos, to: pos }, 'input.drop')
 }

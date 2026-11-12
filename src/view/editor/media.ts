@@ -3,9 +3,10 @@ import { StateField, type EditorState, type Extension } from '@codemirror/state'
 import { Decoration, EditorView, WidgetType, type DecorationSet } from '@codemirror/view'
 import { createApp, h, reactive, shallowRef, type App, type ShallowRef } from 'vue'
 import { SENTINEL_CHAR } from '../../model/chat/content'
-import { MEDIA_TAG_NAMES, findMediaTags, isPastedMediaPath, mediaTagText, savedMediaTag, unsavedMediaTag, type MediaTag, type MediaTagData } from '../../model/chat/mediaTags'
+import { MEDIA_TAG_NAMES, findMediaTags, isLinkedMediaPath, isPastedMediaPath, isTempMediaPath, mediaTagText, savedMediaTag, unsavedMediaTag, type MediaTag, type MediaTagData } from '../../model/chat/mediaTags'
+import type { Role } from '../../model/chat/types'
 import MediaPlayer from '../media/MediaPlayer.vue'
-import { clipSourceKind, expiryNotice } from '../media/clipState'
+import { expiryNotice } from '../media/clipState'
 import { sectionsField, type SectionModel } from '../thread/cmEditor'
 import { measureLineHeights } from '../thread/editorMeasure'
 import { selectedAssetLook } from './assetSelection'
@@ -35,9 +36,15 @@ function isInSelectableTooltip(target: EventTarget | null): boolean {
   return element instanceof Element && element.closest(`.${SELECTABLE_TOOLTIP_CLASS}`) !== null
 }
 
+/** A tag that the editor shows as a player, with the role of its section,
+ *  which tells whether a linked `src` counts (`sectionClipSource`). */
+interface RenderedMedia extends MediaTag {
+  role: Role
+}
+
 interface MediaDecorations {
   /** In doc order. */
-  media: readonly MediaTag[]
+  media: readonly RenderedMedia[]
   decorations: DecorationSet
 }
 
@@ -66,7 +73,7 @@ const mountedPlayers = new WeakMap<HTMLElement, MountedPlayer>()
 
 /** The player of one clip. */
 class MediaWidget extends WidgetType {
-  constructor(readonly tag: MediaTagData) {
+  constructor(readonly tag: MediaTagData, readonly role: Role) {
     super()
   }
   // Every field that the player shows or that Save and Delete read. Doc
@@ -75,12 +82,13 @@ class MediaWidget extends WidgetType {
     if (!(other instanceof MediaWidget)) return false
     const a = this.tag
     const b = other.tag
-    return a.kind === b.kind && a.id === b.id && a.type === b.type && a.src === b.src && a.url === b.url && a.expires === b.expires
+    return this.role === other.role && a.kind === b.kind && a.id === b.id && a.type === b.type && a.src === b.src && a.url === b.url && a.expires === b.expires
   }
   toDOM(view: EditorView): HTMLElement {
     const root = document.createElement('span')
     root.className = ROOT_CLASS
     const tag = shallowRef(this.tag)
+    const { role } = this
     const app = createApp({
       // The player gets the source as the tag has it, and makes the URL
       // that loads it.
@@ -91,6 +99,7 @@ class MediaWidget extends WidgetType {
           id,
           type,
           src,
+          role,
           expires,
           busy: src !== null && busyClips.has(src),
           onSave: () => { void saveClip(view, root, tag.value) },
@@ -184,7 +193,7 @@ class MediaWidget extends WidgetType {
   // e2e case "keeps a video in fullscreen over a Save" covers it).
   updateDOM(dom: HTMLElement, _view: EditorView, from: MediaWidget): boolean {
     const player = mountedPlayers.get(dom)
-    if (!player || from.tag.kind !== this.tag.kind || from.tag.id !== this.tag.id) return false
+    if (!player || from.role !== this.role || from.tag.kind !== this.tag.kind || from.tag.id !== this.tag.id) return false
     // The player keeps its height, so its observer writes no entry for the
     // key of the new `src`. The old entry stays: an undo of the Save, or
     // another tag of the same file, still uses it.
@@ -210,17 +219,18 @@ class MediaWidget extends WidgetType {
   }
 }
 
-/** The tags that the editor shows as players, in doc order. Each section
- *  is read on its own (`sectionTexts`). Left as text: a line that is not a
- *  valid tag, and a tag that holds a sentinel (a prompt pill), whose
- *  widgets and atomic ranges must stay the only ones there. */
-function findRenderedMedia(doc: string, sections: readonly SectionModel[]): MediaTag[] {
-  const media: MediaTag[] = []
+/** The tags that the editor shows as players, in doc order, each with the
+ *  role of its section. Each section is read on its own (`sectionTexts`).
+ *  Left as text: a line that is not a valid tag, and a tag that holds a
+ *  sentinel (a prompt pill), whose widgets and atomic ranges must stay the
+ *  only ones there. */
+function findRenderedMedia(doc: string, sections: readonly SectionModel[]): RenderedMedia[] {
+  const media: RenderedMedia[] = []
   if (!MEDIA_TAG_NAMES.some((name) => doc.includes(`<${name}`))) return media
-  for (const { from, text } of sectionTexts(doc, sections)) {
+  for (const { section, from, text } of sectionTexts(doc, sections)) {
     for (const tag of findMediaTags(text)) {
       if (SENTINEL_CHAR.test(text.slice(tag.from, tag.to))) continue
-      media.push({ ...tag, from: from + tag.from, to: from + tag.to })
+      media.push({ ...tag, from: from + tag.from, to: from + tag.to, role: section.role })
     }
   }
   return media
@@ -228,7 +238,7 @@ function findRenderedMedia(doc: string, sections: readonly SectionModel[]): Medi
 
 function buildMediaDecorations(state: EditorState): MediaDecorations {
   const media = findRenderedMedia(state.doc.toString(), state.field(sectionsField, false) ?? [])
-  const decorations = Decoration.set(media.map((tag) => Decoration.replace({ widget: new MediaWidget(tag) }).range(tag.from, tag.to)))
+  const decorations = Decoration.set(media.map((tag) => Decoration.replace({ widget: new MediaWidget(tag, tag.role) }).range(tag.from, tag.to)))
   return { media, decorations }
 }
 
@@ -243,12 +253,12 @@ const mediaDecorationsField = StateField.define<MediaDecorations>({
   ],
 })
 
-const NO_MEDIA: readonly MediaTag[] = []
+const NO_MEDIA: readonly RenderedMedia[] = []
 
 /** The tags that the editor shows as players in `state`, in doc order; none
  *  for a state without `markdownMedia()`. The array is the same object
  *  until the doc or the sections change, so callers can cache by it. */
-export function renderedMedia(state: EditorState): readonly MediaTag[] {
+export function renderedMedia(state: EditorState): readonly RenderedMedia[] {
   return state.field(mediaDecorationsField, false)?.media ?? NO_MEDIA
 }
 
@@ -315,7 +325,7 @@ async function saveClip(view: EditorView, root: HTMLElement, clip: MediaTagData)
   }
   followed.end()
   if (path === null) return
-  if (clipSourceKind(src) === 'temp') {
+  if (isTempMediaPath(src)) {
     const shownPath = await sbp('dez.controller/displayPath', path) as string
     warnClipChanged(root, 'Clip saved, but not shown', `The conversation changed while the clip was saved, so its player does not show the saved file. The file is at ${shownPath}.`)
     return
@@ -336,19 +346,22 @@ async function saveClip(view: EditorView, root: HTMLElement, clip: MediaTagData)
  *  rule of the player's clock). A clip that the user pasted or dropped
  *  (`isPastedMediaPath`) has no other source: its trash deletes the clip,
  *  and takes the tag's whole line out of the doc (`linesRemovalRange`), as
- *  the image trash does with an image reference. When the tag is gone after
- *  the prompt (see `followClip`), no file is deleted, and a toast tells the
- *  user. A failed delete (the controller has shown a toast) keeps the
- *  tag. */
+ *  the image trash does with an image reference. A linked clip
+ *  (`isLinkedMediaPath`, linkedFiles.ts) keeps its file: its trash takes
+ *  only the tag's line out. When the tag is gone after the prompt (see
+ *  `followClip`), no file is deleted, and a toast tells the user. A failed
+ *  delete (the controller has shown a toast) keeps the tag. */
 export async function deleteSavedClip(view: EditorView, root: HTMLElement, clip: MediaTagData): Promise<void> {
   const { src } = clip
   if (src === null || busyClips.has(src)) return
   const followed = followClip(view, root, clip)
   if (!followed) return
+  const linked = isLinkedMediaPath(src)
   const pasted = isPastedMediaPath(src)
   await leaveFullscreen(root)
   let message = 'Are you sure you want to delete the saved file of this clip?'
-  if (pasted) message = 'Are you sure you want to delete this clip?'
+  if (linked) message = 'Are you sure you want to remove this clip from the conversation? Its file stays where it is.'
+  else if (pasted) message = 'Are you sure you want to delete this clip?'
   else if (clip.url === null) message += ' The clip cannot be played again after that.'
   else if (expiryNotice(clip.expires, Date.now(), null)?.expired) message += ' The web address of the clip has expired, so the clip can stop playing after that.'
   const confirmed = await sbp('dez.ui/confirm', { message }) as boolean
@@ -356,9 +369,15 @@ export async function deleteSavedClip(view: EditorView, root: HTMLElement, clip:
     followed.end()
     return
   }
-  if (!followed.current()) {
+  const current = followed.current()
+  if (!current) {
     followed.end()
-    warnClipChanged(root, 'Clip not deleted', 'The conversation changed while the prompt was open. Try again.')
+    warnClipChanged(root, linked ? 'Clip not removed' : 'Clip not deleted', 'The conversation changed while the prompt was open. Try again.')
+    return
+  }
+  if (linked) {
+    followed.end(linesRemovalRange(view.state.doc, current))
+    syncDomSelection(view)
     return
   }
   busyClips.add(src)
