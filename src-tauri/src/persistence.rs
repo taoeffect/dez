@@ -341,13 +341,15 @@ fn move_file(source: &Path, target: &Path) -> Result<(), String> {
 
 // The move between two file systems: a copy as a private file, then the
 // removal of the source. When the source cannot be removed, the copy is
-// removed again, so a failed move leaves the file only where it was.
+// removed again, so a failed move leaves the file only where it was. A
+// source that is already gone (a second Dez app removed an expired temp
+// copy during the copy) means that the move is done: the copy stays.
 fn copy_then_remove(source: &Path, target: &Path) -> Result<(), String> {
     let mut input = std::fs::File::open(source).map_err(|error| error.to_string())?;
     let mut writer = PrivateFileWriter::create(target)?;
     std::io::copy(&mut input, &mut writer.file).map_err(write_error)?;
     writer.finish()?;
-    std::fs::remove_file(source).map_err(|error| {
+    remove_file_if_present(source).map_err(|error| {
         let _ = std::fs::remove_file(target);
         error.to_string()
     })
