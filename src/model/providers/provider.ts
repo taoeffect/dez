@@ -122,10 +122,10 @@ export class Provider {
 
   // Config models come first, in config order, then the fetched models the
   // config does not list. Each id appears once. A name, capability flag,
-  // outputs list, request kind, or clip input set in the config wins over
-  // the fetched one for the same id. A fetched model that is known to make
-  // none of the output types (embeddings, rerank) is left out; a config
-  // model is always listed.
+  // outputs list, or request kind set in the config wins over the fetched
+  // one for the same id. A fetched model that is known to make none of the
+  // output types (embeddings, rerank) is left out; a config model is always
+  // listed.
   mergeModels(fetched: ModelInfo[]): ModelInfo[] {
     const fetchedById = new Map<string, ModelInfo>()
     for (const model of fetched) {
