@@ -343,6 +343,14 @@ function scaleFirstText(id: string, size: ImageSize, subcommand: string, needs =
   return `${smallerImageText(id, size, ' first')}, then call ${subcommand} with the new image${needs}.`
 }
 
+// The drawing of the whole image `id`, of `size`, at its own size, for a
+// call of `subcommand`. Throws for an image over `MAX_DRAWN_PIXELS` (the
+// text tells how to make a smaller image first).
+function wholeDrawing(id: string, size: ImageSize, subcommand: string): ImageDrawing {
+  if (size.width * size.height > MAX_DRAWN_PIXELS) throw tooLargeError(size, scaleFirstText(id, size, subcommand))
+  return wholeImageDrawing(size)
+}
+
 const FLIPS: readonly ImageFlip[] = ['horizontal', 'vertical']
 
 // The named fills of `rotate`, as `#rrggbb`. A Map, not an object: the key
@@ -456,8 +464,7 @@ export const flipPlan: ImagePlan = (id, args, size) => {
     throw new ToolError(`${JSON.stringify(args.direction)} is not a direction of flip. `
       + 'Give "horizontal" to swap the left and the right of the image, or "vertical" to swap its top and its bottom.')
   }
-  if (size.width * size.height > MAX_DRAWN_PIXELS) throw tooLargeError(size, scaleFirstText(id, size, 'flip'))
-  return { ...wholeImageDrawing(size), flip }
+  return { ...wholeDrawing(id, size, 'flip'), flip }
 }
 
 /** The plan of `image rotate`: the whole image turned by `angle` degrees
@@ -497,18 +504,11 @@ export const rotatePlan: ImagePlan = (id, args, size) => {
   return drawing
 }
 
-// The drawing of the whole image `id`, of `size`, at its own size, with the
-// colors changed by `colors` (a call of `subcommand`). Throws for an image
-// over `MAX_DRAWN_PIXELS`. The file type stays as for any other drawing: a
-// color change makes no pixel transparent.
-function colorDrawing(id: string, size: ImageSize, subcommand: string, colors: ColorChange): ImageDrawing {
-  if (size.width * size.height > MAX_DRAWN_PIXELS) throw tooLargeError(size, scaleFirstText(id, size, subcommand))
-  return { ...wholeImageDrawing(size), colors }
-}
-
 // The plan of the color subcommand `kind`, which changes the colors by
 // its `amount`. Throws for an amount under 0, and for an amount of 1,
-// which keeps the colors.
+// which keeps the colors. A color change makes no pixel transparent, so
+// the color plans (this one and `invertPlan`) keep the file type of any
+// other drawing.
 function amountPlan(kind: AmountKind): ImagePlan {
   const { scale, less, more } = AMOUNTS[kind]
   return (id, args, size) => {
@@ -518,7 +518,7 @@ function amountPlan(kind: AmountKind): ImagePlan {
       throw new ToolError(`An \`amount\` of 1 keeps the colors of @${id}, so the new image would be the same as @${id}. `
         + `Give less than 1 for ${less}, or more than 1 for ${more}.`)
     }
-    return colorDrawing(id, size, kind, { kind, amount })
+    return { ...wholeDrawing(id, size, kind), colors: { kind, amount } }
   }
 }
 
@@ -538,7 +538,7 @@ export const saturationPlan = amountPlan('saturation')
 
 /** The plan of `image invert`: the whole image at its own size, with each
  *  color inverted. */
-export const invertPlan: ImagePlan = (id, _args, size) => colorDrawing(id, size, 'invert', { kind: 'invert' })
+export const invertPlan: ImagePlan = (id, _args, size) => ({ ...wholeDrawing(id, size, 'invert'), colors: { kind: 'invert' } })
 
 // The formats of the file types `types` as a call names them, as in
 // `"png", "jpeg", or "svg"`.
@@ -565,15 +565,13 @@ export const convertPlan: ImagePlan = (id, args, size, mediaType) => {
     throw new ToolError(`The image @${id} is already in the ${FORMAT_NAMES[target]} format, so the new image would be the same as @${id}. `
       + `Give another format: ${formatsText(CONVERT_TYPES.filter((type) => type !== target))}.`)
   }
-  if (size.width * size.height > MAX_DRAWN_PIXELS) {
-    // Scale writes a WebP, GIF, or SVG image as a PNG (`drawnMediaType`), so
-    // for a PNG target its new image is the answer: a convert of that image
-    // to PNG would be refused, as it is already a PNG.
-    throw tooLargeError(size, target === drawnMediaType(mediaType)
-      ? `${smallerImageText(id, size)}. Scale makes a ${FORMAT_NAMES[target]} image from @${id}, so no convert call is needed.`
-      : scaleFirstText(id, size, 'convert'))
+  // Scale writes a WebP, GIF, or SVG image as a PNG (`drawnMediaType`), so
+  // for a PNG target its new image is the answer: a convert of that image
+  // to PNG would be refused, as it is already a PNG.
+  if (target === drawnMediaType(mediaType) && size.width * size.height > MAX_DRAWN_PIXELS) {
+    throw tooLargeError(size, `${smallerImageText(id, size)}. Scale makes a ${FORMAT_NAMES[target]} image from @${id}, so no convert call is needed.`)
   }
-  const drawing: ImageDrawing = { ...wholeImageDrawing(size), mediaType: target }
+  const drawing: ImageDrawing = { ...wholeDrawing(id, size, 'convert'), mediaType: target }
   if (target === 'image/jpeg') drawing.background = '#ffffff'
   return drawing
 }
