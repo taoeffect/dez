@@ -15,6 +15,7 @@ const DELETED: ModelRef = { providerId: '0b7c6a52-5f2e-4c1d-9a8b-3e4f5a6b7c8d', 
 const NAMES: ModelDisplayNames = {
   providers: new Map([['mock', 'Mock']]),
   models: new Map([['mock/alpha', 'Alpha One'], ['mock/beta', 'Beta Two']]),
+  readableNames: new Map([['mock/beta', 'Beta Readable']]),
 }
 
 /** Sections with ids `s0`, `s1`, … in order. */
@@ -47,6 +48,15 @@ describe('sectionModelChips', () => {
       ['unnamed/model', 'Mock'],
       ['gpt-4o', null],
     ])
+  })
+
+  it('gives each chip the readable name of its model, or null', () => {
+    const chips = sectionModelChips(sections(
+      { role: 'agent', model: ALPHA },
+      { role: 'agent', model: BETA },
+    ), NAMES, null)
+
+    expect(chips.map((chip) => chip?.readableName)).toEqual([null, 'Beta Readable'])
   })
 
   it('marks a switch against the nearest earlier agent section that has a model', () => {
@@ -120,21 +130,22 @@ describe('role separator model chips', () => {
   }
 
   // CodeMirror reuses the widget DOM while `eq` holds. A streamed token must
-  // not redraw the pill; a new name must.
+  // not redraw the pill; a new name or readable name (the tooltip) must.
   it('keeps the chip widget on a text edit and replaces it when a name changes', () => {
     const state = chipState()
     const [chipWidget] = separatorWidgets(state)
 
     const typed = state.update({ changes: { from: state.doc.length, insert: ' more' } }).state
     const renamed = state.update({
-      effects: setModelDisplayNamesEffect.of({
-        providers: NAMES.providers,
-        models: new Map([['mock/alpha', 'Alpha Renamed']]),
-      }),
+      effects: setModelDisplayNamesEffect.of({ ...NAMES, models: new Map([['mock/alpha', 'Alpha Renamed']]) }),
+    }).state
+    const readable = state.update({
+      effects: setModelDisplayNamesEffect.of({ ...NAMES, readableNames: new Map([['mock/alpha', 'Alpha Readable']]) }),
     }).state
 
     expect(separatorWidgets(typed)[0].eq(chipWidget)).toBe(true)
     expect(separatorWidgets(renamed)[0].eq(chipWidget)).toBe(false)
+    expect(separatorWidgets(readable)[0].eq(chipWidget)).toBe(false)
   })
 
   // A streamed token must not restart the pill animation; the end of the

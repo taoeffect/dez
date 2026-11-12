@@ -27,10 +27,11 @@ describe('model cache persistence format', () => {
     expect(serializeModelCacheJson(parsed)).toBe(JSON.stringify(parsed, null, 2))
   })
 
-  it('round-trips capability flags and reads a model without one as unknown', () => {
+  it('round-trips capability flags and the readable name, and reads a model without one as unknown', () => {
     const models = [
       { id: 'vision', name: 'Vision', provider: 'venice', imageInput: true, toolCalling: true, thinking: true },
       { id: 'text', name: 'Text', provider: 'venice', imageInput: false, toolCalling: false, thinking: false, unsupportedSettings: ['xSearch'] },
+      { id: 'named-by-id', name: 'named-by-id', provider: 'venice', readableName: 'Named By Id' },
       // A cache written before the thinking flag and the unsupported toggles
       // existed.
       { id: 'tools-only', name: 'Tools only', provider: 'venice', imageInput: true, toolCalling: true },

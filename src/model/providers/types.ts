@@ -105,6 +105,10 @@ export interface ModelInfo {
   id: string
   name: string
   provider: ProviderId
+  // A readable name that the provider gives a model that is named by its id
+  // (`modelReadableName` in config.ts): only the tooltips show it, after the
+  // name. Never empty. Missing: none is known.
+  readableName?: string
   // true: the model reads images; false: it does not. Missing: unknown, and
   // the request sends the images.
   imageInput?: boolean
@@ -156,19 +160,21 @@ export interface ModelInfo {
   unstoredOutput?: string
 }
 
-export type ModelCapabilities = Pick<ModelInfo, 'imageInput' | 'toolCalling' | 'thinking' | 'unsupportedSettings' | 'outputs' | 'request' | 'parameters' | 'text' | 'images' | 'clips' | 'unstoredOutput'>
+export type ModelCapabilities = Pick<ModelInfo, 'readableName' | 'imageInput' | 'toolCalling' | 'thinking' | 'unsupportedSettings' | 'outputs' | 'request' | 'parameters' | 'text' | 'images' | 'clips' | 'unstoredOutput'>
 
 // What a clip model takes as the input of a request, besides the values of
 // its parameters.
 export type ClipInputRules = Pick<ModelInfo, 'text' | 'images' | 'clips'>
 
 // Display names for agent role pills and history rows: provider id ->
-// provider name, and `modelRefKey` -> model name. Maps, not plain objects,
-// because the ids come from files. A missing entry means the name is
-// unknown.
+// provider name, `modelRefKey` -> model name, and `modelRefKey` -> the
+// model's readable name (`ModelInfo.readableName`, for the pill's tooltip).
+// Maps, not plain objects, because the ids come from files. A missing entry
+// means the name is unknown.
 export interface ModelDisplayNames {
   providers: Map<ProviderId, string>
   models: Map<string, string>
+  readableNames: Map<string, string>
 }
 
 // What views and controllers know about a provider. Plain data, so it can be
@@ -333,6 +339,7 @@ export class ProviderNotConfiguredError extends ProviderError {
 // (a store copy and its snapshot, a config model and the cache).
 export function providerModel(provider: ProviderId, id: string, name: string, capabilities: ModelCapabilities = {}): ModelInfo {
   const model: ModelInfo = { id, name, provider }
+  if (capabilities.readableName !== undefined) model.readableName = capabilities.readableName
   if (capabilities.imageInput !== undefined) model.imageInput = capabilities.imageInput
   if (capabilities.toolCalling !== undefined) model.toolCalling = capabilities.toolCalling
   if (capabilities.thinking !== undefined) model.thinking = capabilities.thinking

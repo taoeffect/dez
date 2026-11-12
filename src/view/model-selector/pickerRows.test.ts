@@ -136,4 +136,20 @@ describe('pickerRows', () => {
     // Each found row is, with the same key, a row of the full list.
     expect(all.filter((row) => found.some((other) => other.key === row.key))).toStrictEqual(found)
   })
+
+  it('names a model in its tooltip, with the readable name after it when that is known and differs', () => {
+    const titles = pickerRows({
+      providers: [ACME],
+      models: [
+        { id: 'venice-uncensored', name: 'venice-uncensored', readableName: 'Venice Uncensored', provider: ACME.id },
+        { id: 'same', name: 'Same', readableName: 'Same', provider: ACME.id },
+        { id: 'plain', name: 'Plain', provider: ACME.id },
+      ],
+      query: { terms: [], outputs: [] },
+      favorites: null,
+      none: false,
+    }).flatMap((row) => row.kind === 'model' ? [row.title] : [])
+
+    expect(titles).toStrictEqual(['venice-uncensored (Venice Uncensored)', 'Same', 'Plain'])
+  })
 })

@@ -169,7 +169,7 @@ describe('provider config schema', () => {
     expect(parseModel({ request: 'speech' }).success).toBe(false)
   })
 
-  it('keeps the model list query, the output type mapping, and the media API, and rejects bad ones', () => {
+  it('keeps the model list query, the output type mapping, the readable name path, and the media API, and rejects bad ones', () => {
     const parse = (fields: Record<string, unknown>) =>
       providerConfigSchema.safeParse({ id: 'p', name: 'P', baseUrl: 'http://h', ...fields })
     const outputs = (values: unknown) => parse({ modelOutputs: { path: 'type', values } }).success
@@ -188,6 +188,7 @@ describe('provider config schema', () => {
           embed: { outputs: [] },
         },
       },
+      modelReadableName: { path: 'model_spec.name' },
       imageOutputBody: { modalities: ['image', 'text'] },
       mediaApi: { format: 'openrouter', modelRequestBodies: [{ request: 'tts', modelIdPrefix: 'heygen/', body: { response_format: 'pcm' } }] },
     }
@@ -196,6 +197,8 @@ describe('provider config schema', () => {
     expect(parse({ modelListQuery: { limit: 10 } }).success).toBe(false)
     expect(parse({ modelOutputs: { path: 'arch..out', values: {} } }).success).toBe(false)
     expect(parse({ modelOutputs: { path: 'type' } }).success).toBe(false)
+    expect(parse({ modelReadableName: { path: 'model_spec..name' } }).success).toBe(false)
+    expect(parse({ modelReadableName: 'model_spec.name' }).success).toBe(false)
     expect(outputs({ tts: { outputs: ['speech'] } })).toBe(false)
     expect(outputs({ tts: { outputs: 'audio' } })).toBe(false)
     expect(outputs({ tts: { request: 'chat' } })).toBe(false)

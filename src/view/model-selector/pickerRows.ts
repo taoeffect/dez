@@ -1,6 +1,7 @@
 import { matchingModelsByProvider, modelMatchesQuery, type ModelQuery } from '../../model/modelSearch'
 import type { ModelInfo, ProviderInfo } from '../../model/providers'
 import type { DefaultModel } from '../modelState'
+import { modelTooltipName } from '../modelLabel'
 
 // The rows of the model picker's list. The picker draws them with a virtual
 // list (`ModelPicker.vue`), which takes one flat array and draws only the
@@ -12,11 +13,12 @@ import type { DefaultModel } from '../modelState'
 const FAVORITES_GROUP_ID = '__favorites__'
 
 /** One row of the picker's list. `key` is unique in the list, and a row
- *  keeps its key when the list changes, so the virtual list can follow it. */
+ *  keeps its key when the list changes, so the virtual list can follow it.
+ *  A model row's `title` is the tooltip of its name. */
 export type PickerRow =
   | { kind: 'none', key: string }
   | { kind: 'header', key: string, label: string }
-  | { kind: 'model', key: string, model: ModelInfo, providerName: string }
+  | { kind: 'model', key: string, model: ModelInfo, providerName: string, title: string }
 
 export interface PickerRowsInput {
   /** The providers, in the order of their groups. */
@@ -57,7 +59,7 @@ export function pickerRows({ providers, models, query, favorites, none }: Picker
         rows.push({ kind: 'header', key: `header:${groupId}`, label })
         hasHeader = true
       }
-      rows.push({ kind: 'model', key, model, providerName: provider.name })
+      rows.push({ kind: 'model', key, model, providerName: provider.name, title: modelTooltipName(model.name, model.readableName) })
     }
   }
 

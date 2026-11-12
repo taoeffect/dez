@@ -960,6 +960,33 @@ describe('provider models', () => {
     ])
   })
 
+  it('reads the readable name at the config path, trimmed, and keeps the fetched one for a config model', () => {
+    const provider = customProvider({
+      models: [{ id: 'listed', name: 'Listed' }],
+      modelReadableName: { path: 'model_spec.name' },
+    })
+    const fetched = provider.parseModels({
+      data: [
+        { id: 'listed', model_spec: { name: 'Listed Readable' } },
+        { id: 'spaced', model_spec: { name: '  Spaced  ' } },
+        { id: 'blank', model_spec: { name: '   ' } },
+        { id: 'number', model_spec: { name: 7 } },
+        { id: 'missing' },
+      ],
+    })
+
+    // toStrictEqual: an unknown readable name leaves the key out.
+    expect(provider.mergeModels(fetched)).toStrictEqual([
+      { id: 'listed', name: 'Listed', provider: 'local', readableName: 'Listed Readable' },
+      { id: 'spaced', name: 'spaced', provider: 'local', readableName: 'Spaced' },
+      { id: 'blank', name: 'blank', provider: 'local' },
+      { id: 'number', name: 'number', provider: 'local' },
+      { id: 'missing', name: 'missing', provider: 'local' },
+    ])
+    expect(customProvider({}).parseModels({ data: [{ id: 'a', model_spec: { name: 'A' } }] }))
+      .toStrictEqual([{ id: 'a', name: 'a', provider: 'local' }])
+  })
+
   // The image, tool, and thinking flags share one reader; each has its own
   // config path and list value.
   const capabilities = [

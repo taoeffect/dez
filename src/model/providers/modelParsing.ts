@@ -1,5 +1,5 @@
 import { normalizeOutputs } from '../modelOutputs'
-import type { ModelCapabilityPath, ModelOutputsConfig, ProviderSettingDef } from './config'
+import type { ModelCapabilityPath, ModelOutputsConfig, ProviderConfig, ProviderSettingDef } from './config'
 import type { ModelCapabilities, ModelRequest } from './types'
 
 export function isRecord(value: unknown): value is Record<string, unknown> {
@@ -42,6 +42,16 @@ export function modelCapability(model: Record<string, unknown>, capability: Mode
   if (typeof value === 'boolean') return value
   if (Array.isArray(value)) return value.includes(listValue)
   return undefined
+}
+
+// The readable name of a `/models` entry's model, at the config's
+// `modelReadableName` path: a string with text, trimmed. Anything else, or
+// no config, is unknown.
+export function modelReadableName(model: Record<string, unknown>, config: ProviderConfig['modelReadableName']): string | undefined {
+  if (config === undefined) return undefined
+
+  const value = valueAtPath(model, config.path)
+  return typeof value === 'string' && value.trim().length > 0 ? value.trim() : undefined
 }
 
 // The keys of the config toggles (`settings`) that a `/models` entry says

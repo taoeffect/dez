@@ -334,11 +334,14 @@ export default sbp('sbp/selectors/register', {
   'dez.provider/modelDisplayNames' (): ModelDisplayNames {
     const providers = new Map<ProviderId, string>()
     const models = new Map<string, string>()
+    const readableNames = new Map<string, string>()
 
     const cache = sbp('dez.model/modelCache/snapshot') as ModelCache
     for (const [providerId, entry] of Object.entries(cache.providers)) {
       for (const model of entry?.models ?? []) {
-        models.set(modelRefKey({ providerId, modelId: model.id }), model.name)
+        const key = modelRefKey({ providerId, modelId: model.id })
+        models.set(key, model.name)
+        if (model.readableName) readableNames.set(key, model.readableName)
       }
     }
 
@@ -349,7 +352,7 @@ export default sbp('sbp/selectors/register', {
       }
     }
 
-    return { providers, models }
+    return { providers, models, readableNames }
   },
 
   // Never throws for a known provider: every failure becomes `ok: false`, the

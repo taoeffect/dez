@@ -15,7 +15,9 @@ import { activeConversationId, activeTabStreaming, maskPillDuration, newTab, ope
 // that no row shows it. Its model ids hold a `/`, as OpenRouter ids do, so
 // the `provider/model` key in pills and files has two slashes.
 // `fetchModels: false` keeps the model list to the config, so the mock serves
-// only chat requests.
+// only its chat requests. A second one ("Readable Provider") lists one model
+// from the mock's model list, named by its id with a readable name at
+// `model_spec.name`, as Venice's list does (`modelReadableName`).
 //
 // One app session serves the whole file. The tests from the model switch
 // on run in order in one tab: each builds on the replies of the one before.
@@ -58,28 +60,38 @@ const LONG = {
 // A model of a provider that was deleted.
 const GONE_PROVIDER_ID = '0b7c6a52-5f2e-4c1d-9a8b-3e4f5a6b7c8d'
 const GONE = { key: `${GONE_PROVIDER_ID}/old-model`, providerId: GONE_PROVIDER_ID, modelId: 'old-model' }
+// A model of the second provider: its list entry has no `name`, so the id is
+// its name, and the tooltips show the readable name after it.
+const READABLE_PROVIDER = { id: 'readable', name: 'Readable Provider' }
+const READABLE = {
+  key: `${READABLE_PROVIDER.id}/acme-two-v2`,
+  modelId: 'acme-two-v2',
+  readableName: 'Acme Two',
+}
 
 // What the model part of a pill must show. The title and the aria-label
 // list the same facts; the aria-label (on the model part, so the role word
 // and the thinking triangle stay readable) labels the model and the
-// provider, and says "Generating" while the reply streams.
+// provider, and says "Generating" while the reply streams. Both name the
+// model with its readable name after the name, when it has one.
 function expectedChip (
   key: string,
   name: string,
   provider: string | null,
-  options: { switchedFrom?: string, streaming?: boolean } = {}
+  options: { switchedFrom?: string, streaming?: boolean, readableName?: string } = {}
 ): ChipView {
   const providerText = provider ?? 'Unknown provider'
   const switched = options.switchedFrom ? [`Switched from ${options.switchedFrom}`] : []
   const streaming = options.streaming ?? false
+  const fullName = options.readableName ? `${name} (${options.readableName})` : name
   return {
     key,
     name,
     provider,
     switched: options.switchedFrom !== undefined,
     streaming,
-    title: [name, providerText, key, ...switched].join('\n'),
-    ariaLabel: [`Model: ${name}`, `Provider: ${providerText}`, key, ...switched, ...(streaming ? ['Generating'] : [])].join(', '),
+    title: [fullName, providerText, key, ...switched].join('\n'),
+    ariaLabel: [`Model: ${fullName}`, `Provider: ${providerText}`, key, ...switched, ...(streaming ? ['Generating'] : [])].join(', '),
   }
 }
 
@@ -146,13 +158,16 @@ describe('model names', () => {
   }
 
   beforeAll(async () => {
-    // Answers only chat requests to `/mock/v1`, and records their models.
-    server = await startChatMock(['/mock/v1/chat/completions'], async (_req, res, body) => {
+    // Answers the chat requests of both providers, records their models, and
+    // gives the second provider its model list.
+    server = await startChatMock(['/mock/v1/chat/completions', `/${READABLE_PROVIDER.id}/v1/chat/completions`], async (_req, res, body) => {
       const model = String(JSON.parse(body).model)
       mock.chatModels.push(model)
       const hold = mock.hold
       mock.hold = null
       await sendChatReply(res, model, hold)
+    }, {
+      [`/${READABLE_PROVIDER.id}/v1/models`]: { data: [{ id: READABLE.modelId, model_spec: { name: READABLE.readableName } }] },
     })
     app = await startApp()
     try {
@@ -163,6 +178,13 @@ describe('model names', () => {
           baseUrl: `${server.url}/mock/v1`,
           fetchModels: false,
           models: [{ id: ALPHA.modelId, name: ALPHA.name }, { id: BETA.modelId, name: BETA.name }, { id: LONG.modelId, name: LONG.name }],
+        }, {
+          id: READABLE_PROVIDER.id,
+          name: READABLE_PROVIDER.name,
+          baseUrl: `${server.url}/${READABLE_PROVIDER.id}/v1`,
+          fetchModels: true,
+          models: [],
+          modelReadableName: { path: 'model_spec.name' },
         }],
       })
       await seedConversation(app.home, makeConversation({
@@ -249,19 +271,21 @@ describe('model names', () => {
     for (const height of rest) expect(height).toBeCloseTo(first, 1)
   })
 
-  it('shows the full model name as the tooltip of each picker row', async () => {
+  it('shows the full model name as the tooltip of each picker row, with a readable name after the id', async () => {
     await openPicker(browser)
     // The model button toggles the picker, so the next test's `pickModel`
     // needs it closed even when a check here fails.
     try {
       // The shown name and the tooltip of each model row. A row may cut a
-      // long name off; its tooltip still shows all of it.
+      // long name off; its tooltip still shows all of it. A model named by
+      // its id shows the id, and its tooltip adds the readable name.
       await waitForValue(browser, 'picker rows', async () => (await pickerRows(browser))
         .filter((row) => row.kind === 'model')
         .map((row) => ({ name: row.text, title: row.title })), [
         { name: ALPHA.name, title: ALPHA.name },
         { name: BETA.name, title: BETA.name },
         { name: LONG.name, title: LONG.name },
+        { name: READABLE.modelId, title: `${READABLE.modelId} (${READABLE.readableName})` },
       ])
     } finally {
       await click(browser, '.model-selector-btn')
@@ -379,5 +403,21 @@ describe('model names', () => {
       meta: `${ALPHA.name}Renamed Provider1 message`,
     })
     await click(browser, '.history-close')
+  })
+
+  it('shows the readable name after the id in the tooltip of a response pill', async () => {
+    await newTab(browser)
+    await pickModel(browser, READABLE_PROVIDER.name, READABLE.modelId)
+    await submit(browser, 'Hello readable')
+    await waitForThread(browser, [
+      { role: 'user', text: 'Hello readable' },
+      { role: 'agent', text: replyText(READABLE.modelId) },
+      { role: 'user', text: '' },
+    ])
+    // The pill shows the id; only its tooltip names the readable name.
+    await waitForValue(browser, 'separators', separators, [
+      { index: 1, role: 'agent', chip: expectedChip(READABLE.key, READABLE.modelId, READABLE_PROVIDER.name, { readableName: READABLE.readableName }) },
+      { index: 2, role: 'user', chip: null },
+    ])
   })
 })

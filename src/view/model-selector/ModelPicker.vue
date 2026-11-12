@@ -161,7 +161,7 @@ onMounted(async () => {
               <path d="M6 1.5l1.4 2.9 3.1.4-2.3 2.2.6 3.1L6 8.6l-2.8 1.5.6-3.1L1.5 4.8l3.1-.4L6 1.5z" :fill="isFavorite(row.model) ? 'currentColor' : 'none'" stroke="currentColor" stroke-width="1" stroke-linejoin="round"/>
             </svg>
           </span>
-          <span class="model-item-name" :title="row.model.name">{{ row.model.name }}</span>
+          <span class="model-item-name" :title="row.title">{{ row.model.name }}</span>
           <span class="model-item-provider">{{ row.providerName }}</span>
         </button>
       </Virtualizer>

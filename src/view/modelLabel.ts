@@ -12,3 +12,11 @@ export function modelLabel(ref: ModelRef, names: ModelDisplayNames): { modelName
     providerName: names.providers.get(ref.providerId) || null,
   }
 }
+
+/** The model name in a tooltip (the picker row, the agent pill): the shown
+ *  name, then the readable name that the provider gives a model that is
+ *  named by its id (`ModelInfo.readableName`), as `<name> (<readable
+ *  name>)`. Only the name when the readable name is unknown or the same. */
+export function modelTooltipName(name: string, readableName: string | null | undefined): string {
+  return readableName && readableName !== name ? `${name} (${readableName})` : name
+}

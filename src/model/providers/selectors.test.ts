@@ -1490,7 +1490,7 @@ describe('model display names', () => {
     sbp('dez.model/modelCache/applyProviderResult', 'named', {
       ok: true,
       models: [
-        { id: 'alpha', name: 'alpha (served)', provider: 'named' },
+        { id: 'alpha', name: 'alpha (served)', provider: 'named', readableName: 'Alpha Readable' },
         { id: 'beta', name: 'Beta Two', provider: 'named' },
         { id: 'vendor/gamma', name: 'Gamma', provider: 'named' },
       ],
@@ -1514,6 +1514,10 @@ describe('model display names', () => {
 
   it('have no entry for a model that is neither configured nor cached', () => {
     expect(names().models.has('named/epsilon')).toBe(false)
+  })
+
+  it('take the readable names from the cache, also for a model that the config names', () => {
+    expect([...names().readableNames]).toStrictEqual([['named/alpha', 'Alpha Readable']])
   })
 
   it('name known providers and have no entry for an unknown provider', () => {

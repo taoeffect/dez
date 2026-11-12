@@ -116,6 +116,7 @@ export const BUILT_IN_PROVIDER_CONFIGS: readonly ProviderConfig[] = [
     modelImageInput: { path: 'model_spec.capabilities.supportsVision' },
     modelToolCalling: { path: 'model_spec.capabilities.supportsFunctionCalling' },
     modelThinking: { path: 'model_spec.capabilities.supportsReasoning' },
+    modelReadableName: { path: 'model_spec.name' },
     // One `type` per model. `inpaint` models edit images, and `upscale`
     // models make an image larger. `music` models also make sounds and
     // speech; one of them is a voice changer (`model_spec.voice_changer`),

@@ -124,6 +124,7 @@ const modelInfoSchema = z.object({
   provider: z.string().refine(isValidProviderId, 'invalid provider id'),
   // Optional with no version bump: a cache written before a field existed
   // reads it as "unknown" until the next model check.
+  readableName: z.string().min(1).optional(),
   imageInput: z.boolean().optional(),
   toolCalling: z.boolean().optional(),
   thinking: z.boolean().optional(),

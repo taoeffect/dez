@@ -238,6 +238,10 @@ export const providerConfigSchema = z.object({
   // not to think gets no Thinking toggle and no thinking fields.
   modelThinking: modelCapabilityPathSchema.optional(),
   modelOutputs: modelOutputsConfigSchema.optional(),
+  // Where a `/models` entry holds a readable name of the model, for a server
+  // whose entries are named by their ids (Venice). Only the tooltips of the
+  // picker and the agent pill show it, after the name; no request holds it.
+  modelReadableName: z.object({ path: modelEntryPathSchema }).optional(),
   auth: z.enum(['apiKey', 'githubCopilot']).default('apiKey'),
   // Static headers added to every request.
   headers: headersSchema.optional(),
