@@ -122,11 +122,12 @@ export default sbp('sbp/selectors/register', {
   // type that the webview reads), asks `plan` what to draw for an image of
   // that size (a part of it, at another size, mirrored or turned, on a
   // background, with changed colors), and gives the drawing as a file of
-  // `mediaType`, or of the type that the drawing names. Null when `plan`
-  // gives null: the image stays as it is, and nothing is drawn. There is no
-  // Rust code for this: the webview has the decoders. Rejects when the
-  // webview cannot decode the image, when `plan` throws, and when the
-  // drawing cannot be made, with an `UnwritableImageTypeError` when the
+  // the type that the drawing names, else of `mediaType`; the result tells
+  // that type, so that the caller saves or sends the bytes under it. Null
+  // when `plan` gives null: the image stays as it is, and nothing is drawn.
+  // There is no Rust code for this: the webview has the decoders. Rejects
+  // when the webview cannot decode the image, when `plan` throws, and when
+  // the drawing cannot be made, with an `UnwritableImageTypeError` when the
   // canvas does not write the type; the caller logs it, as each caller has
   // its own answer to a failure.
   async 'dez.controller/images/redraw' (
@@ -209,7 +210,7 @@ export default sbp('sbp/selectors/register', {
       // A canvas that cannot write a type writes a PNG in its place.
       if (drawn.type !== canvasType) throw new UnwritableImageTypeError(canvasType)
       const bytes = new Uint8Array(await drawn.arrayBuffer())
-      return { bytes: type === 'image/svg+xml' ? svgOfPng(bytes, drawing) : bytes, width: drawing.width, height: drawing.height }
+      return { bytes: type === 'image/svg+xml' ? svgOfPng(bytes, drawing) : bytes, mediaType: type, width: drawing.width, height: drawing.height }
     } finally {
       URL.revokeObjectURL(url)
     }

@@ -255,7 +255,7 @@ describe('dez.controller/images/redraw', () => {
 
     expect(sizes).toStrictEqual([{ width: 400, height: 1000 }])
     expect(drawn).toStrictEqual([{ canvas: '300x750', steps: [], numbers: [10, 20, 380, 950, 0, 0, 300, 750], type: 'image/jpeg' }])
-    expect(image).toStrictEqual({ bytes: new Uint8Array(DRAWN_BYTES), width: 300, height: 750 })
+    expect(image).toStrictEqual({ bytes: new Uint8Array(DRAWN_BYTES), mediaType: 'image/jpeg', width: 300, height: 750 })
   })
 
   it('draws nothing for an image that the plan leaves as it is', async () => {
@@ -292,7 +292,7 @@ describe('dez.controller/images/redraw', () => {
     const image = await sbp('dez.controller/images/redraw', svg, () => ({ crop: { x: 100, y: 30, width: 100, height: 90 }, width: 50, height: 45 }), 'image/png')
 
     expect(drawn).toStrictEqual([{ canvas: '50x45', steps: [], numbers: [-50, -15, 150, 75], type: 'image/png' }])
-    expect(image).toStrictEqual({ bytes: new Uint8Array(DRAWN_BYTES), width: 50, height: 45 })
+    expect(image).toStrictEqual({ bytes: new Uint8Array(DRAWN_BYTES), mediaType: 'image/png', width: 50, height: 45 })
   })
 
   it('paints the background, then draws the part at its size, mirrored, then turned, with its center at the center of the canvas', async () => {
@@ -316,7 +316,7 @@ describe('dez.controller/images/redraw', () => {
       numbers: [0, 0, 400, 200, 0, 0, 400, 200],
       type: 'image/png',
     }])
-    expect(image).toStrictEqual({ bytes: new Uint8Array(DRAWN_BYTES), width: 300, height: 500 })
+    expect(image).toStrictEqual({ bytes: new Uint8Array(DRAWN_BYTES), mediaType: 'image/png', width: 300, height: 500 })
   })
 
   it('mirrors top and bottom for a vertical flip, with the part at the size of the canvas', async () => {
@@ -364,13 +364,15 @@ describe('dez.controller/images/redraw', () => {
     }])
   })
 
-  it('draws the file type that the drawing names, in place of the type that the caller asks for', async () => {
+  // The caller saves the bytes under the type of the result.
+  it('draws and gives the file type that the drawing names, in place of the type that the caller asks for', async () => {
     stubImage(40, 30)
     const drawn = stubCanvas()
 
-    await redraw(({ width, height }) => ({ crop: { x: 0, y: 0, width, height }, width, height, turn: 45, mediaType: 'image/png' }), 'image/jpeg')
+    const image = await redraw(({ width, height }) => ({ crop: { x: 0, y: 0, width, height }, width, height, turn: 45, mediaType: 'image/png' }), 'image/jpeg')
 
     expect(drawn.map(({ type }) => type)).toStrictEqual(['image/png'])
+    expect(image?.mediaType).toBe('image/png')
   })
 
   // No canvas writes SVG.
@@ -384,7 +386,7 @@ describe('dez.controller/images/redraw', () => {
     // [9, 8, 7] in base64 is CQgH.
     expect(new TextDecoder().decode(image?.bytes)).toBe('<svg xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink" width="20" height="15" viewBox="0 0 20 15">'
       + '<image width="20" height="15" xlink:href="data:image/png;base64,CQgH"/></svg>')
-    expect(image).toMatchObject({ width: 20, height: 15 })
+    expect(image).toMatchObject({ mediaType: 'image/svg+xml', width: 20, height: 15 })
   })
 
   // The canvas of a webview that cannot write a type writes a PNG in its

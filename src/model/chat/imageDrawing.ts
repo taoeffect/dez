@@ -97,7 +97,10 @@ export function svgOfPng(png: Uint8Array, { width, height }: ImageSize): Uint8Ar
     + `<image width="${width}" height="${height}" xlink:href="data:image/png;base64,${bytesToBase64(png)}"/></svg>`)
 }
 
-/** The file of a new drawing, and the size of the drawing. */
+/** The file of a new drawing, its file type, and the size of the drawing. */
 export interface DrawnImage extends ImageSize {
   bytes: Uint8Array
+  /** The file type of `bytes`: the type that the drawing names, else the
+   *  type that the caller of redraw asked for. */
+  mediaType: DrawnMediaType
 }

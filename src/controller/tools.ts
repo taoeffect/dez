@@ -1,6 +1,6 @@
 import sbp from '@sbp/sbp'
 import type { CutAudio } from '../model/chat/audioCut'
-import { drawnMediaType, UnwritableImageTypeError, type DrawnImage, type DrawnMediaType, type ImageSize } from '../model/chat/imageDrawing'
+import { drawnMediaType, UnwritableImageTypeError, type DrawnImage, type ImageSize } from '../model/chat/imageDrawing'
 import { ClipReadError, type ClipReadProblem } from '../model/chat/mediaFiles'
 import type { MediaTagData } from '../model/chat/mediaTags'
 import { modelRefKey } from '../model/chat/modelRef'
@@ -138,25 +138,21 @@ function imageRunner(plan: ImagePlan): ToolRunner {
     // text or the error waits until redraw ends, so that a failure of
     // redraw is never the call's fault. A plan can choose the file type of
     // its drawing (a PNG for transparent pixels, the type of a convert);
-    // redraw draws that type.
+    // redraw draws that type and tells it.
     let text = ''
     let callError: unknown
-    let mediaType: DrawnMediaType = drawnMediaType(source.mediaType)
     let drawn: DrawnImage | null
     try {
       drawn = await sbp('dez.controller/images/redraw', file, (size: ImageSize) => {
         try {
           const planned = plan(id, args, size, source.mediaType)
-          if (typeof planned !== 'string') {
-            mediaType = planned.mediaType ?? mediaType
-            return planned
-          }
+          if (typeof planned !== 'string') return planned
           text = planned
         } catch (error) {
           callError = error
         }
         return null
-      }, mediaType) as DrawnImage | null
+      }, drawnMediaType(source.mediaType)) as DrawnImage | null
     } catch (error) {
       if (error instanceof UnwritableImageTypeError) throw unwritableFormatError(id, error.mediaType, source.mediaType, { cause: error })
       // The texts of redraw hold no path: it gets the file, not its path.
@@ -169,7 +165,7 @@ function imageRunner(plan: ImagePlan): ToolRunner {
     signal.throwIfAborted()
     let path: string
     try {
-      path = await sbp('dez.controller/images/save', drawn.bytes, mediaType, { folder: 'generated' }) as string
+      path = await sbp('dez.controller/images/save', drawn.bytes, drawn.mediaType, { folder: 'generated' }) as string
     } catch {
       // images/save logged the failure and showed its error toast.
       throw new ToolError('Dez could not save the new image, so there is no new image. This is not a fault of the call, and Dez showed the user the cause. '

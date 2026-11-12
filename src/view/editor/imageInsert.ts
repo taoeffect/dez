@@ -104,7 +104,7 @@ async function storableImage(file: File): Promise<StorableImage | null> {
     if (isImageMediaType(file.type)) return { bytes: new Uint8Array(await file.arrayBuffer()), mediaType: file.type }
     // Never null: the plan gives a drawing for every size.
     const png = await sbp('dez.controller/images/redraw', file, wholeImageDrawing, 'image/png') as DrawnImage
-    return { bytes: png.bytes, mediaType: 'image/png' }
+    return { bytes: png.bytes, mediaType: png.mediaType }
   } catch (error) {
     console.error('Failed to read the image:', error)
     showNotAddedToast('image', errorText(

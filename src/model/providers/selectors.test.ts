@@ -2,7 +2,7 @@ import sbp from '@sbp/sbp'
 import { createPinia, setActivePinia } from 'pinia'
 import { afterEach, beforeEach, describe, expect, it, vi, type MockInstance } from 'vitest'
 import type { AudioPart, CutAudio } from '../chat/audioCut'
-import type { DrawnImage, ImageDrawing, ImageSize } from '../chat/imageDrawing'
+import type { DrawnImage, DrawnMediaType, ImageDrawing, ImageSize } from '../chat/imageDrawing'
 import { ClipReadError } from '../chat/mediaFiles'
 import type { ModelRef, Section } from '../chat/types'
 import { toolBlockText } from '../chat/toolBlocks'
@@ -162,11 +162,11 @@ sbp('sbp/selectors/register', {
     if (path === 'assets/generated/images/logo.svg') return STORED_SVG
     throw `Failed to read ${path}: No such file or directory (os error 2)`
   },
-  async 'dez.controller/images/redraw' (_file: Blob, plan: (size: ImageSize) => ImageDrawing | null, mediaType: string): Promise<DrawnImage | null> {
+  async 'dez.controller/images/redraw' (_file: Blob, plan: (size: ImageSize) => ImageDrawing | null, mediaType: DrawnMediaType): Promise<DrawnImage | null> {
     if (!storedImageSize) throw new Error('unknown image format')
     const drawing = plan(storedImageSize)
     drawings.push([drawing, mediaType])
-    return drawing && { bytes: DRAWN_IMAGE, width: drawing.width, height: drawing.height }
+    return drawing && { bytes: DRAWN_IMAGE, mediaType: drawing.mediaType ?? mediaType, width: drawing.width, height: drawing.height }
   },
   async 'dez.controller/media/readClip' (clip: ClipAttachment): Promise<Blob> {
     clipReads.push(clip.id)

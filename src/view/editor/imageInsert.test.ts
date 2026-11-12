@@ -3,7 +3,7 @@ import { history, undo } from '@codemirror/commands'
 import { EditorSelection, EditorState, type TransactionSpec } from '@codemirror/state'
 import type { EditorView } from '@codemirror/view'
 import { afterEach, beforeEach, describe, expect, it, vi, type MockInstance } from 'vitest'
-import type { DrawnImage, ImageDrawing, ImageSize } from '../../model/chat/imageDrawing'
+import type { DrawnImage, DrawnMediaType, ImageDrawing, ImageSize } from '../../model/chat/imageDrawing'
 import { imageMarkdown } from '../../model/chat/images'
 import { FileTooLargeError, MAX_SAVED_CLIP_BYTES } from '../../model/chat/mediaFiles'
 import { mediaTagText, type MediaTagData, type MediaTagKind } from '../../model/chat/mediaTags'
@@ -49,7 +49,7 @@ let clipSaves: ClipSave[] = []
 /** The first bytes of the clip files whose save fails. */
 let failingClipSaves = new Set<number>()
 /** What `dez.controller/images/redraw` does with the plan of its caller. */
-let redraw: (plan: (size: ImageSize) => ImageDrawing | null, mediaType: string) => Promise<DrawnImage | null>
+let redraw: (plan: (size: ImageSize) => ImageDrawing | null, mediaType: DrawnMediaType) => Promise<DrawnImage | null>
 let consoleError: MockInstance<typeof console.error>
 
 sbp('sbp/selectors/register', {
@@ -84,7 +84,7 @@ sbp('sbp/selectors/register', {
     if (failingClipSaves.has(options.bytes[0])) return Promise.reject(new Error('disk full'))
     return Promise.resolve(clipPath(clip.kind, options.bytes[0]))
   },
-  'dez.controller/images/redraw' (_file: Blob, plan: (size: ImageSize) => ImageDrawing | null, mediaType: string): Promise<DrawnImage | null> {
+  'dez.controller/images/redraw' (_file: Blob, plan: (size: ImageSize) => ImageDrawing | null, mediaType: DrawnMediaType): Promise<DrawnImage | null> {
     return redraw(plan, mediaType)
   },
 })
@@ -347,7 +347,7 @@ describe('inserting the saved images', () => {
     const drawings: unknown[] = []
     redraw = async (plan, mediaType) => {
       drawings.push([plan({ width: 40, height: 30 }), mediaType])
-      return { bytes: new Uint8Array([7, ...PNG_BYTES.subarray(1)]), width: 40, height: 30 }
+      return { bytes: new Uint8Array([7, ...PNG_BYTES.subarray(1)]), mediaType, width: 40, height: 30 }
     }
     const editor = createEditor('', 0)
     const bitmap = new File([new Uint8Array([66, 77])], 'scan.bmp', { type: 'image/bmp' })

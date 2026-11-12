@@ -4,7 +4,7 @@ import { afterEach, beforeEach, describe, expect, it, vi, type MockInstance } fr
 import type { ActiveModel, Section, SectionThinking, Tab, ThinkingReplay } from '../model/chat/types'
 import type { AudioPart, CutAudio } from '../model/chat/audioCut'
 import { sectionVisibleText } from '../model/chat/content'
-import type { DrawnImage, ImageDrawing, ImageSize } from '../model/chat/imageDrawing'
+import type { DrawnImage, DrawnMediaType, ImageDrawing, ImageSize } from '../model/chat/imageDrawing'
 import { findMediaTags } from '../model/chat/mediaTags'
 import { agentTextForRequest, findToolBlocks } from '../model/chat/toolBlocks'
 import type { ConversationData } from '../model/persistence/types'
@@ -84,9 +84,9 @@ sbp('sbp/selectors/register', {
     return new Blob([])
   },
   // Every stored image is 1000 by 500 pixels.
-  async 'dez.controller/images/redraw' (_file: Blob, plan: (size: ImageSize) => ImageDrawing | null): Promise<DrawnImage | null> {
+  async 'dez.controller/images/redraw' (_file: Blob, plan: (size: ImageSize) => ImageDrawing | null, mediaType: DrawnMediaType): Promise<DrawnImage | null> {
     const drawing = plan({ width: 1000, height: 500 })
-    return drawing && { bytes: new Uint8Array([1]), width: drawing.width, height: drawing.height }
+    return drawing && { bytes: new Uint8Array([1]), mediaType: drawing.mediaType ?? mediaType, width: drawing.width, height: drawing.height }
   },
   async 'dez.native/getAppDir' (root = 'app'): Promise<string> {
     return root === 'cache' ? '/home/u/.cache/dez' : '/home/u/.config/dez'

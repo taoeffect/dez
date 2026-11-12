@@ -2,7 +2,7 @@ import sbp from '@sbp/sbp'
 import { createPinia, setActivePinia } from 'pinia'
 import { afterEach, beforeEach, describe, expect, it, vi, type MockInstance } from 'vitest'
 import type { AudioPart, CutAudio } from '../model/chat/audioCut'
-import { UnwritableImageTypeError, type DrawnImage, type ImageDrawing, type ImageSize } from '../model/chat/imageDrawing'
+import { UnwritableImageTypeError, type DrawnImage, type DrawnMediaType, type ImageDrawing, type ImageSize } from '../model/chat/imageDrawing'
 import { ClipReadError } from '../model/chat/mediaFiles'
 import type { MediaTagData } from '../model/chat/mediaTags'
 import type { KnownLimit } from '../model/providers/knownLimits'
@@ -90,12 +90,14 @@ sbp('sbp/selectors/register', {
     readImages.push(path)
     return await readImage()
   },
-  async 'dez.controller/images/redraw' (_file: Blob, plan: (size: ImageSize) => ImageDrawing | null, mediaType: string): Promise<DrawnImage | null> {
+  // Writes the type that the drawing names, else the type that the caller
+  // asked for, as redraw does.
+  async 'dez.controller/images/redraw' (_file: Blob, plan: (size: ImageSize) => ImageDrawing | null, mediaType: DrawnMediaType): Promise<DrawnImage | null> {
     if (redrawError) throw redrawError
     const drawing = plan(storedImageSize)
     if (!drawing) return null
     drawings.push({ drawing, mediaType })
-    return { bytes: new Uint8Array([7]), width: drawing.width, height: drawing.height }
+    return { bytes: new Uint8Array([7]), mediaType: drawing.mediaType ?? mediaType, width: drawing.width, height: drawing.height }
   },
   async 'dez.controller/images/save' (_bytes: Uint8Array, mediaType: string, options: unknown): Promise<string> {
     savedImages.push({ mediaType, options })

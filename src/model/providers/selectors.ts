@@ -235,7 +235,6 @@ async function requestImage(path: string, appDir: string, rules?: ImageSizeRules
   const image = await readStoredImage(path, appDir)
   const svg = image.mediaType === 'image/svg+xml'
   if (!rules && !svg) return { ...image, size: null }
-  const mediaType = drawnMediaType(image.mediaType)
   let decoded: ImageSize | null = null
   try {
     const file = new Blob([image.bytes], { type: image.mediaType })
@@ -244,8 +243,8 @@ async function requestImage(path: string, appDir: string, rules?: ImageSizeRules
       const fit = rules ? imageFit(size, rules) : null
       return fit ?? (svg ? wholeImageDrawing(size) : null)
     }
-    const drawn = await sbp('dez.controller/images/redraw', file, plan, mediaType) as DrawnImage | null
-    return drawn ? { bytes: drawn.bytes, mediaType, size: { width: drawn.width, height: drawn.height } } : { ...image, size: decoded }
+    const drawn = await sbp('dez.controller/images/redraw', file, plan, drawnMediaType(image.mediaType)) as DrawnImage | null
+    return drawn ? { bytes: drawn.bytes, mediaType: drawn.mediaType, size: { width: drawn.width, height: drawn.height } } : { ...image, size: decoded }
   } catch (error) {
     if (svg) {
       // An SVG with HTML in it (a `foreignObject`) taints the canvas, so
