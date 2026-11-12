@@ -73,18 +73,20 @@ export const STRIPES_SVG = Buffer.from([
 export const WEBKIT_SVG_SIZES = [{ width: 300, height: 150 }, { width: 60, height: 30 }]
 
 /** An image as the WebView decodes it: its size, and the colors (red,
- *  green, blue, alpha) of some pixels of one row. */
+ *  green, blue, alpha) of some of its pixels. */
 export interface DecodedImage {
   width: number
   height: number
   pixels: number[][]
 }
 
-/** Decodes the image at `url` (a data URL) in the page, and reads the
- *  pixel of the row `row` (the middle row when absent) in each column of
- *  `columns`. */
-export async function decodedImage (browser: E2EBrowser, url: string, columns: number[], row?: number): Promise<DecodedImage> {
-  return browser.execute(async (source: string, wanted: number[], wantedRow: number | null) => {
+/** Decodes the image at `url` (a data URL) in the page, and reads the pixel
+ *  at each of `points`: a column (in the middle row), or a column and a row. */
+export async function decodedImage (browser: E2EBrowser, url: string, points: Array<number | [number, number]>): Promise<DecodedImage> {
+  // WebdriverIO's `execute` types turn a tuple argument into a tuple that
+  // can end in page elements, so the points go to the page as number arrays.
+  const wantedPoints: Array<number | number[]> = points
+  return browser.execute(async (source: string, wanted: Array<number | number[]>) => {
     const image = new Image()
     image.src = source
     await image.decode()
@@ -94,13 +96,16 @@ export async function decodedImage (browser: E2EBrowser, url: string, columns: n
     const context = canvas.getContext('2d')
     if (!context) throw new Error('decodedImage: no canvas context')
     context.drawImage(image, 0, 0)
-    const y = wantedRow ?? Math.floor(canvas.height / 2)
+    const middle = Math.floor(canvas.height / 2)
     return {
       width: canvas.width,
       height: canvas.height,
-      pixels: wanted.map((column) => Array.from(context.getImageData(column, y, 1, 1).data)),
+      pixels: wanted.map((point) => {
+        const [x, y = middle] = typeof point === 'number' ? [point] : point
+        return Array.from(context.getImageData(x, y, 1, 1).data)
+      }),
     }
-  }, url, columns, row ?? null)
+  }, url, wantedPoints)
 }
 
 /** The JPEG that the WebView encodes from the PNG `png`, at full quality:

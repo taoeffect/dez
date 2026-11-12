@@ -112,9 +112,7 @@ describe('image tool flip, rotate, color changes, and convert', () => {
   async function filePixels (file: string, points: Array<[number, number]>): Promise<DecodedImage> {
     const bytes = await fs.promises.readFile(file)
     const url = `data:${FILE_TYPES[path.extname(file)]};base64,${bytes.toString('base64')}`
-    const reads = []
-    for (const [column, row] of points) reads.push(await decodedImage(browser, url, [column], row))
-    return { width: reads[0]?.width ?? 0, height: reads[0]?.height ?? 0, pixels: reads.flatMap((read) => read.pixels) }
+    return decodedImage(browser, url, points)
   }
 
   beforeAll(async () => {
@@ -323,7 +321,7 @@ describe('image tool flip, rotate, color changes, and convert', () => {
     const [mention] = sentMessages(third.body).slice(-1)
     expect(mention).toEqual({ role: 'user', content: [{ type: 'text', text: 'Look at @d' }, { type: 'image_url', image_url: { url: expect.stringMatching(/^data:image\/png;base64,/) } }] })
     const sentUrl = /"url":"(data:image\/png;base64,[^"]+)"/.exec(third.body)?.[1] ?? ''
-    expect(await decodedImage(browser, sentUrl, [15, 45, 75], 10)).toEqual({ width: 90, height: 20, pixels: [RED, GREEN, BLUE] })
+    expect(await decodedImage(browser, sentUrl, [[15, 10], [45, 10], [75, 10]])).toEqual({ width: 90, height: 20, pixels: [RED, GREEN, BLUE] })
     await sendChatReply(third.reply, TOOLER.modelName)
     await waitForValue(browser, 'sections after the second reply', async () => (await threadSections(browser)).length, 5)
   })
