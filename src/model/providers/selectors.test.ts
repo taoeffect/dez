@@ -1375,11 +1375,13 @@ describe('the price of an image', () => {
       expect(await quote('media', 'm', 'imageEdit')).toStrictEqual({ usd: 0.04 })
     })
 
-    // The price depends on a field that Dez does not send.
-    it('gives no price when the prices depend on more than the request', async () => {
-      cacheModel('media', { id: 'm', request: 'image' }, pricing({ generation: { usd: 0.01 }, resolutions: { '1K': { usd: 0.01 }, '4K': { usd: 0.05 } } }))
+    // The values of the request choose the price, as the model check left
+    // the parameter of the resolution with no default.
+    it('gives the price of the resolution of the request, and none with no resolution', async () => {
+      cacheModel('media', { id: 'm', request: 'image', parameters: [{ name: 'resolution', label: 'Resolution', options: ['1K', '4K'] }] }, pricing({ resolutions: { '1K': { usd: 0.01 }, '4K': { usd: 0.05 } } }))
 
-      expect(await quote('media', 'm', 'image')).toBeNull()
+      expect([await quote('media', 'm', 'image', { resolution: '4K' }), await quote('media', 'm', 'image')]).toStrictEqual([{ usd: 0.05 }, null])
+      expect(httpRequests).toStrictEqual([])
     })
   })
 

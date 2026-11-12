@@ -4,7 +4,7 @@ import { base64ToBytes, bytesToBase64 } from '../../utils/base64'
 import type { NativeHttpResponseHead } from '../../utils/protocol/nativeHttp'
 import { ClipNotMadeError, UnusableAnswerError } from './errors'
 import { MEDIA_FORMATS, NO_VIDEO_LENGTH_MESSAGE, type ClipFormat, type ClipQuoteFormat, type ImageFormat, type InputClipPart } from './mediaFormats'
-import { effectiveParameterValues, type ModelParameter } from './modelParameters'
+import { effectiveParameterValues, type ModelParameter, type ParameterValues } from './modelParameters'
 import type { ChatImagePart, ClipKind, MediaKind } from './types'
 
 const venice = MEDIA_FORMATS.venice.images as ImageFormat
@@ -81,6 +81,18 @@ describe('venice media requests', () => {
     })
   })
 
+  it.each([
+    ['image', '/image/generate', { model: 'krea-3', prompt: 'A red fox', format: 'webp', hide_watermark: true, safe_mode: false }],
+    ['imageEdit', '/image/multi-edit', { modelId: 'krea-3', prompt: 'A red fox', images: [PNG_URL], safe_mode: false }],
+  ] as const)('sends the parameter values of a %s request with its fixed fields', (kind, path, fixed) => {
+    const values = { aspect_ratio: '16:9', resolution: '2K', quality: 'high' }
+
+    expect(venice.request(kind, VENICE_URL, 'krea-3', { prompt: 'A red fox', images: [IMAGES[0]], values })).toStrictEqual({
+      url: `${VENICE_URL}${path}`,
+      body: { ...fixed, ...values },
+    })
+  })
+
   // The schema has no prompt and no model field.
   it('sends an upscale to /image/upscale with the image as bare base64 and the values, and no prompt or model', () => {
     const input = { prompt: 'Make it larger', images: [IMAGES[1]], values: { scale: 4, creativity: 0.005 } }
@@ -104,8 +116,102 @@ describe('venice image parameters', () => {
     expect(effectiveParameterValues(upscale)).toStrictEqual({ scale: 2, creativity: 0.01 })
   })
 
-  it.each(['image', 'imageEdit'] as const)('gives a %s model no parameters', (kind) => {
+  // The constraints of `krea-3` (2026-11-11), with fewer aspect ratios.
+  const KREA = {
+    aspectRatios: ['1:1', '16:9', '9:16'],
+    resolutions: ['1K', '2K', '4K'],
+    qualities: ['medium', 'high'],
+    defaultAspectRatio: '1:1',
+    defaultResolution: '1K',
+    defaultQuality: 'high',
+  }
+  const imageParameters = (kind: 'image' | 'imageEdit', constraints: Record<string, unknown>) =>
+    (venice.parameters?.(kind, { id: 'm', model_spec: { constraints } }, undefined) ?? []).map(({ label: _label, ...parameter }) => parameter)
+
+  it.each(['image', 'imageEdit'] as const)('gives a %s model the aspect ratios, resolutions, and qualities of its entry, with their defaults', (kind) => {
+    expect(imageParameters(kind, KREA)).toStrictEqual([
+      { name: 'aspect_ratio', options: ['1:1', '16:9', '9:16'], default: '1:1' },
+      { name: 'resolution', options: ['1K', '2K', '4K'], default: '1K' },
+      { name: 'quality', options: ['medium', 'high'], default: 'high' },
+    ])
+  })
+
+  // `qwen-image-2-1-turbo-edit` (2026-11-11): an edit with no aspect ratio
+  // takes the one of its first image, so the list names no default.
+  it('gives a list with no default no default', () => {
+    expect(imageParameters('imageEdit', { aspectRatios: ['auto', '1:1'], resolutions: ['1K', '2K'], defaultResolution: '1K', maxInputImages: 6 })).toStrictEqual([
+      { name: 'aspect_ratio', options: ['auto', '1:1'] },
+      { name: 'resolution', options: ['1K', '2K'], default: '1K' },
+    ])
+  })
+
+  it('gives no default that is not in its list, and no row for an empty list', () => {
+    expect(imageParameters('image', { aspectRatios: ['1:1', '16:9'], defaultAspectRatio: '4:3', resolutions: [], defaultResolution: '1K', qualities: ['low'] })).toStrictEqual([
+      { name: 'aspect_ratio', options: ['1:1', '16:9'] },
+      { name: 'quality', options: ['low'] },
+    ])
+  })
+
+  // `venice-sd35` (2026-11-11) takes a width and a height, which Dez does
+  // not send.
+  it.each(['image', 'imageEdit'] as const)('gives a %s model with no option lists no parameters', (kind) => {
+    expect(imageParameters(kind, { promptCharacterLimit: 1500, steps: { default: 25, max: 30 }, widthHeightDivisor: 16 })).toStrictEqual([])
     expect(venice.parameters?.(kind, { id: 'm', model_spec: {} }, undefined)).toStrictEqual([])
+  })
+})
+
+describe('venice image quotes', () => {
+  const price = (usd: number) => ({ usd, diem: usd })
+  const upscale = { '2x': price(0.02), '4x': price(0.08) }
+  const usd = (kind: 'image' | 'imageEdit', pricing: Record<string, unknown>, values: ParameterValues = {}) =>
+    venice.quote?.usd(kind, values, { entry: { id: 'm', model_spec: { pricing } }, mediaEntry: undefined, records: undefined })
+  // The prices of `krea-3` (2026-11-11).
+  const KREA_PRICES = {
+    resolutions: { '1K': price(0.07), '2K': price(0.1), '4K': price(0.15) },
+    quality: {
+      '1K': { medium: price(0.04), high: price(0.07) },
+      '2K': { medium: price(0.08), high: price(0.1) },
+      '4K': { medium: price(0.13), high: price(0.15) },
+    },
+    upscale,
+  }
+  // The prices of `seedream-v5-5` (2026-11-11): no `generation` price.
+  const SEEDREAM_PRICES = { resolutions: { '1K': price(0.0255), '1.5K': price(0.034), '2K': price(0.051) }, upscale }
+
+  it('gives the price of the resolution and the quality of a request', () => {
+    expect([
+      usd('image', KREA_PRICES, { resolution: '1K', quality: 'high' }),
+      usd('image', KREA_PRICES, { resolution: '4K', quality: 'medium' }),
+    ]).toStrictEqual([0.07, 0.13])
+  })
+
+  // A resolution such as `1.5K` holds a dot.
+  it('gives the price of the resolution of a request', () => {
+    expect([
+      usd('image', SEEDREAM_PRICES, { resolution: '1.5K' }),
+      usd('imageEdit', { inpaint: price(0.02), resolutions: { '1K': price(0.02), '2K': price(0.03) } }, { resolution: '2K' }),
+    ]).toStrictEqual([0.034, 0.03])
+  })
+
+  it.each([
+    ['with no resolution', SEEDREAM_PRICES, {}],
+    ['with a resolution that the table does not have', SEEDREAM_PRICES, { resolution: '4K' }],
+    ['with no quality', KREA_PRICES, { resolution: '1K' }],
+    ['with a resolution that is a key of every object', SEEDREAM_PRICES, { resolution: 'constructor' }],
+  ])('gives no price of a request %s', (_name, pricing, values) => {
+    expect(usd('image', pricing, values)).toBeUndefined()
+  })
+
+  // `seedream-v5-5-edit` (2026-11-11): each image past the included ones
+  // costs more, and a quote does not know the count of the images.
+  it('gives no price for a model whose price depends on the count of the input images', () => {
+    const pricing = {
+      inpaint: price(0.0255),
+      resolutions: { '1K': price(0.0255), '2K': price(0.051) },
+      inputImages: { included: 0, additional: price(0.0102) },
+    }
+
+    expect(usd('imageEdit', pricing, { resolution: '1K' })).toBeUndefined()
   })
 })
 

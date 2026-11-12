@@ -439,17 +439,29 @@ const VENICE_SPEECH_FORMATS: ReadonlySet<OptionValue> = new Set(['mp3', 'wav', '
 // https://docs.venice.ai/guides/media/image-upscaling
 const VENICE_UPSCALE_LIMITS = { pixelsBelow: 16_777_216, maxBytes: 25 * 1024 ** 2 } as const satisfies InputImageLimits
 
-// The price key of each Venice image kind with a price table, in the
-// model entry (`model_spec.pricing`), and the keys of the table that are
-// prices of other requests (every image model repeats the upscale table).
-// A table with any other key (`resolutions`, `quality`, `inputImages`)
-// has a price that depends on a field that Dez does not send, or on the
-// input images, so it tells no one price of a request. The entry of an
+// The price key of each Venice image kind in the model entry
+// (`model_spec.pricing`), and the keys of the table that are prices of
+// other requests (every image model repeats the upscale table). The table
+// of a model whose price depends on the options of the request also has
+// `resolutions` (resolution → price) or `quality` (resolution → quality →
+// price), and some such tables have no price key. An edit model's table
+// can have `inputImages` (the images that the price includes, and the price
+// of each more); a quote does not know the count of the images, so such a
+// model gets no price, as does a table with any other key. The entry of an
 // upscale model has the price of each scale (`upscale` → `2x`, `4x`).
 // https://docs.venice.ai/pricing
 const VENICE_IMAGE_PRICES: Readonly<Record<Exclude<ImageKind, 'upscale'>, { key: string, others: readonly string[] }>> = {
   image: { key: 'generation', others: ['upscale', 'inpaint'] },
   imageEdit: { key: 'inpaint', others: ['upscale', 'generation'] },
+}
+const VENICE_OPTION_PRICES: readonly string[] = ['resolutions', 'quality']
+
+// The entry of a Venice price table for the option value `value` of a
+// request; none when the request has no value, or the table has no price
+// for it. A plain lookup, not `valueAtPath`: a resolution such as `1.5K`
+// holds a dot.
+function venicePriceOf(table: unknown, value: unknown): unknown {
+  return isRecord(table) && (typeof value === 'string' || typeof value === 'number') && Object.hasOwn(table, value) ? table[value] : undefined
 }
 
 // The USD of one price of a Venice price table (`{ usd, diem }`).
@@ -473,11 +485,30 @@ const veniceFormat: MediaFormat = {
     // the range, and the step gives the field's arrows a use.
     // https://docs.venice.ai/api-reference/endpoint/image/upscale
     // https://docs.venice.ai/guides/media/image-upscaling
-    parameters: (kind) => {
-      if (kind !== 'upscale') return []
+    // image, imageEdit: the option lists of the entry
+    // (`model_spec.constraints`; camelCase keys, where the video entries
+    // have snake_case ones), whose names are the request fields of both
+    // endpoints. A model with `qualities` takes only those. A list's
+    // default is the default only when the list holds it; else the popup
+    // shows "Default" and the request sends no field, so the model's own
+    // default applies (an edit with no `aspect_ratio` takes the one of its
+    // first image). A model that takes a size in pixels
+    // (`widthHeightDivisor`) has none of the lists, so it gets no row, and
+    // Dez sends no `width` or `height`.
+    // https://docs.venice.ai/api-reference/endpoint/image/generate
+    // https://docs.venice.ai/api-reference/endpoint/image/multi-edit
+    parameters: (kind, entry) => {
+      if (kind === 'upscale') {
+        return [
+          { name: 'scale', label: 'Scale', options: [2, 4], default: 2 },
+          { name: 'creativity', label: 'Creativity', min: 0, max: 0.02, step: 0.001, default: 0.01 },
+        ]
+      }
+      const constraint = (field: string) => valueAtPath(entry, `model_spec.constraints.${field}`)
       return [
-        { name: 'scale', label: 'Scale', options: [2, 4], default: 2 },
-        { name: 'creativity', label: 'Creativity', min: 0, max: 0.02, step: 0.001, default: 0.01 },
+        ...optionsParameter('aspect_ratio', 'Aspect ratio', listedValues(constraint('aspectRatios')), constraint('defaultAspectRatio')),
+        ...optionsParameter('resolution', 'Resolution', listedValues(constraint('resolutions')), constraint('defaultResolution')),
+        ...optionsParameter('quality', 'Quality', listedValues(constraint('qualities')), constraint('defaultQuality')),
       ]
     },
     request: (kind, baseUrl, modelId, { prompt, images, values }) => {
@@ -486,18 +517,20 @@ const veniceFormat: MediaFormat = {
         case 'image':
           // WebP is Venice's default; it is set so that the files keep one
           // type if the default changes.
-          return { url: `${base}/image/generate`, body: { model: modelId, prompt, format: 'webp', hide_watermark: true, safe_mode: false } }
+          return { url: `${base}/image/generate`, body: { model: modelId, prompt, format: 'webp', hide_watermark: true, safe_mode: false, ...values } }
         case 'imageEdit':
           // This endpoint names the model `modelId`, not `model`. The first
           // image is the one to edit; the others are references. Each one
           // goes as a data URL, as Dez has no URL that a provider could
           // fetch. It has `safe_mode` but no `hide_watermark`, and its
           // schema allows no field that it does not name, so only
-          // `safe_mode` goes.
+          // `safe_mode` goes, with the values of the parameters. (The
+          // `/image/edit` endpoint refuses `quality`.)
           // https://docs.venice.ai/api-reference/endpoint/image/multi-edit
+          // https://docs.venice.ai/api-reference/endpoint/image/edit
           return {
             url: `${base}/image/multi-edit`,
-            body: { modelId, prompt, images: images.map(imageDataUrl), safe_mode: false },
+            body: { modelId, prompt, images: images.map(imageDataUrl), safe_mode: false, ...values },
           }
         case 'upscale':
           // The schema has no prompt and no model field: the endpoint has
@@ -559,7 +592,9 @@ const veniceFormat: MediaFormat = {
         if (!isRecord(pricing)) return undefined
         if (kind === 'upscale') return veniceUsd(valueAtPath(pricing, `upscale.${String(values.scale)}x`))
         const { key, others } = VENICE_IMAGE_PRICES[kind]
-        if (Object.keys(pricing).some((name) => name !== key && !others.includes(name))) return undefined
+        if (Object.keys(pricing).some((name) => name !== key && !others.includes(name) && !VENICE_OPTION_PRICES.includes(name))) return undefined
+        if (Object.hasOwn(pricing, 'quality')) return veniceUsd(venicePriceOf(venicePriceOf(pricing.quality, values.resolution), values.quality))
+        if (Object.hasOwn(pricing, 'resolutions')) return veniceUsd(venicePriceOf(pricing.resolutions, values.resolution))
         return veniceUsd(pricing[key])
       },
     },
