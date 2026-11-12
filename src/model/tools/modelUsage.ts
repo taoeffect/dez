@@ -94,7 +94,9 @@ export function clipNamesUsage(kind: MediaTagKind, promptName: string): string {
 // A model that takes the clips of `kind` only by their web address
 // (`ClipKindRules.urlOnly`, `clipTagProblem`).
 export function urlOnlyClipsUsage(kind: MediaTagKind): string {
-  return `A ${kind} clip goes only by its web address, which the provider downloads: only a clip that a model made goes, while its address works (the tag's \`expires\`). Dez refuses a ${kind} clip that is only a file (pasted, dropped, or made by the audio tool).`
+  const clip = kind === 'audio' ? 'an audio clip' : 'a video clip'
+  const lead = kind === 'audio' ? 'An audio clip' : 'A video clip'
+  return `${lead} goes only by its web address, which the provider downloads: only a clip that a model made goes, while its address works (the tag's \`expires\`). Dez refuses ${clip} that is only a file (pasted, dropped, or made by the audio tool).`
 }
 
 // What the input clips of a request are (`mediaRequestInput`), and what

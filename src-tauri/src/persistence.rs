@@ -1,7 +1,8 @@
-//! Raw private-file I/O under `~/.config/dez/`, plus id and app-file path
-//! sanitization. TypeScript owns every file format (app state, prompts,
-//! conversations, model cache); Rust never parses them. The generic app-file
-//! commands (`save_app_file`, `load_app_file`, `load_app_file_bytes`,
+//! Raw private-file I/O under the two file roots (`FileRoot`: the app folder
+//! `~/.config/dez/`, and Dez's folder in the OS cache folder), plus id and
+//! app-file path sanitization. TypeScript owns every file format (app state,
+//! prompts, conversations, model cache); Rust never parses them. The generic
+//! app-file commands (`save_app_file`, `load_app_file`, `load_app_file_bytes`,
 //! `delete_app_file`, `move_app_file`, `list_app_files`, and
 //! `download_app_file` in http_bridge.rs) take a path from TypeScript that is
 //! relative to a root folder (`FileRoot`), so a new file needs no new
@@ -397,7 +398,7 @@ pub fn app_dir(root: FileRoot) -> Result<String, String> {
     ensure_dir(&dir)?;
     dir.into_os_string()
         .into_string()
-        .map_err(|path| format!("App folder path is not valid UTF-8: {:?}", path))
+        .map_err(|path| format!("Folder path is not valid UTF-8: {:?}", path))
 }
 
 #[cfg(test)]

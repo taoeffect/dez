@@ -108,7 +108,7 @@ export default sbp('sbp/selectors/register', {
     } catch (error) {
       console.error(`Failed to ${value ? 'save' : 'delete'} the API key of provider ${providerId}:`, error)
       throw new ExplainedError(
-        `Dez could not ${value ? 'save' : 'remove'} the API key in its key file (provider_keys.json in the Dez folder). The system did not let Dez read or write the file, or the file is not valid JSON: the details tell which. Fix that, and try again.`,
+        `Dez could not ${value ? 'save the API key in' : 'remove the API key from'} its key file (provider_keys.json in the Dez folder). The system did not let Dez read or write the file, or the file is not valid JSON: the details tell which. Fix that, and try again.`,
         rawErrorText(error),
         { cause: error },
       )
