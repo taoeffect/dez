@@ -1,8 +1,6 @@
 import sbp from '@sbp/sbp'
 import type { CutAudio } from '../model/chat/audioCut'
-import { sectionPlainText } from '../model/chat/content'
 import { drawnMediaType, type DrawnImage, type ImageSize } from '../model/chat/imageDrawing'
-import { findImageReferences, imageMediaType, type ImageReference } from '../model/chat/images'
 import { ClipReadError, type ClipReadProblem } from '../model/chat/mediaFiles'
 import type { MediaTagData } from '../model/chat/mediaTags'
 import { modelRefKey } from '../model/chat/modelRef'
@@ -15,7 +13,7 @@ import type { ProviderMediaQuote } from '../model/providers/streamTypes'
 import { effectiveRequest, type ProviderInfo, type ProviderInputImageRules, type ProviderSettingsDescriptor } from '../model/providers/types'
 import type { SettingsSnapshot } from '../model/state'
 import { AUDIO_TOOL, audioClipId, audioClipOf, audioClipPart, audioCutResultText, audioLengthText } from '../model/tools/audioTool'
-import { cropScaleDrawing, cropScaleImageId, cropScaleResultText, imageSizeText } from '../model/tools/cropScaleImage'
+import { cropPlan, IMAGE_TOOL, imageOf, imageResultText, imageToolId, scalePlan, type ImagePlan } from '../model/tools/imageTool'
 import { modelInfoParameterValues, modelInfoPart, modelInfoText, modelInfoTarget, type ModelInfoFacts, type ModelInfoTarget } from '../model/tools/modelInfo'
 import { modelListText } from '../model/tools/modelList'
 import { unknownToolText } from '../model/tools/registry'
@@ -111,6 +109,77 @@ function clipReadProblemText(id: string, problem: ClipReadProblem): string {
   }
 }
 
+// The runner of a subcommand of the `image` tool (imageTool.ts): a new
+// image from an image of the call's tab, which stays as it is. `plan` tells
+// what to draw; the webview draws it (images/redraw), the file goes into
+// the generated image folder, and the reply gets its reference. A plan that
+// draws nothing gives the result text, as the size of the image for a call
+// that asks for it before a crop.
+//
+// The errors and the result name images by their ids only: both go to the
+// chat provider, which gets no path of a stored file. The causes of a read
+// or a save failure are in the log.
+function imageRunner(plan: ImagePlan): ToolRunner {
+  return async (args, signal, context) => {
+    const id = imageToolId(args)
+    const source = imageOf((sbp('dez.model/tab', context.tabId) as Tab | null)?.sections ?? [], id)
+
+    let file: File
+    try {
+      file = await sbp('dez.controller/images/readFile', source.path) as File
+    } catch (error) {
+      console.error(`Failed to read the image @${id}:`, error)
+      throw new ToolError(`Dez cannot read the file of the image @${id}: the file is gone, or Dez may not read it. `
+        + 'This is not a fault of the call. Tell the user, who can paste the image again (it then gets a new id).')
+    }
+
+    // Only redraw knows the size of the image, so the plan runs in it. For
+    // redraw, a plan that draws nothing or refuses the call gives null; the
+    // text or the error waits until redraw ends, so that a failure of
+    // redraw is never the call's fault.
+    let text = ''
+    let callError: unknown
+    const mediaType = drawnMediaType(source.mediaType)
+    let drawn: DrawnImage | null
+    try {
+      drawn = await sbp('dez.controller/images/redraw', file, (size: ImageSize) => {
+        try {
+          const planned = plan(id, args, size)
+          if (typeof planned !== 'string') return planned
+          text = planned
+        } catch (error) {
+          callError = error
+        }
+        return null
+      }, mediaType) as DrawnImage | null
+    } catch (error) {
+      // The texts of redraw hold no path: it gets the file, not its path.
+      throw new ToolError(`Dez could not draw a new image from @${id}. This is not a fault of the call. `
+        + `Tell the user, and do not call the image tool again for @${id}.`, rawErrorText(error), { cause: error })
+    }
+    if (callError !== undefined) throw callError
+    if (!drawn) return text
+
+    signal.throwIfAborted()
+    let path: string
+    try {
+      path = await sbp('dez.controller/images/save', drawn.bytes, mediaType, { folder: 'generated' }) as string
+    } catch {
+      // images/save logged the failure and showed its error toast.
+      throw new ToolError('Dez could not save the new image, so there is no new image. This is not a fault of the call, and Dez showed the user the cause. '
+        + 'Tell the user that the image was not made, and call the image tool again only when the user asks for it.')
+    }
+    const newId = context.writeImage(path)
+    if (newId === null) {
+      // A file that no reference names; images/delete logs its own failures.
+      await sbp('dez.controller/images/delete', path).catch(() => {})
+      throw new ToolError('The reply stopped before Dez could add the new image to it, so there is no new image. This is not a fault of the call. '
+        + 'Call the image tool again only when the user asks for the image again.')
+    }
+    return imageResultText(id, newId, drawn)
+  }
+}
+
 const TOOL_RUNNERS: Record<string, ToolRunner> = {
   // The models as the model picker shows them, from the model cache as it
   // is (refreshed at startup and when the picker opens): no network request.
@@ -174,88 +243,6 @@ const TOOL_RUNNERS: Record<string, ToolRunner> = {
     }
     return modelInfoText(provider, model, facts, part)
   },
-  // A new image from an image of the call's tab: a part of it, at another
-  // size (`cropScaleDrawing`). The webview draws it (images/redraw), the
-  // file goes into the generated image folder, and the reply gets its
-  // reference. The image that the call names stays as it is. A call that
-  // names no part and no size draws nothing and tells the size of the
-  // image, so that a model can ask before a crop.
-  //
-  // The errors and the result name images by their ids only: both go to the
-  // chat provider, which gets no path of a stored file. The causes of a read
-  // or a save failure are in the log.
-  async crop_scale_image (args, signal, context) {
-    const id = cropScaleImageId(args)
-    const sections = (sbp('dez.model/tab', context.tabId) as Tab | null)?.sections ?? []
-    // The newest reference with an id is its image, as for an `@id` mention
-    // (`sectionsToStreamMessages`).
-    const images = new Map<string, ImageReference>()
-    for (const reference of sections.flatMap((section) => findImageReferences(sectionPlainText(section)))) {
-      if (reference.id !== null) images.set(reference.id, reference)
-    }
-    const source = images.get(id)
-    const sourceType = source && imageMediaType(source.path)
-    if (!source || !sourceType) {
-      const ids = [...images].filter(([, reference]) => imageMediaType(reference.path)).map(([imageId]) => `@${imageId}`)
-      throw new ToolError(ids.length === 0
-        ? `This conversation has no images, so it has no image @${id}. Do not call crop_scale_image until the user adds an image to the conversation.`
-        : `No image of this conversation has the id @${id}. Its images are ${ids.join(', ')}: call again with one of these ids.`)
-    }
-
-    let file: File
-    try {
-      file = await sbp('dez.controller/images/readFile', source.path) as File
-    } catch (error) {
-      console.error(`Failed to read the image @${id}:`, error)
-      throw new ToolError(`Dez cannot read the file of the image @${id}: the file is gone, or Dez may not read it. `
-        + 'This is not a fault of the call. Tell the user, who can paste the image again (it then gets a new id).')
-    }
-
-    // The plan gives null for a call that names no part and no size (only
-    // the plan gets the size of the image, for the result) and for a call
-    // that it refuses, so that a failure of redraw is never the call's fault.
-    let sizeText = ''
-    let callError: unknown
-    const mediaType = drawnMediaType(sourceType)
-    let drawn: DrawnImage | null
-    try {
-      drawn = await sbp('dez.controller/images/redraw', file, (size: ImageSize) => {
-        try {
-          const drawing = cropScaleDrawing(args, size)
-          if (!drawing) sizeText = imageSizeText(id, size)
-          return drawing
-        } catch (error) {
-          callError = error
-          return null
-        }
-      }, mediaType) as DrawnImage | null
-    } catch (error) {
-      // The texts of redraw hold no path: it gets the file, not its path.
-      throw new ToolError(`Dez could not draw a new image from @${id}. This is not a fault of the call. `
-        + `Tell the user, and do not call crop_scale_image again for @${id}.`, rawErrorText(error), { cause: error })
-    }
-    if (callError !== undefined) throw callError
-    if (!drawn) return sizeText
-
-    signal.throwIfAborted()
-    let path: string
-    try {
-      path = await sbp('dez.controller/images/save', drawn.bytes, mediaType, { folder: 'generated' }) as string
-    } catch {
-      // images/save logged the failure and showed its error toast.
-      throw new ToolError('Dez could not save the new image, so there is no new image. This is not a fault of the call, and Dez showed the user the cause. '
-        + 'Tell the user that the image was not made, and call crop_scale_image again only when the user asks for it.')
-    }
-    const newId = context.writeImage(path)
-    if (newId === null) {
-      // A file that no reference names; images/delete logs its own failures.
-      await sbp('dez.controller/images/delete', path).catch(() => {})
-      throw new ToolError('The reply stopped before Dez could add the new image to it, so there is no new image. This is not a fault of the call. '
-        + 'Call crop_scale_image again only when the user asks for the image again.')
-    }
-    return cropScaleResultText(id, newId, drawn)
-  },
-
   // The `audio` tool (audioTool.ts). `clip` cuts a part of an audio clip of
   // the conversation into a new WAV clip in the reply: the webview decodes
   // and cuts it (`dez.controller/media/cutAudio`), and the clip is saved at
@@ -278,7 +265,7 @@ const TOOL_RUNNERS: Record<string, ToolRunner> = {
         throw new ToolError(clipReadProblemText(id, error.problem), error.details, { cause: error })
       }
 
-      // As for crop_scale_image: the plan gives null for a call that names
+      // As for the `image` tool: the plan gives null for a call that names
       // no part (only the plan gets the length of the clip, for the result)
       // and for a call that it refuses, so that a failure of the cut is
       // never the call's fault.
@@ -323,6 +310,12 @@ const TOOL_RUNNERS: Record<string, ToolRunner> = {
       }
       return audioCutResultText(id, newId, cut.part, cut.duration)
     },
+  }),
+  // The `image` tool (imageTool.ts): each subcommand makes a new image from
+  // an image of the conversation (`imageRunner`).
+  image: subcommandRunner(IMAGE_TOOL, {
+    crop: imageRunner(cropPlan),
+    scale: imageRunner(scalePlan),
   }),
 }
 

@@ -268,19 +268,19 @@ describe('agentSectionMessages', () => {
     // round after the tool's group; the replay of that round is not the
     // signature of an image.
     it('keeps the thinking of a round whose only image is one that a Dez tool made', () => {
-      const toolImage = `![${IMAGE}](id=a|tool=crop_scale_image)`
+      const toolImage = `![${IMAGE}](id=a|tool=image)`
       const second = (roundText: string) => agentSectionMessages(agent(text.replace('More.', roundText), thinking), model, true)[2]
 
       expect(second(`\n${toolImage}\n\nMore.`)).toStrictEqual({
         role: 'agent',
-        content: '\n![image](id=a|tool=crop_scale_image)\n\nMore.',
+        content: '\n![image](id=a|tool=image)\n\nMore.',
         thinking: { text: 'Plan 2', replay: replay2 },
         toolCalls: [call('call_3', 'claude')],
       })
       // The model made an image in that round too.
       expect(second(`\n${toolImage}\n\n![${IMAGE}](id=b)`)).toStrictEqual({
         role: 'agent',
-        content: '\n![image](id=a|tool=crop_scale_image)\n\n![image](id=b)',
+        content: '\n![image](id=a|tool=image)\n\n![image](id=b)',
         toolCalls: [call('call_3', 'claude')],
       })
     })

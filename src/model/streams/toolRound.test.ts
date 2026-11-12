@@ -50,7 +50,7 @@ describe('checkToolCalls', () => {
       streamed('c5', '{}', ''),
       streamed('c6', ' ', 'model_info'),
     ]
-    const tools = 'Call only the Dez tools, by their exact names: model_list, model_info, crop_scale_image, audio.'
+    const tools = 'Call only the Dez tools, by their exact names: model_list, model_info, audio, image.'
     const parameters = 'The parameters of model_list are: filter (string), outputs (string).'
 
     expect(checkToolCalls(calls, [])).toStrictEqual([
@@ -88,7 +88,7 @@ describe('checkToolCalls', () => {
 
 describe('toolCallBlock', () => {
   const call: CheckedToolCall = { id: 'c1', name: 'model_list', arguments: { filter: 'gemini' } }
-  const unknownTool = 'Dez has no tool named "web_search". Call only the Dez tools, by their exact names: model_list, model_info, crop_scale_image, audio.'
+  const unknownTool = 'Dez has no tool named "web_search". Call only the Dez tools, by their exact names: model_list, model_info, audio, image.'
   const refused: CheckedToolCall = { id: 'c2', name: 'web_search', arguments: {}, refusal: unknownTool }
 
   it('runs a call until it has a result, then gives the result and its status', () => {

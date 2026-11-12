@@ -1,6 +1,6 @@
 import type { JsonObject } from '../../utils/json'
 import { AUDIO_TOOL_DEFINITION } from './audioTool'
-import { CROP_SCALE_IMAGE_TOOL } from './cropScaleImage'
+import { IMAGE_TOOL_DEFINITION } from './imageTool'
 import { MODEL_INFO_TOOL } from './modelInfo'
 import { MODEL_LIST_TOOL } from './modelList'
 import type { ToolDefinition } from './types'
@@ -8,7 +8,7 @@ import type { ToolDefinition } from './types'
 /** Every Dez tool, in the order that requests list them. A new tool goes
  *  at the end: the tools before it then keep their bytes in the tools
  *  array (the provider's prompt cache). */
-export const TOOL_DEFINITIONS: readonly ToolDefinition[] = [MODEL_LIST_TOOL, MODEL_INFO_TOOL, CROP_SCALE_IMAGE_TOOL, AUDIO_TOOL_DEFINITION]
+export const TOOL_DEFINITIONS: readonly ToolDefinition[] = [MODEL_LIST_TOOL, MODEL_INFO_TOOL, AUDIO_TOOL_DEFINITION, IMAGE_TOOL_DEFINITION]
 
 /** The Dez tool with this name; undefined when no Dez tool has it. */
 export function toolDefinition(name: string): ToolDefinition | undefined {

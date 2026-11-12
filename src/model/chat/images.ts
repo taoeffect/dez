@@ -99,7 +99,7 @@ export interface ImageMetadataItem {
 }
 
 /** The metadata key of an image that a Dez tool made, as in
- *  `![<path>](id=b|tool=crop_scale_image)`; its value is the name of the
+ *  `![<path>](id=b|tool=image)`; its value is the name of the
  *  tool. Such a reference is in an agent section, but it is no part of what
  *  the model wrote in its reply (`roundThinking`, streams/messages.ts). */
 export const IMAGE_TOOL_KEY = 'tool'

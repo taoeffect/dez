@@ -53,7 +53,7 @@ let cancelStream: () => Promise<void>
 let generateMedia: (input: ProviderGenerateMediaInput) => Promise<ProviderGenerateMediaResult>
 let saveImage: (mediaType: string, options: unknown) => Promise<string>
 let deletedImages: string[] = []
-// The path of each stored image that a `crop_scale_image` call read.
+// The path of each stored image that an `image` tool call read.
 let readImages: string[] = []
 // Each file that was deleted from an app folder (the temp copies of clips).
 let deletedFiles: { path: string, root: string }[] = []
@@ -1981,10 +1981,16 @@ describe('dez.stream/start images of a chat reply', () => {
 })
 
 describe('dez.stream/start images that a tool makes', () => {
-  const reference = (name: string, id: string) => `![${generated(name)}](id=${id}|tool=crop_scale_image)`
+  const reference = (name: string, id: string) => `![${generated(name)}](id=${id}|tool=image)`
   const replay = (opaque: string): ThinkingReplay => ({ kind: 'copilot', opaque, prefixHash: 'h' })
-  const widthCall = { id: 'c1', name: 'crop_scale_image', argumentsText: '{"image":"@a","width":400}' }
-  const widthBlock = '<dez:tool id="c1" name="crop_scale_image" image="@a" width="400">\nMade the image @b from @a. The image @b is 400x200 pixels.\n</dez:tool>\n'
+  // An `image scale` call with these parameters, as the model sends it, and
+  // its block in the reply.
+  const scaleArguments = (parameters: Record<string, unknown>) => ({ command: 'scale', parameters: JSON.stringify(parameters) })
+  const scaleCall = (id: string, parameters: Record<string, unknown>) => ({ id, name: 'image', argumentsText: JSON.stringify(scaleArguments(parameters)) })
+  const scaleBlock = (id: string, parameters: Record<string, unknown>, result: string, status = '') =>
+    `<dez:tool id="${id}" name="image"${status} command="scale" parameters="${JSON.stringify(parameters).replaceAll('"', '&quot;')}">\n${result}\n</dez:tool>\n`
+  const widthCall = scaleCall('c1', { image: '@a', width: 400 })
+  const widthBlock = scaleBlock('c1', { image: '@a', width: 400 }, 'Made the image @b from @a. The image @b is 400x200 pixels.')
   // The saves give the files g1.png, g2.png, ….
   let saves = 0
 
@@ -2027,7 +2033,7 @@ describe('dez.stream/start images that a tool makes', () => {
         role: 'agent',
         content: 'Cropping.',
         thinking: { text: 'Plan.', replay: replay('one') },
-        toolCalls: [{ id: 'c1', name: 'crop_scale_image', arguments: { image: '@a', width: 400 } }],
+        toolCalls: [{ id: 'c1', name: 'image', arguments: scaleArguments({ image: '@a', width: 400 }) }],
       },
       { role: 'tool', results: [{ callId: 'c1', content: 'Made the image @b from @a. The image @b is 400x200 pixels.', isError: false }] },
     ]
@@ -2037,7 +2043,7 @@ describe('dez.stream/start images that a tool makes', () => {
       ...firstRound,
       {
         role: 'agent',
-        content: '\n![image](id=b|tool=crop_scale_image)',
+        content: '\n![image](id=b|tool=image)',
         thinking: { text: 'List.', replay: replay('two') },
         toolCalls: [{ id: 'c2', name: 'model_list', arguments: { filter: 'gemini' } }],
       },
@@ -2052,11 +2058,11 @@ describe('dez.stream/start images that a tool makes', () => {
   // The second call names the image that the first call made: it is in the
   // section of the reply itself.
   it('keeps the images of two calls of one group after the group, each with a new id, and starts the next text in a new paragraph', async () => {
-    const heightBlock = '<dez:tool id="c2" name="crop_scale_image" image="b" height="100">\nMade the image @c from @b. The image @c is 200x100 pixels.\n</dez:tool>\n'
+    const heightBlock = scaleBlock('c2', { image: 'b', height: 100 }, 'Made the image @c from @b. The image @c is 200x100 pixels.')
     replyRounds([
       async (input) => ({
         requestId: input.requestId as string,
-        toolCalls: [widthCall, { id: 'c2', name: 'crop_scale_image', argumentsText: '{"image":"b","height":100}' }],
+        toolCalls: [widthCall, scaleCall('c2', { image: 'b', height: 100 })],
       }),
       async (input) => {
         await input.onToken('Both.')
@@ -2082,13 +2088,13 @@ describe('dez.stream/start images that a tool makes', () => {
     replyRounds([
       async (input) => ({
         requestId: input.requestId as string,
-        toolCalls: [widthCall, { id: 'c2', name: 'crop_scale_image', argumentsText: '{"image":"a","height":100}' }],
+        toolCalls: [widthCall, scaleCall('c2', { image: 'a', height: 100 })],
       }),
     ])
 
     await startStream({ sendTools: true })
 
-    const stopped = '<dez:tool id="c2" name="crop_scale_image" status="error" image="a" height="100">\nStopped.\n</dez:tool>\n'
+    const stopped = scaleBlock('c2', { image: 'a', height: 100 }, 'Stopped.', ' status="error"')
     expect(sectionVisibleText(agentSection())).toBe(`${widthBlock}${stopped}\n${reference('g1.png', 'b')}`)
     expect(deletedImages).toStrictEqual([generated('g2.png')])
     expect(sent).toHaveLength(1)

@@ -36,7 +36,7 @@ let quoteAnswer: () => Promise<ProviderMediaQuote | null>
 let descriptor: ProviderSettingsDescriptor | null
 let inputImageRules: ProviderInputImageRules
 let knownLimits: Record<string, KnownLimit[]>
-// The stub image store and webview of `crop_scale_image`: the paths of the
+// The stub image store and webview of the `image` tool: the paths of the
 // files that were read, what a read and a save do, the size of every stored
 // image, each drawing with its file type, each save with its file type, and
 // the deleted files. Set in beforeEach and by the tests.
@@ -196,7 +196,7 @@ describe('dez.controller/tools/run', () => {
       expect((await run({ name: definition.name, arguments: {} })).content).not.toMatch(/^Dez has no tool/)
     }
     expect(await run({ name: 'toString', arguments: {} })).toStrictEqual({
-      content: 'Dez has no tool named "toString". Call only the Dez tools, by their exact names: model_list, model_info, crop_scale_image, audio.',
+      content: 'Dez has no tool named "toString". Call only the Dez tools, by their exact names: model_list, model_info, audio, image.',
       isError: true,
     })
   })
@@ -417,14 +417,15 @@ describe('dez.controller/tools/run', () => {
     })
   })
 
-  describe('crop_scale_image', () => {
+  describe('image', () => {
     const stored = (name: string) => `/home/u/.config/dez/assets/images/${name}`
+    const WHOLE = { x: 0, y: 0, width: 1000, height: 500 }
     // The paths that the reply got an image for, and the id that it gives.
     let written: string[] = []
     let newImageId: string | null
     let tabId: string
 
-    function crop(args: ToolRunCall['arguments'], signal = new AbortController().signal): Promise<ToolRunResult> {
+    function image(command: string, parameters: Record<string, unknown>, signal = new AbortController().signal): Promise<ToolRunResult> {
       const context: ToolRunContext = {
         tabId,
         writeImage: (path) => {
@@ -433,7 +434,8 @@ describe('dez.controller/tools/run', () => {
         },
         writeClip: () => null,
       }
-      return sbp('dez.controller/tools/run', { name: 'crop_scale_image', arguments: args }, signal, context) as Promise<ToolRunResult>
+      const args = { command, parameters: JSON.stringify(parameters) }
+      return sbp('dez.controller/tools/run', { name: 'image', arguments: args }, signal, context) as Promise<ToolRunResult>
     }
 
     beforeEach(() => {
@@ -446,22 +448,32 @@ describe('dez.controller/tools/run', () => {
       ])
     })
 
-    it('draws the part at the new size, saves it as a generated image, and gives the reply its file', async () => {
-      expect(await crop({ image: '@a', crop_x: 100, crop_y: 50, crop_width: 200, crop_height: 80, width: 100 })).toStrictEqual({
-        content: 'Made the image @c from @a. The image @c is 100x40 pixels.',
+    it('crops: draws the part at its own size, saves it as a generated image, and gives the reply its file', async () => {
+      expect(await image('crop', { image: '@a', x: 100, y: 50, width: 200, height: 80 })).toStrictEqual({
+        content: 'Made the image @c from @a. The image @c is 200x80 pixels.',
         isError: false,
       })
 
       expect(readImages).toStrictEqual([stored('fox.png')])
-      expect(drawings).toStrictEqual([{ drawing: { crop: { x: 100, y: 50, width: 200, height: 80 }, width: 100, height: 40 }, mediaType: 'image/png' }])
+      expect(drawings).toStrictEqual([{ drawing: { crop: { x: 100, y: 50, width: 200, height: 80 }, width: 200, height: 80 }, mediaType: 'image/png' }])
       expect(savedImages).toStrictEqual([{ mediaType: 'image/png', options: { folder: 'generated' } }])
       expect(written).toStrictEqual([MADE_IMAGE])
       expect(deletedImages).toStrictEqual([])
     })
 
+    it('scales: draws the whole image at the new size', async () => {
+      expect(await image('scale', { image: 'a', width: 100 })).toStrictEqual({
+        content: 'Made the image @c from @a. The image @c is 100x50 pixels.',
+        isError: false,
+      })
+
+      expect(drawings).toStrictEqual([{ drawing: { crop: WHOLE, width: 100, height: 50 }, mediaType: 'image/png' }])
+      expect(written).toStrictEqual([MADE_IMAGE])
+    })
+
     // A photo as a PNG is some times larger.
     it('keeps a JPEG a JPEG', async () => {
-      await crop({ image: 'b', width: 500 })
+      await image('scale', { image: 'b', width: 500 })
 
       expect(readImages).toStrictEqual([stored('photo.jpg')])
       expect(drawings.map(({ mediaType }) => mediaType)).toStrictEqual(['image/jpeg'])
@@ -469,8 +481,8 @@ describe('dez.controller/tools/run', () => {
     })
 
     it('makes no image for a call with only the image, and gives the size of the image', async () => {
-      expect(await crop({ image: 'a' })).toStrictEqual({
-        content: 'The image @a is 1000x500 pixels. Give a crop, a size, or both to make a new image from it.',
+      expect(await image('crop', { image: 'a' })).toStrictEqual({
+        content: 'The image @a is 1000x500 pixels. Give x, y, width, and height to make a new image from a part of it.',
         isError: false,
       })
 
@@ -479,7 +491,7 @@ describe('dez.controller/tools/run', () => {
     })
 
     it('gives an error result for an id that no image of the tab has, with the ids of its images, and reads no file', async () => {
-      expect(await crop({ image: '@z', width: 10 })).toStrictEqual({
+      expect(await image('scale', { image: '@z', width: 10 })).toStrictEqual({
         content: 'No image of this conversation has the id @z. Its images are @a, @b: call again with one of these ids.',
         isError: true,
       })
@@ -487,20 +499,11 @@ describe('dez.controller/tools/run', () => {
       expect(readImages).toStrictEqual([])
     })
 
-    it('tells that the conversation has no images when it has none', async () => {
-      sbp('dez.model/tabs/replaceSections', tabId, [{ id: 'u1', role: 'user', content: [{ kind: 'text', text: 'Crop @a.' }] }])
-
-      expect(await crop({ image: 'a', width: 10 })).toStrictEqual({
-        content: 'This conversation has no images, so it has no image @a. Do not call crop_scale_image until the user adds an image to the conversation.',
-        isError: true,
-      })
-    })
-
     it('gives the error of a part that is not inside the image, and saves nothing', async () => {
-      expect(await crop({ image: 'a', crop_x: 900, crop_y: 0, crop_width: 200, crop_height: 100 })).toStrictEqual({
-        content: 'The crop (x 900, y 0, 200x100 pixels) is not inside the image, which is 1000x500 pixels. '
-          + 'A crop inside it has crop_x and crop_y of 0 or more, crop_x + crop_width of 1000 or less, and crop_y + crop_height of 500 or less. '
-          + 'The nearest such crop is crop_x 800, crop_y 0, crop_width 200, crop_height 100.',
+      expect(await image('crop', { image: 'a', x: 900, y: 0, width: 200, height: 100 })).toStrictEqual({
+        content: 'The crop (x 900, y 0, 200x100 pixels) is not inside the image @a, which is 1000x500 pixels. '
+          + 'A crop inside it has x and y of 0 or more, x + width of 1000 or less, and y + height of 500 or less. '
+          + 'The nearest such crop is x 800, y 0, width 200, height 100.',
         isError: true,
       })
 
@@ -516,19 +519,19 @@ describe('dez.controller/tools/run', () => {
       ['the save fails', () => {
         saveImage = async () => { throw new Error('The Dez folder /home/u/.config/dez cannot hold images') }
       }, 'Dez could not save the new image, so there is no new image. This is not a fault of the call, and Dez showed the user the cause. '
-        + 'Tell the user that the image was not made, and call crop_scale_image again only when the user asks for it.'],
+        + 'Tell the user that the image was not made, and call the image tool again only when the user asks for it.'],
     ])('gives an error result with no path when %s', async (_case, fail, content) => {
       fail()
 
-      expect(await crop({ image: 'a', width: 10 })).toStrictEqual({ content, isError: true })
+      expect(await image('scale', { image: 'a', width: 10 })).toStrictEqual({ content, isError: true })
       expect(written).toStrictEqual([])
     })
 
     it('tells that a failed drawing is not the fault of the call, with the reason of the webview', async () => {
       redrawError = new Error('The image cannot be decoded.')
 
-      expect(await crop({ image: 'a', width: 10 })).toStrictEqual({
-        content: 'Dez could not draw a new image from @a. This is not a fault of the call. Tell the user, and do not call crop_scale_image again for @a.'
+      expect(await image('scale', { image: 'a', width: 10 })).toStrictEqual({
+        content: 'Dez could not draw a new image from @a. This is not a fault of the call. Tell the user, and do not call the image tool again for @a.'
           + '\n\nDetails: The image cannot be decoded.',
         isError: true,
       })
@@ -538,9 +541,9 @@ describe('dez.controller/tools/run', () => {
     it('deletes the new file when the reply takes no image any more', async () => {
       newImageId = null
 
-      expect(await crop({ image: 'a', width: 10 })).toStrictEqual({
+      expect(await image('scale', { image: 'a', width: 10 })).toStrictEqual({
         content: 'The reply stopped before Dez could add the new image to it, so there is no new image. This is not a fault of the call. '
-          + 'Call crop_scale_image again only when the user asks for the image again.',
+          + 'Call the image tool again only when the user asks for the image again.',
         isError: true,
       })
       expect(deletedImages).toStrictEqual([MADE_IMAGE])
@@ -553,7 +556,7 @@ describe('dez.controller/tools/run', () => {
         return new Blob([])
       }
 
-      expect((await crop({ image: 'a', width: 10 }, abort.signal)).isError).toBe(true)
+      expect((await image('scale', { image: 'a', width: 10 }, abort.signal)).isError).toBe(true)
       expect(savedImages).toStrictEqual([])
     })
   })

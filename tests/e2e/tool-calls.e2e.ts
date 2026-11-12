@@ -21,14 +21,14 @@ import { activeConversationId, activeTabStreaming, docPos, editorCaret, editorDo
 // one before it (the prompt cache). A relaunch reads the saved call back
 // from the conversation file. A Stop while the round after a call waits
 // keeps the call, and the next request sends it with its result. A
-// `model_info` call gives the facts of the mock model as Dez knows them. A
-// `crop_scale_image` call makes a new image from a part of a pasted one:
-// the image goes into the reply after the call, and the requests name it
-// by its id, with no path. A pasted SVG goes as the same PNG copy in each
-// request of a reply, and its crop is a PNG. An `audio` call cuts a part of
-// a saved clip into a new saved WAV clip, in the same way. A long result
-// scrolls in its field under the wheel. Backspace and Delete next to a chip
-// never join its block to other text.
+// `model_info` call gives the facts of the mock model as Dez knows them.
+// The `image` tool's `crop` and `scale` calls make new images from a pasted
+// one: the images go into the reply after the calls, and the requests name
+// them by their ids, with no path. A pasted SVG goes as the same PNG copy
+// in each request of a reply, and its crop is a PNG. An `audio` call cuts a
+// part of a saved clip into a new saved WAV clip, in the same way. A long
+// result scrolls in its field under the wheel. Backspace and Delete next
+// to a chip never join its block to other text.
 //
 // One app session serves the whole file. The relaunch test reopens the tab
 // of the OpenAI test, so it runs right after it.
@@ -36,8 +36,8 @@ import { activeConversationId, activeTabStreaming, docPos, editorCaret, editorDo
 const TOOLER: MockProvider = { id: 'tooler', name: 'Tool Mock', modelId: 'tool-model', modelName: 'Tool Model' }
 const CLAUDE: MockProvider = { id: 'claude', name: 'Claude Mock', modelId: 'claude-model', modelName: 'Claude Model', apiFormat: 'anthropic' }
 
-// 90 x 20, in three stripes of 30 columns: the image of the
-// `crop_scale_image` test.
+// 90 x 20, in three stripes of 30 columns: the image of the `image` tool
+// test.
 const GREEN: Rgb = [40, 160, 60]
 const STRIPES_PNG = stripedPng(30, 20, [[220, 40, 40], GREEN, [40, 90, 220]])
 
@@ -445,7 +445,7 @@ describe('tool calls', () => {
     await waitForValue(browser, 'model_info panel', () => toolPanel(0), { parameters: [['model', model]], result, error: false })
   })
 
-  it('runs a crop_scale_image call: the new image goes into the reply after the call, and the requests name it by its id', async () => {
+  it('runs image crop and scale calls: the new images go into the reply after the calls, and the requests name them by their ids', async () => {
     await newTab(browser)
     await pickModel(browser, TOOLER.name, TOOLER.modelName)
     await focusEditor(browser)
@@ -458,74 +458,81 @@ describe('tool calls', () => {
     const withImage = { role: 'user', content: [{ type: 'text', text: 'Crop ![image](id=a)' }, { type: 'image_url', image_url: { url: pngDataUrl(STRIPES_PNG) } }] }
     expect(JSON.parse(first.body)).toEqual(openAiChatBody(TOOLER, [withImage]))
 
-    // The green stripe (columns 30 to 59), at twice its size.
-    const call = {
-      id: 'call_crop',
-      type: 'function',
-      function: { name: 'crop_scale_image', arguments: JSON.stringify({ image: 'a', crop_x: 30, crop_y: 0, crop_width: 30, crop_height: 20, width: 60 }) },
-    }
+    // The green stripe (columns 30 to 59), then that new image at twice its
+    // size: the second call of the group names the image of the first.
+    const cropParameters = JSON.stringify({ image: 'a', x: 30, y: 0, width: 30, height: 20 })
+    const scaleParameters = JSON.stringify({ image: 'b', width: 60 })
+    const cropCall = { id: 'call_crop', type: 'function', function: { name: 'image', arguments: JSON.stringify({ command: 'crop', parameters: cropParameters }) } }
+    const scaleCall = { id: 'call_scale', type: 'function', function: { name: 'image', arguments: JSON.stringify({ command: 'scale', parameters: scaleParameters }) } }
     startEventStream(first.reply)
     writeChatFrame(first.reply, { content: 'Cropping.' })
-    writeChatFrame(first.reply, { tool_calls: [{ index: 0, ...call }] }, 'tool_calls')
+    writeChatFrame(first.reply, { tool_calls: [{ index: 0, ...cropCall }, { index: 1, ...scaleCall }] }, 'tool_calls')
     first.reply.end('data: [DONE]\n\n')
 
-    // The result names the new image by its id and gives its size. The
-    // reference of the image comes after the request of this round, so the
-    // request ends with the result.
-    const result = 'Made the image @b from @a. The image @b is 60x40 pixels.'
+    // The results name the new images by their ids and give their sizes.
+    // The references of the images come after the request of this round,
+    // so the request ends with the results.
+    const cropResult = 'Made the image @b from @a. The image @b is 30x20 pixels.'
+    const scaleResult = 'Made the image @c from @b. The image @c is 60x40 pixels.'
     const round = [
-      { role: 'assistant', content: 'Cropping.', tool_calls: [call] },
-      { role: 'tool', tool_call_id: 'call_crop', content: result },
+      { role: 'assistant', content: 'Cropping.', tool_calls: [cropCall, scaleCall] },
+      { role: 'tool', tool_call_id: 'call_crop', content: cropResult },
+      { role: 'tool', tool_call_id: 'call_scale', content: scaleResult },
     ]
     const second = await setup.mock.waitForRequest(browser)
     expect(JSON.parse(second.body)).toEqual(openAiChatBody(TOOLER, [withImage, ...round]))
     expectSentPrefix(first.body, second.body)
     await sendChatReply(second.reply, TOOLER.modelName)
 
-    // The new image is a file of the generated images, written into the
-    // reply after the call with the name of the tool that made it. The
-    // text of the next round starts a new paragraph after it.
+    // The new images are files of the generated images, written into the
+    // reply after the calls with the name of the tool that made them. The
+    // text of the next round starts a new paragraph after them.
     await waitForValue(browser, 'sections after the reply', async () => (await threadSections(browser)).length, 3)
     const reply = (await threadSections(browser))[1].text
-    const madePath = reply.slice(reply.indexOf('![') + 2, reply.indexOf(']('))
-    const block = `<dez:tool id="call_crop" name="crop_scale_image" image="a" crop_x="30" crop_y="0" crop_width="30" crop_height="20" width="60">\n${result}\n</dez:tool>`
-    expect(path.dirname(madePath)).toBe(path.join(setup.app.home, '.config', 'dez', 'assets', 'generated', 'images'))
+    const [croppedPath = '', scaledPath = ''] = [...reply.matchAll(/!\[([^\]]+)\]\(id=[bc]\|tool=image\)/g)].map((match) => match[1])
+    const blockOf = (id: string, command: string, parameters: string, result: string) =>
+      `<dez:tool id="${id}" name="image" command="${command}" parameters="${parameters.replaceAll('"', '&quot;')}">\n${result}\n</dez:tool>`
+    const blocks = `${blockOf('call_crop', 'crop', cropParameters, cropResult)}\n${blockOf('call_scale', 'scale', scaleParameters, scaleResult)}`
+    const generatedDir = path.join(setup.app.home, '.config', 'dez', 'assets', 'generated', 'images')
+    expect([path.dirname(croppedPath), path.dirname(scaledPath)]).toStrictEqual([generatedDir, generatedDir])
     const sections = [
       { role: 'user', text: message },
-      { role: 'agent', text: `Cropping.\n${block}\n\n![${madePath}](id=b|tool=crop_scale_image)\n\n${replyText(TOOLER.modelName)}` },
+      {
+        role: 'agent',
+        text: `Cropping.\n${blocks}\n\n![${croppedPath}](id=b|tool=image)\n\n![${scaledPath}](id=c|tool=image)\n\n${replyText(TOOLER.modelName)}`,
+      },
     ]
     await waitForThread(browser, [...sections, { role: 'user', text: '' }])
     const pastedPath = message.slice('Crop !['.length, message.indexOf(']('))
     await waitForValue(browser, 'shown images', () => shownImages(browser), [
       { alt: path.basename(pastedPath), width: 90, height: 20 },
-      { alt: path.basename(madePath), width: 60, height: 40 },
+      { alt: path.basename(croppedPath), width: 30, height: 20 },
+      { alt: path.basename(scaledPath), width: 60, height: 40 },
     ])
-    const made = await fs.promises.readFile(madePath)
-    expect(await decodedImage(browser, pngDataUrl(made), [10, 30, 50])).toEqual({
-      width: 60,
-      height: 40,
-      pixels: [[...GREEN, 255], [...GREEN, 255], [...GREEN, 255]],
-    })
+    const green = [[...GREEN, 255], [...GREEN, 255], [...GREEN, 255]]
+    expect(await decodedImage(browser, pngDataUrl(await fs.promises.readFile(croppedPath)), [5, 15, 25])).toEqual({ width: 30, height: 20, pixels: green })
+    const scaled = await fs.promises.readFile(scaledPath)
+    expect(await decodedImage(browser, pngDataUrl(scaled), [10, 30, 50])).toEqual({ width: 60, height: 40, pixels: green })
     expect(await fs.promises.readFile(pastedPath)).toEqual(STRIPES_PNG)
 
-    // A later request holds the reference of the new image as text with no
-    // path, at the start of the message after the result; a mention of its
-    // id sends the image.
-    await submit(browser, 'Is @b green?')
+    // A later request holds the references of the new images as text with
+    // no path, at the start of the message after the results; a mention of
+    // an id sends its image.
+    await submit(browser, 'Is @c green?')
     const third = await setup.mock.waitForRequest(browser)
     expect(JSON.parse(third.body)).toEqual(openAiChatBody(TOOLER, [
       { role: 'user', content: 'Crop ![image](id=a)' },
       ...round,
-      { role: 'assistant', content: `\n![image](id=b|tool=crop_scale_image)\n\n${replyText(TOOLER.modelName)}` },
-      { role: 'user', content: [{ type: 'text', text: 'Is @b' }, { type: 'image_url', image_url: { url: pngDataUrl(made) } }, { type: 'text', text: ' green?' }] },
+      { role: 'assistant', content: `\n![image](id=b|tool=image)\n\n![image](id=c|tool=image)\n\n${replyText(TOOLER.modelName)}` },
+      { role: 'user', content: [{ type: 'text', text: 'Is @c' }, { type: 'image_url', image_url: { url: pngDataUrl(scaled) } }, { type: 'text', text: ' green?' }] },
     ]))
     expect(third.body).not.toContain(setup.app.home)
     await sendChatReply(third.reply, 'green')
-    await waitForThread(browser, [...sections, { role: 'user', text: 'Is @b green?' }, { role: 'agent', text: replyText('green') }, { role: 'user', text: '' }])
+    await waitForThread(browser, [...sections, { role: 'user', text: 'Is @c green?' }, { role: 'agent', text: replyText('green') }, { role: 'user', text: '' }])
   })
 
   // No provider is known to take SVG images.
-  it('sends a pasted SVG as the same PNG copy in each request of a reply, and its crop_scale_image call makes a PNG', async () => {
+  it('sends a pasted SVG as the same PNG copy in each request of a reply, and its image crop call makes a PNG', async () => {
     await newTab(browser)
     await pickModel(browser, TOOLER.name, TOOLER.modelName)
     await focusEditor(browser)
@@ -553,12 +560,12 @@ describe('tool calls', () => {
       pixels: [[220, 40, 40, 255], [...GREEN, 255], [40, 90, 220, 255]],
     })
 
-    // The green stripe, at half its size.
-    const made = { width: stripe / 2, height: svgSize.height / 2 }
+    // The green stripe.
+    const made = { width: stripe, height: svgSize.height }
     const call = {
       id: 'call_crop_svg',
       type: 'function',
-      function: { name: 'crop_scale_image', arguments: JSON.stringify({ image: 'a', crop_x: stripe, crop_y: 0, crop_width: stripe, crop_height: svgSize.height, width: made.width }) },
+      function: { name: 'image', arguments: JSON.stringify({ command: 'crop', parameters: JSON.stringify({ image: 'a', x: stripe, y: 0, ...made }) }) },
     }
     startEventStream(first.reply)
     writeChatFrame(first.reply, { tool_calls: [{ index: 0, ...call }] }, 'tool_calls')

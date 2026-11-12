@@ -2,8 +2,8 @@ import type { ImageMediaType } from './images'
 
 // How Dez draws a stored image again as a new file: a part of it, at
 // another size. The code that decides what to draw is pure
-// (`imageFit` in providers/imageSize.ts, `cropScaleDrawing` in
-// tools/cropScaleImage.ts); the pixel work is in the webview
+// (`imageFit` in providers/imageSize.ts, the plans of the `image` tool in
+// tools/imageTool.ts); the pixel work is in the webview
 // (dez.controller/images/redraw).
 
 /** The size of an image in whole pixels. */

@@ -54,7 +54,7 @@ describe('toolDefinition', () => {
 describe('unknownToolText', () => {
   it('names every Dez tool', () => {
     expect(unknownToolText('web_search')).toBe(
-      'Dez has no tool named "web_search". Call only the Dez tools, by their exact names: model_list, model_info, crop_scale_image, audio.',
+      'Dez has no tool named "web_search". Call only the Dez tools, by their exact names: model_list, model_info, audio, image.',
     )
   })
 })
