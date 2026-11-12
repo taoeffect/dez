@@ -1,6 +1,7 @@
 import sbp from '@sbp/sbp'
-import { MEDIA_TEMP_LIFETIME_MS, mediaFileExtension } from '../chat/mediaFiles'
+import { MAX_SAVED_CLIP_BYTES, MEDIA_TEMP_LIFETIME_MS, mediaFileExtension } from '../chat/mediaFiles'
 import { MEDIA_CACHE_FOLDER } from '../chat/mediaTags'
+import { byteSizeText } from '../../utils/byteSize'
 import { ExplainedError, rawErrorText } from '../../utils/errorText'
 import { responseOk, sanitizeErrorText } from '../../utils/protocol/errors'
 import { responseContentType, textFromNativeBody, type NativeHttpDownload, type NativeHttpRequest } from '../../utils/protocol/nativeHttp'
@@ -18,8 +19,6 @@ export const CLIP_POLL_INTERVAL_MS = 5_000
 // The longest time from the first request of a clip to its last byte. A job
 // that the provider never ends would keep the reply busy with no end.
 export const CLIP_JOB_TIMEOUT_MS = 30 * 60 * 1000
-// The largest clip that Dez takes.
-const MAX_CLIP_BYTES = 1024 ** 3
 
 // What all requests of one clip have in common.
 export interface ClipRun {
@@ -32,6 +31,21 @@ export interface ClipRun {
   deadline: number
   // Aborts when the caller stops the clip.
   signal: AbortSignal | undefined
+}
+
+// The error of a clip whose time (`CLIP_JOB_TIMEOUT_MS`) is over. With no
+// `requestError`, the time was over before a request: the job did not end in
+// time. With one, Rust ended a request at the deadline (`timeoutMs`), and
+// that request can be the download of a clip that is made.
+function clipTimeoutError(run: ClipRun, requestError?: unknown): ExplainedError {
+  const name = run.provider.name
+  const limit = `in ${CLIP_JOB_TIMEOUT_MS / 60_000} minutes, the longest time that Dez waits`
+  if (requestError === undefined) return new ExplainedError(`${name} did not make the clip ${limit}. Send the request again later.`)
+  return new ExplainedError(
+    `Dez did not get the clip from ${name} ${limit}: ${name} did not make it in that time, or the download of the clip was too slow. Send the request again later.`,
+    sanitizeErrorText(rawErrorText(requestError)),
+    { cause: requestError },
+  )
 }
 
 // Sends one request of a clip, with the time that the clip has left as its
@@ -53,9 +67,7 @@ export async function sendClipRequest(
   run.signal?.throwIfAborted()
   const startedAt = Date.now()
   const timeoutMs = run.deadline - startedAt
-  if (timeoutMs <= 0) {
-    throw new ExplainedError(`${run.provider.name} did not make the clip in ${CLIP_JOB_TIMEOUT_MS / 60_000} minutes, the longest time that Dez waits. Send the request again later.`)
-  }
+  if (timeoutMs <= 0) throw clipTimeoutError(run)
 
   // The file has no type in its name until the response tells one. The
   // cleanup of the temp copies also deletes a part file that stays.
@@ -68,15 +80,17 @@ export async function sendClipRequest(
       { ...request, timeoutMs },
       run.requestId,
       { root: 'cache', path: part },
-      { maxBytes: MAX_CLIP_BYTES, contentTypes: [`${CLIP_KINDS[run.kind]}/`] },
+      { maxBytes: MAX_SAVED_CLIP_BYTES, contentTypes: [`${CLIP_KINDS[run.kind]}/`] },
     ) as NativeHttpDownload
   } catch (error) {
     // A stop rejects too: the caller tells it by its signal.
     if (run.signal?.aborted) throw error
-    // The native text does not tell which step failed: the connection, or
-    // the write of the file.
+    if (Date.now() >= run.deadline) throw clipTimeoutError(run, error)
+    // The code cannot tell the other causes apart (the connection, the size
+    // limit, the write of the file): the text names all three, and the native
+    // text in the details tells which one it was.
     throw new ExplainedError(
-      `Dez could not get the answer of ${run.provider.name}: the connection broke, or Dez could not write the file. Check the internet connection and the free disk space, then send the request again.`,
+      `Dez could not get the answer of ${run.provider.name}: the connection broke, the clip is larger than ${byteSizeText(MAX_SAVED_CLIP_BYTES)} (the most that Dez takes), or Dez could not write the file. The details tell which. Check the internet connection and the free disk space, then send the request again.`,
       sanitizeErrorText(rawErrorText(error)),
       { cause: error },
     )

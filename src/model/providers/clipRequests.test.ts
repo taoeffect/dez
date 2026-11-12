@@ -300,12 +300,12 @@ describe('a clip that the first answer holds', () => {
     expect(moves).toEqual([])
   })
 
-  // The native text does not tell whether the connection or the disk
-  // failed, so the text names both.
-  it('names both causes of a download that the native layer refuses, with the native text last', async () => {
+  // The code cannot tell the connection, the size limit, and the disk apart,
+  // so the text names all three.
+  it('names the causes of a download that the native layer refuses, with the native text last', async () => {
     answers = [() => Promise.reject('error decoding response body')]
 
-    await expect(generate({ kind: 'tts' })).rejects.toThrow('Dez could not get the answer of Media server: the connection broke, or Dez could not write the file. Check the internet connection and the free disk space, then send the request again.\n\nDetails: error decoding response body')
+    await expect(generate({ kind: 'tts' })).rejects.toThrow('Dez could not get the answer of Media server: the connection broke, the clip is larger than 1.0 GB (the most that Dez takes), or Dez could not write the file. The details tell which. Check the internet connection and the free disk space, then send the request again.\n\nDetails: error decoding response body')
   })
 })
 
@@ -561,6 +561,25 @@ describe('a clip job', () => {
 
     // The last request had 5 seconds left.
     expect(downloads.at(-1)).toMatchObject({ at: STARTED_AT + JOB_TIMEOUT_MS - 5 * SECOND_MS, request: { timeoutMs: 5 * SECOND_MS } })
+  })
+
+  // Rust ends a request at the clip's deadline, with a native text that does
+  // not tell the time limit. Here the provider made the clip, and its
+  // download takes the rest of the time.
+  it('tells of the time limit when it ends the download of a made clip', async () => {
+    cacheModel('venice-like', VENICE_VIDEO_PARAMETERS)
+    const cutDownload = () => {
+      vi.setSystemTime(STARTED_AT + JOB_TIMEOUT_MS)
+      return Promise.reject('error decoding response body')
+    }
+    answers = [json({ model: 'm', queue_id: 'q-1', download_url: 'https://share.example.com/v1/share/token-1' }), json({ status: 'COMPLETED' }), cutDownload]
+
+    const failure = expect(generate({ kind: 'video' })).rejects.toThrow('Dez did not get the clip from Media server in 30 minutes, the longest time that Dez waits: Media server did not make it in that time, or the download of the clip was too slow. '
+      + `Send the request again later. ${JOB_ADVICE}\n\nDetails: error decoding response body`)
+    await vi.advanceTimersByTimeAsync(5 * SECOND_MS)
+    await failure
+
+    expect(downloads).toHaveLength(3)
   })
 })
 

@@ -14,8 +14,9 @@ import { MEDIA_CACHE_FOLDER, MEDIA_FOLDERS, isSavedMediaPath, isTempMediaPath, t
  *  lifetime, so the copy is there until then. */
 export const MEDIA_TEMP_LIFETIME_MS = 24 * 60 * 60 * 1000
 
-/** The largest clip that Dez stores: Save downloads no larger one, and a
- *  paste or a drop leaves out a larger file. */
+/** The largest clip that Dez stores: Save downloads no larger one,
+ *  `dez.provider/generateMedia` takes no larger temp copy (a Save only moves
+ *  it), and a paste or a drop leaves out a larger file. */
 export const MAX_SAVED_CLIP_BYTES = 1024 ** 3
 
 // The file extension of each media type that Dez gives a file name to.
