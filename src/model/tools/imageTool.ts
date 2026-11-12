@@ -247,7 +247,7 @@ export type ImagePlan = (id: string, args: ToolArguments, size: ImageSize, media
 
 /** The image id that the `image` parameter of a call names (`a` or `@a`).
  *  Throws for any other text; the model reads the error. */
-export function imageToolId(args: ToolArguments): string {
+export function imageIdArgument(args: ToolArguments): string {
   return assetIdArgument(args.image, 'an image', 'a')
 }
 

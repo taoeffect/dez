@@ -3,7 +3,7 @@ import type { ImageMediaType } from '../chat/images'
 import { mediaTagText } from '../chat/mediaTags'
 import type { Section } from '../chat/types'
 import { checkArgumentValues } from './arguments'
-import { brightnessPlan, contrastPlan, convertPlan, cropPlan, flipPlan, IMAGE_TOOL, imageOf, imageResultText, imageToolId, invertPlan, MAX_DRAWN_PIXELS, rotatePlan, saturationPlan, scalePlan, unwritableFormatError } from './imageTool'
+import { brightnessPlan, contrastPlan, convertPlan, cropPlan, flipPlan, IMAGE_TOOL, imageIdArgument, imageOf, imageResultText, invertPlan, MAX_DRAWN_PIXELS, rotatePlan, saturationPlan, scalePlan, unwritableFormatError } from './imageTool'
 import { ToolError, type ToolArguments } from './types'
 
 // A wide image: the two sides differ, so a swap of width and height shows.
@@ -36,17 +36,17 @@ describe('IMAGE_TOOL', () => {
   })
 })
 
-describe('imageToolId', () => {
+describe('imageIdArgument', () => {
   it.each([
     ['a', 'a'],
     ['@a', 'a'],
     [' @ab ', 'ab'],
   ])('reads %j as the image %j', (image, id) => {
-    expect(imageToolId({ image })).toBe(id)
+    expect(imageIdArgument({ image })).toBe(id)
   })
 
   it.each(['', '@', 'A', 'a1', 'image a', '@a @b', 'a.png'])('refuses %j, which is no image id', (image) => {
-    expect(errorOf(() => imageToolId({ image }))).toBe(`${JSON.stringify(image)} is not an image id. An image id is lower-case letters, as in "a" or "@a".`)
+    expect(errorOf(() => imageIdArgument({ image }))).toBe(`${JSON.stringify(image)} is not an image id. An image id is lower-case letters, as in "a" or "@a".`)
   })
 })
 

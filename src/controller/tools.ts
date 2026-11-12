@@ -13,7 +13,7 @@ import type { ProviderMediaQuote } from '../model/providers/streamTypes'
 import { effectiveRequest, type ProviderInfo, type ProviderInputImageRules, type ProviderSettingsDescriptor } from '../model/providers/types'
 import type { SettingsSnapshot } from '../model/state'
 import { AUDIO_TOOL, audioClipId, audioClipOf, audioClipPart, audioCutResultText, audioLengthText } from '../model/tools/audioTool'
-import { brightnessPlan, contrastPlan, convertPlan, cropPlan, flipPlan, IMAGE_TOOL, imageOf, imageResultText, imageToolId, invertPlan, rotatePlan, saturationPlan, scalePlan, unwritableFormatError, type ImagePlan } from '../model/tools/imageTool'
+import { brightnessPlan, contrastPlan, convertPlan, cropPlan, flipPlan, IMAGE_TOOL, imageIdArgument, imageOf, imageResultText, invertPlan, rotatePlan, saturationPlan, scalePlan, unwritableFormatError, type ImagePlan } from '../model/tools/imageTool'
 import { modelInfoParameterValues, modelInfoPart, modelInfoText, modelInfoTarget, type ModelInfoFacts, type ModelInfoTarget } from '../model/tools/modelInfo'
 import { modelListText } from '../model/tools/modelList'
 import { unknownToolText } from '../model/tools/registry'
@@ -121,7 +121,7 @@ function clipReadProblemText(id: string, problem: ClipReadProblem): string {
 // or a save failure are in the log.
 function imageRunner(plan: ImagePlan): ToolRunner {
   return async (args, signal, context) => {
-    const id = imageToolId(args)
+    const id = imageIdArgument(args)
     const source = imageOf((sbp('dez.model/tab', context.tabId) as Tab | null)?.sections ?? [], id)
 
     let file: File
