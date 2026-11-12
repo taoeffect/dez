@@ -23,7 +23,7 @@ function joined(events: SseTokenEvent[]): SseTokenEvent[] {
   const result: SseTokenEvent[] = []
   for (const event of events) {
     const last = result[result.length - 1]
-    if (event.kind !== 'done' && event.kind !== 'image' && last && last.kind === event.kind) {
+    if ((event.kind === 'token' || event.kind === 'thinking') && last && last.kind === event.kind) {
       result[result.length - 1] = { kind: event.kind, token: last.token + event.token }
     } else {
       result.push(event)
@@ -161,6 +161,47 @@ describe('OpenAiStreamParser replay', () => {
 
     expect(events).toStrictEqual([{ kind: 'thinking', token: 'Plan.' }, { kind: 'token', token: 'Answer' }])
     expect(end.replay).toStrictEqual({ kind: 'copilot', opaque: 'last' })
+  })
+})
+
+describe('OpenAiStreamParser errors', () => {
+  const errorChunk = (error: unknown, content = '') => JSON.stringify({
+    error,
+    choices: [{ index: 0, delta: { content }, finish_reason: 'error' }],
+  })
+
+  it.each([
+    // OpenRouter: `code` is the HTTP status of the failure.
+    ['an OpenRouter error', { code: 429, message: 'Rate limited', metadata: { error_type: 'rate_limit_exceeded' } }, { status: 429, code: 'rate_limit_exceeded', message: 'Rate limited' }],
+    ['a string code', { code: 'server_error', message: 'Provider disconnected' }, { code: 'server_error', message: 'Provider disconnected' }],
+    ['an OpenAI error type', { type: 'server_error', code: null, message: 'Overloaded' }, { code: 'server_error', message: 'Overloaded' }],
+    // Only a number in the error range of HTTP is a status.
+    ['a number code that is no HTTP status', { code: 1301, message: 'Unsafe content' }, { code: '1301', message: 'Unsafe content' }],
+    ['a string error', 'Upstream failed', { message: 'Upstream failed' }],
+    ['no error object', undefined, { message: '' }],
+  ])('gives an error event for %s', (_case, error, fields) => {
+    expect(run([errorChunk(error)]).events).toStrictEqual([{ kind: 'error', ...fields }])
+  })
+
+  it('gives the text of the chunk before its error, and the error after the end too', () => {
+    const error = { code: 502, message: 'Provider returned error' }
+
+    expect(run([chunk({ content: 'Partial' }), errorChunk(error, ' answer')]).events).toStrictEqual([
+      { kind: 'token', token: 'Partial' },
+      { kind: 'token', token: ' answer' },
+      { kind: 'error', status: 502, message: 'Provider returned error' },
+    ])
+    expect(run([chunk({ content: 'Done' }, 'stop'), JSON.stringify({ error })]).events).toStrictEqual([
+      { kind: 'token', token: 'Done' },
+      { kind: 'error', status: 502, message: 'Provider returned error' },
+    ])
+  })
+
+  it('gives the text held back as a possible inline tag before the error', () => {
+    expect(run([chunk({ content: '<thi' }), errorChunk('Failed')]).events).toStrictEqual([
+      { kind: 'token', token: '<thi' },
+      { kind: 'error', message: 'Failed' },
+    ])
   })
 })
 

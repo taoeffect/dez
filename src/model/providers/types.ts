@@ -261,12 +261,19 @@ export interface ChatRequestContext {
 // API format. `token` is answer text and `thinking` is reasoning text.
 // `image` is an image that the model made, at its place in the answer; its
 // URL is a `data:` URL or an http(s) URL (`generatedImageFromUrl` in
-// generatedImages.ts reads it).
+// generatedImages.ts reads it). `error` is a failure that the server
+// reported inside a stream that it started with a good status: `status` is
+// the HTTP status that the server gives the failure, `code` its own type of
+// the failure (`overloaded_error`), and `message` its text (can be empty).
+// A reader throws `providerStreamError` (errors.ts) at it.
 export type SseTokenEvent =
   | { kind: 'token', token: string }
   | { kind: 'thinking', token: string }
   | { kind: 'image', url: string }
+  | { kind: 'error', status?: number, code?: string, message: string }
   | { kind: 'done' }
+
+export type SseErrorEvent = Extract<SseTokenEvent, { kind: 'error' }>
 
 // Omit from each member of a union, not from the union as a whole.
 type OmitEach<T, Key extends PropertyKey> = T extends unknown ? Omit<T, Key> : never
@@ -283,7 +290,7 @@ export interface SseStreamEnd {
   // complete (the stream ended early).
   replay?: StreamedThinkingReplay
   // The tool calls of the reply, in stream order. Absent when there are
-  // none, or when the stream was cut off or reported a failure: the
+  // none, or when the stream was cut off or had an `error` event: the
   // arguments of a call could then be cut off too.
   toolCalls?: StreamedToolCall[]
 }

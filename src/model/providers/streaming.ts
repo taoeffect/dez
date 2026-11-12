@@ -1,7 +1,7 @@
 import { responseOk } from '../../utils/protocol/errors'
 import { readNativeChunkText, type NativeHttpResponseHead, type NativeHttpStreamResult } from '../../utils/protocol/nativeHttp'
 import { decodeSseData } from '../../utils/protocol/sse'
-import { providerStatusError } from './errors'
+import { providerStatusError, providerStreamError } from './errors'
 import type { Provider, ProviderChatRequest } from './provider'
 import type { ProviderStreamChatInput, ProviderStreamChatResult } from './streamTypes'
 import type { GeneratedMedia, SseTokenEvent } from './types'
@@ -19,7 +19,8 @@ export async function assertStreamResponseOk(provider: Provider, response: Nativ
 // gives the bytes of its URL), and, when the request asked for thinking
 // (`requestThinking`), the thinking to `onThinking`. Returns the replay of a
 // complete thinking, for the next request, and the tool calls, with the
-// Thinking toggle on or off.
+// Thinking toggle on or off. An error event inside the stream throws, after
+// the text before it went out.
 //
 // A provider that supports thinking always has its thinking split from the
 // answer text, so with the Thinking toggle off its thinking is dropped, not
@@ -38,6 +39,7 @@ export async function streamProviderTokens(
   const deliver = async (events: SseTokenEvent[]): Promise<boolean> => {
     for (const event of events) {
       if (event.kind === 'done') return true
+      if (event.kind === 'error') throw providerStreamError(provider, event)
       if (event.kind === 'token') {
         await input.onToken(event.token)
       } else if (event.kind === 'image') {

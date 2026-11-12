@@ -76,6 +76,16 @@ const REASONING_STREAM = [
 ].join('\n\n') + '\n\n'
 const STREAMED_TOOL_CALLS = [{ id: 'call_1', name: 'model_list', argumentsText: '{}' }]
 
+// This server answers, then stops the stream with an OpenRouter error
+// event, after a tool call that it never finishes.
+const BROKEN_STREAM_BASE_URL = 'http://localhost:7171/v1'
+const BROKEN_STREAM = [
+  'data: {"choices":[{"delta":{"content":"Partial"}}]}',
+  'data: {"choices":[{"delta":{"tool_calls":[{"index":0,"id":"call_1","type":"function","function":{"name":"model_list","arguments":"{\\"fil"}}]}}]}',
+  'data: {"error":{"code":502,"message":"Provider returned error","metadata":{"error_type":"provider_unavailable"}},"choices":[{"delta":{"content":""},"finish_reason":"error"}]}',
+  'data: [DONE]',
+].join('\n\n') + '\n\n'
+
 // This media server answers a generate request with JSON, an edit and an
 // upscale with the image's bytes, and a transcription with JSON, each in
 // two chunks. The file host answers the same way.
@@ -189,9 +199,11 @@ sbp('sbp/selectors/register', {
           ? 'Not found'
           : request.url.startsWith(REASONING_BASE_URL)
             ? REASONING_STREAM
-            : request.url.startsWith(PAINTER_BASE_URL)
-              ? painterStream()
-              : 'data: {"choices":[{"delta":{"content":"Hello"}}]}\n\ndata: [DONE]\n\n')
+            : request.url.startsWith(BROKEN_STREAM_BASE_URL)
+              ? BROKEN_STREAM
+              : request.url.startsWith(PAINTER_BASE_URL)
+                ? painterStream()
+                : 'data: {"choices":[{"delta":{"content":"Hello"}}]}\n\ndata: [DONE]\n\n')
       })(),
     }
   },
@@ -296,6 +308,24 @@ describe('provider requests that get no answer that Dez can read', () => {
     const result = await sbp('dez.provider/listModelsResult', 'closed') as ProviderModelsResult
 
     expect(result).toStrictEqual({ ok: false, models: [], error: `${UNREACHED}\n\nDetails: error sending request for url (${CLOSED_BASE_URL}/models)` })
+  })
+
+  it('throws the provider\'s error event inside a stream, after the text before it', async () => {
+    saveProvider('broken', BROKEN_STREAM_BASE_URL)
+    const tokens: string[] = []
+
+    const failure = sbp('dez.provider/streamChat', {
+      providerId: 'broken',
+      modelId: 'm',
+      messages: [{ role: 'user', content: 'Hi' }],
+      onToken: (token: string) => { tokens.push(token) },
+    }) as Promise<void>
+
+    await expect(failure).rejects.toStrictEqual(new ExplainedError(
+      'My server stopped the answer with an error. This is a problem at My server, not in your message or in Dez. Try again later.',
+      'provider_unavailable: Provider returned error',
+    ))
+    expect(tokens).toStrictEqual(['Partial'])
   })
 
   it('tells the user to check the base URL of a custom provider whose server answers with no JSON', async () => {

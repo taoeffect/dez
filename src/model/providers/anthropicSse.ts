@@ -1,6 +1,7 @@
 import type { AnthropicThinkingBlock } from '../chat/types'
 import type { StreamedToolCall } from '../tools/types'
-import type { SseStreamEnd, SseStreamParser, SseTokenEvent, StreamedThinkingReplay } from './types'
+import { isRecord } from './modelParsing'
+import type { SseErrorEvent, SseStreamEnd, SseStreamParser, SseTokenEvent, StreamedThinkingReplay } from './types'
 
 interface AnthropicContentBlock {
   type?: unknown
@@ -24,6 +25,41 @@ interface AnthropicChunk {
   index?: unknown
   content_block?: AnthropicContentBlock | null
   delta?: AnthropicDelta | null
+  error?: unknown
+}
+
+// The HTTP status of each error type of the Messages API. An `error` event
+// inside a stream has only the type, and the status tells whose fault the
+// error is (`providerStreamError`). An unknown type gets no status. A Map,
+// as the type is the server's text (a Record would find `constructor`).
+// https://platform.claude.com/docs/en/api/errors
+const ERROR_TYPE_STATUSES: ReadonlyMap<string, number> = new Map([
+  ['invalid_request_error', 400],
+  ['authentication_error', 401],
+  ['billing_error', 402],
+  ['permission_error', 403],
+  ['not_found_error', 404],
+  ['conflict_error', 409],
+  ['request_too_large', 413],
+  ['rate_limit_error', 429],
+  ['api_error', 500],
+  ['timeout_error', 504],
+  ['overloaded_error', 529],
+])
+
+// `{ type: "error", error: { type, message } }`: the server stopped a stream
+// that it started with a 200 status.
+// https://platform.claude.com/docs/en/build-with-claude/streaming
+function streamErrorEvent(error: unknown): SseErrorEvent {
+  const fields: Record<string, unknown> = isRecord(error) ? error : {}
+  const code = typeof fields.type === 'string' && fields.type !== '' ? fields.type : undefined
+  const status = code === undefined ? undefined : ERROR_TYPE_STATUSES.get(code)
+  return {
+    kind: 'error',
+    ...(status !== undefined && { status }),
+    ...(code !== undefined && { code }),
+    message: typeof fields.message === 'string' ? fields.message : '',
+  }
 }
 
 interface StreamedBlock<Block> {
@@ -51,7 +87,8 @@ export class AnthropicStreamParser implements SseStreamParser {
   private thinkingShown = false
   // `message_stop` (or `[DONE]`) arrived: the stream was not cut off.
   private stopped = false
-  // The server sent an `error` event inside the stream.
+  // An `error` event came out: the reader throws at it, and the replay and
+  // tool calls of the stream may be cut off.
   private failed = false
 
   constructor(private readonly thinking: boolean) {}
@@ -69,7 +106,10 @@ export class AnthropicStreamParser implements SseStreamParser {
       this.stopped = true
       return [{ kind: 'done' }]
     }
-    if (chunk.type === 'error') this.failed = true
+    if (chunk.type === 'error') {
+      this.failed = true
+      return [streamErrorEvent(chunk.error)]
+    }
 
     if (chunk.type === 'content_block_delta' && delta?.type === 'text_delta' && typeof delta.text === 'string' && delta.text.length > 0) {
       return [{ kind: 'token', token: delta.text }]
@@ -115,13 +155,14 @@ export class AnthropicStreamParser implements SseStreamParser {
   // Every thinking block must be complete: a block cut off before its
   // signature would be refused. The signature itself may be empty, because
   // compatible servers (MiniMax) may send none and the blocks go back as
-  // they came. The tool calls of a stream that was cut off or failed may
-  // have cut-off input, so such a stream gives none; every tool_use block
-  // must be complete too.
+  // they came. A stream that was cut off or failed gives no tool calls, as
+  // their input may be cut off; every tool_use block must be complete too.
+  // A failed stream gives no replay either.
   finish(): SseStreamEnd {
+    if (this.failed) return { events: [] }
     const blocks = completeBlocks(this.thinkingBlocks)
     const replay: StreamedThinkingReplay | undefined = blocks && { kind: 'anthropicBlocks', blocks }
-    const toolCalls = this.stopped && !this.failed ? completeBlocks(this.toolUses) : undefined
+    const toolCalls = this.stopped ? completeBlocks(this.toolUses) : undefined
     return { events: [], ...(replay && { replay }), ...(toolCalls && { toolCalls }) }
   }
 

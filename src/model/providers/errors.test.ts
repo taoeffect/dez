@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import { NativeHttpError } from '../../utils/protocol/errors'
 import { BUILT_IN_PROVIDER_CONFIGS } from './builtins'
-import { ClipNotMadeError, explainedProviderError, providerConnectionError, providerStatusError, UnusableAnswerError } from './errors'
+import { ClipNotMadeError, explainedProviderError, providerConnectionError, providerStatusError, providerStreamError, UnusableAnswerError } from './errors'
 import { Provider } from './provider'
 
 function builtInProvider(id: string): Provider {
@@ -84,6 +84,43 @@ describe('provider status errors', () => {
 
   it('cuts a long text', () => {
     expect(statusError(400, 'x'.repeat(5000)).details).toBe(`HTTP 400: ${'x'.repeat(1000)}`)
+  })
+})
+
+describe('provider stream errors', () => {
+  const openRouter = builtInProvider('openrouter')
+  const minimax = builtInProvider('minimax')
+
+  it.each([
+    [529, minimax, 'MiniMax stopped the answer with an error. This is a problem at MiniMax, not in your message or in Dez. Try again later.'],
+    [500, openRouter, 'OpenRouter stopped the answer with an error. This is a problem at OpenRouter, not in your message or in Dez. Try again later.'],
+    [429, openRouter, 'OpenRouter stopped the answer with an error. OpenRouter refused the request because of a limit: too many requests in a short time, or a limit of your OpenRouter account. OpenRouter tells its reason in the details below. Wait a minute, then try again. If the error stays, check your account at OpenRouter.'],
+    [403, openRouter, 'OpenRouter stopped the answer with an error. OpenRouter refused access. OpenRouter tells its reason in the details below. The cause can be your OpenRouter account (it may not use this model) or the message (OpenRouter can block a prompt). Check your account at OpenRouter, change the message, or choose another model.'],
+    [400, openRouter, 'OpenRouter stopped the answer with an error. OpenRouter refused the request. OpenRouter tells its reason in the details below. The cause can be the message, the settings of the model, or the request that Dez made. Change the message or the settings, or choose another model. If the error stays, report it at Help › Dez on GitHub.'],
+    [undefined, venice, 'Venice stopped the answer with an error. The cause can be a problem at Venice or the request. Venice tells its reason in the details below. Try again, or choose another model. If the error stays, report it at Help › Dez on GitHub.'],
+  ])('explains an error event with status %s by the status', (status, provider, explanation) => {
+    expect(providerStreamError(provider, { kind: 'error', ...(status !== undefined && { status }), code: 'x', message: 'Failed' }).explanation).toBe(explanation)
+  })
+
+  it('puts the code and the text into the details, with no HTTP word, and leaves out what is empty', () => {
+    const details = (code: string | undefined, message: string) =>
+      providerStreamError(minimax, { kind: 'error', status: 529, ...(code !== undefined && { code }), message }).details
+
+    expect([details('overloaded_error', ' Overloaded '), details(undefined, 'Overloaded'), details('overloaded_error', '')])
+      .toStrictEqual(['overloaded_error: Overloaded', 'Overloaded', 'overloaded_error'])
+  })
+
+  it('says that the provider tells its reason only when it sent a text', () => {
+    expect(providerStreamError(venice, { kind: 'error', message: '' }).message).toBe(
+      'Venice stopped the answer with an error. The cause can be a problem at Venice or the request. Try again, or choose another model. If the error stays, report it at Help › Dez on GitHub.',
+    )
+  })
+
+  it('hides a key and cuts a long text', () => {
+    expect([
+      providerStreamError(venice, { kind: 'error', message: 'Bad header Bearer sk-12345678901234567890' }).details,
+      providerStreamError(venice, { kind: 'error', code: 'x', message: 'y'.repeat(5000) }).details,
+    ]).toStrictEqual(['Bad header Bearer [REDACTED]', `x: ${'y'.repeat(997)}`])
   })
 })
 

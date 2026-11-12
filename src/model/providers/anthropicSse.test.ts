@@ -171,3 +171,46 @@ describe('AnthropicStreamParser tool calls', () => {
     })
   })
 })
+
+describe('AnthropicStreamParser errors', () => {
+  const error = (type: unknown, message?: unknown) => event({ type: 'error', error: { type, message } })
+
+  it.each([
+    ['invalid_request_error', 400],
+    ['authentication_error', 401],
+    ['billing_error', 402],
+    ['permission_error', 403],
+    ['not_found_error', 404],
+    ['conflict_error', 409],
+    ['request_too_large', 413],
+    ['rate_limit_error', 429],
+    ['api_error', 500],
+    ['timeout_error', 504],
+    ['overloaded_error', 529],
+  ])('gives the HTTP status of %s', (type, status) => {
+    expect(run([error(type, 'Text')]).events).toStrictEqual([{ kind: 'error', status, code: type, message: 'Text' }])
+  })
+
+  it('gives no status for an unknown or missing type, and an empty message for none', () => {
+    expect(run([error('new_error', 'Text'), error('constructor'), event({ type: 'error' })]).events).toStrictEqual([
+      { kind: 'error', code: 'new_error', message: 'Text' },
+      { kind: 'error', code: 'constructor', message: '' },
+      { kind: 'error', message: '' },
+    ])
+  })
+
+  it('gives the text before the error, and no replay after it', () => {
+    const { events, end } = run([
+      thinkingStart(0), thinkingDelta(0, 'Plan.'), signatureDelta(0, 's0'), stop(0),
+      textStart(1), textDelta(1, 'Partial'),
+      error('overloaded_error', 'Overloaded'),
+    ])
+
+    expect(events).toStrictEqual([
+      { kind: 'thinking', token: 'Plan.' },
+      { kind: 'token', token: 'Partial' },
+      { kind: 'error', status: 529, code: 'overloaded_error', message: 'Overloaded' },
+    ])
+    expect(end).toStrictEqual({ events: [] })
+  })
+})

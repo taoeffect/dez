@@ -194,6 +194,13 @@ export function writeChatFrame (res: http.ServerResponse, delta: Record<string, 
   res.write(`data: ${JSON.stringify({ choices: [{ index: 0, delta, finish_reason: finishReason }] })}\n\n`)
 }
 
+/** Writes the chat completion SSE frame with which OpenRouter stops a 200
+ *  reply that failed: a top-level `error` (`{ code, message, metadata: {
+ *  error_type } }`) and `finish_reason: "error"`. */
+export function writeChatErrorFrame (res: http.ServerResponse, error: Record<string, unknown>): void {
+  res.write(`data: ${JSON.stringify({ error, choices: [{ index: 0, delta: { content: '' }, finish_reason: 'error' }] })}\n\n`)
+}
+
 /** Writes one Anthropic Messages SSE event; its `type` names the event. */
 export function writeAnthropicEvent (res: http.ServerResponse, data: Record<string, unknown>): void {
   res.write(`event: ${String(data.type)}\ndata: ${JSON.stringify(data)}\n\n`)

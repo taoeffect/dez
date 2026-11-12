@@ -5,7 +5,7 @@ import type { RunningApp } from './harness/app'
 import { click, consoleErrors, resetConsoleErrors, screenshotOnFailure, typeKeys, waitForValue } from './harness/dom'
 import { conversationFilePath } from './harness/fixtures'
 import { startMockProviderApp } from './harness/mockProviderApp'
-import { startEventStream, writeChatFrame, type HeldRequest, type HoldingChatMock, type MockProvider } from './harness/mockServer'
+import { startEventStream, writeAnthropicEvent, writeChatErrorFrame, writeChatFrame, type HeldRequest, type HoldingChatMock, type MockProvider } from './harness/mockServer'
 import type { E2EBrowser } from './harness/session'
 import { activeConversationId, activeTabId, activeTabStreaming, editorDoc, openToasts, pickModel, sbpCall, submit, threadSections } from './harness/thread'
 
@@ -14,7 +14,8 @@ import { activeConversationId, activeTabId, activeTabStreaming, editorDoc, openT
 // - an error before any output leaves the tab as the user typed it: no agent
 //   section, no trailing user section, no error text, also on disk;
 // - an error after some output keeps that output and adds the trailing user
-//   section, with no error text;
+//   section, with no error text; so does an error event inside a 200
+//   stream (OpenAI and Anthropic formats), which also runs no tool call;
 // - each error shows in a red error toast at the lower right that stays
 //   until the user closes it, fits its text, and names a background tab.
 //
@@ -24,6 +25,7 @@ const PROVIDER: MockProvider = { id: 'errors', name: 'Errors Mock', modelId: 'er
 // A custom provider whose base URL names a port where no server listens.
 const CLOSED_PROVIDER: MockProvider = { id: 'closed', name: 'Closed Server', modelId: 'closed-model', modelName: 'Closed Model' }
 const CLOSED_BASE_URL = 'http://127.0.0.1:9/v1'
+const CLAUDE: MockProvider = { id: 'claude', name: 'Claude Mock', modelId: 'claude-model', modelName: 'Claude Model', apiFormat: 'anthropic' }
 // The start of the text of a request to a custom provider that got no
 // whole answer.
 const unreachedText = (name: string) => `Dez could not reach ${name}, or the connection broke before the answer was complete. Check the internet connection, then try again. `
@@ -97,7 +99,7 @@ describe('stream errors', () => {
 
   beforeAll(async () => {
     ({ app, browser, mock, stop: stopApp } = await startMockProviderApp(PROVIDER, {}, {
-      moreProviders: [{ provider: CLOSED_PROVIDER, config: { baseUrl: CLOSED_BASE_URL } }],
+      moreProviders: [{ provider: CLOSED_PROVIDER, config: { baseUrl: CLOSED_BASE_URL } }, { provider: CLAUDE }],
     }))
   })
 
@@ -184,6 +186,62 @@ describe('stream errors', () => {
       { role: 'agent', text: 'Partial answer' },
       { role: 'user', text: '' },
     ])
+  })
+
+  it('ends the reply with an error toast when the server sends an error event inside the stream, and runs no tool call', async () => {
+    await submit(browser, 'Question')
+    const { reply } = await mock.waitForRequest(browser)
+    startEventStream(reply)
+    writeChatFrame(reply, { content: 'Partial answer' })
+    writeChatFrame(reply, { tool_calls: [{ index: 0, id: 'call_1', type: 'function', function: { name: 'model_list', arguments: '{}' } }] })
+    // OpenRouter's form: `code` is the HTTP status of the failure.
+    writeChatErrorFrame(reply, { code: 429, message: 'Rate limit exceeded upstream', metadata: { error_type: 'rate_limit_exceeded' } })
+    reply.end()
+
+    await waitForValue(browser, 'error toasts', () => openToasts(browser, 'error'), [{
+      title: 'Request failed',
+      message: `${PROVIDER.name} stopped the answer with an error. ${PROVIDER.name} refused the request because of a limit: too many requests in a short time, or a limit of your ${PROVIDER.name} account. `
+        + `${PROVIDER.name} tells its reason in the details below. Wait a minute, then try again. If the error stays, check your account at ${PROVIDER.name}.`
+        + '\n\nDetails: rate_limit_exceeded: Rate limit exceeded upstream',
+    }])
+    await waitForValue(browser, 'streaming', () => activeTabStreaming(browser), false)
+    expect(await threadSections(browser)).toEqual([
+      { role: 'user', text: 'Question' },
+      { role: 'agent', text: 'Partial answer' },
+      { role: 'user', text: '' },
+    ])
+    expect(mock.hasWaitingRequest(), 'a tool round sent a next request').toBe(false)
+  })
+
+  it('ends the reply with an error toast when an Anthropic server sends an error event, and tells that the problem is at the provider', async () => {
+    await pickModel(browser, CLAUDE.name, CLAUDE.modelName)
+    try {
+      await submit(browser, 'Question')
+      const { reply } = await mock.waitForRequest(browser)
+      startEventStream(reply)
+      writeAnthropicEvent(reply, {
+        type: 'message_start',
+        message: { id: 'msg_error', type: 'message', role: 'assistant', content: [], stop_reason: null, usage: { input_tokens: 1, output_tokens: 1 } },
+      })
+      writeAnthropicEvent(reply, { type: 'content_block_start', index: 0, content_block: { type: 'text', text: '' } })
+      writeAnthropicEvent(reply, { type: 'content_block_delta', index: 0, delta: { type: 'text_delta', text: 'Partial answer' } })
+      writeAnthropicEvent(reply, { type: 'error', error: { type: 'overloaded_error', message: 'Overloaded' } })
+      reply.end()
+
+      await waitForValue(browser, 'error toasts', () => openToasts(browser, 'error'), [{
+        title: 'Request failed',
+        message: `${CLAUDE.name} stopped the answer with an error. This is a problem at ${CLAUDE.name}, not in your message or in Dez. Try again later.\n\nDetails: overloaded_error: Overloaded`,
+      }])
+      await waitForValue(browser, 'streaming', () => activeTabStreaming(browser), false)
+      expect(await threadSections(browser)).toEqual([
+        { role: 'user', text: 'Question' },
+        { role: 'agent', text: 'Partial answer' },
+        { role: 'user', text: '' },
+      ])
+    } finally {
+      // A new tab gets the last used model.
+      await pickModel(browser, PROVIDER.name, PROVIDER.modelName)
+    }
   })
 
   it('fits a long message: the toast grows to its widest, stays in the window, and the message scrolls', async () => {

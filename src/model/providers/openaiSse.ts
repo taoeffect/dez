@@ -2,7 +2,7 @@ import type { JsonObject } from '../../utils/json'
 import type { StreamedToolCall } from '../tools/types'
 import { FORBIDDEN_BODY_KEYS } from './config'
 import { isRecord } from './modelParsing'
-import type { SseStreamEnd, SseStreamParser, SseTokenEvent, StreamedThinkingReplay } from './types'
+import type { SseErrorEvent, SseStreamEnd, SseStreamParser, SseTokenEvent, StreamedThinkingReplay } from './types'
 
 interface OpenAiChoiceDelta {
   content?: unknown
@@ -28,9 +28,35 @@ interface OpenAiChoice {
 
 interface OpenAiChunk {
   choices?: OpenAiChoice[]
-  // OpenRouter reports a failure inside a 200 stream with a top-level
-  // `error` and `finish_reason: "error"`.
+  // A failure inside a 200 stream, with `finish_reason: "error"`
+  // (`streamErrorEvent`).
   error?: unknown
+}
+
+// OpenRouter reports a failure after the 200 status as `{ code, message,
+// metadata: { error_type } }`, where `code` is the HTTP status of the
+// failure; the stream then ends. OpenAI's error object has a string `code`
+// or `type`, and some servers send a string `error`. Only a number in the
+// error range of HTTP is a status: other servers use their own number codes
+// (Z.ai: 1301), which are only codes.
+// https://openrouter.ai/docs/api/reference/errors-and-debugging
+function streamErrorEvent(error: unknown): SseErrorEvent {
+  if (typeof error === 'string') return { kind: 'error', message: error }
+  if (!isRecord(error)) return { kind: 'error', message: '' }
+
+  const { code, message, metadata, type } = error
+  const httpStatus = typeof code === 'number' && Number.isInteger(code) && code >= 400 && code <= 599 ? code : undefined
+  const errorCode = [
+    typeof code === 'number' && httpStatus === undefined ? String(code) : code,
+    isRecord(metadata) ? metadata.error_type : undefined,
+    type,
+  ].find(nonEmptyString)
+  return {
+    kind: 'error',
+    ...(httpStatus !== undefined && { status: httpStatus }),
+    ...(errorCode !== undefined && { code: errorCode }),
+    message: typeof message === 'string' ? message : '',
+  }
 }
 
 // Servers name the reasoning text field differently: `reasoning_content`
@@ -192,7 +218,8 @@ export class OpenAiStreamParser implements SseStreamParser {
   // `[DONE]` or a `finish_reason` arrived. Without `failed`, the reasoning
   // was not cut off.
   private complete = false
-  // The server reported a failure inside the stream.
+  // An `error` event came out: the reader throws at it, and the replay and
+  // tool calls of the stream may be cut off.
   private failed = false
 
   constructor(private readonly thinking: boolean) {
@@ -206,8 +233,8 @@ export class OpenAiStreamParser implements SseStreamParser {
     }
 
     const chunk = JSON.parse(data) as OpenAiChunk
-    if (chunk.error !== undefined && chunk.error !== null) this.failed = true
     const events: SseTokenEvent[] = []
+    let failed = chunk.error !== undefined && chunk.error !== null
 
     for (const choice of chunk.choices ?? []) {
       const delta = choice.delta
@@ -226,10 +253,18 @@ export class OpenAiStreamParser implements SseStreamParser {
 
       if (Array.isArray(delta?.tool_calls)) this.readToolCalls(delta.tool_calls.filter(isRecord))
 
-      if (choice.finish_reason === 'error') this.failed = true
+      if (choice.finish_reason === 'error') failed = true
       else if (choice.finish_reason !== undefined && choice.finish_reason !== null) this.complete = true
     }
 
+    // The error goes after the text of its chunk, which came before it.
+    // Text held back as a possible inline tag comes out first, as at the
+    // end of a stream: the stream ends with the error.
+    if (failed) {
+      this.failed = true
+      this.inline?.flush(events)
+      events.push(streamErrorEvent(chunk.error))
+    }
     return events
   }
 

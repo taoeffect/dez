@@ -3,7 +3,7 @@ import type { NativeHttpResponse, NativeHttpResponseHead } from '../../utils/pro
 import { NativeHttpError, responseOk, sanitizeErrorText } from '../../utils/protocol/errors'
 import { isRecord } from './modelParsing'
 import type { Provider } from './provider'
-import type { ProviderId } from './types'
+import type { ProviderId, SseErrorEvent } from './types'
 
 // The most characters of the provider's text in a message.
 const PROVIDER_TEXT_LENGTH = 1000
@@ -96,13 +96,17 @@ function providerText(data: unknown): string | null {
 // URL from a response (a reply image, a clip) has none, so a 401 or 402
 // there tells nothing of the key or the account; such a URL is signed, and
 // a refusal of it tells that it has expired. `hasReason`: the details hold
-// the provider's own text.
+// the provider's own text. No `status`: an error inside a stream whose kind
+// the provider did not tell.
 // https://openrouter.ai/docs/api/reference/errors-and-debugging
 // https://docs.venice.ai/api-reference/error-codes
 // https://docs.z.ai/api-reference/api-code
-function statusExplanation(provider: ProviderIdentity, status: number, keyed: boolean, hasReason: boolean): string {
+function statusExplanation(provider: ProviderIdentity, status: number | undefined, keyed: boolean, hasReason: boolean): string {
   const name = provider.name
   const reason = hasReason ? ` ${name} tells its reason in the details below.` : ''
+  if (status === undefined) {
+    return `The cause can be a problem at ${name} or the request.${reason} Try again, or choose another model. ${REPORT_ADVICE}`
+  }
   if (!keyed && GONE_FILE_STATUSES.has(status)) {
     return `The file that ${name} made is not at its link any more: the link can have expired. Send the request again to make a new one.`
   }
@@ -145,6 +149,21 @@ export function providerStatusError(provider: ProviderIdentity, response: Native
 export function assertProviderResponseOk(response: NativeHttpResponse, provider: ProviderIdentity, bodyText = ''): void {
   if (responseOk(response)) return
   throw providerStatusError(provider, response, bodyText)
+}
+
+// The error of an `error` event inside a stream: the provider started the
+// answer with a 200 status, then stopped it. The status of the event tells
+// whose fault it is, as for a refused response. The details hold the
+// provider's code and text, with no "HTTP" word: the response itself had a
+// good status. OpenRouter's `metadata.raw` (the upstream answer as it is)
+// stays out: it is long, and the message tells the cause.
+export function providerStreamError(provider: ProviderIdentity, failure: SseErrorEvent): ExplainedError {
+  const raw = [failure.code, failure.message.trim()].filter((part) => part !== undefined && part !== '').join(': ')
+  const details = sanitizeErrorText(raw, PROVIDER_TEXT_LENGTH)
+  return new ExplainedError(
+    `${provider.name} stopped the answer with an error. ${statusExplanation(provider, failure.status, true, details !== '')}`,
+    details,
+  )
 }
 
 // The error of a request to the provider that got no whole answer: no

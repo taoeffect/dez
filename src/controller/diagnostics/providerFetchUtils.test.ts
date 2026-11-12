@@ -27,4 +27,12 @@ describe('readFirstToken', () => {
   it('gives false for a stream that ends with [DONE] and no text', async () => {
     await expect(readFirstToken(thinker, sseChunks('[DONE]'))).resolves.toBe(false)
   })
+
+  it('throws the provider\'s error event that comes before the first token', async () => {
+    const error = JSON.stringify({ error: { code: 429, message: 'Rate limited' }, choices: [{ delta: {}, finish_reason: 'error' }] })
+
+    await expect(readFirstToken(thinker, sseChunks(error))).rejects.toThrow(
+      'Local stopped the answer with an error. Local refused the request because of a limit',
+    )
+  })
 })

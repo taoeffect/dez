@@ -1,5 +1,6 @@
 import sbp from '@sbp/sbp'
 import { effectiveRequest, requireProvider, type ModelInfo, type Provider, type ProviderId, type ProviderInfo, type SseTokenEvent } from '../../model/providers'
+import { providerStreamError } from '../../model/providers/errors'
 import { decodeSseData } from '../../utils/protocol/sse'
 import type { ProviderFetchProbeResult } from './providerFetchTypes'
 
@@ -66,7 +67,8 @@ export function selectProbeModel(
 }
 
 // Thinking text counts too: a model that thinks first sends it before any
-// answer text. So does an image, for a reply that starts with one.
+// answer text. So does an image, for a reply that starts with one. An error
+// event before the first token throws the provider's error.
 export async function readFirstToken(provider: Provider, chunks: AsyncIterable<Uint8Array>): Promise<boolean> {
   const parser = provider.format.createStreamParser(provider.supportsThinking)
   let ended = false
@@ -76,6 +78,7 @@ export async function readFirstToken(provider: Provider, chunks: AsyncIterable<U
         ended = true
         return false
       }
+      if (event.kind === 'error') throw providerStreamError(provider, event)
       if (event.kind === 'image' || event.token.length > 0) return true
     }
     return false
