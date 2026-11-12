@@ -502,7 +502,7 @@ describe('dez.controller/tools/run', () => {
 
       expect(await image('convert', { image: 'a', format: 'webp' })).toStrictEqual({
         content: 'Dez cannot make WebP images on this computer: its web view does not write them. This is not a fault of the call, and there is no new image from @a. '
-          + 'If another format does for the user, call convert with "png" or "jpeg"; else tell the user that this computer cannot make WebP images.',
+          + 'If another format will do for the user, call convert with "jpeg"; else tell the user that this computer cannot make WebP images.',
         isError: true,
       })
       expect(savedImages).toStrictEqual([])

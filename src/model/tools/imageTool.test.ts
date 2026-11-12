@@ -365,10 +365,22 @@ describe('convertPlan', () => {
 })
 
 describe('unwritableFormatError', () => {
-  it('says that the call is not at fault, and names the formats that every computer makes', () => {
-    expect(unwritableFormatError('a', 'image/webp').message).toBe('Dez cannot make WebP images on this computer: its web view does not write them. '
-      + 'This is not a fault of the call, and there is no new image from @a. '
-      + 'If another format does for the user, call convert with "png" or "jpeg"; else tell the user that this computer cannot make WebP images.')
+  const NOT_AT_FAULT = 'This is not a fault of the call, and there is no new image from @a. '
+
+  // convert refuses the format of the image itself, so the text never
+  // offers it.
+  it.each([
+    ['image/png', 'If another format will do for the user, call convert with "jpeg"; else tell'],
+    ['image/jpeg', 'If another format will do for the user, call convert with "png"; else tell'],
+    ['image/gif', 'If another format will do for the user, call convert with "png" or "jpeg"; else tell'],
+  ] as const)('says that the call is not at fault, and names the formats that every computer makes, but not the format of an image of the type %s', (sourceType, advice) => {
+    expect(unwritableFormatError('a', 'image/webp', sourceType).message).toBe('Dez cannot make WebP images on this computer: its web view does not write them. '
+      + `${NOT_AT_FAULT}${advice} the user that this computer cannot make WebP images.`)
+  })
+
+  it('offers no format when no other format is left', () => {
+    expect(unwritableFormatError('a', 'image/jpeg', 'image/png').message).toBe('Dez cannot make JPEG images on this computer: its web view does not write them. '
+      + `${NOT_AT_FAULT}Tell the user that this computer cannot make JPEG images.`)
   })
 })
 

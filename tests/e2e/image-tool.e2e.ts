@@ -287,7 +287,7 @@ describe('image tool flip, rotate, color changes, and convert', () => {
         result: writesWebp
           ? 'Made the image @f from @b. The image @f is 78x78 pixels.'
           : 'Dez cannot make WebP images on this computer: its web view does not write them. This is not a fault of the call, and there is no new image from @b. '
-            + 'If another format does for the user, call convert with "png" or "jpeg"; else tell the user that this computer cannot make WebP images.',
+            + 'If another format will do for the user, call convert with "jpeg"; else tell the user that this computer cannot make WebP images.',
       },
     ]
     sendImageCalls(first.reply, calls)

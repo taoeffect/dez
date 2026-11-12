@@ -158,7 +158,7 @@ function imageRunner(plan: ImagePlan): ToolRunner {
         return null
       }, mediaType) as DrawnImage | null
     } catch (error) {
-      if (error instanceof UnwritableImageTypeError) throw unwritableFormatError(id, error.mediaType, { cause: error })
+      if (error instanceof UnwritableImageTypeError) throw unwritableFormatError(id, error.mediaType, source.mediaType, { cause: error })
       // The texts of redraw hold no path: it gets the file, not its path.
       throw new ToolError(`Dez could not draw a new image from @${id}. This is not a fault of the call. `
         + `Tell the user, and do not call the image tool again for @${id}.`, rawErrorText(error), { cause: error })

@@ -565,15 +565,18 @@ export const convertPlan: ImagePlan = (id, args, size, mediaType) => {
   return drawing
 }
 
-/** The error of a call whose new image from the image `id` is of the type
- *  `mediaType`, which the canvas of this computer's webview does not write
- *  (WebP on macOS). It is not a fault of the call; the text names the
- *  formats that every computer makes (only WebP is known to fail). */
-export function unwritableFormatError(id: string, mediaType: DrawnMediaType, options?: ErrorOptions): ToolError {
+/** The error of a call whose new image from the image `id` (a file of the
+ *  type `sourceType`) is of the type `mediaType`, which the canvas of this
+ *  computer's webview does not write (WebP on macOS). It is not a fault of
+ *  the call; the text names the formats that every computer makes (only
+ *  WebP is known to fail), except the format of the image itself, which
+ *  convert refuses. */
+export function unwritableFormatError(id: string, mediaType: DrawnMediaType, sourceType: ImageMediaType, options?: ErrorOptions): ToolError {
   const name = FORMAT_NAMES[mediaType]
-  const others = formatsText(mediaType === 'image/jpeg' ? ['image/png'] : ['image/png', 'image/jpeg'])
+  const others = (['image/png', 'image/jpeg'] as const).filter((type) => type !== mediaType && type !== sourceType)
+  const advice = others.length > 0 ? `If another format will do for the user, call convert with ${formatsText(others)}; else tell` : 'Tell'
   return new ToolError(`Dez cannot make ${name} images on this computer: its web view does not write them. This is not a fault of the call, and there is no new image from @${id}. `
-    + `If another format does for the user, call convert with ${others}; else tell the user that this computer cannot make ${name} images.`, '', options)
+    + `${advice} the user that this computer cannot make ${name} images.`, '', options)
 }
 
 /** The result of a call that made the image `newId`, of `size`, from the
