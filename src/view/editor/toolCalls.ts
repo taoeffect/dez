@@ -2,6 +2,7 @@ import { StateEffect, StateField, type EditorState, type Extension } from '@code
 import { Decoration, EditorView, ViewPlugin, WidgetType, type DecorationSet, type ViewUpdate } from '@codemirror/view'
 import { SENTINEL_CHAR } from '../../model/chat/content'
 import { EMPTY_TOOL_RESULT, INTERRUPTED_TOOL_RESULT, findToolBlocks, type ToolBlock } from '../../model/chat/toolBlocks'
+import { toolDefinition } from '../../model/tools/registry'
 import type { ToolArguments } from '../../model/tools/types'
 import { sectionsField, type SectionModel } from '../thread/cmEditor'
 import { measureLineHeights } from '../thread/editorMeasure'
@@ -12,9 +13,11 @@ import { ROUND_STROKE, svgIcon } from './svgIcon'
 // The editor shows each `<dez:tool>` block of an agent section
 // (`src/model/chat/toolBlocks.ts`) as a quiet one-line chip: a disclosure
 // triangle, a wrench, the tool name, and a short form of its arguments. A
-// click on the chip, or Enter or Space while it has the focus, opens a panel
-// under it with the parameters and the result. The block's text stays in the
-// doc as it is: the chip only hides it.
+// call to a tool that Dez does not have says so before the name, with no
+// short form (`UNRECOGNIZED_TOOL_TEXT`). A click on the chip, or Enter or
+// Space while it has the focus, opens a panel under it with the parameters
+// and the result. The block's text stays in the doc as it is: the chip only
+// hides it.
 
 /** How a chip shows its call. `running`: a reply runs the tool now.
  *  `interrupted`: a `running` block that no reply runs (the app stopped
@@ -37,10 +40,23 @@ interface ToolCallDecorations {
  *  included. */
 const SUMMARY_MAX_CHARS = 40
 
+/** What a chip says before the name of a tool that Dez does not have: an
+ *  old tool that this Dez no longer has (such as `crop_scale_image`), or a
+ *  name that a model made up, whose call `checkToolCalls` (toolRound.ts)
+ *  refused. Requests still send such a call and its result as they are. */
+const UNRECOGNIZED_TOOL_TEXT = 'old/unrecognized tool:'
+
+function isUnrecognizedTool(name: string): boolean {
+  return toolDefinition(name) === undefined
+}
+
 /** The chip's short form of a call's arguments: the value of the first one
  *  on one line, a string in quotes, cut with `…` past `SUMMARY_MAX_CHARS`;
- *  '' for a call with no arguments. */
-export function toolCallSummary(args: ToolArguments): string {
+ *  '' for a call with no arguments. A call to a tool that Dez does not have
+ *  gets '' too: its chip text is long already, and its arguments follow no
+ *  Dez schema (the panel shows them all). */
+export function toolCallSummary(name: string, args: ToolArguments): string {
+  if (isUnrecognizedTool(name)) return ''
   const [first] = Object.values(args)
   if (first === undefined) return ''
   const chars = [...(typeof first === 'string' ? first : JSON.stringify(first)).replace(/\s+/g, ' ').trim()]
@@ -123,10 +139,12 @@ const STATE_WORDS: Partial<Record<ToolCallState, string>> = { error: 'failed', i
 /** The chip's accessible name. Its `aria-label` replaces the text of the
  *  chip's parts, so it holds the summary and the state word too, and
  *  "running" stands for the spinner, which screen readers skip. Empty parts
- *  are left out. */
+ *  are left out. A tool that Dez does not have is named as its chip names
+ *  it. */
 export function toolCallLabel(name: string, summary: string, state: ToolCallState): string {
   const word = state === 'running' ? 'running' : STATE_WORDS[state]
-  return [`Tool call ${name}`, summary, word].filter(Boolean).join(', ')
+  const tool = isUnrecognizedTool(name) ? `Tool call, ${UNRECOGNIZED_TOOL_TEXT} ${name}` : `Tool call ${name}`
+  return [tool, summary, word].filter(Boolean).join(', ')
 }
 
 function createChip(view: EditorView, call: RenderedToolCall): HTMLElement {
@@ -139,8 +157,12 @@ function createChip(view: EditorView, call: RenderedToolCall): HTMLElement {
   slot.setAttribute('aria-hidden', 'true')
   const icon = span('dez-tool-call__icon')
   icon.appendChild(wrenchIcon())
-  chip.append(slot, icon, span('dez-tool-call__name', call.name))
-  const summary = toolCallSummary(call.arguments)
+  chip.append(slot, icon)
+  // The words go in their own span, so the name keeps the name's look
+  // (`dezTheme`) and the flex gap spaces the two.
+  if (isUnrecognizedTool(call.name)) chip.appendChild(span('dez-tool-call__unrecognized', UNRECOGNIZED_TOOL_TEXT))
+  chip.appendChild(span('dez-tool-call__name', call.name))
+  const summary = toolCallSummary(call.name, call.arguments)
   if (summary !== '') chip.appendChild(span('dez-tool-call__summary', summary))
   const word = STATE_WORDS[call.state]
   if (word) chip.appendChild(span('dez-tool-call__state', word))

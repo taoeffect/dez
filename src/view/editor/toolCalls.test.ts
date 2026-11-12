@@ -81,16 +81,21 @@ describe('renderedToolCalls', () => {
 
 describe('toolCallSummary', () => {
   it('shows the first argument on one line, a string in quotes', () => {
-    expect(toolCallSummary({})).toBe('')
-    expect(toolCallSummary({ filter: '  gem\n\tini ', other: 'x' })).toBe('"gem ini"')
-    expect(toolCallSummary({ count: 3 })).toBe('3')
-    expect(toolCallSummary({ all: false })).toBe('false')
+    expect(toolCallSummary('model_list', {})).toBe('')
+    expect(toolCallSummary('model_list', { filter: '  gem\n\tini ', other: 'x' })).toBe('"gem ini"')
+    expect(toolCallSummary('model_list', { count: 3 })).toBe('3')
+    expect(toolCallSummary('model_list', { all: false })).toBe('false')
   })
 
   it('cuts a long value at 40 characters, the ellipsis included', () => {
-    expect(toolCallSummary({ filter: 'a'.repeat(40) })).toBe(`"${'a'.repeat(40)}"`)
-    expect(toolCallSummary({ filter: 'a'.repeat(41) })).toBe(`"${'a'.repeat(39)}…"`)
-    expect(toolCallSummary({ filter: '😀'.repeat(41) })).toBe(`"${'😀'.repeat(39)}…"`)
+    expect(toolCallSummary('model_list', { filter: 'a'.repeat(40) })).toBe(`"${'a'.repeat(40)}"`)
+    expect(toolCallSummary('model_list', { filter: 'a'.repeat(41) })).toBe(`"${'a'.repeat(39)}…"`)
+    expect(toolCallSummary('model_list', { filter: '😀'.repeat(41) })).toBe(`"${'😀'.repeat(39)}…"`)
+  })
+
+  it('shows nothing for a tool that Dez does not have', () => {
+    expect(toolCallSummary('crop_scale_image', { image: 'a', width: '10' })).toBe('')
+    expect(toolCallSummary('Model_List', { filter: 'gemini' })).toBe('')
   })
 })
 
@@ -101,5 +106,10 @@ describe('toolCallLabel', () => {
     expect(toolCallLabel('model_list', '"gemini"', 'error')).toBe('Tool call model_list, "gemini", failed')
     expect(toolCallLabel('model_list', '', 'interrupted')).toBe('Tool call model_list, interrupted')
     expect(toolCallLabel('model_list', '', 'success')).toBe('Tool call model_list')
+  })
+
+  it('says that Dez does not have the tool, as the chip does', () => {
+    expect(toolCallLabel('crop_scale_image', '', 'success')).toBe('Tool call, old/unrecognized tool: crop_scale_image')
+    expect(toolCallLabel('web_search', '', 'error')).toBe('Tool call, old/unrecognized tool: web_search, failed')
   })
 })

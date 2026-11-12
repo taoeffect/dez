@@ -2,6 +2,7 @@ import fs from 'node:fs'
 import path from 'node:path'
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from 'vitest'
 import { Key } from 'webdriverio'
+import { unknownToolText } from '../../src/model/tools/registry'
 import { anthropicChatBody, anthropicMarkedUser, openAiChatBody } from './harness/chatBody'
 import { consoleErrors, pointerClick, resetConsoleErrors, screenshotOnFailure, typeKeys, waitForValue } from './harness/dom'
 import { conversationFilePath, makeConversation, seedConversation } from './harness/fixtures'
@@ -26,9 +27,11 @@ import { activeConversationId, activeTabStreaming, docPos, editorCaret, editorDo
 // one: the images go into the reply after the calls, and the requests name
 // them by their ids, with no path. A pasted SVG goes as the same PNG copy
 // in each request of a reply, and its crop is a PNG. An `audio` call cuts a
-// part of a saved clip into a new saved WAV clip, in the same way. A long
-// result scrolls in its field under the wheel. Backspace and Delete next
-// to a chip never join its block to other text.
+// part of a saved clip into a new saved WAV clip, in the same way. A block
+// of a tool that Dez does not have shows as an old/unrecognized tool chip,
+// and goes back with its result. A long result scrolls in its field under
+// the wheel. Backspace and Delete next to a chip never join its block to
+// other text.
 //
 // One app session serves the whole file. The relaunch test reopens the tab
 // of the OpenAI test, so it runs right after it.
@@ -105,6 +108,8 @@ interface ToolChipView {
   /** `data-state` of the chip root. */
   state: string | null
   label: string | null
+  /** The words before the name of a tool that Dez does not have. */
+  unrecognized: string | null
   name: string
   summary: string | null
   /** "failed" or "interrupted"; null for a call that succeeded or runs. */
@@ -122,11 +127,20 @@ interface ToolPanelView {
   error: boolean
 }
 
+/** The parts of an OpenAI-format request message that a spec reads. */
+interface SentMessage {
+  role: string
+  content?: unknown
+  tool_call_id?: string
+  tool_calls?: Array<{ id: string, function: { name: string } }>
+}
+
 /** A `model_list` chip that succeeded, with its panel closed. */
 function closedChip (summary: string): ToolChipView {
   return {
     state: 'success',
     label: `Tool call model_list, ${summary}`,
+    unrecognized: null,
     name: 'model_list',
     summary,
     stateWord: null,
@@ -149,6 +163,7 @@ describe('tool calls', () => {
       return {
         state: root.dataset.state ?? null,
         label: chip?.getAttribute('aria-label') ?? null,
+        unrecognized: chip?.querySelector('.dez-tool-call__unrecognized')?.textContent ?? null,
         name: chip?.querySelector('.dez-tool-call__name')?.textContent ?? '',
         summary: chip?.querySelector('.dez-tool-call__summary')?.textContent ?? null,
         stateWord: chip?.querySelector('.dez-tool-call__state')?.textContent ?? null,
@@ -684,6 +699,51 @@ describe('tool calls', () => {
     expect(third.body).not.toContain(setup.app.home)
     await sendChatReply(third.reply, 'welcome')
     await waitForThread(browser, [...sections, { role: 'user', text: 'Thanks.' }, { role: 'agent', text: replyText('welcome') }, { role: 'user', text: '' }])
+  })
+
+  it('shows a block of a tool that Dez does not have as an old/unrecognized tool chip, and sends the call back with its result', async () => {
+    const oldResult = 'Made the image @b from @a. The image @b is 10x10 pixels.'
+    const oldBlock = `<dez:tool id="call_old" name="crop_scale_image" image="a" width="10" height="10">\n${oldResult}\n</dez:tool>`
+    const refusal = unknownToolText('web_search')
+    const refusedBlock = `<dez:tool id="call_web" name="web_search" status="error" query="cats">\n${refusal}\n</dez:tool>`
+    const reply = `${oldBlock}\n${refusedBlock}\nDone.`
+    await seedConversation(setup.app.home, makeConversation({
+      id: 'unrecognized-tools',
+      title: 'Unrecognized tools',
+      sections: [
+        { role: 'user', nodes: [{ kind: 'text', text: 'Crop it and look it up.' }] },
+        { role: 'agent', nodes: [{ kind: 'text', text: reply }] },
+        { role: 'user', nodes: [{ kind: 'text', text: '' }] },
+      ],
+    }))
+    await sbpCall(browser, 'dez.model/tabs/openConversation', 'unrecognized-tools')
+    const sections = [{ role: 'user', text: 'Crop it and look it up.' }, { role: 'agent', text: reply }]
+    await waitForThread(browser, [...sections, { role: 'user', text: '' }])
+
+    // The chip names the tool after the words, with no argument summary; a
+    // refused call keeps its state word.
+    const unrecognized = 'old/unrecognized tool:'
+    await waitForValue(browser, 'chips of the old and the made-up tool', toolChips, [
+      { ...closedChip(''), label: 'Tool call, old/unrecognized tool: crop_scale_image', unrecognized, name: 'crop_scale_image', summary: null },
+      { ...closedChip(''), state: 'error', label: 'Tool call, old/unrecognized tool: web_search, failed', unrecognized, name: 'web_search', summary: null, stateWord: 'failed' },
+    ])
+    await pointerClick(browser, '.cm-content .dez-tool-call__chip')
+    await waitForValue(browser, 'panel of the old tool', () => toolPanel(0), {
+      parameters: [['image', 'a'], ['width', '10'], ['height', '10']],
+      result: oldResult,
+      error: false,
+    })
+
+    await pickModel(browser, TOOLER.name, TOOLER.modelName)
+    await submit(browser, 'Go on.')
+    const request = await setup.mock.waitForRequest(browser)
+    // The mock's copy of the app's request; the expects below check the
+    // parts that this cast names.
+    const sent = JSON.parse(request.body) as { messages: SentMessage[] }
+    expect(sent.messages.flatMap((message) => message.tool_calls ?? []).map((call) => [call.id, call.function.name])).toEqual([['call_old', 'crop_scale_image'], ['call_web', 'web_search']])
+    expect(sent.messages.filter((message) => message.role === 'tool').map((message) => [message.tool_call_id, message.content])).toEqual([['call_old', oldResult], ['call_web', refusal]])
+    await sendChatReply(request.reply, TOOLER.modelName)
+    await waitForThread(browser, [...sections, { role: 'user', text: 'Go on.' }, { role: 'agent', text: replyText(TOOLER.modelName) }, { role: 'user', text: '' }])
   })
 
   it('scrolls a result that is taller than its field under the wheel, not the doc', async () => {
