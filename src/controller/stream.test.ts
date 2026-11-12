@@ -1182,7 +1182,7 @@ describe('dez.stream/start media round', () => {
   })
 
   // A model that does not read images gets the message as text only, but a
-  // model that needs an image still gets the newest image of the
+  // model that needs one image still gets the newest image of the
   // conversation, here an image of the message (`mediaRequestInput`).
   it.each([
     ['an edit model that does not read images the newest image', 'imageEdit', [image('cat.png')], leftOut('Only the newest image sent', 'M does not read images, so only the newest image of the conversation went with the request.')],
@@ -1219,6 +1219,21 @@ describe('dez.stream/start media round', () => {
     expect(toasts).toStrictEqual([{ area: 'app-global', data: { variant: 'error', title: 'Cannot send', message } }])
     expect(consoleError).toHaveBeenCalledWith(`Cannot send: ${message}`)
     expect(alerts).toStrictEqual([])
+  })
+
+  // The conversation has an image before the message, but one image cannot
+  // meet the count, so the toast counts only the images of the message.
+  it('sends no request to a model that needs more images than the message has, and tells the count of the message', async () => {
+    const message = 'M needs at least 2 images, and this message has 0. Paste more images, or name them with @id.'
+    sbp('dez.model/modelCache/applyProviderResult', model.providerId, {
+      ok: true,
+      models: [{ id: model.modelId, name: model.modelName, provider: model.providerId, outputs: ['image'], request: 'image', images: { maxImages: 4, minImages: 2 } }],
+    })
+
+    await sbp('dez.controller/submitTab', activeTab().id)
+
+    expect(mediaInputs).toStrictEqual([])
+    expect(toasts).toStrictEqual([{ area: 'app-global', data: { variant: 'error', title: 'Cannot send', message } }])
   })
 
   it('removes the section and shows an error toast when the request fails', async () => {

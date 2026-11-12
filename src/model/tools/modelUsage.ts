@@ -1,6 +1,6 @@
 import type { MediaTagKind } from '../chat/mediaTags'
 import { effectiveOutputs } from '../modelOutputs'
-import { imagesText, maxInputImages, minInputImages, needsInputImage } from '../providers/clipImages'
+import { imagesText, maxInputImages, minInputImages } from '../providers/clipImages'
 import { clipsText, maxInputClips, neededClipKind, type ClipUse, type InputClipRules } from '../providers/clipInputs'
 import { lyricsHowTo } from '../providers/clipText'
 import { toolsApply } from '../providers/modelToggles'
@@ -172,12 +172,15 @@ function chatUsage(model: ModelInfo, facts: UsageFacts): string[] {
 
 function inputImagesUsage(kind: MediaKind, model: ModelInfo): string[] {
   const max = maxInputImages(kind, model.images)
-  const needed = needsInputImage(kind, model.images)
+  const min = minInputImages(kind, model.images)
+  // With no image in the message, only a model that needs exactly one image
+  // gets the newest image of the conversation (`mediaRequestInput`).
+  const takesNewest = min === 1
   if (max === 0) return [USAGE_TEXTS.noImages]
   // A message to a model that is known not to read images carries no
   // image (`dez.model/streamMessagesForTab`), so only the fallback of
   // `mediaRequestInput` gives one.
-  if (model.imageInput === false) return [needed ? USAGE_TEXTS.newestImageOnly : USAGE_TEXTS.noImagesRead]
+  if (model.imageInput === false) return [takesNewest ? USAGE_TEXTS.newestImageOnly : USAGE_TEXTS.noImagesRead]
   const role = model.images?.references ? USAGE_TEXTS.videoReferences : MEDIA_USAGE[kind].images
   // A video request with a reference clip sends its images as references
   // too, whatever the image rules (OpenRouter: frames would drop the clips;
@@ -186,10 +189,10 @@ function inputImagesUsage(kind: MediaKind, model: ModelInfo): string[] {
   // A video clip takes the place of the newest image (`mediaRequestInput`).
   const newest = model.clips?.video ? USAGE_TEXTS.newestImageOrVideo : USAGE_TEXTS.newestImage
   return [
-    `It takes ${takenImages(minInputImages(kind, model.images), max)} of the message (pasted, or named with @id)${max === 1 ? '' : ', in text order'}.`,
+    `It takes ${takenImages(min, max)} of the message (pasted, or named with @id)${max === 1 ? '' : ', in text order'}.`,
     ...(role === undefined ? [] : [role]),
     ...(clipsMakeReferences ? [USAGE_TEXTS.clipsMakeReferences] : []),
-    ...(needed ? [newest] : []),
+    ...(takesNewest ? [newest] : []),
   ]
 }
 

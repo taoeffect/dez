@@ -8,7 +8,7 @@ import { holdsStoredFilePath, withoutStoredFilePaths } from '../chat/storedFileP
 import { thinkingField } from '../chat/thinking'
 import { EMPTY_TOOL_RESULT, INTERRUPTED_TOOL_RESULT, agentTextForRequest, splitToolBlocks, type ToolBlock } from '../chat/toolBlocks'
 import { maxInputClips, type ClipAttachment } from '../providers/clipInputs'
-import { maxInputImages, needsInputImage } from '../providers/clipImages'
+import { maxInputImages, minInputImages } from '../providers/clipImages'
 import { clipText } from '../providers/clipText'
 import type { ClipInputRules, MediaKind } from '../providers/types'
 import type { ToolCall, ToolResult } from '../tools/types'
@@ -115,13 +115,15 @@ export function sectionsToStreamMessages(sections: Section[], requestModel: Mode
  *  `clipsLeftOut` is the count of each kind that the request does not
  *  take. A chat request sends no clip: only a media request reads them.
  *
- *  When the message has no image, a request that cannot go without one
- *  (`needsInputImage`) takes the newest image reference of `sections` (the
+ *  When the message has no image, a request that needs exactly one image
+ *  (`minInputImages`) takes the newest image reference of `sections` (the
  *  tab's sections, in which the reply's own section is still empty), so
  *  that "Make it blue" or "Make it move" uses the image of the reply
  *  before. With no image there either, it gets no paths: the submit
  *  refuses the request (`missingImageProblem`), and generateMedia refuses
- *  it too. A request with a video clip takes no such image: the video is
+ *  it too. A model that needs more images takes no such image: one image
+ *  can never meet its count, and the refusal tells the count of the
+ *  message. A request with a video clip takes no such image: the video is
  *  the reference then, and neither refuses it. */
 export function mediaRequestInput(
   kind: MediaKind,
@@ -158,7 +160,7 @@ export function mediaRequestInput(
     : promptWithNames(parts, imageNames, clipNames, sections)
   const text = clipText(rules.text, prompt.trim())
   const input = { ...text, images, imagesLeftOut, clips, clipsLeftOut }
-  if (messageImages.length > 0 || clips.some((clip) => clip.kind === 'video') || !needsInputImage(kind, rules.images)) return input
+  if (messageImages.length > 0 || clips.some((clip) => clip.kind === 'video') || minInputImages(kind, rules.images) !== 1) return input
   const newest = sections.map((section) => findImageReferences(sectionPlainText(section)).at(-1)).findLast((reference) => reference !== undefined)
   return { ...input, images: newest ? [newest.path] : [] }
 }

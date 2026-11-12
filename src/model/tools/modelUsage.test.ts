@@ -29,6 +29,7 @@ const IMAGE_RULES: (InputImageRules | undefined)[] = [
   undefined,
   { maxImages: 1 },
   { maxImages: 2, minImages: 1 },
+  { maxImages: 4, minImages: 2 },
   { maxImages: 4 },
   { maxImages: 7, references: {} },
   { maxImages: 7, references: { promptName: '@Image{n}' } },

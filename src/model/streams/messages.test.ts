@@ -647,15 +647,19 @@ describe('mediaRequestInput', () => {
       expect(input('image', sections, { images: { maxImages: 1 } })).toStrictEqual({ prompt: 'Mix ![image](id=b) and @a', images: [IMAGE], imagesLeftOut: 1, ...NO_CLIPS })
     })
 
-    // "Make it blue" after an image: the image goes, as for an edit.
-    it('takes the newest image of the conversation for a model that needs one, and none for a model that does not', () => {
+    // "Make it blue" after an image: the image goes, as for an edit. One
+    // image can never meet a count above 1, so a model that needs more
+    // gets none, and the refusal tells the count of the message.
+    it('takes the newest image of the conversation for a model that needs one, and none for a model that needs none or more', () => {
       const sections = [user('u1', 'A red fox'), reply('a1', `![${GENERATED}](id=a)`), user('u2', 'Make it blue')]
 
       expect([
         input('image', sections, { images: { maxImages: 1, minImages: 1 } }),
         input('image', sections, { images: { maxImages: 4 } }),
+        input('image', sections, { images: { maxImages: 4, minImages: 2 } }),
       ]).toStrictEqual([
         { prompt: 'Make it blue', images: [GENERATED], imagesLeftOut: 0, ...NO_CLIPS },
+        { prompt: 'Make it blue', images: [], imagesLeftOut: 0, ...NO_CLIPS },
         { prompt: 'Make it blue', images: [], imagesLeftOut: 0, ...NO_CLIPS },
       ])
     })

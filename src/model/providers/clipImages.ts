@@ -24,12 +24,6 @@ export function minInputImages(kind: MediaKind, rules: InputImageRules | undefin
   return Math.max(NEEDS_INPUT_IMAGE[kind] === undefined ? 0 : 1, rules?.minImages ?? 0)
 }
 
-/** Whether a request of `kind` to a model with `rules` makes nothing
- *  without an input image. */
-export function needsInputImage(kind: MediaKind, rules: InputImageRules | undefined): boolean {
-  return minInputImages(kind, rules) > 0
-}
-
 // How the images of a request go to a model that takes them as
 // references (a reference-to-video model), not as the frames of a video.
 export interface ReferenceImages {
@@ -97,7 +91,7 @@ export function inputImageRulesFor(rules: InputImageRules | undefined, values: R
 export function maxInputImages(kind: MediaKind, rules: InputImageRules | undefined): number {
   if (rules) return rules.maxImages
   if (kind === 'imageEdit') return Infinity
-  return needsInputImage(kind, undefined) ? 1 : 0
+  return minInputImages(kind, undefined)
 }
 
 /** `1 image`, `2 images`. */
