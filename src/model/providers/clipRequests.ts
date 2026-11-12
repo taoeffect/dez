@@ -114,10 +114,14 @@ export async function sendClipRequest(
   const mediaType = pcm ? 'audio/wav' : contentType.split(';', 1)[0].trim()
   const extension = mediaFileExtension(mediaType, null)
   if (extension === null) {
-    await sbp('dez.native/deleteAppFile', part, 'cache')
+    // A failed delete must not hide the error of the file type: the
+    // cleanup of the temp copies deletes the part file later.
+    await sbp('dez.native/deleteAppFile', part, 'cache').catch((error: unknown) => {
+      console.error('Failed to delete a clip of an unknown file type:', error)
+    })
     throw new ExplainedError(
       `${run.provider.name} sent the clip in a file type that Dez does not know. Choose another model, and report the file type at Help › Dez on GitHub.`,
-      `Content type: ${contentType}`,
+      `Content type: ${sanitizeErrorText(contentType, 100)}`,
     )
   }
   const file = `${MEDIA_CACHE_FOLDER}/${name}.${extension}`

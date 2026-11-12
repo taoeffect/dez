@@ -216,6 +216,15 @@ describe('a clip that the first answer holds', () => {
     expect([moves, loaded, saved]).toStrictEqual([[], [], []])
   })
 
+  it('keeps the file type error when the delete of the file fails', async () => {
+    answers = [clip('audio/x-unknown')]
+    deleteError = new Error('Permission denied')
+
+    await expect(generate({ kind: 'tts' })).rejects.toThrow('Media server sent the clip in a file type that Dez does not know. Choose another model, and report the file type at Help › Dez on GitHub.\n\nDetails: Content type: audio/x-unknown')
+
+    expect(consoleError).toHaveBeenCalledWith('Failed to delete a clip of an unknown file type:', deleteError)
+  })
+
   it('makes a WAV temp copy of raw PCM speech from the layout of the answer, and deletes the raw samples', async () => {
     answers = [clip('audio/pcm;rate=44100;channels=1')]
 
