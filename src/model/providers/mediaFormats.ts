@@ -602,11 +602,13 @@ const veniceFormat: MediaFormat = {
   },
   clips: {
     // tts: the entry names no default voice, and each model has its own.
-    // The format is a parameter so that every request names it, with the
-    // model's own default: `tts-kokoro` answers a request with no
-    // `response_format` in WAV with the header `audio/mpeg`, and Dez names
-    // a clip's file after that header. With the format in the request, the
-    // header agrees with the audio (checked live, 2026-11-10).
+    // The format is a parameter so that every request names it: the
+    // model's own default when Dez stores its type, else the first type
+    // that Dez stores. A request with no `response_format` gets the
+    // model's default, which can be raw PCM (no file). Also, `tts-kokoro`
+    // answers such a request in WAV with the header `audio/mpeg`, and Dez
+    // names a clip's file after that header. With the format in the
+    // request, the header agrees with the audio (checked live, 2026-11-10).
     // video: the first aspect ratio is the model's main one (`16:9` for
     // most). A model takes only the fields that its entry lists values
     // for: some list no resolution, and half of the image-to-video models
@@ -628,9 +630,10 @@ const veniceFormat: MediaFormat = {
       switch (kind) {
         case 'tts': {
           const formats = listedValues(spec('supported_formats')).filter((format) => VENICE_SPEECH_FORMATS.has(format))
+          const modelDefault = spec('default_format')
           return [
             ...optionsParameter('voice', 'Voice', listedValues(spec('voices'))),
-            ...optionsParameter('response_format', 'Format', formats, spec('default_format')),
+            ...optionsParameter('response_format', 'Format', formats, formats.find((format) => format === modelDefault) ?? formats[0]),
             // The speech request takes 0.25 to 4 for every model (its
             // schema); the entries hold no speed. No default: with no
             // value, the API's own (1) applies.

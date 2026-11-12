@@ -301,9 +301,16 @@ describe('venice clip parameters', () => {
     ])
   })
 
-  it('gives a speech format no default when the default of the model has no file type', () => {
-    expect(parameters(veniceClips, 'tts', spec({ default_format: 'pcm', supported_formats: ['wav', 'pcm'] }))).toStrictEqual([
-      { name: 'response_format', options: ['wav'] },
+  // With no format, Venice answers in the model's default, which can be a
+  // type that Dez cannot make a file of (raw PCM).
+  it.each([
+    ['has no file type', 'pcm'],
+    ['is not in the list of the model', 'mp3'],
+    ['is not a format that Dez knows', 'ogg'],
+    ['is missing', undefined],
+  ])('gives a speech format the first format that has a file type when the default of the model %s', (_name, defaultFormat) => {
+    expect(parameters(veniceClips, 'tts', spec({ default_format: defaultFormat, supported_formats: ['pcm', 'ogg', 'flac', 'wav'] }))).toStrictEqual([
+      { name: 'response_format', options: ['flac', 'wav'], default: 'flac' },
       SPEECH_SPEED,
     ])
   })
