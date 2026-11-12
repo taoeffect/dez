@@ -2,6 +2,7 @@ import sbp from '@sbp/sbp'
 import { watch } from 'vue'
 import { errorText, rawErrorText } from '../utils/errorText'
 import { isNewerVersion } from '../utils/version'
+import { DEZ_REPO_URL } from '../utils/dezLinks'
 import {
   settingsCheckForUpdates,
   settingsLastUpdateCheckAt,
@@ -37,8 +38,6 @@ async function latestReleaseStatus(): Promise<LatestReleaseStatus> {
     hasUpdate: isNewerVersion(latestRelease.version, __APP_VERSION__),
   }
 }
-
-export const DEZ_REPO_URL = 'https://github.com/taoeffect/dez'
 
 function isValidReleaseUrl(url: string): boolean {
   return url.startsWith(DEZ_REPO_URL)

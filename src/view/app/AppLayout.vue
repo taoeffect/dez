@@ -9,6 +9,7 @@ import ModelSelector from "../model-selector/ModelSelector.vue";
 import SubmitButton from "../thread/SubmitButton.vue";
 import TabBar from "../tabs/TabBar.vue";
 import HistoryPanel from "../history/HistoryPanel.vue";
+import HelpView from "../help/HelpView.vue";
 import ToastContainer from "../toast/ToastContainer.vue";
 import ConfirmDialog from "../confirm/ConfirmDialog.vue";
 import { shortcutKeyText } from "../../model/shortcuts";
@@ -71,11 +72,28 @@ onUnmounted(() => {
     </main>
     <footer class="bottom-bar">
       <ModelSelector />
-      <SubmitButton />
+      <div class="bottom-bar-end">
+        <SubmitButton />
+        <!-- `mousedown.prevent` keeps the focus and the caret where they are. -->
+        <button
+          class="help-button"
+          title="Help"
+          aria-label="Help"
+          @mousedown.prevent
+          @click="sbp('dez.model/settings/helpOpen')"
+        >
+          <svg width="16" height="16" viewBox="0 0 16 16" fill="none">
+            <circle cx="8" cy="8" r="6.5" stroke="currentColor" stroke-width="1.2"/>
+            <path d="M6.1 6.3a1.9 1.9 0 1 1 2.7 1.7c-.5.25-.8.6-.8 1.2v.4" stroke="currentColor" stroke-width="1.2" stroke-linecap="round" stroke-linejoin="round"/>
+            <circle cx="8" cy="11.4" r=".8" fill="currentColor"/>
+          </svg>
+        </button>
+      </div>
     </footer>
 
     <HistoryPanel v-if="settings.historyOpen" @close="sbp('dez.model/settings/historyClose')" />
     <SettingsView v-if="settings.settingsOpen" />
+    <HelpView v-if="settings.helpOpen" />
     <ConfirmDialog />
     <ToastContainer area="app-global" />
   </div>
@@ -153,5 +171,34 @@ onUnmounted(() => {
   background-color: var(--color-tab-bar);
   border-top: 1px solid var(--color-border);
   flex-shrink: 0;
+}
+
+/* Submit and Help at the right end of the bar. */
+.bottom-bar-end {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
+/* As the gear of ModelSelector.vue at the other end of the bar. */
+.help-button {
+  width: 22px;
+  height: 22px;
+  padding: 0;
+  border: none;
+  border-radius: 4px;
+  background: transparent;
+  color: var(--color-text);
+  opacity: 0.4;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  transition: opacity 0.15s;
+}
+
+.help-button:hover {
+  opacity: 0.8;
 }
 </style>

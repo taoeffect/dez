@@ -55,7 +55,7 @@ sbp('sbp/selectors/register', {
   'dez.editor/focus' (): boolean {
     editorFocuses.push({
       activeTabId: activeTabId(),
-      panelOpen: (sbp('dez.model/settings/isOpen') as boolean) || (sbp('dez.model/settings/isHistoryOpen') as boolean),
+      panelOpen: ['isOpen', 'isHistoryOpen', 'isHelpOpen'].some((selector) => sbp(`dez.model/settings/${selector}`) as boolean),
     })
     return true
   },
@@ -278,7 +278,7 @@ describe('dez.controller/alertReplyEnded', () => {
   })
 
   // The editor takes no focus while a panel covers it.
-  it.each(['dez.model/settings/open', 'dez.model/settings/historyOpen'])('a click closes the panel of %s, opens the tab, and then focuses the editor', async (openPanel) => {
+  it.each(['dez.model/settings/open', 'dez.model/settings/historyOpen', 'dez.model/settings/helpOpen'])('a click closes the panel of %s, opens the tab, and then focuses the editor', async (openPanel) => {
     const tabId = backgroundTabId()
     await alertReplyEnded(tabId)
     sbp(openPanel)
@@ -288,6 +288,7 @@ describe('dez.controller/alertReplyEnded', () => {
     expect(activeTabId()).toBe(tabId)
     expect(sbp('dez.model/settings/isOpen')).toBe(false)
     expect(sbp('dez.model/settings/isHistoryOpen')).toBe(false)
+    expect(sbp('dez.model/settings/isHelpOpen')).toBe(false)
     expect(editorFocuses).toEqual([{ activeTabId: tabId, panelOpen: false }])
   })
 

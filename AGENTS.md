@@ -106,9 +106,10 @@ ThreadEditor (CodeMirror doc) syncs to the active tab's sections
 - `model/shortcuts.ts`: the editable shortcut registry (ids, default keys, key event matching, validation, labels, menu accelerators); user overrides are in the settings store.
 - `controller/menu.ts`: the native menubar (Tauri only); `dez.controller/menu/suspendAccelerators` turns its keys off while a key is recorded; `dez.controller/menu/popupAsset`: the right-click menu of an image or a player ("Reveal in File Manager"). `view/composables/useKeyboardShortcuts.ts`: app keys.
 - `controller/window.ts`, `windowFit.ts`: restore and save the window size and position.
-- `view/app/AppLayout.vue`: layout and bottom bar (`ModelSelector.vue`, `view/thread/SubmitButton.vue`).
+- `view/app/AppLayout.vue`: layout and bottom bar (`ModelSelector.vue`, `view/thread/SubmitButton.vue`, the Help button).
 - `view/model-selector/`: `ModelPicker.vue` (a virtual list of the rows from `pickerRows.ts`), `ModelOutputFilter.vue` (the output type filter), `ProviderSettingsPopup.vue` (for the active model: the provider toggles that apply to it, its "Model Parameters", how to write its lyrics, and the input of an upscale).
 - `view/history/HistoryPanel.vue`: saved conversations.
+- `view/help/HelpView.vue`: the Help panel (General, Tips, Support), opened by Help › Dez Help and the `?` button of the bottom bar (`dez.model/settings/helpOpen`). At most one of Settings, History, and Help is open.
 - `view/confirm/`: `dez.ui/confirm`, the in-app yes/no prompt (`ConfirmDialog.vue`, mounted in `AppLayout.vue`); `isModalOpen()` (`useKeyboardShortcuts.ts`) counts it.
 - `view/prompts/PromptManager.vue`, `view/thread/PromptAutocomplete.vue`: saved prompts and `/prompt ` insertion.
 - `view/settings/SettingsView.vue`, `ProviderManager.vue`, `ShortcutManager.vue`: settings (General holds the "Unused files" row, `unusedFiles.ts`), the providers page, and Settings › Shortcuts with its key recorder (Help › Keyboard Shortcuts opens it).
@@ -116,6 +117,7 @@ ThreadEditor (CodeMirror doc) syncs to the active tab's sections
 - `view/modelLabel.ts`: model display names. `view/theme.ts`: theme and editor font size.
 - `utils/byteSize.ts`: `byteSizeText`, the one byte-count text. `utils/homePath.ts`: `pathWithTilde`; a view gets a path with `~` for the home folder from `dez.controller/displayPath` (`controller/utils.ts`).
 - `utils/errorText.ts`: the shape of every user error text (`errorText`, `ExplainedError`, `explainedError`, `UNEXPECTED_ERROR`).
+- `utils/dezLinks.ts`: the URLs of Dez's GitHub pages.
 
 ### SBP
 

@@ -65,6 +65,7 @@ export interface SettingsSnapshot {
   settingsOpen: boolean
   settingsSection: SettingsSection
   historyOpen: boolean
+  helpOpen: boolean
 }
 
 // A tab's reply activity in the tab bar: `busy` while its reply streams,
@@ -277,6 +278,7 @@ function cloneSettings(settings = useSettingsStore()): SettingsSnapshot {
     settingsOpen: settings.settingsOpen,
     settingsSection: settings.settingsSection,
     historyOpen: settings.historyOpen,
+    helpOpen: settings.helpOpen,
   }
 }
 
@@ -992,10 +994,15 @@ export default sbp('sbp/selectors/register', {
     return useSettingsStore().historyOpen
   },
 
+  'dez.model/settings/isHelpOpen' (): boolean {
+    return useSettingsStore().helpOpen
+  },
+
   'dez.model/settings/open' (section: SettingsSection = 'general'): void {
     const settings = useSettingsStore()
     settings.settingsSection = section
     settings.historyOpen = false
+    settings.helpOpen = false
     settings.settingsOpen = true
   },
 
@@ -1015,6 +1022,7 @@ export default sbp('sbp/selectors/register', {
   'dez.model/settings/historyOpen' (): void {
     const settings = useSettingsStore()
     settings.settingsOpen = false
+    settings.helpOpen = false
     settings.historyOpen = true
   },
 
@@ -1025,6 +1033,19 @@ export default sbp('sbp/selectors/register', {
   'dez.model/settings/historyToggle' (): void {
     if (useSettingsStore().historyOpen) sbp('dez.model/settings/historyClose')
     else sbp('dez.model/settings/historyOpen')
+  },
+
+  // The Help panel (Help › Dez Help, the `?` button of the bottom bar). It
+  // opens on its General page (`HelpView.vue`).
+  'dez.model/settings/helpOpen' (): void {
+    const settings = useSettingsStore()
+    settings.settingsOpen = false
+    settings.historyOpen = false
+    settings.helpOpen = true
+  },
+
+  'dez.model/settings/helpClose' (): void {
+    useSettingsStore().helpOpen = false
   },
 
   'dez.model/settings/setTheme' (theme: Theme): void {

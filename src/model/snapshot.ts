@@ -44,6 +44,7 @@ export interface ModelSnapshot {
     settingsOpen: boolean
     settingsSection: string
     historyOpen: boolean
+    helpOpen: boolean
   }
   prompts: Prompt[]
 }

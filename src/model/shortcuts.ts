@@ -50,7 +50,7 @@ const goToTabDefinitions = Object.fromEntries(TAB_NUMBERS.map((n) => [
 // never editable: Cut/Copy/Paste, the macOS app-menu keys, the Linux
 // Ctrl+A/Ctrl+E line navigation, the prompt autocomplete keys, the editor
 // navigation keys, Enter and Shift+Enter in the find field, and Esc while it
-// closes a dropdown, Settings, History, the prompt autocomplete, or find.
+// closes a dropdown, Settings, History, Help, the prompt autocomplete, or find.
 const DEFINITIONS = {
   submit: { label: 'Submit thread to LLM', group: 'Conversation', scope: 'editor', key: 'Mod-Enter' },
   // In the editor CodeMirror runs it after the Esc bindings that close the

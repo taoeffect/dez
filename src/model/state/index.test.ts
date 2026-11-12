@@ -644,6 +644,30 @@ describe('dez.model/customProviders/remove', () => {
   })
 })
 
+describe('dez.model/settings overlay panels', () => {
+  const PANELS = {
+    settings: { open: 'dez.model/settings/open', isOpen: 'dez.model/settings/isOpen' },
+    history: { open: 'dez.model/settings/historyOpen', isOpen: 'dez.model/settings/isHistoryOpen' },
+    help: { open: 'dez.model/settings/helpOpen', isOpen: 'dez.model/settings/isHelpOpen' },
+  } as const
+  type Panel = keyof typeof PANELS
+  const panels = Object.keys(PANELS) as Panel[]
+
+  function openPanels (): Panel[] {
+    return panels.filter((panel) => sbp(PANELS[panel].isOpen) as boolean)
+  }
+
+  // At most one panel covers the thread: the one opened last.
+  it.each(panels)('opening %s closes the panel that was open', (panel) => {
+    for (const other of panels.filter((name) => name !== panel)) {
+      sbp(PANELS[other].open)
+      expect(openPanels()).toEqual([other])
+      sbp(PANELS[panel].open)
+      expect(openPanels()).toEqual([panel])
+    }
+  })
+})
+
 describe('dez.model/settings/changeEditorFontSize', () => {
   function fontSize (): number {
     return (sbp('dez.model/settings/snapshot') as SettingsSnapshot).editorFontSize

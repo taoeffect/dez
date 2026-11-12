@@ -66,9 +66,11 @@ export const useSettingsStore = defineStore('settings', () => {
   // Every shortcut with its effective key, computed once per change, since
   // the window handler reads it on every keydown.
   const shortcuts = computed(() => resolveShortcuts(currentShortcutPlatform, shortcutOverrides.value))
+  // The overlay panels. At most one is open: opening one closes the others.
   const settingsOpen = ref(false)
   const settingsSection = ref<SettingsSection>('general')
   const historyOpen = ref(false)
+  const helpOpen = ref(false)
 
   function setTheme(t: Theme) {
     theme.value = t
@@ -110,6 +112,7 @@ export const useSettingsStore = defineStore('settings', () => {
   function openSettings(section: SettingsSection = 'general') {
     settingsSection.value = section
     historyOpen.value = false
+    helpOpen.value = false
     settingsOpen.value = true
   }
 
@@ -119,6 +122,7 @@ export const useSettingsStore = defineStore('settings', () => {
 
   function openHistory() {
     settingsOpen.value = false
+    helpOpen.value = false
     historyOpen.value = true
   }
 
@@ -147,6 +151,7 @@ export const useSettingsStore = defineStore('settings', () => {
     settingsOpen,
     settingsSection,
     historyOpen,
+    helpOpen,
     setTheme,
     setDefaultNewTabModel,
     setLastUsedModel,

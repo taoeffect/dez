@@ -6,7 +6,7 @@ import { Menu, MenuItem, Submenu, type MenuItemOptions, type PredefinedMenuItemO
 import { getCurrentWindow } from '@tauri-apps/api/window'
 import { currentShortcutPlatform, findShortcut, shortcutAccelerator, type Shortcut, type ShortcutId } from '../model/shortcuts'
 import { isMacPlatform } from '../utils/platform'
-import { DEZ_REPO_URL } from './updates'
+import { DEZ_REPO_URL } from '../utils/dezLinks'
 import dezIconUrl from '../../src-tauri/icons/128x128.png'
 
 const SEPARATOR: PredefinedMenuItemOptions = { item: 'Separator' }
@@ -151,6 +151,7 @@ export default sbp('sbp/selectors/register', {
       const help = await Submenu.new({
         text: 'Help',
         items: [
+          { text: 'Dez Help', action: () => sbp('dez.model/settings/helpOpen') },
           { text: 'Keyboard Shortcuts', action: () => sbp('dez.model/settings/open', 'shortcuts') },
           { text: 'Dez on GitHub', action: () => sbp('dez.controller/openUrl', DEZ_REPO_URL) },
           SEPARATOR,
