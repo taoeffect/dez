@@ -5,7 +5,7 @@ import { createApp, h, reactive, shallowRef, type App, type ShallowRef } from 'v
 import { SENTINEL_CHAR } from '../../model/chat/content'
 import { MEDIA_TAG_NAMES, findMediaTags, isPastedMediaPath, mediaTagText, savedMediaTag, unsavedMediaTag, type MediaTag, type MediaTagData } from '../../model/chat/mediaTags'
 import MediaPlayer from '../media/MediaPlayer.vue'
-import { clipSourceKind } from '../media/clipState'
+import { clipSourceKind, expiryNotice } from '../media/clipState'
 import { sectionsField, type SectionModel } from '../thread/cmEditor'
 import { measureLineHeights } from '../thread/editorMeasure'
 import { selectedAssetLook } from './assetSelection'
@@ -357,7 +357,9 @@ async function saveClip(view: EditorView, root: HTMLElement, clip: MediaTagData)
 /** The trash of the player `root`: asks whether to delete the saved file of
  *  `clip`, and on "Yes" deletes it (`dez.controller/media/delete`), then
  *  gives the clip's tag its source of before (`unsavedMediaTag`: the
- *  provider URL, or no source). A clip that the user pasted or dropped
+ *  provider URL, or no source). The prompt warns when the clip can be lost
+ *  after the delete: there is no URL, or the URL's `expires` is over (the
+ *  rule of the player's clock). A clip that the user pasted or dropped
  *  (`isPastedMediaPath`) has no other source: its trash deletes the clip,
  *  and takes the tag's whole line out of the doc (`linesRemovalRange`), as
  *  the image trash does with an image reference. When the tag is gone after
@@ -374,6 +376,7 @@ export async function deleteSavedClip(view: EditorView, root: HTMLElement, clip:
   let message = 'Are you sure you want to delete the saved file of this clip?'
   if (pasted) message = 'Are you sure you want to delete this clip?'
   else if (clip.url === null) message += ' The clip cannot be played again after that.'
+  else if (expiryNotice(clip.expires, Date.now(), null)?.expired) message += ' The web address of the clip has expired, so the clip can stop playing after that.'
   const confirmed = await sbp('dez.ui/confirm', { message }) as boolean
   if (!confirmed) {
     followed.end()

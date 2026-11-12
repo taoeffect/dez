@@ -148,4 +148,18 @@ describe('deleteSavedClip (the trash of a player)', () => {
     expect(state.doc.toString()).toBe(`before\n${unsaved}\nafter!`)
     expect(undoOnce(state)).toBe(`before\n${unsaved}\nafter`)
   })
+
+  it('warns at the delete of a saved file when the URL that the clip goes back to has expired', async () => {
+    const path = '/home/u/.config/dez/assets/generated/video/x.mp4'
+    const clip = (expires: number): MediaTagData => ({ kind: 'video', id: 'b', type: 'video/mp4', src: path, url: 'https://cdn.example/x.mp4', expires: new Date(expires).toISOString(), other: [] })
+
+    await deleteClip(clip(Date.now() - 1000))
+    await deleteClip(clip(Date.now() + 60 * 60 * 1000))
+
+    expect(confirmMessages).toStrictEqual([
+      'Are you sure you want to delete the saved file of this clip? The web address of the clip has expired, so the clip can stop playing after that.',
+      'Are you sure you want to delete the saved file of this clip?',
+    ])
+    expect(deletedPaths).toStrictEqual([path, path])
+  })
 })
