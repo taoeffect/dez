@@ -169,7 +169,7 @@ const TOOL_RUNNERS: Record<string, ToolRunner> = {
         // The provider's error text stays in the log: it can echo details
         // of the user's account, and this result goes to a chat provider.
         console.error(`Failed to get the price of a ${model.id} request:`, error)
-        facts.cost = { error: 'The provider did not answer the price request.' }
+        facts.cost = { error: 'The price request to the provider failed. Help › Developer Console shows why.' }
       }
     }
     return modelInfoText(provider, model, facts, part)
