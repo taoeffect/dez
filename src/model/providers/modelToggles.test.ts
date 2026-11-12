@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import type { ProviderSettingDef } from './config'
-import { modelToggles, toggleRows, toggleValue, toolsApply, type ModelToggles, type ToggleModel } from './modelToggles'
+import { isThinkingEnabled, modelToggles, toggleRows, toggleValue, toolsApply, type ModelToggles, type ToggleModel } from './modelToggles'
 import { MODEL_REQUESTS } from './types'
 
 const setting = (key: string, more: Partial<ProviderSettingDef> = {}): ProviderSettingDef =>
@@ -86,5 +86,15 @@ describe('toggleValue', () => {
     const stored: (Record<string, boolean> | undefined)[] = [undefined, {}, { other: false }, { search: false }]
 
     expect(stored.map((values) => toggleValue(row, values))).toStrictEqual([true, true, true, false])
+  })
+})
+
+describe('isThinkingEnabled', () => {
+  it('is on unless the user turned the stored toggle off', () => {
+    expect(isThinkingEnabled(undefined)).toBe(true)
+    expect(isThinkingEnabled({})).toBe(true)
+    expect(isThinkingEnabled({ webSearch: false })).toBe(true)
+    expect(isThinkingEnabled({ thinking: true })).toBe(true)
+    expect(isThinkingEnabled({ thinking: false })).toBe(false)
   })
 })

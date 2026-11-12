@@ -10,9 +10,3 @@ export const TOOLS_SETTING_KEY = 'tools'
 // The stored toggles are sparse: a provider whose toggle the user never
 // flipped gets the tools.
 export const TOOLS_DEFAULT = true
-
-// `overrides` is settings.providerSettings[providerId].
-export function isToolsEnabled(overrides: Readonly<Record<string, boolean>> | undefined): boolean {
-  const stored = overrides?.[TOOLS_SETTING_KEY]
-  return typeof stored === 'boolean' ? stored : TOOLS_DEFAULT
-}

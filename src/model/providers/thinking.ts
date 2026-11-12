@@ -10,13 +10,6 @@ export const THINKING_SETTING_KEY = 'thinking'
 // flipped has thinking on.
 export const THINKING_DEFAULT = true
 
-// `overrides` is settings.providerSettings[providerId]. The toggle matters
-// only for a provider whose config has `thinking`.
-export function isThinkingEnabled(overrides: Readonly<Record<string, boolean>> | undefined): boolean {
-  const stored = overrides?.[THINKING_SETTING_KEY]
-  return typeof stored === 'boolean' ? stored : THINKING_DEFAULT
-}
-
 // The prefix hash of a signed replay: a hash of the JSON text of an array of
 // what went before the reply that made it: the system prompt, the wire tools,
 // and the wire messages (ApiFormat.chatBody). Providers refuse such a replay

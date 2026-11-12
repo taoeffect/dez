@@ -20,7 +20,8 @@ export const MEDIA_TEMP_LIFETIME_MS = 24 * 60 * 60 * 1000
 export const MAX_SAVED_CLIP_BYTES = 1024 ** 3
 
 // The file extension of each media type that Dez gives a file name to.
-// Servers name one format in more than one way.
+// Servers name one format in more than one way; the first name of an
+// extension is the one that Dez writes (`MEDIA_TYPE_BY_EXTENSION`).
 const EXTENSION_BY_MEDIA_TYPE: Readonly<Record<string, string>> = {
   'video/mp4': 'mp4',
   'video/webm': 'webm',
@@ -43,19 +44,25 @@ const EXTENSION_BY_MEDIA_TYPE: Readonly<Record<string, string>> = {
 const MEDIA_EXTENSIONS: ReadonlySet<string> = new Set(Object.values(EXTENSION_BY_MEDIA_TYPE))
 
 // The media type that Dez writes into the tag of a pasted or dropped clip
-// file, by the file's extension: one name for each extension of
+// file, by the file's extension: the first name of each extension of
 // `EXTENSION_BY_MEDIA_TYPE`.
-const MEDIA_TYPE_BY_EXTENSION: Readonly<Record<string, string>> = {
-  mp4: 'video/mp4',
-  webm: 'video/webm',
-  mov: 'video/quicktime',
-  mp3: 'audio/mpeg',
-  wav: 'audio/wav',
-  ogg: 'audio/ogg',
-  flac: 'audio/flac',
-  m4a: 'audio/mp4',
-  aac: 'audio/aac',
-  opus: 'audio/opus',
+const MEDIA_TYPE_BY_EXTENSION: Readonly<Record<string, string>> = Object.entries(EXTENSION_BY_MEDIA_TYPE)
+  .reduce<Record<string, string>>((types, [mediaType, extension]) => {
+    types[extension] ??= mediaType
+    return types
+  }, {})
+
+// A media type with no parameters, in lower case.
+function bareMediaType(type: string): string {
+  return type.split(';', 1)[0].trim().toLowerCase()
+}
+
+/** A media type with no parameters, in lower case, with one name for each
+ *  format that Dez knows: `audio/x-flac` is `audio/flac`, `audio/mp3` is
+ *  `audio/mpeg`. Another type stays as it is. */
+export function canonicalMediaType(type: string): string {
+  const mediaType = bareMediaType(type)
+  return Object.hasOwn(EXTENSION_BY_MEDIA_TYPE, mediaType) ? MEDIA_TYPE_BY_EXTENSION[EXTENSION_BY_MEDIA_TYPE[mediaType]] : mediaType
 }
 
 /** The extensions of the files that Dez takes as clips in a paste or a
@@ -111,7 +118,7 @@ function urlPath(url: string): string {
  *  and case do not count), else from the path of the clip's URL when that
  *  names a media file. Null when neither tells. */
 export function mediaFileExtension(type: string, url: string | null): string | null {
-  const mediaType = type.split(';', 1)[0].trim().toLowerCase()
+  const mediaType = bareMediaType(type)
   if (Object.hasOwn(EXTENSION_BY_MEDIA_TYPE, mediaType)) return EXTENSION_BY_MEDIA_TYPE[mediaType]
   const extension = /\.([A-Za-z0-9]+)$/.exec(urlPath(url ?? ''))?.[1].toLowerCase()
   return extension !== undefined && MEDIA_EXTENSIONS.has(extension) ? extension : null

@@ -59,14 +59,18 @@ export interface ToggleRow {
   default: boolean
 }
 
+// Dez's own toggles (thinking.ts, toolsSetting.ts) as rows.
+const THINKING_ROW: Readonly<ToggleRow> = { key: THINKING_SETTING_KEY, label: 'Thinking', default: THINKING_DEFAULT }
+const TOOLS_ROW: Readonly<ToggleRow> = { key: TOOLS_SETTING_KEY, label: 'Tools', default: TOOLS_DEFAULT }
+
 /** The toggles of `toggles` as rows: Dez's own toggles first (Thinking,
  *  then Tools), then the config's toggles. Dez's own toggles are stored
  *  with the config's toggles, so the rows share one code path, and "Reset
  *  to defaults" resets them too. */
 export function toggleRows(toggles: ModelToggles): ToggleRow[] {
   return [
-    ...(toggles.thinking ? [{ key: THINKING_SETTING_KEY, label: 'Thinking', default: THINKING_DEFAULT }] : []),
-    ...(toggles.tools ? [{ key: TOOLS_SETTING_KEY, label: 'Tools', default: TOOLS_DEFAULT }] : []),
+    ...(toggles.thinking ? [{ ...THINKING_ROW }] : []),
+    ...(toggles.tools ? [{ ...TOOLS_ROW }] : []),
     ...toggles.settings.map(({ key, label, default: defaultValue }) => ({ key, label, default: defaultValue })),
   ]
 }
@@ -77,4 +81,16 @@ export function toggleRows(toggles: ModelToggles): ToggleRow[] {
 export function toggleValue(row: Pick<ToggleRow, 'key' | 'default'>, stored: Readonly<Record<string, boolean>> | undefined): boolean {
   const value = stored?.[row.key]
   return typeof value === 'boolean' ? value : row.default
+}
+
+/** The value of the Thinking toggle in `stored`. It matters only where
+ *  the toggle applies (`modelToggles`). */
+export function isThinkingEnabled(stored: Readonly<Record<string, boolean>> | undefined): boolean {
+  return toggleValue(THINKING_ROW, stored)
+}
+
+/** The value of the Tools toggle in `stored`. It matters only where the
+ *  toggle applies (`toolsApply`). */
+export function isToolsEnabled(stored: Readonly<Record<string, boolean>> | undefined): boolean {
+  return toggleValue(TOOLS_ROW, stored)
 }

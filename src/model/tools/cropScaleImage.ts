@@ -1,5 +1,5 @@
 import type { ImageDrawing, ImageRegion, ImageSize } from '../chat/imageDrawing'
-import { IMAGE_ID_SOURCE } from '../chat/images'
+import { assetIdArgument } from './arguments'
 import { ToolError, type ToolArguments, type ToolDefinition } from './types'
 
 /** The most pixels of an image that `crop_scale_image` makes (8K, 7680 by
@@ -70,15 +70,10 @@ export const CROP_SCALE_IMAGE_TOOL: ToolDefinition = {
   ],
 }
 
-const IMAGE_ARGUMENT = new RegExp(`^@?(${IMAGE_ID_SOURCE})$`)
-
 /** The image id that the `image` argument of a call names (`a` or `@a`).
  *  Throws for any other text; the model reads the error. */
 export function cropScaleImageId(args: ToolArguments): string {
-  const image = typeof args.image === 'string' ? args.image.trim() : ''
-  const id = IMAGE_ARGUMENT.exec(image)?.[1]
-  if (id === undefined) throw new ToolError(`${JSON.stringify(image)} is not an image id. An image id is lower-case letters, as in "a" or "@a".`)
-  return id
+  return assetIdArgument(args.image, 'an image', 'a')
 }
 
 function sizeText({ width, height }: ImageSize): string {

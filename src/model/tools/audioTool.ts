@@ -1,8 +1,9 @@
 import type { AudioPart } from '../chat/audioCut'
 import { sectionPlainText } from '../chat/content'
-import { findImageReferences, IMAGE_ID_SOURCE } from '../chat/images'
+import { findImageReferences } from '../chat/images'
 import { findMediaTags, type MediaTag } from '../chat/mediaTags'
 import type { Section } from '../chat/types'
+import { assetIdArgument } from './arguments'
 import { subcommandToolDefinition, type SubcommandTool } from './subcommands'
 import { ToolError, type ToolArguments } from './types'
 
@@ -44,15 +45,10 @@ export const AUDIO_TOOL: SubcommandTool = {
 
 export const AUDIO_TOOL_DEFINITION = subcommandToolDefinition(AUDIO_TOOL)
 
-const CLIP_ARGUMENT = new RegExp(`^@?(${IMAGE_ID_SOURCE})$`)
-
 /** The clip id that the `clip` parameter of an `audio clip` call names (`b`
  *  or `@b`). Throws for any other text; the model reads the error. */
 export function audioClipId(args: ToolArguments): string {
-  const clip = typeof args.clip === 'string' ? args.clip.trim() : ''
-  const id = CLIP_ARGUMENT.exec(clip)?.[1]
-  if (id === undefined) throw new ToolError(`${JSON.stringify(clip)} is not a clip id. A clip id is lower-case letters, as in "b" or "@b".`)
-  return id
+  return assetIdArgument(args.clip, 'a clip', 'b')
 }
 
 /** The audio clip `id` of a tab's `sections`: the newest media tag with that

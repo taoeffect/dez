@@ -2,7 +2,7 @@ import sbp from '@sbp/sbp'
 import type { CutAudio } from '../chat/audioCut'
 import { drawnMediaType, wholeImageDrawing, type DrawnImage, type ImageDrawing, type ImageSize } from '../chat/imageDrawing'
 import { IMAGE_FOLDERS, imageMediaType, storedImageFile, type ImageMediaType } from '../chat/images'
-import { ClipReadError, type ClipReadProblem } from '../chat/mediaFiles'
+import { canonicalMediaType, ClipReadError, type ClipReadProblem } from '../chat/mediaFiles'
 import { mp4DurationSeconds } from '../chat/mp4Duration'
 import type { MessagePart } from '../chat/types'
 import { modelRefKey } from '../chat/modelRef'
@@ -13,7 +13,7 @@ import { fileNameOf } from '../../utils/fileName'
 import { secret, type Secret } from '../../utils/secret'
 import { sanitizeErrorText } from '../../utils/protocol/errors'
 import { nativeResponseJson, nativeResponseText, readNativeChunkBytes, type NativeHttpRequest, type NativeHttpResponse, type NativeHttpStreamResult } from '../../utils/protocol/nativeHttp'
-import { clipFileProblem, clipMediaType, clipTagProblem, hasLengthRules, missingClipProblem, needsWavCopy, type ClipAttachment, type ClipUse, type InputClipRules } from './clipInputs'
+import { clipFileProblem, clipTagProblem, hasLengthRules, missingClipProblem, needsWavCopy, type ClipAttachment, type ClipUse, type InputClipRules } from './clipInputs'
 import { inputImageRulesFor, missingImageProblem } from './clipImages'
 import { CLIP_JOB_TIMEOUT_MS, clipPollDelay, sendClipRequest, type ClipRun } from './clipRequests'
 import { assertProviderResponseOk, explainedProviderError, providerConnectionError, UnusableAnswerError } from './errors'
@@ -98,7 +98,7 @@ async function inputClipParts(
       if (!(error instanceof ClipReadError)) throw error
       throw new ExplainedError(clipReadProblemText(clip, error.problem), error.details, { cause: error })
     }
-    const mediaType = clipMediaType(clip.type)
+    const mediaType = canonicalMediaType(clip.type)
     if (clip.kind === 'video') {
       const bytes = new Uint8Array(await file.arrayBuffer())
       return { clip, use: kindRules.use, mediaType, bytes, seconds: MP4_TYPES[mediaType] ? mp4DurationSeconds(bytes) : null, wavCopy: false }

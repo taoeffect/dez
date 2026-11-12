@@ -2,6 +2,7 @@ import sbp from '@sbp/sbp'
 import { AUDIO_CUT_RATE, audioPartFrames, type AudioPart, type CutAudio } from '../model/chat/audioCut'
 import { ClipReadError, MAX_SAVED_CLIP_BYTES, MEDIA_TEMP_LIFETIME_MS, mediaFileExtension, savedMediaFile, tempMediaFile } from '../model/chat/mediaFiles'
 import { MEDIA_CACHE_FOLDER, MEDIA_FOLDERS, isSavedMediaPath, isTempMediaPath, type MediaFolder, type MediaTagData } from '../model/chat/mediaTags'
+import { signedUrlGone } from '../model/providers/errors'
 import { wavFileOfChannels } from '../model/providers/pcmAudio'
 import { byteSizeText } from '../utils/byteSize'
 import { ExplainedError, errorText, explainedError, rawErrorText } from '../utils/errorText'
@@ -68,7 +69,7 @@ function downloadFileName ({ type, url }: Pick<MediaTagData, 'type' | 'url'>): s
 // key with it: so an access refusal or a missing file tells that the link
 // has expired or that the clip was deleted, and not that a key is wrong.
 function clipDownloadRefusal (status: number): string {
-  if (status === 403 || status === 404 || status === 410) {
+  if (signedUrlGone(status)) {
     return 'The clip is not on its server any more: its link has expired, or the provider deleted it. Make the clip again.'
   }
   if (status >= 500) return 'The server of the clip has a problem. Try again later.'

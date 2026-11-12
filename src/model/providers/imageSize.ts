@@ -29,20 +29,23 @@ export interface InputImageLimits {
   maxBytes?: number
 }
 
+/** A limit from a provider's data: a finite number above zero, and a
+ *  whole one when `whole` (a count). Undefined for any other value. */
+export function positiveLimit(value: unknown, whole: boolean): number | undefined {
+  return typeof value === 'number' && Number.isFinite(value) && value > 0 && (!whole || Number.isInteger(value)) ? value : undefined
+}
+
 /** The rules that the values of a provider's model data give, each under
  *  the name of its rule. A value that cannot be a limit (not a number above
  *  zero; pixels that are not whole) gives no rule, and neither do two
  *  ratio limits with no ratio between them. Undefined when no rule is
  *  left. */
 export function imageSizeRules(values: { readonly [Rule in keyof ImageSizeRules]?: unknown }): ImageSizeRules | undefined {
-  // A limit: a number above zero, and a whole one for a count of pixels.
-  const limit = (value: unknown, whole: boolean): number | undefined =>
-    (typeof value === 'number' && Number.isFinite(value) && value > 0 && (!whole || Number.isInteger(value)) ? value : undefined)
   const rules: ImageSizeRules = {}
-  const minShortSide = limit(values.minShortSide, true)
-  const minAspectRatio = limit(values.minAspectRatio, false)
-  const maxAspectRatio = limit(values.maxAspectRatio, false)
-  const maxPixels = limit(values.maxPixels, true)
+  const minShortSide = positiveLimit(values.minShortSide, true)
+  const minAspectRatio = positiveLimit(values.minAspectRatio, false)
+  const maxAspectRatio = positiveLimit(values.maxAspectRatio, false)
+  const maxPixels = positiveLimit(values.maxPixels, true)
   const ratiosAgree = minAspectRatio === undefined || maxAspectRatio === undefined || minAspectRatio < maxAspectRatio
   if (minShortSide !== undefined) rules.minShortSide = minShortSide
   if (minAspectRatio !== undefined && ratiosAgree) rules.minAspectRatio = minAspectRatio

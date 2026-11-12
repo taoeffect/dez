@@ -139,7 +139,7 @@ const OTHER_REFERENCE_MODELS: VeniceReferenceFamily = { idPrefix: '', field: 're
 export const VENICE_REFERENCE_FIELDS: readonly VeniceReferenceField[] = ['reference_image_urls', 'image_references', 'elements']
 
 /** The types of the video and audio clips that Venice takes, in the
- *  `clipMediaType` form: ".mp4 or .mov", "WAV, MP3". */
+ *  `canonicalMediaType` form: ".mp4 or .mov", "WAV, MP3". */
 export const VENICE_VIDEO_TYPES = ['video/mp4', 'video/quicktime']
 export const VENICE_AUDIO_TYPES = ['audio/wav', 'audio/mpeg']
 

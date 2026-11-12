@@ -1,4 +1,5 @@
 import { byteSizeText } from '../../utils/byteSize'
+import { canonicalMediaType } from '../chat/mediaFiles'
 import type { MediaTagData, MediaTagKind } from '../chat/mediaTags'
 import type { MediaKind } from './types'
 
@@ -40,9 +41,9 @@ export interface ClipKindRules {
   maxTotalSeconds?: number
   /** The most bytes of one clip. Missing: no known limit. */
   maxBytes?: number
-  /** The media types that the model takes (`clipMediaType` form). Missing:
-   *  any. An audio clip of another type goes as a WAV copy when the list
-   *  holds `audio/wav` (`needsWavCopy`). Never empty. */
+  /** The media types that the model takes (`canonicalMediaType` form).
+   *  Missing: any. An audio clip of another type goes as a WAV copy when
+   *  the list holds `audio/wav` (`needsWavCopy`). Never empty. */
   types?: string[]
   /** The name that the model's prompt gives the n-th clip of the kind,
    *  with `{n}` for the number: `@Audio{n}`, `<Video {n}>`. Missing: the
@@ -71,26 +72,12 @@ export interface InputClipRules {
  *  address (`ClipKindRules.urlOnly`). */
 export type ClipAttachment = Pick<MediaTagData, 'kind' | 'id' | 'type' | 'src' | 'url' | 'expires'>
 
-// Servers name one format in more than one way (mediaFiles.ts).
-const MEDIA_TYPE_ALIASES: Readonly<Record<string, string>> = {
-  'audio/mp3': 'audio/mpeg',
-  'audio/wave': 'audio/wav',
-  'audio/x-wav': 'audio/wav',
-}
-
 const WAV_TYPE = 'audio/wav'
-
-/** The media type of a clip with no parameters, in lower case, with one
- *  name for each format: `audio/mp3` is `audio/mpeg`. */
-export function clipMediaType(type: string): string {
-  const mediaType = type.split(';', 1)[0].trim().toLowerCase()
-  return MEDIA_TYPE_ALIASES[mediaType] ?? mediaType
-}
 
 /** Whether a clip of `type` goes as a WAV copy: an audio clip of a type
  *  that the model does not take, when it takes WAV. */
 export function needsWavCopy(kind: MediaTagKind, rules: ClipKindRules, type: string): boolean {
-  return kind === 'audio' && rules.types !== undefined && !rules.types.includes(clipMediaType(type)) && rules.types.includes(WAV_TYPE)
+  return kind === 'audio' && rules.types !== undefined && !rules.types.includes(canonicalMediaType(type)) && rules.types.includes(WAV_TYPE)
 }
 
 /** Whether `rules` limit the length of a clip or of all clips of the
@@ -189,9 +176,9 @@ export function clipTagProblem(modelName: string, rules: InputClipRules | undefi
   for (const clip of clips) {
     const kindRules = rules?.[clip.kind]
     const types = kindRules?.types
-    if (!kindRules || !types || types.includes(clipMediaType(clip.type)) || needsWavCopy(clip.kind, kindRules, clip.type)) continue
+    if (!kindRules || !types || types.includes(canonicalMediaType(clip.type)) || needsWavCopy(clip.kind, kindRules, clip.type)) continue
     const typeList = new Intl.ListFormat('en', { type: 'disjunction' }).format(types)
-    return `${modelName} takes only ${clip.kind} clips of the type ${typeList}, and @${clip.id} is ${clipMediaType(clip.type)}. ${fixText(clip.kind, false)}`
+    return `${modelName} takes only ${clip.kind} clips of the type ${typeList}, and @${clip.id} is ${canonicalMediaType(clip.type)}. ${fixText(clip.kind, false)}`
   }
   for (const clip of clips) {
     if (!rules?.[clip.kind]?.urlOnly) continue
@@ -252,7 +239,7 @@ export function clipFileProblem(modelName: string, rules: InputClipRules | undef
     }
     if (kindRules.maxBytes !== undefined && byteLength > kindRules.maxBytes) {
       const size = wavCopy
-        ? `Dez sends the audio clip @${clip.id} as a WAV copy, because ${modelName} takes no audio clip of the type ${clipMediaType(clip.type)}. The copy is ${byteSizeText(byteLength)}`
+        ? `Dez sends the audio clip @${clip.id} as a WAV copy, because ${modelName} takes no audio clip of the type ${canonicalMediaType(clip.type)}. The copy is ${byteSizeText(byteLength)}`
         : `The ${clip.kind} clip @${clip.id} is ${byteSizeText(byteLength)}`
       return `${size}, and ${modelName} takes ${clip.kind} clips of at most ${byteSizeText(kindRules.maxBytes)}. ${fixText(clip.kind, clip.kind === 'audio')}`
     }

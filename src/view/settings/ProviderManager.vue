@@ -5,7 +5,8 @@ import { useModelState } from '../modelState'
 import type { ApiFormatId, ProviderConfig, ProviderInfo } from '../../model/providers'
 import { API_FORMATS } from '../../model/providers/apiFormats'
 import { customProviderConfigSchema } from '../../model/providers/config'
-import { isThinkingEnabled, THINKING_SETTING_KEY } from '../../model/providers/thinking'
+import { isThinkingEnabled } from '../../model/providers/modelToggles'
+import { THINKING_SETTING_KEY } from '../../model/providers/thinking'
 import { REPORT_ADVICE, explainedError } from '../../utils/errorText'
 
 interface CopilotDeviceFlowViewState {

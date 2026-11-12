@@ -11,9 +11,8 @@ import type { ImageSizeRules, InputImageLimits } from './imageSize'
 import { MEDIA_FORMATS, type ClipFormat, type ClipInput, type ClipJob, type ImageFormat, type ImageQuoteFormat, type MediaFormat, type MediaInput, type MediaWireRequest, type TextFormat } from './mediaFormats'
 import type { ParameterValues } from './modelParameters'
 import { isRecord, modelCapability, modelData, modelOutputsAndRequest, modelReadableName, unsupportedSettings } from './modelParsing'
-import { modelToggles, type ToggleModel } from './modelToggles'
+import { isThinkingEnabled, modelToggles, toggleValue, type ToggleModel } from './modelToggles'
 import { multipartBody, type MultipartField } from './multipart'
-import { isThinkingEnabled } from './thinking'
 import { ProviderError, effectiveRequest, isClipKind, isTextKind, providerModel, type ChatMessage, type ChatRequestContext, type ClipKind, type GeneratedMedia, type ImageKind, type MediaKind, type ModelInfo, type ProviderInfo, type TextKind } from './types'
 
 export interface ProviderOptions {
@@ -268,8 +267,7 @@ export class Provider {
     if (context.imageOutput && this.config.imageOutputBody) mergeBodyPart(body, this.config.imageOutputBody)
 
     for (const setting of toggles.settings) {
-      const override = overrides[setting.key]
-      const enabled = typeof override === 'boolean' ? override : setting.default
+      const enabled = toggleValue(setting, overrides)
       writeBodyPath(body, setting.bodyPath, enabled ? (setting.onValue ?? true) : (setting.offValue ?? false))
     }
 

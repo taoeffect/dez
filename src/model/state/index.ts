@@ -20,9 +20,8 @@ import type { ModelOutputsConfig, ProviderConfig, ProviderThinkingConfig } from 
 import { withKeptClipData } from '../providers/keptClipData'
 import { modelEntriesFingerprint, withKeptImageLimits } from '../providers/learnedImageLimit'
 import type { ParameterValue, ParameterValues } from '../providers/modelParameters'
-import { toolsApply } from '../providers/modelToggles'
+import { isToolsEnabled, toolsApply } from '../providers/modelToggles'
 import { providerModel, type ModelInfo, type ProviderId, type ProviderModelsResult } from '../providers/types'
-import { isToolsEnabled } from '../providers/toolsSetting'
 import type { ActiveModel, ContentNode, ModelRef, Section, SectionThinking, Tab, ThinkingReplay, ThinkingRound } from '../chat/types'
 import {
   appendStreamingText,

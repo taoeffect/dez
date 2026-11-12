@@ -230,6 +230,7 @@ describe('dez.controller/media/save', () => {
   })
 
   it.each([
+    [401, 'The clip is not on its server any more: its link has expired, or the provider deleted it. Make the clip again.\n\nDetails: HTTP 401'],
     [410, 'The clip is not on its server any more: its link has expired, or the provider deleted it. Make the clip again.\n\nDetails: HTTP 410'],
     [503, 'The server of the clip has a problem. Try again later.\n\nDetails: HTTP 503'],
     [400, 'The server of the clip refused to send it. Try again later. If the error stays, make the clip again.\n\nDetails: HTTP 400'],

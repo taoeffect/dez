@@ -3,7 +3,7 @@ import type { MediaTagKind } from '../model/chat/mediaTags'
 import { modelRefKey } from '../model/chat/modelRef'
 import { effectiveOutputs } from '../model/modelOutputs'
 import { clipsText, clipTagProblem, missingClipProblem } from '../model/providers/clipInputs'
-import { inputImageRulesFor, missingImageProblem } from '../model/providers/clipImages'
+import { imagesText, inputImageRulesFor, missingImageProblem } from '../model/providers/clipImages'
 import { clipTextProblem } from '../model/providers/clipText'
 import { learnedImagesProblem } from '../model/providers/learnedImageLimit'
 import { effectiveParameterValues } from '../model/providers/modelParameters'
@@ -19,7 +19,7 @@ function warnImagesLeftOut(modelName: string, reason: string, count: number): vo
   sbp('dez.ui/toast', 'app-global', {
     variant: 'warning',
     title: count === 1 ? 'Image not sent' : 'Images not sent',
-    message: `${modelName} ${reason}, so ${count === 1 ? '1 image was' : `${count} images were`} left out of the request.`,
+    message: `${modelName} ${reason}, so ${imagesText(count)} ${count === 1 ? 'was' : 'were'} left out of the request.`,
     duration: 8000,
   })
 }
@@ -144,7 +144,7 @@ export default sbp('sbp/selectors/register', {
       // With only the text of each image reference.
       warnImagesLeftOut(model.modelName, 'does not read images', imagesLeftOut)
     } else if (mediaImages.leftOut > 0) {
-      const takes = mediaImages.sent === 0 ? 'takes no image' : `takes only ${mediaImages.sent === 1 ? '1 image' : `${mediaImages.sent} images`}`
+      const takes = mediaImages.sent === 0 ? 'takes no image' : `takes only ${imagesText(mediaImages.sent)}`
       warnImagesLeftOut(model.modelName, takes, mediaImages.leftOut)
     }
     warnClipsLeftOut(model.modelName, cachedModel.clips !== undefined, mediaClips.sent, mediaClips.leftOut)

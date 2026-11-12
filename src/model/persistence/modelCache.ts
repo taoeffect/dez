@@ -3,7 +3,7 @@ import { MODEL_OUTPUT_IDS } from '../modelOutputs'
 import { CLIP_USES, type ClipKindRules, type InputClipRules } from '../providers/clipInputs'
 import type { InputImageRules } from '../providers/clipImages'
 import { isValidProviderId } from '../providers/config'
-import { imageSizeRules } from '../providers/imageSize'
+import { imageSizeRules, positiveLimit } from '../providers/imageSize'
 import { isRecord } from '../providers/modelParsing'
 import { MODEL_REQUESTS, type ProviderId } from '../providers/types'
 import type { CachedProvider, ModelCache } from './types'
@@ -31,6 +31,12 @@ const clipTextRulesSchema = z.object({
   lyrics: z.object({ required: z.boolean(), maxLength: textLengthSchema.optional() }).optional(),
 })
 
+// A prompt name of the n-th image or clip: a text with `{n}` for the
+// number. Undefined for any other value.
+function promptNameWithNumber(value: unknown): string | undefined {
+  return typeof value === 'string' && value.includes('{n}') ? value : undefined
+}
+
 // InputImageRules (src/model/providers/clipImages.ts). A bad size rule is
 // dropped alone (`imageSizeRules`), and the model stays: its images then
 // go as they are, and the provider checks them. A fewest count above the
@@ -41,11 +47,11 @@ const ownImageRulesShape = { maxImages: z.number().int().positive(), minImages: 
 
 function ownImageRules({ maxImages, minImages, size, references }: { maxImages: number, minImages?: unknown, size?: unknown, references?: unknown }): Omit<InputImageRules, 'whenParameter'> {
   const sizeRules = isRecord(size) ? imageSizeRules(size) : undefined
-  const fewest = typeof minImages === 'number' && Number.isInteger(minImages) && minImages > 0 && minImages <= maxImages ? minImages : undefined
-  const promptName = isRecord(references) && typeof references.promptName === 'string' && references.promptName.includes('{n}') ? references.promptName : undefined
+  const fewest = positiveLimit(minImages, true)
+  const promptName = isRecord(references) ? promptNameWithNumber(references.promptName) : undefined
   return {
     maxImages,
-    ...(fewest !== undefined && { minImages: fewest }),
+    ...(fewest !== undefined && fewest <= maxImages && { minImages: fewest }),
     ...(sizeRules && { size: sizeRules }),
     ...(isRecord(references) && { references: promptName === undefined ? {} : { promptName } }),
   }
@@ -58,12 +64,6 @@ const inputImageRulesSchema = z.object({ ...ownImageRulesShape, whenParameter: z
     const other = whenParameterSchema.safeParse(whenParameter)
     return { ...ownImageRules(own), ...(other.success && { whenParameter: other.data }) }
   })
-
-// A number of a clip rule: a count is a whole number, and each number is
-// above 0.
-function clipRuleNumber(value: unknown, whole: boolean): number | undefined {
-  return typeof value === 'number' && Number.isFinite(value) && value > 0 && (!whole || Number.isInteger(value)) ? value : undefined
-}
 
 // ClipKindRules (src/model/providers/clipInputs.ts). A bad rule is dropped
 // alone, and the kind stays with its use: the provider then checks what
@@ -81,13 +81,13 @@ const clipKindRulesSchema = z.object({
   promptName: z.unknown(),
   urlOnly: z.unknown(),
 }).transform((rules): ClipKindRules => {
-  const maxClips = clipRuleNumber(rules.maxClips, true)
-  const maxSeconds = clipRuleNumber(rules.maxSeconds, false)
-  const minSeconds = clipRuleNumber(rules.minSeconds, false)
-  const maxTotalSeconds = clipRuleNumber(rules.maxTotalSeconds, false)
-  const maxBytes = clipRuleNumber(rules.maxBytes, true)
+  const maxClips = positiveLimit(rules.maxClips, true)
+  const maxSeconds = positiveLimit(rules.maxSeconds, false)
+  const minSeconds = positiveLimit(rules.minSeconds, false)
+  const maxTotalSeconds = positiveLimit(rules.maxTotalSeconds, false)
+  const maxBytes = positiveLimit(rules.maxBytes, true)
   const types = Array.isArray(rules.types) && rules.types.length > 0 && rules.types.every((type) => typeof type === 'string' && type !== '') ? rules.types as string[] : undefined
-  const promptName = typeof rules.promptName === 'string' && rules.promptName.includes('{n}') ? rules.promptName : undefined
+  const promptName = promptNameWithNumber(rules.promptName)
   return {
     use: rules.use,
     ...(maxClips !== undefined && { maxClips }),

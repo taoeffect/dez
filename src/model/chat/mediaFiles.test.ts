@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { mediaFileExtension, savedMediaFile, storableClip, tempMediaFile } from './mediaFiles'
+import { canonicalMediaType, mediaFileExtension, savedMediaFile, storableClip, tempMediaFile } from './mediaFiles'
 
 const APP_DIR = '/home/ann/.config/dez'
 const CACHE_DIR = '/home/ann/.cache/dez'
@@ -133,5 +133,18 @@ describe('mediaFileExtension', () => {
     ] as const) {
       expect(mediaFileExtension(type, url), `${type} ${url}`).toBeNull()
     }
+  })
+})
+
+describe('canonicalMediaType', () => {
+  it.each([
+    ['audio/mp3', 'audio/mpeg'],
+    [' Audio/X-WAV ; codecs=1', 'audio/wav'],
+    ['audio/x-flac', 'audio/flac'],
+    ['audio/x-m4a', 'audio/mp4'],
+    ['VIDEO/MP4; codecs="avc1.42E01E"', 'video/mp4'],
+    ['Video/X-Unknown', 'video/x-unknown'],
+  ])('reads %j as %j', (type, mediaType) => {
+    expect(canonicalMediaType(type)).toBe(mediaType)
   })
 })

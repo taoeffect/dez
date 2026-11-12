@@ -17,6 +17,14 @@ const PASSING_SERVER_ERRORS: ReadonlySet<number> = new Set([408, 500, 502, 503, 
 // file is not there any more: such a URL is signed, and it expires.
 const GONE_FILE_STATUSES: ReadonlySet<number> = new Set([401, 403, 404, 410])
 
+/** Whether the server of a file URL from a provider's response (a reply
+ *  image, a clip), asked with no key, refused it with a status that tells
+ *  that the file is not there any more: the URL is signed, and it expired,
+ *  or the provider deleted the file. */
+export function signedUrlGone(status: number): boolean {
+  return GONE_FILE_STATUSES.has(status)
+}
+
 // The explanation names the provider, because custom provider ids are UUIDs
 // that the user never sees; the id stays in `providerId`. It tells whose
 // fault the status is and what to do (`statusExplanation`); the details,
@@ -107,7 +115,7 @@ function statusExplanation(provider: ProviderIdentity, status: number | undefine
   if (status === undefined) {
     return `The cause can be a problem at ${name} or the request.${reason} Try again, or choose another model. ${REPORT_ADVICE}`
   }
-  if (!keyed && GONE_FILE_STATUSES.has(status)) {
+  if (!keyed && signedUrlGone(status)) {
     return `The file that ${name} made is not at its link any more: the link can have expired. Send the request again to make a new one.`
   }
   if (keyed && status === 401) {

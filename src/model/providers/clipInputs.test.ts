@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import type { MediaTagKind } from '../chat/mediaTags'
-import { clipFileProblem, clipMediaType, clipTagProblem, cloneInputClipRules, maxInputClips, missingClipProblem, needsWavCopy, type ClipAttachment, type ClipKindRules, type InputClipRules, type ReadInputClip } from './clipInputs'
+import { clipFileProblem, clipTagProblem, cloneInputClipRules, maxInputClips, missingClipProblem, needsWavCopy, type ClipAttachment, type ClipKindRules, type InputClipRules, type ReadInputClip } from './clipInputs'
 
 const MP3_OR_WAV: ClipKindRules = { use: 'reference', maxClips: 2, types: ['audio/mpeg', 'audio/wav'] }
 
@@ -13,16 +13,6 @@ const REFERENCES: InputClipRules = {
 const clip = (kind: MediaTagKind, id: string, type = kind === 'audio' ? 'audio/mpeg' : 'video/mp4'): ClipAttachment =>
   ({ kind, id, type, src: `assets/generated/${kind}/${id}`, url: null, expires: null })
 
-describe('clipMediaType', () => {
-  it.each([
-    ['audio/mp3', 'audio/mpeg'],
-    [' Audio/X-WAV ; codecs=1', 'audio/wav'],
-    ['VIDEO/MP4; codecs="avc1.42E01E"', 'video/mp4'],
-  ])('reads %j as %j', (type, mediaType) => {
-    expect(clipMediaType(type)).toBe(mediaType)
-  })
-})
-
 describe('needsWavCopy', () => {
   it('copies an audio clip to WAV when the model does not take its type and takes WAV', () => {
     expect(needsWavCopy('audio', MP3_OR_WAV, 'audio/ogg')).toBe(true)
@@ -30,6 +20,7 @@ describe('needsWavCopy', () => {
 
   it.each<[string, MediaTagKind, ClipKindRules, string]>([
     ['an audio clip of a type that the model takes', 'audio', MP3_OR_WAV, 'audio/MP3'],
+    ['an audio clip of another name of a type that the model takes', 'audio', { use: 'source', types: ['audio/wav', 'audio/flac', 'audio/mp4'] }, 'audio/x-flac'],
     ['an audio clip to a model that takes any type', 'audio', { use: 'reference' }, 'audio/ogg'],
     ['an audio clip to a model that takes no WAV', 'audio', { use: 'reference', types: ['audio/mpeg'] }, 'audio/ogg'],
     // Dez converts no video.

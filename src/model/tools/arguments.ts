@@ -1,4 +1,5 @@
-import type { ToolArguments, ToolArgumentValue, ToolParameter, ToolParameterType } from './types'
+import { IMAGE_ID_SOURCE } from '../chat/images'
+import { ToolError, type ToolArguments, type ToolArgumentValue, type ToolParameter, type ToolParameterType } from './types'
 
 // The checks of the arguments of a call against the parameters of a tool
 // (or of a subcommand, subcommands.ts), with error texts that tell the
@@ -104,4 +105,20 @@ export function checkArgumentValues(rules: ArgumentRules, values: Record<string,
     parsed[parameter.name] = value
   }
   return { ok: true, arguments: parsed }
+}
+
+const ASSET_ID_ARGUMENT = new RegExp(`^@?(${IMAGE_ID_SOURCE})$`)
+
+/** The id of the image or the clip that an argument names (`a` or `@a`).
+ *  Throws a ToolError for any other value; the model reads the error.
+ *  `asset` is the kind of asset with its article (`an image`, `a clip`),
+ *  and `example` is an id, for the error text. */
+export function assetIdArgument(value: ToolArgumentValue | undefined, asset: string, example: string): string {
+  const text = typeof value === 'string' ? value.trim() : ''
+  const id = ASSET_ID_ARGUMENT.exec(text)?.[1]
+  if (id === undefined) {
+    const sentenceStart = asset.charAt(0).toUpperCase() + asset.slice(1)
+    throw new ToolError(`${JSON.stringify(text)} is not ${asset} id. ${sentenceStart} id is lower-case letters, as in "${example}" or "@${example}".`)
+  }
+  return id
 }
