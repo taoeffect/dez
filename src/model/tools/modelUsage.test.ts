@@ -1,12 +1,14 @@
 import { describe, expect, it } from 'vitest'
 import { mediaTagText, type MediaTagData } from '../chat/mediaTags'
 import type { ModelRef, Section } from '../chat/types'
-import type { InputImageRules } from '../providers/clipImages'
+import { inputImageRulesFor, maxInputImages, type InputImageRules } from '../providers/clipImages'
 import { clipTagProblem, maxInputClips, missingClipProblem, needsWavCopy, type ClipAttachment, type InputClipRules } from '../providers/clipInputs'
 import { lyricsHowTo, type ClipTextRules } from '../providers/clipText'
+import { MEDIA_FORMATS, type ClipFormat } from '../providers/mediaFormats'
+import type { ParameterValues } from '../providers/modelParameters'
 import { modelToggles, toggleRows, toggleValue, toolsApply } from '../providers/modelToggles'
 import { isToolsEnabled } from '../providers/toolsSetting'
-import { MODEL_REQUESTS, type MediaKind, type ModelInfo, type ModelRequest } from '../providers/types'
+import { MODEL_REQUESTS, type ChatImagePart, type MediaKind, type ModelInfo, type ModelRequest } from '../providers/types'
 import { mediaRequestInput, sectionsToStreamMessages } from '../streams/messages'
 import { clipNamesUsage, modelUsage, neededClipUsage, referenceNamesUsage, takenClipsUsage, urlOnlyClipsUsage, USAGE_TEXTS, type UsageFacts } from './modelUsage'
 
@@ -129,7 +131,7 @@ describe('modelUsage', () => {
     it('tells that the images of a model with reference rules are references, not frames', () => {
       const usage = modelUsage({ id: 'm', name: 'M', provider: 'p', request: 'video', images: { maxImages: 7, references: {} } }, NO_FACTS)
 
-      expect([usage.includes(USAGE_TEXTS.videoReferences), usage.some((text) => text.includes('first frame'))]).toStrictEqual([true, false])
+      expect([usage.includes(USAGE_TEXTS.videoReferences), usage.includes(USAGE_TEXTS.frames)]).toStrictEqual([true, false])
     })
 
     it('tells the rules of the input images only to a model that takes images', () => {
@@ -208,6 +210,56 @@ describe('modelUsage', () => {
           const { images } = mediaInput('imageToVideo', model, [clipsReply, user('u1', 'Make @d slower')])
 
           expect(has(usage, USAGE_TEXTS.newestImageOrVideo), JSON.stringify(model)).toBe(images.length === 0)
+        }
+      })
+
+      // The video models that the rules of each media format make:
+      // OpenRouter frames or references (the user's choice) with the clip
+      // kinds of its input modalities, Venice frames with and without a
+      // background audio clip, and a Venice reference family with its
+      // clips. Each request has one image, and one clip of each kind that
+      // the model takes; the frame fields are those of the two formats.
+      it('tells that the images are frames exactly when a video request sends them so, with and without a clip', () => {
+        const FRAME_FIELDS = ['frame_images', 'image_url', 'end_image_url']
+        const image: ChatImagePart = { type: 'image', mediaType: 'image/png', data: 'iVBORw0KGgo=' }
+        interface FormatModel { format: keyof typeof MEDIA_FORMATS, id: string, entry: unknown, mediaEntry?: unknown, values: ParameterValues }
+        const venice = (id: string, constraints: Record<string, unknown>): FormatModel => ({ format: 'venice', id, entry: { id, model_spec: { constraints } }, values: {} })
+        const formatModels: FormatModel[] = [
+          ...['frames', 'references'].flatMap((imagesAs) => [['text', 'image'], ['text', 'image', 'audio'], ['text', 'image', 'video']].map((inputs): FormatModel => ({
+            format: 'openrouter',
+            id: 'm',
+            entry: { id: 'm', architecture: { input_modalities: inputs } },
+            mediaEntry: { id: 'm', supported_frame_images: ['first_frame', 'last_frame'] },
+            values: { images_as: imagesAs },
+          }))),
+          venice('wan-2-6-image-to-video', {}),
+          venice('wan-2-6-image-to-video', { audio_input: true }),
+          venice('seedance-2-0-reference-to-video', { audio_input: true }),
+        ]
+
+        for (const kind of ['video', 'imageToVideo'] as const) {
+          for (const { format, id, entry, mediaEntry, values } of formatModels) {
+            const images = inputImageRulesFor(MEDIA_FORMATS[format].imageRules?.(kind, entry, mediaEntry), values)
+            const clipRules = MEDIA_FORMATS[format].clipRules?.(kind, entry, mediaEntry)
+            const usage = modelUsage({ id, name: 'M', provider: 'p', request: kind, ...(images && { images }), ...(clipRules && { clips: clipRules }) }, NO_FACTS)
+            const clips = (['audio', 'video'] as const).flatMap((clipKind) => {
+              const use = clipRules?.[clipKind]?.use
+              return use ? [{ kind: clipKind, use, url: `https://files.example.com/${clipKind}.bin` }] : []
+            })
+            const sendsFrames = (withClips: boolean) => {
+              const request = (MEDIA_FORMATS[format].clips as ClipFormat).request(kind, 'https://api.example.com/v1', id, {
+                prompt: 'It runs',
+                images: [image].slice(0, maxInputImages(kind, images)),
+                ...(withClips && { clips }),
+                values: { ...values, duration: 1 },
+              })
+              return FRAME_FIELDS.some((field) => Object.hasOwn(request.body ?? {}, field))
+            }
+            const label = `${format} ${kind} ${JSON.stringify({ entry, values })}`
+
+            expect(usage.includes(USAGE_TEXTS.frames), label).toBe(sendsFrames(false))
+            expect(usage.includes(USAGE_TEXTS.clipsMakeReferences), label).toBe(sendsFrames(false) && !sendsFrames(true))
+          }
         }
       })
 

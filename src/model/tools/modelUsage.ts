@@ -42,7 +42,9 @@ export const USAGE_TEXTS = {
   newestImageOnly: 'It does not read images, so only the newest image of the conversation goes.',
   fitted: 'Dez sends a fitted copy (cropped or scaled) of an image that breaks `dez.images.size`.',
   limits: 'Dez refuses an image that breaks `dez.images.limits`.',
+  frames: 'The first one is the first frame of the video, and the second one is the last frame.',
   videoReferences: 'They are references for the video, not frames of it.',
+  clipsMakeReferences: 'With a clip in the message (pasted, or named with @id), the images go as references for the video, not as its frames.',
   parameters: `Each request sends the \`value\` of each of \`dez.parameters\`; the user sets them under "Model Parameters" in ${SETTINGS_POPUP}.`,
   imageResult: 'It answers with an image, which goes into the reply with a new id (@id).',
   audioResult: 'It answers with an audio clip, which the reply shows as a player with a new id.',
@@ -133,8 +135,8 @@ const MEDIA_USAGE: Readonly<Record<MediaKind, { prompt?: string, images?: string
   upscale: { images: 'It makes that image larger.' },
   tts: { prompt: 'The text of the message is the text that it speaks.' },
   music: { prompt: 'The text of the message is the prompt (for a song: its style).' },
-  video: { prompt: 'The text of the message is the prompt.', images: 'The first one is the first frame of the video, and the second one is the last frame.' },
-  imageToVideo: { prompt: 'The text of the message is the prompt.', images: 'The first one is the first frame of the video, and the second one is the last frame.' },
+  video: { prompt: 'The text of the message is the prompt.', images: USAGE_TEXTS.frames },
+  imageToVideo: { prompt: 'The text of the message is the prompt.', images: USAGE_TEXTS.frames },
   // A video upscale model takes no prompt (mediaFormats.ts).
   videoToVideo: { prompt: 'The text of the message tells what to change; a video upscale model gets no text.', images: 'It is a reference for the new video, such as the person that a motion control model moves.' },
   voiceChange: {},
@@ -177,11 +179,16 @@ function inputImagesUsage(kind: MediaKind, model: ModelInfo): string[] {
   // `mediaRequestInput` gives one.
   if (model.imageInput === false) return [needed ? USAGE_TEXTS.newestImageOnly : USAGE_TEXTS.noImagesRead]
   const role = model.images?.references ? USAGE_TEXTS.videoReferences : MEDIA_USAGE[kind].images
+  // A video request with a reference clip sends its images as references
+  // too, whatever the image rules (OpenRouter: frames would drop the clips;
+  // mediaFormats.ts). A background clip keeps the frames (Venice).
+  const clipsMakeReferences = role === USAGE_TEXTS.frames && (model.clips?.audio?.use === 'reference' || model.clips?.video?.use === 'reference')
   // A video clip takes the place of the newest image (`mediaRequestInput`).
   const newest = model.clips?.video ? USAGE_TEXTS.newestImageOrVideo : USAGE_TEXTS.newestImage
   return [
     `It takes ${takenImages(minInputImages(kind, model.images), max)} of the message (pasted, or named with @id)${max === 1 ? '' : ', in text order'}.`,
     ...(role === undefined ? [] : [role]),
+    ...(clipsMakeReferences ? [USAGE_TEXTS.clipsMakeReferences] : []),
     ...(needed ? [newest] : []),
   ]
 }
