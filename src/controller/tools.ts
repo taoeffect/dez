@@ -13,7 +13,7 @@ import type { ProviderMediaQuote } from '../model/providers/streamTypes'
 import { effectiveRequest, type ProviderInfo, type ProviderInputImageRules, type ProviderSettingsDescriptor } from '../model/providers/types'
 import type { SettingsSnapshot } from '../model/state'
 import { AUDIO_TOOL, audioClipId, audioClipOf, audioClipPart, audioCutResultText, audioLengthText } from '../model/tools/audioTool'
-import { cropPlan, flipPlan, IMAGE_TOOL, imageOf, imageResultText, imageToolId, rotatePlan, scalePlan, type ImagePlan } from '../model/tools/imageTool'
+import { brightnessPlan, contrastPlan, cropPlan, flipPlan, IMAGE_TOOL, imageOf, imageResultText, imageToolId, invertPlan, rotatePlan, saturationPlan, scalePlan, type ImagePlan } from '../model/tools/imageTool'
 import { modelInfoParameterValues, modelInfoPart, modelInfoText, modelInfoTarget, type ModelInfoFacts, type ModelInfoTarget } from '../model/tools/modelInfo'
 import { modelListText } from '../model/tools/modelList'
 import { unknownToolText } from '../model/tools/registry'
@@ -322,6 +322,10 @@ const TOOL_RUNNERS: Record<string, ToolRunner> = {
     scale: imageRunner(scalePlan),
     flip: imageRunner(flipPlan),
     rotate: imageRunner(rotatePlan),
+    brightness: imageRunner(brightnessPlan),
+    contrast: imageRunner(contrastPlan),
+    saturation: imageRunner(saturationPlan),
+    invert: imageRunner(invertPlan),
   }),
 }
 

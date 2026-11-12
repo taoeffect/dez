@@ -10,14 +10,16 @@ import { replyText, sendChatReply, startEventStream, writeChatFrame, type MockPr
 import type { E2EBrowser } from './harness/session'
 import { focusEditor, newTab, pickModel, submit, threadSections } from './harness/thread'
 
-// The `image` tool's `flip` and `rotate` calls, driven through the real app
-// against a mock server in this process. The webview draws each new image,
-// and the tests read the pixels of the stored files. A flip mirrors the
-// image. A turn by a right angle swaps the sides. Another angle makes a
-// larger image with transparent corners, or (with `keep_size`) an image of
-// the same size with a smaller turned image, and `fill` paints the blank
-// parts. A turned SVG is drawn as a PNG. A turned JPEG stays a JPEG, unless
-// the turn leaves transparent corners: then it is a PNG.
+// The `image` tool's `flip`, `rotate`, and color calls, driven through the
+// real app against a mock server in this process. The webview draws each
+// new image, and the tests read the pixels of the stored files. A flip
+// mirrors the image. A turn by a right angle swaps the sides. Another angle
+// makes a larger image with transparent corners, or (with `keep_size`) an
+// image of the same size with a smaller turned image, and `fill` paints the
+// blank parts. A turned SVG is drawn as a PNG. A turned JPEG stays a JPEG,
+// unless the turn leaves transparent corners: then it is a PNG. The color
+// calls (`brightness`, `contrast`, `saturation`, `invert`) change each color
+// value and keep the transparency.
 //
 // One app session serves the whole file.
 
@@ -66,7 +68,7 @@ function sentMessages (body: string): unknown[] {
   return sent.messages
 }
 
-describe('image tool flip and rotate', () => {
+describe('image tool flip, rotate, and color changes', () => {
   let setup: MockProviderApp
   let browser: E2EBrowser
   let generatedDir: string
@@ -219,5 +221,36 @@ describe('image tool flip and rotate', () => {
     const [whiteCorner = []] = (await filePixels(made.c, [[2, 39]])).pixels
     expect(Math.min(...whiteCorner)).toBeGreaterThanOrEqual(250)
     expect(await filePixels(made.d, [[10, 45]])).toMatchObject({ width: 20, height: 90 })
+  })
+
+  // The colors are those of `changeColors` (src/model/chat/imageColors.ts)
+  // for the stripe colors, worked out by hand.
+  it('changes the brightness, the contrast, the saturation, and the colors of a PNG, and keeps its transparent pixels', async () => {
+    await pasteInNewTab(STRIPES_PNG, 'image/png')
+    await submit(browser, '')
+    const first = await setup.mock.waitForRequest(browser)
+    // The last call inverts the turned image of the call before it, whose
+    // corners are transparent.
+    const calls: ImageCall[] = [
+      { id: 'call_dark', command: 'brightness', parameters: { image: 'a', amount: 0.5 }, result: 'Made the image @b from @a. The image @b is 90x20 pixels.' },
+      { id: 'call_flat', command: 'contrast', parameters: { image: 'a', amount: 0.5 }, result: 'Made the image @c from @a. The image @c is 90x20 pixels.' },
+      { id: 'call_gray', command: 'saturation', parameters: { image: 'a', amount: 0 }, result: 'Made the image @d from @a. The image @d is 90x20 pixels.' },
+      { id: 'call_negative', command: 'invert', parameters: { image: 'a' }, result: 'Made the image @e from @a. The image @e is 90x20 pixels.' },
+      { id: 'call_slant_colors', command: 'rotate', parameters: { image: 'a', angle: 45 }, result: 'Made the image @f from @a. The image @f is 78x78 pixels.' },
+      { id: 'call_negative_slant', command: 'invert', parameters: { image: 'f' }, result: 'Made the image @g from @f. The image @g is 78x78 pixels.' },
+    ]
+    sendImageCalls(first.reply, calls)
+    const second = await setup.mock.waitForRequest(browser)
+    expect(sentMessages(second.body).slice(-7)).toEqual(roundMessages(calls))
+
+    const made = await madeImages(second.reply)
+    expect(Object.keys(made)).toStrictEqual(['b', 'c', 'd', 'e', 'f', 'g'])
+    const stripes: Array<[number, number]> = [[15, 10], [45, 10], [75, 10]]
+    expect(await filePixels(made.b, stripes)).toEqual({ width: 90, height: 20, pixels: [[110, 20, 20, 255], [20, 80, 30, 255], [20, 45, 110, 255]] })
+    expect(await filePixels(made.c, stripes)).toEqual({ width: 90, height: 20, pixels: [[174, 84, 84, 255], [84, 144, 94, 255], [84, 109, 174, 255]] })
+    expect(await filePixels(made.d, stripes)).toEqual({ width: 90, height: 20, pixels: [[78, 78, 78, 255], [127, 127, 127, 255], [89, 89, 89, 255]] })
+    expect(await filePixels(made.e, stripes)).toEqual({ width: 90, height: 20, pixels: [[35, 215, 215, 255], [215, 95, 195, 255], [215, 165, 35, 255]] })
+    // The green stripe in the middle, and a blank corner.
+    expect(await filePixels(made.g, [[39, 39], [2, 39]])).toEqual({ width: 78, height: 78, pixels: [[215, 95, 195, 255], TRANSPARENT] })
   })
 })

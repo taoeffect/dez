@@ -1,4 +1,5 @@
 import { sectionPlainText } from '../chat/content'
+import type { ColorChange } from '../chat/imageColors'
 import { wholeImageDrawing, type ImageDrawing, type ImageFlip, type ImageRegion, type ImageSize } from '../chat/imageDrawing'
 import { findImageReferences, imageMediaType, type ImageMediaType } from '../chat/images'
 import { findMediaTags } from '../chat/mediaTags'
@@ -27,6 +28,21 @@ const NEW_IMAGE_TEXT = 'An image of the conversation shows in the text as `![ima
   + 'The image itself does not change. The new image goes into your reply, where the user sees it, and the result gives its id and its size in pixels.'
 
 const CROP_PARAMETERS = ['x', 'y', 'width', 'height'] as const
+
+// The subcommands that change the colors by an `amount`.
+type AmountKind = Extract<ColorChange, { amount: number }>['kind']
+
+// What the `amount` of each such subcommand does, for its help and for the
+// errors of a bad amount: what 0, 1, and 2 do (`scale`), and what an
+// amount under 1 (`less`) and over 1 (`more`) give.
+const AMOUNTS: Record<AmountKind, { scale: string, less: string, more: string }> = {
+  brightness: { scale: '0 makes the image black, 1 keeps it as it is, and 2 makes it twice as bright', less: 'a darker image', more: 'a brighter image' },
+  contrast: { scale: '0 makes the image one flat gray, 1 keeps it as it is, and 2 doubles the contrast', less: 'less contrast', more: 'more contrast' },
+  saturation: { scale: '0 makes the image gray, 1 keeps it as it is, and 2 doubles the strength of the colors', less: 'weaker colors', more: 'stronger colors' },
+}
+
+// What every color subcommand keeps, for the help texts.
+const KEPT_ALPHA_TEXT = 'The transparency of each pixel stays as it is.'
 
 // The texts are static (no counts, no dates): the tools array, which names
 // the subcommands, is in the provider's prompt cache.
@@ -122,6 +138,62 @@ export const IMAGE_TOOL: SubcommandTool = {
         },
       ],
       example: { image: 'a', angle: 90 },
+    },
+    {
+      name: 'brightness',
+      summary: 'Make a new image from an image made brighter or darker.',
+      description: `Makes a new image from an image of this conversation, brighter or darker, at the same size. ${NEW_IMAGE_TEXT} `
+        + `Each color value is multiplied by \`amount\`: ${AMOUNTS.brightness.scale}. ${KEPT_ALPHA_TEXT}`,
+      parameters: [
+        IMAGE_PARAMETER,
+        {
+          name: 'amount',
+          type: 'number',
+          description: 'The brightness of the new image, as a multiple of that of the image: 0 or more, as in 0.7 for a darker image or 1.3 for a brighter one.',
+          required: true,
+        },
+      ],
+      example: { image: 'a', amount: 1.3 },
+    },
+    {
+      name: 'contrast',
+      summary: 'Make a new image from an image with more or less contrast.',
+      description: `Makes a new image from an image of this conversation with more or less contrast, at the same size. ${NEW_IMAGE_TEXT} `
+        + `The distance of each color value from the middle gray is multiplied by \`amount\`: ${AMOUNTS.contrast.scale}. ${KEPT_ALPHA_TEXT}`,
+      parameters: [
+        IMAGE_PARAMETER,
+        {
+          name: 'amount',
+          type: 'number',
+          description: 'The contrast of the new image, as a multiple of that of the image: 0 or more, as in 0.7 for less contrast or 1.3 for more.',
+          required: true,
+        },
+      ],
+      example: { image: 'a', amount: 1.3 },
+    },
+    {
+      name: 'saturation',
+      summary: 'Make a new image from an image with stronger or weaker colors, or in shades of gray.',
+      description: `Makes a new image from an image of this conversation with stronger or weaker colors, at the same size. ${NEW_IMAGE_TEXT} `
+        + `The distance of each color value from the gray of its pixel is multiplied by \`amount\`: ${AMOUNTS.saturation.scale}. ${KEPT_ALPHA_TEXT}`,
+      parameters: [
+        IMAGE_PARAMETER,
+        {
+          name: 'amount',
+          type: 'number',
+          description: 'The strength of the colors of the new image, as a multiple of that of the image: 0 or more, as in 0 for shades of gray, 0.5 for weaker colors, or 1.5 for stronger ones.',
+          required: true,
+        },
+      ],
+      example: { image: 'a', amount: 0 },
+    },
+    {
+      name: 'invert',
+      summary: 'Make a new image from an image with inverted colors, as in a photo negative.',
+      description: `Makes a new image from an image of this conversation with each color inverted, at the same size: black becomes white, and red becomes cyan. ${NEW_IMAGE_TEXT} `
+        + KEPT_ALPHA_TEXT,
+      parameters: [IMAGE_PARAMETER],
+      example: { image: 'a' },
     },
   ],
 }
@@ -379,6 +451,49 @@ export const rotatePlan: ImagePlan = (id, args, size) => {
   else if (!covered) drawing.mediaType = 'image/png'
   return drawing
 }
+
+// The drawing of the whole image `id`, of `size`, at its own size, with the
+// colors changed by `colors` (a call of `subcommand`). Throws for an image
+// over `MAX_DRAWN_PIXELS`. The file type stays as for any other drawing: a
+// color change makes no pixel transparent.
+function colorDrawing(id: string, size: ImageSize, subcommand: string, colors: ColorChange): ImageDrawing {
+  if (size.width * size.height > MAX_DRAWN_PIXELS) throw tooLargeError(size, scaleFirstText(id, size, subcommand))
+  return { ...wholeImageDrawing(size), colors }
+}
+
+// The plan of the color subcommand `kind`, which changes the colors by
+// its `amount`. Throws for an amount under 0, and for an amount of 1,
+// which keeps the colors.
+function amountPlan(kind: AmountKind): ImagePlan {
+  const { scale, less, more } = AMOUNTS[kind]
+  return (id, args, size) => {
+    const amount = numberArgument(args, 'amount') ?? 1
+    if (amount < 0) throw new ToolError(`An \`amount\` of ${amount} is less than 0. Give 0 or more: ${scale}.`)
+    if (amount === 1) {
+      throw new ToolError(`An \`amount\` of 1 keeps the colors of @${id}, so the new image would be the same as @${id}. `
+        + `Give less than 1 for ${less}, or more than 1 for ${more}.`)
+    }
+    return colorDrawing(id, size, kind, { kind, amount })
+  }
+}
+
+/** The plan of `image brightness`: the whole image at its own size, with
+ *  each color value multiplied by `amount`. */
+export const brightnessPlan = amountPlan('brightness')
+
+/** The plan of `image contrast`: the whole image at its own size, with the
+ *  distance of each color value from the middle gray multiplied by
+ *  `amount`. */
+export const contrastPlan = amountPlan('contrast')
+
+/** The plan of `image saturation`: the whole image at its own size, with
+ *  the distance of each color value from the gray of its pixel multiplied
+ *  by `amount`. */
+export const saturationPlan = amountPlan('saturation')
+
+/** The plan of `image invert`: the whole image at its own size, with each
+ *  color inverted. */
+export const invertPlan: ImagePlan = (id, _args, size) => colorDrawing(id, size, 'invert', { kind: 'invert' })
 
 /** The result of a call that made the image `newId`, of `size`, from the
  *  image `id`. It names the images by their ids only: a result goes to the

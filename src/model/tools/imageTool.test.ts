@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest'
 import { mediaTagText } from '../chat/mediaTags'
 import type { Section } from '../chat/types'
 import { checkArgumentValues } from './arguments'
-import { cropPlan, flipPlan, IMAGE_TOOL, imageOf, imageResultText, imageToolId, MAX_DRAWN_PIXELS, rotatePlan, scalePlan } from './imageTool'
+import { brightnessPlan, contrastPlan, cropPlan, flipPlan, IMAGE_TOOL, imageOf, imageResultText, imageToolId, invertPlan, MAX_DRAWN_PIXELS, rotatePlan, saturationPlan, scalePlan } from './imageTool'
 import { ToolError, type ToolArguments } from './types'
 
 // A wide image: the two sides differ, so a swap of width and height shows.
@@ -278,6 +278,47 @@ describe('rotatePlan', () => {
     // The turn of the smaller image would grow it over the limit again.
     expect(errorOf(() => rotatePlan('a', { image: 'a', angle: 45 }, HUGE)))
       .toBe(`The new image would be 14143x14143 pixels. The most is ${MAX_DRAWN_PIXELS} pixels (width times height). ${SCALE_FIRST}then call rotate with the new image and \`keep_size\` true.`)
+  })
+})
+
+describe('the color plans', () => {
+  const PLANS = { brightness: brightnessPlan, contrast: contrastPlan, saturation: saturationPlan, invert: invertPlan }
+
+  // 0 is the least amount, and a valid one.
+  it.each([
+    ['brightness', 0],
+    ['contrast', 0],
+    ['saturation', 0],
+    ['brightness', 1.5],
+    ['contrast', 1.5],
+    ['saturation', 1.5],
+  ] as const)('%s changes the colors of the whole image by the amount %s, at its own size', (kind, amount) => {
+    expect(PLANS[kind]('a', { image: 'a', amount }, SIZE)).toStrictEqual({ crop: WHOLE, width: 1000, height: 500, colors: { kind, amount } })
+  })
+
+  it('invert inverts the colors of the whole image, at its own size', () => {
+    expect(invertPlan('a', { image: 'a' }, SIZE)).toStrictEqual({ crop: WHOLE, width: 1000, height: 500, colors: { kind: 'invert' } })
+  })
+
+  it.each([
+    ['brightness', '0 makes the image black, 1 keeps it as it is, and 2 makes it twice as bright'],
+    ['contrast', '0 makes the image one flat gray, 1 keeps it as it is, and 2 doubles the contrast'],
+    ['saturation', '0 makes the image gray, 1 keeps it as it is, and 2 doubles the strength of the colors'],
+  ] as const)('%s refuses an amount under 0, and tells what the amounts do', (kind, scale) => {
+    expect(errorOf(() => PLANS[kind]('a', { image: 'a', amount: -0.5 }, SIZE))).toBe(`An \`amount\` of -0.5 is less than 0. Give 0 or more: ${scale}.`)
+  })
+
+  it.each([
+    ['brightness', 'a darker image', 'a brighter image'],
+    ['contrast', 'less contrast', 'more contrast'],
+    ['saturation', 'weaker colors', 'stronger colors'],
+  ] as const)('%s refuses an amount of 1, which makes no change', (kind, less, more) => {
+    expect(errorOf(() => PLANS[kind]('a', { image: 'a', amount: 1 }, SIZE)))
+      .toBe(`An \`amount\` of 1 keeps the colors of @a, so the new image would be the same as @a. Give less than 1 for ${less}, or more than 1 for ${more}.`)
+  })
+
+  it.each(['brightness', 'contrast', 'saturation', 'invert'] as const)('%s refuses an image over the limit, and tells how to make a smaller image first', (kind) => {
+    expect(errorOf(() => PLANS[kind]('a', { image: 'a', amount: 2 }, HUGE))).toBe(`${TOO_LARGE}${SCALE_FIRST}then call ${kind} with the new image.`)
   })
 })
 

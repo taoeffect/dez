@@ -171,7 +171,7 @@ describe('dez.controller/images/delete', () => {
 describe('dez.controller/images/redraw', () => {
   interface Drawn {
     canvas: string
-    // The other canvas calls, in order, before `drawImage`.
+    // The other canvas calls, in order.
     steps: string[]
     // The numbers of `drawImage`: the part of the image, then the place on
     // the canvas.
@@ -212,6 +212,14 @@ describe('dez.controller/images/redraw', () => {
           beginPath: step('beginPath'),
           rect: step('rect'),
           clip: step('clip'),
+          // The pixels of the canvas, as one pixel whatever its size: a
+          // transparent one before the draw, and a color after it, so that
+          // a test sees the change of the colors of the drawn image.
+          getImageData: (...args: number[]) => {
+            step('getImageData')(...args)
+            return { data: new Uint8ClampedArray(numbers.length ? [100, 150, 200, 255] : [0, 0, 0, 0]) }
+          },
+          putImageData: (pixels: { data: Uint8ClampedArray }, ...args: number[]) => step('putImageData')(`[${pixels.data.join(' ')}]`, ...args),
           drawImage(_image: unknown, ...drawNumbers: number[]) {
             numbers = drawNumbers
           },
@@ -320,6 +328,20 @@ describe('dez.controller/images/redraw', () => {
     expect(drawn).toStrictEqual([{
       canvas: '40x20',
       steps: ['translate 20 10', 'scale 1 -1', 'translate -20 -10'],
+      numbers: [0, 0, 400, 200, 0, 0, 40, 20],
+      type: 'image/png',
+    }])
+  })
+
+  it('changes the colors of the whole canvas after the draw', async () => {
+    stubImage(400, 200)
+    const drawn = stubCanvas()
+
+    await redraw(() => ({ crop: { x: 0, y: 0, width: 400, height: 200 }, width: 40, height: 20, colors: { kind: 'invert' } }))
+
+    expect(drawn).toStrictEqual([{
+      canvas: '40x20',
+      steps: ['getImageData 0 0 40 20', 'putImageData [155 105 55 255] 0 0'],
       numbers: [0, 0, 400, 200, 0, 0, 40, 20],
       type: 'image/png',
     }])

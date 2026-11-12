@@ -1,10 +1,12 @@
+import type { ColorChange } from './imageColors'
 import type { ImageMediaType } from './images'
 
 // How Dez draws a stored image again as a new file: a part of it, at
-// another size, mirrored or turned, on a painted background. The code that
-// decides what to draw is pure (`imageFit` in providers/imageSize.ts, the
-// plans of the `image` tool in tools/imageTool.ts); the pixel work is in
-// the webview (dez.controller/images/redraw).
+// another size, mirrored or turned, on a painted background, with changed
+// colors. The code that decides what to draw is pure (`imageFit` in
+// providers/imageSize.ts, the plans of the `image` tool in
+// tools/imageTool.ts, the color math in imageColors.ts); the pixel work is
+// in the webview (dez.controller/images/redraw).
 
 /** The size of an image in whole pixels. */
 export interface ImageSize {
@@ -28,7 +30,8 @@ export type ImageFlip = 'horizontal' | 'vertical'
  *  optional fields, the part fills the canvas, and the file is of the type
  *  that the caller of redraw asks for. A drawing with one of them is drawn
  *  in this order: the background, then the part at `partSize`, mirrored,
- *  then turned, with its center at the center of the canvas. */
+ *  then turned, with its center at the center of the canvas, and last the
+ *  change of the colors of the whole canvas. */
 export interface ImageDrawing extends ImageSize {
   crop: ImageRegion
   flip?: ImageFlip
@@ -45,6 +48,9 @@ export interface ImageDrawing extends ImageSize {
    *  that leaves pixels transparent must not be a JPEG, and only the plan
    *  knows that, after redraw gives it the size of the image. */
   mediaType?: DrawnMediaType
+  /** The change of the colors of every pixel of the canvas, after the
+   *  draw. */
+  colors?: ColorChange
 }
 
 /** The drawing of the whole image at its own size. */

@@ -1,6 +1,7 @@
 import sbp from '@sbp/sbp'
 import { convertFileSrc, isTauri } from '@tauri-apps/api/core'
 import { getCurrentWebview } from '@tauri-apps/api/webview'
+import { changeColors } from '../model/chat/imageColors'
 import type { DrawnImage, DrawnMediaType, ImageDrawing, ImageSize } from '../model/chat/imageDrawing'
 import { IMAGE_FOLDERS, imageExtension, isImagePath, storedImageFile, type ImageFolder, type ImageMediaType } from '../model/chat/images'
 import { FileTooLargeError } from '../model/chat/mediaFiles'
@@ -120,12 +121,13 @@ export default sbp('sbp/selectors/register', {
   // Draws an image again in the webview: decodes `file` (an image of any
   // type that the webview reads), asks `plan` what to draw for an image of
   // that size (a part of it, at another size, mirrored or turned, on a
-  // background), and gives the drawing as a file of `mediaType`, or of the
-  // type that the drawing names. Null when `plan` gives null: the image
-  // stays as it is, and nothing is drawn. There is no Rust code for this:
-  // the webview has the decoders. Rejects when the webview cannot decode
-  // the image, when `plan` throws, and when the drawing cannot be made; the
-  // caller logs it, as each caller has its own answer to a failure.
+  // background, with changed colors), and gives the drawing as a file of
+  // `mediaType`, or of the type that the drawing names. Null when `plan`
+  // gives null: the image stays as it is, and nothing is drawn. There is no
+  // Rust code for this: the webview has the decoders. Rejects when the
+  // webview cannot decode the image, when `plan` throws, and when the
+  // drawing cannot be made; the caller logs it, as each caller has its own
+  // answer to a failure.
   async 'dez.controller/images/redraw' (
     file: Blob,
     plan: (size: ImageSize) => ImageDrawing | null,
@@ -190,6 +192,13 @@ export default sbp('sbp/selectors/register', {
         context.drawImage(img, -crop.x * scaleX, -crop.y * scaleY, img.naturalWidth * scaleX, img.naturalHeight * scaleY)
       } else {
         context.drawImage(img, crop.x, crop.y, crop.width, crop.height, 0, 0, part.width, part.height)
+      }
+      if (drawing.colors) {
+        // The pixels of the whole canvas; the transform and the clip of
+        // the draw do not apply to these two calls.
+        const pixels = context.getImageData(0, 0, drawing.width, drawing.height)
+        changeColors(pixels.data, drawing.colors)
+        context.putImageData(pixels, 0, 0)
       }
       const type = drawing.mediaType ?? mediaType
       const drawn = await new Promise<Blob | null>((resolve) => canvas.toBlob(resolve, type, JPEG_QUALITY))
