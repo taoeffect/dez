@@ -160,12 +160,12 @@ describe('clipTagProblem', () => {
       expect(clipTagProblem('Wan', rules, [madeClip('audio', 'https://cdn.example.com/a.mp3', null)], 1)).toBeNull()
     })
 
-    it.each<[string, ClipAttachment]>([
-      ['a clip that is only a file', clip('video', 'm1')],
-      ['a clip whose address is not https', madeClip('video', 'http://cdn.example.com/v.mp4')],
-      ['a clip whose address expired', madeClip('audio', 'https://cdn.example.com/a.mp3')],
-    ])('refuses %s, and names it', (_name, refused) => {
-      expect(clipTagProblem('Wan', rules, [refused], 1, Date.parse(EXPIRES))).toContain(`@${refused.id}`)
+    it.each<[string, ClipAttachment, string]>([
+      ['a clip that is only a file', clip('video', 'm1'), '@m1 has none: Dez has it only as a file'],
+      ['a clip whose address is not https', madeClip('video', 'http://cdn.example.com/v.mp4'), 'the web address of @m1 is not https'],
+      ['a clip whose address expired', madeClip('audio', 'https://cdn.example.com/a.mp3'), 'the web address of @m1 has expired'],
+    ])('refuses %s, and tells why', (_name, refused, reason) => {
+      expect(clipTagProblem('Wan', rules, [refused], 1, Date.parse(EXPIRES))).toContain(reason)
     })
   })
 })

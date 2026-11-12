@@ -196,8 +196,11 @@ export function clipTagProblem(modelName: string, rules: InputClipRules | undefi
   for (const clip of clips) {
     if (!rules?.[clip.kind]?.urlOnly) continue
     const lead = `${modelName} takes ${clip.kind} clips only by a web address that its provider downloads, and`
-    if (clip.url === null || !/^https:\/\//i.test(clip.url)) {
+    if (clip.url === null) {
       return `${lead} @${clip.id} has none: Dez has it only as a file. Use a ${clip.kind} clip that a model made, while its web address works, or choose another model.`
+    }
+    if (!/^https:\/\//i.test(clip.url)) {
+      return `${lead} the web address of @${clip.id} is not https. Use a ${clip.kind} clip that a model made, while its web address works, or choose another model.`
     }
     // A tag with a `url` has the time of the address in `expires`
     // (`savedMediaTag`); with no time, the provider tells.
