@@ -88,6 +88,19 @@ export function problemCard(
   return { text, hint: 'Its file is still there. Open the file with another app.', file: clip.savedPath === null ? null : `Saved file: ${clip.savedPath}` }
 }
 
+/** The clip's file on this computer, which the context menu of its player
+ *  shows in the file manager (`dez.controller/menu/popupAsset`): the saved
+ *  file or the temp copy, from the tag's `src`. Null when there is none: a
+ *  clip that plays from its URL only or has no source, a file that cannot
+ *  be read (`problem` is `gone`), and while a Save or a Delete moves or
+ *  removes the file (`busy`). A file that this computer cannot play is
+ *  there, so it counts. */
+export function clipFile(src: string | null, problem: ClipProblem | null, busy: boolean): string | null {
+  if (src === null || busy || problem === 'gone') return null
+  const source = clipSourceKind(src)
+  return source === 'saved' || source === 'temp' ? src : null
+}
+
 /** What the clock of a clip that is not saved tells. */
 export interface ExpiryNotice {
   /** The source's time is over: it can have stopped working. */

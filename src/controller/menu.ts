@@ -83,6 +83,13 @@ async function updateAccelerators (): Promise<void> {
 
 let menuInstalled = false
 
+// The menu of the last asset popup (`dez.controller/menu/popupAsset`). Tauri
+// keeps a menu in its resource table until `close()`, but a menu cannot
+// close right after its `popup()`: on GTK `popup` returns at once and the
+// menu shows after; on macOS it returns when the menu closes. So each popup
+// closes the menu of the popup before, and at most one asset menu is kept.
+let lastAssetMenu: Menu | null = null
+
 export default sbp('sbp/selectors/register', {
   // The native menubar, with an item for every app shortcut. Each item calls
   // the same selector as its key handler (`useKeyboardShortcuts.ts` or an
@@ -297,5 +304,34 @@ export default sbp('sbp/selectors/register', {
   'dez.controller/menu/suspendAccelerators' (suspended: boolean): Promise<void> {
     acceleratorsSuspended = suspended
     return sbp('okTurtles.eventQueue/queueEvent', 'dez.controller/menu/accelerators', updateAccelerators)
+  },
+
+  // The context menu of an image or a clip in the editor, at the pointer.
+  // Its "Reveal in File Manager" shows `file` in the system file manager.
+  // `file` is null for an asset with no file on this computer (a missing
+  // image, a clip that plays from its URL only); the item is then disabled.
+  // A native menu gives the platform's look and keys with no new UI. A new
+  // menu for each popup is simpler than one shared menu whose item changes.
+  // Without Tauri (`npm run dev`) there is no menu, and the webview's own
+  // menu does not show either (the widgets cancel the event).
+  'dez.controller/menu/popupAsset' (file: string | null): Promise<void> {
+    if (!isTauri()) return Promise.resolve()
+    return sbp('okTurtles.eventQueue/queueEvent', 'dez.controller/menu/asset', async () => {
+      const previous = lastAssetMenu
+      lastAssetMenu = null
+      await previous?.close().catch((error: unknown) => console.error('Failed to close the last asset menu:', error))
+      const label = 'Reveal in File Manager'
+      try {
+        const menu = await Menu.new({
+          items: [file === null
+            ? { text: label, enabled: false }
+            : { text: label, action: () => void sbp('dez.controller/revealInFileManager', file) }],
+        })
+        lastAssetMenu = menu
+        await menu.popup()
+      } catch (error) {
+        console.error('Failed to show the asset menu:', error)
+      }
+    })
   },
 })

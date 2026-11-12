@@ -3,7 +3,7 @@ import path from 'node:path'
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from 'vitest'
 import { click, consoleErrors, resetConsoleErrors, screenshotOnFailure, waitForValue } from './harness/dom'
 import { makeConversation, seedConversation } from './harness/fixtures'
-import { MP4_VIDEO, WEBM_VIDEO, silentWav } from './harness/media'
+import { MP4_VIDEO, WEBM_VIDEO, clipTag, silentWav } from './harness/media'
 import { startMockProviderApp, type MockProviderApp } from './harness/mockProviderApp'
 import { requestForm, type HeldRequest, type MockProvider } from './harness/mockServer'
 import type { E2EBrowser } from './harness/session'
@@ -66,12 +66,6 @@ const MODEL_LIST = {
 
 const BEAT = silentWav(3)
 const HOUR_MS = 60 * 60 * 1000
-
-/** The text of a media tag, written out here so that the spec does not take
- *  the format from the code under test. No value needs an escape. */
-function clipTag (kind: 'audio' | 'video', fields: { id: string, type: string, src: string, expires: string }): string {
-  return `<dez:${kind} id="${fields.id}" type="${fields.type}" src="${fields.src}" expires="${fields.expires}"/>`
-}
 
 describe('models that change or write down a clip', () => {
   let setup: MockProviderApp

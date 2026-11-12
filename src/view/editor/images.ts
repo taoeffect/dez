@@ -4,6 +4,7 @@ import { Decoration, EditorView, ViewPlugin, WidgetType, showTooltip, type Decor
 import { SENTINEL_CHAR } from '../../model/chat/content'
 import { findImageReferences, type ImageReference } from '../../model/chat/images'
 import { fileNameOf } from '../../utils/fileName'
+import { isMacPlatform } from '../../utils/platform'
 import { IMAGE_MAX_HEIGHT_PX, SECTION_SEP, editorSizePx } from '../thread/cmEditor'
 import { measureLineHeights } from '../thread/editorMeasure'
 import { syncDomSelection } from './focus'
@@ -129,6 +130,36 @@ function addTooltip(view: EditorView, widget: HTMLElement, item: HTMLElement, co
   item.addEventListener('mouseleave', () => view.plugin(imageTooltipHover)?.leave())
 }
 
+/** Gives the image widget `wrapper` the asset menu: a context click on the
+ *  image (or on its "Image not found" box) pops up the native menu with
+ *  "Reveal in File Manager" (`dez.controller/menu/popupAsset`), in place of
+ *  the webview's own menu. The item is disabled while the box shows, as
+ *  the file is not there. The click leaves the caret, the selection, and
+ *  the focus where they are. */
+function addAssetMenu(view: EditorView, wrapper: HTMLElement, path: string): void {
+  // A context press (the right button, or on macOS the main button with
+  // Ctrl) is canceled: CodeMirror skips a canceled press, so the caret does
+  // not move, and the focus does not change. The overlay's tooltip closes,
+  // as the menu shows over it.
+  wrapper.addEventListener('mousedown', (event) => {
+    if (event.button !== 2 && !(isMacPlatform && event.button === 0 && event.ctrlKey)) return
+    event.preventDefault()
+    view.plugin(imageTooltipHover)?.hide()
+  })
+  // On macOS a context click selects the word next to the pointer before
+  // its `contextmenu` event, also after a canceled press, when the editor
+  // has the focus or the target is text (`sendContextMenuEvent` in WebKit's
+  // EventHandler.cpp). That selection starts with `selectstart`, and is
+  // canceled with it. No other selection starts in the image: CodeMirror
+  // takes the presses of the main button itself.
+  wrapper.addEventListener('selectstart', (event) => event.preventDefault())
+  wrapper.addEventListener('contextmenu', (event) => {
+    event.preventDefault()
+    const missing = wrapper.querySelector('.dez-image-missing') !== null
+    void sbp('dez.controller/menu/popupAsset', missing ? null : path)
+  })
+}
+
 /** An image, with an overlay that shows while the pointer is over the
  *  image: a small toolbar in its top-right corner with its id (null for an
  *  old reference with no id) in a badge, and a trash button, each with a
@@ -193,6 +224,7 @@ class ImageWidget extends WidgetType {
     row.className = 'dez-image__overlay-row'
     row.appendChild(overlay)
     wrapper.append(img, row)
+    addAssetMenu(view, wrapper, this.path)
     return wrapper
   }
   // CM uses this for the lines that it has not drawn yet: the image's box at

@@ -202,6 +202,21 @@ export async function pointerClick (browser: E2EBrowser, selector: string): Prom
 }
 
 /**
+ * Right-click at `point` with WebDriver pointer actions: a real press and
+ * release of the right button, which the page gets as `mousedown`,
+ * `contextmenu`, and `mouseup`. Use it only where the page cancels the
+ * `contextmenu` event: elsewhere the webview opens its own menu, a native
+ * popup that WebDriver cannot close.
+ */
+export async function pointerRightClickAt (browser: E2EBrowser, point: Point): Promise<void> {
+  await browser.action('pointer', { parameters: { pointerType: 'mouse' } })
+    .move({ x: Math.round(point.x), y: Math.round(point.y), origin: 'viewport' })
+    .down({ button: 2 })
+    .up({ button: 2 })
+    .perform()
+}
+
+/**
  * Double-click the center of an element with WebDriver pointer actions: two
  * real clicks in one action sequence, so the second click has
  * `event.detail` 2. `gapMs` is the time between the clicks; WebKitGTK still

@@ -27,8 +27,11 @@ const ROOT_CLASS = 'dez-media'
  *  clock's tooltip (`MediaPlayer.vue`). */
 const SELECTABLE_TOOLTIP_CLASS = 'media-player__tooltip--selectable'
 
+// The target of a `selectstart` event can be a text node; mouse events
+// always target an element.
 function isInSelectableTooltip(target: EventTarget | null): boolean {
-  return target instanceof Element && target.closest(`.${SELECTABLE_TOOLTIP_CLASS}`) !== null
+  const element = target instanceof Text ? target.parentElement : target
+  return element instanceof Element && element.closest(`.${SELECTABLE_TOOLTIP_CLASS}`) !== null
 }
 
 interface MediaDecorations {
@@ -114,6 +117,16 @@ class MediaWidget extends WidgetType {
     // click events, which this does not stop. A press on the text of the
     // clock's tooltip keeps its default, so that the text can be selected.
     root.addEventListener('mousedown', (event) => {
+      if (!isInSelectableTooltip(event.target)) event.preventDefault()
+    })
+    // On macOS a context click selects the word next to the pointer before
+    // its `contextmenu` event, also after a canceled press, when the editor
+    // has the focus (`sendContextMenuEvent` in WebKit's EventHandler.cpp).
+    // So a right-click on the player, which opens its own menu
+    // (`MediaPlayer.vue`), would move the editor's selection. That selection
+    // starts with `selectstart`, and is canceled with it. The tooltip's text
+    // is the only text of the player that can be selected.
+    root.addEventListener('selectstart', (event) => {
       if (!isInSelectableTooltip(event.target)) event.preventDefault()
     })
     // A video.js slider gives the focus to its thumb when a press starts on

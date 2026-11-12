@@ -26,7 +26,7 @@ import '@videojs/html/ui/tooltip'
 import '@videojs/html/ui/tooltip-label'
 import '@videojs/html/ui/tooltip-shortcut'
 import { isPastedMediaPath, type MediaTagKind } from '../../model/chat/mediaTags'
-import { clipProblem, clipSourceKind, expiryNotice, problemCard, type ClipLoadFailure, type ClipProblem } from './clipState'
+import { clipFile, clipProblem, clipSourceKind, expiryNotice, problemCard, type ClipLoadFailure, type ClipProblem } from './clipState'
 import { releaseRemovedMedia } from './releaseMedia'
 import { videoAspectRatios } from './videoSizes'
 
@@ -372,6 +372,18 @@ function onSaveClick(): void {
   if (!saved.value) emit('save')
   else if (trashArmed.value) emit('delete')
 }
+
+// A right-click on the player pops up the native menu with "Reveal in File
+// Manager" (`dez.controller/menu/popupAsset`), in place of the webview's
+// own menu. The item is disabled when the clip has no file here
+// (`clipFile`). The text of the clock's tooltip keeps the webview's menu,
+// which can copy the selected text. The press of the click keeps the
+// editor's caret and focus (`src/view/editor/media.ts`).
+function onContextMenu(event: MouseEvent): void {
+  if (event.target instanceof Element && event.target.closest('.media-player__tooltip--selectable') !== null) return
+  event.preventDefault()
+  void sbp('dez.controller/menu/popupAsset', clipFile(props.src, unavailable.value, props.busy))
+}
 </script>
 
 <template>
@@ -381,6 +393,7 @@ function onSaveClick(): void {
     :data-kind="kind"
     :data-unavailable="unavailable ?? undefined"
     :style="{ '--media-player-ratio': aspectRatio }"
+    @contextmenu="onContextMenu"
   >
     <!-- `tabindex="-1"`: the card itself is no Tab stop (video.js gives it
          0); its buttons and sliders are. -->

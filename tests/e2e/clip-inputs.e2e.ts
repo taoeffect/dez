@@ -5,7 +5,7 @@ import { click, consoleErrors, resetConsoleErrors, screenshotOnFailure, waitForV
 import { dropFiles, nativeDrop } from './harness/drops'
 import { makeConversation, seedConversation } from './harness/fixtures'
 import { pasteImage, pngDataUrl, solidPng } from './harness/images'
-import { MP4_VIDEO, WEBM_VIDEO, shownPlayers, silentWav } from './harness/media'
+import { MP4_VIDEO, WEBM_VIDEO, clipTag, shownPlayers, silentWav } from './harness/media'
 import { startMockProviderApp, type MockProviderApp } from './harness/mockProviderApp'
 import type { HeldRequest, MockProvider } from './harness/mockServer'
 import type { E2EBrowser } from './harness/session'
@@ -60,12 +60,6 @@ const PARAMETERS = { duration: '5s', resolution: '480p', audio: true }
 const PNG = solidPng(48, 32, [220, 40, 40])
 const BEAT = silentWav(3)
 const HOUR_MS = 60 * 60 * 1000
-
-/** The text of a media tag, written out here so that the spec does not take
- *  the format from the code under test. No value needs an escape. */
-function clipTag (kind: 'audio' | 'video', fields: { id: string, type: string, src: string, expires: string }): string {
-  return `<dez:${kind} id="${fields.id}" type="${fields.type}" src="${fields.src}" expires="${fields.expires}"/>`
-}
 
 describe('clips that a message names', () => {
   let setup: MockProviderApp

@@ -4,7 +4,7 @@ import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from
 import { openAiChatBody } from './harness/chatBody'
 import { click, consoleErrors, elementCenter, isOnTop, movePointer, pointerClick, pointerClickAt, pointerDrag, resetConsoleErrors, screenshotOnFailure, waitForValue, type Point } from './harness/dom'
 import { conversationFilePath, makeConversation, seedConversation } from './harness/fixtures'
-import { NOT_A_CLIP, WAV_SAMPLE_RATE, WEBM_VIDEO, monoWav, openPlayerTooltips, problemCards, shownPlayers, silentWav, startClipServer, waitForPlayerFullscreen, type ClipServer, type ProblemCard, type ShownPlayer } from './harness/media'
+import { NOT_A_CLIP, WAV_SAMPLE_RATE, WEBM_VIDEO, clipTag, monoWav, openPlayerTooltips, problemCards, shownPlayers, silentWav, startClipServer, waitForPlayerFullscreen, type ClipKind, type ClipServer, type ProblemCard, type ShownPlayer } from './harness/media'
 import { startMockProviderApp, type MockProviderApp } from './harness/mockProviderApp'
 import { mockChatPath, replyText, sendChatReply, type MockProvider } from './harness/mockServer'
 import { threadCount, webProcessPid } from './harness/processes'
@@ -88,16 +88,6 @@ const OPEN_HINT = 'Its file is still there. Open the file with another app.'
 
 // A point of the tab bar: over no player.
 const OFF_PLAYERS = { x: 5, y: 5 }
-
-type ClipKind = 'audio' | 'video'
-
-/** The text of a media tag, written out here so that the spec does not take
- *  the format from the code under test. No value needs an escape. */
-function clipTag (kind: ClipKind, fields: { id: string, type: string, src?: string, url?: string, expires?: string }): string {
-  const attributes = (['id', 'type', 'src', 'url', 'expires'] as const)
-    .flatMap((name) => fields[name] === undefined ? [] : [` ${name}="${fields[name]}"`])
-  return `<dez:${kind}${attributes.join('')}/>`
-}
 
 /** The thread of a seeded conversation whose one reply is `reply`, with
  *  `next` as the text of the user section after it. */

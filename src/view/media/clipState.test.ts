@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { clipProblem, clipSourceKind, expiryNotice, problemCard, type ClipSourceKind } from './clipState'
+import { clipFile, clipProblem, clipSourceKind, expiryNotice, problemCard, type ClipSourceKind } from './clipState'
 
 describe('clipSourceKind', () => {
   it('tells a saved file, a temp copy, and a URL apart', () => {
@@ -109,6 +109,31 @@ describe('problemCard', () => {
       hint: OPEN_HINT,
       file: null,
     })
+  })
+})
+
+describe('clipFile', () => {
+  const SAVED = '/home/u/.config/dez/assets/generated/video/9f3c.webm'
+  const TEMP = '/home/u/.cache/dez/media/9f3c.wav'
+
+  it('gives the saved file or the temp copy, also when this computer cannot play it', () => {
+    for (const src of [SAVED, TEMP]) {
+      expect(clipFile(src, null, false), src).toBe(src)
+      expect(clipFile(src, 'cannot-play', false), src).toBe(src)
+    }
+  })
+
+  it('gives no file for a clip that plays from its URL only, or that has no source', () => {
+    expect(clipFile('https://cdn.example/v.mp4?sig=1', null, false)).toBeNull()
+    expect(clipFile('/home/u/Videos/clip.mp4', 'gone', false)).toBeNull()
+    expect(clipFile(null, 'gone', false)).toBeNull()
+  })
+
+  it('gives no file when the file cannot be read, or while a Save or a Delete runs', () => {
+    for (const src of [SAVED, TEMP]) {
+      expect(clipFile(src, 'gone', false), src).toBeNull()
+      expect(clipFile(src, null, true), src).toBeNull()
+    }
   })
 })
 

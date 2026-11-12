@@ -105,6 +105,16 @@ export async function startClipServer (clips: Readonly<Record<string, ServedClip
   return { ...server, clipUrl: (name) => `${server.url}/${name}` }
 }
 
+export type ClipKind = 'audio' | 'video'
+
+/** The text of a media tag, written out here so that the specs do not take
+ *  the format from the code under test. No value needs an escape. */
+export function clipTag (kind: ClipKind, fields: { id: string, type: string, src?: string, url?: string, expires?: string }): string {
+  const attributes = (['id', 'type', 'src', 'url', 'expires'] as const)
+    .flatMap((name) => fields[name] === undefined ? [] : [` ${name}="${fields[name]}"`])
+  return `<dez:${kind}${attributes.join('')}/>`
+}
+
 /** One player of the active editor, as the page shows it. */
 export interface ShownPlayer {
   kind: string | null
