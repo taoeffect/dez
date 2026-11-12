@@ -41,6 +41,12 @@ onUnmounted(() => {
   --color-code: #c792ea;
   --color-selection: #d7d4f0;
   --color-selection-inactive: rgba(100, 149, 237, 0.35);
+  /* The tints over an image or a player's card in a selection, with the
+     editor focus and without it. They are translucent, so the asset stays
+     clear, and over the background they give the two selection colors
+     above, so that the asset reads as a part of the selection. */
+  --color-selection-tint: rgba(184, 178, 234, 0.5);
+  --color-selection-tint-inactive: rgba(100, 149, 237, 0.35);
   --color-find-match: rgba(255, 190, 60, 0.35);
   --color-find-match-current: rgba(255, 150, 0, 0.6);
   --color-find-match-outline: rgba(230, 120, 0, 0.95);
@@ -89,6 +95,8 @@ onUnmounted(() => {
     --color-link: #6cb4ff;
     --color-selection: rgba(16, 56, 113, 0.7);
     --color-selection-inactive: #283242;
+    --color-selection-tint: rgba(10, 66, 146, 0.5);
+    --color-selection-tint-inactive: rgba(50, 70, 102, 0.5);
     --color-find-match: rgba(224, 160, 48, 0.22);
     --color-find-match-current: rgba(255, 128, 0, 0.32);
     --color-find-match-outline: #ffa040;
@@ -113,6 +121,8 @@ onUnmounted(() => {
   --color-link: #6cb4ff;
   --color-selection: rgba(16, 56, 113, 0.7);
   --color-selection-inactive: #283242;
+  --color-selection-tint: rgba(10, 66, 146, 0.5);
+  --color-selection-tint-inactive: rgba(50, 70, 102, 0.5);
   --color-find-match: rgba(224, 160, 48, 0.22);
   --color-find-match-current: rgba(255, 128, 0, 0.32);
   --color-find-match-outline: #ffa040;

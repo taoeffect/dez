@@ -714,7 +714,9 @@ function onContextMenu(event: MouseEvent): void {
 /* video.js elements are custom elements with no styles of their own
    (inline, no size): every one that has a box gets its layout here.
    `min-width: 0`: in a narrow line the card gets narrower, not the badge.
-   `position`: the card is the containing block of the stand-in video. */
+   `position`: the card is the containing block of the stand-in video, and
+   of the tint that the editor puts over a card in a text selection (its
+   `::after`, `dezTheme` in cmEditor.ts). */
 .media-player__card {
   position: relative;
   display: flex;

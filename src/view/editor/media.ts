@@ -8,6 +8,7 @@ import MediaPlayer from '../media/MediaPlayer.vue'
 import { clipSourceKind } from '../media/clipState'
 import { sectionsField, type SectionModel } from '../thread/cmEditor'
 import { measureLineHeights } from '../thread/editorMeasure'
+import { selectedAssetLook } from './assetSelection'
 import { focusKeepingScroll, syncDomSelection } from './focus'
 import { linesRemovalRange } from './images'
 import { lineBlocks, sectionRolesChanged, sectionTexts } from './lineBlocks'
@@ -409,8 +410,9 @@ export async function deleteSavedClip(view: EditorView, root: HTMLElement, clip:
 /** Media players for the thread editor (`buildState()` in
  *  `ThreadEditor.vue`). The players are line blocks (`lineBlocks.ts`), as
  *  the tool call chips are. Find skips the hidden text (`protectedRanges`
- *  in `find.ts`). The widget's CSS is in `dezTheme`, and the player's in
- *  `MediaPlayer.vue`. The state needs `sectionsField`. */
+ *  in `find.ts`). A player inside a selection looks selected
+ *  (`assetSelection.ts`). The widget's CSS is in `dezTheme`, and the
+ *  player's in `MediaPlayer.vue`. The state needs `sectionsField`. */
 export function markdownMedia(): Extension {
-  return [mediaDecorationsField, lineBlocks(renderedMedia), pendingRanges()]
+  return [mediaDecorationsField, lineBlocks(renderedMedia), pendingRanges(), selectedAssetLook(ROOT_CLASS, renderedMedia)]
 }

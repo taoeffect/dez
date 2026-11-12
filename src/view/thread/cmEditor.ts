@@ -1437,6 +1437,28 @@ export const dezTheme = EditorView.theme({
   '&.cm-focused > .cm-scroller > .cm-selectionLayer .cm-selectionBackground, ::selection': {
     backgroundColor: 'var(--color-selection, #d7d4f0)',
   },
+  // An image or a player's card that a selection holds (`data-selected`,
+  // assetSelection.ts). The selection layer is behind the text, where the
+  // opaque image or card hides it, so a tint goes over the asset, under its
+  // hover toolbar (which has a z-index). The tint is translucent, so the
+  // asset stays clear (the tint colors in App.vue). Not tinted: the "Image
+  // not found" box, which has no fill, so the layer already shows through
+  // it, and a card that fills the screen. The focused rules repeat the
+  // selectors, so they win by one more class.
+  '.dez-image[data-selected]:has(> .dez-image__img)::after, .dez-media[data-selected] .media-player__card:not(:fullscreen)::after': {
+    content: '""',
+    position: 'absolute',
+    inset: '0',
+    background: 'var(--color-selection-tint-inactive, rgba(100, 149, 237, 0.35))',
+    pointerEvents: 'none',
+  },
+  // The image's own corners; the card clips its tint to its corners.
+  '.dez-image[data-selected]:has(> .dez-image__img)::after': {
+    borderRadius: editorSize(6),
+  },
+  '&.cm-focused .dez-image[data-selected]:has(> .dez-image__img)::after, &.cm-focused .dez-media[data-selected] .media-player__card:not(:fullscreen)::after': {
+    background: 'var(--color-selection-tint, rgba(184, 178, 234, 0.5))',
+  },
   '.cm-gutters': { display: 'none' },
   '.dez-role-separator': {
     display: 'inline-flex',

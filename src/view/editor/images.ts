@@ -8,6 +8,7 @@ import { isMacPlatform } from '../../utils/platform'
 import { assetFactsText } from '../assetFacts'
 import { IMAGE_MAX_HEIGHT_PX, SECTION_SEP, editorSizePx } from '../thread/cmEditor'
 import { measureLineHeights } from '../thread/editorMeasure'
+import { selectedAssetLook } from './assetSelection'
 import { syncDomSelection } from './focus'
 import { addPendingRange, pendingRange, pendingRanges, removePendingRange, type DocRange } from './pendingRanges'
 import { ROUND_STROKE, svgIcon } from './svgIcon'
@@ -595,7 +596,8 @@ const imageTooltipHover = ViewPlugin.fromClass(ImageTooltipHover)
 /** Images for the thread editor (`buildState()` in `ThreadEditor.vue`).
  *  The Backspace and Delete rules (`deleteImageParen`, `deleteImageBang`)
  *  are in its `sectionKeymap`, and find skips the hidden source
- *  (`protectedRanges` in `find.ts`). The CSS is in `dezTheme`. */
+ *  (`protectedRanges` in `find.ts`). An image inside a selection looks
+ *  selected (`assetSelection.ts`). The CSS is in `dezTheme`. */
 export function markdownImages(): Extension {
-  return [imageDecorationsField, pendingRanges(), imageTooltipField, imageTooltipHover]
+  return [imageDecorationsField, pendingRanges(), imageTooltipField, imageTooltipHover, selectedAssetLook('dez-image', renderedImages)]
 }
