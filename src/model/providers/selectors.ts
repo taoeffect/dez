@@ -1,6 +1,6 @@
 import sbp from '@sbp/sbp'
 import type { CutAudio } from '../chat/audioCut'
-import { drawnMediaType, type DrawnImage, type ImageSize } from '../chat/imageDrawing'
+import { drawnMediaType, wholeImageDrawing, type DrawnImage, type ImageDrawing, type ImageSize } from '../chat/imageDrawing'
 import { IMAGE_FOLDERS, imageMediaType, storedImageFile, type ImageMediaType } from '../chat/images'
 import { ClipReadError, type ClipReadProblem } from '../chat/mediaFiles'
 import { mp4DurationSeconds } from '../chat/mp4Duration'
@@ -171,7 +171,7 @@ async function readMessageImages(messages: ProviderChatInputMessage[]): Promise<
   const readPart = async (part: MessagePart): Promise<ChatPart> => {
     if (part.type === 'text') return part
     appDir ??= sbp('dez.native/getAppDir') as Promise<string>
-    const { bytes, mediaType } = await readStoredImage(part.path, await appDir)
+    const { bytes, mediaType } = await requestImage(part.path, await appDir)
     return { type: 'image', mediaType, data: bytesToBase64(bytes) }
   }
 
@@ -201,29 +201,49 @@ async function readStoredImage(path: string, appDir: string): Promise<StoredImag
   }
 }
 
-// The image that a media request sends for a stored image. A provider
-// refuses an image that breaks a size rule that it tells (`rules`,
-// imageSize.ts), so such an image goes as a new drawing that passes the
-// rules: a part of it, at another size (`imageFit`). Only the request gets
-// the drawing; the stored file and the doc keep the image. An image that
-// passes the rules goes as it is, byte for byte, and so does every image
-// of a request with no rules, which is not even decoded. An image that
-// cannot be drawn (a file that the webview does not decode) also goes as
-// it is: the provider's answer then tells the user what is wrong. `size`
-// is the size of the image that goes; null when it was not decoded.
-async function fittedImage(image: StoredImage, rules: ImageSizeRules | undefined): Promise<StoredImage & { size: ImageSize | null }> {
-  if (!rules) return { ...image, size: null }
+// The image that a request sends for the stored image at `path`. A
+// provider refuses an image that breaks a size rule that it tells
+// (`rules`, imageSize.ts), so such an image goes as a new drawing that
+// passes the rules: a part of it, at another size (`imageFit`). No
+// provider is known to take SVG images, so an SVG always goes as a PNG
+// drawing, at its own size when no rule asks for another. The webview
+// draws the same file at the same size to the same bytes, so each round
+// of a reply sends the same copy (the prompt cache). Only the request
+// gets a drawing; the stored file and the doc keep the image.
+//
+// Any other image that passes the rules goes as it is, byte for byte, and
+// so does every such image of a request with no rules, which is not even
+// decoded. One that cannot be drawn (a file that the webview does not
+// decode) also goes as it is: the provider's answer then tells the user
+// what is wrong. An SVG that cannot be drawn is refused before the
+// request, as no form of it can go. `size` is the size of the image that
+// goes; null when it was not decoded.
+async function requestImage(path: string, appDir: string, rules?: ImageSizeRules): Promise<StoredImage & { size: ImageSize | null }> {
+  const image = await readStoredImage(path, appDir)
+  const svg = image.mediaType === 'image/svg+xml'
+  if (!rules && !svg) return { ...image, size: null }
   const mediaType = drawnMediaType(image.mediaType)
   let decoded: ImageSize | null = null
   try {
     const file = new Blob([image.bytes], { type: image.mediaType })
-    const plan = (size: ImageSize) => {
+    const plan = (size: ImageSize): ImageDrawing | null => {
       decoded = { width: size.width, height: size.height }
-      return imageFit(size, rules)
+      const fit = rules ? imageFit(size, rules) : null
+      return fit ?? (svg ? wholeImageDrawing(size) : null)
     }
     const drawn = await sbp('dez.controller/images/redraw', file, plan, mediaType) as DrawnImage | null
     return drawn ? { bytes: drawn.bytes, mediaType, size: { width: drawn.width, height: drawn.height } } : { ...image, size: decoded }
   } catch (error) {
+    if (svg) {
+      // An SVG with HTML in it (a `foreignObject`) taints the canvas, so
+      // WebKit gives no copy of it.
+      console.error(`Failed to draw a PNG copy of the SVG image ${path}:`, error)
+      throw new ExplainedError(
+        `Dez cannot send the SVG image ${fileNameOf(path)}. Providers take no SVG images, so Dez sends a PNG copy, and it could not draw one: the file can be damaged, or it holds HTML, which a copy may not show. Remove its reference or mention from the message, or paste a PNG copy of the image in its place.`,
+        sanitizeErrorText(rawErrorText(error)),
+        { cause: error },
+      )
+    }
     console.error('Failed to fit an image to the size rules of the request:', error)
     return { ...image, size: null }
   }
@@ -445,7 +465,7 @@ export default sbp('sbp/selectors/register', {
   // with `requestId` cancels the request that runs, and `signal` does the
   // same and also ends the wait of a clip job. An input image that breaks
   // a size rule of the request goes as a drawing that passes it
-  // (`fittedImage`); one that breaks a limit that no drawing meets rejects
+  // (`requestImage`); one that breaks a limit that no drawing meets rejects
   // before any request (`Provider.inputImageProblem`). The request sets the
   // model's parameters (a scale, the length of a clip, a voice):
   // `input.parameters` where the model takes the value, else the
@@ -507,7 +527,7 @@ export default sbp('sbp/selectors/register', {
       const appDir = paths.length > 0 ? await sbp('dez.native/getAppDir') as string : ''
       const sizeRules = provider.inputImageSize(kind, { ...(imageRules && { images: imageRules }) })
       const images = await Promise.all(paths.map(async (path): Promise<ChatImagePart> => {
-        const { bytes, mediaType, size } = await fittedImage(await readStoredImage(path, appDir), sizeRules)
+        const { bytes, mediaType, size } = await requestImage(path, appDir, sizeRules)
         const problem = provider.inputImageProblem(kind, size, bytes.length)
         if (problem !== undefined) throw new ExplainedError(problem)
         return { type: 'image', mediaType, data: bytesToBase64(bytes) }

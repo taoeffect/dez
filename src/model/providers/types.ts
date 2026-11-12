@@ -154,7 +154,7 @@ export interface ModelInfo {
   // takes no clip, as far as the provider tells.
   clips?: InputClipRules
   // The name of the file type of the images that the model makes (such as
-  // `SVG`), for a model of an image request kind that makes only types
+  // `TIFF`), for a model of an image request kind that makes only types
   // that Dez does not store (`ImageFormat.unstoredOutput`). Dez sends it
   // no request (`unstoredOutputMessage`). Missing: it makes a type that
   // Dez stores, as far as the provider tells.

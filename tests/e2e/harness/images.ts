@@ -89,14 +89,16 @@ export async function shownImages (browser: E2EBrowser): Promise<ShownImage[]> {
   ))
 }
 
-/** Pastes a PNG file with no text into the active editor, as an image
- *  copied in an image viewer gives it. */
-export async function pasteImage (browser: E2EBrowser, png: Buffer): Promise<void> {
-  await browser.execute((base64: string) => {
+/** Pastes an image file with no text into the active editor, as an image
+ *  copied in an image viewer gives it: a PNG, or a file of the type
+ *  `type`. */
+export async function pasteImage (browser: E2EBrowser, image: Buffer, type = 'image/png'): Promise<void> {
+  await browser.execute((base64: string, fileType: string) => {
     const content = document.querySelector('.cm-content')
     if (!content) throw new Error('pasteImage: .cm-content not found')
     const data = new DataTransfer()
-    data.items.add(new File([Uint8Array.from(atob(base64), (char) => char.charCodeAt(0))], 'image.png', { type: 'image/png' }))
+    const name = `image.${fileType.slice('image/'.length).replace(/\+.*$/, '')}`
+    data.items.add(new File([Uint8Array.from(atob(base64), (char) => char.charCodeAt(0))], name, { type: fileType }))
     content.dispatchEvent(new ClipboardEvent('paste', { clipboardData: data, bubbles: true, cancelable: true }))
-  }, png.toString('base64'))
+  }, image.toString('base64'), type)
 }

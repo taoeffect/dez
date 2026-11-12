@@ -1430,20 +1430,24 @@ describe('media model data', () => {
     ])).toStrictEqual(new Map<string, unknown>([['a', first], ['b', { id: 'b' }], ['c', { id: 'c' }]]))
   })
 
-  // Entry shapes of the live image list (2026-11-11), with short lists.
+  // Entry shapes of the live image list (2026-11-11), with short lists. The
+  // Recraft vector models list only `svg`.
   it('gives an OpenRouter image model its parameters, its reference images, and the type that Dez cannot store, from its entry of the image list', () => {
     const flux = providerModel('local', 'flux', 'Flux', { request: 'image' })
     const vector = providerModel('local', 'vector', 'Vector', { request: 'image' })
+    const scanner = providerModel('local', 'scanner', 'Scanner', { request: 'image' })
     const textOnly = providerModel('local', 'text-only', 'Text Only', { request: 'image' })
     const mediaEntries = new Map<string, unknown>([
       ['flux', { id: 'flux', supported_parameters: { resolution: { type: 'enum', values: ['768', '1k'] }, input_references: { type: 'range', min: 0, max: 4 }, seed: { type: 'boolean' } } }],
       ['vector', { id: 'vector', supported_parameters: { output_format: { type: 'enum', values: ['svg'] }, input_references: { type: 'range', min: 1, max: 1 } } }],
+      ['scanner', { id: 'scanner', supported_parameters: { output_format: { type: 'enum', values: ['tiff'] }, input_references: { type: 'range', min: 1, max: 1 } } }],
       ['text-only', { id: 'text-only', supported_parameters: { aspect_ratio: { type: 'enum', values: ['1:1'] } } }],
     ])
 
-    expect(openRouterLike.withClipData([flux, vector, textOnly], new Map(), mediaEntries)).toStrictEqual([
+    expect(openRouterLike.withClipData([flux, vector, scanner, textOnly], new Map(), mediaEntries)).toStrictEqual([
       { ...flux, parameters: [{ name: 'resolution', label: 'Resolution', options: ['768', '1k'] }], images: { maxImages: 4 } },
-      { ...vector, images: { maxImages: 1, minImages: 1 }, unstoredOutput: 'SVG' },
+      { ...vector, parameters: [{ name: 'output_format', label: 'Format', options: ['svg'] }], images: { maxImages: 1, minImages: 1 } },
+      { ...scanner, images: { maxImages: 1, minImages: 1 }, unstoredOutput: 'TIFF' },
       { ...textOnly, parameters: [{ name: 'aspect_ratio', label: 'Aspect ratio', options: ['1:1'] }] },
     ])
   })

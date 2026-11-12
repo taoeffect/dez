@@ -26,6 +26,8 @@ const KEY_STORE_ERROR = 'API error: Failed to parse provider_keys.json (line 1, 
 
 // The text of an image reference whose file Dez cannot read.
 const MISSING_IMAGE = (name: string) => `The image file ${name} is missing, or Dez cannot read it. Paste the image again, or remove its reference from the message.`
+// The text of a stored SVG that the webview cannot draw as a PNG copy.
+const SVG_NOT_DRAWN = (name: string) => `Dez cannot send the SVG image ${name}. Providers take no SVG images, so Dez sends a PNG copy, and it could not draw one: the file can be damaged, or it holds HTML, which a copy may not show. Remove its reference or mention from the message, or paste a PNG copy of the image in its place.`
 
 // Requests the stubs below received, in order.
 let httpRequests: NativeHttpRequest[] = []
@@ -34,9 +36,10 @@ let streamRequestIds: string[] = []
 let imageReads: string[] = []
 let downloadRequests: NativeHttpRequest[] = []
 
-// The app folder and its one stored image.
+// The app folder and its stored images.
 const APP_DIR = '/home/u/.config/dez'
 const STORED_IMAGE = Uint8Array.from([137, 80, 78, 71, 13, 10, 26, 10, 0, 255])
+const STORED_SVG = new TextEncoder().encode('<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 60 30"/>')
 
 // The stand-in of the webview's canvas (dez.controller/images/redraw):
 // every stored image has the size `storedImageSize` (null: a file that the
@@ -150,6 +153,7 @@ sbp('sbp/selectors/register', {
   async 'dez.native/loadAppFileBytes' (path: string): Promise<Uint8Array> {
     imageReads.push(path)
     if (path === 'assets/images/red.png' || path === 'assets/generated/images/red.png') return STORED_IMAGE
+    if (path === 'assets/generated/images/logo.svg') return STORED_SVG
     throw `Failed to read ${path}: No such file or directory (os error 2)`
   },
   async 'dez.controller/images/redraw' (_file: Blob, plan: (size: ImageSize) => ImageDrawing | null, mediaType: string): Promise<DrawnImage | null> {
@@ -636,6 +640,30 @@ describe('images in chat streams', () => {
     expect(streamRequests).toEqual([])
   })
 
+  // No provider is known to take SVG image parts.
+  it('sends a stored SVG as a PNG drawing of the whole image, at its own size', async () => {
+    storedImageSize = { width: 300, height: 150 }
+
+    await streamImage(`${APP_DIR}/assets/generated/images/logo.svg`)
+
+    expect(drawings).toStrictEqual([[{ crop: { x: 0, y: 0, width: 300, height: 150 }, width: 300, height: 150 }, 'image/png']])
+    expect(JSON.parse(streamRequests[0].body as string).messages[0].content[1]).toStrictEqual({
+      type: 'image_url',
+      image_url: { url: `data:image/png;base64,${bytesToBase64(DRAWN_IMAGE)}` },
+    })
+  })
+
+  // WebKit draws no copy of an SVG with HTML in it, and the SVG itself
+  // cannot go.
+  it('fails before the request for an SVG that the webview cannot draw, and tells how to fix the message', async () => {
+    storedImageSize = null
+
+    await expect(streamImage(`${APP_DIR}/assets/generated/images/logo.svg`)).rejects.toThrow(`${SVG_NOT_DRAWN('logo.svg')}\n\nDetails: unknown image format`)
+
+    expect(streamRequests).toEqual([])
+    expect(consoleError).toHaveBeenCalledWith(`Failed to draw a PNG copy of the SVG image ${APP_DIR}/assets/generated/images/logo.svg:`, new Error('unknown image format'))
+  })
+
   it('sends the image of the newest user message only, and an earlier turn as the same bytes in every request after that', async () => {
     const model = { providerId: 'local', modelId: 'm' }
     const path = `${APP_DIR}/assets/images/red.png`
@@ -801,11 +829,11 @@ describe('images of a chat reply', () => {
   })
 
   it.each([
-    ['bytes that are not an image', `data:image/png;base64,${bytesToBase64(WAV)}`, 'not a PNG, JPEG, GIF, or WebP image'],
+    ['bytes that are not an image', `data:image/png;base64,${bytesToBase64(WAV)}`, 'not a PNG, JPEG, GIF, WebP, or SVG image'],
     ['a data URL whose data is not base64', 'data:image/png;base64,***', 'not base64 text'],
     ['a data URL with no base64 mark', 'data:image/svg+xml,<svg/>', 'neither a base64 data URL nor an http(s) URL'],
     ['a URL of another scheme', 'file:///etc/passwd', 'neither a base64 data URL nor an http(s) URL'],
-    ['a URL whose file is not an image', HOSTED_PAGE_URL, 'not a PNG, JPEG, GIF, or WebP image'],
+    ['a URL whose file is not an image', HOSTED_PAGE_URL, 'not a PNG, JPEG, GIF, WebP, or SVG image'],
     ['a URL that its server refuses', `${FAILING_BASE_URL}/cat.png`, 'The file that Painter made is not at its link any more: the link can have expired. Send the request again to make a new one.\n\nDetails: HTTP 404: Not found'],
   ])('fails the chat for %s', async (_name, url, message) => {
     await expect(streamPainter([url])).rejects.toThrow(message)
@@ -898,10 +926,10 @@ describe('media requests', () => {
   it('refuses a request to a model that makes only a type that Dez does not store, before any request', async () => {
     sbp('dez.model/modelCache/applyProviderResult', 'media', {
       ok: true,
-      models: [{ id: 'm', name: 'Vector', provider: 'media', request: 'image', unstoredOutput: 'SVG' }],
+      models: [{ id: 'm', name: 'Scanner', provider: 'media', request: 'image', unstoredOutput: 'TIFF' }],
     })
 
-    await expect(generate({ kind: 'image' })).rejects.toThrow('Vector makes only SVG images, and Dez cannot store SVG images. Choose another image model.')
+    await expect(generate({ kind: 'image' })).rejects.toThrow('Scanner makes only TIFF images, and Dez cannot store TIFF images. Choose another image model.')
     expect(streamRequests).toEqual([])
   })
 
@@ -1009,6 +1037,44 @@ describe('media requests', () => {
 
       expect(drawings).toStrictEqual([])
       expect(frames()).toStrictEqual([[dataUrl(STORED_IMAGE), undefined]])
+    })
+
+    describe('of an SVG', () => {
+      const svgPath = `${APP_DIR}/assets/generated/images/logo.svg`
+      const whole = (width: number, height: number) => ({ crop: { x: 0, y: 0, width, height }, width, height })
+
+      it('sends an edit image that passes the rules as a PNG drawing of the whole image', async () => {
+        await generate({ kind: 'imageEdit', images: [svgPath] })
+
+        expect(drawings).toStrictEqual([[whole(1024, 768), 'image/png']])
+        expect(editImages()).toStrictEqual([[dataUrl(DRAWN_IMAGE)]])
+      })
+
+      it('sends the frame of a video model whose provider tells no size rule as a PNG drawing', async () => {
+        useVideoModel()
+        storedImageSize = { width: 300, height: 150 }
+
+        await generate({ kind: 'imageToVideo', images: [svgPath] })
+
+        expect(drawings).toStrictEqual([[whole(300, 150), 'image/png']])
+        expect(frames()).toStrictEqual([[dataUrl(DRAWN_IMAGE), undefined]])
+      })
+
+      it('sends an edit image that is too small as a drawing with the least size of the edit request', async () => {
+        storedImageSize = { width: 100, height: 50 }
+
+        await generate({ kind: 'imageEdit', images: [svgPath] })
+
+        expect(drawings).toStrictEqual([[{ crop: { x: 0, y: 0, width: 100, height: 50 }, width: 512, height: 256 }, 'image/png']])
+      })
+
+      it('refuses an image that the webview cannot draw before any request', async () => {
+        storedImageSize = null
+
+        await expect(generate({ kind: 'imageEdit', images: [svgPath] })).rejects.toThrow(SVG_NOT_DRAWN('logo.svg'))
+
+        expect(streamRequests).toEqual([])
+      })
     })
 
     // Puts the model `m` in the model cache as an upscale model with the

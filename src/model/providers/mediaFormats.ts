@@ -4,7 +4,7 @@ import { ExplainedError } from '../../utils/errorText'
 import { sanitizeErrorText } from '../../utils/protocol/errors'
 import { responseContentType, type NativeHttpResponseHead } from '../../utils/protocol/nativeHttp'
 import type { ImageSize } from '../chat/imageDrawing'
-import { isImageMediaType } from '../chat/images'
+import { imageMediaType } from '../chat/images'
 import type { MediaTagKind } from '../chat/mediaTags'
 import { mediaFileExtension } from '../chat/mediaFiles'
 import { trimTrailingSlashes, type MediaApiFormatId } from './config'
@@ -126,10 +126,11 @@ export interface ImageFormat {
   parameters?(kind: ImageKind, entry: unknown, mediaEntry: unknown): ModelParameter[]
   // The name of the file type that a model of `kind` makes, from the same
   // two entries, when it makes only types that Dez does not store
-  // (generatedImages.ts), such as `SVG`; undefined when it makes a type
+  // (generatedImages.ts), such as `BMP`; undefined when it makes a type
   // that Dez stores, as far as the entries tell. Dez sends such a model no
-  // request (`ModelInfo.unstoredOutput`). Missing: every model of the API
-  // makes a type that Dez stores.
+  // request (`ModelInfo.unstoredOutput`), so that the provider bills no
+  // image that Dez cannot keep. Missing: every model of the API makes a
+  // type that Dez stores.
   unstoredOutput?(kind: ImageKind, entry: unknown, mediaEntry: unknown): string | undefined
   request(kind: ImageKind, baseUrl: string, modelId: string, input: MediaInput): MediaWireRequest
   // The images of a 2xx response to a request of `kind`. Throws when the
@@ -1069,9 +1070,10 @@ function openRouterImageOptions(mediaEntry: unknown, name: string): OptionValue[
 }
 
 // Whether an `output_format` value of OpenRouter's image list names a type
-// that Dez stores (`png`, `jpeg`, `webp`, `gif`; not `svg`).
+// that Dez stores. The values are extension names (`png`, `jpeg`, `webp`,
+// `svg`), so the extension map of the stored types reads them.
 function isStoredImageFormat(format: OptionValue): boolean {
-  return typeof format === 'string' && isImageMediaType(`image/${format.toLowerCase()}`)
+  return typeof format === 'string' && imageMediaType(`.${format.toLowerCase()}`) !== null
 }
 
 // The reference images that an OpenRouter image model takes: the range of
@@ -1168,8 +1170,9 @@ const openRouterFormat: MediaFormat = {
         ...optionsParameter('output_format', 'Format', storedFormats, storedFormats.length < formats.length ? storedFormats[0] : undefined),
       ]
     },
-    // The Recraft vector models list only `svg` (2026-11-11). The answer
-    // would be an SVG file, which Dez does not store, at the full price.
+    // A model whose list holds only types that Dez does not store: its
+    // answer would be a file that Dez cannot keep, at the full price. On
+    // 2026-11-11 no model did (the Recraft vector models list only `svg`).
     unstoredOutput: (kind, _entry, mediaEntry) => {
       if (kind === 'upscale') return undefined
       const formats = openRouterImageOptions(mediaEntry, 'output_format')

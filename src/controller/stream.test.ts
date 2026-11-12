@@ -2222,11 +2222,11 @@ describe('dez.controller/submitTab with a model that Dez cannot use', () => {
 
   // The provider would bill an image that Dez cannot store.
   it('refuses a model that makes only a file type that Dez does not store', async () => {
-    const message = unstoredOutputMessage(model.modelName, 'SVG')
+    const message = unstoredOutputMessage(model.modelName, 'TIFF')
     sbp('dez.model/setActiveModel', model.providerId, model.modelId, model.modelName)
     sbp('dez.model/modelCache/applyProviderResult', model.providerId, {
       ok: true,
-      models: [{ id: model.modelId, name: model.modelName, provider: model.providerId, outputs: ['image'], request: 'image', unstoredOutput: 'SVG' }],
+      models: [{ id: model.modelId, name: model.modelName, provider: model.providerId, outputs: ['image'], request: 'image', unstoredOutput: 'TIFF' }],
     })
     sbp('dez.model/tabs/replaceSections', activeTab().id, [{ id: 'u1', role: 'user', content: [{ kind: 'text', text: 'Draw a fox.' }] }])
 

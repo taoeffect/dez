@@ -200,25 +200,27 @@ describe('labelImageReferences', () => {
 })
 
 describe('image media types', () => {
-  it('stores PNG, JPEG, GIF, and WebP as they are, and no other type', () => {
-    expect(['image/png', 'image/jpeg', 'image/gif', 'image/webp'].filter(isImageMediaType))
-      .toEqual(['image/png', 'image/jpeg', 'image/gif', 'image/webp'])
-    for (const type of ['image/bmp', 'image/svg+xml', 'text/plain', '', 'constructor', 'toString']) {
+  it('stores PNG, JPEG, GIF, WebP, and SVG as they are, and no other type', () => {
+    expect(['image/png', 'image/jpeg', 'image/gif', 'image/webp', 'image/svg+xml'].filter(isImageMediaType))
+      .toEqual(['image/png', 'image/jpeg', 'image/gif', 'image/webp', 'image/svg+xml'])
+    for (const type of ['image/bmp', 'image/svg', 'image/avif', 'text/plain', '', 'constructor', 'toString']) {
       expect(isImageMediaType(type)).toBe(false)
     }
   })
 
   it('gives each stored type an extension that maps back to the same type', () => {
-    for (const type of ['image/png', 'image/jpeg', 'image/gif', 'image/webp'] as const) {
+    for (const type of ['image/png', 'image/jpeg', 'image/gif', 'image/webp', 'image/svg+xml'] as const) {
       const path = `/home/ann/.config/dez/assets/images/x.${imageExtension(type)}`
       expect(isImagePath(path)).toBe(true)
       expect(imageMediaType(path)).toBe(type)
     }
     expect(imageExtension('image/jpeg')).toBe('jpg')
+    expect(imageExtension('image/svg+xml')).toBe('svg')
   })
 
   it('reads the type of a path from its extension', () => {
     expect(imageMediaType('/a/assets/images/x.jpeg')).toBe('image/jpeg')
+    expect(imageMediaType('/a/assets/generated/images/x.svg')).toBe('image/svg+xml')
     expect(imageMediaType('/a/assets/images/x.bmp')).toBeNull()
     expect(imageMediaType('/a/assets/images/x.constructor')).toBeNull()
     expect(imageMediaType('png')).toBeNull()

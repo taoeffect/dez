@@ -61,7 +61,7 @@ describe('modelUsage', () => {
   it('tells only that Dez sends no request to a model that it cannot use', () => {
     for (const request of MODEL_REQUESTS) {
       const usable = modelUsage({ id: 'm', name: 'M', provider: 'p', request }, NO_FACTS)
-      const unstored = modelUsage({ id: 'm', name: 'M', provider: 'p', request, unstoredOutput: 'SVG' }, NO_FACTS)
+      const unstored = modelUsage({ id: 'm', name: 'M', provider: 'p', request, unstoredOutput: 'TIFF' }, NO_FACTS)
 
       expect(usable[0], request).toBe(request === 'none' ? USAGE_TEXTS.cannotUse : USAGE_TEXTS.userSends)
       expect(usable.length > 1, request).toBe(request !== 'none')

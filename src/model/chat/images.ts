@@ -20,12 +20,15 @@ import { fileNameOf } from '../../utils/fileName'
 
 // The image types that Dez stores as they are; the paste and drop code
 // converts other image types to PNG. OpenAI, Anthropic, and Venice accept
-// all four ([unverified] GIF on Venice).
+// the first four ([unverified] GIF on Venice). No provider is known to take
+// SVG image parts, so a request gets a PNG copy of an SVG (`requestImage`,
+// src/model/providers/selectors.ts); the stored file stays SVG.
 const EXTENSION_BY_MEDIA_TYPE = {
   'image/png': 'png',
   'image/jpeg': 'jpg',
   'image/gif': 'gif',
   'image/webp': 'webp',
+  'image/svg+xml': 'svg',
 } as const
 
 export type ImageMediaType = keyof typeof EXTENSION_BY_MEDIA_TYPE
@@ -38,6 +41,7 @@ const MEDIA_TYPE_BY_EXTENSION: Record<string, ImageMediaType> = {
   jpeg: 'image/jpeg',
   gif: 'image/gif',
   webp: 'image/webp',
+  svg: 'image/svg+xml',
 }
 
 /** The folders of the stored images, relative to the app folder: `pasted`

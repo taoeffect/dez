@@ -117,7 +117,7 @@ describe('model cache persistence format', () => {
         request: 'imageToVideo',
         images: { maxImages: 2, size: { minShortSide: 300, minAspectRatio: 0.4, maxAspectRatio: 2.5 } },
       },
-      { id: 'styles', name: 'Styles', provider: 'venice', request: 'image', images: { maxImages: 1, minImages: 1 }, unstoredOutput: 'SVG' },
+      { id: 'styles', name: 'Styles', provider: 'venice', request: 'image', images: { maxImages: 1, minImages: 1 }, unstoredOutput: 'TIFF' },
       { id: 'references', name: 'References', provider: 'venice', request: 'imageToVideo', images: { maxImages: 7, references: { promptName: '@Image{n}' } } },
       {
         id: 'frames-or-references',

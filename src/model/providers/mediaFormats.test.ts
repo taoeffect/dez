@@ -270,9 +270,9 @@ describe('venice media responses', () => {
     ['a JSON answer that does not parse', head('application/json'), new TextEncoder().encode('{"images": ['), 'The answer is not valid JSON.'],
     ['an image that is not base64', head('application/json'), json({ images: [`data:image/png;base64,${bytesToBase64(PNG)}`] }), 'The image is not base64 text.'],
     ['an image that is not a string', head('application/json'), json({ images: [{ url: 'https://example.com/a.png' }] }), 'The image is not base64 text.'],
-    ['a JSON image of a type that Dez does not store', head('application/json'), json({ images: [bytesToBase64(WAV)] }), 'The image is not a PNG, JPEG, GIF, or WebP image.'],
-    ['a binary answer that is not an image', head('audio/wav'), WAV, 'The image is not a PNG, JPEG, GIF, or WebP image.'],
-    ['an empty binary answer', head('image/png'), new Uint8Array(), 'The image is not a PNG, JPEG, GIF, or WebP image.'],
+    ['a JSON image of a type that Dez does not store', head('application/json'), json({ images: [bytesToBase64(WAV)] }), 'The image is not a PNG, JPEG, GIF, WebP, or SVG image.'],
+    ['a binary answer that is not an image', head('audio/wav'), WAV, 'The image is not a PNG, JPEG, GIF, WebP, or SVG image.'],
+    ['an empty binary answer', head('image/png'), new Uint8Array(), 'The image is not a PNG, JPEG, GIF, WebP, or SVG image.'],
   ])('refuses %s as an answer that Dez cannot use', (_name, responseHead, body, message) => {
     expect(thrownError(() => venice.parseResponse('image', responseHead, body))).toStrictEqual(new UnusableAnswerError(message))
   })
@@ -1170,18 +1170,24 @@ describe('openrouter images', () => {
   })
 
   it('takes the images of the answer, each with the type of its bytes', () => {
-    const body = json({ created: 1, data: [{ b64_json: bytesToBase64(PNG), media_type: 'image/webp' }, { b64_json: bytesToBase64(JPEG) }], usage: { cost: 0.008 } })
+    const svg = new TextEncoder().encode('<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 8 8"/>')
+    const body = json({ created: 1, data: [
+      { b64_json: bytesToBase64(PNG), media_type: 'image/webp' },
+      { b64_json: bytesToBase64(JPEG) },
+      { b64_json: bytesToBase64(svg), media_type: 'image/svg+xml' },
+    ], usage: { cost: 0.008 } })
 
     expect(openRouterImages.parseResponse('image', head('application/json'), body)).toStrictEqual([
       { bytes: PNG, mediaType: 'image/png' },
       { bytes: JPEG, mediaType: 'image/jpeg' },
+      { bytes: svg, mediaType: 'image/svg+xml' },
     ])
   })
 
   it.each([
     ['an answer with no image', json({ created: 1, data: [] }), 'The answer holds no image.'],
     ['an answer that is not JSON', PNG, 'The answer is not valid JSON.'],
-    ['an SVG image', json({ data: [{ b64_json: bytesToBase64(new TextEncoder().encode('<svg/>')), media_type: 'image/svg+xml' }] }), 'The image is not a PNG, JPEG, GIF, or WebP image.'],
+    ['an image of a type that Dez does not store', json({ data: [{ b64_json: bytesToBase64(WAV), media_type: 'image/tiff' }] }), 'The image is not a PNG, JPEG, GIF, WebP, or SVG image.'],
     ['an image with no base64 text', json({ data: [{ url: 'https://example.com/a.png' }] }), 'The image is not base64 text.'],
   ])('refuses %s as an answer that Dez cannot use', (_name, body, message) => {
     expect(thrownError(() => openRouterImages.parseResponse('image', head('application/json'), body))).toStrictEqual(new UnusableAnswerError(message))
@@ -1211,8 +1217,18 @@ describe('openrouter images', () => {
   })
 
   it('offers only the file types that Dez stores, with the first one as the default when the model makes another type too', () => {
-    expect(imageParameters('image', entry({ output_format: { type: 'enum', values: ['svg', 'jpeg', 'png'] } }))).toStrictEqual([
+    expect(imageParameters('image', entry({ output_format: { type: 'enum', values: ['tiff', 'jpeg', 'png'] } }))).toStrictEqual([
       { name: 'output_format', options: ['jpeg', 'png'], default: 'jpeg' },
+    ])
+  })
+
+  // The Recraft vector models list only `svg`.
+  it('offers SVG as a file type that Dez stores', () => {
+    expect(imageParameters('image', entry({ output_format: { type: 'enum', values: ['svg'] } }))).toStrictEqual([
+      { name: 'output_format', options: ['svg'] },
+    ])
+    expect(imageParameters('image', entry({ output_format: { type: 'enum', values: ['SVG', 'png'] } }))).toStrictEqual([
+      { name: 'output_format', options: ['SVG', 'png'] },
     ])
   })
 
@@ -1224,9 +1240,10 @@ describe('openrouter images', () => {
   })
 
   it.each([
-    ['only SVG', ['svg'], 'SVG'],
-    ['two types that Dez does not store', ['svg', 'tiff'], 'SVG or TIFF'],
-    ['SVG and PNG', ['svg', 'png'], undefined],
+    ['only TIFF', ['tiff'], 'TIFF'],
+    ['two types that Dez does not store', ['bmp', 'tiff'], 'BMP or TIFF'],
+    ['TIFF and PNG', ['tiff', 'png'], undefined],
+    ['only SVG', ['svg'], undefined],
     ['no list', undefined, undefined],
   ])('tells the unstored type of an image model that makes %s', (_name, formats, unstored) => {
     const mediaEntry = entry(formats ? { output_format: { type: 'enum', values: formats } } : {})

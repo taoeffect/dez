@@ -23,9 +23,11 @@ import { focusEditor, newTab, openToasts, pickModel, sbpCall, submit, threadSect
 // - the images of the message go as reference images (`input_references`,
 //   data URLs with no path); a model that takes fewer gets the first ones,
 //   and a warning toast tells of the rest;
+// - the SVG answer of a model that makes only SVG images (the Recraft
+//   vector models) is saved as an SVG file and shows at its own size;
 // - a model that needs a reference image, with none in the conversation,
-//   and a model that makes only SVG images get an error toast that tells
-//   what to do, and no request goes.
+//   and a model that makes only images of a type that Dez does not store
+//   get an error toast that tells what to do, and no request goes.
 //
 // One app session serves the whole file; each test starts in a new tab.
 
@@ -34,8 +36,10 @@ const ROUTER: MockProvider = { id: 'router-paint', name: 'Router Paint Mock', mo
 const FLUX = { id: ROUTER.modelId, name: ROUTER.modelName }
 // Makes its image from exactly one reference image.
 const STYLE_MODEL = { id: 'style-model', name: 'Style Model' }
-// Makes only SVG files, which Dez does not store.
+// Makes only SVG files.
 const VECTOR_MODEL = { id: 'vector-model', name: 'Vector Model' }
+// Makes only TIFF files, which Dez does not store.
+const SCAN_MODEL = { id: 'scan-model', name: 'Scan Model' }
 const IMAGES_PATH = `/${ROUTER.id}/v1/images`
 // The entries of the image list, in the shape of OpenRouter's (2026-11-11).
 const IMAGE_LIST = {
@@ -52,12 +56,19 @@ const IMAGE_LIST = {
     },
     { id: STYLE_MODEL.id, supported_parameters: { input_references: { type: 'range', min: 1, max: 1 } } },
     { id: VECTOR_MODEL.id, supported_parameters: { output_format: { type: 'enum', values: ['svg'] } } },
+    { id: SCAN_MODEL.id, supported_parameters: { output_format: { type: 'enum', values: ['tiff'] } } },
   ],
 }
 const MADE_PNG = solidPng(24, 16, [40, 160, 60])
+// An SVG with an XML declaration, as a vector model writes one.
+const MADE_SVG = Buffer.from('<?xml version="1.0" encoding="UTF-8"?>\n<svg xmlns="http://www.w3.org/2000/svg" width="40" height="24" viewBox="0 0 40 24"><rect width="40" height="24" fill="#3a6"/></svg>\n')
 const PASTED_PNG = solidPng(20, 20, [200, 60, 60])
 const SECOND_PNG = solidPng(20, 20, [60, 60, 200])
-const STORED_IMAGE_NAME = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\.png$/
+
+/** The name of a stored image file with the extension `extension`. */
+function storedImageName (extension: string): RegExp {
+  return new RegExp(`^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\\.${extension}$`)
+}
 
 describe('images of the OpenRouter image API', () => {
   let setup: MockProviderApp
@@ -83,9 +94,9 @@ describe('images of the OpenRouter image API', () => {
   }
 
   // OpenRouter's answer: JSON with the image as base64, and its price.
-  function answerImage (reply: http.ServerResponse, png: Buffer): void {
+  function answerImage (reply: http.ServerResponse, image: Buffer, mediaType = 'image/png'): void {
     reply.writeHead(200, { 'Content-Type': 'application/json' })
-    reply.end(JSON.stringify({ created: 1, data: [{ b64_json: png.toString('base64'), media_type: 'image/png' }], usage: { cost: 0.01 } }))
+    reply.end(JSON.stringify({ created: 1, data: [{ b64_json: image.toString('base64'), media_type: mediaType }], usage: { cost: 0.01 } }))
   }
 
   // Pastes `pngs` into the editor and returns the section text with their
@@ -115,7 +126,7 @@ describe('images of the OpenRouter image API', () => {
   beforeAll(async () => {
     setup = await startMockProviderApp(ROUTER, {
       mediaApi: { format: 'openrouter' },
-      models: [FLUX, STYLE_MODEL, VECTOR_MODEL].map(({ id, name }) => ({ id, name, outputs: ['image'], request: 'image' })),
+      models: [FLUX, STYLE_MODEL, VECTOR_MODEL, SCAN_MODEL].map(({ id, name }) => ({ id, name, outputs: ['image'], request: 'image' })),
     }, {
       heldPaths: [IMAGES_PATH],
       jsonAnswers: { [`/${ROUTER.id}/v1/images/models`]: IMAGE_LIST, [`/${ROUTER.id}/v1/videos/models`]: { data: [] } },
@@ -154,7 +165,7 @@ describe('images of the OpenRouter image API', () => {
     answerImage(request.reply, MADE_PNG)
 
     const name = await newGeneratedImage(before)
-    expect(name).toMatch(STORED_IMAGE_NAME)
+    expect(name).toMatch(storedImageName('png'))
     const file = path.join(generatedDir(), name)
     expect(await fs.promises.readFile(file)).toEqual(MADE_PNG)
     await waitForThread(browser, [
@@ -236,8 +247,31 @@ describe('images of the OpenRouter image API', () => {
     await refusal(STYLE_MODEL, 'In this style', `${STYLE_MODEL.name} needs an input image. Paste an image, or name one with @id.`)
   })
 
+  it('saves the SVG image of a model that makes only SVG images as an SVG file, and shows it at its own size', async () => {
+    const before = await generatedImages()
+    await pickModel(browser, ROUTER.name, VECTOR_MODEL.name)
+    await submit(browser, 'Draw a logo')
+
+    const request = await setup.mock.waitForRequest(browser)
+    expect(request.path).toBe(IMAGES_PATH)
+    expect(JSON.parse(request.body)).toEqual({ model: VECTOR_MODEL.id, prompt: 'Draw a logo' })
+    answerImage(request.reply, MADE_SVG, 'image/svg+xml')
+
+    const name = await newGeneratedImage(before)
+    expect(name).toMatch(storedImageName('svg'))
+    const file = path.join(generatedDir(), name)
+    expect(await fs.promises.readFile(file)).toEqual(MADE_SVG)
+    await waitForThread(browser, [
+      { role: 'user', text: 'Draw a logo' },
+      { role: 'agent', text: `![${file}](id=a)` },
+      { role: 'user', text: '' },
+    ])
+    await waitForValue(browser, 'shown image', () => shownImages(browser), [{ alt: name, width: 40, height: 24 }])
+    expect(await consoleErrors(browser)).toEqual([])
+  })
+
   // The provider would bill an image that Dez cannot store.
-  it('refuses a model that makes only SVG images, and sends nothing', async () => {
-    await refusal(VECTOR_MODEL, 'Draw a logo', unstoredOutputMessage(VECTOR_MODEL.name, 'SVG'))
+  it('refuses a model that makes only images of a type that Dez does not store, and sends nothing', async () => {
+    await refusal(SCAN_MODEL, 'Scan a page', unstoredOutputMessage(SCAN_MODEL.name, 'TIFF'))
   })
 })

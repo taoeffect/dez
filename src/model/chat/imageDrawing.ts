@@ -25,6 +25,11 @@ export interface ImageDrawing extends ImageSize {
   crop: ImageRegion
 }
 
+/** The drawing of the whole image at its own size. */
+export function wholeImageDrawing({ width, height }: ImageSize): ImageDrawing {
+  return { crop: { x: 0, y: 0, width, height }, width, height }
+}
+
 /** The file types of a drawn image: the two that the canvas of every
  *  webview writes (the HTML standard asks only for PNG; WKWebView writes no
  *  WebP). */

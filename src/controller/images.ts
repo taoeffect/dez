@@ -96,8 +96,9 @@ export default sbp('sbp/selectors/register', {
   // Reads a file by its absolute path through the asset protocol: a file in
   // an app folder that the protocol's scope has (a stored image, a media
   // clip), or a file of a native file drop (Tauri adds each dropped path to
-  // the scope). The protocol takes the type from the bytes. With `maxBytes`,
-  // a larger file is not read: one request asks its size first
+  // the scope). The protocol takes the type from the bytes, and for a file
+  // with no magic number, such as `.svg`, from the extension. With
+  // `maxBytes`, a larger file is not read: one request asks its size first
   // (`dez.controller/images/fileSize`), and when that gives no size, the
   // size of the bytes read is checked. Rejects when the file cannot be
   // read, and with a `FileTooLargeError` that tells the size when it is too
@@ -138,7 +139,9 @@ export default sbp('sbp/selectors/register', {
       await img.decode().catch((error: unknown) => {
         throw new Error('The image cannot be decoded.', { cause: error })
       })
-      // An SVG without a width and height has no size to draw at.
+      // WebKit gives every image that it decodes a size (an SVG with no
+      // width and height gets 300 × 150, fitted to its viewBox), so this
+      // only keeps a plan from a size of 0.
       if (!img.naturalWidth || !img.naturalHeight) throw new Error('The image has no size.')
       const drawing = plan({ width: img.naturalWidth, height: img.naturalHeight })
       if (!drawing) return null
@@ -150,7 +153,17 @@ export default sbp('sbp/selectors/register', {
       if (!context) throw new Error('No canvas to draw the image on.')
       context.imageSmoothingQuality = 'high'
       const { crop } = drawing
-      context.drawImage(img, crop.x, crop.y, crop.width, crop.height, 0, 0, drawing.width, drawing.height)
+      if (file.type === 'image/svg+xml') {
+        // For an SVG with no width and height, WebKit maps the source
+        // rectangle of `drawImage` to the viewBox size, not to the natural
+        // size, and draws the wrong part. So an SVG is drawn whole, scaled
+        // and placed so that the crop fills the canvas.
+        const scaleX = drawing.width / crop.width
+        const scaleY = drawing.height / crop.height
+        context.drawImage(img, -crop.x * scaleX, -crop.y * scaleY, img.naturalWidth * scaleX, img.naturalHeight * scaleY)
+      } else {
+        context.drawImage(img, crop.x, crop.y, crop.width, crop.height, 0, 0, drawing.width, drawing.height)
+      }
       const drawn = await new Promise<Blob | null>((resolve) => canvas.toBlob(resolve, mediaType, JPEG_QUALITY))
       // A canvas that cannot write a type writes a PNG in its place.
       if (!drawn || drawn.type !== mediaType) throw new Error(`The image could not be drawn as ${mediaType}.`)

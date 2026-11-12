@@ -23,7 +23,7 @@ export function unusableModelMessage(modelName: string, model: Pick<ModelInfo, '
 }
 
 /** Why a submit to the model `modelName`, which makes only images of the
- *  file type `fileType` (`ModelInfo.unstoredOutput`, such as `SVG`), is
+ *  file type `fileType` (`ModelInfo.unstoredOutput`, such as `TIFF`), is
  *  refused, as text for the user. Dez would get an image that it cannot
  *  store or show, and the provider bills it all the same. */
 export function unstoredOutputMessage(modelName: string, fileType: string): string {

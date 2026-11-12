@@ -2,7 +2,7 @@ import sbp from '@sbp/sbp'
 import { EditorState, type Extension } from '@codemirror/state'
 import { EditorView, dropCursor } from '@codemirror/view'
 import { SENTINEL_CHAR } from '../../model/chat/content'
-import type { DrawnImage, ImageSize } from '../../model/chat/imageDrawing'
+import { wholeImageDrawing, type DrawnImage } from '../../model/chat/imageDrawing'
 import { imageMarkdown, isImageMediaType, type ImageMediaType } from '../../model/chat/images'
 import { CLIP_FILE_EXTENSIONS, FileTooLargeError, MAX_SAVED_CLIP_BYTES, storableClip } from '../../model/chat/mediaFiles'
 import { newMediaIds, pastedMediaIdChanges } from '../../model/chat/mediaIds'
@@ -95,15 +95,15 @@ function showClipTooLargeToast(name: string, size: number): void {
 }
 
 /** The bytes to store for an image file: the file as it is for a type that
- *  Dez stores (`isImageMediaType`), else a PNG of any other image that the
- *  webview can decode (BMP, TIFF, AVIF, SVG, …), whole and at its own size.
- *  Null, after a warning toast, when the file cannot be read or decoded. */
+ *  Dez stores (`isImageMediaType`, SVG too), else a PNG of any other image
+ *  that the webview can decode (BMP, TIFF, AVIF, …), whole and at its own
+ *  size. Null, after a warning toast, when the file cannot be read or
+ *  decoded. */
 async function storableImage(file: File): Promise<StorableImage | null> {
   try {
     if (isImageMediaType(file.type)) return { bytes: new Uint8Array(await file.arrayBuffer()), mediaType: file.type }
-    const wholeImage = ({ width, height }: ImageSize) => ({ crop: { x: 0, y: 0, width, height }, width, height })
     // Never null: the plan gives a drawing for every size.
-    const png = await sbp('dez.controller/images/redraw', file, wholeImage, 'image/png') as DrawnImage
+    const png = await sbp('dez.controller/images/redraw', file, wholeImageDrawing, 'image/png') as DrawnImage
     return { bytes: png.bytes, mediaType: 'image/png' }
   } catch (error) {
     console.error('Failed to read the image:', error)

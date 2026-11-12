@@ -6,6 +6,7 @@ import { STORED_FILE_FOLDERS, UNUSED_FILE_MIN_AGE_MS, oldStoredFiles, removeName
 const APP_DIR = '/home/ann/.config/dez'
 const PNG = '5f1c2a9e-0b7d-4c3e-9a51-2d8f6e4b7c10.png'
 const WEBP = '0c4e7a51-9b2d-4f6a-8e13-5d7c9a2b4f60.webp'
+const SVG = '9a2b4f60-5d7c-4e13-8f6a-0c4e7a519b2d.svg'
 const MP4 = 'a_1-b.mp4'
 const NOW = 1_800_000_000_000
 const OLD = NOW - UNUSED_FILE_MIN_AGE_MS
@@ -34,6 +35,7 @@ describe('storedFilePath', () => {
   it.each([
     `assets/images/${PNG}`,
     `assets/generated/images/${WEBP}`,
+    `assets/generated/images/${SVG}`,
     `assets/generated/video/${MP4}`,
     'assets/generated/audio/speech.mp3',
     `assets/video/${MP4}`,
@@ -79,16 +81,21 @@ describe('oldStoredFiles', () => {
   // As the two trash rules: an image folder holds only the image types that
   // Dez stores, and a clip folder holds a clip of any file type.
   it('takes the files that the trash of the folder can delete', () => {
-    const entries = [{ name: MP4, updatedAt: 0, size: 1 }, { name: PNG, updatedAt: 0, size: 2 }]
+    const entries = [{ name: MP4, updatedAt: 0, size: 1 }, { name: PNG, updatedAt: 0, size: 2 }, { name: SVG, updatedAt: 0, size: 3 }]
 
-    expect(oldStoredFiles('assets/generated/images', entries, APP_DIR, NOW)).toStrictEqual([{ path: `assets/generated/images/${PNG}`, size: 2 }])
+    expect(oldStoredFiles('assets/generated/images', entries, APP_DIR, NOW)).toStrictEqual([
+      { path: `assets/generated/images/${PNG}`, size: 2 },
+      { path: `assets/generated/images/${SVG}`, size: 3 },
+    ])
     expect(oldStoredFiles('assets/generated/video', entries, APP_DIR, NOW)).toStrictEqual([
       { path: `assets/generated/video/${MP4}`, size: 1 },
       { path: `assets/generated/video/${PNG}`, size: 2 },
+      { path: `assets/generated/video/${SVG}`, size: 3 },
     ])
     expect(oldStoredFiles('assets/audio', entries, APP_DIR, NOW)).toStrictEqual([
       { path: `assets/audio/${MP4}`, size: 1 },
       { path: `assets/audio/${PNG}`, size: 2 },
+      { path: `assets/audio/${SVG}`, size: 3 },
     ])
   })
 

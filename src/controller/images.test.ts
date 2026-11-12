@@ -251,11 +251,24 @@ describe('dez.controller/images/redraw', () => {
     expect(plan).not.toHaveBeenCalled()
   })
 
-  it('rejects for an image with no size, such as an SVG without a width and height', async () => {
+  it('rejects for an image with no size', async () => {
     stubImage(0, 0)
     stubCanvas()
 
     await expect(redraw(() => null)).rejects.toThrow('The image has no size.')
+  })
+
+  // WebKit maps the source rectangle to the viewBox of an SVG with no width
+  // and height, so an SVG is drawn whole, and the crop is where it lands.
+  it('draws an SVG whole, scaled and placed so that the crop fills the canvas', async () => {
+    stubImage(300, 150)
+    const drawn = stubCanvas()
+    const svg = new Blob(['<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 60 30"/>'], { type: 'image/svg+xml' })
+
+    const image = await sbp('dez.controller/images/redraw', svg, () => ({ crop: { x: 100, y: 30, width: 100, height: 90 }, width: 50, height: 45 }), 'image/png')
+
+    expect(drawn).toStrictEqual([{ canvas: '50x45', numbers: [-50, -15, 150, 75], type: 'image/png' }])
+    expect(image).toStrictEqual({ bytes: new Uint8Array(DRAWN_BYTES), width: 50, height: 45 })
   })
 
   // The canvas of a webview that cannot write a type writes a PNG in its

@@ -24,10 +24,11 @@ import { activeConversationId, activeTabStreaming, docPos, editorCaret, editorDo
 // `model_info` call gives the facts of the mock model as Dez knows them. A
 // `crop_scale_image` call makes a new image from a part of a pasted one:
 // the image goes into the reply after the call, and the requests name it
-// by its id, with no path. An `audio` call cuts a part of a saved clip into
-// a new saved WAV clip, in the same way. A long result scrolls in its field
-// under the wheel. Backspace and Delete next to a chip never join its block
-// to other text.
+// by its id, with no path. A pasted SVG goes as the same PNG copy in each
+// request of a reply, and its crop is a PNG. An `audio` call cuts a part of
+// a saved clip into a new saved WAV clip, in the same way. A long result
+// scrolls in its field under the wheel. Backspace and Delete next to a chip
+// never join its block to other text.
 //
 // One app session serves the whole file. The relaunch test reopens the tab
 // of the OpenAI test, so it runs right after it.
@@ -39,6 +40,18 @@ const CLAUDE: MockProvider = { id: 'claude', name: 'Claude Mock', modelId: 'clau
 // `crop_scale_image` test.
 const GREEN: Rgb = [40, 160, 60]
 const STRIPES_PNG = stripedPng(30, 20, [[220, 40, 40], GREEN, [40, 90, 220]])
+
+// Three stripes of 20 viewBox units, with no width and height: the webview
+// gives it 300 x 150 pixels, so each stripe is 100 pixels wide. With no
+// width and height, WebKit draws a part of an SVG wrong unless Dez draws
+// it whole (`dez.controller/images/redraw`).
+const STRIPES_SVG = Buffer.from([
+  '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 60 30">',
+  '<rect width="20" height="30" fill="rgb(220,40,40)"/>',
+  `<rect x="20" width="20" height="30" fill="rgb(${GREEN.join(',')})"/>`,
+  '<rect x="40" width="20" height="30" fill="rgb(40,90,220)"/>',
+  '</svg>',
+].join(''))
 
 // Two seconds of silence, 16-bit mono at 8 kHz: the clip of the `audio`
 // test. Silence, so a run makes no sound.
@@ -503,6 +516,64 @@ describe('tool calls', () => {
     expect(third.body).not.toContain(setup.app.home)
     await sendChatReply(third.reply, 'green')
     await waitForThread(browser, [...sections, { role: 'user', text: 'Is @b green?' }, { role: 'agent', text: replyText('green') }, { role: 'user', text: '' }])
+  })
+
+  // No provider is known to take SVG images.
+  it('sends a pasted SVG as the same PNG copy in each request of a reply, and its crop_scale_image call makes a PNG', async () => {
+    await newTab(browser)
+    await pickModel(browser, TOOLER.name, TOOLER.modelName)
+    await focusEditor(browser)
+    await typeKeys(browser, 'Crop ')
+    await pasteImage(browser, STRIPES_SVG, 'image/svg+xml')
+    await waitForValue(browser, 'reference of the pasted SVG', async () => (await threadSections(browser))[0].text.endsWith('](id=a)'), true)
+    const message = (await threadSections(browser))[0].text
+    const pastedPath = message.slice('Crop !['.length, message.indexOf(']('))
+    expect(path.extname(pastedPath)).toBe('.svg')
+    expect(await fs.promises.readFile(pastedPath)).toEqual(STRIPES_SVG)
+    await waitForValue(browser, 'shown SVG', () => shownImages(browser), [{ alt: path.basename(pastedPath), width: 300, height: 150 }])
+
+    await submit(browser, '')
+    const first = await setup.mock.waitForRequest(browser)
+    const sent = JSON.parse(first.body) as { messages: Array<{ content: Array<{ type: string, image_url?: { url: string } }> }> }
+    const copy = sent.messages.at(-1)?.content[1]?.image_url?.url ?? ''
+    expect(copy.startsWith('data:image/png;base64,')).toBe(true)
+    expect(await decodedImage(browser, copy, [50, 150, 250])).toEqual({
+      width: 300,
+      height: 150,
+      pixels: [[220, 40, 40, 255], [...GREEN, 255], [40, 90, 220, 255]],
+    })
+
+    // The green stripe, at half its size.
+    const call = {
+      id: 'call_crop_svg',
+      type: 'function',
+      function: { name: 'crop_scale_image', arguments: JSON.stringify({ image: 'a', crop_x: 100, crop_y: 0, crop_width: 100, crop_height: 150, width: 50 }) },
+    }
+    startEventStream(first.reply)
+    writeChatFrame(first.reply, { tool_calls: [{ index: 0, ...call }] }, 'tool_calls')
+    first.reply.end('data: [DONE]\n\n')
+
+    // The next request starts with the bytes of the first one, so the copy
+    // of the second drawing is the same file.
+    const second = await setup.mock.waitForRequest(browser)
+    expectSentPrefix(first.body, second.body)
+    expect((JSON.parse(second.body) as { messages: unknown[] }).messages.at(-1)).toEqual({
+      role: 'tool',
+      tool_call_id: 'call_crop_svg',
+      content: 'Made the image @b from @a. The image @b is 50x75 pixels.',
+    })
+    await sendChatReply(second.reply, TOOLER.modelName)
+
+    await waitForValue(browser, 'sections after the reply', async () => (await threadSections(browser)).length, 3)
+    const reply = (await threadSections(browser))[1].text
+    const madePath = reply.slice(reply.indexOf('![') + 2, reply.indexOf(']('))
+    expect(path.extname(madePath)).toBe('.png')
+    expect(await decodedImage(browser, pngDataUrl(await fs.promises.readFile(madePath)), [5, 25, 45])).toEqual({
+      width: 50,
+      height: 75,
+      pixels: [[...GREEN, 255], [...GREEN, 255], [...GREEN, 255]],
+    })
+    expect(await fs.promises.readFile(pastedPath)).toEqual(STRIPES_SVG)
   })
 
   it('runs an audio clip call: the cut is a new saved WAV clip in the reply after the call, and the requests name it by its id', async () => {
