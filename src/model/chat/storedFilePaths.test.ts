@@ -8,6 +8,8 @@ const GENERATED = '/home/ann/.config/dez/assets/generated/images/0c4e7a51-9b2d-4
 const AUDIO = '/home/ann/.config/dez/assets/generated/audio/7b1e-22.mp3'
 const VIDEO = '/home/ann/.config/dez/assets/generated/video/0c4e7a51-9b2d-4f6a-8e13-5d7c9a2b4f60.mp4'
 const CACHED = '/home/ann/.cache/dez/media/0c4e7a51-9b2d-4f6a-8e13-5d7c9a2b4f60.mp4'
+const PASTED_AUDIO = '/home/ann/.config/dez/assets/audio/1d2e-3f.wav'
+const PASTED_VIDEO = '/home/ann/.config/dez/assets/video/0c4e7a51-9b2d-4f6a-8e13-5d7c9a2b4f60.mov'
 
 describe('withoutStoredFilePaths', () => {
   it.each([
@@ -43,6 +45,8 @@ describe('withoutStoredFilePaths', () => {
   it.each([
     ['a saved audio clip', `play ${AUDIO} now`, 'play audio now'],
     ['a saved video clip', `play ${VIDEO} now`, 'play video now'],
+    ['a pasted audio clip', `play ${PASTED_AUDIO} now`, 'play audio now'],
+    ['a pasted video clip', `play ${PASTED_VIDEO} now`, 'play video now'],
     ['a temp copy of a clip', `play ${CACHED} now`, 'play media now'],
     ['a temp copy in another cache folder', 'play /Users/Zoë Ann/Library/Caches/dez/media/x_1-2.webm now', 'play media now'],
     ['a saved clip with an extension that Dez does not know', 'play /home/ann/.config/dez/assets/generated/audio/x.opus7 now', 'play audio now'],
@@ -58,7 +62,7 @@ describe('withoutStoredFilePaths', () => {
   })
 
   it('leaves no path of a media tag that goes as plain text', () => {
-    for (const src of [AUDIO, VIDEO, CACHED]) {
+    for (const src of [AUDIO, VIDEO, CACHED, PASTED_AUDIO, PASTED_VIDEO]) {
       const tag = mediaTagText({ kind: 'video', id: 'b', type: 'video/mp4', src, url: null, expires: null, other: [{ name: 'poster', value: PNG }] })
       const sent = withoutStoredFilePaths(`User text\n${tag}\nmore`)
 
@@ -125,7 +129,7 @@ describe('holdsStoredFilePath', () => {
   })
 
   it('finds the path of a saved clip and of a temp copy', () => {
-    for (const path of [AUDIO, VIDEO, CACHED]) {
+    for (const path of [AUDIO, VIDEO, CACHED, PASTED_AUDIO, PASTED_VIDEO]) {
       expect(holdsStoredFilePath(JSON.stringify({ thinking: `I made\n${path}` })), path).toBe(true)
     }
   })

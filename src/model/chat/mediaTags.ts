@@ -2,12 +2,14 @@ import { MARKER_ATTRIBUTES, escapeMarkerAttribute, markerAttributes } from '../.
 import { stripLiveSentinels } from './content'
 import { IMAGE_ID_SOURCE } from './images'
 
-// A clip that a model made (audio or video) is plain text in an agent
-// section, as an image reference and a tool call are: no content node kind
-// and no sentinel. It is one self-closing tag on a line of its own.
-// Conversation files and clipboard text hold it as it is. This module is
-// the one place that writes and recognizes it; requests, the id sequence
-// (mediaIds.ts), and the search, preview, and Markdown text all call it.
+// A clip (audio or video) is plain text, as an image reference and a tool
+// call are: no content node kind and no sentinel. It is one self-closing
+// tag on a line of its own: in an agent section for a clip that a model or
+// a Dez tool made, and in a user section for a clip that the user pasted
+// or dropped. Conversation files and clipboard text hold it as it is. This
+// module is the one place that writes and recognizes it; requests, the id
+// sequence (mediaIds.ts), and the search, preview, and Markdown text all
+// call it.
 //
 //   <dez:video id="b" type="video/mp4" src="https://cdn.example/v.mp4?sig=1" url="https://cdn.example/v.mp4?sig=1" expires="2026-11-11T09:30:00.000Z"/>
 //
@@ -19,10 +21,10 @@ import { IMAGE_ID_SOURCE } from './images'
 //   - `id`: the clip's short name in its conversation, from the one id
 //     sequence that images use too (mediaIds.ts). It never changes.
 //   - `type`: the media type, such as `video/mp4`.
-//   - `src`: the source that plays now: the saved file (an absolute path in
-//     a folder of `MEDIA_FOLDERS`), else the temp copy (an absolute path in
-//     `MEDIA_CACHE_FOLDER` of the cache root), else the value of `url`. A
-//     clip that has no source any more has no `src`.
+//   - `src`: the source that plays now: the stored file (an absolute path
+//     in a folder of `MEDIA_FOLDERS`), else the temp copy (an absolute path
+//     in `MEDIA_CACHE_FOLDER` of the cache root), else the value of `url`.
+//     A clip that has no source any more has no `src`.
 //   - `url`: the provider's URL of the clip, when the provider gave one. It
 //     never changes, so that a clip can go back to it when its saved file
 //     is deleted. It is a signed URL, which is a secret.
@@ -31,12 +33,14 @@ import { IMAGE_ID_SOURCE } from './images'
 //   - Any other attribute is metadata that Dez does not know here. A
 //     rewrite (read a tag, change fields, write it) keeps it, after the
 //     known attributes and in its order.
-// - Tags count in agent sections only; in a user section the same text is
-//   plain text. Callers check the role, and find tags in one section at a
-//   time.
+// - Tags count in every section, and callers find them in one section at a
+//   time. A tag in a user section comes from a paste or a drop of a clip
+//   file.
 // - Answer text from a model is escaped (`ModelTextEscaper`, toolBlocks.ts),
 //   so a model cannot write a tag.
-// - A provider gets only the request form (`mediaTagRequestText`).
+// - A provider gets only the request form (`mediaTagRequestText`): of a
+//   user section through `mediaTagsForRequest`, and of an agent section
+//   through `agentTextForRequest` (toolBlocks.ts).
 
 /** The kinds of clips: the tag of a kind is `dez:<kind>`. */
 export const MEDIA_TAG_KINDS = ['audio', 'video'] as const
@@ -46,14 +50,20 @@ export type MediaTagKind = typeof MEDIA_TAG_KINDS[number]
 /** The names of the media tags, for the escape of model text. */
 export const MEDIA_TAG_NAMES: readonly string[] = MEDIA_TAG_KINDS.map((kind) => `dez:${kind}`)
 
-/** The folders of the saved clips, relative to the app folder. The asset
+/** The folders of the stored clips, relative to the app folder: the clips
+ *  that the user saved of the ones that models and Dez tools made
+ *  (`generated`), and the clips that the user pasted or dropped
+ *  (`pasted`), as `IMAGE_FOLDERS` (images.ts) for images. The asset
  *  protocol scope in tauri.conf.json serves only the files directly in
  *  them, and the path regexes below are built from these names, so nothing
  *  else spells them. */
 export const MEDIA_FOLDERS = {
-  audio: 'assets/generated/audio',
-  video: 'assets/generated/video',
-} as const satisfies Record<MediaTagKind, string>
+  generated: { audio: 'assets/generated/audio', video: 'assets/generated/video' },
+  pasted: { audio: 'assets/audio', video: 'assets/video' },
+} as const satisfies Record<string, Record<MediaTagKind, string>>
+
+/** Where a stored clip came from: a folder group of `MEDIA_FOLDERS`. */
+export type MediaFolder = keyof typeof MEDIA_FOLDERS
 
 // The name of Dez's folder in the OS cache folder (`~/.cache` on Linux):
 // the `cache` root of the app-file selectors. `root_dir` in
@@ -74,11 +84,11 @@ const MEDIA_FILE_NAME_SOURCE = String.raw`[A-Za-z0-9_-]+\.[A-Za-z0-9]+`
 // are.
 const pathEndSource = (folder: string) => String.raw`${folder}\/${MEDIA_FILE_NAME_SOURCE}`
 
-/** Regex source of the end of every saved clip's path, by kind: a media
- *  folder and a stored file name. No capture groups. */
+/** Regex source of the end of every stored clip's path, by kind: a media
+ *  folder of the kind and a stored file name. No capture groups. */
 export const SAVED_MEDIA_PATH_END_SOURCES: Readonly<Record<MediaTagKind, string>> = {
-  audio: pathEndSource(MEDIA_FOLDERS.audio),
-  video: pathEndSource(MEDIA_FOLDERS.video),
+  audio: `(?:${pathEndSource(MEDIA_FOLDERS.generated.audio)}|${pathEndSource(MEDIA_FOLDERS.pasted.audio)})`,
+  video: `(?:${pathEndSource(MEDIA_FOLDERS.generated.video)}|${pathEndSource(MEDIA_FOLDERS.pasted.video)})`,
 }
 
 /** Regex source of the end of every temp copy's path. No capture groups. */
@@ -87,12 +97,21 @@ export const MEDIA_CACHE_PATH_END_SOURCE = pathEndSource(`${CACHE_ROOT_NAME}/${M
 // An absolute path, on one line, that ends with `endSource`.
 const absolutePath = (endSource: string) => new RegExp(String.raw`^\/(?:[^\r\n]*\/)?(?:${endSource})$`)
 const SAVED_MEDIA_PATH = absolutePath(Object.values(SAVED_MEDIA_PATH_END_SOURCES).join('|'))
+const PASTED_MEDIA_PATH = absolutePath(Object.values(MEDIA_FOLDERS.pasted).map(pathEndSource).join('|'))
 const TEMP_MEDIA_PATH = absolutePath(MEDIA_CACHE_PATH_END_SOURCE)
 
-/** True for the path of a saved clip: an absolute path to a file directly
- *  in a media folder. A temp copy and a URL are not one. */
+/** True for the path of a stored clip: an absolute path to a file directly
+ *  in a media folder, generated or pasted. A temp copy and a URL are not
+ *  one. */
 export function isSavedMediaPath(path: string): boolean {
   return SAVED_MEDIA_PATH.test(path)
+}
+
+/** True for the path of a clip that the user pasted or dropped: an
+ *  absolute path to a file directly in a folder of `MEDIA_FOLDERS.pasted`.
+ *  Such a clip has no other source, so its trash removes its tag too. */
+export function isPastedMediaPath(path: string): boolean {
+  return PASTED_MEDIA_PATH.test(path)
 }
 
 /** True for the path of a temp copy: an absolute path to a file directly in
@@ -254,6 +273,13 @@ export function splitMediaTags(text: string): MediaTextPiece[] {
   }
   if (start < text.length) pieces.push({ kind: 'text', text: text.slice(start) })
   return pieces
+}
+
+/** A text as a provider gets it: each media tag in its request form
+ *  (`mediaTagRequestText`), and the rest as it is. Give it the whole text
+ *  of a section: a tag counts only at a line start of that text. */
+export function mediaTagsForRequest(text: string): string {
+  return splitMediaTags(text).map((piece) => (piece.kind === 'text' ? piece.text : mediaTagRequestText(piece.tag))).join('')
 }
 
 /** The text that stands for a clip of each kind in history previews and

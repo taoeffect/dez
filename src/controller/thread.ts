@@ -1,6 +1,8 @@
 import sbp from '@sbp/sbp'
+import type { MediaTagKind } from '../model/chat/mediaTags'
 import { modelRefKey } from '../model/chat/modelRef'
 import { effectiveOutputs } from '../model/modelOutputs'
+import { clipsText, clipTagProblem } from '../model/providers/clipInputs'
 import { inputImageRulesFor, missingImageProblem } from '../model/providers/clipImages'
 import { clipTextProblem } from '../model/providers/clipText'
 import { effectiveParameterValues } from '../model/providers/modelParameters'
@@ -17,6 +19,25 @@ function warnImagesLeftOut(modelName: string, reason: string, count: number): vo
     variant: 'warning',
     title: count === 1 ? 'Image not sent' : 'Images not sent',
     message: `${modelName} ${reason}, so ${count === 1 ? '1 image was' : `${count} images were`} left out of the request.`,
+    duration: 8000,
+  })
+}
+
+// Tells the user that the request goes without the clips of `leftOut`, the
+// count of each kind that the message holds or names and the model
+// `modelName` does not take; `sent` is the count of each kind that goes. A
+// model with no clip rules takes no clip at all.
+function warnClipsLeftOut(modelName: string, takesClips: boolean, sent: Record<MediaTagKind, number>, leftOut: Record<MediaTagKind, number>): void {
+  const count = leftOut.audio + leftOut.video
+  if (count === 0) return
+  const kinds = (['audio', 'video'] as const).filter((kind) => leftOut[kind] > 0)
+  const takes = takesClips
+    ? kinds.map((kind) => (sent[kind] === 0 ? `takes no ${kind} clip` : `takes only ${clipsText(sent[kind], kind)}`)).join(' and ')
+    : 'takes no clip'
+  sbp('dez.ui/toast', 'app-global', {
+    variant: 'warning',
+    title: count === 1 ? 'Clip not sent' : 'Clips not sent',
+    message: `${modelName} ${takes}, so ${count === 1 ? '1 clip was' : `${count} clips were`} left out of the request.`,
     duration: 8000,
   })
 }
@@ -40,15 +61,17 @@ export default sbp('sbp/selectors/register', {
     // A model that the cache does not have has no request kind, so it gets
     // a chat request, as before models had one. A refusal changes nothing,
     // so it comes before the end of a running reply's output.
-    const cachedModel: Pick<ModelInfo, 'outputs' | 'request' | 'clipInput' | 'text' | 'images' | 'parameters' | 'unstoredOutput'> = sbp('dez.model/modelCache/model', model.providerId, model.modelId) ?? {}
+    const cachedModel: Pick<ModelInfo, 'outputs' | 'request' | 'clipInput' | 'text' | 'images' | 'clips' | 'parameters' | 'unstoredOutput'> = sbp('dez.model/modelCache/model', model.providerId, model.modelId) ?? {}
     const kind = effectiveRequest(cachedModel)
     let message: string | null = null
-    // How many images of the message a media request takes and leaves out.
+    // How many images and clips of the message a media request takes and
+    // leaves out.
     let mediaImages = { sent: 0, leftOut: 0 }
-    // The text and image rules of a media request. The image rules can
-    // depend on the parameter values that the request sends (OpenRouter's
-    // "Images as"), so they are the rules of the user's values, which the
-    // request reads at its start too (`generateMedia`).
+    let mediaClips = { sent: { audio: 0, video: 0 }, leftOut: { audio: 0, video: 0 } }
+    // The text, image, and clip rules of a media request. The image rules
+    // can depend on the parameter values that the request sends
+    // (OpenRouter's "Images as"), so they are the rules of the user's
+    // values, which the request reads at its start too (`generateMedia`).
     let inputRules: ClipInputRules = {}
     if (kind === 'none') {
       message = unusableModelMessage(model.modelName, cachedModel)
@@ -58,18 +81,26 @@ export default sbp('sbp/selectors/register', {
     } else if (kind !== 'chat') {
       const chosen = (sbp('dez.model/settings/snapshot') as SettingsSnapshot).modelParameters[modelRefKey(model)]
       const images = inputImageRulesFor(cachedModel.images, effectiveParameterValues(cachedModel.parameters ?? [], chosen))
-      inputRules = { ...(cachedModel.text && { text: cachedModel.text }), ...(images && { images }) }
+      inputRules = { ...(cachedModel.text && { text: cachedModel.text }), ...(images && { images }), ...(cachedModel.clips && { clips: cachedModel.clips }) }
       // An input that the model is known not to take (no image for a model
       // that edits one, makes one larger, makes its video from one, or
       // needs a reference image; no lyrics for a model that needs them; a
-      // prompt that is too short or too long) gets no request: the check
-      // costs nothing, and it tells the user what to change. The end of a
-      // running reply's output changes no user message and adds no image,
-      // so the input that this checks is the input of the request. Only a
-      // clip model has text rules.
+      // prompt that is too short or too long; a clip of a type that it does
+      // not take, or an audio clip with no image or video that it needs)
+      // gets no request: the check costs nothing, and it tells the user
+      // what to change. The end of a running reply's output changes no user
+      // message and adds no image or clip, so the input that this checks is
+      // the input of the request. Only a clip model has text rules. A video
+      // clip is the reference of a request with no image.
       const input = mediaRequestInput(kind, request.messages, tab.sections, inputRules)
-      message = missingImageProblem(model.modelName, kind, input.images.length, images) ?? clipTextProblem(model.modelName, cachedModel.text, input)
+      const sentVideo = input.clips.some((clip) => clip.kind === 'video')
+      message = clipTagProblem(model.modelName, cachedModel.clips, input.clips, input.images.length)
+        ?? (sentVideo ? null : missingImageProblem(model.modelName, kind, input.images.length, images))
+        ?? clipTextProblem(model.modelName, cachedModel.text, input)
       mediaImages = { sent: input.images.length, leftOut: input.imagesLeftOut }
+      const sentClips = { audio: 0, video: 0 }
+      for (const clip of input.clips) sentClips[clip.kind]++
+      mediaClips = { sent: sentClips, leftOut: input.clipsLeftOut }
     }
     if (message !== null) {
       console.error(`Cannot send: ${message}`)
@@ -98,6 +129,7 @@ export default sbp('sbp/selectors/register', {
       const takes = mediaImages.sent === 0 ? 'takes no image' : `takes only ${mediaImages.sent === 1 ? '1 image' : `${mediaImages.sent} images`}`
       warnImagesLeftOut(model.modelName, takes, mediaImages.leftOut)
     }
+    warnClipsLeftOut(model.modelName, cachedModel.clips !== undefined, mediaClips.sent, mediaClips.leftOut)
 
     await sbp('dez.stream/start', {
       tabId,

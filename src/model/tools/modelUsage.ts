@@ -1,5 +1,7 @@
+import type { MediaTagKind } from '../chat/mediaTags'
 import { effectiveOutputs } from '../modelOutputs'
 import { imagesText, maxInputImages, minInputImages, needsInputImage } from '../providers/clipImages'
+import { clipsText, maxInputClips, type ClipUse, type InputClipRules } from '../providers/clipInputs'
 import { lyricsHowTo } from '../providers/clipText'
 import { toolsApply } from '../providers/modelToggles'
 import { TOOLS_SETTING_KEY } from '../providers/toolsSetting'
@@ -36,14 +38,19 @@ export const USAGE_TEXTS = {
   noImages: 'It takes no input image: the images of the message do not go.',
   noImagesRead: 'It does not read images, so the images of the message do not go.',
   newestImage: 'With no image in the message, the newest image of the conversation goes.',
+  newestImageOrVideo: 'With no image and no video clip in the message, the newest image of the conversation goes.',
   newestImageOnly: 'It does not read images, so only the newest image of the conversation goes.',
   fitted: 'Dez sends a fitted copy (cropped or scaled) of an image that breaks `dez.images.size`.',
   limits: 'Dez refuses an image that breaks `dez.images.limits`.',
   videoReferences: 'They are references for the video, not frames of it.',
   parameters: `Each request sends the \`value\` of each of \`dez.parameters\`; the user sets them under "Model Parameters" in ${SETTINGS_POPUP}.`,
   imageResult: 'It answers with an image, which goes into the reply with a new id (@id).',
-  audioResult: 'It answers with an audio clip, which the reply shows as a player with a new id. Dez cannot send a clip to a model.',
-  videoResult: 'It answers with a video clip, which the reply shows as a player with a new id. Dez cannot send a clip to a model.',
+  audioResult: 'It answers with an audio clip, which the reply shows as a player with a new id.',
+  videoResult: 'It answers with a video clip, which the reply shows as a player with a new id.',
+  noClips: 'It takes no input clip: the clips of the message (pasted, or named with @id) do not go.',
+  clipRules: 'Dez refuses a clip that breaks the rules of its kind in `dez.clips` (media types, seconds, bytes). Dez cuts no clip, but the audio tool can cut an audio clip.',
+  wavCopy: 'An audio clip of a type that it does not take goes as a WAV copy.',
+  audioNeedsVisual: 'An audio clip goes only together with an image or a video clip.',
 } as const
 
 // The prompt of a model that names its reference images (`promptName`,
@@ -51,6 +58,57 @@ export const USAGE_TEXTS = {
 export function referenceNamesUsage(promptName: string): string {
   const name = (n: number) => `\`${promptName.replaceAll('{n}', String(n))}\``
   return `Each image that goes is named in the prompt as the model names it, ${name(1)} for the first, ${name(2)} for the second, and so on, in place of its id text (such as \`![image](id=a)\`) and its @id mentions; any other image goes into the prompt as its id text.`
+}
+
+// What a model does with the clips of a kind (`ClipKindRules.use`).
+const CLIP_USE_USAGE: Readonly<Record<ClipUse, string>> = {
+  reference: 'They are references for the video (a look, a motion, a voice, a sound).',
+  background: 'It is the sound of the video, as it is.',
+  voice: 'Each one is the voice of one reference, in order: the first audio clip is the voice of the first image, with the images first and then the video clips.',
+}
+
+/** How many clips of `kind` of the message (pasted, or named with @id) a
+ *  request takes, with at most `max` (`maxInputClips`, more than 0). */
+export function takenClipsUsage(kind: MediaTagKind, max: number): string {
+  const taken = max === Infinity ? `every ${kind} clip` : max === 1 ? clipsText(1, kind) : `up to ${clipsText(max, kind)}`
+  return `It takes ${taken} of the message (pasted, or named with @id)${max === 1 ? '' : ', in text order'}.`
+}
+
+// The prompt of a model that names its clips of `kind` (`promptName`,
+// `mediaRequestInput`): the names of the first two clips show the form.
+export function clipNamesUsage(kind: MediaTagKind, promptName: string): string {
+  const name = (n: number) => `\`${promptName.replaceAll('{n}', String(n))}\``
+  return `Each ${kind} clip that goes is named in the prompt as the model names it, ${name(1)} for the first, ${name(2)} for the second, and so on, in place of its tag and its @id mentions.`
+}
+
+// A model that takes the clips of `kind` only by their web address
+// (`ClipKindRules.urlOnly`, `clipTagProblem`).
+export function urlOnlyClipsUsage(kind: MediaTagKind): string {
+  return `A ${kind} clip goes only by its web address, which the provider downloads: only a clip that a model made goes, while its address works (the tag's \`expires\`). Dez refuses a ${kind} clip that is only a file (pasted, dropped, or made by the audio tool).`
+}
+
+// What the input clips of a request are (`mediaRequestInput`), and what
+// generateMedia checks and converts. Only a video model has clip rules
+// (`MediaFormat.clipRules`), so only a video model gets told that it takes
+// none.
+function inputClipsUsage(kind: MediaKind, clips: InputClipRules | undefined): string[] {
+  if (!clips) return isClipKind(kind) && CLIP_KINDS[kind] === 'video' ? [USAGE_TEXTS.noClips] : []
+  const kinds = (['audio', 'video'] as const).flatMap((clipKind) => {
+    const rules = clips[clipKind]
+    if (!rules) return []
+    return [
+      takenClipsUsage(clipKind, maxInputClips(clips, clipKind)),
+      CLIP_USE_USAGE[rules.use],
+      ...(rules.promptName === undefined ? [] : [clipNamesUsage(clipKind, rules.promptName)]),
+      ...(rules.urlOnly ? [urlOnlyClipsUsage(clipKind)] : []),
+    ]
+  })
+  return [
+    ...kinds,
+    ...(clips.audioNeedsVisual ? [USAGE_TEXTS.audioNeedsVisual] : []),
+    USAGE_TEXTS.clipRules,
+    ...(clips.audio?.types?.includes('audio/wav') ? [USAGE_TEXTS.wavCopy] : []),
+  ]
 }
 
 // What the text of the message is to a model of each media kind (none:
@@ -102,10 +160,12 @@ function inputImagesUsage(kind: MediaKind, model: ModelInfo): string[] {
   // `mediaRequestInput` gives one.
   if (model.imageInput === false) return [needed ? USAGE_TEXTS.newestImageOnly : USAGE_TEXTS.noImagesRead]
   const role = model.images?.references ? USAGE_TEXTS.videoReferences : MEDIA_USAGE[kind].images
+  // A video clip takes the place of the newest image (`mediaRequestInput`).
+  const newest = model.clips?.video ? USAGE_TEXTS.newestImageOrVideo : USAGE_TEXTS.newestImage
   return [
     `It takes ${takenImages(minInputImages(kind, model.images), max)} of the message (pasted, or named with @id)${max === 1 ? '' : ', in text order'}.`,
     ...(role === undefined ? [] : [role]),
-    ...(needed ? [USAGE_TEXTS.newestImage] : []),
+    ...(needed ? [newest] : []),
   ]
 }
 
@@ -125,6 +185,7 @@ function mediaUsage(kind: MediaKind, model: ModelInfo, facts: UsageFacts): strin
     ...inputImagesUsage(kind, model),
     ...(takesImages && facts.inputImages.size ? [USAGE_TEXTS.fitted] : []),
     ...(takesImages && facts.inputImages.limits ? [USAGE_TEXTS.limits] : []),
+    ...inputClipsUsage(kind, model.clips),
     ...(model.parameters ? [USAGE_TEXTS.parameters] : []),
     !isClipKind(kind) ? USAGE_TEXTS.imageResult : CLIP_KINDS[kind] === 'audio' ? USAGE_TEXTS.audioResult : USAGE_TEXTS.videoResult,
   ]

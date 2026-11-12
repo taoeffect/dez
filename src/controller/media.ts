@@ -1,7 +1,7 @@
 import sbp from '@sbp/sbp'
 import { AUDIO_CUT_RATE, audioPartFrames, type AudioPart, type CutAudio } from '../model/chat/audioCut'
-import { ClipReadError, MEDIA_TEMP_LIFETIME_MS, mediaFileExtension, savedMediaFile, tempMediaFile } from '../model/chat/mediaFiles'
-import { MEDIA_CACHE_FOLDER, MEDIA_FOLDERS, isSavedMediaPath, isTempMediaPath, type MediaTagData } from '../model/chat/mediaTags'
+import { ClipReadError, MAX_SAVED_CLIP_BYTES, MEDIA_TEMP_LIFETIME_MS, mediaFileExtension, savedMediaFile, tempMediaFile } from '../model/chat/mediaFiles'
+import { MEDIA_CACHE_FOLDER, MEDIA_FOLDERS, isSavedMediaPath, isTempMediaPath, type MediaFolder, type MediaTagData } from '../model/chat/mediaTags'
 import { wavFileOfChannels } from '../model/providers/pcmAudio'
 import { byteSizeText } from '../utils/byteSize'
 import { ExplainedError, errorText, explainedError, rawErrorText } from '../utils/errorText'
@@ -9,8 +9,6 @@ import { fileNameOf } from '../utils/fileName'
 import { readNativeChunkBytes, type NativeHttpDownload, type NativeHttpStreamResult } from '../utils/protocol/nativeHttp'
 import type { AppFileEntry } from './nativeTypes'
 
-// The largest clip that Save downloads from a URL.
-const MAX_SAVED_CLIP_BYTES = 1024 ** 3
 // The longest time that Save, or a read of a clip from its URL, waits for
 // the whole download. A server that stops sending would keep the Save
 // control, or the tool that reads the clip, busy with no end.
@@ -103,9 +101,11 @@ async function readClipUrl (url: string, type: string): Promise<Blob> {
 
 export default sbp('sbp/selectors/register', {
   // Keeps a clip: its file goes into the media folder of its kind in the app
-  // folder, and the absolute path of that file comes back, for the `src` of
-  // the clip's tag (src/model/chat/mediaTags.ts). With `bytes` (a clip that
-  // Dez made, such as a cut of the `audio` tool), they go to a new file
+  // folder (`folder`: `generated` for a clip that a model or a Dez tool
+  // made, `pasted` for a clip file that the user pasted or dropped), and the
+  // absolute path of that file comes back, for the `src` of the clip's tag
+  // (src/model/chat/mediaTags.ts). With `bytes` (a clip that Dez made, such
+  // as a cut of the `audio` tool, or a pasted file), they go to a new file
   // named for the clip's type. Else a clip whose `src` is a temp copy of
   // this computer moves there under its name, and any other clip is
   // downloaded from its `url` (http and https only) with no provider header:
@@ -114,7 +114,7 @@ export default sbp('sbp/selectors/register', {
   // the tag as it is.
   async 'dez.controller/media/save' (
     clip: Pick<MediaTagData, 'kind' | 'type' | 'src' | 'url'>,
-    { bytes }: { bytes?: Uint8Array } = {},
+    { bytes, folder = 'generated' }: { bytes?: Uint8Array, folder?: MediaFolder } = {},
   ): Promise<string> {
     try {
       const appDir = await sbp('dez.native/getAppDir') as string
@@ -122,7 +122,7 @@ export default sbp('sbp/selectors/register', {
       const fileName = bytes !== undefined
         ? newClipFileName(clip.type, null)
         : tempFile !== null ? fileNameOf(tempFile) : downloadFileName(clip)
-      const file = `${MEDIA_FOLDERS[clip.kind]}/${fileName}`
+      const file = `${MEDIA_FOLDERS[folder][clip.kind]}/${fileName}`
       const path = `${appDir}/${file}`
       // The recognizer takes only absolute paths on one line (e.g. not
       // `./.config/dez` when $HOME is not set). A tag with another path

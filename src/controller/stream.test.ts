@@ -7,7 +7,8 @@ import { sectionVisibleText } from '../model/chat/content'
 import type { DrawnImage, ImageDrawing, ImageSize } from '../model/chat/imageDrawing'
 import { findToolBlocks } from '../model/chat/toolBlocks'
 import type { ConversationData } from '../model/persistence/types'
-import { missingImageProblem, TooManyImagesError } from '../model/providers/clipImages'
+import { missingImageProblem, TooManyImagesError, type InputImageRules } from '../model/providers/clipImages'
+import type { ClipAttachment, InputClipRules } from '../model/providers/clipInputs'
 import type { ClipTextRules } from '../model/providers/clipText'
 import { customProviderConfigSchema } from '../model/providers/config'
 import { unstoredOutputMessage, unusableModelMessage } from '../model/providers/unusableModel'
@@ -1084,6 +1085,7 @@ describe('dez.stream/start media round', () => {
     { role: 'agent', text: `![${generated('old.png')}](id=b)` },
     { role: 'user', text: lastUserText },
   ]
+  const leftOut = (title: string, message: string) => [{ area: 'app-global', data: { variant: 'warning', title, message, duration: 8000 } }]
   let mediaInputs: ProviderGenerateMediaInput[] = []
   // The options of each save; the saves give the files g1.png, g2.png, ….
   let saves: unknown[] = []
@@ -1307,7 +1309,6 @@ describe('dez.stream/start media round', () => {
 
   describe('the frames of a video', () => {
     const twoImages = `From ![${image('cat.png')}](id=c) to @a.`
-    const leftOut = (title: string, message: string) => [{ area: 'app-global', data: { variant: 'warning', title, message, duration: 8000 } }]
 
     beforeEach(() => {
       generateMedia = async (input) => {
@@ -1436,6 +1437,135 @@ describe('dez.stream/start media round', () => {
 
       expect(mediaInputs.map((input) => input.images)).toStrictEqual([images])
       expect(toasts).toStrictEqual(warnings)
+    })
+  })
+
+  describe('the clips that a message names', () => {
+    const speechClip = (id: string): ClipAttachment => ({ kind: 'audio', id, type: 'audio/mpeg', src: speech.src, url: null, expires: EXPIRES })
+    const filmClip: ClipAttachment = { kind: 'video', id: 'e', type: 'video/mp4', src: FILM_URL, url: FILM_URL, expires: EXPIRES }
+    const referenceClips: InputClipRules = { audio: { use: 'reference' }, video: { use: 'reference' } }
+    // Two audio clips (c, d) and a video clip (e) of an earlier reply, and
+    // no image.
+    const clipConversation = (lastUserText: string) => [
+      { role: 'user', text: 'Make a song, a voice, and a film.' },
+      { role: 'agent', text: `${speechTag('c')}\n\n${speechTag('d')}\n\n<dez:video id="e" type="video/mp4" src="${FILM_URL}" url="${FILM_URL}" expires="${EXPIRES}"/>` },
+      { role: 'user', text: lastUserText },
+    ]
+
+    function useClipModel(request: ModelRequest, clips?: InputClipRules, images?: InputImageRules): void {
+      sbp('dez.model/modelCache/applyProviderResult', model.providerId, {
+        ok: true,
+        models: [{
+          id: model.modelId,
+          name: model.modelName,
+          provider: model.providerId,
+          outputs: ['video'],
+          request,
+          ...(clips && { clips }),
+          ...(images && { images }),
+        }],
+      })
+    }
+
+    function setClipConversation(lastUserText: string): void {
+      const [u1, a1, u2] = clipConversation(lastUserText)
+      sbp('dez.model/tabs/replaceSections', activeTab().id, [
+        { id: 'u1', role: 'user', content: [{ kind: 'text', text: u1.text }] },
+        { id: 'a1', role: 'agent', content: [{ kind: 'text', text: a1.text }], model },
+        { id: 'u2', role: 'user', content: [{ kind: 'text', text: u2.text }] },
+      ])
+    }
+
+    beforeEach(() => {
+      generateMedia = async (input) => {
+        mediaInputs.push(input)
+        return { media: [], clips: [film] }
+      }
+    })
+
+    it('sends a video model that takes clips the audio and the video clip that the message names, in text order', async () => {
+      useClipModel('video', referenceClips)
+      setClipConversation('Make @e move to the beat of @c.')
+
+      await sbp('dez.controller/submitTab', activeTab().id)
+
+      expect(mediaInputs.map((input) => input.clips)).toStrictEqual([[filmClip, speechClip('c')]])
+      expect(toasts).toStrictEqual([])
+    })
+
+    it.each([
+      ['@c', 'Clip not sent', 'M takes no clip, so 1 clip was left out of the request.'],
+      ['@c and @e', 'Clips not sent', 'M takes no clip, so 2 clips were left out of the request.'],
+    ])('sends a video model with no clip rules a request with no clip of %s, and tells the user', async (mentions, title, message) => {
+      useClipModel('video')
+      setClipConversation(`Make it move like ${mentions}.`)
+
+      await sbp('dez.controller/submitTab', activeTab().id)
+
+      expect(mediaInputs).toHaveLength(1)
+      expect(mediaInputs[0]).not.toHaveProperty('clips')
+      expect(toasts).toStrictEqual(leftOut(title, message))
+    })
+
+    it.each([
+      [
+        'one audio clip',
+        { audio: { use: 'reference', maxClips: 1 }, video: { use: 'reference' } },
+        'Mix @c with @d.',
+        [speechClip('c')],
+        'Clip not sent',
+        'M takes only 1 audio clip, so 1 clip was left out of the request.',
+      ],
+      [
+        'one audio clip and no video clip',
+        { audio: { use: 'background', maxClips: 1 } },
+        'Put @d and @c under @e.',
+        [speechClip('d')],
+        'Clips not sent',
+        'M takes only 1 audio clip and takes no video clip, so 2 clips were left out of the request.',
+      ],
+    ] as const)('sends a model that takes %s the clips that it takes, and tells the user of the rest', async (_name, clips, lastUserText, sent, title, message) => {
+      useClipModel('video', clips)
+      setClipConversation(lastUserText)
+
+      await sbp('dez.controller/submitTab', activeTab().id)
+
+      expect(mediaInputs.map((input) => input.clips)).toStrictEqual([sent])
+      expect(toasts).toStrictEqual(leftOut(title, message))
+    })
+
+    it('sends no request and shows an error toast for an audio clip with no image or video clip, when the model needs one', async () => {
+      const message = 'M takes an audio clip only together with a reference image or video. Add an image or a video clip to the message, or name one with @id.'
+      useClipModel('video', { ...referenceClips, audioNeedsVisual: true })
+      setClipConversation('Dance to @c.')
+
+      await sbp('dez.controller/submitTab', activeTab().id)
+
+      expect(mediaInputs).toStrictEqual([])
+      expect(sectionTexts()).toStrictEqual(clipConversation('Dance to @c.'))
+      expect(toasts).toStrictEqual([{ area: 'app-global', data: { variant: 'error', title: 'Cannot send', message } }])
+    })
+
+    // The video clip is the reference of a request with no image.
+    it('sends a model that needs an image a request with a video clip and no image', async () => {
+      useClipModel('imageToVideo', referenceClips, { maxImages: 1, minImages: 1 })
+      setClipConversation('Make @e slower.')
+
+      await sbp('dez.controller/submitTab', activeTab().id)
+
+      expect(mediaInputs.map(({ kind, images, clips }) => ({ kind, images, clips }))).toStrictEqual([{ kind: 'imageToVideo', images: [], clips: [filmClip] }])
+      expect(toasts).toStrictEqual([])
+    })
+
+    it('refuses a request with an audio clip and no image to a model that needs an image', async () => {
+      const message = 'M makes a video from an image. Paste an image, or name one with @id.'
+      useClipModel('imageToVideo', referenceClips, { maxImages: 1, minImages: 1 })
+      setClipConversation('Sing @c.')
+
+      await sbp('dez.controller/submitTab', activeTab().id)
+
+      expect(mediaInputs).toStrictEqual([])
+      expect(toasts).toStrictEqual([{ area: 'app-global', data: { variant: 'error', title: 'Cannot send', message } }])
     })
   })
 
@@ -1919,7 +2049,6 @@ describe('dez.stream/start clips that a tool makes', () => {
     saves = 0
     saveClip = async () => made(`g${++saves}.wav`)
     deletedClips = []
-    // A tag counts only in an agent section.
     sbp('dez.model/tabs/replaceSections', activeTab().id, [
       { id: 'u0', role: 'user', content: [{ kind: 'text', text: 'A song.' }] },
       { id: 'a0', role: 'agent', content: [{ kind: 'text', text: `<dez:audio id="a" type="audio/mpeg" src="${song}"/>` }], model },

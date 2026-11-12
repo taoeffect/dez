@@ -45,11 +45,11 @@ export function clearConversationSearchCache(): void {
 // where the preview does; a label would make `image` match them all too.
 // Tool blocks in agent text are left out the same way: their markup (`dez`,
 // `tool`, call ids) and tool results are not reply text. So are the media
-// tags in agent text: their markup, path, and URL, and a label too (`video`
-// would match every conversation with a clip).
+// tags, in agent and in user text: their markup, path, and URL, and a label
+// too (`video` would match every conversation with a clip).
 function nodeSearchText(node: ContentNodeData, role: Role): string {
   return node.kind === 'text'
-    ? labelImageReferences(role === 'agent' ? labelMediaTags(labelToolBlocks(node.text, ' '), ' ') : node.text, ' ')
+    ? labelImageReferences(labelMediaTags(role === 'agent' ? labelToolBlocks(node.text, ' ') : node.text, ' '), ' ')
     : `${node.name} ${labelImageReferences(node.body, ' ')}`
 }
 

@@ -20,10 +20,12 @@ function notNamed(text: string, names: string[] = [PNG, WEBP, MP4]): string[] {
 describe('STORED_FILE_FOLDERS', () => {
   it('holds the folder of each kind of stored file', () => {
     expect([...STORED_FILE_FOLDERS].sort()).toEqual([
+      'assets/audio',
       'assets/generated/audio',
       'assets/generated/images',
       'assets/generated/video',
       'assets/images',
+      'assets/video',
     ])
   })
 })
@@ -34,6 +36,8 @@ describe('storedFilePath', () => {
     `assets/generated/images/${WEBP}`,
     `assets/generated/video/${MP4}`,
     'assets/generated/audio/speech.mp3',
+    `assets/video/${MP4}`,
+    'assets/audio/voice.wav',
   ])('gives the app-file path of %s', (file) => {
     expect(storedFilePath(`${APP_DIR}/${file}`, APP_DIR)).toBe(file)
   })
@@ -81,6 +85,10 @@ describe('oldStoredFiles', () => {
     expect(oldStoredFiles('assets/generated/video', entries, APP_DIR, NOW)).toStrictEqual([
       { path: `assets/generated/video/${MP4}`, size: 1 },
       { path: `assets/generated/video/${PNG}`, size: 2 },
+    ])
+    expect(oldStoredFiles('assets/audio', entries, APP_DIR, NOW)).toStrictEqual([
+      { path: `assets/audio/${MP4}`, size: 1 },
+      { path: `assets/audio/${PNG}`, size: 2 },
     ])
   })
 

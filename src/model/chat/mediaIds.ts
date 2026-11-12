@@ -12,10 +12,8 @@ import { findMediaTags, mediaTagText } from './mediaTags'
 // clip is deleted.
 //
 // The functions read media tags in every text, with no role check, and
-// `pastedMediaIdChanges` reads a whole editor doc: a tag line in a user
-// section is plain text there, but its id still counts as taken, and a
-// pasted one gets a new id as a clip does. A new id that skips one more
-// letter does no harm.
+// `pastedMediaIdChanges` reads a whole editor doc: a tag counts in every
+// section, user (a pasted or dropped clip) or agent.
 
 /** A range of a text. */
 interface TextRange {

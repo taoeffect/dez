@@ -5,9 +5,10 @@ import type { EditorView } from '@codemirror/view'
 import { afterEach, beforeEach, describe, expect, it, vi, type MockInstance } from 'vitest'
 import type { DrawnImage, ImageDrawing, ImageSize } from '../../model/chat/imageDrawing'
 import { imageMarkdown } from '../../model/chat/images'
-import { mediaTagText } from '../../model/chat/mediaTags'
+import { FileTooLargeError, MAX_SAVED_CLIP_BYTES } from '../../model/chat/mediaFiles'
+import { mediaTagText, type MediaTagData, type MediaTagKind } from '../../model/chat/mediaTags'
 import { SECTION_SEP, clipboardPasteTransaction, encodePrompt, pillsField, sectionsField } from '../thread/cmEditor'
-import { dropFilePaths, dropImages, imagePasteAndDrop, pasteImages } from './imageInsert'
+import { dropFilePaths, dropFiles, filePasteAndDrop, pasteFiles } from './imageInsert'
 import { markdownImages, renderedImages } from './images'
 
 interface SaveCall {
@@ -15,6 +16,11 @@ interface SaveCall {
   mediaType: string
   finish: () => void
   fail: () => void
+}
+
+interface ClipSave {
+  clip: Pick<MediaTagData, 'kind' | 'type' | 'src' | 'url'>
+  options: { bytes: Uint8Array, folder: string }
 }
 
 interface Toast {
@@ -25,6 +31,8 @@ interface Toast {
 
 const IMAGE_FOLDER = '/home/u/.config/dez/assets/images'
 const PNG_BYTES = new Uint8Array([137, 80, 78, 71])
+const UNSUPPORTED_DROP_MESSAGE = 'Only images and audio and video clips can be dropped into a conversation. '
+  + 'Clips must be mp4, webm, mov, mp3, wav, ogg, flac, m4a, aac, or opus files.'
 
 let saveCalls: SaveCall[] = []
 let holdSaves = false
@@ -33,7 +41,13 @@ let activeTabId = 'tab-1'
 /** The files that `dez.controller/images/readFile` reads, by path; any
  *  other path fails to read. */
 let localFiles = new Map<string, File>()
-let readPaths: string[] = []
+/** The sizes of the files that are too large to read with a `maxBytes`,
+ *  by path. */
+let largeFiles = new Map<string, number>()
+let reads: [string, { maxBytes?: number }][] = []
+let clipSaves: ClipSave[] = []
+/** The first bytes of the clip files whose save fails. */
+let failingClipSaves = new Set<number>()
 /** What `dez.controller/images/redraw` does with the plan of its caller. */
 let redraw: (plan: (size: ImageSize) => ImageDrawing | null, mediaType: string) => Promise<DrawnImage | null>
 let consoleError: MockInstance<typeof console.error>
@@ -56,10 +70,19 @@ sbp('sbp/selectors/register', {
   'dez.model/tabs/activeId' (): string {
     return activeTabId
   },
-  'dez.controller/images/readFile' (path: string): Promise<File> {
-    readPaths.push(path)
+  'dez.controller/images/readFile' (path: string, options: { maxBytes?: number }): Promise<File> {
+    reads.push([path, options])
+    const size = largeFiles.get(path)
+    if (size !== undefined && options.maxBytes !== undefined && size > options.maxBytes) return Promise.reject(new FileTooLargeError(size, options.maxBytes))
     const file = localFiles.get(path)
     return file ? Promise.resolve(file) : Promise.reject(new Error('The file cannot be read (HTTP 404).'))
+  },
+  // Names each clip file after the first byte of its content, as the image
+  // saves do.
+  'dez.controller/media/save' (clip: ClipSave['clip'], options: ClipSave['options']): Promise<string> {
+    clipSaves.push({ clip, options })
+    if (failingClipSaves.has(options.bytes[0])) return Promise.reject(new Error('disk full'))
+    return Promise.resolve(clipPath(clip.kind, options.bytes[0]))
   },
   'dez.controller/images/redraw' (_file: Blob, plan: (size: ImageSize) => ImageDrawing | null, mediaType: string): Promise<DrawnImage | null> {
     return redraw(plan, mediaType)
@@ -76,6 +99,16 @@ function reference(firstByte = PNG_BYTES[0], id = 'a', extension = 'png'): strin
   return imageMarkdown(savedPath(firstByte, extension), [{ key: 'id', value: id }])
 }
 
+function clipPath(kind: MediaTagKind, firstByte: number): string {
+  return `/home/u/.config/dez/assets/${kind}/clip${firstByte}.bin`
+}
+
+/** The tag that an insert of the clip saved as `clip<firstByte>` puts in
+ *  the doc, with its id. */
+function clipTag(kind: MediaTagKind, type: string, firstByte: number, id: string): string {
+  return mediaTagText({ kind, id, type, src: clipPath(kind, firstByte), url: null, expires: null, other: [] })
+}
+
 function saveCallOf(firstByte: number): SaveCall {
   const call = saveCalls.find((candidate) => candidate.bytes[0] === firstByte)
   if (!call) throw new Error(`No save of image ${firstByte}`)
@@ -90,11 +123,23 @@ function jpeg(name = 'photo.jpg'): File {
   return new File([new Uint8Array([255, 216, 255])], name, { type: 'image/jpeg' })
 }
 
+function clipFile(name: string, type: string, firstByte: number): File {
+  return new File([new Uint8Array([firstByte, 0, 0])], name, { type })
+}
+
+/** A clip file whose size is `size`, larger than the test can make; its
+ *  bytes are `read`, which the test checks. */
+function largeClipFile(name: string, size: number, read: () => Promise<ArrayBuffer>): File {
+  const file = clipFile(name, 'video/quicktime', 41)
+  Object.defineProperties(file, { size: { value: size }, arrayBuffer: { value: read } })
+  return file
+}
+
 function createState(doc: string, anchor: number, head = anchor): EditorState {
   return EditorState.create({
     doc,
     selection: EditorSelection.single(anchor, head),
-    extensions: [imagePasteAndDrop(), markdownImages()],
+    extensions: [filePasteAndDrop(), markdownImages(), history()],
   })
 }
 
@@ -135,11 +180,11 @@ function dataTransfer({ text = '', files = [], items = [] }: { text?: string, fi
 }
 
 function paste(view: EditorView, data: Parameters<typeof dataTransfer>[0]): boolean {
-  return pasteImages({ clipboardData: dataTransfer(data) } as unknown as ClipboardEvent, view)
+  return pasteFiles({ clipboardData: dataTransfer(data) } as unknown as ClipboardEvent, view)
 }
 
 function drop(view: EditorView, pos: number, data: Parameters<typeof dataTransfer>[0]): boolean {
-  return dropImages({ dataTransfer: dataTransfer(data), clientX: pos, clientY: 0 } as unknown as DragEvent, view)
+  return dropFiles({ dataTransfer: dataTransfer(data), clientX: pos, clientY: 0 } as unknown as DragEvent, view)
 }
 
 beforeEach(() => {
@@ -148,7 +193,10 @@ beforeEach(() => {
   toasts = []
   activeTabId = 'tab-1'
   localFiles = new Map()
-  readPaths = []
+  largeFiles = new Map()
+  reads = []
+  clipSaves = []
+  failingClipSaves = new Set()
   redraw = () => Promise.reject(new Error('No image of another type in this test.'))
   consoleError = vi.spyOn(console, 'error').mockImplementation(() => {})
 })
@@ -157,7 +205,7 @@ afterEach(() => {
   consoleError.mockRestore()
 })
 
-describe('pasteImages', () => {
+describe('pasteFiles', () => {
   it('saves a pasted image and puts it in place of the selection, with the caret after it', async () => {
     const editor = createEditor('Look at this: here', 14, 18)
 
@@ -169,20 +217,23 @@ describe('pasteImages', () => {
     expect(renderedImages(editor.view.state)).toHaveLength(1)
   })
 
-  it('leaves a paste with plain text to the text paste, even with an image', () => {
+  it('leaves a paste with plain text to the text paste, even with an image or a clip', () => {
     const editor = createEditor('', 0)
 
     expect(paste(editor.view, { text: 'a caption', files: [png()] })).toBe(false)
+    expect(paste(editor.view, { text: 'a caption', files: [clipFile('dance.mp4', 'video/mp4', 21)] })).toBe(false)
     expect(saveCalls).toEqual([])
+    expect(clipSaves).toStrictEqual([])
   })
 
-  it('leaves a paste without an image file to CodeMirror', () => {
+  it('leaves a paste without an image or clip file to CodeMirror', () => {
     const editor = createEditor('', 0)
     const notes = new File(['hi'], 'notes.txt', { type: 'text/plain' })
 
-    expect(paste(editor.view, { files: [notes] })).toBe(false)
+    expect(paste(editor.view, { files: [notes, clipFile('movie.mkv', 'video/x-matroska', 21)] })).toBe(false)
     expect(paste(editor.view, {})).toBe(false)
     expect(saveCalls).toEqual([])
+    expect(clipSaves).toStrictEqual([])
   })
 
   it('takes an image that the clipboard lists only in its items', async () => {
@@ -191,6 +242,19 @@ describe('pasteImages', () => {
     expect(paste(editor.view, { items: [png()] })).toBe(true)
 
     await vi.waitFor(() => expect(editor.doc()).toBe(reference()))
+  })
+
+  it('stores a pasted clip in the pasted clip folder of its kind, and puts its tag on a line of its own', async () => {
+    const editor = createEditor('see', 3)
+
+    expect(paste(editor.view, { files: [clipFile('dance.mp4', 'video/mp4', 21)] })).toBe(true)
+
+    await vi.waitFor(() => expect(editor.doc()).toBe(`see\n${clipTag('video', 'video/mp4', 21, 'a')}`))
+    expect(clipSaves).toStrictEqual([{
+      clip: { kind: 'video', type: 'video/mp4', src: null, url: null },
+      options: { bytes: new Uint8Array([21, 0, 0]), folder: 'pasted' },
+    }])
+    expect(editor.view.state.selection.main.head).toBe(editor.doc().length)
   })
 })
 
@@ -321,7 +385,7 @@ describe('inserting the saved images', () => {
   })
 })
 
-describe('dropImages', () => {
+describe('dropFiles', () => {
   it('puts dropped images at the drop point', async () => {
     const editor = createEditor('one two', 0)
 
@@ -342,19 +406,79 @@ describe('dropImages', () => {
     await vi.waitFor(() => expect(editor.doc()).toBe(`question\n${reference(1)}\n${SECTION_SEP}\n${reference(2, 'b')}\nanswer`))
   })
 
-  it('leaves out the files that are not images, with a toast', async () => {
+  it('puts dropped images and clips in file order, the clips each on a whole line, with the caret after the last one', async () => {
+    const editor = createEditor('one two', 0)
+    const files = [png('a.png', 1), clipFile('dance.mp4', 'video/mp4', 21), clipFile('song.MP3', '', 22)]
+
+    expect(drop(editor.view, 4, { files })).toBe(true)
+
+    const text = `${reference(1)}\n${clipTag('video', 'video/mp4', 21, 'b')}\n${clipTag('audio', 'audio/mpeg', 22, 'c')}`
+    await vi.waitFor(() => expect(editor.doc()).toBe(`one \n${text}\ntwo`))
+    expect(editor.view.state.selection.main.head).toBe('one \n'.length + text.length)
+    expect(clipSaves.map(({ clip, options }) => [clip.kind, clip.type, options.folder])).toStrictEqual([['video', 'video/mp4', 'pasted'], ['audio', 'audio/mpeg', 'pasted']])
+    expect(toasts).toStrictEqual([])
+  })
+
+  it('leaves out the files that are not images or clips, with a toast', async () => {
     const editor = createEditor('', 0)
     const notes = new File(['hi'], 'notes.txt', { type: 'text/plain' })
 
-    expect(drop(editor.view, 0, { files: [notes, png()] })).toBe(true)
+    expect(drop(editor.view, 0, { files: [notes, clipFile('movie.mkv', 'video/x-matroska', 21), png()] })).toBe(true)
     expect(drop(editor.view, 0, { files: [notes] })).toBe(true)
 
     await vi.waitFor(() => expect(editor.doc()).toBe(reference()))
     expect(saveCalls).toHaveLength(1)
-    expect(toasts.map((toast) => toast.message)).toEqual([
-      'Only image files can be dropped into a conversation.',
-      'Only image files can be dropped into a conversation.',
-    ])
+    expect(clipSaves).toStrictEqual([])
+    expect(toasts.map((toast) => toast.message)).toStrictEqual([UNSUPPORTED_DROP_MESSAGE, UNSUPPORTED_DROP_MESSAGE])
+  })
+
+  it('leaves out a clip that is larger than the clips that Dez stores, without reading it', async () => {
+    const read = vi.fn(() => Promise.resolve(new ArrayBuffer(3)))
+    const editor = createEditor('', 0)
+
+    drop(editor.view, 0, { files: [largeClipFile('trip.mov', 1.5 * 1024 ** 3, read), png()] })
+
+    await vi.waitFor(() => expect(editor.doc()).toBe(reference()))
+    expect(read).not.toHaveBeenCalled()
+    expect(clipSaves).toStrictEqual([])
+    expect(toasts).toStrictEqual([expect.objectContaining({ title: 'Clip not added', variant: 'warning' })])
+    expect(toasts[0].message).toContain('trip.mov')
+    expect(toasts[0].message).toContain('1.5 GB')
+    expect(toasts[0].message).toContain('1.0 GB')
+  })
+
+  it('inserts the other files when a clip save fails', async () => {
+    failingClipSaves = new Set([21])
+    const editor = createEditor('', 0)
+
+    drop(editor.view, 0, { files: [clipFile('dance.mp4', 'video/mp4', 21), clipFile('song.mp3', 'audio/mpeg', 22)] })
+
+    await vi.waitFor(() => expect(editor.doc()).toBe(clipTag('audio', 'audio/mpeg', 22, 'a')))
+    expect(clipSaves).toHaveLength(2)
+  })
+
+  it('takes a clip insert back in one undo step', async () => {
+    const editor = createEditor('see', 3)
+
+    drop(editor.view, 3, { files: [clipFile('dance.mp4', 'video/mp4', 21)] })
+    await vi.waitFor(() => expect(editor.doc()).toBe(`see\n${clipTag('video', 'video/mp4', 21, 'a')}`))
+
+    let undone = editor.view.state
+    expect(undo({ state: undone, dispatch: (tr) => { undone = tr.state } })).toBe(true)
+    expect(undone.doc.toString()).toBe('see')
+  })
+
+  it('says which files it did not insert in a state rebuilt during the save', async () => {
+    holdSaves = true
+    const editor = createEditor('first tab', 9)
+
+    drop(editor.view, 9, { files: [png(), clipFile('dance.mp4', 'video/mp4', 21)] })
+    await vi.waitFor(() => expect(saveCalls).toHaveLength(1))
+    editor.replaceState(createState('first tab', 9))
+    saveCalls[0].finish()
+
+    await vi.waitFor(() => expect(toasts).toStrictEqual([expect.objectContaining({ title: 'Image and clip not inserted', variant: 'warning' })]))
+    expect(editor.doc()).toBe('first tab')
   })
 
   it('leaves a drag without files to CodeMirror', () => {
@@ -369,13 +493,49 @@ describe('dropFilePaths', () => {
     localFiles = new Map([['/home/u/Pictures/a.png', png('a.png', 1)], ['/home/u/Pictures/b.JPG', jpeg('b.JPG')]])
     const editor = createEditor('one two', 0)
 
-    dropFilePaths(editor.view, ['/home/u/Pictures/a.png', '/home/u/notes.txt', '/home/u/Pictures/b.JPG'], { x: 4, y: 0 })
+    dropFilePaths(editor.view, ['/home/u/Pictures/a.png', '/home/u/notes.txt', '/home/u/movie.mkv', '/home/u/Pictures/b.JPG'], { x: 4, y: 0 })
 
     const references = `${reference(1)}\n${reference(255, 'b', 'jpg')}`
     await vi.waitFor(() => expect(editor.doc()).toBe(`one ${references}two`))
     expect(editor.view.state.selection.main.head).toBe(4 + references.length)
-    expect(readPaths).toEqual(['/home/u/Pictures/a.png', '/home/u/Pictures/b.JPG'])
-    expect(toasts.map((toast) => toast.message)).toEqual(['Only image files can be dropped into a conversation.'])
+    expect(reads).toStrictEqual([['/home/u/Pictures/a.png', {}], ['/home/u/Pictures/b.JPG', {}]])
+    expect(toasts.map((toast) => toast.message)).toStrictEqual([UNSUPPORTED_DROP_MESSAGE])
+  })
+
+  it('reads the dropped clip files by path, up to the size of the clips that Dez stores, and puts their tags at the drop point', async () => {
+    localFiles = new Map([
+      ['/home/u/Pictures/a.png', png('a.png', 1)],
+      ['/home/u/Videos/dance.mp4', clipFile('dance.mp4', '', 21)],
+      ['/home/u/Music/song.MP3', clipFile('song.MP3', '', 22)],
+    ])
+    const editor = createEditor('one two', 0)
+
+    dropFilePaths(editor.view, ['/home/u/Pictures/a.png', '/home/u/Videos/dance.mp4', '/home/u/Music/song.MP3'], { x: 4, y: 0 })
+
+    const text = `${reference(1)}\n${clipTag('video', 'video/mp4', 21, 'b')}\n${clipTag('audio', 'audio/mpeg', 22, 'c')}`
+    await vi.waitFor(() => expect(editor.doc()).toBe(`one \n${text}\ntwo`))
+    expect(editor.view.state.selection.main.head).toBe('one \n'.length + text.length)
+    expect(reads).toStrictEqual([
+      ['/home/u/Pictures/a.png', {}],
+      ['/home/u/Videos/dance.mp4', { maxBytes: MAX_SAVED_CLIP_BYTES }],
+      ['/home/u/Music/song.MP3', { maxBytes: MAX_SAVED_CLIP_BYTES }],
+    ])
+    expect(toasts).toStrictEqual([])
+  })
+
+  it('leaves out a dropped clip that is larger than the clips that Dez stores', async () => {
+    localFiles = new Map([['/tmp/a.png', png('a.png', 1)]])
+    largeFiles = new Map([['/tmp/trip.mov', 1.5 * 1024 ** 3]])
+    const editor = createEditor('', 0)
+
+    dropFilePaths(editor.view, ['/tmp/trip.mov', '/tmp/a.png'], { x: 0, y: 0 })
+
+    await vi.waitFor(() => expect(editor.doc()).toBe(reference(1)))
+    expect(clipSaves).toStrictEqual([])
+    expect(toasts).toStrictEqual([expect.objectContaining({ title: 'Clip not added', variant: 'warning' })])
+    expect(toasts[0].message).toContain('trip.mov')
+    expect(toasts[0].message).toContain('1.5 GB')
+    expect(toasts[0].message).toContain('1.0 GB')
   })
 
   it('leaves out an image that cannot be read, with a warning', async () => {
@@ -400,7 +560,7 @@ describe('dropFilePaths', () => {
 
     expect(editor.doc()).toBe('see https://example.com/a')
     expect(editor.view.state.selection.main.head).toBe(editor.doc().length)
-    expect(readPaths).toEqual([])
+    expect(reads).toStrictEqual([])
     expect(toasts).toEqual([])
   })
 })
@@ -413,7 +573,7 @@ describe('image and clip ids', () => {
     return EditorState.create({
       doc,
       selection: EditorSelection.cursor(doc.length),
-      extensions: [imagePasteAndDrop(), history(), sectionsField.init(() => [{ id: 's1', role: 'user' }]), pillsField.init(() => new Map())],
+      extensions: [filePasteAndDrop(), history(), sectionsField.init(() => [{ id: 's1', role: 'user' }]), pillsField.init(() => new Map())],
     })
   }
 

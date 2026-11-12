@@ -824,8 +824,9 @@ describe('conversation Markdown export', () => {
       .toBe(`# Chat\n\n## User\n\nLike this?\n${block}\n\n## Agent\n\nLet me check.\n\nThere are 12.\n`)
   })
 
-  it('writes each clip of agent text as a link, and keeps the same text in a user message', () => {
+  it('writes each clip of agent and user text as a link', () => {
     const saved = '/home/u/.config/dez/assets/generated/video/v1.mp4'
+    const pasted = '/home/u/.config/dez/assets/video/v2.mp4'
     const video = `<dez:video id="b" type="video/mp4" src="${saved}" url="https://cdn.example/v.mp4?sig=1"/>`
     const audio = '<dez:audio id="c" type="audio/mpeg" src="https://cdn.example/a.mp3" url="https://cdn.example/a.mp3"/>'
     const gone = '<dez:audio id="d" type="audio/mpeg"/>'
@@ -834,7 +835,7 @@ describe('conversation Markdown export', () => {
       id: 'conversation',
       title: 'Chat',
       sections: [
-        section('user', [textNode(`Like this?\n${gone}`)]),
+        section('user', [textNode(`Like this?\n<dez:video id="e" type="video/mp4" src="${pasted}"/>\n${gone}`)]),
         section('agent', [textNode(`Here:\n${video}\n${block}\n${audio}\n${gone}\nDone.`)]),
       ],
       activeModel: null,
@@ -842,7 +843,7 @@ describe('conversation Markdown export', () => {
     }
 
     expect(serializeConversationAsMarkdown(data)).toBe(
-      `# Chat\n\n## User\n\nLike this?\n${gone}\n\n## Agent\n\nHere:\n[video](${saved})\n\n[audio](https://cdn.example/a.mp3)\n[audio]\nDone.\n`,
+      `# Chat\n\n## User\n\nLike this?\n[video](${pasted})\n[audio]\n\n## Agent\n\nHere:\n[video](${saved})\n\n[audio](https://cdn.example/a.mp3)\n[audio]\nDone.\n`,
     )
   })
 })

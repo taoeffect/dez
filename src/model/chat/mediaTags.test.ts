@@ -2,6 +2,8 @@ import { describe, expect, it } from 'vitest'
 import { SENTINEL_CHAR } from './content'
 import {
   findMediaTags,
+  isPastedMediaPath,
+  isSavedMediaPath,
   labelMediaTags,
   mediaTagRequestText,
   mediaTagText,
@@ -40,6 +42,30 @@ const AUDIO: MediaTagData = {
 function read(text: string): MediaTagData[] {
   return findMediaTags(text).map(({ from: _from, to: _to, ...data }) => data)
 }
+
+describe('isSavedMediaPath and isPastedMediaPath', () => {
+  const GENERATED = ['/home/u/.config/dez/assets/generated/video/9f3c.mp4', '/home/u/.config/dez/assets/generated/audio/a_1.mp3']
+  const PASTED = ['/home/u/.config/dez/assets/video/9f3c.mov', '/home/u/.config/dez/assets/audio/a-1.wav']
+
+  it('takes a clip directly in a generated or a pasted folder as stored, and only a pasted one as pasted', () => {
+    expect([...GENERATED, ...PASTED].map(isSavedMediaPath)).toStrictEqual([true, true, true, true])
+    expect([...GENERATED, ...PASTED].map(isPastedMediaPath)).toStrictEqual([false, false, true, true])
+  })
+
+  it('takes no other path', () => {
+    for (const path of [
+      CACHED_VIDEO,
+      URL,
+      '/home/u/.config/dez/assets/video/sub/9f3c.mp4',
+      'home/u/.config/dez/assets/audio/a.mp3',
+      '/home/u/.config/dez/assets/video/9f3c.mp4/more',
+      '/home/u/.config/dez/assets/images/9f3c.png',
+      '/home/u/.config/dez/assets/audio/no-extension',
+    ]) {
+      expect([isSavedMediaPath(path), isPastedMediaPath(path)], path).toStrictEqual([false, false])
+    }
+  })
+})
 
 describe('mediaTagText', () => {
   it('writes one self-closing line with the attributes in a fixed order', () => {

@@ -34,14 +34,15 @@ describe('conversation summaries', () => {
       .toBe('Like: <dez:tool id="call_1" name="model_list"> 12 models </dez:tool> There are 12.')
   })
 
-  it('shows the media tags of agent text as labels and keeps the same text in user text', () => {
+  it('shows the media tags of agent and user text as labels', () => {
     const video = '<dez:video id="b" type="video/mp4" src="/home/u/.config/dez/assets/generated/video/v1.mp4" url="https://cdn.example/v.mp4"/>'
     const audio = '<dez:audio id="c" type="audio/mpeg"/>'
+    const pasted = '<dez:video id="d" type="video/mp4" src="/home/u/.config/dez/assets/video/v2.mp4"/>'
     const sections = [
-      section('user', [textNode(`Like:\n${audio}`)]),
+      section('user', [textNode(`Like:\n${audio}\n${pasted}`)]),
       section('agent', [textNode(`Here it is.\n${video}\n${audio}\nDone.`)]),
     ]
 
-    expect(conversationPreview(sections)).toBe(`Like: ${audio} Here it is. [video] [audio] Done.`)
+    expect(conversationPreview(sections)).toBe('Like: [audio] [video] Here it is. [video] [audio] Done.')
   })
 })

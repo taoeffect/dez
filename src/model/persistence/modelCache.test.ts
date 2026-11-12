@@ -80,7 +80,7 @@ describe('model cache persistence format', () => {
     expect(parseModelCacheJson(serializeModelCacheJson(parsed))).toStrictEqual(parsed)
   })
 
-  it('round-trips the parameters, text rules, image rules, and unstored file type of a model, and drops only a model whose data is not valid', () => {
+  it('round-trips the parameters, text rules, image rules, clip rules, and unstored file type of a model, and drops only a model whose data is not valid', () => {
     const models = [
       {
         id: 'film',
@@ -122,6 +122,21 @@ describe('model cache persistence format', () => {
         request: 'video',
         images: { maxImages: 2, whenParameter: { name: 'images_as', value: 'references', rules: { maxImages: 16, references: {} } } },
       },
+      {
+        id: 'clip-references',
+        name: 'Clip references',
+        provider: 'venice',
+        request: 'video',
+        clips: {
+          audio: { use: 'reference', maxClips: 3, minSeconds: 0.5, maxSeconds: 15, maxTotalSeconds: 15, maxBytes: 15_000_000, types: ['audio/wav', 'audio/mpeg'], promptName: '@Audio{n}' },
+          // One length only: the least length is the most length.
+          video: { use: 'reference', maxClips: 3, minSeconds: 2, maxSeconds: 2, maxBytes: 50_000_000, types: ['video/mp4'] },
+          audioNeedsVisual: true,
+        },
+      },
+      { id: 'voices', name: 'Voices', provider: 'venice', request: 'video', clips: { audio: { use: 'voice', types: ['audio/wav'] } } },
+      { id: 'by-address', name: 'By address', provider: 'venice', request: 'video', clips: { audio: { use: 'reference', urlOnly: true }, video: { use: 'reference', urlOnly: true } } },
+      { id: 'soundtrack', name: 'Soundtrack', provider: 'venice', request: 'imageToVideo', clips: { audio: { use: 'background', maxClips: 1, maxSeconds: 30 } } },
       // A cache written before parameters existed.
       { id: 'old', name: 'Old', provider: 'venice', request: 'video' },
     ]
@@ -213,6 +228,70 @@ describe('model cache persistence format', () => {
       ['bad-value', { maxImages: 2 }],
       ['no-count', { maxImages: 2 }],
       ['bad-name-inside', { maxImages: 2, whenParameter: { name: 'images_as', value: 'references', rules: { maxImages: 16, references: {} } } }],
+    ])
+  })
+
+  it('drops a clip rule that is not valid alone, and keeps the model, the kind, and its other rules', () => {
+    const model = (id: string, audio: Record<string, unknown>) => ({ id, name: id, provider: 'venice', request: 'video', clips: { audio: { use: 'reference', maxSeconds: 10, ...audio } } })
+    const parsed = parseModelCacheJson(JSON.stringify({
+      version: MODEL_CACHE_VERSION,
+      providers: {
+        venice: {
+          models: [
+            model('no-count', { maxClips: 0 }),
+            model('part-count', { maxClips: 1.5 }),
+            model('type-not-text', { types: ['audio/wav', 3] }),
+            model('no-types', { types: [] }),
+            model('least-above-most', { minSeconds: 20 }),
+            model('no-number', { promptName: '@Audio' }),
+            model('url-only-not-true', { urlOnly: 'yes' }),
+          ],
+          working: true,
+          updatedAt: 1,
+          lastCheckedAt: 2,
+        },
+      },
+    }))
+
+    const kept = { audio: { use: 'reference', maxSeconds: 10 } }
+    expect(parsed.providers.venice?.models.map(({ id, clips }) => [id, clips])).toStrictEqual([
+      ['no-count', kept],
+      ['part-count', kept],
+      ['type-not-text', kept],
+      ['no-types', kept],
+      ['least-above-most', kept],
+      ['no-number', kept],
+      ['url-only-not-true', kept],
+    ])
+  })
+
+  it('drops a clip kind that is not valid alone, and keeps the model and its other kind', () => {
+    const video = { use: 'reference', maxClips: 2 }
+    const model = (id: string, clips: Record<string, unknown>) => ({ id, name: id, provider: 'venice', request: 'video', clips })
+    const parsed = parseModelCacheJson(JSON.stringify({
+      version: MODEL_CACHE_VERSION,
+      providers: {
+        venice: {
+          models: [
+            model('unknown-use', { audio: { use: 'lipsync', maxClips: 1 }, video }),
+            model('no-object', { audio: 'wav', video }),
+            // The rule of the audio clips goes with them.
+            model('needs-visual', { audio: { use: 'lipsync' }, video, audioNeedsVisual: true }),
+            // As a model with no clip rules, it takes no clip.
+            model('no-kind', { audio: { use: 'lipsync' }, audioNeedsVisual: true }),
+          ],
+          working: true,
+          updatedAt: 1,
+          lastCheckedAt: 2,
+        },
+      },
+    }))
+
+    expect(parsed.providers.venice?.models.map((model) => [model.id, 'clips' in model ? model.clips : 'no field'])).toStrictEqual([
+      ['unknown-use', { video }],
+      ['no-object', { video }],
+      ['needs-visual', { video }],
+      ['no-kind', 'no field'],
     ])
   })
 

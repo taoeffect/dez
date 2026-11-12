@@ -56,11 +56,12 @@ export function audioClipId(args: ToolArguments): string {
 }
 
 /** The audio clip `id` of a tab's `sections`: the newest media tag with that
- *  id in an agent section (tags count there only; mediaTags.ts). Throws for
- *  an id that names a video clip, an image, or nothing; the text tells the
- *  model the ids of the audio clips that it can name. */
+ *  id in any section (a clip that a model made, or a clip file that the
+ *  user pasted or dropped; mediaTags.ts). Throws for an id that names a
+ *  video clip, an image, or nothing; the text tells the model the ids of
+ *  the audio clips that it can name. */
 export function audioClipOf(sections: readonly Section[], id: string): MediaTag {
-  const tags = sections.flatMap((section) => (section.role === 'agent' ? findMediaTags(sectionPlainText(section)) : []))
+  const tags = sections.flatMap((section) => findMediaTags(sectionPlainText(section)))
   const tag = tags.findLast((candidate) => candidate.id === id)
   if (tag?.kind === 'audio') return tag
   if (tag?.kind === 'video') throw new ToolError(`@${id} is a video clip. The audio tool works on audio clips only.`)

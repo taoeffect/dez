@@ -246,6 +246,17 @@ describe('dez.controller/media/save', () => {
     expect(toasts).toEqual([])
   })
 
+  it('writes the bytes of a pasted clip file to the pasted folder of its kind', async () => {
+    const bytes = Uint8Array.from([4, 5])
+    const audio = await sbp('dez.controller/media/save', { kind: 'audio', type: 'audio/mpeg', src: null, url: null }, { bytes, folder: 'pasted' }) as string
+    const video = await sbp('dez.controller/media/save', { kind: 'video', type: 'video/quicktime', src: null, url: null }, { bytes, folder: 'pasted' }) as string
+
+    expect(audio).toMatch(/^\/home\/ann\/\.config\/dez\/assets\/audio\/[0-9a-f-]{36}\.mp3$/)
+    expect(video).toMatch(/^\/home\/ann\/\.config\/dez\/assets\/video\/[0-9a-f-]{36}\.mov$/)
+    expect(savedFiles).toStrictEqual([{ path: audio.slice(APP_DIR.length + 1), bytes }, { path: video.slice(APP_DIR.length + 1), bytes }])
+    expect(toasts).toEqual([])
+  })
+
   it('logs, shows an error toast, and rejects when the bytes cannot be written', async () => {
     const writeError = 'Failed to write assets/generated/audio/a.wav: No space left on device (os error 28)'
     saveAppFile = async () => {
@@ -298,10 +309,12 @@ describe('dez.controller/media/delete', () => {
   it('deletes a saved clip of this Dez folder by its app-file path', async () => {
     await deleteClip(`${APP_DIR}/assets/generated/video/${NAME}.mp4`)
     await deleteClip(`${APP_DIR}/assets/generated/audio/a_1.mp3`)
+    await deleteClip(`${APP_DIR}/assets/video/${NAME}.mov`)
 
     expect(deletedFiles).toStrictEqual([
       { root: 'app', path: `assets/generated/video/${NAME}.mp4` },
       { root: 'app', path: 'assets/generated/audio/a_1.mp3' },
+      { root: 'app', path: `assets/video/${NAME}.mov` },
     ])
     expect(toasts).toEqual([])
   })

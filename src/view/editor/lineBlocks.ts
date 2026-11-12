@@ -4,11 +4,12 @@ import { SECTION_SEP, sectionsField, type SectionModel } from '../thread/cmEdito
 import { linesRemovalRange } from './images'
 import type { DocRange } from './pendingRanges'
 
-// A line block is a tag of an agent section that the editor shows as one
-// widget in place of its source lines: a tool call chip (`toolCalls.ts`) or
-// a media player (`media.ts`). The tag is a block only while it has its
-// lines to itself; text on its first or last line turns it back into its
-// source. The rules here keep text off those lines, for every kind of block.
+// A line block is a tag that the editor shows as one widget in place of its
+// source lines: a tool call chip of an agent section (`toolCalls.ts`), or a
+// media player of any section (`media.ts`). The tag is a block only while
+// it has its lines to itself; text on its first or last line turns it back
+// into its source. The rules here keep text off those lines, for every
+// kind of block.
 
 /** The text of a section and where it starts in the doc. */
 export interface SectionText {
@@ -17,24 +18,29 @@ export interface SectionText {
   text: string
 }
 
-/** The text of each agent section of `doc`, in section order. A section's
- *  text is the text between the line breaks that frame the separators
+/** The text of each section of `doc`, in section order. A section's text
+ *  is the text between the line breaks that frame the separators
  *  (`sectionsToDoc` in cmEditor.ts); `sectionsField` counts every separator
  *  char, so the text before separator `i` is the text of `sections[i]`.
- *  Blocks are read from one agent section at a time: a tag in a user
- *  section is plain text, and a tag never runs from one section into the
- *  next. */
-export function agentSectionTexts(doc: string, sections: readonly SectionModel[]): SectionText[] {
+ *  Blocks are read from one section at a time: a tag never runs from one
+ *  section into the next. */
+export function sectionTexts(doc: string, sections: readonly SectionModel[]): SectionText[] {
   const texts: SectionText[] = []
   let from = 0
   for (let index = 0; ; index++) {
     const separator = doc.indexOf(SECTION_SEP, from)
     const to = separator < 0 ? doc.length : doc[separator - 1] === '\n' ? separator - 1 : separator
     const section = sections[index]
-    if (section?.role === 'agent') texts.push({ section, from, text: doc.slice(from, Math.max(from, to)) })
+    if (section) texts.push({ section, from, text: doc.slice(from, Math.max(from, to)) })
     if (separator < 0) return texts
     from = doc[separator + 1] === '\n' ? separator + 2 : separator + 1
   }
+}
+
+/** The text of each agent section of `doc` (`sectionTexts`), for the blocks
+ *  of agent sections only: a tool call in a user section is plain text. */
+export function agentSectionTexts(doc: string, sections: readonly SectionModel[]): SectionText[] {
+  return sectionTexts(doc, sections).filter(({ section }) => section.role === 'agent')
 }
 
 /** Whether `tr` changed which sections there are, or the role of one. Each

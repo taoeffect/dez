@@ -3,7 +3,7 @@ import { mediaTagText, type MediaTagData } from '../chat/mediaTags'
 import { toolBlockText, type ToolBlockStatus } from '../chat/toolBlocks'
 import type { ModelRef, Section, SectionThinking, ThinkingReplay } from '../chat/types'
 import type { ClipInputRules, MediaKind } from '../providers/types'
-import { agentSectionMessages, mediaRequestInput, sectionsToStreamMessages } from './messages'
+import { agentSectionMessages, mediaRequestInput, messageClips, sectionsToStreamMessages } from './messages'
 
 const model: ModelRef = { providerId: 'local', modelId: 'm' }
 const IMAGE = '/home/u/.config/dez/assets/images/red.png'
@@ -183,16 +183,16 @@ describe('agentSectionMessages', () => {
       ])
     })
 
-    it('sends a reply that holds only a clip, and no path of a tag line in a user message', () => {
+    it('sends a reply that holds only a clip, and a tag line of a user message with no path', () => {
       const sections: Section[] = [
         { id: 'u1', role: 'user', content: [{ kind: 'text', text: `What is this?\n${mediaTagText(CLIP)}` }] },
         agent(mediaTagText(CLIP)),
       ]
-      const { messages } = sectionsToStreamMessages(sections, model, { sendImages: true, sendTools: true })
 
-      expect(messages[1]).toStrictEqual({ role: 'agent', content: SENT_CLIP })
-      expect(JSON.stringify(messages)).not.toContain('/home/u')
-      expect(JSON.stringify(messages)).not.toContain('assets/generated')
+      expect(sectionsToStreamMessages(sections, model, { sendImages: true, sendTools: true }).messages).toStrictEqual([
+        { role: 'user', content: `What is this?\n${SENT_CLIP}` },
+        { role: 'agent', content: SENT_CLIP },
+      ])
     })
   })
 
@@ -305,6 +305,65 @@ describe('agentSectionMessages', () => {
 const GENERATED = '/home/u/.config/dez/assets/generated/images/fox.webp'
 const user = (id: string, text: string): Section => ({ id, role: 'user', content: [{ kind: 'text', text }] })
 const reply = (id: string, text: string): Section => ({ id, role: 'agent', model, content: [{ kind: 'text', text }] })
+
+// The clips of a tab, as players of earlier replies show them.
+const SONG: MediaTagData = { kind: 'audio', id: 'c', type: 'audio/mpeg', src: '/home/u/.cache/dez/media/s1.mp3', url: null, expires: null, other: [] }
+const DANCE: MediaTagData = { kind: 'video', id: 'd', type: 'video/mp4', src: null, url: 'https://cdn.example/d.mp4', expires: '2026-12-01T00:00:00.000Z', other: [] }
+const RAIN: MediaTagData = { kind: 'audio', id: 'e', type: 'audio/wav', src: '/home/u/.config/dez/assets/generated/audio/r.wav', url: null, expires: null, other: [] }
+// Clip files that the user pasted or dropped into a message.
+const PASTED_DANCE: MediaTagData = { kind: 'video', id: 'f', type: 'video/mp4', src: '/home/u/.config/dez/assets/video/v1.mp4', url: null, expires: null, other: [] }
+const PASTED_VOICE: MediaTagData = { kind: 'audio', id: 'g', type: 'audio/wav', src: '/home/u/.config/dez/assets/audio/a1.wav', url: null, expires: null, other: [] }
+const SENT_DANCE = '<dez:video id="f" type="video/mp4"/>'
+const SENT_VOICE = '<dez:audio id="g" type="audio/wav"/>'
+// A clip as a request takes it: no unknown attribute.
+const attached = ({ other: _other, ...clip }: MediaTagData) => clip
+const NO_CLIPS = { clips: [], clipsLeftOut: { audio: 0, video: 0 } }
+
+describe('messageClips', () => {
+  const clipsReply = reply('a1', `Here:\n${mediaTagText(SONG)}\n${mediaTagText(DANCE)}\n${mediaTagText(RAIN)}`)
+
+  it('gives the clips that the newest user message names, in text order and each one once', () => {
+    expect(messageClips([clipsReply, user('u1', 'Put @e under @d, then @c. Keep @d.')])).toStrictEqual([attached(RAIN), attached(DANCE), attached(SONG)])
+  })
+
+  it('gives the clips that the message holds and the clips that it names, in text order, and a clip that it holds once', () => {
+    const message = user('u1', `${mediaTagText(PASTED_DANCE)}\nThe dancer of @f moves to @d, and @g sings.\n${mediaTagText(PASTED_VOICE)}`)
+
+    expect(messageClips([clipsReply, message])).toStrictEqual([attached(PASTED_DANCE), attached(DANCE), attached(PASTED_VOICE)])
+  })
+
+  it('gives a clip of an earlier user message only when the message names it', () => {
+    const sections = [user('u1', `Here:\n${mediaTagText(PASTED_DANCE)}`), reply('a1', 'A dancer.')]
+
+    expect([
+      messageClips([...sections, user('u2', 'Make it longer')]),
+      messageClips([...sections, user('u2', 'Make @f longer')]),
+    ]).toStrictEqual([[], [attached(PASTED_DANCE)]])
+  })
+
+  it('takes the last tag of an id in the message or the sections before it, and no tag of a later section', () => {
+    const later = { ...SONG, src: null, url: 'https://cdn.example/c.mp3', expires: '2026-12-01T00:00:00.000Z' }
+    const sections = [
+      clipsReply,
+      reply('a2', mediaTagText(later)),
+      user('u1', `Mix @c, @e, and @h\n${mediaTagText({ ...PASTED_VOICE, id: 'e' })}`),
+      reply('a3', mediaTagText({ ...DANCE, id: 'h' })),
+    ]
+
+    expect(messageClips(sections)).toStrictEqual([attached(later), attached({ ...PASTED_VOICE, id: 'e' })])
+  })
+
+  it('reads only the newest non-empty user message', () => {
+    expect(messageClips([clipsReply, user('u1', `Use @c\n${mediaTagText(PASTED_DANCE)}`), reply('a2', 'Done.'), user('u2', 'Again'), user('u3', '')])).toStrictEqual([])
+  })
+
+  // The ids are unique in a tab unless the user edits the text.
+  it('gives no clip for an id that an image has', () => {
+    const sections = [clipsReply, reply('a2', `![${GENERATED}](id=c)`), user('u1', `Use @c and ![${IMAGE}](id=d)\n${mediaTagText({ ...PASTED_DANCE, id: 'c' })}`)]
+
+    expect(messageClips(sections)).toStrictEqual([])
+  })
+})
 
 describe('sectionsToStreamMessages: images of user messages', () => {
   const sent = (sections: Section[], sendImages = true) => sectionsToStreamMessages(sections, model, { sendImages, sendTools: false })
@@ -456,6 +515,41 @@ describe('sectionsToStreamMessages: images of user messages', () => {
   })
 })
 
+describe('sectionsToStreamMessages: clips of user messages', () => {
+  const sent = (sections: Section[], sendImages = true) => sectionsToStreamMessages(sections, model, { sendImages, sendTools: false })
+  const sections = [
+    user('u1', `Like this:\n${mediaTagText(PASTED_DANCE)}`),
+    reply('a1', 'Yes.'),
+    user('u2', `Sing @f like ![${IMAGE}](id=a)\n${mediaTagText(PASTED_VOICE)}`),
+  ]
+
+  it('sends each tag of a user message in its request form, and no part for a clip or a mention of one', () => {
+    expect(sent(sections)).toStrictEqual({
+      messages: [
+        { role: 'user', content: `Like this:\n${SENT_DANCE}` },
+        { role: 'agent', content: 'Yes.' },
+        { role: 'user', content: [{ type: 'text', text: 'Sing @f like ![image](id=a)' }, { type: 'image', path: IMAGE }, { type: 'text', text: `\n${SENT_VOICE}` }] },
+      ],
+      imagesLeftOut: 0,
+    })
+  })
+
+  it('sends the newest message with no image part as the text that an older message sends', () => {
+    const textOnly = [...sections.slice(0, 2), user('u2', `Sing @f\n${mediaTagText(PASTED_VOICE)}`)]
+
+    expect([sent(sections, false).messages.at(-1), sent(textOnly).messages.at(-1)]).toStrictEqual([
+      { role: 'user', content: `Sing @f like ![image](id=a)\n${SENT_VOICE}` },
+      { role: 'user', content: `Sing @f\n${SENT_VOICE}` },
+    ])
+  })
+
+  it('reads no image mention in a tag line', () => {
+    const tag = mediaTagText({ ...PASTED_DANCE, src: '/home/u/clips/@a.mp4' })
+
+    expect(sent([user('u1', `![${IMAGE}](id=a)`), user('u2', `Dance\n${tag}`)]).messages.at(-1)).toStrictEqual({ role: 'user', content: `Dance\n${SENT_DANCE}` })
+  })
+})
+
 describe('mediaRequestInput', () => {
   // The tab's sections at the start of a media reply: the reply's own
   // section is empty, so it gives no message.
@@ -471,8 +565,8 @@ describe('mediaRequestInput', () => {
       user('u2', `\nLike ![${IMAGE}](id=b), but blue \n`),
     ]
 
-    expect(input('image', sections)).toStrictEqual({ prompt: 'Like ![image](id=b), but blue', images: [], imagesLeftOut: 1 })
-    expect(input('imageEdit', sections)).toStrictEqual({ prompt: 'Like ![image](id=b), but blue', images: [IMAGE], imagesLeftOut: 0 })
+    expect(input('image', sections)).toStrictEqual({ prompt: 'Like ![image](id=b), but blue', images: [], imagesLeftOut: 1, ...NO_CLIPS })
+    expect(input('imageEdit', sections)).toStrictEqual({ prompt: 'Like ![image](id=b), but blue', images: [IMAGE], imagesLeftOut: 0, ...NO_CLIPS })
   })
 
   it('edits the images of the last user message, in order', () => {
@@ -492,8 +586,8 @@ describe('mediaRequestInput', () => {
       user('u3', 'Edit @a to add an apple'),
     ]
 
-    expect(input('imageEdit', sections)).toStrictEqual({ prompt: 'Edit @a to add an apple', images: [GENERATED], imagesLeftOut: 0 })
-    expect(input('image', sections)).toStrictEqual({ prompt: 'Edit @a to add an apple', images: [], imagesLeftOut: 1 })
+    expect(input('imageEdit', sections)).toStrictEqual({ prompt: 'Edit @a to add an apple', images: [GENERATED], imagesLeftOut: 0, ...NO_CLIPS })
+    expect(input('image', sections)).toStrictEqual({ prompt: 'Edit @a to add an apple', images: [], imagesLeftOut: 1, ...NO_CLIPS })
   })
 
   it('edits the pasted and the mentioned images of the last user message in text order, each one once', () => {
@@ -515,8 +609,8 @@ describe('mediaRequestInput', () => {
       input('imageEdit', sections, { images: { maxImages: 1 } }),
       input('imageEdit', sections, { images: { maxImages: 3 } }),
     ]).toStrictEqual([
-      { prompt: 'Put ![image](id=b) on @a', images: [IMAGE], imagesLeftOut: 1 },
-      { prompt: 'Put ![image](id=b) on @a', images: [IMAGE, GENERATED], imagesLeftOut: 0 },
+      { prompt: 'Put ![image](id=b) on @a', images: [IMAGE], imagesLeftOut: 1, ...NO_CLIPS },
+      { prompt: 'Put ![image](id=b) on @a', images: [IMAGE, GENERATED], imagesLeftOut: 0, ...NO_CLIPS },
     ])
   })
 
@@ -527,11 +621,11 @@ describe('mediaRequestInput', () => {
       user('u2', 'Make it blue'),
     ]
 
-    expect(input('imageEdit', sections)).toStrictEqual({ prompt: 'Make it blue', images: [GENERATED], imagesLeftOut: 0 })
+    expect(input('imageEdit', sections)).toStrictEqual({ prompt: 'Make it blue', images: [GENERATED], imagesLeftOut: 0, ...NO_CLIPS })
   })
 
   it('gives an edit with no image in the conversation no images', () => {
-    expect(input('imageEdit', [user('u1', 'Make it blue')])).toStrictEqual({ prompt: 'Make it blue', images: [], imagesLeftOut: 0 })
+    expect(input('imageEdit', [user('u1', 'Make it blue')])).toStrictEqual({ prompt: 'Make it blue', images: [], imagesLeftOut: 0, ...NO_CLIPS })
   })
 
   // These requests have no place for a file, so the submit tells the user
@@ -539,14 +633,14 @@ describe('mediaRequestInput', () => {
   it.each(['image', 'tts', 'music'] as const)('gives a %s request the prompt, no image of the conversation, and the count of the message\'s images', (kind) => {
     const sections = [reply('a1', `![${GENERATED}](id=a)`), user('u1', `Say what ![${IMAGE}](id=b) and @a show`)]
 
-    expect(input(kind, sections)).toStrictEqual({ prompt: 'Say what ![image](id=b) and @a show', images: [], imagesLeftOut: 2 })
+    expect(input(kind, sections)).toStrictEqual({ prompt: 'Say what ![image](id=b) and @a show', images: [], imagesLeftOut: 2, ...NO_CLIPS })
   })
 
   describe('the reference images of a new image', () => {
     it('takes as many images of the last user message as the model takes, and counts the rest', () => {
       const sections = [reply('a1', `![${GENERATED}](id=a)`), user('u1', `Mix ![${IMAGE}](id=b) and @a`)]
 
-      expect(input('image', sections, { images: { maxImages: 1 } })).toStrictEqual({ prompt: 'Mix ![image](id=b) and @a', images: [IMAGE], imagesLeftOut: 1 })
+      expect(input('image', sections, { images: { maxImages: 1 } })).toStrictEqual({ prompt: 'Mix ![image](id=b) and @a', images: [IMAGE], imagesLeftOut: 1, ...NO_CLIPS })
     })
 
     // "Make it blue" after an image: the image goes, as for an edit.
@@ -557,8 +651,8 @@ describe('mediaRequestInput', () => {
         input('image', sections, { images: { maxImages: 1, minImages: 1 } }),
         input('image', sections, { images: { maxImages: 4 } }),
       ]).toStrictEqual([
-        { prompt: 'Make it blue', images: [GENERATED], imagesLeftOut: 0 },
-        { prompt: 'Make it blue', images: [], imagesLeftOut: 0 },
+        { prompt: 'Make it blue', images: [GENERATED], imagesLeftOut: 0, ...NO_CLIPS },
+        { prompt: 'Make it blue', images: [], imagesLeftOut: 0, ...NO_CLIPS },
       ])
     })
   })
@@ -568,15 +662,15 @@ describe('mediaRequestInput', () => {
     it('takes the first image of the last user message, and counts the rest', () => {
       const sections = [reply('a1', `![${GENERATED}](id=a)`), user('u1', `![${IMAGE}](id=b) and @a`)]
 
-      expect(input('upscale', sections)).toStrictEqual({ prompt: '![image](id=b) and @a', images: [IMAGE], imagesLeftOut: 1 })
+      expect(input('upscale', sections)).toStrictEqual({ prompt: '![image](id=b) and @a', images: [IMAGE], imagesLeftOut: 1, ...NO_CLIPS })
     })
 
     it('takes the newest image of the conversation when the last user message has none, and none when there is none', () => {
       const sections = [user('u1', `![${IMAGE}](id=a) A red fox`), reply('a1', `![${GENERATED}](id=b)`), user('u2', 'Larger')]
 
       expect([input('upscale', sections), input('upscale', [user('u1', 'Larger')])]).toStrictEqual([
-        { prompt: 'Larger', images: [GENERATED], imagesLeftOut: 0 },
-        { prompt: 'Larger', images: [], imagesLeftOut: 0 },
+        { prompt: 'Larger', images: [GENERATED], imagesLeftOut: 0, ...NO_CLIPS },
+        { prompt: 'Larger', images: [], imagesLeftOut: 0, ...NO_CLIPS },
       ])
     })
   })
@@ -594,7 +688,7 @@ describe('mediaRequestInput', () => {
       ['a model that takes one frame one image', { images: { maxImages: 1 } }, [IMAGE], 1],
       ['a model that takes two frames both images, in text order', { images: { maxImages: 2 } }, [IMAGE, GENERATED], 0],
     ])('gives %s of the last user message, and counts the rest', (_name, rules, images, imagesLeftOut) => {
-      expect(input('imageToVideo', twoImages, rules)).toStrictEqual({ prompt: 'From ![image](id=b) to @a. Keep @b and @a sharp.', images, imagesLeftOut })
+      expect(input('imageToVideo', twoImages, rules)).toStrictEqual({ prompt: 'From ![image](id=b) to @a. Keep @b and @a sharp.', images, imagesLeftOut, ...NO_CLIPS })
     })
 
     it('gives a model that takes two frames the first two of three images', () => {
@@ -604,11 +698,11 @@ describe('mediaRequestInput', () => {
     })
 
     it('makes the video from the newest image of the conversation when the last user message has none', () => {
-      expect(input('imageToVideo', imageBefore, { images: { maxImages: 2 } })).toStrictEqual({ prompt: 'Make it run', images: [GENERATED], imagesLeftOut: 0 })
+      expect(input('imageToVideo', imageBefore, { images: { maxImages: 2 } })).toStrictEqual({ prompt: 'Make it run', images: [GENERATED], imagesLeftOut: 0, ...NO_CLIPS })
     })
 
     it('gives an image-to-video request with no image in the conversation no images', () => {
-      expect(input('imageToVideo', [user('u1', 'Make it run')])).toStrictEqual({ prompt: 'Make it run', images: [], imagesLeftOut: 0 })
+      expect(input('imageToVideo', [user('u1', 'Make it run')])).toStrictEqual({ prompt: 'Make it run', images: [], imagesLeftOut: 0, ...NO_CLIPS })
     })
 
     // A text-to-video model works with no image, so it gets none that the
@@ -637,7 +731,7 @@ describe('mediaRequestInput', () => {
       ['@Image{n}', 'From @Image1 to @Image2. Keep @Image1 and @Image2 sharp, not @z.'],
       ['<Image {n}>', 'From <Image 1> to <Image 2>. Keep <Image 1> and <Image 2> sharp, not @z.'],
     ])('names each image in the prompt as %s, in the order of the request, in place of its reference and its mentions', (promptName, prompt) => {
-      expect(input('imageToVideo', twoImages, references(7, promptName))).toStrictEqual({ prompt, images: [IMAGE, GENERATED], imagesLeftOut: 0 })
+      expect(input('imageToVideo', twoImages, references(7, promptName))).toStrictEqual({ prompt, images: [IMAGE, GENERATED], imagesLeftOut: 0, ...NO_CLIPS })
     })
 
     it('keeps the reference and the mentions of an image that does not go', () => {
@@ -645,13 +739,14 @@ describe('mediaRequestInput', () => {
         prompt: 'From @Image1 to @a. Keep @Image1 and @a sharp, not @z.',
         images: [IMAGE],
         imagesLeftOut: 1,
+        ...NO_CLIPS,
       })
     })
 
     it('names an image whose reference has no id', () => {
       const sections = [user('u1', `![${IMAGE}]() meets ![${GENERATED}](id=a)`)]
 
-      expect(input('imageToVideo', sections, references(7, '@Image{n}'))).toStrictEqual({ prompt: '@Image1 meets @Image2', images: [IMAGE, GENERATED], imagesLeftOut: 0 })
+      expect(input('imageToVideo', sections, references(7, '@Image{n}'))).toStrictEqual({ prompt: '@Image1 meets @Image2', images: [IMAGE, GENERATED], imagesLeftOut: 0, ...NO_CLIPS })
     })
 
     it('keeps the ids in the prompt of a model that tells no names', () => {
@@ -661,7 +756,83 @@ describe('mediaRequestInput', () => {
     it('names an image of an earlier message that the last user message mentions', () => {
       const imageBefore = [user('u1', `![${IMAGE}](id=a) A red fox`), reply('a1', `![${GENERATED}](id=b)`), user('u2', 'Make @a run')]
 
-      expect(input('imageToVideo', imageBefore, references(7, '@Image{n}'))).toStrictEqual({ prompt: 'Make @Image1 run', images: [IMAGE], imagesLeftOut: 0 })
+      expect(input('imageToVideo', imageBefore, references(7, '@Image{n}'))).toStrictEqual({ prompt: 'Make @Image1 run', images: [IMAGE], imagesLeftOut: 0, ...NO_CLIPS })
+    })
+  })
+
+  describe('the clips of a video', () => {
+    const clipsReply = reply('a1', `![${GENERATED}](id=a)\n${mediaTagText(SONG)}\n${mediaTagText(DANCE)}\n${mediaTagText(RAIN)}`)
+    const rules = (maxAudio: number, maxVideo: number, names = false): ClipInputRules => ({
+      images: { maxImages: 4, references: names ? { promptName: '@Image{n}' } : {} },
+      clips: {
+        audio: { use: 'reference', maxClips: maxAudio, ...(names && { promptName: '@Audio{n}' }) },
+        video: { use: 'reference', maxClips: maxVideo, ...(names && { promptName: '@Video{n}' }) },
+      },
+    })
+
+    it('takes as many clips of each kind as the model takes, in text order, and counts the rest', () => {
+      const sections = [clipsReply, user('u1', 'Dance @d to @c, then @e')]
+
+      expect(input('video', sections, rules(1, 3))).toStrictEqual({
+        prompt: 'Dance @d to @c, then @e',
+        images: [],
+        imagesLeftOut: 0,
+        clips: [attached(DANCE), attached(SONG)],
+        clipsLeftOut: { audio: 1, video: 0 },
+      })
+    })
+
+    it('gives a model with no clip rules no clip, and counts each one', () => {
+      const { clips, clipsLeftOut } = input('imageToVideo', [clipsReply, user('u1', 'Dance @d to @c')], { images: { maxImages: 1 } })
+
+      expect({ clips, clipsLeftOut }).toStrictEqual({ clips: [], clipsLeftOut: { audio: 1, video: 1 } })
+    })
+
+    it('names each clip that goes in the prompt with the numbers of its kind, and keeps the mentions of the others', () => {
+      const sections = [clipsReply, user('u1', `@a dances @d to @e and @c, like ![${IMAGE}](id=g)`)]
+
+      expect(input('video', sections, rules(1, 3, true))).toStrictEqual({
+        prompt: '@Image1 dances @Video1 to @Audio1 and @c, like @Image2',
+        images: [GENERATED, IMAGE],
+        imagesLeftOut: 0,
+        clips: [attached(DANCE), attached(RAIN)],
+        clipsLeftOut: { audio: 1, video: 0 },
+      })
+    })
+
+    // A video clip is the reference of a request with no image; an audio
+    // clip is not.
+    it('takes no newest image of the conversation when a video clip goes', () => {
+      const needsImage: ClipInputRules = { ...rules(3, 3), images: { maxImages: 4, minImages: 1, references: {} } }
+
+      expect([
+        input('imageToVideo', [clipsReply, user('u1', 'Make @d slower')], needsImage).images,
+        input('imageToVideo', [clipsReply, user('u1', 'Make it sing @c')], needsImage).images,
+      ]).toStrictEqual([[], [GENERATED]])
+    })
+
+    it('takes the clips that the message holds with no mention, in text order with the clips that it names', () => {
+      const sections = [clipsReply, user('u1', `${mediaTagText(PASTED_DANCE)}\nThe dancer of @f moves to @c\n${mediaTagText(PASTED_VOICE)}`)]
+
+      expect(input('video', sections, rules(3, 3))).toStrictEqual({
+        prompt: `${SENT_DANCE}\nThe dancer of @f moves to @c\n${SENT_VOICE}`,
+        images: [],
+        imagesLeftOut: 0,
+        clips: [attached(PASTED_DANCE), attached(SONG), attached(PASTED_VOICE)],
+        clipsLeftOut: { audio: 0, video: 0 },
+      })
+    })
+
+    it('names a clip that goes in place of its tag line and its mentions, and keeps the tag of a clip that does not go', () => {
+      const sections = [clipsReply, user('u1', `${mediaTagText(PASTED_DANCE)}\nThe dancer of @f moves to @c\n${mediaTagText(PASTED_VOICE)}`)]
+
+      expect(input('video', sections, rules(1, 3, true))).toStrictEqual({
+        prompt: `@Video1\nThe dancer of @Video1 moves to @Audio1\n${SENT_VOICE}`,
+        images: [],
+        imagesLeftOut: 0,
+        clips: [attached(PASTED_DANCE), attached(SONG)],
+        clipsLeftOut: { audio: 1, video: 0 },
+      })
     })
   })
 
@@ -675,9 +846,9 @@ describe('mediaRequestInput', () => {
       mediaRequestInput('music', messages, tab, { text: { maxPromptLength: 300 } }),
       mediaRequestInput('music', messages, tab),
     ]).toStrictEqual([
-      { prompt: 'Slow piano ballad', lyrics: 'Rain on the roof', images: [], imagesLeftOut: 0 },
-      { prompt: 'Slow piano ballad\nLyrics:\nRain on the roof', images: [], imagesLeftOut: 0 },
-      { prompt: 'Slow piano ballad\nLyrics:\nRain on the roof', images: [], imagesLeftOut: 0 },
+      { prompt: 'Slow piano ballad', lyrics: 'Rain on the roof', images: [], imagesLeftOut: 0, ...NO_CLIPS },
+      { prompt: 'Slow piano ballad\nLyrics:\nRain on the roof', images: [], imagesLeftOut: 0, ...NO_CLIPS },
+      { prompt: 'Slow piano ballad\nLyrics:\nRain on the roof', images: [], imagesLeftOut: 0, ...NO_CLIPS },
     ])
   })
 })

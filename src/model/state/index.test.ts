@@ -332,6 +332,12 @@ describe('tab titles', () => {
     expect(titleFor(`![${image('a')}]() ![${image('b')}]() Which one is brighter?`)).toBe('[image] [image] Which one is b…')
   })
 
+  it('shows each clip tag of a dropped clip as its kind, never its path', () => {
+    const tag = '<dez:video id="a" type="video/mp4" src="/home/user/.config/dez/assets/video/a.mp4"/>'
+
+    expect(titleFor(`${tag}\nMake it dance`)).toBe('[video]\nMake it dance')
+  })
+
   it('goes back to New Tab when no user text is left', () => {
     const image = '/home/user/.config/dez/assets/images/a.png'
 

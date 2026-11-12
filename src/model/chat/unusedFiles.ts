@@ -15,7 +15,10 @@ import { MEDIA_FOLDERS } from './mediaTags'
 // deletes a file that Dez shows or sends.
 
 /** The folders of the stored files, relative to the app folder. */
-export const STORED_FILE_FOLDERS: readonly string[] = [...Object.values(IMAGE_FOLDERS), ...Object.values(MEDIA_FOLDERS)]
+export const STORED_FILE_FOLDERS: readonly string[] = [
+  ...Object.values(IMAGE_FOLDERS),
+  ...Object.values(MEDIA_FOLDERS).flatMap((folders) => Object.values(folders)),
+]
 
 /** A stored file that is younger than this is in use: a reply and a paste
  *  write the file first, and the text that names it after that. */

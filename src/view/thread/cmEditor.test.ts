@@ -1021,17 +1021,19 @@ describe('Copy Markdown', () => {
     expect(markdownOf(doc, EditorSelection.single('Like '.length, doc.indexOf(SECTION_SEP) - 1), models)).toBe(`this?\n${block}`)
   })
 
-  it('copies each clip of agent text as a link, also inside one agent section, and keeps the tag in user text', () => {
+  it('copies each clip of agent and user text as a link, also inside one section', () => {
     const saved = '/home/u/.config/dez/assets/generated/video/v1.mp4'
+    const pasted = '/home/u/.config/dez/assets/video/v2.mp4'
     const tag = `<dez:video id="b" type="video/mp4" src="${saved}" url="https://cdn.example/v.mp4?sig=1"/>`
     const agentText = `Here it is:\n${tag}\nDone.`
-    const doc = [`Like this?\n${tag}`, agentText].join(`\n${SECTION_SEP}\n`)
+    const doc = [`Like this?\n<dez:video id="c" type="video/mp4" src="${pasted}"/>`, agentText].join(`\n${SECTION_SEP}\n`)
     const models: SectionModel[] = [{ id: 's1', role: 'user' }, { id: 's2', role: 'agent' }]
     const agentFrom = doc.length - agentText.length
 
     expect(markdownOf(doc, EditorSelection.single(0, doc.length), models))
-      .toBe(`## User\n\nLike this?\n${tag}\n\n## Agent\n\nHere it is:\n[video](${saved})\nDone.\n`)
+      .toBe(`## User\n\nLike this?\n[video](${pasted})\n\n## Agent\n\nHere it is:\n[video](${saved})\nDone.\n`)
     expect(markdownOf(doc, EditorSelection.single(agentFrom + 'Here '.length, doc.length - 1), models)).toBe(`it is:\n[video](${saved})\nDone`)
+    expect(markdownOf(doc, EditorSelection.single('Like '.length, doc.indexOf(SECTION_SEP) - 1), models)).toBe(`this?\n[video](${pasted})`)
   })
 })
 

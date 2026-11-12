@@ -201,11 +201,11 @@ export class Provider {
 
   // `models` (a `mergeModels` list), each model of a media request kind
   // with its parameters (`ImageFormat.parameters`, `ClipFormat.parameters`)
-  // and the rules of its input images (`MediaFormat.imageRules`), each one
-  // of a clip request kind also with the rules of its text
-  // (`ClipFormat.textRules`), and each one of an image request kind also
-  // with the file type that it makes when Dez cannot store it
-  // (`ImageFormat.unstoredOutput`), read from its raw entries
+  // and the rules of its input images and clips (`MediaFormat.imageRules`,
+  // `MediaFormat.clipRules`), each one of a clip request kind also with the
+  // rules of its text (`ClipFormat.textRules`), and each one of an image
+  // request kind also with the file type that it makes when Dez cannot
+  // store it (`ImageFormat.unstoredOutput`), read from its raw entries
   // (`modelEntries`, `mediaModelEntries`). This comes after the merge,
   // because a config model can set the request kind. A new field here
   // needs a line in `withKeptClipData` (keptClipData.ts), which keeps
@@ -213,13 +213,14 @@ export class Provider {
   withClipData(models: readonly ModelInfo[], entries: ReadonlyMap<string, unknown>, mediaEntries: ReadonlyMap<string, unknown>): ModelInfo[] {
     const mediaApi = this.config.mediaApi
     if (!mediaApi) return [...models]
-    const { images: imageFormat, clips, imageRules } = MEDIA_FORMATS[mediaApi.format]
+    const { images: imageFormat, clips, imageRules, clipRules } = MEDIA_FORMATS[mediaApi.format]
     return models.map((model) => {
       const kind = effectiveRequest(model)
       if (kind === 'chat' || kind === 'none') return model
       const entry = entries.get(model.id)
       const mediaEntry = mediaEntries.get(model.id)
       const images = imageRules?.(kind, entry, mediaEntry)
+      const inputClips = clipRules?.(kind, entry, mediaEntry)
       const parameters = (isClipKind(kind) ? clips?.parameters(kind, entry, mediaEntry) : imageFormat?.parameters?.(kind, entry, mediaEntry)) ?? []
       const text = isClipKind(kind) ? clips?.textRules?.(kind, entry, mediaEntry) : undefined
       const unstoredOutput = isClipKind(kind) ? undefined : imageFormat?.unstoredOutput?.(kind, entry, mediaEntry)
@@ -228,6 +229,7 @@ export class Provider {
         ...(parameters.length > 0 && { parameters }),
         ...(text && { text }),
         ...(images && { images }),
+        ...(inputClips && { clips: inputClips }),
         ...(unstoredOutput !== undefined && { unstoredOutput }),
       }
     })

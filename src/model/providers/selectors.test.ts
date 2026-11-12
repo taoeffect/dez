@@ -1,7 +1,9 @@
 import sbp from '@sbp/sbp'
 import { createPinia, setActivePinia } from 'pinia'
 import { afterEach, beforeEach, describe, expect, it, vi, type MockInstance } from 'vitest'
+import type { AudioPart, CutAudio } from '../chat/audioCut'
 import type { DrawnImage, ImageDrawing, ImageSize } from '../chat/imageDrawing'
+import { ClipReadError } from '../chat/mediaFiles'
 import type { ModelRef, Section } from '../chat/types'
 import { toolBlockText } from '../chat/toolBlocks'
 import type { ModelCache } from '../persistence/types'
@@ -10,6 +12,7 @@ import { bytesToBase64 } from '../../utils/base64'
 import { ExplainedError } from '../../utils/errorText'
 import type { NativeHttpDownload, NativeHttpRequest, NativeHttpResponse, NativeHttpStreamResult } from '../../utils/protocol/nativeHttp'
 import { NativeHttpError } from '../../utils/protocol/errors'
+import type { ClipAttachment, InputClipRules } from './clipInputs'
 import type { ProviderGenerateMediaResult, ProviderMediaQuote } from './streamTypes'
 import type { GeneratedMedia, ModelDisplayNames, ProviderModelsResult, ProviderSettingsDescriptor } from './types'
 // Side-effect imports: register the dez.model/* selectors and the selectors
@@ -41,6 +44,19 @@ const STORED_IMAGE = Uint8Array.from([137, 80, 78, 71, 13, 10, 26, 10, 0, 255])
 let storedImageSize: ImageSize | null
 let drawings: Array<[ImageDrawing | null, string]> = []
 const DRAWN_IMAGE = Uint8Array.from([1, 2, 3, 4])
+
+// The stand-ins of the webview's clip reads (dez.controller/media/readClip,
+// dez.controller/media/cutAudio): each clip is the file of its id in
+// `clipFiles`, unless no clip can be read (`clipReadError`). Every audio
+// clip is `audioSeconds` long (an error: the webview cannot decode it), and
+// its WAV copy is the file `WAV_COPY`. `clipReads` holds the id of each
+// clip read, and `audioCuts` the part of each WAV copy.
+let clipFiles: Record<string, Uint8Array> = {}
+let clipReadError: ClipReadError | null
+let clipReads: string[] = []
+let audioSeconds: number | Error
+let audioCuts: AudioPart[] = []
+const WAV_COPY = new TextEncoder().encode('RIFF\x08\x00\x00\x00WAVEfmt ')
 
 // Requests to this base URL get HTTP 404; every other server answers.
 const FAILING_BASE_URL = 'http://localhost:9090/v1'
@@ -130,6 +146,17 @@ sbp('sbp/selectors/register', {
     drawings.push([drawing, mediaType])
     return drawing && { bytes: DRAWN_IMAGE, width: drawing.width, height: drawing.height }
   },
+  async 'dez.controller/media/readClip' (clip: ClipAttachment): Promise<Blob> {
+    clipReads.push(clip.id)
+    if (clipReadError) throw clipReadError
+    return new Blob([clipFiles[clip.id]])
+  },
+  async 'dez.controller/media/cutAudio' (_file: Blob, plan: (duration: number) => AudioPart | null): Promise<CutAudio | null> {
+    if (audioSeconds instanceof Error) throw audioSeconds
+    const part = plan(audioSeconds)
+    if (part) audioCuts.push(part)
+    return part && { part, bytes: WAV_COPY, duration: part.end - part.start }
+  },
   // Every clip request gets the clip as its answer.
   async 'dez.native/downloadAppFile' (request: NativeHttpRequest): Promise<NativeHttpDownload> {
     downloadRequests.push(request)
@@ -179,6 +206,11 @@ beforeEach(() => {
   downloadRequests = []
   storedImageSize = { width: 1024, height: 768 }
   drawings = []
+  clipFiles = {}
+  clipReadError = null
+  clipReads = []
+  audioSeconds = 10
+  audioCuts = []
   consoleError = vi.spyOn(console, 'error').mockImplementation(() => {})
   sbp('dez.model/customProviders/save', {
     id: 'local',
@@ -998,6 +1030,162 @@ describe('media requests', () => {
 
       expect(drawings).toStrictEqual([[null, 'image/png']])
       expect(streamRequests).toEqual([])
+    })
+  })
+
+  describe('input clips of a video request', () => {
+    const VIDEO_LENGTH = [{ name: 'duration', label: 'Length', options: ['5s'], default: '5s' }]
+    // A Venice reference-to-video model, whose family takes its reference
+    // clips in fields of their own (veniceReferences.ts).
+    const REFERENCE_MODEL = 'seedance-2-0-reference-to-video'
+    const OGG_AUDIO = new TextEncoder().encode('OggS')
+    const MP3_AUDIO = new TextEncoder().encode('ID3\x04')
+    const BACKGROUND_AUDIO: InputClipRules = { audio: { use: 'background', maxClips: 1, types: ['audio/wav', 'audio/mpeg'] } }
+
+    const clip = (kind: 'audio' | 'video', id: string, type: string): ClipAttachment =>
+      ({ kind, id, type, src: `${APP_DIR}/assets/generated/${kind}/${id}.bin`, url: `https://files.example.com/${id}.bin`, expires: null })
+    const dataUrl = (mediaType: string, bytes: Uint8Array) => `data:${mediaType};base64,${bytesToBase64(bytes)}`
+
+    // Puts the video model `modelId` in the model cache with the clip
+    // rules `clips`. The video request needs a length.
+    function useClipModel(modelId: string, clips: InputClipRules): void {
+      sbp('dez.model/modelCache/applyProviderResult', 'media', {
+        ok: true,
+        models: [{ id: modelId, name: 'M', provider: 'media', outputs: ['video'], request: 'imageToVideo', parameters: VIDEO_LENGTH, clips }],
+      })
+    }
+
+    // An MP4 file of `seconds`: an `ftyp` box, then a `moov` box that holds
+    // only its movie header (`mvhd` version 0, with 1000 units in one
+    // second), which is all that mp4Duration.ts reads.
+    function mp4Video(seconds: number): Uint8Array {
+      const bytes = new Uint8Array(52)
+      const view = new DataView(bytes.buffer)
+      const box = (offset: number, size: number, type: string) => {
+        view.setUint32(offset, size)
+        bytes.set(new TextEncoder().encode(type), offset + 4)
+      }
+      box(0, 16, 'ftyp')
+      bytes.set(new TextEncoder().encode('isom'), 8)
+      box(16, 36, 'moov')
+      box(24, 28, 'mvhd')
+      view.setUint32(44, 1000)
+      view.setUint32(48, seconds * 1000)
+      return bytes
+    }
+
+    // The model needs an image, and the video clip is its reference. The
+    // model takes WAV and MP3 audio, so the OGG clip goes as a WAV copy.
+    it('sends a reference video in place of the image that the model needs, and an audio clip of a type that it does not take as a WAV copy of the whole clip', async () => {
+      useClipModel(REFERENCE_MODEL, {
+        video: { use: 'reference', maxClips: 3, types: ['video/mp4', 'video/quicktime'] },
+        audio: { use: 'reference', maxClips: 3, types: ['audio/wav', 'audio/mpeg'] },
+        audioNeedsVisual: true,
+      })
+      const video = mp4Video(12)
+      clipFiles = { v1: video, a1: OGG_AUDIO }
+      audioSeconds = 12
+
+      await generate({ modelId: REFERENCE_MODEL, kind: 'imageToVideo', clips: [clip('video', 'v1', 'video/mp4'), clip('audio', 'a1', 'audio/ogg')] })
+
+      expect(audioCuts).toStrictEqual([{ start: 0, end: 12 }])
+      expect(downloadRequests.map((request) => JSON.parse(request.body as string))).toStrictEqual([{
+        duration: '5s',
+        model: REFERENCE_MODEL,
+        prompt: 'A red fox',
+        reference_video_urls: [dataUrl('video/mp4', video)],
+        reference_audio_urls: [dataUrl('audio/wav', WAV_COPY)],
+      }])
+    })
+
+    // Its length is then unknown, and the provider checks it.
+    it('sends a background audio clip that the webview cannot decode as it is, with no length check, when the model takes its type', async () => {
+      useClipModel('m', { audio: { use: 'background', maxClips: 1, maxSeconds: 1, types: ['audio/wav', 'audio/mpeg'] } })
+      clipFiles = { a1: MP3_AUDIO }
+      audioSeconds = new Error('EncodingError: Unable to decode audio data')
+
+      await generate({ kind: 'video', clips: [clip('audio', 'a1', 'audio/mp3')] })
+
+      expect(downloadRequests.map((request) => JSON.parse(request.body as string))).toStrictEqual([{ duration: '5s', model: 'm', prompt: 'A red fox', audio_url: dataUrl('audio/mpeg', MP3_AUDIO) }])
+    })
+
+    it('refuses an audio clip that needs a WAV copy and that the webview cannot decode, before any request', async () => {
+      useClipModel('m', BACKGROUND_AUDIO)
+      clipFiles = { a1: OGG_AUDIO }
+      audioSeconds = new Error('EncodingError: Unable to decode audio data')
+
+      await expect(generate({ kind: 'video', clips: [clip('audio', 'a1', 'audio/ogg')] })).rejects.toThrow(
+        'M takes no audio clip of the type audio/ogg, and Dez could not make a WAV copy of the audio clip @a1: this app cannot decode its audio. Use another audio clip.\n\nDetails: EncodingError: Unable to decode audio data',
+      )
+      expect(downloadRequests).toEqual([])
+    })
+
+    // readClip's details hold no path and no URL either (media.ts).
+    it.each([
+      ['deleted', '', 'The audio clip @a1 is gone'],
+      ['expired', 'HTTP 404: Not Found', 'The audio clip @a1 has expired'],
+      ['unreadable', 'No such file or directory (os error 2) HTTP 403: Forbidden', 'Dez could not read the audio clip @a1'],
+    ] as const)('refuses a clip that is %s with a text that names its id and no path or URL, before any request', async (problem, details, start) => {
+      useClipModel('m', BACKGROUND_AUDIO)
+      clipReadError = new ClipReadError(problem, details)
+      const audio = clip('audio', 'a1', 'audio/mpeg')
+
+      const error = await generate({ kind: 'video', clips: [audio] }).then(() => null, (error: unknown) => error)
+
+      expect(error).toBeInstanceOf(ExplainedError)
+      const { explanation, details: shownDetails, message } = error as ExplainedError
+      expect(explanation.startsWith(start)).toBe(true)
+      expect(shownDetails).toBe(details)
+      expect(message).not.toContain(audio.src)
+      expect(message).not.toContain(audio.url)
+      expect([downloadRequests, streamRequests, httpRequests]).toStrictEqual([[], [], []])
+    })
+
+    // The size is that of the file that goes: the WAV copy.
+    it.each([
+      ['an audio clip too long, by its decode', { audio: { use: 'background', maxSeconds: 30 } }, { a1: MP3_AUDIO }, [clip('audio', 'a1', 'audio/mpeg')], 'The audio clip @a1 is 31 seconds long, and M takes audio clips of at most 30 seconds.'],
+      ['a video clip too long, by its MP4 header', { video: { use: 'reference', maxSeconds: 15 } }, { v1: mp4Video(15.5) }, [clip('video', 'v1', 'video/mp4')], 'The video clip @v1 is 15.5 seconds long, and M takes video clips of at most 15 seconds.'],
+      ['a video clip too short', { video: { use: 'reference', minSeconds: 2 } }, { v1: mp4Video(1.5) }, [clip('video', 'v1', 'video/mp4')], 'The video clip @v1 is 1.5 seconds long, and M takes video clips of at least 2 seconds.'],
+      ['video clips too long together', { video: { use: 'reference', maxTotalSeconds: 15 } }, { v1: mp4Video(8), v2: mp4Video(8) }, [clip('video', 'v1', 'video/mp4'), clip('video', 'v2', 'video/mp4')], 'The video clips of this message are 16 seconds long together, and M takes at most 15 seconds of video clips in one request.'],
+      ['a WAV copy too large', { audio: { use: 'background', maxBytes: 10, types: ['audio/wav'] } }, { a1: OGG_AUDIO }, [clip('audio', 'a1', 'audio/ogg')], 'The audio clip @a1 is 16 B, and M takes audio clips of at most 10 B.'],
+    ] as Array<[string, InputClipRules, Record<string, Uint8Array>, ClipAttachment[], string]>)('refuses %s, before any request', async (_case, rules, files, clips, message) => {
+      useClipModel('m', rules)
+      clipFiles = files
+      audioSeconds = 31
+
+      await expect(generate({ kind: 'video', clips })).rejects.toThrow(message)
+      expect(downloadRequests).toEqual([])
+    })
+
+    it('refuses a clip of a kind that the model does not take before it reads any clip', async () => {
+      useClipModel('m', { video: { use: 'reference' } })
+
+      await expect(generate({ kind: 'video', clips: [clip('video', 'v1', 'video/mp4'), clip('audio', 'a1', 'audio/mpeg')] })).rejects.toThrow('M takes no audio clip, and this message has 1 audio clip.')
+      expect([clipReads, downloadRequests]).toStrictEqual([[], []])
+    })
+
+    it('sends a clip of a kind that the model takes only by web address by its URL, unread, and reads the clips of the other kind', async () => {
+      useClipModel(REFERENCE_MODEL, { video: { use: 'reference', urlOnly: true }, audio: { use: 'reference', types: ['audio/mpeg'] } })
+      clipFiles = { a1: MP3_AUDIO }
+      audioSeconds = 3
+
+      await generate({ modelId: REFERENCE_MODEL, kind: 'imageToVideo', clips: [clip('video', 'v1', 'video/mp4'), clip('audio', 'a1', 'audio/mpeg')] })
+
+      expect(clipReads).toStrictEqual(['a1'])
+      expect(downloadRequests.map((request) => JSON.parse(request.body as string))).toStrictEqual([{
+        duration: '5s',
+        model: REFERENCE_MODEL,
+        prompt: 'A red fox',
+        reference_video_urls: ['https://files.example.com/v1.bin'],
+        reference_audio_urls: [dataUrl('audio/mpeg', MP3_AUDIO)],
+      }])
+    })
+
+    it('refuses a clip with no web address to a model that takes its kind only by one, before it reads any clip', async () => {
+      useClipModel('m', { video: { use: 'reference', urlOnly: true } })
+
+      await expect(generate({ kind: 'video', clips: [{ ...clip('video', 'v1', 'video/mp4'), url: null }] })).rejects.toThrow('M takes video clips only by a web address that its provider downloads, and @v1 has none')
+      expect([clipReads, downloadRequests]).toStrictEqual([[], []])
     })
   })
 })

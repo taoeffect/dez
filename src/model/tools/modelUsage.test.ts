@@ -1,12 +1,14 @@
 import { describe, expect, it } from 'vitest'
+import { mediaTagText, type MediaTagData } from '../chat/mediaTags'
 import type { ModelRef, Section } from '../chat/types'
 import type { InputImageRules } from '../providers/clipImages'
+import { clipTagProblem, maxInputClips, needsWavCopy, type ClipAttachment, type InputClipRules } from '../providers/clipInputs'
 import { lyricsHowTo, type ClipTextRules } from '../providers/clipText'
 import { modelToggles, toggleRows, toggleValue, toolsApply } from '../providers/modelToggles'
 import { isToolsEnabled } from '../providers/toolsSetting'
 import { MODEL_REQUESTS, type MediaKind, type ModelInfo, type ModelRequest } from '../providers/types'
 import { mediaRequestInput, sectionsToStreamMessages } from '../streams/messages'
-import { modelUsage, referenceNamesUsage, USAGE_TEXTS, type UsageFacts } from './modelUsage'
+import { clipNamesUsage, modelUsage, referenceNamesUsage, takenClipsUsage, urlOnlyClipsUsage, USAGE_TEXTS, type UsageFacts } from './modelUsage'
 
 // Each choice of a usage text is checked against the code that builds the
 // request, so that a change of that code that the texts do not follow
@@ -143,6 +145,103 @@ describe('modelUsage', () => {
 
       expect(modelUsage({ id: 'm', name: 'M', provider: 'p', request: 'video', parameters }, NO_FACTS)).toContain(USAGE_TEXTS.parameters)
       expect(modelUsage({ id: 'm', name: 'M', provider: 'p', request: 'video' }, NO_FACTS)).not.toContain(USAGE_TEXTS.parameters)
+    })
+
+    describe('the clips of the message', () => {
+      const SONG: MediaTagData = { kind: 'audio', id: 'c', type: 'audio/mpeg', src: '/home/u/.cache/dez/media/s.mp3', url: null, expires: null, other: [] }
+      const DANCE: MediaTagData = { kind: 'video', id: 'd', type: 'video/mp4', src: '/home/u/.cache/dez/media/d.mp4', url: null, expires: null, other: [] }
+      const RAIN: MediaTagData = { ...SONG, id: 'e', src: '/home/u/.cache/dez/media/r.mp3' }
+      const clipsReply = reply('a1', `![${FIRST}](id=a)\n${mediaTagText(SONG)}\n${mediaTagText(DANCE)}\n${mediaTagText(RAIN)}`)
+      // A message with clips that it names and a clip file that the user
+      // pasted into it.
+      const message = user('u1', `Use @c, @d, and @e with this:\n${mediaTagText({ ...DANCE, id: 'f', src: '/home/u/.config/dez/assets/video/f.mp4' })}`)
+      const CLIP_RULES: (InputClipRules | undefined)[] = [
+        undefined,
+        { audio: { use: 'background', maxClips: 1, types: ['audio/wav', 'audio/mpeg'] } },
+        { audio: { use: 'reference', maxClips: 3, promptName: '<Audio {n}>' }, video: { use: 'reference', maxClips: 3, promptName: '<Video {n}>' }, audioNeedsVisual: true },
+        { audio: { use: 'voice', types: ['audio/mpeg'] }, video: { use: 'reference', maxClips: 5 } },
+        { audio: { use: 'reference', urlOnly: true }, video: { use: 'reference', urlOnly: true } },
+      ]
+      // The clips as a model made them, with a web address that works.
+      const withUrls = (clips: ClipAttachment[]) => clips.map((clip) => ({ ...clip, url: `https://files.example.com/${clip.id}` }))
+      // A video model of each clip rules, which needs an image.
+      const clipModels = (kind: MediaKind) => CLIP_RULES.map((clips): ModelInfo => ({
+        id: 'm',
+        name: 'M',
+        provider: 'p',
+        request: kind,
+        images: { maxImages: 4, minImages: 1, references: {} },
+        ...(clips && { clips }),
+      }))
+
+      it('tells which clips of the message go exactly when a request takes them', () => {
+        for (const kind of mediaKinds) {
+          for (const model of clipModels(kind)) {
+            const usage = modelUsage(model, NO_FACTS)
+            const { clips } = mediaInput(kind, model, [clipsReply, message])
+            const label = `${kind} ${JSON.stringify(model)}`
+
+            for (const clipKind of ['audio', 'video'] as const) {
+              const max = maxInputClips(model.clips, clipKind)
+              const sent = clips.filter((clip) => clip.kind === clipKind).length
+              expect(max > 0 && usage.includes(takenClipsUsage(clipKind, max)), `${clipKind} ${label}`).toBe(sent > 0)
+            }
+            if (has(usage, USAGE_TEXTS.noClips)) expect(clips, label).toStrictEqual([])
+          }
+        }
+      })
+
+      it('tells the names of the clips in the prompt exactly when a request gives them', () => {
+        for (const model of clipModels('video')) {
+          const usage = modelUsage(model, NO_FACTS)
+          const { prompt } = mediaInput('video', model, [clipsReply, message])
+          const label = JSON.stringify(model)
+
+          expect(usage.includes(clipNamesUsage('audio', '<Audio {n}>')), label).toBe(prompt.includes('<Audio 1>'))
+          expect(usage.includes(clipNamesUsage('video', '<Video {n}>')), label).toBe(prompt.includes('<Video 1>'))
+        }
+      })
+
+      it('tells that a video clip takes the place of the newest image exactly when it does', () => {
+        for (const model of clipModels('imageToVideo')) {
+          const usage = modelUsage(model, NO_FACTS)
+          const { images } = mediaInput('imageToVideo', model, [clipsReply, user('u1', 'Make @d slower')])
+
+          expect(has(usage, USAGE_TEXTS.newestImageOrVideo), JSON.stringify(model)).toBe(images.length === 0)
+        }
+      })
+
+      // A voice is the voice of a reference, so it needs one too.
+      it('tells that an audio clip needs an image or a video clip exactly when Dez refuses one alone', () => {
+        for (const model of clipModels('video')) {
+          const usage = modelUsage(model, NO_FACTS)
+          const { clips } = mediaInput('video', model, [clipsReply, user('u1', 'Sing @c')])
+          const refused = clips.length > 0 && clipTagProblem('M', model.clips, withUrls(clips), 0) !== null
+
+          expect(has(usage, USAGE_TEXTS.audioNeedsVisual) || model.clips?.audio?.use === 'voice', JSON.stringify(model)).toBe(refused)
+        }
+      })
+
+      it('tells that a clip goes only by its web address exactly when Dez refuses one that is only a file', () => {
+        for (const model of clipModels('video')) {
+          const usage = modelUsage(model, NO_FACTS)
+          for (const clipKind of ['audio', 'video'] as const) {
+            const { clips } = mediaInput('video', model, [clipsReply, user('u1', `![${FIRST}](id=a) with @${clipKind === 'audio' ? 'c' : 'd'}`)])
+            const refusedAsFile = clips.length > 0 && clipTagProblem('M', model.clips, clips, 1) !== null
+            const refusedWithUrl = clips.length > 0 && clipTagProblem('M', model.clips, withUrls(clips), 1) !== null
+
+            expect(usage.includes(urlOnlyClipsUsage(clipKind)), `${clipKind} ${JSON.stringify(model)}`).toBe(refusedAsFile && !refusedWithUrl)
+          }
+        }
+      })
+
+      it('tells that an audio clip goes as a WAV copy exactly when one of another type does', () => {
+        for (const model of clipModels('video')) {
+          const audio = model.clips?.audio
+
+          expect(has(modelUsage(model, NO_FACTS), USAGE_TEXTS.wavCopy), JSON.stringify(model)).toBe(audio !== undefined && needsWavCopy('audio', audio, 'audio/flac'))
+        }
+      })
     })
   })
 

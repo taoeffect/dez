@@ -1,6 +1,6 @@
 import { stripLiveSentinels } from '../chat/content'
 import { durationField } from '../chat/duration'
-import { agentTextAsMarkdown, messagesAsMarkdown } from '../chat/markdown'
+import { messagesAsMarkdown, sectionTextAsMarkdown } from '../chat/markdown'
 import { modelRefKey, parseModelRefKey } from '../chat/modelRef'
 import { PILL_CLOSE_TAG, containerThinking, parsePillMarker, pillMarkerText, type PillMarker } from '../chat/pillMarker'
 import type { ActiveModel, SectionThinking } from '../chat/types'
@@ -81,13 +81,13 @@ export function serializeConversation(data: ConversationData): string {
 // role heading (`messagesAsMarkdown`, which Copy Markdown also uses) and
 // holds what the model received: its text with prompt bodies inline. The
 // agent thinking and the tool calls are left out, and a clip is a link
-// (`agentTextAsMarkdown`). Dez cannot read this format back.
+// (`sectionTextAsMarkdown`). Dez cannot read this format back.
 export function serializeConversationAsMarkdown(data: ConversationData): string {
   const messages = messagesAsMarkdown(data.sections.map((section) => {
     const text = section.nodes
       .map((node) => stripLiveSentinels(node.kind === 'text' ? node.text : node.body))
       .join('')
-    return { role: section.role, text: section.role === 'agent' ? agentTextAsMarkdown(text) : text }
+    return { role: section.role, text: sectionTextAsMarkdown(section.role, text) }
   }))
   const title = `# ${data.title.replace(/\s+/g, ' ').trim() || 'Conversation'}\n`
   return messages === '' ? title : `${title}\n${messages}`

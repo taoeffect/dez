@@ -3,7 +3,7 @@ import { ExplainedError } from '../../utils/errorText'
 import { bytesToBase64 } from '../../utils/base64'
 import type { NativeHttpResponseHead } from '../../utils/protocol/nativeHttp'
 import { ClipNotMadeError, UnusableAnswerError } from './errors'
-import { MEDIA_FORMATS, NO_VIDEO_LENGTH_MESSAGE, type ClipFormat, type ClipQuoteFormat, type ImageFormat } from './mediaFormats'
+import { MEDIA_FORMATS, NO_VIDEO_LENGTH_MESSAGE, type ClipFormat, type ClipQuoteFormat, type ImageFormat, type InputClipPart } from './mediaFormats'
 import { effectiveParameterValues, type ModelParameter } from './modelParameters'
 import type { ChatImagePart, ClipKind, MediaKind } from './types'
 
@@ -53,6 +53,16 @@ const JPEG_URL = `data:image/jpeg;base64,${bytesToBase64(JPEG)}`
 // The "Images as" parameter of an OpenRouter video model, with no label.
 const IMAGES_AS_FRAMES = { name: 'images_as', options: ['frames', 'references'], default: 'frames' }
 const IMAGES_AS_REFERENCES = { name: 'images_as', options: ['references'], default: 'references' }
+
+// Two video and two audio clips of a video request: their bytes as base64,
+// and each one as the data URL that a request sends. Each test gives a clip
+// its use.
+const VIDEOS = ['VjE=', 'VjI=']
+const AUDIOS = ['QTE=', 'QTI=']
+const VIDEO_URLS = VIDEOS.map((data) => `data:video/mp4;base64,${data}`)
+const AUDIO_URLS = AUDIOS.map((data) => `data:audio/mpeg;base64,${data}`)
+const clip = (kind: InputClipPart['kind'], use: InputClipPart['use'], data: string): InputClipPart =>
+  ({ kind, use, url: `data:${kind === 'audio' ? 'audio/mpeg' : 'video/mp4'};base64,${data}` })
 
 describe('venice media requests', () => {
   it('asks /image/generate for a WebP image with no watermark and no safe mode', () => {
@@ -409,6 +419,57 @@ describe('venice image rules', () => {
   })
 })
 
+// https://docs.venice.ai/api-reference/endpoint/video/queue
+describe('venice clip rules', () => {
+  const rules = (kind: MediaKind, id: string, constraints: Record<string, unknown> = {}) =>
+    MEDIA_FORMATS.venice.clipRules?.(kind, { id, model_spec: { constraints: { model_type: 'image-to-video', ...constraints } } }, undefined)
+  const VIDEO_TYPES = ['video/mp4', 'video/quicktime']
+  const AUDIO_TYPES = ['audio/wav', 'audio/mpeg']
+  const MB = 1024 ** 2
+
+  // The rules of the family win over `audio_input`, which would make an
+  // audio clip the sound of the video.
+  it('takes the reference clips of a seedance 2.0 model, and its audio clips only with an image or a video', () => {
+    const seconds = { minSeconds: 2, maxSeconds: 15, maxTotalSeconds: 15 }
+
+    expect(rules('imageToVideo', 'seedance-2-0-reference-to-video', { audio_input: true })).toStrictEqual({
+      video: { use: 'reference', maxClips: 3, ...seconds, maxBytes: 50 * MB, types: VIDEO_TYPES, promptName: '<Video {n}>' },
+      audio: { use: 'reference', maxClips: 3, ...seconds, maxBytes: 15 * MB, types: AUDIO_TYPES, promptName: '<Audio {n}>' },
+      audioNeedsVisual: true,
+    })
+  })
+
+  it('takes the voice of each reference for a wan 2.7 model whose entry says so, and no audio clip without it', () => {
+    const video = { use: 'reference', maxClips: 5, maxBytes: 50 * MB, types: VIDEO_TYPES }
+
+    expect([
+      rules('imageToVideo', 'wan-2-7-reference-to-video', { per_reference_audio: true }),
+      rules('imageToVideo', 'wan-2-7-reference-to-video'),
+    ]).toStrictEqual([
+      { video, audio: { use: 'voice', types: AUDIO_TYPES } },
+      { video },
+    ])
+  })
+
+  it.each([
+    ['video', 'wan-2-5-preview-text-to-video'],
+    // A reference family that takes no clip.
+    ['imageToVideo', 'grok-imagine-1-5-reference-to-video'],
+  ] as const)('takes one audio clip as the sound of the %s model %s, whose entry says that it takes audio', (kind, id) => {
+    expect(rules(kind, id, { audio_input: true })).toStrictEqual({
+      audio: { use: 'background', maxClips: 1, maxSeconds: 30, maxBytes: 15 * MB, types: AUDIO_TYPES },
+    })
+  })
+
+  it('takes no clip for a video model whose entry says that it takes no audio', () => {
+    expect(rules('imageToVideo', 'wan-2-5-preview-image-to-video', { audio_input: false })).toBeUndefined()
+  })
+
+  it.each(['music', 'imageEdit'] as const)('takes no clip for a %s model', (kind) => {
+    expect(rules(kind, 'seedance-2-0-reference-to-video', { audio_input: true })).toBeUndefined()
+  })
+})
+
 describe('venice refusals of images', () => {
   // The body of a live refusal (2026-11-11), with the details of the other
   // fields cut.
@@ -575,6 +636,50 @@ describe('venice clip requests', () => {
   ])('queues the images of %s as references in the field of its family, and no frame', (modelId, references) => {
     expect(veniceClips.request('imageToVideo', VENICE_URL, modelId, { prompt: '@Image1 meets @Image2', images: IMAGES, values: { duration: '5s' } }).body).toStrictEqual({
       duration: '5s', model: modelId, prompt: '@Image1 meets @Image2', ...references,
+    })
+  })
+
+  it('queues the reference clips of a seedance 2.0 model in the field of their kind, each list in the user\'s order', () => {
+    const clips = [clip('video', 'reference', VIDEOS[0]), clip('audio', 'reference', AUDIOS[0]), clip('video', 'reference', VIDEOS[1])]
+    const prompt = '<Image 1> dances to <Audio 1>'
+
+    expect(veniceClips.request('imageToVideo', VENICE_URL, 'seedance-2-0-reference-to-video', { prompt, images: IMAGES, clips, values: { duration: '5s' } }).body).toStrictEqual({
+      duration: '5s',
+      model: 'seedance-2-0-reference-to-video',
+      prompt,
+      reference_image_urls: [PNG_URL, JPEG_URL],
+      reference_video_urls: VIDEO_URLS,
+      reference_audio_urls: [AUDIO_URLS[0]],
+    })
+  })
+
+  it('sends no image field and no audio field in a reference request with only a video clip', () => {
+    const input = { prompt: 'Like <Video 1>', images: [], clips: [clip('video', 'reference', VIDEOS[0])], values: { duration: '5s' } }
+
+    expect(veniceClips.request('imageToVideo', VENICE_URL, 'seedance-2-0-reference-to-video', input).body).toStrictEqual({
+      duration: '5s', model: 'seedance-2-0-reference-to-video', prompt: 'Like <Video 1>', reference_video_urls: [VIDEO_URLS[0]],
+    })
+  })
+
+  // The n-th voice is the voice of the n-th reference: the images first,
+  // then the videos.
+  it('queues each voice of a wan 2.7 model as the `audio_url` of one reference, and none on a reference with no voice', () => {
+    const clips = [clip('video', 'reference', VIDEOS[0]), clip('audio', 'voice', AUDIOS[0]), clip('video', 'reference', VIDEOS[1]), clip('audio', 'voice', AUDIOS[1])]
+
+    expect(veniceClips.request('imageToVideo', VENICE_URL, 'wan-2-7-reference-to-video', { prompt: 'They talk', images: [IMAGES[0]], clips, values: { duration: '5s' } }).body).toStrictEqual({
+      duration: '5s',
+      model: 'wan-2-7-reference-to-video',
+      prompt: 'They talk',
+      image_references: [{ image_url: PNG_URL, audio_url: AUDIO_URLS[0] }],
+      video_references: [{ video_url: VIDEO_URLS[0], audio_url: AUDIO_URLS[1] }, { video_url: VIDEO_URLS[1] }],
+    })
+  })
+
+  it('queues the sound of the video as `audio_url`, next to the first frame', () => {
+    const input = { prompt: 'It sings', images: [IMAGES[0]], clips: [clip('audio', 'background', AUDIOS[0])], values: { duration: '5s' } }
+
+    expect(veniceClips.request('imageToVideo', VENICE_URL, 'wan-2-5-preview-image-to-video', input).body).toStrictEqual({
+      duration: '5s', model: 'wan-2-5-preview-image-to-video', prompt: 'It sings', image_url: PNG_URL, audio_url: AUDIO_URLS[0],
     })
   })
 
@@ -773,6 +878,28 @@ describe('openrouter image rules', () => {
   })
 })
 
+// The docs tell no count, length, type, size, or prompt name of a clip.
+// https://openrouter.ai/docs/guides/overview/multimodal/video-generation
+describe('openrouter clip rules', () => {
+  const rules = (kind: MediaKind, inputs: unknown) => MEDIA_FORMATS.openrouter.clipRules?.(kind, { id: 'm', architecture: { input_modalities: inputs } }, undefined)
+
+  it.each([
+    ['audio', ['text', 'image', 'audio'], { audio: { use: 'reference', urlOnly: true } }],
+    ['video', ['text', 'video'], { video: { use: 'reference', urlOnly: true } }],
+    ['audio and video', ['text', 'image', 'audio', 'video'], { audio: { use: 'reference', urlOnly: true }, video: { use: 'reference', urlOnly: true } }],
+  ])('takes %s clips as references by web address with no limit for a video model whose entry names them as inputs', (_name, inputs, expected) => {
+    expect(rules('video', inputs)).toStrictEqual(expected)
+  })
+
+  it('takes no clip for a video model whose entry names neither audio nor video as an input', () => {
+    expect(rules('video', ['text', 'image'])).toBeUndefined()
+  })
+
+  it.each(['tts', 'image'] as const)('takes no clip for a %s model, whatever its entry names', (kind) => {
+    expect(rules(kind, ['text', 'audio', 'video'])).toBeUndefined()
+  })
+})
+
 // Entry shapes of the live image list (2026-11-11), with short lists.
 describe('openrouter images', () => {
   const entry = (supported: Record<string, unknown>) => ({ id: 'm', supported_parameters: supported })
@@ -946,6 +1073,26 @@ describe('openrouter clip requests', () => {
   it('sends no images field for references when the request has no image', () => {
     expect(openRouterClips.request('video', OPENROUTER_URL, 'm', { prompt: 'A red fox', images: [], values: { duration: 1, images_as: 'references' } }).body).toStrictEqual({
       duration: 1, model: 'm', prompt: 'A red fox',
+    })
+  })
+
+  // "frame_images takes precedence", which would drop the clips.
+  it('sends the images as references, then the clips by their web addresses in the user\'s order, when a clip goes, even when the user chose frames', () => {
+    const clips: InputClipPart[] = [
+      { kind: 'video', use: 'reference', url: 'https://cdn.example.com/v.mp4' },
+      { kind: 'audio', use: 'reference', url: 'https://cdn.example.com/a.mp3' },
+    ]
+
+    expect(openRouterClips.request('video', OPENROUTER_URL, 'm', { prompt: 'They dance', images: IMAGES, clips, values: { duration: 1, images_as: 'frames' } }).body).toStrictEqual({
+      duration: 1,
+      model: 'm',
+      prompt: 'They dance',
+      input_references: [
+        { type: 'image_url', image_url: { url: PNG_URL } },
+        { type: 'image_url', image_url: { url: JPEG_URL } },
+        { type: 'video_url', video_url: { url: 'https://cdn.example.com/v.mp4' } },
+        { type: 'audio_url', audio_url: { url: 'https://cdn.example.com/a.mp3' } },
+      ],
     })
   })
 

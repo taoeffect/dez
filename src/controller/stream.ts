@@ -64,10 +64,11 @@ interface StreamStartArgs {
   // image output (ChatRequestContext.imageOutput).
   imageOutput: boolean
   // What the model takes as the input of a media request (its
-  // ModelInfo.text, and its ModelInfo.images for the parameter values of
-  // the request, `inputImageRulesFor`): a model with lyrics gets them from
-  // the message, and a video model gets the message's images as frames or
-  // references (`mediaRequestInput`). It is the submit's read of the model,
+  // ModelInfo.text, its ModelInfo.images for the parameter values of the
+  // request, `inputImageRulesFor`, and its ModelInfo.clips): a model with
+  // lyrics gets them from the message, and a video model gets the
+  // message's images as frames or references and the clips that it holds
+  // or names (`mediaRequestInput`). It is the submit's read of the model,
   // so the request sends the input that the submit checked.
   inputRules?: ClipInputRules
 }
@@ -483,11 +484,12 @@ async function runChatRounds(args: StreamStartArgs, reply: ReplyRuntime): Promis
 // parameters to the values that the user chose in the provider settings
 // popup, and sends the lyrics that the message holds to a model that
 // takes lyrics; an edit, an upscale, and a video request send the images
-// of the message (`mediaRequestInput`). Images and clips get new ids of
-// the one id sequence. Ends the reply, except when it throws.
+// of the message, and a video request the clips that it holds or names
+// (`mediaRequestInput`). Images and clips get new ids of the one id
+// sequence. Ends the reply, except when it throws.
 async function runMediaRound(args: StreamStartArgs, reply: ReplyRuntime, kind: MediaKind): Promise<void> {
   const tab = sbp('dez.model/tab', args.tabId) as Tab | null
-  const { prompt, lyrics, images } = mediaRequestInput(kind, args.messages, tab?.sections ?? [], args.inputRules)
+  const input = mediaRequestInput(kind, args.messages, tab?.sections ?? [], args.inputRules)
   const parameters = (sbp('dez.model/settings/snapshot') as SettingsSnapshot).modelParameters[modelRefKey(args.model)]
   const requestId = crypto.randomUUID()
   reply.requestId = requestId
@@ -495,9 +497,10 @@ async function runMediaRound(args: StreamStartArgs, reply: ReplyRuntime, kind: M
     providerId: args.model.providerId,
     modelId: args.model.modelId,
     kind,
-    prompt,
-    ...(lyrics !== undefined && { lyrics }),
-    images,
+    prompt: input.prompt,
+    ...(input.lyrics !== undefined && { lyrics: input.lyrics }),
+    images: input.images,
+    ...(input.clips.length > 0 && { clips: input.clips }),
     ...(parameters && { parameters }),
     requestId,
     signal: reply.abort.signal,

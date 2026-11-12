@@ -4,7 +4,9 @@ import { sanitizeErrorText } from '../../utils/protocol/errors'
 import { responseContentType, type NativeHttpResponseHead } from '../../utils/protocol/nativeHttp'
 import type { ImageSize } from '../chat/imageDrawing'
 import { isImageMediaType } from '../chat/images'
+import type { MediaTagKind } from '../chat/mediaTags'
 import { trimTrailingSlashes, type MediaApiFormatId } from './config'
+import type { ClipUse, InputClipRules } from './clipInputs'
 import type { InputImageRules } from './clipImages'
 import type { ClipTextRules } from './clipText'
 import { ClipNotMadeError, UnusableAnswerError } from './errors'
@@ -13,12 +15,12 @@ import { imageSizeRules, type ImageSizeRules, type InputImageLimits } from './im
 import { isOptionValue, parameterTakes, type ModelParameter, type OptionsParameter, type OptionValue, type ParameterValues, type RangeParameter } from './modelParameters'
 import { isRecord, valueAtPath } from './modelParsing'
 import { CLIP_KINDS, isClipKind, type ChatImagePart, type ClipKind, type GeneratedMedia, type ImageKind, type MediaKind } from './types'
-import { VENICE_REFERENCE_FIELDS, veniceReferenceBody, veniceReferenceFamily } from './veniceReferences'
+import { VENICE_AUDIO_TYPES, VENICE_MAX_AUDIO_BYTES, VENICE_REFERENCE_FIELDS, veniceReferenceBody, veniceReferenceClipRules, veniceReferenceFamily } from './veniceReferences'
 
 // What one media request sends: the user's prompt, the input images as
-// bytes, in the user's order, and the value of each parameter of the model
-// that has one (`ImageFormat.parameters`, `ClipFormat.parameters`,
-// `effectiveParameterValues`).
+// bytes, in the user's order, the input clips as bytes, and the value of
+// each parameter of the model that has one (`ImageFormat.parameters`,
+// `ClipFormat.parameters`, `effectiveParameterValues`).
 export interface MediaInput {
   prompt: string
   // The images of an edit, the one image of an upscale, the reference
@@ -29,7 +31,22 @@ export interface MediaInput {
   // values of `values`). A request of a kind that takes no image does not
   // send them.
   images: readonly ChatImagePart[]
+  // The clips of a video, in the user's order, each with the way that the
+  // model uses its kind. The caller gives a request only clips that the
+  // model takes (`MediaFormat.clipRules`), in a type that it takes.
+  // Missing: none.
+  clips?: readonly InputClipPart[]
   values: ParameterValues
+}
+
+// One input clip of a request: its use (`ClipKindRules.use`), and the URL
+// that the request gives: a data URL of its bytes, or, for a kind that the
+// model takes only by a web address (`ClipKindRules.urlOnly`), the
+// clip's own `https` URL.
+export interface InputClipPart {
+  kind: MediaTagKind
+  use: ClipUse
+  url: string
 }
 
 // What one clip request sends: a media input (for speech, the prompt is
@@ -193,6 +210,10 @@ export interface MediaFormat {
   // model), with the size rules of each image when an entry tells them.
   // Undefined for a model that takes none, as far as the API tells.
   imageRules?(kind: MediaKind, entry: unknown, mediaEntry: unknown): InputImageRules | undefined
+  // What a model of `kind` takes as input clips, from the same two
+  // entries. Undefined for a model that takes none, as far as the API
+  // tells.
+  clipRules?(kind: MediaKind, entry: unknown, mediaEntry: unknown): InputClipRules | undefined
 }
 
 function jsonBody(body: Uint8Array): unknown {
@@ -560,7 +581,7 @@ const veniceFormat: MediaFormat = {
     // The schemas allow no field that they do not name, and a field that
     // the model does not take is an error. The values are the fields of the
     // model's own parameters, so they go as they are.
-    request: (kind, baseUrl, modelId, { prompt, images, lyrics, values }) => {
+    request: (kind, baseUrl, modelId, { prompt, images, clips = [], lyrics, values }) => {
       const base = trimTrailingSlashes(baseUrl)
       switch (kind) {
         case 'tts':
@@ -584,21 +605,26 @@ const veniceFormat: MediaFormat = {
           // values of its own entry. The images are the first and the
           // last frame, or the references of a reference-to-video model
           // (veniceReferences.ts), each as a data URL ("a URL (http/https)
-          // or a data URL").
+          // or a data URL"). So are the clips: the reference clips and the
+          // voices go in the family's fields, and a background audio clip
+          // in `audio_url` (`clipRules`).
           // https://docs.venice.ai/api-reference/endpoint/video/queue
           if (values.duration === undefined) throw new ExplainedError(NO_VIDEO_LENGTH_MESSAGE)
           const urls = images.map(imageDataUrl)
           const family = veniceReferenceFamily(modelId)
           const [firstFrame, lastFrame] = urls
+          const references = clips.filter((clip) => clip.use !== 'background')
+          const background = clips.find((clip) => clip.use === 'background')
           return {
             url: `${base}/video/queue`,
             body: {
               ...values,
               model: modelId,
               prompt,
-              ...(family && urls.length > 0 && veniceReferenceBody(family, urls)),
+              ...(family && veniceReferenceBody(family, urls, references)),
               ...(!family && firstFrame !== undefined && { image_url: firstFrame }),
               ...(!family && lastFrame !== undefined && { end_image_url: lastFrame }),
+              ...(background && { audio_url: background.url }),
             },
           }
         }
@@ -732,6 +758,24 @@ const veniceFormat: MediaFormat = {
     const family = typeof id === 'string' ? veniceReferenceFamily(id) : undefined
     if (family) return { maxImages: family.maxImages, references: { promptName: family.promptName }, ...(size && { size }) }
     return { maxImages: 2, ...(size && { size }) }
+  },
+  // A reference-to-video model: the reference clips of its family, and the
+  // voice of each reference when its entry says that it takes one
+  // (`per_reference_audio`; veniceReferences.ts). Any other video model
+  // whose entry says that it takes audio (`audio_input`) takes one audio
+  // clip as the sound of the video (`audio_url`: "WAV, MP3. Max: 30s,
+  // 15MB"). The entries' `video_input` is false for every model of these
+  // kinds (2026-11-11), so it tells nothing of reference videos.
+  // https://docs.venice.ai/api-reference/endpoint/video/queue
+  clipRules: (kind, entry) => {
+    if (kind !== 'video' && kind !== 'imageToVideo') return undefined
+    const constraint = (field: string) => valueAtPath(entry, `model_spec.constraints.${field}`)
+    const id = valueAtPath(entry, 'id')
+    const family = typeof id === 'string' ? veniceReferenceFamily(id) : undefined
+    const references = family && veniceReferenceClipRules(family, constraint('per_reference_audio') === true)
+    if (references) return references
+    if (constraint('audio_input') !== true) return undefined
+    return { audio: { use: 'background', maxClips: 1, maxSeconds: 30, maxBytes: VENICE_MAX_AUDIO_BYTES, types: [...VENICE_AUDIO_TYPES] } }
   },
 }
 
@@ -959,7 +1003,7 @@ const openRouterFormat: MediaFormat = {
           return []
       }
     },
-    request: (kind, baseUrl, modelId, { prompt, images, values }) => {
+    request: (kind, baseUrl, modelId, { prompt, images, clips = [], values }) => {
       const base = trimTrailingSlashes(baseUrl)
       switch (kind) {
         case 'tts':
@@ -983,20 +1027,31 @@ const openRouterFormat: MediaFormat = {
           // (OPENROUTER_IMAGES_AS), each as a data URL; never both. Any
           // value but `references` (a cache from before the parameter) sends
           // frames, which the model's image rules then count.
+          // The clips are references too (`audio_url`, `video_url` items),
+          // each by its web address (`clipRules`). A request with a clip
+          // sends its images as references whatever the user chose: "If
+          // both fields are provided, frame_images takes precedence and the
+          // request is treated as image-to-video", which would drop the
+          // clips. Its images stay as many as the rules of the user's
+          // choice take.
           // https://openrouter.ai/docs/guides/overview/multimodal/video-generation
           // https://openrouter.ai/docs/cookbook/video-generation/image-to-video
           // https://openrouter.ai/docs/cookbook/video-generation/reference-to-video
           const { [OPENROUTER_IMAGES_AS]: imagesAs, ...fields } = values
           if (fields.duration === undefined) throw new ExplainedError(NO_VIDEO_LENGTH_MESSAGE)
           const imageUrls = images.map((image) => ({ type: 'image_url', image_url: { url: imageDataUrl(image) } }))
+          const clipUrls = clips.map((clip) => (clip.kind === 'audio'
+            ? { type: 'audio_url', audio_url: { url: clip.url } }
+            : { type: 'video_url', video_url: { url: clip.url } }))
+          const references = [...imageUrls, ...clipUrls]
           return {
             url: `${base}/videos`,
             body: {
               ...fields,
               model: modelId,
               prompt,
-              ...(imageUrls.length > 0 && (imagesAs === OPENROUTER_AS_REFERENCES
-                ? { input_references: imageUrls }
+              ...(references.length > 0 && (imagesAs === OPENROUTER_AS_REFERENCES || clipUrls.length > 0
+                ? { input_references: references }
                 : { frame_images: OPENROUTER_FRAMES.slice(0, imageUrls.length).map((frame, index) => ({ ...imageUrls[index], frame_type: frame })) })),
             },
           }
@@ -1075,6 +1130,23 @@ const openRouterFormat: MediaFormat = {
     const references = { maxImages: OPENROUTER_MAX_REFERENCES, references: {} }
     if (frames === 0) return references
     return { maxImages: frames, whenParameter: { name: OPENROUTER_IMAGES_AS, value: OPENROUTER_AS_REFERENCES, rules: references } }
+  },
+  // A video model takes the clip kinds that its entry in the provider's
+  // model list names as inputs (`architecture.input_modalities`: `audio`,
+  // `video`), as references (`input_references`), each only by its web
+  // address: a data URL gets a 400 ("Invalid reference URL:
+  // input_references[0].audio_url.url: Only HTTPS URLs are allowed";
+  // `video_url` the same, 2026-11-11). The docs tell no count, length,
+  // type, size, or prompt name, so the provider checks them.
+  // https://openrouter.ai/docs/guides/overview/multimodal/video-generation
+  clipRules: (kind, entry) => {
+    if (!isClipKind(kind) || CLIP_KINDS[kind] !== 'video') return undefined
+    const inputs = listedValues(valueAtPath(entry, 'architecture.input_modalities'))
+    const rules: InputClipRules = {
+      ...(inputs.includes('audio') && { audio: { use: 'reference', urlOnly: true } }),
+      ...(inputs.includes('video') && { video: { use: 'reference', urlOnly: true } }),
+    }
+    return rules.audio || rules.video ? rules : undefined
   },
 }
 

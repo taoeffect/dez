@@ -7,13 +7,14 @@ describe('withKeptClipData', () => {
   const voices = [{ name: 'voice', label: 'Voice', options: ['alloy', 'bella'], default: 'alloy' }]
   const text = { maxPromptLength: 300 }
   const images = { maxImages: 2 }
+  const clips = { audio: { use: 'background' as const, maxClips: 1 } }
   const model = (id: string, fields: Partial<ModelInfo> = {}): ModelInfo => ({ id, name: id, provider: 'p', ...fields })
 
-  it('gives a model the parameters, text rules, and image rules that the cache has and the new list lacks', () => {
-    const cached = [model('film', { request: 'video', parameters: lengths, text, images })]
+  it('gives a model the parameters, text rules, image rules, and clip rules that the cache has and the new list lacks', () => {
+    const cached = [model('film', { request: 'video', parameters: lengths, text, images, clips })]
 
     expect(withKeptClipData([model('film', { request: 'video' })], cached))
-      .toStrictEqual([model('film', { request: 'video', parameters: lengths, text, images })])
+      .toStrictEqual([model('film', { request: 'video', parameters: lengths, text, images, clips })])
   })
 
   // Else a request would go to it after a failed image list, and the

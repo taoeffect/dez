@@ -1,17 +1,21 @@
 import { IMAGE_ID_SOURCE } from './images'
 
-// An image mention is `@` and an image id in a user message: `@a` names the
-// image whose reference has `id=a` (the badge on the image shows the id). The
-// user types it to say which image a request is about ("edit @a to add an
-// apple"). The request builder then sends that image with the message, at
-// the place of the mention, while the message is the newest user message of
-// the request (`sectionsToStreamMessages`, streams/messages.ts). The
-// mention itself stays in the text as the user typed it.
+// A mention is `@` and an id in a user message: `@a` names the image whose
+// reference has `id=a` (the badge on the image shows the id), or the clip
+// whose media tag has `id="a"` (mediaTags.ts). The user types it to say
+// which image or clip a request is about ("edit @a to add an apple", "make
+// @c move to the beat of @b"). The request builder then sends that image
+// with the message, at the place of the mention, while the message is the
+// newest user message of the request (`sectionsToStreamMessages`,
+// streams/messages.ts). A clip goes only to a media request, for a model
+// that takes clips (`messageClips`, `mediaRequestInput`). The mention
+// itself stays in the text as the user typed it.
 //
 // Most `@` words are not mentions: an e-mail address, a user name, a
 // decorator in code. So a word counts only when it has the form below and
-// an image has its id; every other word is plain text, with no error. This
-// module finds the words of that form; the request builder knows the images.
+// an image or a clip has its id; every other word is plain text, with no
+// error. This module finds the words of that form; the request builder
+// knows the images and the clips.
 
 // The chars of a word, as the inside of a character class: the letters
 // (with their combining marks) and digits of any script, and `_`.

@@ -1,8 +1,16 @@
 import sbp from '@sbp/sbp'
+import type * as TauriCore from '@tauri-apps/api/core'
 import { afterEach, beforeEach, describe, expect, it, vi, type MockInstance } from 'vitest'
 import type { DrawnImage, DrawnMediaType, ImageDrawing, ImageSize } from '../model/chat/imageDrawing'
 import { findImageReferences, imageMarkdown, storedImageFile, type ImageFolder, type ImageMediaType } from '../model/chat/images'
+import { FileTooLargeError } from '../model/chat/mediaFiles'
 import './images'
+
+// Unit tests run outside Tauri, which gives the asset URL of a path.
+vi.mock('@tauri-apps/api/core', async (importOriginal) => ({
+  ...await importOriginal<typeof TauriCore>(),
+  convertFileSrc: (path: string) => `asset://localhost${path}`,
+}))
 
 interface SavedFile {
   path: string
@@ -269,5 +277,77 @@ describe('dez.controller/images/redraw', () => {
       throw new Error('The crop is outside the image.')
     })).rejects.toThrow('The crop is outside the image.')
     expect(drawn).toStrictEqual([])
+  })
+})
+
+describe('dez.controller/images/readFile', () => {
+  const PATH = '/home/ann/Videos/dance.mp4'
+  const ASSET_URL = `asset://localhost${PATH}`
+  let requests: { url: string, range: string | null }[] = []
+
+  /** Gives each request of the asset protocol the answer of `answer`, by
+   *  the range that it asks for (null: the whole file). */
+  function stubAssets(answer: (range: string | null) => Response): void {
+    vi.stubGlobal('fetch', async (url: string, init?: RequestInit) => {
+      const range = new Headers(init?.headers).get('Range')
+      requests.push({ url, range })
+      return answer(range)
+    })
+  }
+
+  /** A file that holds `content` and takes ranges, as the asset protocol
+   *  does. */
+  function stubFile(content: string): void {
+    stubAssets((range) => {
+      if (range === null) return new Response(content, { headers: { 'Content-Type': 'video/mp4' } })
+      if (content === '') return new Response(null, { status: 416, headers: { 'Content-Range': 'bytes */0' } })
+      return new Response(content.slice(0, 1), { status: 206, headers: { 'Content-Range': `bytes 0-0/${content.length}` } })
+    })
+  }
+
+  function readFile(options?: { maxBytes?: number }): Promise<File> {
+    return sbp('dez.controller/images/readFile', PATH, options) as Promise<File>
+  }
+
+  beforeEach(() => {
+    requests = []
+  })
+
+  it.each(['hello', ''])('asks for the size first, and reads a file that is not too large (%j)', async (content) => {
+    stubFile(content)
+
+    const file = await readFile({ maxBytes: 5 })
+
+    expect(requests).toStrictEqual([{ url: ASSET_URL, range: 'bytes=0-0' }, { url: ASSET_URL, range: null }])
+    expect([file.name, file.type, await file.text()]).toStrictEqual(['dance.mp4', 'video/mp4', content])
+  })
+
+  it('rejects a file that is too large, with its size, without reading it', async () => {
+    stubFile('hello')
+
+    await expect(readFile({ maxBytes: 4 })).rejects.toStrictEqual(new FileTooLargeError(5, 4))
+    expect(requests).toStrictEqual([{ url: ASSET_URL, range: 'bytes=0-0' }])
+  })
+
+  it('checks the size of the bytes read when the size request gives no size', async () => {
+    stubAssets(() => new Response('hello'))
+
+    await expect(readFile({ maxBytes: 4 })).rejects.toStrictEqual(new FileTooLargeError(5, 4))
+    expect(requests).toHaveLength(2)
+  })
+
+  it('rejects when the file cannot be read', async () => {
+    stubAssets(() => new Response(null, { status: 404 }))
+
+    await expect(readFile({ maxBytes: 4 })).rejects.toThrow('The file cannot be read (HTTP 404).')
+  })
+
+  it('reads the file with one request when it has no size limit', async () => {
+    stubFile('hello')
+
+    const file = await readFile()
+
+    expect(requests).toStrictEqual([{ url: ASSET_URL, range: null }])
+    expect(await file.text()).toBe('hello')
   })
 })

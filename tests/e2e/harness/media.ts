@@ -45,6 +45,13 @@ export function silentWav (seconds: number): Buffer {
  *      -fflags +bitexact -flags:v +bitexact video.webm */
 export const WEBM_VIDEO = fs.readFileSync(new URL('../fixtures/video.webm', import.meta.url))
 
+/** `WEBM_VIDEO` in an MP4 file (the same VP9 stream; a model can take
+ *  only MP4 or MOV clips, and the CI GStreamer packages decode VP9 in
+ *  MP4 too): 2 s by its movie header. Made with:
+ *
+ *    ffmpeg -i video.webm -c copy -movflags +faststart video.mp4 */
+export const MP4_VIDEO = fs.readFileSync(new URL('../fixtures/video.mp4', import.meta.url))
+
 /** Bytes that no computer decodes as a clip: plain text. A test of a clip
  *  that the computer cannot play uses them in place of a real format that
  *  only some computers decode, so that it gives the same result on each

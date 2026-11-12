@@ -1,6 +1,7 @@
 import * as z from 'zod'
 import { MEDIA_TAG_KINDS } from '../chat/mediaTags'
 import { MODEL_OUTPUT_IDS } from '../modelOutputs'
+import { CLIP_USES, type ClipKindRules, type InputClipRules } from '../providers/clipInputs'
 import type { InputImageRules } from '../providers/clipImages'
 import { isValidProviderId } from '../providers/config'
 import { imageSizeRules } from '../providers/imageSize'
@@ -59,6 +60,65 @@ const inputImageRulesSchema = z.object({ ...ownImageRulesShape, whenParameter: z
     return { ...ownImageRules(own), ...(other.success && { whenParameter: other.data }) }
   })
 
+// A number of a clip rule: a count is a whole number, and each number is
+// above 0.
+function clipRuleNumber(value: unknown, whole: boolean): number | undefined {
+  return typeof value === 'number' && Number.isFinite(value) && value > 0 && (!whole || Number.isInteger(value)) ? value : undefined
+}
+
+// ClipKindRules (src/model/providers/clipInputs.ts). A bad rule is dropped
+// alone, and the kind stays with its use: the provider then checks what
+// Dez does not. A least length above the most length is no rule, so it is
+// dropped too, and so is a prompt name with no `{n}` (the clips then keep
+// their ids in the prompt). A kind with no known use is dropped.
+const clipKindRulesSchema = z.object({
+  use: z.enum(CLIP_USES),
+  maxClips: z.unknown(),
+  minSeconds: z.unknown(),
+  maxSeconds: z.unknown(),
+  maxTotalSeconds: z.unknown(),
+  maxBytes: z.unknown(),
+  types: z.unknown(),
+  promptName: z.unknown(),
+  urlOnly: z.unknown(),
+}).transform((rules): ClipKindRules => {
+  const maxClips = clipRuleNumber(rules.maxClips, true)
+  const maxSeconds = clipRuleNumber(rules.maxSeconds, false)
+  const minSeconds = clipRuleNumber(rules.minSeconds, false)
+  const maxTotalSeconds = clipRuleNumber(rules.maxTotalSeconds, false)
+  const maxBytes = clipRuleNumber(rules.maxBytes, true)
+  const types = Array.isArray(rules.types) && rules.types.length > 0 && rules.types.every((type) => typeof type === 'string' && type !== '') ? rules.types as string[] : undefined
+  const promptName = typeof rules.promptName === 'string' && rules.promptName.includes('{n}') ? rules.promptName : undefined
+  return {
+    use: rules.use,
+    ...(maxClips !== undefined && { maxClips }),
+    ...(minSeconds !== undefined && (maxSeconds === undefined || minSeconds <= maxSeconds) && { minSeconds }),
+    ...(maxSeconds !== undefined && { maxSeconds }),
+    ...(maxTotalSeconds !== undefined && { maxTotalSeconds }),
+    ...(maxBytes !== undefined && { maxBytes }),
+    ...(types && { types }),
+    ...(promptName !== undefined && { promptName }),
+    ...(rules.urlOnly === true && { urlOnly: true }),
+  }
+})
+
+// InputClipRules. A bad kind is dropped alone, and the other stays; the
+// rule of the audio clips goes with them. With no kind left, the model has
+// no clip rules (as from `MediaFormat.clipRules`): it takes no clip.
+const inputClipRulesSchema = z.object({ audio: z.unknown(), video: z.unknown(), audioNeedsVisual: z.unknown() })
+  .transform(({ audio, video, audioNeedsVisual }): InputClipRules | undefined => {
+    const audioRules = clipKindRulesSchema.safeParse(audio)
+    const videoRules = clipKindRulesSchema.safeParse(video)
+    if (!audioRules.success && !videoRules.success) return undefined
+    return {
+      ...(audioRules.success && { audio: audioRules.data }),
+      ...(videoRules.success && { video: videoRules.data }),
+      ...(audioRules.success && audioNeedsVisual === true && { audioNeedsVisual: true }),
+    }
+  })
+
+// The transform drops the `clips` key of a model whose clip rules have no
+// kind left, which Zod would keep with an undefined value.
 const modelInfoSchema = z.object({
   id: z.string(),
   name: z.string(),
@@ -75,8 +135,9 @@ const modelInfoSchema = z.object({
   parameters: z.array(modelParameterSchema).min(1).optional(),
   text: clipTextRulesSchema.optional(),
   images: inputImageRulesSchema.optional(),
+  clips: inputClipRulesSchema.optional(),
   unstoredOutput: z.string().min(1).optional(),
-})
+}).transform(({ clips, ...model }) => ({ ...model, ...(clips && { clips }) }))
 
 // Individually drop invalid models (e.g. a bad provider id) instead of failing
 // the whole provider entry, so one bad model doesn't discard the rest.

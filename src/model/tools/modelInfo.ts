@@ -216,6 +216,9 @@ function dezFacts(model: ModelInfo, facts: ModelInfoFacts): Record<string, unkno
         ...(limits && { limits }),
       },
     }),
+    // What the model takes of the clips that a message names, by kind
+    // (`mediaRequestInput`, `generateMedia`).
+    ...(model.clips && { clips: model.clips }),
     // The options come from the provider's entries, so they get the same
     // stand-ins.
     ...(model.parameters && {

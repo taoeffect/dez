@@ -5,6 +5,7 @@ import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from
 import { Key } from 'webdriverio'
 import { openAiSystemMessage } from './harness/chatBody'
 import { consoleErrors, elementCenter, movePointer, pointerClick, pointerClickAt, resetConsoleErrors, screenshotOnFailure, typeKeys, waitForValue, type Point } from './harness/dom'
+import { dropFiles, nativeDrop } from './harness/drops'
 import { conversationFilePath } from './harness/fixtures'
 import { pasteImage, shownImages, solidPng, type ShownImage } from './harness/images'
 import { startMockProviderApp, type MockProviderApp } from './harness/mockProviderApp'
@@ -46,7 +47,7 @@ const CLAUDE: MockProvider = { id: 'claude', name: 'Claude Mock', modelId: 'clau
 const UNDO_STEP_MS = 600
 
 const QUESTION = ' What color?'
-const NOT_AN_IMAGE_MESSAGE = 'Only image files can be dropped into a conversation.'
+const NOT_AN_IMAGE_MESSAGE = 'Only images and audio and video clips can be dropped into a conversation. Clips must be mp4, webm, mov, mp3, wav, ogg, flac, m4a, aac, or opus files.'
 const PASTED_PNG = solidPng(48, 32, [220, 40, 40])
 const DROPPED_PNG = solidPng(40, 24, [40, 90, 220])
 // PASTED_PNG as an OpenAI-format image part.
@@ -102,13 +103,6 @@ interface PromptState {
   /** The labels of its buttons, in page order. */
   buttons: string[]
   focus: 'yes' | 'no' | 'editor' | 'other'
-}
-
-/** A file for `dropFiles`. */
-interface DroppedFile {
-  name: string
-  type: string
-  base64: string
 }
 
 interface InsertedImage {
@@ -302,45 +296,6 @@ describe('images', () => {
   async function docPoint (pos: number): Promise<Point> {
     const point = await docPosPoint(browser, pos, 1)
     return { x: point.x + 1, y: point.y }
-  }
-
-  // Drags `files` over `point` and drops them there, on the element at that
-  // point. Returns whether a handler canceled each event: a canceled
-  // dragover accepts the drag, and a canceled drop keeps the webview from
-  // opening the file.
-  async function dropFiles (point: Point, files: DroppedFile[]): Promise<{ dragover: boolean, drop: boolean }> {
-    return browser.execute((at: Point, dropped: DroppedFile[]) => {
-      const target = document.elementFromPoint(at.x, at.y)
-      if (!target) throw new Error(`dropFiles: nothing at ${at.x}, ${at.y}`)
-      const data = new DataTransfer()
-      for (const file of dropped) {
-        data.items.add(new File([Uint8Array.from(atob(file.base64), (char) => char.charCodeAt(0))], file.name, { type: file.type }))
-      }
-      const send = (type: 'dragover' | 'drop'): boolean => {
-        const event = new DragEvent(type, { dataTransfer: data, clientX: at.x, clientY: at.y, bubbles: true, cancelable: true })
-        target.dispatchEvent(event)
-        return event.defaultPrevented
-      }
-      return { dragover: send('dragover'), drop: send('drop') }
-    }, point, files)
-  }
-
-  // Sends the drop event of Tauri's native file drop to the page, as wry
-  // sends it when a file manager drops `paths` at `point` (CSS px). The
-  // native drop is on only on Linux (src-tauri/tauri.linux.conf.json), and
-  // WebDriver cannot drive an OS drag, so the page emits the event itself.
-  // Unlike a real drop, this event adds no path to the asset-protocol
-  // scope: a dropped image must be in the image folder, which is always in
-  // the scope.
-  async function nativeDrop (point: Point, paths: string[]): Promise<void> {
-    await browser.execute(async (at: Point, dropped: string[]) => {
-      const internals = Reflect.get(window, '__TAURI_INTERNALS__') as { invoke: (command: string, args: unknown) => Promise<unknown> }
-      await internals.invoke('plugin:event|emit_to', {
-        target: { kind: 'Webview', label: 'main' },
-        event: 'tauri://drag-drop',
-        payload: { paths: dropped, position: at },
-      })
-    }, point, paths)
   }
 
   // Waits for the drop of DROPPED_PNG into the doc `Before after`, after
@@ -723,7 +678,7 @@ describe('images', () => {
     await typeKeys(browser, 'Before after')
     await waitForValue(browser, 'typed text', () => editorDoc(browser), 'Before after')
 
-    const accepted = await dropFiles(await docPoint('Before '.length), [
+    const accepted = await dropFiles(browser, await docPoint('Before '.length), [
       { name: 'blue.png', type: 'image/png', base64: DROPPED_PNG.toString('base64') },
     ])
     expect(accepted).toEqual({ dragover: true, drop: true })
@@ -737,7 +692,7 @@ describe('images', () => {
     await waitForValue(browser, 'typed text', () => editorDoc(browser), 'Some text')
     const before = await storedImages()
 
-    const accepted = await dropFiles(await docPoint('Some '.length), [
+    const accepted = await dropFiles(browser, await docPoint('Some '.length), [
       { name: 'notes.txt', type: 'text/plain', base64: Buffer.from('notes').toString('base64') },
     ])
     expect(accepted).toEqual({ dragover: true, drop: true })
@@ -747,7 +702,7 @@ describe('images', () => {
 
     // Outside the editor, the window refuses every file drop, so the
     // webview does not open the file in place of the app.
-    const refused = await dropFiles(await elementCenter(browser, 'header.tab-bar'), [
+    const refused = await dropFiles(browser, await elementCenter(browser, 'header.tab-bar'), [
       { name: 'red.png', type: 'image/png', base64: PASTED_PNG.toString('base64') },
     ])
     expect(refused).toEqual({ dragover: true, drop: true })
@@ -766,7 +721,7 @@ describe('images', () => {
     await typeKeys(browser, 'Before after')
     await waitForValue(browser, 'typed text', () => editorDoc(browser), 'Before after')
 
-    await nativeDrop(await docPoint('Before '.length), [source])
+    await nativeDrop(browser, await docPoint('Before '.length), [source])
     await expectDroppedImage(before)
   })
 
@@ -777,14 +732,14 @@ describe('images', () => {
     await waitForValue(browser, 'typed text', () => editorDoc(browser), 'Some text')
     const before = await storedImages()
 
-    await nativeDrop(await docPoint('Some '.length), [path.join(setup.app.home, 'notes.txt')])
+    await nativeDrop(browser, await docPoint('Some '.length), [path.join(setup.app.home, 'notes.txt')])
     await waitForValue(browser, 'toast', async () => (await openToasts(browser)).some((toast) => toast.message === NOT_AN_IMAGE_MESSAGE), true)
     expect(await editorDoc(browser)).toBe('Some text')
     expect(await storedImages()).toEqual(before)
 
     // wry passes on a URI that is not a `file://` URI as it is.
     const link = 'https://example.com/page'
-    await nativeDrop(await docPoint('Some '.length), [link])
+    await nativeDrop(browser, await docPoint('Some '.length), [link])
     await waitForValue(browser, 'dropped link', docAndCaret, { doc: `Some ${link}text`, caret: 'Some '.length + link.length })
     expect(await storedImages()).toEqual(before)
   })

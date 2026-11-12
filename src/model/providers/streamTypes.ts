@@ -1,5 +1,6 @@
 import type { MessagePart, RequestMessage, ThinkingReplay } from '../chat/types'
 import type { StreamedToolCall } from '../tools/types'
+import type { ClipAttachment } from './clipInputs'
 import type { ParameterValues } from './modelParameters'
 import type { ChatRequestContext, GeneratedClip, GeneratedMedia, MediaKind, ProviderId } from './types'
 
@@ -60,6 +61,12 @@ export interface ProviderGenerateMediaInput {
   // of `parameters`: `inputImageRulesFor`). A request of another kind does
   // not send them.
   images?: readonly string[]
+  // The input clips of a `video` or `imageToVideo` request, in the user's
+  // order (`mediaRequestInput`): media tags with their sources, which
+  // generateMedia reads. Only clips that the model takes
+  // (`ModelInfo.clips`); generateMedia refuses the others before any
+  // request. A request of another kind does not send them.
+  clips?: readonly ClipAttachment[]
   // The values to set for the model's parameters (ModelInfo.parameters),
   // by parameter name. A parameter with no value here, or with one that
   // the model does not take, gets its default.

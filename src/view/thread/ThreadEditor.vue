@@ -53,7 +53,7 @@ import { deleteImageBang, deleteImageParen, markdownImages } from '../editor/ima
 import { markdownToolCalls, openToolCalls } from '../editor/toolCalls'
 import { markdownMedia } from '../editor/media'
 import { deleteLineBlockBackward, deleteLineBlockForward, joinsLineBlock } from '../editor/lineBlocks'
-import { imagePasteAndDrop } from '../editor/imageInsert'
+import { filePasteAndDrop } from '../editor/imageInsert'
 import { markdownLinks } from '../editor/links'
 import { focusKeepingScrollOnMouseDown } from '../editor/focus'
 import { activeFindQuery, findState } from '../editor/findState'
@@ -894,7 +894,7 @@ function buildState(openPanels?: OpenPanels): EditorState {
       markdownToolCalls(openPanels?.toolCalls),
       markdownMedia(),
       markdownLinks(),
-      imagePasteAndDrop(),
+      filePasteAndDrop(),
       // The find dropdown floats over the top of the scroller. Count it as
       // hidden space so matches (and anything else CM scrolls to) are not
       // scrolled under it.

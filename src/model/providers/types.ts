@@ -4,6 +4,7 @@ import type { MediaTagKind } from '../chat/mediaTags'
 import type { RequestMessage, ThinkingReplay } from '../chat/types'
 import { normalizeOutputs, type ModelOutput } from '../modelOutputs'
 import type { StreamedToolCall, ToolDefinition } from '../tools/types'
+import { cloneInputClipRules, type InputClipRules } from './clipInputs'
 import { cloneInputImageRules, type InputImageRules } from './clipImages'
 import { cloneClipTextRules, type ClipTextRules } from './clipText'
 import type { ImageSizeRules, InputImageLimits } from './imageSize'
@@ -70,7 +71,9 @@ export interface GeneratedClip {
   // The source that plays: `url` when the provider gave one, else the
   // absolute path of the temp copy (`isTempMediaPath` in mediaTags.ts).
   src: string
-  // The provider's URL of the clip. It is a signed URL, which is a secret.
+  // The provider's URL of the clip. It is a signed URL, which is a secret:
+  // it goes to a provider only as the input of a model that takes the
+  // clip's kind only by its web address (`ClipKindRules.urlOnly`).
   url: string | null
   // The ISO time after which `src` stops working.
   expires: string
@@ -105,7 +108,8 @@ export interface ModelInfo {
   request?: ModelRequest
   // The kind of clip that the model needs as the input of every request: a
   // recording to write down or to change (speech-to-text, a voice changer),
-  // or a video to change. Dez has no request that carries a clip, so only a
+  // or a video to change. Dez has no request kind for such a model yet (a
+  // video model can take clips besides its prompt: `clips`), so only a
   // model with the request `none` has this, and it tells why a submit is
   // refused. Missing: the model needs no clip, or the provider does not
   // tell.
@@ -129,6 +133,12 @@ export interface ModelInfo {
   // image, an `upscale` or `imageToVideo` model one image, and a `video`
   // or `image` model none (`maxInputImages`).
   images?: InputImageRules
+  // What the model takes as the input clips of a request (clipInputs.ts):
+  // the kinds, how many, their lengths, types, and sizes, and how it uses
+  // them. For a model of a media request kind whose provider tells it (a
+  // video model that takes reference clips or background audio). Missing:
+  // it takes no clip, as far as the provider tells.
+  clips?: InputClipRules
   // The name of the file type of the images that the model makes (such as
   // `SVG`), for a model of an image request kind that makes only types
   // that Dez does not store (`ImageFormat.unstoredOutput`). Dez sends it
@@ -137,11 +147,11 @@ export interface ModelInfo {
   unstoredOutput?: string
 }
 
-export type ModelCapabilities = Pick<ModelInfo, 'imageInput' | 'toolCalling' | 'thinking' | 'unsupportedSettings' | 'outputs' | 'request' | 'clipInput' | 'parameters' | 'text' | 'images' | 'unstoredOutput'>
+export type ModelCapabilities = Pick<ModelInfo, 'imageInput' | 'toolCalling' | 'thinking' | 'unsupportedSettings' | 'outputs' | 'request' | 'clipInput' | 'parameters' | 'text' | 'images' | 'clips' | 'unstoredOutput'>
 
 // What a clip model takes as the input of a request, besides the values of
 // its parameters.
-export type ClipInputRules = Pick<ModelInfo, 'text' | 'images'>
+export type ClipInputRules = Pick<ModelInfo, 'text' | 'images' | 'clips'>
 
 // Display names for agent role pills and history rows: provider id ->
 // provider name, and `modelRefKey` -> model name. Maps, not plain objects,
@@ -303,10 +313,11 @@ export class ProviderNotConfiguredError extends ProviderError {
 // Leaves each capability out when it is unknown, so the model cache file and
 // whole-object comparisons hold no `undefined` field. `outputs` becomes a new
 // array in table order, `unsupportedSettings` a new array, and `parameters`,
-// `text`, and `images` deep copies, so two models never share one (a store
-// copy and its snapshot, a config model and the cache). `clipInput` stays
-// only with the request `none`: a config model can give a fetched model
-// another request kind, and its reason for `none` must not stay then.
+// `text`, `images`, and `clips` deep copies, so two models never share one
+// (a store copy and its snapshot, a config model and the cache).
+// `clipInput` stays only with the request `none`: a config model can give a
+// fetched model another request kind, and its reason for `none` must not
+// stay then.
 export function providerModel(provider: ProviderId, id: string, name: string, capabilities: ModelCapabilities = {}): ModelInfo {
   const model: ModelInfo = { id, name, provider }
   if (capabilities.imageInput !== undefined) model.imageInput = capabilities.imageInput
@@ -319,6 +330,7 @@ export function providerModel(provider: ProviderId, id: string, name: string, ca
   if (capabilities.parameters !== undefined) model.parameters = capabilities.parameters.map(cloneModelParameter)
   if (capabilities.text !== undefined) model.text = cloneClipTextRules(capabilities.text)
   if (capabilities.images !== undefined) model.images = cloneInputImageRules(capabilities.images)
+  if (capabilities.clips !== undefined) model.clips = cloneInputClipRules(capabilities.clips)
   if (capabilities.unstoredOutput !== undefined) model.unstoredOutput = capabilities.unstoredOutput
   return model
 }

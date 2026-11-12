@@ -1,8 +1,8 @@
 import { effectiveRequest, type ModelInfo } from './types'
 
 // The clip data of a model: what a media request to it can set, the rules
-// of its text, the rules of its input images, and the file type of an
-// image that Dez cannot store. Image models have some of it too (the
+// of its text, the rules of its input images and clips, and the file type
+// of an image that Dez cannot store. Image models have some of it too (the
 // parameters of an upscale, the image rules of an edit;
 // `Provider.withClipData`). A media format can read it from model lists
 // that only the media API has (`MediaFormat.modelLists`), and such a list
@@ -34,6 +34,7 @@ export function withKeptClipData(models: readonly ModelInfo[], cached: readonly 
       ...(model.parameters === undefined && known.parameters && { parameters: known.parameters }),
       ...(model.text === undefined && known.text && { text: known.text }),
       ...(model.images === undefined && known.images && { images: known.images }),
+      ...(model.clips === undefined && known.clips && { clips: known.clips }),
       ...(model.unstoredOutput === undefined && known.unstoredOutput !== undefined && { unstoredOutput: known.unstoredOutput }),
     }
   })

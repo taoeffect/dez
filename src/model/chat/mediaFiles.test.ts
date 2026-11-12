@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { mediaFileExtension, savedMediaFile, tempMediaFile } from './mediaFiles'
+import { mediaFileExtension, savedMediaFile, storableClip, tempMediaFile } from './mediaFiles'
 
 const APP_DIR = '/home/ann/.config/dez'
 const CACHE_DIR = '/home/ann/.cache/dez'
@@ -9,6 +9,8 @@ describe('savedMediaFile', () => {
   it('gives the app-file path of a clip directly in a media folder of this app folder', () => {
     expect(savedMediaFile(`${APP_DIR}/assets/generated/video/${NAME}.mp4`, APP_DIR)).toBe(`assets/generated/video/${NAME}.mp4`)
     expect(savedMediaFile(`${APP_DIR}/assets/generated/audio/a_1.mp3`, APP_DIR)).toBe('assets/generated/audio/a_1.mp3')
+    expect(savedMediaFile(`${APP_DIR}/assets/video/${NAME}.mov`, APP_DIR)).toBe(`assets/video/${NAME}.mov`)
+    expect(savedMediaFile(`${APP_DIR}/assets/audio/${NAME}.wav`, APP_DIR)).toBe(`assets/audio/${NAME}.wav`)
   })
 
   it('gives null for any other path, so that no other file is deleted', () => {
@@ -16,6 +18,8 @@ describe('savedMediaFile', () => {
       // The same file name in another home is another clip.
       `/home/bob/.config/dez/assets/generated/video/${NAME}.mp4`,
       `/backup${APP_DIR}/assets/generated/video/${NAME}.mp4`,
+      `/home/bob/.config/dez/assets/audio/${NAME}.wav`,
+      `${APP_DIR}/assets/video/2026/${NAME}.mp4`,
       `${APP_DIR}/assets/generated/video/2026/${NAME}.mp4`,
       `${APP_DIR}/assets/generated/video/../audio/${NAME}.mp3`,
       `${APP_DIR}/assets/generated/video/my clip.mp4`,
@@ -29,6 +33,40 @@ describe('savedMediaFile', () => {
       '',
     ]) {
       expect(savedMediaFile(path, APP_DIR), path).toBeNull()
+    }
+  })
+})
+
+describe('storableClip', () => {
+  it('takes the kind and the media type from the type that the system gives', () => {
+    expect([
+      storableClip('video/mp4', 'clip'),
+      storableClip('audio/x-wav', 'voice.mp3'),
+      storableClip('Audio/MPEG', 'song'),
+      storableClip('video/quicktime', 'x.MOV'),
+    ]).toStrictEqual([
+      { kind: 'video', type: 'video/mp4' },
+      { kind: 'audio', type: 'audio/wav' },
+      { kind: 'audio', type: 'audio/mpeg' },
+      { kind: 'video', type: 'video/quicktime' },
+    ])
+  })
+
+  it('takes them from the extension when the type is empty or names no clip format', () => {
+    expect([
+      storableClip('', 'Song.FLAC'),
+      storableClip('application/octet-stream', 'talk.m4a'),
+      storableClip('', 'dance.webm'),
+    ]).toStrictEqual([
+      { kind: 'audio', type: 'audio/flac' },
+      { kind: 'audio', type: 'audio/mp4' },
+      { kind: 'video', type: 'video/webm' },
+    ])
+  })
+
+  it('gives null for a file that Dez does not store as a clip', () => {
+    for (const [type, name] of [['image/png', 'red.png'], ['', 'notes.txt'], ['', 'clip'], ['video/x-matroska', 'film.mkv'], ['', 'a.constructor']]) {
+      expect(storableClip(type, name), name).toBeNull()
     }
   })
 })

@@ -44,8 +44,9 @@ describe('audioClipId', () => {
 })
 
 describe('audioClipOf', () => {
-  it('finds the newest audio tag with the id in the agent sections', () => {
+  it('finds the newest audio tag with the id in the agent and the user sections', () => {
     const newer = { ...SONG, src: '/home/u/.config/dez/assets/generated/audio/b.mp3' }
+    const pasted = { ...SONG, src: '/home/u/.config/dez/assets/audio/b.mp3', url: null }
     const sections = [
       section('user', 'Make a song.'),
       section('agent', `Here:\n${mediaTagText(SONG)}`),
@@ -53,12 +54,7 @@ describe('audioClipOf', () => {
       section('agent', mediaTagText(newer)),
     ]
     expect(audioClipOf(sections, 'b')).toMatchObject(newer)
-  })
-
-  it('does not count a tag in a user section', () => {
-    expect(errorOf(() => audioClipOf([section('user', mediaTagText(SONG))], 'b'))).toBe(
-      'This conversation has no audio clips, so it has no audio clip @b. Do not call the audio tool until the conversation has an audio clip.',
-    )
+    expect(audioClipOf([...sections, section('user', `Cut this:\n${mediaTagText(pasted)}`)], 'b')).toMatchObject(pasted)
   })
 
   it('tells the model that an id names a video clip or an image', () => {

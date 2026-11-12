@@ -1,22 +1,25 @@
 import sbp from '@sbp/sbp'
-import { StateField, Transaction, type EditorState, type Extension } from '@codemirror/state'
+import { StateField, Transaction, type ChangeSpec, type EditorState, type Extension } from '@codemirror/state'
 import { Decoration, EditorView, WidgetType, type DecorationSet } from '@codemirror/view'
 import { createApp, h, reactive, shallowRef, type App, type ShallowRef } from 'vue'
 import { SENTINEL_CHAR } from '../../model/chat/content'
-import { MEDIA_TAG_NAMES, findMediaTags, mediaTagText, savedMediaTag, unsavedMediaTag, type MediaTag, type MediaTagData } from '../../model/chat/mediaTags'
+import { MEDIA_TAG_NAMES, findMediaTags, isPastedMediaPath, mediaTagText, savedMediaTag, unsavedMediaTag, type MediaTag, type MediaTagData } from '../../model/chat/mediaTags'
 import MediaPlayer from '../media/MediaPlayer.vue'
 import { clipSourceKind } from '../media/clipState'
 import { sectionsField, type SectionModel } from '../thread/cmEditor'
 import { measureLineHeights } from '../thread/editorMeasure'
 import { focusKeepingScroll, syncDomSelection } from './focus'
-import { agentSectionTexts, lineBlocks, sectionRolesChanged } from './lineBlocks'
+import { linesRemovalRange } from './images'
+import { lineBlocks, sectionRolesChanged, sectionTexts } from './lineBlocks'
 import { addPendingRange, pendingRange, pendingRanges, removePendingRange } from './pendingRanges'
 
-// The audio and video clips of agent sections (media tags,
-// src/model/chat/mediaTags.ts), each shown as a player in place of its tag.
-// The player is a Vue component (src/view/media/MediaPlayer.vue); this
-// module is its owner in the editor: it finds the tags, mounts a player for
-// each, and does the Save and the Delete of a clip, which rewrite the tag.
+// The audio and video clips of every section (media tags,
+// src/model/chat/mediaTags.ts), each shown as a player in place of its tag:
+// in agent sections the clips that models and Dez tools made, in user
+// sections the clip files that the user pasted or dropped. The player is a
+// Vue component (src/view/media/MediaPlayer.vue); this module is its owner
+// in the editor: it finds the tags, mounts a player for each, and does the
+// Save and the Delete of a clip, which rewrite or remove the tag.
 
 const ROOT_CLASS = 'dez-media'
 
@@ -188,15 +191,14 @@ class MediaWidget extends WidgetType {
   }
 }
 
-/** The tags that the editor shows as players, in doc order. Each agent
- *  section is read on its own (`agentSectionTexts`). Left as text: a tag in
- *  a user section, a line that is not a valid tag, and a tag that holds a
- *  sentinel (a prompt pill), whose widgets and atomic ranges must stay the
- *  only ones there. */
+/** The tags that the editor shows as players, in doc order. Each section
+ *  is read on its own (`sectionTexts`). Left as text: a line that is not a
+ *  valid tag, and a tag that holds a sentinel (a prompt pill), whose
+ *  widgets and atomic ranges must stay the only ones there. */
 function findRenderedMedia(doc: string, sections: readonly SectionModel[]): MediaTag[] {
   const media: MediaTag[] = []
   if (!MEDIA_TAG_NAMES.some((name) => doc.includes(`<${name}`))) return media
-  for (const { from, text } of agentSectionTexts(doc, sections)) {
+  for (const { from, text } of sectionTexts(doc, sections)) {
     for (const tag of findMediaTags(text)) {
       if (SENTINEL_CHAR.test(text.slice(tag.from, tag.to))) continue
       media.push({ ...tag, from: from + tag.from, to: from + tag.to })
@@ -211,8 +213,8 @@ function buildMediaDecorations(state: EditorState): MediaDecorations {
   return { media, decorations }
 }
 
-/** Each media tag of an agent section is replaced by its player. The
- *  ranges are atomic, so the caret is never inside the hidden text. */
+/** Each media tag is replaced by its player. The ranges are atomic, so the
+ *  caret is never inside the hidden text. */
 const mediaDecorationsField = StateField.define<MediaDecorations>({
   create: buildMediaDecorations,
   update: (value, tr) => tr.docChanged || sectionRolesChanged(tr) ? buildMediaDecorations(tr.state) : value,
@@ -258,18 +260,15 @@ function followClip(view: EditorView, root: HTMLElement, clip: MediaTagData) {
     rangeId = addPendingRange(view, matches[0])
     return matches[0]
   }
-  /** Ends the work: writes `next` in place of the clip's tag `tag`, if
-   *  given. The rewrite is not in the undo history: the file change that it
-   *  tells of stays, so an undo could only bring back a tag that names a
-   *  file that is gone. */
-  const end = (tag?: MediaTag, next?: MediaTagData): void => {
+  /** Ends the work: makes `change` (a rewrite or the removal of the clip's
+   *  tag), if given. The change is not in the undo history: the file change
+   *  that it tells of stays, so an undo could only bring back a tag that
+   *  names a file that is gone. */
+  const end = (change?: ChangeSpec): void => {
     // In another state, or while another tab is active, there is no range.
     if (!pendingRange(view.state, rangeId)) return
     view.dispatch({
-      ...(tag && next && {
-        changes: { from: tag.from, to: tag.to, insert: mediaTagText(next) },
-        annotations: Transaction.addToHistory.of(false),
-      }),
+      ...(change && { changes: change, annotations: Transaction.addToHistory.of(false) }),
       effects: removePendingRange(rangeId),
     })
   }
@@ -323,7 +322,7 @@ async function saveClip(view: EditorView, root: HTMLElement, clip: MediaTagData)
   // "saving" to "saved" with no other state between.
   busyClips.delete(src)
   if (path !== null && tag) {
-    followed.end(tag, savedMediaTag(tag, path))
+    followed.end({ from: tag.from, to: tag.to, insert: mediaTagText(savedMediaTag(tag, path)) })
     return
   }
   followed.end()
@@ -344,20 +343,24 @@ async function saveClip(view: EditorView, root: HTMLElement, clip: MediaTagData)
 /** The trash of the player `root`: asks whether to delete the saved file of
  *  `clip`, and on "Yes" deletes it (`dez.controller/media/delete`), then
  *  gives the clip's tag its source of before (`unsavedMediaTag`: the
- *  provider URL, or no source). When the tag is gone after the prompt (see
- *  `followClip`), no file is deleted, and a toast tells the user. A failed
- *  delete (the controller has shown a toast) keeps the tag. */
-async function deleteSavedClip(view: EditorView, root: HTMLElement, clip: MediaTagData): Promise<void> {
+ *  provider URL, or no source). A clip that the user pasted or dropped
+ *  (`isPastedMediaPath`) has no other source: its trash deletes the clip,
+ *  and takes the tag's whole line out of the doc (`linesRemovalRange`), as
+ *  the image trash does with an image reference. When the tag is gone after
+ *  the prompt (see `followClip`), no file is deleted, and a toast tells the
+ *  user. A failed delete (the controller has shown a toast) keeps the
+ *  tag. */
+export async function deleteSavedClip(view: EditorView, root: HTMLElement, clip: MediaTagData): Promise<void> {
   const { src } = clip
   if (src === null || busyClips.has(src)) return
   const followed = followClip(view, root, clip)
   if (!followed) return
+  const pasted = isPastedMediaPath(src)
   await leaveFullscreen(root)
-  const confirmed = await sbp('dez.ui/confirm', {
-    message: clip.url === null
-      ? 'Are you sure you want to delete the saved file of this clip? The clip cannot be played again after that.'
-      : 'Are you sure you want to delete the saved file of this clip?',
-  }) as boolean
+  let message = 'Are you sure you want to delete the saved file of this clip?'
+  if (pasted) message = 'Are you sure you want to delete this clip?'
+  else if (clip.url === null) message += ' The clip cannot be played again after that.'
+  const confirmed = await sbp('dez.ui/confirm', { message }) as boolean
   if (!confirmed) {
     followed.end()
     return
@@ -385,7 +388,7 @@ async function deleteSavedClip(view: EditorView, root: HTMLElement, clip: MediaT
     followed.end()
     return
   }
-  followed.end(tag, unsavedMediaTag(tag))
+  followed.end(pasted ? linesRemovalRange(view.state.doc, tag) : { from: tag.from, to: tag.to, insert: mediaTagText(unsavedMediaTag(tag)) })
   // The prompt gave the focus back a few ms ago (`syncDomSelection`).
   syncDomSelection(view)
 }

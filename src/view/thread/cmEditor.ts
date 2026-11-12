@@ -10,7 +10,7 @@ import { durationField } from '../../model/chat/duration'
 import { modelRefField } from '../../model/chat/modelRef'
 import { PILL_MARKER, parsePillMarkerMatch, pillMarkerText } from '../../model/chat/pillMarker'
 import { thinkingField } from '../../model/chat/thinking'
-import { agentTextAsMarkdown, messagesAsMarkdown, type MarkdownMessage } from '../../model/chat/markdown'
+import { messagesAsMarkdown, sectionTextAsMarkdown, type MarkdownMessage } from '../../model/chat/markdown'
 import { SENTINEL_CHAR, normalizeContent, stripLiveSentinels, textNode } from '../../model/chat/content'
 import { EDITOR_FONT_SIZE_DEFAULT, EDITOR_FONT_SIZE_PROPERTY } from '../../model/editorFontSize'
 import { escapeMarkerAttribute, unescapeMarkerAttribute } from '../../utils/markerAttribute'
@@ -1093,8 +1093,8 @@ export function serializeSelectionForClipboard(state: EditorState): string {
 }
 
 /** Copy Markdown text of one doc range: what the model reads, with no `dez:`
- *  markers, no thinking, and agent text with no tool blocks and with each
- *  clip as a link (`agentTextAsMarkdown`). A prompt pill, whole or in part,
+ *  markers, no thinking, agent text with no tool blocks, and each clip as a
+ *  link (`sectionTextAsMarkdown`). A prompt pill, whole or in part,
  *  gives its body text. A range that holds a role pill gives its section
  *  parts as `messagesAsMarkdown` gives them, so a whole tab copies as Save
  *  As Markdown saves it (without the title): a part gets its role heading only
@@ -1121,7 +1121,7 @@ function serializeDocRangeAsMarkdown(doc: string, from: number, to: number, mode
   }
   if (cursor < to) appendDocText(cursor, to)
   const firstSection = sectionIndexAtOffset(doc, from)
-  const texts = parts.map((text, index) => (models[firstSection + index]?.role === 'agent' ? agentTextAsMarkdown(text) : text))
+  const texts = parts.map((text, index) => sectionTextAsMarkdown(models[firstSection + index]?.role ?? 'user', text))
   if (from > 0 && texts.length === 1) return texts[0]
   return messagesAsMarkdown(texts.map((text, index): MarkdownMessage => {
     if (index > 0) return { role: models[firstSection + index]?.role ?? 'user', text }

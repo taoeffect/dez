@@ -96,7 +96,7 @@ pub fn run() {
     });
     // Reads tauri.conf.json, whose `"csp": null` is on purpose during
     // development. Its `assetProtocol` scope lets the webview show the files
-    // directly in `$HOME/.config/dez/assets/images/`, in the
+    // directly in `$HOME/.config/dez/assets/{images,audio,video}/`, in the
     // `assets/generated/{images,audio,video}/` folders, and in
     // `$CACHE/dez/media/` (the temp copies of clips) by `convertFileSrc`
     // URLs; it must name the folders that `base_dir()` and `root_dir()` in

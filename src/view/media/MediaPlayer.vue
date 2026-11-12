@@ -25,7 +25,7 @@ import '@videojs/html/ui/tooltip-group'
 import '@videojs/html/ui/tooltip'
 import '@videojs/html/ui/tooltip-label'
 import '@videojs/html/ui/tooltip-shortcut'
-import type { MediaTagKind } from '../../model/chat/mediaTags'
+import { isPastedMediaPath, type MediaTagKind } from '../../model/chat/mediaTags'
 import { clipProblem, clipSourceKind, expiryNotice, problemCard, type ClipLoadFailure, type ClipProblem } from './clipState'
 import { releaseRemovedMedia } from './releaseMedia'
 import { videoAspectRatios } from './videoSizes'
@@ -362,7 +362,10 @@ const SAVE_HINTS: Record<SaveState, string> = {
   deleting: 'Deleting…',
 }
 
-const saveHint = computed(() => saveState.value === 'saved' && trashArmed.value ? 'Delete the saved file' : SAVE_HINTS[saveState.value])
+// The trash of a clip that the user pasted or dropped deletes the clip, and
+// not only a saved copy (`deleteSavedClip`, src/view/editor/media.ts).
+const trashHint = computed(() => props.src !== null && isPastedMediaPath(props.src) ? 'Delete this clip' : 'Delete the saved file')
+const saveHint = computed(() => saveState.value === 'saved' && trashArmed.value ? trashHint.value : SAVE_HINTS[saveState.value])
 
 function onSaveClick(): void {
   if (props.busy) return
