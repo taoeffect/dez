@@ -1,10 +1,10 @@
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from 'vitest'
 import { startApp, type RunningApp } from './harness/app'
-import { click, consoleErrors, openHistoryPanel, resetConsoleErrors, screenshotOnFailure, waitFor, waitForValue } from './harness/dom'
+import { click, consoleErrors, elementCenter, openHistoryPanel, pointerShiftClickAt, resetConsoleErrors, screenshotOnFailure, waitFor, waitForValue } from './harness/dom'
 import { makeConversation, seedConversation, seedRawAppState } from './harness/fixtures'
 import { replyText, sendChatReply, startChatMock, type MockServer } from './harness/mockServer'
 import { createSession, destroySession, type E2EBrowser } from './harness/session'
-import { activeConversationId, activeTabStreaming, maskPillDuration, newTab, openPicker, pickerRows, pickModel, pressRolePill, rolePillHeights, savedPillLines, sbpCall, submit, threadSections, waitForThread } from './harness/thread'
+import { activeConversationId, activeTabStreaming, editorSelection, maskPillDuration, newTab, openPicker, pickerRows, pickModel, pressRolePill, rolePillHeights, savedPillLines, sbpCall, setCaret, submit, threadSections, waitForThread } from './harness/thread'
 
 // The model on agent role pills, the model names in history rows, and the
 // full model names as tooltips in the model picker, driven through the real
@@ -331,10 +331,49 @@ describe('model names', () => {
     ])
   })
 
+  it('keeps the model of a response through a role toggle', async () => {
+    // A Shift+click on the model name makes the Alpha One response a user
+    // section, as one anywhere on the pill does: it shows no model, and the
+    // file drops its model. Beta Two then has no earlier model to switch
+    // from. The click keeps the caret where it was and selects nothing.
+    await setCaret(browser, 3)
+    await pointerShiftClickAt(browser, await elementCenter(browser, '.cm-content .dez-role-separator[data-section-index="1"] .dez-role-separator__model-name'))
+    await waitForValue(browser, 'separators as user', separators, [
+      { index: 1, role: 'user', chip: null },
+      { index: 2, role: 'user', chip: null },
+      { index: 3, role: 'agent', chip: expectedChip(BETA.key, BETA.name, PROVIDER.name) },
+      { index: 4, role: 'user', chip: null },
+    ])
+    expect(await editorSelection(browser)).toEqual({ anchor: 3, head: 3 })
+    await waitForValue(browser, 'saved pills as user', activeTabPillLines, [
+      '<dez:pill type="user"/>',
+      '<dez:pill type="user"/>',
+      '<dez:pill type="user"/>',
+      `<dez:pill type="agent" model="${BETA.key}" duration-ms="#"/>`,
+      '<dez:pill type="user"/>',
+    ])
+
+    // Back to agent: the section still knows its model.
+    await pressRolePill(browser, 1, '.dez-role-separator__label', { shiftKey: true })
+    await waitForValue(browser, 'separators as agent', separators, [
+      { index: 1, role: 'agent', chip: expectedChip(ALPHA.key, ALPHA.name, PROVIDER.name) },
+      { index: 2, role: 'user', chip: null },
+      { index: 3, role: 'agent', chip: expectedChip(BETA.key, BETA.name, PROVIDER.name, { switchedFrom: `${ALPHA.name} (${PROVIDER.name})` }) },
+      { index: 4, role: 'user', chip: null },
+    ])
+    await waitForValue(browser, 'saved pills as agent', activeTabPillLines, [
+      '<dez:pill type="user"/>',
+      `<dez:pill type="agent" model="${ALPHA.key}" duration-ms="#"/>`,
+      '<dez:pill type="user"/>',
+      `<dez:pill type="agent" model="${BETA.key}" duration-ms="#"/>`,
+      '<dez:pill type="user"/>',
+    ])
+  })
+
   it('keeps the role of a pill that a press lands on', async () => {
-    // A press on a pill with no thinking triangle does nothing: no part of
-    // a pill changes its role. The handler runs in the press, so a change
-    // would show at once.
+    // A press with no Shift on a pill with no thinking triangle does
+    // nothing: it changes no role. The handler runs in the press, so a
+    // change would show at once.
     await pressRolePill(browser, 1, '.dez-role-separator__model-name')
     await pressRolePill(browser, 2)
     expect(await separators()).toEqual([

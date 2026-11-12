@@ -167,7 +167,8 @@ export function keymapHasPlatformBinding(
 }
 
 /** The first section is always `user`. It has no separator line in the
- *  doc; its fixed User pill is the editor's `::before`. */
+ *  doc, so it has no role pill that could toggle it; its fixed User pill is
+ *  the editor's `::before`. */
 function normalizeSectionModels(models: SectionModel[]): SectionModel[] {
   if (models.length === 0) return [{ id: crypto.randomUUID(), role: 'user' }]
   if (models[0].role === 'user') return models
@@ -443,6 +444,15 @@ export const splitSectionEffect = StateEffect.define<{
   newRole?: Role
 }>()
 export const mergeSectionEffect = StateEffect.define<{ removeIndex: number }>()
+/** Switches the role of the section with `id` between `user` and `agent`
+ *  (a Shift+press on its pill). The section keeps its model, thinking, and
+ *  reply time in memory, so a switch back to agent shows them again; as a
+ *  user section it shows, saves, and sends none of them. So after a save
+ *  and a reload, a section switched to user has lost them, and a switch
+ *  back gives a pill with no model. The first section and the section that
+ *  streams keep their role: stream tokens go to the doc end, whatever the
+ *  role. The switch is not in the undo history. */
+export const toggleSectionRoleEffect = StateEffect.define<{ id: string }>()
 export const setSectionsEffect = StateEffect.define<SectionModel[]>()
 /** Sets the thinking of the section with `sectionId`, or removes it when
  *  `thinking` is absent. Thinking is not doc text, so this changes no doc
@@ -578,6 +588,14 @@ export const sectionsField = StateField.define<SectionModel[]>({
           // The value is the store's object, a reactive proxy. Keep a plain
           // copy: `structuredClone` refuses proxies.
           copy[index] = { ...section, ...thinkingField(e.value.thinking) }
+          next = copy
+        }
+      } else if (e.is(toggleSectionRoleEffect)) {
+        const index = next.findIndex((model) => model.id === e.value.id)
+        if (index > 0 && e.value.id !== tr.startState.field(streamingSectionField, false)) {
+          const copy = next.slice()
+          const old = copy[index]
+          copy[index] = { ...old, role: old.role === 'user' ? 'agent' : 'user' }
           next = copy
         }
       }
@@ -774,7 +792,8 @@ const pillThinkingUpdater = ViewPlugin.define(() => ({
  *  index). With `chips` null, the ranges have no widget (atomic ranges
  *  only). Separator n (counting from 1) starts section n, so the index of
  *  a pill is the section after it; section 0 has no separator. Only agent
- *  pills show a reply time (it is agent-only). */
+ *  pills show a reply time: a user section can still hold one in memory
+ *  after a role toggle. */
 function buildSeparatorDecorations(
   doc: string,
   models: SectionModel[],
@@ -832,11 +851,13 @@ export const roleSeparatorAtomicRanges = EditorView.atomicRanges.of((view) =>
   ),
 )
 
-/** Click handler: a mousedown anywhere on an agent pill that shows a
- *  disclosure triangle, its model part and reply time too, opens or closes
- *  its thinking panel. A press on any other pill does nothing. Every pill
- *  takes the mousedown, so a press on a pill keeps the caret and the focus
- *  where they are. */
+/** Click handler: a Shift+press anywhere on a pill switches the role of the
+ *  section after it (`toggleSectionRoleEffect`). A plain press anywhere on
+ *  an agent pill that shows a disclosure triangle, its model part and reply
+ *  time too, opens or closes its thinking panel; a plain press on any other
+ *  pill does nothing. Every pill takes the mousedown, so a press on a pill
+ *  keeps the caret and the focus where they are, and a Shift+press does not
+ *  extend the selection. */
 export const roleSeparatorMouseHandler = EditorView.domEventHandlers({
   mousedown(event, view) {
     const target = event.target as Element | null
@@ -850,8 +871,12 @@ export const roleSeparatorMouseHandler = EditorView.domEventHandlers({
     const index = Number(idxStr)
     if (!Number.isFinite(index)) return false
     event.preventDefault()
-    const thinking = pillThinkingAt(view.state, index)
     const sectionId = view.state.field(sectionsField)[index]?.id
+    if (event.shiftKey && !event.ctrlKey && !event.metaKey && !event.altKey) {
+      if (event.button === 0 && sectionId) view.dispatch({ effects: toggleSectionRoleEffect.of({ id: sectionId }) })
+      return true
+    }
+    const thinking = pillThinkingAt(view.state, index)
     if (thinking && hasThinking(thinking) && sectionId) {
       view.dispatch({ effects: toggleThinkingExpandedEffect.of(sectionId) })
     }

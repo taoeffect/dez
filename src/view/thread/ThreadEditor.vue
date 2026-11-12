@@ -39,6 +39,7 @@ import {
   sectionsField,
   serializeSelectionForClipboard,
   TEXT_GUTTER,
+  toggleSectionRoleEffect,
   setPillsEffect,
   setSectionsEffect,
   splitSectionEffect,
@@ -914,7 +915,14 @@ function buildState(openPanels?: OpenPanels): EditorState {
         return dropdown ? { top: dropdown.offsetTop + dropdown.offsetHeight } : null
       }),
       EditorView.updateListener.of((update) => {
-        if (update.docChanged && !syncingViewStructure) {
+        // A role toggle changes no doc text, but the store and the
+        // conversation file need the new role: else the next store-to-view
+        // sync puts the old role back.
+        const roleToggled = update.transactions.some((tr) =>
+          tr.effects.some((effect) => effect.is(toggleSectionRoleEffect)) &&
+          tr.state.field(sectionsField) !== tr.startState.field(sectionsField),
+        )
+        if ((update.docChanged || roleToggled) && !syncingViewStructure) {
           syncDocToStore(true)
         }
         if (update.docChanged || update.selectionSet || update.focusChanged) {

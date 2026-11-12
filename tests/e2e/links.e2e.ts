@@ -2,7 +2,7 @@ import type { EditorView } from '@codemirror/view'
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from 'vitest'
 import { Key } from 'webdriverio'
 import { startApp, type RunningApp } from './harness/app'
-import { consoleErrors, elementCenter, movePointer, pointerClickAt, resetConsoleErrors, screenshotOnFailure, typeKeys, waitFor, waitForValue, type Point } from './harness/dom'
+import { consoleErrors, elementCenter, movePointer, pointerClickAt, pointerShiftClickAt, resetConsoleErrors, screenshotOnFailure, typeKeys, waitFor, waitForValue, type Point } from './harness/dom'
 import { makeConversation, seedAppState, seedConversation } from './harness/fixtures'
 import { createSession, destroySession, type E2EBrowser } from './harness/session'
 import { docPos, docPosPoint, editorCaret, focusEditor, focusedArea, setCaret } from './harness/thread'
@@ -317,16 +317,7 @@ describe('markdown links', () => {
   it('leaves a Shift+click on a link to the editor, which selects into the link and shows its source', async () => {
     await openFixture()
     await setCaret(browser, 3)
-    const docs = await linkBox('the docs')
-    // One `actions` call, so Shift is down for the whole click.
-    await browser.actions([
-      browser.action('key').down(Key.Shift).pause(0).pause(0).pause(0).up(Key.Shift),
-      browser.action('pointer', { parameters: { pointerType: 'mouse' } })
-        .move({ x: Math.round(docs.x), y: Math.round(docs.y), origin: 'viewport' })
-        .pause(0)
-        .down({ button: 0 })
-        .up({ button: 0 }),
-    ])
+    await pointerShiftClickAt(browser, await linkBox('the docs'))
     await waitForValue(browser, 'line after the Shift+click', () => shownLine('Read'), `Read ${DOCS_LINK} and https://example.org/a now.`)
     const selection = await browser.execute(() => {
       const content = document.querySelector('.cm-content')

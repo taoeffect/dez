@@ -969,7 +969,7 @@ describe('dez.controller/submitTab thinking send-back', () => {
       { id: 'a1', role: 'agent', content: [{ kind: 'text', text: 'Same model' }], model, thinking: { text: 'Kept', replay }, durationMs: 4213 },
       { id: 'a2', role: 'agent', content: [{ kind: 'text', text: 'Other model' }], model: { providerId: 'other', modelId: 'm' }, thinking: { text: 'Other', replay } },
       { id: 'a3', role: 'agent', content: [{ kind: 'text', text: 'No replay' }], model, thinking: { text: 'Pasted' } },
-      { id: 'u2', role: 'user', content: [{ kind: 'text', text: 'Q2' }], model, thinking: { text: 'Not sent', replay }, durationMs: 900 },
+      { id: 'u2', role: 'user', content: [{ kind: 'text', text: 'Was agent' }], model, thinking: { text: 'Toggled', replay }, durationMs: 900 },
     ])
     let sent: ProviderChatInputMessage[] = []
     streamChat = async (input) => {
@@ -984,7 +984,7 @@ describe('dez.controller/submitTab thinking send-back', () => {
       { role: 'agent', content: 'Same model', thinking: { text: 'Kept', replay } },
       { role: 'agent', content: 'Other model' },
       { role: 'agent', content: 'No replay' },
-      { role: 'user', content: 'Q2' },
+      { role: 'user', content: 'Was agent' },
     ])
   })
 })

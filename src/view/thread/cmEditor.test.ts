@@ -34,10 +34,12 @@ import {
   setSectionThinkingEffect,
   splitSectionEffect,
   strictMultiCursorBackspace,
+  toggleSectionRoleEffect,
   unwrapBrokenPills,
   type PillMetadata,
   type SectionModel,
 } from './cmEditor'
+import { streamingSectionField } from './modelChip'
 import { SENTINEL_CHAR, sectionVisibleText } from '../../model/chat/content'
 import type { ContentNode, ModelRef, Role, Section, SectionThinking } from '../../model/chat/types'
 import { toolBlockText } from '../../model/chat/toolBlocks'
@@ -103,13 +105,13 @@ describe('CodeMirror section role reconciliation', () => {
     expect(sections.map((candidate) => candidate.id)).toEqual(['s1', 's2'])
   })
 
-  it('keeps live section metadata over the fallback when the ids match', () => {
+  it('keeps a toggled role and other live section data over the fallback when the ids match', () => {
     const doc = ['hello', 'answer'].join(`\n${SECTION_SEP}\n`)
     const fallback = initialSectionModels([
       section('s1', 'user', 'hello'),
       section('s2', 'agent', 'answer'),
     ])
-    const live: SectionModel[] = [fallback[0], { id: 's2', role: 'agent', durationMs: 900 }]
+    const live: SectionModel[] = [fallback[0], { id: 's2', role: 'user', durationMs: 900 }]
 
     expect(reconcileSectionModelsToDoc(live, doc, fallback)).toStrictEqual(live)
   })
@@ -174,6 +176,19 @@ describe('section models in the undo history', () => {
 
     expect(redone.field(sectionsField)).toStrictEqual(deleted.field(sectionsField))
     expect(dispatchCommand(redone, undo).field(sectionsField)).toStrictEqual(MODELS)
+  })
+
+  it('keeps a role toggle out of the history, and puts a toggled section back with its new role', () => {
+    const toggled = historyState().update({ effects: toggleSectionRoleEffect.of({ id: 's4' }) }).state
+    const toggledModels = MODELS.map((model) => (model.id === 's4' ? { ...model, role: 'user' as const } : model))
+    expect(toggled.field(sectionsField)).toStrictEqual(toggledModels)
+    expect(undoDepth(toggled)).toBe(0)
+
+    const deleted = toggled.update({ changes: { from: MIDDLE.main.from, to: MIDDLE.main.to }, userEvent: 'delete.selection' }).state
+    const undone = dispatchCommand(deleted, undo)
+
+    expect(undone.field(sectionsField)).toStrictEqual(toggledModels)
+    expect(undoDepth(undone)).toBe(0)
   })
 
   it('puts back an agent section that Backspace at its start merged into the section before', () => {
@@ -281,6 +296,31 @@ describe('section AI models', () => {
     const state = modeledState()
 
     expect(docToSections(DOC, state.field(sectionsField), new Map())).toStrictEqual(modeledSections())
+  })
+
+  it('keeps the model when the role is toggled to user and back', () => {
+    const toUser = modeledState().update({ effects: toggleSectionRoleEffect.of({ id: 's2' }) }).state
+    const back = toUser.update({ effects: toggleSectionRoleEffect.of({ id: 's2' }) }).state
+
+    expect(toUser.field(sectionsField)[1]).toStrictEqual({ id: 's2', role: 'user', model: MODEL })
+    expect(back.field(sectionsField)[1]).toStrictEqual({ id: 's2', role: 'agent', model: MODEL })
+  })
+
+  // The same array: the editor writes nothing back to the store.
+  it('keeps the role of the first section, of the section that streams, and of an unknown id', () => {
+    const state = EditorState.create({
+      doc: DOC,
+      extensions: [
+        sectionsField.init(() => initialSectionModels(modeledSections())),
+        streamingSectionField.init(() => 's3'),
+      ],
+    })
+    const before = state.field(sectionsField)
+
+    for (const id of ['s1', 's3', 'gone']) {
+      expect(state.update({ effects: toggleSectionRoleEffect.of({ id }) }).state.field(sectionsField)).toBe(before)
+    }
+    expect(state.update({ effects: toggleSectionRoleEffect.of({ id: 's2' }) }).state.field(sectionsField)[1].role).toBe('user')
   })
 
   it('pastes copied agent sections with their models', () => {
@@ -413,7 +453,8 @@ describe('section thinking', () => {
     expect(docToSections(DOC, thinkingState().field(sectionsField), new Map())).toStrictEqual(thinkingSections(THINKING))
   })
 
-  it('keeps thinking on its own section through a split', () => {
+  it('keeps thinking on its own section through a role toggle and a split', () => {
+    const toUser = thinkingState().update({ effects: toggleSectionRoleEffect.of({ id: 's2' }) }).state
     const splitAt = `question\n${SECTION_SEP}\nans`.length
     const split = thinkingState().update({
       changes: { from: splitAt, insert: `\n${SECTION_SEP}\n` },
@@ -421,6 +462,7 @@ describe('section thinking', () => {
     }).state
     const splitSections = docToSections(split.doc.toString(), split.field(sectionsField), new Map())
 
+    expect(toUser.field(sectionsField)[1]).toStrictEqual({ id: 's2', role: 'user', model: MODEL, thinking: THINKING })
     expect(splitSections.map(sectionVisibleText)).toEqual(['question', 'ans', 'wer', 'legacy'])
     expect(storedThinking(splitSections)).toStrictEqual(['none', THINKING, 'none', 'none'])
   })
@@ -584,9 +626,12 @@ describe('section durations', () => {
     })
   }
 
-  it('keeps the duration from the store through the editor and back', () => {
+  it('keeps the duration from the store through the editor and back, and through a role toggle', () => {
+    const toUser = durationState().update({ effects: toggleSectionRoleEffect.of({ id: 's2' }) }).state
+
     // Strict: a section without a duration must not get `durationMs: undefined`.
     expect(docToSections(DOC, durationState().field(sectionsField), new Map())).toStrictEqual(SECTIONS)
+    expect(toUser.field(sectionsField)[1]).toStrictEqual({ id: 's2', role: 'user', model: MODEL, durationMs: 4213 })
   })
 
   it('copies the duration in agent markers and pastes it back', () => {
@@ -619,7 +664,8 @@ describe('section durations', () => {
     expect(pasted.map((candidate) => ('durationMs' in candidate ? candidate.durationMs : 'none'))).toStrictEqual(['none', 4213, 0, 'none'])
   })
 
-  it('pastes no duration from a user marker or a bad value', () => {
+  it('copies no duration for a section toggled to user, and pastes none from a user marker or a bad value', () => {
+    const toUser = durationState(EditorSelection.single(0, DOC.length)).update({ effects: toggleSectionRoleEffect.of({ id: 's2' }) }).state
     const parsed = parseClipboardText([
       'a',
       '<dez:pill type="user" duration-ms="5"/>',
@@ -628,6 +674,7 @@ describe('section durations', () => {
       'c',
     ].join('\n'))
 
+    expect(serializeSelectionForClipboard(toUser).split('\n').slice(2, 4)).toEqual(['<dez:pill type="user"/>', 'answer'])
     expect(parsed.separators).toStrictEqual([{ role: 'user' }, { role: 'agent' }])
   })
 })

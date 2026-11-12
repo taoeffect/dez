@@ -366,13 +366,13 @@ export async function misplacedLines (browser: E2EBrowser): Promise<string[]> {
 }
 
 /** A mousedown on `part` of the role pill before section `index`, as a
- *  click gives. */
-export async function pressRolePill (browser: E2EBrowser, index: number, part = '.dez-role-separator__label'): Promise<void> {
-  await browser.execute((sectionIndex: number, selector: string) => {
+ *  click gives; with `shiftKey`, as a Shift+click gives. */
+export async function pressRolePill (browser: E2EBrowser, index: number, part = '.dez-role-separator__label', { shiftKey = false } = {}): Promise<void> {
+  await browser.execute((sectionIndex: number, selector: string, shift: boolean) => {
     const target = document.querySelector(`.cm-content .dez-role-separator[data-section-index="${sectionIndex}"] ${selector}`)
     if (!target) throw new Error(`pressRolePill: no ${selector} for section ${sectionIndex}`)
-    target.dispatchEvent(new MouseEvent('mousedown', { bubbles: true, cancelable: true, button: 0 }))
-  }, index, part)
+    target.dispatchEvent(new MouseEvent('mousedown', { bubbles: true, cancelable: true, button: 0, shiftKey: shift }))
+  }, index, part, shiftKey)
 }
 
 /** The marker lines of a conversation file, or null while it does not

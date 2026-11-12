@@ -5,7 +5,7 @@ import { makeConversation, seedConversation } from './harness/fixtures'
 import { startMockProviderApp, type MockProviderApp } from './harness/mockProviderApp'
 import { replyText, sendChatReply, type MockProvider } from './harness/mockServer'
 import type { E2EBrowser } from './harness/session'
-import { activeTabStreaming, newTab, rolePillHeights, savedPillLines, sbpCall, submit, threadSections, waitForThread } from './harness/thread'
+import { activeTabStreaming, newTab, pressRolePill, rolePillHeights, savedPillLines, sbpCall, submit, threadSections, waitForThread } from './harness/thread'
 
 // The reply time at the end of agent role pills, through the real app
 // against a mock server in this process: no time while a reply streams, the
@@ -126,7 +126,7 @@ describe('reply duration', () => {
     timedReply = { conversationId: tab.conversationId, durationMs }
   })
 
-  it('shows the time in a pill with no model, and none for a reply without one', async () => {
+  it('shows the time in a pill with no model, and only while the section is an agent section', async () => {
     // A tab of its own: the relaunch test needs the first test's tab as it
     // was.
     await newTab(browser)
@@ -152,6 +152,22 @@ describe('reply duration', () => {
       { index: 5, role: 'agent', time: null },
     ])
     await expectEqualPillHeights(5)
+
+    // A Shift+press on the time toggles the role, as one anywhere on the
+    // pill does. As a user section it keeps its time in memory but shows
+    // none, and the file drops it.
+    await pressRolePill(browser, 3, '.dez-role-separator__duration', { shiftKey: true })
+    await waitForValue(browser, 'pill as user', async () => (await pills())[2], { index: 3, role: 'user', time: null })
+    await waitForValue(browser, 'saved pill as user', async () => (await savedPillLines(setup.app.home, 'timed'))?.[3] ?? null, '<dez:pill type="user"/>')
+
+    await pressRolePill(browser, 3, '.dez-role-separator__label', { shiftKey: true })
+    await waitForValue(browser, 'pill as agent', async () => (await pills())[2], { index: 3, role: 'agent', time: expectedTime(4213) })
+    await waitForValue(
+      browser,
+      'saved pill as agent',
+      async () => (await savedPillLines(setup.app.home, 'timed'))?.[3] ?? null,
+      `<dez:pill type="agent" model="${MODEL_KEY}" duration-ms="4213"/>`
+    )
   })
 
   it('shows the time again after a relaunch', async () => {

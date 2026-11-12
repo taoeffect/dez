@@ -201,6 +201,20 @@ export async function pointerClick (browser: E2EBrowser, selector: string): Prom
   await pointerClickAt(browser, await elementCenter(browser, selector))
 }
 
+/** A Shift+click at `point` with real pointer actions, as `pointerClickAt`
+ *  gives one; Shift is down for the whole click. */
+export async function pointerShiftClickAt (browser: E2EBrowser, point: Point): Promise<void> {
+  // One `actions` call, so that the key and pointer ticks run together.
+  await browser.actions([
+    browser.action('key').down(Key.Shift).pause(0).pause(0).pause(0).up(Key.Shift),
+    browser.action('pointer', { parameters: { pointerType: 'mouse' } })
+      .move({ x: Math.round(point.x), y: Math.round(point.y), origin: 'viewport' })
+      .pause(0)
+      .down({ button: 0 })
+      .up({ button: 0 }),
+  ])
+}
+
 /**
  * Right-click at `point` with WebDriver pointer actions: a real press and
  * release of the right button, which the page gets as `mousedown`,
