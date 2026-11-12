@@ -14,6 +14,7 @@ import {
   type SwitchParameter,
 } from '../../model/providers/modelParameters'
 import { toggleRows, toggleValue } from '../../model/providers/modelToggles'
+import ProviderSettingsSwitch from './ProviderSettingsSwitch.vue'
 
 const { activeModel, settings } = useModelState()
 
@@ -60,6 +61,10 @@ const cachedModel = computed(() => {
 // What a request to the active model can set (the length of a clip, a
 // voice): only media models have parameters.
 const parameters = computed(() => cachedModel.value?.parameters ?? [])
+
+// Whether the popup has a value to set: a toggle or a parameter. A model
+// with only a hint has nothing to reset.
+const hasValues = computed(() => settingDefs.value.length > 0 || parameters.value.length > 0)
 
 // Lyrics are a part of the message and not a parameter (`clipText` in
 // model/providers/clipText.ts), so no row sets them. For a model that
@@ -143,27 +148,17 @@ function resetToDefaults() {
 
 <template>
   <div class="provider-settings-popup">
-    <template v-if="activeModel && (settingDefs.length > 0 || parameters.length > 0 || lyricsHint || inputHint)">
+    <template v-if="activeModel && (hasValues || lyricsHint || inputHint)">
       <template v-if="settingDefs.length > 0">
         <div class="provider-settings-header">{{ providerName }}</div>
         <div class="provider-settings-rows">
-          <button
+          <ProviderSettingsSwitch
             v-for="def in settingDefs"
             :key="def.key"
-            class="provider-settings-row"
-            type="button"
-            role="switch"
-            :aria-checked="settingValue(def.key, def.default)"
-            @click="toggleSetting(def.key, def.default)"
-          >
-            <span class="provider-settings-label">{{ def.label }}</span>
-            <span
-              class="provider-settings-switch"
-              :class="{ 'provider-settings-switch--on': settingValue(def.key, def.default) }"
-            >
-              <span class="provider-settings-knob"></span>
-            </span>
-          </button>
+            :label="def.label"
+            :on="settingValue(def.key, def.default)"
+            @toggle="toggleSetting(def.key, def.default)"
+          />
         </div>
       </template>
       <template v-if="parameters.length > 0">
@@ -200,23 +195,13 @@ function resetToDefaults() {
                 @change="chooseNumber(parameter, $event)"
               >
             </label>
-            <button
+            <ProviderSettingsSwitch
               v-else
-              class="provider-settings-row"
-              type="button"
-              role="switch"
               :data-parameter="parameter.name"
-              :aria-checked="switchIsOn(parameter)"
-              @click="toggleSwitch(parameter)"
-            >
-              <span class="provider-settings-label">{{ parameter.label }}</span>
-              <span
-                class="provider-settings-switch"
-                :class="{ 'provider-settings-switch--on': switchIsOn(parameter) }"
-              >
-                <span class="provider-settings-knob"></span>
-              </span>
-            </button>
+              :label="parameter.label"
+              :on="switchIsOn(parameter)"
+              @toggle="toggleSwitch(parameter)"
+            />
           </template>
         </div>
       </template>
@@ -228,9 +213,8 @@ function resetToDefaults() {
         <div class="provider-settings-header">Lyrics</div>
         <div class="provider-settings-hint">{{ lyricsHint }}</div>
       </template>
-      <!-- A model with only a hint has nothing to reset. -->
       <button
-        v-if="settingDefs.length > 0 || parameters.length > 0"
+        v-if="hasValues"
         class="provider-settings-reset"
         type="button"
         @click="resetToDefaults"
@@ -276,28 +260,10 @@ function resetToDefaults() {
   padding: 4px;
 }
 
-.provider-settings-row {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  width: 100%;
-  padding: 6px 8px;
-  border: none;
-  border-radius: 4px;
-  background: transparent;
-  color: var(--color-text);
-  font-size: 13px;
-  font-family: inherit;
-  cursor: pointer;
-  text-align: left;
-  transition: background 0.1s;
-}
-
-.provider-settings-row:hover {
-  background: var(--color-border);
-}
-
-.provider-settings-label {
+/* Also the label of a switch row (ProviderSettingsSwitch.vue): a scoped
+   rule of this file reaches the root of a child component, but not the
+   elements in it. */
+.provider-settings-rows :deep(.provider-settings-label) {
   flex: 1;
   min-width: 0;
   overflow: hidden;
@@ -306,7 +272,8 @@ function resetToDefaults() {
 }
 
 /* A row of the "Model Parameters" section: the label, then a select or a
-   number field. A switch parameter has the row of a provider toggle. */
+   number field. A switch parameter has the row of a provider toggle
+   (ProviderSettingsSwitch.vue). */
 .provider-settings-parameter {
   display: flex;
   align-items: center;
@@ -349,36 +316,6 @@ function resetToDefaults() {
 .provider-settings-select option {
   background: var(--color-bg);
   color: var(--color-text);
-}
-
-.provider-settings-switch {
-  flex-shrink: 0;
-  width: 28px;
-  height: 16px;
-  margin-left: 8px;
-  border-radius: 8px;
-  background: var(--color-border);
-  display: inline-flex;
-  align-items: center;
-  padding: 2px;
-  box-sizing: border-box;
-  transition: background 0.15s;
-}
-
-.provider-settings-switch--on {
-  background: var(--color-accent);
-}
-
-.provider-settings-knob {
-  width: 12px;
-  height: 12px;
-  border-radius: 50%;
-  background: var(--color-bg);
-  transition: transform 0.15s;
-}
-
-.provider-settings-switch--on .provider-settings-knob {
-  transform: translateX(12px);
 }
 
 .provider-settings-reset {

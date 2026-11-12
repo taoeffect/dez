@@ -363,13 +363,21 @@ function lowestFirstParameter(name: string, label: string, list: unknown, size: 
 // new check help, and a format cannot tell the two apart.
 export const NO_VIDEO_LENGTH_MESSAGE = 'Dez does not know which lengths this model takes: the provider\'s model list did not tell them. Check the provider again (Settings › Providers, "Check again").'
 
+// The readers of the fields of a Venice model entry: `spec` reads
+// `model_spec.<field>`, and `constraint` reads
+// `model_spec.constraints.<field>`.
+function veniceEntryFields(entry: unknown): { spec: (field: string) => unknown, constraint: (field: string) => unknown } {
+  const spec = (field: string) => valueAtPath(entry, `model_spec.${field}`)
+  return { spec, constraint: (field) => spec(`constraints.${field}`) }
+}
+
 // The length of a Venice music clip, in seconds: one of the entry's
 // `duration_options` when it has them, else each whole second from
 // `min_duration` to `max_duration`. A model with neither takes no length.
 // The default is the model's own (`default_duration`), not the lowest: the
 // lowest is a second or a few, which is no piece of music.
 function veniceMusicLength(entry: unknown): ModelParameter[] {
-  const spec = (field: string) => valueAtPath(entry, `model_spec.${field}`)
+  const { spec } = veniceEntryFields(entry)
   const name = 'duration_seconds'
   const label = 'Length (seconds)'
   const defaultLength = spec('default_duration')
@@ -407,7 +415,7 @@ function veniceUpscaleFactors(entry: unknown): number[] {
 // the most characters of the prompt, and whether it takes lyrics
 // (`lyrics_prompt`). A limit that is no count is not known.
 function veniceMusicText(entry: unknown): ClipTextRules | undefined {
-  const spec = (field: string) => valueAtPath(entry, `model_spec.${field}`)
+  const { spec } = veniceEntryFields(entry)
   const count = (field: string) => veniceCharacterCount(spec(field))
   const rules: ClipTextRules = {}
   const minPromptLength = count('min_prompt_length')
@@ -505,7 +513,7 @@ const veniceFormat: MediaFormat = {
           { name: 'creativity', label: 'Creativity', min: 0, max: 0.02, step: 0.001, default: 0.01 },
         ]
       }
-      const constraint = (field: string) => valueAtPath(entry, `model_spec.constraints.${field}`)
+      const { constraint } = veniceEntryFields(entry)
       return [
         ...optionsParameter('aspect_ratio', 'Aspect ratio', listedValues(constraint('aspectRatios')), constraint('defaultAspectRatio')),
         ...optionsParameter('resolution', 'Resolution', listedValues(constraint('resolutions')), constraint('defaultResolution')),
@@ -626,7 +634,7 @@ const veniceFormat: MediaFormat = {
     // has no format field) and no language parameter (the API gives no
     // list of the languages).
     parameters: (kind, entry) => {
-      const spec = (field: string) => valueAtPath(entry, `model_spec.${field}`)
+      const { spec } = veniceEntryFields(entry)
       switch (kind) {
         case 'tts': {
           const formats = listedValues(spec('supported_formats')).filter((format) => VENICE_SPEECH_FORMATS.has(format))
@@ -927,7 +935,7 @@ const veniceFormat: MediaFormat = {
   // control model; the docs tell of no other model that reads it. An
   // upscale model takes no image (`veniceUpscaleFactors`).
   imageRules: (kind, entry) => {
-    const constraint = (field: string) => valueAtPath(entry, `model_spec.constraints.${field}`)
+    const { constraint } = veniceEntryFields(entry)
     if (kind === 'imageEdit') {
       const maxImages = constraint('maxInputImages')
       if (typeof maxImages === 'number' && Number.isInteger(maxImages) && maxImages > 0) return { maxImages }
@@ -971,7 +979,7 @@ const veniceFormat: MediaFormat = {
   // https://docs.venice.ai/guides/media/voice-changer
   // https://docs.venice.ai/api-reference/endpoint/audio/transcriptions
   clipRules: (kind, entry) => {
-    const constraint = (field: string) => valueAtPath(entry, `model_spec.constraints.${field}`)
+    const { constraint } = veniceEntryFields(entry)
     const id = valueAtPath(entry, 'id')
     switch (kind) {
       case 'video':
@@ -1060,6 +1068,11 @@ function openRouterFrameCount(mediaEntry: unknown): number {
   const frames = listedValues(valueAtPath(mediaEntry, 'supported_frame_images'))
   const firstMissing = OPENROUTER_FRAMES.findIndex((frame) => !frames.includes(frame))
   return firstMissing === -1 ? OPENROUTER_FRAMES.length : firstMissing
+}
+
+// An input image of an OpenRouter image or video request, as a data URL.
+function openRouterImageItem(image: ChatImagePart): { type: 'image_url', image_url: { url: string } } {
+  return { type: 'image_url', image_url: { url: imageDataUrl(image) } }
 }
 
 // The values of the request field `name` that an entry of OpenRouter's
@@ -1191,7 +1204,7 @@ const openRouterFormat: MediaFormat = {
           model: modelId,
           prompt,
           ...(images.length > 0 && {
-            input_references: images.map((image) => ({ type: 'image_url', image_url: { url: imageDataUrl(image) } })),
+            input_references: images.map(openRouterImageItem),
           }),
         },
       }
@@ -1294,7 +1307,7 @@ const openRouterFormat: MediaFormat = {
           // https://openrouter.ai/docs/cookbook/video-generation/reference-to-video
           const { [OPENROUTER_IMAGES_AS]: imagesAs, ...fields } = values
           if (fields.duration === undefined) throw new ExplainedError(NO_VIDEO_LENGTH_MESSAGE)
-          const imageUrls = images.map((image) => ({ type: 'image_url', image_url: { url: imageDataUrl(image) } }))
+          const imageUrls = images.map(openRouterImageItem)
           const clipUrls = clips.map((clip) => (clip.kind === 'audio'
             ? { type: 'audio_url', audio_url: { url: clipUrl(clip) } }
             : { type: 'video_url', video_url: { url: clipUrl(clip) } }))

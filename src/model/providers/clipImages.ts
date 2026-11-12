@@ -111,14 +111,16 @@ export class TooManyImagesError extends Error {
   }
 }
 
-/** The text for the user whose message to the model `modelName` the
- *  provider refused with `error`: the message's images are the images of
- *  the request (`mediaRequestInput`). Dez does not send the request again
- *  with fewer images by itself: the user would pay for a clip that leaves
- *  out an image that they meant. */
-export function tooManyImagesMessage(modelName: string, error: TooManyImagesError): string {
-  const takes = imagesText(error.maxImages)
-  return `${modelName} takes only ${takes}, and this message has ${error.sentImages}. `
+/** The text for the user whose message to the model `modelName` has
+ *  `sentImages` images, of which the model takes only `maxImages`: from
+ *  the provider's refusal (a `TooManyImagesError`), or from the limit that
+ *  Dez learned from one (learnedImageLimit.ts). The message's images are
+ *  the images of the request (`mediaRequestInput`). Dez does not send the
+ *  request again with fewer images by itself: the user would pay for a
+ *  clip that leaves out an image that they meant. */
+export function tooManyImagesMessage(modelName: string, { maxImages, sentImages }: Pick<TooManyImagesError, 'maxImages' | 'sentImages'>): string {
+  const takes = imagesText(maxImages)
+  return `${modelName} takes only ${takes}, and this message has ${sentImages}. `
     + `Keep only ${takes} in the message (pasted, or named with @id), and send it again.`
 }
 

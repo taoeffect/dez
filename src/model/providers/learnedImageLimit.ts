@@ -1,4 +1,4 @@
-import { imagesText, maxInputImages, TooManyImagesError, tooManyImagesMessage, type InputImageRules } from './clipImages'
+import { imagesText, maxInputImages, tooManyImagesMessage, type InputImageRules } from './clipImages'
 import type { KnownLimit } from './knownLimits'
 import type { MediaKind, ModelInfo } from './types'
 
@@ -62,7 +62,7 @@ export function withKeptImageLimits(
  *  they meant. */
 export function learnedImagesProblem(modelName: string, learned: LearnedImageLimit | undefined, imageCount: number): string | null {
   if (!learned || imageCount <= learned.maxImages) return null
-  return tooManyImagesMessage(modelName, new TooManyImagesError(learned.maxImages, imageCount))
+  return tooManyImagesMessage(modelName, { maxImages: learned.maxImages, sentImages: imageCount })
 }
 
 /** `rules`, the image rules of a request of `kind`, with the most images

@@ -20,7 +20,8 @@ function quotedParameter(text: string): string {
 /** The bytes of a form with `fields`, in their order, and the content type
  *  that names its boundary. The boundary is random: the chance that a
  *  file holds it is too small to check for. */
-export function multipartBody(fields: readonly MultipartField[], boundary = `dez-${crypto.randomUUID()}`): { contentType: string, body: Uint8Array } {
+export function multipartBody(fields: readonly MultipartField[]): { contentType: string, body: Uint8Array } {
+  const boundary = `dez-${crypto.randomUUID()}`
   const encoder = new TextEncoder()
   const parts: Uint8Array[] = []
   for (const field of fields) {

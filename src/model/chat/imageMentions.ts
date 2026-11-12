@@ -31,8 +31,9 @@ const WORD_CHARS = String.raw`\p{L}\p{M}\p{N}_`
 // part of the mention before it, as a mention ends with a letter.
 const MENTION = new RegExp(String.raw`(^|[^${WORD_CHARS}])@(${IMAGE_ID_SOURCE})(?![${WORD_CHARS}]|-[${WORD_CHARS}])`, 'gu')
 
-/** One word of a text that has the form of an image mention. */
-export interface ImageMention {
+/** One word of a text that has the form of a mention of an image or a
+ *  clip. */
+export interface AssetMention {
   /** Offset of the `@`. */
   from: number
   /** Offset after the id. */
@@ -40,10 +41,10 @@ export interface ImageMention {
   id: string
 }
 
-/** The words of `text` that have the form of an image mention, in order.
- *  Give it only text outside image references: a path or a metadata value
- *  can hold an `@`. */
-export function findImageMentions(text: string): ImageMention[] {
+/** The words of `text` that have the form of a mention of an image or a
+ *  clip, in order. Give it only text outside image references: a path or a
+ *  metadata value can hold an `@`. */
+export function findAssetMentions(text: string): AssetMention[] {
   // `matchAll` copies the regex, so the shared one keeps no `lastIndex`.
   return Array.from(text.matchAll(MENTION), (match) => {
     const from = match.index + match[1].length

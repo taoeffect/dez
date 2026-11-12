@@ -1,13 +1,13 @@
 import { describe, expect, it } from 'vitest'
-import { findImageMentions } from './imageMentions'
+import { findAssetMentions } from './imageMentions'
 
-const ids = (text: string) => findImageMentions(text).map((mention) => mention.id)
+const ids = (text: string) => findAssetMentions(text).map((mention) => mention.id)
 
-describe('findImageMentions', () => {
+describe('findAssetMentions', () => {
   it('finds each mention with its offsets and id, in order', () => {
     const text = '@a: put the hat of @bc on it (@zz).\n@d'
 
-    const mentions = findImageMentions(text)
+    const mentions = findAssetMentions(text)
 
     expect(mentions).toStrictEqual([
       { from: 0, to: 2, id: 'a' },
@@ -30,7 +30,7 @@ describe('findImageMentions', () => {
   })
 
   it('gives the offsets of a mention after a char outside the BMP', () => {
-    expect(findImageMentions('🦊@a')).toStrictEqual([{ from: 2, to: 4, id: 'a' }])
+    expect(findAssetMentions('🦊@a')).toStrictEqual([{ from: 2, to: 4, id: 'a' }])
   })
 
   it('takes the letters after the `@` as one whole id', () => {

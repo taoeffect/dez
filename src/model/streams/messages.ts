@@ -1,8 +1,8 @@
 import type { MessagePart, ModelRef, Section, SectionThinking, ThinkingReplay } from '../chat/types'
 import { sectionIsEmpty, sectionPlainText } from '../chat/content'
-import { findImageMentions } from '../chat/imageMentions'
+import { findAssetMentions, type AssetMention } from '../chat/imageMentions'
 import { findImageReferences, IMAGE_TOOL_KEY, requestImageReferenceStart, type ImageReference } from '../chat/images'
-import { findMediaTags, mediaTagRequestText, mediaTagsForRequest, splitMediaTags, type MediaTagKind } from '../chat/mediaTags'
+import { findMediaTags, mediaTagRequestText, mediaTagsForRequest, splitMediaTags, type MediaTag, type MediaTagKind } from '../chat/mediaTags'
 import { sameModelRef } from '../chat/modelRef'
 import { holdsStoredFilePath, withoutStoredFilePaths } from '../chat/storedFilePaths'
 import { thinkingField } from '../chat/thinking'
@@ -71,9 +71,9 @@ export function sectionsToStreamMessages(sections: Section[], requestModel: Mode
       if (id !== null) imagesById.set(id, path)
     }
     if (section.role === 'agent') return agentSectionMessages(section, requestModel, options.sendTools)
-    if (index === newestUser) {
-      const content = userMessageContent(text, imagesById)
-      if (options.sendImages || typeof content === 'string') return [{ role: 'user', content }]
+    const content = index === newestUser ? userMessageContent(text, imagesById) : null
+    if (content !== null) {
+      if (options.sendImages) return [{ role: 'user', content }]
       // The count is of the image parts that the request has for a model
       // that reads images, so the toast and the request always agree.
       imagesLeftOut = content.filter((part) => part.type === 'image').length
@@ -169,12 +169,11 @@ export function mediaRequestInput(
  *  each one once: its media tags (clip files that the user pasted or
  *  dropped) and the clips that it names with an `@id` mention
  *  (imageMentions.ts). A mention names the last media tag with that id in
- *  the message or in a section before it, user or agent. Mentions are read
- *  as `userMessageContent` reads them: in the text outside media tags and
- *  image references, after the path scrub. An id that an image of the
- *  message or of an earlier section has is an image: its tag and its
- *  mentions add no clip. A mention of no image and no clip is plain text.
- *  The text keeps each mention as the user typed it. */
+ *  the message or in a section before it, user or agent. The message is
+ *  read as `userMessageContent` reads it (`messageTextPieces`). An id that
+ *  an image of the message or of an earlier section has is an image: its
+ *  tag and its mentions add no clip. A mention of no image and no clip is
+ *  plain text. The text keeps each mention as the user typed it. */
 export function messageClips(sections: readonly Section[]): ClipAttachment[] {
   const messageIndex = sections.findLastIndex((section) => section.role === 'user' && !sectionIsEmpty(section))
   if (messageIndex < 0) return []
@@ -193,16 +192,9 @@ export function messageClips(sections: readonly Section[]): ClipAttachment[] {
     const clip = clipsById.get(id)
     if (clip && !imageIds.has(id) && !clips.has(id)) clips.set(id, clip)
   }
-  for (const piece of splitMediaTags(sectionPlainText(sections[messageIndex]))) {
-    if (piece.kind === 'media') {
-      add(piece.tag.id)
-      continue
-    }
-    const references = findImageReferences(piece.text)
-    const gaps = [...references.map((reference, index) => [references[index - 1]?.to ?? 0, reference.from] as const), [references.at(-1)?.to ?? 0, piece.text.length] as const]
-    for (const [from, to] of gaps) {
-      for (const { id } of findImageMentions(withoutStoredFilePaths(piece.text.slice(from, to)))) add(id)
-    }
+  for (const piece of messageTextPieces(sectionPlainText(sections[messageIndex]))) {
+    if (piece.kind === 'media') add(piece.tag.id)
+    else if (piece.kind === 'gap') for (const { id } of piece.mentions) add(id)
   }
   return [...clips.values()]
 }
@@ -228,7 +220,7 @@ function promptWithNames(parts: MessagePart[], imageNames: ReadonlyMap<string, s
   const withNamedMentions = (text: string) => {
     let named = ''
     let start = 0
-    for (const mention of findImageMentions(text)) {
+    for (const mention of findAssetMentions(text)) {
       const path = pathsById.get(mention.id)
       const name = path === undefined ? clipNames.get(mention.id) : imageNames.get(path)
       if (name === undefined) continue
@@ -405,67 +397,92 @@ function textWithToolCalls(text: string): string {
 }
 
 // The content of the newest user message, the only one with image parts:
-// text and image parts in doc order. Each image part comes right after its
-// reference's text, `![image](id=a)`, at the end of the text part before
-// it, so that a model can name the image by its id (and `promptWithNames`
-// finds that text). A media tag goes in its request form and adds no part.
+// text and image parts in doc order (`messageTextPieces`). Each image part
+// comes right after its reference's text, `![image](id=a)`, at the end of
+// the text part before it, so that a model can name the image by its id
+// (and `promptWithNames` finds that text). A media tag goes in its request
+// form and adds no part.
 //
 // An `@id` mention (imageMentions.ts) that names an image of `imagesById`
 // counts as that image at that place: its image part comes right after the
 // mention, which stays in the text as the user typed it. A mentioned image
 // goes once, at its first mention. A mention of an image that the text
-// itself holds adds no part: the reference sends that image. References
-// and mentions are read in the text outside media tags, and mentions after
-// the path scrub: a bare path can hold an `@`, and a cut there would send
-// the start of the path.
+// itself holds adds no part: the reference sends that image.
 //
-// A text with no image stays a string, so a text-only request body is the
-// same bytes as before images existed: the prefix hashes of saved thinking
-// replays depend on it. It is the text that an older user message sends:
-// a tag is a whole line, and the path scrub never reads across a line end.
-// A whitespace-only text after the last image is left out: Anthropic
-// refuses a text block with no visible text.
-function userMessageContent(text: string, imagesById: ReadonlyMap<string, string>): string | MessagePart[] {
-  const pieces = splitMediaTags(text)
-  const pieceReferences = pieces.map((piece) => (piece.kind === 'text' ? findImageReferences(piece.text) : []))
+// Null for a text with no image part: the message then goes as the text
+// that an older user message sends (`sectionsToStreamMessages`). So a
+// text-only request body is the same bytes as before images existed (the
+// prefix hashes of saved thinking replays depend on it), and the message
+// keeps its bytes when a newer user message comes. A whitespace-only text
+// after the last image is left out: Anthropic refuses a text block with no
+// visible text.
+function userMessageContent(text: string, imagesById: ReadonlyMap<string, string>): MessagePart[] | null {
+  const pieces = messageTextPieces(text)
   const parts: MessagePart[] = []
   // The images that the message has a part for, or gets one for below.
-  const sentImages = new Set(pieceReferences.flat().map((reference) => reference.path))
+  const sentImages = new Set(pieces.flatMap((piece) => (piece.kind === 'reference' ? [piece.path] : [])))
   // The scrubbed text since the last image part.
   let pendingText = ''
-  // Takes in a text between two references (or a text end), with an image
-  // part after each mention that adds one.
-  const addText = (gap: string) => {
-    const scrubbed = withoutStoredFilePaths(gap)
-    let start = 0
-    for (const mention of findImageMentions(scrubbed)) {
-      const path = imagesById.get(mention.id)
-      if (path === undefined || sentImages.has(path)) continue
-      sentImages.add(path)
-      parts.push({ type: 'text', text: pendingText + scrubbed.slice(start, mention.to) }, { type: 'image', path })
-      pendingText = ''
-      start = mention.to
+  for (const piece of pieces) {
+    switch (piece.kind) {
+      case 'media':
+        pendingText += withoutStoredFilePaths(mediaTagRequestText(piece.tag))
+        break
+      case 'reference':
+        parts.push({ type: 'text', text: pendingText + piece.text }, { type: 'image', path: piece.path })
+        pendingText = ''
+        break
+      case 'gap': {
+        // An image part after each mention that adds one.
+        let start = 0
+        for (const mention of piece.mentions) {
+          const path = imagesById.get(mention.id)
+          if (path === undefined || sentImages.has(path)) continue
+          sentImages.add(path)
+          parts.push({ type: 'text', text: pendingText + piece.text.slice(start, mention.to) }, { type: 'image', path })
+          pendingText = ''
+          start = mention.to
+        }
+        pendingText += piece.text.slice(start)
+      }
     }
-    pendingText += scrubbed.slice(start)
   }
 
-  for (const [index, piece] of pieces.entries()) {
-    if (piece.kind === 'media') {
-      pendingText += withoutStoredFilePaths(mediaTagRequestText(piece.tag))
-      continue
-    }
-    let end = 0
-    for (const { from, to, path } of pieceReferences[index]) {
-      addText(piece.text.slice(end, from))
-      parts.push({ type: 'text', text: pendingText + withoutStoredFilePaths(piece.text.slice(from, to)) }, { type: 'image', path })
-      pendingText = ''
-      end = to
-    }
-    addText(piece.text.slice(end))
-  }
-
-  // With no part, the pending text is the whole scrubbed text.
-  if (parts.length === 0) return pendingText
+  if (parts.length === 0) return null
   if (pendingText.trim()) parts.push({ type: 'text', text: pendingText })
   return parts
+}
+
+// A run of the text of a user message, as a request reads it: a media tag,
+// an image reference (its text after the path scrub, and its path), or a
+// text between them (after the path scrub, with its `@id` mentions).
+type MessageTextPiece =
+  | { kind: 'media', tag: MediaTag }
+  | { kind: 'reference', text: string, path: string }
+  | { kind: 'gap', text: string, mentions: AssetMention[] }
+
+// The pieces of a user message's text, in order, with no empty gap. Both
+// readers of a message's images and clips use it (`userMessageContent`,
+// `messageClips`), so a mention names the same thing in a chat request and
+// in a media request. References and mentions are read in the text outside
+// media tags, and mentions after the path scrub: a bare path can hold an
+// `@`, and a cut there would send the start of the path.
+function messageTextPieces(text: string): MessageTextPiece[] {
+  return splitMediaTags(text).flatMap((piece): MessageTextPiece[] => {
+    if (piece.kind === 'media') return [piece]
+    const pieces: MessageTextPiece[] = []
+    const addGap = (from: number, to: number) => {
+      if (from === to) return
+      const gap = withoutStoredFilePaths(piece.text.slice(from, to))
+      pieces.push({ kind: 'gap', text: gap, mentions: findAssetMentions(gap) })
+    }
+    let end = 0
+    for (const { from, to, path } of findImageReferences(piece.text)) {
+      addGap(end, from)
+      pieces.push({ kind: 'reference', text: withoutStoredFilePaths(piece.text.slice(from, to)), path })
+      end = to
+    }
+    addGap(end, piece.text.length)
+    return pieces
+  })
 }

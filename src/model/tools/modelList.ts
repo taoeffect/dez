@@ -78,10 +78,13 @@ export function modelListText(cache: ModelCache, providers: readonly ProviderInf
   if (models.length === 0) return NO_MODELS_TEXT
 
   const terms = searchTerms(filter)
-  const criteria = [
-    ...(terms.length > 0 ? [JSON.stringify(filter)] : []),
-    ...(outputs.length > 0 ? [`outputs ${outputLetters(outputs)}`] : []),
-  ].join(' and ')
+  // The arguments that narrow the list: the name of each one, how the
+  // result tells its match, and the fix of a call that matches nothing.
+  const narrowing = [
+    ...(terms.length > 0 ? [{ name: '`filter`', text: JSON.stringify(filter), fix: 'fewer words in `filter`' }] : []),
+    ...(outputs.length > 0 ? [{ name: '`outputs`', text: `outputs ${outputLetters(outputs)}`, fix: 'other letters in `outputs`' }] : []),
+  ]
+  const criteria = narrowing.map((argument) => argument.text).join(' and ')
   const lines = matchingModelsByProvider(providers, models, { terms, outputs }).flatMap(({ provider, models: matches }) =>
     matches.map((model) => {
       const columns = [modelRefKey({ providerId: provider.id, modelId: model.id }), columnText(model.name), columnText(provider.name)]
@@ -91,9 +94,9 @@ export function modelListText(cache: ModelCache, providers: readonly ProviderInf
     }))
   const count = lines.length
   if (count === 0) {
-    const fixes = [...(terms.length > 0 ? ['fewer words in `filter`'] : []), ...(outputs.length > 0 ? ['other letters in `outputs`'] : [])]
-    const given = [...(terms.length > 0 ? ['`filter`'] : []), ...(outputs.length > 0 ? ['`outputs`'] : [])]
-    return `No models match ${criteria}. Call model_list again with ${fixes.join(' or ')}, or with no ${given.join(' and no ')} to list every model.`
+    const fixes = narrowing.map((argument) => argument.fix).join(' or ')
+    const given = narrowing.map((argument) => argument.name).join(' and no ')
+    return `No models match ${criteria}. Call model_list again with ${fixes}, or with no ${given} to list every model.`
   }
 
   const counted = `${count} ${count === 1 ? 'model' : 'models'}`

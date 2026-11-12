@@ -557,11 +557,11 @@ export default sbp('sbp/selectors/register', {
       }
 
       if (!isClipKind(kind)) {
-        const request = provider.mediaRequest(kind, modelId, { prompt: input.prompt, images, values }, await requestSecret(provider))
+        const request = provider.imageRequest(kind, modelId, { prompt: input.prompt, images, values }, await requestSecret(provider))
         signal?.throwIfAborted()
         const { response, chunks } = await sbp('dez.http/stream', request, requestId) as NativeHttpStreamResult
         await assertStreamResponseOk(provider, response, chunks)
-        return { media: provider.mediaResult(kind, response, await readNativeChunkBytes(chunks)), clips: [] }
+        return { media: provider.imageResult(kind, response, await readNativeChunkBytes(chunks)), clips: [] }
       }
 
       const startedAt = Date.now()

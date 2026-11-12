@@ -184,8 +184,7 @@ export class Provider {
   // (`MediaFormat.modelLists`); none when it has none. Each one ends like a
   // model list request (`MODEL_LIST_TIMEOUT_MS`).
   mediaModelListRequests(secret: Secret<string> | null): NativeHttpRequest[] {
-    const mediaApi = this.config.mediaApi
-    const lists = mediaApi ? MEDIA_FORMATS[mediaApi.format].modelLists?.(this.config.baseUrl) ?? [] : []
+    const lists = this.mediaFormatOrNone()?.modelLists?.(this.config.baseUrl) ?? []
     return lists.map((list) => ({ ...this.mediaApiRequest(list, secret), timeoutMs: MODEL_LIST_TIMEOUT_MS }))
   }
 
@@ -213,9 +212,9 @@ export class Provider {
   // needs a line in `withKeptClipData` (keptClipData.ts), which keeps
   // these fields when a media list does not load.
   withClipData(models: readonly ModelInfo[], entries: ReadonlyMap<string, unknown>, mediaEntries: ReadonlyMap<string, unknown>): ModelInfo[] {
-    const mediaApi = this.config.mediaApi
-    if (!mediaApi) return [...models]
-    const { images: imageFormat, clips, imageRules, clipRules } = MEDIA_FORMATS[mediaApi.format]
+    const format = this.mediaFormatOrNone()
+    if (!format) return [...models]
+    const { images: imageFormat, clips, imageRules, clipRules } = format
     return models.map((model) => {
       const kind = effectiveRequest(model)
       if (kind === 'chat' || kind === 'none') return model
@@ -310,12 +309,12 @@ export class Provider {
   }
 
   // The request for a model of an image request kind.
-  mediaRequest(kind: ImageKind, modelId: string, input: MediaInput, secret: Secret<string> | null): NativeHttpRequest {
+  imageRequest(kind: ImageKind, modelId: string, input: MediaInput, secret: Secret<string> | null): NativeHttpRequest {
     return this.mediaApiRequest(this.withModelBody(kind, modelId, this.imageFormat().request(kind, this.config.baseUrl, modelId, input)), secret)
   }
 
-  // The images of a 2xx response to `mediaRequest`.
-  mediaResult(kind: ImageKind, head: NativeHttpResponseHead, body: Uint8Array): GeneratedMedia[] {
+  // The images of a 2xx response to `imageRequest`.
+  imageResult(kind: ImageKind, head: NativeHttpResponseHead, body: Uint8Array): GeneratedMedia[] {
     return this.imageFormat().parseResponse(kind, head, body)
   }
 
@@ -336,17 +335,15 @@ export class Provider {
   // the provider tells none.
   inputImageSize(kind: MediaKind, model: Pick<ModelInfo, 'images'> | null): ImageSizeRules | undefined {
     if (isClipKind(kind) || isTextKind(kind)) return model?.images?.size
-    const mediaApi = this.config.mediaApi
-    return mediaApi ? MEDIA_FORMATS[mediaApi.format].images?.inputImageSize?.[kind] : undefined
+    return this.mediaFormatOrNone()?.images?.inputImageSize?.[kind]
   }
 
   // The limits of each input image of a request of `kind` that no fit can
   // meet (`ImageFormat.inputImageLimits`); undefined when the provider
   // tells none.
   inputImageLimits(kind: MediaKind): InputImageLimits | undefined {
-    const mediaApi = this.config.mediaApi
-    if (isClipKind(kind) || isTextKind(kind) || !mediaApi) return undefined
-    return MEDIA_FORMATS[mediaApi.format].images?.inputImageLimits?.[kind]
+    if (isClipKind(kind) || isTextKind(kind)) return undefined
+    return this.mediaFormatOrNone()?.images?.inputImageLimits?.[kind]
   }
 
   // Why the media API refuses an input image of a request of `kind` that
@@ -354,9 +351,8 @@ export class Provider {
   // bytes (`ImageFormat.inputImageProblem`); undefined when it takes it, as
   // far as Dez knows.
   inputImageProblem(kind: MediaKind, size: ImageSize | null, byteLength: number): string | undefined {
-    const mediaApi = this.config.mediaApi
-    if (isClipKind(kind) || isTextKind(kind) || !mediaApi) return undefined
-    return MEDIA_FORMATS[mediaApi.format].images?.inputImageProblem?.(kind, size, byteLength)
+    if (isClipKind(kind) || isTextKind(kind)) return undefined
+    return this.mediaFormatOrNone()?.images?.inputImageProblem?.(kind, size, byteLength)
   }
 
   // The parts of a clip request kind (`ClipFormat` in mediaFormats.ts), for
@@ -370,7 +366,7 @@ export class Provider {
   // The size of a sample of the raw PCM audio that the media API can
   // answer with (`ClipFormat.pcmSampleBits`).
   pcmSampleBits(): number | undefined {
-    return this.clipFormatOrNone()?.pcmSampleBits
+    return this.mediaFormatOrNone()?.clips?.pcmSampleBits
   }
 
   clipJob(kind: ClipKind, modelId: string, data: unknown): ClipJob {
@@ -382,7 +378,7 @@ export class Provider {
   // (`ClipFormat.refusedImages`). Null for any other error.
   imageCountRefusal(kind: ClipKind, error: unknown, imageCount: number): TooManyImagesError | null {
     if (!(error instanceof ProviderHttpError)) return null
-    const maxImages = this.clipFormatOrNone()?.refusedImages?.(kind, error.status, error.bodyJson)
+    const maxImages = this.mediaFormatOrNone()?.clips?.refusedImages?.(kind, error.status, error.bodyJson)
     return maxImages !== undefined && maxImages < imageCount ? new TooManyImagesError(maxImages, imageCount, { cause: error }) : null
   }
 
@@ -391,7 +387,7 @@ export class Provider {
   // the refusal tells none, or none that the body lacks.
   clipRequestAfterRefusal(kind: ClipKind, wire: MediaWireRequest, error: unknown): MediaWireRequest | null {
     if (!(error instanceof ProviderHttpError) || wire.body === undefined) return null
-    const fields = this.clipFormatOrNone()?.refusalBody?.(kind, error.status, error.bodyJson)
+    const fields = this.mediaFormatOrNone()?.clips?.refusalBody?.(kind, error.status, error.bodyJson)
     if (!fields || Object.entries(fields).every(([name, value]) => wire.body?.[name] === value)) return null
     return { ...wire, body: { ...wire.body, ...fields } }
   }
@@ -409,7 +405,7 @@ export class Provider {
     entry: unknown,
     secret: Secret<string> | null,
   ): { request: NativeHttpRequest, usd(data: unknown): number } | null {
-    const quote = this.clipFormatOrNone()?.quote
+    const quote = this.mediaFormatOrNone()?.clips?.quote
     const wire = quote?.request(kind, this.config.baseUrl, modelId, values, entry)
     return quote && wire ? { request: { ...this.mediaApiRequest(wire, secret), timeoutMs: MODEL_LIST_TIMEOUT_MS }, usd: quote.usd } : null
   }
@@ -424,8 +420,7 @@ export class Provider {
     modelId: string,
     secret: Secret<string> | null,
   ): { request: NativeHttpRequest | null, usd: ImageQuoteFormat['usd'] } | null {
-    const mediaApi = this.config.mediaApi
-    const quote = mediaApi ? MEDIA_FORMATS[mediaApi.format].images?.quote : undefined
+    const quote = this.mediaFormatOrNone()?.images?.quote
     if (!quote) return null
     const wire = quote.recordsRequest?.(kind, this.config.baseUrl, modelId) ?? null
     return { request: wire && { ...this.mediaApiRequest(wire, secret), timeoutMs: MODEL_LIST_TIMEOUT_MS }, usd: quote.usd }
@@ -450,9 +445,9 @@ export class Provider {
   // requests then fail with one of these errors. The fix of the config is
   // the `mediaApi` row of the README.
   private mediaFormat(): MediaFormat {
-    const mediaApi = this.config.mediaApi
-    if (!mediaApi) throw new ProviderError(`${this.name} has no media API that Dez can use. Choose another model.`, this.id)
-    return MEDIA_FORMATS[mediaApi.format]
+    const format = this.mediaFormatOrNone()
+    if (!format) throw new ProviderError(`${this.name} has no media API that Dez can use. Choose another model.`, this.id)
+    return format
   }
 
   private imageFormat(): ImageFormat {
@@ -473,10 +468,11 @@ export class Provider {
     return texts
   }
 
-  // For the parts of a clip format that a provider can be without.
-  private clipFormatOrNone(): ClipFormat | undefined {
+  // The provider's media format; undefined when it has no `mediaApi`. For
+  // the parts of a media format that a provider can be without.
+  private mediaFormatOrNone(): MediaFormat | undefined {
     const mediaApi = this.config.mediaApi
-    return mediaApi ? MEDIA_FORMATS[mediaApi.format].clips : undefined
+    return mediaApi ? MEDIA_FORMATS[mediaApi.format] : undefined
   }
 
   // The native bridge appends every header entry and header names are

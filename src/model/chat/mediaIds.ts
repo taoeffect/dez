@@ -1,4 +1,4 @@
-import { findImageMentions } from './imageMentions'
+import { findAssetMentions } from './imageMentions'
 import { findImageReferences, imageIdChange } from './images'
 import { findMediaTags, mediaTagText } from './mediaTags'
 
@@ -175,7 +175,7 @@ export function pastedMediaIdChanges(text: string, pasted: readonly TextRange[])
   // pasted `@a` before the letters `bc` is the word `@abc`.
   let textFrom = 0
   for (const next of [...assets, { from: text.length, to: text.length }]) {
-    for (const mention of findImageMentions(text.slice(textFrom, next.from))) {
+    for (const mention of findAssetMentions(text.slice(textFrom, next.from))) {
       const id = newIds.get(mention.id)
       const range = { from: textFrom + mention.from, to: textFrom + mention.to }
       // The change keeps the `@`.
