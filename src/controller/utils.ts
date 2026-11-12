@@ -47,10 +47,11 @@ export default sbp('sbp/selectors/register', {
       await revealItemInDir(path)
     } catch (error) {
       console.error('Failed to show the file in the file manager:', error)
+      const shownPath = await sbp('dez.controller/displayPath', path) as string
       // The path tells the user where to find the file by hand.
       sbp('dez.ui/toast', 'app-global', {
         title: 'Could not show the file',
-        message: errorText(`The file manager did not show the file. Find it by hand: it is at ${path}.`, rawErrorText(error)),
+        message: errorText(`The file manager did not show the file. Find it by hand: it is at ${shownPath}.`, rawErrorText(error)),
         variant: 'error',
       })
     }
