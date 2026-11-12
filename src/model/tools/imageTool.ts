@@ -1,6 +1,6 @@
 import { sectionPlainText } from '../chat/content'
 import type { ColorChange } from '../chat/imageColors'
-import { wholeImageDrawing, type DrawnMediaType, type ImageDrawing, type ImageFlip, type ImageRegion, type ImageSize } from '../chat/imageDrawing'
+import { drawnMediaType, wholeImageDrawing, type DrawnMediaType, type ImageDrawing, type ImageFlip, type ImageRegion, type ImageSize } from '../chat/imageDrawing'
 import { findImageReferences, imageMediaType, type ImageMediaType } from '../chat/images'
 import { findMediaTags } from '../chat/mediaTags'
 import type { Section } from '../chat/types'
@@ -327,14 +327,20 @@ function largestSize({ width, height }: ImageSize): ImageSize {
   return fit
 }
 
+// The call of scale that makes an image from the image `id`, of `size`,
+// that is not over `MAX_DRAWN_PIXELS`. `when` goes after "scale", as
+// " first".
+function smallerImageText(id: string, size: ImageSize, when = ''): string {
+  const fit = largestSize(size)
+  return `Make a smaller image from @${id} with scale${when} (for the same shape, a \`width\` of ${fit.width} and a \`height\` of ${fit.height}, or less)`
+}
+
 // The fix of a call of `subcommand` that would make an image over
 // `MAX_DRAWN_PIXELS` because the image `id`, of `size`, is over it: a
 // smaller image from it first. `needs` is what else the call of
 // `subcommand` must give for its image not to be over the limit.
 function scaleFirstText(id: string, size: ImageSize, subcommand: string, needs = ''): string {
-  const fit = largestSize(size)
-  return `Make a smaller image from @${id} with scale first (for the same shape, a \`width\` of ${fit.width} and a \`height\` of ${fit.height}, or less), `
-    + `then call ${subcommand} with the new image${needs}.`
+  return `${smallerImageText(id, size, ' first')}, then call ${subcommand} with the new image${needs}.`
 }
 
 const FLIPS: readonly ImageFlip[] = ['horizontal', 'vertical']
@@ -559,7 +565,14 @@ export const convertPlan: ImagePlan = (id, args, size, mediaType) => {
     throw new ToolError(`The image @${id} is already in the ${FORMAT_NAMES[target]} format, so the new image would be the same as @${id}. `
       + `Give another format: ${formatsText(CONVERT_TYPES.filter((type) => type !== target))}.`)
   }
-  if (size.width * size.height > MAX_DRAWN_PIXELS) throw tooLargeError(size, scaleFirstText(id, size, 'convert'))
+  if (size.width * size.height > MAX_DRAWN_PIXELS) {
+    // Scale writes a WebP, GIF, or SVG image as a PNG (`drawnMediaType`), so
+    // for a PNG target its new image is the answer: a convert of that image
+    // to PNG would be refused, as it is already a PNG.
+    throw tooLargeError(size, target === drawnMediaType(mediaType)
+      ? `${smallerImageText(id, size)}. Scale makes a ${FORMAT_NAMES[target]} image from @${id}, so no convert call is needed.`
+      : scaleFirstText(id, size, 'convert'))
+  }
   const drawing: ImageDrawing = { ...wholeImageDrawing(size), mediaType: target }
   if (target === 'image/jpeg') drawing.background = '#ffffff'
   return drawing

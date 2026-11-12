@@ -362,6 +362,15 @@ describe('convertPlan', () => {
   it('refuses an image over the limit, and tells how to make a smaller image first', () => {
     expect(errorOf(() => convertPlan('a', { image: 'a', format: 'jpeg' }, HUGE, PNG))).toBe(`${TOO_LARGE}${SCALE_FIRST}then call convert with the new image.`)
   })
+
+  // Scale writes these types as a PNG, so a convert to PNG after the scale
+  // would be refused as one of the image's own format.
+  it.each(['image/webp', 'image/gif', 'image/svg+xml'] as const)('for a PNG of a %s image over the limit, tells that the scale alone makes it', (mediaType) => {
+    expect(errorOf(() => convertPlan('a', { image: 'a', format: 'png' }, HUGE, mediaType))).toBe(
+      `${TOO_LARGE}Make a smaller image from @a with scale (for the same shape, a \`width\` of 5760 and a \`height\` of 5760, or less). `
+      + 'Scale makes a PNG image from @a, so no convert call is needed.',
+    )
+  })
 })
 
 describe('unwritableFormatError', () => {
