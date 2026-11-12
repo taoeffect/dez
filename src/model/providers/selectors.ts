@@ -13,7 +13,7 @@ import { fileNameOf } from '../../utils/fileName'
 import { secret, type Secret } from '../../utils/secret'
 import { sanitizeErrorText } from '../../utils/protocol/errors'
 import { nativeResponseJson, nativeResponseText, readNativeChunkBytes, type NativeHttpRequest, type NativeHttpResponse, type NativeHttpStreamResult } from '../../utils/protocol/nativeHttp'
-import { clipFileProblem, clipMediaType, clipTagProblem, needsWavCopy, type ClipAttachment, type ClipUse, type InputClipRules } from './clipInputs'
+import { clipFileProblem, clipMediaType, clipTagProblem, missingClipProblem, needsWavCopy, type ClipAttachment, type ClipUse, type InputClipRules } from './clipInputs'
 import { inputImageRulesFor, missingImageProblem } from './clipImages'
 import { CLIP_JOB_TIMEOUT_MS, clipPollDelay, sendClipRequest, type ClipRun } from './clipRequests'
 import { assertProviderResponseOk, explainedProviderError, providerConnectionError, UnusableAnswerError } from './errors'
@@ -26,7 +26,7 @@ import type { Provider, ProviderChatRequest } from './provider'
 import { getProvider, listProviders, requireProvider } from './registry'
 import { assertStreamResponseOk, streamProviderTokens } from './streaming'
 import type { ProviderChatInputMessage, ProviderGenerateMediaInput, ProviderGenerateMediaResult, ProviderMediaQuote, ProviderMediaQuoteInput, ProviderStreamChatInput, ProviderStreamChatResult } from './streamTypes'
-import { CLIP_KINDS, ProviderNotConfiguredError, effectiveRequest, isClipKind, type ChatImagePart, type ChatMessage, type ChatPart, type ModelDisplayNames, type ModelInfo, type ProviderId, type ProviderInfo, type ProviderInputImageRules, type ProviderModelsResult, type ProviderSettingsDescriptor } from './types'
+import { CLIP_KINDS, ProviderNotConfiguredError, effectiveRequest, isClipKind, isTextKind, type ChatImagePart, type ChatMessage, type ChatPart, type ModelDisplayNames, type ModelInfo, type ProviderId, type ProviderInfo, type ProviderInputImageRules, type ProviderModelsResult, type ProviderSettingsDescriptor } from './types'
 import { unstoredOutputMessage } from './unusableModel'
 
 // The file of a stored image.
@@ -112,11 +112,9 @@ async function inputClipParts(modelName: string, rules: InputClipRules | undefin
   }))
   const problem = clipFileProblem(modelName, rules, sources.flatMap((source) => ('bytes' in source ? [{ clip: source.clip, seconds: source.seconds, byteLength: source.bytes.length }] : [])))
   if (problem !== null) throw new ExplainedError(problem)
-  return sources.map((source) => ({
-    kind: source.clip.kind,
-    use: source.use,
-    url: 'bytes' in source ? `data:${source.mediaType};base64,${bytesToBase64(source.bytes)}` : source.url,
-  }))
+  return sources.map((source) => ('bytes' in source
+    ? { kind: source.clip.kind, use: source.use, mediaType: source.mediaType, bytes: source.bytes }
+    : { kind: source.clip.kind, use: source.use, url: source.url }))
 }
 
 // The stored key, or null when there is none. Throws for GitHub Copilot when
@@ -447,6 +445,8 @@ export default sbp('sbp/selectors/register', {
   //   of `input.clips` as the model uses them (`inputClipParts`). A refusal
   //   that tells that the model takes fewer images rejects with a
   //   TooManyImagesError (`Provider.imageCountRefusal`).
+  // - A text (a transcription of an audio clip): one request through
+  //   dez.http/stream, and the text of its answer in `text`.
   //
   // A provider takes the money for a job when it starts. So after that
   // point, a failure and a stop log the job id, and the message of a
@@ -468,13 +468,13 @@ export default sbp('sbp/selectors/register', {
       const cachedModel = sbp('dez.model/modelCache/model', provider.id, modelId) as ModelInfo | null
       const modelName = cachedModel?.name ?? modelId
       // The submit refuses such requests with the model's name
-      // (`unstoredOutputMessage`, `missingImageProblem`, `clipTagProblem`);
-      // this is for a caller that did not check. A video clip is the
-      // reference of a request with no image.
+      // (`unstoredOutputMessage`, `missingClipProblem`, `clipTagProblem`,
+      // `missingImageProblem`); this is for a caller that did not check. A
+      // video clip is the reference of a request with no image.
       if (cachedModel?.unstoredOutput !== undefined) throw new ExplainedError(unstoredOutputMessage(cachedModel.name, cachedModel.unstoredOutput))
       const values = parameterValues(provider.id, modelId, input.parameters)
       const imageRules = inputImageRulesFor(cachedModel?.images, values)
-      const clipProblem = clipTagProblem(modelName, cachedModel?.clips, clips, paths.length)
+      const clipProblem = missingClipProblem(modelName, kind, clips) ?? clipTagProblem(modelName, cachedModel?.clips, clips, paths.length)
       if (clipProblem !== null) throw new ExplainedError(clipProblem)
       const missingImages = clips.some((clip) => clip.kind === 'video') ? null : missingImageProblem(modelName, kind, paths.length, imageRules)
       if (missingImages !== null) throw new ExplainedError(missingImages)
@@ -487,6 +487,14 @@ export default sbp('sbp/selectors/register', {
         return { type: 'image', mediaType, data: bytesToBase64(bytes) }
       }))
       const clipParts = await inputClipParts(modelName, cachedModel?.clips, clips)
+
+      if (isTextKind(kind)) {
+        const request = provider.textRequest(kind, modelId, { prompt: input.prompt, images, clips: clipParts, values }, await requestSecret(provider))
+        signal?.throwIfAborted()
+        const { response, chunks } = await sbp('dez.http/stream', request, requestId) as NativeHttpStreamResult
+        await assertStreamResponseOk(provider, response, chunks)
+        return { media: [], clips: [], text: provider.textResult(kind, await readNativeChunkBytes(chunks)) }
+      }
 
       if (!isClipKind(kind)) {
         const request = provider.mediaRequest(kind, modelId, { prompt: input.prompt, images, values }, await requestSecret(provider))
@@ -502,7 +510,14 @@ export default sbp('sbp/selectors/register', {
       // A request of the media API, which gets the API key.
       const apiRequest = (wire: MediaWireRequest) => provider.mediaApiRequest(wire, secret)
       const cacheDir = await sbp('dez.native/getAppDir', 'cache') as string
-      const clipInput = { prompt: input.prompt, images, clips: clipParts, values, ...(input.lyrics !== undefined && { lyrics: input.lyrics }) }
+      const clipInput = {
+        prompt: input.prompt,
+        images,
+        clips: clipParts,
+        values,
+        ...(input.lyrics !== undefined && { lyrics: input.lyrics }),
+        ...(imageRules?.references && { imagesAsReferences: true as const }),
+      }
       // A refusal that tells that the model takes fewer images: the user
       // gets Dez's text, with the count, and the console the provider's. A
       // refusal that tells a field value that the model needs: the request
@@ -569,6 +584,7 @@ export default sbp('sbp/selectors/register', {
     const { kind, modelId } = input
     const values = parameterValues(provider.id, modelId, input.parameters)
     const entry = sbp('dez.model/modelCache/rawModel', provider.id, modelId) as unknown
+    if (isTextKind(kind)) return null
     if (isClipKind(kind)) {
       const quote = provider.clipQuote(kind, modelId, values, entry, await requestSecret(provider))
       return quote ? { usd: quote.usd(await jsonResponse(provider, quote.request)) } : null

@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import type { AnthropicThinkingBlock, ThinkingReplay } from '../chat/types'
 import type { ToolCall, ToolDefinition } from '../tools/types'
+import { base64ToBytes } from '../../utils/base64'
 import type { NativeHttpRequest } from '../../utils/protocol/nativeHttp'
 import { secret } from '../../utils/secret'
 import { BUILT_IN_PROVIDER_CONFIGS } from './builtins'
@@ -1198,75 +1199,6 @@ describe('provider models', () => {
     ])
   })
 
-  // The clip tells why a model has no request, so it comes from the same
-  // config data as the request kind.
-  it('reads the clip that a model with no request needs, from its type or from a second value of the entry', () => {
-    const provider = customProvider({
-      modelOutputs: {
-        path: 'type',
-        values: {
-          text: { outputs: ['text'], request: 'chat' },
-          asr: { outputs: ['text'], clipInput: 'audio' },
-          film: { outputs: ['video'], requestBy: { path: 'kind', values: { fromText: 'video' }, clipInputs: { fromVideo: 'video' } } },
-          sound: { outputs: ['audio'], clipInput: 'audio', requestBy: { path: 'kind', values: { song: 'music' }, clipInputs: { film: 'video', true: 'audio' } } },
-        },
-      },
-    })
-    const models = provider.parseModels({
-      data: [
-        { id: 'by-type', type: 'asr' },
-        { id: 'by-value', type: 'film', kind: 'fromVideo' },
-        { id: 'by-other-value', type: 'film', kind: 'constructor' },
-        { id: 'by-no-value', type: 'film' },
-        { id: 'value-beats-type', type: 'sound', kind: 'film' },
-        { id: 'type-for-other-value', type: 'sound', kind: 'other' },
-        { id: 'by-true', type: 'film', kind: true },
-        { id: 'by-true-of-sound', type: 'sound', kind: true },
-        { id: 'with-request', type: 'sound', kind: 'song' },
-        { id: 'chat-wins', type: ['asr', 'text'] },
-        { id: 'first-clip', type: ['film', 'asr'], kind: 'fromVideo' },
-      ],
-    })
-
-    expect(models).toStrictEqual([
-      listed('by-type', { outputs: ['text'], request: 'none', clipInput: 'audio' }),
-      listed('by-value', { outputs: ['video'], request: 'none', clipInput: 'video' }),
-      listed('by-other-value', { outputs: ['video'], request: 'none' }),
-      listed('by-no-value', { outputs: ['video'], request: 'none' }),
-      listed('value-beats-type', { outputs: ['audio'], request: 'none', clipInput: 'video' }),
-      listed('type-for-other-value', { outputs: ['audio'], request: 'none', clipInput: 'audio' }),
-      // `film` names no clip for `true`.
-      listed('by-true', { outputs: ['video'], request: 'none' }),
-      listed('by-true-of-sound', { outputs: ['audio'], request: 'none', clipInput: 'audio' }),
-      // A model that gets requests needs no clip that Dez cannot send.
-      listed('with-request', { outputs: ['audio'], request: 'music' }),
-      listed('chat-wins', { outputs: ['text'], request: 'chat' }),
-      listed('first-clip', { outputs: ['text', 'video'], request: 'none', clipInput: 'video' }),
-    ])
-  })
-
-  it('lets a config clip input win over the fetched one, and drops it when the config gives the model a request', () => {
-    const provider = customProvider({
-      models: [
-        { id: 'config', request: 'none', clipInput: 'video' },
-        { id: 'fetched' },
-        { id: 'config-wins', clipInput: 'video' },
-        { id: 'gets-request', request: 'tts' },
-        { id: 'clip-with-request', request: 'chat', clipInput: 'audio' },
-      ],
-    })
-    const transcriber = (id: string) => providerModel('local', id, id, { outputs: ['text'], request: 'none', clipInput: 'audio' })
-
-    expect(provider.mergeModels(['fetched', 'config-wins', 'gets-request', 'extra'].map(transcriber))).toStrictEqual([
-      listed('config', { request: 'none', clipInput: 'video' }),
-      listed('fetched', { outputs: ['text'], request: 'none', clipInput: 'audio' }),
-      listed('config-wins', { outputs: ['text'], request: 'none', clipInput: 'video' }),
-      listed('gets-request', { outputs: ['text'], request: 'tts' }),
-      listed('clip-with-request', { request: 'chat' }),
-      listed('extra', { outputs: ['text'], request: 'none', clipInput: 'audio' }),
-    ])
-  })
-
   it('leaves out the fetched models that make nothing, but always lists config models', () => {
     const provider = customProvider({
       modelOutputs: { path: 'type', values: { text: { outputs: ['text'], request: 'chat' }, embed: { outputs: [] } } },
@@ -1373,6 +1305,7 @@ describe('provider models', () => {
       { id: 'text-to-video', type: 'video', model_spec: { constraints: { model_type: 'text-to-video' } } },
       { id: 'image-to-video', type: 'video', model_spec: { constraints: { model_type: 'image-to-video' } } },
       { id: 'video-to-video', type: 'video', model_spec: { constraints: { model_type: 'video' } } },
+      { id: 'speech-to-text', type: 'asr' },
       { id: 'embed', type: 'embedding' },
     ])).toEqual([
       ['text', ['text'], 'chat'],
@@ -1382,13 +1315,14 @@ describe('provider models', () => {
       ['video', ['video'], 'none'],
       ['speech', ['audio'], 'tts'],
       ['song', ['audio'], 'music'],
-      // It needs a recording, which Dez does not send.
-      ['voice-changer', ['audio'], 'none'],
-      // A video model gets requests when it needs only a text, or an
-      // image; Dez sends no video.
+      // It says the speech of an audio clip in another voice.
+      ['voice-changer', ['audio'], 'voiceChange'],
+      // `model_type` tells what a video model needs: a text, an image, or
+      // a video.
       ['text-to-video', ['video'], 'video'],
       ['image-to-video', ['video'], 'imageToVideo'],
-      ['video-to-video', ['video'], 'none'],
+      ['video-to-video', ['video'], 'videoToVideo'],
+      ['speech-to-text', ['text'], 'transcription'],
     ])
     // OpenRouter: an image+text model is a chat model that also makes
     // images; an image-only model takes the image API; a router lists
@@ -1403,6 +1337,7 @@ describe('provider models', () => {
       { id: 'speech', architecture: { output_modalities: ['speech'] } },
       { id: 'video', architecture: { output_modalities: ['video'] } },
       { id: 'text-audio', architecture: { output_modalities: ['text', 'audio'] } },
+      { id: 'speech-to-text', architecture: { output_modalities: ['transcription'] } },
       { id: 'rerank', architecture: { output_modalities: ['rerank'] } },
     ])).toEqual([
       ['text', ['text'], 'chat'],
@@ -1412,6 +1347,7 @@ describe('provider models', () => {
       ['speech', ['audio'], 'tts'],
       ['video', ['video'], 'video'],
       ['text-audio', ['text', 'audio'], 'chat'],
+      ['speech-to-text', ['text'], 'transcription'],
     ])
     expect(kinds('copilot', [
       { id: 'chat', capabilities: { type: 'chat' } },
@@ -1422,34 +1358,6 @@ describe('provider models', () => {
       ['chat', ['text'], 'chat'],
       ['image', ['image'], 'none'],
       ['new-type', undefined, undefined],
-    ])
-  })
-
-  // Entry shapes of the live Venice and OpenRouter lists (2026-11-11). The
-  // refusal of a submit names the clip (unusableModel.ts).
-  it('reads the clip that a built-in\'s model with no request needs from its /models entry shape', () => {
-    const clipInputs = (id: string, data: unknown[]) => {
-      const provider = builtInProvider(id)
-      return provider.mergeModels(provider.parseModels({ data })).map((model) => [model.id, model.request, model.clipInput])
-    }
-
-    expect(clipInputs('venice', [
-      { id: 'speech-to-text', type: 'asr' },
-      { id: 'voice-changer', type: 'music', model_spec: { voice_changer: true } },
-      { id: 'video-to-video', type: 'video', model_spec: { constraints: { model_type: 'video' } } },
-      { id: 'song', type: 'music', model_spec: { voice_changer: false } },
-      { id: 'image-to-video', type: 'video', model_spec: { constraints: { model_type: 'image-to-video' } } },
-    ])).toEqual([
-      ['speech-to-text', 'none', 'audio'],
-      ['voice-changer', 'none', 'audio'],
-      ['video-to-video', 'none', 'video'],
-      ['song', 'music', undefined],
-      ['image-to-video', 'imageToVideo', undefined],
-    ])
-    expect(clipInputs('openrouter', [
-      { id: 'speech-to-text', architecture: { output_modalities: ['transcription'] } },
-    ])).toEqual([
-      ['speech-to-text', 'none', 'audio'],
     ])
   })
 
@@ -1719,6 +1627,31 @@ describe('media model data', () => {
       openRouterLike.clipQuote('video', 'm', { duration: 1 }, undefined, key),
       customProvider({}).clipQuote('video', 'm', { duration: 1 }, undefined, key),
     ]).toStrictEqual([null, null, null])
+  })
+
+  // A server reads the form by the boundary of the Content-Type header, so
+  // the header and the bytes must agree.
+  it('sends a transcription as a multipart form whose bytes a server reads back to the model and the clip, with the key', async () => {
+    const bytes = Uint8Array.from([0x52, 0x49, 0x46, 0x46, 0, 13, 10, 0xff])
+    const request = veniceLike.textRequest('transcription', 'openai/whisper-large-v3', {
+      prompt: 'Write it down',
+      images: [],
+      clips: [{ kind: 'audio', use: 'source', mediaType: 'audio/wav', bytes }],
+      values: {},
+    }, key)
+    const contentType = request.headers?.['Content-Type'] ?? ''
+    const bytesSent = typeof request.body === 'object' ? base64ToBytes(request.body.base64) : new Uint8Array()
+    const form = await new Response(bytesSent, { headers: { 'Content-Type': contentType } }).formData()
+    const file = form.get('file') as File
+
+    expect({ method: request.method, url: request.url, authorization: request.headers?.Authorization }).toStrictEqual({
+      method: 'POST',
+      url: 'http://localhost:8080/v1/audio/transcriptions',
+      authorization: 'Bearer sk-test',
+    })
+    expect(contentType).toMatch(/^multipart\/form-data; boundary=/)
+    expect([form.get('model'), form.get('response_format'), file.name, file.type, new Uint8Array(await file.arrayBuffer())])
+      .toStrictEqual(['openai/whisper-large-v3', 'json', 'clip.wav', 'audio/wav', bytes])
   })
 })
 

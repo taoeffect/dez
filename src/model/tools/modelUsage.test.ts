@@ -2,13 +2,13 @@ import { describe, expect, it } from 'vitest'
 import { mediaTagText, type MediaTagData } from '../chat/mediaTags'
 import type { ModelRef, Section } from '../chat/types'
 import type { InputImageRules } from '../providers/clipImages'
-import { clipTagProblem, maxInputClips, needsWavCopy, type ClipAttachment, type InputClipRules } from '../providers/clipInputs'
+import { clipTagProblem, maxInputClips, missingClipProblem, needsWavCopy, type ClipAttachment, type InputClipRules } from '../providers/clipInputs'
 import { lyricsHowTo, type ClipTextRules } from '../providers/clipText'
 import { modelToggles, toggleRows, toggleValue, toolsApply } from '../providers/modelToggles'
 import { isToolsEnabled } from '../providers/toolsSetting'
 import { MODEL_REQUESTS, type MediaKind, type ModelInfo, type ModelRequest } from '../providers/types'
 import { mediaRequestInput, sectionsToStreamMessages } from '../streams/messages'
-import { clipNamesUsage, modelUsage, referenceNamesUsage, takenClipsUsage, urlOnlyClipsUsage, USAGE_TEXTS, type UsageFacts } from './modelUsage'
+import { clipNamesUsage, modelUsage, neededClipUsage, referenceNamesUsage, takenClipsUsage, urlOnlyClipsUsage, USAGE_TEXTS, type UsageFacts } from './modelUsage'
 
 // Each choice of a usage text is checked against the code that builds the
 // request, so that a change of that code that the texts do not follow
@@ -240,6 +240,21 @@ describe('modelUsage', () => {
           const audio = model.clips?.audio
 
           expect(has(modelUsage(model, NO_FACTS), USAGE_TEXTS.wavCopy), JSON.stringify(model)).toBe(audio !== undefined && needsWavCopy('audio', audio, 'audio/flac'))
+        }
+      })
+
+      it('tells that a message needs a clip of a kind exactly when Dez refuses a message with none of that kind', () => {
+        for (const kind of mediaKinds) {
+          for (const model of clipModels(kind)) {
+            const usage = modelUsage(model, NO_FACTS)
+
+            for (const clipKind of ['audio', 'video'] as const) {
+              const other = clipKind === 'audio' ? DANCE : SONG
+              const refused = missingClipProblem('M', kind, [other]) !== null
+
+              expect(usage.includes(neededClipUsage(clipKind)), `${clipKind} ${kind} ${JSON.stringify(model)}`).toBe(refused)
+            }
+          }
         }
       })
     })

@@ -47,7 +47,7 @@ import { activeConversationId, focusEditor, newTab, openToasts, pickModel, submi
 //   request goes;
 // - Stop during the request leaves no file and no agent section;
 // - a model that Dez has no request for gets an error toast, and no request
-//   goes; the toast of a model that needs a clip as its input tells so.
+//   goes.
 //
 // One app session serves the whole file; each test starts in a new tab.
 
@@ -56,8 +56,6 @@ const EDIT_MODEL = { id: 'edit-model', name: 'Edit Model' }
 const UPSCALE_MODEL = { id: 'upscale-model', name: 'Upscale Model' }
 // An image model of an API that Dez does not speak.
 const SKETCH_MODEL = { id: 'sketch-model', name: 'Sketch Model' }
-// A model that writes down a recording: Dez cannot send it one.
-const LISTEN_MODEL = { id: 'listen-model', name: 'Listen Model' }
 // A chat model that writes text and makes images in one reply.
 const CHAT_MODEL = { id: 'chat-paint-model', name: 'Chat Paint Model' }
 const GENERATE_PATH = `/${PAINTER.id}/v1/image/generate`
@@ -163,7 +161,6 @@ describe('image generation', () => {
         { id: EDIT_MODEL.id, name: EDIT_MODEL.name, outputs: ['image'], request: 'imageEdit' },
         { id: UPSCALE_MODEL.id, name: UPSCALE_MODEL.name, outputs: ['image'], request: 'upscale' },
         { id: SKETCH_MODEL.id, name: SKETCH_MODEL.name, outputs: ['image'], request: 'none' },
-        { id: LISTEN_MODEL.id, name: LISTEN_MODEL.name, outputs: ['text'], request: 'none', clipInput: 'audio' },
         { id: CHAT_MODEL.id, name: CHAT_MODEL.name, outputs: ['text', 'image'], request: 'chat' },
       ],
     }, { heldPaths: [GENERATE_PATH, EDIT_PATH, UPSCALE_PATH] })
@@ -514,13 +511,10 @@ describe('image generation', () => {
     expect(await consoleErrors(browser)).toEqual([])
   })
 
-  // What the config tells of each model (`beforeAll`) picks the text.
-  it.each<[string, { id: string, name: string }, Parameters<typeof unusableModelMessage>[1]]>([
-    ['has an API that Dez does not support', SKETCH_MODEL, { outputs: ['image'] }],
-    ['needs a clip as its input', LISTEN_MODEL, { clipInput: 'audio' }],
-  ])('refuses a model that %s with an error toast that tells so, and sends nothing', async (_cause, model, facts) => {
-    const message = unusableModelMessage(model.name, facts)
-    await pickModel(browser, PAINTER.name, model.name)
+  it('refuses a model that has an API that Dez does not support with an error toast that tells so, and sends nothing', async () => {
+    // What the config tells of the model (`beforeAll`) picks the text.
+    const message = unusableModelMessage(SKETCH_MODEL.name, { outputs: ['image'] })
+    await pickModel(browser, PAINTER.name, SKETCH_MODEL.name)
     await submit(browser, 'Work on it')
 
     await waitForValue(browser, 'error toast', () => openToasts(browser, 'error'), [{ title: 'Cannot send', message }])
@@ -528,8 +522,6 @@ describe('image generation', () => {
     expect(setup.mock.hasWaitingRequest()).toBe(false)
     expect(await consoleErrors(browser)).toEqual([`Cannot send: ${message}`])
 
-    // The toast of the case before can still be in the page while it
-    // closes, so name the open one.
     await click(browser, '.toast-card--error:not(.toast-card--closing) .toast-close')
     await waitForValue(browser, 'error toast closed', () => openToasts(browser, 'error'), [])
   })

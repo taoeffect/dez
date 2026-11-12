@@ -1,5 +1,6 @@
 import { byteSizeText } from '../../utils/byteSize'
 import type { MediaTagData, MediaTagKind } from '../chat/mediaTags'
+import type { MediaKind } from './types'
 
 // The input clips of a media request: the audio and video clips that the
 // newest user message holds or names with an @id mention
@@ -17,8 +18,11 @@ import type { MediaTagData, MediaTagKind } from '../chat/mediaTags'
  *  - `background`: the sound of the video, as it is.
  *  - `voice`: the voice of one reference of the request, by order: the
  *    n-th audio clip is the voice of the n-th reference, with the images
- *    first and then the videos (Venice's Wan 2.7). */
-export const CLIP_USES = ['reference', 'background', 'voice'] as const
+ *    first and then the videos (Venice's Wan 2.7).
+ *  - `source`: the clip that the model changes or writes down (a video to
+ *    edit, speech to say in another voice, speech to write down); the
+ *    kinds of `NEEDS_INPUT_CLIP`. */
+export const CLIP_USES = ['reference', 'background', 'voice', 'source'] as const
 
 export type ClipUse = typeof CLIP_USES[number]
 
@@ -100,6 +104,33 @@ export function maxInputClips(rules: InputClipRules | undefined, kind: MediaTagK
 /** `1 audio clip`, `2 video clips`. */
 export function clipsText(count: number, kind: MediaTagKind): string {
   return `${count} ${kind} ${count === 1 ? 'clip' : 'clips'}`
+}
+
+// The media kinds that make nothing without a clip of the message, each
+// with the kind of that clip and what a model of the kind does, as the
+// end of a sentence for the user.
+const NEEDS_INPUT_CLIP: Readonly<Partial<Record<MediaKind, { kind: MediaTagKind, does: string }>>> = {
+  videoToVideo: { kind: 'video', does: 'makes a new video from a video clip' },
+  voiceChange: { kind: 'audio', does: 'says the speech of an audio clip in another voice' },
+  transcription: { kind: 'audio', does: 'writes down the speech of an audio clip' },
+}
+
+/** The kind of the clip that a request of `kind` cannot go without;
+ *  undefined for a kind that needs none. */
+export function neededClipKind(kind: MediaKind): MediaTagKind | undefined {
+  return NEEDS_INPUT_CLIP[kind]?.kind
+}
+
+/** Why a request of `kind` with the clips `clips` does not go to the
+ *  model `modelName`, as a sentence for the user; null when it can go.
+ *  A model that changes or writes down a clip needs one clip of its kind
+ *  (`NEEDS_INPUT_CLIP`). The check costs nothing, and the submit makes it
+ *  before the reply starts. */
+export function missingClipProblem(modelName: string, kind: MediaKind, clips: readonly Pick<ClipAttachment, 'kind'>[]): string | null {
+  const needed = NEEDS_INPUT_CLIP[kind]
+  if (!needed || clips.some((clip) => clip.kind === needed.kind)) return null
+  const clip = needed.kind === 'audio' ? 'an audio clip' : 'a video clip'
+  return `${modelName} ${needed.does}, and this message has no ${needed.kind} clip. Paste or drop ${clip} into the message, or name one with @id.`
 }
 
 // A copy that shares no object with `rules`.

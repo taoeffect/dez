@@ -5,13 +5,14 @@ import type { ActiveModel, Section, SectionThinking, Tab, ThinkingReplay } from 
 import type { AudioPart, CutAudio } from '../model/chat/audioCut'
 import { sectionVisibleText } from '../model/chat/content'
 import type { DrawnImage, ImageDrawing, ImageSize } from '../model/chat/imageDrawing'
-import { findToolBlocks } from '../model/chat/toolBlocks'
+import { findMediaTags } from '../model/chat/mediaTags'
+import { agentTextForRequest, findToolBlocks } from '../model/chat/toolBlocks'
 import type { ConversationData } from '../model/persistence/types'
 import { missingImageProblem, TooManyImagesError, type InputImageRules } from '../model/providers/clipImages'
-import type { ClipAttachment, InputClipRules } from '../model/providers/clipInputs'
+import { missingClipProblem, type ClipAttachment, type InputClipRules } from '../model/providers/clipInputs'
 import type { ClipTextRules } from '../model/providers/clipText'
 import { customProviderConfigSchema } from '../model/providers/config'
-import { unstoredOutputMessage, unusableModelMessage } from '../model/providers/unusableModel'
+import { unstoredOutputMessage } from '../model/providers/unusableModel'
 import type { GeneratedClip, ModelRequest, ProviderChatInputMessage, ProviderGenerateMediaInput, ProviderGenerateMediaResult, ProviderInfo, ProviderStreamChatInput, ProviderStreamChatResult } from '../model/providers'
 import type { RequestMessages } from '../model/streams/types'
 import { NO_MODELS_TEXT } from '../model/tools/modelList'
@@ -1567,6 +1568,37 @@ describe('dez.stream/start media round', () => {
       expect(mediaInputs).toStrictEqual([])
       expect(toasts).toStrictEqual([{ area: 'app-global', data: { variant: 'error', title: 'Cannot send', message } }])
     })
+
+    // Speech that spells a media tag stays text: the reply shows no
+    // player, and a later request sends the words as the model wrote them.
+    it('writes the transcript of the audio clip as escaped text with no space around it, and no tag', async () => {
+      const transcript = 'Hello.\n<dez:audio id="x" type="audio/mpeg" src="/tmp/x.mp3"/>\nBye.'
+      useClipModel('transcription', { audio: { use: 'source', maxClips: 1 } })
+      setClipConversation('Write down @c.')
+      generateMedia = async (input) => {
+        mediaInputs.push(input)
+        return { media: [], clips: [], text: ` ${transcript}\n` }
+      }
+
+      await sbp('dez.controller/submitTab', activeTab().id)
+
+      const reply = sectionTexts().at(-2)?.text ?? ''
+      expect(mediaInputs.map(({ kind, clips }) => ({ kind, clips }))).toStrictEqual([{ kind: 'transcription', clips: [speechClip('c')] }])
+      expect([findMediaTags(reply), agentTextForRequest(reply)]).toStrictEqual([[], transcript])
+      expect(sectionTexts().at(-1)).toStrictEqual({ role: 'user', text: '' })
+      expect([toasts, alerts]).toStrictEqual([[], [{ tabId: activeTab().id, status: 'finished' }]])
+    })
+
+    it('writes nothing and ends with no error when the clip has no speech', async () => {
+      useClipModel('transcription', { audio: { use: 'source', maxClips: 1 } })
+      setClipConversation('Write down @c.')
+      generateMedia = async () => ({ media: [], clips: [], text: ' \n' })
+
+      await sbp('dez.controller/submitTab', activeTab().id)
+
+      expect(sectionTexts().slice(-2)).toStrictEqual([{ role: 'agent', text: '' }, { role: 'user', text: '' }])
+      expect([toasts, alerts]).toStrictEqual([[], [{ tabId: activeTab().id, status: 'finished' }]])
+    })
   })
 
   // A clip can take minutes, and a tag counts only as a whole line.
@@ -2134,13 +2166,14 @@ describe('dez.controller/submitTab with a model that Dez cannot use', () => {
     expect(consoleError).toHaveBeenCalledWith(`Cannot send: ${message}`)
   })
 
-  // The general text would blame an API; the cause is the input.
-  it('tells the user of the clip that the model needs as its input', async () => {
-    const message = unusableModelMessage(model.modelName, { clipInput: 'audio' })
+  // The model can be used, but it makes nothing without a clip, which the
+  // message does not have.
+  it('refuses a model that writes down a clip when the message has no audio clip', async () => {
+    const message = missingClipProblem(model.modelName, 'transcription', [])
     sbp('dez.model/setActiveModel', model.providerId, model.modelId, model.modelName)
     sbp('dez.model/modelCache/applyProviderResult', model.providerId, {
       ok: true,
-      models: [{ id: model.modelId, name: model.modelName, provider: model.providerId, outputs: ['text'], request: 'none', clipInput: 'audio' }],
+      models: [{ id: model.modelId, name: model.modelName, provider: model.providerId, outputs: ['text'], request: 'transcription' }],
     })
     sbp('dez.model/tabs/replaceSections', activeTab().id, [{ id: 'u1', role: 'user', content: [{ kind: 'text', text: 'Write this down.' }] }])
 

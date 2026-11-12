@@ -1,5 +1,4 @@
 import * as z from 'zod'
-import { MEDIA_TAG_KINDS } from '../chat/mediaTags'
 import { MODEL_OUTPUT_IDS } from '../modelOutputs'
 import { CLIP_USES, type ClipKindRules, type InputClipRules } from '../providers/clipInputs'
 import type { InputImageRules } from '../providers/clipImages'
@@ -131,7 +130,6 @@ const modelInfoSchema = z.object({
   unsupportedSettings: z.array(z.string()).min(1).optional(),
   outputs: z.array(z.enum(MODEL_OUTPUT_IDS)).optional(),
   request: z.enum(MODEL_REQUESTS).optional(),
-  clipInput: z.enum(MEDIA_TAG_KINDS).optional(),
   parameters: z.array(modelParameterSchema).min(1).optional(),
   text: clipTextRulesSchema.optional(),
   images: inputImageRulesSchema.optional(),

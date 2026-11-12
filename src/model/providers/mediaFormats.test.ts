@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import { ExplainedError } from '../../utils/errorText'
-import { bytesToBase64 } from '../../utils/base64'
+import { base64ToBytes, bytesToBase64 } from '../../utils/base64'
 import type { NativeHttpResponseHead } from '../../utils/protocol/nativeHttp'
 import { ClipNotMadeError, UnusableAnswerError } from './errors'
 import { MEDIA_FORMATS, NO_VIDEO_LENGTH_MESSAGE, type ClipFormat, type ClipQuoteFormat, type ImageFormat, type InputClipPart } from './mediaFormats'
@@ -55,14 +55,14 @@ const IMAGES_AS_FRAMES = { name: 'images_as', options: ['frames', 'references'],
 const IMAGES_AS_REFERENCES = { name: 'images_as', options: ['references'], default: 'references' }
 
 // Two video and two audio clips of a video request: their bytes as base64,
-// and each one as the data URL that a request sends. Each test gives a clip
-// its use.
+// and each one as the data URL that a JSON request sends. Each test gives a
+// clip its use.
 const VIDEOS = ['VjE=', 'VjI=']
 const AUDIOS = ['QTE=', 'QTI=']
 const VIDEO_URLS = VIDEOS.map((data) => `data:video/mp4;base64,${data}`)
 const AUDIO_URLS = AUDIOS.map((data) => `data:audio/mpeg;base64,${data}`)
 const clip = (kind: InputClipPart['kind'], use: InputClipPart['use'], data: string): InputClipPart =>
-  ({ kind, use, url: `data:${kind === 'audio' ? 'audio/mpeg' : 'video/mp4'};base64,${data}` })
+  ({ kind, use, mediaType: kind === 'audio' ? 'audio/mpeg' : 'video/mp4', bytes: base64ToBytes(data) })
 
 describe('venice media requests', () => {
   it('asks /image/generate for a WebP image with no watermark and no safe mode', () => {
@@ -161,7 +161,7 @@ describe('venice media responses', () => {
   it.each([
     ['a JSON answer with no images', head('application/json'), json({ id: 'generate-1', images: [] }), 'The answer holds no image.'],
     ['a JSON answer with no images list', head('application/json'), json({ error: 'busy' }), 'The answer holds no image.'],
-    ['a JSON answer that does not parse', head('application/json'), new TextEncoder().encode('{"images": ['), 'The image answer is not valid JSON.'],
+    ['a JSON answer that does not parse', head('application/json'), new TextEncoder().encode('{"images": ['), 'The answer is not valid JSON.'],
     ['an image that is not base64', head('application/json'), json({ images: [`data:image/png;base64,${bytesToBase64(PNG)}`] }), 'The image is not base64 text.'],
     ['an image that is not a string', head('application/json'), json({ images: [{ url: 'https://example.com/a.png' }] }), 'The image is not base64 text.'],
     ['a JSON image of a type that Dez does not store', head('application/json'), json({ images: [bytesToBase64(WAV)] }), 'The image is not a PNG, JPEG, GIF, or WebP image.'],
@@ -354,6 +354,39 @@ describe('venice clip parameters', () => {
   ])('gives a video model that %s no Audio switch', (_name, constraints) => {
     expect(parameters(veniceClips, 'video', videoModel(constraints))).toStrictEqual([])
   })
+
+  // `duration` is required, and most video-to-video models list only
+  // `Auto`, the length of the source clip.
+  it('gives a video-to-video model its one length as the default when no length has seconds', () => {
+    const model = videoModel({ model_type: 'video', durations: ['Auto'], resolutions: ['1080p', '720p'], video_input: true })
+
+    expect(parameters(veniceClips, 'videoToVideo', model)).toStrictEqual([
+      { name: 'duration', options: ['Auto'], default: 'Auto' },
+      { name: 'resolution', options: ['720p', '1080p'], default: '720p' },
+    ])
+  })
+
+  // "Use upscale_factor instead of resolution for upscale models."
+  it('gives a video upscale model its factors as numbers in place of resolutions', () => {
+    const model = videoModel({ model_type: 'video', durations: ['Auto'], resolutions: ['2x', '4x'], video_input: true })
+
+    expect(parameters(veniceClips, 'videoToVideo', model)).toStrictEqual([
+      { name: 'duration', options: ['Auto'], default: 'Auto' },
+      { name: 'upscale_factor', options: [2, 4], default: 2 },
+    ])
+  })
+
+  it('gives the voice changer its voices with its default voice, and a noise switch that is off only when the entry tells of one', () => {
+    const voices = { voice_changer: true, voices: ['Aria', 'Roger'], default_voice: 'Aria' }
+
+    expect([
+      parameters(veniceClips, 'voiceChange', spec({ ...voices, supports_background_noise_removal: true })),
+      parameters(veniceClips, 'voiceChange', spec(voices)),
+    ]).toStrictEqual([
+      [{ name: 'voice', options: ['Aria', 'Roger'], default: 'Aria' }, { name: 'remove_background_noise' }],
+      [{ name: 'voice', options: ['Aria', 'Roger'], default: 'Aria' }],
+    ])
+  })
 })
 
 describe('venice image rules', () => {
@@ -414,6 +447,23 @@ describe('venice image rules', () => {
     ])
   })
 
+  // Free refusals of 40 images (2026-11-12): a video-to-video model takes
+  // reference images only when its entry tells their size.
+  it('takes the references of a video-to-video model whose entry tells their size, else one image, and none for an upscale model', () => {
+    const entry = (id: string, constraints: Record<string, unknown>) =>
+      MEDIA_FORMATS.venice.imageRules?.('videoToVideo', { id, model_spec: { constraints: { model_type: 'video', video_input: true, ...constraints } } }, undefined)
+
+    expect([
+      entry('kling-v4-flash-video-to-video', { reference_image_min_short_side_pixels: 300, resolutions: ['720p'] }),
+      entry('kling-v3-pro-motion-control', { resolutions: [] }),
+      entry('topaz-video-upscale', { reference_image_min_short_side_pixels: 300, resolutions: ['2x', '4x'] }),
+    ]).toStrictEqual([
+      { maxImages: 10, references: { promptName: '@Image{n}' }, size: { minShortSide: 300 } },
+      { maxImages: 1 },
+      undefined,
+    ])
+  })
+
   it.each(['image', 'video', 'tts', 'music'] as const)('takes no image for a %s model', (kind) => {
     expect(rules(kind, { maxInputImages: 6 })).toBeUndefined()
   })
@@ -467,6 +517,32 @@ describe('venice clip rules', () => {
 
   it.each(['music', 'imageEdit'] as const)('takes no clip for a %s model', (kind) => {
     expect(rules(kind, 'seedance-2-0-reference-to-video', { audio_input: true })).toBeUndefined()
+  })
+
+  // Live entries of 2026-11-12: Seedance 2.5 Edit is the one model with
+  // `video_input: false`, and it refuses `video_url`.
+  it('takes the one video of a video-to-video model as its source, or as a reference video when the model refuses video_url', () => {
+    expect([
+      rules('videoToVideo', 'wan-2-7-video-to-video', { model_type: 'video', video_input: true }),
+      rules('videoToVideo', 'seedance-2-5-edit-video-basic', { model_type: 'video', video_input: false }),
+    ]).toStrictEqual([
+      { video: { use: 'source', maxClips: 1, types: [...VIDEO_TYPES, 'video/webm'] } },
+      { video: { use: 'reference', maxClips: 1, minSeconds: 2, maxSeconds: 30, maxTotalSeconds: 30, maxBytes: 50 * MB, types: VIDEO_TYPES, promptName: '<Video {n}>' } },
+    ])
+  })
+
+  it('takes one audio clip of the types and the length of the voice changer\'s entry, at most 25 MB', () => {
+    const entry = { id: 'elevenlabs-voice-changer', model_spec: { voice_changer: true, accepted_audio_formats: ['mp3', 'wav', 'flac'], max_source_audio_duration_seconds: 300 } }
+
+    expect(MEDIA_FORMATS.venice.clipRules?.('voiceChange', entry, undefined)).toStrictEqual({
+      audio: { use: 'source', maxClips: 1, maxSeconds: 300, maxBytes: 25 * MB, types: ['audio/mpeg', 'audio/wav'] },
+    })
+  })
+
+  it('takes one audio clip of a type that the transcription endpoint reads and Dez stores', () => {
+    expect(MEDIA_FORMATS.venice.clipRules?.('transcription', { id: 'openai/whisper-large-v3', model_spec: {} }, undefined)).toStrictEqual({
+      audio: { use: 'source', maxClips: 1, types: ['audio/wav', 'audio/flac', 'audio/mp4', 'audio/aac', 'audio/mpeg', 'audio/ogg'] },
+    })
   })
 })
 
@@ -683,7 +759,54 @@ describe('venice clip requests', () => {
     })
   })
 
-  it.each(['video', 'imageToVideo'] as const)('refuses a %s request with no length', (kind) => {
+  // https://docs.venice.ai/guides/media/video-upscaling
+  it('queues the source clip of a video-to-video model as `video_url`, with its one image as `image_url`', () => {
+    const input = { prompt: 'Make it rain', images: [IMAGES[0]], clips: [clip('video', 'source', VIDEOS[0])], values: { duration: 'Auto', resolution: '720p' } }
+
+    expect(veniceClips.request('videoToVideo', `${VENICE_URL}/`, 'kling-v3-pro-motion-control', input)).toStrictEqual({
+      url: `${VENICE_URL}/video/queue`,
+      body: { duration: 'Auto', resolution: '720p', model: 'kling-v3-pro-motion-control', prompt: 'Make it rain', video_url: VIDEO_URLS[0], image_url: PNG_URL },
+    })
+  })
+
+  it('queues the images of a video-to-video model that takes references as `reference_image_urls`, and a reference video as `reference_video_urls`', () => {
+    const input = { prompt: '<Video 1> like <Image 1>', images: IMAGES, imagesAsReferences: true as const, clips: [clip('video', 'reference', VIDEOS[0])], values: { duration: 'Auto' } }
+
+    expect(veniceClips.request('videoToVideo', VENICE_URL, 'seedance-2-5-edit-video-basic', input).body).toStrictEqual({
+      duration: 'Auto',
+      model: 'seedance-2-5-edit-video-basic',
+      prompt: '<Video 1> like <Image 1>',
+      reference_video_urls: [VIDEO_URLS[0]],
+      reference_image_urls: [PNG_URL, JPEG_URL],
+    })
+  })
+
+  // "Upscaling does not use text prompts … will return an error if
+  // provided".
+  it('queues a video upscale with its factor and no prompt', () => {
+    const input = { prompt: 'Sharper', images: [], clips: [clip('video', 'source', VIDEOS[0])], values: { duration: 'Auto', upscale_factor: 2 } }
+
+    expect(veniceClips.request('videoToVideo', VENICE_URL, 'topaz-video-upscale', input).body).toStrictEqual({
+      duration: 'Auto', upscale_factor: 2, model: 'topaz-video-upscale', video_url: VIDEO_URLS[0],
+    })
+  })
+
+  // https://docs.venice.ai/guides/media/voice-changer
+  it('queues a voice change as a form with the model, the values, and the clip as a file, with no prompt and no switch that is off', () => {
+    const input = { prompt: 'Make it deep', images: [], clips: [clip('audio', 'source', AUDIOS[0])], values: { voice: 'Roger', remove_background_noise: false, seed: 7 } }
+
+    expect(veniceClips.request('voiceChange', `${VENICE_URL}/`, 'elevenlabs-voice-changer', input)).toStrictEqual({
+      url: `${VENICE_URL}/audio/voice-changer/queue`,
+      form: [
+        { name: 'model', value: 'elevenlabs-voice-changer' },
+        { name: 'voice', value: 'Roger' },
+        { name: 'seed', value: '7' },
+        { name: 'file', file: { bytes: base64ToBytes(AUDIOS[0]), mediaType: 'audio/mpeg', fileName: 'clip.mp3' } },
+      ],
+    })
+  })
+
+  it.each(['video', 'imageToVideo', 'videoToVideo'] as const)('refuses a %s request with no length', (kind) => {
     expect(thrownError(() => veniceClips.request(kind, VENICE_URL, 'wan', { prompt: 'A red fox', images: [], values: { aspect_ratio: '16:9' } })))
       .toStrictEqual(new ExplainedError(NO_VIDEO_LENGTH_MESSAGE))
   })
@@ -741,6 +864,9 @@ describe('venice clip jobs', () => {
     ['music', 'audio'],
     ['video', 'video'],
     ['imageToVideo', 'video'],
+    ['videoToVideo', 'video'],
+    // The voice changer has its own endpoint.
+    ['voiceChange', 'audio/voice-changer'],
   ] as const)('asks the %s retrieve endpoint for the queue id of the job', (kind, path) => {
     const job = veniceClips.job(kind, VENICE_URL, 'm', { model: 'm', queue_id: 'q-1', status: 'QUEUED' })
 
@@ -898,6 +1024,13 @@ describe('openrouter clip rules', () => {
   it.each(['tts', 'image'] as const)('takes no clip for a %s model, whatever its entry names', (kind) => {
     expect(rules(kind, ['text', 'audio', 'video'])).toBeUndefined()
   })
+
+  // https://openrouter.ai/docs/api/api-reference/stt/create-transcription
+  it('takes one audio clip of at most 25 MB as the file of a transcription', () => {
+    expect(rules('transcription', ['audio'])).toStrictEqual({
+      audio: { use: 'source', maxClips: 1, maxBytes: 25 * 1024 ** 2, types: ['audio/wav', 'audio/mpeg', 'audio/flac', 'audio/mp4', 'audio/ogg', 'audio/aac'] },
+    })
+  })
 })
 
 // Entry shapes of the live image list (2026-11-11), with short lists.
@@ -941,7 +1074,7 @@ describe('openrouter images', () => {
 
   it.each([
     ['an answer with no image', json({ created: 1, data: [] }), 'The answer holds no image.'],
-    ['an answer that is not JSON', PNG, 'The image answer is not valid JSON.'],
+    ['an answer that is not JSON', PNG, 'The answer is not valid JSON.'],
     ['an SVG image', json({ data: [{ b64_json: bytesToBase64(new TextEncoder().encode('<svg/>')), media_type: 'image/svg+xml' }] }), 'The image is not a PNG, JPEG, GIF, or WebP image.'],
     ['an image with no base64 text', json({ data: [{ url: 'https://example.com/a.png' }] }), 'The image is not base64 text.'],
   ])('refuses %s as an answer that Dez cannot use', (_name, body, message) => {
@@ -1159,5 +1292,42 @@ describe('openrouter clip jobs', () => {
   ] as const)('finds no job in %s', (_name, kind, data) => {
     expect(thrownError(() => openRouterClips.job(kind, OPENROUTER_URL, 'm', data)))
       .toStrictEqual(new UnusableAnswerError('The answer to the clip request is neither a clip nor a job.'))
+  })
+})
+
+// https://docs.venice.ai/api-reference/endpoint/audio/transcriptions
+// https://openrouter.ai/docs/api/api-reference/stt/create-transcription
+describe('transcriptions', () => {
+  const FILE = { name: 'file', file: { bytes: base64ToBytes(AUDIOS[0]), mediaType: 'audio/mpeg', fileName: 'clip.mp3' } }
+  const input = { prompt: 'Write it down', images: [], clips: [clip('audio', 'source', AUDIOS[0])], values: {} }
+
+  it('sends the clip to each format as the file of a form, with the model and no prompt', () => {
+    expect([
+      MEDIA_FORMATS.venice.texts?.request('transcription', `${VENICE_URL}/`, 'openai/whisper-large-v3', input),
+      MEDIA_FORMATS.openrouter.texts?.request('transcription', `${OPENROUTER_URL}/`, 'openai/whisper-1', input),
+    ]).toStrictEqual([
+      {
+        url: `${VENICE_URL}/audio/transcriptions`,
+        form: [{ name: 'model', value: 'openai/whisper-large-v3' }, { name: 'response_format', value: 'json' }, FILE],
+      },
+      { url: `${OPENROUTER_URL}/audio/transcriptions`, form: [{ name: 'model', value: 'openai/whisper-1' }, FILE] },
+    ])
+  })
+
+  it.each(['venice', 'openrouter'] as const)('reads the text of a %s answer as it is, and an empty text as the transcript of a clip with no speech', (format) => {
+    const parse = (data: unknown) => MEDIA_FORMATS[format].texts?.parseResponse('transcription', json(data))
+
+    expect([
+      parse({ text: ' Hello there. ', duration: 3 }),
+      parse({ text: '', usage: { seconds: 2 } }),
+    ]).toStrictEqual([' Hello there. ', ''])
+  })
+
+  it.each([
+    ['no text', json({ duration: 3 })],
+    ['a text that is no string', json({ text: ['Hello'] })],
+    ['a body that is not JSON', new TextEncoder().encode('Hello')],
+  ])('refuses an answer with %s', (_name, body) => {
+    expect(thrownError(() => MEDIA_FORMATS.venice.texts?.parseResponse('transcription', body))).toBeInstanceOf(UnusableAnswerError)
   })
 })

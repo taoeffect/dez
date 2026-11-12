@@ -237,13 +237,7 @@ function cloneModelOutputsConfig({ path, values }: ModelOutputsConfig): ModelOut
     values: Object.fromEntries(Object.entries(values).map(([type, { requestBy, ...value }]) => [type, {
       ...value,
       outputs: [...value.outputs],
-      ...(requestBy && {
-        requestBy: {
-          path: requestBy.path,
-          values: { ...requestBy.values },
-          ...(requestBy.clipInputs && { clipInputs: { ...requestBy.clipInputs } }),
-        },
-      }),
+      ...(requestBy && { requestBy: { path: requestBy.path, values: { ...requestBy.values } } }),
     }])),
   }
 }

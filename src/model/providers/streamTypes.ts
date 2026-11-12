@@ -78,12 +78,14 @@ export interface ProviderGenerateMediaInput {
   signal?: AbortSignal
 }
 
-// An image kind gives `media`, and a clip kind (CLIP_KINDS) gives `clips`;
-// the other list is empty.
+// An image kind gives `media`, a clip kind (CLIP_KINDS) gives `clips`, and
+// a text kind (TEXT_KINDS) gives `text`; the other lists are empty.
 export interface ProviderGenerateMediaResult {
   // The image files that the model made, in the provider's order.
   media: GeneratedMedia[]
   clips: GeneratedClip[]
+  // The text that the model wrote (a transcription), which can be empty.
+  text?: string
 }
 
 // The input of dez.provider/mediaQuote: the fields of the

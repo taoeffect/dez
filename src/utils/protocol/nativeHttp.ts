@@ -4,7 +4,9 @@ export type NativeHttpMethod = 'GET' | 'POST' | 'PUT' | 'PATCH' | 'DELETE'
 
 export type NativeHttpHeaders = Record<string, string>
 
-export type NativeHttpBody = string | number[]
+// Text goes as it is; bytes go as base64 text (`HttpBody` in
+// src-tauri/src/http_bridge.rs), as a JSON number array of them is slow.
+export type NativeHttpBody = string | { base64: string }
 
 export interface NativeHttpRequest {
   method: NativeHttpMethod

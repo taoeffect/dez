@@ -1,3 +1,4 @@
+import { bytesToBase64 } from '../../utils/base64'
 import { byteSizeText } from '../../utils/byteSize'
 import { ExplainedError } from '../../utils/errorText'
 import { sanitizeErrorText } from '../../utils/protocol/errors'
@@ -5,6 +6,7 @@ import { responseContentType, type NativeHttpResponseHead } from '../../utils/pr
 import type { ImageSize } from '../chat/imageDrawing'
 import { isImageMediaType } from '../chat/images'
 import type { MediaTagKind } from '../chat/mediaTags'
+import { mediaFileExtension } from '../chat/mediaFiles'
 import { trimTrailingSlashes, type MediaApiFormatId } from './config'
 import type { ClipUse, InputClipRules } from './clipInputs'
 import type { InputImageRules } from './clipImages'
@@ -12,10 +14,11 @@ import type { ClipTextRules } from './clipText'
 import { ClipNotMadeError, UnusableAnswerError } from './errors'
 import { generatedBase64Image, generatedImage } from './generatedImages'
 import { imageSizeRules, type ImageSizeRules, type InputImageLimits } from './imageSize'
+import type { MultipartField } from './multipart'
 import { isOptionValue, parameterTakes, type ModelParameter, type OptionsParameter, type OptionValue, type ParameterValues, type RangeParameter } from './modelParameters'
 import { isRecord, valueAtPath } from './modelParsing'
-import { CLIP_KINDS, isClipKind, type ChatImagePart, type ClipKind, type GeneratedMedia, type ImageKind, type MediaKind } from './types'
-import { VENICE_AUDIO_TYPES, VENICE_MAX_AUDIO_BYTES, VENICE_REFERENCE_FIELDS, veniceReferenceBody, veniceReferenceClipRules, veniceReferenceFamily } from './veniceReferences'
+import { CLIP_KINDS, type ChatImagePart, type ClipKind, type GeneratedMedia, type ImageKind, type MediaKind, type TextKind } from './types'
+import { VENICE_AUDIO_TYPES, VENICE_MAX_AUDIO_BYTES, VENICE_REFERENCE_FIELDS, VENICE_VIDEO_TYPES, veniceFamilyByIdPrefix, veniceReferenceBody, veniceReferenceClipRules, veniceReferenceFamily } from './veniceReferences'
 
 // What one media request sends: the user's prompt, the input images as
 // bytes, in the user's order, the input clips as bytes, and the value of
@@ -31,22 +34,48 @@ export interface MediaInput {
   // values of `values`). A request of a kind that takes no image does not
   // send them.
   images: readonly ChatImagePart[]
+  // The model takes the images as references, not as frames
+  // (`InputImageRules.references`, for the values of `values`). Only a
+  // request that cannot tell it from the model id reads it (Venice's
+  // video-to-video models). Missing: frames, or no image.
+  imagesAsReferences?: true
   // The clips of a video, in the user's order, each with the way that the
-  // model uses its kind. The caller gives a request only clips that the
+  // model uses its kind, or the one source clip of a model that changes or
+  // writes down a clip. The caller gives a request only clips that the
   // model takes (`MediaFormat.clipRules`), in a type that it takes.
   // Missing: none.
   clips?: readonly InputClipPart[]
   values: ParameterValues
 }
 
-// One input clip of a request: its use (`ClipKindRules.use`), and the URL
-// that the request gives: a data URL of its bytes, or, for a kind that the
-// model takes only by a web address (`ClipKindRules.urlOnly`), the
-// clip's own `https` URL.
-export interface InputClipPart {
-  kind: MediaTagKind
-  use: ClipUse
-  url: string
+// One input clip of a request, with its use (`ClipKindRules.use`): the
+// bytes that Dez read, or, for a kind that the model takes only by a web
+// address (`ClipKindRules.urlOnly`), the clip's own `https` URL.
+export type InputClipPart =
+  | { kind: MediaTagKind, use: ClipUse, url: string }
+  | { kind: MediaTagKind, use: ClipUse, mediaType: string, bytes: Uint8Array }
+
+// The URL of a clip in a JSON body: its own URL, or a data URL of its
+// bytes. Made only where a body needs it, so a clip that goes as a form
+// file is never base64.
+function clipUrl(clip: InputClipPart): string {
+  return 'url' in clip ? clip.url : `data:${clip.mediaType};base64,${bytesToBase64(clip.bytes)}`
+}
+
+// The one clip of a request to a model that changes or writes down a clip
+// (its `source` clip), with its bytes. The submit and `generateMedia` send
+// no such request without it (`missingClipProblem`), and no model of these
+// kinds takes a clip only by its web address.
+function sourceClip(clips: readonly InputClipPart[]): { bytes: Uint8Array, mediaType: string } {
+  const clip = clips.find((part) => part.use === 'source')
+  if (!clip || 'url' in clip) throw new Error('The request has no source clip to send.')
+  return clip
+}
+
+// The form file `name` of a clip. The file name tells the type by its
+// extension (some servers read that) and names no local path.
+function clipFormFile(name: string, { bytes, mediaType }: { bytes: Uint8Array, mediaType: string }): MultipartField {
+  return { name, file: { bytes, mediaType, fileName: `clip.${mediaFileExtension(mediaType, null) ?? 'bin'}` } }
 }
 
 // What one clip request sends: a media input (for speech, the prompt is
@@ -56,12 +85,14 @@ export interface ClipInput extends MediaInput {
   lyrics?: string
 }
 
-// The URL and the JSON body of one media request: a POST, or a GET when it
-// has no body. Provider.mediaApiRequest adds the method and the headers, so
-// a format holds no secrets.
+// The URL and the body of one media request: a POST of a JSON body or of a
+// form (`form`, multipart/form-data, for an endpoint that takes a file
+// only as an upload), or a GET when it has neither. Provider.mediaApiRequest
+// adds the method and the headers, so a format holds no secrets.
 export interface MediaWireRequest {
   url: string
   body?: Record<string, unknown>
+  form?: readonly MultipartField[]
 }
 
 // Where the clip of a finished job is:
@@ -192,12 +223,24 @@ export interface ClipFormat {
   pcmSampleBits?: number
 }
 
+// The requests of a media API whose answer is text (a transcription of an
+// audio clip). One request; its 2xx response is JSON that holds the text.
+export interface TextFormat {
+  request(kind: TextKind, baseUrl: string, modelId: string, input: MediaInput): MediaWireRequest
+  // The text of the JSON of a 2xx response to a request of `kind`, as the
+  // model wrote it (an empty text for a clip with no speech). Throws when
+  // it holds no text.
+  parseResponse(kind: TextKind, body: Uint8Array): string
+}
+
 // Everything that differs between the media APIs that a provider can speak
 // (`mediaApi.format` in config.ts). A format with no `images` makes no
-// images, and one with no `clips` makes no clips.
+// images, one with no `clips` makes no clips, and one with no `texts`
+// writes down no clip.
 export interface MediaFormat {
   images?: ImageFormat
   clips?: ClipFormat
+  texts?: TextFormat
   // The model lists that only the media API has, for an API whose model
   // data is not all in the provider's model list: requests whose responses
   // are `{ data: [...] }`, with an `id` in each entry. A model is in one
@@ -220,8 +263,17 @@ function jsonBody(body: Uint8Array): unknown {
   try {
     return JSON.parse(new TextDecoder().decode(body))
   } catch {
-    throw new UnusableAnswerError('The image answer is not valid JSON.')
+    throw new UnusableAnswerError('The answer is not valid JSON.')
   }
+}
+
+// The text of a transcription answer: JSON `{ text, … }` for Venice and
+// OpenRouter. An empty text is the transcript of a clip with no speech.
+function transcriptText(body: Uint8Array): string {
+  const data = jsonBody(body)
+  const text = isRecord(data) ? data.text : undefined
+  if (typeof text !== 'string') throw new UnusableAnswerError('The answer holds no text.')
+  return text
 }
 
 // A URL that a player can load: http or https, with no space or line break
@@ -335,6 +387,19 @@ function veniceMusicLength(entry: unknown): ModelParameter[] {
 // no count.
 function veniceCharacterCount(value: unknown): number | undefined {
   return typeof value === 'number' && Number.isInteger(value) && value >= 0 ? value : undefined
+}
+
+// The factors of a Venice video upscale model (Topaz), which its entry
+// lists as its resolutions (`2x`, `4x`); none for any other model. The
+// API takes them only as `upscale_factor`, a number ("Use upscale_factor
+// instead of resolution for upscale models"), and such a model takes no
+// prompt: "`prompt`: Upscaling does not use text prompts … will return an
+// error if provided".
+// https://docs.venice.ai/guides/media/video-upscaling
+function veniceUpscaleFactors(entry: unknown): number[] {
+  const factors = listedValues(valueAtPath(entry, 'model_spec.constraints.resolutions'))
+    .map((resolution) => (typeof resolution === 'string' ? /^(\d+)x$/i.exec(resolution)?.[1] : undefined))
+  return factors.length > 0 && factors.every((factor) => factor !== undefined) ? factors.map(Number) : []
 }
 
 // What a Venice music model takes as text, from its entry: the least and
@@ -548,15 +613,31 @@ const veniceFormat: MediaFormat = {
             ...switchParameter('loop', 'Loop', spec('supports_loop')),
           ]
         case 'video':
-        case 'imageToVideo': {
+        case 'imageToVideo':
+        case 'videoToVideo': {
           const aspectRatios = listedValues(spec('constraints.aspect_ratios'))
+          const factors = kind === 'videoToVideo' ? veniceUpscaleFactors(entry) : []
           return [
-            ...lowestFirstParameter('duration', 'Length', spec('constraints.durations'), lengthSeconds),
-            ...lowestFirstParameter('resolution', 'Resolution', spec('constraints.resolutions'), resolutionLines),
+            // `duration` is required, and most video-to-video models list
+            // only `Auto` (the length of the source clip), which no
+            // length in seconds puts first. So a list with no length in
+            // seconds gets its first entry as the default.
+            ...lowestFirstParameter('duration', 'Length', spec('constraints.durations'), lengthSeconds)
+              .map((length) => ('options' in length ? { default: length.options[0], ...length } : length)),
+            ...(factors.length > 0
+              ? optionsParameter('upscale_factor', 'Upscale factor', factors, factors[0])
+              : lowestFirstParameter('resolution', 'Resolution', spec('constraints.resolutions'), resolutionLines)),
             ...optionsParameter('aspect_ratio', 'Aspect ratio', aspectRatios, aspectRatios[0]),
             ...switchParameter('audio', 'Audio', spec('constraints.audio_configurable'), true),
           ]
         }
+        case 'voiceChange':
+          // No seed: a seed gives the same speech again, which a user who
+          // asks once more does not want.
+          return [
+            ...optionsParameter('voice', 'Voice', listedValues(spec('voices')), spec('default_voice')),
+            ...switchParameter('remove_background_noise', 'Remove background noise', spec('supports_background_noise_removal')),
+          ]
       }
     },
     // tts: 1 to 4096 characters for every model (the speech request's
@@ -564,7 +645,8 @@ const veniceFormat: MediaFormat = {
     // the most characters of the prompt
     // (`constraints.prompt_character_limit`, 1000 to 26000); a longer text
     // gets a 400 from the API, so Dez refuses it first. A limit of 0 is
-    // not a limit that a model can have.
+    // not a limit that a model can have. voiceChange: the request has no
+    // text.
     textRules: (kind, entry) => {
       switch (kind) {
         case 'tts':
@@ -572,16 +654,19 @@ const veniceFormat: MediaFormat = {
         case 'music':
           return veniceMusicText(entry)
         case 'video':
-        case 'imageToVideo': {
+        case 'imageToVideo':
+        case 'videoToVideo': {
           const maxPromptLength = veniceCharacterCount(valueAtPath(entry, 'model_spec.constraints.prompt_character_limit'))
           return maxPromptLength ? { maxPromptLength } : undefined
         }
+        case 'voiceChange':
+          return undefined
       }
     },
     // The schemas allow no field that they do not name, and a field that
     // the model does not take is an error. The values are the fields of the
     // model's own parameters, so they go as they are.
-    request: (kind, baseUrl, modelId, { prompt, images, clips = [], lyrics, values }) => {
+    request: (kind, baseUrl, modelId, { prompt, images, imagesAsReferences, clips = [], lyrics, values }) => {
       const base = trimTrailingSlashes(baseUrl)
       switch (kind) {
         case 'tts':
@@ -613,7 +698,7 @@ const veniceFormat: MediaFormat = {
           const urls = images.map(imageDataUrl)
           const family = veniceReferenceFamily(modelId)
           const [firstFrame, lastFrame] = urls
-          const references = clips.filter((clip) => clip.use !== 'background')
+          const references = clips.filter((clip) => clip.use !== 'background').map((clip) => ({ kind: clip.kind, use: clip.use, url: clipUrl(clip) }))
           const background = clips.find((clip) => clip.use === 'background')
           return {
             url: `${base}/video/queue`,
@@ -624,24 +709,66 @@ const veniceFormat: MediaFormat = {
               ...(family && veniceReferenceBody(family, urls, references)),
               ...(!family && firstFrame !== undefined && { image_url: firstFrame }),
               ...(!family && lastFrame !== undefined && { end_image_url: lastFrame }),
-              ...(background && { audio_url: background.url }),
+              ...(background && { audio_url: clipUrl(background) }),
             },
           }
         }
+        case 'videoToVideo': {
+          // The source clip goes as `video_url` ("Input video URL or data
+          // URL. Supported formats: MP4, MOV, WebM"), or as a reference
+          // video for a model that refuses `video_url` (`clipRules`). The
+          // images go as references (`reference_image_urls`) to a model
+          // that takes them so (`imageRules`), else as `image_url`: the
+          // person or the thing of a motion control model. An upscale
+          // model (`upscale_factor`) refuses a prompt
+          // (`veniceUpscaleFactors`).
+          // https://docs.venice.ai/guides/media/video-upscaling
+          // https://docs.venice.ai/guides/media/reference-to-video
+          if (values.duration === undefined) throw new ExplainedError(NO_VIDEO_LENGTH_MESSAGE)
+          const urls = images.map(imageDataUrl)
+          const source = clips.find((clip) => clip.use === 'source')
+          const references = clips.filter((clip) => clip.use === 'reference').map(clipUrl)
+          return {
+            url: `${base}/video/queue`,
+            body: {
+              ...values,
+              model: modelId,
+              ...(values.upscale_factor === undefined && { prompt }),
+              ...(source && { video_url: clipUrl(source) }),
+              ...(references.length > 0 && { reference_video_urls: references }),
+              ...(urls.length > 0 && (imagesAsReferences ? { reference_image_urls: urls } : { image_url: urls[0] })),
+            },
+          }
+        }
+        case 'voiceChange':
+          // The queue takes the clip as a form file, or by an `http(s)`
+          // address, which a clip of Dez has only for a while; so it goes
+          // as a file, and the request is a form, with the values as text
+          // fields. A switch that is off goes as no field. No prompt: the
+          // schema has no such field.
+          // https://docs.venice.ai/guides/media/voice-changer
+          return {
+            url: `${base}/audio/voice-changer/queue`,
+            form: [
+              { name: 'model', value: modelId },
+              ...Object.entries(values).flatMap(([name, value]) => (value === false ? [] : [{ name, value: String(value) }])),
+              clipFormFile('file', sourceClip(clips)),
+            ],
+          }
       }
     },
     // A model that takes no last frame refuses `end_image_url` with a 400
     // whose `details` (zod's error format: one entry per field) name the
     // field: "This model does not support end_image_url". A
-    // reference-to-video model refuses more references than it takes in
-    // the same way: "reference_image_urls must have at most 7 images",
-    // "image_references must have at most 5 entries", "elements must have
-    // at most 4 items". Those are validation errors, so the request cost
-    // nothing (checked live, 2026-11-11). No field of an entry tells the
-    // last frame, and the counts of veniceReferences.ts can get old (see
-    // `imageRules`).
+    // reference-to-video or video-to-video model refuses more references
+    // than it takes in the same way: "reference_image_urls must have at
+    // most 7 images", "image_references must have at most 5 entries",
+    // "elements must have at most 4 items". Those are validation errors,
+    // so the request cost nothing (checked live, 2026-11-11). No field of
+    // an entry tells the last frame, and the counts of veniceReferences.ts
+    // can get old (see `imageRules`).
     refusedImages: (kind, status, body) => {
-      if (kind !== 'imageToVideo' || status !== 400) return undefined
+      if ((kind !== 'imageToVideo' && kind !== 'videoToVideo') || status !== 400) return undefined
       const errors = (field: string) => {
         const texts = valueAtPath(body, `details.${field}._errors`)
         return Array.isArray(texts) ? texts.filter((text): text is string => typeof text === 'string') : []
@@ -662,19 +789,22 @@ const veniceFormat: MediaFormat = {
     // `COMPLETED` means that the URL has the clip. That URL is a `fileUrl`
     // and not a `url`: its server answers a range request with the whole
     // file (seen 2026-11-10), and a seek in the player then fails with a
-    // network error.
+    // network error. The voice changer has its own retrieve endpoint, which
+    // answers the same way (its clip is `audio/mpeg`).
     // `delete_media_on_completion` is never sent: a download that breaks
     // would lose a paid clip.
     // https://docs.venice.ai/api-reference/endpoint/audio/retrieve
     // https://docs.venice.ai/api-reference/endpoint/video/retrieve
+    // https://docs.venice.ai/guides/media/voice-changer
     job: (kind, baseUrl, modelId, data) => {
       const queueId = isRecord(data) ? data.queue_id : undefined
       if (kind === 'tts' || typeof queueId !== 'string' || queueId === '') throw new UnusableAnswerError('The answer to the clip request is neither a clip nor a job.')
       const downloadUrl = isRecord(data) && isClipUrl(data.download_url) ? data.download_url : null
+      const retrievePath = kind === 'voiceChange' ? 'audio/voice-changer/retrieve' : `${CLIP_KINDS[kind]}/retrieve`
       return {
         id: queueId,
         poll: {
-          url: `${trimTrailingSlashes(baseUrl)}/${CLIP_KINDS[kind]}/retrieve`,
+          url: `${trimTrailingSlashes(baseUrl)}/${retrievePath}`,
           body: { model: modelId, queue_id: queueId },
         },
         state: (poll) => {
@@ -713,6 +843,15 @@ const veniceFormat: MediaFormat = {
             // The price does not depend on the input images, and the
             // schema has no field for them.
             return { url: `${base}/video/quote`, body: { ...values, model: modelId } }
+          case 'videoToVideo':
+          case 'voiceChange':
+            // The price is by the length of the source clip ("Edit,
+            // motion-control and upscale modes bill by the length of your
+            // source video"; the voice changer by its started minutes). A
+            // quote of an upscale needs the clip itself ("video_url is
+            // required for quotes on this model"), and a price request
+            // sends no clip.
+            return null
         }
       },
       usd: (data) => {
@@ -741,6 +880,13 @@ const veniceFormat: MediaFormat = {
   // image up themselves, which gives the same image.
   // https://docs.venice.ai/guides/media/seedance-2-0
   // https://docs.venice.ai/guides/media/wan-3-0
+  // videoToVideo: the API refuses `reference_image_urls` ("This model does
+  // not support reference images") from each model whose entry tells no
+  // size of a reference image, and takes it from the others, as many as
+  // their family takes (free refusals of 40 images, 2026-11-12). The
+  // others take one `image_url`, the person or the thing of a motion
+  // control model; the docs tell of no other model that reads it. An
+  // upscale model takes no image (`veniceUpscaleFactors`).
   imageRules: (kind, entry) => {
     const constraint = (field: string) => valueAtPath(entry, `model_spec.constraints.${field}`)
     if (kind === 'imageEdit') {
@@ -748,13 +894,19 @@ const veniceFormat: MediaFormat = {
       if (typeof maxImages === 'number' && Number.isInteger(maxImages) && maxImages > 0) return { maxImages }
       return { maxImages: constraint('combineImages') === false ? 1 : 3 }
     }
-    if (kind !== 'imageToVideo') return undefined
+    if (kind !== 'imageToVideo' && kind !== 'videoToVideo') return undefined
     const size = imageSizeRules({
       minShortSide: constraint('reference_image_min_short_side_pixels'),
       minAspectRatio: constraint('reference_image_min_aspect_ratio'),
       maxAspectRatio: constraint('reference_image_max_aspect_ratio'),
     })
     const id = valueAtPath(entry, 'id')
+    if (kind === 'videoToVideo') {
+      if (veniceUpscaleFactors(entry).length > 0) return undefined
+      if (!size || typeof id !== 'string') return { maxImages: 1 }
+      const family = veniceFamilyByIdPrefix(id)
+      return { maxImages: family.maxImages, references: { promptName: family.promptName }, size }
+    }
     const family = typeof id === 'string' ? veniceReferenceFamily(id) : undefined
     if (family) return { maxImages: family.maxImages, references: { promptName: family.promptName }, ...(size && { size }) }
     return { maxImages: 2, ...(size && { size }) }
@@ -767,16 +919,76 @@ const veniceFormat: MediaFormat = {
   // 15MB"). The entries' `video_input` is false for every model of these
   // kinds (2026-11-11), so it tells nothing of reference videos.
   // https://docs.venice.ai/api-reference/endpoint/video/queue
+  // videoToVideo: the one video that the model changes, as `video_url`.
+  // A model whose entry has `video_input: false` refuses that field ("This
+  // model does not support video input"; Seedance 2.5 Edit) and takes the
+  // video as a reference video, with the rules and the prompt name of its
+  // family's references (`<Video 1>`).
+  // voiceChange: the entry tells the types (`accepted_audio_formats`) and
+  // the most seconds; a larger file than 25 MB gets a 413.
+  // transcription: the types of the endpoint's list that Dez stores ("A
+  // file is accepted when either its MIME type or its extension is on that
+  // list, and the uploaded bytes must also pass a magic-byte check").
+  // https://docs.venice.ai/guides/media/voice-changer
+  // https://docs.venice.ai/api-reference/endpoint/audio/transcriptions
   clipRules: (kind, entry) => {
-    if (kind !== 'video' && kind !== 'imageToVideo') return undefined
     const constraint = (field: string) => valueAtPath(entry, `model_spec.constraints.${field}`)
     const id = valueAtPath(entry, 'id')
-    const family = typeof id === 'string' ? veniceReferenceFamily(id) : undefined
-    const references = family && veniceReferenceClipRules(family, constraint('per_reference_audio') === true)
-    if (references) return references
-    if (constraint('audio_input') !== true) return undefined
-    return { audio: { use: 'background', maxClips: 1, maxSeconds: 30, maxBytes: VENICE_MAX_AUDIO_BYTES, types: [...VENICE_AUDIO_TYPES] } }
+    switch (kind) {
+      case 'video':
+      case 'imageToVideo': {
+        const family = typeof id === 'string' ? veniceReferenceFamily(id) : undefined
+        const references = family && veniceReferenceClipRules(family, constraint('per_reference_audio') === true)
+        if (references) return references
+        if (constraint('audio_input') !== true) return undefined
+        return { audio: { use: 'background', maxClips: 1, maxSeconds: 30, maxBytes: VENICE_MAX_AUDIO_BYTES, types: [...VENICE_AUDIO_TYPES] } }
+      }
+      case 'videoToVideo': {
+        if (constraint('video_input') !== false) return { video: { use: 'source', maxClips: 1, types: [...VENICE_VIDEO_TYPES, 'video/webm'] } }
+        const video = typeof id === 'string' ? veniceReferenceClipRules(veniceFamilyByIdPrefix(id), false)?.video : undefined
+        return video && { video: { ...video, maxClips: 1 } }
+      }
+      case 'voiceChange': {
+        const formats = listedValues(valueAtPath(entry, 'model_spec.accepted_audio_formats'))
+        const types = formats.flatMap((format) => (typeof format === 'string' && Object.hasOwn(VENICE_VOICE_CHANGER_TYPES, format) ? [VENICE_VOICE_CHANGER_TYPES[format]] : []))
+        const maxSeconds = valueAtPath(entry, 'model_spec.max_source_audio_duration_seconds')
+        return {
+          audio: {
+            use: 'source',
+            maxClips: 1,
+            ...(typeof maxSeconds === 'number' && maxSeconds > 0 && { maxSeconds }),
+            maxBytes: 25 * 1024 ** 2,
+            ...(types.length > 0 && { types }),
+          },
+        }
+      }
+      case 'transcription':
+        return { audio: { use: 'source', maxClips: 1, types: ['audio/wav', 'audio/flac', 'audio/mp4', 'audio/aac', 'audio/mpeg', 'audio/ogg'] } }
+      default:
+        return undefined
+    }
   },
+  // The transcription endpoint takes only a form (`file`, `model`,
+  // `response_format`, `timestamps`, `language`; no other field), and
+  // answers `{ text, duration?, timestamps? }` for `json`.
+  // https://docs.venice.ai/api-reference/endpoint/audio/transcriptions
+  texts: {
+    request: (_kind, baseUrl, modelId, { clips = [] }) => ({
+      url: `${trimTrailingSlashes(baseUrl)}/audio/transcriptions`,
+      form: [{ name: 'model', value: modelId }, { name: 'response_format', value: 'json' }, clipFormFile('file', sourceClip(clips))],
+    }),
+    parseResponse: (_kind, body) => transcriptText(body),
+  },
+}
+
+// The media types of the audio formats that Venice's voice changer names
+// in a model entry (`accepted_audio_formats`).
+const VENICE_VOICE_CHANGER_TYPES: Readonly<Record<string, string>> = {
+  mp3: 'audio/mpeg',
+  wav: 'audio/wav',
+  ogg: 'audio/ogg',
+  mp4: 'audio/mp4',
+  aac: 'audio/aac',
 }
 
 // The frames of a video that an OpenRouter request can give an image for
@@ -1000,6 +1212,8 @@ const openRouterFormat: MediaFormat = {
           ]
         }
         case 'music':
+        case 'videoToVideo':
+        case 'voiceChange':
           return []
       }
     },
@@ -1041,8 +1255,8 @@ const openRouterFormat: MediaFormat = {
           if (fields.duration === undefined) throw new ExplainedError(NO_VIDEO_LENGTH_MESSAGE)
           const imageUrls = images.map((image) => ({ type: 'image_url', image_url: { url: imageDataUrl(image) } }))
           const clipUrls = clips.map((clip) => (clip.kind === 'audio'
-            ? { type: 'audio_url', audio_url: { url: clip.url } }
-            : { type: 'video_url', video_url: { url: clip.url } }))
+            ? { type: 'audio_url', audio_url: { url: clipUrl(clip) } }
+            : { type: 'video_url', video_url: { url: clipUrl(clip) } }))
           const references = [...imageUrls, ...clipUrls]
           return {
             url: `${base}/videos`,
@@ -1058,6 +1272,10 @@ const openRouterFormat: MediaFormat = {
         }
         case 'music':
           throw new ExplainedError('This provider has no music request that Dez can use. Choose another model.')
+        case 'videoToVideo':
+          throw new ExplainedError('This provider has no video-to-video request that Dez can use. Choose another model.')
+        case 'voiceChange':
+          throw new ExplainedError('This provider has no voice changer request that Dez can use. Choose another model.')
       }
     },
     // A speech model that makes only PCM refuses mp3 with a 400 that names
@@ -1125,7 +1343,7 @@ const openRouterFormat: MediaFormat = {
   // video request must have.
   imageRules: (kind, _entry, mediaEntry) => {
     if (kind === 'image' || kind === 'imageEdit') return openRouterReferenceRules(mediaEntry)
-    if (!isClipKind(kind) || CLIP_KINDS[kind] !== 'video' || !isRecord(mediaEntry)) return undefined
+    if ((kind !== 'video' && kind !== 'imageToVideo') || !isRecord(mediaEntry)) return undefined
     const frames = openRouterFrameCount(mediaEntry)
     const references = { maxImages: OPENROUTER_MAX_REFERENCES, references: {} }
     if (frames === 0) return references
@@ -1138,15 +1356,34 @@ const openRouterFormat: MediaFormat = {
   // input_references[0].audio_url.url: Only HTTPS URLs are allowed";
   // `video_url` the same, 2026-11-11). The docs tell no count, length,
   // type, size, or prompt name, so the provider checks them.
+  // A transcription model takes one audio clip as a form file: "The
+  // format is derived from the filename extension or the file part
+  // content type. Max 25 MB". The formats are those of the docs' list
+  // that Dez stores ("Supported formats vary by provider").
   // https://openrouter.ai/docs/guides/overview/multimodal/video-generation
+  // https://openrouter.ai/docs/api/api-reference/stt/create-transcription
   clipRules: (kind, entry) => {
-    if (!isClipKind(kind) || CLIP_KINDS[kind] !== 'video') return undefined
+    if (kind === 'transcription') {
+      return { audio: { use: 'source', maxClips: 1, maxBytes: 25 * 1024 ** 2, types: ['audio/wav', 'audio/mpeg', 'audio/flac', 'audio/mp4', 'audio/ogg', 'audio/aac'] } }
+    }
+    if (kind !== 'video' && kind !== 'imageToVideo') return undefined
     const inputs = listedValues(valueAtPath(entry, 'architecture.input_modalities'))
     const rules: InputClipRules = {
       ...(inputs.includes('audio') && { audio: { use: 'reference', urlOnly: true } }),
       ...(inputs.includes('video') && { video: { use: 'reference', urlOnly: true } }),
     }
     return rules.audio || rules.video ? rules : undefined
+  },
+  // The transcription endpoint takes a form (`model`, `file`), and answers
+  // `{ text, usage }` (`response_format` `json`, its default). A form needs
+  // no base64 copy of the clip, which the JSON body (`input_audio`) does.
+  // https://openrouter.ai/docs/api/api-reference/stt/create-transcription
+  texts: {
+    request: (_kind, baseUrl, modelId, { clips = [] }) => ({
+      url: `${trimTrailingSlashes(baseUrl)}/audio/transcriptions`,
+      form: [{ name: 'model', value: modelId }, clipFormFile('file', sourceClip(clips))],
+    }),
+    parseResponse: (_kind, body) => transcriptText(body),
   },
 }
 

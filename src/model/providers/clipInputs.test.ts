@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import type { MediaTagKind } from '../chat/mediaTags'
-import { clipFileProblem, clipMediaType, clipTagProblem, cloneInputClipRules, maxInputClips, needsWavCopy, type ClipAttachment, type ClipKindRules, type InputClipRules, type ReadInputClip } from './clipInputs'
+import { clipFileProblem, clipMediaType, clipTagProblem, cloneInputClipRules, maxInputClips, missingClipProblem, needsWavCopy, type ClipAttachment, type ClipKindRules, type InputClipRules, type ReadInputClip } from './clipInputs'
 
 const MP3_OR_WAV: ClipKindRules = { use: 'reference', maxClips: 2, types: ['audio/mpeg', 'audio/wav'] }
 
@@ -62,6 +62,27 @@ describe('cloneInputClipRules', () => {
     if (copy.audio) copy.audio.maxClips = 1
 
     expect(rules).toStrictEqual({ audio: { use: 'reference', types: ['audio/mpeg'] }, video: { use: 'reference', types: ['video/mp4'] }, audioNeedsVisual: true })
+  })
+})
+
+describe('missingClipProblem', () => {
+  it('lets a model that changes or writes down a clip go with a clip of its kind, and every other model go with none', () => {
+    expect([
+      missingClipProblem('Edit', 'videoToVideo', [clip('audio', 'a'), clip('video', 'b')]),
+      missingClipProblem('Voice', 'voiceChange', [clip('audio', 'a')]),
+      missingClipProblem('Whisper', 'transcription', [clip('audio', 'a')]),
+      missingClipProblem('Film', 'imageToVideo', []),
+    ]).toStrictEqual([null, null, null, null])
+  })
+
+  it('tells which clip the model needs when the message has none of its kind', () => {
+    expect([
+      missingClipProblem('Edit', 'videoToVideo', [clip('audio', 'a')]),
+      missingClipProblem('Whisper', 'transcription', [clip('video', 'b')]),
+    ]).toStrictEqual([
+      'Edit makes a new video from a video clip, and this message has no video clip. Paste or drop a video clip into the message, or name one with @id.',
+      'Whisper writes down the speech of an audio clip, and this message has no audio clip. Paste or drop an audio clip into the message, or name one with @id.',
+    ])
   })
 })
 

@@ -2,7 +2,7 @@ import sbp from '@sbp/sbp'
 import type { MediaTagKind } from '../model/chat/mediaTags'
 import { modelRefKey } from '../model/chat/modelRef'
 import { effectiveOutputs } from '../model/modelOutputs'
-import { clipsText, clipTagProblem } from '../model/providers/clipInputs'
+import { clipsText, clipTagProblem, missingClipProblem } from '../model/providers/clipInputs'
 import { inputImageRulesFor, missingImageProblem } from '../model/providers/clipImages'
 import { clipTextProblem } from '../model/providers/clipText'
 import { effectiveParameterValues } from '../model/providers/modelParameters'
@@ -61,7 +61,7 @@ export default sbp('sbp/selectors/register', {
     // A model that the cache does not have has no request kind, so it gets
     // a chat request, as before models had one. A refusal changes nothing,
     // so it comes before the end of a running reply's output.
-    const cachedModel: Pick<ModelInfo, 'outputs' | 'request' | 'clipInput' | 'text' | 'images' | 'clips' | 'parameters' | 'unstoredOutput'> = sbp('dez.model/modelCache/model', model.providerId, model.modelId) ?? {}
+    const cachedModel: Pick<ModelInfo, 'outputs' | 'request' | 'text' | 'images' | 'clips' | 'parameters' | 'unstoredOutput'> = sbp('dez.model/modelCache/model', model.providerId, model.modelId) ?? {}
     const kind = effectiveRequest(cachedModel)
     let message: string | null = null
     // How many images and clips of the message a media request takes and
@@ -84,7 +84,8 @@ export default sbp('sbp/selectors/register', {
       inputRules = { ...(cachedModel.text && { text: cachedModel.text }), ...(images && { images }), ...(cachedModel.clips && { clips: cachedModel.clips }) }
       // An input that the model is known not to take (no image for a model
       // that edits one, makes one larger, makes its video from one, or
-      // needs a reference image; no lyrics for a model that needs them; a
+      // needs a reference image; no clip for a model that changes or
+      // writes down a clip; no lyrics for a model that needs them; a
       // prompt that is too short or too long; a clip of a type that it does
       // not take, or an audio clip with no image or video that it needs)
       // gets no request: the check costs nothing, and it tells the user
@@ -94,7 +95,8 @@ export default sbp('sbp/selectors/register', {
       // clip is the reference of a request with no image.
       const input = mediaRequestInput(kind, request.messages, tab.sections, inputRules)
       const sentVideo = input.clips.some((clip) => clip.kind === 'video')
-      message = clipTagProblem(model.modelName, cachedModel.clips, input.clips, input.images.length)
+      message = missingClipProblem(model.modelName, kind, input.clips)
+        ?? clipTagProblem(model.modelName, cachedModel.clips, input.clips, input.images.length)
         ?? (sentVideo ? null : missingImageProblem(model.modelName, kind, input.images.length, images))
         ?? clipTextProblem(model.modelName, cachedModel.text, input)
       mediaImages = { sent: input.images.length, leftOut: input.imagesLeftOut }

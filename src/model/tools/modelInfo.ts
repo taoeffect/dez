@@ -228,7 +228,6 @@ function dezFacts(model: ModelInfo, facts: ModelInfoFacts): Record<string, unkno
       })),
     }),
     ...(facts.cost && { cost: facts.cost }),
-    ...(model.clipInput && { clipInput: model.clipInput }),
     ...(model.unstoredOutput !== undefined && { unstoredOutput: model.unstoredOutput }),
     ...(cannotUse !== undefined && { cannotUse }),
   }

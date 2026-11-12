@@ -48,17 +48,19 @@ describe('model cache persistence format', () => {
     expect(parseModelCacheJson(serializeModelCacheJson(parsed))).toStrictEqual(parsed)
   })
 
-  it('round-trips outputs, request kinds, and clip inputs, and drops only a model with an unknown one', () => {
+  it('round-trips outputs and request kinds, and drops only a model with an unknown one', () => {
     const models = [
       { id: 'edit', name: 'Edit', provider: 'venice', outputs: ['image'], request: 'imageEdit' },
       { id: 'chat', name: 'Chat', provider: 'venice', imageInput: true, outputs: ['text', 'image'], request: 'chat' },
       // Known to make none of the types.
       { id: 'embed', name: 'Embed', provider: 'venice', outputs: [], request: 'none' },
-      // No request, because it needs a recording as its input.
-      { id: 'listen', name: 'Listen', provider: 'venice', outputs: ['text'], request: 'none', clipInput: 'audio' },
+      { id: 'listen', name: 'Listen', provider: 'venice', outputs: ['text'], request: 'transcription' },
       // A cache written before outputs and request kinds existed.
       { id: 'old', name: 'Old', provider: 'venice' },
     ]
+    // A cache of an older Dez told the clip that a model with no request
+    // needed; the next model check gives the model its request.
+    const oldClipInput = { id: 'old-listen', name: 'Old listen', provider: 'venice', outputs: ['text'], request: 'none' }
     const parsed = parseModelCacheJson(JSON.stringify({
       version: MODEL_CACHE_VERSION,
       providers: {
@@ -67,7 +69,7 @@ describe('model cache persistence format', () => {
             ...models,
             { id: 'new-output', name: 'New output', provider: 'venice', outputs: ['text', 'embedding'] },
             { id: 'new-request', name: 'New request', provider: 'venice', request: 'speech' },
-            { id: 'new-clip', name: 'New clip', provider: 'venice', request: 'none', clipInput: 'image' },
+            { ...oldClipInput, clipInput: 'audio' },
           ],
           working: true,
           updatedAt: 1,
@@ -76,7 +78,7 @@ describe('model cache persistence format', () => {
       },
     }))
 
-    expect(parsed.providers.venice?.models).toStrictEqual(models)
+    expect(parsed.providers.venice?.models).toStrictEqual([...models, oldClipInput])
     expect(parseModelCacheJson(serializeModelCacheJson(parsed))).toStrictEqual(parsed)
   })
 

@@ -716,6 +716,7 @@ dependencies = [
 name = "dez"
 version = "0.15.1"
 dependencies = [
+ "base64 0.22.1",
  "dirs",
  "futures",
  "gtk",

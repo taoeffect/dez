@@ -201,16 +201,15 @@ describe('modelInfoText', () => {
   })
 
   it('tells why Dez sends no request to a model that it cannot use, or whose images it cannot store', () => {
-    const transcriber: ModelInfo = { id: 'whisper', name: 'Whisper', provider: OPENROUTER.id, outputs: ['text'], request: 'none', clipInput: 'audio' }
+    const sketcher: ModelInfo = { id: 'sketch', name: 'Sketcher', provider: OPENROUTER.id, outputs: ['image'], request: 'none' }
     const svg: ModelInfo = { id: 'svg', name: 'SVG Maker', provider: OPENROUTER.id, outputs: ['image'], request: 'image', imageInput: false, unstoredOutput: 'SVG' }
 
-    expect(parsed(modelInfoText(OPENROUTER, transcriber, { entry: {} })).dez).toStrictEqual({
+    expect(parsed(modelInfoText(OPENROUTER, sketcher, { entry: {} })).dez).toStrictEqual({
       request: 'none',
-      outputs: ['text'],
+      outputs: ['image'],
       imageInput: true,
       unknown: ['imageInput'],
-      clipInput: 'audio',
-      cannotUse: unusableModelMessage('Whisper', transcriber),
+      cannotUse: unusableModelMessage('Sketcher', sketcher),
     })
     expect(parsed(modelInfoText(OPENROUTER, svg, { entry: {} })).dez).toStrictEqual({
       request: 'image',

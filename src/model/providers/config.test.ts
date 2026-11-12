@@ -160,12 +160,8 @@ describe('provider config schema', () => {
     const parseModel = (model: Record<string, unknown>) =>
       providerConfigSchema.safeParse({ id: 'p', name: 'P', baseUrl: 'http://h', models: [{ id: 'm', ...model }] })
     const fields = { outputs: ['image', 'text'], request: 'imageEdit' }
-    const needsClip = { request: 'none', clipInput: 'video' }
 
     expect(parseModel(fields).data?.models).toStrictEqual([{ id: 'm', ...fields }])
-    expect(parseModel(needsClip).data?.models).toStrictEqual([{ id: 'm', ...needsClip }])
-    // A clip is audio or video; an image is no clip.
-    expect(parseModel({ clipInput: 'image' }).success).toBe(false)
     // A config model is always listed, so it must make something.
     expect(parseModel({ outputs: [] }).success).toBe(false)
     expect(parseModel({ outputs: ['speech'] }).success).toBe(false)
@@ -187,9 +183,8 @@ describe('provider config schema', () => {
           text: { outputs: ['text'], request: 'chat' },
           image: { outputs: ['image'], requiredPath: 'price.image' },
           // The request kind depends on a second value of the entry.
-          video: { outputs: ['video'], requestBy: { path: 'spec.kind', values: { 'text-to-video': 'video' }, clipInputs: { video: 'video' } } },
-          // A type with no request can tell the clip that its models need.
-          asr: { outputs: ['text'], clipInput: 'audio' },
+          video: { outputs: ['video'], requestBy: { path: 'spec.kind', values: { 'text-to-video': 'video', video: 'videoToVideo' } } },
+          asr: { outputs: ['text'], request: 'transcription' },
           embed: { outputs: [] },
         },
       },
@@ -208,8 +203,6 @@ describe('provider config schema', () => {
     expect(outputs({ video: { outputs: ['video'], requestBy: { path: 'spec..kind', values: {} } } })).toBe(false)
     expect(outputs({ video: { outputs: ['video'], requestBy: { path: 'spec.kind', values: { 'text-to-video': 'film' } } } })).toBe(false)
     expect(outputs({ video: { outputs: ['video'], requestBy: { path: 'spec.kind' } } })).toBe(false)
-    expect(outputs({ asr: { outputs: ['text'], clipInput: 'image' } })).toBe(false)
-    expect(outputs({ video: { outputs: ['video'], requestBy: { path: 'spec.kind', values: {}, clipInputs: { video: 'image' } } } })).toBe(false)
     expect(outputs({ image: { outputs: ['image'], requiredPath: 'price..image' } })).toBe(false)
     expect(parse({ imageOutputBody: ['image'] }).success).toBe(false)
     expect(parse({ mediaApi: { format: 'openai' } }).success).toBe(false)

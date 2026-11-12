@@ -49,6 +49,9 @@ reqwest = { version = "=0.12.28", features = ["json", "stream"] }
 tokio = { version = "=1.52.0", features = ["full"] }
 thiserror = "=2.0.18"
 futures = "=0.3.32"
+# The base64 version that reqwest already pulls in: http_bridge.rs decodes
+# a request body that the webview sends as base64 text.
+base64 = "=0.22.1"
 # The dirs version that tauri uses: persistence.rs finds the OS cache folder
 # with it, as tauri does for `$CACHE` in the asset scope of tauri.conf.json.
 dirs = "=6.0.0"

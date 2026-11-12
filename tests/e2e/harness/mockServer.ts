@@ -15,8 +15,9 @@ export interface MockServer {
   stop: () => Promise<void>
 }
 
-/** Answers one request. `body` is the whole request body as UTF-8 text. */
-export type MockHandler = (req: http.IncomingMessage, res: http.ServerResponse, body: string) => void | Promise<void>
+/** Answers one request. `body` is the whole request body as UTF-8 text,
+ *  and `bytes` the same body as it came (a multipart form holds files). */
+export type MockHandler = (req: http.IncomingMessage, res: http.ServerResponse, body: string, bytes: Buffer) => void | Promise<void>
 
 /** Starts a server on a free port of 127.0.0.1 that reads each request
  *  body, then passes the request to `handler`. */
@@ -24,7 +25,8 @@ export async function startMockServer (handler: MockHandler): Promise<MockServer
   const server = http.createServer(async (req, res) => {
     const chunks: Buffer[] = []
     for await (const chunk of req) chunks.push(chunk as Buffer)
-    await handler(req, res, Buffer.concat(chunks).toString('utf8'))
+    const bytes = Buffer.concat(chunks)
+    await handler(req, res, bytes.toString('utf8'), bytes)
   })
   await new Promise<void>((resolve, reject) => {
     server.once('error', reject)
@@ -48,9 +50,9 @@ export async function startChatMock (
   onChat: MockHandler,
   jsonAnswers: Readonly<Record<string, unknown>> = {},
 ): Promise<MockServer> {
-  return startMockServer((req, res, body) => {
+  return startMockServer((req, res, body, bytes) => {
     const path = req.url ?? ''
-    if (req.method === 'POST' && chatPaths.includes(path)) return onChat(req, res, body)
+    if (req.method === 'POST' && chatPaths.includes(path)) return onChat(req, res, body, bytes)
     if (req.method === 'GET' && Object.hasOwn(jsonAnswers, path)) {
       res.writeHead(200, { 'Content-Type': 'application/json' })
       res.end(JSON.stringify(jsonAnswers[path]))
@@ -68,9 +70,28 @@ export interface HeldRequest {
   path: string
   /** The request body as UTF-8 text. */
   body: string
+  /** The request body as it came, and the request headers: a form
+   *  (`requestForm`) needs both. */
+  bytes: Buffer
+  headers: http.IncomingHttpHeaders
   reply: http.ServerResponse
   /** The app closed the connection before the reply ended. */
   closed: boolean
+}
+
+/** One field of a multipart/form-data request: a text, or a file with its
+ *  name, type, and bytes. */
+export type FormField =
+  | { name: string, value: string }
+  | { name: string, fileName: string, type: string, bytes: Buffer }
+
+/** The fields of the multipart/form-data body of `request`, in body order,
+ *  as a server that follows the standard reads them. */
+export async function requestForm (request: HeldRequest): Promise<FormField[]> {
+  const form = await new Response(request.bytes, { headers: { 'Content-Type': request.headers['content-type'] ?? '' } }).formData()
+  return Promise.all([...form.entries()].map(async ([name, value]) => (typeof value === 'string'
+    ? { name, value }
+    : { name, fileName: value.name, type: value.type, bytes: Buffer.from(await value.arrayBuffer()) })))
 }
 
 export interface HoldingChatMock extends MockServer {
@@ -96,8 +117,8 @@ export async function startHoldingChatMock (
 ): Promise<HoldingChatMock> {
   const sinceDrop: HeldRequest[] = []
   const waiting: HeldRequest[] = []
-  const server = await startChatMock(chatPaths, (req, res, body) => {
-    const request: HeldRequest = { path: req.url ?? '', body, reply: res, closed: false }
+  const server = await startChatMock(chatPaths, (req, res, body, bytes) => {
+    const request: HeldRequest = { path: req.url ?? '', body, bytes, headers: req.headers, reply: res, closed: false }
     res.on('close', () => { request.closed = !res.writableEnded })
     sinceDrop.push(request)
     waiting.push(request)

@@ -1,3 +1,4 @@
+import { bytesToBase64 } from '../../utils/base64'
 import type { JsonObject } from '../../utils/json'
 import type { NativeHttpHeaders, NativeHttpRequest, NativeHttpResponseHead } from '../../utils/protocol/nativeHttp'
 import type { Secret } from '../../utils/secret'
@@ -7,12 +8,13 @@ import { TooManyImagesError } from './clipImages'
 import { FORBIDDEN_BODY_KEYS, type ProviderConfig } from './config'
 import { ProviderHttpError } from './errors'
 import type { ImageSizeRules, InputImageLimits } from './imageSize'
-import { MEDIA_FORMATS, type ClipFormat, type ClipInput, type ClipJob, type ImageFormat, type ImageQuoteFormat, type MediaFormat, type MediaInput, type MediaWireRequest } from './mediaFormats'
+import { MEDIA_FORMATS, type ClipFormat, type ClipInput, type ClipJob, type ImageFormat, type ImageQuoteFormat, type MediaFormat, type MediaInput, type MediaWireRequest, type TextFormat } from './mediaFormats'
 import type { ParameterValues } from './modelParameters'
 import { isRecord, modelCapability, modelData, modelOutputsAndRequest, unsupportedSettings } from './modelParsing'
 import { modelToggles, type ToggleModel } from './modelToggles'
+import { multipartBody } from './multipart'
 import { isThinkingEnabled } from './thinking'
-import { ProviderError, effectiveRequest, isClipKind, providerModel, type ChatMessage, type ChatRequestContext, type ClipKind, type GeneratedMedia, type ImageKind, type MediaKind, type ModelInfo, type ProviderInfo } from './types'
+import { ProviderError, effectiveRequest, isClipKind, isTextKind, providerModel, type ChatMessage, type ChatRequestContext, type ClipKind, type GeneratedMedia, type ImageKind, type MediaKind, type ModelInfo, type ProviderInfo, type TextKind } from './types'
 
 export interface ProviderOptions {
   builtIn: boolean
@@ -143,7 +145,6 @@ export class Provider {
         unsupportedSettings: fetchedModel?.unsupportedSettings,
         outputs: model.outputs ?? fetchedModel?.outputs,
         request: model.request ?? fetchedModel?.request,
-        clipInput: model.clipInput ?? fetchedModel?.clipInput,
       }))
     }
 
@@ -221,9 +222,9 @@ export class Provider {
       const mediaEntry = mediaEntries.get(model.id)
       const images = imageRules?.(kind, entry, mediaEntry)
       const inputClips = clipRules?.(kind, entry, mediaEntry)
-      const parameters = (isClipKind(kind) ? clips?.parameters(kind, entry, mediaEntry) : imageFormat?.parameters?.(kind, entry, mediaEntry)) ?? []
+      const parameters = (isClipKind(kind) ? clips?.parameters(kind, entry, mediaEntry) : isTextKind(kind) ? [] : imageFormat?.parameters?.(kind, entry, mediaEntry)) ?? []
       const text = isClipKind(kind) ? clips?.textRules?.(kind, entry, mediaEntry) : undefined
-      const unstoredOutput = isClipKind(kind) ? undefined : imageFormat?.unstoredOutput?.(kind, entry, mediaEntry)
+      const unstoredOutput = isClipKind(kind) || isTextKind(kind) ? undefined : imageFormat?.unstoredOutput?.(kind, entry, mediaEntry)
       return {
         ...model,
         ...(parameters.length > 0 && { parameters }),
@@ -291,10 +292,14 @@ export class Provider {
   }
 
   // A request to the provider's media API (`mediaApi`): a POST of the JSON
-  // body, or a GET when it has none. It takes the headers of a chat
-  // request, but no `requestBody`, settings, or thinking body: those are
-  // chat fields.
-  mediaApiRequest({ url, body }: MediaWireRequest, secret: Secret<string> | null): NativeHttpRequest {
+  // body or of the form (multipart/form-data, as base64 bytes), or a GET
+  // when it has neither. It takes the headers of a chat request, but no
+  // `requestBody`, settings, or thinking body: those are chat fields.
+  mediaApiRequest({ url, body, form }: MediaWireRequest, secret: Secret<string> | null): NativeHttpRequest {
+    if (form !== undefined) {
+      const multipart = multipartBody(form)
+      return { method: 'POST', url, headers: this.requestHeaders(secret, { 'Content-Type': multipart.contentType }), body: { base64: bytesToBase64(multipart.body) } }
+    }
     if (body === undefined) return { method: 'GET', url, headers: this.requestHeaders(secret, {}) }
     return {
       method: 'POST',
@@ -314,13 +319,23 @@ export class Provider {
     return this.imageFormat().parseResponse(kind, head, body)
   }
 
+  // The request for a model of a text request kind (a transcription).
+  textRequest(kind: TextKind, modelId: string, input: MediaInput, secret: Secret<string> | null): NativeHttpRequest {
+    return this.mediaApiRequest(this.withModelBody(kind, modelId, this.textFormat().request(kind, this.config.baseUrl, modelId, input)), secret)
+  }
+
+  // The text of the body of a 2xx response to `textRequest`.
+  textResult(kind: TextKind, body: Uint8Array): string {
+    return this.textFormat().parseResponse(kind, body)
+  }
+
   // The size rules (imageSize.ts) of each input image of a request of
   // `kind`: for a video, the rules of the model (`model`: what the model
   // cache knows of it, or null); for an edit or an upscale, the rules of
   // the media API's request (`ImageFormat.inputImageSize`). Undefined when
   // the provider tells none.
   inputImageSize(kind: MediaKind, model: Pick<ModelInfo, 'images'> | null): ImageSizeRules | undefined {
-    if (isClipKind(kind)) return model?.images?.size
+    if (isClipKind(kind) || isTextKind(kind)) return model?.images?.size
     const mediaApi = this.config.mediaApi
     return mediaApi ? MEDIA_FORMATS[mediaApi.format].images?.inputImageSize?.[kind] : undefined
   }
@@ -330,7 +345,7 @@ export class Provider {
   // tells none.
   inputImageLimits(kind: MediaKind): InputImageLimits | undefined {
     const mediaApi = this.config.mediaApi
-    if (isClipKind(kind) || !mediaApi) return undefined
+    if (isClipKind(kind) || isTextKind(kind) || !mediaApi) return undefined
     return MEDIA_FORMATS[mediaApi.format].images?.inputImageLimits?.[kind]
   }
 
@@ -340,7 +355,7 @@ export class Provider {
   // far as Dez knows.
   inputImageProblem(kind: MediaKind, size: ImageSize | null, byteLength: number): string | undefined {
     const mediaApi = this.config.mediaApi
-    if (isClipKind(kind) || !mediaApi) return undefined
+    if (isClipKind(kind) || isTextKind(kind) || !mediaApi) return undefined
     return MEDIA_FORMATS[mediaApi.format].images?.inputImageProblem?.(kind, size, byteLength)
   }
 
@@ -448,6 +463,12 @@ export class Provider {
     const { clips } = this.mediaFormat()
     if (!clips) throw new ProviderError(`${this.name} has no audio or video API that Dez can use. Choose another model.`, this.id)
     return clips
+  }
+
+  private textFormat(): TextFormat {
+    const { texts } = this.mediaFormat()
+    if (!texts) throw new ProviderError(`${this.name} has no transcription API that Dez can use. Choose another model.`, this.id)
+    return texts
   }
 
   // For the parts of a clip format that a provider can be without.

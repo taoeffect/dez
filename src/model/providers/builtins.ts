@@ -37,10 +37,7 @@ export const BUILT_IN_PROVIDER_CONFIGS: readonly ProviderConfig[] = [
     // that takes frames (the video list, mediaFormats.ts). The few models
     // that need a video get the same request, and OpenRouter refuses it.
     // "audio" comes only with "text": those models answer through chat.
-    // "transcription" models write down a recording, which Dez cannot
-    // send (`clipInput`).
-    // MODEL_INVOKE: the types with no `request` here (transcription) are
-    // the models that a `model_invoke` tool could run.
+    // "transcription" models write down the speech of an audio clip.
     modelOutputs: {
       path: 'architecture.output_modalities',
       values: {
@@ -49,7 +46,7 @@ export const BUILT_IN_PROVIDER_CONFIGS: readonly ProviderConfig[] = [
         audio: { outputs: ['audio'] },
         speech: { outputs: ['audio'], request: 'tts' },
         video: { outputs: ['video'], request: 'video' },
-        transcription: { outputs: ['text'], clipInput: 'audio' },
+        transcription: { outputs: ['text'], request: 'transcription' },
         embeddings: { outputs: [] },
         rerank: { outputs: [] },
         decisions: { outputs: [] },
@@ -122,16 +119,12 @@ export const BUILT_IN_PROVIDER_CONFIGS: readonly ProviderConfig[] = [
     // One `type` per model. `inpaint` models edit images, and `upscale`
     // models make an image larger. `music` models also make sounds and
     // speech; one of them is a voice changer (`model_spec.voice_changer`),
-    // which needs a recording and has an own endpoint, so it gets no
-    // request yet. Every video model has the type `video`, and
-    // `model_spec.constraints.model_type` tells what it needs: just a text
-    // (`text-to-video`), an image (`image-to-video`), or a video (`video`),
-    // which Dez does not send yet. Dez does not run speech-to-text (`asr`)
-    // models yet. `clipInput` and `clipInputs` name the clip that such a
-    // model needs, for the text of the refusal.
-    // MODEL_INVOKE: the types and values with no request here (asr, the
-    // voice changer, video-to-video) are the models that a `model_invoke`
-    // tool could run.
+    // which says the speech of an audio clip in another voice. Every video
+    // model has the type `video`, and `model_spec.constraints.model_type`
+    // tells what it needs: just a text (`text-to-video`), an image
+    // (`image-to-video`), or a video (`video`: an edit, a motion control,
+    // an extension, an upscale). `asr` models write down the speech of an
+    // audio clip.
     modelOutputs: {
       path: 'type',
       values: {
@@ -143,17 +136,16 @@ export const BUILT_IN_PROVIDER_CONFIGS: readonly ProviderConfig[] = [
         music: {
           outputs: ['audio'],
           request: 'music',
-          requestBy: { path: 'model_spec.voice_changer', values: { true: 'none' }, clipInputs: { true: 'audio' } },
+          requestBy: { path: 'model_spec.voice_changer', values: { true: 'voiceChange' } },
         },
         video: {
           outputs: ['video'],
           requestBy: {
             path: 'model_spec.constraints.model_type',
-            values: { 'text-to-video': 'video', 'image-to-video': 'imageToVideo' },
-            clipInputs: { video: 'video' },
+            values: { 'text-to-video': 'video', 'image-to-video': 'imageToVideo', video: 'videoToVideo' },
           },
         },
-        asr: { outputs: ['text'], clipInput: 'audio' },
+        asr: { outputs: ['text'], request: 'transcription' },
         embedding: { outputs: [] },
         decision: { outputs: [] },
       },

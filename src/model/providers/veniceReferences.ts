@@ -119,6 +119,11 @@ const VENICE_REFERENCE_FAMILIES: readonly VeniceReferenceFamily[] = [
   { idPrefix: 'gemini-omni-flash-', field: 'reference_image_urls', maxImages: 3, promptName: AT_IMAGE },
   { idPrefix: 'happyhorse-1-0-', field: 'reference_image_urls', maxImages: 5, promptName: AT_IMAGE },
   { idPrefix: 'happyhorse-', field: 'reference_image_urls', maxImages: 9, promptName: AT_IMAGE },
+  // The video-to-video model MiniMax H3 Max Recast takes fewer reference
+  // images than its reference-to-video siblings: "reference_image_urls
+  // must have at most 4 images" (a refusal of 40 images, which costs
+  // nothing; 2026-11-12).
+  { idPrefix: 'minimax-h3-max-recast', field: 'reference_image_urls', maxImages: 4, promptName: AT_IMAGE },
   { idPrefix: 'minimax-h3-', field: 'reference_image_urls', maxImages: 9, promptName: AT_IMAGE, clips: { videos: 3, audios: 3, promptNames: AT_CLIP } },
   { idPrefix: 'kling-o3-', field: 'elements', maxImages: 4, promptName: '@Element{n}' },
   { idPrefix: 'kling-v3-', field: 'elements', maxImages: 4, promptName: '@Element{n}' },
@@ -143,11 +148,19 @@ export const VENICE_AUDIO_TYPES = ['audio/wav', 'audio/mpeg']
 export const VENICE_MAX_VIDEO_BYTES = 50 * 1024 ** 2
 export const VENICE_MAX_AUDIO_BYTES = 15 * 1024 ** 2
 
+/** The family of the Venice model `modelId` by the start of its id alone:
+ *  a family above, else the plain list. For a model that is known to take
+ *  reference images: a reference-to-video model
+ *  (`veniceReferenceFamily`), or a video-to-video model whose entry tells
+ *  the sizes of reference images (`reference_image_…`). */
+export function veniceFamilyByIdPrefix(modelId: string): VeniceReferenceFamily {
+  return VENICE_REFERENCE_FAMILIES.find((family) => modelId.startsWith(family.idPrefix)) ?? OTHER_REFERENCE_MODELS
+}
+
 /** The family of the Venice model `modelId`; undefined for a model that
  *  takes its images as frames. */
 export function veniceReferenceFamily(modelId: string): VeniceReferenceFamily | undefined {
-  if (!modelId.includes('reference-to-video')) return undefined
-  return VENICE_REFERENCE_FAMILIES.find((family) => modelId.startsWith(family.idPrefix)) ?? OTHER_REFERENCE_MODELS
+  return modelId.includes('reference-to-video') ? veniceFamilyByIdPrefix(modelId) : undefined
 }
 
 /** The clips that a model of `family` takes as references; undefined for

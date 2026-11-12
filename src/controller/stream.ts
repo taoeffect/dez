@@ -480,20 +480,21 @@ async function runChatRounds(args: StreamStartArgs, reply: ReplyRuntime): Promis
 // are saved in the generated image folder, and the section gets a
 // reference to each. A clip (audio, video) is not saved: the section gets
 // a media tag (mediaTags.ts) whose source is the provider's URL, or a temp
-// copy until the user saves the clip. The request sets the model's
-// parameters to the values that the user chose in the provider settings
-// popup, and sends the lyrics that the message holds to a model that
-// takes lyrics; an edit, an upscale, and a video request send the images
-// of the message, and a video request the clips that it holds or names
-// (`mediaRequestInput`). Images and clips get new ids of the one id
-// sequence. Ends the reply, except when it throws.
+// copy until the user saves the clip. A transcription model's text goes
+// into the section as the text of a chat reply. The request sets the
+// model's parameters to the values that the user chose in the provider
+// settings popup, and sends the lyrics that the message holds to a model
+// that takes lyrics; an edit, an upscale, and a video request send the
+// images of the message, and a request of a model that takes clips the
+// clips that it holds or names (`mediaRequestInput`). Images and clips get
+// new ids of the one id sequence. Ends the reply, except when it throws.
 async function runMediaRound(args: StreamStartArgs, reply: ReplyRuntime, kind: MediaKind): Promise<void> {
   const tab = sbp('dez.model/tab', args.tabId) as Tab | null
   const input = mediaRequestInput(kind, args.messages, tab?.sections ?? [], args.inputRules)
   const parameters = (sbp('dez.model/settings/snapshot') as SettingsSnapshot).modelParameters[modelRefKey(args.model)]
   const requestId = crypto.randomUUID()
   reply.requestId = requestId
-  const { media, clips } = await sbp('dez.provider/generateMedia', {
+  const { media, clips, text = '' } = await sbp('dez.provider/generateMedia', {
     providerId: args.model.providerId,
     modelId: args.model.modelId,
     kind,
@@ -553,8 +554,12 @@ async function runMediaRound(args: StreamStartArgs, reply: ReplyRuntime, kind: M
       other: clip.jobId === null ? [] : [{ name: 'job', value: clip.jobId }],
     })),
   ]
+  // A transcription is escaped as the text of a chat reply
+  // (`ModelTextEscaper`), so that speech that spells a tag forms no tool
+  // block and no media tag. An empty one writes nothing.
+  const written = [...references, reply.escaper.push(text.trim()) + reply.escaper.flush()].filter((part) => part !== '')
   // The user can type in the section while a clip is made.
-  receiveToken(args.tabId, args.sectionId, paragraphGap(sectionText) + references.join('\n\n'))
+  if (written.length > 0) receiveToken(args.tabId, args.sectionId, paragraphGap(sectionText) + written.join('\n\n'))
   finalizeStream(args.tabId, finishStreamSession(args.tabId))
 }
 

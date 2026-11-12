@@ -1,11 +1,11 @@
 import type { MediaTagKind } from '../chat/mediaTags'
 import { effectiveOutputs } from '../modelOutputs'
 import { imagesText, maxInputImages, minInputImages, needsInputImage } from '../providers/clipImages'
-import { clipsText, maxInputClips, type ClipUse, type InputClipRules } from '../providers/clipInputs'
+import { clipsText, maxInputClips, neededClipKind, type ClipUse, type InputClipRules } from '../providers/clipInputs'
 import { lyricsHowTo } from '../providers/clipText'
 import { toolsApply } from '../providers/modelToggles'
 import { TOOLS_SETTING_KEY } from '../providers/toolsSetting'
-import { CLIP_KINDS, effectiveRequest, isClipKind, type MediaKind, type ModelInfo, type ProviderInputImageRules } from '../providers/types'
+import { CLIP_KINDS, effectiveRequest, isClipKind, isTextKind, type MediaKind, type ModelInfo, type ProviderInputImageRules } from '../providers/types'
 
 // The `usage` of a `model_info` result: how a request to a model is formed,
 // what it needs, and what comes back. Each text tells what the code that
@@ -47,6 +47,7 @@ export const USAGE_TEXTS = {
   imageResult: 'It answers with an image, which goes into the reply with a new id (@id).',
   audioResult: 'It answers with an audio clip, which the reply shows as a player with a new id.',
   videoResult: 'It answers with a video clip, which the reply shows as a player with a new id.',
+  transcriptResult: 'It answers with the words of the speech, which go into the reply as text.',
   noClips: 'It takes no input clip: the clips of the message (pasted, or named with @id) do not go.',
   clipRules: 'Dez refuses a clip that breaks the rules of its kind in `dez.clips` (media types, seconds, bytes). Dez cuts no clip, but the audio tool can cut an audio clip.',
   wavCopy: 'An audio clip of a type that it does not take goes as a WAV copy.',
@@ -65,6 +66,13 @@ const CLIP_USE_USAGE: Readonly<Record<ClipUse, string>> = {
   reference: 'They are references for the video (a look, a motion, a voice, a sound).',
   background: 'It is the sound of the video, as it is.',
   voice: 'Each one is the voice of one reference, in order: the first audio clip is the voice of the first image, with the images first and then the video clips.',
+  source: 'It is the clip that the model changes or writes down.',
+}
+
+// A model that makes nothing without a clip of `kind` (`neededClipKind`,
+// `missingClipProblem`).
+export function neededClipUsage(kind: MediaTagKind): string {
+  return `Dez refuses a message with no ${kind} clip.`
 }
 
 /** How many clips of `kind` of the message (pasted, or named with @id) a
@@ -88,11 +96,15 @@ export function urlOnlyClipsUsage(kind: MediaTagKind): string {
 }
 
 // What the input clips of a request are (`mediaRequestInput`), and what
-// generateMedia checks and converts. Only a video model has clip rules
-// (`MediaFormat.clipRules`), so only a video model gets told that it takes
-// none.
+// generateMedia checks and converts. Of the kinds that take clips, only a
+// video model can have no clip rules (`MediaFormat.clipRules`), so only a
+// video model gets told that it takes none. A model that needs a clip
+// (`neededClipKind`) gets told so with or without rules, as the submit
+// refuses a message with no such clip either way.
 function inputClipsUsage(kind: MediaKind, clips: InputClipRules | undefined): string[] {
-  if (!clips) return isClipKind(kind) && CLIP_KINDS[kind] === 'video' ? [USAGE_TEXTS.noClips] : []
+  const needed = neededClipKind(kind)
+  const neededText = needed ? [neededClipUsage(needed)] : []
+  if (!clips) return [...(isClipKind(kind) && CLIP_KINDS[kind] === 'video' ? [USAGE_TEXTS.noClips] : []), ...neededText]
   const kinds = (['audio', 'video'] as const).flatMap((clipKind) => {
     const rules = clips[clipKind]
     if (!rules) return []
@@ -105,6 +117,7 @@ function inputClipsUsage(kind: MediaKind, clips: InputClipRules | undefined): st
   })
   return [
     ...kinds,
+    ...neededText,
     ...(clips.audioNeedsVisual ? [USAGE_TEXTS.audioNeedsVisual] : []),
     USAGE_TEXTS.clipRules,
     ...(clips.audio?.types?.includes('audio/wav') ? [USAGE_TEXTS.wavCopy] : []),
@@ -122,6 +135,10 @@ const MEDIA_USAGE: Readonly<Record<MediaKind, { prompt?: string, images?: string
   music: { prompt: 'The text of the message is the prompt (for a song: its style).' },
   video: { prompt: 'The text of the message is the prompt.', images: 'The first one is the first frame of the video, and the second one is the last frame.' },
   imageToVideo: { prompt: 'The text of the message is the prompt.', images: 'The first one is the first frame of the video, and the second one is the last frame.' },
+  // A video upscale model takes no prompt (mediaFormats.ts).
+  videoToVideo: { prompt: 'The text of the message tells what to change; a video upscale model gets no text.', images: 'It is a reference for the new video, such as the person that a motion control model moves.' },
+  voiceChange: {},
+  transcription: {},
 }
 
 /** What `model_info` knows besides the cached model, for `modelUsage`. */
@@ -187,7 +204,7 @@ function mediaUsage(kind: MediaKind, model: ModelInfo, facts: UsageFacts): strin
     ...(takesImages && facts.inputImages.limits ? [USAGE_TEXTS.limits] : []),
     ...inputClipsUsage(kind, model.clips),
     ...(model.parameters ? [USAGE_TEXTS.parameters] : []),
-    !isClipKind(kind) ? USAGE_TEXTS.imageResult : CLIP_KINDS[kind] === 'audio' ? USAGE_TEXTS.audioResult : USAGE_TEXTS.videoResult,
+    isTextKind(kind) ? USAGE_TEXTS.transcriptResult : !isClipKind(kind) ? USAGE_TEXTS.imageResult : CLIP_KINDS[kind] === 'audio' ? USAGE_TEXTS.audioResult : USAGE_TEXTS.videoResult,
   ]
 }
 

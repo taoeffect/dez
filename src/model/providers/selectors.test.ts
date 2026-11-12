@@ -8,7 +8,7 @@ import type { ModelRef, Section } from '../chat/types'
 import { toolBlockText } from '../chat/toolBlocks'
 import type { ModelCache } from '../persistence/types'
 import { sectionsToStreamMessages } from '../streams/messages'
-import { bytesToBase64 } from '../../utils/base64'
+import { base64ToBytes, bytesToBase64 } from '../../utils/base64'
 import { ExplainedError } from '../../utils/errorText'
 import type { NativeHttpDownload, NativeHttpRequest, NativeHttpResponse, NativeHttpStreamResult } from '../../utils/protocol/nativeHttp'
 import { NativeHttpError } from '../../utils/protocol/errors'
@@ -76,9 +76,9 @@ const REASONING_STREAM = [
 ].join('\n\n') + '\n\n'
 const STREAMED_TOOL_CALLS = [{ id: 'call_1', name: 'model_list', argumentsText: '{}' }]
 
-// This media server answers a generate request with JSON, and an edit and
-// an upscale with the image's bytes, each in two chunks. The file host
-// answers the same way.
+// This media server answers a generate request with JSON, an edit and an
+// upscale with the image's bytes, and a transcription with JSON, each in
+// two chunks. The file host answers the same way.
 const MEDIA_BASE_URL = 'http://localhost:5050/api/v1'
 const WEBP_IMAGE = new TextEncoder().encode('RIFF\x0c\x00\x00\x00WEBPVP8 ')
 const JPEG_IMAGE = Uint8Array.from([0xff, 0xd8, 0xff, 0xe0, 0, 1])
@@ -88,6 +88,7 @@ const MEDIA_ANSWERS = new Map([
   [`${MEDIA_BASE_URL}/image/generate`, { contentType: 'application/json', body: new TextEncoder().encode(JSON.stringify({ images: [bytesToBase64(WEBP_IMAGE)] })) }],
   [`${MEDIA_BASE_URL}/image/multi-edit`, { contentType: 'image/png', body: STORED_IMAGE }],
   [`${MEDIA_BASE_URL}/image/upscale`, { contentType: 'image/png', body: STORED_IMAGE }],
+  [`${MEDIA_BASE_URL}/audio/transcriptions`, { contentType: 'application/json', body: new TextEncoder().encode(JSON.stringify({ text: ' Hello there. ', duration: 3 })) }],
   [HOSTED_IMAGE_URL, { contentType: 'image/jpeg', body: JPEG_IMAGE }],
   [HOSTED_PAGE_URL, { contentType: 'image/jpeg', body: new TextEncoder().encode('<html>Not here</html>') }],
 ])
@@ -1033,7 +1034,7 @@ describe('media requests', () => {
     })
   })
 
-  describe('input clips of a video request', () => {
+  describe('input clips of a clip or text request', () => {
     const VIDEO_LENGTH = [{ name: 'duration', label: 'Length', options: ['5s'], default: '5s' }]
     // A Venice reference-to-video model, whose family takes its reference
     // clips in fields of their own (veniceReferences.ts).
@@ -1186,6 +1187,39 @@ describe('media requests', () => {
 
       await expect(generate({ kind: 'video', clips: [{ ...clip('video', 'v1', 'video/mp4'), url: null }] })).rejects.toThrow('M takes video clips only by a web address that its provider downloads, and @v1 has none')
       expect([clipReads, downloadRequests]).toStrictEqual([[], []])
+    })
+
+    // Puts the transcription model `whisper` in the model cache, with the
+    // clip rules of the Venice format.
+    function useTranscriptionModel(): void {
+      sbp('dez.model/modelCache/applyProviderResult', 'media', {
+        ok: true,
+        models: [{ id: 'whisper', name: 'Whisper', provider: 'media', outputs: ['text'], request: 'transcription', clips: { audio: { use: 'source', maxClips: 1, types: ['audio/wav', 'audio/mpeg'] } } }],
+      })
+    }
+
+    it('sends the audio clip of a transcription as the file of a form through dez.http/stream, and gives the text of the answer as it is', async () => {
+      useTranscriptionModel()
+      clipFiles = { a1: MP3_AUDIO }
+      audioSeconds = 3
+
+      const result = await generate({ modelId: 'whisper', kind: 'transcription', clips: [clip('audio', 'a1', 'audio/mpeg')], requestId: 'reply-1' })
+      const [{ url, headers, body }] = streamRequests
+      const form = await new Response(typeof body === 'object' ? base64ToBytes(body.base64) : body, { headers }).formData()
+      const file = form.get('file')
+
+      expect(result).toStrictEqual({ media: [], clips: [], text: ' Hello there. ' })
+      expect([streamRequestIds, url, downloadRequests]).toStrictEqual([['reply-1'], `${MEDIA_BASE_URL}/audio/transcriptions`, []])
+      expect(file instanceof Blob && new Uint8Array(await file.arrayBuffer())).toStrictEqual(MP3_AUDIO)
+    })
+
+    it('refuses a transcription with no audio clip before any request', async () => {
+      useTranscriptionModel()
+
+      await expect(generate({ modelId: 'whisper', kind: 'transcription', clips: [clip('video', 'v1', 'video/mp4')] })).rejects.toThrow(
+        'Whisper writes down the speech of an audio clip, and this message has no audio clip.',
+      )
+      expect([clipReads, streamRequests, downloadRequests]).toStrictEqual([[], [], []])
     })
   })
 })
