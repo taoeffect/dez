@@ -185,6 +185,11 @@ class MediaWidget extends WidgetType {
   updateDOM(dom: HTMLElement, _view: EditorView, from: MediaWidget): boolean {
     const player = mountedPlayers.get(dom)
     if (!player || from.tag.kind !== this.tag.kind || from.tag.id !== this.tag.id) return false
+    // The player keeps its height, so its observer writes no entry for the
+    // key of the new `src`. The old entry stays: an undo of the Save, or
+    // another tag of the same file, still uses it.
+    const height = playerHeights.get(heightKey(from.tag))
+    if (height !== undefined) playerHeights.set(heightKey(this.tag), height)
     player.tag.value = this.tag
     return true
   }
