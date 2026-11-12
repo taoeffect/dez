@@ -1622,6 +1622,50 @@ describe('media model data', () => {
     ])
   })
 
+  // A form holds only text and file fields. A switch that is off goes as no
+  // field, as the parameter values of a Venice voice change do.
+  it('sets the top-level scalars of the body parts of a form request as text fields before its file', async () => {
+    const bytes = Uint8Array.from([1, 2, 3])
+    const file = { name: 'file', file: { bytes, mediaType: 'audio/wav', fileName: 'clip.wav' } }
+    const venice = customProvider({
+      mediaApi: {
+        format: 'venice',
+        modelRequestBodies: [{
+          request: 'voiceChange',
+          modelIdPrefix: 'changer',
+          body: { voice: 'ana', pitch: 2, keep_timing: true, remove_background_noise: false, style: null, options: { level: 1 }, tags: ['x'] },
+        }],
+      },
+    })
+    const openRouter = customProvider({
+      mediaApi: { format: 'openrouter', modelRequestBodies: [{ request: 'transcription', modelIdPrefix: 'openai/whisper', body: { language: 'de' } }] },
+    })
+    const transcription = openRouter.textRequest('transcription', 'openai/whisper-1', {
+      prompt: '',
+      images: [],
+      clips: [{ kind: 'audio', use: 'source', mediaType: 'audio/wav', bytes }],
+      values: {},
+    }, key)
+    const formBytes = typeof transcription.body === 'object' ? base64ToBytes(transcription.body.base64) : new Uint8Array()
+    const form = await new Response(formBytes, { headers: { 'Content-Type': transcription.headers?.['Content-Type'] ?? '' } }).formData()
+
+    expect(venice.clipRequest('voiceChange', 'changer-1', {
+      prompt: '',
+      images: [],
+      clips: [{ kind: 'audio', use: 'source', mediaType: 'audio/wav', bytes }],
+      values: { voice: 'bob', similarity: 0.5, remove_background_noise: true },
+    }).form).toStrictEqual([
+      { name: 'model', value: 'changer-1' },
+      { name: 'similarity', value: '0.5' },
+      { name: 'voice', value: 'ana' },
+      { name: 'pitch', value: '2' },
+      { name: 'keep_timing', value: 'true' },
+      file,
+    ])
+    expect([...form.entries()].map(([name, value]) => [name, typeof value === 'string' ? value : 'a file']))
+      .toStrictEqual([['model', 'openai/whisper-1'], ['language', 'de'], ['file', 'a file']])
+  })
+
   // The ids of the OpenRouter model list of 2026-11-10. Its guide names
   // the models that make only PCM; no field of an entry does.
   it('asks the OpenRouter speech models that make only raw PCM for PCM, and the others for mp3', () => {

@@ -286,8 +286,10 @@ export const providerConfigSchema = z.object({
     // merged (as `requestBody` is) into a request of the kind `request` to a
     // model whose id starts with `modelIdPrefix`, after the format's own
     // fields and the values of the model's parameters, so it wins over
-    // both. The parts go in list order. OpenRouter's entries do not tell
-    // which speech models answer only with raw PCM.
+    // both. The parts go in list order. A form request (a transcription, a
+    // Venice voice change) takes only the top-level scalars of a part, as
+    // text fields (`withFormParts`, provider.ts). OpenRouter's entries do
+    // not tell which speech models answer only with raw PCM.
     modelRequestBodies: z.array(z.object({
       request: z.enum(MEDIA_KINDS),
       modelIdPrefix: z.string().min(1),

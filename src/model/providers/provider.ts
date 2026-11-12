@@ -12,7 +12,7 @@ import { MEDIA_FORMATS, type ClipFormat, type ClipInput, type ClipJob, type Imag
 import type { ParameterValues } from './modelParameters'
 import { isRecord, modelCapability, modelData, modelOutputsAndRequest, modelReadableName, unsupportedSettings } from './modelParsing'
 import { modelToggles, type ToggleModel } from './modelToggles'
-import { multipartBody } from './multipart'
+import { multipartBody, type MultipartField } from './multipart'
 import { isThinkingEnabled } from './thinking'
 import { ProviderError, effectiveRequest, isClipKind, isTextKind, providerModel, type ChatMessage, type ChatRequestContext, type ClipKind, type GeneratedMedia, type ImageKind, type MediaKind, type ModelInfo, type ProviderInfo, type TextKind } from './types'
 
@@ -439,7 +439,9 @@ export class Provider {
   private withModelBody(kind: MediaKind, modelId: string, wire: MediaWireRequest): MediaWireRequest {
     const parts = (this.config.mediaApi?.modelRequestBodies ?? [])
       .filter((part) => part.request === kind && modelId.startsWith(part.modelIdPrefix))
-    if (wire.body === undefined || parts.length === 0) return wire
+    if (parts.length === 0) return wire
+    if (wire.form !== undefined) return { ...wire, form: withFormParts(wire.form, parts.map((part) => part.body)) }
+    if (wire.body === undefined) return wire
     const body = { ...wire.body }
     for (const part of parts) mergeBodyPart(body, part.body)
     return { ...wire, body }
@@ -563,6 +565,28 @@ function mergeBodyPart(target: Record<string, unknown>, part: JsonObject): void 
       target[key] = value
     }
   }
+}
+
+// A form (`multipart/form-data`) with the config body parts of its request.
+// A form has only text and file fields, so only the top-level text, number,
+// and `true` values of a part go, as text fields; an object or an array does
+// not. A value replaces a text field of the same name, and `false` or `null`
+// leaves the field out, as a form sends a switch that is off as no field.
+// File fields stay, and new fields go before the first one, as the media
+// formats put their text fields first.
+function withFormParts(form: readonly MultipartField[], parts: readonly JsonObject[]): MultipartField[] {
+  const values = new Map<string, string | null>()
+  for (const part of parts) {
+    for (const [name, value] of Object.entries(part)) {
+      if (value === false || value === null) values.set(name, null)
+      else if (typeof value !== 'object') values.set(name, String(value))
+    }
+  }
+  const kept = form.filter((field) => 'file' in field || !values.has(field.name))
+  const added = [...values].flatMap(([name, value]) => (value === null ? [] : [{ name, value }]))
+  const firstFile = kept.findIndex((field) => 'file' in field)
+  const at = firstFile === -1 ? kept.length : firstFile
+  return [...kept.slice(0, at), ...added, ...kept.slice(at)]
 }
 
 // Adds query parameters to a model-list URL, after the format's own query if
