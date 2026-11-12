@@ -153,11 +153,11 @@ export async function pasteImage (browser: E2EBrowser, image: Buffer, type = 'im
   }, image.toString('base64'), type)
 }
 
-/** Pastes the PNG `png` with `pasteImage`, and waits until the last
- *  section of the active tab ends with its reference, which gets the image
- *  id `id`. */
-export async function pasteImageReference (browser: E2EBrowser, png: Buffer, id: string): Promise<void> {
-  await pasteImage(browser, png)
+/** Pastes `image` with `pasteImage` (a PNG, or a file of the type `type`),
+ *  and waits until the last section of the active tab ends with its
+ *  reference, which gets the image id `id`. */
+export async function pasteImageReference (browser: E2EBrowser, image: Buffer, id: string, type = 'image/png'): Promise<void> {
+  await pasteImage(browser, image, type)
   await waitForValue(browser, `reference of the image ${id}`, async () => (await threadSections(browser)).at(-1)?.text.endsWith(`](id=${id})`) ?? false, true)
 }
 

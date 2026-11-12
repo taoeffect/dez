@@ -6,7 +6,7 @@ import { unknownToolText } from '../../src/model/tools/registry'
 import { anthropicChatBody, anthropicMarkedUser, openAiChatBody } from './harness/chatBody'
 import { consoleErrors, pointerClick, resetConsoleErrors, screenshotOnFailure, typeKeys, waitForValue } from './harness/dom'
 import { conversationFilePath, makeConversation, seedConversation } from './harness/fixtures'
-import { decodedImage, pasteImage, pngDataUrl, shownImages, STRIPE_COLORS, STRIPES_PNG, STRIPES_SVG, WEBKIT_SVG_SIZES } from './harness/images'
+import { decodedImage, generatedImagesDir, pasteImageReference, pngDataUrl, shownImages, STRIPE_COLORS, STRIPES_PNG, STRIPES_SVG, WEBKIT_SVG_SIZES } from './harness/images'
 import { WAV_SAMPLE_RATE, monoWav, shownPlayers } from './harness/media'
 import { startMockProviderApp, type MockProviderApp } from './harness/mockProviderApp'
 import { mockChatPath, replyText, sendAnthropicReply, sendChatReply, startEventStream, writeAnthropicEvent, writeChatFrame, type MockProvider } from './harness/mockServer'
@@ -39,7 +39,7 @@ import { activeConversationId, activeTabStreaming, docPos, editorCaret, editorDo
 const TOOLER: MockProvider = { id: 'tooler', name: 'Tool Mock', modelId: 'tool-model', modelName: 'Tool Model' }
 const CLAUDE: MockProvider = { id: 'claude', name: 'Claude Mock', modelId: 'claude-model', modelName: 'Claude Model', apiFormat: 'anthropic' }
 
-const [, GREEN] = STRIPE_COLORS
+const [RED, GREEN, BLUE] = STRIPE_COLORS
 
 // Two seconds of silence, 16-bit mono at 8 kHz: the clip of the `audio`
 // test. Silence, so a run makes no sound.
@@ -446,8 +446,7 @@ describe('tool calls', () => {
     await pickModel(browser, TOOLER.name, TOOLER.modelName)
     await focusEditor(browser)
     await typeKeys(browser, 'Crop ')
-    await pasteImage(browser, STRIPES_PNG)
-    await waitForValue(browser, 'reference of the pasted image', async () => (await threadSections(browser))[0].text.endsWith('](id=a)'), true)
+    await pasteImageReference(browser, STRIPES_PNG, 'a')
     const message = (await threadSections(browser))[0].text
     await submit(browser, '')
     const first = await setup.mock.waitForRequest(browser)
@@ -489,7 +488,7 @@ describe('tool calls', () => {
     const blockOf = (id: string, command: string, parameters: string, result: string) =>
       `<dez:tool id="${id}" name="image" command="${command}" parameters="${parameters.replaceAll('"', '&quot;')}">\n${result}\n</dez:tool>`
     const blocks = `${blockOf('call_crop', 'crop', cropParameters, cropResult)}\n${blockOf('call_scale', 'scale', scaleParameters, scaleResult)}`
-    const generatedDir = path.join(setup.app.home, '.config', 'dez', 'assets', 'generated', 'images')
+    const generatedDir = generatedImagesDir(setup.app.home)
     expect([path.dirname(croppedPath), path.dirname(scaledPath)]).toStrictEqual([generatedDir, generatedDir])
     const sections = [
       { role: 'user', text: message },
@@ -533,8 +532,7 @@ describe('tool calls', () => {
     await pickModel(browser, TOOLER.name, TOOLER.modelName)
     await focusEditor(browser)
     await typeKeys(browser, 'Crop ')
-    await pasteImage(browser, STRIPES_SVG, 'image/svg+xml')
-    await waitForValue(browser, 'reference of the pasted SVG', async () => (await threadSections(browser))[0].text.endsWith('](id=a)'), true)
+    await pasteImageReference(browser, STRIPES_SVG, 'a', 'image/svg+xml')
     const message = (await threadSections(browser))[0].text
     const pastedPath = message.slice('Crop !['.length, message.indexOf(']('))
     expect(path.extname(pastedPath)).toBe('.svg')
@@ -553,7 +551,7 @@ describe('tool calls', () => {
     expect(copy.startsWith('data:image/png;base64,')).toBe(true)
     expect(await decodedImage(browser, copy, [stripe / 2, stripe * 1.5, stripe * 2.5])).toEqual({
       ...svgSize,
-      pixels: [[220, 40, 40, 255], [...GREEN, 255], [40, 90, 220, 255]],
+      pixels: [[...RED, 255], [...GREEN, 255], [...BLUE, 255]],
     })
 
     // The green stripe.

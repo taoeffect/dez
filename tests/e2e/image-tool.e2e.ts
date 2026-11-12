@@ -4,7 +4,7 @@ import path from 'node:path'
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from 'vitest'
 import { openAiChatBody } from './harness/chatBody'
 import { consoleErrors, resetConsoleErrors, screenshotOnFailure, typeKeys, waitForValue } from './harness/dom'
-import { decodedImage, jpegImage, pasteImage, pngDataUrl, shownImages, STRIPE_COLORS, STRIPES_PNG, STRIPES_SVG, WEBKIT_SVG_SIZES, type DecodedImage } from './harness/images'
+import { decodedImage, generatedImagesDir, jpegImage, pasteImageReference, pngDataUrl, shownImages, STRIPE_COLORS, STRIPES_PNG, STRIPES_SVG, WEBKIT_SVG_SIZES, type DecodedImage } from './harness/images'
 import { startMockProviderApp, type MockProviderApp } from './harness/mockProviderApp'
 import { replyText, sendChatReply, startEventStream, writeChatFrame, type MockProvider } from './harness/mockServer'
 import type { E2EBrowser } from './harness/session'
@@ -85,15 +85,13 @@ describe('image tool flip, rotate, color changes, and convert', () => {
   let generatedDir: string
 
   /** Types "Turn " into a new tab, pastes `image`, and waits for its
-   *  reference. Gives the message text. */
-  async function pasteInNewTab (image: Buffer, type: string): Promise<string> {
+   *  reference. */
+  async function pasteInNewTab (image: Buffer, type: string): Promise<void> {
     await newTab(browser)
     await pickModel(browser, TOOLER.name, TOOLER.modelName)
     await focusEditor(browser)
     await typeKeys(browser, 'Turn ')
-    await pasteImage(browser, image, type)
-    await waitForValue(browser, 'reference of the pasted image', async () => (await threadSections(browser))[0].text.endsWith('](id=a)'), true)
-    return (await threadSections(browser))[0].text
+    await pasteImageReference(browser, image, 'a', type)
   }
 
   /** Ends the reply after the calls, and gives the paths of the images
@@ -122,7 +120,7 @@ describe('image tool flip, rotate, color changes, and convert', () => {
   beforeAll(async () => {
     setup = await startMockProviderApp(TOOLER)
     browser = setup.browser
-    generatedDir = path.join(setup.app.home, '.config', 'dez', 'assets', 'generated', 'images')
+    generatedDir = generatedImagesDir(setup.app.home)
   })
 
   beforeEach(async () => {
