@@ -55,11 +55,10 @@ const CONVERT_FORMATS: Record<DrawnMediaType, string> = {
 
 const CONVERT_TYPES = Object.keys(CONVERT_FORMATS) as DrawnMediaType[]
 
-// The name of each image file type in the texts.
-const FORMAT_NAMES: Record<ImageMediaType, string> = {
+// The name of each file type that the image tool makes, in the texts.
+const FORMAT_NAMES: Record<DrawnMediaType, string> = {
   'image/png': 'PNG',
   'image/jpeg': 'JPEG',
-  'image/gif': 'GIF',
   'image/webp': 'WebP',
   'image/svg+xml': 'SVG',
 }
