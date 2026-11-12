@@ -132,7 +132,14 @@ function onMediaError(event: Event): void {
   const code = media.value?.error?.code
   // Only the code: the message can hold the URL, which can be a signed URL.
   console.error('[MediaPlayer] The clip did not load; media error code:', code)
-  if (loaded.value) fail(loaded.value.src, { step: 'play', code })
+  const source = loaded.value
+  if (!source) return
+  fail(source.src, { step: 'play', code })
+  // The card takes the place of the media element, so the player needs no
+  // source any more: this gives up the blob URL of a local file (the
+  // `loaded` watcher revokes it), which holds the whole file in memory. A
+  // URL that is asked first (`unavailable` stays null) keeps its element.
+  if (unavailable.value !== null) load(null)
 }
 
 // A video is 16:9 until it tells its size.
@@ -165,7 +172,8 @@ const fileBytes = ref<number | null>(null)
 // URL: the media player of WebKitGTK (GStreamer) loads http, https, and blob
 // URLs only, and gives a "source not supported" error for the URL of a
 // custom protocol. `fetch` has no such limit, so the asset protocol still
-// reads the file. The whole file is in memory while the player shows it.
+// reads the file. The whole file is in memory while the media element has
+// it; the card of a clip that does not play gives it up (`onMediaError`).
 // Until the file is read, the media element keeps the source of before. A
 // new media element (in place of a card) gets no source until then: so it
 // does not change its source at the start of its load, which can stop the

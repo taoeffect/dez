@@ -28,9 +28,10 @@ import { copySelection, editorCaret, editorDoc, focusEditor, focusedArea, newTab
 // - a clip in a format that no computer decodes (text in a `.webm` file),
 //   from a temp copy or from a URL, shows the card that says that this
 //   computer cannot play it, under which the clock and Save stay; the card
-//   stays over a Save and then names the saved file, and after the Delete
-//   of a saved file that has no URL the clip is gone; a clip whose URL
-//   gives no clip (a 404) is gone;
+//   of a temp copy holds no blob URL of the file's bytes; the card stays
+//   over a Save and then names the saved file, and after the Delete of a
+//   saved file that has no URL the clip is gone; a clip whose URL gives no
+//   clip (a 404) is gone;
 // - the clock's tooltip stays open while the pointer moves into it and
 //   rests there, also in fullscreen over the picture; a drag or a triple
 //   click in it selects its text and leaves the editor's caret and doc
@@ -295,6 +296,34 @@ describe('media player', () => {
     return browser.execute(() => window.getSelection()?.toString() ?? '')
   }
 
+  // From now on, the page keeps a list of the blob URLs that it makes. A
+  // local clip plays from a blob URL of its file, which keeps the whole
+  // file in memory until the URL is revoked. `createObjectURL` is wrapped
+  // once per page; later calls only empty the list.
+  async function recordBlobUrls (): Promise<void> {
+    await browser.execute(() => {
+      Reflect.set(window, '__e2eBlobUrls', [])
+      if (Reflect.get(window, '__e2eBlobUrlsWrapped')) return
+      Reflect.set(window, '__e2eBlobUrlsWrapped', true)
+      const create = URL.createObjectURL.bind(URL)
+      URL.createObjectURL = (object: Blob | MediaSource) => {
+        const url = create(object)
+        ;(Reflect.get(window, '__e2eBlobUrls') as string[]).push(url)
+        return url
+      }
+    })
+  }
+
+  // How many blob URLs the page made since `recordBlobUrls`, and how many
+  // of them still give their bytes (a revoked URL makes the fetch fail).
+  async function blobUrls (): Promise<{ made: number, live: number }> {
+    return browser.execute(async () => {
+      const urls = Reflect.get(window, '__e2eBlobUrls') as string[]
+      const live = await Promise.all(urls.map((url) => fetch(url).then(() => true, () => false)))
+      return { made: urls.length, live: live.filter(Boolean).length }
+    })
+  }
+
   beforeAll(async () => {
     clips = await startClipServer({
       'tone.wav': { type: 'audio/wav', bytes: TONE },
@@ -481,6 +510,7 @@ describe('media player', () => {
     const tempPath = path.join(tempDir(), 'text-copy.webm')
     await fs.promises.writeFile(tempPath, NOT_A_CLIP)
     const expires = new Date(Date.now() + HOUR_MS).toISOString()
+    await recordBlobUrls()
     await openReply('text-copy', clipTag('video', { id: 'a', type: 'video/webm', src: tempPath, expires }))
 
     // The file was read, so its bytes are there: the card names the format
@@ -488,6 +518,9 @@ describe('media player', () => {
     const cannotPlay: ShownPlayer = { kind: 'video', id: 'a', available: false, source: null, seconds: null, picture: null, clock: 'Not saved', save: 'save' }
     await waitForValue(browser, 'player of the text', () => shownPlayers(browser), [cannotPlay])
     expect(await problemCards(browser)).toStrictEqual([{ cause: 'cannot-play', lines: [CANNOT_PLAY_WEBM, SAVE_HINT] }])
+    // The card needs no bytes of the file: the player gave up the blob URL
+    // of the file, so the file is not in memory while the card shows.
+    await waitForValue(browser, 'blob URLs of the file', blobUrls, { made: 1, live: 0 })
     await movePointer(browser, await elementCenter(browser, '.media-player__clock'))
     await waitForValue(browser, 'clock tooltip', () => openPlayerTooltips(browser), [
       `Not saved This clip is available until ${await pageTime(expires)}. Save it to keep it. Temporary file: ~/.cache/dez/media/text-copy.webm`,
