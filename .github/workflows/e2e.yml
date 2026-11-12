@@ -23,20 +23,20 @@ env:
 # before any network request (see the e2e job). A new job must do the same.
 jobs:
   e2e:
-    name: E2E (Linux, WebDriver, ${{ matrix.shard }}/4)
+    name: E2E (Linux, WebDriver, ${{ matrix.shard }}/6)
     runs-on: ubuntu-24.04
     # 3x the run time in the v0.13.0 release, rounded up. That run was from
-    # before the 4 shards, when one runner ran all the specs.
+    # before the shards, when one runner ran all the specs.
     timeout-minutes: 46
 
-    # The specs run one file at a time, so four runners each run about a
-    # quarter of the files (`vitest --shard`). Vitest splits by file count,
-    # not by run time. The 4 in `name` and in the test step must match the
+    # The specs run one file at a time, so six runners each run about a
+    # sixth of the files (`vitest --shard`). Vitest splits by file count,
+    # not by run time. The 6 in `name` and in the test step must match the
     # length of `shard`.
     strategy:
       fail-fast: false
       matrix:
-        shard: [1, 2, 3, 4]
+        shard: [1, 2, 3, 4, 5, 6]
 
     env:
       # Pin the native WebDriver so tauri-driver never has to guess its
@@ -120,7 +120,7 @@ jobs:
         run: npm run tauri build -- --debug --no-bundle
 
       - name: Run E2E tests under Xvfb
-        run: xvfb-run -a npm run test:e2e -- --shard=${{ matrix.shard }}/4
+        run: xvfb-run -a npm run test:e2e -- --shard=${{ matrix.shard }}/6
 
       # upload-artifact sends the runtime token over HTTPS, so skip it when
       # the CA fix failed and the bundle can still trust a removed root.
