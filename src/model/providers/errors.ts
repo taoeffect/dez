@@ -123,7 +123,7 @@ function statusExplanation(provider: ProviderIdentity, status: number | undefine
     const baseUrl = provider.builtIn ? '' : `, or check the base URL of ${name} in Settings › Providers`
     return `${name} has nothing for this request: the model can be gone, or it does not take this kind of request.${reason} Choose another model${baseUrl}.`
   }
-  if (status === 413) return `The request is too large for ${name}.${reason} Send fewer or smaller images, or start a new conversation.`
+  if (status === 413) return `The request is too large for ${name}.${reason} Send fewer or smaller images or clips, or start a new conversation.`
   if (status === 429) {
     return `${name} refused the request because of a limit: too many requests in a short time, or a limit of your ${name} account.${reason} Wait a minute, then try again. If the error stays, check your account at ${name}.`
   }

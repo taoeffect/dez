@@ -53,7 +53,7 @@ describe('provider status errors', () => {
     [404, venice, true, 'Venice has nothing for this request: the model can be gone, or it does not take this kind of request. Venice tells its reason in the details below. Choose another model.'],
     // A custom provider's base URL can be wrong.
     [404, custom, true, 'My server has nothing for this request: the model can be gone, or it does not take this kind of request. My server tells its reason in the details below. Choose another model, or check the base URL of My server in Settings › Providers.'],
-    [413, venice, true, 'The request is too large for Venice. Venice tells its reason in the details below. Send fewer or smaller images, or start a new conversation.'],
+    [413, venice, true, 'The request is too large for Venice. Venice tells its reason in the details below. Send fewer or smaller images or clips, or start a new conversation.'],
     [503, venice, true, 'This is a problem at Venice, not in your message or in Dez. Try again later.'],
     [501, venice, true, 'Venice had an error. Venice tells its reason in the details below. This is a problem at Venice, not in your message or in Dez. Try again later, or choose another model.'],
     [422, venice, true, 'Venice refused the request. Venice tells its reason in the details below. The cause can be the message, the settings of the model, or the request that Dez made. Change the message or the settings, or choose another model. If the error stays, report it at Help › Dez on GitHub.'],
