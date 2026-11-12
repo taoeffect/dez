@@ -91,11 +91,13 @@ let syncingViewStructure = false
 // Where the view was in each conversation that it left, so that it shows
 // the same place on a return: a tab switch, File › Reopen Closed Tab (the
 // reopened tab has a new tab id but the same conversation id), or History.
-// The selection comes back too: a caret left at the doc start would scroll
-// the view back up at the first key press. Session-only. The restore
-// scrolls the view as a user scroll does, on purpose: a place at the very
-// bottom of a tab whose reply still streams starts the stream follow again
-// (`handleVisibleScroll` in `src/view/editor/selectors.ts`).
+// A conversation with no saved place starts at the top
+// (`resetViewToActiveTab`). The selection comes back too: a caret left at
+// the doc start would scroll the view back up at the first key press.
+// Session-only. The restore scrolls the view as a user scroll does, on
+// purpose: a place at the very bottom of a tab whose reply still streams
+// starts the stream follow again (`handleVisibleScroll` in
+// `src/view/editor/selectors.ts`).
 interface ViewPlace {
   scroll: ReturnType<EditorView['scrollSnapshot']>
   selection: EditorSelection
@@ -1056,11 +1058,18 @@ function resetViewToActiveTab(streamEnd?: { followBottom: boolean }) {
       effects: place.scroll,
       userEvent: 'select',
     })
-  } else if (findState.open) {
-    // setState runs no update listeners, so redo the find bookkeeping that
-    // the listener does for the dispatches above.
-    findState.origin = view.state.selection.main.from
-    refreshFindStatus()
+  } else {
+    // CodeMirror's setState keeps the scroller's scrollTop, so another tab
+    // with no saved place (a new tab, or a conversation not shown yet in
+    // this session) would open at the scroll of the tab before it. It
+    // starts at the top, where its caret (the doc start) is.
+    if (!sameTab) view.scrollDOM.scrollTop = 0
+    if (findState.open) {
+      // setState runs no update listeners, so redo the find bookkeeping
+      // that the listener does for the dispatches above.
+      findState.origin = view.state.selection.main.from
+      refreshFindStatus()
+    }
   }
 }
 

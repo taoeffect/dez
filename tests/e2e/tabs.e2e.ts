@@ -140,6 +140,14 @@ async function viewPlace (browser: E2EBrowser): Promise<{ topLine: number, caret
   }))
 }
 
+async function scrollerTop (browser: E2EBrowser): Promise<number> {
+  return browser.execute(() => {
+    const scroller = document.querySelector('.cm-scroller')
+    if (!scroller) throw new Error('scrollerTop: .cm-scroller not found')
+    return scroller.scrollTop
+  })
+}
+
 // A tab's sections as the store holds them, with the fields that the
 // editor's section models carry (id, role, model, thinking) and the text.
 async function tabSections (browser: E2EBrowser, tabId: string): Promise<Array<{
@@ -196,6 +204,15 @@ function questionsAndAnswers (name: string, turns: number, model: ModelRef): Sec
   }
   sections.push({ role: 'user', nodes: [] })
   return sections
+}
+
+// One user message of 150 lines, so the view can scroll, and its reply.
+function longQuestion (name: string): SectionData[] {
+  const text = Array.from({ length: 150 }, (_, i) => `${name} line ${i + 1}`).join('\n')
+  return [
+    { role: 'user', nodes: [{ kind: 'text', text }] },
+    { role: 'agent', nodes: [{ kind: 'text', text: 'Reply.' }] },
+  ]
 }
 
 const VISIBLE = {
@@ -544,6 +561,18 @@ describe('tab change that adds a tab', () => {
     title: 'Closed thread',
     sections: questionsAndAnswers('Closed', 2, { providerId: 'seeded', modelId: 'closed-model' }),
   })
+  // Two threads of the same height: the scroll of the first one is a valid
+  // scroll of the second one, so the browser does not clamp it to the top.
+  const SCROLLED_THREAD = makeConversation({
+    id: 'tab-change-scrolled',
+    title: 'Scrolled thread',
+    sections: longQuestion('Scrolled'),
+  })
+  const LONG_THREAD = makeConversation({
+    id: 'tab-change-long',
+    title: 'Long thread',
+    sections: longQuestion('Long'),
+  })
   // Leaving a tab saves it at once, and the editor's own saves wait 1 s, so
   // a wrong save of the tab left behind is on disk after this pause.
   const SAVES_DONE_MS = 1500
@@ -554,7 +583,7 @@ describe('tab change that adds a tab', () => {
     app = await startApp()
     try {
       await seedAppState(app.home)
-      for (const conversation of [HISTORY_THREAD, SAVED_THREAD, CLOSED_THREAD]) {
+      for (const conversation of [HISTORY_THREAD, SAVED_THREAD, CLOSED_THREAD, SCROLLED_THREAD, LONG_THREAD]) {
         await seedConversation(app.home, conversation)
       }
       browser = await createSession(app.binary, app.port)
@@ -612,5 +641,36 @@ describe('tab change that adds a tab', () => {
       sections: await tabSections(browser, savedTab.id),
       pillLines: await savedPillLines(app.home, SAVED_THREAD.id),
     }).toEqual(saved)
+  })
+
+  // Regression: CodeMirror keeps the scroller's scrollTop over a new editor
+  // state, so a conversation that History opened showed the scroll of the
+  // tab before it, with the caret at the doc start out of view.
+  it('opens a conversation from History at the top, not at the scroll of the tab before it', async () => {
+    await sbpCall(browser, 'dez.model/tabs/openConversation', SCROLLED_THREAD.id)
+    await waitForValue(browser, 'scrolled thread in the editor', async () => (await editorDoc(browser)).startsWith('Scrolled line 1\n'), true)
+    // Focus first: a script focus of the editor scrolls it to the caret.
+    await focusEditor(browser)
+    await browser.keys([Key.Control, Key.End])
+    const docLength = (await editorDoc(browser)).length
+    let bottom = { topLine: 0, caret: 0 }
+    await waitForValue(browser, 'caret at the doc end', async () => {
+      bottom = await viewPlace(browser)
+      return bottom.caret
+    }, docLength)
+    expect(bottom.topLine).toBeGreaterThan(100)
+
+    await openFromHistory(browser, LONG_THREAD.title)
+    const top = { conversationId: LONG_THREAD.id, place: { topLine: 1, caret: 0 }, scrollTop: 0 }
+    const longThreadView = async (): Promise<typeof top> => ({
+      conversationId: await activeConversationId(browser),
+      place: await viewPlace(browser),
+      scrollTop: await scrollerTop(browser),
+    })
+    await waitForValue(browser, 'long thread at the top', longThreadView, top)
+    // A late scroll (such as a focus that scrolls to the caret) would move
+    // the view after the first match.
+    await browser.pause(300)
+    expect(await longThreadView()).toEqual(top)
   })
 })

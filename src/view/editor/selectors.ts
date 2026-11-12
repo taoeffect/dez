@@ -60,6 +60,9 @@ function followToBottomNextFrame(): void {
 // So code that runs without a user action must not scroll a view up, or
 // scroll a view that does not follow: that looks like a user scroll, and
 // stops or starts the follow.
+// A tab change sets the place of the new tab's view (its saved place, or
+// the top) between `unregisterActiveView` and `registerActiveView`, which
+// both clear the follow (`resetViewToActiveTab` in `ThreadEditor.vue`).
 // `tests/e2e/stream-follow.e2e.ts` covers the rules.
 function handleVisibleScroll(tabId: string): void {
   if (!activeView || activeViewTabId !== tabId) return

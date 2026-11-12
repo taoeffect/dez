@@ -613,9 +613,6 @@ describe('tool calls', () => {
     }))
     await sbpCall(browser, 'dez.model/tabs/openConversation', 'long-result')
     await waitForValue(browser, 'chip of the long result', toolChips, [closedChip('"x"')])
-    // A new tab keeps the scroll position of the tab before it (a tall
-    // reply of an earlier test), which can put the chip under the tab bar.
-    await browser.execute(() => document.querySelector('.cm-content .dez-tool-call__chip')?.scrollIntoView({ block: 'center' }))
     await pointerClick(browser, '.cm-content .dez-tool-call__chip')
     await waitForValue(browser, 'long result in the panel', async () => (await toolPanel(0))?.result, result)
 
