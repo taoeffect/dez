@@ -27,12 +27,14 @@ const TOOL: SubcommandTool = {
 }
 
 const CUT_CALL = '{"command":"cut","parameters":"{\\"sound\\":\\"b\\",\\"start\\":1.5}"}'
+const DETAILS = 'To get the details of a subcommand (what it does, its parameters, and an example call), call help with its name, '
+  + 'as in {"command":"help","parameters":"{\\"command\\":\\"cut\\"}"}, or call a subcommand that takes parameters with none, as in {"command":"cut"}.'
 const LIST = [
   'The subcommands of the sound tool:',
   '- cut: Cut a part of a sound.',
   '- list: List the sounds.',
   '- help: Give the details of a subcommand: what it does, its parameters, and an example call.',
-  `To get the details of a subcommand, call it with no parameters, as in {"command":"cut"}. To run it, give its parameters as the text of a JSON object, as in ${CUT_CALL}.`,
+  `${DETAILS} To run a subcommand, give its parameters as the text of a JSON object, as in ${CUT_CALL}.`,
 ].join('\n')
 const CUT_HELP = [
   'The subcommand cut of the sound tool: Makes a new sound from a part of a sound.',
@@ -56,12 +58,25 @@ describe('subcommandToolDefinition', () => {
   it('names the subcommands and how to list them and get their details, with two optional text arguments', () => {
     const definition = subcommandToolDefinition(TOOL)
     expect(definition.description).toBe('Change sounds. It has subcommands (cut, list, help). '
-      + 'Call it with no arguments to list them with what each one does. '
-      + 'Call a subcommand with no parameters, as in {"command": "cut"}, to get its details: what it does, its parameters, and an example call.')
+      + `Call it with no arguments to list them with what each one does. ${DETAILS}`)
     expect(definition.parameters.map(({ name, type, required }) => ({ name, type, required }))).toStrictEqual([
       { name: 'command', type: 'string', required: false },
       { name: 'parameters', type: 'string', required: false },
     ])
+  })
+
+  // A subcommand that takes no parameters runs when a call gives none, so it
+  // is never the example of a details call with no parameters.
+  it('gives a details call with no parameters only for a subcommand that takes parameters, and none when no subcommand does', () => {
+    const [cut, list] = TOOL.subcommands
+    expect(subcommandToolDefinition({ ...TOOL, subcommands: [list, cut] }).description).toBe('Change sounds. It has subcommands (list, cut, help). '
+      + 'Call it with no arguments to list them with what each one does. '
+      + 'To get the details of a subcommand (what it does, its parameters, and an example call), call help with its name, '
+      + 'as in {"command":"help","parameters":"{\\"command\\":\\"list\\"}"}, or call a subcommand that takes parameters with none, as in {"command":"cut"}.')
+    expect(subcommandToolDefinition({ ...TOOL, subcommands: [list] }).description).toBe('Change sounds. It has subcommands (list, help). '
+      + 'Call it with no arguments to list them with what each one does. '
+      + 'To get the details of a subcommand (what it does, its parameters, and an example call), call help with its name, '
+      + 'as in {"command":"help","parameters":"{\\"command\\":\\"list\\"}"}.')
   })
 })
 

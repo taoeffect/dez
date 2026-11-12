@@ -7,8 +7,8 @@ import { ToolError, type ToolArguments, type ToolArgumentValue, type ToolDefinit
 // parameter is a flat scalar (types.ts): `command`, the subcommand's name,
 // and `parameters`, the subcommand's own parameters as the text of a JSON
 // object. A call with no arguments lists the subcommands; the built-in
-// `help` subcommand, or a subcommand called with no parameters, gives the
-// details of one.
+// `help` subcommand, or a subcommand that takes parameters called with
+// none, gives the details of one.
 
 /** One subcommand of a `SubcommandTool`. */
 export interface Subcommand {
@@ -67,7 +67,7 @@ export function subcommandToolDefinition(tool: SubcommandTool): ToolDefinition {
     name: tool.name,
     description: `${tool.summary} It has subcommands (${names}). `
       + 'Call it with no arguments to list them with what each one does. '
-      + `Call a subcommand with no parameters, as in {"command": "${first}"}, to get its details: what it does, its parameters, and an example call.`,
+      + detailsText(tool),
     parameters: [
       {
         name: 'command',
@@ -78,7 +78,7 @@ export function subcommandToolDefinition(tool: SubcommandTool): ToolDefinition {
       {
         name: 'parameters',
         type: 'string',
-        description: 'The parameters of the subcommand, as the text of a JSON object. Leave it out to get the details of the subcommand.',
+        description: 'The parameters of the subcommand, as the text of a JSON object. Leave it out to run a subcommand that takes none, or to get the details of one that takes some.',
         required: false,
       },
     ],
@@ -91,14 +91,26 @@ function exampleCall(subcommand: Subcommand): string {
   return JSON.stringify({ command: subcommand.name, parameters: JSON.stringify(subcommand.example) })
 }
 
+// How to get the details of a subcommand, for the tool's description and
+// the list. A subcommand that takes no parameters runs when a call gives
+// none, so only `help` gives the details of every subcommand; the shortcut
+// call is told only with a subcommand that takes parameters.
+function detailsText(tool: SubcommandTool): string {
+  const takesParameters = tool.subcommands.find((subcommand) => subcommand.parameters.length > 0)
+  const shortcut = takesParameters
+    ? `, or call a subcommand that takes parameters with none, as in ${JSON.stringify({ command: takesParameters.name })}`
+    : ''
+  return `To get the details of a subcommand (what it does, its parameters, and an example call), call ${HELP_NAME} with its name, `
+    + `as in ${exampleCall(helpSubcommand(tool))}${shortcut}.`
+}
+
 function listText(tool: SubcommandTool): string {
   const subcommands = allSubcommands(tool)
   const first = subcommands[0]
   return [
     `The subcommands of the ${tool.name} tool:`,
     ...subcommands.map((subcommand) => `- ${subcommand.name}: ${subcommand.summary}`),
-    `To get the details of a subcommand, call it with no parameters, as in ${JSON.stringify({ command: first.name })}. `
-      + `To run it, give its parameters as the text of a JSON object, as in ${exampleCall(first)}.`,
+    `${detailsText(tool)} To run a subcommand, give its parameters as the text of a JSON object, as in ${exampleCall(first)}.`,
   ].join('\n')
 }
 
