@@ -1,5 +1,5 @@
 import sbp from '@sbp/sbp'
-import { StateEffect, StateField, Transaction, type EditorState, type Extension, type Text } from '@codemirror/state'
+import { StateEffect, StateField, type EditorState, type Extension, type Text } from '@codemirror/state'
 import { Decoration, EditorView, ViewPlugin, WidgetType, showTooltip, type DecorationSet, type PluginValue, type Rect, type Tooltip } from '@codemirror/view'
 import { SENTINEL_CHAR } from '../../model/chat/content'
 import { findImageReferences, imageExtension, imageMediaType, type ImageReference } from '../../model/chat/images'
@@ -10,7 +10,7 @@ import { IMAGE_MAX_HEIGHT_PX, SECTION_SEP, editorSizePx } from '../thread/cmEdit
 import { measureLineHeights } from '../thread/editorMeasure'
 import { selectedAssetLook } from './assetSelection'
 import { syncDomSelection } from './focus'
-import { addPendingRange, pendingRange, pendingRanges, removePendingRange, type DocRange } from './pendingRanges'
+import { followShownRange, pendingRanges, type DocRange } from './pendingRanges'
 import { ROUND_STROKE, svgIcon } from './svgIcon'
 import { tableRowStarts } from './tables'
 
@@ -402,9 +402,9 @@ export function imageRemovalRange(doc: Text, { from, to }: DocRange): DocRange {
  *  (`dez.controller/images/delete`), then takes the reference out of the
  *  doc (`imageRemovalRange`). The doc can change while the prompt is open
  *  or the file is being deleted (a stream), so the reference is followed
- *  (`addPendingRange`). A new state of the same tab (the rebuild at the end
- *  of a stream) has no pending ranges: there the reference is found again
- *  by its path and id, when exactly one shown image has them. When the
+ *  (`followShownRange`). A new state of the same tab (the rebuild at the
+ *  end of a stream) has no pending ranges: there the reference is found
+ *  again by its path and id, when exactly one shown image has them. When the
  *  reference is gone (its text changed, another tab, no single match), no
  *  file is deleted, and a toast tells the user. A failed file delete (the
  *  controller has shown a toast) keeps the reference. If the reference
@@ -415,25 +415,10 @@ export function imageRemovalRange(doc: Text, { from, to }: DocRange): DocRange {
 export async function deleteImage(view: EditorView, from: number, path: string): Promise<void> {
   const image = renderedImages(view.state).find((image) => image.from === from && image.path === path)
   if (!image) return
-  const tabId = sbp('dez.model/tabs/activeId') as string
-  let rangeId = addPendingRange(view, image)
-  const currentRange = (): DocRange | null => {
-    const range = pendingRange(view.state, rangeId)
-    if (range) {
-      return renderedImages(view.state).some((other) => other.from === range.from && other.to === range.to && other.path === path) ? range : null
-    }
-    // `pendingRange` gives no range while another tab is active either, and
-    // right after a tab switch the view still holds this tab's state: find
-    // the reference again only while this tab is active.
-    if (sbp('dez.model/tabs/activeId') !== tabId) return null
-    const matches = renderedImages(view.state).filter((other) => other.path === path && other.id === image.id)
-    if (matches.length !== 1) return null
-    rangeId = addPendingRange(view, matches[0])
-    return matches[0]
-  }
+  const followed = followShownRange(view, image, renderedImages, (other) => other.path === path && other.id === image.id)
   let range: DocRange | null = null
   const confirmed = await sbp('dez.ui/confirm', { message: 'Are you sure you want to delete this image?' }) as boolean
-  if (confirmed && !currentRange()) {
+  if (confirmed && !followed.current()) {
     sbp('dez.ui/toast', 'app-global', {
       title: 'Image not deleted',
       message: 'The conversation changed while the prompt was open. Try again.',
@@ -443,20 +428,12 @@ export async function deleteImage(view: EditorView, from: number, path: string):
   } else if (confirmed) {
     try {
       await sbp('dez.controller/images/delete', path)
-      range = currentRange()
+      range = followed.current()
     } catch {
       // The controller has logged the failure and shown a toast.
     }
   }
-  // In another state, or while another tab is active, there is no range.
-  if (!pendingRange(view.state, rangeId)) return
-  view.dispatch({
-    ...(range && {
-      changes: imageRemovalRange(view.state.doc, range),
-      annotations: Transaction.addToHistory.of(false),
-    }),
-    effects: removePendingRange(rangeId),
-  })
+  followed.end(range ? imageRemovalRange(view.state.doc, range) : undefined)
   // The prompt gave the focus back a few ms ago (`syncDomSelection`).
   if (range) syncDomSelection(view)
 }

@@ -1,5 +1,5 @@
 import sbp from '@sbp/sbp'
-import { StateField, Transaction, type ChangeSpec, type EditorState, type Extension } from '@codemirror/state'
+import { StateField, type EditorState, type Extension } from '@codemirror/state'
 import { Decoration, EditorView, WidgetType, type DecorationSet } from '@codemirror/view'
 import { createApp, h, reactive, shallowRef, type App, type ShallowRef } from 'vue'
 import { SENTINEL_CHAR } from '../../model/chat/content'
@@ -12,7 +12,7 @@ import { selectedAssetLook } from './assetSelection'
 import { focusKeepingScroll, syncDomSelection } from './focus'
 import { linesRemovalRange } from './images'
 import { lineBlocks, sectionRolesChanged, sectionTexts } from './lineBlocks'
-import { addPendingRange, pendingRange, pendingRanges, removePendingRange } from './pendingRanges'
+import { followShownRange, pendingRanges } from './pendingRanges'
 
 // The audio and video clips of every section (media tags,
 // src/model/chat/mediaTags.ts), each shown as a player in place of its tag:
@@ -248,45 +248,14 @@ export function renderedMedia(state: EditorState): readonly MediaTag[] {
 }
 
 /** Follows the tag of the player `root` while async work on its clip runs
- *  (a file download, a prompt). The doc can change meanwhile (a stream), so
- *  the tag's range is a pending range. A new state of the same tab (the
- *  rebuild at the end of a stream) has no pending ranges: there the tag is
- *  found again by its kind, id, and `src`, when exactly one shown tag has
- *  them. Null when `root` shows no tag with the `src` of `clip` now. */
+ *  (`followShownRange`). In a new state of the same tab the tag is found
+ *  again by its kind, id, and `src`. Null when `root` shows no tag with the
+ *  `src` of `clip` now. */
 function followClip(view: EditorView, root: HTMLElement, clip: MediaTagData) {
   const from = view.posAtDOM(root)
   const isClip = (tag: MediaTag) => tag.kind === clip.kind && tag.id === clip.id && tag.src === clip.src
   const shown = renderedMedia(view.state).find((tag) => tag.from === from && isClip(tag))
-  if (!shown) return null
-  const tabId = sbp('dez.model/tabs/activeId') as string
-  let rangeId = addPendingRange(view, shown)
-  /** The clip's tag in the state of now; null when it is gone (its text
-   *  changed, another tab is active, no single match). */
-  const currentTag = (): MediaTag | null => {
-    const range = pendingRange(view.state, rangeId)
-    if (range) return renderedMedia(view.state).find((tag) => tag.from === range.from && tag.to === range.to && isClip(tag)) ?? null
-    // `pendingRange` gives no range while another tab is active either, and
-    // right after a tab switch the view still holds this tab's state: find
-    // the tag again only while this tab is active.
-    if (sbp('dez.model/tabs/activeId') !== tabId) return null
-    const matches = renderedMedia(view.state).filter(isClip)
-    if (matches.length !== 1) return null
-    rangeId = addPendingRange(view, matches[0])
-    return matches[0]
-  }
-  /** Ends the work: makes `change` (a rewrite or the removal of the clip's
-   *  tag), if given. The change is not in the undo history: the file change
-   *  that it tells of stays, so an undo could only bring back a tag that
-   *  names a file that is gone. */
-  const end = (change?: ChangeSpec): void => {
-    // In another state, or while another tab is active, there is no range.
-    if (!pendingRange(view.state, rangeId)) return
-    view.dispatch({
-      ...(change && { changes: change, annotations: Transaction.addToHistory.of(false) }),
-      effects: removePendingRange(rangeId),
-    })
-  }
-  return { currentTag, end }
+  return shown ? followShownRange(view, shown, renderedMedia, isClip) : null
 }
 
 /** Fullscreen shows only the card of a player. The delete prompt and the
@@ -331,7 +300,7 @@ async function saveClip(view: EditorView, root: HTMLElement, clip: MediaTagData)
     // The controller has logged the failure and shown a toast.
     void leaveFullscreen(root)
   }
-  const tag = path === null ? null : followed.currentTag()
+  const tag = path === null ? null : followed.current()
   // In one synchronous block with the rewrite, so that the player goes from
   // "saving" to "saved" with no other state between.
   busyClips.delete(src)
@@ -382,7 +351,7 @@ export async function deleteSavedClip(view: EditorView, root: HTMLElement, clip:
     followed.end()
     return
   }
-  if (!followed.currentTag()) {
+  if (!followed.current()) {
     followed.end()
     warnClipChanged(root, 'Clip not deleted', 'The conversation changed while the prompt was open. Try again.')
     return
@@ -399,7 +368,7 @@ export async function deleteSavedClip(view: EditorView, root: HTMLElement, clip:
   }
   // When the tag went while its file was deleted, its text stays where it
   // is, and its player says that the clip is not available.
-  const tag = deleted ? followed.currentTag() : null
+  const tag = deleted ? followed.current() : null
   busyClips.delete(src)
   if (!tag) {
     followed.end()

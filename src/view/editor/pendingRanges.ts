@@ -1,5 +1,5 @@
 import sbp from '@sbp/sbp'
-import { StateEffect, StateField, type EditorState, type Extension } from '@codemirror/state'
+import { StateEffect, StateField, Transaction, type ChangeSpec, type EditorState, type Extension } from '@codemirror/state'
 import type { EditorView } from '@codemirror/view'
 
 export interface DocRange {
@@ -73,6 +73,50 @@ export function pendingRange(state: EditorState, id: string): DocRange | undefin
  *  changes the range, or dispatch it alone when the work changes nothing. */
 export function removePendingRange(id: string): StateEffect<string> {
   return removePendingRangeEffect.of(id)
+}
+
+/** Follows the shown item `start` (an image reference, a media tag) while
+ *  async work on it runs (a prompt, a file save or delete). `shown` gives
+ *  the items that a state shows, and `isSame` tells which of them are
+ *  `start`. The doc can change meanwhile (a stream), so the item's range is
+ *  a pending range. A new state of the same tab (the rebuild at the end of
+ *  a stream) has no pending ranges: there the item is found again when
+ *  exactly one shown item `isSame`. */
+export function followShownRange<T extends DocRange>(
+  view: EditorView,
+  start: T,
+  shown: (state: EditorState) => readonly T[],
+  isSame: (item: T) => boolean,
+) {
+  const tabId = sbp('dez.model/tabs/activeId') as string
+  let rangeId = addPendingRange(view, start)
+  /** The item in the state of now; null when it is gone (its text changed,
+   *  another tab is active, no single match). */
+  const current = (): T | null => {
+    const range = pendingRange(view.state, rangeId)
+    if (range) return shown(view.state).find((item) => item.from === range.from && item.to === range.to && isSame(item)) ?? null
+    // `pendingRange` gives no range while another tab is active either, and
+    // right after a tab switch the view still holds this tab's state: find
+    // the item again only while this tab is active.
+    if (sbp('dez.model/tabs/activeId') !== tabId) return null
+    const matches = shown(view.state).filter(isSame)
+    if (matches.length !== 1) return null
+    rangeId = addPendingRange(view, matches[0])
+    return matches[0]
+  }
+  /** Ends the work: makes `change` (a rewrite or the removal of the item),
+   *  if given. The change is not in the undo history: the file change that
+   *  it tells of stays, so an undo could only bring back text that names a
+   *  file that is gone. */
+  const end = (change?: ChangeSpec): void => {
+    // In another state, or while another tab is active, there is no range.
+    if (!pendingRange(view.state, rangeId)) return
+    view.dispatch({
+      ...(change && { changes: change, annotations: Transaction.addToHistory.of(false) }),
+      effects: removePendingRange(rangeId),
+    })
+  }
+  return { current, end }
 }
 
 /** The field for `addPendingRange`; each editor extension that uses it
