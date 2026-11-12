@@ -1181,6 +1181,25 @@ describe('dez.stream/start media round', () => {
     expect(mediaInputs[0]).toMatchObject({ kind: 'imageEdit', prompt: 'Make it red.', images: [generated('old.png')] })
   })
 
+  // A model that does not read images gets the message as text only, but a
+  // model that needs an image still gets the newest image of the
+  // conversation, here an image of the message (`mediaRequestInput`).
+  it.each([
+    ['an edit model that does not read images the newest image', 'imageEdit', [image('cat.png')], leftOut('Only the newest image sent', 'M does not read images, so only the newest image of the conversation went with the request.')],
+    ['an image model that does not read images no image', 'image', [], leftOut('Images not sent', 'M does not read images, so 2 images were left out of the request.')],
+  ] as const)('sends %s, and tells the user', async (_name, request, images, warnings) => {
+    sbp('dez.model/modelCache/applyProviderResult', model.providerId, {
+      ok: true,
+      models: [{ id: model.modelId, name: model.modelName, provider: model.providerId, outputs: ['image'], request, imageInput: false }],
+    })
+    setConversation(`Make ![${image('cat.png')}](id=c) look like @a.`)
+
+    await sbp('dez.controller/submitTab', activeTab().id)
+
+    expect(mediaInputs.map(({ prompt, images }) => ({ prompt, images }))).toStrictEqual([{ prompt: 'Make ![image](id=c) look like @a.', images }])
+    expect(toasts).toStrictEqual(warnings)
+  })
+
   // The reply would start, and then fail with an error of the request.
   it.each([
     ['an edit', 'imageEdit', undefined],

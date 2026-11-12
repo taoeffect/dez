@@ -128,9 +128,19 @@ export default sbp('sbp/selectors/register', {
     const agentSection = sbp('dez.model/ensureTrailingAgentSectionForTab', tabId, model)
     if (!agentSection) return
 
-    // The request still goes. At most one of the two shows: a message whose
-    // images do not go as image parts has none for a media request to take.
-    if (imagesLeftOut > 0) {
+    // The request still goes. A message whose images do not go as image
+    // parts has none for a media request to take, so at most one of these
+    // shows. A media model that needs an image still gets the newest image
+    // reference of the tab (`mediaRequestInput`), which can be an image of
+    // this message.
+    if (imagesLeftOut > 0 && mediaImages.sent > 0) {
+      sbp('dez.ui/toast', 'app-global', {
+        variant: 'warning',
+        title: 'Only the newest image sent',
+        message: `${model.modelName} does not read images, so only the newest image of the conversation went with the request.`,
+        duration: 8000,
+      })
+    } else if (imagesLeftOut > 0) {
       // With only the text of each image reference.
       warnImagesLeftOut(model.modelName, 'does not read images', imagesLeftOut)
     } else if (mediaImages.leftOut > 0) {
