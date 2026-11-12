@@ -2,7 +2,7 @@
 import { computed, onBeforeUnmount, onMounted, ref, watch, nextTick } from 'vue'
 import { Compartment, EditorSelection, EditorState, Prec, type Extension } from '@codemirror/state'
 import { EditorView, drawSelection, keymap, tooltips, type Command, type KeyBinding } from '@codemirror/view'
-import { history, historyKeymap, defaultKeymap, redo, selectAll, undo } from '@codemirror/commands'
+import { copyLineDown, copyLineUp, deleteLine, history, historyKeymap, defaultKeymap, redo, selectAll, undo } from '@codemirror/commands'
 import sbp from '@sbp/sbp'
 import { useModelState, type Prompt } from '../modelState'
 import { sectionIsEmpty } from '../../model/chat/content'
@@ -53,6 +53,7 @@ import { deleteImageBang, deleteImageParen, markdownImages } from '../editor/ima
 import { markdownToolCalls, openToolCalls } from '../editor/toolCalls'
 import { markdownMedia } from '../editor/media'
 import { deleteLineBlockBackward, deleteLineBlockForward, joinsLineBlock } from '../editor/lineBlocks'
+import { deleteLines, duplicateLines } from '../editor/lineCommands'
 import { filePasteAndDrop } from '../editor/imageInsert'
 import { markdownLinks } from '../editor/links'
 import { focusKeepingScrollOnMouseDown } from '../editor/focus'
@@ -668,11 +669,19 @@ const editorShortcutCommands: Record<ShortcutIdOfScope<'editor'>, Command> = {
   undo,
   redo,
   selectAll,
+  deleteLine: deleteLines,
+  duplicateLine: duplicateLines,
 }
 
 // Undo and Redo are editable shortcuts, so they leave `historyKeymap`. Its
 // selection undo and redo (Mod-u, Alt-u) stay fixed.
 const fixedHistoryKeymap = historyKeymap.filter((binding) => binding.run !== undo && binding.run !== redo)
+
+// CodeMirror's own line keys (Shift-Mod-k deletes a line, Shift-Alt-ArrowUp
+// and Shift-Alt-ArrowDown copy one) do not know sections, pills, or line
+// blocks; Delete Line and Duplicate Line take their place.
+const lineSafeDefaultKeymap = defaultKeymap.filter((binding) =>
+  binding.run !== deleteLine && binding.run !== copyLineUp && binding.run !== copyLineDown)
 
 // Holds the editor shortcuts' keymap, so that a key change can replace it
 // in the live view.
@@ -872,7 +881,7 @@ function buildState(openPanels?: OpenPanels): EditorState {
       editorShortcuts.of(editorShortcutKeymap()),
       selectionKeymap,
       sectionKeymap,
-      keymap.of([...defaultKeymap, ...fixedHistoryKeymap]),
+      keymap.of([...lineSafeDefaultKeymap, ...fixedHistoryKeymap]),
       EditorView.lineWrapping,
       dezLanguageSupport(),
       dezTheme,

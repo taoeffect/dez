@@ -69,6 +69,12 @@ const DEFINITIONS = {
   // Super+A also selects all.
   selectAll: { label: 'Select all', group: 'Editing', scope: 'editor', key: { linux: 'Alt-a' }, aliases: { linux: ['Meta-a'] } },
   copyMarkdown: { label: 'Copy Markdown (as Save As Markdown writes it)', group: 'Editing', scope: 'app', key: 'Mod-Shift-c' },
+  // macOS Option+D types `∂`, and CodeMirror (and `eventKeyNames`) skip the
+  // key's US name for Option alone on macOS, so the key name is `Alt-∂`. A
+  // layout where Option+D types another character does not match it; the
+  // user can record a new key in Settings › Shortcuts.
+  deleteLine: { label: 'Delete Line', group: 'Editing', scope: 'editor', key: { mac: 'Alt-∂', linux: 'Alt-d' } },
+  duplicateLine: { label: 'Duplicate Line', group: 'Editing', scope: 'editor', key: 'Mod-Shift-d' },
   find: { label: 'Find and replace', group: 'Find', scope: 'app', key: 'Mod-f' },
   findNext: { label: 'Next match', group: 'Find', scope: 'app', key: 'Mod-g' },
   findPrevious: { label: 'Previous match', group: 'Find', scope: 'app', key: 'Mod-Shift-g' },

@@ -66,6 +66,11 @@ function findLineBlock(state: EditorState, test: (block: DocRange) => boolean): 
   return undefined
 }
 
+/** Every line block of a state, of every kind, in doc order. */
+export function lineBlockRanges(state: EditorState): DocRange[] {
+  return state.facet(lineBlockSources).flatMap((source) => source(state)).sort((a, b) => a.from - b.from)
+}
+
 /** Text typed, pasted, or dragged right at a block's start or end would join
  *  the block's first or last line, and the block would show as its source.
  *  This puts a line break between the new text and the block instead. A text

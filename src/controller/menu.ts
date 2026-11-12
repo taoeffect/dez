@@ -227,6 +227,15 @@ export default sbp('sbp/selectors/register', {
                     action: () => sbp('dez.editor/runKeyBinding', 'selectAll', 'selectAll'),
                   }),
               SEPARATOR,
+              await shortcutMenuItem(shortcuts, 'deleteLine', {
+                text: 'Delete Line',
+                action: () => sbp('dez.editor/runKeyBinding', 'deleteLine', 'none'),
+              }),
+              await shortcutMenuItem(shortcuts, 'duplicateLine', {
+                text: 'Duplicate Line',
+                action: () => sbp('dez.editor/runKeyBinding', 'duplicateLine', 'none'),
+              }),
+              SEPARATOR,
               await shortcutMenuItem(shortcuts, 'find', { text: 'Find…', action: () => sbp('dez.editor/openFind') }),
               await shortcutMenuItem(shortcuts, 'findNext', { text: 'Find Next', action: () => sbp('dez.editor/selectFindMatch', 'next') }),
               await shortcutMenuItem(shortcuts, 'findPrevious', { text: 'Find Previous', action: () => sbp('dez.editor/selectFindMatch', 'previous') }),

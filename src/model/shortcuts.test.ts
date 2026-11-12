@@ -1,6 +1,6 @@
 import { EditorState } from '@codemirror/state'
 import { type EditorView, keymap, runScopeHandlers } from '@codemirror/view'
-import { describe, expect, it } from 'vitest'
+import { describe, expect, it, vi } from 'vitest'
 import {
   currentShortcutPlatform,
   eventKeyNames,
@@ -132,6 +132,23 @@ describe('key matching', () => {
     expect(matchShortcut(shortcuts, press('i', 73, HOST_MOD))?.id).toBe('increaseFontSize')
     expect(matchShortcut(shortcuts, press('=', 187, HOST_MOD))).toBeNull()
     expect(matchShortcut(shortcuts, press('+', 187, { ...HOST_MOD, shiftKey: true }))).toBeNull()
+  })
+
+  // Option+D types `∂` on macOS, and there `eventKeyNames`, like CodeMirror,
+  // tries no US key name for Option alone. The module reads the platform
+  // when it loads, so a copy is loaded as on a Mac.
+  it('runs Delete Line for macOS Option+D, which types ∂', async () => {
+    vi.resetModules()
+    vi.doMock('../utils/platform', () => ({ isMacPlatform: true }))
+    try {
+      const mac = await import('./shortcuts')
+      const optionD = press('∂', 68, { altKey: true })
+      expect(mac.eventKeyNames(optionD)).toEqual(['Alt-∂'])
+      expect(mac.matchShortcut(mac.resolveShortcuts('mac'), optionD)?.id).toBe('deleteLine')
+    } finally {
+      vi.doUnmock('../utils/platform')
+      vi.resetModules()
+    }
   })
 })
 
