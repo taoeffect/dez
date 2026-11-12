@@ -480,6 +480,16 @@ describe('dez.controller/tools/run', () => {
       expect(savedImages.map(({ mediaType }) => mediaType)).toStrictEqual(['image/jpeg'])
     })
 
+    // A JPEG has no transparent pixels: the blank corners would be black.
+    it('saves a turned JPEG as a PNG when its blank corners are transparent, and as a JPEG when they are painted or when there are none', async () => {
+      await image('rotate', { image: 'b', angle: 45 })
+      await image('rotate', { image: 'b', angle: 45, fill: 'white' })
+      await image('rotate', { image: 'b', angle: 90 })
+
+      expect(drawings.map(({ drawing }) => drawing.mediaType)).toStrictEqual(['image/png', undefined, undefined])
+      expect(savedImages.map(({ mediaType }) => mediaType)).toStrictEqual(['image/png', 'image/jpeg', 'image/jpeg'])
+    })
+
     it('makes no image for a call with only the image, and gives the size of the image', async () => {
       expect(await image('crop', { image: 'a' })).toStrictEqual({
         content: 'The image @a is 1000x500 pixels. Give x, y, width, and height to make a new image from a part of it.',

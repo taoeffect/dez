@@ -1,11 +1,11 @@
 import { sectionPlainText } from '../chat/content'
-import type { ImageDrawing, ImageRegion, ImageSize } from '../chat/imageDrawing'
+import { wholeImageDrawing, type ImageDrawing, type ImageFlip, type ImageRegion, type ImageSize } from '../chat/imageDrawing'
 import { findImageReferences, imageMediaType, type ImageMediaType } from '../chat/images'
 import { findMediaTags } from '../chat/mediaTags'
 import type { Section } from '../chat/types'
 import { assetIdArgument } from './arguments'
 import { subcommandToolDefinition, type SubcommandTool } from './subcommands'
-import { ToolError, type ToolArguments, type ToolParameter } from './types'
+import { ToolError, type ToolArguments, type ToolArgumentValue, type ToolParameter } from './types'
 
 // The `image` tool: make new images from the images of a conversation, one
 // subcommand each (subcommands.ts). Each subcommand has a pure plan here
@@ -78,6 +78,51 @@ export const IMAGE_TOOL: SubcommandTool = {
       ],
       example: { image: 'a', width: 1024 },
     },
+    {
+      name: 'flip',
+      summary: 'Make a new image from an image mirrored left to right or top to bottom.',
+      description: `Makes a new image from an image of this conversation, mirrored, at the same size. ${NEW_IMAGE_TEXT} `
+        + 'A horizontal flip swaps the left and the right of the image, as a mirror shows it; a vertical flip swaps its top and its bottom. '
+        + 'To turn an image, call rotate.',
+      parameters: [
+        IMAGE_PARAMETER,
+        {
+          name: 'direction',
+          type: 'string',
+          description: '"horizontal" to swap the left and the right of the image, or "vertical" to swap its top and its bottom.',
+          required: true,
+        },
+      ],
+      example: { image: 'a', direction: 'horizontal' },
+    },
+    {
+      name: 'rotate',
+      summary: 'Make a new image from an image turned by an angle.',
+      description: `Makes a new image from an image of this conversation, turned about its center. ${NEW_IMAGE_TEXT} `
+        + 'A turn of 90 or 270 degrees swaps the width and the height, and a turn of 180 keeps them. '
+        + 'Any other angle makes the new image larger, so that it holds the whole turned image, with blank corners. '
+        + 'With `keep_size`, the new image has the size of the image, and the turned image is made smaller to fit inside it. '
+        + '`fill` paints the blank parts.',
+      parameters: [
+        IMAGE_PARAMETER,
+        { name: 'angle', type: 'number', description: 'The angle of the turn in degrees, clockwise, as in 90. A negative angle turns counterclockwise.', required: true },
+        {
+          name: 'keep_size',
+          type: 'boolean',
+          description: 'true to give the new image the size of the image, with the turned image made smaller to fit inside it. '
+            + 'The default is false: the new image grows to hold the whole turned image.',
+          required: false,
+        },
+        {
+          name: 'fill',
+          type: 'string',
+          description: 'The color under the turned image, which shows in its blank parts and through its transparent parts: '
+            + '"transparent" (the default), "black", "white", or a hex color, as in "#ff8800" or "#f80".',
+          required: false,
+        },
+      ],
+      example: { image: 'a', angle: 90 },
+    },
   ],
 }
 
@@ -129,10 +174,10 @@ function sizeText({ width, height }: ImageSize): string {
   return `${width}x${height} pixels`
 }
 
-// An integer parameter of a subcommand, or undefined when the call leaves
-// it out. The subcommand gives the parameter the type `integer`
-// (`checkArgumentValues`), and a parameter that is left out has no key.
-function integerArgument(args: ToolArguments, name: string): number | undefined {
+// A number parameter of a subcommand (of the type `number` or `integer`),
+// or undefined when the call leaves it out. `checkArgumentValues` checked
+// its type, and a parameter that is left out has no key.
+function numberArgument(args: ToolArguments, name: string): number | undefined {
   const value = args[name]
   return typeof value === 'number' ? value : undefined
 }
@@ -171,13 +216,70 @@ function largestSize({ width, height }: ImageSize): ImageSize {
   return fit
 }
 
+// The fix of a call of `subcommand` that would make an image over
+// `MAX_DRAWN_PIXELS` because the image `id`, of `size`, is over it: a
+// smaller image from it first. `needs` is what else the call of
+// `subcommand` must give for its image not to be over the limit.
+function scaleFirstText(id: string, size: ImageSize, subcommand: string, needs = ''): string {
+  const fit = largestSize(size)
+  return `Make a smaller image from @${id} with scale first (for the same shape, a \`width\` of ${fit.width} and a \`height\` of ${fit.height}, or less), `
+    + `then call ${subcommand} with the new image${needs}.`
+}
+
+const FLIPS: readonly ImageFlip[] = ['horizontal', 'vertical']
+
+// The named fills of `rotate`, as `#rrggbb`. A Map, not an object: the key
+// is the model's text, which can be a name such as `constructor`.
+const NAMED_FILLS = new Map([['black', '#000000'], ['white', '#ffffff']])
+
+// The paint of the `fill` of a `rotate` call as `#rrggbb`, or undefined
+// for a transparent fill. Throws for a text that names no fill.
+function fillColor(fill: ToolArgumentValue | undefined): string | undefined {
+  if (fill === undefined) return undefined
+  const text = String(fill).trim().toLowerCase()
+  if (text === 'transparent') return undefined
+  const named = NAMED_FILLS.get(text)
+  if (named) return named
+  if (/^#[0-9a-f]{6}$/.test(text)) return text
+  // `#rgb` is `#rrggbb` with each digit twice, as in CSS.
+  if (/^#[0-9a-f]{3}$/.test(text)) return `#${[...text.slice(1)].map((digit) => digit.repeat(2)).join('')}`
+  throw new ToolError(`${JSON.stringify(fill)} is not a fill of rotate. Give "transparent", "black", "white", or a hex color, as in "#ff8800" or "#f80".`)
+}
+
+// The sizes of a turn by `turn` degrees clockwise (more than 0, less than
+// 360) of an image of `size`: the new image (`canvas`), and the image in it
+// before the turn (`part`).
+function turnSizes(size: ImageSize, turn: number, keepSize: boolean): { canvas: ImageSize, part: ImageSize } {
+  // The box that holds the whole turned image. The cosine and the sine of
+  // a right angle in radians are not exact, so a right angle gives its box
+  // with no math.
+  let box: ImageSize
+  if (turn % 90 === 0) {
+    box = turn === 180 ? size : { width: size.height, height: size.width }
+  } else {
+    const radians = turn * Math.PI / 180
+    const cos = Math.abs(Math.cos(radians))
+    const sin = Math.abs(Math.sin(radians))
+    box = { width: size.width * cos + size.height * sin, height: size.width * sin + size.height * cos }
+  }
+  if (!keepSize) {
+    // The whole pixels that hold the box. A float error of under a
+    // millionth of a pixel adds no row.
+    return { canvas: { width: Math.ceil(box.width - 1e-6), height: Math.ceil(box.height - 1e-6) }, part: size }
+  }
+  // The scale is 1 or less: the box of a turned image has at least the
+  // area of the image, so it is not narrower and lower than the image.
+  const scale = Math.min(size.width / box.width, size.height / box.height)
+  return { canvas: size, part: { width: Math.max(1, Math.round(size.width * scale)), height: Math.max(1, Math.round(size.height * scale)) } }
+}
+
 /** The plan of `image crop`: the part that `x`, `y`, `width`, and `height`
  *  name, at its own size. A call with none of them asks for the size of the
  *  image. Throws for only some of the four, for a part that is not inside
  *  the image (the text gives the nearest part that is), and for a part over
  *  `MAX_DRAWN_PIXELS`. */
 export const cropPlan: ImagePlan = (id, args, size) => {
-  const values = CROP_PARAMETERS.map((name) => integerArgument(args, name))
+  const values = CROP_PARAMETERS.map((name) => numberArgument(args, name))
   const given = values.filter((value) => value !== undefined).length
   if (given === 0) return `The image @${id} is ${sizeText(size)}. Give x, y, width, and height to make a new image from a part of it.`
   if (given < CROP_PARAMETERS.length) {
@@ -203,8 +305,8 @@ export const cropPlan: ImagePlan = (id, args, size) => {
  *  pixel and for a new image over `MAX_DRAWN_PIXELS` (the text gives the
  *  largest size of the same shape). */
 export const scalePlan: ImagePlan = (id, args, size) => {
-  const width = integerArgument(args, 'width')
-  const height = integerArgument(args, 'height')
+  const width = numberArgument(args, 'width')
+  const height = numberArgument(args, 'height')
   if (width === undefined && height === undefined) {
     return `The image @${id} is ${sizeText(size)}. Give a width, a height, or both to make a new image from it at another size.`
   }
@@ -224,6 +326,58 @@ export const scalePlan: ImagePlan = (id, args, size) => {
     throw tooLargeError(drawn, `For the same shape, give a \`width\` of ${fit.width} and a \`height\` of ${fit.height}, or less.`)
   }
   return { crop: { x: 0, y: 0, width: size.width, height: size.height }, ...drawn }
+}
+
+/** The plan of `image flip`: the whole image, mirrored, at its own size.
+ *  Throws for a `direction` that is not `horizontal` or `vertical`, and for
+ *  an image over `MAX_DRAWN_PIXELS` (the text tells how to make a smaller
+ *  image first). */
+export const flipPlan: ImagePlan = (id, args, size) => {
+  const direction = String(args.direction).trim().toLowerCase()
+  const flip = FLIPS.find((name) => name === direction)
+  if (!flip) {
+    throw new ToolError(`${JSON.stringify(args.direction)} is not a direction of flip. `
+      + 'Give "horizontal" to swap the left and the right of the image, or "vertical" to swap its top and its bottom.')
+  }
+  if (size.width * size.height > MAX_DRAWN_PIXELS) throw tooLargeError(size, scaleFirstText(id, size, 'flip'))
+  return { ...wholeImageDrawing(size), flip }
+}
+
+/** The plan of `image rotate`: the whole image turned by `angle` degrees
+ *  clockwise about its center. The new image holds the whole turned image,
+ *  or with `keep_size` has the size of the image, with the turned image
+ *  made smaller to fit. `fill` paints under the turned image; with a
+ *  transparent fill, a turn that leaves blank parts makes a PNG. Throws for
+ *  an angle that makes no change, for a fill that names no color, and for
+ *  a new image over `MAX_DRAWN_PIXELS`. */
+export const rotatePlan: ImagePlan = (id, args, size) => {
+  const angle = numberArgument(args, 'angle') ?? 0
+  // The same turn, in degrees from 0 up to 360.
+  const turn = ((angle % 360) + 360) % 360
+  if (turn === 0) {
+    throw new ToolError(`An angle of ${angle} degrees is a whole number of turns, so the new image would be the same as @${id}. Give an angle that is not a multiple of 360, as in 90 or -90.`)
+  }
+  const background = fillColor(args.fill)
+  const keepSize = args.keep_size === true
+  const rightAngle = turn % 90 === 0
+  const { canvas, part } = turnSizes(size, turn, keepSize)
+  if (canvas.width * canvas.height > MAX_DRAWN_PIXELS) {
+    // Only a turn that grows the image makes a new image over the limit
+    // from an image that is not.
+    throw tooLargeError(canvas, size.width * size.height > MAX_DRAWN_PIXELS
+      ? scaleFirstText(id, size, 'rotate', keepSize || rightAngle ? '' : ' and `keep_size` true')
+      : `Give \`keep_size\` true to keep the size of @${id}.`)
+  }
+
+  const drawing: ImageDrawing = { ...wholeImageDrawing(size), width: canvas.width, height: canvas.height, partSize: part, turn }
+  // Only a right angle can leave no blank part: when the turned image has
+  // the size of the new image.
+  const turned = turn === 180 ? part : { width: part.height, height: part.width }
+  const covered = rightAngle && turned.width === canvas.width && turned.height === canvas.height
+  if (background) drawing.background = background
+  // A JPEG has no transparent pixels: the blank parts would be black.
+  else if (!covered) drawing.mediaType = 'image/png'
+  return drawing
 }
 
 /** The result of a call that made the image `newId`, of `size`, from the

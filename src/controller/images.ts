@@ -119,11 +119,12 @@ export default sbp('sbp/selectors/register', {
 
   // Draws an image again in the webview: decodes `file` (an image of any
   // type that the webview reads), asks `plan` what to draw for an image of
-  // that size (a part of it, at another size), and gives the drawing as a
-  // file of `mediaType`. Null when `plan` gives null: the image stays as
-  // it is, and nothing is drawn. There is no Rust code for this: the
-  // webview has the decoders. Rejects when the webview cannot decode the
-  // image, when `plan` throws, and when the drawing cannot be made; the
+  // that size (a part of it, at another size, mirrored or turned, on a
+  // background), and gives the drawing as a file of `mediaType`, or of the
+  // type that the drawing names. Null when `plan` gives null: the image
+  // stays as it is, and nothing is drawn. There is no Rust code for this:
+  // the webview has the decoders. Rejects when the webview cannot decode
+  // the image, when `plan` throws, and when the drawing cannot be made; the
   // caller logs it, as each caller has its own answer to a failure.
   async 'dez.controller/images/redraw' (
     file: Blob,
@@ -153,21 +154,47 @@ export default sbp('sbp/selectors/register', {
       const context = canvas.getContext('2d')
       if (!context) throw new Error('No canvas to draw the image on.')
       context.imageSmoothingQuality = 'high'
-      const { crop } = drawing
+      if (drawing.background) {
+        context.fillStyle = drawing.background
+        context.fillRect(0, 0, drawing.width, drawing.height)
+      }
+      const { crop, flip, turn, partSize } = drawing
+      const part = partSize ?? drawing
+      // A drawing that only crops and scales gets no transform, so that
+      // each file keeps the bytes of its earlier drawings: a request sends
+      // the drawing, and the provider's prompt cache needs the same bytes.
+      const moved = flip !== undefined || turn !== undefined || partSize !== undefined
+      if (moved) {
+        // The part is drawn from (0, 0), with these steps in reverse order:
+        // its center to the origin, the mirror and the turn about the
+        // origin, and the origin to the center of the canvas.
+        context.translate(drawing.width / 2, drawing.height / 2)
+        if (turn) context.rotate(turn * Math.PI / 180)
+        if (flip) context.scale(flip === 'horizontal' ? -1 : 1, flip === 'vertical' ? -1 : 1)
+        context.translate(-part.width / 2, -part.height / 2)
+      }
       if (file.type === 'image/svg+xml') {
         // For an SVG with no width and height, WebKit maps the source
         // rectangle of `drawImage` to the viewBox size, not to the natural
         // size, and draws the wrong part. So an SVG is drawn whole, scaled
-        // and placed so that the crop fills the canvas.
-        const scaleX = drawing.width / crop.width
-        const scaleY = drawing.height / crop.height
+        // and placed so that the crop fills the part. The edges of the
+        // canvas cut off the rest of the SVG only when the part fills the
+        // canvas; a moved part needs a clip to its own edges.
+        if (moved) {
+          context.beginPath()
+          context.rect(0, 0, part.width, part.height)
+          context.clip()
+        }
+        const scaleX = part.width / crop.width
+        const scaleY = part.height / crop.height
         context.drawImage(img, -crop.x * scaleX, -crop.y * scaleY, img.naturalWidth * scaleX, img.naturalHeight * scaleY)
       } else {
-        context.drawImage(img, crop.x, crop.y, crop.width, crop.height, 0, 0, drawing.width, drawing.height)
+        context.drawImage(img, crop.x, crop.y, crop.width, crop.height, 0, 0, part.width, part.height)
       }
-      const drawn = await new Promise<Blob | null>((resolve) => canvas.toBlob(resolve, mediaType, JPEG_QUALITY))
+      const type = drawing.mediaType ?? mediaType
+      const drawn = await new Promise<Blob | null>((resolve) => canvas.toBlob(resolve, type, JPEG_QUALITY))
       // A canvas that cannot write a type writes a PNG in its place.
-      if (!drawn || drawn.type !== mediaType) throw new Error(`The image could not be drawn as ${mediaType}.`)
+      if (!drawn || drawn.type !== type) throw new Error(`The image could not be drawn as ${type}.`)
       return { bytes: new Uint8Array(await drawn.arrayBuffer()), width: drawing.width, height: drawing.height }
     } finally {
       URL.revokeObjectURL(url)

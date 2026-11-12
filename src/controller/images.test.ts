@@ -171,6 +171,8 @@ describe('dez.controller/images/delete', () => {
 describe('dez.controller/images/redraw', () => {
   interface Drawn {
     canvas: string
+    // The other canvas calls, in order, before `drawImage`.
+    steps: string[]
     // The numbers of `drawImage`: the part of the image, then the place on
     // the canvas.
     numbers: number[]
@@ -195,17 +197,31 @@ describe('dez.controller/images/redraw', () => {
     const drawn: Drawn[] = []
     vi.stubGlobal('document', {
       createElement: () => {
+        const steps: string[] = []
         let numbers: number[] = []
+        const step = (name: string) => (...args: unknown[]) => {
+          steps.push([name, ...args].join(' '))
+        }
+        const context = {
+          imageSmoothingQuality: 'low',
+          fillStyle: '#000000',
+          fillRect: (...args: number[]): void => step('fillRect')(context.fillStyle, ...args),
+          translate: step('translate'),
+          rotate: step('rotate'),
+          scale: step('scale'),
+          beginPath: step('beginPath'),
+          rect: step('rect'),
+          clip: step('clip'),
+          drawImage(_image: unknown, ...drawNumbers: number[]) {
+            numbers = drawNumbers
+          },
+        }
         const canvas = {
           width: 300,
           height: 150,
-          getContext: () => ({
-            drawImage(_image: unknown, ...drawNumbers: number[]) {
-              numbers = drawNumbers
-            },
-          }),
+          getContext: () => context,
           toBlob(callback: (blob: Blob | null) => void, type: string) {
-            drawn.push({ canvas: `${canvas.width}x${canvas.height}`, numbers, type })
+            drawn.push({ canvas: `${canvas.width}x${canvas.height}`, steps, numbers, type })
             callback(new Blob([new Uint8Array(DRAWN_BYTES)], { type: writes ?? type }))
           },
         }
@@ -230,7 +246,7 @@ describe('dez.controller/images/redraw', () => {
     }, 'image/jpeg')
 
     expect(sizes).toStrictEqual([{ width: 400, height: 1000 }])
-    expect(drawn).toStrictEqual([{ canvas: '300x750', numbers: [10, 20, 380, 950, 0, 0, 300, 750], type: 'image/jpeg' }])
+    expect(drawn).toStrictEqual([{ canvas: '300x750', steps: [], numbers: [10, 20, 380, 950, 0, 0, 300, 750], type: 'image/jpeg' }])
     expect(image).toStrictEqual({ bytes: new Uint8Array(DRAWN_BYTES), width: 300, height: 750 })
   })
 
@@ -267,8 +283,72 @@ describe('dez.controller/images/redraw', () => {
 
     const image = await sbp('dez.controller/images/redraw', svg, () => ({ crop: { x: 100, y: 30, width: 100, height: 90 }, width: 50, height: 45 }), 'image/png')
 
-    expect(drawn).toStrictEqual([{ canvas: '50x45', numbers: [-50, -15, 150, 75], type: 'image/png' }])
+    expect(drawn).toStrictEqual([{ canvas: '50x45', steps: [], numbers: [-50, -15, 150, 75], type: 'image/png' }])
     expect(image).toStrictEqual({ bytes: new Uint8Array(DRAWN_BYTES), width: 50, height: 45 })
+  })
+
+  it('paints the background, then draws the part at its size, mirrored, then turned, with its center at the center of the canvas', async () => {
+    stubImage(400, 200)
+    const drawn = stubCanvas()
+
+    const image = await redraw(() => ({
+      crop: { x: 0, y: 0, width: 400, height: 200 },
+      width: 300,
+      height: 500,
+      partSize: { width: 400, height: 200 },
+      flip: 'horizontal',
+      turn: 90,
+      background: '#ff8800',
+    }))
+
+    // The canvas applies the transforms to the part in reverse order.
+    expect(drawn).toStrictEqual([{
+      canvas: '300x500',
+      steps: ['fillRect #ff8800 0 0 300 500', 'translate 150 250', `rotate ${Math.PI / 2}`, 'scale -1 1', 'translate -200 -100'],
+      numbers: [0, 0, 400, 200, 0, 0, 400, 200],
+      type: 'image/png',
+    }])
+    expect(image).toStrictEqual({ bytes: new Uint8Array(DRAWN_BYTES), width: 300, height: 500 })
+  })
+
+  it('mirrors top and bottom for a vertical flip, with the part at the size of the canvas', async () => {
+    stubImage(400, 200)
+    const drawn = stubCanvas()
+
+    await redraw(() => ({ crop: { x: 0, y: 0, width: 400, height: 200 }, width: 40, height: 20, flip: 'vertical' }))
+
+    expect(drawn).toStrictEqual([{
+      canvas: '40x20',
+      steps: ['translate 20 10', 'scale 1 -1', 'translate -20 -10'],
+      numbers: [0, 0, 400, 200, 0, 0, 40, 20],
+      type: 'image/png',
+    }])
+  })
+
+  // Drawn whole, the SVG would show outside of a part that does not fill
+  // the canvas.
+  it('clips a turned SVG to its part', async () => {
+    stubImage(300, 150)
+    const drawn = stubCanvas()
+    const svg = new Blob(['<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 60 30"/>'], { type: 'image/svg+xml' })
+
+    await sbp('dez.controller/images/redraw', svg, () => ({ crop: { x: 100, y: 30, width: 100, height: 90 }, width: 80, height: 80, partSize: { width: 50, height: 45 }, turn: 45 }), 'image/png')
+
+    expect(drawn).toStrictEqual([{
+      canvas: '80x80',
+      steps: ['translate 40 40', `rotate ${Math.PI / 4}`, 'translate -25 -22.5', 'beginPath', 'rect 0 0 50 45', 'clip'],
+      numbers: [-50, -15, 150, 75],
+      type: 'image/png',
+    }])
+  })
+
+  it('draws the file type that the drawing names, in place of the type that the caller asks for', async () => {
+    stubImage(40, 30)
+    const drawn = stubCanvas()
+
+    await redraw(({ width, height }) => ({ crop: { x: 0, y: 0, width, height }, width, height, turn: 45, mediaType: 'image/png' }), 'image/jpeg')
+
+    expect(drawn.map(({ type }) => type)).toStrictEqual(['image/png'])
   })
 
   // The canvas of a webview that cannot write a type writes a PNG in its

@@ -6,7 +6,7 @@ import { unknownToolText } from '../../src/model/tools/registry'
 import { anthropicChatBody, anthropicMarkedUser, openAiChatBody } from './harness/chatBody'
 import { consoleErrors, pointerClick, resetConsoleErrors, screenshotOnFailure, typeKeys, waitForValue } from './harness/dom'
 import { conversationFilePath, makeConversation, seedConversation } from './harness/fixtures'
-import { decodedImage, pasteImage, pngDataUrl, shownImages, stripedPng, type Rgb } from './harness/images'
+import { decodedImage, pasteImage, pngDataUrl, shownImages, STRIPE_COLORS, STRIPES_PNG, STRIPES_SVG, WEBKIT_SVG_SIZES } from './harness/images'
 import { WAV_SAMPLE_RATE, monoWav, shownPlayers } from './harness/media'
 import { startMockProviderApp, type MockProviderApp } from './harness/mockProviderApp'
 import { mockChatPath, replyText, sendAnthropicReply, sendChatReply, startEventStream, writeAnthropicEvent, writeChatFrame, type MockProvider } from './harness/mockServer'
@@ -39,26 +39,7 @@ import { activeConversationId, activeTabStreaming, docPos, editorCaret, editorDo
 const TOOLER: MockProvider = { id: 'tooler', name: 'Tool Mock', modelId: 'tool-model', modelName: 'Tool Model' }
 const CLAUDE: MockProvider = { id: 'claude', name: 'Claude Mock', modelId: 'claude-model', modelName: 'Claude Model', apiFormat: 'anthropic' }
 
-// 90 x 20, in three stripes of 30 columns: the image of the `image` tool
-// test.
-const GREEN: Rgb = [40, 160, 60]
-const STRIPES_PNG = stripedPng(30, 20, [[220, 40, 40], GREEN, [40, 90, 220]])
-
-// Three stripes of 20 viewBox units, with no width and height. The size
-// that WebKit gives it depends on the version: WebKitGTK 2.54 gives it
-// 300 x 150 (the default size, fitted to the viewBox), and 2.52 (the CI
-// runner's) gives it the viewBox size. The SVG test works in the size that
-// the webview gives. Where that is not the viewBox size, WebKit draws a
-// part of an SVG wrong unless Dez draws it whole
-// (`dez.controller/images/redraw`).
-const STRIPES_SVG = Buffer.from([
-  '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 60 30">',
-  '<rect width="20" height="30" fill="rgb(220,40,40)"/>',
-  `<rect x="20" width="20" height="30" fill="rgb(${GREEN.join(',')})"/>`,
-  '<rect x="40" width="20" height="30" fill="rgb(40,90,220)"/>',
-  '</svg>',
-].join(''))
-const WEBKIT_SVG_SIZES = [{ width: 300, height: 150 }, { width: 60, height: 30 }]
+const [, GREEN] = STRIPE_COLORS
 
 // Two seconds of silence, 16-bit mono at 8 kHz: the clip of the `audio`
 // test. Silence, so a run makes no sound.

@@ -1,6 +1,6 @@
 import sbp from '@sbp/sbp'
 import type { CutAudio } from '../model/chat/audioCut'
-import { drawnMediaType, type DrawnImage, type ImageSize } from '../model/chat/imageDrawing'
+import { drawnMediaType, type DrawnImage, type DrawnMediaType, type ImageSize } from '../model/chat/imageDrawing'
 import { ClipReadError, type ClipReadProblem } from '../model/chat/mediaFiles'
 import type { MediaTagData } from '../model/chat/mediaTags'
 import { modelRefKey } from '../model/chat/modelRef'
@@ -13,7 +13,7 @@ import type { ProviderMediaQuote } from '../model/providers/streamTypes'
 import { effectiveRequest, type ProviderInfo, type ProviderInputImageRules, type ProviderSettingsDescriptor } from '../model/providers/types'
 import type { SettingsSnapshot } from '../model/state'
 import { AUDIO_TOOL, audioClipId, audioClipOf, audioClipPart, audioCutResultText, audioLengthText } from '../model/tools/audioTool'
-import { cropPlan, IMAGE_TOOL, imageOf, imageResultText, imageToolId, scalePlan, type ImagePlan } from '../model/tools/imageTool'
+import { cropPlan, flipPlan, IMAGE_TOOL, imageOf, imageResultText, imageToolId, rotatePlan, scalePlan, type ImagePlan } from '../model/tools/imageTool'
 import { modelInfoParameterValues, modelInfoPart, modelInfoText, modelInfoTarget, type ModelInfoFacts, type ModelInfoTarget } from '../model/tools/modelInfo'
 import { modelListText } from '../model/tools/modelList'
 import { unknownToolText } from '../model/tools/registry'
@@ -136,16 +136,20 @@ function imageRunner(plan: ImagePlan): ToolRunner {
     // Only redraw knows the size of the image, so the plan runs in it. For
     // redraw, a plan that draws nothing or refuses the call gives null; the
     // text or the error waits until redraw ends, so that a failure of
-    // redraw is never the call's fault.
+    // redraw is never the call's fault. A plan can choose the file type of
+    // its drawing (a PNG for transparent pixels); redraw draws that type.
     let text = ''
     let callError: unknown
-    const mediaType = drawnMediaType(source.mediaType)
+    let mediaType: DrawnMediaType = drawnMediaType(source.mediaType)
     let drawn: DrawnImage | null
     try {
       drawn = await sbp('dez.controller/images/redraw', file, (size: ImageSize) => {
         try {
           const planned = plan(id, args, size)
-          if (typeof planned !== 'string') return planned
+          if (typeof planned !== 'string') {
+            mediaType = planned.mediaType ?? mediaType
+            return planned
+          }
           text = planned
         } catch (error) {
           callError = error
@@ -316,6 +320,8 @@ const TOOL_RUNNERS: Record<string, ToolRunner> = {
   image: subcommandRunner(IMAGE_TOOL, {
     crop: imageRunner(cropPlan),
     scale: imageRunner(scalePlan),
+    flip: imageRunner(flipPlan),
+    rotate: imageRunner(rotatePlan),
   }),
 }
 
