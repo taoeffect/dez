@@ -47,7 +47,7 @@ const CLAUDE: MockProvider = { id: 'claude', name: 'Claude Mock', modelId: 'clau
 const UNDO_STEP_MS = 600
 
 const QUESTION = ' What color?'
-const NOT_AN_IMAGE_MESSAGE = 'Only images and audio and video clips can be dropped into a conversation. Clips must be mp4, webm, mov, mp3, wav, ogg, flac, m4a, aac, or opus files.'
+const NOT_AN_IMAGE_OR_CLIP_MESSAGE = 'Only images and audio and video clips can be dropped into a conversation. Clips must be mp4, webm, mov, mp3, wav, ogg, flac, m4a, aac, or opus files.'
 const PASTED_PNG = solidPng(48, 32, [220, 40, 40])
 const DROPPED_PNG = solidPng(40, 24, [40, 90, 220])
 // PASTED_PNG as an OpenAI-format image part.
@@ -693,7 +693,7 @@ describe('images', () => {
       { name: 'notes.txt', type: 'text/plain', base64: Buffer.from('notes').toString('base64') },
     ])
     expect(accepted).toEqual({ dragover: true, drop: true })
-    await waitForValue(browser, 'toast', async () => (await openToasts(browser)).some((toast) => toast.message === NOT_AN_IMAGE_MESSAGE), true)
+    await waitForValue(browser, 'toast', async () => (await openToasts(browser)).some((toast) => toast.message === NOT_AN_IMAGE_OR_CLIP_MESSAGE), true)
     expect(await editorDoc(browser)).toBe('Some text')
     expect(await storedImages()).toEqual(before)
 
@@ -728,7 +728,7 @@ describe('images', () => {
     const before = await storedImages()
 
     await nativeDrop(browser, await docPoint('Some '.length), [path.join(setup.app.home, 'notes.txt')])
-    await waitForValue(browser, 'toast', async () => (await openToasts(browser)).some((toast) => toast.message === NOT_AN_IMAGE_MESSAGE), true)
+    await waitForValue(browser, 'toast', async () => (await openToasts(browser)).some((toast) => toast.message === NOT_AN_IMAGE_OR_CLIP_MESSAGE), true)
     expect(await editorDoc(browser)).toBe('Some text')
     expect(await storedImages()).toEqual(before)
 

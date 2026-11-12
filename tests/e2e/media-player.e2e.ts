@@ -63,14 +63,15 @@ const CHAT_MODEL = { id: 'chat-model', name: 'Chat Model' }
 const SPEECH_PATH = `/${SPEAKER.id}/v1/audio/speech`
 
 // A speech model that makes only raw samples. The media API of this
-// provider has an own model list, which the mock answers with no models.
+// provider (the OpenRouter format) has two own model lists, of images and
+// of videos, which the mock answers with no models.
 const RAW_SPEAKER: MockProvider = { id: 'raw', name: 'Raw Speech Mock', modelId: 'raw-voice', modelName: 'Raw Voice' }
 const RAW_SPEECH_PATH = `/${RAW_SPEAKER.id}/v1/audio/speech`
-const RAW_MODEL_LIST_PATH = `/${RAW_SPEAKER.id}/v1/videos/models`
+const RAW_VIDEO_LIST_PATH = `/${RAW_SPEAKER.id}/v1/videos/models`
 const RAW_IMAGE_LIST_PATH = `/${RAW_SPEAKER.id}/v1/images/models`
 
-// One second of a saw wave in 16-bit little-endian samples: each byte
-// differs from the bytes next to it, so a byte that moves shows.
+// One second of a saw wave in 16-bit little-endian samples: no two samples
+// next to each other are the same, so a sample that moves shows.
 const RAW_SAMPLES = Buffer.alloc(WAV_SAMPLE_RATE * 2)
 for (let sample = 0; sample < WAV_SAMPLE_RATE; sample++) RAW_SAMPLES.writeInt16LE((sample % 50 - 25) * 100, sample * 2)
 
@@ -318,7 +319,7 @@ describe('media player', () => {
         },
       }],
       heldPaths: [SPEECH_PATH, RAW_SPEECH_PATH],
-      jsonAnswers: { [RAW_MODEL_LIST_PATH]: { data: [] }, [RAW_IMAGE_LIST_PATH]: { data: [] } },
+      jsonAnswers: { [RAW_VIDEO_LIST_PATH]: { data: [] }, [RAW_IMAGE_LIST_PATH]: { data: [] } },
     })
     browser = setup.browser
   })

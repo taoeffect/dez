@@ -1,7 +1,8 @@
 // A `multipart/form-data` body (RFC 7578), for a media endpoint that takes
 // a file only as an upload: Venice's transcription and voice changer. The
-// body is bytes, which the native HTTP bridge sends as they are, so a clip
-// never goes through base64.
+// provider gets the clip as raw bytes in the form, not as base64 text in a
+// JSON body; only the step to Rust carries the form as base64 text
+// (`HttpBody::Base64`, `Provider.mediaApiRequest`).
 // https://www.rfc-editor.org/rfc/rfc7578
 
 /** One field of a form: a text, or a file with its bytes. The names come

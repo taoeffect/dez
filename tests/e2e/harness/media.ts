@@ -7,12 +7,12 @@ import { answerHeld, startMockServer, type HeldRequest, type MockServer } from '
 import type { E2EBrowser } from './session'
 import { threadSections } from './thread'
 
-// Clips for the specs of the media player: the bytes of two short clips, a
+// Clips for the specs of the media player: the bytes of short test clips, a
 // server that serves them as the CDN of a provider does, and readers of the
-// players that the editor shows. The two formats are the ones that the
+// players that the editor shows. The clips are in the formats that the
 // GStreamer of the CI image plays: its `gstreamer1.0-plugins-good` package
-// has the WAV parser and the WebM demuxer with the VP9 decoder. It has no
-// H.264 decoder, so no clip is an mp4.
+// has the WAV parser, the WebM and MP4 demuxers, and the VP9 decoder. It
+// has no H.264 decoder, so the MP4 clip holds VP9 too.
 
 /** The sample rate of the test audio, in samples a second. */
 export const WAV_SAMPLE_RATE = 8000

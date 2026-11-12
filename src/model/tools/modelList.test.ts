@@ -83,7 +83,7 @@ describe('modelListText', () => {
     ].join('\n'))
   })
 
-  it('lists every model for a filter or outputs with no letters or digits', () => {
+  it('lists every model for a filter with no letters or digits, and for outputs of only commas and white space', () => {
     expect(modelListText(CACHE, PROVIDERS, { filter: ' - ' })).toBe(modelListText(CACHE, PROVIDERS))
     expect(modelListText(CACHE, PROVIDERS, { outputs: ' , ' })).toBe(modelListText(CACHE, PROVIDERS))
   })

@@ -39,7 +39,8 @@ describe('imageFit', () => {
     ['inside every rule', { width: 800, height: 600 }, { ...VIDEO_RULES, maxPixels: 1_000_000 }],
     ['with exactly the least short side', { width: 300, height: 700 }, VIDEO_RULES],
     ['with exactly the most pixels', { width: 7680, height: 4320 }, { maxPixels: 33_177_600 }],
-    ['one pixel inside each ratio limit', { width: 400, height: 999 }, VIDEO_RULES],
+    ['one pixel inside the lower ratio limit', { width: 400, height: 999 }, VIDEO_RULES],
+    ['one pixel inside the upper ratio limit', { width: 999, height: 400 }, VIDEO_RULES],
     ['under no rule', { width: 1, height: 5000 }, {}],
   ])('leaves an image %s as it is', (_name, size, rules) => {
     expect(imageFit(size, rules)).toBeNull()
@@ -68,7 +69,9 @@ describe('imageFit', () => {
     ['too wide', { width: 1500, height: 400 }, { x: 250, y: 0, width: 999, height: 400 }],
     ['exactly on the lower limit', { width: 400, height: 1000 }, { x: 0, y: 0, width: 400, height: 999 }],
     ['exactly on the upper limit', { width: 1000, height: 400 }, { x: 0, y: 0, width: 999, height: 400 }],
-    // 2 / 0.4 is not exactly 5 in floating point.
+    // 2 / 0.4 is exactly 5, the height of the image: the first step of the
+    // crop keeps the ratio on the limit, and only the step in whole pixels
+    // takes the row off.
     ['of a few pixels on the lower limit', { width: 2, height: 5 }, { x: 0, y: 0, width: 2, height: 4 }],
   ])('crops the middle of an image that is %s to the nearest ratio inside the limits, at the same scale', (_name, size, crop) => {
     expect(imageFit(size, { minAspectRatio: 0.4, maxAspectRatio: 2.5 }))

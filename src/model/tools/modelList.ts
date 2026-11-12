@@ -62,8 +62,9 @@ export const NO_MODELS_TEXT = 'The user has no models that Dez can use: no provi
  *  that match `filter` and `outputs`, in provider order, then model cache
  *  order. A first line gives the count, the columns, and the output letter
  *  legend; the full id of each model leads its line. A model whose outputs
- *  are unknown (or empty) has no outputs column. A `filter` or `outputs`
- *  with no letters or digits selects every model, as in the picker.
+ *  are unknown (or empty) has no outputs column. A `filter` with no letters
+ *  or digits selects every model, as in the picker, and so does an
+ *  `outputs` of only commas and white space.
  *
  *  Throws for an `outputs` value with an unknown letter; the error names the
  *  valid letters, for the model to read. With no model, or no match, the

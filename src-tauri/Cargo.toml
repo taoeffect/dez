@@ -25,9 +25,10 @@ tauri-build = { version = "=2.5.6", features = [] }
 # item. WebKit keeps console messages from before the inspector opens, so
 # the console shows earlier logs too. On macOS it uses a private WebKit API,
 # which only blocks App Store distribution.
-# `protocol-asset` serves the images in `~/.config/dez/assets/images/` and
-# the media in `~/.config/dez/assets/generated/` to the webview by
-# `convertFileSrc` URLs (`assetProtocol` in tauri.conf.json).
+# `protocol-asset` serves the stored images and clips (the folders under
+# `~/.config/dez/assets/`) and the temp copies of clips (`dez/media/` in the
+# OS cache folder) to the webview by `convertFileSrc` URLs. The folders are
+# the `assetProtocol` scope in tauri.conf.json.
 # `macos-private-api` (with `macOSPrivateApi` in tauri.conf.json, which must
 # agree with it) makes wry set WKWebView's `fullScreenEnabled` preference,
 # which is off by default. Without it the fullscreen button of a video

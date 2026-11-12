@@ -12,9 +12,9 @@ import { REPORT_ADVICE, errorText, explainedError, rawErrorText } from '../utils
 import { fileNameOf } from '../utils/fileName'
 import type { AppFileEntry } from './nativeTypes'
 
-// The cleanup of the stored files (pasted images, generated images, saved
-// clips) that no text uses any more: Settings › General › Unused files. The
-// rules for "unused" are in src/model/chat/unusedFiles.ts.
+// The cleanup of the stored files (pasted, dropped, and generated images
+// and clips) that no text uses any more: Settings › General › Unused files.
+// The rules for "unused" are in src/model/chat/unusedFiles.ts.
 
 // One scan or delete at a time: a scan that ran together with a delete
 // would count files that are gone a moment later.

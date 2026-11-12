@@ -1108,7 +1108,7 @@ describe('openrouter image rules', () => {
     expect(rules('video', frames)).toStrictEqual(REFERENCES)
   })
 
-  it('takes no image for a video model that the video list does not have, and none for speech or an image', () => {
+  it('takes no image for a video model that the video list does not have, and no frame for a speech or an image model', () => {
     expect([
       MEDIA_FORMATS.openrouter.imageRules?.('video', { id: 'm' }, undefined),
       rules('tts', ['first_frame']),

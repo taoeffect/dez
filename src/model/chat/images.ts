@@ -45,10 +45,11 @@ const MEDIA_TYPE_BY_EXTENSION: Record<string, ImageMediaType> = {
 }
 
 /** The folders of the stored images, relative to the app folder: `pasted`
- *  for pasted and dropped images, `generated` for the images that image
- *  models make. The asset protocol scope in tauri.conf.json serves only the
- *  files directly in them, and the path regexes below are built from these
- *  names, so nothing else spells them. */
+ *  for pasted and dropped images, `generated` for the images that models
+ *  make (image models and chat replies) and that Dez tools make. The asset
+ *  protocol scope in tauri.conf.json serves only the files directly in
+ *  them, and the path regexes below are built from these names, so nothing
+ *  else spells them. */
 export const IMAGE_FOLDERS = {
   pasted: 'assets/images',
   generated: 'assets/generated/images',

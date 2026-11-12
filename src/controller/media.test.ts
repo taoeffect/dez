@@ -530,7 +530,9 @@ describe('dez.controller/media/readClip', () => {
       'The download of the clip failed: its server gave no answer, the answer broke off, the clip is larger than 1.0 GB, or Dez could not write the file.',
     ])
 
-    // A path of another home is no file of Dez: it is never read.
+    // A path that is in no media folder is never read. A path of another
+    // home in the form of a media folder goes to the asset protocol, whose
+    // scope refuses it.
     const foreign = await readError({ type: 'audio/mpeg', src: '/home/bob/song.mp3', url: null, expires: null })
     expect([foreign.problem, foreign.details]).toStrictEqual(['unreadable', 'A source of the clip is not a file of Dez or a web address.'])
 

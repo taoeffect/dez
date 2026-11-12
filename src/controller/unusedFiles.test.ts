@@ -92,17 +92,20 @@ afterEach(() => {
 describe('dez.controller/unusedFiles/find', () => {
   const READ_FAILURE = 'The system did not let Dez read all of its files, so Dez deletes no file. The details tell why (for example, Dez has no permission to read a file). Fix that, and try again.'
 
-  it('gives the old files of the four folders that no text names, with their total size', async () => {
+  it('gives the old files of every stored-file folder that no text names, with their total size', async () => {
     folders = {
       'assets/images': [file('pasted-used.png', 1), file('pasted-free.png', 20), file('pasted-new.png', 300, OLD + 1)],
       'assets/generated/images': [file('made-held.webp', 4000), file('made-free.jpg', 50_000)],
       'assets/generated/audio': [file('speech-prompt.mp3', 600_000), file('speech-free.wav', 7_000_000)],
       'assets/generated/video': [file('film-used.mp4', 80_000_000), file('film.mp4.4012.7.tmp', 900_000_000)],
+      'assets/audio': [file('memo-free.m4a', 100)],
+      'assets/video': [file('pasted-used.webm', 3_000_000)],
     }
     conversations = [
       `---\ntitle: One\n---\n![${APP_DIR}/assets/images/pasted-used.png](id=a)\n`,
       'No file here.',
-      `<dez:video id="b" type="video/mp4" src="${APP_DIR}/assets/generated/video/film-used.mp4"/>\n`,
+      `<dez:video id="b" type="video/mp4" src="${APP_DIR}/assets/generated/video/film-used.mp4"/>\n`
+        + `<dez:video id="d" type="video/webm" src="${APP_DIR}/assets/video/pasted-used.webm"/>\n`,
     ]
     // A tab that is not saved yet, and a saved prompt.
     heldTexts = [`![${APP_DIR}/assets/generated/images/made-held.webp](id=c)`, 'Say it as in speech-prompt.mp3']
@@ -114,8 +117,9 @@ describe('dez.controller/unusedFiles/find', () => {
         { path: 'assets/images/pasted-free.png', size: 20 },
         { path: 'assets/generated/images/made-free.jpg', size: 50_000 },
         { path: 'assets/generated/audio/speech-free.wav', size: 7_000_000 },
+        { path: 'assets/audio/memo-free.m4a', size: 100 },
       ],
-      bytes: 7_050_020,
+      bytes: 7_050_120,
     })
     expect(progress).toEqual([0, 1 / 3, 2 / 3, 1, 1])
     expect(deletedFiles).toEqual([])

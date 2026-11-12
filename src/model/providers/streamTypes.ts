@@ -52,20 +52,20 @@ export interface ProviderGenerateMediaInput {
   // (`ModelInfo.text.lyrics`); `prompt` is then the style of the song. A
   // request of another kind does not send them.
   lyrics?: string
-  // The absolute paths of stored images (`storedImageFile`): the inputs of
-  // an `imageEdit` request, the first one the image to edit; the one image
-  // of an `upscale` request; or the images of a `video` or `imageToVideo`
-  // request: its frames, the first one the first frame and the second one
-  // the last frame, or its references (`InputImageRules.references`). No
-  // more of them than the model takes (`ModelInfo.images`, for the values
-  // of `parameters`: `inputImageRulesFor`). A request of another kind does
-  // not send them.
+  // The absolute paths of stored images (`storedImageFile`). The model's
+  // image rules tell how many it takes and as what (`ModelInfo.images`,
+  // for the values of `parameters`: `inputImageRulesFor`; the count:
+  // `maxInputImages`): for example the image to edit first, the one image
+  // of an `upscale`, the frames of a video (the first frame, then the last
+  // frame), or references (`InputImageRules.references`). No more of them
+  // than those rules take.
   images?: readonly string[]
-  // The input clips of a `video` or `imageToVideo` request, in the user's
-  // order (`mediaRequestInput`): media tags with their sources, which
-  // generateMedia reads. Only clips that the model takes
-  // (`ModelInfo.clips`); generateMedia refuses the others before any
-  // request. A request of another kind does not send them.
+  // The input clips, in the user's order (`mediaRequestInput`): media tags
+  // with their sources, which generateMedia reads. Only clips that the
+  // model's clip rules take (`ModelInfo.clips`): for example the clip of a
+  // `videoToVideo`, `voiceChange`, or `transcription` request, or the
+  // references of a video. generateMedia refuses the others before any
+  // request.
   clips?: readonly ClipAttachment[]
   // The values to set for the model's parameters (ModelInfo.parameters),
   // by parameter name. A parameter with no value here, or with one that

@@ -1485,7 +1485,7 @@ describe('media model data', () => {
 
   // The upscale parameters are rules of the request (mediaFormats.ts), so
   // a config model with no entry gets them too.
-  it('gives an image model the parameters of the image API, and none when the media API makes no images', () => {
+  it('gives an upscale model with no entry the parameters of the upscale request, and none to an image model with no entry or to an upscale model of a media API with no upscale request', () => {
     const image = providerModel('local', 'image', 'Image', { request: 'image' })
     const upscale = providerModel('local', 'upscale', 'Upscale', { request: 'upscale' })
     const names = (models: ModelInfo[]) => models.map((model) => [model.id, model.parameters?.map((parameter) => parameter.name)])

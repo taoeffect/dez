@@ -211,10 +211,10 @@ describe('clipFileProblem', () => {
     ['too short', read('audio', 'a1', 1), '1 second', 'at least 2 seconds'],
     ['too long by less than 0.05 s', read('video', 'v1', 10.04), '10.1 seconds', 'at most 10 seconds'],
     ['too short by less than 0.05 s', read('audio', 'a1', 1.96), '1.9 seconds', 'at least 2 seconds'],
-  ])('names the length and the limit of a clip that is %s', (_name, tooLong, length, limit) => {
-    const problem = clipFileProblem('Film', LIMITS, [tooLong])
+  ])('names the length and the limit of a clip that is %s', (_name, input, length, limit) => {
+    const problem = clipFileProblem('Film', LIMITS, [input])
 
-    expect(problem).toContain(`@${tooLong.clip.id} is ${length} long`)
+    expect(problem).toContain(`@${input.clip.id} is ${length} long`)
     expect(problem).toContain(limit)
   })
 
@@ -229,7 +229,7 @@ describe('clipFileProblem', () => {
   })
 
   it.each([
-    ['a whole second', 15, '35 seconds'],
+    ['5 seconds', 15, '35 seconds'],
     ['less than 0.05 s', 10.02, '30.1 seconds'],
   ])('names the total length and the limit of the clips of a kind that are too long together by %s', (_name, second, total) => {
     const problem = clipFileProblem('Film', TOTALS, [read('audio', 'a1', 20), read('audio', 'a2', second)])

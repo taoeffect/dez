@@ -10,7 +10,7 @@ import { createSession, destroySession, type E2EBrowser } from './harness/sessio
 import { activeTabId, newTab, openToasts, sbpCall } from './harness/thread'
 
 // Settings › General › Unused files, driven through the real app: the
-// button scans the stored files (pasted images, generated images, saved
+// button scans the stored files (pasted, dropped, and generated images and
 // clips) and shows a progress bar, a prompt states the count and the size
 // of the files that nothing uses, and a "Yes" deletes them.
 //
@@ -62,7 +62,8 @@ describe('Settings: delete unused files', () => {
     fs.utimesSync(file, old, old)
   }
 
-  // The files of the four stored-file folders, relative to the app folder.
+  // The files of the four stored-file folders that this spec seeds,
+  // relative to the app folder.
   function storedFiles (): string[] {
     return ['assets/images', 'assets/generated/images', 'assets/generated/audio', 'assets/generated/video']
       .flatMap((folder) => fs.readdirSync(appFilePath(app.home, folder)).map((name) => `${folder}/${name}`))

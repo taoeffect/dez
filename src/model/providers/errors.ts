@@ -33,15 +33,16 @@ export class ProviderHttpError extends ExplainedError {
   constructor(
     readonly providerId: ProviderId,
     readonly status: number,
-    // The provider's text (`providerText`), after sanitizeErrorText.
-    providerText: string,
+    // The provider's text (`providerText`), or the body when it has none
+    // (`providerStatusError`), after sanitizeErrorText.
+    sanitizedText: string,
     // The JSON of the whole body, with each string after sanitizeErrorText,
     // for a media format that reads a known cause in it
     // (`ClipFormat.refusedImages`). Undefined for a body that is not JSON.
     readonly bodyJson: unknown,
     explanation: string,
   ) {
-    super(explanation, `HTTP ${status}${providerText ? `: ${providerText}` : ''}`)
+    super(explanation, `HTTP ${status}${sanitizedText ? `: ${sanitizedText}` : ''}`)
     this.name = 'ProviderHttpError'
   }
 }

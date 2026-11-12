@@ -34,7 +34,8 @@ let loadCalls: string[] = []
 let appFiles: Map<string, Uint8Array> | Error = new Map()
 let appFileReads: string[] = []
 
-// Stub the native selectors dez.persistence/searchConversations orchestrates.
+// Stub the native selectors that dez.persistence/searchConversations and
+// dez.persistence/eachConversationText call.
 // src/controller/native.ts is never imported by this test, so these are the
 // only dez.native/* registrations in the test process (vitest isolates module
 // registries per test file). Registered once: sbp selectors are global module
@@ -205,7 +206,7 @@ describe('dez.persistence/eachConversationText', () => {
     expect(appFileReads).toEqual(['conversations/a.md', 'conversations/b.md'])
   })
 
-  it('reads a conversation file that is a link, and no file that Dez cannot open', async () => {
+  it('reads a conversation file that is a link, and no link whose name is not a conversation id', async () => {
     appFiles = new Map([['a.md', bytes('plain')]])
     diskFiles = [
       { id: 'a', content: 'plain', updatedAt: 1 },

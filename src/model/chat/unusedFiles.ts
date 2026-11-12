@@ -3,8 +3,9 @@ import { savedMediaFile } from './mediaFiles'
 import { MEDIA_FOLDERS } from './mediaTags'
 
 // The stored files that no text uses any more, for the cleanup in Settings ›
-// General. Dez stores a file for each pasted image, and for each image and
-// saved clip that a model made. A text names the file by its path: in an
+// General. Dez stores a file for each pasted or dropped image and clip, for
+// each image that a model or a Dez tool made, and for each clip that the
+// user saved or a Dez tool made. A text names the file by its path: in an
 // image reference (images.ts) or in the `src` of a media tag (mediaTags.ts).
 // A text edit or a conversation delete leaves the file on disk.
 //
