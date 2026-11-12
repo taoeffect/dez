@@ -1,7 +1,7 @@
 import sbp from '@sbp/sbp'
 import { afterEach, beforeEach, describe, expect, it, vi, type MockInstance } from 'vitest'
 import type { AudioPart, CutAudio } from '../model/chat/audioCut'
-import { ClipReadError, MEDIA_TEMP_LIFETIME_MS, savedMediaFile } from '../model/chat/mediaFiles'
+import { ClipReadError, MAX_SAVED_CLIP_BYTES, MEDIA_TEMP_LIFETIME_MS, savedMediaFile } from '../model/chat/mediaFiles'
 import type { MediaTagData } from '../model/chat/mediaTags'
 import type {
   NativeDownloadRule,
@@ -39,6 +39,8 @@ let moves: Array<{ from: AppFileRef, to: AppFileRef }> = []
 let moveAppFile: () => Promise<void>
 let downloads: Download[] = []
 let downloadAppFile: () => Promise<NativeHttpDownload>
+let cancelledDownloads: string[] = []
+let cancelDownload: () => void
 let deletedFiles: AppFileRef[] = []
 let deleteAppFile: (file: AppFileRef) => Promise<void>
 let listedFolders: AppFileRef[] = []
@@ -73,6 +75,10 @@ sbp('sbp/selectors/register', {
   async 'dez.native/downloadAppFile' (request: NativeHttpRequest, requestId: string, file: AppFileRef, rule: NativeDownloadRule): Promise<NativeHttpDownload> {
     downloads.push({ request, requestId, file, rule })
     return downloadAppFile()
+  },
+  async 'dez.native/cancelHttpStream' (requestId: string): Promise<void> {
+    cancelledDownloads.push(requestId)
+    cancelDownload()
   },
   async 'dez.native/deleteAppFile' (path: string, root = 'app'): Promise<void> {
     const file = { root, path } as AppFileRef
@@ -111,6 +117,8 @@ beforeEach(() => {
   moveAppFile = async () => {}
   downloads = []
   downloadAppFile = async () => SAVED
+  cancelledDownloads = []
+  cancelDownload = () => {}
   deletedFiles = []
   deleteAppFile = async () => {}
   listedFolders = []
@@ -414,8 +422,8 @@ describe('dez.controller/media/readClip', () => {
   const FUTURE = '2999-01-01T00:00:00.000Z'
   const PAST = '2000-01-01T00:00:00.000Z'
 
-  function readClip(clip: ReadClip): Promise<Blob> {
-    return sbp('dez.controller/media/readClip', clip) as Promise<Blob>
+  function readClip(clip: ReadClip, signal?: AbortSignal): Promise<Blob> {
+    return sbp('dez.controller/media/readClip', clip, { signal }) as Promise<Blob>
   }
 
   async function readError(clip: ReadClip): Promise<ClipReadError> {
@@ -428,10 +436,10 @@ describe('dez.controller/media/readClip', () => {
     return [...new Uint8Array(await blob.arrayBuffer())]
   }
 
-  function body(...parts: number[][]): AsyncIterable<Uint8Array> {
-    return (async function * () {
-      for (const part of parts) yield Uint8Array.from(part)
-    })()
+  // The part file of the one download of a test, in the cache root.
+  function partFile(): AppFileRef {
+    expect(downloads).toHaveLength(1)
+    return downloads[0].file
   }
 
   it('reads a saved file or a temp copy through the asset protocol, before the URL', async () => {
@@ -441,28 +449,64 @@ describe('dez.controller/media/readClip', () => {
     expect(await bytesOf(await readClip({ type: 'audio/mpeg', src: TEMP_PATH, url: CLIP_URL, expires: FUTURE }))).toStrictEqual([TEMP_PATH.length])
 
     expect(readFiles).toStrictEqual([SAVED_PATH, TEMP_PATH])
-    expect(streams).toEqual([])
+    expect(downloads).toEqual([])
   })
 
-  it('downloads a clip that plays from its URL once, with no header, and gives the bytes with the clip type', async () => {
-    streamAnswer = async () => ({ status: 200, headers: { 'content-type': 'application/octet-stream' } })
-    streamBody = body([1, 2], [3])
+  it('downloads a clip that plays from its URL once, with no header, to a part file that it reads and deletes, and gives the bytes with the clip type', async () => {
+    readFile = async () => new File([Uint8Array.from([1, 2, 3])], 'clip.part', { type: 'application/octet-stream' })
 
     const blob = await readClip({ type: 'audio/mpeg', src: CLIP_URL, url: CLIP_URL, expires: FUTURE })
 
     expect(blob.type).toBe('audio/mpeg')
     expect(await bytesOf(blob)).toStrictEqual([1, 2, 3])
-    expect(streams).toStrictEqual([{ method: 'GET', url: CLIP_URL, timeoutMs: expect.any(Number) }])
-    expect(readFiles).toEqual([])
+    expect(downloads).toStrictEqual([{
+      request: { method: 'GET', url: CLIP_URL, timeoutMs: expect.any(Number) },
+      requestId: expect.any(String),
+      file: { root: 'cache', path: expect.stringMatching(/^media\/[0-9a-f-]{36}\.part$/) },
+      rule: { maxBytes: MAX_SAVED_CLIP_BYTES },
+    }])
+    expect(readFiles).toStrictEqual([`${CACHE_DIR}/${partFile().path}`])
+    expect(deletedFiles).toStrictEqual([partFile()])
+    expect(streams).toEqual([])
+    expect(consoleError).not.toHaveBeenCalled()
   })
 
   it('downloads from the URL when the saved file cannot be read', async () => {
-    streamAnswer = async () => ({ status: 200, headers: {} })
-    streamBody = body([7])
+    readFile = async (path) => {
+      if (path === SAVED_PATH) throw new Error('The file cannot be read (HTTP 404).')
+      return new File([Uint8Array.from([7])], 'clip.part')
+    }
 
     expect(await bytesOf(await readClip({ type: 'audio/mpeg', src: SAVED_PATH, url: CLIP_URL, expires: FUTURE }))).toStrictEqual([7])
-    expect(readFiles).toStrictEqual([SAVED_PATH])
-    expect(streams.map((request) => request.url)).toStrictEqual([CLIP_URL])
+    expect(readFiles).toStrictEqual([SAVED_PATH, `${CACHE_DIR}/${partFile().path}`])
+    expect(downloads.map(({ request }) => request.url)).toStrictEqual([CLIP_URL])
+  })
+
+  it('gives the bytes when the part file cannot be deleted, which the cleanup of the temp copies deletes later', async () => {
+    readFile = async () => new File([Uint8Array.from([4])], 'clip.part')
+    deleteAppFile = async () => {
+      throw 'Permission denied'
+    }
+
+    expect(await bytesOf(await readClip({ type: 'audio/mpeg', src: null, url: CLIP_URL, expires: null }))).toStrictEqual([4])
+    expect(consoleError.mock.calls).toStrictEqual([['Failed to delete the part file of a clip download:', 'Permission denied']])
+  })
+
+  it('ends the download at a stop, rejects with the stop, and deletes the part file', async () => {
+    const abort = new AbortController()
+    downloadAppFile = () => new Promise((_resolve, reject) => {
+      cancelDownload = () => reject('Download cancelled')
+    })
+
+    const read = readClip({ type: 'audio/mpeg', src: null, url: CLIP_URL, expires: FUTURE }, abort.signal)
+    await vi.waitFor(() => expect(downloads).toHaveLength(1))
+    abort.abort()
+
+    await expect(read).rejects.toBe(abort.signal.reason)
+    expect(cancelledDownloads).toStrictEqual([downloads[0].requestId])
+    expect(deletedFiles).toStrictEqual([partFile()])
+    expect(readFiles).toEqual([])
+    expect(consoleError).not.toHaveBeenCalled()
   })
 
   it('throws "deleted" for a clip with no source', async () => {
@@ -470,16 +514,20 @@ describe('dez.controller/media/readClip', () => {
   })
 
   it('throws "expired" when no source gives the bytes after the clip expired, else "unreadable", with details that hold no path or URL', async () => {
-    streamAnswer = async () => ({ status: 403, headers: {} })
+    downloadAppFile = async () => ({ status: 403, headers: {}, saved: false, body: [] })
     const expired = await readError({ type: 'audio/mpeg', src: TEMP_PATH, url: CLIP_URL, expires: PAST })
     expect([expired.problem, expired.details]).toStrictEqual(['expired', 'The file cannot be read (HTTP 404). The server of the clip answered HTTP 403.'])
-    expect(cancelledStreams).toStrictEqual(['stream-1'])
 
-    streamAnswer = async () => {
-      throw new Error(`error sending request for url (${CLIP_URL})`)
+    // A network failure, an answer that broke off, a clip over the size
+    // limit, and a file that cannot be written all reject the download.
+    downloadAppFile = async () => {
+      throw `error sending request for url (${CLIP_URL})`
     }
     const unreadable = await readError({ type: 'audio/mpeg', src: CLIP_URL, url: CLIP_URL, expires: FUTURE })
-    expect([unreadable.problem, unreadable.details]).toStrictEqual(['unreadable', 'The server of the clip gave no answer.'])
+    expect([unreadable.problem, unreadable.details]).toStrictEqual([
+      'unreadable',
+      'The download of the clip failed: its server gave no answer, the answer broke off, the clip is larger than 1.0 GB, or Dez could not write the file.',
+    ])
 
     // A path of another home is no file of Dez: it is never read.
     const foreign = await readError({ type: 'audio/mpeg', src: '/home/bob/song.mp3', url: null, expires: null })
@@ -490,18 +538,9 @@ describe('dez.controller/media/readClip', () => {
       expect(error.message).not.toContain('cdn.example')
     }
     expect(readFiles).toStrictEqual([TEMP_PATH])
+    // Each failed download deleted its part file, if there was one.
+    expect(deletedFiles.map(({ root }) => root)).toStrictEqual(['cache', 'cache'])
     expect(consoleError).not.toHaveBeenCalled()
-  })
-
-  it('throws "unreadable" when the answer of the server breaks off', async () => {
-    streamAnswer = async () => ({ status: 200, headers: {} })
-    streamBody = (async function * () {
-      yield Uint8Array.from([1])
-      throw new Error(`connection reset: ${CLIP_URL}`)
-    })()
-
-    const error = await readError({ type: 'audio/mpeg', src: null, url: CLIP_URL, expires: null })
-    expect([error.problem, error.details]).toStrictEqual(['unreadable', 'The answer of the server of the clip broke off.'])
   })
 })
 

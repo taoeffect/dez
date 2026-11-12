@@ -265,8 +265,8 @@ const TOOL_RUNNERS: Record<string, ToolRunner> = {
       let file: Blob
       try {
         // A download from the clip's URL can take long: a stop ends the run
-        // at once.
-        file = await untilAborted(sbp('dez.controller/media/readClip', source) as Promise<Blob>, signal)
+        // at once, and the signal also ends the download.
+        file = await untilAborted(sbp('dez.controller/media/readClip', source, { signal }) as Promise<Blob>, signal)
       } catch (error) {
         if (!(error instanceof ClipReadError)) throw error
         throw new ToolError(clipReadProblemText(id, error.problem), error.details, { cause: error })

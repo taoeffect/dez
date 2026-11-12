@@ -70,8 +70,14 @@ type ClipSource =
 // when its length or size breaks a rule (`clipFileProblem`): all before a
 // paid request. The length of an audio clip comes from its decode, and the
 // length of a video from its MP4 header; a clip whose length Dez cannot
-// tell gets no length check.
-async function inputClipParts(modelName: string, rules: InputClipRules | undefined, clips: readonly ClipAttachment[]): Promise<InputClipPart[]> {
+// tell gets no length check. A stop of `signal` ends the download of a
+// clip from its URL, and rejects with the stop.
+async function inputClipParts(
+  modelName: string,
+  rules: InputClipRules | undefined,
+  clips: readonly ClipAttachment[],
+  signal: AbortSignal | undefined,
+): Promise<InputClipPart[]> {
   const sources = await Promise.all(clips.map(async (clip): Promise<ClipSource> => {
     const kindRules = rules?.[clip.kind]
     // `clipTagProblem` refused a clip of a kind with no rules before this.
@@ -82,8 +88,10 @@ async function inputClipParts(modelName: string, rules: InputClipRules | undefin
     }
     let file: Blob
     try {
-      file = await sbp('dez.controller/media/readClip', clip) as Blob
+      file = await sbp('dez.controller/media/readClip', clip, { signal }) as Blob
     } catch (error) {
+      // A stopped read did not fail.
+      if (signal?.aborted) throw error
       console.error(`Failed to read the ${clip.kind} clip @${clip.id} of a media request:`, error)
       if (!(error instanceof ClipReadError)) throw error
       throw new ExplainedError(clipReadProblemText(clip, error.problem), error.details, { cause: error })
@@ -463,10 +471,11 @@ export default sbp('sbp/selectors/register', {
   // Makes media with a model of the provider's media API (`mediaApi`). It
   // needs no tab or editor, so a tool can call it too. dez.http/cancelStream
   // with `requestId` cancels the request that runs, and `signal` does the
-  // same and also ends the wait of a clip job. An input image that breaks
-  // a size rule of the request goes as a drawing that passes it
-  // (`requestImage`); one that breaks a limit that no drawing meets rejects
-  // before any request (`Provider.inputImageProblem`). The request sets the
+  // same and also ends the wait of a clip job and the download of an input
+  // clip from its URL. An input image that breaks a size rule of the
+  // request goes as a drawing that passes it (`requestImage`); one that
+  // breaks a limit that no drawing meets rejects before any request
+  // (`Provider.inputImageProblem`). The request sets the
   // model's parameters (a scale, the length of a clip, a voice):
   // `input.parameters` where the model takes the value, else the
   // parameter's default.
@@ -532,7 +541,7 @@ export default sbp('sbp/selectors/register', {
         if (problem !== undefined) throw new ExplainedError(problem)
         return { type: 'image', mediaType, data: bytesToBase64(bytes) }
       }))
-      const clipParts = await inputClipParts(modelName, cachedModel?.clips, clips)
+      const clipParts = await inputClipParts(modelName, cachedModel?.clips, clips, signal)
 
       if (isTextKind(kind)) {
         const request = provider.textRequest(kind, modelId, { prompt: input.prompt, images, clips: clipParts, values }, await requestSecret(provider))

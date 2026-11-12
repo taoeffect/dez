@@ -1,13 +1,14 @@
 import fs from 'node:fs'
+import type { ServerResponse } from 'node:http'
 import path from 'node:path'
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from 'vitest'
-import { click, consoleErrors, resetConsoleErrors, screenshotOnFailure, waitForValue } from './harness/dom'
+import { click, consoleErrors, pointerClick, resetConsoleErrors, screenshotOnFailure, waitForValue } from './harness/dom'
 import { dropFiles, nativeDrop } from './harness/drops'
 import { makeConversation, seedConversation } from './harness/fixtures'
 import { pasteImage, pngDataUrl, solidPng } from './harness/images'
-import { MP4_VIDEO, WEBM_VIDEO, clipTag, shownPlayers, silentWav } from './harness/media'
+import { MP4_VIDEO, WEBM_VIDEO, clipTag, shownPlayers, silentWav, startClipServer, type ClipServer } from './harness/media'
 import { startMockProviderApp, type MockProviderApp } from './harness/mockProviderApp'
-import type { HeldRequest, MockProvider } from './harness/mockServer'
+import { startMockServer, type HeldRequest, type MockProvider, type MockServer } from './harness/mockServer'
 import type { E2EBrowser } from './harness/session'
 import { docPosPoint, editorDoc, focusEditor, newTab, openToasts, pasteText, pickModel, sbpCall, setCaret, submit, threadSections, waitForThread } from './harness/thread'
 
@@ -21,6 +22,9 @@ import { docPosPoint, editorDoc, focusEditor, newTab, openToasts, pasteText, pic
 // - clips that the user drops into the newest message (an HTML5 drop or a
 //   native drop) are stored in the clip folders, show as players, and go
 //   with no mention; a clip of an earlier message goes by its mention;
+// - a clip that plays from its URL is downloaded (by Rust, into a part
+//   file that goes after the read) and goes the same way; a Stop during
+//   that download ends it, and no request goes;
 // - a model that takes no clip gets the request without the clips, and a
 //   warning toast tells that they were left out;
 // - an audio clip with no image and no video clip gets an error toast for
@@ -61,9 +65,19 @@ const PNG = solidPng(48, 32, [220, 40, 40])
 const BEAT = silentWav(3)
 const HOUR_MS = 60 * 60 * 1000
 
+// A download that the slow clip server holds: its answer has the headers
+// and the first bytes of the clip, and stays open.
+interface HeldDownload {
+  reply: ServerResponse
+  closed: boolean
+}
+
 describe('clips that a message names', () => {
   let setup: MockProviderApp
   let browser: E2EBrowser
+  let clips: ClipServer
+  let slowClips: MockServer
+  const heldDownloads: HeldDownload[] = []
 
   // Writes `bytes` as the temp copy `name` of a clip, and gives its tag.
   async function tempClip (kind: 'audio' | 'video', id: string, name: string, bytes: Buffer): Promise<string> {
@@ -72,6 +86,13 @@ describe('clips that a message names', () => {
     const src = path.join(dir, name)
     await fs.promises.writeFile(src, bytes)
     return clipTag(kind, { id, type: kind === 'audio' ? 'audio/wav' : 'video/mp4', src, expires: new Date(Date.now() + HOUR_MS).toISOString() })
+  }
+
+  // The part files of clip downloads in the cache media folder, with the
+  // temp file that Rust writes a part into.
+  async function partFiles (): Promise<string[]> {
+    const names = await fs.promises.readdir(path.join(setup.app.home, '.cache', 'dez', 'media')).catch(() => [])
+    return names.filter((name) => name.includes('.part'))
   }
 
   // Seeds a conversation whose one reply holds the clips `tags`, with
@@ -128,6 +149,21 @@ describe('clips that a message names', () => {
   }
 
   beforeAll(async () => {
+    clips = await startClipServer({ 'dance.mp4': { type: 'video/mp4', bytes: MP4_VIDEO } })
+    slowClips = await startMockServer((req, res) => {
+      // The player of the clip gets it whole: its requests come from the
+      // webview, which sends a User-Agent. A download of the app comes from
+      // Rust (reqwest), which sends none.
+      res.writeHead(200, { 'Content-Type': 'video/mp4', 'Content-Length': MP4_VIDEO.length })
+      if (req.headers['user-agent'] !== undefined) {
+        res.end(MP4_VIDEO)
+        return
+      }
+      const held: HeldDownload = { reply: res, closed: false }
+      res.on('close', () => { held.closed = !res.writableEnded })
+      heldDownloads.push(held)
+      res.write(MP4_VIDEO.subarray(0, 64))
+    })
     setup = await startMockProviderApp(FILMS, {
       mediaApi: { format: 'venice' },
       fetchModels: true,
@@ -156,10 +192,14 @@ describe('clips that a message names', () => {
   afterEach(async (ctx) => {
     await screenshotOnFailure(browser, ctx)
     await setup.mock.dropOpenReplies(browser)
+    for (const held of heldDownloads) held.reply.destroy()
+    heldDownloads.length = 0
   })
 
   afterAll(async () => {
     await setup?.stop()
+    await clips?.stop()
+    await slowClips?.stop()
   })
 
   it('sends the image, the video clip, and the audio clip of a message to a reference model, each named in the prompt', async () => {
@@ -312,6 +352,51 @@ describe('clips that a message names', () => {
       { role: 'user', text: '' },
     ])
     expect(await openToasts(browser, 'warning')).toStrictEqual([])
+    expect(await consoleErrors(browser)).toStrictEqual([])
+  })
+
+  it('downloads a clip that plays from its URL, sends its bytes to a reference model, and keeps no part file', async () => {
+    const url = clips.clipUrl('dance.mp4')
+    const dance = clipTag('video', { id: 'a', type: 'video/mp4', src: url, url, expires: new Date(Date.now() + HOUR_MS).toISOString() })
+    await openClips('url-clip', [dance], 'Dance like @a', REFERENCES.name)
+    await submit(browser, '')
+
+    const queue = await queueRequest({
+      model: REFERENCES.id,
+      prompt: 'Dance like <Video 1>',
+      ...PARAMETERS,
+      reference_video_urls: [`data:video/mp4;base64,${MP4_VIDEO.toString('base64')}`],
+    })
+    const clip = await answerJob(queue, 'queue-url', 3, REFERENCES.id)
+    await waitForThread(browser, [
+      { role: 'user', text: 'Make clips' },
+      { role: 'agent', text: dance },
+      { role: 'user', text: 'Dance like @a' },
+      { role: 'agent', text: clip },
+      { role: 'user', text: '' },
+    ])
+    expect(await partFiles()).toStrictEqual([])
+    expect(await consoleErrors(browser)).toStrictEqual([])
+  })
+
+  it('ends the download of a clip from its URL when the user stops the reply, and sends no request', async () => {
+    const url = `${slowClips.url}/slow-dance.mp4`
+    const dance = clipTag('video', { id: 'a', type: 'video/mp4', src: url, url, expires: new Date(Date.now() + HOUR_MS).toISOString() })
+    await openClips('url-clip-stop', [dance], 'Dance like @a', REFERENCES.name)
+    await submit(browser, '')
+
+    await waitForValue(browser, 'download of the clip', async () => heldDownloads.length, 1)
+    // While a reply runs, the Submit button stops it.
+    await pointerClick(browser, '.submit-button')
+
+    await waitForValue(browser, 'download closed', async () => heldDownloads[0].closed, true)
+    await waitForThread(browser, [
+      { role: 'user', text: 'Make clips' },
+      { role: 'agent', text: dance },
+      { role: 'user', text: 'Dance like @a' },
+    ])
+    await waitForValue(browser, 'part files', partFiles, [])
+    expect(setup.mock.hasWaitingRequest()).toBe(false)
     expect(await consoleErrors(browser)).toStrictEqual([])
   })
 

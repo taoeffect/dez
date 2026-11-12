@@ -6,12 +6,13 @@ import { wavFileOfChannels } from '../model/providers/pcmAudio'
 import { byteSizeText } from '../utils/byteSize'
 import { ExplainedError, errorText, explainedError, rawErrorText } from '../utils/errorText'
 import { fileNameOf } from '../utils/fileName'
-import { readNativeChunkBytes, type NativeHttpDownload, type NativeHttpStreamResult } from '../utils/protocol/nativeHttp'
+import type { NativeHttpDownload, NativeHttpStreamResult } from '../utils/protocol/nativeHttp'
 import type { AppFileEntry } from './nativeTypes'
 
 // The longest time that Save, or a read of a clip from its URL, waits for
 // the whole download. A server that stops sending would keep the Save
-// control, or the tool that reads the clip, busy with no end.
+// control, or the tool or the request that reads the clip, busy with no
+// end.
 const SAVE_TIMEOUT_MS = 30 * 60 * 1000
 const CLEANUP_INTERVAL_MS = 60 * 60 * 1000
 // The longest time that `urlAnswers` waits for an answer. The player of the
@@ -76,26 +77,47 @@ function clipDownloadRefusal (status: number): string {
 
 // The bytes of a clip from its http or https URL, with no provider header:
 // the URL is a signed one, and a key must not go to the host of a clip.
-// Throws an error whose text holds no URL, as the error of a failed
-// request can name it.
-async function readClipUrl (url: string, type: string): Promise<Blob> {
-  let result: NativeHttpStreamResult
-  try {
-    result = await sbp('dez.http/stream', { method: 'GET', url, timeoutMs: SAVE_TIMEOUT_MS }) as NativeHttpStreamResult
-  } catch {
-    throw new Error('The server of the clip gave no answer.')
-  }
-  const { status } = result.response
-  if (status < 200 || status >= 300) {
-    await sbp('dez.http/cancelStream', result.requestId).catch((error: unknown) => {
-      console.error('Failed to stop the answer of a clip URL:', error)
+// Rust downloads the clip into a part file of the cache media folder, so no
+// byte of it crosses the bridge as a JSON number array, and a clip larger
+// than `MAX_SAVED_CLIP_BYTES` fails before it fills the memory. A stop of
+// `signal` cancels the download and rejects with the stop. The part file
+// goes after the read; a delete that fails leaves it to the cleanup of the
+// temp copies. Throws an error whose text holds no URL and no path, as the
+// error of a failed request can name them.
+async function readClipUrl (url: string, type: string, signal: AbortSignal | undefined): Promise<Blob> {
+  signal?.throwIfAborted()
+  const part = `${MEDIA_CACHE_FOLDER}/${crypto.randomUUID()}.part`
+  const requestId = crypto.randomUUID()
+  const cancel = () => {
+    sbp('dez.native/cancelHttpStream', requestId).catch((error: unknown) => {
+      console.error('Failed to stop the download of a clip:', error)
     })
-    throw new Error(`The server of the clip answered HTTP ${status}.`)
   }
+  signal?.addEventListener('abort', cancel, { once: true })
   try {
-    return new Blob([await readNativeChunkBytes(result.chunks)], { type })
-  } catch {
-    throw new Error('The answer of the server of the clip broke off.')
+    let download: NativeHttpDownload
+    try {
+      download = await sbp(
+        'dez.native/downloadAppFile',
+        { method: 'GET', url, timeoutMs: SAVE_TIMEOUT_MS },
+        requestId,
+        { root: 'cache', path: part },
+        { maxBytes: MAX_SAVED_CLIP_BYTES },
+      ) as NativeHttpDownload
+    } catch {
+      throw new Error(`The download of the clip failed: its server gave no answer, the answer broke off, the clip is larger than ${byteSizeText(MAX_SAVED_CLIP_BYTES)}, or Dez could not write the file.`)
+    }
+    if (!download.saved) throw new Error(`The server of the clip answered HTTP ${download.status}.`)
+    // A stop that came while the download ended, before its cancel did.
+    signal?.throwIfAborted()
+    const cacheDir = await sbp('dez.native/getAppDir', 'cache') as string
+    const file = await sbp('dez.controller/images/readFile', `${cacheDir}/${part}`) as File
+    return new Blob([file], { type })
+  } finally {
+    signal?.removeEventListener('abort', cancel)
+    await sbp('dez.native/deleteAppFile', part, 'cache').catch((error: unknown) => {
+      console.error('Failed to delete the part file of a clip download:', error)
+    })
   }
 }
 
@@ -204,20 +226,27 @@ export default sbp('sbp/selectors/register', {
   // The bytes of a clip, for a tool or a request that uses the clip: from
   // its `src`, else from its `url`. A saved file or a temp copy of this
   // computer is read through the asset protocol; a URL (http or https) is
-  // downloaded with no provider header. Throws a `ClipReadError` when no
-  // source gives them (src/model/chat/mediaFiles.ts tells each problem); it
-  // holds no path and no URL. Nothing is logged here: the caller logs, and
-  // words the problem for its reader.
-  async 'dez.controller/media/readClip' (clip: Pick<MediaTagData, 'type' | 'src' | 'url' | 'expires'>): Promise<Blob> {
+  // downloaded with no provider header (`readClipUrl`), and a stop of
+  // `signal` ends that download. Throws a `ClipReadError` when no source
+  // gives them (src/model/chat/mediaFiles.ts tells each problem); it holds
+  // no path and no URL. After a stop, rejects with the stop instead. A
+  // failed read is not logged here: the caller logs, and words the problem
+  // for its reader.
+  async 'dez.controller/media/readClip' (
+    clip: Pick<MediaTagData, 'type' | 'src' | 'url' | 'expires'>,
+    { signal }: { signal?: AbortSignal } = {},
+  ): Promise<Blob> {
     const sources = [...new Set([clip.src, clip.url])].filter((source): source is string => source !== null)
     if (sources.length === 0) throw new ClipReadError('deleted')
     const failures: string[] = []
     for (const source of sources) {
       try {
         if (isSavedMediaPath(source) || isTempMediaPath(source)) return await sbp('dez.controller/images/readFile', source) as File
-        if (/^https?:\/\//i.test(source)) return await readClipUrl(source, clip.type)
+        if (/^https?:\/\//i.test(source)) return await readClipUrl(source, clip.type, signal)
         failures.push('A source of the clip is not a file of Dez or a web address.')
       } catch (error) {
+        // A stop is no problem of the clip, and no later source is tried.
+        signal?.throwIfAborted()
         failures.push(rawErrorText(error))
       }
     }
