@@ -461,13 +461,17 @@ describe('sectionsToStreamMessages: images of user messages', () => {
     expect(sent([...earlier, user('u2', text)]).messages.at(-1)).toStrictEqual({ role: 'user', content: text })
   })
 
-  it('reads no image of a later section, so an earlier message keeps its bytes when an image arrives', () => {
+  it('reads no image of a later section, so the newest message keeps its bytes while the reply after it gets an image', () => {
     const first = user('u1', 'Draw @a')
     const before = sent([first]).messages
 
+    // The reply that answers `first` made the image `a` and goes on with a
+    // tool round: `first` is still the newest user message.
+    const during = sent([first, reply('a1', `![${GENERATED}](id=a)`)]).messages
     const after = sent([first, reply('a1', `![${GENERATED}](id=a)`), user('u2', 'Now make @a blue')]).messages
 
     expect(before).toStrictEqual([{ role: 'user', content: 'Draw @a' }])
+    expect(during).toStrictEqual([...before, { role: 'agent', content: '![image](id=a)' }])
     expect(after).toStrictEqual([
       ...before,
       { role: 'agent', content: '![image](id=a)' },
