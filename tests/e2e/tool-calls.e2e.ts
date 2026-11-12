@@ -411,7 +411,9 @@ describe('tool calls', () => {
     ]))
     // The mock model's config tells only its id and name, so every fact is
     // the value that Dez acts on when it does not know; the Tools toggle is
-    // the user's value. The usage texts are not wording that a test pins.
+    // the user's value. The mock provider's config has no `thinking`, so
+    // Dez asks for no thinking: the model does not think, and the fact is
+    // known. The usage texts are not wording that a test pins.
     expect(JSON.parse(result)).toStrictEqual({
       id: model,
       name: TOOLER.modelName,
@@ -421,8 +423,8 @@ describe('tool calls', () => {
         outputs: ['text'],
         imageInput: true,
         toolCalling: true,
-        thinking: true,
-        unknown: ['request', 'outputs', 'imageInput', 'toolCalling', 'thinking'],
+        thinking: false,
+        unknown: ['request', 'outputs', 'imageInput', 'toolCalling'],
         toggles: [{ key: 'tools', label: 'Tools', on: true }],
       },
       usage: expect.any(Array),

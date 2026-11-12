@@ -7,7 +7,8 @@ import { MODEL_INFO_SIZE_CAP, modelInfoParameterValues, modelInfoPart, modelInfo
 import { modelUsage, USAGE_TEXTS } from './modelUsage'
 import { ToolError } from './types'
 
-const OPENROUTER = providerInfo('openrouter', 'OpenRouter')
+// The built-in OpenRouter config has `thinking`.
+const OPENROUTER = { ...providerInfo('openrouter', 'OpenRouter'), supportsThinking: true }
 const CLOSED = providerInfo('closed', 'Closed', false)
 const FAILING = providerInfo('failing', 'Failing')
 const PROVIDERS = [OPENROUTER, CLOSED, FAILING]
@@ -128,6 +129,24 @@ describe('modelInfoText', () => {
       thinking: true,
       unknown: ['request', 'outputs', 'imageInput', 'toolCalling', 'thinking'],
     })
+  })
+
+  // Dez asks no model of such a provider for thinking, and drops the
+  // reasoning of its replies.
+  it('says that no model of a provider with no thinking config thinks, also one that says it thinks', () => {
+    const plain = providerInfo('plain', 'Plain')
+    const thinker: ModelInfo = { ...GEMINI, provider: plain.id, toolCalling: true, thinking: true }
+    const facts = (model: ModelInfo) => parsed(modelInfoText(plain, model, { entry: { id: model.id } })).dez
+
+    expect(facts({ ...UNKNOWN, provider: plain.id })).toStrictEqual({
+      request: 'chat',
+      outputs: ['text'],
+      imageInput: true,
+      toolCalling: true,
+      thinking: false,
+      unknown: ['request', 'outputs', 'imageInput', 'toolCalling'],
+    })
+    expect(facts(thinker)).toStrictEqual({ request: 'chat', outputs: ['text', 'image'], imageInput: true, toolCalling: true, thinking: false })
   })
 
   it('gives the toggles that apply, with their values, and the toggles that the model does not take', () => {

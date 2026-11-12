@@ -185,10 +185,13 @@ function prettyJson(value: unknown): string {
 // and tools matter only to a chat request, so a model of another kind gets
 // them only when the provider tells them. `model` holds the image rules of
 // the parameter values that a request sends (`modelInfoText`).
-function dezFacts(model: ModelInfo, facts: ModelInfoFacts): Record<string, unknown> {
+function dezFacts(model: ModelInfo, facts: ModelInfoFacts, supportsThinking: boolean): Record<string, unknown> {
   const kind = effectiveRequest(model)
   const chat = kind === 'chat'
-  const told = { request: model.request, outputs: model.outputs, imageInput: model.imageInput, ...(chat && { toolCalling: model.toolCalling, thinking: model.thinking }) }
+  // With no `thinking` in its provider's config, Dez asks no model for
+  // thinking and drops the reasoning of its replies (`supportsThinking`).
+  const thinking = supportsThinking ? model.thinking : false
+  const told = { request: model.request, outputs: model.outputs, imageInput: model.imageInput, ...(chat && { toolCalling: model.toolCalling, thinking }) }
   const unknown = Object.entries(told).flatMap(([name, value]) => (value === undefined ? [name] : []))
   const mediaKind = kind === 'chat' || kind === 'none' ? undefined : kind
   const maxImages = mediaKind && maxInputImages(mediaKind, model.images)
@@ -202,7 +205,7 @@ function dezFacts(model: ModelInfo, facts: ModelInfoFacts): Record<string, unkno
     outputs: effectiveOutputs(model),
     imageInput: model.imageInput !== false,
     ...((chat || model.toolCalling !== undefined) && { toolCalling: model.toolCalling !== false }),
-    ...((chat || model.thinking !== undefined) && { thinking: model.thinking !== false }),
+    ...((chat || model.thinking !== undefined) && { thinking: thinking !== false }),
     ...(unknown.length > 0 && { unknown }),
     ...(facts.toggles !== undefined && facts.toggles.length > 0 && { toggles: facts.toggles }),
     ...(model.unsupportedSettings && { togglesNotTaken: model.unsupportedSettings }),
@@ -299,7 +302,7 @@ export function modelInfoText(provider: ProviderInfo, model: ModelInfo, facts: M
     id,
     name: model.name,
     provider: { id: provider.id, name: provider.name },
-    dez: dezFacts(requestModel, facts),
+    dez: dezFacts(requestModel, facts, provider.supportsThinking),
     usage: modelUsage(requestModel, { toggles: facts.toggles ?? [], inputImages: facts.inputImages ?? {} }),
   }
   const noEntry = facts.entry === undefined ? ['Dez has no entry from the provider\'s model list for this model now. Try again later.'] : []
