@@ -242,14 +242,19 @@ function dezFacts(model: ModelInfo, facts: ModelInfoFacts, supportsThinking: boo
   }
 }
 
-// `part` alone. An entry that is over the cap alone goes as the start of
-// its JSON text, as long as the result stays within the cap.
+// The result with `part`: the id and that entry alone. When the result with
+// all of the entry is over the cap, the entry goes as the start of its JSON
+// text, and the result stays within the cap. The note gives the length of
+// that whole result, as that is the length that was checked: the entry's own
+// text is shorter (in the result each of its lines has 2 more spaces), and
+// can be under the cap.
 function partText(id: string, part: ModelInfoPart, value: unknown): string {
   const whole = prettyJson({ id, [part]: value })
   if (whole.length <= MODEL_INFO_SIZE_CAP) return whole
 
   const text = prettyJson(value)
-  const note = `\`${part}\` is cut: its JSON text has ${text.length} characters, over the limit of ${MODEL_INFO_SIZE_CAP}, so this is the start of that text.`
+  const note = `\`${part}\` is cut: with all of it, this result would have ${whole.length} characters, over the limit of ${MODEL_INFO_SIZE_CAP}. `
+    + `So \`${part}\` is the start of its JSON text, which has ${text.length} characters.`
   const cut = (length: number) => prettyJson({ id, [part]: text.slice(0, length), note })
   // The escapes of the JSON string make the result longer than the text,
   // so the longest start that fits is searched for.

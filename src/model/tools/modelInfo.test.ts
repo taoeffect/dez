@@ -323,15 +323,20 @@ describe('modelInfoText', () => {
         .toThrow('Dez has no priceEntry for this model now. Call model_info without `part` to see which entries it has.')
     })
 
-    it('gives the longest start of the JSON text of an entry that is over the limit alone', () => {
-      const big = { lines: Array.from({ length: 5000 }, (_, index) => `"line" ${index}`) }
-      const whole = JSON.stringify(big, null, 2)
+    // In the result each line of the entry has 2 more spaces, so an entry
+    // under the limit alone can make a result over it.
+    it('cuts an entry whose result is over the limit, and gives the checked length in the note', () => {
+      const big = { lines: Array.from({ length: 2300 }, (_, index) => `"line" ${index}`) }
+      const entryText = JSON.stringify(big, null, 2)
+      const wholeLength = JSON.stringify({ id: 'openrouter/x-ai/grok-video', providerEntry: big }, null, 2).length
       const text = modelInfoText(OPENROUTER, VIDEO, { entry: big }, 'providerEntry')
       const result = JSON.parse(text) as { providerEntry: string, note: string }
 
-      expect(whole.length).toBeGreaterThan(MODEL_INFO_SIZE_CAP)
-      expect(whole.startsWith(result.providerEntry)).toBe(true)
-      expect(result.note).toContain(String(whole.length))
+      expect(entryText.length).toBeLessThan(MODEL_INFO_SIZE_CAP)
+      expect(wholeLength).toBeGreaterThan(MODEL_INFO_SIZE_CAP)
+      expect(entryText.startsWith(result.providerEntry)).toBe(true)
+      expect(result.note).toContain(`${wholeLength} characters, over the limit of ${MODEL_INFO_SIZE_CAP}`)
+      expect(result.note).toContain(`${entryText.length} characters`)
       // One more character of the text is at most 2 more of the result
       // (an escape such as `\n` or `\"`).
       expect(text.length).toBeLessThanOrEqual(MODEL_INFO_SIZE_CAP)
