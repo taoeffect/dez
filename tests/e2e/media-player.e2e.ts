@@ -627,6 +627,8 @@ describe('media player', () => {
 
     await click(browser, '.toast-card--error .toast-close')
     await waitForValue(browser, 'error toast closed', () => openToasts(browser, 'error'), [])
+    // One error: the failed Save's.
+    expect(await consoleErrors(browser)).toStrictEqual([expect.stringMatching(/^Failed to save the clip: /)])
   })
 
   it('gives up the decoder of a clip whose tab is left', async () => {

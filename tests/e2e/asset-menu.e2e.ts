@@ -184,9 +184,13 @@ describe('asset menu', () => {
     const parts = ['.media-player__time', '.media-player__time', '.media-player__video', '.media-player__unavailable', '.media-player__unavailable']
     await expectMenus('.media-player', (index) => parts[index], [null, temp, saved, unplayable, null], before)
 
-    // Only the two clips that do not play gave errors.
-    const errors = await consoleErrors(browser)
-    expect(errors.filter((error) => !error.startsWith('[MediaPlayer] The '))).toStrictEqual([])
+    // Only the two clips that do not play gave errors, in either order: the
+    // media error of the file that cannot play, and the failed read of the
+    // file that is gone.
+    expect([...await consoleErrors(browser)].sort()).toStrictEqual([
+      expect.stringMatching(/^\[MediaPlayer\] The clip did not load; media error code: [34]$/),
+      '[MediaPlayer] The file of the clip could not be read',
+    ])
   })
 
   it('leaves the webview\'s menu on text and on the text of a clock\'s tooltip', async () => {

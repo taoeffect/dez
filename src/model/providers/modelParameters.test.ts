@@ -58,9 +58,9 @@ describe('effectiveParameterValues', () => {
   })
 
   it('reads no value from the prototype of the chosen values', () => {
-    const parameter: ModelParameter = { name: 'toString', label: 'Text', options: ['a'] }
+    const inherited = Object.create({ duration: 10, aspect_ratio: '1:1' }) as Record<string, unknown>
 
-    expect(effectiveParameterValues([parameter], {})).toStrictEqual({})
+    expect(effectiveParameterValues(PARAMETERS, inherited)).toStrictEqual({ duration: 1, duration_seconds: 5 })
   })
 })
 
@@ -86,9 +86,11 @@ describe('nearestRangeValue', () => {
     expect([0.8, 1, 3.99].map((value) => nearestRangeValue(speed, value))).toStrictEqual([0.8, 1, 4])
   })
 
-  // 1 to 10 in steps of 4 takes 1, 5, and 9.
+  // 1 to 12 in steps of 4 takes 1, 5, and 9: the step nearest to 12 is 13.
   it('never gives a number over the last step when `max` is not on a step', () => {
-    expect(nearestRangeValue({ name: 'n', label: 'N', min: 1, max: 10, step: 4 }, 10)).toBe(9)
+    const range: RangeParameter = { name: 'n', label: 'N', min: 1, max: 12, step: 4 }
+
+    expect([10, 12, 99].map((value) => nearestRangeValue(range, value))).toStrictEqual([9, 9, 9])
   })
 })
 

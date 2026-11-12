@@ -602,8 +602,8 @@ describe('a stop of a clip', () => {
     abort.abort()
     await failure
 
-    // No time went by, and no request came after the stop.
-    expect(Date.now()).toBe(STARTED_AT + 2 * SECOND_MS)
+    // The wait left no timer, and no request came after the stop.
+    expect(vi.getTimerCount()).toBe(0)
     await vi.advanceTimersByTimeAsync(10 * SECOND_MS)
     expect(downloads).toHaveLength(1)
     expect(cancelled).toStrictEqual(['reply-1'])

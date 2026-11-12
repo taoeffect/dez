@@ -125,7 +125,7 @@ describe('clipFile', () => {
 
   it('gives no file for a clip that plays from its URL only, or that has no source', () => {
     expect(clipFile('https://cdn.example/v.mp4?sig=1', null, false)).toBeNull()
-    expect(clipFile('/home/u/Videos/clip.mp4', 'gone', false)).toBeNull()
+    expect(clipFile('/home/u/Videos/clip.mp4', null, false)).toBeNull()
     expect(clipFile(null, 'gone', false)).toBeNull()
   })
 

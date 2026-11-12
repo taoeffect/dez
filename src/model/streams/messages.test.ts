@@ -357,9 +357,11 @@ describe('messageClips', () => {
     expect(messageClips([clipsReply, user('u1', `Use @c\n${mediaTagText(PASTED_DANCE)}`), reply('a2', 'Done.'), user('u2', 'Again'), user('u3', '')])).toStrictEqual([])
   })
 
-  // The ids are unique in a tab unless the user edits the text.
+  // The ids are unique in a tab unless the user edits the text. The clip `c`
+  // has the id of an image of an earlier section, and the clip `d` that of
+  // an image of the message.
   it('gives no clip for an id that an image has', () => {
-    const sections = [clipsReply, reply('a2', `![${GENERATED}](id=c)`), user('u1', `Use @c and ![${IMAGE}](id=d)\n${mediaTagText({ ...PASTED_DANCE, id: 'c' })}`)]
+    const sections = [clipsReply, reply('a2', `![${GENERATED}](id=c)`), user('u1', `Use @c and @d: ![${IMAGE}](id=d)\n${mediaTagText({ ...PASTED_DANCE, id: 'c' })}`)]
 
     expect(messageClips(sections)).toStrictEqual([])
   })

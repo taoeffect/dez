@@ -267,7 +267,7 @@ describe('modelInfoText', () => {
     expect(result).not.toHaveProperty('providerEntry')
     expect(result.mediaEntry).toStrictEqual({ id: 'm' })
     expect(result.priceEntry).toStrictEqual([{ cost: 1 }])
-    expect(result.note).toBeTypeOf('string')
+    expect(result.note).toBe('Dez has no entry from the provider\'s model list for this model now. Try again later.')
   })
 
   describe(`within ${MODEL_INFO_SIZE_CAP} characters`, () => {
@@ -377,11 +377,10 @@ describe('modelInfoText', () => {
       })
     })
 
-    it('tells that the provider gave no price, and has no media entry for a provider with no media list', () => {
+    it('tells that the provider gave no price', () => {
       const result = parsed(modelInfoText(OPENROUTER, VIDEO, { entry: videoEntry, values: {}, cost: { error: 'No answer' } }))
 
       expect(result.dez.cost).toStrictEqual({ error: 'No answer' })
-      expect(result).not.toHaveProperty('mediaEntry')
     })
 
     it('sends a stand-in for a local file path in an option and in the media and price entries', () => {

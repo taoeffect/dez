@@ -163,8 +163,12 @@ describe('asset facts', () => {
       await waitForValue(browser, `facts of player ${index} shown`, () => factsShown('.media-player', index), true)
     }
 
-    // Only the two clips that do not play gave errors.
-    const errors = await consoleErrors(browser)
-    expect(errors.filter((error) => !error.startsWith('[MediaPlayer] The '))).toStrictEqual([])
+    // Only the two clips that do not play gave errors, in either order: the
+    // media error of the file that cannot play, and the failed read of the
+    // file that is gone.
+    expect([...await consoleErrors(browser)].sort()).toStrictEqual([
+      expect.stringMatching(/^\[MediaPlayer\] The clip did not load; media error code: [34]$/),
+      '[MediaPlayer] The file of the clip could not be read',
+    ])
   })
 })

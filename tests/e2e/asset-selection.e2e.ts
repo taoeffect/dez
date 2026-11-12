@@ -58,23 +58,26 @@ describe('assets in a selection', () => {
     }, name)
   }
 
-  // Marks the image and player elements that are in the page now, so that
-  // `stillMarked` can tell whether the editor drew an asset again.
+  // The widget roots of the images and players, and their image, card, and
+  // media elements.
+  const ASSET_ELEMENTS = '.cm-content .dez-image, .cm-content .dez-image__img, .cm-content .dez-media, .cm-content .media-player__card, .cm-content audio, .cm-content video'
+
+  // Marks the asset elements that are in the page now, so that
+  // `stillMarked` can tell whether the editor drew an asset again (also the
+  // "Image not found" box, which is only its root and text).
   async function markAssetElements (): Promise<void> {
-    await browser.execute(() => {
-      for (const element of document.querySelectorAll('.cm-content .dez-image__img, .cm-content .media-player__card, .cm-content audio, .cm-content video')) {
-        Reflect.set(element, 'e2eMark', true)
-      }
-    })
+    await browser.execute((selector: string) => {
+      for (const element of document.querySelectorAll(selector)) Reflect.set(element, 'e2eMark', true)
+    }, ASSET_ELEMENTS)
   }
 
-  // For each image and player element in the page, whether it is one that
+  // For each asset element in the page, whether it is one that
   // `markAssetElements` marked.
   async function stillMarked (): Promise<boolean[]> {
-    return browser.execute(() => Array.from(
-      document.querySelectorAll('.cm-content .dez-image__img, .cm-content .media-player__card, .cm-content audio, .cm-content video'),
+    return browser.execute((selector: string) => Array.from(
+      document.querySelectorAll(selector),
       (element) => Reflect.get(element, 'e2eMark') === true,
-    ))
+    ), ASSET_ELEMENTS)
   }
 
   beforeAll(async () => {
@@ -165,7 +168,9 @@ describe('assets in a selection', () => {
     await browser.keys([Key.Alt, 'a'])
     await waitForValue(browser, 'images in Select All', assetLooks, [{ selected: true, tint: focused }, { selected: true, tint: null }])
 
-    expect(await stillMarked()).toStrictEqual([true])
+    // The root and the image of the stored image, and the root of the
+    // missing one.
+    expect(await stillMarked()).toStrictEqual([true, true, true])
     expect(await consoleErrors(browser)).toStrictEqual([])
   })
 
@@ -189,7 +194,7 @@ describe('assets in a selection', () => {
     ])
     await markAssetElements()
     const marks = await stillMarked()
-    expect(marks.length).toBeGreaterThanOrEqual(4)
+    expect(marks.length).toBeGreaterThanOrEqual(6)
     const focused = await themeColor('--color-selection-tint')
 
     await focusEditor(browser)

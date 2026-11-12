@@ -51,7 +51,7 @@ let streamAnswer: () => Promise<NativeHttpResponseHead>
 let cancelledStreams: string[] = []
 let cancelStream: () => Promise<void>
 let streamBody: AsyncIterable<Uint8Array>
-let savedFiles: Array<{ path: string, bytes: Uint8Array }> = []
+let savedFiles: Array<{ file: AppFileRef, bytes: Uint8Array }> = []
 let saveAppFile: () => Promise<void>
 let readFiles: string[] = []
 let readFile: (path: string) => Promise<File>
@@ -101,9 +101,9 @@ sbp('sbp/selectors/register', {
     cancelledStreams.push(requestId)
     await cancelStream()
   },
-  async 'dez.native/saveAppFile' (path: string, bytes: Uint8Array): Promise<void> {
+  async 'dez.native/saveAppFile' (path: string, bytes: Uint8Array, root = 'app'): Promise<void> {
     await saveAppFile()
-    savedFiles.push({ path, bytes })
+    savedFiles.push({ file: { root, path } as AppFileRef, bytes })
   },
   async 'dez.controller/images/readFile' (path: string): Promise<File> {
     readFiles.push(path)
@@ -249,7 +249,7 @@ describe('dez.controller/media/save', () => {
     const path = await sbp('dez.controller/media/save', clip, { bytes }) as string
 
     expect(path).toMatch(/^\/home\/ann\/\.config\/dez\/assets\/generated\/audio\/[0-9a-f-]{36}\.wav$/)
-    expect(savedFiles).toStrictEqual([{ path: path.slice(APP_DIR.length + 1), bytes }])
+    expect(savedFiles).toStrictEqual([{ file: { root: 'app', path: path.slice(APP_DIR.length + 1) }, bytes }])
     expect(moves).toEqual([])
     expect(downloads).toEqual([])
     expect(toasts).toEqual([])
@@ -262,7 +262,10 @@ describe('dez.controller/media/save', () => {
 
     expect(audio).toMatch(/^\/home\/ann\/\.config\/dez\/assets\/audio\/[0-9a-f-]{36}\.mp3$/)
     expect(video).toMatch(/^\/home\/ann\/\.config\/dez\/assets\/video\/[0-9a-f-]{36}\.mov$/)
-    expect(savedFiles).toStrictEqual([{ path: audio.slice(APP_DIR.length + 1), bytes }, { path: video.slice(APP_DIR.length + 1), bytes }])
+    expect(savedFiles).toStrictEqual([
+      { file: { root: 'app', path: audio.slice(APP_DIR.length + 1) }, bytes },
+      { file: { root: 'app', path: video.slice(APP_DIR.length + 1) }, bytes },
+    ])
     expect(toasts).toEqual([])
   })
 

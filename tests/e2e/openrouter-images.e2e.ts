@@ -3,7 +3,7 @@ import type http from 'node:http'
 import path from 'node:path'
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from 'vitest'
 import { unstoredOutputMessage } from '../../src/model/providers/unusableModel'
-import { consoleErrors, resetConsoleErrors, screenshotOnFailure, waitForValue } from './harness/dom'
+import { click, consoleErrors, resetConsoleErrors, screenshotOnFailure, waitForValue } from './harness/dom'
 import { filesIn, newFileIn, storedFileName } from './harness/fixtures'
 import { generatedImagesDir, pasteImageReference, pngDataUrl, shownImages, solidPng } from './harness/images'
 import { expectSendRefused, startMockProviderApp, type MockProviderApp } from './harness/mockProviderApp'
@@ -183,6 +183,12 @@ describe('images of the OpenRouter image API', () => {
       { role: 'user', text: '' },
     ])
     expect(await openToasts(browser, 'warning')).toEqual([])
+
+    // Back to the defaults, so that a later test gets no resolution.
+    await openPopup(browser)
+    await click(browser, '.provider-settings-reset')
+    await waitForValue(browser, 'popup after the reset', async () => (await popupView(browser)).rows, rows)
+    await closePopup(browser)
     expect(await consoleErrors(browser)).toEqual([])
   })
 

@@ -787,10 +787,11 @@ describe('venice clip requests', () => {
     expect(veniceClips.request(kind, VENICE_URL, 'm', { prompt: 'Hi', images: [], lyrics: 'La la', values }).body).not.toHaveProperty('lyrics_prompt')
   })
 
-  it.each(['tts', 'music'] as const)('sends no image in a %s request', (kind) => {
-    const body = JSON.stringify(veniceClips.request(kind, VENICE_URL, 'm', { prompt: 'Hi', images: IMAGES, values: {} }).body)
-
-    expect(body).not.toContain('base64')
+  it.each([
+    ['tts', { model: 'm', input: 'Hi' }],
+    ['music', { model: 'm', prompt: 'Hi' }],
+  ] as const)('sends no image in a %s request', (kind, body) => {
+    expect(veniceClips.request(kind, VENICE_URL, 'm', { prompt: 'Hi', images: IMAGES, values: {} }).body).toStrictEqual(body)
   })
 
   it('queues a video from a text with each value as its request field, and no image field', () => {
@@ -1454,10 +1455,11 @@ describe('transcriptions', () => {
   })
 
   it.each([
-    ['no text', json({ duration: 3 })],
-    ['a text that is no string', json({ text: ['Hello'] })],
-    ['a body that is not JSON', new TextEncoder().encode('Hello')],
-  ])('refuses an answer with %s', (_name, body) => {
-    expect(thrownError(() => MEDIA_FORMATS.venice.texts?.parseResponse('transcription', body))).toBeInstanceOf(UnusableAnswerError)
+    ['no text', json({ duration: 3 }), 'The answer holds no text.'],
+    ['a text that is no string', json({ text: ['Hello'] }), 'The answer holds no text.'],
+    ['a body that is not JSON', new TextEncoder().encode('Hello'), 'The answer is not valid JSON.'],
+  ])('refuses an answer with %s in each format', (_name, body, message) => {
+    expect((['venice', 'openrouter'] as const).map((format) => thrownError(() => MEDIA_FORMATS[format].texts?.parseResponse('transcription', body))))
+      .toStrictEqual([new UnusableAnswerError(message), new UnusableAnswerError(message)])
   })
 })

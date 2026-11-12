@@ -31,9 +31,11 @@ let refreshCheck: () => Promise<void>
 // The price requests, and what the provider answers to one.
 let quotes: ProviderMediaQuoteInput[] = []
 let quoteAnswer: () => Promise<ProviderMediaQuote | null>
-// The toggles that apply to every model, and the rules of an input image.
+// The toggles that apply to every model, the rules of an input image, and
+// the known limits of each model by its full id.
 let descriptor: ProviderSettingsDescriptor | null
 let inputImageRules: ProviderInputImageRules
+let knownLimits: Record<string, KnownLimit[]>
 // The stub image store and webview of `crop_scale_image`: the paths of the
 // files that were read, what a read and a save do, the size of every stored
 // image, each drawing with its file type, each save with its file type, and
@@ -55,7 +57,7 @@ let readClip: () => Promise<Blob>
 let clipDuration: number
 // Set to make the webview fail to decode.
 let cutError: Error | undefined
-let savedClips: { clip: unknown, bytes: Uint8Array }[] = []
+let savedClips: { clip: unknown, options: unknown }[] = []
 let saveClip: () => Promise<string>
 let deletedClips: string[] = []
 const CUT_BYTES = new Uint8Array([9])
@@ -74,8 +76,8 @@ sbp('sbp/selectors/register', {
   'dez.provider/inputImageRules' (): ProviderInputImageRules {
     return inputImageRules
   },
-  'dez.provider/knownLimits' (): KnownLimit[] {
-    return []
+  'dez.provider/knownLimits' (providerId: string, modelId: string): KnownLimit[] {
+    return knownLimits[`${providerId}/${modelId}`] ?? []
   },
   async 'dez.controller/modelCache/refresh' (options: unknown): Promise<void> {
     refreshes.push(options)
@@ -108,8 +110,8 @@ sbp('sbp/selectors/register', {
     const part = plan(clipDuration)
     return part && { part, bytes: CUT_BYTES, duration: part.end - part.start }
   },
-  async 'dez.controller/media/save' (clip: unknown, { bytes }: { bytes: Uint8Array }): Promise<string> {
-    savedClips.push({ clip, bytes })
+  async 'dez.controller/media/save' (clip: unknown, options: unknown): Promise<string> {
+    savedClips.push({ clip, options })
     return await saveClip()
   },
   async 'dez.controller/media/delete' (path: string): Promise<void> {
@@ -135,6 +137,7 @@ beforeEach(() => {
   quoteAnswer = async () => ({ usd: 0.07 })
   descriptor = { name: 'Venice', thinking: true, tools: true, settings: [{ key: 'webSearch', label: 'Web search', type: 'boolean', default: true, bodyPath: 'venice_parameters.enable_web_search' }] }
   inputImageRules = {}
+  knownLimits = {}
   readImages = []
   readImage = async () => new Blob([])
   storedImageSize = { width: 1000, height: 500 }
@@ -334,6 +337,14 @@ describe('dez.controller/tools/run', () => {
 
         expect((await info()).content)
           .toBe(modelInfoText(providers[0], VIDEO, facts({ duration: '8s', resolution: '720p', aspect_ratio: '16:9' }, { priceEntry: records })))
+      })
+
+      it('gives the known limits of the model', async () => {
+        const limits: KnownLimit[] = [{ text: 'Takes at most 2 images.', source: 'A test', limit: { maxImages: 2 } }]
+        knownLimits = { 'venice/wan': limits }
+
+        expect((await info()).content)
+          .toBe(modelInfoText(providers[0], VIDEO, facts({ duration: '8s', resolution: '720p', aspect_ratio: '16:9' }, { cost: { usd: 0.07 }, limits })))
       })
 
       it('gives the part that the call names, and asks for no price for a part that it does not know', async () => {
@@ -586,7 +597,7 @@ describe('dez.controller/tools/run', () => {
 
       expect(readClips).toStrictEqual([song])
       const wav = { kind: 'audio', type: 'audio/wav', src: null, url: null, expires: null }
-      expect(savedClips).toStrictEqual([{ clip: wav, bytes: CUT_BYTES }])
+      expect(savedClips).toStrictEqual([{ clip: wav, options: { bytes: CUT_BYTES } }])
       expect(written).toStrictEqual([{ ...wav, src: made }])
       expect(deletedClips).toStrictEqual([])
     })

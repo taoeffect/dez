@@ -965,7 +965,7 @@ describe('media requests', () => {
     await expect(generate({ providerId: 'local', kind: 'image' })).rejects.toThrow('Local has no media API that Dez can use.')
     await expect(generate({ providerId: 'local', kind: 'tts' })).rejects.toThrow('Local has no media API that Dez can use.')
 
-    expect(streamRequests).toEqual([])
+    expect([streamRequests, downloadRequests, httpRequests]).toStrictEqual([[], [], []])
   })
 
   describe('input images and the size rules of the request', () => {
