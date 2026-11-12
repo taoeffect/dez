@@ -47,6 +47,9 @@ const mvhdV1 = (timescale: number, duration: bigint) =>
 const FTYP = box('ftyp', ascii('isom'), u32(512), ascii('isomiso2avc1mp41'))
 const TRAK = box('trak', box('tkhd', new Uint8Array(84)))
 const MDAT = box('mdat', new Uint8Array(64).fill(0xAB))
+// The movie extends box of a fragmented file, with one track extends box.
+const MVEX = box('mvex', box('trex', new Uint8Array(24)))
+const MOOF = box('moof', box('mfhd', new Uint8Array(8)))
 
 describe('mp4DurationSeconds', () => {
   it('reads the length from a version 0 movie header', () => {
@@ -85,6 +88,11 @@ describe('mp4DurationSeconds', () => {
     ['a time scale of 0', concat(FTYP, box('moov', mvhdV0(0, 4000)))],
     ['an unknown length in a version 0 header', concat(FTYP, box('moov', mvhdV0(1000, 0xFFFFFFFF)))],
     ['an unknown length in a version 1 header', concat(FTYP, box('moov', mvhdV1(1000, 0xFFFFFFFFFFFFFFFFn)))],
+    // The movie header counts only the first fragment (1 s here), as with
+    // `ffmpeg -movflags frag_keyframe`; the rest is in the fragments.
+    ['a fragmented file', concat(FTYP, box('moov', mvhdV0(1000, 1000), TRAK, MVEX), MOOF, MDAT, MOOF, MDAT)],
+    ['a length of 0 in a version 0 header', concat(FTYP, box('moov', mvhdV0(1000, 0), TRAK))],
+    ['a length of 0 in a version 1 header', concat(FTYP, box('moov', mvhdV1(1000, 0n), TRAK))],
   ])('tells no length for %s', (_name, bytes) => {
     expect(mp4DurationSeconds(bytes)).toBeNull()
   })

@@ -37,25 +37,32 @@ function findBox(view: DataView, start: number, end: number, type: string): { st
 }
 
 /** The length in seconds of the MP4 or QuickTime video `bytes`; null when
- *  the file has no movie header that Dez can read, or when the header
- *  tells no length (all bits set, or a time scale of 0). */
+ *  the file has no movie header that Dez can read, when it is a fragmented
+ *  file, or when the header tells no length (all bits set, a length of 0,
+ *  or a time scale of 0). */
 export function mp4DurationSeconds(bytes: Uint8Array): number | null {
   const view = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength)
   const movie = findBox(view, 0, bytes.length, 'moov')
   const header = movie && findBox(view, movie.start, movie.end, 'mvhd')
-  if (!header) return null
+  if (!movie || !header) return null
+  // A fragmented file (a `mvex` box: screen recorders, `MediaRecorder`,
+  // `ffmpeg -movflags frag_keyframe`) has its media in fragments after the
+  // movie box, which the movie header does not count: its length is 0, or
+  // the length of the first fragment only.
+  // ISO/IEC 14496-12, 8.8 (Movie Fragments)
+  if (findBox(view, movie.start, movie.end, 'mvex')) return null
   // Version 0 has 32-bit times and length; version 1 has 64-bit ones. The
   // version and 3 bytes of flags come first.
   const version = header.end - header.start >= 1 ? view.getUint8(header.start) : null
   if (version === 0 && header.end - header.start >= 20) {
     const timescale = view.getUint32(header.start + 12)
     const duration = view.getUint32(header.start + 16)
-    return timescale === 0 || duration === 0xFFFFFFFF ? null : duration / timescale
+    return timescale === 0 || duration === 0 || duration === 0xFFFFFFFF ? null : duration / timescale
   }
   if (version === 1 && header.end - header.start >= 32) {
     const timescale = view.getUint32(header.start + 20)
     const duration = view.getBigUint64(header.start + 24)
-    return timescale === 0 || duration === 0xFFFFFFFFFFFFFFFFn ? null : Number(duration) / timescale
+    return timescale === 0 || duration === 0n || duration === 0xFFFFFFFFFFFFFFFFn ? null : Number(duration) / timescale
   }
   return null
 }
