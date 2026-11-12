@@ -13,20 +13,6 @@ const JPEG_QUALITY = 0.95
 
 let fileDropsWatched = false
 
-// The size of the file at the asset protocol URL `url`, from one request of
-// its first byte: the protocol gives the whole size after the `/` of
-// `Content-Range` (in a 206, and in the 416 of an empty file). Null when the
-// answer has no size, such as for a missing file. The body is not read: a
-// server that does not take ranges sends the whole file.
-async function fileSize(url: string): Promise<number | null> {
-  const response = await fetch(url, { headers: { Range: 'bytes=0-0' } })
-  response.body?.cancel().catch((error: unknown) => {
-    console.error('Failed to stop the answer of a file size request:', error)
-  })
-  const total = /\/(\d+)\s*$/.exec(response.headers.get('Content-Range') ?? '')?.[1]
-  return total === undefined ? null : Number(total)
-}
-
 export default sbp('sbp/selectors/register', {
   // Stores the bytes of an image under a new name in an image folder
   // (`pasted` for pasted and dropped images, `generated` for the images that
@@ -91,21 +77,38 @@ export default sbp('sbp/selectors/register', {
     return convertFileSrc(path)
   },
 
+  // The size in bytes of the file at the absolute path `path` (a file that
+  // `readFile` can read), from one request of its first byte: the asset
+  // protocol gives the whole size after the `/` of `Content-Range` (in a
+  // 206, and in the 416 of an empty file). So a view can show the size of a
+  // file with no read of the whole file. Null when the answer has no size,
+  // such as for a missing file. The body is not read: a server that does
+  // not take ranges sends the whole file. Rejects when the request fails.
+  async 'dez.controller/images/fileSize' (path: string): Promise<number | null> {
+    const response = await fetch(convertFileSrc(path), { headers: { Range: 'bytes=0-0' } })
+    response.body?.cancel().catch((error: unknown) => {
+      console.error('Failed to stop the answer of a file size request:', error)
+    })
+    const total = /\/(\d+)\s*$/.exec(response.headers.get('Content-Range') ?? '')?.[1]
+    return total === undefined ? null : Number(total)
+  },
+
   // Reads a file by its absolute path through the asset protocol: a file in
   // an app folder that the protocol's scope has (a stored image, a media
   // clip), or a file of a native file drop (Tauri adds each dropped path to
   // the scope). The protocol takes the type from the bytes. With `maxBytes`,
   // a larger file is not read: one request asks its size first
-  // (`fileSize`), and when that gives no size, the size of the bytes read
-  // is checked. Rejects when the file cannot be read, and with a
-  // `FileTooLargeError` that tells the size when it is too large; the error
-  // holds no path, as a tool can give its text to a chat provider.
+  // (`dez.controller/images/fileSize`), and when that gives no size, the
+  // size of the bytes read is checked. Rejects when the file cannot be
+  // read, and with a `FileTooLargeError` that tells the size when it is too
+  // large; the error holds no path, as a tool can give its text to a chat
+  // provider.
   async 'dez.controller/images/readFile' (path: string, { maxBytes }: { maxBytes?: number } = {}): Promise<File> {
-    const url = convertFileSrc(path)
     if (maxBytes !== undefined) {
-      const size = await fileSize(url)
+      const size = await sbp('dez.controller/images/fileSize', path) as number | null
       if (size !== null && size > maxBytes) throw new FileTooLargeError(size, maxBytes)
     }
+    const url = convertFileSrc(path)
     const response = await fetch(url)
     if (!response.ok) throw new Error(`The file cannot be read (HTTP ${response.status}).`)
     const blob = await response.blob()

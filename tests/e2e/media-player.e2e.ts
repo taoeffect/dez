@@ -190,12 +190,14 @@ describe('media player', () => {
     place: 'top right of the card' | 'right of the card' | 'other'
   }
 
-  // The id badge of each player, in doc order.
+  // The id badge of each player, in doc order: its label, and the place and
+  // the opacity of its toolbar.
   async function badges (): Promise<Badge[]> {
     return browser.execute(() => Array.from(document.querySelectorAll('.cm-content .media-player'), (player) => {
-      const badge = player.querySelector('.media-player__id')?.getBoundingClientRect()
+      const toolbar = player.querySelector('.media-player__overlay')
+      const badge = toolbar?.getBoundingClientRect()
       const card = player.querySelector('.media-player__card')?.getBoundingClientRect()
-      if (!badge || !card) throw new Error('badges: a player has no badge or no card')
+      if (!toolbar || !badge || !card) throw new Error('badges: a player has no badge or no card')
       const inCard = badge.left >= card.left && badge.right <= card.right && badge.top >= card.top && badge.bottom <= card.bottom
       const badgeMiddle = badge.top + badge.height / 2
       const place: Badge['place'] = inCard && badge.left > card.left + card.width / 2 && badge.bottom < card.top + card.height / 2
@@ -203,7 +205,7 @@ describe('media player', () => {
         : badge.left >= card.right && badgeMiddle > card.top && badgeMiddle < card.bottom ? 'right of the card' : 'other'
       return {
         label: player.querySelector('.media-player__id')?.getAttribute('aria-label') ?? null,
-        opacity: getComputedStyle(player.querySelector('.media-player__id') as Element).opacity,
+        opacity: getComputedStyle(toolbar).opacity,
         place,
       }
     }))

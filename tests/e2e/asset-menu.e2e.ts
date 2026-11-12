@@ -2,7 +2,7 @@ import fs from 'node:fs'
 import path from 'node:path'
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from 'vitest'
 import { startApp, type RunningApp } from './harness/app'
-import { consoleErrors, pointerRightClickAt, resetConsoleErrors, screenshotOnFailure, waitFor, waitForValue, type Point } from './harness/dom'
+import { consoleErrors, elementCenter, movePointer, pointerRightClickAt, resetConsoleErrors, screenshotOnFailure, waitFor, waitForValue, type Point } from './harness/dom'
 import { makeConversation, seedAppState, seedConversation } from './harness/fixtures'
 import { shownImages, solidPng } from './harness/images'
 import { NOT_A_CLIP, WEBM_VIDEO, clipTag, silentWav, startClipServer, type ClipServer } from './harness/media'
@@ -115,10 +115,13 @@ describe('asset menu', () => {
   // Right-clicks the element `part` of each asset of `asset`, in doc order,
   // and checks that each click asked for the menu with the file of
   // `files[index]`, canceled the webview's menu, and left the editor as
-  // `before` had it.
+  // `before` had it. The pointer comes from off the assets: the toolbar of
+  // a small image hangs over the line below while it shows, and then it
+  // takes the clicks there.
   async function expectMenus (asset: string, part: (index: number) => string, files: Array<string | null>, before: EditorState): Promise<void> {
     for (const [index, file] of files.entries()) {
       await resetMenuRecord()
+      await movePointer(browser, await elementCenter(browser, 'header.tab-bar'))
       await pointerRightClickAt(browser, await assetPoint(asset, index, part(index)))
       await waitForValue(browser, `menu of ${asset} ${index}`, menuRecord, { files: [file], canceled: [true] })
       expect(await editorState(), `editor after a right-click on ${asset} ${index}`).toStrictEqual(before)

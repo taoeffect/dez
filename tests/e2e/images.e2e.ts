@@ -52,8 +52,9 @@ const PASTED_PNG = solidPng(48, 32, [220, 40, 40])
 const DROPPED_PNG = solidPng(40, 24, [40, 90, 220])
 // PASTED_PNG as an OpenAI-format image part.
 const PASTED_IMAGE_URL_PART = { type: 'image_url', image_url: { url: `data:image/png;base64,${PASTED_PNG.toString('base64')}` } }
-// Wider than an image's overlay toolbar, which is wider than PASTED_PNG.
-const WIDE_PNG = solidPng(200, 60, [30, 30, 30])
+// Wider than an image's overlay toolbar (its facts make it wide), which is
+// wider than PASTED_PNG.
+const WIDE_PNG = solidPng(400, 60, [30, 30, 30])
 
 /** A Dez image reference in the doc, `![<absolute path>](id=<letters>)`. */
 const REFERENCE = /!\[[^\]\n]+\]\(id=[a-z]+\)/
@@ -402,7 +403,7 @@ describe('images', () => {
     await waitForValue(browser, 'shown images', () => shownImages(browser), [
       shownPastedImage(first),
       { alt: path.basename(secondPath), width: 48, height: 32 },
-      { alt: 'wide.png', width: 200, height: 60 },
+      { alt: 'wide.png', width: 400, height: 60 },
     ])
     await waitForValue(browser, 'missing image box', () => browser.execute(
       () => document.querySelector('.cm-content .dez-image-missing')?.firstChild?.textContent ?? null,

@@ -1857,10 +1857,11 @@ export const dezTheme = EditorView.theme({
     userSelect: 'none',
   },
   // The overlay of an image (`ImageWidget`): one small floating toolbar with
-  // the id badge and the trash button, shown only while the pointer is over
-  // the image, and never a part of the layout, so a hover changes no size.
-  // Its glass surface is dark in both themes, with white text, a hairline
-  // border, and a shadow, so it reads on light, dark, and busy images.
+  // the id badge, the facts of the image, and the trash button, shown only
+  // while the pointer is over the image, and never a part of the layout, so
+  // a hover changes no size. Its glass surface is dark in both themes, with
+  // white text, a hairline border, and a shadow, so it reads on light, dark,
+  // and busy images.
   //
   // Over an image, it sits at the right end of a row along the image's top
   // edge, inset as far from the top as from the right, and draws over the
@@ -1897,7 +1898,11 @@ export const dezTheme = EditorView.theme({
     lineHeight: '1',
     whiteSpace: 'nowrap',
     userSelect: 'none',
-    pointerEvents: 'auto',
+    // Hidden, the toolbar takes no pointer: over a small image it covers a
+    // part of the line below, whose text keeps its clicks and its menu. It
+    // takes the pointer once the pointer is on the image (the rule below),
+    // so the pointer can go on to the part that hangs out.
+    pointerEvents: 'none',
     cursor: 'default',
     opacity: '0',
     // The entrance: a fade, and a slide in the
@@ -1909,6 +1914,7 @@ export const dezTheme = EditorView.theme({
   },
   '.dez-image:hover .dez-image__overlay': {
     opacity: '1',
+    pointerEvents: 'auto',
   },
   // In the "Image not found" box, the toolbar follows the text and keeps
   // its room while hidden. It is taller than the box's line; its negative
@@ -1919,7 +1925,8 @@ export const dezTheme = EditorView.theme({
     verticalAlign: 'middle',
   },
   // The id reads as a label of the image: an image icon, then the id. The
-  // `::after` is the divider in the middle of the gap before the trash.
+  // `::after` is the divider in the middle of the gap before the facts (or
+  // before the trash, in the "Image not found" box, which has no facts).
   '.dez-image__id': {
     position: 'relative',
     display: 'inline-flex',
@@ -1938,6 +1945,28 @@ export const dezTheme = EditorView.theme({
     opacity: '0.72',
   },
   '.dez-image__id::after': {
+    content: '""',
+    position: 'absolute',
+    top: '25%',
+    bottom: '25%',
+    right: `calc(${editorSize(-1.5)} - 0.5px)`,
+    width: '1px',
+    background: 'var(--color-image-toolbar-border, rgba(255, 255, 255, 0.18))',
+  },
+  // The facts (pixels, format, file size) are less strong than the id, with
+  // digits of one width. The `::after` is the divider before the trash.
+  '.dez-image__facts': {
+    position: 'relative',
+    display: 'inline-flex',
+    alignItems: 'center',
+    boxSizing: 'border-box',
+    height: editorSize(24),
+    padding: editorSize(0, 8),
+    color: 'rgba(255, 255, 255, 0.78)',
+    fontWeight: '500',
+    fontVariantNumeric: 'tabular-nums',
+  },
+  '.dez-image__facts::after': {
     content: '""',
     position: 'absolute',
     top: '25%',

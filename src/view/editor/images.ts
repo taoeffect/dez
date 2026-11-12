@@ -2,9 +2,10 @@ import sbp from '@sbp/sbp'
 import { StateEffect, StateField, Transaction, type EditorState, type Extension, type Text } from '@codemirror/state'
 import { Decoration, EditorView, ViewPlugin, WidgetType, showTooltip, type DecorationSet, type PluginValue, type Rect, type Tooltip } from '@codemirror/view'
 import { SENTINEL_CHAR } from '../../model/chat/content'
-import { findImageReferences, type ImageReference } from '../../model/chat/images'
+import { findImageReferences, imageExtension, imageMediaType, type ImageReference } from '../../model/chat/images'
 import { fileNameOf } from '../../utils/fileName'
 import { isMacPlatform } from '../../utils/platform'
+import { assetFactsText } from '../assetFacts'
 import { IMAGE_MAX_HEIGHT_PX, SECTION_SEP, editorSizePx } from '../thread/cmEditor'
 import { measureLineHeights } from '../thread/editorMeasure'
 import { syncDomSelection } from './focus'
@@ -27,6 +28,12 @@ interface ImageSize {
  *  draws again (tab switch, stream end, scroll back into view) sizes its box
  *  from here before its image loads, so the text below does not jump. */
 const naturalSizes = new Map<string, ImageSize>()
+
+/** The size in bytes of each image file whose size was read, by path, for
+ *  the facts of the overlay. A stored image's path names one file for good
+ *  (each new image gets a new file name, and no file is written again), so
+ *  a widget that CM draws again needs no second read. */
+const fileSizes = new Map<string, number>()
 
 /** Gives the box of `img` the size that the theme computes from its natural
  *  size (`.dez-image__img` in `dezTheme`). */
@@ -54,6 +61,33 @@ function idBadge(id: string): HTMLElement {
   badge.setAttribute('aria-label', `Image id: ${id}`)
   badge.append(imageIcon(), id)
   return badge
+}
+
+/** The facts of the image at `path` in its overlay (`assetFactsText`): its
+ *  pixels and its file size once they are known, and its format from its
+ *  extension. */
+function imageFactsText(path: string): string {
+  const type = imageMediaType(path)
+  return assetFactsText({
+    pixels: naturalSizes.get(path) ?? null,
+    extension: type && imageExtension(type),
+    bytes: fileSizes.get(path) ?? null,
+  })
+}
+
+/** Reads the size of the image file at `path` (`fileSizes`), and then shows
+ *  it in the overlay facts `facts`. */
+async function showFileSize(path: string, facts: HTMLElement): Promise<void> {
+  let size: number | null = null
+  try {
+    size = await sbp('dez.controller/images/fileSize', path) as number | null
+  } catch {
+    // The error can name the path of the file, which stays out of the log.
+    console.error('[images] The size of an image file could not be read')
+  }
+  if (size === null) return
+  fileSizes.set(path, size)
+  facts.textContent = imageFactsText(path)
 }
 
 /** The trash can of the History and Prompts lists. */
@@ -162,10 +196,10 @@ function addAssetMenu(view: EditorView, wrapper: HTMLElement, path: string): voi
 
 /** An image, with an overlay that shows while the pointer is over the
  *  image: a small toolbar in its top-right corner with its id (null for an
- *  old reference with no id) in a badge, and a trash button, each with a
- *  tooltip. A reference to a file that does not load shows an "Image not
- *  found" box with the same overlay after its text, so that its text can go
- *  too. */
+ *  old reference with no id) in a badge, the facts of the image, and a
+ *  trash button; the badge and the trash have a tooltip. A reference to a
+ *  file that does not load shows an "Image not found" box with the same
+ *  overlay after its text, with no facts, so that its text can go too. */
 class ImageWidget extends WidgetType {
   constructor(readonly path: string, readonly id: string | null) {
     super()
@@ -192,6 +226,11 @@ class ImageWidget extends WidgetType {
       addTooltip(view, wrapper, badge, () => idTooltip(id))
       overlay.appendChild(badge)
     }
+    // The pixels and the file size come in after the load.
+    const facts = document.createElement('span')
+    facts.className = 'dez-image__facts'
+    facts.textContent = imageFactsText(this.path)
+    overlay.appendChild(facts)
     const trash = trashButton(view, wrapper, this.path)
     addTooltip(view, wrapper, trash, () => trashTooltip(trash.closest('.dez-image-missing') !== null))
     overlay.appendChild(trash)
@@ -203,10 +242,13 @@ class ImageWidget extends WidgetType {
       const size = { width: img.naturalWidth, height: img.naturalHeight }
       naturalSizes.set(this.path, size)
       setBoxSize(img, size)
+      facts.textContent = imageFactsText(this.path)
+      if (!fileSizes.has(this.path)) void showFileSize(this.path, facts)
       if (!cached || cached.width !== size.width || cached.height !== size.height) measureLineHeights(view)
     })
     img.addEventListener('error', () => {
       naturalSizes.delete(this.path)
+      facts.remove()
       const box = document.createElement('span')
       box.className = 'dez-image-missing'
       box.textContent = `Image not found: ${img.alt}`

@@ -25,7 +25,9 @@ import '@videojs/html/ui/tooltip-group'
 import '@videojs/html/ui/tooltip'
 import '@videojs/html/ui/tooltip-label'
 import '@videojs/html/ui/tooltip-shortcut'
+import { mediaFileExtension } from '../../model/chat/mediaFiles'
 import { isPastedMediaPath, type MediaTagKind } from '../../model/chat/mediaTags'
+import { assetFactsText } from '../assetFacts'
 import { clipFile, clipProblem, clipSourceKind, expiryNotice, problemCard, type ClipLoadFailure, type ClipProblem } from './clipState'
 import { releaseRemovedMedia } from './releaseMedia'
 import { videoAspectRatios } from './videoSizes'
@@ -46,7 +48,8 @@ const props = defineProps<{
    *  the badge shows. */
   id: string
   /** The clip's media type (the `type` of the clip's tag), which the card of
-   *  a clip that this computer cannot play names; null when not known. */
+   *  a clip that this computer cannot play and the facts of the badge name;
+   *  null when not known. */
   type: string | null
   /** The clip's source, as its tag has it: the path of the saved file or of
    *  the temp copy, or a URL; null for a clip with no source. */
@@ -152,6 +155,11 @@ function load(next: LoadedSource | null): void {
   loaded.value = next
 }
 
+/** The size in bytes of the clip's file, from the read of the file (no
+ *  second read), for the facts beside the id badge. Null for a clip that
+ *  plays from its URL, and until the file is read. */
+const fileBytes = ref<number | null>(null)
+
 // A provider URL loads as it is. A local file (the saved file or the temp
 // copy) loads from a blob URL of its bytes, and not from its asset protocol
 // URL: the media player of WebKitGTK (GStreamer) loads http, https, and blob
@@ -166,10 +174,12 @@ function load(next: LoadedSource | null): void {
 watch(() => props.src, async (src, previous) => {
   const kind = sourceKind.value
   if (src === null || kind === 'none') {
+    fileBytes.value = null
     load(null)
     return
   }
   if (kind === 'remote') {
+    fileBytes.value = null
     load({ src, url: src })
     return
   }
@@ -196,10 +206,12 @@ watch(() => props.src, async (src, previous) => {
   // read.
   if (unmounted || props.src !== src) return
   if (file === null) {
+    fileBytes.value = null
     fail(src, { step: 'read' })
     load(null)
     return
   }
+  fileBytes.value = file.size
   load({ src, url: URL.createObjectURL(file) })
 }, { immediate: true })
 
@@ -244,6 +256,21 @@ function onLoadedMetadata(): void {
   if (playing) play(element)
 }
 
+/** The length of the clip in seconds, for the facts beside the id badge;
+ *  null until the media element knows it. */
+const seconds = ref<number | null>(null)
+
+// The length is read from the media element that loads the clip anyway: no
+// other load. A new source of the same clip (after a Save or a Delete)
+// first has no length; the length of before stays until it has one. A
+// stream with no end has an infinite length, which is no fact.
+function onDurationChange(event: Event): void {
+  // A removed media element can still send events (`onMediaError`).
+  if (event.target !== media.value) return
+  const duration = media.value?.duration ?? NaN
+  if (Number.isFinite(duration)) seconds.value = duration
+}
+
 function togglePlay(): void {
   const element = media.value
   if (!element) return
@@ -284,6 +311,15 @@ const noticeLabel = computed(() => {
   if (!value) return undefined
   return value.file === null ? `${value.title}. ${value.text}` : `${value.title}. ${value.text} ${value.file}`
 })
+
+// The facts beside the id badge: the length, the format, and the size of
+// the file, each when known (`assetFactsText`). None for a clip that is
+// gone: its card already tells that there is no clip to tell of.
+const factsText = computed(() => unavailable.value === 'gone' ? '' : assetFactsText({
+  seconds: seconds.value,
+  extension: mediaFileExtension(props.type ?? '', props.src),
+  bytes: fileBytes.value,
+}))
 
 // How long the clock's tooltip stays after the pointer left it or the
 // clock. A move from the clock to the tooltip that leaves the clock through
@@ -414,6 +450,7 @@ function onContextMenu(event: MouseEvent): void {
             playsinline
             @click="togglePlay"
             @loadedmetadata="onLoadedMetadata"
+            @durationchange="onDurationChange"
             @error="onMediaError"
           />
           <audio
@@ -423,6 +460,7 @@ function onContextMenu(event: MouseEvent): void {
             :src="loaded?.url"
             preload="metadata"
             @loadedmetadata="onLoadedMetadata"
+            @durationchange="onDurationChange"
             @error="onMediaError"
           />
         </template>
@@ -624,24 +662,28 @@ function onContextMenu(event: MouseEvent): void {
         <video v-if="kind === 'video' && !card" class="media-player__stand-in" />
       </div>
     </media-container>
-    <!-- The id badge, as an image has one (`idBadge` in
-         src/view/editor/images.ts). A model gets the id in the request form
-         of the clip's tag (`mediaTagRequestText`), so a message can name
-         the clip by it. -->
-    <span class="media-player__id" role="img" :aria-label="`${kindName} id: ${id}`">
-      <svg v-if="kind === 'video'" class="media-player__icon media-player__icon--line" viewBox="0 0 16 16" aria-hidden="true">
-        <rect x="1.8" y="4" width="8.6" height="8" rx="1.8" />
-        <path d="M10.4 7.2l3.8-2.2v6l-3.8-2.2" />
-      </svg>
-      <svg v-else class="media-player__icon media-player__icon--line" viewBox="0 0 16 16" aria-hidden="true">
-        <path d="M3 6.5v3M5.5 4.4v7.2M8 2.8v10.4M10.5 5v6M13 6.7v2.6" />
-      </svg>
-      <span class="media-player__id-text">{{ id }}</span>
+    <!-- The id badge and the facts of the clip, in one toolbar as an image
+         has them (`ImageWidget` in src/view/editor/images.ts). A model gets
+         the id in the request form of the clip's tag
+         (`mediaTagRequestText`), so a message can name the clip by it. The
+         tooltip belongs to the badge, the element before it. -->
+    <span class="media-player__overlay">
+      <span class="media-player__id" role="img" :aria-label="`${kindName} id: ${id}`">
+        <svg v-if="kind === 'video'" class="media-player__icon media-player__icon--line" viewBox="0 0 16 16" aria-hidden="true">
+          <rect x="1.8" y="4" width="8.6" height="8" rx="1.8" />
+          <path d="M10.4 7.2l3.8-2.2v6l-3.8-2.2" />
+        </svg>
+        <svg v-else class="media-player__icon media-player__icon--line" viewBox="0 0 16 16" aria-hidden="true">
+          <path d="M3 6.5v3M5.5 4.4v7.2M8 2.8v10.4M10.5 5v6M13 6.7v2.6" />
+        </svg>
+        <span class="media-player__id-text">{{ id }}</span>
+      </span>
+      <media-tooltip class="media-player__tooltip media-player__tooltip--notice" boundary="viewport">
+        <span class="media-player__tooltip-title">{{ kindName }} id: {{ id }}</span>
+        <span class="media-player__tooltip-text">Refer to this clip in a message as <code>{{ kind }} @{{ id }}</code>.</span>
+      </media-tooltip>
+      <span v-if="factsText" class="media-player__facts">{{ factsText }}</span>
     </span>
-    <media-tooltip class="media-player__tooltip media-player__tooltip--notice" boundary="viewport">
-      <span class="media-player__tooltip-title">{{ kindName }} id: {{ id }}</span>
-      <span class="media-player__tooltip-text">Refer to this clip in a message as <code>{{ kind }} @{{ id }}</code>.</span>
-    </media-tooltip>
   </component>
 </template>
 
@@ -649,10 +691,10 @@ function onContextMenu(event: MouseEvent): void {
 /* Sizes follow the editor font size, as all of the editor does: `--u` is
    1px at the default size. The editor gives the unit and the max height of
    a video (`.dez-media` in `dezTheme`, cmEditor.ts).
-   The player is a row: the card, then the id badge. It is a flex item of
-   the editor's widget, so with no width of its own it is as wide as that
-   row, and `max-width` keeps it in the line. Its box is the hover area
-   that shows the badge. */
+   The player is a row: the card, then the toolbar of the id badge. It is
+   a flex item of the editor's widget, so with no width of its own it is
+   as wide as that row, and `max-width` keeps it in the line. Its box is
+   the hover area that shows the toolbar. */
 .media-player {
   --u: var(--dez-media-unit, 1px);
   --max-height: var(--dez-media-max-height, 320px);
@@ -1065,25 +1107,23 @@ function onContextMenu(event: MouseEvent): void {
   border-radius: 50%;
 }
 
-/* The id badge has the look of an image's id badge (`.dez-image__overlay`
-   and `.dez-image__id` in `dezTheme`, cmEditor.ts): dark glass with white
+/* The toolbar of the id badge and the facts has the look of an image's
+   toolbar (`.dez-image__overlay`, `.dez-image__id`, and
+   `.dez-image__facts` in `dezTheme`, cmEditor.ts): dark glass with white
    text in both themes, shown only while the pointer is over the player.
    Beside an audio card and the card of a clip that does not play, it
    covers no control of the bar, and it keeps its room while hidden, so a
    hover changes no size; the rule below puts it over the picture of a
    video. It is outside the card, which cuts its content (`overflow`); so
-   the fullscreen view, which is the card, has no badge. */
-.media-player__id {
+   the fullscreen view, which is the card, has no toolbar. */
+.media-player__overlay {
   z-index: 2;
   display: inline-flex;
   flex: none;
   align-items: center;
-  gap: calc(var(--u) * 5);
-  box-sizing: border-box;
-  max-width: calc(var(--u) * 120);
-  height: calc(var(--u) * 30 + 2px);
+  gap: calc(var(--u) * 3);
   margin-left: calc(var(--u) * 8);
-  padding: 0 calc(var(--u) * 11) 0 calc(var(--u) * 10);
+  padding: calc(var(--u) * 3);
   border: 1px solid var(--color-image-toolbar-border, rgba(255, 255, 255, 0.18));
   border-radius: calc(var(--u) * 9);
   background: var(--color-image-toolbar, rgba(18, 18, 22, 0.72));
@@ -1092,26 +1132,37 @@ function onContextMenu(event: MouseEvent): void {
   -webkit-backdrop-filter: blur(14px) saturate(130%);
   backdrop-filter: blur(14px) saturate(130%);
   font-size: calc(var(--u) * 12.5);
-  font-weight: 600;
   line-height: 1;
-  letter-spacing: 0.02em;
   white-space: nowrap;
   cursor: default;
   opacity: 0;
   transition: opacity 0.14s ease;
 }
 
-/* On a video, the badge is at the top-right corner of the picture, as on
-   an image. */
-.media-player[data-kind="video"]:not([data-unavailable]) > .media-player__id {
+/* On a video, the toolbar is at the top-right corner of the picture, as
+   on an image. */
+.media-player[data-kind="video"]:not([data-unavailable]) > .media-player__overlay {
   position: absolute;
   top: calc(var(--u) * 8);
   right: calc(var(--u) * 8);
   margin: 0;
 }
 
-.media-player:hover > .media-player__id {
+.media-player:hover > .media-player__overlay {
   opacity: 1;
+}
+
+.media-player__id {
+  display: inline-flex;
+  align-items: center;
+  gap: calc(var(--u) * 5);
+  box-sizing: border-box;
+  min-width: 0;
+  max-width: calc(var(--u) * 114);
+  height: calc(var(--u) * 24);
+  padding: 0 calc(var(--u) * 8) 0 calc(var(--u) * 7);
+  font-weight: 600;
+  letter-spacing: 0.02em;
 }
 
 .media-player__id > .media-player__icon {
@@ -1130,6 +1181,32 @@ function onContextMenu(event: MouseEvent): void {
   overflow: hidden;
   line-height: 1.4;
   text-overflow: ellipsis;
+}
+
+/* The facts (length, format, file size) are less strong than the id, with
+   digits of one width. The `::before` is the divider in the middle of the
+   gap after the id. The video.js tooltip between the two is a popover,
+   which takes no room in the toolbar. */
+.media-player__facts {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  box-sizing: border-box;
+  height: calc(var(--u) * 24);
+  padding: 0 calc(var(--u) * 8);
+  color: rgba(255, 255, 255, 0.78);
+  font-weight: 500;
+  font-variant-numeric: tabular-nums;
+}
+
+.media-player__facts::before {
+  content: "";
+  position: absolute;
+  top: 25%;
+  bottom: 25%;
+  left: calc(var(--u) * -1.5 - 0.5px);
+  width: 1px;
+  background: var(--color-image-toolbar-border, rgba(255, 255, 255, 0.18));
 }
 
 /* A video.js tooltip is a popover in the top layer, so the card's
@@ -1313,15 +1390,15 @@ function onContextMenu(event: MouseEvent): void {
     transition: opacity 0.12s;
   }
 
-  /* The badge drops into place from its top-right corner as it fades in,
+  /* The toolbar drops into place from its top-right corner as it fades in,
      as the image toolbar does. */
-  .media-player__id {
+  .media-player__overlay {
     transform: translateY(calc(var(--u) * -4)) scale(0.97);
     transform-origin: top right;
     transition: opacity 0.14s ease, transform 0.2s cubic-bezier(0.2, 0.8, 0.2, 1);
   }
 
-  .media-player:hover > .media-player__id {
+  .media-player:hover > .media-player__overlay {
     transform: none;
   }
 

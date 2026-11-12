@@ -280,38 +280,56 @@ describe('dez.controller/images/redraw', () => {
   })
 })
 
-describe('dez.controller/images/readFile', () => {
-  const PATH = '/home/ann/Videos/dance.mp4'
-  const ASSET_URL = `asset://localhost${PATH}`
-  let requests: { url: string, range: string | null }[] = []
+const ASSET_PATH = '/home/ann/Videos/dance.mp4'
+const ASSET_URL = `asset://localhost${ASSET_PATH}`
+let requests: { url: string, range: string | null }[] = []
 
-  /** Gives each request of the asset protocol the answer of `answer`, by
-   *  the range that it asks for (null: the whole file). */
-  function stubAssets(answer: (range: string | null) => Response): void {
-    vi.stubGlobal('fetch', async (url: string, init?: RequestInit) => {
-      const range = new Headers(init?.headers).get('Range')
-      requests.push({ url, range })
-      return answer(range)
-    })
-  }
-
-  /** A file that holds `content` and takes ranges, as the asset protocol
-   *  does. */
-  function stubFile(content: string): void {
-    stubAssets((range) => {
-      if (range === null) return new Response(content, { headers: { 'Content-Type': 'video/mp4' } })
-      if (content === '') return new Response(null, { status: 416, headers: { 'Content-Range': 'bytes */0' } })
-      return new Response(content.slice(0, 1), { status: 206, headers: { 'Content-Range': `bytes 0-0/${content.length}` } })
-    })
-  }
-
-  function readFile(options?: { maxBytes?: number }): Promise<File> {
-    return sbp('dez.controller/images/readFile', PATH, options) as Promise<File>
-  }
-
-  beforeEach(() => {
-    requests = []
+/** Gives each request of the asset protocol the answer of `answer`, by the
+ *  range that it asks for (null: the whole file). */
+function stubAssets(answer: (range: string | null) => Response): void {
+  requests = []
+  vi.stubGlobal('fetch', async (url: string, init?: RequestInit) => {
+    const range = new Headers(init?.headers).get('Range')
+    requests.push({ url, range })
+    return answer(range)
   })
+}
+
+/** A file that holds `content` and takes ranges, as the asset protocol
+ *  does. */
+function stubFile(content: string): void {
+  stubAssets((range) => {
+    if (range === null) return new Response(content, { headers: { 'Content-Type': 'video/mp4' } })
+    if (content === '') return new Response(null, { status: 416, headers: { 'Content-Range': 'bytes */0' } })
+    return new Response(content.slice(0, 1), { status: 206, headers: { 'Content-Range': `bytes 0-0/${content.length}` } })
+  })
+}
+
+describe('dez.controller/images/fileSize', () => {
+  function fileSize(): Promise<number | null> {
+    return sbp('dez.controller/images/fileSize', ASSET_PATH) as Promise<number | null>
+  }
+
+  it.each([['hello', 5], ['', 0]])('gives the size of a file (%j) from a request of its first byte', async (content, size) => {
+    stubFile(content)
+
+    expect(await fileSize()).toBe(size)
+    expect(requests).toStrictEqual([{ url: ASSET_URL, range: 'bytes=0-0' }])
+  })
+
+  it('gives no size for a missing file, and for an answer with no range', async () => {
+    stubAssets(() => new Response(null, { status: 404 }))
+    expect(await fileSize()).toBeNull()
+
+    stubAssets(() => new Response('hello'))
+    expect(await fileSize()).toBeNull()
+  })
+})
+
+describe('dez.controller/images/readFile', () => {
+  function readFile(options?: { maxBytes?: number }): Promise<File> {
+    return sbp('dez.controller/images/readFile', ASSET_PATH, options) as Promise<File>
+  }
 
   it.each(['hello', ''])('asks for the size first, and reads a file that is not too large (%j)', async (content) => {
     stubFile(content)
