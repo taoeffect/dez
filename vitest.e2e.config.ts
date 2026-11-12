@@ -41,7 +41,10 @@ headless compositor needs no sudo:
 - To look at the UI, write a throwaway spec that calls
   `browser.saveScreenshot('/tmp/<name>.png')`, open the PNG, then delete the
   spec and the PNG. Under kwin the screenshots are real renders at 2x device
-  pixels.
+  pixels, with one gap: when the editor holds three or more images, none of
+  its images shows in a screenshot (the `<img>` elements are decoded and in
+  place; one or two images show, and so does an `<img>` outside the editor).
+  Start the specs with `WEBKIT_DISABLE_DMABUF_RENDERER=1` to see them.
 
 Menu accelerators and menu clicks (manual check)
 ------------------------------------------------
