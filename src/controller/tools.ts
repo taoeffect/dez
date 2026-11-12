@@ -59,14 +59,20 @@ function unexpectedToolErrorText(name: string): string {
     + 'Tell the user that the tool failed (Help › Developer Console shows the error), and do not call it again with the same arguments.'
 }
 
-// Waits for `work` until the user stops the reply; then rejects at once.
-// The work itself goes on: a model-list check still updates the model cache.
-function untilAborted<T>(work: Promise<T>, signal: AbortSignal): Promise<T> {
+// Runs `start` and waits for its work until the user stops the reply; then
+// rejects at once. The work itself goes on: a model-list check still updates
+// the model cache. Nothing starts after a stop, so a stopped reply sends no
+// request, and no work that nobody waits for can reject unhandled.
+function untilAborted<T>(start: () => Promise<T>, signal: AbortSignal): Promise<T> {
   signal.throwIfAborted()
+  const work = start()
   return new Promise<T>((resolve, reject) => {
     const onAbort = () => reject(signal.reason)
     signal.addEventListener('abort', onAbort, { once: true })
     work.then(resolve, reject).finally(() => signal.removeEventListener('abort', onAbort))
+    // `start` runs before the listener is added, and a stop in it (a selector
+    // that stops the reply before its first await) fires no event any more.
+    if (signal.aborted) onAbort()
   })
 }
 
@@ -130,7 +136,7 @@ const TOOL_RUNNERS: Record<string, ToolRunner> = {
     const part = modelInfoPart(args)
     let found = await modelInfoLookup(args)
     if (found.entry === undefined) {
-      await untilAborted(sbp('dez.controller/modelCache/refresh', { providerIds: [found.provider.id], force: true }) as Promise<void>, signal)
+      await untilAborted(() => sbp('dez.controller/modelCache/refresh', { providerIds: [found.provider.id], force: true }) as Promise<void>, signal)
       found = await modelInfoLookup(args)
     }
     const { provider, model, entry } = found
@@ -155,7 +161,7 @@ const TOOL_RUNNERS: Record<string, ToolRunner> = {
     const kind = effectiveRequest(model)
     if (kind !== 'chat' && kind !== 'none') {
       try {
-        const quote = await untilAborted(sbp('dez.provider/mediaQuote', { ...ref, kind, parameters: values }) as Promise<ProviderMediaQuote | null>, signal)
+        const quote = await untilAborted(() => sbp('dez.provider/mediaQuote', { ...ref, kind, parameters: values }) as Promise<ProviderMediaQuote | null>, signal)
         if (quote?.usd !== undefined) facts.cost = { usd: quote.usd }
         if (quote?.records !== undefined) facts.priceEntry = quote.records
       } catch (error) {
@@ -266,7 +272,7 @@ const TOOL_RUNNERS: Record<string, ToolRunner> = {
       try {
         // A download from the clip's URL can take long: a stop ends the run
         // at once, and the signal also ends the download.
-        file = await untilAborted(sbp('dez.controller/media/readClip', source, { signal }) as Promise<Blob>, signal)
+        file = await untilAborted(() => sbp('dez.controller/media/readClip', source, { signal }) as Promise<Blob>, signal)
       } catch (error) {
         if (!(error instanceof ClipReadError)) throw error
         throw new ToolError(clipReadProblemText(id, error.problem), error.details, { cause: error })

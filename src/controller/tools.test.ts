@@ -371,6 +371,17 @@ describe('dez.controller/tools/run', () => {
         expect((await result).isError).toBe(true)
         expect(consoleError).not.toHaveBeenCalled()
       })
+
+      it('asks for no price after the user stopped the reply', async () => {
+        // A stop while the runner looked up the model, before the price request.
+        const abort = new AbortController()
+        abort.abort()
+
+        const result = await sbp('dez.controller/tools/run', { name: 'model_info', arguments: { model: 'venice/wan' } }, abort.signal) as ToolRunResult
+
+        expect(result.isError).toBe(true)
+        expect(quotes).toStrictEqual([])
+      })
     })
 
     it('asks for no price of a chat model', async () => {
