@@ -41,6 +41,7 @@ export interface ModelSnapshot {
     doneSoundVolume: number
     doneNotification: boolean
     shortcutOverrides: ShortcutOverrides
+    systemPrompt: string | null
     settingsOpen: boolean
     settingsSection: string
     historyOpen: boolean

@@ -7,6 +7,7 @@ import PromptManager from '../prompts/PromptManager.vue'
 import ProviderManager from './ProviderManager.vue'
 import ModelPicker from '../model-selector/ModelPicker.vue'
 import ShortcutManager from './ShortcutManager.vue'
+import SystemPromptSettings from './SystemPromptSettings.vue'
 import { deleteUnusedFiles, unusedFilesProgress } from './unusedFiles'
 
 const { settings, modelCache } = useModelState()
@@ -56,7 +57,17 @@ function onDefaultModelClickOutside(e: MouseEvent) {
     closeDefaultModelPicker()
   }
 }
-const sections: SettingsSection[] = ['general', 'providers', 'prompts', 'appearance', 'notifications', 'shortcuts']
+const sections: SettingsSection[] = ['general', 'providers', 'prompts', 'systemPrompt', 'appearance', 'notifications', 'shortcuts']
+
+const sectionLabels: Record<SettingsSection, string> = {
+  general: 'General',
+  providers: 'Providers',
+  prompts: 'Prompts',
+  systemPrompt: 'System Prompt',
+  appearance: 'Appearance',
+  notifications: 'Notifications',
+  shortcuts: 'Shortcuts',
+}
 
 // Providers and Prompts fill the content pane and scroll inside their own
 // lists, so the pane itself never scrolls for them. Its scrollbar gutter
@@ -128,7 +139,7 @@ function onOverlayClick(e: MouseEvent) {
             :class="{ 'settings-nav-btn--active': settings.settingsSection === s }"
             @click="sbp('dez.model/settings/setSection', s)"
           >
-            {{ s.charAt(0).toUpperCase() + s.slice(1) }}
+            {{ sectionLabels[s] }}
           </button>
         </nav>
 
@@ -142,6 +153,9 @@ function onOverlayClick(e: MouseEvent) {
           <div v-if="settings.settingsSection === 'prompts'" class="settings-section settings-section--fill">
             <PromptManager />
           </div>
+
+          <!-- System Prompt -->
+          <SystemPromptSettings v-if="settings.settingsSection === 'systemPrompt'" />
 
           <!-- Appearance -->
           <div v-if="settings.settingsSection === 'appearance'" class="settings-section">
@@ -429,20 +443,6 @@ function onOverlayClick(e: MouseEvent) {
   height: 100%;
 }
 
-.settings-label {
-  font-size: 13px;
-  font-weight: 500;
-  opacity: 0.8;
-}
-
-/* A setting and the rows that belong to it (a hint, a row under a
-   checkbox), closer together than the section's rows. */
-.settings-group {
-  display: flex;
-  flex-direction: column;
-  gap: 8px;
-}
-
 /* Starts where the text of the checkbox above starts: the checkbox is 12px
    wide in WebKitGTK, and the gap after it is 8px. */
 .notifications-indented {
@@ -502,12 +502,6 @@ function onOverlayClick(e: MouseEvent) {
   min-width: 4ch;
   font-size: 13px;
   font-variant-numeric: tabular-nums;
-}
-
-.settings-hint {
-  font-size: 12px;
-  line-height: 1.4;
-  color: var(--color-muted);
 }
 
 /* The bar of a task that runs, drawn as the volume slider's track. */
@@ -589,9 +583,9 @@ function onOverlayClick(e: MouseEvent) {
 </style>
 
 <!-- Rows and form controls shared by the Settings sections and the managers
-     they mount (ProviderManager, PromptManager, ShortcutManager). Not scoped,
-     because a parent's scoped styles do not reach elements inside a child
-     component. -->
+     they mount (ProviderManager, PromptManager, ShortcutManager,
+     SystemPromptSettings). Not scoped, because a parent's scoped styles do
+     not reach elements inside a child component. -->
 <style>
 .settings-row {
   display: flex;
@@ -602,6 +596,26 @@ function onOverlayClick(e: MouseEvent) {
 
 .settings-row--end {
   justify-content: flex-end;
+}
+
+.settings-label {
+  font-size: 13px;
+  font-weight: 500;
+  opacity: 0.8;
+}
+
+/* A setting and the rows that belong to it (a hint, a row under a
+   checkbox), closer together than the section's rows. */
+.settings-group {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.settings-hint {
+  font-size: 12px;
+  line-height: 1.4;
+  color: var(--color-muted);
 }
 
 .settings-input {

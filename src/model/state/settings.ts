@@ -8,7 +8,7 @@ import { DONE_SOUND_VOLUME_DEFAULT } from '../doneSoundVolume'
 import { currentShortcutPlatform, resolveShortcuts, type ShortcutOverrides } from '../shortcuts'
 
 export type Theme = 'light' | 'dark' | 'system'
-export type SettingsSection = 'general' | 'providers' | 'prompts' | 'appearance' | 'notifications' | 'shortcuts'
+export type SettingsSection = 'general' | 'providers' | 'prompts' | 'systemPrompt' | 'appearance' | 'notifications' | 'shortcuts'
 
 export interface DefaultModel {
   providerId: string
@@ -66,6 +66,10 @@ export const useSettingsStore = defineStore('settings', () => {
   // Every shortcut with its effective key, computed once per change, since
   // the window handler reads it on every keydown.
   const shortcuts = computed(() => resolveShortcuts(currentShortcutPlatform, shortcutOverrides.value))
+  // The user's system prompt template (Settings › System Prompt); null for
+  // Dez's own template (`BUILT_IN_SYSTEM_PROMPT`). An empty or blank text
+  // is kept: it sends no system prompt.
+  const systemPrompt = ref<string | null>(null)
   // The overlay panels. At most one is open: opening one closes the others.
   const settingsOpen = ref(false)
   const settingsSection = ref<SettingsSection>('general')
@@ -147,6 +151,7 @@ export const useSettingsStore = defineStore('settings', () => {
     doneSoundVolume,
     doneNotification,
     shortcutOverrides,
+    systemPrompt,
     shortcuts,
     settingsOpen,
     settingsSection,

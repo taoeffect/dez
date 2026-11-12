@@ -33,6 +33,7 @@ describe('app state persistence format', () => {
       doneSoundVolume: 35,
       doneNotification: false,
       shortcuts: { closeTab: 'alt-k', bogus: 'Alt-j', newTab: 'Escape' },
+      systemPrompt: 'You are {{model_id}}.\n',
     }))
 
     expect(state.tabs).toEqual([{
@@ -57,6 +58,7 @@ describe('app state persistence format', () => {
     expect(state.doneSoundVolume).toBe(35)
     expect(state.doneNotification).toBe(false)
     expect(state.shortcuts).toEqual({ closeTab: 'Alt-k' })
+    expect(state.systemPrompt).toBe('You are {{model_id}}.\n')
     expect(parseAppStateJson('{ "shortcuts": "Alt-k" }').shortcuts).toEqual({})
     expect(parseAppStateJson(serializeAppStateJson(state))).toEqual(state)
   })
@@ -145,6 +147,17 @@ describe('app state persistence format', () => {
     expect(parseVolume(null)).toBe(50)
     expect(parse({ doneSound: 'false' }).doneSound).toBe(true)
     expect(parse({ doneNotification: 0 }).doneNotification).toBe(true)
+  })
+
+  it('keeps any system prompt text, also an empty one, and reads any other value as the built-in prompt', () => {
+    const parsePrompt = (value: unknown) => parseAppStateJson(JSON.stringify({ systemPrompt: value })).systemPrompt
+    expect(parseAppStateJson('{}').systemPrompt).toBeNull()
+    expect(parsePrompt('')).toBe('')
+    expect(parsePrompt(' \n')).toBe(' \n')
+    expect(parsePrompt('{{foo}}')).toBe('{{foo}}')
+    expect(parsePrompt(null)).toBeNull()
+    expect(parsePrompt(42)).toBeNull()
+    expect(parsePrompt(['Hi'])).toBeNull()
   })
 
   it('keeps a whole window geometry and drops a bad one as a whole', () => {

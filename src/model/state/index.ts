@@ -38,6 +38,7 @@ import { modelRefField, modelRefKey, parseModelRefKey } from '../chat/modelRef'
 import { thinkingField } from '../chat/thinking'
 import { cloneJsonObject } from '../../utils/json'
 import { sectionsToStreamMessages } from '../streams/messages'
+import { BUILT_IN_SYSTEM_PROMPT } from '../systemPrompt'
 import {
   endStreamSection,
   ensureTrailingAgentSection,
@@ -62,6 +63,7 @@ export interface SettingsSnapshot {
   doneSoundVolume: number
   doneNotification: boolean
   shortcutOverrides: ShortcutOverrides
+  systemPrompt: string | null
   settingsOpen: boolean
   settingsSection: SettingsSection
   historyOpen: boolean
@@ -276,6 +278,7 @@ function cloneSettings(settings = useSettingsStore()): SettingsSnapshot {
     doneSoundVolume: settings.doneSoundVolume,
     doneNotification: settings.doneNotification,
     shortcutOverrides: { ...settings.shortcutOverrides },
+    systemPrompt: settings.systemPrompt,
     settingsOpen: settings.settingsOpen,
     settingsSection: settings.settingsSection,
     historyOpen: settings.historyOpen,
@@ -480,6 +483,14 @@ function cloneModelInfo(model: ModelInfo): ModelInfo {
 function cachedModel(model: ModelRef): ModelInfo | undefined {
   return useModelCacheStore().cache.providers[model.providerId]?.models
     .find((candidate) => candidate.id === model.modelId)
+}
+
+// The tools go only to a model that the Tools toggle applies to
+// (`toolsApply`: not one that is known not to call tools, and no media
+// model), and only while that toggle of its provider is on. An unknown model
+// (not in the cache yet) gets the tools.
+function requestSendsTools(model: ModelRef): boolean {
+  return toolsApply(cachedModel(model) ?? {}) && isToolsEnabled(useSettingsStore().providerSettings[model.providerId])
 }
 
 function cloneModelCache(cache: ModelCache): ModelCache {
@@ -766,6 +777,7 @@ export default sbp('sbp/selectors/register', {
         doneSoundVolume: settings.doneSoundVolume,
         doneNotification: settings.doneNotification,
         shortcuts: settings.shortcutOverrides,
+        systemPrompt: settings.systemPrompt,
       })
     } catch (error) {
       console.error('Failed to save app state', error)
@@ -872,21 +884,23 @@ export default sbp('sbp/selectors/register', {
   },
 
   // `model`: the model the request goes to. It decides what earlier thinking
-  // goes back, whether the images go, and whether the tools go. A model that
-  // the model cache knows not to read images gets only the text of each
-  // reference, with no path. The tools go only to a model that the Tools
-  // toggle applies to (`toolsApply`: not one that is known not to call
-  // tools, and no media model), and only while that toggle of its provider
-  // is on. An unknown model (no flag, or not in the cache yet) gets the
-  // images and the tools.
+  // goes back, whether the images go, and whether the tools go
+  // (`requestSendsTools`). A model that the model cache knows not to read
+  // images gets only the text of each reference, with no path. An unknown
+  // model (no flag, or not in the cache yet) gets the images.
   'dez.model/streamMessagesForTab' (tabId: string, model: ModelRef): RequestMessages {
     const tab = useTabStore().tabs.find((candidate) => candidate.id === tabId)
     if (!tab) return { messages: [], imagesLeftOut: 0, sendTools: false }
 
-    const cached = cachedModel(model)
-    const sendTools = toolsApply(cached ?? {}) && isToolsEnabled(useSettingsStore().providerSettings[model.providerId])
-    const sendImages = cached?.imageInput !== false
+    const sendTools = requestSendsTools(model)
+    const sendImages = cachedModel(model)?.imageInput !== false
     return { ...sectionsToStreamMessages(tab.sections, model, { sendImages, sendTools }), sendTools }
+  },
+
+  // Whether a chat request to `model` offers the Dez tools now. Settings ›
+  // System Prompt fills `{{tools_list}}` of its preview with it.
+  'dez.model/requestSendsTools' (model: ModelRef): boolean {
+    return requestSendsTools(model)
   },
 
   // Stamps the agent section with the model of the request that will fill it.
@@ -917,6 +931,7 @@ export default sbp('sbp/selectors/register', {
       if (typeof state.doneSoundVolume === 'number') settings.doneSoundVolume = state.doneSoundVolume
       if (typeof state.doneNotification === 'boolean') settings.doneNotification = state.doneNotification
       if (state.shortcuts) settings.shortcutOverrides = state.shortcuts
+      if (state.systemPrompt !== undefined) settings.systemPrompt = state.systemPrompt
     }
 
     sbp('dez.ui/applyTheme', settings.theme)
@@ -953,6 +968,7 @@ export default sbp('sbp/selectors/register', {
         () => settings.doneSoundVolume,
         () => settings.doneNotification,
         () => settings.shortcutOverrides,
+        () => settings.systemPrompt,
       ],
       () => {
         persistSettings()
@@ -1168,6 +1184,14 @@ export default sbp('sbp/selectors/register', {
 
   'dez.model/settings/setDoneNotification' (enabled: boolean): void {
     useSettingsStore().doneNotification = enabled
+  },
+
+  // Settings › System Prompt: the user's template, or null for Dez's own.
+  // Only the exact text of Dez's template is stored as null, so a later
+  // release's template reaches the user who never changed it; a trim here
+  // would change the text in the field while the user types.
+  'dez.model/settings/setSystemPrompt' (template: string | null): void {
+    useSettingsStore().systemPrompt = template === BUILT_IN_SYSTEM_PROMPT ? null : template
   },
 
   'dez.model/settings/toggleFavorite' (providerId: string, modelId: string): void {
@@ -1449,20 +1473,22 @@ export default sbp('sbp/selectors/register', {
 
   // Every text in memory that can name a stored file (an image, a saved
   // clip): the text and the prompt bodies of each section of the open tabs
-  // and of the closed tabs that can come back (`reopenClosed`), and the
-  // saved prompts. Some of it is not on disk: text that is not saved yet, a
-  // closed tab's unsent text. So the cleanup of unused stored files
-  // (src/controller/unusedFiles.ts) reads it together with the conversation
-  // files. Each node is a text of its own: in a joined text, the start of a
-  // node would make another name out of a file name that ends the node
-  // before it.
+  // and of the closed tabs that can come back (`reopenClosed`), the saved
+  // prompts, and the user's system prompt template. Some of it is not on
+  // disk: text that is not saved yet, a closed tab's unsent text. So the
+  // cleanup of unused stored files (src/controller/unusedFiles.ts) reads it
+  // together with the conversation files. Each node is a text of its own: in
+  // a joined text, the start of a node would make another name out of a file
+  // name that ends the node before it.
   'dez.model/heldTexts' (): string[] {
     const tabStore = useTabStore()
     const tabs = [...tabStore.tabs, ...tabStore.closedTabs.map((closed) => closed.tab)]
     const nodes = tabs.flatMap((tab) => tab.sections.flatMap((section) => section.content))
+    const { systemPrompt } = useSettingsStore()
     return [
       ...nodes.map((node) => (node.kind === 'text' ? node.text : node.body)),
       ...usePromptsStore().prompts.map((prompt) => prompt.content),
+      ...(systemPrompt === null ? [] : [systemPrompt]),
     ]
   },
 

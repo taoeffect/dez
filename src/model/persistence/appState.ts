@@ -177,6 +177,7 @@ export function defaultAppState(): AppStatePayload {
     doneSoundVolume: DONE_SOUND_VOLUME_DEFAULT,
     doneNotification: true,
     shortcuts: {},
+    systemPrompt: null,
   }
 }
 
@@ -232,6 +233,9 @@ export function parseAppStateJson(content: string): AppStatePayload {
         ? parsed.doneNotification
         : fallback.doneNotification,
       shortcuts: parseShortcutOverrides(parsed.shortcuts, currentShortcutPlatform),
+      // Any text is kept as it is, also an empty one (no system prompt); a
+      // template problem is shown in Settings and refuses a send.
+      systemPrompt: typeof parsed.systemPrompt === 'string' ? parsed.systemPrompt : fallback.systemPrompt,
     }
   } catch {
     return defaultAppState()

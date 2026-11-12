@@ -16,6 +16,7 @@ import { unstoredOutputMessage } from '../model/providers/unusableModel'
 import type { GeneratedClip, ProviderChatInputMessage, ProviderGenerateMediaInput, ProviderGenerateMediaResult, ProviderInfo, ProviderStreamChatInput, ProviderStreamChatResult } from '../model/providers'
 import { CLIP_KINDS, isClipKind, isTextKind, type MediaKind } from '../model/providers/types'
 import type { RequestMessages } from '../model/streams/types'
+import { systemPromptErrorText } from '../model/systemPrompt'
 import { NO_MODELS_TEXT } from '../model/tools/modelList'
 import { TOOL_DEFINITIONS, unknownToolText } from '../model/tools/registry'
 import type { ToastData } from '../view/toast/selectors'
@@ -957,6 +958,61 @@ describe('dez.controller/submitTab without a model', () => {
 
     expect(sectionTexts()).toEqual([{ role: 'user', text: 'Hi' }])
     expect(toasts).toStrictEqual([{ area: 'app-global', data: { variant: 'error', title: 'Cannot send', message: 'No model is selected. Choose a model in the bottom bar, and send again.' } }])
+  })
+})
+
+describe('dez.controller/submitTab system prompt', () => {
+  beforeEach(() => {
+    replyRounds([async (input) => ({ requestId: input.requestId as string })])
+    sbp('dez.model/setActiveModel', model.providerId, model.modelId, model.modelName)
+    sbp('dez.model/tabs/replaceSections', activeTab().id, [{ id: 'u1', role: 'user', content: [{ kind: 'text', text: 'Hi' }] }])
+  })
+
+  it('sends the user template with its values', async () => {
+    sbp('dez.model/settings/setSystemPrompt', 'You are {{model_id}} of {{provider_name}}.')
+
+    await sbp('dez.controller/submitTab', activeTab().id)
+
+    expect(requests.map((input) => input.system)).toStrictEqual(['You are m of Thinker.'])
+  })
+
+  it('sends no system prompt for a template of only white space', async () => {
+    sbp('dez.model/settings/setSystemPrompt', ' \n ')
+
+    await sbp('dez.controller/submitTab', activeTab().id)
+
+    expect(requests).toHaveLength(1)
+    expect(requests[0].system).toBeUndefined()
+  })
+
+  it('sends no chat request for a template with a problem, and names the problem and the fix', async () => {
+    sbp('dez.model/settings/setSystemPrompt', 'Hi.\n{{model_name}}')
+    const message = systemPromptErrorText('Line 2: {{model_name}} is not a variable.')
+
+    await sbp('dez.controller/submitTab', activeTab().id)
+
+    expect(requests).toStrictEqual([])
+    expect(sectionTexts()).toStrictEqual([{ role: 'user', text: 'Hi' }])
+    expect(toasts).toStrictEqual([{ area: 'app-global', data: { variant: 'error', title: 'Cannot send', message } }])
+    expect(consoleError).toHaveBeenCalledWith(`Cannot send: ${message}`)
+  })
+
+  it('sends a media request all the same, as it has no system prompt', async () => {
+    const mediaInputs: ProviderGenerateMediaInput[] = []
+    generateMedia = async (input) => {
+      mediaInputs.push(input)
+      return { media: [], clips: [] }
+    }
+    sbp('dez.model/modelCache/applyProviderResult', model.providerId, {
+      ok: true,
+      models: [{ id: model.modelId, name: model.modelName, provider: model.providerId, outputs: ['image'], request: 'image' }],
+    })
+    sbp('dez.model/settings/setSystemPrompt', '{{model_name}}')
+
+    await sbp('dez.controller/submitTab', activeTab().id)
+
+    expect(mediaInputs.map((input) => input.prompt)).toStrictEqual(['Hi'])
+    expect(toasts.filter((toast) => toast.data.title === 'Cannot send')).toStrictEqual([])
   })
 })
 

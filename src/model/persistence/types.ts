@@ -127,4 +127,7 @@ export interface AppStatePayload {
   // The user's shortcut keys that differ from the defaults
   // (src/model/shortcuts.ts).
   shortcuts?: ShortcutOverrides
+  // The user's system prompt template (Settings › System Prompt); null (or
+  // missing) for Dez's own template. An empty text sends no system prompt.
+  systemPrompt?: string | null
 }

@@ -12,6 +12,7 @@ import { unstoredOutputMessage, unusableModelMessage } from '../model/providers/
 import type { SettingsSnapshot } from '../model/state'
 import { mediaRequestInput } from '../model/streams/messages'
 import type { RequestMessages } from '../model/streams/types'
+import { BUILT_IN_SYSTEM_PROMPT, systemPromptErrorText, systemPromptProblem } from '../model/systemPrompt'
 
 // Tells the user that the request goes with `count` fewer images than the
 // message has, because the model `reason` (e.g. "does not read images").
@@ -109,6 +110,13 @@ export default sbp('sbp/selectors/register', {
       const sentClips = { audio: 0, video: 0 }
       for (const clip of input.clips) sentClips[clip.kind]++
       mediaClips = { sent: sentClips, leftOut: input.clipsLeftOut }
+    } else {
+      // A chat request sends the system prompt (`dez.stream/start`), whose
+      // template the user can edit. A template with a problem would fail
+      // the request after the new agent section exists.
+      const { systemPrompt } = sbp('dez.model/settings/snapshot') as SettingsSnapshot
+      const problem = systemPromptProblem(systemPrompt ?? BUILT_IN_SYSTEM_PROMPT)
+      if (problem !== null) message = systemPromptErrorText(problem)
     }
     if (message !== null) {
       console.error(`Cannot send: ${message}`)

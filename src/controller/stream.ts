@@ -31,7 +31,7 @@ import {
   setThinkingReplayForTabSection,
   type SettingsSnapshot,
 } from '../model/state'
-import { buildSystemPrompt } from '../model/systemPrompt'
+import { BUILT_IN_SYSTEM_PROMPT, buildSystemPrompt } from '../model/systemPrompt'
 import { TOOL_DEFINITIONS } from '../model/tools/registry'
 import type { ToolRunResult } from '../model/tools/types'
 import {
@@ -368,17 +368,19 @@ async function writeReplyImage(tabId: string, reply: ReplyRuntime, image: Genera
 // them, and sends the next round with the reply so far. Ends the reply,
 // except when it throws.
 async function runChatRounds(args: StreamStartArgs, reply: ReplyRuntime): Promise<void> {
-  // Read the provider's stored setting overrides at stream start (rather
-  // than threading them from submitTab) so every caller — including future
-  // retries — picks up the user's current settings consistently.
-  const providerSettings = (sbp('dez.model/settings/snapshot') as SettingsSnapshot)
-    .providerSettings[args.model.providerId]
+  // Read the provider's stored setting overrides and the system prompt
+  // template at stream start (rather than threading them from submitTab) so
+  // every caller — including future retries — picks up the user's current
+  // settings consistently.
+  const settings = sbp('dez.model/settings/snapshot') as SettingsSnapshot
+  const providerSettings = settings.providerSettings[args.model.providerId]
   // The prompt lists exactly the tools that the request offers.
   const tools = args.sendTools ? TOOL_DEFINITIONS : []
   // A template error or a deleted provider throws, which ends the stream
-  // session. Built once per reply, so a provider rename during the reply
-  // does not change the prompt of its later rounds.
-  const system = buildSystemPrompt(args.model, requireProvider(args.model.providerId).name, tools)
+  // session. Built once per reply, so a provider rename or a template edit
+  // during the reply does not change the prompt of its later rounds. A
+  // blank template gives no system prompt.
+  const system = buildSystemPrompt(settings.systemPrompt ?? BUILT_IN_SYSTEM_PROMPT, args.model, requireProvider(args.model.providerId).name, tools)
   let messages = args.messages
   // The first call id of the group that ended the round before: it names
   // the thinking round of every later round (SectionThinking.rounds).

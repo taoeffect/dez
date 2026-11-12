@@ -1,4 +1,4 @@
-import { buildSystemPrompt } from '../../../src/model/systemPrompt'
+import { BUILT_IN_SYSTEM_PROMPT, buildSystemPrompt } from '../../../src/model/systemPrompt'
 import { TOOL_DEFINITIONS, toolJsonSchema } from '../../../src/model/tools/registry'
 
 // The parts of a chat request body that the app adds to its messages: Dez's
@@ -18,12 +18,14 @@ export interface ChatModel {
 }
 
 /** Dez's system prompt in a chat request to `model` that offers the Dez
- *  tools. */
-export function systemPrompt (model: ChatModel): string {
-  return buildSystemPrompt({ providerId: model.id, modelId: model.modelId }, model.name, TOOL_DEFINITIONS)
+ *  tools, from `template` (the built-in one when absent); undefined for a
+ *  blank template, which sends no system prompt. */
+export function systemPrompt (model: ChatModel, template = BUILT_IN_SYSTEM_PROMPT): string | undefined {
+  return buildSystemPrompt(template, { providerId: model.id, modelId: model.modelId }, model.name, TOOL_DEFINITIONS)
 }
 
-/** The first message of an OpenAI-format chat request to `model`. */
+/** The first message of an OpenAI-format chat request to `model`, with
+ *  Dez's built-in system prompt. */
 export function openAiSystemMessage (model: ChatModel): Record<string, unknown> {
   return { role: 'system', content: systemPrompt(model) }
 }
@@ -42,9 +44,12 @@ export const ANTHROPIC_TOOLS = TOOL_DEFINITIONS.map((tool) => ({
 }))
 
 /** The body of an OpenAI-format chat request to `model` with no thinking
- *  fields: the system message, then `messages`. */
-export function openAiChatBody (model: ChatModel, messages: unknown[]): Record<string, unknown> {
-  return { model: model.modelId, stream: true, messages: [openAiSystemMessage(model), ...messages], tools: OPENAI_TOOLS }
+ *  fields: the system message of `template` (the built-in one when absent;
+ *  none for a blank one), then `messages`. */
+export function openAiChatBody (model: ChatModel, messages: unknown[], template = BUILT_IN_SYSTEM_PROMPT): Record<string, unknown> {
+  const system = systemPrompt(model, template)
+  const systemMessages = system === undefined ? [] : [{ role: 'system', content: system }]
+  return { model: model.modelId, stream: true, messages: [...systemMessages, ...messages], tools: OPENAI_TOOLS }
 }
 
 /** The body of an Anthropic-format chat request to `model` with no

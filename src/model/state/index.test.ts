@@ -11,6 +11,7 @@ import type { Shortcut, ShortcutId } from '../shortcuts'
 // Side-effect import: registers the dez.model/* selectors under test.
 import './index'
 import { appendThinkingToTabSection, appendTokenToTabSection, finalizeStreamSectionForTab, setThinkingReplayForTabSection } from './index'
+import { BUILT_IN_SYSTEM_PROMPT } from '../systemPrompt'
 
 // Conversation ids that the stub disk load below was asked for. Reset in
 // beforeEach.
@@ -248,7 +249,7 @@ describe('dez.model/tabs/reopenClosed', () => {
 })
 
 describe('dez.model/heldTexts', () => {
-  it('gives each text and prompt body of the open and the closed tabs, and each saved prompt', () => {
+  it('gives each text and prompt body of the open and the closed tabs, each saved prompt, and the system prompt template', () => {
     sbp('dez.model/tabs/replaceSections', activeId(), [
       {
         id: 'u1',
@@ -265,6 +266,7 @@ describe('dez.model/heldTexts', () => {
     sbp('dez.model/tabs/replaceSections', closed.id, [{ id: 'u2', role: 'user', content: [{ kind: 'text', text: 'closed four.png' }] }])
     sbp('dez.model/tabs/close', closed.id)
     sbp('dez.model/prompts/add', 'Saved', 'prompt five.png')
+    sbp('dez.model/settings/setSystemPrompt', 'system six.png')
 
     // One text for each node: a joined text would read `one.pngbody`.
     expect(sbp('dez.model/heldTexts')).toEqual([
@@ -274,6 +276,7 @@ describe('dez.model/heldTexts', () => {
       'reply three.png',
       'closed four.png',
       'prompt five.png',
+      'system six.png',
     ])
   })
 })
@@ -765,6 +768,42 @@ describe('dez.model/settings/setModelOutputFilter', () => {
     sbp('dez.model/settings/setModelOutputFilter', ['audio', 'image'])
     await vi.advanceTimersByTimeAsync(1000)
     expect(savedAppStates.at(-1)?.modelOutputFilter).toStrictEqual(['image', 'audio'])
+  })
+})
+
+describe('dez.model/settings/setSystemPrompt', () => {
+  const systemPrompt = () => (sbp('dez.model/settings/snapshot') as SettingsSnapshot).systemPrompt
+
+  afterEach(() => {
+    sbp('dez.model/settings/stopPersistence')
+    vi.useRealTimers()
+  })
+
+  it('stores the exact built-in text as null, and keeps every other text as it is', () => {
+    sbp('dez.model/settings/setSystemPrompt', `${BUILT_IN_SYSTEM_PROMPT}\n`)
+    expect(systemPrompt()).toBe(`${BUILT_IN_SYSTEM_PROMPT}\n`)
+    sbp('dez.model/settings/setSystemPrompt', BUILT_IN_SYSTEM_PROMPT)
+    expect(systemPrompt()).toBeNull()
+    sbp('dez.model/settings/setSystemPrompt', '')
+    expect(systemPrompt()).toBe('')
+    sbp('dez.model/settings/setSystemPrompt', null)
+    expect(systemPrompt()).toBeNull()
+    expect(sbp('dez.model/heldTexts')).not.toContain(BUILT_IN_SYSTEM_PROMPT)
+  })
+
+  it('loads the saved template, and saves a change and a restore', async () => {
+    diskAppState = { systemPrompt: 'Be {{model_id}}.' }
+    await sbp('dez.model/settings/init')
+    expect(systemPrompt()).toBe('Be {{model_id}}.')
+
+    vi.useFakeTimers()
+    sbp('dez.model/settings/startPersistence')
+    sbp('dez.model/settings/setSystemPrompt', 'Be brief.')
+    await vi.advanceTimersByTimeAsync(1000)
+    expect(savedAppStates.at(-1)?.systemPrompt).toBe('Be brief.')
+    sbp('dez.model/settings/setSystemPrompt', null)
+    await vi.advanceTimersByTimeAsync(1000)
+    expect(savedAppStates.at(-1)?.systemPrompt).toBeNull()
   })
 })
 
