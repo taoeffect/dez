@@ -27,11 +27,11 @@ describe('model cache persistence format', () => {
     expect(serializeModelCacheJson(parsed)).toBe(JSON.stringify(parsed, null, 2))
   })
 
-  it('round-trips capability flags and the readable name, and reads a model without one as unknown', () => {
+  it('round-trips capability flags, the readable name, and the release date, and reads a model without one as unknown', () => {
     const models = [
       { id: 'vision', name: 'Vision', provider: 'venice', imageInput: true, toolCalling: true, thinking: true },
       { id: 'text', name: 'Text', provider: 'venice', imageInput: false, toolCalling: false, thinking: false, unsupportedSettings: ['xSearch'] },
-      { id: 'named-by-id', name: 'named-by-id', provider: 'venice', readableName: 'Named By Id' },
+      { id: 'named-by-id', name: 'named-by-id', provider: 'venice', readableName: 'Named By Id', released: '2025-11-18' },
       // A cache written before the thinking flag and the unsupported toggles
       // existed.
       { id: 'tools-only', name: 'Tools only', provider: 'venice', imageInput: true, toolCalling: true },
@@ -47,6 +47,17 @@ describe('model cache persistence format', () => {
 
     expect(parsed.providers.venice?.models).toStrictEqual(models)
     expect(parseModelCacheJson(serializeModelCacheJson(parsed))).toStrictEqual(parsed)
+  })
+
+  // A hand-edited file: the next model check reads the date again.
+  it('drops only a release date that is not a YYYY-MM-DD date, and keeps the model', () => {
+    const model = { id: 'm', name: 'M', provider: 'venice' }
+    const parsed = parseModelCacheJson(JSON.stringify({
+      version: MODEL_CACHE_VERSION,
+      providers: { venice: { models: ['2025-11-18T00:00:00Z', 1763424000, '', null].map((released) => ({ ...model, released })), working: true, updatedAt: 1, lastCheckedAt: 2 } },
+    }))
+
+    expect(parsed.providers.venice?.models).toStrictEqual([model, model, model, model])
   })
 
   it('round-trips outputs and request kinds, and drops only a model with an unknown one', () => {

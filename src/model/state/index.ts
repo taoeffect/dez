@@ -187,9 +187,9 @@ function cloneRecords<Value>(records: Record<string, Record<string, Value>>): Re
 function cloneProviderConfig(config: ProviderConfig): ProviderConfig {
   const {
     id, name, baseUrl, apiFormat, models, fetchModels, modelListQuery, modelImageInput, modelToolCalling,
-    modelThinking, modelOutputs, modelReadableName, auth, headers, imageRequestHeaders, maxOutputTokens,
-    cacheBreakpoints, toolMessageCacheMark, promptCacheKey, requestBody, imageOutputBody, mediaApi, settings,
-    thinking,
+    modelThinking, modelOutputs, modelReadableName, modelReleased, auth, headers, imageRequestHeaders,
+    maxOutputTokens, cacheBreakpoints, toolMessageCacheMark, promptCacheKey, requestBody, imageOutputBody,
+    mediaApi, settings, thinking,
     ...uncopied
   } = config
   // A compile error when ProviderConfig gets a field that this clone does not
@@ -210,6 +210,7 @@ function cloneProviderConfig(config: ProviderConfig): ProviderConfig {
   if (modelThinking) clone.modelThinking = { ...modelThinking }
   if (modelOutputs) clone.modelOutputs = cloneModelOutputsConfig(modelOutputs)
   if (modelReadableName) clone.modelReadableName = { ...modelReadableName }
+  if (modelReleased) clone.modelReleased = { ...modelReleased }
   if (headers) clone.headers = { ...headers }
   if (imageRequestHeaders) clone.imageRequestHeaders = { ...imageRequestHeaders }
   if (maxOutputTokens !== undefined) clone.maxOutputTokens = maxOutputTokens

@@ -4,7 +4,7 @@ import { CLIP_USES, type ClipKindRules, type InputClipRules } from '../providers
 import type { InputImageRules } from '../providers/clipImages'
 import { isValidProviderId } from '../providers/config'
 import { imageSizeRules, positiveLimit } from '../providers/imageSize'
-import { isRecord } from '../providers/modelParsing'
+import { isRecord, RELEASED_DATE } from '../providers/modelParsing'
 import { MODEL_REQUESTS, type ProviderId } from '../providers/types'
 import type { CachedProvider, ModelCache } from './types'
 
@@ -117,8 +117,8 @@ const inputClipRulesSchema = z.object({ audio: z.unknown(), video: z.unknown(), 
   })
 
 // The transform drops the `clips` key of a model whose clip rules have no
-// kind left, and a `learnedImageLimit` key whose value was bad, which Zod
-// would keep with an undefined value.
+// kind left, and a `released` or `learnedImageLimit` key whose value was
+// bad, which Zod would keep with an undefined value.
 const modelInfoSchema = z.object({
   id: z.string(),
   name: z.string(),
@@ -126,6 +126,8 @@ const modelInfoSchema = z.object({
   // Optional with no version bump: a cache written before a field existed
   // reads it as "unknown" until the next model check.
   readableName: z.string().min(1).optional(),
+  // A bad value drops only the date: the next model check reads it again.
+  released: z.string().regex(RELEASED_DATE).optional().catch(undefined),
   imageInput: z.boolean().optional(),
   toolCalling: z.boolean().optional(),
   thinking: z.boolean().optional(),
@@ -140,7 +142,12 @@ const modelInfoSchema = z.object({
   // A bad value drops only the limit, and the model stays: the next
   // refusal of the provider (it costs nothing) teaches it again.
   learnedImageLimit: z.object({ maxImages: z.number().int().positive(), entry: z.string().min(1) }).optional().catch(undefined),
-}).transform(({ clips, learnedImageLimit, ...model }) => ({ ...model, ...(clips && { clips }), ...(learnedImageLimit && { learnedImageLimit }) }))
+}).transform(({ released, clips, learnedImageLimit, ...model }) => ({
+  ...model,
+  ...(released && { released }),
+  ...(clips && { clips }),
+  ...(learnedImageLimit && { learnedImageLimit }),
+}))
 
 // Individually drop invalid models (e.g. a bad provider id) instead of failing
 // the whole provider entry, so one bad model doesn't discard the rest.

@@ -173,15 +173,15 @@ afterEach(() => {
 })
 
 describe('dez.controller/tools/run', () => {
-  const columns = '(full id | name | provider | type | inputs). Letters: t text, i image, a audio, v video; ? unknown, - none.'
+  const columns = '(full id | name | provider | type | inputs | released). Letters: t text, i image, a audio, v video; ? unknown, - none.'
 
   it('lists the cached models of the configured providers that match the filter', async () => {
     expect(await run({ name: 'model_list', arguments: { filter: 'gemini' } })).toStrictEqual({
-      content: `1 model matches "gemini" ${columns}\nvenice/venice-gemini-3-pro | Gemini 3 Pro | Venice | ? | t,i`,
+      content: `1 model matches "gemini" ${columns}\nvenice/venice-gemini-3-pro | Gemini 3 Pro | Venice | ? | t,i | ?`,
       isError: false,
     })
     expect(await run({ name: 'model_list', arguments: {} })).toStrictEqual({
-      content: `2 models ${columns}\nvenice/venice-gemini-3-pro | Gemini 3 Pro | Venice | ? | t,i\nvenice/venice-glm-5 | GLM 5 | Venice | ? | t,i`,
+      content: `2 models ${columns}\nvenice/venice-gemini-3-pro | Gemini 3 Pro | Venice | ? | t,i | ?\nvenice/venice-glm-5 | GLM 5 | Venice | ? | t,i | ?`,
       isError: false,
     })
   })

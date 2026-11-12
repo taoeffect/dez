@@ -123,6 +123,11 @@ export interface ModelInfo {
   // (`modelReadableName` in config.ts): only the tooltips show it, after the
   // name. Never empty. Missing: none is known.
   readableName?: string
+  // The date that the provider's model list gives the model (`modelReleased`
+  // in config.ts), as `YYYY-MM-DD` (UTC): its release date, or for some
+  // providers the day that the provider added it. Only `model_list` and
+  // `model_info` show it. Missing: none is known.
+  released?: string
   // true: the model reads images; false: it does not. Missing: unknown, and
   // the request sends the images.
   imageInput?: boolean
@@ -180,7 +185,7 @@ export interface ModelInfo {
   learnedImageLimit?: LearnedImageLimit
 }
 
-export type ModelCapabilities = Pick<ModelInfo, 'readableName' | 'imageInput' | 'toolCalling' | 'thinking' | 'unsupportedSettings' | 'outputs' | 'request' | 'parameters' | 'text' | 'images' | 'clips' | 'unstoredOutput' | 'learnedImageLimit'>
+export type ModelCapabilities = Pick<ModelInfo, 'readableName' | 'released' | 'imageInput' | 'toolCalling' | 'thinking' | 'unsupportedSettings' | 'outputs' | 'request' | 'parameters' | 'text' | 'images' | 'clips' | 'unstoredOutput' | 'learnedImageLimit'>
 
 // What a clip model takes as the input of a request, besides the values of
 // its parameters.
@@ -361,6 +366,7 @@ export class ProviderNotConfiguredError extends ProviderError {
 export function providerModel(provider: ProviderId, id: string, name: string, capabilities: ModelCapabilities = {}): ModelInfo {
   const model: ModelInfo = { id, name, provider }
   if (capabilities.readableName !== undefined) model.readableName = capabilities.readableName
+  if (capabilities.released !== undefined) model.released = capabilities.released
   if (capabilities.imageInput !== undefined) model.imageInput = capabilities.imageInput
   if (capabilities.toolCalling !== undefined) model.toolCalling = capabilities.toolCalling
   if (capabilities.thinking !== undefined) model.thinking = capabilities.thinking

@@ -10,7 +10,7 @@ import { ProviderHttpError } from './errors'
 import type { ImageSizeRules, InputImageLimits } from './imageSize'
 import { MEDIA_FORMATS, type ClipFormat, type ClipInput, type ClipJob, type ImageFormat, type ImageQuoteFormat, type MediaFormat, type MediaInput, type MediaWireRequest, type TextFormat } from './mediaFormats'
 import type { ParameterValues } from './modelParameters'
-import { isRecord, modelCapability, modelData, modelOutputsAndRequest, modelReadableName, unsupportedSettings } from './modelParsing'
+import { isRecord, modelCapability, modelData, modelOutputsAndRequest, modelReadableName, modelReleased, unsupportedSettings } from './modelParsing'
 import { isThinkingEnabled, modelToggles, toggleValue, type ToggleModel } from './modelToggles'
 import { multipartBody, type MultipartField } from './multipart'
 import { ProviderError, effectiveRequest, isClipKind, isTextKind, providerModel, type ChatMessage, type ChatRequestContext, type ClipKind, type GeneratedMedia, type ImageKind, type MediaKind, type ModelInfo, type ProviderInfo, type TextKind } from './types'
@@ -92,10 +92,11 @@ export class Provider {
   // Reads the `{ data: [...] }` model list both formats return. The name
   // falls back from `name` (OpenAI-style servers) to `display_name`
   // (Anthropic-style) to the id (servers that report only ids). The readable
-  // name, the image, tool, and thinking flags, the toggles that the model
-  // does not take, the outputs, and the request kind are read only where the
-  // config's `modelReadableName`, `modelImageInput`, `modelToolCalling`,
-  // `modelThinking`, `settings[].modelSupport`, and `modelOutputs` point.
+  // name, the release date, the image, tool, and thinking flags, the
+  // toggles that the model does not take, the outputs, and the request kind
+  // are read only where the config's `modelReadableName`, `modelReleased`,
+  // `modelImageInput`, `modelToolCalling`, `modelThinking`,
+  // `settings[].modelSupport`, and `modelOutputs` point.
   // Models that make nothing stay in this list; `mergeModels` drops them, so
   // the diagnostics report shows what the server sent.
   parseModels(data: unknown): ModelInfo[] {
@@ -109,6 +110,7 @@ export class Provider {
         .find((value): value is string => typeof value === 'string' && value.trim().length > 0)
       models.push(providerModel(this.id, id, name?.trim() ?? id, {
         readableName: modelReadableName(model, this.config.modelReadableName),
+        released: modelReleased(model, this.config.modelReleased),
         imageInput: modelCapability(model, this.config.modelImageInput, 'image'),
         toolCalling: modelCapability(model, this.config.modelToolCalling, 'tools'),
         thinking: modelCapability(model, this.config.modelThinking, 'reasoning'),
@@ -123,9 +125,10 @@ export class Provider {
   // Config models come first, in config order, then the fetched models the
   // config does not list. Each id appears once. A name, capability flag,
   // outputs list, or request kind set in the config wins over the fetched
-  // one for the same id; the readable name is always the fetched one. A
-  // fetched model that is known to make none of the output types
-  // (embeddings, rerank) is left out; a config model is always listed.
+  // one for the same id; the readable name and the release date are always
+  // the fetched ones. A fetched model that is known to make none of the
+  // output types (embeddings, rerank) is left out; a config model is always
+  // listed.
   mergeModels(fetched: ModelInfo[]): ModelInfo[] {
     const fetchedById = new Map<string, ModelInfo>()
     for (const model of fetched) {
@@ -140,6 +143,7 @@ export class Provider {
       const name = model.name ?? fetchedModel?.name ?? model.id
       merged.set(model.id, providerModel(this.id, model.id, name, {
         readableName: fetchedModel?.readableName,
+        released: fetchedModel?.released,
         imageInput: model.imageInput ?? fetchedModel?.imageInput,
         toolCalling: model.toolCalling ?? fetchedModel?.toolCalling,
         thinking: model.thinking ?? fetchedModel?.thinking,

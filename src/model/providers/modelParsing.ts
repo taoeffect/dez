@@ -54,6 +54,47 @@ export function modelReadableName(model: Record<string, unknown>, config: Provid
   return typeof value === 'string' && value.trim().length > 0 ? value.trim() : undefined
 }
 
+/** The form of a release date that Dez keeps (`ModelInfo.released`). */
+export const RELEASED_DATE = /^\d{4}-\d{2}-\d{2}$/
+
+// The first and the end of the release times that count: a date before
+// 2000 is a placeholder (a list can give the epoch for an unknown date),
+// and `toISOString` writes no `YYYY` after 9999.
+const FIRST_RELEASE_MS = Date.UTC(2000, 0, 1)
+const RELEASE_END_MS = Date.UTC(10000, 0, 1)
+
+// An RFC 3339 date or date-time, in parts: the date, the time with no
+// fraction, and the offset. A fraction of a second cannot change the date.
+const RFC3339_TIME = /^(\d{4}-\d{2}-\d{2})(?:[Tt ](\d{2}:\d{2}:\d{2})(?:\.\d+)?([Zz]|[+-]\d{2}:\d{2}))?$/
+
+// The time of an RFC 3339 text, in ms; NaN for another value. RFC 3339
+// allows forms that ECMAScript leaves to each engine (a lower-case `t` or
+// `z`, a space, more than 3 digits of a fraction), so the parts go to
+// `Date.parse` in the one form that it defines, and the webview and the
+// tests agree.
+function rfc3339Time(value: unknown): number {
+  const match = typeof value === 'string' ? RFC3339_TIME.exec(value) : null
+  if (!match) return NaN
+  const [, date, time = '00:00:00', offset = 'Z'] = match
+  return Date.parse(`${date}T${time}${offset.toUpperCase()}`)
+}
+
+// The release date of a `/models` entry's model, at the config's
+// `modelReleased` path, as `YYYY-MM-DD` in UTC. A value that is not of the
+// config's format, a time out of the range that counts, or no config is
+// unknown.
+export function modelReleased(model: Record<string, unknown>, config: ProviderConfig['modelReleased']): string | undefined {
+  if (config === undefined) return undefined
+
+  const value = valueAtPath(model, config.path)
+  const ms = config.format === 'unixSeconds'
+    ? (typeof value === 'number' ? value * 1000 : NaN)
+    : rfc3339Time(value)
+  // A NaN fails both compares.
+  if (!(ms >= FIRST_RELEASE_MS && ms < RELEASE_END_MS)) return undefined
+  return new Date(ms).toISOString().slice(0, 10)
+}
+
 // The keys of the config toggles (`settings`) that a `/models` entry says
 // its model does not take: each toggle whose flag at its `modelSupport` is
 // false. A list there holds the names of the request fields that the model

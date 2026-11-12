@@ -61,6 +61,7 @@ const LIST_COLUMNS: readonly ListColumn[] = [
   { key: 'provider', title: 'provider', text: (row) => columnText(row.provider.name) },
   { key: 'type', title: 'type', text: (row) => typesText(row.model.outputs), order: (row) => row.model.outputs && typesOrder(row.model.outputs) },
   { key: 'inputs', title: 'inputs', text: (row) => typesText(row.inputs), order: (row) => typesOrder(row.inputs) },
+  { key: 'released', title: 'released', text: (row) => row.model.released ?? UNKNOWN_TEXT, order: (row) => row.model.released?.split('-').map(Number) },
 ]
 
 const SORT_KEYS = LIST_COLUMNS.map((column) => column.key)
@@ -79,12 +80,13 @@ export const MODEL_LIST_TOOL: ToolDefinition = {
     + 'The first line gives the count, the column names, and what the letters mean. '
     + 'Then each line gives one model: its full id (`provider/model`), its name, the name of its provider, '
     + 'its type (the letters of the outputs that it makes), '
-    + 'and its inputs (the letters of what Dez can send it in one request: the text of the message, images, audio clips, video clips). '
+    + 'its inputs (the letters of what Dez can send it in one request: the text of the message, images, audio clips, video clips), '
+    + 'and its release date (`YYYY-MM-DD`: the date that its provider gives, for some providers the day that the provider added the model). '
     + 'Dez sends a chat model only text and images, whatever its provider says that it reads; `model_info` tells more. '
     + '`?` stands for a value that the provider does not tell, and `-` for none. '
     + 'With no `filter`, no `type`, and no `inputs`, the list has every model. '
     + `The list stops after ${MODEL_LIST_LIMIT} models. \`sort\` orders all the models that match before that, `
-    + 'so `sort` with `sort_dir` `desc` lists the models with the most of a column first.',
+    + 'so `sort: released` with `sort_dir: desc` lists the newest models first.',
   parameters: [
     {
       name: 'filter',
@@ -117,7 +119,7 @@ export const MODEL_LIST_TOOL: ToolDefinition = {
       name: 'sort',
       type: 'string',
       description: `The column that orders the list: ${SORT_KEYS.join(', ')}. `
-        + '`type` and `inputs` order by the count of their letters. '
+        + '`type` and `inputs` order by the count of their letters, and `released` by date. '
         + 'Models with `?` in the column come last. '
         + 'With no `sort`, the models come in provider order, and the models of a provider in the order of its list.',
       required: false,
@@ -125,7 +127,7 @@ export const MODEL_LIST_TOOL: ToolDefinition = {
     {
       name: 'sort_dir',
       type: 'string',
-      description: 'The direction of `sort`: `asc` (the default: A to Z, the fewest letters first) or `desc`.',
+      description: 'The direction of `sort`: `asc` (the default: A to Z, the fewest letters first, the oldest date first) or `desc`.',
       required: false,
     },
   ],

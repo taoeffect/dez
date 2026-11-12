@@ -12,22 +12,23 @@ function cache(...entries: [ProviderInfo, ModelInfo[]][]): ModelCache {
 }
 
 // The column names and the letter legend of every header.
-const COLUMNS = '(full id | name | provider | type | inputs)'
+const COLUMNS = '(full id | name | provider | type | inputs | released)'
 const LEGEND = 'Letters: t text, i image, a audio, v video; ? unknown, - none.'
 const HEADER = `${COLUMNS}. ${LEGEND}`
 
 const VENICE = providerInfo('venice', 'Venice')
 const OPENROUTER = providerInfo('openrouter', 'OpenRouter')
-// Mistral Small and Gemini 3 Flash have unknown outputs and request kinds:
-// Dez sends them chat requests.
+// Mistral Small and Gemini 3 Flash have unknown outputs, request kinds, and
+// release dates: Dez sends them chat requests.
 const VENICE_MODELS: ModelInfo[] = [
-  { id: 'gemini-3-pro-preview', name: 'Gemini 3 Pro Preview', provider: VENICE.id, outputs: ['text'], request: 'chat' },
+  { id: 'gemini-3-pro-preview', name: 'Gemini 3 Pro Preview', provider: VENICE.id, released: '2025-11-18', outputs: ['text'], request: 'chat' },
   { id: 'mistral-small', name: 'Mistral Small', provider: VENICE.id },
-  { id: 'z-image-turbo', name: 'Z-Image Turbo', provider: VENICE.id, outputs: ['image'], request: 'image' },
+  { id: 'z-image-turbo', name: 'Z-Image Turbo', provider: VENICE.id, released: '2025-11-26', outputs: ['image'], request: 'image' },
   {
     id: 'wan-2-7-reference-to-video',
     name: 'Wan 2.7 Reference to Video',
     provider: VENICE.id,
+    released: '2026-03-10',
     outputs: ['video'],
     request: 'video',
     images: { maxImages: 4 },
@@ -35,22 +36,22 @@ const VENICE_MODELS: ModelInfo[] = [
   },
 ]
 const OPENROUTER_MODELS: ModelInfo[] = [
-  { id: 'google/gemini-3-pro-preview', name: 'Google: Gemini 3 Pro Preview', provider: OPENROUTER.id, outputs: ['text', 'image'], request: 'chat' },
+  { id: 'google/gemini-3-pro-preview', name: 'Google: Gemini 3 Pro Preview', provider: OPENROUTER.id, released: '2025-11-18', outputs: ['text', 'image'], request: 'chat' },
   { id: 'google/gemini-3-flash', name: 'Google: Gemini 3 Flash', provider: OPENROUTER.id },
-  { id: 'openai/whisper-2', name: 'OpenAI: Whisper 2', provider: OPENROUTER.id, outputs: ['text'], request: 'transcription', clips: { audio: { use: 'source', maxClips: 1 } } },
+  { id: 'openai/whisper-2', name: 'OpenAI: Whisper 2', provider: OPENROUTER.id, released: '2024-09-30', outputs: ['text'], request: 'transcription', clips: { audio: { use: 'source', maxClips: 1 } } },
 ]
 // The cache lists OpenRouter first; the result follows the provider order.
 const CACHE = cache([OPENROUTER, OPENROUTER_MODELS], [VENICE, VENICE_MODELS])
 const PROVIDERS = [VENICE, OPENROUTER]
 
 const LINES = {
-  veniceGemini: 'venice/gemini-3-pro-preview | Gemini 3 Pro Preview | Venice | t | t,i',
-  mistral: 'venice/mistral-small | Mistral Small | Venice | ? | t,i',
-  zImage: 'venice/z-image-turbo | Z-Image Turbo | Venice | i | t',
-  wan: 'venice/wan-2-7-reference-to-video | Wan 2.7 Reference to Video | Venice | v | t,i,a,v',
-  openRouterGemini: 'openrouter/google/gemini-3-pro-preview | Google: Gemini 3 Pro Preview | OpenRouter | t,i | t,i',
-  flash: 'openrouter/google/gemini-3-flash | Google: Gemini 3 Flash | OpenRouter | ? | t,i',
-  whisper: 'openrouter/openai/whisper-2 | OpenAI: Whisper 2 | OpenRouter | t | a',
+  veniceGemini: 'venice/gemini-3-pro-preview | Gemini 3 Pro Preview | Venice | t | t,i | 2025-11-18',
+  mistral: 'venice/mistral-small | Mistral Small | Venice | ? | t,i | ?',
+  zImage: 'venice/z-image-turbo | Z-Image Turbo | Venice | i | t | 2025-11-26',
+  wan: 'venice/wan-2-7-reference-to-video | Wan 2.7 Reference to Video | Venice | v | t,i,a,v | 2026-03-10',
+  openRouterGemini: 'openrouter/google/gemini-3-pro-preview | Google: Gemini 3 Pro Preview | OpenRouter | t,i | t,i | 2025-11-18',
+  flash: 'openrouter/google/gemini-3-flash | Google: Gemini 3 Flash | OpenRouter | ? | t,i | ?',
+  whisper: 'openrouter/openai/whisper-2 | OpenAI: Whisper 2 | OpenRouter | t | a | 2024-09-30',
 }
 
 describe('modelListText', () => {
@@ -132,7 +133,7 @@ describe('modelListText', () => {
 
   it('shows `-` for a model that makes none of the four types and that Dez cannot send anything, and no types select it', () => {
     const models: ModelInfo[] = [{ id: 'embed', name: 'Embed', provider: VENICE.id, outputs: [], request: 'none' }]
-    expect(modelListText(cache([VENICE, models]), PROVIDERS)).toBe([`1 model ${HEADER}`, 'venice/embed | Embed | Venice | - | -'].join('\n'))
+    expect(modelListText(cache([VENICE, models]), PROVIDERS)).toBe([`1 model ${HEADER}`, 'venice/embed | Embed | Venice | - | - | ?'].join('\n'))
     expect(modelListText(cache([VENICE, models]), PROVIDERS, { type: 'text,image,audio,video' }))
       .toBe('No models match type text,image,audio,video. Call model_list again with other values in `type`, or with no `type` to list every model.')
   })
@@ -143,14 +144,14 @@ describe('modelListText', () => {
     expect(() => modelListText(CACHE, PROVIDERS, { type: 'i,v' })).toThrow(`Unknown values "i", "v" in \`type\`. ${types}`)
     expect(() => modelListText(cache(), PROVIDERS, { inputs: 'audio speech' })).toThrow(`Unknown value "speech" in \`inputs\`. ${types}`)
     expect(() => modelListText(cache(), PROVIDERS, { sort: 'date' }))
-      .toThrow('Unknown value "date" in `sort`. Use one of: id, name, provider, type, inputs.')
+      .toThrow('Unknown value "date" in `sort`. Use one of: id, name, provider, type, inputs, released.')
     expect(() => modelListText(cache(), PROVIDERS, { sort: 'name', sort_dir: 'down' })).toThrow('Unknown value "down" in `sort_dir`. Use one of: asc, desc.')
   })
 
   // The model would read a list in another order than the one it asked for.
   it('refuses a sort direction with no sort column', () => {
     expect(() => modelListText(CACHE, PROVIDERS, { sort_dir: 'desc' })).toThrow('`sort_dir` is the direction of `sort`. '
-      + 'Call model_list again with `sort` too (one of: id, name, provider, type, inputs), or with no `sort_dir`.')
+      + 'Call model_list again with `sort` too (one of: id, name, provider, type, inputs, released), or with no `sort_dir`.')
   })
 
   it('says so when the user can use no model, whatever the arguments, and what the user can do', () => {
@@ -190,6 +191,30 @@ describe('modelListText', () => {
     ])
   })
 
+  // A date that the provider does not tell comes last in both directions,
+  // and equal dates keep provider order, then cache order.
+  it('sorts by release date, the oldest first', () => {
+    expect(modelListText(CACHE, PROVIDERS, { sort: 'released' })).toBe([
+      `7 models ${COLUMNS}, sorted by released asc. ${LEGEND}`,
+      LINES.whisper,
+      LINES.veniceGemini,
+      LINES.openRouterGemini,
+      LINES.zImage,
+      LINES.wan,
+      LINES.mistral,
+      LINES.flash,
+    ].join('\n'))
+    expect(modelListText(CACHE, PROVIDERS, { sort: 'released', sort_dir: 'desc' }).split('\n').slice(1)).toStrictEqual([
+      LINES.wan,
+      LINES.zImage,
+      LINES.veniceGemini,
+      LINES.openRouterGemini,
+      LINES.whisper,
+      LINES.mistral,
+      LINES.flash,
+    ])
+  })
+
   it('sorts text as a person reads it: numbers by value, and case does not count', () => {
     const models: ModelInfo[] = ['model 10', 'Model 9', 'alpha', 'Beta'].map((name, index) => ({ id: `m${index}`, name, provider: VENICE.id }))
     const names = (sort_dir?: string) => modelListText(cache([VENICE, models]), PROVIDERS, { sort: 'name', ...(sort_dir && { sort_dir }) })
@@ -209,20 +234,20 @@ describe('modelListText', () => {
   })
 
   it(`stops after ${MODEL_LIST_LIMIT} models and counts the rest, after the sort`, () => {
-    const many = (count: number) => Array.from({ length: count }, (_, index) => ({ id: `m${index}`, name: `M ${index}`, provider: VENICE.id }))
+    const many = (count: number) => Array.from({ length: count }, (_, index) => ({ id: `m${index}`, name: `M ${index}`, provider: VENICE.id, released: `${2000 + index}-01-01` }))
     const full = modelListText(cache([VENICE, many(MODEL_LIST_LIMIT)]), PROVIDERS).split('\n')
     expect(full).toHaveLength(MODEL_LIST_LIMIT + 1)
-    expect(full.at(-1)).toBe(`venice/m${MODEL_LIST_LIMIT - 1} | M ${MODEL_LIST_LIMIT - 1} | Venice | ? | t,i`)
+    expect(full.at(-1)).toBe(`venice/m${MODEL_LIST_LIMIT - 1} | M ${MODEL_LIST_LIMIT - 1} | Venice | ? | t,i | 2049-01-01`)
 
     const over = modelListText(cache([VENICE, many(MODEL_LIST_LIMIT + 3)]), PROVIDERS).split('\n')
     expect(over[0]).toBe(`${MODEL_LIST_LIMIT + 3} models ${HEADER}`)
     expect(over).toHaveLength(MODEL_LIST_LIMIT + 2)
-    expect(over.at(-2)).toBe(`venice/m${MODEL_LIST_LIMIT - 1} | M ${MODEL_LIST_LIMIT - 1} | Venice | ? | t,i`)
+    expect(over.at(-2)).toBe(`venice/m${MODEL_LIST_LIMIT - 1} | M ${MODEL_LIST_LIMIT - 1} | Venice | ? | t,i | 2049-01-01`)
     expect(over.at(-1)).toBe('… and 3 more. Use a narrower filter.')
 
-    const newestFirst = modelListText(cache([VENICE, many(MODEL_LIST_LIMIT + 3)]), PROVIDERS, { sort: 'name', sort_dir: 'desc' }).split('\n')
-    expect(newestFirst[1]).toBe(`venice/m${MODEL_LIST_LIMIT + 2} | M ${MODEL_LIST_LIMIT + 2} | Venice | ? | t,i`)
-    expect(newestFirst.at(-2)).toBe('venice/m3 | M 3 | Venice | ? | t,i')
+    const newestFirst = modelListText(cache([VENICE, many(MODEL_LIST_LIMIT + 3)]), PROVIDERS, { sort: 'released', sort_dir: 'desc' }).split('\n')
+    expect(newestFirst[1]).toBe(`venice/m${MODEL_LIST_LIMIT + 2} | M ${MODEL_LIST_LIMIT + 2} | Venice | ? | t,i | 2052-01-01`)
+    expect(newestFirst.at(-2)).toBe('venice/m3 | M 3 | Venice | ? | t,i | 2003-01-01')
     expect(newestFirst.at(-1)).toBe('… and 3 more. Use a narrower filter.')
   })
 
@@ -230,7 +255,7 @@ describe('modelListText', () => {
     const models = [{ id: 'odd', name: 'Odd\nName  ', provider: VENICE.id }]
     expect(modelListText(cache([providerInfo('venice', 'Ven\r\nice'), models]), [providerInfo('venice', 'Ven\r\nice')])).toBe([
       `1 model ${HEADER}`,
-      'venice/odd | Odd Name | Ven ice | ? | t,i',
+      'venice/odd | Odd Name | Ven ice | ? | t,i | ?',
     ].join('\n'))
   })
 
@@ -239,7 +264,7 @@ describe('modelListText', () => {
     const models: ModelInfo[] = [{ id: 'odd', name: 'Odd | Name', provider: VENICE.id, outputs: ['audio'], request: 'tts' }]
     expect(modelListText(cache([piped, models]), [piped])).toBe([
       `1 model ${HEADER}`,
-      'venice/odd | Odd / Name | Ven/ice | a | t',
+      'venice/odd | Odd / Name | Ven/ice | a | t | ?',
     ].join('\n'))
   })
 })

@@ -14,7 +14,7 @@ const FAILING = providerInfo('failing', 'Failing')
 const PROVIDERS = [OPENROUTER, CLOSED, FAILING]
 
 // Model ids can hold `/`; provider ids cannot.
-const GEMINI: ModelInfo = { id: 'google/gemini-3-pro', name: 'Gemini 3 Pro', provider: OPENROUTER.id, imageInput: true, outputs: ['text', 'image'], request: 'chat' }
+const GEMINI: ModelInfo = { id: 'google/gemini-3-pro', name: 'Gemini 3 Pro', provider: OPENROUTER.id, released: '2025-11-18', imageInput: true, outputs: ['text', 'image'], request: 'chat' }
 const UNKNOWN: ModelInfo = { id: 'mystery', name: 'Mystery', provider: OPENROUTER.id }
 const VIDEO: ModelInfo = {
   id: 'x-ai/grok-video',
@@ -114,12 +114,13 @@ describe('modelInfoText', () => {
       id: 'openrouter/google/gemini-3-pro',
       name: 'Gemini 3 Pro',
       provider: { id: 'openrouter', name: 'OpenRouter' },
-      dez: { request: 'chat', outputs: ['text', 'image'], inputs: ['text', 'image'], imageInput: true, toolCalling: true, thinking: true, unknown: ['toolCalling', 'thinking'] },
+      dez: { request: 'chat', outputs: ['text', 'image'], inputs: ['text', 'image'], released: '2025-11-18', imageInput: true, toolCalling: true, thinking: true, unknown: ['toolCalling', 'thinking'] },
       usage: modelUsage(GEMINI, chatFacts),
       providerEntry: entry,
     }, null, 2))
   })
 
+  // An unknown release date has no value: Dez does not act on it.
   it('gives each fact that the provider does not tell the value that Dez acts on, and names it in `unknown`', () => {
     expect(parsed(modelInfoText(OPENROUTER, UNKNOWN, { entry: { id: 'mystery' } })).dez).toStrictEqual({
       request: 'chat',
@@ -128,7 +129,7 @@ describe('modelInfoText', () => {
       imageInput: true,
       toolCalling: true,
       thinking: true,
-      unknown: ['request', 'outputs', 'imageInput', 'toolCalling', 'thinking'],
+      unknown: ['request', 'outputs', 'released', 'imageInput', 'toolCalling', 'thinking'],
     })
   })
 
@@ -146,9 +147,9 @@ describe('modelInfoText', () => {
       imageInput: true,
       toolCalling: true,
       thinking: false,
-      unknown: ['request', 'outputs', 'imageInput', 'toolCalling'],
+      unknown: ['request', 'outputs', 'released', 'imageInput', 'toolCalling'],
     })
-    expect(facts(thinker)).toStrictEqual({ request: 'chat', outputs: ['text', 'image'], inputs: ['text', 'image'], imageInput: true, toolCalling: true, thinking: false })
+    expect(facts(thinker)).toStrictEqual({ request: 'chat', outputs: ['text', 'image'], inputs: ['text', 'image'], released: '2025-11-18', imageInput: true, toolCalling: true, thinking: false })
   })
 
   it('gives the toggles that apply, with their values, and the toggles that the model does not take', () => {
@@ -159,6 +160,7 @@ describe('modelInfoText', () => {
       request: 'chat',
       outputs: ['text', 'image'],
       inputs: ['text', 'image'],
+      released: '2025-11-18',
       imageInput: true,
       toolCalling: false,
       thinking: false,
@@ -187,6 +189,7 @@ describe('modelInfoText', () => {
       inputs: ['text', 'image'],
       imageInput: true,
       toolCalling: false,
+      unknown: ['released'],
       text: { maxPromptLength: 1000 },
       images: { minImages: 1, maxImages: 3, size: { minShortSide: 256, maxPixels: 4_000_000 }, limits: { maxBytes: 1000 } },
     })
@@ -194,6 +197,7 @@ describe('modelInfoText', () => {
       request: 'imageEdit',
       outputs: ['image'],
       inputs: ['text', 'image'],
+      unknown: ['released'],
       text: { maxPromptLength: 1000 },
       images: { minImages: 1, maxImages: 3 },
     })
@@ -249,6 +253,7 @@ describe('modelInfoText', () => {
       request: 'none',
       outputs: ['image'],
       inputs: [],
+      unknown: ['released'],
       cannotUse: unusableModelMessage('Sketcher', sketcher),
     })
     expect(parsed(modelInfoText(OPENROUTER, scanner, { entry: {} })).dez).toStrictEqual({
@@ -256,6 +261,7 @@ describe('modelInfoText', () => {
       outputs: ['image'],
       inputs: [],
       imageInput: false,
+      unknown: ['released'],
       images: { minImages: 0, maxImages: 0 },
       unstoredOutput: 'TIFF',
       cannotUse: unstoredOutputMessage('Scanner', 'TIFF'),
@@ -371,6 +377,7 @@ describe('modelInfoText', () => {
           request: 'video',
           outputs: ['video'],
           inputs: ['text'],
+          unknown: ['released'],
           images: { minImages: 0, maxImages: 0 },
           parameters: [
             { name: 'duration', label: 'Length (seconds)', options: [1, 5, 10], default: 1, value: 5 },
@@ -417,7 +424,7 @@ describe('modelInfoText', () => {
         id: `local/${path}`,
         name: path,
         provider: { id: 'local', name: 'Local' },
-        dez: { request: 'chat', outputs: ['text'], inputs: ['text'], imageInput: false, toolCalling: false, thinking: false },
+        dez: { request: 'chat', outputs: ['text'], inputs: ['text'], imageInput: false, toolCalling: false, thinking: false, unknown: ['released'] },
         usage: modelUsage(served, { toggles: [], inputImages: {} }),
         providerEntry: { id: '/home/…', object: 'model', root: '/home/…', parent: null, max_model_len: 8192 },
       })

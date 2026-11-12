@@ -987,6 +987,48 @@ describe('provider models', () => {
       .toStrictEqual([{ id: 'a', name: 'a', provider: 'local' }])
   })
 
+  // `YYYY-MM-DD` in UTC. A date before 2000 is a placeholder (the epoch),
+  // and a time in ms read as seconds is past 9999: both are unknown.
+  it('reads the release date at the config path as a UTC date, from Unix seconds', () => {
+    const provider = customProvider({ modelReleased: { path: 'created', format: 'unixSeconds' } })
+    const created = [1763424000, 1763510399, 946684800, 946684799, 0, 1763424000000, '1763424000', null, undefined]
+    const models = provider.parseModels({ data: created.map((value, index) => ({ id: `m${index}`, created: value })) })
+
+    expect(models.map((model) => model.released)).toStrictEqual(['2025-11-18', '2025-11-18', '2000-01-01', undefined, undefined, undefined, undefined, undefined, undefined])
+    expect(Object.hasOwn(models[3], 'released')).toBe(false)
+  })
+
+  it('reads the release date at the config path as a UTC date, from an RFC 3339 text', () => {
+    const provider = customProvider({ modelReleased: { path: 'meta.created_at', format: 'rfc3339' } })
+    const createdAt = [
+      '2025-02-19T00:00:00Z',
+      // 2025-02-20T04:00Z.
+      '2025-02-19T20:00:00-08:00',
+      '2025-02-19t23:59:59.123456z',
+      // 2025-02-18T23:00Z.
+      '2025-02-19 01:00:00+02:00',
+      '2025-02-19',
+      '1970-01-01T00:00:00Z',
+      '2025-13-01T00:00:00Z',
+      'Feb 19, 2025',
+      '2025-02-19T00:00Z',
+      1739923200,
+    ]
+    const models = provider.parseModels({ data: createdAt.map((value, index) => ({ id: `m${index}`, meta: { created_at: value } })) })
+
+    expect(models.map((model) => model.released)).toStrictEqual([
+      '2025-02-19', '2025-02-20', '2025-02-19', '2025-02-18', '2025-02-19', undefined, undefined, undefined, undefined, undefined,
+    ])
+  })
+
+  it('keeps the fetched release date for a config model, and has none with no config path', () => {
+    const provider = customProvider({ models: [{ id: 'listed', name: 'Listed' }], modelReleased: { path: 'created', format: 'unixSeconds' } })
+
+    expect(provider.mergeModels(provider.parseModels({ data: [{ id: 'listed', created: 1763424000 }] })))
+      .toStrictEqual([{ id: 'listed', name: 'Listed', provider: 'local', released: '2025-11-18' }])
+    expect(customProvider({}).parseModels({ data: [{ id: 'a', created: 1763424000 }] })).toStrictEqual([{ id: 'a', name: 'a', provider: 'local' }])
+  })
+
   // The image, tool, and thinking flags share one reader; each has its own
   // config path and list value.
   const capabilities = [

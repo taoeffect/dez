@@ -83,6 +83,9 @@ const modelEntryPathSchema = z.string().refine(
   'Model entry path must be dot-separated names, none empty',
 )
 
+// The formats of a release date in a `/models` entry (`modelReleased`).
+const MODEL_RELEASED_FORMATS = ['unixSeconds', 'rfc3339'] as const
+
 // Where a `/models` entry says whether the model has a capability. A boolean
 // there is the flag; a list means "has it" when it holds the capability's
 // list value ("image" for `modelImageInput`, "tools" for
@@ -242,6 +245,11 @@ export const providerConfigSchema = z.object({
   // whose entries are named by their ids (Venice). Only the tooltips of the
   // picker and the agent pill show it, after the name; no request holds it.
   modelReadableName: z.object({ path: modelEntryPathSchema }).optional(),
+  // Where a `/models` entry holds the date that the provider gives the model
+  // (OpenRouter's and Venice's `created`), and its format: `unixSeconds` (a
+  // number) or `rfc3339` (a text, such as Anthropic's `created_at`).
+  // `model_list` and `model_info` show it as the model's release date.
+  modelReleased: z.object({ path: modelEntryPathSchema, format: z.enum(MODEL_RELEASED_FORMATS) }).optional(),
   auth: z.enum(['apiKey', 'githubCopilot']).default('apiKey'),
   // Static headers added to every request.
   headers: headersSchema.optional(),

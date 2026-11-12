@@ -52,6 +52,9 @@ export const BUILT_IN_PROVIDER_CONFIGS: readonly ProviderConfig[] = [
         decisions: { outputs: [] },
       },
     },
+    // The day that OpenRouter added the model, not always its release
+    // (Unix seconds; checked live, 2026-11-12).
+    modelReleased: { path: 'created', format: 'unixSeconds' },
     auth: 'apiKey',
     // OpenRouter passes the marks on to the models that cache only a marked
     // prompt (Claude, Gemini, Qwen), and makes OpenAI's own marks of them for
@@ -117,6 +120,9 @@ export const BUILT_IN_PROVIDER_CONFIGS: readonly ProviderConfig[] = [
     modelToolCalling: { path: 'model_spec.capabilities.supportsFunctionCalling' },
     modelThinking: { path: 'model_spec.capabilities.supportsReasoning' },
     modelReadableName: { path: 'model_spec.name' },
+    // "Release date on Venice API": the day that Venice added the model, at
+    // midnight UTC (Unix seconds; checked live, 2026-11-12).
+    modelReleased: { path: 'created', format: 'unixSeconds' },
     // One `type` per model. `inpaint` models edit images, and `upscale`
     // models make an image larger. `music` models also make sounds and
     // speech; one of them is a voice changer (`model_spec.voice_changer`),
