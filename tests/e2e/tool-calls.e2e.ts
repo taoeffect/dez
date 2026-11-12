@@ -47,10 +47,11 @@ const SONG_WAV = monoWav(Buffer.alloc(2 * WAV_SAMPLE_RATE * 2), 2)
 
 // The `model_list` results for the filters of the tests. The mock providers
 // are the only configured ones: built-ins have no key in the test HOME. Their
-// models do not say what they make, so the lines have no outputs column.
-const LIST_COLUMNS = '(full id | name | provider | outputs). Outputs: t text, i image, a audio, v video.'
-const TOOLER_LIST = `1 model matches "tool" ${LIST_COLUMNS}\n${TOOLER.id}/${TOOLER.modelId} | ${TOOLER.modelName} | ${TOOLER.name}`
-const CLAUDE_LIST = `1 model matches "claude" ${LIST_COLUMNS}\n${CLAUDE.id}/${CLAUDE.modelId} | ${CLAUDE.modelName} | ${CLAUDE.name}`
+// models do not say what they make or how Dez asks them, so they are chat
+// models of unknown type: Dez sends them text and images.
+const LIST_COLUMNS = '(full id | name | provider | type | inputs). Letters: t text, i image, a audio, v video; ? unknown, - none.'
+const TOOLER_LIST = `1 model matches "tool" ${LIST_COLUMNS}\n${TOOLER.id}/${TOOLER.modelId} | ${TOOLER.modelName} | ${TOOLER.name} | ? | t,i`
+const CLAUDE_LIST = `1 model matches "claude" ${LIST_COLUMNS}\n${CLAUDE.id}/${CLAUDE.modelId} | ${CLAUDE.modelName} | ${CLAUDE.name} | ? | t,i`
 
 const EPHEMERAL = { type: 'ephemeral' }
 
@@ -421,6 +422,7 @@ describe('tool calls', () => {
       dez: {
         request: 'chat',
         outputs: ['text'],
+        inputs: ['text', 'image'],
         imageInput: true,
         toolCalling: true,
         thinking: false,

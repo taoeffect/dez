@@ -13,8 +13,8 @@ import { tagEscape } from './tagEscape'
 // text all call it.
 //
 //   <dez:tool id="call_7Qx" name="model_list" filter="gemini 3 pro">
-//   1 model matches "gemini 3 pro" (full id | name | provider | outputs). …
-//   venice/gemini-3-pro-preview | Gemini 3 Pro Preview | Venice | t
+//   1 model matches "gemini 3 pro" (full id | name | provider | type | inputs). …
+//   venice/gemini-3-pro-preview | Gemini 3 Pro Preview | Venice | t | t,i
 //   </dez:tool>
 //
 // - The opening tag is one whole line, and so is the closing tag: a block

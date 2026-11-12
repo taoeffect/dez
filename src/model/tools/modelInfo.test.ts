@@ -114,7 +114,7 @@ describe('modelInfoText', () => {
       id: 'openrouter/google/gemini-3-pro',
       name: 'Gemini 3 Pro',
       provider: { id: 'openrouter', name: 'OpenRouter' },
-      dez: { request: 'chat', outputs: ['text', 'image'], imageInput: true, toolCalling: true, thinking: true, unknown: ['toolCalling', 'thinking'] },
+      dez: { request: 'chat', outputs: ['text', 'image'], inputs: ['text', 'image'], imageInput: true, toolCalling: true, thinking: true, unknown: ['toolCalling', 'thinking'] },
       usage: modelUsage(GEMINI, chatFacts),
       providerEntry: entry,
     }, null, 2))
@@ -124,6 +124,7 @@ describe('modelInfoText', () => {
     expect(parsed(modelInfoText(OPENROUTER, UNKNOWN, { entry: { id: 'mystery' } })).dez).toStrictEqual({
       request: 'chat',
       outputs: ['text'],
+      inputs: ['text', 'image'],
       imageInput: true,
       toolCalling: true,
       thinking: true,
@@ -141,12 +142,13 @@ describe('modelInfoText', () => {
     expect(facts({ ...UNKNOWN, provider: plain.id })).toStrictEqual({
       request: 'chat',
       outputs: ['text'],
+      inputs: ['text', 'image'],
       imageInput: true,
       toolCalling: true,
       thinking: false,
       unknown: ['request', 'outputs', 'imageInput', 'toolCalling'],
     })
-    expect(facts(thinker)).toStrictEqual({ request: 'chat', outputs: ['text', 'image'], imageInput: true, toolCalling: true, thinking: false })
+    expect(facts(thinker)).toStrictEqual({ request: 'chat', outputs: ['text', 'image'], inputs: ['text', 'image'], imageInput: true, toolCalling: true, thinking: false })
   })
 
   it('gives the toggles that apply, with their values, and the toggles that the model does not take', () => {
@@ -156,6 +158,7 @@ describe('modelInfoText', () => {
     expect(parsed(modelInfoText(OPENROUTER, model, { entry, toggles })).dez).toStrictEqual({
       request: 'chat',
       outputs: ['text', 'image'],
+      inputs: ['text', 'image'],
       imageInput: true,
       toolCalling: false,
       thinking: false,
@@ -164,7 +167,7 @@ describe('modelInfoText', () => {
     })
   })
 
-  it('gives a media model its text and image rules, and tools and thinking only when the provider tells them', () => {
+  it('gives a media model its text and image rules, and image input, tools, and thinking only when the provider tells them', () => {
     const edit: ModelInfo = {
       id: 'edit',
       name: 'Edit',
@@ -181,10 +184,18 @@ describe('modelInfoText', () => {
     expect(parsed(modelInfoText(OPENROUTER, edit, { entry: { id: 'edit' }, inputImages })).dez).toStrictEqual({
       request: 'imageEdit',
       outputs: ['image'],
+      inputs: ['text', 'image'],
       imageInput: true,
       toolCalling: false,
       text: { maxPromptLength: 1000 },
       images: { minImages: 1, maxImages: 3, size: { minShortSide: 256, maxPixels: 4_000_000 }, limits: { maxBytes: 1000 } },
+    })
+    expect(parsed(modelInfoText(OPENROUTER, { ...edit, imageInput: undefined, toolCalling: undefined }, { entry: { id: 'edit' } })).dez).toStrictEqual({
+      request: 'imageEdit',
+      outputs: ['image'],
+      inputs: ['text', 'image'],
+      text: { maxPromptLength: 1000 },
+      images: { minImages: 1, maxImages: 3 },
     })
   })
 
@@ -237,13 +248,13 @@ describe('modelInfoText', () => {
     expect(parsed(modelInfoText(OPENROUTER, sketcher, { entry: {} })).dez).toStrictEqual({
       request: 'none',
       outputs: ['image'],
-      imageInput: true,
-      unknown: ['imageInput'],
+      inputs: [],
       cannotUse: unusableModelMessage('Sketcher', sketcher),
     })
     expect(parsed(modelInfoText(OPENROUTER, scanner, { entry: {} })).dez).toStrictEqual({
       request: 'image',
       outputs: ['image'],
+      inputs: [],
       imageInput: false,
       images: { minImages: 0, maxImages: 0 },
       unstoredOutput: 'TIFF',
@@ -359,8 +370,7 @@ describe('modelInfoText', () => {
         dez: {
           request: 'video',
           outputs: ['video'],
-          imageInput: true,
-          unknown: ['imageInput'],
+          inputs: ['text'],
           images: { minImages: 0, maxImages: 0 },
           parameters: [
             { name: 'duration', label: 'Length (seconds)', options: [1, 5, 10], default: 1, value: 5 },
@@ -407,7 +417,7 @@ describe('modelInfoText', () => {
         id: `local/${path}`,
         name: path,
         provider: { id: 'local', name: 'Local' },
-        dez: { request: 'chat', outputs: ['text'], imageInput: false, toolCalling: false, thinking: false },
+        dez: { request: 'chat', outputs: ['text'], inputs: ['text'], imageInput: false, toolCalling: false, thinking: false },
         usage: modelUsage(served, { toggles: [], inputImages: {} }),
         providerEntry: { id: '/home/…', object: 'model', root: '/home/…', parent: null, max_model_len: 8192 },
       })

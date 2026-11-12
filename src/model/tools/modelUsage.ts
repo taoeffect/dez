@@ -5,7 +5,7 @@ import { clipsText, maxInputClips, neededClipKind, type ClipUse, type InputClipR
 import { lyricsHowTo } from '../providers/clipText'
 import { toolsApply } from '../providers/modelToggles'
 import { TOOLS_SETTING_KEY } from '../providers/toolsSetting'
-import { CLIP_KINDS, effectiveRequest, isClipKind, isTextKind, type MediaKind, type ModelInfo, type ProviderInputImageRules } from '../providers/types'
+import { CLIP_KINDS, effectiveRequest, isClipKind, isTextKind, type MediaKind, type ModelInfo, type NoPromptKind, type ProviderInputImageRules } from '../providers/types'
 
 // The `usage` of a `model_info` result: how a request to a model is formed,
 // what it needs, and what comes back. Each text tells what the code that
@@ -129,9 +129,12 @@ function inputClipsUsage(kind: MediaKind, clips: InputClipRules | undefined): st
 }
 
 // What the text of the message is to a model of each media kind (none:
-// the text does not go), and what its input images are (none: no model of
-// the kind takes images, as far as the media formats tell).
-const MEDIA_USAGE: Readonly<Record<MediaKind, { prompt?: string, images?: string }>> = {
+// the text does not go, `NO_PROMPT_KINDS`; the type keeps the two tables
+// the same), and what its input images are (none: no model of the kind
+// takes images, as far as the media formats tell).
+type MediaUsage = { [Kind in MediaKind]: { images?: string } & (Kind extends NoPromptKind ? { prompt?: never } : { prompt: string }) }
+
+const MEDIA_USAGE: Readonly<MediaUsage> = {
   image: { prompt: 'The text of the message is the prompt.', images: 'They are references for the new image.' },
   imageEdit: { prompt: 'The text of the message tells what to change.', images: 'The first one is the image to edit, and the others are references.' },
   upscale: { images: 'It makes that image larger.' },

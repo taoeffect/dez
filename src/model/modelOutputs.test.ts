@@ -4,7 +4,7 @@ import {
   matchesOutputFilter,
   normalizeOutputs,
   outputLetters,
-  parseOutputLetters,
+  parseOutputTypes,
   toggleOutputFilter,
   type ModelOutput,
 } from './modelOutputs'
@@ -16,30 +16,19 @@ describe('model outputs', () => {
     expect(outputLetters([])).toBe('')
   })
 
-  it('reads letters with any case, commas, and white space, in table order and once each', () => {
-    expect(parseOutputLetters('iv')).toStrictEqual({ ok: true, outputs: ['image', 'video'] })
-    expect(parseOutputLetters(' V, i ,\tA ')).toStrictEqual({ ok: true, outputs: ['image', 'audio', 'video'] })
-    expect(parseOutputLetters('t,i,a,v')).toStrictEqual({ ok: true, outputs: ['text', 'image', 'audio', 'video'] })
-    expect(parseOutputLetters('iiI')).toStrictEqual({ ok: true, outputs: ['image'] })
-    expect(parseOutputLetters(' , ')).toStrictEqual({ ok: true, outputs: [] })
+  it('reads type ids with any case, commas, and white space, in table order and once each', () => {
+    expect(parseOutputTypes('image,video')).toStrictEqual({ ok: true, types: ['image', 'video'] })
+    expect(parseOutputTypes(' Video, image ,\tAUDIO ')).toStrictEqual({ ok: true, types: ['image', 'audio', 'video'] })
+    expect(parseOutputTypes('text image audio video')).toStrictEqual({ ok: true, types: ['text', 'image', 'audio', 'video'] })
+    expect(parseOutputTypes('image,Image')).toStrictEqual({ ok: true, types: ['image'] })
+    expect(parseOutputTypes(' , ')).toStrictEqual({ ok: true, types: [] })
   })
 
-  it('reads back the letters it writes', () => {
-    const outputs: ModelOutput[] = ['text', 'audio', 'video']
-    expect(parseOutputLetters(outputLetters(outputs))).toStrictEqual({ ok: true, outputs })
-  })
-
-  it('refuses unknown letters, naming each once and the valid letters', () => {
-    expect(parseOutputLetters('ix')).toStrictEqual({
-      ok: false,
-      error: 'Unknown output letter "x". Valid letters: t text, i image, a audio, v video.',
-    })
-    // A word is read letter by letter: "image" holds "m", "g", and "e".
-    expect(parseOutputLetters('image')).toStrictEqual({
-      ok: false,
-      error: 'Unknown output letters "m", "g", "e". Valid letters: t text, i image, a audio, v video.',
-    })
-    expect(parseOutputLetters('i;v').ok).toBe(false)
+  it('gives each word that is no type id once, in text order', () => {
+    // The letters of the `model_list` columns are no type ids.
+    expect(parseOutputTypes('i,v')).toStrictEqual({ ok: false, unknown: ['i', 'v'] })
+    expect(parseOutputTypes('image, speech, Speech, img')).toStrictEqual({ ok: false, unknown: ['speech', 'img'] })
+    expect(parseOutputTypes('image;video')).toStrictEqual({ ok: false, unknown: ['image;video'] })
   })
 
   it('counts a model with unknown outputs as a text model', () => {

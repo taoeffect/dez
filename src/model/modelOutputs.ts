@@ -1,9 +1,10 @@
 import type { ModelInfo } from './providers/types'
 
 // The output types a model can make, in the order that every list of them
-// uses. This table is the one place that spells them: the picker filter
-// labels, the `model_list` letters and legend, the config and model-cache
-// schemas, and the sort order all read it.
+// uses; the types that Dez can send a model (modelInputs.ts) are the same.
+// This table is the one place that spells them: the picker filter labels,
+// the `model_list` letters, legend, and filter values, the config and
+// model-cache schemas, and the sort order all read it.
 export const MODEL_OUTPUTS = [
   { id: 'text', letter: 't', label: 'Text' },
   { id: 'image', letter: 'i', label: 'Image' },
@@ -18,34 +19,28 @@ export const MODEL_OUTPUT_IDS: readonly ModelOutput[] = MODEL_OUTPUTS.map((outpu
 // What each output letter stands for: "t text, i image, a audio, v video".
 export const OUTPUT_LETTER_LEGEND = MODEL_OUTPUTS.map(({ letter, id }) => `${letter} ${id}`).join(', ')
 
-export type OutputLettersResult =
-  | { ok: true, outputs: ModelOutput[] }
-  | { ok: false, error: string }
+export type OutputTypesResult =
+  | { ok: true, types: ModelOutput[] }
+  | { ok: false, unknown: string[] }
 
 // Dez sends a model with unknown outputs chat requests, so it counts as a
 // text model.
 const UNKNOWN_MODEL_OUTPUTS: readonly ModelOutput[] = ['text']
 
-/** The letters of `outputs` in table order, joined with commas: `t,i`. */
-export function outputLetters(outputs: readonly ModelOutput[]): string {
-  return MODEL_OUTPUTS.filter((output) => outputs.includes(output.id)).map((output) => output.letter).join(',')
+/** The letters of `types` in table order, joined with commas: `t,i`. */
+export function outputLetters(types: readonly ModelOutput[]): string {
+  return MODEL_OUTPUTS.filter((output) => types.includes(output.id)).map((output) => output.letter).join(',')
 }
 
-/** Reads output letters such as `iv` or `i, V`: commas and white space are
- *  ignored, and case does not count. The outputs come in table order, each
- *  once; a text with no letters gives none. An unknown letter is an error
- *  that names the valid letters. */
-export function parseOutputLetters(text: string): OutputLettersResult {
-  const letters = [...text.toLowerCase().replace(/[\s,]+/g, '')]
-  const unknown = [...new Set(letters.filter((letter) => !MODEL_OUTPUTS.some((output) => output.letter === letter)))]
-  if (unknown.length > 0) {
-    const quoted = unknown.map((letter) => `"${letter}"`).join(', ')
-    return {
-      ok: false,
-      error: `Unknown output letter${unknown.length === 1 ? '' : 's'} ${quoted}. Valid letters: ${OUTPUT_LETTER_LEGEND}.`,
-    }
-  }
-  return { ok: true, outputs: MODEL_OUTPUTS.filter((output) => letters.includes(output.letter)).map((output) => output.id) }
+/** Reads type ids such as `image,video` or `Image VIDEO`: words split by
+ *  commas and white space, in which case does not count. The types come in
+ *  table order, each once; a text with no word gives none. `unknown` holds
+ *  each word that is no type id, once, in text order. */
+export function parseOutputTypes(text: string): OutputTypesResult {
+  const words = text.toLowerCase().split(/[\s,]+/).filter(Boolean)
+  const unknown = [...new Set(words.filter((word) => !MODEL_OUTPUT_IDS.some((id) => id === word)))]
+  if (unknown.length > 0) return { ok: false, unknown }
+  return { ok: true, types: MODEL_OUTPUT_IDS.filter((id) => words.includes(id)) }
 }
 
 /** What the model makes; a model whose provider does not tell counts as a

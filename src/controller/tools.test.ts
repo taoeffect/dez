@@ -173,22 +173,22 @@ afterEach(() => {
 })
 
 describe('dez.controller/tools/run', () => {
-  const columns = '(full id | name | provider | outputs). Outputs: t text, i image, a audio, v video.'
+  const columns = '(full id | name | provider | type | inputs). Letters: t text, i image, a audio, v video; ? unknown, - none.'
 
   it('lists the cached models of the configured providers that match the filter', async () => {
     expect(await run({ name: 'model_list', arguments: { filter: 'gemini' } })).toStrictEqual({
-      content: `1 model matches "gemini" ${columns}\nvenice/venice-gemini-3-pro | Gemini 3 Pro | Venice`,
+      content: `1 model matches "gemini" ${columns}\nvenice/venice-gemini-3-pro | Gemini 3 Pro | Venice | ? | t,i`,
       isError: false,
     })
     expect(await run({ name: 'model_list', arguments: {} })).toStrictEqual({
-      content: `2 models ${columns}\nvenice/venice-gemini-3-pro | Gemini 3 Pro | Venice\nvenice/venice-glm-5 | GLM 5 | Venice`,
+      content: `2 models ${columns}\nvenice/venice-gemini-3-pro | Gemini 3 Pro | Venice | ? | t,i\nvenice/venice-glm-5 | GLM 5 | Venice | ? | t,i`,
       isError: false,
     })
   })
 
-  it('gives an error result that names the valid letters for outputs with an unknown letter', async () => {
-    expect(await run({ name: 'model_list', arguments: { outputs: 'q' } })).toStrictEqual({
-      content: 'Unknown output letter "q". Valid letters: t text, i image, a audio, v video.',
+  it('gives an error result that names the valid values for a type that is unknown', async () => {
+    expect(await run({ name: 'model_list', arguments: { type: 'q' } })).toStrictEqual({
+      content: 'Unknown value "q" in `type`. Use a comma list of: text, image, audio, video.',
       isError: true,
     })
   })

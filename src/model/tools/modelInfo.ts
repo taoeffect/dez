@@ -1,5 +1,6 @@
 import { rawErrorText } from '../../utils/errorText'
 import { modelRefKey, parseModelRefKey } from '../chat/modelRef'
+import { modelInputs } from '../modelInputs'
 import { effectiveOutputs, MODEL_OUTPUT_IDS } from '../modelOutputs'
 import { availableModels } from '../modelSearch'
 import type { ModelCache } from '../persistence/types'
@@ -35,7 +36,8 @@ export const MODEL_INFO_TOOL: ToolDefinition = {
     + '`id` is its full id, `name` its name, and `provider` the `id` and `name` of its provider. '
     + '`dez` holds the facts that Dez uses, each under a name that tells what it is, for example '
     + `\`request\` (how Dez sends it a request: ${MODEL_REQUESTS.join(', ')}; none means that Dez cannot use it yet), `
-    + `\`outputs\` (what it makes: ${MODEL_OUTPUT_IDS.join(', ')}), \`parameters\`, and \`cost\`. `
+    + `\`outputs\` (what it makes: ${MODEL_OUTPUT_IDS.join(', ')}), `
+    + `\`inputs\` (what Dez can send it in one request: ${MODEL_OUTPUT_IDS.join(', ')}), \`parameters\`, and \`cost\`. `
     + '`dez.unknown` names the facts that the provider does not tell; their values are what Dez does then. '
     + '`dez.limits` lists rules of the model that Dez knows from other places than the provider\'s data, each with its `source`. '
     + '`usage` tells how to use the model: how a request to it is formed, what it needs, and what comes back. '
@@ -181,17 +183,19 @@ function prettyJson(value: unknown): string {
 }
 
 // The facts that Dez uses, as it uses them. A fact that the provider does
-// not tell gets the value that Dez acts on, and `unknown` names it. Thinking
-// and tools matter only to a chat request, so a model of another kind gets
-// them only when the provider tells them. `model` holds the image rules of
-// the parameter values that a request sends (`modelInfoText`).
+// not tell gets the value that Dez acts on, and `unknown` names it. Image
+// input, thinking, and tools are facts of their own only for a chat request,
+// so a model of another kind gets them only when the provider tells them
+// (`inputs` tells whether a media request sends images). `model` holds the
+// image rules of the parameter values that a request sends
+// (`modelInfoText`).
 function dezFacts(model: ModelInfo, facts: ModelInfoFacts, supportsThinking: boolean): Record<string, unknown> {
   const kind = effectiveRequest(model)
   const chat = kind === 'chat'
   // With no `thinking` in its provider's config, Dez asks no model for
   // thinking and drops the reasoning of its replies (`supportsThinking`).
   const thinking = supportsThinking ? model.thinking : false
-  const told = { request: model.request, outputs: model.outputs, imageInput: model.imageInput, ...(chat && { toolCalling: model.toolCalling, thinking }) }
+  const told = { request: model.request, outputs: model.outputs, ...(chat && { imageInput: model.imageInput, toolCalling: model.toolCalling, thinking }) }
   const unknown = Object.entries(told).flatMap(([name, value]) => (value === undefined ? [name] : []))
   const mediaKind = kind === 'chat' || kind === 'none' ? undefined : kind
   const maxImages = mediaKind && maxInputImages(mediaKind, model.images)
@@ -203,7 +207,8 @@ function dezFacts(model: ModelInfo, facts: ModelInfoFacts, supportsThinking: boo
   return {
     request: kind,
     outputs: effectiveOutputs(model),
-    imageInput: model.imageInput !== false,
+    inputs: modelInputs(model),
+    ...((chat || model.imageInput !== undefined) && { imageInput: model.imageInput !== false }),
     ...((chat || model.toolCalling !== undefined) && { toolCalling: model.toolCalling !== false }),
     ...((chat || model.thinking !== undefined) && { thinking: thinking !== false }),
     ...(unknown.length > 0 && { unknown }),

@@ -51,7 +51,7 @@ describe('checkToolCalls', () => {
       streamed('c6', ' ', 'model_info'),
     ]
     const tools = 'Call only the Dez tools, by their exact names: model_list, model_info, audio, image.'
-    const parameters = 'The parameters of model_list are: filter (string), outputs (string).'
+    const parameters = 'The parameters of model_list are: filter (string), type (string), inputs (string), sort (string), sort_dir (string).'
 
     expect(checkToolCalls(calls, [])).toStrictEqual([
       { id: 'c1', name: 'web_search', arguments: {}, refusal: `Dez has no tool named "web_search". ${tools}` },

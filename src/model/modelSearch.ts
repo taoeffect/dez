@@ -1,3 +1,4 @@
+import { matchesInputFilter } from './modelInputs'
 import { matchesOutputFilter, type ModelOutput } from './modelOutputs'
 import type { ModelCache } from './persistence/types'
 import type { ModelInfo, ProviderInfo } from './providers/types'
@@ -11,11 +12,14 @@ export interface ProviderModels {
   models: ModelInfo[]
 }
 
-/** A model search: the words of the query (`searchTerms`) and the output
- *  filter (`matchesOutputFilter`; empty for every output). */
+/** A model search: the words of the query (`searchTerms`), the output
+ *  filter (`matchesOutputFilter`; empty for every output), and the input
+ *  filter (`matchesInputFilter`; absent or empty for every model; only
+ *  `model_list` sets it). */
 export interface ModelQuery {
   terms: readonly string[]
   outputs: readonly ModelOutput[]
+  inputs?: readonly ModelOutput[]
 }
 
 // Lower case, and each run of characters other than `a-z0-9` becomes one
@@ -76,10 +80,10 @@ export function modelMatches(provider: ProviderInfo, model: ModelInfo, terms: re
     text.includes(term) || startsConsecutiveWords(words, term)))
 }
 
-/** True when the model makes one of the query's outputs and matches all its
- *  terms (`modelMatches`). */
+/** True when the model makes one of the query's outputs, takes all its
+ *  inputs, and matches all its terms (`modelMatches`). */
 export function modelMatchesQuery(provider: ProviderInfo, model: ModelInfo, query: ModelQuery): boolean {
-  return matchesOutputFilter(model, query.outputs) && modelMatches(provider, model, query.terms)
+  return matchesOutputFilter(model, query.outputs) && matchesInputFilter(model, query.inputs ?? []) && modelMatches(provider, model, query.terms)
 }
 
 /** The models that the user can pick, in model cache order: the cached

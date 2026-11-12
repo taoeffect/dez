@@ -1,24 +1,90 @@
 import { modelRefKey } from '../chat/modelRef'
-import { OUTPUT_LETTER_LEGEND, outputLetters, parseOutputLetters } from '../modelOutputs'
+import { modelInputs } from '../modelInputs'
+import { MODEL_OUTPUT_IDS, OUTPUT_LETTER_LEGEND, outputLetters, parseOutputTypes, type ModelOutput } from '../modelOutputs'
 import { availableModels, matchingModelsByProvider, searchTerms } from '../modelSearch'
 import type { ModelCache } from '../persistence/types'
-import type { ProviderInfo } from '../providers/types'
+import type { ModelInfo, ProviderInfo } from '../providers/types'
 import { ToolError, type ToolArguments, type ToolDefinition } from './types'
 
 /** The most model lines that one `model_list` result holds. */
 export const MODEL_LIST_LIMIT = 50
+
+// One model of the list, with what its columns read.
+interface ListedModel {
+  provider: ProviderInfo
+  model: ModelInfo
+  inputs: readonly ModelOutput[]
+}
+
+interface ListColumn {
+  // The `sort` value of the column.
+  key: string
+  // The name of the column in the first line of a result.
+  title: string
+  text: (row: ListedModel) => string
+  // What `sort` compares, numbers in order (`compareNumbers`); undefined
+  // for a value that the provider does not tell, which sorts last. Absent:
+  // `sort` compares the text (`LIST_COLLATOR`).
+  order?: (row: ListedModel) => readonly number[] | undefined
+}
+
+const UNKNOWN_TEXT = '?'
+const NO_TYPES_TEXT = '-'
+
+// Names come from provider APIs and user input. A line break in one would
+// split its model over two lines of the result, and a `|` would read as one
+// more column; `/` takes its place, as in conversation titles. The full id
+// stays as it is: the model must be able to give it back byte for byte.
+function columnText(value: string): string {
+  return value.replace(/\s+/g, ' ').trim().replaceAll('|', '/')
+}
+
+// The letters of a list of types (`t,i`); `-` for none, `?` for a list
+// that the provider does not tell.
+function typesText(types: readonly ModelOutput[] | undefined): string {
+  if (types === undefined) return UNKNOWN_TEXT
+  return outputLetters(types) || NO_TYPES_TEXT
+}
+
+// The sort order of a list of types: the count of types first, then the
+// table index of each one, so `t` < `i` < `v` < `t,i` < `t,a`.
+function typesOrder(types: readonly ModelOutput[]): number[] {
+  const indexes = MODEL_OUTPUT_IDS.flatMap((type, index) => (types.includes(type) ? [index] : []))
+  return [indexes.length, ...indexes]
+}
+
+// The columns of a result, in line order. The header, each line, and the
+// `sort` values all come from this list.
+const LIST_COLUMNS: readonly ListColumn[] = [
+  { key: 'id', title: 'full id', text: (row) => modelRefKey({ providerId: row.provider.id, modelId: row.model.id }) },
+  { key: 'name', title: 'name', text: (row) => columnText(row.model.name) },
+  { key: 'provider', title: 'provider', text: (row) => columnText(row.provider.name) },
+  { key: 'type', title: 'type', text: (row) => typesText(row.model.outputs), order: (row) => row.model.outputs && typesOrder(row.model.outputs) },
+  { key: 'inputs', title: 'inputs', text: (row) => typesText(row.inputs), order: (row) => typesOrder(row.inputs) },
+]
+
+const SORT_KEYS = LIST_COLUMNS.map((column) => column.key)
+
+const SORT_DIRECTIONS = ['asc', 'desc'] as const
+
+type SortDirection = (typeof SORT_DIRECTIONS)[number]
+
+const TYPE_VALUES = MODEL_OUTPUT_IDS.join(', ')
 
 // The description and the legend come from static tables only (no counts,
 // no dates): the tools array is in the provider's prompt cache.
 export const MODEL_LIST_TOOL: ToolDefinition = {
   name: 'model_list',
   description: 'List the models that the user can use in Dez. '
-    + 'The first line gives the count, the column names, and what the output letters mean. '
+    + 'The first line gives the count, the column names, and what the letters mean. '
     + 'Then each line gives one model: its full id (`provider/model`), its name, the name of its provider, '
-    + 'and the letters of the outputs that it makes. '
-    + 'The output letters show only when the provider reports what the model makes. '
-    + 'With no `filter` and no `outputs`, the list has every model. '
-    + `The list stops after ${MODEL_LIST_LIMIT} models.`,
+    + 'its type (the letters of the outputs that it makes), '
+    + 'and its inputs (the letters of what Dez can send it in one request: the text of the message, images, audio clips, video clips). '
+    + 'Dez sends a chat model only text and images, whatever its provider says that it reads; `model_info` tells more. '
+    + '`?` stands for a value that the provider does not tell, and `-` for none. '
+    + 'With no `filter`, no `type`, and no `inputs`, the list has every model. '
+    + `The list stops after ${MODEL_LIST_LIMIT} models. \`sort\` orders all the models that match before that, `
+    + 'so `sort` with `sort_dir` `desc` lists the models with the most of a column first.',
   parameters: [
     {
       name: 'filter',
@@ -31,26 +97,106 @@ export const MODEL_LIST_TOOL: ToolDefinition = {
       required: false,
     },
     {
-      name: 'outputs',
+      name: 'type',
       type: 'string',
-      description: `Output letters that select models by what they make (${OUTPUT_LETTER_LEGEND}), as in "iv" or "i,v". `
-        + 'A model matches when it makes at least one of them. '
-        + 'A model whose provider does not report what it makes counts as a text model. '
-        + 'Use it alone or with `filter`.',
+      description: `Output types that select models by what they make: a comma list of ${TYPE_VALUES}, as in "image,video". `
+        + 'A model matches when it makes at least one of them, as in the type filter of the Dez model picker. '
+        + 'A model whose type is `?` counts as a text model. '
+        + 'Use it alone or with the other parameters.',
+      required: false,
+    },
+    {
+      name: 'inputs',
+      type: 'string',
+      description: `Input types that select models by what Dez can send them: a comma list of ${TYPE_VALUES}, as in "audio,video". `
+        + 'A model matches when it takes all of them in one request. '
+        + 'Use it alone or with the other parameters.',
+      required: false,
+    },
+    {
+      name: 'sort',
+      type: 'string',
+      description: `The column that orders the list: ${SORT_KEYS.join(', ')}. `
+        + '`type` and `inputs` order by the count of their letters. '
+        + 'Models with `?` in the column come last. '
+        + 'With no `sort`, the models come in provider order, and the models of a provider in the order of its list.',
+      required: false,
+    },
+    {
+      name: 'sort_dir',
+      type: 'string',
+      description: 'The direction of `sort`: `asc` (the default: A to Z, the fewest letters first) or `desc`.',
       required: false,
     },
   ],
 }
 
-const COLUMNS = '(full id | name | provider | outputs)'
-const LEGEND = `Outputs: ${OUTPUT_LETTER_LEGEND}.`
+const COLUMNS = `(${LIST_COLUMNS.map((column) => column.title).join(' | ')})`
+const LEGEND = `Letters: ${OUTPUT_LETTER_LEGEND}; ${UNKNOWN_TEXT} unknown, ${NO_TYPES_TEXT} none.`
 
-// Names come from provider APIs and user input. A line break in one would
-// split its model over two lines of the result, and a `|` would read as one
-// more column; `/` takes its place, as in conversation titles. The full id
-// stays as it is: the model must be able to give it back byte for byte.
-function columnText(value: string): string {
-  return value.replace(/\s+/g, ' ').trim().replaceAll('|', '/')
+// Text compares as a person reads it: `model 9` before `model 10`, and
+// case does not count.
+const LIST_COLLATOR = new Intl.Collator('en', { numeric: true, sensitivity: 'base' })
+
+// Compares two lists of numbers in order, as a dictionary compares words.
+function compareNumbers(a: readonly number[], b: readonly number[]): number {
+  for (let index = 0; index < Math.min(a.length, b.length); index++) {
+    if (a[index] !== b[index]) return a[index] - b[index]
+  }
+  return a.length - b.length
+}
+
+// `rows` in the order of `column`. A row whose value is unknown comes last
+// in both directions. Array sort is stable, so the rows of one value keep
+// their order in `rows` (provider order, then cache order).
+function sortedRows(rows: readonly ListedModel[], column: ListColumn, direction: SortDirection): ListedModel[] {
+  const sign = direction === 'desc' ? -1 : 1
+  const { order } = column
+  const keyed = rows.map((row) => ({ row, text: column.text(row), numbers: order?.(row) }))
+  keyed.sort((a, b) => {
+    if (!order) return sign * LIST_COLLATOR.compare(a.text, b.text)
+    if (a.numbers === undefined || b.numbers === undefined) return Number(a.numbers === undefined) - Number(b.numbers === undefined)
+    return sign * compareNumbers(a.numbers, b.numbers)
+  })
+  return keyed.map(({ row }) => row)
+}
+
+function stringArgument(args: ToolArguments, name: string): string {
+  const value = args[name]
+  return typeof value === 'string' ? value : ''
+}
+
+// The error of a call that gives `parameter` the values `values`, which it
+// does not take; `valid` tells what it takes.
+function unknownValuesText(parameter: string, values: readonly string[], valid: string): string {
+  const quoted = values.map((value) => JSON.stringify(value)).join(', ')
+  return `Unknown value${values.length === 1 ? '' : 's'} ${quoted} in \`${parameter}\`. Use ${valid}.`
+}
+
+// The types of the `type` or the `inputs` argument; none for a call with no
+// such argument, or one of only commas and white space.
+function typesArgument(args: ToolArguments, parameter: string): ModelOutput[] {
+  const parsed = parseOutputTypes(stringArgument(args, parameter))
+  if (!parsed.ok) throw new ToolError(unknownValuesText(parameter, parsed.unknown, `a comma list of: ${TYPE_VALUES}`))
+  return parsed.types
+}
+
+// The column and direction of the `sort` and `sort_dir` arguments; none for
+// a call with no `sort` (or a blank one). A `sort_dir` with no `sort` is an
+// error, as the call would get a list in another order than it asked for.
+function sortArgument(args: ToolArguments): { column: ListColumn, direction: SortDirection } | undefined {
+  const key = stringArgument(args, 'sort').trim()
+  const direction = stringArgument(args, 'sort_dir').trim()
+  const directionKey = SORT_DIRECTIONS.find((candidate) => candidate === direction.toLowerCase())
+  if (direction !== '' && !directionKey) throw new ToolError(unknownValuesText('sort_dir', [direction], `one of: ${SORT_DIRECTIONS.join(', ')}`))
+  const sortKeys = SORT_KEYS.join(', ')
+  if (key === '') {
+    if (directionKey) throw new ToolError(`\`sort_dir\` is the direction of \`sort\`. Call model_list again with \`sort\` too (one of: ${sortKeys}), or with no \`sort_dir\`.`)
+    return undefined
+  }
+  const column = LIST_COLUMNS.find((candidate) => candidate.key === key.toLowerCase())
+  if (!column) throw new ToolError(unknownValuesText('sort', [key], `one of: ${sortKeys}`))
+  return { column, direction: directionKey ?? 'asc' }
 }
 
 /** The `model_list` result when the user can use no model at all. */
@@ -59,21 +205,24 @@ export const NO_MODELS_TEXT = 'The user has no models that Dez can use: no provi
 
 /** The `model_list` result for the arguments of a call: the models that the
  *  user can pick (as the model picker shows them, with no Favorites group)
- *  that match `filter` and `outputs`, in provider order, then model cache
- *  order. A first line gives the count, the columns, and the output letter
- *  legend; the full id of each model leads its line. A model whose outputs
- *  are unknown (or empty) has no outputs column. A `filter` with no letters
- *  or digits selects every model, as in the picker, and so does an
- *  `outputs` of only commas and white space.
+ *  that match `filter`, `type` (what they make, any of them), and `inputs`
+ *  (what Dez can send them, `modelInputs`, all of them). They come in
+ *  provider order, then model cache order, or in the order of the `sort`
+ *  column, and the cap of `MODEL_LIST_LIMIT` lines comes after the sort. A
+ *  first line gives the count, the columns (`LIST_COLUMNS`), the sort, and
+ *  the letter legend; then each model has one line with every column. A
+ *  `filter` with no letters or digits selects every model, as in the
+ *  picker, and so does a `type` or `inputs` of only commas and white space.
  *
- *  Throws for an `outputs` value with an unknown letter; the error names the
- *  valid letters, for the model to read. With no model, or no match, the
- *  result says why and what the model can do. */
+ *  Throws for an argument value that the tool does not take, before it
+ *  looks at the models; the error names the valid values, for the model to
+ *  read. With no model, or no match, the result says why and what the model
+ *  can do. */
 export function modelListText(cache: ModelCache, providers: readonly ProviderInfo[], args: ToolArguments = {}): string {
-  const filter = typeof args.filter === 'string' ? args.filter : ''
-  const parsedOutputs = parseOutputLetters(typeof args.outputs === 'string' ? args.outputs : '')
-  if (!parsedOutputs.ok) throw new ToolError(parsedOutputs.error)
-  const { outputs } = parsedOutputs
+  const filter = stringArgument(args, 'filter')
+  const outputs = typesArgument(args, 'type')
+  const inputs = typesArgument(args, 'inputs')
+  const sort = sortArgument(args)
 
   const models = availableModels(cache, providers)
   if (models.length === 0) return NO_MODELS_TEXT
@@ -83,17 +232,13 @@ export function modelListText(cache: ModelCache, providers: readonly ProviderInf
   // result tells its match, and the fix of a call that matches nothing.
   const narrowing = [
     ...(terms.length > 0 ? [{ name: '`filter`', text: JSON.stringify(filter), fix: 'fewer words in `filter`' }] : []),
-    ...(outputs.length > 0 ? [{ name: '`outputs`', text: `outputs ${outputLetters(outputs)}`, fix: 'other letters in `outputs`' }] : []),
+    ...(outputs.length > 0 ? [{ name: '`type`', text: `type ${outputs.join(',')}`, fix: 'other values in `type`' }] : []),
+    ...(inputs.length > 0 ? [{ name: '`inputs`', text: `inputs ${inputs.join(',')}`, fix: 'fewer values in `inputs`' }] : []),
   ]
   const criteria = narrowing.map((argument) => argument.text).join(' and ')
-  const lines = matchingModelsByProvider(providers, models, { terms, outputs }).flatMap(({ provider, models: matches }) =>
-    matches.map((model) => {
-      const columns = [modelRefKey({ providerId: provider.id, modelId: model.id }), columnText(model.name), columnText(provider.name)]
-      const letters = outputLetters(model.outputs ?? [])
-      if (letters !== '') columns.push(letters)
-      return columns.join(' | ')
-    }))
-  const count = lines.length
+  const rows = matchingModelsByProvider(providers, models, { terms, outputs, inputs }).flatMap(({ provider, models: matches }) =>
+    matches.map((model) => ({ provider, model, inputs: modelInputs(model) })))
+  const count = rows.length
   if (count === 0) {
     const fixes = narrowing.map((argument) => argument.fix).join(' or ')
     const given = narrowing.map((argument) => argument.name).join(' and no ')
@@ -102,7 +247,9 @@ export function modelListText(cache: ModelCache, providers: readonly ProviderInf
 
   const counted = `${count} ${count === 1 ? 'model' : 'models'}`
   const matched = criteria === '' ? counted : `${counted} ${count === 1 ? 'matches' : 'match'} ${criteria}`
-  const shown = lines.slice(0, MODEL_LIST_LIMIT)
+  const sorted = sort ? `, sorted by ${sort.column.key} ${sort.direction}` : ''
+  const shown = (sort ? sortedRows(rows, sort.column, sort.direction) : rows).slice(0, MODEL_LIST_LIMIT)
+    .map((row) => LIST_COLUMNS.map((column) => column.text(row)).join(' | '))
   if (count > MODEL_LIST_LIMIT) shown.push(`… and ${count - MODEL_LIST_LIMIT} more. Use a narrower filter.`)
-  return [`${matched} ${COLUMNS}. ${LEGEND}`, ...shown].join('\n')
+  return [`${matched} ${COLUMNS}${sorted}. ${LEGEND}`, ...shown].join('\n')
 }

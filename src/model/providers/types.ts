@@ -72,6 +72,19 @@ export function isTextKind(kind: ModelRequest): kind is TextKind {
   return (TEXT_KINDS as readonly ModelRequest[]).includes(kind)
 }
 
+// The media kinds whose request sends no text of the message: the model
+// only changes or writes down its input (mediaFormats.ts). A Venice video
+// upscale model (`videoToVideo` with an `upscale_factor`) sends no text
+// either, but that comes from the parameter values of one model, not from
+// its kind, so `videoToVideo` is not here.
+export const NO_PROMPT_KINDS = ['upscale', 'voiceChange', 'transcription'] as const satisfies readonly MediaKind[]
+
+export type NoPromptKind = (typeof NO_PROMPT_KINDS)[number]
+
+export function sendsPrompt(kind: MediaKind): boolean {
+  return !(NO_PROMPT_KINDS as readonly MediaKind[]).includes(kind)
+}
+
 // The media kinds that make image files.
 export type ImageKind = Exclude<MediaKind, ClipKind | TextKind>
 
