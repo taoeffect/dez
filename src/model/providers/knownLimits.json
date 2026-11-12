@@ -1,0 +1,66 @@
+{
+  "limits": [
+    {
+      "id": "venice-wan-2-7-reference-images-and-videos",
+      "match": { "mediaFormat": "venice", "modelIdPrefixes": ["wan-2-7-"], "modelIdIncludes": "reference-to-video" },
+      "text": "Venice takes at most 5 reference images and videos together in one request. Dez checks the image count and the video count apart (at most 5 each), not their sum.",
+      "source": "Venice API reference of POST /video/queue (image_references, video_references): https://docs.venice.ai/api-reference/endpoint/video/queue",
+      "checked": "2026-11-11",
+      "limit": { "maxImagesAndVideos": 5 }
+    },
+    {
+      "id": "venice-wan-2-7-voice-clips",
+      "match": { "mediaFormat": "venice", "modelIdPrefixes": ["wan-2-7-"], "modelIdIncludes": "reference-to-video" },
+      "text": "The Venice docs give no size or length limit of the voice of a reference (audio_url), and Dez checks none. A long or large voice clip can get a refusal from Venice.",
+      "source": "Venice API reference of POST /video/queue (image_references[].audio_url, video_references[].audio_url): https://docs.venice.ai/api-reference/endpoint/video/queue",
+      "checked": "2026-11-11"
+    },
+    {
+      "id": "venice-wan-3-0-reference-videos-and-length",
+      "match": { "mediaFormat": "venice", "modelIdPrefixes": ["wan-3-0-"], "modelIdIncludes": "reference-to-video" },
+      "text": "Venice takes reference videos and a video length (duration) of at most 30 seconds together. Dez does not check that sum: Venice refuses such a job when Dez asks for its result, and gives the charge back.",
+      "source": "Venice Wan 3.0 guide: https://docs.venice.ai/guides/media/wan-3-0",
+      "checked": "2026-11-11",
+      "limit": { "maxReferenceVideoAndOutputSeconds": 30 }
+    },
+    {
+      "id": "venice-kling-elements-images-only",
+      "match": { "mediaFormat": "venice", "modelIdPrefixes": ["kling-o3-", "kling-v3-"], "modelIdIncludes": "reference-to-video" },
+      "text": "Dez sends each image as the front image of one element (@Element1, @Element2, …). It sends no video of an element (elements[].video_url), no other images of an element, and no scene images (scene_image_urls). This is a limit of Dez, not of the model.",
+      "source": "Dez. The fields are in the Venice API reference of POST /video/queue: https://docs.venice.ai/api-reference/endpoint/video/queue",
+      "checked": "2026-11-11"
+    },
+    {
+      "id": "venice-video-queue-body-size",
+      "match": { "mediaFormat": "venice", "request": ["video", "imageToVideo", "videoToVideo"] },
+      "text": "Venice takes a request body of at most 35 MB. Dez sends each image and clip of the request in that body as a data URL (about a third larger than its file) and does not check the body size, so the files of one request must stay under about 25 MB together.",
+      "source": "Venice Seedance 2.0 guide, Request size: https://docs.venice.ai/guides/media/seedance-2-0",
+      "checked": "2026-11-11",
+      "limit": { "maxBodyMB": 35 }
+    },
+    {
+      "id": "venice-image-edit-file-size",
+      "match": { "mediaFormat": "venice", "request": ["imageEdit"] },
+      "text": "Venice takes an input image of an edit only under 25 MB. Dez does not check the file size, so a larger image gets a refusal.",
+      "source": "Venice image editing guide: https://docs.venice.ai/guides/media/image-editing",
+      "checked": "2026-11-11",
+      "limit": { "maxImageMB": 25 }
+    },
+    {
+      "id": "venice-seedance-2-5-reference-image-size",
+      "match": { "mediaFormat": "venice", "modelIdPrefixes": ["seedance-2-5-"], "modelIdIncludes": "reference-to-video" },
+      "text": "Venice takes a reference image of at most 30 MB. Dez does not check the file size.",
+      "source": "Venice Seedance 2.0 guide, Family comparison: https://docs.venice.ai/guides/media/seedance-2-0",
+      "checked": "2026-11-11",
+      "limit": { "maxImageMB": 30 }
+    },
+    {
+      "id": "venice-grok-imagine-lite-no-last-frame",
+      "match": { "mediaFormat": "venice", "modelIds": ["grok-imagine-1-5-lite-image-to-video"] },
+      "text": "This model takes no last frame: Venice refuses a request with two images (end_image_url), at no cost. Send one image, the first frame.",
+      "source": "Venice's answer to a request with a first and a last frame",
+      "checked": "2026-11-11",
+      "limit": { "maxImages": 1 }
+    }
+  ]
+}

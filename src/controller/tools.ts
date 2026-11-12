@@ -8,6 +8,7 @@ import type { MediaTagData } from '../model/chat/mediaTags'
 import { modelRefKey } from '../model/chat/modelRef'
 import type { Tab } from '../model/chat/types'
 import type { ModelCache } from '../model/persistence/types'
+import type { KnownLimit } from '../model/providers/knownLimits'
 import { effectiveParameterValues } from '../model/providers/modelParameters'
 import { toggleRows, toggleValue } from '../model/providers/modelToggles'
 import type { ProviderMediaQuote } from '../model/providers/streamTypes'
@@ -120,7 +121,8 @@ const TOOL_RUNNERS: Record<string, ToolRunner> = {
   // The result also tells the value that a request sends for each
   // parameter now (the call's own value, else the user's from the provider
   // settings popup, else the default), the toggles that apply with their
-  // values, and the rules of an input image. For a media model it asks the
+  // values, the rules of an input image, and the limits that Dez knows from
+  // other places than the provider's data. For a media model it asks the
   // provider for the price of one request with those values, or for the
   // model's price records; that costs nothing. A failed price request does
   // not fail the call.
@@ -143,6 +145,7 @@ const TOOL_RUNNERS: Record<string, ToolRunner> = {
       values,
       toggles: descriptor ? toggleRows(descriptor).map((row) => ({ key: row.key, label: row.label, on: toggleValue(row, stored) })) : [],
       inputImages: sbp('dez.provider/inputImageRules', provider.id, model.id) as ProviderInputImageRules,
+      limits: sbp('dez.provider/knownLimits', provider.id, model.id) as KnownLimit[],
     }
     if (entry !== undefined) facts.entry = entry
 

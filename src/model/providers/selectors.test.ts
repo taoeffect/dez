@@ -13,6 +13,7 @@ import { ExplainedError } from '../../utils/errorText'
 import type { NativeHttpDownload, NativeHttpRequest, NativeHttpResponse, NativeHttpStreamResult } from '../../utils/protocol/nativeHttp'
 import { NativeHttpError } from '../../utils/protocol/errors'
 import type { ClipAttachment, InputClipRules } from './clipInputs'
+import type { KnownLimit } from './knownLimits'
 import type { ProviderGenerateMediaResult, ProviderMediaQuote } from './streamTypes'
 import type { GeneratedMedia, ModelDisplayNames, ProviderModelsResult, ProviderSettingsDescriptor } from './types'
 // Side-effect imports: register the dez.model/* selectors and the selectors
@@ -1427,6 +1428,35 @@ describe('the price of an image', () => {
 
       await expect(quote('routed', 'acme/pic', 'image')).rejects.toThrow('Details: HTTP 404: No model')
     })
+  })
+})
+
+describe('known model limits', () => {
+  const WAN = { id: 'wan-2-7-text-to-video', name: 'Wan 2.7', request: 'video' }
+  const limits = (providerId: string) => (sbp('dez.provider/knownLimits', providerId, WAN.id) as KnownLimit[]).map(({ limit }) => limit)
+
+  beforeEach(() => {
+    sbp('dez.model/customProviders/save', {
+      id: 'proxy',
+      name: 'Proxy',
+      baseUrl: MEDIA_BASE_URL,
+      apiFormat: 'openai',
+      models: [],
+      fetchModels: true,
+      auth: 'apiKey',
+      mediaApi: { format: 'venice' },
+    })
+  })
+
+  // The limit of the Venice video queue is for the video request kinds.
+  it('gives the limits of the provider\'s media format for the request kind of the cached model', () => {
+    expect(limits('proxy')).toStrictEqual([])
+
+    for (const providerId of ['proxy', 'local']) {
+      sbp('dez.model/modelCache/applyProviderResult', providerId, { ok: true, models: [{ ...WAN, provider: providerId }] })
+    }
+
+    expect([limits('proxy'), limits('local')]).toStrictEqual([[{ maxBodyMB: 35 }], []])
   })
 })
 

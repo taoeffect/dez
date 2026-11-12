@@ -4,6 +4,7 @@ import { effectiveOutputs, MODEL_OUTPUT_IDS } from '../modelOutputs'
 import { availableModels } from '../modelSearch'
 import type { ModelCache } from '../persistence/types'
 import { inputImageRulesFor, maxInputImages, minInputImages } from '../providers/clipImages'
+import type { KnownLimit } from '../providers/knownLimits'
 import { checkedParameterValues, type ParameterValues } from '../providers/modelParameters'
 import { effectiveRequest, MODEL_REQUESTS, type ModelInfo, type ProviderInfo, type ProviderInputImageRules } from '../providers/types'
 import { unstoredOutputMessage, unusableModelMessage } from '../providers/unusableModel'
@@ -35,6 +36,7 @@ export const MODEL_INFO_TOOL: ToolDefinition = {
     + `\`request\` (how Dez sends it a request: ${MODEL_REQUESTS.join(', ')}; none means that Dez cannot use it yet), `
     + `\`outputs\` (what it makes: ${MODEL_OUTPUT_IDS.join(', ')}), \`parameters\`, and \`cost\`. `
     + '`dez.unknown` names the facts that the provider does not tell; their values are what Dez does then. '
+    + '`dez.limits` lists rules of the model that Dez knows from other places than the provider\'s data, each with its `source`. '
     + '`usage` tells how to use the model: how a request to it is formed, what it needs, and what comes back. '
     + '`dez` and `usage` can hold more than this text names. '
     + 'Each of `dez.parameters` has a `name`, a `label` (its name in the Dez settings), and `options` (the values that it takes), '
@@ -110,6 +112,8 @@ export interface ModelInfoFacts {
   /** The model's price records, for a provider whose model lists hold no
    *  prices (dez.provider/mediaQuote). */
   priceEntry?: unknown
+  /** The known limits of the model (dez.provider/knownLimits). */
+  limits?: KnownLimit[]
 }
 
 const FIND_MODELS = 'Use model_list to find the full ids of the models that the user can use.'
@@ -230,6 +234,7 @@ function dezFacts(model: ModelInfo, facts: ModelInfoFacts): Record<string, unkno
     ...(facts.cost && { cost: facts.cost }),
     ...(model.unstoredOutput !== undefined && { unstoredOutput: model.unstoredOutput }),
     ...(cannotUse !== undefined && { cannotUse }),
+    ...(facts.limits !== undefined && facts.limits.length > 0 && { limits: facts.limits }),
   }
 }
 

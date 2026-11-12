@@ -19,6 +19,7 @@ import { CLIP_JOB_TIMEOUT_MS, clipPollDelay, sendClipRequest, type ClipRun } fro
 import { assertProviderResponseOk, explainedProviderError, providerConnectionError, UnusableAnswerError } from './errors'
 import { generatedImageFromUrl } from './generatedImages'
 import { imageFit, type ImageSizeRules } from './imageSize'
+import { knownLimitsOf, type KnownLimit } from './knownLimits'
 import type { InputClipPart, MediaWireRequest } from './mediaFormats'
 import { effectiveParameterValues, type ParameterValues } from './modelParameters'
 import { modelToggles, type ToggleModel } from './modelToggles'
@@ -324,6 +325,19 @@ export default sbp('sbp/selectors/register', {
     const size = provider.inputImageSize(kind, model)
     const limits = provider.inputImageLimits(kind)
     return { ...(size && { size }), ...(limits && { limits }) }
+  },
+
+  // Synchronous: the known limits of the model (knownLimits.ts), the rules
+  // that Dez knows from other places than the provider's model data. A
+  // limit for some request kinds needs the cached model.
+  'dez.provider/knownLimits' (providerId: string, modelId: string): KnownLimit[] {
+    const model = sbp('dez.model/modelCache/model', providerId, modelId) as ModelInfo | null
+    return knownLimitsOf({
+      providerId,
+      mediaFormat: getProvider(providerId)?.config.mediaApi?.format,
+      modelId,
+      ...(model && { request: effectiveRequest(model) }),
+    })
   },
 
   // Synchronous and reactive: it reads the custom providers and the model

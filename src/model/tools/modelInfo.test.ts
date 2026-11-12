@@ -221,6 +221,16 @@ describe('modelInfoText', () => {
     })
   })
 
+  it('gives the known limits of the model, and no `limits` when it has none', () => {
+    const limits = [
+      { text: 'At most 5 images and videos together.', source: 'The provider docs', limit: { maxImagesAndVideos: 5 } },
+      { text: 'Dez checks no length of a voice.', source: 'Dez' },
+    ]
+
+    expect(parsed(modelInfoText(OPENROUTER, GEMINI, { entry, limits })).dez.limits).toStrictEqual(limits)
+    expect(parsed(modelInfoText(OPENROUTER, GEMINI, { entry, limits: [] })).dez).not.toHaveProperty('limits')
+  })
+
   it('says so in a note when Dez has no provider entry, and keeps the other entries', () => {
     const result = parsed(modelInfoText(OPENROUTER, VIDEO, { mediaEntry: { id: 'm' }, priceEntry: [{ cost: 1 }] }))
 

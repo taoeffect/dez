@@ -5,6 +5,7 @@ import type { AudioPart, CutAudio } from '../model/chat/audioCut'
 import type { DrawnImage, ImageDrawing, ImageSize } from '../model/chat/imageDrawing'
 import { ClipReadError } from '../model/chat/mediaFiles'
 import type { MediaTagData } from '../model/chat/mediaTags'
+import type { KnownLimit } from '../model/providers/knownLimits'
 import type { ProviderMediaQuote, ProviderMediaQuoteInput } from '../model/providers/streamTypes'
 import { providerInfo } from '../model/providers/testing'
 import type { ModelInfo, ProviderInfo, ProviderInputImageRules, ProviderSettingsDescriptor } from '../model/providers/types'
@@ -72,6 +73,9 @@ sbp('sbp/selectors/register', {
   },
   'dez.provider/inputImageRules' (): ProviderInputImageRules {
     return inputImageRules
+  },
+  'dez.provider/knownLimits' (): KnownLimit[] {
+    return []
   },
   async 'dez.controller/modelCache/refresh' (options: unknown): Promise<void> {
     refreshes.push(options)
