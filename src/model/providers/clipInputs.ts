@@ -223,6 +223,9 @@ export interface ReadInputClip {
   clip: ClipAttachment
   seconds: number | null
   byteLength: number
+  /** The file that goes is Dez's WAV copy of the clip (`needsWavCopy`), not
+   *  the clip's own file. */
+  wavCopy?: boolean
 }
 
 /** Why the clips `read` do not go to the model `modelName` with the clip
@@ -231,20 +234,24 @@ export interface ReadInputClip {
  *  could not tell gets no length check, and the provider's answer tells
  *  the user then. Dez cuts nothing: a clip that is too long gets the
  *  model's limit, and an audio clip the hint to cut it with the `audio`
- *  tool. */
+ *  tool. The length of a clip comes before its size: the size of a WAV
+ *  copy follows from its length, so a clip that is too long is the cause
+ *  of a copy that is too large. */
 export function clipFileProblem(modelName: string, rules: InputClipRules | undefined, read: readonly ReadInputClip[]): string | null {
-  for (const { clip, seconds, byteLength } of read) {
+  for (const { clip, seconds, byteLength, wavCopy } of read) {
     const kindRules = rules?.[clip.kind]
     if (!kindRules) continue
-    if (kindRules.maxBytes !== undefined && byteLength > kindRules.maxBytes) {
-      return `The ${clip.kind} clip @${clip.id} is ${byteSizeText(byteLength)}, and ${modelName} takes ${clip.kind} clips of at most ${byteSizeText(kindRules.maxBytes)}. ${fixText(clip.kind, clip.kind === 'audio')}`
-    }
-    if (seconds === null) continue
-    if (kindRules.maxSeconds !== undefined && seconds > kindRules.maxSeconds) {
+    if (seconds !== null && kindRules.maxSeconds !== undefined && seconds > kindRules.maxSeconds) {
       return `The ${clip.kind} clip @${clip.id} is ${secondsText(seconds, Math.ceil)} long, and ${modelName} takes ${clip.kind} clips of at most ${secondsText(kindRules.maxSeconds)}. ${fixText(clip.kind, true)}`
     }
-    if (kindRules.minSeconds !== undefined && seconds < kindRules.minSeconds) {
+    if (seconds !== null && kindRules.minSeconds !== undefined && seconds < kindRules.minSeconds) {
       return `The ${clip.kind} clip @${clip.id} is ${secondsText(seconds, Math.floor)} long, and ${modelName} takes ${clip.kind} clips of at least ${secondsText(kindRules.minSeconds)}. ${fixText(clip.kind, false)}`
+    }
+    if (kindRules.maxBytes !== undefined && byteLength > kindRules.maxBytes) {
+      const size = wavCopy
+        ? `Dez sends the audio clip @${clip.id} as a WAV copy, because ${modelName} takes no audio clip of the type ${clipMediaType(clip.type)}. The copy is ${byteSizeText(byteLength)}`
+        : `The ${clip.kind} clip @${clip.id} is ${byteSizeText(byteLength)}`
+      return `${size}, and ${modelName} takes ${clip.kind} clips of at most ${byteSizeText(kindRules.maxBytes)}. ${fixText(clip.kind, clip.kind === 'audio')}`
     }
   }
   for (const kind of ['audio', 'video'] as const) {

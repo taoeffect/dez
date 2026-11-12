@@ -196,6 +196,23 @@ describe('clipFileProblem', () => {
     expect(problem).toContain('1.0 MB')
   })
 
+  // A WAV copy is large because its clip is long: the length is the cause
+  // that the user can fix.
+  it('names the length, not the size, of a clip that is both too long and too large', () => {
+    const problem = clipFileProblem('Film', LIMITS, [read('audio', 'a1', 90, 1.5 * MB)])
+
+    expect(problem).toContain('@a1 is 90 seconds long')
+    expect(problem).not.toContain('1.5 MB')
+  })
+
+  it('names a WAV copy that is too large as Dez\'s copy, not as the clip', () => {
+    const problem = clipFileProblem('Film', LIMITS, [{ clip: clip('audio', 'a1', 'audio/ogg'), seconds: 5, byteLength: 1.5 * MB, wavCopy: true }])
+
+    expect(problem).toContain('WAV copy')
+    expect(problem).toContain('The copy is 1.5 MB')
+    expect(problem).not.toContain('@a1 is 1.5 MB')
+  })
+
   // A length that breaks a limit is rounded away from it, so the two
   // numbers of the text never look the same.
   it.each<[string, ReadInputClip, string, string]>([

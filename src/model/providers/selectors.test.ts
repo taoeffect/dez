@@ -1261,7 +1261,7 @@ describe('media requests', () => {
       ['a video clip too long, by its MP4 header', { video: { use: 'reference', maxSeconds: 15 } }, { v1: mp4Video(15.5) }, [clip('video', 'v1', 'video/mp4')], 'The video clip @v1 is 15.5 seconds long, and M takes video clips of at most 15 seconds.'],
       ['a video clip too short', { video: { use: 'reference', minSeconds: 2 } }, { v1: mp4Video(1.5) }, [clip('video', 'v1', 'video/mp4')], 'The video clip @v1 is 1.5 seconds long, and M takes video clips of at least 2 seconds.'],
       ['video clips too long together', { video: { use: 'reference', maxTotalSeconds: 15 } }, { v1: mp4Video(8), v2: mp4Video(8) }, [clip('video', 'v1', 'video/mp4'), clip('video', 'v2', 'video/mp4')], 'The video clips of this message are 16 seconds long together, and M takes at most 15 seconds of video clips in one request.'],
-      ['a WAV copy too large', { audio: { use: 'background', maxBytes: 10, types: ['audio/wav'] } }, { a1: OGG_AUDIO }, [clip('audio', 'a1', 'audio/ogg')], 'The audio clip @a1 is 16 B, and M takes audio clips of at most 10 B.'],
+      ['a WAV copy too large', { audio: { use: 'background', maxBytes: 10, types: ['audio/wav'] } }, { a1: OGG_AUDIO }, [clip('audio', 'a1', 'audio/ogg')], 'The copy is 16 B, and M takes audio clips of at most 10 B.'],
     ] as Array<[string, InputClipRules, Record<string, Uint8Array>, ClipAttachment[], string]>)('refuses %s, before any request', async (_case, rules, files, clips, message) => {
       useClipModel('m', rules)
       clipFiles = files

@@ -57,7 +57,7 @@ function clipReadProblemText(clip: ClipAttachment, problem: ClipReadProblem): st
 // Dez read.
 type ClipSource =
   | { clip: ClipAttachment, use: ClipUse, url: string }
-  | { clip: ClipAttachment, use: ClipUse, mediaType: string, bytes: Uint8Array, seconds: number | null }
+  | { clip: ClipAttachment, use: ClipUse, mediaType: string, bytes: Uint8Array, seconds: number | null, wavCopy: boolean }
 
 // The clips of a request to the model `modelName` with the clip rules
 // `rules`, as the request sends them: each one read
@@ -101,11 +101,11 @@ async function inputClipParts(
     const mediaType = clipMediaType(clip.type)
     if (clip.kind === 'video') {
       const bytes = new Uint8Array(await file.arrayBuffer())
-      return { clip, use: kindRules.use, mediaType, bytes, seconds: MP4_TYPES[mediaType] ? mp4DurationSeconds(bytes) : null }
+      return { clip, use: kindRules.use, mediaType, bytes, seconds: MP4_TYPES[mediaType] ? mp4DurationSeconds(bytes) : null, wavCopy: false }
     }
     const wav = needsWavCopy('audio', kindRules, clip.type)
     if (!wav && !hasLengthRules(kindRules)) {
-      return { clip, use: kindRules.use, mediaType, bytes: new Uint8Array(await file.arrayBuffer()), seconds: null }
+      return { clip, use: kindRules.use, mediaType, bytes: new Uint8Array(await file.arrayBuffer()), seconds: null, wavCopy: false }
     }
     const measured = { seconds: null as number | null }
     const copy = await (sbp('dez.controller/media/cutAudio', file, (duration: number) => {
@@ -123,9 +123,9 @@ async function inputClipParts(
       )
     })
     const bytes = copy ? copy.bytes : new Uint8Array(await file.arrayBuffer())
-    return { clip, use: kindRules.use, mediaType: copy ? 'audio/wav' : mediaType, bytes, seconds: measured.seconds }
+    return { clip, use: kindRules.use, mediaType: copy ? 'audio/wav' : mediaType, bytes, seconds: measured.seconds, wavCopy: copy !== null }
   }))
-  const problem = clipFileProblem(modelName, rules, sources.flatMap((source) => ('bytes' in source ? [{ clip: source.clip, seconds: source.seconds, byteLength: source.bytes.length }] : [])))
+  const problem = clipFileProblem(modelName, rules, sources.flatMap((source) => ('bytes' in source ? [{ clip: source.clip, seconds: source.seconds, byteLength: source.bytes.length, wavCopy: source.wavCopy }] : [])))
   if (problem !== null) throw new ExplainedError(problem)
   return sources.map((source) => ('bytes' in source
     ? { kind: source.clip.kind, use: source.use, mediaType: source.mediaType, bytes: source.bytes }
