@@ -37,9 +37,14 @@ function thrownError(call: () => unknown): unknown {
   return undefined
 }
 
-// The parameters of a model with no labels: a label is UI text.
+// The parameters with no labels: a label is UI text.
+function withoutLabels(parameters: ModelParameter[]): Omit<ModelParameter, 'label'>[] {
+  return parameters.map(({ label: _label, ...parameter }) => parameter)
+}
+
+// The parameters of a model with no labels.
 function parameters(format: ClipFormat, kind: ClipKind, entry: unknown, mediaEntry?: unknown): Omit<ModelParameter, 'label'>[] {
-  return format.parameters(kind, entry, mediaEntry).map(({ label: _label, ...parameter }) => parameter)
+  return withoutLabels(format.parameters(kind, entry, mediaEntry))
 }
 
 // Two input images, and each one as the data URL that a request sends.
@@ -109,7 +114,7 @@ describe('venice image parameters', () => {
   it('gives an upscale model a scale of 2 or 4 and a creativity of 0 to 0.02, whose defaults a request sends', () => {
     const upscale = venice.parameters?.('upscale', undefined, undefined) ?? []
 
-    expect(upscale.map(({ label: _label, ...parameter }) => parameter)).toStrictEqual([
+    expect(withoutLabels(upscale)).toStrictEqual([
       { name: 'scale', options: [2, 4], default: 2 },
       { name: 'creativity', min: 0, max: 0.02, step: 0.001, default: 0.01 },
     ])
@@ -126,7 +131,7 @@ describe('venice image parameters', () => {
     defaultQuality: 'high',
   }
   const imageParameters = (kind: 'image' | 'imageEdit', constraints: Record<string, unknown>) =>
-    (venice.parameters?.(kind, { id: 'm', model_spec: { constraints } }, undefined) ?? []).map(({ label: _label, ...parameter }) => parameter)
+    withoutLabels(venice.parameters?.(kind, { id: 'm', model_spec: { constraints } }, undefined) ?? [])
 
   it.each(['image', 'imageEdit'] as const)('gives a %s model the aspect ratios, resolutions, and qualities of its entry, with their defaults', (kind) => {
     expect(imageParameters(kind, KREA)).toStrictEqual([
@@ -1151,7 +1156,7 @@ describe('openrouter clip rules', () => {
 describe('openrouter images', () => {
   const entry = (supported: Record<string, unknown>) => ({ id: 'm', supported_parameters: supported })
   const imageParameters = (kind: 'image' | 'imageEdit' | 'upscale', mediaEntry: unknown) =>
-    (openRouterImages.parameters?.(kind, { id: 'm' }, mediaEntry) ?? []).map(({ label: _label, ...parameter }) => parameter)
+    withoutLabels(openRouterImages.parameters?.(kind, { id: 'm' }, mediaEntry) ?? [])
   const references = (range: unknown) => MEDIA_FORMATS.openrouter.imageRules?.('image', { id: 'm' }, entry({ input_references: range }))
 
   it('asks /images for one image from the prompt and the values, with no reference image', () => {

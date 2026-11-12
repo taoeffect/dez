@@ -16,14 +16,14 @@ import {
 
 const SAVED_VIDEO = '/home/u/.config/dez/assets/generated/video/9f3c.mp4'
 const CACHED_VIDEO = '/home/u/.cache/dez/media/9f3c.mp4'
-const URL = 'https://cdn.example/v.mp4?sig=1&exp=2'
+const CLIP_URL = 'https://cdn.example/v.mp4?sig=1&exp=2'
 
 const VIDEO: MediaTagData = {
   kind: 'video',
   id: 'b',
   type: 'video/mp4',
   src: SAVED_VIDEO,
-  url: URL,
+  url: CLIP_URL,
   expires: '2026-11-11T09:30:00.000Z',
   other: [],
 }
@@ -55,7 +55,7 @@ describe('isSavedMediaPath and isPastedMediaPath', () => {
   it('takes no other path', () => {
     for (const path of [
       CACHED_VIDEO,
-      URL,
+      CLIP_URL,
       '/home/u/.config/dez/assets/video/sub/9f3c.mp4',
       'home/u/.config/dez/assets/audio/a.mp3',
       '/home/u/.config/dez/assets/video/9f3c.mp4/more',
@@ -220,7 +220,7 @@ describe('savedMediaTag and unsavedMediaTag', () => {
   const other = [{ name: 'job', value: 'q-1' }]
 
   it('keeps the URL and its end through a save and a delete', () => {
-    const fromUrl: MediaTagData = { ...VIDEO, src: URL, other }
+    const fromUrl: MediaTagData = { ...VIDEO, src: CLIP_URL, other }
     const saved = savedMediaTag(fromUrl, SAVED_VIDEO)
     expect(saved).toStrictEqual({ ...fromUrl, src: SAVED_VIDEO })
     expect(unsavedMediaTag(saved)).toStrictEqual(fromUrl)
@@ -234,7 +234,7 @@ describe('savedMediaTag and unsavedMediaTag', () => {
   })
 
   it('keeps the offsets of a tag in a text', () => {
-    const [tag] = findMediaTags(mediaTagText({ ...VIDEO, src: URL }))
+    const [tag] = findMediaTags(mediaTagText({ ...VIDEO, src: CLIP_URL }))
     expect(savedMediaTag(tag, SAVED_VIDEO)).toStrictEqual({ ...tag, src: SAVED_VIDEO })
   })
 })
@@ -282,9 +282,9 @@ describe('mediaTagsAsLinks', () => {
   })
 
   it('links to the provider URL of a clip with no saved file', () => {
-    expect(mediaTagsAsLinks(mediaTagText({ ...VIDEO, src: URL }))).toBe(`[video](${URL})`)
-    expect(mediaTagsAsLinks(mediaTagText({ ...VIDEO, src: CACHED_VIDEO }))).toBe(`[video](${URL})`)
-    expect(mediaTagsAsLinks(mediaTagText({ ...VIDEO, src: null }))).toBe(`[video](${URL})`)
+    expect(mediaTagsAsLinks(mediaTagText({ ...VIDEO, src: CLIP_URL }))).toBe(`[video](${CLIP_URL})`)
+    expect(mediaTagsAsLinks(mediaTagText({ ...VIDEO, src: CACHED_VIDEO }))).toBe(`[video](${CLIP_URL})`)
+    expect(mediaTagsAsLinks(mediaTagText({ ...VIDEO, src: null }))).toBe(`[video](${CLIP_URL})`)
   })
 
   it('gives only the label of a clip with no saved file and no URL', () => {

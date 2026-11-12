@@ -85,7 +85,7 @@ describe('Settings: delete unused files', () => {
     await browser.execute(() => {
       const section = document.querySelector('.settings-section')
       if (!section) throw new Error('recordRunSteps: no Settings section')
-      const steps: Array<{ percent: string | null, buttonOff: boolean }> = []
+      const steps: RunStep[] = []
       Reflect.set(window, '__e2eRunSteps', steps)
       new MutationObserver(() => {
         const bar = section.querySelector('.settings-progress')

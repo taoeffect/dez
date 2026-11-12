@@ -61,6 +61,9 @@ let savedClips: { clip: unknown, options: unknown }[] = []
 let saveClip: () => Promise<string>
 let deletedClips: string[] = []
 const CUT_BYTES = new Uint8Array([9])
+// The files that the stub stores save.
+const MADE_IMAGE = '/home/u/.config/dez/assets/generated/images/new.png'
+const MADE_CLIP = '/home/u/.config/dez/assets/generated/audio/new.wav'
 
 sbp('sbp/selectors/register', {
   async 'dez.provider/infos' (): Promise<ProviderInfo[]> {
@@ -144,14 +147,14 @@ beforeEach(() => {
   redrawError = undefined
   drawings = []
   savedImages = []
-  saveImage = async () => '/home/u/.config/dez/assets/generated/images/new.png'
+  saveImage = async () => MADE_IMAGE
   deletedImages = []
   readClips = []
   readClip = async () => new Blob([])
   clipDuration = 10
   cutError = undefined
   savedClips = []
-  saveClip = async () => '/home/u/.config/dez/assets/generated/audio/new.wav'
+  saveClip = async () => MADE_CLIP
   deletedClips = []
   // A check that the provider passes, with an entry for each model.
   refreshCheck = async () => {
@@ -416,7 +419,6 @@ describe('dez.controller/tools/run', () => {
 
   describe('crop_scale_image', () => {
     const stored = (name: string) => `/home/u/.config/dez/assets/images/${name}`
-    const made = '/home/u/.config/dez/assets/generated/images/new.png'
     // The paths that the reply got an image for, and the id that it gives.
     let written: string[] = []
     let newImageId: string | null
@@ -453,7 +455,7 @@ describe('dez.controller/tools/run', () => {
       expect(readImages).toStrictEqual([stored('fox.png')])
       expect(drawings).toStrictEqual([{ drawing: { crop: { x: 100, y: 50, width: 200, height: 80 }, width: 100, height: 40 }, mediaType: 'image/png' }])
       expect(savedImages).toStrictEqual([{ mediaType: 'image/png', options: { folder: 'generated' } }])
-      expect(written).toStrictEqual([made])
+      expect(written).toStrictEqual([MADE_IMAGE])
       expect(deletedImages).toStrictEqual([])
     })
 
@@ -512,7 +514,7 @@ describe('dez.controller/tools/run', () => {
       }, 'Dez cannot read the file of the image @a: the file is gone, or Dez may not read it. '
         + 'This is not a fault of the call. Tell the user, who can paste the image again (it then gets a new id).'],
       ['the save fails', () => {
-        saveImage = async () => { throw new Error('The Dez folder /home/u]/.config/dez cannot hold images') }
+        saveImage = async () => { throw new Error('The Dez folder /home/u/.config/dez cannot hold images') }
       }, 'Dez could not save the new image, so there is no new image. This is not a fault of the call, and Dez showed the user the cause. '
         + 'Tell the user that the image was not made, and call crop_scale_image again only when the user asks for it.'],
     ])('gives an error result with no path when %s', async (_case, fail, content) => {
@@ -541,7 +543,7 @@ describe('dez.controller/tools/run', () => {
           + 'Call crop_scale_image again only when the user asks for the image again.',
         isError: true,
       })
-      expect(deletedImages).toStrictEqual([made])
+      expect(deletedImages).toStrictEqual([MADE_IMAGE])
     })
 
     it('saves no image after the user stopped the reply', async () => {
@@ -558,7 +560,6 @@ describe('dez.controller/tools/run', () => {
 
   describe('audio clip', () => {
     const song = '/home/u/.config/dez/assets/generated/audio/song.mp3'
-    const made = '/home/u/.config/dez/assets/generated/audio/new.wav'
     // The clips that the reply got a tag for, and the id that it gives.
     let written: unknown[] = []
     let newClipId: string | null
@@ -598,7 +599,7 @@ describe('dez.controller/tools/run', () => {
       expect(readClips).toStrictEqual([song])
       const wav = { kind: 'audio', type: 'audio/wav', src: null, url: null, expires: null }
       expect(savedClips).toStrictEqual([{ clip: wav, options: { bytes: CUT_BYTES } }])
-      expect(written).toStrictEqual([{ ...wav, src: made }])
+      expect(written).toStrictEqual([{ ...wav, src: MADE_CLIP }])
       expect(deletedClips).toStrictEqual([])
     })
 
@@ -656,7 +657,7 @@ describe('dez.controller/tools/run', () => {
 
     it('gives an error result with no path when the save fails', async () => {
       saveClip = async () => {
-        throw new Error(`Failed to write ${made}`)
+        throw new Error(`Failed to write ${MADE_CLIP}`)
       }
 
       expect(await clip({ clip: 'b', end: 5 })).toStrictEqual({
@@ -675,7 +676,7 @@ describe('dez.controller/tools/run', () => {
           + 'Call the audio tool again only when the user asks for the clip again.',
         isError: true,
       })
-      expect(deletedClips).toStrictEqual([made])
+      expect(deletedClips).toStrictEqual([MADE_CLIP])
     })
 
     it('ends at once and saves no clip when the user stops the reply during the read', async () => {

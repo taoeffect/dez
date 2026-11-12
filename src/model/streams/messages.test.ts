@@ -7,6 +7,12 @@ import { agentSectionMessages, mediaRequestInput, messageClips, sectionsToStream
 
 const model: ModelRef = { providerId: 'local', modelId: 'm' }
 const IMAGE = '/home/u/.config/dez/assets/images/red.png'
+const OTHER_IMAGE = '/home/u/.config/dez/assets/images/blue.png'
+
+// The clips of a tab, as players of earlier replies show them.
+const SONG: MediaTagData = { kind: 'audio', id: 'c', type: 'audio/mpeg', src: '/home/u/.cache/dez/media/s1.mp3', url: null, expires: null, other: [] }
+const DANCE: MediaTagData = { kind: 'video', id: 'd', type: 'video/mp4', src: null, url: 'https://cdn.example/d.mp4', expires: '2026-12-01T00:00:00.000Z', other: [] }
+const RAIN: MediaTagData = { kind: 'audio', id: 'e', type: 'audio/wav', src: '/home/u/.config/dez/assets/generated/audio/r.wav', url: null, expires: null, other: [] }
 
 // A block of the model list tool, as the stream controller writes it.
 function block(id: string, filter: string, result: string, status: ToolBlockStatus = 'success'): string {
@@ -123,9 +129,8 @@ describe('agentSectionMessages', () => {
       expires: '2026-11-11T09:30:00.000Z',
       other: [{ name: 'job', value: 'j-1' }],
     }
-    const SOUND: MediaTagData = { kind: 'audio', id: 'c', type: 'audio/mpeg', src: '/home/u/.cache/dez/media/s1.mp3', url: null, expires: null, other: [] }
     const SENT_CLIP = '<dez:video id="b" type="video/mp4"/>'
-    const SENT_SOUND = '<dez:audio id="c" type="audio/mpeg"/>'
+    const SENT_SONG = '<dez:audio id="c" type="audio/mpeg"/>'
 
     it('sends a clip as its tag with only the id and the type, with or without tools', () => {
       const section = agent(`Here it is:\n\n${mediaTagText(CLIP)}\n\nDo you like it?`)
@@ -151,21 +156,21 @@ describe('agentSectionMessages', () => {
     })
 
     it('sends the clips of each round with that round, and as text in a request with no tools', () => {
-      const text = `${mediaTagText(CLIP)}\n${block('call_1', 'gemini', '1 model')}\n${mediaTagText(SOUND)}\nDone.`
+      const text = `${mediaTagText(CLIP)}\n${block('call_1', 'gemini', '1 model')}\n${mediaTagText(SONG)}\nDone.`
 
       expect(agentSectionMessages(agent(text), model, true)).toStrictEqual([
         { role: 'agent', content: SENT_CLIP, toolCalls: [call('call_1', 'gemini')] },
         { role: 'tool', results: [result('call_1', '1 model')] },
-        { role: 'agent', content: `${SENT_SOUND}\nDone.` },
+        { role: 'agent', content: `${SENT_SONG}\nDone.` },
       ])
       expect(agentSectionMessages(agent(text), model, false)).toStrictEqual([{
         role: 'agent',
-        content: `${SENT_CLIP}\n[Tool call: model_list {"filter":"gemini"}]\n1 model\n[End of tool result]\n${SENT_SOUND}\nDone.`,
+        content: `${SENT_CLIP}\n[Tool call: model_list {"filter":"gemini"}]\n1 model\n[End of tool result]\n${SENT_SONG}\nDone.`,
       }])
     })
 
     it('sends no path, no URL, and no other attribute of a clip', () => {
-      const text = `${mediaTagText(CLIP)}\n${block('call_1', 'gemini', '1 model')}\n${mediaTagText(SOUND)}`
+      const text = `${mediaTagText(CLIP)}\n${block('call_1', 'gemini', '1 model')}\n${mediaTagText(SONG)}`
 
       for (const sendTools of [true, false]) {
         const sent = JSON.stringify(agentSectionMessages(agent(text), model, sendTools))
@@ -306,10 +311,6 @@ const GENERATED = '/home/u/.config/dez/assets/generated/images/fox.webp'
 const user = (id: string, text: string): Section => ({ id, role: 'user', content: [{ kind: 'text', text }] })
 const reply = (id: string, text: string): Section => ({ id, role: 'agent', model, content: [{ kind: 'text', text }] })
 
-// The clips of a tab, as players of earlier replies show them.
-const SONG: MediaTagData = { kind: 'audio', id: 'c', type: 'audio/mpeg', src: '/home/u/.cache/dez/media/s1.mp3', url: null, expires: null, other: [] }
-const DANCE: MediaTagData = { kind: 'video', id: 'd', type: 'video/mp4', src: null, url: 'https://cdn.example/d.mp4', expires: '2026-12-01T00:00:00.000Z', other: [] }
-const RAIN: MediaTagData = { kind: 'audio', id: 'e', type: 'audio/wav', src: '/home/u/.config/dez/assets/generated/audio/r.wav', url: null, expires: null, other: [] }
 // Clip files that the user pasted or dropped into a message.
 const PASTED_DANCE: MediaTagData = { kind: 'video', id: 'f', type: 'video/mp4', src: '/home/u/.config/dez/assets/video/v1.mp4', url: null, expires: null, other: [] }
 const PASTED_VOICE: MediaTagData = { kind: 'audio', id: 'g', type: 'audio/wav', src: '/home/u/.config/dez/assets/audio/a1.wav', url: null, expires: null, other: [] }
@@ -379,15 +380,14 @@ describe('sectionsToStreamMessages: images of user messages', () => {
   ]
 
   it('gives image parts only to the newest user message: an earlier one sends its references and mentions as text', () => {
-    const other = '/home/u/.config/dez/assets/images/blue.png'
-    const sections = [...earlier, user('u2', `Is @a like ![${other}](id=c)?`), reply('a2', 'Yes.'), user('u3', 'And @c?')]
+    const sections = [...earlier, user('u2', `Is @a like ![${OTHER_IMAGE}](id=c)?`), reply('a2', 'Yes.'), user('u3', 'And @c?')]
 
     expect(sent(sections)).toStrictEqual({
       messages: [
         ...earlierMessages,
         { role: 'user', content: 'Is @a like ![image](id=c)?' },
         { role: 'agent', content: 'Yes.' },
-        { role: 'user', content: [{ type: 'text', text: 'And @c' }, { type: 'image', path: other }, { type: 'text', text: '?' }] },
+        { role: 'user', content: [{ type: 'text', text: 'And @c' }, { type: 'image', path: OTHER_IMAGE }, { type: 'text', text: '?' }] },
       ],
       imagesLeftOut: 0,
     })
@@ -441,15 +441,13 @@ describe('sectionsToStreamMessages: images of user messages', () => {
   })
 
   it('adds no part for a mention of an image that the message itself holds', () => {
-    const other = '/home/u/.config/dez/assets/images/blue.png'
-
-    expect(sent([...earlier, user('u2', `Put @c on @b: ![${other}](id=c) Is @c right?`)]).messages.at(-1)).toStrictEqual({
+    expect(sent([...earlier, user('u2', `Put @c on @b: ![${OTHER_IMAGE}](id=c) Is @c right?`)]).messages.at(-1)).toStrictEqual({
       role: 'user',
       content: [
         { type: 'text', text: 'Put @c on @b' },
         { type: 'image', path: GENERATED },
         { type: 'text', text: ': ![image](id=c)' },
-        { type: 'image', path: other },
+        { type: 'image', path: OTHER_IMAGE },
         { type: 'text', text: ' Is @c right?' },
       ],
     })
@@ -576,10 +574,9 @@ describe('mediaRequestInput', () => {
   })
 
   it('edits the images of the last user message, in order', () => {
-    const other = '/home/u/.config/dez/assets/images/blue.png'
-    const sections = [user('u1', `![${GENERATED}](id=a)`), user('u2', `Mix ![${other}](id=b) and ![${IMAGE}](id=c)`)]
+    const sections = [user('u1', `![${GENERATED}](id=a)`), user('u2', `Mix ![${OTHER_IMAGE}](id=b) and ![${IMAGE}](id=c)`)]
 
-    expect(input('imageEdit', sections).images).toStrictEqual([other, IMAGE])
+    expect(input('imageEdit', sections).images).toStrictEqual([OTHER_IMAGE, IMAGE])
   })
 
   it('edits the image that the last user message mentions, not the newest one', () => {
@@ -686,10 +683,9 @@ describe('mediaRequestInput', () => {
   })
 
   describe('the frames of a video', () => {
-    const other = '/home/u/.config/dez/assets/images/blue.png'
     // A pasted image, a mentioned image, and each of them once more.
     const twoImages = [reply('a1', `![${GENERATED}](id=a)`), user('u1', `From ![${IMAGE}](id=b) to @a. Keep @b and @a sharp.`)]
-    const threeImages = [reply('a1', `![${GENERATED}](id=a)`), user('u1', `![${IMAGE}](id=b) ![${other}](id=c) @a`)]
+    const threeImages = [reply('a1', `![${GENERATED}](id=a)`), user('u1', `![${IMAGE}](id=b) ![${OTHER_IMAGE}](id=c) @a`)]
     // The newest image of the conversation is not in the last message.
     const imageBefore = [user('u1', `![${IMAGE}](id=a) A red fox`), reply('a1', `![${GENERATED}](id=b)`), user('u2', 'Make it run')]
 
@@ -704,7 +700,7 @@ describe('mediaRequestInput', () => {
     it('gives a model that takes two frames the first two of three images', () => {
       const { images, imagesLeftOut } = input('imageToVideo', threeImages, { images: { maxImages: 2 } })
 
-      expect({ images, imagesLeftOut }).toStrictEqual({ images: [IMAGE, other], imagesLeftOut: 1 })
+      expect({ images, imagesLeftOut }).toStrictEqual({ images: [IMAGE, OTHER_IMAGE], imagesLeftOut: 1 })
     })
 
     it('makes the video from the newest image of the conversation when the last user message has none', () => {

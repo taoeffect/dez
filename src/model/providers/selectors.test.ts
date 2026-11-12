@@ -35,11 +35,15 @@ let streamRequests: NativeHttpRequest[] = []
 let streamRequestIds: string[] = []
 let imageReads: string[] = []
 let downloadRequests: NativeHttpRequest[] = []
+// The JSON body of a request that a stand-in got.
+const jsonBody = (request: NativeHttpRequest) => JSON.parse(request.body as string) as Record<string, unknown>
 
 // The app folder and its stored images.
 const APP_DIR = '/home/u/.config/dez'
 const STORED_IMAGE = Uint8Array.from([137, 80, 78, 71, 13, 10, 26, 10, 0, 255])
 const STORED_SVG = new TextEncoder().encode('<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 60 30"/>')
+
+const dataUrl = (mediaType: string, bytes: Uint8Array) => `data:${mediaType};base64,${bytesToBase64(bytes)}`
 
 // The stand-in of the webview's canvas (dez.controller/images/redraw):
 // every stored image has the size `storedImageSize` (null: a file that the
@@ -550,7 +554,7 @@ describe('the toggles of the request model', () => {
   async function sentBody(modelId: string, providerSettings: Record<string, boolean> = {}): Promise<Record<string, unknown>> {
     streamRequests = []
     await sbp('dez.provider/streamChat', { providerId: 'gated', modelId, messages: [{ role: 'user', content: 'Hi' }], providerSettings, onToken: () => {} })
-    return JSON.parse(streamRequests[0].body as string) as Record<string, unknown>
+    return jsonBody(streamRequests[0])
   }
 
   // The model check puts the facts of the server's list into the cache.
@@ -626,7 +630,7 @@ describe('images in chat streams', () => {
     expect(streamRequests).toHaveLength(1)
     expect(JSON.parse(streamRequests[0].body as string).messages[0].content[1]).toEqual({
       type: 'image_url',
-      image_url: { url: `data:image/png;base64,${Buffer.from(STORED_IMAGE).toString('base64')}` },
+      image_url: { url: dataUrl('image/png', STORED_IMAGE) },
     })
   })
 
@@ -653,7 +657,7 @@ describe('images in chat streams', () => {
     expect(drawings).toStrictEqual([[{ crop: { x: 0, y: 0, width: 300, height: 150 }, width: 300, height: 150 }, 'image/png']])
     expect(JSON.parse(streamRequests[0].body as string).messages[0].content[1]).toStrictEqual({
       type: 'image_url',
-      image_url: { url: `data:image/png;base64,${bytesToBase64(DRAWN_IMAGE)}` },
+      image_url: { url: dataUrl('image/png', DRAWN_IMAGE) },
     })
   })
 
@@ -686,8 +690,8 @@ describe('images in chat streams', () => {
       const { messages } = sectionsToStreamMessages(sections, model, { sendImages: true, sendTools: true })
       await sbp('dez.provider/streamChat', { providerId: 'local', modelId: 'm', messages, onToken: () => {} })
     }
-    const [first, second, third] = streamRequests.map((request) => JSON.parse(request.body as string).messages as unknown[])
-    const imagePart = { type: 'image_url', image_url: { url: `data:image/png;base64,${Buffer.from(STORED_IMAGE).toString('base64')}` } }
+    const [first, second, third] = streamRequests.map((request) => jsonBody(request).messages as unknown[])
+    const imagePart = { type: 'image_url', image_url: { url: dataUrl('image/png', STORED_IMAGE) } }
 
     expect(first).toEqual([{ role: 'user', content: [{ type: 'text', text: 'Which color? ![image](id=a)' }, imagePart] }])
     expect(second).toEqual([
@@ -814,7 +818,7 @@ describe('images of a chat reply', () => {
   }
 
   it('gives each image as bytes with the type of its bytes, in stream order with the text', async () => {
-    const calls = await streamPainter([`data:image/webp;base64,${bytesToBase64(STORED_IMAGE)}`, HOSTED_IMAGE_URL])
+    const calls = await streamPainter([dataUrl('image/webp', STORED_IMAGE), HOSTED_IMAGE_URL])
 
     expect(calls).toStrictEqual([
       'Two cats.',
@@ -833,7 +837,7 @@ describe('images of a chat reply', () => {
   })
 
   it.each([
-    ['bytes that are not an image', `data:image/png;base64,${bytesToBase64(WAV)}`, 'not a PNG, JPEG, GIF, WebP, or SVG image'],
+    ['bytes that are not an image', dataUrl('image/png', WAV), 'not a PNG, JPEG, GIF, WebP, or SVG image'],
     ['a data URL whose data is not base64', 'data:image/png;base64,***', 'not base64 text'],
     ['a data URL with no base64 mark', 'data:image/svg+xml,<svg/>', 'neither a base64 data URL nor an http(s) URL'],
     ['a URL of another scheme', 'file:///etc/passwd', 'neither a base64 data URL nor an http(s) URL'],
@@ -883,11 +887,10 @@ describe('media requests', () => {
   it('edits stored images of both folders, sent as data URLs, and returns the whole image of a binary answer', async () => {
     const result = await generate({ kind: 'imageEdit', images: [`${APP_DIR}/assets/generated/images/red.png`, `${APP_DIR}/assets/images/red.png`] })
 
-    const dataUrl = `data:image/png;base64,${bytesToBase64(STORED_IMAGE)}`
     expect(result).toStrictEqual({ media: [{ bytes: STORED_IMAGE, mediaType: 'image/png' }], clips: [] })
     expect(imageReads).toEqual(['assets/generated/images/red.png', 'assets/images/red.png'])
-    expect(streamRequests.map((request) => [request.url, JSON.parse(request.body as string)])).toStrictEqual([
-      [`${MEDIA_BASE_URL}/image/multi-edit`, { modelId: 'm', prompt: 'A red fox', images: [dataUrl, dataUrl], safe_mode: false }],
+    expect(streamRequests.map((request) => [request.url, jsonBody(request)])).toStrictEqual([
+      [`${MEDIA_BASE_URL}/image/multi-edit`, { modelId: 'm', prompt: 'A red fox', images: [dataUrl('image/png', STORED_IMAGE), dataUrl('image/png', STORED_IMAGE)], safe_mode: false }],
     ])
   })
 
@@ -970,10 +973,9 @@ describe('media requests', () => {
 
   describe('input images and the size rules of the request', () => {
     const path = `${APP_DIR}/assets/images/red.png`
-    const dataUrl = (bytes: Uint8Array) => `data:image/png;base64,${bytesToBase64(bytes)}`
     // The fields `fields` of the JSON body of each request.
     const bodyFields = (requests: NativeHttpRequest[], fields: string[]) => requests.map((request) => {
-      const body = JSON.parse(request.body as string) as Record<string, unknown>
+      const body = jsonBody(request)
       return fields.map((field) => body[field])
     })
     const editImages = () => bodyFields(streamRequests, ['images']).flat()
@@ -1003,14 +1005,14 @@ describe('media requests', () => {
       await generate({ kind: 'imageEdit', images: [path] })
 
       expect(drawings).toStrictEqual([[{ crop: { x: 0, y: 0, width: 100, height: 50 }, width: 512, height: 256 }, 'image/png']])
-      expect(editImages()).toStrictEqual([[dataUrl(DRAWN_IMAGE)]])
+      expect(editImages()).toStrictEqual([[dataUrl('image/png', DRAWN_IMAGE)]])
     })
 
     it('sends an edit image that passes the rules as it is', async () => {
       await generate({ kind: 'imageEdit', images: [path] })
 
       expect(drawings).toStrictEqual([[null, 'image/png']])
-      expect(editImages()).toStrictEqual([[dataUrl(STORED_IMAGE)]])
+      expect(editImages()).toStrictEqual([[dataUrl('image/png', STORED_IMAGE)]])
     })
 
     it('sends an image that the webview cannot decode as it is, and logs the cause', async () => {
@@ -1018,7 +1020,7 @@ describe('media requests', () => {
 
       await generate({ kind: 'imageEdit', images: [path] })
 
-      expect(editImages()).toStrictEqual([[dataUrl(STORED_IMAGE)]])
+      expect(editImages()).toStrictEqual([[dataUrl('image/png', STORED_IMAGE)]])
       expect(consoleError).toHaveBeenCalledWith('Failed to fit an image to the size rules of the request:', new Error('unknown image format'))
     })
 
@@ -1030,7 +1032,7 @@ describe('media requests', () => {
 
       const drawing = { crop: { x: 0, y: 375, width: 100, height: 249 }, width: 300, height: 747 }
       expect(drawings).toStrictEqual([[drawing, 'image/png'], [drawing, 'image/png']])
-      expect(frames()).toStrictEqual([[dataUrl(DRAWN_IMAGE), dataUrl(DRAWN_IMAGE)]])
+      expect(frames()).toStrictEqual([[dataUrl('image/png', DRAWN_IMAGE), dataUrl('image/png', DRAWN_IMAGE)]])
     })
 
     it('sends the frame of a video model whose provider tells no size rule as it is, and does not decode it', async () => {
@@ -1040,7 +1042,7 @@ describe('media requests', () => {
       await generate({ kind: 'imageToVideo', images: [path] })
 
       expect(drawings).toStrictEqual([])
-      expect(frames()).toStrictEqual([[dataUrl(STORED_IMAGE), undefined]])
+      expect(frames()).toStrictEqual([[dataUrl('image/png', STORED_IMAGE), undefined]])
     })
 
     describe('of an SVG', () => {
@@ -1051,7 +1053,7 @@ describe('media requests', () => {
         await generate({ kind: 'imageEdit', images: [svgPath] })
 
         expect(drawings).toStrictEqual([[whole(1024, 768), 'image/png']])
-        expect(editImages()).toStrictEqual([[dataUrl(DRAWN_IMAGE)]])
+        expect(editImages()).toStrictEqual([[dataUrl('image/png', DRAWN_IMAGE)]])
       })
 
       it('sends the frame of a video model whose provider tells no size rule as a PNG drawing', async () => {
@@ -1061,7 +1063,7 @@ describe('media requests', () => {
         await generate({ kind: 'imageToVideo', images: [svgPath] })
 
         expect(drawings).toStrictEqual([[whole(300, 150), 'image/png']])
-        expect(frames()).toStrictEqual([[dataUrl(DRAWN_IMAGE), undefined]])
+        expect(frames()).toStrictEqual([[dataUrl('image/png', DRAWN_IMAGE), undefined]])
       })
 
       it('sends an edit image that is too small as a drawing with the least size of the edit request', async () => {
@@ -1107,7 +1109,7 @@ describe('media requests', () => {
       const result = await generate({ kind: 'upscale', images: [path], parameters: { scale: 4, creativity: 0.5 } })
 
       expect(result).toStrictEqual({ media: [{ bytes: STORED_IMAGE, mediaType: 'image/png' }], clips: [] })
-      expect(streamRequests.map((request) => [request.url, JSON.parse(request.body as string)])).toStrictEqual([
+      expect(streamRequests.map((request) => [request.url, jsonBody(request)])).toStrictEqual([
         [`${MEDIA_BASE_URL}/image/upscale`, { scale: 4, creativity: 0.01, image: bytesToBase64(STORED_IMAGE) }],
       ])
     })
@@ -1146,14 +1148,14 @@ describe('media requests', () => {
 
     const clip = (kind: 'audio' | 'video', id: string, type: string): ClipAttachment =>
       ({ kind, id, type, src: `${APP_DIR}/assets/generated/${kind}/${id}.bin`, url: `https://files.example.com/${id}.bin`, expires: null })
-    const dataUrl = (mediaType: string, bytes: Uint8Array) => `data:${mediaType};base64,${bytesToBase64(bytes)}`
 
     // Puts the video model `modelId` in the model cache with the clip
-    // rules `clips`. The video request needs a length.
-    function useClipModel(modelId: string, clips: InputClipRules): void {
+    // rules `clips`, as a model of the request kind `request`. The video
+    // request needs a length.
+    function useClipModel(modelId: string, clips: InputClipRules, request: 'video' | 'imageToVideo' = 'video'): void {
       sbp('dez.model/modelCache/applyProviderResult', 'media', {
         ok: true,
-        models: [{ id: modelId, name: 'M', provider: 'media', outputs: ['video'], request: 'imageToVideo', parameters: VIDEO_LENGTH, clips }],
+        models: [{ id: modelId, name: 'M', provider: 'media', outputs: ['video'], request, parameters: VIDEO_LENGTH, clips }],
       })
     }
 
@@ -1183,7 +1185,7 @@ describe('media requests', () => {
         video: { use: 'reference', maxClips: 3, types: ['video/mp4', 'video/quicktime'] },
         audio: { use: 'reference', maxClips: 3, types: ['audio/wav', 'audio/mpeg'] },
         audioNeedsVisual: true,
-      })
+      }, 'imageToVideo')
       const video = mp4Video(12)
       clipFiles = { v1: video, a1: OGG_AUDIO }
       audioSeconds = 12
@@ -1191,7 +1193,7 @@ describe('media requests', () => {
       await generate({ modelId: REFERENCE_MODEL, kind: 'imageToVideo', clips: [clip('video', 'v1', 'video/mp4'), clip('audio', 'a1', 'audio/ogg')] })
 
       expect(audioCuts).toStrictEqual([{ start: 0, end: 12 }])
-      expect(downloadRequests.map((request) => JSON.parse(request.body as string))).toStrictEqual([{
+      expect(downloadRequests.map(jsonBody)).toStrictEqual([{
         duration: '5s',
         model: REFERENCE_MODEL,
         prompt: 'A red fox',
@@ -1208,7 +1210,7 @@ describe('media requests', () => {
 
       await generate({ kind: 'video', clips: [clip('audio', 'a1', 'audio/mp3')] })
 
-      expect(downloadRequests.map((request) => JSON.parse(request.body as string))).toStrictEqual([{ duration: '5s', model: 'm', prompt: 'A red fox', audio_url: dataUrl('audio/mpeg', MP3_AUDIO) }])
+      expect(downloadRequests.map(jsonBody)).toStrictEqual([{ duration: '5s', model: 'm', prompt: 'A red fox', audio_url: dataUrl('audio/mpeg', MP3_AUDIO) }])
     })
 
     // A decode holds all samples of the clip in memory, and a long
@@ -1220,7 +1222,7 @@ describe('media requests', () => {
       await generate({ kind: 'video', clips: [clip('audio', 'a1', 'audio/mpeg')] })
 
       expect(audioDecodes).toBe(0)
-      expect(downloadRequests.map((request) => JSON.parse(request.body as string))).toStrictEqual([{ duration: '5s', model: 'm', prompt: 'A red fox', audio_url: dataUrl('audio/mpeg', MP3_AUDIO) }])
+      expect(downloadRequests.map(jsonBody)).toStrictEqual([{ duration: '5s', model: 'm', prompt: 'A red fox', audio_url: dataUrl('audio/mpeg', MP3_AUDIO) }])
     })
 
     it('refuses an audio clip that needs a WAV copy and that the webview cannot decode, before any request', async () => {
@@ -1279,14 +1281,14 @@ describe('media requests', () => {
     })
 
     it('sends a clip of a kind that the model takes only by web address by its URL, unread, and reads the clips of the other kind', async () => {
-      useClipModel(REFERENCE_MODEL, { video: { use: 'reference', urlOnly: true }, audio: { use: 'reference', types: ['audio/mpeg'] } })
+      useClipModel(REFERENCE_MODEL, { video: { use: 'reference', urlOnly: true }, audio: { use: 'reference', types: ['audio/mpeg'] } }, 'imageToVideo')
       clipFiles = { a1: MP3_AUDIO }
       audioSeconds = 3
 
       await generate({ modelId: REFERENCE_MODEL, kind: 'imageToVideo', clips: [clip('video', 'v1', 'video/mp4'), clip('audio', 'a1', 'audio/mpeg')] })
 
       expect(clipReads).toStrictEqual(['a1'])
-      expect(downloadRequests.map((request) => JSON.parse(request.body as string))).toStrictEqual([{
+      expect(downloadRequests.map(jsonBody)).toStrictEqual([{
         duration: '5s',
         model: REFERENCE_MODEL,
         prompt: 'A red fox',

@@ -13,10 +13,11 @@ import { missingClipProblem, type ClipAttachment, type InputClipRules } from '..
 import type { ClipTextRules } from '../model/providers/clipText'
 import { customProviderConfigSchema } from '../model/providers/config'
 import { unstoredOutputMessage } from '../model/providers/unusableModel'
-import type { GeneratedClip, ModelRequest, ProviderChatInputMessage, ProviderGenerateMediaInput, ProviderGenerateMediaResult, ProviderInfo, ProviderStreamChatInput, ProviderStreamChatResult } from '../model/providers'
+import type { GeneratedClip, ProviderChatInputMessage, ProviderGenerateMediaInput, ProviderGenerateMediaResult, ProviderInfo, ProviderStreamChatInput, ProviderStreamChatResult } from '../model/providers'
+import { CLIP_KINDS, isClipKind, isTextKind, type MediaKind } from '../model/providers/types'
 import type { RequestMessages } from '../model/streams/types'
 import { NO_MODELS_TEXT } from '../model/tools/modelList'
-import { TOOL_DEFINITIONS } from '../model/tools/registry'
+import { TOOL_DEFINITIONS, unknownToolText } from '../model/tools/registry'
 import type { ToastData } from '../view/toast/selectors'
 import { ExplainedError, UNEXPECTED_ERROR } from '../utils/errorText'
 // Side-effect imports: register the dez.model/* selectors and the selectors
@@ -27,6 +28,10 @@ import './thread'
 import './tools'
 
 const model: ActiveModel = { providerId: 'thinker', modelId: 'm', modelName: 'M' }
+// The path of a pasted image and of a made image, and a made image.
+const image = (name: string) => `/home/u/.config/dez/assets/images/${name}`
+const generated = (name: string) => `/home/u/.config/dez/assets/generated/images/${name}`
+const png = { bytes: new Uint8Array([1, 2, 3]), mediaType: 'image/png' } as const
 
 // What the stub provider does with a request. Set by each test.
 let streamChat: (input: ProviderStreamChatInput) => Promise<ProviderStreamChatResult>
@@ -163,6 +168,31 @@ async function startStream({ sendTools = false } = {}): Promise<void> {
   })
 }
 
+// The input of each request that `replyRounds` answers, and its messages as
+// plain data at the call.
+let requests: ProviderStreamChatInput[] = []
+let sent: ProviderChatInputMessage[][] = []
+
+// `rounds[n]` answers the request of round n.
+function replyRounds(rounds: Array<(input: ProviderStreamChatInput) => Promise<ProviderStreamChatResult>>): void {
+  streamChat = async (input) => {
+    requests.push(input)
+    sent.push(JSON.parse(JSON.stringify(input.messages)) as ProviderChatInputMessage[])
+    return await rounds[requests.length - 1](input)
+  }
+}
+
+// Puts a user message, an earlier reply, and the last user message in the
+// tab, with the texts of `conversation`.
+function setConversation(conversation: Array<{ text: string }>): void {
+  const [u1, a1, u2] = conversation
+  sbp('dez.model/tabs/replaceSections', activeTab().id, [
+    { id: 'u1', role: 'user', content: [{ kind: 'text', text: u1.text }] },
+    { id: 'a1', role: 'agent', content: [{ kind: 'text', text: a1.text }], model },
+    { id: 'u2', role: 'user', content: [{ kind: 'text', text: u2.text }] },
+  ])
+}
+
 beforeEach(() => {
   setActivePinia(createPinia())
   editorThinking = []
@@ -176,6 +206,8 @@ beforeEach(() => {
   deletedImages = []
   readImages = []
   deletedFiles = []
+  requests = []
+  sent = []
   consoleError = vi.spyOn(console, 'error').mockImplementation(() => {})
   // `dez.stream/start` names the provider in the system prompt, so the stub
   // model's provider must exist.
@@ -551,28 +583,14 @@ describe('dez.stream/start tool loop', () => {
   const running = '<dez:tool id="c1" name="model_list" status="running" filter="gemini">\n</dez:tool>\n'
   const done = `<dez:tool id="c1" name="model_list" filter="gemini">\n${NO_MODELS_TEXT}\n</dez:tool>\n`
   const geminiCall = { id: 'c1', name: 'model_list', argumentsText: '{"filter":"gemini"}' }
-  // The request messages of each round, as plain data at the call.
-  let sent: ProviderChatInputMessage[][] = []
-  let requests: ProviderStreamChatInput[] = []
   // How many times a `model_list` call ran.
   let runs = 0
-
-  // `rounds[n]` answers the request of round n.
-  function replyRounds(rounds: Array<(input: ProviderStreamChatInput) => Promise<ProviderStreamChatResult>>): void {
-    streamChat = async (input) => {
-      requests.push(input)
-      sent.push(JSON.parse(JSON.stringify(input.messages)) as ProviderChatInputMessage[])
-      return await rounds[requests.length - 1](input)
-    }
-  }
 
   function blocks(): Array<{ id: string, status: string, result: string }> {
     return findToolBlocks(sectionVisibleText(agentSection())).map(({ id, status, result }) => ({ id, status, result }))
   }
 
   beforeEach(() => {
-    sent = []
-    requests = []
     runs = 0
     providerInfos = async () => {
       runs++
@@ -775,7 +793,7 @@ describe('dez.stream/start tool loop', () => {
     expect(unknown).toStrictEqual({
       id: 'c1',
       status: 'error',
-      result: 'Dez has no tool named "web_search". Call only the Dez tools, by their exact names: model_list, model_info, crop_scale_image, audio.',
+      result: unknownToolText('web_search'),
     })
     expect(invalid.status).toBe('error')
     expect(invalid.result).toMatch(/^Dez did not run this call\. .+\n\nDetails: The call sent \{"filter":1\}$/)
@@ -972,15 +990,8 @@ describe('dez.controller/submitTab thinking send-back', () => {
 })
 
 describe('dez.controller/submitTab images', () => {
-  const image = (name: string) => `/home/u/.config/dez/assets/images/${name}`
-  let sent: ProviderChatInputMessage[] = []
-
   beforeEach(() => {
-    sent = []
-    streamChat = async (input) => {
-      sent = input.messages
-      return { requestId: input.requestId as string }
-    }
+    replyRounds([async (input) => ({ requestId: input.requestId as string })])
     sbp('dez.model/setActiveModel', model.providerId, model.modelId, model.modelName)
     sbp('dez.model/tabs/replaceSections', activeTab().id, [
       { id: 'u1', role: 'user', content: [{ kind: 'text', text: `Look:\n![${image('one.png')}](id=a)\n![${image('two.jpg')}](id=b)\nWhich is brighter?` }] },
@@ -1001,7 +1012,7 @@ describe('dez.controller/submitTab images', () => {
   it('sends the images of the newest user message as parts after their reference text with no path, and every other image as that text only', async () => {
     await sbp('dez.controller/submitTab', activeTab().id)
 
-    expect(sent).toStrictEqual([
+    expect(sent[0]).toStrictEqual([
       { role: 'user', content: 'Look:\n![image](id=a)\n![image](id=b)\nWhich is brighter?' },
       { role: 'agent', content: 'This one: ![image](id=a)' },
       {
@@ -1025,7 +1036,7 @@ describe('dez.controller/submitTab images', () => {
 
     await sbp('dez.controller/submitTab', activeTab().id)
 
-    expect(sent).toStrictEqual([
+    expect(sent[0]).toStrictEqual([
       { role: 'user', content: 'Look:\n![image](id=a)\n![image](id=b)\nWhich is brighter?' },
       { role: 'agent', content: 'This one: ![image](id=a)' },
       { role: 'user', content: '![image](id=c) and ![image](id=b\nCompare with ![image](id=a)' },
@@ -1060,7 +1071,7 @@ describe('dez.controller/submitTab images', () => {
 
     await sbp('dez.controller/submitTab', activeTab().id)
 
-    expect(sent.map((message) => message.role === 'agent' ? message.thinking : undefined)).toStrictEqual([
+    expect(sent[0].map((message) => message.role === 'agent' ? message.thinking : undefined)).toStrictEqual([
       undefined, undefined,
       undefined, undefined,
       undefined, { text: 'It is a cat.', replay: field },
@@ -1071,9 +1082,6 @@ describe('dez.controller/submitTab images', () => {
 })
 
 describe('dez.stream/start media round', () => {
-  const image = (name: string) => `/home/u/.config/dez/assets/images/${name}`
-  const generated = (name: string) => `/home/u/.config/dez/assets/generated/images/${name}`
-  const png = { bytes: new Uint8Array([1, 2, 3]), mediaType: 'image/png' } as const
   const EXPIRES = '2026-11-11T09:30:00.000Z'
   const FILM_URL = 'https://cdn.example.com/v/clip.mp4?sig=1'
   // A clip that plays from a temp copy, and one that plays from the URL of
@@ -1091,16 +1099,19 @@ describe('dez.stream/start media round', () => {
   // The options of each save; the saves give the files g1.png, g2.png, ….
   let saves: unknown[] = []
 
+  // What a model of this request kind makes.
+  const outputsOf = (request: MediaKind) => isClipKind(request) ? [CLIP_KINDS[request]] : isTextKind(request) ? ['text'] : ['image']
+
   // Puts the model in the cache with this request kind, and with the frames
   // that a video model takes.
-  function useRequest(request: ModelRequest, maxImages?: number): void {
+  function useRequest(request: MediaKind, maxImages?: number): void {
     sbp('dez.model/modelCache/applyProviderResult', model.providerId, {
       ok: true,
       models: [{
         id: model.modelId,
         name: model.modelName,
         provider: model.providerId,
-        outputs: ['image'],
+        outputs: outputsOf(request),
         request,
         ...(maxImages !== undefined && { images: { maxImages } }),
       }],
@@ -1113,15 +1124,6 @@ describe('dez.stream/start media round', () => {
       ok: true,
       models: [{ id: model.modelId, name: model.modelName, provider: model.providerId, outputs: ['audio'], request: 'music', text }],
     })
-  }
-
-  function setConversation(lastUserText?: string): void {
-    const [u1, a1, u2] = conversation(lastUserText)
-    sbp('dez.model/tabs/replaceSections', activeTab().id, [
-      { id: 'u1', role: 'user', content: [{ kind: 'text', text: u1.text }] },
-      { id: 'a1', role: 'agent', content: [{ kind: 'text', text: a1.text }], model },
-      { id: 'u2', role: 'user', content: [{ kind: 'text', text: u2.text }] },
-    ])
   }
 
   beforeEach(() => {
@@ -1137,7 +1139,7 @@ describe('dez.stream/start media round', () => {
     }
     sbp('dez.model/setActiveModel', model.providerId, model.modelId, model.modelName)
     useRequest('image')
-    setConversation()
+    setConversation(conversation())
   })
 
   it('saves each image in the generated folder, writes its reference with a new id, and finishes the reply', async () => {
@@ -1166,7 +1168,7 @@ describe('dez.stream/start media round', () => {
 
   it('edits the images of the last user message, with their stand-ins in the prompt', async () => {
     useRequest('imageEdit')
-    setConversation(`Make ![${image('cat.png')}](id=c) red.`)
+    setConversation(conversation(`Make ![${image('cat.png')}](id=c) red.`))
 
     await sbp('dez.controller/submitTab', activeTab().id)
 
@@ -1192,7 +1194,7 @@ describe('dez.stream/start media round', () => {
       ok: true,
       models: [{ id: model.modelId, name: model.modelName, provider: model.providerId, outputs: ['image'], request, imageInput: false }],
     })
-    setConversation(`Make ![${image('cat.png')}](id=c) look like @a.`)
+    setConversation(conversation(`Make ![${image('cat.png')}](id=c) look like @a.`))
 
     await sbp('dez.controller/submitTab', activeTab().id)
 
@@ -1354,7 +1356,7 @@ describe('dez.stream/start media round', () => {
 
     it('makes a video from the images of the last user message, as the first and the last frame', async () => {
       useRequest('imageToVideo', 2)
-      setConversation(twoImages)
+      setConversation(conversation(twoImages))
 
       await sbp('dez.controller/submitTab', activeTab().id)
 
@@ -1366,7 +1368,7 @@ describe('dez.stream/start media round', () => {
 
     it('makes a video from the newest image of the conversation when the last user message has none', async () => {
       useRequest('imageToVideo', 2)
-      setConversation('Make it run.')
+      setConversation(conversation('Make it run.'))
 
       await sbp('dez.controller/submitTab', activeTab().id)
 
@@ -1391,7 +1393,7 @@ describe('dez.stream/start media round', () => {
 
     it('tells the user to keep only the images that the model takes when the provider refuses the rest', async () => {
       useRequest('imageToVideo', 2)
-      setConversation(twoImages)
+      setConversation(conversation(twoImages))
       generateMedia = async () => {
         throw new TooManyImagesError(1, 2)
       }
@@ -1425,7 +1427,7 @@ describe('dez.stream/start media round', () => {
       // not cut: the user chooses the image.
       it('sends no request for a message with more images, and counts the images that the rules leave out too', async () => {
         const message = 'M takes only 1 image, and this message has 3. Keep only 1 image in the message (pasted, or named with @id), and send it again.'
-        setConversation(`${twoImages} Not @b.`)
+        setConversation(conversation(`${twoImages} Not @b.`))
 
         await sbp('dez.controller/submitTab', activeTab().id)
 
@@ -1436,7 +1438,7 @@ describe('dez.stream/start media round', () => {
       })
 
       it('sends a message with as many images as the refusal told', async () => {
-        setConversation('From @a.')
+        setConversation(conversation('From @a.'))
 
         await sbp('dez.controller/submitTab', activeTab().id)
 
@@ -1454,7 +1456,7 @@ describe('dez.stream/start media round', () => {
       ['a text-to-video model that takes no frame', 'video', undefined, [], 'Images not sent', 'M takes no image, so 2 images were left out of the request.'],
     ] as const)('sends %s the images that it takes, and tells the user of the rest', async (_name, request, maxImages, images, title, message) => {
       useRequest(request, maxImages)
-      setConversation(twoImages)
+      setConversation(conversation(twoImages))
 
       await sbp('dez.controller/submitTab', activeTab().id)
 
@@ -1464,7 +1466,7 @@ describe('dez.stream/start media round', () => {
 
     it('tells the user of a third image that a model with two frames does not take', async () => {
       useRequest('imageToVideo', 2)
-      setConversation(`${twoImages} Not @b.`)
+      setConversation(conversation(`${twoImages} Not @b.`))
 
       await sbp('dez.controller/submitTab', activeTab().id)
 
@@ -1475,7 +1477,7 @@ describe('dez.stream/start media round', () => {
     // A text-to-video model works with no image.
     it('gives a text-to-video model no image of an earlier message', async () => {
       useRequest('video', 2)
-      setConversation('Make it run.')
+      setConversation(conversation('Make it run.'))
 
       await sbp('dez.controller/submitTab', activeTab().id)
 
@@ -1502,7 +1504,7 @@ describe('dez.stream/start media round', () => {
         }],
       })
       if (imagesAs !== undefined) sbp('dez.model/settings/setModelParameter', { providerId: model.providerId, modelId: model.modelId }, 'images_as', imagesAs)
-      setConversation(`${twoImages} Not @b.`)
+      setConversation(conversation(`${twoImages} Not @b.`))
 
       await sbp('dez.controller/submitTab', activeTab().id)
 
@@ -1523,28 +1525,19 @@ describe('dez.stream/start media round', () => {
       { role: 'user', text: lastUserText },
     ]
 
-    function useClipModel(request: ModelRequest, clips?: InputClipRules, images?: InputImageRules): void {
+    function useClipModel(request: MediaKind, clips?: InputClipRules, images?: InputImageRules): void {
       sbp('dez.model/modelCache/applyProviderResult', model.providerId, {
         ok: true,
         models: [{
           id: model.modelId,
           name: model.modelName,
           provider: model.providerId,
-          outputs: ['video'],
+          outputs: outputsOf(request),
           request,
           ...(clips && { clips }),
           ...(images && { images }),
         }],
       })
-    }
-
-    function setClipConversation(lastUserText: string): void {
-      const [u1, a1, u2] = clipConversation(lastUserText)
-      sbp('dez.model/tabs/replaceSections', activeTab().id, [
-        { id: 'u1', role: 'user', content: [{ kind: 'text', text: u1.text }] },
-        { id: 'a1', role: 'agent', content: [{ kind: 'text', text: a1.text }], model },
-        { id: 'u2', role: 'user', content: [{ kind: 'text', text: u2.text }] },
-      ])
     }
 
     beforeEach(() => {
@@ -1556,7 +1549,7 @@ describe('dez.stream/start media round', () => {
 
     it('sends a video model that takes clips the audio and the video clip that the message names, in text order', async () => {
       useClipModel('video', referenceClips)
-      setClipConversation('Make @e move to the beat of @c.')
+      setConversation(clipConversation('Make @e move to the beat of @c.'))
 
       await sbp('dez.controller/submitTab', activeTab().id)
 
@@ -1569,7 +1562,7 @@ describe('dez.stream/start media round', () => {
       ['@c and @e', 'Clips not sent', 'M takes no clip, so 2 clips were left out of the request.'],
     ])('sends a video model with no clip rules a request with no clip of %s, and tells the user', async (mentions, title, message) => {
       useClipModel('video')
-      setClipConversation(`Make it move like ${mentions}.`)
+      setConversation(clipConversation(`Make it move like ${mentions}.`))
 
       await sbp('dez.controller/submitTab', activeTab().id)
 
@@ -1597,7 +1590,7 @@ describe('dez.stream/start media round', () => {
       ],
     ] as const)('sends a model that takes %s the clips that it takes, and tells the user of the rest', async (_name, clips, lastUserText, sent, title, message) => {
       useClipModel('video', clips)
-      setClipConversation(lastUserText)
+      setConversation(clipConversation(lastUserText))
 
       await sbp('dez.controller/submitTab', activeTab().id)
 
@@ -1608,7 +1601,7 @@ describe('dez.stream/start media round', () => {
     it('sends no request and shows an error toast for an audio clip with no image or video clip, when the model needs one', async () => {
       const message = 'M takes an audio clip only together with a reference image or video. Add an image or a video clip to the message, or name one with @id.'
       useClipModel('video', { ...referenceClips, audioNeedsVisual: true })
-      setClipConversation('Dance to @c.')
+      setConversation(clipConversation('Dance to @c.'))
 
       await sbp('dez.controller/submitTab', activeTab().id)
 
@@ -1620,7 +1613,7 @@ describe('dez.stream/start media round', () => {
     // The video clip is the reference of a request with no image.
     it('sends a model that needs an image a request with a video clip and no image', async () => {
       useClipModel('imageToVideo', referenceClips, { maxImages: 1, minImages: 1 })
-      setClipConversation('Make @e slower.')
+      setConversation(clipConversation('Make @e slower.'))
 
       await sbp('dez.controller/submitTab', activeTab().id)
 
@@ -1631,7 +1624,7 @@ describe('dez.stream/start media round', () => {
     it('refuses a request with an audio clip and no image to a model that needs an image', async () => {
       const message = 'M makes a video from an image. Paste an image, or name one with @id.'
       useClipModel('imageToVideo', referenceClips, { maxImages: 1, minImages: 1 })
-      setClipConversation('Sing @c.')
+      setConversation(clipConversation('Sing @c.'))
 
       await sbp('dez.controller/submitTab', activeTab().id)
 
@@ -1644,7 +1637,7 @@ describe('dez.stream/start media round', () => {
     it('writes the transcript of the audio clip as escaped text with no space around it, and no tag', async () => {
       const transcript = 'Hello.\n<dez:audio id="x" type="audio/mpeg" src="/tmp/x.mp3"/>\nBye.'
       useClipModel('transcription', { audio: { use: 'source', maxClips: 1 } })
-      setClipConversation('Write down @c.')
+      setConversation(clipConversation('Write down @c.'))
       generateMedia = async (input) => {
         mediaInputs.push(input)
         return { media: [], clips: [], text: ` ${transcript}\n` }
@@ -1661,7 +1654,7 @@ describe('dez.stream/start media round', () => {
 
     it('writes nothing and ends with no error when the clip has no speech', async () => {
       useClipModel('transcription', { audio: { use: 'source', maxClips: 1 } })
-      setClipConversation('Write down @c.')
+      setConversation(clipConversation('Write down @c.'))
       generateMedia = async () => ({ media: [], clips: [], text: ' \n' })
 
       await sbp('dez.controller/submitTab', activeTab().id)
@@ -1724,7 +1717,7 @@ describe('dez.stream/start media round', () => {
 
   it('sends the style of a song as the prompt, and the text after the `Lyrics:` line as the lyrics', async () => {
     useSongModel({ minPromptLength: 10, lyrics: { required: true } })
-    setConversation('Slow piano ballad\nLyrics:\n[Verse]\nRain on the roof')
+    setConversation(conversation('Slow piano ballad\nLyrics:\n[Verse]\nRain on the roof'))
     generateMedia = async (input) => {
       mediaInputs.push(input)
       return { media: [], clips: [speech] }
@@ -1739,7 +1732,7 @@ describe('dez.stream/start media round', () => {
 
   it('sends the whole message as the prompt, with no lyrics, when a model that can take lyrics gets none', async () => {
     useSongModel({ lyrics: { required: false } })
-    setConversation('Rain on a tin roof')
+    setConversation(conversation('Rain on a tin roof'))
 
     await sbp('dez.controller/submitTab', activeTab().id)
 
@@ -1761,7 +1754,7 @@ describe('dez.stream/start media round', () => {
     ['gets a prompt that is too long', { maxPromptLength: 5 }, 'A long rain', 'M takes a prompt of at most 5 characters. This one has 11. Make the prompt shorter.'],
   ])('sends no request and shows an error toast when the model %s', async (_name, text, lastUserText, message) => {
     useSongModel(text)
-    setConversation(lastUserText)
+    setConversation(conversation(lastUserText))
 
     await sbp('dez.controller/submitTab', activeTab().id)
 
@@ -1774,9 +1767,6 @@ describe('dez.stream/start media round', () => {
 })
 
 describe('dez.stream/start images of a chat reply', () => {
-  const image = (name: string) => `/home/u/.config/dez/assets/images/${name}`
-  const generated = (name: string) => `/home/u/.config/dez/assets/generated/images/${name}`
-  const png = { bytes: new Uint8Array([1, 2, 3]), mediaType: 'image/png' } as const
   // The options of each save; the saves give the files g1.png, g2.png, ….
   let saves: unknown[] = []
 
@@ -1917,22 +1907,22 @@ describe('dez.stream/start images of a chat reply', () => {
 
   it('sends the image of a tool round back as text with no path, and starts no new paragraph after the tool blocks', async () => {
     const block = `<dez:tool id="c1" name="model_list" filter="gemini">\n${NO_MODELS_TEXT}\n</dez:tool>\n`
-    const sent: string[] = []
-    streamChat = async (input) => {
-      sent.push(JSON.stringify(input.messages))
-      if (sent.length === 2) {
+    replyRounds([
+      async (input) => {
+        await input.onImage(png)
+        return { requestId: input.requestId as string, toolCalls: [{ id: 'c1', name: 'model_list', argumentsText: '{"filter":"gemini"}' }] }
+      },
+      async (input) => {
         await input.onToken('None.')
         return { requestId: input.requestId as string }
-      }
-      await input.onImage(png)
-      return { requestId: input.requestId as string, toolCalls: [{ id: 'c1', name: 'model_list', argumentsText: '{"filter":"gemini"}' }] }
-    }
+      },
+    ])
 
     await startStream({ sendTools: true })
 
     expect(sectionVisibleText(agentSection())).toBe(`![${generated('g1.png')}](id=b)\n${block}None.`)
-    expect(sent[1]).toContain('![image](id=b)')
-    expect(sent[1]).not.toContain('/home/u')
+    expect(JSON.stringify(sent[1])).toContain('![image](id=b)')
+    expect(JSON.stringify(sent[1])).not.toContain('/home/u')
   })
 
   // The replay of a round with an image is the provider's signature of
@@ -1956,22 +1946,22 @@ describe('dez.stream/start images of a chat reply', () => {
   it('keeps the thinking text of a round that made an image with no replay, and the replay of each other round at its own round', async () => {
     const replay = (opaque: string): ThinkingReplay => ({ kind: 'copilot', opaque, prefixHash: 'h' })
     const call = (id: string) => ({ id, name: 'model_list', argumentsText: '{"filter":"gemini"}' })
-    const sent: ProviderChatInputMessage[][] = []
-    streamChat = async (input) => {
-      sent.push(JSON.parse(JSON.stringify(input.messages)) as ProviderChatInputMessage[])
-      if (sent.length === 1) {
+    replyRounds([
+      async (input) => {
         await input.onThinking('Plan.')
         return { requestId: input.requestId as string, thinkingReplay: replay('one'), toolCalls: [call('c1')] }
-      }
-      if (sent.length === 2) {
+      },
+      async (input) => {
         await input.onThinking('Draw.')
         await input.onImage(png)
         return { requestId: input.requestId as string, thinkingReplay: replay('two'), toolCalls: [call('c2')] }
-      }
-      await input.onThinking('Check.')
-      await input.onToken('Done.')
-      return { requestId: input.requestId as string, thinkingReplay: replay('three') }
-    }
+      },
+      async (input) => {
+        await input.onThinking('Check.')
+        await input.onToken('Done.')
+        return { requestId: input.requestId as string, thinkingReplay: replay('three') }
+      },
+    ])
 
     await startStream({ sendTools: true })
 
@@ -1991,27 +1981,14 @@ describe('dez.stream/start images of a chat reply', () => {
 })
 
 describe('dez.stream/start images that a tool makes', () => {
-  const image = (name: string) => `/home/u/.config/dez/assets/images/${name}`
-  const generated = (name: string) => `/home/u/.config/dez/assets/generated/images/${name}`
   const reference = (name: string, id: string) => `![${generated(name)}](id=${id}|tool=crop_scale_image)`
   const replay = (opaque: string): ThinkingReplay => ({ kind: 'copilot', opaque, prefixHash: 'h' })
   const widthCall = { id: 'c1', name: 'crop_scale_image', argumentsText: '{"image":"@a","width":400}' }
   const widthBlock = '<dez:tool id="c1" name="crop_scale_image" image="@a" width="400">\nMade the image @b from @a. The image @b is 400x200 pixels.\n</dez:tool>\n'
-  // The request messages of each round, as plain data at the call.
-  let sent: ProviderChatInputMessage[][] = []
   // The saves give the files g1.png, g2.png, ….
   let saves = 0
 
-  // `rounds[n]` answers the request of round n.
-  function replyRounds(rounds: Array<(input: ProviderStreamChatInput) => Promise<ProviderStreamChatResult>>): void {
-    streamChat = async (input) => {
-      sent.push(JSON.parse(JSON.stringify(input.messages)) as ProviderChatInputMessage[])
-      return await rounds[sent.length - 1](input)
-    }
-  }
-
   beforeEach(() => {
-    sent = []
     saves = 0
     saveImage = async () => generated(`g${++saves}.png`)
     sbp('dez.model/tabs/replaceSections', activeTab().id, [
@@ -2126,18 +2103,8 @@ describe('dez.stream/start clips that a tool makes', () => {
   const clipResult = 'Made the audio clip @b from @a, from second 0 to second 2. The audio clip @b is 2 seconds long.'
   const listCall = { id: 'c2', name: 'model_list', argumentsText: '{"filter":"gemini"}' }
   const listBlock = `<dez:tool id="c2" name="model_list" filter="gemini">\n${NO_MODELS_TEXT}\n</dez:tool>\n`
-  // The request messages of each round, as plain data at the call.
-  let sent: ProviderChatInputMessage[][] = []
   // The saves give the files g1.wav, g2.wav, ….
   let saves = 0
-
-  // `rounds[n]` answers the request of round n.
-  function replyRounds(rounds: Array<(input: ProviderStreamChatInput) => Promise<ProviderStreamChatResult>>): void {
-    streamChat = async (input) => {
-      sent.push(JSON.parse(JSON.stringify(input.messages)) as ProviderChatInputMessage[])
-      return await rounds[sent.length - 1](input)
-    }
-  }
 
   // The text of the reply after the block of the `audio` call.
   function textAfterClipBlock(): string {
@@ -2147,7 +2114,6 @@ describe('dez.stream/start clips that a tool makes', () => {
   }
 
   beforeEach(() => {
-    sent = []
     saves = 0
     saveClip = async () => made(`g${++saves}.wav`)
     deletedClips = []

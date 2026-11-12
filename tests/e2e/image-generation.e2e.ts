@@ -195,7 +195,7 @@ describe('image generation', () => {
     expect(JSON.parse(edit.body)).toEqual({
       modelId: EDIT_MODEL.id,
       prompt: 'Make it orange',
-      images: [`data:image/png;base64,${GENERATED_PNG.toString('base64')}`],
+      images: [pngDataUrl(GENERATED_PNG)],
       safe_mode: false,
     })
     expect(edit.body).not.toContain(setup.app.home)
@@ -251,7 +251,7 @@ describe('image generation', () => {
     expect(JSON.parse(edit.body)).toEqual({
       modelId: EDIT_MODEL.id,
       prompt: 'Edit @a to add an apple',
-      images: [`data:image/png;base64,${GENERATED_PNG.toString('base64')}`],
+      images: [pngDataUrl(GENERATED_PNG)],
       safe_mode: false,
     })
     answerHeld(edit.reply, 'image/png', EDITED_PNG)
@@ -302,7 +302,7 @@ describe('image generation', () => {
     // chunk.
     const imageFrame = (png: Buffer) => ({
       content: '',
-      images: [{ type: 'image_url', image_url: { url: `data:image/png;base64,${png.toString('base64')}` } }],
+      images: [{ type: 'image_url', image_url: { url: pngDataUrl(png) } }],
     })
     const before = await filesIn(generatedDir())
     await pickModel(browser, PAINTER.name, CHAT_MODEL.name)
@@ -345,7 +345,7 @@ describe('image generation', () => {
           role: 'user',
           content: [
             { type: 'text', text: 'Make @a' },
-            { type: 'image_url', image_url: { url: `data:image/png;base64,${GENERATED_PNG.toString('base64')}` } },
+            { type: 'image_url', image_url: { url: pngDataUrl(GENERATED_PNG) } },
             { type: 'text', text: ' orange' },
           ],
         },

@@ -7,7 +7,7 @@ import { lyricsHowTo, type ClipTextRules } from '../providers/clipText'
 import { MEDIA_FORMATS, type ClipFormat } from '../providers/mediaFormats'
 import type { ParameterValues } from '../providers/modelParameters'
 import { isToolsEnabled, modelToggles, toggleRows, toggleValue, toolsApply } from '../providers/modelToggles'
-import { MODEL_REQUESTS, type ChatImagePart, type MediaKind, type ModelInfo, type ModelRequest } from '../providers/types'
+import { MEDIA_KINDS, MODEL_REQUESTS, type ChatImagePart, type MediaKind, type ModelInfo, type ModelRequest } from '../providers/types'
 import { mediaRequestInput, sectionsToStreamMessages } from '../streams/messages'
 import { clipNamesUsage, modelUsage, neededClipUsage, referenceNamesUsage, takenClipsUsage, urlOnlyClipsUsage, USAGE_TEXTS, type UsageFacts } from './modelUsage'
 
@@ -72,10 +72,8 @@ describe('modelUsage', () => {
   })
 
   describe('of a media model', () => {
-    const mediaKinds = MODEL_REQUESTS.filter((kind): kind is MediaKind => kind !== 'chat' && kind !== 'none')
-
     it('tells that the images of the message go exactly when a request takes them', () => {
-      for (const kind of mediaKinds) {
+      for (const kind of MEDIA_KINDS) {
         for (const model of models(kind)) {
           const usage = modelUsage(model, NO_FACTS)
           const sent = mediaInput(kind, model, [user('u1', `Mix ![${FIRST}](id=a) and ![${SECOND}](id=b)`)]).images
@@ -89,7 +87,7 @@ describe('modelUsage', () => {
     })
 
     it('tells that the newest image of the conversation goes exactly when a message with no image gets it', () => {
-      for (const kind of mediaKinds) {
+      for (const kind of MEDIA_KINDS) {
         for (const model of models(kind)) {
           const usage = modelUsage(model, NO_FACTS)
           const sent = mediaInput(kind, model, [user('u1', `![${FIRST}](id=a)`), reply('a1', 'Done.'), user('u2', 'Make it blue')]).images
@@ -100,7 +98,7 @@ describe('modelUsage', () => {
     })
 
     it('tells how to write lyrics exactly when a request takes them', () => {
-      for (const kind of mediaKinds) {
+      for (const kind of MEDIA_KINDS) {
         for (const model of models(kind)) {
           const usage = modelUsage(model, NO_FACTS)
           const { lyrics } = mediaInput(kind, model, [user('u1', 'A calm song\nLyrics:\nLa la')])
@@ -113,7 +111,7 @@ describe('modelUsage', () => {
     // The names text shows the names of the first two images of the request.
     // A model whose request sends no text (an upscale) names nothing.
     it('tells the names of the images in the prompt exactly when a request gives them', () => {
-      for (const kind of mediaKinds) {
+      for (const kind of MEDIA_KINDS) {
         for (const model of models(kind)) {
           const usage = modelUsage(model, NO_FACTS)
           const { prompt, images } = mediaInput(kind, model, [user('u1', `Mix ![${FIRST}](id=a) and ![${SECOND}](id=b)`)])
@@ -177,7 +175,7 @@ describe('modelUsage', () => {
       }))
 
       it('tells which clips of the message go exactly when a request takes them', () => {
-        for (const kind of mediaKinds) {
+        for (const kind of MEDIA_KINDS) {
           for (const model of clipModels(kind)) {
             const usage = modelUsage(model, NO_FACTS)
             const { clips } = mediaInput(kind, model, [clipsReply, message])
@@ -296,7 +294,7 @@ describe('modelUsage', () => {
       })
 
       it('tells that a message needs a clip of a kind exactly when Dez refuses a message with none of that kind', () => {
-        for (const kind of mediaKinds) {
+        for (const kind of MEDIA_KINDS) {
           for (const model of clipModels(kind)) {
             const usage = modelUsage(model, NO_FACTS)
 

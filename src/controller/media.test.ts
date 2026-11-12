@@ -2,7 +2,7 @@ import sbp from '@sbp/sbp'
 import { afterEach, beforeEach, describe, expect, it, vi, type MockInstance } from 'vitest'
 import type { AudioPart, CutAudio } from '../model/chat/audioCut'
 import { ClipReadError, MAX_SAVED_CLIP_BYTES, MEDIA_TEMP_LIFETIME_MS, savedMediaFile } from '../model/chat/mediaFiles'
-import type { MediaTagData } from '../model/chat/mediaTags'
+import type { MediaFolder, MediaTagData } from '../model/chat/mediaTags'
 import type {
   NativeDownloadRule,
   NativeHttpDownload,
@@ -144,8 +144,8 @@ afterEach(() => {
 })
 
 describe('dez.controller/media/save', () => {
-  function save(clip: Clip): Promise<string> {
-    return sbp('dez.controller/media/save', clip) as Promise<string>
+  function save(clip: Clip, options?: { bytes?: Uint8Array, folder?: MediaFolder }): Promise<string> {
+    return sbp('dez.controller/media/save', clip, options) as Promise<string>
   }
 
   it('moves a temp copy to the media folder of its kind, under its name', async () => {
@@ -246,7 +246,7 @@ describe('dez.controller/media/save', () => {
   it('writes the bytes of a clip that Dez made to a new file of its type, with no move and no download', async () => {
     const bytes = Uint8Array.from([1, 2, 3])
     const clip: Clip = { kind: 'audio', type: 'audio/wav', src: `${CACHE_DIR}/media/${NAME}.mp3`, url: CLIP_URL }
-    const path = await sbp('dez.controller/media/save', clip, { bytes }) as string
+    const path = await save(clip, { bytes })
 
     expect(path).toMatch(/^\/home\/ann\/\.config\/dez\/assets\/generated\/audio\/[0-9a-f-]{36}\.wav$/)
     expect(savedFiles).toStrictEqual([{ file: { root: 'app', path: path.slice(APP_DIR.length + 1) }, bytes }])
@@ -257,8 +257,8 @@ describe('dez.controller/media/save', () => {
 
   it('writes the bytes of a pasted clip file to the pasted folder of its kind', async () => {
     const bytes = Uint8Array.from([4, 5])
-    const audio = await sbp('dez.controller/media/save', { kind: 'audio', type: 'audio/mpeg', src: null, url: null }, { bytes, folder: 'pasted' }) as string
-    const video = await sbp('dez.controller/media/save', { kind: 'video', type: 'video/quicktime', src: null, url: null }, { bytes, folder: 'pasted' }) as string
+    const audio = await save({ kind: 'audio', type: 'audio/mpeg', src: null, url: null }, { bytes, folder: 'pasted' })
+    const video = await save({ kind: 'video', type: 'video/quicktime', src: null, url: null }, { bytes, folder: 'pasted' })
 
     expect(audio).toMatch(/^\/home\/ann\/\.config\/dez\/assets\/audio\/[0-9a-f-]{36}\.mp3$/)
     expect(video).toMatch(/^\/home\/ann\/\.config\/dez\/assets\/video\/[0-9a-f-]{36}\.mov$/)
@@ -277,7 +277,7 @@ describe('dez.controller/media/save', () => {
     const message = 'The system did not let Dez write the clip file. The details tell why (for example, the disk is full). Fix that, and try again.'
       + `\n\nDetails: ${writeError}`
 
-    await expect(sbp('dez.controller/media/save', { kind: 'audio', type: 'audio/wav', src: null, url: null }, { bytes: new Uint8Array(4) }))
+    await expect(save({ kind: 'audio', type: 'audio/wav', src: null, url: null }, { bytes: new Uint8Array(4) }))
       .rejects.toThrow(message)
 
     expect(consoleError).toHaveBeenCalledWith('Failed to save the clip:', expect.objectContaining({ cause: writeError }))
