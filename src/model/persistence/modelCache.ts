@@ -117,7 +117,8 @@ const inputClipRulesSchema = z.object({ audio: z.unknown(), video: z.unknown(), 
   })
 
 // The transform drops the `clips` key of a model whose clip rules have no
-// kind left, which Zod would keep with an undefined value.
+// kind left, and a `learnedImageLimit` key whose value was bad, which Zod
+// would keep with an undefined value.
 const modelInfoSchema = z.object({
   id: z.string(),
   name: z.string(),
@@ -136,7 +137,10 @@ const modelInfoSchema = z.object({
   images: inputImageRulesSchema.optional(),
   clips: inputClipRulesSchema.optional(),
   unstoredOutput: z.string().min(1).optional(),
-}).transform(({ clips, ...model }) => ({ ...model, ...(clips && { clips }) }))
+  // A bad value drops only the limit, and the model stays: the next
+  // refusal of the provider (it costs nothing) teaches it again.
+  learnedImageLimit: z.object({ maxImages: z.number().int().positive(), entry: z.string().min(1) }).optional().catch(undefined),
+}).transform(({ clips, learnedImageLimit, ...model }) => ({ ...model, ...(clips && { clips }), ...(learnedImageLimit && { learnedImageLimit }) }))
 
 // Individually drop invalid models (e.g. a bad provider id) instead of failing
 // the whole provider entry, so one bad model doesn't discard the rest.

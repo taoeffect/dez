@@ -1375,6 +1375,42 @@ describe('dez.stream/start media round', () => {
       }])
     })
 
+    describe('after a refusal that told the count of images', () => {
+      // An image-to-video model with two frames in its rules, of which a
+      // refusal of the provider told that it takes one (learnedImageLimit.ts).
+      beforeEach(() => {
+        sbp('dez.model/modelCache/applyProviderResult', model.providerId, {
+          ok: true,
+          models: [{ id: model.modelId, name: model.modelName, provider: model.providerId, outputs: ['video'], request: 'imageToVideo', images: { maxImages: 2 } }],
+          entries: new Map([[model.modelId, { id: model.modelId }]]),
+        })
+        sbp('dez.model/modelCache/learnImageLimit', model.providerId, model.modelId, 1)
+      })
+
+      // The rules take two of the three images, but the message is refused,
+      // not cut: the user chooses the image.
+      it('sends no request for a message with more images, and counts the images that the rules leave out too', async () => {
+        const message = 'M takes only 1 image, and this message has 3. Keep only 1 image in the message (pasted, or named with @id), and send it again.'
+        setConversation(`${twoImages} Not @b.`)
+
+        await sbp('dez.controller/submitTab', activeTab().id)
+
+        expect(mediaInputs).toStrictEqual([])
+        expect(sectionTexts()).toStrictEqual(conversation(`${twoImages} Not @b.`))
+        expect(toasts).toStrictEqual([{ area: 'app-global', data: { variant: 'error', title: 'Cannot send', message } }])
+        expect(consoleError).toHaveBeenCalledWith(`Cannot send: ${message}`)
+      })
+
+      it('sends a message with as many images as the refusal told', async () => {
+        setConversation('From @a.')
+
+        await sbp('dez.controller/submitTab', activeTab().id)
+
+        expect(mediaInputs.map((input) => input.images)).toStrictEqual([[image('fox.png')]])
+        expect(toasts).toStrictEqual([])
+      })
+    })
+
     it.each([
       ['an image-to-video model that takes one frame', 'imageToVideo', 1, [image('cat.png')], 'Image not sent', 'M takes only 1 image, so 1 image was left out of the request.'],
       ['an edit model that takes one image', 'imageEdit', 1, [image('cat.png')], 'Image not sent', 'M takes only 1 image, so 1 image was left out of the request.'],

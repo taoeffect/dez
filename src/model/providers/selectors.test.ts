@@ -1458,6 +1458,20 @@ describe('known model limits', () => {
 
     expect([limits('proxy'), limits('local')]).toStrictEqual([[{ maxBodyMB: 35 }], []])
   })
+
+  // The row tells the model why Dez refuses a message with more images.
+  it('gives last the image count that a refusal of the provider told, with the name of the provider', () => {
+    sbp('dez.model/modelCache/applyProviderResult', 'proxy', {
+      ok: true,
+      models: [{ ...WAN, provider: 'proxy' }],
+      entries: new Map([[WAN.id, { id: WAN.id }]]),
+    })
+    sbp('dez.model/modelCache/learnImageLimit', 'proxy', WAN.id, 1)
+    const rows = sbp('dez.provider/knownLimits', 'proxy', WAN.id) as KnownLimit[]
+
+    expect(rows.map(({ limit }) => limit)).toStrictEqual([{ maxBodyMB: 35 }, { maxImages: 1 }])
+    expect(rows[1].source).toContain('Proxy')
+  })
 })
 
 describe('provider error messages', () => {

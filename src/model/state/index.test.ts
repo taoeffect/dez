@@ -4,7 +4,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import type { ActiveModel, ContentNode, ModelRef, Section, SectionThinking, Tab, ThinkingReplay } from '../chat/types'
 import type { AppStatePayload, ConversationData, ModelCache } from '../persistence/types'
 import type { ProviderConfig } from '../providers/config'
-import type { ModelRequest } from '../providers/types'
+import type { ModelInfo, ModelRequest } from '../providers/types'
 import type { SettingsSnapshot } from './index'
 import type { RequestMessages } from '../streams/types'
 import type { Shortcut, ShortcutId } from '../shortcuts'
@@ -24,6 +24,9 @@ const diskConversations = new Map<string, ConversationData>()
 // save got. Reset in beforeEach.
 let diskAppState: AppStatePayload = {}
 let savedAppStates: AppStatePayload[] = []
+
+// Each model cache that the stub save got. Reset in beforeEach.
+let savedModelCaches: ModelCache[] = []
 
 // Stub the persistence selectors that the tab and settings selectors call.
 // src/model/persistence/index.ts is never imported by this test, so these are
@@ -50,6 +53,12 @@ sbp('sbp/selectors/register', {
     savedAppStates.push(JSON.parse(JSON.stringify(state)) as AppStatePayload)
   },
   async 'dez.persistence/deleteConversation' (): Promise<void> {},
+  async 'dez.persistence/loadModelCache' (): Promise<ModelCache> {
+    return { providers: {}, version: 1 }
+  },
+  async 'dez.persistence/saveModelCache' (cache: ModelCache): Promise<void> {
+    savedModelCaches.push(structuredClone(cache))
+  },
   // dez.model/settings/init applies the loaded theme and font size.
   'dez.ui/applyTheme' (): void {},
   'dez.ui/applyEditorFontSize' (): void {},
@@ -73,6 +82,7 @@ beforeEach(() => {
   diskConversations.clear()
   diskAppState = {}
   savedAppStates = []
+  savedModelCaches = []
 })
 
 describe('dez.model/tabs/openConversation', () => {
@@ -935,6 +945,66 @@ describe('dez.model/modelCache clip data', () => {
     // A list that loaded and tells no lengths is the newer fact.
     apply({ models: [film] })
     expect(cachedModels()).toStrictEqual([film])
+  })
+})
+
+describe('dez.model/modelCache learned image limits', () => {
+  const film = { id: 'film', name: 'Film', provider: 'local', request: 'imageToVideo' as const, images: { maxImages: 2 } }
+  const entry = { id: 'film', model_spec: { name: 'Film', constraints: { durations: ['5s'] } } }
+  const learned = () => (sbp('dez.model/modelCache/model', 'local', 'film') as ModelInfo | null)?.learnedImageLimit
+  const learn = () => sbp('dez.model/modelCache/learnImageLimit', 'local', 'film', 1)
+  const check = (entries?: ReadonlyMap<string, unknown>, models: ModelInfo[] = [film]) =>
+    sbp('dez.model/modelCache/applyProviderResult', 'local', { ok: true, models, ...(entries && { entries }) })
+
+  afterEach(() => {
+    sbp('dez.model/modelCache/stopPersistence')
+    vi.useRealTimers()
+  })
+
+  // With no raw entry, the next check could not tell whether the model
+  // changed (after a start, until the provider's next good check).
+  it('learns a limit only while the model\'s raw entry is in memory', () => {
+    check()
+    learn()
+    expect(learned()).toBeUndefined()
+
+    check(new Map([['film', entry]]))
+    learn()
+    expect(learned()?.maxImages).toBe(1)
+  })
+
+  it('keeps a limit over checks with the same entry and over a failed check, and forgets it when the entry changes', () => {
+    check(new Map([['film', entry]]))
+    learn()
+    const limit = learned()
+
+    check(new Map([['film', structuredClone(entry)]]))
+    sbp('dez.model/modelCache/applyProviderResult', 'local', { ok: false, models: [], error: 'HTTP 500' })
+    expect(learned()).toStrictEqual(limit)
+
+    check(new Map([['film', { ...entry, offline: true }]]))
+    expect(learned()).toBeUndefined()
+  })
+
+  it('forgets the limit of a model that left the list', () => {
+    const entries = new Map([['film', entry]])
+    check(entries)
+    learn()
+
+    check(new Map(), [])
+    check(entries)
+    expect(learned()).toBeUndefined()
+  })
+
+  it('saves a learned limit in model_cache.json', async () => {
+    await sbp('dez.model/modelCache/init')
+    vi.useFakeTimers()
+    sbp('dez.model/modelCache/startPersistence')
+    check(new Map([['film', entry]]))
+    learn()
+    await vi.advanceTimersByTimeAsync(1000)
+
+    expect(savedModelCaches.at(-1)?.providers.local?.models).toStrictEqual([{ ...film, learnedImageLimit: learned() }])
   })
 })
 

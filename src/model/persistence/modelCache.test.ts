@@ -83,7 +83,7 @@ describe('model cache persistence format', () => {
     expect(parseModelCacheJson(serializeModelCacheJson(parsed))).toStrictEqual(parsed)
   })
 
-  it('round-trips the parameters, text rules, image rules, clip rules, and unstored file type of a model, and drops only a model whose data is not valid', () => {
+  it('round-trips the parameters, text rules, image rules, clip rules, unstored file type, and learned image limit of a model, and drops only a model whose data is not valid', () => {
     const models = [
       {
         id: 'film',
@@ -109,6 +109,7 @@ describe('model cache persistence format', () => {
       },
       { id: 'sound', name: 'Sound', provider: 'venice', request: 'music', text: { lyrics: { required: false } } },
       { id: 'frames', name: 'Frames', provider: 'venice', request: 'imageToVideo', images: { maxImages: 2 } },
+      { id: 'first-frame', name: 'First frame', provider: 'venice', request: 'imageToVideo', images: { maxImages: 2 }, learnedImageLimit: { maxImages: 1, entry: '0badf00d' } },
       {
         id: 'sized',
         name: 'Sized',
@@ -232,6 +233,30 @@ describe('model cache persistence format', () => {
       ['no-count', { maxImages: 2 }],
       ['bad-name-inside', { maxImages: 2, whenParameter: { name: 'images_as', value: 'references', rules: { maxImages: 16, references: {} } } }],
     ])
+  })
+
+  it('drops a learned image limit that is not valid, and keeps the model', () => {
+    const model = (id: string, learnedImageLimit: unknown) => ({ id, name: id, provider: 'venice', request: 'imageToVideo', images: { maxImages: 2 }, learnedImageLimit })
+    const parsed = parseModelCacheJson(JSON.stringify({
+      version: MODEL_CACHE_VERSION,
+      providers: {
+        venice: {
+          models: [
+            model('none', 0),
+            model('no-images', { maxImages: 0, entry: '0badf00d' }),
+            model('part-image', { maxImages: 1.5, entry: '0badf00d' }),
+            model('text', { maxImages: '1', entry: '0badf00d' }),
+            model('no-entry', { maxImages: 1 }),
+          ],
+          working: true,
+          updatedAt: 1,
+          lastCheckedAt: 2,
+        },
+      },
+    }))
+
+    expect(parsed.providers.venice?.models).toStrictEqual(['none', 'no-images', 'part-image', 'text', 'no-entry']
+      .map((id) => ({ id, name: id, provider: 'venice', request: 'imageToVideo', images: { maxImages: 2 } })))
   })
 
   it('drops a clip rule that is not valid alone, and keeps the model, the kind, and its other rules', () => {

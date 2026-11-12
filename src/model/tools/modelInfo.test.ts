@@ -200,6 +200,17 @@ describe('modelInfoText', () => {
     expect([asFrames, asReferences].map(({ usage }) => (usage as string[]).includes(USAGE_TEXTS.videoReferences))).toStrictEqual([false, true])
   })
 
+  // The submit refuses a message with more images (learnedImageLimit.ts).
+  it('gives the most images that a refusal of the provider told, in the facts and in the usage', () => {
+    const film: ModelInfo = { id: 'film', name: 'Film', provider: OPENROUTER.id, outputs: ['video'], request: 'imageToVideo', imageInput: true, images: { maxImages: 2 } }
+    const learned = parsed(modelInfoText(OPENROUTER, { ...film, learnedImageLimit: { maxImages: 1, entry: '0badf00d' } }, { entry: { id: 'film' } }))
+    const usage = (maxImages: number) => parsed(modelInfoText(OPENROUTER, { ...film, images: { maxImages } }, { entry: { id: 'film' } })).usage
+
+    expect(learned.dez.images).toStrictEqual({ minImages: 1, maxImages: 1 })
+    expect(learned.usage).toStrictEqual(usage(1))
+    expect(learned.usage).not.toStrictEqual(usage(2))
+  })
+
   it('tells why Dez sends no request to a model that it cannot use, or whose images it cannot store', () => {
     const sketcher: ModelInfo = { id: 'sketch', name: 'Sketcher', provider: OPENROUTER.id, outputs: ['image'], request: 'none' }
     const svg: ModelInfo = { id: 'svg', name: 'SVG Maker', provider: OPENROUTER.id, outputs: ['image'], request: 'image', imageInput: false, unstoredOutput: 'SVG' }

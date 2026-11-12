@@ -18,6 +18,7 @@ import type { AppStatePayload, CachedProvider, ConversationSearchOutcome, ModelC
 import { emptyModelCache } from '../persistence/modelCache'
 import type { ModelOutputsConfig, ProviderConfig, ProviderThinkingConfig } from '../providers/config'
 import { withKeptClipData } from '../providers/keptClipData'
+import { modelEntriesFingerprint, withKeptImageLimits } from '../providers/learnedImageLimit'
 import type { ParameterValue, ParameterValues } from '../providers/modelParameters'
 import { toolsApply } from '../providers/modelToggles'
 import { providerModel, type ModelInfo, type ProviderId, type ProviderModelsResult } from '../providers/types'
@@ -1354,6 +1355,19 @@ export default sbp('sbp/selectors/register', {
     return model ? cloneModelInfo(model) : null
   },
 
+  // Keeps the image count that the provider's refusal of a request to the
+  // model told (learnedImageLimit.ts), with the fingerprint of the model's
+  // raw entries. Nothing without a raw entry in memory (after a start,
+  // until the provider's next good model check): with no fingerprint, the
+  // next check could not tell whether the model changed. The model cache
+  // watch saves it.
+  'dez.model/modelCache/learnImageLimit' (providerId: ProviderId, modelId: string, maxImages: number): void {
+    const store = useModelCacheStore()
+    const model = cachedModel({ providerId, modelId })
+    const entry = modelEntriesFingerprint(store.rawModels.get(providerId)?.get(modelId), store.rawMediaModels.get(providerId)?.get(modelId))
+    if (model && entry !== undefined) model.learnedImageLimit = { maxImages, entry }
+  },
+
   // Reconciliation primitive: on success replace models and raw entries,
   // mark working, bump both timestamps, and clear the error; on failure keep
   // the last-known models and raw entries but mark the provider not-working,
@@ -1364,13 +1378,15 @@ export default sbp('sbp/selectors/register', {
   // lists (`withKeptClipData`), so model_cache.json is the cache of it.
   // The raw media entries are only those of the lists that loaded: they
   // hold prices, and `model_info` must not show old ones as the provider's
-  // answer.
+  // answer. On every success, a model keeps its learned image limit only
+  // while its new raw entries are the same (`withKeptImageLimits`).
   'dez.model/modelCache/applyProviderResult' (providerId: ProviderId, result: ProviderModelsResult): void {
     const store = useModelCacheStore()
     const now = Date.now()
     const existing = store.cache.providers[providerId]
     if (result.ok) {
-      const models = result.mediaListFailed && existing ? withKeptClipData(result.models, existing.models) : result.models
+      const listed = result.mediaListFailed && existing ? withKeptClipData(result.models, existing.models) : result.models
+      const models = withKeptImageLimits(listed, existing?.models ?? [], result.entries, result.mediaEntries)
       store.cache.providers[providerId] = {
         models: models.map(cloneModelInfo),
         working: true,

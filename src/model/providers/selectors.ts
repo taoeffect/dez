@@ -20,6 +20,7 @@ import { assertProviderResponseOk, explainedProviderError, providerConnectionErr
 import { generatedImageFromUrl } from './generatedImages'
 import { imageFit, type ImageSizeRules } from './imageSize'
 import { knownLimitsOf, type KnownLimit } from './knownLimits'
+import { learnedImageLimitRow, learnedImagesProblem } from './learnedImageLimit'
 import type { InputClipPart, MediaWireRequest } from './mediaFormats'
 import { effectiveParameterValues, type ParameterValues } from './modelParameters'
 import { modelToggles, type ToggleModel } from './modelToggles'
@@ -328,16 +329,20 @@ export default sbp('sbp/selectors/register', {
   },
 
   // Synchronous: the known limits of the model (knownLimits.ts), the rules
-  // that Dez knows from other places than the provider's model data. A
-  // limit for some request kinds needs the cached model.
+  // that Dez knows from other places than the provider's model data, and
+  // last the image count that a refusal of the provider told
+  // (learnedImageLimit.ts). A limit for some request kinds needs the
+  // cached model.
   'dez.provider/knownLimits' (providerId: string, modelId: string): KnownLimit[] {
     const model = sbp('dez.model/modelCache/model', providerId, modelId) as ModelInfo | null
-    return knownLimitsOf({
+    const provider = getProvider(providerId)
+    const limits = knownLimitsOf({
       providerId,
-      mediaFormat: getProvider(providerId)?.config.mediaApi?.format,
+      mediaFormat: provider?.config.mediaApi?.format,
       modelId,
       ...(model && { request: effectiveRequest(model) }),
     })
+    return model?.learnedImageLimit ? [...limits, learnedImageLimitRow(provider?.name ?? providerId, model.learnedImageLimit)] : limits
   },
 
   // Synchronous and reactive: it reads the custom providers and the model
@@ -461,7 +466,9 @@ export default sbp('sbp/selectors/register', {
   //   (a reference-to-video model, OpenRouter's "Images as"), and the clips
   //   of `input.clips` as the model uses them (`inputClipParts`). A refusal
   //   that tells that the model takes fewer images rejects with a
-  //   TooManyImagesError (`Provider.imageCountRefusal`).
+  //   TooManyImagesError (`Provider.imageCountRefusal`), and the model
+  //   cache keeps that count: a later call with more images rejects before
+  //   any request (`learnedImagesProblem`).
   // - A text (a transcription of an audio clip): one request through
   //   dez.http/stream, and the text of its answer in `text`.
   //
@@ -486,15 +493,17 @@ export default sbp('sbp/selectors/register', {
       const modelName = cachedModel?.name ?? modelId
       // The submit refuses such requests with the model's name
       // (`unstoredOutputMessage`, `missingClipProblem`, `clipTagProblem`,
-      // `missingImageProblem`); this is for a caller that did not check. A
-      // video clip is the reference of a request with no image.
+      // `missingImageProblem`, `learnedImagesProblem`); this is for a
+      // caller that did not check. A video clip is the reference of a
+      // request with no image.
       if (cachedModel?.unstoredOutput !== undefined) throw new ExplainedError(unstoredOutputMessage(cachedModel.name, cachedModel.unstoredOutput))
       const values = parameterValues(provider.id, modelId, input.parameters)
       const imageRules = inputImageRulesFor(cachedModel?.images, values)
       const clipProblem = missingClipProblem(modelName, kind, clips) ?? clipTagProblem(modelName, cachedModel?.clips, clips, paths.length)
       if (clipProblem !== null) throw new ExplainedError(clipProblem)
-      const missingImages = clips.some((clip) => clip.kind === 'video') ? null : missingImageProblem(modelName, kind, paths.length, imageRules)
-      if (missingImages !== null) throw new ExplainedError(missingImages)
+      const imageProblem = (clips.some((clip) => clip.kind === 'video') ? null : missingImageProblem(modelName, kind, paths.length, imageRules))
+        ?? learnedImagesProblem(modelName, cachedModel?.learnedImageLimit, paths.length)
+      if (imageProblem !== null) throw new ExplainedError(imageProblem)
       const appDir = paths.length > 0 ? await sbp('dez.native/getAppDir') as string : ''
       const sizeRules = provider.inputImageSize(kind, { ...(imageRules && { images: imageRules }) })
       const images = await Promise.all(paths.map(async (path): Promise<ChatImagePart> => {
@@ -536,14 +545,17 @@ export default sbp('sbp/selectors/register', {
         ...(imageRules?.references && { imagesAsReferences: true as const }),
       }
       // A refusal that tells that the model takes fewer images: the user
-      // gets Dez's text, with the count, and the console the provider's. A
-      // refusal that tells a field value that the model needs: the request
-      // goes once more with it (`Provider.clipRequestAfterRefusal`).
+      // gets Dez's text, with the count, and the console the provider's;
+      // the model cache keeps the count, so that the next message with as
+      // many images gets no request (learnedImageLimit.ts). A refusal that
+      // tells a field value that the model needs: the request goes once
+      // more with it (`Provider.clipRequestAfterRefusal`).
       const firstRequest = provider.clipRequest(kind, modelId, clipInput)
       const first = await sendClipRequest(run, apiRequest(firstRequest), null, cacheDir).catch(async (error: unknown) => {
         const refusal = provider.imageCountRefusal(kind, error, images.length)
         if (refusal) {
           console.error(`${provider.name} refused the images of a request to ${modelId}:`, error)
+          sbp('dez.model/modelCache/learnImageLimit', provider.id, modelId, refusal.maxImages)
           throw refusal
         }
         const fixed = provider.clipRequestAfterRefusal(kind, firstRequest, error)

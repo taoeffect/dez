@@ -9,6 +9,7 @@ import { NO_VIDEO_LENGTH_MESSAGE } from './mediaFormats'
 import type { ModelParameter } from './modelParameters'
 import { wavFile } from './pcmAudio'
 import type { ProviderGenerateMediaResult } from './streamTypes'
+import type { ModelInfo } from './types'
 // Side-effect imports: register the dez.model/* selectors and the selector
 // under test.
 import '../state/index'
@@ -161,6 +162,13 @@ const OPENROUTER_VIDEO_PARAMETERS: ModelParameter[] = [
   { name: 'resolution', label: 'Resolution', options: ['480p', '720p'], default: '480p' },
   { name: 'aspect_ratio', label: 'Aspect ratio', options: ['16:9', '1:1'] },
 ]
+// The answer of a Venice-like provider to a video request with a last
+// frame, for a model that takes none, and the two frames of that request.
+const LAST_FRAME_REFUSAL = json({
+  details: { _errors: [], end_image_url: { _errors: ['This model does not support end_image_url'] } },
+  error: 'Invalid request parameters',
+}, 400)
+const TWO_FRAMES = ['/home/u/.config/dez/assets/images/fox.png', '/home/u/.config/dez/assets/images/end.png']
 
 describe('a clip that the first answer holds', () => {
   it('lets Rust write the speech to a temp copy, named by the type of the answer', async () => {
@@ -438,16 +446,13 @@ describe('a clip job', () => {
   })
 
   // Dez does not send the request again with one image: the user chooses
-  // the image.
+  // the image. With no raw entry of the model in memory, the model cache
+  // learns no count (learnedImageLimit.ts).
   it('fails with the count of the images after a refusal of the last frame, and sends no other request', async () => {
     cacheModel('venice-like', VENICE_VIDEO_PARAMETERS)
-    answers = [json({
-      details: { _errors: [], end_image_url: { _errors: ['This model does not support end_image_url'] } },
-      error: 'Invalid request parameters',
-    }, 400)]
+    answers = [LAST_FRAME_REFUSAL]
 
-    const error = await generate({ kind: 'imageToVideo', images: ['/home/u/.config/dez/assets/images/fox.png', '/home/u/.config/dez/assets/images/end.png'] })
-      .catch((failure: unknown) => failure)
+    const error = await generate({ kind: 'imageToVideo', images: TWO_FRAMES }).catch((failure: unknown) => failure)
 
     expect(error).toBeInstanceOf(TooManyImagesError)
     expect(error).toMatchObject({ maxImages: 1, sentImages: 2 })
@@ -456,6 +461,25 @@ describe('a clip job', () => {
       'Media server refused the images of a request to m:',
       'HTTP 400: Invalid request parameters (end_image_url: This model does not support end_image_url)',
     ]])
+    expect((sbp('dez.model/modelCache/model', 'venice-like', 'm') as ModelInfo).learnedImageLimit).toBeUndefined()
+  })
+
+  // The refusal cost nothing, and so would the next one; but the user
+  // would send the same message again and again.
+  it('keeps the count of a refusal of the last frame, and refuses a later request with more images before any request', async () => {
+    sbp('dez.model/modelCache/applyProviderResult', 'venice-like', {
+      ok: true,
+      models: [{ id: 'm', name: 'M', provider: 'venice-like', parameters: VENICE_VIDEO_PARAMETERS }],
+      entries: new Map([['m', { id: 'm', model_spec: { name: 'M' } }]]),
+    })
+    answers = [LAST_FRAME_REFUSAL]
+    await expect(generate({ kind: 'imageToVideo', images: TWO_FRAMES })).rejects.toBeInstanceOf(TooManyImagesError)
+
+    await expect(generate({ kind: 'imageToVideo', images: TWO_FRAMES })).rejects.toStrictEqual(new ExplainedError(
+      'M takes only 1 image, and this message has 2. Keep only 1 image in the message (pasted, or named with @id), and send it again.',
+    ))
+    expect(downloads).toHaveLength(1)
+    expect((sbp('dez.model/modelCache/model', 'venice-like', 'm') as ModelInfo).learnedImageLimit?.maxImages).toBe(1)
   })
 
   it('makes a video through a job that answers 202, a GET poll, and a download of the content', async () => {

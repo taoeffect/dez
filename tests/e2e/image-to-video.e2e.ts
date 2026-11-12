@@ -28,7 +28,8 @@ import { editorDoc, focusEditor, newTab, openToasts, pickModel, setCaret, submit
 //   and a warning toast tells of a third one;
 // - a model that refuses the last frame (Venice's 400 for
 //   `end_image_url`) gets an error toast that tells to keep one image, and
-//   the request does not go again;
+//   the request does not go again; Dez keeps the count of the refusal, so
+//   the same message sent again gets the error toast with no request;
 // - an image that passes the size rules of the model's entry goes as its
 //   own bytes (the tests above); one that breaks them goes as a copy that
 //   passes them (the part in its middle, scaled), and the stored file and
@@ -275,7 +276,9 @@ describe('image-to-video models', () => {
     expect(await consoleErrors(browser)).toStrictEqual([])
   })
 
-  it('tells to keep one image when the model refuses the last frame, and does not send the request again', async () => {
+  // Keep this test after the two-frames test: after it, Dez refuses a
+  // message with more than one image to the frames model.
+  it('tells to keep one image when the model refuses the last frame, and refuses the same message again before any request', async () => {
     const message = `${FILMS.modelName} takes only 1 image, and this message has 2. Keep only 1 image in the message (pasted, or named with @id), and send it again.`
     await pickModel(browser, FILMS.name, FILMS.modelName)
     await focusEditor(browser)
@@ -310,6 +313,20 @@ describe('image-to-video models', () => {
       expect.stringMatching(new RegExp(`^${FILMS.name} refused the images of a request to ${FILMS.modelId}: `)),
       expect.stringMatching(/^Media request failed: /),
     ])
+    await resetConsoleErrors(browser)
+
+    // The model's entry in the list of the mock did not change, so Dez
+    // keeps the count of the refusal (learnedImageLimit.ts), and the
+    // provider gets no second request.
+    await submit(browser, '')
+
+    await waitForValue(browser, 'error toast', () => openToasts(browser, 'error'), [{ title: 'Cannot send', message }])
+    // The card of the first toast can still be closing.
+    await click(browser, '.toast-card--error:not(.toast-card--closing) .toast-close')
+    await waitForValue(browser, 'error toast closed', () => openToasts(browser, 'error'), [])
+    await waitForThread(browser, [{ role: 'user', text }])
+    expect(setup.mock.hasWaitingRequest()).toBe(false)
+    expect(await consoleErrors(browser)).toStrictEqual([`Cannot send: ${message}`])
   })
 
   it('sends a copy that passes the size rules of the model for an image that breaks them, and keeps the stored image', async () => {

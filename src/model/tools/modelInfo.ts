@@ -5,6 +5,7 @@ import { availableModels } from '../modelSearch'
 import type { ModelCache } from '../persistence/types'
 import { inputImageRulesFor, maxInputImages, minInputImages } from '../providers/clipImages'
 import type { KnownLimit } from '../providers/knownLimits'
+import { imageRulesWithLearnedLimit } from '../providers/learnedImageLimit'
 import { checkedParameterValues, type ParameterValues } from '../providers/modelParameters'
 import { effectiveRequest, MODEL_REQUESTS, type ModelInfo, type ProviderInfo, type ProviderInputImageRules } from '../providers/types'
 import { unstoredOutputMessage, unusableModelMessage } from '../providers/unusableModel'
@@ -287,8 +288,12 @@ export function modelInfoText(provider: ProviderInfo, model: ModelInfo, facts: M
 
   // The image rules of a model can depend on its parameter values
   // (`InputImageRules.whenParameter`): the facts and the usage tell the
-  // rules of the values that a request sends now.
-  const images = inputImageRulesFor(model.images, facts.values ?? {})
+  // rules of the values that a request sends now, with the most images
+  // that a refusal of the provider told, when that is lower (its row in
+  // `dez.limits` tells where it comes from).
+  const kind = effectiveRequest(model)
+  const ownImages = inputImageRulesFor(model.images, facts.values ?? {})
+  const images = kind === 'chat' || kind === 'none' ? ownImages : imageRulesWithLearnedLimit(kind, ownImages, model.learnedImageLimit)
   const requestModel: ModelInfo = { ...model, ...(images && { images }) }
   const info = {
     id,
