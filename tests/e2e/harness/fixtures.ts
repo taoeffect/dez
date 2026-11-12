@@ -62,10 +62,18 @@ export async function filesIn (dir: string): Promise<string[]> {
   }
 }
 
-/** The one file name in `dir` that is not in `before`, once it is there.
- *  The wait fails when more than one new file comes. */
+// The temp file of a write that has not ended. The app's file writer
+// (`PrivateFileWriter`, src-tauri/src/persistence.rs) writes the bytes to
+// `<name>.<pid>.<n>.tmp` next to the file, syncs it to disk, and only then
+// renames it to `<name>`. On a slow disk the whole file is there under the
+// temp name for a while.
+const WRITE_TEMP_NAME = /\.\d+\.\d+\.tmp$/
+
+/** The one file name in `dir` that is not in `before`, once it is there
+ *  under its own name (a temp file of a write does not count). The wait
+ *  fails when more than one new file comes. */
 export async function newFileIn (browser: E2EBrowser, dir: string, before: string[]): Promise<string> {
-  const added = async () => (await filesIn(dir)).filter((name) => !before.includes(name))
+  const added = async () => (await filesIn(dir)).filter((name) => !before.includes(name) && !WRITE_TEMP_NAME.test(name))
   await waitForValue(browser, `new files in ${path.basename(dir)}`, async () => (await added()).length, 1)
   return (await added())[0]
 }

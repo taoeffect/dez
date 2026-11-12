@@ -140,8 +140,9 @@ export default sbp('sbp/selectors/register', {
         throw new Error('The image cannot be decoded.', { cause: error })
       })
       // WebKit gives every image that it decodes a size (an SVG with no
-      // width and height gets 300 × 150, fitted to its viewBox), so this
-      // only keeps a plan from a size of 0.
+      // width and height gets its viewBox size in WebKitGTK 2.52, and
+      // 300 × 150 fitted to its viewBox in 2.54), so this only keeps a plan
+      // from a size of 0.
       if (!img.naturalWidth || !img.naturalHeight) throw new Error('The image has no size.')
       const drawing = plan({ width: img.naturalWidth, height: img.naturalHeight })
       if (!drawing) return null

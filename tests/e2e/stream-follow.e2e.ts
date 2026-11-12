@@ -7,7 +7,7 @@ import { consoleErrors, resetConsoleErrors, screenshotOnFailure, waitFor, waitFo
 import { makeConversation, seedConversation, seedRawAppState } from './harness/fixtures'
 import { mockChatPath, mockProviderConfig, startChatMock, startEventStream, writeChatFrame, type MockProvider, type MockServer } from './harness/mockServer'
 import { createSession, destroySession, type E2EBrowser } from './harness/session'
-import { activeTabStreaming, openToasts, pickModel, sbpCall, submit, threadSections } from './harness/thread'
+import { activeTabStreaming, editorDoc, openToasts, pickModel, sbpCall, submit, threadSections } from './harness/thread'
 
 // How the thread editor scrolls while a reply streams, driven through the
 // real app against a mock server in this process:
@@ -22,10 +22,12 @@ import { activeTabStreaming, openToasts, pickModel, sbpCall, submit, threadSecti
 // fire the same scroll events as a wheel or the scrollbar.
 //
 // One app session and one tab serve the whole file. The tests run in order:
-// each adds a reply to the conversation of the one before.
+// each adds a reply to the conversation of the one before. The last test
+// leaves that tab for another conversation.
 
 const PROVIDER: MockProvider = { id: 'follow', name: 'Follow Mock', modelId: 'follow-model', modelName: 'Follow Model' }
 const CONVERSATION_ID = 'long-thread'
+const OTHER_CONVERSATION_ID = 'other-long-thread'
 
 /** What a view at its bottom may still have below it: scroll positions
  *  can be fractions of a pixel. */
@@ -166,6 +168,11 @@ describe('stream follow', () => {
           { role: 'agent', nodes: [{ kind: 'text', text: longText('Answer') }] },
           { role: 'user', nodes: [{ kind: 'text', text: 'Question 1' }] },
         ],
+      }))
+      await seedConversation(app.home, makeConversation({
+        id: OTHER_CONVERSATION_ID,
+        title: 'Other long thread',
+        sections: [{ role: 'user', nodes: [{ kind: 'text', text: longText('Other') }] }],
       }))
       browser = await createSession(app.binary, app.port)
     } catch (err) {
@@ -316,5 +323,44 @@ describe('stream follow', () => {
     const ended = await scrollView()
     expect(ended.topLine, 'top line after the end').toBe(scrolled.topLine)
     expect(ended.fromBottom, 'distance from the bottom after the end').toBeGreaterThan(AT_BOTTOM_PX)
+  })
+
+  // Regression: a tab change keeps the same editor view, so the bottom
+  // scroll of a followed reply's end, in a frame after the change, scrolled
+  // the next tab to its bottom. The page holds its frames here, so the
+  // change surely comes before that frame.
+  it('opens the next tab at its top when the tab changes before the bottom scroll of a followed reply end', async () => {
+    await submit(browser, 'Question 5')
+    await waitForReply(5)
+    await sendAnswer('Reply 5.')
+    await expectAtBottom('reply 5')
+
+    await browser.execute(() => {
+      const request = window.requestAnimationFrame
+      const cancel = window.cancelAnimationFrame
+      const held = new Map<number, FrameRequestCallback>()
+      // Far above the ids of the frames that the page asked for before.
+      let nextId = 1_000_000_000
+      window.requestAnimationFrame = (callback) => {
+        held.set(nextId, callback)
+        return nextId++
+      }
+      window.cancelAnimationFrame = (id) => {
+        if (!held.delete(id)) cancel.call(window, id)
+      }
+      Reflect.set(window, '__e2eReleaseFrames', () => {
+        window.requestAnimationFrame = request
+        window.cancelAnimationFrame = cancel
+        for (const callback of held.values()) request.call(window, callback)
+      })
+    })
+    endReply()
+    await waitForReplyEnd()
+    await sbpCall(browser, 'dez.model/tabs/openConversation', OTHER_CONVERSATION_ID)
+    await waitForValue(browser, 'other conversation in the editor', async () => (await editorDoc(browser)).startsWith('Other line 1\n'), true)
+    await browser.execute(() => (Reflect.get(window, '__e2eReleaseFrames') as () => void)())
+
+    const view = await scrollView()
+    expect([view.scrollTop, view.topLine]).toEqual([0, 1])
   })
 })

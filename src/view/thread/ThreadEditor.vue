@@ -974,6 +974,10 @@ let keepBottomOnLateLoad = false
 // The scroller's scrollTop at the last `checkScrollUp`.
 let lastScrollerTop = 0
 const KEEP_BOTTOM_MEASURE_KEY = 'dez-keep-bottom-on-late-load'
+// The frame of `scrollViewToBottomAfterLayout`. Every rebuild cancels it:
+// a tab change keeps the same view, so a frame that comes after one would
+// scroll the next tab to its bottom.
+let bottomScrollFrame = 0
 
 function onScrollerLateLoad(event: Event) {
   if (!view || !(event.target instanceof HTMLImageElement || event.target instanceof HTMLVideoElement)) return
@@ -1012,7 +1016,7 @@ function checkScrollUp() {
 }
 
 function scrollViewToBottomAfterLayout(v: EditorView) {
-  requestAnimationFrame(() => {
+  bottomScrollFrame = requestAnimationFrame(() => {
     if (view !== v) return
     v.scrollDOM.scrollTop = v.scrollDOM.scrollHeight
     // Set here, not before the frame: scroll events of the rebuild come
@@ -1031,6 +1035,7 @@ function resetViewToActiveTab(streamEnd?: { followBottom: boolean }) {
   // swap would insert a pill at a wrong position.
   closeAutocomplete()
   keepBottomOnLateLoad = false
+  cancelAnimationFrame(bottomScrollFrame)
   // A rebuild of the same tab, such as the reset at the end of each
   // stream, keeps the open thinking and tool call panels; another tab
   // starts with all closed.

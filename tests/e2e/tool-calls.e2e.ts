@@ -41,10 +41,13 @@ const CLAUDE: MockProvider = { id: 'claude', name: 'Claude Mock', modelId: 'clau
 const GREEN: Rgb = [40, 160, 60]
 const STRIPES_PNG = stripedPng(30, 20, [[220, 40, 40], GREEN, [40, 90, 220]])
 
-// Three stripes of 20 viewBox units, with no width and height: the webview
-// gives it 300 x 150 pixels, so each stripe is 100 pixels wide. With no
-// width and height, WebKit draws a part of an SVG wrong unless Dez draws
-// it whole (`dez.controller/images/redraw`).
+// Three stripes of 20 viewBox units, with no width and height. The size
+// that WebKit gives it depends on the version: WebKitGTK 2.54 gives it
+// 300 x 150 (the default size, fitted to the viewBox), and 2.52 (the CI
+// runner's) gives it the viewBox size. The SVG test works in the size that
+// the webview gives. Where that is not the viewBox size, WebKit draws a
+// part of an SVG wrong unless Dez draws it whole
+// (`dez.controller/images/redraw`).
 const STRIPES_SVG = Buffer.from([
   '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 60 30">',
   '<rect width="20" height="30" fill="rgb(220,40,40)"/>',
@@ -52,6 +55,7 @@ const STRIPES_SVG = Buffer.from([
   '<rect x="40" width="20" height="30" fill="rgb(40,90,220)"/>',
   '</svg>',
 ].join(''))
+const WEBKIT_SVG_SIZES = [{ width: 300, height: 150 }, { width: 60, height: 30 }]
 
 // Two seconds of silence, 16-bit mono at 8 kHz: the clip of the `audio`
 // test. Silence, so a run makes no sound.
@@ -532,24 +536,29 @@ describe('tool calls', () => {
     const pastedPath = message.slice('Crop !['.length, message.indexOf(']('))
     expect(path.extname(pastedPath)).toBe('.svg')
     expect(await fs.promises.readFile(pastedPath)).toEqual(STRIPES_SVG)
-    await waitForValue(browser, 'shown SVG', () => shownImages(browser), [{ alt: path.basename(pastedPath), width: 300, height: 150 }])
+    await waitForValue(browser, 'loaded SVG', async () => ((await shownImages(browser))[0]?.width ?? 0) > 0, true)
+    const [shown] = await shownImages(browser)
+    expect(shown.alt).toBe(path.basename(pastedPath))
+    const svgSize = { width: shown.width, height: shown.height }
+    expect(WEBKIT_SVG_SIZES).toContainEqual(svgSize)
+    const stripe = svgSize.width / 3
 
     await submit(browser, '')
     const first = await setup.mock.waitForRequest(browser)
     const sent = JSON.parse(first.body) as { messages: Array<{ content: Array<{ type: string, image_url?: { url: string } }> }> }
     const copy = sent.messages.at(-1)?.content[1]?.image_url?.url ?? ''
     expect(copy.startsWith('data:image/png;base64,')).toBe(true)
-    expect(await decodedImage(browser, copy, [50, 150, 250])).toEqual({
-      width: 300,
-      height: 150,
+    expect(await decodedImage(browser, copy, [stripe / 2, stripe * 1.5, stripe * 2.5])).toEqual({
+      ...svgSize,
       pixels: [[220, 40, 40, 255], [...GREEN, 255], [40, 90, 220, 255]],
     })
 
     // The green stripe, at half its size.
+    const made = { width: stripe / 2, height: svgSize.height / 2 }
     const call = {
       id: 'call_crop_svg',
       type: 'function',
-      function: { name: 'crop_scale_image', arguments: JSON.stringify({ image: 'a', crop_x: 100, crop_y: 0, crop_width: 100, crop_height: 150, width: 50 }) },
+      function: { name: 'crop_scale_image', arguments: JSON.stringify({ image: 'a', crop_x: stripe, crop_y: 0, crop_width: stripe, crop_height: svgSize.height, width: made.width }) },
     }
     startEventStream(first.reply)
     writeChatFrame(first.reply, { tool_calls: [{ index: 0, ...call }] }, 'tool_calls')
@@ -562,7 +571,7 @@ describe('tool calls', () => {
     expect((JSON.parse(second.body) as { messages: unknown[] }).messages.at(-1)).toEqual({
       role: 'tool',
       tool_call_id: 'call_crop_svg',
-      content: 'Made the image @b from @a. The image @b is 50x75 pixels.',
+      content: `Made the image @b from @a. The image @b is ${made.width}x${made.height} pixels.`,
     })
     await sendChatReply(second.reply, TOOLER.modelName)
 
@@ -570,9 +579,8 @@ describe('tool calls', () => {
     const reply = (await threadSections(browser))[1].text
     const madePath = reply.slice(reply.indexOf('![') + 2, reply.indexOf(']('))
     expect(path.extname(madePath)).toBe('.png')
-    expect(await decodedImage(browser, pngDataUrl(await fs.promises.readFile(madePath)), [5, 25, 45])).toEqual({
-      width: 50,
-      height: 75,
+    expect(await decodedImage(browser, pngDataUrl(await fs.promises.readFile(madePath)), [made.width / 10, made.width / 2, made.width * 9 / 10])).toEqual({
+      ...made,
       pixels: [[...GREEN, 255], [...GREEN, 255], [...GREEN, 255]],
     })
     expect(await fs.promises.readFile(pastedPath)).toEqual(STRIPES_SVG)
