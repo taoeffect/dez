@@ -10,16 +10,18 @@ import { replyText, sendChatReply, startEventStream, writeChatFrame, type MockPr
 import type { E2EBrowser } from './harness/session'
 import { focusEditor, newTab, pickModel, submit, threadSections } from './harness/thread'
 
-// The `image` tool's `flip`, `rotate`, and color calls, driven through the
-// real app against a mock server in this process. The webview draws each
-// new image, and the tests read the pixels of the stored files. A flip
-// mirrors the image. A turn by a right angle swaps the sides. Another angle
-// makes a larger image with transparent corners, or (with `keep_size`) an
-// image of the same size with a smaller turned image, and `fill` paints the
-// blank parts. A turned SVG is drawn as a PNG. A turned JPEG stays a JPEG,
-// unless the turn leaves transparent corners: then it is a PNG. The color
-// calls (`brightness`, `contrast`, `saturation`, `invert`) change each color
-// value and keep the transparency.
+// The `image` tool's `flip`, `rotate`, color, and `convert` calls, driven
+// through the real app against a mock server in this process. The webview
+// draws each new image, and the tests read the pixels of the stored files.
+// A flip mirrors the image. A turn by a right angle swaps the sides.
+// Another angle makes a larger image with transparent corners, or (with
+// `keep_size`) an image of the same size with a smaller turned image, and
+// `fill` paints the blank parts. A turned SVG is drawn as a PNG. A turned
+// JPEG stays a JPEG, unless the turn leaves transparent corners: then it is
+// a PNG. The color calls (`brightness`, `contrast`, `saturation`, `invert`)
+// change each color value and keep the transparency. A convert makes a
+// JPEG on white, a WebP (where the webview writes WebP), or an SVG that
+// holds the PNG of the image, which the editor shows and Dez draws again.
 //
 // One app session serves the whole file.
 
@@ -27,6 +29,15 @@ const TOOLER: MockProvider = { id: 'tooler', name: 'Tool Mock', modelId: 'tool-m
 
 const [RED, GREEN, BLUE] = STRIPE_COLORS.map((rgb) => [...rgb, 255])
 const TRANSPARENT = [0, 0, 0, 0]
+
+// The file type of each extension of a stored image.
+const FILE_TYPES: Record<string, string> = { '.png': 'image/png', '.jpg': 'image/jpeg', '.webp': 'image/webp', '.svg': 'image/svg+xml' }
+
+/** The largest difference of a channel of `pixel` from that of `color`:
+ *  JPEG and WebP keep colors only near to their values. */
+function colorDistance (pixel: readonly number[] | undefined, color: readonly number[]): number {
+  return Math.max(...color.map((value, index) => Math.abs((pixel?.[index] ?? Infinity) - value)))
+}
 
 /** An `image` call of the mock model, and the result that Dez gives. */
 interface ImageCall {
@@ -68,7 +79,7 @@ function sentMessages (body: string): unknown[] {
   return sent.messages
 }
 
-describe('image tool flip, rotate, and color changes', () => {
+describe('image tool flip, rotate, color changes, and convert', () => {
   let setup: MockProviderApp
   let browser: E2EBrowser
   let generatedDir: string
@@ -102,7 +113,7 @@ describe('image tool flip, rotate, and color changes', () => {
    *  `points` (each a column and a row). */
   async function filePixels (file: string, points: Array<[number, number]>): Promise<DecodedImage> {
     const bytes = await fs.promises.readFile(file)
-    const url = path.extname(file) === '.jpg' ? `data:image/jpeg;base64,${bytes.toString('base64')}` : pngDataUrl(bytes)
+    const url = `data:${FILE_TYPES[path.extname(file)]};base64,${bytes.toString('base64')}`
     const reads = []
     for (const [column, row] of points) reads.push(await decodedImage(browser, url, [column], row))
     return { width: reads[0]?.width ?? 0, height: reads[0]?.height ?? 0, pixels: reads.flatMap((read) => read.pixels) }
@@ -252,5 +263,70 @@ describe('image tool flip, rotate, and color changes', () => {
     expect(await filePixels(made.e, stripes)).toEqual({ width: 90, height: 20, pixels: [[35, 215, 215, 255], [215, 95, 195, 255], [215, 165, 35, 255]] })
     // The green stripe in the middle, and a blank corner.
     expect(await filePixels(made.g, [[39, 39], [2, 39]])).toEqual({ width: 78, height: 78, pixels: [[215, 95, 195, 255], TRANSPARENT] })
+  })
+
+  // Not every webview writes WebP (a canvas that cannot gives a PNG), so the
+  // test asks the page first and expects the unwritable-format error where
+  // it does not. The SVG holds the PNG of the image: the editor shows it, and
+  // Dez draws it again for a convert to PNG and for the PNG copy of a request.
+  it('converts a PNG to a JPEG on white, a WebP, and an SVG, and draws the SVG again as a PNG and in a request', async () => {
+    const writesWebp = await browser.execute(() => document.createElement('canvas').toDataURL('image/webp').startsWith('data:image/webp'))
+    await pasteInNewTab(STRIPES_PNG, 'image/png')
+    await submit(browser, '')
+    const first = await setup.mock.waitForRequest(browser)
+    // The corners of `b` are transparent.
+    const calls: ImageCall[] = [
+      { id: 'call_slant_convert', command: 'rotate', parameters: { image: 'a', angle: 45 }, result: 'Made the image @b from @a. The image @b is 78x78 pixels.' },
+      { id: 'call_jpeg', command: 'convert', parameters: { image: 'b', format: 'jpeg' }, result: 'Made the image @c from @b. The image @c is 78x78 pixels.' },
+      { id: 'call_svg', command: 'convert', parameters: { image: 'a', format: 'svg' }, result: 'Made the image @d from @a. The image @d is 90x20 pixels.' },
+      { id: 'call_svg_png', command: 'convert', parameters: { image: 'd', format: 'png' }, result: 'Made the image @e from @d. The image @e is 90x20 pixels.' },
+      {
+        id: 'call_webp',
+        command: 'convert',
+        parameters: { image: 'b', format: 'webp' },
+        result: writesWebp
+          ? 'Made the image @f from @b. The image @f is 78x78 pixels.'
+          : 'Dez cannot make WebP images on this computer: its web view does not write them. This is not a fault of the call, and there is no new image from @b. '
+            + 'If another format does for the user, call convert with "png" or "jpeg"; else tell the user that this computer cannot make WebP images.',
+      },
+    ]
+    sendImageCalls(first.reply, calls)
+    const second = await setup.mock.waitForRequest(browser)
+    expect(sentMessages(second.body).slice(-6)).toEqual(roundMessages(calls))
+
+    const made = await madeImages(second.reply)
+    const extensions = Object.fromEntries(Object.entries(made).map(([id, file]) => [id, path.extname(file)]))
+    expect(extensions).toStrictEqual({ b: '.png', c: '.jpg', d: '.svg', e: '.png', ...(writesWebp ? { f: '.webp' } : {}) })
+    if (!writesWebp) {
+      expect(await consoleErrors(browser)).toEqual([expect.stringContaining('The tool image failed')])
+      await resetConsoleErrors(browser)
+    }
+
+    const [whiteCorner, jpegMiddle] = (await filePixels(made.c, [[2, 39], [39, 39]])).pixels
+    expect(Math.min(...whiteCorner ?? [])).toBeGreaterThanOrEqual(250)
+    expect(colorDistance(jpegMiddle, GREEN)).toBeLessThanOrEqual(12)
+
+    const stripes: Array<[number, number]> = [[15, 10], [45, 10], [75, 10]]
+    expect((await fs.promises.readFile(made.d, 'utf8')).startsWith('<svg ')).toBe(true)
+    await waitForValue(browser, 'shown SVG', async () => (await shownImages(browser)).map(({ width, height }) => `${width}x${height}`)[3], '90x20')
+    expect(await filePixels(made.d, stripes)).toEqual({ width: 90, height: 20, pixels: [RED, GREEN, BLUE] })
+    expect(await filePixels(made.e, stripes)).toEqual({ width: 90, height: 20, pixels: [RED, GREEN, BLUE] })
+
+    if (writesWebp) {
+      const webp = await filePixels(made.f, [[2, 39], [39, 39]])
+      expect(webp).toMatchObject({ width: 78, height: 78 })
+      expect(webp.pixels[0]?.[3]).toBe(0)
+      expect(colorDistance(webp.pixels[1], GREEN)).toBeLessThanOrEqual(12)
+    }
+
+    // The request sends the SVG as a PNG that the webview drew.
+    await submit(browser, 'Look at @d')
+    const third = await setup.mock.waitForRequest(browser)
+    const [mention] = sentMessages(third.body).slice(-1)
+    expect(mention).toEqual({ role: 'user', content: [{ type: 'text', text: 'Look at @d' }, { type: 'image_url', image_url: { url: expect.stringMatching(/^data:image\/png;base64,/) } }] })
+    const sentUrl = /"url":"(data:image\/png;base64,[^"]+)"/.exec(third.body)?.[1] ?? ''
+    expect(await decodedImage(browser, sentUrl, [15, 45, 75], 10)).toEqual({ width: 90, height: 20, pixels: [RED, GREEN, BLUE] })
+    await sendChatReply(third.reply, TOOLER.modelName)
+    await waitForValue(browser, 'sections after the second reply', async () => (await threadSections(browser)).length, 5)
   })
 })

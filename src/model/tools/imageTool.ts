@@ -1,6 +1,6 @@
 import { sectionPlainText } from '../chat/content'
 import type { ColorChange } from '../chat/imageColors'
-import { wholeImageDrawing, type ImageDrawing, type ImageFlip, type ImageRegion, type ImageSize } from '../chat/imageDrawing'
+import { wholeImageDrawing, type DrawnMediaType, type ImageDrawing, type ImageFlip, type ImageRegion, type ImageSize } from '../chat/imageDrawing'
 import { findImageReferences, imageMediaType, type ImageMediaType } from '../chat/images'
 import { findMediaTags } from '../chat/mediaTags'
 import type { Section } from '../chat/types'
@@ -43,6 +43,26 @@ const AMOUNTS: Record<AmountKind, { scale: string, less: string, more: string }>
 
 // What every color subcommand keeps, for the help texts.
 const KEPT_ALPHA_TEXT = 'The transparency of each pixel stays as it is.'
+
+// The format that a `convert` call names for each file type that it makes,
+// in the order of the texts. A call can also name JPEG `jpg`.
+const CONVERT_FORMATS: Record<DrawnMediaType, string> = {
+  'image/png': 'png',
+  'image/jpeg': 'jpeg',
+  'image/webp': 'webp',
+  'image/svg+xml': 'svg',
+}
+
+const CONVERT_TYPES = Object.keys(CONVERT_FORMATS) as DrawnMediaType[]
+
+// The name of each image file type in the texts.
+const FORMAT_NAMES: Record<ImageMediaType, string> = {
+  'image/png': 'PNG',
+  'image/jpeg': 'JPEG',
+  'image/gif': 'GIF',
+  'image/webp': 'WebP',
+  'image/svg+xml': 'SVG',
+}
 
 // The texts are static (no counts, no dates): the tools array, which names
 // the subcommands, is in the provider's prompt cache.
@@ -195,17 +215,36 @@ export const IMAGE_TOOL: SubcommandTool = {
       parameters: [IMAGE_PARAMETER],
       example: { image: 'a' },
     },
+    {
+      name: 'convert',
+      summary: 'Make a new image from an image in another file format: PNG, JPEG, WebP, or SVG.',
+      description: `Makes a new image from an image of this conversation in another file format, at the same size. ${NEW_IMAGE_TEXT} `
+        + 'PNG keeps each pixel as it is. JPEG and WebP make smaller files of photos, with colors near to those of the image. '
+        + 'PNG, WebP, and SVG keep the transparency; JPEG has none, so the transparent parts of the image become white. '
+        + 'An SVG made from an image holds its pixels, not shapes, so it is not sharper at a larger size. '
+        + 'An SVG image becomes an image of its size in pixels, and a GIF image becomes its first frame. Dez cannot make GIF images.',
+      parameters: [
+        IMAGE_PARAMETER,
+        {
+          name: 'format',
+          type: 'string',
+          description: 'The format of the new image: "png", "jpeg" (or "jpg"), "webp", or "svg". It must not be the format of the image.',
+          required: true,
+        },
+      ],
+      example: { image: 'a', format: 'jpeg' },
+    },
   ],
 }
 
 export const IMAGE_TOOL_DEFINITION = subcommandToolDefinition(IMAGE_TOOL)
 
-/** What an `image` subcommand draws of the image `id`, of `size`, for a
- *  call with `args` (the subcommand's checked arguments): the drawing, or
- *  the result text of a call that draws nothing (one that asks for the
- *  size of the image). Throws a `ToolError` that tells the model how to fix
- *  a bad call. */
-export type ImagePlan = (id: string, args: ToolArguments, size: ImageSize) => ImageDrawing | string
+/** What an `image` subcommand draws of the image `id`, of `size` and of
+ *  the file type `mediaType`, for a call with `args` (the subcommand's
+ *  checked arguments): the drawing, or the result text of a call that draws
+ *  nothing (one that asks for the size of the image). Throws a `ToolError`
+ *  that tells the model how to fix a bad call. */
+export type ImagePlan = (id: string, args: ToolArguments, size: ImageSize, mediaType: ImageMediaType) => ImageDrawing | string
 
 /** The image id that the `image` parameter of a call names (`a` or `@a`).
  *  Throws for any other text; the model reads the error. */
@@ -494,6 +533,48 @@ export const saturationPlan = amountPlan('saturation')
 /** The plan of `image invert`: the whole image at its own size, with each
  *  color inverted. */
 export const invertPlan: ImagePlan = (id, _args, size) => colorDrawing(id, size, 'invert', { kind: 'invert' })
+
+// The formats of the file types `types` as a call names them, as in
+// `"png", "jpeg", or "svg"`.
+function formatsText(types: readonly DrawnMediaType[]): string {
+  return new Intl.ListFormat('en', { type: 'disjunction' }).format(types.map((type) => `"${CONVERT_FORMATS[type]}"`))
+}
+
+/** The plan of `image convert`: the whole image at its own size, as a file
+ *  of the format that `format` names. A JPEG gets white under the image,
+ *  as it has no transparency: the transparent parts would be black. Throws
+ *  for a format that Dez does not make, for the format of the image itself,
+ *  and for an image over `MAX_DRAWN_PIXELS` (the text tells how to make a
+ *  smaller image first). */
+export const convertPlan: ImagePlan = (id, args, size, mediaType) => {
+  const text = String(args.format).trim().toLowerCase()
+  const format = text === 'jpg' ? 'jpeg' : text
+  const target = CONVERT_TYPES.find((type) => CONVERT_FORMATS[type] === format)
+  if (!target) {
+    throw new ToolError(format === 'gif'
+      ? `Dez cannot make GIF images. Give ${formatsText(CONVERT_TYPES)}.`
+      : `${JSON.stringify(args.format)} is not a format of convert. Give ${formatsText(CONVERT_TYPES)}.`)
+  }
+  if (target === mediaType) {
+    throw new ToolError(`The image @${id} is already in the ${FORMAT_NAMES[target]} format, so the new image would be the same as @${id}. `
+      + `Give another format: ${formatsText(CONVERT_TYPES.filter((type) => type !== target))}.`)
+  }
+  if (size.width * size.height > MAX_DRAWN_PIXELS) throw tooLargeError(size, scaleFirstText(id, size, 'convert'))
+  const drawing: ImageDrawing = { ...wholeImageDrawing(size), mediaType: target }
+  if (target === 'image/jpeg') drawing.background = '#ffffff'
+  return drawing
+}
+
+/** The error of a call whose new image from the image `id` is of the type
+ *  `mediaType`, which the canvas of this computer's webview does not write
+ *  (WebP on macOS). It is not a fault of the call; the text names the
+ *  formats that every computer makes (only WebP is known to fail). */
+export function unwritableFormatError(id: string, mediaType: DrawnMediaType, options?: ErrorOptions): ToolError {
+  const name = FORMAT_NAMES[mediaType]
+  const others = formatsText(mediaType === 'image/jpeg' ? ['image/png'] : ['image/png', 'image/jpeg'])
+  return new ToolError(`Dez cannot make ${name} images on this computer: its web view does not write them. This is not a fault of the call, and there is no new image from @${id}. `
+    + `If another format does for the user, call convert with ${others}; else tell the user that this computer cannot make ${name} images.`, '', options)
+}
 
 /** The result of a call that made the image `newId`, of `size`, from the
  *  image `id`. It names the images by their ids only: a result goes to the

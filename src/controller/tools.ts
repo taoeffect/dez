@@ -1,6 +1,6 @@
 import sbp from '@sbp/sbp'
 import type { CutAudio } from '../model/chat/audioCut'
-import { drawnMediaType, type DrawnImage, type DrawnMediaType, type ImageSize } from '../model/chat/imageDrawing'
+import { drawnMediaType, UnwritableImageTypeError, type DrawnImage, type DrawnMediaType, type ImageSize } from '../model/chat/imageDrawing'
 import { ClipReadError, type ClipReadProblem } from '../model/chat/mediaFiles'
 import type { MediaTagData } from '../model/chat/mediaTags'
 import { modelRefKey } from '../model/chat/modelRef'
@@ -13,7 +13,7 @@ import type { ProviderMediaQuote } from '../model/providers/streamTypes'
 import { effectiveRequest, type ProviderInfo, type ProviderInputImageRules, type ProviderSettingsDescriptor } from '../model/providers/types'
 import type { SettingsSnapshot } from '../model/state'
 import { AUDIO_TOOL, audioClipId, audioClipOf, audioClipPart, audioCutResultText, audioLengthText } from '../model/tools/audioTool'
-import { brightnessPlan, contrastPlan, cropPlan, flipPlan, IMAGE_TOOL, imageOf, imageResultText, imageToolId, invertPlan, rotatePlan, saturationPlan, scalePlan, type ImagePlan } from '../model/tools/imageTool'
+import { brightnessPlan, contrastPlan, convertPlan, cropPlan, flipPlan, IMAGE_TOOL, imageOf, imageResultText, imageToolId, invertPlan, rotatePlan, saturationPlan, scalePlan, unwritableFormatError, type ImagePlan } from '../model/tools/imageTool'
 import { modelInfoParameterValues, modelInfoPart, modelInfoText, modelInfoTarget, type ModelInfoFacts, type ModelInfoTarget } from '../model/tools/modelInfo'
 import { modelListText } from '../model/tools/modelList'
 import { unknownToolText } from '../model/tools/registry'
@@ -137,7 +137,8 @@ function imageRunner(plan: ImagePlan): ToolRunner {
     // redraw, a plan that draws nothing or refuses the call gives null; the
     // text or the error waits until redraw ends, so that a failure of
     // redraw is never the call's fault. A plan can choose the file type of
-    // its drawing (a PNG for transparent pixels); redraw draws that type.
+    // its drawing (a PNG for transparent pixels, the type of a convert);
+    // redraw draws that type.
     let text = ''
     let callError: unknown
     let mediaType: DrawnMediaType = drawnMediaType(source.mediaType)
@@ -145,7 +146,7 @@ function imageRunner(plan: ImagePlan): ToolRunner {
     try {
       drawn = await sbp('dez.controller/images/redraw', file, (size: ImageSize) => {
         try {
-          const planned = plan(id, args, size)
+          const planned = plan(id, args, size, source.mediaType)
           if (typeof planned !== 'string') {
             mediaType = planned.mediaType ?? mediaType
             return planned
@@ -157,6 +158,7 @@ function imageRunner(plan: ImagePlan): ToolRunner {
         return null
       }, mediaType) as DrawnImage | null
     } catch (error) {
+      if (error instanceof UnwritableImageTypeError) throw unwritableFormatError(id, error.mediaType, { cause: error })
       // The texts of redraw hold no path: it gets the file, not its path.
       throw new ToolError(`Dez could not draw a new image from @${id}. This is not a fault of the call. `
         + `Tell the user, and do not call the image tool again for @${id}.`, rawErrorText(error), { cause: error })
@@ -326,6 +328,7 @@ const TOOL_RUNNERS: Record<string, ToolRunner> = {
     contrast: imageRunner(contrastPlan),
     saturation: imageRunner(saturationPlan),
     invert: imageRunner(invertPlan),
+    convert: imageRunner(convertPlan),
   }),
 }
 

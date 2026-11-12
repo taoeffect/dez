@@ -2,7 +2,7 @@ import sbp from '@sbp/sbp'
 import { createPinia, setActivePinia } from 'pinia'
 import { afterEach, beforeEach, describe, expect, it, vi, type MockInstance } from 'vitest'
 import type { AudioPart, CutAudio } from '../model/chat/audioCut'
-import type { DrawnImage, ImageDrawing, ImageSize } from '../model/chat/imageDrawing'
+import { UnwritableImageTypeError, type DrawnImage, type ImageDrawing, type ImageSize } from '../model/chat/imageDrawing'
 import { ClipReadError } from '../model/chat/mediaFiles'
 import type { MediaTagData } from '../model/chat/mediaTags'
 import type { KnownLimit } from '../model/providers/knownLimits'
@@ -488,6 +488,24 @@ describe('dez.controller/tools/run', () => {
 
       expect(drawings.map(({ drawing }) => drawing.mediaType)).toStrictEqual(['image/png', undefined, undefined])
       expect(savedImages.map(({ mediaType }) => mediaType)).toStrictEqual(['image/png', 'image/jpeg', 'image/jpeg'])
+    })
+
+    it('converts: saves the new image as the format of the call, and refuses the format of the image itself', async () => {
+      expect(await image('convert', { image: 'b', format: 'svg' })).toStrictEqual({ content: 'Made the image @c from @b. The image @c is 1000x500 pixels.', isError: false })
+      expect(await image('convert', { image: 'b', format: 'jpg' })).toMatchObject({ content: expect.stringMatching(/^The image @b is already in the JPEG format/), isError: true })
+
+      expect(savedImages).toStrictEqual([{ mediaType: 'image/svg+xml', options: { folder: 'generated' } }])
+    })
+
+    it('tells that this computer cannot make the format when the webview does not write it, and that the call is not at fault', async () => {
+      redrawError = new UnwritableImageTypeError('image/webp')
+
+      expect(await image('convert', { image: 'a', format: 'webp' })).toStrictEqual({
+        content: 'Dez cannot make WebP images on this computer: its web view does not write them. This is not a fault of the call, and there is no new image from @a. '
+          + 'If another format does for the user, call convert with "png" or "jpeg"; else tell the user that this computer cannot make WebP images.',
+        isError: true,
+      })
+      expect(savedImages).toStrictEqual([])
     })
 
     it('makes no image for a call with only the image, and gives the size of the image', async () => {

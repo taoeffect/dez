@@ -1,13 +1,16 @@
 import { describe, expect, it } from 'vitest'
+import type { ImageMediaType } from '../chat/images'
 import { mediaTagText } from '../chat/mediaTags'
 import type { Section } from '../chat/types'
 import { checkArgumentValues } from './arguments'
-import { brightnessPlan, contrastPlan, cropPlan, flipPlan, IMAGE_TOOL, imageOf, imageResultText, imageToolId, invertPlan, MAX_DRAWN_PIXELS, rotatePlan, saturationPlan, scalePlan } from './imageTool'
+import { brightnessPlan, contrastPlan, convertPlan, cropPlan, flipPlan, IMAGE_TOOL, imageOf, imageResultText, imageToolId, invertPlan, MAX_DRAWN_PIXELS, rotatePlan, saturationPlan, scalePlan, unwritableFormatError } from './imageTool'
 import { ToolError, type ToolArguments } from './types'
 
 // A wide image: the two sides differ, so a swap of width and height shows.
 const SIZE = { width: 1000, height: 500 }
 const WHOLE = { x: 0, y: 0, width: 1000, height: 500 }
+// The file type of the image, for the plans that do not read it.
+const PNG: ImageMediaType = 'image/png'
 
 const stored = (name: string) => `/home/u/.config/dez/assets/images/${name}`
 
@@ -81,11 +84,11 @@ describe('imageOf', () => {
 
 describe('cropPlan', () => {
   it('draws nothing for a call with only the image, and gives the size of the image', () => {
-    expect(cropPlan('a', { image: 'a' }, SIZE)).toBe('The image @a is 1000x500 pixels. Give x, y, width, and height to make a new image from a part of it.')
+    expect(cropPlan('a', { image: 'a' }, SIZE, PNG)).toBe('The image @a is 1000x500 pixels. Give x, y, width, and height to make a new image from a part of it.')
   })
 
   it('takes the part at its own size', () => {
-    expect(cropPlan('a', { image: 'a', x: 100, y: 50, width: 200, height: 80 }, SIZE)).toStrictEqual({
+    expect(cropPlan('a', { image: 'a', x: 100, y: 50, width: 200, height: 80 }, SIZE, PNG)).toStrictEqual({
       crop: { x: 100, y: 50, width: 200, height: 80 },
       width: 200,
       height: 80,
@@ -93,12 +96,12 @@ describe('cropPlan', () => {
   })
 
   it('takes a part that ends at the right and bottom edges, and a part that is the whole image', () => {
-    expect(cropPlan('a', { image: 'a', x: 999, y: 499, width: 1, height: 1 }, SIZE)).toStrictEqual({
+    expect(cropPlan('a', { image: 'a', x: 999, y: 499, width: 1, height: 1 }, SIZE, PNG)).toStrictEqual({
       crop: { x: 999, y: 499, width: 1, height: 1 },
       width: 1,
       height: 1,
     })
-    expect(cropPlan('a', { image: 'a', x: 0, y: 0, width: 1000, height: 500 }, SIZE)).toStrictEqual({ crop: WHOLE, width: 1000, height: 500 })
+    expect(cropPlan('a', { image: 'a', x: 0, y: 0, width: 1000, height: 500 }, SIZE, PNG)).toStrictEqual({ crop: WHOLE, width: 1000, height: 500 })
   })
 
   it.each([
@@ -107,7 +110,7 @@ describe('cropPlan', () => {
     // 0 is a value, not an absent parameter.
     ['only a zero', { x: 0 }],
   ])('refuses a crop with %s of its four parameters', (_case, crop) => {
-    expect(errorOf(() => cropPlan('a', { image: 'a', ...crop }, SIZE)))
+    expect(errorOf(() => cropPlan('a', { image: 'a', ...crop }, SIZE, PNG)))
       .toBe('A crop needs all four of x, y, width, and height. Give all four, or only `image` to get the size of the image.')
   })
 
@@ -120,7 +123,7 @@ describe('cropPlan', () => {
     ['with no height', { x: 0, y: 0, width: 10, height: 0 }, [0, 0, 10, 1]],
     ['larger than the image', { x: 5, y: 5, width: 2000, height: 100 }, [0, 5, 1000, 100]],
   ])('refuses a part %s, and tells the size of the image and the nearest part inside it', (_case, crop, [x, y, width, height]) => {
-    expect(errorOf(() => cropPlan('a', { image: 'a', ...crop }, SIZE))).toBe(
+    expect(errorOf(() => cropPlan('a', { image: 'a', ...crop }, SIZE, PNG))).toBe(
       `The crop (x ${crop.x}, y ${crop.y}, ${crop.width}x${crop.height} pixels) is not inside the image @a, which is 1000x500 pixels. `
         + 'A crop inside it has x and y of 0 or more, x + width of 1000 or less, and y + height of 500 or less. '
         + `The nearest such crop is x ${x}, y ${y}, width ${width}, height ${height}.`,
@@ -129,30 +132,30 @@ describe('cropPlan', () => {
 
   it('takes a part of the most pixels from an image larger than that, and refuses a larger part', () => {
     const huge = { width: 10000, height: 10000 }
-    expect(cropPlan('a', { image: 'a', x: 0, y: 0, width: 7680, height: 4320 }, huge)).toStrictEqual({
+    expect(cropPlan('a', { image: 'a', x: 0, y: 0, width: 7680, height: 4320 }, huge, PNG)).toStrictEqual({
       crop: { x: 0, y: 0, width: 7680, height: 4320 },
       width: 7680,
       height: 4320,
     })
-    expect(errorOf(() => cropPlan('a', { image: 'a', x: 0, y: 0, width: 7681, height: 4320 }, huge)))
+    expect(errorOf(() => cropPlan('a', { image: 'a', x: 0, y: 0, width: 7681, height: 4320 }, huge, PNG)))
       .toBe(`The new image would be 7681x4320 pixels. The most is ${MAX_DRAWN_PIXELS} pixels (width times height). Take a smaller part.`)
   })
 })
 
 describe('scalePlan', () => {
   it('draws nothing for a call with only the image, and gives the size of the image', () => {
-    expect(scalePlan('a', { image: 'a' }, SIZE)).toBe('The image @a is 1000x500 pixels. Give a width, a height, or both to make a new image from it at another size.')
+    expect(scalePlan('a', { image: 'a' }, SIZE, PNG)).toBe('The image @a is 1000x500 pixels. Give a width, a height, or both to make a new image from it at another size.')
   })
 
   it('keeps the shape of the image when the call gives only the width or only the height', () => {
-    expect(scalePlan('a', { image: 'a', width: 400 }, SIZE)).toStrictEqual({ crop: WHOLE, width: 400, height: 200 })
-    expect(scalePlan('a', { image: 'a', height: 100 }, SIZE)).toStrictEqual({ crop: WHOLE, width: 200, height: 100 })
+    expect(scalePlan('a', { image: 'a', width: 400 }, SIZE, PNG)).toStrictEqual({ crop: WHOLE, width: 400, height: 200 })
+    expect(scalePlan('a', { image: 'a', height: 100 }, SIZE, PNG)).toStrictEqual({ crop: WHOLE, width: 200, height: 100 })
   })
 
   it('rounds the other side to the nearest whole pixel, and gives it at least one pixel', () => {
     // 500 * 333 / 1000 = 166.5
-    expect(scalePlan('a', { image: 'a', width: 333 }, SIZE)).toStrictEqual({ crop: WHOLE, width: 333, height: 167 })
-    expect(scalePlan('a', { image: 'a', width: 1 }, { width: 1000, height: 10 })).toStrictEqual({
+    expect(scalePlan('a', { image: 'a', width: 333 }, SIZE, PNG)).toStrictEqual({ crop: WHOLE, width: 333, height: 167 })
+    expect(scalePlan('a', { image: 'a', width: 1 }, { width: 1000, height: 10 }, PNG)).toStrictEqual({
       crop: { x: 0, y: 0, width: 1000, height: 10 },
       width: 1,
       height: 1,
@@ -160,25 +163,25 @@ describe('scalePlan', () => {
   })
 
   it('stretches the image to a width and a height of another shape', () => {
-    expect(scalePlan('a', { image: 'a', width: 300, height: 300 }, SIZE)).toStrictEqual({ crop: WHOLE, width: 300, height: 300 })
+    expect(scalePlan('a', { image: 'a', width: 300, height: 300 }, SIZE, PNG)).toStrictEqual({ crop: WHOLE, width: 300, height: 300 })
   })
 
   it.each<ToolArguments>([{ width: 0 }, { height: 0 }, { width: -5, height: 10 }])('refuses the size %j', (size) => {
-    expect(errorOf(() => scalePlan('a', { image: 'a', ...size }, SIZE)))
+    expect(errorOf(() => scalePlan('a', { image: 'a', ...size }, SIZE, PNG)))
       .toBe('`width` and `height` must be 1 or more. Leave out one of them to keep the shape of the image.')
   })
 
   it('draws an image of the most pixels, and refuses a larger one with the largest size of its shape', () => {
-    expect(scalePlan('a', { image: 'a', width: 7680, height: 4320 }, SIZE)).toStrictEqual({ crop: WHOLE, width: 7680, height: 4320 })
-    expect(errorOf(() => scalePlan('a', { image: 'a', width: 7681, height: 4320 }, SIZE))).toBe(
+    expect(scalePlan('a', { image: 'a', width: 7680, height: 4320 }, SIZE, PNG)).toStrictEqual({ crop: WHOLE, width: 7680, height: 4320 })
+    expect(errorOf(() => scalePlan('a', { image: 'a', width: 7681, height: 4320 }, SIZE, PNG))).toBe(
       `The new image would be 7681x4320 pixels. The most is ${MAX_DRAWN_PIXELS} pixels (width times height). `
         + 'For the same shape, give a `width` of 7680 and a `height` of 4319, or less.',
     )
     // The side that the call leaves out counts too.
-    expect(errorOf(() => scalePlan('a', { image: 'a', width: 10000 }, SIZE)))
+    expect(errorOf(() => scalePlan('a', { image: 'a', width: 10000 }, SIZE, PNG)))
       .toBe('The new image would be 10000x5000 pixels. The most is 33177600 pixels (width times height). For the same shape, give a `width` of 8145 and a `height` of 4072, or less.')
     // A side of one pixel stays at one pixel.
-    expect(errorOf(() => scalePlan('a', { image: 'a', width: 100_000_000, height: 1 }, SIZE)))
+    expect(errorOf(() => scalePlan('a', { image: 'a', width: 100_000_000, height: 1 }, SIZE, PNG)))
       .toContain(`For the same shape, give a \`width\` of ${MAX_DRAWN_PIXELS} and a \`height\` of 1, or less.`)
   })
 })
@@ -191,20 +194,20 @@ const SCALE_FIRST = 'Make a smaller image from @a with scale first (for the same
 
 describe('flipPlan', () => {
   it.each(['horizontal', 'vertical'] as const)('mirrors the whole image %s, at its own size', (direction) => {
-    expect(flipPlan('a', { image: 'a', direction }, SIZE)).toStrictEqual({ crop: WHOLE, width: 1000, height: 500, flip: direction })
+    expect(flipPlan('a', { image: 'a', direction }, SIZE, PNG)).toStrictEqual({ crop: WHOLE, width: 1000, height: 500, flip: direction })
   })
 
   it('reads the direction with any case and spaces', () => {
-    expect(flipPlan('a', { image: 'a', direction: ' Vertical ' }, SIZE)).toStrictEqual({ crop: WHOLE, width: 1000, height: 500, flip: 'vertical' })
+    expect(flipPlan('a', { image: 'a', direction: ' Vertical ' }, SIZE, PNG)).toStrictEqual({ crop: WHOLE, width: 1000, height: 500, flip: 'vertical' })
   })
 
   it('refuses a direction that it does not have, and names the two that it has', () => {
-    expect(errorOf(() => flipPlan('a', { image: 'a', direction: 'diagonal' }, SIZE))).toBe('"diagonal" is not a direction of flip. '
+    expect(errorOf(() => flipPlan('a', { image: 'a', direction: 'diagonal' }, SIZE, PNG))).toBe('"diagonal" is not a direction of flip. '
       + 'Give "horizontal" to swap the left and the right of the image, or "vertical" to swap its top and its bottom.')
   })
 
   it('refuses an image over the limit, and tells how to make a smaller image first', () => {
-    expect(errorOf(() => flipPlan('a', { image: 'a', direction: 'vertical' }, HUGE))).toBe(`${TOO_LARGE}${SCALE_FIRST}then call flip with the new image.`)
+    expect(errorOf(() => flipPlan('a', { image: 'a', direction: 'vertical' }, HUGE, PNG))).toBe(`${TOO_LARGE}${SCALE_FIRST}then call flip with the new image.`)
   })
 })
 
@@ -220,26 +223,26 @@ describe('rotatePlan', () => {
     [180, 180, { width: 1000, height: 500 }],
     [450, 90, { width: 500, height: 1000 }],
   ])('turns the image %s degrees as a clockwise turn of %s, to the exact size %j', (angle, turn, size) => {
-    expect(rotatePlan('a', { image: 'a', angle }, SIZE)).toStrictEqual(turned(size, turn))
+    expect(rotatePlan('a', { image: 'a', angle }, SIZE, PNG)).toStrictEqual(turned(size, turn))
   })
 
   it('grows the new image to hold the whole turned image, and makes a PNG for its transparent corners', () => {
-    expect(rotatePlan('a', { image: 'a', angle: 45 }, SIZE)).toStrictEqual(turned({ width: 1061, height: 1061 }, 45, { mediaType: 'image/png' }))
+    expect(rotatePlan('a', { image: 'a', angle: 45 }, SIZE, PNG)).toStrictEqual(turned({ width: 1061, height: 1061 }, 45, { mediaType: 'image/png' }))
     // 1000 * cos 30 + 500 * sin 30 = 1116.03, 1000 * sin 30 + 500 * cos 30 = 933.01
-    expect(rotatePlan('a', { image: 'a', angle: -30 }, SIZE)).toStrictEqual(turned({ width: 1117, height: 934 }, 330, { mediaType: 'image/png' }))
+    expect(rotatePlan('a', { image: 'a', angle: -30 }, SIZE, PNG)).toStrictEqual(turned({ width: 1117, height: 934 }, 330, { mediaType: 'image/png' }))
   })
 
   it('keeps the size of the image with keep_size, and makes the turned image smaller to fit inside it', () => {
     // The box of the turn is 1060.66 pixels on each side: 500 / 1060.66 of
     // the image fits.
-    expect(rotatePlan('a', { image: 'a', angle: 45, keep_size: true }, SIZE))
+    expect(rotatePlan('a', { image: 'a', angle: 45, keep_size: true }, SIZE, PNG))
       .toStrictEqual({ crop: WHOLE, width: 1000, height: 500, partSize: { width: 471, height: 236 }, turn: 45, mediaType: 'image/png' })
     // On its side, a wide image leaves blank parts at its left and right.
-    expect(rotatePlan('a', { image: 'a', angle: 90, keep_size: true }, SIZE))
+    expect(rotatePlan('a', { image: 'a', angle: 90, keep_size: true }, SIZE, PNG))
       .toStrictEqual({ crop: WHOLE, width: 1000, height: 500, partSize: { width: 500, height: 250 }, turn: 90, mediaType: 'image/png' })
     // A square image on its side has no blank part.
     const square = { width: 400, height: 400 }
-    expect(rotatePlan('a', { image: 'a', angle: 90, keep_size: true }, square))
+    expect(rotatePlan('a', { image: 'a', angle: 90, keep_size: true }, square, PNG))
       .toStrictEqual({ crop: { x: 0, y: 0, ...square }, ...square, partSize: square, turn: 90 })
   })
 
@@ -249,34 +252,34 @@ describe('rotatePlan', () => {
     ['#FF8800', '#ff8800'],
     [' #f80 ', '#ff8800'],
   ])('paints the fill %j under the turned image as %s, and keeps the file type', (fill, background) => {
-    expect(rotatePlan('a', { image: 'a', angle: 45, fill }, SIZE)).toStrictEqual(turned({ width: 1061, height: 1061 }, 45, { background }))
+    expect(rotatePlan('a', { image: 'a', angle: 45, fill }, SIZE, PNG)).toStrictEqual(turned({ width: 1061, height: 1061 }, 45, { background }))
   })
 
   it('takes a transparent fill as no fill', () => {
-    expect(rotatePlan('a', { image: 'a', angle: 45, fill: 'Transparent' }, SIZE)).toStrictEqual(rotatePlan('a', { image: 'a', angle: 45 }, SIZE))
+    expect(rotatePlan('a', { image: 'a', angle: 45, fill: 'Transparent' }, SIZE, PNG)).toStrictEqual(rotatePlan('a', { image: 'a', angle: 45 }, SIZE, PNG))
   })
 
   it.each(['red', '#ff88', 'constructor', ''])('refuses the fill %j, and names the fills that it takes', (fill) => {
-    expect(errorOf(() => rotatePlan('a', { image: 'a', angle: 45, fill }, SIZE)))
+    expect(errorOf(() => rotatePlan('a', { image: 'a', angle: 45, fill }, SIZE, PNG)))
       .toBe(`${JSON.stringify(fill)} is not a fill of rotate. Give "transparent", "black", "white", or a hex color, as in "#ff8800" or "#f80".`)
   })
 
   it.each([0, 360, -720])('refuses the angle %s, which makes no change', (angle) => {
-    expect(errorOf(() => rotatePlan('a', { image: 'a', angle }, SIZE))).toBe(`An angle of ${angle} degrees is a whole number of turns, so the new image would be the same as @a. `
+    expect(errorOf(() => rotatePlan('a', { image: 'a', angle }, SIZE, PNG))).toBe(`An angle of ${angle} degrees is a whole number of turns, so the new image would be the same as @a. `
       + 'Give an angle that is not a multiple of 360, as in 90 or -90.')
   })
 
   it('refuses a turn that grows the image over the limit, and tells it to keep the size', () => {
-    expect(errorOf(() => rotatePlan('a', { image: 'a', angle: 45 }, { width: 7680, height: 4320 }))).toBe(
+    expect(errorOf(() => rotatePlan('a', { image: 'a', angle: 45 }, { width: 7680, height: 4320 }, PNG))).toBe(
       `The new image would be 8486x8486 pixels. The most is ${MAX_DRAWN_PIXELS} pixels (width times height). Give \`keep_size\` true to keep the size of @a.`,
     )
   })
 
   it('refuses an image over the limit, and tells how to make a smaller image first', () => {
-    expect(errorOf(() => rotatePlan('a', { image: 'a', angle: 90 }, HUGE))).toBe(`${TOO_LARGE}${SCALE_FIRST}then call rotate with the new image.`)
-    expect(errorOf(() => rotatePlan('a', { image: 'a', angle: 45, keep_size: true }, HUGE))).toBe(`${TOO_LARGE}${SCALE_FIRST}then call rotate with the new image.`)
+    expect(errorOf(() => rotatePlan('a', { image: 'a', angle: 90 }, HUGE, PNG))).toBe(`${TOO_LARGE}${SCALE_FIRST}then call rotate with the new image.`)
+    expect(errorOf(() => rotatePlan('a', { image: 'a', angle: 45, keep_size: true }, HUGE, PNG))).toBe(`${TOO_LARGE}${SCALE_FIRST}then call rotate with the new image.`)
     // The turn of the smaller image would grow it over the limit again.
-    expect(errorOf(() => rotatePlan('a', { image: 'a', angle: 45 }, HUGE)))
+    expect(errorOf(() => rotatePlan('a', { image: 'a', angle: 45 }, HUGE, PNG)))
       .toBe(`The new image would be 14143x14143 pixels. The most is ${MAX_DRAWN_PIXELS} pixels (width times height). ${SCALE_FIRST}then call rotate with the new image and \`keep_size\` true.`)
   })
 })
@@ -293,11 +296,11 @@ describe('the color plans', () => {
     ['contrast', 1.5],
     ['saturation', 1.5],
   ] as const)('%s changes the colors of the whole image by the amount %s, at its own size', (kind, amount) => {
-    expect(PLANS[kind]('a', { image: 'a', amount }, SIZE)).toStrictEqual({ crop: WHOLE, width: 1000, height: 500, colors: { kind, amount } })
+    expect(PLANS[kind]('a', { image: 'a', amount }, SIZE, PNG)).toStrictEqual({ crop: WHOLE, width: 1000, height: 500, colors: { kind, amount } })
   })
 
   it('invert inverts the colors of the whole image, at its own size', () => {
-    expect(invertPlan('a', { image: 'a' }, SIZE)).toStrictEqual({ crop: WHOLE, width: 1000, height: 500, colors: { kind: 'invert' } })
+    expect(invertPlan('a', { image: 'a' }, SIZE, PNG)).toStrictEqual({ crop: WHOLE, width: 1000, height: 500, colors: { kind: 'invert' } })
   })
 
   it.each([
@@ -305,7 +308,7 @@ describe('the color plans', () => {
     ['contrast', '0 makes the image one flat gray, 1 keeps it as it is, and 2 doubles the contrast'],
     ['saturation', '0 makes the image gray, 1 keeps it as it is, and 2 doubles the strength of the colors'],
   ] as const)('%s refuses an amount under 0, and tells what the amounts do', (kind, scale) => {
-    expect(errorOf(() => PLANS[kind]('a', { image: 'a', amount: -0.5 }, SIZE))).toBe(`An \`amount\` of -0.5 is less than 0. Give 0 or more: ${scale}.`)
+    expect(errorOf(() => PLANS[kind]('a', { image: 'a', amount: -0.5 }, SIZE, PNG))).toBe(`An \`amount\` of -0.5 is less than 0. Give 0 or more: ${scale}.`)
   })
 
   it.each([
@@ -313,12 +316,59 @@ describe('the color plans', () => {
     ['contrast', 'less contrast', 'more contrast'],
     ['saturation', 'weaker colors', 'stronger colors'],
   ] as const)('%s refuses an amount of 1, which makes no change', (kind, less, more) => {
-    expect(errorOf(() => PLANS[kind]('a', { image: 'a', amount: 1 }, SIZE)))
+    expect(errorOf(() => PLANS[kind]('a', { image: 'a', amount: 1 }, SIZE, PNG)))
       .toBe(`An \`amount\` of 1 keeps the colors of @a, so the new image would be the same as @a. Give less than 1 for ${less}, or more than 1 for ${more}.`)
   })
 
   it.each(['brightness', 'contrast', 'saturation', 'invert'] as const)('%s refuses an image over the limit, and tells how to make a smaller image first', (kind) => {
-    expect(errorOf(() => PLANS[kind]('a', { image: 'a', amount: 2 }, HUGE))).toBe(`${TOO_LARGE}${SCALE_FIRST}then call ${kind} with the new image.`)
+    expect(errorOf(() => PLANS[kind]('a', { image: 'a', amount: 2 }, HUGE, PNG))).toBe(`${TOO_LARGE}${SCALE_FIRST}then call ${kind} with the new image.`)
+  })
+})
+
+describe('convertPlan', () => {
+  const ALL_FORMATS = '"png", "jpeg", "webp", or "svg"'
+
+  // A GIF source, as no plan makes a GIF.
+  it.each([
+    ['png', 'image/png'],
+    ['webp', 'image/webp'],
+    ['svg', 'image/svg+xml'],
+    [' WebP ', 'image/webp'],
+  ] as const)('draws the whole image at its own size as the format %j', (format, mediaType) => {
+    expect(convertPlan('a', { image: 'a', format }, SIZE, 'image/gif')).toStrictEqual({ crop: WHOLE, width: 1000, height: 500, mediaType })
+  })
+
+  // A JPEG has no transparency: the transparent parts would be black.
+  it.each(['jpeg', 'jpg', 'JPG'])('draws a JPEG for %j on white', (format) => {
+    expect(convertPlan('a', { image: 'a', format }, SIZE, 'image/svg+xml')).toStrictEqual({ crop: WHOLE, width: 1000, height: 500, mediaType: 'image/jpeg', background: '#ffffff' })
+  })
+
+  it.each([
+    ['png', 'image/png', 'The image @a is already in the PNG format, so the new image would be the same as @a. Give another format: "jpeg", "webp", or "svg".'],
+    ['jpg', 'image/jpeg', 'The image @a is already in the JPEG format, so the new image would be the same as @a. Give another format: "png", "webp", or "svg".'],
+    ['svg', 'image/svg+xml', 'The image @a is already in the SVG format, so the new image would be the same as @a. Give another format: "png", "jpeg", or "webp".'],
+  ] as const)('refuses %j for an image of the type %s, and names the other formats', (format, mediaType, message) => {
+    expect(errorOf(() => convertPlan('a', { image: 'a', format }, SIZE, mediaType))).toBe(message)
+  })
+
+  it.each([
+    ['gif', `Dez cannot make GIF images. Give ${ALL_FORMATS}.`],
+    ['bmp', `"bmp" is not a format of convert. Give ${ALL_FORMATS}.`],
+    ['constructor', `"constructor" is not a format of convert. Give ${ALL_FORMATS}.`],
+  ])('refuses the format %j, and names the formats that it makes', (format, message) => {
+    expect(errorOf(() => convertPlan('a', { image: 'a', format }, SIZE, PNG))).toBe(message)
+  })
+
+  it('refuses an image over the limit, and tells how to make a smaller image first', () => {
+    expect(errorOf(() => convertPlan('a', { image: 'a', format: 'jpeg' }, HUGE, PNG))).toBe(`${TOO_LARGE}${SCALE_FIRST}then call convert with the new image.`)
+  })
+})
+
+describe('unwritableFormatError', () => {
+  it('says that the call is not at fault, and names the formats that every computer makes', () => {
+    expect(unwritableFormatError('a', 'image/webp').message).toBe('Dez cannot make WebP images on this computer: its web view does not write them. '
+      + 'This is not a fault of the call, and there is no new image from @a. '
+      + 'If another format does for the user, call convert with "png" or "jpeg"; else tell the user that this computer cannot make WebP images.')
   })
 })
 

@@ -2,15 +2,15 @@ import sbp from '@sbp/sbp'
 import { convertFileSrc, isTauri } from '@tauri-apps/api/core'
 import { getCurrentWebview } from '@tauri-apps/api/webview'
 import { changeColors } from '../model/chat/imageColors'
-import type { DrawnImage, DrawnMediaType, ImageDrawing, ImageSize } from '../model/chat/imageDrawing'
+import { svgOfPng, UnwritableImageTypeError, type DrawnImage, type DrawnMediaType, type ImageDrawing, type ImageSize } from '../model/chat/imageDrawing'
 import { IMAGE_FOLDERS, imageExtension, isImagePath, storedImageFile, type ImageFolder, type ImageMediaType } from '../model/chat/images'
 import { FileTooLargeError } from '../model/chat/mediaFiles'
 import { ExplainedError, errorText, rawErrorText } from '../utils/errorText'
 import { fileNameOf } from '../utils/fileName'
 
-// The quality of a drawn JPEG, from 0 to 1: high, so that a second
+// The quality of a drawn JPEG or WebP, from 0 to 1: high, so that a second
 // encoding of a photo shows no new marks.
-const JPEG_QUALITY = 0.95
+const LOSSY_QUALITY = 0.95
 
 let fileDropsWatched = false
 
@@ -126,8 +126,9 @@ export default sbp('sbp/selectors/register', {
   // gives null: the image stays as it is, and nothing is drawn. There is no
   // Rust code for this: the webview has the decoders. Rejects when the
   // webview cannot decode the image, when `plan` throws, and when the
-  // drawing cannot be made; the caller logs it, as each caller has its own
-  // answer to a failure.
+  // drawing cannot be made, with an `UnwritableImageTypeError` when the
+  // canvas does not write the type; the caller logs it, as each caller has
+  // its own answer to a failure.
   async 'dez.controller/images/redraw' (
     file: Blob,
     plan: (size: ImageSize) => ImageDrawing | null,
@@ -201,10 +202,14 @@ export default sbp('sbp/selectors/register', {
         context.putImageData(pixels, 0, 0)
       }
       const type = drawing.mediaType ?? mediaType
-      const drawn = await new Promise<Blob | null>((resolve) => canvas.toBlob(resolve, type, JPEG_QUALITY))
+      // No canvas writes SVG: a drawn SVG is a PNG drawing in an SVG file.
+      const canvasType = type === 'image/svg+xml' ? 'image/png' : type
+      const drawn = await new Promise<Blob | null>((resolve) => canvas.toBlob(resolve, canvasType, LOSSY_QUALITY))
+      if (!drawn) throw new Error(`The image could not be drawn as ${canvasType}.`)
       // A canvas that cannot write a type writes a PNG in its place.
-      if (!drawn || drawn.type !== type) throw new Error(`The image could not be drawn as ${type}.`)
-      return { bytes: new Uint8Array(await drawn.arrayBuffer()), width: drawing.width, height: drawing.height }
+      if (drawn.type !== canvasType) throw new UnwritableImageTypeError(canvasType)
+      const bytes = new Uint8Array(await drawn.arrayBuffer())
+      return { bytes: type === 'image/svg+xml' ? svgOfPng(bytes, drawing) : bytes, width: drawing.width, height: drawing.height }
     } finally {
       URL.revokeObjectURL(url)
     }

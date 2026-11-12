@@ -1,7 +1,7 @@
 import sbp from '@sbp/sbp'
 import type * as TauriCore from '@tauri-apps/api/core'
 import { afterEach, beforeEach, describe, expect, it, vi, type MockInstance } from 'vitest'
-import type { DrawnImage, DrawnMediaType, ImageDrawing, ImageSize } from '../model/chat/imageDrawing'
+import { UnwritableImageTypeError, type DrawnImage, type DrawnMediaType, type ImageDrawing, type ImageSize } from '../model/chat/imageDrawing'
 import { findImageReferences, imageMarkdown, storedImageFile, type ImageFolder, type ImageMediaType } from '../model/chat/images'
 import { FileTooLargeError } from '../model/chat/mediaFiles'
 import './images'
@@ -373,15 +373,29 @@ describe('dez.controller/images/redraw', () => {
     expect(drawn.map(({ type }) => type)).toStrictEqual(['image/png'])
   })
 
+  // No canvas writes SVG.
+  it('draws an SVG file as a PNG drawing in an SVG of the size of the drawing', async () => {
+    stubImage(40, 30)
+    const drawn = stubCanvas()
+
+    const image = await redraw(() => ({ crop: { x: 0, y: 0, width: 40, height: 30 }, width: 20, height: 15, mediaType: 'image/svg+xml' }))
+
+    expect(drawn.map(({ type }) => type)).toStrictEqual(['image/png'])
+    // [9, 8, 7] in base64 is CQgH.
+    expect(new TextDecoder().decode(image?.bytes)).toBe('<svg xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink" width="20" height="15" viewBox="0 0 20 15">'
+      + '<image width="20" height="15" xlink:href="data:image/png;base64,CQgH"/></svg>')
+    expect(image).toMatchObject({ width: 20, height: 15 })
+  })
+
   // The canvas of a webview that cannot write a type writes a PNG in its
   // place; a file with the wrong type must not go on under the type that
   // was asked.
-  it('rejects when the canvas writes a file of another type', async () => {
+  it('rejects with the type when the canvas writes a file of another type', async () => {
     stubImage(40, 30)
     stubCanvas('image/png')
 
-    await expect(redraw(({ width, height }) => ({ crop: { x: 0, y: 0, width, height }, width, height }), 'image/jpeg'))
-      .rejects.toThrow('The image could not be drawn as image/jpeg.')
+    await expect(redraw(({ width, height }) => ({ crop: { x: 0, y: 0, width, height }, width, height, mediaType: 'image/webp' }), 'image/jpeg'))
+      .rejects.toStrictEqual(new UnwritableImageTypeError('image/webp'))
   })
 
   it('rejects with the error of a plan that throws', async () => {
