@@ -140,9 +140,12 @@ function statusExplanation(provider: ProviderIdentity, status: number | undefine
 // anything keeps it. `keyed`: see `statusExplanation`.
 export function providerStatusError(provider: ProviderIdentity, response: NativeHttpResponseHead, bodyText = '', keyed = true): ProviderHttpError {
   const bodyJson = sanitizedJson(parsedJson(bodyText))
+  // JSON with no known text field shows as JSON, from the sanitized copy:
+  // the raw text can hide a key behind an escape (see `sanitizedJson`).
+  const fallback = bodyJson === undefined ? bodyText : JSON.stringify(bodyJson)
   // Sanitized again after the join: a field name and its text can make a
   // key pair (`token: …`).
-  const text = sanitizeErrorText((providerText(bodyJson) ?? bodyText).trim(), PROVIDER_TEXT_LENGTH)
+  const text = sanitizeErrorText((providerText(bodyJson) ?? fallback).trim(), PROVIDER_TEXT_LENGTH)
   return new ProviderHttpError(provider.id, response.status, text, bodyJson, statusExplanation(provider, response.status, keyed, text !== ''))
 }
 

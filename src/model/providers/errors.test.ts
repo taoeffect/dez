@@ -71,10 +71,14 @@ describe('provider status errors', () => {
     expect(statusError(422, '').message).toBe('Venice refused the request. The cause can be the message, the settings of the model, or the request that Dez made. Change the message or the settings, or choose another model. If the error stays, report it at Help › Dez on GitHub.\n\nDetails: HTTP 422')
   })
 
-  it('hides a key in the text and in the JSON, also one behind a JSON escape', () => {
-    const error = statusError(400, '{"error":"Bad header \\u0042earer sk-12345678901234567890"}')
+  // A body with no known text field shows its JSON in the details.
+  it.each([
+    ['{"error":"Bad header \\u0042earer sk-12345678901234567890"}', 'HTTP 400: Bad header Bearer [REDACTED]'],
+    ['{"detail":"Bad header \\u0042earer sk-12345678901234567890"}', 'HTTP 400: {"detail":"Bad header Bearer [REDACTED]"}'],
+  ])('hides a key in the text and in the JSON, also one behind a JSON escape (%s)', (body, details) => {
+    const error = statusError(400, body)
 
-    expect(error.details).toBe('HTTP 400: Bad header Bearer [REDACTED]')
+    expect(error.details).toBe(details)
     expect(JSON.stringify(error.bodyJson)).not.toContain('sk-1234')
   })
 
