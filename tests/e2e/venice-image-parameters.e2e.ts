@@ -1,9 +1,8 @@
-import type http from 'node:http'
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from 'vitest'
 import { consoleErrors, resetConsoleErrors, screenshotOnFailure, waitForValue } from './harness/dom'
-import { pasteImage, pngDataUrl, solidPng } from './harness/images'
+import { pasteImageReference, pngDataUrl, solidPng } from './harness/images'
 import { startMockProviderApp, type MockProviderApp } from './harness/mockProviderApp'
-import type { MockProvider } from './harness/mockServer'
+import { answerHeld, type MockProvider } from './harness/mockServer'
 import { changeParameterField, closePopup, openPopup, popupOpen, popupView, type PopupView } from './harness/parameterPopup'
 import type { E2EBrowser } from './harness/session'
 import { focusEditor, newTab, pickModel, submit, threadSections } from './harness/thread'
@@ -74,11 +73,6 @@ const OUTPUT_PNG = solidPng(24, 24, [200, 120, 20])
 describe('venice image parameters', () => {
   let setup: MockProviderApp
   let browser: E2EBrowser
-
-  function answer (reply: http.ServerResponse, contentType: string, body: string | Buffer): void {
-    reply.writeHead(200, { 'Content-Type': contentType })
-    reply.end(body)
-  }
 
   beforeAll(async () => {
     setup = await startMockProviderApp(CANVAS, {
@@ -156,7 +150,7 @@ describe('venice image parameters', () => {
       resolution: '1K',
       quality: 'medium',
     })
-    answer(generate.reply, 'application/json', JSON.stringify({ images: [OUTPUT_PNG.toString('base64')] }))
+    answerHeld(generate.reply, 'application/json', JSON.stringify({ images: [OUTPUT_PNG.toString('base64')] }))
 
     await waitForValue(browser, 'sections of the reply', async () => (await threadSections(browser)).map((section) => section.role), ['user', 'agent', 'user'])
     expect(await consoleErrors(browser)).toStrictEqual([])
@@ -177,8 +171,7 @@ describe('venice image parameters', () => {
     await closePopup(browser)
 
     await focusEditor(browser)
-    await pasteImage(browser, INPUT_PNG)
-    await waitForValue(browser, 'pasted image', async () => (await threadSections(browser))[0]?.text.includes('](id=a)') ?? false, true)
+    await pasteImageReference(browser, INPUT_PNG, 'a')
     await submit(browser, '')
 
     const edit = await setup.mock.waitForRequest(browser)
@@ -190,7 +183,7 @@ describe('venice image parameters', () => {
       safe_mode: false,
       resolution: '1K',
     })
-    answer(edit.reply, 'image/png', OUTPUT_PNG)
+    answerHeld(edit.reply, 'image/png', OUTPUT_PNG)
 
     await waitForValue(browser, 'sections of the reply', async () => (await threadSections(browser)).map((section) => section.role), ['user', 'agent', 'user'])
     expect(await consoleErrors(browser)).toStrictEqual([])

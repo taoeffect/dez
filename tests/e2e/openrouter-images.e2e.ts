@@ -3,10 +3,11 @@ import type http from 'node:http'
 import path from 'node:path'
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from 'vitest'
 import { unstoredOutputMessage } from '../../src/model/providers/unusableModel'
-import { click, consoleErrors, resetConsoleErrors, screenshotOnFailure, waitForValue } from './harness/dom'
-import { pasteImage, pngDataUrl, shownImages, solidPng } from './harness/images'
-import { startMockProviderApp, type MockProviderApp } from './harness/mockProviderApp'
-import type { MockProvider } from './harness/mockServer'
+import { consoleErrors, resetConsoleErrors, screenshotOnFailure, waitForValue } from './harness/dom'
+import { filesIn, newFileIn, storedFileName } from './harness/fixtures'
+import { generatedImagesDir, pasteImageReference, pngDataUrl, shownImages, solidPng } from './harness/images'
+import { expectSendRefused, startMockProviderApp, type MockProviderApp } from './harness/mockProviderApp'
+import { answerHeld, type MockProvider } from './harness/mockServer'
 import { changeParameterField, closePopup, openPopup, popupOpen, popupView } from './harness/parameterPopup'
 import type { E2EBrowser } from './harness/session'
 import { focusEditor, newTab, openToasts, pickModel, sbpCall, submit, threadSections, waitForThread } from './harness/thread'
@@ -65,62 +66,31 @@ const MADE_SVG = Buffer.from('<?xml version="1.0" encoding="UTF-8"?>\n<svg xmlns
 const PASTED_PNG = solidPng(20, 20, [200, 60, 60])
 const SECOND_PNG = solidPng(20, 20, [60, 60, 200])
 
-/** The name of a stored image file with the extension `extension`. */
-function storedImageName (extension: string): RegExp {
-  return new RegExp(`^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\\.${extension}$`)
-}
-
 describe('images of the OpenRouter image API', () => {
   let setup: MockProviderApp
   let browser: E2EBrowser
 
   function generatedDir (): string {
-    return path.join(setup.app.home, '.config', 'dez', 'assets', 'generated', 'images')
-  }
-
-  async function generatedImages (): Promise<string[]> {
-    try {
-      return (await fs.promises.readdir(generatedDir())).sort()
-    } catch {
-      return []
-    }
-  }
-
-  // The one new file name in the generated image folder, once it is there.
-  async function newGeneratedImage (before: string[]): Promise<string> {
-    const added = async () => (await generatedImages()).filter((name) => !before.includes(name))
-    await waitForValue(browser, 'generated image files', async () => (await added()).length, 1)
-    return (await added())[0]
+    return generatedImagesDir(setup.app.home)
   }
 
   // OpenRouter's answer: JSON with the image as base64, and its price.
   function answerImage (reply: http.ServerResponse, image: Buffer, mediaType = 'image/png'): void {
-    reply.writeHead(200, { 'Content-Type': 'application/json' })
-    reply.end(JSON.stringify({ created: 1, data: [{ b64_json: image.toString('base64'), media_type: mediaType }], usage: { cost: 0.01 } }))
+    answerHeld(reply, 'application/json', JSON.stringify({ created: 1, data: [{ b64_json: image.toString('base64'), media_type: mediaType }], usage: { cost: 0.01 } }))
   }
 
   // Pastes `pngs` into the editor and returns the section text with their
   // references (ids a, b, …).
   async function pasteImages (pngs: Buffer[]): Promise<string> {
     await focusEditor(browser)
-    for (const [index, png] of pngs.entries()) {
-      await pasteImage(browser, png)
-      const id = String.fromCharCode(97 + index)
-      await waitForValue(browser, `pasted reference ${id}`, async () => (await threadSections(browser))[0]?.text.endsWith(`](id=${id})`) ?? false, true)
-    }
+    for (const [index, png] of pngs.entries()) await pasteImageReference(browser, png, String.fromCharCode(97 + index))
     return (await threadSections(browser))[0].text
   }
 
   async function refusal (model: { name: string }, text: string, message: string): Promise<void> {
     await pickModel(browser, ROUTER.name, model.name)
     await submit(browser, text)
-
-    await waitForValue(browser, 'error toast', () => openToasts(browser, 'error'), [{ title: 'Cannot send', message }])
-    expect(await threadSections(browser)).toEqual([{ role: 'user', text }])
-    expect(setup.mock.hasWaitingRequest()).toBe(false)
-    expect(await consoleErrors(browser)).toEqual([`Cannot send: ${message}`])
-    await click(browser, '.toast-card--error:not(.toast-card--closing) .toast-close')
-    await waitForValue(browser, 'error toast closed', () => openToasts(browser, 'error'), [])
+    await expectSendRefused(setup, message, [{ role: 'user', text }])
   }
 
   beforeAll(async () => {
@@ -155,7 +125,7 @@ describe('images of the OpenRouter image API', () => {
   })
 
   it('makes an image from the prompt alone, with no field that the user did not choose', async () => {
-    const before = await generatedImages()
+    const before = await filesIn(generatedDir())
     await pickModel(browser, ROUTER.name, FLUX.name)
     await submit(browser, 'Draw a fox')
 
@@ -164,8 +134,8 @@ describe('images of the OpenRouter image API', () => {
     expect(JSON.parse(request.body)).toEqual({ model: FLUX.id, prompt: 'Draw a fox' })
     answerImage(request.reply, MADE_PNG)
 
-    const name = await newGeneratedImage(before)
-    expect(name).toMatch(storedImageName('png'))
+    const name = await newFileIn(browser, generatedDir(), before)
+    expect(name).toMatch(storedFileName('png'))
     const file = path.join(generatedDir(), name)
     expect(await fs.promises.readFile(file)).toEqual(MADE_PNG)
     await waitForThread(browser, [
@@ -191,7 +161,7 @@ describe('images of the OpenRouter image API', () => {
     await waitForValue(browser, 'popup with the resolution of the user', async () => (await popupView(browser)).rows, [row('resolution', 'Resolution', ['1K', '2K'], '2K'), ...rows.slice(1)])
     await closePopup(browser)
 
-    const before = await generatedImages()
+    const before = await filesIn(generatedDir())
     const references = await pasteImages([PASTED_PNG, SECOND_PNG])
     await submit(browser, 'Mix them')
 
@@ -206,7 +176,7 @@ describe('images of the OpenRouter image API', () => {
     expect(request.body).not.toContain(setup.app.home)
     answerImage(request.reply, MADE_PNG)
 
-    const name = await newGeneratedImage(before)
+    const name = await newFileIn(browser, generatedDir(), before)
     await waitForThread(browser, [
       { role: 'user', text: `${references}Mix them` },
       { role: 'agent', text: `![${path.join(generatedDir(), name)}](id=c)` },
@@ -218,7 +188,7 @@ describe('images of the OpenRouter image API', () => {
 
   it('sends a model that takes one reference image the first image of the message, and tells of the other one', async () => {
     await pickModel(browser, ROUTER.name, STYLE_MODEL.name)
-    const before = await generatedImages()
+    const before = await filesIn(generatedDir())
     const references = await pasteImages([PASTED_PNG, SECOND_PNG])
     await submit(browser, 'In this style')
 
@@ -234,7 +204,7 @@ describe('images of the OpenRouter image API', () => {
     }])
     answerImage(request.reply, MADE_PNG)
 
-    const name = await newGeneratedImage(before)
+    const name = await newFileIn(browser, generatedDir(), before)
     await waitForThread(browser, [
       { role: 'user', text: `${references}In this style` },
       { role: 'agent', text: `![${path.join(generatedDir(), name)}](id=c)` },
@@ -248,7 +218,7 @@ describe('images of the OpenRouter image API', () => {
   })
 
   it('saves the SVG image of a model that makes only SVG images as an SVG file, and shows it at its own size', async () => {
-    const before = await generatedImages()
+    const before = await filesIn(generatedDir())
     await pickModel(browser, ROUTER.name, VECTOR_MODEL.name)
     await submit(browser, 'Draw a logo')
 
@@ -257,8 +227,8 @@ describe('images of the OpenRouter image API', () => {
     expect(JSON.parse(request.body)).toEqual({ model: VECTOR_MODEL.id, prompt: 'Draw a logo' })
     answerImage(request.reply, MADE_SVG, 'image/svg+xml')
 
-    const name = await newGeneratedImage(before)
-    expect(name).toMatch(storedImageName('svg'))
+    const name = await newFileIn(browser, generatedDir(), before)
+    expect(name).toMatch(storedFileName('svg'))
     const file = path.join(generatedDir(), name)
     expect(await fs.promises.readFile(file)).toEqual(MADE_SVG)
     await waitForThread(browser, [

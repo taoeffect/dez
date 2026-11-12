@@ -2,15 +2,15 @@ import fs from 'node:fs'
 import type { ServerResponse } from 'node:http'
 import path from 'node:path'
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from 'vitest'
-import { click, consoleErrors, pointerClick, resetConsoleErrors, screenshotOnFailure, waitForValue } from './harness/dom'
+import { consoleErrors, pointerClick, resetConsoleErrors, screenshotOnFailure, waitForValue } from './harness/dom'
 import { dropFiles, nativeDrop } from './harness/drops'
-import { makeConversation, seedConversation } from './harness/fixtures'
-import { pasteImage, pngDataUrl, solidPng } from './harness/images'
-import { MP4_VIDEO, WEBM_VIDEO, clipTag, shownPlayers, silentWav, startClipServer, type ClipServer } from './harness/media'
-import { startMockProviderApp, type MockProviderApp } from './harness/mockProviderApp'
+import { appFilePath, filesIn, mediaTempDir, writeTestFile } from './harness/fixtures'
+import { pasteImageReference, pngDataUrl, solidPng } from './harness/images'
+import { MP4_VIDEO, WEBM_VIDEO, answerVeniceJob, clipTag, shownPlayers, silentWav, startClipServer, tempClipTag, type ClipServer } from './harness/media'
+import { expectSendRefused, startMockProviderApp, takeRequest, type MockProviderApp } from './harness/mockProviderApp'
 import { startMockServer, type HeldRequest, type MockProvider, type MockServer } from './harness/mockServer'
 import type { E2EBrowser } from './harness/session'
-import { docPosPoint, editorDoc, focusEditor, newTab, openToasts, pasteText, pickModel, sbpCall, setCaret, submit, threadSections, waitForThread } from './harness/thread'
+import { docPosPoint, editorDoc, focusEditor, newTab, openSeededConversation, openToasts, pasteText, pickModel, setCaret, submit, threadSections, waitForThread } from './harness/thread'
 
 // Clips that a message holds or names with @id, driven through the real
 // app against a mock of Venice's media API
@@ -79,38 +79,21 @@ describe('clips that a message names', () => {
   let slowClips: MockServer
   const heldDownloads: HeldDownload[] = []
 
-  // Writes `bytes` as the temp copy `name` of a clip, and gives its tag.
-  async function tempClip (kind: 'audio' | 'video', id: string, name: string, bytes: Buffer): Promise<string> {
-    const dir = path.join(setup.app.home, '.cache', 'dez', 'media')
-    await fs.promises.mkdir(dir, { recursive: true })
-    const src = path.join(dir, name)
-    await fs.promises.writeFile(src, bytes)
-    return clipTag(kind, { id, type: kind === 'audio' ? 'audio/wav' : 'video/mp4', src, expires: new Date(Date.now() + HOUR_MS).toISOString() })
-  }
-
   // The part files of clip downloads in the cache media folder, with the
   // temp file that Rust writes a part into.
   async function partFiles (): Promise<string[]> {
-    const names = await fs.promises.readdir(path.join(setup.app.home, '.cache', 'dez', 'media')).catch(() => [])
-    return names.filter((name) => name.includes('.part'))
+    return (await filesIn(mediaTempDir(setup.app.home))).filter((name) => name.includes('.part'))
   }
 
   // Seeds a conversation whose one reply holds the clips `tags`, with
   // `next` as the text of the user section after it, opens it, and picks
   // the model `modelName`.
   async function openClips (id: string, tags: string[], next: string, modelName: string): Promise<void> {
-    const reply = tags.join('\n\n')
-    await seedConversation(setup.app.home, makeConversation({
-      id,
-      title: id,
-      sections: [
-        { role: 'user', nodes: [{ kind: 'text', text: 'Make clips' }] },
-        { role: 'agent', nodes: [{ kind: 'text', text: reply }] },
-        { role: 'user', nodes: [{ kind: 'text', text: next }] },
-      ],
-    }))
-    await sbpCall(browser, 'dez.model/tabs/openConversation', id)
-    await waitForThread(browser, [{ role: 'user', text: 'Make clips' }, { role: 'agent', text: reply }, { role: 'user', text: next }])
+    await openSeededConversation(browser, setup.app.home, id, [
+      { role: 'user', text: 'Make clips' },
+      { role: 'agent', text: tags.join('\n\n') },
+      { role: 'user', text: next },
+    ])
     await pickModel(browser, FILMS.name, modelName)
   }
 
@@ -119,33 +102,15 @@ describe('clips that a message names', () => {
   async function pasteAtEnd (png: Buffer, id: string): Promise<string> {
     await focusEditor(browser)
     await setCaret(browser, (await editorDoc(browser)).length)
-    await pasteImage(browser, png)
-    await waitForValue(browser, `reference of the image ${id}`, async () => (await threadSections(browser)).at(-1)?.text.endsWith(`](id=${id})`), true)
+    await pasteImageReference(browser, png, id)
     return (await threadSections(browser)).at(-1)?.text ?? ''
-  }
-
-  async function queueRequest (body: Record<string, unknown>): Promise<HeldRequest> {
-    const queue = await setup.mock.waitForRequest(browser)
-    expect(queue.path).toBe(QUEUE_PATH)
-    expect(JSON.parse(queue.body)).toStrictEqual(body)
-    expect(queue.body).not.toContain(setup.app.home)
-    return queue
   }
 
   // Answers the queue request with a job whose clip is done at the first
   // ask. Returns the tag of the clip, which the reply `agentIndex` then
   // holds as its whole text.
   async function answerJob (queue: HeldRequest, queueId: string, agentIndex: number, modelId: string): Promise<string> {
-    queue.reply.writeHead(200, { 'Content-Type': 'application/json' })
-    queue.reply.end(JSON.stringify({ model: modelId, queue_id: queueId, status: 'QUEUED' }))
-
-    const retrieve = await setup.mock.waitForRequest(browser)
-    expect(retrieve.path).toBe(RETRIEVE_PATH)
-    retrieve.reply.writeHead(200, { 'Content-Type': 'video/webm' })
-    retrieve.reply.end(WEBM_VIDEO)
-
-    await waitForValue(browser, 'sections after the reply', async () => (await threadSections(browser)).length, agentIndex + 2)
-    return (await threadSections(browser))[agentIndex].text
+    return answerVeniceJob(setup, queue, { retrievePath: RETRIEVE_PATH, modelId, queueId, clip: { type: 'video/webm', bytes: WEBM_VIDEO }, replyIndex: agentIndex })
   }
 
   beforeAll(async () => {
@@ -203,13 +168,13 @@ describe('clips that a message names', () => {
   })
 
   it('sends the image, the video clip, and the audio clip of a message to a reference model, each named in the prompt', async () => {
-    const beat = await tempClip('audio', 'a', 'beat.wav', BEAT)
-    const dance = await tempClip('video', 'b', 'dance.mp4', MP4_VIDEO)
+    const beat = await tempClipTag(setup.app.home, 'audio', 'a', 'beat.wav', BEAT)
+    const dance = await tempClipTag(setup.app.home, 'video', 'b', 'dance.mp4', MP4_VIDEO)
     await openClips('references', [beat, dance], 'The dancer of @b moves to @a, like ', REFERENCES.name)
     const message = await pasteAtEnd(PNG, 'c')
     await submit(browser, '')
 
-    const queue = await queueRequest({
+    const queue = await takeRequest(setup, QUEUE_PATH, {
       model: REFERENCES.id,
       prompt: 'The dancer of <Video 1> moves to <Audio 1>, like <Image 1>',
       ...PARAMETERS,
@@ -250,8 +215,8 @@ describe('clips that a message names', () => {
     const tagLines = /^<dez:video id="a" type="video\/mp4" src="([^"]+)"\/>\n<dez:audio id="b" type="audio\/wav" src="([^"]+)"\/>\n/
     await waitForValue(browser, 'tags of the dropped clips', async () => tagLines.test(await editorDoc(browser)), true)
     const [tags, videoSrc, audioSrc] = tagLines.exec(await editorDoc(browser)) ?? ['', '', '']
-    expect(path.dirname(videoSrc)).toBe(path.join(setup.app.home, '.config', 'dez', 'assets', 'video'))
-    expect(path.dirname(audioSrc)).toBe(path.join(setup.app.home, '.config', 'dez', 'assets', 'audio'))
+    expect(path.dirname(videoSrc)).toBe(appFilePath(setup.app.home, 'assets', 'video'))
+    expect(path.dirname(audioSrc)).toBe(appFilePath(setup.app.home, 'assets', 'audio'))
     expect(await fs.promises.readFile(videoSrc)).toStrictEqual(MP4_VIDEO)
     expect(await fs.promises.readFile(audioSrc)).toStrictEqual(BEAT)
     // A dropped clip is a stored file: no clock, and the Save control
@@ -267,7 +232,7 @@ describe('clips that a message names', () => {
 
     // The tags and the mentions of the clips become their names, and each
     // clip goes once.
-    const queue = await queueRequest({
+    const queue = await takeRequest(setup, QUEUE_PATH, {
       model: REFERENCES.id,
       prompt: '<Video 1>\n<Audio 1>\nThe dancer of <Video 1> moves to <Audio 1>, like <Image 1>',
       ...PARAMETERS,
@@ -288,23 +253,10 @@ describe('clips that a message names', () => {
 
   it('copies a clip of a native file drop into the clip folder, and sends it with a clip of an earlier message that the newest message names', async () => {
     // An audio clip that the user dropped into an earlier message.
-    const audioDir = path.join(setup.app.home, '.config', 'dez', 'assets', 'audio')
-    await fs.promises.mkdir(audioDir, { recursive: true })
-    const beatSrc = path.join(audioDir, 'earlier-beat.wav')
-    await fs.promises.writeFile(beatSrc, BEAT)
+    const beatSrc = await writeTestFile(appFilePath(setup.app.home, 'assets', 'audio', 'earlier-beat.wav'), BEAT)
     const beat = `<dez:audio id="a" type="audio/wav" src="${beatSrc}"/>`
     const first = `${beat}\nMake a dance to this`
-    await seedConversation(setup.app.home, makeConversation({
-      id: 'earlier-clip',
-      title: 'earlier-clip',
-      sections: [
-        { role: 'user', nodes: [{ kind: 'text', text: first }] },
-        { role: 'agent', nodes: [{ kind: 'text', text: 'Drop a video of the dancer.' }] },
-        { role: 'user', nodes: [{ kind: 'text', text: 'The dancer moves to @a' }] },
-      ],
-    }))
-    await sbpCall(browser, 'dez.model/tabs/openConversation', 'earlier-clip')
-    await waitForThread(browser, [
+    await openSeededConversation(browser, setup.app.home, 'earlier-clip', [
       { role: 'user', text: first },
       { role: 'agent', text: 'Drop a video of the dancer.' },
       { role: 'user', text: 'The dancer moves to @a' },
@@ -313,10 +265,8 @@ describe('clips that a message names', () => {
 
     // A real native drop adds the file to the asset scope; this one does
     // not, so the file is in the clip folder, which is always in it.
-    const videoDir = path.join(setup.app.home, '.config', 'dez', 'assets', 'video')
-    await fs.promises.mkdir(videoDir, { recursive: true })
-    const source = path.join(videoDir, 'dropped-dance.mp4')
-    await fs.promises.writeFile(source, MP4_VIDEO)
+    const videoDir = appFilePath(setup.app.home, 'assets', 'video')
+    const source = await writeTestFile(path.join(videoDir, 'dropped-dance.mp4'), MP4_VIDEO)
     const newest = (await editorDoc(browser)).length - 'The dancer moves to @a'.length
     const point = await docPosPoint(browser, newest, 1)
     await nativeDrop(browser, { x: point.x + 1, y: point.y }, [source])
@@ -336,7 +286,7 @@ describe('clips that a message names', () => {
     // The clip of the earlier message goes by its mention; the tag of that
     // message goes in its request form only, and the prompt holds the
     // newest message.
-    const queue = await queueRequest({
+    const queue = await takeRequest(setup, QUEUE_PATH, {
       model: REFERENCES.id,
       prompt: '<Video 1>\nThe dancer moves to <Audio 1>',
       ...PARAMETERS,
@@ -361,7 +311,7 @@ describe('clips that a message names', () => {
     await openClips('url-clip', [dance], 'Dance like @a', REFERENCES.name)
     await submit(browser, '')
 
-    const queue = await queueRequest({
+    const queue = await takeRequest(setup, QUEUE_PATH, {
       model: REFERENCES.id,
       prompt: 'Dance like <Video 1>',
       ...PARAMETERS,
@@ -401,13 +351,13 @@ describe('clips that a message names', () => {
   })
 
   it('sends a model that takes no clip the request without the clips, and tells that they were left out', async () => {
-    const beat = await tempClip('audio', 'a', 'left-beat.wav', BEAT)
-    const dance = await tempClip('video', 'b', 'left-dance.mp4', MP4_VIDEO)
+    const beat = await tempClipTag(setup.app.home, 'audio', 'a', 'left-beat.wav', BEAT)
+    const dance = await tempClipTag(setup.app.home, 'video', 'b', 'left-dance.mp4', MP4_VIDEO)
     await openClips('no-clips', [beat, dance], 'Make it dance like @b to @a: ', FILMS.modelName)
     await pasteAtEnd(PNG, 'c')
     await submit(browser, '')
 
-    const queue = await queueRequest({
+    const queue = await takeRequest(setup, QUEUE_PATH, {
       model: FILMS.modelId,
       prompt: 'Make it dance like @b to @a: ![image](id=c)',
       ...PARAMETERS,
@@ -423,16 +373,11 @@ describe('clips that a message names', () => {
 
   it('refuses an audio clip with no image and no video clip for a model whose audio clips need one, and sends nothing', async () => {
     const refusal = `${REFERENCES.name} takes an audio clip only together with a reference image or video. Add an image or a video clip to the message, or name one with @id.`
-    const beat = await tempClip('audio', 'a', 'lone-beat.wav', BEAT)
+    const beat = await tempClipTag(setup.app.home, 'audio', 'a', 'lone-beat.wav', BEAT)
     await openClips('audio-alone', [beat], 'Dance to @a', REFERENCES.name)
     await submit(browser, '')
 
-    await waitForValue(browser, 'error toast', () => openToasts(browser, 'error'), [{ title: 'Cannot send', message: refusal }])
-    expect(setup.mock.hasWaitingRequest()).toBe(false)
-    expect(await consoleErrors(browser)).toStrictEqual([`Cannot send: ${refusal}`])
-    await click(browser, '.toast-card--error .toast-close')
-    await waitForValue(browser, 'error toast closed', () => openToasts(browser, 'error'), [])
-    await waitForThread(browser, [
+    await expectSendRefused(setup, refusal, [
       { role: 'user', text: 'Make clips' },
       { role: 'agent', text: beat },
       { role: 'user', text: 'Dance to @a' },

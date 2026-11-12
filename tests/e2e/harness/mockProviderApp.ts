@@ -1,9 +1,10 @@
+import { expect } from 'vitest'
 import { startApp, type AppOptions, type RunningApp } from './app'
-import { waitFor } from './dom'
+import { click, consoleErrors, waitFor, waitForValue } from './dom'
 import { seedRawAppState } from './fixtures'
-import { mockChatPath, mockProviderConfig, startHoldingChatMock, type HoldingChatMock, type MockProvider } from './mockServer'
+import { mockChatPath, mockProviderConfig, startHoldingChatMock, type HeldRequest, type HoldingChatMock, type MockProvider } from './mockServer'
 import { createSession, destroySession, type E2EBrowser } from './session'
-import { pickModel } from './thread'
+import { openToasts, pickModel, threadSections, type ThreadSection } from './thread'
 
 export interface MockProviderApp {
   mock: HoldingChatMock
@@ -84,4 +85,29 @@ export async function startMockProviderApp (
     await stop()
     throw err
   }
+}
+
+/** Takes the next held request, and checks that it goes to `requestPath`
+ *  and that its body holds no path of the test HOME. When `json` is given,
+ *  the body must be that JSON. */
+export async function takeRequest (setup: MockProviderApp, requestPath: string, json?: unknown): Promise<HeldRequest> {
+  const request = await setup.mock.waitForRequest(setup.browser)
+  expect(request.path).toBe(requestPath)
+  expect(request.body).not.toContain(setup.app.home)
+  if (json !== undefined) expect(JSON.parse(request.body)).toStrictEqual(json)
+  return request
+}
+
+/** Checks that a submit got the "Cannot send" error toast with `message`
+ *  and sent no request: the thread is `thread`, and the one console error
+ *  is the refusal. Then closes the toast. */
+export async function expectSendRefused (setup: MockProviderApp, message: string, thread: ThreadSection[]): Promise<void> {
+  const { browser } = setup
+  await waitForValue(browser, 'error toast', () => openToasts(browser, 'error'), [{ title: 'Cannot send', message }])
+  expect(await threadSections(browser)).toStrictEqual(thread)
+  expect(setup.mock.hasWaitingRequest()).toBe(false)
+  expect(await consoleErrors(browser)).toStrictEqual([`Cannot send: ${message}`])
+  // The card of an earlier toast can still be closing.
+  await click(browser, '.toast-card--error:not(.toast-card--closing) .toast-close')
+  await waitForValue(browser, 'error toast closed', () => openToasts(browser, 'error'), [])
 }

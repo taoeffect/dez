@@ -1,13 +1,12 @@
-import fs from 'node:fs'
 import path from 'node:path'
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from 'vitest'
 import { startApp, type RunningApp } from './harness/app'
 import { consoleErrors, elementCenter, movePointer, resetConsoleErrors, screenshotOnFailure, waitFor, waitForValue } from './harness/dom'
-import { makeConversation, seedAppState, seedConversation } from './harness/fixtures'
+import { appFilePath, mediaTempDir, seedAppState, writeTestFile } from './harness/fixtures'
 import { shownImages, solidPng } from './harness/images'
-import { NOT_A_CLIP, WEBM_VIDEO, clipTag, silentWav, startClipServer, type ClipServer } from './harness/media'
+import { NOT_A_CLIP, WEBM_VIDEO, clipTag, problemCards, shownPlayers, silentWav, startClipServer, type ClipServer } from './harness/media'
 import { createSession, destroySession, type E2EBrowser } from './harness/session'
-import { sbpCall, waitForThread } from './harness/thread'
+import { assetPartPoint, openSeededConversation } from './harness/thread'
 
 // The facts of an asset in its hover toolbar, driven through the real app:
 // next to the id badge, an image shows its pixels, its format, and the size
@@ -28,31 +27,6 @@ describe('asset facts', () => {
   let app: RunningApp
   let browser: E2EBrowser
   let clips: ClipServer
-
-  function configDir (...parts: string[]): string {
-    return path.join(app.home, '.config', 'dez', ...parts)
-  }
-
-  function tempDir (): string {
-    return path.join(app.home, '.cache', 'dez', 'media')
-  }
-
-  async function writeFile (file: string, bytes: Buffer): Promise<string> {
-    await fs.promises.mkdir(path.dirname(file), { recursive: true })
-    await fs.promises.writeFile(file, bytes)
-    return file
-  }
-
-  // Seeds a conversation with `sections` and opens it in a new tab.
-  async function openConversation (id: string, sections: Array<{ role: 'user' | 'agent', text: string }>): Promise<void> {
-    await seedConversation(app.home, makeConversation({
-      id,
-      title: id,
-      sections: sections.map(({ role, text }) => ({ role, nodes: [{ kind: 'text', text }] })),
-    }))
-    await sbpCall(browser, 'dez.model/tabs/openConversation', id)
-    await waitForThread(browser, sections)
-  }
 
   // The items of the toolbar of each asset (`.dez-image` or
   // `.media-player`), in doc order, as `<class>` or `<class>: <text>` for
@@ -115,9 +89,9 @@ describe('asset facts', () => {
   })
 
   it('shows the pixels, the format, and the file size of an image between its id and its trash, and no facts for a missing image', async () => {
-    const stored = await writeFile(configDir('assets', 'images', 'facts.png'), PNG)
-    const missing = configDir('assets', 'images', 'facts-missing.png')
-    await openConversation('asset-facts-images', [{ role: 'user', text: `Images:\n![${stored}](id=a)\n![${missing}](id=b)\nEnd.` }])
+    const stored = await writeTestFile(appFilePath(app.home, 'assets', 'images', 'facts.png'), PNG)
+    const missing = appFilePath(app.home, 'assets', 'images', 'facts-missing.png')
+    await openSeededConversation(browser, app.home, 'asset-facts-images', [{ role: 'user', text: `Images:\n![${stored}](id=a)\n![${missing}](id=b)\nEnd.` }])
     await waitForValue(browser, 'shown images', () => shownImages(browser), [{ alt: 'facts.png', width: 40, height: 24 }])
     await waitFor(browser, '.cm-content .dez-image-missing')
 
@@ -148,10 +122,10 @@ describe('asset facts', () => {
     const expires = new Date(Date.now() + HOUR_MS).toISOString()
     const url = clips.clipUrl('tone.wav')
     // The temp copies are new files, so the cleanup of old ones leaves them.
-    const temp = await writeFile(path.join(tempDir(), 'facts-copy.wav'), TONE)
-    const saved = await writeFile(configDir('assets', 'generated', 'video', 'facts-saved.webm'), WEBM_VIDEO)
-    const unplayable = await writeFile(path.join(tempDir(), 'facts-text.webm'), NOT_A_CLIP)
-    const gone = path.join(tempDir(), 'facts-gone.wav')
+    const temp = await writeTestFile(path.join(mediaTempDir(app.home), 'facts-copy.wav'), TONE)
+    const saved = await writeTestFile(appFilePath(app.home, 'assets', 'generated', 'video', 'facts-saved.webm'), WEBM_VIDEO)
+    const unplayable = await writeTestFile(path.join(mediaTempDir(app.home), 'facts-text.webm'), NOT_A_CLIP)
+    const gone = path.join(mediaTempDir(app.home), 'facts-gone.wav')
     const reply = [
       clipTag('audio', { id: 'a', type: 'audio/wav', src: url, url, expires }),
       clipTag('audio', { id: 'b', type: 'audio/wav', src: temp, expires }),
@@ -159,16 +133,17 @@ describe('asset facts', () => {
       clipTag('video', { id: 'd', type: 'video/webm', src: unplayable, expires }),
       clipTag('audio', { id: 'e', type: 'audio/wav', src: gone, expires }),
     ].join('\n\n')
-    await openConversation('asset-facts-clips', [
+    await openSeededConversation(browser, app.home, 'asset-facts-clips', [
       { role: 'user', text: 'Make clips' },
       { role: 'agent', text: reply },
       { role: 'user', text: 'Thanks' },
     ])
-    const playable = () => browser.execute(() => Array.from(
-      document.querySelectorAll('.cm-content .media-player'),
-      (player) => player.getAttribute('data-unavailable') ?? 'plays',
-    ))
-    await waitForValue(browser, 'players', playable, ['plays', 'plays', 'plays', 'cannot-play', 'gone'])
+    const playing = { available: true, seconds: 2 }
+    const notPlaying = { available: false, seconds: null }
+    await waitForValue(browser, 'players', async () => (await shownPlayers(browser)).map(({ available, seconds }) => ({ available, seconds })), [
+      playing, playing, playing, notPlaying, notPlaying,
+    ])
+    expect((await problemCards(browser)).map((card) => card.cause)).toStrictEqual(['cannot-play', 'gone'])
 
     expect(WEBM_VIDEO.length).toBeLessThan(1024)
     await waitForValue(browser, 'player toolbars', () => toolbars('.media-player'), [
@@ -184,13 +159,7 @@ describe('asset facts', () => {
     // Over the picture of a video and beside an audio card, the facts show
     // in the toolbar while the pointer is on the player.
     for (const [index, part] of [[2, '.media-player__video'], [1, '.media-player__time']] as const) {
-      await movePointer(browser, await browser.execute((at: number, wanted: string) => {
-        const element = document.querySelectorAll('.cm-content .media-player')[at]?.querySelector(wanted)
-        if (!element) throw new Error(`no ${wanted} in player ${at}`)
-        element.scrollIntoView({ block: 'center' })
-        const box = element.getBoundingClientRect()
-        return { x: (box.left + box.right) / 2, y: (box.top + box.bottom) / 2 }
-      }, index, part))
+      await movePointer(browser, await assetPartPoint(browser, '.media-player', index, part))
       await waitForValue(browser, `facts of player ${index} shown`, () => factsShown('.media-player', index), true)
     }
 

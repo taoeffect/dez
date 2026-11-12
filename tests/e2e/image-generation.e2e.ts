@@ -1,15 +1,14 @@
 import fs from 'node:fs'
-import type http from 'node:http'
 import path from 'node:path'
 import type { EditorView } from '@codemirror/view'
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from 'vitest'
 import { unusableModelMessage } from '../../src/model/providers/unusableModel'
 import { openAiChatBody } from './harness/chatBody'
-import { click, consoleErrors, pointerClick, resetConsoleErrors, screenshotOnFailure, waitForValue } from './harness/dom'
-import { conversationFilePath } from './harness/fixtures'
-import { pasteImage, pngDataUrl, shownImages, solidPng } from './harness/images'
-import { startMockProviderApp, type MockProviderApp } from './harness/mockProviderApp'
-import { mockChatPath, startEventStream, writeChatFrame, type MockProvider } from './harness/mockServer'
+import { consoleErrors, pointerClick, resetConsoleErrors, screenshotOnFailure, waitForValue } from './harness/dom'
+import { conversationFilePath, filesIn, newFileIn, storedFileName } from './harness/fixtures'
+import { generatedImagesDir, pasteImageReference, pngDataUrl, shownImages, solidPng } from './harness/images'
+import { expectSendRefused, startMockProviderApp, type MockProviderApp } from './harness/mockProviderApp'
+import { answerHeld, mockChatPath, startEventStream, writeChatFrame, type MockProvider } from './harness/mockServer'
 import { changeParameterField, closePopup, openPopup, popupOpen, popupView } from './harness/parameterPopup'
 import type { E2EBrowser } from './harness/session'
 import { activeConversationId, focusEditor, newTab, openToasts, pickModel, submit, threadSections, waitForThread } from './harness/thread'
@@ -73,7 +72,7 @@ const TALL_PNG = solidPng(40, 300, [60, 90, 200])
 // image goes as it is.
 const UPSCALE_INPUT_PNG = solidPng(256, 256, [220, 60, 60])
 const UPSCALED_PNG = solidPng(512, 512, [220, 60, 60])
-const STORED_IMAGE_NAME = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\.png$/
+const STORED_IMAGE_NAME = storedFileName('png')
 
 /** What a view at its bottom may still have below it: scroll positions
  *  can be fractions of a pixel. */
@@ -84,28 +83,7 @@ describe('image generation', () => {
   let browser: E2EBrowser
 
   function generatedDir (): string {
-    return path.join(setup.app.home, '.config', 'dez', 'assets', 'generated', 'images')
-  }
-
-  async function generatedImages (): Promise<string[]> {
-    try {
-      return (await fs.promises.readdir(generatedDir())).sort()
-    } catch {
-      return []
-    }
-  }
-
-  // The file names in the generated image folder that are not in `before`,
-  // once there are `count` of them.
-  async function newGeneratedImages (before: string[], count: number): Promise<string[]> {
-    const added = async () => (await generatedImages()).filter((name) => !before.includes(name))
-    await waitForValue(browser, 'generated image files', async () => (await added()).length, count)
-    return await added()
-  }
-
-  function answer (reply: http.ServerResponse, contentType: string, body: string | Buffer): void {
-    reply.writeHead(200, { 'Content-Type': contentType })
-    reply.end(body)
+    return generatedImagesDir(setup.app.home)
   }
 
   // Keeps the generated images that the editor shows from loading until
@@ -185,16 +163,16 @@ describe('image generation', () => {
   })
 
   it('makes an image, then edits the newest image of the conversation', async () => {
-    const before = await generatedImages()
+    const before = await filesIn(generatedDir())
     await pickModel(browser, PAINTER.name, PAINTER.modelName)
     await submit(browser, 'Draw a fox')
 
     const generate = await setup.mock.waitForRequest(browser)
     expect(generate.path).toBe(GENERATE_PATH)
     expect(JSON.parse(generate.body)).toEqual({ model: PAINTER.modelId, prompt: 'Draw a fox', format: 'webp', hide_watermark: true, safe_mode: false })
-    answer(generate.reply, 'application/json', JSON.stringify({ images: [GENERATED_PNG.toString('base64')] }))
+    answerHeld(generate.reply, 'application/json', JSON.stringify({ images: [GENERATED_PNG.toString('base64')] }))
 
-    const [generatedName] = await newGeneratedImages(before, 1)
+    const generatedName = await newFileIn(browser, generatedDir(), before)
     expect(generatedName).toMatch(STORED_IMAGE_NAME)
     const generatedPath = path.join(generatedDir(), generatedName)
     expect(await fs.promises.readFile(generatedPath)).toEqual(GENERATED_PNG)
@@ -222,9 +200,9 @@ describe('image generation', () => {
     })
     expect(edit.body).not.toContain(setup.app.home)
     // The edit endpoint answers the bytes of one image.
-    answer(edit.reply, 'image/png', EDITED_PNG)
+    answerHeld(edit.reply, 'image/png', EDITED_PNG)
 
-    const [editedName] = await newGeneratedImages([...before, generatedName], 1)
+    const editedName = await newFileIn(browser, generatedDir(), [...before, generatedName])
     const editedPath = path.join(generatedDir(), editedName)
     expect(await fs.promises.readFile(editedPath)).toEqual(EDITED_PNG)
     await waitForThread(browser, [
@@ -242,12 +220,12 @@ describe('image generation', () => {
   })
 
   it('edits the image that the message names with `@a`, not the newest one', async () => {
-    const before = await generatedImages()
+    const before = await filesIn(generatedDir())
     await pickModel(browser, PAINTER.name, PAINTER.modelName)
     await submit(browser, 'Draw a fox')
     const fox = await setup.mock.waitForRequest(browser)
-    answer(fox.reply, 'application/json', JSON.stringify({ images: [GENERATED_PNG.toString('base64')] }))
-    const [foxName] = await newGeneratedImages(before, 1)
+    answerHeld(fox.reply, 'application/json', JSON.stringify({ images: [GENERATED_PNG.toString('base64')] }))
+    const foxName = await newFileIn(browser, generatedDir(), before)
     const foxReply = [
       { role: 'user', text: 'Draw a fox' },
       { role: 'agent', text: `![${path.join(generatedDir(), foxName)}](id=a)` },
@@ -256,8 +234,8 @@ describe('image generation', () => {
 
     await submit(browser, 'Draw a cat')
     const cat = await setup.mock.waitForRequest(browser)
-    answer(cat.reply, 'application/json', JSON.stringify({ images: [NEWEST_PNG.toString('base64')] }))
-    const [catName] = await newGeneratedImages([...before, foxName], 1)
+    answerHeld(cat.reply, 'application/json', JSON.stringify({ images: [NEWEST_PNG.toString('base64')] }))
+    const catName = await newFileIn(browser, generatedDir(), [...before, foxName])
     const catReply = [
       { role: 'user', text: 'Draw a cat' },
       { role: 'agent', text: `![${path.join(generatedDir(), catName)}](id=b)` },
@@ -276,9 +254,9 @@ describe('image generation', () => {
       images: [`data:image/png;base64,${GENERATED_PNG.toString('base64')}`],
       safe_mode: false,
     })
-    answer(edit.reply, 'image/png', EDITED_PNG)
+    answerHeld(edit.reply, 'image/png', EDITED_PNG)
 
-    const [editedName] = await newGeneratedImages([...before, foxName, catName], 1)
+    const editedName = await newFileIn(browser, generatedDir(), [...before, foxName, catName])
     await waitForThread(browser, [
       ...foxReply,
       ...catReply,
@@ -295,10 +273,7 @@ describe('image generation', () => {
       .map((rgb) => solidPng(320, 256, [...rgb]))
     await pickModel(browser, PAINTER.name, EDIT_MODEL.name)
     await focusEditor(browser)
-    for (const [index, png] of pngs.entries()) {
-      await pasteImage(browser, png)
-      await waitForValue(browser, `reference ${index + 1}`, async () => ((await threadSections(browser))[0]?.text.match(/\]\(id=/g) ?? []).length, index + 1)
-    }
+    for (const [index, png] of pngs.entries()) await pasteImageReference(browser, png, String.fromCharCode(97 + index))
     const message = (await threadSections(browser))[0].text
     await submit(browser, '')
 
@@ -314,7 +289,7 @@ describe('image generation', () => {
       title: 'Image not sent',
       message: `${EDIT_MODEL.name} takes only 3 images, so 1 image was left out of the request.`,
     }])
-    answer(edit.reply, 'image/png', EDITED_PNG)
+    answerHeld(edit.reply, 'image/png', EDITED_PNG)
 
     await waitForValue(browser, 'sections after the edit', async () => (await threadSections(browser)).length, 3)
     expect((await threadSections(browser))[0].text).toBe(message)
@@ -329,7 +304,7 @@ describe('image generation', () => {
       content: '',
       images: [{ type: 'image_url', image_url: { url: `data:image/png;base64,${png.toString('base64')}` } }],
     })
-    const before = await generatedImages()
+    const before = await filesIn(generatedDir())
     await pickModel(browser, PAINTER.name, CHAT_MODEL.name)
     await submit(browser, 'Draw a fox')
 
@@ -346,7 +321,7 @@ describe('image generation', () => {
     writeChatFrame(first.reply, {}, 'stop')
     first.reply.end('data: [DONE]\n\n')
 
-    const [foxName] = await newGeneratedImages(before, 1)
+    const foxName = await newFileIn(browser, generatedDir(), before)
     expect(foxName).toMatch(STORED_IMAGE_NAME)
     const foxPath = path.join(generatedDir(), foxName)
     expect(await fs.promises.readFile(foxPath)).toEqual(GENERATED_PNG)
@@ -384,7 +359,7 @@ describe('image generation', () => {
     writeChatFrame(second.reply, {}, 'stop')
     second.reply.end('data: [DONE]\n\n')
 
-    const [editedName] = await newGeneratedImages([...before, foxName], 1)
+    const editedName = await newFileIn(browser, generatedDir(), [...before, foxName])
     const editedPath = path.join(generatedDir(), editedName)
     expect(await fs.promises.readFile(editedPath)).toEqual(EDITED_PNG)
     await waitForThread(browser, [
@@ -414,14 +389,14 @@ describe('image generation', () => {
       const view = Reflect.get(Reflect.get(content, 'cmTile'), 'root').view as EditorView
       view.dispatch({ changes: { from: 0, insert: text } })
     }, `${question}\n`)
-    const before = await generatedImages()
+    const before = await filesIn(generatedDir())
     await pickModel(browser, PAINTER.name, PAINTER.modelName)
     await holdImageLoads()
     await submit(browser, 'Draw a tall fox')
 
     const request = await setup.mock.waitForRequest(browser)
-    answer(request.reply, 'application/json', JSON.stringify({ images: [TALL_PNG.toString('base64')] }))
-    const [name] = await newGeneratedImages(before, 1)
+    answerHeld(request.reply, 'application/json', JSON.stringify({ images: [TALL_PNG.toString('base64')] }))
+    const name = await newFileIn(browser, generatedDir(), before)
     await waitForThread(browser, [
       { role: 'user', text: `${question}\nDraw a tall fox` },
       { role: 'agent', text: `![${path.join(generatedDir(), name)}](id=a)` },
@@ -441,7 +416,7 @@ describe('image generation', () => {
   })
 
   it('upscales the image of the message with the scale of the popup, and sends no text', async () => {
-    const before = await generatedImages()
+    const before = await filesIn(generatedDir())
     await pickModel(browser, PAINTER.name, UPSCALE_MODEL.name)
     await openPopup(browser)
     const scale = (picked: string) => ({ name: 'scale', label: 'Scale', options: ['2', '4'], picked })
@@ -457,17 +432,16 @@ describe('image generation', () => {
     await closePopup(browser)
 
     await focusEditor(browser)
-    await pasteImage(browser, UPSCALE_INPUT_PNG)
-    await waitForValue(browser, 'pasted reference', async () => /\]\(id=a\)$/.test((await threadSections(browser))[0]?.text ?? ''), true)
+    await pasteImageReference(browser, UPSCALE_INPUT_PNG, 'a')
     const reference = (await threadSections(browser))[0].text
     await submit(browser, 'Make it larger')
 
     const upscale = await setup.mock.waitForRequest(browser)
     expect(upscale.path).toBe(UPSCALE_PATH)
     expect(JSON.parse(upscale.body)).toEqual({ scale: 4, creativity: 0.01, image: UPSCALE_INPUT_PNG.toString('base64') })
-    answer(upscale.reply, 'image/png', UPSCALED_PNG)
+    answerHeld(upscale.reply, 'image/png', UPSCALED_PNG)
 
-    const [upscaledName] = await newGeneratedImages(before, 1)
+    const upscaledName = await newFileIn(browser, generatedDir(), before)
     const upscaledPath = path.join(generatedDir(), upscaledName)
     expect(await fs.promises.readFile(upscaledPath)).toEqual(UPSCALED_PNG)
     await waitForThread(browser, [
@@ -484,17 +458,11 @@ describe('image generation', () => {
     await pickModel(browser, PAINTER.name, UPSCALE_MODEL.name)
     await submit(browser, 'Make it larger')
 
-    await waitForValue(browser, 'error toast', () => openToasts(browser, 'error'), [{ title: 'Cannot send', message }])
-    expect(await threadSections(browser)).toEqual([{ role: 'user', text: 'Make it larger' }])
-    expect(setup.mock.hasWaitingRequest()).toBe(false)
-    expect(await consoleErrors(browser)).toEqual([`Cannot send: ${message}`])
-
-    await click(browser, '.toast-card--error:not(.toast-card--closing) .toast-close')
-    await waitForValue(browser, 'error toast closed', () => openToasts(browser, 'error'), [])
+    await expectSendRefused(setup, message, [{ role: 'user', text: 'Make it larger' }])
   })
 
   it('leaves no file and no agent section when the user stops a request that has begun its answer', async () => {
-    const before = await generatedImages()
+    const before = await filesIn(generatedDir())
     await pickModel(browser, PAINTER.name, PAINTER.modelName)
     await submit(browser, 'Draw a cat')
 
@@ -507,7 +475,7 @@ describe('image generation', () => {
 
     await waitForValue(browser, 'request closed', async () => request.closed, true)
     await waitForThread(browser, [{ role: 'user', text: 'Draw a cat' }])
-    expect(await generatedImages()).toEqual(before)
+    expect(await filesIn(generatedDir())).toEqual(before)
     expect(await consoleErrors(browser)).toEqual([])
   })
 
@@ -517,12 +485,6 @@ describe('image generation', () => {
     await pickModel(browser, PAINTER.name, SKETCH_MODEL.name)
     await submit(browser, 'Work on it')
 
-    await waitForValue(browser, 'error toast', () => openToasts(browser, 'error'), [{ title: 'Cannot send', message }])
-    expect(await threadSections(browser)).toEqual([{ role: 'user', text: 'Work on it' }])
-    expect(setup.mock.hasWaitingRequest()).toBe(false)
-    expect(await consoleErrors(browser)).toEqual([`Cannot send: ${message}`])
-
-    await click(browser, '.toast-card--error:not(.toast-card--closing) .toast-close')
-    await waitForValue(browser, 'error toast closed', () => openToasts(browser, 'error'), [])
+    await expectSendRefused(setup, message, [{ role: 'user', text: 'Work on it' }])
   })
 })

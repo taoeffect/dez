@@ -1,12 +1,12 @@
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from 'vitest'
 import { click, consoleErrors, resetConsoleErrors, screenshotOnFailure, waitForValue } from './harness/dom'
 import { readAppState } from './harness/fixtures'
-import { shownPlayers, silentWav } from './harness/media'
-import { startMockProviderApp, type MockProviderApp } from './harness/mockProviderApp'
+import { answerVeniceJob, shownPlayers, silentWav } from './harness/media'
+import { expectSendRefused, startMockProviderApp, takeRequest, type MockProviderApp } from './harness/mockProviderApp'
 import type { MockProvider } from './harness/mockServer'
 import { changeParameterField, closePopup, openPopup, popupOpen, popupView, type PopupView } from './harness/parameterPopup'
 import type { E2EBrowser } from './harness/session'
-import { editorDoc, newTab, openToasts, pasteText, pickModel, setCaret, submit, threadSections, waitForThread } from './harness/thread'
+import { editorDoc, newTab, pasteText, pickModel, setCaret, submit, threadSections, waitForThread } from './harness/thread'
 
 // Music models, driven through the real app against a mock of Venice's
 // media API (`mediaApi: { format: 'venice' }`). The mock also serves the
@@ -164,12 +164,7 @@ describe('music models', () => {
     await pickModel(browser, SONGS.name, LYRICS_MODEL.name)
     await submit(browser, STYLE)
 
-    await waitForValue(browser, 'error toast', () => openToasts(browser, 'error'), [{ title: 'Cannot send', message: refusal }])
-    expect(await threadSections(browser)).toStrictEqual([{ role: 'user', text: STYLE }])
-    expect(setup.mock.hasWaitingRequest()).toBe(false)
-    expect(await consoleErrors(browser)).toStrictEqual([`Cannot send: ${refusal}`])
-    await click(browser, '.toast-card--error .toast-close')
-    await waitForValue(browser, 'error toast closed', () => openToasts(browser, 'error'), [])
+    await expectSendRefused(setup, refusal, [{ role: 'user', text: STYLE }])
     await resetConsoleErrors(browser)
 
     // The lyrics go into the same message, after the style.
@@ -179,22 +174,8 @@ describe('music models', () => {
     await waitForValue(browser, 'message with the lyrics', () => threadSections(browser), [{ role: 'user', text: message }])
     await submit(browser, '')
 
-    const queue = await setup.mock.waitForRequest(browser)
-    expect(queue.path).toBe(QUEUE_PATH)
-    expect(JSON.parse(queue.body)).toStrictEqual({ model: LYRICS_MODEL.id, prompt: STYLE, lyrics_prompt: LYRICS })
-    queue.reply.writeHead(200, { 'Content-Type': 'application/json' })
-    queue.reply.end(JSON.stringify({ model: LYRICS_MODEL.id, queue_id: 'queue-1', status: 'QUEUED' }))
-
-    // The app asks for the state of the job 5 seconds later. The answer of
-    // a job that is done is the clip.
-    const retrieve = await setup.mock.waitForRequest(browser)
-    expect(retrieve.path).toBe(RETRIEVE_PATH)
-    expect(JSON.parse(retrieve.body)).toStrictEqual({ model: LYRICS_MODEL.id, queue_id: 'queue-1' })
-    retrieve.reply.writeHead(200, { 'Content-Type': 'audio/wav' })
-    retrieve.reply.end(TONE)
-
-    await waitForValue(browser, 'sections of the reply', async () => (await threadSections(browser)).map((section) => section.role), ['user', 'agent', 'user'])
-    const reply = (await threadSections(browser))[1].text
+    const queue = await takeRequest(setup, QUEUE_PATH, { model: LYRICS_MODEL.id, prompt: STYLE, lyrics_prompt: LYRICS })
+    const reply = await answerVeniceJob(setup, queue, { retrievePath: RETRIEVE_PATH, modelId: LYRICS_MODEL.id, queueId: 'queue-1', clip: { type: 'audio/wav', bytes: TONE }, replyIndex: 1 })
     // The tag keeps the id of the job, the only way back to a paid clip.
     expect(reply).toMatch(/^<dez:audio id="a" type="audio\/wav" src="[^"]+\.wav" expires="[^"]+" job="queue-1"\/>$/)
     await waitForThread(browser, [

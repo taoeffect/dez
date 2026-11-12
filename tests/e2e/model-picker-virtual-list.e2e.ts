@@ -1,10 +1,10 @@
 import { Key } from 'webdriverio'
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from 'vitest'
 import { startApp, type RunningApp } from './harness/app'
-import { consoleErrors, pointerClick, pointerClickAt, resetConsoleErrors, screenshotOnFailure, typeInto, waitFor, waitForValue, type Point } from './harness/dom'
+import { consoleErrors, isOnTop, pointerClick, pointerClickAt, resetConsoleErrors, screenshotOnFailure, typeInto, waitFor, waitForValue, type Point } from './harness/dom'
 import { seedRawAppState } from './harness/fixtures'
 import { createSession, destroySession, type E2EBrowser } from './harness/session'
-import { drawnPickerRows, openPicker, pickerGroups, sbpCall } from './harness/thread'
+import { drawnPickerRows, openPicker, pickerGroups, pickerOpen, sbpCall } from './harness/thread'
 
 // The virtual list of the model pickers, driven through the real app. A
 // custom provider with `fetchModels: false` gives 1000 config models, and a
@@ -55,17 +55,10 @@ describe('model picker virtual list', () => {
     }, root, fraction)
   }
 
-  // Whether the row of the model `name` is in view: a click at its center
-  // goes to it.
-  async function showsModel (name: string, root = BOTTOM): Promise<boolean> {
-    return browser.execute((rootSelector: string, model: string) => {
-      const row = Array.from(document.querySelectorAll<HTMLElement>(`${rootSelector} .model-item-name`))
-        .find((candidate) => candidate.title === model)?.closest('.model-item')
-      if (!row) return false
-      const rect = row.getBoundingClientRect()
-      const hit = document.elementFromPoint(rect.left + rect.width / 2, rect.top + rect.height / 2)
-      return hit !== null && row.contains(hit)
-    }, root, name)
+  // The first drawn row of the model `name`. It is in view when
+  // `isOnTop` holds for it: a click at its center goes to it.
+  function modelRow (name: string, root = BOTTOM): string {
+    return `${root} .model-item:has(.model-item-name[title="${name}"])`
   }
 
   // The model row at the middle of the list's visible part: its name and
@@ -89,15 +82,6 @@ describe('model picker virtual list', () => {
       }
       throw new Error(`middleRow: no model row at the middle of ${rootSelector}`)
     }, root)
-  }
-
-  // The star of the first drawn row of the model `name`.
-  function star (name: string): string {
-    return `${BOTTOM} .model-item:has(.model-item-name[title="${name}"]) .model-item-star`
-  }
-
-  async function pickerOpen (root = BOTTOM): Promise<boolean> {
-    return browser.execute((rootSelector: string) => document.querySelector(rootSelector) !== null, root)
   }
 
   beforeAll(async () => {
@@ -180,7 +164,7 @@ describe('model picker virtual list', () => {
 
   it('shows the last rows after a scroll to the end', async () => {
     await scrollList(1)
-    await waitForValue(browser, 'last row in view', () => showsModel(SMALL_MODEL), true)
+    await waitForValue(browser, 'last row in view', () => isOnTop(browser, modelRow(SMALL_MODEL)), true)
     const drawn = await drawnTexts()
     expect(drawn.length).toBeLessThan(MAX_DRAWN_ROWS)
     expect(drawn).toEqual(ROW_TEXTS.slice(-drawn.length))
@@ -197,7 +181,7 @@ describe('model picker virtual list', () => {
     await scrollList(1)
     await typeInto(browser, `${BOTTOM} .model-picker-input`, '0777', { clear: true })
     await waitForValue(browser, 'matches of 0777', () => pickerGroups(browser), [{ provider: BIG, models: ['Model 0777'] }])
-    expect(await showsModel('Model 0777')).toBe(true)
+    expect(await isOnTop(browser, modelRow('Model 0777'))).toBe(true)
 
     await typeInto(browser, `${BOTTOM} .model-picker-input`, '', { clear: true })
     await waitForValue(browser, 'first rows', async () => (await drawnTexts()).slice(0, 2), [BIG, BIG_MODELS[0]])
@@ -214,7 +198,7 @@ describe('model picker virtual list', () => {
     await waitForValue(browser, 'selected model', () => browser.execute(
       () => document.querySelector('.model-selector-label')?.textContent?.trim() ?? null
     ), far.name)
-    expect(await pickerOpen()).toBe(false)
+    expect(await pickerOpen(browser)).toBe(false)
 
     // A new picker starts at the top, where the selected row is not drawn.
     await openPicker(browser)
@@ -228,7 +212,7 @@ describe('model picker virtual list', () => {
   it('puts a far model in the Favorites group with its star, and takes it out again', async () => {
     // The list is at its middle, with the selected model in view.
     const far = (await middleRow()).name
-    await pointerClick(browser, star(far))
+    await pointerClick(browser, `${modelRow(far)} .model-item-star`)
     await scrollList(0)
     await waitForValue(browser, 'first rows', async () => (await drawnTexts()).slice(0, 4), ['Favorites', far, BIG, BIG_MODELS[0]])
     // The two new rows at the top move every other row down; no row is lost
@@ -236,13 +220,13 @@ describe('model picker virtual list', () => {
     expect(await pickerGroups(browser)).toEqual([{ provider: 'Favorites', models: [far] }, ...ALL_GROUPS])
 
     // The first row of that model is now the one in Favorites.
-    await pointerClick(browser, star(far))
+    await pointerClick(browser, `${modelRow(far)} .model-item-star`)
     await waitForValue(browser, 'first rows', async () => (await drawnTexts()).slice(0, 2), [BIG, BIG_MODELS[0]])
     const drawn = await drawnTexts()
     expect(drawn).toEqual(ROW_TEXTS.slice(0, drawn.length))
 
     await browser.keys([Key.Escape])
-    await waitForValue(browser, 'picker open', () => pickerOpen(), false)
+    await waitForValue(browser, 'picker open', () => pickerOpen(browser), false)
   })
 
   it('draws the Settings picker the same way, with the None row first', async () => {
@@ -257,7 +241,7 @@ describe('model picker virtual list', () => {
     expect(first.slice(1).map((row) => row.text)).toEqual(ROW_TEXTS.slice(0, first.length - 1))
 
     await scrollList(1, SETTINGS)
-    await waitForValue(browser, 'last row in view', () => showsModel(SMALL_MODEL, SETTINGS), true)
+    await waitForValue(browser, 'last row in view', () => isOnTop(browser, modelRow(SMALL_MODEL, SETTINGS)), true)
     const last = await drawnTexts(SETTINGS)
     expect(last.length).toBeLessThan(MAX_DRAWN_ROWS)
     expect(last).toEqual(ROW_TEXTS.slice(-last.length))
@@ -268,7 +252,7 @@ describe('model picker virtual list', () => {
     await waitForValue(browser, 'default model', () => browser.execute(
       () => document.querySelector('.settings-model-trigger-label')?.textContent?.trim() ?? null
     ), `${SMALL} — ${SMALL_MODEL}`)
-    expect(await pickerOpen(SETTINGS)).toBe(false)
+    expect(await pickerOpen(browser, SETTINGS)).toBe(false)
     await pointerClick(browser, '.settings-model-trigger')
     await waitFor(browser, SETTINGS)
     await waitForValue(browser, 'None row', async () => (await drawnPickerRows(browser, SETTINGS))[0],

@@ -1,13 +1,10 @@
-import fs from 'node:fs'
-import path from 'node:path'
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from 'vitest'
-import { click, consoleErrors, resetConsoleErrors, screenshotOnFailure, waitForValue } from './harness/dom'
-import { makeConversation, seedConversation } from './harness/fixtures'
-import { MP4_VIDEO, WEBM_VIDEO, clipTag, silentWav } from './harness/media'
-import { startMockProviderApp, type MockProviderApp } from './harness/mockProviderApp'
-import { requestForm, type HeldRequest, type MockProvider } from './harness/mockServer'
+import { consoleErrors, resetConsoleErrors, screenshotOnFailure } from './harness/dom'
+import { MP4_VIDEO, WEBM_VIDEO, answerVeniceJob, silentWav, tempClipTag } from './harness/media'
+import { expectSendRefused, startMockProviderApp, takeRequest, type MockProviderApp } from './harness/mockProviderApp'
+import { answerHeld, requestForm, type MockProvider } from './harness/mockServer'
 import type { E2EBrowser } from './harness/session'
-import { newTab, openToasts, pickModel, sbpCall, submit, threadSections, waitForThread } from './harness/thread'
+import { newTab, openSeededConversation, pickModel, submit, waitForThread } from './harness/thread'
 
 // The models that change or write down a clip of the message, driven
 // through the real app against a mock of Venice's media API
@@ -65,64 +62,21 @@ const MODEL_LIST = {
 }
 
 const BEAT = silentWav(3)
-const HOUR_MS = 60 * 60 * 1000
 
 describe('models that change or write down a clip', () => {
   let setup: MockProviderApp
   let browser: E2EBrowser
 
-  // Writes `bytes` as the temp copy `name` of a clip with the id `a`, and
-  // gives its tag.
-  async function tempClip (kind: 'audio' | 'video', name: string, bytes: Buffer): Promise<string> {
-    const dir = path.join(setup.app.home, '.cache', 'dez', 'media')
-    await fs.promises.mkdir(dir, { recursive: true })
-    const src = path.join(dir, name)
-    await fs.promises.writeFile(src, bytes)
-    return clipTag(kind, { id: 'a', type: kind === 'audio' ? 'audio/wav' : 'video/mp4', src, expires: new Date(Date.now() + HOUR_MS).toISOString() })
-  }
-
   // Seeds a conversation whose one reply holds the clip `tag`, with `next`
   // as the text of the user section after it, opens it, and picks the
   // model `modelName`.
   async function openClip (id: string, tag: string, next: string, modelName: string): Promise<void> {
-    await seedConversation(setup.app.home, makeConversation({
-      id,
-      title: id,
-      sections: [
-        { role: 'user', nodes: [{ kind: 'text', text: 'Make a clip' }] },
-        { role: 'agent', nodes: [{ kind: 'text', text: tag }] },
-        { role: 'user', nodes: [{ kind: 'text', text: next }] },
-      ],
-    }))
-    await sbpCall(browser, 'dez.model/tabs/openConversation', id)
-    await waitForThread(browser, [{ role: 'user', text: 'Make a clip' }, { role: 'agent', text: tag }, { role: 'user', text: next }])
+    await openSeededConversation(browser, setup.app.home, id, [
+      { role: 'user', text: 'Make a clip' },
+      { role: 'agent', text: tag },
+      { role: 'user', text: next },
+    ])
     await pickModel(browser, CLIPS.name, modelName)
-  }
-
-  async function takeRequest (requestPath: string): Promise<HeldRequest> {
-    const request = await setup.mock.waitForRequest(browser)
-    expect(request.path).toBe(requestPath)
-    expect(request.body).not.toContain(setup.app.home)
-    return request
-  }
-
-  function answerJson (request: HeldRequest, data: unknown): void {
-    request.reply.writeHead(200, { 'Content-Type': 'application/json' })
-    request.reply.end(JSON.stringify(data))
-  }
-
-  // Answers the queue request with a job whose clip is done at the first
-  // ask, and checks the ask. Returns the text of the reply, which then is
-  // the third section.
-  async function answerJob (queue: HeldRequest, retrievePath: string, modelId: string, clip: { type: string, bytes: Buffer }): Promise<string> {
-    answerJson(queue, { model: modelId, queue_id: 'job-1', status: 'QUEUED' })
-    const retrieve = await takeRequest(retrievePath)
-    expect(JSON.parse(retrieve.body)).toStrictEqual({ model: modelId, queue_id: 'job-1' })
-    retrieve.reply.writeHead(200, { 'Content-Type': clip.type })
-    retrieve.reply.end(clip.bytes)
-
-    await waitForValue(browser, 'sections after the reply', async () => (await threadSections(browser)).length, 5)
-    return (await threadSections(browser))[3].text
   }
 
   beforeAll(async () => {
@@ -160,11 +114,11 @@ describe('models that change or write down a clip', () => {
   })
 
   it('sends the named audio clip to a transcription model as a form file, and writes the transcript as the reply', async () => {
-    const beat = await tempClip('audio', 'speech.wav', BEAT)
+    const beat = await tempClipTag(setup.app.home, 'audio', 'a', 'speech.wav', BEAT)
     await openClip('transcribe', beat, 'Write down @a', CLIPS.modelName)
     await submit(browser, '')
 
-    const request = await takeRequest(TRANSCRIBE_PATH)
+    const request = await takeRequest(setup, TRANSCRIBE_PATH)
     expect(request.headers['content-type']).toMatch(/^multipart\/form-data; boundary=/)
     // No prompt: the endpoint takes none.
     expect(await requestForm(request)).toStrictEqual([
@@ -172,7 +126,7 @@ describe('models that change or write down a clip', () => {
       { name: 'response_format', value: 'json' },
       { name: 'file', fileName: 'clip.wav', type: 'audio/wav', bytes: BEAT },
     ])
-    answerJson(request, { text: ' Hello there. ', duration: 3 })
+    answerHeld(request.reply, 'application/json', JSON.stringify({ text: ' Hello there. ', duration: 3 }))
 
     await waitForThread(browser, [
       { role: 'user', text: 'Make a clip' },
@@ -185,39 +139,38 @@ describe('models that change or write down a clip', () => {
   })
 
   it('sends the named audio clip and the default voice to the voice changer as a form, and shows the clip of its job', async () => {
-    const beat = await tempClip('audio', 'voice.wav', BEAT)
+    const beat = await tempClipTag(setup.app.home, 'audio', 'a', 'voice.wav', BEAT)
     await openClip('voice', beat, '@a', VOICE.name)
     await submit(browser, '')
 
-    const queue = await takeRequest(VOICE_QUEUE_PATH)
+    const queue = await takeRequest(setup, VOICE_QUEUE_PATH)
     // The noise switch is off, so it goes as no field.
     expect(await requestForm(queue)).toStrictEqual([
       { name: 'model', value: VOICE.id },
       { name: 'voice', value: 'Aria' },
       { name: 'file', fileName: 'clip.wav', type: 'audio/wav', bytes: BEAT },
     ])
-    const reply = await answerJob(queue, VOICE_RETRIEVE_PATH, VOICE.id, { type: 'audio/wav', bytes: silentWav(2) })
+    const reply = await answerVeniceJob(setup, queue, { retrievePath: VOICE_RETRIEVE_PATH, modelId: VOICE.id, queueId: 'job-1', clip: { type: 'audio/wav', bytes: silentWav(2) }, replyIndex: 3 })
 
     expect(reply).toMatch(/^<dez:audio id="b" type="audio\/wav" src="[^"]+\.wav" expires="[^"]+" job="job-1"\/>$/)
     expect(await consoleErrors(browser)).toStrictEqual([])
   })
 
   it('sends the named video clip to a video-to-video model as video_url, and shows the clip of its job', async () => {
-    const film = await tempClip('video', 'film.mp4', MP4_VIDEO)
+    const film = await tempClipTag(setup.app.home, 'video', 'a', 'film.mp4', MP4_VIDEO)
     await openClip('edit', film, 'Make @a look like a painting', EDIT.name)
     await submit(browser, '')
 
-    const queue = await takeRequest(VIDEO_QUEUE_PATH)
     // The one length (`Auto`, the length of the clip) and the lowest
     // resolution.
-    expect(JSON.parse(queue.body)).toStrictEqual({
+    const queue = await takeRequest(setup, VIDEO_QUEUE_PATH, {
       model: EDIT.id,
       prompt: 'Make @a look like a painting',
       duration: 'Auto',
       resolution: '720p',
       video_url: `data:video/mp4;base64,${MP4_VIDEO.toString('base64')}`,
     })
-    const reply = await answerJob(queue, VIDEO_RETRIEVE_PATH, EDIT.id, { type: 'video/webm', bytes: WEBM_VIDEO })
+    const reply = await answerVeniceJob(setup, queue, { retrievePath: VIDEO_RETRIEVE_PATH, modelId: EDIT.id, queueId: 'job-1', clip: { type: 'video/webm', bytes: WEBM_VIDEO }, replyIndex: 3 })
 
     expect(reply).toMatch(/^<dez:video id="b" type="video\/webm" src="[^"]+\.webm" expires="[^"]+" job="job-1"\/>$/)
     expect(await consoleErrors(browser)).toStrictEqual([])
@@ -228,11 +181,6 @@ describe('models that change or write down a clip', () => {
     await pickModel(browser, CLIPS.name, CLIPS.modelName)
     await submit(browser, 'Write this down')
 
-    await waitForValue(browser, 'error toast', () => openToasts(browser, 'error'), [{ title: 'Cannot send', message: refusal }])
-    expect(setup.mock.hasWaitingRequest()).toBe(false)
-    expect(await consoleErrors(browser)).toStrictEqual([`Cannot send: ${refusal}`])
-    expect(await threadSections(browser)).toStrictEqual([{ role: 'user', text: 'Write this down' }])
-    await click(browser, '.toast-card--error .toast-close')
-    await waitForValue(browser, 'error toast closed', () => openToasts(browser, 'error'), [])
+    await expectSendRefused(setup, refusal, [{ role: 'user', text: 'Write this down' }])
   })
 })

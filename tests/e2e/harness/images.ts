@@ -1,5 +1,8 @@
 import zlib from 'node:zlib'
+import { waitForValue } from './dom'
+import { appFilePath } from './fixtures'
 import type { E2EBrowser } from './session'
+import { threadSections } from './thread'
 
 const PNG_SIGNATURE = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a])
 
@@ -101,4 +104,18 @@ export async function pasteImage (browser: E2EBrowser, image: Buffer, type = 'im
     data.items.add(new File([Uint8Array.from(atob(base64), (char) => char.charCodeAt(0))], name, { type: fileType }))
     content.dispatchEvent(new ClipboardEvent('paste', { clipboardData: data, bubbles: true, cancelable: true }))
   }, image.toString('base64'), type)
+}
+
+/** Pastes the PNG `png` with `pasteImage`, and waits until the last
+ *  section of the active tab ends with its reference, which gets the image
+ *  id `id`. */
+export async function pasteImageReference (browser: E2EBrowser, png: Buffer, id: string): Promise<void> {
+  await pasteImage(browser, png)
+  await waitForValue(browser, `reference of the image ${id}`, async () => (await threadSections(browser)).at(-1)?.text.endsWith(`](id=${id})`) ?? false, true)
+}
+
+/** The folder of the images that models and Dez tools made, in the test
+ *  HOME `home`. */
+export function generatedImagesDir (home: string): string {
+  return appFilePath(home, 'assets', 'generated', 'images')
 }

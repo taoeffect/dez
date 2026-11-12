@@ -2,9 +2,9 @@ import fs from 'node:fs'
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from 'vitest'
 import { click, consoleErrors, resetConsoleErrors, screenshotOnFailure, typeKeys, waitForValue } from './harness/dom'
 import { readAppState } from './harness/fixtures'
-import { decodedImage, pasteImage, pngDataUrl, solidPng, stripedPng, type Rgb } from './harness/images'
-import { WEBM_VIDEO, shownPlayers } from './harness/media'
-import { startMockProviderApp, type MockProviderApp } from './harness/mockProviderApp'
+import { decodedImage, pasteImageReference, pngDataUrl, solidPng, stripedPng, type Rgb } from './harness/images'
+import { WEBM_VIDEO, answerVeniceJob, shownPlayers } from './harness/media'
+import { expectSendRefused, startMockProviderApp, takeRequest, type MockProviderApp } from './harness/mockProviderApp'
 import type { HeldRequest, MockProvider } from './harness/mockServer'
 import { closePopup, openPopup, popupOpen, popupView, type PopupView } from './harness/parameterPopup'
 import type { E2EBrowser } from './harness/session'
@@ -103,36 +103,20 @@ describe('image-to-video models', () => {
   // reference, which gets the image id `id`.
   async function typeThenPaste (text: string, png: Buffer, id: string): Promise<void> {
     await typeKeys(browser, text)
-    await pasteImage(browser, png)
-    await waitForValue(browser, `reference of the image ${id}`, async () => (await threadSections(browser)).at(-1)?.text.endsWith(`](id=${id})`), true)
+    await pasteImageReference(browser, png, id)
   }
 
   // Takes the queue request of a submit and checks its body, which is for
   // the frames model unless `body` names another.
   async function queueRequest (body: Record<string, unknown>): Promise<HeldRequest> {
-    const queue = await setup.mock.waitForRequest(browser)
-    expect(queue.path).toBe(QUEUE_PATH)
-    expect(JSON.parse(queue.body)).toStrictEqual({ model: FILMS.modelId, ...body })
-    expect(queue.body).not.toContain(setup.app.home)
-    return queue
+    return takeRequest(setup, QUEUE_PATH, { model: FILMS.modelId, ...body })
   }
 
-  // Answers the queue request with the id of its job. The app asks for the
-  // state of the job 5 seconds later, and the answer of a job that is done
-  // is the clip. Returns the tag of the clip, which the reply `agentIndex`
-  // then holds as its whole text.
+  // Answers the queue request with the id of its job, and the ask for the
+  // state of the job with the clip. Returns the tag of the clip, which the
+  // reply `agentIndex` then holds as its whole text.
   async function answerJob (queue: HeldRequest, queueId: string, agentIndex: number, modelId = FILMS.modelId): Promise<string> {
-    queue.reply.writeHead(200, { 'Content-Type': 'application/json' })
-    queue.reply.end(JSON.stringify({ model: modelId, queue_id: queueId, status: 'QUEUED' }))
-
-    const retrieve = await setup.mock.waitForRequest(browser)
-    expect(retrieve.path).toBe(RETRIEVE_PATH)
-    expect(JSON.parse(retrieve.body)).toStrictEqual({ model: modelId, queue_id: queueId })
-    retrieve.reply.writeHead(200, { 'Content-Type': 'video/webm' })
-    retrieve.reply.end(WEBM_VIDEO)
-
-    await waitForValue(browser, 'sections after the reply', async () => (await threadSections(browser)).length, agentIndex + 2)
-    return (await threadSections(browser))[agentIndex].text
+    return answerVeniceJob(setup, queue, { retrievePath: RETRIEVE_PATH, modelId, queueId, clip: { type: 'video/webm', bytes: WEBM_VIDEO }, replyIndex: agentIndex })
   }
 
   beforeAll(async () => {
@@ -178,12 +162,7 @@ describe('image-to-video models', () => {
     await pickModel(browser, FILMS.name, FILMS.modelName)
     await submit(browser, 'The fox runs:')
 
-    await waitForValue(browser, 'error toast', () => openToasts(browser, 'error'), [{ title: 'Cannot send', message: refusal }])
-    expect(await threadSections(browser)).toStrictEqual([{ role: 'user', text: 'The fox runs:' }])
-    expect(setup.mock.hasWaitingRequest()).toBe(false)
-    expect(await consoleErrors(browser)).toStrictEqual([`Cannot send: ${refusal}`])
-    await click(browser, '.toast-card--error .toast-close')
-    await waitForValue(browser, 'error toast closed', () => openToasts(browser, 'error'), [])
+    await expectSendRefused(setup, refusal, [{ role: 'user', text: 'The fox runs:' }])
     await resetConsoleErrors(browser)
 
     // The image goes into the same message, after its text.
@@ -320,13 +299,7 @@ describe('image-to-video models', () => {
     // provider gets no second request.
     await submit(browser, '')
 
-    await waitForValue(browser, 'error toast', () => openToasts(browser, 'error'), [{ title: 'Cannot send', message }])
-    // The card of the first toast can still be closing.
-    await click(browser, '.toast-card--error:not(.toast-card--closing) .toast-close')
-    await waitForValue(browser, 'error toast closed', () => openToasts(browser, 'error'), [])
-    await waitForThread(browser, [{ role: 'user', text }])
-    expect(setup.mock.hasWaitingRequest()).toBe(false)
-    expect(await consoleErrors(browser)).toStrictEqual([`Cannot send: ${message}`])
+    await expectSendRefused(setup, message, [{ role: 'user', text }])
   })
 
   it('sends a copy that passes the size rules of the model for an image that breaks them, and keeps the stored image', async () => {

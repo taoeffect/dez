@@ -4,7 +4,7 @@ import { expect } from 'vitest'
 import { Key } from 'webdriverio'
 import type { ToastVariant } from '../../../src/view/toast/selectors'
 import { click, typeKeys, waitFor, waitForValue, type Point } from './dom'
-import { conversationFilePath } from './fixtures'
+import { conversationFilePath, makeConversation, seedConversation } from './fixtures'
 import type { E2EBrowser } from './session'
 
 // Helpers that drive the thread editor and the model picker through the
@@ -187,6 +187,12 @@ export async function openPicker (browser: E2EBrowser): Promise<void> {
   await waitFor(browser, '.model-dropdown', 10_000)
 }
 
+/** Whether the model picker of the bottom bar, or the one at `root`, is
+ *  open. */
+export async function pickerOpen (browser: E2EBrowser, root = '.model-dropdown'): Promise<boolean> {
+  return browser.execute((rootSelector: string) => document.querySelector(rootSelector) !== null, root)
+}
+
 /** Picks the model named `modelName` in the picker group of `providerName`. */
 export async function pickModel (browser: E2EBrowser, providerName: string, modelName: string): Promise<void> {
   await openPicker(browser)
@@ -253,6 +259,17 @@ export async function editorCaret (browser: E2EBrowser): Promise<number> {
   })
 }
 
+/** The anchor and the head of the active editor's main selection. */
+export async function editorSelection (browser: E2EBrowser): Promise<{ anchor: number, head: number }> {
+  return browser.execute(() => {
+    const content = document.querySelector('.cm-content')
+    if (!content) throw new Error('editorSelection: .cm-content not found')
+    const view = Reflect.get(Reflect.get(content, 'cmTile'), 'root').view as EditorView
+    const { anchor, head } = view.state.selection.main
+    return { anchor, head }
+  })
+}
+
 /** The clipboard text that a copy of the active editor's selection gives.
  *  WebDriver cannot read the system clipboard, so the page sends the editor
  *  a `copy` event with a `DataTransfer` of its own, which the editor's copy
@@ -299,6 +316,23 @@ export async function docPosPoint (browser: E2EBrowser, pos: number, side: -1 | 
     if (!coords) throw new Error(`docPosPoint: no coords for ${target}`)
     return { x: coords.left, y: (coords.top + coords.bottom) / 2 }
   }, pos, side)
+}
+
+/** Scrolls the element `part` of the asset `asset` (such as `.dez-image`
+ *  or `.media-player`) at `index` (doc order) of the active editor into
+ *  view, and gives its center. The center is read in a second call, after
+ *  the scroll. */
+export async function assetPartPoint (browser: E2EBrowser, asset: string, index: number, part: string): Promise<Point> {
+  await browser.execute((wantedAsset: string, at: number, wantedPart: string) => {
+    const element = document.querySelectorAll(`.cm-content ${wantedAsset}`)[at]?.querySelector(wantedPart)
+    if (!element) throw new Error(`assetPartPoint: no ${wantedPart} in ${wantedAsset} ${at}`)
+    element.scrollIntoView({ block: 'center' })
+  }, asset, index, part)
+  return browser.execute((wantedAsset: string, at: number, wantedPart: string) => {
+    const box = document.querySelectorAll(`.cm-content ${wantedAsset}`)[at]?.querySelector(wantedPart)?.getBoundingClientRect()
+    if (!box) throw new Error(`assetPartPoint: ${wantedPart} in ${wantedAsset} ${at} went away`)
+    return { x: (box.left + box.right) / 2, y: (box.top + box.bottom) / 2 }
+  }, asset, index, part)
 }
 
 /** The height of every role pill of the active editor. */
@@ -393,4 +427,16 @@ export async function waitForThread (browser: E2EBrowser, expected: ThreadSectio
   await waitForValue(browser, 'thread sections', () => threadSections(browser), expected)
   await waitForValue(browser, 'streaming', () => activeTabStreaming(browser), false)
   expect(await openToasts(browser, 'error')).toEqual([])
+}
+
+/** Seeds the conversation `id` with `sections` in the test HOME `home`,
+ *  opens it in a new tab, and waits for it as `waitForThread` does. */
+export async function openSeededConversation (browser: E2EBrowser, home: string, id: string, sections: Array<{ role: 'user' | 'agent', text: string }>): Promise<void> {
+  await seedConversation(home, makeConversation({
+    id,
+    title: id,
+    sections: sections.map(({ role, text }) => ({ role, nodes: [{ kind: 'text', text }] })),
+  }))
+  await sbpCall(browser, 'dez.model/tabs/openConversation', id)
+  await waitForThread(browser, sections)
 }

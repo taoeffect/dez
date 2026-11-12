@@ -1,14 +1,13 @@
-import fs from 'node:fs'
 import path from 'node:path'
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from 'vitest'
 import { Key } from 'webdriverio'
 import { startApp, type RunningApp } from './harness/app'
 import { consoleErrors, pointerClickAt, pointerDrag, resetConsoleErrors, screenshotOnFailure, waitFor, waitForValue } from './harness/dom'
-import { makeConversation, seedAppState, seedConversation } from './harness/fixtures'
+import { appFilePath, mediaTempDir, seedAppState, writeTestFile } from './harness/fixtures'
 import { shownImages, solidPng } from './harness/images'
-import { WEBM_VIDEO, clipTag, silentWav } from './harness/media'
+import { WEBM_VIDEO, clipTag, shownPlayers, silentWav } from './harness/media'
 import { createSession, destroySession, type E2EBrowser } from './harness/session'
-import { docPos, docPosPoint, editorDoc, focusEditor, sbpCall, setCaret, waitForThread } from './harness/thread'
+import { docPos, docPosPoint, editorDoc, editorSelection, focusEditor, openSeededConversation, setCaret } from './harness/thread'
 
 // Images and players inside a text selection, driven through the real app:
 // an asset looks selected (a tint of the selection color over it) only
@@ -32,27 +31,6 @@ interface AssetLook {
 describe('assets in a selection', () => {
   let app: RunningApp
   let browser: E2EBrowser
-
-  function configDir (...parts: string[]): string {
-    return path.join(app.home, '.config', 'dez', ...parts)
-  }
-
-  async function writeFile (file: string, bytes: Buffer): Promise<string> {
-    await fs.promises.mkdir(path.dirname(file), { recursive: true })
-    await fs.promises.writeFile(file, bytes)
-    return file
-  }
-
-  // Seeds a conversation with `sections` and opens it in a new tab.
-  async function openConversation (id: string, sections: Array<{ role: 'user' | 'agent', text: string }>): Promise<void> {
-    await seedConversation(app.home, makeConversation({
-      id,
-      title: id,
-      sections: sections.map(({ role, text }) => ({ role, nodes: [{ kind: 'text', text }] })),
-    }))
-    await sbpCall(browser, 'dez.model/tabs/openConversation', id)
-    await waitForThread(browser, sections)
-  }
 
   // The look of each drawn image or player, in doc order. The tint of an
   // image is its own `::after`; the tint of a player is its card's.
@@ -99,16 +77,6 @@ describe('assets in a selection', () => {
     ))
   }
 
-  async function selectionRange (): Promise<{ from: number, to: number }> {
-    return browser.execute(() => {
-      const content = document.querySelector('.cm-content')
-      if (!content) throw new Error('selectionRange: .cm-content not found')
-      const view = Reflect.get(Reflect.get(content, 'cmTile'), 'root').view
-      const { from, to } = view.state.selection.main
-      return { from, to }
-    })
-  }
-
   beforeAll(async () => {
     app = await startApp()
     try {
@@ -135,10 +103,10 @@ describe('assets in a selection', () => {
   })
 
   it('tints an image only while a selection holds all of it, in the focused or the not-focused color, and keeps its element', async () => {
-    const stored = await writeFile(configDir('assets', 'images', 'selection.png'), PNG)
-    const missing = configDir('assets', 'images', 'selection-missing.png')
+    const stored = await writeTestFile(appFilePath(app.home, 'assets', 'images', 'selection.png'), PNG)
+    const missing = appFilePath(app.home, 'assets', 'images', 'selection-missing.png')
     const reference = `![${stored}](id=a)`
-    await openConversation('asset-selection-image', [{
+    await openSeededConversation(browser, app.home, 'asset-selection-image', [{
       role: 'user',
       text: `Before the image.\n${reference}\nAfter the image.\n![${missing}](id=b)\nEnd.`,
     }])
@@ -162,7 +130,7 @@ describe('assets in a selection', () => {
     const start = await docPosPoint(browser, before, 1)
     const end = await docPosPoint(browser, afterEnd, -1)
     await pointerDrag(browser, start, end.x, { toY: end.y })
-    await waitForValue(browser, 'dragged selection', selectionRange, { from: before, to: afterEnd })
+    await waitForValue(browser, 'dragged selection', () => editorSelection(browser), { anchor: before, head: afterEnd })
     await waitForValue(browser, 'image in a drag', assetLooks, firstSelected)
 
     // A selection that ends where the image starts does not hold it.
@@ -172,7 +140,7 @@ describe('assets in a selection', () => {
     // Shift+Right from the image's start selects exactly the image.
     await setCaret(browser, imageFrom)
     await browser.keys([Key.Shift, Key.ArrowRight])
-    await waitForValue(browser, 'image selected by Shift+Right', selectionRange, { from: imageFrom, to: imageTo })
+    await waitForValue(browser, 'image selected by Shift+Right', () => editorSelection(browser), { anchor: imageFrom, head: imageTo })
     await waitForValue(browser, 'image in its own selection', assetLooks, firstSelected)
 
     // A selection that starts where the image ends does not hold it.
@@ -204,21 +172,21 @@ describe('assets in a selection', () => {
   it('tints the cards of players inside a selection and keeps their elements', async () => {
     const expires = new Date(Date.now() + HOUR_MS).toISOString()
     // A temp copy is a new file, so the cleanup of old ones leaves it.
-    const tone = await writeFile(path.join(app.home, '.cache', 'dez', 'media', 'selection-tone.wav'), silentWav(2))
-    const video = await writeFile(configDir('assets', 'generated', 'video', 'selection-video.webm'), WEBM_VIDEO)
+    const tone = await writeTestFile(path.join(mediaTempDir(app.home), 'selection-tone.wav'), silentWav(2))
+    const video = await writeTestFile(appFilePath(app.home, 'assets', 'generated', 'video', 'selection-video.webm'), WEBM_VIDEO)
     const reply = [
       clipTag('audio', { id: 'a', type: 'audio/wav', src: tone, expires }),
       clipTag('video', { id: 'b', type: 'video/webm', src: video }),
     ].join('\n\n')
-    await openConversation('asset-selection-clips', [
+    await openSeededConversation(browser, app.home, 'asset-selection-clips', [
       { role: 'user', text: 'Make clips' },
       { role: 'agent', text: reply },
       { role: 'user', text: 'Thanks' },
     ])
-    await waitForValue(browser, 'players', () => browser.execute(() => Array.from(
-      document.querySelectorAll('.cm-content .media-player'),
-      (player) => player.getAttribute('data-unavailable') ?? 'plays',
-    )), ['plays', 'plays'])
+    await waitForValue(browser, 'players', async () => (await shownPlayers(browser)).map(({ available, seconds }) => ({ available, seconds })), [
+      { available: true, seconds: 2 },
+      { available: true, seconds: 2 },
+    ])
     await markAssetElements()
     const marks = await stillMarked()
     expect(marks.length).toBeGreaterThanOrEqual(4)
@@ -249,9 +217,9 @@ describe('assets in a selection', () => {
   })
 
   it('marks an image that the editor draws after a scroll into a selection', async () => {
-    const stored = await writeFile(configDir('assets', 'images', 'selection-far.png'), PNG)
+    const stored = await writeTestFile(appFilePath(app.home, 'assets', 'images', 'selection-far.png'), PNG)
     const lines = Array.from({ length: 200 }, (_, index) => `Line ${index + 1}`)
-    await openConversation('asset-selection-far', [{ role: 'user', text: `${lines.join('\n')}\n![${stored}](id=a)\nEnd.` }])
+    await openSeededConversation(browser, app.home, 'asset-selection-far', [{ role: 'user', text: `${lines.join('\n')}\n![${stored}](id=a)\nEnd.` }])
     await browser.execute(() => {
       const scroller = document.querySelector('.cm-scroller')
       if (scroller) scroller.scrollTop = 0
@@ -261,7 +229,7 @@ describe('assets in a selection', () => {
 
     await focusEditor(browser)
     await browser.keys([Key.Alt, 'a'])
-    await waitForValue(browser, 'select all', selectionRange, { from: 0, to: (await editorDoc(browser)).length })
+    await waitForValue(browser, 'select all', () => editorSelection(browser), { anchor: 0, head: (await editorDoc(browser)).length })
     await browser.execute(() => {
       const scroller = document.querySelector('.cm-scroller')
       if (scroller) scroller.scrollTop = scroller.scrollHeight

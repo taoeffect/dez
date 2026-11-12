@@ -1,13 +1,12 @@
-import fs from 'node:fs'
 import path from 'node:path'
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from 'vitest'
 import { startApp, type RunningApp } from './harness/app'
-import { consoleErrors, elementCenter, movePointer, pointerRightClickAt, resetConsoleErrors, screenshotOnFailure, waitFor, waitForValue, type Point } from './harness/dom'
-import { makeConversation, seedAppState, seedConversation } from './harness/fixtures'
+import { consoleErrors, elementCenter, movePointer, pointerRightClickAt, resetConsoleErrors, screenshotOnFailure, waitFor, waitForValue } from './harness/dom'
+import { appFilePath, mediaTempDir, seedAppState, writeTestFile } from './harness/fixtures'
 import { shownImages, solidPng } from './harness/images'
-import { NOT_A_CLIP, WEBM_VIDEO, clipTag, silentWav, startClipServer, type ClipServer } from './harness/media'
+import { NOT_A_CLIP, WEBM_VIDEO, clipTag, problemCards, shownPlayers, silentWav, startClipServer, type ClipServer } from './harness/media'
 import { createSession, destroySession, type E2EBrowser } from './harness/session'
-import { editorDoc, focusEditor, focusedArea, sbpCall, setCaret, waitForThread } from './harness/thread'
+import { assetPartPoint, editorDoc, editorSelection, focusEditor, focusedArea, openSeededConversation, setCaret } from './harness/thread'
 
 // The asset menu, driven through the real app: a right-click on an image
 // (or on its "Image not found" box) or on a player asks
@@ -45,39 +44,8 @@ describe('asset menu', () => {
   let browser: E2EBrowser
   let clips: ClipServer
 
-  function configDir (...parts: string[]): string {
-    return path.join(app.home, '.config', 'dez', ...parts)
-  }
-
-  function tempDir (): string {
-    return path.join(app.home, '.cache', 'dez', 'media')
-  }
-
-  async function writeFile (file: string, bytes: Buffer): Promise<string> {
-    await fs.promises.mkdir(path.dirname(file), { recursive: true })
-    await fs.promises.writeFile(file, bytes)
-    return file
-  }
-
-  // Seeds a conversation with `sections` and opens it in a new tab.
-  async function openConversation (id: string, sections: Array<{ role: 'user' | 'agent', text: string }>): Promise<void> {
-    await seedConversation(app.home, makeConversation({
-      id,
-      title: id,
-      sections: sections.map(({ role, text }) => ({ role, nodes: [{ kind: 'text', text }] })),
-    }))
-    await sbpCall(browser, 'dez.model/tabs/openConversation', id)
-    await waitForThread(browser, sections)
-  }
-
   async function editorState (): Promise<EditorState> {
-    const { anchor, head } = await browser.execute(() => {
-      const content = document.querySelector('.cm-content')
-      if (!content) throw new Error('editorState: .cm-content not found')
-      const view = Reflect.get(Reflect.get(content, 'cmTile'), 'root').view as { state: { selection: { main: { anchor: number, head: number } } } }
-      return { anchor: view.state.selection.main.anchor, head: view.state.selection.main.head }
-    })
-    return { anchor, head, focus: await focusedArea(browser), doc: await editorDoc(browser) }
+    return { ...await editorSelection(browser), focus: await focusedArea(browser), doc: await editorDoc(browser) }
   }
 
   // The files of the `popupAsset` calls, and whether each `contextmenu`
@@ -97,21 +65,6 @@ describe('asset menu', () => {
     })
   }
 
-  // Scrolls the element `part` of the asset `asset` at `index` (doc order)
-  // into view, and gives its center.
-  async function assetPoint (asset: string, index: number, part: string): Promise<Point> {
-    await browser.execute((wantedAsset: string, at: number, wantedPart: string) => {
-      const element = document.querySelectorAll(`.cm-content ${wantedAsset}`)[at]?.querySelector(wantedPart)
-      if (!element) throw new Error(`assetPoint: no ${wantedPart} in ${wantedAsset} ${at}`)
-      element.scrollIntoView({ block: 'center' })
-    }, asset, index, part)
-    return browser.execute((wantedAsset: string, at: number, wantedPart: string) => {
-      const box = document.querySelectorAll(`.cm-content ${wantedAsset}`)[at]?.querySelector(wantedPart)?.getBoundingClientRect()
-      if (!box) throw new Error(`assetPoint: ${wantedPart} in ${wantedAsset} ${at} went away`)
-      return { x: (box.left + box.right) / 2, y: (box.top + box.bottom) / 2 }
-    }, asset, index, part)
-  }
-
   // Right-clicks the element `part` of each asset of `asset`, in doc order,
   // and checks that each click asked for the menu with the file of
   // `files[index]`, canceled the webview's menu, and left the editor as
@@ -122,7 +75,7 @@ describe('asset menu', () => {
     for (const [index, file] of files.entries()) {
       await resetMenuRecord()
       await movePointer(browser, await elementCenter(browser, 'header.tab-bar'))
-      await pointerRightClickAt(browser, await assetPoint(asset, index, part(index)))
+      await pointerRightClickAt(browser, await assetPartPoint(browser, asset, index, part(index)))
       await waitForValue(browser, `menu of ${asset} ${index}`, menuRecord, { files: [file], canceled: [true] })
       expect(await editorState(), `editor after a right-click on ${asset} ${index}`).toStrictEqual(before)
     }
@@ -172,10 +125,10 @@ describe('asset menu', () => {
   })
 
   it('pops up the menu with the file of a stored image, and with no file for a missing image', async () => {
-    const stored = await writeFile(configDir('assets', 'images', 'stored.png'), PNG)
-    const missing = configDir('assets', 'images', 'missing.png')
+    const stored = await writeTestFile(appFilePath(app.home, 'assets', 'images', 'stored.png'), PNG)
+    const missing = appFilePath(app.home, 'assets', 'images', 'missing.png')
     const text = `Images:\n![${stored}](id=a)\n![${missing}](id=b)\nEnd of the images.`
-    await openConversation('asset-menu-images', [{ role: 'user', text }])
+    await openSeededConversation(browser, app.home, 'asset-menu-images', [{ role: 'user', text }])
     await waitForValue(browser, 'shown images', () => shownImages(browser), [{ alt: 'stored.png', width: 40, height: 24 }])
     await waitFor(browser, '.cm-content .dez-image-missing')
 
@@ -194,10 +147,10 @@ describe('asset menu', () => {
     const expires = new Date(Date.now() + HOUR_MS).toISOString()
     const url = clips.clipUrl('tone.wav')
     // The temp copies are new files, so the cleanup of old ones leaves them.
-    const temp = await writeFile(path.join(tempDir(), 'menu-copy.wav'), TONE)
-    const saved = await writeFile(configDir('assets', 'generated', 'video', 'menu-saved.webm'), WEBM_VIDEO)
-    const unplayable = await writeFile(path.join(tempDir(), 'menu-text.webm'), NOT_A_CLIP)
-    const gone = path.join(tempDir(), 'menu-gone.wav')
+    const temp = await writeTestFile(path.join(mediaTempDir(app.home), 'menu-copy.wav'), TONE)
+    const saved = await writeTestFile(appFilePath(app.home, 'assets', 'generated', 'video', 'menu-saved.webm'), WEBM_VIDEO)
+    const unplayable = await writeTestFile(path.join(mediaTempDir(app.home), 'menu-text.webm'), NOT_A_CLIP)
+    const gone = path.join(mediaTempDir(app.home), 'menu-gone.wav')
     const reply = [
       clipTag('audio', { id: 'a', type: 'audio/wav', src: url, url, expires }),
       clipTag('audio', { id: 'b', type: 'audio/wav', src: temp, expires }),
@@ -205,7 +158,7 @@ describe('asset menu', () => {
       clipTag('video', { id: 'd', type: 'video/webm', src: unplayable, expires }),
       clipTag('audio', { id: 'e', type: 'audio/wav', src: gone, expires }),
     ].join('\n\n')
-    await openConversation('asset-menu-clips', [
+    await openSeededConversation(browser, app.home, 'asset-menu-clips', [
       { role: 'user', text: 'Make clips' },
       { role: 'agent', text: reply },
       { role: 'user', text: 'Thanks' },
@@ -213,11 +166,12 @@ describe('asset menu', () => {
     // The menu of a clip whose file is gone is known only after the read of
     // the file failed, and that of a file that cannot play is known after
     // its media error.
-    const playable = () => browser.execute(() => Array.from(
-      document.querySelectorAll('.cm-content .media-player'),
-      (player) => player.getAttribute('data-unavailable') ?? 'plays',
-    ))
-    await waitForValue(browser, 'players', playable, ['plays', 'plays', 'plays', 'cannot-play', 'gone'])
+    const playing = { available: true, seconds: 2 }
+    const notPlaying = { available: false, seconds: null }
+    await waitForValue(browser, 'players', async () => (await shownPlayers(browser)).map(({ available, seconds }) => ({ available, seconds })), [
+      playing, playing, playing, notPlaying, notPlaying,
+    ])
+    expect((await problemCards(browser)).map((card) => card.cause)).toStrictEqual(['cannot-play', 'gone'])
 
     await focusEditor(browser)
     const doc = await editorDoc(browser)
@@ -237,8 +191,8 @@ describe('asset menu', () => {
 
   it('leaves the webview\'s menu on text and on the text of a clock\'s tooltip', async () => {
     const expires = new Date(Date.now() + HOUR_MS).toISOString()
-    const temp = await writeFile(path.join(tempDir(), 'menu-tooltip.wav'), TONE)
-    await openConversation('asset-menu-text', [
+    const temp = await writeTestFile(path.join(mediaTempDir(app.home), 'menu-tooltip.wav'), TONE)
+    await openSeededConversation(browser, app.home, 'asset-menu-text', [
       { role: 'user', text: 'Plain words' },
       { role: 'agent', text: clipTag('audio', { id: 'a', type: 'audio/wav', src: temp, expires }) },
       { role: 'user', text: '' },
@@ -266,9 +220,9 @@ describe('asset menu', () => {
   // Linux makes no such selection, so the spec sends the event.
   it('cancels the selection that a context click starts on an image or a player, but not in a clock\'s tooltip', async () => {
     const expires = new Date(Date.now() + HOUR_MS).toISOString()
-    const stored = await writeFile(configDir('assets', 'images', 'select.png'), PNG)
-    const temp = await writeFile(path.join(tempDir(), 'menu-select.wav'), TONE)
-    await openConversation('asset-menu-select', [
+    const stored = await writeTestFile(appFilePath(app.home, 'assets', 'images', 'select.png'), PNG)
+    const temp = await writeTestFile(path.join(mediaTempDir(app.home), 'menu-select.wav'), TONE)
+    await openSeededConversation(browser, app.home, 'asset-menu-select', [
       { role: 'user', text: `See ![${stored}](id=a)` },
       { role: 'agent', text: clipTag('audio', { id: 'b', type: 'audio/wav', src: temp, expires }) },
       { role: 'user', text: '' },

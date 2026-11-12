@@ -317,6 +317,12 @@ export async function clickSettingsNav (browser: E2EBrowser, label: string): Pro
   }, label)
 }
 
+/** The message of the open `dez.ui/confirm` prompt; null when none is
+ *  open. */
+export async function promptMessage (browser: E2EBrowser): Promise<string | null> {
+  return browser.execute(() => document.querySelector('.confirm-dialog .confirm-message')?.textContent ?? null)
+}
+
 /**
  * Save a WebDriver screenshot to `tests/e2e/artifacts/` on test failure.
  * Call from an `afterEach` hook with the Vitest task context so the

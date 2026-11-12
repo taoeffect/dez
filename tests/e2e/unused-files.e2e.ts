@@ -2,8 +2,8 @@ import fs from 'node:fs'
 import path from 'node:path'
 import { afterAll, afterEach, beforeAll, describe, expect, it } from 'vitest'
 import { startApp, type RunningApp } from './harness/app'
-import { consoleErrors, pointerClick, resetConsoleErrors, screenshotOnFailure, waitFor, waitForValue } from './harness/dom'
-import { conversationFilePath, makeConversation, seedAppState, seedConversation } from './harness/fixtures'
+import { consoleErrors, pointerClick, promptMessage, resetConsoleErrors, screenshotOnFailure, waitFor, waitForValue } from './harness/dom'
+import { appFilePath, conversationFilePath, makeConversation, seedAppState, seedConversation } from './harness/fixtures'
 import { solidPng } from './harness/images'
 import { silentWav } from './harness/media'
 import { createSession, destroySession, type E2EBrowser } from './harness/session'
@@ -53,14 +53,9 @@ describe('Settings: delete unused files', () => {
   // The conversation of the tab whose text is only in memory.
   let unsavedConversationId: string
 
-  // The absolute path of the app file `relative`.
-  function appFile (relative: string): string {
-    return path.join(app.home, '.config', 'dez', relative)
-  }
-
   // Writes the stored file `relative` with a file time of one hour ago.
   function seedStoredFile (relative: string, bytes: Buffer): void {
-    const file = appFile(relative)
+    const file = appFilePath(app.home, relative)
     fs.mkdirSync(path.dirname(file), { recursive: true })
     fs.writeFileSync(file, bytes)
     const old = new Date(Date.now() - HOUR_MS)
@@ -70,12 +65,8 @@ describe('Settings: delete unused files', () => {
   // The files of the four stored-file folders, relative to the app folder.
   function storedFiles (): string[] {
     return ['assets/images', 'assets/generated/images', 'assets/generated/audio', 'assets/generated/video']
-      .flatMap((folder) => fs.readdirSync(appFile(folder)).map((name) => `${folder}/${name}`))
+      .flatMap((folder) => fs.readdirSync(appFilePath(app.home, folder)).map((name) => `${folder}/${name}`))
       .sort()
-  }
-
-  async function promptMessage (): Promise<string | null> {
-    return browser.execute(() => document.querySelector('.confirm-dialog .confirm-message')?.textContent ?? null)
   }
 
   // The bar's percent (null with no bar) and whether the button is off.
@@ -122,14 +113,14 @@ describe('Settings: delete unused files', () => {
       await seedConversation(app.home, makeConversation({
         id: 'with-image',
         title: 'With image',
-        sections: [{ role: 'user', nodes: [{ kind: 'text', text: `Look at ![${appFile('assets/images/image-saved.png')}](id=a)` }] }],
+        sections: [{ role: 'user', nodes: [{ kind: 'text', text: `Look at ![${appFilePath(app.home, 'assets/images/image-saved.png')}](id=a)` }] }],
       }))
       await seedConversation(app.home, makeConversation({
         id: 'with-clip',
         title: 'With clip',
         sections: [
           { role: 'user', nodes: [{ kind: 'text', text: 'Say hello' }] },
-          { role: 'agent', nodes: [{ kind: 'text', text: `<dez:audio id="a" type="audio/wav" src="${appFile('assets/generated/audio/clip-saved.wav')}"/>` }] },
+          { role: 'agent', nodes: [{ kind: 'text', text: `<dez:audio id="a" type="audio/wav" src="${appFilePath(app.home, 'assets/generated/audio/clip-saved.wav')}"/>` }] },
           { role: 'user', nodes: [{ kind: 'text', text: '' }] },
         ],
       }))
@@ -149,7 +140,7 @@ describe('Settings: delete unused files', () => {
     await sbpCall(browser, 'dez.model/tabs/replaceSections', firstTab, [{
       id: 'u1',
       role: 'user',
-      content: [{ kind: 'text', text: `Draft with ![${appFile('assets/generated/images/image-tab.png')}](id=a)` }],
+      content: [{ kind: 'text', text: `Draft with ![${appFilePath(app.home, 'assets/generated/images/image-tab.png')}](id=a)` }],
     }])
 
     await sbpCall(browser, 'dez.model/settings/open', 'general')
@@ -169,11 +160,11 @@ describe('Settings: delete unused files', () => {
   it('shows the progress of the scan, then asks with the count and the size, and deletes nothing on a No', async () => {
     // A file time of now, as a paste that just stored its file gives.
     const now = new Date()
-    fs.utimesSync(appFile('assets/images/image-young.png'), now, now)
+    fs.utimesSync(appFilePath(app.home, 'assets/images/image-young.png'), now, now)
     expect(await rowState()).toStrictEqual({ percent: null, buttonOff: false })
 
     await pointerClick(browser, '.unused-files-btn')
-    await waitForValue(browser, 'prompt', promptMessage, DELETE_PROMPT)
+    await waitForValue(browser, 'prompt', () => promptMessage(browser), DELETE_PROMPT)
 
     // One step for the start, and one for each of the two conversation
     // files.
@@ -186,14 +177,14 @@ describe('Settings: delete unused files', () => {
 
     await pointerClick(browser, '.confirm-btn--cancel')
     await waitForValue(browser, 'row after No', rowState, { percent: null, buttonOff: false })
-    expect(await promptMessage()).toBeNull()
+    expect(await promptMessage(browser)).toBeNull()
     expect(storedFiles()).toStrictEqual([...KEPT_FILES, ...UNUSED_FILES].sort())
     expect(await openToasts(browser)).toEqual([])
   })
 
   it('deletes on a Yes only the old files that no conversation and no open tab names', async () => {
     await pointerClick(browser, '.unused-files-btn')
-    await waitForValue(browser, 'prompt', promptMessage, DELETE_PROMPT)
+    await waitForValue(browser, 'prompt', () => promptMessage(browser), DELETE_PROMPT)
     await pointerClick(browser, '.confirm-btn--confirm')
 
     await waitForValue(browser, 'result toast', () => openToasts(browser), [{ title: '', message: 'Deleted 2 unused files (2.0 MB).' }])
@@ -209,7 +200,7 @@ describe('Settings: delete unused files', () => {
 
     await waitForValue(browser, 'toast', async () => (await openToasts(browser)).some((toast) => toast.message === 'No unused files found'), true)
     await waitForValue(browser, 'row after the scan', rowState, { percent: null, buttonOff: false })
-    expect(await promptMessage()).toBeNull()
+    expect(await promptMessage(browser)).toBeNull()
     expect(storedFiles()).toStrictEqual(KEPT_FILES)
     expect(await consoleErrors(browser)).toEqual([])
   })

@@ -4,7 +4,7 @@ import { startApp, type RunningApp } from './harness/app'
 import { consoleErrors, pointerClick, resetConsoleErrors, screenshotOnFailure, typeInto, typeKeys, waitFor, waitForValue } from './harness/dom'
 import { readAppState, seedRawAppState } from './harness/fixtures'
 import { createSession, destroySession, type E2EBrowser } from './harness/session'
-import { openPicker, pickerGroups, sbpCall } from './harness/thread'
+import { openPicker, pickerGroups, pickerOpen, sbpCall } from './harness/thread'
 
 // The output filter of the model pickers (the funnel at the right of the
 // search field), driven through the real app. Two custom providers with
@@ -243,9 +243,7 @@ describe('model output filter', () => {
     expect(await pickerGroups(browser)).toEqual(ALL_GROUPS)
 
     await browser.keys([Key.Escape])
-    await waitForValue(browser, 'picker open', () => browser.execute(
-      (sel: string) => document.querySelector(sel) !== null, BOTTOM
-    ), false)
+    await waitForValue(browser, 'picker open', () => pickerOpen(browser), false)
   })
 
   it('closes on a click outside it and on Tab out of it; the keyboard opens it with the focus inside', async () => {
@@ -272,12 +270,10 @@ describe('model output filter', () => {
     await browser.execute((sel: string) => document.querySelector<HTMLElement>(sel)?.focus(), `${BOTTOM} .output-filter-option input[value="video"]`)
     await browser.keys([Key.Tab])
     expect((await filterView())?.open).toBe(false)
-    expect(await browser.execute((sel: string) => document.querySelector(sel) !== null, BOTTOM)).toBe(true)
+    expect(await pickerOpen(browser)).toBe(true)
 
     await browser.keys([Key.Escape])
-    await waitForValue(browser, 'picker open', () => browser.execute(
-      (sel: string) => document.querySelector(sel) !== null, BOTTOM
-    ), false)
+    await waitForValue(browser, 'picker open', () => pickerOpen(browser), false)
   })
 
   it('is shared with the Settings picker, where Escape closes only the filter dropdown', async () => {
@@ -286,9 +282,7 @@ describe('model output filter', () => {
     await clickOption('Image')
     await browser.keys([Key.Escape])
     await browser.keys([Key.Escape])
-    await waitForValue(browser, 'picker open', () => browser.execute(
-      (sel: string) => document.querySelector(sel) !== null, BOTTOM
-    ), false)
+    await waitForValue(browser, 'picker open', () => pickerOpen(browser), false)
 
     await sbpCall(browser, 'dez.model/settings/open', 'general')
     await waitFor(browser, '.settings-model-trigger')
@@ -304,7 +298,7 @@ describe('model output filter', () => {
     expect(await filterView(SETTINGS)).toEqual(openFilter(['Image']))
     await browser.keys([Key.Escape])
     expect((await filterView(SETTINGS))?.open).toBe(false)
-    expect(await browser.execute((sel: string) => document.querySelector(sel) !== null, SETTINGS)).toBe(true)
+    expect(await pickerOpen(browser, SETTINGS)).toBe(true)
     expect(await browser.execute(() => document.querySelector('.settings-overlay') !== null)).toBe(true)
 
     // A change here shows in the bottom bar picker.

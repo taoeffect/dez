@@ -3,6 +3,8 @@ import path from 'node:path'
 import { serializeConversation } from '../../../src/model/persistence/conversationFormat'
 import { defaultAppState, serializeAppStateJson } from '../../../src/model/persistence/appState'
 import type { AppStatePayload, ConversationData, ModelCache } from '../../../src/model/persistence/types'
+import { waitForValue } from './dom'
+import type { E2EBrowser } from './session'
 
 // Fixture seeding for the isolated per-run HOME created by `startApp()`.
 //
@@ -31,6 +33,46 @@ function sanitizeId (id: string): string {
 
 function configDir (home: string): string {
   return path.join(home, '.config', 'dez')
+}
+
+/** A path in the app folder of the test HOME `home`, such as
+ *  `appFilePath(home, 'assets', 'images')`. */
+export function appFilePath (home: string, ...parts: string[]): string {
+  return path.join(configDir(home), ...parts)
+}
+
+/** The folder of the temp copies of clips of the test HOME `home`. */
+export function mediaTempDir (home: string): string {
+  return path.join(home, '.cache', 'dez', 'media')
+}
+
+/** Writes `bytes` to `file`, with its folders, and gives `file`. */
+export async function writeTestFile (file: string, bytes: Buffer): Promise<string> {
+  await fs.promises.mkdir(path.dirname(file), { recursive: true })
+  await fs.promises.writeFile(file, bytes)
+  return file
+}
+
+/** The sorted file names in `dir`; none when the folder does not exist. */
+export async function filesIn (dir: string): Promise<string[]> {
+  try {
+    return (await fs.promises.readdir(dir)).sort()
+  } catch {
+    return []
+  }
+}
+
+/** The one file name in `dir` that is not in `before`, once it is there.
+ *  The wait fails when more than one new file comes. */
+export async function newFileIn (browser: E2EBrowser, dir: string, before: string[]): Promise<string> {
+  const added = async () => (await filesIn(dir)).filter((name) => !before.includes(name))
+  await waitForValue(browser, `new files in ${path.basename(dir)}`, async () => (await added()).length, 1)
+  return (await added())[0]
+}
+
+/** The name of a stored file: a UUID with the extension `extension`. */
+export function storedFileName (extension: string): RegExp {
+  return new RegExp(`^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\\.${extension}$`)
 }
 
 function conversationsDir (home: string): string {

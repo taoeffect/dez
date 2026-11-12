@@ -6,7 +6,7 @@ import { Key } from 'webdriverio'
 import { openAiSystemMessage } from './harness/chatBody'
 import { consoleErrors, elementCenter, movePointer, pointerClick, pointerClickAt, resetConsoleErrors, screenshotOnFailure, typeKeys, waitForValue, type Point } from './harness/dom'
 import { dropFiles, nativeDrop } from './harness/drops'
-import { conversationFilePath } from './harness/fixtures'
+import { appFilePath, conversationFilePath, filesIn, storedFileName, writeTestFile } from './harness/fixtures'
 import { pasteImage, shownImages, solidPng, type ShownImage } from './harness/images'
 import { startMockProviderApp, type MockProviderApp } from './harness/mockProviderApp'
 import { mockChatPath, replyText, sendAnthropicReply, sendChatReply, type HeldRequest, type MockProvider } from './harness/mockServer'
@@ -126,16 +126,12 @@ describe('images', () => {
   let sentImage: { image: InsertedImage, conversationId: string } | null = null
 
   function imagesDir (): string {
-    return path.join(setup.app.home, '.config', 'dez', 'assets', 'images')
+    return appFilePath(setup.app.home, 'assets', 'images')
   }
 
   // The file names in the image folder, sorted.
   async function storedImages (): Promise<string[]> {
-    try {
-      return (await fs.promises.readdir(imagesDir())).sort()
-    } catch {
-      return []
-    }
+    return filesIn(imagesDir())
   }
 
   async function docAndCaret (): Promise<DocAndCaret> {
@@ -376,7 +372,7 @@ describe('images', () => {
     const image = await insertPastedImage('See ', ' here')
 
     const fileName = path.basename(image.path)
-    expect(fileName).toMatch(/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\.png$/)
+    expect(fileName).toMatch(storedFileName('png'))
     expect(image.path).toBe(path.join(imagesDir(), fileName))
     expect(await storedImages()).toEqual([...before, fileName].sort())
     expect(await fs.promises.readFile(image.path)).toEqual(PASTED_PNG)
@@ -713,9 +709,7 @@ describe('images', () => {
 
   it('puts an image of a native file drop at the drop point', async () => {
     // A file outside the image folder in a real drop; see `nativeDrop`.
-    await fs.promises.mkdir(imagesDir(), { recursive: true })
-    const source = path.join(imagesDir(), 'native-drop-source.png')
-    await fs.promises.writeFile(source, DROPPED_PNG)
+    const source = await writeTestFile(path.join(imagesDir(), 'native-drop-source.png'), DROPPED_PNG)
     const before = await storedImages()
     await newTab(browser)
     await focusEditor(browser)

@@ -2,14 +2,14 @@ import fs from 'node:fs'
 import path from 'node:path'
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from 'vitest'
 import { openAiChatBody } from './harness/chatBody'
-import { click, consoleErrors, elementCenter, isOnTop, movePointer, pointerClick, pointerClickAt, pointerDrag, resetConsoleErrors, screenshotOnFailure, waitForValue, type Point } from './harness/dom'
-import { conversationFilePath, makeConversation, seedConversation } from './harness/fixtures'
+import { click, consoleErrors, elementCenter, isOnTop, movePointer, pointerClick, pointerClickAt, pointerDrag, promptMessage, resetConsoleErrors, screenshotOnFailure, waitForValue, type Point } from './harness/dom'
+import { appFilePath, conversationFilePath, filesIn, mediaTempDir, newFileIn, storedFileName, writeTestFile } from './harness/fixtures'
 import { NOT_A_CLIP, WAV_SAMPLE_RATE, WEBM_VIDEO, clipTag, monoWav, openPlayerTooltips, problemCards, shownPlayers, silentWav, startClipServer, waitForPlayerFullscreen, type ClipKind, type ClipServer, type ProblemCard, type ShownPlayer } from './harness/media'
 import { startMockProviderApp, type MockProviderApp } from './harness/mockProviderApp'
 import { mockChatPath, replyText, sendChatReply, type MockProvider } from './harness/mockServer'
 import { threadCount, webProcessPid } from './harness/processes'
 import type { E2EBrowser } from './harness/session'
-import { copySelection, editorCaret, editorDoc, focusEditor, focusedArea, newTab, openToasts, pasteText, pickModel, sbpCall, setCaret, submit, threadSections, waitForThread, type ThreadSection } from './harness/thread'
+import { copySelection, editorCaret, editorDoc, focusEditor, focusedArea, newTab, openSeededConversation, openToasts, pasteText, pickModel, sbpCall, setCaret, submit, threadSections, waitForThread } from './harness/thread'
 
 // The players of audio and video clips (media tags in agent sections),
 // driven through the real app. The clips come from a clip server of the
@@ -75,7 +75,7 @@ const RAW_SAMPLES = Buffer.alloc(WAV_SAMPLE_RATE * 2)
 for (let sample = 0; sample < WAV_SAMPLE_RATE; sample++) RAW_SAMPLES.writeInt16LE((sample % 50 - 25) * 100, sample * 2)
 
 const TONE = silentWav(2)
-const STORED_WAV_NAME = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\.wav$/
+const STORED_WAV_NAME = storedFileName('wav')
 const HOUR_MS = 60 * 60 * 1000
 const DELETE_PROMPT = 'Are you sure you want to delete the saved file of this clip?'
 // The prompt for a saved file with no URL to go back to.
@@ -92,7 +92,7 @@ const OFF_PLAYERS = { x: 5, y: 5 }
 
 /** The thread of a seeded conversation whose one reply is `reply`, with
  *  `next` as the text of the user section after it. */
-function seededThread (reply: string, next = ''): ThreadSection[] {
+function seededThread (reply: string, next = ''): Array<{ role: 'user' | 'agent', text: string }> {
   return [
     { role: 'user', text: 'Make clips' },
     { role: 'agent', text: reply },
@@ -106,44 +106,18 @@ describe('media player', () => {
   let browser: E2EBrowser
 
   function savedDir (kind: ClipKind): string {
-    return path.join(setup.app.home, '.config', 'dez', 'assets', 'generated', kind)
+    return appFilePath(setup.app.home, 'assets', 'generated', kind)
   }
 
   function tempDir (): string {
-    return path.join(setup.app.home, '.cache', 'dez', 'media')
+    return mediaTempDir(setup.app.home)
   }
 
-  async function filesIn (dir: string): Promise<string[]> {
-    try {
-      return (await fs.promises.readdir(dir)).sort()
-    } catch {
-      return []
-    }
-  }
-
-  // The file names in `dir` that are not in `before`, once there are
-  // `count` of them.
-  async function newFiles (dir: string, before: string[], count: number): Promise<string[]> {
-    const added = async () => (await filesIn(dir)).filter((name) => !before.includes(name))
-    await waitForValue(browser, `new files in ${path.basename(dir)}`, async () => (await added()).length, count)
-    return await added()
-  }
-
-  // Seeds a conversation whose one reply is `reply`, as the app saves it
-  // after a reply (with the next user section, whose text is `next`), and
-  // opens it.
+  // Opens a seeded conversation whose one reply is `reply`, as the app
+  // saves it after a reply (with the next user section, whose text is
+  // `next`).
   async function openReply (id: string, reply: string, next = ''): Promise<void> {
-    await seedConversation(setup.app.home, makeConversation({
-      id,
-      title: id,
-      sections: [
-        { role: 'user', nodes: [{ kind: 'text', text: 'Make clips' }] },
-        { role: 'agent', nodes: [{ kind: 'text', text: reply }] },
-        { role: 'user', nodes: [{ kind: 'text', text: next }] },
-      ],
-    }))
-    await sbpCall(browser, 'dez.model/tabs/openConversation', id)
-    await waitForValue(browser, 'seeded thread', () => threadSections(browser), seededThread(reply, next))
+    await openSeededConversation(browser, setup.app.home, id, seededThread(reply, next))
   }
 
   // The name of the first Save control, which tells what a click on it does.
@@ -158,10 +132,6 @@ describe('media player', () => {
       (iso: string) => new Intl.DateTimeFormat(undefined, { dateStyle: 'medium', timeStyle: 'short' }).format(new Date(iso)),
       time,
     )
-  }
-
-  async function promptMessage (): Promise<string | null> {
-    return browser.execute(() => document.querySelector('.confirm-dialog .confirm-message')?.textContent ?? null)
   }
 
   // The source of the video that WebKit on macOS would read text from when
@@ -390,7 +360,7 @@ describe('media player', () => {
     // under its last name.
     await pointerClick(browser, '.media-player__save')
     await waitForValue(browser, 'source after Save', async () => (await shownPlayers(browser))[0]?.source, 'blob')
-    const [name] = await newFiles(savedDir('audio'), before, 1)
+    const name = await newFileIn(browser, savedDir('audio'), before)
     expect(name).toMatch(STORED_WAV_NAME)
     const savedPath = path.join(savedDir('audio'), name)
     const savedTag = clipTag('audio', { id: 'a', type: 'audio/wav', src: savedPath, url, expires })
@@ -412,21 +382,21 @@ describe('media player', () => {
 
     // "No" keeps the file and the tag.
     await pointerClick(browser, '.media-player__save')
-    await waitForValue(browser, 'prompt', promptMessage, DELETE_PROMPT)
+    await waitForValue(browser, 'prompt', () => promptMessage(browser), DELETE_PROMPT)
     await pointerClick(browser, '.confirm-btn--cancel')
-    await waitForValue(browser, 'prompt after No', promptMessage, null)
+    await waitForValue(browser, 'prompt after No', () => promptMessage(browser), null)
     expect(await filesIn(savedDir('audio'))).toStrictEqual([...before, name].sort())
     expect(await threadSections(browser)).toStrictEqual(seededThread(savedTag))
     expect(await shownPlayers(browser)).toStrictEqual([saved])
 
     // "Yes" deletes the file, and the clip plays from its URL again.
     await pointerClick(browser, '.media-player__save')
-    await waitForValue(browser, 'second prompt', promptMessage, DELETE_PROMPT)
+    await waitForValue(browser, 'second prompt', () => promptMessage(browser), DELETE_PROMPT)
     await pointerClick(browser, '.confirm-btn--confirm')
     await waitForValue(browser, 'thread after the delete', () => threadSections(browser), seededThread(remoteTag))
     await waitForValue(browser, 'player after the delete', () => shownPlayers(browser), [remote])
     expect(await filesIn(savedDir('audio'))).toStrictEqual(before)
-    await waitForValue(browser, 'prompt after Yes', promptMessage, null)
+    await waitForValue(browser, 'prompt after Yes', () => promptMessage(browser), null)
     await waitForValue(browser, 'tag with the URL in the file', async () => (await fs.promises.readFile(file, 'utf8').catch(() => '')).includes(remoteTag), true)
     expect(await consoleErrors(browser)).toStrictEqual([])
   })
@@ -434,10 +404,8 @@ describe('media player', () => {
   it('tells where the temp copy of a clip is, moves it on Save, and tells that a clip with no file is not available', async () => {
     const savedBefore = await filesIn(savedDir('audio'))
     const tempBefore = await filesIn(tempDir())
-    await fs.promises.mkdir(tempDir(), { recursive: true })
-    const tempPath = path.join(tempDir(), 'kept-copy.wav')
     // The file is new, so the cleanup of old temp copies leaves it.
-    await fs.promises.writeFile(tempPath, TONE)
+    const tempPath = await writeTestFile(path.join(tempDir(), 'kept-copy.wav'), TONE)
     const expires = new Date(Date.now() + HOUR_MS).toISOString()
     const tempTag = clipTag('audio', { id: 'a', type: 'audio/wav', src: tempPath, expires })
     const goneTag = clipTag('audio', { id: 'b', type: 'audio/wav', src: path.join(tempDir(), 'gone-copy.wav'), expires })
@@ -506,9 +474,7 @@ describe('media player', () => {
   it('tells that this computer cannot play the format of a temp copy, keeps that over a Save, and names the saved file', async () => {
     const savedBefore = await filesIn(savedDir('video'))
     const tempBefore = await filesIn(tempDir())
-    await fs.promises.mkdir(tempDir(), { recursive: true })
-    const tempPath = path.join(tempDir(), 'text-copy.webm')
-    await fs.promises.writeFile(tempPath, NOT_A_CLIP)
+    const tempPath = await writeTestFile(path.join(tempDir(), 'text-copy.webm'), NOT_A_CLIP)
     const expires = new Date(Date.now() + HOUR_MS).toISOString()
     await recordBlobUrls()
     await openReply('text-copy', clipTag('video', { id: 'a', type: 'video/webm', src: tempPath, expires }))
@@ -549,11 +515,11 @@ describe('media player', () => {
     await movePointer(browser, await elementCenter(browser, '.media-player__save'))
     await waitForValue(browser, 'trash', saveLabel, 'Delete the saved file')
     await pointerClick(browser, '.media-player__save')
-    await waitForValue(browser, 'prompt', promptMessage, DELETE_ONLY_COPY_PROMPT)
+    await waitForValue(browser, 'prompt', () => promptMessage(browser), DELETE_ONLY_COPY_PROMPT)
     await pointerClick(browser, '.confirm-btn--confirm')
     await waitForValue(browser, 'thread after the delete', () => threadSections(browser), seededThread(clipTag('video', { id: 'a', type: 'video/webm' })))
     expect(await filesIn(savedDir('video'))).toStrictEqual(savedBefore)
-    await waitForValue(browser, 'prompt after Yes', promptMessage, null)
+    await waitForValue(browser, 'prompt after Yes', () => promptMessage(browser), null)
     await waitForValue(browser, 'player after the delete', () => shownPlayers(browser), [{ ...cannotPlay, clock: null, save: null }])
     expect(await problemCards(browser)).toStrictEqual([GONE_CARD])
 
@@ -614,7 +580,7 @@ describe('media player', () => {
     // over that, so it still fills the screen.
     await pointerClick(browser, '.media-player__save')
     await waitForValue(browser, 'Save control', async () => (await shownPlayers(browser))[0]?.save, 'saved')
-    expect(await newFiles(savedDir('video'), before, 1)).toHaveLength(1)
+    await newFileIn(browser, savedDir('video'), before)
     await waitForPlayerFullscreen(browser, true)
 
     // The trash asks first. The prompt is not a part of the player, so the
@@ -623,11 +589,11 @@ describe('media player', () => {
     await movePointer(browser, await elementCenter(browser, '.media-player__save'))
     await waitForValue(browser, 'trash', saveLabel, 'Delete the saved file')
     await pointerClick(browser, '.media-player__save')
-    await waitForValue(browser, 'prompt', promptMessage, DELETE_PROMPT)
+    await waitForValue(browser, 'prompt', () => promptMessage(browser), DELETE_PROMPT)
     await waitForPlayerFullscreen(browser, false)
     expect(await isOnTop(browser, '.confirm-dialog')).toBe(true)
     await pointerClick(browser, '.confirm-btn--cancel')
-    await waitForValue(browser, 'prompt after No', promptMessage, null)
+    await waitForValue(browser, 'prompt after No', () => promptMessage(browser), null)
     expect(await focusedArea(browser)).toBe('editor')
 
     // A click on the fullscreen button of a player that fills the screen
@@ -642,9 +608,7 @@ describe('media player', () => {
   })
 
   it('leaves fullscreen when a Save fails, so that its toast shows', async () => {
-    await fs.promises.mkdir(tempDir(), { recursive: true })
-    const tempPath = path.join(tempDir(), 'lost-copy.webm')
-    await fs.promises.writeFile(tempPath, WEBM_VIDEO)
+    const tempPath = await writeTestFile(path.join(tempDir(), 'lost-copy.webm'), WEBM_VIDEO)
     const expires = new Date(Date.now() + HOUR_MS).toISOString()
     await openReply('lost-clip', clipTag('video', { id: 'a', type: 'video/webm', src: tempPath, expires }))
     await waitForValue(browser, 'length of the clip', async () => (await shownPlayers(browser))[0]?.seconds, 2)
@@ -665,9 +629,7 @@ describe('media player', () => {
   })
 
   it('gives up the decoder of a clip whose tab is left', async () => {
-    await fs.promises.mkdir(tempDir(), { recursive: true })
-    const tempPath = path.join(tempDir(), 'left-copy.wav')
-    await fs.promises.writeFile(tempPath, TONE)
+    const tempPath = await writeTestFile(path.join(tempDir(), 'left-copy.wav'), TONE)
     const expires = new Date(Date.now() + HOUR_MS).toISOString()
     await openReply('left-clip', clipTag('audio', { id: 'a', type: 'audio/wav', src: tempPath, expires }))
     const otherTabId = (await sbpCall(browser, 'dez.model/tabs/create') as { id: string }).id
@@ -725,7 +687,7 @@ describe('media player', () => {
     // first. The audio is a temp copy, which stays for 24 hours after the
     // request.
     await waitForValue(browser, 'sections of the reply', async () => (await threadSections(browser)).map((section) => section.role), ['user', 'agent', 'user'])
-    const [name] = await newFiles(tempDir(), tempBefore, 1)
+    const name = await newFileIn(browser, tempDir(), tempBefore)
     expect(name).toMatch(STORED_WAV_NAME)
     const tempPath = path.join(tempDir(), name)
     const reply = (await threadSections(browser))[1].text
@@ -782,7 +744,7 @@ describe('media player', () => {
     // The samples go into a `.part` file, which is gone when the reply
     // ends: the one new file is the WAV file.
     await waitForValue(browser, 'sections of the reply', async () => (await threadSections(browser)).map((section) => section.role), ['user', 'agent', 'user'])
-    const [name] = await newFiles(tempDir(), tempBefore, 1)
+    const name = await newFileIn(browser, tempDir(), tempBefore)
     expect(name).toMatch(STORED_WAV_NAME)
     const tempPath = path.join(tempDir(), name)
     const reply = (await threadSections(browser))[1].text

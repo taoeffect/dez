@@ -1,6 +1,11 @@
 import fs from 'node:fs'
-import { startMockServer, type MockServer } from './mockServer'
+import path from 'node:path'
+import { waitForValue } from './dom'
+import { mediaTempDir, writeTestFile } from './fixtures'
+import { takeRequest, type MockProviderApp } from './mockProviderApp'
+import { answerHeld, startMockServer, type HeldRequest, type MockServer } from './mockServer'
 import type { E2EBrowser } from './session'
+import { threadSections } from './thread'
 
 // Clips for the specs of the media player: the bytes of two short clips, a
 // server that serves them as the CDN of a provider does, and readers of the
@@ -113,6 +118,40 @@ export function clipTag (kind: ClipKind, fields: { id: string, type: string, src
   const attributes = (['id', 'type', 'src', 'url', 'expires'] as const)
     .flatMap((name) => fields[name] === undefined ? [] : [` ${name}="${fields[name]}"`])
   return `<dez:${kind}${attributes.join('')}/>`
+}
+
+/** Writes `bytes` as the temp copy `name` of a clip in the test HOME
+ *  `home`, and gives its tag with the id `id` and a time that ends in one
+ *  hour. An audio clip is a WAV file, a video clip an MP4 file. The copy
+ *  is a new file, so the cleanup of old temp copies leaves it. */
+export async function tempClipTag (home: string, kind: ClipKind, id: string, name: string, bytes: Buffer): Promise<string> {
+  const src = await writeTestFile(path.join(mediaTempDir(home), name), bytes)
+  const expires = new Date(Date.now() + 60 * 60 * 1000).toISOString()
+  return clipTag(kind, { id, type: kind === 'audio' ? 'audio/wav' : 'video/mp4', src, expires })
+}
+
+/** A job of Venice's queue API, for `answerVeniceJob`. */
+export interface VeniceJob {
+  /** The path of the ask for the state of the job. */
+  retrievePath: string
+  modelId: string
+  queueId: string
+  /** The answer to the ask: the clip of a job that is done. */
+  clip: ServedClip
+  /** The index of the section that the reply is. */
+  replyIndex: number
+}
+
+/** Answers the held Venice queue request `queue` with the job, takes the
+ *  ask for the state of the job (the app asks 5 seconds later), checks
+ *  it, and answers it with the clip. Gives the text of the reply once the
+ *  user section after it is there. */
+export async function answerVeniceJob (setup: MockProviderApp, queue: HeldRequest, job: VeniceJob): Promise<string> {
+  answerHeld(queue.reply, 'application/json', JSON.stringify({ model: job.modelId, queue_id: job.queueId, status: 'QUEUED' }))
+  const retrieve = await takeRequest(setup, job.retrievePath, { model: job.modelId, queue_id: job.queueId })
+  answerHeld(retrieve.reply, job.clip.type, job.clip.bytes)
+  await waitForValue(setup.browser, 'sections after the reply', async () => (await threadSections(setup.browser)).length, job.replyIndex + 2)
+  return (await threadSections(setup.browser))[job.replyIndex].text
 }
 
 /** One player of the active editor, as the page shows it. */

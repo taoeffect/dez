@@ -79,6 +79,13 @@ export interface HeldRequest {
   closed: boolean
 }
 
+/** Answers a held request with a 200 and `body` of the type
+ *  `contentType`. */
+export function answerHeld (reply: http.ServerResponse, contentType: string, body: string | Buffer): void {
+  reply.writeHead(200, { 'Content-Type': contentType })
+  reply.end(body)
+}
+
 /** One field of a multipart/form-data request: a text, or a file with its
  *  name, type, and bytes. */
 export type FormField =
