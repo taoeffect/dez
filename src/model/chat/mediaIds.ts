@@ -109,7 +109,8 @@ function findAssets(text: string): Asset[] {
  *    highest one in `text`. The pasted ones are read in doc order, so an
  *    earlier one keeps an id that a later one has too.
  *  - The same image (the same path) or the same clip (the same tag text)
- *    with the same id is a copy: it keeps its id.
+ *    with the same id is a copy: it keeps its id. When that id is taken,
+ *    all the pasted copies get one new id.
  *  - An `@id` mention (imageMentions.ts) in the pasted text goes with its
  *    image or clip: when a pasted reference or tag gets a new id, each
  *    pasted mention of its old id gets the new one. Without this, a pasted
@@ -142,6 +143,10 @@ export function pastedMediaIdChanges(text: string, pasted: readonly TextRange[])
   // The new id of each id that changed, for the pasted mentions of the old
   // one. The last pasted asset of an id counts.
   const newIds = new Map<string, string>()
+  // The new id of a pasted asset by its old id and its owner, so that the
+  // pasted copies of one image or clip get one new id. An id has only
+  // letters (`IMAGE_ID_SOURCE`), so the first `\n` ends it.
+  const copyIds = new Map<string, string>()
   let changedTo = 0
   for (const asset of assets.filter(isPasted)) {
     // A tag holds any text in its attribute values, so it can hold a whole
@@ -151,7 +156,9 @@ export function pastedMediaIdChanges(text: string, pasted: readonly TextRange[])
     const owners = asset.id === null ? undefined : ownersById.get(asset.id)
     let id = asset.id
     if (id === null || (owners && Array.from(owners).some((owner) => owner !== asset.owner))) {
-      id = highest = nextMediaId(highest)
+      const copyKey = id === null ? null : `${id}\n${asset.owner}`
+      id = (copyKey === null ? undefined : copyIds.get(copyKey)) ?? (highest = nextMediaId(highest))
+      if (copyKey !== null) copyIds.set(copyKey, id)
       changes.push(asset.withId(id))
       changedTo = asset.to
     }

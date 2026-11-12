@@ -147,6 +147,13 @@ describe('pastedMediaIdChanges', () => {
         .toBe(`${before}![${image('x')}](id=b) ![${image('a')}](id=a) @a`)
     })
 
+    it('gives the pasted copies of one image or clip one new id', () => {
+      expect(paste(`![${image('x')}](id=a) ![${image('x')}](id=a) @a`, before))
+        .toBe(`${before}![${image('x')}](id=b) ![${image('x')}](id=b) @b`)
+      expect(paste(`${clip('a')}\nMake @a longer.\n${clip('a')}`, before))
+        .toBe(`${before}${clip('b')}\nMake @b longer.\n${clip('b')}`)
+    })
+
     it('reads a pasted mention with the chars around it in the conversation', () => {
       // `bob@a` is an address and `@abc` is another word.
       expect(paste(`@a ![${image('x')}](id=a) @a`, `${before}bob`, 'bc'))
