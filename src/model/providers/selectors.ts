@@ -13,7 +13,7 @@ import { fileNameOf } from '../../utils/fileName'
 import { secret, type Secret } from '../../utils/secret'
 import { sanitizeErrorText } from '../../utils/protocol/errors'
 import { nativeResponseJson, nativeResponseText, readNativeChunkBytes, type NativeHttpRequest, type NativeHttpResponse, type NativeHttpStreamResult } from '../../utils/protocol/nativeHttp'
-import { clipFileProblem, clipMediaType, clipTagProblem, missingClipProblem, needsWavCopy, type ClipAttachment, type ClipUse, type InputClipRules } from './clipInputs'
+import { clipFileProblem, clipMediaType, clipTagProblem, hasLengthRules, missingClipProblem, needsWavCopy, type ClipAttachment, type ClipUse, type InputClipRules } from './clipInputs'
 import { inputImageRulesFor, missingImageProblem } from './clipImages'
 import { CLIP_JOB_TIMEOUT_MS, clipPollDelay, sendClipRequest, type ClipRun } from './clipRequests'
 import { assertProviderResponseOk, explainedProviderError, providerConnectionError, UnusableAnswerError } from './errors'
@@ -70,8 +70,10 @@ type ClipSource =
 // when its length or size breaks a rule (`clipFileProblem`): all before a
 // paid request. The length of an audio clip comes from its decode, and the
 // length of a video from its MP4 header; a clip whose length Dez cannot
-// tell gets no length check. A stop of `signal` ends the download of a
-// clip from its URL, and rejects with the stop.
+// tell gets no length check. An audio clip is decoded only for its WAV copy
+// or a length rule of the model: a decode holds all its samples in memory,
+// and a transcription of a long recording has neither. A stop of `signal`
+// ends the download of a clip from its URL, and rejects with the stop.
 async function inputClipParts(
   modelName: string,
   rules: InputClipRules | undefined,
@@ -102,14 +104,17 @@ async function inputClipParts(
       return { clip, use: kindRules.use, mediaType, bytes, seconds: MP4_TYPES[mediaType] ? mp4DurationSeconds(bytes) : null }
     }
     const wav = needsWavCopy('audio', kindRules, clip.type)
+    if (!wav && !hasLengthRules(kindRules)) {
+      return { clip, use: kindRules.use, mediaType, bytes: new Uint8Array(await file.arrayBuffer()), seconds: null }
+    }
     const measured = { seconds: null as number | null }
     const copy = await (sbp('dez.controller/media/cutAudio', file, (duration: number) => {
       measured.seconds = duration
       return wav ? { start: 0, end: duration } : null
     }) as Promise<CutAudio | null>).catch((error: unknown) => {
       console.error(`Failed to decode the audio clip @${clip.id} of a media request:`, error)
-      // A clip that goes as it is needs no decode: its length is then
-      // unknown, and the provider checks it.
+      // A clip that goes as it is does not need the decode: its length is
+      // then unknown, and the provider checks it.
       if (!wav) return null
       throw new ExplainedError(
         `${modelName} takes no audio clip of the type ${mediaType}, and Dez could not make a WAV copy of the audio clip @${clip.id}: this app cannot decode its audio. Use another audio clip.`,

@@ -93,6 +93,12 @@ export function needsWavCopy(kind: MediaTagKind, rules: ClipKindRules, type: str
   return kind === 'audio' && rules.types !== undefined && !rules.types.includes(clipMediaType(type)) && rules.types.includes(WAV_TYPE)
 }
 
+/** Whether `rules` limit the length of a clip or of all clips of the
+ *  kind, so the request needs the length of each clip of the kind. */
+export function hasLengthRules(rules: ClipKindRules): boolean {
+  return rules.minSeconds !== undefined || rules.maxSeconds !== undefined || rules.maxTotalSeconds !== undefined
+}
+
 /** The most clips of `kind` that a request to a model with `rules` takes:
  *  0 for a kind with no rules, Infinity with no known limit. */
 export function maxInputClips(rules: InputClipRules | undefined, kind: MediaTagKind): number {

@@ -54,11 +54,13 @@ const DRAWN_IMAGE = Uint8Array.from([1, 2, 3, 4])
 // `clipFiles`, unless no clip can be read (`clipReadError`). Every audio
 // clip is `audioSeconds` long (an error: the webview cannot decode it), and
 // its WAV copy is the file `WAV_COPY`. `clipReads` holds the id of each
-// clip read, and `audioCuts` the part of each WAV copy.
+// clip read, `audioDecodes` counts the decodes, and `audioCuts` holds the
+// part of each WAV copy.
 let clipFiles: Record<string, Uint8Array> = {}
 let clipReadError: ClipReadError | null
 let clipReads: string[] = []
 let audioSeconds: number | Error
+let audioDecodes = 0
 let audioCuts: AudioPart[] = []
 const WAV_COPY = new TextEncoder().encode('RIFF\x08\x00\x00\x00WAVEfmt ')
 
@@ -168,6 +170,7 @@ sbp('sbp/selectors/register', {
     return new Blob([clipFiles[clip.id]])
   },
   async 'dez.controller/media/cutAudio' (_file: Blob, plan: (duration: number) => AudioPart | null): Promise<CutAudio | null> {
+    audioDecodes += 1
     if (audioSeconds instanceof Error) throw audioSeconds
     const part = plan(audioSeconds)
     if (part) audioCuts.push(part)
@@ -228,6 +231,7 @@ beforeEach(() => {
   clipReadError = null
   clipReads = []
   audioSeconds = 10
+  audioDecodes = 0
   audioCuts = []
   consoleError = vi.spyOn(console, 'error').mockImplementation(() => {})
   sbp('dez.model/customProviders/save', {
@@ -1204,6 +1208,18 @@ describe('media requests', () => {
 
       await generate({ kind: 'video', clips: [clip('audio', 'a1', 'audio/mp3')] })
 
+      expect(downloadRequests.map((request) => JSON.parse(request.body as string))).toStrictEqual([{ duration: '5s', model: 'm', prompt: 'A red fox', audio_url: dataUrl('audio/mpeg', MP3_AUDIO) }])
+    })
+
+    // A decode holds all samples of the clip in memory, and a long
+    // recording has many.
+    it('sends an audio clip of a type that the model takes as it is, with no decode, when the model has no length rule', async () => {
+      useClipModel('m', BACKGROUND_AUDIO)
+      clipFiles = { a1: MP3_AUDIO }
+
+      await generate({ kind: 'video', clips: [clip('audio', 'a1', 'audio/mpeg')] })
+
+      expect(audioDecodes).toBe(0)
       expect(downloadRequests.map((request) => JSON.parse(request.body as string))).toStrictEqual([{ duration: '5s', model: 'm', prompt: 'A red fox', audio_url: dataUrl('audio/mpeg', MP3_AUDIO) }])
     })
 
