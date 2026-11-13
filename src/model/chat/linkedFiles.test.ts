@@ -1,5 +1,7 @@
 import { describe, expect, it } from 'vitest'
-import { dropCopiesFile, isInFolder, pairDroppedFiles } from './linkedFiles'
+import { imageMarkdown } from './images'
+import { dropCopiesFile, holdsLinkedFile, isInFolder, pairDroppedFiles } from './linkedFiles'
+import { mediaTagText } from './mediaTags'
 
 describe('isInFolder and dropCopiesFile', () => {
   it('takes the folder itself and every path under it, with or without a trailing slash', () => {
@@ -25,6 +27,30 @@ describe('isInFolder and dropCopiesFile', () => {
       expect(dropCopiesFile(path, folders), path).toBe(false)
     }
     expect(dropCopiesFile('/tmp/a.png', [])).toBe(false)
+  })
+})
+
+describe('holdsLinkedFile', () => {
+  const image = (path: string) => imageMarkdown(path, [{ key: 'id', value: 'a' }])
+  const clip = (src: string | null, url: string | null = null) => mediaTagText({ kind: 'audio', id: 'b', type: 'audio/wav', src, url, expires: null, other: [] })
+
+  it('finds a linked image reference and a clip tag with a linked src', () => {
+    expect(holdsLinkedFile(`See ${image('/home/u/Pictures/My photo (1).JPG')} here`)).toBe(true)
+    expect(holdsLinkedFile(`Hear\n${clip('/home/u/Music/song.wav')}`)).toBe(true)
+  })
+
+  it('takes no stored file, temp copy, URL, or text that only reads like a reference or a tag', () => {
+    const texts = [
+      image('/home/u/.config/dez/assets/images/a1.png'),
+      image('/home/u/.config/dez/assets/generated/images/a1.png'),
+      clip('/home/u/.config/dez/assets/audio/a1.wav'),
+      clip('/home/u/.config/dez/assets/generated/audio/a1.wav'),
+      clip('/home/u/.cache/dez/media/a1.wav', 'https://cdn.example/a1.wav'),
+      clip(null, 'https://cdn.example/a1.wav'),
+      `Text ${clip('/home/u/Music/song.wav')}`,
+      'The file /home/u/Pictures/a.png, typed in prose.',
+    ]
+    for (const text of texts) expect(holdsLinkedFile(text), text).toBe(false)
   })
 })
 

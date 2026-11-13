@@ -1,4 +1,6 @@
 import { fileNameOf } from '../../utils/fileName'
+import { findImageReferences } from './images'
+import { findMediaTags, isLinkedMediaPath } from './mediaTags'
 
 // A dropped image or clip file is linked: the conversation names the file
 // by its absolute path where it is, and Dez stores no copy of it. A file
@@ -26,6 +28,14 @@ export function isInFolder(path: string, folder: string): boolean {
  *  of `copyFolders` (canonical too): a temp folder or a folder of Dez. */
 export function dropCopiesFile(canonicalPath: string, copyFolders: readonly string[]): boolean {
   return copyFolders.some((folder) => isInFolder(canonicalPath, folder))
+}
+
+/** True when `text`, as the text of a user section, names a linked file:
+ *  an image reference or a media tag with a linked path. Such a section
+ *  must stay a user section, as its linked paths count nowhere else. */
+export function holdsLinkedFile(text: string): boolean {
+  return findImageReferences(text, 'user').some((reference) => reference.linked)
+    || findMediaTags(text).some((tag) => tag.src !== null && isLinkedMediaPath(tag.src))
 }
 
 /** A dropped `File` as a drop event gives it: no path, only a name and a

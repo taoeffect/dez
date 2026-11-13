@@ -11,7 +11,7 @@ import { pasteImage, shownImages, solidPng, type ShownImage } from './harness/im
 import { startMockProviderApp, type MockProviderApp } from './harness/mockProviderApp'
 import { mockChatPath, replyText, sendAnthropicReply, sendChatReply, type HeldRequest, type MockProvider } from './harness/mockServer'
 import type { E2EBrowser } from './harness/session'
-import { activeConversationId, copySelection, docPosPoint, editorCaret, editorDoc, focusEditor, newTab, openToasts, pasteText, pickModel, sbpCall, setCaret, threadSections, waitForThread } from './harness/thread'
+import { activeConversationId, copySelection, docPos, docPosPoint, editorCaret, editorDoc, focusEditor, newTab, openToasts, pasteText, pickModel, pressRolePill, sbpCall, setCaret, threadSections, waitForThread } from './harness/thread'
 
 // Images in a conversation, driven through the real app: a paste or a drop
 // stores the file and puts its reference, with a new image id, in the doc,
@@ -28,8 +28,10 @@ import { activeConversationId, copySelection, docPosPoint, editorCaret, editorDo
 // images gets only that text and the user a warning, no request holds an
 // image path (also not a reference that shows its source or an image in a
 // reply), a native drop of a file out of every temp folder links the file
-// in place (shown, sent with no path, removed with no file delete), and a
-// relaunch shows the saved image and the linked image again.
+// in place (shown, sent with no path, removed with no file delete) but
+// copies it into an agent message, a user message that links a file does
+// not switch to Agent, and a relaunch shows the saved image and the linked
+// image again.
 //
 // WebDriver can send neither clipboard data nor an OS drag, so the paste
 // and drop events are synthetic DOM events built in the page. The PNG bytes
@@ -811,6 +813,41 @@ describe('images', () => {
     await waitForValue(browser, 'doc after Enter', docAndCaret, { doc: 'See  here', caret: 2 })
     await waitForValue(browser, 'prompt after Enter', promptState, { message: null, buttons: [], focus: 'editor' })
     expect(await fs.promises.readFile(source)).toEqual(DROPPED_PNG)
+  })
+
+  // A linked path counts only in a user message.
+  it('copies a file dropped into an agent message, and keeps a user message that links a file from a switch to Agent', async () => {
+    const source = await writeTestFile(path.join(linkedDir, 'switch.png'), DROPPED_PNG)
+    await newTab(browser)
+    await pickModel(browser, VISION.name, VISION.modelName)
+    await focusEditor(browser)
+    await typeKeys(browser, 'Hi')
+    await waitForValue(browser, 'typed text', () => editorDoc(browser), 'Hi')
+    const request = await sendRequest()
+    await sendChatReply(request.reply, VISION.modelName)
+    const reply = replyText(VISION.modelName)
+    await waitForThread(browser, [{ role: 'user', text: 'Hi' }, { role: 'agent', text: reply }, { role: 'user', text: '' }])
+
+    const before = await storedImages()
+    await nativeDrop(browser, await docPoint(await docPos(browser, reply)), [source])
+    await waitForValue(browser, 'stored copy', async () => (await storedImages()).length, before.length + 1)
+    const fileName = (await storedImages()).find((name) => !before.includes(name)) ?? ''
+    expect(await fs.promises.readFile(path.join(imagesDir(), fileName))).toEqual(DROPPED_PNG)
+    const copied = `![${path.join(imagesDir(), fileName)}](id=a)${reply}`
+    const copiedImage = { alt: fileName, width: 40, height: 24 }
+    await waitForThread(browser, [{ role: 'user', text: 'Hi' }, { role: 'agent', text: copied }, { role: 'user', text: '' }])
+    await waitForValue(browser, 'shown copy', () => shownImages(browser), [copiedImage])
+
+    await nativeDrop(browser, await docPoint((await editorDoc(browser)).length), [source])
+    const sections = [{ role: 'user', text: 'Hi' }, { role: 'agent', text: copied }, { role: 'user', text: `![${source}](id=b)` }]
+    const shown = [copiedImage, { alt: 'switch.png', width: 40, height: 24 }]
+    await waitForThread(browser, sections)
+    await waitForValue(browser, 'shown images', () => shownImages(browser), shown)
+
+    await pressRolePill(browser, 2, '.dez-role-separator__label', { shiftKey: true })
+    await waitForValue(browser, 'warning', async () => (await openToasts(browser, 'warning')).map((toast) => toast.title), ['Message not switched to Agent'])
+    expect(await threadSections(browser)).toEqual(sections)
+    expect(await shownImages(browser)).toEqual(shown)
   })
 
   it('sends a pasted image to an OpenAI-format model as a data URL, and titles the tab with [image]', async () => {

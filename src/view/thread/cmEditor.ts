@@ -1,3 +1,4 @@
+import sbp from '@sbp/sbp'
 import { invertedEffects } from '@codemirror/commands'
 import { HighlightStyle, syntaxHighlighting } from '@codemirror/language'
 import { markdown } from '@codemirror/lang-markdown'
@@ -11,6 +12,7 @@ import { modelRefField } from '../../model/chat/modelRef'
 import { PILL_MARKER, parsePillMarkerMatch, pillMarkerText } from '../../model/chat/pillMarker'
 import { thinkingField } from '../../model/chat/thinking'
 import { messagesAsMarkdown, sectionTextAsMarkdown, type MarkdownMessage } from '../../model/chat/markdown'
+import { holdsLinkedFile } from '../../model/chat/linkedFiles'
 import { SENTINEL_CHAR, normalizeContent, stripLiveSentinels, textNode } from '../../model/chat/content'
 import { EDITOR_FONT_SIZE_DEFAULT, EDITOR_FONT_SIZE_PROPERTY } from '../../model/editorFontSize'
 import { escapeMarkerAttribute, unescapeMarkerAttribute } from '../../utils/markerAttribute'
@@ -851,8 +853,32 @@ export const roleSeparatorAtomicRanges = EditorView.atomicRanges.of((view) =>
   ),
 )
 
+/** Switches the role of section `index` (`toggleSectionRoleEffect`), but
+ *  keeps a user section that links a file (a dropped image or clip,
+ *  src/model/chat/linkedFiles.ts) a user section, and a toast tells why. A
+ *  linked path counts only in a user section, so in an agent section its
+ *  images and players would show as source text and go to no request. The
+ *  first section is always a user section (`sectionsField`), so a press on
+ *  its pill shows no toast. */
+function toggleSectionRole(view: EditorView, index: number): void {
+  const section = view.state.field(sectionsField)[index]
+  if (!section) return
+  if (index > 0 && section.role === 'user' && holdsLinkedFile(splitDocBySeparator(view.state.doc.toString())[index] ?? '')) {
+    sbp('dez.ui/toast', 'app-global', {
+      title: 'Message not switched to Agent',
+      message: 'This message links images or clips that you dropped, which stay where they are on your computer. '
+        + 'Only a user message can link files. To make it an agent message, delete those images and clips from it '
+        + '(the files stay), switch it, and drop the files again: Dez then keeps copies of them.',
+      variant: 'warning',
+      duration: 8000,
+    })
+    return
+  }
+  view.dispatch({ effects: toggleSectionRoleEffect.of({ id: section.id }) })
+}
+
 /** Click handler: a Shift+press anywhere on a pill switches the role of the
- *  section after it (`toggleSectionRoleEffect`). A plain press anywhere on
+ *  section after it (`toggleSectionRole`). A plain press anywhere on
  *  an agent pill that shows a disclosure triangle, its model part and reply
  *  time too, opens or closes its thinking panel; a plain press on any other
  *  pill does nothing. Every pill takes the mousedown, so a press on a pill
@@ -871,11 +897,11 @@ export const roleSeparatorMouseHandler = EditorView.domEventHandlers({
     const index = Number(idxStr)
     if (!Number.isFinite(index)) return false
     event.preventDefault()
-    const sectionId = view.state.field(sectionsField)[index]?.id
     if (event.shiftKey && !event.ctrlKey && !event.metaKey && !event.altKey) {
-      if (event.button === 0 && sectionId) view.dispatch({ effects: toggleSectionRoleEffect.of({ id: sectionId }) })
+      if (event.button === 0) toggleSectionRole(view, index)
       return true
     }
+    const sectionId = view.state.field(sectionsField)[index]?.id
     const thinking = pillThinkingAt(view.state, index)
     if (thinking && hasThinking(thinking) && sectionId) {
       view.dispatch({ effects: toggleThinkingExpandedEffect.of(sectionId) })

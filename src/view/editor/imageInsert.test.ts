@@ -7,6 +7,7 @@ import type { DrawnImage, DrawnMediaType, ImageDrawing, ImageSize } from '../../
 import { imageMarkdown } from '../../model/chat/images'
 import { FileTooLargeError, MAX_SAVED_CLIP_BYTES } from '../../model/chat/mediaFiles'
 import { mediaTagText, type MediaTagData, type MediaTagKind } from '../../model/chat/mediaTags'
+import type { Role } from '../../model/chat/types'
 import { SECTION_SEP, clipboardPasteTransaction, encodePrompt, pillsField, sectionsField } from '../thread/cmEditor'
 import { dropFilePaths, dropFiles, filePasteAndDrop, pasteFiles } from './imageInsert'
 import { markdownImages, renderedImages } from './images'
@@ -157,18 +158,20 @@ function largeClipFile(name: string, size: number, read: () => Promise<ArrayBuff
   return file
 }
 
-function createState(doc: string, anchor: number, head = anchor): EditorState {
+/** A state of `doc` whose sections have the roles `roles`: all user by
+ *  default. A drop links files only into a user section. */
+function createState(doc: string, anchor: number, head = anchor, roles: Role[] = doc.split(SECTION_SEP).map(() => 'user')): EditorState {
   return EditorState.create({
     doc,
     selection: EditorSelection.single(anchor, head),
-    extensions: [filePasteAndDrop(), markdownImages(), history()],
+    extensions: [filePasteAndDrop(), markdownImages(), history(), sectionsField.init(() => roles.map((role, index) => ({ id: `s${index}`, role })))],
   })
 }
 
 /** A view stand-in: the handlers read the state, dispatch, focus, and map
  *  drop coordinates (here `clientX` is the doc position). */
-function createEditor(doc: string, anchor: number, head = anchor) {
-  let state = createState(doc, anchor, head)
+function createEditor(doc: string, anchor: number, head = anchor, roles?: Role[]) {
+  let state = createState(doc, anchor, head, roles)
   const view = {
     get state() {
       return state
@@ -532,6 +535,22 @@ describe('dropFiles', () => {
     expect(clipSaves).toStrictEqual([])
     expect(toasts.map((toast) => toast.message)).toStrictEqual([UNSUPPORTED_DROP_MESSAGE, UNSUPPORTED_DROP_MESSAGE])
   })
+
+  // A linked path counts only in a user section: in an agent section the
+  // reference would show as its source and go to no request.
+  it('copies the files of a drop into an agent section, without reading their paths', async () => {
+    draggedPaths = new Map([['a.png', '/Users/u/a.png'], ['dance.mp4', '/Users/u/dance.mp4']])
+    linkedPaths = new Set(['/Users/u/a.png', '/Users/u/dance.mp4'])
+    const doc = `question\n${SECTION_SEP}\nanswer`
+    const editor = createEditor(doc, 0, 0, ['user', 'agent'])
+
+    drop(editor.view, doc.length, { files: [png('a.png', 1), clipFile('dance.mp4', 'video/mp4', 21)] })
+
+    await vi.waitFor(() => expect(editor.doc()).toBe(`${doc}\n${reference(1)}\n${clipTag('video', 'video/mp4', 21, 'b')}`))
+    expect(draggedFileReads).toStrictEqual([])
+    expect(saveCalls.map((call) => call.bytes[0])).toStrictEqual([1])
+    expect(clipSaves.map(({ options }) => options.bytes[0])).toStrictEqual([21])
+  })
 })
 
 describe('dropFilePaths', () => {
@@ -658,6 +677,25 @@ describe('dropFilePaths', () => {
     expect(toasts).toStrictEqual([expect.objectContaining({ title: 'Clip not added', variant: 'warning' })])
     expect(toasts[0].message).toContain('trip.mov')
     expect(toasts[0].message).toContain('1.5 GB')
+  })
+
+  it('links a dropped file only into a user section, also for a drop on either side of an agent pill', async () => {
+    const photo = '/home/u/Pictures/a.png'
+    linkedPaths = new Set([photo])
+    localFiles = new Map([[photo, png('a.png', 1)]])
+    const doc = `question\n${SECTION_SEP}\nanswer`
+    const editor = createEditor(doc, 0, 0, ['user', 'agent'])
+
+    // Before the separator: the end of the user section.
+    dropFilePaths(editor.view, [photo], { x: doc.indexOf(SECTION_SEP), y: 0 })
+    const linked = `question\n${imageMarkdown(photo, [{ key: 'id', value: 'a' }])}\n${SECTION_SEP}\n`
+    await vi.waitFor(() => expect(editor.doc()).toBe(`${linked}answer`))
+    expect(reads).toStrictEqual([])
+    // After the separator: the start of the agent section.
+    dropFilePaths(editor.view, [photo], { x: linked.length - 1, y: 0 })
+
+    await vi.waitFor(() => expect(editor.doc()).toBe(`${linked}${reference(1, 'b')}\nanswer`))
+    expect(reads).toStrictEqual([[photo, {}]])
   })
 })
 

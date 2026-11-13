@@ -79,9 +79,10 @@ function onOverlayClick(e: MouseEvent) {
             <p>
               Paste or drop images, audio, and video into a message. Each one gets an id
               (<code>a</code>, <code>b</code>, …), which shows when you point at it: write
-              <code>@a</code> in a message to name it. Dez keeps a copy of a pasted file. A dropped
-              file stays where it is, and the message links to it, so do not move or delete it; Dez
-              keeps a copy only of a file from a temp folder. A model that makes images, audio, or
+              <code>@a</code> in a message to name it. Dez keeps a copy of a pasted file. A file
+              that you drop into a user message stays where it is, and the message links to it, so
+              do not move or delete it; Dez keeps a copy of a file from a temp folder, and of a file
+              that you drop into an agent message. A model that makes images, audio, or
               video puts them in its reply. Type <code>/prompt</code> to insert a saved prompt
               (Settings › Prompts).
             </p>
@@ -91,7 +92,8 @@ function onOverlayClick(e: MouseEvent) {
             <p>
               Shift+Click a role pill (User or Agent) to change its message from User to Agent, or
               from Agent to User: for example, to write a reply yourself. The first message is always
-              User, and the pill of a reply that is coming in does not change.
+              User, the pill of a reply that is coming in does not change, and a message that links
+              dropped files stays User.
             </p>
           </section>
 
