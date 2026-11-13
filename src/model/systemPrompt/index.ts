@@ -10,6 +10,14 @@ import SYSTEM_PROMPT_TEMPLATE from './systemPrompt.md?raw'
  *  `systemPrompt` setting is null). */
 export const BUILT_IN_SYSTEM_PROMPT = SYSTEM_PROMPT_TEMPLATE.trimEnd()
 
+/** The template that the `systemPrompt` setting stands for: null is Dez's
+ *  own template. The send check, the request, and Settings › System Prompt
+ *  all read the template through this, so a send that passes the check
+ *  never fails on another template. */
+export function systemPromptTemplate(setting: string | null): string {
+  return setting ?? BUILT_IN_SYSTEM_PROMPT
+}
+
 /** The facts of a request that the variables of a template stand for. */
 interface PromptFacts {
   model: ModelRef
@@ -91,11 +99,11 @@ export function systemPromptErrorText(problem: string): string {
 }
 
 /** The system prompt of a request to `model` that offers `tools`, the Dez
- *  tools that the request sends, from `template` (the user's template, else
- *  `BUILT_IN_SYSTEM_PROMPT`); undefined for a blank template, so that the
- *  request has no system prompt. `providerName` is the display name of the
- *  model's provider. Throws an `ExplainedError` for a template with a
- *  problem: `dez.controller/submitTab` refuses such a request first.
+ *  tools that the request sends, from `template` (`systemPromptTemplate` of
+ *  the setting); undefined for a blank template, so that the request has no
+ *  system prompt. `providerName` is the display name of the model's
+ *  provider. Throws an `ExplainedError` for a template with a problem:
+ *  `dez.controller/submitTab` refuses such a request first.
  *
  *  The prompt holds no date, count, or other changing value, and the
  *  template's last white space is dropped: the same template, model,

@@ -31,7 +31,7 @@ import {
   setThinkingReplayForTabSection,
   type SettingsSnapshot,
 } from '../model/state'
-import { BUILT_IN_SYSTEM_PROMPT, buildSystemPrompt } from '../model/systemPrompt'
+import { buildSystemPrompt, systemPromptTemplate } from '../model/systemPrompt'
 import { TOOL_DEFINITIONS } from '../model/tools/registry'
 import type { ToolRunResult } from '../model/tools/types'
 import {
@@ -380,7 +380,7 @@ async function runChatRounds(args: StreamStartArgs, reply: ReplyRuntime): Promis
   // session. Built once per reply, so a provider rename or a template edit
   // during the reply does not change the prompt of its later rounds. A
   // blank template gives no system prompt.
-  const system = buildSystemPrompt(settings.systemPrompt ?? BUILT_IN_SYSTEM_PROMPT, args.model, requireProvider(args.model.providerId).name, tools)
+  const system = buildSystemPrompt(systemPromptTemplate(settings.systemPrompt), args.model, requireProvider(args.model.providerId).name, tools)
   let messages = args.messages
   // The first call id of the group that ended the round before: it names
   // the thinking round of every later round (SectionThinking.rounds).

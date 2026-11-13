@@ -12,7 +12,7 @@ import { unstoredOutputMessage, unusableModelMessage } from '../model/providers/
 import type { SettingsSnapshot } from '../model/state'
 import { mediaRequestInput } from '../model/streams/messages'
 import type { RequestMessages } from '../model/streams/types'
-import { BUILT_IN_SYSTEM_PROMPT, systemPromptErrorText, systemPromptProblem } from '../model/systemPrompt'
+import { systemPromptErrorText, systemPromptProblem, systemPromptTemplate } from '../model/systemPrompt'
 
 // Tells the user that the request goes with `count` fewer images than the
 // message has, because the model `reason` (e.g. "does not read images").
@@ -115,7 +115,7 @@ export default sbp('sbp/selectors/register', {
       // template the user can edit. A template with a problem would fail
       // the request after the new agent section exists.
       const { systemPrompt } = sbp('dez.model/settings/snapshot') as SettingsSnapshot
-      const problem = systemPromptProblem(systemPrompt ?? BUILT_IN_SYSTEM_PROMPT)
+      const problem = systemPromptProblem(systemPromptTemplate(systemPrompt))
       if (problem !== null) message = systemPromptErrorText(problem)
     }
     if (message !== null) {

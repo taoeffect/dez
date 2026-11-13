@@ -3,11 +3,11 @@ import { computed, ref } from 'vue'
 import sbp from '@sbp/sbp'
 import { effectiveRequest, type ModelInfo, type ProviderSettingsDescriptor } from '../../model/providers'
 import {
-  BUILT_IN_SYSTEM_PROMPT,
   SYSTEM_PROMPT_VARIABLES,
   buildSystemPrompt,
   systemPromptIsBlank,
   systemPromptProblem,
+  systemPromptTemplate,
 } from '../../model/systemPrompt'
 import { TOOL_DEFINITIONS } from '../../model/tools/registry'
 import { modelLabel } from '../modelLabel'
@@ -20,7 +20,7 @@ const { settings, activeModel, modelDisplayNames } = useModelState()
 const editing = ref(false)
 const mode = ref<'source' | 'preview'>('source')
 
-const template = computed(() => settings.value.systemPrompt ?? BUILT_IN_SYSTEM_PROMPT)
+const template = computed(() => systemPromptTemplate(settings.value.systemPrompt))
 const problem = computed(() => systemPromptProblem(template.value))
 const blank = computed(() => systemPromptIsBlank(template.value))
 
