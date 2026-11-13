@@ -30,6 +30,11 @@ export function threadCount (pid: number): number {
  * folder does not exist. This finds a program that Dez runs in a work
  * folder: Dez gives such a program an empty environment, so its HOME does
  * not tell which app started it.
+ *
+ * It finds no program once its folder is deleted, also when the program
+ * still runs (`/proc/<pid>/cwd` then ends with ` (deleted)`). To see that a
+ * program ended, keep its pid while it runs and check it with
+ * `processExists`.
  */
 export function pidsWithCwd (folder: string): number[] {
   let wanted: string
@@ -49,4 +54,12 @@ export function pidsWithCwd (folder: string): number[] {
     }
   }
   return pids
+}
+
+/**
+ * Whether the process `pid` still exists. Dez waits for the end of each
+ * program that it runs, so a program that ended leaves no zombie here.
+ */
+export function processExists (pid: number): boolean {
+  return fs.existsSync(`/proc/${pid}`)
 }

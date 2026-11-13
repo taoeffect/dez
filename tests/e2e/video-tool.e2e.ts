@@ -12,7 +12,7 @@ import { startedJob, waitCall } from './harness/jobs'
 import { clipTag, MP4_VIDEO, shownPlayers, silentWav, startClipServer, WEBM_VIDEO, type ClipServer, type ShownPlayer } from './harness/media'
 import { startMockProviderApp, takeRequest, type MockProviderApp } from './harness/mockProviderApp'
 import { mockChatPath, openAiToolCall, replyText, sendChatReply, sendToolCalls, toolResult, type HeldRequest, type MockProvider } from './harness/mockServer'
-import { pidsWithCwd } from './harness/processes'
+import { pidsWithCwd, processExists } from './harness/processes'
 import type { E2EBrowser } from './harness/session'
 import { endedReply, newTab, openSeededConversation, openToasts, pickModel, submit, waitForThread } from './harness/thread'
 
@@ -176,12 +176,15 @@ describe('video tool', () => {
     return { jobId, started: toolResult(second, callId), result: results[0], next }
   }
 
-  // The work folder of the one call that runs: waits until the work root
-  // holds one folder, and one program works in it.
-  async function runningWorkFolder (): Promise<string> {
+  // The pid of the program of the one call that runs: waits until the work
+  // root holds one folder, and one program works in it. Dez deletes the
+  // folder at the end of the call, so a check that the program ended reads
+  // this pid, not the folder (`pidsWithCwd`).
+  async function runningProgram (): Promise<number> {
     await waitForValue(browser, 'programs in the work folders', async () => (await filesIn(workRoot)).map((name) => pidsWithCwd(path.join(workRoot, name)).length), [1])
     const [name] = await filesIn(workRoot)
-    return path.join(workRoot, name)
+    const [pid] = pidsWithCwd(path.join(workRoot, name))
+    return pid
   }
 
   // After the calls of a test: no work folder stays, no file of the
@@ -440,12 +443,12 @@ describe('video tool', () => {
     const second = await chatRequest()
     const started = toolResult(second, 'call_tone')
     expect(started).toBe(`${jobStartedText(startedJob(second, 'call_tone'), 1)}\nThe run has no input image and no input clip.`)
-    const folder = await runningWorkFolder()
+    const program = await runningProgram()
 
     // While a reply runs, the Submit button stops it.
     await pointerClick(browser, '.submit-button')
     await waitForValue(browser, 'chat request closed', async () => second.closed, true)
-    await waitForValue(browser, 'programs in the work folder', async () => pidsWithCwd(folder), [])
+    await waitForValue(browser, 'the program of the call runs', async () => processExists(program), false)
     await waitForValue(browser, 'work folders', () => filesIn(workRoot), [])
     const block = `<dez:tool id="call_tone" name="video" command="ffmpeg" parameters="${parameters.replaceAll('"', '&quot;')}">\n${started}\n</dez:tool>\n`
     await waitForThread(browser, [
@@ -471,7 +474,7 @@ describe('video tool', () => {
     sendToolCalls(first.reply, [videoCall('call_tone', 'ffmpeg', { arguments: ENDLESS_TONE, timeout_seconds: 10 })])
     const second = await chatRequest()
     const jobId = startedJob(second, 'call_tone')
-    const folder = await runningWorkFolder()
+    const program = await runningProgram()
     sendToolCalls(second.reply, [waitCall('call_wait')])
 
     // The wait is longer than `waitForValue` takes.
@@ -484,7 +487,7 @@ describe('video tool', () => {
 
     const reply = await endedReply(browser)
     expect(reply.endsWith(`</dez:tool>\n${replyText(CALLER.modelName)}`)).toBe(true)
-    await waitForValue(browser, 'programs in the work folder', async () => pidsWithCwd(folder), [])
+    await waitForValue(browser, 'the program of the call runs', async () => processExists(program), false)
     await waitForValue(browser, 'work folders', () => filesIn(workRoot), [])
     expect(await filesIn(audioDir)).toStrictEqual(before)
     expect(await openToasts(browser, 'error')).toStrictEqual([])
