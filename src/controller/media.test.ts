@@ -460,13 +460,20 @@ describe('dez.controller/media/readClip', () => {
     expect(downloads).toEqual([])
   })
 
-  it('reads a linked file through the asset protocol, up to the size of a clip that Dez stores', async () => {
+  it('reads a linked file through the asset protocol, up to the size of a clip that Dez stores, only as the src', async () => {
     const linked = '/home/ann/Music/song (live).mp3'
     readFile = async () => new File([Uint8Array.from([9])], 'song (live).mp3', { type: 'audio/mpeg' })
 
     expect(await bytesOf(await readClip({ type: 'audio/mpeg', src: linked, url: null, expires: null }))).toStrictEqual([9])
     expect(readFiles).toStrictEqual([linked])
     expect(readCaps).toStrictEqual([MAX_SAVED_CLIP_BYTES])
+
+    // The `url` is the provider's: a linked path there (a hand edit, or a
+    // tag of an agent section whose linked `src` the caller dropped) is never
+    // read.
+    const fromUrl = await readError({ type: 'audio/mpeg', src: null, url: linked, expires: null })
+    expect([fromUrl.problem, fromUrl.details]).toStrictEqual(['unreadable', 'A source of the clip is not a file that Dez may read or a web address.'])
+    expect(readFiles).toStrictEqual([linked])
   })
 
   it('downloads a clip that plays from its URL once, with no header, to a part file that it reads and deletes, and gives the bytes with the clip type', async () => {
@@ -548,7 +555,7 @@ describe('dez.controller/media/readClip', () => {
 
     // A source that is no absolute path and no web address is never read.
     const foreign = await readError({ type: 'audio/mpeg', src: 'Music/song.mp3', url: null, expires: null })
-    expect([foreign.problem, foreign.details]).toStrictEqual(['unreadable', 'A source of the clip is not a file of this computer or a web address.'])
+    expect([foreign.problem, foreign.details]).toStrictEqual(['unreadable', 'A source of the clip is not a file that Dez may read or a web address.'])
 
     for (const error of [expired, unreadable, foreign]) {
       expect(error.message).not.toContain('/home/')

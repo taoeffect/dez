@@ -225,10 +225,11 @@ export default sbp('sbp/selectors/register', {
   },
 
   // The bytes of a clip, for a tool or a request that uses the clip: from
-  // its `src`, else from its `url`. A saved file, a temp copy, or a linked
-  // file of this computer is read through the asset protocol; the caller
-  // gives a linked `src` only for a tag of a user section
-  // (`sectionClipSource`), and a linked file larger than
+  // its `src`, else from its `url`. A saved file or a temp copy is read
+  // through the asset protocol. So is a linked file of this computer, but
+  // only as the `src`: the caller gives a linked `src` only for a tag of a
+  // user section (`sectionClipSource`), and the `url` is the provider's, so
+  // a linked path there is never read. A linked file larger than
   // `MAX_SAVED_CLIP_BYTES` is not read, as a dropped clip that Dez copies
   // has that cap. A URL (http or https) is downloaded with no provider
   // header (`readClipUrl`), and a stop of `signal` ends that download.
@@ -247,8 +248,8 @@ export default sbp('sbp/selectors/register', {
       try {
         if (isSavedMediaPath(source) || isTempMediaPath(source)) return await sbp('dez.controller/images/readFile', source) as File
         if (/^https?:\/\//i.test(source)) return await readClipUrl(source, clip.type, signal)
-        if (isLinkedMediaPath(source)) return await sbp('dez.controller/images/readFile', source, { maxBytes: MAX_SAVED_CLIP_BYTES }) as File
-        failures.push('A source of the clip is not a file of this computer or a web address.')
+        if (source === clip.src && isLinkedMediaPath(source)) return await sbp('dez.controller/images/readFile', source, { maxBytes: MAX_SAVED_CLIP_BYTES }) as File
+        failures.push('A source of the clip is not a file that Dez may read or a web address.')
       } catch (error) {
         // A stop is no problem of the clip, and no later source is tried.
         signal?.throwIfAborted()
