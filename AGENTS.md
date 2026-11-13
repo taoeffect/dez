@@ -117,7 +117,7 @@ ThreadEditor (CodeMirror doc) syncs to the active tab's sections
 - `view/prompts/PromptManager.vue`, `view/thread/PromptAutocomplete.vue`: saved prompts and `/prompt ` insertion.
 - `view/settings/SettingsView.vue`, `ProviderManager.vue`, `ShortcutManager.vue`, `SystemPromptSettings.vue`: settings (General holds the "Unused files" row, `unusedFiles.ts`), the providers page, Settings › Shortcuts with its key recorder (Help › Keyboard Shortcuts opens it), and Settings › System Prompt (the custom template, its variables, and Source/Preview; `SystemPromptPreview.vue` is a read-only CodeMirror view of the prompt).
 - `view/tabs/TabBar.vue`: tabs, colored busy/done by `dez.model/tabs/activity`, pointer drag to reorder (`dez.model/tabs/move`). The `+` button, keys, and File menu create tabs with `dez.controller/newTab` (`controller/tabs.ts`), which focuses the editor (`dez.editor/focus`). `dez.model/tabs/reopenClosed` brings back a closed tab from a session-only list (`model/state/tabs.ts`).
-- `view/modelLabel.ts`: model display names. `view/theme.ts`: theme and editor font size.
+- `view/modelLabel.ts`: model display names, and `modelTooltipName`, the one text of a model's tooltip (the id first). `view/theme.ts`: theme and editor font size.
 - `utils/byteSize.ts`: `byteSizeText`, the one byte-count text. `utils/homePath.ts`: `pathWithTilde`; a view gets a path with `~` for the home folder from `dez.controller/displayPath` (`controller/utils.ts`).
 - `utils/errorText.ts`: the shape of every user error text (`errorText`, `ExplainedError`, `explainedError`, `UNEXPECTED_ERROR`).
 - `utils/dezLinks.ts`: the URLs of Dez's GitHub pages.

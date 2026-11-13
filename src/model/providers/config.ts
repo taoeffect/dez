@@ -243,7 +243,7 @@ export const providerConfigSchema = z.object({
   modelOutputs: modelOutputsConfigSchema.optional(),
   // Where a `/models` entry holds a readable name of the model, for a server
   // whose entries are named by their ids (Venice). Only the tooltips of the
-  // picker and the agent pill show it, after the name; no request holds it.
+  // picker and the agent pill show it, after the id; no request holds it.
   modelReadableName: z.object({ path: modelEntryPathSchema }).optional(),
   // Where a `/models` entry holds the date that the provider gives the model
   // (OpenRouter's and Venice's `created`), and its format: `unixSeconds` (a

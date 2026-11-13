@@ -7,9 +7,10 @@ import { modelLabel, modelTooltipName } from '../modelLabel'
 /** What the model part of an agent role pill shows. */
 export interface ModelChip {
   key: string
+  /** The model id, which the tooltip shows first (`modelTooltipName`). */
+  modelId: string
   modelName: string
-  /** The model's readable name, for the tooltip (`modelTooltipName`); null
-   *  when unknown. */
+  /** The model's readable name, for the tooltip; null when unknown. */
   readableName: string | null
   providerName: string | null
   /** Label of the model of the nearest earlier agent section that has a
@@ -25,6 +26,7 @@ export function sameModelChip(a: ModelChip | null, b: ModelChip | null): boolean
   if (!a || !b) return !a && !b
   return (
     a.key === b.key &&
+    a.modelId === b.modelId &&
     a.modelName === b.modelName &&
     a.readableName === b.readableName &&
     a.providerName === b.providerName &&
@@ -84,6 +86,7 @@ export function sectionModelChips(
     previous = { key, label: providerName ? `${modelName} (${providerName})` : modelName }
     return {
       key,
+      modelId: section.model.modelId,
       modelName,
       readableName: names.readableNames.get(key) ?? null,
       providerName,
@@ -120,16 +123,18 @@ function span(className: string, text = ''): HTMLSpanElement {
 
 /** Shows the model inside the agent role pill, after the role word: the
  *  switch icon, the model name, and the provider name. The pill also gets
- *  the model facts (the name with the readable name) as its tooltip, and
- *  the model part gets them as its accessible name. One pill and one color
- *  for every model: the name, not a color, tells models apart. Styles are in
- *  `dezTheme` (`cmEditor.ts`). The model is widget DOM, not doc text, so
- *  find and copy never see it. */
+ *  the model facts as its tooltip, and the model part gets them as its
+ *  accessible name: the id with the pretty name (`modelTooltipName`), the
+ *  provider name, and the key, which is the only fact that holds the
+ *  provider id (all that Dez knows of a deleted provider). One pill and one
+ *  color for every model: the name, not a color, tells models apart. Styles
+ *  are in `dezTheme` (`cmEditor.ts`). The model is widget DOM, not doc text,
+ *  so find and copy never see it. */
 export function addModelToPill(pill: HTMLElement, chip: ModelChip): void {
   pill.setAttribute('data-model-key', chip.key)
   const provider = chip.providerName ?? 'Unknown provider'
   const switched = chip.switchedFrom ? `Switched from ${chip.switchedFrom}` : null
-  const name = modelTooltipName(chip.modelName, chip.readableName)
+  const name = modelTooltipName(chip.modelId, chip.modelName, chip.readableName)
   pill.title = [name, provider, chip.key, switched].filter(Boolean).join('\n')
   if (chip.streaming) pill.setAttribute('data-streaming', '1')
   const model = span('dez-role-separator__model')

@@ -59,7 +59,7 @@ export function pickerRows({ providers, models, query, favorites, none }: Picker
         rows.push({ kind: 'header', key: `header:${groupId}`, label })
         hasHeader = true
       }
-      rows.push({ kind: 'model', key, model, providerName: provider.name, title: modelTooltipName(model.name, model.readableName) })
+      rows.push({ kind: 'model', key, model, providerName: provider.name, title: modelTooltipName(model.id, model.name, model.readableName) })
     }
   }
 

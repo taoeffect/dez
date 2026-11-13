@@ -7,17 +7,19 @@ import { createSession, destroySession, type E2EBrowser } from './harness/sessio
 import { activeConversationId, activeTabStreaming, editorSelection, maskPillDuration, newTab, openPicker, pickerRows, pickModel, pressRolePill, rolePillHeights, savedPillLines, sbpCall, setCaret, submit, threadSections, waitForThread } from './harness/thread'
 
 // The model on agent role pills, the model names in history rows, and the
-// full model names as tooltips in the model picker, driven through the real
-// app against a mock OpenAI-compatible server in this process.
+// tooltips of the models (the id, then the pretty name) in the model picker
+// and on the pills, driven through the real app against a mock
+// OpenAI-compatible server in this process.
 //
 // One custom provider ("Mock Provider") has three named config models. Its id
 // is a UUID, as the id of a provider added in Settings is, so a check can see
 // that no row shows it. Its model ids hold a `/`, as OpenRouter ids do, so
 // the `provider/model` key in pills and files has two slashes.
 // `fetchModels: false` keeps the model list to the config, so the mock serves
-// only its chat requests. A second one ("Readable Provider") lists one model
-// from the mock's model list, named by its id with a readable name at
-// `model_spec.name`, as Venice's list does (`modelReadableName`).
+// only its chat requests. A second one ("Readable Provider") lists two models
+// from the mock's model list: one named by its id with a readable name at
+// `model_spec.name`, as Venice's list does (`modelReadableName`), and one
+// with a pretty `name` and no readable name, as OpenRouter's list does.
 //
 // One app session serves the whole file. The tests from the model switch
 // on run in order in one tab: each builds on the replies of the one before.
@@ -48,50 +50,68 @@ interface SeparatorView {
   chip: ChipView | null
 }
 
-const PROVIDER = { id: '6f1d2c3b-8a47-4e5f-9b10-2c3d4e5f6a7b', name: 'Mock Provider' }
-const ALPHA = { key: `${PROVIDER.id}/acme/alpha`, modelId: 'acme/alpha', name: 'Alpha One' }
-const BETA = { key: `${PROVIDER.id}/acme/beta`, modelId: 'acme/beta', name: 'Beta Two' }
-// Its name is wider than the editor column, so its pill must shrink the name.
-const LONG = {
-  key: `${PROVIDER.id}/acme/long`,
-  modelId: 'acme/long',
-  name: 'Gamma Extended Preview Edition With An Extremely Long Display Name That Never Fits On One Editor Line',
+/** A model of the spec. */
+interface TestModel {
+  key: string
+  modelId: string
+  /** What a picker row and a pill show for the model. */
+  name: string
+  /** How a tooltip names the model: the id, then the pretty name in
+   *  parentheses; only the id for a model with no name but its id. */
+  tooltipName: string
 }
-// A model of a provider that was deleted.
+
+const PROVIDER = { id: '6f1d2c3b-8a47-4e5f-9b10-2c3d4e5f6a7b', name: 'Mock Provider' }
+const ALPHA: TestModel = { key: `${PROVIDER.id}/acme/alpha`, modelId: 'acme/alpha', name: 'Alpha One', tooltipName: 'acme/alpha (Alpha One)' }
+const BETA: TestModel = { key: `${PROVIDER.id}/acme/beta`, modelId: 'acme/beta', name: 'Beta Two', tooltipName: 'acme/beta (Beta Two)' }
+// Its name is wider than the editor column, so its pill must shrink the name.
+const LONG_NAME = 'Gamma Extended Preview Edition With An Extremely Long Display Name That Never Fits On One Editor Line'
+const LONG: TestModel = { key: `${PROVIDER.id}/acme/long`, modelId: 'acme/long', name: LONG_NAME, tooltipName: `acme/long (${LONG_NAME})` }
+// A model of a provider that was deleted: Dez knows no name for it, so the
+// id stands in, and the tooltips show only the id.
 const GONE_PROVIDER_ID = '0b7c6a52-5f2e-4c1d-9a8b-3e4f5a6b7c8d'
-const GONE = { key: `${GONE_PROVIDER_ID}/old-model`, providerId: GONE_PROVIDER_ID, modelId: 'old-model' }
+const GONE = { key: `${GONE_PROVIDER_ID}/old-model`, providerId: GONE_PROVIDER_ID, modelId: 'old-model', name: 'old-model', tooltipName: 'old-model' }
 // A model of the second provider: its list entry has no `name`, so the id is
 // its name, and the tooltips show the readable name after it.
 const READABLE_PROVIDER = { id: 'readable', name: 'Readable Provider' }
 const READABLE = {
   key: `${READABLE_PROVIDER.id}/acme-two-v2`,
   modelId: 'acme-two-v2',
+  name: 'acme-two-v2',
   readableName: 'Acme Two',
+  tooltipName: 'acme-two-v2 (Acme Two)',
+}
+// The other model of the second provider: its list entry has a pretty `name`
+// and no readable name. No row and no pill shows its id; the tooltips do,
+// before that name.
+const PRETTY: TestModel = {
+  key: `${READABLE_PROVIDER.id}/acme/pretty-v1`,
+  modelId: 'acme/pretty-v1',
+  name: 'Acme: Pretty One',
+  tooltipName: 'acme/pretty-v1 (Acme: Pretty One)',
 }
 
 // What the model part of a pill must show. The title and the aria-label
 // list the same facts; the aria-label (on the model part, so the role word
 // and the thinking triangle stay readable) labels the model and the
 // provider, and says "Generating" while the reply streams. Both name the
-// model with its readable name after the name, when it has one.
+// model as every model tooltip does (`tooltipName`).
 function expectedChip (
-  key: string,
-  name: string,
+  model: TestModel,
   provider: string | null,
-  options: { switchedFrom?: string, streaming?: boolean, readableName?: string } = {}
+  options: { switchedFrom?: string, streaming?: boolean } = {}
 ): ChipView {
   const providerText = provider ?? 'Unknown provider'
   const switched = options.switchedFrom ? [`Switched from ${options.switchedFrom}`] : []
   const streaming = options.streaming ?? false
-  const fullName = options.readableName ? `${name} (${options.readableName})` : name
   return {
-    key,
-    name,
+    key: model.key,
+    name: model.name,
     provider,
     switched: options.switchedFrom !== undefined,
     streaming,
-    title: [fullName, providerText, key, ...switched].join('\n'),
-    ariaLabel: [`Model: ${fullName}`, `Provider: ${providerText}`, key, ...switched, ...(streaming ? ['Generating'] : [])].join(', '),
+    title: [model.tooltipName, providerText, model.key, ...switched].join('\n'),
+    ariaLabel: [`Model: ${model.tooltipName}`, `Provider: ${providerText}`, model.key, ...switched, ...(streaming ? ['Generating'] : [])].join(', '),
   }
 }
 
@@ -167,7 +187,12 @@ describe('model names', () => {
       mock.hold = null
       await sendChatReply(res, model, hold)
     }, {
-      [`/${READABLE_PROVIDER.id}/v1/models`]: { data: [{ id: READABLE.modelId, model_spec: { name: READABLE.readableName } }] },
+      [`/${READABLE_PROVIDER.id}/v1/models`]: {
+        data: [
+          { id: READABLE.modelId, model_spec: { name: READABLE.readableName } },
+          { id: PRETTY.modelId, name: PRETTY.name },
+        ],
+      },
     })
     app = await startApp()
     try {
@@ -251,17 +276,17 @@ describe('model names', () => {
     // label, and the model id stands in for the model name. Its response
     // follows an Alpha One response, so it shows the switch cue.
     await waitForValue(browser, 'separators', separators, [
-      { index: 1, role: 'agent', chip: expectedChip(ALPHA.key, ALPHA.name, PROVIDER.name) },
+      { index: 1, role: 'agent', chip: expectedChip(ALPHA, PROVIDER.name) },
       { index: 2, role: 'user', chip: null },
       { index: 3, role: 'agent', chip: null },
       { index: 4, role: 'user', chip: null },
       {
         index: 5,
         role: 'agent',
-        chip: expectedChip(GONE.key, GONE.modelId, null, { switchedFrom: `${ALPHA.name} (${PROVIDER.name})` }),
+        chip: expectedChip(GONE, null, { switchedFrom: `${ALPHA.name} (${PROVIDER.name})` }),
       },
       { index: 6, role: 'user', chip: null },
-      { index: 7, role: 'agent', chip: expectedChip(LONG.key, LONG.name, PROVIDER.name, { switchedFrom: GONE.modelId }) },
+      { index: 7, role: 'agent', chip: expectedChip(LONG, PROVIDER.name, { switchedFrom: GONE.modelId }) },
     ])
     // A pill with a model is as tall as one without, so a separator does
     // not move when a stream stamps a model on its pill. The long model
@@ -271,21 +296,23 @@ describe('model names', () => {
     for (const height of rest) expect(height).toBeCloseTo(first, 1)
   })
 
-  it('shows the full model name as the tooltip of each picker row, with a readable name after the id', async () => {
+  it('shows the model id, then the pretty name of the model, as the tooltip of each picker row', async () => {
     await openPicker(browser)
     // The model button toggles the picker, so the next test's `pickModel`
     // needs it closed even when a check here fails.
     try {
-      // The shown name and the tooltip of each model row. A row may cut a
-      // long name off; its tooltip still shows all of it. A model named by
-      // its id shows the id, and its tooltip adds the readable name.
+      // The shown name and the tooltip of each model row. A row shows the
+      // pretty name of its model and no id, and it may cut a long name off;
+      // its tooltip shows the id and all of the name. A model named by its
+      // id shows the id, and its tooltip adds the readable name.
       await waitForValue(browser, 'picker rows', async () => (await pickerRows(browser))
         .filter((row) => row.kind === 'model')
         .map((row) => ({ name: row.text, title: row.title })), [
-        { name: ALPHA.name, title: ALPHA.name },
-        { name: BETA.name, title: BETA.name },
-        { name: LONG.name, title: LONG.name },
-        { name: READABLE.modelId, title: `${READABLE.modelId} (${READABLE.readableName})` },
+        { name: ALPHA.name, title: ALPHA.tooltipName },
+        { name: BETA.name, title: BETA.tooltipName },
+        { name: LONG.name, title: LONG.tooltipName },
+        { name: READABLE.name, title: READABLE.tooltipName },
+        { name: PRETTY.name, title: PRETTY.tooltipName },
       ])
     } finally {
       await click(browser, '.model-selector-btn')
@@ -314,9 +341,9 @@ describe('model names', () => {
     expect(mock.chatModels).toEqual([ALPHA.modelId, BETA.modelId])
 
     await waitForValue(browser, 'separators', separators, [
-      { index: 1, role: 'agent', chip: expectedChip(ALPHA.key, ALPHA.name, PROVIDER.name) },
+      { index: 1, role: 'agent', chip: expectedChip(ALPHA, PROVIDER.name) },
       { index: 2, role: 'user', chip: null },
-      { index: 3, role: 'agent', chip: expectedChip(BETA.key, BETA.name, PROVIDER.name, { switchedFrom: `${ALPHA.name} (${PROVIDER.name})` }) },
+      { index: 3, role: 'agent', chip: expectedChip(BETA, PROVIDER.name, { switchedFrom: `${ALPHA.name} (${PROVIDER.name})` }) },
       { index: 4, role: 'user', chip: null },
     ])
     // The editor writes its section data back to the store on every token,
@@ -341,7 +368,7 @@ describe('model names', () => {
     await waitForValue(browser, 'separators as user', separators, [
       { index: 1, role: 'user', chip: null },
       { index: 2, role: 'user', chip: null },
-      { index: 3, role: 'agent', chip: expectedChip(BETA.key, BETA.name, PROVIDER.name) },
+      { index: 3, role: 'agent', chip: expectedChip(BETA, PROVIDER.name) },
       { index: 4, role: 'user', chip: null },
     ])
     expect(await editorSelection(browser)).toEqual({ anchor: 3, head: 3 })
@@ -356,9 +383,9 @@ describe('model names', () => {
     // Back to agent: the section still knows its model.
     await pressRolePill(browser, 1, '.dez-role-separator__label', { shiftKey: true })
     await waitForValue(browser, 'separators as agent', separators, [
-      { index: 1, role: 'agent', chip: expectedChip(ALPHA.key, ALPHA.name, PROVIDER.name) },
+      { index: 1, role: 'agent', chip: expectedChip(ALPHA, PROVIDER.name) },
       { index: 2, role: 'user', chip: null },
-      { index: 3, role: 'agent', chip: expectedChip(BETA.key, BETA.name, PROVIDER.name, { switchedFrom: `${ALPHA.name} (${PROVIDER.name})` }) },
+      { index: 3, role: 'agent', chip: expectedChip(BETA, PROVIDER.name, { switchedFrom: `${ALPHA.name} (${PROVIDER.name})` }) },
       { index: 4, role: 'user', chip: null },
     ])
     await waitForValue(browser, 'saved pills as agent', activeTabPillLines, [
@@ -377,9 +404,9 @@ describe('model names', () => {
     await pressRolePill(browser, 1, '.dez-role-separator__model-name')
     await pressRolePill(browser, 2)
     expect(await separators()).toEqual([
-      { index: 1, role: 'agent', chip: expectedChip(ALPHA.key, ALPHA.name, PROVIDER.name) },
+      { index: 1, role: 'agent', chip: expectedChip(ALPHA, PROVIDER.name) },
       { index: 2, role: 'user', chip: null },
-      { index: 3, role: 'agent', chip: expectedChip(BETA.key, BETA.name, PROVIDER.name, { switchedFrom: `${ALPHA.name} (${PROVIDER.name})` }) },
+      { index: 3, role: 'agent', chip: expectedChip(BETA, PROVIDER.name, { switchedFrom: `${ALPHA.name} (${PROVIDER.name})` }) },
       { index: 4, role: 'user', chip: null },
     ])
   })
@@ -393,11 +420,11 @@ describe('model names', () => {
       await waitForValue(browser, 'held reply', async () => (await threadSections(browser))[5]?.text ?? null, replyText(BETA.modelId))
       expect(await activeTabStreaming(browser)).toBe(true)
       await waitForValue(browser, 'separators while streaming', separators, [
-        { index: 1, role: 'agent', chip: expectedChip(ALPHA.key, ALPHA.name, PROVIDER.name) },
+        { index: 1, role: 'agent', chip: expectedChip(ALPHA, PROVIDER.name) },
         { index: 2, role: 'user', chip: null },
-        { index: 3, role: 'agent', chip: expectedChip(BETA.key, BETA.name, PROVIDER.name, { switchedFrom: `${ALPHA.name} (${PROVIDER.name})` }) },
+        { index: 3, role: 'agent', chip: expectedChip(BETA, PROVIDER.name, { switchedFrom: `${ALPHA.name} (${PROVIDER.name})` }) },
         { index: 4, role: 'user', chip: null },
-        { index: 5, role: 'agent', chip: expectedChip(BETA.key, BETA.name, PROVIDER.name, { streaming: true }) },
+        { index: 5, role: 'agent', chip: expectedChip(BETA, PROVIDER.name, { streaming: true }) },
       ])
     } finally {
       release()
@@ -415,7 +442,7 @@ describe('model names', () => {
     await waitForValue(browser, 'separators after the stream', async () => (await separators()).find((separator) => separator.index === 5) ?? null, {
       index: 5,
       role: 'agent',
-      chip: expectedChip(BETA.key, BETA.name, PROVIDER.name),
+      chip: expectedChip(BETA, PROVIDER.name),
     })
   })
 
@@ -455,7 +482,7 @@ describe('model names', () => {
     ])
     // The pill shows the id; only its tooltip names the readable name.
     await waitForValue(browser, 'separators', separators, [
-      { index: 1, role: 'agent', chip: expectedChip(READABLE.key, READABLE.modelId, READABLE_PROVIDER.name, { readableName: READABLE.readableName }) },
+      { index: 1, role: 'agent', chip: expectedChip(READABLE, READABLE_PROVIDER.name) },
       { index: 2, role: 'user', chip: null },
     ])
   })

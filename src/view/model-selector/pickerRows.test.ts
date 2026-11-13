@@ -137,19 +137,32 @@ describe('pickerRows', () => {
     expect(all.filter((row) => found.some((other) => other.key === row.key))).toStrictEqual(found)
   })
 
-  it('names a model in its tooltip, with the readable name after it when that is known and differs', () => {
+  it('starts the tooltip of a model with its id, then gives a pretty name in parentheses when the model has one', () => {
     const titles = pickerRows({
       providers: [ACME],
       models: [
+        // As Venice lists a model: named by its id, with a readable name.
         { id: 'venice-uncensored', name: 'venice-uncensored', readableName: 'Venice Uncensored', provider: ACME.id },
-        { id: 'same', name: 'Same', readableName: 'Same', provider: ACME.id },
-        { id: 'plain', name: 'Plain', provider: ACME.id },
+        // As OpenRouter lists a model: a pretty name and no readable name.
+        { id: 'anthropic/claude-sonnet-4.5', name: 'Anthropic: Claude Sonnet 4.5', provider: ACME.id },
+        // The row shows the name, so the tooltip adds the readable name.
+        { id: 'both', name: 'Both Name', readableName: 'Both Readable', provider: ACME.id },
+        { id: 'echo', name: 'Echo', readableName: 'echo', provider: ACME.id },
+        { id: 'blank', name: ' ', provider: ACME.id },
+        { id: 'plain', name: 'plain', readableName: 'plain', provider: ACME.id },
       ],
       query: { terms: [], outputs: [] },
       favorites: null,
       none: false,
     }).flatMap((row) => row.kind === 'model' ? [row.title] : [])
 
-    expect(titles).toStrictEqual(['venice-uncensored (Venice Uncensored)', 'Same', 'Plain'])
+    expect(titles).toStrictEqual([
+      'venice-uncensored (Venice Uncensored)',
+      'anthropic/claude-sonnet-4.5 (Anthropic: Claude Sonnet 4.5)',
+      'both (Both Readable)',
+      'echo (Echo)',
+      'blank',
+      'plain',
+    ])
   })
 })

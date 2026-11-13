@@ -55,10 +55,16 @@ describe('model picker virtual list', () => {
     }, root, fraction)
   }
 
-  // The first drawn row of the model `name`. It is in view when
-  // `isOnTop` holds for it: a click at its center goes to it.
+  // The id of the model `name` of the two providers.
+  function modelId (name: string): string {
+    return name.toLowerCase().replace(' ', '-')
+  }
+
+  // The first drawn row of the model `name`, found by the tooltip of its
+  // name: the model id, then the name. It is in view when `isOnTop` holds
+  // for it: a click at its center goes to it.
   function modelRow (name: string, root = BOTTOM): string {
-    return `${root} .model-item:has(.model-item-name[title="${name}"])`
+    return `${root} .model-item:has(.model-item-name[title="${modelId(name)} (${name})"])`
   }
 
   // The model row at the middle of the list's visible part: its name and
@@ -94,14 +100,14 @@ describe('model picker virtual list', () => {
             name: BIG,
             baseUrl: 'http://127.0.0.1:9/v1',
             fetchModels: false,
-            models: BIG_MODELS.map((name) => ({ id: name.toLowerCase().replace(' ', '-'), name })),
+            models: BIG_MODELS.map((name) => ({ id: modelId(name), name })),
           },
           {
             id: 'small',
             name: SMALL,
             baseUrl: 'http://127.0.0.1:9/v1',
             fetchModels: false,
-            models: [{ id: 'small-model', name: SMALL_MODEL }],
+            models: [{ id: modelId(SMALL_MODEL), name: SMALL_MODEL }],
           },
         ],
       })
@@ -248,7 +254,7 @@ describe('model picker virtual list', () => {
 
     // A pick of the last row closes the picker; a new one shows it as
     // selected, and the None row as not selected.
-    await pointerClick(browser, `${SETTINGS} .model-item-name[title="${SMALL_MODEL}"]`)
+    await pointerClick(browser, `${modelRow(SMALL_MODEL, SETTINGS)} .model-item-name`)
     await waitForValue(browser, 'default model', () => browser.execute(
       () => document.querySelector('.settings-model-trigger-label')?.textContent?.trim() ?? null
     ), `${SMALL} — ${SMALL_MODEL}`)

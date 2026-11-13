@@ -13,10 +13,15 @@ export function modelLabel(ref: ModelRef, names: ModelDisplayNames): { modelName
   }
 }
 
-/** The model name in a tooltip (the picker row, the agent pill): the shown
- *  name, then the readable name that the provider gives a model that is
- *  named by its id (`ModelInfo.readableName`), as `<name> (<readable
- *  name>)`. Only the name when the readable name is unknown or the same. */
-export function modelTooltipName(name: string, readableName: string | null | undefined): string {
-  return readableName && readableName !== name ? `${name} (${readableName})` : name
+/** The model name in a tooltip (the picker row, the agent pill), by one rule
+ *  for every provider: the model id, then a pretty name, as `<id> (<pretty
+ *  name>)`. The pretty name is the readable name that the provider gives a
+ *  model that is named by its id (`ModelInfo.readableName`), else the shown
+ *  name. A name that is blank or the same as the id is no pretty name; with
+ *  none, the tooltip is only the id. So the tooltip always holds the id,
+ *  which the row or the pill does not show for a provider that gives its
+ *  models pretty names. */
+export function modelTooltipName(id: string, name: string, readableName: string | null | undefined): string {
+  const prettyName = [readableName, name].find((candidate) => candidate?.trim() && candidate !== id)
+  return prettyName ? `${id} (${prettyName})` : id
 }

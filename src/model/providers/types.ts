@@ -121,7 +121,7 @@ export interface ModelInfo {
   provider: ProviderId
   // A readable name that the provider gives a model that is named by its id
   // (`modelReadableName` in config.ts): only the tooltips show it, after the
-  // name. Never empty. Missing: none is known.
+  // id (`modelTooltipName`). Never empty. Missing: none is known.
   readableName?: string
   // The date that the provider's model list gives the model (`modelReleased`
   // in config.ts), as `YYYY-MM-DD` (UTC): its release date, or for some
