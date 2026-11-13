@@ -361,21 +361,30 @@ const TOOL_RUNNERS: Record<string, ToolRunner> = {
     return jobInspectText(job)
   },
   // The `model_invoke` tool (model/tools/modelInvoke.ts): one request to
-  // another model, as a job of the reply (`invokeModel`, modelInvoke.ts).
+  // a model, as a job of the reply (`invokeModel`, modelInvoke.ts).
   // Every check that needs no request runs first (`modelInvocation`): a
   // call that cannot work starts no job, costs nothing, and gets its
   // answer at once. A refusal of the provider comes as the result of the
   // job. The result of the call tells the inputs that go, so that the
   // model sees a wrong input before it waits.
+  //
+  // The caller is a text model (only a chat reply runs tools), so an
+  // invoked text model gets no tools (`InvocationRights.toolsAllowed`).
   async model_invoke (args, _signal, context) {
     const providers = await sbp('dez.provider/infos') as ProviderInfo[]
+    const { modelParameters, providerSettings } = sbp('dez.model/settings/snapshot') as SettingsSnapshot
     const invocation = modelInvocation(args, {
       cache: sbp('dez.model/modelCache/snapshot') as ModelCache,
       providers,
-      modelParameters: (sbp('dez.model/settings/snapshot') as SettingsSnapshot).modelParameters,
+      modelParameters,
+      providerSettings,
       sections: (sbp('dez.model/tab', context.tabId) as Tab | null)?.sections ?? [],
     })
-    const jobId = context.jobs.start(MODEL_INVOKE_TOOL.name, (signal, report) => invokeModel(invocation, signal, report), { timeoutMs: invocation.timeoutMs })
+    const jobId = context.jobs.start(
+      MODEL_INVOKE_TOOL.name,
+      (signal, report) => invokeModel(invocation, signal, report, { toolsAllowed: false }),
+      { timeoutMs: invocation.timeoutMs },
+    )
     return `${jobStartedText(jobId)}\n${invocationInputsText(invocation.inputs)}`
   },
 }

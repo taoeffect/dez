@@ -16,7 +16,12 @@ export interface ProviderStreamChatInput extends ChatRequestContext {
   providerId: ProviderId
   modelId: string
   messages: ProviderChatInputMessage[]
+  // dez.http/cancelStream with this id cancels the request that runs.
   requestId?: string
+  // Stops the request: nothing goes to the provider after the abort, and a
+  // request that runs is cancelled. For a caller that has no reply of a tab
+  // to stop (the job of a `model_invoke` call).
+  signal?: AbortSignal
   // Sparse user overrides for this provider's settings
   // (ProviderConfig.settings) and its Thinking toggle; missing keys fall
   // back to the defaults.

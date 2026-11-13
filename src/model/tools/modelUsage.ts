@@ -17,16 +17,27 @@ import { CLIP_KINDS, effectiveRequest, isClipKind, isTextKind, type MediaKind, t
 
 const SETTINGS_POPUP = 'the provider settings popup (the gear button next to the model picker)'
 
+// The start of the first text of a model that takes a request of
+// `model_invoke`: the texts after it tell of a message of the user.
+const INVOKE_LEAD = 'You can send this model a request with `model_invoke`. The user can too: they choose it in the model picker of the bottom bar, write a message, and send it. '
+  + 'The sentences after these tell of such a message. '
+
 export const USAGE_TEXTS = {
-  // MODEL_INVOKE: the text of a chat model, which `model_invoke` does not
-  // take yet. Change it when the tool takes chat models.
-  userSends: 'You cannot send this model a request. The user can: they choose it in the model picker of the bottom bar, write a message, and send it.',
-  // The texts of a media model tell of a message of the user. A
-  // `model_invoke` call sends the same request, but for the differences
-  // that streams/mediaRequest.ts and controller/modelInvoke.ts have, which
+  // A `model_invoke` call to a text model sends another request than a
+  // message of the user (`chatContent`, modelInvoke.ts; `invokeTextModel`,
+  // controller/modelInvoke.ts), and this text tells each difference. It
+  // names no "other" model: a call can name the model that reads it.
+  invokeSendsChat: INVOKE_LEAD
+    + 'A `model_invoke` call sends another request: it holds only `prompt`, with no conversation and no system prompt, and the model gets no Dez tools. '
+    + 'An image goes only when `prompt` names it with @id. '
+    + 'Dez refuses a call whose `prompt` names a clip, and a call that names an image for a model that does not read images. '
+    + 'The text of the answer comes only as the result of the job, not into the reply.',
+  // A `model_invoke` call to a media model sends the same request as a
+  // message of the user, but for the differences that
+  // streams/mediaRequest.ts and controller/modelInvoke.ts have, which
   // this text tells.
-  invokeSends: 'You can send this model a request with `model_invoke`. The user can too: they choose it in the model picker of the bottom bar, write a message, and send it. '
-    + 'The sentences after these tell of such a message. For a `model_invoke` call, read `prompt` for the message, with these differences. '
+  invokeSends: INVOKE_LEAD
+    + 'For a `model_invoke` call, read `prompt` for the message, with these differences. '
     + 'An image or a clip goes only when `prompt` names it with @id, and the newest image of the conversation never goes by itself. '
     + 'Dez refuses a call with more images or clips than the model takes. '
     + 'A value in `parameters` of the call goes in place of the `value` of that parameter in `dez.parameters`. '
@@ -237,13 +248,12 @@ function mediaUsage(kind: MediaKind, model: ModelInfo, facts: UsageFacts): strin
  *  request, what goes in it, what the model needs, and what comes back. A
  *  model that Dez sends no request (the request `none`, or an output that
  *  Dez does not store) gets only a pointer to the reason. The first
- *  sentence tells who can send a request: a media model takes one of
- *  `model_invoke` (`modelInvocation`, modelInvoke.ts), a chat model not
- *  yet. */
+ *  sentence tells that `model_invoke` takes the model (`modelInvocation`,
+ *  modelInvoke.ts), and how a call differs from a message of the user. */
 export function modelUsage(model: ModelInfo, facts: UsageFacts): string[] {
   const kind = effectiveRequest(model)
   if (kind === 'none' || model.unstoredOutput !== undefined) return [USAGE_TEXTS.cannotUse]
   return kind === 'chat'
-    ? [USAGE_TEXTS.userSends, ...chatUsage(model, facts)]
+    ? [USAGE_TEXTS.invokeSendsChat, ...chatUsage(model, facts)]
     : [USAGE_TEXTS.invokeSends, ...mediaUsage(kind, model, facts)]
 }

@@ -2,18 +2,20 @@ import fs from 'node:fs'
 import path from 'node:path'
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from 'vitest'
 import { jobsWaitText, startedJobId } from '../../src/model/tools/jobs'
+import { invocationAnswerText } from '../../src/model/tools/modelInvoke'
 import { click, consoleErrors, pointerClick, resetConsoleErrors, screenshotOnFailure, typeKeys, waitForValue } from './harness/dom'
 import { filesIn, mediaTempDir, newFileIn, storedFileName } from './harness/fixtures'
 import { generatedImagesDir, pasteImageReference, pngDataUrl, shownImages, solidPng } from './harness/images'
 import { finishVeniceJob, shownPlayers, silentWav } from './harness/media'
 import { startMockProviderApp, takeRequestTo, type MockProviderApp } from './harness/mockProviderApp'
-import { answerHeld, mockChatPath, openAiToolCall, replyText, sendChatReply, sendToolCalls, type HeldRequest, type MockProvider } from './harness/mockServer'
+import { answerHeld, mockChatPath, openAiToolCall, replyText, sendChatReply, sendToolCalls, startEventStream, writeChatFrame, type HeldRequest, type MockProvider } from './harness/mockServer'
 import type { E2EBrowser } from './harness/session'
 import { activeTabStreaming, focusEditor, newTab, openToasts, submit, threadSections, waitForThread } from './harness/thread'
 
 // The `model_invoke` tool, driven through the real app against a mock chat
-// model (the caller) and a mock of Venice's media API
-// (`mediaApi: { format: 'venice' }`) in this process:
+// model (the caller), a mock of Venice's media API
+// (`mediaApi: { format: 'venice' }`), and a second mock chat model (the
+// helper, a text model that a call names) in this process:
 // - a call starts a job and returns its job id at once, with the inputs
 //   that go; the request of the job holds the prompt and the image that the
 //   prompt names with `@id`, as a data URL with no path;
@@ -27,6 +29,9 @@ import { activeTabStreaming, focusEditor, newTab, openToasts, submit, threadSect
 // - a job that runs longer than `timeout_seconds` ends with no result, and
 //   Dez closes its request;
 // - Stop ends the job and its request, and keeps the tool blocks;
+// - the request to a text model holds only the prompt and the image that
+//   the prompt names (no tools, no system prompt, nothing of the
+//   conversation), its answer is the result of the job, and Stop ends it;
 // - a reply that ends while a job runs waits for it and takes its image;
 // - a job that failed and that no `jobs_wait` read shows an error toast.
 // No request holds a path of the test HOME.
@@ -35,9 +40,11 @@ import { activeTabStreaming, focusEditor, newTab, openToasts, submit, threadSect
 
 const CALLER: MockProvider = { id: 'caller', name: 'Caller Mock', modelId: 'caller-model', modelName: 'Caller Model' }
 const STUDIO: MockProvider = { id: 'studio', name: 'Studio Mock', modelId: 'paint-model', modelName: 'Paint Model' }
+const HELPER: MockProvider = { id: 'helper', name: 'Helper Mock', modelId: 'helper-model', modelName: 'Helper Model' }
 const EDIT_MODEL = { id: 'edit-model', name: 'Edit Model' }
 const SONG_MODEL = { id: 'song-model', name: 'Song Model' }
 const CHAT_PATH = mockChatPath(CALLER)
+const HELPER_PATH = mockChatPath(HELPER)
 const GENERATE_PATH = `/${STUDIO.id}/v1/image/generate`
 const EDIT_PATH = `/${STUDIO.id}/v1/image/multi-edit`
 const QUEUE_PATH = `/${STUDIO.id}/v1/audio/queue`
@@ -51,6 +58,7 @@ const SONG_WAV = silentWav(2)
 
 const PAINT_PROMPT = 'A fox in the snow'
 const paintCall = (id: string, more: Record<string, unknown> = {}) => openAiToolCall(id, 'model_invoke', { model: `${STUDIO.id}/${STUDIO.modelId}`, prompt: PAINT_PROMPT, ...more })
+const askCall = (id: string, prompt: string) => openAiToolCall(id, 'model_invoke', { model: `${HELPER.id}/${HELPER.modelId}`, prompt })
 const waitCall = (id: string) => openAiToolCall(id, 'jobs_wait', {})
 const PAINT_BODY = { model: STUDIO.modelId, prompt: PAINT_PROMPT, format: 'webp', hide_watermark: true, safe_mode: false }
 
@@ -88,17 +96,20 @@ describe('model_invoke', () => {
 
   beforeAll(async () => {
     setup = await startMockProviderApp(CALLER, {}, {
-      moreProviders: [{
-        provider: STUDIO,
-        config: {
-          mediaApi: { format: 'venice' },
-          models: [
-            { id: STUDIO.modelId, name: STUDIO.modelName, outputs: ['image'], request: 'image' },
-            { id: EDIT_MODEL.id, name: EDIT_MODEL.name, outputs: ['image'], request: 'imageEdit' },
-            { id: SONG_MODEL.id, name: SONG_MODEL.name, outputs: ['audio'], request: 'music' },
-          ],
+      moreProviders: [
+        {
+          provider: STUDIO,
+          config: {
+            mediaApi: { format: 'venice' },
+            models: [
+              { id: STUDIO.modelId, name: STUDIO.modelName, outputs: ['image'], request: 'image' },
+              { id: EDIT_MODEL.id, name: EDIT_MODEL.name, outputs: ['image'], request: 'imageEdit' },
+              { id: SONG_MODEL.id, name: SONG_MODEL.name, outputs: ['audio'], request: 'music' },
+            ],
+          },
         },
-      }],
+        { provider: HELPER },
+      ],
       heldPaths: [GENERATE_PATH, EDIT_PATH, QUEUE_PATH, RETRIEVE_PATH],
     })
     browser = setup.browser
@@ -205,15 +216,15 @@ describe('model_invoke', () => {
     await submit(browser, 'Make a picture.')
     const first = await requestTo(CHAT_PATH)
     sendToolCalls(first.reply, [
-      // The caller is a chat model, which the tool does not take.
-      openAiToolCall('call_chat', 'model_invoke', { model: `${CALLER.id}/${CALLER.modelId}`, prompt: PAINT_PROMPT }),
+      // The conversation has no image and no clip, so `@z` names nothing.
+      askCall('call_ask', 'What does @z show?'),
       paintCall('call_paint'),
     ])
 
     const paint = await requestTo(GENERATE_PATH, PAINT_BODY)
     const second = await requestTo(CHAT_PATH)
-    expect(startedJobId(toolResult(second, 'call_chat'))).toBeNull()
-    expect(toolResult(second, 'call_chat')).toContain(CALLER.modelName)
+    expect(startedJobId(toolResult(second, 'call_ask'))).toBeNull()
+    expect(toolResult(second, 'call_ask')).toContain('@z')
     const jobId = startedJob(second, 'call_paint')
 
     sendToolCalls(second.reply, [waitCall('call_wait')])
@@ -287,6 +298,75 @@ describe('model_invoke', () => {
     const third = await requestTo(CHAT_PATH)
     expect(toolResult(third, 'call_paint')).toBe(started)
     expect(setup.mock.hasWaitingRequest()).toBe(false)
+    expect(await consoleErrors(browser)).toStrictEqual([])
+  })
+
+  // The invoked model must not call a tool or invoke a model in its turn,
+  // and it gets nothing of the conversation: the whole body is checked.
+  it('sends a text model only the prompt and the image that the prompt names, and gives its answer as the result of the job', async () => {
+    const before = await filesIn(generatedDir)
+    await focusEditor(browser)
+    await typeKeys(browser, 'Look at ')
+    await pasteImageReference(browser, PASTED_PNG, 'a')
+    await submit(browser, '')
+    const first = await requestTo(CHAT_PATH)
+    sendToolCalls(first.reply, [askCall('call_ask', 'What does @a show?')])
+
+    const asked = await requestTo(HELPER_PATH, {
+      model: HELPER.modelId,
+      stream: true,
+      messages: [{
+        role: 'user',
+        content: [
+          { type: 'text', text: 'What does @a' },
+          { type: 'image_url', image_url: { url: pngDataUrl(PASTED_PNG) } },
+          { type: 'text', text: ' show?' },
+        ],
+      }],
+    })
+    const second = await requestTo(CHAT_PATH)
+    const jobId = startedJob(second, 'call_ask')
+    expect(toolResult(second, 'call_ask')).toContain('the image @a')
+
+    sendToolCalls(second.reply, [waitCall('call_wait')])
+    await sendChatReply(asked.reply, HELPER.modelName)
+    const third = await requestTo(CHAT_PATH)
+    expect(toolResult(third, 'call_wait')).toBe(jobsWaitText([{ id: jobId, tool: 'model_invoke', status: 'finished', text: invocationAnswerText(replyText(HELPER.modelName)) }], 0))
+    await sendChatReply(third.reply, CALLER.modelName)
+
+    // The answer of the helper is only in the result of the job: the
+    // caller decides what the user sees.
+    const reply = await endedReply()
+    expect(reply.endsWith(`</dez:tool>\n${replyText(CALLER.modelName)}`)).toBe(true)
+    expect(setup.mock.hasWaitingRequest()).toBe(false)
+    expect(await filesIn(generatedDir)).toStrictEqual(before)
+    expect(await openToasts(browser, 'error')).toStrictEqual([])
+    expect(await consoleErrors(browser)).toStrictEqual([])
+  })
+
+  it('ends the request to a text model that still answers when the user stops the reply, and takes nothing of its answer', async () => {
+    const prompt = 'Tell a long story.'
+    await submit(browser, 'Ask the helper.')
+    const first = await requestTo(CHAT_PATH)
+    sendToolCalls(first.reply, [askCall('call_ask', prompt)])
+    const asked = await requestTo(HELPER_PATH, { model: HELPER.modelId, stream: true, messages: [{ role: 'user', content: prompt }] })
+    const second = await requestTo(CHAT_PATH)
+    const started = toolResult(second, 'call_ask')
+    // The answer has begun, and it does not end.
+    startEventStream(asked.reply)
+    writeChatFrame(asked.reply, { content: 'Once' })
+
+    await pointerClick(browser, '.submit-button')
+    await waitForValue(browser, 'request of the job closed', async () => asked.closed, true)
+    await waitForValue(browser, 'chat request closed', async () => second.closed, true)
+    const block = `<dez:tool id="call_ask" name="model_invoke" model="${HELPER.id}/${HELPER.modelId}" prompt="${prompt}">\n${started}\n</dez:tool>\n`
+    await waitForThread(browser, [
+      { role: 'user', text: 'Ask the helper.' },
+      { role: 'agent', text: block },
+      { role: 'user', text: '' },
+    ])
+    expect(setup.mock.hasWaitingRequest()).toBe(false)
+    expect(await openToasts(browser, 'error')).toStrictEqual([])
     expect(await consoleErrors(browser)).toStrictEqual([])
   })
 

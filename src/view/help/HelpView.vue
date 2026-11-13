@@ -158,9 +158,10 @@ function onOverlayClick(event: MouseEvent) {
               conversation when your message has none.
             </p>
             <p>
-              A chat model can ask another model for an image, a clip, or a transcription. It
-              names by id the assets that the other model gets, so that model can also get an
-              asset of an older message or of a reply.
+              A chat model can ask another model for an image, a clip, a transcription, or an
+              answer. It names by id the assets that the other model gets, so that model can also
+              get an asset of an older message or of a reply. This is how a chat model looks at an
+              older image: it asks a model that reads images about it.
             </p>
 
             <h3>Ids</h3>

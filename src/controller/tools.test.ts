@@ -10,12 +10,12 @@ import type { ModelCache } from '../model/persistence/types'
 import { TooManyImagesError } from '../model/providers/clipImages'
 import { InputImageError } from '../model/providers/errors'
 import type { KnownLimit } from '../model/providers/knownLimits'
-import type { ProviderGenerateMediaInput, ProviderGenerateMediaResult, ProviderMediaQuote, ProviderMediaQuoteInput } from '../model/providers/streamTypes'
+import type { ProviderGenerateMediaInput, ProviderGenerateMediaResult, ProviderMediaQuote, ProviderMediaQuoteInput, ProviderStreamChatInput, ProviderStreamChatResult } from '../model/providers/streamTypes'
 import { providerInfo } from '../model/providers/testing'
 import type { ModelInfo, ProviderInfo, ProviderInputImageRules, ProviderSettingsDescriptor } from '../model/providers/types'
 import { NO_JOBS_TEXT, NO_OPEN_JOBS_TEXT, startedJobId } from '../model/tools/jobs'
 import { modelInfoText, type ModelInfoFacts } from '../model/tools/modelInfo'
-import { modelInvocation } from '../model/tools/modelInvoke'
+import { IMAGE_NOT_SAVED_TEXT, INVOCATION_TEXT_CAP, invocationAnswerStateText, invocationAnswerText, modelInvocation } from '../model/tools/modelInvoke'
 import { TOOL_DEFINITIONS, unexpectedToolErrorText, unknownToolText } from '../model/tools/registry'
 import type { ToolArguments, ToolRunResult } from '../model/tools/types'
 import { ExplainedError } from '../utils/errorText'
@@ -79,6 +79,13 @@ const MADE_CLIP = '/home/u/.config/dez/assets/generated/audio/new.wav'
 let mediaRequests: ProviderGenerateMediaInput[] = []
 let generateMedia: (input: ProviderGenerateMediaInput) => Promise<ProviderGenerateMediaResult>
 let deletedTempCopies: string[] = []
+// The stub chat API of `model_invoke`: each request, what the provider
+// does with one (it calls the callbacks of the request, as the answer
+// comes), and the ids of the requests that were cancelled. Set in
+// beforeEach and by the tests.
+let chatRequests: ProviderStreamChatInput[] = []
+let streamChat: (input: ProviderStreamChatInput) => Promise<void>
+let cancelledRequests: string[] = []
 
 sbp('sbp/selectors/register', {
   async 'dez.provider/infos' (): Promise<ProviderInfo[]> {
@@ -141,6 +148,14 @@ sbp('sbp/selectors/register', {
     mediaRequests.push(input)
     return await generateMedia(input)
   },
+  async 'dez.provider/streamChat' (input: ProviderStreamChatInput): Promise<ProviderStreamChatResult> {
+    chatRequests.push(input)
+    await streamChat(input)
+    return { requestId: input.requestId ?? '' }
+  },
+  async 'dez.http/cancelStream' (requestId: string): Promise<void> {
+    cancelledRequests.push(requestId)
+  },
   async 'dez.native/getAppDir' (root = 'app'): Promise<string> {
     return root === 'cache' ? '/home/u/.cache/dez' : '/home/u/.config/dez'
   },
@@ -193,6 +208,9 @@ beforeEach(() => {
   mediaRequests = []
   generateMedia = async () => ({ media: [], clips: [] })
   deletedTempCopies = []
+  chatRequests = []
+  streamChat = async () => {}
+  cancelledRequests = []
   // A check that the provider passes, with an entry for each model.
   refreshCheck = async () => {
     sbp('dez.model/modelCache/applyProviderResult', 'venice', {
@@ -926,6 +944,8 @@ describe('dez.controller/tools/run', () => {
       const PAINTER: ModelInfo = { id: 'painter', name: 'Painter', provider: 'venice', outputs: ['image'], request: 'image', images: { maxImages: 2 } }
       const FILMER: ModelInfo = { id: 'filmer', name: 'Filmer', provider: 'venice', outputs: ['video'], request: 'video' }
       const SCRIBE: ModelInfo = { id: 'scribe', name: 'Scribe', provider: 'venice', outputs: ['text'], request: 'transcription', clips: { audio: { use: 'source', maxClips: 1 } } }
+      // A text model that makes images too.
+      const SKETCHER: ModelInfo = { id: 'sketcher', name: 'Sketcher', provider: 'venice', outputs: ['text', 'image'] }
       const FOX = '/home/u/.config/dez/assets/images/fox.png'
       // A linked file: its name is private.
       const LINKED = '/home/u/Pictures/private-name.png'
@@ -935,6 +955,10 @@ describe('dez.controller/tools/run', () => {
       const PNG = { bytes: new Uint8Array([1]), mediaType: 'image/png' } as const
       const PAINT = { model: 'venice/painter', prompt: 'The fox of @a in snow.' }
       const FILM = { model: 'venice/filmer', prompt: 'A fox runs.' }
+      // Calls to text models: the first one names the model of the reply
+      // itself, which a model may invoke too.
+      const ASK = { model: 'venice/venice-glm-5', prompt: 'What does @a show?' }
+      const SKETCH = { model: 'venice/sketcher', prompt: 'Draw a fox.' }
 
       // A request that the provider answers when its test calls `answer`.
       // It reports the provider's job id first.
@@ -953,8 +977,20 @@ describe('dez.controller/tools/run', () => {
         return (await jobTool('jobs_wait')).content
       }
 
+      // The request of a call in the tab of the calls, for a test that
+      // runs the work with no job.
+      function invocationOf(args: ToolArguments) {
+        return modelInvocation(args, {
+          cache: sbp('dez.model/modelCache/snapshot') as ModelCache,
+          providers,
+          modelParameters: {},
+          providerSettings: {},
+          sections: (sbp('dez.model/tab', tabId) as Tab).sections,
+        })
+      }
+
       beforeEach(() => {
-        sbp('dez.model/modelCache/applyProviderResult', 'venice', { ok: true, models: [...MODELS('venice'), PAINTER, FILMER, SCRIBE] })
+        sbp('dez.model/modelCache/applyProviderResult', 'venice', { ok: true, models: [...MODELS('venice'), PAINTER, FILMER, SCRIBE, SKETCHER] })
         tabId = sbp('dez.model/tabs/activeId') as string
         sbp('dez.model/tabs/replaceSections', tabId, [
           { id: 'u1', role: 'user', content: [{ kind: 'text', text: `A fox: ![${FOX}](id=a) and ![${LINKED}](id=b)\n${mediaTagText(SPEECH)}` }] },
@@ -1009,13 +1045,15 @@ describe('dez.controller/tools/run', () => {
 
       it.each([
         ['a model that the user cannot use', { model: 'venice/gone', prompt: 'A fox.' }],
-        ['a chat model', { model: 'venice/venice-glm-5', prompt: 'A fox.' }],
         ['an @id that names nothing', { model: 'venice/painter', prompt: 'A fox as in @z.' }],
         ['a time limit that is too short', { ...PAINT, timeout_seconds: 5 }],
+        ['a clip for a text model', { model: 'venice/venice-glm-5', prompt: 'What does @c say?' }],
+        ['a text model with no prompt', { model: 'venice/venice-glm-5', prompt: ' ' }],
       ])('refuses %s at once: no job starts, and no request goes', async (_name, args) => {
         expect((await jobTool('model_invoke', args)).isError).toBe(true)
         expect(jobs.list()).toStrictEqual([])
         expect(mediaRequests).toStrictEqual([])
+        expect(chatRequests).toStrictEqual([])
       })
 
       it('gives a refusal of the provider as the result of the job, with no local path', async () => {
@@ -1081,13 +1119,7 @@ describe('dez.controller/tools/run', () => {
       it('saves no image that still comes after its job ended', async () => {
         const request = heldRequest()
         const abort = new AbortController()
-        const invocation = modelInvocation(PAINT, {
-          cache: sbp('dez.model/modelCache/snapshot') as ModelCache,
-          providers,
-          modelParameters: {},
-          sections: (sbp('dez.model/tab', tabId) as Tab).sections,
-        })
-        const work = invokeModel(invocation, abort.signal, () => {})
+        const work = invokeModel(invocationOf(PAINT), abort.signal, () => {}, { toolsAllowed: false })
 
         abort.abort()
         request.answer({ media: [PNG], clips: [] })
@@ -1119,6 +1151,188 @@ describe('dez.controller/tools/run', () => {
         expect(result).toContain('status="timed out"')
         expect(result).toContain('q-17')
         expect(mediaRequests[0].signal?.aborted).toBe(true)
+      })
+
+      describe('to a text model', () => {
+        // A chat request whose answer stays open after `start` until its
+        // test calls `end`.
+        function heldAnswer(start: (input: ProviderStreamChatInput) => void | Promise<void>): { end: () => void } {
+          let end!: () => void
+          const ended = new Promise<void>((resolve) => { end = resolve })
+          streamChat = async (input) => {
+            await start(input)
+            await ended
+          }
+          return { end }
+        }
+
+        // The invoked model must not call a tool or invoke a model in its
+        // turn, and it gets nothing of the conversation.
+        it('sends one request with only the prompt and its images: no tools, no system prompt, no conversation', async () => {
+          sbp('dez.model/settings/setProviderSetting', 'venice', 'webSearch', false)
+          streamChat = async (input) => {
+            await input.onThinking('The image shows a fox.')
+            await input.onToken('A fox')
+            await input.onToken(' in snow.')
+          }
+
+          const started = await jobTool('model_invoke', ASK)
+
+          const [job] = jobs.list()
+          expect(started.isError).toBe(false)
+          expect(started.content).toContain('the image @a')
+          expect(await jobResult()).toContain(`<job id="${job.id}" tool="model_invoke" status="finished">\n${invocationAnswerText('A fox in snow.')}\n</job>`)
+          expect(chatRequests).toStrictEqual([{
+            providerId: 'venice',
+            modelId: 'venice-glm-5',
+            messages: [{ role: 'user', content: [{ type: 'text', text: 'What does @a' }, { type: 'image', path: FOX }, { type: 'text', text: ' show?' }] }],
+            tools: [],
+            imageOutput: false,
+            providerSettings: { webSearch: false },
+            requestId: expect.any(String),
+            signal: expect.any(AbortSignal),
+            onThinking: expect.any(Function),
+            onToken: expect.any(Function),
+            onImage: expect.any(Function),
+          }])
+          expect(written).toStrictEqual([])
+          expect(mediaRequests).toStrictEqual([])
+          expect(cancelledRequests).toStrictEqual([])
+        })
+
+        it('asks a model that makes images for them, and jobs_wait puts an image of the answer into the reply', async () => {
+          streamChat = async (input) => {
+            await input.onToken('Here it is.')
+            await input.onImage(PNG)
+          }
+
+          await jobTool('model_invoke', SKETCH)
+
+          expect(await jobResult()).toContain(`${invocationAnswerText('Here it is.')}\nMade the image @c.\n</job>`)
+          expect(chatRequests[0].imageOutput).toBe(true)
+          expect(savedImages).toStrictEqual([{ mediaType: 'image/png', options: { folder: 'generated' } }])
+          expect(written).toStrictEqual([{ path: MADE_IMAGE, tool: 'model_invoke' }])
+        })
+
+        it('tells in the state of the job how much text came so far', async () => {
+          const answer = heldAnswer((input) => input.onToken('A fox'))
+          await jobTool('model_invoke', ASK)
+          const [{ id }] = jobs.list()
+
+          expect((await jobTool('job_inspect', { job_id: id })).content).toContain(invocationAnswerStateText(5))
+          answer.end()
+        })
+
+        describe(`whose answer has more than ${INVOCATION_TEXT_CAP} characters`, () => {
+          const tokens = ['x'.repeat(INVOCATION_TEXT_CAP), 'y', 'z']
+          const cut = invocationAnswerText(tokens.join(''))
+
+          // The user must not pay for text that the result does not hold.
+          it('gives the start of the answer, and cancels the request', async () => {
+            streamChat = async (input) => {
+              for (const token of tokens) await input.onToken(token)
+            }
+
+            await jobTool('model_invoke', ASK)
+
+            expect(await jobResult()).toContain(`${cut}\n</job>`)
+            expect(cancelledRequests).toStrictEqual([chatRequests[0].requestId])
+          })
+
+          it('does not cancel the request of a model that makes images, whose image can still come', async () => {
+            streamChat = async (input) => {
+              for (const token of tokens) await input.onToken(token)
+              await input.onImage(PNG)
+            }
+
+            await jobTool('model_invoke', SKETCH)
+
+            expect(await jobResult()).toContain(`${cut}\nMade the image @c.\n</job>`)
+            expect(cancelledRequests).toStrictEqual([])
+          })
+        })
+
+        it('gives a refusal of the provider as the result of the job, with no local path, and deletes the images of the answer', async () => {
+          streamChat = async (input) => {
+            await input.onImage(PNG)
+            throw new ExplainedError('Venice stopped the answer with an error.', 'no file /home/alice/model.bin')
+          }
+
+          await jobTool('model_invoke', SKETCH)
+
+          const result = await jobResult()
+          expect(result).toContain('status="failed"')
+          expect(result).toContain('Venice stopped the answer with an error.')
+          expect(result).not.toContain('alice')
+          expect(written).toStrictEqual([])
+          expect(deletedImages).toStrictEqual([MADE_IMAGE])
+        })
+
+        it('names an input image that Dez cannot read by its id, never by its file', async () => {
+          streamChat = async () => { throw new InputImageError(LINKED, 'unreadable', 'Dez cannot use the image private-name.png.') }
+
+          await jobTool('model_invoke', { model: 'venice/venice-glm-5', prompt: 'What does @b show?' })
+
+          const result = await jobResult()
+          expect(result).toContain('status="failed"')
+          expect(result).toContain('the image @b')
+          expect(result).not.toContain('private-name')
+        })
+
+        it('fails the job and ends the request when an image of the answer cannot be saved', async () => {
+          saveImage = async () => { throw new Error('The disk is full.') }
+          streamChat = async (input) => {
+            await input.onToken('Here it is.')
+            await input.onImage(PNG)
+          }
+
+          await jobTool('model_invoke', SKETCH)
+
+          expect(await jobResult()).toContain(`status="failed">\n${IMAGE_NOT_SAVED_TEXT}\n</job>`)
+          expect(written).toStrictEqual([])
+          expect(cancelledRequests).toStrictEqual([chatRequests[0].requestId])
+        })
+
+        // A cancel after the first bytes of the answer ends it with no
+        // error: what came is not the whole answer. The work runs here
+        // with no job, so that the test can wait for its end.
+        it('gives no text and saves no image of an answer that its job did not wait for', async () => {
+          const abort = new AbortController()
+          streamChat = async (input) => {
+            await input.onToken('A fox')
+            abort.abort()
+            await input.onImage(PNG)
+          }
+
+          expect(await invokeModel(invocationOf(SKETCH), abort.signal, () => {}, { toolsAllowed: false })).toStrictEqual({ text: '', isError: false, assets: [] })
+          expect(savedImages).toStrictEqual([])
+        })
+
+        it('stops the request when the reply stops, and deletes an image of the answer that it saved', async () => {
+          const answer = heldAnswer((input) => input.onImage(PNG))
+          await jobTool('model_invoke', SKETCH)
+          await vi.waitFor(() => expect(savedImages).toHaveLength(1))
+
+          jobs.stopAll()
+          answer.end()
+
+          expect(chatRequests[0].signal?.aborted).toBe(true)
+          await vi.waitFor(() => expect(deletedImages).toStrictEqual([MADE_IMAGE]))
+          expect(consoleError).not.toHaveBeenCalled()
+        })
+
+        it('ends the job at its time limit, stops the request, and tells how much text came', async () => {
+          vi.useFakeTimers()
+          heldAnswer((input) => input.onToken('A fox'))
+          await jobTool('model_invoke', { ...ASK, timeout_seconds: 10 })
+
+          vi.advanceTimersByTime(10_000)
+
+          const result = await jobResult()
+          expect(result).toContain('status="timed out"')
+          expect(result).toContain(invocationAnswerStateText(5))
+          expect(chatRequests[0].signal?.aborted).toBe(true)
+        })
       })
     })
   })

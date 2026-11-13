@@ -6,7 +6,7 @@ import type { ParameterValues } from '../providers/modelParameters'
 import { providerInfo } from '../providers/testing'
 import type { ModelInfo } from '../providers/types'
 import { reply, user } from '../streams/testing'
-import { DEFAULT_INVOKE_TIMEOUT_SECONDS, invocationFailedText, invocationInputsText, invocationStateText, invocationTextResult, MODEL_INVOKE_TOOL, modelInvocation } from './modelInvoke'
+import { answerIsCut, DEFAULT_INVOKE_TIMEOUT_SECONDS, INVOCATION_TEXT_CAP, invocationAnswerStateText, invocationAnswerText, invocationFailedText, invocationInputsText, invocationStateText, invocationTextResult, MODEL_INVOKE_TOOL, modelInvocation, type ChatInvocation, type MediaInvocation, type ModelInvocation } from './modelInvoke'
 import { ToolError, type ToolArguments } from './types'
 
 const VENICE = providerInfo('venice', 'Venice')
@@ -28,13 +28,17 @@ const FILMER: ModelInfo = {
   ],
   images: { maxImages: 2, whenParameter: { name: 'images_as', value: 'references', rules: { maxImages: 3, references: {} } } },
 }
+// Text models: one with no known facts, one that is known not to read
+// images, and one that makes images too.
 const CHATTER: ModelInfo = { id: 'chatter', name: 'Chatter', provider: VENICE.id }
+const BLIND: ModelInfo = { id: 'blind', name: 'Blind', provider: VENICE.id, imageInput: false }
+const SKETCHER: ModelInfo = { id: 'sketcher', name: 'Sketcher', provider: VENICE.id, outputs: ['text', 'image'] }
 const OTHER_API: ModelInfo = { id: 'other-api', name: 'Other', provider: VENICE.id, outputs: ['image'], request: 'none' }
 const TIFF_ONLY: ModelInfo = { id: 'tiff-only', name: 'Tiffer', provider: VENICE.id, outputs: ['image'], request: 'image', unstoredOutput: 'TIFF' }
 
 const CACHE: ModelCache = {
   version: 1,
-  providers: { venice: { models: [PAINTER, SPEAKER, SCRIBE, FILMER, CHATTER, OTHER_API, TIFF_ONLY], working: true, updatedAt: 0, lastCheckedAt: 0 } },
+  providers: { venice: { models: [PAINTER, SPEAKER, SCRIBE, FILMER, CHATTER, BLIND, SKETCHER, OTHER_API, TIFF_ONLY], working: true, updatedAt: 0, lastCheckedAt: 0 } },
 }
 
 const RED = '/home/u/.config/dez/assets/images/red.png'
@@ -48,14 +52,36 @@ const CONVERSATION = [
   reply('a1', `![${FOX}](id=a)\n${mediaTagText(SONG)}`),
 ]
 
-function invocation(args: ToolArguments, { sections = CONVERSATION, modelParameters = {} }: { sections?: Section[], modelParameters?: Record<string, ParameterValues> } = {}) {
-  return modelInvocation(args, { cache: CACHE, providers: [VENICE], modelParameters, sections })
+// What a test knows besides the call; the rest is as in the conversation
+// above, with no choice of the user.
+interface CallFacts {
+  sections?: Section[]
+  modelParameters?: Record<string, ParameterValues>
+  providerSettings?: Record<string, Record<string, boolean>>
+}
+
+function anyInvocation(args: ToolArguments, { sections = CONVERSATION, modelParameters = {}, providerSettings = {} }: CallFacts = {}): ModelInvocation {
+  return modelInvocation(args, { cache: CACHE, providers: [VENICE], modelParameters, providerSettings, sections })
+}
+
+// The request of a call to a media model.
+function invocation(args: ToolArguments, facts?: CallFacts): MediaInvocation {
+  const call = anyInvocation(args, facts)
+  if (call.kind === 'chat') throw new Error('The call went to a text model.')
+  return call
+}
+
+// The request of a call to a text model.
+function chatInvocation(args: ToolArguments, facts?: CallFacts): ChatInvocation {
+  const call = anyInvocation(args, facts)
+  if (call.kind !== 'chat') throw new Error('The call went to a media model.')
+  return call
 }
 
 // The text of the refusal of a call.
-function refusal(args: ToolArguments, facts?: Parameters<typeof invocation>[1]): string {
+function refusal(args: ToolArguments, facts?: CallFacts): string {
   try {
-    invocation(args, facts)
+    anyInvocation(args, facts)
   } catch (error) {
     if (error instanceof ToolError) return error.message
     throw error
@@ -109,7 +135,6 @@ describe('modelInvocation', () => {
   })
 
   it.each([
-    ['a chat model', 'venice/chatter', 'Chatter', 'chat'],
     ['a model that Dez has no request for', 'venice/other-api', 'Other', 'cannot use'],
     ['a model whose images Dez cannot store', 'venice/tiff-only', 'Tiffer', 'TIFF'],
   ])('refuses %s, and points to model_list', (_name, model, modelName, cause) => {
@@ -181,6 +206,86 @@ describe('modelInvocation', () => {
   })
 })
 
+describe('modelInvocation for a text model', () => {
+  it('gives one user message, which is the prompt as it is when it names no image', () => {
+    const { provider, model, kind, content, inputs, imageIds, timeoutMs } = chatInvocation({ model: 'venice/chatter', prompt: ' Name three foxes.\n', timeout_seconds: 60 })
+
+    expect([provider, model, kind]).toStrictEqual([VENICE, CHATTER, 'chat'])
+    expect(content).toBe(' Name three foxes.\n')
+    expect([inputs, [...imageIds]]).toStrictEqual([[], []])
+    expect(timeoutMs).toBe(60_000)
+  })
+
+  it('puts each image once, right after the text that names it first', () => {
+    const { content, inputs, imageIds } = chatInvocation({ model: 'venice/chatter', prompt: 'Is @a as red as @b? And is @a new?' })
+
+    expect(content).toStrictEqual([
+      { type: 'text', text: 'Is @a' },
+      { type: 'image', path: FOX },
+      { type: 'text', text: ' as red as @b' },
+      { type: 'image', path: RED },
+      { type: 'text', text: '? And is @a new?' },
+    ])
+    expect(inputs).toStrictEqual([{ id: 'a', kind: 'image' }, { id: 'b', kind: 'image' }])
+    expect([...imageIds]).toStrictEqual([[FOX, 'a'], [RED, 'b']])
+  })
+
+  // The Anthropic format refuses a text part with only white space.
+  it('sends no blank text part after the last image', () => {
+    expect(chatInvocation({ model: 'venice/chatter', prompt: 'What does this show? @a \n' }).content)
+      .toStrictEqual([{ type: 'text', text: 'What does this show? @a' }, { type: 'image', path: FOX }])
+  })
+
+  // Only an @id sends an image: a path that the model wrote reads no file
+  // and does not go.
+  it('sends no path of a stored file that the prompt holds', () => {
+    const { content, inputs } = chatInvocation({ model: 'venice/chatter', prompt: `What is ![${RED}](id=b)?` })
+
+    expect(content).toBeTypeOf('string')
+    expect(content).not.toContain('/home')
+    expect(inputs).toStrictEqual([])
+  })
+
+  it('asks for images only from a model that makes them', () => {
+    expect(chatInvocation({ model: 'venice/chatter', prompt: 'A fox.' }).imageOutput).toBe(false)
+    expect(chatInvocation({ model: 'venice/sketcher', prompt: 'A fox.' }).imageOutput).toBe(true)
+  })
+
+  it('takes the toggles that the user set for the provider of the model', () => {
+    const providerSettings = { venice: { webSearch: false }, openrouter: { thinking: false } }
+
+    expect(chatInvocation({ model: 'venice/chatter', prompt: 'A fox.' }, { providerSettings }).providerSettings).toStrictEqual({ webSearch: false })
+    expect(chatInvocation({ model: 'venice/chatter', prompt: 'A fox.' }).providerSettings).toBeUndefined()
+  })
+
+  it('refuses a clip, which no chat request carries', () => {
+    const text = refusal({ model: 'venice/chatter', prompt: 'What does @c say about @a?' })
+
+    expect(text).toContain('Chatter takes no audio clip')
+    expect(text).toContain('`prompt`')
+  })
+
+  // A user message sends such a model the reference as text; a calling
+  // model would get an answer about an image that the model never got.
+  it('refuses an image for a model that is known not to read images', () => {
+    expect(refusal({ model: 'venice/blind', prompt: 'What does @a show?' })).toContain('Blind takes no input image')
+    expect(chatInvocation({ model: 'venice/blind', prompt: 'Name three foxes.' }).content).toBe('Name three foxes.')
+  })
+
+  it('refuses an @id that names nothing', () => {
+    expect(refusal({ model: 'venice/chatter', prompt: 'What does @z show?' })).toContain('@z names no image and no clip')
+  })
+
+  it.each(['', '  \n'])('refuses the blank prompt %j', (prompt) => {
+    expect(refusal({ model: 'venice/chatter', prompt })).toContain('`prompt` has no text')
+  })
+
+  it('refuses a parameter value, as a text model has no parameters', () => {
+    expect(refusal({ model: 'venice/chatter', prompt: 'A fox.', parameters: '{"temperature": 1}' })).toContain('leave out `parameters`')
+    expect(chatInvocation({ model: 'venice/chatter', prompt: 'A fox.', parameters: '{}' }).content).toBe('A fox.')
+  })
+})
+
 describe('the texts of a call', () => {
   it('names the inputs that go, or says that none goes', () => {
     expect(invocationInputsText([{ id: 'a', kind: 'image' }, { id: 'd', kind: 'video' }, { id: 'c', kind: 'audio' }]))
@@ -198,6 +303,41 @@ describe('the texts of a call', () => {
   it('gives the text of the model as it is, and says so when there is none', () => {
     expect(invocationTextResult('  Hello there.\nSecond line. \n')).toMatch(/\nHello there\.\nSecond line\.$/)
     expect(invocationTextResult(' \n')).toContain('no text')
+  })
+
+  it('tells how much text a text model gave so far', () => {
+    expect(invocationAnswerStateText(0)).toContain('no text yet')
+    expect(invocationAnswerStateText(1234)).toContain('1234 characters')
+  })
+
+  it('gives the answer of a text model as it is, and says so when there is none', () => {
+    expect(invocationAnswerText('  A fox.\nA red one. \n')).toMatch(/\nA fox\.\nA red one\.$/)
+    expect(invocationAnswerText(' \n')).toBe('The model gave no text.')
+  })
+
+  describe(`an answer over ${INVOCATION_TEXT_CAP} characters`, () => {
+    const full = 'x'.repeat(INVOCATION_TEXT_CAP)
+
+    it('is whole up to the limit', () => {
+      expect(answerIsCut(full)).toBe(false)
+      expect(invocationAnswerText(full).endsWith(`:\n${full}`)).toBe(true)
+      expect(invocationAnswerText(full)).not.toContain('lost')
+    })
+
+    it('is cut to the limit, and the text tells that first', () => {
+      const text = invocationAnswerText(`${full}yz`)
+
+      expect(answerIsCut(`${full}y`)).toBe(true)
+      expect(text.endsWith(`:\n${full}`)).toBe(true)
+      expect(text.slice(0, text.indexOf('\n'))).toContain(`more than ${INVOCATION_TEXT_CAP} characters`)
+    })
+
+    // Half of a character pair is no text: a provider can refuse it.
+    it('is not cut inside a character pair', () => {
+      const text = invocationAnswerText(`${full.slice(1)}🦊 and more`)
+
+      expect(text.endsWith(`:\n${full.slice(1)}`)).toBe(true)
+    })
   })
 
   it('keeps the text of a failed request, with a stand-in for a local path', () => {

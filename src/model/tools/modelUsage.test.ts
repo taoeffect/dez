@@ -69,34 +69,67 @@ describe('modelUsage', () => {
       const usable = modelUsage({ id: 'm', name: 'M', provider: 'p', request }, NO_FACTS)
       const unstored = modelUsage({ id: 'm', name: 'M', provider: 'p', request, unstoredOutput: 'TIFF' }, NO_FACTS)
 
-      expect(usable[0], request).toBe(request === 'none' ? USAGE_TEXTS.cannotUse : request === 'chat' ? USAGE_TEXTS.userSends : USAGE_TEXTS.invokeSends)
+      expect(usable[0], request).toBe(request === 'none' ? USAGE_TEXTS.cannotUse : request === 'chat' ? USAGE_TEXTS.invokeSendsChat : USAGE_TEXTS.invokeSends)
       expect(usable.length > 1, request).toBe(request !== 'none')
       expect(unstored, request).toStrictEqual([USAGE_TEXTS.cannotUse])
     }
   })
 
-  // `model_invoke` checks the model of a call before its time limit. So a
-  // call with a bad time limit tells whether the tool takes the model:
-  // only then is the refusal about the time limit.
-  it('tells that you can send a request with model_invoke exactly when that tool takes the model', () => {
-    const invokeTakes = (model: ModelInfo) => {
-      const cache: ModelCache = { version: 1, providers: { p: { models: [model], working: true, updatedAt: 0, lastCheckedAt: 0 } } }
-      try {
-        modelInvocation({ model: 'p/m', prompt: 'A fox.', timeout_seconds: 0 }, { cache, providers: [providerInfo('p', 'P')], modelParameters: {}, sections: [] })
-      } catch (error) {
-        if (error instanceof ToolError) return error.message.includes('timeout_seconds')
-        throw error
-      }
-      throw new Error('The call was not refused.')
-    }
+  describe('of a model_invoke call', () => {
+    // What `model_invoke` makes of a call to `model` that names no input.
+    const invocationOf = (model: ModelInfo, timeoutSeconds?: number) => modelInvocation(
+      { model: 'p/m', prompt: 'A fox.', ...(timeoutSeconds !== undefined && { timeout_seconds: timeoutSeconds }) },
+      {
+        cache: { version: 1, providers: { p: { models: [model], working: true, updatedAt: 0, lastCheckedAt: 0 } } } satisfies ModelCache,
+        providers: [providerInfo('p', 'P')],
+        modelParameters: {},
+        providerSettings: {},
+        sections: [],
+      },
+    )
+    const invokeTexts: string[] = [USAGE_TEXTS.invokeSends, USAGE_TEXTS.invokeSendsChat]
 
-    for (const request of MODEL_REQUESTS) {
-      for (const unstoredOutput of [undefined, 'TIFF']) {
-        const model: ModelInfo = { id: 'm', name: 'M', provider: 'p', request, ...(unstoredOutput && { unstoredOutput }) }
-
-        expect(modelUsage(model, NO_FACTS)[0] === USAGE_TEXTS.invokeSends, JSON.stringify(model)).toBe(invokeTakes(model))
+    // `model_invoke` checks the model of a call before its time limit. So
+    // a call with a bad time limit tells whether the tool takes the model:
+    // only then is the refusal about the time limit.
+    it('tells that you can send a request with model_invoke exactly when that tool takes the model', () => {
+      const invokeTakes = (model: ModelInfo) => {
+        try {
+          invocationOf(model, 0)
+        } catch (error) {
+          if (error instanceof ToolError) return error.message.includes('timeout_seconds')
+          throw error
+        }
+        throw new Error('The call was not refused.')
       }
-    }
+
+      for (const request of MODEL_REQUESTS) {
+        for (const unstoredOutput of [undefined, 'TIFF']) {
+          const model: ModelInfo = { id: 'm', name: 'M', provider: 'p', request, ...(unstoredOutput && { unstoredOutput }) }
+
+          expect(invokeTexts.includes(modelUsage(model, NO_FACTS)[0]), JSON.stringify(model)).toBe(invokeTakes(model))
+        }
+      }
+    })
+
+    // A media model can refuse the call for an input that it needs: its
+    // request is then no chat request either.
+    it('tells of the request of a text model exactly when a call sends a chat request', () => {
+      const sendsChatRequest = (model: ModelInfo) => {
+        try {
+          return invocationOf(model).kind === 'chat'
+        } catch (error) {
+          if (error instanceof ToolError) return false
+          throw error
+        }
+      }
+
+      for (const request of MODEL_REQUESTS) {
+        const model: ModelInfo = { id: 'm', name: 'M', provider: 'p', request }
+
+        expect(modelUsage(model, NO_FACTS)[0] === USAGE_TEXTS.invokeSendsChat, request).toBe(sendsChatRequest(model))
+      }
+    })
   })
 
   describe('of a media model', () => {

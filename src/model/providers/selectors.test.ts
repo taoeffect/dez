@@ -34,6 +34,8 @@ const SVG_NOT_DRAWN = (name: string) => `Dez cannot send the SVG image ${name}. 
 let httpRequests: NativeHttpRequest[] = []
 let streamRequests: NativeHttpRequest[] = []
 let streamRequestIds: string[] = []
+// The ids of the requests that dez.http/cancelStream got.
+let cancelledStreams: string[] = []
 let imageReads: string[] = []
 let downloadRequests: NativeHttpRequest[] = []
 // The JSON body of a request that a stand-in got.
@@ -229,6 +231,9 @@ sbp('sbp/selectors/register', {
       })(),
     }
   },
+  async 'dez.http/cancelStream' (requestId: string): Promise<void> {
+    cancelledStreams.push(requestId)
+  },
 })
 
 beforeEach(() => {
@@ -237,6 +242,7 @@ beforeEach(() => {
   httpAnswers = new Map()
   streamRequests = []
   streamRequestIds = []
+  cancelledStreams = []
   imageReads = []
   linkedImages = {}
   downloadRequests = []
@@ -550,6 +556,43 @@ describe('thinking in chat streams', () => {
 
     expect(calls).toEqual(['token:Hello'])
     expect(result).toStrictEqual({ requestId: 'request-2', toolCalls: STREAMED_TOOL_CALLS })
+  })
+})
+
+describe('the stop of a chat stream', () => {
+  const chat = (input: Record<string, unknown>) => sbp('dez.provider/streamChat', {
+    providerId: 'local',
+    modelId: 'served-model',
+    requestId: 'chat-1',
+    onToken: () => {},
+    ...input,
+  }) as Promise<unknown>
+
+  // A cancel finds no request while Dez still reads the images.
+  it('sends no request when the signal aborts while Dez reads the images of the message', async () => {
+    const abort = new AbortController()
+    const stream = chat({
+      messages: [{ role: 'user', content: [{ type: 'text', text: 'Which color?' }, { type: 'image', path: `${APP_DIR}/assets/images/red.png` }] }],
+      signal: abort.signal,
+    })
+
+    abort.abort()
+
+    await expect(stream).rejects.toThrow('This operation was aborted')
+    expect(streamRequests).toEqual([])
+  })
+
+  it('cancels the request when the signal aborts while the answer comes, and only then', async () => {
+    const abort = new AbortController()
+
+    await chat({ messages: [{ role: 'user', content: 'Hi' }], signal: abort.signal, onToken: () => abort.abort() })
+    expect(cancelledStreams).toEqual(['chat-1'])
+
+    // The request is over: its signal stops nothing any more.
+    const later = new AbortController()
+    await chat({ messages: [{ role: 'user', content: 'Hi' }], requestId: 'chat-2', signal: later.signal })
+    later.abort()
+    expect(cancelledStreams).toEqual(['chat-1'])
   })
 })
 

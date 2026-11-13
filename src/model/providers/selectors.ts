@@ -304,6 +304,10 @@ async function nativeChatStream(
 ): Promise<{ result: NativeHttpStreamResult, thinking: ProviderChatRequest['thinking'] }> {
   const secretValue = await requestSecret(provider, refreshCopilot)
   const { request, thinking } = provider.chatRequest(messages, toggleModel(provider.id, input.modelId), secretValue, input.providerSettings, input)
+  // The last step before the request: a cancel finds a request only from
+  // here on (dez.http/stream keeps it under `requestId` at once), so an
+  // abort during the reads above must stop here.
+  input.signal?.throwIfAborted()
   return { result: await sbp('dez.http/stream', request, requestId) as NativeHttpStreamResult, thinking }
 }
 
@@ -473,29 +477,43 @@ export default sbp('sbp/selectors/register', {
   },
 
   // A failed request rejects with a text for the user
-  // (`explainedProviderError`).
+  // (`explainedProviderError`). dez.http/cancelStream with `requestId`
+  // cancels the request that runs, and `signal` does the same and also
+  // stops a request that did not go yet (the images are read first). A
+  // cancel before the response headers rejects; a cancel after them ends
+  // the answer early with no error, so a caller that cancelled must drop
+  // the result.
   async 'dez.provider/streamChat' (input: ProviderStreamChatInput): Promise<ProviderStreamChatResult> {
     const provider = requireProvider(input.providerId)
     const requestId = input.requestId ?? crypto.randomUUID()
-    const messages = await readMessageImages(input.messages)
+    const { signal } = input
+    const cancelRequest = () => {
+      sbp('dez.http/cancelStream', requestId).catch((error: unknown) => console.error('Failed to cancel a chat request:', error))
+    }
+    signal?.addEventListener('abort', cancelRequest)
     try {
-      let stream = await nativeChatStream(provider, input, messages, requestId)
+      const messages = await readMessageImages(input.messages)
+      try {
+        let stream = await nativeChatStream(provider, input, messages, requestId)
 
-      // A 401 can mean the cached Copilot chat token expired early; get a
-      // fresh one and retry once. The refused response is never parsed, so
-      // its thinking cannot mix with the retry's.
-      if (provider.config.auth === 'githubCopilot' && stream.result.response.status === 401) {
-        await sbp('dez.http/cancelStream', stream.result.requestId)
-        stream = await nativeChatStream(provider, input, messages, requestId, true)
-      }
+        // A 401 can mean the cached Copilot chat token expired early; get a
+        // fresh one and retry once. The refused response is never parsed, so
+        // its thinking cannot mix with the retry's.
+        if (provider.config.auth === 'githubCopilot' && stream.result.response.status === 401) {
+          await sbp('dez.http/cancelStream', stream.result.requestId)
+          stream = await nativeChatStream(provider, input, messages, requestId, true)
+        }
 
-      return {
-        requestId: stream.result.requestId,
-        ...await streamProviderTokens(provider, input, stream.result, stream.thinking,
-          (url) => generatedImageFromUrl(url, (imageUrl) => fetchReplyImage(provider, imageUrl))),
+        return {
+          requestId: stream.result.requestId,
+          ...await streamProviderTokens(provider, input, stream.result, stream.thinking,
+            (url) => generatedImageFromUrl(url, (imageUrl) => fetchReplyImage(provider, imageUrl))),
+        }
+      } catch (error) {
+        throw explainedProviderError(provider, error)
       }
-    } catch (error) {
-      throw explainedProviderError(provider, error)
+    } finally {
+      signal?.removeEventListener('abort', cancelRequest)
     }
   },
 

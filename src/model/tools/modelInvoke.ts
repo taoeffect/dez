@@ -1,29 +1,37 @@
 import { sectionPlainText } from '../chat/content'
 import { newMediaIds } from '../chat/mediaIds'
 import { modelRefKey } from '../chat/modelRef'
-import type { Section } from '../chat/types'
+import type { MessagePart, Section } from '../chat/types'
+import { effectiveOutputs } from '../modelOutputs'
 import type { ModelCache } from '../persistence/types'
-import { inputImageRulesFor } from '../providers/clipImages'
+import { inputImageRulesFor, unusedImagesProblem } from '../providers/clipImages'
+import { clipTagProblem } from '../providers/clipInputs'
 import { effectiveParameterValues, type ParameterValues } from '../providers/modelParameters'
 import type { MediaProgress } from '../providers/streamTypes'
 import { effectiveRequest, sendsPrompt, type MediaKind, type ModelInfo, type ProviderInfo } from '../providers/types'
 import { unstoredOutputMessage, unusableModelMessage } from '../providers/unusableModel'
-import { conversationAssets, preparedMediaRequest, promptRequestProblem, promptRequestSource, type ConversationAssets, type MediaRequestInput, type PromptInput } from '../streams/mediaRequest'
+import { conversationAssets, preparedMediaRequest, promptRequestProblem, promptRequestSource, type ConversationAssets, type MediaRequestInput, type PromptInput, type PromptRequestSource } from '../streams/mediaRequest'
 import { ASSET_NAMES } from './jobs'
 import { withoutLocalPaths } from './localPaths'
 import { FIND_MODELS, namedModelTarget, parameterValuesArgument } from './modelArguments'
 import { ToolError, type ToolArguments, type ToolDefinition } from './types'
 
-// The `model_invoke` tool: a model sends one request to another model that
-// the user can use. This module has the pure parts: the definition, the
+// The `model_invoke` tool: a model sends one request to a model that the
+// user can use. This module has the pure parts: the definition, the
 // checks of a call (`modelInvocation`), and every text that the calling
 // model reads. controller/modelInvoke.ts sends the request, as a job of the
 // reply (controller/jobs.ts).
 //
-// For now the tool takes only the models of a media request kind (image,
-// audio, video, transcription). The request is the one that a user message
-// to such a model sends (streams/mediaRequest.ts has the shared
-// preparation and the differences), with `prompt` in place of the message.
+// The tool takes two groups of models:
+// - A model of a media request kind (image, audio, video, transcription).
+//   The request is the one that a user message to such a model sends
+//   (streams/mediaRequest.ts has the shared preparation and the
+//   differences), with `prompt` in place of the message.
+// - A text model (the request kind `chat`). The request is one chat
+//   request with one user message: `prompt`, and the images that it names.
+//   It holds no conversation, no system prompt, and no tools, so the
+//   invoked model cannot call a tool or invoke a model in its turn (the
+//   `toolsAllowed` rule, controller/modelInvoke.ts).
 //
 // Every text here is a tool result or the result of a job: it goes to the
 // chat provider. So it names an image or a clip by its id only, and it
@@ -32,6 +40,13 @@ import { ToolError, type ToolArguments, type ToolDefinition } from './types'
 /** The time limit of a call with no `timeout_seconds`: 30 minutes, which
  *  the definition states in words. */
 export const DEFAULT_INVOKE_TIMEOUT_SECONDS = 1800
+
+/** The most characters of a text model's answer that the result of a job
+ *  holds (the size limit of a `model_info` result, MODEL_INFO_SIZE_CAP):
+ *  the result goes into the next request of the calling model and stays in
+ *  the conversation, so a model that writes without end must not fill
+ *  them. */
+export const INVOCATION_TEXT_CAP = 50_000
 
 // A shorter limit ends a request before a provider can answer. The longest
 // one is also far below the most that a timer takes.
@@ -43,17 +58,19 @@ const MAX_INVOKE_TIMEOUT_SECONDS = 3600
 // cache.
 export const MODEL_INVOKE_TOOL: ToolDefinition = {
   name: 'model_invoke',
-  description: 'Send one request to another model that the user can use, and get what it makes. '
-    + 'For now it takes only the models whose request is not `chat` (`dez.request` of `model_info`): '
-    + 'the models that make images, audio clips, or video clips, and the models that write down speech. '
+  description: 'Send one request to a model that the user can use, and get what it makes: '
+    + 'a model that makes images, audio clips, or video clips, a model that writes down speech, or a text model. '
     + 'A request costs the user money, as a request that the user sends does. '
     + 'Call `model_info` for the model first: `usage` tells what the model needs, `dez.parameters` what a request can set, and `dez.cost` the price. '
     + '`model_list` finds models. '
     + 'The model gets only `prompt` and the inputs that `prompt` names with @id, not the conversation. '
+    + 'A text model gets no tools and no system prompt: it can only answer `prompt`, and of the inputs it takes only images. '
+    + 'To learn what an image shows, ask a text model that reads images about it; that model can be your own model. '
     + 'The call starts a job and returns its job id at once; `jobs_wait` gives the result. '
     + 'Jobs run at the same time: start every call that does not need the result of another call, then wait. '
     + 'An image or a clip that the model made goes into your reply at `jobs_wait`, with a new id that a later call can name with @id. '
     + 'Text that the model made is only in the result of the job: the user sees it only when you write it in your reply. '
+    + `The result of a text model holds at most the first ${INVOCATION_TEXT_CAP} characters of its answer. `
     + 'A request that failed gives the cause as the result of its job.',
   parameters: [
     {
@@ -65,7 +82,7 @@ export const MODEL_INVOKE_TOOL: ToolDefinition = {
     {
       name: 'prompt',
       type: 'string',
-      description: 'The text of the request: what the model must make or change. '
+      description: 'The text of the request: what the model must make, change, or answer. '
         + 'Write @id in it for each image or clip of the conversation that the model must get, as in "make @a move as in @c": '
         + 'each one goes as an input, in text order. Only an @id sends an image or a clip. '
         + 'A model that takes no text (the `usage` of `model_info` tells it) needs only the @id of its input. '
@@ -96,18 +113,11 @@ export const MODEL_INVOKE_TOOL: ToolDefinition = {
   ],
 }
 
-/** What a `model_invoke` call sends, after every check that needs no
- *  request. */
-export interface ModelInvocation {
+// What every `model_invoke` call holds, after every check that needs no
+// request.
+interface InvocationTarget {
   provider: ProviderInfo
   model: ModelInfo
-  kind: MediaKind
-  /** What the request sends of the prompt (`preparedMediaRequest`). */
-  request: MediaRequestInput
-  /** The parameter values that the caller wants: the values of the call
-   *  over the values that the user chose. `dez.provider/generateMedia`
-   *  takes the ones that the model takes, and the defaults of the others. */
-  parameters: ParameterValues
   /** The images and the clips that go, in text order. */
   inputs: PromptInput[]
   /** The id of each input image by its path, for the text of an image that
@@ -117,6 +127,39 @@ export interface ModelInvocation {
   timeoutMs: number
 }
 
+/** A call to a model of a media request kind: one media request
+ *  (`dez.provider/generateMedia`). */
+export interface MediaInvocation extends InvocationTarget {
+  kind: MediaKind
+  /** What the request sends of the prompt (`preparedMediaRequest`). */
+  request: MediaRequestInput
+  /** The parameter values that the caller wants: the values of the call
+   *  over the values that the user chose. `dez.provider/generateMedia`
+   *  takes the ones that the model takes, and the defaults of the others. */
+  parameters: ParameterValues
+}
+
+/** A call to a text model: one chat request (`dez.provider/streamChat`)
+ *  whose only message is this user message. */
+export interface ChatInvocation extends InvocationTarget {
+  kind: 'chat'
+  /** The content of the user message: the prompt, or, when it names
+   *  images, its text with an image part right after the text that names
+   *  each image (the shape of the newest user message of a conversation,
+   *  streams/messages.ts). */
+  content: string | MessagePart[]
+  /** The model makes images too: the request asks for them, as a request
+   *  of the user does (`submitTab`). */
+  imageOutput: boolean
+  /** The user's toggles of the provider, which a request of the user to
+   *  the model sends too (Thinking, web search); undefined for none. */
+  providerSettings: Record<string, boolean> | undefined
+}
+
+/** What a `model_invoke` call sends, after every check that needs no
+ *  request. */
+export type ModelInvocation = MediaInvocation | ChatInvocation
+
 /** What Dez knows when a `model_invoke` call comes. */
 export interface InvocationFacts {
   cache: ModelCache
@@ -124,6 +167,9 @@ export interface InvocationFacts {
   /** The parameter values that the user chose, by `modelRefKey`
    *  (`SettingsSnapshot.modelParameters`). */
   modelParameters: Readonly<Record<string, ParameterValues>>
+  /** The toggles that the user set, by provider id
+   *  (`SettingsSnapshot.providerSettings`). */
+  providerSettings: Readonly<Record<string, Record<string, boolean>>>
   /** The sections of the tab of the call. */
   sections: readonly Section[]
 }
@@ -141,17 +187,11 @@ function timeoutArgument(args: ToolArguments): number {
 
 // The request kind of a model that `model_invoke` takes. Dez sends no
 // request to a model with the request `none` or with an output that it
-// cannot store, as for the user; a chat model is not a part of the tool
-// yet.
-function invokedKind(model: ModelInfo): MediaKind {
+// cannot store, as for the user.
+function invokedKind(model: ModelInfo): MediaKind | 'chat' {
   const kind = effectiveRequest(model)
   if (kind === 'none') throw new ToolError(`${unusableModelMessage(model.name, model)} ${FIND_MODELS}`)
   if (model.unstoredOutput !== undefined) throw new ToolError(`${unstoredOutputMessage(model.name, model.unstoredOutput)} ${FIND_MODELS}`)
-  if (kind === 'chat') {
-    throw new ToolError(`${model.name} is a chat model (its request is \`chat\`), and model_invoke takes no chat model yet. `
-      + 'It takes the models that make images, audio clips, or video clips, and the models that write down speech. '
-      + 'Use model_list with `type` to find one.')
-  }
   return kind
 }
 
@@ -179,6 +219,31 @@ function unknownInputsProblem(unknownIds: readonly string[], assets: Conversatio
     : `${lead}. Dez sent no request. The conversation has ${known.join(', ')}: call again with these ids. ${notAnInput}`
 }
 
+// The content of the one user message that a call sends to the text model
+// `model` (`ChatInvocation.content`), from the source of its prompt.
+//
+// Throws for an input that the request does not carry: a clip (a chat
+// request takes none, whatever the provider says that the model reads,
+// `modelInputs`), and an image for a model that is known not to read
+// images (a user message sends such a model the reference as text; the
+// calling model would get an answer about an image that the model never
+// got). Throws for a prompt with no text too.
+function chatContent(model: ModelInfo, source: PromptRequestSource): string | MessagePart[] {
+  const imageCount = source.inputs.length - source.clips.length
+  const problem = clipTagProblem(model.name, undefined, source.clips, imageCount, undefined, 'model')
+    ?? unusedImagesProblem(model.name, model.imageInput === false ? 0 : imageCount, imageCount)
+  if (problem !== null) throw new ToolError(problem)
+  // The text after the last image can be only white space, and the
+  // Anthropic format refuses such a text part (as `userMessageContent`,
+  // streams/messages.ts).
+  const parts = source.parts.filter((part) => part.type === 'image' || part.text.trim() !== '')
+  const [first] = parts
+  if (first === undefined) {
+    throw new ToolError(`\`prompt\` has no text, and ${model.name} answers nothing without one. Write in \`prompt\` what the model must answer or do, and name each image that it must get with @id.`)
+  }
+  return parts.length === 1 && first.type === 'text' ? first.text : parts
+}
+
 /** The request of a `model_invoke` call with `args`: the model that it
  *  names, the inputs that its prompt names, and the values of its
  *  parameters. Every check that needs no request runs here, before the job
@@ -186,14 +251,18 @@ function unknownInputsProblem(unknownIds: readonly string[], assets: Conversatio
  *  answer at once.
  *
  *  Throws a `ToolError` that tells the model how to fix the call:
- *  - a model that the user cannot use (`namedModelTarget`), that Dez sends
- *    no request, or that is a chat model;
- *  - a bad `timeout_seconds` or `parameters` (`parameterValuesArgument`);
+ *  - a model that the user cannot use (`namedModelTarget`), or that Dez
+ *    sends no request;
+ *  - a bad `timeout_seconds` or `parameters` (`parameterValuesArgument`; a
+ *    text model has no parameters, so it takes none);
  *  - an `@id` that names nothing (`unknownInputsProblem`);
- *  - an input that the model does not take, more inputs than it takes, or
- *    a text that it does not take (`promptRequestProblem`);
+ *  - for a media model: an input that the model does not take, more
+ *    inputs than it takes, or a text that it does not take
+ *    (`promptRequestProblem`);
+ *  - for a text model: a clip, or an image for a model that reads none
+ *    (`chatContent`);
  *  - no text for a model that needs one. */
-export function modelInvocation(args: ToolArguments, { cache, providers, modelParameters, sections }: InvocationFacts): ModelInvocation {
+export function modelInvocation(args: ToolArguments, { cache, providers, modelParameters, providerSettings, sections }: InvocationFacts): ModelInvocation {
   const { provider, model } = namedModelTarget(cache, providers, typeof args.model === 'string' ? args.model : '')
   const kind = invokedKind(model)
   const timeoutMs = timeoutArgument(args)
@@ -205,6 +274,26 @@ export function modelInvocation(args: ToolArguments, { cache, providers, modelPa
   const [nextId] = newMediaIds(sections.map(sectionPlainText), 1)
   const unknown = unknownInputsProblem(source.unknownIds, assets, nextId)
   if (unknown !== null) throw new ToolError(unknown)
+  const target = { provider, model, timeoutMs }
+
+  if (kind === 'chat') {
+    const content = chatContent(model, source)
+    // Every input goes, and each one is an image: `chatContent` refused
+    // the clips.
+    const imageIds = new Map(source.inputs.flatMap(({ id }) => {
+      const path = assets.images.get(id)
+      return path === undefined ? [] : [[path, id] as const]
+    }))
+    return {
+      ...target,
+      kind,
+      content,
+      imageOutput: effectiveOutputs(model).includes('image'),
+      providerSettings: providerSettings[provider.id],
+      inputs: source.inputs,
+      imageIds,
+    }
+  }
 
   // The image rules can depend on the parameter values that the request
   // sends, as for a user message (`submitTab`).
@@ -226,7 +315,7 @@ export function modelInvocation(args: ToolArguments, { cache, providers, modelPa
     imageIds.set(path, id)
     return true
   })
-  return { provider, model, kind, request, parameters, inputs, imageIds, timeoutMs }
+  return { ...target, kind, request, parameters, inputs, imageIds }
 }
 
 /** What the result of a call that started a job adds after
@@ -257,6 +346,9 @@ export function invocationStateText(providerName: string, { phase, jobId }: Medi
   }
 }
 
+// The lead of a text that a model wrote, in the result of a job.
+const GIVEN_TEXT = 'the model gave (the user sees it only when you write it in your reply)'
+
 /** The result text of a job whose model wrote `text` (a transcription). It
  *  goes as the model gave it: it is the answer of the model, not data
  *  about the computer. */
@@ -264,7 +356,40 @@ export function invocationTextResult(text: string): string {
   const words = text.trim()
   return words === ''
     ? 'The model gave no text: it found no words in the input.'
-    : `The text that the model gave (the user sees it only when you write it in your reply):\n${words}`
+    : `The text that ${GIVEN_TEXT}:\n${words}`
+}
+
+/** The state of a job whose text model gave `characters` characters of
+ *  answer text so far. A model that thinks first gives none for a time. */
+export function invocationAnswerStateText(characters: number): string {
+  return characters === 0 ? 'The model has given no text yet.' : `The model has given ${characters} characters of text so far.`
+}
+
+/** Whether `answer`, the answer text of a text model so far, is more than
+ *  the result of its job holds: the job needs no more of it. */
+export function answerIsCut(answer: string): boolean {
+  return answer.length > INVOCATION_TEXT_CAP
+}
+
+/** The result text of a job whose text model answered with `answer`. The
+ *  text goes as the model gave it, as a transcription does
+ *  (`invocationTextResult`). An answer over INVOCATION_TEXT_CAP characters
+ *  (`answerIsCut`) is cut to that length, and the text says so first: the
+ *  job can have stopped the request there, so the rest is not known. The
+ *  images of the answer are assets of the job, which `jobResultText`
+ *  names. */
+export function invocationAnswerText(answer: string): string {
+  if (answerIsCut(answer)) {
+    // A cut between the two halves of a character pair (an emoji) would
+    // leave a half that is no text: a provider can refuse a request that
+    // holds it.
+    const start = answer.slice(0, INVOCATION_TEXT_CAP).replace(/[\uD800-\uDBFF]$/, '')
+    return `The start of the text that ${GIVEN_TEXT}. `
+      + `The answer had more than ${INVOCATION_TEXT_CAP} characters, and the result of a job holds no more, so the rest is lost. `
+      + `When you need the rest, call again and ask for a shorter answer, or for the answer in parts:\n${start.trim()}`
+  }
+  const words = answer.trim()
+  return words === '' ? 'The model gave no text.' : `The text that ${GIVEN_TEXT}:\n${words}`
 }
 
 /** The error result of a job whose input image `id` Dez could not draw as
