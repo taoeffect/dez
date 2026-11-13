@@ -57,8 +57,6 @@ function onDefaultModelClickOutside(e: MouseEvent) {
     closeDefaultModelPicker()
   }
 }
-const sections: SettingsSection[] = ['general', 'providers', 'prompts', 'systemPrompt', 'appearance', 'notifications', 'shortcuts']
-
 const sectionLabels: Record<SettingsSection, string> = {
   general: 'General',
   providers: 'Providers',
@@ -68,6 +66,8 @@ const sectionLabels: Record<SettingsSection, string> = {
   notifications: 'Notifications',
   shortcuts: 'Shortcuts',
 }
+// The nav order is the key order of `sectionLabels`.
+const sections = Object.keys(sectionLabels) as SettingsSection[]
 
 // Providers and Prompts fill the content pane and scroll inside their own
 // lists, so the pane itself never scrolls for them. Its scrollbar gutter
