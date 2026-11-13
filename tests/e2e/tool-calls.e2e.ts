@@ -22,7 +22,9 @@ import { activeConversationId, activeTabStreaming, docPos, editorCaret, editorDo
 // one before it (the prompt cache). A relaunch reads the saved call back
 // from the conversation file. A Stop while the round after a call waits
 // keeps the call, and the next request sends it with its result. A
-// `model_info` call gives the facts of the mock model as Dez knows them.
+// `model_info` call gives the facts of the mock model as Dez knows them,
+// and a call with no arguments gives those of the reply's model, also after
+// the user chose another model for the tab.
 // The `image` tool's `crop` and `scale` calls make new images from a pasted
 // one: the images go into the reply after the calls, and the requests name
 // them by their ids, with no path. A pasted SVG goes as the same PNG copy
@@ -464,6 +466,46 @@ describe('tool calls', () => {
     ])
     await pointerClick(browser, '.cm-content .dez-tool-call__chip')
     await waitForValue(browser, 'model_info panel', () => toolPanel(0), { parameters: [['model', model]], result, error: false })
+  })
+
+  it('runs a model_info call with no arguments: the result is about the model of the reply, also after the user chose another model for the tab', async () => {
+    await newTab(browser)
+    await pickModel(browser, TOOLER.name, TOOLER.modelName)
+    const question = 'Tell me about yourself.'
+    await submit(browser, question)
+    const first = await setup.mock.waitForRequest(browser)
+    // The tab's model changes while the reply runs; the reply keeps its own.
+    await pickModel(browser, CLAUDE.name, CLAUDE.modelName)
+    const call = { id: 'call_own', type: 'function', function: { name: 'model_info', arguments: '{}' } }
+    startEventStream(first.reply)
+    writeChatFrame(first.reply, { tool_calls: [{ index: 0, ...call }] }, 'tool_calls')
+    first.reply.end('data: [DONE]\n\n')
+
+    const second = await setup.mock.waitForRequest(browser)
+    expect(second.path).toBe(mockChatPath(TOOLER))
+    const sent = JSON.parse(second.body) as { messages: Array<{ content: unknown }> }
+    const result = sent.messages.at(-1)?.content
+    if (typeof result !== 'string') throw new Error('The second request has no tool result text')
+    expect(JSON.parse(second.body)).toEqual(openAiChatBody(TOOLER, [
+      { role: 'user', content: question },
+      { role: 'assistant', content: '', tool_calls: [call] },
+      { role: 'tool', tool_call_id: 'call_own', content: result },
+    ]))
+    expect(JSON.parse(result)).toMatchObject({
+      id: `${TOOLER.id}/${TOOLER.modelId}`,
+      name: TOOLER.modelName,
+      provider: { id: TOOLER.id, name: TOOLER.name },
+      providerEntry: { id: TOOLER.modelId, name: TOOLER.modelName },
+    })
+
+    await sendChatReply(second.reply, TOOLER.modelName)
+    await waitForThread(browser, [
+      { role: 'user', text: question },
+      { role: 'agent', text: `<dez:tool id="call_own" name="model_info">\n${result}\n</dez:tool>\n${replyText(TOOLER.modelName)}` },
+      { role: 'user', text: '' },
+    ])
+    await pointerClick(browser, '.cm-content .dez-tool-call__chip')
+    await waitForValue(browser, 'model_info panel', () => toolPanel(0), { parameters: [], result, error: false })
   })
 
   it('runs image crop and scale calls: the new images go into the reply after the calls, and the requests name them by their ids', async () => {

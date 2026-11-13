@@ -28,6 +28,14 @@ describe('checkToolCalls', () => {
     ])
   })
 
+  // `model_info` then gives the model of the reply.
+  it('takes a model_info call with no arguments', () => {
+    expect(checkToolCalls([streamed('c1', '', 'model_info'), streamed('c2', '{}', 'model_info')], [])).toStrictEqual([
+      { id: 'c1', name: 'model_info', arguments: {} },
+      { id: 'c2', name: 'model_info', arguments: {} },
+    ])
+  })
+
   it('gives a new id to a call with none, and to an id that the section or an earlier call of the group holds', () => {
     const calls = [streamed('', '{}'), streamed('call_1', '{}'), streamed('call_2', '{}'), streamed('call_2', '{}')]
 
@@ -48,7 +56,6 @@ describe('checkToolCalls', () => {
       streamed('c3', '{"filter":3}'),
       streamed('c4', '{"limit":3}'),
       streamed('c5', '{}', ''),
-      streamed('c6', ' ', 'model_info'),
     ]
     const tools = 'Call only the Dez tools, by their exact names: model_list, model_info, audio, image.'
     const parameters = 'The parameters of model_list are: filter (string), type (string), inputs (string), sort (string), sort_dir (string).'
@@ -75,13 +82,6 @@ describe('checkToolCalls', () => {
         refusal: `Dez did not run this call. model_list has no parameter "limit". ${parameters}\n\nDetails: The call sent {"limit":3}`,
       },
       { id: 'c5', name: '', arguments: {}, refusal: `Dez has no tool named "". ${tools}` },
-      // Blank text is `{}`, so the refusal has no details.
-      {
-        id: 'c6',
-        name: 'model_info',
-        arguments: {},
-        refusal: 'Dez did not run this call. The required parameter "model" is missing. Add it as a string, as in {"model": "..."}.',
-      },
     ])
   })
 })

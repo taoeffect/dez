@@ -1,5 +1,6 @@
 import { rawErrorText } from '../../utils/errorText'
 import { modelRefKey, parseModelRefKey } from '../chat/modelRef'
+import type { ModelRef } from '../chat/types'
 import { modelInputs } from '../modelInputs'
 import { effectiveOutputs, MODEL_OUTPUT_IDS } from '../modelOutputs'
 import { availableModels } from '../modelSearch'
@@ -33,6 +34,7 @@ export type ModelInfoPart = (typeof MODEL_INFO_PARTS)[number]
 export const MODEL_INFO_TOOL: ToolDefinition = {
   name: 'model_info',
   description: 'Give all that Dez knows about one model that the user can use, as JSON. '
+    + 'With no `model`, that model is you: the model that the user chose for this reply, which makes this call. '
     + '`id` is its full id, `name` its name, and `provider` the `id` and `name` of its provider. '
     + '`dez` holds the facts that Dez uses, each under a name that tells what it is, for example '
     + `\`request\` (how Dez sends it a request: ${MODEL_REQUESTS.join(', ')}; none means that Dez cannot use it yet), `
@@ -63,8 +65,9 @@ export const MODEL_INFO_TOOL: ToolDefinition = {
     {
       name: 'model',
       type: 'string',
-      description: 'The full id of the model (`provider/model`), as `model_list` gives it.',
-      required: true,
+      description: 'The full id of the model (`provider/model`), as `model_list` gives it. '
+        + 'Leave it out to get the info of your own model.',
+      required: false,
     },
     {
       name: 'parameters',
@@ -84,7 +87,7 @@ export const MODEL_INFO_TOOL: ToolDefinition = {
   ],
 }
 
-/** The provider and the cached model that a `model_info` call names. */
+/** The provider and the cached model of a `model_info` call. */
 export interface ModelInfoTarget {
   provider: ProviderInfo
   model: ModelInfo
@@ -123,25 +126,36 @@ export interface ModelInfoFacts {
 
 const FIND_MODELS = 'Use model_list to find the full ids of the models that the user can use.'
 
-/** The provider and the model that the `model` argument of a call names (a
- *  full id, `provider/model`), among the models that `model_list` lists
- *  (`availableModels`).
+/** The provider and the model of a `model_info` call, among the models that
+ *  `model_list` lists (`availableModels`): the model that the `model`
+ *  argument names (a full id, `provider/model`), else `replyModel`, the
+ *  model of the reply that makes the call.
  *
  *  Throws for an id that is not a full id, an unknown provider, and a model
  *  that the user cannot use; the error points to `model_list`, for the model
- *  to read. */
-export function modelInfoTarget(cache: ModelCache, providers: readonly ProviderInfo[], args: ToolArguments): ModelInfoTarget {
-  const fullId = typeof args.model === 'string' ? args.model : ''
-  const ref = parseModelRefKey(fullId)
-  if (!ref) throw new ToolError(`${JSON.stringify(fullId)} is not a full model id (provider/model). ${FIND_MODELS}`)
+ *  to read. The reply's own model can be missing from the list too, as a
+ *  reply needs no cached model: the last model check of its provider failed,
+ *  or the provider's list has the model no more. That is not a fault of the
+ *  call, and the error says so. */
+export function modelInfoTarget(cache: ModelCache, providers: readonly ProviderInfo[], args: ToolArguments, replyModel: ModelRef): ModelInfoTarget {
+  const named = args.model
+  const ref = named === undefined ? replyModel : parseModelRefKey(String(named))
+  if (!ref) {
+    throw new ToolError(`${JSON.stringify(named)} is not a full model id (provider/model). ${FIND_MODELS} `
+      + 'Leave out `model` to get the info of your own model.')
+  }
 
   const provider = providers.find((candidate) => candidate.id === ref.providerId)
+  const model = provider && availableModels(cache, [provider]).find((candidate) => candidate.id === ref.modelId)
+  if (provider && model) return { provider, model }
+
+  if (named === undefined) {
+    throw new ToolError(`Dez cannot give the info of your own model (${JSON.stringify(modelRefKey(ref))}) now: it is not among the models that model_list lists. `
+      + 'The last model check of its provider can have failed. This is not a fault of the call: tell the user. '
+      + `To get the info of another model, give its full id in \`model\`. ${FIND_MODELS}`)
+  }
   if (!provider) throw new ToolError(`No provider has the id ${JSON.stringify(ref.providerId)}. ${FIND_MODELS}`)
-
-  const model = availableModels(cache, [provider]).find((candidate) => candidate.id === ref.modelId)
-  if (!model) throw new ToolError(`The user cannot use the model ${JSON.stringify(fullId)}. ${FIND_MODELS}`)
-
-  return { provider, model }
+  throw new ToolError(`The user cannot use the model ${JSON.stringify(named)}. ${FIND_MODELS}`)
 }
 
 /** The parameter values that the `parameters` argument of a call names (the

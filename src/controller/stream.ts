@@ -1,5 +1,5 @@
 import sbp from '@sbp/sbp'
-import type { ActiveModel, Section, SectionThinking, Tab } from '../model/chat/types'
+import type { ActiveModel, ModelRef, Section, SectionThinking, Tab } from '../model/chat/types'
 import { sectionPlainText } from '../model/chat/content'
 import { IMAGE_TOOL_KEY, imageMarkdown } from '../model/chat/images'
 import { modelRefKey } from '../model/chat/modelRef'
@@ -242,10 +242,11 @@ function stopToolRun(tabId: string, reply: ReplyRuntime): boolean {
 // refused call gets its error block at once), runs each call, then replaces
 // the running blocks with the final ones. Nothing else of the reply writes
 // the section meanwhile, but a tool can put an image or a clip after the
-// blocks (`ToolRunContext.writeImage`, `writeClip`). Returns the section
-// after the round, or null when the run did not end here: the user stopped
-// the reply, or a submit ended its output (stopToolRun wrote the blocks),
-// or the user deleted the running blocks.
+// blocks (`ToolRunContext.writeImage`, `writeClip`). `model` is the reply's
+// model, for a tool that reads it. Returns the section after the round, or
+// null when the run did not end here: the user stopped the reply, or a
+// submit ended its output (stopToolRun wrote the blocks), or the user
+// deleted the running blocks.
 //
 // The reference of a tool's image or the tag of its clip goes after the
 // group, so it is the start of the text of the next round, and has the
@@ -254,7 +255,7 @@ function stopToolRun(tabId: string, reply: ReplyRuntime): boolean {
 // a request sends no thinking for a round whose text holds an image of the
 // model (`roundThinking`, streams/messages.ts), and the request after a
 // round of calls needs that round's thinking.
-async function runToolRound(tabId: string, reply: ReplyRuntime, calls: CheckedToolCall[], sectionText: string): Promise<Section | null> {
+async function runToolRound(tabId: string, reply: ReplyRuntime, model: ModelRef, calls: CheckedToolCall[], sectionText: string): Promise<Section | null> {
   const runningBlocks = calls.map((call) => toolCallBlock(call))
   const run: ToolRun = {
     calls,
@@ -272,6 +273,7 @@ async function runToolRound(tabId: string, reply: ReplyRuntime, calls: CheckedTo
     const toolCall: ToolRunCall = { name: call.name, arguments: call.arguments }
     const context: ToolRunContext = {
       tabId,
+      model,
       // Not after a stop (`stopToolRun`), as for an image of the model.
       writeImage: (path) => (reply.toolRun === run
         ? writeAsset(tabId, reply, (id) => imageMarkdown(path, [{ key: 'id', value: id }, { key: IMAGE_TOOL_KEY, value: call.name }]))
@@ -455,7 +457,7 @@ async function runChatRounds(args: StreamStartArgs, reply: ReplyRuntime): Promis
       return
     }
 
-    const replySoFar = await runToolRound(args.tabId, reply, calls, sectionText)
+    const replySoFar = await runToolRound(args.tabId, reply, args.model, calls, sectionText)
     if (!replySoFar) {
       // Still current only when the user deleted the running blocks:
       // with no calls to send back, the reply cannot go on, so it ends

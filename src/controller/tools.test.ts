@@ -5,6 +5,7 @@ import type { AudioPart, CutAudio } from '../model/chat/audioCut'
 import { UnwritableImageTypeError, type DrawnImage, type DrawnMediaType, type ImageDrawing, type ImageSize } from '../model/chat/imageDrawing'
 import { ClipReadError } from '../model/chat/mediaFiles'
 import type { MediaTagData } from '../model/chat/mediaTags'
+import type { ModelRef } from '../model/chat/types'
 import type { KnownLimit } from '../model/providers/knownLimits'
 import type { ProviderMediaQuote, ProviderMediaQuoteInput } from '../model/providers/streamTypes'
 import { providerInfo } from '../model/providers/testing'
@@ -124,8 +125,14 @@ sbp('sbp/selectors/register', {
   },
 })
 
-function run(call: ToolRunCall): Promise<ToolRunResult> {
-  return sbp('dez.controller/tools/run', call, new AbortController().signal) as Promise<ToolRunResult>
+// The model of the reply that makes the calls: not the model that most
+// calls name, so that a result tells which of the two the tool read.
+const REPLY_MODEL: ModelRef = { providerId: 'venice', modelId: 'venice-glm-5' }
+
+// Runs a call of a reply of `model` that takes no image and no clip.
+function run(call: ToolRunCall, { signal = new AbortController().signal, model = REPLY_MODEL } = {}): Promise<ToolRunResult> {
+  const context: ToolRunContext = { tabId: '', model, writeImage: () => null, writeClip: () => null }
+  return sbp('dez.controller/tools/run', call, signal, context) as Promise<ToolRunResult>
 }
 
 let consoleError: MockInstance<typeof console.error>
@@ -235,6 +242,17 @@ describe('dez.controller/tools/run', () => {
       expect(refreshes).toStrictEqual([])
     })
 
+    it('gives the model of the reply for a call with no `model`', async () => {
+      expect(await run({ name: 'model_info', arguments: {} })).toStrictEqual({
+        content: modelInfoText(providers[0], MODELS('venice')[1], { entry: { id: 'venice-glm-5', checked: true }, values: {}, toggles, inputImages: {} }),
+        isError: false,
+      })
+      expect(await run({ name: 'model_info', arguments: { part: 'providerEntry' } })).toStrictEqual({
+        content: JSON.stringify({ id: 'venice/venice-glm-5', providerEntry: { id: 'venice-glm-5', checked: true } }, null, 2),
+        isError: false,
+      })
+    })
+
     it('checks only the model\'s provider, at once, when no raw entry is in memory, and gives the new entry', async () => {
       expect(await run({ name: 'model_info', arguments: { model: 'venice/venice-gemini-3-pro' } })).toStrictEqual({
         content: gemini({ id: 'venice-gemini-3-pro', checked: true }),
@@ -259,7 +277,7 @@ describe('dez.controller/tools/run', () => {
       // A server that never answers.
       refreshCheck = () => new Promise(() => {})
       const abort = new AbortController()
-      const result = sbp('dez.controller/tools/run', { name: 'model_info', arguments: { model: 'venice/venice-gemini-3-pro' } }, abort.signal) as Promise<ToolRunResult>
+      const result = run({ name: 'model_info', arguments: { model: 'venice/venice-gemini-3-pro' } }, { signal: abort.signal })
       await vi.waitFor(() => expect(refreshes).toHaveLength(1))
 
       abort.abort()
@@ -321,6 +339,13 @@ describe('dez.controller/tools/run', () => {
         expect(sbp('dez.model/settings/snapshot').modelParameters).toStrictEqual({ 'venice/wan': { duration: '8s', resolution: '720p' } })
       })
 
+      it('takes the values of a call with no `model` for the model of the reply', async () => {
+        const values = { duration: '12s', resolution: '720p', aspect_ratio: '16:9' }
+
+        expect((await run({ name: 'model_info', arguments: { parameters: '{"duration": "12s"}' } }, { model: { providerId: 'venice', modelId: 'wan' } })).content)
+          .toBe(modelInfoText(providers[0], VIDEO, facts(values, { cost: { usd: 0.07 } })))
+      })
+
       it('gives an error result, and asks for no price, for a value that the model does not take', async () => {
         expect(await info({ parameters: '{"duration": "5s"}' })).toStrictEqual({
           content: 'The parameter "duration" takes one of: "4s", "8s", "12s".',
@@ -379,7 +404,7 @@ describe('dez.controller/tools/run', () => {
       it('stops waiting for the price when the user stops the reply', async () => {
         quoteAnswer = () => new Promise(() => {})
         const abort = new AbortController()
-        const result = sbp('dez.controller/tools/run', { name: 'model_info', arguments: { model: 'venice/wan' } }, abort.signal) as Promise<ToolRunResult>
+        const result = run({ name: 'model_info', arguments: { model: 'venice/wan' } }, { signal: abort.signal })
         await vi.waitFor(() => expect(quotes).toHaveLength(1))
 
         abort.abort()
@@ -393,7 +418,7 @@ describe('dez.controller/tools/run', () => {
         const abort = new AbortController()
         abort.abort()
 
-        const result = await sbp('dez.controller/tools/run', { name: 'model_info', arguments: { model: 'venice/wan' } }, abort.signal) as ToolRunResult
+        const result = await run({ name: 'model_info', arguments: { model: 'venice/wan' } }, { signal: abort.signal })
 
         expect(result.isError).toBe(true)
         expect(quotes).toStrictEqual([])
@@ -430,6 +455,7 @@ describe('dez.controller/tools/run', () => {
     function image(command: string, parameters: Record<string, unknown>, signal = new AbortController().signal): Promise<ToolRunResult> {
       const context: ToolRunContext = {
         tabId,
+        model: REPLY_MODEL,
         writeImage: (path) => {
           written.push(path)
           return newImageId
@@ -601,6 +627,7 @@ describe('dez.controller/tools/run', () => {
     function clip(parameters: Record<string, unknown>, signal = new AbortController().signal): Promise<ToolRunResult> {
       const context: ToolRunContext = {
         tabId,
+        model: REPLY_MODEL,
         writeImage: () => null,
         writeClip: (data) => {
           written.push(data)

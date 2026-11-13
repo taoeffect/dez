@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest'
+import type { ModelRef } from '../chat/types'
 import type { ModelCache } from '../persistence/types'
 import { providerInfo } from '../providers/testing'
 import type { ModelInfo } from '../providers/types'
@@ -41,25 +42,46 @@ const CACHE: ModelCache = {
 const FIND_MODELS = 'Use model_list to find the full ids of the models that the user can use.'
 
 describe('modelInfoTarget', () => {
+  // The model of the reply that makes the call.
+  const REPLY: ModelRef = { providerId: OPENROUTER.id, modelId: UNKNOWN.id }
+
   it('finds the provider and the cached model of a full id, split at the first /', () => {
-    expect(modelInfoTarget(CACHE, PROVIDERS, { model: 'openrouter/google/gemini-3-pro' })).toStrictEqual({ provider: OPENROUTER, model: GEMINI })
+    expect(modelInfoTarget(CACHE, PROVIDERS, { model: 'openrouter/google/gemini-3-pro' }, REPLY)).toStrictEqual({ provider: OPENROUTER, model: GEMINI })
   })
 
+  it('gives the model of the reply for a call with no `model`', () => {
+    expect(modelInfoTarget(CACHE, PROVIDERS, {}, REPLY)).toStrictEqual({ provider: OPENROUTER, model: UNKNOWN })
+  })
+
+  // A blank id is not "no model": only a call with no `model` gets the
+  // model of the reply.
   it.each(['', 'gemini-3-pro', 'openrouter/', '/google/gemini-3-pro'])('refuses %j, which is not a full id', (model) => {
-    expect(() => modelInfoTarget(CACHE, PROVIDERS, { model }))
-      .toThrow(`${JSON.stringify(model)} is not a full model id (provider/model). ${FIND_MODELS}`)
+    expect(() => modelInfoTarget(CACHE, PROVIDERS, { model }, REPLY))
+      .toThrow(new ToolError(`${JSON.stringify(model)} is not a full model id (provider/model). ${FIND_MODELS} Leave out \`model\` to get the info of your own model.`))
   })
 
   it('refuses a provider id that no provider has', () => {
-    expect(() => modelInfoTarget(CACHE, PROVIDERS, { model: 'google/gemini-3-pro' }))
-      .toThrow(`No provider has the id "google". ${FIND_MODELS}`)
+    expect(() => modelInfoTarget(CACHE, PROVIDERS, { model: 'google/gemini-3-pro' }, REPLY))
+      .toThrow(new ToolError(`No provider has the id "google". ${FIND_MODELS}`))
   })
 
   // The models that model_list lists: a configured provider whose last check
   // did not fail, and a model in its cached list.
-  it.each(['closed/m', 'failing/m', 'openrouter/gemini-3-pro'])('refuses %s, which model_list does not list', (model) => {
-    expect(() => modelInfoTarget(CACHE, PROVIDERS, { model }))
-      .toThrow(`The user cannot use the model ${JSON.stringify(model)}. ${FIND_MODELS}`)
+  const UNLISTED = ['closed/m', 'failing/m', 'openrouter/gemini-3-pro']
+
+  it.each(UNLISTED)('refuses %s, which model_list does not list', (model) => {
+    expect(() => modelInfoTarget(CACHE, PROVIDERS, { model }, REPLY))
+      .toThrow(new ToolError(`The user cannot use the model ${JSON.stringify(model)}. ${FIND_MODELS}`))
+  })
+
+  // A reply needs no listed model, so the call is not at fault.
+  it.each([...UNLISTED, 'gone/m'])('tells a call with no `model` that Dez cannot give the model of the reply, %s, which model_list does not list', (model) => {
+    const [providerId, modelId] = model.split('/')
+
+    expect(() => modelInfoTarget(CACHE, PROVIDERS, {}, { providerId, modelId }))
+      .toThrow(new ToolError(`Dez cannot give the info of your own model (${JSON.stringify(model)}) now: it is not among the models that model_list lists. `
+        + 'The last model check of its provider can have failed. This is not a fault of the call: tell the user. '
+        + `To get the info of another model, give its full id in \`model\`. ${FIND_MODELS}`))
   })
 })
 

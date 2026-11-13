@@ -4,7 +4,7 @@ import { drawnMediaType, UnwritableImageTypeError, type DrawnImage, type ImageSi
 import { ClipReadError, type ClipReadProblem } from '../model/chat/mediaFiles'
 import type { MediaTagData } from '../model/chat/mediaTags'
 import { modelRefKey } from '../model/chat/modelRef'
-import type { Tab } from '../model/chat/types'
+import type { ModelRef, Tab } from '../model/chat/types'
 import type { ModelCache } from '../model/persistence/types'
 import type { KnownLimit } from '../model/providers/knownLimits'
 import { effectiveParameterValues } from '../model/providers/modelParameters'
@@ -31,6 +31,10 @@ export interface ToolRunCall {
 /** What a runner gets of the reply that made its call. */
 export interface ToolRunContext {
   tabId: string
+  /** The model of the reply: the one that the user chose for it and that
+   *  makes the call. Not the tab's active model, which the user can change
+   *  while the reply runs. */
+  model: ModelRef
   /** Writes the reference of a stored image that the tool made into the
    *  reply, with a new image id, and returns that id. Null when the reply
    *  takes no image any more (a stop ended the tool round): the runner
@@ -74,12 +78,13 @@ function untilAborted<T>(start: () => Promise<T>, signal: AbortSignal): Promise<
   })
 }
 
-// The model that a `model_info` call names, and its raw model-list entry in
-// memory (undefined when there is none). Throws for a model that the user
-// cannot use (`modelInfoTarget`).
-async function modelInfoLookup(args: ToolArguments): Promise<ModelInfoTarget & { entry: unknown }> {
+// The model of a `model_info` call (the one that it names, else the reply's
+// model `replyModel`), and its raw model-list entry in memory (undefined
+// when there is none). Throws for a model that the user cannot use
+// (`modelInfoTarget`).
+async function modelInfoLookup(args: ToolArguments, replyModel: ModelRef): Promise<ModelInfoTarget & { entry: unknown }> {
   const providers = await sbp('dez.provider/infos') as ProviderInfo[]
-  const target = modelInfoTarget(sbp('dez.model/modelCache/snapshot') as ModelCache, providers, args)
+  const target = modelInfoTarget(sbp('dez.model/modelCache/snapshot') as ModelCache, providers, args, replyModel)
   return { ...target, entry: sbp('dez.model/modelCache/rawModel', target.provider.id, target.model.id) as unknown }
 }
 
@@ -190,10 +195,11 @@ const TOOL_RUNNERS: Record<string, ToolRunner> = {
     const cache = sbp('dez.model/modelCache/snapshot') as ModelCache
     return modelListText(cache, providers, args)
   },
-  // All that Dez knows about one model. The raw entries of the provider's
-  // model list are in memory only, so after a start they are missing until
-  // the provider's next model check; then this one runs a check of that
-  // provider now, and looks again (the model may be gone).
+  // All that Dez knows about one model: the one that the call names, else
+  // the reply's model. The raw entries of the provider's model list are in
+  // memory only, so after a start they are missing until the provider's
+  // next model check; then this one runs a check of that provider now, and
+  // looks again (the model may be gone).
   //
   // The result also tells the value that a request sends for each
   // parameter now (the call's own value, else the user's from the provider
@@ -203,12 +209,12 @@ const TOOL_RUNNERS: Record<string, ToolRunner> = {
   // provider for the price of one request with those values, or for the
   // model's price records; that costs nothing. A failed price request does
   // not fail the call.
-  async model_info (args, signal) {
+  async model_info (args, signal, context) {
     const part = modelInfoPart(args)
-    let found = await modelInfoLookup(args)
+    let found = await modelInfoLookup(args, context.model)
     if (found.entry === undefined) {
       await untilAborted(() => sbp('dez.controller/modelCache/refresh', { providerIds: [found.provider.id], force: true }) as Promise<void>, signal)
-      found = await modelInfoLookup(args)
+      found = await modelInfoLookup(args, context.model)
     }
     const { provider, model, entry } = found
     const ref = { providerId: provider.id, modelId: model.id }
