@@ -7,6 +7,7 @@ import { MEDIA_TEMP_LIFETIME_MS } from '../../model/chat/mediaFiles'
 import { MEDIA_CACHE_FOLDER, MEDIA_FOLDERS } from '../../model/chat/mediaTags'
 import { shortcutKeyText } from '../../model/shortcuts'
 import { DEZ_DISCUSSIONS_URL } from '../../utils/dezLinks'
+import bundledFfmpeg from '../../../src-tauri/binaries/manifest.json'
 
 type HelpPage = 'general' | 'tips' | 'assets' | 'support'
 
@@ -231,6 +232,23 @@ function onOverlayClick(event: MouseEvent) {
                    the app window. The system browser opens it. -->
               <button type="button" class="help-link" @click="sbp('dez.controller/openUrl', DEZ_DISCUSSIONS_URL)">
                 {{ DEZ_DISCUSSIONS_URL }}
+              </button>
+            </p>
+
+            <!-- The version and the link come from the manifest of the
+                 programs that this build holds, so they are true for every
+                 Dez version, and the link needs no file of the Dez
+                 repository. The full notice is src-tauri/binaries/NOTICE.md. -->
+            <h3>FFmpeg</h3>
+            <p>
+              Dez comes with ffmpeg and ffprobe, two programs of the FFmpeg project (version
+              {{ bundledFfmpeg.ffmpegVersion }}). They are separate programs with their own license,
+              the GNU General Public License, version 3 or later. Dez ships the files of this
+              release, and the release lists the versions of their source code:
+            </p>
+            <p>
+              <button type="button" class="help-link help-link--ffmpeg" @click="sbp('dez.controller/openUrl', bundledFfmpeg.source)">
+                {{ bundledFfmpeg.source }}
               </button>
             </p>
           </section>

@@ -44,6 +44,7 @@
       "icons/icon.icns",
       "icons/icon.ico"
     ],
+    "externalBin": ["binaries/dez-ffmpeg", "binaries/dez-ffprobe"],
     "macOS": {
       "files": {
         "Resources/Assets.car": "icons/Assets.car"

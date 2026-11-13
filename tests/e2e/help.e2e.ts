@@ -2,6 +2,7 @@ import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from
 import { Key } from 'webdriverio'
 import { STORED_FILE_FOLDERS } from '../../src/model/chat/unusedFiles'
 import { DEZ_DISCUSSIONS_URL } from '../../src/utils/dezLinks'
+import bundledFfmpeg from '../../src-tauri/binaries/manifest.json'
 import { startApp, type RunningApp } from './harness/app'
 import { clearOpenedUrls, consoleErrors, openedUrls, pointerClick, pointerClickAt, pointerDrag, resetConsoleErrors, screenshotOnFailure, stopOpenUrl, waitFor, waitForValue } from './harness/dom'
 import { seedAppState } from './harness/fixtures'
@@ -141,12 +142,15 @@ describe('Help panel', () => {
     expect(await browser.execute(() => document.getSelection()?.toString().length ?? 0)).toBeGreaterThan(0)
   })
 
-  it('opens the Discussions page with the system browser from Support', async () => {
+  it('opens the links of Support with the system browser', async () => {
     await openWithButton()
     await pointerClick(browser, NAV.Support)
     await waitFor(browser, '.help-page--support .help-link')
     await pointerClick(browser, '.help-page--support .help-link')
     await waitForValue(browser, 'opened URLs', () => openedUrls(browser), [DEZ_DISCUSSIONS_URL])
+    // The release of the ffmpeg and ffprobe programs that the app holds.
+    await pointerClick(browser, '.help-page--support .help-link--ffmpeg')
+    await waitForValue(browser, 'opened URLs', () => openedUrls(browser), [DEZ_DISCUSSIONS_URL, bundledFfmpeg.source])
     expect(await helpOpen()).toBe(true)
   })
 

@@ -133,7 +133,7 @@ The AppImage is written under `src-tauri/target/release/bundle/appimage/`. A loc
 
 The AppImage includes the GStreamer plugins of the build machine, so that the notification sound plays. The build needs `patchelf` (Debian/Ubuntu: `sudo apt install patchelf`; Fedora: `sudo dnf install patchelf`) and the GStreamer base and good plugins.
 
-The notification sound (`src/assets/sounds/ding.mp3`) is stored with [Git LFS](https://git-lfs.com/). Install Git LFS and run `git lfs pull` before you build. Without it, the build has a small text file in place of the sound, and the sound does not play.
+The notification sound (`src/assets/sounds/ding.mp3`) and the ffmpeg and ffprobe programs that Dez ships (`src-tauri/binaries/`, with their license notice in `NOTICE.md`) are stored with [Git LFS](https://git-lfs.com/). Install Git LFS and run `git lfs pull` before you build. Without it, the build stops, because a small text file is in place of each program.
 
 Build an Apple Silicon macOS DMG on macOS:
 

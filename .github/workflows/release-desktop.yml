@@ -70,13 +70,17 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
+        # `target` is the Rust target triple of the runner: the names of
+        # the ffmpeg and ffprobe programs in src-tauri/binaries/ end with it.
         include:
           - arch: x86_64
             runner: ubuntu-22.04
+            target: x86_64-unknown-linux-gnu
             artifact: dez-linux-x86_64-appimage
             timeout-minutes: 14
           - arch: arm64
             runner: ubuntu-22.04-arm
+            target: aarch64-unknown-linux-gnu
             artifact: dez-linux-arm64-appimage
             timeout-minutes: 19
 
@@ -91,12 +95,15 @@ jobs:
       - name: Fix Ubuntu runner CA root bundle
         uses: okTurtles/libcheloniajs/.github/actions/fix-ubuntu-ca-roots@main
 
-      # `lfs: true`: the build inlines the Git LFS file
-      # src/assets/sounds/ding.mp3 (see the checkout comment in e2e.yml).
+      # No `lfs: true`; the next step gets the Git LFS files that this
+      # build needs (see the two comments at the checkout in e2e.yml).
       - name: Checkout
         uses: actions/checkout@v7
+
+      - name: Pull Git LFS files
+        uses: ./.github/actions/pull-lfs-files
         with:
-          lfs: true
+          target: ${{ matrix.target }}
 
       - name: Setup Node
         uses: actions/setup-node@v7
@@ -189,12 +196,15 @@ jobs:
             [ -s "$t" ] && sudo install -m 0644 -o root -g wheel "$t" /etc/ssl/cert.pem; rm -f "$t"
           ls -lA /etc/ssl/cert.pem
 
-      # `lfs: true`: the build inlines the Git LFS file
-      # src/assets/sounds/ding.mp3 (see the checkout comment in e2e.yml).
+      # No `lfs: true`; the next step gets the Git LFS files that this
+      # build needs (see the two comments at the checkout in e2e.yml).
       - name: Checkout
         uses: actions/checkout@v7
+
+      - name: Pull Git LFS files
+        uses: ./.github/actions/pull-lfs-files
         with:
-          lfs: true
+          target: aarch64-apple-darwin
 
       - name: Setup Node
         uses: actions/setup-node@v7

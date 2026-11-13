@@ -1,0 +1,50 @@
+# Gets the Git LFS files that a build of one target needs: the sound files
+# and the ffmpeg and ffprobe programs of that target. Run it after a
+# checkout without `lfs: true`, which leaves a small pointer file in the
+# place of every LFS file.
+#
+# Why not `lfs: true`: it downloads the programs of every platform (about
+# 240 MB) in every job, and GitHub counts each download against the LFS
+# bandwidth of the repository. This action downloads only the two programs
+# of the job's platform (about 70 to 96 MB). The cache keeps the LFS
+# objects, and `git lfs pull` downloads nothing that the local LFS store
+# has, so a run that finds the cache downloads nothing.
+#
+# A run finds only the caches of its own branch or tag and of the default
+# branch (a GitHub rule). So a release run finds the x86_64 Linux cache of
+# the E2E runs on master, and downloads the files of the other two
+# targets once.
+#
+# The build needs the real files: Vite inlines the sound with no error when
+# it is a pointer file (only the sound then fails to play), and
+# src-tauri/build.rs stops the build when a program is not the file that
+# src-tauri/binaries/manifest.json names.
+name: Pull the Git LFS files of one platform
+description: >-
+  Gets the sound files and the ffmpeg and ffprobe programs of one build
+  target from Git LFS, with a cache of the LFS objects.
+
+inputs:
+  target:
+    description: >-
+      The Rust target triple of the build, as in the file names of
+      src-tauri/binaries/ (for example x86_64-unknown-linux-gnu).
+    required: true
+
+runs:
+  using: composite
+  steps:
+    # The key changes when a sound or a program changes: the hash is over
+    # the pointer files of the sounds and over the manifest, which has the
+    # SHA-256 of every program.
+    - name: Cache Git LFS objects
+      uses: actions/cache@v6
+      with:
+        path: .git/lfs/objects
+        key: git-lfs-${{ inputs.target }}-${{ hashFiles('src/assets/sounds/**', 'src-tauri/binaries/manifest.json') }}
+
+    - name: Pull Git LFS files
+      shell: bash
+      env:
+        TARGET: ${{ inputs.target }}
+      run: git lfs pull --include="src/assets/sounds/*,src-tauri/binaries/dez-*-${TARGET}"

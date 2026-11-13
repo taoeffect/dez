@@ -22,6 +22,7 @@ npm run build:macos:dmg        # Apple Silicon macOS DMG; macOS only
 npm run build:macos:app        # Apple Silicon macOS .app; macOS only
 npm run bump-version -- [--check] <version>          # npm, Tauri, and Cargo version files; --check only checks
 node scripts/release-notes.js <tag> [--out <file>]   # release notes body for a tag
+node scripts/update-ffmpeg.js <release tag>           # vendor the ffmpeg and ffprobe programs of a release
 npm run preview                # preview the built frontend
 cd src-tauri && cargo check
 cd src-tauri && cargo test
@@ -31,7 +32,7 @@ cd src-tauri && cargo test
 - `build:linux:appimage` runs `scripts/build-linux-appimage.js`; the AppImage bundles the build host's GStreamer plugins.
 - macOS builds need Xcode 26+: `build:macos:*` first run `scripts/build-macos-icon.js`, which compiles `src-tauri/icons/Dez.icon` into the gitignored `src-tauri/icons/Assets.car` (icon name set in `src-tauri/Info.plist`). A bare `tauri build` on macOS fails without that file.
 - Releases: run `npm run bump-version` and commit before you tag. A pushed `v*` tag runs `.github/workflows/release-desktop.yml` (version check against the tag, e2e gate, Linux AppImages, macOS DMG, release notes from `scripts/release-notes.js`, GitHub Release). The rules are in the comments of those files.
-- CI rules (details in the workflow comments): every job removes the compromised eMudhra CA roots in its first step, and only the "Write release notes" step may reference `ZAI_API_KEY`.
+- CI rules (details in the workflow comments): every job removes the compromised eMudhra CA roots in its first step, only the "Write release notes" step may reference `ZAI_API_KEY`, and a job that builds the app gets only the Git LFS files of its platform (`.github/actions/pull-lfs-files`), not `lfs: true`.
 
 ## Git conventions
 
@@ -123,7 +124,7 @@ ThreadEditor (CodeMirror doc) syncs to the active tab's sections
 - `view/app/AppLayout.vue`: layout and bottom bar (`ModelSelector.vue`, `view/thread/SubmitButton.vue`, the Help button).
 - `view/model-selector/`: `ModelPicker.vue` (a virtual list of the rows from `pickerRows.ts`), `ModelOutputFilter.vue` (the output type filter), `ProviderSettingsPopup.vue` (for the active model: the provider toggles that apply to it, its "Model Parameters", how to write its lyrics, and the input of an upscale).
 - `view/history/HistoryPanel.vue`: saved conversations.
-- `view/help/HelpView.vue`: the Help panel (General, Tips, Assets, Support), opened by Help › Dez Help and the `?` button of the bottom bar (`dez.model/settings/helpOpen`). At most one of Settings, History, and Help is open. The Assets page tells the user the asset rules (what a model sees, `@id`, the folders, copy or link, delete): keep it true when one of them changes.
+- `view/help/HelpView.vue`: the Help panel (General, Tips, Assets, Support), opened by Help › Dez Help and the `?` button of the bottom bar (`dez.model/settings/helpOpen`). At most one of Settings, History, and Help is open. The Assets page tells the user the asset rules (what a model sees, `@id`, the folders, copy or link, delete): keep it true when one of them changes. The Support page names the license of the ffmpeg and ffprobe programs, with the version and the release of `src-tauri/binaries/manifest.json`.
 - `view/confirm/`: `dez.ui/confirm`, the in-app yes/no prompt (`ConfirmDialog.vue`, mounted in `AppLayout.vue`); `isModalOpen()` (`useKeyboardShortcuts.ts`) counts it.
 - `view/prompts/PromptManager.vue`, `view/thread/PromptAutocomplete.vue`: saved prompts and `/prompt ` insertion.
 - `view/settings/SettingsView.vue`, `ProviderManager.vue`, `ShortcutManager.vue`, `SystemPromptSettings.vue`: settings (General holds the "Unused files" row, `unusedFiles.ts`), the providers page, Settings › Shortcuts with its key recorder (Help › Keyboard Shortcuts opens it), and Settings › System Prompt (the custom template, its variables, and Source/Preview; `SystemPromptPreview.vue` is a read-only CodeMirror view of the prompt).
@@ -205,6 +206,7 @@ Rules:
 - `lib.rs`: plugins, permission reasons, app bootstrap.
 - `../tauri.linux.conf.json`: the Linux copy of the main window, with Tauri's native file drop on (a test in `lib.rs` keeps the two windows the same otherwise).
 - `../tauri.conf.json` `app.macOSPrivateApi` and the `macos-private-api` feature of the `tauri` crate (`Cargo.toml`) go together: they turn on element fullscreen in WKWebView, for the media player.
+- `../binaries/`: the ffmpeg and ffprobe programs that Dez ships, one pair per build target (Git LFS), with `manifest.json` (their release, sizes, and SHA-256) and `NOTICE.md` (their license); only `scripts/update-ffmpeg.js` writes this folder. `../build.rs` stops a build whose programs are not the files of the manifest, and `bundle.externalBin` (`../tauri.conf.json`) puts them next to the Dez program as `dez-ffmpeg` and `dez-ffprobe`.
 
 ## Persistence layout
 
@@ -276,7 +278,7 @@ Do not ever read, view, print, or `cat` `~/.config/dez/provider_keys.json`; it c
 - **Vite port is fixed**: `1420` with `strictPort: true`.
 - **`@tauri-apps/plugin-store` is unused**: app files use Dez's own Rust file I/O.
 - **Secrets wrapper is not a vault**: `src/utils/secret.ts`; never log provider headers, native HTTP payloads, or diagnostics without sanitization.
-- **Sounds are in Git LFS**: clone with LFS (`git lfs pull`); CI checkouts use `lfs: true`. A pointer file builds with no error, and only `play()` fails (the e2e guard in `tests/e2e/notifications.e2e.ts` catches it).
+- **Sounds and the ffmpeg programs are in Git LFS**: clone with LFS (`git lfs pull`). A pointer file in place of a sound builds with no error, and only `play()` fails (the e2e guard in `tests/e2e/notifications.e2e.ts` catches it); a pointer file in place of a program stops the build (`src-tauri/build.rs`).
 - When using the `agentic_fetch` tool:
   - If searching the web, *ALWAYS* tell the tool to never use local tools like Grep, and only search the web
   - If searching local folders, *ALWAYS* tell the tool to restrict its searches to this folder only and to never search outside of it
