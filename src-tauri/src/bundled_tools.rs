@@ -8,9 +8,11 @@
 //!   it starts through `/usr/bin/sandbox-exec`, see confinement.rs).
 //! - It runs in a work folder of the cache root, with copies of its input
 //!   files (`prepare_work_folder`), an empty environment, and no input.
-//! - The OS keeps it inside the cache root: it can read and write no file
-//!   outside it (confinement.rs, which also tells what a computer with no
-//!   confinement does).
+//! - The OS keeps it inside the cache root and the assets folder of the app
+//!   folder (`PROGRAM_APP_FOLDER`): it can read and write no file outside
+//!   the cache root, and in the assets folder it can read, make, and change
+//!   files, but not delete or move them (confinement.rs, which also tells
+//!   what a computer with no confinement does).
 //! - It ends at its time limit, at its output cap, at a cancel
 //!   (`cancel_bundled_tool`), and when the app quits (`stop_all_runs`).
 
@@ -35,6 +37,15 @@ use crate::persistence::{FileRoot, app_file_path, is_app_file_segment, root_dir}
 // tauri.conf.json, under the names that the bundle gives them (a test keeps
 // the two lists the same).
 const BUNDLED_TOOLS: [&str; 2] = ["dez-ffmpeg", "dez-ffprobe"];
+
+// The folder of the app folder whose files a program can read, make, and
+// change, but not delete, move, or link (`also_writable` of
+// `confined_command`): the folder of every stored asset (`IMAGE_FOLDERS`
+// in images.ts, `MEDIA_FOLDERS` in mediaTags.ts). Never the app folder
+// itself: it holds provider_keys.json, app_state.json, and conversations/,
+// and Landlock cannot take a folder back out of an allowed one. A constant
+// and not a command parameter, so no page code can widen it.
+const PROGRAM_APP_FOLDER: &str = "assets";
 
 // How long a quit of the app waits for the runs to end (`stop_all_runs`).
 const EXIT_WAIT: Duration = Duration::from_secs(2);
@@ -113,9 +124,21 @@ pub(crate) struct ProgramRun {
     // The folder that the program can read and write, with all below it
     // (`confined_command`): the cache root, which holds `folder`.
     confined_to: PathBuf,
+    // Folders whose files the program can also read, make, and change, but
+    // not delete or move: `PROGRAM_APP_FOLDER` for a bundled program.
+    also_writable: Vec<PathBuf>,
     // Folders and files that the program can also read: none for a bundled
     // program. The system programs of the tests need the system's folders.
     also_readable: Vec<PathBuf>,
+}
+
+// `PROGRAM_APP_FOLDER` of the app folder `app_dir`, made when it is
+// missing: the confinement of a run needs a folder that is there (Landlock
+// opens it, Seatbelt resolves it).
+fn program_app_folder(app_dir: &Path) -> Result<PathBuf, String> {
+    let folder = app_dir.join(PROGRAM_APP_FOLDER);
+    std::fs::create_dir_all(&folder).map_err(|error| format!("Failed to make the folder {}: {}", PROGRAM_APP_FOLDER, error))?;
+    Ok(folder)
 }
 
 // The folder of the bundled programs: the folder of the Dez program in every
@@ -335,7 +358,7 @@ async fn run_program(
     stopped: &mut watch::Receiver<bool>,
     send: &(impl Fn(ToolRunEvent) + Sync),
 ) -> Result<ToolRunEnd, String> {
-    let mut child = confined_command(&run.program, &run.args, &run.confined_to, &run.also_readable)?
+    let mut child = confined_command(&run.program, &run.args, &run.confined_to, &run.also_writable, &run.also_readable)?
         .current_dir(&run.folder)
         .env_clear()
         .stdin(Stdio::null())
@@ -511,6 +534,7 @@ pub async fn run_bundled_tool(
         timeout: Duration::from_millis(run.timeout_ms),
         max_output_bytes: run.max_output_bytes,
         confined_to: root_dir(FileRoot::Cache)?,
+        also_writable: vec![program_app_folder(&root_dir(FileRoot::App)?)?],
         also_readable: Vec::new(),
     };
     runs.run(&run_id, run, |event| {
@@ -696,6 +720,7 @@ mod tests {
                 timeout: Duration::from_secs(30),
                 max_output_bytes: 1024 * 1024,
                 confined_to: folder.to_path_buf(),
+                also_writable: Vec::new(),
                 also_readable: ["/usr", "/bin", "/lib", "/lib64", "/etc"].into_iter().map(PathBuf::from).filter(|path| path.exists()).collect(),
             }
         }
@@ -909,6 +934,53 @@ mod tests {
             assert_eq!(std::fs::read(folder.join("copy.txt")).expect("read"), b"sibling text");
             assert_eq!(std::fs::read(&made).expect("read"), b"text\n");
             assert!(!written.exists());
+        }
+
+        // The assets folder of the app folder, as `run_bundled_tool` gives
+        // it: a program reads, changes, and makes the files of the stored
+        // assets, but it cannot delete one, make a folder there, or link a
+        // file of the app folder in, and it can open no other file of the
+        // app folder (the API keys, the app state, a conversation).
+        #[tokio::test]
+        async fn a_program_changes_the_assets_but_opens_no_other_file_of_the_app_folder() {
+            let dir = TempDir::new("tools-run-assets");
+            let (app, cache) = (dir.0.join("config"), dir.0.join("cache"));
+            let assets = program_app_folder(&app).expect("assets folder");
+            let (image, clip, made) = (assets.join("images").join("a.png"), assets.join("audio").join("b.wav"), assets.join("generated").join("images").join("c.png"));
+            let (new_folder, linked) = (assets.join("images").join("new"), assets.join("images").join("keys.png"));
+            let (keys, state, conversation) = (app.join("provider_keys.json"), app.join("app_state.json"), app.join("conversations").join("c.md"));
+            for (file, text) in [(&image, "image"), (&clip, "clip"), (&keys, "keys"), (&state, "state"), (&conversation, "conversation")] {
+                std::fs::create_dir_all(file.parent().expect("a folder")).expect("create");
+                std::fs::write(file, text).expect("write");
+            }
+            std::fs::create_dir_all(made.parent().expect("a folder")).expect("create");
+            // The error of the link goes to /dev/null: its text differs by
+            // OS (Landlock gives EXDEV for a link that needs `Refer`).
+            let text = format!(
+                "/bin/cat '{image}'; echo changed > '{clip}'; echo made > '{made}'; /bin/rm '{image}'; /bin/mkdir '{new_folder}'; /bin/cat '{keys}' '{state}' '{conversation}'; /bin/ln '{keys}' '{linked}' 2>/dev/null",
+                image = image.display(),
+                clip = clip.display(),
+                made = made.display(),
+                new_folder = new_folder.display(),
+                keys = keys.display(),
+                state = state.display(),
+                conversation = conversation.display(),
+                linked = linked.display(),
+            );
+            let mut run = script(&text, &cache.join("work").join("a"));
+            run.confined_to = cache.clone();
+            run.also_writable = vec![assets.clone()];
+
+            let sent = finished(run).await;
+
+            assert_eq!(sent.stdout, "image", "{NOT_CONFINED}");
+            // The delete, the folder, and the three reads.
+            assert_eq!(sent.stderr.matches(DENIED).count(), 5, "{}", sent.stderr);
+            assert_eq!(std::fs::read(&image).expect("read"), b"image");
+            assert_eq!(std::fs::read(&clip).expect("read"), b"changed\n");
+            assert_eq!(std::fs::read(&made).expect("read"), b"made\n");
+            assert!(!new_folder.exists());
+            assert!(!linked.exists());
         }
 
         #[tokio::test]

@@ -1,8 +1,10 @@
-//! Keeps a bundled program inside one folder at the OS level: the program
-//! can read and write only under that folder (Dez's cache folder for a
-//! bundled program, `run_bundled_tool`), and it can read its own file. So a
-//! program that a call tricks into opening a path (an argument, or a path in
-//! the content of a file, such as a playlist) gets "permission denied".
+//! Keeps a bundled program inside its folders at the OS level: the program
+//! can read and write only under one folder (Dez's cache folder for a
+//! bundled program, `run_bundled_tool`), read, make, and change files (but
+//! not delete, move, or link them) under a few more (the assets folder of
+//! the Dez folder), and read its own file. So a program that a call tricks
+//! into opening a path (an argument, or a path in the content of a file,
+//! such as a playlist) gets "permission denied".
 //! - Linux: Landlock, a part of the kernel since Linux 5.13.
 //! - macOS: Seatbelt, through `/usr/bin/sandbox-exec`, which ships with the
 //!   OS. It is the only program of the computer that a run starts.
@@ -31,17 +33,19 @@ fn warn_unconfined(cause: &str) {
 }
 
 // A command that starts `program` with `args`, confined to `folder`, with
-// read rights on `also_readable` too (only the tests, whose system programs
-// need the system's folders). The caller sets the rest (the work folder,
-// the environment, the pipes). An `Err` is a confinement that the OS has
-// but that Dez could not set up: the run does not start then.
+// the file rights of `also_writable` (read, make, and change a file; never
+// delete, move, or link one, nor make a folder) and read rights on
+// `also_readable` too (only the tests, whose system programs need the
+// system's folders). The caller sets the rest (the work folder, the
+// environment, the pipes). An `Err` is a confinement that the OS has but
+// that Dez could not set up: the run does not start then.
 #[cfg(target_os = "linux")]
-pub(crate) fn confined_command(program: &Path, args: &[String], folder: &Path, also_readable: &[PathBuf]) -> Result<Command, String> {
+pub(crate) fn confined_command(program: &Path, args: &[String], folder: &Path, also_writable: &[PathBuf], also_readable: &[PathBuf]) -> Result<Command, String> {
     use std::os::fd::AsRawFd;
 
     let mut command = Command::new(program);
     command.args(args);
-    match landlock_rules(program, folder, also_readable).map_err(|error| format!("Failed to set up the confinement of the program: {}", error))? {
+    match landlock_rules(program, folder, also_writable, also_readable).map_err(|error| format!("Failed to set up the confinement of the program: {}", error))? {
         // SAFETY: the closure runs in the child between fork and exec, where
         // only async-signal-safe calls are allowed (another thread of Dez can
         // hold the lock of the allocator at the fork). It makes two system
@@ -82,7 +86,7 @@ enum RulesError {
 // Landlock confines reads and writes. The file has `O_CLOEXEC`, so the
 // program does not get it.
 #[cfg(target_os = "linux")]
-fn landlock_rules(program: &Path, folder: &Path, also_readable: &[PathBuf]) -> Result<Option<std::os::fd::OwnedFd>, RulesError> {
+fn landlock_rules(program: &Path, folder: &Path, also_writable: &[PathBuf], also_readable: &[PathBuf]) -> Result<Option<std::os::fd::OwnedFd>, RulesError> {
     use landlock::{ABI, Access, AccessFs, PathBeneath, PathFd, Ruleset, RulesetAttr, RulesetCreatedAttr};
 
     let every_right = AccessFs::from_all(ABI::V9);
@@ -104,6 +108,15 @@ fn landlock_rules(program: &Path, folder: &Path, also_readable: &[PathBuf]) -> R
     ];
     for (device, rights) in devices.into_iter().filter(|(device, _)| Path::new(device).exists()) {
         ruleset = ruleset.add_rule(PathBeneath::new(PathFd::new(device)?, rights))?;
+    }
+    // With no `RemoveFile`, `MakeDir`, or `Refer`, a program cannot delete,
+    // move, or hard-link a file there, nor make a folder; with no `Execute`
+    // or `MakeSym`, it cannot start a file there or make a link to another
+    // file. Landlock checks the real path of each open, so a symlink or
+    // `..` from there reaches nothing else.
+    let file_rights = AccessFs::ReadFile | AccessFs::ReadDir | AccessFs::WriteFile | AccessFs::MakeReg | AccessFs::Truncate;
+    for path in also_writable {
+        ruleset = ruleset.add_rule(PathBeneath::new(PathFd::new(path)?, file_rights))?;
     }
     for path in also_readable {
         // The crate drops the folder rights of a rule on a file.
@@ -130,6 +143,9 @@ const SANDBOX_EXEC: &str = "/usr/bin/sandbox-exec";
 //   (`/private/var/…`), so they are canonical.
 // - File facts, extended attributes, and maps of the libraries stay
 //   allowed: dyld needs them, and Landlock does not confine them either.
+// - The rules of `also_writable` (added in `confined_command`) give read,
+//   write, and the create of a regular file, as `file_rights` of
+//   `landlock_rules`: no unlink, rename away, folder, or symlink there.
 #[cfg(target_os = "macos")]
 const SEATBELT_PROFILE: &str = r#"(version 1)
 (allow default)
@@ -150,7 +166,7 @@ const SEATBELT_PROFILE: &str = r#"(version 1)
 "#;
 
 #[cfg(target_os = "macos")]
-pub(crate) fn confined_command(program: &Path, args: &[String], folder: &Path, also_readable: &[PathBuf]) -> Result<Command, String> {
+pub(crate) fn confined_command(program: &Path, args: &[String], folder: &Path, also_writable: &[PathBuf], also_readable: &[PathBuf]) -> Result<Command, String> {
     if !Path::new(SANDBOX_EXEC).is_file() {
         warn_unconfined("this Mac has no /usr/bin/sandbox-exec");
         let mut command = Command::new(program);
@@ -165,6 +181,10 @@ pub(crate) fn confined_command(program: &Path, args: &[String], folder: &Path, a
     };
     // Only the count of the extra paths goes into the profile text.
     let mut profile = SEATBELT_PROFILE.to_string();
+    for index in 0..also_writable.len() {
+        profile.push_str(&format!("(allow file-read-data file-write-data (subpath (param \"WRITE_{index}\")))\n"));
+        profile.push_str(&format!("(allow file-write-create (require-all (subpath (param \"WRITE_{index}\")) (vnode-type REGULAR-FILE)))\n"));
+    }
     if !also_readable.is_empty() {
         let paths: Vec<String> = (0..also_readable.len()).map(|index| format!("(subpath (param \"READ_{index}\"))")).collect();
         profile.push_str(&format!("(allow file-read-data {})\n", paths.join(" ")));
@@ -174,6 +194,9 @@ pub(crate) fn confined_command(program: &Path, args: &[String], folder: &Path, a
     command.arg("-p").arg(profile);
     command.arg("-D").arg(parameter("FOLDER", &canonical(folder)?));
     command.arg("-D").arg(parameter("PROGRAM", &program));
+    for (index, path) in also_writable.iter().enumerate() {
+        command.arg("-D").arg(parameter(&format!("WRITE_{index}"), &canonical(path)?));
+    }
     for (index, path) in also_readable.iter().enumerate() {
         command.arg("-D").arg(parameter(&format!("READ_{index}"), &canonical(path)?));
     }
@@ -184,7 +207,7 @@ pub(crate) fn confined_command(program: &Path, args: &[String], folder: &Path, a
 }
 
 #[cfg(not(any(target_os = "linux", target_os = "macos")))]
-pub(crate) fn confined_command(program: &Path, args: &[String], _folder: &Path, _also_readable: &[PathBuf]) -> Result<Command, String> {
+pub(crate) fn confined_command(program: &Path, args: &[String], _folder: &Path, _also_writable: &[PathBuf], _also_readable: &[PathBuf]) -> Result<Command, String> {
     warn_unconfined("Dez knows no confinement of this OS");
     let mut command = Command::new(program);
     command.args(args);

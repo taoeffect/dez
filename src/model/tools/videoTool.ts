@@ -37,10 +37,11 @@ import { ToolError, type ToolArguments, type ToolParameter } from './types'
 // file tells ffmpeg to open (a playlist that names other files), and a new
 // option of a later ffmpeg can pass them. So the guard of the user's files
 // is the OS rule of every run (src-tauri/src/confinement.rs): the program
-// can open only the files of Dez's cache folder. Where the OS has no such
-// rule (a Linux kernel with no Landlock), the program runs with the rights
-// of the user, and these checks are its only guard. The OS rule is about
-// files only: the network always has only these checks.
+// can open only the files of Dez's cache folder and of the assets folder
+// of the Dez folder, where it can delete or move no file. Where the OS has
+// no such rule (a Linux kernel with no Landlock), the program runs with
+// the rights of the user, and these checks are its only guard. The OS rule
+// is about files only: the network always has only these checks.
 //
 // Every text here is a tool result or the result of a job: it goes to the
 // chat provider. So it names an image or a clip by its id only.
@@ -113,7 +114,7 @@ const FFMPEG_HELP = [
   'Inputs: name a video clip, an audio clip, or an image of this conversation by its id with an @, as in `-i @c`. '
     + 'Dez puts a copy of that file into the work folder and writes the name of the copy (as in c.mp4) in place of the @id. '
     + 'The file itself never changes. Name no other file: Dez refuses an argument that names a file outside the work folder. '
-    + 'On Linux with Landlock and on macOS, the system also lets ffmpeg open no file outside the cache folder of Dez, so a file that names another file (a playlist, a list) cannot reach a file of the user. '
+    + 'On Linux with Landlock and on macOS, the system also lets ffmpeg open no file outside the cache folder and the assets folder of Dez, so a file that names another file (a playlist, a list) cannot reach the other files of the user. '
     + 'A PNG or SVG image goes as a JPEG copy, with white in place of transparent pixels.',
   'Outputs: give each output a new file name with no folder, made of ASCII letters, digits, ".", "_", and "-" only. '
     + `Dez keeps the new files whose name ends in ${KEPT_ENDINGS}, at most ${MAX_VIDEO_OUTPUT_FILES} for one call, and deletes every other file. `

@@ -192,8 +192,8 @@ describe('bundled tools', () => {
 
   // The OS rule of src-tauri/src/confinement.rs (Landlock on Linux): the
   // spec runs the programs with paths that the argument checks of the
-  // `video` tool refuse, to show what the OS still stops.
-  it('lets a program open only the files of the cache folder', async () => {
+  // `video` tool refuse, to show what the OS still allows and stops.
+  it('lets a program open only the files of the cache folder and of the assets folder', async () => {
     const folder = workFolderPath(randomUUID())
     const dir = path.join(workDir(app.home), path.basename(folder))
     const finishedRun = async (tool: BundledTool, args: string[]) => {
@@ -204,17 +204,23 @@ describe('bundled tools', () => {
     const tone = ['-v', 'error', '-f', 'lavfi', '-i', 'sine=frequency=440:duration=0.2']
 
     // An MPEG-TS clip, a type that an HLS playlist can name, in the cache
-    // folder but not in the work folder, in the app folder, and in the home
-    // folder.
+    // folder but not in the work folder, in the assets folder of the app
+    // folder, and in the home folder.
     expect((await finishedRun('dez-ffmpeg', [...tone, '-c:a', 'mp2', 'tone.ts'])).end).toStrictEqual({ kind: 'exited', code: 0 })
     const clip = fs.readFileSync(path.join(dir, 'tone.ts'))
     const cached = await writeTestFile(path.join(mediaTempDir(app.home), `${randomUUID()}.ts`), clip)
-    const appData = await writeTestFile(appFilePath(app.home, 'assets', 'audio', `${randomUUID()}.ts`), clip)
+    const asset = await writeTestFile(appFilePath(app.home, 'assets', 'audio', `${randomUUID()}.ts`), clip)
     const home = await writeTestFile(path.join(app.home, 'clips', 'tone.ts'), clip)
+    // Files of the app folder outside its assets folder: a key file with no
+    // keys, and the app state of the seed.
+    const keys = await writeTestFile(appFilePath(app.home, 'provider_keys.json'), Buffer.from('{}'))
+    const appState = appFilePath(app.home, 'app_state.json')
 
     const probe = (file: string) => finishedRun('dez-ffprobe', ['-v', 'error', '-show_entries', 'format=format_name', '-of', 'csv=p=0', file])
-    expect(await probe(cached)).toStrictEqual({ stdout: 'mpegts\n', stderr: '', end: { kind: 'exited', code: 0 }, refusal: null })
-    for (const file of [appData, home]) {
+    for (const file of [cached, asset]) {
+      expect(await probe(file)).toStrictEqual({ stdout: 'mpegts\n', stderr: '', end: { kind: 'exited', code: 0 }, refusal: null })
+    }
+    for (const file of [keys, appState, home]) {
       const refused = await probe(file)
       expect({ stdout: refused.stdout, end: refused.end }).toStrictEqual({ stdout: '', end: { kind: 'exited', code: 1 } })
       expect(refused.stderr).toContain('Permission denied')
@@ -234,6 +240,11 @@ describe('bundled tools', () => {
     expect(refused.stderr).toContain('Error when loading first segment')
     expect(fs.existsSync(path.join(dir, 'home.mkv'))).toBe(false)
 
+    // ffmpeg writes a new file into the assets folder, and none outside the
+    // two folders.
+    const stored = path.join(path.dirname(asset), `${randomUUID()}.wav`)
+    expect(await finishedRun('dez-ffmpeg', [...tone, stored])).toStrictEqual({ stdout: '', stderr: '', end: { kind: 'exited', code: 0 }, refusal: null })
+    expect(fs.readFileSync(stored).subarray(0, 4).toString()).toBe('RIFF')
     const written = path.join(app.home, 'written.wav')
     const write = await finishedRun('dez-ffmpeg', [...tone, written])
     expect(write.end).not.toStrictEqual({ kind: 'exited', code: 0 })

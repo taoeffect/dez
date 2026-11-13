@@ -27,12 +27,13 @@ import type { BundledTool, BundledToolEnd, BundledToolInput, BundledToolOutput, 
 // Each call has its own new work folder in the cache root
 // (model/tools/workFolders.ts). The program runs in it and gets only
 // copies of the inputs that the call names, under neutral names, so it
-// cannot change a file of the user, and no path of the user's computer is
-// in its arguments. Where the OS can, Rust also lets the program open only
-// the files of the cache root (src-tauri/src/confinement.rs). The folder
-// goes at the end of the call, with all that the program wrote. Only the
-// files that Dez keeps move out of it first, into the generated folders of
-// the Dez folder.
+// does not change the files of its inputs, and no path of the user's
+// computer is in its arguments. Where the OS can, Rust also lets the
+// program open only the files of the cache root and of the assets folder
+// of the Dez folder, where it cannot delete or move a file
+// (src-tauri/src/confinement.rs). The folder goes at the end of the call,
+// with all that the program wrote. Only the files that Dez keeps move out
+// of it first, into the generated folders of the Dez folder.
 //
 // An error of the system (a native error text) can hold a path: it goes to
 // the log only, never into a text for a model.
