@@ -6,6 +6,7 @@ import { MAX_SAVED_CLIP_BYTES } from '../chat/mediaFiles'
 import { findMediaTags, sectionClipSource, type MediaTag } from '../chat/mediaTags'
 import type { Section } from '../chat/types'
 import { assetIdArgument } from './arguments'
+import { madeAssetText } from './jobs'
 import type { KeptFile, ProgramEnd } from './programRuns'
 import { subcommandToolDefinition, type SubcommandTool } from './subcommands'
 import { ToolError, type ToolArguments } from './types'
@@ -260,6 +261,6 @@ export function audioLengthText(id: string, duration: number): string {
  *  from `part` of the clip `id`. It names the clips by their ids only: a
  *  result goes to the provider, which gets no path of a stored file. */
 export function audioCutResultText(id: string, newId: string, part: AudioPart, duration: number): string {
-  return `Made the audio clip @${newId} from @${id}, from second ${secondsText(part.start)} to second ${secondsText(part.end)}. `
+  return `${madeAssetText('audio', newId)} from @${id}, from second ${secondsText(part.start)} to second ${secondsText(part.end)}. `
     + `The audio clip @${newId} is ${secondsText(duration)} seconds long.`
 }

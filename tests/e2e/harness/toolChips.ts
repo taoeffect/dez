@@ -14,7 +14,8 @@ export interface ToolChipView {
   unrecognized: string | null
   name: string
   summary: string | null
-  /** "failed" or "interrupted"; null for a call that succeeded or runs. */
+  /** "failed", "interrupted", or "not run"; null for a call that succeeded
+   *  or runs. */
   stateWord: string | null
   spinner: boolean
   expanded: string | null

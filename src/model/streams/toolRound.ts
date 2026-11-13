@@ -10,8 +10,10 @@ import type { StreamedToolCall, ToolArguments, ToolRunResult } from '../tools/ty
 // round.
 
 /** The most tool rounds in one reply. A model that keeps calling tools
- *  would else send requests with no end. */
-export const MAX_TOOL_ROUNDS = 20
+ *  would else send requests with no end. A reply that makes a video from
+ *  parts needs about 25: the model lists, the calls of the parts, their
+ *  waits, the join, and its wait. */
+export const MAX_TOOL_ROUNDS = 40
 
 /** The result of a call that was not done when the user stopped the reply. */
 export const STOPPED_TOOL_RESULT: ToolRunResult = { content: 'Stopped.', isError: true }
@@ -20,6 +22,34 @@ export const STOPPED_TOOL_RESULT: ToolRunResult = { content: 'Stopped.', isError
 export const ROUND_LIMIT_TOOL_RESULT: ToolRunResult = {
   content: `Not run: the reply reached the limit of ${MAX_TOOL_ROUNDS} tool rounds.`,
   isError: true,
+}
+
+/** True for the result text of a call that the round limit stopped
+ *  (`ROUND_LIMIT_TOOL_RESULT`), with any limit: a block of a release with
+ *  another limit still reads. Such a call did not run, which the chip of
+ *  its block tells apart from a call that ran and failed. */
+export function isRoundLimitResult(result: string): boolean {
+  return /^Not run: the reply reached the limit of \d+ tool rounds\.$/.test(result)
+}
+
+/** From this many rounds left, the results of a round tell the model how
+ *  many rounds the reply has left (`roundsLeftNote`). */
+export const ROUNDS_LEFT_NOTE_FROM = 5
+
+/** What the last result of a tool round adds for the model when the reply
+ *  can run only `roundsLeft` more tool rounds; null while more than
+ *  `ROUNDS_LEFT_NOTE_FROM` are left. No other text tells the model the
+ *  limit, and a model that meets it with no warning leaves its work half
+ *  done and tells the user nothing of it. */
+export function roundsLeftNote(roundsLeft: number): string | null {
+  if (roundsLeft > ROUNDS_LEFT_NOTE_FROM) return null
+  if (roundsLeft <= 0) {
+    return 'Note from Dez: this was the last round of tool calls that this reply can run: a call that you make now does not run. '
+      + 'Write your answer to the user now, and tell what is not done. The user can send a new message to let you go on.'
+  }
+  return `Note from Dez: this reply can run ${roundsLeft} more ${roundsLeft === 1 ? 'round' : 'rounds'} of tool calls `
+    + '(the calls of one answer of yours are one round; a new message of the user starts the count again). Calls after that do not run. '
+    + 'So make the calls that the result needs most, and then tell the user what is not done.'
 }
 
 /** A call from a reply stream after Dez checked it. */
@@ -73,6 +103,22 @@ export function toolCallBlock(call: CheckedToolCall, result?: ToolRunResult): To
   if (call.refusal !== undefined) return { ...block, status: 'error', result: call.refusal }
   if (!result) return { ...block, status: 'running', result: '' }
   return { ...block, status: result.isError ? 'error' : 'success', result: result.content }
+}
+
+/** The blocks of a round whose calls have their `results` (by the index
+ *  of the call; none for a refused call), when the reply can run
+ *  `roundsLeft` more rounds after this one. Near the limit, the result of
+ *  the last block ends with `roundsLeftNote`, after a blank line: the note
+ *  is a part of the stored result, so every later request sends the same
+ *  bytes. It goes after the result, so a reader of a result's start
+ *  (`startedJobId`) or of its job parts (`jobsWaitResults`) still reads
+ *  it. */
+export function toolRoundBlocks(calls: readonly CheckedToolCall[], results: readonly (ToolRunResult | undefined)[], roundsLeft: number): ToolBlockData[] {
+  const note = roundsLeftNote(roundsLeft)
+  return calls.map((call, index) => {
+    const block = toolCallBlock(call, results[index])
+    return note !== null && index === calls.length - 1 ? { ...block, result: `${block.result}\n\n${note}` } : block
+  })
 }
 
 /** The text of a group of blocks: each block and a `\n` after it, as

@@ -43,10 +43,35 @@ export function newJobId(taken: (id: string) => boolean, random: () => number = 
   }
 }
 
-/** The result of a call that started the job `jobId`. A runner can add
- *  lines after it. */
-export function jobStartedText(jobId: string): string {
-  return `Started the job ${jobId}. It runs in the background. Start the other jobs that you need now, then call jobs_wait to get the results.`
+/** Which call of its reply started a job, for the reader of the job's
+ *  result. A result comes when its job ends, and an image or a clip of
+ *  the job gets its id then, so neither tells the order of the calls. */
+export interface JobCall {
+  /** The place of the job in the order of the reply's job starts: 1 for
+   *  the first job. Two calls can begin with the same words, so only the
+   *  number always tells them apart. */
+  number: number
+  /** How the call begins (`jobCallLabel`); blank for none. */
+  label: string
+}
+
+// The most characters of a label: it goes into each result of its job.
+const JOB_LABEL_CHARS = 80
+
+/** The label of a call from `text`, the argument that tells most what the
+ *  call asks for (a prompt, a command line): its start, on one line. It
+ *  holds no double quote, as a job part keeps it in an attribute
+ *  (`jobPart`). The text is the model's own, which a request already
+ *  holds. */
+export function jobCallLabel(text: string): string {
+  const line = [...text.replace(/"/g, '\'').replace(/\s+/g, ' ').trim()]
+  return line.length <= JOB_LABEL_CHARS ? line.join('') : `${line.slice(0, JOB_LABEL_CHARS - 1).join('').trimEnd()}…`
+}
+
+/** The result of a call that started the job `jobId` as the job `number`
+ *  of its reply (`JobCall.number`). A runner can add lines after it. */
+export function jobStartedText(jobId: string, number: number): string {
+  return `Started the job ${jobId}. It is job ${number} of this reply, and it runs in the background. Start the other jobs that you need now, then call jobs_wait to get the results.`
 }
 
 const STARTED_JOB = new RegExp(`^Started the job (${JOB_ID_SOURCE})\\.`)
@@ -120,6 +145,32 @@ export type JobAssetKind = 'image' | 'audio' | 'video'
 /** The name of each kind of asset in a text for a model. */
 export const ASSET_NAMES: Readonly<Record<JobAssetKind, string>> = { image: 'image', audio: 'audio clip', video: 'video clip' }
 
+const ASSET_NAME_SOURCE = Object.values(ASSET_NAMES).join('|')
+
+/** The start of the sentence with which a tool result names an image or a
+ *  clip that its call made and that Dez put into the reply, as in "Made
+ *  the image @b." and "Made the image @b from @a." Every result that tells
+ *  of such an asset starts a line with it (a job part of `jobs_wait`, and
+ *  the result of a tool that makes its asset in its call). A request reads
+ *  it: the result tells the model of the asset, so the asset's own text in
+ *  the reply does not go (`madeAssetIds`; `roundRequestText`,
+ *  streams/messages.ts). */
+export function madeAssetText(kind: JobAssetKind, id: string): string {
+  return `Made the ${ASSET_NAMES[kind]} @${id}`
+}
+
+// `madeAssetText`, with the id as its one group.
+const MADE_ASSET_SOURCE = `Made the (?:${ASSET_NAME_SOURCE}) @([a-z]+)`
+const MADE_ASSET_LINE_START = new RegExp(`^${MADE_ASSET_SOURCE}\\b`, 'gm')
+
+/** The ids of the assets that a tool result names with `madeAssetText`, in
+ *  text order. Only that sentence start counts, not any `@id` word: a
+ *  result can name an asset that its call did not make (an input, an
+ *  example). */
+export function madeAssetIds(resultText: string): string[] {
+  return [...resultText.matchAll(MADE_ASSET_LINE_START)].map((match) => match[1])
+}
+
 /** One asset of a job after Dez put it into the reply: `id` is its new id
  *  there, or null when the reply took no asset any more. */
 export interface WrittenJobAsset {
@@ -130,7 +181,7 @@ export interface WrittenJobAsset {
 function assetLine({ kind, id }: WrittenJobAsset): string {
   return id === null
     ? `The reply stopped before Dez could add the ${ASSET_NAMES[kind]} of this job to it, so there is no new ${ASSET_NAMES[kind]}.`
-    : `Made the ${ASSET_NAMES[kind]} @${id}.`
+    : `${madeAssetText(kind, id)}.`
 }
 
 /** The result text of a job for its reader: the job's own `text` as it is
@@ -140,9 +191,8 @@ export function jobResultText(text: string, assets: readonly WrittenJobAsset[]):
   return [...(text.trim() === '' ? [] : [text]), ...assets.map(assetLine)].join('\n')
 }
 
-const ASSET_NAME_SOURCE = Object.values(ASSET_NAMES).join('|')
 // One line of `assetLine`, of either form.
-const ASSET_LINE = new RegExp(`^(?:Made the (?:${ASSET_NAME_SOURCE}) @[a-z]+\\.|The reply stopped before Dez could add the (${ASSET_NAME_SOURCE}) of this job to it, so there is no new \\1\\.)$`)
+const ASSET_LINE = new RegExp(`^(?:${MADE_ASSET_SOURCE}\\.|The reply stopped before Dez could add the (${ASSET_NAME_SOURCE}) of this job to it, so there is no new \\2\\.)$`)
 
 /** The job's own text of a `jobResultText`: the text without the lines of
  *  its assets. Blank when the job gave only assets. A last line of the
@@ -162,6 +212,9 @@ export interface JobResult {
   status: JobResultStatus
   /** `jobResultText`. */
   text: string
+  /** Null in a result that Dez wrote before the job parts named their
+   *  calls. */
+  call: JobCall | null
 }
 
 /** The result of a `jobs_wait` call when no job runs and no result waits. */
@@ -176,41 +229,48 @@ const NO_JOB_OUTPUT_TEXT = 'The job gave no output.'
 // a later reader of the parts.
 const jobTextEscape = tagEscape('job')
 
-function jobPart({ id, tool, status, text }: JobResult): string {
+function jobPart({ id, tool, status, text, call }: JobResult): string {
   const body = text.trim() === '' ? NO_JOB_OUTPUT_TEXT : jobTextEscape.escape(text)
-  return `<job id="${id}" tool="${tool}" status="${status}">\n${body}\n</job>`
+  const number = call === null ? '' : ` number="${call.number}"`
+  const label = call === null || call.label === '' ? '' : ` call="${call.label}"`
+  return `<job id="${id}"${number} tool="${tool}" status="${status}"${label}>\n${body}\n</job>`
 }
 
 /** The result of a `jobs_wait` call: a first line that tells how many jobs
  *  ended and how many of the reply's jobs still run (`running`), then one
- *  part for each job of `results`:
+ *  part for each job of `results`, which names its call (`JobCall`):
  *
- *      <job id="j-k3x9" tool="model_invoke" status="finished">
+ *      <job id="j-k3x9" number="2" tool="model_invoke" status="finished" call="A red fox in the snow">
  *      Made the image @c.
  *      </job>
  *
  *  `results` is empty only when no job runs (`NO_OPEN_JOBS_TEXT`). */
 export function jobsWaitText(results: readonly JobResult[], running: number): string {
   if (results.length === 0) return NO_OPEN_JOBS_TEXT
-  const rest = running === 0
-    ? 'No job still runs.'
-    : `${running === 1 ? '1 job still runs' : `${running} jobs still run`}: call jobs_wait again to get ${running === 1 ? 'its result' : 'their results'}.`
+  let rest = 'No job still runs.'
+  if (running === 1) rest = '1 job still runs: call jobs_wait again to get its result.'
+  else if (running > 1) rest = `${running} jobs still run: call jobs_wait again to get their results (with \`all\`, one call waits for all of them).`
   return [`${results.length === 1 ? '1 job' : `${results.length} jobs`} ended. ${rest}`, ...results.map(jobPart)].join('\n\n')
 }
 
 // One part of `jobPart`. The body is escaped, so its first `\n</job>` line
-// is the end of the part, and a part inside a body does not start one.
-const JOB_PART = new RegExp(`<job id="(${JOB_ID_SOURCE})" tool="([^"\\n]*)" status="(finished|failed|timed out)">\\n([\\s\\S]*?)\\n</job>`, 'g')
+// is the end of the part, and a part inside a body does not start one. A
+// part of an older conversation has no `number` and no `call`.
+const JOB_PART = new RegExp(
+  `<job id="(${JOB_ID_SOURCE})"(?: number="(\\d+)")? tool="([^"\\n]*)" status="(finished|failed|timed out)"(?: call="([^"\\n]*)")?>\\n([\\s\\S]*?)\\n</job>`,
+  'g',
+)
 
 /** The results in the result text of a `jobs_wait` call (`jobsWaitText`),
  *  in order, each with the text that `jobResultText` gave (blank for a job
  *  with no output). None for any other text. */
 export function jobsWaitResults(resultText: string): JobResult[] {
-  return [...resultText.matchAll(JOB_PART)].map(([, id, tool, status, body]) => ({
+  return [...resultText.matchAll(JOB_PART)].map(([, id, number, tool, status, label, body]) => ({
     id,
     tool,
     status: status as JobResultStatus,
     text: body === NO_JOB_OUTPUT_TEXT ? '' : jobTextEscape.unescape(body),
+    call: number === undefined ? null : { number: Number(number), label: label ?? '' },
   }))
 }
 
@@ -226,6 +286,7 @@ export interface JobInfo {
   elapsedMs: number
   /** The last state that the job reported; blank for none. */
   state: string
+  call: JobCall
 }
 
 /** The result of a `jobs_list` call for a reply with no job. */
@@ -239,20 +300,26 @@ function resultColumn(job: JobInfo): string {
 
 /** The result of a `jobs_list` call: a first line with the count, the
  *  columns, and what their values mean, then one line for each job, in the
- *  order of their starts. */
+ *  order of their starts. The label of the call is the last column: it is
+ *  free text, which can hold the column mark. */
 export function jobsListText(jobs: readonly JobInfo[]): string {
   if (jobs.length === 0) return NO_JOBS_TEXT
-  const head = `${jobs.length === 1 ? '1 job' : `${jobs.length} jobs`} of this reply (id | tool | status | result | seconds). `
+  const head = `${jobs.length === 1 ? '1 job' : `${jobs.length} jobs`} of this reply (number | id | tool | status | result | seconds | call). `
+    + 'number: the place of the job in the order of the starts. '
     + 'result: `ready` means that the next jobs_wait gives it, `given` that a jobs_wait gave it, and `-` that there is none. '
-    + 'seconds: how long the job ran, or runs so far.'
-  return [head, ...jobs.map((job) => [job.id, job.tool, job.status, resultColumn(job), Math.round(job.elapsedMs / 1000)].join(' | '))].join('\n')
+    + 'seconds: how long the job ran, or runs so far. '
+    + 'call: how the prompt or the arguments of its call begin.'
+  const rows = jobs.map((job) => [
+    job.call.number, job.id, job.tool, job.status, resultColumn(job), Math.round(job.elapsedMs / 1000), job.call.label === '' ? '-' : job.call.label,
+  ].join(' | '))
+  return [head, ...rows].join('\n')
 }
 
 /** The result of a `job_inspect` call: the status of the job, what to do
- *  for its result, and the last state that it reported. */
+ *  for its result, the last state that it reported, and its call. */
 export function jobInspectText(job: JobInfo): string {
   const time = secondsText(job.elapsedMs)
-  const name = `The job ${job.id} (${job.tool})`
+  const name = `The job ${job.id} (job ${job.call.number} of this reply, ${job.tool})`
   const result = job.delivered ? 'A jobs_wait call gave its result.' : 'Its result is ready: call jobs_wait to get it.'
   let status: string
   switch (job.status) {
@@ -265,7 +332,8 @@ export function jobInspectText(job: JobInfo): string {
     default:
       status = `${name} ${job.status} after ${time}. ${result}`
   }
-  return `${status}\n${job.state.trim() === '' ? 'The job reported no state.' : `State: ${job.state}`}`
+  const state = job.state.trim() === '' ? 'The job reported no state.' : `State: ${job.state}`
+  return [status, state, ...(job.call.label === '' ? [] : [`Its call begins: ${job.call.label}`])].join('\n')
 }
 
 /** The error result of a `job_inspect` call whose `jobId` names no job of
@@ -280,7 +348,8 @@ export function unknownJobText(jobId: string, knownIds: readonly string[]): stri
 // The descriptions are static (no counts, no dates): the tools array and
 // the system prompt, which lists them, are in the provider's prompt cache.
 // They are brief, as each word goes with every chat request, but a model
-// must learn from them alone how jobs run at the same time.
+// must learn from them alone how jobs run at the same time, and that a
+// result comes in the order of the job ends, not of the calls.
 
 export const JOBS_WAIT_TOOL: ToolDefinition = {
   name: 'jobs_wait',
@@ -288,14 +357,28 @@ export const JOBS_WAIT_TOOL: ToolDefinition = {
     + 'A Dez tool whose work takes long starts a job: its call returns a job id at once, and the work runs in the background. '
     + 'Jobs run at the same time, so start every job that you need before you wait. '
     + '`jobs_wait` returns when one or more jobs ended. It gives the result of each of those jobs once, with its job id and its status (finished, failed, or timed out). '
+    + 'The results come in the order in which the jobs ended, which is not the order of your calls. '
+    + 'So each result names its call: `number` is the place of the job in the order of the starts (the result of the call that started it told the same number), '
+    + 'and `call` is how the prompt or the arguments of that call begin. '
     + 'An image or a clip that a job made goes into your reply then, and the result gives its id. '
+    + 'These ids follow the order of the results too: before you use them in an order (the scenes of a video), read from `number` which call made each one. '
     + 'The first line tells how many jobs still run: call `jobs_wait` again until none runs. Get the result of every job before you end your reply.',
-  parameters: [],
+  parameters: [
+    {
+      name: 'all',
+      type: 'boolean',
+      description: 'Set it to `true` to wait until every job of this reply ended, and to get all their results in one call. '
+        + 'A reply can make only a limited count of rounds of tool calls, and each `jobs_wait` call that gives one result uses one: '
+        + 'set it when you need all the results before your next step. The default is `false`.',
+      required: false,
+    },
+  ],
 }
 
 export const JOBS_LIST_TOOL: ToolDefinition = {
   name: 'jobs_list',
-  description: 'List the jobs that this reply started: the id, the tool, and the status of each job, whether `jobs_wait` gave its result, and how long it ran. '
+  description: 'List the jobs that this reply started, in the order of the starts: the number, the id, the tool, and the status of each job, '
+    + 'whether `jobs_wait` gave its result, how long it ran, and how its call begins. '
     + 'It does not wait, and it gives no result of a job.',
   parameters: [],
 }

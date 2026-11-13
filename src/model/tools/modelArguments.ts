@@ -1,5 +1,5 @@
 import { rawErrorText } from '../../utils/errorText'
-import { parseModelRefKey } from '../chat/modelRef'
+import { modelRefKey, parseModelRefKey } from '../chat/modelRef'
 import type { ModelRef } from '../chat/types'
 import { availableModels } from '../modelSearch'
 import type { ModelCache } from '../persistence/types'
@@ -30,22 +30,87 @@ export function listedModel(cache: ModelCache, providers: readonly ProviderInfo[
   return { ...(provider && { provider }), ...(model && { model }) }
 }
 
+// The most ids that the error of a wrong id names.
+const MAX_NEAR_IDS = 3
+
+// The letters and the digits of an id, in lower case: a model that copies
+// an id writes `2-6` for `2.6`, `_` for `-`, or a capital.
+function idLetters(id: string): string {
+  return id.toLowerCase().replace(/[^a-z0-9]+/g, '')
+}
+
+// How many single-character changes (insert, delete, replace) turn `a`
+// into `b`: the Levenshtein distance, with one row of the table at a time.
+function editDistance(a: string, b: string): number {
+  let row = Array.from({ length: b.length + 1 }, (_, index) => index)
+  for (let i = 1; i <= a.length; i++) {
+    const next = [i]
+    for (let j = 1; j <= b.length; j++) {
+      next[j] = Math.min(row[j] + 1, next[j - 1] + 1, row[j - 1] + (a[i - 1] === b[j - 1] ? 0 : 1))
+    }
+    row = next
+  }
+  return row[b.length]
+}
+
+// The fewest letters and digits of an id that count as a part of another
+// id: a shorter text (`o1`) is in too many ids by chance.
+const MIN_PART_LENGTH = 4
+
+/** The full ids of the models of `models` whose ids are nearest to
+ *  `modelId`, the nearest first, at most `MAX_NEAR_IDS`; none when no id
+ *  is near. Only the letters and the digits count (`idLetters`). An id is
+ *  near when a few changes make it (one for each five characters), or when
+ *  one id holds the other (`gpt-4o` for `openai/gpt-4o`). */
+export function nearModelIds(models: readonly ModelInfo[], modelId: string): string[] {
+  const wanted = idLetters(modelId)
+  if (wanted === '') return []
+  const mostChanges = Math.max(1, Math.floor(wanted.length / 5))
+  return models
+    .flatMap((model) => {
+      const letters = idLetters(model.id)
+      const distance = editDistance(wanted, letters)
+      const [shorter, longer] = wanted.length < letters.length ? [wanted, letters] : [letters, wanted]
+      const near = distance <= mostChanges || (shorter.length >= MIN_PART_LENGTH && longer.includes(shorter))
+      return near ? [{ id: modelRefKey({ providerId: model.provider, modelId: model.id }), distance }] : []
+    })
+    .sort((a, b) => a.distance - b.distance)
+    .slice(0, MAX_NEAR_IDS)
+    .map(({ id }) => id)
+}
+
+// What the error of a wrong id adds: the near ids among `models`, so that
+// the next call needs no `model_list` call first. Empty with none.
+function nearIdsText(models: readonly ModelInfo[], modelId: string): string {
+  const ids = nearModelIds(models, modelId).map((id) => JSON.stringify(id))
+  if (ids.length === 0) return ''
+  return ids.length === 1
+    ? ` The nearest id of a model that the user can use is ${ids[0]}.`
+    : ` The nearest ids of models that the user can use are ${ids.join(', ')}.`
+}
+
 /** The provider and the model that a call names with `named`, a full id
  *  (`provider/model`, split at the first `/`), among the models that
  *  `model_list` lists.
  *
  *  Throws for a text that is not a full id, an unknown provider, and a
- *  model that the user cannot use; the error points to `model_list`, for
- *  the model to read. `advice` is what the error of a text that is no full
- *  id adds: a tool whose `model` is optional tells there what a call with
- *  no `model` gets. */
+ *  model that the user cannot use; the error names the near ids
+ *  (`nearModelIds`) and points to `model_list`, for the model to read.
+ *  `advice` is what the error of a text that is no full id adds: a tool
+ *  whose `model` is optional tells there what a call with no `model`
+ *  gets. */
 export function namedModelTarget(cache: ModelCache, providers: readonly ProviderInfo[], named: string, advice = ''): ModelTarget {
   const ref = parseModelRefKey(named)
-  if (!ref) throw new ToolError(`${JSON.stringify(named)} is not a full model id (provider/model). ${FIND_MODELS}${advice === '' ? '' : ` ${advice}`}`)
+  if (!ref) {
+    const near = nearIdsText(availableModels(cache, providers), named)
+    throw new ToolError(`${JSON.stringify(named)} is not a full model id (provider/model).${near} ${FIND_MODELS}${advice === '' ? '' : ` ${advice}`}`)
+  }
   const { provider, model } = listedModel(cache, providers, ref)
   if (provider && model) return { provider, model }
-  if (!provider) throw new ToolError(`No provider has the id ${JSON.stringify(ref.providerId)}. ${FIND_MODELS}`)
-  throw new ToolError(`The user cannot use the model ${JSON.stringify(named)}. ${FIND_MODELS}`)
+  if (!provider) {
+    throw new ToolError(`No provider has the id ${JSON.stringify(ref.providerId)}.${nearIdsText(availableModels(cache, providers), ref.modelId)} ${FIND_MODELS}`)
+  }
+  throw new ToolError(`The user cannot use the model ${JSON.stringify(named)}.${nearIdsText(availableModels(cache, [provider]), ref.modelId)} ${FIND_MODELS}`)
 }
 
 /** The parameter values that the `parameters` argument of a call names (the

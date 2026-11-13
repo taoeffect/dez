@@ -85,6 +85,7 @@ sbp('dez.ui/toast', 'app-global', {
 | `closeable` | No | `boolean` | Shows or hides the close button. |
 | `actionLabel` | No | `string` | Renders a text-button action inside the toast. |
 | `sbpInvocation` | No | `{ selector: string, args?: unknown[] }` or `[string, ...unknown[]]` | Invoked when the toast body or action is clicked: `[selector, ...args]` calls `sbp(selector, ...args)`. The selector may be async. A selector that throws or rejects is logged with `console.error`. |
+| `group` | No | `string` | A name that the toast shares with the toasts that go out of date together. `dez.ui/closeToasts` closes them by it. |
 
 Defaults applied by `dez.ui/toast`:
 
@@ -94,6 +95,16 @@ Defaults applied by `dez.ui/toast`:
   position: 'bottom-right',
   closeable: true,
 }
+```
+
+## Closing toasts from code
+
+`dez.ui/closeToasts` closes the open toasts of an area that have a `group`. Use it when a later action makes a sticky toast untrue.
+
+```js
+sbp('dez.ui/toast', 'app-global', { message: 'The reply failed', variant: 'error', group: 'reply-error:tab-1' })
+
+sbp('dez.ui/closeToasts', 'app-global', 'reply-error:tab-1')
 ```
 
 ## Behavior notes
@@ -108,6 +119,7 @@ Defaults applied by `dez.ui/toast`:
 - `closeable: false` hides the close button, but the toast can still close by timeout or max-count eviction.
 - `error` toasts have a red tint, a red stripe on the left, and a red icon and title, from the theme variables `--color-error`, `--color-error-bg`, and `--color-error-border` in `App.vue` (light and dark values). The card grows with its text from the normal 360 px up to 560 px (never wider than the window less 32 px). A message taller than 40% of the window scrolls inside the card. The message text is selectable, so the user can copy it.
 - Errors of a chat or media request (`dez.stream/start`), also an error event inside a chat stream, and a send with no model or with a model that Dez cannot use (`dez.controller/submitTab`), are `error` toasts with no `duration`, so they stay until the user closes them. The thread shows no error text. E2E specs read open error toasts with `openToasts(browser, 'error')` in `tests/e2e/harness/thread.ts`.
+- The error toasts of a reply (a failed request, the tool round limit, failed jobs) have the group of their tab. The next reply of that tab closes them (`dez.stream/start`, `src/controller/stream.ts`): they tell of a reply that is not the newest one. The toasts of other tabs stay, and so does a "Cannot send" toast, which has no group.
 - The jobs of a reply that failed, and whose results the model did not get before the reply ended, show in one such `error` toast for all of them (`Job failed`, `N jobs failed`; `endReply`, `src/controller/stream.ts`): a container shows only 4 toasts.
 - An error message is Dez's explanation first, then a blank line and `Details: <raw text>` (`errorText`, `src/utils/errorText.ts`). The message keeps its line breaks (`white-space: pre-wrap`), so the details are a paragraph of their own.
 - Toast title, message, and action text are rendered as Vue text bindings, not `v-html`, so HTML in toast content is not executed.

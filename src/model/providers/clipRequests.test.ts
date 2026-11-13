@@ -552,6 +552,19 @@ describe('a clip job', () => {
     expect(consoleError.mock.calls.map(([text]) => text)).toStrictEqual(['The clip job q-1 of Media server (model m) failed:'])
   })
 
+  // Only the user can ask the provider about a job, so the model of a
+  // `model_invoke` call gets the id to pass on.
+  it('tells a model that called what a new call can change, and to give the user the job id', async () => {
+    answers = [json({ queue_id: 'q-1' }), json({ status: 'FAILED' })]
+
+    const failure = expect(generate({ kind: 'music', reader: 'model' })).rejects.toThrow(
+      'Media server did not make the clip. The cause can be the prompt (Media server can refuse a prompt) or a problem at Media server: the details below tell what Media server said. '
+      + 'Change the prompt, or call again once. Media server ran this request as its job q-1: give the user this id, with which the user can ask Media server about the clip.\n\nDetails: State: FAILED',
+    )
+    await vi.advanceTimersByTimeAsync(5 * SECOND_MS)
+    await failure
+  })
+
   it('fails when the content request of a finished job gives no clip', async () => {
     cacheModel('router-like', OPENROUTER_VIDEO_PARAMETERS)
     answers = [json({ id: 'gen-1' }, 202), json({ status: 'completed' }), json({ error: 'Not ready' })]

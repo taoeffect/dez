@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest'
+import { parseToolArguments } from './arguments'
 import { parseSubcommandCall, subcommandToolDefinition, type SubcommandTool } from './subcommands'
 import { ToolError } from './types'
 
@@ -77,6 +78,44 @@ describe('subcommandToolDefinition', () => {
       + 'Call it with no arguments to list them with what each one does. '
       + 'To get the details of a subcommand (what it does, its parameters, and an example call), call help with its name, '
       + 'as in {"command":"help","parameters":"{\\"command\\":\\"list\\"}"}.')
+  })
+})
+
+// A model that knows a parameter from another tool writes it next to
+// `command`. The list of the tool's two parameters does not tell the fix.
+describe('a call with a parameter of a subcommand next to "command"', () => {
+  const FADE = { name: 'fade', summary: 'Fade a sound.', description: 'Fades a sound in.', parameters: TOOL.subcommands[0].parameters.slice(1), example: { start: 0 } }
+  const definition = subcommandToolDefinition({ ...TOOL, subcommands: [...TOOL.subcommands, FADE] })
+  const errorOfCall = (args: Record<string, unknown>) => {
+    const parsed = parseToolArguments(definition, JSON.stringify(args))
+    return parsed.ok ? '' : parsed.error
+  }
+  const goesInside = (key: string, subcommand: string, call: string) =>
+    `sound has no parameter "${key}". "${key}" is a parameter of the subcommand ${subcommand}, so it goes inside "parameters", the text of a JSON object, and not next to "command", as in ${call}.`
+
+  it('tells that it goes inside "parameters", with the call\'s own number in the example', () => {
+    expect(errorOfCall({ command: 'cut', parameters: '{"sound":"c"}', start: 3 }))
+      .toBe(goesInside('start', 'cut', '{"command":"cut","parameters":"{\\"sound\\":\\"b\\",\\"start\\":3}"}'))
+  })
+
+  it('names the subcommand of the call first, else the first one that has the parameter', () => {
+    expect(errorOfCall({ command: ' fade ', start: 2 })).toBe(goesInside('start', 'fade', '{"command":"fade","parameters":"{\\"start\\":2}"}'))
+    for (const command of ['list', 'none', undefined, 7]) {
+      expect(errorOfCall({ command, start: 2 })).toBe(goesInside('start', 'cut', '{"command":"cut","parameters":"{\\"sound\\":\\"b\\",\\"start\\":2}"}'))
+    }
+  })
+
+  // A text can be long, and a value of a wrong type is no example.
+  it.each([
+    ['a text', 'sound', 'c'.repeat(500)],
+    ['a value of another type', 'start', '3'],
+    ['a value that is no scalar', 'start', { seconds: 3 }],
+  ])('keeps %s out of the example', (_name, key, value) => {
+    expect(errorOfCall({ command: 'cut', [key]: value })).toBe(goesInside(key, 'cut', CUT_CALL))
+  })
+
+  it('lists the two parameters of the tool for a key that no subcommand has', () => {
+    expect(errorOfCall({ command: 'cut', end: 3 })).toBe('sound has no parameter "end". The parameters of sound are: command (string), parameters (string).')
   })
 })
 

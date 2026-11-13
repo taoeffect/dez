@@ -2,6 +2,7 @@ import fs from 'node:fs'
 import path from 'node:path'
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from 'vitest'
 import { Key } from 'webdriverio'
+import { MAX_TOOL_ROUNDS, ROUND_LIMIT_TOOL_RESULT, roundsLeftNote } from '../../src/model/streams/toolRound'
 import { unknownToolText } from '../../src/model/tools/registry'
 import { anthropicChatBody, anthropicMarkedUser, openAiChatBody } from './harness/chatBody'
 import { consoleErrors, pointerClick, resetConsoleErrors, screenshotOnFailure, typeKeys, waitForValue } from './harness/dom'
@@ -11,8 +12,8 @@ import { WAV_SAMPLE_RATE, monoWav, shownPlayers } from './harness/media'
 import { startMockProviderApp, type MockProviderApp } from './harness/mockProviderApp'
 import { mockChatPath, openAiToolCall, replyText, sendAnthropicReply, sendChatReply, sendToolCalls, startEventStream, toolResult, writeAnthropicEvent, writeChatFrame, type MockProvider } from './harness/mockServer'
 import type { E2EBrowser } from './harness/session'
-import { activeConversationId, activeTabStreaming, docPos, editorCaret, editorDoc, focusEditor, focusedArea, newTab, pickModel, sbpCall, setCaret, submit, threadSections, waitForThread, type ThreadSection } from './harness/thread'
-import { toolChips, toolPanel, type ToolChipView } from './harness/toolChips'
+import { activeConversationId, activeTabStreaming, docPos, editorCaret, editorDoc, focusEditor, focusedArea, newTab, openToasts, pickModel, sbpCall, setCaret, submit, threadSections, waitForThread, type ThreadSection } from './harness/thread'
+import { pressToolChip, toolChips, toolPanel, type ToolChipView } from './harness/toolChips'
 
 // Tool calls, driven through the real app against a mock server in this
 // process: a model of each API format calls the `model_list` tool, the app
@@ -25,7 +26,10 @@ import { toolChips, toolPanel, type ToolChipView } from './harness/toolChips'
 // keeps the call, and the next request sends it with its result. A
 // `model_info` call gives the facts of the mock model as Dez knows them,
 // and a call with no arguments gives those of the reply's model, also after
-// the user chose another model for the tab.
+// the user chose another model for the tab. Near the limit of tool rounds
+// of a reply, the results tell the model how many rounds are left; the
+// calls of a round past the limit do not run, their chips say "not run",
+// and the toast of the limit closes at the next message of the tab.
 // The `image` tool's `crop` and `scale` calls make new images from a pasted
 // one: the images go into the reply after the calls, and the requests name
 // them by their ids, with no path. A pasted SVG goes as the same PNG copy
@@ -385,6 +389,64 @@ describe('tool calls', () => {
     ])
   })
 
+  // A model that calls a tool in every answer. Each round is one short
+  // request to the mock.
+  it('tells the model near the limit how many tool rounds are left, shows a call past the limit as "not run", and closes the toast of the limit at the next message', async () => {
+    await newTab(browser)
+    await pickModel(browser, TOOLER.name, TOOLER.modelName)
+    await submit(browser, 'List the tool models with no end.')
+    let request = await setup.mock.waitForRequest(browser)
+    for (let round = 1; round <= MAX_TOOL_ROUNDS; round++) {
+      sendToolCalls(request.reply, [openAiModelListCall(`call_${round}`, 'tool')])
+      request = await setup.mock.waitForRequest(browser)
+    }
+
+    // What Dez added to the result of a round, as the model gets it.
+    const noteOfRound = (round: number): string => toolResult(request, `call_${round}`).slice(TOOLER_LIST.length)
+    expect(noteOfRound(MAX_TOOL_ROUNDS - 6)).toBe('')
+    expect(noteOfRound(MAX_TOOL_ROUNDS - 5)).toBe(`\n\n${roundsLeftNote(5)}`)
+    expect(noteOfRound(MAX_TOOL_ROUNDS - 1)).toBe(`\n\n${roundsLeftNote(1)}`)
+    expect(noteOfRound(MAX_TOOL_ROUNDS)).toBe(`\n\n${roundsLeftNote(0)}`)
+
+    // The model calls a tool again: the reply ends, and the call does not
+    // run.
+    const pastLimit = `call_${MAX_TOOL_ROUNDS + 1}`
+    sendToolCalls(request.reply, [openAiModelListCall(pastLimit, 'tool')])
+    await waitForValue(browser, 'toast of the limit', () => openToasts(browser, 'error'), [{
+      title: 'Tool limit reached',
+      message: `The reply reached the limit of ${MAX_TOOL_ROUNDS} tool rounds, so Dez did not run its last tool calls. To let the model go on, send a new message (for example "Go on").`,
+    }])
+    await waitForValue(browser, 'streaming', () => activeTabStreaming(browser), false)
+    expect(setup.mock.hasWaitingRequest()).toBe(false)
+
+    // The editor draws only the chips near its window: the last ones here.
+    // Nothing failed, so the chip and its result are not marked as an error.
+    const notRunChip = { ...closedChip('"tool"'), state: 'notRun', label: 'Tool call model_list, "tool", not run', stateWord: 'not run' }
+    await waitForValue(browser, 'the last two chips', async () => (await toolChips(browser)).slice(-2), [closedChip('"tool"'), notRunChip])
+    const last = (await toolChips(browser)).length - 1
+    await pressToolChip(browser, last)
+    await waitForValue(browser, 'panel of the call that did not run', async () => toolPanel(browser, (await toolChips(browser)).length - 1), {
+      parameters: [['filter', 'tool']],
+      result: ROUND_LIMIT_TOOL_RESULT.content,
+      error: false,
+    })
+    expect(await consoleErrors(browser)).toStrictEqual([`The reply reached the limit of ${MAX_TOOL_ROUNDS} tool rounds`])
+    await resetConsoleErrors(browser)
+
+    // A new message starts the count again. Its request closes the toast of
+    // the reply before it, and sends the call back with its result.
+    await submit(browser, 'Go on.')
+    const next = await setup.mock.waitForRequest(browser)
+    await waitForValue(browser, 'toast of the limit after the new message', () => openToasts(browser, 'error'), [])
+    expect(toolResult(next, pastLimit)).toBe(ROUND_LIMIT_TOOL_RESULT.content)
+    sendToolCalls(next.reply, [openAiModelListCall('call_again', 'tool')])
+    const after = await setup.mock.waitForRequest(browser)
+    expect(toolResult(after, 'call_again')).toBe(TOOLER_LIST)
+    await sendChatReply(after.reply, TOOLER.modelName)
+    await waitForValue(browser, 'streaming after the new message', () => activeTabStreaming(browser), false)
+    expect(await openToasts(browser, 'error')).toStrictEqual([])
+  })
+
   it('runs a model_info call: the result holds the facts of the model as Dez knows them, and the panel shows it', async () => {
     await newTab(browser)
     await pickModel(browser, TOOLER.name, TOOLER.modelName)
@@ -548,15 +610,15 @@ describe('tool calls', () => {
     expect(await decodedImage(browser, pngDataUrl(scaled), [10, 30, 50])).toEqual({ width: 60, height: 40, pixels: green })
     expect(await fs.promises.readFile(pastedPath)).toEqual(STRIPES_PNG)
 
-    // A later request holds the references of the new images as text with
-    // no path, at the start of the message after the results; a mention of
-    // an id sends its image.
+    // A later request names the new images only in the results of their
+    // calls: the message after the results holds no reference of them. A
+    // mention of an id sends its image.
     await submit(browser, 'Is @c green?')
     const third = await setup.mock.waitForRequest(browser)
     expect(JSON.parse(third.body)).toEqual(openAiChatBody(TOOLER, [
       { role: 'user', content: 'Crop ![image](id=a)' },
       ...round,
-      { role: 'assistant', content: `\n![image](id=b|tool=image)\n\n![image](id=c|tool=image)\n\n${replyText(TOOLER.modelName)}` },
+      { role: 'assistant', content: replyText(TOOLER.modelName) },
       { role: 'user', content: [{ type: 'text', text: 'Is @c' }, { type: 'image_url', image_url: { url: pngDataUrl(scaled) } }, { type: 'text', text: ' green?' }] },
     ]))
     expect(third.body).not.toContain(setup.app.home)
@@ -687,14 +749,14 @@ describe('tool calls', () => {
     }).toStrictEqual({ riff: 'RIFF', channels: 1, rate: 48000, bits: 16, dataBytes: 48000, length: 44 + 48000 })
     expect(await fs.promises.readFile(songPath)).toEqual(SONG_WAV)
 
-    // A later request holds the tag of the new clip in its request form:
-    // its id and type, with no path.
+    // A later request names the new clip only in the result of its call:
+    // the message after the result holds no tag of it.
     await submit(browser, 'Thanks.')
     const third = await setup.mock.waitForRequest(browser)
     expect(JSON.parse(third.body)).toEqual(openAiChatBody(TOOLER, [
       ...before,
       ...round,
-      { role: 'assistant', content: `\n<dez:audio id="b" type="audio/wav"/>\n\n${replyText(TOOLER.modelName)}` },
+      { role: 'assistant', content: replyText(TOOLER.modelName) },
       { role: 'user', content: 'Thanks.' },
     ]))
     expect(third.body).not.toContain(setup.app.home)

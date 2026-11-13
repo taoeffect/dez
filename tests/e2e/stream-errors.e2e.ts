@@ -5,7 +5,7 @@ import type { RunningApp } from './harness/app'
 import { click, consoleErrors, resetConsoleErrors, screenshotOnFailure, typeKeys, waitForValue } from './harness/dom'
 import { conversationFilePath } from './harness/fixtures'
 import { startMockProviderApp } from './harness/mockProviderApp'
-import { startEventStream, writeAnthropicEvent, writeChatErrorFrame, writeChatFrame, type HeldRequest, type HoldingChatMock, type MockProvider } from './harness/mockServer'
+import { sendChatReply, startEventStream, writeAnthropicEvent, writeChatErrorFrame, writeChatFrame, type HeldRequest, type HoldingChatMock, type MockProvider } from './harness/mockServer'
 import type { E2EBrowser } from './harness/session'
 import { activeConversationId, activeTabId, activeTabStreaming, editorDoc, openToasts, pickModel, sbpCall, submit, threadSections } from './harness/thread'
 
@@ -17,7 +17,9 @@ import { activeConversationId, activeTabId, activeTabStreaming, editorDoc, openT
 //   section, with no error text; so does an error event inside a 200
 //   stream (OpenAI and Anthropic formats), which also runs no tool call;
 // - each error shows in a red error toast at the lower right that stays
-//   until the user closes it, fits its text, and names a background tab.
+//   until the user closes it, fits its text, and names a background tab;
+// - the next message of a tab closes the error toasts of that tab's earlier
+//   replies, and no toast of another tab.
 //
 // One app session serves the whole file; each test starts in a new tab.
 
@@ -116,7 +118,7 @@ describe('stream errors', () => {
     // starts with none.
     await closeErrorToasts()
     if (ctx.task.result?.state === 'fail') return
-    // Each test makes one failed request, which the app logs.
+    // Each test ends with one failed request in the log.
     const errors = await consoleErrors(browser)
     expect(errors).toHaveLength(1)
     expect(errors[0]).toMatch(/^Chat request failed:/)
@@ -281,6 +283,44 @@ describe('stream errors', () => {
     await sbpCall(browser, 'dez.model/tabs/switch', backgroundTabId)
     await waitForValue(browser, 'editor doc of the background tab', () => editorDoc(browser), 'Background question')
     expect(await threadSections(browser)).toEqual([{ role: 'user', text: 'Background question' }])
+  })
+
+  it('closes the error toast of a reply at the next message of its tab, and keeps the toast of another tab', async () => {
+    // The provider's text of each open error toast.
+    const openErrors = async (): Promise<string[]> => (await openToasts(browser, 'error')).map((toast) => toast.message.split('Details: HTTP 500: ')[1]).sort()
+    const firstTabId = await activeTabId(browser)
+    await submit(browser, 'First tab')
+    answerStatus(await mock.waitForRequest(browser), 500, '{"error":"First error"}')
+    await waitForValue(browser, 'toast of the first tab', openErrors, ['First error'])
+    await waitForValue(browser, 'streaming in the first tab', () => activeTabStreaming(browser), false)
+
+    await sbpCall(browser, 'dez.model/tabs/create')
+    await submit(browser, 'Second tab')
+    answerStatus(await mock.waitForRequest(browser), 500, '{"error":"Second error"}')
+    await waitForValue(browser, 'toasts of the two tabs', openErrors, ['First error', 'Second error'])
+    await waitForValue(browser, 'streaming in the second tab', () => activeTabStreaming(browser), false)
+    expect(await consoleErrors(browser)).toHaveLength(2)
+    // The check after each test wants only the failed request that follows.
+    await resetConsoleErrors(browser)
+
+    // The toast closes when the new reply starts, before its answer.
+    await submit(browser, ' again')
+    const second = await mock.waitForRequest(browser)
+    await waitForValue(browser, 'toasts after the new message of the second tab', openErrors, ['First error'])
+    // A later error of the same tab shows as a new toast.
+    answerStatus(second, 500, '{"error":"Third error"}')
+    await waitForValue(browser, 'toasts after the new error of the second tab', openErrors, ['First error', 'Third error'])
+    await waitForValue(browser, 'streaming after the new error', () => activeTabStreaming(browser), false)
+
+    await sbpCall(browser, 'dez.model/tabs/switch', firstTabId)
+    await waitForValue(browser, 'editor doc of the first tab', () => editorDoc(browser), 'First tab')
+    await submit(browser, ' again')
+    const first = await mock.waitForRequest(browser)
+    await waitForValue(browser, 'toasts after the new message of the first tab', openErrors, ['Third error'])
+    await sendChatReply(first.reply, PROVIDER.modelName)
+    await waitForValue(browser, 'sections of the first tab', async () => (await threadSections(browser)).length, 3)
+    await waitForValue(browser, 'streaming in the first tab after its reply', () => activeTabStreaming(browser), false)
+    expect(await openErrors()).toStrictEqual(['Third error'])
   })
 
   it('tells that Dez could not reach a custom provider whose server does not run, and to check its base URL', async () => {

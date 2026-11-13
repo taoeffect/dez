@@ -7,6 +7,7 @@ import { parseModelRefKey } from '../../model/chat/modelRef'
 import { EMPTY_TOOL_RESULT, INTERRUPTED_TOOL_RESULT, type ToolBlock } from '../../model/chat/toolBlocks'
 import { MODEL_OUTPUT_IDS, effectiveOutputs, type ModelOutput } from '../../model/modelOutputs'
 import type { ModelInfo } from '../../model/providers/types'
+import { isRoundLimitResult } from '../../model/streams/toolRound'
 import { jobOwnText, startedJobId, type JobResultStatus } from '../../model/tools/jobs'
 import { MODEL_INVOKE_TOOL } from '../../model/tools/modelInvoke'
 import { toolDefinition } from '../../model/tools/registry'
@@ -36,8 +37,16 @@ import { ROUND_STROKE, svgIcon } from './svgIcon'
 
 /** How a chip shows its call. `running`: a reply runs the tool now.
  *  `interrupted`: a `running` block that no reply runs (the app stopped
- *  while the tool ran); requests send it as an error. */
-export type ToolCallState = 'success' | 'error' | 'running' | 'interrupted'
+ *  while the tool ran); requests send it as an error. `notRun`: a call
+ *  that the round limit of its reply stopped (`isRoundLimitResult`). Its
+ *  block is an error block, which requests send as one, but nothing
+ *  failed, so the chip does not say so. */
+export type ToolCallState = 'success' | 'error' | 'running' | 'interrupted' | 'notRun'
+
+function toolCallState(block: ToolBlock, streaming: boolean): ToolCallState {
+  if (block.status === 'running') return streaming ? 'running' : 'interrupted'
+  return block.status === 'error' && isRoundLimitResult(block.result) ? 'notRun' : block.status
+}
 
 /** A hidden asset as the panel of its chip draws it, with no doc offsets:
  *  what `createImage` or `createPlayer` takes. */
@@ -221,7 +230,7 @@ function findRenderedToolCalls(doc: string, sections: readonly SectionModel[], s
     const chips = chipBlocks(text)
     const sectionHidden = hidden.filter((asset) => asset.from >= from && asset.to <= from + text.length)
     for (const block of chips) {
-      const state = block.status !== 'running' ? block.status : section.id === streamingSectionId ? 'running' : 'interrupted'
+      const state = toolCallState(block, section.id === streamingSectionId)
       calls.push({ ...block, from: from + block.from, to: from + block.to, state, intermediate: intermediateCall(block, state, chips, sectionHidden) })
     }
     // Spaces stand for the text of each hidden asset, so that its line
@@ -307,7 +316,7 @@ function span(className: string, text?: string): HTMLSpanElement {
   return element
 }
 
-const STATE_WORDS: Partial<Record<ToolCallState, string>> = { error: 'failed', interrupted: 'interrupted' }
+const STATE_WORDS: Partial<Record<ToolCallState, string>> = { error: 'failed', interrupted: 'interrupted', notRun: 'not run' }
 
 /** The chip's accessible name. Its `aria-label` replaces the text of the
  *  chip's parts, so it holds the summary and the state word too, and

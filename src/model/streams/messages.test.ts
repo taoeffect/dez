@@ -1,8 +1,11 @@
 import { describe, expect, it } from 'vitest'
-import { mediaTagRequestText, mediaTagText, type MediaTagData } from '../chat/mediaTags'
+import { MEDIA_HIDDEN_ATTRIBUTE, MEDIA_TOOL_ATTRIBUTE, mediaTagRequestText, mediaTagText, type MediaTagData } from '../chat/mediaTags'
 import { toolBlockText, type ToolBlockStatus } from '../chat/toolBlocks'
 import type { Section, SectionThinking, ThinkingReplay } from '../chat/types'
 import type { ClipInputRules, MediaKind } from '../providers/types'
+import { audioCutResultText } from '../tools/audioTool'
+import { imageResultText } from '../tools/imageTool'
+import { jobResultText, jobStartedText, jobsWaitText, type WrittenJobAsset } from '../tools/jobs'
 import { agentSectionMessages, mediaRequestInput, messageClips, sectionsToStreamMessages } from './messages'
 import { model, reply, user } from './testing'
 
@@ -198,6 +201,70 @@ describe('agentSectionMessages', () => {
         { role: 'user', content: `What is this?\n${SENT_CLIP}` },
         { role: 'agent', content: SENT_CLIP },
       ])
+    })
+  })
+
+  // Dez writes the asset of a tool after the group of the tool's call, so
+  // its text is the start of the text of the next round.
+  describe('images and clips that a Dez tool made', () => {
+    const toolImage = (id: string, hidden?: string) => `![${IMAGE}](id=${id}|tool=model_invoke${hidden === undefined ? '' : `|hidden=${hidden}`})`
+    const toolClip = (clip: MediaTagData, hidden?: string) => mediaTagText({
+      ...clip,
+      other: [{ name: MEDIA_TOOL_ATTRIBUTE, value: 'model_invoke' }, ...(hidden === undefined ? [] : [{ name: MEDIA_HIDDEN_ATTRIBUTE, value: hidden }])],
+    })
+    const job = (id: string, assets: WrittenJobAsset[]) => ({ id, tool: 'model_invoke', status: 'finished' as const, text: jobResultText('', assets), call: { number: 1, label: 'A fox' } })
+    const WAIT_RESULT = jobsWaitText([job('j-aaaa', [{ kind: 'image', id: 'a' }, { kind: 'audio', id: 'c' }]), job('j-bbbb', [{ kind: 'video', id: 'd' }])], 0)
+    const ASSETS = [toolImage('a', 'j-aaaa'), toolClip(SONG, 'j-aaaa'), toolClip(DANCE)].join('\n\n')
+
+    // The messages after the first round, which called a tool that gave
+    // `toolResult`; `roundText` is the text after that group.
+    function sentAfterGroup(toolResult: string, roundText: string): unknown[] {
+      const group = toolBlockText({ id: 'call_1', name: 'jobs_wait', status: 'success', arguments: {}, result: toolResult })
+      return agentSectionMessages(agent(`${group}\n${roundText}`), model, true).slice(2)
+    }
+
+    it('leaves out the assets that a result of the group before names, so that a round has only the text of the model', () => {
+      expect(sentAfterGroup(WAIT_RESULT, `\n${ASSETS}\n\nHere it is: @d.`)).toStrictEqual([{ role: 'agent', content: 'Here it is: @d.' }])
+      expect(sentAfterGroup(WAIT_RESULT, `\n${ASSETS}\n${block('call_2', 'gemini', '1 model')}`)).toStrictEqual([
+        { role: 'agent', content: '', toolCalls: [call('call_2', 'gemini')] },
+        { role: 'tool', results: [result('call_2', '1 model')] },
+      ])
+    })
+
+    it('leaves them out of the text of a request with no tools too, and keeps the line breaks next to the blocks', () => {
+      const group = toolBlockText({ id: 'call_1', name: 'jobs_wait', status: 'success', arguments: {}, result: WAIT_RESULT })
+      const text = `Look.\n${group}\n\n${ASSETS}\n${block('call_2', 'gemini', '1 model')}\n\n${toolImage('b')}\n\nDone.`
+
+      expect(agentSectionMessages(agent(text), model, false)).toStrictEqual([{
+        role: 'agent',
+        content: [
+          'Look.',
+          `[Tool call: jobs_wait {}]\n${WAIT_RESULT}\n[End of tool result]`,
+          '',
+          '[Tool call: model_list {"filter":"gemini"}]\n1 model\n[End of tool result]',
+          '',
+          '![image](id=b|tool=model_invoke)',
+          '',
+          'Done.',
+        ].join('\n'),
+      }])
+    })
+
+    it('reads the result of each tool that makes an asset in its call', () => {
+      expect(sentAfterGroup(imageResultText('a', 'b', { width: 4, height: 2 }), `\n${toolImage('b')}\n\nDone.`)).toStrictEqual([{ role: 'agent', content: 'Done.' }])
+      expect(sentAfterGroup(audioCutResultText('c', 'e', { start: 0, end: 2 }, 2), `\n${toolClip(RAIN)}\n\nDone.`)).toStrictEqual([{ role: 'agent', content: 'Done.' }])
+    })
+
+    it('keeps an asset that no result of the group before says that it made', () => {
+      // The asset of a job that ended after the last round: the model got
+      // no result of it.
+      expect(sentAfterGroup(WAIT_RESULT, `\n${toolImage('a')}\n\nDone.\n\n${toolClip(RAIN)}`))
+        .toStrictEqual([{ role: 'agent', content: 'Done.\n\n<dez:audio id="e" type="audio/wav"/>' }])
+      // A result that names an asset as an input of its call.
+      expect(sentAfterGroup(`${jobStartedText('j-cccc', 1)}\nThe inputs of the request: the video clip @d.`, `\n${toolClip(DANCE)}\n\nDone.`))
+        .toStrictEqual([{ role: 'agent', content: '\n<dez:video id="d" type="video/mp4"/>\n\nDone.' }])
+      // An image of the model itself, with no mark of a tool.
+      expect(sentAfterGroup(WAIT_RESULT, `\n![${IMAGE}](id=a)\n\nDone.`)).toStrictEqual([{ role: 'agent', content: '\n![image](id=a)\n\nDone.' }])
     })
   })
 

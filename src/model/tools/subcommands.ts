@@ -1,4 +1,4 @@
-import { checkArgumentValues, type ArgumentRules } from './arguments'
+import { checkArgumentValues, fitsParameterType, type ArgumentRules } from './arguments'
 import { ToolError, type ToolArguments, type ToolArgumentValue, type ToolDefinition, type ToolParameter } from './types'
 
 // A tool with subcommands (the `audio` and `image` tools): one
@@ -82,13 +82,35 @@ export function subcommandToolDefinition(tool: SubcommandTool): ToolDefinition {
         required: false,
       },
     ],
+    misplacedParameter: (key, values) => misplacedParameterText(tool, key, values),
   }
 }
 
-// The arguments of a call of `subcommand` with its example parameters, as
-// one line of JSON.
-function exampleCall(subcommand: Subcommand): string {
-  return JSON.stringify({ command: subcommand.name, parameters: JSON.stringify(subcommand.example) })
+// The arguments of a call of `subcommand` with `parameters` (its example
+// parameters with none), as one line of JSON.
+function exampleCall(subcommand: Subcommand, parameters: Readonly<Record<string, ToolArgumentValue>> = subcommand.example): string {
+  return JSON.stringify({ command: subcommand.name, parameters: JSON.stringify(parameters) })
+}
+
+// Where `key` belongs when a call has it next to `command` and it is a
+// parameter of a subcommand: a model that knows `timeout_seconds` from
+// `model_invoke` writes it there, and the list of the tool's two
+// parameters does not tell it the fix. The subcommand of the call comes
+// first, else the first one that has the parameter. The example holds the
+// call's own value when it is a number or true/false of the parameter's
+// type; a text can be long, and the example parameters show how one looks.
+function misplacedParameterText(tool: SubcommandTool, key: string, values: Readonly<Record<string, unknown>>): string | null {
+  const named = typeof values.command === 'string' ? values.command.trim() : ''
+  const subcommands = [...tool.subcommands].sort((a, b) => Number(b.name === named) - Number(a.name === named))
+  for (const subcommand of subcommands) {
+    const parameter = subcommand.parameters.find((candidate) => candidate.name === key)
+    if (!parameter) continue
+    const given = values[key]
+    const example = typeof given !== 'string' && fitsParameterType(parameter.type, given) ? { ...subcommand.example, [key]: given } : subcommand.example
+    return `${JSON.stringify(key)} is a parameter of the subcommand ${subcommand.name}, so it goes inside "parameters", `
+      + `the text of a JSON object, and not next to "command", as in ${exampleCall(subcommand, example)}.`
+  }
+  return null
 }
 
 // How to get the details of a subcommand, for the tool's description and

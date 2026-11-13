@@ -64,6 +64,10 @@ export const USAGE_TEXTS = {
   fitted: 'Dez sends a fitted copy (cropped or scaled) of an image that breaks `dez.images.size`.',
   limits: 'Dez refuses an image that breaks `dez.images.limits`.',
   frames: 'The first one is the first frame of the video, and the second one is the last frame.',
+  // No request field sets this: a model that starts from a frame keeps the
+  // shape of that frame (the square clips of a square first image), and
+  // nothing else tells the calling model so.
+  frameShape: 'The video usually gets the shape (the aspect ratio) of its first frame, so give an image that has the shape that the video must have; the image tool can crop one.',
   videoReferences: 'They are references for the video, not frames of it.',
   clipsMakeReferences: 'With a clip in the message (pasted, or named with @id), the images go as references for the video, not as its frames.',
   parameters: `Each request sends the \`value\` of each of \`dez.parameters\`; the user sets them under "Model Parameters" in ${SETTINGS_POPUP}.`,
@@ -80,11 +84,16 @@ export const USAGE_TEXTS = {
   audioNeedsVisual: 'An audio clip goes only together with an image or a video clip.',
 } as const
 
+// What follows each text about the names that a model gives its inputs:
+// a model that reads only the name writes it next to the `@id`, and Dez
+// then sends the name twice.
+const NAMES_ARE_PUT_IN = 'Dez puts these names in: write only the @id in the prompt, never such a name.'
+
 // The prompt of a model that names its reference images (`promptName`,
 // `mediaRequestInput`): the names of the first two images show the form.
 export function referenceNamesUsage(promptName: string): string {
   const name = (n: number) => `\`${promptName.replaceAll('{n}', String(n))}\``
-  return `Each image that goes is named in the prompt as the model names it, ${name(1)} for the first, ${name(2)} for the second, and so on, in place of its id text (such as \`![image](id=a)\`) and its @id mentions; any other image goes into the prompt as its id text.`
+  return `Each image that goes is named in the prompt as the model names it, ${name(1)} for the first, ${name(2)} for the second, and so on, in place of its id text (such as \`![image](id=a)\`) and its @id mentions; any other image goes into the prompt as its id text. ${NAMES_ARE_PUT_IN}`
 }
 
 // What a model does with the clips of a kind (`ClipKindRules.use`).
@@ -112,7 +121,7 @@ export function takenClipsUsage(kind: MediaTagKind, max: number): string {
 // `mediaRequestInput`): the names of the first two clips show the form.
 export function clipNamesUsage(kind: MediaTagKind, promptName: string): string {
   const name = (n: number) => `\`${promptName.replaceAll('{n}', String(n))}\``
-  return `Each ${kind} clip that goes is named in the prompt as the model names it, ${name(1)} for the first, ${name(2)} for the second, and so on, in place of its tag and its @id mentions.`
+  return `Each ${kind} clip that goes is named in the prompt as the model names it, ${name(1)} for the first, ${name(2)} for the second, and so on, in place of its tag and its @id mentions. ${NAMES_ARE_PUT_IN}`
 }
 
 // A model that takes the clips of `kind` only by their web address
@@ -221,6 +230,7 @@ function inputImagesUsage(kind: MediaKind, model: ModelInfo): string[] {
   return [
     `It takes ${takenImages(min, max)} of the message (pasted, or named with @id)${max === 1 ? '' : ', in text order'}.`,
     ...(role === undefined ? [] : [role]),
+    ...(role === USAGE_TEXTS.frames ? [USAGE_TEXTS.frameShape] : []),
     ...(clipsMakeReferences ? [USAGE_TEXTS.clipsMakeReferences] : []),
     ...(takesNewest ? [newest] : []),
   ]

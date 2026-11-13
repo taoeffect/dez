@@ -5,9 +5,10 @@ import { openAiToolCall, toolResult, type HeldRequest } from './mockServer'
 // `video`): a call starts a job of the reply, and a `jobs_wait` call gives
 // its result.
 
-/** A `jobs_wait` call of a mock model. */
-export function waitCall (id: string): Record<string, unknown> {
-  return openAiToolCall(id, 'jobs_wait', {})
+/** A `jobs_wait` call of a mock model: for the first job that ends, or
+ *  with `all` for every job. */
+export function waitCall (id: string, all = false): Record<string, unknown> {
+  return openAiToolCall(id, 'jobs_wait', all ? { all: true } : {})
 }
 
 /** The id of the job that the call `callId` started, from its result in

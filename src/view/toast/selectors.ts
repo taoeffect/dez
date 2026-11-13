@@ -1,5 +1,5 @@
 import sbp from '@sbp/sbp'
-import { SHOW_TOAST } from './events'
+import { CLOSE_TOASTS, SHOW_TOAST } from './events'
 
 export type ToastVariant = 'default' | 'success' | 'warning' | 'error'
 export type ToastPosition =
@@ -25,6 +25,9 @@ export interface ToastData {
   closeable?: boolean
   actionLabel?: string
   sbpInvocation?: ToastSbpInvocation | [string, ...unknown[]]
+  // A name that the toast shares with the toasts that go out of date with
+  // it: `dez.ui/closeToasts` closes them by it.
+  group?: string
 }
 
 export default sbp('sbp/selectors/register', {
@@ -47,5 +50,12 @@ export default sbp('sbp/selectors/register', {
       ...defaultData,
       ...data,
     })
+  },
+
+  // Closes the open toasts of `area` that have this `group`
+  // (`ToastData.group`): what they tell is out of date. A toast that is
+  // not open any more is no error.
+  'dez.ui/closeToasts' (area: string, group: string): void {
+    sbp('okTurtles.events/emit', CLOSE_TOASTS, area, group)
   },
 })

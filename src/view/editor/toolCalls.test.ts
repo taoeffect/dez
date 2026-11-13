@@ -5,6 +5,7 @@ import { HIDDEN_CLIP_PATH, HIDDEN_IMAGE_PATH, hiddenClip, hiddenImage, invokeBlo
 import type { Role } from '../../model/chat/types'
 import { toolBlockText, type ToolBlockStatus } from '../../model/chat/toolBlocks'
 import { jobStartedText, jobsWaitText, type JobResultStatus } from '../../model/tools/jobs'
+import { ROUND_LIMIT_TOOL_RESULT, STOPPED_TOOL_RESULT } from '../../model/streams/toolRound'
 import { PILL_OPEN, SECTION_SEP, sectionsField, setSectionsEffect, setSectionThinkingEffect } from '../thread/cmEditor'
 import { setStreamingSectionEffect, streamingSectionField } from '../thread/modelChip'
 import { PLAYER } from './testing'
@@ -61,6 +62,18 @@ describe('renderedToolCalls', () => {
     expect(shown(ended).map(([id, callState]) => [id, callState])).toEqual([['a', 'interrupted'], ['b', 'interrupted']])
   })
 
+  // The round limit ran none of these calls, so nothing failed.
+  it('shows a call that the round limit stopped as not run, also with the limit of an older Dez', () => {
+    const state = createState(['ask', [
+      block('a', 'error', ROUND_LIMIT_TOOL_RESULT.content),
+      block('b', 'error', 'Not run: the reply reached the limit of 20 tool rounds.'),
+      block('c', 'error', STOPPED_TOOL_RESULT.content),
+      block('d', 'success', ROUND_LIMIT_TOOL_RESULT.content),
+    ].join('\n')], ['user', 'agent'])
+
+    expect(shown(state).map(([id, callState]) => [id, callState])).toEqual([['a', 'notRun'], ['b', 'notRun'], ['c', 'error'], ['d', 'success']])
+  })
+
   it('shows and hides the chips when only the section roles change', () => {
     const state = createState(['ask', block('a')], ['user', 'user'])
     expect(shown(state)).toEqual([])
@@ -91,7 +104,7 @@ describe('the intermediate data of a call (RenderedToolCall.intermediate)', () =
   }
 
   function waited(status: JobResultStatus, text: string): string {
-    return waitBlock(jobsWaitText([{ id: 'j-aaaa', tool: 'model_invoke', status, text }], 0))
+    return waitBlock(jobsWaitText([{ id: 'j-aaaa', tool: 'model_invoke', status, text, call: { number: 1, label: 'A cat' } }], 0))
   }
 
   /** The intermediate data of the first chip of an agent section with the
@@ -154,7 +167,7 @@ describe('the intermediate data of a call (RenderedToolCall.intermediate)', () =
   })
 
   it('is null for a call that shows its assets: a job with no hidden asset and no is_intermediate', () => {
-    const shown = toolBlockText({ id: 'call_1', name: 'model_invoke', status: 'success', arguments: { model: 'studio/paint', prompt: 'A cat' }, result: jobStartedText('j-aaaa') })
+    const shown = toolBlockText({ id: 'call_1', name: 'model_invoke', status: 'success', arguments: { model: 'studio/paint', prompt: 'A cat' }, result: jobStartedText('j-aaaa', 1) })
 
     expect(intermediate([shown, waited('finished', 'Made the image @b.')])).toBeNull()
   })
@@ -309,6 +322,7 @@ describe('toolCallLabel', () => {
     expect(toolCallLabel('model_list', '"gemini"', 'running')).toBe('Tool call model_list, "gemini", running')
     expect(toolCallLabel('model_list', '"gemini"', 'error')).toBe('Tool call model_list, "gemini", failed')
     expect(toolCallLabel('model_list', '', 'interrupted')).toBe('Tool call model_list, interrupted')
+    expect(toolCallLabel('model_invoke', '"studio/paint"', 'notRun')).toBe('Tool call model_invoke, "studio/paint", not run')
     expect(toolCallLabel('model_list', '', 'success')).toBe('Tool call model_list')
   })
 

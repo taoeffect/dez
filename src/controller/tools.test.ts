@@ -11,7 +11,7 @@ import type { KnownLimit } from '../model/providers/knownLimits'
 import type { ProviderGenerateMediaInput, ProviderGenerateMediaResult, ProviderMediaQuote, ProviderMediaQuoteInput, ProviderStreamChatInput, ProviderStreamChatResult } from '../model/providers/streamTypes'
 import { providerInfo } from '../model/providers/testing'
 import type { ModelInfo, ProviderInfo, ProviderInputImageRules, ProviderSettingsDescriptor } from '../model/providers/types'
-import { NO_JOBS_TEXT, NO_OPEN_JOBS_TEXT, startedJobId } from '../model/tools/jobs'
+import { jobStartedText, jobsWaitResults, NO_JOBS_TEXT, NO_OPEN_JOBS_TEXT } from '../model/tools/jobs'
 import { modelInfoText, type ModelInfoFacts } from '../model/tools/modelInfo'
 import { IMAGE_NOT_SAVED_TEXT, INVOCATION_TEXT_CAP, invocationAnswerStateText, invocationAnswerText, modelInvocation } from '../model/tools/modelInvoke'
 import { TOOL_DEFINITIONS, unexpectedToolErrorText, unknownToolText } from '../model/tools/registry'
@@ -785,39 +785,62 @@ describe('dez.controller/tools/run', () => {
     // Ends the time limits of the jobs that a test left.
     afterEach(() => jobs.stopAll())
 
-    it('jobs_wait waits for the next job end, gives each result once with its job id and status, and tells how many jobs still run', async () => {
+    it('jobs_wait waits for the next job end, gives each result once with its job id, its call, and its status, and tells how many jobs still run', async () => {
       const slow = heldWork()
-      const made = jobs.start('model_invoke', async () => ({ text: 'A red square.', isError: false, assets: [] }), LONG)
-      const refused = jobs.start('video', async () => ({ text: 'The provider refused the request.', isError: true, assets: [] }), LONG)
-      const last = jobs.start('model_invoke', slow.work, LONG)
+      const made = jobs.start('model_invoke', async () => ({ text: 'A red square.', isError: false, assets: [] }), { ...LONG, label: 'A red square' }).id
+      const refused = jobs.start('video', async () => ({ text: 'The provider refused the request.', isError: true, assets: [] }), LONG).id
+      const last = jobs.start('model_invoke', slow.work, LONG).id
 
       // Also a job that failed gives no error result: the result holds the
       // results of other jobs too.
       expect(await jobTool('jobs_wait')).toStrictEqual({
         content: '2 jobs ended. 1 job still runs: call jobs_wait again to get its result.\n\n'
-          + `<job id="${made}" tool="model_invoke" status="finished">\nA red square.\n</job>\n\n`
-          + `<job id="${refused}" tool="video" status="failed">\nThe provider refused the request.\n</job>`,
+          + `<job id="${made}" number="1" tool="model_invoke" status="finished" call="A red square">\nA red square.\n</job>\n\n`
+          + `<job id="${refused}" number="2" tool="video" status="failed">\nThe provider refused the request.\n</job>`,
         isError: false,
       })
 
       const wait = jobTool('jobs_wait')
       slow.finish({ text: 'Done.', isError: false, assets: [] })
       expect(await wait).toStrictEqual({
-        content: `1 job ended. No job still runs.\n\n<job id="${last}" tool="model_invoke" status="finished">\nDone.\n</job>`,
+        content: `1 job ended. No job still runs.\n\n<job id="${last}" number="3" tool="model_invoke" status="finished">\nDone.\n</job>`,
         isError: false,
       })
       expect(await jobTool('jobs_wait')).toStrictEqual({ content: NO_OPEN_JOBS_TEXT, isError: false })
     })
 
+    it('jobs_wait with `all` waits until no job runs, and gives every result in one call', async () => {
+      const slow = heldWork()
+      const fast = heldWork()
+      const slowId = jobs.start('model_invoke', slow.work, LONG).id
+      const fastId = jobs.start('model_invoke', fast.work, LONG).id
+
+      let result: ToolRunResult | undefined
+      const wait = jobTool('jobs_wait', { all: true }).then((value) => { result = value })
+      fast.finish({ text: 'Fast.', isError: false, assets: [] })
+      await vi.waitFor(() => expect(jobs.running).toBe(1))
+      // A result is ready, but one job still runs.
+      expect(result).toBeUndefined()
+
+      slow.finish({ text: 'Slow.', isError: false, assets: [] })
+      await wait
+      expect(result).toStrictEqual({
+        content: '2 jobs ended. No job still runs.\n\n'
+          + `<job id="${fastId}" number="2" tool="model_invoke" status="finished">\nFast.\n</job>\n\n`
+          + `<job id="${slowId}" number="1" tool="model_invoke" status="finished">\nSlow.\n</job>`,
+        isError: false,
+      })
+    })
+
     it('jobs_wait puts what a job made into the reply under the name of the job\'s tool, and its result names the new ids', async () => {
-      const id = jobs.start('model_invoke', async () => ({
+      const { id } = jobs.start('model_invoke', async () => ({
         text: '',
         isError: false,
         assets: [{ kind: 'image', path: IMAGE }, { kind: 'clip', clip: { kind: 'audio', type: 'audio/mpeg', src: SONG, url: null, expires: null } }],
       }), LONG)
 
       expect((await jobTool('jobs_wait')).content).toBe(
-        `1 job ended. No job still runs.\n\n<job id="${id}" tool="model_invoke" status="finished">\nMade the image @c.\nMade the audio clip @d.\n</job>`,
+        `1 job ended. No job still runs.\n\n<job id="${id}" number="1" tool="model_invoke" status="finished">\nMade the image @c.\nMade the audio clip @d.\n</job>`,
       )
       expect(written).toStrictEqual([{ path: IMAGE, tool: 'model_invoke' }, { path: SONG, tool: 'model_invoke' }])
       expect(deletedImages).toStrictEqual([])
@@ -834,7 +857,7 @@ describe('dez.controller/tools/run', () => {
 
     it('jobs_wait ends at once when the user stops the reply, and keeps the result of the job for a later reader', async () => {
       const slow = heldWork()
-      const id = jobs.start('model_invoke', slow.work, LONG)
+      const { id } = jobs.start('model_invoke', slow.work, LONG)
       const abort = new AbortController()
       const wait = jobTool('jobs_wait', {}, abort.signal)
 
@@ -849,32 +872,32 @@ describe('dez.controller/tools/run', () => {
     it('jobs_list lists the jobs of the reply and does not wait', async () => {
       expect(await jobTool('jobs_list')).toStrictEqual({ content: NO_JOBS_TEXT, isError: false })
 
-      const running = jobs.start('model_invoke', heldWork().work, LONG)
-      const ended = jobs.start('video', async () => ({ text: 'Done.', isError: false, assets: [] }), LONG)
+      const running = jobs.start('model_invoke', heldWork().work, { ...LONG, label: 'A red fox' }).id
+      const ended = jobs.start('video', async () => ({ text: 'Done.', isError: false, assets: [] }), LONG).id
       await jobTool('jobs_wait')
 
       const { content, isError } = await jobTool('jobs_list')
       expect(isError).toBe(false)
       expect(content.split('\n').slice(1)).toStrictEqual([
-        `${running} | model_invoke | running | - | 0`,
-        `${ended} | video | finished | given | 0`,
+        `1 | ${running} | model_invoke | running | - | 0 | A red fox`,
+        `2 | ${ended} | video | finished | given | 0 | -`,
       ])
     })
 
     it('job_inspect tells the status and the last state of the job that the call names', async () => {
-      const id = jobs.start('model_invoke', async (_signal, report) => {
+      const { id } = jobs.start('model_invoke', async (_signal, report) => {
         report('Queued at the provider as job q-7.')
         return await new Promise<JobOutcome>(() => {})
       }, LONG)
 
       expect(await jobTool('job_inspect', { job_id: ` ${id}\n` })).toStrictEqual({
-        content: `The job ${id} (model_invoke) runs, for 0 seconds so far. Call jobs_wait to wait for its result.\nState: Queued at the provider as job q-7.`,
+        content: `The job ${id} (job 1 of this reply, model_invoke) runs, for 0 seconds so far. Call jobs_wait to wait for its result.\nState: Queued at the provider as job q-7.`,
         isError: false,
       })
     })
 
     it('job_inspect gives an error result that names the jobs of the reply for an id that none of them has', async () => {
-      const id = jobs.start('model_invoke', heldWork().work, LONG)
+      const { id } = jobs.start('model_invoke', heldWork().work, LONG)
       // An id that no job can have: a job id has 4 characters after `j-`.
       expect(await jobTool('job_inspect', { job_id: 'j-none-1' })).toStrictEqual({
         content: `This reply has no job with the id "j-none-1". A job of an earlier reply ended with that reply. The jobs of this reply are ${id}: call job_inspect again with one of these ids.`,
@@ -944,19 +967,35 @@ describe('dez.controller/tools/run', () => {
         vi.useRealTimers()
       })
 
-      it('starts a job at once and tells the inputs that go; jobs_wait puts the image of the model into the reply', async () => {
+      it('starts a job at once and tells its number and the inputs that go; jobs_wait puts the image of the model into the reply, with the start of the prompt', async () => {
         generateMedia = async () => ({ media: [PNG], clips: [] })
 
         const started = await jobTool('model_invoke', { ...PAINT, timeout_seconds: 60 })
 
         const [job] = jobs.list()
         expect(started.isError).toBe(false)
-        expect(startedJobId(started.content)).toBe(job.id)
+        expect(started.content.split('\n')[0]).toBe(jobStartedText(job.id, 1))
         expect(started.content).toContain('the image @a')
-        expect(await jobResult()).toContain(`<job id="${job.id}" tool="model_invoke" status="finished">\nMade the image @c.\n</job>`)
+        expect(await jobResult()).toContain(`<job id="${job.id}" number="1" tool="model_invoke" status="finished" call="The fox of @a in snow.">\nMade the image @c.\n</job>`)
         expect(mediaRequests).toMatchObject([{ providerId: 'venice', modelId: 'painter', kind: 'image', images: [FOX], clips: [], reader: 'model', timeoutMs: 60_000 }])
         expect(savedImages).toStrictEqual([{ mediaType: 'image/png', options: { folder: 'generated' } }])
         expect(written).toStrictEqual([{ path: MADE_IMAGE, tool: 'model_invoke' }])
+      })
+
+      // Calls that begin with the same words: only the number tells which
+      // result is whose.
+      it('numbers the jobs in the order of their calls', async () => {
+        generateMedia = async () => ({ media: [PNG], clips: [] })
+
+        const first = await jobTool('model_invoke', PAINT)
+        const second = await jobTool('model_invoke', PAINT)
+
+        const [one, two] = jobs.list()
+        expect([first.content.split('\n')[0], second.content.split('\n')[0]]).toStrictEqual([jobStartedText(one.id, 1), jobStartedText(two.id, 2)])
+        expect(jobsWaitResults((await jobTool('jobs_wait', { all: true })).content).map((result) => [result.id, result.call]).sort()).toStrictEqual([
+          [one.id, { number: 1, label: 'The fox of @a in snow.' }],
+          [two.id, { number: 2, label: 'The fox of @a in snow.' }],
+        ].sort())
       })
 
       // The provider took the money for its job: the id must not get lost.
@@ -981,7 +1020,7 @@ describe('dez.controller/tools/run', () => {
         await jobTool('model_invoke', { ...FILM, is_intermediate: true })
         const [{ id }] = jobs.list()
 
-        expect(await jobResult()).toContain(`<job id="${id}" tool="model_invoke" status="finished">\nMade the video clip @c.\nMade the image @d.\n</job>`)
+        expect(await jobResult()).toContain(`<job id="${id}" number="1" tool="model_invoke" status="finished" call="A fox runs.">\nMade the video clip @c.\nMade the image @d.\n</job>`)
         expect(written).toStrictEqual([
           { path: TEMP_COPY, tool: 'model_invoke', hidden: id, jobId: 'q-17' },
           { path: MADE_IMAGE, tool: 'model_invoke', hidden: id },
@@ -1133,7 +1172,8 @@ describe('dez.controller/tools/run', () => {
         }
 
         // The invoked model must not call a tool or invoke a model in its
-        // turn, and it gets nothing of the conversation.
+        // turn, and it gets nothing of the conversation. A failure of the
+        // request is told to the calling model (`reader`).
         it('sends one request with only the prompt and its images: no tools, no system prompt, no conversation', async () => {
           sbp('dez.model/settings/setProviderSetting', 'venice', 'webSearch', false)
           streamChat = async (input) => {
@@ -1147,7 +1187,7 @@ describe('dez.controller/tools/run', () => {
           const [job] = jobs.list()
           expect(started.isError).toBe(false)
           expect(started.content).toContain('the image @a')
-          expect(await jobResult()).toContain(`<job id="${job.id}" tool="model_invoke" status="finished">\n${invocationAnswerText('A fox in snow.')}\n</job>`)
+          expect(await jobResult()).toContain(`<job id="${job.id}" number="1" tool="model_invoke" status="finished" call="What does @a show?">\n${invocationAnswerText('A fox in snow.')}\n</job>`)
           expect(chatRequests).toStrictEqual([{
             providerId: 'venice',
             modelId: 'venice-glm-5',
@@ -1155,6 +1195,7 @@ describe('dez.controller/tools/run', () => {
             tools: [],
             imageOutput: false,
             providerSettings: { webSearch: false },
+            reader: 'model',
             requestId: expect.any(String),
             signal: expect.any(AbortSignal),
             onThinking: expect.any(Function),
@@ -1254,7 +1295,7 @@ describe('dez.controller/tools/run', () => {
 
           await jobTool('model_invoke', SKETCH)
 
-          expect(await jobResult()).toContain(`status="failed">\n${IMAGE_NOT_SAVED_TEXT}\n</job>`)
+          expect(await jobResult()).toContain(`status="failed" call="Draw a fox.">\n${IMAGE_NOT_SAVED_TEXT}\n</job>`)
           expect(written).toStrictEqual([])
           expect(cancelledRequests).toStrictEqual([chatRequests[0].requestId])
         })

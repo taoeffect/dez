@@ -45,7 +45,9 @@ import type { Role } from './types'
 //   so a model cannot write a tag.
 // - A provider gets only the request form (`mediaTagRequestText`): of a
 //   user section through `mediaTagsForRequest`, and of an agent section
-//   through `agentTextForRequest` (toolBlocks.ts).
+//   through `agentTextForRequest` (toolBlocks.ts). The tag of a clip that a
+//   Dez tool made does not go at all when a result of that tool names the
+//   clip (`roundRequestText`, streams/messages.ts).
 
 /** The kinds of clips: the tag of a kind is `dez:<kind>`. */
 export const MEDIA_TAG_KINDS = ['audio', 'video'] as const

@@ -88,11 +88,12 @@ describe('ReplyJobs', () => {
   it('runs its jobs at the same time, and a wait gives the results in the order of their ends', async () => {
     const first = heldWork()
     const second = heldWork()
-    const firstId = jobs.start('model_invoke', first.work, LONG)
-    const secondId = jobs.start('video', second.work, LONG)
+    const { id: firstId, number: firstNumber } = jobs.start('model_invoke', first.work, { ...LONG, label: 'A red fox' })
+    const { id: secondId, number: secondNumber } = jobs.start('video', second.work, LONG)
 
     expect(firstId).toMatch(/^j-[a-z0-9]{4}$/)
     expect(secondId).not.toBe(firstId)
+    expect([firstNumber, secondNumber]).toStrictEqual([1, 2])
     expect(jobs.running).toBe(2)
 
     second.finish({ text: 'Second.' })
@@ -100,8 +101,8 @@ describe('ReplyJobs', () => {
     await settled()
 
     expect(await jobs.wait(never)).toStrictEqual<EndedJob[]>([
-      { id: secondId, tool: 'video', status: 'finished', text: 'Second.', assets: [], hidesAssets: false },
-      { id: firstId, tool: 'model_invoke', status: 'failed', text: 'The provider refused it.', assets: [image], hidesAssets: false },
+      { id: secondId, tool: 'video', status: 'finished', text: 'Second.', assets: [], hidesAssets: false, call: { number: 2, label: '' } },
+      { id: firstId, tool: 'model_invoke', status: 'failed', text: 'The provider refused it.', assets: [image], hidesAssets: false, call: { number: 1, label: 'A red fox' } },
     ])
     expect(jobs.running).toBe(0)
   })
@@ -109,8 +110,8 @@ describe('ReplyJobs', () => {
   it('waits for the next end of a job, and gives each result only once', async () => {
     const first = heldWork()
     const second = heldWork()
-    const firstId = jobs.start('model_invoke', first.work, LONG)
-    const secondId = jobs.start('model_invoke', second.work, LONG)
+    const { id: firstId } = jobs.start('model_invoke', first.work, LONG)
+    const { id: secondId } = jobs.start('model_invoke', second.work, LONG)
 
     const wait = jobs.wait(never)
     first.finish({ text: 'First.' })
@@ -133,9 +134,30 @@ describe('ReplyJobs', () => {
     expect(jobs.hasOpen).toBe(false)
   })
 
+  it('waits for every job with `all`, and gives all the results that are left in one call', async () => {
+    const works = [heldWork(), heldWork(), heldWork()]
+    const ids = works.map((held) => jobs.start('model_invoke', held.work, LONG).id)
+    works[1].finish({ text: 'Second.' })
+    await settled()
+    expect((await jobs.wait(never)).map((job) => job.id)).toStrictEqual([ids[1]])
+
+    let ended: EndedJob[] | undefined
+    void jobs.wait(never, true).then((results) => { ended = results })
+    works[2].finish({ text: 'Third.' })
+    await settled()
+    // One job still runs, so the wait goes on with a result that is ready.
+    expect(ended).toBeUndefined()
+
+    works[0].finish({ text: 'First.' })
+    await settled()
+    expect(ended?.map((job) => [job.id, job.text])).toStrictEqual([[ids[2], 'Third.'], [ids[0], 'First.']])
+    expect(jobs.hasOpen).toBe(false)
+    expect(await jobs.wait(never, true)).toStrictEqual([])
+  })
+
   it('ends a wait whose signal aborts, and the job goes on', async () => {
     const held = heldWork()
-    const id = jobs.start('model_invoke', held.work, LONG)
+    const { id } = jobs.start('model_invoke', held.work, LONG)
     const stop = new AbortController()
     const wait = jobs.wait(stop.signal)
     const reason = new Error('stop')
@@ -153,7 +175,7 @@ describe('ReplyJobs', () => {
 
   it('ends a job that takes more than its time limit as timed out, with its last state, and aborts its work', async () => {
     const held = heldWork()
-    const id = jobs.start('model_invoke', held.work, { timeoutMs: 90_000 })
+    const { id } = jobs.start('model_invoke', held.work, { timeoutMs: 90_000 })
     held.report('Queued at the provider as job q-7.')
 
     await vi.advanceTimersByTimeAsync(89_999)
@@ -168,8 +190,11 @@ describe('ReplyJobs', () => {
       text: 'The job did not end within its time limit of 90 seconds, so Dez stopped it. It has no result. This is not a fault of the call. The last state of the job: Queued at the provider as job q-7.',
       assets: [],
       hidesAssets: false,
+      call: { number: 1, label: '' },
     }])
-    expect(jobs.list()).toStrictEqual([{ id, tool: 'model_invoke', status: 'timed out', delivered: true, elapsedMs: 90_000, state: 'Queued at the provider as job q-7.' }])
+    expect(jobs.list()).toStrictEqual([{
+      id, tool: 'model_invoke', status: 'timed out', delivered: true, elapsedMs: 90_000, state: 'Queued at the provider as job q-7.', call: { number: 1, label: '' },
+    }])
   })
 
   it('throws away what a work gives after its job timed out, with its files', async () => {
@@ -199,9 +224,9 @@ describe('ReplyJobs', () => {
   })
 
   it('fails a job whose work throws: the text of a ToolError, else a text with no detail of the error, and logs it', async () => {
-    const refused = jobs.start('model_invoke', async () => { throw new ToolError('The model takes no image.', 'HTTP 400') }, LONG)
+    const refused = jobs.start('model_invoke', async () => { throw new ToolError('The model takes no image.', 'HTTP 400') }, LONG).id
     // Before its first await, as a work that is no async function can.
-    const broken = jobs.start('video', () => { throw new Error('Failed to read /home/u/.config/dez/assets/x.png') }, LONG)
+    const broken = jobs.start('video', () => { throw new Error('Failed to read /home/u/.config/dez/assets/x.png') }, LONG).id
     await settled()
 
     const ended = new Map((await jobs.wait(never)).map((job) => [job.id, job]))
@@ -214,12 +239,12 @@ describe('ReplyJobs', () => {
     expect(consoleError).toHaveBeenCalledTimes(2)
   })
 
-  it('lists its jobs in the order of their starts, with the state, the time, and whether a wait gave the result', async () => {
+  it('lists its jobs in the order of their starts, with the state, the time, the call, and whether a wait gave the result', async () => {
     const first = heldWork()
     const second = heldWork()
-    const firstId = jobs.start('model_invoke', first.work, LONG)
+    const { id: firstId } = jobs.start('model_invoke', first.work, LONG)
     await vi.advanceTimersByTimeAsync(4000)
-    const secondId = jobs.start('video', second.work, LONG)
+    const { id: secondId } = jobs.start('video', second.work, { ...LONG, label: 'join_clips @c @d' })
     second.report('Sent the request.')
     second.report('Queued.')
     await vi.advanceTimersByTimeAsync(3000)
@@ -227,8 +252,8 @@ describe('ReplyJobs', () => {
     await vi.advanceTimersByTimeAsync(2000)
 
     expect(jobs.list()).toStrictEqual([
-      { id: firstId, tool: 'model_invoke', status: 'running', delivered: false, elapsedMs: 9000, state: '' },
-      { id: secondId, tool: 'video', status: 'finished', delivered: false, elapsedMs: 3000, state: 'Queued.' },
+      { id: firstId, tool: 'model_invoke', status: 'running', delivered: false, elapsedMs: 9000, state: '', call: { number: 1, label: '' } },
+      { id: secondId, tool: 'video', status: 'finished', delivered: false, elapsedMs: 3000, state: 'Queued.', call: { number: 2, label: 'join_clips @c @d' } },
     ])
 
     await jobs.wait(never)
@@ -252,8 +277,8 @@ describe('ReplyJobs', () => {
     it('waits until no job runs, then gives the results that no wait took', async () => {
       const first = heldWork()
       const second = heldWork()
-      const firstId = jobs.start('model_invoke', first.work, LONG)
-      const secondId = jobs.start('model_invoke', second.work, LONG)
+      const { id: firstId } = jobs.start('model_invoke', first.work, LONG)
+      const { id: secondId } = jobs.start('model_invoke', second.work, LONG)
       first.finish({ text: 'First.' })
       await jobs.wait(never)
 
@@ -264,23 +289,23 @@ describe('ReplyJobs', () => {
 
       second.finish({ assets: [image] })
       await settled()
-      expect(settledJobs).toStrictEqual<EndedJob[]>([{ id: secondId, tool: 'model_invoke', status: 'finished', text: '', assets: [image], hidesAssets: false }])
+      expect(settledJobs).toStrictEqual<EndedJob[]>([{ id: secondId, tool: 'model_invoke', status: 'finished', text: '', assets: [image], hidesAssets: false, call: { number: 2, label: '' } }])
       expect(jobs.list().map((job) => [job.id, job.delivered])).toStrictEqual([[firstId, true], [secondId, true]])
     })
 
     it('tells its reader that a job hides its assets', async () => {
       const held = heldWork()
-      const id = jobs.start('model_invoke', held.work, { ...LONG, hidesAssets: true })
+      const { id } = jobs.start('model_invoke', held.work, { ...LONG, hidesAssets: true })
       held.finish({ assets: [image] })
 
-      expect(await jobs.settle()).toStrictEqual<EndedJob[]>([{ id, tool: 'model_invoke', status: 'finished', text: '', assets: [image], hidesAssets: true }])
+      expect(await jobs.settle()).toStrictEqual<EndedJob[]>([{ id, tool: 'model_invoke', status: 'finished', text: '', assets: [image], hidesAssets: true, call: { number: 1, label: '' } }])
     })
   })
 
   describe('stopAll', () => {
     it('ends every job that runs with no result, aborts its work, and ends the waits', async () => {
       const held = heldWork()
-      const id = jobs.start('model_invoke', held.work, { timeoutMs: 1000 })
+      const { id } = jobs.start('model_invoke', held.work, { timeoutMs: 1000 })
       const settle = jobs.settle()
       await vi.advanceTimersByTimeAsync(400)
 
@@ -295,7 +320,7 @@ describe('ReplyJobs', () => {
       // work's files go.
       held.finish({ assets: [image] })
       await vi.advanceTimersByTimeAsync(5000)
-      expect(jobs.list()).toStrictEqual([{ id, tool: 'model_invoke', status: 'stopped', delivered: false, elapsedMs: 400, state: '' }])
+      expect(jobs.list()).toStrictEqual([{ id, tool: 'model_invoke', status: 'stopped', delivered: false, elapsedMs: 400, state: '', call: { number: 1, label: '' } }])
       expect(deletedImages).toStrictEqual([IMAGE])
       expect(consoleError).not.toHaveBeenCalled()
     })
@@ -339,7 +364,9 @@ describe('ReplyJobs', () => {
 
 describe('writeJobAssets', () => {
   // The provider made the last clip as its job `q-1`.
-  const job: EndedJob = { id: 'j-aaaa', tool: 'model_invoke', status: 'finished', text: '', assets: [image, clip(SAVED_CLIP), clip(URL_CLIP, URL_CLIP, 'q-1')], hidesAssets: false }
+  const job: EndedJob = {
+    id: 'j-aaaa', tool: 'model_invoke', status: 'finished', text: '', assets: [image, clip(SAVED_CLIP), clip(URL_CLIP, URL_CLIP, 'q-1')], hidesAssets: false, call: { number: 1, label: '' },
+  }
 
   it('writes each asset under the name of the job\'s tool, a clip with the job id of its provider, and gives the new ids', async () => {
     const writes: unknown[] = []

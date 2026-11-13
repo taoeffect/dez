@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest'
+import { ExplainedError } from '../../utils/errorText'
 import { NativeHttpError } from '../../utils/protocol/errors'
 import { BUILT_IN_PROVIDER_CONFIGS } from './builtins'
 import { ClipNotMadeError, explainedProviderError, providerConnectionError, providerStatusError, providerStreamError, UnusableAnswerError } from './errors'
@@ -67,6 +68,26 @@ describe('provider status errors', () => {
     expect(statusError(status, '{"error":"Refused"}', provider, keyed).explanation).toBe(explanation)
   })
 
+  // A model has no settings page, no account, and no report form: its text
+  // tells whose fault the status is and what a new call can change.
+  it.each([
+    [401, venice, true, 'Venice did not accept the API key of the user. This is not a fault of the call: no call to a model of Venice works until the user fixes it in Settings › Providers.'],
+    [401, copilot, true, 'GitHub Copilot did not accept the sign-in of the user. This is not a fault of the call: no call to a model of GitHub Copilot works until the user fixes it in Settings › Providers.'],
+    [402, venice, true, 'The Venice account of the user does not have enough credit. This is not a fault of the call: no paid call to Venice works until the user adds credit at Venice.'],
+    [403, venice, true, 'Venice refused access. Venice tells its reason in the details below. The cause can be the Venice account of the user (it may not use this model) or the prompt (Venice can block a prompt). Change the prompt, or use another model.'],
+    [429, venice, true, 'Venice refused the request because of a limit: too many requests in a short time, or a limit of the Venice account of the user. Venice tells its reason in the details below. Do not call again at once: wait for the jobs that run, and start fewer jobs at the same time.'],
+    // A model cannot change a base URL.
+    [404, custom, true, 'My server has nothing for this request: the model can be gone, or it does not take this kind of request. My server tells its reason in the details below. Use another model.'],
+    [413, venice, true, 'The request is too large for Venice. Venice tells its reason in the details below. Name fewer or smaller images or clips in `prompt`.'],
+    [503, venice, true, 'This is a problem at Venice, not in the call. Call again once, or use another model.'],
+    [501, venice, true, 'Venice had an error. Venice tells its reason in the details below. This is a problem at Venice, not in the call. Call again once, or use another model.'],
+    [422, venice, true, 'Venice refused the request. Venice tells its reason in the details below. The cause can be `prompt`, the inputs, `parameters`, or the request that Dez made.'],
+    [302, venice, true, 'Venice gave an answer that Dez did not expect. Venice tells its reason in the details below. Call again once.'],
+    [410, venice, false, 'The file that Venice made is not at its link any more: the link can have expired. Call again to make a new one.'],
+  ])('explains HTTP %i to a model that called (%#)', (status, provider, keyed, explanation) => {
+    expect(statusError(status, '{"error":"Refused"}', provider, keyed).modelExplanation).toBe(explanation)
+  })
+
   it('says that the provider tells its reason only when it sent a text', () => {
     expect(statusError(422, '').message).toBe('Venice refused the request. The cause can be the message, the settings of the model, or the request that Dez made. Change the message or the settings, or choose another model. If the error stays, report it at Help › Dez on GitHub.\n\nDetails: HTTP 422')
   })
@@ -126,6 +147,16 @@ describe('provider stream errors', () => {
       providerStreamError(venice, { kind: 'error', code: 'x', message: 'y'.repeat(5000) }).details,
     ]).toStrictEqual(['Bad header Bearer [REDACTED]', `x: ${'y'.repeat(997)}`])
   })
+
+  it('explains an error event to a model that called', () => {
+    expect([
+      providerStreamError(venice, { kind: 'error', status: 503, message: 'Failed' }).modelExplanation,
+      providerStreamError(venice, { kind: 'error', message: 'Failed' }).modelExplanation,
+    ]).toStrictEqual([
+      'Venice stopped the answer with an error. This is a problem at Venice, not in the call. Call again once, or use another model.',
+      'Venice stopped the answer with an error. The cause can be a problem at Venice or the request. Venice tells its reason in the details below. Call again once, or use another model.',
+    ])
+  })
 })
 
 describe('provider request errors', () => {
@@ -149,5 +180,34 @@ describe('provider request errors', () => {
       'Venice did not make the clip. The cause can be the prompt (Venice can refuse a prompt) or a problem at Venice: the details below tell what Venice said. Change the prompt, or send the request again later.\n\nDetails: State: failed: Content policy',
     ])
     expect(explainedProviderError(venice, other)).toBe(other)
+  })
+
+  // The reader of a `model_invoke` request: a model reads the failure in
+  // the result of its job.
+  it('gives a model that called its own text of each failure, with the same details', () => {
+    const native = new NativeHttpError('error sending request for url (http://127.0.0.1:9/v1/chat/completions?api_key=secret123&stream=true)')
+    const forModel = (error: unknown) => explainedProviderError(custom, error, 'model')
+
+    expect([
+      forModel(native),
+      forModel(new UnusableAnswerError('The answer holds no image.')),
+      forModel(new ClipNotMadeError('State: failed: Content policy')),
+      forModel(statusError(402, '{"error":"No credit"}', custom)),
+      forModel(providerStreamError(custom, { kind: 'error', status: 503, message: 'Overloaded' })),
+    ].map((error) => (error as Error).message)).toStrictEqual([
+      'Dez could not reach My server, or the connection broke before the answer was complete. This is a problem of the network or of My server, not of the call. Call again once.\n\nDetails: error sending request for url (http://127.0.0.1:9/v1/chat/completions?api_key=[REDACTED]&stream=true)',
+      'My server sent an answer that Dez cannot use. This is not a fault of the call. Call again once, or use another model.\n\nDetails: The answer holds no image.',
+      'My server did not make the clip. The cause can be the prompt (My server can refuse a prompt) or a problem at My server: the details below tell what My server said. Change the prompt, or call again once.\n\nDetails: State: failed: Content policy',
+      'The My server account of the user does not have enough credit. This is not a fault of the call: no paid call to My server works until the user adds credit at My server.\n\nDetails: HTTP 402: No credit',
+      'My server stopped the answer with an error. This is a problem at My server, not in the call. Call again once, or use another model.\n\nDetails: Overloaded',
+    ])
+  })
+
+  it('gives a model an error with no text for it as it is: a text that Dez wrote for the reader, and an error that Dez did not expect', () => {
+    const written = new ExplainedError('The model takes no image.')
+    const other = new TypeError('x is undefined')
+
+    expect([explainedProviderError(venice, written, 'model'), explainedProviderError(venice, other, 'model')]).toStrictEqual([written, other])
+    expect(explainedProviderError(venice, written, 'model')).toBe(written)
   })
 })

@@ -75,14 +75,14 @@ describe('the marker of a hidden asset', () => {
 
 describe('jobResultInBlocks', () => {
   const results = jobsWaitText([
-    { id: 'j-aaaa', tool: 'model_invoke', status: 'finished', text: 'The cat is blue.' },
-    { id: 'j-bbbb', tool: 'model_invoke', status: 'failed', text: 'The provider refused the prompt.' },
+    { id: 'j-aaaa', tool: 'model_invoke', status: 'finished', text: 'The cat is blue.', call: { number: 1, label: 'A cat' } },
+    { id: 'j-bbbb', tool: 'model_invoke', status: 'failed', text: 'The provider refused the prompt.', call: null },
   ], 1)
 
   it('gives the result that a jobs_wait block of the section holds for the job', () => {
     const blocks = findToolBlocks(`${invoke('j-aaaa')}\n${wait('1 job ended.')}\n\n${wait(results)}`)
 
-    expect(jobResultInBlocks(blocks, 'j-aaaa')).toStrictEqual({ id: 'j-aaaa', tool: 'model_invoke', status: 'finished', text: 'The cat is blue.' })
+    expect(jobResultInBlocks(blocks, 'j-aaaa')).toStrictEqual({ id: 'j-aaaa', tool: 'model_invoke', status: 'finished', text: 'The cat is blue.', call: { number: 1, label: 'A cat' } })
     expect(jobResultInBlocks(blocks, 'j-bbbb')?.status).toBe('failed')
   })
 

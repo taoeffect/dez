@@ -5,6 +5,7 @@ import { findImageReferences, imageMediaType, type ImageMediaType } from '../cha
 import { findMediaTags } from '../chat/mediaTags'
 import type { Section } from '../chat/types'
 import { assetIdArgument } from './arguments'
+import { madeAssetText } from './jobs'
 import { subcommandToolDefinition, type SubcommandTool } from './subcommands'
 import { ToolError, type ToolArguments, type ToolArgumentValue, type ToolParameter } from './types'
 
@@ -601,5 +602,5 @@ export function unwritableFormatError(id: string, mediaType: DrawnMediaType, sou
  *  image `id`. It names the images by their ids only: a result goes to the
  *  provider, which gets no path of a stored file. */
 export function imageResultText(id: string, newId: string, size: ImageSize): string {
-  return `Made the image @${newId} from @${id}. The image @${newId} is ${sizeText(size)}.`
+  return `${madeAssetText('image', newId)} from @${id}. The image @${newId} is ${sizeText(size)}.`
 }

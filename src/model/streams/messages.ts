@@ -3,7 +3,7 @@ import { assetTextPieces } from '../chat/assetMentions'
 import { sectionIsEmpty, sectionPlainText } from '../chat/content'
 import { findAssetMentions, type AssetMention } from '../chat/imageMentions'
 import { findImageReferences, IMAGE_TOOL_KEY, type ImageReference } from '../chat/images'
-import { mediaTagRequestText, mediaTagsForRequest, type MediaTag } from '../chat/mediaTags'
+import { findMediaTags, MEDIA_TOOL_ATTRIBUTE, mediaTagRequestText, mediaTagsForRequest, type MediaTag } from '../chat/mediaTags'
 import { sameModelRef } from '../chat/modelRef'
 import { holdsStoredFilePath, withoutStoredFilePaths } from '../chat/storedFilePaths'
 import { thinkingField } from '../chat/thinking'
@@ -11,6 +11,7 @@ import { EMPTY_TOOL_RESULT, INTERRUPTED_TOOL_RESULT, agentTextForRequest, splitT
 import type { ClipAttachment } from '../providers/clipInputs'
 import { minInputImages } from '../providers/clipImages'
 import type { ClipInputRules, MediaKind } from '../providers/types'
+import { madeAssetIds } from '../tools/jobs'
 import type { ToolCall, ToolResult } from '../tools/types'
 import { conversationAssets, preparedMediaRequest, type MediaRequestInput } from './mediaRequest'
 import type { RequestMessages, StreamMessage } from './types'
@@ -48,6 +49,12 @@ export interface RequestOptions {
 // a mention of it (`@b`): only a media request sends clips (`messageClips`,
 // `mediaRequestInput`), so the bytes of a chat request do not depend on
 // them.
+//
+// An image or a clip that a Dez tool made is not text of the model, but
+// its reference or tag is in the reply, at the start of the text of the
+// round after the tool's group. An agent message leaves it out when a
+// result of that group names the asset (`roundRequestText`): the result
+// already tells the model the id.
 //
 // Prompt cache: a message is the same bytes in every later request, with
 // one exception. A user message with image parts loses them when a newer
@@ -154,26 +161,25 @@ export function messageClips(sections: readonly Section[]): ClipAttachment[] {
 /** The request messages of one agent section. A reply that called tools
  *  made one request round per group of calls, and the section holds them
  *  all: each round's text, then its `<dez:tool>` blocks. Each round becomes
- *  an agent message with the round's text and calls, then a tool message
- *  with their results; the text after the last group becomes the last agent
- *  message, left out when it is blank. A section with no blocks gives one
- *  agent message, the same bytes as before tools existed (saved prefix
- *  hashes depend on it). The stream controller builds the rounds of a
- *  running reply with this too, so the loop and every later request send
- *  the same bytes.
+ *  an agent message with the round's text (`roundRequestText`) and calls,
+ *  then a tool message with their results; the text after the last group
+ *  becomes the last agent message, left out when it is blank. A section
+ *  with no blocks gives one agent message, the same bytes as before tools
+ *  existed (saved prefix hashes depend on it). The stream controller builds
+ *  the rounds of a running reply with this too, so the loop and every later
+ *  request send the same bytes.
  *
  *  With `sendTools` false, a section with blocks is one agent message, with
  *  each block as text, and sends no thinking: a request with no tool
  *  definitions cannot hold tool calls. */
 export function agentSectionMessages(section: Section, requestModel: ModelRef, sendTools: boolean): StreamMessage[] {
-  const text = sectionPlainText(section)
-  const rounds = agentRounds(text)
+  const rounds = agentRounds(sectionPlainText(section))
   // The first group's blocks are always in the first round; a section that
   // ends at its first group has only that round.
-  if (!sendTools && rounds[0].blocks.length > 0) return [{ role: 'agent', content: textWithToolCalls(text) }]
+  if (!sendTools && rounds[0].blocks.length > 0) return [{ role: 'agent', content: textWithToolCalls(rounds) }]
 
   return rounds.flatMap((round, index): StreamMessage[] => {
-    const content = withoutStoredFilePaths(agentTextForRequest(round.text))
+    const content = withoutStoredFilePaths(roundRequestText(rounds, index))
     const thinking = roundThinking(section, requestModel, rounds, index)
     if (round.blocks.length === 0) return content.trim() === '' ? [] : [{ role: 'agent', content, ...thinking }]
     return [
@@ -183,11 +189,60 @@ export function agentSectionMessages(section: Section, requestModel: ModelRef, s
   })
 }
 
+// The text of the round `index` as a request sends it, before the path
+// scrub: the text that the model wrote (`agentTextForRequest`), without
+// the references and the tags of the images and the clips that the tools
+// of the group before the round made and named in their results
+// (`madeAssetIds`, tools/jobs.ts).
+//
+// Dez writes such an asset after the group, so its text is the start of
+// the model's own message of the next round. A model that reads two of
+// its messages that start with a clip's tag ends its answer with a tag
+// that it wrote itself, which the user sees as text (`ModelTextEscaper`);
+// a sentence in the system prompt did not stop that. The result tells the
+// model the id and the kind of each asset, so the request loses nothing.
+//
+// An asset that no result of that group names keeps its text: the model's
+// own image, and the asset of a job whose result the model did not take
+// (`settleJobs`, controller/stream.ts), which nothing else tells it of.
+// The stored text never changes, and the stored result of a block never
+// changes, so a round is the same bytes in every request.
+function roundRequestText(rounds: readonly AgentRound[], index: number): string {
+  const made = new Set(rounds[index - 1]?.blocks.flatMap((block) => madeAssetIds(block.result)))
+  return agentTextForRequest(made.size === 0 ? rounds[index].text : withoutToolAssets(rounds[index].text, made))
+}
+
+// `text` without the image references and the media tags of the assets
+// `ids` that have the mark of a Dez tool. Each one goes with the line
+// breaks around it, which Dez wrote (`writeAsset` and `writeModelText`,
+// controller/stream.ts); one blank line stays where text is on both sides.
+// So a round that wrote only calls gives a blank text, and a round's
+// answer starts with the model's own words.
+function withoutToolAssets(text: string, ids: ReadonlySet<string>): string {
+  const assets = [
+    ...findImageReferences(text, 'agent').filter(({ id, metadata }) => id !== null && ids.has(id) && metadata.some((item) => item.key === IMAGE_TOOL_KEY)),
+    ...findMediaTags(text).filter(({ id, other }) => ids.has(id) && other.some((attribute) => attribute.name === MEDIA_TOOL_ATTRIBUTE)),
+  ]
+  let rest = text
+  // From the last one, so that the offsets of the earlier ones still hold.
+  for (const { from, to } of assets.sort((a, b) => b.from - a.from)) {
+    const before = rest.slice(0, from).replace(/\n+$/, '')
+    const after = rest.slice(to).replace(/^\n+/, '')
+    rest = before !== '' && after !== '' ? `${before}\n\n${after}` : before + after
+  }
+  return rest
+}
+
 // One request round of an agent section: the text that the round wrote, and
-// the group of calls that ended it. The last round has no calls.
+// the group of calls that ended it. The last round has no calls. `before`
+// and `after` are the `\n` that joins the text to the group before it and
+// to its own group (blank on a side with no block): Dez wrote them, so they
+// are no part of `text`.
 interface AgentRound {
   text: string
   blocks: ToolBlock[]
+  before: string
+  after: string
 }
 
 // The stream controller writes one `\n` before each group of calls (none
@@ -201,7 +256,7 @@ interface AgentRound {
 // before a `\n`, so the text next to a block always has that `\n`.
 function agentRounds(text: string): AgentRound[] {
   const pieces = splitToolBlocks(text)
-  const rounds: AgentRound[] = [{ text: '', blocks: [] }]
+  const rounds: AgentRound[] = [{ text: '', blocks: [], before: '', after: '' }]
   // splitToolBlocks never gives two text pieces in a row.
   pieces.forEach((piece, index) => {
     if (piece.kind === 'tool') {
@@ -211,11 +266,11 @@ function agentRounds(text: string): AgentRound[] {
     const afterBlock = index > 0
     const beforeBlock = index < pieces.length - 1
     if (afterBlock && beforeBlock && piece.text === '\n') return
-    let roundText = piece.text
-    if (afterBlock) roundText = roundText.slice(1)
-    if (beforeBlock) roundText = roundText.slice(0, -1)
-    if (afterBlock) rounds.push({ text: roundText, blocks: [] })
-    else rounds[0].text = roundText
+    const from = afterBlock ? 1 : 0
+    const to = piece.text.length - (beforeBlock ? 1 : 0)
+    const round: AgentRound = { text: piece.text.slice(from, to), blocks: [], before: piece.text.slice(0, from), after: piece.text.slice(to) }
+    if (afterBlock) rounds.push(round)
+    else rounds[0] = round
   })
   return rounds
 }
@@ -281,13 +336,17 @@ function toolResult(block: ToolBlock): ToolResult {
   return { callId: block.id, content: content.trim() === '' ? EMPTY_TOOL_RESULT : content, isError: block.status === 'error' }
 }
 
-// The section text with each block in place as plain text, for a request
-// with no tools.
-function textWithToolCalls(text: string): string {
-  const parts = splitToolBlocks(text).map((piece) => {
-    if (piece.kind === 'text') return agentTextForRequest(piece.text)
-    const call = toolCall(piece.block)
-    return `[Tool call: ${call.name} ${JSON.stringify(call.arguments)}]\n${toolResult(piece.block).content}\n[End of tool result]`
+// The section as one text, for a request with no tools: the text of each
+// round (`roundRequestText`) with its joins, as the section has them, and
+// each block in place as plain text. The blocks of a group have one `\n`
+// between them (`agentRounds`).
+function textWithToolCalls(rounds: readonly AgentRound[]): string {
+  const parts = rounds.map((round, index) => {
+    const blocks = round.blocks.map((block) => {
+      const call = toolCall(block)
+      return `[Tool call: ${call.name} ${JSON.stringify(call.arguments)}]\n${toolResult(block).content}\n[End of tool result]`
+    })
+    return round.before + roundRequestText(rounds, index) + round.after + blocks.join('\n')
   })
   return withoutStoredFilePaths(parts.join(''))
 }

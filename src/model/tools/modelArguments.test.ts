@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest'
 import type { ModelCache } from '../persistence/types'
 import { providerInfo } from '../providers/testing'
 import type { ModelInfo } from '../providers/types'
-import { namedModelTarget, parameterValuesArgument } from './modelArguments'
+import { namedModelTarget, nearModelIds, parameterValuesArgument } from './modelArguments'
 import { ToolError } from './types'
 
 const OPENROUTER = providerInfo('openrouter', 'OpenRouter')
@@ -48,6 +48,68 @@ describe('namedModelTarget', () => {
     expect(refusal()).toContain('is not a full model id')
     expect(refusal()).not.toContain('Leave out')
     expect(refusal('Leave out `model`.')).toBe(`${refusal()} Leave out \`model\`.`)
+  })
+
+  // A model that copies an id from memory gets the id that it meant, so
+  // that its next call needs no `model_list` call.
+  it.each([
+    ['a model id with other marks', 'venice/wan-2-6-flash-image-to-video', 'The user cannot use the model "venice/wan-2-6-flash-image-to-video". The nearest id of a model that the user can use is "venice/wan-2.6-flash-image-to-video".'],
+    ['an id with no provider', 'wan-2.6-flash-image-to-video', '"wan-2.6-flash-image-to-video" is not a full model id (provider/model). The nearest id of a model that the user can use is "venice/wan-2.6-flash-image-to-video".'],
+    ['an id with a provider that the user does not have', 'wan/wan-2.6-image-to-video', 'No provider has the id "wan". The nearest id of a model that the user can use is "venice/wan-2.6-image-to-video".'],
+    ['a part of two ids', 'image-to-video', '"image-to-video" is not a full model id (provider/model). The nearest ids of models that the user can use are "venice/wan-2.6-image-to-video", "venice/wan-2.6-flash-image-to-video".'],
+    ['an id that is near no id', 'venice/sora-9', 'The user cannot use the model "venice/sora-9".'],
+  ])('names the nearest ids in the refusal of %s', (_name, named, refusal) => {
+    const venice = providerInfo('venice', 'Venice')
+    const models = ['wan-2.6-flash-image-to-video', 'wan-2.6-image-to-video', 'z-image-turbo'].map((id): ModelInfo => ({ id, name: id, provider: venice.id }))
+    const cache: ModelCache = { version: 1, providers: { venice: { models, working: true, updatedAt: 0, lastCheckedAt: 0 } } }
+
+    expect(() => namedModelTarget(cache, [venice], named)).toThrow(new ToolError(`${refusal} Use model_list to find the full ids of the models that the user can use.`))
+  })
+
+  // The models of another provider are no help for a call that names a
+  // provider of the user.
+  it('names only the near ids of the provider that the call names', () => {
+    const other = providerInfo('other', 'Other')
+    const cache: ModelCache = {
+      version: 1,
+      providers: { ...CACHE.providers, other: { models: [{ ...VIDEO, provider: other.id }], working: true, updatedAt: 0, lastCheckedAt: 0 } },
+    }
+
+    expect(() => namedModelTarget(cache, [OPENROUTER, other], 'openrouter/grok-video'))
+      .toThrow('The nearest id of a model that the user can use is "openrouter/x-ai/grok-video". ')
+  })
+})
+
+describe('nearModelIds', () => {
+  const models = (...ids: string[]) => ids.map((id): ModelInfo => ({ id, name: id, provider: 'p' }))
+
+  it('compares only letters and digits, in any case', () => {
+    expect(nearModelIds(models('wan-2.6-flash', 'plain'), 'WAN_2-6_Flash')).toStrictEqual(['p/wan-2.6-flash'])
+  })
+
+  it('takes one change for each five characters, and at least one', () => {
+    // 10 letters and digits: 2 changes are near, 3 are not.
+    expect(nearModelIds(models('abcdefghij'), 'abcdefghxy')).toStrictEqual(['p/abcdefghij'])
+    expect(nearModelIds(models('abcdefghij'), 'abcdefgxyz')).toStrictEqual([])
+    expect(nearModelIds(models('gpt5'), 'gpt4')).toStrictEqual(['p/gpt5'])
+  })
+
+  it('takes an id that holds the text, or that the text holds, from 4 letters and digits', () => {
+    expect(nearModelIds(models('openai/gpt-4o', 'openai/o1-pro'), 'gpt-4o')).toStrictEqual(['p/openai/gpt-4o'])
+    expect(nearModelIds(models('gpt-4o'), 'openai/gpt-4o-2026')).toStrictEqual(['p/gpt-4o'])
+    // `o1` is in too many ids by chance.
+    expect(nearModelIds(models('openai/o1-pro'), 'o1')).toStrictEqual([])
+  })
+
+  // `flux-2-max` is no part of the text and 3 changes away; the id that
+  // is the 4th nearest is left out.
+  it('gives at most 3 ids, the nearest first', () => {
+    expect(nearModelIds(models('flux-2-pro-ultra-max', 'flux-2-pro-ultra', 'flux-2', 'flux-2-pro', 'flux-2-max'), 'flux-2-pro'))
+      .toStrictEqual(['p/flux-2-pro', 'p/flux-2', 'p/flux-2-pro-ultra'])
+  })
+
+  it('gives none for a text with no letter and no digit', () => {
+    expect(nearModelIds(models('plain'), ' / ')).toStrictEqual([])
   })
 })
 

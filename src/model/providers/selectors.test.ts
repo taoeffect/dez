@@ -319,7 +319,11 @@ describe('provider requests that get no answer that Dez can read', () => {
   // A custom provider: the user wrote its base URL, so the text names it.
   const UNREACHED = 'Dez could not reach My server, or the connection broke before the answer was complete. Check the internet connection, then try again. If the error stays, check the base URL of My server in Settings › Providers (for a server on this computer: check that it runs).'
 
-  it('tells that Dez could not reach the server of a chat, with the native text last', async () => {
+  // The reader of a `model_invoke` request is the model that called.
+  it.each([
+    ['the user', undefined, UNREACHED],
+    ['a model that called', 'model', 'Dez could not reach My server, or the connection broke before the answer was complete. This is a problem of the network or of My server, not of the call. Call again once.'],
+  ])('tells %s that Dez could not reach the server of a chat, with the native text last', async (_name, reader, explanation) => {
     saveProvider('closed', CLOSED_BASE_URL)
 
     const failure = sbp('dez.provider/streamChat', {
@@ -327,9 +331,10 @@ describe('provider requests that get no answer that Dez can read', () => {
       modelId: 'm',
       messages: [{ role: 'user', content: 'Hi' }],
       onToken: () => {},
+      ...(reader !== undefined && { reader }),
     }) as Promise<void>
 
-    await expect(failure).rejects.toStrictEqual(new ExplainedError(UNREACHED, `error sending request for url (${CLOSED_BASE_URL}/chat/completions)`))
+    await expect(failure).rejects.toMatchObject({ explanation, details: `error sending request for url (${CLOSED_BASE_URL}/chat/completions)` })
   })
 
   it('tells that Dez could not reach the server of a model check', async () => {
@@ -351,10 +356,10 @@ describe('provider requests that get no answer that Dez can read', () => {
       onToken: (token: string) => { tokens.push(token) },
     }) as Promise<void>
 
-    await expect(failure).rejects.toStrictEqual(new ExplainedError(
-      'My server stopped the answer with an error. This is a problem at My server, not in your message or in Dez. Try again later.',
-      'provider_unavailable: Provider returned error',
-    ))
+    await expect(failure).rejects.toMatchObject({
+      explanation: 'My server stopped the answer with an error. This is a problem at My server, not in your message or in Dez. Try again later.',
+      details: 'provider_unavailable: Provider returned error',
+    })
     expect(tokens).toStrictEqual(['Partial'])
   })
 

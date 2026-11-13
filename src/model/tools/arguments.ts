@@ -1,5 +1,5 @@
 import { IMAGE_ID_SOURCE } from '../chat/images'
-import { ToolError, type ToolArguments, type ToolArgumentValue, type ToolParameter, type ToolParameterType } from './types'
+import { ToolError, type MisplacedParameterText, type ToolArguments, type ToolArgumentValue, type ToolParameter, type ToolParameterType } from './types'
 
 // The checks of the arguments of a call against the parameters of a tool
 // (or of a subcommand, subcommands.ts), with error texts that tell the
@@ -10,6 +10,9 @@ import { ToolError, type ToolArguments, type ToolArgumentValue, type ToolParamet
 export interface ArgumentRules {
   name: string
   parameters: readonly ToolParameter[]
+  /** What the error of a key that is no parameter tells when the tool
+   *  knows where the key belongs; else the error lists the parameters. */
+  misplacedParameter?: MisplacedParameterText
 }
 
 // `number` needs a finite value: `JSON.parse('1e999')` gives `Infinity`, and
@@ -82,11 +85,13 @@ export function parseToolArguments(rules: ArgumentRules, json: string): ToolArgu
  *  An unknown key, a value of the wrong type, and a missing required
  *  parameter are errors; `error` is then the text for the model to read:
  *  what is wrong, and how a good value looks (the parameter names and
- *  types, or an example). A `null` value counts as absent. */
+ *  types, where the key belongs (`ArgumentRules.misplacedParameter`), or
+ *  an example). A `null` value counts as absent. */
 export function checkArgumentValues(rules: ArgumentRules, values: Record<string, unknown>): ToolArgumentsParse {
   const unknownKey = Object.keys(values).find((key) => !rules.parameters.some((parameter) => parameter.name === key))
   if (unknownKey !== undefined) {
-    return { ok: false, error: `${rules.name} has no parameter ${JSON.stringify(unknownKey)}. ${parametersText(rules)}` }
+    const fix = rules.misplacedParameter?.(unknownKey, values) ?? parametersText(rules)
+    return { ok: false, error: `${rules.name} has no parameter ${JSON.stringify(unknownKey)}. ${fix}` }
   }
 
   const parsed: ToolArguments = {}

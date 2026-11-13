@@ -65,6 +65,8 @@ export const MODEL_INVOKE_TOOL: ToolDefinition = {
     + 'The call starts a job and returns its job id at once; `jobs_wait` gives the result. '
     + 'Jobs run at the same time: start every call that does not need the result of another call, then wait. '
     + 'An image or a clip that the model made goes into your reply at `jobs_wait`, with a new id that a later call can name with @id. '
+    + 'The new ids follow the order in which the jobs end, not the order of your calls: each result of `jobs_wait` names its call. '
+    + 'The user sees each image and each clip of your reply: set `is_intermediate` for a call that makes only a part of the result. '
     + 'Text that the model made is only in the result of the job: the user sees it only when you write it in your reply. '
     + `The result of a text model holds at most the first ${INVOCATION_TEXT_CAP} characters of its answer. `
     + 'A request that failed gives the cause as the result of its job.',
@@ -96,7 +98,10 @@ export const MODEL_INVOKE_TOOL: ToolDefinition = {
       name: 'is_intermediate',
       type: 'boolean',
       description: 'Set it to `true` when the call makes only a part that you use to assemble the result that the user asked for, '
-        + 'and not a result that the user asked to see. The default is `false`.',
+        + 'and not a result that the user asked to see: a frame, one scene of a video, a sound track. '
+        + 'The image or the clip is then hidden in your reply: the user sees only the chip of this call, and can open the chip to see it. '
+        + 'It gets an id as any other one, which a later call can name with @id. '
+        + 'The default is `false`: the image or the clip shows in your reply.',
       required: false,
     },
     jobTimeoutParameter(DEFAULT_INVOKE_TIMEOUT_SECONDS),
@@ -363,12 +368,12 @@ export const IMAGE_NOT_SAVED_TEXT = 'The model made an image, but Dez could not 
   + 'This is not a fault of the call, and Dez showed the user the cause. '
   + 'Tell the user that the image was not made, and call model_invoke again for it only when the user asks for it.'
 
-/** The error result of a job whose request failed with `message`: the text
- *  that a user would get (the fault and the fix, the provider's own job id
- *  when it took one, and the provider's text as the details). The cause
- *  can be the call (a provider can refuse a prompt), so the text does not
- *  say whose fault it is. A local server can name a file in its error
- *  text, so the local paths go. */
+/** The error result of a job whose request failed with `message`: the
+ *  text of the failure for a model that called (`RequestReader`: whose
+ *  fault it is and what a new call can change, the provider's own job id
+ *  when it took one, and the provider's text as the details). The last
+ *  sentence is for a failure whose text names no fix. A local server can
+ *  name a file in its error text, so the local paths go. */
 export function invocationFailedText(modelName: string, message: string): string {
   return `The request to ${modelName} failed, and it made nothing. ${withoutLocalPaths(message)}\n\n`
     + 'When the cause is in `prompt`, the inputs, or `parameters`, change the call and call again. Else tell the user what failed.'

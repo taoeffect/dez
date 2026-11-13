@@ -18,6 +18,7 @@ import {
   ROUND_LIMIT_TOOL_RESULT,
   STOPPED_TOOL_RESULT,
   toolCallBlock,
+  toolRoundBlocks,
   toolGroupAppendText,
   toolGroupText,
   type CheckedToolCall,
@@ -137,10 +138,17 @@ function finalizeStream(tabId: string, session: EndedStreamSession | null): void
   sbp('dez.model/appState/save')
 }
 
+// The toast group (`ToastData.group`) of the reply errors of a tab.
+function replyErrorGroup(tabId: string): string {
+  return `reply-error:${tabId}`
+}
+
 // The error shows only in this toast, never as thread text. Sticky (no
-// duration): the user closes it. For a tab in the background the title names
-// the tab, else the user cannot tell where the error came from. Call it after
-// the stream end, which sets the title of a new tab.
+// duration): the user closes it, or the next reply of the tab does
+// (`dez.stream/start`), as the toast then tells of a reply that the user
+// went on from. For a tab in the background the title names the tab, else
+// the user cannot tell where the error came from. Call it after the stream
+// end, which sets the title of a new tab.
 function showReplyError(tabId: string, title: string, message: string): void {
   const tab = sbp('dez.model/tab', tabId) as Tab | null
   const inBackground = !!tab && tab.id !== sbp('dez.model/tabs/activeId')
@@ -148,6 +156,7 @@ function showReplyError(tabId: string, title: string, message: string): void {
     variant: 'error',
     title: inBackground ? `${title} in "${tab.title}"` : title,
     message,
+    group: replyErrorGroup(tabId),
   })
 }
 
@@ -304,12 +313,17 @@ function toolAssetWriters(tabId: string, reply: ReplyRuntime, tool: string, take
 //
 // The reference of a tool's image or the tag of its clip goes after the
 // group, so it is the start of the text of the next round, and has the
-// name of its tool (`IMAGE_TOOL_KEY`, `MEDIA_TOOL_ATTRIBUTE`). The round
-// that made the call keeps its text, and both rounds keep their thinking:
-// a request sends no thinking for a round whose text holds an image of the
-// model (`roundThinking`, streams/messages.ts), and the request after a
-// round of calls needs that round's thinking.
-async function runToolRound(tabId: string, reply: ReplyRuntime, model: ModelRef, calls: CheckedToolCall[], sectionText: string): Promise<Section | null> {
+// name of its tool (`IMAGE_TOOL_KEY`, `MEDIA_TOOL_ATTRIBUTE`). A request
+// does not send that text: the result of the call names the asset
+// (`roundRequestText`, streams/messages.ts). The round that made the call
+// keeps its text, and both rounds keep their thinking: a request sends no
+// thinking for a round whose text holds an image of the model
+// (`roundThinking`, streams/messages.ts), and the request after a round of
+// calls needs that round's thinking.
+//
+// `roundsLeft`: how many tool rounds the reply can run after this one;
+// near the limit the last result tells the model (`toolRoundBlocks`).
+async function runToolRound(tabId: string, reply: ReplyRuntime, model: ModelRef, calls: CheckedToolCall[], sectionText: string, roundsLeft: number): Promise<Section | null> {
   const runningBlocks = calls.map((call) => toolCallBlock(call))
   const run: ToolRun = {
     calls,
@@ -338,7 +352,7 @@ async function runToolRound(tabId: string, reply: ReplyRuntime, model: ModelRef,
   }
 
   reply.toolRun = null
-  const blocks = calls.map((call, index) => toolCallBlock(call, run.results[index]))
+  const blocks = toolRoundBlocks(calls, run.results, roundsLeft)
   if (!replaceToolRun(tabId, reply.sectionId, run, toolGroupText(blocks))) return null
   return streamingSection(tabId, reply.sectionId)
 }
@@ -544,7 +558,7 @@ async function runChatRounds(args: StreamStartArgs, reply: ReplyRuntime): Promis
       return
     }
 
-    const replySoFar = await runToolRound(args.tabId, reply, args.model, calls, sectionText)
+    const replySoFar = await runToolRound(args.tabId, reply, args.model, calls, sectionText, MAX_TOOL_ROUNDS - toolRounds - 1)
     if (!replySoFar) {
       // Still current only when the user deleted the running blocks:
       // with no calls to send back, the reply cannot go on, so it ends
@@ -554,12 +568,12 @@ async function runChatRounds(args: StreamStartArgs, reply: ReplyRuntime): Promis
     }
     afterToolCall = calls[0].id
     // Only up to the results of the newest group. The text after that group
-    // (an image that a tool of the round made, or text that the user typed
-    // while the tools ran) is the start of the next round's message. A
-    // request that ends with an agent message asks the model to go on from
-    // that text, and many providers refuse it. Every later request sends
-    // that text at the start of the message of the next round, after these
-    // same bytes.
+    // (text that the user typed while the tools ran, or an asset that no
+    // result names) is the start of the next round's message. A request
+    // that ends with an agent message asks the model to go on from that
+    // text, and many providers refuse it. Every later request sends that
+    // text at the start of the message of the next round, after these same
+    // bytes.
     const soFar = agentSectionMessages(replySoFar, args.model, true)
     messages = [...args.messages, ...soFar.slice(0, soFar.findLastIndex((message) => message.role === 'tool') + 1)]
   }
@@ -670,6 +684,8 @@ export default sbp('sbp/selectors/register', {
       await sbp('dez.http/cancelStream', previousReply.requestId).catch(() => {})
       if (repliesByTab.get(args.tabId) === previousReply) repliesByTab.delete(args.tabId)
     }
+    // The error toasts of the tab's earlier replies are out of date now.
+    sbp('dez.ui/closeToasts', 'app-global', replyErrorGroup(args.tabId))
 
     const reply: ReplyRuntime = {
       sectionId: args.sectionId,

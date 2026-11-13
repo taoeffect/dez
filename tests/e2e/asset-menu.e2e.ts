@@ -202,7 +202,7 @@ describe('asset menu', () => {
     const stored = await writeTestFile(appFilePath(app.home, 'assets', 'generated', 'images', 'menu-hidden.png'), PNG)
     const saved = await writeTestFile(appFilePath(app.home, 'assets', 'generated', 'audio', 'menu-hidden.wav'), TONE)
     const reply = [
-      `<dez:tool id="call_menu" name="model_invoke" model="studio/paint" prompt="A draft" is_intermediate="true">\n${jobStartedText(jobId)}\n</dez:tool>`,
+      `<dez:tool id="call_menu" name="model_invoke" model="studio/paint" prompt="A draft" is_intermediate="true">\n${jobStartedText(jobId, 1)}\n</dez:tool>`,
       `![${stored}](id=a|tool=model_invoke|hidden=${jobId})`,
       `<dez:audio id="b" type="audio/wav" src="${saved}" tool="model_invoke" hidden="${jobId}"/>`,
       'Done',

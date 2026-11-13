@@ -24,8 +24,10 @@ import { endedReply, newTab, openSeededConversation, openToasts, pickModel, subm
 //   its URL), and encodes clips of two formats again;
 // - `ffmpeg` runs as a job on copies of the inputs that its arguments name
 //   with `@id`: a new clip and a new image go into the generated folders
-//   and into the reply, with a new id and the name of the tool; a PNG image
-//   goes as a JPEG copy; a run with `-f null -` gives only its log;
+//   and into the reply, with a new id and the name of the tool; a later
+//   call of the reply mixes music under the sound of such a new clip; a
+//   PNG image goes as a JPEG copy; a run with `-f null -` gives only its
+//   log;
 // - `ffprobe` gives its output as the result of its call, with the neutral
 //   names of the copies;
 // - a call whose arguments name a file of the computer, the network, or a
@@ -229,12 +231,13 @@ describe('video tool', () => {
     const before = await filesIn(videoDir)
     await submit(browser, 'Join my clips.')
     const job = await runJob(await chatRequest(), 'call_join', 'join_clips', { clips: '@a @b @f' })
-    expect(job.started).toBe(`${jobStartedText(job.jobId)}\nThe inputs of the run: the video clip @a as a.webm, the video clip @b as b.webm, the video clip @f as f.webm.`)
+    expect(job.started).toBe(`${jobStartedText(job.jobId, 1)}\nThe inputs of the run: the video clip @a as a.webm, the video clip @b as b.webm, the video clip @f as f.webm.`)
     expect(job.result).toStrictEqual({
       id: job.jobId,
       tool: 'video',
       status: 'finished',
       text: 'Joined the 3 clips into one clip with no new encode: their streams match.\nMade the video clip @g.',
+      call: { number: 1, label: 'join_clips @a @b @f' },
     })
     // The linked file is not in the test HOME, which `takeRequest` checks.
     expect(job.next.body).not.toContain(linkedDir)
@@ -258,13 +261,14 @@ describe('video tool', () => {
     await submit(browser, 'Join the two formats.')
     // `@d` is the temp copy of a clip: a file of the cache folder.
     const job = await runJob(await chatRequest(), 'call_join', 'join_clips', { clips: '@a @d' })
-    expect(job.started).toBe(`${jobStartedText(job.jobId)}\nThe inputs of the run: the video clip @a as a.webm, the video clip @d as d.mp4.`)
+    expect(job.started).toBe(`${jobStartedText(job.jobId, 1)}\nThe inputs of the run: the video clip @a as a.webm, the video clip @d as d.mp4.`)
     expect(job.result).toStrictEqual({
       id: job.jobId,
       tool: 'video',
       status: 'finished',
       text: 'Joined the 2 clips into one 48x36 WebM (VP9) clip. Dez encoded them again, as their streams do not match '
         + '(a join with no new encode needs the same format, codecs, size, and frame rate in every clip).\nMade the video clip @g.',
+      call: { number: 1, label: 'join_clips @a @d' },
     })
     await sendChatReply(job.next.reply, CALLER.modelName)
 
@@ -278,34 +282,46 @@ describe('video tool', () => {
     await expectCleanEnd(files)
   })
 
-  it('runs ffmpeg on copies of a video clip and a sound: the new clip goes into the generated video, and a run with -f null gives only its log', async () => {
+  it('runs ffmpeg on copies of a video clip and a sound: the new clip goes into the generated video, a later call mixes music under its sound, and a run with -f null gives only its log', async () => {
     const files = await openClips('ffmpeg-mix')
     const before = await filesIn(videoDir)
     await submit(browser, 'Put the sound on the clip.')
     const mix = await runJob(await chatRequest(), 'call_mix', 'ffmpeg', { arguments: '-i @a -i @e -map 0:v -map 1:a -c:v copy -c:a libopus -shortest mixed.webm' })
-    expect(mix.started).toBe(`${jobStartedText(mix.jobId)}\nThe inputs of the run: the video clip @a as a.webm, the audio clip @e as e.wav.`)
+    expect(mix.started).toBe(`${jobStartedText(mix.jobId, 1)}\nThe inputs of the run: the video clip @a as a.webm, the audio clip @e as e.wav.`)
     expect(mix.result.status).toBe('finished')
+    // The result names its call: the start of the command line.
+    expect(mix.result.call).toStrictEqual({ number: 1, label: 'ffmpeg -i @a -i @e -map 0:v -map 1:a -c:v copy -c:a libopus -shortest mixed.webm' })
     expect(mix.result.text).toMatch(/^ffmpeg ended with no error and made 1 file that Dez keeps: mixed\.webm \(video clip\)\. The line at the end gives its id\.\nThe end of the log of ffmpeg:\n[\s\S]+\nMade the video clip @g\.$/)
+    const madeName = await newFileIn(browser, videoDir, before)
 
     // An example of the help of the subcommand: the log is the result, and
     // it names the input by the name of its copy.
     const loudness = await runJob(mix.next, 'call_loudness', 'ffmpeg', { arguments: '-v info -i @e -af volumedetect -f null -' })
-    expect(loudness.started).toBe(`${jobStartedText(loudness.jobId)}\nThe inputs of the run: the audio clip @e as e.wav.`)
+    expect(loudness.started).toBe(`${jobStartedText(loudness.jobId, 2)}\nThe inputs of the run: the audio clip @e as e.wav.`)
     expect(loudness.result.status).toBe('finished')
     expect(loudness.result.text.startsWith('ffmpeg ended with no error. It made no file, as the call asked for with -f null.\nThe end of the log of ffmpeg:\n')).toBe(true)
     expect(loudness.result.text).toContain('from \'e.wav\'')
     expect(loudness.result.text).toMatch(/mean_volume: -?[\d.]+ dB/)
     expect(loudness.result.text).not.toContain('Made the')
-    await sendChatReply(loudness.next.reply, CALLER.modelName)
+
+    // Music under the sound of the clip that the first call made: a filter
+    // graph with labels, on a clip of this reply.
+    const under = await runJob(loudness.next, 'call_under', 'ffmpeg', {
+      arguments: '-i @g -i @e -filter_complex "[0:a][1:a]amix=inputs=2:duration=first[a]" -map 0:v -map "[a]" -c:v copy -c:a libopus under.webm',
+    })
+    expect(under.started).toBe(`${jobStartedText(under.jobId, 3)}\nThe inputs of the run: the video clip @g as g.webm, the audio clip @e as e.wav.`)
+    expect(under.result.status).toBe('finished')
+    expect(under.result.text.endsWith('\nMade the video clip @h.')).toBe(true)
+    await sendChatReply(under.next.reply, CALLER.modelName)
 
     const reply = await endedReply(browser, CLIPS_REPLY_INDEX)
-    const madeName = await newFileIn(browser, videoDir, before)
     expect(madeName).toMatch(storedFileName('webm'))
     const madePath = path.join(videoDir, madeName)
+    const underPath = path.join(videoDir, await newFileIn(browser, videoDir, [...before, madeName]))
     expect(reply).toContain(`</dez:tool>\n\n<dez:video id="g" type="video/webm" src="${madePath}" tool="video"/>\n<dez:tool id="call_loudness"`)
-    expect(reply.endsWith(`</dez:tool>\n${replyText(CALLER.modelName)}`)).toBe(true)
-    expect(mediaFacts(madePath)).toStrictEqual({ streams: ['video vp9 48x36', 'audio opus'], seconds: 1 })
-    await waitForValue(browser, 'player of the new clip', async () => (await shownPlayers(browser)).at(-1), madeVideoPlayer('g', 1))
+    expect(reply.endsWith(`</dez:tool>\n\n<dez:video id="h" type="video/webm" src="${underPath}" tool="video"/>\n\n${replyText(CALLER.modelName)}`)).toBe(true)
+    for (const file of [madePath, underPath]) expect(mediaFacts(file)).toStrictEqual({ streams: ['video vp9 48x36', 'audio opus'], seconds: 1 })
+    await waitForValue(browser, 'player of the last new clip', async () => (await shownPlayers(browser)).at(-1), madeVideoPlayer('h', 1))
     await expectCleanEnd(files)
   })
 
@@ -316,13 +332,13 @@ describe('video tool', () => {
     await submit(browser, 'Take a frame, and make a clip of my picture.')
     // An example of the help of the subcommand.
     const frame = await runJob(await chatRequest(), 'call_frame', 'ffmpeg', { arguments: '-ss 1 -i @a -frames:v 1 -update 1 frame.jpg' })
-    expect(frame.started).toBe(`${jobStartedText(frame.jobId)}\nThe inputs of the run: the video clip @a as a.webm.`)
+    expect(frame.started).toBe(`${jobStartedText(frame.jobId, 1)}\nThe inputs of the run: the video clip @a as a.webm.`)
     expect(frame.result.status).toBe('finished')
     expect(frame.result.text).toMatch(/^ffmpeg ended with no error and made 1 file that Dez keeps: frame\.jpg \(image\)\. The line at the end gives its id\.\n[\s\S]+\nMade the image @g\.$/)
 
     // This ffmpeg reads no PNG file.
     const still = await runJob(frame.next, 'call_still', 'ffmpeg', { arguments: '-loop 1 -i @c -i @e -c:v libvpx-vp9 -pix_fmt yuv420p -c:a libopus -shortest still.webm' })
-    expect(still.started).toBe(`${jobStartedText(still.jobId)}\nThe inputs of the run: the image @c as c.jpg (a JPEG copy, with white in place of transparent pixels), the audio clip @e as e.wav.`)
+    expect(still.started).toBe(`${jobStartedText(still.jobId, 2)}\nThe inputs of the run: the image @c as c.jpg (a JPEG copy, with white in place of transparent pixels), the audio clip @e as e.wav.`)
     expect(still.result.status).toBe('finished')
     expect(still.result.text).toMatch(/^ffmpeg ended with no error and made 1 file that Dez keeps: still\.webm \(video clip\)\. The line at the end gives its id\.\n[\s\S]+\nMade the video clip @h\.$/)
     await sendChatReply(still.next.reply, CALLER.modelName)
@@ -423,7 +439,7 @@ describe('video tool', () => {
     sendToolCalls(first.reply, [videoCall('call_tone', 'ffmpeg', { arguments: ENDLESS_TONE })])
     const second = await chatRequest()
     const started = toolResult(second, 'call_tone')
-    expect(started).toBe(`${jobStartedText(startedJob(second, 'call_tone'))}\nThe run has no input image and no input clip.`)
+    expect(started).toBe(`${jobStartedText(startedJob(second, 'call_tone'), 1)}\nThe run has no input image and no input clip.`)
     const folder = await runningWorkFolder()
 
     // While a reply runs, the Submit button stops it.

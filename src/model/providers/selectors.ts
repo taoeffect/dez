@@ -476,8 +476,9 @@ export default sbp('sbp/selectors/register', {
     }
   },
 
-  // A failed request rejects with a text for the user
-  // (`explainedProviderError`). dez.http/cancelStream with `requestId`
+  // A failed request rejects with a text for `input.reader`: the user, or
+  // the model of a `model_invoke` call (`explainedProviderError`).
+  // dez.http/cancelStream with `requestId`
   // cancels the request that runs, and `signal` does the same and also
   // stops a request that did not go yet (the images are read first). A
   // cancel before the response headers rejects; a cancel after them ends
@@ -510,7 +511,7 @@ export default sbp('sbp/selectors/register', {
             (url) => generatedImageFromUrl(url, (imageUrl) => fetchReplyImage(provider, imageUrl))),
         }
       } catch (error) {
-        throw explainedProviderError(provider, error)
+        throw explainedProviderError(provider, error, input.reader)
       }
     } finally {
       signal?.removeEventListener('abort', cancelRequest)
@@ -529,8 +530,9 @@ export default sbp('sbp/selectors/register', {
   // model's parameters (a scale, the length of a clip, a voice):
   // `input.parameters` where the model takes the value, else the
   // parameter's default. `input.reader` tells who reads the text of an
-  // input that does not go (the user, or the model of a `model_invoke`
-  // call), and `input.onProgress` gets each step of the request.
+  // input that does not go and of a request that failed (the user, or the
+  // model of a `model_invoke` call), and `input.onProgress` gets each step
+  // of the request.
   //
   // - An image, or an edit or an upscale of stored images: one request
   //   through dez.http/stream. A cancel before the response headers
@@ -678,15 +680,19 @@ export default sbp('sbp/selectors/register', {
         return { media: [], clips: [download.clip] }
       }
     } catch (error) {
-      const explained = explainedProviderError(provider, error)
+      const explained = explainedProviderError(provider, error, reader)
       if (jobId === null) throw explained
       const stopped = signal?.aborted === true
       console.error(`The clip job ${jobId} of ${provider.name} (model ${modelId}) ${stopped ? 'was stopped' : 'failed'}:`, error)
       if (stopped) throw error
       // A provider takes the money for a job when it starts, so the text
-      // gives the job id, before the details.
+      // gives the job id, before the details. Only the user can ask the
+      // provider, so a model gets the id to pass on.
       const { explanation, details } = explainedError(explained)
-      throw new ExplainedError(`${explanation} To ask ${provider.name} about this clip, give its job id: ${jobId}.`, details, { cause: error })
+      const askWith = reader === 'user'
+        ? `To ask ${provider.name} about this clip, give its job id: ${jobId}.`
+        : `${provider.name} ran this request as its job ${jobId}: give the user this id, with which the user can ask ${provider.name} about the clip.`
+      throw new ExplainedError(`${explanation} ${askWith}`, details, { cause: error })
     } finally {
       signal?.removeEventListener('abort', cancelRequest)
     }

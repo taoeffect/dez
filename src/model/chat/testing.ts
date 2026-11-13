@@ -33,9 +33,9 @@ export function hiddenClip(jobId: string, id = 'c', kind: MediaTagKind = 'audio'
 }
 
 /** The block of an intermediate `model_invoke` call that started the job
- *  `jobId`. */
+ *  `jobId`, the first job of its reply. */
 export function invokeBlock(jobId: string, id = 'call_1'): string {
-  return toolBlockText({ id, name: 'model_invoke', status: 'success', arguments: { model: 'studio/paint', prompt: 'A cat', is_intermediate: true }, result: jobStartedText(jobId) })
+  return toolBlockText({ id, name: 'model_invoke', status: 'success', arguments: { model: 'studio/paint', prompt: 'A cat', is_intermediate: true }, result: jobStartedText(jobId, 1) })
 }
 
 /** The block of a `jobs_wait` call with the result text `result`. */

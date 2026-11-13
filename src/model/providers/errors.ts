@@ -3,6 +3,7 @@ import type { NativeHttpResponse, NativeHttpResponseHead } from '../../utils/pro
 import { NativeHttpError, responseOk, sanitizeErrorText } from '../../utils/protocol/errors'
 import { isRecord } from './modelParsing'
 import type { Provider } from './provider'
+import type { RequestReader } from './requestReader'
 import type { ProviderId, SseErrorEvent } from './types'
 
 // The most characters of the provider's text in a message.
@@ -25,11 +26,29 @@ export function signedUrlGone(status: number): boolean {
   return GONE_FILE_STATUSES.has(status)
 }
 
+// An error of a request to a provider that has a text for each reader
+// (requestReader.ts). `explanation` is for the user who sent a message.
+// `modelExplanation` is for a model whose `model_invoke` call sent the
+// request: a model has no settings page, no account, and no report form,
+// so its text tells whose fault the failure is and what a new call can
+// change. `explainedProviderError` gives the error for a reader.
+export class ProviderRequestError extends ExplainedError {
+  constructor(
+    explanation: string,
+    readonly modelExplanation: string,
+    details = '',
+    options?: ErrorOptions,
+  ) {
+    super(explanation, details, options)
+    this.name = 'ProviderRequestError'
+  }
+}
+
 // The explanation names the provider, because custom provider ids are UUIDs
 // that the user never sees; the id stays in `providerId`. It tells whose
 // fault the status is and what to do (`statusExplanation`); the details,
 // last, hold the status and the provider's own text.
-export class ProviderHttpError extends ExplainedError {
+export class ProviderHttpError extends ProviderRequestError {
   constructor(
     readonly providerId: ProviderId,
     readonly status: number,
@@ -41,8 +60,9 @@ export class ProviderHttpError extends ExplainedError {
     // (`ClipFormat.refusedImages`). Undefined for a body that is not JSON.
     readonly bodyJson: unknown,
     explanation: string,
+    modelExplanation: string,
   ) {
-    super(explanation, `HTTP ${status}${sanitizedText ? `: ${sanitizedText}` : ''}`)
+    super(explanation, modelExplanation, `HTTP ${status}${sanitizedText ? `: ${sanitizedText}` : ''}`)
     this.name = 'ProviderHttpError'
   }
 }
@@ -107,41 +127,71 @@ function providerText(data: unknown): string | null {
 // a refusal of it tells that it has expired. `hasReason`: the details hold
 // the provider's own text. No `status`: an error inside a stream whose kind
 // the provider did not tell.
+//
+// `reader`: the user gets what to do in Dez and at the provider. A model
+// (`ProviderRequestError`) gets what a new call can change, and which
+// failures only the user can end; its caller tells it to pass those on.
 // https://openrouter.ai/docs/api/reference/errors-and-debugging
 // https://docs.venice.ai/api-reference/error-codes
 // https://docs.z.ai/api-reference/api-code
-function statusExplanation(provider: ProviderIdentity, status: number | undefined, keyed: boolean, hasReason: boolean): string {
+function statusExplanation(provider: ProviderIdentity, status: number | undefined, keyed: boolean, hasReason: boolean, reader: RequestReader): string {
   const name = provider.name
+  const user = reader === 'user'
   const reason = hasReason ? ` ${name} tells its reason in the details below.` : ''
+  const onceMore = 'Call again once, or use another model.'
   if (status === undefined) {
-    return `The cause can be a problem at ${name} or the request.${reason} Try again, or choose another model. ${REPORT_ADVICE}`
+    return `The cause can be a problem at ${name} or the request.${reason} ${user ? `Try again, or choose another model. ${REPORT_ADVICE}` : onceMore}`
   }
   if (!keyed && signedUrlGone(status)) {
-    return `The file that ${name} made is not at its link any more: the link can have expired. Send the request again to make a new one.`
+    return `The file that ${name} made is not at its link any more: the link can have expired. ${user ? 'Send the request again' : 'Call again'} to make a new one.`
   }
   if (keyed && status === 401) {
-    return provider.config.auth === 'githubCopilot'
+    const copilot = provider.config.auth === 'githubCopilot'
+    if (!user) {
+      return `${name} did not accept the ${copilot ? 'sign-in' : 'API key'} of the user. This is not a fault of the call: no call to a model of ${name} works until the user fixes it in Settings › Providers.`
+    }
+    return copilot
       ? `${name} did not accept the sign-in. Sign in to ${name} again in Settings › Providers.`
       : `${name} did not accept the API key. Check the API key of ${name} in Settings › Providers.`
   }
-  if (keyed && status === 402) return `Your ${name} account does not have enough credit. Add credit at ${name}, then try again.`
+  if (keyed && status === 402) {
+    return user
+      ? `Your ${name} account does not have enough credit. Add credit at ${name}, then try again.`
+      : `The ${name} account of the user does not have enough credit. This is not a fault of the call: no paid call to ${name} works until the user adds credit at ${name}.`
+  }
   if (keyed && status === 403) {
-    return `${name} refused access.${reason} The cause can be your ${name} account (it may not use this model) or the message (${name} can block a prompt). Check your account at ${name}, change the message, or choose another model.`
+    return user
+      ? `${name} refused access.${reason} The cause can be your ${name} account (it may not use this model) or the message (${name} can block a prompt). Check your account at ${name}, change the message, or choose another model.`
+      : `${name} refused access.${reason} The cause can be the ${name} account of the user (it may not use this model) or the prompt (${name} can block a prompt). Change the prompt, or use another model.`
   }
   if (keyed && status === 404) {
     const baseUrl = provider.builtIn ? '' : `, or check the base URL of ${name} in Settings › Providers`
-    return `${name} has nothing for this request: the model can be gone, or it does not take this kind of request.${reason} Choose another model${baseUrl}.`
+    return `${name} has nothing for this request: the model can be gone, or it does not take this kind of request.${reason} ${user ? `Choose another model${baseUrl}.` : 'Use another model.'}`
   }
-  if (status === 413) return `The request is too large for ${name}.${reason} Send fewer or smaller images or clips, or start a new conversation.`
+  if (status === 413) {
+    return `The request is too large for ${name}.${reason} ${user ? 'Send fewer or smaller images or clips, or start a new conversation.' : 'Name fewer or smaller images or clips in `prompt`.'}`
+  }
   if (status === 429) {
-    return `${name} refused the request because of a limit: too many requests in a short time, or a limit of your ${name} account.${reason} Wait a minute, then try again. If the error stays, check your account at ${name}.`
+    return user
+      ? `${name} refused the request because of a limit: too many requests in a short time, or a limit of your ${name} account.${reason} Wait a minute, then try again. If the error stays, check your account at ${name}.`
+      : `${name} refused the request because of a limit: too many requests in a short time, or a limit of the ${name} account of the user.${reason} Do not call again at once: wait for the jobs that run, and start fewer jobs at the same time.`
   }
-  if (PASSING_SERVER_ERRORS.has(status)) return `This is a problem at ${name}, not in your message or in Dez. Try again later.`
-  if (status >= 500) return `${name} had an error.${reason} This is a problem at ${name}, not in your message or in Dez. Try again later, or choose another model.`
+  if (PASSING_SERVER_ERRORS.has(status)) {
+    return user
+      ? `This is a problem at ${name}, not in your message or in Dez. Try again later.`
+      : `This is a problem at ${name}, not in the call. ${onceMore}`
+  }
+  if (status >= 500) {
+    return user
+      ? `${name} had an error.${reason} This is a problem at ${name}, not in your message or in Dez. Try again later, or choose another model.`
+      : `${name} had an error.${reason} This is a problem at ${name}, not in the call. ${onceMore}`
+  }
   if (status >= 400) {
-    return `${name} refused the request.${reason} The cause can be the message, the settings of the model, or the request that Dez made. Change the message or the settings, or choose another model. ${REPORT_ADVICE}`
+    return user
+      ? `${name} refused the request.${reason} The cause can be the message, the settings of the model, or the request that Dez made. Change the message or the settings, or choose another model. ${REPORT_ADVICE}`
+      : `${name} refused the request.${reason} The cause can be \`prompt\`, the inputs, \`parameters\`, or the request that Dez made.`
   }
-  return `${name} gave an answer that Dez did not expect.${reason} Try again. ${REPORT_ADVICE}`
+  return `${name} gave an answer that Dez did not expect.${reason} ${user ? `Try again. ${REPORT_ADVICE}` : 'Call again once.'}`
 }
 
 // The error of a provider's response with a status that is not 2xx, with
@@ -155,7 +205,15 @@ export function providerStatusError(provider: ProviderIdentity, response: Native
   // Sanitized again after the join: a field name and its text can make a
   // key pair (`token: …`).
   const text = sanitizeErrorText((providerText(bodyJson) ?? fallback).trim(), PROVIDER_TEXT_LENGTH)
-  return new ProviderHttpError(provider.id, response.status, text, bodyJson, statusExplanation(provider, response.status, keyed, text !== ''))
+  const hasReason = text !== ''
+  return new ProviderHttpError(
+    provider.id,
+    response.status,
+    text,
+    bodyJson,
+    statusExplanation(provider, response.status, keyed, hasReason, 'user'),
+    statusExplanation(provider, response.status, keyed, hasReason, 'model'),
+  )
 }
 
 export function assertProviderResponseOk(response: NativeHttpResponse, provider: ProviderIdentity, bodyText = ''): void {
@@ -169,11 +227,13 @@ export function assertProviderResponseOk(response: NativeHttpResponse, provider:
 // provider's code and text, with no "HTTP" word: the response itself had a
 // good status. OpenRouter's `metadata.raw` (the upstream answer as it is)
 // stays out: it is long, and the message tells the cause.
-export function providerStreamError(provider: ProviderIdentity, failure: SseErrorEvent): ExplainedError {
+export function providerStreamError(provider: ProviderIdentity, failure: SseErrorEvent): ProviderRequestError {
   const raw = [failure.code, failure.message.trim()].filter((part) => part !== undefined && part !== '').join(': ')
   const details = sanitizeErrorText(raw, PROVIDER_TEXT_LENGTH)
-  return new ExplainedError(
-    `${provider.name} stopped the answer with an error. ${statusExplanation(provider, failure.status, true, details !== '')}`,
+  const stopped = `${provider.name} stopped the answer with an error.`
+  return new ProviderRequestError(
+    `${stopped} ${statusExplanation(provider, failure.status, true, details !== '', 'user')}`,
+    `${stopped} ${statusExplanation(provider, failure.status, true, details !== '', 'model')}`,
     details,
   )
 }
@@ -182,10 +242,12 @@ export function providerStreamError(provider: ProviderIdentity, failure: SseErro
 // connection, a timeout, or a connection that broke in the body. The native
 // text (`error`) goes into the details. A custom provider can have a wrong
 // base URL, or a server on this computer that does not run.
-export function providerConnectionError(provider: ProviderIdentity, error: unknown): ExplainedError {
+export function providerConnectionError(provider: ProviderIdentity, error: unknown): ProviderRequestError {
   const custom = provider.builtIn ? '' : ` If the error stays, check the base URL of ${provider.name} in Settings › Providers (for a server on this computer: check that it runs).`
-  return new ExplainedError(
-    `Dez could not reach ${provider.name}, or the connection broke before the answer was complete. Check the internet connection, then try again.${custom}`,
+  const notReached = `Dez could not reach ${provider.name}, or the connection broke before the answer was complete.`
+  return new ProviderRequestError(
+    `${notReached} Check the internet connection, then try again.${custom}`,
+    `${notReached} This is a problem of the network or of ${provider.name}, not of the call. Call again once.`,
     sanitizeErrorText(rawErrorText(error)),
     { cause: error },
   )
@@ -237,21 +299,42 @@ export class InputImageError extends ExplainedError {
   }
 }
 
-// The error for the user of a failed provider request: an answer that
-// Dez cannot use, a clip job that the provider ended, or no answer
-// (`NativeHttpError`). Any other error as it is.
-export function explainedProviderError(provider: ProviderIdentity, error: unknown): unknown {
+// The error of a failed provider request, without the choice of the
+// reader: an answer that Dez cannot use, a clip job that the provider
+// ended, or no answer (`NativeHttpError`). Any other error as it is.
+function providerRequestError(provider: ProviderIdentity, error: unknown): unknown {
   const name = provider.name
   if (error instanceof NativeHttpError) return providerConnectionError(provider, error)
   if (error instanceof UnusableAnswerError) {
-    return new ExplainedError(`${name} sent an answer that Dez cannot use. Send the request again. ${REPORT_ADVICE}`, error.message, { cause: error })
+    const unusable = `${name} sent an answer that Dez cannot use.`
+    return new ProviderRequestError(
+      `${unusable} Send the request again. ${REPORT_ADVICE}`,
+      `${unusable} This is not a fault of the call. Call again once, or use another model.`,
+      error.message,
+      { cause: error },
+    )
   }
   if (error instanceof ClipNotMadeError) {
-    return new ExplainedError(
-      `${name} did not make the clip. The cause can be the prompt (${name} can refuse a prompt) or a problem at ${name}: the details below tell what ${name} said. Change the prompt, or send the request again later.`,
+    const notMade = `${name} did not make the clip. The cause can be the prompt (${name} can refuse a prompt) or a problem at ${name}: the details below tell what ${name} said.`
+    return new ProviderRequestError(
+      `${notMade} Change the prompt, or send the request again later.`,
+      `${notMade} Change the prompt, or call again once.`,
       error.message,
       { cause: error },
     )
   }
   return error
+}
+
+/** The error for `reader` of a failed provider request
+ *  (`providerRequestError`): the user who sent a message reads it in a
+ *  toast, and a model that called `model_invoke` reads it in the result of
+ *  its job. An error with no text for a model (a text that Dez wrote for
+ *  the reader already, or an error that Dez did not expect) stays as it
+ *  is. */
+export function explainedProviderError(provider: ProviderIdentity, error: unknown, reader: RequestReader = 'user'): unknown {
+  const explained = providerRequestError(provider, error)
+  return reader === 'model' && explained instanceof ProviderRequestError
+    ? new ExplainedError(explained.modelExplanation, explained.details, { cause: explained })
+    : explained
 }

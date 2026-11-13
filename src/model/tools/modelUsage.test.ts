@@ -187,6 +187,14 @@ describe('modelUsage', () => {
       }
     })
 
+    // A model that reads only the names writes one next to the @id, and
+    // Dez then sends the name twice.
+    it('tells with the names of the inputs that Dez puts them in, so that a prompt holds only the @id', () => {
+      const putIn = 'Dez puts these names in: write only the @id in the prompt, never such a name.'
+
+      expect([referenceNamesUsage('@Image{n}'), clipNamesUsage('video', '<Video {n}>')].map((text) => text.endsWith(` ${putIn}`))).toStrictEqual([true, true])
+    })
+
     it('tells that the images of a model with reference rules are references, not frames', () => {
       const usage = modelUsage({ id: 'm', name: 'M', provider: 'p', request: 'video', images: { maxImages: 7, references: {} } }, NO_FACTS)
 
@@ -317,6 +325,8 @@ describe('modelUsage', () => {
             const label = `${format} ${kind} ${JSON.stringify({ entry, values })}`
 
             expect(usage.includes(USAGE_TEXTS.frames), label).toBe(sendsFrames(false))
+            // A frame gives the video its shape; a reference does not.
+            expect(usage.includes(USAGE_TEXTS.frameShape), label).toBe(sendsFrames(false))
             expect(usage.includes(USAGE_TEXTS.clipsMakeReferences), label).toBe(sendsFrames(false) && !sendsFrames(true))
           }
         }

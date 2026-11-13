@@ -15,6 +15,11 @@ export interface ToolParameter {
   required: boolean
 }
 
+/** For a key of a call that is none of a tool's parameters: the text that
+ *  tells the model where the key belongs, from the call's arguments
+ *  (`values`); null when the tool does not know the key. */
+export type MisplacedParameterText = (key: string, values: Readonly<Record<string, unknown>>) => string | null
+
 /** A tool as the model sees it: its name, what it does, and its parameters
  *  in a fixed order. The order is the order of the JSON schema keys and of
  *  the block attributes, so requests keep the same bytes. */
@@ -22,6 +27,9 @@ export interface ToolDefinition {
   name: string
   description: string
   parameters: readonly ToolParameter[]
+  /** Only a tool whose calls hold more parameters inside one of these
+   *  (subcommands.ts). No part of a request. */
+  misplacedParameter?: MisplacedParameterText
 }
 
 export type ToolArgumentValue = string | number | boolean

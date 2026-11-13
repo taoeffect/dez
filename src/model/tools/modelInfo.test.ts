@@ -53,16 +53,23 @@ describe('modelInfoTarget', () => {
     expect(modelInfoTarget(CACHE, PROVIDERS, {}, REPLY)).toStrictEqual({ provider: OPENROUTER, model: UNKNOWN })
   })
 
+  const NEAREST = 'The nearest id of a model that the user can use is "openrouter/google/gemini-3-pro".'
+
   // A blank id is not "no model": only a call with no `model` gets the
-  // model of the reply.
-  it.each(['', 'gemini-3-pro', 'openrouter/', '/google/gemini-3-pro'])('refuses %j, which is not a full id', (model) => {
+  // model of the reply. A text that is near an id gets that id.
+  it.each([
+    ['', ''],
+    ['openrouter/', ''],
+    ['gemini-3-pro', ` ${NEAREST}`],
+    ['/google/gemini-3-pro', ` ${NEAREST}`],
+  ])('refuses %j, which is not a full id', (model, near) => {
     expect(() => modelInfoTarget(CACHE, PROVIDERS, { model }, REPLY))
-      .toThrow(new ToolError(`${JSON.stringify(model)} is not a full model id (provider/model). ${FIND_MODELS} Leave out \`model\` to get the info of your own model.`))
+      .toThrow(new ToolError(`${JSON.stringify(model)} is not a full model id (provider/model).${near} ${FIND_MODELS} Leave out \`model\` to get the info of your own model.`))
   })
 
   it('refuses a provider id that no provider has', () => {
     expect(() => modelInfoTarget(CACHE, PROVIDERS, { model: 'google/gemini-3-pro' }, REPLY))
-      .toThrow(new ToolError(`No provider has the id "google". ${FIND_MODELS}`))
+      .toThrow(new ToolError(`No provider has the id "google". ${NEAREST} ${FIND_MODELS}`))
   })
 
   // The models that model_list lists: a configured provider whose last check
@@ -71,7 +78,7 @@ describe('modelInfoTarget', () => {
 
   it.each(UNLISTED)('refuses %s, which model_list does not list', (model) => {
     expect(() => modelInfoTarget(CACHE, PROVIDERS, { model }, REPLY))
-      .toThrow(new ToolError(`The user cannot use the model ${JSON.stringify(model)}. ${FIND_MODELS}`))
+      .toThrow(new ToolError(`The user cannot use the model ${JSON.stringify(model)}.${model === 'openrouter/gemini-3-pro' ? ` ${NEAREST}` : ''} ${FIND_MODELS}`))
   })
 
   // A reply needs no listed model, so the call is not at fault.

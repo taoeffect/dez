@@ -1,7 +1,7 @@
 import sbp from '@sbp/sbp'
 import { tempMediaFile } from '../model/chat/mediaFiles'
 import { isSavedMediaPath, type MediaTagData } from '../model/chat/mediaTags'
-import { JOB_LIMIT_TEXT, jobTimedOutText, MAX_JOBS_PER_REPLY, newJobId, type JobInfo, type JobResultStatus, type JobStatus, type WrittenJobAsset } from '../model/tools/jobs'
+import { JOB_LIMIT_TEXT, jobTimedOutText, MAX_JOBS_PER_REPLY, newJobId, type JobCall, type JobInfo, type JobResultStatus, type JobStatus, type WrittenJobAsset } from '../model/tools/jobs'
 import { unexpectedToolErrorText } from '../model/tools/registry'
 import { ToolError } from '../model/tools/types'
 import type { ToolRunContext } from './tools'
@@ -56,6 +56,8 @@ export interface EndedJob {
   /** The call made the assets as a part of its work: they go into the
    *  reply as hidden assets of this job (`writeJobAssets`). */
   hidesAssets: boolean
+  /** Which call started the job, for the reader of the result. */
+  call: JobCall
 }
 
 interface Job extends Omit<EndedJob, 'status'> {
@@ -140,17 +142,19 @@ export class ReplyJobs {
     return this.unread.length > 0 || this.running > 0
   }
 
-  /** Starts `work` as a job of `tool` and returns the job's id at once. The
-   *  job ends as `timed out` when the work takes more than `timeoutMs`.
-   *  `hidesAssets`: see `EndedJob`. Throws a `ToolError` for a job over
-   *  `MAX_JOBS_PER_REPLY`, and after `stopAll`. */
-  start(tool: string, work: JobWork, { timeoutMs, hidesAssets = false }: { timeoutMs: number, hidesAssets?: boolean }): string {
+  /** Starts `work` as a job of `tool` and returns the job's id and its
+   *  number (`JobCall.number`) at once. The job ends as `timed out` when
+   *  the work takes more than `timeoutMs`. `hidesAssets`: see `EndedJob`.
+   *  `label` is the label of the call (`jobCallLabel`). Throws a
+   *  `ToolError` for a job over `MAX_JOBS_PER_REPLY`, and after `stopAll`. */
+  start(tool: string, work: JobWork, { timeoutMs, hidesAssets = false, label = '' }: { timeoutMs: number, hidesAssets?: boolean, label?: string }): { id: string, number: number } {
     if (this.stopped) throw new ToolError('The reply stopped, so Dez started no job. This is not a fault of the call.')
     if (this.jobs.size >= MAX_JOBS_PER_REPLY) throw new ToolError(JOB_LIMIT_TEXT)
     const job: Job = {
       id: newJobId((id) => this.jobs.has(id)),
       tool,
       hidesAssets,
+      call: { number: this.jobs.size + 1, label },
       status: 'running',
       text: '',
       assets: [],
@@ -182,7 +186,7 @@ export class ReplyJobs {
       console.error(`The ${tool} job ${job.id} failed:`, error)
       this.end(job, 'failed', error instanceof ToolError ? error.message : unexpectedToolErrorText(tool))
     })
-    return job.id
+    return { id: job.id, number: job.call.number }
   }
 
   // Ends a running job, and wakes every wait. A job that its work did not
@@ -203,7 +207,7 @@ export class ReplyJobs {
   private takeUnread(): EndedJob[] {
     return this.unread.splice(0).map((job) => {
       job.delivered = true
-      return { id: job.id, tool: job.tool, status: job.status as JobResultStatus, text: job.text, assets: job.assets, hidesAssets: job.hidesAssets }
+      return { id: job.id, tool: job.tool, status: job.status as JobResultStatus, text: job.text, assets: job.assets, hidesAssets: job.hidesAssets, call: job.call }
     })
   }
 
@@ -228,13 +232,14 @@ export class ReplyJobs {
   /** For `jobs_wait`: the jobs that ended and whose results no reader took
    *  yet, in the order of their ends. Each result comes once. With no such
    *  job, it waits for the next end of a job; with no job that runs
-   *  either, it gives none at once. Rejects with the reason of `signal`
-   *  when it aborts; the jobs go on. */
-  async wait(signal: AbortSignal): Promise<EndedJob[]> {
+   *  either, it gives none at once. With `all`, it waits until no job
+   *  runs, so it gives every result that is left in one call. Rejects with
+   *  the reason of `signal` when it aborts; the jobs go on, and the
+   *  results stay for the next reader. */
+  async wait(signal: AbortSignal, all = false): Promise<EndedJob[]> {
     for (;;) {
       signal.throwIfAborted()
-      const ended = this.takeUnread()
-      if (ended.length > 0 || this.running === 0) return ended
+      if (this.running === 0 || (!all && this.unread.length > 0)) return this.takeUnread()
       await this.nextEnd(signal)
     }
   }
@@ -257,6 +262,7 @@ export class ReplyJobs {
       delivered: job.delivered,
       elapsedMs: (job.endedAt ?? now) - job.startedAt,
       state: job.state,
+      call: job.call,
     }))
   }
 

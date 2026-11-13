@@ -698,8 +698,9 @@ function onContextMenu(event: MouseEvent): void {
     <!-- The id badge and the facts of the clip, in one toolbar as an image
          has them (`ImageWidget` in src/view/editor/images.ts). A model gets
          the id in the request form of the clip's tag
-         (`mediaTagRequestText`), so a message can name the clip by it. The
-         tooltip belongs to the badge, the element before it. -->
+         (`mediaTagRequestText`), or in the result of the tool that made
+         the clip, so a message can name the clip by it. The tooltip belongs
+         to the badge, the element before it. -->
     <span class="media-player__overlay">
       <span class="media-player__id" role="img" :aria-label="`${kindName} id: ${id}`">
         <svg v-if="kind === 'video'" class="media-player__icon media-player__icon--line" viewBox="0 0 16 16" aria-hidden="true">

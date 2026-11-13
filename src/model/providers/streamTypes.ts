@@ -22,6 +22,9 @@ export interface ProviderStreamChatInput extends ChatRequestContext {
   // request that runs is cancelled. For a caller that has no reply of a tab
   // to stop (the job of a `model_invoke` call).
   signal?: AbortSignal
+  // Who reads the text of a request that failed (requestReader.ts); the
+  // user with none.
+  reader?: RequestReader
   // Sparse user overrides for this provider's settings
   // (ProviderConfig.settings) and its Thinking toggle; missing keys fall
   // back to the defaults.
@@ -102,7 +105,8 @@ export interface ProviderGenerateMediaInput {
   // Called at each step of the request, in order.
   onProgress?: (progress: MediaProgress) => void
   // Who reads the text of an input that the model does not take or that
-  // Dez cannot read (requestReader.ts); the user with none.
+  // Dez cannot read, and of a request that failed (requestReader.ts); the
+  // user with none.
   reader?: RequestReader
 }
 

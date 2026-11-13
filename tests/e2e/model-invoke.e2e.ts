@@ -1,7 +1,7 @@
 import fs from 'node:fs'
 import path from 'node:path'
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from 'vitest'
-import { jobsWaitText, startedJobId } from '../../src/model/tools/jobs'
+import { jobStartedText, jobsWaitText, startedJobId } from '../../src/model/tools/jobs'
 import { invocationAnswerText } from '../../src/model/tools/modelInvoke'
 import { click, consoleErrors, movePointer, pointerClick, pointerClickAt, promptMessage, resetConsoleErrors, screenshotOnFailure, typeKeys, waitForValue } from './harness/dom'
 import { appFilePath, conversationFilePath, filesIn, mediaTempDir, newFileIn, storedFileName } from './harness/fixtures'
@@ -26,6 +26,10 @@ import { hiddenAssetNotes, hiddenPart, intermediateParts, pressToolChip, toolChi
 //   tool;
 // - two jobs run at the same time, each `jobs_wait` gives the jobs that
 //   ended, and the clip of a provider's job keeps the provider's job id;
+// - the start text of a job tells its number in the reply, each result
+//   names its call (the number and the start of the prompt), and
+//   `jobs_wait` with `all` waits for every job and gives the results in
+//   the order of the job ends;
 // - a call that cannot work is refused at once and starts no job, and a
 //   refusal of the provider is the result of its job;
 // - a job that runs longer than `timeout_seconds` ends with no result, and
@@ -136,7 +140,7 @@ describe('model_invoke', () => {
     sendToolCalls(second.reply, [waitCall('call_wait')])
     answerHeld(edit.reply, 'image/png', MADE_PNG)
     const third = await requestTo(CHAT_PATH)
-    expect(toolResult(third, 'call_wait')).toBe(jobsWaitText([{ id: jobId, tool: 'model_invoke', status: 'finished', text: 'Made the image @b.' }], 0))
+    expect(toolResult(third, 'call_wait')).toBe(jobsWaitText([{ id: jobId, tool: 'model_invoke', status: 'finished', text: 'Made the image @b.', call: { number: 1, label: 'Make @a orange' } }], 0))
     await sendChatReply(third.reply, CALLER.modelName)
 
     // The image comes after the blocks of the call that gave it.
@@ -169,17 +173,19 @@ describe('model_invoke', () => {
     const paintJob = startedJob(second, 'call_paint')
     const songJob = startedJob(second, 'call_song')
     expect(songJob).not.toBe(paintJob)
+    // Each start tells the number of its job, which its result repeats.
+    expect(['call_paint', 'call_song'].map((callId) => toolResult(second, callId).split('\n')[0])).toStrictEqual([jobStartedText(paintJob, 1), jobStartedText(songJob, 2)])
 
     // The first wait ends with the first job that ends.
     sendToolCalls(second.reply, [waitCall('call_wait_1')])
     answerHeld(paint.reply, 'application/json', JSON.stringify({ images: [MADE_PNG.toString('base64')] }))
     const third = await requestTo(CHAT_PATH)
-    expect(toolResult(third, 'call_wait_1')).toBe(jobsWaitText([{ id: paintJob, tool: 'model_invoke', status: 'finished', text: 'Made the image @a.' }], 1))
+    expect(toolResult(third, 'call_wait_1')).toBe(jobsWaitText([{ id: paintJob, tool: 'model_invoke', status: 'finished', text: 'Made the image @a.', call: { number: 1, label: PAINT_PROMPT } }], 1))
 
     sendToolCalls(third.reply, [waitCall('call_wait_2')])
     await finishVeniceJob(setup, queue, { retrievePath: RETRIEVE_PATH, modelId: SONG_MODEL.id, queueId: 'queue-1', clip: { type: 'audio/wav', bytes: SONG_WAV } })
     const fourth = await requestTo(CHAT_PATH)
-    expect(toolResult(fourth, 'call_wait_2')).toBe(jobsWaitText([{ id: songJob, tool: 'model_invoke', status: 'finished', text: 'Made the audio clip @b.' }], 0))
+    expect(toolResult(fourth, 'call_wait_2')).toBe(jobsWaitText([{ id: songJob, tool: 'model_invoke', status: 'finished', text: 'Made the audio clip @b.', call: { number: 2, label: 'A slow song' } }], 0))
     await sendChatReply(fourth.reply, CALLER.modelName)
 
     // Each asset comes after the blocks of the call that gave it.
@@ -193,6 +199,42 @@ describe('model_invoke', () => {
     await waitForValue(browser, 'player of the song', () => shownPlayers(browser), [
       { kind: 'audio', id: 'b', available: true, source: 'blob', seconds: 2, picture: null, clock: 'Not saved', save: 'save' },
     ])
+    expect(await openToasts(browser, 'error')).toStrictEqual([])
+    expect(await consoleErrors(browser)).toStrictEqual([])
+  })
+
+  // The ids of the new assets follow the order of the job ends, so each
+  // result names its call.
+  it('waits for every job with `all`, and gives the results in one call, in the order of the job ends, each with the number and the prompt of its call', async () => {
+    const tempDir = mediaTempDir(setup.app.home)
+    const clipsBefore = await filesIn(tempDir)
+    await submit(browser, 'Make a picture and a song.')
+    const first = await requestTo(CHAT_PATH)
+    sendToolCalls(first.reply, [
+      paintCall('call_paint'),
+      openAiToolCall('call_song', 'model_invoke', { model: `${STUDIO.id}/${SONG_MODEL.id}`, prompt: 'A slow song' }),
+    ])
+    const paint = await requestTo(GENERATE_PATH, PAINT_BODY)
+    const queue = await requestTo(QUEUE_PATH, { model: SONG_MODEL.id, prompt: 'A slow song' })
+    const second = await requestTo(CHAT_PATH)
+    const paintJob = startedJob(second, 'call_paint')
+    const songJob = startedJob(second, 'call_song')
+
+    // The second job ends first. The wait goes on, as a job still runs.
+    sendToolCalls(second.reply, [waitCall('call_wait', true)])
+    await finishVeniceJob(setup, queue, { retrievePath: RETRIEVE_PATH, modelId: SONG_MODEL.id, queueId: 'queue-1', clip: { type: 'audio/wav', bytes: SONG_WAV } })
+    await waitForValue(browser, 'temp copy of the song', async () => (await filesIn(tempDir)).filter((name) => name.endsWith('.wav') && !clipsBefore.includes(name)).length, 1)
+    expect(setup.mock.hasWaitingRequest()).toBe(false)
+
+    answerHeld(paint.reply, 'application/json', JSON.stringify({ images: [MADE_PNG.toString('base64')] }))
+    const third = await requestTo(CHAT_PATH)
+    expect(toolResult(third, 'call_wait')).toBe(jobsWaitText([
+      { id: songJob, tool: 'model_invoke', status: 'finished', text: 'Made the audio clip @a.', call: { number: 2, label: 'A slow song' } },
+      { id: paintJob, tool: 'model_invoke', status: 'finished', text: 'Made the image @b.', call: { number: 1, label: PAINT_PROMPT } },
+    ], 0))
+    await sendChatReply(third.reply, CALLER.modelName)
+
+    await endedReply(browser)
     expect(await openToasts(browser, 'error')).toStrictEqual([])
     expect(await consoleErrors(browser)).toStrictEqual([])
   })
@@ -218,8 +260,10 @@ describe('model_invoke', () => {
     paint.reply.end(JSON.stringify({ error: 'The prompt breaks the content rules' }))
     const third = await requestTo(CHAT_PATH)
     const result = toolResult(third, 'call_wait')
-    expect(result).toContain(`<job id="${jobId}" tool="model_invoke" status="failed">`)
-    expect(result).toContain('The prompt breaks the content rules')
+    // The failure text is for the model: what a new call can change.
+    expect(result).toContain(`<job id="${jobId}" number="1" tool="model_invoke" status="failed" call="${PAINT_PROMPT}">`)
+    expect(result).toContain(`${STUDIO.name} refused the request. ${STUDIO.name} tells its reason in the details below. The cause can be \`prompt\`, the inputs, \`parameters\`, or the request that Dez made.`)
+    expect(result).toContain('Details: HTTP 400: The prompt breaks the content rules')
     await sendChatReply(third.reply, CALLER.modelName)
 
     // The model got the failure, so no toast tells of it.
@@ -248,7 +292,7 @@ describe('model_invoke', () => {
     await browser.waitUntil(async () => paint.closed, { timeout: 30_000, interval: 100, timeoutMsg: 'the app did not close the request of the job' })
     const third = await requestTo(CHAT_PATH)
     const result = toolResult(third, 'call_wait')
-    expect(result).toContain(`<job id="${jobId}" tool="model_invoke" status="timed out">`)
+    expect(result).toContain(`<job id="${jobId}" number="1" tool="model_invoke" status="timed out" call="${PAINT_PROMPT}">`)
     expect(result).toContain('10 seconds')
     await sendChatReply(third.reply, CALLER.modelName)
 
@@ -317,7 +361,9 @@ describe('model_invoke', () => {
     sendToolCalls(second.reply, [waitCall('call_wait')])
     await sendChatReply(asked.reply, HELPER.modelName)
     const third = await requestTo(CHAT_PATH)
-    expect(toolResult(third, 'call_wait')).toBe(jobsWaitText([{ id: jobId, tool: 'model_invoke', status: 'finished', text: invocationAnswerText(replyText(HELPER.modelName)) }], 0))
+    expect(toolResult(third, 'call_wait')).toBe(jobsWaitText([{
+      id: jobId, tool: 'model_invoke', status: 'finished', text: invocationAnswerText(replyText(HELPER.modelName)), call: { number: 1, label: 'What does @a show?' },
+    }], 0))
     await sendChatReply(third.reply, CALLER.modelName)
 
     // The answer of the helper is only in the result of the job: the
@@ -425,7 +471,7 @@ describe('model_invoke', () => {
     answerHeld(paint.reply, 'application/json', JSON.stringify({ images: [MADE_PNG.toString('base64')] }))
     const third = await requestTo(CHAT_PATH)
     // The model gets the result of an image that shows.
-    expect(toolResult(third, 'call_wait')).toBe(jobsWaitText([{ id: jobId, tool: 'model_invoke', status: 'finished', text: 'Made the image @a.' }], 0))
+    expect(toolResult(third, 'call_wait')).toBe(jobsWaitText([{ id: jobId, tool: 'model_invoke', status: 'finished', text: 'Made the image @a.', call: { number: 1, label: PAINT_PROMPT } }], 0))
     await sendChatReply(third.reply, CALLER.modelName)
 
     const reply = await endedReply(browser)
@@ -491,7 +537,7 @@ describe('model_invoke', () => {
     sendToolCalls(second.reply, [waitCall('call_wait')])
     await finishVeniceJob(setup, queue, { retrievePath: RETRIEVE_PATH, modelId: SONG_MODEL.id, queueId: 'queue-1', clip: { type: 'audio/wav', bytes: SONG_WAV } })
     const third = await requestTo(CHAT_PATH)
-    expect(toolResult(third, 'call_wait')).toBe(jobsWaitText([{ id: jobId, tool: 'model_invoke', status: 'finished', text: 'Made the audio clip @a.' }], 0))
+    expect(toolResult(third, 'call_wait')).toBe(jobsWaitText([{ id: jobId, tool: 'model_invoke', status: 'finished', text: 'Made the audio clip @a.', call: { number: 1, label: 'A slow song' } }], 0))
     await sendChatReply(third.reply, CALLER.modelName)
 
     const reply = await endedReply(browser)

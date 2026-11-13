@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed, onMounted, onUnmounted, ref } from 'vue'
 import sbp from '@sbp/sbp'
-import { SHOW_TOAST } from './events'
+import { CLOSE_TOASTS, SHOW_TOAST } from './events'
 import ToastCard from './ToastCard.vue'
 import type { ToastItem } from './ToastCard.vue'
 import type { ToastData, ToastPosition } from './selectors'
@@ -70,16 +70,25 @@ function onShowToast (toastArea: unknown, data: unknown): void {
   while (toasts.value.filter((item) => !item.closing).length > MAX_TOAST_COUNT) {
     const oldestToast = toasts.value.find((item) => !item.closing)
     if (!oldestToast) return
-
-    const oldestToastCard = toastRefs.get(oldestToast.id)
-
-    if (oldestToastCard) {
-      oldestToastCard.closeToast()
-    } else {
-      oldestToast.closing = true
-      closeToast(oldestToast.id)
-    }
+    startClose(oldestToast)
   }
+}
+
+// Closes `toast` with the animation of its card, or at once while it has
+// no card yet (a toast of the same tick).
+function startClose (toast: ToastItem): void {
+  const card = toastRefs.get(toast.id)
+  if (card) {
+    card.closeToast()
+  } else {
+    toast.closing = true
+    closeToast(toast.id)
+  }
+}
+
+function onCloseToasts (toastArea: unknown, group: unknown): void {
+  if (toastArea !== props.area) return
+  for (const toast of toasts.value.filter((item) => item.group === group && !item.closing)) startClose(toast)
 }
 
 function closeToast (id: string): void {
@@ -93,6 +102,7 @@ function updateSmallScreenState (): void {
 
 onMounted(() => {
   sbp('okTurtles.events/on', SHOW_TOAST, onShowToast)
+  sbp('okTurtles.events/on', CLOSE_TOASTS, onCloseToasts)
 
   mediaQuery = window.matchMedia(SMALL_SCREEN_QUERY)
   updateSmallScreenState()
@@ -101,6 +111,7 @@ onMounted(() => {
 
 onUnmounted(() => {
   sbp('okTurtles.events/off', SHOW_TOAST, onShowToast)
+  sbp('okTurtles.events/off', CLOSE_TOASTS, onCloseToasts)
   mediaQuery?.removeEventListener('change', updateSmallScreenState)
 })
 </script>

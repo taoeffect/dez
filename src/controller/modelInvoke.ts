@@ -147,6 +147,8 @@ async function invokeTextModel(
       requestId,
       // A stop of the reply and the time limit of the job end the request.
       signal,
+      // The calling model reads the text of a request that failed.
+      reader: 'model',
       onThinking: () => {},
       onToken: (token: string) => {
         if (answerIsCut(answer)) return
