@@ -94,8 +94,7 @@ export function sectionsToStreamMessages(sections: Section[], requestModel: Mode
 
 /** What a media reply (a ModelInfo.request that is not `chat`) sends to
  *  dez.provider/generateMedia. `rules` is what the cache knows of the
- *  model's input (its ModelInfo), with the image rules of the request's
- *  parameter values (`inputImageRulesFor`).
+ *  model's input, for the request's parameter values (`mediaInputRules`).
  *
  *  The source of the request is the last user message of `messages` as a
  *  chat request sends it: its text, with no path, and with each image

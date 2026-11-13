@@ -4,13 +4,13 @@ import { modelRefKey } from '../chat/modelRef'
 import type { MessagePart, Section } from '../chat/types'
 import { effectiveOutputs } from '../modelOutputs'
 import type { ModelCache } from '../persistence/types'
-import { inputImageRulesFor, unusedImagesProblem } from '../providers/clipImages'
+import { unusedImagesProblem } from '../providers/clipImages'
 import { clipTagProblem } from '../providers/clipInputs'
-import { effectiveParameterValues, type ParameterValues } from '../providers/modelParameters'
+import type { ParameterValues } from '../providers/modelParameters'
 import type { MediaProgress } from '../providers/streamTypes'
 import { effectiveRequest, sendsPrompt, type MediaKind, type ModelInfo, type ProviderInfo } from '../providers/types'
 import { unstoredOutputMessage, unusableModelMessage } from '../providers/unusableModel'
-import { conversationAssets, preparedMediaRequest, promptRequestProblem, promptRequestSource, type MediaRequestInput, type PromptInput, type PromptRequestSource } from '../streams/mediaRequest'
+import { conversationAssets, mediaInputRules, preparedMediaRequest, promptRequestProblem, promptRequestSource, type MediaRequestInput, type PromptInput, type PromptRequestSource } from '../streams/mediaRequest'
 import { jobTimeoutMs, jobTimeoutParameter } from './jobs'
 import { withoutLocalPaths } from './localPaths'
 import { FIND_MODELS, namedModelTarget, parameterValuesArgument } from './modelArguments'
@@ -261,10 +261,9 @@ export function modelInvocation(args: ToolArguments, { cache, providers, modelPa
 
   // The image rules can depend on the parameter values that the request
   // sends, as for a user message (`submitTab`).
-  const images = inputImageRulesFor(model.images, effectiveParameterValues(model.parameters ?? [], parameters))
-  const rules = { ...(model.text && { text: model.text }), ...(images && { images }), ...(model.clips && { clips: model.clips }) }
+  const rules = mediaInputRules(model, parameters)
   const request = preparedMediaRequest(kind, source, rules)
-  const problem = promptRequestProblem(model.name, kind, model, images, source, request)
+  const problem = promptRequestProblem(model.name, kind, model, rules.images, source, request)
   if (problem !== null) throw new ToolError(problem)
   if (sendsPrompt(kind) && request.prompt === '' && request.lyrics === undefined) {
     throw new ToolError(`\`prompt\` has no text, and ${model.name} makes nothing without one. Write in \`prompt\` what the model must make, and name each input with @id.`)

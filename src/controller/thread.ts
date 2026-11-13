@@ -3,12 +3,11 @@ import type { MediaTagKind } from '../model/chat/mediaTags'
 import { modelRefKey } from '../model/chat/modelRef'
 import { effectiveOutputs } from '../model/modelOutputs'
 import { clipsText } from '../model/providers/clipInputs'
-import { imagesText, inputImageRulesFor } from '../model/providers/clipImages'
-import { effectiveParameterValues } from '../model/providers/modelParameters'
+import { imagesText } from '../model/providers/clipImages'
 import { effectiveRequest, type ClipInputRules, type ModelInfo } from '../model/providers/types'
 import { unstoredOutputMessage, unusableModelMessage } from '../model/providers/unusableModel'
 import type { SettingsSnapshot } from '../model/state'
-import { mediaRequestProblem } from '../model/streams/mediaRequest'
+import { mediaInputRules, mediaRequestProblem } from '../model/streams/mediaRequest'
 import { mediaRequestInput } from '../model/streams/messages'
 import type { RequestMessages } from '../model/streams/types'
 import { systemPromptErrorText, systemPromptProblem, systemPromptTemplate } from '../model/systemPrompt'
@@ -69,10 +68,9 @@ export default sbp('sbp/selectors/register', {
     // leaves out.
     let mediaImages = { sent: 0, leftOut: 0 }
     let mediaClips = { sent: { audio: 0, video: 0 }, leftOut: { audio: 0, video: 0 } }
-    // The text, image, and clip rules of a media request. The image rules
-    // can depend on the parameter values that the request sends
-    // (OpenRouter's "Images as"), so they are the rules of the user's
-    // values, which the request reads at its start too (`generateMedia`).
+    // The text, image, and clip rules of a media request, for the user's
+    // parameter values, which the request reads at its start too
+    // (`generateMedia`).
     let inputRules: ClipInputRules = {}
     if (kind === 'none') {
       message = unusableModelMessage(model.modelName, cachedModel)
@@ -81,8 +79,7 @@ export default sbp('sbp/selectors/register', {
       message = unstoredOutputMessage(model.modelName, cachedModel.unstoredOutput)
     } else if (kind !== 'chat') {
       const chosen = (sbp('dez.model/settings/snapshot') as SettingsSnapshot).modelParameters[modelRefKey(model)]
-      const images = inputImageRulesFor(cachedModel.images, effectiveParameterValues(cachedModel.parameters ?? [], chosen))
-      inputRules = { ...(cachedModel.text && { text: cachedModel.text }), ...(images && { images }), ...(cachedModel.clips && { clips: cachedModel.clips }) }
+      inputRules = mediaInputRules(cachedModel, chosen)
       // An input that the model is known not to take gets no request
       // (`mediaRequestProblem`, the checks that the `model_invoke` tool
       // shares): each check costs nothing, and it tells the user what to
@@ -90,7 +87,7 @@ export default sbp('sbp/selectors/register', {
       // message and adds no image or clip, so the input that this checks is
       // the input of the request.
       const input = mediaRequestInput(kind, request.messages, tab.sections, inputRules)
-      message = mediaRequestProblem(model.modelName, kind, cachedModel, images, input)
+      message = mediaRequestProblem(model.modelName, kind, cachedModel, inputRules.images, input)
       mediaImages = { sent: input.images.length, leftOut: input.imagesLeftOut }
       const sentClips = { audio: 0, video: 0 }
       for (const clip of input.clips) sentClips[clip.kind]++

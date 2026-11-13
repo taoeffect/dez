@@ -65,9 +65,8 @@ interface StreamStartArgs {
   // The model's known outputs hold `image`: its chat requests ask for
   // image output (ChatRequestContext.imageOutput).
   imageOutput: boolean
-  // What the model takes as the input of a media request (its
-  // ModelInfo.text, its ModelInfo.images for the parameter values of the
-  // request, `inputImageRulesFor`, and its ModelInfo.clips): a model with
+  // What the model takes as the input of a media request, for the
+  // parameter values of the request (`mediaInputRules`): a model with
   // lyrics gets them from the message, and a video model gets the
   // message's images as frames or references and the clips that it holds
   // or names (`mediaRequestInput`). It is the submit's read of the model,

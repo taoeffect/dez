@@ -7,9 +7,10 @@ import { findMediaTags, sectionClipSource, type MediaTagKind } from '../chat/med
 import { withoutStoredFilePaths } from '../chat/storedFilePaths'
 import { takesInputImages } from '../modelInputs'
 import { clipTagProblem, maxInputClips, missingClipProblem, type ClipAttachment } from '../providers/clipInputs'
-import { maxInputImages, missingImageProblem, unusedImagesProblem, type InputImageRules } from '../providers/clipImages'
+import { inputImageRulesFor, maxInputImages, missingImageProblem, unusedImagesProblem, type InputImageRules } from '../providers/clipImages'
 import { clipText, clipTextProblem, type ClipText } from '../providers/clipText'
 import { learnedImagesProblem } from '../providers/learnedImageLimit'
+import { effectiveParameterValues, type ParameterValues } from '../providers/modelParameters'
 import type { RequestReader } from '../providers/requestReader'
 import type { ClipInputRules, MediaKind, ModelInfo } from '../providers/types'
 
@@ -134,10 +135,21 @@ export function promptRequestSource(prompt: string, assets: ConversationAssets):
   return { parts, clips: [...clips.values()], pathsById: assets.images, inputs, unknownIds: [...unknownIds] }
 }
 
+/** The input rules of a media request to `model` (the `rules` of
+ *  `preparedMediaRequest`): its text and clip rules, and the image rules of
+ *  the parameter values that the request sends (`inputImageRulesFor`), as
+ *  OpenRouter's "Images as" changes them. `chosen` holds the values of the
+ *  user and of the call, before the defaults (`effectiveParameterValues`).
+ *  The submit of a user message and the `model_invoke` tool both read the
+ *  rules here, so that they take and refuse the same inputs. */
+export function mediaInputRules(model: Pick<ModelInfo, 'text' | 'images' | 'clips' | 'parameters'>, chosen: Readonly<ParameterValues> | undefined): ClipInputRules {
+  const images = inputImageRulesFor(model.images, effectiveParameterValues(model.parameters ?? [], chosen))
+  return { ...(model.text && { text: model.text }), ...(images && { images }), ...(model.clips && { clips: model.clips }) }
+}
+
 /** What a media request of `kind` sends of `source`, for a model with
- *  `rules`: what the cache knows of the model's input (its ModelInfo), with
- *  the image rules of the request's parameter values
- *  (`inputImageRulesFor`).
+ *  `rules`: what the cache knows of the model's input, for the request's
+ *  parameter values (`mediaInputRules`).
  *
  *  The images are the images of the source, in text order and each one
  *  once, as many as the model takes (`rules.images`, `maxInputImages`):
