@@ -752,6 +752,17 @@ describe('joinRunResult', () => {
     expect(empty.text).toContain('it made no clip that Dez can store')
     expect(empty.text).toContain('[warn] nothing')
   })
+
+  // A join call has only its clips: Dez builds the ffmpeg arguments.
+  it.each([
+    [{ kind: 'exited', code: 8 }, 'call again without that clip. Else this is not a fault of the call: tell the user.'],
+    [{ kind: 'outputTooLarge' }, 'This is not a fault of the call. Tell the user.'],
+  ] as const)('tells a fix that a join call can make after a failed run: %j', (end, advice) => {
+    const { text } = joinRunResult(copy, 2, end, false, logOf('[warn] one\n'))
+
+    expect(text).toContain(advice)
+    expect(text).not.toMatch(/argument|log level|-v /)
+  })
 })
 
 describe('joinProbeFailedText', () => {

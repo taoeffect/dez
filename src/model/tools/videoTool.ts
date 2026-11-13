@@ -926,24 +926,43 @@ function notKeptText(notKept: readonly string[]): string {
   return notKept.length === 0 ? '' : ` Dez did not keep ${notKept.join(', ')}.`
 }
 
+// What the failure text of an ffmpeg run tells the model to do. A `video
+// ffmpeg` call gives the arguments; Dez builds those of `join_clips`
+// (`joinPlan`), so its call can change only its clips.
+interface FfmpegAdvice {
+  /** After a run that ended with an error code, before its log. */
+  failed: string
+  /** After a run that wrote more output than Dez takes. */
+  tooMuchOutput: string
+}
+
+const FFMPEG_CALL_ADVICE: FfmpegAdvice = {
+  // A model that read the name of a copy in an earlier result (`c.mp4`)
+  // can take it for a file that stays.
+  failed: 'Read the end of its log: fix the arguments and call again, or, when the log tells that an input file is the problem, tell the user. '
+    + 'Each call has a new work folder, which holds only the inputs that the call names as @id.',
+  tooMuchOutput: 'Call again with a lower log level (-v error gives only the errors), and with no option that prints data.',
+}
+
+const JOIN_ADVICE: FfmpegAdvice = {
+  failed: 'When the end of its log tells of a clip that is broken (the log names a clip by its id: c.mp4 is @c), call again without that clip. '
+    + 'Else this is not a fault of the call: tell the user.',
+  tooMuchOutput: 'This is not a fault of the call. Tell the user.',
+}
+
 // The error result of an ffmpeg run that did not end with the code 0;
 // null for one that did. `timedOut` is not here: the job has the text of
 // its own time limit (`jobTimedOutText`).
-function ffmpegFailureText(end: Exclude<ProgramEnd, { kind: 'timedOut' }>, log: ProgramLog): string | null {
+function ffmpegFailureText(end: Exclude<ProgramEnd, { kind: 'timedOut' }>, log: ProgramLog, advice: FfmpegAdvice): string | null {
   if (end.kind === 'outputTooLarge') {
-    return `Dez stopped ffmpeg: it wrote more than ${byteSizeText(FFMPEG_OUTPUT_BYTES)} of output. Dez kept no file. `
-      + 'Call again with a lower log level (-v error gives only the errors), and with no option that prints data.'
+    return `Dez stopped ffmpeg: it wrote more than ${byteSizeText(FFMPEG_OUTPUT_BYTES)} of output. Dez kept no file. ${advice.tooMuchOutput}`
   }
   if (end.code === null) {
     return withLog('The system ended ffmpeg before it was done (for example, the computer had no memory left). Dez kept no file. '
       + 'This is not a fault of the call. Tell the user, and call again only for a smaller task or when the user asks for it.', log.end(LOG_END))
   }
   if (end.code === 0) return null
-  // A model that read the name of a copy in an earlier result (`c.mp4`)
-  // can take it for a file that stays.
-  return withLog(`ffmpeg ended with the error code ${end.code}, and Dez kept no file. Read the end of its log: fix the arguments and call again, `
-    + 'or, when the log tells that an input file is the problem, tell the user. '
-    + 'Each call has a new work folder, which holds only the inputs that the call names as @id.', log.end(LOG_END))
+  return withLog(`ffmpeg ended with the error code ${end.code}, and Dez kept no file. ${advice.failed}`, log.end(LOG_END))
 }
 
 /** The result of an ffmpeg run that ended, before its new files move:
@@ -956,7 +975,7 @@ export function ffmpegRunResult(
   log: ProgramLog,
   output: OutputStart,
 ): { text: string, isError: boolean } {
-  const failure = ffmpegFailureText(end, log)
+  const failure = ffmpegFailureText(end, log, FFMPEG_CALL_ADVICE)
   if (failure !== null) return { text: failure, isError: true }
   const { kept, notKept } = files
   if (kept.length > MAX_VIDEO_OUTPUT_FILES) {
@@ -1017,11 +1036,11 @@ export function joinNoVideoText(id: string): string {
  *  the text of a run that failed or that made no file, else the text that
  *  goes with the new clip. `joined` tells that the output file is there. */
 export function joinRunResult(plan: JoinPlan, count: number, end: Exclude<ProgramEnd, { kind: 'timedOut' }>, joined: boolean, log: ProgramLog): { text: string, isError: boolean } {
-  const failure = ffmpegFailureText(end, log)
+  const failure = ffmpegFailureText(end, log, JOIN_ADVICE)
   if (failure !== null || !joined) {
     return {
       text: failure !== null
-        ? `Dez could not join the clips. This is not a fault of the call, unless the log tells of a clip that is broken. ${failure}`
+        ? `Dez could not join the clips. ${failure}`
         : withLog('Dez could not join the clips: ffmpeg ended with no error, but it made no clip that Dez can store. This is not a fault of the call. Tell the user.', log.end(LOG_END)),
       isError: true,
     }
