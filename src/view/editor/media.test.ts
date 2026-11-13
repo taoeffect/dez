@@ -111,11 +111,10 @@ describe('deleteSavedClip (the trash of a player)', () => {
       dispatch(spec: TransactionSpec) {
         state = state.update(spec).state
       },
-      posAtDOM: () => 'before\n'.length,
       hasFocus: false,
     } as unknown as EditorView
     vi.stubGlobal('document', { fullscreenElement: null })
-    await deleteSavedClip(view, { contains: () => false } as unknown as HTMLElement, clip)
+    await deleteSavedClip(view, { contains: () => false } as unknown as HTMLElement, () => 'before\n'.length, clip)
     return state
   }
 

@@ -89,14 +89,31 @@ export interface WrittenJobAsset {
   id: string | null
 }
 
+function assetLine({ kind, id }: WrittenJobAsset): string {
+  return id === null
+    ? `The reply stopped before Dez could add the ${ASSET_NAMES[kind]} of this job to it, so there is no new ${ASSET_NAMES[kind]}.`
+    : `Made the ${ASSET_NAMES[kind]} @${id}.`
+}
+
 /** The result text of a job for its reader: the job's own `text` as it is
  *  (an error text too), then one line for each asset. The lines name the
  *  assets by their ids only. */
 export function jobResultText(text: string, assets: readonly WrittenJobAsset[]): string {
-  const lines = assets.map(({ kind, id }) => (id === null
-    ? `The reply stopped before Dez could add the ${ASSET_NAMES[kind]} of this job to it, so there is no new ${ASSET_NAMES[kind]}.`
-    : `Made the ${ASSET_NAMES[kind]} @${id}.`))
-  return [...(text.trim() === '' ? [] : [text]), ...lines].join('\n')
+  return [...(text.trim() === '' ? [] : [text]), ...assets.map(assetLine)].join('\n')
+}
+
+const ASSET_NAME_SOURCE = Object.values(ASSET_NAMES).join('|')
+// One line of `assetLine`, of either form.
+const ASSET_LINE = new RegExp(`^(?:Made the (?:${ASSET_NAME_SOURCE}) @[a-z]+\\.|The reply stopped before Dez could add the (${ASSET_NAME_SOURCE}) of this job to it, so there is no new \\1\\.)$`)
+
+/** The job's own text of a `jobResultText`: the text without the lines of
+ *  its assets. Blank when the job gave only assets. A last line of the
+ *  job's own text that reads as an asset line is lost too; the editor,
+ *  which shows this text to the user, takes that risk. */
+export function jobOwnText(resultText: string): string {
+  const lines = resultText.split('\n')
+  while (lines.length > 0 && ASSET_LINE.test(lines[lines.length - 1])) lines.pop()
+  return lines.join('\n')
 }
 
 /** The result of one job, as a `jobs_wait` result gives it. */
@@ -141,6 +158,22 @@ export function jobsWaitText(results: readonly JobResult[], running: number): st
     ? 'No job still runs.'
     : `${running === 1 ? '1 job still runs' : `${running} jobs still run`}: call jobs_wait again to get ${running === 1 ? 'its result' : 'their results'}.`
   return [`${results.length === 1 ? '1 job' : `${results.length} jobs`} ended. ${rest}`, ...results.map(jobPart)].join('\n\n')
+}
+
+// One part of `jobPart`. The body is escaped, so its first `\n</job>` line
+// is the end of the part, and a part inside a body does not start one.
+const JOB_PART = new RegExp(`<job id="(${JOB_ID_SOURCE})" tool="([^"\\n]*)" status="(finished|failed|timed out)">\\n([\\s\\S]*?)\\n</job>`, 'g')
+
+/** The results in the result text of a `jobs_wait` call (`jobsWaitText`),
+ *  in order, each with the text that `jobResultText` gave (blank for a job
+ *  with no output). None for any other text. */
+export function jobsWaitResults(resultText: string): JobResult[] {
+  return [...resultText.matchAll(JOB_PART)].map(([, id, tool, status, body]) => ({
+    id,
+    tool,
+    status: status as JobResultStatus,
+    text: body === NO_JOB_OUTPUT_TEXT ? '' : jobTextEscape.unescape(body),
+  }))
 }
 
 /** One job of a reply, as `jobs_list` and `job_inspect` tell it. */

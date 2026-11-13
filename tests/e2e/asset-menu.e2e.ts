@@ -1,5 +1,6 @@
 import path from 'node:path'
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from 'vitest'
+import { jobStartedText } from '../../src/model/tools/jobs'
 import { startApp, type RunningApp } from './harness/app'
 import { consoleErrors, elementCenter, movePointer, pointerRightClickAt, resetConsoleErrors, screenshotOnFailure, waitFor, waitForValue } from './harness/dom'
 import { appFilePath, mediaTempDir, seedAppState, writeTestFile } from './harness/fixtures'
@@ -7,6 +8,7 @@ import { shownImages, solidPng } from './harness/images'
 import { NOT_A_CLIP, WEBM_VIDEO, clipTag, problemCards, shownPlayers, silentWav, startClipServer, type ClipServer } from './harness/media'
 import { createSession, destroySession, type E2EBrowser } from './harness/session'
 import { assetPartPoint, editorDoc, editorSelection, focusEditor, focusedArea, openSeededConversation, setCaret } from './harness/thread'
+import { pressToolChip } from './harness/toolChips'
 
 // The asset menu, driven through the real app: a right-click on an image
 // (or on its "Image not found" box) or on a player asks
@@ -14,9 +16,11 @@ import { assetPartPoint, editorDoc, editorSelection, focusEditor, focusedArea, o
 // Manager", with the asset's file: the stored image, the saved clip, or the
 // clip's temp copy, also when this computer cannot play it. A missing
 // image, a clip that plays from its URL only, and a clip whose file is gone
-// give no file (the item is disabled). The click cancels the webview's own
-// menu, and it leaves the editor's selection, focus, and doc alone. Text,
-// and the text of a clock's tooltip, keep the webview's own menu.
+// give no file (the item is disabled). An image or a clip that the chip of
+// an intermediate call hides gives the same menu in the open panel of the
+// chip. The click cancels the webview's own menu, and it leaves the
+// editor's selection, focus, and doc alone. Text, and the text of a clock's
+// tooltip, keep the webview's own menu.
 //
 // WebDriver cannot drive a native menu, so an SBP filter stops each
 // `popupAsset` call and records its file (`src/controller/menu.test.ts`
@@ -191,6 +195,39 @@ describe('asset menu', () => {
       expect.stringMatching(/^\[MediaPlayer\] The clip did not load; media error code: [34]$/),
       '[MediaPlayer] The file of the clip could not be read',
     ])
+  })
+
+  it('pops up the menu with the file of a hidden image and of a hidden clip in the open panel of their chip', async () => {
+    const jobId = 'j-menu'
+    const stored = await writeTestFile(appFilePath(app.home, 'assets', 'generated', 'images', 'menu-hidden.png'), PNG)
+    const saved = await writeTestFile(appFilePath(app.home, 'assets', 'generated', 'audio', 'menu-hidden.wav'), TONE)
+    const reply = [
+      `<dez:tool id="call_menu" name="model_invoke" model="studio/paint" prompt="A draft" is_intermediate="true">\n${jobStartedText(jobId)}\n</dez:tool>`,
+      `![${stored}](id=a|tool=model_invoke|hidden=${jobId})`,
+      `<dez:audio id="b" type="audio/wav" src="${saved}" tool="model_invoke" hidden="${jobId}"/>`,
+      'Done',
+    ].join('\n\n')
+    await openSeededConversation(browser, app.home, 'asset-menu-hidden', [
+      { role: 'user', text: 'Make drafts' },
+      { role: 'agent', text: reply },
+      { role: 'user', text: 'Thanks' },
+    ])
+    expect(await shownImages(browser)).toStrictEqual([])
+    expect(await shownPlayers(browser)).toStrictEqual([])
+
+    await pressToolChip(browser, 0)
+    await waitForValue(browser, 'image in the panel', () => shownImages(browser), [{ alt: 'menu-hidden.png', width: 40, height: 24 }])
+    await waitForValue(browser, 'player in the panel', async () => (await shownPlayers(browser)).map(({ available, seconds }) => ({ available, seconds })), [{ available: true, seconds: 2 }])
+
+    await focusEditor(browser)
+    const doc = await editorDoc(browser)
+    await setCaret(browser, doc.length - 'Thanks'.length, doc.length)
+    const before = await editorState()
+    expect(before.focus).toBe('editor')
+
+    await expectMenus('.dez-image', () => ':scope > *', [stored], before)
+    await expectMenus('.media-player', () => '.media-player__time', [saved], before)
+    expect(await consoleErrors(browser)).toStrictEqual([])
   })
 
   it('leaves the webview\'s menu on text and on the text of a clock\'s tooltip', async () => {

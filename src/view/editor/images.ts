@@ -10,6 +10,7 @@ import { IMAGE_MAX_HEIGHT_PX, SECTION_SEP, editorSizePx, sectionsField } from '.
 import { measureLineHeights } from '../thread/editorMeasure'
 import { selectedAssetLook } from './assetSelection'
 import { syncDomSelection } from './focus'
+import { HiddenAssetWidget, hiddenAssetLines, hiddenAssets, type AssetPlace } from './hiddenAssets'
 import { sectionRolesChanged } from './lineBlocks'
 import { followShownRange, pendingRanges, type DocRange } from './pendingRanges'
 import { ROUND_STROKE, svgIcon } from './svgIcon'
@@ -46,8 +47,9 @@ function setBoxSize(img: HTMLImageElement, size: ImageSize): void {
 }
 
 /** A picture frame with a sun and hills, so that the id badge reads as the
- *  label of the image. */
-function imageIcon(): SVGSVGElement {
+ *  label of the image. The chip of a call that hides an image shows it too
+ *  (toolCalls.ts). */
+export function imageIcon(): SVGSVGElement {
   return svgIcon('0 0 16 16', [
     ['rect', { x: '2', y: '3', width: '12', height: '10', rx: '2', ...ROUND_STROKE, 'stroke-width': '1.3' }],
     ['circle', { cx: '6', cy: '6.5', r: '1.2', fill: 'currentColor' }],
@@ -100,13 +102,13 @@ function trashIcon(): SVGSVGElement {
   ])
 }
 
-/** The button that deletes the image of `widget` (`deleteImage`). Its
- *  press keeps the focus and the caret where they are (as the Submit
- *  button's does), and `ImageWidget.ignoreEvent` keeps its events from
- *  CodeMirror. It is out of the Tab order, so Tab in the editor never lands
- *  on it while it is hidden. It has no native `title`: its tooltip is
- *  Dez's own (`trashTooltip`). */
-function trashButton(view: EditorView, widget: HTMLElement, path: string, linked: boolean): HTMLButtonElement {
+/** The button that deletes the image whose reference is at `place`
+ *  (`deleteImage`). Its press keeps the focus and the caret where they are
+ *  (as the Submit button's does), and `ImageWidget.ignoreEvent` keeps its
+ *  events from CodeMirror. It is out of the Tab order, so Tab in the editor
+ *  never lands on it while it is hidden. It has no native `title`: its
+ *  tooltip is Dez's own (`trashTooltip`). */
+function trashButton(view: EditorView, place: AssetPlace, path: string, linked: boolean): HTMLButtonElement {
   const button = document.createElement('button')
   button.type = 'button'
   button.className = 'dez-image__trash'
@@ -119,7 +121,8 @@ function trashButton(view: EditorView, widget: HTMLElement, path: string, linked
     view.plugin(imageTooltipHover)?.hide()
   })
   button.addEventListener('click', () => {
-    void deleteImage(view, view.posAtDOM(widget), path)
+    const from = place()
+    if (from !== null) void deleteImage(view, from, path)
   })
   return button
 }
@@ -169,9 +172,10 @@ function trashTooltip(missing: boolean, linked: boolean): HTMLElement {
 }
 
 /** Shows the tooltip `content` while the pointer rests on `item`, an
- *  overlay item of the image widget `widget` (`imageTooltipHover`). */
-function addTooltip(view: EditorView, widget: HTMLElement, item: HTMLElement, content: () => HTMLElement): void {
-  item.addEventListener('mouseenter', () => view.plugin(imageTooltipHover)?.enter(widget, item, content))
+ *  overlay item of the image whose reference is at `place`
+ *  (`imageTooltipHover`). */
+function addTooltip(view: EditorView, place: AssetPlace, item: HTMLElement, content: () => HTMLElement): void {
+  item.addEventListener('mouseenter', () => view.plugin(imageTooltipHover)?.enter(place, item, content))
   item.addEventListener('mouseleave', () => view.plugin(imageTooltipHover)?.leave())
 }
 
@@ -205,14 +209,84 @@ function addAssetMenu(view: EditorView, wrapper: HTMLElement, path: string): voi
   })
 }
 
-/** An image, with an overlay that shows while the pointer is over the
- *  image: a small toolbar in its top-right corner with its id (null for an
- *  old reference with no id) in a badge, the facts of the image, and a
+/** Draws an image, with an overlay that shows while the pointer is over
+ *  the image: a small toolbar in its top-right corner with its id (null for
+ *  an old reference with no id) in a badge, the facts of the image, and a
  *  trash button; the badge and the trash have a tooltip. A reference to a
  *  file that does not load shows an "Image not found" box with the same
  *  overlay after its text, with no facts, so that its text can go too.
  *  `linked`: the file is a linked file (linkedFiles.ts), which the trash
- *  does not delete. */
+ *  does not delete.
+ *
+ *  `place` tells where the image's reference is in the doc now, for the
+ *  trash and the tooltips. With none, the image is drawn in place of its
+ *  reference, and its DOM tells (`ImageWidget`). A hidden image is drawn in
+ *  the panel of its chip (toolCalls.ts), whose DOM is at the chip's place,
+ *  so the chip gives the place. */
+export function createImage(view: EditorView, { path, id, linked }: Pick<ImageReference, 'path' | 'id' | 'linked'>, place?: AssetPlace): HTMLElement {
+  // The image is in a wrapper, so that the root element stays the same
+  // when an image that fails to load becomes a box. The wrapper is as big
+  // as the image (`.dez-image` in `dezTheme`), so the overlay can be placed
+  // over the image.
+  const wrapper = document.createElement('span')
+  wrapper.className = 'dez-image'
+  const placeNow = place ?? (() => view.contentDOM.contains(wrapper) ? view.posAtDOM(wrapper) : null)
+  const img = document.createElement('img')
+  img.className = 'dez-image__img'
+  img.alt = fileNameOf(path)
+  img.draggable = false
+  const overlay = document.createElement('span')
+  overlay.className = 'dez-image__overlay'
+  if (id !== null) {
+    const badge = idBadge(id)
+    addTooltip(view, placeNow, badge, () => idTooltip(id))
+    overlay.appendChild(badge)
+  }
+  // The pixels and the file size come in after the load.
+  const facts = document.createElement('span')
+  facts.className = 'dez-image__facts'
+  facts.textContent = imageFactsText(path)
+  overlay.appendChild(facts)
+  const trash = trashButton(view, placeNow, path, linked)
+  addTooltip(view, placeNow, trash, () => trashTooltip(trash.closest('.dez-image-missing') !== null, linked))
+  overlay.appendChild(trash)
+  const cached = naturalSizes.get(path)
+  if (cached) setBoxSize(img, cached)
+  // A load or an error changes the line's height in place, which CM does
+  // not see (see `measureLineHeights`).
+  img.addEventListener('load', () => {
+    const size = { width: img.naturalWidth, height: img.naturalHeight }
+    naturalSizes.set(path, size)
+    setBoxSize(img, size)
+    facts.textContent = imageFactsText(path)
+    if (linked || !fileSizes.has(path)) void showFileSize(path, facts)
+    if (!cached || cached.width !== size.width || cached.height !== size.height) measureLineHeights(view)
+  })
+  img.addEventListener('error', () => {
+    naturalSizes.delete(path)
+    facts.remove()
+    const box = document.createElement('span')
+    box.className = 'dez-image-missing'
+    box.textContent = `Image not found: ${img.alt}`
+    // The box is one short line of text, so an overlay over its corner
+    // would hide a part of it: the overlay goes after the text, in the
+    // box.
+    box.append(overlay)
+    wrapper.replaceChildren(box)
+    measureLineHeights(view)
+  })
+  img.src = sbp('dez.controller/images/displayUrl', path) as string
+  // The row along the image's top edge in which the overlay sits, at the
+  // right end (`.dez-image__overlay-row` in `dezTheme`).
+  const row = document.createElement('span')
+  row.className = 'dez-image__overlay-row'
+  row.appendChild(overlay)
+  wrapper.append(img, row)
+  addAssetMenu(view, wrapper, path)
+  return wrapper
+}
+
+/** An image in place of its reference (`createImage`). */
 class ImageWidget extends WidgetType {
   constructor(readonly path: string, readonly id: string | null, readonly linked: boolean) {
     super()
@@ -221,66 +295,7 @@ class ImageWidget extends WidgetType {
     return other instanceof ImageWidget && other.path === this.path && other.id === this.id && other.linked === this.linked
   }
   toDOM(view: EditorView): HTMLElement {
-    // The image is in a wrapper, so that the widget's root element stays the
-    // same when an image that fails to load becomes a box. The wrapper is as
-    // big as the image (`.dez-image` in `dezTheme`), so the overlay can be
-    // placed over the image.
-    const wrapper = document.createElement('span')
-    wrapper.className = 'dez-image'
-    const img = document.createElement('img')
-    img.className = 'dez-image__img'
-    img.alt = fileNameOf(this.path)
-    img.draggable = false
-    const overlay = document.createElement('span')
-    overlay.className = 'dez-image__overlay'
-    const { id } = this
-    if (id !== null) {
-      const badge = idBadge(id)
-      addTooltip(view, wrapper, badge, () => idTooltip(id))
-      overlay.appendChild(badge)
-    }
-    // The pixels and the file size come in after the load.
-    const facts = document.createElement('span')
-    facts.className = 'dez-image__facts'
-    facts.textContent = imageFactsText(this.path)
-    overlay.appendChild(facts)
-    const trash = trashButton(view, wrapper, this.path, this.linked)
-    addTooltip(view, wrapper, trash, () => trashTooltip(trash.closest('.dez-image-missing') !== null, this.linked))
-    overlay.appendChild(trash)
-    const cached = naturalSizes.get(this.path)
-    if (cached) setBoxSize(img, cached)
-    // A load or an error changes the line's height in place, which CM does
-    // not see (see `measureLineHeights`).
-    img.addEventListener('load', () => {
-      const size = { width: img.naturalWidth, height: img.naturalHeight }
-      naturalSizes.set(this.path, size)
-      setBoxSize(img, size)
-      facts.textContent = imageFactsText(this.path)
-      if (this.linked || !fileSizes.has(this.path)) void showFileSize(this.path, facts)
-      if (!cached || cached.width !== size.width || cached.height !== size.height) measureLineHeights(view)
-    })
-    img.addEventListener('error', () => {
-      naturalSizes.delete(this.path)
-      facts.remove()
-      const box = document.createElement('span')
-      box.className = 'dez-image-missing'
-      box.textContent = `Image not found: ${img.alt}`
-      // The box is one short line of text, so an overlay over its corner
-      // would hide a part of it: the overlay goes after the text, in the
-      // box.
-      box.append(overlay)
-      wrapper.replaceChildren(box)
-      measureLineHeights(view)
-    })
-    img.src = sbp('dez.controller/images/displayUrl', this.path) as string
-    // The row along the image's top edge in which the overlay sits, at the
-    // right end (`.dez-image__overlay-row` in `dezTheme`).
-    const row = document.createElement('span')
-    row.className = 'dez-image__overlay-row'
-    row.appendChild(overlay)
-    wrapper.append(img, row)
-    addAssetMenu(view, wrapper, this.path)
-    return wrapper
+    return createImage(view, this)
   }
   // CM uses this for the lines that it has not drawn yet: the image's box at
   // the editor font size of now, as `dezTheme` scales its max height. The
@@ -330,7 +345,13 @@ function findRenderedImages(state: EditorState): ImageReference[] {
 
 function buildImageDecorations(state: EditorState): ImageDecorations {
   const images = findRenderedImages(state)
-  const decorations = Decoration.set(images.map((image) => Decoration.replace({ widget: new ImageWidget(image.path, image.id, image.linked) }).range(image.from, image.to)))
+  // A hidden image shows in the panel of its chip (hiddenAssets.ts). It
+  // stays an image here, so that its source keeps every rule of an image's
+  // source; only its widget is the one of a hidden asset.
+  const hidden = new Set(hiddenAssets(state).map((asset) => asset.from))
+  const decorations = Decoration.set(images.map((image) => Decoration.replace({
+    widget: hidden.has(image.from) ? new HiddenAssetWidget('image', image.id) : new ImageWidget(image.path, image.id, image.linked),
+  }).range(image.from, image.to)))
   return { images, decorations }
 }
 
@@ -422,9 +443,10 @@ export function imageRemovalRange(doc: Text, { from, to }: DocRange): DocRange {
 /** The image trash (`trashButton`): asks whether to delete the image whose
  *  reference starts at `from`, and on "Yes" deletes its file
  *  (`dez.controller/images/delete`), then takes the reference out of the
- *  doc (`imageRemovalRange`). A linked image (linkedFiles.ts) keeps its
- *  file: its prompt says so, and only its reference goes. The doc can
- *  change while the prompt is open or the file is being deleted (a
+ *  doc (`imageRemovalRange`; a hidden image goes with the lines that it
+ *  takes out of view, `hiddenAssetLines`). A linked image (linkedFiles.ts)
+ *  keeps its file: its prompt says so, and only its reference goes. The
+ *  doc can change while the prompt is open or the file is being deleted (a
  *  stream), so the reference is followed (`followShownRange`). A new state
  *  of the same tab (the rebuild at the end of a stream) has no pending
  *  ranges: there the reference is found again by its path and id, when
@@ -463,7 +485,12 @@ export async function deleteImage(view: EditorView, from: number, path: string):
       // The controller has logged the failure and shown a toast.
     }
   }
-  followed.end(range ? imageRemovalRange(view.state.doc, range) : undefined, { undoable: image.linked })
+  let removal: DocRange | undefined
+  if (range) {
+    const hiddenLines = hiddenAssetLines(view.state, range.from)
+    removal = hiddenLines ? linesRemovalRange(view.state.doc, hiddenLines) : imageRemovalRange(view.state.doc, range)
+  }
+  followed.end(removal, { undoable: image.linked })
   // The prompt gave the focus back a few ms ago (`syncDomSelection`).
   if (range) syncDomSelection(view)
 }
@@ -554,14 +581,13 @@ class ImageTooltipHover implements PluginValue {
 
   constructor(private readonly view: EditorView) {}
 
-  enter(widget: HTMLElement, item: HTMLElement, content: () => HTMLElement): void {
+  enter(place: AssetPlace, item: HTMLElement, content: () => HTMLElement): void {
     this.cancel()
     const show = (): void => {
       this.timer = null
-      if (!this.view.contentDOM.contains(widget)) return
-      const from = this.view.posAtDOM(widget)
-      const image = renderedImages(this.view.state).find((image) => image.from === from)
-      if (!image) return
+      const from = place()
+      const image = from === null ? undefined : renderedImages(this.view.state).find((image) => image.from === from)
+      if (from === null || !image) return
       // A new `create` each time, so CM makes a new tooltip view.
       const tooltip: Tooltip = {
         pos: from,

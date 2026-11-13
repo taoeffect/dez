@@ -3,9 +3,10 @@ import { history, undo } from '@codemirror/commands'
 import { EditorSelection, EditorState, type TransactionSpec } from '@codemirror/state'
 import type { EditorView } from '@codemirror/view'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
+import { HIDDEN_IMAGE_PATH, hiddenImage, invokeBlock } from '../../model/chat/testing'
 import { SECTION_SEP, encodePrompt, sectionsField } from '../thread/cmEditor'
 import { deleteImage, deleteImageBang, deleteImageParen, imageRemovalRange, imageTooltip, imageTooltipDelay, markdownImages, renderedImages, setImageTooltip } from './images'
-import { runCommand } from './testing'
+import { createState as createThreadState, joinSections, runCommand } from './testing'
 
 interface ConfirmCall {
   message: string
@@ -298,6 +299,17 @@ describe('deleteImage (the image trash)', () => {
     expect(undone.doc.toString()).toBe(['before', linked, 'after!'].join('\n'))
     expect(shown(undone)).toEqual([linked])
     expect(undoOnce(undone).doc.toString()).toBe(['before', linked, 'after'].join('\n'))
+  })
+
+  it('takes a hidden image out with the blank line that went out of view with it, so that the text keeps its look', async () => {
+    const invoke = invokeBlock('j-aaaa')
+    const hidden = hiddenImage('j-aaaa')
+    const editor = createEditor(createThreadState(['ask', [invoke, '', hidden, '', 'Done.'].join('\n')], ['user', 'agent']))
+    const done = deleteImage(editor.view, editor.doc().indexOf(hidden), HIDDEN_IMAGE_PATH)
+    confirmCalls[0].answer(true)
+    ;(await nextDeleteCall()).finish()
+    await done
+    expect(editor.doc()).toBe(joinSections(['ask', [invoke, '', 'Done.'].join('\n')]))
   })
 
   it('changes nothing on "No", or when the file delete fails', async () => {

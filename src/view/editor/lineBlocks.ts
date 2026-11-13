@@ -1,5 +1,7 @@
 import { EditorState, Facet, type ChangeSpec, type Extension, type Transaction } from '@codemirror/state'
 import type { EditorView } from '@codemirror/view'
+import { SENTINEL_CHAR } from '../../model/chat/content'
+import { findToolBlocks, type ToolBlock } from '../../model/chat/toolBlocks'
 import { SECTION_SEP, sectionsField, type SectionModel } from '../thread/cmEditor'
 import { linesRemovalRange } from './images'
 import type { DocRange } from './pendingRanges'
@@ -41,6 +43,14 @@ export function sectionTexts(doc: string, sections: readonly SectionModel[]): Se
  *  of agent sections only: a tool call in a user section is plain text. */
 export function agentSectionTexts(doc: string, sections: readonly SectionModel[]): SectionText[] {
   return sectionTexts(doc, sections).filter(({ section }) => section.role === 'agent')
+}
+
+/** The tool blocks of an agent section's `text` that the editor shows as
+ *  chips, in order, as ranges in that text. A block that holds a sentinel
+ *  (a prompt pill) stays text: the widgets and atomic ranges of the pill
+ *  must stay the only ones there. */
+export function chipBlocks(text: string): ToolBlock[] {
+  return findToolBlocks(text).filter((block) => !SENTINEL_CHAR.test(text.slice(block.from, block.to)))
 }
 
 /** Whether `tr` changed which sections there are, or the role of one. Each

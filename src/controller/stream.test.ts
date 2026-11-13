@@ -2346,6 +2346,38 @@ describe('dez.stream/start jobs', () => {
     expect(alerts).toStrictEqual([{ tabId: activeTab().id, status: 'finished' }])
   })
 
+  // Both readers of a job's result write the marker: a `jobs_wait` call,
+  // and the end of the reply.
+  it('marks the assets of a call with `is_intermediate` as hidden assets of its job, at the place of any other asset', async () => {
+    const intermediateCall = (id: string, target: string) => ({ id, name: 'model_invoke', argumentsText: JSON.stringify({ model: target, prompt: PROMPT, is_intermediate: true }) })
+    replyRounds([
+      async (input) => ({ requestId: input.requestId as string, toolCalls: [intermediateCall('c1', PAINTER), intermediateCall('c2', FILMER)] }),
+      async (input) => ({ requestId: input.requestId as string, toolCalls: [{ id: 'c3', name: 'jobs_wait', argumentsText: '{}' }] }),
+      async (input) => {
+        await input.onToken('Done.')
+        return { requestId: input.requestId as string }
+      },
+    ])
+
+    const stream = startStream({ sendTools: true })
+    await settled()
+    jobs[0].end({ media: [png], clips: [] })
+    await settled()
+    // The model ended its reply, and the job of the clip still runs.
+    expect(requests).toHaveLength(3)
+    jobs[1].end({ media: [], clips: [run] })
+    await stream
+
+    // The model reads the same result as for a call that hides nothing.
+    expect(callResult('c3')).toBe(jobsWaitText([{ id: jobId('c1'), tool: 'model_invoke', status: 'finished', text: 'Made the image @a.' }], 1))
+    const text = sectionVisibleText(agentSection())
+    expect(text.slice(text.lastIndexOf('</dez:tool>\n'))).toBe(
+      `</dez:tool>\n\n![${fox}](id=a|tool=model_invoke|hidden=${jobId('c1')})\n\nDone.\n\n`
+      + `<dez:video id="b" type="video/mp4" src="${run.src}" expires="${run.expires}" tool="model_invoke" job="q-17" hidden="${jobId('c2')}"/>`,
+    )
+    expect(toasts).toStrictEqual([])
+  })
+
   // The reply does not tell of these jobs, so only the toast does. One
   // toast for all of them: the toast area shows only a few at a time.
   it('tells the user in one sticky error toast of the jobs that failed and whose results the model did not get', async () => {

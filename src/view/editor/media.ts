@@ -11,6 +11,7 @@ import { sectionsField, type SectionModel } from '../thread/cmEditor'
 import { measureLineHeights } from '../thread/editorMeasure'
 import { selectedAssetLook } from './assetSelection'
 import { focusKeepingScroll, syncDomSelection } from './focus'
+import { HiddenAssetWidget, hiddenAssets, type AssetPlace } from './hiddenAssets'
 import { linesRemovalRange } from './images'
 import { lineBlocks, sectionRolesChanged, sectionTexts } from './lineBlocks'
 import { followShownRange, pendingRanges } from './pendingRanges'
@@ -29,9 +30,10 @@ const ROOT_CLASS = 'dez-media'
  *  clock's tooltip (`MediaPlayer.vue`). */
 const SELECTABLE_TOOLTIP_CLASS = 'media-player__tooltip--selectable'
 
-// The target of a `selectstart` event can be a text node; mouse events
-// always target an element.
-function isInSelectableTooltip(target: EventTarget | null): boolean {
+/** Whether an event's target is in that tooltip. The target of a
+ *  `selectstart` event can be a text node; mouse events always target an
+ *  element. */
+export function isInSelectableTooltip(target: EventTarget | null): boolean {
   const element = target instanceof Text ? target.parentElement : target
   return element instanceof Element && element.closest(`.${SELECTABLE_TOOLTIP_CLASS}`) !== null
 }
@@ -71,7 +73,137 @@ interface MountedPlayer {
 
 const mountedPlayers = new WeakMap<HTMLElement, MountedPlayer>()
 
-/** The player of one clip. */
+/** Mounts the player of the clip `shownTag` of a section with the role
+ *  `role`, and returns its root element. `destroyPlayer` must take it
+ *  down.
+ *
+ *  `place` tells where the tag is in the doc now, for the Save and the
+ *  Delete. With none, the player is drawn in place of its tag, and its DOM
+ *  tells (`MediaWidget`). The player of a hidden clip is drawn in the panel
+ *  of its chip (toolCalls.ts), whose DOM is at the chip's place, so the
+ *  chip gives the place. */
+export function createPlayer(view: EditorView, shownTag: MediaTagData, role: Role, place?: AssetPlace): HTMLElement {
+  const root = document.createElement('span')
+  root.className = ROOT_CLASS
+  const tagPlace = place ?? (() => view.contentDOM.contains(root) ? view.posAtDOM(root) : null)
+  const tag = shallowRef(shownTag)
+  const app = createApp({
+    // The player gets the source as the tag has it, and makes the URL
+    // that loads it.
+    render: () => {
+      const { kind, id, type, src, expires } = tag.value
+      return h(MediaPlayer, {
+        kind,
+        id,
+        type,
+        src,
+        role,
+        expires,
+        busy: src !== null && busyClips.has(src),
+        onSave: () => { void saveClip(view, root, tagPlace, tag.value) },
+        onDelete: () => { void deleteSavedClip(view, root, tagPlace, tag.value) },
+      })
+    },
+  })
+  app.mount(root)
+  // The player changes its height in place (a video's size comes with its
+  // metadata, and the card of a clip that does not play has its own
+  // size), which CM does not see (see `measureLineHeights`).
+  let drawnHeight = 0
+  const observer = new ResizeObserver(() => {
+    const height = root.offsetHeight
+    // 0: the player is not in the document.
+    if (height === 0 || height === drawnHeight) return
+    drawnHeight = height
+    playerHeights.set(heightKey(tag.value), height)
+    measureLineHeights(view)
+  })
+  observer.observe(root)
+  mountedPlayers.set(root, { app, tag, observer })
+  // A press on the player keeps the caret and the focus where they are, as
+  // a press on a tool call chip does. The controls work by pointer and
+  // click events, which this does not stop. A press on the text of the
+  // clock's tooltip keeps its default, so that the text can be selected.
+  root.addEventListener('mousedown', (event) => {
+    if (!isInSelectableTooltip(event.target)) event.preventDefault()
+  })
+  // On macOS a context click selects the word next to the pointer before
+  // its `contextmenu` event, also after a canceled press, when the editor
+  // has the focus (`sendContextMenuEvent` in WebKit's EventHandler.cpp).
+  // So a right-click on the player, which opens its own menu
+  // (`MediaPlayer.vue`), would move the editor's selection. That selection
+  // starts with `selectstart`, and is canceled with it. The tooltip's text
+  // is the only text of the player that can be selected.
+  root.addEventListener('selectstart', (event) => {
+    if (!isInSelectableTooltip(event.target)) event.preventDefault()
+  })
+  // A video.js slider gives the focus to its thumb when a press starts on
+  // it, with no regard to the line above. So when the editor had the
+  // focus, it gets it back at the end of the press. The slider stops its
+  // pointer events from going up, so only capture listeners get them.
+  //
+  // A press on the tooltip's text puts the focus on the card. There the
+  // give-back waits until the tooltip closes: a focused editor writes its
+  // own selection to the DOM, which would end the user's selection in the
+  // tooltip. So the debt stays over presses until a give-back pays it.
+  let editorHadFocus = false
+  let pressInTooltip = false
+  root.addEventListener('pointerdown', (event) => {
+    if (view.hasFocus) editorHadFocus = true
+    pressInTooltip = isInSelectableTooltip(event.target)
+  }, true)
+  const giveFocusBack = () => {
+    if (editorHadFocus && root.contains(document.activeElement)) focusKeepingScroll(view)
+    editorHadFocus = false
+  }
+  const endPress = () => {
+    if (!pressInTooltip) giveFocusBack()
+  }
+  root.addEventListener('pointerup', endPress, true)
+  root.addEventListener('pointercancel', endPress, true)
+  root.addEventListener('open-change', (event) => {
+    const { open } = (event as CustomEvent<{ open: boolean }>).detail
+    if (!open && isInSelectableTooltip(event.target)) giveFocusBack()
+  }, true)
+  // The card has the focus while the player fills the screen, so keys do
+  // not go to the editor behind it. At the end, the editor gets the focus
+  // back. The card is no Tab stop, so the focus is on it only then.
+  root.addEventListener('fullscreenchange', () => {
+    const active = document.activeElement
+    if (!document.fullscreenElement && active?.localName === 'media-container' && root.contains(active)) focusKeepingScroll(view)
+  })
+  return root
+}
+
+/** Gives the mounted player `root` the new tag of its clip, after a Save or
+ *  a Delete changed the tag's `src`. A new player would start from zero,
+ *  with no Save animation; the drawn one keeps its place in the clip over a
+ *  new source (`MediaPlayer.vue`). False when `root` has no player of that
+ *  clip (a clip's kind and id never change). */
+export function updatePlayer(root: HTMLElement, tag: MediaTagData): boolean {
+  const player = mountedPlayers.get(root)
+  if (!player || player.tag.value.kind !== tag.kind || player.tag.value.id !== tag.id) return false
+  // The player keeps its height, so its observer writes no entry for the
+  // key of the new `src`. The old entry stays: an undo of the Save, or
+  // another tag of the same file, still uses it.
+  const height = playerHeights.get(heightKey(player.tag.value))
+  if (height !== undefined) playerHeights.set(heightKey(tag), height)
+  player.tag.value = tag
+  return true
+}
+
+/** Takes down the player that `createPlayer` mounted in `root`. Its media
+ *  elements free their players as they leave the document
+ *  (`v-release-on-remove` in `MediaPlayer.vue`). */
+export function destroyPlayer(root: HTMLElement): void {
+  const player = mountedPlayers.get(root)
+  if (!player) return
+  player.observer.disconnect()
+  player.app.unmount()
+  mountedPlayers.delete(root)
+}
+
+/** The player of one clip, in place of its tag. */
 class MediaWidget extends WidgetType {
   constructor(readonly tag: MediaTagData, readonly role: Role) {
     super()
@@ -85,102 +217,10 @@ class MediaWidget extends WidgetType {
     return this.role === other.role && a.kind === b.kind && a.id === b.id && a.type === b.type && a.src === b.src && a.url === b.url && a.expires === b.expires
   }
   toDOM(view: EditorView): HTMLElement {
-    const root = document.createElement('span')
-    root.className = ROOT_CLASS
-    const tag = shallowRef(this.tag)
-    const { role } = this
-    const app = createApp({
-      // The player gets the source as the tag has it, and makes the URL
-      // that loads it.
-      render: () => {
-        const { kind, id, type, src, expires } = tag.value
-        return h(MediaPlayer, {
-          kind,
-          id,
-          type,
-          src,
-          role,
-          expires,
-          busy: src !== null && busyClips.has(src),
-          onSave: () => { void saveClip(view, root, tag.value) },
-          onDelete: () => { void deleteSavedClip(view, root, tag.value) },
-        })
-      },
-    })
-    app.mount(root)
-    // The player changes its height in place (a video's size comes with its
-    // metadata, and the card of a clip that does not play has its own
-    // size), which CM does not see (see `measureLineHeights`).
-    let drawnHeight = 0
-    const observer = new ResizeObserver(() => {
-      const height = root.offsetHeight
-      // 0: the player is not in the document.
-      if (height === 0 || height === drawnHeight) return
-      drawnHeight = height
-      playerHeights.set(heightKey(tag.value), height)
-      measureLineHeights(view)
-    })
-    observer.observe(root)
-    mountedPlayers.set(root, { app, tag, observer })
-    // A press on the player keeps the caret and the focus where they are, as
-    // a press on a tool call chip does. The controls work by pointer and
-    // click events, which this does not stop. A press on the text of the
-    // clock's tooltip keeps its default, so that the text can be selected.
-    root.addEventListener('mousedown', (event) => {
-      if (!isInSelectableTooltip(event.target)) event.preventDefault()
-    })
-    // On macOS a context click selects the word next to the pointer before
-    // its `contextmenu` event, also after a canceled press, when the editor
-    // has the focus (`sendContextMenuEvent` in WebKit's EventHandler.cpp).
-    // So a right-click on the player, which opens its own menu
-    // (`MediaPlayer.vue`), would move the editor's selection. That selection
-    // starts with `selectstart`, and is canceled with it. The tooltip's text
-    // is the only text of the player that can be selected.
-    root.addEventListener('selectstart', (event) => {
-      if (!isInSelectableTooltip(event.target)) event.preventDefault()
-    })
-    // A video.js slider gives the focus to its thumb when a press starts on
-    // it, with no regard to the line above. So when the editor had the
-    // focus, it gets it back at the end of the press. The slider stops its
-    // pointer events from going up, so only capture listeners get them.
-    //
-    // A press on the tooltip's text puts the focus on the card. There the
-    // give-back waits until the tooltip closes: a focused editor writes its
-    // own selection to the DOM, which would end the user's selection in the
-    // tooltip. So the debt stays over presses until a give-back pays it.
-    let editorHadFocus = false
-    let pressInTooltip = false
-    root.addEventListener('pointerdown', (event) => {
-      if (view.hasFocus) editorHadFocus = true
-      pressInTooltip = isInSelectableTooltip(event.target)
-    }, true)
-    const giveFocusBack = () => {
-      if (editorHadFocus && root.contains(document.activeElement)) focusKeepingScroll(view)
-      editorHadFocus = false
-    }
-    const endPress = () => {
-      if (!pressInTooltip) giveFocusBack()
-    }
-    root.addEventListener('pointerup', endPress, true)
-    root.addEventListener('pointercancel', endPress, true)
-    root.addEventListener('open-change', (event) => {
-      const { open } = (event as CustomEvent<{ open: boolean }>).detail
-      if (!open && isInSelectableTooltip(event.target)) giveFocusBack()
-    }, true)
-    // The card has the focus while the player fills the screen, so keys do
-    // not go to the editor behind it. At the end, the editor gets the focus
-    // back. The card is no Tab stop, so the focus is on it only then.
-    root.addEventListener('fullscreenchange', () => {
-      const active = document.activeElement
-      if (!document.fullscreenElement && active?.localName === 'media-container' && root.contains(active)) focusKeepingScroll(view)
-    })
-    return root
+    return createPlayer(view, this.tag, this.role)
   }
-  // A Save or a Delete changes the `src` of the clip's tag. CM would then
-  // make a new player, which starts from zero, with no Save animation. This
-  // gives the new tag to the drawn player instead: the clip is the same one
-  // (its id never changes), and the player keeps its place in the clip over
-  // a new source (`MediaPlayer.vue`).
+  // A changed tag goes to the drawn player (`updatePlayer`), so CM makes no
+  // new one.
   //
   // The player's element also stays in the document while CM draws its line
   // again, which a player that fills the screen needs: an element that
@@ -192,22 +232,10 @@ class MediaWidget extends WidgetType {
   // make the DOM agree, so a Save in fullscreen ended the fullscreen (the
   // e2e case "keeps a video in fullscreen over a Save" covers it).
   updateDOM(dom: HTMLElement, _view: EditorView, from: MediaWidget): boolean {
-    const player = mountedPlayers.get(dom)
-    if (!player || from.role !== this.role || from.tag.kind !== this.tag.kind || from.tag.id !== this.tag.id) return false
-    // The player keeps its height, so its observer writes no entry for the
-    // key of the new `src`. The old entry stays: an undo of the Save, or
-    // another tag of the same file, still uses it.
-    const height = playerHeights.get(heightKey(from.tag))
-    if (height !== undefined) playerHeights.set(heightKey(this.tag), height)
-    player.tag.value = this.tag
-    return true
+    return from.role === this.role && updatePlayer(dom, this.tag)
   }
   destroy(dom: HTMLElement): void {
-    const player = mountedPlayers.get(dom)
-    if (!player) return
-    player.observer.disconnect()
-    player.app.unmount()
-    mountedPlayers.delete(dom)
+    destroyPlayer(dom)
   }
   // CM uses this for the lines that it has not drawn yet.
   get estimatedHeight(): number {
@@ -238,7 +266,13 @@ function findRenderedMedia(doc: string, sections: readonly SectionModel[]): Rend
 
 function buildMediaDecorations(state: EditorState): MediaDecorations {
   const media = findRenderedMedia(state.doc.toString(), state.field(sectionsField, false) ?? [])
-  const decorations = Decoration.set(media.map((tag) => Decoration.replace({ widget: new MediaWidget(tag, tag.role) }).range(tag.from, tag.to)))
+  // A hidden clip plays in the panel of its chip (hiddenAssets.ts). It
+  // stays a line block here; only its widget is the one of a hidden asset,
+  // so that no second player of the clip is made.
+  const hidden = new Set(hiddenAssets(state).map((asset) => asset.from))
+  const decorations = Decoration.set(media.map((tag) => Decoration.replace({
+    widget: hidden.has(tag.from) ? new HiddenAssetWidget(tag.kind, tag.id) : new MediaWidget(tag, tag.role),
+  }).range(tag.from, tag.to)))
   return { media, decorations }
 }
 
@@ -262,12 +296,12 @@ export function renderedMedia(state: EditorState): readonly RenderedMedia[] {
   return state.field(mediaDecorationsField, false)?.media ?? NO_MEDIA
 }
 
-/** Follows the tag of the player `root` while async work on its clip runs
- *  (`followShownRange`). In a new state of the same tab the tag is found
- *  again by its kind, id, and `src`. Null when `root` shows no tag with the
- *  `src` of `clip` now. */
-function followClip(view: EditorView, root: HTMLElement, clip: MediaTagData) {
-  const from = view.posAtDOM(root)
+/** Follows the tag of a player, which is at `place`, while async work on
+ *  its clip runs (`followShownRange`). In a new state of the same tab the
+ *  tag is found again by its kind, id, and `src`. Null when the tag is not
+ *  in the doc now with the `src` of `clip`. */
+function followClip(view: EditorView, place: AssetPlace, clip: MediaTagData) {
+  const from = place()
   const isClip = (tag: MediaTag) => tag.kind === clip.kind && tag.id === clip.id && tag.src === clip.src
   const shown = renderedMedia(view.state).find((tag) => tag.from === from && isClip(tag))
   return shown ? followShownRange(view, shown, renderedMedia, isClip) : null
@@ -294,18 +328,19 @@ function warnClipChanged(root: HTMLElement, title: string, message: string): voi
   sbp('dez.ui/toast', 'app-global', { title, message, variant: 'warning', duration: 8000 })
 }
 
-/** The Save of the player `root`: keeps the file of `clip`
- *  (`dez.controller/media/save`: a download, or a move of the temp copy),
- *  then makes the saved file the `src` of the clip's tag (`savedMediaTag`).
+/** The Save of the player `root`, whose tag is at `place`: keeps the file
+ *  of `clip` (`dez.controller/media/save`: a download, or a move of the
+ *  temp copy), then makes the saved file the `src` of the clip's tag
+ *  (`savedMediaTag`).
  *  A failed save (the controller has shown a toast) keeps the tag. When the
  *  tag is gone at the end of a download (see `followClip`), the new file is
  *  deleted again, and a toast tells the user. The file of a temp copy has
  *  moved by then and stays: its tag, where it still is, names the temp copy
  *  that is gone. */
-async function saveClip(view: EditorView, root: HTMLElement, clip: MediaTagData): Promise<void> {
+async function saveClip(view: EditorView, root: HTMLElement, place: AssetPlace, clip: MediaTagData): Promise<void> {
   const { src } = clip
   if (src === null || busyClips.has(src)) return
-  const followed = followClip(view, root, clip)
+  const followed = followClip(view, place, clip)
   if (!followed) return
   busyClips.add(src)
   let path: string | null = null
@@ -338,8 +373,9 @@ async function saveClip(view: EditorView, root: HTMLElement, clip: MediaTagData)
   }
 }
 
-/** The trash of the player `root`: asks whether to delete the saved file of
- *  `clip`, and on "Yes" deletes it (`dez.controller/media/delete`), then
+/** The trash of the player `root`, whose tag is at `place`: asks whether
+ *  to delete the saved file of `clip`, and on "Yes" deletes it
+ *  (`dez.controller/media/delete`), then
  *  gives the clip's tag its source of before (`unsavedMediaTag`: the
  *  provider URL, or no source). The prompt warns when the clip can be lost
  *  after the delete: there is no URL, or the URL's `expires` is over (the
@@ -353,10 +389,10 @@ async function saveClip(view: EditorView, root: HTMLElement, clip: MediaTagData)
  *  When the tag is gone after the prompt (see `followClip`), no file is
  *  deleted, and a toast tells the user. A failed delete (the controller has
  *  shown a toast) keeps the tag. */
-export async function deleteSavedClip(view: EditorView, root: HTMLElement, clip: MediaTagData): Promise<void> {
+export async function deleteSavedClip(view: EditorView, root: HTMLElement, place: AssetPlace, clip: MediaTagData): Promise<void> {
   const { src } = clip
   if (src === null || busyClips.has(src)) return
-  const followed = followClip(view, root, clip)
+  const followed = followClip(view, place, clip)
   if (!followed) return
   const linked = isLinkedMediaPath(src)
   const pasted = isPastedMediaPath(src)

@@ -54,6 +54,7 @@ import { deleteImageBang, deleteImageParen, markdownImages } from '../editor/ima
 import { markdownToolCalls, openToolCalls } from '../editor/toolCalls'
 import { markdownMedia } from '../editor/media'
 import { deleteLineBlockBackward, deleteLineBlockForward, joinsLineBlock } from '../editor/lineBlocks'
+import { revealHiddenLineBackward, revealHiddenLineForward } from '../editor/hiddenAssets'
 import { deleteLines, duplicateLines } from '../editor/lineCommands'
 import { filePasteAndDrop } from '../editor/imageInsert'
 import { markdownLinks } from '../editor/links'
@@ -848,13 +849,15 @@ function buildState(openPanels?: OpenPanels): EditorState {
         key: 'ArrowRight',
         run: (v) => moveCursorAcrossPromptRight(v) || moveCursorAcrossSeparatorRight(v),
       },
+      // A key next to the line of a hidden asset first shows that line
+      // (`revealHiddenLineBackward`), before a rule that deletes.
       {
         key: 'Backspace',
-        run: (v) => mergeWithPreviousSection(v) || deleteLineBlockBackward(v) || deleteImageParen(v) || strictMultiCursorBackspace(v),
+        run: (v) => mergeWithPreviousSection(v) || revealHiddenLineBackward(v) || deleteLineBlockBackward(v) || deleteImageParen(v) || strictMultiCursorBackspace(v),
       },
       {
         key: 'Delete',
-        run: (v) => deleteImageBang(v) || deleteLineBlockForward(v) || mergeWithNextSection(v),
+        run: (v) => revealHiddenLineForward(v) || deleteImageBang(v) || deleteLineBlockForward(v) || mergeWithNextSection(v),
       },
     ]),
   )

@@ -3,14 +3,15 @@ import path from 'node:path'
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from 'vitest'
 import { jobsWaitText, startedJobId } from '../../src/model/tools/jobs'
 import { invocationAnswerText } from '../../src/model/tools/modelInvoke'
-import { click, consoleErrors, pointerClick, resetConsoleErrors, screenshotOnFailure, typeKeys, waitForValue } from './harness/dom'
-import { filesIn, mediaTempDir, newFileIn, storedFileName } from './harness/fixtures'
+import { click, consoleErrors, movePointer, pointerClick, pointerClickAt, promptMessage, resetConsoleErrors, screenshotOnFailure, typeKeys, waitForValue } from './harness/dom'
+import { appFilePath, conversationFilePath, filesIn, mediaTempDir, newFileIn, storedFileName } from './harness/fixtures'
 import { generatedImagesDir, pasteImageReference, pngDataUrl, shownImages, solidPng } from './harness/images'
-import { finishVeniceJob, shownPlayers, silentWav } from './harness/media'
+import { finishVeniceJob, shownPlayers, silentWav, type ShownPlayer } from './harness/media'
 import { startMockProviderApp, takeRequestTo, type MockProviderApp } from './harness/mockProviderApp'
 import { answerHeld, mockChatPath, openAiToolCall, replyText, sendChatReply, sendToolCalls, startEventStream, writeChatFrame, type HeldRequest, type MockProvider } from './harness/mockServer'
 import type { E2EBrowser } from './harness/session'
-import { activeTabStreaming, focusEditor, newTab, openToasts, submit, threadSections, waitForThread } from './harness/thread'
+import { activeConversationId, activeTabStreaming, assetPartPoint, docPos, editorDoc, focusEditor, newTab, openToasts, setCaret, submit, threadSections, waitForThread } from './harness/thread'
+import { hiddenAssetNotes, hiddenPart, intermediateParts, pressToolChip, toolChips, toolPanel, type IntermediatePartView } from './harness/toolChips'
 
 // The `model_invoke` tool, driven through the real app against a mock chat
 // model (the caller), a mock of Venice's media API
@@ -33,10 +34,18 @@ import { activeTabStreaming, focusEditor, newTab, openToasts, submit, threadSect
 //   the prompt names (no tools, no system prompt, nothing of the
 //   conversation), its answer is the result of the job, and Stop ends it;
 // - a reply that ends while a job runs waits for it and takes its image;
-// - a job that failed and that no `jobs_wait` read shows an error toast.
+// - a job that failed and that no `jobs_wait` read shows an error toast;
+// - the image or the clip of a call with `is_intermediate` does not show
+//   at its place in the reply: the chip of the call names it (an eye, a
+//   type symbol, a label), and shows it in its panel while it is open,
+//   with its trash and its Save. The model gets the same result, the
+//   asset keeps its id, and an `@id` mention of it sends it. It stays
+//   hidden after a relaunch;
+// - the answer of a text model to such a call shows in the panel too.
 // No request holds a path of the test HOME.
 //
 // One app session serves the whole file; each test starts in a new tab.
+// The last test starts the app again.
 
 const CALLER: MockProvider = { id: 'caller', name: 'Caller Mock', modelId: 'caller-model', modelName: 'Caller Model' }
 const STUDIO: MockProvider = { id: 'studio', name: 'Studio Mock', modelId: 'paint-model', modelName: 'Paint Model' }
@@ -58,7 +67,7 @@ const SONG_WAV = silentWav(2)
 
 const PAINT_PROMPT = 'A fox in the snow'
 const paintCall = (id: string, more: Record<string, unknown> = {}) => openAiToolCall(id, 'model_invoke', { model: `${STUDIO.id}/${STUDIO.modelId}`, prompt: PAINT_PROMPT, ...more })
-const askCall = (id: string, prompt: string) => openAiToolCall(id, 'model_invoke', { model: `${HELPER.id}/${HELPER.modelId}`, prompt })
+const askCall = (id: string, prompt: string, more: Record<string, unknown> = {}) => openAiToolCall(id, 'model_invoke', { model: `${HELPER.id}/${HELPER.modelId}`, prompt, ...more })
 const waitCall = (id: string) => openAiToolCall(id, 'jobs_wait', {})
 const PAINT_BODY = { model: STUDIO.modelId, prompt: PAINT_PROMPT, format: 'webp', hide_watermark: true, safe_mode: false }
 
@@ -412,5 +421,196 @@ describe('model_invoke', () => {
     // Closed, so that it is not open in the next test.
     await click(browser, '.toast-card--error:not(.toast-card--closing) .toast-close')
     await waitForValue(browser, 'error toast closed', () => openToasts(browser, 'error'), [])
+  })
+
+  // What the chip of an intermediate call shows of an asset that it hides,
+  // with its panel closed, and with its panel open.
+  const hides = (type: string): IntermediatePartView => ({ eye: 'closed', lit: false, types: [type], text: 'intermediate asset hidden' })
+  const reveals = (type: string): IntermediatePartView => ({ eye: 'open', lit: true, types: [type], text: 'intermediate asset' })
+  const imageSizes = async (): Promise<Array<{ width: number, height: number }>> => (await shownImages(browser)).map(({ width, height }) => ({ width, height }))
+
+  /** Runs a reply whose one `model_invoke` call is intermediate and makes
+   *  the image `MADE_PNG`, to its end. Gives the text of the reply, the
+   *  file of the image, the job of the call, and the result of the call. */
+  async function intermediateImageReply (): Promise<{ reply: string, madePath: string, jobId: string, started: string }> {
+    const before = await filesIn(generatedDir)
+    await submit(browser, 'Make a draft.')
+    const first = await requestTo(CHAT_PATH)
+    sendToolCalls(first.reply, [paintCall('call_paint', { is_intermediate: true })])
+    const paint = await requestTo(GENERATE_PATH, PAINT_BODY)
+    const second = await requestTo(CHAT_PATH)
+    const jobId = startedJob(second, 'call_paint')
+    // The job has no result yet, so the chip tells only what its model
+    // makes.
+    await waitForValue(browser, 'chip of the job that runs', () => intermediateParts(browser), [{ eye: 'closed', lit: false, types: ['image'], text: 'intermediate' }])
+
+    sendToolCalls(second.reply, [waitCall('call_wait')])
+    answerHeld(paint.reply, 'application/json', JSON.stringify({ images: [MADE_PNG.toString('base64')] }))
+    const third = await requestTo(CHAT_PATH)
+    // The model gets the result of an image that shows.
+    expect(toolResult(third, 'call_wait')).toBe(jobsWaitText([{ id: jobId, tool: 'model_invoke', status: 'finished', text: 'Made the image @a.' }], 0))
+    await sendChatReply(third.reply, CALLER.modelName)
+
+    const reply = await endedReply()
+    const madePath = path.join(generatedDir, await newFileIn(browser, generatedDir, before))
+    expect(reply.endsWith(`</dez:tool>\n\n![${madePath}](id=a|tool=model_invoke|hidden=${jobId})\n\n${replyText(CALLER.modelName)}`)).toBe(true)
+    return { reply, madePath, jobId, started: toolResult(second, 'call_paint') }
+  }
+
+  it('hides the image of an intermediate call under its chip, shows it while the chip is open, and sends it for its @id', async () => {
+    const { madePath, started } = await intermediateImageReply()
+
+    // The image does not show at its place, and its lines take no room.
+    // The chip of its call tells of it; the `jobs_wait` chip does not.
+    await waitForValue(browser, 'chips after the reply', () => intermediateParts(browser), [hides('image'), null])
+    expect((await toolChips(browser))[0].label).toBe(`Tool call model_invoke, "${STUDIO.id}/${STUDIO.modelId}", intermediate asset hidden`)
+    expect(await shownImages(browser)).toStrictEqual([])
+    const note = 'Hidden intermediate image @a. Open its tool call to see it.'
+    expect(await hiddenAssetNotes(browser)).toStrictEqual([{ text: note, visible: false }])
+
+    // A caret on the line of the image shows what the line holds.
+    await setCaret(browser, await docPos(browser, `![${madePath}]`))
+    await waitForValue(browser, 'note under the caret', () => hiddenAssetNotes(browser), [{ text: note, visible: true }])
+    await setCaret(browser, (await editorDoc(browser)).length)
+    await waitForValue(browser, 'note after the caret left', () => hiddenAssetNotes(browser), [{ text: note, visible: false }])
+
+    // The open chip shows the image in its panel, before the call.
+    await pressToolChip(browser, 0)
+    await waitForValue(browser, 'image in the panel', imageSizes, [{ width: 48, height: 36 }])
+    expect(await intermediateParts(browser)).toStrictEqual([reveals('image'), null])
+    expect((await toolChips(browser))[0].label).toBe(`Tool call model_invoke, "${STUDIO.id}/${STUDIO.modelId}", intermediate asset`)
+    expect(await hiddenPart(browser, 0)).toStrictEqual({ heading: 'Intermediate asset', assets: 1, text: null })
+    expect((await toolPanel(browser, 0))?.result).toBe(started)
+
+    await pressToolChip(browser, 0)
+    await waitForValue(browser, 'image after the chip closed', () => shownImages(browser), [])
+    expect(await intermediateParts(browser)).toStrictEqual([hides('image'), null])
+
+    // The hidden image has its id, and a mention of it sends the image.
+    await submit(browser, 'Use @a now.')
+    const next = await requestTo(CHAT_PATH)
+    const { messages } = JSON.parse(next.body) as { messages: Array<{ role: string, content: unknown }> }
+    expect(messages.at(-1)).toStrictEqual({
+      role: 'user',
+      content: [
+        { type: 'text', text: 'Use @a' },
+        { type: 'image_url', image_url: { url: pngDataUrl(MADE_PNG) } },
+        { type: 'text', text: ' now.' },
+      ],
+    })
+    await sendChatReply(next.reply, CALLER.modelName)
+    await waitForValue(browser, 'sections after the second reply', async () => (await threadSections(browser)).length, 5)
+    expect(await openToasts(browser, 'error')).toStrictEqual([])
+    expect(await consoleErrors(browser)).toStrictEqual([])
+  })
+
+  it('hides the clip of an intermediate call under its chip, and keeps its player in the open panel over a Save', async () => {
+    await submit(browser, 'Make a draft song.')
+    const first = await requestTo(CHAT_PATH)
+    sendToolCalls(first.reply, [openAiToolCall('call_song', 'model_invoke', { model: `${STUDIO.id}/${SONG_MODEL.id}`, prompt: 'A slow song', is_intermediate: true })])
+    const queue = await requestTo(QUEUE_PATH, { model: SONG_MODEL.id, prompt: 'A slow song' })
+    const second = await requestTo(CHAT_PATH)
+    const jobId = startedJob(second, 'call_song')
+    sendToolCalls(second.reply, [waitCall('call_wait')])
+    await finishVeniceJob(setup, queue, { retrievePath: RETRIEVE_PATH, modelId: SONG_MODEL.id, queueId: 'queue-1', clip: { type: 'audio/wav', bytes: SONG_WAV } })
+    const third = await requestTo(CHAT_PATH)
+    expect(toolResult(third, 'call_wait')).toBe(jobsWaitText([{ id: jobId, tool: 'model_invoke', status: 'finished', text: 'Made the audio clip @a.' }], 0))
+    await sendChatReply(third.reply, CALLER.modelName)
+
+    const reply = await endedReply()
+    expect(reply).toMatch(new RegExp(`</dez:tool>\\n\\n<dez:audio id="a" type="audio/wav" src="[^"]+\\.wav" expires="[^"]+" tool="model_invoke" job="queue-1" hidden="${jobId}"/>\\n\\n`))
+    await waitForValue(browser, 'chips after the reply', () => intermediateParts(browser), [hides('audio'), null])
+    expect(await shownPlayers(browser)).toStrictEqual([])
+
+    await pressToolChip(browser, 0)
+    const player: ShownPlayer = { kind: 'audio', id: 'a', available: true, source: 'blob', seconds: 2, picture: null, clock: 'Not saved', save: 'save' }
+    await waitForValue(browser, 'player in the panel', () => shownPlayers(browser), [player])
+    expect(await intermediateParts(browser)).toStrictEqual([reveals('audio'), null])
+    expect(await hiddenPart(browser, 0)).toStrictEqual({ heading: 'Intermediate asset', assets: 1, text: null })
+
+    // Save writes the tag anew: its file is the saved one, and a file has
+    // no end time. The player of the panel stays the same element: a new
+    // one would stop a clip that plays. The clip stays hidden.
+    await browser.execute(() => document.querySelector('.cm-content .media-player')?.setAttribute('data-e2e-kept', ''))
+    await pointerClick(browser, '.media-player__save')
+    await waitForValue(browser, 'saved player', () => shownPlayers(browser), [{ ...player, clock: null, save: 'saved' }])
+    expect(await browser.execute(() => document.querySelector('.cm-content .media-player')?.hasAttribute('data-e2e-kept') ?? false)).toBe(true)
+    const savedDir = appFilePath(setup.app.home, 'assets', 'generated', 'audio')
+    const saved = new RegExp(`<dez:audio id="a" type="audio/wav" src="${savedDir}/[^"]+\\.wav" tool="model_invoke" job="queue-1" hidden="${jobId}"/>`)
+    await waitForValue(browser, 'saved tag', async () => saved.test((await threadSections(browser))[1].text), true)
+    expect(await intermediateParts(browser)).toStrictEqual([reveals('audio'), null])
+
+    await pressToolChip(browser, 0)
+    await waitForValue(browser, 'player after the chip closed', () => shownPlayers(browser), [])
+    expect(await intermediateParts(browser)).toStrictEqual([hides('audio'), null])
+    expect(await openToasts(browser, 'error')).toStrictEqual([])
+    expect(await consoleErrors(browser)).toStrictEqual([])
+  })
+
+  it('shows the answer of a text model to an intermediate call in the panel of its chip', async () => {
+    const prompt = 'Name a color.'
+    await submit(browser, 'Ask the helper.')
+    const first = await requestTo(CHAT_PATH)
+    sendToolCalls(first.reply, [askCall('call_ask', prompt, { is_intermediate: true })])
+    const asked = await requestTo(HELPER_PATH, { model: HELPER.modelId, stream: true, messages: [{ role: 'user', content: prompt }] })
+    const second = await requestTo(CHAT_PATH)
+    const started = toolResult(second, 'call_ask')
+    await waitForValue(browser, 'chip of the job that runs', () => intermediateParts(browser), [{ eye: 'closed', lit: false, types: ['text'], text: 'intermediate' }])
+
+    sendToolCalls(second.reply, [waitCall('call_wait')])
+    await sendChatReply(asked.reply, HELPER.modelName)
+    const third = await requestTo(CHAT_PATH)
+    await sendChatReply(third.reply, CALLER.modelName)
+
+    // The answer is in no line of the reply, so the reply has nothing to
+    // take out of view.
+    const reply = await endedReply()
+    expect(reply.endsWith(`</dez:tool>\n${replyText(CALLER.modelName)}`)).toBe(true)
+    await waitForValue(browser, 'chips after the reply', () => intermediateParts(browser), [{ eye: 'closed', lit: false, types: ['text'], text: 'intermediate text hidden' }, null])
+
+    // The result of the call stays in its own field, after the answer.
+    await pressToolChip(browser, 0)
+    await waitForValue(browser, 'answer in the panel', () => hiddenPart(browser, 0), { heading: 'Intermediate text', assets: 0, text: invocationAnswerText(replyText(HELPER.modelName)) })
+    expect(await intermediateParts(browser)).toStrictEqual([{ eye: 'open', lit: true, types: ['text'], text: 'intermediate text' }, null])
+    expect((await toolPanel(browser, 0))?.result).toBe(started)
+    expect(await openToasts(browser, 'error')).toStrictEqual([])
+    expect(await consoleErrors(browser)).toStrictEqual([])
+  })
+
+  it('keeps the image of an intermediate call hidden after a relaunch, and the trash in the open panel takes it out of the reply', async () => {
+    const before = await filesIn(generatedDir)
+    const { reply, madePath, jobId, started } = await intermediateImageReply()
+    const conversationId = await activeConversationId(browser)
+    const file = conversationFilePath(setup.app.home, conversationId)
+    await waitForValue(browser, 'saved reply', async () => (await fs.promises.readFile(file, 'utf8').catch(() => '')).includes(`hidden=${jobId}`), true)
+
+    browser = await setup.relaunch()
+    // A new page: the record that beforeEach started is gone.
+    await resetConsoleErrors(browser)
+    await waitForValue(browser, 'restored active tab', () => activeConversationId(browser), conversationId)
+    await waitForValue(browser, 'restored chips', () => intermediateParts(browser), [hides('image'), null])
+    expect(await shownImages(browser)).toStrictEqual([])
+
+    await pressToolChip(browser, 0)
+    await waitForValue(browser, 'image in the panel', imageSizes, [{ width: 48, height: 36 }])
+
+    // The trash of the image works as at its own place: after the prompt,
+    // the file is gone, and the reference leaves the reply with the blank
+    // line that was out of view with it.
+    await movePointer(browser, await assetPartPoint(browser, '.dez-image', 0, '.dez-image__img'))
+    await pointerClickAt(browser, await assetPartPoint(browser, '.dez-image', 0, '.dez-image__trash'))
+    await waitForValue(browser, 'delete prompt', async () => await promptMessage(browser) !== null, true)
+    await pointerClick(browser, '.confirm-btn--confirm')
+    const reference = `![${madePath}](id=a|tool=model_invoke|hidden=${jobId})\n\n`
+    await waitForValue(browser, 'reply after the trash', async () => (await threadSections(browser))[1].text, reply.replace(reference, ''))
+    await waitForValue(browser, 'files after the trash', () => filesIn(generatedDir), before)
+
+    // The call stays, with its open panel, and its chip hides nothing.
+    await waitForValue(browser, 'chips after the trash', () => intermediateParts(browser), [{ eye: 'closed', lit: false, types: [], text: 'intermediate' }, null])
+    expect(await hiddenPart(browser, 0)).toBeNull()
+    expect((await toolPanel(browser, 0))?.result).toBe(started)
+    expect(await shownImages(browser)).toStrictEqual([])
+    expect(await openToasts(browser, 'error')).toStrictEqual([])
+    expect(await consoleErrors(browser)).toStrictEqual([])
   })
 })

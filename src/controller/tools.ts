@@ -46,16 +46,20 @@ export interface ToolRunContext {
   /** Writes the reference of a stored image that the tool made into the
    *  reply, with a new image id, and returns that id. The reference names
    *  the tool of the call, or `tool` (the `jobs_wait` runner writes what
-   *  the job of another tool made). Null when the reply takes no image any
-   *  more (a stop ended the tool round): the runner then deletes the file. */
-  writeImage(path: string, options?: { tool?: string }): string | null
+   *  the job of another tool made). `hidden` is the id of the Dez job that
+   *  made the image as a part of its work: the reference keeps it
+   *  (`IMAGE_HIDDEN_KEY`), and the editor shows the image under the chip
+   *  of that job's call. Null when the reply takes no image any more (a
+   *  stop ended the tool round): the runner then deletes the file. */
+  writeImage(path: string, options?: { tool?: string, hidden?: string }): string | null
   /** Writes the tag of a clip that the tool made into the reply, with a new
    *  media id and the tool's name (`tool`, as for `writeImage`), and
    *  returns that id. `jobId` is the provider's id of the job that made
-   *  the clip, which the tag keeps (`MEDIA_JOB_ATTRIBUTE`). Null when the
-   *  reply takes no clip any more (a stop ended the tool round): the
-   *  runner then deletes the file. */
-  writeClip(clip: Omit<MediaTagData, 'id' | 'other'>, options?: { tool?: string, jobId?: string }): string | null
+   *  the clip, which the tag keeps (`MEDIA_JOB_ATTRIBUTE`); `hidden` is as
+   *  for `writeImage` (`MEDIA_HIDDEN_ATTRIBUTE`). Null when the reply takes
+   *  no clip any more (a stop ended the tool round): the runner then
+   *  deletes the file. */
+  writeClip(clip: Omit<MediaTagData, 'id' | 'other'>, options?: { tool?: string, jobId?: string, hidden?: string }): string | null
 }
 
 // The code of each Dez tool (TOOL_DEFINITIONS), by tool name. A runner gives
@@ -370,6 +374,11 @@ const TOOL_RUNNERS: Record<string, ToolRunner> = {
   //
   // The caller is a text model (only a chat reply runs tools), so an
   // invoked text model gets no tools (`InvocationRights.toolsAllowed`).
+  //
+  // `is_intermediate` changes nothing of the request or of the results
+  // that the model reads: the job only marks its images and clips as
+  // hidden (`hidesAssets`), and the editor shows them under the chip of
+  // this call.
   async model_invoke (args, _signal, context) {
     const providers = await sbp('dez.provider/infos') as ProviderInfo[]
     const { modelParameters, providerSettings } = sbp('dez.model/settings/snapshot') as SettingsSnapshot
@@ -383,7 +392,7 @@ const TOOL_RUNNERS: Record<string, ToolRunner> = {
     const jobId = context.jobs.start(
       MODEL_INVOKE_TOOL.name,
       (signal, report) => invokeModel(invocation, signal, report, { toolsAllowed: false }),
-      { timeoutMs: invocation.timeoutMs },
+      { timeoutMs: invocation.timeoutMs, hidesAssets: args.is_intermediate === true },
     )
     return `${jobStartedText(jobId)}\n${invocationInputsText(invocation.inputs)}`
   },

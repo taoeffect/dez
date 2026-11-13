@@ -2115,10 +2115,12 @@ export const dezTheme = EditorView.theme({
   '.cm-line.dez-tool-call-line--before-content': {
     paddingBottom: `${TEXT_LINE_HEIGHT}em`,
   },
-  // A blank line between two chips takes no height. It stays in the layout
-  // (not `display: none`), so CodeMirror can still measure it. The font size
-  // is zero too: CodeMirror reads its text size from a short line of plain
-  // text, and a line of spaces with a width and no height would be one.
+  // A blank line between two chips takes no height, and so does the line
+  // of a hidden asset (src/view/editor/hiddenAssets.ts). It stays in the
+  // layout (not `display: none`), so CodeMirror can still measure it. The
+  // font size is zero too: CodeMirror reads its text size from a short line
+  // of plain text, and a line of spaces with a width and no height would be
+  // one.
   '.cm-line.dez-tool-call-gap': {
     fontSize: '0',
     lineHeight: '0',
@@ -2175,7 +2177,13 @@ export const dezTheme = EditorView.theme({
     fontFamily: MONO_FONT_FAMILY,
     fontWeight: '600',
   },
+  // The summary gives way first when the chip is wider than its line: the
+  // label of an intermediate call (below) can shrink too, and the two
+  // share the loss by their factors. The factor is this large because any
+  // part of a pixel that the label loses cuts it with an ellipsis; with it,
+  // the share of the label rounds to nothing while the summary has a width.
   '.dez-tool-call__summary': {
+    flexShrink: '1000000',
     minWidth: '0',
     overflow: 'hidden',
     textOverflow: 'ellipsis',
@@ -2191,6 +2199,38 @@ export const dezTheme = EditorView.theme({
   },
   '.dez-tool-call[data-state="error"] .dez-tool-call__icon, .dez-tool-call[data-state="error"] .dez-tool-call__name, .dez-tool-call[data-state="interrupted"] .dez-tool-call__icon, .dez-tool-call[data-state="interrupted"] .dez-tool-call__name': {
     color: 'var(--color-error, #d9534f)',
+  },
+  // The intermediate part of a chip (`renderIntermediate` in toolCalls.ts):
+  // after a thin rule, an eye, the type symbols, and a small label, all in
+  // the chip's muted color. While the open panel shows what the chip
+  // hides (`data-revealed`), the eye is open and has the accent color. The
+  // symbols keep their size; only the label gives way in a narrow window.
+  '.dez-tool-call__intermediate': {
+    display: 'inline-flex',
+    alignItems: 'center',
+    gap: editorSize(5),
+    minWidth: '0',
+    marginLeft: editorSize(2),
+    paddingLeft: editorSize(8),
+    borderLeft: '1px solid color-mix(in srgb, var(--color-text) 16%, transparent)',
+  },
+  '.dez-tool-call__eye, .dez-tool-call__type': {
+    display: 'inline-flex',
+    flex: 'none',
+  },
+  '.dez-tool-call__eye svg, .dez-tool-call__type svg': {
+    display: 'block',
+    width: editorSize(13),
+    height: editorSize(13),
+  },
+  '.dez-tool-call__intermediate[data-revealed] .dez-tool-call__eye': {
+    color: 'var(--color-accent, #4c8dff)',
+  },
+  '.dez-tool-call__intermediate-label': {
+    minWidth: '0',
+    overflow: 'hidden',
+    textOverflow: 'ellipsis',
+    fontSize: editorSize(11.5),
   },
   // The panel hangs from the disclosure triangle by a thin rule: the
   // parameters as name and value rows, then the result in a read-only
@@ -2253,6 +2293,55 @@ export const dezTheme = EditorView.theme({
     borderColor: 'var(--color-error-border, #d9534f)',
     background: 'var(--color-error-bg, rgba(217,83,79,0.08))',
     color: 'var(--color-error, #d9534f)',
+  },
+  // What an intermediate call hides, as the first part of its panel
+  // (`renderHiddenPart` in toolCalls.ts): a heading, then its images and
+  // players one under the other, each as it shows in the text, or the text
+  // of its job in a field. A player has its own space above and below in
+  // the text; here the gap of the list spaces it.
+  '.dez-tool-call__hidden': {
+    display: 'flex',
+    flexDirection: 'column',
+    alignSelf: 'stretch',
+    gap: editorSize(4),
+    minWidth: '0',
+  },
+  '.dez-tool-call__assets': {
+    display: 'flex',
+    flexDirection: 'column',
+    alignItems: 'flex-start',
+    gap: editorSize(8),
+    minWidth: '0',
+    padding: editorSize(2, 0),
+  },
+  '.dez-tool-call__assets:empty': {
+    display: 'none',
+  },
+  '.dez-tool-call__assets .dez-media': {
+    padding: '0',
+  },
+  // The text at the place of a hidden asset (`HiddenAssetWidget` in
+  // hiddenAssets.ts). Its line has no height while no caret is on it
+  // (`.dez-tool-call-gap`, font size zero), so every size here is in `em`:
+  // an absolute size would give that line a width or a height.
+  '.dez-hidden-asset': {
+    color: 'var(--color-muted, #888)',
+    fontFamily: UI_FONT_FAMILY,
+    fontSize: '0.85em',
+    fontStyle: 'italic',
+    cursor: 'default',
+    userSelect: 'none',
+    WebkitUserSelect: 'none',
+  },
+  // The space at the left keeps the caret at the start of the line off
+  // the symbol.
+  '.dez-hidden-asset svg': {
+    display: 'inline-block',
+    width: '1.1em',
+    height: '1.1em',
+    marginLeft: '0.25em',
+    marginRight: '0.4em',
+    verticalAlign: '-0.2em',
   },
   // Media players (src/view/editor/media.ts). The widget is the only thing
   // on its line, as a tool call chip is. The player inside is a Vue

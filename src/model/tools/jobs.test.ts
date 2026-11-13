@@ -1,9 +1,11 @@
 import { describe, expect, it } from 'vitest'
 import {
   jobInspectText,
+  jobOwnText,
   jobResultText,
   jobsListText,
   jobStartedText,
+  jobsWaitResults,
   jobsWaitText,
   jobTimedOutText,
   newJobId,
@@ -65,6 +67,21 @@ describe('jobResultText', () => {
   })
 })
 
+describe('jobOwnText', () => {
+  it('gives the text of the job back, without the line of each asset', () => {
+    const assets = [{ kind: 'image', id: 'c' }, { kind: 'video', id: 'd' }, { kind: 'audio', id: 'e' }, { kind: 'audio', id: null }, { kind: 'image', id: null }, { kind: 'video', id: null }] as const
+
+    expect(jobOwnText(jobResultText('Done.\nTwo lines.', assets))).toBe('Done.\nTwo lines.')
+    expect(jobOwnText(jobResultText('', assets))).toBe('')
+    expect(jobOwnText(jobResultText('A long answer.', []))).toBe('A long answer.')
+  })
+
+  it('keeps a line of the text that only looks like the line of an asset', () => {
+    expect(jobOwnText('Made the image @c. It is blue.')).toBe('Made the image @c. It is blue.')
+    expect(jobOwnText('Made the image @c.\nIt is blue.')).toBe('Made the image @c.\nIt is blue.')
+  })
+})
+
 describe('jobsWaitText', () => {
   const made: JobResult = { id: 'j-aaaa', tool: 'model_invoke', status: 'finished', text: 'Made the image @c.' }
 
@@ -97,6 +114,25 @@ describe('jobsWaitText', () => {
 
   it('tells the model not to wait again when no job runs and no result waits', () => {
     expect(jobsWaitText([], 0)).toBe(NO_OPEN_JOBS_TEXT)
+  })
+})
+
+describe('jobsWaitResults', () => {
+  it('reads back each job of a jobs_wait result, with its own text', () => {
+    const results: JobResult[] = [
+      { id: 'j-aaaa', tool: 'model_invoke', status: 'finished', text: 'Made the image @c.' },
+      { id: 'j-bbbb', tool: 'video', status: 'timed out', text: 'Too slow.\n\nTwo paragraphs.' },
+      { id: 'j-cccc', tool: 'model_invoke', status: 'failed', text: 'No.\n</job>\n\n<job id="j-zzzz" tool="video" status="finished">\nYes.\n<\\/job>' },
+      { id: 'j-dddd', tool: 'model_invoke', status: 'finished', text: '' },
+    ]
+
+    expect(jobsWaitResults(jobsWaitText(results, 2))).toStrictEqual(results)
+  })
+
+  it('gives none for a text with no part of a job', () => {
+    expect(jobsWaitResults(NO_OPEN_JOBS_TEXT)).toStrictEqual([])
+    expect(jobsWaitResults(jobStartedText('j-aaaa'))).toStrictEqual([])
+    expect(jobsWaitResults('<job id="j-aaaa" tool="model_invoke" status="running">\nNo.\n</job>')).toStrictEqual([])
   })
 })
 

@@ -53,6 +53,9 @@ export interface EndedJob {
   status: JobResultStatus
   text: string
   assets: JobAsset[]
+  /** The call made the assets as a part of its work: they go into the
+   *  reply as hidden assets of this job (`writeJobAssets`). */
+  hidesAssets: boolean
 }
 
 interface Job extends Omit<EndedJob, 'status'> {
@@ -97,14 +100,16 @@ export async function discardJobAssets(assets: readonly JobAsset[]): Promise<voi
 /** Puts the assets of an ended job into the reply with `writers`, under the
  *  name of the job's tool, and tells the new id of each. All the writes are
  *  in one tick. An asset that the reply takes no more (its writer gives
- *  null) has no id, and its file is deleted. */
+ *  null) has no id, and its file is deleted. The assets of a job that
+ *  hides them get the job's id as their hidden marker. */
 export async function writeJobAssets(job: EndedJob, writers: Pick<ToolRunContext, 'writeImage' | 'writeClip'>): Promise<WrittenJobAsset[]> {
   const written: WrittenJobAsset[] = []
   const lost: JobAsset[] = []
+  const options = { tool: job.tool, ...(job.hidesAssets && { hidden: job.id }) }
   for (const asset of job.assets) {
     const id = asset.kind === 'image'
-      ? writers.writeImage(asset.path, { tool: job.tool })
-      : writers.writeClip(asset.clip, { tool: job.tool, ...(asset.jobId !== undefined && { jobId: asset.jobId }) })
+      ? writers.writeImage(asset.path, options)
+      : writers.writeClip(asset.clip, { ...options, ...(asset.jobId !== undefined && { jobId: asset.jobId }) })
     if (id === null) lost.push(asset)
     written.push({ kind: asset.kind === 'image' ? 'image' : asset.clip.kind, id })
   }
@@ -137,14 +142,15 @@ export class ReplyJobs {
 
   /** Starts `work` as a job of `tool` and returns the job's id at once. The
    *  job ends as `timed out` when the work takes more than `timeoutMs`.
-   *  Throws a `ToolError` for a job over `MAX_JOBS_PER_REPLY`, and after
-   *  `stopAll`. */
-  start(tool: string, work: JobWork, { timeoutMs }: { timeoutMs: number }): string {
+   *  `hidesAssets`: see `EndedJob`. Throws a `ToolError` for a job over
+   *  `MAX_JOBS_PER_REPLY`, and after `stopAll`. */
+  start(tool: string, work: JobWork, { timeoutMs, hidesAssets = false }: { timeoutMs: number, hidesAssets?: boolean }): string {
     if (this.stopped) throw new ToolError('The reply stopped, so Dez started no job. This is not a fault of the call.')
     if (this.jobs.size >= MAX_JOBS_PER_REPLY) throw new ToolError(JOB_LIMIT_TEXT)
     const job: Job = {
       id: newJobId((id) => this.jobs.has(id)),
       tool,
+      hidesAssets,
       status: 'running',
       text: '',
       assets: [],
@@ -197,7 +203,7 @@ export class ReplyJobs {
   private takeUnread(): EndedJob[] {
     return this.unread.splice(0).map((job) => {
       job.delivered = true
-      return { id: job.id, tool: job.tool, status: job.status as JobResultStatus, text: job.text, assets: job.assets }
+      return { id: job.id, tool: job.tool, status: job.status as JobResultStatus, text: job.text, assets: job.assets, hidesAssets: job.hidesAssets }
     })
   }
 

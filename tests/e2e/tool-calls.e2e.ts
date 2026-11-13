@@ -12,6 +12,7 @@ import { startMockProviderApp, type MockProviderApp } from './harness/mockProvid
 import { mockChatPath, replyText, sendAnthropicReply, sendChatReply, startEventStream, writeAnthropicEvent, writeChatFrame, type MockProvider } from './harness/mockServer'
 import type { E2EBrowser } from './harness/session'
 import { activeConversationId, activeTabStreaming, docPos, editorCaret, editorDoc, focusEditor, focusedArea, newTab, pickModel, sbpCall, setCaret, submit, threadSections, waitForThread, type ThreadSection } from './harness/thread'
+import { toolChips, toolPanel, type ToolChipView } from './harness/toolChips'
 
 // Tool calls, driven through the real app against a mock server in this
 // process: a model of each API format calls the `model_list` tool, the app
@@ -91,30 +92,6 @@ function expectSentPrefix (earlierBody: string, laterBody: string): void {
   expect(later.messages.slice(0, earlier.messages.length)).toEqual(earlier.messages)
 }
 
-/** What one tool call chip in the editor shows. */
-interface ToolChipView {
-  /** `data-state` of the chip root. */
-  state: string | null
-  label: string | null
-  /** The words before the name of a tool that Dez does not have. */
-  unrecognized: string | null
-  name: string
-  summary: string | null
-  /** "failed" or "interrupted"; null for a call that succeeded or runs. */
-  stateWord: string | null
-  spinner: boolean
-  expanded: string | null
-  title: string
-  open: boolean
-}
-
-/** What the panel of an open chip shows. */
-interface ToolPanelView {
-  parameters: Array<[string, string]>
-  result: string | null
-  error: boolean
-}
-
 /** One line of the editor, in viewport px. */
 interface LineBox {
   /** The text of the line; for the line of a chip, the chip's summary. */
@@ -154,38 +131,6 @@ describe('tool calls', () => {
   let browser: E2EBrowser
   // The tab of the OpenAI test, for the relaunch test.
   let openAiTab: { conversationId: string, sections: ThreadSection[], lastBody: string } | null = null
-
-  async function toolChips (): Promise<ToolChipView[]> {
-    return browser.execute(() => Array.from(document.querySelectorAll<HTMLElement>('.cm-content .dez-tool-call'), (root) => {
-      const chip = root.querySelector<HTMLElement>('.dez-tool-call__chip')
-      return {
-        state: root.dataset.state ?? null,
-        label: chip?.getAttribute('aria-label') ?? null,
-        unrecognized: chip?.querySelector('.dez-tool-call__unrecognized')?.textContent ?? null,
-        name: chip?.querySelector('.dez-tool-call__name')?.textContent ?? '',
-        summary: chip?.querySelector('.dez-tool-call__summary')?.textContent ?? null,
-        stateWord: chip?.querySelector('.dez-tool-call__state')?.textContent ?? null,
-        spinner: chip?.querySelector('.dez-tool-call__spinner') != null,
-        expanded: chip?.getAttribute('aria-expanded') ?? null,
-        title: chip?.title ?? '',
-        open: root.hasAttribute('data-open'),
-      }
-    }))
-  }
-
-  async function toolPanel (index: number): Promise<ToolPanelView | null> {
-    return browser.execute((chipIndex: number) => {
-      const panel = document.querySelectorAll('.cm-content .dez-tool-call')[chipIndex]?.querySelector('.dez-tool-call__panel')
-      if (!panel) return null
-      const names = Array.from(panel.querySelectorAll('.dez-tool-call__parameter-name'), (name) => name.textContent ?? '')
-      const values = Array.from(panel.querySelectorAll('.dez-tool-call__parameter-value'), (value) => value.textContent ?? '')
-      return {
-        parameters: names.map((name, index): [string, string] => [name, values[index] ?? '']),
-        result: panel.querySelector<HTMLTextAreaElement>('.dez-tool-call__result-text')?.value ?? null,
-        error: panel.querySelector('.dez-tool-call__result')?.hasAttribute('data-error') ?? false,
-      }
-    }, index)
-  }
 
   /** The lines of the editor, top to bottom. */
   async function lineBoxes (): Promise<LineBox[]> {
@@ -246,7 +191,7 @@ describe('tool calls', () => {
       { role: 'user', text: question },
       { role: 'agent', text: `Let me look.\n${block}\n` },
     ])
-    await waitForValue(browser, 'chip while the next round waits', toolChips, [closedChip('"tool"')])
+    await waitForValue(browser, 'chip while the next round waits', () => toolChips(browser), [closedChip('"tool"')])
     expect(await activeTabStreaming(browser)).toBe(true)
 
     await sendChatReply(second.reply, TOOLER.modelName)
@@ -256,28 +201,28 @@ describe('tool calls', () => {
       { role: 'user', text: '' },
     ]
     await waitForThread(browser, sections)
-    await waitForValue(browser, 'chip after the reply', toolChips, [closedChip('"tool"')])
+    await waitForValue(browser, 'chip after the reply', () => toolChips(browser), [closedChip('"tool"')])
 
     // A press on the chip opens its panel, and keeps the caret and the focus
     // in the editor.
     const openChip = { ...closedChip('"tool"'), expanded: 'true', title: 'Hide tool call', open: true }
     const caret = await editorCaret(browser)
     await pointerClick(browser, '.cm-content .dez-tool-call__chip')
-    await waitForValue(browser, 'open chip', toolChips, [openChip])
-    expect(await toolPanel(0)).toEqual({ parameters: [['filter', 'tool']], result: TOOLER_LIST, error: false })
+    await waitForValue(browser, 'open chip', () => toolChips(browser), [openChip])
+    expect(await toolPanel(browser, 0)).toEqual({ parameters: [['filter', 'tool']], result: TOOLER_LIST, error: false })
     expect(await editorCaret(browser)).toBe(caret)
     expect(await focusedArea(browser)).toBe('editor')
     await pointerClick(browser, '.cm-content .dez-tool-call__chip')
-    await waitForValue(browser, 'chip closed by a press', toolChips, [closedChip('"tool"')])
-    expect(await toolPanel(0)).toBeNull()
+    await waitForValue(browser, 'chip closed by a press', () => toolChips(browser), [closedChip('"tool"')])
+    expect(await toolPanel(browser, 0)).toBeNull()
 
     // Enter and Space toggle the focused chip, which keeps the focus; the
     // keys do not reach the doc.
     await browser.execute(() => document.querySelector<HTMLElement>('.cm-content .dez-tool-call__chip')?.focus())
     await browser.keys(Key.Enter)
-    await waitForValue(browser, 'chip opened by Enter', toolChips, [openChip])
+    await waitForValue(browser, 'chip opened by Enter', () => toolChips(browser), [openChip])
     await browser.keys(Key.Space)
-    await waitForValue(browser, 'chip closed by Space', toolChips, [closedChip('"tool"')])
+    await waitForValue(browser, 'chip closed by Space', () => toolChips(browser), [closedChip('"tool"')])
     expect(await browser.execute(() => document.activeElement?.matches('.dez-tool-call__chip') ?? false)).toBe(true)
     expect(await threadSections(browser)).toEqual(sections)
 
@@ -297,7 +242,7 @@ describe('tool calls', () => {
     await waitForValue(browser, 'restored active tab', () => activeConversationId(browser), conversationId)
     await waitForValue(browser, 'restored thread', () => threadSections(browser), sections)
     // The open state is view state, so the panel starts closed.
-    await waitForValue(browser, 'restored chip', toolChips, [closedChip('"tool"')])
+    await waitForValue(browser, 'restored chip', () => toolChips(browser), [closedChip('"tool"')])
 
     await submit(browser, 'And again?')
     const request = await setup.mock.waitForRequest(browser)
@@ -365,7 +310,7 @@ describe('tool calls', () => {
       { role: 'agent', text: `Checking.\n${modelListBlock('toolu_01', 'claude', CLAUDE_LIST)}\n${replyText(CLAUDE.modelName)}` },
       { role: 'user', text: '' },
     ])
-    await waitForValue(browser, 'chip', toolChips, [closedChip('"claude"')])
+    await waitForValue(browser, 'chip', () => toolChips(browser), [closedChip('"claude"')])
   })
 
   it('keeps the call when Stop ends the reply while the next round waits, and sends it back with its result', async () => {
@@ -381,7 +326,7 @@ describe('tool calls', () => {
     first.reply.end('data: [DONE]\n\n')
 
     const second = await setup.mock.waitForRequest(browser)
-    await waitForValue(browser, 'chip while the next round waits', toolChips, [closedChip('"tool"')])
+    await waitForValue(browser, 'chip while the next round waits', () => toolChips(browser), [closedChip('"tool"')])
     expect(await activeTabStreaming(browser)).toBe(true)
 
     await pointerClick(browser, '.submit-button')
@@ -392,7 +337,7 @@ describe('tool calls', () => {
       { role: 'user', text: '' },
     ])
     await waitForValue(browser, 'request closed by the app', async () => second.closed, true)
-    expect(await toolChips()).toEqual([closedChip('"tool"')])
+    expect(await toolChips(browser)).toEqual([closedChip('"tool"')])
 
     // The call ended before the stop, so it goes back with its result.
     await submit(browser, 'Go on.')
@@ -465,7 +410,7 @@ describe('tool calls', () => {
       { role: 'user', text: '' },
     ])
     await pointerClick(browser, '.cm-content .dez-tool-call__chip')
-    await waitForValue(browser, 'model_info panel', () => toolPanel(0), { parameters: [['model', model]], result, error: false })
+    await waitForValue(browser, 'model_info panel', () => toolPanel(browser, 0), { parameters: [['model', model]], result, error: false })
   })
 
   it('runs a model_info call with no arguments: the result is about the model of the reply, also after the user chose another model for the tab', async () => {
@@ -505,7 +450,7 @@ describe('tool calls', () => {
       { role: 'user', text: '' },
     ])
     await pointerClick(browser, '.cm-content .dez-tool-call__chip')
-    await waitForValue(browser, 'model_info panel', () => toolPanel(0), { parameters: [], result, error: false })
+    await waitForValue(browser, 'model_info panel', () => toolPanel(browser, 0), { parameters: [], result, error: false })
   })
 
   it('runs image crop and scale calls: the new images go into the reply after the calls, and the requests name them by their ids', async () => {
@@ -769,12 +714,12 @@ describe('tool calls', () => {
     // The chip names the tool after the words, with no argument summary; a
     // refused call keeps its state word.
     const unrecognized = 'old/unrecognized tool:'
-    await waitForValue(browser, 'chips of the old and the made-up tool', toolChips, [
+    await waitForValue(browser, 'chips of the old and the made-up tool', () => toolChips(browser), [
       { ...closedChip(''), label: 'Tool call, old/unrecognized tool: crop_scale_image', unrecognized, name: 'crop_scale_image', summary: null },
       { ...closedChip(''), state: 'error', label: 'Tool call, old/unrecognized tool: web_search, failed', unrecognized, name: 'web_search', summary: null, stateWord: 'failed' },
     ])
     await pointerClick(browser, '.cm-content .dez-tool-call__chip')
-    await waitForValue(browser, 'panel of the old tool', () => toolPanel(0), {
+    await waitForValue(browser, 'panel of the old tool', () => toolPanel(browser, 0), {
       parameters: [['image', 'a'], ['width', '10'], ['height', '10']],
       result: oldResult,
       error: false,
@@ -806,9 +751,9 @@ describe('tool calls', () => {
       ],
     }))
     await sbpCall(browser, 'dez.model/tabs/openConversation', 'long-result')
-    await waitForValue(browser, 'chip of the long result', toolChips, [closedChip('"x"')])
+    await waitForValue(browser, 'chip of the long result', () => toolChips(browser), [closedChip('"x"')])
     await pointerClick(browser, '.cm-content .dez-tool-call__chip')
-    await waitForValue(browser, 'long result in the panel', async () => (await toolPanel(0))?.result, result)
+    await waitForValue(browser, 'long result in the panel', async () => (await toolPanel(browser, 0))?.result, result)
 
     const scrollTops = async (): Promise<{ field: number, doc: number }> => browser.execute(() => ({
       field: document.querySelector('.cm-content .dez-tool-call__result')?.scrollTop ?? -1,
@@ -845,7 +790,7 @@ describe('tool calls', () => {
       ],
     }))
     await sbpCall(browser, 'dez.model/tabs/openConversation', 'chip-keys')
-    await waitForValue(browser, 'chips', async () => (await toolChips()).length, 3)
+    await waitForValue(browser, 'chips', async () => (await toolChips(browser)).length, 3)
     const doc = await editorDoc(browser)
     const docAndCaret = async (): Promise<{ doc: string, caret: number }> => ({ doc: await editorDoc(browser), caret: await editorCaret(browser) })
     const from = await docPos(browser, first)
@@ -882,7 +827,7 @@ describe('tool calls', () => {
       { role: 'agent', text: `${alone}\nlast` },
     ])
     expect(await editorCaret(browser)).toBe(aloneTo)
-    expect((await toolChips()).length).toBe(3)
+    expect((await toolChips(browser)).length).toBe(3)
   })
 
   it('puts chips that follow each other close together, and a chip as far from text on the next line as from text after a blank line', async () => {
@@ -902,7 +847,7 @@ describe('tool calls', () => {
       ],
     }))
     await sbpCall(browser, 'dez.model/tabs/openConversation', 'chip-gaps')
-    await waitForValue(browser, 'chips', async () => (await toolChips()).length, 4)
+    await waitForValue(browser, 'chips', async () => (await toolChips(browser)).length, 4)
 
     const boxes = await lineBoxes()
     const box = (text: string): LineBox => {
@@ -938,7 +883,7 @@ describe('tool calls', () => {
       ],
     }))
     await sbpCall(browser, 'dez.model/tabs/openConversation', 'chip-gap-caret')
-    await waitForValue(browser, 'chips', async () => (await toolChips()).length, 2)
+    await waitForValue(browser, 'chips', async () => (await toolChips(browser)).length, 2)
     const apart = await editorDoc(browser)
     const together = apart.replace(`${first}\n\n`, `${first}\n`)
     const firstEnd = apart.indexOf(first) + first.length
@@ -948,7 +893,7 @@ describe('tool calls', () => {
     const view = async (): Promise<{ lineAfterFirstChip: number, doc: string, caret: number, chips: number }> => {
       const boxes = await lineBoxes()
       const line = boxes[boxes.findIndex(({ text }) => text === '"a"') + 1]
-      return { lineAfterFirstChip: Math.round(line.bottom - line.top), doc: await editorDoc(browser), caret: await editorCaret(browser), chips: (await toolChips()).length }
+      return { lineAfterFirstChip: Math.round(line.bottom - line.top), doc: await editorDoc(browser), caret: await editorCaret(browser), chips: (await toolChips(browser)).length }
     }
     const heights = new Map((await lineBoxes()).map(({ text, top, bottom }) => [text, Math.round(bottom - top)]))
     const lineHeight = heights.get('text above') ?? 0

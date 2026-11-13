@@ -124,6 +124,15 @@ export interface ImageMetadataItem {
  *  the model wrote in its reply (`roundThinking`, streams/messages.ts). */
 export const IMAGE_TOOL_KEY = 'tool'
 
+/** The metadata key of an image that a call made as a part of its work
+ *  (`is_intermediate` of `model_invoke`), as in
+ *  `![<path>](id=b|tool=model_invoke|hidden=j-k3x9)`; its value is the id
+ *  of the Dez job that made the image. The editor shows such an image
+ *  under the chip of the call that started that job, and not at the place
+ *  of its reference (hiddenAssets.ts). It is an image as any other: it has
+ *  its id, and a message can name it with `@id`. */
+export const IMAGE_HIDDEN_KEY = 'hidden'
+
 /** One image reference in a text. */
 export interface ImageReference {
   /** Offset of the `!`. */

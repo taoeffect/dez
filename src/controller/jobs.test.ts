@@ -100,8 +100,8 @@ describe('ReplyJobs', () => {
     await settled()
 
     expect(await jobs.wait(never)).toStrictEqual<EndedJob[]>([
-      { id: secondId, tool: 'video', status: 'finished', text: 'Second.', assets: [] },
-      { id: firstId, tool: 'model_invoke', status: 'failed', text: 'The provider refused it.', assets: [image] },
+      { id: secondId, tool: 'video', status: 'finished', text: 'Second.', assets: [], hidesAssets: false },
+      { id: firstId, tool: 'model_invoke', status: 'failed', text: 'The provider refused it.', assets: [image], hidesAssets: false },
     ])
     expect(jobs.running).toBe(0)
   })
@@ -167,6 +167,7 @@ describe('ReplyJobs', () => {
       status: 'timed out',
       text: 'The job did not end within its time limit of 90 seconds, so Dez stopped it. It has no result. This is not a fault of the call. The last state of the job: Queued at the provider as job q-7.',
       assets: [],
+      hidesAssets: false,
     }])
     expect(jobs.list()).toStrictEqual([{ id, tool: 'model_invoke', status: 'timed out', delivered: true, elapsedMs: 90_000, state: 'Queued at the provider as job q-7.' }])
   })
@@ -263,8 +264,16 @@ describe('ReplyJobs', () => {
 
       second.finish({ assets: [image] })
       await settled()
-      expect(settledJobs).toStrictEqual<EndedJob[]>([{ id: secondId, tool: 'model_invoke', status: 'finished', text: '', assets: [image] }])
+      expect(settledJobs).toStrictEqual<EndedJob[]>([{ id: secondId, tool: 'model_invoke', status: 'finished', text: '', assets: [image], hidesAssets: false }])
       expect(jobs.list().map((job) => [job.id, job.delivered])).toStrictEqual([[firstId, true], [secondId, true]])
+    })
+
+    it('tells its reader that a job hides its assets', async () => {
+      const held = heldWork()
+      const id = jobs.start('model_invoke', held.work, { ...LONG, hidesAssets: true })
+      held.finish({ assets: [image] })
+
+      expect(await jobs.settle()).toStrictEqual<EndedJob[]>([{ id, tool: 'model_invoke', status: 'finished', text: '', assets: [image], hidesAssets: true }])
     })
   })
 
@@ -330,7 +339,7 @@ describe('ReplyJobs', () => {
 
 describe('writeJobAssets', () => {
   // The provider made the last clip as its job `q-1`.
-  const job: EndedJob = { id: 'j-aaaa', tool: 'model_invoke', status: 'finished', text: '', assets: [image, clip(SAVED_CLIP), clip(URL_CLIP, URL_CLIP, 'q-1')] }
+  const job: EndedJob = { id: 'j-aaaa', tool: 'model_invoke', status: 'finished', text: '', assets: [image, clip(SAVED_CLIP), clip(URL_CLIP, URL_CLIP, 'q-1')], hidesAssets: false }
 
   it('writes each asset under the name of the job\'s tool, a clip with the job id of its provider, and gives the new ids', async () => {
     const writes: unknown[] = []
@@ -344,6 +353,20 @@ describe('writeJobAssets', () => {
     expect(writes).toStrictEqual([[IMAGE, { tool: 'model_invoke' }], [SAVED_CLIP, { tool: 'model_invoke' }], [URL_CLIP, { tool: 'model_invoke', jobId: 'q-1' }]])
     expect(deletedImages).toStrictEqual([])
     expect(deletedClips).toStrictEqual([])
+  })
+
+  it('marks each asset of a job that hides its assets with the id of the job', async () => {
+    const writes: unknown[] = []
+    await writeJobAssets({ ...job, hidesAssets: true }, {
+      writeImage: (_path, options) => { writes.push(options); return 'c' },
+      writeClip: (_made, options) => { writes.push(options); return 'd' },
+    })
+
+    expect(writes).toStrictEqual([
+      { tool: 'model_invoke', hidden: 'j-aaaa' },
+      { tool: 'model_invoke', hidden: 'j-aaaa' },
+      { tool: 'model_invoke', hidden: 'j-aaaa', jobId: 'q-1' },
+    ])
   })
 
   it('deletes the file of an asset that the reply takes no more, and gives it no id', async () => {

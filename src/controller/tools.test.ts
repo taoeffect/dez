@@ -1031,6 +1031,30 @@ describe('dez.controller/tools/run', () => {
         expect(deletedTempCopies).toStrictEqual([])
       })
 
+      // The model reads the same texts as for any other call: only the
+      // editor reads the marker.
+      it('marks the clip and the image of a call with `is_intermediate` as hidden assets of its job', async () => {
+        generateMedia = async () => ({ media: [PNG], clips: [MADE_VIDEO] })
+
+        await jobTool('model_invoke', { ...FILM, is_intermediate: true })
+        const [{ id }] = jobs.list()
+
+        expect(await jobResult()).toContain(`<job id="${id}" tool="model_invoke" status="finished">\nMade the video clip @c.\nMade the image @d.\n</job>`)
+        expect(written).toStrictEqual([
+          { path: TEMP_COPY, tool: 'model_invoke', hidden: id, jobId: 'q-17' },
+          { path: MADE_IMAGE, tool: 'model_invoke', hidden: id },
+        ])
+      })
+
+      it('hides nothing for a call whose `is_intermediate` is false', async () => {
+        generateMedia = async () => ({ media: [PNG], clips: [] })
+
+        await jobTool('model_invoke', { ...PAINT, is_intermediate: false })
+        await jobResult()
+
+        expect(written).toStrictEqual([{ path: MADE_IMAGE, tool: 'model_invoke' }])
+      })
+
       it('gives the text of a model that writes down speech as the result of the job, and writes nothing into the reply', async () => {
         generateMedia = async () => ({ media: [], clips: [], text: 'Hello there.' })
 

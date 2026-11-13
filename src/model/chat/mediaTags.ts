@@ -172,6 +172,13 @@ export const MEDIA_TOOL_ATTRIBUTE = 'tool'
  *  and with the id the user can ask it for the clip again. */
 export const MEDIA_JOB_ATTRIBUTE = 'job'
 
+/** The attribute of a clip that a call made as a part of its work, as in
+ *  `<dez:audio id="c" type="audio/wav" src="…" tool="model_invoke" hidden="j-k3x9"/>`;
+ *  its value is the id of the Dez job that made the clip, as
+ *  `IMAGE_HIDDEN_KEY` (images.ts) for an image. `job` is taken: it is the
+ *  provider's id of its own job. */
+export const MEDIA_HIDDEN_ATTRIBUTE = 'hidden'
+
 /** One tag in a text. */
 export interface MediaTag extends MediaTagData {
   /** Offset of the `<`. */
