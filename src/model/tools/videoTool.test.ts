@@ -261,6 +261,12 @@ describe('ffmpegCall', () => {
     ['-i @c -filter_script:v graph.txt out.mp4', '-filter_script:v', 'the option filter_script'],
     ['-dump_attachment:t "" -i @c', '-dump_attachment:t', 'the option dump_attachment'],
     ['-f lavfi -i movie=list.txt:format_opts=safe=0:f=concat out.mp4', 'movie=list.txt:format_opts=safe=0:f=concat', 'the option safe'],
+    ['-f lavfi -graph_file @c -i x out.wav', '-graph_file', 'the option graph_file'],
+    ['-i @c -f hls -hls_key_info_file @d out.m3u8', '-hls_key_info_file', 'the option hls_key_info_file'],
+    ['-f hls -i @c -c copy out.mkv', 'hls', 'the format of an input or of a filter'],
+    ['-f HLS -i @c -i @d out.mkv', 'HLS', 'the format of an input or of a filter'],
+    ['-f lavfi -i "amovie=@c:f=hls" out.wav', 'amovie=@c:f=hls', 'the format of an input or of a filter'],
+    ['-f lavfi -i "movie=@c:format_name=h\'l\'s" out.mp4', 'movie=@c:format_name=h\'l\'s', 'the format of an input or of a filter'],
     ['-/filter_complex graph.txt -i @c out.mp4', '-/filter_complex', 'reads its value from a file'],
     ['-i @c -vf "drawbox=x=10\\:y=2" out.mp4', 'drawbox=x=10\\:y=2', 'a backslash'],
   ])('refuses %j', (text, word, cause) => {
@@ -310,6 +316,7 @@ describe('ffprobeCall', () => {
 
   it.each([
     ['-show_format /etc/passwd', 'an absolute path'],
+    ['-f hls @c', 'the format of an input or of a filter'],
     ['-show_format @z', '@z names no image and no clip'],
   ])('tells that ffprobe did not run for %j', (text, cause) => {
     const message = refusal(() => ffprobeCall({ arguments: text }, CONVERSATION))

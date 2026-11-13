@@ -71,12 +71,19 @@ dirs = "=6.0.0"
 # idle monitor. idle.rs reads the idle time from the Wayland compositor and
 # the X server with pure-Rust protocol crates, so the build needs no new
 # system library (no libwayland-client, libxcb, or libXss).
+#
+# landlock: confinement.rs builds the Landlock rules of a bundled program
+# run with it. libc: the two raw calls that apply those rules in the child
+# between fork and exec, where the landlock crate's own call could
+# allocate (landlock 0.4.7 needs libc 0.2.186 or later).
 [target.'cfg(target_os = "linux")'.dependencies]
 gtk = "=0.18.2"
 zbus = "=5.14.0"
 wayland-client = "=0.31.15"
 wayland-protocols = { version = "=0.32.13", features = ["client", "staging"] }
 x11rb = { version = "=0.14.0", features = ["screensaver"] }
+landlock = "=0.4.7"
+libc = "=0.2.191"
 
 # objc2, objc2-foundation: the versions that mac-notification-sys already
 # uses. notification.rs posts the notifications and owns the notification

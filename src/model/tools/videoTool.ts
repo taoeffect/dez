@@ -281,14 +281,16 @@ export const REFUSED_DEVICES: readonly string[] = [
   'libcdio', 'libdc1394', 'openal', 'opengl', 'oss', 'pulse', 'sdl', 'sdl2', 'sndio', 'v4l2', 'vfwcap', 'video4linux2', 'x11grab', 'xcbgrab', 'xv',
 ]
 
-// The options that take the checks away: a script or an option value that
-// comes from a file (its text is not checked), the lists of the protocols
-// that a demuxer may open, the `safe` mode of the concat demuxer and the
-// file references of a MOV file (both keep a file from naming a file
-// outside of its folder), and an attachment that is written under the
-// name that the input file gives.
+// The options that take the checks away: a script, a filter graph, or an
+// option value that comes from a file (its text is not checked), a file
+// that names another file (the key file of HLS encryption), the lists of
+// the protocols that a demuxer may open, the `safe` mode of the concat
+// demuxer and the file references of a MOV file (both keep a file from
+// naming a file outside of its folder), and an attachment that is written
+// under the name that the input file gives.
 const REFUSED_OPTIONS: readonly string[] = [
-  'filter_script', 'filter_complex_script', 'protocol_whitelist', 'protocol_blacklist', 'safe', 'enable_drefs', 'use_absolute_path', 'dump_attachment',
+  'filter_script', 'filter_complex_script', 'graph_file', 'hls_key_info_file', 'protocol_whitelist', 'protocol_blacklist', 'safe', 'enable_drefs',
+  'use_absolute_path', 'dump_attachment',
 ]
 
 // The chars of a name in an ffmpeg argument, as the inside of a character
@@ -315,20 +317,23 @@ const DEVICE_FORMAT = new RegExp(String.raw`(?:^|[^${NAME_CHARS}])(?:f|format|fo
 // A refused option as a key of an option list inside a word
 // (`movie=list.txt:format_opts=safe=0`).
 const OPTION_KEY = new RegExp(String.raw`(?:^|[^${NAME_CHARS}])(${REFUSED_OPTIONS.join('|')})\s*=`, 'i')
+// The hls format as the format of a filter or of a muxer option
+// (`amovie=x:f=hls`); `argumentProblem` checks the `-f` option.
+const HLS_FORMAT = new RegExp(String.raw`(?:^|[^${NAME_CHARS}])(?:f|format|format_name)\s*=\s*hls(?![${NAME_CHARS}])`, 'i')
 
 const WORK_FOLDER_ONLY = 'The program works only in its own work folder: name an input as @id, and an output as a new file name with no folder.'
 
-// Why Dez refuses the word `words[index]` of a command line; null for a
-// word that can go. `words` are the words after the split, with a bare
-// `@` in place of each `@id` that names an input: the id is no part of
-// what the program gets, and an id such as `fd` or `oss` must refuse
-// nothing.
+// Why Dez refuses the word `words[index]` of a command line of `program`;
+// null for a word that can go. `words` are the words after the split,
+// with a bare `@` in place of each `@id` that names an input: the id is no
+// part of what the program gets, and an id such as `fd` or `oss` must
+// refuse nothing.
 //
 // The filter and option parsers of ffmpeg drop single quotes
 // (`m'o'vie=…` is `movie=…`), so each check of a text inside a word also
 // runs on the word without them. A backslash, their other escape, is
 // refused as such.
-function argumentProblem(words: readonly string[], index: number): string | null {
+function argumentProblem(program: ShippedProgram, words: readonly string[], index: number): string | null {
   const word = words[index]
   const forms = word.includes('\'') ? [word, word.replaceAll('\'', '')] : [word]
   const found = (pattern: RegExp) => forms.map((form) => pattern.exec(form)).find((match) => match !== null) ?? null
@@ -357,6 +362,15 @@ function argumentProblem(words: readonly string[], index: number): string | null
   const format = words[index - 1] === '-f' ? word.toLowerCase() : undefined
   const device = format !== undefined && REFUSED_DEVICES.includes(format) ? format : found(DEVICE_FORMAT)?.[1].toLowerCase()
   if (device !== undefined) return `it names the device ${device}. Dez lets the program use no camera, no microphone, no screen, and no sound output of this computer.`
+  // The hls demuxer opens the files that its playlist names, by any path:
+  // a playlist that an earlier run wrote into a kept file passes every
+  // check of the words. The hls muxer only writes, so `-f hls` stays for an
+  // ffmpeg output (no `-i` after it); every `-f` of ffprobe is an input.
+  const hlsInput = format === 'hls' ? program === 'ffprobe' || words.slice(index + 1).includes('-i') : found(HLS_FORMAT) !== null
+  if (hlsInput) {
+    return 'it makes hls the format of an input or of a filter. An HLS playlist can name a file outside the work folder by a path that Dez cannot check, '
+      + 'so Dez lets the program read no playlist: hls can only be the format of an output, as -f hls after the last -i.'
+  }
   // The null muxer opens no file, so its `-` names nothing: `-f null -` is
   // the usual form of a run whose log is the result.
   if (word === '-' && !(words[index - 1] === 'null' && words[index - 2] === '-f')) {
@@ -441,9 +455,9 @@ function programCall(program: ShippedProgram, fixedArgs: readonly string[], args
     masked.push(mask)
   }
 
-  const refused = masked.findIndex((_, index) => argumentProblem(masked, index) !== null)
+  const refused = masked.findIndex((_, index) => argumentProblem(program, masked, index) !== null)
   if (refused >= 0) {
-    throw new ToolError(`Dez refuses ${JSON.stringify(words[refused])} in \`arguments\`: ${argumentProblem(masked, refused)} ${NOT_DONE[program]}`)
+    throw new ToolError(`Dez refuses ${JSON.stringify(words[refused])} in \`arguments\`: ${argumentProblem(program, masked, refused)} ${NOT_DONE[program]}`)
   }
   const [nextId] = newMediaIds(sections.map(sectionPlainText), 1)
   const unknown = unknownInputsProblem([...unknownIds], assets, nextId, { argument: '`arguments`', notDone: NOT_DONE[program] })

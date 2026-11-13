@@ -6,7 +6,7 @@ import type { AppFileEntry, BundledTool, BundledToolEnd, BundledToolOutput, Bund
 import { workFolderPath } from '../../src/model/tools/workFolders'
 import { startApp, type RunningApp } from './harness/app'
 import { consoleErrors, resetConsoleErrors, screenshotOnFailure, waitFor, waitForValue } from './harness/dom'
-import { appFilePath, filesIn, seedAppState, workDir, writeTestFile } from './harness/fixtures'
+import { appFilePath, filesIn, mediaTempDir, seedAppState, workDir, writeTestFile } from './harness/fixtures'
 import { WEBM_VIDEO } from './harness/media'
 import { pidsWithCwd } from './harness/processes'
 import { createSession, destroySession, type E2EBrowser } from './harness/session'
@@ -188,6 +188,59 @@ describe('bundled tools', () => {
     // No refused run made a folder.
     expect(fs.existsSync(path.join(workDir(app.home), id))).toBe(false)
     expect(fs.existsSync(path.join(app.home, '.cache', 'outside'))).toBe(false)
+  })
+
+  // The OS rule of src-tauri/src/confinement.rs (Landlock on Linux): the
+  // spec runs the programs with paths that the argument checks of the
+  // `video` tool refuse, to show what the OS still stops.
+  it('lets a program open only the files of the cache folder', async () => {
+    const folder = workFolderPath(randomUUID())
+    const dir = path.join(workDir(app.home), path.basename(folder))
+    const finishedRun = async (tool: BundledTool, args: string[]) => {
+      const runId = randomUUID()
+      await startRun(browser, runId, { tool, args, folder, inputs: [], ...WIDE_LIMITS })
+      return endedRun(browser, runId)
+    }
+    const tone = ['-v', 'error', '-f', 'lavfi', '-i', 'sine=frequency=440:duration=0.2']
+
+    // An MPEG-TS clip, a type that an HLS playlist can name, in the cache
+    // folder but not in the work folder, in the app folder, and in the home
+    // folder.
+    expect((await finishedRun('dez-ffmpeg', [...tone, '-c:a', 'mp2', 'tone.ts'])).end).toStrictEqual({ kind: 'exited', code: 0 })
+    const clip = fs.readFileSync(path.join(dir, 'tone.ts'))
+    const cached = await writeTestFile(path.join(mediaTempDir(app.home), `${randomUUID()}.ts`), clip)
+    const appData = await writeTestFile(appFilePath(app.home, 'assets', 'audio', `${randomUUID()}.ts`), clip)
+    const home = await writeTestFile(path.join(app.home, 'clips', 'tone.ts'), clip)
+
+    const probe = (file: string) => finishedRun('dez-ffprobe', ['-v', 'error', '-show_entries', 'format=format_name', '-of', 'csv=p=0', file])
+    expect(await probe(cached)).toStrictEqual({ stdout: 'mpegts\n', stderr: '', end: { kind: 'exited', code: 0 }, refusal: null })
+    for (const file of [appData, home]) {
+      const refused = await probe(file)
+      expect({ stdout: refused.stdout, end: refused.end }).toStrictEqual({ stdout: '', end: { kind: 'exited', code: 1 } })
+      expect(refused.stderr).toContain('Permission denied')
+    }
+
+    // A playlist in the work folder names its segment by a path that no
+    // argument holds. The hls demuxer does not pass on the cause of a failed
+    // open: the run of the same playlist with the clip of the cache folder
+    // shows it.
+    const playlist = (segment: string) => `#EXTM3U\n#EXT-X-TARGETDURATION:5\n#EXTINF:0.2,\n${segment}\n#EXT-X-ENDLIST\n`
+    fs.writeFileSync(path.join(dir, 'cached.m3u8'), playlist(cached))
+    fs.writeFileSync(path.join(dir, 'home.m3u8'), playlist(home))
+    const copy = (list: string, output: string) => finishedRun('dez-ffmpeg', ['-v', 'error', '-f', 'hls', '-i', list, '-c', 'copy', output])
+    expect((await copy('cached.m3u8', 'cached.mkv')).end).toStrictEqual({ kind: 'exited', code: 0 })
+    const refused = await copy('home.m3u8', 'home.mkv')
+    expect(refused.end).not.toStrictEqual({ kind: 'exited', code: 0 })
+    expect(refused.stderr).toContain('Error when loading first segment')
+    expect(fs.existsSync(path.join(dir, 'home.mkv'))).toBe(false)
+
+    const written = path.join(app.home, 'written.wav')
+    const write = await finishedRun('dez-ffmpeg', [...tone, written])
+    expect(write.end).not.toStrictEqual({ kind: 'exited', code: 0 })
+    expect(write.stderr).toContain('Permission denied')
+    expect(fs.existsSync(written)).toBe(false)
+
+    await sbpCall(browser, 'dez.native/deleteAppFile', folder, 'cache', { folder: true })
   })
 
   it('stops a program on a cancel, at its time limit, and at its output cap', async () => {

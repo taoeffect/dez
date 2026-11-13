@@ -60,7 +60,7 @@ fn base_dir() -> PathBuf {
 }
 
 // The OS cache folder comes from the `dirs` crate, as Tauri's `$CACHE` does.
-fn root_dir(root: FileRoot) -> Result<PathBuf, String> {
+pub(crate) fn root_dir(root: FileRoot) -> Result<PathBuf, String> {
     match root {
         FileRoot::App => Ok(base_dir()),
         FileRoot::Cache => dirs::cache_dir()

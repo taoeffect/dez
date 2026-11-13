@@ -4,9 +4,13 @@
 //! and the end of the run.
 //!
 //! The rules of a run, which no caller can change:
-//! - Only a bundled program runs, never a program of the computer.
+//! - Only a bundled program runs, never a program of the computer (on macOS
+//!   it starts through `/usr/bin/sandbox-exec`, see confinement.rs).
 //! - It runs in a work folder of the cache root, with copies of its input
 //!   files (`prepare_work_folder`), an empty environment, and no input.
+//! - The OS keeps it inside the cache root: it can read and write no file
+//!   outside it (confinement.rs, which also tells what a computer with no
+//!   confinement does).
 //! - It ends at its time limit, at its output cap, at a cancel
 //!   (`cancel_bundled_tool`), and when the app quits (`stop_all_runs`).
 
@@ -24,7 +28,8 @@ use tauri::ipc::Channel;
 use tokio::io::{AsyncRead, AsyncReadExt};
 use tokio::sync::{Notify, watch};
 
-use crate::persistence::{FileRoot, app_file_path, is_app_file_segment};
+use crate::confinement::confined_command;
+use crate::persistence::{FileRoot, app_file_path, is_app_file_segment, root_dir};
 
 // The programs that a run can name: the `bundle.externalBin` programs of
 // tauri.conf.json, under the names that the bundle gives them (a test keeps
@@ -105,6 +110,12 @@ pub(crate) struct ProgramRun {
     inputs: Vec<ToolInput>,
     timeout: Duration,
     max_output_bytes: u64,
+    // The folder that the program can read and write, with all below it
+    // (`confined_command`): the cache root, which holds `folder`.
+    confined_to: PathBuf,
+    // Folders and files that the program can also read: none for a bundled
+    // program. The system programs of the tests need the system's folders.
+    also_readable: Vec<PathBuf>,
 }
 
 // The folder of the bundled programs: the folder of the Dez program in every
@@ -313,6 +324,7 @@ async fn until_stopped(stopped: &mut watch::Receiver<bool>) {
 }
 
 // Starts the program in its work folder and waits for its end.
+// - `confined_command`: the OS keeps the program inside its folder.
 // - `env_clear`: the program gets no variable of Dez's environment (API
 //   keys can be there), and no `PATH`.
 // - `Stdio::null()`: a program that reads its input (ffmpeg reads keys)
@@ -323,8 +335,7 @@ async fn run_program(
     stopped: &mut watch::Receiver<bool>,
     send: &(impl Fn(ToolRunEvent) + Sync),
 ) -> Result<ToolRunEnd, String> {
-    let mut child = tokio::process::Command::new(&run.program)
-        .args(&run.args)
+    let mut child = confined_command(&run.program, &run.args, &run.confined_to, &run.also_readable)?
         .current_dir(&run.folder)
         .env_clear()
         .stdin(Stdio::null())
@@ -499,6 +510,8 @@ pub async fn run_bundled_tool(
         inputs: run.inputs,
         timeout: Duration::from_millis(run.timeout_ms),
         max_output_bytes: run.max_output_bytes,
+        confined_to: root_dir(FileRoot::Cache)?,
+        also_readable: Vec::new(),
     };
     runs.run(&run_id, run, |event| {
         // A send fails only when the page is gone, and then nobody waits
@@ -642,6 +655,15 @@ mod tests {
         // file `pid`, and then does not end by itself. `exec` keeps the id.
         const ENDLESS: &str = "echo $$ > pid; echo started; exec /bin/sleep 60";
 
+        // The error text of an open that the confinement refused: Landlock
+        // gives EACCES, Seatbelt EPERM.
+        #[cfg(not(target_os = "macos"))]
+        const DENIED: &str = "Permission denied";
+        #[cfg(target_os = "macos")]
+        const DENIED: &str = "Operation not permitted";
+        // The cause to check first when a test of the confinement fails.
+        const NOT_CONFINED: &str = "The program could read a file outside its folder: Linux needs Landlock (kernel 5.13+, `landlock` in /sys/kernel/security/lsm).";
+
         // What a run sent.
         #[derive(Debug, Default, PartialEq)]
         struct Sent {
@@ -661,7 +683,10 @@ mod tests {
         }
 
         // The environment of a run is empty, so the tests name each program
-        // by its path.
+        // by its path. The program is confined to its work folder, and it
+        // can read the system's folders that `/bin/sh` and the programs that
+        // it starts need (their libraries, and the cache of the library
+        // loader in /etc).
         fn program_run(program: &str, args: &[&str], folder: &Path) -> ProgramRun {
             ProgramRun {
                 program: PathBuf::from(program),
@@ -670,6 +695,8 @@ mod tests {
                 inputs: Vec::new(),
                 timeout: Duration::from_secs(30),
                 max_output_bytes: 1024 * 1024,
+                confined_to: folder.to_path_buf(),
+                also_readable: ["/usr", "/bin", "/lib", "/lib64", "/etc"].into_iter().map(PathBuf::from).filter(|path| path.exists()).collect(),
             }
         }
 
@@ -851,6 +878,37 @@ mod tests {
             assert_eq!(finished(program_run("/usr/bin/env", &[], &dir.0.join("env"))).await, nothing);
             // `cat` with no file reads its input to the end.
             assert_eq!(finished(program_run("/bin/cat", &[], &dir.0.join("cat"))).await, nothing);
+        }
+
+        // The OS keeps a program inside its folder: it reads and writes
+        // there, also a file that is not in its work folder, and it can read
+        // and write no file outside it, by any path.
+        #[tokio::test]
+        async fn a_program_reads_and_writes_only_inside_its_folder() {
+            let dir = TempDir::new("tools-run-confined");
+            let inside = dir.0.join("cache");
+            let folder = inside.join("work").join("a");
+            let sibling = inside.join("media").join("clip.txt");
+            let (outside, written, made) = (dir.0.join("private.txt"), dir.0.join("written.txt"), inside.join("made.txt"));
+            std::fs::create_dir_all(sibling.parent().expect("a folder")).expect("create");
+            std::fs::write(&sibling, b"sibling text").expect("write");
+            std::fs::write(&outside, b"private text").expect("write");
+            let text = format!(
+                "/bin/cat ../../media/clip.txt > copy.txt; /bin/cat '{}'; /bin/cat ../../../private.txt; echo text > '{}'; echo text > '{}'",
+                outside.display(),
+                written.display(),
+                made.display(),
+            );
+            let mut run = script(&text, &folder);
+            run.confined_to = inside.clone();
+
+            let sent = finished(run).await;
+
+            assert_eq!(sent.stdout, "", "{NOT_CONFINED}");
+            assert_eq!(sent.stderr.matches(DENIED).count(), 3, "{}", sent.stderr);
+            assert_eq!(std::fs::read(folder.join("copy.txt")).expect("read"), b"sibling text");
+            assert_eq!(std::fs::read(&made).expect("read"), b"text\n");
+            assert!(!written.exists());
         }
 
         #[tokio::test]
@@ -1038,33 +1096,89 @@ mod tests {
             assert_eq!(sent(events_b).await.ends, [ToolRunEnd::Cancelled]);
         }
 
+        // A run of a real bundled program as `run_bundled_tool` makes it:
+        // confined to `confined_to`, with no other folder to read. cargo
+        // puts the test program into `target/<profile>/deps/`, and the
+        // programs that build.rs copied are one folder up.
+        fn bundled_run(name: &str, args: &[&str], folder: &Path, confined_to: &Path) -> ProgramRun {
+            let tools = tools_dir().expect("tools folder").parent().expect("the folder above deps").to_path_buf();
+            ProgramRun {
+                program: tool_path(&tools, name).expect("a bundled program"),
+                confined_to: confined_to.to_path_buf(),
+                also_readable: Vec::new(),
+                ..program_run("", args, folder)
+            }
+        }
+
         // The real programs, as a tool call runs them: ffmpeg makes a file,
-        // and ffprobe reads a copy of it as its input. cargo puts the test
-        // program into `target/<profile>/deps/`, and the programs that
-        // build.rs copied are one folder up.
+        // and ffprobe reads a copy of it as its input.
         #[tokio::test]
         async fn the_bundled_programs_run_and_read_an_input_copy() {
             let dir = TempDir::new("tools-run-bundled");
-            let tools = tools_dir().expect("tools folder").parent().expect("the folder above deps").to_path_buf();
-            let tool = |name: &str, args: &[&str], folder: &Path| ProgramRun {
-                program: tool_path(&tools, name).expect("a bundled program"),
-                ..program_run("", args, folder)
-            };
             let made = dir.0.join("made");
 
             let make = ["-hide_banner", "-f", "lavfi", "-i", "sine=frequency=440:duration=0.2", "tone.wav"];
-            let ffmpeg = finished(tool("dez-ffmpeg", &make, &made)).await;
+            let ffmpeg = finished(bundled_run("dez-ffmpeg", &make, &made, &made)).await;
 
             assert_eq!(ffmpeg.ends, exited(0), "{}", ffmpeg.stderr);
             assert_eq!(ffmpeg.stdout, "");
             assert!(ffmpeg.stderr.contains("tone.wav"), "{}", ffmpeg.stderr);
 
             let read = ["-v", "error", "-show_entries", "format=duration", "-of", "default=noprint_wrappers=1:nokey=1", "in.wav"];
-            let mut probe = tool("dez-ffprobe", &read, &dir.0.join("probe"));
+            let probe_folder = dir.0.join("probe");
+            let mut probe = bundled_run("dez-ffprobe", &read, &probe_folder, &probe_folder);
             probe.inputs = vec![input("in.wav", &made.join("tone.wav"))];
             let ffprobe = finished(probe).await;
 
             assert_eq!(ffprobe, Sent { stdout: "0.200000\n".to_string(), ends: exited(0), ..Sent::default() });
+        }
+
+        // The real programs read a clip of their folder by its path, and
+        // cannot read or write a file outside it: not by a path in their
+        // arguments, and not by a path in the content of an input (an HLS
+        // playlist, which passes the argument checks of the page).
+        #[tokio::test]
+        async fn the_bundled_programs_cannot_open_a_file_outside_their_folder() {
+            let dir = TempDir::new("tools-run-bundled-confined");
+            let inside = dir.0.join("cache");
+            let made = inside.join("made");
+            let (clip, outside) = (made.join("tone.ts"), dir.0.join("tone.ts"));
+            let make = ["-v", "error", "-f", "lavfi", "-i", "sine=frequency=440:duration=0.2", "-c:a", "mp2", "tone.ts"];
+            assert_eq!(finished(bundled_run("dez-ffmpeg", &make, &made, &inside)).await.ends, exited(0));
+            std::fs::copy(&clip, &outside).expect("copy");
+            let path = |path: &Path| path.to_str().expect("UTF-8 path").to_string();
+            let probe = |name: &str, file: &str| {
+                let args = ["-v", "error", "-show_entries", "format=format_name", "-of", "csv=p=0", file];
+                bundled_run("dez-ffprobe", &args, &inside.join(name), &inside)
+            };
+
+            let read = finished(probe("inside", &path(&clip))).await;
+            assert_eq!(read, Sent { stdout: "mpegts\n".to_string(), ends: exited(0), ..Sent::default() });
+            let refused = finished(probe("outside", &path(&outside))).await;
+            assert_ne!(refused.ends, exited(0), "{NOT_CONFINED}");
+            assert!(refused.stderr.contains(DENIED), "{}", refused.stderr);
+
+            let playlist = |segment: &Path| format!("#EXTM3U\n#EXT-X-TARGETDURATION:5\n#EXTINF:0.2,\n{}\n#EXT-X-ENDLIST\n", segment.display());
+            let hls = inside.join("hls");
+            std::fs::create_dir_all(&hls).expect("create");
+            std::fs::write(hls.join("inside.m3u8"), playlist(&clip)).expect("write");
+            std::fs::write(hls.join("outside.m3u8"), playlist(&outside)).expect("write");
+            let copy = |list: &str, output: &str| bundled_run("dez-ffmpeg", &["-v", "error", "-f", "hls", "-i", list, "-c", "copy", output], &hls, &inside);
+            let copied = finished(copy("inside.m3u8", "inside.mkv")).await;
+            assert_eq!(copied.ends, exited(0), "{}", copied.stderr);
+            // The hls demuxer does not pass on the cause of a failed open:
+            // the run of the same playlist with the clip inside shows it.
+            let refused = finished(copy("outside.m3u8", "outside.mkv")).await;
+            assert_ne!(refused.ends, exited(0));
+            assert!(refused.stderr.contains("Error when loading first segment"), "{}", refused.stderr);
+            assert!(!hls.join("outside.mkv").exists());
+
+            let written = dir.0.join("written.wav");
+            let write = ["-v", "error", "-f", "lavfi", "-i", "sine=frequency=440:duration=0.2", &path(&written)];
+            let refused = finished(bundled_run("dez-ffmpeg", &write, &inside.join("write"), &inside)).await;
+            assert_ne!(refused.ends, exited(0));
+            assert!(refused.stderr.contains(DENIED), "{}", refused.stderr);
+            assert!(!written.exists());
         }
     }
 }

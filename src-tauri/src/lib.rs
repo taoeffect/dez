@@ -1,5 +1,6 @@
 mod bundled_tools;
 mod commands;
+mod confinement;
 mod copilot;
 mod http_bridge;
 mod idle;
