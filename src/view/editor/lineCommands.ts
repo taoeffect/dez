@@ -68,14 +68,14 @@ function grow(doc: Text, span: LineSpan, lineBlocks: readonly DocRange[], pills:
 }
 
 /** The line spans that the commands act on: the selected lines, grown until
- *  no line block or pill is cut. A grown span can reach another block or
- *  another span, so this repeats until nothing changes. Null when a span
- *  holds a separator line: then the commands change nothing at all, as
- *  `strictMultiCursorBackspace` (cmEditor.ts) does. */
-function wholeLineSpans(state: EditorState): LineSpan[] | null {
+ *  no line block or pill of `pills` (the doc's pills) is cut. A grown span
+ *  can reach another block or another span, so this repeats until nothing
+ *  changes. Null when a span holds a separator line: then the commands
+ *  change nothing at all, as `strictMultiCursorBackspace` (cmEditor.ts)
+ *  does. */
+function wholeLineSpans(state: EditorState, pills: readonly PillLocation[]): LineSpan[] | null {
   const { doc } = state
   const lineBlocks = lineBlockRanges(state)
-  const pills = scanPills(doc.toString())
   let spans = joinTouching(selectedLines(state))
   for (;;) {
     const grown = joinTouching(spans.map((span) => grow(doc, span, lineBlocks, pills)))
@@ -89,8 +89,8 @@ function wholeLineSpans(state: EditorState): LineSpan[] | null {
 /** Whether a span holds a tool block of an agent section, shown as a chip
  *  or not. Its id is the provider's call id, and two tool calls with one id
  *  break the next request. */
-function holdsToolBlock(state: EditorState, spans: readonly LineSpan[]): boolean {
-  const toolBlocks = agentSectionTexts(state.doc.toString(), state.field(sectionsField))
+function holdsToolBlock(state: EditorState, docText: string, spans: readonly LineSpan[]): boolean {
+  const toolBlocks = agentSectionTexts(docText, state.field(sectionsField))
     .flatMap(({ from, text }) => findToolBlocks(text).map((block) => ({ from: from + block.from, to: from + block.to })))
   return spans.some((span) => toolBlocks.some((block) => block.from <= span.to && block.to >= span.from))
 }
@@ -125,7 +125,7 @@ function outsideAtoms(doc: Text, atoms: readonly RangeSet<RangeValue>[], pos: nu
 export function deleteLines(view: EditorView): boolean {
   const { state } = view
   const { doc } = state
-  const spans = wholeLineSpans(state)
+  const spans = wholeLineSpans(state, scanPills(doc.toString()))
   if (!spans) return true
   const removals = spans.map((span) => linesRemovalRange(doc, span))
   const changes = state.changes(removals)
@@ -179,9 +179,10 @@ function textWithNewPillIds(
  *  agent section (`holdsToolBlock`). */
 export function duplicateLines(view: EditorView): boolean {
   const { state } = view
-  const spans = wholeLineSpans(state)
-  if (!spans || holdsToolBlock(state, spans)) return true
-  const pills = scanPills(state.doc.toString())
+  const text = state.doc.toString()
+  const pills = scanPills(text)
+  const spans = wholeLineSpans(state, pills)
+  if (!spans || holdsToolBlock(state, text, spans)) return true
   const copiedMeta = new Map<string, PillMetadata>()
   const changes = state.changes(spans.map((span) => ({
     from: span.from,
