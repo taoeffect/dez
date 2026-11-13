@@ -429,6 +429,15 @@ export async function waitForThread (browser: E2EBrowser, expected: ThreadSectio
   expect(await openToasts(browser, 'error')).toEqual([])
 }
 
+/** Waits for the end of the reply at the section `replyIndex` of the
+ *  active tab (the empty user section after it is there, and no stream
+ *  runs), and gives its text. */
+export async function endedReply (browser: E2EBrowser, replyIndex = 1): Promise<string> {
+  await waitForValue(browser, 'sections after the reply', async () => (await threadSections(browser)).length, replyIndex + 2)
+  await waitForValue(browser, 'streaming', () => activeTabStreaming(browser), false)
+  return (await threadSections(browser))[replyIndex].text
+}
+
 /** Seeds the conversation `id` with `sections` in the test HOME `home`,
  *  opens it in a new tab, and waits for it as `waitForThread` does. */
 export async function openSeededConversation (browser: E2EBrowser, home: string, id: string, sections: Array<{ role: 'user' | 'agent', text: string }>): Promise<void> {

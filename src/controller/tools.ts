@@ -1,10 +1,10 @@
 import sbp from '@sbp/sbp'
 import type { CutAudio } from '../model/chat/audioCut'
 import { drawnMediaType, UnwritableImageTypeError, type DrawnImage, type ImageSize } from '../model/chat/imageDrawing'
-import { ClipReadError, type ClipReadProblem } from '../model/chat/mediaFiles'
+import { ClipReadError } from '../model/chat/mediaFiles'
 import type { MediaTagData } from '../model/chat/mediaTags'
 import { modelRefKey } from '../model/chat/modelRef'
-import type { ModelRef, Tab } from '../model/chat/types'
+import type { ModelRef, Section, Tab } from '../model/chat/types'
 import type { ModelCache } from '../model/persistence/types'
 import type { KnownLimit } from '../model/providers/knownLimits'
 import { effectiveParameterValues } from '../model/providers/modelParameters'
@@ -21,10 +21,13 @@ import { invocationInputsText, MODEL_INVOKE_TOOL, modelInvocation } from '../mod
 import { modelListText } from '../model/tools/modelList'
 import { unexpectedToolErrorText, unknownToolText } from '../model/tools/registry'
 import { parseSubcommandCall, type SubcommandTool } from '../model/tools/subcommands'
+import { clipReadProblemText } from '../model/tools/toolInputs'
 import { ToolError, type ToolArguments, type ToolRunResult } from '../model/tools/types'
+import { ffmpegCall, ffprobeCall, joinClipsCall, VIDEO_TOOL, videoInputsText } from '../model/tools/videoTool'
 import { rawErrorText } from '../utils/errorText'
 import { writeJobAssets, type ReplyJobs } from './jobs'
 import { invokeModel } from './modelInvoke'
+import { runFfmpegJob, runFfprobe, runJoinJob } from './videoTool'
 
 /** A call that Dez runs: a Dez tool and the arguments that its definition
  *  accepted (`checkToolCalls`). */
@@ -85,6 +88,12 @@ function untilAborted<T>(start: () => Promise<T>, signal: AbortSignal): Promise<
   })
 }
 
+// The sections of the tab of a call, where a tool finds the images and
+// the clips that the call names; none for a tab that is gone.
+function callSections(context: ToolRunContext): Section[] {
+  return (sbp('dez.model/tab', context.tabId) as Tab | null)?.sections ?? []
+}
+
 // The model of a `model_info` call (the one that it names, else the reply's
 // model `replyModel`), and its raw model-list entry in memory (undefined
 // when there is none). Throws for a model that the user cannot use
@@ -105,22 +114,6 @@ function subcommandRunner(tool: SubcommandTool, runners: Record<string, ToolRunn
   }
 }
 
-// The error result of an `audio` call whose clip Dez could not read
-// (`ClipReadError`), by its problem.
-function clipReadProblemText(id: string, problem: ClipReadProblem): string {
-  switch (problem) {
-    case 'deleted':
-      return `The audio clip @${id} is gone: the user deleted its file, and it has no web address to download it from. `
-        + `This is not a fault of the call. Tell the user, and do not call the audio tool again for @${id}.`
-    case 'expired':
-      return `The audio clip @${id} has expired: the provider that made it does not keep it any more, and the user did not save it. `
-        + `This is not a fault of the call. Tell the user, and do not call the audio tool again for @${id}.`
-    case 'unreadable':
-      return `Dez could not read the audio clip @${id}: its file is gone, Dez may not read it, or its server did not send it (the details tell which). `
-        + `This is not a fault of the call. Tell the user, and call the audio tool again for @${id} only when the user asks for it.`
-  }
-}
-
 // The runner of a subcommand of the `image` tool (imageTool.ts): a new
 // image from an image of the call's tab, which stays as it is. `plan` tells
 // what to draw; the webview draws it (images/redraw), the file goes into
@@ -134,7 +127,7 @@ function clipReadProblemText(id: string, problem: ClipReadProblem): string {
 function imageRunner(plan: ImagePlan): ToolRunner {
   return async (args, signal, context) => {
     const id = imageIdArgument(args)
-    const source = imageOf((sbp('dez.model/tab', context.tabId) as Tab | null)?.sections ?? [], id)
+    const source = imageOf(callSections(context), id)
 
     let file: File
     try {
@@ -266,8 +259,7 @@ const TOOL_RUNNERS: Record<string, ToolRunner> = {
   audio: subcommandRunner(AUDIO_TOOL, {
     async clip (args, signal, context) {
       const id = audioClipId(args)
-      const sections = (sbp('dez.model/tab', context.tabId) as Tab | null)?.sections ?? []
-      const source = audioClipOf(sections, id)
+      const source = audioClipOf(callSections(context), id)
 
       let file: Blob
       try {
@@ -276,7 +268,7 @@ const TOOL_RUNNERS: Record<string, ToolRunner> = {
         file = await untilAborted(() => sbp('dez.controller/media/readClip', source, { signal }) as Promise<Blob>, signal)
       } catch (error) {
         if (!(error instanceof ClipReadError)) throw error
-        throw new ToolError(clipReadProblemText(id, error.problem), error.details, { cause: error })
+        throw new ToolError(clipReadProblemText('audio', id, AUDIO_TOOL.name, error.problem), error.details, { cause: error })
       }
 
       // As for the `image` tool: the plan gives null for a call that names
@@ -387,7 +379,7 @@ const TOOL_RUNNERS: Record<string, ToolRunner> = {
       providers,
       modelParameters,
       providerSettings,
-      sections: (sbp('dez.model/tab', context.tabId) as Tab | null)?.sections ?? [],
+      sections: callSections(context),
     })
     const jobId = context.jobs.start(
       MODEL_INVOKE_TOOL.name,
@@ -396,6 +388,29 @@ const TOOL_RUNNERS: Record<string, ToolRunner> = {
     )
     return `${jobStartedText(jobId)}\n${invocationInputsText(invocation.inputs)}`
   },
+  // The `video` tool (model/tools/videoTool.ts): ffmpeg and ffprobe, the
+  // programs that Dez ships, on the clips and the images of the
+  // conversation (videoTool.ts runs them). The checks of a call that need
+  // no file run first (`joinClipsCall`, `ffmpegCall`, `ffprobeCall`): a
+  // call that Dez refuses starts no job and no program. `join_clips` and
+  // `ffmpeg` run as jobs of the reply, and their results tell the inputs
+  // that go, as for `model_invoke`. `ffprobe` is short, so its call waits
+  // for it.
+  video: subcommandRunner(VIDEO_TOOL, {
+    async join_clips (args, _signal, context) {
+      const call = joinClipsCall(args, callSections(context))
+      const jobId = context.jobs.start(VIDEO_TOOL.name, (signal, report) => runJoinJob(call, signal, report), { timeoutMs: call.timeoutMs })
+      return `${jobStartedText(jobId)}\n${videoInputsText(call.inputs)}`
+    },
+    async ffmpeg (args, _signal, context) {
+      const call = ffmpegCall(args, callSections(context))
+      const jobId = context.jobs.start(VIDEO_TOOL.name, (signal, report) => runFfmpegJob(call, signal, report), { timeoutMs: call.timeoutMs })
+      return `${jobStartedText(jobId)}\n${videoInputsText(call.inputs)}`
+    },
+    async ffprobe (args, signal, context) {
+      return runFfprobe(ffprobeCall(args, callSections(context)), signal)
+    },
+  }),
 }
 
 export default sbp('sbp/selectors/register', {

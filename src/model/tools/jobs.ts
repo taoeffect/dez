@@ -1,5 +1,5 @@
 import { tagEscape } from '../chat/tagEscape'
-import type { ToolDefinition } from './types'
+import { ToolError, type ToolArguments, type ToolDefinition, type ToolParameter } from './types'
 
 // Jobs: the slow work of a Dez tool, such as a request to a media model. A
 // call of such a tool only starts a job and returns its id at once
@@ -60,6 +60,44 @@ export function startedJobId(resultText: string): string | null {
 /** The error result of a call that would start one job too many. */
 export const JOB_LIMIT_TEXT = `Dez did not start this job: this reply already started ${MAX_JOBS_PER_REPLY} jobs, which is the most for one reply. `
   + 'Call jobs_wait for the results of the jobs that still run, then tell the user what is not done. The next message of the user starts a new count.'
+
+// The time limits that a call can give its job. A shorter limit ends a
+// request before a provider can answer. The longest one is also far below
+// the most that a timer takes.
+const MIN_JOB_TIMEOUT_SECONDS = 10
+const MAX_JOB_TIMEOUT_SECONDS = 3600
+
+// A default time limit in words, as in `30 minutes`. Each default is a
+// whole count of minutes.
+function minutesText(seconds: number): string {
+  return `${seconds / 60} minutes`
+}
+
+/** The `timeout_seconds` parameter of a tool whose call starts a job with
+ *  the default time limit `defaultSeconds`. Static text: it goes into a
+ *  tool definition or a help text. */
+export function jobTimeoutParameter(defaultSeconds: number): ToolParameter {
+  return {
+    name: 'timeout_seconds',
+    type: 'integer',
+    description: `The most seconds that the job runs, from ${MIN_JOB_TIMEOUT_SECONDS} to ${MAX_JOB_TIMEOUT_SECONDS}. A job that runs longer stops with no result. `
+      + `The default is ${defaultSeconds} (${minutesText(defaultSeconds)}).`,
+    required: false,
+  }
+}
+
+/** The time limit of the job of a call, in milliseconds: its
+ *  `timeout_seconds` (`jobTimeoutParameter`), else `defaultSeconds`.
+ *  Throws a `ToolError` for a value outside the range. */
+export function jobTimeoutMs(args: ToolArguments, defaultSeconds: number): number {
+  const seconds = args.timeout_seconds
+  if (seconds === undefined) return defaultSeconds * 1000
+  if (typeof seconds !== 'number' || !Number.isInteger(seconds) || seconds < MIN_JOB_TIMEOUT_SECONDS || seconds > MAX_JOB_TIMEOUT_SECONDS) {
+    throw new ToolError(`\`timeout_seconds\` must be a whole number from ${MIN_JOB_TIMEOUT_SECONDS} to ${MAX_JOB_TIMEOUT_SECONDS}. `
+      + `Leave it out for the default of ${minutesText(defaultSeconds)}.`)
+  }
+  return seconds * 1000
+}
 
 // Whole seconds, as a job's time is not exact.
 function secondsText(milliseconds: number): string {

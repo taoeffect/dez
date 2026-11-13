@@ -218,6 +218,15 @@ export function sendToolCalls (res: http.ServerResponse, calls: ReadonlyArray<Re
   res.end('data: [DONE]\n\n')
 }
 
+/** The result of the tool call `callId`, as the OpenAI-format chat request
+ *  `request` sends it back. */
+export function toolResult (request: HeldRequest, callId: string): string {
+  const { messages } = JSON.parse(request.body) as { messages: Array<{ role: string, tool_call_id?: string, content?: unknown }> }
+  const content = messages.find((message) => message.role === 'tool' && message.tool_call_id === callId)?.content
+  if (typeof content !== 'string') throw new Error(`toolResult: the request has no result of ${callId}`)
+  return content
+}
+
 /** Writes the chat completion SSE frame with which OpenRouter stops a 200
  *  reply that failed: a top-level `error` (`{ code, message, metadata: {
  *  error_type } }`) and `finish_reason: "error"`. */

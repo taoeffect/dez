@@ -6,11 +6,12 @@ import { invocationAnswerText } from '../../src/model/tools/modelInvoke'
 import { click, consoleErrors, movePointer, pointerClick, pointerClickAt, promptMessage, resetConsoleErrors, screenshotOnFailure, typeKeys, waitForValue } from './harness/dom'
 import { appFilePath, conversationFilePath, filesIn, mediaTempDir, newFileIn, storedFileName } from './harness/fixtures'
 import { generatedImagesDir, pasteImageReference, pngDataUrl, shownImages, solidPng } from './harness/images'
+import { startedJob, waitCall } from './harness/jobs'
 import { finishVeniceJob, shownPlayers, silentWav, type ShownPlayer } from './harness/media'
 import { startMockProviderApp, takeRequestTo, type MockProviderApp } from './harness/mockProviderApp'
-import { answerHeld, mockChatPath, openAiToolCall, replyText, sendChatReply, sendToolCalls, startEventStream, writeChatFrame, type HeldRequest, type MockProvider } from './harness/mockServer'
+import { answerHeld, mockChatPath, openAiToolCall, replyText, sendChatReply, sendToolCalls, startEventStream, toolResult, writeChatFrame, type HeldRequest, type MockProvider } from './harness/mockServer'
 import type { E2EBrowser } from './harness/session'
-import { activeConversationId, activeTabStreaming, assetPartPoint, docPos, editorDoc, focusEditor, newTab, openToasts, setCaret, submit, threadSections, waitForThread } from './harness/thread'
+import { activeConversationId, activeTabStreaming, assetPartPoint, docPos, editorDoc, endedReply, focusEditor, newTab, openToasts, setCaret, submit, threadSections, waitForThread } from './harness/thread'
 import { hiddenAssetNotes, hiddenPart, intermediateParts, pressToolChip, toolChips, toolPanel, type IntermediatePartView } from './harness/toolChips'
 
 // The `model_invoke` tool, driven through the real app against a mock chat
@@ -68,7 +69,6 @@ const SONG_WAV = silentWav(2)
 const PAINT_PROMPT = 'A fox in the snow'
 const paintCall = (id: string, more: Record<string, unknown> = {}) => openAiToolCall(id, 'model_invoke', { model: `${STUDIO.id}/${STUDIO.modelId}`, prompt: PAINT_PROMPT, ...more })
 const askCall = (id: string, prompt: string, more: Record<string, unknown> = {}) => openAiToolCall(id, 'model_invoke', { model: `${HELPER.id}/${HELPER.modelId}`, prompt, ...more })
-const waitCall = (id: string) => openAiToolCall(id, 'jobs_wait', {})
 const PAINT_BODY = { model: STUDIO.modelId, prompt: PAINT_PROMPT, format: 'webp', hide_watermark: true, safe_mode: false }
 
 describe('model_invoke', () => {
@@ -79,29 +79,6 @@ describe('model_invoke', () => {
   // A chat request and the request of a job go at the same time, so the
   // test takes each request by its path.
   const requestTo = (requestPath: string, json?: unknown): Promise<HeldRequest> => takeRequestTo(setup, requestPath, json)
-
-  /** The result of the call `callId`, as the chat request `request` sends
-   *  it back. */
-  function toolResult (request: HeldRequest, callId: string): string {
-    const { messages } = JSON.parse(request.body) as { messages: Array<{ role: string, tool_call_id?: string, content?: unknown }> }
-    const content = messages.find((message) => message.role === 'tool' && message.tool_call_id === callId)?.content
-    if (typeof content !== 'string') throw new Error(`toolResult: the request has no result of ${callId}`)
-    return content
-  }
-
-  /** The id of the job that the call `callId` started. */
-  function startedJob (request: HeldRequest, callId: string): string {
-    const id = startedJobId(toolResult(request, callId))
-    if (id === null) throw new Error(`startedJob: ${callId} started no job`)
-    return id
-  }
-
-  /** Waits for the end of the reply, and gives its text. */
-  async function endedReply (): Promise<string> {
-    await waitForValue(browser, 'sections after the reply', async () => (await threadSections(browser)).length, 3)
-    await waitForValue(browser, 'streaming', () => activeTabStreaming(browser), false)
-    return (await threadSections(browser))[1].text
-  }
 
   beforeAll(async () => {
     setup = await startMockProviderApp(CALLER, {}, {
@@ -163,7 +140,7 @@ describe('model_invoke', () => {
     await sendChatReply(third.reply, CALLER.modelName)
 
     // The image comes after the blocks of the call that gave it.
-    const reply = await endedReply()
+    const reply = await endedReply(browser)
     const madeName = await newFileIn(browser, generatedDir, before)
     expect(madeName).toMatch(storedFileName('png'))
     const madePath = path.join(generatedDir, madeName)
@@ -206,7 +183,7 @@ describe('model_invoke', () => {
     await sendChatReply(fourth.reply, CALLER.modelName)
 
     // Each asset comes after the blocks of the call that gave it.
-    const reply = await endedReply()
+    const reply = await endedReply(browser)
     const image = /<\/dez:tool>\n\n!\[[^\]]+\]\(id=a\|tool=model_invoke\)\n/.exec(reply)
     expect(image).not.toBeNull()
     expect(image?.index).toBeLessThan(reply.indexOf('id="call_wait_2"'))
@@ -246,7 +223,7 @@ describe('model_invoke', () => {
     await sendChatReply(third.reply, CALLER.modelName)
 
     // The model got the failure, so no toast tells of it.
-    const reply = await endedReply()
+    const reply = await endedReply(browser)
     expect(reply.endsWith(`</dez:tool>\n${replyText(CALLER.modelName)}`)).toBe(true)
     expect(setup.mock.hasWaitingRequest()).toBe(false)
     expect(await filesIn(generatedDir)).toStrictEqual(before)
@@ -275,7 +252,7 @@ describe('model_invoke', () => {
     expect(result).toContain('10 seconds')
     await sendChatReply(third.reply, CALLER.modelName)
 
-    const reply = await endedReply()
+    const reply = await endedReply(browser)
     expect(reply.endsWith(`</dez:tool>\n${replyText(CALLER.modelName)}`)).toBe(true)
     expect(await filesIn(generatedDir)).toStrictEqual(before)
     expect(await openToasts(browser, 'error')).toStrictEqual([])
@@ -345,7 +322,7 @@ describe('model_invoke', () => {
 
     // The answer of the helper is only in the result of the job: the
     // caller decides what the user sees.
-    const reply = await endedReply()
+    const reply = await endedReply(browser)
     expect(reply.endsWith(`</dez:tool>\n${replyText(CALLER.modelName)}`)).toBe(true)
     expect(setup.mock.hasWaitingRequest()).toBe(false)
     expect(await filesIn(generatedDir)).toStrictEqual(before)
@@ -394,7 +371,7 @@ describe('model_invoke', () => {
     expect(await threadSections(browser)).toHaveLength(2)
 
     answerHeld(paint.reply, 'application/json', JSON.stringify({ images: [MADE_PNG.toString('base64')] }))
-    const reply = await endedReply()
+    const reply = await endedReply(browser)
     const madePath = path.join(generatedDir, await newFileIn(browser, generatedDir, before))
     expect(reply.endsWith(`${replyText(CALLER.modelName)}\n\n![${madePath}](id=a|tool=model_invoke)`)).toBe(true)
     expect(await openToasts(browser, 'error')).toStrictEqual([])
@@ -412,7 +389,7 @@ describe('model_invoke', () => {
     paint.reply.writeHead(400, { 'Content-Type': 'application/json' })
     paint.reply.end(JSON.stringify({ error: 'The prompt breaks the content rules' }))
 
-    const reply = await endedReply()
+    const reply = await endedReply(browser)
     expect(reply.endsWith(replyText(CALLER.modelName))).toBe(true)
     await waitForValue(browser, 'error toast', async () => (await openToasts(browser, 'error')).map((toast) => toast.title), ['Job failed'])
     const [{ message }] = await openToasts(browser, 'error')
@@ -451,7 +428,7 @@ describe('model_invoke', () => {
     expect(toolResult(third, 'call_wait')).toBe(jobsWaitText([{ id: jobId, tool: 'model_invoke', status: 'finished', text: 'Made the image @a.' }], 0))
     await sendChatReply(third.reply, CALLER.modelName)
 
-    const reply = await endedReply()
+    const reply = await endedReply(browser)
     const madePath = path.join(generatedDir, await newFileIn(browser, generatedDir, before))
     expect(reply.endsWith(`</dez:tool>\n\n![${madePath}](id=a|tool=model_invoke|hidden=${jobId})\n\n${replyText(CALLER.modelName)}`)).toBe(true)
     return { reply, madePath, jobId, started: toolResult(second, 'call_paint') }
@@ -517,7 +494,7 @@ describe('model_invoke', () => {
     expect(toolResult(third, 'call_wait')).toBe(jobsWaitText([{ id: jobId, tool: 'model_invoke', status: 'finished', text: 'Made the audio clip @a.' }], 0))
     await sendChatReply(third.reply, CALLER.modelName)
 
-    const reply = await endedReply()
+    const reply = await endedReply(browser)
     expect(reply).toMatch(new RegExp(`</dez:tool>\\n\\n<dez:audio id="a" type="audio/wav" src="[^"]+\\.wav" expires="[^"]+" tool="model_invoke" job="queue-1" hidden="${jobId}"/>\\n\\n`))
     await waitForValue(browser, 'chips after the reply', () => intermediateParts(browser), [hides('audio'), null])
     expect(await shownPlayers(browser)).toStrictEqual([])
@@ -564,7 +541,7 @@ describe('model_invoke', () => {
 
     // The answer is in no line of the reply, so the reply has nothing to
     // take out of view.
-    const reply = await endedReply()
+    const reply = await endedReply(browser)
     expect(reply.endsWith(`</dez:tool>\n${replyText(CALLER.modelName)}`)).toBe(true)
     await waitForValue(browser, 'chips after the reply', () => intermediateParts(browser), [{ eye: 'closed', lit: false, types: ['text'], text: 'intermediate text hidden' }, null])
 

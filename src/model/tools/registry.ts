@@ -6,6 +6,7 @@ import { MODEL_INFO_TOOL } from './modelInfo'
 import { MODEL_INVOKE_TOOL } from './modelInvoke'
 import { MODEL_LIST_TOOL } from './modelList'
 import type { ToolDefinition } from './types'
+import { VIDEO_TOOL_DEFINITION } from './videoTool'
 
 /** Every Dez tool, in the order that requests list them. A new tool goes
  *  at the end: the tools before it then keep their bytes in the tools
@@ -19,6 +20,7 @@ export const TOOL_DEFINITIONS: readonly ToolDefinition[] = [
   JOBS_LIST_TOOL,
   JOB_INSPECT_TOOL,
   MODEL_INVOKE_TOOL,
+  VIDEO_TOOL_DEFINITION,
 ]
 
 /** The Dez tool with this name; undefined when no Dez tool has it. */

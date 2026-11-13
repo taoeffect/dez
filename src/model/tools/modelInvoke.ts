@@ -10,10 +10,11 @@ import { effectiveParameterValues, type ParameterValues } from '../providers/mod
 import type { MediaProgress } from '../providers/streamTypes'
 import { effectiveRequest, sendsPrompt, type MediaKind, type ModelInfo, type ProviderInfo } from '../providers/types'
 import { unstoredOutputMessage, unusableModelMessage } from '../providers/unusableModel'
-import { conversationAssets, preparedMediaRequest, promptRequestProblem, promptRequestSource, type ConversationAssets, type MediaRequestInput, type PromptInput, type PromptRequestSource } from '../streams/mediaRequest'
-import { ASSET_NAMES } from './jobs'
+import { conversationAssets, preparedMediaRequest, promptRequestProblem, promptRequestSource, type MediaRequestInput, type PromptInput, type PromptRequestSource } from '../streams/mediaRequest'
+import { jobTimeoutMs, jobTimeoutParameter } from './jobs'
 import { withoutLocalPaths } from './localPaths'
 import { FIND_MODELS, namedModelTarget, parameterValuesArgument } from './modelArguments'
+import { assetText, unknownInputsProblem, type InputWording } from './toolInputs'
 import { ToolError, type ToolArguments, type ToolDefinition } from './types'
 
 // The `model_invoke` tool: a model sends one request to a model that the
@@ -47,11 +48,6 @@ export const DEFAULT_INVOKE_TIMEOUT_SECONDS = 1800
  *  the conversation, so a model that writes without end must not fill
  *  them. */
 export const INVOCATION_TEXT_CAP = 50_000
-
-// A shorter limit ends a request before a provider can answer. The longest
-// one is also far below the most that a timer takes.
-const MIN_INVOKE_TIMEOUT_SECONDS = 10
-const MAX_INVOKE_TIMEOUT_SECONDS = 3600
 
 // Static text only (no count that changes, no date): the tools array and
 // the system prompt, which lists the tools, are in the provider's prompt
@@ -103,13 +99,7 @@ export const MODEL_INVOKE_TOOL: ToolDefinition = {
         + 'and not a result that the user asked to see. The default is `false`.',
       required: false,
     },
-    {
-      name: 'timeout_seconds',
-      type: 'integer',
-      description: `The most seconds that the job runs, from ${MIN_INVOKE_TIMEOUT_SECONDS} to ${MAX_INVOKE_TIMEOUT_SECONDS}. A job that runs longer stops with no result. `
-        + `The default is ${DEFAULT_INVOKE_TIMEOUT_SECONDS} (30 minutes).`,
-      required: false,
-    },
+    jobTimeoutParameter(DEFAULT_INVOKE_TIMEOUT_SECONDS),
   ],
 }
 
@@ -174,17 +164,6 @@ export interface InvocationFacts {
   sections: readonly Section[]
 }
 
-// The time limit that a call names, in milliseconds.
-function timeoutArgument(args: ToolArguments): number {
-  const seconds = args.timeout_seconds
-  if (seconds === undefined) return DEFAULT_INVOKE_TIMEOUT_SECONDS * 1000
-  if (typeof seconds !== 'number' || !Number.isInteger(seconds) || seconds < MIN_INVOKE_TIMEOUT_SECONDS || seconds > MAX_INVOKE_TIMEOUT_SECONDS) {
-    throw new ToolError(`\`timeout_seconds\` must be a whole number from ${MIN_INVOKE_TIMEOUT_SECONDS} to ${MAX_INVOKE_TIMEOUT_SECONDS}. `
-      + 'Leave it out for the default of 30 minutes.')
-  }
-  return seconds * 1000
-}
-
 // The request kind of a model that `model_invoke` takes. Dez sends no
 // request to a model with the request `none` or with an output that it
 // cannot store, as for the user.
@@ -195,29 +174,9 @@ function invokedKind(model: ModelInfo): MediaKind | 'chat' {
   return kind
 }
 
-function assetText({ id, kind }: PromptInput): string {
-  return `the ${ASSET_NAMES[kind]} @${id}`
-}
-
-// Why a prompt with the `@id` words `unknownIds`, which name no image and
-// no clip, gets no request; null when it can go. A model that names an
-// input that is not there (a wrong id, an image that the user deleted)
-// would pay for a result without it. Most `@` words are no ids (a user
-// name, an address), so only a word that is as short as an id of this
-// conversation counts: a word longer than the next free id cannot be one.
-function unknownInputsProblem(unknownIds: readonly string[], assets: ConversationAssets, nextId: string): string | null {
-  const unknown = unknownIds.filter((id) => id.length <= nextId.length).map((id) => `@${id}`)
-  if (unknown.length === 0) return null
-  const lead = `${unknown.join(', ')} ${unknown.length === 1 ? 'names' : 'name'} no image and no clip of this conversation`
-  const known = [
-    ...Array.from(assets.images.keys(), (id) => assetText({ id, kind: 'image' })),
-    ...Array.from(assets.clips.values(), assetText),
-  ]
-  const notAnInput = 'Write a word that is no input without the @.'
-  return known.length === 0
-    ? `${lead}: it has none, so \`prompt\` can name no input. Dez sent no request. ${notAnInput}`
-    : `${lead}. Dez sent no request. The conversation has ${known.join(', ')}: call again with these ids. ${notAnInput}`
-}
+// A prompt that names an input that is not there gets no request: the
+// model would pay for a result without it (`unknownInputsProblem`).
+const PROMPT_INPUTS: InputWording = { argument: '`prompt`', notDone: 'Dez sent no request.' }
 
 // The content of the one user message that a call sends to the text model
 // `model` (`ChatInvocation.content`), from the source of its prompt.
@@ -265,14 +224,14 @@ function chatContent(model: ModelInfo, source: PromptRequestSource): string | Me
 export function modelInvocation(args: ToolArguments, { cache, providers, modelParameters, providerSettings, sections }: InvocationFacts): ModelInvocation {
   const { provider, model } = namedModelTarget(cache, providers, typeof args.model === 'string' ? args.model : '')
   const kind = invokedKind(model)
-  const timeoutMs = timeoutArgument(args)
+  const timeoutMs = jobTimeoutMs(args, DEFAULT_INVOKE_TIMEOUT_SECONDS)
   const chosen = modelParameters[modelRefKey({ providerId: provider.id, modelId: model.id })]
   const parameters = { ...chosen, ...parameterValuesArgument(model, args) }
 
   const assets = conversationAssets(sections)
   const source = promptRequestSource(typeof args.prompt === 'string' ? args.prompt : '', assets)
   const [nextId] = newMediaIds(sections.map(sectionPlainText), 1)
-  const unknown = unknownInputsProblem(source.unknownIds, assets, nextId)
+  const unknown = unknownInputsProblem(source.unknownIds, assets, nextId, PROMPT_INPUTS)
   if (unknown !== null) throw new ToolError(unknown)
   const target = { provider, model, timeoutMs }
 

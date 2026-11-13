@@ -1,21 +1,17 @@
 import sbp from '@sbp/sbp'
 import { AUDIO_CUT_RATE, audioPartFrames, type AudioPart, type CutAudio } from '../model/chat/audioCut'
-import { ClipReadError, MAX_SAVED_CLIP_BYTES, MEDIA_TEMP_LIFETIME_MS, mediaFileExtension, savedMediaFile, tempMediaFile } from '../model/chat/mediaFiles'
-import { MEDIA_CACHE_FOLDER, MEDIA_FOLDERS, isLinkedMediaPath, isSavedMediaPath, isTempMediaPath, type MediaFolder, type MediaTagData } from '../model/chat/mediaTags'
+import { MAX_SAVED_CLIP_BYTES, MEDIA_TEMP_LIFETIME_MS, mediaFileExtension, savedMediaFile, tempMediaFile } from '../model/chat/mediaFiles'
+import { MEDIA_CACHE_FOLDER, MEDIA_FOLDERS, isSavedMediaPath, type MediaFolder, type MediaTagData } from '../model/chat/mediaTags'
 import { signedUrlGone } from '../model/providers/errors'
 import { wavFileOfChannels } from '../model/providers/pcmAudio'
 import { byteSizeText } from '../utils/byteSize'
 import { ExplainedError, errorText, explainedError, rawErrorText } from '../utils/errorText'
 import { fileNameOf } from '../utils/fileName'
 import type { NativeHttpDownload, NativeHttpStreamResult } from '../utils/protocol/nativeHttp'
+import { CLIP_DOWNLOAD_TIMEOUT_MS, clipFromSources, downloadClip } from './clipSources'
 import type { AppFileEntry } from './nativeTypes'
 import { deleteOldWorkFolders } from './workFolders'
 
-// The longest time that Save, or a read of a clip from its URL, waits for
-// the whole download. A server that stops sending would keep the Save
-// control, or the tool or the request that reads the clip, busy with no
-// end.
-const SAVE_TIMEOUT_MS = 30 * 60 * 1000
 const CLEANUP_INTERVAL_MS = 60 * 60 * 1000
 // The longest time that `urlAnswers` waits for an answer. The player of the
 // clip waits for it to tell why the clip does not play.
@@ -77,46 +73,19 @@ function clipDownloadRefusal (status: number): string {
   return 'The server of the clip refused to send it. Try again later. If the error stays, make the clip again.'
 }
 
-// The bytes of a clip from its http or https URL, with no provider header:
-// the URL is a signed one, and a key must not go to the host of a clip.
-// Rust downloads the clip into a part file of the cache media folder, so no
-// byte of it crosses the bridge as a JSON number array, and a clip larger
-// than `MAX_SAVED_CLIP_BYTES` fails before it fills the memory. A stop of
-// `signal` cancels the download and rejects with the stop. The part file
-// goes after the read; a delete that fails leaves it to the cleanup of the
-// temp copies. Throws an error whose text holds no URL and no path, as the
-// error of a failed request can name them.
+// The bytes of a clip from its http or https URL (`downloadClip`): the
+// clip goes into a part file of the cache media folder, which is read and
+// then deleted. A delete that fails leaves the part file to the cleanup of
+// the temp copies.
 async function readClipUrl (url: string, type: string, signal: AbortSignal | undefined): Promise<Blob> {
   signal?.throwIfAborted()
   const part = `${MEDIA_CACHE_FOLDER}/${crypto.randomUUID()}.part`
-  const requestId = crypto.randomUUID()
-  const cancel = () => {
-    sbp('dez.native/cancelHttpStream', requestId).catch((error: unknown) => {
-      console.error('Failed to stop the download of a clip:', error)
-    })
-  }
-  signal?.addEventListener('abort', cancel, { once: true })
   try {
-    let download: NativeHttpDownload
-    try {
-      download = await sbp(
-        'dez.native/downloadAppFile',
-        { method: 'GET', url, timeoutMs: SAVE_TIMEOUT_MS },
-        requestId,
-        { root: 'cache', path: part },
-        { maxBytes: MAX_SAVED_CLIP_BYTES },
-      ) as NativeHttpDownload
-    } catch {
-      throw new Error(`The download of the clip failed: its server gave no answer, the answer broke off, the clip is larger than ${byteSizeText(MAX_SAVED_CLIP_BYTES)}, or Dez could not write the file.`)
-    }
-    if (!download.saved) throw new Error(`The server of the clip answered HTTP ${download.status}.`)
-    // A stop that came while the download ended, before its cancel did.
-    signal?.throwIfAborted()
+    await downloadClip(url, { root: 'cache', path: part }, signal)
     const cacheDir = await sbp('dez.native/getAppDir', 'cache') as string
     const file = await sbp('dez.controller/images/readFile', `${cacheDir}/${part}`) as File
     return new Blob([file], { type })
   } finally {
-    signal?.removeEventListener('abort', cancel)
     await sbp('dez.native/deleteAppFile', part, 'cache').catch((error: unknown) => {
       console.error('Failed to delete the part file of a clip download:', error)
     })
@@ -178,7 +147,7 @@ export default sbp('sbp/selectors/register', {
       // URL), a body over the size limit, and a file that cannot be written.
       const download = await sbp(
         'dez.native/downloadAppFile',
-        { method: 'GET', url: clip.url, timeoutMs: SAVE_TIMEOUT_MS },
+        { method: 'GET', url: clip.url, timeoutMs: CLIP_DOWNLOAD_TIMEOUT_MS },
         crypto.randomUUID(),
         { root: 'app', path: file },
         { maxBytes: MAX_SAVED_CLIP_BYTES },
@@ -225,40 +194,20 @@ export default sbp('sbp/selectors/register', {
     }
   },
 
-  // The bytes of a clip, for a tool or a request that uses the clip: from
-  // its `src`, else from its `url`. A saved file or a temp copy is read
-  // through the asset protocol. So is a linked file of this computer, but
-  // only as the `src`: the caller gives a linked `src` only for a tag of a
-  // user section (`sectionClipSource`), and the `url` is the provider's, so
-  // a linked path there is never read. A linked file larger than
+  // The bytes of a clip, for a tool or a request that uses the clip, from
+  // the first of its sources that gives them (`clipFromSources`). A file
+  // is read through the asset protocol; a linked file larger than
   // `MAX_SAVED_CLIP_BYTES` is not read, as a dropped clip that Dez copies
-  // has that cap. A URL (http or https) is downloaded with no provider
-  // header (`readClipUrl`), and a stop of `signal` ends that download.
-  // Throws a `ClipReadError` when no source gives them
-  // (src/model/chat/mediaFiles.ts tells each problem); it holds no path and
-  // no URL. After a stop, rejects with the stop instead. A failed read is
-  // not logged here: the caller logs, and words the problem for its reader.
+  // has that cap. A URL is downloaded (`readClipUrl`), and a stop of
+  // `signal` ends that download. Throws a `ClipReadError` when no source
+  // gives the bytes; after a stop, rejects with the stop instead.
   async 'dez.controller/media/readClip' (
     clip: Pick<MediaTagData, 'type' | 'src' | 'url' | 'expires'>,
     { signal }: { signal?: AbortSignal } = {},
   ): Promise<Blob> {
-    const sources = [...new Set([clip.src, clip.url])].filter((source): source is string => source !== null)
-    if (sources.length === 0) throw new ClipReadError('deleted')
-    const failures: string[] = []
-    for (const source of sources) {
-      try {
-        if (isSavedMediaPath(source) || isTempMediaPath(source)) return await sbp('dez.controller/images/readFile', source) as File
-        if (/^https?:\/\//i.test(source)) return await readClipUrl(source, clip.type, signal)
-        if (source === clip.src && isLinkedMediaPath(source)) return await sbp('dez.controller/images/readFile', source, { maxBytes: MAX_SAVED_CLIP_BYTES }) as File
-        failures.push('A source of the clip is not a file that Dez may read or a web address.')
-      } catch (error) {
-        // A stop is no problem of the clip, and no later source is tried.
-        signal?.throwIfAborted()
-        failures.push(rawErrorText(error))
-      }
-    }
-    const expired = clip.expires !== null && Date.parse(clip.expires) <= Date.now()
-    throw new ClipReadError(expired ? 'expired' : 'unreadable', failures.join(' '))
+    return clipFromSources(clip, signal, (source) => source.kind === 'url'
+      ? readClipUrl(source.url, clip.type, signal)
+      : sbp('dez.controller/images/readFile', source.path, source.linked ? { maxBytes: MAX_SAVED_CLIP_BYTES } : {}) as Promise<File>)
   },
 
   // Cuts a part of an audio clip in the webview: decodes `file` (any audio
