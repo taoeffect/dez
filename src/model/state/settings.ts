@@ -113,27 +113,6 @@ export const useSettingsStore = defineStore('settings', () => {
     }
   }
 
-  function openSettings(section: SettingsSection = 'general') {
-    settingsSection.value = section
-    historyOpen.value = false
-    helpOpen.value = false
-    settingsOpen.value = true
-  }
-
-  function closeSettings() {
-    settingsOpen.value = false
-  }
-
-  function openHistory() {
-    settingsOpen.value = false
-    helpOpen.value = false
-    historyOpen.value = true
-  }
-
-  function closeHistory() {
-    historyOpen.value = false
-  }
-
   return {
     theme,
     editorFontSize,
@@ -164,9 +143,5 @@ export const useSettingsStore = defineStore('settings', () => {
     setLastUpdateCheckAt,
     isFavorite,
     toggleFavorite,
-    openSettings,
-    closeSettings,
-    openHistory,
-    closeHistory,
   }
 })
