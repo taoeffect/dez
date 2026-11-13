@@ -79,8 +79,8 @@ function onOverlayClick(event: MouseEvent) {
             </p>
             <p>
               The model picker at the lower left sets the model of the tab, and the gear next to it
-              shows the settings of that model. Add your API keys and your own providers in Settings ›
-              Providers (<kbd>{{ keys.settings }}</kbd>). Models can use Dez tools, for example to
+              shows the settings of that model. Add your API keys and your own providers in Settings
+              (<kbd>{{ keys.settings }}</kbd>) › Providers. Models can use Dez tools, for example to
               find other models. Dez saves each conversation: History (<kbd>{{ keys.history }}</kbd>)
               opens it again.
             </p>
@@ -88,11 +88,11 @@ function onOverlayClick(event: MouseEvent) {
               Paste or drop images, audio, and video into a message. Each one gets an id
               (<code>a</code>, <code>b</code>, …), which shows when you point at it: write
               <code>@a</code> in a message to name it. Dez keeps a copy of a pasted file. A file
-              that you drop into a user message stays where it is, and the message links to it, so
-              do not move or delete it; Dez keeps a copy of a file from a temp folder, and of a file
-              that you drop into an agent message. A model that makes images, audio, or
-              video puts them in its reply. Type <code>/prompt</code> to insert a saved prompt
-              (Settings › Prompts).
+              that you drop into a user message usually stays where it is, and the message links to
+              it, so do not move or delete it. Dez keeps a copy of some dropped files: for example, a
+              file from a temp folder or a file that you drop into an agent message. A model that
+              makes images, audio, or video puts them in its reply. Type <code>/prompt</code> and a
+              space to insert a saved prompt (Settings › Prompts).
             </p>
           </section>
 
