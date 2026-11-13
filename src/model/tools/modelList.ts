@@ -77,7 +77,8 @@ const TYPE_VALUES = MODEL_OUTPUT_IDS.join(', ')
 export const MODEL_LIST_TOOL: ToolDefinition = {
   name: 'model_list',
   description: 'List the models that the user can use in Dez. '
-    + 'The first line gives the count, the column names, and what the letters mean. '
+    + 'The first line gives the count, the column names, and what the letters mean; '
+    + 'when `filter` left out models that `type` or `inputs` alone select, it also gives their count. '
     + 'Then each line gives one model: its full id (`provider/model`), its name, the name of its provider, '
     + 'its type (the letters of the outputs that it makes), '
     + 'its inputs (the letters of what Dez can send it in one request: the text of the message, images, audio clips, video clips), '
@@ -95,7 +96,8 @@ export const MODEL_LIST_TOOL: ToolDefinition = {
         + 'A model matches when every word matches, in any word order. '
         + 'A word matches when it is part of the provider name, the provider id, the model name, or the model id, '
         + 'or when it is made of the starts of consecutive words of one of them: "gem3pro" matches "gemini-3-pro". '
-        + 'To match two of them, use two words, as in "venice claude". Case and punctuation do not count.',
+        + 'To match two of them, use two words, as in "venice claude". Case and punctuation do not count. '
+        + 'A word never matches a type: to select models by type, use `type` or `inputs`.',
       required: false,
     },
     {
@@ -241,10 +243,21 @@ export function modelListText(cache: ModelCache, providers: readonly ProviderInf
   const rows = matchingModelsByProvider(providers, models, { terms, outputs, inputs }).flatMap(({ provider, models: matches }) =>
     matches.map((model) => ({ provider, model, inputs: modelInputs(model) })))
   const count = rows.length
+  // A `filter` word matches only names and ids, so a word such as "video"
+  // next to `type: video` leaves out every video model whose name does not
+  // hold it (in a paid test, the cheapest one). The count of the models of
+  // the types alone tells the calling model that it missed some.
+  const typeCriteria = narrowing.filter((argument) => argument.name !== '`filter`').map((argument) => argument.text).join(' and ')
+  const typeCount = terms.length > 0 && typeCriteria !== ''
+    ? matchingModelsByProvider(providers, models, { terms: [], outputs, inputs }).reduce((sum, group) => sum + group.models.length, 0)
+    : count
+  const filterNote = typeCount > count
+    ? ` Without \`filter\`, ${typeCount} ${typeCount === 1 ? 'model matches' : 'models match'} ${typeCriteria}: a \`filter\` word matches only names and ids, not types.`
+    : ''
   if (count === 0) {
     const fixes = narrowing.map((argument) => argument.fix).join(' or ')
     const given = narrowing.map((argument) => argument.name).join(' and no ')
-    return `No models match ${criteria}. Call model_list again with ${fixes}, or with no ${given} to list every model.`
+    return `No models match ${criteria}. Call model_list again with ${fixes}, or with no ${given} to list every model.${filterNote}`
   }
 
   const counted = `${count} ${count === 1 ? 'model' : 'models'}`
@@ -253,5 +266,5 @@ export function modelListText(cache: ModelCache, providers: readonly ProviderInf
   const shown = (sort ? sortedRows(rows, sort.column, sort.direction) : rows).slice(0, MODEL_LIST_LIMIT)
     .map((row) => LIST_COLUMNS.map((column) => column.text(row)).join(' | '))
   if (count > MODEL_LIST_LIMIT) shown.push(`… and ${count - MODEL_LIST_LIMIT} more. Use a narrower filter.`)
-  return [`${matched} ${COLUMNS}${sorted}. ${LEGEND}`, ...shown].join('\n')
+  return [`${matched} ${COLUMNS}${sorted}. ${LEGEND}${filterNote}`, ...shown].join('\n')
 }

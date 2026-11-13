@@ -282,11 +282,13 @@ describe('modelUsage', () => {
 
       // The video models that the rules of each media format make:
       // OpenRouter frames or references (the user's choice) with the clip
-      // kinds of its input modalities, Venice frames with and without a
-      // background audio clip, and a Venice reference family with its
-      // clips. Each request has one image, and one clip of each kind that
-      // the model takes; the frame fields are those of the two formats.
-      it('tells that the images are frames exactly when a video request sends them so, with and without a clip', () => {
+      // kinds of its input modalities, an OpenRouter model with only a first
+      // frame, Venice frames with and without a background audio clip, and a
+      // Venice reference family with its clips. Each request has one image
+      // (two for the last frame, as many as the model takes), and one clip
+      // of each kind that the model takes; the frame fields are those of
+      // the two formats.
+      it('tells that the images are frames exactly when a video request sends them so, with and without a clip, and names a last frame only when one goes', () => {
         const FRAME_FIELDS = ['frame_images', 'image_url', 'end_image_url']
         const image: ChatImagePart = { type: 'image', mediaType: 'image/png', data: 'iVBORw0KGgo=' }
         interface FormatModel { format: keyof typeof MEDIA_FORMATS, id: string, entry: unknown, mediaEntry?: unknown, values: ParameterValues }
@@ -299,6 +301,8 @@ describe('modelUsage', () => {
             mediaEntry: { id: 'm', supported_frame_images: ['first_frame', 'last_frame'] },
             values: { images_as: imagesAs },
           }))),
+          // A model that takes only a first frame (tbc/mischief-1).
+          { format: 'openrouter', id: 'm', entry: { id: 'm', architecture: { input_modalities: ['text', 'image'] } }, mediaEntry: { id: 'm', supported_frame_images: ['first_frame'] }, values: { images_as: 'frames' } },
           venice('wan-2-6-image-to-video', {}),
           venice('wan-2-6-image-to-video', { audio_input: true }),
           venice('seedance-2-0-reference-to-video', { audio_input: true }),
@@ -313,18 +317,19 @@ describe('modelUsage', () => {
               const use = clipRules?.[clipKind]?.use
               return use ? [{ kind: clipKind, use, url: `https://files.example.com/${clipKind}.bin` }] : []
             })
-            const sendsFrames = (withClips: boolean) => {
-              const request = (MEDIA_FORMATS[format].clips as ClipFormat).request(kind, 'https://api.example.com/v1', id, {
-                prompt: 'It runs',
-                images: [image].slice(0, maxInputImages(kind, images)),
-                ...(withClips && { clips }),
-                values: { ...values, duration: 1 },
-              })
-              return FRAME_FIELDS.some((field) => Object.hasOwn(request.body ?? {}, field))
-            }
+            const frameRequest = (count: number, withClips: boolean) => (MEDIA_FORMATS[format].clips as ClipFormat).request(kind, 'https://api.example.com/v1', id, {
+              prompt: 'It runs',
+              images: Array<ChatImagePart>(count).fill(image).slice(0, maxInputImages(kind, images)),
+              ...(withClips && { clips }),
+              values: { ...values, duration: 1 },
+            }).body ?? {}
+            const sendsFrames = (withClips: boolean) => FRAME_FIELDS.some((field) => Object.hasOwn(frameRequest(1, withClips), field))
+            const twoImages = frameRequest(2, false)
+            const sendsLastFrame = Object.hasOwn(twoImages, 'end_image_url') || JSON.stringify(twoImages).includes('"last_frame"')
             const label = `${format} ${kind} ${JSON.stringify({ entry, values })}`
 
-            expect(usage.includes(USAGE_TEXTS.frames), label).toBe(sendsFrames(false))
+            expect(usage.includes(USAGE_TEXTS.frames) || usage.includes(USAGE_TEXTS.firstFrame), label).toBe(sendsFrames(false))
+            expect(usage.includes(USAGE_TEXTS.frames), label).toBe(sendsLastFrame)
             // A frame gives the video its shape; a reference does not.
             expect(usage.includes(USAGE_TEXTS.frameShape), label).toBe(sendsFrames(false))
             expect(usage.includes(USAGE_TEXTS.clipsMakeReferences), label).toBe(sendsFrames(false) && !sendsFrames(true))

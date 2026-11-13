@@ -107,13 +107,24 @@ describe('modelListText', () => {
     ].join('\n'))
   })
 
-  it('selects the models that match the filter, the type, and the inputs together', () => {
+  it('selects the models that match the filter, the type, and the inputs together, and counts the ones that the filter left out', () => {
     expect(modelListText(CACHE, PROVIDERS, { filter: 'venice', type: 'video,text', inputs: 'image' })).toBe([
-      `3 models match "venice" and type text,video and inputs image ${HEADER}`,
+      `3 models match "venice" and type text,video and inputs image ${HEADER} `
+        + 'Without `filter`, 5 models match type text,video and inputs image: a `filter` word matches only names and ids, not types.',
       LINES.veniceGemini,
       LINES.mistral,
       LINES.wan,
     ].join('\n'))
+  })
+
+  // A paid test asked for "openrouter video" with type video, and the
+  // word "video" left out the models with no "video" in their names.
+  it('counts the models of the types alone when the filter leaves some out, also with no match, and only then', () => {
+    expect(modelListText(CACHE, PROVIDERS, { filter: 'flux', type: 'text' })).toBe('No models match "flux" and type text. '
+      + 'Call model_list again with fewer words in `filter` or other values in `type`, or with no `filter` and no `type` to list every model. '
+      + 'Without `filter`, 5 models match type text: a `filter` word matches only names and ids, not types.')
+    expect(modelListText(CACHE, PROVIDERS, { filter: 'video', type: 'video' })).toBe([`1 model matches "video" and type video ${HEADER}`, LINES.wan].join('\n'))
+    expect(modelListText(CACHE, PROVIDERS, { filter: 'whisper' }).split('\n')[0]).toBe(`1 model matches "whisper" ${HEADER}`)
   })
 
   it('lists every model for a filter with no letters or digits, and for a type or inputs of only commas and white space', () => {

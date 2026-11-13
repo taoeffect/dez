@@ -1093,6 +1093,83 @@ describe('openrouter clip parameters', () => {
   })
 })
 
+// `pricing_skus` shapes of the live video list (2026-11-13).
+describe('openrouter clip prices', () => {
+  const price = (skus: Record<string, unknown>, values: ParameterValues, kind: ClipKind = 'video') =>
+    openRouterClips.entryPrice?.(kind, values, { id: 'm' }, { id: 'm', pricing_skus: skus })
+  const VEO_LITE = { duration_seconds_with_audio: '0.08', duration_seconds_without_audio: '0.05', duration_seconds_with_audio_720p: '0.05', duration_seconds_without_audio_720p: '0.03' }
+  const SEEDANCE = {
+    video_tokens: '0.000007',
+    video_tokens_4k: '0.000004',
+    video_tokens_1080p: '0.0000077',
+    video_tokens_without_audio: '0.000007',
+    video_tokens_with_video_input: '0.0000043',
+    video_tokens_1080p_with_video_input: '0.0000047',
+  }
+
+  it.each([
+    ['a price in cents of the resolution', { cents_per_video_output_second_480p: '0.5', cents_per_video_output_second_720p: '1' }, { duration: 5, resolution: '480p' }, 0.025],
+    ['the price of the resolution over the price of any', { cents_per_second_output: '17', cents_per_second_output_1080p: '29' }, { duration: 5, resolution: '1080P' }, 1.45],
+    ['the price of any resolution', { cents_per_second_output: '17', cents_per_second_output_1080p: '29' }, { duration: 5, resolution: '720p' }, 0.85],
+    ['a price of any sound, with the sound on', { duration_seconds: '0.1120' }, { duration: 5, resolution: '720p', generate_audio: true }, 0.56],
+    ['the price of the resolution and the sound', VEO_LITE, { duration: 4, resolution: '720p', generate_audio: false }, 0.12],
+    ['the price of the sound at another resolution', VEO_LITE, { duration: 4, resolution: '1080p', generate_audio: true }, 0.32],
+  ])('gives the length times %s', (_name, skus, values, usd) => {
+    expect(price(skus, values)).toStrictEqual({ usd })
+  })
+
+  // https://openrouter.ai/blog/insights/seedance-2-5-review/: Seedance 2.0
+  // costs $0.374 a second at 1080p and $0.778 at 4K (rounded).
+  it.each([
+    ['1080p', 0.37422],
+    ['4K', 0.7776],
+  ])('estimates a price by video tokens at the standard size of %s, with a note', (resolution, usdPerSecond) => {
+    const result = price(SEEDANCE, { duration: 1, resolution, generate_audio: true })
+    expect(result).toStrictEqual({ usd: usdPerSecond, note: expect.stringContaining('estimate') })
+  })
+
+  it('refuses to choose between two prices that each fit the request', () => {
+    expect(price(SEEDANCE, { duration: 5, resolution: '1080p', generate_audio: false })).toStrictEqual({
+      error: expect.stringContaining('the prices `video_tokens_1080p`, `video_tokens_without_audio` each fit a request of 1080p, no sound'),
+    })
+  })
+
+  it('takes two prices that fit the request when they are the same', () => {
+    expect(price({ duration_seconds_1080p: '0.2', duration_seconds_without_audio: '0.2' }, { duration: 2, resolution: '1080p', generate_audio: false })).toStrictEqual({ usd: 0.4 })
+  })
+
+  it.each([
+    ['a price of sound for a model with no sound switch', { duration_seconds_with_audio: '0.1' }, { duration: 5, resolution: '720p' }, 'no price fits a request of 720p'],
+    ['a token price at a resolution of no known size', { video_tokens: '0.000007' }, { duration: 5, resolution: '540p' }, 'the size in pixels of a video of 540p'],
+    ['no length', { duration_seconds: '0.1' }, { resolution: '720p' }, 'no length'],
+    ['a price whose rule is not known', { duration_seconds: '0.1', text_to_video_duration_seconds_720p: '0.084', minimum_cents_per_generation: '50' }, { duration: 5 }, '`text_to_video_duration_seconds_720p`, `minimum_cents_per_generation`'],
+    ['a price that is no number', { duration_seconds: 'n/a' }, { duration: 5 }, '`duration_seconds`'],
+  ])('gives no price but an error for %s', (_name, skus, values, reason) => {
+    expect(price(skus, values)).toStrictEqual({ error: expect.stringContaining(reason) })
+  })
+
+  it('leaves out a price of 0 whose rule is not known', () => {
+    expect(price({ duration_seconds: '0.1', long_duration_seconds: '0' }, { duration: 5 })).toStrictEqual({ usd: 0.5 })
+  })
+
+  // The price of each input image and of a request with an input clip:
+  // the price is for a request with neither.
+  it('prices a request with no input image or clip, and tells the price of one in a note', () => {
+    const skus = { cents_per_image_input: '1', cents_per_video_output_second_480p: '2', cents_per_second_video_continuation_480p: '41' }
+    const result = price(skus, { duration: 2, resolution: '480p' }, 'imageToVideo')
+    expect(result).toStrictEqual({ usd: 0.04, note: expect.stringContaining('each input image adds 0.01 USD') })
+    expect(result).toStrictEqual({ usd: 0.04, note: expect.stringContaining('input video clip') })
+  })
+
+  it.each([
+    ['a model with no prices', 'video', undefined],
+    ['a model whose prices are all 0', 'video', { long_duration_seconds: '0' }],
+    ['a request of another kind', 'videoToVideo', { duration_seconds: '0.1' }],
+  ] as const)('tells no price for %s', (_name, kind, skus) => {
+    expect(openRouterClips.entryPrice?.(kind, { duration: 5 }, { id: 'm' }, { id: 'm', ...(skus && { pricing_skus: skus }) })).toBeUndefined()
+  })
+})
+
 describe('openrouter image rules', () => {
   const rules = (kind: MediaKind, frames: unknown) => MEDIA_FORMATS.openrouter.imageRules?.(kind, { id: 'm' }, { id: 'm', supported_frame_images: frames })
   const REFERENCES = { maxImages: 16, references: {} }

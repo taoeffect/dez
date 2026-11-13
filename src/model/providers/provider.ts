@@ -8,7 +8,7 @@ import { TooManyImagesError } from './clipImages'
 import { FORBIDDEN_BODY_KEYS, type ProviderConfig } from './config'
 import { ProviderHttpError } from './errors'
 import type { ImageSizeRules, InputImageLimits } from './imageSize'
-import { MEDIA_FORMATS, type ClipFormat, type ClipInput, type ClipJob, type ImageFormat, type ImageQuoteFormat, type MediaFormat, type MediaInput, type MediaWireRequest, type TextFormat } from './mediaFormats'
+import { MEDIA_FORMATS, type ClipEntryPrice, type ClipFormat, type ClipInput, type ClipJob, type ImageFormat, type ImageQuoteFormat, type MediaFormat, type MediaInput, type MediaWireRequest, type TextFormat } from './mediaFormats'
 import type { ParameterValues } from './modelParameters'
 import { isRecord, modelCapability, modelData, modelOutputsAndRequest, modelReadableName, modelReleased, unsupportedSettings } from './modelParsing'
 import { isThinkingEnabled, modelToggles, toggleValue, type ToggleModel } from './modelToggles'
@@ -412,6 +412,13 @@ export class Provider {
     const quote = this.mediaFormatOrNone()?.clips?.quote
     const wire = quote?.request(kind, this.config.baseUrl, modelId, values, entry)
     return quote && wire ? { request: { ...this.mediaApiRequest(wire, secret), timeoutMs: MODEL_LIST_TIMEOUT_MS }, usd: quote.usd } : null
+  }
+
+  // The price of the clip that `clipRequest` with the same values asks
+  // for, from the model's raw entries (`ClipFormat.entryPrice`); undefined
+  // when they tell none.
+  clipEntryPrice(kind: ClipKind, values: ParameterValues, entry: unknown, mediaEntry: unknown): ClipEntryPrice | undefined {
+    return this.mediaFormatOrNone()?.clips?.entryPrice?.(kind, values, entry, mediaEntry)
   }
 
   // How to tell the price of one image request of `kind`

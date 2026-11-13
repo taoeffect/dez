@@ -701,9 +701,11 @@ export default sbp('sbp/selectors/register', {
   // The provider's price in USD of the image or the clip that
   // dez.provider/generateMedia with the same `parameters` asks for, as far
   // as its data tells one, and the model's price records for a provider
-  // whose model lists hold no prices. Null when the provider tells neither:
-  // its model entries hold the prices then. The requests cost nothing.
-  // Rejects when one fails.
+  // whose model lists hold no prices. A clip's price comes from a price
+  // request, else from the model's entries; when they hold prices that
+  // tell no one price, `error` says why. Null when the provider tells
+  // none of these: its model entries hold the prices then. The requests
+  // cost nothing. Rejects when one fails.
   async 'dez.provider/mediaQuote' (input: ProviderMediaQuoteInput): Promise<ProviderMediaQuote | null> {
     const provider = requireProvider(input.providerId)
     const { kind, modelId } = input
@@ -712,7 +714,9 @@ export default sbp('sbp/selectors/register', {
     if (isTextKind(kind)) return null
     if (isClipKind(kind)) {
       const quote = provider.clipQuote(kind, modelId, values, entry, await requestSecret(provider))
-      return quote ? { usd: quote.usd(await jsonResponse(provider, quote.request)) } : null
+      if (quote) return { usd: quote.usd(await jsonResponse(provider, quote.request)) }
+      const mediaEntry = sbp('dez.model/modelCache/rawModel', provider.id, modelId, 'media') as unknown
+      return provider.clipEntryPrice(kind, values, entry, mediaEntry) ?? null
     }
 
     const quote = provider.imageQuote(kind, modelId, await requestSecret(provider))

@@ -1537,6 +1537,32 @@ describe('the price of a clip', () => {
 
     await expect(quote({})).rejects.toThrow('Details: HTTP 400: Bad model')
   })
+
+  // OpenRouter's video list holds the prices (`ClipFormat.entryPrice`).
+  it('gives the price from the media entry, for the defaults of the values that the request leaves out, and sends no request', async () => {
+    sbp('dez.model/customProviders/save', {
+      id: 'routed', name: 'Router', baseUrl: MEDIA_BASE_URL, apiFormat: 'openai', models: [], fetchModels: true, auth: 'apiKey', mediaApi: { format: 'openrouter' },
+    })
+    sbp('dez.model/modelCache/applyProviderResult', 'routed', {
+      ok: true,
+      models: [{
+        id: 'tbc/mischief-1',
+        name: 'Mischief',
+        provider: 'routed',
+        request: 'video',
+        parameters: [
+          { name: 'duration', label: 'Length', options: [3, 5], default: 3 },
+          { name: 'resolution', label: 'Resolution', options: ['480p', '720p'], default: '480p' },
+        ],
+      }],
+      entries: new Map([['tbc/mischief-1', { id: 'tbc/mischief-1' }]]),
+      mediaEntries: new Map([['tbc/mischief-1', { id: 'tbc/mischief-1', pricing_skus: { cents_per_video_output_second_480p: '0.5', cents_per_video_output_second_720p: '1' } }]]),
+    })
+    const routed = (parameters: Record<string, unknown>) => quote({ providerId: 'routed', modelId: 'tbc/mischief-1', parameters })
+
+    expect([await routed({}), await routed({ duration: 5, resolution: '720p' })]).toStrictEqual([{ usd: 0.015 }, { usd: 0.05 }])
+    expect(httpRequests).toStrictEqual([])
+  })
 })
 
 describe('the price of an image', () => {

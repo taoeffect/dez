@@ -51,7 +51,8 @@ export const MODEL_INFO_TOOL: ToolDefinition = {
     + 'Its `default` is the value that Dez sends when no one chose a value, and its `value` the value that Dez sends now: '
     + 'the one from the `parameters` argument, else the one that the user chose, else the default. '
     + 'With no `value`, Dez sends none and the provider\'s own default applies. '
-    + '`dez.cost` has `usd`, the price in US dollars of one request with those values, or `error`; '
+    + '`dez.cost` has `usd`, the price in US dollars of one request with those values '
+    + '(with a `note` when other inputs change it or it is an estimate), or `error`, which tells why Dez has no price; '
     + 'with no `cost`, the prices are in the entries. '
     + 'The entries are the provider\'s own data about the model, as it sent them: '
     + '`providerEntry` (its entry in the provider\'s model list, or in the Dez provider settings), '
@@ -105,9 +106,10 @@ export interface ModelInfoFacts {
   toggles?: ModelInfoToggle[]
   /** The rules of each input image of a request (dez.provider/inputImageRules). */
   inputImages?: ProviderInputImageRules
-  /** The provider's price of one request with `values`, or why there is
-   *  none. Absent when the provider tells no price of one request. */
-  cost?: { usd: number } | { error: string }
+  /** The provider's price of one request with `values` (with a note of
+   *  what else changes it), or why there is none. Absent when the provider
+   *  tells no price of one request. */
+  cost?: { usd: number, note?: string } | { error: string }
   /** The model's raw entry in a model list of the provider's media API. */
   mediaEntry?: unknown
   /** The model's price records, for a provider whose model lists hold no

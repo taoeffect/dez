@@ -129,6 +129,11 @@ export interface ProviderMediaQuote {
   // The price in USD of one request with the input's parameter values.
   // Absent when the provider's data tells no one price for it.
   usd?: number
+  // With `usd`: what else changes the price, or that it is an estimate.
+  note?: string
+  // Why the model's entries, which hold its prices, tell no one price of
+  // the request (`ClipFormat.entryPrice`).
+  error?: string
   // The model's price records, as the provider sent them, for a provider
   // whose model lists hold no prices (`ImageQuoteFormat.recordsRequest`).
   records?: unknown

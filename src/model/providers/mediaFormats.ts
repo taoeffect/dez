@@ -186,6 +186,13 @@ export interface ClipQuoteFormat {
   usd(data: unknown): number
 }
 
+// The price of one clip request that the entries of a model tell
+// (`ClipFormat.entryPrice`): the price in USD, with a note when the inputs
+// of the request change it or it is an estimate; or why the entries, which
+// hold the model's prices, tell no one price of the request. The texts are
+// for the model that reads `model_info`.
+export type ClipEntryPrice = { usd: number, note?: string } | { error: string }
+
 // The clip requests (speech, music, video) of a media API. A 2xx response
 // to `request` is the clip's bytes, or JSON that names a job (`job`).
 export interface ClipFormat {
@@ -217,6 +224,10 @@ export interface ClipFormat {
   // it names none.
   job(kind: ClipKind, baseUrl: string, modelId: string, data: unknown): ClipJob
   quote?: ClipQuoteFormat
+  // The price of one request of `kind` with `values`, from the model's
+  // entries (as for `parameters`), for an API whose model lists hold the
+  // prices of its clips. Undefined when they hold none for the model.
+  entryPrice?(kind: ClipKind, values: ParameterValues, entry: unknown, mediaEntry: unknown): ClipEntryPrice | undefined
   // The size in bits of one sample of the raw PCM audio (`audio/pcm`,
   // pcmAudio.ts) that the API can answer with. A response tells the rate
   // and the channels, but not this. Missing: the API's docs do not tell
@@ -1152,6 +1163,152 @@ function openRouterImageUsd(values: ParameterValues, mediaEntry: unknown, record
   return (resolution === undefined ? undefined : prices.get(String(resolution).toLowerCase())) ?? prices.get(undefined)
 }
 
+// One price of an OpenRouter video model (a key and its value in
+// `pricing_skus`, the model's entry of the video list), in USD: of each
+// second of the video, of each video token, or of each input image. A key
+// can name the resolution (lower case, as `480p` or `4k`) and the sound
+// that its price is for; a key that names neither is for any. A
+// `videoInput` price is only for a request with an input video clip.
+interface OpenRouterVideoSku {
+  key: string
+  per: 'second' | 'token' | 'inputImage'
+  usd: number
+  resolution?: string
+  audio?: boolean
+  videoInput?: true
+}
+
+// The key forms whose rule Dez knows. The docs tell nothing of the keys
+// ("Pricing SKUs with provider prefix stripped, values as strings"), so
+// these are the forms of the live list (2026-11-13) whose names tell their
+// rule; a key with `cents` in its name is in US cents. Any other key that
+// costs something (a price of a long clip, of references, of an image to
+// video or a text to video, a minimum, a price by megapixel) leaves the
+// price of a request unknown: its rule is in no data.
+// https://openrouter.ai/docs/api/api-reference/video-generation/list-all-video-generation-models
+const OPENROUTER_VIDEO_SKU_FORMS: readonly { pattern: RegExp, per: OpenRouterVideoSku['per'], cents: boolean, videoInput?: true }[] = [
+  { pattern: /^duration_seconds(?:_(?<audio>with|without)_audio)?(?:_(?<resolution>\d+[pk]))?$/, per: 'second', cents: false },
+  { pattern: /^cents_per_video_output_second(?:_(?<resolution>\d+[pk]))?$/, per: 'second', cents: true },
+  { pattern: /^cents_per_second_output(?:_(?<resolution>\d+[pk]))?$/, per: 'second', cents: true },
+  { pattern: /^cents_per_second_video_continuation(?:_(?<resolution>\d+[pk]))?$/, per: 'second', cents: true, videoInput: true },
+  { pattern: /^video_tokens(?:_(?<resolution>\d+[pk]))?(?:_(?<audio>with|without)_audio)?(?<videoInput>_with_video_input)?$/, per: 'token', cents: false },
+  { pattern: /^cents_per_image_input$/, per: 'inputImage', cents: true },
+]
+
+// The size of a video by which OpenRouter estimates the video tokens of a
+// request before it runs: "(width x height x fps x duration) / 1024 video
+// tokens at 24 fps", with "the standard dimensions for each resolution
+// tier" whatever the aspect ratio; the final charge comes from the tokens
+// of the video that the model makes. The blog names 854x480 and 1280x720;
+// its Seedance 2.0 prices at 1080p ($0.374 a second) and 4K ($0.778) fit
+// 1920x1080 and 3840x2160.
+// https://openrouter.ai/blog/insights/seedance-2-5-review/
+const OPENROUTER_TOKEN_FRAME_PIXELS: Readonly<Record<string, number>> = {
+  '480p': 854 * 480,
+  '720p': 1280 * 720,
+  '1080p': 1920 * 1080,
+  '4k': 3840 * 2160,
+}
+const OPENROUTER_TOKEN_FPS = 24
+const OPENROUTER_PIXELS_PER_TOKEN = 1024
+
+// The price `price` (a number of the key's unit) of `key` in
+// `pricing_skus`; null for a key of no known form.
+function openRouterVideoSku(key: string, price: number): OpenRouterVideoSku | null {
+  for (const form of OPENROUTER_VIDEO_SKU_FORMS) {
+    const match = form.pattern.exec(key)
+    if (!match) continue
+    const { resolution, audio, videoInput } = match.groups ?? {}
+    return {
+      key,
+      per: form.per,
+      usd: form.cents ? price / 100 : price,
+      ...(resolution !== undefined && { resolution }),
+      ...(audio !== undefined && { audio: audio === 'with' }),
+      ...((form.videoInput || videoInput !== undefined) && { videoInput: true as const }),
+    }
+  }
+  return null
+}
+
+function openRouterPriceError(reason: string): ClipEntryPrice {
+  return {
+    error: `Dez cannot compute the price of a request with these values: ${reason}. `
+      + 'The prices are in `pricing_skus` of `mediaEntry` (a key with `cents` in its name is in US cents); the zeros of `pricing` in `providerEntry` are no price.',
+  }
+}
+
+// The price in USD of one OpenRouter video request with `values` and no
+// input image or clip, from the model's prices (`pricing_skus`), with a
+// note of the prices of input images and clips. Undefined for a model with
+// no prices.
+//
+// Of the prices of a second or a token that fit the request (the
+// resolution and the sound of `values`, else any), the ones that name the
+// most of the two apply: `duration_seconds_480p` over `duration_seconds`.
+// With two things to name, these are the ones that no other fitting price
+// names more of. Two that each name what the other leaves open
+// (`video_tokens_1080p` and `video_tokens_without_audio` for a 1080p video
+// with no sound) leave the price unknown when they differ, as no data
+// tells which one applies. A price never comes from a guess: any key whose
+// rule Dez does not know gives an error that tells the calling model to
+// read the prices itself.
+function openRouterVideoPrice(values: ParameterValues, mediaEntry: unknown): ClipEntryPrice | undefined {
+  const table = valueAtPath(mediaEntry, 'pricing_skus')
+  if (!isRecord(table)) return undefined
+  const skus: OpenRouterVideoSku[] = []
+  const unknownKeys: string[] = []
+  for (const [key, value] of Object.entries(table)) {
+    const price = typeof value === 'string' && value.trim() !== '' ? Number(value) : value
+    const sku = typeof price === 'number' && Number.isFinite(price) && price >= 0 ? openRouterVideoSku(key, price) : null
+    if (sku) skus.push(sku)
+    // A price of 0 adds nothing to a request, whatever its rule.
+    else if (price !== 0) unknownKeys.push(`\`${key}\``)
+  }
+  if (unknownKeys.length > 0) return openRouterPriceError(`no data tells the rule of the prices ${unknownKeys.join(', ')}`)
+  if (skus.length === 0) return undefined
+
+  const resolution = typeof values.resolution === 'string' ? values.resolution.toLowerCase() : undefined
+  const audio = typeof values.generate_audio === 'boolean' ? values.generate_audio : undefined
+  const fits = skus.filter((sku) => sku.per !== 'inputImage' && !sku.videoInput
+    && (sku.resolution === undefined || sku.resolution === resolution)
+    && (sku.audio === undefined || sku.audio === audio))
+  const namedCounts = fits.map((sku) => Number(sku.resolution !== undefined) + Number(sku.audio !== undefined))
+  const best = fits.filter((_, index) => namedCounts[index] === Math.max(...namedCounts))
+  const request = `${resolution ?? 'no resolution'}${audio === undefined ? '' : audio ? ', with sound' : ', no sound'}`
+  if (best.length === 0) return openRouterPriceError(`no price fits a request of ${request}`)
+  if (new Set(best.map((sku) => `${sku.per} ${sku.usd}`)).size > 1) {
+    return openRouterPriceError(`the prices ${best.map((sku) => `\`${sku.key}\``).join(', ')} each fit a request of ${request}, and no data tells which one applies`)
+  }
+
+  const rate = best[0]
+  const seconds = values.duration
+  if (typeof seconds !== 'number' || !Number.isFinite(seconds) || seconds <= 0) {
+    return openRouterPriceError('the price is by the length, and the request has no length (`duration`)')
+  }
+  let usd = rate.usd * seconds
+  if (rate.per === 'token') {
+    const pixels = resolution !== undefined && Object.hasOwn(OPENROUTER_TOKEN_FRAME_PIXELS, resolution) ? OPENROUTER_TOKEN_FRAME_PIXELS[resolution] : undefined
+    if (pixels === undefined) return openRouterPriceError(`the price is by video token, and Dez does not know the size in pixels of a video of ${resolution ?? 'no resolution'}`)
+    usd *= pixels * OPENROUTER_TOKEN_FPS / OPENROUTER_PIXELS_PER_TOKEN
+  }
+  const imagePrice = skus.find((sku) => sku.per === 'inputImage' && sku.usd > 0)
+  const notes = [
+    ...(rate.per === 'token'
+      ? ['The provider bills by video tokens: `usd` is its estimate for a video of the standard size of the resolution, and the charge comes from the video that the model makes, so it can differ (for example with another aspect ratio).']
+      : []),
+    ...(imagePrice ? [`\`usd\` is for a request with no input image: each input image adds ${roundedUsd(imagePrice.usd)} USD.`] : []),
+    ...(skus.some((sku) => sku.videoInput) ? ['`usd` is for a request with no input video clip: with one, the price is another one, which Dez cannot compute.'] : []),
+  ]
+  return { usd: roundedUsd(usd), ...(notes.length > 0 && { note: notes.join(' ') }) }
+}
+
+// A price in USD with no float noise (`0.30000000000000004`): no price of
+// a provider has more than six decimal places of a dollar.
+function roundedUsd(usd: number): number {
+  return Math.round(usd * 1e6) / 1e6
+}
+
 // The OpenRouter image, speech, and video APIs. Its image-only models
 // answer only through the image API (`/images`); its image + text models
 // answer through chat (`imageOutputBody` in builtins.ts), and so do its
@@ -1379,6 +1536,10 @@ const openRouterFormat: MediaFormat = {
         },
       }
     },
+    // The video list gives each model's prices (`pricing_skus`); a
+    // request of a model with a source clip has prices of their own,
+    // which `openRouterVideoPrice` tells only in a note.
+    entryPrice: (kind, values, _entry, mediaEntry) => (kind === 'video' || kind === 'imageToVideo' ? openRouterVideoPrice(values, mediaEntry) : undefined),
     // "audio/pcm for pcm — 16-bit little-endian"
     // https://openrouter.ai/docs/api/api-reference/tts/create-speech
     pcmSampleBits: 16,

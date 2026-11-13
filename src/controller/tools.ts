@@ -249,7 +249,8 @@ const TOOL_RUNNERS: Record<string, ToolRunner> = {
     if (kind !== 'chat' && kind !== 'none') {
       try {
         const quote = await untilAborted(() => sbp('dez.provider/mediaQuote', { ...ref, kind, parameters: values }) as Promise<ProviderMediaQuote | null>, signal)
-        if (quote?.usd !== undefined) facts.cost = { usd: quote.usd }
+        if (quote?.usd !== undefined) facts.cost = { usd: quote.usd, ...(quote.note !== undefined && { note: quote.note }) }
+        else if (quote?.error !== undefined) facts.cost = { error: quote.error }
         if (quote?.records !== undefined) facts.priceEntry = quote.records
       } catch (error) {
         if (signal.aborted) throw error

@@ -61,6 +61,14 @@
       "source": "Venice's answer to a request with a first and a last frame",
       "checked": "2026-11-11",
       "limit": { "maxImages": 1 }
+    },
+    {
+      "id": "openrouter-tbc-mischief-1-first-frame",
+      "match": { "mediaFormat": "openrouter", "modelIds": ["tbc/mischief-1"] },
+      "text": "This model needs exactly one image, as the first frame (images_as: frames). OpenRouter refuses a request with no first frame (HTTP 400, at no cost); a reference image is no first frame.",
+      "source": "OpenRouter's answer to a request with no image: \"TBC video requires exactly one frame_images entry with frame_type first_frame\"",
+      "checked": "2026-11-13",
+      "limit": { "minImages": 1, "maxImages": 1 }
     }
   ]
 }

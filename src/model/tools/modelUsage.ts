@@ -64,6 +64,7 @@ export const USAGE_TEXTS = {
   fitted: 'Dez sends a fitted copy (cropped or scaled) of an image that breaks `dez.images.size`.',
   limits: 'Dez refuses an image that breaks `dez.images.limits`.',
   frames: 'The first one is the first frame of the video, and the second one is the last frame.',
+  firstFrame: 'It is the first frame of the video.',
   // No request field sets this: a model that starts from a frame keeps the
   // shape of that frame (the square clips of a square first image), and
   // nothing else tells the calling model so.
@@ -220,17 +221,18 @@ function inputImagesUsage(kind: MediaKind, model: ModelInfo): string[] {
   // image (`dez.model/streamMessagesForTab`), so only the fallback of
   // `mediaRequestInput` gives one.
   if (model.imageInput === false) return [takesNewest ? USAGE_TEXTS.newestImageOnly : USAGE_TEXTS.noImagesRead]
-  const role = model.images?.references ? USAGE_TEXTS.videoReferences : MEDIA_USAGE[kind].images
+  const frames = !model.images?.references && MEDIA_USAGE[kind].images === USAGE_TEXTS.frames
+  const role = model.images?.references ? USAGE_TEXTS.videoReferences : frames && max === 1 ? USAGE_TEXTS.firstFrame : MEDIA_USAGE[kind].images
   // A video request with a reference clip sends its images as references
   // too, whatever the image rules (OpenRouter: frames would drop the clips;
   // mediaFormats.ts). A background clip keeps the frames (Venice).
-  const clipsMakeReferences = role === USAGE_TEXTS.frames && (model.clips?.audio?.use === 'reference' || model.clips?.video?.use === 'reference')
+  const clipsMakeReferences = frames && (model.clips?.audio?.use === 'reference' || model.clips?.video?.use === 'reference')
   // A video clip takes the place of the newest image (`mediaRequestInput`).
   const newest = model.clips?.video ? USAGE_TEXTS.newestImageOrVideo : USAGE_TEXTS.newestImage
   return [
     `It takes ${takenImages(min, max)} of the message (pasted, or named with @id)${max === 1 ? '' : ', in text order'}.`,
     ...(role === undefined ? [] : [role]),
-    ...(role === USAGE_TEXTS.frames ? [USAGE_TEXTS.frameShape] : []),
+    ...(frames ? [USAGE_TEXTS.frameShape] : []),
     ...(clipsMakeReferences ? [USAGE_TEXTS.clipsMakeReferences] : []),
     ...(takesNewest ? [newest] : []),
   ]
