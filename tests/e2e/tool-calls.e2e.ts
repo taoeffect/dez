@@ -6,13 +6,13 @@ import { MAX_TOOL_ROUNDS, ROUND_LIMIT_TOOL_RESULT, roundsLeftNote } from '../../
 import { unknownToolText } from '../../src/model/tools/registry'
 import { anthropicChatBody, anthropicMarkedUser, openAiChatBody } from './harness/chatBody'
 import { consoleErrors, pointerClick, resetConsoleErrors, screenshotOnFailure, typeKeys, waitForValue } from './harness/dom'
-import { conversationFilePath, filesIn, makeConversation, seedConversation, workDir } from './harness/fixtures'
+import { appFilePath, conversationFilePath, filesIn, makeConversation, seedConversation, workDir, writeTestFile } from './harness/fixtures'
 import { decodedImage, generatedImagesDir, pasteImageReference, pngDataUrl, shownImages, STRIPE_COLORS, STRIPES_PNG, STRIPES_SVG, WEBKIT_SVG_SIZES } from './harness/images'
 import { WAV_SAMPLE_RATE, monoWav, shownPlayers } from './harness/media'
 import { startMockProviderApp, type MockProviderApp } from './harness/mockProviderApp'
 import { mockChatPath, openAiToolCall, replyText, sendAnthropicReply, sendChatReply, sendToolCalls, startEventStream, toolResult, writeAnthropicEvent, writeChatFrame, type MockProvider } from './harness/mockServer'
 import type { E2EBrowser } from './harness/session'
-import { activeConversationId, activeTabStreaming, docPos, editorCaret, editorDoc, focusEditor, focusedArea, newTab, openToasts, pickModel, sbpCall, setCaret, submit, threadSections, waitForThread, type ThreadSection } from './harness/thread'
+import { activeConversationId, activeTabStreaming, docPos, editorCaret, editorDoc, focusEditor, focusedArea, newTab, openSeededConversation, openToasts, pickModel, sbpCall, setCaret, submit, threadSections, waitForThread, type ThreadSection } from './harness/thread'
 import { pressToolChip, toolChips, toolPanel, type ToolChipView } from './harness/toolChips'
 
 // Tool calls, driven through the real app against a mock server in this
@@ -151,22 +151,10 @@ describe('tool calls', () => {
   // (SONG_WAV), and chooses the mock model. Gives the folder of the
   // generated audio, the file of the clip, and its tag.
   async function openSongConversation (id: string): Promise<{ audioDir: string, songPath: string, songTag: string }> {
-    const audioDir = path.join(setup.app.home, '.config', 'dez', 'assets', 'generated', 'audio')
-    const songPath = path.join(audioDir, 'song.wav')
-    await fs.promises.mkdir(audioDir, { recursive: true })
-    await fs.promises.writeFile(songPath, SONG_WAV)
+    const audioDir = appFilePath(setup.app.home, 'assets', 'generated', 'audio')
+    const songPath = await writeTestFile(path.join(audioDir, 'song.wav'), SONG_WAV)
     const songTag = `<dez:audio id="a" type="audio/wav" src="${songPath}"/>`
-    await seedConversation(setup.app.home, makeConversation({
-      id,
-      title: 'A song',
-      sections: [
-        { role: 'user', nodes: [{ kind: 'text', text: 'Make a song.' }] },
-        { role: 'agent', nodes: [{ kind: 'text', text: songTag }] },
-        { role: 'user', nodes: [{ kind: 'text', text: '' }] },
-      ],
-    }))
-    await sbpCall(browser, 'dez.model/tabs/openConversation', id)
-    await waitForThread(browser, [{ role: 'user', text: 'Make a song.' }, { role: 'agent', text: songTag }, { role: 'user', text: '' }])
+    await openSeededConversation(browser, setup.app.home, id, [{ role: 'user', text: 'Make a song.' }, { role: 'agent', text: songTag }, { role: 'user', text: '' }])
     await pickModel(browser, TOOLER.name, TOOLER.modelName)
     return { audioDir, songPath, songTag }
   }

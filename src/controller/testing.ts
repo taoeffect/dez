@@ -1,13 +1,14 @@
 import sbp from '@sbp/sbp'
-import { expect } from 'vitest'
+import { expect, vi } from 'vitest'
 import { ToolError } from '../model/tools/types'
 import type { NativeDownloadRule, NativeHttpDownload, NativeHttpRequest } from '../utils/protocol/nativeHttp'
+import type { JobOutcome, JobWork } from './jobs'
 import type { AppFileEntry, AppFileRef, BundledToolEnd, BundledToolOutput, BundledToolRun } from './nativeTypes'
 
 // Shared helpers of the unit tests of the controller code that runs the
 // programs that Dez ships (videoTool.ts, audioTool.ts, and the tool calls
-// of tools.ts and stream.ts): a stub of the native side, and helpers for
-// the work of a call.
+// of tools.ts and stream.ts) and the jobs of a reply (jobs.ts): a stub of
+// the native side, and helpers for the work of a call or a job.
 //
 // An import of this module registers the stub selectors of the app
 // folders, the files, the downloads, and the program runs
@@ -114,6 +115,36 @@ sbp('sbp/selectors/register', {
 /** A signal that never stops. */
 export function running(): AbortSignal {
   return new AbortController().signal
+}
+
+/** The options of a job whose time limit no test reaches. */
+export const LONG = { timeoutMs: 600_000 }
+
+/** Lets the promise callbacks that are due run, such as those of a work
+ *  that ended. Only for a test with fake timers. */
+export const settled = () => vi.advanceTimersByTimeAsync(0)
+
+/** The work of a job that its test ends by hand. */
+export interface HeldWork {
+  work: JobWork
+  finish (outcome?: Partial<JobOutcome>): void
+  /** The signal and the state writer that the job gave its work. */
+  signal (): AbortSignal
+  report (state: string): void
+}
+
+export function heldWork(): HeldWork {
+  let resolveWork!: (outcome: JobOutcome) => void
+  let seen!: { signal: AbortSignal, report: (state: string) => void }
+  return {
+    work: (signal, report) => {
+      seen = { signal, report }
+      return new Promise<JobOutcome>((resolve) => { resolveWork = resolve })
+    },
+    finish: (outcome = {}) => resolveWork({ text: '', isError: false, assets: [], ...outcome }),
+    signal: () => seen.signal,
+    report: (state) => seen.report(state),
+  }
 }
 
 /** The error of a work that must fail. */

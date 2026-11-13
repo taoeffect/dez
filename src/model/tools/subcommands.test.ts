@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import { parseToolArguments } from './arguments'
 import { parseSubcommandCall, subcommandToolDefinition, type SubcommandTool } from './subcommands'
-import { ToolError } from './types'
+import { refusal } from './testing'
 
 const TOOL: SubcommandTool = {
   name: 'sound',
@@ -44,16 +44,6 @@ const CUT_HELP = [
   '- start (number, optional): The start in seconds.',
   `Example call: ${CUT_CALL}`,
 ].join('\n')
-
-function errorOf(call: () => unknown): string {
-  try {
-    call()
-  } catch (error) {
-    expect(error).toBeInstanceOf(ToolError)
-    return (error as ToolError).message
-  }
-  throw new Error('The call did not throw.')
-}
 
 describe('subcommandToolDefinition', () => {
   it('names the subcommands and how to list them and get their details, with two optional text arguments', () => {
@@ -144,30 +134,30 @@ describe('parseSubcommandCall', () => {
   })
 
   it('refuses parameters with no command, and lists the subcommands', () => {
-    expect(errorOf(() => parseSubcommandCall(TOOL, { parameters: '{"sound": "b"}' })))
+    expect(refusal(() => parseSubcommandCall(TOOL, { parameters: '{"sound": "b"}' })))
       .toBe(`The call gives "parameters" but no "command". Give the name of the subcommand in "command". ${LIST}`)
   })
 
   it('refuses an unknown subcommand, also one that help names, and lists the subcommands', () => {
     const unknown = `The sound tool has no subcommand "Cut". ${LIST}`
-    expect(errorOf(() => parseSubcommandCall(TOOL, { command: 'Cut' }))).toBe(unknown)
-    expect(errorOf(() => parseSubcommandCall(TOOL, { command: 'help', parameters: '{"command": "Cut"}' }))).toBe(unknown)
+    expect(refusal(() => parseSubcommandCall(TOOL, { command: 'Cut' }))).toBe(unknown)
+    expect(refusal(() => parseSubcommandCall(TOOL, { command: 'help', parameters: '{"command": "Cut"}' }))).toBe(unknown)
   })
 
   it('refuses parameters that are not the text of a JSON object, with an example call', () => {
     const error = `"parameters" is not the text of a JSON object. Give the parameters of sound cut as the text of one JSON object, as in ${CUT_CALL}.`
     for (const parameters of ['{"sound":', '["b"]', 'null', '"b"']) {
-      expect(errorOf(() => parseSubcommandCall(TOOL, { command: 'cut', parameters }))).toBe(error)
+      expect(refusal(() => parseSubcommandCall(TOOL, { command: 'cut', parameters }))).toBe(error)
     }
   })
 
   it('refuses parameters that the subcommand does not take, and tells where they go', () => {
     const where = `The parameters go in "parameters" as the text of a JSON object, as in ${CUT_CALL}.`
-    expect(errorOf(() => parseSubcommandCall(TOOL, { command: 'cut', parameters: '{"sound": "b", "end": 3}' })))
+    expect(refusal(() => parseSubcommandCall(TOOL, { command: 'cut', parameters: '{"sound": "b", "end": 3}' })))
       .toBe(`sound cut has no parameter "end". The parameters of sound cut are: sound (string, required), start (number). ${where}`)
-    expect(errorOf(() => parseSubcommandCall(TOOL, { command: 'cut', parameters: '{"start": 3}' })))
+    expect(refusal(() => parseSubcommandCall(TOOL, { command: 'cut', parameters: '{"start": 3}' })))
       .toBe(`The required parameter "sound" is missing. Add it as a string, as in {"sound": "..."}. ${where}`)
-    expect(errorOf(() => parseSubcommandCall(TOOL, { command: 'cut', parameters: '{"sound": "b", "start": "3"}' })))
+    expect(refusal(() => parseSubcommandCall(TOOL, { command: 'cut', parameters: '{"sound": "b", "start": "3"}' })))
       .toBe(`The parameter "start" must be a number, as in {"start": 1.5}. ${where}`)
   })
 })

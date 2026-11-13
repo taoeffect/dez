@@ -3,6 +3,7 @@ import type { ModelCache } from '../persistence/types'
 import { providerInfo } from '../providers/testing'
 import type { ModelInfo } from '../providers/types'
 import { namedModelTarget, nearModelIds, parameterValuesArgument } from './modelArguments'
+import { refusal } from './testing'
 import { ToolError } from './types'
 
 const OPENROUTER = providerInfo('openrouter', 'OpenRouter')
@@ -36,18 +37,11 @@ describe('namedModelTarget', () => {
   })
 
   it('tells a tool that needs `model` nothing about a call with no `model`', () => {
-    const refusal = (advice?: string) => {
-      try {
-        namedModelTarget(CACHE, [OPENROUTER], 'grok-video', advice)
-      } catch (error) {
-        return (error as ToolError).message
-      }
-      return ''
-    }
+    const refusalWith = (advice?: string) => refusal(() => namedModelTarget(CACHE, [OPENROUTER], 'grok-video', advice))
 
-    expect(refusal()).toContain('is not a full model id')
-    expect(refusal()).not.toContain('Leave out')
-    expect(refusal('Leave out `model`.')).toBe(`${refusal()} Leave out \`model\`.`)
+    expect(refusalWith()).toContain('is not a full model id')
+    expect(refusalWith()).not.toContain('Leave out')
+    expect(refusalWith('Leave out `model`.')).toBe(`${refusalWith()} Leave out \`model\`.`)
   })
 
   // A model that copies an id from memory gets the id that it meant, so

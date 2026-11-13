@@ -23,7 +23,7 @@ import { NO_MODELS_TEXT } from '../model/tools/modelList'
 import { TOOL_DEFINITIONS, unknownToolText } from '../model/tools/registry'
 import type { ToastData } from '../view/toast/selectors'
 import { ExplainedError, UNEXPECTED_ERROR } from '../utils/errorText'
-import { APP_DIR, audioProgress, native, resetNative, writes } from './testing'
+import { APP_DIR, audioProgress, native, resetNative, settled, writes } from './testing'
 // Side-effect imports: register the dez.model/* selectors and the selectors
 // under test.
 import '../model/state/index'
@@ -2275,10 +2275,6 @@ describe('dez.stream/start jobs', () => {
   // the request, and the provider's answer or refusal, which only the test
   // gives.
   let jobs: Array<{ signal: AbortSignal, end: (result: ProviderGenerateMediaResult) => void, fail: (error: Error) => void }> = []
-
-  // Lets the promise callbacks that are due run, on the fake clock: the
-  // reply then waits for something that only the test ends.
-  const settled = () => vi.advanceTimersByTimeAsync(0)
 
   // The result of the call `callId` of the reply, and the id of the job
   // that it started.

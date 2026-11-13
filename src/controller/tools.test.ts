@@ -20,7 +20,7 @@ import { ExplainedError } from '../utils/errorText'
 import { ReplyJobs, type JobOutcome } from './jobs'
 import { invokeModel } from './modelInvoke'
 import type { BundledToolEnd } from './nativeTypes'
-import { APP_DIR, audioProgress, ENDED, native, resetNative, writes } from './testing'
+import { APP_DIR, audioProgress, ENDED, heldWork, LONG, native, resetNative, writes } from './testing'
 import type { ToolRunCall, ToolRunContext } from './tools'
 // Side-effect imports: register the dez.model/* selectors and the selector
 // under test.
@@ -742,7 +742,6 @@ describe('dez.controller/tools/run', () => {
   describe('the job tools', () => {
     const IMAGE = '/home/u/.config/dez/assets/generated/images/job.png'
     const SONG = '/home/u/.config/dez/assets/generated/audio/job.mp3'
-    const LONG = { timeoutMs: 600_000 }
     let jobs: ReplyJobs
     // The tab of the calls; none for the tools that read no conversation.
     let tabId: string
@@ -766,13 +765,6 @@ describe('dez.controller/tools/run', () => {
         },
       }
       return sbp('dez.controller/tools/run', { name, arguments: args }, signal, context) as Promise<ToolRunResult>
-    }
-
-    // A work that ends when its test calls `finish`.
-    function heldWork(): { work: () => Promise<JobOutcome>, finish: (outcome: JobOutcome) => void } {
-      let finish!: (outcome: JobOutcome) => void
-      const done = new Promise<JobOutcome>((resolve) => { finish = resolve })
-      return { work: () => done, finish }
     }
 
     beforeEach(() => {

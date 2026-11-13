@@ -17,7 +17,7 @@ import {
   audioRunDetails,
   writtenAudioSeconds,
 } from './audioTool'
-import { ToolError } from './types'
+import { refusal } from './testing'
 
 const SONG: MediaTagData = { kind: 'audio', id: 'b', type: 'audio/mpeg', src: 'https://cdn.example/b.mp3', url: 'https://cdn.example/b.mp3', expires: null, other: [] }
 const VIDEO: MediaTagData = { kind: 'video', id: 'c', type: 'video/mp4', src: null, url: null, expires: null, other: [] }
@@ -25,16 +25,6 @@ const IMAGE = '![/home/u/.config/dez/assets/images/red.png](id=a)'
 
 function section(role: Section['role'], text: string): Section {
   return { id: crypto.randomUUID(), role, content: [{ kind: 'text', text }] }
-}
-
-function errorOf(call: () => unknown): string {
-  try {
-    call()
-  } catch (error) {
-    expect(error).toBeInstanceOf(ToolError)
-    return (error as ToolError).message
-  }
-  throw new Error('The call did not throw.')
 }
 
 describe('AUDIO_TOOL', () => {
@@ -52,7 +42,7 @@ describe('audioClipId', () => {
 
   it('refuses a text that is not an id', () => {
     for (const clip of ['B', '@', '', 'b1', 'clip b']) {
-      expect(errorOf(() => audioClipId({ clip }))).toBe(`${JSON.stringify(clip)} is not a clip id. A clip id is lower-case letters, as in "b" or "@b".`)
+      expect(refusal(() => audioClipId({ clip }))).toBe(`${JSON.stringify(clip)} is not a clip id. A clip id is lower-case letters, as in "b" or "@b".`)
     }
   })
 })
@@ -73,13 +63,13 @@ describe('audioClipOf', () => {
 
   it('tells the model that an id names a video clip or an image', () => {
     const sections = [section('user', `Look: ${IMAGE}`), section('agent', mediaTagText(VIDEO))]
-    expect(errorOf(() => audioClipOf(sections, 'c'))).toBe('@c is a video clip. The audio tool works on audio clips only.')
-    expect(errorOf(() => audioClipOf(sections, 'a'))).toBe('@a is an image. The audio tool works on audio clips only.')
+    expect(refusal(() => audioClipOf(sections, 'c'))).toBe('@c is a video clip. The audio tool works on audio clips only.')
+    expect(refusal(() => audioClipOf(sections, 'a'))).toBe('@a is an image. The audio tool works on audio clips only.')
   })
 
   it('lists the audio clips, each once, for an id that names nothing', () => {
     const sections = [section('agent', `${mediaTagText(SONG)}\n${mediaTagText({ ...SONG, id: 'd' })}`), section('agent', mediaTagText(SONG))]
-    expect(errorOf(() => audioClipOf(sections, 'e'))).toBe('No audio clip of this conversation has the id @e. Its audio clips are @b, @d: call again with one of these ids.')
+    expect(refusal(() => audioClipOf(sections, 'e'))).toBe('No audio clip of this conversation has the id @e. Its audio clips are @b, @d: call again with one of these ids.')
   })
 })
 
@@ -95,10 +85,10 @@ describe('audioCutRequest', () => {
   })
 
   it('refuses a start before 0, and an end that is not after the start', () => {
-    expect(errorOf(() => audioCutRequest({ clip: 'b', start: -1 })))
+    expect(refusal(() => audioCutRequest({ clip: 'b', start: -1 })))
       .toBe('"start" must be 0 or more. Give 0, or leave it out, to start at the start of the clip.')
-    expect(errorOf(() => audioCutRequest({ clip: 'b', start: 5, end: 5 }))).toBe('"end" (5) must be after "start" (5).')
-    expect(errorOf(() => audioCutRequest({ clip: 'b', end: 0 }))).toBe('"end" (0) must be after "start" (0).')
+    expect(refusal(() => audioCutRequest({ clip: 'b', start: 5, end: 5 }))).toBe('"end" (5) must be after "start" (5).')
+    expect(refusal(() => audioCutRequest({ clip: 'b', end: 0 }))).toBe('"end" (0) must be after "start" (0).')
   })
 })
 

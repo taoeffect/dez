@@ -7,7 +7,8 @@ import { providerInfo } from '../providers/testing'
 import type { ModelInfo } from '../providers/types'
 import { reply, user } from '../streams/testing'
 import { answerIsCut, DEFAULT_INVOKE_TIMEOUT_SECONDS, INVOCATION_TEXT_CAP, invocationAnswerStateText, invocationAnswerText, invocationFailedText, invocationInputsText, invocationStateText, invocationTextResult, MODEL_INVOKE_TOOL, modelInvocation, type ChatInvocation, type MediaInvocation, type ModelInvocation } from './modelInvoke'
-import { ToolError, type ToolArguments } from './types'
+import { refusal } from './testing'
+import type { ToolArguments } from './types'
 
 const VENICE = providerInfo('venice', 'Venice')
 
@@ -78,17 +79,6 @@ function chatInvocation(args: ToolArguments, facts?: CallFacts): ChatInvocation 
   return call
 }
 
-// The text of the refusal of a call.
-function refusal(args: ToolArguments, facts?: CallFacts): string {
-  try {
-    anyInvocation(args, facts)
-  } catch (error) {
-    if (error instanceof ToolError) return error.message
-    throw error
-  }
-  throw new Error('The call was not refused.')
-}
-
 describe('MODEL_INVOKE_TOOL', () => {
   it('takes the model and the prompt, and tells the default time limit in words', () => {
     expect(MODEL_INVOKE_TOOL.parameters.map(({ name, required }) => [name, required])).toStrictEqual([
@@ -125,20 +115,20 @@ describe('modelInvocation', () => {
   })
 
   it('refuses a model that the user cannot use, and points to model_list', () => {
-    const text = refusal({ model: 'venice/gone', prompt: 'A fox.' })
+    const text = refusal(() => anyInvocation({ model: 'venice/gone', prompt: 'A fox.' }))
 
     expect(text).toContain('"venice/gone"')
     expect(text).toContain('model_list')
     // The advice of `model_info`, whose `model` is optional.
     expect(text).not.toContain('Leave out')
-    expect(refusal({ prompt: 'A fox.' })).toContain('is not a full model id')
+    expect(refusal(() => anyInvocation({ prompt: 'A fox.' }))).toContain('is not a full model id')
   })
 
   it.each([
     ['a model that Dez has no request for', 'venice/other-api', 'Other', 'cannot use'],
     ['a model whose images Dez cannot store', 'venice/tiff-only', 'Tiffer', 'TIFF'],
   ])('refuses %s, and points to model_list', (_name, model, modelName, cause) => {
-    const text = refusal({ model, prompt: 'A fox.' })
+    const text = refusal(() => anyInvocation({ model, prompt: 'A fox.' }))
 
     expect(text).toContain(modelName)
     expect(text).toContain(cause)
@@ -150,7 +140,7 @@ describe('modelInvocation', () => {
   })
 
   it.each([9, 3601, 0, -5, 60.5])('refuses a time limit of %d seconds, and tells the range', (seconds) => {
-    const text = refusal({ model: 'venice/painter', prompt: 'A fox.', timeout_seconds: seconds })
+    const text = refusal(() => anyInvocation({ model: 'venice/painter', prompt: 'A fox.', timeout_seconds: seconds }))
 
     expect(text).toContain('`timeout_seconds`')
     expect(text).toContain('10 to 3600')
@@ -165,7 +155,7 @@ describe('modelInvocation', () => {
   })
 
   it('refuses a parameter value that the model does not take', () => {
-    expect(refusal({ model: 'venice/filmer', prompt: 'A fox runs.', parameters: '{"duration": "7s"}' })).toContain('"duration"')
+    expect(refusal(() => anyInvocation({ model: 'venice/filmer', prompt: 'A fox runs.', parameters: '{"duration": "7s"}' }))).toContain('"duration"')
   })
 
   // More inputs than the model takes would leave out one that the caller
@@ -173,18 +163,18 @@ describe('modelInvocation', () => {
   it('checks the inputs against the image rules of the request\'s parameter values', () => {
     const prompt = 'A film of @a, @b, and @d.'
 
-    expect(refusal({ model: 'venice/filmer', prompt })).toContain('2 images')
+    expect(refusal(() => anyInvocation({ model: 'venice/filmer', prompt }))).toContain('2 images')
     expect(invocation({ model: 'venice/filmer', prompt, parameters: '{"images_as": "references"}' }).request.images).toStrictEqual([FOX, RED, SKY])
     expect(invocation({ model: 'venice/filmer', prompt }, { modelParameters: { 'venice/filmer': { images_as: 'references' } } }).request.images).toStrictEqual([FOX, RED, SKY])
   })
 
   it('refuses an input that the model does not take', () => {
-    expect(refusal({ model: 'venice/speaker', prompt: 'Read the sign of @a.' })).toContain('Speaker takes no input image')
-    expect(refusal({ model: 'venice/scribe', prompt: 'Write it down.' })).toContain('audio clip')
+    expect(refusal(() => anyInvocation({ model: 'venice/speaker', prompt: 'Read the sign of @a.' }))).toContain('Speaker takes no input image')
+    expect(refusal(() => anyInvocation({ model: 'venice/scribe', prompt: 'Write it down.' }))).toContain('audio clip')
   })
 
   it('refuses an @id that names nothing, and tells the ids of the conversation', () => {
-    const text = refusal({ model: 'venice/painter', prompt: 'A fox as in @z, with @a.' })
+    const text = refusal(() => anyInvocation({ model: 'venice/painter', prompt: 'A fox as in @z, with @a.' }))
 
     expect(text).toContain('@z names no image and no clip')
     expect(text).toContain('the image @b, the image @d, the image @a, the audio clip @c')
@@ -192,7 +182,7 @@ describe('modelInvocation', () => {
   })
 
   it('tells a prompt with an @id that the conversation has no image and no clip', () => {
-    expect(refusal({ model: 'venice/painter', prompt: 'A fox as in @a.' }, { sections: [user('u1', 'Hello')] })).toContain('it has none')
+    expect(refusal(() => anyInvocation({ model: 'venice/painter', prompt: 'A fox as in @a.' }, { sections: [user('u1', 'Hello')] }))).toContain('it has none')
   })
 
   // The next free id of the conversation is `e`: a longer word is no id.
@@ -201,8 +191,8 @@ describe('modelInvocation', () => {
   })
 
   it.each(['', '  \n'])('refuses the blank prompt %j for a model that needs a text', (prompt) => {
-    expect(refusal({ model: 'venice/painter', prompt })).toContain('`prompt` has no text')
-    expect(refusal({ model: 'venice/painter' })).toContain('`prompt` has no text')
+    expect(refusal(() => anyInvocation({ model: 'venice/painter', prompt }))).toContain('`prompt` has no text')
+    expect(refusal(() => anyInvocation({ model: 'venice/painter' }))).toContain('`prompt` has no text')
   })
 })
 
@@ -259,7 +249,7 @@ describe('modelInvocation for a text model', () => {
   })
 
   it('refuses a clip, which no chat request carries', () => {
-    const text = refusal({ model: 'venice/chatter', prompt: 'What does @c say about @a?' })
+    const text = refusal(() => anyInvocation({ model: 'venice/chatter', prompt: 'What does @c say about @a?' }))
 
     expect(text).toContain('Chatter takes no audio clip')
     expect(text).toContain('`prompt`')
@@ -268,20 +258,20 @@ describe('modelInvocation for a text model', () => {
   // A user message sends such a model the reference as text; a calling
   // model would get an answer about an image that the model never got.
   it('refuses an image for a model that is known not to read images', () => {
-    expect(refusal({ model: 'venice/blind', prompt: 'What does @a show?' })).toContain('Blind takes no input image')
+    expect(refusal(() => anyInvocation({ model: 'venice/blind', prompt: 'What does @a show?' }))).toContain('Blind takes no input image')
     expect(chatInvocation({ model: 'venice/blind', prompt: 'Name three foxes.' }).content).toBe('Name three foxes.')
   })
 
   it('refuses an @id that names nothing', () => {
-    expect(refusal({ model: 'venice/chatter', prompt: 'What does @z show?' })).toContain('@z names no image and no clip')
+    expect(refusal(() => anyInvocation({ model: 'venice/chatter', prompt: 'What does @z show?' }))).toContain('@z names no image and no clip')
   })
 
   it.each(['', '  \n'])('refuses the blank prompt %j', (prompt) => {
-    expect(refusal({ model: 'venice/chatter', prompt })).toContain('`prompt` has no text')
+    expect(refusal(() => anyInvocation({ model: 'venice/chatter', prompt }))).toContain('`prompt` has no text')
   })
 
   it('refuses a parameter value, as a text model has no parameters', () => {
-    expect(refusal({ model: 'venice/chatter', prompt: 'A fox.', parameters: '{"temperature": 1}' })).toContain('leave out `parameters`')
+    expect(refusal(() => anyInvocation({ model: 'venice/chatter', prompt: 'A fox.', parameters: '{"temperature": 1}' }))).toContain('leave out `parameters`')
     expect(chatInvocation({ model: 'venice/chatter', prompt: 'A fox.', parameters: '{}' }).content).toBe('A fox.')
   })
 })

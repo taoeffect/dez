@@ -2,11 +2,12 @@ import sbp from '@sbp/sbp'
 import { afterEach, beforeEach, describe, expect, it, vi, type MockInstance } from 'vitest'
 import { JOB_LIMIT_TEXT, MAX_JOBS_PER_REPLY } from '../model/tools/jobs'
 import { ToolError } from '../model/tools/types'
-import { discardJobAssets, ReplyJobs, writeJobAssets, type EndedJob, type JobAsset, type JobOutcome, type JobWork } from './jobs'
+import { discardJobAssets, ReplyJobs, writeJobAssets, type EndedJob, type JobAsset } from './jobs'
+import { APP_DIR, CACHE_DIR, heldWork, LONG, native, resetNative, running, settled } from './testing'
 
-const IMAGE = '/home/u/.config/dez/assets/generated/images/made.png'
-const SAVED_CLIP = '/home/u/.config/dez/assets/generated/audio/made.wav'
-const TEMP_CLIP = '/home/u/.cache/dez/media/made.mp4'
+const IMAGE = `${APP_DIR}/assets/generated/images/made.png`
+const SAVED_CLIP = `${APP_DIR}/assets/generated/audio/made.wav`
+const TEMP_CLIP = `${CACHE_DIR}/media/made.mp4`
 const URL_CLIP = 'https://clips.test/made.mp4'
 
 const image: JobAsset = { kind: 'image', path: IMAGE }
@@ -17,10 +18,10 @@ const clip = (src: string | null, url: string | null = null, jobId?: string): Jo
 })
 
 // The stub stores: the files that were deleted, and an error that the
-// delete of an image throws (set by a test).
+// delete of an image throws (set by a test). The native side is the stub
+// of testing.ts.
 let deletedImages: string[] = []
 let deletedClips: string[] = []
-let deletedFiles: { path: string, root: string }[] = []
 let imageDeleteError: Error | undefined
 
 sbp('sbp/selectors/register', {
@@ -31,40 +32,7 @@ sbp('sbp/selectors/register', {
   async 'dez.controller/media/delete' (path: string): Promise<void> {
     deletedClips.push(path)
   },
-  async 'dez.native/getAppDir' (root: string): Promise<string> {
-    return root === 'cache' ? '/home/u/.cache/dez' : '/home/u/.config/dez'
-  },
-  async 'dez.native/deleteAppFile' (path: string, root: string): Promise<void> {
-    deletedFiles.push({ path, root })
-  },
 })
-
-// A work that its test ends by hand.
-interface HeldWork {
-  work: JobWork
-  finish (outcome?: Partial<JobOutcome>): void
-  signal (): AbortSignal
-  report (state: string): void
-}
-
-function heldWork(): HeldWork {
-  let resolveWork!: (outcome: JobOutcome) => void
-  let seen!: { signal: AbortSignal, report: (state: string) => void }
-  return {
-    work: (signal, report) => {
-      seen = { signal, report }
-      return new Promise<JobOutcome>((resolve) => { resolveWork = resolve })
-    },
-    finish: (outcome = {}) => resolveWork({ text: '', isError: false, assets: [], ...outcome }),
-    signal: () => seen.signal,
-    report: (state) => seen.report(state),
-  }
-}
-
-const LONG = { timeoutMs: 600_000 }
-const never = new AbortController().signal
-// Lets the promise callbacks of an ended work run.
-const settled = () => vi.advanceTimersByTimeAsync(0)
 
 let jobs: ReplyJobs
 let consoleError: MockInstance<typeof console.error>
@@ -73,9 +41,9 @@ beforeEach(() => {
   vi.useFakeTimers()
   consoleError = vi.spyOn(console, 'error').mockImplementation(() => {})
   jobs = new ReplyJobs()
+  resetNative()
   deletedImages = []
   deletedClips = []
-  deletedFiles = []
   imageDeleteError = undefined
 })
 
@@ -100,7 +68,7 @@ describe('ReplyJobs', () => {
     first.finish({ text: 'The provider refused it.', isError: true, assets: [image] })
     await settled()
 
-    expect(await jobs.wait(never)).toStrictEqual<EndedJob[]>([
+    expect(await jobs.wait(running())).toStrictEqual<EndedJob[]>([
       { id: secondId, tool: 'video', status: 'finished', text: 'Second.', assets: [], hidesAssets: false, call: { number: 2, label: '' } },
       { id: firstId, tool: 'model_invoke', status: 'failed', text: 'The provider refused it.', assets: [image], hidesAssets: false, call: { number: 1, label: 'A red fox' } },
     ])
@@ -113,23 +81,23 @@ describe('ReplyJobs', () => {
     const { id: firstId } = jobs.start('model_invoke', first.work, LONG)
     const { id: secondId } = jobs.start('model_invoke', second.work, LONG)
 
-    const wait = jobs.wait(never)
+    const wait = jobs.wait(running())
     first.finish({ text: 'First.' })
     expect((await wait).map((job) => job.id)).toStrictEqual([firstId])
     expect(jobs.running).toBe(1)
     expect(jobs.hasOpen).toBe(true)
 
-    const next = jobs.wait(never)
+    const next = jobs.wait(running())
     second.finish({ text: 'Second.' })
     expect((await next).map((job) => job.id)).toStrictEqual([secondId])
 
     // No job runs, and every result was given.
     expect(jobs.hasOpen).toBe(false)
-    expect(await jobs.wait(never)).toStrictEqual([])
+    expect(await jobs.wait(running())).toStrictEqual([])
   })
 
   it('gives no result at once when the reply has no job', async () => {
-    expect(await jobs.wait(never)).toStrictEqual([])
+    expect(await jobs.wait(running())).toStrictEqual([])
     expect(await jobs.settle()).toStrictEqual([])
     expect(jobs.hasOpen).toBe(false)
   })
@@ -139,10 +107,10 @@ describe('ReplyJobs', () => {
     const ids = works.map((held) => jobs.start('model_invoke', held.work, LONG).id)
     works[1].finish({ text: 'Second.' })
     await settled()
-    expect((await jobs.wait(never)).map((job) => job.id)).toStrictEqual([ids[1]])
+    expect((await jobs.wait(running())).map((job) => job.id)).toStrictEqual([ids[1]])
 
     let ended: EndedJob[] | undefined
-    void jobs.wait(never, true).then((results) => { ended = results })
+    void jobs.wait(running(), true).then((results) => { ended = results })
     works[2].finish({ text: 'Third.' })
     await settled()
     // One job still runs, so the wait goes on with a result that is ready.
@@ -152,7 +120,7 @@ describe('ReplyJobs', () => {
     await settled()
     expect(ended?.map((job) => [job.id, job.text])).toStrictEqual([[ids[2], 'Third.'], [ids[0], 'First.']])
     expect(jobs.hasOpen).toBe(false)
-    expect(await jobs.wait(never, true)).toStrictEqual([])
+    expect(await jobs.wait(running(), true)).toStrictEqual([])
   })
 
   it('ends a wait whose signal aborts, and the job goes on', async () => {
@@ -170,7 +138,7 @@ describe('ReplyJobs', () => {
 
     // The result is still there for the next reader.
     held.finish({ text: 'Done.' })
-    expect((await jobs.wait(never)).map((job) => job.id)).toStrictEqual([id])
+    expect((await jobs.wait(running())).map((job) => job.id)).toStrictEqual([id])
   })
 
   it('ends a job that takes more than its time limit as timed out, with its last state, and aborts its work', async () => {
@@ -183,7 +151,7 @@ describe('ReplyJobs', () => {
     await vi.advanceTimersByTimeAsync(1)
 
     expect(held.signal().aborted).toBe(true)
-    expect(await jobs.wait(never)).toStrictEqual<EndedJob[]>([{
+    expect(await jobs.wait(running())).toStrictEqual<EndedJob[]>([{
       id,
       tool: 'model_invoke',
       status: 'timed out',
@@ -201,15 +169,15 @@ describe('ReplyJobs', () => {
     const held = heldWork()
     jobs.start('model_invoke', held.work, { timeoutMs: 1000 })
     await vi.advanceTimersByTimeAsync(1000)
-    await jobs.wait(never)
+    await jobs.wait(running())
 
     held.finish({ text: 'Late.', assets: [image, clip(SAVED_CLIP), clip(TEMP_CLIP, URL_CLIP), clip(URL_CLIP, URL_CLIP)] })
     await settled()
 
-    expect(await jobs.wait(never)).toStrictEqual([])
+    expect(await jobs.wait(running())).toStrictEqual([])
     expect(deletedImages).toStrictEqual([IMAGE])
     expect(deletedClips).toStrictEqual([SAVED_CLIP])
-    expect(deletedFiles).toStrictEqual([{ path: 'media/made.mp4', root: 'cache' }])
+    expect(native.deletedFiles).toStrictEqual([{ root: 'cache', path: 'media/made.mp4', folder: false }])
     expect(jobs.list()[0].status).toBe('timed out')
     expect(consoleError).not.toHaveBeenCalled()
   })
@@ -220,7 +188,7 @@ describe('ReplyJobs', () => {
     held.finish({ text: 'Done.' })
     await vi.advanceTimersByTimeAsync(5000)
 
-    expect((await jobs.wait(never)).map((job) => job.status)).toStrictEqual(['finished'])
+    expect((await jobs.wait(running())).map((job) => job.status)).toStrictEqual(['finished'])
   })
 
   it('fails a job whose work throws: the text of a ToolError, else a text with no detail of the error, and logs it', async () => {
@@ -229,7 +197,7 @@ describe('ReplyJobs', () => {
     const broken = jobs.start('video', () => { throw new Error('Failed to read /home/u/.config/dez/assets/x.png') }, LONG).id
     await settled()
 
-    const ended = new Map((await jobs.wait(never)).map((job) => [job.id, job]))
+    const ended = new Map((await jobs.wait(running())).map((job) => [job.id, job]))
     expect(ended.get(refused)).toMatchObject({ status: 'failed', text: 'The model takes no image.\n\nDetails: HTTP 400' })
     expect(ended.get(broken)).toMatchObject({
       status: 'failed',
@@ -256,7 +224,7 @@ describe('ReplyJobs', () => {
       { id: secondId, tool: 'video', status: 'finished', delivered: false, elapsedMs: 3000, state: 'Queued.', call: { number: 2, label: 'join_clips @c @d' } },
     ])
 
-    await jobs.wait(never)
+    await jobs.wait(running())
     // A state that a work reports after its job ended does not count.
     second.report('Late.')
     expect(jobs.list()[1]).toMatchObject({ delivered: true, state: 'Queued.' })
@@ -265,7 +233,7 @@ describe('ReplyJobs', () => {
   it(`starts no job after ${MAX_JOBS_PER_REPLY} jobs of the reply, also when they ended`, async () => {
     for (let count = 0; count < MAX_JOBS_PER_REPLY; count++) jobs.start('model_invoke', async () => ({ text: '', isError: false, assets: [] }), LONG)
     await settled()
-    await jobs.wait(never)
+    await jobs.wait(running())
 
     let started = false
     expect(() => jobs.start('model_invoke', async () => { started = true; return { text: '', isError: false, assets: [] } }, LONG)).toThrow(new ToolError(JOB_LIMIT_TEXT))
@@ -280,7 +248,7 @@ describe('ReplyJobs', () => {
       const { id: firstId } = jobs.start('model_invoke', first.work, LONG)
       const { id: secondId } = jobs.start('model_invoke', second.work, LONG)
       first.finish({ text: 'First.' })
-      await jobs.wait(never)
+      await jobs.wait(running())
 
       let settledJobs: EndedJob[] | undefined
       void jobs.settle().then((ended) => { settledJobs = ended })
@@ -313,7 +281,7 @@ describe('ReplyJobs', () => {
 
       expect(held.signal().aborted).toBe(true)
       expect(await settle).toStrictEqual([])
-      expect(await jobs.wait(never)).toStrictEqual([])
+      expect(await jobs.wait(running())).toStrictEqual([])
       expect(jobs.hasOpen).toBe(false)
 
       // Neither the time limit nor the work changes a job that stopped; the
@@ -347,8 +315,8 @@ describe('ReplyJobs', () => {
       await settled()
 
       expect(deletedImages).toStrictEqual([IMAGE])
-      expect(deletedFiles).toStrictEqual([{ path: 'media/made.mp4', root: 'cache' }])
-      expect(await jobs.wait(never)).toStrictEqual([])
+      expect(native.deletedFiles).toStrictEqual([{ root: 'cache', path: 'media/made.mp4', folder: false }])
+      expect(await jobs.wait(running())).toStrictEqual([])
     })
 
     it('starts no job after it', () => {
@@ -403,7 +371,7 @@ describe('writeJobAssets', () => {
     expect(deletedImages).toStrictEqual([IMAGE])
     expect(deletedClips).toStrictEqual([SAVED_CLIP])
     // A clip at a provider URL has no file.
-    expect(deletedFiles).toStrictEqual([])
+    expect(native.deletedFiles).toStrictEqual([])
   })
 })
 

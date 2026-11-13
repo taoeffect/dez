@@ -4,7 +4,8 @@ import { mediaTagText } from '../chat/mediaTags'
 import type { Section } from '../chat/types'
 import { checkArgumentValues } from './arguments'
 import { brightnessPlan, contrastPlan, convertPlan, cropPlan, flipPlan, IMAGE_TOOL, imageIdArgument, imageOf, imageResultText, invertPlan, MAX_DRAWN_PIXELS, rotatePlan, saturationPlan, scalePlan, unwritableFormatError } from './imageTool'
-import { ToolError, type ToolArguments } from './types'
+import { refusal } from './testing'
+import type { ToolArguments } from './types'
 
 // A wide image: the two sides differ, so a swap of width and height shows.
 const SIZE = { width: 1000, height: 500 }
@@ -16,16 +17,6 @@ const stored = (name: string) => `/home/u/.config/dez/assets/images/${name}`
 
 function section(role: Section['role'], text: string): Section {
   return { id: crypto.randomUUID(), role, content: [{ kind: 'text', text }] }
-}
-
-function errorOf(call: () => unknown): string {
-  try {
-    call()
-  } catch (error) {
-    expect(error).toBeInstanceOf(ToolError)
-    return (error as ToolError).message
-  }
-  throw new Error('The call did not throw.')
 }
 
 describe('IMAGE_TOOL', () => {
@@ -46,7 +37,7 @@ describe('imageIdArgument', () => {
   })
 
   it.each(['', '@', 'A', 'a1', 'image a', '@a @b', 'a.png'])('refuses %j, which is no image id', (image) => {
-    expect(errorOf(() => imageIdArgument({ image }))).toBe(`${JSON.stringify(image)} is not an image id. An image id is lower-case letters, as in "a" or "@a".`)
+    expect(refusal(() => imageIdArgument({ image }))).toBe(`${JSON.stringify(image)} is not an image id. An image id is lower-case letters, as in "a" or "@a".`)
   })
 })
 
@@ -64,8 +55,8 @@ describe('imageOf', () => {
       section('agent', mediaTagText({ kind: 'audio', id: 'b', type: 'audio/mpeg', src: null, url: 'https://cdn.example/b.mp3', expires: null, other: [] })),
       section('agent', mediaTagText({ kind: 'video', id: 'c', type: 'video/mp4', src: null, url: null, expires: null, other: [] })),
     ]
-    expect(errorOf(() => imageOf(sections, 'b'))).toBe('@b is an audio clip. The image tool works on images only.')
-    expect(errorOf(() => imageOf(sections, 'c'))).toBe('@c is a video clip. The image tool works on images only.')
+    expect(refusal(() => imageOf(sections, 'b'))).toBe('@b is an audio clip. The image tool works on images only.')
+    expect(refusal(() => imageOf(sections, 'c'))).toBe('@c is a video clip. The image tool works on images only.')
   })
 
   it('lists the images, each once and in the order they first came, for an id that names nothing', () => {
@@ -73,11 +64,11 @@ describe('imageOf', () => {
       section('user', `![${stored('b.png')}](id=b) ![${stored('a.png')}](id=a) ![${stored('old.png')}]()`),
       section('user', `![${stored('b2.png')}](id=b)`),
     ]
-    expect(errorOf(() => imageOf(sections, 'z'))).toBe('No image of this conversation has the id @z. Its images are @b, @a: call again with one of these ids.')
+    expect(refusal(() => imageOf(sections, 'z'))).toBe('No image of this conversation has the id @z. Its images are @b, @a: call again with one of these ids.')
   })
 
   it('tells the model that the conversation has no images when it has none', () => {
-    expect(errorOf(() => imageOf([section('user', 'Crop @a.')], 'a')))
+    expect(refusal(() => imageOf([section('user', 'Crop @a.')], 'a')))
       .toBe('This conversation has no images, so it has no image @a. Do not call the image tool until the user adds an image to the conversation.')
   })
 })
@@ -110,7 +101,7 @@ describe('cropPlan', () => {
     // 0 is a value, not an absent parameter.
     ['only a zero', { x: 0 }],
   ])('refuses a crop with %s of its four parameters', (_case, crop) => {
-    expect(errorOf(() => cropPlan('a', { image: 'a', ...crop }, SIZE, PNG)))
+    expect(refusal(() => cropPlan('a', { image: 'a', ...crop }, SIZE, PNG)))
       .toBe('A crop needs all four of x, y, width, and height. Give all four, or only `image` to get the size of the image.')
   })
 
@@ -123,7 +114,7 @@ describe('cropPlan', () => {
     ['with no height', { x: 0, y: 0, width: 10, height: 0 }, [0, 0, 10, 1]],
     ['larger than the image', { x: 5, y: 5, width: 2000, height: 100 }, [0, 5, 1000, 100]],
   ])('refuses a part %s, and tells the size of the image and the nearest part inside it', (_case, crop, [x, y, width, height]) => {
-    expect(errorOf(() => cropPlan('a', { image: 'a', ...crop }, SIZE, PNG))).toBe(
+    expect(refusal(() => cropPlan('a', { image: 'a', ...crop }, SIZE, PNG))).toBe(
       `The crop (x ${crop.x}, y ${crop.y}, ${crop.width}x${crop.height} pixels) is not inside the image @a, which is 1000x500 pixels. `
         + 'A crop inside it has x and y of 0 or more, x + width of 1000 or less, and y + height of 500 or less. '
         + `The nearest such crop is x ${x}, y ${y}, width ${width}, height ${height}.`,
@@ -137,7 +128,7 @@ describe('cropPlan', () => {
       width: 7680,
       height: 4320,
     })
-    expect(errorOf(() => cropPlan('a', { image: 'a', x: 0, y: 0, width: 7681, height: 4320 }, huge, PNG)))
+    expect(refusal(() => cropPlan('a', { image: 'a', x: 0, y: 0, width: 7681, height: 4320 }, huge, PNG)))
       .toBe(`The new image would be 7681x4320 pixels. The most is ${MAX_DRAWN_PIXELS} pixels (width times height). Take a smaller part.`)
   })
 })
@@ -167,21 +158,21 @@ describe('scalePlan', () => {
   })
 
   it.each<ToolArguments>([{ width: 0 }, { height: 0 }, { width: -5, height: 10 }])('refuses the size %j', (size) => {
-    expect(errorOf(() => scalePlan('a', { image: 'a', ...size }, SIZE, PNG)))
+    expect(refusal(() => scalePlan('a', { image: 'a', ...size }, SIZE, PNG)))
       .toBe('`width` and `height` must be 1 or more. Leave out one of them to keep the shape of the image.')
   })
 
   it('draws an image of the most pixels, and refuses a larger one with the largest size of its shape', () => {
     expect(scalePlan('a', { image: 'a', width: 7680, height: 4320 }, SIZE, PNG)).toStrictEqual({ crop: WHOLE, width: 7680, height: 4320 })
-    expect(errorOf(() => scalePlan('a', { image: 'a', width: 7681, height: 4320 }, SIZE, PNG))).toBe(
+    expect(refusal(() => scalePlan('a', { image: 'a', width: 7681, height: 4320 }, SIZE, PNG))).toBe(
       `The new image would be 7681x4320 pixels. The most is ${MAX_DRAWN_PIXELS} pixels (width times height). `
         + 'For the same shape, give a `width` of 7680 and a `height` of 4319, or less.',
     )
     // The side that the call leaves out counts too.
-    expect(errorOf(() => scalePlan('a', { image: 'a', width: 10000 }, SIZE, PNG)))
+    expect(refusal(() => scalePlan('a', { image: 'a', width: 10000 }, SIZE, PNG)))
       .toBe('The new image would be 10000x5000 pixels. The most is 33177600 pixels (width times height). For the same shape, give a `width` of 8145 and a `height` of 4072, or less.')
     // A side of one pixel stays at one pixel.
-    expect(errorOf(() => scalePlan('a', { image: 'a', width: 100_000_000, height: 1 }, SIZE, PNG)))
+    expect(refusal(() => scalePlan('a', { image: 'a', width: 100_000_000, height: 1 }, SIZE, PNG)))
       .toContain(`For the same shape, give a \`width\` of ${MAX_DRAWN_PIXELS} and a \`height\` of 1, or less.`)
   })
 })
@@ -202,12 +193,12 @@ describe('flipPlan', () => {
   })
 
   it('refuses a direction that it does not have, and names the two that it has', () => {
-    expect(errorOf(() => flipPlan('a', { image: 'a', direction: 'diagonal' }, SIZE, PNG))).toBe('"diagonal" is not a direction of flip. '
+    expect(refusal(() => flipPlan('a', { image: 'a', direction: 'diagonal' }, SIZE, PNG))).toBe('"diagonal" is not a direction of flip. '
       + 'Give "horizontal" to swap the left and the right of the image, or "vertical" to swap its top and its bottom.')
   })
 
   it('refuses an image over the limit, and tells how to make a smaller image first', () => {
-    expect(errorOf(() => flipPlan('a', { image: 'a', direction: 'vertical' }, HUGE, PNG))).toBe(`${TOO_LARGE}${SCALE_FIRST}then call flip with the new image.`)
+    expect(refusal(() => flipPlan('a', { image: 'a', direction: 'vertical' }, HUGE, PNG))).toBe(`${TOO_LARGE}${SCALE_FIRST}then call flip with the new image.`)
   })
 })
 
@@ -260,26 +251,26 @@ describe('rotatePlan', () => {
   })
 
   it.each(['red', '#ff88', 'constructor', ''])('refuses the fill %j, and names the fills that it takes', (fill) => {
-    expect(errorOf(() => rotatePlan('a', { image: 'a', angle: 45, fill }, SIZE, PNG)))
+    expect(refusal(() => rotatePlan('a', { image: 'a', angle: 45, fill }, SIZE, PNG)))
       .toBe(`${JSON.stringify(fill)} is not a fill of rotate. Give "transparent", "black", "white", or a hex color, as in "#ff8800" or "#f80".`)
   })
 
   it.each([0, 360, -720])('refuses the angle %s, which makes no change', (angle) => {
-    expect(errorOf(() => rotatePlan('a', { image: 'a', angle }, SIZE, PNG))).toBe(`An angle of ${angle} degrees is a whole number of turns, so the new image would be the same as @a. `
+    expect(refusal(() => rotatePlan('a', { image: 'a', angle }, SIZE, PNG))).toBe(`An angle of ${angle} degrees is a whole number of turns, so the new image would be the same as @a. `
       + 'Give an angle that is not a multiple of 360, as in 90 or -90.')
   })
 
   it('refuses a turn that grows the image over the limit, and tells it to keep the size', () => {
-    expect(errorOf(() => rotatePlan('a', { image: 'a', angle: 45 }, { width: 7680, height: 4320 }, PNG))).toBe(
+    expect(refusal(() => rotatePlan('a', { image: 'a', angle: 45 }, { width: 7680, height: 4320 }, PNG))).toBe(
       `The new image would be 8486x8486 pixels. The most is ${MAX_DRAWN_PIXELS} pixels (width times height). Give \`keep_size\` true to keep the size of @a.`,
     )
   })
 
   it('refuses an image over the limit, and tells how to make a smaller image first', () => {
-    expect(errorOf(() => rotatePlan('a', { image: 'a', angle: 90 }, HUGE, PNG))).toBe(`${TOO_LARGE}${SCALE_FIRST}then call rotate with the new image.`)
-    expect(errorOf(() => rotatePlan('a', { image: 'a', angle: 45, keep_size: true }, HUGE, PNG))).toBe(`${TOO_LARGE}${SCALE_FIRST}then call rotate with the new image.`)
+    expect(refusal(() => rotatePlan('a', { image: 'a', angle: 90 }, HUGE, PNG))).toBe(`${TOO_LARGE}${SCALE_FIRST}then call rotate with the new image.`)
+    expect(refusal(() => rotatePlan('a', { image: 'a', angle: 45, keep_size: true }, HUGE, PNG))).toBe(`${TOO_LARGE}${SCALE_FIRST}then call rotate with the new image.`)
     // The turn of the smaller image would grow it over the limit again.
-    expect(errorOf(() => rotatePlan('a', { image: 'a', angle: 45 }, HUGE, PNG)))
+    expect(refusal(() => rotatePlan('a', { image: 'a', angle: 45 }, HUGE, PNG)))
       .toBe(`The new image would be 14143x14143 pixels. The most is ${MAX_DRAWN_PIXELS} pixels (width times height). ${SCALE_FIRST}then call rotate with the new image and \`keep_size\` true.`)
   })
 })
@@ -308,7 +299,7 @@ describe('the color plans', () => {
     ['contrast', '0 makes the image one flat gray, 1 keeps it as it is, and 2 doubles the contrast'],
     ['saturation', '0 makes the image gray, 1 keeps it as it is, and 2 doubles the strength of the colors'],
   ] as const)('%s refuses an amount under 0, and tells what the amounts do', (kind, scale) => {
-    expect(errorOf(() => PLANS[kind]('a', { image: 'a', amount: -0.5 }, SIZE, PNG))).toBe(`An \`amount\` of -0.5 is less than 0. Give 0 or more: ${scale}.`)
+    expect(refusal(() => PLANS[kind]('a', { image: 'a', amount: -0.5 }, SIZE, PNG))).toBe(`An \`amount\` of -0.5 is less than 0. Give 0 or more: ${scale}.`)
   })
 
   it.each([
@@ -316,12 +307,12 @@ describe('the color plans', () => {
     ['contrast', 'less contrast', 'more contrast'],
     ['saturation', 'weaker colors', 'stronger colors'],
   ] as const)('%s refuses an amount of 1, which makes no change', (kind, less, more) => {
-    expect(errorOf(() => PLANS[kind]('a', { image: 'a', amount: 1 }, SIZE, PNG)))
+    expect(refusal(() => PLANS[kind]('a', { image: 'a', amount: 1 }, SIZE, PNG)))
       .toBe(`An \`amount\` of 1 keeps the colors of @a, so the new image would be the same as @a. Give less than 1 for ${less}, or more than 1 for ${more}.`)
   })
 
   it.each(['brightness', 'contrast', 'saturation', 'invert'] as const)('%s refuses an image over the limit, and tells how to make a smaller image first', (kind) => {
-    expect(errorOf(() => PLANS[kind]('a', { image: 'a', amount: 2 }, HUGE, PNG))).toBe(`${TOO_LARGE}${SCALE_FIRST}then call ${kind} with the new image.`)
+    expect(refusal(() => PLANS[kind]('a', { image: 'a', amount: 2 }, HUGE, PNG))).toBe(`${TOO_LARGE}${SCALE_FIRST}then call ${kind} with the new image.`)
   })
 })
 
@@ -348,7 +339,7 @@ describe('convertPlan', () => {
     ['jpg', 'image/jpeg', 'The image @a is already in the JPEG format, so the new image would be the same as @a. Give another format: "png", "webp", or "svg".'],
     ['svg', 'image/svg+xml', 'The image @a is already in the SVG format, so the new image would be the same as @a. Give another format: "png", "jpeg", or "webp".'],
   ] as const)('refuses %j for an image of the type %s, and names the other formats', (format, mediaType, message) => {
-    expect(errorOf(() => convertPlan('a', { image: 'a', format }, SIZE, mediaType))).toBe(message)
+    expect(refusal(() => convertPlan('a', { image: 'a', format }, SIZE, mediaType))).toBe(message)
   })
 
   it.each([
@@ -356,17 +347,17 @@ describe('convertPlan', () => {
     ['bmp', `"bmp" is not a format of convert. Give ${ALL_FORMATS}.`],
     ['constructor', `"constructor" is not a format of convert. Give ${ALL_FORMATS}.`],
   ])('refuses the format %j, and names the formats that it makes', (format, message) => {
-    expect(errorOf(() => convertPlan('a', { image: 'a', format }, SIZE, PNG))).toBe(message)
+    expect(refusal(() => convertPlan('a', { image: 'a', format }, SIZE, PNG))).toBe(message)
   })
 
   it('refuses an image over the limit, and tells how to make a smaller image first', () => {
-    expect(errorOf(() => convertPlan('a', { image: 'a', format: 'jpeg' }, HUGE, PNG))).toBe(`${TOO_LARGE}${SCALE_FIRST}then call convert with the new image.`)
+    expect(refusal(() => convertPlan('a', { image: 'a', format: 'jpeg' }, HUGE, PNG))).toBe(`${TOO_LARGE}${SCALE_FIRST}then call convert with the new image.`)
   })
 
   // Scale writes these types as a PNG, so a convert to PNG after the scale
   // would be refused as one of the image's own format.
   it.each(['image/webp', 'image/gif', 'image/svg+xml'] as const)('for a PNG of a %s image over the limit, tells that the scale alone makes it', (mediaType) => {
-    expect(errorOf(() => convertPlan('a', { image: 'a', format: 'png' }, HUGE, mediaType))).toBe(
+    expect(refusal(() => convertPlan('a', { image: 'a', format: 'png' }, HUGE, mediaType))).toBe(
       `${TOO_LARGE}Make a smaller image from @a with scale (for the same shape, a \`width\` of 5760 and a \`height\` of 5760, or less). `
       + 'Scale makes a PNG image from @a, so no convert call is needed.',
     )

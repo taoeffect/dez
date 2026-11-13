@@ -8,7 +8,7 @@ import { reply, user } from '../model/streams/testing'
 import { unreadableImageText } from '../model/tools/imageTool'
 import { jobTimedOutText } from '../model/tools/jobs'
 import { INPUT_CLIP_TOO_LARGE, outputNotStoredText, programNotStartedText } from '../model/tools/programRuns'
-import { OPUS, probeOutput, VP9 } from '../model/tools/testing'
+import { CONVERSATION, FILM, LOOP, OPUS, probeOutput, SKY, SONG, VP9 } from '../model/tools/testing'
 import { clipReadProblemText } from '../model/tools/toolInputs'
 import { ToolError } from '../model/tools/types'
 import {
@@ -35,21 +35,6 @@ import { errorText } from '../utils/errorText'
 import type { BundledToolEnd } from './nativeTypes'
 import { APP_DIR, CACHE_DIR, deletedWorkFolder, ENDED, failureOf, FILE_ID, native, refusalOf, resetNative, running, SAVED, STOP, writes, type StubProgram } from './testing'
 import { runFfmpegJob, runFfprobe, runJoinJob } from './videoTool'
-
-const RED = `${APP_DIR}/assets/images/red.jpg`
-const SKY = `${APP_DIR}/assets/images/sky.png`
-const SONG: MediaTagData = { kind: 'audio', id: 'b', type: 'audio/wav', src: `${APP_DIR}/assets/audio/s1.wav`, url: null, expires: null, other: [] }
-const FILM: MediaTagData = { kind: 'video', id: 'c', type: 'video/webm', src: `${CACHE_DIR}/media/v1.webm`, url: null, expires: null, other: [] }
-// A clip that is only at its provider's address.
-const LOOP: MediaTagData = { kind: 'video', id: 'd', type: 'video/webm', src: null, url: 'https://clips.example/x/loop?sig=1', expires: null, other: [] }
-
-// A conversation with the JPEG image `a`, the audio clip `b`, the video
-// clips `c` and `d`, and the PNG image `e`.
-const CONVERSATION = [
-  user('u1', `![${RED}](id=a)\n${mediaTagText(SONG)}`),
-  reply('a1', `${mediaTagText(FILM)}\n${mediaTagText(LOOP)}`),
-  user('u2', `![${SKY}](id=e)`),
-]
 
 // A conversation whose only asset is the video clip `a`, in a user section.
 function withClip(clip: Partial<MediaTagData>): Section[] {

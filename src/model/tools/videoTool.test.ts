@@ -1,10 +1,10 @@
 import { describe, expect, it } from 'vitest'
 import { MAX_SAVED_CLIP_BYTES } from '../chat/mediaFiles'
-import { mediaTagText, type MediaTagData } from '../chat/mediaTags'
+import { mediaTagText } from '../chat/mediaTags'
 import type { Section } from '../chat/types'
 import { reply, user } from '../streams/testing'
-import { OPUS, probeOutput, VP9, WEBM } from './testing'
-import { ToolError, type ToolArguments } from './types'
+import { CONVERSATION, FILM, OPUS, probeOutput, RED, refusal, SKY, SONG, VP9, WEBM } from './testing'
+import type { ToolArguments } from './types'
 import {
   clipFacts,
   commandLineWords,
@@ -33,32 +33,6 @@ import {
   type JoinPlan,
   type OutputFiles,
 } from './videoTool'
-
-const RED = '/home/u/.config/dez/assets/images/red.jpg'
-const SKY = '/home/u/.config/dez/assets/images/sky.png'
-const SONG: MediaTagData = { kind: 'audio', id: 'b', type: 'audio/wav', src: '/home/u/.config/dez/assets/audio/s1.wav', url: null, expires: null, other: [] }
-const FILM: MediaTagData = { kind: 'video', id: 'c', type: 'video/mp4', src: '/home/u/.cache/dez/media/v1.mp4', url: null, expires: null, other: [] }
-// A clip that is only at its provider's address.
-const LOOP: MediaTagData = { kind: 'video', id: 'd', type: 'video/webm', src: null, url: 'https://clips.example/x/loop?sig=1', expires: null, other: [] }
-
-// A conversation with the JPEG image `a`, the audio clip `b`, the video
-// clips `c` and `d`, and the PNG image `e`.
-const CONVERSATION = [
-  user('u1', `![${RED}](id=a)\n${mediaTagText(SONG)}`),
-  reply('a1', `${mediaTagText(FILM)}\n${mediaTagText(LOOP)}`),
-  user('u2', `![${SKY}](id=e)`),
-]
-
-// The text of the refusal of a call.
-function refusal(call: () => unknown): string {
-  try {
-    call()
-  } catch (error) {
-    if (error instanceof ToolError) return error.message
-    throw error
-  }
-  throw new Error('The call was not refused.')
-}
 
 // The arguments that ffmpeg gets for the command line `text`, without the
 // ones that Dez adds.
@@ -94,7 +68,7 @@ describe('the video tool', () => {
       .map((line) => line.slice(line.indexOf(': ') + 2))
 
     expect(examples).toHaveLength(6)
-    expect(ffmpegWords(examples[0])).toStrictEqual(['-i', 'c.mp4', '-i', 'b.wav', '-map', '0:v', '-map', '1:a', '-c:v', 'copy', '-c:a', 'aac', '-shortest', 'out.mp4'])
+    expect(ffmpegWords(examples[0])).toStrictEqual(['-i', 'c.webm', '-i', 'b.wav', '-map', '0:v', '-map', '1:a', '-c:v', 'copy', '-c:a', 'aac', '-shortest', 'out.mp4'])
     for (const example of examples) expect(() => ffmpegCall({ arguments: example }, CONVERSATION), example).not.toThrow()
     expect(() => ffmpegCall(subcommand('ffmpeg').example as ToolArguments, CONVERSATION)).not.toThrow()
     expect(() => ffprobeCall(subcommand('ffprobe').example as ToolArguments, CONVERSATION)).not.toThrow()
@@ -155,9 +129,9 @@ describe('ffmpegCall', () => {
   it('puts the arguments of Dez first, and the name of each copy in place of its @id', () => {
     const call = ffmpegCall({ arguments: '-i @c -i @b -map 0:v -map 1:a out.mp4' }, CONVERSATION)
 
-    expect(call.args).toStrictEqual(['-nostdin', '-hide_banner', '-v', 'warning', '-stats', '-i', 'c.mp4', '-i', 'b.wav', '-map', '0:v', '-map', '1:a', 'out.mp4'])
+    expect(call.args).toStrictEqual(['-nostdin', '-hide_banner', '-v', 'warning', '-stats', '-i', 'c.webm', '-i', 'b.wav', '-map', '0:v', '-map', '1:a', 'out.mp4'])
     expect(call.inputs).toStrictEqual([
-      { kind: 'video', id: 'c', name: 'c.mp4', clip: { kind: 'video', id: 'c', type: 'video/mp4', src: FILM.src, url: null, expires: null } },
+      { kind: 'video', id: 'c', name: 'c.webm', clip: { kind: 'video', id: 'c', type: 'video/webm', src: FILM.src, url: null, expires: null } },
       { kind: 'audio', id: 'b', name: 'b.wav', clip: { kind: 'audio', id: 'b', type: 'audio/wav', src: SONG.src, url: null, expires: null } },
     ])
     expect(call.nullOutput).toBe(false)
@@ -166,7 +140,7 @@ describe('ffmpegCall', () => {
   it('gives an input that the arguments name more than once as one file, also inside a word', () => {
     const call = ffmpegCall({ arguments: '-i @c -filter_complex "movie=@d[logo];[0:v][logo]overlay,movie=@c[x]" -i @d out.mp4' }, CONVERSATION)
 
-    expect(call.args.slice(FFMPEG_FIXED_ARGS.length)).toStrictEqual(['-i', 'c.mp4', '-filter_complex', 'movie=d.webm[logo];[0:v][logo]overlay,movie=c.mp4[x]', '-i', 'd.webm', 'out.mp4'])
+    expect(call.args.slice(FFMPEG_FIXED_ARGS.length)).toStrictEqual(['-i', 'c.webm', '-filter_complex', 'movie=d.webm[logo];[0:v][logo]overlay,movie=c.webm[x]', '-i', 'd.webm', 'out.mp4'])
     expect(call.inputs.map(({ id }) => id)).toStrictEqual(['c', 'd'])
   })
 
@@ -310,7 +284,7 @@ describe('ffmpegCall', () => {
   })
 
   it('takes a long @ word as text', () => {
-    expect(ffmpegWords('-i @c -metadata artist=@someone out.mp4')).toStrictEqual(['-i', 'c.mp4', '-metadata', 'artist=@someone', 'out.mp4'])
+    expect(ffmpegWords('-i @c -metadata artist=@someone out.mp4')).toStrictEqual(['-i', 'c.webm', '-metadata', 'artist=@someone', 'out.mp4'])
   })
 
   it('refuses a bad argument before an unknown id', () => {
@@ -321,8 +295,8 @@ describe('ffmpegCall', () => {
 describe('ffprobeCall', () => {
   it('puts its own arguments first, and has the rules of an ffmpeg call', () => {
     expect(ffprobeCall({ arguments: 'ffprobe -v error -show_format -of json @c' }, CONVERSATION)).toStrictEqual({
-      args: ['-hide_banner', '-v', 'error', '-show_format', '-of', 'json', 'c.mp4'],
-      inputs: [{ kind: 'video', id: 'c', name: 'c.mp4', clip: { kind: 'video', id: 'c', type: 'video/mp4', src: FILM.src, url: null, expires: null } }],
+      args: ['-hide_banner', '-v', 'error', '-show_format', '-of', 'json', 'c.webm'],
+      inputs: [{ kind: 'video', id: 'c', name: 'c.webm', clip: { kind: 'video', id: 'c', type: 'video/webm', src: FILM.src, url: null, expires: null } }],
     })
     expect(ffprobeCall({ arguments: '-encoders' }, CONVERSATION)).toStrictEqual({ args: ['-hide_banner', '-encoders'], inputs: [] })
   })
@@ -344,7 +318,7 @@ describe('joinClipsCall', () => {
   it('gives the clips in the order of the call, and each one once as a file', () => {
     const { clips, inputs } = joinClipsCall({ clips: '@c @d @c' }, CONVERSATION)
 
-    expect(clips.map(({ name }) => name)).toStrictEqual(['c.mp4', 'd.webm', 'c.mp4'])
+    expect(clips.map(({ name }) => name)).toStrictEqual(['c.webm', 'd.webm', 'c.webm'])
     expect(inputs.map(({ id }) => id)).toStrictEqual(['c', 'd'])
   })
 
