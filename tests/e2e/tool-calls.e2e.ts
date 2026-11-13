@@ -31,7 +31,10 @@ import { activeConversationId, activeTabStreaming, docPos, editorCaret, editorDo
 // of a tool that Dez does not have shows as an old/unrecognized tool chip,
 // and goes back with its result. A long result scrolls in its field under
 // the wheel. Backspace and Delete next to a chip never join its block to
-// other text.
+// other text. Chips that follow each other are close together, with or
+// without a blank line between them in the text, and a chip is as far from
+// text on the next line as from text after a blank line; a blank line
+// between two chips has a height only while the caret is on it.
 //
 // One app session serves the whole file. The relaunch test reopens the tab
 // of the OpenAI test, so it runs right after it.
@@ -110,6 +113,16 @@ interface ToolPanelView {
   error: boolean
 }
 
+/** One line of the editor, in viewport px. */
+interface LineBox {
+  /** The text of the line; for the line of a chip, the chip's summary. */
+  text: string
+  /** The box of the line; for the line of a chip, of the chip that the
+   *  user sees. */
+  top: number
+  bottom: number
+}
+
 /** The parts of an OpenAI-format request message that a spec reads. */
 interface SentMessage {
   role: string
@@ -170,6 +183,15 @@ describe('tool calls', () => {
         error: panel.querySelector('.dez-tool-call__result')?.hasAttribute('data-error') ?? false,
       }
     }, index)
+  }
+
+  /** The lines of the editor, top to bottom. */
+  async function lineBoxes (): Promise<LineBox[]> {
+    return browser.execute(() => Array.from(document.querySelectorAll<HTMLElement>('.cm-content > .cm-line'), (line) => {
+      const chip = line.querySelector('.dez-tool-call__chip')
+      const { top, bottom } = (chip ?? line).getBoundingClientRect()
+      return { text: chip?.querySelector('.dez-tool-call__summary')?.textContent ?? line.textContent ?? '', top, bottom }
+    }))
   }
 
   beforeAll(async () => {
@@ -819,5 +841,104 @@ describe('tool calls', () => {
     ])
     expect(await editorCaret(browser)).toBe(aloneTo)
     expect((await toolChips()).length).toBe(3)
+  })
+
+  it('puts chips that follow each other close together, and a chip as far from text on the next line as from text after a blank line', async () => {
+    const chip = (name: string): string => modelListBlock(`call_gap_${name}`, name, name)
+    await seedConversation(setup.app.home, makeConversation({
+      id: 'chip-gaps',
+      title: 'Chip gaps',
+      sections: [
+        { role: 'user', nodes: [{ kind: 'text', text: 'Ask' }] },
+        // As a reply writes it: text, a group of two calls, a group of one
+        // call after a blank line, and text, with no blank line next to the
+        // text.
+        { role: 'agent', nodes: [{ kind: 'text', text: ['text above', chip('a'), chip('b'), '', chip('c'), 'text below'].join('\n') }] },
+        { role: 'user', nodes: [{ kind: 'text', text: 'Again' }] },
+        { role: 'agent', nodes: [{ kind: 'text', text: ['apart above', '', chip('d'), '', 'apart below'].join('\n') }] },
+        { role: 'user', nodes: [{ kind: 'text', text: 'last' }] },
+      ],
+    }))
+    await sbpCall(browser, 'dez.model/tabs/openConversation', 'chip-gaps')
+    await waitForValue(browser, 'chips', async () => (await toolChips()).length, 4)
+
+    const boxes = await lineBoxes()
+    const box = (text: string): LineBox => {
+      const found = boxes.find((line) => line.text === text)
+      if (!found) throw new Error(`no line "${text}" in ${JSON.stringify(boxes)}`)
+      return found
+    }
+    const gap = (above: string, below: string): number => box(below).top - box(above).bottom
+    const lineHeight = box('text above').bottom - box('text above').top
+
+    // The blank line between the two groups takes no height.
+    expect(gap('"a"', '"b"')).toBeGreaterThan(0)
+    expect(gap('"a"', '"b"')).toBeLessThan(lineHeight)
+    expect(gap('"b"', '"c"')).toBeCloseTo(gap('"a"', '"b"'), 1)
+    // A chip with text on the next line is as far from it as a chip with a
+    // blank line between: more than a line.
+    expect(gap('apart above', '"d"')).toBeGreaterThan(lineHeight)
+    expect(gap('text above', '"a"')).toBeCloseTo(gap('apart above', '"d"'), 1)
+    expect(gap('"c"', 'text below')).toBeCloseTo(gap('"d"', 'apart below'), 1)
+    expect(gap('"d"', 'apart below')).toBeCloseTo(gap('apart above', '"d"'), 1)
+  })
+
+  it('gives a blank line between two chips a height only while the caret is on it, and keeps the chips under the keys there', async () => {
+    const first = modelListBlock('call_caret_a', 'a', 'one')
+    const second = modelListBlock('call_caret_b', 'b', 'two')
+    await seedConversation(setup.app.home, makeConversation({
+      id: 'chip-gap-caret',
+      title: 'Chip gap caret',
+      sections: [
+        { role: 'user', nodes: [{ kind: 'text', text: 'Ask' }] },
+        { role: 'agent', nodes: [{ kind: 'text', text: `text above\n${first}\n\n${second}` }] },
+        { role: 'user', nodes: [{ kind: 'text', text: 'last' }] },
+      ],
+    }))
+    await sbpCall(browser, 'dez.model/tabs/openConversation', 'chip-gap-caret')
+    await waitForValue(browser, 'chips', async () => (await toolChips()).length, 2)
+    const apart = await editorDoc(browser)
+    const together = apart.replace(`${first}\n\n`, `${first}\n`)
+    const firstEnd = apart.indexOf(first) + first.length
+
+    /** The height of the line after the first chip, the doc, the caret,
+     *  and how many chips there are. */
+    const view = async (): Promise<{ lineAfterFirstChip: number, doc: string, caret: number, chips: number }> => {
+      const boxes = await lineBoxes()
+      const line = boxes[boxes.findIndex(({ text }) => text === '"a"') + 1]
+      return { lineAfterFirstChip: Math.round(line.bottom - line.top), doc: await editorDoc(browser), caret: await editorCaret(browser), chips: (await toolChips()).length }
+    }
+    const heights = new Map((await lineBoxes()).map(({ text, top, bottom }) => [text, Math.round(bottom - top)]))
+    const lineHeight = heights.get('text above') ?? 0
+    const chipHeight = heights.get('"b"') ?? 0
+    expect(lineHeight).toBeGreaterThan(0)
+    expect(chipHeight).toBeGreaterThan(0)
+
+    // The caret goes onto the blank line, which then has the height of a
+    // line of text, and off it. A selection over the line shows no caret.
+    await focusEditor(browser)
+    await setCaret(browser, firstEnd)
+    expect(await view()).toEqual({ lineAfterFirstChip: 0, doc: apart, caret: firstEnd, chips: 2 })
+    await browser.keys(Key.ArrowRight)
+    await waitForValue(browser, 'caret on the blank line', view, { lineAfterFirstChip: lineHeight, doc: apart, caret: firstEnd + 1, chips: 2 })
+    await browser.keys(Key.ArrowRight)
+    await waitForValue(browser, 'caret at the second chip', view, { lineAfterFirstChip: 0, doc: apart, caret: firstEnd + 2, chips: 2 })
+    await setCaret(browser, 0, apart.length)
+    await waitForValue(browser, 'all selected', view, { lineAfterFirstChip: 0, doc: apart, caret: apart.length, chips: 2 })
+
+    // Backspace at the start of the second chip takes the blank line away,
+    // and both blocks stay chips. Enter at the end of the first chip puts
+    // the caret on a new blank line. Delete at the end of the first chip
+    // takes that line away again.
+    await setCaret(browser, firstEnd + 2)
+    await browser.keys(Key.Backspace)
+    await waitForValue(browser, 'after Backspace at the second chip', view, { lineAfterFirstChip: chipHeight, doc: together, caret: firstEnd + 1, chips: 2 })
+    await setCaret(browser, firstEnd)
+    await browser.keys(Key.Enter)
+    await waitForValue(browser, 'after Enter at the first chip', view, { lineAfterFirstChip: lineHeight, doc: apart, caret: firstEnd + 1, chips: 2 })
+    await browser.keys(Key.ArrowLeft)
+    await waitForValue(browser, 'caret back at the first chip', view, { lineAfterFirstChip: 0, doc: apart, caret: firstEnd, chips: 2 })
+    await browser.keys(Key.Delete)
+    await waitForValue(browser, 'after Delete at the first chip', view, { lineAfterFirstChip: chipHeight, doc: together, caret: firstEnd, chips: 2 })
   })
 })

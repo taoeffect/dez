@@ -1432,6 +1432,9 @@ const TABLE_DELIMITER_ROW_EM = 0.6
  *  in px at the default font size. */
 export const IMAGE_MAX_HEIGHT_PX = 320
 
+/** The height of a line of body text, in em of the editor font. */
+const TEXT_LINE_HEIGHT = 1.6
+
 const UI_FONT_FAMILY = "ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif"
 const MONO_FONT_FAMILY = "ui-monospace, SFMono-Regular, Menlo, Consolas, 'Liberation Mono', monospace"
 
@@ -1444,7 +1447,7 @@ export const dezTheme = EditorView.theme({
   },
   '.cm-scroller': {
     fontFamily: MONO_FONT_FAMILY,
-    lineHeight: '1.6',
+    lineHeight: String(TEXT_LINE_HEIGHT),
     padding: `${SCROLLER_PADDING_PX}px ${TEXT_GUTTER}`,
   },
   '.cm-content': {
@@ -2101,6 +2104,24 @@ export const dezTheme = EditorView.theme({
     cursor: 'default',
     userSelect: 'none',
     WebkitUserSelect: 'none',
+  },
+  // The spacing of the chip lines (`ChipSpacing` in toolCalls.ts). A chip
+  // next to content gets the height of one blank line as space there. It
+  // is padding of the line, not a margin: CodeMirror measures the box of a
+  // line, and a margin is outside it.
+  '.cm-line.dez-tool-call-line--after-content': {
+    paddingTop: `${TEXT_LINE_HEIGHT}em`,
+  },
+  '.cm-line.dez-tool-call-line--before-content': {
+    paddingBottom: `${TEXT_LINE_HEIGHT}em`,
+  },
+  // A blank line between two chips takes no height. It stays in the layout
+  // (not `display: none`), so CodeMirror can still measure it. The font size
+  // is zero too: CodeMirror reads its text size from a short line of plain
+  // text, and a line of spaces with a width and no height would be one.
+  '.cm-line.dez-tool-call-gap': {
+    fontSize: '0',
+    lineHeight: '0',
   },
   '.dez-tool-call__chip': {
     display: 'inline-flex',

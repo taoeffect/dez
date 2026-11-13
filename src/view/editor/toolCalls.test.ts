@@ -1,9 +1,11 @@
-import { EditorState } from '@codemirror/state'
+import { EditorSelection, EditorState } from '@codemirror/state'
+import { EditorView } from '@codemirror/view'
 import { describe, expect, it } from 'vitest'
 import type { Role } from '../../model/chat/types'
 import { toolBlockText, type ToolBlockStatus } from '../../model/chat/toolBlocks'
 import { PILL_OPEN, SECTION_SEP, sectionsField, setSectionsEffect, setSectionThinkingEffect } from '../thread/cmEditor'
 import { setStreamingSectionEffect, streamingSectionField } from '../thread/modelChip'
+import { PLAYER } from './testing'
 import { markdownToolCalls, renderedToolCalls, toolCallLabel, toolCallSummary } from './toolCalls'
 
 function block(id: string, status: ToolBlockStatus = 'success', result = 'ok'): string {
@@ -76,6 +78,98 @@ describe('renderedToolCalls', () => {
     const typed = thought.update({ changes: { from: 0, insert: 'x' } }).state
     expect(renderedToolCalls(typed)).not.toBe(calls)
     expect(renderedToolCalls(typed)[0].from).toBe(calls[0].from + 1)
+  })
+})
+
+describe('the spacing of the chip lines', () => {
+  const SPACE = '(the space of a blank line)'
+  const COLLAPSED = '(a blank line of no height)'
+
+  /** The lines of `state` as the editor spaces them, top to bottom: a chip
+   *  as `chip <id>`, `SPACE` where the line of a chip has extra space,
+   *  `COLLAPSED` for a blank line that takes no height, and any other line
+   *  as its text. Read from the decorations that the editor draws. */
+  function rows(state: EditorState): string[] {
+    const classes = new Map<number, string[]>()
+    for (const source of state.facet(EditorView.decorations)) {
+      if (typeof source === 'function') continue
+      for (const cursor = source.iter(); cursor.value; cursor.next()) {
+        const name: unknown = cursor.value.spec.class
+        if (typeof name === 'string') classes.set(cursor.from, [...(classes.get(cursor.from) ?? []), name])
+      }
+    }
+    const calls = renderedToolCalls(state)
+    const result: string[] = []
+    for (let pos = 0; pos <= state.doc.length;) {
+      const line = state.doc.lineAt(pos)
+      const call = calls.find(({ from }) => from === line.from)
+      const names = classes.get(line.from) ?? []
+      if (names.includes('dez-tool-call-line--after-content')) result.push(SPACE)
+      result.push(call ? `chip ${call.id}` : names.includes('dez-tool-call-gap') ? COLLAPSED : line.text)
+      if (names.includes('dez-tool-call-line--before-content')) result.push(SPACE)
+      pos = (call ? call.to : line.to) + 1
+    }
+    return result
+  }
+
+  /** `rows` of an agent section with the lines `lines`, after a user
+   *  section; the rows of the agent section only. `caret` puts a caret at
+   *  the start of that line of the agent section (0 is its first). */
+  function agentRows(lines: string[], caret?: number): string[] {
+    let state = createState(['ask', lines.join('\n')], ['user', 'agent'])
+    const start = state.doc.length - lines.join('\n').length
+    if (caret !== undefined) state = state.update({ selection: { anchor: start + lines.slice(0, caret).join('\n').length + (caret > 0 ? 1 : 0) } }).state
+    return rows(state).slice(2)
+  }
+
+  it('gives the chips of one group no extra space', () => {
+    expect(agentRows([block('a'), block('b'), block('c')])).toEqual(['chip a', 'chip b', 'chip c'])
+  })
+
+  it('gives the blank lines between two chips no height', () => {
+    expect(agentRows([block('a'), '', block('b'), block('c'), '', ' \t', block('d')])).toEqual([
+      'chip a', COLLAPSED, 'chip b', 'chip c', COLLAPSED, COLLAPSED, 'chip d',
+    ])
+  })
+
+  it('gives a chip the space of a blank line next to content on a line that touches it', () => {
+    expect(agentRows(['before', block('a'), 'after'])).toEqual(['before', SPACE, 'chip a', SPACE, 'after'])
+    expect(agentRows(['before', block('a'), block('b'), '', block('c'), 'after'])).toEqual([
+      'before', SPACE, 'chip a', 'chip b', COLLAPSED, 'chip c', SPACE, 'after',
+    ])
+    const image = '![/home/u/.config/dez/assets/images/red.png](id=a)'
+    expect(agentRows([image, block('a'), PLAYER])).toEqual([image, SPACE, 'chip a', SPACE, PLAYER])
+  })
+
+  it('leaves a chip with a blank line between it and content as it is', () => {
+    expect(agentRows(['before', '', block('a'), ' ', 'after'])).toEqual(['before', '', 'chip a', ' ', 'after'])
+    expect(agentRows([block('a'), '', 'between', '', block('b')])).toEqual(['chip a', '', 'between', '', 'chip b'])
+    expect(agentRows([block('a'), '', 'between', block('b')])).toEqual(['chip a', '', 'between', SPACE, 'chip b'])
+  })
+
+  it('gives no space at the start and the end of a section, and keeps the blank lines there', () => {
+    expect(agentRows([block('a')])).toEqual(['chip a'])
+    expect(agentRows(['', block('a'), ''])).toEqual(['', 'chip a', ''])
+    const sections = createState(['ask', block('a'), `${block('b')}\n`, 'next'], ['user', 'agent', 'agent', 'user'])
+    expect(rows(sections)).toEqual(['ask', SECTION_SEP, 'chip a', SECTION_SEP, 'chip b', '', SECTION_SEP, 'next'])
+  })
+
+  it('counts a block that stays text as content', () => {
+    const pillBlock = `<dez:tool id="p" name="model_list">\nx ${PILL_OPEN} y\n</dez:tool>`
+    expect(agentRows([block('a'), pillBlock, block('b')])).toEqual(['chip a', SPACE, ...pillBlock.split('\n'), SPACE, 'chip b'])
+    const user = createState(['ask', ['before', block('a'), '', block('b')].join('\n')], ['user', 'user'])
+    expect(rows(user)).toEqual(['ask', SECTION_SEP, 'before', ...block('a').split('\n'), '', ...block('b').split('\n')])
+  })
+
+  it('shows a blank line between two chips while a caret is on it', () => {
+    const lines = [block('a'), '', '', block('b')]
+    expect(agentRows(lines, 1)).toEqual(['chip a', '', COLLAPSED, 'chip b'])
+    expect(agentRows(lines, 2)).toEqual(['chip a', COLLAPSED, '', 'chip b'])
+    expect(agentRows(lines, 3)).toEqual(['chip a', COLLAPSED, COLLAPSED, 'chip b'])
+    // A selection that is not empty draws no caret.
+    const state = createState(['ask', lines.join('\n')], ['user', 'agent'])
+    const selected = state.update({ selection: EditorSelection.single(0, state.doc.length - block('b').length - 1) }).state
+    expect(rows(selected).slice(2)).toEqual(['chip a', COLLAPSED, COLLAPSED, 'chip b'])
   })
 })
 

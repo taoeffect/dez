@@ -8,6 +8,7 @@ import { sectionsField, type SectionModel } from '../thread/cmEditor'
 import { measureLineHeights } from '../thread/editorMeasure'
 import { streamingSectionField } from '../thread/modelChip'
 import { agentSectionTexts, lineBlocks, sectionRolesChanged } from './lineBlocks'
+import type { DocRange } from './pendingRanges'
 import { ROUND_STROKE, svgIcon } from './svgIcon'
 
 // The editor shows each `<dez:tool>` block of an agent section
@@ -30,10 +31,38 @@ export interface RenderedToolCall extends ToolBlock {
   state: ToolCallState
 }
 
+/** How the editor spaces the lines of the chips. The text of a reply has
+ *  no blank line between its text and a group of calls, and one blank line
+ *  between two groups with no text between them (`toolGroupAppendText` in
+ *  toolRound.ts). That text must stay as it is: `agentRounds` (messages.ts)
+ *  reads the rounds of a reply from it, and the bytes of every later
+ *  request. So the look is made here, with no text change: chips that
+ *  follow each other are always close together, and a chip is as far from
+ *  content with no blank line between them as with one. Content is a line
+ *  of the same section that is not blank and not a chip (text, an image, a
+ *  player); the start and the end of a section are not content. Positions
+ *  are doc offsets, in doc order. */
+interface ChipSpacing {
+  /** The start of each blank line between two chips. Such a line takes no
+   *  height (`collapsedGapLines`). */
+  gapLines: number[]
+  /** The start of each chip whose line above is content. The chip's line
+   *  gets the height of one blank line as space there. */
+  contentAbove: number[]
+  /** As `contentAbove`, for the line below. */
+  contentBelow: number[]
+}
+
 interface ToolCallDecorations {
   /** In doc order. */
   calls: readonly RenderedToolCall[]
-  decorations: DecorationSet
+  chips: DecorationSet
+  /** The space of the chips next to content (`ChipSpacing`). */
+  space: DecorationSet
+  /** `ChipSpacing.gapLines`. */
+  gapLines: readonly number[]
+  /** A line of no height at each of `gapLines`. */
+  collapsedGaps: DecorationSet
 }
 
 /** The longest argument text that a chip shows, in characters, `…`
@@ -64,24 +93,72 @@ export function toolCallSummary(name: string, args: ToolArguments): string {
   return typeof first === 'string' ? `"${text}"` : text
 }
 
-/** The blocks that the editor shows as chips, in doc order. Each agent
- *  section is read on its own: the recognizer stops only at the next `dez:`
- *  tag, so an opening line in one section could pair with a closing line in
- *  a later one. Left as text: blocks in user sections (plain text there),
- *  and blocks that hold a sentinel (a prompt pill), whose widgets and atomic
- *  ranges must stay the only ones there. A `running` block runs only in the
- *  section that the active tab's stream writes into. */
-function findRenderedToolCalls(doc: string, sections: readonly SectionModel[], streamingSectionId: string | null): RenderedToolCall[] {
+const WHITE_SPACE_RUN = /\s*/y
+
+/** Whether `text` holds only white space from `from` to `to`. Sentinels
+ *  (section separators, pill markers) are no white space. */
+function isBlank(text: string, from: number, to: number): boolean {
+  WHITE_SPACE_RUN.lastIndex = from
+  WHITE_SPACE_RUN.test(text)
+  return WHITE_SPACE_RUN.lastIndex >= to
+}
+
+/** Whether the line above the chip `chip` of `text` is not blank. A chip
+ *  starts at a line start, so the line above ends one char before it. */
+function hasTextAbove(text: string, chip: DocRange): boolean {
+  if (chip.from === 0) return false
+  const lineEnd = chip.from - 1
+  return !isBlank(text, lineEnd === 0 ? 0 : text.lastIndexOf('\n', lineEnd - 1) + 1, lineEnd)
+}
+
+/** Whether the line below the chip `chip` of `text` is not blank. A chip
+ *  ends at a line end. */
+function hasTextBelow(text: string, chip: DocRange): boolean {
+  if (chip.to === text.length) return false
+  const lineEnd = text.indexOf('\n', chip.to + 1)
+  return !isBlank(text, chip.to + 1, lineEnd < 0 ? text.length : lineEnd)
+}
+
+/** Adds the spacing of one section to `spacing`. `chips` are the chips of
+ *  the section in order, as ranges in its `text`, which starts at `offset`
+ *  in the doc. */
+function addSectionSpacing(spacing: ChipSpacing, text: string, offset: number, chips: readonly DocRange[]): void {
+  chips.forEach((chip, index) => {
+    const previous: DocRange | undefined = chips[index - 1]
+    // Only line breaks and blank lines are between the two chips: each
+    // line between them is a gap line. Chips of one group have none.
+    if (previous && isBlank(text, previous.to, chip.from)) {
+      for (let line = previous.to + 1; line < chip.from; line = text.indexOf('\n', line) + 1) spacing.gapLines.push(offset + line)
+      return
+    }
+    if (previous && hasTextBelow(text, previous)) spacing.contentBelow.push(offset + previous.from)
+    if (hasTextAbove(text, chip)) spacing.contentAbove.push(offset + chip.from)
+  })
+  const last = chips.at(-1)
+  if (last && hasTextBelow(text, last)) spacing.contentBelow.push(offset + last.from)
+}
+
+/** The blocks that the editor shows as chips, in doc order, and the spacing
+ *  of their lines. Each agent section is read on its own: the recognizer
+ *  stops only at the next `dez:` tag, so an opening line in one section
+ *  could pair with a closing line in a later one. Left as text: blocks in
+ *  user sections (plain text there), and blocks that hold a sentinel (a
+ *  prompt pill), whose widgets and atomic ranges must stay the only ones
+ *  there. A `running` block runs only in the section that the active tab's
+ *  stream writes into. */
+function findRenderedToolCalls(doc: string, sections: readonly SectionModel[], streamingSectionId: string | null): { calls: RenderedToolCall[], spacing: ChipSpacing } {
   const calls: RenderedToolCall[] = []
-  if (!doc.includes('<dez:tool')) return calls
+  const spacing: ChipSpacing = { gapLines: [], contentAbove: [], contentBelow: [] }
+  if (!doc.includes('<dez:tool')) return { calls, spacing }
   for (const { section, from, text } of agentSectionTexts(doc, sections)) {
-    for (const block of findToolBlocks(text)) {
-      if (SENTINEL_CHAR.test(text.slice(block.from, block.to))) continue
+    const chips = findToolBlocks(text).filter((block) => !SENTINEL_CHAR.test(text.slice(block.from, block.to)))
+    for (const block of chips) {
       const state = block.status !== 'running' ? block.status : section.id === streamingSectionId ? 'running' : 'interrupted'
       calls.push({ ...block, from: from + block.from, to: from + block.to, state })
     }
+    addSectionSpacing(spacing, text, from, chips)
   }
-  return calls
+  return { calls, spacing }
 }
 
 /** Opens or closes the panel of every chip whose call has this id. */
@@ -274,15 +351,47 @@ class ToolCallWidget extends WidgetType {
   }
 }
 
+const collapsedLine = Decoration.line({ class: 'dez-tool-call-gap' })
+const spaceAboveChip = Decoration.line({ class: 'dez-tool-call-line--after-content' })
+const spaceBelowChip = Decoration.line({ class: 'dez-tool-call-line--before-content' })
+
 function buildToolCallDecorations(state: EditorState): ToolCallDecorations {
-  const calls = findRenderedToolCalls(state.doc.toString(), state.field(sectionsField, false) ?? [], state.field(streamingSectionField, false) ?? null)
-  const decorations = Decoration.set(calls.map((call) => Decoration.replace({ widget: new ToolCallWidget(call) }).range(call.from, call.to)))
-  return { calls, decorations }
+  const { calls, spacing } = findRenderedToolCalls(state.doc.toString(), state.field(sectionsField, false) ?? [], state.field(streamingSectionField, false) ?? null)
+  return {
+    calls,
+    chips: Decoration.set(calls.map((call) => Decoration.replace({ widget: new ToolCallWidget(call) }).range(call.from, call.to))),
+    // A line decoration goes at the start of a doc line. A chip starts at
+    // one, but for a chip right after a separator char that lost its line
+    // break.
+    space: Decoration.set([
+      ...spacing.contentAbove.map((chip) => spaceAboveChip.range(state.doc.lineAt(chip).from)),
+      ...spacing.contentBelow.map((chip) => spaceBelowChip.range(state.doc.lineAt(chip).from)),
+    ], true),
+    gapLines: spacing.gapLines,
+    collapsedGaps: Decoration.set(spacing.gapLines.map((line) => collapsedLine.range(line))),
+  }
+}
+
+/** The blank lines between chips that take no height in `state`: each of
+ *  `gapLines`, but a line with a caret on it. On a line of no height the
+ *  caret would not show, and the keys can put it there (an arrow key, or
+ *  Enter at the end of a chip). Such a line is not an atomic range: the
+ *  caret would still get into it (Enter, a stream that appends a group at
+ *  the caret), and CM's Backspace and Delete take a whole atomic range, here
+ *  both line breaks, which would join the two chips into one line of
+ *  source. A selection that is not empty draws no caret, so it shows no
+ *  line: Select All moves nothing. */
+function collapsedGapLines(state: EditorState, { gapLines, collapsedGaps }: ToolCallDecorations): DecorationSet {
+  if (gapLines.length === 0) return collapsedGaps
+  const caretLines = state.selection.ranges.filter((range) => range.empty).map((range) => state.doc.lineAt(range.head).from)
+  if (!caretLines.some((line) => gapLines.includes(line))) return collapsedGaps
+  return Decoration.set(gapLines.filter((line) => !caretLines.includes(line)).map((line) => collapsedLine.range(line)))
 }
 
 /** Each tool block of an agent section is replaced by its chip. The block
  *  spans lines, which only decorations from a state field can replace. The
- *  ranges are atomic, so the caret is never inside the hidden text. */
+ *  ranges are atomic, so the caret is never inside the hidden text. The
+ *  lines around the chips get their spacing (`ChipSpacing`). */
 const toolCallDecorationsField = StateField.define<ToolCallDecorations>({
   create: buildToolCallDecorations,
   update(value, tr) {
@@ -290,8 +399,10 @@ const toolCallDecorationsField = StateField.define<ToolCallDecorations>({
     return changed ? buildToolCallDecorations(tr.state) : value
   },
   provide: (field) => [
-    EditorView.decorations.from(field, (value) => value.decorations),
-    EditorView.atomicRanges.of((view) => view.state.field(field).decorations),
+    EditorView.decorations.from(field, (value) => value.chips),
+    EditorView.decorations.from(field, (value) => value.space),
+    EditorView.decorations.compute([field, 'selection'], (state) => collapsedGapLines(state, state.field(field))),
+    EditorView.atomicRanges.of((view) => view.state.field(field).chips),
   ],
 })
 
