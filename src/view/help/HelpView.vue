@@ -49,12 +49,14 @@ const keys = computed(() => ({
   history: shortcutKeyText(shortcuts.value, 'history'),
 }))
 
-// The Dez folder, the folder of the temp copies of clips, and the folder
-// of the work folders, as the Assets page shows them (`~` for the home
-// folder). The cache folder differs by system, so the page reads the
-// folders and spells none. Null until the read ends, and for a folder that
-// cannot be read: the page then names the folder with no path.
+// The Dez folder, Dez's cache folder (which the bundled programs can open),
+// the folder of the temp copies of clips, and the folder of the work
+// folders, as the Assets page shows them (`~` for the home folder). The
+// cache folder differs by system, so the page reads the folders and spells
+// none. Null until the read ends, and for a folder that cannot be read: the
+// page then names the folder with no path.
 const appDir = ref<string | null>(null)
+const cacheDir = ref<string | null>(null)
 const tempDir = ref<string | null>(null)
 const workDir = ref<string | null>(null)
 
@@ -64,6 +66,7 @@ onMounted(async () => {
     sbp('dez.controller/displayAppDir', 'cache') as Promise<string | null>,
   ])
   appDir.value = app
+  cacheDir.value = cache
   tempDir.value = cache === null ? null : `${cache}/${MEDIA_CACHE_FOLDER}`
   workDir.value = cache === null ? null : `${cache}/${WORK_ROOT}`
 })
@@ -217,6 +220,18 @@ function onOverlayClick(event: MouseEvent) {
               <code v-if="workDir">{{ workDir }}</code><template v-else>the cache folder of the system</template>,
               so it never changes a file of yours. Dez deletes the work folder at the end of the
               work, or {{ WORK_FOLDER_HOURS }} hours later if Dez closed before that.
+            </p>
+            <!-- The rule is in src-tauri/src/confinement.rs (Landlock on
+                 Linux, Seatbelt on macOS), and the checks of a command line
+                 are `argumentProblem` in src/model/tools/videoTool.ts. -->
+            <p>
+              Such a tool runs ffmpeg or ffprobe, programs that come with Dez. The system lets them
+              open only the files in
+              <code v-if="cacheDir">{{ cacheDir }}</code><template v-else>the folder of Dez in the cache folder of the system</template>:
+              not your conversations, your API keys, or any other file of yours. Dez also refuses
+              a command line that names another file, a web address, or a device such as a camera.
+              A Linux system without Landlock (a part of the kernel since Linux 5.13) cannot set
+              this limit: there, the checks of Dez are the only guard.
             </p>
 
             <h3>Copy or link</h3>

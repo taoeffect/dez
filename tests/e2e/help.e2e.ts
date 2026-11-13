@@ -166,10 +166,10 @@ describe('Help panel', () => {
     await waitForValue(browser, 'Assets page', shownPage, { nav: 'Assets', page: 'help-page--assets' })
 
     // The paths come from a native read after the panel opens.
-    await waitForValue(browser, 'the Dez folder, the temp folder, and the work folder on Assets', async () => {
+    await waitForValue(browser, 'the Dez folder, the temp folder, the work folder, and the cache folder on Assets', async () => {
       const paths = await codeTexts('p code')
       return paths.filter((path) => path.startsWith('~/'))
-    }, ['~/.config/dez', '~/.cache/dez/media', '~/.cache/dez/work'])
+    }, ['~/.config/dez', '~/.cache/dez/media', '~/.cache/dez/work', '~/.cache/dez'])
     // The list has every folder of stored files.
     expect((await codeTexts('.help-folders code')).sort()).toEqual([...STORED_FILE_FOLDERS].sort())
 

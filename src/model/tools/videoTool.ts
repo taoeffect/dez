@@ -30,12 +30,17 @@ import { ToolError, type ToolArguments, type ToolParameter } from './types'
 // holds a path of the user's computer, and the program cannot change a
 // file of the user.
 //
-// The checks of the arguments (`argumentProblem`) are string checks, NOT A
-// SANDBOX. They keep a model that makes a mistake, or that follows a text
-// that it read, from an argument that opens a file outside of the work
-// folder, the network, or a device. They cannot see what a file tells
-// ffmpeg to open (a playlist that names other files), and a new option of
-// a later ffmpeg can pass them. The program has the rights of the user.
+// The checks of the arguments (`argumentProblem`) are string checks. They
+// give a model that makes a mistake, or that follows a text that it read,
+// a clear refusal before any run, for an argument that opens a file outside
+// of the work folder, the network, or a device. They cannot see what a
+// file tells ffmpeg to open (a playlist that names other files), and a new
+// option of a later ffmpeg can pass them. So the guard of the user's files
+// is the OS rule of every run (src-tauri/src/confinement.rs): the program
+// can open only the files of Dez's cache folder. Where the OS has no such
+// rule (a Linux kernel with no Landlock), the program runs with the rights
+// of the user, and these checks are its only guard. The OS rule is about
+// files only: the network always has only these checks.
 //
 // Every text here is a tool result or the result of a job: it goes to the
 // chat provider. So it names an image or a clip by its id only.
@@ -107,7 +112,9 @@ const FFMPEG_HELP = [
     + 'The result has the end of the log of ffmpeg and the id of each new clip and image; they go into your reply, where the user sees them.',
   'Inputs: name a video clip, an audio clip, or an image of this conversation by its id with an @, as in `-i @c`. '
     + 'Dez puts a copy of that file into the work folder and writes the name of the copy (as in c.mp4) in place of the @id. '
-    + 'The file itself never changes, and ffmpeg can read no other file. A PNG or SVG image goes as a JPEG copy, with white in place of transparent pixels.',
+    + 'The file itself never changes. Name no other file: Dez refuses an argument that names a file outside the work folder. '
+    + 'On Linux with Landlock and on macOS, the system also lets ffmpeg open no file outside the cache folder of Dez, so a file that names another file (a playlist, a list) cannot reach a file of the user. '
+    + 'A PNG or SVG image goes as a JPEG copy, with white in place of transparent pixels.',
   'Outputs: give each output a new file name with no folder, made of ASCII letters, digits, ".", "_", and "-" only. '
     + `Dez keeps the new files whose name ends in ${KEPT_ENDINGS}, at most ${MAX_VIDEO_OUTPUT_FILES} for one call, and deletes every other file. `
     + 'This ffmpeg writes no PNG and no WebP image. For a run whose log is the result, end the arguments with `-f null -`.',
@@ -117,8 +124,9 @@ const FFMPEG_HELP = [
   `Dez puts \`${FFMPEG_FIXED_ARGS.join(' ')}\` before your arguments, so the log holds the warnings, the errors, and the progress. `
     + 'Add `-v info` for the lines of a filter that reports in the log (volumedetect, silencedetect, cropdetect).',
   'Dez refuses an argument with: an absolute path, "~", "..", a backslash, a URL or a protocol form (as in http:, file:, pipe:, concat:), '
-    + 'a lone "-" (only `-f null -` can have one), a capture or playback device, and the options -safe, -protocol_whitelist, -protocol_blacklist, '
-    + '-filter_script, -filter_complex_script, -enable_drefs, -use_absolute_path, -dump_attachment, and each option that starts with "-/".',
+    + 'a lone "-" (only `-f null -` can have one), a capture or playback device, hls as the format of an input or of a filter (an HLS output can go, as -f hls after the last -i), '
+    + 'and the options -safe, -protocol_whitelist, -protocol_blacklist, -filter_script, -filter_complex_script, -graph_file, -hls_key_info_file, '
+    + '-enable_drefs, -use_absolute_path, -dump_attachment, and each option that starts with "-/".',
   'Encoders of this build: libx264, libx265, libvpx-vp9, libvpx, libsvtav1 (video); aac, libmp3lame, libopus, flac, pcm_s16le (audio); mjpeg, gif (images). '
     + 'It has no drawtext and no subtitles filter. The ffprobe subcommand gives the full lists with no job (-encoders, -filters, -h filter=scale).',
   'Examples of `arguments`:',
