@@ -151,15 +151,30 @@ function secondsText(seconds: number, round: (value: number) => number = Math.ro
   return `${rounded} ${rounded === 1 ? 'second' : 'seconds'}`
 }
 
-// What to do about a clip that breaks a rule of its kind. Dez cuts and
-// converts no video; an audio clip can be cut with the `audio` tool, which
-// the model that reads the text can call itself.
-function fixText(kind: MediaTagKind, tooLong: boolean, reader: RequestReader): string {
-  if (kind === 'video') return 'Use another video clip, or choose another model.'
-  if (!tooLong) return 'Use another audio clip, or choose another model.'
+// What makes a clip that breaks a rule of its kind fit: a cut (it is too
+// long), another file type, or a smaller file. Null: no Dez tool helps.
+type ClipFix = 'cut' | 'convert' | 'shrink' | null
+
+const CLIP_FIX_ACTS: Readonly<Record<NonNullable<ClipFix>, string>> = {
+  cut: 'cut it',
+  convert: 'convert it',
+  shrink: 'make its file smaller (a cut, a smaller picture, or a lower bit rate)',
+}
+
+// What to do about a clip that breaks a rule of its kind. Dez changes no
+// clip of a request by itself (but for the WAV copy, `needsWavCopy`). A
+// Dez tool can make a new clip that fits: `audio clip` cuts an audio clip,
+// and the ffmpeg of the `video` tool cuts and converts audio and video
+// clips. A model that reads the text can call the tool itself, and the
+// user asks the chat model. `USAGE_TEXTS.clipRules` (tools/modelUsage.ts)
+// names the same tools: keep the two the same.
+function fixText(kind: MediaTagKind, fix: ClipFix, reader: RequestReader): string {
+  if (fix === null) return `Use another ${kind} clip, or choose another model.`
+  const tool = kind === 'audio' && fix === 'cut' ? 'the audio tool (`audio clip`)' : 'the video tool (`video ffmpeg`)'
+  const act = CLIP_FIX_ACTS[fix]
   return reader === 'user'
-    ? 'Ask the chat model to cut it with the audio tool (`audio clip`), then name the new clip.'
-    : 'Cut it with the audio tool (`audio clip`), then name the new clip in `prompt`.'
+    ? `Ask the chat model to ${act} with ${tool}, then name the new clip.`
+    : `${act.charAt(0).toUpperCase()}${act.slice(1)} with ${tool}, then name the new clip in \`prompt\`.`
 }
 
 /** Why the clips `clips` (the clips of a request, `mediaRequestInput`)
@@ -194,7 +209,9 @@ export function clipTagProblem(
     const types = kindRules?.types
     if (!kindRules || !types || types.includes(canonicalMediaType(clip.type)) || needsWavCopy(clip.kind, kindRules, clip.type)) continue
     const typeList = new Intl.ListFormat('en', { type: 'disjunction' }).format(types)
-    return `${modelName} takes only ${clip.kind} clips of the type ${typeList}, and @${clip.id} is ${canonicalMediaType(clip.type)}. ${fixText(clip.kind, false, reader)}`
+    // A converted clip is only a file, which a kind that goes only by its
+    // web address does not take.
+    return `${modelName} takes only ${clip.kind} clips of the type ${typeList}, and @${clip.id} is ${canonicalMediaType(clip.type)}. ${fixText(clip.kind, kindRules.urlOnly ? null : 'convert', reader)}`
   }
   for (const clip of clips) {
     if (!rules?.[clip.kind]?.urlOnly) continue
@@ -240,26 +257,28 @@ export interface ReadInputClip {
  *  rules `rules`, by their lengths and sizes, as a sentence for `reader`;
  *  null when they can go, as far as Dez can tell. A clip whose length Dez
  *  could not tell gets no length check, and the provider's answer tells
- *  the reader then. Dez cuts nothing: a clip that is too long gets the
- *  model's limit, and an audio clip the hint to cut it with the `audio`
- *  tool. The length of a clip comes before its size: the size of a WAV
- *  copy follows from its length, so a clip that is too long is the cause
- *  of a copy that is too large. */
+ *  the reader then. Dez cuts nothing: a clip that is too long or too large
+ *  gets the model's limit and the Dez tool that makes a clip that fits
+ *  (`fixText`). The length of a clip comes before its size: the size of a
+ *  WAV copy follows from its length, so a clip that is too long is the
+ *  cause of a copy that is too large. */
 export function clipFileProblem(modelName: string, rules: InputClipRules | undefined, read: readonly ReadInputClip[], reader: RequestReader = 'user'): string | null {
   for (const { clip, seconds, byteLength, wavCopy } of read) {
     const kindRules = rules?.[clip.kind]
     if (!kindRules) continue
     if (seconds !== null && kindRules.maxSeconds !== undefined && seconds > kindRules.maxSeconds) {
-      return `The ${clip.kind} clip @${clip.id} is ${secondsText(seconds, Math.ceil)} long, and ${modelName} takes ${clip.kind} clips of at most ${secondsText(kindRules.maxSeconds)}. ${fixText(clip.kind, true, reader)}`
+      return `The ${clip.kind} clip @${clip.id} is ${secondsText(seconds, Math.ceil)} long, and ${modelName} takes ${clip.kind} clips of at most ${secondsText(kindRules.maxSeconds)}. ${fixText(clip.kind, 'cut', reader)}`
     }
     if (seconds !== null && kindRules.minSeconds !== undefined && seconds < kindRules.minSeconds) {
-      return `The ${clip.kind} clip @${clip.id} is ${secondsText(seconds, Math.floor)} long, and ${modelName} takes ${clip.kind} clips of at least ${secondsText(kindRules.minSeconds)}. ${fixText(clip.kind, false, reader)}`
+      return `The ${clip.kind} clip @${clip.id} is ${secondsText(seconds, Math.floor)} long, and ${modelName} takes ${clip.kind} clips of at least ${secondsText(kindRules.minSeconds)}. ${fixText(clip.kind, null, reader)}`
     }
     if (kindRules.maxBytes !== undefined && byteLength > kindRules.maxBytes) {
       const size = wavCopy
         ? `Dez sends the audio clip @${clip.id} as a WAV copy, because ${modelName} takes no audio clip of the type ${canonicalMediaType(clip.type)}. The copy is ${byteSizeText(byteLength)}`
         : `The ${clip.kind} clip @${clip.id} is ${byteSizeText(byteLength)}`
-      return `${size}, and ${modelName} takes ${clip.kind} clips of at most ${byteSizeText(kindRules.maxBytes)}. ${fixText(clip.kind, clip.kind === 'audio', reader)}`
+      // The audio tool makes an audio clip smaller with a cut; the video
+      // tool has more ways for a video.
+      return `${size}, and ${modelName} takes ${clip.kind} clips of at most ${byteSizeText(kindRules.maxBytes)}. ${fixText(clip.kind, clip.kind === 'audio' ? 'cut' : 'shrink', reader)}`
     }
   }
   for (const kind of ['audio', 'video'] as const) {

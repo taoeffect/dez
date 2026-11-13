@@ -23,7 +23,7 @@ describe('needsWavCopy', () => {
     ['an audio clip of another name of a type that the model takes', 'audio', { use: 'source', types: ['audio/wav', 'audio/flac', 'audio/mp4'] }, 'audio/x-flac'],
     ['an audio clip to a model that takes any type', 'audio', { use: 'reference' }, 'audio/ogg'],
     ['an audio clip to a model that takes no WAV', 'audio', { use: 'reference', types: ['audio/mpeg'] }, 'audio/ogg'],
-    // Dez converts no video.
+    // Dez converts no video by itself.
     ['a video clip', 'video', { use: 'reference', types: ['video/mp4', 'audio/wav'] }, 'video/webm'],
   ])('makes no copy of %s', (_name, kind, rules, type) => {
     expect(needsWavCopy(kind, rules, type)).toBe(false)
@@ -104,6 +104,17 @@ describe('clipTagProblem', () => {
     ['an audio clip of another type, to a model that takes no WAV', { audio: { use: 'reference', types: ['audio/mpeg'] } }, clip('audio', 'a1', 'audio/ogg')],
   ])('refuses %s, and names its type', (_name, rules, refused) => {
     expect(clipTagProblem('Film', rules, [refused], 0)).toContain(`@${refused.id} is ${refused.type}`)
+  })
+
+  // A converted clip is a file with no web address.
+  it('names the tool that converts a clip of another type, but not to a model that takes clips only by their web address', () => {
+    const types = ['video/mp4']
+    const refused = clip('video', 'v1', 'video/quicktime')
+
+    expect([
+      clipTagProblem('Film', { video: { use: 'reference', types } }, [refused], 0)?.includes('`video ffmpeg`'),
+      clipTagProblem('Film', { video: { use: 'reference', types, urlOnly: true } }, [refused], 0)?.includes('`video ffmpeg`'),
+    ]).toStrictEqual([true, false])
   })
 
   it('lets an audio clip of another type go as a WAV copy, when the model takes WAV', () => {
@@ -218,25 +229,31 @@ describe('clipFileProblem', () => {
     expect(problem).toContain(limit)
   })
 
-  // Cutting is the fix only for an audio clip that is too long: Dez cuts no
-  // video.
-  it('tells the user to cut an audio clip that is too long with the audio tool', () => {
-    expect([
-      clipFileProblem('Film', LIMITS, [read('audio', 'a1', 31)])?.includes('audio tool'),
-      clipFileProblem('Film', LIMITS, [read('audio', 'a1', 1)])?.includes('audio tool'),
-      clipFileProblem('Film', LIMITS, [read('video', 'v1', 11)])?.includes('audio tool'),
-    ]).toStrictEqual([true, false, false])
+  // `audio clip` cuts an audio clip, and the ffmpeg of the `video` tool
+  // does the rest. No tool makes a short clip longer.
+  it.each<[string, ReadInputClip, string | null]>([
+    ['an audio clip that is too long', read('audio', 'a1', 31), '`audio clip`'],
+    ['a video clip that is too long', read('video', 'v1', 11), '`video ffmpeg`'],
+    ['an audio clip that is too large', read('audio', 'a1', 5, 1.5 * MB), '`audio clip`'],
+    ['a video clip that is too large', read('video', 'v1', 5, 11 * MB), '`video ffmpeg`'],
+    ['an audio clip that is too short', read('audio', 'a1', 1), null],
+  ])('names the Dez tool that makes %s fit', (_name, input, tool) => {
+    const problem = clipFileProblem('Film', LIMITS, [input])
+
+    expect(['`audio clip`', '`video ffmpeg`'].filter((name) => problem?.includes(name))).toStrictEqual(tool === null ? [] : [tool])
   })
 
-  // The model that called `model_invoke` has the audio tool itself, and
-  // its inputs are the clips that its prompt names.
-  it('tells a model to cut the clip itself, and names its prompt, not a message', () => {
+  // The model that called `model_invoke` has the tools itself, and its
+  // inputs are the clips that its prompt names.
+  it('tells a model to use the tool itself, and names its prompt, not a message', () => {
     const problems = [
       clipFileProblem('Film', LIMITS, [read('audio', 'a1', 31)], 'model'),
+      clipFileProblem('Film', LIMITS, [read('video', 'v1', 11)], 'model'),
       clipFileProblem('Film', TOTALS, [read('audio', 'a1', 20), read('audio', 'a2', 15)], 'model'),
     ]
 
     expect(problems[0]).toContain('Cut it with the audio tool')
+    expect(problems[1]).toContain('Cut it with the video tool')
     for (const problem of problems) {
       expect(problem).toMatch(/prompt/)
       expect(problem).not.toMatch(/\b(message|chat model)\b/)

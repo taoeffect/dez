@@ -73,7 +73,7 @@ export const MODEL_INFO_TOOL: ToolDefinition = {
       type: 'string',
       description: 'Values for parameters of the model, as the text of a JSON object from parameter name to value '
         + '(for example `{"duration": "5s"}`). `value` and `cost` in the result are then for a request with these values. '
-        + 'Use it to tell the user what a request costs. It changes no setting.',
+        + 'Use it to learn what a request costs, for the user or before a `model_invoke` call with the same values. It changes no setting.',
       required: false,
     },
     {

@@ -155,7 +155,7 @@ describe('Help panel', () => {
   })
 
   // The app of this spec has its own home folder, with the cache folder in
-  // it (`startApp`), so both folders show with `~`.
+  // it (`startApp`), so every folder shows with `~`.
   it('opens Assets from the link of General, with the folders of this computer, and scrolls to its end', async () => {
     // The texts of the `code` elements of `selector`, in text order.
     const codeTexts = async (selector: string): Promise<string[]> =>
@@ -166,10 +166,10 @@ describe('Help panel', () => {
     await waitForValue(browser, 'Assets page', shownPage, { nav: 'Assets', page: 'help-page--assets' })
 
     // The paths come from a native read after the panel opens.
-    await waitForValue(browser, 'the Dez folder and the temp folder on Assets', async () => {
+    await waitForValue(browser, 'the Dez folder, the temp folder, and the work folder on Assets', async () => {
       const paths = await codeTexts('p code')
       return paths.filter((path) => path.startsWith('~/'))
-    }, ['~/.config/dez', '~/.cache/dez/media'])
+    }, ['~/.config/dez', '~/.cache/dez/media', '~/.cache/dez/work'])
     // The list has every folder of stored files.
     expect((await codeTexts('.help-folders code')).sort()).toEqual([...STORED_FILE_FOLDERS].sort())
 

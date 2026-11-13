@@ -72,7 +72,10 @@ export const USAGE_TEXTS = {
   videoResult: 'It answers with a video clip, which the reply shows as a player with a new id.',
   transcriptResult: 'It answers with the words of the speech, which go into the reply as text.',
   noClips: 'It takes no input clip: the clips of the message (pasted, or named with @id) do not go.',
-  clipRules: 'Dez refuses a clip that breaks the rules of its kind in `dez.clips` (media types, seconds, bytes). Dez cuts no clip, but the audio tool can cut an audio clip.',
+  // `clipTagProblem`, `clipFileProblem` (clipInputs.ts). The refusal of a
+  // clip names the same tools (`fixText` there): keep the two the same.
+  clipRules: 'Dez refuses a clip that breaks the rules of its kind in `dez.clips` (media types, seconds, bytes). Dez cuts and converts no clip by itself. '
+    + 'A Dez tool can make a new clip that fits: the audio tool cuts an audio clip, and the video tool (its ffmpeg subcommand) cuts and converts audio and video clips.',
   wavCopy: 'An audio clip of a type that it does not take goes as a WAV copy.',
   audioNeedsVisual: 'An audio clip goes only together with an image or a video clip.',
 } as const
@@ -113,11 +116,12 @@ export function clipNamesUsage(kind: MediaTagKind, promptName: string): string {
 }
 
 // A model that takes the clips of `kind` only by their web address
-// (`ClipKindRules.urlOnly`, `clipTagProblem`).
+// (`ClipKindRules.urlOnly`, `clipTagProblem`). A clip that the `audio` or
+// the `video` tool made has no web address: Dez stores its file at once.
 export function urlOnlyClipsUsage(kind: MediaTagKind): string {
   const clip = kind === 'audio' ? 'an audio clip' : 'a video clip'
   const lead = kind === 'audio' ? 'An audio clip' : 'A video clip'
-  return `${lead} goes only by its web address, which the provider downloads: only a clip that a model made goes, while its address works (the tag's \`expires\`). Dez refuses ${clip} that is only a file (pasted, dropped, or made by the audio tool).`
+  return `${lead} goes only by its web address, which the provider downloads: only a clip that a model made goes, while its address works (the tag's \`expires\`). Dez refuses ${clip} that is only a file (pasted, dropped, or made by the audio tool or the video tool).`
 }
 
 // What the input clips of a request are (`mediaRequestInput`), and what

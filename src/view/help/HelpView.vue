@@ -5,6 +5,7 @@ import { useModelState } from '../modelState'
 import { IMAGE_FOLDERS } from '../../model/chat/images'
 import { MEDIA_TEMP_LIFETIME_MS } from '../../model/chat/mediaFiles'
 import { MEDIA_CACHE_FOLDER, MEDIA_FOLDERS } from '../../model/chat/mediaTags'
+import { WORK_FOLDER_LIFETIME_MS, WORK_ROOT } from '../../model/tools/workFolders'
 import { shortcutKeyText } from '../../model/shortcuts'
 import { DEZ_DISCUSSIONS_URL } from '../../utils/dezLinks'
 import bundledFfmpeg from '../../../src-tauri/binaries/manifest.json'
@@ -25,11 +26,13 @@ const PAGES: { id: HelpPage; label: string }[] = [
 const STORED_FOLDERS: { folders: readonly string[]; holds: string }[] = [
   { folders: [IMAGE_FOLDERS.pasted], holds: 'Pasted images, and dropped images that Dez copies.' },
   { folders: Object.values(MEDIA_FOLDERS.pasted), holds: 'Pasted clips, and dropped clips that Dez copies.' },
-  { folders: [IMAGE_FOLDERS.generated], holds: 'Images that models make.' },
+  { folders: [IMAGE_FOLDERS.generated], holds: 'Images that models and Dez tools make.' },
   { folders: Object.values(MEDIA_FOLDERS.generated), holds: 'Clips that you save, and clips that Dez tools make.' },
 ]
 
-const TEMP_COPY_HOURS = MEDIA_TEMP_LIFETIME_MS / (60 * 60 * 1000)
+const HOUR_MS = 60 * 60 * 1000
+const TEMP_COPY_HOURS = MEDIA_TEMP_LIFETIME_MS / HOUR_MS
+const WORK_FOLDER_HOURS = WORK_FOLDER_LIFETIME_MS / HOUR_MS
 
 const { shortcuts } = useModelState()
 
@@ -46,13 +49,14 @@ const keys = computed(() => ({
   history: shortcutKeyText(shortcuts.value, 'history'),
 }))
 
-// The Dez folder and the folder of the temp copies of clips, as the Assets
-// page shows them (`~` for the home folder). The cache folder differs by
-// system, so the page reads both and spells neither. Null until the read
-// ends, and for a folder that cannot be read: the page then names the
-// folder with no path.
+// The Dez folder, the folder of the temp copies of clips, and the folder
+// of the work folders, as the Assets page shows them (`~` for the home
+// folder). The cache folder differs by system, so the page reads the
+// folders and spells none. Null until the read ends, and for a folder that
+// cannot be read: the page then names the folder with no path.
 const appDir = ref<string | null>(null)
 const tempDir = ref<string | null>(null)
+const workDir = ref<string | null>(null)
 
 onMounted(async () => {
   const [app, cache] = await Promise.all([
@@ -61,6 +65,7 @@ onMounted(async () => {
   ])
   appDir.value = app
   tempDir.value = cache === null ? null : `${cache}/${MEDIA_CACHE_FOLDER}`
+  workDir.value = cache === null ? null : `${cache}/${WORK_ROOT}`
 })
 
 function onClose() {
@@ -118,8 +123,8 @@ function onOverlayClick(event: MouseEvent) {
               The model picker at the lower left sets the model of the tab, and the gear next to it
               shows the settings of that model. Add your API keys and your own providers in Settings
               (<kbd>{{ keys.settings }}</kbd>) › Providers. Models can use Dez tools, for example to
-              find other models. Dez saves each conversation: History (<kbd>{{ keys.history }}</kbd>)
-              opens it again.
+              find other models, to ask them for images and clips, and to cut and join clips. Dez
+              saves each conversation: History (<kbd>{{ keys.history }}</kbd>) opens it again.
             </p>
             <p>
               Paste or drop images, audio, and video into a message. A model that makes images,
@@ -174,6 +179,20 @@ function onOverlayClick(event: MouseEvent) {
               a small chip when an asset has that id; a name with no chip names no asset.
             </p>
 
+            <h3>Intermediate assets</h3>
+            <p>
+              A chat model that asks another model for an image or a clip can mark it as
+              intermediate: a part of its work, for example a clip that it then joins with others,
+              and not the result that you asked for. Dez hides such an asset in the reply, and the
+              chip of its tool call says "intermediate asset hidden". Click the chip to see the
+              asset.
+            </p>
+            <p>
+              A hidden asset is an asset as any other: it has an id, you can name it with
+              <code>@</code> and the id, its trash and Save work in the open chip, and Delete Unused
+              Files keeps its file.
+            </p>
+
             <h3>Where the files are</h3>
             <p>
               Dez stores the files of assets in these folders of the Dez
@@ -191,6 +210,13 @@ function onOverlayClick(event: MouseEvent) {
               <code v-if="tempDir">{{ tempDir }}</code><template v-else>the cache folder of the system</template>,
               which Dez deletes after {{ TEMP_COPY_HOURS }} hours. The clock on its player tells
               until when the clip is available. Click Save on the player to keep the clip.
+            </p>
+            <p>
+              A Dez tool that cuts, joins, or converts clips stores its new clips and images at
+              once, in the folders above. It works on copies of the assets, in a work folder in
+              <code v-if="workDir">{{ workDir }}</code><template v-else>the cache folder of the system</template>,
+              so it never changes a file of yours. Dez deletes the work folder at the end of the
+              work, or {{ WORK_FOLDER_HOURS }} hours later if Dez closed before that.
             </p>
 
             <h3>Copy or link</h3>

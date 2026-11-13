@@ -291,9 +291,9 @@ export const BUILT_IN_PROVIDER_CONFIGS: readonly ProviderConfig[] = [
     // (code completion) and `embeddings` models, and Zed lists only `chat`
     // models. `image` and `decisions` are newer values that a third-party
     // client reports from the live API.
-    // MODEL_INVOKE: `image` has no request (no client that Dez knows of
-    // shows the API of these models); a `model_invoke` tool could run
-    // them when it has one.
+    // `image` has no request: no client that Dez knows of shows the API of
+    // these models. So Dez lists them, and refuses a message of the user
+    // and a `model_invoke` call to one (`unusableModelMessage`).
     // https://github.com/microsoft/vscode/blob/5e718f45a0486f73460d307540aff922a22eaca9/extensions/copilot/src/platform/endpoint/common/endpointProvider.ts#L39
     // https://github.com/zed-industries/zed/blob/b36b283021c48f1712714b8a0e2ad6ffb578920b/crates/copilot_chat/src/copilot_chat.rs#L950-L955
     // https://github.com/Ashesh3/copilot-api/pull/146
