@@ -1,63 +1,19 @@
-import { history, insertNewlineAndIndent, undo } from '@codemirror/commands'
-import { EditorSelection, EditorState, type Transaction, type TransactionSpec } from '@codemirror/state'
+import { insertNewlineAndIndent, undo } from '@codemirror/commands'
+import type { EditorState } from '@codemirror/state'
 import type { EditorView } from '@codemirror/view'
 import { describe, expect, it } from 'vitest'
-import { mediaTagText } from '../../model/chat/mediaTags'
-import { toolBlockText } from '../../model/chat/toolBlocks'
 import type { Role } from '../../model/chat/types'
-import { SECTION_SEP, sectionsField } from '../thread/cmEditor'
-import { streamingSectionField } from '../thread/modelChip'
+import { SECTION_SEP } from '../thread/cmEditor'
 import { deleteLineBlockBackward, deleteLineBlockForward, joinsLineBlock } from './lineBlocks'
-import { markdownMedia, renderedMedia } from './media'
-import { markdownToolCalls, renderedToolCalls } from './toolCalls'
-
-const CHIP = toolBlockText({ id: 'a', name: 'model_list', status: 'success', arguments: { filter: 'gemini' }, result: 'ok' })
-const PLAYER = mediaTagText({ kind: 'video', id: 'a', type: 'video/webm', src: 'https://cdn.example/v.webm', url: 'https://cdn.example/v.webm', expires: null, other: [] })
-
-function joinSections(texts: string[]): string {
-  return texts.join(`\n${SECTION_SEP}\n`)
-}
-
-/** A state with both kinds of line blocks, whose doc is `texts`, one
- *  section each, with the roles of `roles`, and carets at `carets`. The
- *  first section is always `user` (`normalizeSectionModels` in
- *  cmEditor.ts). */
-function createState(texts: string[], roles: Role[], carets: number[] = []): EditorState {
-  return EditorState.create({
-    doc: joinSections(texts),
-    selection: carets.length ? EditorSelection.create(carets.map((pos) => EditorSelection.cursor(pos))) : undefined,
-    extensions: [
-      sectionsField.init(() => roles.map((role, index) => ({ id: `s${index}`, role }))),
-      streamingSectionField.init(() => null),
-      markdownToolCalls(),
-      markdownMedia(),
-      history(),
-      EditorState.allowMultipleSelections.of(true),
-    ],
-  })
-}
+import { renderedMedia } from './media'
+import { CHIP, PLAYER, createState, joinSections, runCommand } from './testing'
+import { renderedToolCalls } from './toolCalls'
 
 /** The source of each block that the editor shows, in doc order. */
 function shown(state: EditorState): string[] {
   return [...renderedToolCalls(state), ...renderedMedia(state)]
     .sort((a, b) => a.from - b.from)
     .map(({ from, to }) => state.sliceDoc(from, to))
-}
-
-/** Runs a key command on a fake view; the next state is unchanged when the
- *  command does not handle the key. */
-function runCommand(state: EditorState, command: (view: EditorView) => boolean): { handled: boolean, state: EditorState } {
-  let next = state
-  const view = {
-    get state() {
-      return next
-    },
-    dispatch(...specs: [Transaction] | TransactionSpec[]) {
-      next = 'startState' in specs[0] ? specs[0].state : next.update(...specs as TransactionSpec[]).state
-    },
-  } as EditorView
-  const handled = command(view)
-  return { handled, state: next }
 }
 
 function insert(state: EditorState, text: string, userEvent = 'input.type'): EditorState {

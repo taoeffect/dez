@@ -1,10 +1,11 @@
 import sbp from '@sbp/sbp'
 import { history, undo } from '@codemirror/commands'
-import { EditorSelection, EditorState, type Transaction, type TransactionSpec } from '@codemirror/state'
+import { EditorSelection, EditorState, type TransactionSpec } from '@codemirror/state'
 import type { EditorView } from '@codemirror/view'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { SECTION_SEP, encodePrompt, sectionsField } from '../thread/cmEditor'
 import { deleteImage, deleteImageBang, deleteImageParen, imageRemovalRange, imageTooltip, imageTooltipDelay, markdownImages, renderedImages, setImageTooltip } from './images'
+import { runCommand } from './testing'
 
 interface ConfirmCall {
   message: string
@@ -71,22 +72,6 @@ function createState(doc: string, ...carets: number[]): EditorState {
 /** The source of each image that the editor shows. */
 function shown(state: EditorState): string[] {
   return renderedImages(state).map((image) => state.sliceDoc(image.from, image.to))
-}
-
-/** Runs a key command on a fake view; the next state is unchanged when the
- *  command does not handle the key. */
-function runCommand(state: EditorState, command: (view: EditorView) => boolean): { handled: boolean, state: EditorState } {
-  let next = state
-  const view = {
-    get state() {
-      return next
-    },
-    dispatch(...specs: [Transaction] | TransactionSpec[]) {
-      next = 'startState' in specs[0] ? specs[0].state : next.update(...specs as TransactionSpec[]).state
-    },
-  } as EditorView
-  const handled = command(view)
-  return { handled, state: next }
 }
 
 function type(state: EditorState, text: string): EditorState {

@@ -299,6 +299,7 @@ Brief comments are encouraged above functions that do anything non-trivial expla
 ## Testing approach
 
 - Unit tests: Vitest with colocated `*.test.ts` files; `npm test` also runs `scripts/*.test.js`. Rust unit tests are in the `src-tauri/src/*.rs` files.
+- Shared unit test helpers are in a `testing.ts` module next to their tests (`src/model/providers/testing.ts`, `src/view/editor/testing.ts`); never copy one into a test file.
 - Run `npm run build` at the end of a task step with frontend changes (it type-checks), not after every edit.
 - Run `npm test` after frontend logic changes.
 - Run `cd src-tauri && cargo check` after significant Rust changes, and `cargo test` when touching Rust logic with tests.
