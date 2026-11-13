@@ -1039,14 +1039,16 @@ export function joinNoVideoText(id: string): string {
 
 /** The result of a `join_clips` job whose ffmpeg run ended: `isError` with
  *  the text of a run that failed or that made no file, else the text that
- *  goes with the new clip. `joined` tells that the output file is there. */
-export function joinRunResult(plan: JoinPlan, count: number, end: Exclude<ProgramEnd, { kind: 'timedOut' }>, joined: boolean, log: ProgramLog): { text: string, isError: boolean } {
+ *  goes with the new clip. `joined` tells that the output file is there;
+ *  `notKept` gives the reason of each new file that Dez did not keep
+ *  (`OutputFiles`). */
+export function joinRunResult(plan: JoinPlan, count: number, end: Exclude<ProgramEnd, { kind: 'timedOut' }>, joined: boolean, notKept: readonly string[], log: ProgramLog): { text: string, isError: boolean } {
   const failure = ffmpegFailureText(end, log, JOIN_ADVICE)
   if (failure !== null || !joined) {
     return {
       text: failure !== null
         ? `Dez could not join the clips. ${failure}`
-        : withLog('Dez could not join the clips: ffmpeg ended with no error, but it made no clip that Dez can store. This is not a fault of the call. Tell the user.', log.end(LOG_END)),
+        : withLog(`Dez could not join the clips: ffmpeg ended with no error, but it made no clip that Dez can store.${notKeptText(notKept)} This is not a fault of the call. Tell the user.`, log.end(LOG_END)),
       isError: true,
     }
   }

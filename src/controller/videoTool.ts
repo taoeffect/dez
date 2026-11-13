@@ -214,8 +214,9 @@ export function runJoinJob(call: JoinCall, signal: AbortSignal, report: (state: 
     if (end.kind === 'timedOut') return timedOutOutcome(call.timeoutMs, log)
 
     const listed = await sbp('dez.native/listAppFiles', folder, 'cache') as AppFileEntry[]
-    const joined = outputFiles(listed, made).kept.filter((file) => file.name === plan.output)
-    const result = joinRunResult(plan, call.clips.length, end, joined.length > 0, log)
+    const { kept, notKept } = outputFiles(listed, made)
+    const joined = kept.filter((file) => file.name === plan.output)
+    const result = joinRunResult(plan, call.clips.length, end, joined.length > 0, notKept, log)
     const text = withoutLocalPaths(result.text)
     if (result.isError) return { text, isError: true, assets: [] }
     return { text, isError: false, assets: await storeOutputs(folder, joined, VIDEO_TOOL.name) }

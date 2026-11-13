@@ -705,22 +705,22 @@ describe('joinRunResult', () => {
   const encode: JoinPlan = { kind: 'encode', args: [], output: 'joined.mp4', format: 'MP4 (H.264, AAC)', width: 1280, height: 720, hasAudio: true }
 
   it('tells that a copy made no new encode', () => {
-    expect(joinRunResult(copy, 3, ENDED, true, logOf())).toStrictEqual({ text: 'Joined the 3 clips into one clip with no new encode: their streams match.', isError: false })
+    expect(joinRunResult(copy, 3, ENDED, true, [], logOf())).toStrictEqual({ text: 'Joined the 3 clips into one clip with no new encode: their streams match.', isError: false })
   })
 
   it('tells the format of a new encode, and why Dez made one', () => {
-    const { text, isError } = joinRunResult(encode, 2, ENDED, true, logOf())
+    const { text, isError } = joinRunResult(encode, 2, ENDED, true, [], logOf())
 
     expect(isError).toBe(false)
     expect(text).toContain('Joined the 2 clips into one 1280x720 MP4 (H.264, AAC) clip.')
     expect(text).toContain('their streams do not match')
     expect(text).toContain('A clip with no sound has silence in the new clip.')
-    expect(joinRunResult({ ...encode, hasAudio: false }, 2, ENDED, true, logOf()).text).not.toContain('silence')
+    expect(joinRunResult({ ...encode, hasAudio: false }, 2, ENDED, true, [], logOf()).text).not.toContain('silence')
   })
 
   it('gives the log of a join that failed, or that made no clip, as an error', () => {
-    const failed = joinRunResult(encode, 2, { kind: 'exited', code: 8 }, false, logOf('Error opening output files\n'))
-    const empty = joinRunResult(copy, 2, ENDED, false, logOf('[warn] nothing\n'))
+    const failed = joinRunResult(encode, 2, { kind: 'exited', code: 8 }, false, [], logOf('Error opening output files\n'))
+    const empty = joinRunResult(copy, 2, ENDED, false, [], logOf('[warn] nothing\n'))
 
     expect(failed.isError).toBe(true)
     expect(failed.text).toContain('Dez could not join the clips.')
@@ -730,12 +730,19 @@ describe('joinRunResult', () => {
     expect(empty.text).toContain('[warn] nothing')
   })
 
+  it('tells why Dez did not keep the clip that a join made', () => {
+    const { text, isError } = joinRunResult(copy, 2, ENDED, false, ['joined.webm (it is empty)'], logOf())
+
+    expect(isError).toBe(true)
+    expect(text).toContain('it made no clip that Dez can store. Dez did not keep joined.webm (it is empty). This is not a fault of the call.')
+  })
+
   // A join call has only its clips: Dez builds the ffmpeg arguments.
   it.each([
     [{ kind: 'exited', code: 8 }, 'call again without that clip. Else this is not a fault of the call: tell the user.'],
     [{ kind: 'outputTooLarge' }, 'This is not a fault of the call. Tell the user.'],
   ] as const)('tells a fix that a join call can make after a failed run: %j', (end, advice) => {
-    const { text } = joinRunResult(copy, 2, end, false, logOf('[warn] one\n'))
+    const { text } = joinRunResult(copy, 2, end, false, [], logOf('[warn] one\n'))
 
     expect(text).toContain(advice)
     expect(text).not.toMatch(/argument|log level|-v /)

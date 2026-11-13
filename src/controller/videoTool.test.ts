@@ -466,6 +466,18 @@ describe('runJoinJob', () => {
     expect(native.moves).toStrictEqual([])
   })
 
+  it('tells why Dez did not keep a joined clip that is too large', async () => {
+    native.program = probing({ 'a.webm': probeOutput([VP9]), 'b.webm': probeOutput([VP9]) })
+    native.folderFiles = ['a.webm', 'b.webm', 'list.txt', 'joined.webm']
+    native.folderFileSize = MAX_SAVED_CLIP_BYTES + 1
+
+    const outcome = await runJoinJob(joinClipsCall({ clips: '@a @b' }, CLIPS), running(), report)
+
+    expect(outcome).toMatchObject({ isError: true, assets: [] })
+    expect(outcome.text).toContain('it made no clip that Dez can store. Dez did not keep joined.webm (it is larger than')
+    expect(native.moves).toStrictEqual([])
+  })
+
   it('runs no ffmpeg when Dez cannot write the list file', async () => {
     native.program = probing({ 'a.webm': probeOutput([VP9]), 'b.webm': probeOutput([VP9]) })
     native.saveAppFile = async () => { throw new Error(`${CACHE_DIR}: the disk is full`) }
