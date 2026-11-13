@@ -125,7 +125,7 @@ const FFMPEG_HELP = [
   `Dez puts \`${FFMPEG_FIXED_ARGS.join(' ')}\` before your arguments, so the log holds the warnings, the errors, and the progress. `
     + 'Add `-v info` for the lines of a filter that reports in the log (volumedetect, silencedetect, cropdetect).',
   'Dez refuses an argument with: an absolute path, "~", "..", a backslash, a URL or a protocol form (as in http:, file:, pipe:, concat:), '
-    + 'a lone "-" (only `-f null -` can have one), a capture or playback device, hls as the format of an input or of a filter (an HLS output can go, as -f hls after the last -i), '
+    + 'a lone "-" (only `-f null -` can have one), a capture or playback device, the hls format or an .m3u8 file name (no HLS input and no HLS output), '
     + 'and the options -safe, -protocol_whitelist, -protocol_blacklist, -filter_script, -filter_complex_script, -graph_file, -hls_key_info_file, '
     + '-enable_drefs, -use_absolute_path, -dump_attachment, and each option that starts with "-/".',
   'Encoders of this build: libx264, libx265, libvpx-vp9, libvpx, libsvtav1 (video); aac, libmp3lame, libopus, flac, pcm_s16le (audio); mjpeg, gif (images). '
@@ -320,16 +320,16 @@ const PARENT_FOLDER = /(?:^|\/)\.\.(?:\/|$)|\.\.\//
 // is `expr:` or a time (`00:00:05`).
 const PROTOCOL_FORM = new RegExp(String.raw`(?:^|[^${NAME_CHARS}])(?:(${REFUSED_PROTOCOLS.join('|')})[:+]|(subfile),)`, 'i')
 // The `-f` option, which sets the format of the next input or output:
-// ffmpeg and ffprobe take a stream part on any option, so `-f:v hls` is
-// `-f hls`.
+// ffmpeg and ffprobe take a stream part on any option, so `-f:v alsa` is
+// `-f alsa`.
 const FORMAT_OPTION = /^-f(?::|$)/
 // A format as the value of a key of a filter or of a muxer option
 // (`movie=x:f=alsa`, `[f=pulse]`).
 const KEYED_FORMAT_VALUE = String.raw`(?:^|[^${NAME_CHARS}])(?:f|format|format_name)\s*=\s*`
 // A format as the second value with no key of `movie` or `amovie`
-// (`amovie=x:hls`): a filter takes values with no key in the order of its
+// (`amovie=x:pulse`): a filter takes values with no key in the order of its
 // options, and format_name comes after filename. The filter can have an
-// instance name (`amovie@a=x:hls`). The first value takes any char but `:`
+// instance name (`amovie@a=x:pulse`). The first value takes any char but `:`
 // and the graph separators, `=` too: ffmpeg takes `x y=z` as a value with
 // no key, as no `=` follows the name `x`. So a keyed first value matches
 // too, which ffmpeg refuses before a value with no key. Quotes can put a
@@ -342,10 +342,13 @@ const DEVICE_FORMAT = new RegExp(String.raw`(?:${KEYED_FORMAT_VALUE}|${MOVIE_FOR
 // A refused option as a key of an option list inside a word
 // (`movie=list.txt:format_opts=safe=0`).
 const OPTION_KEY = new RegExp(String.raw`(?:^|[^${NAME_CHARS}])(${REFUSED_OPTIONS.join('|')})\s*=`, 'i')
-// The hls format as the format of a filter or of a muxer option
-// (`amovie=x:f=hls`, `amovie=x:hls`); `argumentProblem` checks the `-f`
-// option.
-const HLS_FORMAT = new RegExp(String.raw`(?:${KEYED_FORMAT_VALUE}|${MOVIE_FORMAT_VALUE})hls(?![${NAME_CHARS}])`, 'i')
+// The name of the hls format, or of the one file ending of the hls muxer
+// (`.m3u8`), as a whole name in a word: ffmpeg takes a format name in any
+// case, from many options (`-f`, `-fifo_format`, `-segment_format`, the
+// `f=` and `fifo_format=` keys of a filter or of a tee output, the second
+// value of `movie`), and takes the hls muxer for an output name that ends
+// in `.m3u8`. Option names such as `-hls_time` do not match.
+const HLS_NAME = new RegExp(String.raw`(?:^|[^${NAME_CHARS}])(?:hls|m3u8)(?![${NAME_CHARS}])`, 'i')
 
 // The chars that end a filter, its name, or its options in the filter
 // graph parser of ffmpeg, unless they are in quotes.
@@ -353,7 +356,7 @@ const GRAPH_SEPARATORS = '[],;='
 
 // The text of `word` as the filter graph parser of ffmpeg gives it to the
 // parser of a filter's options: with no quotes, and with `_` in place of
-// each separator in quotes, as that one ends nothing (`amovie@'a,b'=x:hls`
+// each separator in quotes, as that one ends nothing (`amovie@'a,b'=x:pulse`
 // is one filter, `amovie` with the instance name `a,b`). The parser drops
 // each quote and takes the text up to the next one as it is; Dez takes no
 // backslash, its other escape.
@@ -369,18 +372,18 @@ function filterGraphText(word: string): string {
 
 const WORK_FOLDER_ONLY = 'The program works only in its own work folder: name an input as @id, and an output as a new file name with no folder.'
 
-// Why Dez refuses the word `words[index]` of a command line of `program`;
-// null for a word that can go. `words` are the words after the split,
-// with a bare `@` in place of each `@id` that names an input: the id is no
-// part of what the program gets, and an id such as `fd` or `oss` must
-// refuse nothing.
+// Why Dez refuses the word `words[index]` of a command line of ffmpeg or
+// ffprobe (one rule for both); null for a word that can go. `words` are
+// the words after the split, with a bare `@` in place of each `@id` that
+// names an input: the id is no part of what the program gets, and an id
+// such as `fd` or `oss` must refuse nothing.
 //
 // The filter and option parsers of ffmpeg drop single quotes
 // (`m'o'vie=…` is `movie=…`), so each check of a text inside a word also
 // runs on the word without them, and on its `filterGraphText`, where a
 // separator in quotes ends no filter. A backslash, their other escape, is
 // refused as such.
-function argumentProblem(program: ShippedProgram, words: readonly string[], index: number): string | null {
+function argumentProblem(words: readonly string[], index: number): string | null {
   const word = words[index]
   const forms = word.includes('\'') ? [word, word.replaceAll('\'', ''), filterGraphText(word)] : [word]
   const found = (pattern: RegExp) => forms.map((form) => pattern.exec(form)).find((match) => match !== null) ?? null
@@ -409,14 +412,16 @@ function argumentProblem(program: ShippedProgram, words: readonly string[], inde
   const format = FORMAT_OPTION.test(words[index - 1] ?? '') ? word.toLowerCase() : undefined
   const device = format !== undefined && REFUSED_DEVICES.includes(format) ? format : found(DEVICE_FORMAT)?.[1].toLowerCase()
   if (device !== undefined) return `it names the device ${device}. Dez lets the program use no camera, no microphone, no screen, and no sound output of this computer.`
-  // The hls demuxer opens the files that its playlist names, by any path:
-  // a playlist that an earlier run wrote into a kept file passes every
-  // check of the words. The hls muxer only writes, so `-f hls` stays for an
-  // ffmpeg output (no `-i` after it); every `-f` of ffprobe is an input.
-  const hlsInput = format === 'hls' ? program === 'ffprobe' || words.slice(index + 1).includes('-i') : found(HLS_FORMAT) !== null
-  if (hlsInput) {
-    return 'it makes hls the format of an input or of a filter. An HLS playlist can name a file outside the work folder by a path that Dez cannot check, '
-      + 'so Dez lets the program read no playlist: hls can only be the format of an output, as -f hls after the last -i.'
+  // An HLS playlist names its segments by any path, and a playlist that an
+  // earlier run wrote into a kept file passes every check of the words.
+  // The hls demuxer opens those segments. The hls muxer with
+  // `-hls_flags append_list+delete_segments` reads the playlist that has
+  // the name of its output (the output can be the copy of such a file) and
+  // deletes its old segments, each one by the folder of the newest line.
+  if (found(HLS_NAME)) {
+    return 'it names the hls format or an .m3u8 file. An HLS playlist can name files outside the work folder by paths that Dez cannot check, '
+      + 'and ffmpeg reads those files as segments, or deletes them as old segments. So Dez lets the program read and write no HLS playlist. '
+      + 'To cut a clip into short clips, use the segment format, as in -f segment -segment_time 5 -reset_timestamps 1 part%03d.mp4.'
   }
   // The null muxer opens no file, so its `-` names nothing: `-f null -` is
   // the usual form of a run whose log is the result.
@@ -502,9 +507,9 @@ function programCall(program: ShippedProgram, fixedArgs: readonly string[], args
     masked.push(mask)
   }
 
-  const refused = masked.findIndex((_, index) => argumentProblem(program, masked, index) !== null)
+  const refused = masked.findIndex((_, index) => argumentProblem(masked, index) !== null)
   if (refused >= 0) {
-    throw new ToolError(`Dez refuses ${JSON.stringify(words[refused])} in \`arguments\`: ${argumentProblem(program, masked, refused)} ${NOT_DONE[program]}`)
+    throw new ToolError(`Dez refuses ${JSON.stringify(words[refused])} in \`arguments\`: ${argumentProblem(masked, refused)} ${NOT_DONE[program]}`)
   }
   const [nextId] = newMediaIds(sections.map(sectionPlainText), 1)
   const unknown = unknownInputsProblem([...unknownIds], assets, nextId, { argument: '`arguments`', notDone: NOT_DONE[program] })
