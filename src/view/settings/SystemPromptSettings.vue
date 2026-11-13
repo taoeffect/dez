@@ -16,6 +16,10 @@ import SystemPromptPreview from './SystemPromptPreview.vue'
 
 const { settings, activeModel, modelDisplayNames } = useModelState()
 
+// Source and Preview show the prompt at this one size, not at the user's
+// editor font size, so a switch between them keeps the text the same size.
+const PROMPT_FONT_SIZE_PX = 13
+
 // Off each time the page opens, so a stray key never changes the prompt.
 const editing = ref(false)
 const mode = ref<'source' | 'preview'>('source')
@@ -83,7 +87,7 @@ async function restoreDefault() {
           @input="onInput"
         />
         <template v-if="mode === 'preview'">
-          <SystemPromptPreview v-if="'text' in preview" :text="preview.text" />
+          <SystemPromptPreview v-if="'text' in preview" :text="preview.text" :font-size-px="PROMPT_FONT_SIZE_PX" />
           <p v-else class="settings-hint system-prompt-preview-note">{{ preview.note }}</p>
         </template>
         <div class="system-prompt-bar">
@@ -177,7 +181,7 @@ async function restoreDefault() {
   border: none;
   background: transparent;
   color: var(--color-text);
-  font-size: 13px;
+  font-size: v-bind("PROMPT_FONT_SIZE_PX + 'px'");
   font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, 'Liberation Mono', monospace;
   line-height: 1.6;
   outline: none;

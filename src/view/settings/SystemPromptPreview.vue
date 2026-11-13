@@ -2,6 +2,7 @@
 import { onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { EditorState, Prec } from '@codemirror/state'
 import { EditorView, drawSelection } from '@codemirror/view'
+import { EDITOR_FONT_SIZE_PROPERTY } from '../../model/editorFontSize'
 import { markdownLinks } from '../editor/links'
 import { markdownTables } from '../editor/tables'
 import { dezLanguageSupport, dezTheme } from '../thread/cmEditor'
@@ -10,7 +11,9 @@ import { dezLanguageSupport, dezTheme } from '../thread/cmEditor'
 // editor draws text. It has no image, tool, or media extension, so an image
 // reference or a media tag in the prompt shows as its source text.
 
-const props = defineProps<{ text: string }>()
+// Every size of `dezTheme` follows `EDITOR_FONT_SIZE_PROPERTY`. The root sets
+// it to `fontSizePx`, so this view does not follow the user's editor font size.
+const props = defineProps<{ text: string, fontSizePx: number }>()
 
 const host = ref<HTMLElement | null>(null)
 let view: EditorView | null = null
@@ -56,16 +59,13 @@ onBeforeUnmount(() => {
 </script>
 
 <template>
-  <div class="system-prompt-preview">
+  <div class="system-prompt-preview" :style="{ [EDITOR_FONT_SIZE_PROPERTY]: `${fontSizePx}px` }">
     <div ref="host" class="system-prompt-preview-host" />
   </div>
 </template>
 
 <style scoped>
-/* The size of the Source text, not the user's editor font size: every
-   size of `dezTheme` follows this property (`EDITOR_FONT_SIZE_PROPERTY`). */
 .system-prompt-preview {
-  --dez-editor-font-size: 13px;
   position: relative;
   min-height: 0;
 }
