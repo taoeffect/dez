@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed, ref } from 'vue'
 import sbp from '@sbp/sbp'
-import { effectiveRequest, type ModelInfo, type ProviderSettingsDescriptor } from '../../model/providers'
+import { effectiveRequest, type ModelInfo } from '../../model/providers'
 import {
   SYSTEM_PROMPT_VARIABLES,
   buildSystemPrompt,
@@ -31,13 +31,12 @@ const preview = computed((): { text: string, model: string } | { note: string } 
   const model = activeModel.value
   if (!model) return { note: 'No model is selected. Choose a model in the bottom bar to see the prompt that it gets.' }
   if (problem.value !== null) return { note: 'Fix the error in the prompt to see the preview.' }
-  const modelName = modelLabel(model, modelDisplayNames.value).modelName
+  const { modelName, providerName: knownProviderName } = modelLabel(model, modelDisplayNames.value)
   const cached = sbp('dez.model/modelCache/model', model.providerId, model.modelId) as ModelInfo | null
   if (effectiveRequest(cached ?? {}) !== 'chat') {
     return { note: `${modelName} gets no system prompt: Dez sends it only to chat models.` }
   }
-  const provider = sbp('dez.provider/settingsDescriptor', model.providerId, model.modelId) as ProviderSettingsDescriptor | null
-  const providerName = provider?.name ?? model.providerId
+  const providerName = knownProviderName ?? model.providerId
   const tools = sbp('dez.model/requestSendsTools', model) as boolean ? TOOL_DEFINITIONS : []
   const text = buildSystemPrompt(template.value, model, providerName, tools)
   if (text === undefined) return { note: 'Dez sends no system prompt.' }
