@@ -1,7 +1,7 @@
 // WAV files: raw PCM audio (`audio/pcm`), the samples of a clip with no
 // file format, which no player plays, gets a WAV header before its samples
 // (`wavFile`); decoded audio (Web Audio's float samples) becomes a 16-bit
-// WAV file (`wavFileOfChannels`, for the cuts of the `audio` tool).
+// WAV file (`wavFileOfChannels`, for the webview's cut of an audio clip).
 
 // How the samples of raw PCM audio are laid out. The samples are signed
 // whole numbers, little-endian.

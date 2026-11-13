@@ -1,5 +1,7 @@
 // A cut of an audio clip in the webview (`dez.controller/media/cutAudio`):
 // Web Audio decodes the clip, and a part of its samples becomes a WAV file.
+// A media request uses it for an input clip. The `audio` tool cuts with
+// ffmpeg (model/tools/audioTool.ts), at the rate `AUDIO_CUT_RATE`.
 
 /** The rate that a cut decodes every clip at, in frames a second. The
  *  decode resamples a clip to the rate of its context, so every WAV file of

@@ -1,7 +1,5 @@
 import sbp from '@sbp/sbp'
-import type { CutAudio } from '../model/chat/audioCut'
 import { drawnMediaType, UnwritableImageTypeError, type DrawnImage, type ImageSize } from '../model/chat/imageDrawing'
-import { ClipReadError } from '../model/chat/mediaFiles'
 import type { MediaTagData } from '../model/chat/mediaTags'
 import { modelRefKey } from '../model/chat/modelRef'
 import type { ModelRef, Section, Tab } from '../model/chat/types'
@@ -12,7 +10,7 @@ import { toggleRows, toggleValue } from '../model/providers/modelToggles'
 import type { ProviderMediaQuote } from '../model/providers/streamTypes'
 import { effectiveRequest, type ProviderInfo, type ProviderInputImageRules, type ProviderSettingsDescriptor } from '../model/providers/types'
 import type { SettingsSnapshot } from '../model/state'
-import { AUDIO_TOOL, audioClipId, audioClipOf, audioClipPart, audioCutResultText, audioLengthText } from '../model/tools/audioTool'
+import { AUDIO_TOOL, audioClipId, audioClipOf, audioCutPart, audioCutRequest, audioCutResultText, audioLengthText } from '../model/tools/audioTool'
 import { brightnessPlan, contrastPlan, convertPlan, cropPlan, flipPlan, IMAGE_TOOL, imageIdArgument, imageOf, imageResultText, invertPlan, rotatePlan, saturationPlan, scalePlan, unreadableImageText, unwritableFormatError, type ImagePlan } from '../model/tools/imageTool'
 import { jobInspectText, jobResultText, jobsListText, jobStartedText, jobsWaitText, unknownJobText, type JobResult } from '../model/tools/jobs'
 import { parameterValuesArgument, type ModelTarget } from '../model/tools/modelArguments'
@@ -21,11 +19,11 @@ import { invocationInputsText, MODEL_INVOKE_TOOL, modelInvocation } from '../mod
 import { modelListText } from '../model/tools/modelList'
 import { unexpectedToolErrorText, unknownToolText } from '../model/tools/registry'
 import { parseSubcommandCall, type SubcommandTool } from '../model/tools/subcommands'
-import { clipReadProblemText } from '../model/tools/toolInputs'
 import { ToolError, type ToolArguments, type ToolRunResult } from '../model/tools/types'
 import { ffmpegCall, ffprobeCall, joinClipsCall, VIDEO_TOOL, videoInputsText } from '../model/tools/videoTool'
 import { rawErrorText } from '../utils/errorText'
-import { writeJobAssets, type ReplyJobs } from './jobs'
+import { audioClipSeconds, cutAudioClip } from './audioTool'
+import { discardJobAssets, writeJobAssets, type ReplyJobs } from './jobs'
 import { invokeModel } from './modelInvoke'
 import { runFfmpegJob, runFfprobe, runJoinJob } from './videoTool'
 
@@ -251,70 +249,28 @@ const TOOL_RUNNERS: Record<string, ToolRunner> = {
     return modelInfoText(provider, model, facts, part)
   },
   // The `audio` tool (audioTool.ts). `clip` cuts a part of an audio clip of
-  // the conversation into a new WAV clip in the reply: the webview decodes
-  // and cuts it (`dez.controller/media/cutAudio`), and the clip is saved at
-  // once, as it has no URL to save it from later. Its error texts name the
-  // clip by its id only; the result goes to the chat provider, which gets
-  // no path of a stored file and no signed URL. The causes are in the log.
+  // the conversation into a new stored WAV clip in the reply; ffmpeg does
+  // the work (controller/audioTool.ts), and the call waits for it. A call
+  // with values that are a part of no clip is refused before Dez reads the
+  // clip. The result and the error texts name a clip by its id only: they
+  // go to the chat provider, which gets no path of a stored file and no
+  // signed URL. The causes are in the log.
   audio: subcommandRunner(AUDIO_TOOL, {
     async clip (args, signal, context) {
       const id = audioClipId(args)
       const source = audioClipOf(callSections(context), id)
+      const request = audioCutRequest(args)
+      if (!request) return audioLengthText(id, await audioClipSeconds(source, signal))
 
-      let file: Blob
-      try {
-        // A download from the clip's URL can take long: a stop ends the run
-        // at once, and the signal also ends the download.
-        file = await untilAborted(() => sbp('dez.controller/media/readClip', source, { signal }) as Promise<Blob>, signal)
-      } catch (error) {
-        if (!(error instanceof ClipReadError)) throw error
-        throw new ToolError(clipReadProblemText('audio', id, AUDIO_TOOL.name, error.problem), error.details, { cause: error })
-      }
-
-      // As for the `image` tool: the plan gives null for a call that names
-      // no part (only the plan gets the length of the clip, for the result)
-      // and for a call that it refuses, so that a failure of the cut is
-      // never the call's fault.
-      let lengthText = ''
-      let callError: unknown
-      let cut: CutAudio | null
-      try {
-        cut = await sbp('dez.controller/media/cutAudio', file, (duration: number) => {
-          try {
-            const part = audioClipPart(id, args, duration)
-            if (!part) lengthText = audioLengthText(id, duration)
-            return part
-          } catch (error) {
-            callError = error
-            return null
-          }
-        }) as CutAudio | null
-      } catch (error) {
-        // The texts of cutAudio hold no path: it gets the bytes, not a path.
-        throw new ToolError(`Dez could not decode the audio clip @${id} (${source.type}): this computer has no decoder for its file type, or the file is broken. `
-          + `This is not a fault of the call. Tell the user, and do not call the audio tool again for @${id}.`, rawErrorText(error), { cause: error })
-      }
-      if (callError !== undefined) throw callError
-      if (!cut) return lengthText
-
-      signal.throwIfAborted()
-      const clip = { kind: 'audio', type: 'audio/wav', src: null, url: null, expires: null } as const
-      let path: string
-      try {
-        path = await sbp('dez.controller/media/save', clip, { bytes: cut.bytes }) as string
-      } catch {
-        // media/save logged the failure and showed its error toast.
-        throw new ToolError('Dez could not save the new audio clip, so there is no new clip. This is not a fault of the call, and Dez showed the user the cause. '
-          + 'Tell the user that the clip was not made, and call the audio tool again only when the user asks for it.')
-      }
-      const newId = context.writeClip({ ...clip, src: path })
+      const cut = await cutAudioClip(source, request, signal)
+      const newId = context.writeClip(cut.clip)
       if (newId === null) {
-        // A file that no tag names; media/delete logs its own failures.
-        await sbp('dez.controller/media/delete', path).catch(() => {})
+        // A file that no tag names.
+        await discardJobAssets([{ kind: 'clip', clip: cut.clip }])
         throw new ToolError('The reply stopped before Dez could add the new audio clip to it, so there is no new clip. This is not a fault of the call. '
           + 'Call the audio tool again only when the user asks for the clip again.')
       }
-      return audioCutResultText(id, newId, cut.part, cut.duration)
+      return audioCutResultText(id, newId, audioCutPart(request, cut.seconds), cut.seconds)
     },
   }),
   // The `image` tool (imageTool.ts): each subcommand makes a new image from

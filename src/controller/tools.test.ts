@@ -1,9 +1,7 @@
 import sbp from '@sbp/sbp'
 import { createPinia, setActivePinia } from 'pinia'
 import { afterEach, beforeEach, describe, expect, it, vi, type MockInstance } from 'vitest'
-import type { AudioPart, CutAudio } from '../model/chat/audioCut'
 import { UnwritableImageTypeError, type DrawnImage, type DrawnMediaType, type ImageDrawing, type ImageSize } from '../model/chat/imageDrawing'
-import { ClipReadError } from '../model/chat/mediaFiles'
 import { mediaTagText, type MediaTagData } from '../model/chat/mediaTags'
 import type { ModelRef, Tab } from '../model/chat/types'
 import type { ModelCache } from '../model/persistence/types'
@@ -21,6 +19,8 @@ import type { ToolArguments, ToolRunResult } from '../model/tools/types'
 import { ExplainedError } from '../utils/errorText'
 import { ReplyJobs, type JobOutcome } from './jobs'
 import { invokeModel } from './modelInvoke'
+import type { BundledToolEnd } from './nativeTypes'
+import { APP_DIR, audioProgress, ENDED, native, resetNative, writes } from './testing'
 import type { ToolRunCall, ToolRunContext } from './tools'
 // Side-effect imports: register the dez.model/* selectors and the selector
 // under test.
@@ -58,27 +58,15 @@ let drawings: { drawing: ImageDrawing, mediaType: string }[] = []
 let savedImages: { mediaType: string, options: unknown }[] = []
 let saveImage: () => Promise<string>
 let deletedImages: string[] = []
-// The stub clip store and webview of the `audio` tool: the source of each
-// clip that was read, what a read and a save do, the length of every clip,
-// each save, and the deleted files. Set in beforeEach and by the tests.
-let readClips: (string | null)[] = []
-let readClip: () => Promise<Blob>
-let clipDuration: number
-// Set to make the webview fail to decode.
-let cutError: Error | undefined
-let savedClips: { clip: unknown, options: unknown }[] = []
-let saveClip: () => Promise<string>
+// The clip files that were deleted. The native side of the `audio` tool
+// (the runs of ffmpeg and their files) is the stub of testing.ts.
 let deletedClips: string[] = []
-const CUT_BYTES = new Uint8Array([9])
-// The files that the stub stores save.
+// The file that the stub image store saves.
 const MADE_IMAGE = '/home/u/.config/dez/assets/generated/images/new.png'
-const MADE_CLIP = '/home/u/.config/dez/assets/generated/audio/new.wav'
-// The stub media API of `model_invoke`: each request, what the provider
-// answers to one, and the temp copies of clips that were deleted (files of
-// the cache root). Set in beforeEach and by the tests.
+// The stub media API of `model_invoke`: each request, and what the
+// provider answers to one. Set in beforeEach and by the tests.
 let mediaRequests: ProviderGenerateMediaInput[] = []
 let generateMedia: (input: ProviderGenerateMediaInput) => Promise<ProviderGenerateMediaResult>
-let deletedTempCopies: string[] = []
 // The stub chat API of `model_invoke`: each request, what the provider
 // does with one (it calls the callbacks of the request, as the answer
 // comes), and the ids of the requests that were cancelled. Set in
@@ -128,19 +116,6 @@ sbp('sbp/selectors/register', {
   async 'dez.controller/images/delete' (path: string): Promise<void> {
     deletedImages.push(path)
   },
-  async 'dez.controller/media/readClip' (clip: MediaTagData): Promise<Blob> {
-    readClips.push(clip.src)
-    return await readClip()
-  },
-  async 'dez.controller/media/cutAudio' (_file: Blob, plan: (duration: number) => AudioPart | null): Promise<CutAudio | null> {
-    if (cutError) throw cutError
-    const part = plan(clipDuration)
-    return part && { part, bytes: CUT_BYTES, duration: part.end - part.start }
-  },
-  async 'dez.controller/media/save' (clip: unknown, options: unknown): Promise<string> {
-    savedClips.push({ clip, options })
-    return await saveClip()
-  },
   async 'dez.controller/media/delete' (path: string): Promise<void> {
     deletedClips.push(path)
   },
@@ -155,12 +130,6 @@ sbp('sbp/selectors/register', {
   },
   async 'dez.http/cancelStream' (requestId: string): Promise<void> {
     cancelledRequests.push(requestId)
-  },
-  async 'dez.native/getAppDir' (root = 'app'): Promise<string> {
-    return root === 'cache' ? '/home/u/.cache/dez' : '/home/u/.config/dez'
-  },
-  async 'dez.native/deleteAppFile' (path: string, root = 'app'): Promise<void> {
-    if (root === 'cache') deletedTempCopies.push(path)
   },
 })
 
@@ -180,6 +149,7 @@ let consoleError: MockInstance<typeof console.error>
 beforeEach(() => {
   setActivePinia(createPinia())
   consoleError = vi.spyOn(console, 'error').mockImplementation(() => {})
+  resetNative()
   // As at app start: the cached models, with no raw entries.
   for (const { id } of providers) {
     sbp('dez.model/modelCache/applyProviderResult', id, { ok: true, models: MODELS(id) })
@@ -198,16 +168,9 @@ beforeEach(() => {
   savedImages = []
   saveImage = async () => MADE_IMAGE
   deletedImages = []
-  readClips = []
-  readClip = async () => new Blob([])
-  clipDuration = 10
-  cutError = undefined
-  savedClips = []
-  saveClip = async () => MADE_CLIP
   deletedClips = []
   mediaRequests = []
   generateMedia = async () => ({ media: [], clips: [] })
-  deletedTempCopies = []
   chatRequests = []
   streamChat = async () => {}
   cancelledRequests = []
@@ -693,83 +656,57 @@ describe('dez.controller/tools/run', () => {
         { id: 'u2', role: 'user', content: [{ kind: 'text', text: 'Cut it.' }] },
         { id: 'a2', role: 'agent', content: [{ kind: 'text', text: '' }] },
       ])
+      // An ffmpeg that wrote 2.5 seconds of audio into the new file.
+      native.program = writes('stdout', audioProgress(2.5))
+      native.folderFiles = ['b.mp3', 'new_clip.wav']
     })
 
-    it('cuts the part into a WAV clip, saves it at once, and gives the reply its tag', async () => {
+    it('cuts the part into a new stored WAV clip, and gives the reply its tag', async () => {
       expect(await clip({ clip: '@b', start: 1, end: 3.5 })).toStrictEqual({
         content: 'Made the audio clip @c from @b, from second 1 to second 3.5. The audio clip @c is 2.5 seconds long.',
         isError: false,
       })
 
-      expect(readClips).toStrictEqual([song])
-      const wav = { kind: 'audio', type: 'audio/wav', src: null, url: null, expires: null }
-      expect(savedClips).toStrictEqual([{ clip: wav, options: { bytes: CUT_BYTES } }])
-      expect(written).toStrictEqual([{ ...wav, src: MADE_CLIP }])
+      expect(native.runs.map(({ run }) => run.inputs)).toStrictEqual([[{ name: 'b.mp3', source: song }]])
+      expect(native.moves.map(({ to }) => to.path)).toStrictEqual([expect.stringMatching(/^assets\/generated\/audio\/[0-9a-f-]{36}\.wav$/)])
+      expect(written).toStrictEqual([{ kind: 'audio', type: 'audio/wav', src: `${APP_DIR}/${native.moves[0].to.path}`, url: null, expires: null }])
       expect(deletedClips).toStrictEqual([])
     })
 
     it('ends the part at the end of the clip for an end past it', async () => {
+      native.program = writes('stdout', audioProgress(2))
+
       expect((await clip({ clip: 'b', start: 8, end: 60 })).content).toBe('Made the audio clip @c from @b, from second 8 to second 10. The audio clip @c is 2 seconds long.')
     })
 
     it('makes no clip for a call with only the clip, and gives the length of the clip', async () => {
-      clipDuration = 12.3456
+      native.program = writes('stdout', audioProgress(12.3456))
 
       expect(await clip({ clip: 'b' })).toStrictEqual({
         content: 'The audio clip @b is 12.35 seconds long. Give a start, an end, or both to make a new clip from a part of it.',
         isError: false,
       })
-      expect(savedClips).toStrictEqual([])
+      expect(native.moves).toStrictEqual([])
       expect(written).toStrictEqual([])
     })
 
-    it('gives the error of a part that is not in the clip, and saves nothing', async () => {
+    it('refuses a part that no clip has before it reads the clip', async () => {
+      expect(await clip({ clip: 'b', start: 5, end: 5 })).toStrictEqual({ content: '"end" (5) must be after "start" (5).', isError: true })
+      expect(native.runs).toStrictEqual([])
+    })
+
+    it('gives the error of a part that is not in the clip, with the length of the clip, and makes no clip', async () => {
+      // The cut wrote no audio; the clip is 10 seconds long.
+      native.program = async (run, onOutput) => {
+        onOutput({ stream: 'stdout', text: audioProgress(run.args.includes('-ss') ? null : 10) })
+        return ENDED
+      }
+
       expect(await clip({ clip: 'b', start: 12 })).toStrictEqual({
         content: 'The audio clip @b is 10 seconds long, so "start" must be less than 10.',
         isError: true,
       })
-      expect(savedClips).toStrictEqual([])
-    })
-
-    // An error result goes to the chat provider: no path, no URL.
-    it.each([
-      [new ClipReadError('deleted'), 'The audio clip @b is gone: the user deleted its file, and it has no web address to download it from. '
-        + 'This is not a fault of the call. Tell the user, and do not call the audio tool again for @b.'],
-      [new ClipReadError('expired', 'The server of the clip answered HTTP 403.'), 'The audio clip @b has expired: the provider that made it does not keep it any more, and the user did not save it. '
-        + 'This is not a fault of the call. Tell the user, and do not call the audio tool again for @b.\n\nDetails: The server of the clip answered HTTP 403.'],
-      [new ClipReadError('unreadable', 'The file cannot be read (HTTP 404).'), 'Dez could not read the audio clip @b: its file is gone, Dez may not read it, or its server did not send it (the details tell which). '
-        + 'This is not a fault of the call. Tell the user, and call the audio tool again for @b only when the user asks for it.\n\nDetails: The file cannot be read (HTTP 404).'],
-    ])('gives an error result for a clip that cannot be read (%s)', async (error, content) => {
-      readClip = async () => {
-        throw error
-      }
-
-      expect(await clip({ clip: 'b', end: 5 })).toStrictEqual({ content, isError: true })
-      expect(savedClips).toStrictEqual([])
-      expect(consoleError).toHaveBeenCalledWith('The tool audio failed:', expect.objectContaining({ cause: error }))
-    })
-
-    it('tells that a failed decode is not the fault of the call, with the reason of the webview', async () => {
-      cutError = new Error('The audio cannot be decoded.')
-
-      expect(await clip({ clip: 'b', end: 5 })).toStrictEqual({
-        content: 'Dez could not decode the audio clip @b (audio/mpeg): this computer has no decoder for its file type, or the file is broken. '
-          + 'This is not a fault of the call. Tell the user, and do not call the audio tool again for @b.\n\nDetails: The audio cannot be decoded.',
-        isError: true,
-      })
-      expect(savedClips).toStrictEqual([])
-    })
-
-    it('gives an error result with no path when the save fails', async () => {
-      saveClip = async () => {
-        throw new Error(`Failed to write ${MADE_CLIP}`)
-      }
-
-      expect(await clip({ clip: 'b', end: 5 })).toStrictEqual({
-        content: 'Dez could not save the new audio clip, so there is no new clip. This is not a fault of the call, and Dez showed the user the cause. '
-          + 'Tell the user that the clip was not made, and call the audio tool again only when the user asks for it.',
-        isError: true,
-      })
+      expect(native.moves).toStrictEqual([])
       expect(written).toStrictEqual([])
     })
 
@@ -781,18 +718,23 @@ describe('dez.controller/tools/run', () => {
           + 'Call the audio tool again only when the user asks for the clip again.',
         isError: true,
       })
-      expect(deletedClips).toStrictEqual([MADE_CLIP])
+      expect(deletedClips).toStrictEqual([`${APP_DIR}/${native.moves[0].to.path}`])
     })
 
-    it('ends at once and saves no clip when the user stops the reply during the read', async () => {
+    it('stops ffmpeg and makes no clip when the user stops the reply during the cut', async () => {
       const abort = new AbortController()
-      readClip = () => {
-        abort.abort()
-        return new Promise<Blob>(() => {})
-      }
+      let end: (end: BundledToolEnd) => void = () => {}
+      native.program = () => new Promise((resolve) => { end = resolve })
 
-      expect((await clip({ clip: 'b', end: 5 }, abort.signal)).isError).toBe(true)
-      expect(savedClips).toStrictEqual([])
+      const result = clip({ clip: 'b', end: 5 }, abort.signal)
+      await vi.waitFor(() => expect(native.runs).toHaveLength(1))
+      abort.abort()
+      end({ kind: 'cancelled' })
+
+      expect((await result).isError).toBe(true)
+      expect(native.cancelledRuns).toStrictEqual([native.runs[0].runId])
+      expect(native.moves).toStrictEqual([])
+      expect(written).toStrictEqual([])
       expect(consoleError).not.toHaveBeenCalled()
     })
   })
@@ -1028,7 +970,7 @@ describe('dez.controller/tools/run', () => {
         request.answer({ media: [], clips: [MADE_VIDEO] })
         expect(await jobResult()).toContain('Made the video clip @c.')
         expect(written).toStrictEqual([{ path: TEMP_COPY, tool: 'model_invoke', jobId: 'q-17' }])
-        expect(deletedTempCopies).toStrictEqual([])
+        expect(native.deletedFiles).toStrictEqual([])
       })
 
       // The model reads the same texts as for any other call: only the
@@ -1160,7 +1102,7 @@ describe('dez.controller/tools/run', () => {
         request.answer({ media: [], clips: [MADE_VIDEO] })
 
         expect(mediaRequests[0].signal?.aborted).toBe(true)
-        await vi.waitFor(() => expect(deletedTempCopies).toStrictEqual(['media/made.mp4']))
+        await vi.waitFor(() => expect(native.deletedFiles).toStrictEqual([{ root: 'cache', path: 'media/made.mp4', folder: false }]))
         expect(consoleError).not.toHaveBeenCalled()
       })
 

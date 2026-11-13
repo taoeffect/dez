@@ -5,11 +5,11 @@ import { Key } from 'webdriverio'
 import { unknownToolText } from '../../src/model/tools/registry'
 import { anthropicChatBody, anthropicMarkedUser, openAiChatBody } from './harness/chatBody'
 import { consoleErrors, pointerClick, resetConsoleErrors, screenshotOnFailure, typeKeys, waitForValue } from './harness/dom'
-import { conversationFilePath, makeConversation, seedConversation } from './harness/fixtures'
+import { conversationFilePath, filesIn, makeConversation, seedConversation, workDir } from './harness/fixtures'
 import { decodedImage, generatedImagesDir, pasteImageReference, pngDataUrl, shownImages, STRIPE_COLORS, STRIPES_PNG, STRIPES_SVG, WEBKIT_SVG_SIZES } from './harness/images'
 import { WAV_SAMPLE_RATE, monoWav, shownPlayers } from './harness/media'
 import { startMockProviderApp, type MockProviderApp } from './harness/mockProviderApp'
-import { mockChatPath, replyText, sendAnthropicReply, sendChatReply, startEventStream, writeAnthropicEvent, writeChatFrame, type MockProvider } from './harness/mockServer'
+import { mockChatPath, openAiToolCall, replyText, sendAnthropicReply, sendChatReply, sendToolCalls, startEventStream, toolResult, writeAnthropicEvent, writeChatFrame, type MockProvider } from './harness/mockServer'
 import type { E2EBrowser } from './harness/session'
 import { activeConversationId, activeTabStreaming, docPos, editorCaret, editorDoc, focusEditor, focusedArea, newTab, pickModel, sbpCall, setCaret, submit, threadSections, waitForThread, type ThreadSection } from './harness/thread'
 import { toolChips, toolPanel, type ToolChipView } from './harness/toolChips'
@@ -30,7 +30,9 @@ import { toolChips, toolPanel, type ToolChipView } from './harness/toolChips'
 // one: the images go into the reply after the calls, and the requests name
 // them by their ids, with no path. A pasted SVG goes as the same PNG copy
 // in each request of a reply, and its crop is a PNG. An `audio` call cuts a
-// part of a saved clip into a new saved WAV clip, in the same way. A block
+// part of a saved clip into a new saved WAV clip, in the same way; a call
+// with no part gives the length of the clip, and a part after its end gives
+// an error that tells that length. A block
 // of a tool that Dez does not have shows as an old/unrecognized tool chip,
 // and goes back with its result. A long result scrolls in its field under
 // the wheel. Backspace and Delete next to a chip never join its block to
@@ -139,6 +141,30 @@ describe('tool calls', () => {
       const { top, bottom } = (chip ?? line).getBoundingClientRect()
       return { text: chip?.querySelector('.dez-tool-call__summary')?.textContent ?? line.textContent ?? '', top, bottom }
     }))
+  }
+
+  // Opens a conversation in which a model made the saved audio clip `a`
+  // (SONG_WAV), and chooses the mock model. Gives the folder of the
+  // generated audio, the file of the clip, and its tag.
+  async function openSongConversation (id: string): Promise<{ audioDir: string, songPath: string, songTag: string }> {
+    const audioDir = path.join(setup.app.home, '.config', 'dez', 'assets', 'generated', 'audio')
+    const songPath = path.join(audioDir, 'song.wav')
+    await fs.promises.mkdir(audioDir, { recursive: true })
+    await fs.promises.writeFile(songPath, SONG_WAV)
+    const songTag = `<dez:audio id="a" type="audio/wav" src="${songPath}"/>`
+    await seedConversation(setup.app.home, makeConversation({
+      id,
+      title: 'A song',
+      sections: [
+        { role: 'user', nodes: [{ kind: 'text', text: 'Make a song.' }] },
+        { role: 'agent', nodes: [{ kind: 'text', text: songTag }] },
+        { role: 'user', nodes: [{ kind: 'text', text: '' }] },
+      ],
+    }))
+    await sbpCall(browser, 'dez.model/tabs/openConversation', id)
+    await waitForThread(browser, [{ role: 'user', text: 'Make a song.' }, { role: 'agent', text: songTag }, { role: 'user', text: '' }])
+    await pickModel(browser, TOOLER.name, TOOLER.modelName)
+    return { audioDir, songPath, songTag }
   }
 
   beforeAll(async () => {
@@ -600,23 +626,7 @@ describe('tool calls', () => {
   })
 
   it('runs an audio clip call: the cut is a new saved WAV clip in the reply after the call, and the requests name it by its id', async () => {
-    const audioDir = path.join(setup.app.home, '.config', 'dez', 'assets', 'generated', 'audio')
-    const songPath = path.join(audioDir, 'song.wav')
-    await fs.promises.mkdir(audioDir, { recursive: true })
-    await fs.promises.writeFile(songPath, SONG_WAV)
-    const songTag = `<dez:audio id="a" type="audio/wav" src="${songPath}"/>`
-    await seedConversation(setup.app.home, makeConversation({
-      id: 'audio-cut',
-      title: 'Audio cut',
-      sections: [
-        { role: 'user', nodes: [{ kind: 'text', text: 'Make a song.' }] },
-        { role: 'agent', nodes: [{ kind: 'text', text: songTag }] },
-        { role: 'user', nodes: [{ kind: 'text', text: '' }] },
-      ],
-    }))
-    await sbpCall(browser, 'dez.model/tabs/openConversation', 'audio-cut')
-    await waitForThread(browser, [{ role: 'user', text: 'Make a song.' }, { role: 'agent', text: songTag }, { role: 'user', text: '' }])
-    await pickModel(browser, TOOLER.name, TOOLER.modelName)
+    const { audioDir, songPath, songTag } = await openSongConversation('audio-cut')
     await submit(browser, 'Cut it.')
     const first = await setup.mock.waitForRequest(browser)
     const before = [
@@ -690,6 +700,33 @@ describe('tool calls', () => {
     expect(third.body).not.toContain(setup.app.home)
     await sendChatReply(third.reply, 'welcome')
     await waitForThread(browser, [...sections, { role: 'user', text: 'Thanks.' }, { role: 'agent', text: replyText('welcome') }, { role: 'user', text: '' }])
+  })
+
+  // Dez reads both facts from the progress output of the real ffmpeg: the
+  // length of a clip, and that a part holds no audio.
+  it('answers an audio clip call with no part with the length of the clip, and a part after its end with an error that tells the length', async () => {
+    const { audioDir } = await openSongConversation('audio-length')
+    const filesBefore = await filesIn(audioDir)
+    await submit(browser, 'How long is it?')
+    const first = await setup.mock.waitForRequest(browser)
+    const clipCall = (id: string, parameters: Record<string, unknown>) => openAiToolCall(id, 'audio', { command: 'clip', parameters: JSON.stringify(parameters) })
+    sendToolCalls(first.reply, [clipCall('call_length', { clip: 'a' }), clipCall('call_after', { clip: 'a', start: 5 })])
+
+    const second = await setup.mock.waitForRequest(browser)
+    expect([toolResult(second, 'call_length'), toolResult(second, 'call_after')]).toStrictEqual([
+      'The audio clip @a is 2 seconds long. Give a start, an end, or both to make a new clip from a part of it.',
+      'The audio clip @a is 2 seconds long, so "start" must be less than 2.',
+    ])
+    await sendChatReply(second.reply, TOOLER.modelName)
+    await waitForValue(browser, 'sections after the reply', async () => (await threadSections(browser)).length, 5)
+
+    // No call made a clip, and each run deleted its work folder.
+    expect((await threadSections(browser))[3].text).not.toContain('<dez:audio')
+    expect(await filesIn(audioDir)).toStrictEqual(filesBefore)
+    expect(await filesIn(workDir(setup.app.home))).toStrictEqual([])
+    // Dez logs the call that it refused.
+    expect(await consoleErrors(browser)).toStrictEqual([expect.stringContaining('The tool audio failed:')])
+    await resetConsoleErrors(browser)
   })
 
   it('shows a block of a tool that Dez does not have as an old/unrecognized tool chip, and sends the call back with its result', async () => {

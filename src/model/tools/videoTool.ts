@@ -3,13 +3,12 @@ import { byteSizeText } from '../../utils/byteSize'
 import { sectionPlainText } from '../chat/content'
 import { findAssetMentions } from '../chat/imageMentions'
 import { imageExtension, imageMediaType } from '../chat/images'
-import { CLIP_FILE_EXTENSIONS, MAX_SAVED_CLIP_BYTES, mediaFileExtension, storableClip } from '../chat/mediaFiles'
+import { CLIP_FILE_EXTENSIONS, MAX_SAVED_CLIP_BYTES, storableClip } from '../chat/mediaFiles'
 import { newMediaIds } from '../chat/mediaIds'
-import type { MediaTagKind } from '../chat/mediaTags'
 import type { Section } from '../chat/types'
-import type { ClipAttachment } from '../providers/clipInputs'
 import { conversationAssets, type ConversationAssets } from '../streams/mediaRequest'
-import { ASSET_NAMES, jobTimeoutMs, jobTimeoutParameter, type JobAssetKind } from './jobs'
+import { ASSET_NAMES, jobTimeoutMs, jobTimeoutParameter } from './jobs'
+import { clipInput, tellUserConsole, type ClipInput, type KeptFile, type ProgramEnd, type ShippedProgram } from './programRuns'
 import { subcommandToolDefinition, type SubcommandTool } from './subcommands'
 import { assetText, unknownInputsProblem } from './toolInputs'
 import { ToolError, type ToolArguments, type ToolParameter } from './types'
@@ -19,7 +18,8 @@ import { ToolError, type ToolArguments, type ToolParameter } from './types'
 // This module has the pure parts: the definition and its help texts, the
 // checks of a call, the plan of a join, the rule of the new files, and
 // every text that the calling model reads. controller/videoTool.ts runs
-// the programs.
+// the programs. What the `audio` tool shares with this one about a run is
+// in programRuns.ts.
 //
 // - `join_clips` and `ffmpeg` start a job of the reply (controller/jobs.ts).
 // - `ffprobe` is fast, so its call waits for it.
@@ -80,8 +80,6 @@ export const FFMPEG_FIXED_ARGS: readonly string[] = ['-nostdin', '-hide_banner',
 /** As `FFMPEG_FIXED_ARGS`, for ffprobe: its output is what the call asks
  *  for, so its log level stays. */
 export const FFPROBE_FIXED_ARGS: readonly string[] = ['-hide_banner']
-
-export type VideoProgram = 'ffmpeg' | 'ffprobe'
 
 // The name of the output file of a join, without its extension, and the
 // file that lists the clips of a stream copy.
@@ -186,12 +184,12 @@ export const VIDEO_TOOL_DEFINITION = subcommandToolDefinition(VIDEO_TOOL)
 
 // What Dez did not do for a call that it refuses, by the program of the
 // call: `ffmpeg` runs as a job, and `ffprobe` in the call.
-const NOT_DONE: Readonly<Record<VideoProgram, string>> = {
+const NOT_DONE: Readonly<Record<ShippedProgram, string>> = {
   ffmpeg: 'Dez started no job.',
   ffprobe: 'Dez did not run ffprobe.',
 }
 
-const OTHER_PROGRAM: Readonly<Record<VideoProgram, VideoProgram>> = { ffmpeg: 'ffprobe', ffprobe: 'ffmpeg' }
+const OTHER_PROGRAM: Readonly<Record<ShippedProgram, ShippedProgram>> = { ffmpeg: 'ffprobe', ffprobe: 'ffmpeg' }
 
 // A word that only a shell reads: an operator between two commands, or a
 // redirect (`>`, `2>&1`, `<in.txt`). A filter value such as
@@ -211,7 +209,7 @@ const SHELL_WORD = /^(?:&&|\|\||[|;&]|\d*[<>].*)$/
  *  name of the program is dropped. Throws a `ToolError` for a quote that
  *  does not close, a word that only a shell reads, and a text with no
  *  word. */
-export function commandLineWords(text: string, program: VideoProgram): string[] {
+export function commandLineWords(text: string, program: ShippedProgram): string[] {
   const words: string[] = []
   let word = ''
   let inWord = false
@@ -380,15 +378,6 @@ export interface ImageInput {
   jpegCopy: boolean
 }
 
-/** A clip of a call, as the program gets it. */
-export interface ClipInput {
-  kind: MediaTagKind
-  id: string
-  /** The name of its copy in the work folder. */
-  name: string
-  clip: ClipAttachment
-}
-
 export type VideoInput = ImageInput | ClipInput
 
 // The image types whose files this ffmpeg build reads, with the extension
@@ -396,10 +385,8 @@ export type VideoInput = ImageInput | ClipInput
 const READ_IMAGE_TYPES: Readonly<Record<string, string>> = { 'image/jpeg': 'jpg', 'image/gif': 'gif', 'image/webp': 'webp' }
 
 // The input that the id `id` names; null for an id of no image and no
-// clip. The name of the copy is the id and the extension of the file's
-// type, so it tells nothing of the user's file name. ffmpeg finds the
-// format in the bytes, so a clip of a type that Dez does not know still
-// reads (`.bin`).
+// clip. The name of an image's copy is the id and the extension of the
+// file's type, as for a clip (`clipInput`).
 function inputOf(id: string, assets: ConversationAssets): VideoInput | null {
   const path = assets.images.get(id)
   if (path !== undefined) {
@@ -408,7 +395,7 @@ function inputOf(id: string, assets: ConversationAssets): VideoInput | null {
     return { kind: 'image', id, name: `${id}.${extension ?? 'jpg'}`, path, jpegCopy: extension === null }
   }
   const clip = assets.clips.get(id)
-  return clip ? { kind: clip.kind, id, name: `${id}.${mediaFileExtension(clip.type, clip.url) ?? 'bin'}`, clip } : null
+  return clip ? clipInput(clip) : null
 }
 
 /** A run of a program that a call asks for. */
@@ -426,7 +413,7 @@ export interface ProgramCall {
 // text, as in a prompt. Throws a `ToolError` for a text that is no command
 // line (`commandLineWords`), a word that the argument rule refuses, and an
 // `@id` that names nothing (`unknownInputsProblem`).
-function programCall(program: VideoProgram, fixedArgs: readonly string[], args: ToolArguments, sections: readonly Section[]): ProgramCall {
+function programCall(program: ShippedProgram, fixedArgs: readonly string[], args: ToolArguments, sections: readonly Section[]): ProgramCall {
   const words = commandLineWords(typeof args.arguments === 'string' ? args.arguments : '', program)
   const assets = conversationAssets(sections)
   const inputs = new Map<string, VideoInput>()
@@ -747,15 +734,6 @@ export interface WorkFile {
   size: number
 }
 
-/** A new file of a run that Dez keeps: an image or a clip of a type that
- *  it stores. `extension` is the one of its stored file. */
-export interface KeptFile {
-  name: string
-  kind: JobAssetKind
-  type: string
-  extension: string
-}
-
 /** The new files of a run. */
 export interface OutputFiles {
   kept: KeptFile[]
@@ -871,29 +849,13 @@ export function ffmpegStateText(progress: string): string {
   return progress === '' ? 'ffmpeg runs.' : `ffmpeg runs. Its last progress line: ${progress}`
 }
 
-const TELL_USER_CONSOLE = 'This is not a fault of the call. Tell the user that the video tool failed and that Help › Developer Console shows why, '
-  + 'and call the video tool again only when the user asks for it.'
-
-/** The error result of a run that did not start: the program is missing,
- *  or the system did not let Dez make the work folder or copy an input
- *  file. The cause is in the log; it can hold a path. */
-export function programNotStartedText(program: VideoProgram): string {
-  return `Dez could not start ${program} on this computer. ${TELL_USER_CONSOLE}`
-}
+const TELL_USER_CONSOLE = tellUserConsole(VIDEO_TOOL.name)
 
 /** The error result of a call whose input image `id` Dez could not draw as
  *  a JPEG copy. */
 export function jpegCopyFailedText(id: string): string {
   return `Dez could not make the JPEG copy of the image @${id} for the program: the webview could not decode or draw the image. ${TELL_USER_CONSOLE}`
 }
-
-/** The details of a clip that Dez does not give to the program because its
- *  file is too large. */
-export const INPUT_CLIP_TOO_LARGE = `The file of the clip is larger than ${byteSizeText(MAX_SAVED_CLIP_BYTES)}, the most that Dez gives to a tool.`
-
-/** The error result of a run whose new files Dez could not move into the
- *  Dez folder. */
-export const OUTPUT_NOT_STORED_TEXT = `The program made its files, but Dez could not move them into the Dez folder, so it kept none. ${TELL_USER_CONSOLE}`
 
 function withLog(text: string, logEnd: string): string {
   return logEnd.trim() === '' ? `${text}\nffmpeg wrote no log.` : `${text}\nThe end of the log of ffmpeg:\n${logEnd}`
@@ -902,13 +864,6 @@ function withLog(text: string, logEnd: string): string {
 function notKeptText(notKept: readonly string[]): string {
   return notKept.length === 0 ? '' : ` Dez did not keep ${notKept.join(', ')}.`
 }
-
-/** How a program run ended by itself or by a limit (`BundledToolEnd`
- *  without the cancel). */
-export type ProgramEnd =
-  | { kind: 'exited', code: number | null }
-  | { kind: 'timedOut' }
-  | { kind: 'outputTooLarge' }
 
 // The error result of an ffmpeg run that did not end with the code 0;
 // null for one that did. `timedOut` is not here: the job has the text of

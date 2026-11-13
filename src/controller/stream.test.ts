@@ -2,7 +2,6 @@ import sbp from '@sbp/sbp'
 import { createPinia, setActivePinia } from 'pinia'
 import { afterEach, beforeEach, describe, expect, it, vi, type MockInstance } from 'vitest'
 import type { ActiveModel, Section, SectionThinking, Tab, ThinkingReplay } from '../model/chat/types'
-import type { AudioPart, CutAudio } from '../model/chat/audioCut'
 import { sectionVisibleText } from '../model/chat/content'
 import type { DrawnImage, DrawnMediaType, ImageDrawing, ImageSize } from '../model/chat/imageDrawing'
 import { findMediaTags } from '../model/chat/mediaTags'
@@ -23,6 +22,7 @@ import { NO_MODELS_TEXT } from '../model/tools/modelList'
 import { TOOL_DEFINITIONS, unknownToolText } from '../model/tools/registry'
 import type { ToastData } from '../view/toast/selectors'
 import { ExplainedError, UNEXPECTED_ERROR } from '../utils/errorText'
+import { APP_DIR, audioProgress, native, resetNative, writes } from './testing'
 // Side-effect imports: register the dez.model/* selectors and the selectors
 // under test.
 import '../model/state/index'
@@ -58,11 +58,9 @@ let saveImage: (mediaType: string, options: unknown) => Promise<string>
 let deletedImages: string[] = []
 // The path of each stored image that an `image` tool call read.
 let readImages: string[] = []
-// Each file that was deleted from an app folder (the temp copies of clips).
-let deletedFiles: { path: string, root: string }[] = []
-// What the stub clip store does with the clip of an `audio` call, and the
-// clip files that were deleted. Every clip is 10 seconds long.
-let saveClip: () => Promise<string>
+// The clip files that were deleted. The native side (the deleted files of
+// the app folders, and the ffmpeg runs of an `audio` call with their
+// files) is the stub of testing.ts.
 let deletedClips: string[] = []
 let consoleError: MockInstance<typeof console.error>
 
@@ -90,22 +88,6 @@ sbp('sbp/selectors/register', {
   async 'dez.controller/images/redraw' (_file: Blob, plan: (size: ImageSize) => ImageDrawing | null, mediaType: DrawnMediaType): Promise<DrawnImage | null> {
     const drawing = plan({ width: 1000, height: 500 })
     return drawing && { bytes: new Uint8Array([1]), mediaType: drawing.mediaType ?? mediaType, width: drawing.width, height: drawing.height }
-  },
-  async 'dez.native/getAppDir' (root = 'app'): Promise<string> {
-    return root === 'cache' ? '/home/u/.cache/dez' : '/home/u/.config/dez'
-  },
-  async 'dez.native/deleteAppFile' (path: string, root = 'app'): Promise<void> {
-    deletedFiles.push({ path, root })
-  },
-  async 'dez.controller/media/readClip' (): Promise<Blob> {
-    return new Blob([])
-  },
-  async 'dez.controller/media/cutAudio' (_file: Blob, plan: (duration: number) => AudioPart | null): Promise<CutAudio | null> {
-    const part = plan(10)
-    return part && { part, bytes: new Uint8Array([1]), duration: part.end - part.start }
-  },
-  async 'dez.controller/media/save' (): Promise<string> {
-    return await saveClip()
   },
   async 'dez.controller/media/delete' (path: string): Promise<void> {
     deletedClips.push(path)
@@ -208,7 +190,7 @@ beforeEach(() => {
   cancelStream = async () => {}
   deletedImages = []
   readImages = []
-  deletedFiles = []
+  resetNative()
   requests = []
   sent = []
   consoleError = vi.spyOn(console, 'error').mockImplementation(() => {})
@@ -1389,7 +1371,7 @@ describe('dez.stream/start media round', () => {
       { role: 'user', text: '' },
     ])
     expect(alerts).toStrictEqual([{ tabId: activeTab().id, status: 'finished' }])
-    expect(deletedFiles).toStrictEqual([])
+    expect(native.deletedFiles).toStrictEqual([])
   })
 
   it('sends the values that the user chose for the model, and no value of another model', async () => {
@@ -1749,7 +1731,7 @@ describe('dez.stream/start media round', () => {
 
     await sbp('dez.controller/submitTab', activeTab().id)
 
-    expect(deletedFiles).toStrictEqual([{ path: 'media/s1.mp3', root: 'cache' }])
+    expect(native.deletedFiles).toStrictEqual([{ root: 'cache', path: 'media/s1.mp3', folder: false }])
     expect(sectionTexts()).toStrictEqual(conversation())
     expect(toasts).toStrictEqual([])
   })
@@ -2161,14 +2143,13 @@ describe('dez.stream/start images that a tool makes', () => {
 
 describe('dez.stream/start clips that a tool makes', () => {
   const song = '/home/u/.config/dez/assets/generated/audio/song.mp3'
-  const made = (name: string) => `/home/u/.config/dez/assets/generated/audio/${name}`
-  const clipTag = (name: string, id: string) => `<dez:audio id="${id}" type="audio/wav" src="${made(name)}" tool="audio"/>`
+  // The new clip of the `audio` call: the file that Dez stored.
+  const madeClip = () => `${APP_DIR}/${native.moves[0].to.path}`
+  const clipTag = (id: string) => `<dez:audio id="${id}" type="audio/wav" src="${madeClip()}" tool="audio"/>`
   const clipCall = { id: 'c1', name: 'audio', argumentsText: JSON.stringify({ command: 'clip', parameters: JSON.stringify({ clip: 'a', end: 2 }) }) }
   const clipResult = 'Made the audio clip @b from @a, from second 0 to second 2. The audio clip @b is 2 seconds long.'
   const listCall = { id: 'c2', name: 'model_list', argumentsText: '{"filter":"gemini"}' }
   const listBlock = `<dez:tool id="c2" name="model_list" filter="gemini">\n${NO_MODELS_TEXT}\n</dez:tool>\n`
-  // The saves give the files g1.wav, g2.wav, ….
-  let saves = 0
 
   // The text of the reply after the block of the `audio` call.
   function textAfterClipBlock(): string {
@@ -2178,8 +2159,9 @@ describe('dez.stream/start clips that a tool makes', () => {
   }
 
   beforeEach(() => {
-    saves = 0
-    saveClip = async () => made(`g${++saves}.wav`)
+    // An ffmpeg that wrote 2 seconds of audio into the new file.
+    native.program = writes('stdout', audioProgress(2))
+    native.folderFiles = ['a.mp3', 'new_clip.wav']
     deletedClips = []
     sbp('dez.model/tabs/replaceSections', activeTab().id, [
       { id: 'u0', role: 'user', content: [{ kind: 'text', text: 'A song.' }] },
@@ -2201,7 +2183,7 @@ describe('dez.stream/start clips that a tool makes', () => {
 
     await startStream({ sendTools: true })
 
-    expect(textAfterClipBlock()).toBe(`\n${clipTag('g1.wav', 'b')}\n${listBlock}Done.`)
+    expect(textAfterClipBlock()).toBe(`\n${clipTag('b')}\n${listBlock}Done.`)
     expect(sent[1].at(-1)).toStrictEqual({ role: 'tool', results: [{ callId: 'c1', content: clipResult, isError: false }] })
     expect(sent[2].at(-2)).toStrictEqual({
       role: 'agent',
@@ -2222,20 +2204,19 @@ describe('dez.stream/start clips that a tool makes', () => {
 
     await startStream({ sendTools: true })
 
-    expect(textAfterClipBlock()).toBe(`\n${clipTag('g1.wav', 'b')}\n\nDone.`)
+    expect(textAfterClipBlock()).toBe(`\n${clipTag('b')}\n\nDone.`)
   })
 
   it('deletes the file of a clip whose call the user stopped', async () => {
-    saveClip = async () => {
+    native.moveAppFile = async () => {
       await sbp('dez.stream/stop', activeTab().id)
-      return made(`g${++saves}.wav`)
     }
     replyRounds([async (input) => ({ requestId: input.requestId as string, toolCalls: [clipCall] })])
 
     await startStream({ sendTools: true })
 
     expect(sectionVisibleText(agentSection())).not.toContain('<dez:audio')
-    expect(deletedClips).toStrictEqual([made('g1.wav')])
+    expect(deletedClips).toStrictEqual([madeClip()])
     expect(sent).toHaveLength(1)
   })
 })
@@ -2341,7 +2322,7 @@ describe('dez.stream/start jobs', () => {
       { role: 'agent', text: `${invokeBlock('c1', FILMER)}I started it.\n\n${tag}` },
       { role: 'user', text: '' },
     ])
-    expect(deletedFiles).toStrictEqual([])
+    expect(native.deletedFiles).toStrictEqual([])
     expect(toasts).toStrictEqual([])
     expect(alerts).toStrictEqual([{ tabId: activeTab().id, status: 'finished' }])
   })
@@ -2444,7 +2425,7 @@ describe('dez.stream/start jobs', () => {
     // A request that does not end at the abort still gives its clip.
     jobs[0].end({ media: [], clips: [run] })
     await settled()
-    expect(deletedFiles).toStrictEqual([{ path: 'media/run.mp4', root: 'cache' }])
+    expect(native.deletedFiles).toStrictEqual([{ root: 'cache', path: 'media/run.mp4', folder: false }])
     expect(sectionTexts()).toStrictEqual([
       { role: 'user', text: 'Hi' },
       { role: 'agent', text: invokeBlock('c1', FILMER) },

@@ -10,7 +10,7 @@ import type { AppFileRef } from './nativeTypes'
 // clip itself (a request that sends it, a tool that works on it): the one
 // rule of which sources Dez may take it from, and the download of a clip
 // from a web address. This module registers no selector, so that a module
-// with no selectors can use it (videoTool.ts).
+// with no selectors can use it (programRuns.ts).
 
 /** The longest time that Dez waits for the whole download of a clip. A
  *  server that stops sending would keep the Save control, or the tool or

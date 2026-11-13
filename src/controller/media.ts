@@ -97,14 +97,13 @@ export default sbp('sbp/selectors/register', {
   // folder (`folder`: `generated` for a clip that a model or a Dez tool
   // made, `pasted` for a clip file that the user pasted or dropped), and the
   // absolute path of that file comes back, for the `src` of the clip's tag
-  // (src/model/chat/mediaTags.ts). With `bytes` (a clip that Dez made, such
-  // as a cut of the `audio` tool, or a pasted file), they go to a new file
-  // named for the clip's type. Else a clip whose `src` is a temp copy of
-  // this computer moves there under its name, and any other clip is
-  // downloaded from its `url` (http and https only) with no provider header:
-  // the URL is a signed one, and a key must not go to the host of a clip. A
-  // failure is logged, shows an error toast, and rejects, so the caller keeps
-  // the tag as it is.
+  // (src/model/chat/mediaTags.ts). With `bytes` (a pasted or dropped file),
+  // they go to a new file named for the clip's type. Else a clip whose
+  // `src` is a temp copy of this computer moves there under its name, and
+  // any other clip is downloaded from its `url` (http and https only) with
+  // no provider header: the URL is a signed one, and a key must not go to
+  // the host of a clip. A failure is logged, shows an error toast, and
+  // rejects, so the caller keeps the tag as it is.
   async 'dez.controller/media/save' (
     clip: Pick<MediaTagData, 'kind' | 'type' | 'src' | 'url'>,
     { bytes, folder = 'generated' }: { bytes?: Uint8Array, folder?: MediaFolder } = {},
@@ -215,16 +214,19 @@ export default sbp('sbp/selectors/register', {
   // part to keep of audio of that length in seconds, and gives that part as
   // a 16-bit WAV file. A part of the whole clip converts it to WAV. Null
   // when `plan` gives null: nothing is cut. There is no Rust code for this:
-  // the webview has the decoders (Web Audio). Rejects when the webview
-  // cannot decode the file and when `plan` throws; the caller logs it, as
-  // each caller has its own answer to a failure.
+  // the webview has the decoders (Web Audio). A media request uses it for
+  // the length and the WAV copy of an input clip. The `audio` tool does not:
+  // it cuts with ffmpeg (audioTool.ts), which was 3 to 7 times faster in a
+  // measurement on Linux and does not stop the page during the decode.
+  // Rejects when the webview cannot decode the file and when `plan` throws;
+  // the caller logs it.
   async 'dez.controller/media/cutAudio' (file: Blob, plan: (duration: number) => AudioPart | null): Promise<CutAudio | null> {
     // An offline context needs no sound device, and its decode resamples to
     // its rate. Its own length and channel count are only for a render,
     // which this context never does.
     const context = new OfflineAudioContext(1, 1, AUDIO_CUT_RATE)
-    // A tool gives the message of this error to a model, so the message
-    // says what failed; the webview's own error is the cause.
+    // The caller puts the message of this error into an error text, so the
+    // message says what failed; the webview's own error is the cause.
     const audio = await context.decodeAudioData(await file.arrayBuffer()).catch((error: unknown) => {
       throw new Error('The audio cannot be decoded.', { cause: error })
     })
