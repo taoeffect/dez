@@ -110,6 +110,35 @@ export async function consoleErrors (browser: E2EBrowser): Promise<string[]> {
 }
 
 /**
+ * Stop every `dez.controller/openUrl` call with an SBP filter (a filter that
+ * returns false stops the call) and record its URL, so that no browser
+ * opens. Call it once per app start.
+ */
+export async function stopOpenUrl (browser: E2EBrowser): Promise<void> {
+  await browser.execute(() => {
+    const sbp = Reflect.get(window, 'sbp') as (selector: string, ...args: unknown[]) => unknown
+    const opened: string[] = []
+    Reflect.set(window, '__e2eOpenedUrls', opened)
+    sbp('sbp/filters/selector/add', 'dez.controller/openUrl', (_domain: string, _selector: string, data: unknown[]) => {
+      opened.push(String(data[0]))
+      return false
+    })
+  })
+}
+
+/** The URLs that `dez.controller/openUrl` got since `stopOpenUrl` or the
+ *  last `clearOpenedUrls`. */
+export async function openedUrls (browser: E2EBrowser): Promise<string[]> {
+  return browser.execute(() => [...Reflect.get(window, '__e2eOpenedUrls') as string[]])
+}
+
+export async function clearOpenedUrls (browser: E2EBrowser): Promise<void> {
+  await browser.execute(() => {
+    (Reflect.get(window, '__e2eOpenedUrls') as string[]).length = 0
+  })
+}
+
+/**
  * Poll until exactly `count` `.history-row` elements are rendered.
  * Useful after search queries where the panel re-renders asynchronously
  * (debounced input -> re-index -> DOM update).
@@ -141,6 +170,16 @@ export async function click (browser: E2EBrowser, selector: string): Promise<voi
     if (!el) throw new Error(`click: element not found: ${sel}`)
     el.click()
   }, selector)
+}
+
+/** Click, as `click` does, the first element that matches `selector` and
+ *  whose trimmed text is `text`. */
+export async function clickWithText (browser: E2EBrowser, selector: string, text: string): Promise<void> {
+  await browser.execute((sel: string, wanted: string) => {
+    const el = [...document.querySelectorAll<HTMLElement>(sel)].find((candidate) => candidate.textContent?.trim() === wanted)
+    if (!el) throw new Error(`clickWithText: no ${sel} with the text "${wanted}"`)
+    el.click()
+  }, selector, text)
 }
 
 /** A point in viewport px, for WebDriver pointer actions. */
@@ -313,22 +352,15 @@ export async function openHistoryPanel (browser: E2EBrowser): Promise<void> {
   await waitFor(browser, '.history-overlay')
 }
 
-/**
- * Close Settings with Esc and wait until its Providers page is gone. Call it
- * while the Providers page is open.
- */
+/** Close Settings with Esc, on any page, and wait until it is gone. */
 export async function closeSettings (browser: E2EBrowser): Promise<void> {
   await browser.keys([Key.Escape])
-  await waitForValue(browser, 'Settings open', () => browser.execute(() => document.querySelector('.provider-manager') !== null), false)
+  await waitForValue(browser, 'Settings open', () => browser.execute(() => document.querySelector('.settings-overlay') !== null), false)
 }
 
 /** Click the nav button of the open Settings whose label is `label`. */
 export async function clickSettingsNav (browser: E2EBrowser, label: string): Promise<void> {
-  await browser.execute((wanted: string) => {
-    const button = [...document.querySelectorAll<HTMLElement>('.settings-nav-btn')].find((el) => el.textContent?.trim() === wanted)
-    if (!button) throw new Error(`clickSettingsNav: no ${wanted} nav button`)
-    button.click()
-  }, label)
+  await clickWithText(browser, '.settings-nav-btn', label)
 }
 
 /** The message of the open `dez.ui/confirm` prompt; null when none is

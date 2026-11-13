@@ -1,6 +1,6 @@
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from 'vitest'
 import { Key } from 'webdriverio'
-import { click, clickSettingsNav, consoleErrors, pointerClick, resetConsoleErrors, screenshotOnFailure, typeKeys, waitFor, waitForValue } from './harness/dom'
+import { click, clickSettingsNav, closeSettings, consoleErrors, pointerClick, resetConsoleErrors, screenshotOnFailure, typeKeys, waitFor, waitForValue } from './harness/dom'
 import { readAppState } from './harness/fixtures'
 import { startMockProviderApp, type MockProviderApp } from './harness/mockProviderApp'
 import { replyText, sendChatReply, type MockProvider } from './harness/mockServer'
@@ -76,11 +76,6 @@ describe('Settings › Shortcuts', () => {
   async function openShortcuts (): Promise<void> {
     await sbpCall(browser, 'dez.model/settings/open', 'shortcuts')
     await waitFor(browser, '.shortcut-manager')
-  }
-
-  async function closeSettings (): Promise<void> {
-    await browser.keys([Key.Escape])
-    await waitForValue(browser, 'Settings open', settingsOpen, false)
   }
 
   async function startRecording (id: string): Promise<void> {
@@ -173,7 +168,7 @@ describe('Settings › Shortcuts', () => {
     await browser.keys([Key.Control, 'k'])
     await waitForValue(browser, 'newTab row', () => row('newTab'), { label: 'New tab', key: 'Ctrl+K', aliases: null, resetDisabled: false, refusal: null })
     await waitForValue(browser, 'saved keys', savedShortcuts, { newTab: 'Ctrl-k' })
-    await closeSettings()
+    await closeSettings(browser)
 
     const before = await tabCount()
     await focusEditor(browser)
@@ -205,7 +200,7 @@ describe('Settings › Shortcuts', () => {
     await startRecording('submit')
     await browser.keys([Key.Control, 'j'])
     await waitForValue(browser, 'submit row', async () => (await row('submit')).key, 'Ctrl+J')
-    await closeSettings()
+    await closeSettings(browser)
     expect(await submitButton()).toEqual({ keycap: 'Ctrl+J', name: 'Submit (Ctrl+J)' })
 
     await sbpCall(browser, 'dez.model/tabs/create')
@@ -237,7 +232,7 @@ describe('Settings › Shortcuts', () => {
     await openShortcuts()
     expect((await row('newTab')).key).toBe('Ctrl+K')
     expect((await row('submit')).key).toBe('Ctrl+J')
-    await closeSettings()
+    await closeSettings(browser)
 
     const before = await tabCount()
     await focusEditor(browser)
@@ -273,7 +268,7 @@ describe('Settings › Shortcuts', () => {
     expect((await row('submit')).key).toBe('Ctrl+↩')
     expect(await browser.execute(() => document.querySelector<HTMLButtonElement>('.shortcut-reset-all')?.disabled)).toBe(true)
     await waitForValue(browser, 'saved keys', savedShortcuts, {})
-    await closeSettings()
+    await closeSettings(browser)
 
     expect(await submitButton()).toEqual({ keycap: 'Ctrl+↩', name: 'Submit (Ctrl+Enter)' })
     const before = await tabCount()

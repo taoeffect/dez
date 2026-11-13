@@ -315,6 +315,6 @@ Brief comments are encouraged above functions that do anything non-trivial expla
 - E2E specs that check a whole chat request body build the expected system prompt and tools with `tests/e2e/harness/chatBody.ts`; a multipart body that the mock got is read with `requestForm` (`tests/e2e/harness/mockServer.ts`).
 - E2E picker reads: use `pickerRows`, `pickerGroups`, and `pickModel` (`tests/e2e/harness/thread.ts`), which scroll the virtual list to read every row; `drawnPickerRows` reads only the rows in the DOM.
 - E2E clips (`tests/e2e/media-player.e2e.ts`, `tests/e2e/harness/media.ts`, `tests/e2e/fixtures/`): a test clip must be in a format that the CI GStreamer packages decode (VP9 in webm or mp4, wav; `.github/workflows/e2e.yml`).
-- E2E specs that open a URL stop `dez.controller/openUrl` with an SBP filter, so no browser opens (`tests/e2e/links.e2e.ts`).
+- E2E specs that open a URL call `stopOpenUrl` (`tests/e2e/harness/dom.ts`), an SBP filter on `dez.controller/openUrl`, so no browser opens.
 - **No display server** (every spec fails with `Hook timed out in 120000ms` in `beforeAll`): run under headless `kwin_wayland`; the recipe is in `vitest.e2e.config.ts`.
 - For UI changes beyond unit-testable logic, also check by hand with `npm run tauri dev`.

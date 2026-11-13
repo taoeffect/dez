@@ -1,8 +1,7 @@
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from 'vitest'
-import { Key } from 'webdriverio'
 import { BUILT_IN_SYSTEM_PROMPT, systemPromptErrorText } from '../../src/model/systemPrompt'
 import { openAiChatBody, systemPrompt } from './harness/chatBody'
-import { click, clickSettingsNav, consoleErrors, pointerClick, promptMessage, resetConsoleErrors, screenshotOnFailure, typeInto, typeKeys, waitFor, waitForValue } from './harness/dom'
+import { click, clickSettingsNav, clickWithText, closeSettings, consoleErrors, pointerClick, promptMessage, resetConsoleErrors, screenshotOnFailure, typeInto, typeKeys, waitFor, waitForValue } from './harness/dom'
 import { readAppState } from './harness/fixtures'
 import { expectSendRefused, startMockProviderApp, takeRequest, type MockProviderApp } from './harness/mockProviderApp'
 import { mockChatPath, replyText, sendChatReply, type MockProvider } from './harness/mockServer'
@@ -69,11 +68,6 @@ describe('Settings › System Prompt', () => {
     await waitFor(browser, '.system-prompt-source')
   }
 
-  async function closeWithEsc (): Promise<void> {
-    await browser.keys([Key.Escape])
-    await waitForValue(browser, 'Settings open', () => browser.execute(() => document.querySelector('.settings-overlay') !== null), false)
-  }
-
   // Checks Edit, then puts `text` in place of the whole prompt as typing
   // does: one input event per character.
   async function writePrompt (text: string): Promise<void> {
@@ -96,11 +90,7 @@ describe('Settings › System Prompt', () => {
 
   // Clicks the Source or the Preview button of the prompt box.
   async function showMode (label: 'Source' | 'Preview'): Promise<void> {
-    await browser.execute((wanted: string) => {
-      const button = [...document.querySelectorAll<HTMLElement>('.system-prompt-mode')].find((el) => el.textContent?.trim() === wanted)
-      if (!button) throw new Error(`showMode: no ${wanted} button`)
-      button.click()
-    }, label)
+    await clickWithText(browser, '.system-prompt-mode', label)
   }
 
   // The lines that the preview's editor draws.
@@ -163,7 +153,7 @@ describe('Settings › System Prompt', () => {
     const custom = 'You are {{model_id}} of {{provider_name}} ({{provider_id}}).'
     await writePrompt(custom)
     expect(systemPrompt(PROVIDER, custom)).toBe('You are prompt-model of Prompt Mock (prompter).')
-    await closeWithEsc()
+    await closeSettings(browser)
     await sendAndExpect('Hello', custom)
 
     // The page opens locked again, with the user's prompt.
@@ -182,7 +172,7 @@ describe('Settings › System Prompt', () => {
       problem: null,
       blankNote: 'The prompt is empty, so Dez sends no system prompt.',
     })
-    await closeWithEsc()
+    await closeSettings(browser)
     await sendAndExpect('No prompt', '')
   })
 
@@ -193,7 +183,7 @@ describe('Settings › System Prompt', () => {
     expect((await pageLook()).problem).toBe(problem)
     await showMode('Preview')
     await waitForValue(browser, 'preview note', () => browser.execute(() => document.querySelector('.system-prompt-preview-note')?.textContent ?? null), 'Fix the error in the prompt to see the preview.')
-    await closeWithEsc()
+    await closeSettings(browser)
 
     await submit(browser, 'Refused')
     await expectSendRefused(setup, systemPromptErrorText(problem), [{ role: 'user', text: 'Refused' }])

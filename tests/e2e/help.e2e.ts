@@ -1,7 +1,7 @@
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from 'vitest'
 import { Key } from 'webdriverio'
 import { startApp, type RunningApp } from './harness/app'
-import { consoleErrors, pointerClick, pointerClickAt, pointerDrag, resetConsoleErrors, screenshotOnFailure, waitFor, waitForValue } from './harness/dom'
+import { clearOpenedUrls, consoleErrors, openedUrls, pointerClick, pointerClickAt, pointerDrag, resetConsoleErrors, screenshotOnFailure, stopOpenUrl, waitFor, waitForValue } from './harness/dom'
 import { seedAppState } from './harness/fixtures'
 import { createSession, destroySession, type E2EBrowser } from './harness/session'
 import { focusEditor, focusedArea, sbpCall } from './harness/thread'
@@ -10,8 +10,8 @@ import { focusEditor, focusedArea, sbpCall } from './harness/thread'
 // Help › Dez Help open it. No spec can click a native menu item, so the
 // menu item is tested through the selector that it calls.
 //
-// The spec stops every `dez.controller/openUrl` call with an SBP filter and
-// records its URL, so no real browser opens.
+// The spec stops every `dez.controller/openUrl` call (`stopOpenUrl`), so no
+// real browser opens.
 
 const DISCUSSIONS_URL = 'https://github.com/taoeffect/dez/discussions'
 
@@ -49,10 +49,6 @@ describe('Help panel', () => {
     return browser.execute(() => document.querySelector('.help-page')?.textContent?.replace(/\s+/g, ' ').trim() ?? '')
   }
 
-  async function openedUrls (): Promise<string[]> {
-    return browser.execute(() => [...Reflect.get(window, '__e2eOpenedUrls') as string[]])
-  }
-
   async function openWithButton (): Promise<void> {
     await pointerClick(browser, '.help-button')
     await waitFor(browser, '.help-overlay')
@@ -70,23 +66,12 @@ describe('Help panel', () => {
       throw err
     }
     await waitFor(browser, 'header.tab-bar', 60_000)
-    // A filter that returns false stops the selector call.
-    await browser.execute(() => {
-      const sbp = Reflect.get(window, 'sbp') as (selector: string, ...args: unknown[]) => unknown
-      const opened: string[] = []
-      Reflect.set(window, '__e2eOpenedUrls', opened)
-      sbp('sbp/filters/selector/add', 'dez.controller/openUrl', (_domain: string, _selector: string, data: unknown[]) => {
-        opened.push(String(data[0]))
-        return false
-      })
-    })
+    await stopOpenUrl(browser)
   })
 
   beforeEach(async () => {
     await resetConsoleErrors(browser)
-    await browser.execute(() => {
-      (Reflect.get(window, '__e2eOpenedUrls') as string[]).length = 0
-    })
+    await clearOpenedUrls(browser)
   })
 
   afterEach(async (ctx) => {
@@ -163,7 +148,7 @@ describe('Help panel', () => {
     await pointerClick(browser, NAV.Support)
     await waitFor(browser, '.help-link')
     await pointerClick(browser, '.help-link')
-    await waitForValue(browser, 'opened URLs', openedUrls, [DISCUSSIONS_URL])
+    await waitForValue(browser, 'opened URLs', () => openedUrls(browser), [DISCUSSIONS_URL])
     expect(await helpOpen()).toBe(true)
   })
 

@@ -2,7 +2,7 @@ import type { EditorView } from '@codemirror/view'
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from 'vitest'
 import { Key } from 'webdriverio'
 import { startApp, type RunningApp } from './harness/app'
-import { consoleErrors, elementCenter, movePointer, pointerClickAt, pointerShiftClickAt, resetConsoleErrors, screenshotOnFailure, typeKeys, waitFor, waitForValue, type Point } from './harness/dom'
+import { clearOpenedUrls, consoleErrors, elementCenter, movePointer, openedUrls, pointerClickAt, pointerShiftClickAt, resetConsoleErrors, screenshotOnFailure, stopOpenUrl, typeKeys, waitFor, waitForValue, type Point } from './harness/dom'
 import { makeConversation, seedAppState, seedConversation } from './harness/fixtures'
 import { createSession, destroySession, type E2EBrowser } from './harness/session'
 import { docPos, docPosPoint, editorCaret, focusEditor, focusedArea, setCaret } from './harness/thread'
@@ -16,8 +16,8 @@ import { docPos, docPosPoint, editorCaret, focusEditor, focusedArea, setCaret } 
 // it with `dez.controller/openUrl` and leaves the caret and the focus where
 // they are.
 //
-// The spec stops every `dez.controller/openUrl` call with an SBP filter and
-// records its URL, so no real browser opens.
+// The spec stops every `dez.controller/openUrl` call (`stopOpenUrl`), so no
+// real browser opens.
 //
 // One app session serves the whole file. Each test opens its fixture in a
 // new tab, so no test depends on the edits of another.
@@ -100,11 +100,6 @@ describe('markdown links', () => {
     return (await tooltip())?.text ?? null
   }
 
-  // The URLs that `dez.controller/openUrl` got since the last reset.
-  async function openedUrls (): Promise<string[]> {
-    return browser.execute(() => [...Reflect.get(window, '__e2eOpenedUrls') as string[]])
-  }
-
   // A point off the editor text, where no tooltip can open: the middle of
   // the tab bar.
   async function offTextPoint (): Promise<Point> {
@@ -148,16 +143,7 @@ describe('markdown links', () => {
       throw err
     }
     await waitFor(browser, 'header.tab-bar', 60_000)
-    // A filter that returns false stops the selector call.
-    await browser.execute(() => {
-      const sbp = Reflect.get(window, 'sbp') as (selector: string, ...args: unknown[]) => unknown
-      const opened: string[] = []
-      Reflect.set(window, '__e2eOpenedUrls', opened)
-      sbp('sbp/filters/selector/add', 'dez.controller/openUrl', (_domain: string, _selector: string, data: unknown[]) => {
-        opened.push(String(data[0]))
-        return false
-      })
-    })
+    await stopOpenUrl(browser)
   })
 
   // Errors thrown inside CodeMirror plugins and Vue handlers are only
@@ -165,9 +151,7 @@ describe('markdown links', () => {
   // the record.
   beforeEach(async () => {
     await resetConsoleErrors(browser)
-    await browser.execute(() => {
-      (Reflect.get(window, '__e2eOpenedUrls') as string[]).length = 0
-    })
+    await clearOpenedUrls(browser)
   })
 
   afterEach(async (ctx) => {
@@ -272,7 +256,7 @@ describe('markdown links', () => {
     await setCaret(browser, 3)
 
     await pointerClickAt(browser, await linkBox('the docs'))
-    await waitForValue(browser, 'opened URLs', openedUrls, ['https://example.com/docs'])
+    await waitForValue(browser, 'opened URLs', () => openedUrls(browser), ['https://example.com/docs'])
     expect(await editorCaret(browser)).toBe(3)
     expect(await focusedArea(browser)).toBe('editor')
     expect(await renderedLinkTexts()).toEqual(RENDERED)
@@ -280,7 +264,7 @@ describe('markdown links', () => {
     await pointerClickAt(browser, await linkBox('ann@example.com'))
     await pointerClickAt(browser, await linkBox('support'))
     await pointerClickAt(browser, await linkBox('a reply link'))
-    await waitForValue(browser, 'opened URLs', openedUrls, [
+    await waitForValue(browser, 'opened URLs', () => openedUrls(browser), [
       'https://example.com/docs',
       'mailto:ann@example.com',
       'tel:+15551234',
@@ -299,8 +283,8 @@ describe('markdown links', () => {
       .perform()
     // A click after it shows that the released press opened nothing.
     await pointerClickAt(browser, await linkBox('support'))
-    await waitForValue(browser, 'opened URLs after a release off the link', async () => (await openedUrls()).length, 5)
-    expect((await openedUrls()).at(-1)).toBe('tel:+15551234')
+    await waitForValue(browser, 'opened URLs after a release off the link', async () => (await openedUrls(browser)).length, 5)
+    expect((await openedUrls(browser)).at(-1)).toBe('tel:+15551234')
     expect(await editorCaret(browser)).toBe(3)
 
     // With the focus off the editor, a click opens the link and leaves the
@@ -310,7 +294,7 @@ describe('markdown links', () => {
     })
     expect(await focusedArea(browser)).toBe('body')
     await pointerClickAt(browser, await linkBox('the docs'))
-    await waitForValue(browser, 'opened URLs after a click with no focus', async () => (await openedUrls()).length, 6)
+    await waitForValue(browser, 'opened URLs after a click with no focus', async () => (await openedUrls(browser)).length, 6)
     expect(await focusedArea(browser)).toBe('body')
   })
 
@@ -330,6 +314,6 @@ describe('markdown links', () => {
     expect(selection.anchor).toBe(3)
     expect(selection.head).toBeGreaterThan(from)
     expect(selection.head).toBeLessThan(from + DOCS_LINK.length)
-    expect(await openedUrls()).toEqual([])
+    expect(await openedUrls(browser)).toEqual([])
   })
 })
