@@ -184,10 +184,11 @@ export default sbp('sbp/selectors/register', {
     })
   },
 
-  // Stops a `runBundledTool` run, which then ends as `cancelled`. A `runId`
-  // that is not active does nothing: the run has ended, or its start has
-  // not reached the backend yet. So send the cancel after the run call, in
-  // the same tick or later, never before it.
+  // Stops a `runBundledTool` run, which then ends as `cancelled`. The
+  // backend runs each command as its own task, so a cancel can come before
+  // its run: the backend keeps the newest few cancels of runs that are not
+  // active, and such a run starts as stopped. A cancel after the end of its
+  // run is kept too, so give each run a new `runId`.
   'dez.native/cancelBundledTool' (runId: string): Promise<void> {
     return invoke('cancel_bundled_tool', { runId })
   },

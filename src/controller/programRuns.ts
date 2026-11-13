@@ -124,8 +124,6 @@ export async function runProgram(
     })
   }
   const ended = sbp('dez.native/runBundledTool', { ...run, tool: PROGRAM_FILES[program] }, runId, onOutput) as Promise<BundledToolEnd>
-  // After the run call, never before it: a cancel of a run that the
-  // backend does not know yet does nothing (`dez.native/cancelBundledTool`).
   signal.addEventListener('abort', cancel, { once: true })
   let end: BundledToolEnd
   try {

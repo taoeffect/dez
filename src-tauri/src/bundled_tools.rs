@@ -15,11 +15,12 @@
 //!   what a computer with no confinement does). It can make no symlink, and
 //!   Dez follows no link of the cache root (`has_link_below`).
 //! - It ends at its time limit, at its output cap, at a cancel
-//!   (`cancel_bundled_tool`), and when the app quits (`stop_all_runs`). The
-//!   end of a run ends the programs that it started too (`ProcessGroup`).
+//!   (`cancel_bundled_tool`, also one that came before the run command),
+//!   and when the app quits (`stop_all_runs`). The end of a run ends the
+//!   programs that it started too (`ProcessGroup`).
 
-use std::collections::HashMap;
 use std::collections::hash_map::Entry;
+use std::collections::{HashMap, VecDeque};
 use std::path::{Path, PathBuf};
 use std::process::Stdio;
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -51,6 +52,12 @@ const PROGRAM_APP_FOLDER: &str = "assets";
 
 // How long a quit of the app waits for the runs to end (`stop_all_runs`).
 const EXIT_WAIT: Duration = Duration::from_secs(2);
+
+// How many cancels of ids with no active run `ToolRuns` keeps, for a run
+// whose command comes after its cancel. Such a cancel waits only for the
+// moment until its run starts, so a few are enough. Most kept cancels are
+// of runs that had ended, and nothing else takes them out.
+const KEPT_CANCELS: usize = 16;
 
 // The size of one read of a program's output, which is also the largest
 // output event.
@@ -468,15 +475,26 @@ async fn run_program(
 }
 
 // The runs that are active, by the run id of the page, each with the sender
-// of its stop flag. A managed state of the app.
+// of its stop flag, and the cancels that came before their run. A managed
+// state of the app.
 #[derive(Default)]
 pub struct ToolRuns {
-    active: Mutex<HashMap<String, watch::Sender<bool>>>,
+    table: Mutex<RunTable>,
     // Notified each time that a run leaves `active`.
     ended: Notify,
 }
 
-// The place of a run in `ToolRuns::active`. Its drop takes the run out, on
+// One lock holds both lists: a cancel that finds no active run and the
+// register of its run must not pass each other.
+#[derive(Default)]
+struct RunTable {
+    active: HashMap<String, watch::Sender<bool>>,
+    // The ids of the cancels that came when their run was not active, the
+    // oldest first, at most `KEPT_CANCELS`.
+    kept_cancels: VecDeque<String>,
+}
+
+// The place of a run in `RunTable::active`. Its drop takes the run out, on
 // every way out of `ToolRuns::run`.
 struct ActiveRun<'a> {
     runs: &'a ToolRuns,
@@ -485,25 +503,28 @@ struct ActiveRun<'a> {
 
 impl Drop for ActiveRun<'_> {
     fn drop(&mut self) {
-        self.runs.lock().remove(self.run_id);
+        self.runs.lock().active.remove(self.run_id);
         self.runs.ended.notify_waiters();
     }
 }
 
 impl ToolRuns {
     // The lock is never held over code that can panic, but a poisoned lock
-    // must not stop every later run: the map is whole after each change.
-    fn lock(&self) -> MutexGuard<'_, HashMap<String, watch::Sender<bool>>> {
-        self.active.lock().unwrap_or_else(|poisoned| poisoned.into_inner())
+    // must not stop every later run: the table is whole after each change.
+    fn lock(&self) -> MutexGuard<'_, RunTable> {
+        self.table.lock().unwrap_or_else(|poisoned| poisoned.into_inner())
     }
 
-    // Adds a run. An id that is active is refused: a cancel could not tell
-    // the two runs apart.
+    // Adds a run, as stopped when its cancel came first. An id that is
+    // active is refused: a cancel could not tell the two runs apart.
     fn register<'a>(&'a self, run_id: &'a str) -> Result<(ActiveRun<'a>, watch::Receiver<bool>), String> {
-        let (stop, stopped) = watch::channel(false);
-        match self.lock().entry(run_id.to_string()) {
+        let mut table = self.lock();
+        let RunTable { active, kept_cancels } = &mut *table;
+        match active.entry(run_id.to_string()) {
             Entry::Occupied(_) => Err(format!("A run with the id {} is active", run_id)),
             Entry::Vacant(entry) => {
+                let cancelled = kept_cancels.iter().position(|id| id == run_id).and_then(|index| kept_cancels.remove(index)).is_some();
+                let (stop, stopped) = watch::channel(cancelled);
                 entry.insert(stop);
                 Ok((ActiveRun { runs: self, run_id }, stopped))
             }
@@ -511,11 +532,19 @@ impl ToolRuns {
     }
 
     // Stops a run. The flag stays set, so a cancel that comes while the
-    // input files are copied is not lost. An id that is not active (the run
-    // ended, or its command has not come yet) does nothing.
+    // input files are copied is not lost. Tauri runs each command as its own
+    // task, so a cancel can also come before its run is active: its id is
+    // then kept, and the run of that id starts as stopped. A cancel that
+    // comes after the end of its run is kept too, so each run needs a new id.
     pub(crate) fn cancel(&self, run_id: &str) {
-        if let Some(stop) = self.lock().get(run_id) {
+        let mut table = self.lock();
+        if let Some(stop) = table.active.get(run_id) {
             stop.send_replace(true);
+        } else if !table.kept_cancels.iter().any(|id| id == run_id) {
+            if table.kept_cancels.len() == KEPT_CANCELS {
+                table.kept_cancels.pop_front();
+            }
+            table.kept_cancels.push_back(run_id.to_string());
         }
     }
 
@@ -528,11 +557,11 @@ impl ToolRuns {
             tokio::pin!(ended);
             ended.as_mut().enable();
             {
-                let active = self.lock();
-                if active.is_empty() {
+                let table = self.lock();
+                if table.active.is_empty() {
                     return;
                 }
-                for stop in active.values() {
+                for stop in table.active.values() {
                     stop.send_replace(true);
                 }
             }
@@ -554,8 +583,9 @@ impl ToolRuns {
         tokio::task::spawn_blocking(move || prepare_work_folder(&folder, &inputs, &confined_to))
             .await
             .map_err(|error| format!("Failed to prepare the work folder: {}", error))??;
-        // A copy cannot stop in its middle, so a cancel that came during the
-        // copies ends the run here, before the program starts.
+        // A copy cannot stop in its middle, so a cancel that came before the
+        // run or during the copies ends the run here, before the program
+        // starts.
         let cancelled = *stopped.borrow();
         let end = if cancelled {
             ToolRunEnd::Cancelled
@@ -1166,7 +1196,7 @@ mod tests {
             assert_eq!(result, Ok(()));
             assert_eq!(sent(events).await.ends, [ToolRunEnd::Cancelled]);
             assert!(!program_is_running(&folder));
-            assert!(runs.lock().is_empty());
+            assert!(runs.lock().active.is_empty());
         }
 
         // A program can start another program that keeps on after the
@@ -1277,19 +1307,29 @@ mod tests {
             assert_eq!(sent(events).await.ends, exited(0));
         }
 
-        // A cancel can come before the run command (or after the end of the
-        // run). It must not end a later run of that id.
+        // Tauri runs each command as its own task, so the cancel of a run
+        // can come before the run. Most kept cancels are of runs that had
+        // ended, so only the newest few stay.
         #[tokio::test]
-        async fn a_cancel_of_an_id_that_is_not_active_does_nothing() {
-            let dir = TempDir::new("tools-run-unknown-cancel");
+        async fn a_cancel_that_comes_before_its_run_stops_it_while_it_is_kept() {
+            let dir = TempDir::new("tools-run-cancel-first");
+            let (newest_folder, oldest_folder) = (dir.0.join("newest"), dir.0.join("oldest"));
             let runs = ToolRuns::default();
-            let (send, events) = event_channel();
+            let (newest_send, newest_events) = event_channel();
+            let (oldest_send, oldest_events) = event_channel();
+            runs.cancel("oldest");
+            for index in 0..KEPT_CANCELS {
+                runs.cancel(&format!("newer-{index}"));
+            }
+            let newest = format!("newer-{}", KEPT_CANCELS - 1);
 
-            runs.cancel("a");
-            let result = runs.run("a", script("echo done", &dir.0.join("work")), send).await;
+            assert_eq!(runs.run(&newest, script("echo ran > ran.txt", &newest_folder), newest_send).await, Ok(()));
+            assert_eq!(runs.run("oldest", script("echo ran > ran.txt", &oldest_folder), oldest_send).await, Ok(()));
 
-            assert_eq!(result, Ok(()));
-            assert_eq!(sent(events).await, Sent { stdout: "done\n".to_string(), ends: exited(0), ..Sent::default() });
+            assert_eq!(sent(newest_events).await, Sent { ends: vec![ToolRunEnd::Cancelled], ..Sent::default() });
+            assert!(!newest_folder.join("ran.txt").exists());
+            assert_eq!(sent(oldest_events).await.ends, exited(0));
+            assert!(oldest_folder.join("ran.txt").is_file());
         }
 
         // The quit of the app.
@@ -1311,7 +1351,7 @@ mod tests {
                     wait_for_output(&mut events_a, "started").await;
                     wait_for_output(&mut events_b, "started").await;
                     runs.stop_all().await;
-                    assert!(runs.lock().is_empty());
+                    assert!(runs.lock().active.is_empty());
                     assert!(!program_is_running(&folder_a));
                     assert!(!program_is_running(&folder_b));
                 },
