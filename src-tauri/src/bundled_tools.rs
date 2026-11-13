@@ -211,10 +211,7 @@ impl OutputBudget {
     // gave.
     fn take(&self, wanted: usize) -> usize {
         let wanted = wanted as u64;
-        let left = self
-            .0
-            .fetch_update(Ordering::Relaxed, Ordering::Relaxed, |left| Some(left.saturating_sub(wanted)))
-            .unwrap_or_else(|left| left);
+        let left = self.0.update(Ordering::Relaxed, Ordering::Relaxed, |left| left.saturating_sub(wanted));
         // At most `wanted`, which came from a `usize`.
         left.min(wanted) as usize
     }
