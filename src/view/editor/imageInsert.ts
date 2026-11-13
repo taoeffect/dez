@@ -286,7 +286,7 @@ function showNotInsertedToast(stored: readonly AddedFile[], userEvent: 'input.pa
   const one = stored.length === 1
   sbp('dez.ui/toast', 'app-global', {
     title: `${what[0].toUpperCase()}${what.slice(1)} not inserted`,
-    message: `The conversation changed while the ${what} ${one ? 'was' : 'were'} being saved, so Dez did not insert ${one ? 'it' : 'them'}. `
+    message: `The conversation changed while the ${what} ${one ? 'was' : 'were'} being added, so Dez did not insert ${one ? 'it' : 'them'}. `
       + `${userEvent === 'input.paste' ? 'Paste' : 'Drop'} ${one ? 'it' : 'them'} again.`,
     variant: 'warning',
     duration: 8000,
@@ -301,9 +301,10 @@ function showNotInsertedToast(stored: readonly AddedFile[], userEvent: 'input.pa
  *  (`addPendingRange`), and when its text changed, the files go after it
  *  and the new text stays. When the view no longer shows the doc of the
  *  paste or drop (another tab, or a rebuilt state), the stored files stay
- *  stored but are not inserted, and a toast says so. Each file gets its id
- *  at the dispatch (`newMediaIds`, from the doc as it is then), as a tag
- *  with no id is no tag; so two inserts in flight never take the same id. */
+ *  stored (and linked files where they are) but are not inserted, and a
+ *  toast says so. Each file gets its id at the dispatch (`newMediaIds`, from
+ *  the doc as it is then), as a tag with no id is no tag; so two inserts in
+ *  flight never take the same id. */
 async function insertFiles(view: EditorView, stores: ReadonlyArray<Promise<AddedFile | null>>, range: DocRange, userEvent: 'input.paste' | 'input.drop'): Promise<void> {
   const replacedText = view.state.sliceDoc(range.from, range.to)
   const id = addPendingRange(view, range)
