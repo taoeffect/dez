@@ -72,38 +72,69 @@ describe('namedModelTarget', () => {
     expect(() => namedModelTarget(cache, [OPENROUTER, other], 'openrouter/grok-video'))
       .toThrow('The nearest id of a model that the user can use is "openrouter/x-ai/grok-video". ')
   })
+
+  // A model that copies an OpenRouter id leaves out `openrouter/`, and the
+  // ids of the model part alone (`gpt-5`) are nearer than the id that holds
+  // the whole name.
+  it('names first the id that holds the whole name of a call with no known provider', () => {
+    const copilot = providerInfo('copilot', 'Copilot')
+    const copilotModels = ['gpt-5', 'gpt-5.1', 'gpt-5.2', 'gpt-5-mini'].map((id): ModelInfo => ({ id, name: id, provider: copilot.id }))
+    const cache: ModelCache = {
+      version: 1,
+      providers: {
+        copilot: { models: copilotModels, working: true, updatedAt: 0, lastCheckedAt: 0 },
+        openrouter: { models: [{ id: 'openai/gpt-5', name: 'GPT-5', provider: OPENROUTER.id }], working: true, updatedAt: 0, lastCheckedAt: 0 },
+      },
+    }
+
+    expect(() => namedModelTarget(cache, [copilot, OPENROUTER], 'openai/gpt-5'))
+      .toThrow('No provider has the id "openai". The nearest ids of models that the user can use are "copilot/gpt-5", "openrouter/openai/gpt-5", "copilot/gpt-5.1". ')
+  })
+
+  // A provider with no key lists no models: the call can mean the same
+  // model at another provider.
+  it('names the near ids of every provider for a provider that lists no models', () => {
+    const minimax = providerInfo('minimax', 'MiniMax', false)
+    const cache: ModelCache = {
+      version: 1,
+      providers: { openrouter: { models: [{ id: 'minimax/minimax-m2', name: 'MiniMax M2', provider: OPENROUTER.id }, PLAIN], working: true, updatedAt: 0, lastCheckedAt: 0 } },
+    }
+
+    expect(() => namedModelTarget(cache, [OPENROUTER, minimax], 'minimax/MiniMax-M2'))
+      .toThrow(new ToolError('The user cannot use the model "minimax/MiniMax-M2". The nearest id of a model that the user can use is "openrouter/minimax/minimax-m2". Use model_list to find the full ids of the models that the user can use.'))
+  })
 })
 
 describe('nearModelIds', () => {
   const models = (...ids: string[]) => ids.map((id): ModelInfo => ({ id, name: id, provider: 'p' }))
 
   it('compares only letters and digits, in any case', () => {
-    expect(nearModelIds(models('wan-2.6-flash', 'plain'), 'WAN_2-6_Flash')).toStrictEqual(['p/wan-2.6-flash'])
+    expect(nearModelIds(models('wan-2.6-flash', 'plain'), ['WAN_2-6_Flash'])).toStrictEqual(['p/wan-2.6-flash'])
   })
 
   it('takes one change for each five characters, and at least one', () => {
     // 10 letters and digits: 2 changes are near, 3 are not.
-    expect(nearModelIds(models('abcdefghij'), 'abcdefghxy')).toStrictEqual(['p/abcdefghij'])
-    expect(nearModelIds(models('abcdefghij'), 'abcdefgxyz')).toStrictEqual([])
-    expect(nearModelIds(models('gpt5'), 'gpt4')).toStrictEqual(['p/gpt5'])
+    expect(nearModelIds(models('abcdefghij'), ['abcdefghxy'])).toStrictEqual(['p/abcdefghij'])
+    expect(nearModelIds(models('abcdefghij'), ['abcdefgxyz'])).toStrictEqual([])
+    expect(nearModelIds(models('gpt5'), ['gpt4'])).toStrictEqual(['p/gpt5'])
   })
 
   it('takes an id that holds the text, or that the text holds, from 4 letters and digits', () => {
-    expect(nearModelIds(models('openai/gpt-4o', 'openai/o1-pro'), 'gpt-4o')).toStrictEqual(['p/openai/gpt-4o'])
-    expect(nearModelIds(models('gpt-4o'), 'openai/gpt-4o-2026')).toStrictEqual(['p/gpt-4o'])
+    expect(nearModelIds(models('openai/gpt-4o', 'openai/o1-pro'), ['gpt-4o'])).toStrictEqual(['p/openai/gpt-4o'])
+    expect(nearModelIds(models('gpt-4o'), ['openai/gpt-4o-2026'])).toStrictEqual(['p/gpt-4o'])
     // `o1` is in too many ids by chance.
-    expect(nearModelIds(models('openai/o1-pro'), 'o1')).toStrictEqual([])
+    expect(nearModelIds(models('openai/o1-pro'), ['o1'])).toStrictEqual([])
   })
 
   // `flux-2-max` is no part of the text and 3 changes away; the id that
   // is the 4th nearest is left out.
   it('gives at most 3 ids, the nearest first', () => {
-    expect(nearModelIds(models('flux-2-pro-ultra-max', 'flux-2-pro-ultra', 'flux-2', 'flux-2-pro', 'flux-2-max'), 'flux-2-pro'))
+    expect(nearModelIds(models('flux-2-pro-ultra-max', 'flux-2-pro-ultra', 'flux-2', 'flux-2-pro', 'flux-2-max'), ['flux-2-pro']))
       .toStrictEqual(['p/flux-2-pro', 'p/flux-2', 'p/flux-2-pro-ultra'])
   })
 
   it('gives none for a text with no letter and no digit', () => {
-    expect(nearModelIds(models('plain'), ' / ')).toStrictEqual([])
+    expect(nearModelIds(models('plain'), [' / '])).toStrictEqual([])
   })
 })
 

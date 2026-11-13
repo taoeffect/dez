@@ -57,22 +57,30 @@ function editDistance(a: string, b: string): number {
 // id: a shorter text (`o1`) is in too many ids by chance.
 const MIN_PART_LENGTH = 4
 
-/** The full ids of the models of `models` whose ids are nearest to
- *  `modelId`, the nearest first, at most `MAX_NEAR_IDS`; none when no id
- *  is near. Only the letters and the digits count (`idLetters`). An id is
- *  near when a few changes make it (one for each five characters), or when
- *  one id holds the other (`gpt-4o` for `openai/gpt-4o`). */
-export function nearModelIds(models: readonly ModelInfo[], modelId: string): string[] {
-  const wanted = idLetters(modelId)
-  if (wanted === '') return []
+// How near the id letters `letters` are to the text letters `wanted`: the
+// number of changes, or null when the id is not near (`nearModelIds`).
+function idDistance(wanted: string, letters: string): number | null {
+  const distance = editDistance(wanted, letters)
   const mostChanges = Math.max(1, Math.floor(wanted.length / 5))
+  const [shorter, longer] = wanted.length < letters.length ? [wanted, letters] : [letters, wanted]
+  return distance <= mostChanges || (shorter.length >= MIN_PART_LENGTH && longer.includes(shorter)) ? distance : null
+}
+
+/** The full ids of the models of `models` whose ids are nearest to one of
+ *  `names`, the texts of a call, the nearest first, at most `MAX_NEAR_IDS`;
+ *  none when no id is near. An id counts with its smallest number of
+ *  changes to a text that it is near. Only the letters and the digits count
+ *  (`idLetters`). An id is near when a few changes make it (one for each
+ *  five characters), or when one id holds the other (`gpt-4o` for
+ *  `openai/gpt-4o`). */
+export function nearModelIds(models: readonly ModelInfo[], names: readonly string[]): string[] {
+  const wanted = names.map(idLetters).filter((letters) => letters !== '')
   return models
     .flatMap((model) => {
       const letters = idLetters(model.id)
-      const distance = editDistance(wanted, letters)
-      const [shorter, longer] = wanted.length < letters.length ? [wanted, letters] : [letters, wanted]
-      const near = distance <= mostChanges || (shorter.length >= MIN_PART_LENGTH && longer.includes(shorter))
-      return near ? [{ id: modelRefKey({ providerId: model.provider, modelId: model.id }), distance }] : []
+      const distances = wanted.flatMap((text) => idDistance(text, letters) ?? [])
+      if (distances.length === 0) return []
+      return [{ id: modelRefKey({ providerId: model.provider, modelId: model.id }), distance: Math.min(...distances) }]
     })
     .sort((a, b) => a.distance - b.distance)
     .slice(0, MAX_NEAR_IDS)
@@ -81,8 +89,8 @@ export function nearModelIds(models: readonly ModelInfo[], modelId: string): str
 
 // What the error of a wrong id adds: the near ids among `models`, so that
 // the next call needs no `model_list` call first. Empty with none.
-function nearIdsText(models: readonly ModelInfo[], modelId: string): string {
-  const ids = nearModelIds(models, modelId).map((id) => JSON.stringify(id))
+function nearIdsText(models: readonly ModelInfo[], names: readonly string[]): string {
+  const ids = nearModelIds(models, names).map((id) => JSON.stringify(id))
   if (ids.length === 0) return ''
   return ids.length === 1
     ? ` The nearest id of a model that the user can use is ${ids[0]}.`
@@ -102,15 +110,24 @@ function nearIdsText(models: readonly ModelInfo[], modelId: string): string {
 export function namedModelTarget(cache: ModelCache, providers: readonly ProviderInfo[], named: string, advice = ''): ModelTarget {
   const ref = parseModelRefKey(named)
   if (!ref) {
-    const near = nearIdsText(availableModels(cache, providers), named)
+    const near = nearIdsText(availableModels(cache, providers), [named])
     throw new ToolError(`${JSON.stringify(named)} is not a full model id (provider/model).${near} ${FIND_MODELS}${advice === '' ? '' : ` ${advice}`}`)
   }
   const { provider, model } = listedModel(cache, providers, ref)
   if (provider && model) return { provider, model }
+  // The provider part can be the start of a model id of another provider:
+  // a model that copies the OpenRouter id `openai/gpt-5` leaves out
+  // `openrouter/`, and `minimax/minimax-m2` names a provider of Dez too.
+  // So the whole name counts next to the model part.
+  const names = [named, ref.modelId]
   if (!provider) {
-    throw new ToolError(`No provider has the id ${JSON.stringify(ref.providerId)}.${nearIdsText(availableModels(cache, providers), ref.modelId)} ${FIND_MODELS}`)
+    throw new ToolError(`No provider has the id ${JSON.stringify(ref.providerId)}.${nearIdsText(availableModels(cache, providers), names)} ${FIND_MODELS}`)
   }
-  throw new ToolError(`The user cannot use the model ${JSON.stringify(named)}.${nearIdsText(availableModels(cache, [provider]), ref.modelId)} ${FIND_MODELS}`)
+  // A provider with no key, or whose last model check failed, lists no
+  // models: then the call can mean the same model at another provider.
+  const ownModels = availableModels(cache, [provider])
+  const candidates = ownModels.length > 0 ? ownModels : availableModels(cache, providers)
+  throw new ToolError(`The user cannot use the model ${JSON.stringify(named)}.${nearIdsText(candidates, names)} ${FIND_MODELS}`)
 }
 
 /** The parameter values that the `parameters` argument of a call names (the
