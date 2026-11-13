@@ -12,6 +12,8 @@ interface TauriCapabilities extends WebdriverIO.Capabilities {
   }
 }
 
+const SETTLED_SIZE_MS = 500
+
 /**
  * Open a WebDriver session against a running tauri-driver instance.
  * `'tauri:options'.application` tells tauri-driver which binary to launch.
@@ -22,6 +24,12 @@ interface TauriCapabilities extends WebdriverIO.Capabilities {
  * and position (`dez.controller/window/restore`). The page loads before
  * that, and a pointer action on the hidden window fails with "move target
  * out of bounds", so this waits until the window shows.
+ *
+ * The page size can still change just after the show: under GTK on Wayland
+ * the header bar takes its height from the page only then (900x700 becomes
+ * 900x673). A pointer action placed with the old size misses an element at
+ * the bottom or right edge, so this also waits until the size stays the
+ * same for `SETTLED_SIZE_MS`.
  */
 export async function createSession (binary: string, port: number): Promise<E2EBrowser> {
   // Bound to a const so the vendor key survives assignability checking
@@ -52,6 +60,16 @@ export async function createSession (binary: string, port: number): Promise<E2EB
         return false
       }
     }, { timeout: 60_000, interval: 50, timeoutMsg: 'createSession: the app window did not show within 60 s' })
+    let size = ''
+    let sizeSince = 0
+    await browser.waitUntil(async () => {
+      const now = await browser.execute(() => `${window.innerWidth}x${window.innerHeight}`)
+      if (now !== size) {
+        size = now
+        sizeSince = Date.now()
+      }
+      return Date.now() - sizeSince >= SETTLED_SIZE_MS
+    }, { timeout: 10_000, interval: 50, timeoutMsg: 'createSession: the page size did not settle within 10 s' })
   } catch (err) {
     await destroySession(browser)
     throw err
