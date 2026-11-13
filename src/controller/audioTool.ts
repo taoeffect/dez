@@ -51,20 +51,35 @@ async function clipCopy(clip: ClipAttachment, folder: string, signal: AbortSigna
   return { name: input.name, inputs: copy ? [copy] : [] }
 }
 
+// The kept end `kept` of the error output of a run, whose start Dez `cut`:
+// after a cut, only its whole lines. The cut can fall inside a path, and
+// `withoutLocalPaths` does not see the rest of a path as a path.
+function wholeLinesEnd(kept: string, cut: boolean): string {
+  if (!cut) return kept
+  const lineEnd = kept.search(/[\r\n]/)
+  return lineEnd < 0 ? '' : kept.slice(lineEnd + 1)
+}
+
 // One ffmpeg run on the clip `id` in `folder`, to its end: the seconds of
 // audio that it wrote, or null for none (`writtenAudioSeconds`). Throws a
 // `ToolError` for a run that failed.
 async function writtenSeconds(id: string, args: string[], folder: string, inputs: BundledToolInput[], signal: AbortSignal): Promise<number | null> {
   let progress = ''
   let errors = ''
+  let errorsCut = false
   const run = { args, folder, inputs, timeoutMs: AUDIO_RUN_TIMEOUT_MS, maxOutputBytes: AUDIO_RUN_OUTPUT_BYTES }
   const end = await runProgram('ffmpeg', AUDIO_TOOL.name, run, signal, ({ stream, text }) => {
-    if (stream === 'stdout') progress = (progress + text).slice(-OUTPUT_END_CHARS)
-    else errors = (errors + text).slice(-OUTPUT_END_CHARS)
+    if (stream === 'stdout') {
+      progress = (progress + text).slice(-OUTPUT_END_CHARS)
+      return
+    }
+    errors += text
+    errorsCut ||= errors.length > OUTPUT_END_CHARS
+    errors = errors.slice(-OUTPUT_END_CHARS)
   })
   if (end.kind === 'timedOut') throw new ToolError(audioTimedOutText(id))
   // The error output can name a path that the data of the file holds.
-  if (end.kind !== 'exited' || end.code !== 0) throw new ToolError(audioDecodeFailedText(id), withoutLocalPaths(audioRunDetails(end, errors)))
+  if (end.kind !== 'exited' || end.code !== 0) throw new ToolError(audioDecodeFailedText(id), withoutLocalPaths(audioRunDetails(end, wholeLinesEnd(errors, errorsCut))))
   return writtenAudioSeconds(progress)
 }
 

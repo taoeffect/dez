@@ -133,6 +133,20 @@ describe('cutAudioClip', () => {
     deletedWorkFolder()
   })
 
+  // Dez keeps only the end of the error output, and the cut can fall inside
+  // a path: `withoutLocalPaths` does not see the rest of a path as a path.
+  it.each([
+    ['the whole lines after the cut', '\nInvalid data found when processing input\n', 'Invalid data found when processing input'],
+    ['nothing when the cut line has no end', '', ''],
+  ])('keeps of an error output whose start Dez cut %s', async (_case, after, kept) => {
+    const end = { kind: 'exited', code: 183 } as const
+    native.program = writes('stderr', `Error opening input file ${CACHE_DIR}/${'project/'.repeat(200)}b.mp3${after}`, end)
+    native.folderFiles = ['b.mp3', AUDIO_CUT_FILE.name]
+
+    expect(await refusalOf(cutAudioClip(SONG, PART, running()))).toBe(errorText(audioDecodeFailedText('b'), audioRunDetails(end, kept)))
+    deletedWorkFolder()
+  })
+
   it.each([
     [{ kind: 'outputTooLarge' }, errorText(audioDecodeFailedText('b'), audioRunDetails({ kind: 'outputTooLarge' }, ''))],
     [{ kind: 'timedOut' }, audioTimedOutText('b')],
