@@ -318,16 +318,53 @@ const PARENT_FOLDER = /(?:^|\/)\.\.(?:\/|$)|\.\.\//
 // of `-c:v` and the `data` of `-codec:data` are no protocols, and neither
 // is `expr:` or a time (`00:00:05`).
 const PROTOCOL_FORM = new RegExp(String.raw`(?:^|[^${NAME_CHARS}])(?:(${REFUSED_PROTOCOLS.join('|')})[:+]|(subfile),)`, 'i')
-// A device as the format of a filter or of a muxer option
-// (`movie=x:f=alsa`, `[f=pulse]`); the format of the `-f` option is the
-// next word, which `argumentProblem` checks.
-const DEVICE_FORMAT = new RegExp(String.raw`(?:^|[^${NAME_CHARS}])(?:f|format|format_name)\s*=\s*(${REFUSED_DEVICES.join('|')})(?![${NAME_CHARS}])`, 'i')
+// The `-f` option, which sets the format of the next input or output:
+// ffmpeg and ffprobe take a stream part on any option, so `-f:v hls` is
+// `-f hls`.
+const FORMAT_OPTION = /^-f(?::|$)/
+// A format as the value of a key of a filter or of a muxer option
+// (`movie=x:f=alsa`, `[f=pulse]`).
+const KEYED_FORMAT_VALUE = String.raw`(?:^|[^${NAME_CHARS}])(?:f|format|format_name)\s*=\s*`
+// A format as the second value with no key of `movie` or `amovie`
+// (`amovie=x:hls`): a filter takes values with no key in the order of its
+// options, and format_name comes after filename. The filter can have an
+// instance name (`amovie@a=x:hls`). The first value takes any char but `:`
+// and the graph separators, `=` too: ffmpeg takes `x y=z` as a value with
+// no key, as no `=` follows the name `x`. So a keyed first value matches
+// too, which ffmpeg refuses before a value with no key. Quotes can put a
+// separator into the name or the value, so this check needs the text of
+// `filterGraphText`.
+const MOVIE_FORMAT_VALUE = String.raw`(?:^|[^${NAME_CHARS}])a?movie(?:@[^=,;[]*)?\s*=[^:,;[\]]*:\s*`
+// A device as the format of a filter or of a muxer option; the format of
+// the `-f` option is the next word, which `argumentProblem` checks.
+const DEVICE_FORMAT = new RegExp(String.raw`(?:${KEYED_FORMAT_VALUE}|${MOVIE_FORMAT_VALUE})(${REFUSED_DEVICES.join('|')})(?![${NAME_CHARS}])`, 'i')
 // A refused option as a key of an option list inside a word
 // (`movie=list.txt:format_opts=safe=0`).
 const OPTION_KEY = new RegExp(String.raw`(?:^|[^${NAME_CHARS}])(${REFUSED_OPTIONS.join('|')})\s*=`, 'i')
 // The hls format as the format of a filter or of a muxer option
-// (`amovie=x:f=hls`); `argumentProblem` checks the `-f` option.
-const HLS_FORMAT = new RegExp(String.raw`(?:^|[^${NAME_CHARS}])(?:f|format|format_name)\s*=\s*hls(?![${NAME_CHARS}])`, 'i')
+// (`amovie=x:f=hls`, `amovie=x:hls`); `argumentProblem` checks the `-f`
+// option.
+const HLS_FORMAT = new RegExp(String.raw`(?:${KEYED_FORMAT_VALUE}|${MOVIE_FORMAT_VALUE})hls(?![${NAME_CHARS}])`, 'i')
+
+// The chars that end a filter, its name, or its options in the filter
+// graph parser of ffmpeg, unless they are in quotes.
+const GRAPH_SEPARATORS = '[],;='
+
+// The text of `word` as the filter graph parser of ffmpeg gives it to the
+// parser of a filter's options: with no quotes, and with `_` in place of
+// each separator in quotes, as that one ends nothing (`amovie@'a,b'=x:hls`
+// is one filter, `amovie` with the instance name `a,b`). The parser drops
+// each quote and takes the text up to the next one as it is; Dez takes no
+// backslash, its other escape.
+function filterGraphText(word: string): string {
+  let quoted = false
+  let text = ''
+  for (const char of word) {
+    if (char === '\'') quoted = !quoted
+    else text += quoted && GRAPH_SEPARATORS.includes(char) ? '_' : char
+  }
+  return text
+}
 
 const WORK_FOLDER_ONLY = 'The program works only in its own work folder: name an input as @id, and an output as a new file name with no folder.'
 
@@ -339,11 +376,12 @@ const WORK_FOLDER_ONLY = 'The program works only in its own work folder: name an
 //
 // The filter and option parsers of ffmpeg drop single quotes
 // (`m'o'vie=…` is `movie=…`), so each check of a text inside a word also
-// runs on the word without them. A backslash, their other escape, is
+// runs on the word without them, and on its `filterGraphText`, where a
+// separator in quotes ends no filter. A backslash, their other escape, is
 // refused as such.
 function argumentProblem(program: ShippedProgram, words: readonly string[], index: number): string | null {
   const word = words[index]
-  const forms = word.includes('\'') ? [word, word.replaceAll('\'', '')] : [word]
+  const forms = word.includes('\'') ? [word, word.replaceAll('\'', ''), filterGraphText(word)] : [word]
   const found = (pattern: RegExp) => forms.map((form) => pattern.exec(form)).find((match) => match !== null) ?? null
 
   if (word.includes('\\')) {
@@ -367,7 +405,7 @@ function argumentProblem(program: ShippedProgram, words: readonly string[], inde
   const option = /^-+([^:=]+)/.exec(word)?.[1].toLowerCase()
   const key = option !== undefined && REFUSED_OPTIONS.includes(option) ? option : found(OPTION_KEY)?.[1].toLowerCase()
   if (key !== undefined) return `Dez does not allow the option ${key}: with it, the program could open a file outside of its work folder.`
-  const format = words[index - 1] === '-f' ? word.toLowerCase() : undefined
+  const format = FORMAT_OPTION.test(words[index - 1] ?? '') ? word.toLowerCase() : undefined
   const device = format !== undefined && REFUSED_DEVICES.includes(format) ? format : found(DEVICE_FORMAT)?.[1].toLowerCase()
   if (device !== undefined) return `it names the device ${device}. Dez lets the program use no camera, no microphone, no screen, and no sound output of this computer.`
   // The hls demuxer opens the files that its playlist names, by any path:
@@ -381,7 +419,7 @@ function argumentProblem(program: ShippedProgram, words: readonly string[], inde
   }
   // The null muxer opens no file, so its `-` names nothing: `-f null -` is
   // the usual form of a run whose log is the result.
-  if (word === '-' && !(words[index - 1] === 'null' && words[index - 2] === '-f')) {
+  if (word === '-' && !(words[index - 1] === 'null' && FORMAT_OPTION.test(words[index - 2] ?? ''))) {
     return 'it is the standard input or output. The program gets no input stream, and Dez keeps no output stream: name an output as a new file name. '
       + 'Only -f null - can have a lone "-", for a run with no output file.'
   }
@@ -488,7 +526,7 @@ export interface FfmpegCall extends ProgramCall {
 export function ffmpegCall(args: ToolArguments, sections: readonly Section[]): FfmpegCall {
   const timeoutMs = jobTimeoutMs(args, DEFAULT_VIDEO_TIMEOUT_SECONDS)
   const call = programCall('ffmpeg', FFMPEG_FIXED_ARGS, args, sections)
-  return { ...call, timeoutMs, nullOutput: call.args.some((word, index) => word === 'null' && call.args[index - 1] === '-f') }
+  return { ...call, timeoutMs, nullOutput: call.args.some((word, index) => word === 'null' && FORMAT_OPTION.test(call.args[index - 1] ?? '')) }
 }
 
 /** The run that a `video ffprobe` call asks for, as `ffmpegCall`. */

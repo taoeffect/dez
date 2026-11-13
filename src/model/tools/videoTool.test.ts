@@ -195,6 +195,7 @@ describe('ffmpegCall', () => {
 
   it('knows a run with the null format', () => {
     expect(ffmpegCall({ arguments: '-v info -i @b -af volumedetect -f null -' }, CONVERSATION).nullOutput).toBe(true)
+    expect(ffmpegCall({ arguments: '-i @b -af volumedetect -f:a null -' }, CONVERSATION).nullOutput).toBe(true)
   })
 
   it('takes a time limit of the call', () => {
@@ -219,10 +220,13 @@ describe('ffmpegCall', () => {
     '-f concat -i list.txt -c copy out.mp4',
     '-i @c -movflags +faststart out.mp4',
     '-i @c -f hls -hls_flags delete_segments+append_list out.m3u8',
+    '-i @c -f:v hls -hls_time 2 out.m3u8',
+    '-f lavfi -i "amovie=@b:wav:si=0" out.wav',
     '-i @c -metadata artist="Jack White" -metadata title=wait... out.mp4',
     '-i @c -c:v h264_v4l2m2m out.mp4',
     '-i @c -vf "select=\'eq(n,0)\'" -frames:v 1 frame.jpg',
     '-y -i @c -f null -',
+    '-i @b -af volumedetect -f:a null -',
     '-i @c frame_%03d.jpg',
   ])('runs %j', (text) => {
     expect(() => ffmpegCall({ arguments: text }, CONVERSATION)).not.toThrow()
@@ -255,6 +259,9 @@ describe('ffmpegCall', () => {
     ['-f AVFoundation -i 0:0 out.mp4', 'AVFoundation', 'the device avfoundation'],
     ['-f lavfi -i amovie=default:f=pulse out.wav', 'amovie=default:f=pulse', 'the device pulse'],
     ['-i @c -f tee "[f=alsa]default|out.mp4"', '[f=alsa]default|out.mp4', 'the device alsa'],
+    ['-f:v fbdev -i "" out.mp4', 'fbdev', 'the device fbdev'],
+    ['-f lavfi -i "amovie=default:pulse" out.wav', 'amovie=default:pulse', 'the device pulse'],
+    ['-f lavfi -i "movie=\'0,1\':AVFoundation" out.mp4', 'movie=\'0,1\':AVFoundation', 'the device avfoundation'],
     ['-f concat -safe 0 -i list.txt out.mp4', '-safe', 'the option safe'],
     ['-protocol_whitelist file,crypto -i @c out.mp4', '-protocol_whitelist', 'the option protocol_whitelist'],
     ['-i @c -filter_complex_script graph.txt out.mp4', '-filter_complex_script', 'the option filter_complex_script'],
@@ -267,6 +274,12 @@ describe('ffmpegCall', () => {
     ['-f HLS -i @c -i @d out.mkv', 'HLS', 'the format of an input or of a filter'],
     ['-f lavfi -i "amovie=@c:f=hls" out.wav', 'amovie=@c:f=hls', 'the format of an input or of a filter'],
     ['-f lavfi -i "movie=@c:format_name=h\'l\'s" out.mp4', 'movie=@c:format_name=h\'l\'s', 'the format of an input or of a filter'],
+    ['-f:v hls -i @c -c copy out.mkv', 'hls', 'the format of an input or of a filter'],
+    ['-f lavfi -i "amovie=@c:hls" out.wav', 'amovie=@c:hls', 'the format of an input or of a filter'],
+    ['-f lavfi -i "amovie = @c : hls " out.wav', 'amovie = @c : hls ', 'the format of an input or of a filter'],
+    ['-f lavfi -i "amovie@q=@c:hls" out.wav', 'amovie@q=@c:hls', 'the format of an input or of a filter'],
+    ['-f lavfi -i "amovie=x y=z:hls" out.wav', 'amovie=x y=z:hls', 'the format of an input or of a filter'],
+    ['-f lavfi -i "amo\'v\'ie@\'x,y\'=@c:hls" out.wav', 'amo\'v\'ie@\'x,y\'=@c:hls', 'the format of an input or of a filter'],
     ['-/filter_complex graph.txt -i @c out.mp4', '-/filter_complex', 'reads its value from a file'],
     ['-i @c -vf "drawbox=x=10\\:y=2" out.mp4', 'drawbox=x=10\\:y=2', 'a backslash'],
   ])('refuses %j', (text, word, cause) => {
@@ -317,6 +330,7 @@ describe('ffprobeCall', () => {
   it.each([
     ['-show_format /etc/passwd', 'an absolute path'],
     ['-f hls @c', 'the format of an input or of a filter'],
+    ['-f:v hls @c', 'the format of an input or of a filter'],
     ['-show_format @z', '@z names no image and no clip'],
   ])('tells that ffprobe did not run for %j', (text, cause) => {
     const message = refusal(() => ffprobeCall({ arguments: text }, CONVERSATION))
