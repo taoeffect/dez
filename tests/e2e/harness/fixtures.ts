@@ -46,6 +46,12 @@ export function mediaTempDir (home: string): string {
   return path.join(home, '.cache', 'dez', 'media')
 }
 
+/** The folder of the work folders of the bundled tools of the test HOME
+ *  `home` (`WORK_ROOT` in src/model/tools/workFolders.ts). */
+export function workDir (home: string): string {
+  return path.join(home, '.cache', 'dez', 'work')
+}
+
 /** Writes `bytes` to `file`, with its folders, and gives `file`. */
 export async function writeTestFile (file: string, bytes: Buffer): Promise<string> {
   await fs.promises.mkdir(path.dirname(file), { recursive: true })

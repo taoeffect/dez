@@ -290,10 +290,11 @@ pub async fn load_app_file_bytes(root: FileRoot, path: String) -> Result<tauri::
     crate::persistence::load_app_file_bytes(root, &path).map(tauri::ipc::Response::new)
 }
 
-// A missing file is not an error.
+// A missing file or folder is not an error. `folder` deletes a folder with
+// all that it holds, in the cache root only.
 #[tauri::command]
-pub async fn delete_app_file(root: FileRoot, path: String) -> Result<(), String> {
-    crate::persistence::delete_app_file(root, &path)
+pub async fn delete_app_file(root: FileRoot, path: String, folder: bool) -> Result<(), String> {
+    crate::persistence::delete_app_file(root, &path, folder)
 }
 
 #[tauri::command]
@@ -306,9 +307,10 @@ pub async fn move_app_file(
     crate::persistence::move_app_file(from_root, &from_path, to_root, &to_path)
 }
 
+// `folders` lists the folders of the folder in place of its files.
 #[tauri::command]
-pub async fn list_app_files(root: FileRoot, path: String) -> Result<Vec<AppFileEntry>, String> {
-    crate::persistence::list_app_files(root, &path)
+pub async fn list_app_files(root: FileRoot, path: String, folders: bool) -> Result<Vec<AppFileEntry>, String> {
+    crate::persistence::list_app_files(root, &path, folders)
 }
 
 #[tauri::command]

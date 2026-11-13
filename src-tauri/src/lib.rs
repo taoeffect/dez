@@ -1,3 +1,4 @@
+mod bundled_tools;
 mod commands;
 mod copilot;
 mod http_bridge;
@@ -38,6 +39,7 @@ pub fn run() {
         .plugin(tauri_plugin_store::Builder::default().build())
         .manage(reqwest::Client::new())
         .manage(http_bridge::HttpStreamState::new())
+        .manage(bundled_tools::ToolRuns::default())
         // The frontend invokes these only from the `dez.native/*` selectors in
         // src/controller/native.ts. App commands need no capability entry:
         // build.rs declares no app command list, so the webview may call each
@@ -75,6 +77,8 @@ pub fn run() {
             commands::open_devtools,
             notification::show_notification,
             idle::user_idle_ms,
+            bundled_tools::run_bundled_tool,
+            bundled_tools::cancel_bundled_tool,
         ]);
     // macOS brings the app to the front when it starts, and with it each
     // window that is visible at that time. The main window starts hidden
@@ -118,8 +122,17 @@ pub fn run() {
     // window built there stays on about:blank under WebDriver automation.
     // https://bugs.webkit.org/show_bug.cgi?id=323277
     builder
-        .run(tauri::generate_context!())
-        .expect("error while running tauri application");
+        .build(tauri::generate_context!())
+        .expect("error while running tauri application")
+        // The hook of the quit: `Exit` is the last event before the event
+        // loop ends the process, which drops no task. A bundled tool that
+        // runs then must be stopped here, or it goes on with no app
+        // (`stop_all_runs`).
+        .run(|app, event| {
+            if let tauri::RunEvent::Exit = event {
+                bundled_tools::stop_all_runs(app);
+            }
+        });
 }
 
 #[cfg(test)]

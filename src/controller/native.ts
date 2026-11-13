@@ -1,5 +1,5 @@
 import sbp from '@sbp/sbp'
-import { invoke, type Channel } from '@tauri-apps/api/core'
+import { Channel, invoke } from '@tauri-apps/api/core'
 import { homeDir } from '@tauri-apps/api/path'
 import { save, type SaveDialogOptions } from '@tauri-apps/plugin-dialog'
 import { writeTextFile } from '@tauri-apps/plugin-fs'
@@ -15,6 +15,10 @@ import type {
   AppFileEntry,
   AppFileRef,
   AppFileRoot,
+  BundledToolEnd,
+  BundledToolEvent,
+  BundledToolOutput,
+  BundledToolRun,
   CopilotChatToken,
   CopilotDeviceFlowResponse,
   LatestRelease,
@@ -116,26 +120,76 @@ export default sbp('sbp/selectors/register', {
     return new Uint8Array(await invoke<ArrayBuffer>('load_app_file_bytes', { root, path }))
   },
 
-  // A missing file is not an error.
-  'dez.native/deleteAppFile' (path: string, root: AppFileRoot = 'app'): Promise<void> {
-    return invoke('delete_app_file', { root, path })
+  // A missing file is not an error. With `folder`, the path names a folder,
+  // which goes with all that it holds; only a folder of the cache root can
+  // be deleted.
+  'dez.native/deleteAppFile' (path: string, root: AppFileRoot = 'app', { folder = false }: { folder?: boolean } = {}): Promise<void> {
+    return invoke('delete_app_file', { root, path, folder })
   },
 
   // Moves a file, also from one root to the other. A file at `to` is
-  // replaced; a missing file at `from` rejects.
+  // replaced; a missing file at `from` rejects. Only the user can read the
+  // file after the move.
   'dez.native/moveAppFile' (from: AppFileRef, to: AppFileRef): Promise<void> {
     return invoke('move_app_file', { fromRoot: from.root, fromPath: from.path, toRoot: to.root, toPath: to.path })
   },
 
-  // The files directly in a folder, in no fixed order. A missing folder
-  // lists as empty.
-  'dez.native/listAppFiles' (path: string, root: AppFileRoot = 'app'): Promise<AppFileEntry[]> {
-    return invoke<AppFileEntry[]>('list_app_files', { root, path })
+  // The files directly in a folder, or with `folders` the folders directly
+  // in it, in no fixed order. A missing folder lists as empty. Left out: an
+  // entry whose name is no valid path segment of the app-file selectors.
+  'dez.native/listAppFiles' (path: string, root: AppFileRoot = 'app', { folders = false }: { folders?: boolean } = {}): Promise<AppFileEntry[]> {
+    return invoke<AppFileEntry[]>('list_app_files', { root, path, folders })
   },
 
   // The absolute path of a root folder.
   'dez.native/getAppDir' (root: AppFileRoot = 'app'): Promise<string> {
     return invoke<string>('get_app_dir', { root })
+  },
+
+  // Runs a program that Dez ships (src-tauri/src/bundled_tools.rs) to its
+  // end, and resolves with how it ended; only `exited` is an end that the
+  // program chose. `onOutput` gets the output while the program runs, as
+  // pieces of text in the order of each stream (a piece is not a line).
+  // Rejects when the run did not start: a bad folder path or input file, a
+  // `runId` that is active, a program that is missing.
+  //
+  // The channel is made here, not by the caller as for `streamHttp`: the end
+  // of a run is its last channel event (a command result can come before
+  // the last output), so this selector can give it as its result.
+  'dez.native/runBundledTool' (run: BundledToolRun, runId: string, onOutput: (output: BundledToolOutput) => void): Promise<BundledToolEnd> {
+    return new Promise((resolve, reject) => {
+      let outputFailed = false
+      const onEvent = new Channel<BundledToolEvent>((event) => {
+        if (event.kind === 'end') {
+          resolve(event.data)
+          return
+        }
+        if (outputFailed) return
+        // A throw out of a channel handler stops the channel: it holds
+        // every later event back, the end too. So a failure of `onOutput`
+        // rejects the run here and stops the program, which has no reader
+        // any more.
+        try {
+          onOutput(event.data)
+        } catch (error) {
+          outputFailed = true
+          console.error('The output handler of a bundled tool failed:', error)
+          reject(error)
+          invoke('cancel_bundled_tool', { runId }).catch((cancelError: unknown) => {
+            console.error('Failed to stop a bundled tool:', cancelError)
+          })
+        }
+      })
+      invoke('run_bundled_tool', { run, runId, onEvent }).catch(reject)
+    })
+  },
+
+  // Stops a `runBundledTool` run, which then ends as `cancelled`. A `runId`
+  // that is not active does nothing: the run has ended, or its start has
+  // not reached the backend yet. So send the cancel after the run call, in
+  // the same tick or later, never before it.
+  'dez.native/cancelBundledTool' (runId: string): Promise<void> {
+    return invoke('cancel_bundled_tool', { runId })
   },
 
   // The canonical paths of the OS temp folders that exist

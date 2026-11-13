@@ -9,6 +9,7 @@ import { ExplainedError, errorText, explainedError, rawErrorText } from '../util
 import { fileNameOf } from '../utils/fileName'
 import type { NativeHttpDownload, NativeHttpStreamResult } from '../utils/protocol/nativeHttp'
 import type { AppFileEntry } from './nativeTypes'
+import { deleteOldWorkFolders } from './workFolders'
 
 // The longest time that Save, or a read of a clip from its URL, waits for
 // the whole download. A server that stops sending would keep the Save
@@ -316,14 +317,18 @@ export default sbp('sbp/selectors/register', {
     return result.response.status >= 200 && result.response.status < 300
   },
 
-  // Deletes the old temp copies now, and then each hour while the app runs.
-  // A second call does nothing: one timer is enough for the whole app.
+  // Deletes the old files of the cache root (the temp copies of clips, and
+  // the work folders of the bundled tools) now, and then each hour while
+  // the app runs. A second call does nothing: one timer is enough for the
+  // whole app.
   'dez.controller/media/startCleanup' (): void {
     if (cleanupStarted) return
     cleanupStarted = true
-    void deleteExpiredTempCopies()
-    setInterval(() => {
+    const cleanUp = () => {
       void deleteExpiredTempCopies()
-    }, CLEANUP_INTERVAL_MS)
+      void deleteOldWorkFolders()
+    }
+    cleanUp()
+    setInterval(cleanUp, CLEANUP_INTERVAL_MS)
   },
 })

@@ -86,9 +86,11 @@ sbp('sbp/selectors/register', {
     await deleteAppFile(file)
     deletedFiles.push(file)
   },
-  async 'dez.native/listAppFiles' (path: string, root = 'app'): Promise<AppFileEntry[]> {
+  // A listing of folders is the cleanup of the work folders, which has its
+  // own tests (workFolders.test.ts): here the work root holds none.
+  async 'dez.native/listAppFiles' (path: string, root = 'app', { folders = false }: { folders?: boolean } = {}): Promise<AppFileEntry[]> {
     listedFolders.push({ root, path } as AppFileRef)
-    return listAppFiles()
+    return folders ? [] : listAppFiles()
   },
   'dez.ui/toast' (_area: string, toast: Toast): void {
     toasts.push(toast)
@@ -665,7 +667,7 @@ describe('dez.controller/media/startCleanup', () => {
   const start = Date.UTC(2026, 10, 10, 12)
   const cacheFiles = (...names: string[]): AppFileRef[] => names.map((name) => ({ root: 'cache', path: `media/${name}` }))
 
-  it('deletes the temp copies that are older than the temp lifetime, at the start and each hour', async () => {
+  it('deletes the temp copies that are older than the temp lifetime, and looks for old work folders, at the start and each hour', async () => {
     vi.useFakeTimers()
     vi.setSystemTime(start)
     let files: AppFileEntry[] = [
@@ -684,14 +686,14 @@ describe('dez.controller/media/startCleanup', () => {
     sbp('dez.controller/media/startCleanup')
     await vi.advanceTimersByTimeAsync(0)
 
-    expect(listedFolders).toStrictEqual([{ root: 'cache', path: 'media' }])
+    expect(listedFolders).toStrictEqual([{ root: 'cache', path: 'media' }, { root: 'cache', path: 'work' }])
     expect(deletedFiles).toStrictEqual(cacheFiles('old.mp4', 'at-the-end.mp3', 'cut.mp4.4012.7.tmp'))
 
     await vi.advanceTimersByTimeAsync(HOUR - 1)
-    expect(listedFolders).toHaveLength(1)
+    expect(listedFolders).toHaveLength(2)
 
     await vi.advanceTimersByTimeAsync(1)
-    expect(listedFolders).toHaveLength(2)
+    expect(listedFolders).toHaveLength(4)
     expect(deletedFiles).toStrictEqual(cacheFiles('old.mp4', 'at-the-end.mp3', 'cut.mp4.4012.7.tmp', 'one-ms-left.mp4'))
 
     // A file that cannot be deleted does not stop the other deletes.

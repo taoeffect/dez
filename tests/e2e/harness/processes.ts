@@ -24,3 +24,29 @@ export function webProcessPid (home: string): number {
 export function threadCount (pid: number): number {
   return fs.readdirSync(`/proc/${pid}/task`).length
 }
+
+/**
+ * The pids of the processes whose working folder is `folder`; none when the
+ * folder does not exist. This finds a program that Dez runs in a work
+ * folder: Dez gives such a program an empty environment, so its HOME does
+ * not tell which app started it.
+ */
+export function pidsWithCwd (folder: string): number[] {
+  let wanted: string
+  try {
+    // `/proc/<pid>/cwd` has no symlink in it.
+    wanted = fs.realpathSync(folder)
+  } catch {
+    return []
+  }
+  const pids: number[] = []
+  for (const entry of fs.readdirSync('/proc')) {
+    if (!/^\d+$/.test(entry)) continue
+    try {
+      if (fs.readlinkSync(`/proc/${entry}/cwd`) === wanted) pids.push(Number(entry))
+    } catch {
+      // The process ended, or it is another user's.
+    }
+  }
+  return pids
+}
