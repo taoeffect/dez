@@ -174,39 +174,42 @@ function storeFile(file: File): Promise<AddedFile | null> | null {
 /** Gives the dropped file at `path` (or at the path that `path` gives;
  *  null: not known, or the drop must copy) as a linked file
  *  (src/model/chat/linkedFiles.ts), the image or the clip `clip` (null: an
- *  image), when it is not in a temp folder or a folder of Dez
- *  (`dez.controller/images/linkPath`) and its path has the linked form; an
- *  image of a type that Dez converts to PNG has no linked form. Else gives
- *  the store that `store` starts, and Dez copies the file. A clip larger
- *  than the clips that Dez stores is not linked either: null, after a
- *  toast. */
-async function linkOrStore(path: string | null | Promise<string | null>, clip: StorableClip | null, store: () => Promise<AddedFile | null>): Promise<AddedFile | null> {
+ *  image), when its path has the linked form and it is not in a temp folder
+ *  or a folder of Dez (`dez.controller/images/linkPath`); an image of a
+ *  type that Dez converts to PNG has no linked form. The form test comes
+ *  first, so a path that can never be linked makes no native call. Else
+ *  gives the store that `store` starts, and Dez copies the file. A clip
+ *  larger than the clips that Dez stores is not linked either: null, after
+ *  a toast. `clipSize` is the size of the clip when the drop knows it;
+ *  else Dez asks it. */
+async function linkOrStore(path: string | null | Promise<string | null>, clip: StorableClip | null, store: () => Promise<AddedFile | null>, clipSize?: number): Promise<AddedFile | null> {
   const dropped = await path
-  const linked = dropped === null ? null : await sbp('dez.controller/images/linkPath', dropped) as string | null
-  if (linked === null || !(clip === null ? isLinkedImagePath(linked) : isLinkedMediaPath(linked))) return await store()
+  if (dropped === null || !(clip === null ? isLinkedImagePath(dropped) : isLinkedMediaPath(dropped))) return await store()
+  if (await sbp('dez.controller/images/linkPath', dropped) === null) return await store()
   if (clip !== null) {
     let size: number | null
     try {
-      size = await sbp('dez.controller/images/fileSize', linked) as number | null
+      size = clipSize ?? await sbp('dez.controller/images/fileSize', dropped) as number | null
     } catch (error) {
       // The copy reads the file, and tells the user why it cannot.
       console.error('Failed to read the size of a dropped clip:', error)
       return await store()
     }
     if (size !== null && size > MAX_SAVED_CLIP_BYTES) {
-      showClipTooLargeToast(fileNameOf(linked), size)
+      showClipTooLargeToast(fileNameOf(dropped), size)
       return null
     }
   }
-  return { path: linked, clip }
+  return { path: dropped, clip }
 }
 
 /** Starts to add a file of an HTML5 drop (macOS), as `storeFile` does,
- *  but links it when `pathOf` gives its path (`linkOrStore`). */
+ *  but links it when `pathOf` gives its path (`linkOrStore`). A clip's size
+ *  is `file.size`: `pairDroppedFiles` gave only a path with that size. */
 function dropFile(file: File, pathOf: () => Promise<string | null>): Promise<AddedFile | null> | null {
   if (file.type.startsWith('image/')) return linkOrStore(pathOf(), null, () => storeImage(file))
   const clip = storableClip(file.type, file.name)
-  return clip && linkOrStore(pathOf(), clip, () => storeClip(file, clip))
+  return clip && linkOrStore(pathOf(), clip, () => storeClip(file, clip), file.size)
 }
 
 /** Whether a drop at `pos` may link its files: only when `pos` is in a user

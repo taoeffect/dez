@@ -520,7 +520,6 @@ describe('dropFiles', () => {
   it('links the files of a drop that have a path out of the temp and Dez folders, and copies the others, with one path read per drop', async () => {
     draggedPaths = new Map([['a.png', '/Users/u/a.png'], ['dance.mp4', '/Users/u/dance.mp4'], ['b.png', '/private/tmp/b.png']])
     linkedPaths = new Set(['/Users/u/a.png', '/Users/u/dance.mp4'])
-    fileSizes = new Map([['/Users/u/dance.mp4', 3]])
     const notes = new File(['hi'], 'notes.txt', { type: 'text/plain' })
     const editor = createEditor('one two', 0)
 
