@@ -485,14 +485,6 @@ function cachedModel(model: ModelRef): ModelInfo | undefined {
     .find((candidate) => candidate.id === model.modelId)
 }
 
-// The tools go only to a model that the Tools toggle applies to
-// (`toolsApply`: not one that is known not to call tools, and no media
-// model), and only while that toggle of its provider is on. An unknown model
-// (not in the cache yet) gets the tools.
-function requestSendsTools(model: ModelRef): boolean {
-  return toolsApply(cachedModel(model) ?? {}) && isToolsEnabled(useSettingsStore().providerSettings[model.providerId])
-}
-
 function cloneModelCache(cache: ModelCache): ModelCache {
   const providers: Partial<Record<ProviderId, CachedProvider>> = {}
   for (const [key, entry] of Object.entries(cache.providers)) {
@@ -885,22 +877,26 @@ export default sbp('sbp/selectors/register', {
 
   // `model`: the model the request goes to. It decides what earlier thinking
   // goes back, whether the images go, and whether the tools go
-  // (`requestSendsTools`). A model that the model cache knows not to read
-  // images gets only the text of each reference, with no path. An unknown
-  // model (no flag, or not in the cache yet) gets the images.
+  // (`dez.model/requestSendsTools`). A model that the model cache knows not
+  // to read images gets only the text of each reference, with no path. An
+  // unknown model (no flag, or not in the cache yet) gets the images.
   'dez.model/streamMessagesForTab' (tabId: string, model: ModelRef): RequestMessages {
     const tab = useTabStore().tabs.find((candidate) => candidate.id === tabId)
     if (!tab) return { messages: [], imagesLeftOut: 0, sendTools: false }
 
-    const sendTools = requestSendsTools(model)
+    const sendTools = sbp('dez.model/requestSendsTools', model) as boolean
     const sendImages = cachedModel(model)?.imageInput !== false
     return { ...sectionsToStreamMessages(tab.sections, model, { sendImages, sendTools }), sendTools }
   },
 
-  // Whether a chat request to `model` offers the Dez tools now. Settings ›
-  // System Prompt fills `{{tools_list}}` of its preview with it.
+  // Whether a chat request to `model` offers the Dez tools now: only to a
+  // model that the Tools toggle applies to (`toolsApply`: not one that is
+  // known not to call tools, and no media model), and only while that toggle
+  // of its provider is on. An unknown model (not in the cache yet) gets the
+  // tools. Settings › System Prompt fills `{{tools_list}}` of its preview
+  // with it.
   'dez.model/requestSendsTools' (model: ModelRef): boolean {
-    return requestSendsTools(model)
+    return toolsApply(cachedModel(model) ?? {}) && isToolsEnabled(useSettingsStore().providerSettings[model.providerId])
   },
 
   // Stamps the agent section with the model of the request that will fill it.
