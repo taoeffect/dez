@@ -156,7 +156,7 @@ function trashTooltip(missing: boolean, linked: boolean): HTMLElement {
   if (linked) {
     return tooltipContent(
       'Remove image',
-      'Removes the image from the conversation. Its file stays where it is. Dez asks you first. You cannot undo this.',
+      'Removes the image from the conversation. Its file stays where it is. Dez asks you first.',
     )
   }
   return tooltipContent(
@@ -431,10 +431,11 @@ export function imageRemovalRange(doc: Text, { from, to }: DocRange): DocRange {
  *  changed, another tab, no single match), no file is deleted, and a toast
  *  tells the user. A failed file delete (the controller has shown a toast)
  *  keeps the reference. If the reference goes while its file is being
- *  deleted, its text stays and shows "Image not found". The removal is not
- *  in the undo history: the file is gone, so an undo could only bring back
- *  a broken reference. Other references to the same file are left as they
- *  are. */
+ *  deleted, its text stays and shows "Image not found". The removal of a
+ *  stored image is not in the undo history: the file is gone, so an undo
+ *  could only bring back a broken reference. A linked image's file stays,
+ *  so its removal is a normal edit that an undo takes back. Other
+ *  references to the same file are left as they are. */
 export async function deleteImage(view: EditorView, from: number, path: string): Promise<void> {
   const image = renderedImages(view.state).find((image) => image.from === from && image.path === path)
   if (!image) return
@@ -461,7 +462,7 @@ export async function deleteImage(view: EditorView, from: number, path: string):
       // The controller has logged the failure and shown a toast.
     }
   }
-  followed.end(range ? imageRemovalRange(view.state.doc, range) : undefined)
+  followed.end(range ? imageRemovalRange(view.state.doc, range) : undefined, { undoable: image.linked })
   // The prompt gave the focus back a few ms ago (`syncDomSelection`).
   if (range) syncDomSelection(view)
 }

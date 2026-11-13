@@ -1,4 +1,5 @@
 import sbp from '@sbp/sbp'
+import { isolateHistory } from '@codemirror/commands'
 import { StateEffect, StateField, Transaction, type ChangeSpec, type EditorState, type Extension } from '@codemirror/state'
 import type { EditorView } from '@codemirror/view'
 
@@ -105,14 +106,19 @@ export function followShownRange<T extends DocRange>(
     return matches[0]
   }
   /** Ends the work: makes `change` (a rewrite or the removal of the item),
-   *  if given. The change is not in the undo history: the file change that
-   *  it tells of stays, so an undo could only bring back text that names a
-   *  file that is gone. */
-  const end = (change?: ChangeSpec): void => {
+   *  if given. A change that tells of a file change (a save, a delete) is
+   *  not in the undo history: the file change stays, so an undo could only
+   *  bring back text that names a file that is gone. An `undoable` change
+   *  changes no file (the removal of a linked file's text), so it is a
+   *  normal edit, in its own undo step. */
+  const end = (change?: ChangeSpec, { undoable = false } = {}): void => {
     // In another state, or while another tab is active, there is no range.
     if (!pendingRange(view.state, rangeId)) return
     view.dispatch({
-      ...(change && { changes: change, annotations: Transaction.addToHistory.of(false) }),
+      ...(change && {
+        changes: change,
+        annotations: undoable ? isolateHistory.of('full') : Transaction.addToHistory.of(false),
+      }),
       effects: removePendingRange(rangeId),
     })
   }

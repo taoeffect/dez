@@ -3,7 +3,7 @@ import { history, undo } from '@codemirror/commands'
 import { EditorSelection, EditorState, type Transaction, type TransactionSpec } from '@codemirror/state'
 import type { EditorView } from '@codemirror/view'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
-import { SECTION_SEP, encodePrompt } from '../thread/cmEditor'
+import { SECTION_SEP, encodePrompt, sectionsField } from '../thread/cmEditor'
 import { deleteImage, deleteImageBang, deleteImageParen, imageRemovalRange, imageTooltip, imageTooltipDelay, markdownImages, renderedImages, setImageTooltip } from './images'
 
 interface ConfirmCall {
@@ -247,9 +247,10 @@ describe('deleteImage (the image trash)', () => {
     replaceState: (next: EditorState) => void
   }
 
-  /** A view stand-in that `deleteImage` reads and dispatches to. */
-  function createEditor(doc: string): FakeEditor {
-    let state = createState(doc)
+  /** A view stand-in that `deleteImage` reads and dispatches to; its state
+   *  is `createState(doc)`, or `doc` when that is a state. */
+  function createEditor(doc: string | EditorState): FakeEditor {
+    let state = typeof doc === 'string' ? createState(doc) : doc
     const view = {
       get state() {
         return state
@@ -290,6 +291,28 @@ describe('deleteImage (the image trash)', () => {
     let undone = editor.view.state
     expect(undo({ state: undone, dispatch: (tr) => { undone = tr.state } })).toBe(true)
     expect(undone.doc.toString()).toBe('before\nafter')
+  })
+
+  it('removes a linked image, whose file stays, in its own step that undo takes back', async () => {
+    const path = '/home/u/Pictures/cat.png'
+    const linked = `![${path}](id=a)`
+    // A linked reference shows only in a user section.
+    const editor = createEditor(EditorState.create({
+      doc: ['before', linked, 'after'].join('\n'),
+      extensions: [markdownImages(), history(), sectionsField.init(() => [{ id: 's0', role: 'user' }])],
+    }))
+    editor.edit({ changes: { from: editor.doc().length, insert: '!' }, userEvent: 'input.type' })
+    const done = deleteImage(editor.view, 'before\n'.length, path)
+    expect(confirmCalls.map((call) => call.message)).toEqual(['Are you sure you want to remove this image from the conversation? Its file stays where it is.'])
+    confirmCalls[0].answer(true)
+    await done
+    expect(deleteCalls).toEqual([])
+    expect(editor.doc()).toBe('before\nafter!')
+
+    const undone = undoOnce(editor.view.state)
+    expect(undone.doc.toString()).toBe(['before', linked, 'after!'].join('\n'))
+    expect(shown(undone)).toEqual([linked])
+    expect(undoOnce(undone).doc.toString()).toBe(['before', linked, 'after'].join('\n'))
   })
 
   it('changes nothing on "No", or when the file delete fails', async () => {

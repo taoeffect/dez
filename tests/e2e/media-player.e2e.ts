@@ -1,6 +1,7 @@
 import fs from 'node:fs'
 import path from 'node:path'
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from 'vitest'
+import { Key } from 'webdriverio'
 import { openAiChatBody } from './harness/chatBody'
 import { click, consoleErrors, elementCenter, isOnTop, movePointer, pointerClick, pointerClickAt, pointerDrag, promptMessage, resetConsoleErrors, screenshotOnFailure, typeKeys, waitForValue, type Point } from './harness/dom'
 import { linkedDropDir, nativeDrop } from './harness/drops'
@@ -432,7 +433,7 @@ describe('media player', () => {
     expect(await consoleErrors(browser)).toStrictEqual([])
   })
 
-  it('links a clip of a native file drop from a folder that is not a temp folder, sends no path, and removes only its tag after a prompt', async () => {
+  it('links a clip of a native file drop from a folder that is not a temp folder, sends no path, and removes only its tag after a prompt, in an undo step', async () => {
     const source = await writeTestFile(path.join(linkedDir, 'My tone (1).wav'), TONE)
     const pastedDir = appFilePath(setup.app.home, 'assets', 'audio')
     const pastedBefore = await filesIn(pastedDir)
@@ -474,6 +475,11 @@ describe('media player', () => {
     expect(await shownPlayers(browser)).toStrictEqual([])
     expect(await fs.promises.readFile(source)).toStrictEqual(TONE)
     expect(await consoleErrors(browser)).toStrictEqual([])
+
+    // The file stays, so the removal is an undo step.
+    await browser.keys([Key.Control, 'z'])
+    await waitForValue(browser, 'thread after undo', () => threadSections(browser), thread)
+    await waitForValue(browser, 'player after undo', () => shownPlayers(browser), [linked])
   })
 
   it('tells where the temp copy of a clip is, moves it on Save, and tells that a clip with no file is not available', async () => {

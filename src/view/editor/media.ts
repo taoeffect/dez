@@ -348,9 +348,11 @@ async function saveClip(view: EditorView, root: HTMLElement, clip: MediaTagData)
  *  and takes the tag's whole line out of the doc (`linesRemovalRange`), as
  *  the image trash does with an image reference. A linked clip
  *  (`isLinkedMediaPath`, linkedFiles.ts) keeps its file: its trash takes
- *  only the tag's line out. When the tag is gone after the prompt (see
- *  `followClip`), no file is deleted, and a toast tells the user. A failed
- *  delete (the controller has shown a toast) keeps the tag. */
+ *  only the tag's line out, in a normal edit that an undo takes back (the
+ *  other changes are not in the undo history, see `followShownRange`).
+ *  When the tag is gone after the prompt (see `followClip`), no file is
+ *  deleted, and a toast tells the user. A failed delete (the controller has
+ *  shown a toast) keeps the tag. */
 export async function deleteSavedClip(view: EditorView, root: HTMLElement, clip: MediaTagData): Promise<void> {
   const { src } = clip
   if (src === null || busyClips.has(src)) return
@@ -376,7 +378,7 @@ export async function deleteSavedClip(view: EditorView, root: HTMLElement, clip:
     return
   }
   if (linked) {
-    followed.end(linesRemovalRange(view.state.doc, current))
+    followed.end(linesRemovalRange(view.state.doc, current), { undoable: true })
     syncDomSelection(view)
     return
   }

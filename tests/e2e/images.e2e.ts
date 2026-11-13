@@ -792,7 +792,7 @@ describe('images', () => {
     sentLinkedImage = { message, conversationId }
   })
 
-  it('asks before the trash removes a linked image, and keeps its file', async () => {
+  it('asks before the trash removes a linked image, keeps its file, and brings the image back on undo', async () => {
     const source = await writeTestFile(path.join(linkedDir, 'kept.png'), DROPPED_PNG)
     await newTab(browser)
     await focusEditor(browser)
@@ -813,6 +813,11 @@ describe('images', () => {
     await waitForValue(browser, 'doc after Enter', docAndCaret, { doc: 'See  here', caret: 2 })
     await waitForValue(browser, 'prompt after Enter', promptState, { message: null, buttons: [], focus: 'editor' })
     expect(await fs.promises.readFile(source)).toEqual(DROPPED_PNG)
+
+    // The file stays, so the removal is an undo step.
+    await browser.keys([Key.Control, 'z'])
+    await waitForValue(browser, 'doc after undo', () => editorDoc(browser), `See ![${source}](id=a) here`)
+    await waitForValue(browser, 'image after undo', () => shownImages(browser), [{ alt: 'kept.png', width: 40, height: 24 }])
   })
 
   // A linked path counts only in a user message.

@@ -149,6 +149,17 @@ describe('deleteSavedClip (the trash of a player)', () => {
     expect(undoOnce(state)).toBe(`before\n${unsaved}\nafter`)
   })
 
+  it('removes the tag line of a linked clip, whose file stays, in a step that undo takes back', async () => {
+    const clip: MediaTagData = { kind: 'audio', id: 'b', type: 'audio/wav', src: '/home/u/Music/song.wav', url: null, expires: null, other: [] }
+
+    const state = await deleteClip(clip)
+
+    expect(confirmMessages).toStrictEqual(['Are you sure you want to remove this clip from the conversation? Its file stays where it is.'])
+    expect(deletedPaths).toStrictEqual([])
+    expect(state.doc.toString()).toBe('before\nafter!')
+    expect(undoOnce(state)).toBe(`before\n${mediaTagText(clip)}\nafter!`)
+  })
+
   it('warns at the delete of a saved file when the URL that the clip goes back to has expired', async () => {
     const path = '/home/u/.config/dez/assets/generated/video/x.mp4'
     const clip = (expires: number): MediaTagData => ({ kind: 'video', id: 'b', type: 'video/mp4', src: path, url: 'https://cdn.example/x.mp4', expires: new Date(expires).toISOString(), other: [] })
