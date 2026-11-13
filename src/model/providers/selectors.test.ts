@@ -13,8 +13,9 @@ import { ExplainedError } from '../../utils/errorText'
 import type { NativeHttpDownload, NativeHttpRequest, NativeHttpResponse, NativeHttpStreamResult } from '../../utils/protocol/nativeHttp'
 import { NativeHttpError } from '../../utils/protocol/errors'
 import type { ClipAttachment, InputClipRules } from './clipInputs'
+import { InputImageError } from './errors'
 import type { KnownLimit } from './knownLimits'
-import type { ProviderGenerateMediaResult, ProviderMediaQuote } from './streamTypes'
+import type { MediaProgress, ProviderGenerateMediaResult, ProviderMediaQuote } from './streamTypes'
 import type { GeneratedMedia, ModelDisplayNames, ProviderModelsResult, ProviderSettingsDescriptor } from './types'
 // Side-effect imports: register the dez.model/* selectors and the selectors
 // under test.
@@ -919,6 +920,14 @@ describe('media requests', () => {
     expect(imageReads).toEqual([])
   })
 
+  it('tells the caller when the request of an image goes', async () => {
+    const steps: Array<[MediaProgress, number]> = []
+
+    await generate({ kind: 'image', onProgress: (progress: MediaProgress) => steps.push([progress, streamRequests.length]) })
+
+    expect(steps).toStrictEqual([[{ phase: 'sent', jobId: null }, 0]])
+  })
+
   it('edits stored images of both folders, sent as data URLs, and returns the whole image of a binary answer', async () => {
     const result = await generate({ kind: 'imageEdit', images: [`${APP_DIR}/assets/generated/images/red.png`, `${APP_DIR}/assets/images/red.png`] })
 
@@ -980,6 +989,30 @@ describe('media requests', () => {
 
     expect(imageReads).toEqual([])
     expect(streamRequests).toEqual([])
+  })
+
+  // The file name of a linked image is private: a caller whose reader is
+  // a model names the image by the id that it has for the path.
+  it.each([
+    ['a file that Dez cannot read', `${APP_DIR}/assets/images/gone.png`, 'unreadable'],
+    ['an SVG that the webview cannot draw', `${APP_DIR}/assets/generated/images/logo.svg`, 'notDrawn'],
+  ])('rejects with the path and the problem of %s, before any request', async (_name, path, problem) => {
+    storedImageSize = null
+
+    const error: unknown = await generate({ kind: 'imageEdit', images: [path] }).catch((error: unknown) => error)
+
+    expect(error).toBeInstanceOf(InputImageError)
+    expect(error).toMatchObject({ path, problem })
+    expect(streamRequests).toEqual([])
+  })
+
+  // The model of a `model_invoke` call gave its inputs in `prompt`, and it
+  // cannot paste an image or change a message.
+  it('words an input that does not go for the model of a call, when the caller names that reader', async () => {
+    const error = await generate({ kind: 'imageEdit', reader: 'model' }).catch((error: unknown) => error)
+
+    expect((error as ExplainedError).explanation).toContain('`prompt`')
+    expect((error as ExplainedError).explanation).not.toMatch(/\b(paste|message)\b/i)
   })
 
   it('names the provider of a refused request first, with the start of its answer in the details', async () => {
@@ -1290,6 +1323,19 @@ describe('media requests', () => {
       expect(message).not.toContain(audio.src)
       expect(message).not.toContain(audio.url)
       expect([downloadRequests, streamRequests, httpRequests]).toStrictEqual([[], [], []])
+    })
+
+    it.each(['deleted', 'expired', 'unreadable'] as const)('tells the model of a call that named a clip that is %s to tell the user, and how to call again', async (problem) => {
+      useClipModel('m', BACKGROUND_AUDIO)
+      clipReadError = new ClipReadError(problem, '')
+
+      const error = await generate({ kind: 'video', clips: [clip('audio', 'a1', 'audio/mpeg')], reader: 'model' }).catch((error: unknown) => error)
+
+      const { explanation } = error as ExplainedError
+      expect(explanation).toContain('This is not a fault of the call')
+      expect(explanation).toContain('another clip in place of @a1')
+      expect(explanation).not.toMatch(/\bmessage\b/)
+      expect(downloadRequests).toEqual([])
     })
 
     // The size is that of the file that goes: the WAV copy.

@@ -5,7 +5,7 @@ import { IMAGE_TOOL_KEY, imageMarkdown } from '../model/chat/images'
 import { modelRefKey } from '../model/chat/modelRef'
 import { tempMediaFile } from '../model/chat/mediaFiles'
 import { newMediaIds } from '../model/chat/mediaIds'
-import { MEDIA_TOOL_ATTRIBUTE, mediaTagText } from '../model/chat/mediaTags'
+import { MEDIA_JOB_ATTRIBUTE, MEDIA_TOOL_ATTRIBUTE, mediaTagText } from '../model/chat/mediaTags'
 import { findToolBlocks, ModelTextEscaper } from '../model/chat/toolBlocks'
 import { TooManyImagesError, tooManyImagesMessage } from '../model/providers/clipImages'
 import { errorText, explainedError } from '../utils/errorText'
@@ -263,15 +263,24 @@ function stopToolRun(tabId: string, reply: ReplyRuntime): boolean {
 // (`ToolRunContext`): each puts its asset at the section end, with the
 // name of the tool that made it (`IMAGE_TOOL_KEY`, `MEDIA_TOOL_ATTRIBUTE`).
 // That is `tool`, or the tool that a write names (`jobs_wait` writes what
-// the job of another tool made). A write while `takesAssets` gives false
-// writes nothing and gives null.
+// the job of another tool made). A clip that a provider made as a job
+// keeps the provider's job id too (`MEDIA_JOB_ATTRIBUTE`), as the clip of
+// a media reply does. A write while `takesAssets` gives false writes
+// nothing and gives null.
 function toolAssetWriters(tabId: string, reply: ReplyRuntime, tool: string, takesAssets: () => boolean): Pick<ToolRunContext, 'writeImage' | 'writeClip'> {
   return {
     writeImage: (path, options) => (takesAssets()
       ? writeAsset(tabId, reply, (id) => imageMarkdown(path, [{ key: 'id', value: id }, { key: IMAGE_TOOL_KEY, value: options?.tool ?? tool }]))
       : null),
     writeClip: (clip, options) => (takesAssets()
-      ? writeAsset(tabId, reply, (id) => mediaTagText({ ...clip, id, other: [{ name: MEDIA_TOOL_ATTRIBUTE, value: options?.tool ?? tool }] }))
+      ? writeAsset(tabId, reply, (id) => mediaTagText({
+        ...clip,
+        id,
+        other: [
+          { name: MEDIA_TOOL_ATTRIBUTE, value: options?.tool ?? tool },
+          ...(options?.jobId === undefined ? [] : [{ name: MEDIA_JOB_ATTRIBUTE, value: options.jobId }]),
+        ],
+      }))
       : null),
   }
 }
@@ -617,8 +626,7 @@ async function runMediaRound(args: StreamStartArgs, reply: ReplyRuntime, kind: M
   const ids = newMediaIds(texts, paths.length + clips.length)
   const references = [
     ...paths.map((path, index) => imageMarkdown(path, [{ key: 'id', value: ids[index] }])),
-    // The job id is tag metadata: the provider took the money for the job,
-    // and with the id the user can ask it for the clip again.
+    // The job id is tag metadata (`MEDIA_JOB_ATTRIBUTE`).
     ...clips.map((clip, index) => mediaTagText({
       kind: clip.kind,
       id: ids[paths.length + index],
@@ -626,7 +634,7 @@ async function runMediaRound(args: StreamStartArgs, reply: ReplyRuntime, kind: M
       src: clip.src,
       url: clip.url,
       expires: clip.expires,
-      other: clip.jobId === null ? [] : [{ name: 'job', value: clip.jobId }],
+      other: clip.jobId === null ? [] : [{ name: MEDIA_JOB_ATTRIBUTE, value: clip.jobId }],
     })),
   ]
   // A transcription is escaped as the text of a chat reply

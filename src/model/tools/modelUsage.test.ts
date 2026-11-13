@@ -1,15 +1,19 @@
 import { describe, expect, it } from 'vitest'
 import { mediaTagText, type MediaTagData } from '../chat/mediaTags'
 import type { ModelRef, Section } from '../chat/types'
+import type { ModelCache } from '../persistence/types'
 import { inputImageRulesFor, maxInputImages, type InputImageRules } from '../providers/clipImages'
 import { clipTagProblem, maxInputClips, missingClipProblem, needsWavCopy, type ClipAttachment, type InputClipRules } from '../providers/clipInputs'
 import { lyricsHowTo, type ClipTextRules } from '../providers/clipText'
 import { MEDIA_FORMATS, type ClipFormat } from '../providers/mediaFormats'
 import type { ParameterValues } from '../providers/modelParameters'
 import { isToolsEnabled, modelToggles, toggleRows, toggleValue, toolsApply } from '../providers/modelToggles'
+import { providerInfo } from '../providers/testing'
 import { MEDIA_KINDS, MODEL_REQUESTS, type ChatImagePart, type MediaKind, type ModelInfo, type ModelRequest } from '../providers/types'
 import { mediaRequestInput, sectionsToStreamMessages } from '../streams/messages'
+import { modelInvocation } from './modelInvoke'
 import { clipNamesUsage, modelUsage, neededClipUsage, referenceNamesUsage, takenClipsUsage, urlOnlyClipsUsage, USAGE_TEXTS, type UsageFacts } from './modelUsage'
+import { ToolError } from './types'
 
 // Each choice of a usage text is checked against the code that builds the
 // request, so that a change of that code that the texts do not follow
@@ -65,9 +69,33 @@ describe('modelUsage', () => {
       const usable = modelUsage({ id: 'm', name: 'M', provider: 'p', request }, NO_FACTS)
       const unstored = modelUsage({ id: 'm', name: 'M', provider: 'p', request, unstoredOutput: 'TIFF' }, NO_FACTS)
 
-      expect(usable[0], request).toBe(request === 'none' ? USAGE_TEXTS.cannotUse : USAGE_TEXTS.userSends)
+      expect(usable[0], request).toBe(request === 'none' ? USAGE_TEXTS.cannotUse : request === 'chat' ? USAGE_TEXTS.userSends : USAGE_TEXTS.invokeSends)
       expect(usable.length > 1, request).toBe(request !== 'none')
       expect(unstored, request).toStrictEqual([USAGE_TEXTS.cannotUse])
+    }
+  })
+
+  // `model_invoke` checks the model of a call before its time limit. So a
+  // call with a bad time limit tells whether the tool takes the model:
+  // only then is the refusal about the time limit.
+  it('tells that you can send a request with model_invoke exactly when that tool takes the model', () => {
+    const invokeTakes = (model: ModelInfo) => {
+      const cache: ModelCache = { version: 1, providers: { p: { models: [model], working: true, updatedAt: 0, lastCheckedAt: 0 } } }
+      try {
+        modelInvocation({ model: 'p/m', prompt: 'A fox.', timeout_seconds: 0 }, { cache, providers: [providerInfo('p', 'P')], modelParameters: {}, sections: [] })
+      } catch (error) {
+        if (error instanceof ToolError) return error.message.includes('timeout_seconds')
+        throw error
+      }
+      throw new Error('The call was not refused.')
+    }
+
+    for (const request of MODEL_REQUESTS) {
+      for (const unstoredOutput of [undefined, 'TIFF']) {
+        const model: ModelInfo = { id: 'm', name: 'M', provider: 'p', request, ...(unstoredOutput && { unstoredOutput }) }
+
+        expect(modelUsage(model, NO_FACTS)[0] === USAGE_TEXTS.invokeSends, JSON.stringify(model)).toBe(invokeTakes(model))
+      }
     }
   })
 

@@ -228,6 +228,21 @@ describe('clipFileProblem', () => {
     ]).toStrictEqual([true, false, false])
   })
 
+  // The model that called `model_invoke` has the audio tool itself, and
+  // its inputs are the clips that its prompt names.
+  it('tells a model to cut the clip itself, and names its prompt, not a message', () => {
+    const problems = [
+      clipFileProblem('Film', LIMITS, [read('audio', 'a1', 31)], 'model'),
+      clipFileProblem('Film', TOTALS, [read('audio', 'a1', 20), read('audio', 'a2', 15)], 'model'),
+    ]
+
+    expect(problems[0]).toContain('Cut it with the audio tool')
+    for (const problem of problems) {
+      expect(problem).toMatch(/prompt/)
+      expect(problem).not.toMatch(/\b(message|chat model)\b/)
+    }
+  })
+
   it.each([
     ['5 seconds', 15, '35 seconds'],
     ['less than 0.05 s', 10.02, '30.1 seconds'],

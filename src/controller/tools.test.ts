@@ -4,17 +4,23 @@ import { afterEach, beforeEach, describe, expect, it, vi, type MockInstance } fr
 import type { AudioPart, CutAudio } from '../model/chat/audioCut'
 import { UnwritableImageTypeError, type DrawnImage, type DrawnMediaType, type ImageDrawing, type ImageSize } from '../model/chat/imageDrawing'
 import { ClipReadError } from '../model/chat/mediaFiles'
-import type { MediaTagData } from '../model/chat/mediaTags'
-import type { ModelRef } from '../model/chat/types'
+import { mediaTagText, type MediaTagData } from '../model/chat/mediaTags'
+import type { ModelRef, Tab } from '../model/chat/types'
+import type { ModelCache } from '../model/persistence/types'
+import { TooManyImagesError } from '../model/providers/clipImages'
+import { InputImageError } from '../model/providers/errors'
 import type { KnownLimit } from '../model/providers/knownLimits'
-import type { ProviderMediaQuote, ProviderMediaQuoteInput } from '../model/providers/streamTypes'
+import type { ProviderGenerateMediaInput, ProviderGenerateMediaResult, ProviderMediaQuote, ProviderMediaQuoteInput } from '../model/providers/streamTypes'
 import { providerInfo } from '../model/providers/testing'
 import type { ModelInfo, ProviderInfo, ProviderInputImageRules, ProviderSettingsDescriptor } from '../model/providers/types'
-import { NO_JOBS_TEXT, NO_OPEN_JOBS_TEXT } from '../model/tools/jobs'
+import { NO_JOBS_TEXT, NO_OPEN_JOBS_TEXT, startedJobId } from '../model/tools/jobs'
 import { modelInfoText, type ModelInfoFacts } from '../model/tools/modelInfo'
-import { TOOL_DEFINITIONS } from '../model/tools/registry'
+import { modelInvocation } from '../model/tools/modelInvoke'
+import { TOOL_DEFINITIONS, unexpectedToolErrorText, unknownToolText } from '../model/tools/registry'
 import type { ToolArguments, ToolRunResult } from '../model/tools/types'
+import { ExplainedError } from '../utils/errorText'
 import { ReplyJobs, type JobOutcome } from './jobs'
+import { invokeModel } from './modelInvoke'
 import type { ToolRunCall, ToolRunContext } from './tools'
 // Side-effect imports: register the dez.model/* selectors and the selector
 // under test.
@@ -67,6 +73,12 @@ const CUT_BYTES = new Uint8Array([9])
 // The files that the stub stores save.
 const MADE_IMAGE = '/home/u/.config/dez/assets/generated/images/new.png'
 const MADE_CLIP = '/home/u/.config/dez/assets/generated/audio/new.wav'
+// The stub media API of `model_invoke`: each request, what the provider
+// answers to one, and the temp copies of clips that were deleted (files of
+// the cache root). Set in beforeEach and by the tests.
+let mediaRequests: ProviderGenerateMediaInput[] = []
+let generateMedia: (input: ProviderGenerateMediaInput) => Promise<ProviderGenerateMediaResult>
+let deletedTempCopies: string[] = []
 
 sbp('sbp/selectors/register', {
   async 'dez.provider/infos' (): Promise<ProviderInfo[]> {
@@ -125,6 +137,16 @@ sbp('sbp/selectors/register', {
   async 'dez.controller/media/delete' (path: string): Promise<void> {
     deletedClips.push(path)
   },
+  async 'dez.provider/generateMedia' (input: ProviderGenerateMediaInput): Promise<ProviderGenerateMediaResult> {
+    mediaRequests.push(input)
+    return await generateMedia(input)
+  },
+  async 'dez.native/getAppDir' (root = 'app'): Promise<string> {
+    return root === 'cache' ? '/home/u/.cache/dez' : '/home/u/.config/dez'
+  },
+  async 'dez.native/deleteAppFile' (path: string, root = 'app'): Promise<void> {
+    if (root === 'cache') deletedTempCopies.push(path)
+  },
 })
 
 // The model of the reply that makes the calls: not the model that most
@@ -168,6 +190,9 @@ beforeEach(() => {
   savedClips = []
   saveClip = async () => MADE_CLIP
   deletedClips = []
+  mediaRequests = []
+  generateMedia = async () => ({ media: [], clips: [] })
+  deletedTempCopies = []
   // A check that the provider passes, with an entry for each model.
   refreshCheck = async () => {
     sbp('dez.model/modelCache/applyProviderResult', 'venice', {
@@ -207,10 +232,7 @@ describe('dez.controller/tools/run', () => {
     for (const definition of TOOL_DEFINITIONS) {
       expect((await run({ name: definition.name, arguments: {} })).content).not.toMatch(/^Dez has no tool/)
     }
-    expect(await run({ name: 'toString', arguments: {} })).toStrictEqual({
-      content: 'Dez has no tool named "toString". Call only the Dez tools, by their exact names: model_list, model_info, audio, image, jobs_wait, jobs_list, job_inspect.',
-      isError: true,
-    })
+    expect(await run({ name: 'toString', arguments: {} })).toStrictEqual({ content: unknownToolText('toString'), isError: true })
   })
 
   // The error's own text can hold a local path, and the result goes to the
@@ -762,6 +784,8 @@ describe('dez.controller/tools/run', () => {
     const SONG = '/home/u/.config/dez/assets/generated/audio/job.mp3'
     const LONG = { timeoutMs: 600_000 }
     let jobs: ReplyJobs
+    // The tab of the calls; none for the tools that read no conversation.
+    let tabId: string
     // What the reply got, each with the tool that its text names, and the
     // ids that it gives (null: the reply takes no asset).
     let written: unknown[] = []
@@ -769,7 +793,7 @@ describe('dez.controller/tools/run', () => {
 
     function jobTool(name: string, args: ToolArguments = {}, signal = new AbortController().signal): Promise<ToolRunResult> {
       const context: ToolRunContext = {
-        tabId: '',
+        tabId,
         model: REPLY_MODEL,
         jobs,
         writeImage: (path, options) => {
@@ -793,6 +817,7 @@ describe('dez.controller/tools/run', () => {
 
     beforeEach(() => {
       jobs = new ReplyJobs()
+      tabId = ''
       written = []
       newIds = ['c', 'd', 'e']
     })
@@ -894,6 +919,206 @@ describe('dez.controller/tools/run', () => {
       expect(await jobTool('job_inspect', { job_id: 'j-none-1' })).toStrictEqual({
         content: `This reply has no job with the id "j-none-1". A job of an earlier reply ended with that reply. The jobs of this reply are ${id}: call job_inspect again with one of these ids.`,
         isError: true,
+      })
+    })
+
+    describe('model_invoke', () => {
+      const PAINTER: ModelInfo = { id: 'painter', name: 'Painter', provider: 'venice', outputs: ['image'], request: 'image', images: { maxImages: 2 } }
+      const FILMER: ModelInfo = { id: 'filmer', name: 'Filmer', provider: 'venice', outputs: ['video'], request: 'video' }
+      const SCRIBE: ModelInfo = { id: 'scribe', name: 'Scribe', provider: 'venice', outputs: ['text'], request: 'transcription', clips: { audio: { use: 'source', maxClips: 1 } } }
+      const FOX = '/home/u/.config/dez/assets/images/fox.png'
+      // A linked file: its name is private.
+      const LINKED = '/home/u/Pictures/private-name.png'
+      const SPEECH: MediaTagData = { kind: 'audio', id: 'c', type: 'audio/mpeg', src: '/home/u/.config/dez/assets/audio/speech.mp3', url: null, expires: null, other: [] }
+      const TEMP_COPY = '/home/u/.cache/dez/media/made.mp4'
+      const MADE_VIDEO = { kind: 'video', mediaType: 'video/mp4', src: TEMP_COPY, url: null, expires: '2026-12-01T00:00:00.000Z', jobId: 'q-17' } as const
+      const PNG = { bytes: new Uint8Array([1]), mediaType: 'image/png' } as const
+      const PAINT = { model: 'venice/painter', prompt: 'The fox of @a in snow.' }
+      const FILM = { model: 'venice/filmer', prompt: 'A fox runs.' }
+
+      // A request that the provider answers when its test calls `answer`.
+      // It reports the provider's job id first.
+      function heldRequest(): { answer: (result: ProviderGenerateMediaResult) => void } {
+        let answer!: (result: ProviderGenerateMediaResult) => void
+        const result = new Promise<ProviderGenerateMediaResult>((resolve) => { answer = resolve })
+        generateMedia = (input) => {
+          input.onProgress?.({ phase: 'queued', jobId: 'q-17' })
+          return result
+        }
+        return { answer: (value) => answer(value) }
+      }
+
+      // The result of the one job of the reply, as `jobs_wait` gives it.
+      async function jobResult(): Promise<string> {
+        return (await jobTool('jobs_wait')).content
+      }
+
+      beforeEach(() => {
+        sbp('dez.model/modelCache/applyProviderResult', 'venice', { ok: true, models: [...MODELS('venice'), PAINTER, FILMER, SCRIBE] })
+        tabId = sbp('dez.model/tabs/activeId') as string
+        sbp('dez.model/tabs/replaceSections', tabId, [
+          { id: 'u1', role: 'user', content: [{ kind: 'text', text: `A fox: ![${FOX}](id=a) and ![${LINKED}](id=b)\n${mediaTagText(SPEECH)}` }] },
+          { id: 'a1', role: 'agent', content: [{ kind: 'text', text: '' }] },
+        ])
+      })
+
+      afterEach(() => {
+        vi.useRealTimers()
+      })
+
+      it('starts a job at once and tells the inputs that go; jobs_wait puts the image of the model into the reply', async () => {
+        generateMedia = async () => ({ media: [PNG], clips: [] })
+
+        const started = await jobTool('model_invoke', { ...PAINT, timeout_seconds: 60 })
+
+        const [job] = jobs.list()
+        expect(started.isError).toBe(false)
+        expect(startedJobId(started.content)).toBe(job.id)
+        expect(started.content).toContain('the image @a')
+        expect(await jobResult()).toContain(`<job id="${job.id}" tool="model_invoke" status="finished">\nMade the image @c.\n</job>`)
+        expect(mediaRequests).toMatchObject([{ providerId: 'venice', modelId: 'painter', kind: 'image', images: [FOX], clips: [], reader: 'model', timeoutMs: 60_000 }])
+        expect(savedImages).toStrictEqual([{ mediaType: 'image/png', options: { folder: 'generated' } }])
+        expect(written).toStrictEqual([{ path: MADE_IMAGE, tool: 'model_invoke' }])
+      })
+
+      // The provider took the money for its job: the id must not get lost.
+      it('tells the provider\'s job id while a clip is made, and keeps it on the clip', async () => {
+        const request = heldRequest()
+        await jobTool('model_invoke', FILM)
+        const [{ id }] = jobs.list()
+
+        expect((await jobTool('job_inspect', { job_id: id })).content).toContain('q-17')
+
+        request.answer({ media: [], clips: [MADE_VIDEO] })
+        expect(await jobResult()).toContain('Made the video clip @c.')
+        expect(written).toStrictEqual([{ path: TEMP_COPY, tool: 'model_invoke', jobId: 'q-17' }])
+        expect(deletedTempCopies).toStrictEqual([])
+      })
+
+      it('gives the text of a model that writes down speech as the result of the job, and writes nothing into the reply', async () => {
+        generateMedia = async () => ({ media: [], clips: [], text: 'Hello there.' })
+
+        await jobTool('model_invoke', { model: 'venice/scribe', prompt: '@c' })
+
+        const result = await jobResult()
+        expect(result).toContain('status="finished"')
+        expect(result).toContain('Hello there.')
+        expect(mediaRequests[0].clips?.map((clip) => clip.id)).toStrictEqual(['c'])
+        expect(written).toStrictEqual([])
+      })
+
+      it.each([
+        ['a model that the user cannot use', { model: 'venice/gone', prompt: 'A fox.' }],
+        ['a chat model', { model: 'venice/venice-glm-5', prompt: 'A fox.' }],
+        ['an @id that names nothing', { model: 'venice/painter', prompt: 'A fox as in @z.' }],
+        ['a time limit that is too short', { ...PAINT, timeout_seconds: 5 }],
+      ])('refuses %s at once: no job starts, and no request goes', async (_name, args) => {
+        expect((await jobTool('model_invoke', args)).isError).toBe(true)
+        expect(jobs.list()).toStrictEqual([])
+        expect(mediaRequests).toStrictEqual([])
+      })
+
+      it('gives a refusal of the provider as the result of the job, with no local path', async () => {
+        generateMedia = async () => { throw new ExplainedError('Venice refused the request: the prompt breaks its rules.', 'no file /home/alice/model.bin') }
+
+        expect((await jobTool('model_invoke', PAINT)).isError).toBe(false)
+
+        const result = await jobResult()
+        expect(result).toContain('status="failed"')
+        expect(result).toContain('Venice refused the request: the prompt breaks its rules.')
+        expect(result).not.toContain('alice')
+      })
+
+      it.each(['unreadable', 'notDrawn'] as const)('names an input image that is %s by its id, never by its file', async (problem) => {
+        generateMedia = async () => { throw new InputImageError(LINKED, problem, 'Dez cannot use the image private-name.png.') }
+
+        await jobTool('model_invoke', { model: 'venice/painter', prompt: 'A fox as in @b.' })
+
+        const result = await jobResult()
+        expect(result).toContain('status="failed"')
+        expect(result).toContain('the image @b')
+        expect(result).not.toContain('private-name')
+      })
+
+      it('tells how many images the model takes when the provider refuses the count', async () => {
+        generateMedia = async () => { throw new TooManyImagesError(1, 2) }
+
+        await jobTool('model_invoke', { model: 'venice/painter', prompt: 'A fox as in @a and @b.' })
+
+        const result = await jobResult()
+        expect(result).toContain('status="failed"')
+        expect(result).toContain('Painter takes only 1 image')
+      })
+
+      // The text of an error that Dez does not know can hold a local path.
+      it('tells only that Dez did not expect an error that it does not know', async () => {
+        generateMedia = async () => { throw new Error('Failed to read /home/alice/model.bin') }
+
+        await jobTool('model_invoke', PAINT)
+
+        const result = await jobResult()
+        expect(result).toContain(unexpectedToolErrorText('model_invoke'))
+        expect(result).not.toContain('alice')
+      })
+
+      it('fails the job and deletes the images that it saved when a save fails', async () => {
+        generateMedia = async () => ({ media: [PNG, PNG], clips: [] })
+        let saves = 0
+        saveImage = async () => {
+          if (++saves === 2) throw new Error('The disk is full.')
+          return MADE_IMAGE
+        }
+
+        await jobTool('model_invoke', PAINT)
+
+        expect(await jobResult()).toContain('status="failed"')
+        expect(written).toStrictEqual([])
+        expect(deletedImages).toStrictEqual([MADE_IMAGE])
+      })
+
+      // A cancelled request can end the body of an image early. The work
+      // runs here with no job, so that the test can wait for its end.
+      it('saves no image that still comes after its job ended', async () => {
+        const request = heldRequest()
+        const abort = new AbortController()
+        const invocation = modelInvocation(PAINT, {
+          cache: sbp('dez.model/modelCache/snapshot') as ModelCache,
+          providers,
+          modelParameters: {},
+          sections: (sbp('dez.model/tab', tabId) as Tab).sections,
+        })
+        const work = invokeModel(invocation, abort.signal, () => {})
+
+        abort.abort()
+        request.answer({ media: [PNG], clips: [] })
+
+        expect((await work).assets).toStrictEqual([])
+        expect(savedImages).toStrictEqual([])
+      })
+
+      it('stops the request when the reply stops, and deletes the temp copy of a clip that still comes', async () => {
+        const request = heldRequest()
+        await jobTool('model_invoke', FILM)
+
+        jobs.stopAll()
+        request.answer({ media: [], clips: [MADE_VIDEO] })
+
+        expect(mediaRequests[0].signal?.aborted).toBe(true)
+        await vi.waitFor(() => expect(deletedTempCopies).toStrictEqual(['media/made.mp4']))
+        expect(consoleError).not.toHaveBeenCalled()
+      })
+
+      it('ends the job at its time limit, stops the request, and tells the provider\'s job id', async () => {
+        vi.useFakeTimers()
+        heldRequest()
+        await jobTool('model_invoke', { ...FILM, timeout_seconds: 10 })
+
+        vi.advanceTimersByTime(10_000)
+
+        const result = await jobResult()
+        expect(result).toContain('status="timed out"')
+        expect(result).toContain('q-17')
+        expect(mediaRequests[0].signal?.aborted).toBe(true)
       })
     })
   })

@@ -52,10 +52,11 @@ describe('toolDefinition', () => {
 })
 
 describe('unknownToolText', () => {
-  it('names every Dez tool', () => {
-    expect(unknownToolText('web_search')).toBe(
-      'Dez has no tool named "web_search". Call only the Dez tools, by their exact names: model_list, model_info, audio, image, jobs_wait, jobs_list, job_inspect.',
-    )
+  it('names the unknown tool and every Dez tool', () => {
+    const text = unknownToolText('web_search')
+
+    expect(text).toContain('"web_search"')
+    for (const { name } of TOOL_DEFINITIONS) expect(text).toContain(name)
   })
 })
 

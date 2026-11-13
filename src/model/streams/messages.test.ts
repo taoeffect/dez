@@ -1,11 +1,11 @@
 import { describe, expect, it } from 'vitest'
 import { mediaTagRequestText, mediaTagText, type MediaTagData } from '../chat/mediaTags'
 import { toolBlockText, type ToolBlockStatus } from '../chat/toolBlocks'
-import type { ModelRef, Section, SectionThinking, ThinkingReplay } from '../chat/types'
+import type { Section, SectionThinking, ThinkingReplay } from '../chat/types'
 import type { ClipInputRules, MediaKind } from '../providers/types'
 import { agentSectionMessages, mediaRequestInput, messageClips, sectionsToStreamMessages } from './messages'
+import { model, reply, user } from './testing'
 
-const model: ModelRef = { providerId: 'local', modelId: 'm' }
 const IMAGE = '/home/u/.config/dez/assets/images/red.png'
 const OTHER_IMAGE = '/home/u/.config/dez/assets/images/blue.png'
 
@@ -308,8 +308,6 @@ describe('agentSectionMessages', () => {
 })
 
 const GENERATED = '/home/u/.config/dez/assets/generated/images/fox.webp'
-const user = (id: string, text: string): Section => ({ id, role: 'user', content: [{ kind: 'text', text }] })
-const reply = (id: string, text: string): Section => ({ id, role: 'agent', model, content: [{ kind: 'text', text }] })
 
 // Clip files that the user pasted or dropped into a message.
 const PASTED_DANCE: MediaTagData = { kind: 'video', id: 'f', type: 'video/mp4', src: '/home/u/.config/dez/assets/video/v1.mp4', url: null, expires: null, other: [] }

@@ -18,9 +18,19 @@ import { CLIP_KINDS, effectiveRequest, isClipKind, isTextKind, type MediaKind, t
 const SETTINGS_POPUP = 'the provider settings popup (the gear button next to the model picker)'
 
 export const USAGE_TEXTS = {
-  // MODEL_INVOKE: change this text when a model can send a request to
-  // another model.
+  // MODEL_INVOKE: the text of a chat model, which `model_invoke` does not
+  // take yet. Change it when the tool takes chat models.
   userSends: 'You cannot send this model a request. The user can: they choose it in the model picker of the bottom bar, write a message, and send it.',
+  // The texts of a media model tell of a message of the user. A
+  // `model_invoke` call sends the same request, but for the differences
+  // that streams/mediaRequest.ts and controller/modelInvoke.ts have, which
+  // this text tells.
+  invokeSends: 'You can send this model a request with `model_invoke`. The user can too: they choose it in the model picker of the bottom bar, write a message, and send it. '
+    + 'The sentences after these tell of such a message. For a `model_invoke` call, read `prompt` for the message, with these differences. '
+    + 'An image or a clip goes only when `prompt` names it with @id, and the newest image of the conversation never goes by itself. '
+    + 'Dez refuses a call with more images or clips than the model takes. '
+    + 'A value in `parameters` of the call goes in place of the `value` of that parameter in `dez.parameters`. '
+    + 'Text that the model makes comes only as the result of the job, not into the reply.',
   cannotUse: 'Dez sends this model no request; `dez.cannotUse` tells why.',
   chatRequest: 'A request holds the whole conversation of the tab, with Dez\'s system prompt.',
   tools: 'It gets the Dez tools (the ones that you have).',
@@ -226,9 +236,14 @@ function mediaUsage(kind: MediaKind, model: ModelInfo, facts: UsageFacts): strin
 /** How to use `model`, as short sentences for a chat model: who sends a
  *  request, what goes in it, what the model needs, and what comes back. A
  *  model that Dez sends no request (the request `none`, or an output that
- *  Dez does not store) gets only a pointer to the reason. */
+ *  Dez does not store) gets only a pointer to the reason. The first
+ *  sentence tells who can send a request: a media model takes one of
+ *  `model_invoke` (`modelInvocation`, modelInvoke.ts), a chat model not
+ *  yet. */
 export function modelUsage(model: ModelInfo, facts: UsageFacts): string[] {
   const kind = effectiveRequest(model)
   if (kind === 'none' || model.unstoredOutput !== undefined) return [USAGE_TEXTS.cannotUse]
-  return [USAGE_TEXTS.userSends, ...(kind === 'chat' ? chatUsage(model, facts) : mediaUsage(kind, model, facts))]
+  return kind === 'chat'
+    ? [USAGE_TEXTS.userSends, ...chatUsage(model, facts)]
+    : [USAGE_TEXTS.invokeSends, ...mediaUsage(kind, model, facts)]
 }

@@ -2,14 +2,13 @@ import sbp from '@sbp/sbp'
 import type { MediaTagKind } from '../model/chat/mediaTags'
 import { modelRefKey } from '../model/chat/modelRef'
 import { effectiveOutputs } from '../model/modelOutputs'
-import { clipsText, clipTagProblem, missingClipProblem } from '../model/providers/clipInputs'
-import { imagesText, inputImageRulesFor, missingImageProblem } from '../model/providers/clipImages'
-import { clipTextProblem } from '../model/providers/clipText'
-import { learnedImagesProblem } from '../model/providers/learnedImageLimit'
+import { clipsText } from '../model/providers/clipInputs'
+import { imagesText, inputImageRulesFor } from '../model/providers/clipImages'
 import { effectiveParameterValues } from '../model/providers/modelParameters'
 import { effectiveRequest, type ClipInputRules, type ModelInfo } from '../model/providers/types'
 import { unstoredOutputMessage, unusableModelMessage } from '../model/providers/unusableModel'
 import type { SettingsSnapshot } from '../model/state'
+import { mediaRequestProblem } from '../model/streams/mediaRequest'
 import { mediaRequestInput } from '../model/streams/messages'
 import type { RequestMessages } from '../model/streams/types'
 import { systemPromptErrorText, systemPromptProblem, systemPromptTemplate } from '../model/systemPrompt'
@@ -84,28 +83,14 @@ export default sbp('sbp/selectors/register', {
       const chosen = (sbp('dez.model/settings/snapshot') as SettingsSnapshot).modelParameters[modelRefKey(model)]
       const images = inputImageRulesFor(cachedModel.images, effectiveParameterValues(cachedModel.parameters ?? [], chosen))
       inputRules = { ...(cachedModel.text && { text: cachedModel.text }), ...(images && { images }), ...(cachedModel.clips && { clips: cachedModel.clips }) }
-      // An input that the model is known not to take (no image for a model
-      // that edits one, makes one larger, makes its video from one, or
-      // needs a reference image; no clip for a model that changes or
-      // writes down a clip; no lyrics for a model that needs them; a
-      // prompt that is too short or too long; a clip of a type that it does
-      // not take, or an audio clip with no image or video that it needs;
-      // more images than an earlier refusal of the provider told)
-      // gets no request: the check costs nothing, and it tells the user
-      // what to change. The end of a running reply's output changes no user
+      // An input that the model is known not to take gets no request
+      // (`mediaRequestProblem`, the checks that the `model_invoke` tool
+      // shares): each check costs nothing, and it tells the user what to
+      // change. The end of a running reply's output changes no user
       // message and adds no image or clip, so the input that this checks is
-      // the input of the request. Only a clip model has text rules. A video
-      // clip is the reference of a request with no image. The learned count
-      // is checked against all the images of the message, before the cut to
-      // the most that the model's rules take, so that the message is
-      // refused and never cut to fewer images.
+      // the input of the request.
       const input = mediaRequestInput(kind, request.messages, tab.sections, inputRules)
-      const sentVideo = input.clips.some((clip) => clip.kind === 'video')
-      message = missingClipProblem(model.modelName, kind, input.clips)
-        ?? clipTagProblem(model.modelName, cachedModel.clips, input.clips, input.images.length)
-        ?? (sentVideo ? null : missingImageProblem(model.modelName, kind, input.images.length, images))
-        ?? learnedImagesProblem(model.modelName, cachedModel.learnedImageLimit, input.images.length + input.imagesLeftOut)
-        ?? clipTextProblem(model.modelName, cachedModel.text, input)
+      message = mediaRequestProblem(model.modelName, kind, cachedModel, images, input)
       mediaImages = { sent: input.images.length, leftOut: input.imagesLeftOut }
       const sentClips = { audio: 0, video: 0 }
       for (const clip of input.clips) sentClips[clip.kind]++

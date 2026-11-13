@@ -87,15 +87,28 @@ export async function startMockProviderApp (
   }
 }
 
+// The checks of a request that a test took: its body holds no path of the
+// test HOME, and it is `json` when that is given.
+function checkedRequest (setup: MockProviderApp, request: HeldRequest, json: unknown): HeldRequest {
+  expect(request.body).not.toContain(setup.app.home)
+  if (json !== undefined) expect(JSON.parse(request.body)).toStrictEqual(json)
+  return request
+}
+
 /** Takes the next held request, and checks that it goes to `requestPath`
  *  and that its body holds no path of the test HOME. When `json` is given,
  *  the body must be that JSON. */
 export async function takeRequest (setup: MockProviderApp, requestPath: string, json?: unknown): Promise<HeldRequest> {
   const request = await setup.mock.waitForRequest(setup.browser)
   expect(request.path).toBe(requestPath)
-  expect(request.body).not.toContain(setup.app.home)
-  if (json !== undefined) expect(JSON.parse(request.body)).toStrictEqual(json)
-  return request
+  return checkedRequest(setup, request, json)
+}
+
+/** Takes the oldest held request to `requestPath`, with the checks of
+ *  `takeRequest`. For requests that the app sends at the same time, which
+ *  come in any order: the request of a job and the next chat request. */
+export async function takeRequestTo (setup: MockProviderApp, requestPath: string, json?: unknown): Promise<HeldRequest> {
+  return checkedRequest(setup, await setup.mock.waitForRequest(setup.browser, requestPath), json)
 }
 
 /** Checks that a submit got the "Cannot send" error toast with `message`

@@ -2,17 +2,17 @@ import type { MessagePart, ModelRef, Section, SectionThinking, ThinkingReplay } 
 import { assetTextPieces } from '../chat/assetMentions'
 import { sectionIsEmpty, sectionPlainText } from '../chat/content'
 import { findAssetMentions, type AssetMention } from '../chat/imageMentions'
-import { findImageReferences, IMAGE_TOOL_KEY, requestImageReferenceStart, type ImageReference } from '../chat/images'
-import { findMediaTags, mediaTagRequestText, mediaTagsForRequest, sectionClipSource, type MediaTag, type MediaTagKind } from '../chat/mediaTags'
+import { findImageReferences, IMAGE_TOOL_KEY, type ImageReference } from '../chat/images'
+import { mediaTagRequestText, mediaTagsForRequest, type MediaTag } from '../chat/mediaTags'
 import { sameModelRef } from '../chat/modelRef'
 import { holdsStoredFilePath, withoutStoredFilePaths } from '../chat/storedFilePaths'
 import { thinkingField } from '../chat/thinking'
 import { EMPTY_TOOL_RESULT, INTERRUPTED_TOOL_RESULT, agentTextForRequest, splitToolBlocks, type ToolBlock } from '../chat/toolBlocks'
-import { maxInputClips, type ClipAttachment } from '../providers/clipInputs'
-import { maxInputImages, minInputImages } from '../providers/clipImages'
-import { clipText } from '../providers/clipText'
+import type { ClipAttachment } from '../providers/clipInputs'
+import { minInputImages } from '../providers/clipImages'
 import type { ClipInputRules, MediaKind } from '../providers/types'
 import type { ToolCall, ToolResult } from '../tools/types'
+import { conversationAssets, preparedMediaRequest, type MediaRequestInput } from './mediaRequest'
 import type { RequestMessages, StreamMessage } from './types'
 
 export interface RequestOptions {
@@ -90,31 +90,16 @@ export function sectionsToStreamMessages(sections: Section[], requestModel: Mode
  *  model's input (its ModelInfo), with the image rules of the request's
  *  parameter values (`inputImageRulesFor`).
  *
- *  The prompt is the text of the last user message of `messages` as a chat
- *  request sends it: with no path, and with each image reference as its
- *  `![image](id=a)` text. For a model whose prompt names its reference
- *  images (`rules.images.references.promptName`) or its clips
- *  (`rules.clips.<kind>.promptName`), each image and clip that goes gets
- *  that name instead (`promptWithNames`). For a model that takes lyrics
- *  (`rules.text`), a `Lyrics:` line splits that text into the prompt and
- *  the lyrics (`clipText`).
- *
- *  The images are the images of that message, in text order and each one
- *  once: the ones that it holds and the ones that it names with an `@id`
- *  mention. A request takes as many as the model takes (`rules.images`,
- *  `maxInputImages`): for an edit, the first image is the one to edit;
- *  for a video, the first image is the first frame, and the second one is
- *  the last frame, or each one is a reference (`rules.images.references`);
- *  a new image takes them as references. `imagesLeftOut` is the count of
- *  the message's images that the request does not take, so that the
- *  submit can tell the user.
- *
- *  The clips are the clips of that message (`messageClips`): the clip files
- *  that it holds and the clips that it names with an `@id` mention, in text
- *  order and each one once, as many of each kind as the model takes
- *  (`rules.clips`, `maxInputClips`).
- *  `clipsLeftOut` is the count of each kind that the request does not
- *  take. A chat request sends no clip: only a media request reads them.
+ *  The source of the request is the last user message of `messages` as a
+ *  chat request sends it: its text, with no path, and with each image
+ *  reference as its `![image](id=a)` text; the images that it holds and
+ *  the ones that it names with an `@id` mention, in text order and each
+ *  one once; and its clips (`messageClips`). A chat request sends no clip:
+ *  only a media request reads them. `preparedMediaRequest` (the code that
+ *  the `model_invoke` tool shares) makes the request of that source: the
+ *  cut to what the model takes, the names in the prompt, and the lyrics.
+ *  `imagesLeftOut` and `clipsLeftOut` count the message's images and clips
+ *  that the request does not take, so that the submit can tell the user.
  *
  *  When the message has no image, a request that needs exactly one image
  *  (`minInputImages`) takes the newest image reference of `sections` (the
@@ -131,37 +116,11 @@ export function mediaRequestInput(
   messages: StreamMessage[],
   sections: Section[],
   rules: ClipInputRules = {},
-): { prompt: string, lyrics?: string, images: string[], imagesLeftOut: number, clips: ClipAttachment[], clipsLeftOut: Record<MediaTagKind, number> } {
+): MediaRequestInput {
   const content = messages.findLast((message): message is Extract<StreamMessage, { role: 'user' }> => message.role === 'user')?.content ?? ''
   const parts: MessagePart[] = typeof content === 'string' ? [{ type: 'text', text: content }] : content
-  const messageImages = [...new Set(parts.flatMap((part) => (part.type === 'image' ? [part.path] : [])))]
-  const images = messageImages.slice(0, maxInputImages(kind, rules.images))
-  const imagesLeftOut = messageImages.length - images.length
-
-  const clipsOfMessage = messageClips(sections)
-  const clipsTaken = { audio: 0, video: 0 }
-  const clipsLeftOut = { audio: 0, video: 0 }
-  const clips = clipsOfMessage.filter((clip) => {
-    const taken = clipsTaken[clip.kind] < maxInputClips(rules.clips, clip.kind)
-    if (taken) clipsTaken[clip.kind]++
-    else clipsLeftOut[clip.kind]++
-    return taken
-  })
-
-  const imagePromptName = rules.images?.references?.promptName
-  const imageNames = new Map(imagePromptName === undefined ? [] : images.map((path, index) => [path, imagePromptName.replaceAll('{n}', String(index + 1))]))
-  // Each kind has its own numbers, in request order: `@Audio1`, `@Video1`.
-  const clipNames = new Map((['audio', 'video'] as const).flatMap((clipKind) => {
-    const clipPromptName = rules.clips?.[clipKind]?.promptName
-    if (clipPromptName === undefined) return []
-    return clips.filter((clip) => clip.kind === clipKind).map((clip, index) => [clip.id, clipPromptName.replaceAll('{n}', String(index + 1))] as const)
-  }))
-  const prompt = imageNames.size === 0 && clipNames.size === 0
-    ? parts.map((part) => (part.type === 'text' ? part.text : '')).join('')
-    : promptWithNames(parts, imageNames, clipNames, sections)
-  const text = clipText(rules.text, prompt.trim())
-  const input = { ...text, images, imagesLeftOut, clips, clipsLeftOut }
-  if (messageImages.length > 0 || clips.some((clip) => clip.kind === 'video') || minInputImages(kind, rules.images) !== 1) return input
+  const input = preparedMediaRequest(kind, { parts, clips: messageClips(sections), pathsById: conversationAssets(sections).images }, rules)
+  if (input.images.length + input.imagesLeftOut > 0 || input.clips.some((clip) => clip.kind === 'video') || minInputImages(kind, rules.images) !== 1) return input
   const newest = sections.map((section) => findImageReferences(sectionPlainText(section), section.role).at(-1)).findLast((reference) => reference !== undefined)
   return { ...input, images: newest ? [newest.path] : [] }
 }
@@ -178,84 +137,18 @@ export function mediaRequestInput(
 export function messageClips(sections: readonly Section[]): ClipAttachment[] {
   const messageIndex = sections.findLastIndex((section) => section.role === 'user' && !sectionIsEmpty(section))
   if (messageIndex < 0) return []
-  const imageIds = new Set<string>()
-  const clipsById = new Map<string, ClipAttachment>()
-  for (const section of sections.slice(0, messageIndex + 1)) {
-    const text = sectionPlainText(section)
-    for (const { id } of findImageReferences(text, section.role)) {
-      if (id !== null) imageIds.add(id)
-    }
-    for (const { kind, id, type, src, url, expires } of findMediaTags(text)) {
-      clipsById.set(id, { kind, id, type, src: sectionClipSource(src, section.role), url, expires })
-    }
-  }
+  const clipsById = conversationAssets(sections.slice(0, messageIndex + 1)).clips
 
   const clips = new Map<string, ClipAttachment>()
   const add = (id: string) => {
     const clip = clipsById.get(id)
-    if (clip && !imageIds.has(id) && !clips.has(id)) clips.set(id, clip)
+    if (clip && !clips.has(id)) clips.set(id, clip)
   }
   for (const piece of messageTextPieces(sectionPlainText(sections[messageIndex]))) {
     if (piece.kind === 'media') add(piece.tag.id)
     else if (piece.kind === 'gap') for (const { id } of piece.mentions) add(id)
   }
   return [...clips.values()]
-}
-
-// The text of `parts` (the newest user message, `userMessageContent`) for
-// a model whose prompt names its reference images or its clips by their
-// order in the request: `imageNames` has the name of each image that goes
-// by its path (`@Image1` for the first), and `clipNames` the name of each
-// clip that goes by its id (`@Audio1`). The name of an image takes the
-// place of its reference text (`![image](id=a)`) and of each @id mention
-// of it, and the name of a clip the place of its tag line and of each @id
-// mention of it, as the guides of such models tell the user to write; the
-// doc keeps the text as the user wrote it. The image part of a reference
-// or of a first mention comes right after that text, at the end of the
-// text part before it. An image or a clip with no name and a mention of
-// nothing stay as they are. `sections` give the id of each image (the ids
-// are unique in a tab).
-function promptWithNames(parts: MessagePart[], imageNames: ReadonlyMap<string, string>, clipNames: ReadonlyMap<string, string>, sections: Section[]): string {
-  const pathsById = new Map(sections.flatMap((section) => findImageReferences(sectionPlainText(section), section.role).flatMap(({ id, path }) => (id === null ? [] : [[id, path] as const]))))
-  // `text` with each mention of an image or a clip that goes as its name.
-  // A mention ends with a letter, so it is never part of a reference that
-  // ends a text.
-  const withNamedMentions = (text: string) => {
-    let named = ''
-    let start = 0
-    for (const mention of findAssetMentions(text)) {
-      const path = pathsById.get(mention.id)
-      const name = path === undefined ? clipNames.get(mention.id) : imageNames.get(path)
-      if (name === undefined) continue
-      named += text.slice(start, mention.from) + name
-      start = mention.to
-    }
-    return named + text.slice(start)
-  }
-  // The whole text, and the places in it that a name can take: the
-  // reference text before each image part, and each tag line. Mentions are
-  // named only between these places, as `userMessageContent` and
-  // `messageClips` read them.
-  let text = ''
-  const places: { from: number, to: number, name: string | undefined }[] = []
-  for (const [index, part] of parts.entries()) {
-    if (part.type !== 'text') continue
-    const next = parts[index + 1]
-    const referenceStart = next?.type === 'image' ? requestImageReferenceStart(part.text) : null
-    if (referenceStart !== null && next?.type === 'image') places.push({ from: text.length + referenceStart, to: text.length + part.text.length, name: imageNames.get(next.path) })
-    text += part.text
-  }
-  for (const tag of findMediaTags(text)) places.push({ from: tag.from, to: tag.to, name: clipNames.get(tag.id) })
-  places.sort((a, b) => a.from - b.from)
-
-  let prompt = ''
-  let start = 0
-  for (const { from, to, name } of places) {
-    if (from < start) continue
-    prompt += withNamedMentions(text.slice(start, from)) + (name ?? text.slice(from, to))
-    start = to
-  }
-  return prompt + withNamedMentions(text.slice(start))
 }
 
 /** The request messages of one agent section. A reply that called tools
@@ -403,8 +296,8 @@ function textWithToolCalls(text: string): string {
 // text and image parts in doc order (`messageTextPieces`). Each image part
 // comes right after its reference's text, `![image](id=a)`, at the end of
 // the text part before it, so that a model can name the image by its id
-// (and `promptWithNames` finds that text). A media tag goes in its request
-// form and adds no part.
+// (and `promptWithNames`, mediaRequest.ts, finds that text). A media tag
+// goes in its request form and adds no part.
 //
 // An `@id` mention (imageMentions.ts) that names an image of `imagesById`
 // counts as that image at that place: its image part comes right after the

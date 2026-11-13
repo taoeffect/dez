@@ -79,7 +79,8 @@ export function jobTimedOutText(timeoutMs: number, state: string): string {
 /** What a job made, by the names that the texts use. */
 export type JobAssetKind = 'image' | 'audio' | 'video'
 
-const ASSET_NAMES: Readonly<Record<JobAssetKind, string>> = { image: 'image', audio: 'audio clip', video: 'video clip' }
+/** The name of each kind of asset in a text for a model. */
+export const ASSET_NAMES: Readonly<Record<JobAssetKind, string>> = { image: 'image', audio: 'audio clip', video: 'video clip' }
 
 /** One asset of a job after Dez put it into the reply: `id` is its new id
  *  there, or null when the reply took no asset any more. */

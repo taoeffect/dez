@@ -103,8 +103,10 @@ export async function requestForm (request: HeldRequest): Promise<FormField[]> {
 
 export interface HoldingChatMock extends MockServer {
   /** Waits for the oldest chat request that no test took yet, and takes
-   *  it. */
-  waitForRequest: (browser: E2EBrowser) => Promise<HeldRequest>
+   *  it. With `path`, the oldest one to that path: requests that the app
+   *  sends at the same time (a chat request and the request of a job) come
+   *  in any order. */
+  waitForRequest: (browser: E2EBrowser, path?: string) => Promise<HeldRequest>
   /** Whether a chat request came that no test took. */
   hasWaitingRequest: () => boolean
   /** Stops the stream of every tab, then destroys the response of every
@@ -132,9 +134,10 @@ export async function startHoldingChatMock (
   }, jsonAnswers)
   return {
     ...server,
-    async waitForRequest (browser) {
-      await waitForValue(browser, 'chat request', async () => waiting.length > 0, true)
-      const request = waiting.shift()
+    async waitForRequest (browser, path) {
+      const oldest = () => waiting.findIndex((request) => path === undefined || request.path === path)
+      await waitForValue(browser, path === undefined ? 'chat request' : `request to ${path}`, async () => oldest() >= 0, true)
+      const [request] = waiting.splice(oldest(), 1)
       if (!request) throw new Error('waitForRequest: no waiting request')
       return request
     },
@@ -199,6 +202,20 @@ export function startEventStream (res: http.ServerResponse): void {
  *  fields such as `content`, or `tool_calls` pieces. */
 export function writeChatFrame (res: http.ServerResponse, delta: Record<string, unknown>, finishReason: string | null = null): void {
   res.write(`data: ${JSON.stringify({ choices: [{ index: 0, delta, finish_reason: finishReason }] })}\n\n`)
+}
+
+/** A tool call of a mock model, as an OpenAI-format assistant message
+ *  holds it. */
+export function openAiToolCall (id: string, name: string, args: Record<string, unknown>): Record<string, unknown> {
+  return { id, type: 'function', function: { name, arguments: JSON.stringify(args) } }
+}
+
+/** Answers a chat request with one round that holds only `calls`
+ *  (`openAiToolCall`), then ends the stream. */
+export function sendToolCalls (res: http.ServerResponse, calls: ReadonlyArray<Record<string, unknown>>): void {
+  startEventStream(res)
+  writeChatFrame(res, { tool_calls: calls.map((call, index) => ({ index, ...call })) }, 'tool_calls')
+  res.end('data: [DONE]\n\n')
 }
 
 /** Writes the chat completion SSE frame with which OpenRouter stops a 200

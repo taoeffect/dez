@@ -213,6 +213,30 @@ export class ClipNotMadeError extends Error {
   }
 }
 
+/** Why Dez sends no input image of a request:
+ *  - `unreadable`: its file is gone, or Dez cannot read it.
+ *  - `notDrawn`: it is an SVG, and Dez could not draw the PNG copy that
+ *    goes in its place. */
+export type InputImageProblem = 'unreadable' | 'notDrawn'
+
+// An input image of a request that Dez could not read or draw, at `path`.
+// The explanation is the text for the user who sent a message, and it
+// names the file. The name of a linked file is private, so a caller whose
+// reader is a model (`model_invoke`) must word the problem by the id of
+// the image at `path`, and never pass this text on.
+export class InputImageError extends ExplainedError {
+  constructor(
+    readonly path: string,
+    readonly problem: InputImageProblem,
+    explanation: string,
+    details = '',
+    options?: ErrorOptions,
+  ) {
+    super(explanation, details, options)
+    this.name = 'InputImageError'
+  }
+}
+
 // The error for the user of a failed provider request: an answer that
 // Dez cannot use, a clip job that the provider ended, or no answer
 // (`NativeHttpError`). Any other error as it is.

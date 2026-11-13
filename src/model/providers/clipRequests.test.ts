@@ -8,7 +8,7 @@ import { TooManyImagesError } from './clipImages'
 import { NO_VIDEO_LENGTH_MESSAGE } from './mediaFormats'
 import type { ModelParameter } from './modelParameters'
 import { wavFile } from './pcmAudio'
-import type { ProviderGenerateMediaResult } from './streamTypes'
+import type { MediaProgress, ProviderGenerateMediaResult } from './streamTypes'
 import type { ModelInfo } from './types'
 // Side-effect imports: register the dez.model/* selectors and the selector
 // under test.
@@ -570,6 +570,49 @@ describe('a clip job', () => {
 
     // The last request had 5 seconds left.
     expect(downloads.at(-1)).toMatchObject({ at: STARTED_AT + JOB_TIMEOUT_MS - 5 * SECOND_MS, request: { timeoutMs: 5 * SECOND_MS } })
+  })
+
+  // A `model_invoke` call names its own time limit.
+  it.each([
+    ['90 seconds', 90 * SECOND_MS],
+    ['1 minute', 60 * SECOND_MS],
+  ])('gives up on a job at the time limit of the caller, and names it as %s', async (limit, timeoutMs) => {
+    answers = [json({ queue_id: 'q-1' }), ...Array.from({ length: 20 }, () => json({ status: 'PROCESSING' }))]
+
+    const failure = expect(generate({ kind: 'music', timeoutMs })).rejects.toThrow(`Media server did not make the clip in ${limit},`)
+    await vi.advanceTimersByTimeAsync(timeoutMs)
+    await failure
+
+    expect(downloads[0].request.timeoutMs).toBe(timeoutMs)
+    expect(downloads.at(-1)).toMatchObject({ at: STARTED_AT + timeoutMs - 5 * SECOND_MS, request: { timeoutMs: 5 * SECOND_MS } })
+  })
+
+  // The provider took the money for the job, so its id is in each step
+  // from the answer that gave it.
+  it('tells the caller each step of a job, with the job id of the provider from its start', async () => {
+    cacheModel('router-like', OPENROUTER_VIDEO_PARAMETERS)
+    answers = [json({ id: 'gen-1' }, 202), json({ status: 'in_progress' }), json({ status: 'completed' }), clip('video/mp4')]
+    const steps: Array<[MediaProgress, number]> = []
+
+    const result = generate({ providerId: 'router-like', kind: 'video', onProgress: (progress: MediaProgress) => steps.push([progress, downloads.length]) })
+    await vi.advanceTimersByTimeAsync(10 * SECOND_MS)
+    await result
+
+    // Each step, and how many requests went before it.
+    expect(steps).toStrictEqual([
+      [{ phase: 'sent', jobId: null }, 0],
+      [{ phase: 'queued', jobId: 'gen-1' }, 1],
+      [{ phase: 'downloading', jobId: 'gen-1' }, 3],
+    ])
+  })
+
+  it('tells the caller only the first request of a clip that the first answer holds', async () => {
+    answers = [clip('audio/mpeg')]
+    const steps: MediaProgress[] = []
+
+    await generate({ kind: 'tts', onProgress: (progress: MediaProgress) => steps.push(progress) })
+
+    expect(steps).toStrictEqual([{ phase: 'sent', jobId: null }])
   })
 
   // Rust ends a request at the clip's deadline, with a native text that does

@@ -130,7 +130,7 @@ export async function tempClipTag (home: string, kind: ClipKind, id: string, nam
   return clipTag(kind, { id, type: kind === 'audio' ? 'audio/wav' : 'video/mp4', src, expires })
 }
 
-/** A job of Venice's queue API, for `answerVeniceJob`. */
+/** A job of Venice's queue API, for `finishVeniceJob`. */
 export interface VeniceJob {
   /** The path of the ask for the state of the job. */
   retrievePath: string
@@ -138,18 +138,22 @@ export interface VeniceJob {
   queueId: string
   /** The answer to the ask: the clip of a job that is done. */
   clip: ServedClip
-  /** The index of the section that the reply is. */
-  replyIndex: number
 }
 
 /** Answers the held Venice queue request `queue` with the job, takes the
  *  ask for the state of the job (the app asks 5 seconds later), checks
- *  it, and answers it with the clip. Gives the text of the reply once the
- *  user section after it is there. */
-export async function answerVeniceJob (setup: MockProviderApp, queue: HeldRequest, job: VeniceJob): Promise<string> {
+ *  it, and answers it with the clip. */
+export async function finishVeniceJob (setup: MockProviderApp, queue: HeldRequest, job: VeniceJob): Promise<void> {
   answerHeld(queue.reply, 'application/json', JSON.stringify({ model: job.modelId, queue_id: job.queueId, status: 'QUEUED' }))
   const retrieve = await takeRequest(setup, job.retrievePath, { model: job.modelId, queue_id: job.queueId })
   answerHeld(retrieve.reply, job.clip.type, job.clip.bytes)
+}
+
+/** Ends the job of a reply of a media model (`finishVeniceJob`), and
+ *  gives the text of the reply, the section `replyIndex`, once the user
+ *  section after it is there. */
+export async function answerVeniceJob (setup: MockProviderApp, queue: HeldRequest, job: VeniceJob & { replyIndex: number }): Promise<string> {
+  await finishVeniceJob(setup, queue, job)
   await waitForValue(setup.browser, 'sections after the reply', async () => (await threadSections(setup.browser)).length, job.replyIndex + 2)
   return (await threadSections(setup.browser))[job.replyIndex].text
 }

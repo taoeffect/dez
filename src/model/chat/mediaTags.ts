@@ -166,6 +166,12 @@ export interface MediaTagData {
  *  what the model wrote, as `IMAGE_TOOL_KEY` (images.ts) for an image. */
 export const MEDIA_TOOL_ATTRIBUTE = 'tool'
 
+/** The attribute of a clip that a provider made as a job, as in
+ *  `<dez:video id="b" type="video/mp4" src="…" job="q-1"/>`; its value is
+ *  the provider's id of the job. The provider took the money for the job,
+ *  and with the id the user can ask it for the clip again. */
+export const MEDIA_JOB_ATTRIBUTE = 'job'
+
 /** One tag in a text. */
 export interface MediaTag extends MediaTagData {
   /** Offset of the `<`. */

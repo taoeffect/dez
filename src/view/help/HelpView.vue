@@ -157,6 +157,11 @@ function onOverlayClick(event: MouseEvent) {
               exactly one image, for example an image editor, takes the newest image of the
               conversation when your message has none.
             </p>
+            <p>
+              A chat model can ask another model for an image, a clip, or a transcription. It
+              names by id the assets that the other model gets, so that model can also get an
+              asset of an older message or of a reply.
+            </p>
 
             <h3>Ids</h3>
             <p>

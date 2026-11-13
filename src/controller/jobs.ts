@@ -15,10 +15,12 @@ import type { ToolRunContext } from './tools'
 // controller/stream.ts), and a runner gets it in its `ToolRunContext`.
 
 /** An image or a clip that a job made: a stored image file, or a clip as
- *  its tag holds it (a saved file, a temp copy, or a provider URL). */
+ *  its tag holds it (a saved file, a temp copy, or a provider URL).
+ *  `jobId` is the provider's id of the job that made the clip, when the
+ *  provider made it as one: the clip's tag keeps it. */
 export type JobAsset =
   | { kind: 'image', path: string }
-  | { kind: 'clip', clip: Omit<MediaTagData, 'id' | 'other'> }
+  | { kind: 'clip', clip: Omit<MediaTagData, 'id' | 'other'>, jobId?: string }
 
 /** What the work of a job gave. */
 export interface JobOutcome {
@@ -102,7 +104,7 @@ export async function writeJobAssets(job: EndedJob, writers: Pick<ToolRunContext
   for (const asset of job.assets) {
     const id = asset.kind === 'image'
       ? writers.writeImage(asset.path, { tool: job.tool })
-      : writers.writeClip(asset.clip, { tool: job.tool })
+      : writers.writeClip(asset.clip, { tool: job.tool, ...(asset.jobId !== undefined && { jobId: asset.jobId }) })
     if (id === null) lost.push(asset)
     written.push({ kind: asset.kind === 'image' ? 'image' : asset.clip.kind, id })
   }

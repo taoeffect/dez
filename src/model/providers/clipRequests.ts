@@ -16,7 +16,8 @@ import { CLIP_KINDS, type ClipKind, type GeneratedClip } from './types'
 
 // The time between two requests for the state of a job.
 export const CLIP_POLL_INTERVAL_MS = 5_000
-// The longest time from the first request of a clip to its last byte. A job
+// The longest time from the first request of a clip to its last byte, for
+// a caller that names none (`ProviderGenerateMediaInput.timeoutMs`). A job
 // that the provider never ends would keep the reply busy with no end.
 export const CLIP_JOB_TIMEOUT_MS = 30 * 60 * 1000
 
@@ -27,19 +28,28 @@ export interface ClipRun {
   // dez.http/cancelStream with this id cancels the request that runs. The
   // requests of a clip go one after the other, so they share the id.
   requestId: string
-  // The time (ms) at which the clip must be there.
+  // The longest time (ms) from the first request of the clip to its last
+  // byte, and the time at which that is over.
+  limitMs: number
   deadline: number
   // Aborts when the caller stops the clip.
   signal: AbortSignal | undefined
 }
 
-// The error of a clip whose time (`CLIP_JOB_TIMEOUT_MS`) is over. With no
+// `30 minutes`, `90 seconds`: a time limit in whole minutes when it is
+// that, else in seconds.
+function limitText(limitMs: number): string {
+  const [count, unit] = limitMs % 60_000 === 0 ? [limitMs / 60_000, 'minute'] : [Math.round(limitMs / 1000), 'second']
+  return `${count} ${unit}${count === 1 ? '' : 's'}`
+}
+
+// The error of a clip whose time (`ClipRun.limitMs`) is over. With no
 // `requestError`, the time was over before a request: the job did not end in
 // time. With one, Rust ended a request at the deadline (`timeoutMs`), and
 // that request can be the download of a clip that is made.
 function clipTimeoutError(run: ClipRun, requestError?: unknown): ExplainedError {
   const name = run.provider.name
-  const limit = `in ${CLIP_JOB_TIMEOUT_MS / 60_000} minutes, the longest time that Dez waits`
+  const limit = `in ${limitText(run.limitMs)}, the longest time that Dez waits`
   if (requestError === undefined) return new ExplainedError(`${name} did not make the clip ${limit}. Send the request again later.`)
   return new ExplainedError(
     `Dez did not get the clip from ${name} ${limit}: ${name} did not make it in that time, or the download of the clip was too slow. Send the request again later.`,

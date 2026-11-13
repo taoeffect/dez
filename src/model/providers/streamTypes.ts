@@ -2,6 +2,7 @@ import type { MessagePart, RequestMessage, ThinkingReplay } from '../chat/types'
 import type { StreamedToolCall } from '../tools/types'
 import type { ClipAttachment } from './clipInputs'
 import type { ParameterValues } from './modelParameters'
+import type { RequestReader } from './requestReader'
 import type { ChatRequestContext, GeneratedClip, GeneratedMedia, MediaKind, ProviderId } from './types'
 
 // A message as dez.provider/streamChat takes it: an image part holds the
@@ -41,6 +42,19 @@ export interface ProviderStreamChatResult {
   toolCalls?: StreamedToolCall[]
 }
 
+// How far a request of dez.provider/generateMedia is:
+// - `sent`: the inputs are read, and the first request goes now.
+// - `queued`: the provider runs the request as a job, and Dez asks for
+//   its state.
+// - `downloading`: the provider made the clip, and Dez copies it.
+// `jobId` is the provider's id of the job, as soon as there is one: the
+// provider took the money for that job, and the user can ask it for the
+// output with the id.
+export interface MediaProgress {
+  phase: 'sent' | 'queued' | 'downloading'
+  jobId: string | null
+}
+
 // The input of dez.provider/generateMedia. `kind` is the model's request
 // kind (ModelInfo.request).
 export interface ProviderGenerateMediaInput {
@@ -76,6 +90,15 @@ export interface ProviderGenerateMediaInput {
   // them; `signal` stops all of that.
   requestId?: string
   signal?: AbortSignal
+  // The longest time (ms) from the first request of a clip to its last
+  // byte; `CLIP_JOB_TIMEOUT_MS` with none. An image and a text have no
+  // time limit here: `signal` ends them.
+  timeoutMs?: number
+  // Called at each step of the request, in order.
+  onProgress?: (progress: MediaProgress) => void
+  // Who reads the text of an input that the model does not take or that
+  // Dez cannot read (requestReader.ts); the user with none.
+  reader?: RequestReader
 }
 
 // An image kind gives `media`, a clip kind (CLIP_KINDS) gives `clips`, and

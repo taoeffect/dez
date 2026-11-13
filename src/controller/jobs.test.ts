@@ -10,9 +10,10 @@ const TEMP_CLIP = '/home/u/.cache/dez/media/made.mp4'
 const URL_CLIP = 'https://clips.test/made.mp4'
 
 const image: JobAsset = { kind: 'image', path: IMAGE }
-const clip = (src: string | null, url: string | null = null): JobAsset => ({
+const clip = (src: string | null, url: string | null = null, jobId?: string): JobAsset => ({
   kind: 'clip',
   clip: src?.endsWith('.wav') ? { kind: 'audio', type: 'audio/wav', src, url, expires: null } : { kind: 'video', type: 'video/mp4', src, url, expires: null },
+  ...(jobId !== undefined && { jobId }),
 })
 
 // The stub stores: the files that were deleted, and an error that the
@@ -328,9 +329,10 @@ describe('ReplyJobs', () => {
 })
 
 describe('writeJobAssets', () => {
-  const job: EndedJob = { id: 'j-aaaa', tool: 'model_invoke', status: 'finished', text: '', assets: [image, clip(SAVED_CLIP), clip(URL_CLIP, URL_CLIP)] }
+  // The provider made the last clip as its job `q-1`.
+  const job: EndedJob = { id: 'j-aaaa', tool: 'model_invoke', status: 'finished', text: '', assets: [image, clip(SAVED_CLIP), clip(URL_CLIP, URL_CLIP, 'q-1')] }
 
-  it('writes each asset under the name of the job\'s tool, and gives the new ids', async () => {
+  it('writes each asset under the name of the job\'s tool, a clip with the job id of its provider, and gives the new ids', async () => {
     const writes: unknown[] = []
     const ids = ['c', 'd', 'e']
     const written = await writeJobAssets(job, {
@@ -339,7 +341,7 @@ describe('writeJobAssets', () => {
     })
 
     expect(written).toStrictEqual([{ kind: 'image', id: 'c' }, { kind: 'audio', id: 'd' }, { kind: 'video', id: 'e' }])
-    expect(writes).toStrictEqual([[IMAGE, { tool: 'model_invoke' }], [SAVED_CLIP, { tool: 'model_invoke' }], [URL_CLIP, { tool: 'model_invoke' }]])
+    expect(writes).toStrictEqual([[IMAGE, { tool: 'model_invoke' }], [SAVED_CLIP, { tool: 'model_invoke' }], [URL_CLIP, { tool: 'model_invoke', jobId: 'q-1' }]])
     expect(deletedImages).toStrictEqual([])
     expect(deletedClips).toStrictEqual([])
   })

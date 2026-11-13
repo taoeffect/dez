@@ -281,6 +281,13 @@ export function imageOf(sections: readonly Section[], id: string): ConversationI
     : `No image of this conversation has the id @${id}. Its images are ${ids.join(', ')}: call again with one of these ids.`)
 }
 
+/** The error result of a tool whose input image `id` Dez cannot read. It
+ *  names the image by its id only: the name of a linked file is private. */
+export function unreadableImageText(id: string): string {
+  return `Dez cannot read the file of the image @${id}: the file is gone or moved, or Dez may not read it. `
+    + 'This is not a fault of the call. Tell the user, who can paste or drop the image again (it then gets a new id).'
+}
+
 function sizeText({ width, height }: ImageSize): string {
   return `${width}x${height} pixels`
 }

@@ -4,7 +4,7 @@ import type { ModelCache } from '../persistence/types'
 import { providerInfo } from '../providers/testing'
 import type { ModelInfo } from '../providers/types'
 import { unstoredOutputMessage, unusableModelMessage } from '../providers/unusableModel'
-import { MODEL_INFO_SIZE_CAP, modelInfoParameterValues, modelInfoPart, modelInfoTarget, modelInfoText, type ModelInfoFacts } from './modelInfo'
+import { MODEL_INFO_SIZE_CAP, modelInfoPart, modelInfoTarget, modelInfoText, type ModelInfoFacts } from './modelInfo'
 import { modelUsage, USAGE_TEXTS } from './modelUsage'
 import { ToolError } from './types'
 
@@ -82,36 +82,6 @@ describe('modelInfoTarget', () => {
       .toThrow(new ToolError(`Dez cannot give the info of your own model (${JSON.stringify(model)}) now: it is not among the models that model_list lists. `
         + 'The last model check of its provider can have failed. This is not a fault of the call: tell the user. '
         + `To get the info of another model, give its full id in \`model\`. ${FIND_MODELS}`))
-  })
-})
-
-describe('modelInfoParameterValues', () => {
-  it('reads the values from the text of a JSON object', () => {
-    expect(modelInfoParameterValues(VIDEO, { model: 'openrouter/x-ai/grok-video', parameters: '{"duration": 5, "aspect_ratio": "1:1", "duration_seconds": 30}' }))
-      .toStrictEqual({ duration: 5, aspect_ratio: '1:1', duration_seconds: 30 })
-  })
-
-  it('names no value for a call with no `parameters`', () => {
-    expect(modelInfoParameterValues(VIDEO, { model: 'openrouter/x-ai/grok-video' })).toStrictEqual({})
-  })
-
-  it.each(['duration=5', '[5]', '5', 'null', ''])('refuses %j, which is not a JSON object', (parameters) => {
-    expect(() => modelInfoParameterValues(VIDEO, { parameters })).toThrow('`parameters` must be the text of a JSON object')
-  })
-
-  // A wrong value must not look like a price of the right one.
-  it.each([
-    ['a name that is no parameter of the model', '{"fps": 60}', 'The model has no parameter "fps". Its parameters: duration, aspect_ratio, duration_seconds.'],
-    ['a value that is not an option', '{"duration": 7}', 'The parameter "duration" takes one of: 1, 5, 10.'],
-    ['a text for a number option', '{"duration": "5"}', 'The parameter "duration" takes one of: 1, 5, 10.'],
-    ['a number out of the range', '{"duration_seconds": 31}', 'The parameter "duration_seconds" takes a whole number from 1 to 30.'],
-  ])('refuses %s, and tells what the model takes', (_name, parameters, message) => {
-    expect(() => modelInfoParameterValues(VIDEO, { parameters })).toThrow(new ToolError(message))
-  })
-
-  it('refuses a value for a model with no parameters, and tells the model to leave them out', () => {
-    expect(() => modelInfoParameterValues(GEMINI, { parameters: '{"duration": 5}' }))
-      .toThrow(new ToolError('The model has no parameter "duration". It has no parameters: leave out `parameters`.'))
   })
 })
 

@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import type { ToolBlockData } from '../chat/toolBlocks'
 import type { ModelRef, Section } from '../chat/types'
+import { unknownToolText } from '../tools/registry'
 import type { StreamedToolCall } from '../tools/types'
 import { agentSectionMessages } from './messages'
 import {
@@ -67,11 +68,10 @@ describe('checkToolCalls', () => {
       streamed('c4', '{"limit":3}'),
       streamed('c5', '{}', ''),
     ]
-    const tools = 'Call only the Dez tools, by their exact names: model_list, model_info, audio, image, jobs_wait, jobs_list, job_inspect.'
     const parameters = 'The parameters of model_list are: filter (string), type (string), inputs (string), sort (string), sort_dir (string).'
 
     expect(checkToolCalls(calls, [])).toStrictEqual([
-      { id: 'c1', name: 'web_search', arguments: {}, refusal: `Dez has no tool named "web_search". ${tools}` },
+      { id: 'c1', name: 'web_search', arguments: {}, refusal: unknownToolText('web_search') },
       {
         id: 'c2',
         name: 'model_list',
@@ -91,14 +91,14 @@ describe('checkToolCalls', () => {
         arguments: {},
         refusal: `Dez did not run this call. model_list has no parameter "limit". ${parameters}\n\nDetails: The call sent {"limit":3}`,
       },
-      { id: 'c5', name: '', arguments: {}, refusal: `Dez has no tool named "". ${tools}` },
+      { id: 'c5', name: '', arguments: {}, refusal: unknownToolText('') },
     ])
   })
 })
 
 describe('toolCallBlock', () => {
   const call: CheckedToolCall = { id: 'c1', name: 'model_list', arguments: { filter: 'gemini' } }
-  const unknownTool = 'Dez has no tool named "web_search". Call only the Dez tools, by their exact names: model_list, model_info, audio, image, jobs_wait, jobs_list, job_inspect.'
+  const unknownTool = unknownToolText('web_search')
   const refused: CheckedToolCall = { id: 'c2', name: 'web_search', arguments: {}, refusal: unknownTool }
 
   it('runs a call until it has a result, then gives the result and its status', () => {

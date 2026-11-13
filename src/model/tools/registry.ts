@@ -3,6 +3,7 @@ import { AUDIO_TOOL_DEFINITION } from './audioTool'
 import { IMAGE_TOOL_DEFINITION } from './imageTool'
 import { JOB_INSPECT_TOOL, JOBS_LIST_TOOL, JOBS_WAIT_TOOL } from './jobs'
 import { MODEL_INFO_TOOL } from './modelInfo'
+import { MODEL_INVOKE_TOOL } from './modelInvoke'
 import { MODEL_LIST_TOOL } from './modelList'
 import type { ToolDefinition } from './types'
 
@@ -17,6 +18,7 @@ export const TOOL_DEFINITIONS: readonly ToolDefinition[] = [
   JOBS_WAIT_TOOL,
   JOBS_LIST_TOOL,
   JOB_INSPECT_TOOL,
+  MODEL_INVOKE_TOOL,
 ]
 
 /** The Dez tool with this name; undefined when no Dez tool has it. */

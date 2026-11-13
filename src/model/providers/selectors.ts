@@ -16,7 +16,7 @@ import { nativeResponseJson, nativeResponseText, readNativeChunkBytes, type Nati
 import { clipFileProblem, clipTagProblem, hasLengthRules, missingClipProblem, needsWavCopy, type ClipAttachment, type ClipUse, type InputClipRules } from './clipInputs'
 import { inputImageRulesFor, missingImageProblem } from './clipImages'
 import { CLIP_JOB_TIMEOUT_MS, clipPollDelay, sendClipRequest, type ClipRun } from './clipRequests'
-import { assertProviderResponseOk, explainedProviderError, providerConnectionError, UnusableAnswerError } from './errors'
+import { assertProviderResponseOk, explainedProviderError, InputImageError, providerConnectionError, UnusableAnswerError } from './errors'
 import { generatedImageFromUrl } from './generatedImages'
 import { imageFit, type ImageSizeRules } from './imageSize'
 import { knownLimitsOf, type KnownLimit } from './knownLimits'
@@ -26,8 +26,9 @@ import { effectiveParameterValues, type ParameterValues } from './modelParameter
 import { modelToggles, type ToggleModel } from './modelToggles'
 import type { Provider, ProviderChatRequest } from './provider'
 import { getProvider, listProviders, requireProvider } from './registry'
+import type { RequestReader } from './requestReader'
 import { assertStreamResponseOk, streamProviderTokens } from './streaming'
-import type { ProviderChatInputMessage, ProviderGenerateMediaInput, ProviderGenerateMediaResult, ProviderMediaQuote, ProviderMediaQuoteInput, ProviderStreamChatInput, ProviderStreamChatResult } from './streamTypes'
+import type { MediaProgress, ProviderChatInputMessage, ProviderGenerateMediaInput, ProviderGenerateMediaResult, ProviderMediaQuote, ProviderMediaQuoteInput, ProviderStreamChatInput, ProviderStreamChatResult } from './streamTypes'
 import { CLIP_KINDS, ProviderNotConfiguredError, effectiveRequest, isClipKind, isTextKind, type ChatImagePart, type ChatMessage, type ChatPart, type ModelDisplayNames, type ModelInfo, type ProviderId, type ProviderInfo, type ProviderInputImageRules, type ProviderModelsResult, type ProviderSettingsDescriptor } from './types'
 import { unstoredOutputMessage } from './unusableModel'
 
@@ -40,16 +41,23 @@ interface StoredImage {
 // The video types whose length `mp4DurationSeconds` reads.
 const MP4_TYPES: Readonly<Record<string, true>> = { 'video/mp4': true, 'video/quicktime': true }
 
-// The user text of a clip of a request that Dez could not read
-// (`ClipReadError`), by its problem. It names no path and no URL.
-function clipReadProblemText(clip: ClipAttachment, problem: ClipReadProblem): string {
+// The text for `reader` of a clip of a request that Dez could not read
+// (`ClipReadError`), by its problem. It names no path and no URL. The
+// user can change the message; a model that named the clip in a
+// `model_invoke` call can only tell the user, or name another clip.
+function clipReadProblemText(clip: ClipAttachment, problem: ClipReadProblem, reader: RequestReader): string {
+  const name = `${clip.kind} clip @${clip.id}`
+  const modelFix = `Call again only with another clip in place of @${clip.id}.`
   switch (problem) {
     case 'deleted':
-      return `The ${clip.kind} clip @${clip.id} is gone: its file was deleted, and it has no web address to download it from. Remove @${clip.id} from the message, or name another clip.`
+      return `The ${name} is gone: its file was deleted, and it has no web address to download it from. `
+        + (reader === 'user' ? `Remove @${clip.id} from the message, or name another clip.` : `This is not a fault of the call: tell the user. ${modelFix}`)
     case 'expired':
-      return `The ${clip.kind} clip @${clip.id} has expired: the provider that made it does not keep it any more, and it was not saved. Remove @${clip.id} from the message, or name another clip.`
+      return `The ${name} has expired: the provider that made it does not keep it any more, and it was not saved. `
+        + (reader === 'user' ? `Remove @${clip.id} from the message, or name another clip.` : `This is not a fault of the call: tell the user. ${modelFix}`)
     case 'unreadable':
-      return `Dez could not read the ${clip.kind} clip @${clip.id}: its file is gone, Dez may not read it, or its server did not send it (the details tell which). Check that the clip plays, or name another clip.`
+      return `Dez could not read the ${name}: its file is gone, Dez may not read it, or its server did not send it (the details tell which). `
+        + (reader === 'user' ? 'Check that the clip plays, or name another clip.' : `This is not a fault of the call: tell the user, who can check that the clip plays. ${modelFix}`)
   }
 }
 
@@ -66,19 +74,21 @@ type ClipSource =
 // A clip of a kind that the model takes only by its web address
 // (`urlOnly`) goes by its `url`, unread: `clipTagProblem` let only one
 // with a live `https` address through.
-// Rejects with the user's text when a clip cannot be read or converted, and
-// when its length or size breaks a rule (`clipFileProblem`): all before a
-// paid request. The length of an audio clip comes from its decode, and the
-// length of a video from its MP4 header; a clip whose length Dez cannot
-// tell gets no length check. An audio clip is decoded only for its WAV copy
-// or a length rule of the model: a decode holds all its samples in memory,
-// and a transcription of a long recording has neither. A stop of `signal`
-// ends the download of a clip from its URL, and rejects with the stop.
+// Rejects with the text for `reader` when a clip cannot be read or
+// converted, and when its length or size breaks a rule (`clipFileProblem`):
+// all before a paid request. The length of an audio clip comes from its
+// decode, and the length of a video from its MP4 header; a clip whose
+// length Dez cannot tell gets no length check. An audio clip is decoded
+// only for its WAV copy or a length rule of the model: a decode holds all
+// its samples in memory, and a transcription of a long recording has
+// neither. A stop of `signal` ends the download of a clip from its URL,
+// and rejects with the stop.
 async function inputClipParts(
   modelName: string,
   rules: InputClipRules | undefined,
   clips: readonly ClipAttachment[],
   signal: AbortSignal | undefined,
+  reader: RequestReader,
 ): Promise<InputClipPart[]> {
   const sources = await Promise.all(clips.map(async (clip): Promise<ClipSource> => {
     const kindRules = rules?.[clip.kind]
@@ -96,7 +106,7 @@ async function inputClipParts(
       if (signal?.aborted) throw error
       console.error(`Failed to read the ${clip.kind} clip @${clip.id} of a media request:`, error)
       if (!(error instanceof ClipReadError)) throw error
-      throw new ExplainedError(clipReadProblemText(clip, error.problem), error.details, { cause: error })
+      throw new ExplainedError(clipReadProblemText(clip, error.problem, reader), error.details, { cause: error })
     }
     const mediaType = canonicalMediaType(clip.type)
     if (clip.kind === 'video') {
@@ -125,7 +135,7 @@ async function inputClipParts(
     const bytes = copy ? copy.bytes : new Uint8Array(await file.arrayBuffer())
     return { clip, use: kindRules.use, mediaType: copy ? 'audio/wav' : mediaType, bytes, seconds: measured.seconds, wavCopy: copy !== null }
   }))
-  const problem = clipFileProblem(modelName, rules, sources.flatMap((source) => ('bytes' in source ? [{ clip: source.clip, seconds: source.seconds, byteLength: source.bytes.length, wavCopy: source.wavCopy }] : [])))
+  const problem = clipFileProblem(modelName, rules, sources.flatMap((source) => ('bytes' in source ? [{ clip: source.clip, seconds: source.seconds, byteLength: source.bytes.length, wavCopy: source.wavCopy }] : [])), reader)
   if (problem !== null) throw new ExplainedError(problem)
   return sources.map((source) => ('bytes' in source
     ? { kind: source.clip.kind, use: source.use, mediaType: source.mediaType, bytes: source.bytes }
@@ -201,8 +211,9 @@ async function readMessageImages(messages: ProviderChatInputMessage[]): Promise<
 // Dez reads where it is. Only a user message has linked references
 // (`findImageReferences`). So a stored reference copied from another home
 // or machine fails like a missing file, as it shows in the editor. The
-// error names only the file, like the editor's broken-image box; the log
-// has the cause.
+// error (an `InputImageError`, which keeps the path for a caller that
+// names the image in another way) names only the file, like the editor's
+// broken-image box; the log has the cause.
 async function readRequestImage(path: string, appDir: string): Promise<StoredImage> {
   const linked = isLinkedImagePath(path)
   try {
@@ -222,7 +233,7 @@ async function readRequestImage(path: string, appDir: string): Promise<StoredIma
     return { bytes: await sbp('dez.native/loadAppFileBytes', file) as Uint8Array, mediaType }
   } catch (error) {
     console.error(`Failed to read the image ${path}:`, error)
-    throw new ExplainedError(linked
+    throw new InputImageError(path, 'unreadable', linked
       ? `The image file ${fileNameOf(path)} is gone or moved, or Dez cannot read it. Drop the image again, or remove its reference from the message.`
       : `The image file ${fileNameOf(path)} is missing, or Dez cannot read it. Paste the image again, or remove its reference from the message.`)
   }
@@ -264,7 +275,9 @@ async function requestImage(path: string, appDir: string, rules?: ImageSizeRules
       // An SVG with HTML in it (a `foreignObject`) taints the canvas, so
       // WebKit gives no copy of it.
       console.error(`Failed to draw a PNG copy of the SVG image ${path}:`, error)
-      throw new ExplainedError(
+      throw new InputImageError(
+        path,
+        'notDrawn',
         `Dez cannot send the SVG image ${fileNameOf(path)}. Providers take no SVG images, so Dez sends a PNG copy, and it could not draw one: the file can be damaged, or it holds HTML, which a copy may not show. Remove its reference or mention from the message, or paste a PNG copy of the image in its place.`,
         sanitizeErrorText(rawErrorText(error)),
         { cause: error },
@@ -493,10 +506,13 @@ export default sbp('sbp/selectors/register', {
   // clip from its URL. An input image that breaks a size rule of the
   // request goes as a drawing that passes it (`requestImage`); one that
   // breaks a limit that no drawing meets rejects before any request
-  // (`Provider.inputImageProblem`). The request sets the
+  // (`Provider.inputImageProblem`), and so does one that Dez cannot read
+  // or draw (an `InputImageError`). The request sets the
   // model's parameters (a scale, the length of a clip, a voice):
   // `input.parameters` where the model takes the value, else the
-  // parameter's default.
+  // parameter's default. `input.reader` tells who reads the text of an
+  // input that does not go (the user, or the model of a `model_invoke`
+  // call), and `input.onProgress` gets each step of the request.
   //
   // - An image, or an edit or an upscale of stored images: one request
   //   through dez.http/stream. A cancel before the response headers
@@ -506,16 +522,18 @@ export default sbp('sbp/selectors/register', {
   //   clip, or a job. For a job, the provider is asked for its state each
   //   `CLIP_POLL_INTERVAL_MS` until the clip is there: in the answer to
   //   that request, at a URL that plays, at a URL to copy, or behind one
-  //   more request. A clip that came as bytes is a temp copy in the cache
-  //   root (`sendClipRequest`), which the caller must delete when it does
-  //   not keep the clip. A stop rejects. A video request sends the stored
-  //   images of `input.images` as frames of the video, or as references
-  //   (a reference-to-video model, OpenRouter's "Images as"), and the clips
-  //   of `input.clips` as the model uses them (`inputClipParts`). A refusal
-  //   that tells that the model takes fewer images rejects with a
-  //   TooManyImagesError (`Provider.imageCountRefusal`), and the model
-  //   cache keeps that count: a later call with more images rejects before
-  //   any request (`learnedImagesProblem`).
+  //   more request. A clip that is not there after `input.timeoutMs`
+  //   (`CLIP_JOB_TIMEOUT_MS` with none) rejects. A clip that came as bytes
+  //   is a temp copy in the cache root (`sendClipRequest`), which the
+  //   caller must delete when it does not keep the clip. A stop rejects. A
+  //   video request sends the stored images of `input.images` as frames of
+  //   the video, or as references (a reference-to-video model, OpenRouter's
+  //   "Images as"), and the clips of `input.clips` as the model uses them
+  //   (`inputClipParts`). A refusal that tells that the model takes fewer
+  //   images rejects with a TooManyImagesError
+  //   (`Provider.imageCountRefusal`), and the model cache keeps that count:
+  //   a later call with more images rejects before any request
+  //   (`learnedImagesProblem`).
   // - A text (a transcription of an audio clip): one request through
   //   dez.http/stream, and the text of its answer in `text`.
   //
@@ -525,7 +543,7 @@ export default sbp('sbp/selectors/register', {
   // clip.
   async 'dez.provider/generateMedia' (input: ProviderGenerateMediaInput): Promise<ProviderGenerateMediaResult> {
     const provider = requireProvider(input.providerId)
-    const { kind, modelId, signal } = input
+    const { kind, modelId, signal, reader = 'user' } = input
     const requestId = input.requestId ?? crypto.randomUUID()
     // The native cancel also ends a clip request (`downloadAppFile`).
     const cancelRequest = () => {
@@ -533,6 +551,7 @@ export default sbp('sbp/selectors/register', {
     }
     signal?.addEventListener('abort', cancelRequest)
     let jobId: string | null = null
+    const progress = (phase: MediaProgress['phase']) => input.onProgress?.({ phase, jobId })
     try {
       const paths = input.images ?? []
       const clips = input.clips ?? []
@@ -546,10 +565,10 @@ export default sbp('sbp/selectors/register', {
       if (cachedModel?.unstoredOutput !== undefined) throw new ExplainedError(unstoredOutputMessage(cachedModel.name, cachedModel.unstoredOutput))
       const values = parameterValues(provider.id, modelId, input.parameters)
       const imageRules = inputImageRulesFor(cachedModel?.images, values)
-      const clipProblem = missingClipProblem(modelName, kind, clips) ?? clipTagProblem(modelName, cachedModel?.clips, clips, paths.length)
+      const clipProblem = missingClipProblem(modelName, kind, clips, reader) ?? clipTagProblem(modelName, cachedModel?.clips, clips, paths.length, undefined, reader)
       if (clipProblem !== null) throw new ExplainedError(clipProblem)
-      const imageProblem = (clips.some((clip) => clip.kind === 'video') ? null : missingImageProblem(modelName, kind, paths.length, imageRules))
-        ?? learnedImagesProblem(modelName, cachedModel?.learnedImageLimit, paths.length)
+      const imageProblem = (clips.some((clip) => clip.kind === 'video') ? null : missingImageProblem(modelName, kind, paths.length, imageRules, reader))
+        ?? learnedImagesProblem(modelName, cachedModel?.learnedImageLimit, paths.length, reader)
       if (imageProblem !== null) throw new ExplainedError(imageProblem)
       const appDir = paths.length > 0 ? await sbp('dez.native/getAppDir') as string : ''
       const sizeRules = provider.inputImageSize(kind, { ...(imageRules && { images: imageRules }) })
@@ -559,11 +578,12 @@ export default sbp('sbp/selectors/register', {
         if (problem !== undefined) throw new ExplainedError(problem)
         return { type: 'image', mediaType, data: bytesToBase64(bytes) }
       }))
-      const clipParts = await inputClipParts(modelName, cachedModel?.clips, clips, signal)
+      const clipParts = await inputClipParts(modelName, cachedModel?.clips, clips, signal, reader)
 
       if (isTextKind(kind)) {
         const request = provider.textRequest(kind, modelId, { prompt: input.prompt, images, clips: clipParts, values }, await requestSecret(provider))
         signal?.throwIfAborted()
+        progress('sent')
         const { response, chunks } = await sbp('dez.http/stream', request, requestId) as NativeHttpStreamResult
         await assertStreamResponseOk(provider, response, chunks)
         return { media: [], clips: [], text: provider.textResult(kind, await readNativeChunkBytes(chunks)) }
@@ -572,13 +592,14 @@ export default sbp('sbp/selectors/register', {
       if (!isClipKind(kind)) {
         const request = provider.imageRequest(kind, modelId, { prompt: input.prompt, images, values }, await requestSecret(provider))
         signal?.throwIfAborted()
+        progress('sent')
         const { response, chunks } = await sbp('dez.http/stream', request, requestId) as NativeHttpStreamResult
         await assertStreamResponseOk(provider, response, chunks)
         return { media: provider.imageResult(kind, response, await readNativeChunkBytes(chunks)), clips: [] }
       }
 
-      const startedAt = Date.now()
-      const run: ClipRun = { provider, kind, requestId, deadline: startedAt + CLIP_JOB_TIMEOUT_MS, signal }
+      const limitMs = input.timeoutMs ?? CLIP_JOB_TIMEOUT_MS
+      const run: ClipRun = { provider, kind, requestId, limitMs, deadline: Date.now() + limitMs, signal }
       const secret = await requestSecret(provider)
       // A request of the media API, which gets the API key.
       const apiRequest = (wire: MediaWireRequest) => provider.mediaApiRequest(wire, secret)
@@ -598,6 +619,8 @@ export default sbp('sbp/selectors/register', {
       // tells a field value that the model needs: the request goes once
       // more with it (`Provider.clipRequestAfterRefusal`).
       const firstRequest = provider.clipRequest(kind, modelId, clipInput)
+      signal?.throwIfAborted()
+      progress('sent')
       const first = await sendClipRequest(run, apiRequest(firstRequest), null, cacheDir).catch(async (error: unknown) => {
         const refusal = provider.imageCountRefusal(kind, error, images.length)
         if (refusal) {
@@ -614,6 +637,7 @@ export default sbp('sbp/selectors/register', {
 
       const job = provider.clipJob(kind, modelId, first.data)
       jobId = job.id
+      progress('queued')
       for (;;) {
         await clipPollDelay(signal)
         const poll = await sendClipRequest(run, apiRequest(job.poll), jobId, cacheDir)
@@ -628,6 +652,7 @@ export default sbp('sbp/selectors/register', {
         // A file URL comes from a response and can name any host, so its
         // request has no header: the API key goes only to the URLs that
         // Dez builds.
+        progress('downloading')
         const keyed = 'download' in state
         const request: NativeHttpRequest = keyed ? apiRequest(state.download) : { method: 'GET', url: state.fileUrl }
         const download = await sendClipRequest(run, request, jobId, cacheDir, keyed)

@@ -13,15 +13,18 @@ import type { ProviderMediaQuote } from '../model/providers/streamTypes'
 import { effectiveRequest, type ProviderInfo, type ProviderInputImageRules, type ProviderSettingsDescriptor } from '../model/providers/types'
 import type { SettingsSnapshot } from '../model/state'
 import { AUDIO_TOOL, audioClipId, audioClipOf, audioClipPart, audioCutResultText, audioLengthText } from '../model/tools/audioTool'
-import { brightnessPlan, contrastPlan, convertPlan, cropPlan, flipPlan, IMAGE_TOOL, imageIdArgument, imageOf, imageResultText, invertPlan, rotatePlan, saturationPlan, scalePlan, unwritableFormatError, type ImagePlan } from '../model/tools/imageTool'
-import { jobInspectText, jobResultText, jobsListText, jobsWaitText, unknownJobText, type JobResult } from '../model/tools/jobs'
-import { modelInfoParameterValues, modelInfoPart, modelInfoText, modelInfoTarget, type ModelInfoFacts, type ModelInfoTarget } from '../model/tools/modelInfo'
+import { brightnessPlan, contrastPlan, convertPlan, cropPlan, flipPlan, IMAGE_TOOL, imageIdArgument, imageOf, imageResultText, invertPlan, rotatePlan, saturationPlan, scalePlan, unreadableImageText, unwritableFormatError, type ImagePlan } from '../model/tools/imageTool'
+import { jobInspectText, jobResultText, jobsListText, jobStartedText, jobsWaitText, unknownJobText, type JobResult } from '../model/tools/jobs'
+import { parameterValuesArgument, type ModelTarget } from '../model/tools/modelArguments'
+import { modelInfoPart, modelInfoText, modelInfoTarget, type ModelInfoFacts } from '../model/tools/modelInfo'
+import { invocationInputsText, MODEL_INVOKE_TOOL, modelInvocation } from '../model/tools/modelInvoke'
 import { modelListText } from '../model/tools/modelList'
 import { unexpectedToolErrorText, unknownToolText } from '../model/tools/registry'
 import { parseSubcommandCall, type SubcommandTool } from '../model/tools/subcommands'
 import { ToolError, type ToolArguments, type ToolRunResult } from '../model/tools/types'
 import { rawErrorText } from '../utils/errorText'
 import { writeJobAssets, type ReplyJobs } from './jobs'
+import { invokeModel } from './modelInvoke'
 
 /** A call that Dez runs: a Dez tool and the arguments that its definition
  *  accepted (`checkToolCalls`). */
@@ -48,9 +51,11 @@ export interface ToolRunContext {
   writeImage(path: string, options?: { tool?: string }): string | null
   /** Writes the tag of a clip that the tool made into the reply, with a new
    *  media id and the tool's name (`tool`, as for `writeImage`), and
-   *  returns that id. Null when the reply takes no clip any more (a stop
-   *  ended the tool round): the runner then deletes the file. */
-  writeClip(clip: Omit<MediaTagData, 'id' | 'other'>, options?: { tool?: string }): string | null
+   *  returns that id. `jobId` is the provider's id of the job that made
+   *  the clip, which the tag keeps (`MEDIA_JOB_ATTRIBUTE`). Null when the
+   *  reply takes no clip any more (a stop ended the tool round): the
+   *  runner then deletes the file. */
+  writeClip(clip: Omit<MediaTagData, 'id' | 'other'>, options?: { tool?: string, jobId?: string }): string | null
 }
 
 // The code of each Dez tool (TOOL_DEFINITIONS), by tool name. A runner gives
@@ -80,7 +85,7 @@ function untilAborted<T>(start: () => Promise<T>, signal: AbortSignal): Promise<
 // model `replyModel`), and its raw model-list entry in memory (undefined
 // when there is none). Throws for a model that the user cannot use
 // (`modelInfoTarget`).
-async function modelInfoLookup(args: ToolArguments, replyModel: ModelRef): Promise<ModelInfoTarget & { entry: unknown }> {
+async function modelInfoLookup(args: ToolArguments, replyModel: ModelRef): Promise<ModelTarget & { entry: unknown }> {
   const providers = await sbp('dez.provider/infos') as ProviderInfo[]
   const target = modelInfoTarget(sbp('dez.model/modelCache/snapshot') as ModelCache, providers, args, replyModel)
   return { ...target, entry: sbp('dez.model/modelCache/rawModel', target.provider.id, target.model.id) as unknown }
@@ -132,8 +137,7 @@ function imageRunner(plan: ImagePlan): ToolRunner {
       file = await sbp('dez.controller/images/readFile', source.path) as File
     } catch (error) {
       console.error(`Failed to read the image @${id}:`, error)
-      throw new ToolError(`Dez cannot read the file of the image @${id}: the file is gone or moved, or Dez may not read it. `
-        + 'This is not a fault of the call. Tell the user, who can paste or drop the image again (it then gets a new id).')
+      throw new ToolError(unreadableImageText(id))
     }
 
     // Only redraw knows the size of the image, so the plan runs in it. For
@@ -216,7 +220,7 @@ const TOOL_RUNNERS: Record<string, ToolRunner> = {
     }
     const { provider, model, entry } = found
     const ref = { providerId: provider.id, modelId: model.id }
-    const called = modelInfoParameterValues(model, args)
+    const called = parameterValuesArgument(model, args)
     const settings = sbp('dez.model/settings/snapshot') as SettingsSnapshot
     const chosen = settings.modelParameters[modelRefKey(ref)]
     const values = effectiveParameterValues(model.parameters ?? [], { ...chosen, ...called })
@@ -355,6 +359,24 @@ const TOOL_RUNNERS: Record<string, ToolRunner> = {
     const job = jobs.find((candidate) => candidate.id === id)
     if (!job) throw new ToolError(unknownJobText(id, jobs.map((known) => known.id)))
     return jobInspectText(job)
+  },
+  // The `model_invoke` tool (model/tools/modelInvoke.ts): one request to
+  // another model, as a job of the reply (`invokeModel`, modelInvoke.ts).
+  // Every check that needs no request runs first (`modelInvocation`): a
+  // call that cannot work starts no job, costs nothing, and gets its
+  // answer at once. A refusal of the provider comes as the result of the
+  // job. The result of the call tells the inputs that go, so that the
+  // model sees a wrong input before it waits.
+  async model_invoke (args, _signal, context) {
+    const providers = await sbp('dez.provider/infos') as ProviderInfo[]
+    const invocation = modelInvocation(args, {
+      cache: sbp('dez.model/modelCache/snapshot') as ModelCache,
+      providers,
+      modelParameters: (sbp('dez.model/settings/snapshot') as SettingsSnapshot).modelParameters,
+      sections: (sbp('dez.model/tab', context.tabId) as Tab | null)?.sections ?? [],
+    })
+    const jobId = context.jobs.start(MODEL_INVOKE_TOOL.name, (signal, report) => invokeModel(invocation, signal, report), { timeoutMs: invocation.timeoutMs })
+    return `${jobStartedText(jobId)}\n${invocationInputsText(invocation.inputs)}`
   },
 }
 

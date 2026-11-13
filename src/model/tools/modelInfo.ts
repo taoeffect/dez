@@ -1,17 +1,16 @@
-import { rawErrorText } from '../../utils/errorText'
-import { modelRefKey, parseModelRefKey } from '../chat/modelRef'
+import { modelRefKey } from '../chat/modelRef'
 import type { ModelRef } from '../chat/types'
 import { modelInputs } from '../modelInputs'
 import { effectiveOutputs, MODEL_OUTPUT_IDS } from '../modelOutputs'
-import { availableModels } from '../modelSearch'
 import type { ModelCache } from '../persistence/types'
 import { inputImageRulesFor, maxInputImages, minInputImages } from '../providers/clipImages'
 import type { KnownLimit } from '../providers/knownLimits'
 import { imageRulesWithLearnedLimit } from '../providers/learnedImageLimit'
-import { checkedParameterValues, type ParameterValues } from '../providers/modelParameters'
+import type { ParameterValues } from '../providers/modelParameters'
 import { effectiveRequest, MODEL_REQUESTS, type ModelInfo, type ProviderInfo, type ProviderInputImageRules } from '../providers/types'
 import { unstoredOutputMessage, unusableModelMessage } from '../providers/unusableModel'
 import { jsonWithoutLocalPaths } from './localPaths'
+import { FIND_MODELS, listedModel, namedModelTarget, type ModelTarget } from './modelArguments'
 import { modelUsage } from './modelUsage'
 import { ToolError, type ToolArguments, type ToolDefinition } from './types'
 
@@ -87,12 +86,6 @@ export const MODEL_INFO_TOOL: ToolDefinition = {
   ],
 }
 
-/** The provider and the cached model of a `model_info` call. */
-export interface ModelInfoTarget {
-  provider: ProviderInfo
-  model: ModelInfo
-}
-
 /** A provider toggle that applies to the model, with its value now. */
 export interface ModelInfoToggle {
   key: string
@@ -124,64 +117,22 @@ export interface ModelInfoFacts {
   limits?: KnownLimit[]
 }
 
-const FIND_MODELS = 'Use model_list to find the full ids of the models that the user can use.'
-
 /** The provider and the model of a `model_info` call, among the models that
- *  `model_list` lists (`availableModels`): the model that the `model`
- *  argument names (a full id, `provider/model`), else `replyModel`, the
- *  model of the reply that makes the call.
+ *  `model_list` lists: the model that the `model` argument names
+ *  (`namedModelTarget`), else `replyModel`, the model of the reply that
+ *  makes the call.
  *
- *  Throws for an id that is not a full id, an unknown provider, and a model
- *  that the user cannot use; the error points to `model_list`, for the model
- *  to read. The reply's own model can be missing from the list too, as a
- *  reply needs no cached model: the last model check of its provider failed,
- *  or the provider's list has the model no more. That is not a fault of the
- *  call, and the error says so. */
-export function modelInfoTarget(cache: ModelCache, providers: readonly ProviderInfo[], args: ToolArguments, replyModel: ModelRef): ModelInfoTarget {
-  const named = args.model
-  const ref = named === undefined ? replyModel : parseModelRefKey(String(named))
-  if (!ref) {
-    throw new ToolError(`${JSON.stringify(named)} is not a full model id (provider/model). ${FIND_MODELS} `
-      + 'Leave out `model` to get the info of your own model.')
-  }
-
-  const provider = providers.find((candidate) => candidate.id === ref.providerId)
-  const model = provider && availableModels(cache, [provider]).find((candidate) => candidate.id === ref.modelId)
+ *  Throws as `namedModelTarget` does. The reply's own model can be missing
+ *  from the list too, as a reply needs no cached model: the last model
+ *  check of its provider failed, or the provider's list has the model no
+ *  more. That is not a fault of the call, and the error says so. */
+export function modelInfoTarget(cache: ModelCache, providers: readonly ProviderInfo[], args: ToolArguments, replyModel: ModelRef): ModelTarget {
+  if (args.model !== undefined) return namedModelTarget(cache, providers, String(args.model), 'Leave out `model` to get the info of your own model.')
+  const { provider, model } = listedModel(cache, providers, replyModel)
   if (provider && model) return { provider, model }
-
-  if (named === undefined) {
-    throw new ToolError(`Dez cannot give the info of your own model (${JSON.stringify(modelRefKey(ref))}) now: it is not among the models that model_list lists. `
-      + 'The last model check of its provider can have failed. This is not a fault of the call: tell the user. '
-      + `To get the info of another model, give its full id in \`model\`. ${FIND_MODELS}`)
-  }
-  if (!provider) throw new ToolError(`No provider has the id ${JSON.stringify(ref.providerId)}. ${FIND_MODELS}`)
-  throw new ToolError(`The user cannot use the model ${JSON.stringify(named)}. ${FIND_MODELS}`)
-}
-
-/** The parameter values that the `parameters` argument of a call names (the
- *  text of a JSON object); none when the call has no such argument.
- *
- *  Throws for a text that is not a JSON object, a name that is not a
- *  parameter of the model, and a value that its parameter does not take
- *  (`checkedParameterValues`); the model reads the error. */
-export function modelInfoParameterValues(model: ModelInfo, args: ToolArguments): ParameterValues {
-  if (typeof args.parameters !== 'string') return {}
-  let chosen: unknown
-  try {
-    chosen = JSON.parse(args.parameters)
-  } catch {
-    chosen = undefined
-  }
-  if (typeof chosen !== 'object' || chosen === null || Array.isArray(chosen)) {
-    throw new ToolError('`parameters` must be the text of a JSON object, for example {"duration": "5s"}.')
-  }
-  try {
-    return checkedParameterValues(model.parameters ?? [], chosen as Record<string, unknown>)
-  } catch (error) {
-    // A provider module throws plain errors, but their texts tell the
-    // calling model which names and values the media model takes.
-    throw new ToolError(rawErrorText(error), '', { cause: error })
-  }
+  throw new ToolError(`Dez cannot give the info of your own model (${JSON.stringify(modelRefKey(replyModel))}) now: it is not among the models that model_list lists. `
+    + 'The last model check of its provider can have failed. This is not a fault of the call: tell the user. '
+    + `To get the info of another model, give its full id in \`model\`. ${FIND_MODELS}`)
 }
 
 /** The entry that the `part` argument of a call names; undefined for a

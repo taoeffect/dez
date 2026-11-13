@@ -1,6 +1,7 @@
 import { byteSizeText } from '../../utils/byteSize'
 import { canonicalMediaType } from '../chat/mediaFiles'
 import type { MediaTagData, MediaTagKind } from '../chat/mediaTags'
+import { requestHas, type RequestReader } from './requestReader'
 import type { MediaKind } from './types'
 
 // The input clips of a media request: the audio and video clips that the
@@ -115,15 +116,17 @@ export function neededClipKind(kind: MediaKind): MediaTagKind | undefined {
 }
 
 /** Why a request of `kind` with the clips `clips` does not go to the
- *  model `modelName`, as a sentence for the user; null when it can go.
- *  A model that changes or writes down a clip needs one clip of its kind
- *  (`NEEDS_INPUT_CLIP`). The check costs nothing, and the submit makes it
- *  before the reply starts. */
-export function missingClipProblem(modelName: string, kind: MediaKind, clips: readonly Pick<ClipAttachment, 'kind'>[]): string | null {
+ *  model `modelName`, as a sentence for `reader` (the user, or the model
+ *  that called `model_invoke`); null when it can go. A model that changes
+ *  or writes down a clip needs one clip of its kind (`NEEDS_INPUT_CLIP`).
+ *  The check costs nothing, and the submit makes it before the reply
+ *  starts. */
+export function missingClipProblem(modelName: string, kind: MediaKind, clips: readonly Pick<ClipAttachment, 'kind'>[], reader: RequestReader = 'user'): string | null {
   const needed = NEEDS_INPUT_CLIP[kind]
   if (!needed || clips.some((clip) => clip.kind === needed.kind)) return null
   const clip = needed.kind === 'audio' ? 'an audio clip' : 'a video clip'
-  return `${modelName} ${needed.does}, and this message has no ${needed.kind} clip. Paste or drop ${clip} into the message, or name one with @id.`
+  const fix = reader === 'user' ? `Paste or drop ${clip} into the message, or name one with @id.` : `Name ${clip} with @id in \`prompt\`.`
+  return `${modelName} ${needed.does}, and ${requestHas(reader)} no ${needed.kind} clip. ${fix}`
 }
 
 // A copy that shares no object with `rules`.
@@ -149,36 +152,49 @@ function secondsText(seconds: number, round: (value: number) => number = Math.ro
 }
 
 // What to do about a clip that breaks a rule of its kind. Dez cuts and
-// converts no video; an audio clip can be cut with the `audio` tool.
-function fixText(kind: MediaTagKind, tooLong: boolean): string {
+// converts no video; an audio clip can be cut with the `audio` tool, which
+// the model that reads the text can call itself.
+function fixText(kind: MediaTagKind, tooLong: boolean, reader: RequestReader): string {
   if (kind === 'video') return 'Use another video clip, or choose another model.'
-  if (tooLong) return 'Ask the chat model to cut it with the audio tool (`audio clip`), then name the new clip.'
-  return 'Use another audio clip, or choose another model.'
+  if (!tooLong) return 'Use another audio clip, or choose another model.'
+  return reader === 'user'
+    ? 'Ask the chat model to cut it with the audio tool (`audio clip`), then name the new clip.'
+    : 'Cut it with the audio tool (`audio clip`), then name the new clip in `prompt`.'
 }
 
 /** Why the clips `clips` (the clips of a request, `mediaRequestInput`)
  *  do not go to the model `modelName` with the clip rules `rules` in a
- *  request with `imageCount` input images, as a sentence for the user;
+ *  request with `imageCount` input images, as a sentence for `reader`;
  *  null when they can go, as far as the tags tell at the time `now`. The
  *  submit gives only the clips that the model takes (`mediaRequestInput`
- *  cuts the others), so the kind and count checks are for a caller of
- *  `generateMedia` that did not cut them. The check costs nothing. */
-export function clipTagProblem(modelName: string, rules: InputClipRules | undefined, clips: readonly ClipAttachment[], imageCount: number, now = Date.now()): string | null {
+ *  cuts the others), so the kind and count checks are for a caller that
+ *  did not cut them: a caller of `generateMedia`, and `model_invoke`,
+ *  which refuses a prompt that names too many. The check costs nothing. */
+export function clipTagProblem(
+  modelName: string,
+  rules: InputClipRules | undefined,
+  clips: readonly ClipAttachment[],
+  imageCount: number,
+  now = Date.now(),
+  reader: RequestReader = 'user',
+): string | null {
   const counts = { audio: 0, video: 0 }
   for (const clip of clips) counts[clip.kind]++
   for (const kind of ['audio', 'video'] as const) {
     const max = maxInputClips(rules, kind)
     if (counts[kind] <= max) continue
-    return max === 0
-      ? `${modelName} takes no ${kind} clip, and this message has ${clipsText(counts[kind], kind)}. Remove the ${kind} clips and their @id mentions from the message.`
-      : `${modelName} takes only ${clipsText(max, kind)}, and this message has ${counts[kind]}. Use fewer ${kind} clips.`
+    if (max > 0) return `${modelName} takes only ${clipsText(max, kind)}, and ${requestHas(reader)} ${counts[kind]}. Use fewer ${kind} clips.`
+    const fix = reader === 'user'
+      ? `Remove the ${kind} clips and their @id mentions from the message.`
+      : 'Remove their @id mentions from `prompt`, or choose another model.'
+    return `${modelName} takes no ${kind} clip, and ${requestHas(reader)} ${clipsText(counts[kind], kind)}. ${fix}`
   }
   for (const clip of clips) {
     const kindRules = rules?.[clip.kind]
     const types = kindRules?.types
     if (!kindRules || !types || types.includes(canonicalMediaType(clip.type)) || needsWavCopy(clip.kind, kindRules, clip.type)) continue
     const typeList = new Intl.ListFormat('en', { type: 'disjunction' }).format(types)
-    return `${modelName} takes only ${clip.kind} clips of the type ${typeList}, and @${clip.id} is ${canonicalMediaType(clip.type)}. ${fixText(clip.kind, false)}`
+    return `${modelName} takes only ${clip.kind} clips of the type ${typeList}, and @${clip.id} is ${canonicalMediaType(clip.type)}. ${fixText(clip.kind, false, reader)}`
   }
   for (const clip of clips) {
     if (!rules?.[clip.kind]?.urlOnly) continue
@@ -196,12 +212,14 @@ export function clipTagProblem(modelName: string, rules: InputClipRules | undefi
     }
   }
   if (counts.audio > 0 && rules?.audioNeedsVisual && imageCount + counts.video === 0) {
-    return `${modelName} takes an audio clip only together with a reference image or video. Add an image or a video clip to the message, or name one with @id.`
+    const fix = reader === 'user' ? 'Add an image or a video clip to the message, or name one with @id.' : 'Name an image or a video clip with @id in `prompt`.'
+    return `${modelName} takes an audio clip only together with a reference image or video. ${fix}`
   }
   const references = imageCount + counts.video
   if (rules?.audio?.use === 'voice' && counts.audio > references) {
+    const has = requestHas(reader)
     return `${modelName} takes each audio clip as the voice of one reference, in order: the first audio clip is the voice of the first image, and so on, with the images first and then the video clips. `
-      + `This message has ${clipsText(counts.audio, 'audio')} and ${references} ${references === 1 ? 'image or video clip' : 'images and video clips'}. Use fewer audio clips, or more images or video clips.`
+      + `${has.charAt(0).toUpperCase()}${has.slice(1)} ${clipsText(counts.audio, 'audio')} and ${references} ${references === 1 ? 'image or video clip' : 'images and video clips'}. Use fewer audio clips, or more images or video clips.`
   }
   return null
 }
@@ -219,29 +237,29 @@ export interface ReadInputClip {
 }
 
 /** Why the clips `read` do not go to the model `modelName` with the clip
- *  rules `rules`, by their lengths and sizes, as a sentence for the user;
+ *  rules `rules`, by their lengths and sizes, as a sentence for `reader`;
  *  null when they can go, as far as Dez can tell. A clip whose length Dez
  *  could not tell gets no length check, and the provider's answer tells
- *  the user then. Dez cuts nothing: a clip that is too long gets the
+ *  the reader then. Dez cuts nothing: a clip that is too long gets the
  *  model's limit, and an audio clip the hint to cut it with the `audio`
  *  tool. The length of a clip comes before its size: the size of a WAV
  *  copy follows from its length, so a clip that is too long is the cause
  *  of a copy that is too large. */
-export function clipFileProblem(modelName: string, rules: InputClipRules | undefined, read: readonly ReadInputClip[]): string | null {
+export function clipFileProblem(modelName: string, rules: InputClipRules | undefined, read: readonly ReadInputClip[], reader: RequestReader = 'user'): string | null {
   for (const { clip, seconds, byteLength, wavCopy } of read) {
     const kindRules = rules?.[clip.kind]
     if (!kindRules) continue
     if (seconds !== null && kindRules.maxSeconds !== undefined && seconds > kindRules.maxSeconds) {
-      return `The ${clip.kind} clip @${clip.id} is ${secondsText(seconds, Math.ceil)} long, and ${modelName} takes ${clip.kind} clips of at most ${secondsText(kindRules.maxSeconds)}. ${fixText(clip.kind, true)}`
+      return `The ${clip.kind} clip @${clip.id} is ${secondsText(seconds, Math.ceil)} long, and ${modelName} takes ${clip.kind} clips of at most ${secondsText(kindRules.maxSeconds)}. ${fixText(clip.kind, true, reader)}`
     }
     if (seconds !== null && kindRules.minSeconds !== undefined && seconds < kindRules.minSeconds) {
-      return `The ${clip.kind} clip @${clip.id} is ${secondsText(seconds, Math.floor)} long, and ${modelName} takes ${clip.kind} clips of at least ${secondsText(kindRules.minSeconds)}. ${fixText(clip.kind, false)}`
+      return `The ${clip.kind} clip @${clip.id} is ${secondsText(seconds, Math.floor)} long, and ${modelName} takes ${clip.kind} clips of at least ${secondsText(kindRules.minSeconds)}. ${fixText(clip.kind, false, reader)}`
     }
     if (kindRules.maxBytes !== undefined && byteLength > kindRules.maxBytes) {
       const size = wavCopy
         ? `Dez sends the audio clip @${clip.id} as a WAV copy, because ${modelName} takes no audio clip of the type ${canonicalMediaType(clip.type)}. The copy is ${byteSizeText(byteLength)}`
         : `The ${clip.kind} clip @${clip.id} is ${byteSizeText(byteLength)}`
-      return `${size}, and ${modelName} takes ${clip.kind} clips of at most ${byteSizeText(kindRules.maxBytes)}. ${fixText(clip.kind, clip.kind === 'audio')}`
+      return `${size}, and ${modelName} takes ${clip.kind} clips of at most ${byteSizeText(kindRules.maxBytes)}. ${fixText(clip.kind, clip.kind === 'audio', reader)}`
     }
   }
   for (const kind of ['audio', 'video'] as const) {
@@ -249,7 +267,8 @@ export function clipFileProblem(modelName: string, rules: InputClipRules | undef
     if (most === undefined) continue
     const total = read.reduce((sum, { clip, seconds }) => sum + (clip.kind === kind && seconds !== null ? seconds : 0), 0)
     if (total <= most) continue
-    return `The ${kind} clips of this message are ${secondsText(total, Math.ceil)} long together, and ${modelName} takes at most ${secondsText(most)} of ${kind} clips in one request. Use fewer or shorter ${kind} clips.`
+    const clips = reader === 'user' ? `The ${kind} clips of this message` : `The ${kind} clips that the prompt names`
+    return `${clips} are ${secondsText(total, Math.ceil)} long together, and ${modelName} takes at most ${secondsText(most)} of ${kind} clips in one request. Use fewer or shorter ${kind} clips.`
   }
   return null
 }

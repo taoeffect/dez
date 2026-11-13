@@ -1,5 +1,6 @@
 import type { ImageSizeRules } from './imageSize'
 import type { OptionValue, ParameterValues } from './modelParameters'
+import { requestHas, type RequestReader } from './requestReader'
 import type { MediaKind } from './types'
 
 // The input images of a media request (an edit, an upscale, a video, the
@@ -111,31 +112,50 @@ export class TooManyImagesError extends Error {
   }
 }
 
-/** The text for the user whose message to the model `modelName` has
+/** The text for `reader` whose request to the model `modelName` has
  *  `sentImages` images, of which the model takes only `maxImages`: from
  *  the provider's refusal (a `TooManyImagesError`), or from the limit that
- *  Dez learned from one (learnedImageLimit.ts). The message's images are
- *  the images of the request (`mediaRequestInput`). Dez does not send the
- *  request again with fewer images by itself: the user would pay for a
- *  clip that leaves out an image that they meant. */
-export function tooManyImagesMessage(modelName: string, { maxImages, sentImages }: Pick<TooManyImagesError, 'maxImages' | 'sentImages'>): string {
+ *  Dez learned from one (learnedImageLimit.ts). For the user, the images
+ *  are the images of the message (`mediaRequestInput`); for a model, the
+ *  images that the `prompt` of its `model_invoke` call names. Dez does not
+ *  send the request again with fewer images by itself: the user would pay
+ *  for a clip that leaves out an image that the reader meant. */
+export function tooManyImagesMessage(
+  modelName: string,
+  { maxImages, sentImages }: Pick<TooManyImagesError, 'maxImages' | 'sentImages'>,
+  reader: RequestReader = 'user',
+): string {
   const takes = imagesText(maxImages)
-  return `${modelName} takes only ${takes}, and this message has ${sentImages}. `
-    + `Keep only ${takes} in the message (pasted, or named with @id), and send it again.`
+  const fix = reader === 'user'
+    ? `Keep only ${takes} in the message (pasted, or named with @id), and send it again.`
+    : `Name only ${takes} with @id in \`prompt\`, and call again.`
+  return `${modelName} takes only ${takes}, and ${requestHas(reader)} ${sentImages}. ${fix}`
+}
+
+/** Why a `model_invoke` call whose prompt names `imageCount` images does
+ *  not go to the model `modelName`, which takes at most `maxImages` of
+ *  them, as a sentence for the model that made the call; null when all of
+ *  them go. A user message with more images is cut instead
+ *  (`mediaRequestInput`), and a toast tells the user. */
+export function unusedImagesProblem(modelName: string, maxImages: number, imageCount: number): string | null {
+  if (imageCount <= maxImages) return null
+  if (maxImages > 0) return tooManyImagesMessage(modelName, { maxImages, sentImages: imageCount }, 'model')
+  return `${modelName} takes no input image, and the prompt names ${imagesText(imageCount)}. Remove the @id mentions of images from \`prompt\`, or choose another model.`
 }
 
 /** Why a request of `kind` with `imageCount` images does not go to the
- *  model `modelName` with the image rules `rules`, as a sentence for the
- *  user; null when it can go. An edit, an upscale, and a video from an
+ *  model `modelName` with the image rules `rules`, as a sentence for
+ *  `reader`; null when it can go. An edit, an upscale, and a video from an
  *  image need an image, and so does a model whose rules tell so. The check
  *  costs nothing, and it comes before the reply starts, so the user's
  *  message stays as it is. */
-export function missingImageProblem(modelName: string, kind: MediaKind, imageCount: number, rules: InputImageRules | undefined): string | null {
+export function missingImageProblem(modelName: string, kind: MediaKind, imageCount: number, rules: InputImageRules | undefined, reader: RequestReader = 'user'): string | null {
   const minImages = minInputImages(kind, rules)
   if (imageCount >= minImages) return null
   if (minImages > 1) {
-    return `${modelName} needs at least ${imagesText(minImages)}, and this message has ${imageCount}. `
-      + 'Paste more images, or name them with @id.'
+    const fix = reader === 'user' ? 'Paste more images, or name them with @id.' : 'Name more images with @id in `prompt`.'
+    return `${modelName} needs at least ${imagesText(minImages)}, and ${requestHas(reader)} ${imageCount}. ${fix}`
   }
-  return `${modelName} ${NEEDS_INPUT_IMAGE[kind] ?? 'needs an input image'}. Paste an image, or name one with @id.`
+  const fix = reader === 'user' ? 'Paste an image, or name one with @id.' : 'Name an image with @id in `prompt`.'
+  return `${modelName} ${NEEDS_INPUT_IMAGE[kind] ?? 'needs an input image'}. ${fix}`
 }

@@ -14,16 +14,15 @@ import type { ClipTextRules } from '../model/providers/clipText'
 import { customProviderConfigSchema } from '../model/providers/config'
 import { unstoredOutputMessage } from '../model/providers/unusableModel'
 import type { GeneratedClip, ProviderChatInputMessage, ProviderGenerateMediaInput, ProviderGenerateMediaResult, ProviderInfo, ProviderStreamChatInput, ProviderStreamChatResult } from '../model/providers'
+import { providerInfo } from '../model/providers/testing'
 import { CLIP_KINDS, isClipKind, isTextKind, type MediaKind } from '../model/providers/types'
 import type { RequestMessages } from '../model/streams/types'
 import { systemPromptErrorText } from '../model/systemPrompt'
-import { jobsWaitText } from '../model/tools/jobs'
+import { jobsWaitText, startedJobId } from '../model/tools/jobs'
 import { NO_MODELS_TEXT } from '../model/tools/modelList'
 import { TOOL_DEFINITIONS, unknownToolText } from '../model/tools/registry'
 import type { ToastData } from '../view/toast/selectors'
 import { ExplainedError, UNEXPECTED_ERROR } from '../utils/errorText'
-import type { JobOutcome } from './jobs'
-import type { ToolRunContext } from './tools'
 // Side-effect imports: register the dez.model/* selectors and the selectors
 // under test.
 import '../model/state/index'
@@ -145,13 +144,6 @@ sbp('sbp/selectors/register', {
   async 'dez.controller/alertReplyEnded' (tabId: string, status: string): Promise<void> {
     alerts.push({ tabId, status })
   },
-})
-
-// The context of the last tool call that the tool loop ran (an SBP filter
-// runs before its selector). The job tests start their jobs through it.
-let toolContext: ToolRunContext
-sbp('sbp/filters/selector/add', 'dez.controller/tools/run', (_domain: string, _selector: string, data: unknown[]) => {
-  toolContext = data[2] as ToolRunContext
 })
 
 function activeTab(): Tab {
@@ -2249,34 +2241,49 @@ describe('dez.stream/start clips that a tool makes', () => {
 })
 
 describe('dez.stream/start jobs', () => {
-  const listCall = (id: string) => ({ id, name: 'model_list', argumentsText: '{"filter":"gemini"}' })
-  const listBlock = (id: string) => `<dez:tool id="${id}" name="model_list" filter="gemini">\n${NO_MODELS_TEXT}\n</dez:tool>\n`
+  const PAINTER = `${model.providerId}/painter`
+  const FILMER = `${model.providerId}/filmer`
+  const PROMPT = 'A fox in the snow.'
+  // A `model_invoke` call, which starts a job.
+  const invokeCall = (id: string, target = PAINTER) => ({ id, name: 'model_invoke', argumentsText: JSON.stringify({ model: target, prompt: PROMPT }) })
   const fox = generated('fox.png')
   const foxReference = `![${fox}](id=a|tool=model_invoke)`
-  // The jobs that the calls started, in the order of the starts: the id,
-  // the signal of the work, and the end of the work.
-  let jobs: Array<{ id: string, signal: AbortSignal, end: (outcome: JobOutcome) => void }> = []
+  // A clip that the provider made as its job `q-17`, in a temp copy.
+  const run: GeneratedClip = { kind: 'video', mediaType: 'video/mp4', src: '/home/u/.cache/dez/media/run.mp4', url: null, expires: '2026-12-01T00:00:00.000Z', jobId: 'q-17' }
+  // The requests of the jobs, in the order of the starts: the signal of
+  // the request, and the provider's answer or refusal, which only the test
+  // gives.
+  let jobs: Array<{ signal: AbortSignal, end: (result: ProviderGenerateMediaResult) => void, fail: (error: Error) => void }> = []
 
   // Lets the promise callbacks that are due run, on the fake clock: the
   // reply then waits for something that only the test ends.
   const settled = () => vi.advanceTimersByTimeAsync(0)
 
-  // No tool starts a job in its own run yet. So each `model_list` call
-  // starts one here, as a job of `model_invoke`: its runner reads the
-  // provider list, and this stub then starts the job through the context
-  // of that call. The work ends only when the test ends it.
+  // The result of the call `callId` of the reply, and the id of the job
+  // that it started.
+  function callResult(callId: string): string {
+    return findToolBlocks(sectionVisibleText(agentSection())).find((block) => block.id === callId)?.result ?? ''
+  }
+  const jobId = (callId: string) => startedJobId(callResult(callId)) as string
+  // The block of a `model_invoke` call of the reply.
+  const invokeBlock = (id: string, target = PAINTER) => `<dez:tool id="${id}" name="model_invoke" model="${target}" prompt="${PROMPT}">\n${callResult(id)}\n</dez:tool>\n`
+
   beforeEach(() => {
     vi.useFakeTimers()
     jobs = []
-    providerInfos = async () => {
-      const job = { id: '', signal: new AbortController().signal, end: (_outcome: JobOutcome) => {} }
-      job.id = toolContext.jobs.start('model_invoke', (signal) => new Promise((resolve) => {
-        job.signal = signal
-        job.end = resolve
-      }), { timeoutMs: 60_000 })
-      jobs.push(job)
-      return []
-    }
+    providerInfos = async () => [providerInfo(model.providerId, 'Thinker')]
+    sbp('dez.model/modelCache/applyProviderResult', model.providerId, {
+      ok: true,
+      models: [
+        { id: model.modelId, name: model.modelName, provider: model.providerId },
+        { id: 'painter', name: 'Painter', provider: model.providerId, outputs: ['image'], request: 'image' },
+        { id: 'filmer', name: 'Filmer', provider: model.providerId, outputs: ['video'], request: 'video' },
+      ],
+    })
+    saveImage = async () => fox
+    generateMedia = (input) => new Promise((resolve, reject) => {
+      jobs.push({ signal: input.signal as AbortSignal, end: resolve, fail: reject })
+    })
   })
 
   afterEach(() => {
@@ -2285,7 +2292,7 @@ describe('dez.stream/start jobs', () => {
 
   it('gives the result of a job to a jobs_wait call, and puts the image of the job after the blocks of that call', async () => {
     replyRounds([
-      async (input) => ({ requestId: input.requestId as string, toolCalls: [listCall('c1')] }),
+      async (input) => ({ requestId: input.requestId as string, toolCalls: [invokeCall('c1')] }),
       async (input) => ({ requestId: input.requestId as string, toolCalls: [{ id: 'c2', name: 'jobs_wait', argumentsText: '{}' }] }),
       async (input) => {
         await input.onToken('Here it is.')
@@ -2297,22 +2304,22 @@ describe('dez.stream/start jobs', () => {
     await settled()
     // The call waits for the job.
     expect(requests).toHaveLength(2)
-    jobs[0].end({ text: 'A fox in the snow.', isError: false, assets: [{ kind: 'image', path: fox }] })
+    jobs[0].end({ media: [png], clips: [] })
     await stream
 
-    const result = jobsWaitText([{ id: jobs[0].id, tool: 'model_invoke', status: 'finished', text: 'A fox in the snow.\nMade the image @a.' }], 0)
+    const result = jobsWaitText([{ id: jobId('c1'), tool: 'model_invoke', status: 'finished', text: 'Made the image @a.' }], 0)
     // The request after the call ends with its result: the reference of
     // the image after it would be a prefill.
     expect(sent[2].at(-1)).toStrictEqual({ role: 'tool', results: [{ callId: 'c2', content: result, isError: false }] })
     const text = sectionVisibleText(agentSection())
-    expect(findToolBlocks(text).map((block) => block.result)).toStrictEqual([NO_MODELS_TEXT, result])
+    expect(callResult('c2')).toBe(result)
     expect(text.slice(text.lastIndexOf('</dez:tool>\n'))).toBe(`</dez:tool>\n\n${foxReference}\n\nHere it is.`)
     expect(toasts).toStrictEqual([])
   })
 
-  it('waits for a job that still runs at the end of the reply, then puts its image at the section end under the name of its tool', async () => {
+  it('waits for a job that still runs at the end of the reply, then puts its clip at the section end with the name of its tool and the provider\'s job id', async () => {
     replyRounds([
-      async (input) => ({ requestId: input.requestId as string, toolCalls: [listCall('c1')] }),
+      async (input) => ({ requestId: input.requestId as string, toolCalls: [invokeCall('c1', FILMER)] }),
       async (input) => {
         await input.onToken('I started it.')
         return { requestId: input.requestId as string }
@@ -2325,15 +2332,16 @@ describe('dez.stream/start jobs', () => {
     expect(requests).toHaveLength(2)
     expect(sbp('dez.model/streams/isStreaming', activeTab().id)).toBe(true)
     expect(savedConversations).toHaveLength(0)
-    jobs[0].end({ text: 'A fox in the snow.', isError: false, assets: [{ kind: 'image', path: fox }] })
+    jobs[0].end({ media: [], clips: [run] })
     await stream
 
+    const tag = `<dez:video id="a" type="video/mp4" src="${run.src}" expires="${run.expires}" tool="model_invoke" job="q-17"/>`
     expect(sectionTexts()).toStrictEqual([
       { role: 'user', text: 'Hi' },
-      { role: 'agent', text: `${listBlock('c1')}I started it.\n\n${foxReference}` },
+      { role: 'agent', text: `${invokeBlock('c1', FILMER)}I started it.\n\n${tag}` },
       { role: 'user', text: '' },
     ])
-    expect(deletedImages).toStrictEqual([])
+    expect(deletedFiles).toStrictEqual([])
     expect(toasts).toStrictEqual([])
     expect(alerts).toStrictEqual([{ tabId: activeTab().id, status: 'finished' }])
   })
@@ -2342,10 +2350,10 @@ describe('dez.stream/start jobs', () => {
   // toast for all of them: the toast area shows only a few at a time.
   it('tells the user in one sticky error toast of the jobs that failed and whose results the model did not get', async () => {
     replyRounds([
-      async (input) => ({ requestId: input.requestId as string, toolCalls: [listCall('c1'), listCall('c2')] }),
+      async (input) => ({ requestId: input.requestId as string, toolCalls: [invokeCall('c1'), invokeCall('c2')] }),
       async (input) => {
-        jobs[0].end({ text: 'The provider refused the prompt.', isError: true, assets: [] })
-        jobs[1].end({ text: 'The provider has no credit left.', isError: true, assets: [] })
+        jobs[0].fail(new ExplainedError('The provider refused the prompt.'))
+        jobs[1].fail(new ExplainedError('The provider has no credit left.'))
         await input.onToken('Both run now.')
         return { requestId: input.requestId as string }
       },
@@ -2357,14 +2365,18 @@ describe('dez.stream/start jobs', () => {
       area: 'app-global',
       data: { variant: 'error', title: '2 jobs failed', message: expect.any(String) },
     }])
-    expect(toasts[0].data.message).toContain(`The model_invoke job ${jobs[0].id} failed: The provider refused the prompt.`)
-    expect(toasts[0].data.message).toContain(`The model_invoke job ${jobs[1].id} failed: The provider has no credit left.`)
+    const details = toasts[0].data.message.split('\n\n').filter((part) => part.includes('model_invoke job'))
+    expect(details).toHaveLength(2)
+    expect(details[0]).toContain(`${jobId('c1')} failed`)
+    expect(details[0]).toContain('The provider refused the prompt.')
+    expect(details[1]).toContain(`${jobId('c2')} failed`)
+    expect(details[1]).toContain('The provider has no credit left.')
     expect(alerts).toStrictEqual([{ tabId: activeTab().id, status: 'finished' }])
   })
 
   it('takes the image of a job that still runs when the request fails, then shows the error', async () => {
     replyRounds([
-      async (input) => ({ requestId: input.requestId as string, toolCalls: [listCall('c1')] }),
+      async (input) => ({ requestId: input.requestId as string, toolCalls: [invokeCall('c1')] }),
       async () => {
         throw new ExplainedError('Venice refused the API key.', 'HTTP 401: Authentication failed')
       },
@@ -2373,10 +2385,10 @@ describe('dez.stream/start jobs', () => {
     const stream = startStream({ sendTools: true })
     await settled()
     expect(toasts).toStrictEqual([])
-    jobs[0].end({ text: '', isError: false, assets: [{ kind: 'image', path: fox }] })
+    jobs[0].end({ media: [png], clips: [] })
     await stream
 
-    expect(sectionVisibleText(agentSection())).toBe(`${listBlock('c1')}\n${foxReference}`)
+    expect(sectionVisibleText(agentSection())).toBe(`${invokeBlock('c1')}\n${foxReference}`)
     expect(toasts.map((toast) => toast.data)).toStrictEqual([
       { variant: 'error', title: 'Request failed', message: 'Venice refused the API key.\n\nDetails: HTTP 401: Authentication failed' },
     ])
@@ -2387,7 +2399,7 @@ describe('dez.stream/start jobs', () => {
   // the blocks tell which calls ran.
   it('stops the jobs when the user stops the reply, keeps a section that holds only tool blocks, and deletes what a job still makes', async () => {
     replyRounds([
-      async (input) => ({ requestId: input.requestId as string, toolCalls: [listCall('c1')] }),
+      async (input) => ({ requestId: input.requestId as string, toolCalls: [invokeCall('c1', FILMER)] }),
       async () => {
         await sbp('dez.stream/stop', activeTab().id)
         throw new Error('cancelled')
@@ -2397,13 +2409,13 @@ describe('dez.stream/start jobs', () => {
     await startStream({ sendTools: true })
 
     expect(jobs[0].signal.aborted).toBe(true)
-    // A work that does not end at the abort still gives its file.
-    jobs[0].end({ text: '', isError: false, assets: [{ kind: 'image', path: fox }] })
+    // A request that does not end at the abort still gives its clip.
+    jobs[0].end({ media: [], clips: [run] })
     await settled()
-    expect(deletedImages).toStrictEqual([fox])
+    expect(deletedFiles).toStrictEqual([{ path: 'media/run.mp4', root: 'cache' }])
     expect(sectionTexts()).toStrictEqual([
       { role: 'user', text: 'Hi' },
-      { role: 'agent', text: listBlock('c1') },
+      { role: 'agent', text: invokeBlock('c1', FILMER) },
       { role: 'user', text: '' },
     ])
     expect(toasts).toStrictEqual([])
@@ -2412,7 +2424,7 @@ describe('dez.stream/start jobs', () => {
 
   it('ends a reply that waits for its jobs as a stop when the user stops it', async () => {
     replyRounds([
-      async (input) => ({ requestId: input.requestId as string, toolCalls: [listCall('c1')] }),
+      async (input) => ({ requestId: input.requestId as string, toolCalls: [invokeCall('c1')] }),
       async (input) => {
         await input.onToken('I started it.')
         return { requestId: input.requestId as string }
@@ -2426,7 +2438,7 @@ describe('dez.stream/start jobs', () => {
 
     expect(jobs[0].signal.aborted).toBe(true)
     expect(sbp('dez.model/streams/isStreaming', activeTab().id)).toBe(false)
-    expect(sectionVisibleText(agentSection())).toBe(`${listBlock('c1')}I started it.`)
+    expect(sectionVisibleText(agentSection())).toBe(`${invokeBlock('c1')}I started it.`)
     expect(savedConversations).toHaveLength(1)
     expect(toasts).toStrictEqual([])
     expect(alerts).toStrictEqual([])
@@ -2436,7 +2448,7 @@ describe('dez.stream/start jobs', () => {
     const tabId = activeTab().id
     sbp('dez.model/setActiveModel', model.providerId, model.modelId, model.modelName)
     replyRounds([
-      async (input) => ({ requestId: input.requestId as string, toolCalls: [listCall('c1')] }),
+      async (input) => ({ requestId: input.requestId as string, toolCalls: [invokeCall('c1')] }),
       async (input) => {
         await input.onToken('I started it.')
         await sbp('dez.controller/submitTab', tabId)

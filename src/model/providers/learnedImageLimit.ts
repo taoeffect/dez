@@ -1,5 +1,6 @@
 import { imagesText, maxInputImages, tooManyImagesMessage, type InputImageRules } from './clipImages'
 import type { KnownLimit } from './knownLimits'
+import type { RequestReader } from './requestReader'
 import type { MediaKind, ModelInfo } from './types'
 
 // The image count that a provider's refusal told for a model
@@ -54,15 +55,15 @@ export function withKeptImageLimits(
   })
 }
 
-/** Why a message with `imageCount` images (before the cut to the most that
+/** Why a request with `imageCount` images (before the cut to the most that
  *  the model's rules take) does not go to the model `modelName` with the
  *  learned limit `learned`, in the words of the provider's refusal
- *  (`tooManyImagesMessage`); null when it can go. The message is refused
- *  and not cut: the user would pay for a clip that leaves out an image that
- *  they meant. */
-export function learnedImagesProblem(modelName: string, learned: LearnedImageLimit | undefined, imageCount: number): string | null {
+ *  (`tooManyImagesMessage`) for `reader`; null when it can go. The request
+ *  is refused and not cut: the user would pay for a clip that leaves out
+ *  an image that the reader meant. */
+export function learnedImagesProblem(modelName: string, learned: LearnedImageLimit | undefined, imageCount: number, reader: RequestReader = 'user'): string | null {
   if (!learned || imageCount <= learned.maxImages) return null
-  return tooManyImagesMessage(modelName, { maxImages: learned.maxImages, sentImages: imageCount })
+  return tooManyImagesMessage(modelName, { maxImages: learned.maxImages, sentImages: imageCount }, reader)
 }
 
 /** `rules`, the image rules of a request of `kind`, with the most images
