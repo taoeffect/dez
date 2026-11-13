@@ -76,7 +76,8 @@ describe('Settings › System Prompt', () => {
     await waitForValue(browser, 'saved prompt', savedPrompt, text)
   }
 
-  // Sends `text` and checks that the request body is `body`, then answers it.
+  // Sends `text`, checks that the request body is the chat body with the
+  // system prompt of `template`, then answers it.
   async function sendAndExpect (text: string, template: string): Promise<void> {
     await submit(browser, text)
     const request = await takeRequest(setup, mockChatPath(PROVIDER), openAiChatBody(PROVIDER, [{ role: 'user', content: text }], template))

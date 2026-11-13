@@ -361,9 +361,10 @@ fn canonical_folders(candidates: Vec<std::path::PathBuf>) -> Vec<String> {
 }
 
 // The absolute path of a file with no symlink, `.`, or `..` in it. The
-// frontend links a dropped file by this path, and compares it with the
-// temp and Dez folders. An error for a missing file and a path that is
-// not UTF-8.
+// frontend compares it with the temp and Dez folders to choose between a
+// link and a copy (`dez.controller/images/linkPath`); a link keeps the path
+// as the drop gave it. An error for a missing file and a path that is not
+// UTF-8.
 #[tauri::command]
 pub async fn canonical_path(path: String) -> Result<String, String> {
     let canonical = std::fs::canonicalize(&path).map_err(|error| error.to_string())?;

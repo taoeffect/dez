@@ -57,12 +57,14 @@ export function holdsStoredFilePath(text: string): boolean {
 }
 
 /** A text for a provider, with each path of a file that Dez stores or
- *  links replaced by one word: `image`, `audio`, `video`, or `media` (a
- *  temp copy). So an image reference goes as `![image](id=a)`, with its
- *  metadata as it is in the text, and a reference that is not valid (the
- *  Backspace rule's `![<path>](id=a`, bad metadata), a `src` path of a media
- *  tag line that is not valid, and, for a stored file, a bare path and a
- *  path in a metadata value lose their paths too. A text with no such path
+ *  links replaced by one word. The `src` path of a media tag line becomes
+ *  the tag's kind (`audio` or `video`), also for a temp copy; any other
+ *  such path becomes `image`, `audio`, `video`, or `media` (a temp copy).
+ *  So an image reference goes as `![image](id=a)`, with its metadata as it
+ *  is in the text, and a reference that is not valid (the Backspace rule's
+ *  `![<path>](id=a`, bad metadata), a `src` path of a media tag line that
+ *  is not valid, and, for a stored file, a bare path and a path in a
+ *  metadata value lose their paths too. A text with no such path
  *  comes back as it is, so text-only request bodies keep their bytes
  *  (prompt cache).
  *
