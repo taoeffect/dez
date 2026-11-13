@@ -20,7 +20,8 @@ import {
   joinProbeArgs,
   joinProbeFailedText,
   joinRunResult,
-  jpegCopyFailedText,
+  jpegCopyNotDrawnText,
+  jpegCopyNotWrittenText,
   outputFiles,
   OutputStart,
   ProgramLog,
@@ -67,18 +68,24 @@ async function imageInputFile({ id, name, path, jpegCopy }: ImageInput, folder: 
     console.error(`Failed to read the image @${id}:`, error)
     throw new ToolError(unreadableImageText(id), '', { cause: error })
   }
+  let drawn: DrawnImage
   try {
     // The plan always draws, so redraw gives a drawing.
-    const drawn = await sbp(
+    drawn = await sbp(
       'dez.controller/images/redraw',
       file,
       (size: ImageSize) => ({ ...wholeImageDrawing(size), background: '#ffffff' }),
       'image/jpeg',
     ) as DrawnImage
+  } catch (error) {
+    console.error(`Failed to draw the JPEG copy of the image @${id}:`, error)
+    throw new ToolError(jpegCopyNotDrawnText(id), '', { cause: error })
+  }
+  try {
     await sbp('dez.native/saveAppFile', `${folder}/${name}`, drawn.bytes, 'cache')
   } catch (error) {
-    console.error(`Failed to make the JPEG copy of the image @${id}:`, error)
-    throw new ToolError(jpegCopyFailedText(id), '', { cause: error })
+    console.error(`Failed to write the JPEG copy of the image @${id}:`, error)
+    throw new ToolError(jpegCopyNotWrittenText(id), '', { cause: error })
   }
   return null
 }

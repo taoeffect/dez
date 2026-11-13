@@ -919,8 +919,15 @@ const TELL_USER_CONSOLE = tellUserConsole(VIDEO_TOOL.name)
 
 /** The error result of a call whose input image `id` Dez could not draw as
  *  a JPEG copy. */
-export function jpegCopyFailedText(id: string): string {
+export function jpegCopyNotDrawnText(id: string): string {
   return `Dez could not make the JPEG copy of the image @${id} for the program: the webview could not decode or draw the image. ${TELL_USER_CONSOLE}`
+}
+
+/** The error result of a call whose JPEG copy of the input image `id` Dez
+ *  drew but could not write into the work folder (a full disk, a folder
+ *  that is gone). */
+export function jpegCopyNotWrittenText(id: string): string {
+  return `Dez could not write the JPEG copy of the image @${id} for the program. ${TELL_USER_CONSOLE}`
 }
 
 function withLog(text: string, logEnd: string): string {

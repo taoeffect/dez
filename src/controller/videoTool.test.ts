@@ -26,7 +26,8 @@ import {
   joinPlan,
   joinProbeArgs,
   joinProbeFailedText,
-  jpegCopyFailedText,
+  jpegCopyNotDrawnText,
+  jpegCopyNotWrittenText,
   OutputStart,
   PROGRAM_OUTPUT_CAP,
   VIDEO_READS_INPUTS,
@@ -231,9 +232,20 @@ describe('runFfmpegJob', () => {
     const notDrawn = await refusalOf(runFfmpegJob(ffmpegCall({ arguments: '-i @e out.mp4' }, CONVERSATION), running(), report))
 
     expect(gone).toBe(unreadableImageText('a'))
-    expect(notDrawn).toBe(jpegCopyFailedText('e'))
+    expect(notDrawn).toBe(jpegCopyNotDrawnText('e'))
     expect(native.runs).toStrictEqual([])
     expect(native.deletedFiles).toHaveLength(2)
+  })
+
+  it('tells that a JPEG copy that Dez could not write is no fault of the call, with no path', async () => {
+    native.saveAppFile = async () => { throw new Error(`${CACHE_DIR}/work/w/e.jpg: the disk is full`) }
+
+    const refusal = await refusalOf(runFfmpegJob(ffmpegCall({ arguments: '-i @e out.mp4' }, CONVERSATION), running(), report))
+
+    expect(refusal).toBe(jpegCopyNotWrittenText('e'))
+    expect(drawings).toHaveLength(1)
+    expect(native.runs).toStrictEqual([])
+    deletedWorkFolder()
   })
 
   it('stops the program at a stop of the call, and rejects with the stop when the program is gone', async () => {
