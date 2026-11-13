@@ -1253,6 +1253,10 @@ function openRouterPriceError(reason: string): ClipEntryPrice {
 // tells which one applies. A price never comes from a guess: any key whose
 // rule Dez does not know gives an error that tells the calling model to
 // read the prices itself.
+//
+// A request with no `generate_audio` field gets the sound of the model's
+// entry flag (the comment of the Audio switch): a model whose flag is
+// false has no Audio switch, and its video has no sound.
 function openRouterVideoPrice(values: ParameterValues, mediaEntry: unknown): ClipEntryPrice | undefined {
   const table = valueAtPath(mediaEntry, 'pricing_skus')
   if (!isRecord(table)) return undefined
@@ -1269,7 +1273,8 @@ function openRouterVideoPrice(values: ParameterValues, mediaEntry: unknown): Cli
   if (skus.length === 0) return undefined
 
   const resolution = typeof values.resolution === 'string' ? values.resolution.toLowerCase() : undefined
-  const audio = typeof values.generate_audio === 'boolean' ? values.generate_audio : undefined
+  const entryAudio = valueAtPath(mediaEntry, 'generate_audio')
+  const audio = typeof values.generate_audio === 'boolean' ? values.generate_audio : typeof entryAudio === 'boolean' ? entryAudio : undefined
   const fits = skus.filter((sku) => sku.per !== 'inputImage' && !sku.videoInput
     && (sku.resolution === undefined || sku.resolution === resolution)
     && (sku.audio === undefined || sku.audio === audio))

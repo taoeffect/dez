@@ -1138,6 +1138,17 @@ describe('openrouter clip prices', () => {
     expect(price({ duration_seconds_1080p: '0.2', duration_seconds_without_audio: '0.2' }, { duration: 2, resolution: '1080p', generate_audio: false })).toStrictEqual({ usd: 0.4 })
   })
 
+  // OpenRouter gives a request with no `generate_audio` field the flag of
+  // the model's entry; a model whose flag is false has no Audio switch.
+  it.each([
+    ['the no sound of the entry for a request with no sound value', false, {}, 0.12],
+    ['the sound of the entry for a request with no sound value', true, {}, 0.2],
+    ['the sound of the request over the sound of the entry', true, { generate_audio: false }, 0.12],
+  ])('prices %s', (_name, generateAudio, values, usd) => {
+    const mediaEntry = { id: 'm', generate_audio: generateAudio, pricing_skus: VEO_LITE }
+    expect(openRouterClips.entryPrice?.('video', { duration: 4, resolution: '720p', ...values }, { id: 'm' }, mediaEntry)).toStrictEqual({ usd })
+  })
+
   it.each([
     ['a price of sound for a model with no sound switch', { duration_seconds_with_audio: '0.1' }, { duration: 5, resolution: '720p' }, 'no price fits a request of 720p'],
     ['a token price at a resolution of no known size', { video_tokens: '0.000007' }, { duration: 5, resolution: '540p' }, 'the size in pixels of a video of 540p'],
