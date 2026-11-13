@@ -12,9 +12,11 @@
 //!   folder (`PROGRAM_APP_FOLDER`): it can read and write no file outside
 //!   the cache root, and in the assets folder it can read, make, and change
 //!   files, but not delete or move them (confinement.rs, which also tells
-//!   what a computer with no confinement does).
+//!   what a computer with no confinement does). It can make no symlink, and
+//!   Dez follows no link of the cache root (`has_link_below`).
 //! - It ends at its time limit, at its output cap, at a cancel
-//!   (`cancel_bundled_tool`), and when the app quits (`stop_all_runs`).
+//!   (`cancel_bundled_tool`), and when the app quits (`stop_all_runs`). The
+//!   end of a run ends the programs that it started too (`ProcessGroup`).
 
 use std::collections::HashMap;
 use std::collections::hash_map::Entry;
@@ -31,7 +33,7 @@ use tokio::io::{AsyncRead, AsyncReadExt};
 use tokio::sync::{Notify, watch};
 
 use crate::confinement::confined_command;
-use crate::persistence::{FileRoot, app_file_path, is_app_file_segment, root_dir};
+use crate::persistence::{FileRoot, app_file_path, has_link_below, is_app_file_segment, root_dir};
 
 // The programs that a run can name: the `bundle.externalBin` programs of
 // tauri.conf.json, under the names that the bundle gives them (a test keeps
@@ -122,7 +124,9 @@ pub(crate) struct ProgramRun {
     timeout: Duration,
     max_output_bytes: u64,
     // The folder that the program can read and write, with all below it
-    // (`confined_command`): the cache root, which holds `folder`.
+    // (`confined_command`): the cache root, which holds `folder`. The
+    // program can make no symlink there, and Dez follows none there
+    // (`has_link_below`).
     confined_to: PathBuf,
     // Folders whose files the program can also read, make, and change, but
     // not delete or move: `PROGRAM_APP_FOLDER` for a bundled program.
@@ -172,10 +176,15 @@ fn tool_path(dir: &Path, tool: &str) -> Result<PathBuf, String> {
 
 // Makes the work folder and puts the input files into it. The folder can be
 // there already: a caller runs more than one program in one folder (a probe
-// of the inputs, then the work), and a download can write into it first.
-fn prepare_work_folder(folder: &Path, inputs: &[ToolInput]) -> Result<(), String> {
+// of the inputs, then the work), and a download can write into it first. A
+// folder that goes through a link below `confined_to` is refused before the
+// chmod: the link can name a folder of the user.
+fn prepare_work_folder(folder: &Path, inputs: &[ToolInput], confined_to: &Path) -> Result<(), String> {
+    if has_link_below(confined_to, folder) {
+        return Err("The work folder goes through a link".to_string());
+    }
     make_private_folder(folder).map_err(|error| format!("Failed to make the work folder: {}", error))?;
-    inputs.iter().try_for_each(|input| copy_input(folder, input))
+    inputs.iter().try_for_each(|input| copy_input(folder, input, confined_to))
 }
 
 // A work folder holds copies of the user's files and what a program makes
@@ -208,7 +217,7 @@ fn make_private_folder(folder: &Path) -> std::io::Result<()> {
 // leave the folder. A name that the folder already has is refused: the copy
 // would replace a file of an earlier run, or write through a link that a
 // program left there. The error texts name the copy, never the source path.
-fn copy_input(folder: &Path, input: &ToolInput) -> Result<(), String> {
+fn copy_input(folder: &Path, input: &ToolInput, confined_to: &Path) -> Result<(), String> {
     let name = &input.name;
     if !is_app_file_segment(name) {
         return Err(format!("Invalid input file name: {}", name));
@@ -217,7 +226,12 @@ fn copy_input(folder: &Path, input: &ToolInput) -> Result<(), String> {
     if !source.is_absolute() {
         return Err(format!("The source of the input file {} is not an absolute path", name));
     }
-    // `metadata` follows a link, so a link to a file is an input like a file.
+    // A link below `confined_to` (a temp clip) can be the work of a program
+    // and name any file, the API keys too. A link outside it is the user's
+    // (a linked file), and `metadata` follows it: it is an input like a file.
+    if has_link_below(confined_to, source) {
+        return Err(format!("The source of the input file {} goes through a link in the folder of the program", name));
+    }
     let is_file = std::fs::metadata(source)
         .map(|metadata| metadata.is_file())
         .map_err(|error| format!("Failed to read the source of the input file {}: {}", name, error))?;
@@ -346,27 +360,64 @@ async fn until_stopped(stopped: &mut watch::Receiver<bool>) {
     }
 }
 
+// The process group of a running program, which `process_group(0)` makes
+// with the program's process id. A program can start other programs (a
+// shell, a helper), and a kill of the program alone leaves them running,
+// still able to write files. `end` kills every process of the group. The
+// caller calls it while the program is not waited for yet: its process
+// then still holds the group id, so the id can name no other group. The
+// drop ends the group too, for a run whose future is dropped. A program
+// that leaves the group (`setsid`) is not ended; it stays under the OS
+// rule of its run.
+struct ProcessGroup(Option<u32>);
+
+impl ProcessGroup {
+    fn end(&mut self) {
+        #[cfg(unix)]
+        if let Some(id) = self.0.take() {
+            // SAFETY: `killpg` takes two integers and touches no memory. An
+            // error means that no process of the group is left.
+            unsafe { libc::killpg(id as libc::pid_t, libc::SIGKILL) };
+        }
+    }
+}
+
+impl Drop for ProcessGroup {
+    fn drop(&mut self) {
+        self.end();
+    }
+}
+
 // Starts the program in its work folder and waits for its end.
 // - `confined_command`: the OS keeps the program inside its folder.
 // - `env_clear`: the program gets no variable of Dez's environment (API
 //   keys can be there), and no `PATH`.
 // - `Stdio::null()`: a program that reads its input (ffmpeg reads keys)
 //   gets the end of the input at once.
+// - `process_group(0)`: the program and the programs that it starts are in
+//   a group of their own (`ProcessGroup`). The end of a run ends them all,
+//   also after a normal exit: the end of both outputs is the end of the run,
+//   so a program that closes them before its exit is ended too.
 // - `kill_on_drop`: a run whose future is dropped leaves no program.
 async fn run_program(
     run: &ProgramRun,
     stopped: &mut watch::Receiver<bool>,
     send: &(impl Fn(ToolRunEvent) + Sync),
 ) -> Result<ToolRunEnd, String> {
-    let mut child = confined_command(&run.program, &run.args, &run.confined_to, &run.also_writable, &run.also_readable)?
+    let mut command = confined_command(&run.program, &run.args, &run.confined_to, &run.also_writable, &run.also_readable)?;
+    command
         .current_dir(&run.folder)
         .env_clear()
         .stdin(Stdio::null())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
-        .kill_on_drop(true)
-        .spawn()
-        .map_err(|error| format!("Failed to start the program: {}", error))?;
+        .kill_on_drop(true);
+    #[cfg(unix)]
+    command.process_group(0);
+    let mut child = command.spawn().map_err(|error| format!("Failed to start the program: {}", error))?;
+    // After `child`, so that a drop ends the group before tokio's drop of
+    // `child` kills and waits for the program.
+    let mut group = ProcessGroup(child.id());
     let (Some(stdout), Some(stderr)) = (child.stdout.take(), child.stderr.take()) else {
         return Err("The program has no output pipes".to_string());
     };
@@ -385,7 +436,10 @@ async fn run_program(
         // the last event and no output is lost. `None`: over the cap.
         let exit = async {
             match output.await {
-                Ok(_) => Some(child.wait().await),
+                Ok(_) => {
+                    group.end();
+                    Some(child.wait().await)
+                }
                 Err(OutputSpent) => None,
             }
         };
@@ -404,6 +458,7 @@ async fn run_program(
     };
 
     if !matches!(end, ToolRunEnd::Exited { .. }) {
+        group.end();
         // `kill` sends SIGKILL and waits for the exit, so the program is
         // gone, and writes no file any more, when the run ends. An error
         // means that the program has already ended.
@@ -495,8 +550,8 @@ impl ToolRuns {
     ) -> Result<(), String> {
         let (_active, mut stopped) = self.register(run_id)?;
         // File copies block, so they run off the async threads.
-        let (folder, inputs) = (run.folder.clone(), std::mem::take(&mut run.inputs));
-        tokio::task::spawn_blocking(move || prepare_work_folder(&folder, &inputs))
+        let (folder, inputs, confined_to) = (run.folder.clone(), std::mem::take(&mut run.inputs), run.confined_to.clone());
+        tokio::task::spawn_blocking(move || prepare_work_folder(&folder, &inputs, &confined_to))
             .await
             .map_err(|error| format!("Failed to prepare the work folder: {}", error))??;
         // A copy cannot stop in its middle, so a cancel that came during the
@@ -789,12 +844,12 @@ mod tests {
             let new = dir.0.join("work").join("new");
             let old = dir.0.join("work").join("old");
 
-            prepare_work_folder(&new, &[]).expect("prepare");
+            prepare_work_folder(&new, &[], &new).expect("prepare");
             assert_eq!(mode_of(&new), 0o700);
 
             std::fs::create_dir(&old).expect("create folder");
             std::fs::set_permissions(&old, std::fs::Permissions::from_mode(0o755)).expect("chmod");
-            prepare_work_folder(&old, &[]).expect("prepare again");
+            prepare_work_folder(&old, &[], &old).expect("prepare again");
             assert_eq!(mode_of(&old), 0o700);
         }
 
@@ -810,7 +865,7 @@ mod tests {
             std::fs::write(&source, b"the clip of the user").expect("write");
             symlink(&source, &link).expect("link");
 
-            prepare_work_folder(&folder, &[input("in.mp4", &source), input("linked.mp4", &link)]).expect("prepare");
+            prepare_work_folder(&folder, &[input("in.mp4", &source), input("linked.mp4", &link)], &folder).expect("prepare");
 
             for name in ["in.mp4", "linked.mp4"] {
                 let copy = folder.join(name);
@@ -832,26 +887,26 @@ mod tests {
             std::fs::write(&source, b"clip").expect("write");
 
             for name in ["", ".", "..", "../out.mp4", "a/b.mp4", "/tmp/dez-test-out.mp4", "a b.mp4"] {
-                assert!(prepare_work_folder(&folder, &[input(name, &source)]).is_err(), "the name {name:?}");
+                assert!(prepare_work_folder(&folder, &[input(name, &source)], &folder).is_err(), "the name {name:?}");
             }
             let relative = ToolInput { name: "in.mp4".to_string(), source: "clip.mp4".to_string() };
-            assert!(prepare_work_folder(&folder, &[relative]).is_err(), "a relative source");
-            assert!(prepare_work_folder(&folder, &[input("in.mp4", &dir.0.join("gone.mp4"))]).is_err(), "a missing source");
-            assert!(prepare_work_folder(&folder, &[input("in.mp4", &dir.0)]).is_err(), "a folder as the source");
+            assert!(prepare_work_folder(&folder, &[relative], &folder).is_err(), "a relative source");
+            assert!(prepare_work_folder(&folder, &[input("in.mp4", &dir.0.join("gone.mp4"))], &folder).is_err(), "a missing source");
+            assert!(prepare_work_folder(&folder, &[input("in.mp4", &dir.0)], &folder).is_err(), "a folder as the source");
             assert_eq!(std::fs::read_dir(&folder).expect("list").count(), 0);
             assert_eq!(dir.file_names().len(), 2, "a file left the work folder");
 
             // A name that the folder has: its file stays as it was.
             std::fs::write(folder.join("in.mp4"), b"of an earlier run").expect("write");
-            assert!(prepare_work_folder(&folder, &[input("in.mp4", &source)]).is_err(), "a name of the folder");
+            assert!(prepare_work_folder(&folder, &[input("in.mp4", &source)], &folder).is_err(), "a name of the folder");
             assert_eq!(std::fs::read(folder.join("in.mp4")).expect("read"), b"of an earlier run");
             // Also a link that names no file: a copy would write through it.
             symlink(dir.0.join("outside.mp4"), folder.join("link.mp4")).expect("link");
-            assert!(prepare_work_folder(&folder, &[input("link.mp4", &source)]).is_err(), "a link of the folder");
+            assert!(prepare_work_folder(&folder, &[input("link.mp4", &source)], &folder).is_err(), "a link of the folder");
             assert!(!dir.0.join("outside.mp4").exists());
             // And a name that the same call gave before.
             let twice = [input("twice.mp4", &source), input("twice.mp4", &source)];
-            assert!(prepare_work_folder(&folder, &twice).is_err(), "a name twice");
+            assert!(prepare_work_folder(&folder, &twice, &folder).is_err(), "a name twice");
         }
 
         // The page can pass the error on to a model, which must learn no
@@ -861,10 +916,47 @@ mod tests {
             let dir = TempDir::new("tools-input-error");
             let missing = dir.0.join("private-folder").join("gone.mp4");
 
-            let error = prepare_work_folder(&dir.0.join("work"), &[input("in.mp4", &missing)]).expect_err("refused");
+            let folder = dir.0.join("work");
+            let error = prepare_work_folder(&folder, &[input("in.mp4", &missing)], &folder).expect_err("refused");
 
             assert!(error.contains("in.mp4"), "{error}");
             assert!(!error.contains("private-folder") && !error.contains("gone.mp4"), "{error}");
+        }
+
+        // A program can change all of its folder (the cache root). A link
+        // that it left there, in place of a temp clip or of a work folder,
+        // must not take a copy or a chmod of Dez to a file of the user. A
+        // link outside that folder is the user's own (a linked file), and an
+        // input like a file (`an_input_is_a_copy_that_…`).
+        #[test]
+        fn a_link_in_the_folder_of_the_program_is_no_input_and_no_work_folder() {
+            let dir = TempDir::new("tools-input-link");
+            let (cache, home) = (dir.0.join("cache"), dir.0.join("home"));
+            let (clip, keys, source) = (cache.join("media").join("clip.mp4"), home.join("provider_keys.json"), dir.0.join("source.mp4"));
+            std::fs::create_dir_all(cache.join("media")).expect("create");
+            std::fs::create_dir_all(cache.join("work")).expect("create");
+            std::fs::create_dir_all(&home).expect("create");
+            std::fs::set_permissions(&home, std::fs::Permissions::from_mode(0o755)).expect("chmod");
+            std::fs::write(&keys, b"keys").expect("write");
+            std::fs::write(&source, b"clip").expect("write");
+            symlink(&keys, &clip).expect("link");
+            symlink(&home, cache.join("linked-media")).expect("link");
+            let folder = cache.join("work").join("a");
+
+            let error = prepare_work_folder(&folder, &[input("in.mp4", &clip)], &cache).expect_err("a temp clip that is a link");
+            assert!(error.contains("in.mp4") && !error.contains("provider_keys"), "{error}");
+            let through = cache.join("linked-media").join("provider_keys.json");
+            assert!(prepare_work_folder(&folder, &[input("in.mp4", &through)], &cache).is_err(), "a clip in a linked folder");
+            assert_eq!(std::fs::read_dir(&folder).expect("list").count(), 0);
+
+            // A work folder that is a link to a folder of the user, or that
+            // is below one.
+            let linked = cache.join("work").join("b");
+            symlink(&home, &linked).expect("link");
+            assert!(prepare_work_folder(&linked, &[input("in.mp4", &source)], &cache).is_err(), "a linked work folder");
+            assert!(prepare_work_folder(&linked.join("c"), &[], &cache).is_err(), "a work folder below a link");
+            assert_eq!(mode_of(&home), 0o755);
+            assert_eq!(std::fs::read_dir(&home).expect("list").count(), 1);
         }
 
         #[tokio::test]
@@ -983,6 +1075,42 @@ mod tests {
             assert!(!linked.exists());
         }
 
+        // Dez's own file code is not confined: it would follow a link in
+        // the folder of a program (the cache root) to any file. So a
+        // program can make no symlink there, in place of a temp clip or of
+        // a work folder. A hard link to a file outside the folder would
+        // open that file to the program itself.
+        #[tokio::test]
+        async fn a_program_makes_no_link_in_its_folder() {
+            let dir = TempDir::new("tools-run-no-link");
+            let inside = dir.0.join("cache");
+            let folder = inside.join("work").join("a");
+            let (clip, hard) = (inside.join("media").join("clip.txt"), inside.join("media").join("hard.txt"));
+            let (keys, home) = (dir.0.join("provider_keys.json"), dir.0.join("home"));
+            std::fs::create_dir_all(clip.parent().expect("a folder")).expect("create");
+            std::fs::create_dir_all(&home).expect("create");
+            std::fs::write(&clip, b"clip").expect("write");
+            std::fs::write(&keys, b"keys").expect("write");
+            // The error of the hard link goes to /dev/null: its text differs
+            // by OS (Landlock gives EXDEV for a link that needs `Refer`).
+            let text = format!(
+                "/bin/rm ../../media/clip.txt; /bin/ln -s '{keys}' ../../media/clip.txt; /bin/ln -s '{home}' ../b; /bin/ln '{keys}' ../../media/hard.txt 2>/dev/null",
+                keys = keys.display(),
+                home = home.display(),
+            );
+            let mut run = script(&text, &folder);
+            run.confined_to = inside.clone();
+
+            let sent = finished(run).await;
+
+            // The two symlinks.
+            assert_eq!(sent.stderr.matches(DENIED).count(), 2, "{}", sent.stderr);
+            // The program could delete the clip, as the rule lets it.
+            assert!(std::fs::symlink_metadata(&clip).is_err(), "{}", sent.stderr);
+            assert!(std::fs::symlink_metadata(inside.join("work").join("b")).is_err());
+            assert!(!hard.exists());
+        }
+
         #[tokio::test]
         async fn a_program_that_a_signal_ended_has_no_exit_code() {
             let dir = TempDir::new("tools-run-signal");
@@ -1039,6 +1167,32 @@ mod tests {
             assert_eq!(sent(events).await.ends, [ToolRunEnd::Cancelled]);
             assert!(!program_is_running(&folder));
             assert!(runs.lock().is_empty());
+        }
+
+        // A program can start another program that keeps on after the
+        // first ends. The end of a run, at an exit or at the time limit,
+        // ends it too: else it could still write files.
+        #[tokio::test]
+        async fn the_end_of_a_run_ends_the_programs_that_its_program_started() {
+            let dir = TempDir::new("tools-run-group");
+            let (exits, times_out) = (dir.0.join("exits"), dir.0.join("times-out"));
+            let start_one = "/bin/sleep 60 > /dev/null 2>&1 & echo $! > pid";
+            let mut timed = script(&format!("{start_one}; echo started; exec /bin/sleep 60"), &times_out);
+            timed.timeout = Duration::from_millis(500);
+
+            assert_eq!(finished(script(start_one, &exits)).await.ends, exited(0));
+            assert_eq!(finished(timed).await.ends, [ToolRunEnd::TimedOut]);
+
+            // The started program is a child of the system's first program
+            // now, which waits for it a moment after its end.
+            for folder in [&exits, &times_out] {
+                let mut checks = 0;
+                while program_is_running(folder) && checks < 100 {
+                    tokio::time::sleep(Duration::from_millis(50)).await;
+                    checks += 1;
+                }
+                assert!(!program_is_running(folder), "{}", folder.display());
+            }
         }
 
         #[tokio::test]

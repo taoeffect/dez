@@ -85,12 +85,39 @@ fn conversation_path(id: &str) -> PathBuf {
 // prefixes, and `..` traversal. It also keeps the path safe to send as an IPC
 // header value (`save_app_file` in commands.rs). Returns an error rather
 // than silently coercing so callers don't accidentally read/write the wrong
-// file.
+// file. A path of the cache root that goes through a link is an error too
+// (`has_link_below`); a link in the app root is the user's own.
 pub(crate) fn app_file_path(root: FileRoot, relative: &str) -> Result<PathBuf, String> {
     if !relative.split('/').all(is_app_file_segment) {
         return Err(format!("Invalid app file path: {}", relative));
     }
-    Ok(root_dir(root)?.join(relative))
+    let dir = root_dir(root)?;
+    let path = dir.join(relative);
+    if root == FileRoot::Cache && has_link_below(&dir, &path) {
+        return Err(format!("The app file path {} goes through a link", relative));
+    }
+    Ok(path)
+}
+
+// Whether a part of `path` below the folder `root` is a symlink. A bundled
+// program can change every file and folder of the cache root, and the OS
+// rule keeps it from making a link there (confinement.rs). This is the
+// second guard, for Dez's own file code, which is not confined: through a
+// link it would read, move, or delete any file of the user. `root` and the
+// folders above it can be links. A part that is not there ends the walk, as
+// nothing below it is there either.
+pub(crate) fn has_link_below(root: &Path, path: &Path) -> bool {
+    let Ok(relative) = path.strip_prefix(root) else { return false };
+    let mut walked = root.to_path_buf();
+    for part in relative.components() {
+        walked.push(part);
+        match std::fs::symlink_metadata(&walked) {
+            Ok(metadata) if metadata.file_type().is_symlink() => return true,
+            Ok(_) => {}
+            Err(_) => return false,
+        }
+    }
+    false
 }
 
 // One folder or file name of an app-file path: only ASCII alphanumerics plus
@@ -579,6 +606,36 @@ pub(crate) mod tests {
                 assert!(app_file_path(root, path).is_err(), "{path:?} must be rejected");
             }
         }
+    }
+
+    // A program can change all of the cache root. A link that it left in
+    // place of a temp clip or of a work folder must be found, by any part of
+    // the path, so that Dez does not follow it to a file of the user.
+    #[cfg(unix)]
+    #[test]
+    fn a_link_below_the_root_is_found_in_any_part_of_a_path() {
+        use std::os::unix::fs::symlink;
+        let dir = TempDir::new("link-below");
+        let (root, home) = (dir.0.join("cache"), dir.0.join("home"));
+        std::fs::create_dir_all(root.join("work").join("a")).expect("create");
+        std::fs::create_dir_all(&home).expect("create");
+        std::fs::write(home.join("keys.json"), "keys").expect("write");
+        symlink(&home, root.join("work").join("b")).expect("link");
+        symlink(home.join("keys.json"), root.join("work").join("a").join("clip.mp4")).expect("link");
+        let linked_root = dir.0.join("linked-cache");
+        symlink(&root, &linked_root).expect("link");
+
+        for linked in ["work/b", "work/b/keys.json", "work/b/new/file", "work/a/clip.mp4"] {
+            assert!(has_link_below(&root, &root.join(linked)), "{linked}");
+        }
+        // A part that is not there yet is no link, nor anything below it.
+        for plain in ["work/a", "work/new", "work/new/clip.mp4"] {
+            assert!(!has_link_below(&root, &root.join(plain)), "{plain}");
+        }
+        assert!(!has_link_below(&root, &root));
+        // The root itself and the folders above it can be links.
+        assert!(!has_link_below(&linked_root, &linked_root.join("work").join("a")));
+        assert!(has_link_below(&linked_root, &linked_root.join("work").join("b")));
     }
 
     // The files that the user did not save must not fill the app folder. The

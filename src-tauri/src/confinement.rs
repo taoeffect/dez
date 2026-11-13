@@ -4,7 +4,10 @@
 //! not delete, move, or link them) under a few more (the assets folder of
 //! the Dez folder), and read its own file. So a program that a call tricks
 //! into opening a path (an argument, or a path in the content of a file,
-//! such as a playlist) gets "permission denied".
+//! such as a playlist) gets "permission denied". It can make no symlink
+//! anywhere: Dez's own file code is not confined, and it would follow a
+//! link in the cache folder to any file (a temp clip that names the API
+//! keys, a work folder that names a folder of the user).
 //! - Linux: Landlock, a part of the kernel since Linux 5.13.
 //! - macOS: Seatbelt, through `/usr/bin/sandbox-exec`, which ships with the
 //!   OS. It is the only program of the computer that a run starts.
@@ -32,13 +35,14 @@ fn warn_unconfined(cause: &str) {
     });
 }
 
-// A command that starts `program` with `args`, confined to `folder`, with
-// the file rights of `also_writable` (read, make, and change a file; never
-// delete, move, or link one, nor make a folder) and read rights on
-// `also_readable` too (only the tests, whose system programs need the
-// system's folders). The caller sets the rest (the work folder, the
-// environment, the pipes). An `Err` is a confinement that the OS has but
-// that Dez could not set up: the run does not start then.
+// A command that starts `program` with `args`, confined to `folder` (every
+// file right there but the make of a symlink), with the file rights of
+// `also_writable` (read, make, and change a file; never delete, move, or
+// link one, nor make a folder) and read rights on `also_readable` too (only
+// the tests, whose system programs need the system's folders). The caller
+// sets the rest (the work folder, the environment, the pipes). An `Err` is
+// a confinement that the OS has but that Dez could not set up: the run
+// does not start then.
 #[cfg(target_os = "linux")]
 pub(crate) fn confined_command(program: &Path, args: &[String], folder: &Path, also_writable: &[PathBuf], also_readable: &[PathBuf]) -> Result<Command, String> {
     use std::os::fd::AsRawFd;
@@ -90,12 +94,15 @@ fn landlock_rules(program: &Path, folder: &Path, also_writable: &[PathBuf], also
     use landlock::{ABI, Access, AccessFs, PathBeneath, PathFd, Ruleset, RulesetAttr, RulesetCreatedAttr};
 
     let every_right = AccessFs::from_all(ABI::V9);
+    // No `MakeSym` in the folder: see the comment of the module.
+    let mut folder_rights = every_right;
+    folder_rights.remove(AccessFs::MakeSym);
     // An exec needs the read right of the program too.
     let start_right = AccessFs::Execute | AccessFs::ReadFile;
     let mut ruleset = Ruleset::default()
         .handle_access(every_right)?
         .create()?
-        .add_rule(PathBeneath::new(PathFd::new(folder)?, every_right))?
+        .add_rule(PathBeneath::new(PathFd::new(folder)?, folder_rights))?
         .add_rule(PathBeneath::new(PathFd::new(program)?, start_right))?;
     // The device files that a run can use, as in `SEATBELT_PROFILE`; one
     // that the computer lacks is left out.
@@ -146,6 +153,9 @@ const SANDBOX_EXEC: &str = "/usr/bin/sandbox-exec";
 // - The rules of `also_writable` (added in `confined_command`) give read,
 //   write, and the create of a regular file, as `file_rights` of
 //   `landlock_rules`: no unlink, rename away, folder, or symlink there.
+// - The deny of a symlink create (the rule of WebKit's WebProcess profile)
+//   comes after the allow of the cache folder, so it wins there: no symlink
+//   in the cache folder either (see the comment of the module).
 #[cfg(target_os = "macos")]
 const SEATBELT_PROFILE: &str = r#"(version 1)
 (allow default)
@@ -163,6 +173,7 @@ const SEATBELT_PROFILE: &str = r#"(version 1)
   (literal (param "PROGRAM")))
 (allow file-write-data (literal "/dev/null"))
 (allow file-read-data file-write* (subpath (param "FOLDER")))
+(deny file-write-create (vnode-type SYMLINK))
 "#;
 
 #[cfg(target_os = "macos")]

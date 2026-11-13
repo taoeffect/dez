@@ -73,9 +73,7 @@ dirs = "=6.0.0"
 # system library (no libwayland-client, libxcb, or libXss).
 #
 # landlock: confinement.rs builds the Landlock rules of a bundled program
-# run with it. libc: the two raw calls that apply those rules in the child
-# between fork and exec, where the landlock crate's own call could
-# allocate (landlock 0.4.7 needs libc 0.2.186 or later).
+# run with it (landlock 0.4.7 needs libc 0.2.186 or later).
 [target.'cfg(target_os = "linux")'.dependencies]
 gtk = "=0.18.2"
 zbus = "=5.14.0"
@@ -83,6 +81,12 @@ wayland-client = "=0.31.15"
 wayland-protocols = { version = "=0.32.13", features = ["client", "staging"] }
 x11rb = { version = "=0.14.0", features = ["screensaver"] }
 landlock = "=0.4.7"
+
+# libc: on Linux, the two raw calls that apply the Landlock rules in the
+# child between fork and exec, where the landlock crate's own call could
+# allocate (confinement.rs); on Linux and macOS, the kill of the process
+# group of a bundled program run (bundled_tools.rs).
+[target.'cfg(unix)'.dependencies]
 libc = "=0.2.191"
 
 # objc2, objc2-foundation: the versions that mac-notification-sys already
