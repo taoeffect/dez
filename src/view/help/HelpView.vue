@@ -32,15 +32,23 @@ function onClose() {
   sbp('dez.model/settings/helpClose')
 }
 
-function onOverlayClick(e: MouseEvent) {
-  if ((e.target as HTMLElement).classList.contains('help-overlay')) {
-    onClose()
-  }
+// Whether the last press started on the overlay itself. A drag that starts
+// in the modal (a text selection) and ends outside it also gives the
+// overlay a click; only a press that started outside closes the panel.
+let pressOnOverlay = false
+
+function onOverlayMouseDown(event: MouseEvent) {
+  pressOnOverlay = event.target === event.currentTarget
+}
+
+function onOverlayClick(event: MouseEvent) {
+  if (pressOnOverlay && event.target === event.currentTarget) onClose()
+  pressOnOverlay = false
 }
 </script>
 
 <template>
-  <div class="help-overlay" @click="onOverlayClick">
+  <div class="help-overlay" @mousedown="onOverlayMouseDown" @click="onOverlayClick">
     <div class="help-modal">
       <div class="help-header">
         <h2>Dez Help</h2>

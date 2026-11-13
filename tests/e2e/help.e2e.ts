@@ -1,7 +1,7 @@
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from 'vitest'
 import { Key } from 'webdriverio'
 import { startApp, type RunningApp } from './harness/app'
-import { consoleErrors, pointerClick, pointerClickAt, resetConsoleErrors, screenshotOnFailure, waitFor, waitForValue } from './harness/dom'
+import { consoleErrors, pointerClick, pointerClickAt, pointerDrag, resetConsoleErrors, screenshotOnFailure, waitFor, waitForValue } from './harness/dom'
 import { seedAppState } from './harness/fixtures'
 import { createSession, destroySession, type E2EBrowser } from './harness/session'
 import { focusEditor, focusedArea, sbpCall } from './harness/thread'
@@ -141,6 +141,21 @@ describe('Help panel', () => {
     await openWithButton()
     await pointerClickAt(browser, { x: 5, y: 5 })
     await waitForValue(browser, 'Help open after a click outside', helpOpen, false)
+  })
+
+  // The browser sends the click of a drag to the nearest parent of the press
+  // and the release: the overlay, for a drag out of the panel.
+  it('stays open when a text selection ends outside the panel', async () => {
+    await openWithButton()
+    const { from, belowModal } = await browser.execute(() => {
+      const paragraph = document.querySelector('.help-page--general p')?.getBoundingClientRect()
+      const modal = document.querySelector('.help-modal')?.getBoundingClientRect()
+      if (!paragraph || !modal) throw new Error('no General paragraph or no modal')
+      return { from: { x: paragraph.left + 2, y: paragraph.top + 8 }, belowModal: modal.bottom + 20 }
+    })
+    await pointerDrag(browser, from, from.x + 40, { toY: belowModal })
+    expect(await helpOpen()).toBe(true)
+    expect(await browser.execute(() => document.getSelection()?.toString().length ?? 0)).toBeGreaterThan(0)
   })
 
   it('opens the Discussions page with the system browser from Support', async () => {
