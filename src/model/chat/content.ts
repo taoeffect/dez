@@ -182,15 +182,60 @@ export function contentEquals(a: ContentNode[], b: ContentNode[]): boolean {
  *  U+E001 body U+E002 brackets a prompt pill, U+E003 is an escaped newline. */
 export const SENTINEL_CHAR = /[\u001E\uE000-\uE003]/
 
+// What `stripLiveSentinels` takes out of live-doc text: a pill header
+// (U+E000 + id + U+E001), then every other marker. A header never holds a
+// marker inside, so one pass finds the same ranges as a pass for the
+// headers and a second one for the markers that are left.
+const LIVE_MARKERS = /\u{E000}[^\n\u001E\u{E000}-\u{E002}]*\u{E001}|[\u001E\u{E000}-\u{E002}]/gu
+
 /** Plain text of live-doc text that holds no well-formed pill: no sentinels,
  *  and no ids of broken pill headers. A header (U+E000 + id + U+E001) goes
  *  with its id: the id is not text, and kept as text it became UUID tab
  *  titles. The header rule must match `pillHeaderBodyIndex` in cmEditor.ts.
- *  The view (titles, clipboard) and the disk format both use this one copy. */
+ *  The view (titles, clipboard) and the disk format both use this one copy.
+ *  For the doc text of a whole section, pills and all, it gives the
+ *  section's `sectionPlainText`: each pill leaves its body. (The one
+ *  difference is a U+E001 inside a pill's body, which only a paste of that
+ *  char can put there: it stays in the body and goes here.) */
 export function stripLiveSentinels(text: string): string {
   if (!SENTINEL_CHAR.test(text)) return text
-  return text
-    .replace(/\u{E000}[^\n\u001E\u{E000}-\u{E002}]*\u{E001}/gu, '')
-    .replace(/[\u001E\u{E000}-\u{E002}]/gu, '')
-    .replace(/\u{E003}/gu, '\n')
+  return text.replace(LIVE_MARKERS, '').replace(/\u{E003}/gu, '\n')
+}
+
+/** `stripLiveSentinels(text)`, and where each of its chars is in `text`. */
+export interface PlainLiveText {
+  text: string
+  /** The offset in the live text of the char at `offset` of `text`. */
+  liveOffset: (offset: number) => number
+}
+
+/** The plain text of live-doc text (`stripLiveSentinels`) with the way
+ *  back, for a reader that finds ranges in the plain text and shows them in
+ *  the editor. U+E003 stays one char, so only the markers move offsets. */
+export function plainLiveText(text: string): PlainLiveText {
+  if (!SENTINEL_CHAR.test(text)) return { text, liveOffset: (offset) => offset }
+  // After each marker: the length of the plain text before it, and the
+  // length of all the markers up to its end.
+  const markers: Array<{ plainLength: number, removed: number }> = []
+  let plain = ''
+  let end = 0
+  for (const match of text.matchAll(LIVE_MARKERS)) {
+    plain += text.slice(end, match.index)
+    end = match.index + match[0].length
+    markers.push({ plainLength: plain.length, removed: end - plain.length })
+  }
+  plain += text.slice(end)
+  return {
+    text: plain.replace(/\u{E003}/gu, '\n'),
+    liveOffset(offset) {
+      // The char is after every marker that has `offset` chars or fewer
+      // before it.
+      let removed = 0
+      for (const marker of markers) {
+        if (marker.plainLength > offset) break
+        removed = marker.removed
+      }
+      return offset + removed
+    },
+  }
 }

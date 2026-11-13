@@ -14,8 +14,10 @@ import { IMAGE_ID_SOURCE } from './images'
 // Most `@` words are not mentions: an e-mail address, a user name, a
 // decorator in code. So a word counts only when it has the form below and
 // an image or a clip has its id; every other word is plain text, with no
-// error. This module finds the words of that form; the request builder
-// knows the images and the clips.
+// error. This module finds the words of that form; `namedMentions`
+// (assetMentions.ts) and the request builder know the images and the
+// clips. The editor shows a mention that names one as a chip
+// (view/editor/mentions.ts).
 
 // The chars of a word, as the inside of a character class: the letters
 // (with their combining marks) and digits of any script, and `_`.

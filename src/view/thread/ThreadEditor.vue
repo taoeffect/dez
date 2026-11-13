@@ -57,6 +57,7 @@ import { deleteLineBlockBackward, deleteLineBlockForward, joinsLineBlock } from 
 import { deleteLines, duplicateLines } from '../editor/lineCommands'
 import { filePasteAndDrop } from '../editor/imageInsert'
 import { markdownLinks } from '../editor/links'
+import { mentionChips } from '../editor/mentions'
 import { focusKeepingScrollOnMouseDown } from '../editor/focus'
 import { activeFindQuery, findState } from '../editor/findState'
 import { isModalOpen } from '../composables/useKeyboardShortcuts'
@@ -906,6 +907,7 @@ function buildState(openPanels?: OpenPanels): EditorState {
       markdownToolCalls(openPanels?.toolCalls),
       markdownMedia(),
       markdownLinks(),
+      mentionChips(),
       filePasteAndDrop(),
       // The find dropdown floats over the top of the scroller. Count it as
       // hidden space so matches (and anything else CM scrolls to) are not

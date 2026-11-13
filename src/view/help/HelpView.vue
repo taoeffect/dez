@@ -163,7 +163,8 @@ function onOverlayClick(event: MouseEvent) {
               Each image and each clip has a short id: <code>a</code>, <code>b</code>, and so on.
               Point at an image or a player to see its id. A model gets this id, and never the path
               of the file. Write <code>@</code> and the id in a message to name the asset. A message
-              can name its own assets and the assets of the messages before it.
+              can name its own assets and the assets of the messages before it. Dez shows a name as
+              a small chip when an asset has that id; a name with no chip names no asset.
             </p>
 
             <h3>Where the files are</h3>

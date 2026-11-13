@@ -124,9 +124,10 @@ function trashButton(view: EditorView, widget: HTMLElement, path: string, linked
   return button
 }
 
-/** The content of an overlay item's tooltip (`.dez-image-tooltip` in
- *  `dezTheme`): what the item is, then what it is for. */
-function tooltipContent(title: string, ...text: Array<string | Node>): HTMLElement {
+/** The content of a tooltip with a title (`.dez-image-tooltip` in
+ *  `dezTheme`): what the item is, then what it is for. The items of an
+ *  image overlay and the mention chips (mentions.ts) use it. */
+export function tooltipContent(title: string, ...text: Array<string | Node>): HTMLElement {
   const dom = document.createElement('div')
   dom.className = 'dez-image-tooltip'
   dom.setAttribute('role', 'tooltip')

@@ -2285,6 +2285,41 @@ export const dezTheme = EditorView.theme({
     textDecoration: 'underline',
     cursor: 'pointer',
   },
+  // An `@id` mention that names an image or a clip (src/view/editor/
+  // mentions.ts): a chip. The chip changes no layout, so that text does not
+  // move when a chip comes or goes: the fill hangs out of the text by its
+  // side padding, which an equal negative margin takes back, and the
+  // vertical padding of an inline box takes no line height. The side padding
+  // is small, so that the fill stays off a bracket or a comma next to the
+  // mention. The fill is translucent, so a selection shows through it.
+  '.dez-mention': {
+    margin: editorSize(0, -2),
+    padding: editorSize(1, 2),
+    borderRadius: editorSize(4),
+    backgroundColor: 'var(--color-mention-bg, rgba(212, 154, 17, 0.2))',
+    color: 'var(--color-mention, #6b4700)',
+  },
+  // The syntax highlight spans and a link's span are inside the chip's span.
+  // The highlight colors (code, a heading, a quote) give way to the mention
+  // color. A link's text keeps the link color, as a click on it opens the
+  // link.
+  '.dez-mention span:not(.dez-link)': {
+    color: 'inherit',
+  },
+  // The span of a find match is outside the chip's span (find.ts gives its
+  // marks the lowest precedence), so a match that covers a part of a mention
+  // cuts the chip into pieces. Inside a match, a mention has no chip: the
+  // amber of the match is its box, and its text has the plain text color
+  // (the mention color has too little contrast on the amber). The part
+  // outside the match keeps the chip. No margin and no padding take the same
+  // room as the chip's, so no text moves.
+  '.dez-find-match .dez-mention': {
+    margin: '0',
+    padding: '0',
+    borderRadius: '0',
+    backgroundColor: 'transparent',
+    color: 'var(--color-text)',
+  },
   // CodeMirror tooltips (the link URL tooltip of links.ts and the image
   // overlay tooltips of images.ts), with the text style they share. CM's
   // base theme gives them light colors only, as Dez does not use CM's dark

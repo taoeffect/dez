@@ -1,8 +1,9 @@
 import type { MessagePart, ModelRef, Section, SectionThinking, ThinkingReplay } from '../chat/types'
+import { assetTextPieces } from '../chat/assetMentions'
 import { sectionIsEmpty, sectionPlainText } from '../chat/content'
 import { findAssetMentions, type AssetMention } from '../chat/imageMentions'
 import { findImageReferences, IMAGE_TOOL_KEY, requestImageReferenceStart, type ImageReference } from '../chat/images'
-import { findMediaTags, mediaTagRequestText, mediaTagsForRequest, sectionClipSource, splitMediaTags, type MediaTag, type MediaTagKind } from '../chat/mediaTags'
+import { findMediaTags, mediaTagRequestText, mediaTagsForRequest, sectionClipSource, type MediaTag, type MediaTagKind } from '../chat/mediaTags'
 import { sameModelRef } from '../chat/modelRef'
 import { holdsStoredFilePath, withoutStoredFilePaths } from '../chat/storedFilePaths'
 import { thinkingField } from '../chat/thinking'
@@ -463,28 +464,19 @@ type MessageTextPiece =
   | { kind: 'reference', text: string, path: string }
   | { kind: 'gap', text: string, mentions: AssetMention[] }
 
-// The pieces of a user message's text, in order, with no empty gap. Both
+// The pieces of a user message's text, in order, with no empty gap
+// (`assetTextPieces`, which the editor's mention chips read too). Both
 // readers of a message's images and clips use it (`userMessageContent`,
 // `messageClips`), so a mention names the same thing in a chat request and
 // in a media request. References and mentions are read in the text outside
 // media tags, and mentions after the path scrub: a bare path can hold an
 // `@`, and a cut there would send the start of the path.
 function messageTextPieces(text: string): MessageTextPiece[] {
-  return splitMediaTags(text).flatMap((piece): MessageTextPiece[] => {
-    if (piece.kind === 'media') return [piece]
-    const pieces: MessageTextPiece[] = []
-    const addGap = (from: number, to: number) => {
-      if (from === to) return
-      const gap = withoutStoredFilePaths(piece.text.slice(from, to))
-      pieces.push({ kind: 'gap', text: gap, mentions: findAssetMentions(gap) })
-    }
-    let end = 0
-    for (const { from, to, path } of findImageReferences(piece.text, 'user')) {
-      addGap(end, from)
-      pieces.push({ kind: 'reference', text: withoutStoredFilePaths(piece.text.slice(from, to)), path })
-      end = to
-    }
-    addGap(end, piece.text.length)
-    return pieces
+  return assetTextPieces(text, 'user').map((piece): MessageTextPiece => {
+    if (piece.kind === 'media') return piece
+    const scrubbed = withoutStoredFilePaths(text.slice(piece.from, piece.to))
+    return piece.kind === 'reference'
+      ? { kind: 'reference', text: scrubbed, path: piece.path }
+      : { kind: 'gap', text: scrubbed, mentions: findAssetMentions(scrubbed) }
   })
 }

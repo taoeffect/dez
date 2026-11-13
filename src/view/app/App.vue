@@ -69,6 +69,15 @@ onUnmounted(() => {
      and its hairline border and divider. */
   --color-image-toolbar: rgba(18, 18, 22, 0.72);
   --color-image-toolbar-border: rgba(255, 255, 255, 0.18);
+  /* An `@id` mention that names an image or a clip (`.dez-mention`, dezTheme
+     in cmEditor.ts): its text and the fill of its chip. Gold in the dark
+     theme; a gold has too little contrast on a light fill, so the light
+     theme has a bronze. The text is 4.5:1 or more on the fill over the
+     background and over both selection colors, each also under the header
+     of a table. (In a find match, a mention has no chip and the plain text
+     color.) */
+  --color-mention: #6b4700;
+  --color-mention-bg: rgba(212, 154, 17, 0.2);
 
   font-family: Inter, Avenir, Helvetica, Arial, sans-serif;
   font-size: 16px;
@@ -109,6 +118,8 @@ onUnmounted(() => {
     --color-tab-done: #234d2e;
     --color-image-toolbar: rgba(40, 40, 46, 0.8);
     --color-image-toolbar-border: rgba(255, 255, 255, 0.14);
+    --color-mention: #f0c75e;
+    --color-mention-bg: rgba(240, 190, 70, 0.16);
   }
 }
 
@@ -135,5 +146,7 @@ onUnmounted(() => {
   --color-tab-done: #234d2e;
   --color-image-toolbar: rgba(40, 40, 46, 0.8);
   --color-image-toolbar-border: rgba(255, 255, 255, 0.14);
+  --color-mention: #f0c75e;
+  --color-mention-bg: rgba(240, 190, 70, 0.16);
 }
 </style>

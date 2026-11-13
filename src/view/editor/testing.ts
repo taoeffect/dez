@@ -8,6 +8,7 @@ import type { Role } from '../../model/chat/types'
 import { SECTION_SEP, pillsField, promptAtomicRanges, sectionsField, unwrapBrokenPills, type PillMetadata } from '../thread/cmEditor'
 import { streamingSectionField } from '../thread/modelChip'
 import { markdownMedia } from './media'
+import { mentionChips } from './mentions'
 import { markdownToolCalls } from './toolCalls'
 
 /** A tool call block: a chip in an agent section, text in a user section. */
@@ -21,7 +22,8 @@ export function joinSections(texts: string[]): string {
   return texts.join(`\n${SECTION_SEP}\n`)
 }
 
-/** A state with both kinds of line blocks and prompt pills, whose doc is
+/** A state with both kinds of line blocks, prompt pills, and mention
+ *  chips, whose doc is
  *  `texts`, one section each, with the roles of `roles`, the selection
  *  `ranges` (a number is a caret, a pair is an anchor and a head; no range
  *  puts the caret at the doc start), and the prompt pill metadata `pills`.
@@ -42,6 +44,7 @@ export function createState(texts: string[], roles: Role[], ranges: Array<number
       promptAtomicRanges,
       markdownToolCalls(),
       markdownMedia(),
+      mentionChips(),
       history(),
       EditorState.allowMultipleSelections.of(true),
     ],
