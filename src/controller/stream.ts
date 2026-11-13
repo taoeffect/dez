@@ -8,7 +8,7 @@ import { newMediaIds } from '../model/chat/mediaIds'
 import { MEDIA_TOOL_ATTRIBUTE, mediaTagText } from '../model/chat/mediaTags'
 import { findToolBlocks, ModelTextEscaper } from '../model/chat/toolBlocks'
 import { TooManyImagesError, tooManyImagesMessage } from '../model/providers/clipImages'
-import { explainedError } from '../utils/errorText'
+import { errorText, explainedError } from '../utils/errorText'
 import type { ClipInputRules, GeneratedClip, GeneratedMedia, MediaKind, ModelRequest, ProviderGenerateMediaResult, ProviderStreamChatResult } from '../model/providers'
 import { requireProvider } from '../model/providers/registry'
 import { agentSectionMessages, mediaRequestInput } from '../model/streams/messages'
@@ -43,6 +43,7 @@ import {
   streamIsStreaming,
   streamSession,
 } from '../model/state/streams'
+import { ReplyJobs, writeJobAssets, type EndedJob } from './jobs'
 import type { ToolRunCall, ToolRunContext } from './tools'
 
 interface StreamStartArgs {
@@ -109,6 +110,10 @@ interface ReplyRuntime {
   // (`writeAsset`): the answer text that comes next starts a new paragraph
   // (`writeModelText`).
   afterAsset: boolean
+  // The jobs that the tools of the reply started (jobs.ts). They outlive
+  // their tool round, but not the reply: a stop, a new submit, and the end
+  // of the reply end them (`stopAll`).
+  jobs: ReplyJobs
 }
 
 // The reply of each tab, so tabs stream at the same time and a new start or
@@ -152,6 +157,22 @@ function showReplyError(tabId: string, title: string, message: string): void {
 function replyErrorMessage(error: unknown, model: ActiveModel): string {
   if (error instanceof TooManyImagesError) return tooManyImagesMessage(model.modelName, error)
   return explainedError(error).message
+}
+
+// The text of the error toast of a reply that ended with `jobs` that
+// failed or timed out, and whose results no `jobs_wait` gave to the model.
+// The reply says nothing of them, so only this toast tells the user. The
+// details are the result texts of the jobs, which hold no local path.
+function unreadJobsMessage(jobs: readonly EndedJob[]): string {
+  const explanation = jobs.length === 1
+    ? 'A job that the model started failed, and the reply ended before the model got the result of the job. '
+      + 'So the reply does not tell of this failure, and it does not hold what the job should make.'
+    : `${jobs.length} jobs that the model started failed, and the reply ended before the model got their results. `
+      + 'So the reply does not tell of these failures, and it does not hold what the jobs should make.'
+  return errorText(
+    `${explanation} To try again, ask the model for it in a new message.`,
+    jobs.map((job) => `The ${job.tool} job ${job.id} ${job.status}: ${job.text}`).join('\n\n'),
+  )
 }
 
 // The tab's stream session still writes into `sectionId`.
@@ -238,11 +259,28 @@ function stopToolRun(tabId: string, reply: ReplyRuntime): boolean {
   return replaceToolRun(tabId, reply.sectionId, run, toolGroupText(blocks))
 }
 
+// The writers of a tool's image and clip into the reply
+// (`ToolRunContext`): each puts its asset at the section end, with the
+// name of the tool that made it (`IMAGE_TOOL_KEY`, `MEDIA_TOOL_ATTRIBUTE`).
+// That is `tool`, or the tool that a write names (`jobs_wait` writes what
+// the job of another tool made). A write while `takesAssets` gives false
+// writes nothing and gives null.
+function toolAssetWriters(tabId: string, reply: ReplyRuntime, tool: string, takesAssets: () => boolean): Pick<ToolRunContext, 'writeImage' | 'writeClip'> {
+  return {
+    writeImage: (path, options) => (takesAssets()
+      ? writeAsset(tabId, reply, (id) => imageMarkdown(path, [{ key: 'id', value: id }, { key: IMAGE_TOOL_KEY, value: options?.tool ?? tool }]))
+      : null),
+    writeClip: (clip, options) => (takesAssets()
+      ? writeAsset(tabId, reply, (id) => mediaTagText({ ...clip, id, other: [{ name: MEDIA_TOOL_ATTRIBUTE, value: options?.tool ?? tool }] }))
+      : null),
+  }
+}
+
 // Runs the calls of one round, in order: appends their running blocks (a
 // refused call gets its error block at once), runs each call, then replaces
 // the running blocks with the final ones. Nothing else of the reply writes
 // the section meanwhile, but a tool can put an image or a clip after the
-// blocks (`ToolRunContext.writeImage`, `writeClip`). `model` is the reply's
+// blocks (`toolAssetWriters`). `model` is the reply's
 // model, for a tool that reads it. Returns the section after the round, or
 // null when the run did not end here: the user stopped the reply, or a
 // submit ended its output (stopToolRun wrote the blocks), or the user
@@ -274,13 +312,9 @@ async function runToolRound(tabId: string, reply: ReplyRuntime, model: ModelRef,
     const context: ToolRunContext = {
       tabId,
       model,
+      jobs: reply.jobs,
       // Not after a stop (`stopToolRun`), as for an image of the model.
-      writeImage: (path) => (reply.toolRun === run
-        ? writeAsset(tabId, reply, (id) => imageMarkdown(path, [{ key: 'id', value: id }, { key: IMAGE_TOOL_KEY, value: call.name }]))
-        : null),
-      writeClip: (clip) => (reply.toolRun === run
-        ? writeAsset(tabId, reply, (id) => mediaTagText({ ...clip, id, other: [{ name: MEDIA_TOOL_ATTRIBUTE, value: call.name }] }))
-        : null),
+      ...toolAssetWriters(tabId, reply, call.name, () => reply.toolRun === run),
     }
     const result = await sbp('dez.controller/tools/run', toolCall, run.abort.signal, context) as ToolRunResult
     if (reply.toolRun !== run) return null
@@ -364,6 +398,42 @@ async function writeReplyImage(tabId: string, reply: ReplyRuntime, image: Genera
   }
 }
 
+// For a reply that ends while some of its jobs still run, or have results
+// that no `jobs_wait` gave to the model: the model ended its reply before
+// it got them, or the reply failed. Waits until no job runs, as a job can
+// be a request that the user pays for, and puts the images and the clips
+// of those jobs at the section end, under the names of their tools, as
+// `jobs_wait` does. The reply stays busy meanwhile, and a stop or a new
+// submit ends the wait and the jobs (`ReplyJobs.stopAll`). The result
+// text of such a job has no reader, so it is dropped. Returns the jobs
+// that failed or timed out, for the error toast (`unreadJobsMessage`);
+// null when the reply ended meanwhile.
+async function settleJobs(tabId: string, reply: ReplyRuntime): Promise<EndedJob[] | null> {
+  // A section that is gone (the user merged it into the one before) takes
+  // no asset, so nothing is worth the wait.
+  if (!streamingSection(tabId, reply.sectionId)) reply.jobs.stopAll()
+  const ended = await reply.jobs.settle()
+  // After a stop the writers give null, which deletes the files.
+  for (const job of ended) {
+    await writeJobAssets(job, toolAssetWriters(tabId, reply, job.tool, () => replyIsCurrent(tabId, reply)))
+  }
+  return replyIsCurrent(tabId, reply) ? ended.filter((job) => job.status !== 'finished') : null
+}
+
+// Ends a reply that is still its tab's reply, as finished or as failed:
+// first its open jobs (`settleJobs`), then the stream session. With no
+// open job there is no wait, so the end is in the tick of the reply's
+// last write. True when it ended the reply; false when a stop or a new
+// submit ended it during the wait for the jobs. A caller shows its own
+// toast only after a true: the end sets the title of a new tab.
+async function endReply(tabId: string, reply: ReplyRuntime, status: 'finished' | 'error'): Promise<boolean> {
+  const unread = reply.jobs.hasOpen ? await settleJobs(tabId, reply) : []
+  if (unread === null) return false
+  finalizeStream(tabId, status === 'finished' ? finishStreamSession(tabId) : errorStreamSession(tabId))
+  if (unread.length > 0) showReplyError(tabId, unread.length === 1 ? 'Job failed' : `${unread.length} jobs failed`, unreadJobsMessage(unread))
+  return true
+}
+
 // The chat rounds of a reply: request rounds until a round ends with no
 // tool calls. Each round streams its answer text and thinking into the
 // agent section; a round that ends with tool calls adds their blocks, runs
@@ -442,7 +512,7 @@ async function runChatRounds(args: StreamStartArgs, reply: ReplyRuntime): Promis
     const streamedCalls = tools.length > 0 ? result.toolCalls ?? [] : []
     const section = streamingSection(args.tabId, args.sectionId)
     if (streamedCalls.length === 0 || !section) {
-      finalizeStream(args.tabId, finishStreamSession(args.tabId))
+      await endReply(args.tabId, reply, 'finished')
       return
     }
 
@@ -452,8 +522,9 @@ async function runChatRounds(args: StreamStartArgs, reply: ReplyRuntime): Promis
       const blocks = calls.map((call) => toolCallBlock(call, ROUND_LIMIT_TOOL_RESULT))
       writeStreamText(args.tabId, args.sectionId, toolGroupAppendText(sectionText, blocks))
       console.error(`The reply reached the limit of ${MAX_TOOL_ROUNDS} tool rounds`)
-      finalizeStream(args.tabId, errorStreamSession(args.tabId))
-      showReplyError(args.tabId, 'Tool limit reached', `The reply reached the limit of ${MAX_TOOL_ROUNDS} tool rounds, so Dez did not run its last tool calls. To let the model go on, send a new message (for example "Go on").`)
+      if (await endReply(args.tabId, reply, 'error')) {
+        showReplyError(args.tabId, 'Tool limit reached', `The reply reached the limit of ${MAX_TOOL_ROUNDS} tool rounds, so Dez did not run its last tool calls. To let the model go on, send a new message (for example "Go on").`)
+      }
       return
     }
 
@@ -577,9 +648,10 @@ export default sbp('sbp/selectors/register', {
     const previousReply = repliesByTab.get(args.tabId)
     if (previousReply) {
       // The submit ended its output (`dez.stream/endOutput`) before it built
-      // `args.messages`; the new reply ends its request.
+      // `args.messages`; the new reply ends its request and its jobs.
       previousReply.cancelling = true
       previousReply.abort.abort()
+      previousReply.jobs.stopAll()
       await sbp('dez.http/cancelStream', previousReply.requestId).catch(() => {})
       if (repliesByTab.get(args.tabId) === previousReply) repliesByTab.delete(args.tabId)
     }
@@ -593,6 +665,7 @@ export default sbp('sbp/selectors/register', {
       toolRun: null,
       escaper: new ModelTextEscaper(),
       afterAsset: false,
+      jobs: new ReplyJobs(),
     }
     repliesByTab.set(args.tabId, reply)
 
@@ -611,10 +684,11 @@ export default sbp('sbp/selectors/register', {
       if (replyIsCurrent(args.tabId, reply)) {
         console.error(args.request === 'chat' ? 'Chat request failed:' : 'Media request failed:', error)
         flushModelText(args.tabId, reply)
-        finalizeStream(args.tabId, errorStreamSession(args.tabId))
-        showReplyError(args.tabId, 'Request failed', replyErrorMessage(error, args.model))
+        if (await endReply(args.tabId, reply, 'error')) showReplyError(args.tabId, 'Request failed', replyErrorMessage(error, args.model))
       }
     } finally {
+      // No job outlives its reply: nothing could take its result.
+      reply.jobs.stopAll()
       if (repliesByTab.get(args.tabId) === reply) repliesByTab.delete(args.tabId)
     }
   },
@@ -622,19 +696,20 @@ export default sbp('sbp/selectors/register', {
   // A submit during a reply in the tab calls this after it builds its
   // request messages (so a submit with no messages leaves the reply alone)
   // and before it adds the new agent section; the new start then cancels
-  // the reply's request. A running tool stops with its final blocks, and
-  // the answer text that the escaper holds is written. These writes must
-  // come before the new section is in the store: the editor gets it only in
-  // Vue's next watcher flush, and a doc change before then writes the
-  // editor's sections back to the store, with no new section. Output of the
-  // request after this is dropped. True when it wrote text: the caller must
-  // then build its messages again.
+  // the reply's request. A running tool stops with its final blocks, the
+  // jobs of the reply stop, and the answer text that the escaper holds is
+  // written. These writes must come before the new section is in the
+  // store: the editor gets it only in Vue's next watcher flush, and a doc
+  // change before then writes the editor's sections back to the store,
+  // with no new section. Output of the request after this is dropped. True
+  // when it wrote text: the caller must then build its messages again.
   'dez.stream/endOutput' (tabId: string): boolean {
     const reply = repliesByTab.get(tabId)
     if (!reply) return false
     reply.cancelling = true
     reply.outputEnded = true
     const wroteBlocks = stopToolRun(tabId, reply)
+    reply.jobs.stopAll()
     const wroteText = flushModelText(tabId, reply)
     return wroteBlocks || wroteText
   },
@@ -646,6 +721,8 @@ export default sbp('sbp/selectors/register', {
       reply.cancelling = true
       reply.abort.abort()
       stopToolRun(tabId, reply)
+      // The blocks of the calls that started the jobs stay in the section.
+      reply.jobs.stopAll()
     }
 
     try {

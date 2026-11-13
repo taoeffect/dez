@@ -14,12 +14,14 @@ import { effectiveRequest, type ProviderInfo, type ProviderInputImageRules, type
 import type { SettingsSnapshot } from '../model/state'
 import { AUDIO_TOOL, audioClipId, audioClipOf, audioClipPart, audioCutResultText, audioLengthText } from '../model/tools/audioTool'
 import { brightnessPlan, contrastPlan, convertPlan, cropPlan, flipPlan, IMAGE_TOOL, imageIdArgument, imageOf, imageResultText, invertPlan, rotatePlan, saturationPlan, scalePlan, unwritableFormatError, type ImagePlan } from '../model/tools/imageTool'
+import { jobInspectText, jobResultText, jobsListText, jobsWaitText, unknownJobText, type JobResult } from '../model/tools/jobs'
 import { modelInfoParameterValues, modelInfoPart, modelInfoText, modelInfoTarget, type ModelInfoFacts, type ModelInfoTarget } from '../model/tools/modelInfo'
 import { modelListText } from '../model/tools/modelList'
-import { unknownToolText } from '../model/tools/registry'
+import { unexpectedToolErrorText, unknownToolText } from '../model/tools/registry'
 import { parseSubcommandCall, type SubcommandTool } from '../model/tools/subcommands'
 import { ToolError, type ToolArguments, type ToolRunResult } from '../model/tools/types'
 import { rawErrorText } from '../utils/errorText'
+import { writeJobAssets, type ReplyJobs } from './jobs'
 
 /** A call that Dez runs: a Dez tool and the arguments that its definition
  *  accepted (`checkToolCalls`). */
@@ -35,16 +37,20 @@ export interface ToolRunContext {
    *  makes the call. Not the tab's active model, which the user can change
    *  while the reply runs. */
   model: ModelRef
+  /** The jobs of the reply (jobs.ts). A tool whose work can take long
+   *  starts it as a job and returns `jobStartedText` with the job's id. */
+  jobs: ReplyJobs
   /** Writes the reference of a stored image that the tool made into the
-   *  reply, with a new image id, and returns that id. Null when the reply
-   *  takes no image any more (a stop ended the tool round): the runner
-   *  then deletes the file. */
-  writeImage(path: string): string | null
-  /** Writes the tag of a saved clip that the tool made into the reply, with
-   *  a new media id and the tool's name, and returns that id. Null when the
-   *  reply takes no clip any more (a stop ended the tool round): the runner
-   *  then deletes the file. */
-  writeClip(clip: Omit<MediaTagData, 'id' | 'other'>): string | null
+   *  reply, with a new image id, and returns that id. The reference names
+   *  the tool of the call, or `tool` (the `jobs_wait` runner writes what
+   *  the job of another tool made). Null when the reply takes no image any
+   *  more (a stop ended the tool round): the runner then deletes the file. */
+  writeImage(path: string, options?: { tool?: string }): string | null
+  /** Writes the tag of a clip that the tool made into the reply, with a new
+   *  media id and the tool's name (`tool`, as for `writeImage`), and
+   *  returns that id. Null when the reply takes no clip any more (a stop
+   *  ended the tool round): the runner then deletes the file. */
+  writeClip(clip: Omit<MediaTagData, 'id' | 'other'>, options?: { tool?: string }): string | null
 }
 
 // The code of each Dez tool (TOOL_DEFINITIONS), by tool name. A runner gives
@@ -52,14 +58,6 @@ export interface ToolRunContext {
 // aborts when the user stops the reply; a runner that waits on something
 // must stop then.
 type ToolRunner = (args: ToolArguments, signal: AbortSignal, context: ToolRunContext) => Promise<string>
-
-// The error result of a runner that threw an error that Dez did not expect.
-// It leaves out the error's text, which can hold a local path: the result
-// goes to the chat provider. The log has it.
-function unexpectedToolErrorText(name: string): string {
-  return `Dez hit an error that it did not expect while it ran ${name}. This is not a fault of the call. `
-    + 'Tell the user that the tool failed (Help › Developer Console shows the error), and do not call it again with the same arguments.'
-}
 
 // Runs `start` and waits for its work until the user stops the reply; then
 // rejects at once. The work itself goes on: a model-list check still updates
@@ -332,6 +330,32 @@ const TOOL_RUNNERS: Record<string, ToolRunner> = {
     invert: imageRunner(invertPlan),
     convert: imageRunner(convertPlan),
   }),
+  // The job tools (model/tools/jobs.ts) read the jobs of the reply
+  // (`ReplyJobs`, jobs.ts). `jobs_wait` gives the results of the jobs that
+  // ended since the last one, and waits for the next end when there is
+  // none; a stop ends the wait, and the jobs with it (`dez.stream/stop`).
+  // It also puts the images and the clips of those jobs into the reply,
+  // under the names of the tools that started them: a job writes nothing
+  // itself, so its asset comes with the result that names it, after the
+  // blocks of this call's group. Its result is never an error result: each
+  // part tells in words whether its job failed.
+  async jobs_wait (_args, signal, context) {
+    const results: JobResult[] = []
+    for (const job of await context.jobs.wait(signal)) {
+      results.push({ id: job.id, tool: job.tool, status: job.status, text: jobResultText(job.text, await writeJobAssets(job, context)) })
+    }
+    return jobsWaitText(results, context.jobs.running)
+  },
+  async jobs_list (_args, _signal, context) {
+    return jobsListText(context.jobs.list())
+  },
+  async job_inspect (args, _signal, context) {
+    const id = String(args.job_id).trim()
+    const jobs = context.jobs.list()
+    const job = jobs.find((candidate) => candidate.id === id)
+    if (!job) throw new ToolError(unknownJobText(id, jobs.map((known) => known.id)))
+    return jobInspectText(job)
+  },
 }
 
 export default sbp('sbp/selectors/register', {

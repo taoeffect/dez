@@ -10,9 +10,11 @@ import type { KnownLimit } from '../model/providers/knownLimits'
 import type { ProviderMediaQuote, ProviderMediaQuoteInput } from '../model/providers/streamTypes'
 import { providerInfo } from '../model/providers/testing'
 import type { ModelInfo, ProviderInfo, ProviderInputImageRules, ProviderSettingsDescriptor } from '../model/providers/types'
+import { NO_JOBS_TEXT, NO_OPEN_JOBS_TEXT } from '../model/tools/jobs'
 import { modelInfoText, type ModelInfoFacts } from '../model/tools/modelInfo'
 import { TOOL_DEFINITIONS } from '../model/tools/registry'
-import type { ToolRunResult } from '../model/tools/types'
+import type { ToolArguments, ToolRunResult } from '../model/tools/types'
+import { ReplyJobs, type JobOutcome } from './jobs'
 import type { ToolRunCall, ToolRunContext } from './tools'
 // Side-effect imports: register the dez.model/* selectors and the selector
 // under test.
@@ -129,9 +131,10 @@ sbp('sbp/selectors/register', {
 // calls name, so that a result tells which of the two the tool read.
 const REPLY_MODEL: ModelRef = { providerId: 'venice', modelId: 'venice-glm-5' }
 
-// Runs a call of a reply of `model` that takes no image and no clip.
+// Runs a call of a reply of `model` that takes no image and no clip, and
+// has no job.
 function run(call: ToolRunCall, { signal = new AbortController().signal, model = REPLY_MODEL } = {}): Promise<ToolRunResult> {
-  const context: ToolRunContext = { tabId: '', model, writeImage: () => null, writeClip: () => null }
+  const context: ToolRunContext = { tabId: '', model, jobs: new ReplyJobs(), writeImage: () => null, writeClip: () => null }
   return sbp('dez.controller/tools/run', call, signal, context) as Promise<ToolRunResult>
 }
 
@@ -205,7 +208,7 @@ describe('dez.controller/tools/run', () => {
       expect((await run({ name: definition.name, arguments: {} })).content).not.toMatch(/^Dez has no tool/)
     }
     expect(await run({ name: 'toString', arguments: {} })).toStrictEqual({
-      content: 'Dez has no tool named "toString". Call only the Dez tools, by their exact names: model_list, model_info, audio, image.',
+      content: 'Dez has no tool named "toString". Call only the Dez tools, by their exact names: model_list, model_info, audio, image, jobs_wait, jobs_list, job_inspect.',
       isError: true,
     })
   })
@@ -456,6 +459,7 @@ describe('dez.controller/tools/run', () => {
       const context: ToolRunContext = {
         tabId,
         model: REPLY_MODEL,
+        jobs: new ReplyJobs(),
         writeImage: (path) => {
           written.push(path)
           return newImageId
@@ -628,6 +632,7 @@ describe('dez.controller/tools/run', () => {
       const context: ToolRunContext = {
         tabId,
         model: REPLY_MODEL,
+        jobs: new ReplyJobs(),
         writeImage: () => null,
         writeClip: (data) => {
           written.push(data)
@@ -749,6 +754,147 @@ describe('dez.controller/tools/run', () => {
       expect((await clip({ clip: 'b', end: 5 }, abort.signal)).isError).toBe(true)
       expect(savedClips).toStrictEqual([])
       expect(consoleError).not.toHaveBeenCalled()
+    })
+  })
+
+  describe('the job tools', () => {
+    const IMAGE = '/home/u/.config/dez/assets/generated/images/job.png'
+    const SONG = '/home/u/.config/dez/assets/generated/audio/job.mp3'
+    const LONG = { timeoutMs: 600_000 }
+    let jobs: ReplyJobs
+    // What the reply got, each with the tool that its text names, and the
+    // ids that it gives (null: the reply takes no asset).
+    let written: unknown[] = []
+    let newIds: (string | null)[]
+
+    function jobTool(name: string, args: ToolArguments = {}, signal = new AbortController().signal): Promise<ToolRunResult> {
+      const context: ToolRunContext = {
+        tabId: '',
+        model: REPLY_MODEL,
+        jobs,
+        writeImage: (path, options) => {
+          written.push({ path, ...options })
+          return newIds.shift() ?? null
+        },
+        writeClip: (clip, options) => {
+          written.push({ path: clip.src, ...options })
+          return newIds.shift() ?? null
+        },
+      }
+      return sbp('dez.controller/tools/run', { name, arguments: args }, signal, context) as Promise<ToolRunResult>
+    }
+
+    // A work that ends when its test calls `finish`.
+    function heldWork(): { work: () => Promise<JobOutcome>, finish: (outcome: JobOutcome) => void } {
+      let finish!: (outcome: JobOutcome) => void
+      const done = new Promise<JobOutcome>((resolve) => { finish = resolve })
+      return { work: () => done, finish }
+    }
+
+    beforeEach(() => {
+      jobs = new ReplyJobs()
+      written = []
+      newIds = ['c', 'd', 'e']
+    })
+
+    // Ends the time limits of the jobs that a test left.
+    afterEach(() => jobs.stopAll())
+
+    it('jobs_wait waits for the next job end, gives each result once with its job id and status, and tells how many jobs still run', async () => {
+      const slow = heldWork()
+      const made = jobs.start('model_invoke', async () => ({ text: 'A red square.', isError: false, assets: [] }), LONG)
+      const refused = jobs.start('video', async () => ({ text: 'The provider refused the request.', isError: true, assets: [] }), LONG)
+      const last = jobs.start('model_invoke', slow.work, LONG)
+
+      // Also a job that failed gives no error result: the result holds the
+      // results of other jobs too.
+      expect(await jobTool('jobs_wait')).toStrictEqual({
+        content: '2 jobs ended. 1 job still runs: call jobs_wait again to get its result.\n\n'
+          + `<job id="${made}" tool="model_invoke" status="finished">\nA red square.\n</job>\n\n`
+          + `<job id="${refused}" tool="video" status="failed">\nThe provider refused the request.\n</job>`,
+        isError: false,
+      })
+
+      const wait = jobTool('jobs_wait')
+      slow.finish({ text: 'Done.', isError: false, assets: [] })
+      expect(await wait).toStrictEqual({
+        content: `1 job ended. No job still runs.\n\n<job id="${last}" tool="model_invoke" status="finished">\nDone.\n</job>`,
+        isError: false,
+      })
+      expect(await jobTool('jobs_wait')).toStrictEqual({ content: NO_OPEN_JOBS_TEXT, isError: false })
+    })
+
+    it('jobs_wait puts what a job made into the reply under the name of the job\'s tool, and its result names the new ids', async () => {
+      const id = jobs.start('model_invoke', async () => ({
+        text: '',
+        isError: false,
+        assets: [{ kind: 'image', path: IMAGE }, { kind: 'clip', clip: { kind: 'audio', type: 'audio/mpeg', src: SONG, url: null, expires: null } }],
+      }), LONG)
+
+      expect((await jobTool('jobs_wait')).content).toBe(
+        `1 job ended. No job still runs.\n\n<job id="${id}" tool="model_invoke" status="finished">\nMade the image @c.\nMade the audio clip @d.\n</job>`,
+      )
+      expect(written).toStrictEqual([{ path: IMAGE, tool: 'model_invoke' }, { path: SONG, tool: 'model_invoke' }])
+      expect(deletedImages).toStrictEqual([])
+      expect(deletedClips).toStrictEqual([])
+    })
+
+    it('jobs_wait deletes the file of a job when the reply takes no image any more, and says so', async () => {
+      newIds = []
+      jobs.start('model_invoke', async () => ({ text: '', isError: false, assets: [{ kind: 'image', path: IMAGE }] }), LONG)
+
+      expect((await jobTool('jobs_wait')).content).toContain('The reply stopped before Dez could add the image of this job to it, so there is no new image.')
+      expect(deletedImages).toStrictEqual([IMAGE])
+    })
+
+    it('jobs_wait ends at once when the user stops the reply, and keeps the result of the job for a later reader', async () => {
+      const slow = heldWork()
+      const id = jobs.start('model_invoke', slow.work, LONG)
+      const abort = new AbortController()
+      const wait = jobTool('jobs_wait', {}, abort.signal)
+
+      abort.abort()
+
+      expect((await wait).isError).toBe(true)
+      expect(consoleError).not.toHaveBeenCalled()
+      slow.finish({ text: 'Done.', isError: false, assets: [] })
+      expect((await jobs.settle()).map((job) => job.id)).toStrictEqual([id])
+    })
+
+    it('jobs_list lists the jobs of the reply and does not wait', async () => {
+      expect(await jobTool('jobs_list')).toStrictEqual({ content: NO_JOBS_TEXT, isError: false })
+
+      const running = jobs.start('model_invoke', heldWork().work, LONG)
+      const ended = jobs.start('video', async () => ({ text: 'Done.', isError: false, assets: [] }), LONG)
+      await jobTool('jobs_wait')
+
+      const { content, isError } = await jobTool('jobs_list')
+      expect(isError).toBe(false)
+      expect(content.split('\n').slice(1)).toStrictEqual([
+        `${running} | model_invoke | running | - | 0`,
+        `${ended} | video | finished | given | 0`,
+      ])
+    })
+
+    it('job_inspect tells the status and the last state of the job that the call names', async () => {
+      const id = jobs.start('model_invoke', async (_signal, report) => {
+        report('Queued at the provider as job q-7.')
+        return await new Promise<JobOutcome>(() => {})
+      }, LONG)
+
+      expect(await jobTool('job_inspect', { job_id: ` ${id}\n` })).toStrictEqual({
+        content: `The job ${id} (model_invoke) runs, for 0 seconds so far. Call jobs_wait to wait for its result.\nState: Queued at the provider as job q-7.`,
+        isError: false,
+      })
+    })
+
+    it('job_inspect gives an error result that names the jobs of the reply for an id that none of them has', async () => {
+      const id = jobs.start('model_invoke', heldWork().work, LONG)
+      // An id that no job can have: a job id has 4 characters after `j-`.
+      expect(await jobTool('job_inspect', { job_id: 'j-none-1' })).toStrictEqual({
+        content: `This reply has no job with the id "j-none-1". A job of an earlier reply ended with that reply. The jobs of this reply are ${id}: call job_inspect again with one of these ids.`,
+        isError: true,
+      })
     })
   })
 })

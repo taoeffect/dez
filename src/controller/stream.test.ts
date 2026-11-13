@@ -17,10 +17,13 @@ import type { GeneratedClip, ProviderChatInputMessage, ProviderGenerateMediaInpu
 import { CLIP_KINDS, isClipKind, isTextKind, type MediaKind } from '../model/providers/types'
 import type { RequestMessages } from '../model/streams/types'
 import { systemPromptErrorText } from '../model/systemPrompt'
+import { jobsWaitText } from '../model/tools/jobs'
 import { NO_MODELS_TEXT } from '../model/tools/modelList'
 import { TOOL_DEFINITIONS, unknownToolText } from '../model/tools/registry'
 import type { ToastData } from '../view/toast/selectors'
 import { ExplainedError, UNEXPECTED_ERROR } from '../utils/errorText'
+import type { JobOutcome } from './jobs'
+import type { ToolRunContext } from './tools'
 // Side-effect imports: register the dez.model/* selectors and the selectors
 // under test.
 import '../model/state/index'
@@ -142,6 +145,13 @@ sbp('sbp/selectors/register', {
   async 'dez.controller/alertReplyEnded' (tabId: string, status: string): Promise<void> {
     alerts.push({ tabId, status })
   },
+})
+
+// The context of the last tool call that the tool loop ran (an SBP filter
+// runs before its selector). The job tests start their jobs through it.
+let toolContext: ToolRunContext
+sbp('sbp/filters/selector/add', 'dez.controller/tools/run', (_domain: string, _selector: string, data: unknown[]) => {
+  toolContext = data[2] as ToolRunContext
 })
 
 function activeTab(): Tab {
@@ -2235,6 +2245,215 @@ describe('dez.stream/start clips that a tool makes', () => {
     expect(sectionVisibleText(agentSection())).not.toContain('<dez:audio')
     expect(deletedClips).toStrictEqual([made('g1.wav')])
     expect(sent).toHaveLength(1)
+  })
+})
+
+describe('dez.stream/start jobs', () => {
+  const listCall = (id: string) => ({ id, name: 'model_list', argumentsText: '{"filter":"gemini"}' })
+  const listBlock = (id: string) => `<dez:tool id="${id}" name="model_list" filter="gemini">\n${NO_MODELS_TEXT}\n</dez:tool>\n`
+  const fox = generated('fox.png')
+  const foxReference = `![${fox}](id=a|tool=model_invoke)`
+  // The jobs that the calls started, in the order of the starts: the id,
+  // the signal of the work, and the end of the work.
+  let jobs: Array<{ id: string, signal: AbortSignal, end: (outcome: JobOutcome) => void }> = []
+
+  // Lets the promise callbacks that are due run, on the fake clock: the
+  // reply then waits for something that only the test ends.
+  const settled = () => vi.advanceTimersByTimeAsync(0)
+
+  // No tool starts a job in its own run yet. So each `model_list` call
+  // starts one here, as a job of `model_invoke`: its runner reads the
+  // provider list, and this stub then starts the job through the context
+  // of that call. The work ends only when the test ends it.
+  beforeEach(() => {
+    vi.useFakeTimers()
+    jobs = []
+    providerInfos = async () => {
+      const job = { id: '', signal: new AbortController().signal, end: (_outcome: JobOutcome) => {} }
+      job.id = toolContext.jobs.start('model_invoke', (signal) => new Promise((resolve) => {
+        job.signal = signal
+        job.end = resolve
+      }), { timeoutMs: 60_000 })
+      jobs.push(job)
+      return []
+    }
+  })
+
+  afterEach(() => {
+    vi.useRealTimers()
+  })
+
+  it('gives the result of a job to a jobs_wait call, and puts the image of the job after the blocks of that call', async () => {
+    replyRounds([
+      async (input) => ({ requestId: input.requestId as string, toolCalls: [listCall('c1')] }),
+      async (input) => ({ requestId: input.requestId as string, toolCalls: [{ id: 'c2', name: 'jobs_wait', argumentsText: '{}' }] }),
+      async (input) => {
+        await input.onToken('Here it is.')
+        return { requestId: input.requestId as string }
+      },
+    ])
+
+    const stream = startStream({ sendTools: true })
+    await settled()
+    // The call waits for the job.
+    expect(requests).toHaveLength(2)
+    jobs[0].end({ text: 'A fox in the snow.', isError: false, assets: [{ kind: 'image', path: fox }] })
+    await stream
+
+    const result = jobsWaitText([{ id: jobs[0].id, tool: 'model_invoke', status: 'finished', text: 'A fox in the snow.\nMade the image @a.' }], 0)
+    // The request after the call ends with its result: the reference of
+    // the image after it would be a prefill.
+    expect(sent[2].at(-1)).toStrictEqual({ role: 'tool', results: [{ callId: 'c2', content: result, isError: false }] })
+    const text = sectionVisibleText(agentSection())
+    expect(findToolBlocks(text).map((block) => block.result)).toStrictEqual([NO_MODELS_TEXT, result])
+    expect(text.slice(text.lastIndexOf('</dez:tool>\n'))).toBe(`</dez:tool>\n\n${foxReference}\n\nHere it is.`)
+    expect(toasts).toStrictEqual([])
+  })
+
+  it('waits for a job that still runs at the end of the reply, then puts its image at the section end under the name of its tool', async () => {
+    replyRounds([
+      async (input) => ({ requestId: input.requestId as string, toolCalls: [listCall('c1')] }),
+      async (input) => {
+        await input.onToken('I started it.')
+        return { requestId: input.requestId as string }
+      },
+    ])
+
+    const stream = startStream({ sendTools: true })
+    await settled()
+    // The model ended its reply, and the job still runs.
+    expect(requests).toHaveLength(2)
+    expect(sbp('dez.model/streams/isStreaming', activeTab().id)).toBe(true)
+    expect(savedConversations).toHaveLength(0)
+    jobs[0].end({ text: 'A fox in the snow.', isError: false, assets: [{ kind: 'image', path: fox }] })
+    await stream
+
+    expect(sectionTexts()).toStrictEqual([
+      { role: 'user', text: 'Hi' },
+      { role: 'agent', text: `${listBlock('c1')}I started it.\n\n${foxReference}` },
+      { role: 'user', text: '' },
+    ])
+    expect(deletedImages).toStrictEqual([])
+    expect(toasts).toStrictEqual([])
+    expect(alerts).toStrictEqual([{ tabId: activeTab().id, status: 'finished' }])
+  })
+
+  // The reply does not tell of these jobs, so only the toast does. One
+  // toast for all of them: the toast area shows only a few at a time.
+  it('tells the user in one sticky error toast of the jobs that failed and whose results the model did not get', async () => {
+    replyRounds([
+      async (input) => ({ requestId: input.requestId as string, toolCalls: [listCall('c1'), listCall('c2')] }),
+      async (input) => {
+        jobs[0].end({ text: 'The provider refused the prompt.', isError: true, assets: [] })
+        jobs[1].end({ text: 'The provider has no credit left.', isError: true, assets: [] })
+        await input.onToken('Both run now.')
+        return { requestId: input.requestId as string }
+      },
+    ])
+
+    await startStream({ sendTools: true })
+
+    expect(toasts).toStrictEqual([{
+      area: 'app-global',
+      data: { variant: 'error', title: '2 jobs failed', message: expect.any(String) },
+    }])
+    expect(toasts[0].data.message).toContain(`The model_invoke job ${jobs[0].id} failed: The provider refused the prompt.`)
+    expect(toasts[0].data.message).toContain(`The model_invoke job ${jobs[1].id} failed: The provider has no credit left.`)
+    expect(alerts).toStrictEqual([{ tabId: activeTab().id, status: 'finished' }])
+  })
+
+  it('takes the image of a job that still runs when the request fails, then shows the error', async () => {
+    replyRounds([
+      async (input) => ({ requestId: input.requestId as string, toolCalls: [listCall('c1')] }),
+      async () => {
+        throw new ExplainedError('Venice refused the API key.', 'HTTP 401: Authentication failed')
+      },
+    ])
+
+    const stream = startStream({ sendTools: true })
+    await settled()
+    expect(toasts).toStrictEqual([])
+    jobs[0].end({ text: '', isError: false, assets: [{ kind: 'image', path: fox }] })
+    await stream
+
+    expect(sectionVisibleText(agentSection())).toBe(`${listBlock('c1')}\n${foxReference}`)
+    expect(toasts.map((toast) => toast.data)).toStrictEqual([
+      { variant: 'error', title: 'Request failed', message: 'Venice refused the API key.\n\nDetails: HTTP 401: Authentication failed' },
+    ])
+    expect(alerts).toStrictEqual([{ tabId: activeTab().id, status: 'error' }])
+  })
+
+  // A section with only tool blocks is not empty, so the stop keeps it:
+  // the blocks tell which calls ran.
+  it('stops the jobs when the user stops the reply, keeps a section that holds only tool blocks, and deletes what a job still makes', async () => {
+    replyRounds([
+      async (input) => ({ requestId: input.requestId as string, toolCalls: [listCall('c1')] }),
+      async () => {
+        await sbp('dez.stream/stop', activeTab().id)
+        throw new Error('cancelled')
+      },
+    ])
+
+    await startStream({ sendTools: true })
+
+    expect(jobs[0].signal.aborted).toBe(true)
+    // A work that does not end at the abort still gives its file.
+    jobs[0].end({ text: '', isError: false, assets: [{ kind: 'image', path: fox }] })
+    await settled()
+    expect(deletedImages).toStrictEqual([fox])
+    expect(sectionTexts()).toStrictEqual([
+      { role: 'user', text: 'Hi' },
+      { role: 'agent', text: listBlock('c1') },
+      { role: 'user', text: '' },
+    ])
+    expect(toasts).toStrictEqual([])
+    expect(alerts).toStrictEqual([])
+  })
+
+  it('ends a reply that waits for its jobs as a stop when the user stops it', async () => {
+    replyRounds([
+      async (input) => ({ requestId: input.requestId as string, toolCalls: [listCall('c1')] }),
+      async (input) => {
+        await input.onToken('I started it.')
+        return { requestId: input.requestId as string }
+      },
+    ])
+
+    const stream = startStream({ sendTools: true })
+    await settled()
+    await sbp('dez.stream/stop', activeTab().id)
+    await stream
+
+    expect(jobs[0].signal.aborted).toBe(true)
+    expect(sbp('dez.model/streams/isStreaming', activeTab().id)).toBe(false)
+    expect(sectionVisibleText(agentSection())).toBe(`${listBlock('c1')}I started it.`)
+    expect(savedConversations).toHaveLength(1)
+    expect(toasts).toStrictEqual([])
+    expect(alerts).toStrictEqual([])
+  })
+
+  it('stops the jobs of a reply that a new submit in the tab ends', async () => {
+    const tabId = activeTab().id
+    sbp('dez.model/setActiveModel', model.providerId, model.modelId, model.modelName)
+    replyRounds([
+      async (input) => ({ requestId: input.requestId as string, toolCalls: [listCall('c1')] }),
+      async (input) => {
+        await input.onToken('I started it.')
+        await sbp('dez.controller/submitTab', tabId)
+        throw new Error('cancelled')
+      },
+      async (input) => {
+        await input.onToken('Answer.')
+        return { requestId: input.requestId as string }
+      },
+    ])
+
+    await startStream({ sendTools: true })
+
+    expect(requests).toHaveLength(3)
+    expect(jobs).toHaveLength(1)
+    expect(jobs[0].signal.aborted).toBe(true)
+    expect(toasts).toStrictEqual([])
   })
 })
 

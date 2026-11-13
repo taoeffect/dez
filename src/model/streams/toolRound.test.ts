@@ -36,6 +36,16 @@ describe('checkToolCalls', () => {
     ])
   })
 
+  // Blank arguments mean `{}`, which lacks the parameter.
+  it('refuses a call with blank arguments of a tool that has a required parameter, and tells how to add it', () => {
+    expect(checkToolCalls([streamed('c1', '', 'job_inspect')], [])).toStrictEqual([{
+      id: 'c1',
+      name: 'job_inspect',
+      arguments: {},
+      refusal: 'Dez did not run this call. The required parameter "job_id" is missing. Add it as a string, as in {"job_id": "..."}.',
+    }])
+  })
+
   it('gives a new id to a call with none, and to an id that the section or an earlier call of the group holds', () => {
     const calls = [streamed('', '{}'), streamed('call_1', '{}'), streamed('call_2', '{}'), streamed('call_2', '{}')]
 
@@ -57,7 +67,7 @@ describe('checkToolCalls', () => {
       streamed('c4', '{"limit":3}'),
       streamed('c5', '{}', ''),
     ]
-    const tools = 'Call only the Dez tools, by their exact names: model_list, model_info, audio, image.'
+    const tools = 'Call only the Dez tools, by their exact names: model_list, model_info, audio, image, jobs_wait, jobs_list, job_inspect.'
     const parameters = 'The parameters of model_list are: filter (string), type (string), inputs (string), sort (string), sort_dir (string).'
 
     expect(checkToolCalls(calls, [])).toStrictEqual([
@@ -88,7 +98,7 @@ describe('checkToolCalls', () => {
 
 describe('toolCallBlock', () => {
   const call: CheckedToolCall = { id: 'c1', name: 'model_list', arguments: { filter: 'gemini' } }
-  const unknownTool = 'Dez has no tool named "web_search". Call only the Dez tools, by their exact names: model_list, model_info, audio, image.'
+  const unknownTool = 'Dez has no tool named "web_search". Call only the Dez tools, by their exact names: model_list, model_info, audio, image, jobs_wait, jobs_list, job_inspect.'
   const refused: CheckedToolCall = { id: 'c2', name: 'web_search', arguments: {}, refusal: unknownTool }
 
   it('runs a call until it has a result, then gives the result and its status', () => {
