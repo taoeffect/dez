@@ -24,11 +24,8 @@ let dropCopyFolders: Promise<string[]> | null = null
 function copyFolders(): Promise<string[]> {
   dropCopyFolders ??= Promise.all([
     sbp('dez.native/tempFolders') as Promise<string[]>,
-    ...(['app', 'cache'] as const).map(async (root) => {
-      const folder = await sbp('dez.native/getAppDir', root) as string
-      // The cache root can be missing until Dez writes a temp copy.
-      return await (sbp('dez.native/canonicalPath', folder) as Promise<string>).catch(() => folder)
-    }),
+    ...(['app', 'cache'] as const).map(async (root) =>
+      await sbp('dez.native/canonicalPath', await sbp('dez.native/getAppDir', root)) as string),
   ]).then(([temp, ...dez]) => [...temp, ...dez])
   dropCopyFolders.catch(() => { dropCopyFolders = null })
   return dropCopyFolders
