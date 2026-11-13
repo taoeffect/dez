@@ -40,7 +40,7 @@ export function parseOutputTypes(text: string): OutputTypesResult {
   const words = text.toLowerCase().split(/[\s,]+/).filter(Boolean)
   const unknown = [...new Set(words.filter((word) => !MODEL_OUTPUT_IDS.some((id) => id === word)))]
   if (unknown.length > 0) return { ok: false, unknown }
-  return { ok: true, types: MODEL_OUTPUT_IDS.filter((id) => words.includes(id)) }
+  return { ok: true, types: normalizeOutputs(words) }
 }
 
 /** What the model makes; a model whose provider does not tell counts as a
