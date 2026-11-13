@@ -1,5 +1,6 @@
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from 'vitest'
 import { Key } from 'webdriverio'
+import { STORED_FILE_FOLDERS } from '../../src/model/chat/unusedFiles'
 import { DEZ_DISCUSSIONS_URL } from '../../src/utils/dezLinks'
 import { startApp, type RunningApp } from './harness/app'
 import { clearOpenedUrls, consoleErrors, openedUrls, pointerClick, pointerClickAt, pointerDrag, resetConsoleErrors, screenshotOnFailure, stopOpenUrl, waitFor, waitForValue } from './harness/dom'
@@ -18,7 +19,8 @@ import { focusEditor, focusedArea, sbpCall } from './harness/thread'
 const NAV = {
   General: '.help-nav-btn:nth-child(1)',
   Tips: '.help-nav-btn:nth-child(2)',
-  Support: '.help-nav-btn:nth-child(3)',
+  Assets: '.help-nav-btn:nth-child(3)',
+  Support: '.help-nav-btn:nth-child(4)',
 }
 
 describe('Help panel', () => {
@@ -91,6 +93,8 @@ describe('Help panel', () => {
 
     await pointerClick(browser, NAV.Tips)
     await waitForValue(browser, 'Tips page', shownPage, { nav: 'Tips', page: 'help-page--tips' })
+    await pointerClick(browser, NAV.Assets)
+    await waitForValue(browser, 'Assets page', shownPage, { nav: 'Assets', page: 'help-page--assets' })
     await pointerClick(browser, NAV.Support)
     await waitForValue(browser, 'Support page', shownPage, { nav: 'Support', page: 'help-page--support' })
 
@@ -140,10 +144,42 @@ describe('Help panel', () => {
   it('opens the Discussions page with the system browser from Support', async () => {
     await openWithButton()
     await pointerClick(browser, NAV.Support)
-    await waitFor(browser, '.help-link')
-    await pointerClick(browser, '.help-link')
+    await waitFor(browser, '.help-page--support .help-link')
+    await pointerClick(browser, '.help-page--support .help-link')
     await waitForValue(browser, 'opened URLs', () => openedUrls(browser), [DEZ_DISCUSSIONS_URL])
     expect(await helpOpen()).toBe(true)
+  })
+
+  // The app of this spec has its own home folder, with the cache folder in
+  // it (`startApp`), so both folders show with `~`.
+  it('opens Assets from the link of General, with the folders of this computer, and scrolls to its end', async () => {
+    // The texts of the `code` elements of `selector`, in text order.
+    const codeTexts = async (selector: string): Promise<string[]> =>
+      browser.execute((selector) => [...document.querySelectorAll(`.help-page--assets ${selector}`)].map((code) => code.textContent ?? ''), selector)
+
+    await openWithButton()
+    await pointerClick(browser, '.help-page--general .help-link')
+    await waitForValue(browser, 'Assets page', shownPage, { nav: 'Assets', page: 'help-page--assets' })
+
+    // The paths come from a native read after the panel opens.
+    await waitForValue(browser, 'the Dez folder and the temp folder on Assets', async () => {
+      const paths = await codeTexts('p code')
+      return paths.filter((path) => path.startsWith('~/'))
+    }, ['~/.config/dez', '~/.cache/dez/media'])
+    // The list has every folder of stored files.
+    expect((await codeTexts('.help-folders code')).sort()).toEqual([...STORED_FILE_FOLDERS].sort())
+
+    // The page is longer than the panel: it scrolls in the panel, down to
+    // its last line.
+    const end = await browser.execute(() => {
+      const content = document.querySelector('.help-content')
+      const last = document.querySelector('.help-page--assets > :last-child')
+      if (!content || !last) throw new Error('no Assets page')
+      content.scrollTop = content.scrollHeight
+      return { scrolled: content.scrollTop, lastBottom: last.getBoundingClientRect().bottom, contentBottom: content.getBoundingClientRect().bottom }
+    })
+    expect(end.scrolled).toBeGreaterThan(0)
+    expect(end.lastBottom).toBeLessThanOrEqual(end.contentBottom)
   })
 
   // Help › Dez Help calls this selector.

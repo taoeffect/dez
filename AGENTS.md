@@ -112,13 +112,13 @@ ThreadEditor (CodeMirror doc) syncs to the active tab's sections
 - `view/app/AppLayout.vue`: layout and bottom bar (`ModelSelector.vue`, `view/thread/SubmitButton.vue`, the Help button).
 - `view/model-selector/`: `ModelPicker.vue` (a virtual list of the rows from `pickerRows.ts`), `ModelOutputFilter.vue` (the output type filter), `ProviderSettingsPopup.vue` (for the active model: the provider toggles that apply to it, its "Model Parameters", how to write its lyrics, and the input of an upscale).
 - `view/history/HistoryPanel.vue`: saved conversations.
-- `view/help/HelpView.vue`: the Help panel (General, Tips, Support), opened by Help › Dez Help and the `?` button of the bottom bar (`dez.model/settings/helpOpen`). At most one of Settings, History, and Help is open.
+- `view/help/HelpView.vue`: the Help panel (General, Tips, Assets, Support), opened by Help › Dez Help and the `?` button of the bottom bar (`dez.model/settings/helpOpen`). At most one of Settings, History, and Help is open. The Assets page tells the user the asset rules (what a model sees, `@id`, the folders, copy or link, delete): keep it true when one of them changes.
 - `view/confirm/`: `dez.ui/confirm`, the in-app yes/no prompt (`ConfirmDialog.vue`, mounted in `AppLayout.vue`); `isModalOpen()` (`useKeyboardShortcuts.ts`) counts it.
 - `view/prompts/PromptManager.vue`, `view/thread/PromptAutocomplete.vue`: saved prompts and `/prompt ` insertion.
 - `view/settings/SettingsView.vue`, `ProviderManager.vue`, `ShortcutManager.vue`, `SystemPromptSettings.vue`: settings (General holds the "Unused files" row, `unusedFiles.ts`), the providers page, Settings › Shortcuts with its key recorder (Help › Keyboard Shortcuts opens it), and Settings › System Prompt (the custom template, its variables, and Source/Preview; `SystemPromptPreview.vue` is a read-only CodeMirror view of the prompt).
 - `view/tabs/TabBar.vue`: tabs, colored busy/done by `dez.model/tabs/activity`, pointer drag to reorder (`dez.model/tabs/move`). The `+` button, keys, and File menu create tabs with `dez.controller/newTab` (`controller/tabs.ts`), which focuses the editor (`dez.editor/focus`). `dez.model/tabs/reopenClosed` brings back a closed tab from a session-only list (`model/state/tabs.ts`).
 - `view/modelLabel.ts`: model display names, and `modelTooltipName`, the one text of a model's tooltip (the id first). `view/theme.ts`: theme and editor font size.
-- `utils/byteSize.ts`: `byteSizeText`, the one byte-count text. `utils/homePath.ts`: `pathWithTilde`; a view gets a path with `~` for the home folder from `dez.controller/displayPath` (`controller/utils.ts`).
+- `utils/byteSize.ts`: `byteSizeText`, the one byte-count text. `utils/homePath.ts`: `pathWithTilde`; a view gets a path with `~` for the home folder from `dez.controller/displayPath`, and the folder of a file root from `dez.controller/displayAppDir` (`controller/utils.ts`).
 - `utils/errorText.ts`: the shape of every user error text (`errorText`, `ExplainedError`, `explainedError`, `UNEXPECTED_ERROR`).
 - `utils/dezLinks.ts`: the URLs of Dez's GitHub pages.
 

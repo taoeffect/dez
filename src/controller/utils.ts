@@ -2,6 +2,7 @@ import sbp from '@sbp/sbp'
 import { openPath, openUrl, revealItemInDir } from '@tauri-apps/plugin-opener'
 import { errorText, rawErrorText } from '../utils/errorText'
 import { pathWithTilde } from '../utils/homePath'
+import type { AppFileRoot } from './nativeTypes'
 
 // The read of the user's home folder, kept: the folder does not change
 // while the app runs. A failed read is not kept.
@@ -68,6 +69,19 @@ export default sbp('sbp/selectors/register', {
       homeDirRead = null
       console.error('Failed to read the home folder:', error)
       return path
+    }
+  },
+
+  // The folder of the file root `root` as the UI shows it (`displayPath`),
+  // for a text that tells the user where Dez keeps its files. Null when the
+  // folder cannot be read (a system with no cache folder): the caller words
+  // the place without a path then.
+  async 'dez.controller/displayAppDir' (root: AppFileRoot = 'app'): Promise<string | null> {
+    try {
+      return await sbp('dez.controller/displayPath', await sbp('dez.native/getAppDir', root)) as string
+    } catch (error) {
+      console.error(`Failed to read the folder of the file root "${root}":`, error)
+      return null
     }
   },
 })

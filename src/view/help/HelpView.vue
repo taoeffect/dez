@@ -1,17 +1,34 @@
 <script setup lang="ts">
-import { computed, ref } from 'vue'
+import { computed, onMounted, ref } from 'vue'
 import sbp from '@sbp/sbp'
 import { useModelState } from '../modelState'
+import { IMAGE_FOLDERS } from '../../model/chat/images'
+import { MEDIA_TEMP_LIFETIME_MS } from '../../model/chat/mediaFiles'
+import { MEDIA_CACHE_FOLDER, MEDIA_FOLDERS } from '../../model/chat/mediaTags'
 import { shortcutKeyText } from '../../model/shortcuts'
 import { DEZ_DISCUSSIONS_URL } from '../../utils/dezLinks'
 
-type HelpPage = 'general' | 'tips' | 'support'
+type HelpPage = 'general' | 'tips' | 'assets' | 'support'
 
 const PAGES: { id: HelpPage; label: string }[] = [
   { id: 'general', label: 'General' },
   { id: 'tips', label: 'Tips' },
+  { id: 'assets', label: 'Assets' },
   { id: 'support', label: 'Support' },
 ]
+
+// The rows of the folder list of the Assets page: the folders of the stored
+// files, relative to the Dez folder, and what Dez puts into them. The names
+// come from the constants of the file code, so the page names no folder
+// that Dez does not write.
+const STORED_FOLDERS: { folders: readonly string[]; holds: string }[] = [
+  { folders: [IMAGE_FOLDERS.pasted], holds: 'Pasted images, and dropped images that Dez copies.' },
+  { folders: Object.values(MEDIA_FOLDERS.pasted), holds: 'Pasted clips, and dropped clips that Dez copies.' },
+  { folders: [IMAGE_FOLDERS.generated], holds: 'Images that models make.' },
+  { folders: Object.values(MEDIA_FOLDERS.generated), holds: 'Clips that you save, and clips that Dez tools make.' },
+]
+
+const TEMP_COPY_HOURS = MEDIA_TEMP_LIFETIME_MS / (60 * 60 * 1000)
 
 const { shortcuts } = useModelState()
 
@@ -27,6 +44,23 @@ const keys = computed(() => ({
   settings: shortcutKeyText(shortcuts.value, 'settings'),
   history: shortcutKeyText(shortcuts.value, 'history'),
 }))
+
+// The Dez folder and the folder of the temp copies of clips, as the Assets
+// page shows them (`~` for the home folder). The cache folder differs by
+// system, so the page reads both and spells neither. Null until the read
+// ends, and for a folder that cannot be read: the page then names the
+// folder with no path.
+const appDir = ref<string | null>(null)
+const tempDir = ref<string | null>(null)
+
+onMounted(async () => {
+  const [app, cache] = await Promise.all([
+    sbp('dez.controller/displayAppDir') as Promise<string | null>,
+    sbp('dez.controller/displayAppDir', 'cache') as Promise<string | null>,
+  ])
+  appDir.value = app
+  tempDir.value = cache === null ? null : `${cache}/${MEDIA_CACHE_FOLDER}`
+})
 
 function onClose() {
   sbp('dez.model/settings/helpClose')
@@ -68,7 +102,9 @@ function onOverlayClick(event: MouseEvent) {
           </button>
         </nav>
 
-        <div class="help-content">
+        <!-- The key gives each page a new scroller, so a page always opens
+             at its top, also after a scroll in the page before it. -->
+        <div :key="page" class="help-content">
           <section v-if="page === 'general'" class="help-page help-page--general">
             <p>
               Each tab is one conversation, written as one text document. Write your message, then
@@ -85,14 +121,11 @@ function onOverlayClick(event: MouseEvent) {
               opens it again.
             </p>
             <p>
-              Paste or drop images, audio, and video into a message. Each one gets an id
-              (<code>a</code>, <code>b</code>, …), which shows when you point at it: write
-              <code>@a</code> in a message to name it. Dez keeps a copy of a pasted file. A file
-              that you drop into a user message usually stays where it is, and the message links to
-              it, so do not move or delete it. Dez keeps a copy of some dropped files: for example, a
-              file from a temp folder or a file that you drop into an agent message. A model that
-              makes images, audio, or video puts them in its reply. Type <code>/prompt</code> and a
-              space to insert a saved prompt (Settings › Prompts).
+              Paste or drop images, audio, and video into a message. A model that makes images,
+              audio, or video puts them in its reply. The
+              <button type="button" class="help-link" @click="page = 'assets'">Assets</button> page
+              tells which of them a model sees, and where Dez keeps their files. Type
+              <code>/prompt</code> and a space to insert a saved prompt (Settings › Prompts).
             </p>
           </section>
 
@@ -102,6 +135,85 @@ function onOverlayClick(event: MouseEvent) {
               from Agent to User: for example, to write a reply yourself. The first message is always
               User, the pill of a reply that is coming in does not change, and a message that links
               dropped files stays User.
+            </p>
+          </section>
+
+          <section v-if="page === 'assets'" class="help-page help-page--assets">
+            <h3>What a model sees</h3>
+            <p>
+              The images, audio clips, and video clips of a conversation are its assets. A model
+              sees only the assets of your newest message: the ones that are in it, and the ones
+              that it names by id (<code>@a</code>). It does not see the assets of older messages
+              or of replies: a chat model gets only their ids. This saves tokens and cost, as Dez
+              does not send every old image again with each message.
+            </p>
+            <p>
+              So when a model must see an older asset, name it in your new message, for example:
+              <code>Make @a brighter</code>.
+            </p>
+            <p>
+              A clip goes only to a model that takes audio or video, for example a video model or
+              a transcription model. A chat model gets only the id of a clip. A model that needs
+              exactly one image, for example an image editor, takes the newest image of the
+              conversation when your message has none.
+            </p>
+
+            <h3>Ids</h3>
+            <p>
+              Each image and each clip has a short id: <code>a</code>, <code>b</code>, and so on.
+              Point at an image or a player to see its id. A model gets this id, and never the path
+              of the file. Write <code>@</code> and the id in a message to name the asset. A message
+              can name its own assets and the assets of the messages before it.
+            </p>
+
+            <h3>Where the files are</h3>
+            <p>
+              Dez stores the files of assets in these folders of the Dez
+              folder<template v-if="appDir"> (<code>{{ appDir }}</code>)</template>:
+            </p>
+            <dl class="help-folders">
+              <template v-for="row in STORED_FOLDERS" :key="row.holds">
+                <dt><code v-for="folder in row.folders" :key="folder">{{ folder }}</code></dt>
+                <dd>{{ row.holds }}</dd>
+              </template>
+            </dl>
+            <p>
+              A clip that a model makes is not stored at first. It plays from the web address that
+              the provider gave, or from a temporary copy in
+              <code v-if="tempDir">{{ tempDir }}</code><template v-else>the cache folder of the system</template>,
+              which Dez deletes after {{ TEMP_COPY_HOURS }} hours. The clock on its player tells
+              until when the clip is available. Click Save on the player to keep the clip.
+            </p>
+
+            <h3>Copy or link</h3>
+            <p>
+              A paste stores a copy of the file. A file that you drop into a user message stays
+              where it is: the message links to it, and Dez stores no copy. Do not move, rename, or
+              delete a linked file, or the conversation loses it.
+            </p>
+            <p>Dez copies a dropped file in these cases:</p>
+            <ul>
+              <li>The file is in a temp folder or in a folder of Dez.</li>
+              <li>You drop it into an agent message.</li>
+              <li>It is an image of a type that Dez converts to PNG, for example BMP.</li>
+            </ul>
+
+            <h3>How files are deleted</h3>
+            <p>Dez deletes a stored file only when you tell it to:</p>
+            <ul>
+              <li>Point at an image and click its trash. This deletes the image and its file.</li>
+              <li>
+                Point at the Saved button of a player, which then shows a trash, and click it. This
+                deletes the stored file of the clip.
+              </li>
+              <li>
+                Click Delete Unused Files in Settings › General. Dez finds the stored files that no
+                conversation uses, and deletes them after you say yes.
+              </li>
+            </ul>
+            <p>
+              An edit of the text and the delete of a conversation leave the files where they are.
+              Dez never deletes a linked file: its trash removes it only from the conversation.
             </p>
           </section>
 
@@ -123,8 +235,8 @@ function onOverlayClick(event: MouseEvent) {
 
 <style scoped>
 /* The overlay, modal, header, and nav of SettingsView.vue, in a smaller
-   modal: the pages are short. One size for every page, so the modal does
-   not move when the user switches pages. */
+   modal: most pages are short, and a long one scrolls. One size for every
+   page, so the modal does not move when the user switches pages. */
 .help-overlay {
   position: fixed;
   inset: 0;
@@ -251,6 +363,46 @@ function onOverlayClick(event: MouseEvent) {
 
 .help-page code {
   font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, 'Liberation Mono', monospace;
+}
+
+/* A heading of a page with more than one topic. It stands closer to its
+   own text than to the text before it. */
+.help-page h3 {
+  margin-top: 8px;
+  margin-bottom: -6px;
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.help-page h3:first-child {
+  margin-top: 0;
+}
+
+/* The global reset takes the padding of a list, so its bullets would be
+   outside the page. */
+.help-page ul {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding-left: 18px;
+}
+
+/* The folder list of the Assets page: the folders of a row at the left, one
+   to a line, and what they hold at the right, on the text line of the
+   first folder. */
+.help-folders {
+  display: grid;
+  grid-template-columns: max-content 1fr;
+  align-items: baseline;
+  gap: 6px 20px;
+}
+
+/* A folder name of the list has no box: a column of boxes would look like
+   a stack of buttons. */
+.help-folders code {
+  display: block;
+  padding: 0;
+  border: none;
 }
 
 .help-link {
