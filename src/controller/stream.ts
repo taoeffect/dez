@@ -170,16 +170,18 @@ function replyErrorMessage(error: unknown, model: ActiveModel): string {
 // The text of the error toast of a reply that ended with `jobs` that
 // failed or timed out, and whose results no `jobs_wait` gave to the model.
 // The reply says nothing of them, so only this toast tells the user. The
-// details are the result texts of the jobs, which hold no local path.
+// result text of a job is for the model (what a new call can change), so
+// the toast names each job only by its tool, its id (the result of its
+// call in the reply holds it), and its status; `endReply` logs the texts.
 function unreadJobsMessage(jobs: readonly EndedJob[]): string {
   const explanation = jobs.length === 1
     ? 'A job that the model started failed, and the reply ended before the model got the result of the job. '
-      + 'So the reply does not tell of this failure, and it does not hold what the job should make.'
+      + 'So the reply does not tell of this failure, and it does not hold what the job should make. Help › Developer Console shows why the job failed.'
     : `${jobs.length} jobs that the model started failed, and the reply ended before the model got their results. `
-      + 'So the reply does not tell of these failures, and it does not hold what the jobs should make.'
+      + 'So the reply does not tell of these failures, and it does not hold what the jobs should make. Help › Developer Console shows why the jobs failed.'
   return errorText(
     `${explanation} To try again, ask the model for it in a new message.`,
-    jobs.map((job) => `The ${job.tool} job ${job.id} ${job.status}: ${job.text}`).join('\n\n'),
+    jobs.map((job) => `The ${job.tool} job ${job.id} ${job.status}.`).join('\n'),
   )
 }
 
@@ -434,9 +436,10 @@ async function writeReplyImage(tabId: string, reply: ReplyRuntime, image: Genera
 // of those jobs at the section end, under the names of their tools, as
 // `jobs_wait` does. The reply stays busy meanwhile, and a stop or a new
 // submit ends the wait and the jobs (`ReplyJobs.stopAll`). The result
-// text of such a job has no reader, so it is dropped. Returns the jobs
-// that failed or timed out, for the error toast (`unreadJobsMessage`);
-// null when the reply ended meanwhile.
+// text of such a job has no reader: the text of a job that finished is
+// dropped, and `endReply` logs the others. Returns the jobs that failed
+// or timed out, for the error toast (`unreadJobsMessage`); null when the
+// reply ended meanwhile.
 async function settleJobs(tabId: string, reply: ReplyRuntime): Promise<EndedJob[] | null> {
   // A section that is gone (the user merged it into the one before) takes
   // no asset, so nothing is worth the wait.
@@ -459,7 +462,10 @@ async function endReply(tabId: string, reply: ReplyRuntime, status: 'finished' |
   const unread = reply.jobs.hasOpen ? await settleJobs(tabId, reply) : []
   if (unread === null) return false
   finalizeStream(tabId, status === 'finished' ? finishStreamSession(tabId) : errorStreamSession(tabId))
-  if (unread.length > 0) showReplyError(tabId, unread.length === 1 ? 'Job failed' : `${unread.length} jobs failed`, unreadJobsMessage(unread))
+  if (unread.length > 0) {
+    for (const job of unread) console.error(`The ${job.tool} job ${job.id} ${job.status}, and the model did not get its result:`, job.text)
+    showReplyError(tabId, unread.length === 1 ? 'Job failed' : `${unread.length} jobs failed`, unreadJobsMessage(unread))
+  }
   return true
 }
 

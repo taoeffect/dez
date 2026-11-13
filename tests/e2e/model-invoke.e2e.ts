@@ -439,8 +439,10 @@ describe('model_invoke', () => {
     expect(reply.endsWith(replyText(CALLER.modelName))).toBe(true)
     await waitForValue(browser, 'error toast', async () => (await openToasts(browser, 'error')).map((toast) => toast.title), ['Job failed'])
     const [{ message }] = await openToasts(browser, 'error')
-    expect(message).toContain(jobId)
-    expect(message).toContain('The prompt breaks the content rules')
+    expect(message).toContain(`The model_invoke job ${jobId} failed.`)
+    // The result text of the job is for the model: only the console has it.
+    expect(message).not.toContain('The prompt breaks the content rules')
+    expect(await consoleErrors(browser)).toContainEqual(expect.stringMatching(new RegExp(`${jobId}.*The prompt breaks the content rules`, 's')))
     // Closed, so that it is not open in the next test.
     await click(browser, '.toast-card--error:not(.toast-card--closing) .toast-close')
     await waitForValue(browser, 'error toast closed', () => openToasts(browser, 'error'), [])

@@ -17,8 +17,9 @@ import { providerInfo } from '../model/providers/testing'
 import { CLIP_KINDS, isClipKind, isTextKind, type MediaKind } from '../model/providers/types'
 import type { RequestMessages } from '../model/streams/types'
 import { systemPromptErrorText } from '../model/systemPrompt'
-import { jobsWaitText, startedJobId } from '../model/tools/jobs'
+import { jobsWaitText, jobTimedOutText, startedJobId } from '../model/tools/jobs'
 import { MAX_TOOL_ROUNDS, roundsLeftNote } from '../model/streams/toolRound'
+import { INVOCATION_READS_INPUTS, invocationFailedText } from '../model/tools/modelInvoke'
 import { NO_MODELS_TEXT } from '../model/tools/modelList'
 import { TOOL_DEFINITIONS, unknownToolText } from '../model/tools/registry'
 import type { ToastData } from '../view/toast/selectors'
@@ -2396,13 +2397,15 @@ describe('dez.stream/start jobs', () => {
   })
 
   // The reply does not tell of these jobs, so only the toast does. One
-  // toast for all of them: the toast area shows only a few at a time.
-  it('tells the user in one sticky error toast of the jobs that failed and whose results the model did not get', async () => {
+  // toast for all of them: the toast area shows only a few at a time. The
+  // result text of a job is for the model, so only the console gets it.
+  it('tells the user in one sticky error toast of the jobs that failed or timed out and whose results the model did not get', async () => {
+    const timedCall = { id: 'c2', name: 'model_invoke', argumentsText: JSON.stringify({ model: PAINTER, prompt: PROMPT, timeout_seconds: 10 }) }
     replyRounds([
-      async (input) => ({ requestId: input.requestId as string, toolCalls: [invokeCall('c1'), invokeCall('c2')] }),
+      async (input) => ({ requestId: input.requestId as string, toolCalls: [invokeCall('c1'), timedCall] }),
       async (input) => {
         jobs[0].fail(new ExplainedError('The provider refused the prompt.'))
-        jobs[1].fail(new ExplainedError('The provider has no credit left.'))
+        vi.advanceTimersByTime(10_000)
         await input.onToken('Both run now.')
         return { requestId: input.requestId as string }
       },
@@ -2414,12 +2417,15 @@ describe('dez.stream/start jobs', () => {
       area: 'app-global',
       data: { variant: 'error', title: '2 jobs failed', message: expect.any(String), group: expect.any(String) },
     }])
-    const details = toasts[0].data.message.split('\n\n').filter((part) => part.includes('model_invoke job'))
-    expect(details).toHaveLength(2)
-    expect(details[0]).toContain(`${jobId('c1')} failed`)
-    expect(details[0]).toContain('The provider refused the prompt.')
-    expect(details[1]).toContain(`${jobId('c2')} failed`)
-    expect(details[1]).toContain('The provider has no credit left.')
+    const { message } = toasts[0].data
+    expect(message).toContain(`The model_invoke job ${jobId('c1')} failed.`)
+    expect(message).toContain(`The model_invoke job ${jobId('c2')} timed out.`)
+    const failedText = invocationFailedText('Painter', 'The provider refused the prompt.')
+    const timedOutText = jobTimedOutText(10_000, INVOCATION_READS_INPUTS)
+    expect(message).not.toContain('The provider refused the prompt.')
+    expect(message).not.toContain(timedOutText)
+    expect(consoleError).toHaveBeenCalledWith(expect.stringContaining(jobId('c1')), failedText)
+    expect(consoleError).toHaveBeenCalledWith(expect.stringContaining(jobId('c2')), timedOutText)
     expect(alerts).toStrictEqual([{ tabId: activeTab().id, status: 'finished' }])
   })
 
