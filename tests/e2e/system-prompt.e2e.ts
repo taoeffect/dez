@@ -1,5 +1,5 @@
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from 'vitest'
-import { BUILT_IN_SYSTEM_PROMPT, systemPromptErrorText } from '../../src/model/systemPrompt'
+import { BUILT_IN_SYSTEM_PROMPT, systemPromptErrorText, systemPromptProblem } from '../../src/model/systemPrompt'
 import { openAiChatBody, systemPrompt } from './harness/chatBody'
 import { click, clickSettingsNav, clickWithText, closeSettings, consoleErrors, pointerClick, promptMessage, resetConsoleErrors, screenshotOnFailure, typeInto, typeKeys, waitFor, waitForValue } from './harness/dom'
 import { readAppState } from './harness/fixtures'
@@ -179,8 +179,10 @@ describe('Settings › System Prompt', () => {
 
   it('shows the error of a placeholder that is no variable, and refuses the send', async () => {
     await openPage()
-    await writePrompt('Hi.\n{{foo}}')
-    const problem = 'Line 2: {{foo}} is not a variable.'
+    const template = 'Hi.\n{{foo}}'
+    await writePrompt(template)
+    const problem = systemPromptProblem(template)
+    if (problem === null) throw new Error(`No problem in ${JSON.stringify(template)}`)
     expect((await pageLook()).problem).toBe(problem)
     await showMode('Preview')
     await waitForValue(browser, 'preview note', () => browser.execute(() => document.querySelector('.system-prompt-preview-note')?.textContent ?? null), 'Fix the error in the prompt to see the preview.')

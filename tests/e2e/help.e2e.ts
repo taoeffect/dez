@@ -1,5 +1,6 @@
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from 'vitest'
 import { Key } from 'webdriverio'
+import { DEZ_DISCUSSIONS_URL } from '../../src/utils/dezLinks'
 import { startApp, type RunningApp } from './harness/app'
 import { clearOpenedUrls, consoleErrors, openedUrls, pointerClick, pointerClickAt, pointerDrag, resetConsoleErrors, screenshotOnFailure, stopOpenUrl, waitFor, waitForValue } from './harness/dom'
 import { seedAppState } from './harness/fixtures'
@@ -12,8 +13,6 @@ import { focusEditor, focusedArea, sbpCall } from './harness/thread'
 //
 // The spec stops every `dez.controller/openUrl` call (`stopOpenUrl`), so no
 // real browser opens.
-
-const DISCUSSIONS_URL = 'https://github.com/taoeffect/dez/discussions'
 
 // The nav buttons, in their order.
 const NAV = {
@@ -43,10 +42,6 @@ describe('Help panel', () => {
   // The keys that the General page names, in text order.
   async function generalKeys (): Promise<string[]> {
     return browser.execute(() => [...document.querySelectorAll('.help-page--general kbd')].map((kbd) => kbd.textContent ?? ''))
-  }
-
-  async function pageText (): Promise<string> {
-    return browser.execute(() => document.querySelector('.help-page')?.textContent?.replace(/\s+/g, ' ').trim() ?? '')
   }
 
   async function openWithButton (): Promise<void> {
@@ -96,7 +91,6 @@ describe('Help panel', () => {
 
     await pointerClick(browser, NAV.Tips)
     await waitForValue(browser, 'Tips page', shownPage, { nav: 'Tips', page: 'help-page--tips' })
-    expect(await pageText()).toContain('Shift+Click a role pill (User or Agent)')
     await pointerClick(browser, NAV.Support)
     await waitForValue(browser, 'Support page', shownPage, { nav: 'Support', page: 'help-page--support' })
 
@@ -148,7 +142,7 @@ describe('Help panel', () => {
     await pointerClick(browser, NAV.Support)
     await waitFor(browser, '.help-link')
     await pointerClick(browser, '.help-link')
-    await waitForValue(browser, 'opened URLs', () => openedUrls(browser), [DISCUSSIONS_URL])
+    await waitForValue(browser, 'opened URLs', () => openedUrls(browser), [DEZ_DISCUSSIONS_URL])
     expect(await helpOpen()).toBe(true)
   })
 

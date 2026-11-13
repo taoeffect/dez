@@ -6,6 +6,10 @@ const PLACEHOLDER = /\{\{ *([a-z][a-z0-9_]*) *\}\}/g
  *  template: a short text for the user that starts with its line number. */
 export type RenderedTemplate = { text: string } | { problem: string }
 
+/** The problem of a `{{` or `}}` that is not part of a placeholder, after
+ *  its `Line N: `. */
+export const STRAY_BRACE_PROBLEM = '"{{" or "}}" is not part of a variable such as {{name}} (lowercase letters, digits, and "_").'
+
 function lineProblem(template: string, offset: number, problem: string): { problem: string } {
   const line = template.slice(0, offset).split('\n').length
   return { problem: `Line ${line}: ${problem}` }
@@ -42,7 +46,7 @@ export function renderTemplate(template: string, values: Readonly<Record<string,
     const literal = template.slice(literalStart, match?.index ?? template.length)
     const brace = strayBraceOffset(literal, i > 0, match !== undefined)
     if (brace >= 0) {
-      return lineProblem(template, literalStart + brace, '"{{" or "}}" is not part of a variable such as {{name}} (lowercase letters, digits, and "_").')
+      return lineProblem(template, literalStart + brace, STRAY_BRACE_PROBLEM)
     }
     parts.push(literal)
     if (!match) break
