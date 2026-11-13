@@ -28,6 +28,7 @@ import {
   joinProbeFailedText,
   jpegCopyFailedText,
   OutputStart,
+  PROGRAM_OUTPUT_CAP,
   VIDEO_READS_INPUTS,
   type ClipFacts,
 } from '../model/tools/videoTool'
@@ -417,6 +418,20 @@ describe('runJoinJob', () => {
     expect(native.runs.at(-1)?.run.args).toStrictEqual(plan.args)
     expect(native.savedFiles).toStrictEqual([])
     expect(outcome.text).toContain('Joined the 2 clips into one 48x36 WebM (VP9, Opus) clip.')
+    expect(outcome.assets).toHaveLength(1)
+  })
+
+  it('reads the facts of a clip whose probe output is longer than a result holds', async () => {
+    // A clip with many sound tracks, for which ffprobe writes more than
+    // `PROGRAM_OUTPUT_CAP` characters of JSON.
+    const long = probeOutput([VP9, ...Array.from({ length: 150 }, (_, index) => ({ ...OPUS, index: index + 1 }))])
+    expect(long.length).toBeGreaterThan(PROGRAM_OUTPUT_CAP)
+    native.program = probing({ 'a.webm': long, 'b.webm': long })
+    native.folderFiles = ['a.webm', 'b.webm', 'list.txt', 'joined.webm']
+
+    const outcome = await runJoinJob(joinClipsCall({ clips: '@a @b' }, CLIPS), running(), report)
+
+    expect(outcome).toMatchObject({ text: 'Joined the 2 clips into one clip with no new encode: their streams match.', isError: false })
     expect(outcome.assets).toHaveLength(1)
   })
 

@@ -163,7 +163,9 @@ export function runFfmpegJob(call: FfmpegCall, signal: AbortSignal, report: (sta
 async function probeJoinClips(clips: readonly ClipInput[], copies: BundledToolInput[], folder: string, signal: AbortSignal): Promise<Map<string, ClipFacts>> {
   const facts = new Map<string, ClipFacts>()
   for (const [index, { id, name }] of clips.entries()) {
-    const output = new OutputStart()
+    // The whole JSON, not its start: `clipFacts` cannot read a cut one.
+    // `FFPROBE_OUTPUT_BYTES` keeps it small.
+    let output = ''
     const errorOutput = new OutputStart()
     const end = await runProgram('ffprobe', VIDEO_TOOL.name, {
       args: joinProbeArgs(name),
@@ -171,9 +173,12 @@ async function probeJoinClips(clips: readonly ClipInput[], copies: BundledToolIn
       inputs: index === 0 ? copies : [],
       timeoutMs: FFPROBE_TIMEOUT_MS,
       maxOutputBytes: FFPROBE_OUTPUT_BYTES,
-    }, signal, ({ stream, text }) => (stream === 'stdout' ? output : errorOutput).add(text))
+    }, signal, ({ stream, text }) => {
+      if (stream === 'stdout') output += text
+      else errorOutput.add(text)
+    })
     if (end.kind !== 'exited' || end.code !== 0) throw new ToolError(withoutLocalPaths(joinProbeFailedText(id, end, errorOutput.text)))
-    const clip = clipFacts(output.text)
+    const clip = clipFacts(output)
     if (!clip) throw new ToolError(joinNoVideoText(id))
     facts.set(name, clip)
   }
