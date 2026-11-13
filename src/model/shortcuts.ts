@@ -494,15 +494,32 @@ const KEYCAP_KEY_NAMES: Record<ShortcutPlatform, Readonly<Partial<Record<string,
   linux: { ...ARROW_SYMBOLS, Enter: '↩', Escape: 'Esc' },
 }
 
+// The characters that Option+<letter> types on a macOS US layout. A key such
+// as `Alt-∂` (Option+D) must stay the character that the key press gives, as
+// `eventKeyNames` and CodeMirror match that, but its label and its menu
+// accelerator name the letter (`⌥D`, `Alt+D`); else the label shows `⌥∂` and
+// the menu item gets no key. Option+E, I, N, and U are dead keys: they type
+// no character, so they have no entry.
+const MAC_OPTION_LETTERS: Readonly<Partial<Record<string, string>>> = {
+  'å': 'a', '∫': 'b', 'ç': 'c', '∂': 'd', 'ƒ': 'f', '©': 'g', '˙': 'h', '∆': 'j', '˚': 'k', '¬': 'l', 'µ': 'm',
+  'ø': 'o', 'π': 'p', 'œ': 'q', '®': 'r', 'ß': 's', '†': 't', '√': 'v', '∑': 'w', '≈': 'x', '¥': 'y', 'Ω': 'z',
+}
+
+// The key that a label or a menu accelerator names.
+function shownKey (parts: KeyParts, platform: ShortcutPlatform): string {
+  return platform === 'mac' && parts.alt ? MAC_OPTION_LETTERS[parts.key] ?? parts.key : parts.key
+}
+
 /** How a key is shown: macOS keycaps use Apple's symbols and modifier
  *  order `⌃⌥⇧⌘`; everything else uses `Ctrl+Alt+Shift+Super+K` (on macOS
  *  `Ctrl+Option+Shift+Cmd+K`). */
 export function shortcutLabel (key: string, platform: ShortcutPlatform, style: ShortcutLabelStyle = 'keycap'): string {
   const parts = parseKeyName(key, platform)
   if (!parts) return key
-  const keyText = (style === 'keycap' ? KEYCAP_KEY_NAMES[platform][parts.key] : undefined) ??
-    TEXT_KEY_NAMES[parts.key] ??
-    ([...parts.key].length === 1 ? parts.key.toUpperCase() : parts.key)
+  const shown = shownKey(parts, platform)
+  const keyText = (style === 'keycap' ? KEYCAP_KEY_NAMES[platform][shown] : undefined) ??
+    TEXT_KEY_NAMES[shown] ??
+    ([...shown].length === 1 ? shown.toUpperCase() : shown)
   if (platform === 'mac' && style === 'keycap') {
     return `${parts.ctrl ? '⌃' : ''}${parts.alt ? '⌥' : ''}${parts.shift ? '⇧' : ''}${parts.meta ? '⌘' : ''}${keyText}`
   }
@@ -540,7 +557,7 @@ export function shortcutAccelerator (key: string, platform: ShortcutPlatform): s
   // accelerator would stop Esc from closing find, the dropdowns, and the
   // modals.
   if (parts.key === 'Escape' && !parts.shift && !parts.meta && !parts.ctrl && !parts.alt) return null
-  const name = acceleratorKey(parts.key)
+  const name = acceleratorKey(shownKey(parts, platform))
   if (!name) return null
   const modifiers = [parts.ctrl && 'Ctrl', parts.alt && 'Alt', parts.shift && 'Shift', parts.meta && (platform === 'mac' ? 'Cmd' : 'Super')]
   return [...modifiers.filter((modifier) => modifier), name].join('+')

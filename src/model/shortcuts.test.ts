@@ -310,6 +310,14 @@ describe('shortcutLabel', () => {
     expect(shortcutLabel('Escape', 'linux', 'text')).toBe('Esc')
     expect(shortcutLabel('Shift-Ctrl-ArrowUp', 'linux', 'text')).toBe('Ctrl+Shift+Up')
   })
+
+  // Option+D types `∂` on macOS, so the key name is `Alt-∂`; the label names
+  // the letter of the key.
+  it('shows the letter of a macOS Option key, not the character it types', () => {
+    expect(shortcutLabel('Alt-∂', 'mac')).toBe('⌥D')
+    expect(shortcutLabel('Alt-∂', 'mac', 'text')).toBe('Option+D')
+    expect(shortcutLabel('Alt-∂', 'linux')).toBe('Alt+∂')
+  })
 })
 
 describe('shortcutAccelerator', () => {
@@ -325,9 +333,13 @@ describe('shortcutAccelerator', () => {
     expect(shortcutAccelerator('Ctrl-Escape', 'linux')).toBe('Ctrl+Escape')
   })
 
+  it('names the letter of a macOS Option key, which muda shows as ⌥D', () => {
+    expect(shortcutAccelerator('Alt-∂', 'mac')).toBe('Alt+D')
+  })
+
   it('gives none for a bare Esc or a key that Tauri cannot parse', () => {
     expect(shortcutAccelerator('Escape', 'linux')).toBeNull()
     expect(shortcutAccelerator('Ctrl-+', 'linux')).toBeNull()
-    expect(shortcutAccelerator('Alt-å', 'mac')).toBeNull()
+    expect(shortcutAccelerator('Alt-å', 'linux')).toBeNull()
   })
 })
