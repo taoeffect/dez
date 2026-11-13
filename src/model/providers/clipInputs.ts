@@ -166,7 +166,7 @@ const CLIP_FIX_ACTS: Readonly<Record<NonNullable<ClipFix>, string>> = {
 // Dez tool can make a new clip that fits: `audio clip` cuts an audio clip,
 // and the ffmpeg of the `video` tool cuts and converts audio and video
 // clips. A model that reads the text can call the tool itself, and the
-// user asks the chat model. `USAGE_TEXTS.clipRules` (tools/modelUsage.ts)
+// user asks the chat model. `USAGE_TEXTS.clipTools` (tools/modelUsage.ts)
 // names the same tools: keep the two the same.
 function fixText(kind: MediaTagKind, fix: ClipFix, reader: RequestReader): string {
   if (fix === null) return `Use another ${kind} clip, or choose another model.`

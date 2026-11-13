@@ -361,11 +361,13 @@ describe('modelUsage', () => {
         }
       })
 
-      it('tells that an audio clip goes as a WAV copy exactly when one of another type does', () => {
+      it('tells that an audio clip goes as a WAV copy exactly when one of another type does, and else that Dez converts no clip', () => {
         for (const model of clipModels('video')) {
           const audio = model.clips?.audio
+          const usage = modelUsage(model, NO_FACTS)
+          const wavCopy = audio !== undefined && needsWavCopy('audio', audio, 'audio/flac')
 
-          expect(has(modelUsage(model, NO_FACTS), USAGE_TEXTS.wavCopy), JSON.stringify(model)).toBe(audio !== undefined && needsWavCopy('audio', audio, 'audio/flac'))
+          expect([has(usage, USAGE_TEXTS.wavCopy), has(usage, USAGE_TEXTS.noConversion)], JSON.stringify(model)).toStrictEqual([wavCopy, model.clips !== undefined && !wavCopy])
         }
       })
 

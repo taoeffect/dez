@@ -77,11 +77,15 @@ export const USAGE_TEXTS = {
   videoResult: 'It answers with a video clip, which the reply shows as a player with a new id.',
   transcriptResult: 'It answers with the words of the speech, which go into the reply as text.',
   noClips: 'It takes no input clip: the clips of the message (pasted, or named with @id) do not go.',
-  // `clipTagProblem`, `clipFileProblem` (clipInputs.ts). The refusal of a
-  // clip names the same tools (`fixText` there): keep the two the same.
-  clipRules: 'Dez refuses a clip that breaks the rules of its kind in `dez.clips` (media types, seconds, bytes). Dez cuts and converts no clip by itself. '
-    + 'A Dez tool can make a new clip that fits: the audio tool cuts an audio clip, and the video tool (its ffmpeg subcommand) cuts and converts audio and video clips.',
-  wavCopy: 'An audio clip of a type that it does not take goes as a WAV copy.',
+  // `clipTagProblem`, `clipFileProblem` (clipInputs.ts). Dez cuts no clip of
+  // a request, and the WAV copy (`needsWavCopy`) is its one conversion, so
+  // a model gets either `wavCopy` or `noConversion`.
+  clipRules: 'Dez refuses a clip that breaks the rules of its kind in `dez.clips` (media types, seconds, bytes). Dez cuts no clip by itself.',
+  wavCopy: 'Dez converts no clip by itself, but an audio clip of a type that the model does not take goes as a WAV copy.',
+  noConversion: 'Dez converts no clip by itself.',
+  // The refusal of a clip names the same tools (`fixText`, clipInputs.ts):
+  // keep the two the same.
+  clipTools: 'A Dez tool can make a new clip that fits: the audio tool cuts an audio clip, and the video tool (its ffmpeg subcommand) cuts and converts audio and video clips.',
   audioNeedsVisual: 'An audio clip goes only together with an image or a video clip.',
 } as const
 
@@ -159,7 +163,8 @@ function inputClipsUsage(kind: MediaKind, clips: InputClipRules | undefined): st
     ...neededText,
     ...(clips.audioNeedsVisual ? [USAGE_TEXTS.audioNeedsVisual] : []),
     USAGE_TEXTS.clipRules,
-    ...(clips.audio?.types?.includes('audio/wav') ? [USAGE_TEXTS.wavCopy] : []),
+    clips.audio?.types?.includes('audio/wav') ? USAGE_TEXTS.wavCopy : USAGE_TEXTS.noConversion,
+    USAGE_TEXTS.clipTools,
   ]
 }
 
