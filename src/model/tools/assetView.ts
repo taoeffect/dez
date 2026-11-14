@@ -15,6 +15,7 @@ import {
 } from '../streams/replyPictures'
 import { assetIdsArgument, unknownValuesText } from './arguments'
 import { shortNumber } from './assetFacts'
+import { SCENE_CUT_FILTER } from './clipAnalysis'
 import { clipReadAdviceText, type InputWording } from './toolInputs'
 import { ToolError, type ToolArguments, type ToolDefinition } from './types'
 import { FFMPEG_FIXED_ARGS } from './videoTool'
@@ -35,9 +36,12 @@ import { FFMPEG_FIXED_ARGS } from './videoTool'
 /** The most ids of one call. */
 export const MAX_ASSET_VIEW_IDS = 4
 
-/** The frames of a frame sheet when the call does not tell. */
+/** The frames of a frame sheet at equal steps when the call does not
+ *  tell. */
 export const DEFAULT_SHEET_FRAMES = 6
 const MIN_SHEET_FRAMES = 2
+/** The most frames of a frame sheet, and of a sheet of shots when the call
+ *  does not tell. */
 const MAX_SHEET_FRAMES = 16
 const MAX_SHEET_COLUMNS = 4
 
@@ -78,8 +82,11 @@ export const ASSET_VIEW_TOOL: ToolDefinition = {
   description: 'Show you images and clips of this conversation, so that you can check them: '
     + 'what you and other models made (the intermediate parts and the final result), before you use them or tell the user that the work is done. '
     + 'For each one, you get its facts (as asset_info gives them) and a picture: an image as it is, or a smaller copy of a large one (see `detail`); '
-    + 'a video clip as a sheet of frames at equal steps (left to right, then top to bottom), with the time of each frame; '
+    + 'a video clip as a sheet of frames (left to right, then top to bottom) with the time of each frame: '
+    + 'at equal steps (`frames`), at the times that you give (`times`), or one for each shot (`scenes`); '
     + 'an audio clip as a picture of its wave (time runs left to right), with its loudness. You do not hear a clip. '
+    + 'View a whole clip first; then, for a part that looks wrong, view it again with `start` and `end` around that part, '
+    + 'or with `times` for the frames that you need. '
     + 'You see the pictures after the results of the calls of this round, in this reply only. '
     + 'Each later request of this reply sends them again, so the pictures of one reply have a budget: '
     + `${MAX_REQUEST_IMAGES} pictures less the images of the user's newest message, ${countText(MAX_REPLY_PICTURE_TOKENS)} tokens, `
@@ -99,7 +106,25 @@ export const ASSET_VIEW_TOOL: ToolDefinition = {
     {
       name: 'frames',
       type: 'integer',
-      description: `For a video clip: how many frames its sheet shows, from ${MIN_SHEET_FRAMES} to ${MAX_SHEET_FRAMES}. Default: ${DEFAULT_SHEET_FRAMES}.`,
+      description: `For a video clip: how many frames its sheet shows, at equal steps over the part, from ${MIN_SHEET_FRAMES} to ${MAX_SHEET_FRAMES}. `
+        + `Default: ${DEFAULT_SHEET_FRAMES}. With \`scenes\`: the most frames of the sheet, default ${MAX_SHEET_FRAMES}.`,
+      required: false,
+    },
+    {
+      name: 'times',
+      type: 'string',
+      description: `For a video clip: the times of the frames to show, in seconds of the clip, as in "14.96 15", at most ${MAX_SHEET_FRAMES}. `
+        + 'Each frame is the first frame at or after its time, and a time that is in the list twice gives that frame and the next one. '
+        + 'The result tells the time of each frame, and a time as a result writes it gives that frame again. '
+        + 'Give no `frames`, `scenes`, `start`, or `end` with it.',
+      required: false,
+    },
+    {
+      name: 'scenes',
+      type: 'boolean',
+      description: 'For a video clip: true to show one frame for each shot of the part: its first frame, '
+        + 'and the first frame after each cut (a sudden change of the whole picture) that Dez finds, with their times. '
+        + `\`frames\` is then the most frames, default ${MAX_SHEET_FRAMES}, and the result tells the cuts that the sheet leaves out.`,
       required: false,
     },
     {
@@ -151,11 +176,20 @@ export interface ViewCrop {
   height: number
 }
 
+/** How the frame sheet of a video clip picks its frames: `frames` frames
+ *  at equal steps over the part; the first frame at or after each of
+ *  `times` (seconds of the clip, in order); or the first frame of each
+ *  shot of the part, at most `frames`. */
+export type SheetChoice =
+  | { kind: 'steps', frames: number }
+  | { kind: 'times', times: number[] }
+  | { kind: 'scenes', frames: number }
+
 /** The checked arguments of an `asset_view` call. */
 export interface AssetViewCall {
   ids: string[]
   /** The frames of the sheet of a video clip. */
-  frames: number
+  sheet: SheetChoice
   /** The part of a clip to show, in seconds; `end` null for the end of
    *  the clip. */
   start: number
@@ -197,19 +231,53 @@ function cropArgument(text: string): ViewCrop {
   return { left, top, width, height }
 }
 
-/** The checked arguments of an `asset_view` call. Throws a `ToolError` for
- *  a bad `assets` (`assetIdsArgument`), a `frames` out of its range, a
- *  `start` before 0, an `end` that is not after `start`, an unknown
- *  `detail`, a bad `crop`, and a `crop` for more than one asset. Whether
- *  the asset of a `crop` is an image, the caller checks. A blank `detail`
- *  or `crop` is none. */
-export function assetViewCall(args: ToolArguments): AssetViewCall {
-  const ids = assetIdsArgument(args, { max: MAX_ASSET_VIEW_IDS, notDone: NOT_DONE })
-  const frames = typeof args.frames === 'number' ? args.frames : DEFAULT_SHEET_FRAMES
+// The times of the `times` text `text`, in order (a time that is there
+// twice stays twice). Throws a `ToolError` for a word that is no time of a
+// clip, and for more times than a sheet has frames.
+function timesArgument(text: string): number[] {
+  const times = text.split(/[\s,]+/).filter((word) => word !== '').map(Number)
+  if (times.some((time) => !Number.isFinite(time) || time < 0)) {
+    throw new ToolError(`\`times\` is ${JSON.stringify(text)}: give times in seconds of the clip, from 0 on, as in "14.96 15". ${NOT_DONE}`)
+  }
+  if (times.length > MAX_SHEET_FRAMES) {
+    throw new ToolError(`\`times\` has ${times.length} times, and a frame sheet shows at most ${MAX_SHEET_FRAMES} frames. `
+      + `Give at most ${MAX_SHEET_FRAMES} times, and the others in another call. ${NOT_DONE}`)
+  }
+  return times.sort((a, b) => a - b)
+}
+
+// The frame choice of a call. Throws a `ToolError` for a bad `times`, for
+// a `times` with another argument that picks frames or a part, and for a
+// `frames` out of its range. A blank `times` is none.
+function sheetArgument(args: ToolArguments): SheetChoice {
+  const timesText = typeof args.times === 'string' ? args.times.trim() : ''
+  if (timesText !== '') {
+    const others = ['frames', 'scenes', 'start', 'end'].filter((name) => (name === 'scenes' ? args.scenes === true : args[name] !== undefined))
+    if (others.length > 0) {
+      const names = new Intl.ListFormat('en', { type: 'conjunction' }).format(others.map((name) => `\`${name}\``))
+      throw new ToolError(`\`times\` picks the frames of the sheet itself, and the call also gives ${names}. Give \`times\` alone, or no \`times\`. ${NOT_DONE}`)
+    }
+    return { kind: 'times', times: timesArgument(timesText) }
+  }
+  const scenes = args.scenes === true
+  const frames = typeof args.frames === 'number' ? args.frames : scenes ? MAX_SHEET_FRAMES : DEFAULT_SHEET_FRAMES
   if (frames < MIN_SHEET_FRAMES || frames > MAX_SHEET_FRAMES) {
     throw new ToolError(`\`frames\` is ${frames}, and a frame sheet shows ${MIN_SHEET_FRAMES} to ${MAX_SHEET_FRAMES} frames. `
       + `Give a number from ${MIN_SHEET_FRAMES} to ${MAX_SHEET_FRAMES}. ${NOT_DONE}`)
   }
+  return { kind: scenes ? 'scenes' : 'steps', frames }
+}
+
+/** The checked arguments of an `asset_view` call. Throws a `ToolError` for
+ *  a bad `assets` (`assetIdsArgument`), a `frames` out of its range, a bad
+ *  `times` or one with `frames`, `scenes`, `start`, or `end`, a `start`
+ *  before 0, an `end` that is not after `start`, an unknown `detail`, a bad
+ *  `crop`, and a `crop` for more than one asset. Whether the asset of a
+ *  `crop` is an image, the caller checks. A blank `times`, `detail`, or
+ *  `crop` is none. */
+export function assetViewCall(args: ToolArguments): AssetViewCall {
+  const ids = assetIdsArgument(args, { max: MAX_ASSET_VIEW_IDS, notDone: NOT_DONE })
+  const sheet = sheetArgument(args)
   const start = typeof args.start === 'number' ? args.start : 0
   if (start < 0) throw new ToolError(`\`start\` is ${start}: give a second of the clip, from 0 on. ${NOT_DONE}`)
   const end = typeof args.end === 'number' ? args.end : null
@@ -223,7 +291,7 @@ export function assetViewCall(args: ToolArguments): AssetViewCall {
     throw new ToolError(`\`crop\` is a part of one image, and \`assets\` names ${ids.length} assets. `
       + `Give \`assets\` only the image to crop, or give no \`crop\`. ${NOT_DONE}`)
   }
-  return { ids, frames, start, end, detail, crop }
+  return { ids, sheet, start, end, detail, crop }
 }
 
 /** The pixels of the part `crop` of an image of `size`: each edge on the
@@ -338,6 +406,30 @@ export function sheetGrid(frames: number): { columns: number, rows: number } {
   return { columns: Math.ceil(frames / rows), rows }
 }
 
+// The time from which the select filter of a sheet takes the first frame
+// at or after `seconds`: rounded down to the millisecond, then one more
+// millisecond, as a target equal to the time of a frame can be a little
+// after it in floating point, and `gte` then takes the next frame. A frame
+// time that a text writes (`frameTimeText`, to the millisecond) is at most
+// half a millisecond off, so it gives the same frame again.
+function frameTarget(seconds: number): number {
+  return Math.max(0, Math.floor(seconds * 1000) / 1000 - 0.001)
+}
+
+// The filters of a sheet of `frames` frames after the ones that pick them:
+// each frame scaled into a square of `box` pixels, in the rows of
+// `sheetGrid`. `nb_frames` writes the sheet right after its last frame, so
+// that `-frames:v 1` ends the run there; a run that gives fewer frames
+// writes it at the end of its input.
+function sheetFilters(frames: number, box: number): string[] {
+  const { columns, rows } = sheetGrid(frames)
+  return [
+    `scale=w=${box}:h=${box}:force_original_aspect_ratio=decrease:force_divisible_by=2`,
+    'setsar=1',
+    `tile=${columns}x${rows}:nb_frames=${frames}:padding=4:color=white`,
+  ]
+}
+
 /** The ffmpeg arguments of the frame sheet of the clip file `input`, the
  *  JPEG file `output`: `frames` frames at equal steps over `part`, each one
  *  the first frame at or after the middle of its step, each one scaled
@@ -347,29 +439,45 @@ export function sheetGrid(frames: number): { columns: number, rows: number } {
  *  later `-v` wins. */
 export function frameSheetArgs(input: string, output: string, part: { start: number, end: number }, frames: number, box: number): string[] {
   const step = (part.end - part.start) / frames
-  // The first target is half a step in. It is rounded down to the
-  // millisecond, then one more millisecond: a target equal to the time of a
-  // frame can be a little after it in floating point, and `gte` then takes
-  // the next frame.
-  const offset = Math.max(0, Math.floor(step / 2 * 1000) / 1000 - 0.001)
-  const { columns, rows } = sheetGrid(frames)
-  const filters = [
-    `select='gte(t\\,${offset.toFixed(3)}+${step.toFixed(6)}*selected_n)'`,
-    'showinfo',
-    `scale=w=${box}:h=${box}:force_original_aspect_ratio=decrease:force_divisible_by=2`,
-    'setsar=1',
-    `tile=${columns}x${rows}:padding=4:color=white`,
-  ]
+  const offset = frameTarget(step / 2)
+  const filters = [`select='gte(t\\,${offset.toFixed(3)}+${step.toFixed(6)}*selected_n)'`, 'showinfo', ...sheetFilters(frames, box)]
   return [...FFMPEG_FIXED_ARGS, '-v', 'info', ...partArgs(part), '-i', input, '-map', '0:v:0', '-vf', filters.join(','), ...pictureOutputArgs(output)]
+}
+
+/** The ffmpeg arguments of the frame sheet of the clip file `input`, the
+ *  JPEG file `output`: the first frame at or after each of `times`
+ *  (seconds of the clip, in order), as `frameSheetArgs` lays them out. The
+ *  target of each time is for the next frame that the sheet takes, so a
+ *  time that is there twice takes that frame and the next one. The run
+ *  reads the clip from `from` (`-ss`; `sheetFrameTimes` adds it back),
+ *  which shifts the times of its frames by up to a tick of the time base
+ *  of the stream, a whole frame for some files: so the frames of exact
+ *  times of the clip need `from` 0, and the frames that an earlier run
+ *  found (`sceneCutsArgs`) need the `from` of that run. */
+export function timesSheetArgs(input: string, output: string, from: number, times: readonly number[], box: number): string[] {
+  const select = times.reduceRight((rest, time, index) => `if(eq(selected_n\\,${index})\\,gte(t\\,${frameTarget(time - from).toFixed(3)})\\,${rest})`, '0')
+  const filters = [`select='${select}'`, 'showinfo', ...sheetFilters(times.length, box)]
+  return [
+    ...FFMPEG_FIXED_ARGS, '-v', 'info', ...partArgs({ start: from, end: null }), '-i', input, '-map', '0:v:0', '-vf', filters.join(','),
+    ...pictureOutputArgs(output),
+  ]
+}
+
+/** The ffmpeg arguments that log the cuts of `part` of the clip file
+ *  `input` (`SCENE_CUT_FILTER`; `cutTimes` reads them, from the start of
+ *  the part) and write nothing. */
+export function sceneCutsArgs(input: string, part: ClipPart): string[] {
+  return [...FFMPEG_FIXED_ARGS, '-v', 'info', ...partArgs(part), '-i', input, '-map', '0:v:0', '-vf', SCENE_CUT_FILTER, '-f', 'null', '-']
 }
 
 const SHOWINFO_FRAME = /\[Parsed_showinfo_\d+ @ [^\]]*\] n:\s*\d+\s+pts:\s*-?\d+\s+pts_time:(-?[\d.]+)/g
 
 /** The times of the frames of a sheet, in seconds of the clip, in sheet
- *  order, from the log of its `frameSheetArgs` run: what `showinfo` gives,
- *  never a guess, plus the start of the part. */
-export function sheetFrameTimes(log: string, start: number, frames: number): number[] {
-  return Array.from(log.matchAll(SHOWINFO_FRAME), (match) => start + Number(match[1])).slice(0, frames)
+ *  order, from the log of its run (`frameSheetArgs`, `timesSheetArgs`):
+ *  what `showinfo` gives, never a guess, plus `from`, where the run started
+ *  to read. */
+export function sheetFrameTimes(log: string, from: number, frames: number): number[] {
+  return Array.from(log.matchAll(SHOWINFO_FRAME), (match) => from + Number(match[1])).slice(0, frames)
 }
 
 // ffmpeg logs this line when it read its input to the end and no frame
@@ -530,18 +638,75 @@ export function imagePictureShows(id: string): string {
   return `the image @${id}`
 }
 
-/** The note and the picture text of the frame sheet of the video clip
- *  `id`, whose run asked for `frames` frames: its part, its rows, and the
- *  time of each frame. A clip with fewer frames than that (a low frame
- *  rate) gives fewer, and they still fill the rows of the grid of
- *  `frames`. */
-export function frameSheetTexts(id: string, part: ClipPart, times: readonly number[], frames: number): { note: string, shows: string } {
+// A time of a frame or of a cut as the texts write it: to the millisecond,
+// so that a call that gives it back (`times`) gets the same frame
+// (`frameTarget`).
+function frameTimeText(seconds: number): string {
+  return String(Number(seconds.toFixed(3)))
+}
+
+function timesListText(times: readonly number[]): string {
+  return `${times.map(frameTimeText).join(', ')} s`
+}
+
+// The layout of the frames at `times` of a sheet whose run asked for
+// `frames` frames. A clip can give fewer (a low frame rate, a time after
+// the end of its picture), and they still fill the rows of the grid of
+// `frames`.
+function sheetLayoutText(times: readonly number[], frames: number): string {
   const { columns } = sheetGrid(frames)
   const rows = times.length <= columns ? 'in one row' : `in rows of ${columns}, left to right, then top to bottom`
-  const layout = `${times.length} ${times.length === 1 ? 'frame' : 'frames'} ${rows}, at ${times.map(shortNumber).join(', ')} s`
+  return `${times.length} ${times.length === 1 ? 'frame' : 'frames'} ${rows}, at ${timesListText(times)}`
+}
+
+/** The note and the picture text of the frame sheet of the video clip
+ *  `id`, with its frames at `times`, whose run asked for `frames` frames at
+ *  equal steps over `part`: its part, its rows, and the time of each
+ *  frame. */
+export function frameSheetTexts(id: string, part: ClipPart, times: readonly number[], frames: number): { note: string, shows: string } {
+  const layout = sheetLayoutText(times, frames)
   return {
     note: `Frame sheet of ${partText(part)}: ${layout}.`,
     shows: `the frame sheet of the video clip @${id}: ${layout}`,
+  }
+}
+
+/** The note and the picture text of the frame sheet of the video clip
+ *  `id`, with its frames at `times`, for the `times` `asked` of a call, of
+ *  which its run asked for the first `frames` (the times before the end of
+ *  the clip). */
+export function timesSheetTexts(id: string, asked: readonly number[], times: readonly number[], frames: number): { note: string, shows: string } {
+  const layout = sheetLayoutText(times, frames)
+  return {
+    note: `Frame sheet of the first frame at or after each of \`times\` ${timesListText(asked)}: ${layout}.`,
+    shows: `the frame sheet of the video clip @${id}: ${layout}`,
+  }
+}
+
+/** The note of the `times` of a call that gave no frame. */
+export function missingTimesNote(times: readonly number[]): string {
+  return `No frame at or after ${timesListText(times)}: the picture of the clip ends before ${times.length === 1 ? 'that time' : 'these times'}.`
+}
+
+/** The note and the picture text of the frame sheet of the shots of `part`
+ *  of the video clip `id`, with its frames at `times`, whose run asked for
+ *  `frames` frames: the first frame of the part and the first frame after
+ *  each of the first `frames - 1` of `cuts`, the times of the cuts of the
+ *  part. */
+export function scenesSheetTexts(id: string, part: ClipPart, times: readonly number[], frames: number, cuts: readonly number[]): { note: string, shows: string } {
+  const layout = sheetLayoutText(times, frames)
+  const leftOut = cuts.slice(frames - 1)
+  const found = cuts.length === 0
+    ? 'Dez found no cut in the part.'
+    : `Dez found ${cuts.length} ${cuts.length === 1 ? 'cut' : 'cuts'} in the part`
+      + (leftOut.length === 0
+        ? '.'
+        : `, and the sheet leaves out the last ${leftOut.length === 1 ? 'one' : leftOut.length}, from ${frameTimeText(leftOut[0])} s on: `
+          + `to see ${leftOut.length === 1 ? 'it' : 'them'}, call again with \`scenes\` and \`start\` ${frameTimeText(leftOut[0])}.`)
+  const frameKinds = cuts.length === 0 ? 'The frame is the first frame of the part' : 'The first frame is the first frame of the part, and each other one the first frame after a cut'
+  return {
+    note: `Frame sheet of the shots of ${partText(part)}: ${layout}. ${frameKinds}. ${found}`,
+    shows: `the frame sheet of the shots of the video clip @${id}: ${layout}`,
   }
 }
 
@@ -558,9 +723,9 @@ export const UNKNOWN_LENGTH_NOTE = 'No frame sheet: Dez does not know the length
 export const NO_VIDEO_STREAM_NOTE = 'No frame sheet: the clip has no picture.'
 
 /** The note of a frame sheet whose file is over `MAX_PICTURE_BYTES`, for
- *  a view with `detail`. */
-export function sheetTooLargeNote(detail: ViewDetail): string {
-  return `No frame sheet: its file is too large to send. Call again with fewer \`frames\`${detail === 'full' ? ', or with `detail` "review"' : ''}.`
+ *  a view with `detail`, whose frames the argument `choice` picked. */
+export function sheetTooLargeNote(detail: ViewDetail, choice: 'frames' | 'times'): string {
+  return `No frame sheet: its file is too large to send. Call again with fewer \`${choice}\`${detail === 'full' ? ', or with `detail` "review"' : ''}.`
 }
 
 /** The note of an audio clip with no sound stream. */
@@ -582,6 +747,12 @@ export function loudnessNote(part: ClipPart, { integrated, range, truePeak }: Lo
 /** The note of a run of ffmpeg that took longer than its time limit. */
 export const VIEW_TIMED_OUT_NOTE = `ffmpeg took longer than ${ASSET_VIEW_TIMEOUT_MS / 1000} s, so Dez stopped it, and it shows no more of this clip. `
   + 'Call again with a shorter part (`start` and `end`).'
+
+/** The note of a `times` run of ffmpeg that took longer than its time
+ *  limit: it reads the clip from its start to the frame of the last time. */
+export const TIMES_TIMED_OUT_NOTE = `ffmpeg took longer than ${ASSET_VIEW_TIMEOUT_MS / 1000} s, so Dez stopped it, and it shows no more of this clip. `
+  + 'For `times`, ffmpeg reads the clip from its start to the last time. Call again with earlier `times`, '
+  + 'or with `start` and `end` around the part and no `times`.'
 
 /** The note of a run of ffmpeg that failed. Its log goes to the console
  *  only: it can hold a path. */

@@ -16,6 +16,7 @@ import { providerInfo } from '../model/providers/testing'
 import type { ModelInfo, ProviderInfo, ProviderInputImageRules, ProviderSettingsDescriptor } from '../model/providers/types'
 import { NO_PICTURE_BUDGET, ReplyPictures, type PictureBudget, type ReplyPicture } from '../model/streams/replyPictures'
 import { assetProbeArgs, clipNotReadFacts } from '../model/tools/assetFacts'
+import { SCENE_CUT_FILTER } from '../model/tools/clipAnalysis'
 import {
   clipNotReadNote,
   cropOfClipText,
@@ -1766,10 +1767,12 @@ describe('dez.controller/tools/run', () => {
     const probed = (streams: object[]) => JSON.stringify({ streams, format: { duration: '5.040000', size: '1250000' } })
     const VIDEO_STREAM = { codec_name: 'h264', codec_type: 'video', width: 854, height: 480, avg_frame_rate: '24/1', r_frame_rate: '24/1' }
     const AUDIO_STREAM = { codec_name: 'pcm_s16le', codec_type: 'audio', sample_rate: '48000', channels: 2 }
-    // The log lines of ffmpeg that Dez reads: the frames of a sheet, and
-    // the loudness summary.
-    const SHOWINFO = [0.4167, 1.25, 2.0833]
+    // The log lines of ffmpeg that Dez reads: the frames of a sheet, the
+    // cuts of a clip, and the loudness summary.
+    const showinfoLog = (times: number[]) => times
       .map((time, n) => `[Parsed_showinfo_1 @ 0x1] n:   ${n} pts:  ${n} pts_time:${time} duration: 512 fmt:yuv420p\n`).join('')
+    const SHOWINFO = showinfoLog([0.4167, 1.25, 2.0833])
+    const scdetLog = (times: number[]) => times.map((time) => `[Parsed_scdet_0 @ 0x3] lavfi.scd.score: 21.747, lavfi.scd.time: ${time}\n`).join('')
     const EBUR128 = '[Parsed_ebur128_3 @ 0x2] Summary:\n  Integrated loudness:\n    I:         -23.1 LUFS\n'
       + '  Loudness range:\n    LRA:         9.4 LU\n  True peak:\n    Peak:      -18.8 dBFS\n'
     // The pictures that ffmpeg makes: a frame sheet of 968 by 364 pixels
@@ -1786,6 +1789,7 @@ describe('dez.controller/tools/run', () => {
     let probes: Record<string, string>
     let frameSheetLog: string
     let frameSheetEnd: BundledToolEnd
+    let cutsLog: string
 
     function assetView(args: ToolArguments): Promise<ToolRunResult> {
       const context: ToolRunContext = {
@@ -1817,9 +1821,14 @@ describe('dez.controller/tools/run', () => {
       probes = { 'b.mp4': probed([VIDEO_STREAM, AUDIO_STREAM]), 'd.wav': probed([AUDIO_STREAM]) }
       frameSheetLog = SHOWINFO
       frameSheetEnd = ENDED
+      cutsLog = ''
       native.program = async (run, onOutput) => {
         if (run.tool === 'dez-ffprobe') {
           onOutput({ stream: 'stdout', text: probes[run.args.at(-1) as string] ?? '' })
+          return ENDED
+        }
+        if (run.args.includes(SCENE_CUT_FILTER)) {
+          onOutput({ stream: 'stderr', text: cutsLog })
           return ENDED
         }
         if (run.args.includes('-vf')) {
@@ -1842,7 +1851,7 @@ describe('dez.controller/tools/run', () => {
       const lines = result.content.split('\n')
       expect(lines[0]).toBe('@a | image | PNG | 1000x500 | 3 B')
       expect(lines).toContain('@b | video | MP4 | 5.04 s | 854x480 | 24 fps | h264 | sound (pcm_s16le) | 1.2 MB')
-      expect(result.content).toMatch(/0 s to 2\.5 s: 3 frames in one row, at 0\.42, 1\.25, 2\.08 s/)
+      expect(result.content).toMatch(/0 s to 2\.5 s: 3 frames in one row, at 0\.417, 1\.25, 2\.083 s/)
       expect(result.content).toMatch(/-23\.1 LUFS integrated, 9\.4 LU range, -18\.8 dBFS true peak/)
       expect(drawings).toStrictEqual([])
       expect(shown.map(({ label, picture, size }) => ({ label: label.match(/@[a-z]+/)?.[0], picture, size }))).toStrictEqual([
@@ -1864,6 +1873,58 @@ describe('dez.controller/tools/run', () => {
       ])
       expect(ffmpegRuns()[0].args).toStrictEqual(expect.arrayContaining(['-to', '2.500', '-i', 'b.mp4']))
       expect(native.readFiles).toStrictEqual([{ root: 'cache', path: `${folder}/b-frames.jpg` }, { root: 'cache', path: `${folder}/d-wave.jpg` }])
+    })
+
+    it('shows the first frame at or after each time of the call, read from the start of the clip, and tells the times with no frame', async () => {
+      const result = await assetView({ assets: '@b', times: '2.08 0.4 1.25 6' })
+
+      // 6 s is after the end of the clip (5.04 s): it gets no place in the
+      // sheet.
+      const [run] = ffmpegRuns()
+      expect(run.args).not.toContain('-ss')
+      expect(run.args[run.args.indexOf('-vf') + 1]).toMatch(/^select='if\(eq\(selected_n\\,0\)\\,gte\(t\\,0\.399\).*,tile=3x1:nb_frames=3:/)
+      expect(result.content).toContain('Frame sheet of the first frame at or after each of `times` 0.4, 1.25, 2.08, 6 s: 3 frames in one row, at 0.417, 1.25, 2.083 s.')
+      expect(result.content).toContain('No frame at or after 6 s:')
+      expect(shown.map(({ label }) => label)).toStrictEqual(['asset_view: the frame sheet of the video clip @b: 3 frames in one row, at 0.417, 1.25, 2.083 s.'])
+
+      // The picture of a clip can end before the end of its sound.
+      frameSheetLog = showinfoLog([0.4167])
+      expect((await assetView({ assets: '@b', times: '0.4 4.9 5' })).content).toContain('No frame at or after 4.9, 5 s:')
+    })
+
+    it('runs no program for times that are all after the end of the clip', async () => {
+      const result = await assetView({ assets: '@b', times: '6 7' })
+
+      expect(result.content).toContain('No frame at or after 6, 7 s:')
+      expect(ffmpegRuns()).toStrictEqual([])
+      expect(shown).toStrictEqual([])
+    })
+
+    it('shows the first frame of the part and of each shot after it, at most `frames`, and tells where the left-out shots start', async () => {
+      // The times of a run are from its `-ss` on.
+      cutsLog = scdetLog([0.25, 1.0833, 2])
+      frameSheetLog = showinfoLog([0, 0.25, 1.0833])
+
+      const result = await assetView({ assets: '@b', scenes: true, start: 1, frames: 3 })
+
+      const [cuts, sheet] = ffmpegRuns()
+      expect(cuts.args).toStrictEqual(expect.arrayContaining(['-ss', '1.000', '-to', '5.040', '-i', 'b.mp4', '-vf', SCENE_CUT_FILTER]))
+      expect(sheet.args).toStrictEqual(expect.arrayContaining(['-ss', '1.000', '-i', 'b.mp4']))
+      expect(sheet.args[sheet.args.indexOf('-vf') + 1]).toMatch(/gte\(t\\,0\.000\).*gte\(t\\,0\.249\).*gte\(t\\,1\.082\).*,tile=3x1:nb_frames=3:/)
+      expect(sheet.args.at(-1)).toBe('b-frames.jpg')
+      expect(result.content).toContain('Frame sheet of the shots of 1 s to 5.04 s: 3 frames in one row, at 1, 1.25, 2.083 s.')
+      expect(result.content).toMatch(/3 cuts in the part, and the sheet leaves out .*, from 3 s on: .*`start` 3\./)
+      expect(shown).toHaveLength(1)
+    })
+
+    it('shows the first frame alone for a clip of one shot', async () => {
+      frameSheetLog = showinfoLog([0])
+
+      const result = await assetView({ assets: '@b', scenes: true })
+
+      expect(ffmpegRuns()[1].args[ffmpegRuns()[1].args.indexOf('-vf') + 1]).toMatch(/^select='if\(eq\(selected_n\\,0\)\\,gte\(t\\,0\.000\)\\,0\)',showinfo,.*tile=1x1:nb_frames=1:/)
+      expect(result.content).toContain('Frame sheet of the shots of 0 s to 5.04 s: 1 frame in one row, at 0 s.')
+      expect(result.content).toContain('Dez found no cut in the part.')
     })
 
     it('gives the facts and the loudness only, and no picture, to a model that reads no images', async () => {
@@ -2037,14 +2098,13 @@ describe('dez.controller/tools/run', () => {
       expect(ffmpegRuns()[0].args.join(' ')).toContain(`scale=w=${box}:h=${box}:`)
     })
 
-    it('sends no frame sheet whose file is too large, and tells how to make a smaller one', async () => {
+    it('sends no frame sheet whose file is too large, and tells the argument that makes a smaller one', async () => {
       const sheet = new Uint8Array(3_750_001)
       sheet.set(SHEET_JPEG)
       native.fileBytes = ({ path }) => path.endsWith('-frames.jpg') ? sheet : new Uint8Array()
 
-      const result = await assetView({ assets: '@b', detail: 'full' })
-
-      expect(result.content).toContain(sheetTooLargeNote('full'))
+      expect((await assetView({ assets: '@b', detail: 'full' })).content).toContain(sheetTooLargeNote('full', 'frames'))
+      expect((await assetView({ assets: '@b', times: '1 2' })).content).toContain(sheetTooLargeNote('review', 'times'))
       expect(shown).toStrictEqual([])
     })
 

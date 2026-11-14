@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest'
+import { SCENE_CUT_FILTER } from './clipAnalysis'
 import {
   assetViewCall,
   audioViewArgs,
@@ -10,9 +11,12 @@ import {
   imagePictureDrawing,
   loudnessOf,
   partHasNoFrame,
+  sceneCutsArgs,
+  scenesSheetTexts,
   sheetFrameTimes,
   sheetGrid,
   smallerPictureDrawing,
+  timesSheetArgs,
 } from './assetView'
 import { refusal } from './testing'
 
@@ -50,10 +54,38 @@ function ebur128Log(integrated: string, range: string, peak: string): string {
 
 describe('assetViewCall', () => {
   it('takes the ids, and the frames, start, end, detail, and crop with their defaults', () => {
-    expect(assetViewCall({ assets: '@f @a' })).toStrictEqual({ ids: ['f', 'a'], frames: DEFAULT_SHEET_FRAMES, start: 0, end: null, detail: 'review', crop: null })
-    expect(assetViewCall({ assets: '@f', frames: 16, start: 1.5, end: 3, detail: 'full', crop: '0.25 0 0.5 1' })).toStrictEqual({
-      ids: ['f'], frames: 16, start: 1.5, end: 3, detail: 'full', crop: { left: 0.25, top: 0, width: 0.5, height: 1 },
+    expect(assetViewCall({ assets: '@f @a' })).toStrictEqual({
+      ids: ['f', 'a'], sheet: { kind: 'steps', frames: DEFAULT_SHEET_FRAMES }, start: 0, end: null, detail: 'review', crop: null,
     })
+    expect(assetViewCall({ assets: '@f', frames: 16, start: 1.5, end: 3, detail: 'full', crop: '0.25 0 0.5 1' })).toStrictEqual({
+      ids: ['f'], sheet: { kind: 'steps', frames: 16 }, start: 1.5, end: 3, detail: 'full', crop: { left: 0.25, top: 0, width: 0.5, height: 1 },
+    })
+  })
+
+  it('takes the times in order, a time that is there twice too, and blank times as none', () => {
+    expect(assetViewCall({ assets: '@f', times: ' 15 14.96, 2 2' }).sheet).toStrictEqual({ kind: 'times', times: [2, 2, 14.96, 15] })
+    expect(assetViewCall({ assets: '@f', times: '  ', frames: 4 }).sheet).toStrictEqual({ kind: 'steps', frames: 4 })
+  })
+
+  it('takes scenes with at most 16 frames, or the frames of the call, over the part of the call', () => {
+    expect(assetViewCall({ assets: '@f', scenes: true }).sheet).toStrictEqual({ kind: 'scenes', frames: 16 })
+    expect(assetViewCall({ assets: '@f', scenes: true, frames: 4, start: 2, end: 9 })).toMatchObject({ sheet: { kind: 'scenes', frames: 4 }, start: 2, end: 9 })
+    expect(assetViewCall({ assets: '@f', scenes: false }).sheet).toStrictEqual({ kind: 'steps', frames: DEFAULT_SHEET_FRAMES })
+  })
+
+  it('refuses times with frames, scenes, start, or end, and names each one that the call gives', () => {
+    for (const [name, value] of [['frames', 4], ['scenes', true], ['start', 0], ['end', 5]] as const) {
+      expect(refusal(() => assetViewCall({ assets: '@f', times: '1 2', [name]: value }))).toContain(`\`${name}\``)
+    }
+    expect(refusal(() => assetViewCall({ assets: '@f', times: '1', frames: 4, end: 5 }))).toMatch(/`frames` and `end`/)
+    expect(assetViewCall({ assets: '@f', times: '1', scenes: false }).sheet).toStrictEqual({ kind: 'times', times: [1] })
+  })
+
+  it('refuses a time that is not a number from 0 on, and more than 16 times', () => {
+    for (const times of ['1 x', '-1 2', '1 Infinity']) {
+      expect(refusal(() => assetViewCall({ assets: '@f', times }))).toMatch(/`times` is/)
+    }
+    expect(refusal(() => assetViewCall({ assets: '@f', times: Array.from({ length: 17 }, (_, index) => index).join(' ') }))).toMatch(/at most 16 times/)
   })
 
   it('takes a detail in any case, crop numbers split by commas, and blank texts as none', () => {
@@ -210,12 +242,46 @@ describe('frameSheetArgs', () => {
     const whole = frameSheetArgs('f.mp4', 'f-frames.jpg', { start: 0, end: 10 }, 6, 320)
     expect(whole).not.toContain('-ss')
     expect(whole.slice(whole.indexOf('-to'), whole.indexOf('-to') + 4)).toStrictEqual(['-to', '10.000', '-i', 'f.mp4'])
-    expect(whole[whole.indexOf('-vf') + 1]).toMatch(/^select='gte\(t\\,0\.832\+1\.666667\*selected_n\)',showinfo,.*tile=3x2:/)
+    // `nb_frames` writes the sheet right after its last frame, so the run
+    // ends there.
+    expect(whole[whole.indexOf('-vf') + 1]).toMatch(/^select='gte\(t\\,0\.832\+1\.666667\*selected_n\)',showinfo,.*tile=3x2:nb_frames=6:/)
     expect(whole.at(-1)).toBe('f-frames.jpg')
 
     const part = frameSheetArgs('f.mp4', 'f-frames.jpg', { start: 2, end: 4 }, 5, 320)
     expect(part.slice(part.indexOf('-ss'), part.indexOf('-ss') + 4)).toStrictEqual(['-ss', '2.000', '-to', '4.000'])
     expect(part[part.indexOf('-vf') + 1]).toMatch(/^select='gte\(t\\,0\.199\+0\.400000\*selected_n\)'/)
+  })
+})
+
+describe('timesSheetArgs', () => {
+  it('takes the first frame at or after each time, the next frame for a repeated time, and reads the clip from its start', () => {
+    const args = timesSheetArgs('f.mp4', 'f-frames.jpg', 0, [2, 2, 14.96], 320)
+    expect(args).not.toContain('-ss')
+    expect(args).not.toContain('-to')
+    expect(args[args.indexOf('-vf') + 1]).toMatch(new RegExp(
+      String.raw`^select='if\(eq\(selected_n\\,0\)\\,gte\(t\\,1\.999\)\\,if\(eq\(selected_n\\,1\)\\,gte\(t\\,1\.999\)\\,`
+      + String.raw`if\(eq\(selected_n\\,2\)\\,gte\(t\\,14\.959\)\\,0\)\)\)',showinfo,.*tile=3x1:nb_frames=3:`,
+    ))
+    expect(args.at(-1)).toBe('f-frames.jpg')
+  })
+
+  it('reads from `from` on, with the times of the clip as times after it', () => {
+    const args = timesSheetArgs('f.mp4', 'f-frames.jpg', 2, [2, 5.5], 320)
+    expect(args.slice(args.indexOf('-ss'), args.indexOf('-ss') + 4)).toStrictEqual(['-ss', '2.000', '-i', 'f.mp4'])
+    expect(args[args.indexOf('-vf') + 1]).toMatch(/gte\(t\\,0\.000\)\\,if\(eq\(selected_n\\,1\)\\,gte\(t\\,3\.499\)/)
+  })
+})
+
+describe('sceneCutsArgs', () => {
+  it('logs the cuts of the part only, and writes no file', () => {
+    const part = sceneCutsArgs('f.mp4', { start: 2, end: 6 })
+    expect(part.slice(part.indexOf('-ss'), part.indexOf('-ss') + 6)).toStrictEqual(['-ss', '2.000', '-to', '6.000', '-i', 'f.mp4'])
+    expect(part[part.indexOf('-vf') + 1]).toBe(SCENE_CUT_FILTER)
+    expect(part.slice(-3)).toStrictEqual(['-f', 'null', '-'])
+
+    const whole = sceneCutsArgs('f.mp4', { start: 0, end: null })
+    expect(whole).not.toContain('-ss')
+    expect(whole).not.toContain('-to')
   })
 })
 
@@ -260,6 +326,27 @@ describe('frameSheetTexts', () => {
     const times = [0.2, 0.4, 0.6, 0.8, 1, 1.2, 1.4, 1.6, 1.8]
     expect(frameSheetTexts('f', { start: 0, end: 2 }, times, 16).note).toContain('9 frames in rows of 4,')
     expect(frameSheetTexts('f', { start: 0, end: 2 }, times.slice(0, 3), 16).note).toContain('3 frames in one row,')
+  })
+
+  // A frame at 14.958333 written as 14.96 would give a target after it
+  // (`timesSheetArgs`), and so the next frame.
+  it('writes each frame time to the millisecond, so that `times` gets the same frame again', () => {
+    expect(frameSheetTexts('f', { start: 0, end: 30 }, [0.041667, 14.958333, 15], 3).note).toContain('at 0.042, 14.958, 15 s')
+  })
+})
+
+describe('scenesSheetTexts', () => {
+  const part = { start: 0, end: 10 }
+
+  it('tells where the cuts that the sheet leaves out start, as the start of the next call', () => {
+    const note = scenesSheetTexts('f', part, [0, 3, 5], 3, [3, 5, 7.041667, 9]).note
+    expect(note).toMatch(/leaves out the last 2, from 7\.042 s on/)
+    expect(note).toMatch(/`start` 7\.042\./)
+  })
+
+  it('tells no left-out cut when the sheet has each shot', () => {
+    expect(scenesSheetTexts('f', part, [0, 3], 2, [3]).note).not.toMatch(/leaves out/)
+    expect(scenesSheetTexts('f', part, [0], 1, []).note).toMatch(/no cut/)
   })
 })
 
