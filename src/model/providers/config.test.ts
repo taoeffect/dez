@@ -242,7 +242,7 @@ describe('provider config schema', () => {
     expect(parse({ body: JSON.parse('{"__proto__":{"polluted":true}}') })).toBe(false)
   })
 
-  it('takes an audio output entry only for a model id prefix, a JSON object body, an audio type, and a whole positive PCM sample size', () => {
+  it('takes an audio output entry only for a model id prefix, a JSON object body, an audio type that Dez can store, and a whole positive PCM sample size', () => {
     const parse = (entry: Record<string, unknown>) => providerConfigSchema.safeParse({
       id: 'p',
       name: 'P',
@@ -259,6 +259,12 @@ describe('provider config schema', () => {
     expect(parse({ body: ['audio'] }).success).toBe(false)
     expect(parse({ pcmSampleBits: 0 }).success).toBe(false)
     expect(parse({ pcmSampleBits: 12.5 }).success).toBe(false)
+    // Dez could not store the audio of the answer, after the provider billed
+    // the request: raw PCM with no sample size or no rate, and a type that
+    // Dez gives no file name to.
+    expect(parse({ pcmSampleBits: undefined }).success).toBe(false)
+    expect(parse({ contentType: 'audio/pcm' }).success).toBe(false)
+    expect(parse({ contentType: 'audio/x-unknown' }).success).toBe(false)
   })
 
   it('keeps an empty thinking object and accepts only JSON objects as bodies', () => {

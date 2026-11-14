@@ -1,7 +1,10 @@
+import { mediaFileExtension } from '../chat/mediaFiles'
+
 // WAV files: raw PCM audio (`audio/pcm`), the samples of a clip with no
 // file format, which no player plays, gets a WAV header before its samples
-// (`wavFile`); decoded audio (Web Audio's float samples) becomes a 16-bit
-// WAV file (`wavFileOfChannels`, for the webview's cut of an audio clip).
+// (`wavFile`; `audioFileType` tells the file of audio of a content type);
+// decoded audio (Web Audio's float samples) becomes a 16-bit WAV file
+// (`wavFileOfChannels`, for the webview's cut of an audio clip).
 
 // How the samples of raw PCM audio are laid out. The samples are signed
 // whole numbers, little-endian.
@@ -37,6 +40,27 @@ export function pcmLayout(contentType: string, sampleBits: number | undefined): 
   // A `channels` that is not a count is an unknown layout, not one channel.
   const channels = parts.some((part) => part.startsWith('channels=')) ? parameter('channels') : 1
   return rate === undefined || channels === undefined ? null : { rate, channels, sampleBits }
+}
+
+// The file that Dez stores audio of a content type in.
+export interface AudioFileType {
+  mediaType: string
+  extension: string
+  // Raw PCM: the layout of its samples, which get a WAV header (`wavFile`).
+  // Null for audio in a file format, which is stored as it is.
+  pcm: PcmLayout | null
+}
+
+/** The file of audio of `contentType` (lower case, with its parameters):
+ *  a WAV file for raw PCM whose layout is known (`pcmLayout`), else the
+ *  file type of the media type. Null when Dez cannot store the audio: a
+ *  media type that Dez gives no file name to, raw PCM with no rate, or an
+ *  API that does not tell the sample size (`sampleBits`). */
+export function audioFileType(contentType: string, sampleBits: number | undefined): AudioFileType | null {
+  const pcm = pcmLayout(contentType, sampleBits)
+  const mediaType = pcm ? 'audio/wav' : contentType.split(';', 1)[0].trim()
+  const extension = mediaFileExtension(mediaType, null)
+  return extension === null ? null : { mediaType, extension, pcm }
 }
 
 const WAV_HEADER_BYTES = 44
