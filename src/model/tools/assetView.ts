@@ -129,7 +129,7 @@ export const ASSET_VIEW_TOOL: ToolDefinition = {
     + `${MAX_REQUEST_IMAGES} pictures less the images of the user's newest message, ${countText(MAX_REPLY_PICTURE_TOKENS)} tokens, `
     + `and ${MAX_REPLY_PICTURE_BYTES / 1024 ** 2} MB of base64. `
     + `Dez counts a picture of W by H pixels as ceil(W / 28) * ceil(H / 28) tokens, at most ${countText(MAX_PICTURE_TOKENS)}: `
-    + `a wave picture as ${countText(pictureTokens({ width: 800, height: 200 }))}, a 1920x1080 frame as ${countText(pictureTokens({ width: 1920, height: 1080 }))}. `
+    + `a wave picture as ${countText(pictureTokens(SOUND_PICTURE_SIZE))}, a 1920x1080 frame as ${countText(pictureTokens({ width: 1920, height: 1080 }))}. `
     + 'Each result tells the budget that is left. '
     + 'To check a small detail of an image, view only that part of it with `crop`. '
     + 'To compare images and clips, or to check many of them for less of the budget, show them in one picture with `layout` "grid". '
@@ -976,15 +976,15 @@ export function loudnessNote(part: ClipPart, { integrated, range, truePeak }: Lo
   return `Loudness of ${partText(part)}: ${integrated} LUFS integrated, ${range} LU range, ${truePeak} dBFS true peak.`
 }
 
+const VIEW_STOPPED = `ffmpeg took longer than ${ASSET_VIEW_TIMEOUT_MS / 1000} s, so Dez stopped it, and it shows no more of this clip. `
+
 /** The note of a run of ffmpeg that took longer than its time limit. */
-export const VIEW_TIMED_OUT_NOTE = `ffmpeg took longer than ${ASSET_VIEW_TIMEOUT_MS / 1000} s, so Dez stopped it, and it shows no more of this clip. `
-  + 'Call again with a shorter part (`start` and `end`).'
+export const VIEW_TIMED_OUT_NOTE = `${VIEW_STOPPED}Call again with a shorter part (\`start\` and \`end\`).`
 
 /** The note of a `times` run of ffmpeg that took longer than its time
  *  limit: it reads the clip from its start to the frame of the last time. */
-export const TIMES_TIMED_OUT_NOTE = `ffmpeg took longer than ${ASSET_VIEW_TIMEOUT_MS / 1000} s, so Dez stopped it, and it shows no more of this clip. `
-  + 'For `times`, ffmpeg reads the clip from its start to the last time. Call again with earlier `times`, '
-  + 'or with `start` and `end` around the part and no `times`.'
+export const TIMES_TIMED_OUT_NOTE = `${VIEW_STOPPED}For \`times\`, ffmpeg reads the clip from its start to the last time. `
+  + 'Call again with earlier `times`, or with `start` and `end` around the part and no `times`.'
 
 /** The note of a run of ffmpeg that failed. Its log goes to the console
  *  only: it can hold a path. */
