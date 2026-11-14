@@ -55,6 +55,18 @@ export const BUILT_IN_PROVIDER_CONFIGS: readonly ProviderConfig[] = [
     // The day that OpenRouter added the model, not always its release
     // (Unix seconds; checked live, 2026-11-12).
     modelReleased: { path: 'created', format: 'unixSeconds' },
+    // Texts of USD per token; `-1` for a router model (`openrouter/auto`),
+    // whose price is that of the model that it picks. `overrides`: other
+    // rates by prompt length or time (checked live, 2026-11-14).
+    // https://openrouter.ai/docs/api/api-reference/models/list-all-models-and-their-properties
+    modelTokenPrices: {
+      input: 'pricing.prompt',
+      output: 'pricing.completion',
+      cachedInput: 'pricing.input_cache_read',
+      perTokens: 1,
+      otherRates: 'pricing.overrides',
+      imageOutput: 'pricing.image_output',
+    },
     auth: 'apiKey',
     // OpenRouter passes the marks on to the models that cache only a marked
     // prompt (Claude, Gemini, Qwen), and makes OpenAI's own marks of them for
@@ -123,6 +135,16 @@ export const BUILT_IN_PROVIDER_CONFIGS: readonly ProviderConfig[] = [
     // "Release date on Venice API": the day that Venice added the model, at
     // midnight UTC (Unix seconds; checked live, 2026-11-12).
     modelReleased: { path: 'created', format: 'unixSeconds' },
+    // `{ usd, diem }` objects per 1M tokens; `extended`: the rates of a
+    // prompt over `context_token_threshold` tokens (checked live,
+    // 2026-11-14).
+    modelTokenPrices: {
+      input: 'model_spec.pricing.input.usd',
+      output: 'model_spec.pricing.output.usd',
+      cachedInput: 'model_spec.pricing.cache_input.usd',
+      perTokens: 1_000_000,
+      otherRates: 'model_spec.pricing.extended',
+    },
     // One `type` per model. `inpaint` models edit images, and `upscale`
     // models make an image larger. `music` models also make sounds and
     // speech; one of them is a voice changer (`model_spec.voice_changer`),

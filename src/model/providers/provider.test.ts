@@ -1597,6 +1597,36 @@ describe('media model data', () => {
     ])
   })
 
+  it('gives a chat model the token price of its entry, and a media model the list price of the defaults of its parameters', () => {
+    const usd = (value: number) => ({ usd: value, diem: value })
+    const chat = providerModel('venice', 'chat', 'Chat', { request: 'chat' })
+    const song = providerModel('venice', 'song', 'Song', { request: 'music', parameters: [{ name: 'duration_seconds', label: 'Length', options: [60, 90], default: 90 }] })
+    const embedder = providerModel('venice', 'embedder', 'Embedder', { request: 'none' })
+    const unlisted = providerModel('venice', 'unlisted', 'Unlisted', { request: 'chat' })
+    const tiers = { 60: { ...usd(0.03), min_seconds: 60, max_seconds: 60 }, 90: { ...usd(0.04), min_seconds: 61, max_seconds: 90 } }
+    const entries = new Map<string, unknown>([
+      ['chat', { id: 'chat', model_spec: { pricing: { input: usd(0.1), output: usd(0.5) } } }],
+      ['song', { id: 'song', model_spec: { pricing: { durations: tiers } } }],
+      ['embedder', { id: 'embedder', model_spec: { pricing: { input: usd(0.1), output: usd(0) } } }],
+    ])
+
+    expect(venice.withPrices([chat, song, embedder, unlisted], entries, new Map())).toStrictEqual([
+      { ...chat, price: { unit: 'token', input: 0.1, output: 0.5 } },
+      { ...song, price: { unit: 'clip', usd: 0.04, note: '90 s' } },
+      embedder,
+      unlisted,
+    ])
+  })
+
+  it('gives no price for a provider whose config tells no token prices and that has no media API', () => {
+    const chat = providerModel('local', 'chat', 'Chat', { request: 'chat' })
+    const speech = providerModel('local', 'speech', 'Speech', { request: 'tts' })
+    const pricing = { prompt: '0.000001', completion: '0.000002' }
+    const entries = new Map<string, unknown>([['chat', { id: 'chat', pricing }], ['speech', { id: 'speech', pricing }]])
+
+    expect(customProvider({}).withPrices([chat, speech], entries, new Map())).toStrictEqual([chat, speech])
+  })
+
   describe('a refusal of the count of the images', () => {
     const refusal = JSON.stringify({
       details: { _errors: [], end_image_url: { _errors: ['This model does not support end_image_url'] } },

@@ -1,12 +1,13 @@
 import { effectiveRequest, type ModelInfo } from './types'
 
 // The clip data of a model: what a media request to it can set, the rules
-// of its text, the rules of its input images and clips, and the file type
-// of an image that Dez cannot store. Image models have some of it too (the
-// parameters of an upscale, the image rules of an edit;
-// `Provider.withClipData`). A media format can read it from model lists
-// that only the media API has (`MediaFormat.modelLists`), and such a list
-// can fail while the provider's own model list loads.
+// of its text, the rules of its input images and clips, the file type of
+// an image that Dez cannot store, and the list price of a model of a media
+// request kind. Image models have some of it too (the parameters of an
+// upscale, the image rules of an edit; `Provider.withClipData`,
+// `Provider.withPrices`). A media format can read it from model lists that
+// only the media API has (`MediaFormat.modelLists`), and such a list can
+// fail while the provider's own model list loads.
 
 /** `models`, the list of a model check of which one or more media lists
  *  did not load, each model with the clip data that it lacks and that
@@ -20,7 +21,9 @@ import { effectiveRequest, type ModelInfo } from './types'
  *  model of a media list that loaded keeps an old field only when the new
  *  data has none of it. Only a model that has the same request kind as
  *  before keeps data, because the parameters of another kind are not its
- *  request fields. A model that the cache does not have keeps nothing.
+ *  request fields. A model that the cache does not have keeps nothing. A
+ *  chat model keeps no price: its price comes from the provider's own list,
+ *  which loaded.
  *
  *  The result shares the kept data with `cached`: the caller copies the
  *  models before it stores them. */
@@ -36,6 +39,7 @@ export function withKeptClipData(models: readonly ModelInfo[], cached: readonly 
       ...(model.images === undefined && known.images && { images: known.images }),
       ...(model.clips === undefined && known.clips && { clips: known.clips }),
       ...(model.unstoredOutput === undefined && known.unstoredOutput !== undefined && { unstoredOutput: known.unstoredOutput }),
+      ...(model.price === undefined && known.price && effectiveRequest(model) !== 'chat' && { price: known.price }),
     }
   })
 }

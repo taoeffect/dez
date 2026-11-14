@@ -11,6 +11,7 @@ import type { ImageSizeRules, InputImageLimits } from './imageSize'
 import type { LearnedImageLimit } from './learnedImageLimit'
 import type { ApiFormatId, ProviderAuth } from './config'
 import { cloneModelParameter, type ModelParameter } from './modelParameters'
+import type { ModelPrice } from './modelPrices'
 import type { ModelToggles } from './modelToggles'
 
 // Any id that passes `isValidProviderId()` in `config.ts`: built-in ids plus
@@ -183,9 +184,14 @@ export interface ModelInfo {
   // `images`, which each model check writes from the provider's data.
   // Missing: no refusal told one.
   learnedImageLimit?: LearnedImageLimit
+  // The price of the model's requests that the provider's model list gives
+  // (modelPrices.ts): token prices for a chat model, else the price of one
+  // unit of a media request for the default values of its parameters. Only
+  // `model_list` and `model_info` show it. Missing: the list gives none.
+  price?: ModelPrice
 }
 
-export type ModelCapabilities = Pick<ModelInfo, 'readableName' | 'released' | 'imageInput' | 'toolCalling' | 'thinking' | 'unsupportedSettings' | 'outputs' | 'request' | 'parameters' | 'text' | 'images' | 'clips' | 'unstoredOutput' | 'learnedImageLimit'>
+export type ModelCapabilities = Pick<ModelInfo, 'readableName' | 'released' | 'imageInput' | 'toolCalling' | 'thinking' | 'unsupportedSettings' | 'outputs' | 'request' | 'parameters' | 'text' | 'images' | 'clips' | 'unstoredOutput' | 'learnedImageLimit' | 'price'>
 
 // What a clip model takes as the input of a request, besides the values of
 // its parameters.
@@ -360,9 +366,9 @@ export class ProviderNotConfiguredError extends ProviderError {
 // Leaves each capability out when it is unknown, so the model cache file and
 // whole-object comparisons hold no `undefined` field. `outputs` becomes a new
 // array in table order, `unsupportedSettings` a new array, and `parameters`,
-// `text`, `images`, `clips`, and `learnedImageLimit` deep copies, so two
-// models never share one (a store copy and its snapshot, a config model and
-// the cache).
+// `text`, `images`, `clips`, `learnedImageLimit`, and `price` deep copies,
+// so two models never share one (a store copy and its snapshot, a config
+// model and the cache).
 export function providerModel(provider: ProviderId, id: string, name: string, capabilities: ModelCapabilities = {}): ModelInfo {
   const model: ModelInfo = { id, name, provider }
   if (capabilities.readableName !== undefined) model.readableName = capabilities.readableName
@@ -379,6 +385,7 @@ export function providerModel(provider: ProviderId, id: string, name: string, ca
   if (capabilities.clips !== undefined) model.clips = cloneInputClipRules(capabilities.clips)
   if (capabilities.unstoredOutput !== undefined) model.unstoredOutput = capabilities.unstoredOutput
   if (capabilities.learnedImageLimit !== undefined) model.learnedImageLimit = { ...capabilities.learnedImageLimit }
+  if (capabilities.price !== undefined) model.price = { ...capabilities.price }
   return model
 }
 

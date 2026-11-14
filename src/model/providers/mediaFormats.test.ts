@@ -975,6 +975,113 @@ describe('venice clip quotes', () => {
   })
 })
 
+// Price tables of the live model list (2026-11-13), with short tier lists.
+// https://docs.venice.ai/pricing
+describe('venice list prices', () => {
+  const price = (usd: number) => ({ usd, diem: usd })
+  const listPrice = (kind: MediaKind, pricing: Record<string, unknown>, values: ParameterValues = {}) =>
+    MEDIA_FORMATS.venice.listPrice?.(kind, values, { id: 'm', model_spec: { pricing } }, undefined)
+  const upscale = { '2x': price(0.02), '4x': price(0.08) }
+  // The tiers of `ace-step-15` and of `elevenlabs-voice-changer`.
+  const SONG_TIERS = {
+    60: { ...price(0.03), min_seconds: 60, max_seconds: 60 },
+    90: { ...price(0.04), min_seconds: 61, max_seconds: 90 },
+  }
+  const VOICE_TIERS = {
+    120: { ...price(0.69), min_seconds: 61, max_seconds: 120 },
+    60: { ...price(0.35), min_seconds: 1, max_seconds: 60 },
+  }
+  // The edit prices of `grok-imagine-image-2-0-edit`, with the price of
+  // each input image.
+  const editPrices = (inputImages: unknown) => ({
+    inpaint: price(0.07),
+    resolutions: { '1K': price(0.07), '2K': price(0.1) },
+    quality: { '1K': { low: price(0.05), medium: price(0.07) } },
+    inputImages,
+  })
+
+  it('gives an image model the price of one image for the values, which the note names', () => {
+    expect([
+      listPrice('image', { resolutions: { '1K': price(0.27) }, quality: { '1K': { high: price(0.26), low: price(0.02) } }, upscale }, { resolution: '1K', quality: 'high' }),
+      listPrice('image', { resolutions: { '1K': price(0.0255), '1.5K': price(0.034) }, upscale }, { resolution: '1.5K' }),
+      listPrice('image', { generation: price(0.01), upscale }),
+    ]).toStrictEqual([
+      { unit: 'image', usd: 0.26, note: '1K, high' },
+      { unit: 'image', usd: 0.034, note: '1.5K' },
+      { unit: 'image', usd: 0.01 },
+    ])
+  })
+
+  it('tells the price of each input image of an edit that the price does not hold', () => {
+    expect([
+      listPrice('imageEdit', editPrices({ included: 0, additional: price(0.011500000000000002) }), { resolution: '1K', quality: 'low' }),
+      listPrice('imageEdit', editPrices({ included: 1, additional: price(0.0092) }), { resolution: '1K', quality: 'medium' }),
+    ]).toStrictEqual([
+      { unit: 'image', usd: 0.05, note: '1K, low; +$0.0115 per input image' },
+      { unit: 'image', usd: 0.07, note: '1K, medium; +$0.0092 per input image over 1' },
+    ])
+  })
+
+  it.each([
+    ['an edit whose included count is no whole number', 'imageEdit', editPrices({ included: 0.5, additional: price(0.01) })],
+    ['an edit with no price of a more image', 'imageEdit', editPrices({ included: 1 })],
+    // Only an edit takes input images.
+    ['an image model with input image prices', 'image', { generation: price(0.01), inputImages: { included: 0, additional: price(0.01) } }],
+    ['a table with a key that Dez does not know', 'image', { generation: price(0.01), per_megapixel: price(0.01) }],
+  ] as const)('gives no price for %s', (_name, kind, pricing) => {
+    expect(listPrice(kind, pricing, { resolution: '1K', quality: 'low' })).toBeUndefined()
+  })
+
+  it('gives an upscale model the price of its scale', () => {
+    const pricing = { generation: price(0.01), upscale }
+
+    expect([listPrice('upscale', pricing, { scale: 2 }), listPrice('upscale', pricing, { scale: 4 })]).toStrictEqual([
+      { unit: 'image', usd: 0.02, note: '2x' },
+      { unit: 'image', usd: 0.08, note: '4x' },
+    ])
+  })
+
+  it.each([
+    ['speech per 1M characters', 'tts', { input: price(3.5) }, { unit: 'character', usd: 3.5 }],
+    ['music per 1K characters as per 1M', 'music', { per_thousand_characters: price(0.11500000000000002) }, { unit: 'character', usd: 115 }],
+    ['music per second', 'music', { per_second: price(0.0028750000000000004) }, { unit: 'second', usd: 0.002875 }],
+    ['music per clip', 'music', { generation: price(0.04) }, { unit: 'clip', usd: 0.04 }],
+    ['a transcription per second of the clip', 'transcription', { per_audio_second: price(0.0001) }, { unit: 'second', usd: 0.0001 }],
+  ] as const)('gives %s', (_name, kind, pricing, expected) => {
+    expect(listPrice(kind, pricing)).toStrictEqual(expected)
+  })
+
+  it('gives music the price of the tier of its length, or the cheapest tier with no length', () => {
+    expect([
+      listPrice('music', { durations: SONG_TIERS }, { duration_seconds: 60 }),
+      listPrice('music', { durations: SONG_TIERS }, { duration_seconds: 90 }),
+      listPrice('music', { durations: SONG_TIERS }),
+      listPrice('music', { durations: SONG_TIERS }, { duration_seconds: 30 }),
+    ]).toStrictEqual([
+      { unit: 'clip', usd: 0.03, note: '60 s' },
+      { unit: 'clip', usd: 0.04, note: '90 s' },
+      { unit: 'clip', usd: 0.03, note: 'up to 60 s' },
+      undefined,
+    ])
+  })
+
+  // The tier of a voice change is the length of its source clip, which the
+  // list price does not know.
+  it('gives a voice changer its cheapest tier, whatever the values', () => {
+    expect(listPrice('voiceChange', { durations: VOICE_TIERS }, { duration_seconds: 90 }))
+      .toStrictEqual({ unit: 'clip', usd: 0.35, note: 'a source clip of up to 60 s' })
+  })
+
+  it.each([
+    ['a table with two prices', 'music', { generation: price(0.04), per_second: price(0.001) }],
+    ['a price of another kind', 'tts', { generation: price(0.04) }],
+    ['a price that is no number', 'tts', { input: { usd: '3.5' } }],
+    ['a video model', 'video', {}],
+  ] as const)('gives no clip price for %s', (_name, kind, pricing) => {
+    expect(listPrice(kind, pricing)).toBeUndefined()
+  })
+})
+
 describe('venice clip jobs', () => {
   const DOWNLOAD_URL = 'https://cdn.venice.ai/v/clip.mp4?sig=1'
   const videoJob = (queued: Record<string, unknown>) => veniceClips.job('video', `${VENICE_URL}/`, 'wan', queued)
@@ -1178,6 +1285,57 @@ describe('openrouter clip prices', () => {
     ['a request of another kind', 'videoToVideo', { duration_seconds: '0.1' }],
   ] as const)('tells no price for %s', (_name, kind, skus) => {
     expect(openRouterClips.entryPrice?.(kind, { duration: 5 }, { id: 'm' }, { id: 'm', ...(skus && { pricing_skus: skus }) })).toBeUndefined()
+  })
+})
+
+// Entry shapes of the live model and video lists (2026-11-13).
+// https://openrouter.ai/docs/guides/overview/multimodal/tts
+// https://openrouter.ai/docs/guides/overview/multimodal/stt
+describe('openrouter list prices', () => {
+  const listPrice = (kind: MediaKind, pricing: Record<string, unknown>) =>
+    MEDIA_FORMATS.openrouter.listPrice?.(kind, {}, { id: 'm', pricing }, undefined)
+  const videoPrice = (skus: Record<string, unknown>, values: ParameterValues) =>
+    MEDIA_FORMATS.openrouter.listPrice?.('video', values, { id: 'm', pricing: { prompt: '0', completion: '0' } }, { id: 'm', pricing_skus: skus })
+
+  it.each([
+    ['speech with a price per character', 'tts', { prompt: '0.000004', completion: '0' }, { unit: 'character', usd: 4 }],
+    ['speech with a price per second', 'tts', { prompt: '0', completion: '0.0025' }, { unit: 'second', usd: 0.0025 }],
+    ['free speech, per character', 'tts', { prompt: '0', completion: '0' }, { unit: 'character', usd: 0 }],
+    ['speech with prices per token', 'tts', { prompt: '0.0000005', completion: '0.000009' }, { unit: 'token', input: 0.5, output: 9 }],
+    ['a transcription with a price per second', 'transcription', { prompt: '0.0001', completion: '0' }, { unit: 'second', usd: 0.0001 }],
+    ['a transcription with prices per token', 'transcription', { prompt: '0.0000025', completion: '0.00001' }, { unit: 'token', input: 2.5, output: 10 }],
+  ] as const)('reads %s from the model list', (_name, kind, pricing, expected) => {
+    expect(listPrice(kind, pricing)).toStrictEqual(expected)
+  })
+
+  it.each([
+    ['a transcription with only an output price', 'transcription', { prompt: '0', completion: '0.0001' }],
+    ['a router', 'tts', { prompt: '-1', completion: '-1' }],
+    ['speech with no output price', 'tts', { prompt: '0.000004' }],
+    // The price per image is in the endpoint records of the model.
+    ['an image model', 'image', { prompt: '0.000002', completion: '0.000012' }],
+  ] as const)('gives no price for %s', (_name, kind, pricing) => {
+    expect(listPrice(kind, pricing)).toBeUndefined()
+  })
+
+  it('gives a video model the price of one clip for its values, which the note names', () => {
+    expect([
+      videoPrice({ cents_per_video_output_second_480p: '0.5', cents_per_video_output_second_720p: '1' }, { duration: 5, resolution: '480p' }),
+      videoPrice({ duration_seconds: '0.1' }, { duration: 4 }),
+      videoPrice({ video_tokens: '0.000007' }, { duration: 1, resolution: '1080p', generate_audio: true }),
+    ]).toStrictEqual([
+      { unit: 'clip', usd: 0.025, note: '5 s, 480p' },
+      { unit: 'clip', usd: 0.4, note: '4 s' },
+      { unit: 'clip', usd: 0.3402, note: '1 s, 1080p, estimate' },
+    ])
+  })
+
+  it.each([
+    ['two prices that each fit the values', { duration_seconds_1080p: '0.2', duration_seconds_without_audio: '0.3' }, { duration: 2, resolution: '1080p', generate_audio: false }],
+    ['no length', { duration_seconds: '0.1' }, {}],
+    ['no prices', {}, { duration: 5 }],
+  ])('gives a video model no price for %s', (_name, skus, values) => {
+    expect(videoPrice(skus, values)).toBeUndefined()
   })
 })
 

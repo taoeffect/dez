@@ -25,6 +25,25 @@ describe('withKeptClipData', () => {
     expect(withKeptClipData([model('scanner', { request: 'image' })], cached)).toStrictEqual(cached)
   })
 
+  it('gives a media model the list price that the cache has and the new list lacks, and lets a new price win', () => {
+    const oldPrice = { unit: 'clip' as const, usd: 0.5, note: '5 s' }
+    const newPrice = { unit: 'clip' as const, usd: 0.4, note: '5 s' }
+    const cached = [model('film', { request: 'video', price: oldPrice }), model('song', { request: 'music', price: oldPrice })]
+
+    expect(withKeptClipData([model('film', { request: 'video' }), model('song', { request: 'music', price: newPrice })], cached)).toStrictEqual([
+      model('film', { request: 'video', price: oldPrice }),
+      model('song', { request: 'music', price: newPrice }),
+    ])
+  })
+
+  // Its price comes from the provider's own list, which loaded: a chat
+  // model with no price there now has none.
+  it('keeps no price of a chat model', () => {
+    const fresh = model('chat', { request: 'chat' })
+
+    expect(withKeptClipData([fresh], [model('chat', { request: 'chat', price: { unit: 'token', input: 1, output: 2 } })])).toStrictEqual([fresh])
+  })
+
   // The voices of a speech model come from the provider's own list, which
   // did load.
   it('lets the data of the new list win, field by field', () => {

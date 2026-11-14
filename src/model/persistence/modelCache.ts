@@ -5,6 +5,7 @@ import type { InputImageRules } from '../providers/clipImages'
 import { isValidProviderId } from '../providers/config'
 import { imageSizeRules, positiveLimit } from '../providers/imageSize'
 import { isRecord, RELEASED_DATE } from '../providers/modelParsing'
+import { SINGLE_PRICE_UNITS } from '../providers/modelPrices'
 import { MODEL_REQUESTS, type ProviderId } from '../providers/types'
 import type { CachedProvider, ModelCache } from './types'
 
@@ -116,9 +117,18 @@ const inputClipRulesSchema = z.object({ audio: z.unknown(), video: z.unknown(), 
     }
   })
 
+const priceNumberSchema = z.number().nonnegative()
+const priceNoteSchema = z.string().min(1).optional()
+
+// ModelPrice (src/model/providers/modelPrices.ts).
+const modelPriceSchema = z.union([
+  z.object({ unit: z.literal('token'), input: priceNumberSchema, output: priceNumberSchema, cachedInput: priceNumberSchema.optional(), note: priceNoteSchema }),
+  z.object({ unit: z.enum(SINGLE_PRICE_UNITS), usd: priceNumberSchema, note: priceNoteSchema }),
+])
+
 // The transform drops the `clips` key of a model whose clip rules have no
-// kind left, and a `released` or `learnedImageLimit` key whose value was
-// bad, which Zod would keep with an undefined value.
+// kind left, and a `released`, `learnedImageLimit`, or `price` key whose
+// value was bad, which Zod would keep with an undefined value.
 const modelInfoSchema = z.object({
   id: z.string(),
   name: z.string(),
@@ -142,11 +152,14 @@ const modelInfoSchema = z.object({
   // A bad value drops only the limit, and the model stays: the next
   // refusal of the provider (it costs nothing) teaches it again.
   learnedImageLimit: z.object({ maxImages: z.number().int().positive(), entry: z.string().min(1) }).optional().catch(undefined),
-}).transform(({ released, clips, learnedImageLimit, ...model }) => ({
+  // A bad value drops only the price: the next model check reads it again.
+  price: modelPriceSchema.optional().catch(undefined),
+}).transform(({ released, clips, learnedImageLimit, price, ...model }) => ({
   ...model,
   ...(released && { released }),
   ...(clips && { clips }),
   ...(learnedImageLimit && { learnedImageLimit }),
+  ...(price && { price }),
 }))
 
 // Individually drop invalid models (e.g. a bad provider id) instead of failing

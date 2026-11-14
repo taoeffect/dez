@@ -465,7 +465,8 @@ export default sbp('sbp/selectors/register', {
       const merged = provider.mergeModels(provider.parseModels(data))
       const entries = provider.modelEntries(merged, data)
       const mediaEntries = loadedMediaData.length > 0 ? provider.mediaModelEntries(loadedMediaData) : undefined
-      const models = provider.withClipData(merged, entries, mediaEntries ?? new Map())
+      const mediaEntriesOrNone = mediaEntries ?? new Map<string, unknown>()
+      const models = provider.withPrices(provider.withClipData(merged, entries, mediaEntriesOrNone), entries, mediaEntriesOrNone)
       return { ok: true, models, entries, ...(mediaEntries && { mediaEntries }), ...(mediaListFailed && { mediaListFailed }) }
     } catch (error) {
       console.error(`Failed to list models for provider ${providerId}:`, error)

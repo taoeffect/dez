@@ -384,9 +384,11 @@ describe('model checks of a provider with media model lists', () => {
   const video = { id: 'video', name: 'video', provider: 'router', request: 'video' }
   // The video list entry tells no frame: the model takes only references.
   const imagesAsReferences = { name: 'images_as', label: 'Images as', options: ['references'], default: 'references' }
+  // The price is that of a clip of the default length.
   const videoData = {
     parameters: [{ name: 'duration', label: 'Length (seconds)', options: [1, 4], default: 1 }, imagesAsReferences],
     images: { maxImages: 16, references: {} },
+    price: { unit: 'clip', usd: 0.02, note: '1 s' },
   }
   const image = { id: 'image', name: 'image', provider: 'router', request: 'image' }
   const imageParameters = [{ name: 'aspect_ratio', label: 'Aspect ratio', options: ['1:1', '16:9'] }]

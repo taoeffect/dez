@@ -250,6 +250,22 @@ export const providerConfigSchema = z.object({
   // number) or `rfc3339` (a text, such as Anthropic's `created_at`).
   // `model_list` and `model_info` show it as the model's release date.
   modelReleased: z.object({ path: modelEntryPathSchema, format: z.enum(MODEL_RELEASED_FORMATS) }).optional(),
+  // Where a `/models` entry holds the token prices of a chat model
+  // (modelPrices.ts): the input, output, and cached input price, each a
+  // number or a text of a number, in USD per `perTokens` tokens (1 for a
+  // price per token, 1000000 for a price per 1M tokens). `otherRates`:
+  // where the entry tells other rates of some requests (a long prompt, a
+  // time of day), so that the price is only the base rate.
+  // `imageOutput`: where it holds the price of the image tokens that a
+  // chat model makes. `model_list` and `model_info` show the price.
+  modelTokenPrices: z.object({
+    input: modelEntryPathSchema,
+    output: modelEntryPathSchema,
+    cachedInput: modelEntryPathSchema.optional(),
+    perTokens: z.number().positive(),
+    otherRates: modelEntryPathSchema.optional(),
+    imageOutput: modelEntryPathSchema.optional(),
+  }).optional(),
   auth: z.enum(['apiKey', 'githubCopilot']).default('apiKey'),
   // Static headers added to every request.
   headers: headersSchema.optional(),

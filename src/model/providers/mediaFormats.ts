@@ -16,6 +16,7 @@ import { generatedBase64Image, generatedImage } from './generatedImages'
 import { imageSizeRules, type ImageSizeRules, type InputImageLimits } from './imageSize'
 import type { MultipartField } from './multipart'
 import { isOptionValue, parameterTakes, type ModelParameter, type OptionsParameter, type OptionValue, type ParameterValues, type RangeParameter } from './modelParameters'
+import { priceNumber, roundedPrice, unitPrice, type ModelPrice } from './modelPrices'
 import { isRecord, valueAtPath } from './modelParsing'
 import { CLIP_KINDS, type ChatImagePart, type ClipKind, type GeneratedMedia, type ImageKind, type MediaKind, type TextKind } from './types'
 import { VENICE_AUDIO_TYPES, VENICE_MAX_AUDIO_BYTES, VENICE_REFERENCE_FIELDS, VENICE_VIDEO_TYPES, veniceFamilyByIdPrefix, veniceReferenceBody, veniceReferenceClipRules, veniceReferenceFamily } from './veniceReferences'
@@ -269,6 +270,11 @@ export interface MediaFormat {
   // entries. Undefined for a model that takes none, as far as the API
   // tells.
   clipRules?(kind: MediaKind, entry: unknown, mediaEntry: unknown): InputClipRules | undefined
+  // The list price of a model of `kind` (`ModelInfo.price`), from the same
+  // two entries, for the default values of its parameters (`values`).
+  // Undefined when the entries tell no price, or none that Dez can read
+  // with no input of the request.
+  listPrice?(kind: MediaKind, values: ParameterValues, entry: unknown, mediaEntry: unknown): ModelPrice | undefined
 }
 
 function jsonBody(body: Uint8Array): unknown {
@@ -467,8 +473,9 @@ const VENICE_UPSCALE_LIMITS = { pixelsBelow: 16_777_216, maxBytes: 25 * 1024 ** 
 // price), and some such tables have no price key. An edit model's table
 // can have `inputImages` (the images that the price includes, and the price
 // of each more); a quote does not know the count of the images, so such a
-// model gets no price, as does a table with any other key. The entry of an
-// upscale model has the price of each scale (`upscale` → `2x`, `4x`).
+// model gets no quote, and its list price tells that price in a note. A
+// table with any other key gets no price. The entry of an upscale model has
+// the price of each scale (`upscale` → `2x`, `4x`).
 // https://docs.venice.ai/pricing
 const VENICE_IMAGE_PRICES: Readonly<Record<Exclude<ImageKind, 'upscale'>, { key: string, others: readonly string[] }>> = {
   image: { key: 'generation', others: ['upscale', 'inpaint'] },
@@ -488,6 +495,94 @@ function venicePriceOf(table: unknown, value: unknown): unknown {
 function veniceUsd(price: unknown): number | undefined {
   const usd = valueAtPath(price, 'usd')
   return typeof usd === 'number' && Number.isFinite(usd) && usd >= 0 ? usd : undefined
+}
+
+// The price of one Venice image request of `kind` with `values`, from the
+// model's price table, with the option values that the price is for. None
+// when the table has a key that Dez does not know (but `moreKeys`, which
+// the caller reads), or no price for the values.
+function veniceImagePrice(kind: Exclude<ImageKind, 'upscale'>, values: ParameterValues, pricing: Record<string, unknown>, moreKeys: readonly string[] = []): { usd: number, options: string[] } | undefined {
+  const { key, others } = VENICE_IMAGE_PRICES[kind]
+  const known = [key, ...others, ...VENICE_OPTION_PRICES, ...moreKeys]
+  if (Object.keys(pricing).some((name) => !known.includes(name))) return undefined
+  const { resolution, quality } = values
+  const priced = (usd: number | undefined, options: unknown[]) => (usd === undefined ? undefined : { usd, options: options.map(String) })
+  if (Object.hasOwn(pricing, 'quality')) return priced(veniceUsd(venicePriceOf(venicePriceOf(pricing.quality, resolution), quality)), [resolution, quality])
+  if (Object.hasOwn(pricing, 'resolutions')) return priced(veniceUsd(venicePriceOf(pricing.resolutions, resolution)), [resolution])
+  return priced(veniceUsd(pricing[key]), [])
+}
+
+// The list price of a Venice image model: one image for the default
+// values, which the note names. The note of an edit model whose price
+// holds fewer input images than a request can have (`inputImages`) tells
+// the price of each more image.
+function veniceImageListPrice(kind: ImageKind, values: ParameterValues, pricing: Record<string, unknown>): ModelPrice | undefined {
+  if (kind === 'upscale') return unitPrice('image', veniceUsd(valueAtPath(pricing, `upscale.${String(values.scale)}x`)), `${String(values.scale)}x`)
+  const price = veniceImagePrice(kind, values, pricing, kind === 'imageEdit' ? ['inputImages'] : [])
+  if (!price) return undefined
+  const notes = price.options.length > 0 ? [price.options.join(', ')] : []
+  if (Object.hasOwn(pricing, 'inputImages')) {
+    const included = valueAtPath(pricing, 'inputImages.included')
+    const more = veniceUsd(valueAtPath(pricing, 'inputImages.additional'))
+    if (typeof included !== 'number' || !Number.isInteger(included) || included < 0 || more === undefined) return undefined
+    notes.push(`+$${roundedPrice(more)} per input image${included > 0 ? ` over ${included}` : ''}`)
+  }
+  return unitPrice('image', price.usd, notes.join('; '))
+}
+
+// The tier of a Venice `durations` price table (`{ usd, min_seconds,
+// max_seconds }` by length) that holds a clip of `seconds`; with no
+// length, the cheapest tier.
+function veniceDurationTier(table: unknown, seconds: unknown): { usd: number, maxSeconds: number } | undefined {
+  if (!isRecord(table)) return undefined
+  const tiers = Object.values(table).flatMap((tier) => {
+    const usd = veniceUsd(tier)
+    const minSeconds = valueAtPath(tier, 'min_seconds')
+    const maxSeconds = valueAtPath(tier, 'max_seconds')
+    return usd !== undefined && typeof minSeconds === 'number' && typeof maxSeconds === 'number' ? [{ usd, minSeconds, maxSeconds }] : []
+  })
+  if (typeof seconds === 'number') return tiers.find((tier) => tier.minSeconds <= seconds && seconds <= tier.maxSeconds)
+  return tiers.reduce<typeof tiers[number] | undefined>((cheapest, tier) => (cheapest && cheapest.usd <= tier.usd ? cheapest : tier), undefined)
+}
+
+// The list price of a Venice clip or transcription model, from the one
+// price of its table: per 1M characters of the text (a speech model's
+// `input`; `per_thousand_characters`), per second of the clip that the
+// model makes or reads (`per_second`, `per_audio_second`), per clip
+// (`generation`), or per clip of a length tier (`durations`: the tier of
+// the default length; a voice changer's tier is the length of its source
+// clip, so its price is the cheapest tier). A table with more than one
+// price has a rule that Dez does not know. Venice video entries hold no
+// price (their quote is the only source).
+// https://docs.venice.ai/pricing
+function veniceClipListPrice(kind: Exclude<MediaKind, ImageKind>, values: ParameterValues, pricing: Record<string, unknown>): ModelPrice | undefined {
+  const keys = Object.keys(pricing)
+  if (keys.length !== 1) return undefined
+  const [key] = keys
+  const price = pricing[key]
+  switch (`${kind} ${key}`) {
+    case 'tts input':
+      return unitPrice('character', veniceUsd(price))
+    case 'transcription per_audio_second':
+    case 'music per_second':
+      return unitPrice('second', veniceUsd(price))
+    case 'music per_thousand_characters': {
+      const usd = veniceUsd(price)
+      return unitPrice('character', usd === undefined ? undefined : usd * 1000)
+    }
+    case 'music generation':
+      return unitPrice('clip', veniceUsd(price))
+    case 'music durations': {
+      const seconds = values.duration_seconds
+      const tier = veniceDurationTier(price, seconds)
+      return unitPrice('clip', tier?.usd, typeof seconds === 'number' ? `${seconds} s` : `up to ${tier?.maxSeconds} s`)
+    }
+    case 'voiceChange durations': {
+      const tier = veniceDurationTier(price, undefined)
+      return unitPrice('clip', tier?.usd, `a source clip of up to ${tier?.maxSeconds} s`)
+    }
+  }
+  return undefined
 }
 
 // The Venice media API (https://docs.venice.ai/api-reference).
@@ -611,11 +706,7 @@ const veniceFormat: MediaFormat = {
         const pricing = valueAtPath(entry, 'model_spec.pricing')
         if (!isRecord(pricing)) return undefined
         if (kind === 'upscale') return veniceUsd(valueAtPath(pricing, `upscale.${String(values.scale)}x`))
-        const { key, others } = VENICE_IMAGE_PRICES[kind]
-        if (Object.keys(pricing).some((name) => name !== key && !others.includes(name) && !VENICE_OPTION_PRICES.includes(name))) return undefined
-        if (Object.hasOwn(pricing, 'quality')) return veniceUsd(venicePriceOf(venicePriceOf(pricing.quality, values.resolution), values.quality))
-        if (Object.hasOwn(pricing, 'resolutions')) return veniceUsd(venicePriceOf(pricing.resolutions, values.resolution))
-        return veniceUsd(pricing[key])
+        return veniceImagePrice(kind, values, pricing)?.usd
       },
     },
   },
@@ -1037,6 +1128,18 @@ const veniceFormat: MediaFormat = {
     }),
     parseResponse: (_kind, body) => transcriptText(body),
   },
+  listPrice: (kind, values, entry) => {
+    const pricing = valueAtPath(entry, 'model_spec.pricing')
+    if (!isRecord(pricing)) return undefined
+    switch (kind) {
+      case 'image':
+      case 'imageEdit':
+      case 'upscale':
+        return veniceImageListPrice(kind, values, pricing)
+      default:
+        return veniceClipListPrice(kind, values, pricing)
+    }
+  },
 }
 
 // The media types of the audio formats that Venice's voice changer names
@@ -1231,7 +1334,7 @@ function openRouterVideoSku(key: string, price: number): OpenRouterVideoSku | nu
   return null
 }
 
-function openRouterPriceError(reason: string): ClipEntryPrice {
+function openRouterPriceError(reason: string): { error: string } {
   return {
     error: `Dez cannot compute the price of a request with these values: ${reason}. `
       + 'The prices are in `pricing_skus` of `mediaEntry` (a key with `cents` in its name is in US cents); the zeros of `pricing` in `providerEntry` are no price.',
@@ -1239,9 +1342,9 @@ function openRouterPriceError(reason: string): ClipEntryPrice {
 }
 
 // The price in USD of one OpenRouter video request with `values` and no
-// input image or clip, from the model's prices (`pricing_skus`), with a
-// note of the prices of input images and clips. Undefined for a model with
-// no prices.
+// input image or clip, from the model's prices (`pricing_skus`), with the
+// rate that applies and all the prices of the model. Undefined for a model
+// with no prices.
 //
 // Of the prices of a second or a token that fit the request (the
 // resolution and the sound of `values`, else any), the ones that name the
@@ -1257,7 +1360,7 @@ function openRouterPriceError(reason: string): ClipEntryPrice {
 // A request with no `generate_audio` field gets the sound of the model's
 // entry flag (the comment of the Audio switch): a model whose flag is
 // false has no Audio switch, and its video has no sound.
-function openRouterVideoPrice(values: ParameterValues, mediaEntry: unknown): ClipEntryPrice | undefined {
+function openRouterVideoRequestPrice(values: ParameterValues, mediaEntry: unknown): { usd: number, rate: OpenRouterVideoSku, skus: OpenRouterVideoSku[] } | { error: string } | undefined {
   const table = valueAtPath(mediaEntry, 'pricing_skus')
   if (!isRecord(table)) return undefined
   const skus: OpenRouterVideoSku[] = []
@@ -1297,6 +1400,16 @@ function openRouterVideoPrice(values: ParameterValues, mediaEntry: unknown): Cli
     if (pixels === undefined) return openRouterPriceError(`the price is by video token, and Dez does not know the size in pixels of a video of ${resolution ?? 'no resolution'}`)
     usd *= pixels * OPENROUTER_TOKEN_FPS / OPENROUTER_PIXELS_PER_TOKEN
   }
+  return { usd: roundedUsd(usd), rate, skus }
+}
+
+// The price of one OpenRouter video request (`openRouterVideoRequestPrice`)
+// for the model that reads `model_info`, with a note of the estimate and of
+// the prices of input images and clips.
+function openRouterVideoPrice(values: ParameterValues, mediaEntry: unknown): ClipEntryPrice | undefined {
+  const price = openRouterVideoRequestPrice(values, mediaEntry)
+  if (price === undefined || 'error' in price) return price
+  const { usd, rate, skus } = price
   const imagePrice = skus.find((sku) => sku.per === 'inputImage' && sku.usd > 0)
   const notes = [
     ...(rate.per === 'token'
@@ -1305,7 +1418,41 @@ function openRouterVideoPrice(values: ParameterValues, mediaEntry: unknown): Cli
     ...(imagePrice ? [`\`usd\` is for a request with no input image: each input image adds ${roundedUsd(imagePrice.usd)} USD.`] : []),
     ...(skus.some((sku) => sku.videoInput) ? ['`usd` is for a request with no input video clip: with one, the price is another one, which Dez cannot compute.'] : []),
   ]
-  return { usd: roundedUsd(usd), ...(notes.length > 0 && { note: notes.join(' ') }) }
+  return { usd, ...(notes.length > 0 && { note: notes.join(' ') }) }
+}
+
+// The list price of an OpenRouter model of a media kind. A video: the
+// price of one clip for the default values (the shortest length, the
+// lowest resolution), which the note names. Speech and transcription: the
+// rates of the main list (`pricing`), which are per character of the text
+// (`prompt`), or per second of the clip (speech: `completion`, with no
+// `prompt` price; transcription: `prompt`, with no `completion` price),
+// or, with both, per token. An image-only model gets none: the main list
+// has only its price per output token, and its price per image is in its
+// endpoint records, a request of its own (`ImageQuoteFormat`).
+// https://openrouter.ai/docs/guides/overview/multimodal/tts
+// https://openrouter.ai/docs/guides/overview/multimodal/stt
+function openRouterListPrice(kind: MediaKind, values: ParameterValues, entry: unknown, mediaEntry: unknown): ModelPrice | undefined {
+  switch (kind) {
+    case 'video':
+    case 'imageToVideo': {
+      const price = openRouterVideoRequestPrice(values, mediaEntry)
+      if (price === undefined || 'error' in price) return undefined
+      const note = [`${String(values.duration)} s`, ...(values.resolution === undefined ? [] : [String(values.resolution)]), ...(price.rate.per === 'token' ? ['estimate'] : [])]
+      return unitPrice('clip', price.usd, note.join(', '))
+    }
+    case 'tts':
+    case 'transcription': {
+      const input = priceNumber(valueAtPath(entry, 'pricing.prompt'))
+      const output = priceNumber(valueAtPath(entry, 'pricing.completion'))
+      if (input === undefined || output === undefined) return undefined
+      if (input > 0 && output > 0) return { unit: 'token', input: roundedPrice(input * 1_000_000), output: roundedPrice(output * 1_000_000) }
+      if (kind === 'tts') return output > 0 ? unitPrice('second', output) : unitPrice('character', input * 1_000_000)
+      return output > 0 ? undefined : unitPrice('second', input)
+    }
+    default:
+      return undefined
+  }
 }
 
 // A price in USD with no float noise (`0.30000000000000004`): no price of
@@ -1605,6 +1752,7 @@ const openRouterFormat: MediaFormat = {
     }),
     parseResponse: (_kind, body) => transcriptText(body),
   },
+  listPrice: openRouterListPrice,
 }
 
 export const MEDIA_FORMATS: Record<MediaApiFormatId, MediaFormat> = {

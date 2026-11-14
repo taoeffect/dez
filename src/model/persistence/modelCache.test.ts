@@ -60,6 +60,30 @@ describe('model cache persistence format', () => {
     expect(parsed.providers.venice?.models).toStrictEqual([model, model, model, model])
   })
 
+  it('round-trips the price of a model, and drops only a price that is not valid', () => {
+    const model = { id: 'm', name: 'M', provider: 'openrouter' }
+    const prices = [
+      { unit: 'token', input: 2.5, output: 10, cachedInput: 0.25, note: 'base rate; some requests have other rates' },
+      { unit: 'token', input: 0, output: 0 },
+      { unit: 'character', usd: 115 },
+      { unit: 'clip', usd: 0.03, note: '60 s' },
+    ]
+    const badPrices = [
+      { unit: 'token', input: 1 },
+      { unit: 'clip', usd: -1 },
+      { unit: 'request', usd: 0.1 },
+      { unit: 'second', usd: 0.1, note: '' },
+      '0.1',
+    ]
+    const parsed = parseModelCacheJson(JSON.stringify({
+      version: MODEL_CACHE_VERSION,
+      providers: { openrouter: { models: [...prices, ...badPrices].map((price) => ({ ...model, price })), working: true, updatedAt: 1, lastCheckedAt: 2 } },
+    }))
+
+    expect(parsed.providers.openrouter?.models).toStrictEqual([...prices.map((price) => ({ ...model, price })), ...badPrices.map(() => model)])
+    expect(parseModelCacheJson(serializeModelCacheJson(parsed))).toStrictEqual(parsed)
+  })
+
   it('round-trips outputs and request kinds, and drops only a model with an unknown one', () => {
     const models = [
       { id: 'edit', name: 'Edit', provider: 'venice', outputs: ['image'], request: 'imageEdit' },

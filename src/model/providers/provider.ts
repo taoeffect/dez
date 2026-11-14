@@ -9,7 +9,8 @@ import { FORBIDDEN_BODY_KEYS, type ProviderConfig } from './config'
 import { ProviderHttpError } from './errors'
 import type { ImageSizeRules, InputImageLimits } from './imageSize'
 import { MEDIA_FORMATS, type ClipEntryPrice, type ClipFormat, type ClipInput, type ClipJob, type ImageFormat, type ImageQuoteFormat, type MediaFormat, type MediaInput, type MediaWireRequest, type TextFormat } from './mediaFormats'
-import type { ParameterValues } from './modelParameters'
+import { effectiveParameterValues, type ParameterValues } from './modelParameters'
+import { modelTokenPrice } from './modelPrices'
 import { isRecord, modelCapability, modelData, modelOutputsAndRequest, modelReadableName, modelReleased, unsupportedSettings } from './modelParsing'
 import { isThinkingEnabled, modelToggles, toggleValue, type ToggleModel } from './modelToggles'
 import { multipartBody, type MultipartField } from './multipart'
@@ -214,7 +215,8 @@ export class Provider {
   // (`modelEntries`, `mediaModelEntries`). This comes after the merge,
   // because a config model can set the request kind. A new field here
   // needs a line in `withKeptClipData` (keptClipData.ts), which keeps
-  // these fields when a media list does not load.
+  // these fields, and the price of `withPrices`, when a media list does not
+  // load.
   withClipData(models: readonly ModelInfo[], entries: ReadonlyMap<string, unknown>, mediaEntries: ReadonlyMap<string, unknown>): ModelInfo[] {
     const format = this.mediaFormatOrNone()
     if (!format) return [...models]
@@ -237,6 +239,24 @@ export class Provider {
         ...(inputClips && { clips: inputClips }),
         ...(unstoredOutput !== undefined && { unstoredOutput }),
       }
+    })
+  }
+
+  // `models` (a `withClipData` list), each one with the price that its raw
+  // entries tell (`ModelInfo.price`): the token prices of a chat model
+  // (`modelTokenPrices` in config.ts), the list price of a model of a media
+  // request kind for the default values of its parameters
+  // (`MediaFormat.listPrice`). This comes after `withClipData`, which gives
+  // those parameters.
+  withPrices(models: readonly ModelInfo[], entries: ReadonlyMap<string, unknown>, mediaEntries: ReadonlyMap<string, unknown>): ModelInfo[] {
+    const listPrice = this.mediaFormatOrNone()?.listPrice
+    return models.map((model) => {
+      const kind = effectiveRequest(model)
+      const entry = entries.get(model.id)
+      const price = kind === 'chat'
+        ? isRecord(entry) ? modelTokenPrice(entry, this.config.modelTokenPrices) : undefined
+        : kind === 'none' ? undefined : listPrice?.(kind, effectiveParameterValues(model.parameters ?? []), entry, mediaEntries.get(model.id))
+      return price ? { ...model, price } : model
     })
   }
 

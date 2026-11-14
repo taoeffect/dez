@@ -169,7 +169,7 @@ describe('provider config schema', () => {
     expect(parseModel({ request: 'speech' }).success).toBe(false)
   })
 
-  it('keeps the model list query, the output type mapping, the readable name path, the release date path, and the media API, and rejects bad ones', () => {
+  it('keeps the model list query, the output type mapping, the readable name path, the release date path, the token price paths, and the media API, and rejects bad ones', () => {
     const parse = (fields: Record<string, unknown>) =>
       providerConfigSchema.safeParse({ id: 'p', name: 'P', baseUrl: 'http://h', ...fields })
     const outputs = (values: unknown) => parse({ modelOutputs: { path: 'type', values } }).success
@@ -190,6 +190,7 @@ describe('provider config schema', () => {
       },
       modelReadableName: { path: 'model_spec.name' },
       modelReleased: { path: 'meta.created_at', format: 'rfc3339' },
+      modelTokenPrices: { input: 'pricing.prompt', output: 'pricing.completion', cachedInput: 'pricing.cache', perTokens: 1_000_000, otherRates: 'pricing.extended', imageOutput: 'pricing.image' },
       imageOutputBody: { modalities: ['image', 'text'] },
       mediaApi: { format: 'openrouter', modelRequestBodies: [{ request: 'tts', modelIdPrefix: 'heygen/', body: { response_format: 'pcm' } }] },
     }
@@ -203,6 +204,13 @@ describe('provider config schema', () => {
     expect(parse({ modelReleased: { path: 'created' } }).success).toBe(false)
     expect(parse({ modelReleased: { path: 'created', format: 'unixMillis' } }).success).toBe(false)
     expect(parse({ modelReleased: { path: '.created', format: 'unixSeconds' } }).success).toBe(false)
+    const tokenPrices = (prices: Record<string, unknown>) => parse({ modelTokenPrices: { input: 'p.in', output: 'p.out', perTokens: 1, ...prices } }).success
+    expect(tokenPrices({})).toBe(true)
+    expect(tokenPrices({ output: undefined })).toBe(false)
+    expect(tokenPrices({ perTokens: undefined })).toBe(false)
+    // A price per 0 tokens would divide by 0.
+    expect(tokenPrices({ perTokens: 0 })).toBe(false)
+    expect(tokenPrices({ cachedInput: 'p..cache' })).toBe(false)
     expect(outputs({ tts: { outputs: ['speech'] } })).toBe(false)
     expect(outputs({ tts: { outputs: 'audio' } })).toBe(false)
     expect(outputs({ tts: { request: 'chat' } })).toBe(false)
