@@ -2,8 +2,8 @@ import type { MessagePart, Section } from '../chat/types'
 import type { AssetKind } from '../chat/assetMentions'
 import { sectionPlainText } from '../chat/content'
 import { findAssetMentions } from '../chat/imageMentions'
-import { findImageReferences, requestImageReferenceStart } from '../chat/images'
-import { findMediaTags, sectionClipSource, type MediaTagKind } from '../chat/mediaTags'
+import { findImageReferences, requestImageReferenceStart, type ImageReference } from '../chat/images'
+import { findMediaTags, sectionClipSource, type MediaTag, type MediaTagKind } from '../chat/mediaTags'
 import { withoutStoredFilePaths } from '../chat/storedFilePaths'
 import { takesInputImages } from '../modelInputs'
 import { clipTagProblem, maxInputClips, missingClipProblem, type ClipAttachment } from '../providers/clipInputs'
@@ -51,12 +51,22 @@ export interface MediaRequestInput extends ClipText {
   clipsLeftOut: Record<MediaTagKind, number>
 }
 
+/** The text that names an image or a clip of a conversation: its image
+ *  reference or its media tag, in the plain text of the section
+ *  `sections[section]`. */
+export type FoundAsset =
+  | { kind: 'image', id: string, section: number, reference: ImageReference }
+  /** `clip` is the clip as `ConversationAssets.clips` holds it. */
+  | { kind: 'clip', id: string, section: number, tag: MediaTag, clip: ClipAttachment }
+
 /** The images and the clips that an `@id` mention can name. */
 export interface ConversationAssets {
   /** The path of each image id. */
   images: ReadonlyMap<string, string>
   /** The clip of each clip id that no image has. */
   clips: ReadonlyMap<string, ClipAttachment>
+  /** The text of each id of `images` and `clips`. */
+  found: ReadonlyMap<string, FoundAsset>
 }
 
 /** The images and the clips of `sections` by their ids: the image
@@ -65,19 +75,24 @@ export interface ConversationAssets {
  *  images or two clips with one id (a hand edit), the last one counts, and
  *  an id that an image and a clip both have names the image. */
 export function conversationAssets(sections: readonly Section[]): ConversationAssets {
-  const images = new Map<string, string>()
-  const clips = new Map<string, ClipAttachment>()
-  for (const section of sections) {
+  const images = new Map<string, Extract<FoundAsset, { kind: 'image' }>>()
+  const clips = new Map<string, Extract<FoundAsset, { kind: 'clip' }>>()
+  sections.forEach((section, index) => {
     const text = sectionPlainText(section)
-    for (const { id, path } of findImageReferences(text, section.role)) {
-      if (id !== null) images.set(id, path)
+    for (const reference of findImageReferences(text, section.role)) {
+      if (reference.id !== null) images.set(reference.id, { kind: 'image', id: reference.id, section: index, reference })
     }
-    for (const { kind, id, type, src, url, expires } of findMediaTags(text)) {
-      clips.set(id, { kind, id, type, src: sectionClipSource(src, section.role), url, expires })
+    for (const tag of findMediaTags(text)) {
+      const { kind, id, type, src, url, expires } = tag
+      clips.set(id, { kind: 'clip', id, section: index, tag, clip: { kind, id, type, src: sectionClipSource(src, section.role), url, expires } })
     }
-  }
+  })
   for (const id of images.keys()) clips.delete(id)
-  return { images, clips }
+  return {
+    images: new Map(Array.from(images, ([id, { reference }]) => [id, reference.path])),
+    clips: new Map(Array.from(clips, ([id, { clip }]) => [id, clip])),
+    found: new Map<string, FoundAsset>([...images, ...clips]),
+  }
 }
 
 /** An image or a clip that a tool prompt names. */

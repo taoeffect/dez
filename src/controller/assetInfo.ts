@@ -1,5 +1,5 @@
 import sbp from '@sbp/sbp'
-import { assetPlaces, type AssetPlace } from '../model/chat/assetOrigins'
+import { assetPlaces } from '../model/chat/assetOrigins'
 import type { DrawnImage, ImageDrawing, ImageSize } from '../model/chat/imageDrawing'
 import { imageExtension, imageMediaType, isImageMediaType, type ImageMediaType } from '../model/chat/images'
 import { ClipReadError } from '../model/chat/mediaFiles'
@@ -128,33 +128,34 @@ export async function probeClip(input: ClipInput, folder: string, signal: AbortS
 export async function assetInfoResult(args: ToolArguments, sections: readonly Section[], signal: AbortSignal): Promise<string> {
   const ids = assetIdsArgument(args, { max: MAX_ASSET_INFO_IDS, notDone: ASSET_INFO_WORDING.notDone })
   const assets = conversationAssets(sections)
-  const unknown = ids.filter((id) => !assets.images.has(id) && !assets.clips.has(id))
-  if (unknown.length > 0) throw new ToolError(unknownAssetsText(unknown, assets, ASSET_INFO_WORDING))
+  const named = ids.flatMap((id) => assets.found.get(id) ?? [])
+  if (named.length < ids.length) {
+    throw new ToolError(unknownAssetsText(ids.filter((id) => !assets.found.has(id)), assets, ASSET_INFO_WORDING))
+  }
 
-  const facts = new Map<string, string>()
-  const clips: ClipAttachment[] = []
-  for (const id of ids) {
-    const path = assets.images.get(id)
-    if (path === undefined) {
-      clips.push(assets.clips.get(id) as ClipAttachment)
+  // The facts of each asset of `named`, at its index. The clips share one
+  // work folder for their probes, after the images.
+  const facts: string[] = []
+  const clips: { index: number, clip: ClipAttachment }[] = []
+  for (const [index, asset] of named.entries()) {
+    if (asset.kind === 'clip') {
+      clips.push({ index, clip: asset.clip })
       continue
     }
     signal.throwIfAborted()
-    facts.set(id, (await readImageFacts(id, path)).facts)
+    facts[index] = (await readImageFacts(asset.id, asset.reference.path)).facts
   }
   if (clips.length > 0) {
     await inWorkFolder(async (folder) => {
-      for (const clip of clips) facts.set(clip.id, probedClipFacts(clip, await probeClip(clipInput(clip), folder, signal, ASSET_INFO_TOOL.name)))
+      for (const { index, clip } of clips) facts[index] = probedClipFacts(clip, await probeClip(clipInput(clip), folder, signal, ASSET_INFO_TOOL.name))
     })
   }
 
-  // `assetPlaces` finds the assets by the rule of `conversationAssets`, so
-  // it has a place for each id.
-  const places = assetPlaces(sections)
-  return assetInfoText(ids.map((id) => assetInfoLine(
-    id,
-    assets.clips.get(id)?.kind ?? 'image',
-    facts.get(id) as string,
-    places.get(id) as AssetPlace,
+  const places = assetPlaces(sections, named)
+  return assetInfoText(named.map((asset, index) => assetInfoLine(
+    asset.id,
+    asset.kind === 'clip' ? asset.clip.kind : 'image',
+    facts[index],
+    places[index],
   )))
 }

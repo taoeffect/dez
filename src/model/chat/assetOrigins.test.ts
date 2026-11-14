@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest'
+import { conversationAssets } from '../streams/mediaRequest'
 import { jobsWaitText, madeAssetText } from '../tools/jobs'
 import { assetPlaces, type AssetPlace } from './assetOrigins'
 import { IMAGE_MADE_BY_KEY, IMAGE_TOOL_KEY, imageMarkdown } from './images'
@@ -39,17 +40,18 @@ function jobClip(id: string, jobId: string): string {
 
 // The place of `id` in a conversation of `sections`.
 function placeOf(sections: readonly Section[], id: string): AssetPlace | undefined {
-  return assetPlaces(sections).get(id)
+  const found = conversationAssets(sections).found.get(id)
+  return found && assetPlaces(sections, [found])[0]
 }
 
 describe('assetPlaces', () => {
   it('gives the assets of a user section to the user', () => {
     const user = section('user', `${imageMarkdown(PASTED, [{ key: 'id', value: 'a' }])}\n${hiddenClip('j-aaaa', 'b')}`)
 
-    expect(Object.fromEntries(assetPlaces([user]))).toStrictEqual({
-      a: { origin: { kind: 'user' }, hidden: false },
-      b: { origin: { kind: 'user' }, hidden: false },
-    })
+    expect([placeOf([user], 'a'), placeOf([user], 'b')]).toStrictEqual([
+      { origin: { kind: 'user' }, hidden: false },
+      { origin: { kind: 'user' }, hidden: false },
+    ])
   })
 
   it('gives an asset with no tool mark to the model of its agent section', () => {
@@ -110,17 +112,5 @@ describe('assetPlaces', () => {
   it('names only the job or the tool when no block of the section tells more', () => {
     expect(placeOf([section('agent', toolImage('b', 'model_invoke', 'j-gone'))], 'b')).toStrictEqual({ origin: { kind: 'job', tool: 'model_invoke', number: null, label: '' }, hidden: false })
     expect(placeOf([section('agent', toolImage('b', 'image'))], 'b')).toStrictEqual({ origin: { kind: 'call', tool: 'image', label: '' }, hidden: false })
-  })
-
-  it('takes the last of two assets with one id, and an image over a clip', () => {
-    const sections = [
-      section('user', imageMarkdown(PASTED, [{ key: 'id', value: 'a' }])),
-      section('agent', `${imageMarkdown(HIDDEN_IMAGE_PATH, [{ key: 'id', value: 'a' }])}\n${jobClip('b', 'j-aaaa')}`, PAINTER),
-      section('user', hiddenClip('j-aaaa', 'b')),
-      section('user', hiddenClip('j-aaaa', 'a')),
-    ]
-
-    expect(placeOf(sections, 'a')?.origin).toStrictEqual({ kind: 'model', model: PAINTER })
-    expect(placeOf(sections, 'b')?.origin).toStrictEqual({ kind: 'user' })
   })
 })

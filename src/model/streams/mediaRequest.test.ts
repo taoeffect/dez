@@ -53,10 +53,18 @@ describe('conversationAssets', () => {
       user('u2', `![${GENERATED}](id=b)\n${mediaTagText(newerSong)}\n${mediaTagText({ ...DANCE, id: 'a' })}`),
     ]
 
-    const { images, clips } = conversationAssets(sections)
+    const { images, clips, found } = conversationAssets(sections)
 
     expect([...images]).toStrictEqual([['b', GENERATED], ['a', GENERATED]])
     expect([...clips]).toStrictEqual([['c', attached(newerSong)], ['d', attached(DANCE)], ['e', attached(RAIN)]])
+    // The text of each asset, which `asset_info` reads for who made it.
+    expect(Array.from(found.values(), ({ id, kind, section }) => [id, kind, sections[section].id])).toStrictEqual([
+      ['b', 'image', 'u2'],
+      ['a', 'image', 'a1'],
+      ['c', 'clip', 'u2'],
+      ['d', 'clip', 'a1'],
+      ['e', 'clip', 'a1'],
+    ])
   })
 
   // A model's text must never make Dez read a file of the computer.

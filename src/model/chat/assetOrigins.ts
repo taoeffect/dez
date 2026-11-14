@@ -1,9 +1,10 @@
+import type { FoundAsset } from '../streams/mediaRequest'
 import { JOBS_WAIT_TOOL, jobsWaitResults, madeAssetIds, startedJob } from '../tools/jobs'
 import { callLabel } from '../tools/registry'
 import { sectionPlainText } from './content'
 import { findHiddenAssets } from './hiddenAssets'
-import { findImageReferences, IMAGE_HIDDEN_KEY, IMAGE_MADE_BY_KEY, IMAGE_TOOL_KEY } from './images'
-import { findMediaTags, MEDIA_HIDDEN_ATTRIBUTE, MEDIA_MADE_BY_ATTRIBUTE, MEDIA_TOOL_ATTRIBUTE } from './mediaTags'
+import { IMAGE_HIDDEN_KEY, IMAGE_MADE_BY_KEY, IMAGE_TOOL_KEY } from './images'
+import { MEDIA_HIDDEN_ATTRIBUTE, MEDIA_MADE_BY_ATTRIBUTE, MEDIA_TOOL_ATTRIBUTE } from './mediaTags'
 import { findToolBlocks, type ToolBlock } from './toolBlocks'
 import type { ModelRef, Section } from './types'
 
@@ -71,36 +72,45 @@ function toolOrigin(id: string, marks: ToolMarks, blocks: readonly ToolBlock[]):
   return { kind: 'call', tool, label: call ? callLabel(call.name, call.arguments) : '' }
 }
 
-/** The place of each image and clip of `sections`, by its id, by the rule
- *  of `conversationAssets` (streams/mediaRequest.ts): of two images or two
- *  clips with one id, the last one counts, and an id that an image and a
- *  clip both have names the image. An asset of a user section is from the
- *  user, and one of an agent section with no tool mark is from the model
- *  of that section. */
-export function assetPlaces(sections: readonly Section[]): Map<string, AssetPlace> {
-  const images = new Map<string, AssetPlace>()
-  const clips = new Map<string, AssetPlace>()
-  for (const section of sections) {
-    const text = sectionPlainText(section)
-    const blocks = section.role === 'agent' ? findToolBlocks(text) : []
-    const hiddenFrom = new Set(section.role === 'agent' ? findHiddenAssets(text, blocks).map((asset) => asset.from) : [])
-    const place = (id: string, from: number, marks: ToolMarks | null): AssetPlace => {
-      if (section.role === 'user') return { origin: { kind: 'user' }, hidden: false }
-      const origin = marks ? toolOrigin(id, marks, blocks) : { kind: 'model' as const, model: section.model ?? null }
-      return { origin, hidden: hiddenFrom.has(from) }
-    }
-
-    for (const { id, from, metadata } of findImageReferences(text, section.role)) {
-      if (id === null) continue
-      const mark = (key: string) => metadata.find((item) => item.key === key)?.value ?? null
-      const tool = mark(IMAGE_TOOL_KEY)
-      images.set(id, place(id, from, tool === null ? null : { tool, jobId: mark(IMAGE_MADE_BY_KEY) ?? mark(IMAGE_HIDDEN_KEY) }))
-    }
-    for (const { id, from, other } of findMediaTags(text)) {
-      const mark = (name: string) => other.find((attribute) => attribute.name === name)?.value ?? null
-      const tool = mark(MEDIA_TOOL_ATTRIBUTE)
-      clips.set(id, place(id, from, tool === null ? null : { tool, jobId: mark(MEDIA_MADE_BY_ATTRIBUTE) ?? mark(MEDIA_HIDDEN_ATTRIBUTE) }))
-    }
+// The tool marks of `asset`; null for an asset that no Dez tool made.
+function toolMarks(asset: FoundAsset): ToolMarks | null {
+  if (asset.kind === 'image') {
+    const mark = (key: string) => asset.reference.metadata.find((item) => item.key === key)?.value ?? null
+    const tool = mark(IMAGE_TOOL_KEY)
+    return tool === null ? null : { tool, jobId: mark(IMAGE_MADE_BY_KEY) ?? mark(IMAGE_HIDDEN_KEY) }
   }
-  return new Map([...clips, ...images])
+  const mark = (name: string) => asset.tag.other.find((attribute) => attribute.name === name)?.value ?? null
+  const tool = mark(MEDIA_TOOL_ATTRIBUTE)
+  return tool === null ? null : { tool, jobId: mark(MEDIA_MADE_BY_ATTRIBUTE) ?? mark(MEDIA_HIDDEN_ATTRIBUTE) }
+}
+
+/** The place of each asset of `assets`, in its order: the assets that
+ *  `conversationAssets` (streams/mediaRequest.ts) found in `sections`. An
+ *  asset of a user section is from the user, and one of an agent section
+ *  with no tool mark is from the model of that section. */
+export function assetPlaces(sections: readonly Section[], assets: readonly FoundAsset[]): AssetPlace[] {
+  // The tool blocks of each agent section that holds one of `assets`, and
+  // the starts of its hidden assets, read once for all its assets.
+  const agentTexts = new Map<number, { blocks: ToolBlock[], hiddenFrom: Set<number> }>()
+  const agentText = (index: number) => {
+    let found = agentTexts.get(index)
+    if (found === undefined) {
+      const text = sectionPlainText(sections[index])
+      const blocks = findToolBlocks(text)
+      found = { blocks, hiddenFrom: new Set(findHiddenAssets(text, blocks).map((asset) => asset.from)) }
+      agentTexts.set(index, found)
+    }
+    return found
+  }
+
+  return assets.map((asset): AssetPlace => {
+    const section = sections[asset.section]
+    if (section.role === 'user') return { origin: { kind: 'user' }, hidden: false }
+    const { blocks, hiddenFrom } = agentText(asset.section)
+    const marks = toolMarks(asset)
+    return {
+      origin: marks ? toolOrigin(asset.id, marks, blocks) : { kind: 'model', model: section.model ?? null },
+      hidden: hiddenFrom.has(asset.kind === 'image' ? asset.reference.from : asset.tag.from),
+    }
+  })
 }
