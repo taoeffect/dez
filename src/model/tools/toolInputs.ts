@@ -56,20 +56,27 @@ export function unknownInputsProblem(
   return `${unknownAssetsText(unknown, assets, wording)} Write a word that is no input without the @.`
 }
 
+/** What a model does after a call of the tool `tool` could not read its
+ *  input clip `id` (`ClipReadError`), by the problem. */
+export function clipReadAdviceText(id: string, tool: string, problem: ClipReadProblem): string {
+  const again = problem === 'unreadable'
+    ? `call the ${tool} tool again for @${id} only when the user asks for it`
+    : `do not call the ${tool} tool again for @${id}`
+  return `This is not a fault of the call. Tell the user, and ${again}.`
+}
+
 /** The error result of a call of the tool `tool` whose input clip `id`
  *  Dez could not read (`ClipReadError`), by its problem. The details of
  *  the error tell what each source of the clip gave. */
 export function clipReadProblemText(kind: MediaTagKind, id: string, tool: string, problem: ClipReadProblem): string {
   const name = `${ASSET_NAMES[kind]} @${id}`
+  const advice = clipReadAdviceText(id, tool, problem)
   switch (problem) {
     case 'deleted':
-      return `The ${name} is gone: the user deleted its file, and it has no web address to download it from. `
-        + `This is not a fault of the call. Tell the user, and do not call the ${tool} tool again for @${id}.`
+      return `The ${name} is gone: the user deleted its file, and it has no web address to download it from. ${advice}`
     case 'expired':
-      return `The ${name} has expired: the provider that made it does not keep it any more, and the user did not save it. `
-        + `This is not a fault of the call. Tell the user, and do not call the ${tool} tool again for @${id}.`
+      return `The ${name} has expired: the provider that made it does not keep it any more, and the user did not save it. ${advice}`
     case 'unreadable':
-      return `Dez could not read the ${name}: its file is gone, Dez may not read it, or its server did not send it (the details tell which). `
-        + `This is not a fault of the call. Tell the user, and call the ${tool} tool again for @${id} only when the user asks for it.`
+      return `Dez could not read the ${name}: its file is gone, Dez may not read it, or its server did not send it (the details tell which). ${advice}`
   }
 }

@@ -1,9 +1,10 @@
+import type { ClipReadProblem } from '../chat/mediaFiles'
 import type { MediaTagKind } from '../chat/mediaTags'
 import type { PicturePart } from '../chat/types'
 import { MAX_REPLY_PICTURES, type ReplyPicture } from '../streams/replyPictures'
 import { shortNumber } from './assetFacts'
 import { assetIdsArgument } from './assetInfo'
-import type { InputWording } from './toolInputs'
+import { clipReadAdviceText, type InputWording } from './toolInputs'
 import { ToolError, type ToolArguments, type ToolDefinition } from './types'
 import { FFMPEG_FIXED_ARGS } from './videoTool'
 
@@ -330,6 +331,18 @@ export const VIEW_TIMED_OUT_NOTE = `ffmpeg took longer than ${ASSET_VIEW_TIMEOUT
  *  only: it can hold a path. */
 export const VIEW_FAILED_NOTE = 'ffmpeg could not read this clip, so Dez shows no more of it. The file may be damaged; '
   + 'Help › Developer Console shows the cause. This is not a fault of the call.'
+
+/** The note of a picture that ffmpeg made but Dez could not read. */
+export const PICTURE_NOT_READ_NOTE = 'No picture: Dez could not read the picture that ffmpeg made of this clip. '
+  + 'Help › Developer Console shows the cause. This is not a fault of the call.'
+
+/** The note of the clip `id` that Dez could not read (`ClipReadError`).
+ *  Its facts (`clipNotReadFacts`) tell what happened; the details of an
+ *  unreadable clip go to the console only, as they can hold a path. */
+export function clipNotReadNote(id: string, problem: ClipReadProblem): string {
+  const advice = clipReadAdviceText(id, ASSET_VIEW_TOOL.name, problem)
+  return problem === 'unreadable' ? `Help › Developer Console shows the cause. ${advice}` : advice
+}
 
 /** The pictures of a view, each with its label, for the reply
  *  (`ToolRunContext.showPictures`). */

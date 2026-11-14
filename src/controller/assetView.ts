@@ -14,6 +14,7 @@ import {
   assetViewPictures,
   assetViewText,
   audioViewArgs,
+  clipNotReadNote,
   clipPart,
   frameSheetArgs,
   frameSheetTexts,
@@ -26,6 +27,7 @@ import {
   partHasNoFrame,
   PICTURE_LIMIT_NOTE,
   PICTURE_NOT_DRAWN_NOTE,
+  PICTURE_NOT_READ_NOTE,
   sheetFrameTimes,
   smallerCopyNote,
   UNKNOWN_LENGTH_NOTE,
@@ -38,7 +40,7 @@ import {
   type PictureChoice,
 } from '../model/tools/assetView'
 import { clipInput, type ClipInput, type ProgramEnd } from '../model/tools/programRuns'
-import { clipReadProblemText, unknownAssetsText } from '../model/tools/toolInputs'
+import { unknownAssetsText } from '../model/tools/toolInputs'
 import { ToolError, type ToolArguments } from '../model/tools/types'
 import { FFMPEG_OUTPUT_BYTES } from '../model/tools/videoTool'
 import { probeClip, readImageFacts } from './assetInfo'
@@ -180,7 +182,7 @@ async function frameSheet(input: ClipInput, call: AssetViewCall, part: ClipPart,
   const problem = runProblemNote(input.clip, ran)
   if (problem !== null) return { notes: [problem], picture: null }
   const picture = await readPicture(folder, name)
-  if (!picture) return { notes: [VIEW_FAILED_NOTE], picture: null }
+  if (!picture) return { notes: [PICTURE_NOT_READ_NOTE], picture: null }
   const { note, shows } = frameSheetTexts(input.id, part, times, call.frames)
   return { notes: [note], picture: { part: picture, shows } }
 }
@@ -199,7 +201,7 @@ async function audioView(input: ClipInput, part: ClipPart, wave: boolean, folder
   const notes = [loudnessNote(part, loudness)]
   if (name === null) return { notes, picture: null }
   const picture = await readPicture(folder, name)
-  if (!picture) return { notes: [...notes, VIEW_FAILED_NOTE], picture: null }
+  if (!picture) return { notes: [...notes, PICTURE_NOT_READ_NOTE], picture: null }
   const { note, shows } = waveTexts(input.id, part)
   return { notes: [note, ...notes], picture: { part: picture, shows } }
 }
@@ -211,7 +213,7 @@ async function viewClip(clip: ClipAttachment, call: AssetViewCall, choice: Pictu
   const input = clipInput(clip)
   const probed = await probeClip(input, folder, signal, ASSET_VIEW_TOOL.name)
   const item: AssetViewItem = { id: clip.id, kind: clip.kind, facts: probedClipFacts(clip, probed), notes: [], picture: null }
-  if (probed.kind === 'notRead') return { ...item, notes: [clipReadProblemText(clip.kind, clip.id, ASSET_VIEW_TOOL.name, probed.problem)] }
+  if (probed.kind === 'notRead') return { ...item, notes: [clipNotReadNote(clip.id, probed.problem)] }
   if (probed.kind === 'notProbed') return item
 
   const { facts } = probed

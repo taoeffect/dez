@@ -15,7 +15,8 @@ import { providerInfo } from '../model/providers/testing'
 import type { ModelInfo, ProviderInfo, ProviderInputImageRules, ProviderSettingsDescriptor } from '../model/providers/types'
 import type { ReplyPicture } from '../model/streams/replyPictures'
 import { assetProbeArgs } from '../model/tools/assetFacts'
-import { PICTURE_NOT_DRAWN_NOTE, smallerCopyNote, VIEW_FAILED_NOTE } from '../model/tools/assetView'
+import { clipNotReadFacts } from '../model/tools/assetInfo'
+import { clipNotReadNote, PICTURE_NOT_DRAWN_NOTE, PICTURE_NOT_READ_NOTE, smallerCopyNote, VIEW_FAILED_NOTE } from '../model/tools/assetView'
 import { jobStartedText, jobsWaitResults, NO_JOBS_TEXT, NO_OPEN_JOBS_TEXT } from '../model/tools/jobs'
 import { modelInfoText, type ModelInfoFacts } from '../model/tools/modelInfo'
 import { IMAGE_NOT_SAVED_TEXT, INVOCATION_TEXT_CAP, invocationAnswerStateText, invocationAnswerText, modelInvocation } from '../model/tools/modelInvoke'
@@ -1928,15 +1929,45 @@ describe('dez.controller/tools/run', () => {
       expect(shown).toStrictEqual([])
     })
 
-    it('tells of a part with no frame, and of a clip that Dez cannot read, and shows no picture for them', async () => {
+    it('tells of a part with no frame, and shows no picture for it', async () => {
       frameSheetLog = 'No filtered frames for output stream, trying to initialize anyway.\nNothing was written into output file'
       frameSheetEnd = { kind: 'exited', code: 234 }
 
-      const result = await assetView({ assets: 'b c' })
+      const result = await assetView({ assets: 'b' })
 
       expect(result.isError).toBe(false)
       expect(result.content).toContain('No frame sheet: ffmpeg found no frame in 0 s to 5.04 s of the clip.')
-      expect(result.content).toContain('@c | audio | gone: the user deleted its file, and it has no web address')
+      expect(shown).toStrictEqual([])
+    })
+
+    // The facts of such a clip tell what happened, and the result has no
+    // details of the read.
+    it('tells only what to do about a clip that Dez cannot read, and runs no program for it', async () => {
+      native.fileSize = () => null
+
+      expect(await assetView({ assets: 'c d' })).toStrictEqual({
+        content: [
+          `@c | audio | ${clipNotReadFacts('deleted')}`,
+          clipNotReadNote('c', 'deleted'),
+          `@d | audio | ${clipNotReadFacts('unreadable')}`,
+          clipNotReadNote('d', 'unreadable'),
+        ].join('\n'),
+        isError: false,
+      })
+      expect(native.runs).toStrictEqual([])
+      expect(shown).toStrictEqual([])
+    })
+
+    it('tells that Dez could not read a picture that ffmpeg made, not that ffmpeg could not read the clip, and keeps the loudness', async () => {
+      native.fileBytes = () => {
+        throw new Error('No such file')
+      }
+
+      const result = await assetView({ assets: 'b d' })
+
+      expect(result.content.split('\n').filter((line) => line === PICTURE_NOT_READ_NOTE)).toHaveLength(2)
+      expect(result.content).not.toContain(VIEW_FAILED_NOTE)
+      expect(result.content).toMatch(/-23\.1 LUFS integrated/)
       expect(shown).toStrictEqual([])
     })
 
