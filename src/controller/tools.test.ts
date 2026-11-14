@@ -2436,6 +2436,7 @@ describe('dez.controller/tools/run', () => {
 
     describe('with `sound_picture`', () => {
       const SHEET_SHOWS = 'the frame sheet of the video clip @b: 3 frames in one row, at 0.417, 1.25, 2.083 s'
+      const SHEET_NOTE = 'Frame sheet of 0 s to 2.5 s: 3 frames in one row, at 0.417, 1.25, 2.083 s.'
       const shownPictures = () => shown.map(({ label, picture, size }) => ({ label, picture, size }))
 
       it('shows the spectrogram of an audio clip with its axes, and tells the time of a later part', async () => {
@@ -2496,7 +2497,7 @@ describe('dez.controller/tools/run', () => {
         }])
         const lines = result.content.split('\n')
         expect(lines.slice(1, 3)).toStrictEqual([
-          'Frame sheet of 0 s to 2.5 s: 3 frames in one row, at 0.417, 1.25, 2.083 s. '
+          `${SHEET_NOTE} `
             + 'Under the frames: the wave of the sound of 0 s to 2.5 s, a strip of 968x160 pixels; '
             + 'time runs left to right over the whole width of the sheet, and the height is the peak level on a square-root scale.',
           expect.stringMatching(/^Loudness of 0 s to 2\.5 s: /),
@@ -2514,10 +2515,10 @@ describe('dez.controller/tools/run', () => {
         expect(result.content).toMatch(/Under the frames: the spectrogram of the sound of 0 s to 5\.04 s, .* from 0 to 24,000 Hz on a linear scale/)
       })
 
-      it('sends the frame sheet alone, with a note, when the strip cannot be read, drawn, or sent', async () => {
+      it('sends the frame sheet alone, with a note in the line of the sheet, when the strip cannot be read, drawn, or sent', async () => {
         const view = async () => {
           shown = []
-          return (await assetView({ assets: '@b', frames: 3, end: 2.5, sound_picture: 'wave' })).content
+          return (await assetView({ assets: '@b', frames: 3, end: 2.5, sound_picture: 'wave' })).content.split('\n')[1]
         }
         const sheetOnly = [{ label: `asset_view: ${SHEET_SHOWS}.`, picture: { type: 'picture', mediaType: 'image/jpeg', bytes: SHEET_JPEG }, size: { width: 968, height: 364 } }]
 
@@ -2525,20 +2526,41 @@ describe('dez.controller/tools/run', () => {
           if (path.endsWith('-strip.jpg')) throw new Error('No such file')
           return SHEET_JPEG
         }
-        expect(await view()).toContain(soundStripFailedNote('wave'))
+        expect(await view()).toBe(`${SHEET_NOTE} ${soundStripFailedNote('wave')}`)
         expect(shownPictures()).toStrictEqual(sheetOnly)
         expect(compositions).toStrictEqual([])
 
         native.fileBytes = ({ path }) => path.endsWith('-strip.jpg') ? STRIP_JPEG : SHEET_JPEG
         drawError = new Error('No canvas to draw the image on.')
-        expect(await view()).toContain(soundStripFailedNote('wave'))
+        expect(await view()).toBe(`${SHEET_NOTE} ${soundStripFailedNote('wave')}`)
         expect(shownPictures()).toStrictEqual(sheetOnly)
         expect(consoleError).toHaveBeenCalledWith('Failed to draw the wave strip of the video clip @b under its frame sheet:', drawError)
 
         drawError = undefined
         composedBytes = () => 3_750_001
-        expect(await view()).toContain(soundStripTooLargeNote('wave', 'review'))
+        expect(await view()).toBe(`${SHEET_NOTE} ${soundStripTooLargeNote('wave', 'review')}`)
         expect(shownPictures()).toStrictEqual(sheetOnly)
+      })
+
+      it('tells of no strip of a frame sheet that does not go: over the budget, or in a grid that does not go', async () => {
+        native.fileBytes = ({ path }) => {
+          if (path.endsWith('-strip.jpg')) throw new Error('No such file')
+          return SHEET_JPEG
+        }
+        // The sheet costs 455 tokens, and the grid 700.
+        budget = { ...budget, tokens: 400 }
+
+        const alone = await assetView({ assets: '@b', frames: 3, end: 2.5, sound_picture: 'wave' })
+        const grid = await assetView({ assets: '@a @b', layout: 'grid', frames: 3, end: 2.5, sound_picture: 'wave' })
+
+        expect(shown).toStrictEqual([])
+        expect(alone.content).toContain(pictureCostNote({ tokens: 455, bytes: 80, pictures: 1 }, budget))
+        expect(grid.content).toContain(gridCostNote(['a', 'b'], { tokens: 700, bytes: 4, pictures: 1 }, budget))
+        for (const { content } of [alone, grid]) {
+          expect(content).not.toContain(soundStripFailedNote('wave'))
+          expect(content).not.toContain(SHEET_NOTE)
+          expect(content).toMatch(/^Loudness of 0 s to 2\.5 s: /m)
+        }
       })
 
       it('shows the sound picture of a video clip with no frame sheet as a picture of its own', async () => {

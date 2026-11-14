@@ -954,16 +954,18 @@ export function soundStripTexts(picture: SoundPictureKind, part: ClipPart, size:
 }
 
 /** The note of the sound strip of `picture` that Dez could not read from
- *  ffmpeg, or could not draw under the frame sheet. */
+ *  ffmpeg, or could not draw under the frame sheet. It goes in the note of
+ *  the sheet, so only while the sheet goes. */
 export function soundStripFailedNote(picture: SoundPictureKind): string {
-  return `No ${picture} strip: Dez could not put it under the frame sheet, so the picture is the sheet alone. `
+  return `No ${picture} strip under the frames: Dez could not put it there. `
     + 'Help › Developer Console shows the cause. This is not a fault of the call.'
 }
 
 /** The note of the sound strip of `picture` with which the frame sheet is
- *  over `MAX_PICTURE_BYTES`, for a view with `detail`. */
+ *  over `MAX_PICTURE_BYTES`, for a view with `detail`. It goes in the note
+ *  of the sheet, so only while the sheet goes. */
 export function soundStripTooLargeNote(picture: SoundPictureKind, detail: ViewDetail): string {
-  return `No ${picture} strip: the frame sheet with it is too large to send, so the picture is the sheet alone. `
+  return `No ${picture} strip under the frames: the frame sheet with it is too large to send. `
     + `To see the ${picture}, call again with fewer frames${detail === 'full' ? ', or with `detail` "review"' : ''}.`
 }
 

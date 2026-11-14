@@ -366,8 +366,10 @@ function soundDraw(input: ClipInput, picture: SoundPicture, strip: ImageSize | n
 
 // The loudness of the sound of `part` of the clip `input`, and with
 // `draw`, the picture of its sound: their notes, and the picture as ffmpeg
-// drew it, which the caller gives its texts.
-async function soundView(input: ClipInput, part: ClipPart, draw: SoundDraw | null, folder: string, signal: AbortSignal): Promise<{ notes: string[], picture: RunPicture | null }> {
+// drew it, which the caller gives its texts. A strip that Dez could not
+// read gives `stripNote` in place of a note, for the note of its frame
+// sheet: it tells of that sheet, so it must go only while the sheet goes.
+async function soundView(input: ClipInput, part: ClipPart, draw: SoundDraw | null, folder: string, signal: AbortSignal): Promise<{ notes: string[], picture: RunPicture | null, stripNote?: string }> {
   const ran = await runFfmpegLog(audioViewArgs(input.name, part, draw), folder, VIEW_RUN, signal)
   // A part with no sample of the sound (a video clip whose sound ends
   // before the part) is no failure. Its run with a picture fails, as it has
@@ -384,43 +386,45 @@ async function soundView(input: ClipInput, part: ClipPart, draw: SoundDraw | nul
   const notes = [loudnessNote(part, loudness)]
   if (draw === null) return { notes, picture: null }
   const picture = await readPicture(folder, draw.output)
-  if (!picture) return { notes: [...notes, draw.strip ? soundStripFailedNote(draw.kind) : PICTURE_NOT_READ_NOTE], picture: null }
+  if (!picture) return draw.strip ? { notes, picture: null, stripNote: soundStripFailedNote(draw.kind) } : { notes: [...notes, PICTURE_NOT_READ_NOTE], picture: null }
   return { notes, picture }
+}
+
+// `picture` with `note` after the note that it has.
+function withNote(picture: ViewPicture, note: string): ViewPicture {
+  return { ...picture, note: picture.note === null ? note : `${picture.note} ${note}` }
 }
 
 // The frame sheet `sheet` of the video clip `id` with the strip `strip` of
 // `kind` of the sound of `part` (of `sampleRate`) under it, as one picture
 // (`soundStripLayout`), for a view with `detail`. When the webview cannot
 // draw it, or its file is too large, the picture is the sheet alone, with
-// the note of why.
+// the note of why in its own note.
 async function withSoundStrip(
   id: string,
   sheet: ViewPicture,
   strip: RunPicture,
   { kind, part, sampleRate, detail }: { kind: SoundPictureKind, part: ClipPart, sampleRate: number | null, detail: ViewDetail },
-): Promise<{ picture: ViewPicture, notes: string[] }> {
+): Promise<ViewPicture> {
   try {
     // Not `ImageComposition | null = null`: as in gridView.
     let layout = null as ImageComposition | null
     const files = [sheet.part, strip.part].map(({ bytes, mediaType }) => new Blob([bytes], { type: mediaType }))
     const drawn = await sbp('dez.controller/images/compose', files, (sizes: readonly ImageSize[]) => (layout = soundStripLayout(sizes))) as DrawnImage
-    if (drawn.bytes.length > MAX_PICTURE_BYTES) return { picture: sheet, notes: [soundStripTooLargeNote(kind, detail)] }
+    if (drawn.bytes.length > MAX_PICTURE_BYTES) return withNote(sheet, soundStripTooLargeNote(kind, detail))
     // A drawing came from the plan, so `layout` is set; its second place
     // is the strip.
     const { width, height } = (layout as ImageComposition).places[1]
     const texts = soundStripTexts(kind, part, { width, height }, sampleRate)
     return {
-      picture: {
-        part: { type: 'picture', mediaType: drawn.mediaType, bytes: drawn.bytes },
-        size: { width: drawn.width, height: drawn.height },
-        shows: `${sheet.shows}; ${texts.shows}`,
-        note: sheet.note === null ? texts.note : `${sheet.note} ${texts.note}`,
-      },
-      notes: [],
+      ...withNote(sheet, texts.note),
+      part: { type: 'picture', mediaType: drawn.mediaType, bytes: drawn.bytes },
+      size: { width: drawn.width, height: drawn.height },
+      shows: `${sheet.shows}; ${texts.shows}`,
     }
   } catch (error) {
     console.error(`Failed to draw the ${kind} strip of the video clip @${id} under its frame sheet:`, error)
-    return { picture: sheet, notes: [soundStripFailedNote(kind)] }
+    return withNote(sheet, soundStripFailedNote(kind))
   }
 }
 
@@ -448,13 +452,12 @@ async function videoView(input: ClipInput, facts: ClipProbeFacts, part: ClipPart
   // strip that the drawing stretches to its width.
   const draw = soundDraw(input, picture, sheet && { width: sheet.size?.width ?? FRAME_BOXES[call.detail], height: SOUND_STRIP_HEIGHTS[call.detail] })
   const sound = await soundView(input, part, draw, folder, signal)
-  const notes = [...frames.notes, ...sound.notes]
-  if (!draw || !sound.picture) return { notes: [...notes, ...limitNotes], picture: sheet }
+  const notes = [...frames.notes, ...sound.notes, ...limitNotes]
+  if (!draw || !sound.picture) return { notes, picture: sheet && sound.stripNote ? withNote(sheet, sound.stripNote) : sheet }
   if (!sheet) {
-    return { notes: [...notes, ...limitNotes], picture: { ...sound.picture, ...soundPictureTexts(input.id, 'video', draw.kind, part, sound.picture.size) } }
+    return { notes, picture: { ...sound.picture, ...soundPictureTexts(input.id, 'video', draw.kind, part, sound.picture.size) } }
   }
-  const joined = await withSoundStrip(input.id, sheet, sound.picture, { kind: draw.kind, part, sampleRate: facts.audio.sampleRate, detail: call.detail })
-  return { notes: [...notes, ...joined.notes, ...limitNotes], picture: joined.picture }
+  return { notes, picture: await withSoundStrip(input.id, sheet, sound.picture, { kind: draw.kind, part, sampleRate: facts.audio.sampleRate, detail: call.detail }) }
 }
 
 // The view of `clip`: its facts from ffprobe, and its frame sheet, or the
