@@ -1335,15 +1335,17 @@ describe('openrouter list prices', () => {
     expect(listPrice(kind, pricing)).toBeUndefined()
   })
 
-  it('gives a video model the price of one clip for its values, which the note names', () => {
+  it('gives a video model the price of one clip for its values, which the note names with the price of each input image', () => {
     expect([
       videoPrice({ cents_per_video_output_second_480p: '0.5', cents_per_video_output_second_720p: '1' }, { duration: 5, resolution: '480p' }),
       videoPrice({ duration_seconds: '0.1' }, { duration: 4 }),
       videoPrice({ video_tokens: '0.000007' }, { duration: 1, resolution: '1080p', generate_audio: true }),
+      videoPrice({ cents_per_image_input: '1', cents_per_video_output_second_480p: '2' }, { duration: 5, resolution: '480p' }),
     ]).toStrictEqual([
       { unit: 'clip', usd: 0.025, note: '5 s, 480p' },
       { unit: 'clip', usd: 0.4, note: '4 s' },
       { unit: 'clip', usd: 0.3402, note: '1 s, 1080p, estimate' },
+      { unit: 'clip', usd: 0.1, note: '5 s, 480p; +$0.01 per input image' },
     ])
   })
 

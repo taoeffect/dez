@@ -1393,8 +1393,9 @@ function openRouterPriceError(reason: string): { error: string } {
 
 // The price in USD of one OpenRouter video request with `values` and no
 // input image or clip, from the model's prices (`pricing_skus`), with the
-// rate that applies and all the prices of the model. Undefined for a model
-// with no prices.
+// rate that applies, the price of each input image (when the model has
+// one), and all the prices of the model. Undefined for a model with no
+// prices.
 //
 // Of the prices of a second or a token that fit the request (the
 // resolution and the sound of `values`, else any), the ones that name the
@@ -1410,7 +1411,7 @@ function openRouterPriceError(reason: string): { error: string } {
 // A request with no `generate_audio` field gets the sound of the model's
 // entry flag (the comment of the Audio switch): a model whose flag is
 // false has no Audio switch, and its video has no sound.
-function openRouterVideoRequestPrice(values: ParameterValues, mediaEntry: unknown): { usd: number, rate: OpenRouterVideoSku, skus: OpenRouterVideoSku[] } | { error: string } | undefined {
+function openRouterVideoRequestPrice(values: ParameterValues, mediaEntry: unknown): { usd: number, rate: OpenRouterVideoSku, inputImageUsd?: number, skus: OpenRouterVideoSku[] } | { error: string } | undefined {
   const table = valueAtPath(mediaEntry, 'pricing_skus')
   if (!isRecord(table)) return undefined
   const skus: OpenRouterVideoSku[] = []
@@ -1450,7 +1451,8 @@ function openRouterVideoRequestPrice(values: ParameterValues, mediaEntry: unknow
     if (pixels === undefined) return openRouterPriceError(`the price is by video token, and Dez does not know the size in pixels of a video of ${resolution ?? 'no resolution'}`)
     usd *= pixels * OPENROUTER_TOKEN_FPS / OPENROUTER_PIXELS_PER_TOKEN
   }
-  return { usd: roundedUsd(usd), rate, skus }
+  const inputImage = skus.find((sku) => sku.per === 'inputImage' && sku.usd > 0)
+  return { usd: roundedUsd(usd), rate, ...(inputImage && { inputImageUsd: roundedUsd(inputImage.usd) }), skus }
 }
 
 // The price of one OpenRouter video request (`openRouterVideoRequestPrice`)
@@ -1459,13 +1461,12 @@ function openRouterVideoRequestPrice(values: ParameterValues, mediaEntry: unknow
 function openRouterVideoPrice(values: ParameterValues, mediaEntry: unknown): ClipEntryPrice | undefined {
   const price = openRouterVideoRequestPrice(values, mediaEntry)
   if (price === undefined || 'error' in price) return price
-  const { usd, rate, skus } = price
-  const imagePrice = skus.find((sku) => sku.per === 'inputImage' && sku.usd > 0)
+  const { usd, rate, inputImageUsd, skus } = price
   const notes = [
     ...(rate.per === 'token'
       ? ['The provider bills by video tokens: `usd` is its estimate for a video of the standard size of the resolution, and the charge comes from the video that the model makes, so it can differ (for example with another aspect ratio).']
       : []),
-    ...(imagePrice ? [`\`usd\` is for a request with no input image: each input image adds ${roundedUsd(imagePrice.usd)} USD.`] : []),
+    ...(inputImageUsd === undefined ? [] : [`\`usd\` is for a request with no input image: each input image adds ${inputImageUsd} USD.`]),
     ...(skus.some((sku) => sku.videoInput) ? ['`usd` is for a request with no input video clip: with one, the price is another one, which Dez cannot compute.'] : []),
   ]
   return { usd, ...(notes.length > 0 && { note: notes.join(' ') }) }
@@ -1473,7 +1474,8 @@ function openRouterVideoPrice(values: ParameterValues, mediaEntry: unknown): Cli
 
 // The list price of an OpenRouter model of a media kind. A video: the
 // price of one clip for the default values (the shortest length, the
-// lowest resolution), which the note names. Speech and transcription: the
+// lowest resolution) and no input image, which the note names with the
+// price of each input image, if any. Speech and transcription: the
 // rates of the main list (`pricing`), which are per character of the text
 // (`prompt`), or per second of the clip (speech: `completion`, with no
 // `prompt` price; transcription: `prompt`, with no `completion` price),
@@ -1488,8 +1490,9 @@ function openRouterListPrice(kind: MediaKind, values: ParameterValues, entry: un
     case 'imageToVideo': {
       const price = openRouterVideoRequestPrice(values, mediaEntry)
       if (price === undefined || 'error' in price) return undefined
-      const note = [`${String(values.duration)} s`, ...(values.resolution === undefined ? [] : [String(values.resolution)]), ...(price.rate.per === 'token' ? ['estimate'] : [])]
-      return unitPrice('clip', price.usd, note.join(', '))
+      const options = [`${String(values.duration)} s`, ...(values.resolution === undefined ? [] : [String(values.resolution)]), ...(price.rate.per === 'token' ? ['estimate'] : [])]
+      const notes = [options.join(', '), ...(price.inputImageUsd === undefined ? [] : [`+${usdText(price.inputImageUsd)} per input image`])]
+      return unitPrice('clip', price.usd, notes.join('; '))
     }
     case 'tts':
     case 'transcription': {
