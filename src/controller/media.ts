@@ -1,14 +1,15 @@
 import sbp from '@sbp/sbp'
 import { AUDIO_CUT_RATE, audioPartFrames, type AudioPart, type CutAudio } from '../model/chat/audioCut'
 import { MAX_SAVED_CLIP_BYTES, MEDIA_TEMP_LIFETIME_MS, mediaFileExtension, savedMediaFile, tempMediaFile } from '../model/chat/mediaFiles'
-import { MEDIA_CACHE_FOLDER, MEDIA_FOLDERS, isSavedMediaPath, type MediaFolder, type MediaTagData } from '../model/chat/mediaTags'
+import { MEDIA_CACHE_FOLDER, MEDIA_FOLDERS, type MediaFolder, type MediaTagData } from '../model/chat/mediaTags'
+import { newStoredFilePath } from '../model/chat/storedFilePaths'
 import { signedUrlGone } from '../model/providers/errors'
 import { wavFileOfChannels } from '../model/providers/pcmAudio'
 import { byteSizeText } from '../utils/byteSize'
 import { ExplainedError, errorText, explainedError, rawErrorText } from '../utils/errorText'
 import { fileNameOf } from '../utils/fileName'
-import type { NativeHttpDownload, NativeHttpStreamResult } from '../utils/protocol/nativeHttp'
-import { CLIP_DOWNLOAD_TIMEOUT_MS, clipFromSources, downloadClip } from './clipSources'
+import type { NativeHttpStreamResult } from '../utils/protocol/nativeHttp'
+import { ClipDownloadError, clipFromSources, downloadClip } from './clipSources'
 import type { AppFileEntry } from './nativeTypes'
 import { deleteOldWorkFolders } from './workFolders'
 
@@ -109,19 +110,12 @@ export default sbp('sbp/selectors/register', {
     { bytes, folder = 'generated' }: { bytes?: Uint8Array, folder?: MediaFolder } = {},
   ): Promise<string> {
     try {
-      const appDir = await sbp('dez.native/getAppDir') as string
       const tempFile = bytes !== undefined || clip.src === null ? null : tempMediaFile(clip.src, await sbp('dez.native/getAppDir', 'cache') as string)
       const fileName = bytes !== undefined
         ? newClipFileName(clip.type, null)
         : tempFile !== null ? fileNameOf(tempFile) : downloadFileName(clip)
       const file = `${MEDIA_FOLDERS[folder][clip.kind]}/${fileName}`
-      const path = `${appDir}/${file}`
-      // The recognizer takes only absolute paths on one line (e.g. not
-      // `./.config/dez` when $HOME is not set). A tag with another path
-      // would not show as a saved clip, so no file is written for it.
-      if (!isSavedMediaPath(path)) {
-        throw new ExplainedError(`Dez cannot store clips in the Dez folder ${appDir}. The path of this folder must start with "/" and must not hold a line break. Start Dez with a HOME environment variable that gives such a path.`)
-      }
+      const path = newStoredFilePath(await sbp('dez.native/getAppDir') as string, file, clip.kind)
       if (bytes !== undefined) {
         await sbp('dez.native/saveAppFile', file, bytes).catch((error: unknown) => {
           throw new ExplainedError(
@@ -142,24 +136,16 @@ export default sbp('sbp/selectors/register', {
         })
         return path
       }
-      // The native download fails for a network error (its text has no
-      // URL), a body over the size limit, and a file that cannot be written.
-      const download = await sbp(
-        'dez.native/downloadAppFile',
-        { method: 'GET', url: clip.url, timeoutMs: CLIP_DOWNLOAD_TIMEOUT_MS },
-        crypto.randomUUID(),
-        { root: 'app', path: file },
-        { maxBytes: MAX_SAVED_CLIP_BYTES },
-      ).catch((error: unknown) => {
+      // `downloadFileName` refused a clip with no http or https URL.
+      await downloadClip(clip.url as string, { root: 'app', path: file }, undefined).catch((error: unknown) => {
+        if (!(error instanceof ClipDownloadError)) throw error
+        if (error.status !== null) throw new ExplainedError(clipDownloadRefusal(error.status), `HTTP ${error.status}`, { cause: error })
         throw new ExplainedError(
           `Dez could not download the clip. The network failed, the clip is larger than ${byteSizeText(MAX_SAVED_CLIP_BYTES)} (the most that Dez saves), or the system did not let Dez write the file: the details tell which. Try again, unless the clip is too large.`,
-          rawErrorText(error),
+          rawErrorText(error.cause),
           { cause: error },
         )
-      }) as NativeHttpDownload
-      if (!download.saved) {
-        throw new ExplainedError(clipDownloadRefusal(download.status), `HTTP ${download.status}`)
-      }
+      })
       return path
     } catch (error) {
       console.error('Failed to save the clip:', error)

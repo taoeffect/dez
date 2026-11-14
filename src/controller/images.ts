@@ -3,9 +3,10 @@ import { convertFileSrc, isTauri } from '@tauri-apps/api/core'
 import { getCurrentWebview } from '@tauri-apps/api/webview'
 import { changeColors } from '../model/chat/imageColors'
 import { svgOfPng, UnwritableImageTypeError, type DrawnImage, type DrawnMediaType, type ImageDrawing, type ImageSize } from '../model/chat/imageDrawing'
-import { IMAGE_FOLDERS, imageExtension, isImagePath, storedImageFile, type ImageFolder, type ImageMediaType } from '../model/chat/images'
+import { IMAGE_FOLDERS, imageExtension, storedImageFile, type ImageFolder, type ImageMediaType } from '../model/chat/images'
 import { dropCopiesFile, pairDroppedFiles } from '../model/chat/linkedFiles'
 import { FileTooLargeError } from '../model/chat/mediaFiles'
+import { newStoredFilePath } from '../model/chat/storedFilePaths'
 import { ExplainedError, errorText, rawErrorText } from '../utils/errorText'
 import { fileNameOf } from '../utils/fileName'
 
@@ -44,15 +45,7 @@ export default sbp('sbp/selectors/register', {
   ): Promise<string> {
     try {
       const file = `${IMAGE_FOLDERS[folder]}/${crypto.randomUUID()}.${imageExtension(mediaType)}`
-      const appDir = await sbp('dez.native/getAppDir') as string
-      const path = `${appDir}/${file}`
-      // The recognizer takes only absolute paths with no brackets or line
-      // breaks (e.g. not `./.config/dez` when $HOME is not set). A reference
-      // to another path would show as plain text and never reach a model,
-      // so no file is written for it.
-      if (!isImagePath(path)) {
-        throw new ExplainedError(`Dez cannot store images in the Dez folder ${appDir}. The path of this folder must start with "/" and must not hold "[", "]", or a line break. Start Dez with a HOME environment variable that gives such a path.`)
-      }
+      const path = newStoredFilePath(await sbp('dez.native/getAppDir') as string, file, 'image')
       await sbp('dez.native/saveAppFile', file, bytes)
       return path
     } catch (error) {

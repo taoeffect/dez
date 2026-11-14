@@ -1,8 +1,11 @@
 const SVG_NS = 'http://www.w3.org/2000/svg'
 
+/** The tag and the attributes of each shape of an icon, in drawing order. */
+export type IconShapes = ReadonlyArray<readonly [tag: string, attributes: Readonly<Record<string, string>>]>
+
 /** An inline SVG icon in `currentColor`, from the tag and attributes of
  *  each of its shapes. */
-export function svgIcon(viewBox: string, shapes: ReadonlyArray<readonly [string, Record<string, string>]>): SVGSVGElement {
+export function svgIcon(viewBox: string, shapes: IconShapes): SVGSVGElement {
   const svg = document.createElementNS(SVG_NS, 'svg')
   svg.setAttribute('viewBox', viewBox)
   svg.setAttribute('aria-hidden', 'true')

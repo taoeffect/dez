@@ -36,10 +36,11 @@ use tokio::sync::{Notify, watch};
 use crate::confinement::confined_command;
 use crate::persistence::{FileRoot, app_file_path, has_link_below, is_app_file_segment, root_dir};
 
-// The programs that a run can name: the `bundle.externalBin` programs of
-// tauri.conf.json, under the names that the bundle gives them (a test keeps
-// the two lists the same).
-const BUNDLED_TOOLS: [&str; 2] = ["dez-ffmpeg", "dez-ffprobe"];
+// The programs that a run can name (`const BUNDLED_TOOLS: &[&str]`): the
+// `bundle.externalBin` programs of tauri.conf.json, under the names that
+// the bundle gives them. build.rs writes the list from the config, so the
+// config is its one place.
+include!(concat!(env!("OUT_DIR"), "/bundled_tools.rs"));
 
 // The folder of the app folder whose files a program can read, make, and
 // change, but not delete, move, or link (`also_writable` of
@@ -660,19 +661,6 @@ mod tests {
     use super::*;
     use crate::persistence::tests::TempDir;
     use serde_json::json;
-
-    #[test]
-    fn the_tool_list_is_the_external_programs_of_the_bundle() {
-        let config: serde_json::Value = serde_json::from_str(include_str!("../tauri.conf.json")).expect("config is JSON");
-        let programs: Vec<&str> = config["bundle"]["externalBin"]
-            .as_array()
-            .expect("externalBin list")
-            .iter()
-            .map(|program| program.as_str().expect("program path").trim_start_matches("binaries/"))
-            .collect();
-
-        assert_eq!(programs, BUNDLED_TOOLS);
-    }
 
     #[test]
     fn only_a_bundled_program_that_is_there_has_a_path() {

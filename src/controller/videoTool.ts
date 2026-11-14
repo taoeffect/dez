@@ -3,7 +3,7 @@ import { wholeImageDrawing, type DrawnImage, type ImageSize } from '../model/cha
 import { unreadableImageText } from '../model/tools/imageTool'
 import { jobTimedOutText } from '../model/tools/jobs'
 import { withoutLocalPaths } from '../model/tools/localPaths'
-import { programNotStartedText, type ClipInput, type ProgramEnd } from '../model/tools/programRuns'
+import { programNotStartedText, type ClipInput, type KeptFile, type ProgramEnd } from '../model/tools/programRuns'
 import { ToolError } from '../model/tools/types'
 import {
   clipFacts,
@@ -35,7 +35,7 @@ import {
   type VideoInput,
 } from '../model/tools/videoTool'
 import type { JobOutcome } from './jobs'
-import type { AppFileEntry, BundledToolInput, BundledToolRun } from './nativeTypes'
+import type { AppFileEntry, BundledToolInput, BundledToolOutput, BundledToolRun } from './nativeTypes'
 import { clipInputFile, inWorkFolder, readableFileSize, runProgram, storeOutputs } from './programRuns'
 
 // The work of the `video` tool (model/tools/videoTool.ts): the runs of
@@ -136,6 +136,25 @@ function timedOutOutcome(timeoutMs: number, log: ProgramLog): JobOutcome {
   return { text: withoutLocalPaths(jobTimedOutText(timeoutMs, ffmpegStateText(log.progress))), isError: true, assets: [] }
 }
 
+// The outcome of a job whose ffmpeg run ended in its time, with the text of
+// `result`: the files of `kept` move into the generated folders as the
+// assets of the job. A run that failed keeps no file.
+async function keptOutcome(result: { text: string, isError: boolean }, folder: string, kept: readonly KeptFile[]): Promise<JobOutcome> {
+  const text = withoutLocalPaths(result.text)
+  if (result.isError) return { text, isError: true, assets: [] }
+  return { text, isError: false, assets: await storeOutputs(folder, kept, VIDEO_TOOL.name) }
+}
+
+// One ffprobe run, to its end, with the time limit and the output cap of
+// every ffprobe run of the tool.
+function runProbe(
+  run: Omit<BundledToolRun, 'tool' | 'timeoutMs' | 'maxOutputBytes'>,
+  signal: AbortSignal,
+  onOutput: (output: BundledToolOutput) => void,
+): Promise<ProgramEnd> {
+  return runProgram('ffprobe', VIDEO_TOOL.name, { ...run, timeoutMs: FFPROBE_TIMEOUT_MS, maxOutputBytes: FFPROBE_OUTPUT_BYTES }, signal, onOutput)
+}
+
 /** The work of the job of a `video ffmpeg` call (`JobWork`): one run of
  *  ffmpeg with the arguments of `call`, in a new work folder that holds
  *  copies of the call's inputs. The new files of the run that Dez stores
@@ -156,10 +175,7 @@ export function runFfmpegJob(call: FfmpegCall, signal: AbortSignal, report: (sta
 
     const listed = await sbp('dez.native/listAppFiles', folder, 'cache') as AppFileEntry[]
     const files = outputFiles(listed, new Set(call.inputs.map((input) => input.name)))
-    const result = ffmpegRunResult(call, end, files, log, output)
-    const text = withoutLocalPaths(result.text)
-    if (result.isError) return { text, isError: true, assets: [] }
-    return { text, isError: false, assets: await storeOutputs(folder, files.kept, VIDEO_TOOL.name) }
+    return keptOutcome(ffmpegRunResult(call, end, files, log, output), folder, files.kept)
   })
 }
 
@@ -174,13 +190,7 @@ async function probeJoinClips(clips: readonly ClipInput[], copies: BundledToolIn
     // `FFPROBE_OUTPUT_BYTES` keeps it small.
     let output = ''
     const errorOutput = new OutputStart()
-    const end = await runProgram('ffprobe', VIDEO_TOOL.name, {
-      args: joinProbeArgs(name),
-      folder,
-      inputs: index === 0 ? copies : [],
-      timeoutMs: FFPROBE_TIMEOUT_MS,
-      maxOutputBytes: FFPROBE_OUTPUT_BYTES,
-    }, signal, ({ stream, text }) => {
+    const end = await runProbe({ args: joinProbeArgs(name), folder, inputs: index === 0 ? copies : [] }, signal, ({ stream, text }) => {
       if (stream === 'stdout') output += text
       else errorOutput.add(text)
     })
@@ -223,10 +233,7 @@ export function runJoinJob(call: JoinCall, signal: AbortSignal, report: (state: 
     const listed = await sbp('dez.native/listAppFiles', folder, 'cache') as AppFileEntry[]
     const { kept, notKept } = outputFiles(listed, made)
     const joined = kept.filter((file) => file.name === plan.output)
-    const result = joinRunResult(plan, call.clips.length, end, joined.length > 0, notKept, log)
-    const text = withoutLocalPaths(result.text)
-    if (result.isError) return { text, isError: true, assets: [] }
-    return { text, isError: false, assets: await storeOutputs(folder, joined, VIDEO_TOOL.name) }
+    return keptOutcome(joinRunResult(plan, call.clips.length, end, joined.length > 0, notKept, log), folder, joined)
   })
 }
 
@@ -241,13 +248,7 @@ export function runFfprobe(call: ProgramCall, signal: AbortSignal): Promise<stri
     const inputs = await prepareInputs(call.inputs, folder, signal)
     const output = new OutputStart()
     const errorOutput = new OutputStart()
-    const end = await runProgram('ffprobe', VIDEO_TOOL.name, {
-      args: call.args,
-      folder,
-      inputs,
-      timeoutMs: FFPROBE_TIMEOUT_MS,
-      maxOutputBytes: FFPROBE_OUTPUT_BYTES,
-    }, signal, ({ stream, text }) => (stream === 'stdout' ? output : errorOutput).add(text))
+    const end = await runProbe({ args: call.args, folder, inputs }, signal, ({ stream, text }) => (stream === 'stdout' ? output : errorOutput).add(text))
     if (end.kind !== 'exited' || end.code !== 0) throw new ToolError(withoutLocalPaths(ffprobeFailedText(end, output, errorOutput)))
     return withoutLocalPaths(ffprobeResultText(call.inputs, output, errorOutput))
   })

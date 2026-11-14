@@ -6,6 +6,7 @@ import { findImageReferences, imageExtension, imageMediaType, type ImageReferenc
 import { fileNameOf } from '../../utils/fileName'
 import { isMacPlatform } from '../../utils/platform'
 import { assetFactsText } from '../assetFacts'
+import { assetIcon } from '../assetIcons'
 import { IMAGE_MAX_HEIGHT_PX, SECTION_SEP, editorSizePx, sectionsField } from '../thread/cmEditor'
 import { measureLineHeights } from '../thread/editorMeasure'
 import { selectedAssetLook } from './assetSelection'
@@ -46,17 +47,6 @@ function setBoxSize(img: HTMLImageElement, size: ImageSize): void {
   img.style.setProperty('--dez-image-height', String(size.height))
 }
 
-/** A picture frame with a sun and hills, so that the id badge reads as the
- *  label of the image. The chip of a call that hides an image shows it too
- *  (toolCalls.ts). */
-export function imageIcon(): SVGSVGElement {
-  return svgIcon('0 0 16 16', [
-    ['rect', { x: '2', y: '3', width: '12', height: '10', rx: '2', ...ROUND_STROKE, 'stroke-width': '1.3' }],
-    ['circle', { cx: '6', cy: '6.5', r: '1.2', fill: 'currentColor' }],
-    ['path', { d: 'M2.6 11.6l3.4-3.3 2.4 2.3 1.9-1.8 3.1 3', ...ROUND_STROKE, 'stroke-width': '1.3' }],
-  ])
-}
-
 /** The badge with an image's id (`.dez-image__id` in `dezTheme`). Its text
  *  is only the id. */
 function idBadge(id: string): HTMLElement {
@@ -64,7 +54,7 @@ function idBadge(id: string): HTMLElement {
   badge.className = 'dez-image__id'
   badge.setAttribute('role', 'img')
   badge.setAttribute('aria-label', `Image id: ${id}`)
-  badge.append(imageIcon(), id)
+  badge.append(assetIcon('image'), id)
   return badge
 }
 

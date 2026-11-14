@@ -14,6 +14,7 @@ import { conversationAssets, mediaInputRules, preparedMediaRequest, promptReques
 import { jobTimeoutMs, jobTimeoutParameter } from './jobs'
 import { withoutLocalPaths } from './localPaths'
 import { FIND_MODELS, namedModelTarget, parameterValuesArgument } from './modelArguments'
+import { MODEL_INFO_SIZE_CAP } from './modelInfo'
 import { assetText, unknownInputsProblem, type InputWording } from './toolInputs'
 import { ToolError, type ToolArguments, type ToolDefinition } from './types'
 
@@ -43,11 +44,10 @@ import { ToolError, type ToolArguments, type ToolDefinition } from './types'
 export const DEFAULT_INVOKE_TIMEOUT_SECONDS = 1800
 
 /** The most characters of a text model's answer that the result of a job
- *  holds (the size limit of a `model_info` result, MODEL_INFO_SIZE_CAP):
- *  the result goes into the next request of the calling model and stays in
- *  the conversation, so a model that writes without end must not fill
- *  them. */
-export const INVOCATION_TEXT_CAP = 50_000
+ *  holds: the size limit of a `model_info` result, as both results go into
+ *  the next request of the calling model and stay in the conversation, so
+ *  a model that writes without end must not fill them. */
+export const INVOCATION_TEXT_CAP = MODEL_INFO_SIZE_CAP
 
 // Static text only (no count that changes, no date): the tools array and
 // the system prompt, which lists the tools, are in the provider's prompt

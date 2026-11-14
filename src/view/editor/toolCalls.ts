@@ -12,11 +12,12 @@ import { jobOwnText, startedJobId, type JobResultStatus } from '../../model/tool
 import { MODEL_INVOKE_TOOL } from '../../model/tools/modelInvoke'
 import { toolDefinition } from '../../model/tools/registry'
 import type { ToolArguments } from '../../model/tools/types'
+import { assetIcon } from '../assetIcons'
 import { sectionsField, type SectionModel } from '../thread/cmEditor'
 import { measureLineHeights } from '../thread/editorMeasure'
 import { streamingSectionField } from '../thread/modelChip'
 import { eyeIcon, hiddenAssets, hiddenAssetsOfChips, hiddenLineStarts, type AssetPlace } from './hiddenAssets'
-import { createImage, imageIcon } from './images'
+import { createImage } from './images'
 import { agentSectionTexts, chipBlocks, lineBlocks, sectionRolesChanged } from './lineBlocks'
 import { createPlayer, destroyPlayer, isInSelectableTooltip, updatePlayer } from './media'
 import type { DocRange } from './pendingRanges'
@@ -293,18 +294,12 @@ function wrenchIcon(): SVGSVGElement {
 }
 
 // The symbol of each type of what an intermediate call made. The image,
-// video, and audio symbols are the ones of the id badges of an image
-// (`imageIcon`) and of a player (`MediaPlayer.vue`), so that a type has one
-// symbol in the whole editor.
+// video, and audio symbols are the ones of the id badges (assetIcons.ts),
+// so that a type has one symbol in the whole editor.
 const TYPE_ICONS: Readonly<Record<ModelOutput, () => SVGSVGElement>> = {
-  image: imageIcon,
-  // A film camera.
-  video: () => svgIcon('0 0 16 16', [
-    ['rect', { x: '1.8', y: '4', width: '8.6', height: '8', rx: '1.8', ...ROUND_STROKE, 'stroke-width': '1.3' }],
-    ['path', { d: 'M10.4 7.2l3.8-2.2v6l-3.8-2.2', ...ROUND_STROKE, 'stroke-width': '1.3' }],
-  ]),
-  // Sound bars.
-  audio: () => svgIcon('0 0 16 16', [['path', { d: 'M3 6.5v3M5.5 4.4v7.2M8 2.8v10.4M10.5 5v6M13 6.7v2.6', ...ROUND_STROKE, 'stroke-width': '1.3' }]]),
+  image: () => assetIcon('image'),
+  video: () => assetIcon('video'),
+  audio: () => assetIcon('audio'),
   // Lines of text, the last one short.
   text: () => svgIcon('0 0 16 16', [['path', { d: 'M2.5 4.2h11M2.5 8h11M2.5 11.8h6.5', ...ROUND_STROKE, 'stroke-width': '1.3' }]]),
 }

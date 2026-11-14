@@ -1,7 +1,8 @@
 import sbp from '@sbp/sbp'
-import { IMAGE_FOLDERS, isImagePath } from '../model/chat/images'
+import { IMAGE_FOLDERS } from '../model/chat/images'
 import { ClipReadError, MAX_SAVED_CLIP_BYTES } from '../model/chat/mediaFiles'
-import { isSavedMediaPath, MEDIA_FOLDERS } from '../model/chat/mediaTags'
+import { MEDIA_FOLDERS } from '../model/chat/mediaTags'
+import { newStoredFilePath } from '../model/chat/storedFilePaths'
 import {
   INPUT_CLIP_TOO_LARGE,
   outputNotStoredText,
@@ -153,13 +154,7 @@ export async function storeOutputs(folder: string, files: readonly KeptFile[], t
     const appDir = await sbp('dez.native/getAppDir') as string
     for (const { name, kind, type, extension } of files) {
       const target = `${kind === 'image' ? IMAGE_FOLDERS.generated : MEDIA_FOLDERS.generated[kind]}/${crypto.randomUUID()}.${extension}`
-      const path = `${appDir}/${target}`
-      // A path that the recognizers of image references and media tags do
-      // not take would show as no asset (images/save and media/save have
-      // the same check), so no file moves there.
-      if (!(kind === 'image' ? isImagePath(path) : isSavedMediaPath(path))) {
-        throw new Error(`Dez cannot store files in the Dez folder ${appDir}: the recognizers of stored files do not take its path.`)
-      }
+      const path = newStoredFilePath(appDir, target, kind)
       await sbp('dez.native/moveAppFile', { root: 'cache', path: `${folder}/${name}` }, { root: 'app', path: target })
       assets.push(kind === 'image' ? { kind, path } : { kind: 'clip', clip: { kind, type, src: path, url: null, expires: null } })
     }

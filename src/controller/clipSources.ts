@@ -15,7 +15,26 @@ import type { AppFileRef } from './nativeTypes'
 /** The longest time that Dez waits for the whole download of a clip. A
  *  server that stops sending would keep the Save control, or the tool or
  *  the request that reads the clip, busy with no end. */
-export const CLIP_DOWNLOAD_TIMEOUT_MS = 30 * 60 * 1000
+const CLIP_DOWNLOAD_TIMEOUT_MS = 30 * 60 * 1000
+
+/** The failure of a clip download (`downloadClip`). `status` is the HTTP
+ *  status of a server that refused the clip; null when no answer came (the
+ *  network failed, the clip is larger than `MAX_SAVED_CLIP_BYTES`, or Dez
+ *  could not write the file), and then `cause` is the native error, whose
+ *  text can name the URL or the file. The message holds no URL and no path,
+ *  so a tool can give it to a chat provider; a text for the user words the
+ *  failure itself. */
+export class ClipDownloadError extends Error {
+  constructor(
+    readonly status: number | null,
+    options?: ErrorOptions,
+  ) {
+    super(status === null
+      ? `The download of the clip failed: its server gave no answer, the answer broke off, the clip is larger than ${byteSizeText(MAX_SAVED_CLIP_BYTES)}, or Dez could not write the file.`
+      : `The server of the clip answered HTTP ${status}.`, options)
+    this.name = 'ClipDownloadError'
+  }
+}
 
 /** Downloads a clip from its http or https URL into `file`, with no
  *  provider header: the URL is a signed one, and a key must not go to the
@@ -23,9 +42,8 @@ export const CLIP_DOWNLOAD_TIMEOUT_MS = 30 * 60 * 1000
  *  bridge as a JSON number array, and a clip larger than
  *  `MAX_SAVED_CLIP_BYTES` fails before it fills the memory. A stop of
  *  `signal` cancels the download and rejects with the stop. Any other
- *  failure throws an error whose text holds no URL and no path, as the
- *  error of a failed request can name them. A download that failed can
- *  leave a part of the clip in `file`: the caller deletes it. */
+ *  failure throws a `ClipDownloadError`. A download that failed can leave a
+ *  part of the clip in `file`: the caller deletes it. */
 export async function downloadClip (url: string, file: AppFileRef, signal: AbortSignal | undefined): Promise<void> {
   signal?.throwIfAborted()
   const requestId = crypto.randomUUID()
@@ -45,11 +63,11 @@ export async function downloadClip (url: string, file: AppFileRef, signal: Abort
         file,
         { maxBytes: MAX_SAVED_CLIP_BYTES },
       ) as NativeHttpDownload
-    } catch {
+    } catch (error) {
       signal?.throwIfAborted()
-      throw new Error(`The download of the clip failed: its server gave no answer, the answer broke off, the clip is larger than ${byteSizeText(MAX_SAVED_CLIP_BYTES)}, or Dez could not write the file.`)
+      throw new ClipDownloadError(null, { cause: error })
     }
-    if (!download.saved) throw new Error(`The server of the clip answered HTTP ${download.status}.`)
+    if (!download.saved) throw new ClipDownloadError(download.status)
     // A stop that came while the download ended, before its cancel did.
     signal?.throwIfAborted()
   } finally {

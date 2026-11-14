@@ -1,19 +1,66 @@
 use sha2::{Digest, Sha256};
 use std::{env, fs, io, path::Path, process};
 
-/// The programs that Dez ships next to its own program (`bundle.externalBin`
-/// in tauri.conf.json). The file of a program for one build target is
-/// `binaries/<name>-<target triple>`.
-const BUNDLED_TOOLS: [&str; 2] = ["dez-ffmpeg", "dez-ffprobe"];
+/// The Tauri config. Its `bundle.externalBin` is the one list of the
+/// programs that Dez ships next to its own program.
+const CONFIG_PATH: &str = "tauri.conf.json";
 
 const MANIFEST_PATH: &str = "binaries/manifest.json";
 
 fn main() {
-    if let Err(problem) = check_bundled_tools() {
+    let prepared = bundled_tools().and_then(|tools| {
+        check_bundled_tools(&tools)?;
+        write_bundled_tools(&tools)
+    });
+    if let Err(problem) = prepared {
         eprintln!("{problem}");
         process::exit(1);
     }
     tauri_build::build()
+}
+
+/// The JSON of a file of src-tauri/.
+fn read_json(path: &str) -> Result<serde_json::Value, String> {
+    let text = fs::read_to_string(path).map_err(|error| format!("Cannot read src-tauri/{path}: {error}"))?;
+    serde_json::from_str(&text).map_err(|error| format!("src-tauri/{path} is not JSON: {error}"))
+}
+
+/// The names of the programs that Dez ships, from `bundle.externalBin` of
+/// the Tauri config: each entry is `binaries/<name>`, and the file of the
+/// program for one build target is `binaries/<name>-<target triple>`.
+fn bundled_tools() -> Result<Vec<String>, String> {
+    println!("cargo:rerun-if-changed={CONFIG_PATH}");
+    let config = read_json(CONFIG_PATH)?;
+    let Some(programs) = config["bundle"]["externalBin"].as_array() else {
+        return Err(format!("src-tauri/{CONFIG_PATH} has no `bundle.externalBin` list."));
+    };
+    programs
+        .iter()
+        .map(|program| {
+            program
+                .as_str()
+                .and_then(|path| path.strip_prefix("binaries/"))
+                .filter(|name| !name.is_empty() && !name.contains('/'))
+                .map(str::to_string)
+                .ok_or_else(|| {
+                    format!(
+                        "src-tauri/{CONFIG_PATH}: each entry of `bundle.externalBin` must be \
+                         \"binaries/<name>\", and one is {program}."
+                    )
+                })
+        })
+        .collect()
+}
+
+/// Writes the names of the bundled programs as the constant `BUNDLED_TOOLS`
+/// of src/bundled_tools.rs (its `include!`), the programs that a run can
+/// name.
+fn write_bundled_tools(tools: &[String]) -> Result<(), String> {
+    let path = Path::new(&env::var("OUT_DIR").expect("cargo sets OUT_DIR for a build script")).join("bundled_tools.rs");
+    // `{:?}` writes each name as a Rust string literal.
+    let names: Vec<String> = tools.iter().map(|tool| format!("{tool:?}")).collect();
+    fs::write(&path, format!("const BUNDLED_TOOLS: &[&str] = &[{}];\n", names.join(", ")))
+        .map_err(|error| format!("Cannot write {}: {error}", path.display()))
 }
 
 /// Checks that the bundled tools of the build target are the files that
@@ -28,15 +75,12 @@ fn main() {
 /// Cargo runs the build script again only when a file that it names with
 /// `rerun-if-changed` changes (tauri-build names the config files), so most
 /// builds do not hash the programs.
-fn check_bundled_tools() -> Result<(), String> {
+fn check_bundled_tools(tools: &[String]) -> Result<(), String> {
     println!("cargo:rerun-if-changed={MANIFEST_PATH}");
-    let manifest = fs::read_to_string(MANIFEST_PATH)
-        .map_err(|error| format!("Cannot read src-tauri/{MANIFEST_PATH}: {error}"))?;
-    let manifest: serde_json::Value = serde_json::from_str(&manifest)
-        .map_err(|error| format!("src-tauri/{MANIFEST_PATH} is not JSON: {error}"))?;
+    let manifest = read_json(MANIFEST_PATH)?;
     let target = env::var("TARGET").expect("cargo sets TARGET for a build script");
 
-    for tool in BUNDLED_TOOLS {
+    for tool in tools {
         let name = format!("{tool}-{target}");
         let path = Path::new("binaries").join(&name);
         println!("cargo:rerun-if-changed={}", path.display());

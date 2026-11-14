@@ -43,8 +43,8 @@ export interface AppFileEntry {
   size: number
 }
 
-// The programs that Dez ships and can run (`BUNDLED_TOOLS` in
-// src-tauri/src/bundled_tools.rs).
+// The programs that Dez ships and can run (`bundle.externalBin` in
+// src-tauri/tauri.conf.json).
 export type BundledTool = 'dez-ffmpeg' | 'dez-ffprobe'
 
 // A file that a run gets in its work folder before the program starts: a

@@ -1,6 +1,9 @@
-import { IMAGE_PATH_END_SOURCE, LINKED_IMAGE_PATH_SOURCE } from './images'
-import { MEDIA_CACHE_PATH_END_SOURCE, MEDIA_TAG_KINDS, SAVED_MEDIA_PATH_END_SOURCES } from './mediaTags'
+import { ExplainedError } from '../../utils/errorText'
+import { IMAGE_PATH_END_SOURCE, LINKED_IMAGE_PATH_SOURCE, isImagePath } from './images'
+import { MEDIA_CACHE_PATH_END_SOURCE, MEDIA_TAG_KINDS, SAVED_MEDIA_PATH_END_SOURCES, isSavedMediaPath, type MediaTagKind } from './mediaTags'
 
+// The paths of the files that Dez stores, in the text of a conversation.
+//
 // A provider must never get the path of a file that Dez stores or links:
 // it holds the user's name and folders. The stored files are the images
 // (images.ts), the saved clips, and the temp copies of clips (mediaTags.ts);
@@ -94,4 +97,19 @@ export function withoutStoredFilePaths(text: string): string {
     const { standIn } = STORED_FILE_PATH_ENDS[last.findIndex((group, index) => index > 0 && group !== undefined) - 1]
     return `${run.slice(0, run.indexOf('/'))}${standIn}${run.slice(last.index + last[0].length)}`
   })
+}
+
+/** The absolute path of a new file that Dez stores at `file`, a path in the
+ *  app folder `appDir`, for the image reference or the media tag that names
+ *  it. Every code that stores an image or a clip in the app folder gets its
+ *  path here, before it writes the file. The recognizers take only an
+ *  absolute path on one line, with no bracket for an image (so not
+ *  `./.config/dez` when $HOME is not set): a reference or a tag with
+ *  another path would show as plain text and never reach a model. For such
+ *  a path, this throws an `ExplainedError` that tells the user the fix. */
+export function newStoredFilePath(appDir: string, file: string, kind: 'image' | MediaTagKind): string {
+  const path = `${appDir}/${file}`
+  if (kind === 'image' ? isImagePath(path) : isSavedMediaPath(path)) return path
+  const [files, refusedChars] = kind === 'image' ? ['images', '"[", "]", or a line break'] : ['clips', 'a line break']
+  throw new ExplainedError(`Dez cannot store ${files} in the Dez folder ${appDir}. The path of this folder must start with "/" and must not hold ${refusedChars}. Start Dez with a HOME environment variable that gives such a path.`)
 }

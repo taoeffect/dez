@@ -310,7 +310,8 @@ describe('dez.controller/media/save', () => {
 
     // The move failed: the URL is not tried in its place.
     expect(downloads).toHaveLength(1)
-    expect(consoleError).toHaveBeenCalledWith('Failed to save the clip:', expect.objectContaining({ cause: downloadError }))
+    // The native error is the cause of the download's error.
+    expect(consoleError).toHaveBeenCalledWith('Failed to save the clip:', expect.objectContaining({ cause: expect.objectContaining({ cause: downloadError }) }))
     expect(toasts).toEqual([
       { title: 'Could not save the clip', message: moveMessage, variant: 'error' },
       { title: 'Could not save the clip', message: downloadMessage, variant: 'error' },

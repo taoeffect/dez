@@ -29,6 +29,7 @@ import { MAX_SAVED_CLIP_BYTES, mediaFileExtension } from '../../model/chat/media
 import { isPastedMediaPath, type MediaTagKind } from '../../model/chat/mediaTags'
 import type { Role } from '../../model/chat/types'
 import { assetFactsText } from '../assetFacts'
+import { ASSET_ICON_SHAPES } from '../assetIcons'
 import { clipFile, clipProblem, clipSourceKind, expiryNotice, problemCard, type ClipLoadFailure, type ClipProblem } from './clipState'
 import { releaseRemovedMedia } from './releaseMedia'
 import { videoAspectRatios } from './videoSizes'
@@ -700,15 +701,12 @@ function onContextMenu(event: MouseEvent): void {
          the id in the request form of the clip's tag
          (`mediaTagRequestText`), or in the result of the tool that made
          the clip, so a message can name the clip by it. The tooltip belongs
-         to the badge, the element before it. -->
+         to the badge, the element before it. The symbol of the kind is the
+         one of the editor's chips (assetIcons.ts). -->
     <span class="media-player__overlay">
       <span class="media-player__id" role="img" :aria-label="`${kindName} id: ${id}`">
-        <svg v-if="kind === 'video'" class="media-player__icon media-player__icon--line" viewBox="0 0 16 16" aria-hidden="true">
-          <rect x="1.8" y="4" width="8.6" height="8" rx="1.8" />
-          <path d="M10.4 7.2l3.8-2.2v6l-3.8-2.2" />
-        </svg>
-        <svg v-else class="media-player__icon media-player__icon--line" viewBox="0 0 16 16" aria-hidden="true">
-          <path d="M3 6.5v3M5.5 4.4v7.2M8 2.8v10.4M10.5 5v6M13 6.7v2.6" />
+        <svg class="media-player__icon" viewBox="0 0 16 16" aria-hidden="true">
+          <component :is="tag" v-for="([tag, attributes], index) in ASSET_ICON_SHAPES[kind]" :key="index" v-bind="attributes" />
         </svg>
         <span class="media-player__id-text">{{ id }}</span>
       </span>
@@ -1204,7 +1202,6 @@ function onContextMenu(event: MouseEvent): void {
 .media-player__id > .media-player__icon {
   width: calc(var(--u) * 14);
   height: calc(var(--u) * 14);
-  stroke-width: 1.3;
   opacity: 0.72;
 }
 
