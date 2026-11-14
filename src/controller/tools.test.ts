@@ -17,8 +17,9 @@ import { providerInfo } from '../model/providers/testing'
 import type { ModelInfo, ProviderInfo, ProviderInputImageRules, ProviderSettingsDescriptor } from '../model/providers/types'
 import { NO_PICTURE_BUDGET, ReplyPictures, type PictureBudget, type ReplyPicture } from '../model/streams/replyPictures'
 import { assetProbeArgs, clipNotReadFacts } from '../model/tools/assetFacts'
-import { SCENE_CUT_FILTER } from '../model/tools/clipAnalysis'
+import { clipChecksArgs, SCENE_CUT_FILTER } from '../model/tools/clipAnalysis'
 import {
+  ASSET_VIEW_TIMEOUT_MS,
   audioViewArgs,
   clipNotReadNote,
   cropOfClipText,
@@ -48,6 +49,7 @@ import { IMAGE_NOT_SAVED_TEXT, INVOCATION_TEXT_CAP, invocationAnswerStateText, i
 import { modelListArguments, modelListText } from '../model/tools/modelList'
 import { TOOL_DEFINITIONS, unexpectedToolErrorText, unknownToolText } from '../model/tools/registry'
 import type { ToolArguments, ToolRunResult } from '../model/tools/types'
+import { FFPROBE_TIMEOUT_MS } from '../model/tools/videoTool'
 import { ExplainedError } from '../utils/errorText'
 import { ReplyJobs, type JobOutcome } from './jobs'
 import { invokeModel } from './modelInvoke'
@@ -1696,9 +1698,10 @@ describe('dez.controller/tools/run', () => {
     const COLUMNS = 'Each line: id | kind | format and facts | shown, or hidden in the panel of its call\'s chip | who made it.'
     let tabId: string
 
-    function assetInfo(assets: string): Promise<ToolRunResult> {
+    function assetInfo(assets: string, checks?: string): Promise<ToolRunResult> {
       const context: ToolRunContext = { tabId, model: REPLY_MODEL, jobs: new ReplyJobs(), writeImage: () => null, writeClip: () => null, ...NO_PICTURES }
-      return sbp('dez.controller/tools/run', { name: 'asset_info', arguments: { assets } }, running(), context) as Promise<ToolRunResult>
+      const args = checks === undefined ? { assets } : { assets, checks }
+      return sbp('dez.controller/tools/run', { name: 'asset_info', arguments: args }, running(), context) as Promise<ToolRunResult>
     }
 
     beforeEach(() => {
@@ -1782,6 +1785,94 @@ describe('dez.controller/tools/run', () => {
       readImage = async () => new Blob([new Uint8Array(2048)], { type: 'image/jpeg' })
 
       expect((await assetInfo('a')).content).toBe(`${COLUMNS}\n@a | image | JPEG | 1000x500 | 2 KB | shown | from the user`)
+    })
+
+    describe('with checks', () => {
+      const CHECKED_COLUMNS = `${COLUMNS} Under the line of a clip: a line for each check, with times in seconds of the clip.`
+      const SCENE_LINE = '@b | video | MP4 | 5.04 s | 854x480 | 24 fps | h264 | sound (aac) | 1.2 MB | hidden | made by the model_invoke job 1 of its reply: "Scene 1: a fox"'
+      const VOICE_LINE = '@d | audio | WAV | 5.04 s | aac | 48000 Hz | 2 channels | 1.2 MB | shown | from the user'
+      // What the check runs log for each clip copy, and how they end.
+      let checkLogs: Record<string, string>
+      let checkEnds: Record<string, BundledToolEnd>
+
+      beforeEach(() => {
+        checkLogs = {
+          'b.mp4': [
+            '[Parsed_blackdetect_0 @ 0xffffa1667d90] black_start:2 black_end:3 black_duration:1',
+            '[Parsed_scdet_1 @ 0xffffa1667e50] lavfi.scd.score: 41.855, lavfi.scd.time: 2',
+            '[Parsed_scdet_1 @ 0xffffa1667e50] lavfi.scd.score: 38.512, lavfi.scd.time: 3',
+          ].join('\n'),
+          'd.wav': '[Parsed_silencedetect_0 @ 0xffffa1668090] silence_start: 1.014813',
+        }
+        checkEnds = {}
+        native.program = async (run, onOutput) => {
+          const input = run.args[run.args.indexOf('-i') + 1]
+          if (run.tool === 'dez-ffprobe') onOutput({ stream: 'stdout', text: PROBED })
+          else onOutput({ stream: 'stderr', text: checkLogs[input] })
+          return run.tool === 'dez-ffmpeg' ? checkEnds[input] ?? ENDED : ENDED
+        }
+      })
+
+      // The tool, the arguments, and the time limit of each run.
+      const runs = () => native.runs.map(({ run }) => ({ tool: run.tool, args: run.args, timeoutMs: run.timeoutMs }))
+
+      it('runs the checks that fit each clip over the whole clip, after its probe, and gives their lines under its line', async () => {
+        expect(await assetInfo('@a @b @d', 'cuts, silence black')).toStrictEqual({
+          content: [
+            CHECKED_COLUMNS,
+            '@a | image | PNG | 1000x500 | 2 KB | shown | from the user',
+            SCENE_LINE,
+            '  black: 2 s to 3 s',
+            '  silence: none',
+            '  cuts: 2, 3 s',
+            VOICE_LINE,
+            '  black: no check, the clip has no picture',
+            '  silence: 1.015 s to the end',
+            '  cuts: no check, the clip has no picture',
+          ].join('\n'),
+          isError: false,
+        })
+
+        deletedWorkFolder()
+        expect(runs()).toStrictEqual([
+          { tool: 'dez-ffprobe', args: assetProbeArgs('b.mp4'), timeoutMs: FFPROBE_TIMEOUT_MS },
+          { tool: 'dez-ffmpeg', args: clipChecksArgs('b.mp4', ['black', 'silence', 'cuts']), timeoutMs: ASSET_VIEW_TIMEOUT_MS },
+          { tool: 'dez-ffprobe', args: assetProbeArgs('d.wav'), timeoutMs: FFPROBE_TIMEOUT_MS },
+          { tool: 'dez-ffmpeg', args: clipChecksArgs('d.wav', ['silence']), timeoutMs: ASSET_VIEW_TIMEOUT_MS },
+        ])
+        expect(consoleError).not.toHaveBeenCalled()
+      })
+
+      it('runs no ffmpeg for a clip that no check fits', async () => {
+        expect((await assetInfo('d', 'frozen')).content).toBe([CHECKED_COLUMNS, VOICE_LINE, '  frozen: no check, the clip has no picture'].join('\n'))
+        expect(runs().map(({ tool }) => tool)).toStrictEqual(['dez-ffprobe'])
+      })
+
+      it('gives one line of no checks for a clip whose run failed or that Dez could not read, and the lines of the others', async () => {
+        checkEnds['b.mp4'] = { kind: 'timedOut' }
+
+        expect((await assetInfo('b c d', 'silence frozen')).content).toBe([
+          CHECKED_COLUMNS,
+          SCENE_LINE,
+          '  No checks: ffmpeg took longer than 60 s to read this whole clip, so Dez stopped it. A check of the picture reads every frame: '
+            + 'for a long video clip, check only its sound (`silence`, `loudness_curve`), or view parts of it with asset_view (`start` and `end`).',
+          '@c | audio | gone: the user deleted its file, and it has no web address | shown | made by the model venice/venice-glm-5',
+          '  No checks: Dez could not read this clip.',
+          VOICE_LINE,
+          '  frozen: no check, the clip has no picture',
+          '  silence: 1.015 s to the end',
+        ].join('\n'))
+        expect(consoleError).toHaveBeenCalledWith('ffmpeg could not run the checks of the video clip @b:', { kind: 'timedOut' }, checkLogs['b.mp4'])
+      })
+
+      it('refuses a check that Dez does not have, and reads nothing', async () => {
+        expect(await assetInfo('@a @b', 'black, freeze')).toStrictEqual({
+          content: 'Unknown value "freeze" in `checks`. Use any of: black, frozen, silence, loudness_curve, cuts. Dez read no facts.',
+          isError: true,
+        })
+        expect(readImages).toStrictEqual([])
+        expect(native.runs).toStrictEqual([])
+      })
     })
   })
 

@@ -15,7 +15,7 @@ import {
 } from '../streams/replyPictures'
 import { assetIdsArgument, unknownValuesText } from './arguments'
 import { shortNumber } from './assetFacts'
-import { SCENE_CUT_FILTER } from './clipAnalysis'
+import { frameTimeText, SCENE_CUT_FILTER } from './clipAnalysis'
 import { clipReadAdviceText, type InputWording } from './toolInputs'
 import { ToolError, type ToolArguments, type ToolDefinition } from './types'
 import { FFMPEG_FIXED_ARGS } from './videoTool'
@@ -803,13 +803,6 @@ export const PICTURE_TOO_LARGE_NOTE = 'No picture: even the smallest JPEG copy t
 /** What the picture of the image `id` shows. */
 export function imagePictureShows(id: string): string {
   return `the image @${id}`
-}
-
-// A time of a frame or of a cut as the texts write it: to the millisecond,
-// so that a call that gives it back (`times`) gets the same frame
-// (`frameTarget`).
-function frameTimeText(seconds: number): string {
-  return String(Number(seconds.toFixed(3)))
 }
 
 function timesListText(times: readonly number[]): string {

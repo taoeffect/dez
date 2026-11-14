@@ -14,6 +14,7 @@ import {
 } from '../model/tools/programRuns'
 import { clipReadProblemText } from '../model/tools/toolInputs'
 import { ToolError } from '../model/tools/types'
+import { FFMPEG_OUTPUT_BYTES } from '../model/tools/videoTool'
 import { workFolderPath } from '../model/tools/workFolders'
 import { holdingCachePath } from './cacheHolds'
 import { clipFromSources, downloadClip, type ClipSource } from './clipSources'
@@ -153,6 +154,24 @@ export async function runProgram(
   // which nobody reads a result.
   if (end.kind === 'cancelled') throw new Error(`The run of ${program} was cancelled with no stop of its call.`)
   return end
+}
+
+/** A run of ffmpeg for a call of the tool `toolName`, on the input copies
+ *  that are already in the work folder `folder`, to its end, with all that
+ *  it wrote: the log, where its filters write what they find in a clip.
+ *  The log can hold a path, so it goes to a model only through a reader. */
+export async function runFfmpegLog(
+  args: string[],
+  folder: string,
+  { toolName, timeoutMs }: { toolName: string, timeoutMs: number },
+  signal: AbortSignal,
+): Promise<{ end: ProgramEnd, log: string }> {
+  let log = ''
+  const run = { args, folder, inputs: [], timeoutMs, maxOutputBytes: FFMPEG_OUTPUT_BYTES }
+  const end = await runProgram('ffmpeg', toolName, run, signal, ({ text }) => {
+    log += text
+  })
+  return { end, log }
 }
 
 /** Moves the new files `files` of a work folder into the generated folders

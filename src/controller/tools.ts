@@ -411,9 +411,11 @@ const TOOL_RUNNERS: Record<string, ToolRunner> = {
     },
   }),
   // The facts of the images and the clips that the call names, with who
-  // made each one and whether the editor hides it (controller/assetInfo.ts).
-  // The call waits for them and starts no job: an image needs one decode in
-  // the webview, and a clip one short ffprobe run.
+  // made each one and whether the editor hides it, and the checks of each
+  // clip (controller/assetInfo.ts). The call waits for them and starts no
+  // job: an image needs one decode in the webview, and a clip one short
+  // ffprobe run, and with checks, one ffmpeg run of at most the time limit
+  // of a view, as asset_view has.
   async asset_info (args, signal, context) {
     return assetInfoResult(args, callSections(context), signal)
   },

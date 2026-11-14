@@ -80,9 +80,8 @@ import {
 import { clipInput, type ClipInput, type ProgramEnd } from '../model/tools/programRuns'
 import { unknownAssetsText } from '../model/tools/toolInputs'
 import { ToolError, type ToolArguments, type ToolRunResult } from '../model/tools/types'
-import { FFMPEG_OUTPUT_BYTES } from '../model/tools/videoTool'
 import { probeClip, readImageFacts, type PicturePlan } from './assetInfo'
-import { inWorkFolder, runProgram } from './programRuns'
+import { inWorkFolder, runFfmpegLog } from './programRuns'
 import { saveShownPictures } from './shownPictures'
 import type { ToolRunContext } from './tools'
 
@@ -212,16 +211,8 @@ async function gridView(members: readonly GridMember[], detail: ViewDetail): Pro
   }
 }
 
-// A run of ffmpeg for a view, on the clip copy that is already in the work
-// folder `folder`, with its log.
-async function runFfmpeg(args: string[], folder: string, signal: AbortSignal): Promise<{ end: ProgramEnd, log: string }> {
-  let log = ''
-  const run = { args, folder, inputs: [], timeoutMs: ASSET_VIEW_TIMEOUT_MS, maxOutputBytes: FFMPEG_OUTPUT_BYTES }
-  const end = await runProgram('ffmpeg', ASSET_VIEW_TOOL.name, run, signal, ({ text }) => {
-    log += text
-  })
-  return { end, log }
-}
+// The time limit and the tool name of each run of ffmpeg for a view.
+const VIEW_RUN = { toolName: ASSET_VIEW_TOOL.name, timeoutMs: ASSET_VIEW_TIMEOUT_MS }
 
 /** A JPEG picture that a run of ffmpeg wrote, with its size (null: not
  *  known). */
@@ -277,7 +268,7 @@ type SheetRun =
 // work folder `folder`: the sheet with the times of its frames, else that
 // the run found no frame to take, else the note of what went wrong.
 async function sheetRun(clip: ClipAttachment, plan: SheetRunPlan, folder: string, signal: AbortSignal): Promise<SheetRun> {
-  const ran = await runFfmpeg(plan.args, folder, signal)
+  const ran = await runFfmpegLog(plan.args, folder, VIEW_RUN, signal)
   const times = sheetFrameTimes(ran.log, plan.from, plan.frames)
   // A run with no frame to take makes ffmpeg fail, as it has nothing to
   // write. A damaged clip fails in the same way: its run is a failed view.
@@ -341,7 +332,7 @@ async function timesSheet(input: ClipInput, times: readonly number[], seconds: n
 // one run cannot do both. Both runs read the part with the same `-ss`, so
 // the frames of the second are those of the cuts of the first.
 async function scenesSheet(input: ClipInput, frames: number, part: ClipPart, detail: ViewDetail, folder: string, signal: AbortSignal): Promise<SheetView> {
-  const cutsRan = await runFfmpeg(sceneCutsArgs(input.name, part), folder, signal)
+  const cutsRan = await runFfmpegLog(sceneCutsArgs(input.name, part), folder, VIEW_RUN, signal)
   const problem = runProblemNote(input.clip, cutsRan)
   if (problem !== null) return { notes: [problem], picture: null, failed: true }
   const cuts = cutTimes(cutsRan.log).map((time) => part.start + time)
@@ -376,7 +367,7 @@ function soundDraw(input: ClipInput, picture: SoundPicture, strip: ImageSize | n
 // `draw`, the picture of its sound: their notes, and the picture as ffmpeg
 // drew it, which the caller gives its texts.
 async function soundView(input: ClipInput, part: ClipPart, draw: SoundDraw | null, folder: string, signal: AbortSignal): Promise<{ notes: string[], picture: RunPicture | null }> {
-  const ran = await runFfmpeg(audioViewArgs(input.name, part, draw), folder, signal)
+  const ran = await runFfmpegLog(audioViewArgs(input.name, part, draw), folder, VIEW_RUN, signal)
   // A part with no sample of the sound (a video clip whose sound ends
   // before the part) is no failure. Its run with a picture fails, as it has
   // no picture to write, and its run with no picture logs a loudness

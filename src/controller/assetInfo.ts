@@ -16,20 +16,36 @@ import {
   probedClipFacts,
   type ProbedClip,
 } from '../model/tools/assetFacts'
-import { ASSET_INFO_TOOL, ASSET_INFO_WORDING, assetInfoLine, assetInfoText, MAX_ASSET_INFO_IDS } from '../model/tools/assetInfo'
+import {
+  ASSET_INFO_TOOL,
+  ASSET_INFO_WORDING,
+  assetInfoChecks,
+  assetInfoLine,
+  assetInfoText,
+  checkLines,
+  CHECKS_NOT_READ_LINE,
+  checksFailedLine,
+  clipStreams,
+  fittingChecks,
+  MAX_ASSET_INFO_IDS,
+} from '../model/tools/assetInfo'
+import { ASSET_VIEW_TIMEOUT_MS } from '../model/tools/assetView'
+import { clipChecksArgs, type ClipCheck } from '../model/tools/clipAnalysis'
 import { clipInput, type ClipInput } from '../model/tools/programRuns'
 import { unknownAssetsText } from '../model/tools/toolInputs'
 import { ToolError, type ToolArguments } from '../model/tools/types'
 import { FFPROBE_OUTPUT_BYTES, FFPROBE_TIMEOUT_MS } from '../model/tools/videoTool'
-import { copyInputClip, inWorkFolder, runProgram } from './programRuns'
+import { copyInputClip, inWorkFolder, runFfmpegLog, runProgram } from './programRuns'
 
 // The work of the `asset_info` tool (model/tools/assetInfo.ts): it reads
-// the facts of each image and clip that a call names. This module
-// registers no selector: the `asset_info` runner (tools.ts) calls it.
+// the facts of each image and clip that a call names, and with `checks`,
+// runs ffmpeg over each clip. This module registers no selector: the
+// `asset_info` runner (tools.ts) calls it.
 //
-// A file that Dez cannot read fails only its own line, so that the model
-// gets the facts of the others. The cause goes to the log only: a native
-// error and the output of ffprobe can hold a path.
+// A file that Dez cannot read, or a run of the checks that fails, fails
+// only its own lines, so that the model gets the facts of the others. The
+// cause goes to the log only: a native error and the output of ffprobe and
+// ffmpeg can hold a path.
 
 /** What `readImageFacts` read of an image. `facts` is its facts text
  *  (`imageFactsText`), or the text of what Dez could not read. */
@@ -120,22 +136,43 @@ export async function probeClip(input: ClipInput, folder: string, signal: AbortS
   return { kind: 'probed', facts }
 }
 
+// The check lines of the clip of `input` (`checks`), whose probe gave
+// `probed`: one run of ffmpeg over the whole clip, on its copy in the work
+// folder `folder`, for the checks that fit the clip.
+async function clipCheckLines(input: ClipInput, probed: ProbedClip, checks: readonly ClipCheck[], folder: string, signal: AbortSignal): Promise<string[]> {
+  if (probed.kind !== 'probed') return [CHECKS_NOT_READ_LINE]
+  const streams = clipStreams(input.kind, probed.facts)
+  const fitting = fittingChecks(checks, streams)
+  if (fitting.length === 0) return checkLines(checks, streams, '')
+  const run = { toolName: ASSET_INFO_TOOL.name, timeoutMs: ASSET_VIEW_TIMEOUT_MS }
+  const { end, log } = await runFfmpegLog(clipChecksArgs(input.name, fitting), folder, run, signal)
+  if (end.kind !== 'exited' || end.code !== 0) {
+    console.error(`ffmpeg could not run the checks of the ${input.kind} clip @${input.id}:`, end, log)
+    return [checksFailedLine(end, fitting)]
+  }
+  return checkLines(checks, streams, log)
+}
+
 /** The result text of an `asset_info` call with the arguments `args`, for
  *  the conversation `sections`: one line for each image and clip that it
- *  names. Throws a `ToolError` for a bad `assets` argument, and for an id
- *  that names no image and no clip of the conversation. A stop of `signal`
- *  stops a run of ffprobe and rejects with the stop. */
+ *  names, and under the line of each clip, the lines of its checks.
+ *  Throws a `ToolError` for a bad `assets` or `checks` argument, and for
+ *  an id that names no image and no clip of the conversation. A stop of
+ *  `signal` stops a run of ffprobe or ffmpeg and rejects with the stop. */
 export async function assetInfoResult(args: ToolArguments, sections: readonly Section[], signal: AbortSignal): Promise<string> {
   const ids = assetIdsArgument(args, { max: MAX_ASSET_INFO_IDS, notDone: ASSET_INFO_WORDING.notDone })
+  const checks = assetInfoChecks(args)
   const assets = conversationAssets(sections)
   const named = ids.flatMap((id) => assets.found.get(id) ?? [])
   if (named.length < ids.length) {
     throw new ToolError(unknownAssetsText(ids.filter((id) => !assets.found.has(id)), assets, ASSET_INFO_WORDING))
   }
 
-  // The facts of each asset of `named`, at its index. The clips share one
-  // work folder for their probes, after the images.
+  // The facts of each asset of `named`, and the check lines of each clip,
+  // at its index. The clips share one work folder for their runs, after
+  // the images.
   const facts: string[] = []
+  const checked: string[][] = []
   const clips: { index: number, clip: ClipAttachment }[] = []
   for (const [index, asset] of named.entries()) {
     if (asset.kind === 'clip') {
@@ -147,15 +184,18 @@ export async function assetInfoResult(args: ToolArguments, sections: readonly Se
   }
   if (clips.length > 0) {
     await inWorkFolder(async (folder) => {
-      for (const { index, clip } of clips) facts[index] = probedClipFacts(clip, await probeClip(clipInput(clip), folder, signal, ASSET_INFO_TOOL.name))
+      for (const { index, clip } of clips) {
+        const input = clipInput(clip)
+        const probed = await probeClip(input, folder, signal, ASSET_INFO_TOOL.name)
+        facts[index] = probedClipFacts(clip, probed)
+        if (checks.length > 0) checked[index] = await clipCheckLines(input, probed, checks, folder, signal)
+      }
     })
   }
 
   const places = assetPlaces(sections, named)
-  return assetInfoText(named.map((asset, index) => assetInfoLine(
-    asset.id,
-    asset.kind === 'clip' ? asset.clip.kind : 'image',
-    facts[index],
-    places[index],
-  )))
+  return assetInfoText(named.flatMap((asset, index) => [
+    assetInfoLine(asset.id, asset.kind === 'clip' ? asset.clip.kind : 'image', facts[index], places[index]),
+    ...(checked[index] ?? []),
+  ]), checks)
 }
