@@ -1,33 +1,32 @@
 import { describe, expect, it } from 'vitest'
-import { assetInfoIds, assetInfoLine, assetOriginText, MAX_ASSET_INFO_IDS } from './assetInfo'
+import { assetIdsArgument, assetInfoLine, assetOriginText } from './assetInfo'
 import { ToolError } from './types'
+
+const RULE = { max: 3, notDone: 'Dez did nothing.' }
 
 function idsError(assets: string): string {
   try {
-    assetInfoIds({ assets })
+    assetIdsArgument({ assets }, RULE)
   } catch (error) {
     expect(error).toBeInstanceOf(ToolError)
     return (error as ToolError).message
   }
-  throw new Error('assetInfoIds did not throw')
+  throw new Error('assetIdsArgument did not throw')
 }
 
-describe('assetInfoIds', () => {
+describe('assetIdsArgument', () => {
   it('takes ids with and without the @, split by spaces and commas, each one once', () => {
-    expect(assetInfoIds({ assets: ' @c, a\n@c  bb,' })).toStrictEqual(['c', 'a', 'bb'])
+    expect(assetIdsArgument({ assets: ' @c, a\n@c  bb,' }, RULE)).toStrictEqual(['c', 'a', 'bb'])
   })
 
-  it('refuses a word that is no id, and no ids', () => {
-    expect(idsError('@a @B')).toBe('`assets` holds "@B", which is no id of an image or a clip. Give the ids of the images and the clips, as in "@a @c". Dez read no facts.')
-    expect(idsError(' , ')).toBe('`assets` names no image and no clip. Give the ids of the images and the clips, as in "@a @c". Dez read no facts.')
+  it('refuses a word that is no id, and no ids, and tells what Dez did not do', () => {
+    expect(idsError('@a @B')).toMatch(/"@B".*Dez did nothing\.$/)
+    expect(idsError(' , ')).toMatch(/Dez did nothing\.$/)
   })
 
-  it(`refuses more than ${MAX_ASSET_INFO_IDS} ids, and counts a repeated id once`, () => {
-    const ids = Array.from({ length: MAX_ASSET_INFO_IDS }, (_, index) => `@${'a'.repeat(index + 1)}`)
-
-    expect(assetInfoIds({ assets: [...ids, ids[0]].join(' ') })).toHaveLength(MAX_ASSET_INFO_IDS)
-    expect(idsError([...ids, '@z'].join(' '))).toBe(`\`assets\` names ${MAX_ASSET_INFO_IDS + 1} images and clips, and one call reads at most ${MAX_ASSET_INFO_IDS}. `
-      + `Call again with the first ${MAX_ASSET_INFO_IDS}, then again with the rest. Dez read no facts.`)
+  it('refuses more than the most ids of one call, and counts a repeated id once', () => {
+    expect(assetIdsArgument({ assets: '@a @b @c @a' }, RULE)).toHaveLength(3)
+    expect(idsError('@a @b @c @d')).toMatch(/at most 3\b.*Dez did nothing\.$/)
   })
 })
 

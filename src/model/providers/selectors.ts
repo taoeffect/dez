@@ -188,11 +188,12 @@ function secretReadError(provider: Provider, copilot: boolean, error: unknown): 
 
 // The messages with the bytes of each image part, read once for the request
 // and its Copilot retry. The app folder is read only when a message has an
-// image.
+// image. A picture part already holds its bytes.
 async function readMessageImages(messages: ProviderChatInputMessage[]): Promise<ChatMessage[]> {
   let appDir: Promise<string> | undefined
   const readPart = async (part: MessagePart): Promise<ChatPart> => {
     if (part.type === 'text') return part
+    if (part.type === 'picture') return { type: 'image', mediaType: part.mediaType, data: bytesToBase64(part.bytes) }
     appDir ??= sbp('dez.native/getAppDir') as Promise<string>
     const { bytes, mediaType } = await requestImage(part.path, await appDir)
     return { type: 'image', mediaType, data: bytesToBase64(bytes) }

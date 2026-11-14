@@ -191,7 +191,7 @@ function chatContent(model: ModelInfo, source: PromptRequestSource): string | Me
   // The text after the last image can be only white space, and the
   // Anthropic format refuses such a text part (as `userMessageContent`,
   // streams/messages.ts).
-  const parts = source.parts.filter((part) => part.type === 'image' || part.text.trim() !== '')
+  const parts = source.parts.filter((part) => part.type !== 'text' || part.text.trim() !== '')
   const [first] = parts
   if (first === undefined) {
     throw new ToolError(`\`prompt\` has no text, and ${model.name} answers nothing without one. Write in \`prompt\` what the model must answer or do, and name each image that it must get with @id.`)

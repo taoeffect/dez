@@ -12,6 +12,7 @@ import { errorText, explainedError } from '../utils/errorText'
 import type { ClipInputRules, GeneratedMedia, MediaKind, MediaProgress, ModelRequest, ProviderGenerateMediaResult, ProviderStreamChatResult } from '../model/providers'
 import { requireProvider } from '../model/providers/registry'
 import { agentSectionMessages, mediaRequestInput } from '../model/streams/messages'
+import { ReplyPictures } from '../model/streams/replyPictures'
 import {
   checkToolCalls,
   MAX_TOOL_ROUNDS,
@@ -114,6 +115,10 @@ interface ReplyRuntime {
   // their tool round, but not the reply: a stop, a new submit, and the end
   // of the reply end them (`stopAll`).
   jobs: ReplyJobs
+  // The pictures that the tools of the reply showed the model
+  // (`ToolRunContext.showPictures`), which each later request of the reply
+  // sends after the results of their round.
+  pictures: ReplyPictures
 }
 
 // The reply of each tab, so tabs stream at the same time and a new start or
@@ -352,12 +357,17 @@ async function runToolRound(tabId: string, reply: ReplyRuntime, model: ModelRef,
   for (const [index, call] of calls.entries()) {
     if (call.refusal !== undefined) continue
     const toolCall: ToolRunCall = { name: call.name, arguments: call.arguments }
+    // Not after a stop (`stopToolRun`), as for an image of the model.
+    const takesAssets = () => reply.toolRun === run
     const context: ToolRunContext = {
       tabId,
       model,
       jobs: reply.jobs,
-      // Not after a stop (`stopToolRun`), as for an image of the model.
-      ...toolAssetWriters(tabId, reply, call.name, () => reply.toolRun === run),
+      ...toolAssetWriters(tabId, reply, call.name, takesAssets),
+      picturesLeft: () => (takesAssets() ? reply.pictures.left : 0),
+      // The round's key is the id of its first call: the first result of
+      // its tool message has it (`ReplyPictures.inMessages`).
+      showPictures: (pictures) => { if (takesAssets()) reply.pictures.add(calls[0].id, pictures) },
     }
     const result = await sbp('dez.controller/tools/run', toolCall, run.abort.signal, context) as ToolRunResult
     if (reply.toolRun !== run) return null
@@ -585,7 +595,7 @@ async function runChatRounds(args: StreamStartArgs, reply: ReplyRuntime): Promis
     // text at the start of the message of the next round, after these same
     // bytes.
     const soFar = agentSectionMessages(replySoFar, args.model, true)
-    messages = [...args.messages, ...soFar.slice(0, soFar.findLastIndex((message) => message.role === 'tool') + 1)]
+    messages = [...args.messages, ...reply.pictures.inMessages(soFar.slice(0, soFar.findLastIndex((message) => message.role === 'tool') + 1))]
   }
 }
 
@@ -723,6 +733,7 @@ export default sbp('sbp/selectors/register', {
       escaper: new ModelTextEscaper(),
       afterAsset: false,
       jobs: new ReplyJobs((usd) => countRequestCost(args.tabId, usd)),
+      pictures: new ReplyPictures(),
     }
     repliesByTab.set(args.tabId, reply)
 

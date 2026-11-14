@@ -1,8 +1,10 @@
 import type { AssetOrigin, AssetPlace } from '../chat/assetOrigins'
 import { IMAGE_ID_SOURCE } from '../chat/images'
-import type { ClipReadProblem } from '../chat/mediaFiles'
+import { mediaFileExtension, type ClipReadProblem } from '../chat/mediaFiles'
 import type { MediaTagKind } from '../chat/mediaTags'
 import { modelRefKey } from '../chat/modelRef'
+import type { ClipAttachment } from '../providers/clipInputs'
+import { clipFactsText, type ClipProbeFacts } from './assetFacts'
 import type { InputWording } from './toolInputs'
 import { ToolError, type ToolArguments, type ToolDefinition } from './types'
 
@@ -49,23 +51,23 @@ export const ASSET_INFO_WORDING: InputWording = { argument: '`assets`', notDone:
 
 const ASSET_ID_WORD = new RegExp(`^@?(${IMAGE_ID_SOURCE})$`)
 
-/** The ids that an `asset_info` call names (`assets`, split as the
+/** The ids that the `assets` argument of a call names (split as the
  *  `join_clips` subcommand of `video` splits its clips), each one once, in
- *  the order of the call. Throws a `ToolError` for a word that is no id,
- *  for no id, and for more than `MAX_ASSET_INFO_IDS` ids. */
-export function assetInfoIds(args: ToolArguments): string[] {
+ *  the order of the call. Throws a `ToolError` that ends with `notDone`
+ *  for a word that is no id, for no id, and for more than `max` ids. */
+export function assetIdsArgument(args: ToolArguments, { max, notDone }: { max: number, notDone: string }): string[] {
   const words = (typeof args.assets === 'string' ? args.assets : '').split(/[\s,]+/).filter((word) => word !== '')
   const form = 'Give the ids of the images and the clips, as in "@a @c".'
   const ids = new Set<string>()
   for (const word of words) {
     const id = ASSET_ID_WORD.exec(word)?.[1]
-    if (id === undefined) throw new ToolError(`\`assets\` holds ${JSON.stringify(word)}, which is no id of an image or a clip. ${form} ${NOT_DONE}`)
+    if (id === undefined) throw new ToolError(`\`assets\` holds ${JSON.stringify(word)}, which is no id of an image or a clip. ${form} ${notDone}`)
     ids.add(id)
   }
-  if (ids.size === 0) throw new ToolError(`\`assets\` names no image and no clip. ${form} ${NOT_DONE}`)
-  if (ids.size > MAX_ASSET_INFO_IDS) {
-    throw new ToolError(`\`assets\` names ${ids.size} images and clips, and one call reads at most ${MAX_ASSET_INFO_IDS}. `
-      + `Call again with the first ${MAX_ASSET_INFO_IDS}, then again with the rest. ${NOT_DONE}`)
+  if (ids.size === 0) throw new ToolError(`\`assets\` names no image and no clip. ${form} ${notDone}`)
+  if (ids.size > max) {
+    throw new ToolError(`\`assets\` names ${ids.size} images and clips, and one call takes at most ${max}. `
+      + `Call again with the first ${max}, then again with the rest. ${notDone}`)
   }
   return [...ids]
 }
@@ -90,6 +92,26 @@ export function clipNotReadFacts(problem: ClipReadProblem): string {
       return 'expired: its provider does not keep it any more, and the user did not save it'
     case 'unreadable':
       return 'Dez could not read its file'
+  }
+}
+
+/** What one ffprobe run tells of a clip: its facts; the problem of a clip
+ *  that Dez could not read (`ClipReadError`); or that ffprobe could not
+ *  read its file. */
+export type ProbedClip =
+  | { kind: 'probed', facts: ClipProbeFacts }
+  | { kind: 'notRead', problem: ClipReadProblem }
+  | { kind: 'notProbed' }
+
+/** The facts text of `clip` from its probe. */
+export function probedClipFacts(clip: Pick<ClipAttachment, 'kind' | 'type' | 'url'>, probed: ProbedClip): string {
+  switch (probed.kind) {
+    case 'probed':
+      return clipFactsText(clip.kind, mediaFileExtension(clip.type, clip.url), probed.facts)
+    case 'notRead':
+      return clipNotReadFacts(probed.problem)
+    case 'notProbed':
+      return CLIP_NOT_PROBED_FACTS
   }
 }
 

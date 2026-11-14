@@ -42,7 +42,11 @@ import { hiddenAssetNotes, hiddenPart, hidingPart, intermediateParts, pressToolC
 //   ffmpeg build;
 // - `asset_info` tells the facts of each image and clip that its call
 //   names (the clips from the same ffprobe), whether the editor hides it,
-//   and who made it: the user, a model, or a job of the reply.
+//   and who made it: the user, a model, or a job of the reply;
+// - `asset_view` shows the model an image as it is, the frame sheet of a
+//   video clip, and the wave of an audio clip, with the times of the
+//   frames and the loudness from the log of the same ffmpeg, in each later
+//   request of the reply and in no request of the next reply.
 // No request holds a path of the test HOME (`takeRequest` checks each one).
 //
 // One app session serves the whole file; each test starts in a new tab.
@@ -82,6 +86,12 @@ interface EndedJob {
   /** The chat request that holds the result of the job. It waits for its
    *  answer. */
   next: HeldRequest
+}
+
+/** A message of an OpenAI-format chat request, as the mock got it. */
+interface WireMessage {
+  role: string
+  content: string | Array<{ type: string, text?: string, image_url?: { url: string } }> | null
 }
 
 describe('video tool', () => {
@@ -397,6 +407,80 @@ describe('video tool', () => {
     await sendChatReply(third.reply, CALLER.modelName)
 
     await endedReply(browser, CLIPS_REPLY_INDEX)
+    await expectCleanEnd(files)
+  })
+
+  it('shows the model an image, the frame sheet of a video clip, and the wave of a clip that the reply made, in the later requests of the reply only', async () => {
+    const files = await openClips('asset-view')
+    await submit(browser, 'Make a tone, and check it and my clips.')
+    const tone = await runJob(await chatRequest(), 'call_tone', 'ffmpeg', { arguments: '-f lavfi -i sine=frequency=440:duration=1 tone.wav' })
+    expect(tone.result.text.endsWith('\nMade the audio clip @g.')).toBe(true)
+    sendToolCalls(tone.next.reply, [openAiToolCall('call_view', 'asset_view', { assets: '@a @c @g', frames: 4 })])
+
+    const viewed = await chatRequest()
+    const [videoLine, sheet, imageLine, audioLine, wave, loudness, end] = toolResult(viewed, 'call_view').split('\n')
+    expect(videoLine).toBe(`@a | video | WebM | 2 s | 48x36 | 5 fps | vp9 | no sound | ${byteSizeText(WEBM_VIDEO.length)}`)
+    // The times are those of the frames that ffmpeg took: the clip has a
+    // frame each 0.2 s, and the sheet takes the first one at or after the
+    // middle of each quarter.
+    const layout = '4 frames in one row, at 0.4, 0.8, 1.4, 1.8 s'
+    expect(sheet).toBe(`Frame sheet of 0 s to 2 s: ${layout}.`)
+    expect(imageLine).toBe(`@c | image | PNG | 48x36 | ${byteSizeText(PICTURE_PNG.length)}`)
+    expect(audioLine).toMatch(/^@g \| audio \| WAV \| 1 s \| pcm_s16le \| \d+ Hz \| 1 channel \| /)
+    expect(wave).toBe('Wave picture of 0 s to 1 s: 800x200 pixels, time runs left to right, and the height is the peak level on a square-root scale.')
+    // A sine at the default level of the lavfi source, an eighth of the
+    // full scale: about -18 dBFS.
+    expect(loudness).toMatch(/^Loudness of 0 s to 1 s: -\d+(\.\d)? LUFS integrated, \d+(\.\d)? LU range, -1[78](\.\d)? dBFS true peak\.$/)
+    expect(end).toBe('You see each picture after the results of the calls of this round, after a line that names it. '
+      + 'You see the pictures in this reply only. In a later reply, call asset_view again to see them again.')
+
+    // The pictures are one user message right after the tool message, with
+    // a line that names each one.
+    const { messages }: { messages: WireMessage[] } = JSON.parse(viewed.body)
+    expect(messages.at(-2)?.role).toBe('tool')
+    const pictures = messages.at(-1)
+    expect(pictures?.role).toBe('user')
+    const parts = Array.isArray(pictures?.content) ? pictures.content : []
+    expect(parts.map(({ type, text }) => text ?? type)).toStrictEqual([
+      `asset_view: the frame sheet of the video clip @a: ${layout}.`,
+      'image_url',
+      'asset_view: the image @c.',
+      'image_url',
+      'asset_view: the wave of the audio clip @g, 0 s to 1 s, time runs left to right.',
+      'image_url',
+    ])
+    const [sheetUrl, imageUrl, waveUrl] = parts.flatMap(({ image_url: image }) => (image ? [image.url] : []))
+    expect(imageUrl).toBe(`data:image/png;base64,${PICTURE_PNG.toString('base64')}`)
+    // Four frames, each scaled into a box of 320 by 320 pixels (320x240),
+    // with 4 pixels between them.
+    const jpegFacts = async (url: string, name: string) => {
+      const [type, data] = url.split(',')
+      expect(type).toBe('data:image/jpeg;base64')
+      const file = path.join(linkedDir, name)
+      await writeTestFile(file, Buffer.from(data, 'base64'))
+      return mediaFacts(file).streams
+    }
+    expect(await jpegFacts(sheetUrl, 'sheet.jpg')).toStrictEqual(['video mjpeg 1292x240'])
+    expect(await jpegFacts(waveUrl, 'wave.jpg')).toStrictEqual(['video mjpeg 800x200'])
+
+    // The next request of the reply sends the same messages again, the
+    // pictures at the same place.
+    sendToolCalls(viewed.reply, [openAiToolCall('call_info', 'asset_info', { assets: '@g' })])
+    const after = await chatRequest()
+    const { messages: afterMessages }: { messages: WireMessage[] } = JSON.parse(after.body)
+    expect(afterMessages.slice(0, messages.length)).toStrictEqual(messages)
+    expect(afterMessages.slice(messages.length).map(({ role }) => role)).toStrictEqual(['assistant', 'tool'])
+    await sendChatReply(after.reply, CALLER.modelName)
+    const reply = await endedReply(browser, CLIPS_REPLY_INDEX)
+    expect(reply).not.toContain('asset_view: ')
+
+    // The next reply gets no picture: the conversation holds none.
+    await submit(browser, 'Thanks.')
+    const next = await chatRequest()
+    expect(next.body).not.toContain('image_url')
+    expect(next.body).not.toContain('asset_view: the')
+    await sendChatReply(next.reply, CALLER.modelName)
+    await endedReply(browser, CLIPS_REPLY_INDEX + 2)
     await expectCleanEnd(files)
   })
 

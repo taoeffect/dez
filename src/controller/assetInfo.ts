@@ -2,27 +2,27 @@ import sbp from '@sbp/sbp'
 import { assetPlaces, type AssetPlace } from '../model/chat/assetOrigins'
 import type { ImageSize } from '../model/chat/imageDrawing'
 import { imageExtension, imageMediaType } from '../model/chat/images'
-import { ClipReadError, mediaFileExtension } from '../model/chat/mediaFiles'
+import { ClipReadError } from '../model/chat/mediaFiles'
 import type { Section } from '../model/chat/types'
 import type { ClipAttachment } from '../model/providers/clipInputs'
 import { conversationAssets } from '../model/streams/mediaRequest'
-import { assetProbeArgs, clipFactsText, clipProbeFacts, imageFactsText } from '../model/tools/assetFacts'
+import { assetProbeArgs, clipProbeFacts, imageFactsText } from '../model/tools/assetFacts'
 import {
   ASSET_INFO_TOOL,
   ASSET_INFO_WORDING,
-  assetInfoIds,
+  assetIdsArgument,
   assetInfoLine,
   assetInfoText,
-  CLIP_NOT_PROBED_FACTS,
-  clipNotReadFacts,
   IMAGE_NOT_DECODED_FACTS,
   IMAGE_NOT_READ_FACTS,
+  MAX_ASSET_INFO_IDS,
+  probedClipFacts,
+  type ProbedClip,
 } from '../model/tools/assetInfo'
-import { clipInput } from '../model/tools/programRuns'
+import { clipInput, type ClipInput } from '../model/tools/programRuns'
 import { unknownAssetsText } from '../model/tools/toolInputs'
 import { ToolError, type ToolArguments } from '../model/tools/types'
 import { FFPROBE_OUTPUT_BYTES, FFPROBE_TIMEOUT_MS } from '../model/tools/videoTool'
-import type { BundledToolInput } from './nativeTypes'
 import { clipCopy, inWorkFolder, runProgram } from './programRuns'
 
 // The work of the `asset_info` tool (model/tools/assetInfo.ts): it reads
@@ -60,34 +60,36 @@ async function imageFacts(id: string, path: string): Promise<string> {
   return imageFactsText(extension, size, file.size)
 }
 
-// The facts text of `clip`, from one ffprobe run on its copy in the work
-// folder `folder`. ffprobe reads one input file in a run, so each clip has
-// its own run; every copy has its own name (`clipInput`), as a run refuses
-// an input whose name the folder already has.
-async function clipFacts(clip: ClipAttachment, folder: string, signal: AbortSignal): Promise<string> {
-  const input = clipInput(clip)
-  let copy: BundledToolInput | null
+/** The probe of the clip of `input` for a call of the tool `toolName`: one
+ *  ffprobe run on its copy in the work folder `folder`, under the name
+ *  `input.name` (`clipInput`). The copy stays in the folder for later runs,
+ *  which must not give it again as an input: a run refuses an input whose
+ *  name the folder already has. ffprobe reads one input file in a run, so
+ *  each clip has its own run. */
+export async function probeClip(input: ClipInput, folder: string, signal: AbortSignal, toolName: string): Promise<ProbedClip> {
+  const { clip } = input
+  let copy
   try {
     copy = await clipCopy(input, folder, signal)
   } catch (error) {
     if (!(error instanceof ClipReadError)) throw error
     console.error(`Failed to read the ${clip.kind} clip @${clip.id}:`, error)
-    return clipNotReadFacts(error.problem)
+    return { kind: 'notRead', problem: error.problem }
   }
 
   let output = ''
   let errorOutput = ''
   const run = { args: assetProbeArgs(input.name), folder, inputs: copy ? [copy] : [], timeoutMs: FFPROBE_TIMEOUT_MS, maxOutputBytes: FFPROBE_OUTPUT_BYTES }
-  const end = await runProgram('ffprobe', ASSET_INFO_TOOL.name, run, signal, ({ stream, text }) => {
+  const end = await runProgram('ffprobe', toolName, run, signal, ({ stream, text }) => {
     if (stream === 'stdout') output += text
     else errorOutput += text
   })
   const facts = end.kind === 'exited' && end.code === 0 ? clipProbeFacts(output) : null
   if (!facts) {
     console.error(`ffprobe could not read the ${clip.kind} clip @${clip.id}:`, end, errorOutput)
-    return CLIP_NOT_PROBED_FACTS
+    return { kind: 'notProbed' }
   }
-  return clipFactsText(clip.kind, mediaFileExtension(clip.type, clip.url), facts)
+  return { kind: 'probed', facts }
 }
 
 /** The result text of an `asset_info` call with the arguments `args`, for
@@ -96,7 +98,7 @@ async function clipFacts(clip: ClipAttachment, folder: string, signal: AbortSign
  *  that names no image and no clip of the conversation. A stop of `signal`
  *  stops a run of ffprobe and rejects with the stop. */
 export async function assetInfoResult(args: ToolArguments, sections: readonly Section[], signal: AbortSignal): Promise<string> {
-  const ids = assetInfoIds(args)
+  const ids = assetIdsArgument(args, { max: MAX_ASSET_INFO_IDS, notDone: ASSET_INFO_WORDING.notDone })
   const assets = conversationAssets(sections)
   const unknown = ids.filter((id) => !assets.images.has(id) && !assets.clips.has(id))
   if (unknown.length > 0) throw new ToolError(unknownAssetsText(unknown, assets, ASSET_INFO_WORDING))
@@ -114,7 +116,7 @@ export async function assetInfoResult(args: ToolArguments, sections: readonly Se
   }
   if (clips.length > 0) {
     await inWorkFolder(async (folder) => {
-      for (const clip of clips) facts.set(clip.id, await clipFacts(clip, folder, signal))
+      for (const clip of clips) facts.set(clip.id, probedClipFacts(clip, await probeClip(clipInput(clip), folder, signal, ASSET_INFO_TOOL.name)))
     })
   }
 

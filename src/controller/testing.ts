@@ -60,6 +60,10 @@ function newNative() {
     cancelledDownloads: [] as string[],
     // The size of a file of the computer; null for one that is gone.
     fileSize: ((): number | null => 10) as (path: string) => number | null,
+    readFiles: [] as AppFileRef[],
+    // The bytes of a file that the code reads (a picture that a program
+    // wrote); a throw for one that is not there.
+    fileBytes: ((): Uint8Array => new Uint8Array([0xff, 0xd8])) as (file: AppFileRef) => Uint8Array,
   }
 }
 
@@ -106,6 +110,11 @@ sbp('sbp/selectors/register', {
   },
   async 'dez.native/cancelHttpStream' (requestId: string): Promise<void> {
     native.cancelledDownloads.push(requestId)
+  },
+  async 'dez.native/loadAppFileBytes' (path: string, root = 'app'): Promise<Uint8Array> {
+    const file = { root, path } as AppFileRef
+    native.readFiles.push(file)
+    return native.fileBytes(file)
   },
   async 'dez.controller/images/fileSize' (path: string): Promise<number | null> {
     return native.fileSize(path)

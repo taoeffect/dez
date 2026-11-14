@@ -69,8 +69,9 @@ export function clipProbeFacts(output: string): ClipProbeFacts | null {
   }
 }
 
-// A number of seconds or frames with at most two decimals, as in `5.04`.
-function shortNumber(value: number): string {
+/** A number of seconds or frames with at most two decimals, as in
+ *  `5.04`. */
+export function shortNumber(value: number): string {
   return String(Number(value.toFixed(2)))
 }
 

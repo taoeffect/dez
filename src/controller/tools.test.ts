@@ -13,7 +13,9 @@ import { PRICE_LIFETIME_MS } from '../model/providers/modelPrices'
 import type { ProviderGenerateMediaInput, ProviderGenerateMediaResult, ProviderMediaQuote, ProviderMediaQuoteInput, ProviderStreamChatInput, ProviderStreamChatResult } from '../model/providers/streamTypes'
 import { providerInfo } from '../model/providers/testing'
 import type { ModelInfo, ProviderInfo, ProviderInputImageRules, ProviderSettingsDescriptor } from '../model/providers/types'
+import type { ReplyPicture } from '../model/streams/replyPictures'
 import { assetProbeArgs } from '../model/tools/assetFacts'
+import { smallerCopyNote } from '../model/tools/assetView'
 import { jobStartedText, jobsWaitResults, NO_JOBS_TEXT, NO_OPEN_JOBS_TEXT } from '../model/tools/jobs'
 import { modelInfoText, type ModelInfoFacts } from '../model/tools/modelInfo'
 import { IMAGE_NOT_SAVED_TEXT, INVOCATION_TEXT_CAP, invocationAnswerStateText, invocationAnswerText, modelInvocation } from '../model/tools/modelInvoke'
@@ -139,10 +141,13 @@ sbp('sbp/selectors/register', {
 // calls name, so that a result tells which of the two the tool read.
 const REPLY_MODEL: ModelRef = { providerId: 'venice', modelId: 'venice-glm-5' }
 
+// The picture methods of a context of a reply that shows no picture.
+const NO_PICTURES: Pick<ToolRunContext, 'picturesLeft' | 'showPictures'> = { picturesLeft: () => 0, showPictures: () => {} }
+
 // Runs a call of a reply of `model` that takes no image and no clip, and
 // has no job.
 function run(call: ToolRunCall, { signal = new AbortController().signal, model = REPLY_MODEL } = {}): Promise<ToolRunResult> {
-  const context: ToolRunContext = { tabId: '', model, jobs: new ReplyJobs(), writeImage: () => null, writeClip: () => null }
+  const context: ToolRunContext = { tabId: '', model, jobs: new ReplyJobs(), writeImage: () => null, writeClip: () => null, ...NO_PICTURES }
   return sbp('dez.controller/tools/run', call, signal, context) as Promise<ToolRunResult>
 }
 
@@ -607,6 +612,7 @@ describe('dez.controller/tools/run', () => {
           return newImageId
         },
         writeClip: () => null,
+        ...NO_PICTURES,
       }
       const args = { command, parameters: JSON.stringify(parameters) }
       return sbp('dez.controller/tools/run', { name: 'image', arguments: args }, signal, context) as Promise<ToolRunResult>
@@ -780,6 +786,7 @@ describe('dez.controller/tools/run', () => {
           written.push(data)
           return newClipId
         },
+        ...NO_PICTURES,
       }
       const args = { command: 'clip', parameters: JSON.stringify(parameters) }
       return sbp('dez.controller/tools/run', { name: 'audio', arguments: args }, signal, context) as Promise<ToolRunResult>
@@ -902,6 +909,7 @@ describe('dez.controller/tools/run', () => {
           written.push({ path: clip.src, ...options })
           return newIds.shift() ?? null
         },
+        ...NO_PICTURES,
       }
       return sbp('dez.controller/tools/run', { name, arguments: args }, signal, context) as Promise<ToolRunResult>
     }
@@ -1556,7 +1564,7 @@ describe('dez.controller/tools/run', () => {
     let tabId: string
 
     function assetInfo(assets: string): Promise<ToolRunResult> {
-      const context: ToolRunContext = { tabId, model: REPLY_MODEL, jobs: new ReplyJobs(), writeImage: () => null, writeClip: () => null }
+      const context: ToolRunContext = { tabId, model: REPLY_MODEL, jobs: new ReplyJobs(), writeImage: () => null, writeClip: () => null, ...NO_PICTURES }
       return sbp('dez.controller/tools/run', { name: 'asset_info', arguments: { assets } }, running(), context) as Promise<ToolRunResult>
     }
 
@@ -1635,6 +1643,191 @@ describe('dez.controller/tools/run', () => {
       readImage = async () => new Blob([new Uint8Array(2048)])
       redrawError = new Error('The image cannot be decoded.')
       expect((await assetInfo('a')).content).toBe(`${COLUMNS}\n@a | image | PNG | 2 KB | Dez could not read its picture | shown | from the user`)
+    })
+  })
+
+  describe('asset_view', () => {
+    const FOX = `${APP_DIR}/assets/images/fox.png`
+    const SCENE = `${APP_DIR}/assets/generated/video/scene.mp4`
+    const VOICE = `${APP_DIR}/assets/audio/voice.wav`
+    const FOX_BYTES = new Uint8Array([1, 2, 3])
+    const probed = (streams: object[]) => JSON.stringify({ streams, format: { duration: '5.040000', size: '1250000' } })
+    const VIDEO_STREAM = { codec_name: 'h264', codec_type: 'video', width: 854, height: 480, avg_frame_rate: '24/1', r_frame_rate: '24/1' }
+    const AUDIO_STREAM = { codec_name: 'pcm_s16le', codec_type: 'audio', sample_rate: '48000', channels: 2 }
+    // The log lines of ffmpeg that Dez reads: the frames of a sheet, and
+    // the loudness summary.
+    const SHOWINFO = [0.4167, 1.25, 2.0833]
+      .map((time, n) => `[Parsed_showinfo_1 @ 0x1] n:   ${n} pts:  ${n} pts_time:${time} duration: 512 fmt:yuv420p\n`).join('')
+    const EBUR128 = '[Parsed_ebur128_3 @ 0x2] Summary:\n  Integrated loudness:\n    I:         -23.1 LUFS\n'
+      + '  Loudness range:\n    LRA:         9.4 LU\n  True peak:\n    Peak:      -18.8 dBFS\n'
+    let tabId: string
+    let picturesLeft: number
+    let shown: ReplyPicture[]
+    // The ffprobe output of each clip, by the name of its copy.
+    let probes: Record<string, string>
+    let frameSheetLog: string
+    let frameSheetEnd: BundledToolEnd
+
+    function assetView(args: ToolArguments): Promise<ToolRunResult> {
+      const context: ToolRunContext = {
+        tabId,
+        model: REPLY_MODEL,
+        jobs: new ReplyJobs(),
+        writeImage: () => null,
+        writeClip: () => null,
+        picturesLeft: () => picturesLeft,
+        showPictures: (pictures) => { shown.push(...pictures) },
+      }
+      return sbp('dez.controller/tools/run', { name: 'asset_view', arguments: args }, running(), context) as Promise<ToolRunResult>
+    }
+
+    const ffmpegRuns = () => native.runs.filter(({ run }) => run.tool === 'dez-ffmpeg').map(({ run }) => run)
+
+    beforeEach(() => {
+      tabId = sbp('dez.model/tabs/activeId') as string
+      sbp('dez.model/tabs/replaceSections', tabId, [
+        { id: 'u1', role: 'user', content: [{ kind: 'text', text: `A fox: ![${FOX}](id=a)\n<dez:video id="b" type="video/mp4" src="${SCENE}"/>` }] },
+        // The clip @c has no file and no web address any more.
+        { id: 'a1', role: 'agent', model: REPLY_MODEL, content: [{ kind: 'text', text: `<dez:audio id="c" type="audio/wav"/>` }] },
+        { id: 'u2', role: 'user', content: [{ kind: 'text', text: `<dez:audio id="d" type="audio/wav" src="${VOICE}"/>\nCheck them.` }] },
+        { id: 'a2', role: 'agent', content: [{ kind: 'text', text: '' }] },
+      ])
+      readImage = async () => new Blob([FOX_BYTES], { type: 'image/png' })
+      picturesLeft = 12
+      shown = []
+      probes = { 'b.mp4': probed([VIDEO_STREAM, AUDIO_STREAM]), 'd.wav': probed([AUDIO_STREAM]) }
+      frameSheetLog = SHOWINFO
+      frameSheetEnd = ENDED
+      native.program = async (run, onOutput) => {
+        if (run.tool === 'dez-ffprobe') {
+          onOutput({ stream: 'stdout', text: probes[run.args.at(-1) as string] ?? '' })
+          return ENDED
+        }
+        if (run.args.includes('-vf')) {
+          onOutput({ stream: 'stderr', text: frameSheetLog })
+          return frameSheetEnd
+        }
+        onOutput({ stream: 'stderr', text: EBUR128 })
+        return ENDED
+      }
+      native.fileBytes = ({ path }) => new TextEncoder().encode(path.slice(path.lastIndexOf('/') + 1))
+    })
+
+    it('shows an image as it is, the frame sheet of a video clip, and the wave of an audio clip, with their facts, times, and loudness', async () => {
+      const result = await assetView({ assets: '@a @b @d', frames: 3, end: 2.5 })
+
+      expect(result.isError).toBe(false)
+      const lines = result.content.split('\n')
+      expect(lines[0]).toBe('@a | image | PNG | 1000x500 | 3 B')
+      expect(lines).toContain('@b | video | MP4 | 5.04 s | 854x480 | 24 fps | h264 | sound (pcm_s16le) | 1.2 MB')
+      expect(result.content).toMatch(/0 s to 2\.5 s: 3 frames in one row, at 0\.42, 1\.25, 2\.08 s/)
+      expect(result.content).toMatch(/-23\.1 LUFS integrated, 9\.4 LU range, -18\.8 dBFS true peak/)
+      expect(drawings).toStrictEqual([])
+      expect(shown.map(({ label, picture }) => ({ label: label.match(/@[a-z]+/)?.[0], picture }))).toStrictEqual([
+        { label: '@a', picture: { type: 'picture', mediaType: 'image/png', bytes: FOX_BYTES } },
+        { label: '@b', picture: { type: 'picture', mediaType: 'image/jpeg', bytes: new TextEncoder().encode('b-frames.jpg') } },
+        { label: '@d', picture: { type: 'picture', mediaType: 'image/jpeg', bytes: new TextEncoder().encode('d-wave.jpg') } },
+      ])
+
+      // One copy of each clip, for its probe; the later runs find it in
+      // the folder, which goes at the end with the pictures.
+      const folder = deletedWorkFolder()
+      expect(native.runs.map(({ run }) => ({ tool: run.tool, folder: run.folder, inputs: run.inputs, output: run.args.at(-1) }))).toStrictEqual([
+        { tool: 'dez-ffprobe', folder, inputs: [{ name: 'b.mp4', source: SCENE }], output: 'b.mp4' },
+        { tool: 'dez-ffmpeg', folder, inputs: [], output: 'b-frames.jpg' },
+        { tool: 'dez-ffprobe', folder, inputs: [{ name: 'd.wav', source: VOICE }], output: 'd.wav' },
+        { tool: 'dez-ffmpeg', folder, inputs: [], output: '-' },
+      ])
+      expect(ffmpegRuns()[0].args).toStrictEqual(expect.arrayContaining(['-to', '2.500', '-i', 'b.mp4']))
+      expect(native.readFiles).toStrictEqual([{ root: 'cache', path: `${folder}/b-frames.jpg` }, { root: 'cache', path: `${folder}/d-wave.jpg` }])
+    })
+
+    it('gives the facts and the loudness only, and no picture, to a model that reads no images', async () => {
+      sbp('dez.model/modelCache/applyProviderResult', 'venice', { ok: true, models: MODELS('venice').map((model) => ({ ...model, imageInput: false })) })
+
+      const result = await assetView({ assets: 'a b d' })
+
+      expect(result.content).toMatch(/-23\.1 LUFS integrated/)
+      expect(shown).toStrictEqual([])
+      expect(drawings).toStrictEqual([])
+      expect(ffmpegRuns()).toHaveLength(1)
+      expect(ffmpegRuns()[0].args.join(' ')).not.toContain('showwavespic')
+      expect(native.readFiles).toStrictEqual([])
+    })
+
+    it('shows no more pictures than the reply has left, and tells which assets got none', async () => {
+      picturesLeft = 1
+
+      const result = await assetView({ assets: 'a b d' })
+
+      expect(shown.map(({ picture }) => picture.mediaType)).toStrictEqual(['image/png'])
+      // The audio clip still gets its loudness, and the video clip no run.
+      expect(ffmpegRuns()).toHaveLength(1)
+      expect(ffmpegRuns()[0].args.join(' ')).not.toContain('showwavespic')
+      expect(result.content).toMatch(/-23\.1 LUFS integrated/)
+      expect(result.content.match(/No picture: this reply has shown 12 pictures/g)).toHaveLength(2)
+    })
+
+    it.each([
+      ['a file that is too large', 4_000_000, { width: 1000, height: 500 }, { width: 1000, height: 500 }],
+      ['a picture with a long side over 4096 pixels', 3, { width: 8192, height: 4096 }, { width: 2048, height: 1024 }],
+    ])('sends %s as a JPEG copy on white, at most 2048 pixels on its long side', async (_case, bytes, size, drawn) => {
+      readImage = async () => new Blob([new Uint8Array(bytes)], { type: 'image/png' })
+      storedImageSize = size
+
+      const result = await assetView({ assets: 'a' })
+
+      expect(drawings).toStrictEqual([{
+        drawing: { crop: { x: 0, y: 0, ...size }, ...drawn, background: '#ffffff', mediaType: 'image/jpeg' },
+        mediaType: 'image/png',
+      }])
+      expect(shown.map(({ picture }) => picture.mediaType)).toStrictEqual(['image/jpeg'])
+      expect(result.content).toContain(smallerCopyNote(drawn.width, drawn.height))
+    })
+
+    it('sends an SVG image as a PNG drawing at its own size', async () => {
+      readImage = async () => new Blob(['<svg/>'], { type: 'image/svg+xml' })
+
+      await assetView({ assets: 'a' })
+
+      expect(drawings).toStrictEqual([{ drawing: { crop: { x: 0, y: 0, width: 1000, height: 500 }, width: 1000, height: 500, mediaType: 'image/png' }, mediaType: 'image/png' }])
+      expect(shown.map(({ picture }) => picture.mediaType)).toStrictEqual(['image/png'])
+    })
+
+    it('sends no picture of an image that the webview cannot decode, or of a clip that ffmpeg cannot read, and shows the others', async () => {
+      redrawError = new Error('The image cannot be decoded.')
+      frameSheetEnd = { kind: 'exited', code: 1 }
+
+      const result = await assetView({ assets: 'a b d' })
+
+      expect(result.content).toContain('@a | image | PNG | 3 B | Dez could not read its picture')
+      expect(shown.map(({ label }) => label.match(/@[a-z]+/)?.[0])).toStrictEqual(['@d'])
+    })
+
+    it('tells of a part with no frame, and of a clip that Dez cannot read, and shows no picture for them', async () => {
+      frameSheetLog = 'Nothing was written into output file'
+      frameSheetEnd = { kind: 'exited', code: 1 }
+
+      const result = await assetView({ assets: 'b c' })
+
+      expect(result.isError).toBe(false)
+      expect(result.content).toContain('No frame sheet: ffmpeg found no frame in 0 s to 5.04 s of the clip.')
+      expect(result.content).toContain('@c | audio | gone: the user deleted its file, and it has no web address')
+      expect(shown).toStrictEqual([])
+    })
+
+    it('refuses an id that names no asset, and a start after the end of a clip shows none of it', async () => {
+      expect(await assetView({ assets: '@a @z' })).toStrictEqual({
+        content: expect.stringMatching(/^@z names no image and no clip of this conversation\. Dez showed nothing\./),
+        isError: true,
+      })
+      expect(readImages).toStrictEqual([])
+      expect(native.runs).toStrictEqual([])
+
+      const result = await assetView({ assets: 'b', start: 6 })
+      expect(result.content).toMatch(/`start` \(6 s\) is not before the end of the clip \(5\.04 s\)/)
+      expect(ffmpegRuns()).toStrictEqual([])
+      expect(shown).toStrictEqual([])
     })
   })
 })

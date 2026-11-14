@@ -2270,6 +2270,46 @@ describe('dez.stream/start images that a tool makes', () => {
   })
 })
 
+describe('dez.stream/start pictures that a tool shows', () => {
+  const viewCall = { id: 'c1', name: 'asset_view', argumentsText: JSON.stringify({ assets: '@a' }) }
+  const listCall = { id: 'c2', name: 'model_list', argumentsText: '{"filter":"gemini"}' }
+  // The stub reads an empty PNG file, which goes as it is.
+  const pictureMessage = {
+    role: 'user',
+    content: [{ type: 'text', text: 'asset_view: the image @a.' }, { type: 'picture', mediaType: 'image/png', bytes: new Uint8Array() }],
+  }
+
+  beforeEach(() => {
+    sbp('dez.model/tabs/replaceSections', activeTab().id, [
+      { id: 'u1', role: 'user', content: [{ kind: 'text', text: `A fox: ![${image('fox.png')}](id=a)` }] },
+      { id: 'a1', role: 'agent', content: [{ kind: 'text', text: '' }], model },
+    ])
+  })
+
+  it('sends the picture of a view after the results of its round in each later request of the reply, and never from the conversation', async () => {
+    replyRounds([
+      async (input) => ({ requestId: input.requestId as string, toolCalls: [viewCall] }),
+      async (input) => ({ requestId: input.requestId as string, toolCalls: [listCall] }),
+      async (input) => {
+        await input.onToken('Done.')
+        return { requestId: input.requestId as string }
+      },
+    ])
+
+    await startStream({ sendTools: true })
+
+    const [, second, third] = requests.map((input) => input.messages)
+    expect(second.map(({ role }) => role)).toStrictEqual(['user', 'agent', 'tool', 'user'])
+    expect(second[3]).toStrictEqual(pictureMessage)
+    expect(third.slice(0, 4)).toStrictEqual(second)
+    expect(third.map(({ role }) => role)).toStrictEqual(['user', 'agent', 'tool', 'user', 'agent', 'tool'])
+    // The next reply sends the rounds from the section, which holds no
+    // picture.
+    const stored = (sbp('dez.model/streamMessagesForTab', activeTab().id, model) as RequestMessages).messages
+    expect(stored.slice(1, 5)).toStrictEqual([third[1], third[2], third[4], third[5]])
+  })
+})
+
 describe('dez.stream/start clips that a tool makes', () => {
   const song = '/home/u/.config/dez/assets/generated/audio/song.mp3'
   // The new clip of the `audio` call: the file that Dez stored.

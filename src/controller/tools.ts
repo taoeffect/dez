@@ -11,6 +11,7 @@ import { toggleRows, toggleValue } from '../model/providers/modelToggles'
 import type { ProviderMediaQuote } from '../model/providers/streamTypes'
 import { effectiveRequest, type ProviderInfo, type ProviderInputImageRules, type ProviderSettingsDescriptor } from '../model/providers/types'
 import type { SettingsSnapshot } from '../model/state'
+import type { ReplyPicture } from '../model/streams/replyPictures'
 import { AUDIO_TOOL, audioClipId, audioClipOf, audioCutPart, audioCutRequest, audioCutResultText, audioLengthText } from '../model/tools/audioTool'
 import { brightnessPlan, contrastPlan, convertPlan, cropPlan, flipPlan, IMAGE_TOOL, imageIdArgument, imageOf, imageResultText, invertPlan, rotatePlan, saturationPlan, scalePlan, unreadableImageText, unwritableFormatError, type ImagePlan } from '../model/tools/imageTool'
 import { isIntermediate, jobInspectText, jobResultText, jobsListText, jobStartedText, jobsWaitText, unknownJobText, type JobResult } from '../model/tools/jobs'
@@ -25,6 +26,7 @@ import { ffmpegCall, ffprobeCall, joinClipsCall, VIDEO_TOOL, videoCallLabel, vid
 import { untilAborted } from '../utils/abort'
 import { rawErrorText } from '../utils/errorText'
 import { assetInfoResult } from './assetInfo'
+import { assetViewResult } from './assetView'
 import { audioClipSeconds, cutAudioClip } from './audioTool'
 import { discardMadeAssets, writeJobAssets, type JobWork, type ReplyJobs } from './jobs'
 import { invokeModel } from './modelInvoke'
@@ -71,6 +73,17 @@ export interface ToolRunContext {
    *  (a stop ended the tool round): the runner then deletes the file. The
    *  result of the call must name the new id, as for `writeImage`. */
   writeClip(clip: Omit<MediaTagData, 'id' | 'other'>, options?: { tool?: string, jobId?: string, madeBy?: string, hidden?: string }): string | null
+  /** How many more pictures the reply can show the model
+   *  (`MAX_REPLY_PICTURES`); 0 when it takes no picture any more (a stop
+   *  ended the tool round). */
+  picturesLeft(): number
+  /** Shows `pictures` to the model in each later request of the reply,
+   *  after the results of the call's round (`ReplyPictures`,
+   *  streams/replyPictures.ts): never in the section, and never in a later
+   *  reply. Takes at most `picturesLeft()` of them, the first ones: the
+   *  calls of a round run one after the other, so a call that makes no
+   *  more than that many shows them all. */
+  showPictures(pictures: readonly ReplyPicture[]): void
 }
 
 // The code of each Dez tool (TOOL_DEFINITIONS), by tool name. A runner gives
@@ -400,6 +413,13 @@ const TOOL_RUNNERS: Record<string, ToolRunner> = {
   // the webview, and a clip one short ffprobe run.
   async asset_info (args, signal, context) {
     return assetInfoResult(args, callSections(context), signal)
+  },
+  // The facts and the pictures of the images and the clips that the call
+  // names (controller/assetView.ts). The call waits for them and starts no
+  // job: the pictures must be there for the next request of the reply,
+  // and a frame sheet or a wave is one short ffmpeg run.
+  async asset_view (args, signal, context) {
+    return assetViewResult(args, callSections(context), signal, context)
   },
 }
 
