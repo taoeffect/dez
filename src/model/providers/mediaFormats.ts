@@ -609,6 +609,30 @@ function veniceClipListPrice(kind: Exclude<MediaKind, ImageKind>, values: Parame
   return undefined
 }
 
+const VENICE_MAX_SIDE = 1280
+const VENICE_DEFAULT_SIDE = 1024
+
+// The `width` and `height` rows of a Venice image model that takes a size
+// in pixels. The docs: "Pixel-based models accept width and height, for
+// example venice-sd35"; the schema of `/image/generate` gives integers of
+// at most 1280, with 1024 as the default. Such an entry has
+// `widthHeightDivisor` (the size is a multiple of it) and no
+// `aspectRatios` list. An aspect-ratio model (the Qwen family, whose
+// divisor is 1) refuses `width` and `height` with an HTTP 400, so it gets
+// no row. Every edit model lists aspect ratios (2026-11-14), and the edit
+// schema allows no field that it does not name, so an edit gets no row.
+// https://docs.venice.ai/api-reference/endpoint/image/generate
+function venicePixelSize(constraint: (field: string) => unknown): RangeParameter[] {
+  const divisor = constraint('widthHeightDivisor')
+  if (constraint('aspectRatios') !== undefined || typeof divisor !== 'number' || !Number.isInteger(divisor) || divisor < 1 || divisor > VENICE_MAX_SIDE) return []
+  const side = (name: string, label: string): RangeParameter => {
+    const range: RangeParameter = { name, label, min: divisor, max: Math.floor(VENICE_MAX_SIDE / divisor) * divisor, step: divisor }
+    if (parameterTakes(range, VENICE_DEFAULT_SIDE)) range.default = VENICE_DEFAULT_SIDE
+    return range
+  }
+  return [side('width', 'Width'), side('height', 'Height')]
+}
+
 // The Venice media API (https://docs.venice.ai/api-reference).
 const veniceFormat: MediaFormat = {
   // The user's choice for every image: no Venice watermark (it is on by
@@ -631,9 +655,8 @@ const veniceFormat: MediaFormat = {
     // default is the default only when the list holds it; else the popup
     // shows "Default" and the request sends no field, so the model's own
     // default applies (an edit with no `aspect_ratio` takes the one of its
-    // first image). A model that takes a size in pixels
-    // (`widthHeightDivisor`) has none of the lists, so it gets no row, and
-    // Dez sends no `width` or `height`.
+    // first image). A model that takes a size in pixels has none of the
+    // lists: see `venicePixelSize`.
     // https://docs.venice.ai/api-reference/endpoint/image/generate
     // https://docs.venice.ai/api-reference/endpoint/image/multi-edit
     parameters: (kind, entry) => {
@@ -648,6 +671,7 @@ const veniceFormat: MediaFormat = {
         ...optionsParameter('aspect_ratio', 'Aspect ratio', listedValues(constraint('aspectRatios')), constraint('defaultAspectRatio')),
         ...optionsParameter('resolution', 'Resolution', listedValues(constraint('resolutions')), constraint('defaultResolution')),
         ...optionsParameter('quality', 'Quality', listedValues(constraint('qualities')), constraint('defaultQuality')),
+        ...(kind === 'image' ? venicePixelSize(constraint) : []),
       ]
     },
     request: (kind, baseUrl, modelId, { prompt, images, values }) => {

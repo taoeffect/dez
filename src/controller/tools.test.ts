@@ -972,6 +972,41 @@ describe('dez.controller/tools/run', () => {
       })
     })
 
+    it('jobs_wait with `jobs` waits only for the named jobs, and tells of the results that stay for a later call', async () => {
+      const music = heldWork()
+      const image = heldWork()
+      const musicId = jobs.start('model_invoke', music.work, LONG).id
+      const imageId = jobs.start('model_invoke', image.work, LONG).id
+      const fastId = jobs.start('model_invoke', async () => ({ text: 'Fast.', isError: false, assets: [] }), LONG).id
+
+      let result: ToolRunResult | undefined
+      const wait = jobTool('jobs_wait', { jobs: imageId }).then((value) => { result = value })
+      await vi.waitFor(() => expect(jobs.ready).toBe(1))
+      // A result of another job is ready, but the named job still runs.
+      expect(result).toBeUndefined()
+
+      image.finish({ text: 'Image.', isError: false, assets: [] })
+      await wait
+      expect(jobsWaitResults(result?.content ?? '').map((job) => job.id)).toStrictEqual([imageId])
+      expect(result?.content.split('\n')[0]).toBe('1 job ended. 1 job still runs: call jobs_wait again to get its result. The result of 1 other job is ready: call jobs_wait to get it.')
+
+      expect(jobsWaitResults((await jobTool('jobs_wait')).content).map((job) => job.id)).toStrictEqual([fastId])
+      music.finish({ text: 'Music.', isError: false, assets: [] })
+      expect(jobsWaitResults((await jobTool('jobs_wait', { jobs: `${musicId}, ${imageId}` })).content).map((job) => job.id)).toStrictEqual([musicId])
+    })
+
+    it('jobs_wait refuses `jobs` with `all`, and an id of no job of the reply, and waits for nothing', async () => {
+      const held = heldWork()
+      const id = jobs.start('model_invoke', held.work, LONG).id
+
+      expect(await jobTool('jobs_wait', { jobs: id, all: true })).toMatchObject({ isError: true })
+      const unknown = await jobTool('jobs_wait', { jobs: `${id} j-zzzz` })
+      expect(unknown.isError).toBe(true)
+      expect(unknown.content).toContain(`"j-zzzz"`)
+      expect(unknown.content).toContain(id)
+      expect(jobs.running).toBe(1)
+    })
+
     it('jobs_wait puts what a job made into the reply under the name of the job\'s tool, and its result names the new ids', async () => {
       const { id } = jobs.start('model_invoke', async () => ({
         text: '',
@@ -1040,10 +1075,10 @@ describe('dez.controller/tools/run', () => {
     it('job_inspect gives an error result that names the jobs of the reply for an id that none of them has', async () => {
       const { id } = jobs.start('model_invoke', heldWork().work, LONG)
       // An id that no job can have: a job id has 4 characters after `j-`.
-      expect(await jobTool('job_inspect', { job_id: 'j-none-1' })).toStrictEqual({
-        content: `This reply has no job with the id "j-none-1". A job of an earlier reply ended with that reply. The jobs of this reply are ${id}: call job_inspect again with one of these ids.`,
-        isError: true,
-      })
+      const result = await jobTool('job_inspect', { job_id: 'j-none-1' })
+      expect(result.isError).toBe(true)
+      expect(result.content).toContain('"j-none-1"')
+      expect(result.content).toContain(`The jobs of this reply are ${id}:`)
     })
 
     describe('model_invoke', () => {

@@ -14,7 +14,7 @@ import type { SettingsSnapshot } from '../model/state'
 import type { ReplyPicture } from '../model/streams/replyPictures'
 import { AUDIO_TOOL, audioClipId, audioClipOf, audioCutPart, audioCutRequest, audioCutResultText, audioLengthText } from '../model/tools/audioTool'
 import { brightnessPlan, contrastPlan, convertPlan, cropPlan, flipPlan, IMAGE_TOOL, imageIdArgument, imageOf, imageResultText, invertPlan, rotatePlan, saturationPlan, scalePlan, unreadableImageText, unwritableFormatError, type ImagePlan } from '../model/tools/imageTool'
-import { isIntermediate, jobInspectText, jobResultText, jobsListText, jobStartedText, jobsWaitText, unknownJobText, type JobResult } from '../model/tools/jobs'
+import { isIntermediate, jobInspectText, jobResultText, jobsListText, jobStartedText, jobsWaitText, unknownJobText, waitedJobIds, type JobResult } from '../model/tools/jobs'
 import { parameterValuesArgument, type ModelTarget } from '../model/tools/modelArguments'
 import { modelCost, modelInfoSelection, modelInfoText, modelInfoTarget, type ModelInfoFacts } from '../model/tools/modelInfo'
 import { invocationInputsText, invocationLabel, MODEL_INVOKE_TOOL, modelInvocation } from '../model/tools/modelInvoke'
@@ -331,19 +331,21 @@ const TOOL_RUNNERS: Record<string, ToolRunner> = {
   // The job tools (model/tools/jobs.ts) read the jobs of the reply
   // (`ReplyJobs`, jobs.ts). `jobs_wait` gives the results of the jobs that
   // ended since the last one, and waits for the next end when there is
-  // none (with `all`: until no job runs); a stop ends the wait, and the
-  // jobs with it (`dez.stream/stop`).
+  // none (with `all`: until no job runs; with `jobs`: until none of the
+  // named jobs runs, and only their results); a stop ends the wait, and
+  // the jobs with it (`dez.stream/stop`).
   // It also puts the images and the clips of those jobs into the reply,
   // under the names of the tools that started them: a job writes nothing
   // itself, so its asset comes with the result that names it, after the
   // blocks of this call's group. Its result is never an error result: each
   // part tells in words whether its job failed.
   async jobs_wait (args, signal, context) {
+    const ids = waitedJobIds(args, context.jobs.list().map((job) => job.id)) ?? undefined
     const results: JobResult[] = []
-    for (const job of await context.jobs.wait(signal, args.all === true)) {
+    for (const job of await context.jobs.wait(signal, { all: args.all === true, ids })) {
       results.push({ id: job.id, tool: job.tool, status: job.status, text: jobResultText(job.text, await writeJobAssets(job, context)), call: job.call })
     }
-    return jobsWaitText(results, context.jobs.running)
+    return jobsWaitText(results, context.jobs.running, context.jobs.ready)
   },
   async jobs_list (_args, _signal, context) {
     return jobsListText(context.jobs.list())
@@ -352,7 +354,7 @@ const TOOL_RUNNERS: Record<string, ToolRunner> = {
     const id = String(args.job_id).trim()
     const jobs = context.jobs.list()
     const job = jobs.find((candidate) => candidate.id === id)
-    if (!job) throw new ToolError(unknownJobText(id, jobs.map((known) => known.id)))
+    if (!job) throw new ToolError(unknownJobText([id], jobs.map((known) => known.id)))
     return jobInspectText(job)
   },
   // The `model_invoke` tool (model/tools/modelInvoke.ts): one request to

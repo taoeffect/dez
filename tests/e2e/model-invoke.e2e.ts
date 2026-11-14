@@ -487,7 +487,7 @@ describe('model_invoke', () => {
     // The image does not show at its place, and its lines take no room.
     // The chip of its call tells of it; the `jobs_wait` chip does not.
     await waitForValue(browser, 'chips after the reply', () => intermediateParts(browser), [hidingPart('image'), null])
-    expect((await toolChips(browser))[0].label).toBe(`Tool call model_invoke, "${STUDIO.id}/${STUDIO.modelId}", intermediate asset hidden`)
+    expect((await toolChips(browser))[0].label).toBe(`Tool call model_invoke, "${STUDIO.id}/${STUDIO.modelId}" "${PAINT_PROMPT}", intermediate asset hidden`)
     expect(await shownImages(browser)).toStrictEqual([])
     const note = 'Hidden intermediate image @a. Open its tool call to see it.'
     expect(await hiddenAssetNotes(browser)).toStrictEqual([{ text: note, visible: false }])
@@ -502,7 +502,7 @@ describe('model_invoke', () => {
     await pressToolChip(browser, 0)
     await waitForValue(browser, 'image in the panel', imageSizes, [{ width: 48, height: 36 }])
     expect(await intermediateParts(browser)).toStrictEqual([revealingPart('image'), null])
-    expect((await toolChips(browser))[0].label).toBe(`Tool call model_invoke, "${STUDIO.id}/${STUDIO.modelId}", intermediate asset`)
+    expect((await toolChips(browser))[0].label).toBe(`Tool call model_invoke, "${STUDIO.id}/${STUDIO.modelId}" "${PAINT_PROMPT}", intermediate asset`)
     expect(await hiddenPart(browser, 0)).toStrictEqual({ heading: 'Intermediate asset', assets: 1, text: null })
     expect((await toolPanel(browser, 0))?.result).toBe(started)
 

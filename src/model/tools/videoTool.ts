@@ -111,7 +111,8 @@ const ARGUMENTS_PARAMETER: ToolParameter = {
 const FFMPEG_HELP = [
   'Runs the ffmpeg that Dez ships once, with the arguments that you give, in a new work folder. '
     + 'The call starts a job and gives its id at once: get the result with jobs_wait. '
-    + 'The result has the end of the log of ffmpeg and the id of each new clip and image; they go into your reply, where the user sees them.',
+    + 'The result has the end of the log of ffmpeg and the id of each new clip and image; they go into your reply, where the user sees them. '
+    + 'A run can end with no error and still make a wrong clip: check each new clip with asset_view before you report it.',
   'Inputs: name a video clip, an audio clip, or an image of this conversation by its id with an @, as in `-i @c`. '
     + 'Dez puts a copy of that file into the work folder and writes the name of the copy (as in c.mp4) in place of the @id. '
     + 'The file itself never changes. Name no other file: Dez refuses an argument that names a file outside the work folder. '
@@ -157,7 +158,7 @@ export const VIDEO_TOOL: SubcommandTool = {
         + 'Else it encodes them again, at the size and the frame rate of the first clip: as WebM (VP9, Opus) when the first clip is a WebM file, else as MP4 (H.264, AAC). '
         + 'A clip of another shape gets black bars, and a clip with no sound gets silence when another clip has sound. '
         + 'The call starts a job and gives its id at once: get the result with jobs_wait. '
-        + 'The new clip goes into your reply, where the user can play it, and the result gives its id. '
+        + 'The new clip goes into your reply, where the user can play it, and the result gives its id: check it with asset_view before you report it. '
         + 'For other work on a clip (a cut, sound for a video clip, another size), use the ffmpeg subcommand.',
       parameters: [
         {

@@ -6,10 +6,11 @@ import type { Role } from '../../model/chat/types'
 import { toolBlockText, type ToolBlockStatus } from '../../model/chat/toolBlocks'
 import { jobStartedText, jobsWaitText, type JobResultStatus } from '../../model/tools/jobs'
 import { ROUND_LIMIT_TOOL_RESULT, STOPPED_TOOL_RESULT } from '../../model/streams/toolRound'
+import type { ToolArguments } from '../../model/tools/types'
 import { PILL_OPEN, SECTION_SEP, sectionsField, setSectionsEffect, setSectionThinkingEffect } from '../thread/cmEditor'
 import { setStreamingSectionEffect, streamingSectionField } from '../thread/modelChip'
 import { PLAYER } from './testing'
-import { intermediateLabel, intermediateSymbols, markdownToolCalls, renderedToolCalls, toolCallLabel, toolCallSummary, type IntermediateCall } from './toolCalls'
+import { intermediateLabel, intermediateSymbols, markdownToolCalls, renderedToolCalls, toolCallLabel, toolCallSummaries, type IntermediateCall } from './toolCalls'
 
 function block(id: string, status: ToolBlockStatus = 'success', result = 'ok'): string {
   return toolBlockText({ id, name: 'model_list', status, arguments: { filter: 'gemini' }, result: status === 'running' ? '' : result })
@@ -315,23 +316,74 @@ describe('the spacing of the chip lines', () => {
   })
 })
 
-describe('toolCallSummary', () => {
-  it('shows the first argument on one line, a string in quotes', () => {
-    expect(toolCallSummary('model_list', {})).toBe('')
-    expect(toolCallSummary('model_list', { filter: '  gem\n\tini ', other: 'x' })).toBe('"gem ini"')
-    expect(toolCallSummary('model_list', { count: 3 })).toBe('3')
-    expect(toolCallSummary('model_list', { all: false })).toBe('false')
+describe('toolCallSummaries', () => {
+  function summary(name: string, args: ToolArguments): string {
+    return toolCallSummaries([{ name, arguments: args }])[0]
+  }
+
+  it('shows each argument in its order: a text in quotes on one line, a number with its name, a true switch by its name', () => {
+    expect(summary('model_list', {})).toBe('')
+    expect(summary('model_list', { filter: '  gem\n\tini ', other: 'x' })).toBe('"gem ini" "x"')
+    expect(summary('model_invoke', { model: 'studio/paint', prompt: 'a cat', timeout_seconds: 600 })).toBe('"studio/paint" "a cat" timeout_seconds=600')
+    expect(summary('jobs_wait', { all: true })).toBe('all')
   })
 
-  it('cuts a long value at 40 characters, the ellipsis included', () => {
-    expect(toolCallSummary('model_list', { filter: 'a'.repeat(40) })).toBe(`"${'a'.repeat(40)}"`)
-    expect(toolCallSummary('model_list', { filter: 'a'.repeat(41) })).toBe(`"${'a'.repeat(39)}…"`)
-    expect(toolCallSummary('model_list', { filter: '😀'.repeat(41) })).toBe(`"${'😀'.repeat(39)}…"`)
+  it('leaves out a blank text, a false switch, and is_intermediate, which the chip tells by its own part', () => {
+    expect(summary('jobs_wait', { all: false, jobs: ' ' })).toBe('')
+    expect(summary('model_invoke', { model: 'studio/paint', is_intermediate: true })).toBe('"studio/paint"')
+  })
+
+  it('shows the subcommand of a subcommand tool as a word, then its parameters', () => {
+    expect(summary('video', { command: 'join_clips', parameters: '{"clips":"@i @k","is_intermediate":true}' })).toBe('join_clips "@i @k"')
+    expect(summary('video', { command: 'help', parameters: 'join_clips' })).toBe('help "join_clips"')
+    expect(summary('video', { command: 'help' })).toBe('help')
+  })
+
+  it('cuts a long text at 40 characters, the ellipsis included', () => {
+    expect(summary('model_list', { filter: 'a'.repeat(40) })).toBe(`"${'a'.repeat(40)}"`)
+    expect(summary('model_list', { filter: 'a'.repeat(41) })).toBe(`"${'a'.repeat(39)}…"`)
+    expect(summary('model_list', { filter: '😀'.repeat(41) })).toBe(`"${'😀'.repeat(39)}…"`)
+  })
+
+  it('shows a text that starts as the same argument of another call of the tool from the word where the two differ', () => {
+    const start = 'Animated music video. The young woman '
+    const calls: { name: string, arguments: ToolArguments }[] = [
+      { name: 'model_invoke', arguments: { model: 'v/seedance', prompt: `${start}walks into the rain at night` } },
+      { name: 'model_invoke', arguments: { model: 'v/seedance', prompt: `${start}waves from the train` } },
+      { name: 'model_invoke', arguments: { model: 'v/seedance', prompt: 'A short text' } },
+      { name: 'model_list', arguments: { filter: `${start}dances` } },
+    ]
+
+    expect(toolCallSummaries(calls)).toEqual([
+      '"v/seedance" "…walks into the rain at night"',
+      '"v/seedance" "…waves from the train"',
+      '"v/seedance" "A short text"',
+      // A call of another tool is no match.
+      `"${`${start}dances`.slice(0, 39)}…"`,
+    ])
+  })
+
+  it('shows a text from its start when the shared start is short or the texts are the same', () => {
+    const calls = [
+      { name: 'model_invoke', arguments: { model: 'v/seedance', prompt: 'A cat on a roof at noon' } },
+      { name: 'model_invoke', arguments: { model: 'v/seedance', prompt: 'A cat on a boat at noon' } },
+    ]
+
+    expect(toolCallSummaries(calls)).toEqual(['"v/seedance" "A cat on a roof at noon"', '"v/seedance" "A cat on a boat at noon"'])
   })
 
   it('shows nothing for a tool that Dez does not have', () => {
-    expect(toolCallSummary('crop_scale_image', { image: 'a', width: '10' })).toBe('')
-    expect(toolCallSummary('Model_List', { filter: 'gemini' })).toBe('')
+    expect(summary('crop_scale_image', { image: 'a', width: '10' })).toBe('')
+    expect(summary('Model_List', { filter: 'gemini' })).toBe('')
+  })
+})
+
+describe('the summary of a rendered call', () => {
+  it('tells apart the calls of one agent section, not the calls of another section', () => {
+    const prompt = (end: string) => toolBlockText({ id: end, name: 'model_list', status: 'success', arguments: { filter: `The very long shared start of a filter ${end}` }, result: 'ok' })
+    const state = createState(['ask', `${prompt('one')}\n\n${prompt('two')}`, 'more', prompt('three')], ['user', 'agent', 'user', 'agent'])
+
+    expect(renderedToolCalls(state).map((call) => call.summary)).toEqual(['"…one"', '"…two"', '"The very long shared start of a filter…"'])
   })
 })
 

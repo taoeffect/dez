@@ -14,10 +14,11 @@ import {
   NO_OPEN_JOBS_TEXT,
   startedJob,
   startedJobId,
-  unknownJobText,
+  waitedJobIds,
   type JobInfo,
   type JobResult,
 } from './jobs'
+import { ToolError } from './types'
 
 const job = (fields: Partial<JobInfo>): JobInfo => ({
   id: 'j-aaaa', tool: 'model_invoke', status: 'running', delivered: false, elapsedMs: 0, state: '', call: { number: 1, label: '' }, ...fields,
@@ -165,6 +166,14 @@ describe('jobsWaitText', () => {
   it('tells the model not to wait again when no job runs and no result waits', () => {
     expect(jobsWaitText([], 0)).toBe(NO_OPEN_JOBS_TEXT)
   })
+
+  // After a call that names its jobs (`jobs`), the results of other jobs
+  // can wait for a later call.
+  it('tells how many results of other jobs are ready', () => {
+    expect(jobsWaitText([made], 0, 2).split('\n')[0]).toContain('The results of 2 other jobs are ready')
+    expect(jobsWaitText([], 1, 1)).not.toBe(NO_OPEN_JOBS_TEXT)
+    expect(jobsWaitText([], 0, 1)).toContain('The result of 1 other job is ready')
+  })
 })
 
 describe('jobsWaitResults', () => {
@@ -239,10 +248,25 @@ describe('jobInspectText', () => {
   })
 })
 
-describe('unknownJobText', () => {
-  it('names the jobs of the reply, or says that it has none', () => {
-    expect(unknownJobText('j-zzzz', ['j-aaaa', 'j-bbbb'])).toContain('has no job with the id "j-zzzz"')
-    expect(unknownJobText('j-zzzz', ['j-aaaa', 'j-bbbb'])).toContain('The jobs of this reply are j-aaaa, j-bbbb: call job_inspect again with one of these ids.')
-    expect(unknownJobText('j-zzzz', [])).toContain('This reply has started no job')
+describe('waitedJobIds', () => {
+  const known = ['j-aaaa', 'j-bbbb', 'j-cccc']
+
+  it('reads the ids with white space or commas between them, each once', () => {
+    expect(waitedJobIds({ jobs: ' j-cccc,j-aaaa\nj-cccc, ' }, known)).toStrictEqual(['j-cccc', 'j-aaaa'])
+  })
+
+  it('gives null for a call that names no job', () => {
+    expect(waitedJobIds({}, known)).toBeNull()
+    expect(waitedJobIds({ jobs: ' , ', all: true }, known)).toBeNull()
+  })
+
+  it('refuses `jobs` together with `all`', () => {
+    expect(() => waitedJobIds({ jobs: 'j-aaaa', all: true }, known)).toThrow(ToolError)
+    expect(waitedJobIds({ jobs: 'j-aaaa', all: false }, known)).toStrictEqual(['j-aaaa'])
+  })
+
+  it('refuses an id of no job of the reply, and names the unknown ids and the ids of the reply', () => {
+    expect(() => waitedJobIds({ jobs: 'j-aaaa j-zzzz j-yyyy' }, known)).toThrow(/"j-zzzz", "j-yyyy".* j-aaaa, j-bbbb, j-cccc:/)
+    expect(() => waitedJobIds({ jobs: 'j-aaaa' }, [])).toThrow(/started no job, so no job has the id "j-aaaa"/)
   })
 })

@@ -96,7 +96,15 @@ export async function resetConsoleErrors (browser: E2EBrowser): Promise<void> {
     const original = console.error.bind(console)
     console.error = (...args: unknown[]) => {
       const record = Reflect.get(window, '__e2eErrors') as string[]
-      record.push(args.map((arg) => arg instanceof Error ? arg.stack ?? arg.message : String(arg)).join(' '))
+      // A WebKit stack holds only the frames, not the error's name and
+      // message, so the record gets the error's text first. A stack of
+      // another engine starts with that text: it goes once.
+      record.push(args.map((arg) => {
+        if (!(arg instanceof Error)) return String(arg)
+        const text = String(arg)
+        if (!arg.stack) return text
+        return arg.stack.startsWith(text) ? arg.stack : `${text}\n${arg.stack}`
+      }).join(' '))
       original(...args)
     }
   })

@@ -138,14 +138,14 @@ pub async fn http_request(
     client: State<'_, reqwest::Client>,
 ) -> Result<HttpResponse, String> {
     let request_builder = build_request(&client, request)?;
-    let response = request_builder.send().await.map_err(|error| error.to_string())?;
+    let response = request_builder.send().await.map_err(|error| error_chain_text(&error))?;
     let status = response.status();
     let status_text = status_text(status);
     let headers = response_headers(response.headers());
     let body = response
         .bytes()
         .await
-        .map_err(|error| error.to_string())?
+        .map_err(|error| error_chain_text(&error))?
         .to_vec();
 
     Ok(HttpResponse {
@@ -257,7 +257,7 @@ pub async fn stream_http(
                         }
                         Err(error) => {
                             let _ = on_event.send(HttpStreamEvent::Error {
-                                message: error.to_string(),
+                                message: error_chain_text(&error),
                                 status: Some(status.as_u16()),
                             });
                             let mut active = active_streams.lock().await;
@@ -272,7 +272,7 @@ pub async fn stream_http(
             Err(error) => {
                 let status = error.status().map(|status| status.as_u16());
                 let _ = on_event.send(HttpStreamEvent::Error {
-                    message: error.to_string(),
+                    message: error_chain_text(&error),
                     status,
                 });
             }
@@ -371,7 +371,27 @@ async fn download(
 // one, which is a secret, and this text goes to the log and to a toast. The
 // caller knows which URL it asked for.
 fn download_error(error: reqwest::Error) -> String {
-    error.without_url().to_string()
+    error_chain_text(&error.without_url())
+}
+
+// The text of an error, then the text of each error under it (its
+// `source()` chain), joined with ": ". The top text of a reqwest error
+// alone ("error sending request") does not tell whether the server closed
+// the connection, the connect failed, or a TLS check failed; the sources
+// do. A source whose text the chain already holds is left out, as some
+// error types put their source into their own text.
+fn error_chain_text(error: &(dyn std::error::Error + 'static)) -> String {
+    let mut text = error.to_string();
+    let mut source = error.source();
+    while let Some(cause) = source {
+        let part = cause.to_string();
+        if !part.is_empty() && !text.contains(&part) {
+            text.push_str(": ");
+            text.push_str(&part);
+        }
+        source = cause.source();
+    }
+    text
 }
 
 // The first `limit` bytes of a body. A body that ends with an error gives
@@ -615,6 +635,22 @@ mod tests {
 
         assert!(!error.contains("secret-part") && !error.contains("clip.mp4"), "{error}");
         assert!(dir.file_names().is_empty());
+    }
+
+    // The top text of the error ("error sending request") alone does not
+    // tell what broke: the text of each cause under it follows.
+    #[tokio::test]
+    async fn a_network_error_tells_its_cause() {
+        let dir = TempDir::new("download-closed");
+        // The server reads the request and closes the connection with no
+        // answer.
+        let url = serve(Vec::new(), false).await;
+
+        let error = get(url, &dir.0.join("clip.mp4"), rule(1024, None)).await.expect_err("closed");
+
+        // reqwest 0.12: "error sending request: client error (SendRequest):
+        // connection closed before message completed".
+        assert!(error.starts_with("error sending request: ") && error.contains("closed"), "{error}");
     }
 
     // The request as the webview sends it: JSON with the body `body`.

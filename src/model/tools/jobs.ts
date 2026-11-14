@@ -266,20 +266,43 @@ function jobPart({ id, tool, status, text, call }: JobResult): string {
 }
 
 /** The result of a `jobs_wait` call: a first line that tells how many jobs
- *  ended and how many of the reply's jobs still run (`running`), then one
- *  part for each job of `results`, which names its call (`JobCall`):
+ *  ended, how many of the reply's jobs still run (`running`), and how many
+ *  results of other jobs wait for a later call (`ready`, only after a call
+ *  that names its jobs), then one part for each job of `results`, which
+ *  names its call (`JobCall`):
  *
  *      <job id="j-k3x9" number="2" tool="model_invoke" status="finished" call="A red fox in the snow">
  *      Made the image @c.
  *      </job>
  *
- *  `results` is empty only when no job runs (`NO_OPEN_JOBS_TEXT`). */
-export function jobsWaitText(results: readonly JobResult[], running: number): string {
-  if (results.length === 0) return NO_OPEN_JOBS_TEXT
+ *  `results` is empty when no job runs and no result waits
+ *  (`NO_OPEN_JOBS_TEXT`), or when a call names jobs (`jobs`) whose results
+ *  an earlier call gave. */
+export function jobsWaitText(results: readonly JobResult[], running: number, ready = 0): string {
+  if (results.length === 0 && running === 0 && ready === 0) return NO_OPEN_JOBS_TEXT
   let rest = 'No job still runs.'
   if (running === 1) rest = '1 job still runs: call jobs_wait again to get its result.'
   else if (running > 1) rest = `${running} jobs still run: call jobs_wait again to get their results (with \`all\`, one call waits for all of them).`
+  if (ready === 1) rest += ' The result of 1 other job is ready: call jobs_wait to get it.'
+  else if (ready > 1) rest += ` The results of ${ready} other jobs are ready: call jobs_wait to get them.`
+  if (results.length === 0) return `You already have the result of each job that \`jobs\` names. ${rest}`
   return [`${jobCountText(results.length)} ended. ${rest}`, ...results.map(jobPart)].join('\n\n')
+}
+
+/** The ids of the jobs that the `jobs` argument of a `jobs_wait` call
+ *  names (white space or commas between them), each once; null for a call
+ *  that names none. Throws a `ToolError` for `jobs` together with `all`,
+ *  and for an id of no job of the reply (`knownIds`). */
+export function waitedJobIds(args: ToolArguments, knownIds: readonly string[]): string[] | null {
+  const text = typeof args.jobs === 'string' ? args.jobs : ''
+  const ids = [...new Set(text.split(/[\s,]+/).filter((id) => id !== ''))]
+  if (ids.length === 0) return null
+  if (args.all === true) {
+    throw new ToolError('Set `jobs` or `all`, not both: `jobs` waits for the jobs that it names, and `all` for every job of this reply. Call jobs_wait again with one of them.')
+  }
+  const unknown = ids.filter((id) => !knownIds.includes(id))
+  if (unknown.length > 0) throw new ToolError(unknownJobText(unknown, knownIds))
+  return ids
 }
 
 // One part of `jobPart`. The body is escaped, so its first `\n</job>` line
@@ -387,13 +410,14 @@ export function jobInspectText(job: JobInfo): string {
   return [status, state, ...(job.call.label === '' ? [] : [`Its call begins: ${job.call.label}`])].join('\n')
 }
 
-/** The error result of a `job_inspect` call whose `jobId` names no job of
+/** The error result of a call whose job ids (`unknownIds`) name no job of
  *  the reply; `knownIds` are the ids of its jobs. */
-export function unknownJobText(jobId: string, knownIds: readonly string[]): string {
+export function unknownJobText(unknownIds: readonly string[], knownIds: readonly string[]): string {
+  const names = `${unknownIds.length === 1 ? 'the id' : 'the ids'} ${unknownIds.map((id) => JSON.stringify(id)).join(', ')}`
   const earlier = 'A job of an earlier reply ended with that reply.'
   return knownIds.length === 0
-    ? `This reply has started no job, so it has no job ${JSON.stringify(jobId)}. ${earlier} Call job_inspect only with the id of a job that you started in this reply.`
-    : `This reply has no job with the id ${JSON.stringify(jobId)}. ${earlier} The jobs of this reply are ${knownIds.join(', ')}: call job_inspect again with one of these ids.`
+    ? `This reply has started no job, so no job has ${names}. ${earlier} Use only the id of a job that you started in this reply.`
+    : `No job of this reply has ${names}. ${earlier} The jobs of this reply are ${knownIds.join(', ')}: use only these ids.`
 }
 
 // The descriptions are static (no counts, no dates): the tools array and
@@ -407,7 +431,8 @@ export const JOBS_WAIT_TOOL: ToolDefinition = {
   description: 'Wait for the jobs of this reply, and get their results. '
     + 'A Dez tool whose work takes long starts a job: its call returns a job id at once, and the work runs in the background. '
     + 'Jobs run at the same time, so start every job that you need before you wait. '
-    + '`jobs_wait` returns when one or more jobs ended. It gives the result of each of those jobs once, with its job id and its status (finished, failed, or timed out). '
+    + '`jobs_wait` returns when one or more jobs ended (with `jobs`: when each job that you name ended). '
+    + 'It gives the result of each of those jobs once, with its job id and its status (finished, failed, or timed out). '
     + 'The results come in the order in which the jobs ended, which is not the order of your calls. '
     + 'So each result names its call: `number` is the place of the job in the order of the starts (the result of the call that started it told the same number), '
     + 'and `call` is how the prompt or the arguments of that call begin. '
@@ -421,6 +446,15 @@ export const JOBS_WAIT_TOOL: ToolDefinition = {
       description: 'Set it to `true` to wait until every job of this reply ended, and to get all their results in one call. '
         + 'A reply can make only a limited count of rounds of tool calls, and each `jobs_wait` call that gives one result uses one: '
         + 'set it when you need all the results before your next step. The default is `false`.',
+      required: false,
+    },
+    {
+      name: 'jobs',
+      type: 'string',
+      description: 'The ids of the jobs to wait for, as in "j-k3x9 j-ab12". The call waits until each of these jobs ended, and gives only their results; '
+        + 'the results of the other jobs stay for a later jobs_wait call. '
+        + 'Use it when your next step needs only some of the results, as an image for your next call while music still runs. '
+        + 'Do not set it together with `all`.',
       required: false,
     },
   ],

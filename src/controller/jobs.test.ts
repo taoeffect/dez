@@ -110,7 +110,7 @@ describe('ReplyJobs', () => {
     expect((await jobs.wait(running())).map((job) => job.id)).toStrictEqual([ids[1]])
 
     let ended: EndedJob[] | undefined
-    void jobs.wait(running(), true).then((results) => { ended = results })
+    void jobs.wait(running(), { all: true }).then((results) => { ended = results })
     works[2].finish({ text: 'Third.' })
     await settled()
     // One job still runs, so the wait goes on with a result that is ready.
@@ -120,7 +120,33 @@ describe('ReplyJobs', () => {
     await settled()
     expect(ended?.map((job) => [job.id, job.text])).toStrictEqual([[ids[2], 'Third.'], [ids[0], 'First.']])
     expect(jobs.hasOpen).toBe(false)
-    expect(await jobs.wait(running(), true)).toStrictEqual([])
+    expect(await jobs.wait(running(), { all: true })).toStrictEqual([])
+  })
+
+  // An image that the next step needs, while music still runs.
+  it('waits only for the jobs `ids`, gives only their results, and keeps the other results for a later wait', async () => {
+    const works = [heldWork(), heldWork(), heldWork()]
+    const ids = works.map((held) => jobs.start('model_invoke', held.work, LONG).id)
+    works[2].finish({ text: 'Third.' })
+    await settled()
+
+    let ended: EndedJob[] | undefined
+    void jobs.wait(running(), { ids: [ids[0], ids[1]] }).then((results) => { ended = results })
+    works[1].finish({ text: 'Second.' })
+    await settled()
+    // A result of another job is ready, and a named job still runs.
+    expect(ended).toBeUndefined()
+
+    works[0].finish({ text: 'First.' })
+    await settled()
+    expect(ended?.map((job) => job.id)).toStrictEqual([ids[1], ids[0]])
+    expect(jobs.ready).toBe(1)
+
+    // The named jobs gave their results, so the next named wait gives none
+    // at once; the other result stays for a wait with no names.
+    expect(await jobs.wait(running(), { ids: [ids[0]] })).toStrictEqual([])
+    expect((await jobs.wait(running())).map((job) => job.id)).toStrictEqual([ids[2]])
+    expect(jobs.hasOpen).toBe(false)
   })
 
   it('ends a wait whose signal aborts, and the job goes on', async () => {

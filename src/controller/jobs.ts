@@ -174,6 +174,11 @@ export class ReplyJobs {
     return this.unread.length > 0 || this.running > 0
   }
 
+  /** How many results of ended jobs wait for a reader. */
+  get ready(): number {
+    return this.unread.length
+  }
+
   /** Starts `work` as a job of `tool` and returns the job's id and its
    *  number (`JobCall.number`) at once. The job ends as `timed out` when
    *  the work takes more than `timeoutMs`. `hidesAssets`: see `EndedJob`.
@@ -240,9 +245,13 @@ export class ReplyJobs {
     for (const wake of [...this.waits]) wake()
   }
 
-  // The results that no reader took, which count as read from now on.
-  private takeUnread(): EndedJob[] {
-    return this.unread.splice(0).map((job) => {
+  // The results that no reader took, which count as read from now on: of
+  // the jobs `ids`, or of every job. The other results stay unread.
+  private takeUnread(ids?: readonly string[]): EndedJob[] {
+    const taken = ids ? this.unread.filter((job) => ids.includes(job.id)) : [...this.unread]
+    const kept = this.unread.filter((job) => !taken.includes(job))
+    this.unread.splice(0, this.unread.length, ...kept)
+    return taken.map((job) => {
       job.delivered = true
       return { id: job.id, tool: job.tool, status: job.status as JobResultStatus, text: job.text, assets: job.assets, hidesAssets: job.hidesAssets, call: job.call }
     })
@@ -270,13 +279,18 @@ export class ReplyJobs {
    *  yet, in the order of their ends. Each result comes once. With no such
    *  job, it waits for the next end of a job; with no job that runs
    *  either, it gives none at once. With `all`, it waits until no job
-   *  runs, so it gives every result that is left in one call. Rejects with
-   *  the reason of `signal` when it aborts; the jobs go on, and the
-   *  results stay for the next reader. */
-  async wait(signal: AbortSignal, all = false): Promise<EndedJob[]> {
+   *  runs, so it gives every result that is left in one call. With `ids`,
+   *  it waits until none of those jobs runs, and gives only their results
+   *  (an id of no job counts as ended). Rejects with the reason of
+   *  `signal` when it aborts; the jobs go on, and the results stay for the
+   *  next reader. */
+  async wait(signal: AbortSignal, { all = false, ids }: { all?: boolean, ids?: readonly string[] } = {}): Promise<EndedJob[]> {
+    const done = ids
+      ? () => ids.every((id) => this.jobs.get(id)?.status !== 'running')
+      : () => this.running === 0 || (!all && this.unread.length > 0)
     for (;;) {
       signal.throwIfAborted()
-      if (this.running === 0 || (!all && this.unread.length > 0)) return this.takeUnread()
+      if (done()) return this.takeUnread(ids)
       await this.nextEnd(signal)
     }
   }

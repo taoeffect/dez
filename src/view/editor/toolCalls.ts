@@ -6,9 +6,10 @@ import type { MediaTagData } from '../../model/chat/mediaTags'
 import { parseModelRefKey } from '../../model/chat/modelRef'
 import { EMPTY_TOOL_RESULT, INTERRUPTED_TOOL_RESULT, type ToolBlock } from '../../model/chat/toolBlocks'
 import { MODEL_OUTPUT_IDS, effectiveOutputs, type ModelOutput } from '../../model/modelOutputs'
+import { isRecord } from '../../model/providers/modelParsing'
 import type { ModelInfo } from '../../model/providers/types'
 import { isRoundLimitResult } from '../../model/streams/toolRound'
-import { jobOwnText, startedJobId, type JobResultStatus } from '../../model/tools/jobs'
+import { INTERMEDIATE_PARAMETER, jobOwnText, startedJobId, type JobResultStatus } from '../../model/tools/jobs'
 import { isIntermediateCall, toolDefinition } from '../../model/tools/registry'
 import type { ToolArguments } from '../../model/tools/types'
 import { assetIcon } from '../assetIcons'
@@ -80,6 +81,8 @@ export interface RenderedToolCall extends ToolBlock {
   state: ToolCallState
   /** Null for a call that is not intermediate. */
   intermediate: IntermediateCall | null
+  /** The chip's short form of the arguments (`toolCallSummary`). */
+  summary: string
 }
 
 /** How the editor spaces the lines of the chips. The text of a reply has
@@ -119,9 +122,14 @@ interface ToolCallDecorations {
   collapsed: DecorationSet
 }
 
-/** The longest argument text that a chip shows, in characters, `…`
- *  included. */
-const SUMMARY_MAX_CHARS = 40
+/** The longest text of one argument value that a chip shows, in
+ *  characters, `…` included. */
+const SUMMARY_PART_MAX_CHARS = 40
+
+/** A text value that starts with at least this many characters of the
+ *  same argument of another call shows from the word where the two differ
+ *  (`toolCallSummary`). */
+const SHARED_START_MIN_CHARS = 20
 
 /** What a chip says before the name of a tool that Dez does not have: an
  *  old tool that this Dez no longer has (such as `crop_scale_image`), or a
@@ -133,18 +141,97 @@ function isUnrecognizedTool(name: string): boolean {
   return toolDefinition(name) === undefined
 }
 
-/** The chip's short form of a call's arguments: the value of the first one
- *  on one line, a string in quotes, cut with `…` past `SUMMARY_MAX_CHARS`;
- *  '' for a call with no arguments. A call to a tool that Dez does not have
- *  gets '' too: its chip text is long already, and its arguments follow no
- *  Dez schema (the panel shows them all). */
-export function toolCallSummary(name: string, args: ToolArguments): string {
-  if (isUnrecognizedTool(name)) return ''
-  const [first] = Object.values(args)
-  if (first === undefined) return ''
-  const chars = [...(typeof first === 'string' ? first : JSON.stringify(first)).replace(/\s+/g, ' ').trim()]
-  const text = chars.length > SUMMARY_MAX_CHARS ? `${chars.slice(0, SUMMARY_MAX_CHARS - 1).join('').trimEnd()}…` : chars.join('')
-  return typeof first === 'string' ? `"${text}"` : text
+/** The arguments of a call as its chip shows them, in their order, each
+ *  text on one line. A call of a subcommand tool (`video`, `image`,
+ *  `audio`: a `command` text and its `parameters` as the text of a JSON
+ *  object) gives the subcommand, then the entries of that object, or the
+ *  text when it is no JSON object. `is_intermediate` is left out: the
+ *  chip's intermediate part tells it. */
+function summaryEntries(args: ToolArguments): { command: string | null, entries: Map<string, unknown> } {
+  let command: string | null = null
+  let entries: [string, unknown][] = Object.entries(args)
+  if (typeof args.command === 'string') {
+    const { command: subcommand, parameters, ...rest } = args
+    let parsed: unknown = parameters
+    if (typeof parameters === 'string') {
+      try {
+        parsed = JSON.parse(parameters)
+      } catch {
+        // A text that is no JSON shows as a text.
+      }
+    }
+    command = subcommand.trim()
+    entries = [...(isRecord(parsed) ? Object.entries(parsed) : parsed === undefined ? [] : [['parameters', parsed] as [string, unknown]]), ...Object.entries(rest)]
+  }
+  return {
+    command,
+    entries: new Map(entries
+      .filter(([key]) => key !== INTERMEDIATE_PARAMETER.name)
+      .map(([key, value]) => [key, typeof value === 'string' ? value.replace(/\s+/g, ' ').trim() : value])),
+  }
+}
+
+// `text` cut with `…` past `SUMMARY_PART_MAX_CHARS`.
+function cutText(text: string): string {
+  const chars = [...text]
+  return chars.length > SUMMARY_PART_MAX_CHARS ? `${chars.slice(0, SUMMARY_PART_MAX_CHARS - 1).join('').trimEnd()}…` : text
+}
+
+// The start of the text `text` as a chip shows it: 0, or, when `text`
+// starts with `SHARED_START_MIN_CHARS` or more characters of another text
+// of `others` that is not the same, the start of the word where the two
+// differ.
+function distinctStart(text: string, others: readonly string[]): number {
+  let shared = 0
+  for (const other of others) {
+    if (other === text) continue
+    let length = 0
+    while (length < text.length && length < other.length && text[length] === other[length]) length++
+    shared = Math.max(shared, length)
+  }
+  return shared < SHARED_START_MIN_CHARS ? 0 : text.lastIndexOf(' ', shared - 1) + 1
+}
+
+/** The chip's short form of the arguments of each call of `calls` (the
+ *  calls of one section, in doc order). The parts of a call's arguments
+ *  go in their order (see `summaryEntries`), with one space between two
+ *  parts: a text in quotes, cut with `…` past `SUMMARY_PART_MAX_CHARS`; a
+ *  number as `name=value`; a `true` switch as its name; a subcommand as a
+ *  bare word. A blank text and a `false` switch are left out. '' for a
+ *  call with no arguments. A call to a tool that Dez does not have gets
+ *  '' too: its chip text is long already, and its arguments follow no Dez
+ *  schema (the panel shows them all).
+ *
+ *  The calls of a reply often differ only late in a long text: six
+ *  prompts that start with the same sentence. So a text that starts with
+ *  a long part of the same argument of another call of the same tool
+ *  shows from the word where the two differ, after a `…`, and the chips
+ *  tell the calls apart. */
+export function toolCallSummaries(calls: readonly Pick<ToolBlock, 'name' | 'arguments'>[]): string[] {
+  const shown = calls.map((call) => summaryEntries(call.arguments))
+  return calls.map((call, index) => {
+    if (isUnrecognizedTool(call.name)) return ''
+    const { command, entries } = shown[index]
+    const others = shown.filter((_, other) => other !== index && calls[other].name === call.name)
+    const parts = command ? [command] : []
+    for (const [key, value] of entries) {
+      if (typeof value === 'string') {
+        if (value === '') continue
+        const start = distinctStart(value, others.flatMap((other) => {
+          const otherValue = other.entries.get(key)
+          return typeof otherValue === 'string' ? [otherValue] : []
+        }))
+        parts.push(`"${cutText(start === 0 ? value : `…${value.slice(start)}`)}"`)
+      } else if (typeof value === 'number') {
+        parts.push(`${key}=${value}`)
+      } else if (value === true) {
+        parts.push(key)
+      } else if (value !== false && value !== undefined) {
+        parts.push(cutText(JSON.stringify(value)))
+      }
+    }
+    return parts.join(' ')
+  })
 }
 
 const WHITE_SPACE_RUN = /\s*/y
@@ -229,11 +316,19 @@ function findRenderedToolCalls(doc: string, sections: readonly SectionModel[], s
   if (!doc.includes('<dez:tool')) return { calls, spacing }
   for (const { section, from, text } of agentSectionTexts(doc, sections)) {
     const chips = chipBlocks(text)
+    const summaries = toolCallSummaries(chips)
     const sectionHidden = hidden.filter((asset) => asset.from >= from && asset.to <= from + text.length)
-    for (const block of chips) {
+    chips.forEach((block, index) => {
       const state = toolCallState(block, section.id === streamingSectionId)
-      calls.push({ ...block, from: from + block.from, to: from + block.to, state, intermediate: intermediateCall(block, state, chips, sectionHidden) })
-    }
+      calls.push({
+        ...block,
+        from: from + block.from,
+        to: from + block.to,
+        state,
+        intermediate: intermediateCall(block, state, chips, sectionHidden),
+        summary: summaries[index],
+      })
+    })
     // Spaces stand for the text of each hidden asset, so that its line
     // counts as a blank line (`ChipSpacing`). A chip with only a hidden
     // asset between it and text, and no blank line, gets no space there;
@@ -370,7 +465,7 @@ function renderIntermediate(chip: HTMLElement, call: RenderedToolCall, open: boo
   chip.querySelector(`.${INTERMEDIATE_CLASS}`)?.remove()
   const { intermediate } = call
   const label = intermediate ? intermediateLabel(intermediate, open) : ''
-  chip.setAttribute('aria-label', toolCallLabel(call.name, toolCallSummary(call.name, call.arguments), call.state, label))
+  chip.setAttribute('aria-label', toolCallLabel(call.name, call.summary, call.state, label))
   if (!intermediate) return
   const part = span(INTERMEDIATE_CLASS)
   const revealed = open && (intermediate.assets.length > 0 || intermediate.text !== '')
@@ -406,8 +501,7 @@ function createChip(view: EditorView, call: RenderedToolCall): HTMLElement {
   // (`dezTheme`) and the flex gap spaces the two.
   if (isUnrecognizedTool(call.name)) chip.appendChild(span('dez-tool-call__unrecognized', UNRECOGNIZED_TOOL_TEXT))
   chip.appendChild(span('dez-tool-call__name', call.name))
-  const summary = toolCallSummary(call.name, call.arguments)
-  if (summary !== '') chip.appendChild(span('dez-tool-call__summary', summary))
+  if (call.summary !== '') chip.appendChild(span('dez-tool-call__summary', call.summary))
   const word = STATE_WORDS[call.state]
   if (word) chip.appendChild(span('dez-tool-call__state', word))
   const toggle = () => view.dispatch({ effects: toggleToolCallOpenEffect.of(call.id) })
@@ -572,7 +666,7 @@ function renderOpenState(view: EditorView, root: HTMLElement, call: RenderedTool
 // Every part of a call that the chip draws, but its intermediate data.
 // Arguments keep their definition order, so equal ones give equal JSON.
 function sameCall(a: RenderedToolCall, b: RenderedToolCall): boolean {
-  return a.id === b.id && a.name === b.name && a.state === b.state && a.result === b.result && JSON.stringify(a.arguments) === JSON.stringify(b.arguments)
+  return a.id === b.id && a.name === b.name && a.state === b.state && a.result === b.result && a.summary === b.summary && JSON.stringify(a.arguments) === JSON.stringify(b.arguments)
 }
 
 /** A chip and, while open, its panel. The open state is not part of the

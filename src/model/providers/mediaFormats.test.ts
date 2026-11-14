@@ -157,11 +157,26 @@ describe('venice image parameters', () => {
     ])
   })
 
-  // `venice-sd35` (2026-11-11) takes a width and a height, which Dez does
-  // not send.
-  it.each(['image', 'imageEdit'] as const)('gives a %s model with no option lists no parameters', (kind) => {
-    expect(imageParameters(kind, { promptCharacterLimit: 1500, steps: { default: 25, max: 30 }, widthHeightDivisor: 16 })).toStrictEqual([])
-    expect(venice.parameters?.(kind, { id: 'm', model_spec: {} }, undefined)).toStrictEqual([])
+  // The constraints of `venice-sd35` and `z-image-turbo` (2026-11-14): a
+  // size in pixels, a multiple of the divisor, at most 1280.
+  it.each([
+    [16, 1280],
+    [8, 1280],
+    [24, 1272],
+  ])('gives an image model with a size in pixels (divisor %i) a width and a height up to %i, with the default 1024 on a step', (divisor, max) => {
+    const side = { min: divisor, max, step: divisor, ...(1024 % divisor === 0 && { default: 1024 }) }
+    expect(imageParameters('image', { promptCharacterLimit: 1500, steps: { default: 25, max: 30 }, widthHeightDivisor: divisor })).toStrictEqual([
+      { name: 'width', ...side },
+      { name: 'height', ...side },
+    ])
+  })
+
+  // The Qwen family lists aspect ratios with a divisor of 1, and refuses a
+  // width and a height.
+  it('gives no width and no height to a model with aspect ratios, to an edit, and to a model with no divisor', () => {
+    expect(imageParameters('image', { aspectRatios: ['1:1', '16:9'], widthHeightDivisor: 1 }).map((row) => row.name)).toStrictEqual(['aspect_ratio'])
+    expect(imageParameters('imageEdit', { widthHeightDivisor: 16 })).toStrictEqual([])
+    for (const kind of ['image', 'imageEdit'] as const) expect(venice.parameters?.(kind, { id: 'm', model_spec: {} }, undefined)).toStrictEqual([])
   })
 })
 
