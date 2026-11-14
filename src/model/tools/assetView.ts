@@ -25,16 +25,20 @@ import { FFMPEG_FIXED_ARGS } from './videoTool'
 // Each asset gives its facts and a picture: an image as it is (a large one
 // as a smaller copy, or only a part of it), a video clip as a sheet of
 // frames, and an audio clip as a picture of its wave; a clip with sound
-// also gives its loudness. The pictures go to the model through the reply
-// (`ToolRunContext.showPictures`, streams/replyPictures.ts), never into
-// the section, and a view makes no asset. controller/assetView.ts reads
-// the files and runs ffmpeg.
+// also gives its loudness. With `layout` "grid", the images and the frame
+// sheets of a call go into one picture (assetGrid.ts). The pictures go to
+// the model through the reply (`ToolRunContext.showPictures`,
+// streams/replyPictures.ts), never into the section, and a view makes no
+// asset. controller/assetView.ts reads the files and runs ffmpeg.
 //
 // This module must not import chat/toolBlocks.ts or registry.ts: the
 // registry imports it, and toolBlocks imports the registry.
 
-/** The most ids of one call. */
+/** The most ids of one call with a picture for each asset. */
 export const MAX_ASSET_VIEW_IDS = 4
+
+/** The most ids of one call with `layout` "grid". */
+export const MAX_ASSET_VIEW_GRID_IDS = 12
 
 /** The frames of a frame sheet at equal steps when the call does not
  *  tell. */
@@ -43,7 +47,11 @@ const MIN_SHEET_FRAMES = 2
 /** The most frames of a frame sheet, and of a sheet of shots when the call
  *  does not tell. */
 const MAX_SHEET_FRAMES = 16
-const MAX_SHEET_COLUMNS = 4
+export const MAX_SHEET_COLUMNS = 4
+
+/** The white pixels between two frames of a frame sheet, which a grid also
+ *  puts between two images. */
+export const SHEET_PADDING = 4
 
 /** The longest run of ffmpeg for one clip, as for `ffprobe`: a frame
  *  sheet decodes only a part of the clip. */
@@ -54,6 +62,12 @@ export const ASSET_VIEW_TIMEOUT_MS = 60_000
 export type ViewDetail = 'review' | 'full'
 const VIEW_DETAILS: readonly ViewDetail[] = ['review', 'full']
 
+/** How a view lays out the pictures of its assets (`layout`): `separate`,
+ *  a picture for each asset; `grid`, one picture for all the images and
+ *  video clips (assetGrid.ts). */
+export type ViewLayout = 'separate' | 'grid'
+const VIEW_LAYOUTS: readonly ViewLayout[] = ['separate', 'grid']
+
 /** The longest side of the picture of an image, by `detail`: a larger
  *  image goes as a smaller copy. No picture has a side over the `full`
  *  one: the Claude API refuses a side over 3,000 px in a request with more
@@ -62,8 +76,9 @@ const VIEW_DETAILS: readonly ViewDetail[] = ['review', 'full']
  *  https://platform.claude.com/docs/en/build-with-claude/vision */
 export const IMAGE_PICTURE_SIDES: Readonly<Record<ViewDetail, number>> = { review: 1568, full: 3000 }
 
-/** The box that each frame of a frame sheet fits in, by `detail`: a sheet
- *  of `MAX_SHEET_COLUMNS` columns stays under 3,000 px on each side. */
+/** The box that each frame of a frame sheet, and each image of a grid,
+ *  fits in, by `detail`: a sheet of `MAX_SHEET_COLUMNS` columns stays
+ *  under 3,000 px on each side. */
 export const FRAME_BOXES: Readonly<Record<ViewDetail, number>> = { review: 320, full: 640 }
 
 /** The most bytes of the file of a picture: in base64, a file of this size
@@ -96,12 +111,13 @@ export const ASSET_VIEW_TOOL: ToolDefinition = {
     + `a wave picture as ${countText(pictureTokens({ width: 800, height: 200 }))}, a 1920x1080 frame as ${countText(pictureTokens({ width: 1920, height: 1080 }))}. `
     + 'Each result tells the budget that is left. '
     + 'To check a small detail of an image, view only that part of it with `crop`. '
+    + 'To compare images and clips, or to check many of them for less of the budget, show them in one picture with `layout` "grid". '
     + "Dez makes the pictures on the user's computer: no request goes to a model.",
   parameters: [
     {
       name: 'assets',
       type: 'string',
-      description: `The ids of the images and the clips, as in "@a @c", at most ${MAX_ASSET_VIEW_IDS}.`,
+      description: `The ids of the images and the clips, as in "@a @c", at most ${MAX_ASSET_VIEW_IDS}, or ${MAX_ASSET_VIEW_GRID_IDS} with \`layout\` "grid".`,
       required: true,
     },
     {
@@ -145,7 +161,7 @@ export const ASSET_VIEW_TOOL: ToolDefinition = {
       type: 'string',
       description: 'How large the pictures are: "review" (the default) or "full". '
         + `With "review", an image is at most ${countText(IMAGE_PICTURE_SIDES.review)} pixels on its longer side, `
-        + `and each frame of a sheet fits in ${FRAME_BOXES.review} by ${FRAME_BOXES.review} pixels; `
+        + `and each frame of a sheet and each image of a grid fits in ${FRAME_BOXES.review} by ${FRAME_BOXES.review} pixels; `
         + `with "full", at most ${countText(IMAGE_PICTURE_SIDES.full)} pixels, and ${FRAME_BOXES.full} by ${FRAME_BOXES.full}. `
         + '"full" costs more of the picture budget: use it for a detail that "review" does not show.',
       required: false,
@@ -157,6 +173,17 @@ export const ASSET_VIEW_TOOL: ToolDefinition = {
         + 'four numbers from 0 to 1 that are fractions of the width and the height of the image, from its top left corner. '
         + '"0.5 0 0.5 0.5" is the top right quarter. '
         + 'Dez shows the part at its own pixels, or as a smaller copy at the size of `detail`.',
+      required: false,
+    },
+    {
+      name: 'layout',
+      type: 'string',
+      description: '"separate" (the default) or "grid". With "separate", each asset gets its own picture. '
+        + 'With "grid", all the images and video clips of the call go into one picture, top to bottom in the order of `assets`: '
+        + `images side by side in rows of at most ${MAX_SHEET_COLUMNS}, each one in the frame box of \`detail\`, `
+        + 'and the frame sheet of each video clip in rows of its own. An audio clip still gets its own picture. '
+        + 'A grid costs less of the picture budget than a picture for each asset, and it shows each image smaller. '
+        + 'With fewer than 2 images and video clips, the call shows separate pictures.',
       required: false,
     },
   ],
@@ -196,17 +223,20 @@ export interface AssetViewCall {
   start: number
   end: number | null
   detail: ViewDetail
+  layout: ViewLayout
   /** The part of the one image of the call to show; null for all of it. */
   crop: ViewCrop | null
 }
 
-// The `detail` of a call; a blank or absent one is the default.
-function detailArgument(args: ToolArguments): ViewDetail {
-  const text = typeof args.detail === 'string' ? args.detail.trim() : ''
-  if (text === '') return 'review'
-  const detail = VIEW_DETAILS.find((value) => value === text.toLowerCase())
-  if (!detail) throw new ToolError(`${unknownValuesText('detail', [text], `one of: ${VIEW_DETAILS.join(', ')}`)} ${NOT_DONE}`)
-  return detail
+// The value of the text argument `name` of a call: one of `values`, in any
+// case. A blank or absent one is the first of `values`, the default.
+function choiceArgument<T extends string>(args: ToolArguments, name: string, values: readonly T[]): T {
+  const argument = args[name]
+  const text = typeof argument === 'string' ? argument.trim() : ''
+  if (text === '') return values[0]
+  const value = values.find((candidate) => candidate === text.toLowerCase())
+  if (!value) throw new ToolError(`${unknownValuesText(name, [text], `one of: ${values.join(', ')}`)} ${NOT_DONE}`)
+  return value
 }
 
 // The part of an image that the `crop` text `text` names. Throws a
@@ -270,14 +300,21 @@ function sheetArgument(args: ToolArguments): SheetChoice {
 }
 
 /** The checked arguments of an `asset_view` call. Throws a `ToolError` for
- *  a bad `assets` (`assetIdsArgument`), a `frames` out of its range, a bad
- *  `times` or one with `frames`, `scenes`, `start`, or `end`, a `start`
- *  before 0, an `end` that is not after `start`, an unknown `detail`, a bad
- *  `crop`, and a `crop` for more than one asset. Whether the asset of a
- *  `crop` is an image, the caller checks. A blank `times`, `detail`, or
- *  `crop` is none. */
+ *  a bad `assets` (`assetIdsArgument`), more ids than its `layout` takes, a
+ *  `frames` out of its range, a bad `times` or one with `frames`,
+ *  `scenes`, `start`, or `end`, a `start` before 0, an `end` that is not
+ *  after `start`, an unknown `detail` or `layout`, a bad `crop`, and a
+ *  `crop` for more than one asset. Whether the asset of a `crop` is an
+ *  image, the caller checks. A blank `times`, `detail`, `layout`, or `crop`
+ *  is none. */
 export function assetViewCall(args: ToolArguments): AssetViewCall {
-  const ids = assetIdsArgument(args, { max: MAX_ASSET_VIEW_IDS, notDone: NOT_DONE })
+  const ids = assetIdsArgument(args, { max: MAX_ASSET_VIEW_GRID_IDS, notDone: NOT_DONE })
+  const layout = choiceArgument(args, 'layout', VIEW_LAYOUTS)
+  if (layout === 'separate' && ids.length > MAX_ASSET_VIEW_IDS) {
+    throw new ToolError(`\`assets\` names ${ids.length} images and clips, and a call with a picture for each one takes at most ${MAX_ASSET_VIEW_IDS}. `
+      + `Call again with \`layout\` "grid" (at most ${MAX_ASSET_VIEW_GRID_IDS}, in one picture), `
+      + `or with the first ${MAX_ASSET_VIEW_IDS}, then again with the rest. ${NOT_DONE}`)
+  }
   const sheet = sheetArgument(args)
   const start = typeof args.start === 'number' ? args.start : 0
   if (start < 0) throw new ToolError(`\`start\` is ${start}: give a second of the clip, from 0 on. ${NOT_DONE}`)
@@ -285,14 +322,14 @@ export function assetViewCall(args: ToolArguments): AssetViewCall {
   if (end !== null && end <= start) {
     throw new ToolError(`\`end\` (${end}) is not after \`start\` (${start}): give an \`end\` after \`start\`, or no \`end\` for the end of the clip. ${NOT_DONE}`)
   }
-  const detail = detailArgument(args)
+  const detail = choiceArgument(args, 'detail', VIEW_DETAILS)
   const cropText = typeof args.crop === 'string' ? args.crop.trim() : ''
   const crop = cropText === '' ? null : cropArgument(cropText)
   if (crop && ids.length > 1) {
     throw new ToolError(`\`crop\` is a part of one image, and \`assets\` names ${ids.length} assets. `
       + `Give \`assets\` only the image to crop, or give no \`crop\`. ${NOT_DONE}`)
   }
-  return { ids, sheet, start, end, detail, crop }
+  return { ids, sheet, start, end, detail, layout, crop }
 }
 
 /** The pixels of the part `crop` of an image of `size`: each edge on the
@@ -307,11 +344,11 @@ export function cropRegion(crop: ViewCrop, size: ImageSize): ImageRegion | null 
   return width < 1 || height < 1 ? null : { x, y, width, height }
 }
 
-// The size of `region` made smaller to at most `side` pixels on its longer
-// side; never larger.
-function sizeWithin(region: ImageRegion, side: number): ImageSize {
-  const scale = Math.min(1, side / Math.max(region.width, region.height))
-  return { width: Math.max(1, Math.round(region.width * scale)), height: Math.max(1, Math.round(region.height * scale)) }
+/** `size` made smaller to at most `side` pixels on its longer side; never
+ *  larger. */
+export function sizeWithin(size: ImageSize, side: number): ImageSize {
+  const scale = Math.min(1, side / Math.max(size.width, size.height))
+  return { width: Math.max(1, Math.round(size.width * scale)), height: Math.max(1, Math.round(size.height * scale)) }
 }
 
 // The drawing of the JPEG copy of the part `region` of an image, on white,
@@ -355,13 +392,20 @@ export function imagePictureDrawing(
 // at its best quality), so the last one fits.
 const SMALLER_PICTURE_SIDES = [2048, 1568, 1024]
 
+/** The longer side at which a JPEG picture with the longer side `longer`,
+ *  whose file is over `MAX_PICTURE_BYTES`, is drawn again: the next side of
+ *  `SMALLER_PICTURE_SIDES` under it. Undefined when there is none. */
+export function smallerPictureSide(longer: number): number | undefined {
+  return SMALLER_PICTURE_SIDES.find((candidate) => candidate < longer)
+}
+
 /** The next drawing of a picture whose `drawing` gave a file over
  *  `MAX_PICTURE_BYTES`: a PNG goes as a JPEG copy of the same size, and a
- *  JPEG as a copy at the next side of `SMALLER_PICTURE_SIDES` under its
- *  longer side. Null when there is no smaller side. */
+ *  JPEG as a copy at `smallerPictureSide`. Null when there is no smaller
+ *  side. */
 export function smallerPictureDrawing(drawing: ImageDrawing): ImageDrawing | null {
   const longer = Math.max(drawing.width, drawing.height)
-  const side = drawing.mediaType === 'image/jpeg' ? SMALLER_PICTURE_SIDES.find((candidate) => candidate < longer) : longer
+  const side = drawing.mediaType === 'image/jpeg' ? smallerPictureSide(longer) : longer
   return side === undefined ? null : jpegPictureDrawing(drawing.crop, side)
 }
 
@@ -427,7 +471,7 @@ function sheetFilters(frames: number, box: number): string[] {
   return [
     `scale=w=${box}:h=${box}:force_original_aspect_ratio=decrease:force_divisible_by=2`,
     'setsar=1',
-    `tile=${columns}x${rows}:nb_frames=${frames}:padding=4:color=white`,
+    `tile=${columns}x${rows}:nb_frames=${frames}:padding=${SHEET_PADDING}:color=white`,
   ]
 }
 
@@ -541,6 +585,18 @@ export function loudnessOf(log: string): Loudness | null {
   return integrated === undefined || range === undefined || truePeak === undefined ? null : { integrated, range, truePeak }
 }
 
+/** A picture of a view, of `size` pixels (null: not known), what it shows
+ *  (the text of the label that goes before it), and the line that tells
+ *  about it (the frame times, the wave, a smaller copy, the parts of a
+ *  grid), which the result has only while the picture goes; null for
+ *  none. */
+export interface ViewPicture {
+  part: PicturePart
+  size: ImageSize | null
+  shows: string
+  note: string | null
+}
+
 /** What a view gives for one asset. */
 export interface AssetViewItem {
   id: string
@@ -550,11 +606,14 @@ export interface AssetViewItem {
   facts: string
   /** More lines: the loudness, why there is no picture. */
   notes: string[]
-  /** Its picture, of `size` pixels (null: not known), what the picture
-   *  shows (the text of the label that goes before it), and the line that
-   *  tells about the picture (the frame times, the wave, a smaller copy),
-   *  which the result has only while the picture goes; null for none. */
-  picture: { part: PicturePart, size: ImageSize | null, shows: string, note: string | null } | null
+  picture: ViewPicture | null
+}
+
+/** The one picture of the images and the video clips of a view with
+ *  `layout` "grid" (assetGrid.ts), or the notes of why it has none. */
+export interface AssetViewGrid {
+  picture: ViewPicture | null
+  notes: string[]
 }
 
 /** Whether a view makes the picture of an asset: `show`; `overLimit`
@@ -577,6 +636,31 @@ export const PICTURE_LIMIT_NOTE = 'No picture: this reply has spent its picture 
 export function pictureCostNote(cost: PictureBudget, left: PictureBudget): string {
   return `No picture: it costs ${tokensAndBytesText(cost)}, and this reply had only ${tokensAndBytesText(left)} left for pictures. `
     + 'In a later reply, call asset_view again to see it.'
+}
+
+/** The ids `ids` as a text writes them: "@a, @b, and @c". */
+export function idsListText(ids: readonly string[]): string {
+  return new Intl.ListFormat('en', { type: 'conjunction' }).format(ids.map((id) => `@${id}`))
+}
+
+/** The note of the grid of `ids`, whose picture costs `cost`, more than the
+ *  budget `left` of the reply. */
+export function gridCostNote(ids: readonly string[], cost: PictureBudget, left: PictureBudget): string {
+  return `No grid picture of ${idsListText(ids)}: it costs ${tokensAndBytesText(cost)}, `
+    + `and this reply had only ${tokensAndBytesText(left)} left for pictures. In a later reply, call asset_view again to see them.`
+}
+
+/** The note of the grid of `ids`, which the webview could not draw. */
+export function gridNotDrawnNote(ids: readonly string[]): string {
+  return `No grid picture of ${idsListText(ids)}: Dez could not draw it. Help › Developer Console shows the cause. `
+    + 'This is not a fault of the call. To see them, call again with `layout` "separate".'
+}
+
+/** The note of the grid of `ids`, whose smallest JPEG copy is still over
+ *  `MAX_PICTURE_BYTES`. */
+export function gridTooLargeNote(ids: readonly string[]): string {
+  return `No grid picture of ${idsListText(ids)}: even the smallest JPEG copy that Dez draws of the grid is too large to send. `
+    + 'Call again with fewer assets, or with `layout` "separate".'
 }
 
 // The advice of a picture with fewer pixels than the part of the image that
@@ -781,23 +865,29 @@ export function clipNotReadNote(id: string, problem: ClipReadProblem): string {
 }
 
 /** The pictures of a view, each with its label, for the reply
- *  (`ToolRunContext.showPictures`). */
-export function assetViewPictures(items: readonly AssetViewItem[]): ReplyPicture[] {
-  return items.flatMap(({ picture }) => (picture ? [{ label: `asset_view: ${picture.shows}.`, picture: picture.part, size: picture.size }] : []))
+ *  (`ToolRunContext.showPictures`): those of the assets, then the grid. */
+export function assetViewPictures(items: readonly AssetViewItem[], grid: AssetViewGrid | null): ReplyPicture[] {
+  return [...items.map(({ picture }) => picture), grid?.picture ?? null]
+    .flatMap((picture) => (picture ? [{ label: `asset_view: ${picture.shows}.`, picture: picture.part, size: picture.size }] : []))
 }
 
 /** The result text of an `asset_view` call: for each asset, a line as in
  *  `@a | image | PNG | 1024x768 | 1.2 MB`, then the note of its picture and
- *  its other notes. The last lines tell where the pictures are and the
- *  picture budget that the reply has `left`, or that the model of the reply
- *  gets no pictures (`left` null). */
-export function assetViewText(items: readonly AssetViewItem[], left: PictureBudget | null): string {
-  const lines = items.flatMap((item) => [`@${item.id} | ${item.kind} | ${item.facts}`, ...(item.picture?.note ? [item.picture.note] : []), ...item.notes])
+ *  its other notes; then the note of the `grid` picture, or why it has
+ *  none. The last lines tell where the pictures are and the picture budget
+ *  that the reply has `left`, or that the model of the reply gets no
+ *  pictures (`left` null). */
+export function assetViewText(items: readonly AssetViewItem[], grid: AssetViewGrid | null, left: PictureBudget | null): string {
+  const lines = [
+    ...items.flatMap((item) => [`@${item.id} | ${item.kind} | ${item.facts}`, ...(item.picture?.note ? [item.picture.note] : []), ...item.notes]),
+    ...(grid?.picture?.note ? [grid.picture.note] : []),
+    ...(grid?.notes ?? []),
+  ]
   if (left === null) {
     lines.push('This model gets no pictures, so Dez gives only the facts, and the loudness of a clip with sound.')
     return lines.join('\n')
   }
-  if (items.some((item) => item.picture)) {
+  if (grid?.picture || items.some((item) => item.picture)) {
     lines.push('You see each picture after the results of the calls of this round, after a line that names it. '
       + 'You see the pictures in this reply only. In a later reply, call asset_view again to see them again.')
   }

@@ -53,12 +53,12 @@ function ebur128Log(integrated: string, range: string, peak: string): string {
 }
 
 describe('assetViewCall', () => {
-  it('takes the ids, and the frames, start, end, detail, and crop with their defaults', () => {
+  it('takes the ids, and the frames, start, end, detail, layout, and crop with their defaults', () => {
     expect(assetViewCall({ assets: '@f @a' })).toStrictEqual({
-      ids: ['f', 'a'], sheet: { kind: 'steps', frames: DEFAULT_SHEET_FRAMES }, start: 0, end: null, detail: 'review', crop: null,
+      ids: ['f', 'a'], sheet: { kind: 'steps', frames: DEFAULT_SHEET_FRAMES }, start: 0, end: null, detail: 'review', layout: 'separate', crop: null,
     })
-    expect(assetViewCall({ assets: '@f', frames: 16, start: 1.5, end: 3, detail: 'full', crop: '0.25 0 0.5 1' })).toStrictEqual({
-      ids: ['f'], sheet: { kind: 'steps', frames: 16 }, start: 1.5, end: 3, detail: 'full', crop: { left: 0.25, top: 0, width: 0.5, height: 1 },
+    expect(assetViewCall({ assets: '@f', frames: 16, start: 1.5, end: 3, detail: 'full', layout: 'grid', crop: '0.25 0 0.5 1' })).toStrictEqual({
+      ids: ['f'], sheet: { kind: 'steps', frames: 16 }, start: 1.5, end: 3, detail: 'full', layout: 'grid', crop: { left: 0.25, top: 0, width: 0.5, height: 1 },
     })
   })
 
@@ -88,17 +88,21 @@ describe('assetViewCall', () => {
     expect(refusal(() => assetViewCall({ assets: '@f', times: Array.from({ length: 17 }, (_, index) => index).join(' ') }))).toMatch(/at most 16 times/)
   })
 
-  it('takes a detail in any case, crop numbers split by commas, and blank texts as none', () => {
-    expect(assetViewCall({ assets: '@f', detail: ' Full ', crop: '0.1, 0.2,0.3 0.4' })).toMatchObject({ detail: 'full', crop: { left: 0.1, top: 0.2, width: 0.3, height: 0.4 } })
-    expect(assetViewCall({ assets: '@f @a', detail: ' ', crop: '  ' })).toMatchObject({ detail: 'review', crop: null })
+  it('takes a detail and a layout in any case, crop numbers split by commas, and blank texts as none', () => {
+    expect(assetViewCall({ assets: '@f', detail: ' Full ', layout: 'GRID', crop: '0.1, 0.2,0.3 0.4' }))
+      .toMatchObject({ detail: 'full', layout: 'grid', crop: { left: 0.1, top: 0.2, width: 0.3, height: 0.4 } })
+    expect(assetViewCall({ assets: '@f @a', detail: ' ', layout: '  ', crop: '  ' })).toMatchObject({ detail: 'review', layout: 'separate', crop: null })
   })
 
   it('takes a crop that ends at the right and bottom edges', () => {
     expect(assetViewCall({ assets: '@f', crop: '0.7 0.9 0.3 0.1' }).crop).toStrictEqual({ left: 0.7, top: 0.9, width: 0.3, height: 0.1 })
   })
 
-  it('refuses more than 4 ids, frames out of 2 to 16, a start before 0, and an end that is not after the start', () => {
-    expect(refusal(() => assetViewCall({ assets: '@a @b @c @d @e' }))).toMatch(/at most 4\b/)
+  it('refuses more than 4 ids with separate pictures and more than 12 with a grid, frames out of 2 to 16, a start before 0, and an end that is not after the start', () => {
+    const twelve = 'abcdefghijkl'.split('').map((id) => `@${id}`).join(' ')
+    expect(refusal(() => assetViewCall({ assets: '@a @b @c @d @e' }))).toMatch(/at most 4\b.*`layout` "grid"/)
+    expect(assetViewCall({ assets: twelve, layout: 'grid' }).ids).toHaveLength(12)
+    expect(refusal(() => assetViewCall({ assets: `${twelve} @m`, layout: 'grid' }))).toMatch(/at most 12\b/)
     expect(refusal(() => assetViewCall({ assets: '@f', frames: 1 }))).toMatch(/2 to 16/)
     expect(refusal(() => assetViewCall({ assets: '@f', frames: 17 }))).toMatch(/2 to 16/)
     expect(refusal(() => assetViewCall({ assets: '@f', start: -1 }))).toMatch(/`start`/)
@@ -106,8 +110,9 @@ describe('assetViewCall', () => {
     expect(refusal(() => assetViewCall({ assets: '@f', end: 0 }))).toMatch(/`end`/)
   })
 
-  it('refuses an unknown detail, and a crop that is not four numbers from 0 to 1', () => {
+  it('refuses an unknown detail or layout, and a crop that is not four numbers from 0 to 1', () => {
     expect(refusal(() => assetViewCall({ assets: '@f', detail: 'high' }))).toMatch(/`detail`/)
+    expect(refusal(() => assetViewCall({ assets: '@f', layout: 'tiles' }))).toMatch(/`layout`/)
     for (const crop of ['0.1 0.2 0.3', '0.1 0.2 0.3 0.4 0.5', 'a b c d', '0.1 0.2 1.5 0.1', '-0.1 0 0.5 0.5']) {
       expect(refusal(() => assetViewCall({ assets: '@f', crop }))).toMatch(/`crop`/)
     }

@@ -2,7 +2,15 @@ import sbp from '@sbp/sbp'
 import { convertFileSrc, isTauri } from '@tauri-apps/api/core'
 import { getCurrentWebview } from '@tauri-apps/api/webview'
 import { changeColors } from '../model/chat/imageColors'
-import { svgOfPng, UnwritableImageTypeError, type DrawnImage, type DrawnMediaType, type ImageDrawing, type ImageSize } from '../model/chat/imageDrawing'
+import {
+  svgOfPng,
+  UnwritableImageTypeError,
+  type DrawnImage,
+  type DrawnMediaType,
+  type ImageComposition,
+  type ImageDrawing,
+  type ImageSize,
+} from '../model/chat/imageDrawing'
 import { IMAGE_FOLDERS, imageExtension, storedImageFile, type ImageFolder, type ImageMediaType } from '../model/chat/images'
 import { dropCopiesFile, pairDroppedFiles } from '../model/chat/linkedFiles'
 import { FileTooLargeError } from '../model/chat/mediaFiles'
@@ -31,6 +39,53 @@ function copyFolders(): Promise<string[]> {
   ]).then(([temp, ...dez]) => [...temp, ...dez])
   dropCopyFolders.catch(() => { dropCopyFolders = null })
   return dropCopyFolders
+}
+
+// Decodes the image at the object URL `url` in the webview, for a draw on
+// a canvas. A tool gives the message of an error to a model, so the message
+// says what failed; the webview's own error is the cause.
+async function decodedImage(url: string): Promise<HTMLImageElement> {
+  const img = new Image()
+  img.src = url
+  await img.decode().catch((error: unknown) => {
+    throw new Error('The image cannot be decoded.', { cause: error })
+  })
+  // WebKit gives every image that it decodes a size (an SVG with no width
+  // and height gets its viewBox size in WebKitGTK 2.52, and 300 × 150
+  // fitted to its viewBox in 2.54), so this only keeps a plan from a size
+  // of 0.
+  if (!img.naturalWidth || !img.naturalHeight) throw new Error('The image has no size.')
+  return img
+}
+
+// A new canvas of `size`, painted with `background` (transparent when
+// absent), with its context.
+function newCanvas({ width, height }: ImageSize, background?: string): { canvas: HTMLCanvasElement, context: CanvasRenderingContext2D } {
+  const canvas = document.createElement('canvas')
+  canvas.width = width
+  canvas.height = height
+  const context = canvas.getContext('2d')
+  if (!context) throw new Error('No canvas to draw the image on.')
+  context.imageSmoothingQuality = 'high'
+  if (background) {
+    context.fillStyle = background
+    context.fillRect(0, 0, width, height)
+  }
+  return { canvas, context }
+}
+
+// The file of the drawing on `canvas`, of the type `type`. Rejects with an
+// `UnwritableImageTypeError` when the canvas does not write that type.
+async function canvasImage(canvas: HTMLCanvasElement, type: DrawnMediaType): Promise<DrawnImage> {
+  // No canvas writes SVG: a drawn SVG is a PNG drawing in an SVG file.
+  const canvasType = type === 'image/svg+xml' ? 'image/png' : type
+  const drawn = await new Promise<Blob | null>((resolve) => canvas.toBlob(resolve, canvasType, LOSSY_QUALITY))
+  if (!drawn) throw new Error(`The image could not be drawn as ${canvasType}.`)
+  // A canvas that cannot write a type writes a PNG in its place.
+  if (drawn.type !== canvasType) throw new UnwritableImageTypeError(canvasType)
+  const bytes = new Uint8Array(await drawn.arrayBuffer())
+  const size = { width: canvas.width, height: canvas.height }
+  return { bytes: type === 'image/svg+xml' ? svgOfPng(bytes, size) : bytes, mediaType: type, ...size }
 }
 
 export default sbp('sbp/selectors/register', {
@@ -207,31 +262,11 @@ export default sbp('sbp/selectors/register', {
   ): Promise<DrawnImage | null> {
     const url = URL.createObjectURL(file)
     try {
-      const img = new Image()
-      img.src = url
-      // A tool gives the message of this error to a model, so the message
-      // says what failed; the webview's own error is the cause.
-      await img.decode().catch((error: unknown) => {
-        throw new Error('The image cannot be decoded.', { cause: error })
-      })
-      // WebKit gives every image that it decodes a size (an SVG with no
-      // width and height gets its viewBox size in WebKitGTK 2.52, and
-      // 300 × 150 fitted to its viewBox in 2.54), so this only keeps a plan
-      // from a size of 0.
-      if (!img.naturalWidth || !img.naturalHeight) throw new Error('The image has no size.')
+      const img = await decodedImage(url)
       const drawing = plan({ width: img.naturalWidth, height: img.naturalHeight })
       if (!drawing) return null
 
-      const canvas = document.createElement('canvas')
-      canvas.width = drawing.width
-      canvas.height = drawing.height
-      const context = canvas.getContext('2d')
-      if (!context) throw new Error('No canvas to draw the image on.')
-      context.imageSmoothingQuality = 'high'
-      if (drawing.background) {
-        context.fillStyle = drawing.background
-        context.fillRect(0, 0, drawing.width, drawing.height)
-      }
+      const { canvas, context } = newCanvas(drawing, drawing.background)
       const { crop, flip, turn, partSize } = drawing
       const part = partSize ?? drawing
       // A drawing that only crops and scales gets no transform, so that
@@ -272,17 +307,40 @@ export default sbp('sbp/selectors/register', {
         changeColors(pixels.data, drawing.colors)
         context.putImageData(pixels, 0, 0)
       }
-      const type = drawing.mediaType ?? mediaType
-      // No canvas writes SVG: a drawn SVG is a PNG drawing in an SVG file.
-      const canvasType = type === 'image/svg+xml' ? 'image/png' : type
-      const drawn = await new Promise<Blob | null>((resolve) => canvas.toBlob(resolve, canvasType, LOSSY_QUALITY))
-      if (!drawn) throw new Error(`The image could not be drawn as ${canvasType}.`)
-      // A canvas that cannot write a type writes a PNG in its place.
-      if (drawn.type !== canvasType) throw new UnwritableImageTypeError(canvasType)
-      const bytes = new Uint8Array(await drawn.arrayBuffer())
-      return { bytes: type === 'image/svg+xml' ? svgOfPng(bytes, drawing) : bytes, mediaType: type, width: drawing.width, height: drawing.height }
+      return await canvasImage(canvas, drawing.mediaType ?? mediaType)
     } finally {
       URL.revokeObjectURL(url)
+    }
+  },
+
+  // Draws several images on one canvas in the webview: decodes `files` (of
+  // any type that the webview reads), asks `plan` for the canvas and the
+  // place of each image from their sizes (in the order of `files`), and
+  // draws each image whole into its place. Rejects when the webview cannot
+  // decode an image, when `plan` throws or gives a place for each image
+  // that is not one, and when the drawing cannot be made; the caller logs
+  // it.
+  async 'dez.controller/images/compose' (
+    files: readonly Blob[],
+    plan: (sizes: readonly ImageSize[]) => ImageComposition,
+  ): Promise<DrawnImage> {
+    const urls = files.map((file) => URL.createObjectURL(file))
+    try {
+      const images = await Promise.all(urls.map(decodedImage))
+      const composition = plan(images.map((img) => ({ width: img.naturalWidth, height: img.naturalHeight })))
+      if (composition.places.length !== images.length) {
+        throw new Error(`The plan has ${composition.places.length} places for ${images.length} images.`)
+      }
+      const { canvas, context } = newCanvas(composition, composition.background)
+      // The whole image into its place: with no part of the image to cut,
+      // an SVG with no width and height draws right too (see redraw).
+      images.forEach((img, index) => {
+        const place = composition.places[index]
+        context.drawImage(img, place.x, place.y, place.width, place.height)
+      })
+      return await canvasImage(canvas, composition.mediaType)
+    } finally {
+      for (const url of urls) URL.revokeObjectURL(url)
     }
   },
 

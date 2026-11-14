@@ -1,7 +1,7 @@
 import sbp from '@sbp/sbp'
 import type * as TauriCore from '@tauri-apps/api/core'
 import { afterEach, beforeEach, describe, expect, it, vi, type MockInstance } from 'vitest'
-import { UnwritableImageTypeError, type DrawnImage, type DrawnMediaType, type ImageDrawing, type ImageSize } from '../model/chat/imageDrawing'
+import { UnwritableImageTypeError, type DrawnImage, type DrawnMediaType, type ImageComposition, type ImageDrawing, type ImageSize } from '../model/chat/imageDrawing'
 import { findImageReferences, imageMarkdown, storedImageFile, type ImageFolder, type ImageMediaType } from '../model/chat/images'
 import { FileTooLargeError } from '../model/chat/mediaFiles'
 import './images'
@@ -182,78 +182,94 @@ describe('dez.controller/images/delete', () => {
   })
 })
 
-// Unit tests have no DOM: a stand-in image of a known size, and a stand-in
+// Unit tests have no DOM: stand-in images of known sizes, and a stand-in
 // canvas that records what is drawn on it.
+interface Drawn {
+  canvas: string
+  // The other canvas calls, in order.
+  steps: string[]
+  // The numbers of each `drawImage`, one after the other: for a part, the
+  // part of the image, then the place on the canvas; for a whole image,
+  // only the place.
+  numbers: number[]
+  type: string
+}
+
+const DRAWN_BYTES = [9, 8, 7]
+
+/** Each new image has the next size of `sizes`, in turn, and decodes with
+ *  `decode` of its number (from 0). */
+function stubImages(sizes: readonly ImageSize[], decode: (index: number) => Promise<void> = () => Promise.resolve()): void {
+  let made = 0
+  vi.stubGlobal('Image', class {
+    src = ''
+    naturalWidth: number
+    naturalHeight: number
+    decode: () => Promise<void>
+    constructor() {
+      const index = made++
+      const size = sizes[index % sizes.length]
+      this.naturalWidth = size.width
+      this.naturalHeight = size.height
+      this.decode = () => decode(index)
+    }
+  })
+}
+
+function stubImage(width: number, height: number, decode?: () => Promise<void>): void {
+  stubImages([{ width, height }], decode)
+}
+
+/** The drawings of the canvases of a test. `writes` is the type of the
+ *  file that a canvas gives, when it is not the type that was asked. */
+function stubCanvas(writes?: string): Drawn[] {
+  const drawn: Drawn[] = []
+  vi.stubGlobal('document', {
+    createElement: () => {
+      const steps: string[] = []
+      let numbers: number[] = []
+      const step = (name: string) => (...args: unknown[]) => {
+        steps.push([name, ...args].join(' '))
+      }
+      const context = {
+        imageSmoothingQuality: 'low',
+        fillStyle: '#000000',
+        fillRect: (...args: number[]): void => step('fillRect')(context.fillStyle, ...args),
+        translate: step('translate'),
+        rotate: step('rotate'),
+        scale: step('scale'),
+        beginPath: step('beginPath'),
+        rect: step('rect'),
+        clip: step('clip'),
+        // The pixels of the canvas, as one pixel whatever its size: a
+        // transparent one before the draw, and a color after it, so that
+        // a test sees the change of the colors of the drawn image.
+        getImageData: (...args: number[]) => {
+          step('getImageData')(...args)
+          return { data: new Uint8ClampedArray(numbers.length ? [100, 150, 200, 255] : [0, 0, 0, 0]) }
+        },
+        putImageData: (pixels: { data: Uint8ClampedArray }, ...args: number[]) => step('putImageData')(`[${pixels.data.join(' ')}]`, ...args),
+        drawImage(_image: unknown, ...drawNumbers: number[]) {
+          numbers = [...numbers, ...drawNumbers]
+        },
+      }
+      const canvas = {
+        width: 300,
+        height: 150,
+        getContext: () => context,
+        toBlob(callback: (blob: Blob | null) => void, type: string) {
+          drawn.push({ canvas: `${canvas.width}x${canvas.height}`, steps, numbers, type })
+          callback(new Blob([new Uint8Array(DRAWN_BYTES)], { type: writes ?? type }))
+        },
+      }
+      return canvas
+    },
+  })
+  return drawn
+}
+
 describe('dez.controller/images/redraw', () => {
-  interface Drawn {
-    canvas: string
-    // The other canvas calls, in order.
-    steps: string[]
-    // The numbers of `drawImage`: the part of the image, then the place on
-    // the canvas.
-    numbers: number[]
-    type: string
-  }
-
   const SOURCE = new Blob([new Uint8Array([66, 77])], { type: 'image/bmp' })
-  const DRAWN_BYTES = [9, 8, 7]
-
-  function stubImage(width: number, height: number, decode: () => Promise<void> = () => Promise.resolve()): void {
-    vi.stubGlobal('Image', class {
-      src = ''
-      naturalWidth = width
-      naturalHeight = height
-      decode = decode
-    })
-  }
-
-  /** The drawings of the canvases of a test. `writes` is the type of the
-   *  file that a canvas gives, when it is not the type that was asked. */
-  function stubCanvas(writes?: string): Drawn[] {
-    const drawn: Drawn[] = []
-    vi.stubGlobal('document', {
-      createElement: () => {
-        const steps: string[] = []
-        let numbers: number[] = []
-        const step = (name: string) => (...args: unknown[]) => {
-          steps.push([name, ...args].join(' '))
-        }
-        const context = {
-          imageSmoothingQuality: 'low',
-          fillStyle: '#000000',
-          fillRect: (...args: number[]): void => step('fillRect')(context.fillStyle, ...args),
-          translate: step('translate'),
-          rotate: step('rotate'),
-          scale: step('scale'),
-          beginPath: step('beginPath'),
-          rect: step('rect'),
-          clip: step('clip'),
-          // The pixels of the canvas, as one pixel whatever its size: a
-          // transparent one before the draw, and a color after it, so that
-          // a test sees the change of the colors of the drawn image.
-          getImageData: (...args: number[]) => {
-            step('getImageData')(...args)
-            return { data: new Uint8ClampedArray(numbers.length ? [100, 150, 200, 255] : [0, 0, 0, 0]) }
-          },
-          putImageData: (pixels: { data: Uint8ClampedArray }, ...args: number[]) => step('putImageData')(`[${pixels.data.join(' ')}]`, ...args),
-          drawImage(_image: unknown, ...drawNumbers: number[]) {
-            numbers = drawNumbers
-          },
-        }
-        const canvas = {
-          width: 300,
-          height: 150,
-          getContext: () => context,
-          toBlob(callback: (blob: Blob | null) => void, type: string) {
-            drawn.push({ canvas: `${canvas.width}x${canvas.height}`, steps, numbers, type })
-            callback(new Blob([new Uint8Array(DRAWN_BYTES)], { type: writes ?? type }))
-          },
-        }
-        return canvas
-      },
-    })
-    return drawn
-  }
 
   function redraw(plan: (size: ImageSize) => ImageDrawing | null, mediaType: DrawnMediaType = 'image/png'): Promise<DrawnImage | null> {
     return sbp('dez.controller/images/redraw', SOURCE, plan, mediaType) as Promise<DrawnImage | null>
@@ -423,6 +439,59 @@ describe('dez.controller/images/redraw', () => {
     await expect(redraw(() => {
       throw new Error('The crop is outside the image.')
     })).rejects.toThrow('The crop is outside the image.')
+    expect(drawn).toStrictEqual([])
+  })
+})
+
+describe('dez.controller/images/compose', () => {
+  const FILES = [
+    new Blob([new Uint8Array([66, 77])], { type: 'image/bmp' }),
+    new Blob([new Uint8Array([60, 115])], { type: 'image/svg+xml' }),
+  ]
+
+  function compose(plan: (sizes: readonly ImageSize[]) => ImageComposition): Promise<DrawnImage> {
+    return sbp('dez.controller/images/compose', FILES, plan) as Promise<DrawnImage>
+  }
+
+  it('draws each image whole into its place on the background, and plans from the sizes in order', async () => {
+    stubImages([{ width: 400, height: 1000 }, { width: 40, height: 30 }])
+    const drawn = stubCanvas()
+    let planned: readonly ImageSize[] = []
+
+    const image = await compose((sizes) => {
+      planned = sizes
+      return {
+        width: 250, height: 120, background: '#ffffff', mediaType: 'image/jpeg',
+        places: [{ x: 0, y: 0, width: 48, height: 120 }, { x: 52, y: 10, width: 198, height: 100 }],
+      }
+    })
+
+    expect(planned).toStrictEqual([{ width: 400, height: 1000 }, { width: 40, height: 30 }])
+    expect(drawn).toStrictEqual([{
+      canvas: '250x120',
+      steps: ['fillRect #ffffff 0 0 250 120'],
+      numbers: [0, 0, 48, 120, 52, 10, 198, 100],
+      type: 'image/jpeg',
+    }])
+    expect(image).toStrictEqual({ bytes: new Uint8Array(DRAWN_BYTES), mediaType: 'image/jpeg', width: 250, height: 120 })
+  })
+
+  it('rejects when the webview cannot decode one of the images, and asks for no plan', async () => {
+    stubImages([{ width: 40, height: 30 }], (index) => index === 1 ? Promise.reject(new Error('unknown image format')) : Promise.resolve())
+    const drawn = stubCanvas()
+    const plan = vi.fn()
+
+    await expect(compose(plan)).rejects.toThrow('The image cannot be decoded.')
+    expect(plan).not.toHaveBeenCalled()
+    expect(drawn).toStrictEqual([])
+  })
+
+  it('rejects a plan that does not give one place for each image', async () => {
+    stubImages([{ width: 40, height: 30 }])
+    const drawn = stubCanvas()
+
+    await expect(compose(() => ({ width: 40, height: 30, background: '#ffffff', mediaType: 'image/jpeg', places: [{ x: 0, y: 0, width: 40, height: 30 }] })))
+      .rejects.toThrow('The plan has 1 places for 2 images.')
     expect(drawn).toStrictEqual([])
   })
 })

@@ -1,7 +1,8 @@
 import sbp from '@sbp/sbp'
 import { createPinia, setActivePinia } from 'pinia'
 import { afterEach, beforeEach, describe, expect, it, vi, type MockInstance } from 'vitest'
-import { UnwritableImageTypeError, type DrawnImage, type DrawnMediaType, type ImageDrawing, type ImageSize } from '../model/chat/imageDrawing'
+import { UnwritableImageTypeError, type DrawnImage, type DrawnMediaType, type ImageComposition, type ImageDrawing, type ImageSize } from '../model/chat/imageDrawing'
+import { jpegSize } from '../model/chat/jpegSize'
 import { mediaTagText, type MediaTagData } from '../model/chat/mediaTags'
 import { jpegHeader } from '../model/chat/testing'
 import { toolBlockText } from '../model/chat/toolBlocks'
@@ -23,6 +24,9 @@ import {
   cropOfClipText,
   cropTexts,
   cropUnderPixelText,
+  gridCostNote,
+  gridNotDrawnNote,
+  gridTooLargeNote,
   NO_VIDEO_STREAM_NOTE,
   PICTURE_LIMIT_NOTE,
   PICTURE_NOT_DRAWN_NOTE,
@@ -83,6 +87,10 @@ let drawError: Error | undefined
 let drawings: { drawing: ImageDrawing, mediaType: string }[] = []
 // The byte count of the file of each drawing, of the type that it writes.
 let drawingBytes: (drawing: ImageDrawing, mediaType: DrawnMediaType) => number
+// The grids that the webview drew, with the type and the bytes of each
+// file, and the byte count of the file of each grid.
+let compositions: { files: { type: string, bytes: Uint8Array }[], composition: ImageComposition }[] = []
+let composedBytes: (composition: ImageComposition) => number
 let savedImages: { mediaType: string, options: unknown }[] = []
 let saveImage: () => Promise<string>
 let deletedImages: string[] = []
@@ -138,6 +146,15 @@ sbp('sbp/selectors/register', {
     drawings.push({ drawing, mediaType })
     const type = drawing.mediaType ?? mediaType
     return { bytes: new Uint8Array(drawingBytes(drawing, type)).fill(7), mediaType: type, width: drawing.width, height: drawing.height }
+  },
+  // Plans from the sizes of the files: a JPEG (a frame sheet) has its own
+  // size, and each other file is a stored image.
+  async 'dez.controller/images/compose' (files: readonly Blob[], plan: (sizes: readonly ImageSize[]) => ImageComposition): Promise<DrawnImage> {
+    const read = await Promise.all(files.map(async (file) => ({ type: file.type, bytes: new Uint8Array(await file.arrayBuffer()) })))
+    const composition = plan(read.map(({ bytes }) => jpegSize(bytes) ?? storedImageSize))
+    if (drawError) throw drawError
+    compositions.push({ files: read, composition })
+    return { bytes: new Uint8Array(composedBytes(composition)).fill(7), mediaType: composition.mediaType, width: composition.width, height: composition.height }
   },
   async 'dez.controller/images/save' (_bytes: Uint8Array, mediaType: string, options: unknown): Promise<string> {
     savedImages.push({ mediaType, options })
@@ -198,6 +215,8 @@ beforeEach(() => {
   redrawError = undefined
   drawError = undefined
   drawings = []
+  compositions = []
+  composedBytes = () => 1
   drawingBytes = () => 1
   savedImages = []
   saveImage = async () => MADE_IMAGE
@@ -2312,6 +2331,117 @@ describe('dez.controller/tools/run', () => {
       expect(result.content).toMatch(/`start` \(6 s\) is not before the end of the clip \(5\.04 s\)/)
       expect(ffmpegRuns()).toStrictEqual([])
       expect(shown).toStrictEqual([])
+    })
+
+    describe('with `layout` "grid"', () => {
+      const GRID_PICTURE = { type: 'picture', mediaType: 'image/jpeg', bytes: new Uint8Array([7]) }
+      const SHEET_SHOWS = 'the frame sheet of the video clip @b: 3 frames in one row, at 0.417, 1.25, 2.083 s'
+
+      it('draws the images and the frame sheets in one picture after the others, and gives the note of each sheet with its clip', async () => {
+        const result = await assetView({ assets: '@a @d @b', layout: 'grid', frames: 3, end: 2.5 })
+
+        expect(result.isError).toBe(false)
+        // The image in the frame box (320 pixels), then the sheet, 16
+        // pixels under it.
+        expect(compositions).toStrictEqual([{
+          files: [{ type: 'image/png', bytes: FOX_BYTES }, { type: 'image/jpeg', bytes: SHEET_JPEG }],
+          composition: {
+            width: 968,
+            height: 540,
+            places: [{ x: 0, y: 0, width: 320, height: 160 }, { x: 0, y: 176, width: 968, height: 364 }],
+            background: '#ffffff',
+            mediaType: 'image/jpeg',
+            scale: 1,
+            imagesSmaller: true,
+          },
+        }])
+        expect(drawings).toStrictEqual([])
+        expect(shown.map(({ label, picture, size }) => ({ label, picture, size }))).toStrictEqual([
+          { label: 'asset_view: the wave of the audio clip @d, 0 s to 2.5 s, time runs left to right.', picture: { type: 'picture', mediaType: 'image/jpeg', bytes: WAVE_JPEG }, size: { width: 800, height: 200 } },
+          { label: `asset_view: a grid, top to bottom: the image @a; ${SHEET_SHOWS}.`, picture: GRID_PICTURE, size: { width: 968, height: 540 } },
+        ])
+        const lines = result.content.split('\n')
+        expect(lines[0]).toBe('@a | image | PNG | 1000x500 | 3 B')
+        expect(lines[1]).toMatch(/^@d \| audio \| /)
+        expect(lines[2]).toMatch(/^Wave picture of /)
+        expect(lines.slice(4, 8)).toStrictEqual([
+          expect.stringMatching(/^@b \| video \| /),
+          'Frame sheet of 0 s to 2.5 s: 3 frames in one row, at 0.417, 1.25, 2.083 s.',
+          expect.stringMatching(/^Loudness of 0 s to 2\.5 s: /),
+          expect.stringMatching(new RegExp(`^Grid picture of 968x540 pixels, top to bottom: the image @a; ${SHEET_SHOWS.replaceAll('.', '\\.')}\\. Each image fits in 320 by 320 pixels`)),
+        ])
+        expect(lines[8]).toMatch(/^You see each picture /)
+        // 232 + 700 tokens, and 80 + 4 bytes of base64.
+        expect(lines[9]).toBe('Picture budget left in this reply: 18 pictures, 56,476 tokens and 20.0 MB of base64.')
+        expect(result.pictures).toStrictEqual(shown.map(({ label }) => ({ file: expect.stringMatching(/\.jpg$/), label })))
+        expect(native.savedFiles.map(({ content }) => content)).toStrictEqual([WAVE_JPEG, GRID_PICTURE.bytes])
+      })
+
+      it('shows separate pictures for fewer than 2 images and video clips', async () => {
+        const result = await assetView({ assets: '@a @d', layout: 'grid' })
+
+        expect(compositions).toStrictEqual([])
+        expect(shown.map(({ label }) => label.match(/@[a-z]+/)?.[0])).toStrictEqual(['@a', '@d'])
+        expect(result.content).not.toContain('Grid picture')
+      })
+
+      it('makes no grid when the budget has no picture left, and tells each asset that got none', async () => {
+        budget = { ...budget, pictures: 0 }
+
+        const result = await assetView({ assets: '@a @b', layout: 'grid' })
+
+        expect(compositions).toStrictEqual([])
+        expect(shown).toStrictEqual([])
+        expect(result.content.split(PICTURE_LIMIT_NOTE)).toHaveLength(3)
+        expect(ffmpegRuns().map(({ args }) => args)).toStrictEqual([audioViewArgs('b.mp4', { start: 0, end: 5.04 }, null)])
+      })
+
+      it('tells the cost of a grid that does not fit in the tokens that are left, after the pictures that fit, with no sheet note', async () => {
+        budget = { ...budget, tokens: 800 }
+
+        const result = await assetView({ assets: '@a @d @b', layout: 'grid', frames: 3, end: 2.5 })
+
+        expect(shown.map(({ label }) => label.match(/@[a-z]+/)?.[0])).toStrictEqual(['@d'])
+        expect(result.content).toContain(gridCostNote(['a', 'b'], { tokens: 700, bytes: 4, pictures: 1 }, { tokens: 568, bytes: budget.bytes - 80, pictures: 19 }))
+        expect(result.content).not.toContain('Frame sheet of')
+        expect(result.content.split('\n').at(-1)).toBe('Picture budget left in this reply: 19 pictures, 568 tokens and 20.0 MB of base64.')
+      })
+
+      it('tells of a grid that the webview could not draw, and logs the cause', async () => {
+        drawError = new Error('No canvas to draw the image on.')
+
+        const result = await assetView({ assets: '@a @b', layout: 'grid' })
+
+        expect(shown).toStrictEqual([])
+        expect(result.content).toContain(gridNotDrawnNote(['a', 'b']))
+        expect(result.content.split('\n').at(-1)).toBe(FULL_BUDGET_LINE)
+        expect(consoleError).toHaveBeenCalledWith('Failed to draw the grid picture of @a @b:', drawError)
+      })
+
+      it('draws a grid whose file is too large again at a smaller side until it fits, else sends none', async () => {
+        // A sheet of 4 columns of frames of 640 pixels.
+        const sheet = jpegHeader(2572, 1000)
+        native.fileBytes = ({ path }) => path.endsWith('-frames.jpg') ? sheet : new Uint8Array()
+        composedBytes = (composition) => composition.width > 1024 ? 3_750_001 : 1
+
+        const result = await assetView({ assets: '@a @b', layout: 'grid' })
+
+        // 2572 by 1176 pixels of parts, at 1568, then 1024, on the longer
+        // side.
+        expect(compositions.map(({ composition: { width, height } }) => `${width}x${height}`)).toStrictEqual(['1568x717', '1024x468'])
+        expect(shown.map(({ size }) => size)).toStrictEqual([{ width: 1024, height: 468 }])
+        expect(result.content).toMatch(/^Grid picture of 1024x468 pixels, .* The whole grid is a smaller copy, at 39% of the size of its parts\./m)
+
+        compositions = []
+        shown = []
+        composedBytes = () => 3_750_001
+        const tooLarge = await assetView({ assets: '@a @b', layout: 'grid' })
+
+        expect(compositions.map(({ composition: { width } }) => width)).toStrictEqual([1568, 1024])
+        expect(shown).toStrictEqual([])
+        expect(tooLarge.content).toContain(gridTooLargeNote(['a', 'b']))
+        expect(consoleError).toHaveBeenCalledWith('The smallest grid picture of @a @b has 3750001 bytes, more than Dez sends.')
+      })
     })
   })
 })

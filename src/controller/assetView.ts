@@ -6,6 +6,7 @@ import type { ClipAttachment } from '../model/providers/clipInputs'
 import type { ModelInfo } from '../model/providers/types'
 import { conversationAssets } from '../model/streams/mediaRequest'
 import { budgetAfter, NO_PICTURE_BUDGET, pictureCost } from '../model/streams/replyPictures'
+import { gridLayout, gridTexts, type GridLayout, type GridPiece } from '../model/tools/assetGrid'
 import { probedClipFacts, type ClipProbeFacts } from '../model/tools/assetFacts'
 import { cutTimes } from '../model/tools/clipAnalysis'
 import {
@@ -25,6 +26,10 @@ import {
   FRAME_BOXES,
   frameSheetArgs,
   frameSheetTexts,
+  gridCostNote,
+  gridNotDrawnNote,
+  gridTooLargeNote,
+  IMAGE_PICTURE_SIDES,
   imagePictureDrawing,
   imagePictureShows,
   loudnessNote,
@@ -46,6 +51,7 @@ import {
   sheetTooLargeNote,
   smallerCopyNote,
   smallerPictureDrawing,
+  smallerPictureSide,
   soundlessPartNote,
   TIMES_TIMED_OUT_NOTE,
   timesSheetArgs,
@@ -55,6 +61,7 @@ import {
   VIEW_TIMED_OUT_NOTE,
   waveTexts,
   type AssetViewCall,
+  type AssetViewGrid,
   type AssetViewItem,
   type ClipPart,
   type PictureChoice,
@@ -139,6 +146,60 @@ async function viewImage(id: string, path: string, call: AssetViewCall, choice: 
     item.picture = { part: { type: 'picture', mediaType, bytes: new Uint8Array(await file.arrayBuffer()) }, size, shows: imagePictureShows(id), note: null }
   }
   return item
+}
+
+/** A member of the grid picture of a view (`layout` "grid"): the file of
+ *  its piece (an image, or the JPEG of a frame sheet), and the note of a
+ *  frame sheet, which its asset gets only when the grid goes. */
+interface GridMember {
+  file: Blob
+  piece: GridPiece
+  note: string | null
+}
+
+// The view of the image `id`, whose file is at `path`, for a grid: its
+// facts as `asset_info` gives them, and, when `choice` lets the view make
+// a picture, its file as a member of the grid, which draws it whole. An
+// image that the webview cannot decode is no member.
+async function gridImage(id: string, path: string, choice: PictureChoice): Promise<{ item: AssetViewItem, member: GridMember | null }> {
+  const image = await readImageFacts(id, path)
+  const item: AssetViewItem = { id, kind: 'image', facts: image.facts, notes: [], picture: null }
+  if (image.kind !== 'read') return { item, member: null }
+  if (choice === 'overLimit') item.notes.push(PICTURE_LIMIT_NOTE)
+  return { item, member: choice === 'show' ? { file: image.file, piece: { kind: 'image', id }, note: null } : null }
+}
+
+// The grid picture of `members`, for a view with `detail`, or the note of
+// why it has none. As the picture of an image, a grid whose file is too
+// large is drawn again smaller until it fits.
+async function gridView(members: readonly GridMember[], detail: ViewDetail): Promise<AssetViewGrid> {
+  const pieces = members.map(({ piece }) => piece)
+  const ids = pieces.map(({ id }) => id)
+  const files = members.map(({ file }) => file)
+  const draw = async (side: number): Promise<{ drawn: DrawnImage, layout: GridLayout }> => {
+    // Not `GridLayout | null = null`: TypeScript would take the variable
+    // for null after the callback, which sets it.
+    let layout = null as GridLayout | null
+    const drawn = await sbp('dez.controller/images/compose', files, (sizes: readonly ImageSize[]) => (layout = gridLayout(pieces, sizes, detail, side))) as DrawnImage
+    // A drawing came from the plan, so `layout` is set.
+    return { drawn, layout: layout as GridLayout }
+  }
+  try {
+    let { drawn, layout } = await draw(IMAGE_PICTURE_SIDES[detail])
+    while (drawn.bytes.length > MAX_PICTURE_BYTES) {
+      const side = smallerPictureSide(Math.max(drawn.width, drawn.height))
+      if (side === undefined) {
+        console.error(`The smallest grid picture of ${ids.map((id) => `@${id}`).join(' ')} has ${drawn.bytes.length} bytes, more than Dez sends.`)
+        return { picture: null, notes: [gridTooLargeNote(ids)] }
+      }
+      ({ drawn, layout } = await draw(side))
+    }
+    const part: PicturePart = { type: 'picture', mediaType: drawn.mediaType, bytes: drawn.bytes }
+    return { picture: { part, size: { width: drawn.width, height: drawn.height }, ...gridTexts(pieces, layout, detail) }, notes: [] }
+  } catch (error) {
+    console.error(`Failed to draw the grid picture of ${ids.map((id) => `@${id}`).join(' ')}:`, error)
+    return { picture: null, notes: [gridNotDrawnNote(ids)] }
+  }
 }
 
 // A run of ffmpeg for a view, on the clip copy that is already in the work
@@ -349,12 +410,14 @@ async function viewClip(clip: ClipAttachment, call: AssetViewCall, choice: Pictu
  *  the model of the reply (`context.showPictures`): its text, and the
  *  saved copies of those pictures (`saveShownPictures`). Each picture that
  *  fits in what is left of the picture budget of the reply goes; an asset
- *  whose picture does not fit gets a note in its place. Throws a
- *  `ToolError` for bad arguments, for an id that names no image and no
- *  clip of the conversation, and for a crop of a clip or of less than one
- *  pixel. A model that reads no images (`imageInput` false) gets the facts
- *  and the loudness only. A stop of `signal` stops a run of a program and
- *  rejects with the stop. */
+ *  whose picture does not fit gets a note in its place. With `layout`
+ *  "grid" and at least 2 images and video clips, those go into one grid
+ *  picture, after the pictures of the other assets. Throws a `ToolError`
+ *  for bad arguments, for an id that names no image and no clip of the
+ *  conversation, and for a crop of a clip or of less than one pixel. A
+ *  model that reads no images (`imageInput` false) gets the facts and the
+ *  loudness only. A stop of `signal` stops a run of a program and rejects
+ *  with the stop. */
 export async function assetViewResult(
   args: ToolArguments,
   sections: readonly Section[],
@@ -372,20 +435,37 @@ export async function assetViewResult(
   const model = sbp('dez.model/modelCache/model', context.model.providerId, context.model.modelId) as ModelInfo | null
   const imageInput = model?.imageInput !== false
   let left = imageInput ? context.pictureBudget() : NO_PICTURE_BUDGET
+  // With nothing left of one part of the budget, no picture fits, so Dez
+  // does not make one. Else only the made picture tells its cost.
+  const pictureChoice = (): PictureChoice => (!imageInput ? 'noImageInput' : left.pictures > 0 && left.tokens > 0 && left.bytes > 0 ? 'show' : 'overLimit')
+  // A grid is one picture, so its choice is made once, before the pictures
+  // of the other assets take their part of the budget.
+  const gridIds = imageInput && call.layout === 'grid' ? call.ids.filter((id) => assets.images.has(id) || assets.clips.get(id)?.kind === 'video') : []
+  const inGrid = new Set(gridIds.length >= 2 ? gridIds : [])
+  const gridChoice = pictureChoice()
+  const members: GridMember[] = []
   const view = async (folder: string | null): Promise<AssetViewItem[]> => {
     const items: AssetViewItem[] = []
     for (const id of call.ids) {
       signal.throwIfAborted()
-      // With nothing left of one part of the budget, no picture fits, so
-      // Dez does not make one. Else only the made picture tells its cost.
-      const hasRoom = left.pictures > 0 && left.tokens > 0 && left.bytes > 0
-      const choice: PictureChoice = !imageInput ? 'noImageInput' : hasRoom ? 'show' : 'overLimit'
       const path = assets.images.get(id)
+      if (path !== undefined && inGrid.has(id)) {
+        const { item, member } = await gridImage(id, path, gridChoice)
+        if (member) members.push(member)
+        items.push(item)
+        continue
+      }
+      const choice = inGrid.has(id) ? gridChoice : pictureChoice()
       // `folder` is a folder when the call names a clip.
       const item = path !== undefined
         ? await viewImage(id, path, call, choice)
         : await viewClip(assets.clips.get(id) as ClipAttachment, call, choice, folder as string, signal)
-      if (item.picture) {
+      if (item.picture && inGrid.has(id)) {
+        // The frame sheet of a video clip of the grid is a member of it.
+        const { part, shows, note } = item.picture
+        members.push({ file: new Blob([part.bytes], { type: part.mediaType }), piece: { kind: 'sheet', id, shows }, note })
+        item.picture = null
+      } else if (item.picture) {
         const cost = pictureCost(item.picture.part, item.picture.size)
         const after = budgetAfter(left, cost)
         if (after) {
@@ -400,11 +480,26 @@ export async function assetViewResult(
     return items
   }
   const items = call.ids.some((id) => assets.clips.has(id)) ? await inWorkFolder(view) : await view(null)
-  const pictures = assetViewPictures(items)
+  const grid = members.length > 0 ? await gridView(members, call.detail) : null
+  if (grid?.picture) {
+    const cost = pictureCost(grid.picture.part, grid.picture.size)
+    const after = budgetAfter(left, cost)
+    if (after) {
+      left = after
+      // The note of a frame sheet goes first, as the note of a picture.
+      for (const { piece, note } of members) {
+        if (note) items.find((item) => item.id === piece.id)?.notes.unshift(note)
+      }
+    } else {
+      grid.notes.push(gridCostNote(members.map(({ piece }) => piece.id), cost, left))
+      grid.picture = null
+    }
+  }
+  const pictures = assetViewPictures(items, grid)
   context.showPictures(pictures)
   // A stopped call gives no result, so its copies would have no block.
   signal.throwIfAborted()
-  const content = assetViewText(items, imageInput ? left : null)
+  const content = assetViewText(items, grid, imageInput ? left : null)
   const copies = await saveShownPictures(pictures)
   return copies.length > 0 ? { content, pictures: copies } : { content }
 }

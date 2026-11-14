@@ -4,10 +4,12 @@ import type { ImageMediaType } from './images'
 
 // How Dez draws a stored image again as a new file: a part of it, at
 // another size, mirrored or turned, on a painted background, with changed
-// colors, as a file of another type. The code that decides what to draw is
-// pure (`imageFit` in providers/imageSize.ts, the plans of the `image` tool
-// in tools/imageTool.ts, the color math in imageColors.ts); the pixel work
-// is in the webview (dez.controller/images/redraw).
+// colors, as a file of another type; and how it draws several images on one
+// canvas. The code that decides what to draw is pure (`imageFit` in
+// providers/imageSize.ts, the plans of the `image` tool in
+// tools/imageTool.ts, the color math in imageColors.ts, the grid of
+// tools/assetGrid.ts); the pixel work is in the webview
+// (dez.controller/images/redraw and compose).
 
 /** The size of an image in whole pixels. */
 export interface ImageSize {
@@ -58,6 +60,17 @@ export interface ImageDrawing extends ImageSize {
 /** The drawing of the whole image at its own size. */
 export function wholeImageDrawing({ width, height }: ImageSize): ImageDrawing {
   return { crop: { x: 0, y: 0, width, height }, width, height }
+}
+
+/** A drawing of several images on one canvas of `width` by `height`
+ *  pixels (dez.controller/images/compose): the canvas painted with
+ *  `background` (`#rrggbb`), then each image drawn whole into its place, in
+ *  the pixels of the canvas (`places`, in the order of the images), as a
+ *  file of the type `mediaType`. */
+export interface ImageComposition extends ImageSize {
+  places: ImageRegion[]
+  background: string
+  mediaType: DrawnMediaType
 }
 
 /** The file types of a drawn image. The canvas of every webview writes
