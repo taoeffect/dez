@@ -1372,7 +1372,10 @@ mod tests {
         }
 
         // The real programs, as a tool call runs them: ffmpeg makes a file,
-        // and ffprobe reads a copy of it as its input.
+        // and ffprobe reads a copy of it as its input. The source of the
+        // input is outside the folder of the confined ffprobe, as a file
+        // that the user linked is: Dez copies it before the program starts,
+        // so the program needs no right on the folder of the source.
         #[tokio::test]
         async fn the_bundled_programs_run_and_read_an_input_copy() {
             let dir = TempDir::new("tools-run-bundled");
