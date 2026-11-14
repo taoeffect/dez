@@ -1,11 +1,11 @@
 import sbp from '@sbp/sbp'
-import type { DrawnImage, ImageComposition, ImageDrawing, ImageSize } from '../model/chat/imageDrawing'
+import type { ComposedImage, DrawnImage, ImageDrawing, ImageSize } from '../model/chat/imageDrawing'
 import { jpegSize } from '../model/chat/jpegSize'
 import type { PicturePart, Section } from '../model/chat/types'
 import type { ClipAttachment } from '../model/providers/clipInputs'
 import type { ModelInfo } from '../model/providers/types'
 import { conversationAssets } from '../model/streams/mediaRequest'
-import { budgetAfter, NO_PICTURE_BUDGET, pictureCost } from '../model/streams/replyPictures'
+import { budgetAfter, NO_PICTURE_BUDGET, pictureCost, type PictureBudget } from '../model/streams/replyPictures'
 import { gridLayout, gridTexts, type GridLayout, type GridPiece } from '../model/tools/assetGrid'
 import { probedClipFacts, type ClipProbeFacts } from '../model/tools/assetFacts'
 import { cutTimes } from '../model/tools/clipAnalysis'
@@ -167,6 +167,13 @@ interface GridMember {
   sheet: ViewPicture | null
 }
 
+/** What a picture that does not fit in the picture budget of the reply
+ *  costs, and what was left of the budget. */
+interface OverBudget {
+  cost: PictureBudget
+  left: PictureBudget
+}
+
 // The view of the image `id`, whose file is at `path`, for a grid: its
 // facts as `asset_info` gives them, and, when `choice` lets the view make
 // a picture, its file as a member of the grid, which draws it whole. An
@@ -179,37 +186,38 @@ async function gridImage(id: string, path: string, choice: PictureChoice): Promi
   return { item, member: choice === 'show' ? { file: image.file, piece: { kind: 'image', id }, sheet: null } : null }
 }
 
-// The grid picture of `members`, for a view with `detail`, or the note of
+// The grid picture of `members`, for a view with `detail`, when `charge`
+// takes its cost from the picture budget of the reply, else the note of
 // why it has none. As the picture of an image, a grid whose file is too
 // large is drawn again smaller until it fits.
-async function gridView(members: readonly GridMember[], detail: ViewDetail): Promise<AssetViewGrid> {
+async function gridView(members: readonly GridMember[], detail: ViewDetail, charge: (picture: ViewPicture) => OverBudget | null): Promise<AssetViewGrid> {
   const pieces = members.map(({ piece }) => piece)
   const ids = pieces.map(({ id }) => id)
+  const mentions = ids.map((id) => `@${id}`).join(' ')
   const files = members.map(({ file }) => file)
-  const draw = async (side: number): Promise<{ drawn: DrawnImage, layout: GridLayout }> => {
-    // Not `GridLayout | null = null`: TypeScript would take the variable
-    // for null after the callback, which sets it.
-    let layout = null as GridLayout | null
-    const drawn = await sbp('dez.controller/images/compose', files, (sizes: readonly ImageSize[]) => (layout = gridLayout(pieces, sizes, detail, side))) as DrawnImage
-    // A drawing came from the plan, so `layout` is set.
-    return { drawn, layout: layout as GridLayout }
-  }
+  let picture: ViewPicture
   try {
-    let { drawn, layout } = await draw(IMAGE_PICTURE_SIDES[detail])
-    while (drawn.bytes.length > MAX_PICTURE_BYTES) {
-      const side = smallerPictureSide(Math.max(drawn.width, drawn.height))
-      if (side === undefined) {
-        console.error(`The smallest grid picture of ${ids.map((id) => `@${id}`).join(' ')} has ${drawn.bytes.length} bytes, more than Dez sends.`)
+    let side = IMAGE_PICTURE_SIDES[detail]
+    for (;;) {
+      const { drawn, composition } = await sbp('dez.controller/images/compose', files, (sizes: readonly ImageSize[]) => gridLayout(pieces, sizes, detail, side)) as ComposedImage<GridLayout>
+      if (drawn.bytes.length <= MAX_PICTURE_BYTES) {
+        const part: PicturePart = { type: 'picture', mediaType: drawn.mediaType, bytes: drawn.bytes }
+        picture = { part, size: { width: drawn.width, height: drawn.height }, ...gridTexts(pieces, composition, detail) }
+        break
+      }
+      const smaller = smallerPictureSide(Math.max(drawn.width, drawn.height))
+      if (smaller === undefined) {
+        console.error(`The smallest grid picture of ${mentions} has ${drawn.bytes.length} bytes, more than Dez sends.`)
         return { picture: null, notes: [gridTooLargeNote(ids)] }
       }
-      ({ drawn, layout } = await draw(side))
+      side = smaller
     }
-    const part: PicturePart = { type: 'picture', mediaType: drawn.mediaType, bytes: drawn.bytes }
-    return { picture: { part, size: { width: drawn.width, height: drawn.height }, ...gridTexts(pieces, layout, detail) }, notes: [] }
   } catch (error) {
-    console.error(`Failed to draw the grid picture of ${ids.map((id) => `@${id}`).join(' ')}:`, error)
+    console.error(`Failed to draw the grid picture of ${mentions}:`, error)
     return { picture: null, notes: [gridNotDrawnNote(ids)] }
   }
+  const over = charge(picture)
+  return over ? { picture: null, notes: [gridCostNote(ids, over.cost, over.left)] } : { picture, notes: [] }
 }
 
 // The time limit and the tool name of each run of ffmpeg for a view.
@@ -243,47 +251,6 @@ function runProblemNote(clip: ClipAttachment, { end, log }: { end: ProgramEnd, l
   return end.kind === 'timedOut' ? timedOutNote : VIEW_FAILED_NOTE
 }
 
-/** One ffmpeg run that writes a frame sheet (`frameSheetArgs`,
- *  `timesSheetArgs`) into the work folder. */
-interface SheetRunPlan {
-  args: string[]
-  /** The file of the sheet in the work folder. */
-  name: string
-  /** Where the run starts to read the clip, in seconds. */
-  from: number
-  /** The frames that the run asks for. */
-  frames: number
-  /** The notes of a sheet whose file is too large, and of a run that took
-   *  too long. */
-  tooLargeNote: string
-  timedOutNote: string
-}
-
-type SheetRun =
-  | { kind: 'sheet', times: number[], picture: RunPicture }
-  | { kind: 'noFrame' }
-  // `failed`: the run failed or took too long (`runProblemNote`).
-  | { kind: 'note', note: string, failed: boolean }
-
-// The run `plan` for the clip `clip`, on the copy that is already in the
-// work folder `folder`: the sheet with the times of its frames, else that
-// the run found no frame to take, else the note of what went wrong.
-async function sheetRun(clip: ClipAttachment, plan: SheetRunPlan, folder: string, signal: AbortSignal): Promise<SheetRun> {
-  const ran = await runFfmpegLog(plan.args, folder, VIEW_RUN, signal)
-  const times = sheetFrameTimes(ran.log, plan.from, plan.frames)
-  // A run with no frame to take makes ffmpeg fail, as it has nothing to
-  // write. A damaged clip fails in the same way: its run is a failed view.
-  if (times.length === 0 && ran.end.kind === 'exited' && partHasNoFrame(ran.log)) return { kind: 'noFrame' }
-  const problem = runProblemNote(clip, ran, plan.timedOutNote)
-  if (problem !== null) return { kind: 'note', note: problem, failed: true }
-  const picture = await readPicture(folder, plan.name)
-  if (!picture) return { kind: 'note', note: PICTURE_NOT_READ_NOTE, failed: false }
-  // The file of a sheet of fine detail (noise, film grain) can be over the
-  // limit, mostly at the `full` box.
-  if (picture.part.bytes.length > MAX_PICTURE_BYTES) return { kind: 'note', note: plan.tooLargeNote, failed: false }
-  return { kind: 'sheet', times, picture }
-}
-
 /** The frame sheet of a video clip and its notes. `failed`: a run failed
  *  or took too long, and its note tells that Dez shows no more of the
  *  clip, so the view runs nothing more on it. */
@@ -291,18 +258,61 @@ interface SheetView extends Pick<AssetViewItem, 'notes' | 'picture'> {
   failed?: boolean
 }
 
+/** One ffmpeg run that writes a frame sheet into the work folder, and the
+ *  texts of the view that it gives. */
+interface SheetRunPlan {
+  /** The arguments of the run (`frameSheetArgs`, `timesSheetArgs`), which
+   *  writes the sheet into the file `output` of the work folder. */
+  args: (output: string) => string[]
+  /** Where the run starts to read the clip, in seconds. */
+  from: number
+  /** The frames that the run asks for. */
+  frames: number
+  /** The notes of a run that found no frame to take, of a sheet whose file
+   *  is too large, and of a run that took too long (when it is not
+   *  `VIEW_TIMED_OUT_NOTE`). */
+  noFrameNote: string
+  tooLargeNote: string
+  timedOutNote?: string
+  /** The texts of the sheet of the frames at `times`, and the notes of
+   *  its asset that go with the sheet. */
+  texts: (times: readonly number[]) => Pick<ViewPicture, 'shows' | 'note'> & { notes?: string[] }
+}
+
+// The run `plan` for the video clip `input`, on the copy that is already
+// in the work folder `folder`: the sheet with its texts, else the note of
+// why it has none.
+async function sheetRun(input: ClipInput, plan: SheetRunPlan, folder: string, signal: AbortSignal): Promise<SheetView> {
+  const output = `${input.id}-frames.jpg`
+  const ran = await runFfmpegLog(plan.args(output), folder, VIEW_RUN, signal)
+  const times = sheetFrameTimes(ran.log, plan.from, plan.frames)
+  // A run with no frame to take makes ffmpeg fail, as it has nothing to
+  // write. A damaged clip fails in the same way: its run is a failed view.
+  if (times.length === 0 && ran.end.kind === 'exited' && partHasNoFrame(ran.log)) return { notes: [plan.noFrameNote], picture: null }
+  const problem = runProblemNote(input.clip, ran, plan.timedOutNote)
+  if (problem !== null) return { notes: [problem], picture: null, failed: true }
+  const picture = await readPicture(folder, output)
+  if (!picture) return { notes: [PICTURE_NOT_READ_NOTE], picture: null }
+  // The file of a sheet of fine detail (noise, film grain) can be over the
+  // limit, mostly at the `full` box.
+  if (picture.part.bytes.length > MAX_PICTURE_BYTES) return { notes: [plan.tooLargeNote], picture: null }
+  const { shows, note, notes = [] } = plan.texts(times)
+  return { notes, picture: { ...picture, shows, note } }
+}
+
 // The frame sheet of `frames` frames at equal steps over `part` of the
 // video clip `input`, for a view with `detail`.
 async function stepsSheet(input: ClipInput, frames: number, part: ClipPart, detail: ViewDetail, folder: string, signal: AbortSignal): Promise<SheetView> {
-  if (part.end === null) return { notes: [UNKNOWN_LENGTH_NOTE], picture: null }
-  const name = `${input.id}-frames.jpg`
-  const args = frameSheetArgs(input.name, name, { start: part.start, end: part.end }, frames, FRAME_BOXES[detail])
-  const plan = { args, name, from: part.start, frames, tooLargeNote: sheetTooLargeNote(detail, 'frames'), timedOutNote: VIEW_TIMED_OUT_NOTE }
-  const ran = await sheetRun(input.clip, plan, folder, signal)
-  if (ran.kind === 'noFrame') return { notes: [noFramesNote(part)], picture: null }
-  if (ran.kind === 'note') return { notes: [ran.note], picture: null, failed: ran.failed }
-  const { note, shows } = frameSheetTexts(input.id, part, ran.times, frames)
-  return { notes: [], picture: { ...ran.picture, shows, note } }
+  const { start, end } = part
+  if (end === null) return { notes: [UNKNOWN_LENGTH_NOTE], picture: null }
+  return sheetRun(input, {
+    args: (output) => frameSheetArgs(input.name, output, { start, end }, frames, FRAME_BOXES[detail]),
+    from: start,
+    frames,
+    noFrameNote: noFramesNote(part),
+    tooLargeNote: sheetTooLargeNote(detail, 'frames'),
+    texts: (times) => frameSheetTexts(input.id, part, times, frames),
+  }, folder, signal)
 }
 
 // The frame sheet of the first frame at or after each of `times` (in
@@ -313,17 +323,20 @@ async function stepsSheet(input: ClipInput, frames: number, part: ClipPart, deta
 async function timesSheet(input: ClipInput, times: readonly number[], seconds: number | null, detail: ViewDetail, folder: string, signal: AbortSignal): Promise<SheetView> {
   const inClip = seconds === null ? times : times.filter((time) => time < seconds)
   if (inClip.length === 0) return { notes: [missingTimesNote(times)], picture: null }
-  const name = `${input.id}-frames.jpg`
-  const args = timesSheetArgs(input.name, name, 0, inClip, FRAME_BOXES[detail])
-  const plan = { args, name, from: 0, frames: inClip.length, tooLargeNote: sheetTooLargeNote(detail, 'times'), timedOutNote: TIMES_TIMED_OUT_NOTE }
-  const ran = await sheetRun(input.clip, plan, folder, signal)
-  if (ran.kind === 'noFrame') return { notes: [missingTimesNote(times)], picture: null }
-  if (ran.kind === 'note') return { notes: [ran.note], picture: null, failed: ran.failed }
-  // The times are in order, so the times that got no frame (the picture of
-  // the clip ends before them) are the last ones.
-  const missing = times.slice(ran.times.length)
-  const { note, shows } = timesSheetTexts(input.id, times, ran.times, inClip.length)
-  return { notes: missing.length > 0 ? [missingTimesNote(missing)] : [], picture: { ...ran.picture, shows, note } }
+  return sheetRun(input, {
+    args: (output) => timesSheetArgs(input.name, output, 0, inClip, FRAME_BOXES[detail]),
+    from: 0,
+    frames: inClip.length,
+    noFrameNote: missingTimesNote(times),
+    tooLargeNote: sheetTooLargeNote(detail, 'times'),
+    timedOutNote: TIMES_TIMED_OUT_NOTE,
+    texts: (frameTimes) => {
+      // The times are in order, so the times that got no frame (the
+      // picture of the clip ends before them) are the last ones.
+      const missing = times.slice(frameTimes.length)
+      return { ...timesSheetTexts(input.id, times, frameTimes, inClip.length), notes: missing.length > 0 ? [missingTimesNote(missing)] : [] }
+    },
+  }, folder, signal)
 }
 
 // The frame sheet of the shots of `part` of the video clip `input`, of at
@@ -338,14 +351,14 @@ async function scenesSheet(input: ClipInput, frames: number, part: ClipPart, det
   if (problem !== null) return { notes: [problem], picture: null, failed: true }
   const cuts = cutTimes(cutsRan.log).map((time) => part.start + time)
   const times = [part.start, ...cuts].slice(0, frames)
-  const name = `${input.id}-frames.jpg`
-  const args = timesSheetArgs(input.name, name, part.start, times, FRAME_BOXES[detail])
-  const plan = { args, name, from: part.start, frames: times.length, tooLargeNote: sheetTooLargeNote(detail, 'frames'), timedOutNote: VIEW_TIMED_OUT_NOTE }
-  const ran = await sheetRun(input.clip, plan, folder, signal)
-  if (ran.kind === 'noFrame') return { notes: [noFramesNote(part)], picture: null }
-  if (ran.kind === 'note') return { notes: [ran.note], picture: null, failed: ran.failed }
-  const { note, shows } = scenesSheetTexts(input.id, part, ran.times, times.length, cuts)
-  return { notes: [], picture: { ...ran.picture, shows, note } }
+  return sheetRun(input, {
+    args: (output) => timesSheetArgs(input.name, output, part.start, times, FRAME_BOXES[detail]),
+    from: part.start,
+    frames: times.length,
+    noFrameNote: noFramesNote(part),
+    tooLargeNote: sheetTooLargeNote(detail, 'frames'),
+    texts: (frameTimes) => scenesSheetTexts(input.id, part, frameTimes, times.length, cuts),
+  }, folder, signal)
 }
 
 // The frame sheet of `part` of the video clip `input`, of `seconds` (null:
@@ -407,14 +420,11 @@ async function withSoundStrip(
   { kind, part, sampleRate, detail }: { kind: SoundPictureKind, part: ClipPart, sampleRate: number | null, detail: ViewDetail },
 ): Promise<ViewPicture> {
   try {
-    // Not `ImageComposition | null = null`: as in gridView.
-    let layout = null as ImageComposition | null
     const files = [sheet.part, strip.part].map(({ bytes, mediaType }) => new Blob([bytes], { type: mediaType }))
-    const drawn = await sbp('dez.controller/images/compose', files, (sizes: readonly ImageSize[]) => (layout = soundStripLayout(sizes))) as DrawnImage
+    const { drawn, composition } = await sbp('dez.controller/images/compose', files, soundStripLayout) as ComposedImage
     if (drawn.bytes.length > MAX_PICTURE_BYTES) return withNote(sheet, soundStripTooLargeNote(kind, detail))
-    // A drawing came from the plan, so `layout` is set; its second place
-    // is the strip.
-    const { width, height } = (layout as ImageComposition).places[1]
+    // The second place of the composition is the strip.
+    const { width, height } = composition.places[1]
     const texts = soundStripTexts(kind, part, { width, height }, sampleRate)
     return {
       ...withNote(sheet, texts.note),
@@ -521,19 +531,23 @@ export async function assetViewResult(
   // With nothing left of one part of the budget, no picture fits, so Dez
   // does not make one. Else only the made picture tells its cost.
   const pictureChoice = (): PictureChoice => (!imageInput ? 'noImageInput' : left.pictures > 0 && left.tokens > 0 && left.bytes > 0 ? 'show' : 'overLimit')
-  // Keeps the picture of its own of `item` when it fits in what is left of
-  // the budget, and takes its cost from what is left; else the item gets
-  // the note of that cost in place of the picture.
-  const keepIfFits = (item: AssetViewItem): void => {
-    if (!item.picture) return
-    const cost = pictureCost(item.picture.part, item.picture.size)
+  // Takes the cost of `picture` from what is left of the budget when it
+  // fits; else takes nothing, and gives its cost and what was left.
+  const charge = (picture: ViewPicture): OverBudget | null => {
+    const cost = pictureCost(picture.part, picture.size)
     const after = budgetAfter(left, cost)
-    if (after) {
-      left = after
-    } else {
-      item.notes.push(pictureCostNote(cost, left))
-      item.picture = null
-    }
+    if (!after) return { cost, left }
+    left = after
+    return null
+  }
+  // Keeps the picture of its own of `item` when it fits in what is left of
+  // the budget (`charge`); else the item gets the note of its cost in place
+  // of the picture.
+  const keepIfFits = (item: AssetViewItem): void => {
+    const over = item.picture && charge(item.picture)
+    if (!over) return
+    item.notes.push(pictureCostNote(over.cost, over.left))
+    item.picture = null
   }
   // The assets of a grid share one choice, made before the pictures of the
   // other assets take their part of the budget. Those pictures can spend
@@ -594,19 +608,11 @@ export async function assetViewResult(
     }
     keepIfFits(items[index])
   }
-  const grid = membersGo && members.length > 1 ? await gridView(members, call.detail) : null
+  const grid = membersGo && members.length > 1 ? await gridView(members, call.detail, charge) : null
   if (grid?.picture) {
-    const cost = pictureCost(grid.picture.part, grid.picture.size)
-    const after = budgetAfter(left, cost)
-    if (after) {
-      left = after
-      // The note of a frame sheet goes first, as the note of a picture.
-      for (const { piece, sheet } of members) {
-        if (sheet?.note) items.find((item) => item.id === piece.id)?.notes.unshift(sheet.note)
-      }
-    } else {
-      grid.notes.push(gridCostNote(members.map(({ piece }) => piece.id), cost, left))
-      grid.picture = null
+    // The note of a frame sheet goes first, as the note of a picture.
+    for (const { piece, sheet } of members) {
+      if (sheet?.note) items.find((item) => item.id === piece.id)?.notes.unshift(sheet.note)
     }
   }
   const pictures = assetViewPictures(items, grid)

@@ -117,3 +117,11 @@ export interface DrawnImage extends ImageSize {
    *  type that the caller of redraw asked for. */
   mediaType: DrawnMediaType
 }
+
+/** The drawing of several images on one canvas
+ *  (dez.controller/images/compose), and the composition that its plan
+ *  gave, which the caller can read the places of. */
+export interface ComposedImage<C extends ImageComposition = ImageComposition> {
+  drawn: DrawnImage
+  composition: C
+}

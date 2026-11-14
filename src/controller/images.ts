@@ -5,6 +5,7 @@ import { changeColors } from '../model/chat/imageColors'
 import {
   svgOfPng,
   UnwritableImageTypeError,
+  type ComposedImage,
   type DrawnImage,
   type DrawnMediaType,
   type ImageComposition,
@@ -316,14 +317,14 @@ export default sbp('sbp/selectors/register', {
   // Draws several images on one canvas in the webview: decodes `files` (of
   // any type that the webview reads), asks `plan` for the canvas and the
   // place of each image from their sizes (in the order of `files`), and
-  // draws each image whole into its place. Rejects when the webview cannot
-  // decode an image, when `plan` throws or gives a place for each image
-  // that is not one, and when the drawing cannot be made; the caller logs
-  // it.
-  async 'dez.controller/images/compose' (
+  // draws each image whole into its place. Gives the drawing with the
+  // composition of the plan. Rejects when the webview cannot decode an
+  // image, when `plan` throws or gives a place for each image that is not
+  // one, and when the drawing cannot be made; the caller logs it.
+  async 'dez.controller/images/compose'<C extends ImageComposition> (
     files: readonly Blob[],
-    plan: (sizes: readonly ImageSize[]) => ImageComposition,
-  ): Promise<DrawnImage> {
+    plan: (sizes: readonly ImageSize[]) => C,
+  ): Promise<ComposedImage<C>> {
     const urls = files.map((file) => URL.createObjectURL(file))
     try {
       const images = await Promise.all(urls.map(decodedImage))
@@ -338,7 +339,7 @@ export default sbp('sbp/selectors/register', {
         const place = composition.places[index]
         context.drawImage(img, place.x, place.y, place.width, place.height)
       })
-      return await canvasImage(canvas, composition.mediaType)
+      return { drawn: await canvasImage(canvas, composition.mediaType), composition }
     } finally {
       for (const url of urls) URL.revokeObjectURL(url)
     }

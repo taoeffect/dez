@@ -1,7 +1,7 @@
 import sbp from '@sbp/sbp'
 import { createPinia, setActivePinia } from 'pinia'
 import { afterEach, beforeEach, describe, expect, it, vi, type MockInstance } from 'vitest'
-import { UnwritableImageTypeError, type DrawnImage, type DrawnMediaType, type ImageComposition, type ImageDrawing, type ImageSize } from '../model/chat/imageDrawing'
+import { UnwritableImageTypeError, type ComposedImage, type DrawnImage, type DrawnMediaType, type ImageComposition, type ImageDrawing, type ImageSize } from '../model/chat/imageDrawing'
 import { jpegSize } from '../model/chat/jpegSize'
 import { mediaTagText, type MediaTagData } from '../model/chat/mediaTags'
 import { jpegHeader } from '../model/chat/testing'
@@ -158,7 +158,7 @@ sbp('sbp/selectors/register', {
   // or a composed sheet with its strip) has its own size, and each other
   // file is a stored image. Every composition is a JPEG: its file is the
   // start of a JPEG of its size, filled up to `composedBytes`.
-  async 'dez.controller/images/compose' (files: readonly Blob[], plan: (sizes: readonly ImageSize[]) => ImageComposition): Promise<DrawnImage> {
+  async 'dez.controller/images/compose'<C extends ImageComposition> (files: readonly Blob[], plan: (sizes: readonly ImageSize[]) => C): Promise<ComposedImage<C>> {
     const read = await Promise.all(files.map(async (file) => ({ type: file.type, bytes: new Uint8Array(await file.arrayBuffer()) })))
     const composition = plan(read.map(({ bytes }) => jpegSize(bytes) ?? storedImageSize))
     if (drawError) throw drawError
@@ -166,7 +166,7 @@ sbp('sbp/selectors/register', {
     const header = jpegHeader(composition.width, composition.height)
     const bytes = new Uint8Array(Math.max(header.length, composedBytes(composition))).fill(7)
     bytes.set(header)
-    return { bytes, mediaType: composition.mediaType, width: composition.width, height: composition.height }
+    return { drawn: { bytes, mediaType: composition.mediaType, width: composition.width, height: composition.height }, composition }
   },
   async 'dez.controller/images/save' (_bytes: Uint8Array, mediaType: string, options: unknown): Promise<string> {
     savedImages.push({ mediaType, options })

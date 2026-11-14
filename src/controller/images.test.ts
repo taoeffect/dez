@@ -1,7 +1,7 @@
 import sbp from '@sbp/sbp'
 import type * as TauriCore from '@tauri-apps/api/core'
 import { afterEach, beforeEach, describe, expect, it, vi, type MockInstance } from 'vitest'
-import { UnwritableImageTypeError, type DrawnImage, type DrawnMediaType, type ImageComposition, type ImageDrawing, type ImageSize } from '../model/chat/imageDrawing'
+import { UnwritableImageTypeError, type ComposedImage, type DrawnImage, type DrawnMediaType, type ImageComposition, type ImageDrawing, type ImageSize } from '../model/chat/imageDrawing'
 import { findImageReferences, imageMarkdown, storedImageFile, type ImageFolder, type ImageMediaType } from '../model/chat/images'
 import { FileTooLargeError } from '../model/chat/mediaFiles'
 import './images'
@@ -449,21 +449,22 @@ describe('dez.controller/images/compose', () => {
     new Blob([new Uint8Array([60, 115])], { type: 'image/svg+xml' }),
   ]
 
-  function compose(plan: (sizes: readonly ImageSize[]) => ImageComposition): Promise<DrawnImage> {
-    return sbp('dez.controller/images/compose', FILES, plan) as Promise<DrawnImage>
+  function compose(plan: (sizes: readonly ImageSize[]) => ImageComposition): Promise<ComposedImage> {
+    return sbp('dez.controller/images/compose', FILES, plan) as Promise<ComposedImage>
   }
 
-  it('draws each image whole into its place on the background, and plans from the sizes in order', async () => {
+  it('draws each image whole into its place on the background, plans from the sizes in order, and gives the plan', async () => {
     stubImages([{ width: 400, height: 1000 }, { width: 40, height: 30 }])
     const drawn = stubCanvas()
     let planned: readonly ImageSize[] = []
+    const composition: ImageComposition = {
+      width: 250, height: 120, background: '#ffffff', mediaType: 'image/jpeg',
+      places: [{ x: 0, y: 0, width: 48, height: 120 }, { x: 52, y: 10, width: 198, height: 100 }],
+    }
 
     const image = await compose((sizes) => {
       planned = sizes
-      return {
-        width: 250, height: 120, background: '#ffffff', mediaType: 'image/jpeg',
-        places: [{ x: 0, y: 0, width: 48, height: 120 }, { x: 52, y: 10, width: 198, height: 100 }],
-      }
+      return composition
     })
 
     expect(planned).toStrictEqual([{ width: 400, height: 1000 }, { width: 40, height: 30 }])
@@ -473,7 +474,7 @@ describe('dez.controller/images/compose', () => {
       numbers: [0, 0, 48, 120, 52, 10, 198, 100],
       type: 'image/jpeg',
     }])
-    expect(image).toStrictEqual({ bytes: new Uint8Array(DRAWN_BYTES), mediaType: 'image/jpeg', width: 250, height: 120 })
+    expect(image).toStrictEqual({ drawn: { bytes: new Uint8Array(DRAWN_BYTES), mediaType: 'image/jpeg', width: 250, height: 120 }, composition })
   })
 
   it('rejects when the webview cannot decode one of the images, and asks for no plan', async () => {
