@@ -30,10 +30,10 @@ import type { AppFileEntry } from './nativeTypes'
 const QUEUE = 'dez.controller/unusedFiles'
 
 // The texts that can name a file that the cleanup must keep, other than
-// the conversation files: the texts in memory, and the sources of the job
-// files that no text names yet (`dez.stream/jobAssetSources`).
+// the conversation files: the texts in memory, and the files that the work
+// of a reply made and that no text names yet (`dez.stream/unnamedMadeFiles`).
 function textsInMemory(): string[] {
-  return [...sbp('dez.model/heldTexts') as string[], ...sbp('dez.stream/jobAssetSources') as string[]]
+  return [...sbp('dez.model/heldTexts') as string[], ...sbp('dez.stream/unnamedMadeFiles') as string[]]
 }
 
 export default sbp('sbp/selectors/register', {
@@ -130,7 +130,7 @@ export default sbp('sbp/selectors/register', {
           try {
             if (file.root === 'app') {
               if (storedFilePath(`${appDir}/${file.path}`, appDir) !== file.path) {
-                throw new Error('Not a stored image or a saved clip')
+                throw new Error('Not a stored image, a saved clip, or a copy of a shown picture')
               }
               await sbp('dez.native/deleteAppFile', file.path)
             } else {

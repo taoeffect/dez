@@ -147,6 +147,32 @@ describe('toolBlockText and findToolBlocks', () => {
     expect(statusOf(' status=""')).toBe('error')
   })
 
+  it('writes the pictures of a call after the status and reads them back, and reads a value that is not the writer\'s form as no pictures', () => {
+    const fox = { file: 'f-1.png', label: 'asset_view: the image @a.' }
+    const block: ToolBlockData = {
+      id: 'call_1',
+      name: 'asset_view',
+      status: 'success',
+      arguments: { assets: '@a @b' },
+      result: '@a | image | PNG',
+      pictures: [fox, { file: 'f_2.jpg', label: 'A "sheet" & more\nlines' }],
+    }
+    const picturesOf = (value: string) => findToolBlocks(`<dez:tool id="a" name="asset_view" pictures="${value}">\n</dez:tool>`)[0]
+    const one = (file: string) => `[{&quot;file&quot;:&quot;${file}&quot;,&quot;label&quot;:&quot;x&quot;}]`
+
+    expect(toolBlockText({ ...block, pictures: [fox] }).split('\n')[0]).toBe(
+      '<dez:tool id="call_1" name="asset_view" pictures="[{&quot;file&quot;:&quot;f-1.png&quot;,&quot;label&quot;:&quot;asset_view: the image @a.&quot;}]" assets="@a @b">',
+    )
+    expect(readBack(block)).toStrictEqual([block])
+    expect(toolBlockText({ ...block, pictures: [] })).not.toContain('pictures')
+    // A hand edit: no JSON, no list, a file outside the views folder, a
+    // file of no image type, no label.
+    for (const value of ['', 'x', '[]', '{}', one('../../provider_keys.json'), one('a.txt'), '[{&quot;file&quot;:&quot;a.png&quot;}]']) {
+      expect(picturesOf(value), value).toStrictEqual({ from: expect.any(Number), to: expect.any(Number), id: 'a', name: 'asset_view', status: 'success', arguments: {}, result: '' })
+    }
+    expect(picturesOf(one('a.png')).pictures).toStrictEqual([{ file: 'a.png', label: 'x' }])
+  })
+
   it('finds a block only as whole lines, with an id, a name, and a closing line', () => {
     const block = toolBlockText(MODEL_LIST_CALL)
     const texts = [

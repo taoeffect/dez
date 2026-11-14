@@ -1,5 +1,6 @@
 import { ExplainedError } from '../../utils/errorText'
 import type { JsonObject } from '../../utils/json'
+import type { ShownPicture } from '../chat/shownPictures'
 
 // The Dez tools: tools that the Dez app itself runs for a model, as opposed
 // to tools that a provider runs on its side (such as Venice web search).
@@ -75,6 +76,9 @@ export interface ToolResult {
 export interface ToolRunResult {
   content: string
   isError: boolean
+  /** The saved copies of the pictures that the call showed its model
+   *  (`ToolBlockData.pictures`). */
+  pictures?: readonly ShownPicture[]
 }
 
 /** An error whose text Dez wrote for the model that made a call: what is

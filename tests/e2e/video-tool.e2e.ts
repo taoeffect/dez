@@ -480,7 +480,9 @@ describe('video tool', () => {
     expect(afterMessages.slice(messages.length).map(({ role }) => role)).toStrictEqual(['assistant', 'tool'])
     await sendChatReply(after.reply, CALLER.modelName)
     const reply = await endedReply(browser, CLIPS_REPLY_INDEX)
-    expect(reply).not.toContain('asset_view: ')
+    // The conversation holds no picture: only the block of the call names
+    // the copies for its panel, in an attribute that no request sends.
+    expect(reply.replace(/ pictures="[^"]*"/, '')).not.toContain('asset_view: ')
 
     // The next reply gets no picture: the conversation holds none.
     await submit(browser, 'Thanks.')

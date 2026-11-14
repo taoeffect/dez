@@ -29,6 +29,7 @@ describe('withoutStoredFilePaths', () => {
     ['a reference with a key given twice', `![${PNG}](id=a|id=b)`, '![image](id=a|id=b)'],
     ['a bare path', `see ${PNG} now`, 'see image now'],
     ['a bare generated path', `see ${GENERATED} now`, 'see image now'],
+    ['a bare path of a copy of a shown picture', 'see /home/ann/.config/dez/assets/generated/views/0c4e7a51-9b2d-4f6a-8e13-5d7c9a2b4f60.jpg now', 'see image now'],
   ])('takes the path out of %s', (_case, text, sent) => {
     expect(withoutStoredFilePaths(text)).toBe(sent)
   })

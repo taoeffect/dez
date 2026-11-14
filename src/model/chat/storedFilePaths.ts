@@ -1,12 +1,14 @@
 import { ExplainedError } from '../../utils/errorText'
 import { IMAGE_PATH_END_SOURCE, LINKED_IMAGE_PATH_SOURCE, isImagePath } from './images'
 import { MEDIA_CACHE_PATH_END_SOURCE, MEDIA_TAG_KINDS, SAVED_MEDIA_PATH_END_SOURCES, isSavedMediaPath, type MediaTagKind } from './mediaTags'
+import { SHOWN_PICTURE_PATH_END_SOURCE } from './shownPictures'
 
 // The paths of the files that Dez stores, in the text of a conversation.
 //
 // A provider must never get the path of a file that Dez stores or links:
 // it holds the user's name and folders. The stored files are the images
-// (images.ts), the saved clips, and the temp copies of clips (mediaTags.ts);
+// (images.ts), the saved clips, the temp copies of clips (mediaTags.ts), and
+// the copies of the pictures that tools showed (shownPictures.ts);
 // the linked files are the dropped files that Dez reads in place
 // (linkedFiles.ts). Every request text goes through `withoutStoredFilePaths`.
 
@@ -23,6 +25,7 @@ const APP_FOLDER_SOURCE = String.raw`\/\.config\/dez\/`
 // only their own folders.
 const STORED_FILE_PATH_ENDS: readonly { source: string, standIn: string }[] = [
   { source: `${APP_FOLDER_SOURCE}${IMAGE_PATH_END_SOURCE}`, standIn: 'image' },
+  { source: `${APP_FOLDER_SOURCE}${SHOWN_PICTURE_PATH_END_SOURCE}`, standIn: 'image' },
   { source: `${APP_FOLDER_SOURCE}${SAVED_MEDIA_PATH_END_SOURCES.audio}`, standIn: 'audio' },
   { source: `${APP_FOLDER_SOURCE}${SAVED_MEDIA_PATH_END_SOURCES.video}`, standIn: 'video' },
   { source: String.raw`\/${MEDIA_CACHE_PATH_END_SOURCE}`, standIn: 'media' },

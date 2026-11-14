@@ -76,6 +76,20 @@ describe('agentSectionMessages', () => {
     ])
   })
 
+  // Only the panel of the chip shows the copies of the pictures: the model
+  // got the pictures as bytes in the reply that made them.
+  it('sends no copy of a picture that a call showed, with or without tools', () => {
+    const pictures = [{ file: 'f1.png', label: 'asset_view: the image @a.' }]
+    const text = `${toolBlockText({ id: 'call_1', name: 'asset_view', status: 'success', arguments: { assets: '@a' }, result: '@a | image | PNG', pictures })}\nDone.`
+
+    expect(agentSectionMessages(agent(text), model, true)).toStrictEqual([
+      { role: 'agent', content: '', toolCalls: [{ id: 'call_1', name: 'asset_view', arguments: { assets: '@a' } }] },
+      { role: 'tool', results: [result('call_1', '@a | image | PNG')] },
+      { role: 'agent', content: 'Done.' },
+    ])
+    expect(JSON.stringify(agentSectionMessages(agent(text), model, false))).not.toMatch(/f1\.png|the image @a/)
+  })
+
   it('sends the model text without the escape of its tag text', () => {
     const text = `See <\\dez:tool> here.\n${block('call_1', 'gemini', '1 model')}\nAnd <\\/dez:tool>.`
 

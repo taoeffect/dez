@@ -343,7 +343,7 @@ export class ReplyJobs {
    *  a result: the ones that no reader took yet, and the ones that a reader
    *  took but may not have written into the reply yet. No text names their
    *  files until the write, so Delete Unused Files keeps them by this list
-   *  (`dez.stream/jobAssetSources`). */
+   *  (`dez.stream/unnamedMadeFiles`). */
   madeAssetSources(): string[] {
     return [...this.jobs.values()].flatMap((job) => job.assets.flatMap((asset) => madeAssetSource(asset) ?? []))
   }

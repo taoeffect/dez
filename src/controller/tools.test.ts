@@ -41,7 +41,7 @@ import { ExplainedError } from '../utils/errorText'
 import { ReplyJobs, type JobOutcome } from './jobs'
 import { invokeModel } from './modelInvoke'
 import type { BundledToolEnd } from './nativeTypes'
-import { APP_DIR, audioProgress, deletedWorkFolder, ENDED, heldWork, LONG, native, resetNative, running, writes } from './testing'
+import { APP_DIR, audioProgress, deletedWorkFolder, ENDED, FILE_ID, heldWork, LONG, native, resetNative, running, writes } from './testing'
 import type { ToolRunCall, ToolRunContext } from './tools'
 // Side-effect imports: register the dez.model/* selectors and the selector
 // under test.
@@ -1861,6 +1861,16 @@ describe('dez.controller/tools/run', () => {
       ])
       // 648 + 455 + 232 tokens, and 4 + 80 + 80 bytes of base64.
       expect(lines.at(-1)).toBe('Picture budget left in this reply: 17 pictures, 56,073 tokens and 20.0 MB of base64.')
+      // A copy of each picture that the model saw, for the panel of the
+      // call's chip, with its label.
+      expect(result.pictures).toStrictEqual(shown.map(({ label, picture }) => ({
+        file: expect.stringMatching(new RegExp(`^${FILE_ID.source}\\.${picture.mediaType === 'image/png' ? 'png' : 'jpg'}$`)),
+        label,
+      })))
+      expect(native.savedFiles).toStrictEqual((result.pictures ?? []).map(({ file }, index) => ({
+        file: { root: 'app', path: `assets/generated/views/${file}` },
+        content: shown[index].picture.bytes,
+      })))
 
       // One copy of each clip, for its probe; the later runs find it in
       // the folder, which goes at the end with the pictures.
@@ -1873,6 +1883,40 @@ describe('dez.controller/tools/run', () => {
       ])
       expect(ffmpegRuns()[0].args).toStrictEqual(expect.arrayContaining(['-to', '2.500', '-i', 'b.mp4']))
       expect(native.readFiles).toStrictEqual([{ root: 'cache', path: `${folder}/b-frames.jpg` }, { root: 'cache', path: `${folder}/d-wave.jpg` }])
+    })
+
+    it('keeps no copy of a picture whose save failed, and gives the others and the result text', async () => {
+      let saves = 0
+      native.saveAppFile = async () => {
+        if (++saves === 2) throw new Error('No space left on device')
+      }
+
+      const result = await assetView({ assets: '@a @b @d', frames: 3, end: 2.5 })
+
+      expect(result.isError).toBe(false)
+      expect(shown).toHaveLength(3)
+      expect(result.content.split('\n').at(-1)).toBe('Picture budget left in this reply: 17 pictures, 56,073 tokens and 20.0 MB of base64.')
+      expect(result.pictures?.map(({ label }) => label.match(/@[a-z]+/)?.[0])).toStrictEqual(['@a', '@d'])
+      expect(consoleError).toHaveBeenCalledWith('Failed to save the copy of a picture that a tool showed:', new Error('No space left on device'))
+    })
+
+    it('gives no copies, and no result, for a call that the user stopped', async () => {
+      const stop = new AbortController()
+      const context: ToolRunContext = {
+        tabId,
+        model: REPLY_MODEL,
+        jobs: new ReplyJobs(),
+        writeImage: () => null,
+        writeClip: () => null,
+        pictureBudget: () => budget,
+        showPictures: () => { stop.abort() },
+      }
+
+      const result = await sbp('dez.controller/tools/run', { name: 'asset_view', arguments: { assets: '@a' } }, stop.signal, context) as ToolRunResult
+
+      expect(result.isError).toBe(true)
+      expect(result.pictures).toBeUndefined()
+      expect(native.savedFiles).toStrictEqual([])
     })
 
     it('shows the first frame at or after each time of the call, read from the start of the clip, and tells the times with no frame', async () => {

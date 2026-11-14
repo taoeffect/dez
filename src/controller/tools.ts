@@ -87,10 +87,11 @@ export interface ToolRunContext {
 }
 
 // The code of each Dez tool (TOOL_DEFINITIONS), by tool name. A runner gives
-// the result text, or throws a `ToolError` for an error result. `signal`
-// aborts when the user stops the reply; a runner that waits on something
-// must stop then.
-type ToolRunner = (args: ToolArguments, signal: AbortSignal, context: ToolRunContext) => Promise<string>
+// the result text, or the result with the copies of the pictures that the
+// call showed (`ToolRunResult.pictures`), or throws a `ToolError` for an
+// error result. `signal` aborts when the user stops the reply; a runner
+// that waits on something must stop then.
+type ToolRunner = (args: ToolArguments, signal: AbortSignal, context: ToolRunContext) => Promise<string | Omit<ToolRunResult, 'isError'>>
 
 // The sections of the tab of a call, where a tool finds the images and
 // the clips that the call names; none for a tab that is gone.
@@ -436,7 +437,8 @@ export default sbp('sbp/selectors/register', {
       return { content: unknownToolText(call.name), isError: true }
     }
     try {
-      return { content: await runner(call.arguments, signal, context), isError: false }
+      const output = await runner(call.arguments, signal, context)
+      return typeof output === 'string' ? { content: output, isError: false } : { ...output, isError: false }
     } catch (error) {
       // A run that the user stopped did not fail; the reply drops its result.
       if (!signal.aborted) console.error(`The tool ${call.name} failed:`, error)

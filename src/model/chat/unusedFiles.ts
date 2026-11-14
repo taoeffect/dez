@@ -2,13 +2,17 @@ import { WORK_ROOT } from '../tools/workFolders'
 import { IMAGE_FOLDERS, storedImageFile } from './images'
 import { savedMediaFile, tempMediaFile } from './mediaFiles'
 import { MEDIA_CACHE_FOLDER, MEDIA_FOLDERS } from './mediaTags'
+import { SHOWN_PICTURE_FOLDER, shownPictureFile } from './shownPictures'
 
 // The stored files that no text uses any more, for the cleanup in Settings ›
 // General. Dez stores a file for each pasted or dropped image and clip, for
-// each image that a model or a Dez tool made, and for each clip that the
-// user saved or a Dez tool made. A text names the file by its path: in an
-// image reference (images.ts) or in the `src` of a media tag (mediaTags.ts).
-// A text edit or a conversation delete leaves the file on disk.
+// each image that a model or a Dez tool made, for each clip that the user
+// saved or a Dez tool made, and for each picture that an `asset_view` call
+// showed its model (shownPictures.ts). A text names the file by its path:
+// in an image reference (images.ts) or in the `src` of a media tag
+// (mediaTags.ts); or by its name, in the `pictures` attribute of a tool
+// block (toolBlocks.ts). A text edit or a conversation delete leaves the
+// file on disk.
 //
 // The rule here: a file is in use when a text holds its file name, in any
 // form (a reference, a tag, a path as plain text, with any route to the
@@ -27,6 +31,7 @@ import { MEDIA_CACHE_FOLDER, MEDIA_FOLDERS } from './mediaTags'
 export const STORED_FILE_FOLDERS: readonly string[] = [
   ...Object.values(IMAGE_FOLDERS),
   ...Object.values(MEDIA_FOLDERS).flatMap((folders) => Object.values(folders)),
+  SHOWN_PICTURE_FOLDER,
 ]
 
 /** A stored file that is younger than this is in use: a reply and a paste
@@ -75,20 +80,20 @@ interface ListedFile {
   size: number
 }
 
-/** The app-file path of `path` when it names a file that the image trash or
- *  the player's trash can delete: a file directly in a stored-file folder of
- *  the app folder `appDir`, with the name form of that folder's files (an
- *  image type that Dez stores; a clip of any file type). Null for any other
- *  path. */
+/** The app-file path of `path` when it names a stored file: a file directly
+ *  in a stored-file folder of the app folder `appDir`, with the name form
+ *  of that folder's files (an image type that Dez stores; a clip of any
+ *  file type). Null for any other path. */
 export function storedFilePath(path: string, appDir: string): string | null {
-  return storedImageFile(path, appDir) ?? savedMediaFile(path, appDir)
+  return storedImageFile(path, appDir) ?? savedMediaFile(path, appDir) ?? shownPictureFile(path, appDir)
 }
 
 /** The files of the listing `entries` of `folder` (relative to the app
  *  folder `appDir`) that the cleanup can delete when no text names them.
  *  Left out:
- *  - a file that no trash can delete (`storedFilePath`), such as the temp
- *    file of a download that runs (`<name>.<pid>.<n>.tmp`);
+ *  - a file that does not have the name form of a stored file
+ *    (`storedFilePath`), such as the temp file of a download that runs
+ *    (`<name>.<pid>.<n>.tmp`);
  *  - a file that is younger than `UNUSED_FILE_MIN_AGE_MS` at the time `now`,
  *    or that has a time after `now`. */
 export function oldStoredFiles(folder: string, entries: readonly ListedFile[], appDir: string, now: number): StoredFile[] {

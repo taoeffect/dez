@@ -47,6 +47,7 @@ import {
   streamSession,
 } from '../model/state/streams'
 import { discardMadeAssets, generatedClipAsset, ReplyJobs, writeJobAssets, type EndedJob, type MadeAsset } from './jobs'
+import { discardShownPictures } from './shownPictures'
 import type { ToolRunCall, ToolRunContext } from './tools'
 
 interface StreamStartArgs {
@@ -271,6 +272,12 @@ function replaceToolRun(tabId: string, sectionId: string, run: ToolRun, text: st
   return true
 }
 
+// Deletes the picture copies of the results of `run` (shownPictures.ts)
+// when no block of the section takes them: no text could name them then.
+function discardRunPictures(run: ToolRun): void {
+  void discardShownPictures(run.results.flatMap((result) => result?.pictures ?? []))
+}
+
 // Ends the tool run of a reply that the user stopped, or whose output a
 // submit ended (`dez.stream/endOutput`): aborts the running tool, and
 // writes the final blocks at once, while the stream session still writes
@@ -282,9 +289,10 @@ function stopToolRun(tabId: string, reply: ReplyRuntime): boolean {
   if (!run) return false
   reply.toolRun = null
   run.abort.abort()
-  if (!streamWritesSection(tabId, reply.sectionId)) return false
   const blocks = run.calls.map((call, index) => toolCallBlock(call, run.results[index] ?? STOPPED_TOOL_RESULT))
-  return replaceToolRun(tabId, reply.sectionId, run, toolGroupText(blocks))
+  if (streamWritesSection(tabId, reply.sectionId) && replaceToolRun(tabId, reply.sectionId, run, toolGroupText(blocks))) return true
+  discardRunPictures(run)
+  return false
 }
 
 // The writers of a tool's image and clip into the reply
@@ -374,13 +382,20 @@ async function runToolRound(tabId: string, reply: ReplyRuntime, model: ModelRef,
       showPictures: (pictures) => { if (takesAssets()) reply.pictures.add(calls[0].id, pictures) },
     }
     const result = await sbp('dez.controller/tools/run', toolCall, run.abort.signal, context) as ToolRunResult
-    if (reply.toolRun !== run) return null
+    if (reply.toolRun !== run) {
+      // `stopToolRun` wrote the block of this call as stopped.
+      void discardShownPictures(result.pictures ?? [])
+      return null
+    }
     run.results[index] = result
   }
 
   reply.toolRun = null
   const blocks = toolRoundBlocks(calls, run.results, roundsLeft)
-  if (!replaceToolRun(tabId, reply.sectionId, run, toolGroupText(blocks))) return null
+  if (!replaceToolRun(tabId, reply.sectionId, run, toolGroupText(blocks))) {
+    discardRunPictures(run)
+    return null
+  }
   return streamingSection(tabId, reply.sectionId)
 }
 
@@ -839,11 +854,17 @@ export default sbp('sbp/selectors/register', {
     }
   },
 
-  // The sources of the files of the jobs of every reply that runs, which
-  // no text may name yet: the files that a job keeps while it runs, and
-  // the assets of the results (`ReplyJobs.madeAssetSources`). Delete Unused
-  // Files keeps those files, as it keeps the files that a text names.
-  'dez.stream/jobAssetSources' (): string[] {
-    return [...repliesByTab.values()].flatMap((reply) => reply.jobs.madeAssetSources())
+  // The files that the work of every reply that runs made, and that no
+  // text may name yet: the sources of the files that a job keeps while it
+  // runs, and of the assets of its result (`ReplyJobs.madeAssetSources`);
+  // and the names of the picture copies of the calls of a tool round that
+  // runs (shownPictures.ts), which a round can hold for longer than the
+  // age rule of the cleanup. Delete Unused Files keeps those files, as it
+  // keeps the files that a text names.
+  'dez.stream/unnamedMadeFiles' (): string[] {
+    return [...repliesByTab.values()].flatMap((reply) => [
+      ...reply.jobs.madeAssetSources(),
+      ...(reply.toolRun?.results ?? []).flatMap((result) => result?.pictures?.map(({ file }) => file) ?? []),
+    ])
   },
 })

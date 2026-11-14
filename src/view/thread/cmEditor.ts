@@ -2301,6 +2301,32 @@ export const dezTheme = EditorView.theme({
     background: 'var(--color-error-bg, rgba(217,83,79,0.08))',
     color: 'var(--color-error, #d9534f)',
   },
+  // The pictures that a call showed its model (`createPictures` in
+  // toolCalls.ts): each one under the text that went before it in the
+  // requests. A picture keeps its ratio and its own size, but never gets
+  // wider than the panel or taller than an image in the text. A copy that
+  // is gone shows the box of a missing image (`.dez-image-missing`).
+  '.dez-tool-call__picture': {
+    display: 'flex',
+    flexDirection: 'column',
+    alignItems: 'flex-start',
+    gap: editorSize(4),
+    minWidth: '0',
+    padding: editorSize(2, 0),
+  },
+  '.dez-tool-call__picture-label': {
+    whiteSpace: 'pre-wrap',
+    overflowWrap: 'anywhere',
+    fontSize: editorSize(12.5),
+  },
+  '.dez-tool-call__picture-img': {
+    display: 'block',
+    maxWidth: '100%',
+    maxHeight: editorSize(IMAGE_MAX_HEIGHT_PX),
+    width: 'auto',
+    height: 'auto',
+    borderRadius: editorSize(6),
+  },
   // What an intermediate call hides, as the first part of its panel
   // (`renderHiddenPart` in toolCalls.ts): a heading, then its images and
   // players one under the other, each as it shows in the text, or the text

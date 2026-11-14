@@ -6,6 +6,7 @@ import { svgOfPng, UnwritableImageTypeError, type DrawnImage, type DrawnMediaTyp
 import { IMAGE_FOLDERS, imageExtension, storedImageFile, type ImageFolder, type ImageMediaType } from '../model/chat/images'
 import { dropCopiesFile, pairDroppedFiles } from '../model/chat/linkedFiles'
 import { FileTooLargeError } from '../model/chat/mediaFiles'
+import { SHOWN_PICTURE_FOLDER } from '../model/chat/shownPictures'
 import { newStoredFilePath } from '../model/chat/storedFilePaths'
 import { ExplainedError, errorText, rawErrorText } from '../utils/errorText'
 import { fileNameOf } from '../utils/fileName'
@@ -87,6 +88,13 @@ export default sbp('sbp/selectors/register', {
   // import Tauri APIs.
   'dez.controller/images/displayUrl' (path: string): string {
     return convertFileSrc(path)
+  },
+
+  // The display URL of the copy `file` of a picture that a tool call showed
+  // its model (`ToolBlockData.pictures`), for the panel of the call's chip,
+  // which knows the name of the copy but not the app folder.
+  async 'dez.controller/images/shownPictureUrl' (file: string): Promise<string> {
+    return convertFileSrc(`${await sbp('dez.native/getAppDir') as string}/${SHOWN_PICTURE_FOLDER}/${file}`)
   },
 
   // The size in bytes of the file at the absolute path `path` (a file that

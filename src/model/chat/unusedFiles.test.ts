@@ -26,6 +26,7 @@ describe('STORED_FILE_FOLDERS', () => {
       'assets/generated/audio',
       'assets/generated/images',
       'assets/generated/video',
+      'assets/generated/views',
       'assets/images',
       'assets/video',
     ])
@@ -41,6 +42,7 @@ describe('storedFilePath', () => {
     'assets/generated/audio/speech.mp3',
     `assets/video/${MP4}`,
     'assets/audio/voice.wav',
+    `assets/generated/views/${PNG}`,
   ])('gives the app-file path of %s', (file) => {
     expect(storedFilePath(`${APP_DIR}/${file}`, APP_DIR)).toBe(file)
   })
@@ -50,6 +52,9 @@ describe('storedFilePath', () => {
     `${APP_DIR}/assets/generated/video/${MP4}.4012.7.tmp`,
     // Not an image type that Dez stores.
     `${APP_DIR}/assets/images/notes.txt`,
+    `${APP_DIR}/assets/generated/views/notes.txt`,
+    // Not a name of a copy of a shown picture.
+    `${APP_DIR}/assets/generated/views/a.b.png`,
     // A folder below a stored-file folder.
     `${APP_DIR}/assets/images/more/${PNG}`,
     // Another Dez folder.

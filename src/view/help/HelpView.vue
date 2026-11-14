@@ -5,6 +5,7 @@ import { useModelState } from '../modelState'
 import { IMAGE_FOLDERS } from '../../model/chat/images'
 import { MEDIA_TEMP_LIFETIME_MS } from '../../model/chat/mediaFiles'
 import { MEDIA_CACHE_FOLDER, MEDIA_FOLDERS } from '../../model/chat/mediaTags'
+import { SHOWN_PICTURE_FOLDER } from '../../model/chat/shownPictures'
 import { WORK_FOLDER_LIFETIME_MS, WORK_ROOT } from '../../model/tools/workFolders'
 import { shortcutKeyText } from '../../model/shortcuts'
 import { DEZ_DISCUSSIONS_URL } from '../../utils/dezLinks'
@@ -28,6 +29,7 @@ const STORED_FOLDERS: { folders: readonly string[]; holds: string }[] = [
   { folders: Object.values(MEDIA_FOLDERS.pasted), holds: 'Pasted clips, and dropped clips that Dez copies.' },
   { folders: [IMAGE_FOLDERS.generated], holds: 'Images that models and Dez tools make.' },
   { folders: Object.values(MEDIA_FOLDERS.generated), holds: 'Clips that you save, and clips that Dez tools make.' },
+  { folders: [SHOWN_PICTURE_FOLDER], holds: 'Copies of the pictures that the asset_view tool showed a model. The panel of the tool call shows them.' },
 ]
 
 const HOUR_MS = 60 * 60 * 1000

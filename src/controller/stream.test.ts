@@ -2389,6 +2389,56 @@ describe('dez.stream/start pictures that a tool shows', () => {
     const stored = (sbp('dez.model/streamMessagesForTab', activeTab().id, model) as RequestMessages).messages
     expect(stored.slice(1, 5)).toStrictEqual([third[1], third[2], third[4], third[5]])
   })
+
+  it('names the copy of each picture in the block of its call', async () => {
+    replyRounds([
+      async (input) => ({ requestId: input.requestId as string, toolCalls: [viewCall] }),
+      async (input) => {
+        await input.onToken('Done.')
+        return { requestId: input.requestId as string }
+      },
+    ])
+
+    await startStream({ sendTools: true })
+
+    const [saved] = native.savedFiles
+    const [block] = findToolBlocks(sectionVisibleText(agentSection()))
+    expect(block.pictures).toStrictEqual([{ file: saved.file.path.slice('assets/generated/views/'.length), label: 'asset_view: the image @a.' }])
+    expect(native.deletedFiles).toStrictEqual([])
+  })
+
+  // A round runs its calls one after the other, and can take longer than
+  // the age rule of Delete Unused Files.
+  it('tells Delete Unused Files the copies of the calls that ended while their round runs', async () => {
+    const held: string[][] = []
+    native.saveAppFile = async () => {
+      held.push(sbp('dez.stream/unnamedMadeFiles') as string[])
+    }
+    replyRounds([
+      async (input) => ({ requestId: input.requestId as string, toolCalls: [viewCall, { ...viewCall, id: 'c3' }] }),
+      async (input) => ({ requestId: input.requestId as string }),
+    ])
+
+    await startStream({ sendTools: true })
+
+    const names = native.savedFiles.map(({ file }) => file.path.slice('assets/generated/views/'.length))
+    expect(held).toStrictEqual([[], [names[0]]])
+    expect(sbp('dez.stream/unnamedMadeFiles')).toStrictEqual([])
+  })
+
+  it('deletes the copies of a call that the user stopped while Dez saved them', async () => {
+    native.saveAppFile = async () => {
+      await sbp('dez.stream/stop', activeTab().id)
+    }
+    replyRounds([async (input) => ({ requestId: input.requestId as string, toolCalls: [viewCall] })])
+
+    await startStream({ sendTools: true })
+
+    const [stopped] = findToolBlocks(sectionVisibleText(agentSection()))
+    expect(stopped).toMatchObject({ status: 'error', result: 'Stopped.' })
+    expect(stopped.pictures).toBeUndefined()
+    expect(native.deletedFiles).toStrictEqual([{ ...native.savedFiles[0].file, folder: false }])
+  })
 })
 
 describe('dez.stream/start clips that a tool makes', () => {

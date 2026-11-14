@@ -28,7 +28,7 @@ let conversations: string[] = []
 let conversationsError: unknown = null
 let conversationReads = 0
 let heldTexts: string[] = []
-let jobAssetSources: string[] = []
+let unnamedMadeFiles: string[] = []
 let deletedFiles: string[] = []
 let deleteAppFile: (path: string) => Promise<void>
 let toasts: Toast[] = []
@@ -56,8 +56,8 @@ sbp('sbp/selectors/register', {
   'dez.model/heldTexts' (): string[] {
     return heldTexts
   },
-  'dez.stream/jobAssetSources' (): string[] {
-    return jobAssetSources
+  'dez.stream/unnamedMadeFiles' (): string[] {
+    return unnamedMadeFiles
   },
   'dez.ui/toast' (_area: string, toast: Toast): void {
     toasts.push(toast)
@@ -101,7 +101,7 @@ beforeEach(() => {
   conversationsError = null
   conversationReads = 0
   heldTexts = []
-  jobAssetSources = []
+  unnamedMadeFiles = []
   deletedFiles = []
   deleteAppFile = async () => {}
   toasts = []
@@ -134,7 +134,7 @@ describe('dez.controller/unusedFiles/find', () => {
     // A tab that is not saved yet, and a saved prompt.
     heldTexts = [`![${APP_DIR}/assets/generated/images/made-held.webp](id=c)`, 'Say it as in speech-prompt.mp3']
     // The image of a job result that no text names yet.
-    jobAssetSources = [`${APP_DIR}/assets/generated/images/made-by-job.png`]
+    unnamedMadeFiles = [`${APP_DIR}/assets/generated/images/made-by-job.png`]
 
     const { unused, progress } = await find()
 
@@ -169,7 +169,7 @@ describe('dez.controller/unusedFiles/find', () => {
       'cache:work/w-held': [file('in.mp4', 9)],
     }
     conversations = [`<dez:video id="a" type="video/mp4" src="${CACHE_DIR}/media/copy-used.mp4"/>\n`]
-    jobAssetSources = [`${CACHE_DIR}/media/copy-of-job.webm`]
+    unnamedMadeFiles = [`${CACHE_DIR}/media/copy-of-job.webm`]
     // A run in a work folder, and a download, of this app.
     const { unused } = await whileHeld(['work/w-held', 'media/held.part'], find)
 
@@ -272,7 +272,7 @@ describe('dez.controller/unusedFiles/delete', () => {
 
   it('keeps a file that a text in memory or a job result names since the scan', async () => {
     heldTexts = ['', `Now with ![${APP_DIR}/assets/generated/images/b.webp](id=a)`]
-    jobAssetSources = [`${CACHE_DIR}/media/d.mp4`]
+    unnamedMadeFiles = [`${CACHE_DIR}/media/d.mp4`]
 
     expect(await deleteUnused(unused)).toStrictEqual({ deleted: 4, bytes: 6_503_010, inUse: 2, failed: 0 })
     expect(deletedFiles).toEqual(['app:assets/images/a.png', 'app:assets/generated/video/c.mp4', 'cache:media/e.part.4012.7.tmp', 'cache:work/f (folder)'])

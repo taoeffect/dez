@@ -61,10 +61,11 @@ import {
 } from '../model/tools/assetView'
 import { clipInput, type ClipInput, type ProgramEnd } from '../model/tools/programRuns'
 import { unknownAssetsText } from '../model/tools/toolInputs'
-import { ToolError, type ToolArguments } from '../model/tools/types'
+import { ToolError, type ToolArguments, type ToolRunResult } from '../model/tools/types'
 import { FFMPEG_OUTPUT_BYTES } from '../model/tools/videoTool'
 import { probeClip, readImageFacts, type PicturePlan } from './assetInfo'
 import { inWorkFolder, runProgram } from './programRuns'
+import { saveShownPictures } from './shownPictures'
 import type { ToolRunContext } from './tools'
 
 // The work of the `asset_view` tool (model/tools/assetView.ts): it gives
@@ -75,11 +76,12 @@ import type { ToolRunContext } from './tools'
 //
 // A picture is always bytes, read once here: each later request of the
 // reply sends the same bytes (the prompt cache), and a file that the user
-// deletes during the reply cannot fail those requests. A view keeps no
-// file: the pictures of the clips are made in a work folder, which goes at
-// the end of the call. The log of ffmpeg goes to the console only, as it
-// can hold a path: the model gets only the times and the loudness that Dez
-// reads from it.
+// deletes during the reply cannot fail those requests. The pictures of the
+// clips are made in a work folder, which goes at the end of the call. The
+// only files that a view keeps are the copies of the pictures that it
+// showed, for the panel of its chip (shownPictures.ts). The log of ffmpeg
+// goes to the console only, as it can hold a path: the model gets only the
+// times and the loudness that Dez reads from it.
 
 // The view of the image `id`, whose file is at `path`, for `call`: its
 // facts as `asset_info` gives them (`readImageFacts`), and its picture,
@@ -320,9 +322,10 @@ async function viewClip(clip: ClipAttachment, call: AssetViewCall, choice: Pictu
   return { ...item, ...view, notes: [...view.notes, ...limitNotes] }
 }
 
-/** The result text of an `asset_view` call with the arguments `args`, for
- *  the conversation `sections`, after it showed the pictures of the call
- *  to the model of the reply (`context.showPictures`). Each picture that
+/** The result of an `asset_view` call with the arguments `args`, for the
+ *  conversation `sections`, after it showed the pictures of the call to
+ *  the model of the reply (`context.showPictures`): its text, and the
+ *  saved copies of those pictures (`saveShownPictures`). Each picture that
  *  fits in what is left of the picture budget of the reply goes; an asset
  *  whose picture does not fit gets a note in its place. Throws a
  *  `ToolError` for bad arguments, for an id that names no image and no
@@ -335,7 +338,7 @@ export async function assetViewResult(
   sections: readonly Section[],
   signal: AbortSignal,
   context: Pick<ToolRunContext, 'model' | 'pictureBudget' | 'showPictures'>,
-): Promise<string> {
+): Promise<Omit<ToolRunResult, 'isError'>> {
   const call = assetViewCall(args)
   const assets = conversationAssets(sections)
   const unknown = call.ids.filter((id) => !assets.images.has(id) && !assets.clips.has(id))
@@ -375,6 +378,11 @@ export async function assetViewResult(
     return items
   }
   const items = call.ids.some((id) => assets.clips.has(id)) ? await inWorkFolder(view) : await view(null)
-  context.showPictures(assetViewPictures(items))
-  return assetViewText(items, imageInput ? left : null)
+  const pictures = assetViewPictures(items)
+  context.showPictures(pictures)
+  // A stopped call gives no result, so its copies would have no block.
+  signal.throwIfAborted()
+  const content = assetViewText(items, imageInput ? left : null)
+  const copies = await saveShownPictures(pictures)
+  return copies.length > 0 ? { content, pictures: copies } : { content }
 }

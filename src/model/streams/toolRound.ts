@@ -102,7 +102,9 @@ export function toolCallBlock(call: CheckedToolCall, result?: ToolRunResult): To
   const block = { id: call.id, name: call.name, arguments: call.arguments }
   if (call.refusal !== undefined) return { ...block, status: 'error', result: call.refusal }
   if (!result) return { ...block, status: 'running', result: '' }
-  return { ...block, status: result.isError ? 'error' : 'success', result: result.content }
+  const ended: ToolBlockData = { ...block, status: result.isError ? 'error' : 'success', result: result.content }
+  if (result.pictures !== undefined && result.pictures.length > 0) ended.pictures = result.pictures
+  return ended
 }
 
 /** The blocks of a round whose calls have their `results` (by the index

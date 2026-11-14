@@ -4,6 +4,7 @@ import { Decoration, EditorView, ViewPlugin, WidgetType, type DecorationSet, typ
 import { jobResultInBlocks, type HiddenAsset } from '../../model/chat/hiddenAssets'
 import type { MediaTagData } from '../../model/chat/mediaTags'
 import { parseModelRefKey } from '../../model/chat/modelRef'
+import type { ShownPicture } from '../../model/chat/shownPictures'
 import { EMPTY_TOOL_RESULT, INTERRUPTED_TOOL_RESULT, type ToolBlock } from '../../model/chat/toolBlocks'
 import { MODEL_OUTPUT_IDS, effectiveOutputs, type ModelOutput } from '../../model/modelOutputs'
 import { isRecord } from '../../model/providers/modelParsing'
@@ -28,9 +29,9 @@ import { ROUND_STROKE, svgIcon } from './svgIcon'
 // triangle, a wrench, the tool name, and a short form of its arguments. A
 // call to a tool that Dez does not have says so before the name, with no
 // short form (`UNRECOGNIZED_TOOL_TEXT`). A click on the chip, or Enter or
-// Space while it has the focus, opens a panel under it with the parameters
-// and the result. The block's text stays in the doc as it is: the chip only
-// hides it.
+// Space while it has the focus, opens a panel under it with the parameters,
+// the result, and the pictures that the call showed its model. The block's
+// text stays in the doc as it is: the chip only hides it.
 //
 // The chip of an intermediate call (`IntermediateCall`) also has an eye, a
 // symbol for the type of what the call made, and a label; its panel shows
@@ -633,6 +634,36 @@ function renderHiddenPart(view: EditorView, panel: HTMLElement, call: RenderedTo
   if (assets.length === 0) part.appendChild(createField(text, 'Intermediate text', ''))
 }
 
+/** The part of an open panel that shows the copies of the pictures that
+ *  the call showed its model (`ToolBlockData.pictures`), so that the user
+ *  sees what the model saw: a heading, then each picture under the text
+ *  that went before it in the requests. A copy that is gone shows a short
+ *  text in its place. */
+function createPictures(view: EditorView, pictures: readonly ShownPicture[]): HTMLElement[] {
+  const items = pictures.map(({ file, label }) => {
+    const item = span('dez-tool-call__picture')
+    const img = document.createElement('img')
+    img.className = 'dez-tool-call__picture-img'
+    img.alt = label
+    img.draggable = false
+    const showMissing = () => {
+      img.replaceWith(span('dez-image-missing', 'Picture file not found'))
+      measureLineHeights(view)
+    }
+    // A load or an error changes the panel's height in place, which CM
+    // does not see (see `measureLineHeights`).
+    img.addEventListener('load', () => measureLineHeights(view))
+    img.addEventListener('error', showMissing)
+    void (sbp('dez.controller/images/shownPictureUrl', file) as Promise<string>).then((url) => { img.src = url }, (error: unknown) => {
+      console.error(`Failed to find the copy ${file} of a picture that a tool showed:`, error)
+      showMissing()
+    })
+    item.append(span('dez-tool-call__picture-label', label), img)
+    return item
+  })
+  return [span(HEADING_CLASS, pictures.length > 1 ? 'Pictures' : 'Picture'), ...items]
+}
+
 function createPanel(view: EditorView, call: RenderedToolCall): HTMLElement {
   const panel = span(PANEL_CLASS)
   const parameters = Object.entries(call.arguments)
@@ -646,6 +677,7 @@ function createPanel(view: EditorView, call: RenderedToolCall): HTMLElement {
   const result = createField(call.state === 'interrupted' ? INTERRUPTED_TOOL_RESULT : call.result, 'Result', call.state === 'running' ? 'Running…' : EMPTY_TOOL_RESULT)
   if (call.state === 'error' || call.state === 'interrupted') result.setAttribute('data-error', '')
   panel.append(span(HEADING_CLASS, 'Result'), result)
+  if (call.pictures) panel.append(...createPictures(view, call.pictures))
   renderHiddenPart(view, panel, call)
   return panel
 }
@@ -674,9 +706,10 @@ function renderOpenState(view: EditorView, root: HTMLElement, call: RenderedTool
 
 // Every part of a call that the chip draws, but its intermediate data and
 // its summary. Arguments keep their definition order, so equal ones give
-// equal JSON.
+// equal JSON, and so do the pictures of two reads of one block.
 function sameCall(a: RenderedToolCall, b: RenderedToolCall): boolean {
   return a.id === b.id && a.name === b.name && a.state === b.state && a.result === b.result && JSON.stringify(a.arguments) === JSON.stringify(b.arguments)
+    && JSON.stringify(a.pictures) === JSON.stringify(b.pictures)
 }
 
 /** A chip and, while open, its panel. The open state is not part of the
