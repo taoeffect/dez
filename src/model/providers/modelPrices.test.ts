@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import { BUILT_IN_PROVIDER_CONFIGS } from './builtins'
-import { modelTokenPrice } from './modelPrices'
+import { freshQuote, isFreshPrice, modelTokenPrice, PRICE_LIFETIME_MS, priceText, usdText, withQuote, type PriceQuote } from './modelPrices'
 
 const tokenPrices = (id: string) => BUILT_IN_PROVIDER_CONFIGS.find((config) => config.id === id)?.modelTokenPrices
 
@@ -59,5 +59,63 @@ describe('chat token prices', () => {
 
   it('gives no price for a provider whose config has no token price paths', () => {
     expect(modelTokenPrice({ id: 'm', pricing: { prompt: '0.000001', completion: '0.000002' } }, undefined)).toBeUndefined()
+  })
+})
+
+describe('price texts', () => {
+  // At least 2 decimals, and 3 decimals after the first zeros of a small
+  // price; never an exponent.
+  it.each([
+    [0.1, '$0.10'],
+    [3.5, '$3.50'],
+    [120, '$120.00'],
+    [0.0115, '$0.0115'],
+    [0.034, '$0.034'],
+    [0.0001, '$0.0001'],
+    [0.00000012345, '$0.0000001235'],
+    [0, '$0'],
+  ])('writes %s USD as %s', (usd, text) => {
+    expect(usdText(usd)).toBe(text)
+  })
+
+  it('tells the unit of a price and its note', () => {
+    expect(priceText({ unit: 'token', input: 0.25, output: 2 })).toBe('$0.25/$2.00 per 1M tokens')
+    expect(priceText({ unit: 'character', usd: 30 })).toBe('$30.00 per 1M chars')
+    expect(priceText({ unit: 'second', usd: 0.006, note: 'turbo' })).toBe('$0.006 per second (turbo)')
+    expect(priceText({ unit: 'image', usd: 0.04 })).toBe('$0.04 per image')
+    expect(priceText({ unit: 'clip', usd: 1.2 })).toBe('$1.20 per clip')
+  })
+})
+
+describe('the quote cache', () => {
+  const quote = (values: PriceQuote['values'], at: number, usd = 1): PriceQuote =>
+    ({ providerId: 'venice', modelId: 'wan', kind: 'video', values, usd, at })
+  const request = { providerId: 'venice', modelId: 'wan', kind: 'video' as const, values: { resolution: '720p', duration: '5s' } }
+
+  // A clock that went back makes a price of the future: a new check is free.
+  it('keeps a price fresh for PRICE_LIFETIME_MS, and a price of the future not', () => {
+    expect(isFreshPrice(100, 100)).toBe(true)
+    expect(isFreshPrice(100, 99 + PRICE_LIFETIME_MS)).toBe(true)
+    expect(isFreshPrice(100, 100 + PRICE_LIFETIME_MS)).toBe(false)
+    expect(isFreshPrice(100, 99)).toBe(false)
+  })
+
+  it('finds the newest fresh quote of the same values in any name order, and only of the same request', () => {
+    const quotes = [quote({ duration: '5s', resolution: '720p' }, 10, 2), quote({ resolution: '720p', duration: '5s' }, 20, 3), quote({ resolution: '720p', duration: '5s' }, 5, 4)]
+    expect(freshQuote(quotes, request, 30)?.usd).toBe(3)
+    expect(freshQuote(quotes, request, 15 + PRICE_LIFETIME_MS)?.usd).toBe(3)
+    expect(freshQuote(quotes, request, 20 + PRICE_LIFETIME_MS)).toBeUndefined()
+    expect(freshQuote(quotes, { ...request, values: { resolution: '1080p', duration: '5s' } }, 30)).toBeUndefined()
+    expect(freshQuote(quotes, { ...request, kind: 'imageToVideo' }, 30)).toBeUndefined()
+    expect(freshQuote(quotes, { ...request, modelId: 'other' }, 30)).toBeUndefined()
+    expect(freshQuote(quotes, { ...request, providerId: 'openrouter' }, 30)).toBeUndefined()
+  })
+
+  it('replaces the quote of the same request and drops the old quotes when it adds one', () => {
+    const old = quote({ duration: '8s' }, 0)
+    const other = quote({ duration: '10s' }, PRICE_LIFETIME_MS)
+    const same = quote({ duration: '5s', resolution: '720p' }, PRICE_LIFETIME_MS)
+    const added = quote({ resolution: '720p', duration: '5s' }, PRICE_LIFETIME_MS + 1, 9)
+    expect(withQuote([old, other, same], added, PRICE_LIFETIME_MS + 1)).toStrictEqual([other, added])
   })
 })

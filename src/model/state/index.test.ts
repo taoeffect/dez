@@ -3,6 +3,7 @@ import { createPinia, setActivePinia } from 'pinia'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import type { ActiveModel, ContentNode, ModelRef, Section, SectionThinking, Tab, ThinkingReplay } from '../chat/types'
 import type { AppStatePayload, ConversationData, ModelCache } from '../persistence/types'
+import { PRICE_LIFETIME_MS, type PriceQuote } from '../providers/modelPrices'
 import type { ProviderConfig } from '../providers/config'
 import type { ModelInfo, ModelRequest } from '../providers/types'
 import type { SettingsSnapshot } from './index'
@@ -1068,6 +1069,61 @@ describe('dez.model/modelCache learned image limits', () => {
     await vi.advanceTimersByTimeAsync(1000)
 
     expect(savedModelCaches.at(-1)?.providers.local?.models).toStrictEqual([{ ...film, learnedImageLimit: learned() }])
+  })
+})
+
+describe('dez.model/modelCache quote cache', () => {
+  const start = 1_800_000_000_000
+  const quote = (providerId: string, values: PriceQuote['values'], usd: number): PriceQuote =>
+    ({ providerId, modelId: 'wan', kind: 'video', values, usd, at: Date.now() })
+  const quotes = () => (sbp('dez.model/modelCache/snapshot') as ModelCache).quotes
+
+  beforeEach(() => {
+    vi.useFakeTimers()
+    vi.setSystemTime(start)
+  })
+
+  afterEach(() => {
+    sbp('dez.model/modelCache/stopPersistence')
+    vi.useRealTimers()
+  })
+
+  it('keeps one quote of a request, the newest, and drops the quotes that are no longer fresh', () => {
+    const old = quote('venice', { duration: '8s' }, 1)
+    sbp('dez.model/modelCache/keepQuote', old)
+    vi.setSystemTime(start + PRICE_LIFETIME_MS - 1)
+    const other = quote('venice', { duration: '5s' }, 2)
+    sbp('dez.model/modelCache/keepQuote', other)
+    sbp('dez.model/modelCache/keepQuote', quote('venice', { duration: '5s' }, 3))
+    expect(quotes()).toStrictEqual([old, { ...other, usd: 3 }])
+
+    vi.setSystemTime(start + PRICE_LIFETIME_MS)
+    expect(quotes()).toStrictEqual([{ ...other, usd: 3 }])
+    const newest = quote('venice', { duration: '8s' }, 4)
+    sbp('dez.model/modelCache/keepQuote', newest)
+    expect(quotes()).toStrictEqual([{ ...other, usd: 3 }, newest])
+  })
+
+  it('saves only the fresh quotes in model_cache.json', async () => {
+    await sbp('dez.model/modelCache/init')
+    sbp('dez.model/modelCache/startPersistence')
+    sbp('dez.model/modelCache/keepQuote', quote('venice', {}, 1))
+    await vi.advanceTimersByTimeAsync(1000)
+    expect(savedModelCaches.at(-1)?.quotes).toStrictEqual([{ ...quote('venice', {}, 1), at: start }])
+
+    vi.setSystemTime(start + PRICE_LIFETIME_MS)
+    sbp('dez.model/modelCache/applyProviderResult', 'venice', { ok: true, models: [] })
+    await vi.advanceTimersByTimeAsync(1000)
+    expect(Object.hasOwn(savedModelCaches.at(-1) ?? {}, 'quotes')).toBe(false)
+  })
+
+  it('drops the quotes of a provider that the user removed', () => {
+    sbp('dez.model/modelCache/keepQuote', quote('venice', {}, 1))
+    sbp('dez.model/modelCache/keepQuote', quote('local', {}, 2))
+
+    sbp('dez.model/modelCache/removeProvider', 'venice')
+
+    expect(quotes()).toStrictEqual([quote('local', {}, 2)])
   })
 })
 

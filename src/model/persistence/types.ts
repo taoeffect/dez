@@ -2,6 +2,7 @@ import type { ActiveModel, ModelRef, SectionThinking } from '../chat/types'
 import type { ModelOutput } from '../modelOutputs'
 import type { ProviderConfig } from '../providers/config'
 import type { ParameterValues } from '../providers/modelParameters'
+import type { PriceQuote } from '../providers/modelPrices'
 import type { ModelInfo, ProviderId } from '../providers/types'
 import type { Prompt } from '../state/prompts'
 import type { DefaultModel, Theme, WindowGeometry } from '../state/settings'
@@ -21,9 +22,13 @@ export interface CachedProvider {
 
 // Whole persisted model cache (~/.config/dez/model_cache.json). Non-secret:
 // only model ids/names, never keys. The model picker shows these last-known
-// lists at once at startup; a background refresh then checks them.
+// lists at once at startup; a background refresh then checks them. `quotes`
+// are the fresh price quotes of media requests (modelPrices.ts), with no
+// provider data but the price and its note; absent in a file of an older
+// Dez, which has none.
 export interface ModelCache {
   providers: Partial<Record<ProviderId, CachedProvider>>
+  quotes?: PriceQuote[]
   version: number
 }
 

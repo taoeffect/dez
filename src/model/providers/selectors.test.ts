@@ -1534,6 +1534,26 @@ describe('the price of a clip', () => {
     await expect(quote({})).rejects.toThrow('Details: HTTP 400: Bad model')
   })
 
+  // The quote cache holds no provider data: only the price and its note.
+  it('keeps a price in the quote cache with the values that the request sends, and keeps no refusal and no missing price', async () => {
+    cacheModel()
+
+    await quote({ parameters: { duration: '8s' } })
+    expect(sbp('dez.model/modelCache/snapshot').quotes).toStrictEqual([{
+      providerId: 'media',
+      modelId: 'm',
+      kind: 'video',
+      values: { duration: '8s', aspect_ratio: '16:9', duration_seconds: 5 },
+      usd: 0.07,
+      at: expect.any(Number),
+    }])
+
+    httpAnswers.set(QUOTE_URL, { status: 400, json: { error: 'Bad model' } })
+    await expect(quote({})).rejects.toThrow()
+    await quote({ kind: 'tts' })
+    expect(sbp('dez.model/modelCache/snapshot').quotes).toHaveLength(1)
+  })
+
   // OpenRouter's video list holds the prices (`ClipFormat.entryPrice`).
   it('gives the price from the media entry, for the defaults of the values that the request leaves out, and sends no request', async () => {
     sbp('dez.model/customProviders/save', {

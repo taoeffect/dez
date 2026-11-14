@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import type { ModelCache } from '../persistence/types'
+import { PRICE_LIFETIME_MS, type PriceQuote } from '../providers/modelPrices'
 import { providerInfo } from '../providers/testing'
 import type { ModelInfo, ProviderInfo } from '../providers/types'
 import { MODEL_LIST_LIMIT, modelListText } from './modelList'
@@ -12,7 +13,7 @@ function cache(...entries: [ProviderInfo, ModelInfo[]][]): ModelCache {
 }
 
 // The column names and the letter legend of every header.
-const COLUMNS = '(full id | name | provider | type | inputs | released)'
+const COLUMNS = '(full id | name | provider | type | inputs | released | price)'
 const LEGEND = 'Letters: t text, i image, a audio, v video; ? unknown, - none.'
 const HEADER = `${COLUMNS}. ${LEGEND}`
 
@@ -45,13 +46,13 @@ const CACHE = cache([OPENROUTER, OPENROUTER_MODELS], [VENICE, VENICE_MODELS])
 const PROVIDERS = [VENICE, OPENROUTER]
 
 const LINES = {
-  veniceGemini: 'venice/gemini-3-pro-preview | Gemini 3 Pro Preview | Venice | t | t,i | 2025-11-18',
-  mistral: 'venice/mistral-small | Mistral Small | Venice | ? | t,i | ?',
-  zImage: 'venice/z-image-turbo | Z-Image Turbo | Venice | i | t | 2025-11-26',
-  wan: 'venice/wan-2-7-reference-to-video | Wan 2.7 Reference to Video | Venice | v | t,i,a,v | 2026-03-10',
-  openRouterGemini: 'openrouter/google/gemini-3-pro-preview | Google: Gemini 3 Pro Preview | OpenRouter | t,i | t,i | 2025-11-18',
-  flash: 'openrouter/google/gemini-3-flash | Google: Gemini 3 Flash | OpenRouter | ? | t,i | ?',
-  whisper: 'openrouter/openai/whisper-2 | OpenAI: Whisper 2 | OpenRouter | t | a | 2024-09-30',
+  veniceGemini: 'venice/gemini-3-pro-preview | Gemini 3 Pro Preview | Venice | t | t,i | 2025-11-18 | ?',
+  mistral: 'venice/mistral-small | Mistral Small | Venice | ? | t,i | ? | ?',
+  zImage: 'venice/z-image-turbo | Z-Image Turbo | Venice | i | t | 2025-11-26 | ?',
+  wan: 'venice/wan-2-7-reference-to-video | Wan 2.7 Reference to Video | Venice | v | t,i,a,v | 2026-03-10 | ?',
+  openRouterGemini: 'openrouter/google/gemini-3-pro-preview | Google: Gemini 3 Pro Preview | OpenRouter | t,i | t,i | 2025-11-18 | ?',
+  flash: 'openrouter/google/gemini-3-flash | Google: Gemini 3 Flash | OpenRouter | ? | t,i | ? | ?',
+  whisper: 'openrouter/openai/whisper-2 | OpenAI: Whisper 2 | OpenRouter | t | a | 2024-09-30 | ?',
 }
 
 describe('modelListText', () => {
@@ -144,7 +145,7 @@ describe('modelListText', () => {
 
   it('shows `-` for a model that makes none of the four types and that Dez cannot send anything, and no types select it', () => {
     const models: ModelInfo[] = [{ id: 'embed', name: 'Embed', provider: VENICE.id, outputs: [], request: 'none' }]
-    expect(modelListText(cache([VENICE, models]), PROVIDERS)).toBe([`1 model ${HEADER}`, 'venice/embed | Embed | Venice | - | - | ?'].join('\n'))
+    expect(modelListText(cache([VENICE, models]), PROVIDERS)).toBe([`1 model ${HEADER}`, 'venice/embed | Embed | Venice | - | - | ? | ?'].join('\n'))
     expect(modelListText(cache([VENICE, models]), PROVIDERS, { type: 'text,image,audio,video' }))
       .toBe('No models match type text,image,audio,video. Call model_list again with other values in `type`, or with no `type` to list every model.')
   })
@@ -155,14 +156,14 @@ describe('modelListText', () => {
     expect(() => modelListText(CACHE, PROVIDERS, { type: 'i,v' })).toThrow(`Unknown values "i", "v" in \`type\`. ${types}`)
     expect(() => modelListText(cache(), PROVIDERS, { inputs: 'audio speech' })).toThrow(`Unknown value "speech" in \`inputs\`. ${types}`)
     expect(() => modelListText(cache(), PROVIDERS, { sort: 'date' }))
-      .toThrow('Unknown value "date" in `sort`. Use one of: id, name, provider, type, inputs, released.')
+      .toThrow('Unknown value "date" in `sort`. Use one of: id, name, provider, type, inputs, released, price.')
     expect(() => modelListText(cache(), PROVIDERS, { sort: 'name', sort_dir: 'down' })).toThrow('Unknown value "down" in `sort_dir`. Use one of: asc, desc.')
   })
 
   // The model would read a list in another order than the one it asked for.
   it('refuses a sort direction with no sort column', () => {
     expect(() => modelListText(CACHE, PROVIDERS, { sort_dir: 'desc' })).toThrow('`sort_dir` is the direction of `sort`. '
-      + 'Call model_list again with `sort` too (one of: id, name, provider, type, inputs, released), or with no `sort_dir`.')
+      + 'Call model_list again with `sort` too (one of: id, name, provider, type, inputs, released, price), or with no `sort_dir`.')
   })
 
   it('says so when the user can use no model, whatever the arguments, and what the user can do', () => {
@@ -248,17 +249,17 @@ describe('modelListText', () => {
     const many = (count: number) => Array.from({ length: count }, (_, index) => ({ id: `m${index}`, name: `M ${index}`, provider: VENICE.id, released: `${2000 + index}-01-01` }))
     const full = modelListText(cache([VENICE, many(MODEL_LIST_LIMIT)]), PROVIDERS).split('\n')
     expect(full).toHaveLength(MODEL_LIST_LIMIT + 1)
-    expect(full.at(-1)).toBe(`venice/m${MODEL_LIST_LIMIT - 1} | M ${MODEL_LIST_LIMIT - 1} | Venice | ? | t,i | 2049-01-01`)
+    expect(full.at(-1)).toBe(`venice/m${MODEL_LIST_LIMIT - 1} | M ${MODEL_LIST_LIMIT - 1} | Venice | ? | t,i | 2049-01-01 | ?`)
 
     const over = modelListText(cache([VENICE, many(MODEL_LIST_LIMIT + 3)]), PROVIDERS).split('\n')
     expect(over[0]).toBe(`${MODEL_LIST_LIMIT + 3} models ${HEADER}`)
     expect(over).toHaveLength(MODEL_LIST_LIMIT + 2)
-    expect(over.at(-2)).toBe(`venice/m${MODEL_LIST_LIMIT - 1} | M ${MODEL_LIST_LIMIT - 1} | Venice | ? | t,i | 2049-01-01`)
+    expect(over.at(-2)).toBe(`venice/m${MODEL_LIST_LIMIT - 1} | M ${MODEL_LIST_LIMIT - 1} | Venice | ? | t,i | 2049-01-01 | ?`)
     expect(over.at(-1)).toBe('… and 3 more. Use a narrower filter.')
 
     const newestFirst = modelListText(cache([VENICE, many(MODEL_LIST_LIMIT + 3)]), PROVIDERS, { sort: 'released', sort_dir: 'desc' }).split('\n')
-    expect(newestFirst[1]).toBe(`venice/m${MODEL_LIST_LIMIT + 2} | M ${MODEL_LIST_LIMIT + 2} | Venice | ? | t,i | 2052-01-01`)
-    expect(newestFirst.at(-2)).toBe('venice/m3 | M 3 | Venice | ? | t,i | 2003-01-01')
+    expect(newestFirst[1]).toBe(`venice/m${MODEL_LIST_LIMIT + 2} | M ${MODEL_LIST_LIMIT + 2} | Venice | ? | t,i | 2052-01-01 | ?`)
+    expect(newestFirst.at(-2)).toBe('venice/m3 | M 3 | Venice | ? | t,i | 2003-01-01 | ?')
     expect(newestFirst.at(-1)).toBe('… and 3 more. Use a narrower filter.')
   })
 
@@ -266,7 +267,7 @@ describe('modelListText', () => {
     const models = [{ id: 'odd', name: 'Odd\nName  ', provider: VENICE.id }]
     expect(modelListText(cache([providerInfo('venice', 'Ven\r\nice'), models]), [providerInfo('venice', 'Ven\r\nice')])).toBe([
       `1 model ${HEADER}`,
-      'venice/odd | Odd Name | Ven ice | ? | t,i | ?',
+      'venice/odd | Odd Name | Ven ice | ? | t,i | ? | ?',
     ].join('\n'))
   })
 
@@ -275,7 +276,79 @@ describe('modelListText', () => {
     const models: ModelInfo[] = [{ id: 'odd', name: 'Odd | Name', provider: VENICE.id, outputs: ['audio'], request: 'tts' }]
     expect(modelListText(cache([piped, models]), [piped])).toBe([
       `1 model ${HEADER}`,
-      'venice/odd | Odd / Name | Ven/ice | a | t | ?',
+      'venice/odd | Odd / Name | Ven/ice | a | t | ? | ?',
     ].join('\n'))
+  })
+
+  describe('price', () => {
+    // The cache of the fixtures has its model lists from time 0, so their
+    // list prices are fresh until PRICE_LIFETIME_MS.
+    const NOW = 1000
+    const priced = (price: ModelInfo['price'], extra: Partial<ModelInfo> = {}): ModelInfo => ({ id: 'm', name: 'M', provider: VENICE.id, price, ...extra })
+    const priceOf = (model: ModelInfo, quotes?: PriceQuote[]) =>
+      modelListText({ ...cache([VENICE, [model]]), ...(quotes && { quotes }) }, PROVIDERS, {}, NOW).split('\n')[1].split(' | ')[6]
+
+    it('tells the list price in US dollars in its unit, with its note in parentheses and no |', () => {
+      expect(priceOf(priced({ unit: 'token', input: 0.1, output: 3.5 }))).toBe('$0.10/$3.50 per 1M tokens')
+      expect(priceOf(priced({ unit: 'token', input: 0, output: 120, note: 'a | b' }))).toBe('$0/$120.00 per 1M tokens (a / b)')
+      expect(priceOf(priced({ unit: 'character', usd: 15 }))).toBe('$15.00 per 1M chars')
+      expect(priceOf(priced({ unit: 'second', usd: 0.0001 }))).toBe('$0.0001 per second')
+      expect(priceOf(priced({ unit: 'image', usd: 0.034 }))).toBe('$0.034 per image')
+      expect(priceOf(priced({ unit: 'clip', usd: 0.0115, note: 'with sound' }))).toBe('$0.0115 per clip (with sound)')
+    })
+
+    // D13: the quote of the default values stands in for a list price.
+    it('tells the fresh quote of the default values of an image or clip model that has no list price', () => {
+      const video = priced(undefined, {
+        outputs: ['video'],
+        request: 'video',
+        parameters: [{ name: 'duration', label: 'Duration', options: ['5s', '8s'], default: '8s' }],
+      })
+      const image = priced(undefined, { outputs: ['image'], request: 'image' })
+      const quote = (model: ModelInfo, values: PriceQuote['values'], at: number, usd = 0.5): PriceQuote =>
+        ({ providerId: VENICE.id, modelId: model.id, kind: model.request as PriceQuote['kind'], values, usd, at })
+
+      expect(priceOf(video, [quote(video, { duration: '8s' }, 0), quote(video, { duration: '8s' }, 10, 0.7)])).toBe('$0.70 per clip')
+      expect(priceOf(image, [{ ...quote(image, {}, 0), note: 'an estimate' }])).toBe('$0.50 per image (an estimate)')
+      // A quote of other values, of another kind, or an old one is no price.
+      expect(priceOf(video, [quote(video, { duration: '5s' }, 0)])).toBe('?')
+      expect(priceOf(video, [{ ...quote(video, { duration: '8s' }, 0), kind: 'imageToVideo' }])).toBe('?')
+      expect(modelListText({ ...cache([VENICE, [image]]), quotes: [quote(image, {}, 0)] }, PROVIDERS, {}, PRICE_LIFETIME_MS).endsWith(' | ?')).toBe(true)
+      // The list price wins over a quote.
+      expect(priceOf({ ...image, price: { unit: 'image', usd: 0.04 } }, [quote(image, {}, 0)])).toBe('$0.04 per image')
+    })
+
+    // Two prices of different units cannot be compared: the rows of a unit
+    // stay together, and a model with no price comes last in both orders.
+    it('sorts by unit, then by price, input plus output for tokens', () => {
+      const models: ModelInfo[] = [
+        priced({ unit: 'image', usd: 0.01 }, { id: 'img' }),
+        priced(undefined, { id: 'none' }),
+        priced({ unit: 'token', input: 3, output: 1 }, { id: 'tok-4' }),
+        priced({ unit: 'clip', usd: 0.5 }, { id: 'clip' }),
+        priced({ unit: 'token', input: 0.5, output: 2 }, { id: 'tok-2.5' }),
+        priced({ unit: 'character', usd: 30 }, { id: 'chars' }),
+      ]
+      const ids = (sort_dir: string) => modelListText(cache([VENICE, models]), PROVIDERS, { sort: 'price', sort_dir }, NOW)
+        .split('\n').slice(1).map((line) => line.split(' | ')[0])
+
+      expect(ids('asc')).toStrictEqual(['venice/tok-2.5', 'venice/tok-4', 'venice/chars', 'venice/img', 'venice/clip', 'venice/none'])
+      expect(ids('desc')).toStrictEqual(['venice/clip', 'venice/img', 'venice/chars', 'venice/tok-4', 'venice/tok-2.5', 'venice/none'])
+    })
+
+    it('tells each provider whose list prices are older than the price lifetime, and only then', () => {
+      const tokens = priced({ unit: 'token', input: 1, output: 2 })
+      const old = cache([VENICE, [tokens]])
+      old.providers[OPENROUTER.id] = { models: [{ ...tokens, provider: OPENROUTER.id }], working: true, updatedAt: PRICE_LIFETIME_MS, lastCheckedAt: PRICE_LIFETIME_MS }
+      const header = (models: ModelCache, now: number) => modelListText(models, PROVIDERS, {}, now).split('\n')[0]
+
+      expect(header(old, PRICE_LIFETIME_MS)).toBe(`2 models ${HEADER} The prices of Venice can be old: its model list did not load in the last 60 minutes.`)
+      expect(header(old, 2 * PRICE_LIFETIME_MS)).toBe(`2 models ${HEADER} `
+        + 'The prices of Venice can be old: its model list did not load in the last 60 minutes. '
+        + 'The prices of OpenRouter can be old: its model list did not load in the last 60 minutes.')
+      expect(header(cache([VENICE, [tokens]], [OPENROUTER, [{ ...tokens, provider: OPENROUTER.id }]]), NOW)).toBe(`2 models ${HEADER}`)
+      // A provider with no list price has no prices to be old.
+      expect(header(cache([VENICE, [priced(undefined)]]), 2 * PRICE_LIFETIME_MS)).toBe(`1 model ${HEADER}`)
+    })
   })
 })

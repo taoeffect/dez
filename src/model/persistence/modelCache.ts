@@ -6,7 +6,7 @@ import { isValidProviderId } from '../providers/config'
 import { imageSizeRules, positiveLimit } from '../providers/imageSize'
 import { isRecord, RELEASED_DATE } from '../providers/modelParsing'
 import { SINGLE_PRICE_UNITS } from '../providers/modelPrices'
-import { MODEL_REQUESTS, type ProviderId } from '../providers/types'
+import { MEDIA_KINDS, MODEL_REQUESTS, type ProviderId } from '../providers/types'
 import type { CachedProvider, ModelCache } from './types'
 
 export const MODEL_CACHE_VERSION = 1
@@ -175,6 +175,22 @@ const cachedProviderSchema = z.object({
   lastCheckedAt: z.number().catch(0),
 })
 
+// PriceQuote (src/model/providers/modelPrices.ts). A bad quote is dropped
+// alone: the next quote of its request costs nothing.
+const priceQuoteSchema = z.object({
+  providerId: z.string().refine(isValidProviderId, 'invalid provider id'),
+  modelId: z.string(),
+  kind: z.enum(MEDIA_KINDS),
+  values: z.record(z.string(), z.union([z.string(), z.number(), z.boolean()])),
+  usd: priceNumberSchema,
+  note: priceNoteSchema,
+  at: z.number(),
+})
+
+const quotesSchema = z.array(priceQuoteSchema.nullable().catch(() => null))
+  .catch(() => [])
+  .transform((quotes) => quotes.filter((quote): quote is z.infer<typeof priceQuoteSchema> => quote !== null))
+
 export function emptyModelCache(): ModelCache {
   return { providers: {}, version: MODEL_CACHE_VERSION }
 }
@@ -199,7 +215,8 @@ export function parseModelCacheJson(content: string): ModelCache {
         if (result.success) providers[key] = result.data
       }
     }
-    return { providers, version: MODEL_CACHE_VERSION }
+    const quotes = quotesSchema.parse((parsed as Record<string, unknown>).quotes)
+    return { providers, ...(quotes.length > 0 && { quotes }), version: MODEL_CACHE_VERSION }
   } catch {
     return emptyModelCache()
   }

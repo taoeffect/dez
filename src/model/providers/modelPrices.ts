@@ -1,5 +1,7 @@
 import type { ProviderConfig } from './config'
+import type { ParameterValues } from './modelParameters'
 import { isRecord, valueAtPath } from './modelParsing'
+import type { MediaKind } from './types'
 
 // The units of a price with one number (`usd`), in the order of
 // `PRICE_UNITS`.
@@ -47,6 +49,85 @@ export function roundedPrice(usd: number): number {
 // A price of one number in `unit`, rounded; none with no number.
 export function unitPrice(unit: typeof SINGLE_PRICE_UNITS[number], usd: number | undefined, note?: string): ModelPrice | undefined {
   return usd === undefined ? undefined : { unit, usd: roundedPrice(usd), ...(note && { note }) }
+}
+
+/** How long a price stays good without a new check: a quote of the
+ *  provider, or the list prices of the provider's model check. Short, so
+ *  that a sale of the provider shows soon. */
+export const PRICE_LIFETIME_MS = 3_600_000
+
+/** True for a price of the time `at` that is good at `now`. A time after
+ *  `now` (the clock of the computer went back) is not good: a new check
+ *  costs nothing. */
+export function isFreshPrice(at: number, now: number): boolean {
+  return now >= at && now - at < PRICE_LIFETIME_MS
+}
+
+/** The provider's price of one media request (`dez.provider/mediaQuote`):
+ *  a model, its request kind, and the parameter values of the request,
+ *  with the price in USD, the note of the quote, and the time of the quote.
+ *  Kept in model_cache.json while it is fresh (`isFreshPrice`). */
+export interface PriceQuote {
+  providerId: string
+  modelId: string
+  kind: MediaKind
+  values: ParameterValues
+  usd: number
+  note?: string
+  at: number
+}
+
+/** What a quote is the price of. */
+export type QuoteRequest = Pick<PriceQuote, 'providerId' | 'modelId' | 'kind' | 'values'>
+
+// The values of a request as one text that does not depend on the order of
+// the names.
+function valuesKey(values: ParameterValues): string {
+  return JSON.stringify(Object.keys(values).sort().map((name) => [name, values[name]]))
+}
+
+function isQuoteOf(quote: PriceQuote, request: QuoteRequest): boolean {
+  return quote.providerId === request.providerId && quote.modelId === request.modelId
+    && quote.kind === request.kind && valuesKey(quote.values) === valuesKey(request.values)
+}
+
+/** The quotes that are fresh at `now`. */
+export function freshQuotes(quotes: readonly PriceQuote[], now: number): PriceQuote[] {
+  return quotes.filter((quote) => isFreshPrice(quote.at, now))
+}
+
+/** The fresh quotes with `quote` in place of an older quote of the same
+ *  request. */
+export function withQuote(quotes: readonly PriceQuote[], quote: PriceQuote, now: number): PriceQuote[] {
+  return [...freshQuotes(quotes, now).filter((kept) => !isQuoteOf(kept, quote)), quote]
+}
+
+/** The newest fresh quote of `request`, if any. */
+export function freshQuote(quotes: readonly PriceQuote[], request: QuoteRequest, now: number): PriceQuote | undefined {
+  return freshQuotes(quotes, now).filter((quote) => isQuoteOf(quote, request))
+    .reduce<PriceQuote | undefined>((newest, quote) => (newest && newest.at >= quote.at ? newest : quote), undefined)
+}
+
+/** A price in USD as a short text: at least 2 decimals, and about 4
+ *  significant digits for a small price (`$0.0115`, `$0.10`, `$3.50`),
+ *  never with an exponent. */
+export function usdText(usd: number): string {
+  if (usd === 0) return '$0'
+  const decimals = Math.min(100, Math.max(2, Math.ceil(-Math.log10(usd)) + 3))
+  // The zeros at the end go, but never the first 2 decimals.
+  return `$${usd.toFixed(decimals).replace(/(\.\d\d\d*?)0+$/, '$1')}`
+}
+
+const UNIT_TEXTS = { character: 'per 1M chars', second: 'per second', image: 'per image', clip: 'per clip' } as const
+
+/** A price as a short text, for a column of a list: `$0.10/$0.50 per 1M
+ *  tokens` (input/output), `$0.01 per image`, with its note in
+ *  parentheses. */
+export function priceText(price: ModelPrice): string {
+  const text = price.unit === 'token'
+    ? `${usdText(price.input)}/${usdText(price.output)} per 1M tokens`
+    : `${usdText(price.usd)} ${UNIT_TEXTS[price.unit]}`
+  return price.note === undefined ? text : `${text} (${price.note})`
 }
 
 // The token price of a chat model's list entry, at the config's paths

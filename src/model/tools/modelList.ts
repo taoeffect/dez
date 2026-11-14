@@ -3,7 +3,9 @@ import { modelInputs } from '../modelInputs'
 import { MODEL_OUTPUT_IDS, OUTPUT_LETTER_LEGEND, outputLetters, parseOutputTypes, type ModelOutput } from '../modelOutputs'
 import { availableModels, matchingModelsByProvider, searchTerms } from '../modelSearch'
 import type { ModelCache } from '../persistence/types'
-import type { ModelInfo, ProviderInfo } from '../providers/types'
+import { effectiveParameterValues } from '../providers/modelParameters'
+import { freshQuote, isFreshPrice, PRICE_LIFETIME_MS, PRICE_UNITS, priceText, type ModelPrice, type PriceQuote } from '../providers/modelPrices'
+import { effectiveRequest, isClipKind, isTextKind, type ModelInfo, type ProviderInfo } from '../providers/types'
 import { unknownValuesText } from './arguments'
 import { ToolError, type ToolArguments, type ToolDefinition } from './types'
 
@@ -15,6 +17,7 @@ interface ListedModel {
   provider: ProviderInfo
   model: ModelInfo
   inputs: readonly ModelOutput[]
+  price?: ModelPrice
 }
 
 interface ListColumn {
@@ -54,6 +57,25 @@ function typesOrder(types: readonly ModelOutput[]): number[] {
   return [indexes.length, ...indexes]
 }
 
+// The sort order of a price: the unit first, in `PRICE_UNITS` order, as
+// prices of two units cannot be compared, then the price (input plus
+// output for tokens).
+function priceOrder(price: ModelPrice): number[] {
+  return [PRICE_UNITS.indexOf(price.unit), price.unit === 'token' ? price.input + price.output : price.usd]
+}
+
+// The price of a model in the list: its list price, else the newest fresh
+// quote of the provider for a request with the default values of the
+// model's parameters, as the price of one image or one clip.
+function listedPrice(quotes: readonly PriceQuote[], provider: ProviderInfo, model: ModelInfo, now: number): ModelPrice | undefined {
+  if (model.price) return model.price
+  const kind = effectiveRequest(model)
+  if (kind === 'chat' || kind === 'none' || isTextKind(kind)) return undefined
+  const request = { providerId: provider.id, modelId: model.id, kind, values: effectiveParameterValues(model.parameters ?? []) }
+  const quote = freshQuote(quotes, request, now)
+  return quote && { unit: isClipKind(kind) ? 'clip' : 'image', usd: quote.usd, ...(quote.note !== undefined && { note: quote.note }) }
+}
+
 // The columns of a result, in line order. The header, each line, and the
 // `sort` values all come from this list.
 const LIST_COLUMNS: readonly ListColumn[] = [
@@ -63,6 +85,7 @@ const LIST_COLUMNS: readonly ListColumn[] = [
   { key: 'type', title: 'type', text: (row) => typesText(row.model.outputs), order: (row) => row.model.outputs && typesOrder(row.model.outputs) },
   { key: 'inputs', title: 'inputs', text: (row) => typesText(row.inputs), order: (row) => typesOrder(row.inputs) },
   { key: 'released', title: 'released', text: (row) => row.model.released ?? UNKNOWN_TEXT, order: (row) => row.model.released?.split('-').map(Number) },
+  { key: 'price', title: 'price', text: (row) => (row.price ? columnText(priceText(row.price)) : UNKNOWN_TEXT), order: (row) => row.price && priceOrder(row.price) },
 ]
 
 const SORT_KEYS = LIST_COLUMNS.map((column) => column.key)
@@ -83,12 +106,16 @@ export const MODEL_LIST_TOOL: ToolDefinition = {
     + 'Then each line gives one model: its full id (`provider/model`), its name, the name of its provider, '
     + 'its type (the letters of the outputs that it makes), '
     + 'its inputs (the letters of what Dez can send it in one request: the text of the message, images, audio clips, video clips), '
-    + 'and its release date (`YYYY-MM-DD`: the date that its provider gives, for some providers the day that the provider added the model). '
+    + 'its release date (`YYYY-MM-DD`: the date that its provider gives, for some providers the day that the provider added the model), '
+    + 'and its price in US dollars: per 1M input and output tokens for a chat model (`$input/$output per 1M tokens`), '
+    + 'else per 1M characters of text, per second of audio, per image, or per clip (a clip with the default values of the model\'s parameters), '
+    + 'with a note in parentheses when the price has one. '
+    + 'A price is an estimate from the provider\'s data; `model_info` gives the price of a request with other values. '
     + 'Dez sends a chat model only text and images, whatever its provider says that it reads; `model_info` tells more. '
     + '`?` stands for a value that the provider does not tell, and `-` for none. '
     + 'With no `filter`, no `type`, and no `inputs`, the list has every model. '
     + `The list stops after ${MODEL_LIST_LIMIT} models. \`sort\` orders all the models that match before that, `
-    + 'so `sort: released` with `sort_dir: desc` lists the newest models first.',
+    + 'so `sort: released` with `sort_dir: desc` lists the newest models first, and `sort: price` the cheapest of each unit first.',
   parameters: [
     {
       name: 'filter',
@@ -123,6 +150,7 @@ export const MODEL_LIST_TOOL: ToolDefinition = {
       type: 'string',
       description: `The column that orders the list: ${SORT_KEYS.join(', ')}. `
         + '`type` and `inputs` order by the count of their letters, and `released` by date. '
+        + `\`price\` orders by unit (${PRICE_UNITS.join(', ')}), then by price (input plus output for tokens). `
         + 'Models with `?` in the column come last. '
         + 'With no `sort`, the models come in provider order, and the models of a provider in the order of its list.',
       required: false,
@@ -130,7 +158,7 @@ export const MODEL_LIST_TOOL: ToolDefinition = {
     {
       name: 'sort_dir',
       type: 'string',
-      description: 'The direction of `sort`: `asc` (the default: A to Z, the fewest letters first, the oldest date first) or `desc`.',
+      description: 'The direction of `sort`: `asc` (the default: A to Z, the fewest letters first, the oldest date first, the lowest price first) or `desc`.',
       required: false,
     },
   ],
@@ -197,6 +225,21 @@ function sortArgument(args: ToolArguments): { column: ListColumn, direction: Sor
   return { column, direction: directionKey ?? 'asc' }
 }
 
+/** The checked arguments of a `model_list` call. */
+export interface ModelListArguments {
+  filter: string
+  outputs: ModelOutput[]
+  inputs: ModelOutput[]
+  sort?: { column: ListColumn, direction: SortDirection }
+}
+
+/** The arguments of a `model_list` call. Throws for an argument value that
+ *  the tool does not take; the error names the valid values, for the model
+ *  to read. */
+export function modelListArguments(args: ToolArguments): ModelListArguments {
+  return { filter: stringArgument(args, 'filter'), outputs: typesArgument(args, 'type'), inputs: typesArgument(args, 'inputs'), sort: sortArgument(args) }
+}
+
 /** The `model_list` result when the user can use no model at all. */
 export const NO_MODELS_TEXT = 'The user has no models that Dez can use: no provider is set up, or the model lists of the providers did not load. '
   + 'Tell the user to add an API key in Settings › Providers, or to look there for a provider with an error.'
@@ -211,16 +254,15 @@ export const NO_MODELS_TEXT = 'The user has no models that Dez can use: no provi
  *  the letter legend; then each model has one line with every column. A
  *  `filter` with no letters or digits selects every model, as in the
  *  picker, and so does a `type` or `inputs` of only commas and white space.
+ *  The price of a model is its list price, else a quote of the cache that
+ *  is fresh at `now` (`listedPrice`). The first line tells each provider
+ *  whose list prices are older than PRICE_LIFETIME_MS at `now`.
  *
  *  Throws for an argument value that the tool does not take, before it
- *  looks at the models; the error names the valid values, for the model to
- *  read. With no model, or no match, the result says why and what the model
- *  can do. */
-export function modelListText(cache: ModelCache, providers: readonly ProviderInfo[], args: ToolArguments = {}): string {
-  const filter = stringArgument(args, 'filter')
-  const outputs = typesArgument(args, 'type')
-  const inputs = typesArgument(args, 'inputs')
-  const sort = sortArgument(args)
+ *  looks at the models (`modelListArguments`). With no model, or no match,
+ *  the result says why and what the model can do. */
+export function modelListText(cache: ModelCache, providers: readonly ProviderInfo[], args: ToolArguments = {}, now = Date.now()): string {
+  const { filter, outputs, inputs, sort } = modelListArguments(args)
 
   const models = availableModels(cache, providers)
   if (models.length === 0) return NO_MODELS_TEXT
@@ -234,8 +276,9 @@ export function modelListText(cache: ModelCache, providers: readonly ProviderInf
     ...(inputs.length > 0 ? [{ name: '`inputs`', text: `inputs ${inputs.join(',')}`, fix: 'fewer values in `inputs`' }] : []),
   ]
   const criteria = narrowing.map((argument) => argument.text).join(' and ')
-  const rows = matchingModelsByProvider(providers, models, { terms, outputs, inputs }).flatMap(({ provider, models: matches }) =>
-    matches.map((model) => ({ provider, model, inputs: modelInputs(model) })))
+  const quotes = cache.quotes ?? []
+  const rows: ListedModel[] = matchingModelsByProvider(providers, models, { terms, outputs, inputs }).flatMap(({ provider, models: matches }) =>
+    matches.map((model) => ({ provider, model, inputs: modelInputs(model), price: listedPrice(quotes, provider, model, now) })))
   const count = rows.length
   // A `filter` word matches only names and ids, so a word such as "video"
   // next to `type: video` leaves out every video model whose name does not
@@ -254,11 +297,19 @@ export function modelListText(cache: ModelCache, providers: readonly ProviderInf
     return `No models match ${criteria}. Call model_list again with ${fixes}, or with no ${given} to list every model.${filterNote}`
   }
 
+  // The list prices come with the model list. A provider whose check was
+  // still running when the call came keeps the list of its last good
+  // check, whose prices can be old.
+  const oldPriceProviders = [...new Set(rows.filter((row) => row.model.price).map((row) => row.provider))]
+    .filter((provider) => !isFreshPrice(cache.providers[provider.id]?.updatedAt ?? 0, now))
+  const priceNote = oldPriceProviders.map((provider) =>
+    ` The prices of ${columnText(provider.name)} can be old: its model list did not load in the last ${PRICE_LIFETIME_MS / 60_000} minutes.`).join('')
+
   const counted = `${count} ${count === 1 ? 'model' : 'models'}`
   const matched = criteria === '' ? counted : `${counted} ${count === 1 ? 'matches' : 'match'} ${criteria}`
   const sorted = sort ? `, sorted by ${sort.column.key} ${sort.direction}` : ''
   const shown = (sort ? sortedRows(rows, sort.column, sort.direction) : rows).slice(0, MODEL_LIST_LIMIT)
     .map((row) => LIST_COLUMNS.map((column) => column.text(row)).join(' | '))
   if (count > MODEL_LIST_LIMIT) shown.push(`… and ${count - MODEL_LIST_LIMIT} more. Use a narrower filter.`)
-  return [`${matched} ${COLUMNS}${sorted}. ${LEGEND}${filterNote}`, ...shown].join('\n')
+  return [`${matched} ${COLUMNS}${sorted}. ${LEGEND}${filterNote}${priceNote}`, ...shown].join('\n')
 }

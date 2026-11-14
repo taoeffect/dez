@@ -7,6 +7,8 @@ import { inputImageRulesFor, maxInputImages, minInputImages } from '../providers
 import type { KnownLimit } from '../providers/knownLimits'
 import { imageRulesWithLearnedLimit } from '../providers/learnedImageLimit'
 import type { ParameterValues } from '../providers/modelParameters'
+import { roundedPrice, type ModelPrice } from '../providers/modelPrices'
+import type { ProviderMediaQuote } from '../providers/streamTypes'
 import { effectiveRequest, MODEL_REQUESTS, type ModelInfo, type ProviderInfo, type ProviderInputImageRules } from '../providers/types'
 import { unstoredOutputMessage, unusableModelMessage } from '../providers/unusableModel'
 import { unknownValuesText } from './arguments'
@@ -62,9 +64,10 @@ export const MODEL_INFO_TOOL: ToolDefinition = {
     + 'Its `default` is the value that Dez sends when no one chose a value, and its `value` the value that Dez sends now: '
     + 'the one from the `parameters` argument, else the one that the user chose, else the default. '
     + 'With no `value`, Dez sends none and the provider\'s own default applies. '
-    + '`dez.cost` has `usd`, the price in US dollars of one request with those values '
-    + '(with a `note` when other inputs change it or it is an estimate), or `error`, which tells why Dez has no price; '
-    + 'with no `cost`, the prices are in the entries. '
+    + '`dez.cost` is the price: `usd`, the price in US dollars of one request with those values '
+    + '(with a `note` when other inputs change it or it is an estimate); '
+    + 'else the rates of the provider\'s price list, each under a name that tells its unit (for example `usdPer1MInputTokens`); '
+    + 'else `error`, which tells why Dez has no price. '
     + 'The entries are the provider\'s own data about the model, as it sent them: '
     + '`providerEntry` (its entry in the provider\'s model list, or in the Dez provider settings), '
     + '`mediaEntry` (its entry in the provider\'s list of media models), and `priceEntry` (its price records). '
@@ -127,10 +130,8 @@ export interface ModelInfoFacts {
   toggles?: ModelInfoToggle[]
   /** The rules of each input image of a request (dez.provider/inputImageRules). */
   inputImages?: ProviderInputImageRules
-  /** The provider's price of one request with `values` (with a note of
-   *  what else changes it), or why there is none. Absent when the provider
-   *  tells no price of one request. */
-  cost?: { usd: number, note?: string } | { error: string }
+  /** `dez.cost` (`modelCost`). Absent when the call did not ask for it. */
+  cost?: ModelInfoCost
   /** The model's raw entry in a model list of the provider's media API. */
   mediaEntry?: unknown
   /** The model's price records, for a provider whose model lists hold no
@@ -138,6 +139,54 @@ export interface ModelInfoFacts {
   priceEntry?: unknown
   /** The known limits of the model (dez.provider/knownLimits). */
   limits?: KnownLimit[]
+}
+
+/** The price of a model in a `model_info` result: the provider's price of
+ *  one request with the values of the call, else the rates of the
+ *  provider's model list (`ModelInfo.price`) in USD, each under a name
+ *  that tells its unit, else why Dez has no price. */
+export type ModelInfoCost =
+  | { usd: number, note?: string }
+  | { usdPer1MInputTokens: number, usdPer1MOutputTokens: number, usdPer1MCachedInputTokens?: number, note?: string }
+  | { usdPer1MCharacters: number, usdPer1000Characters: number, note?: string }
+  | { usdPerSecond: number, note?: string }
+  | { usdPerImage: number, note?: string }
+  | { usdPerClip: number, note?: string }
+  | { error: string }
+
+function listPriceCost(price: ModelPrice): ModelInfoCost {
+  const note = price.note === undefined ? {} : { note: price.note }
+  switch (price.unit) {
+    case 'token':
+      return {
+        usdPer1MInputTokens: price.input,
+        usdPer1MOutputTokens: price.output,
+        ...(price.cachedInput !== undefined && { usdPer1MCachedInputTokens: price.cachedInput }),
+        ...note,
+      }
+    case 'character': return { usdPer1MCharacters: price.usd, usdPer1000Characters: roundedPrice(price.usd / 1000), ...note }
+    case 'second': return { usdPerSecond: price.usd, ...note }
+    case 'image': return { usdPerImage: price.usd, ...note }
+    case 'clip': return { usdPerClip: price.usd, ...note }
+  }
+}
+
+/** The `dez.cost` of a model, from the provider's answer to the price
+ *  request of one request (dez.provider/mediaQuote; null for a model with
+ *  no such request) and the model's list price. The quote wins: it is for
+ *  the values of the call, and the list price is for the default values.
+ *  So does its error, which tells why those values have no one price. */
+export function modelCost(provider: ProviderInfo, model: ModelInfo, quote: ProviderMediaQuote | null): ModelInfoCost {
+  if (quote?.usd !== undefined) return { usd: quote.usd, ...(quote.note !== undefined && { note: quote.note }) }
+  if (quote?.error !== undefined) return { error: quote.error }
+  if (model.price) return listPriceCost(model.price)
+  if (quote?.records !== undefined) {
+    return {
+      error: `${provider.name} gives no one price of a request with these values: its price records are in \`priceEntry\`. `
+        + 'Call model_info with `part: priceEntry` when this result does not hold it.',
+    }
+  }
+  return { error: `${provider.name} gives no price for this model.` }
 }
 
 /** The provider and the model of a `model_info` call, among the models that
@@ -280,24 +329,18 @@ function partText(id: string, part: ModelInfoPart, value: unknown): string {
   return cut(low)
 }
 
-// What the result with `only` says of a named part of `dez` that the model
-// does not have, so that the model does not look for it again.
-const MISSING_ONLY_TEXTS = {
-  parameters: 'Dez knows no parameters of this model.',
-  cost: 'Dez has no price of one request of this model. Call model_info without `only` to get the provider\'s entries, which can hold its prices.',
-} as const
-
 // The result with `only`: the id and the parts that it names, under their
 // names in the whole result. It has no entry, so it never needs the cap.
+// A note tells that the model has no parameters, so that the calling
+// model does not look for them again.
 function onlyText(id: string, dez: Readonly<Record<string, unknown>>, usage: readonly string[], only: readonly ModelInfoOnlyValue[]): string {
-  const named = (['parameters', 'cost'] as const).filter((name) => only.includes(name))
-  const kept = named.filter((name) => dez[name] !== undefined)
-  const notes = named.filter((name) => dez[name] === undefined).map((name) => MISSING_ONLY_TEXTS[name])
+  const kept = (['parameters', 'cost'] as const).filter((name) => only.includes(name) && dez[name] !== undefined)
+  const noParameters = only.includes('parameters') && dez.parameters === undefined
   return prettyJson({
     id,
     ...(kept.length > 0 && { dez: Object.fromEntries(kept.map((name) => [name, dez[name]])) }),
     ...(only.includes('usage') && { usage }),
-    ...(notes.length > 0 && { note: notes.join(' ') }),
+    ...(noParameters && { note: 'Dez knows no parameters of this model.' }),
   })
 }
 

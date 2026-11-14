@@ -62,9 +62,9 @@ const SONG_WAV = monoWav(Buffer.alloc(2 * WAV_SAMPLE_RATE * 2), 2)
 // models do not say what they make, how Dez asks them, or when they came
 // out, so they are chat models of unknown type and date: Dez sends them
 // text and images.
-const LIST_COLUMNS = '(full id | name | provider | type | inputs | released). Letters: t text, i image, a audio, v video; ? unknown, - none.'
-const TOOLER_LIST = `1 model matches "tool" ${LIST_COLUMNS}\n${TOOLER.id}/${TOOLER.modelId} | ${TOOLER.modelName} | ${TOOLER.name} | ? | t,i | ?`
-const CLAUDE_LIST = `1 model matches "claude" ${LIST_COLUMNS}\n${CLAUDE.id}/${CLAUDE.modelId} | ${CLAUDE.modelName} | ${CLAUDE.name} | ? | t,i | ?`
+const LIST_COLUMNS = '(full id | name | provider | type | inputs | released | price). Letters: t text, i image, a audio, v video; ? unknown, - none.'
+const TOOLER_LIST = `1 model matches "tool" ${LIST_COLUMNS}\n${TOOLER.id}/${TOOLER.modelId} | ${TOOLER.modelName} | ${TOOLER.name} | ? | t,i | ? | ?`
+const CLAUDE_LIST = `1 model matches "claude" ${LIST_COLUMNS}\n${CLAUDE.id}/${CLAUDE.modelId} | ${CLAUDE.modelName} | ${CLAUDE.name} | ? | t,i | ? | ?`
 
 const EPHEMERAL = { type: 'ephemeral' }
 
@@ -460,7 +460,8 @@ describe('tool calls', () => {
     // the value that Dez acts on when it does not know; the Tools toggle is
     // the user's value. The mock provider's config has no `thinking`, so
     // Dez asks for no thinking: the model does not think, and the fact is
-    // known. The usage texts are not wording that a test pins.
+    // known. It has no price list either. The usage texts are not wording
+    // that a test pins.
     expect(JSON.parse(result)).toStrictEqual({
       id: model,
       name: TOOLER.modelName,
@@ -474,6 +475,7 @@ describe('tool calls', () => {
         thinking: false,
         unknown: ['request', 'outputs', 'released', 'imageInput', 'toolCalling'],
         toggles: [{ key: 'tools', label: 'Tools', on: true }],
+        cost: { error: `${TOOLER.name} gives no price for this model.` },
       },
       usage: expect.any(Array),
       providerEntry: { id: TOOLER.modelId, name: TOOLER.modelName },

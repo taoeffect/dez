@@ -8,6 +8,7 @@ import type { ModelCache } from '../model/persistence/types'
 import { TooManyImagesError } from '../model/providers/clipImages'
 import { InputImageError } from '../model/providers/errors'
 import type { KnownLimit } from '../model/providers/knownLimits'
+import { PRICE_LIFETIME_MS } from '../model/providers/modelPrices'
 import type { ProviderGenerateMediaInput, ProviderGenerateMediaResult, ProviderMediaQuote, ProviderMediaQuoteInput, ProviderStreamChatInput, ProviderStreamChatResult } from '../model/providers/streamTypes'
 import { providerInfo } from '../model/providers/testing'
 import type { ModelInfo, ProviderInfo, ProviderInputImageRules, ProviderSettingsDescriptor } from '../model/providers/types'
@@ -189,16 +190,83 @@ afterEach(() => {
 })
 
 describe('dez.controller/tools/run', () => {
-  const columns = '(full id | name | provider | type | inputs | released). Letters: t text, i image, a audio, v video; ? unknown, - none.'
+  const columns = '(full id | name | provider | type | inputs | released | price). Letters: t text, i image, a audio, v video; ? unknown, - none.'
 
   it('lists the cached models of the configured providers that match the filter', async () => {
     expect(await run({ name: 'model_list', arguments: { filter: 'gemini' } })).toStrictEqual({
-      content: `1 model matches "gemini" ${columns}\nvenice/venice-gemini-3-pro | Gemini 3 Pro | Venice | ? | t,i | ?`,
+      content: `1 model matches "gemini" ${columns}\nvenice/venice-gemini-3-pro | Gemini 3 Pro | Venice | ? | t,i | ? | ?`,
       isError: false,
     })
     expect(await run({ name: 'model_list', arguments: {} })).toStrictEqual({
-      content: `2 models ${columns}\nvenice/venice-gemini-3-pro | Gemini 3 Pro | Venice | ? | t,i | ?\nvenice/venice-glm-5 | GLM 5 | Venice | ? | t,i | ?`,
+      content: `2 models ${columns}\nvenice/venice-gemini-3-pro | Gemini 3 Pro | Venice | ? | t,i | ? | ?\nvenice/venice-glm-5 | GLM 5 | Venice | ? | t,i | ? | ?`,
       isError: false,
+    })
+    // The model checks of beforeEach are fresh.
+    expect(refreshes).toStrictEqual([])
+  })
+
+  // A model check is free, and the list prices come with it.
+  describe('model_list price checks', () => {
+    const start = 1_800_000_000_000
+    const priced: ModelInfo = { ...MODELS('venice')[0], price: { unit: 'token', input: 2, output: 12 } }
+
+    beforeEach(() => {
+      vi.useFakeTimers({ toFake: ['Date'] })
+      vi.setSystemTime(start)
+      for (const { id } of providers) {
+        sbp('dez.model/modelCache/applyProviderResult', id, { ok: true, models: id === 'venice' ? [priced] : MODELS(id) })
+      }
+    })
+
+    afterEach(() => {
+      vi.useRealTimers()
+    })
+
+    it('checks first each configured provider whose last check is older than the price lifetime', async () => {
+      vi.setSystemTime(start + PRICE_LIFETIME_MS - 1)
+      await run({ name: 'model_list', arguments: {} })
+      expect(refreshes).toStrictEqual([])
+
+      vi.setSystemTime(start + PRICE_LIFETIME_MS)
+      const result = await run({ name: 'model_list', arguments: {} })
+      // The closed provider is not configured.
+      expect(refreshes).toStrictEqual([{ providerIds: ['venice'] }])
+      // The check of beforeEach gives a list with no prices.
+      expect(result.content).toBe(`2 models ${columns}\nvenice/venice-gemini-3-pro | Gemini 3 Pro | Venice | ? | t,i | ? | ?\nvenice/venice-glm-5 | GLM 5 | Venice | ? | t,i | ? | ?`)
+
+      await run({ name: 'model_list', arguments: {} })
+      expect(refreshes).toHaveLength(1)
+    })
+
+    // As when the check of the provider runs already.
+    it('tells that the prices of a provider can be old when its check gives no new list', async () => {
+      refreshCheck = async () => {}
+      vi.setSystemTime(start + PRICE_LIFETIME_MS)
+
+      expect((await run({ name: 'model_list', arguments: {} })).content.split('\n')).toStrictEqual([
+        `1 model ${columns} The prices of Venice can be old: its model list did not load in the last 60 minutes.`,
+        'venice/venice-gemini-3-pro | Gemini 3 Pro | Venice | ? | t,i | ? | $2.00/$12.00 per 1M tokens',
+      ])
+    })
+
+    it('runs no check for a call with an argument that the tool does not take', async () => {
+      vi.setSystemTime(start + PRICE_LIFETIME_MS)
+
+      expect((await run({ name: 'model_list', arguments: { sort: 'cost' } })).isError).toBe(true)
+      expect(refreshes).toStrictEqual([])
+    })
+
+    it('stops waiting for the checks when the user stops the reply', async () => {
+      refreshCheck = () => new Promise(() => {})
+      vi.setSystemTime(start + PRICE_LIFETIME_MS)
+      const abort = new AbortController()
+      const result = run({ name: 'model_list', arguments: {} }, { signal: abort.signal })
+      await vi.waitFor(() => expect(refreshes).toHaveLength(1))
+
+      abort.abort()
+
+      expect((await result).isError).toBe(true)
+      expect(consoleError).not.toHaveBeenCalled()
     })
   })
 
@@ -232,7 +300,8 @@ describe('dez.controller/tools/run', () => {
   describe('model_info', () => {
     // The toggles of the default descriptor, with their defaults.
     const toggles = [{ key: 'thinking', label: 'Thinking', on: true }, { key: 'tools', label: 'Tools', on: true }, { key: 'webSearch', label: 'Web search', on: true }]
-    const gemini = (entry: unknown) => modelInfoText(providers[0], MODELS('venice')[0], { entry, values: {}, toggles, inputImages: {} })
+    const noPrice = { error: 'Venice gives no price for this model.' }
+    const gemini = (entry: unknown) => modelInfoText(providers[0], MODELS('venice')[0], { entry, values: {}, toggles, inputImages: {}, cost: noPrice })
 
     it('gives the raw entry in memory, with no model check', async () => {
       sbp('dez.model/modelCache/applyProviderResult', 'venice', {
@@ -250,7 +319,7 @@ describe('dez.controller/tools/run', () => {
 
     it('gives the model of the reply for a call with no `model`', async () => {
       expect(await run({ name: 'model_info', arguments: {} })).toStrictEqual({
-        content: modelInfoText(providers[0], MODELS('venice')[1], { entry: { id: 'venice-glm-5', checked: true }, values: {}, toggles, inputImages: {} }),
+        content: modelInfoText(providers[0], MODELS('venice')[1], { entry: { id: 'venice-glm-5', checked: true }, values: {}, toggles, inputImages: {}, cost: noPrice }),
         isError: false,
       })
       expect(await run({ name: 'model_info', arguments: { part: 'providerEntry' } })).toStrictEqual({
@@ -267,11 +336,52 @@ describe('dez.controller/tools/run', () => {
       expect(refreshes).toStrictEqual([{ providerIds: ['venice'], force: true }])
     })
 
-    // The result with `only` holds no entry of the provider.
-    it('runs no model check for a call with `only`', async () => {
+    // The result with `only` holds no entry of the provider, and with no
+    // `cost` no price.
+    it('runs no model check for a call whose `only` does not name `cost`', async () => {
       expect(JSON.parse((await run({ name: 'model_info', arguments: { model: 'venice/venice-gemini-3-pro', only: 'usage' } })).content))
         .toStrictEqual({ id: 'venice/venice-gemini-3-pro', usage: expect.any(Array) })
       expect(refreshes).toStrictEqual([])
+    })
+
+    // The list prices come with the model list.
+    it('checks the provider for a call whose `only` names `cost`, when no raw entry is in memory or the last check is old', async () => {
+      const start = 1_800_000_000_000
+      vi.useFakeTimers({ toFake: ['Date'] })
+      try {
+        vi.setSystemTime(start)
+        const call = { name: 'model_info', arguments: { model: 'venice/venice-gemini-3-pro', only: 'cost' } }
+
+        expect(JSON.parse((await run(call)).content)).toStrictEqual({ id: 'venice/venice-gemini-3-pro', dez: { cost: noPrice } })
+        expect(refreshes).toStrictEqual([{ providerIds: ['venice'], force: true }])
+
+        vi.setSystemTime(start + PRICE_LIFETIME_MS - 1)
+        await run(call)
+        expect(refreshes).toHaveLength(1)
+
+        vi.setSystemTime(start + PRICE_LIFETIME_MS)
+        await run(call)
+        expect(refreshes).toHaveLength(2)
+      } finally {
+        vi.useRealTimers()
+      }
+    })
+
+    // A chat model has no price request: the price is the list price.
+    it('gives the list price of a chat model, with no price request', async () => {
+      refreshCheck = async () => {
+        sbp('dez.model/modelCache/applyProviderResult', 'venice', {
+          ok: true,
+          models: [{ ...MODELS('venice')[0], price: { unit: 'token', input: 2, output: 12, cachedInput: 0.2 } }],
+          entries: new Map([['venice-gemini-3-pro', { id: 'venice-gemini-3-pro' }]]),
+        })
+      }
+
+      expect(JSON.parse((await run({ name: 'model_info', arguments: { model: 'venice/venice-gemini-3-pro', only: 'cost' } })).content)).toStrictEqual({
+        id: 'venice/venice-gemini-3-pro',
+        dez: { cost: { usdPer1MInputTokens: 2, usdPer1MOutputTokens: 12, usdPer1MCachedInputTokens: 0.2 } },
+      })
+      expect(quotes).toStrictEqual([])
     })
 
     it('gives an error result that points to model_list when the model is gone after the check', async () => {
@@ -367,19 +477,23 @@ describe('dez.controller/tools/run', () => {
         expect(quotes).toStrictEqual([])
       })
 
-      it('gives no price where the provider has no price request', async () => {
+      it('gives no price where the provider has no price request and the model no list price', async () => {
         quoteAnswer = async () => null
 
         expect((await info()).content)
-          .toBe(modelInfoText(providers[0], VIDEO, facts({ duration: '8s', resolution: '720p', aspect_ratio: '16:9' })))
+          .toBe(modelInfoText(providers[0], VIDEO, facts({ duration: '8s', resolution: '720p', aspect_ratio: '16:9' }, { cost: { error: 'Venice gives no price for this model.' } })))
       })
 
       it('gives the price records of a provider that tells no one price', async () => {
         const records = [{ billable_type: 'output_image', cost: 0.04 }, { billable_type: 'output_image', cost: 0.08, variant: '4k' }]
         quoteAnswer = async () => ({ records })
+        const cost = {
+          error: 'Venice gives no one price of a request with these values: its price records are in `priceEntry`. '
+            + 'Call model_info with `part: priceEntry` when this result does not hold it.',
+        }
 
         expect((await info()).content)
-          .toBe(modelInfoText(providers[0], VIDEO, facts({ duration: '8s', resolution: '720p', aspect_ratio: '16:9' }, { priceEntry: records })))
+          .toBe(modelInfoText(providers[0], VIDEO, facts({ duration: '8s', resolution: '720p', aspect_ratio: '16:9' }, { cost, priceEntry: records })))
       })
 
       it('gives the known limits of the model', async () => {

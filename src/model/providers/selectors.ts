@@ -23,6 +23,7 @@ import { knownLimitsOf, type KnownLimit } from './knownLimits'
 import { learnedImageLimitRow, learnedImagesProblem } from './learnedImageLimit'
 import type { InputClipPart, MediaWireRequest } from './mediaFormats'
 import { effectiveParameterValues, type ParameterValues } from './modelParameters'
+import type { PriceQuote } from './modelPrices'
 import { modelToggles, type ToggleModel } from './modelToggles'
 import type { Provider, ProviderChatRequest } from './provider'
 import { getProvider, listProviders, requireProvider } from './registry'
@@ -704,25 +705,45 @@ export default sbp('sbp/selectors/register', {
   // tell no one price, `error` says why. Null when the provider tells
   // none of these: its model entries hold the prices then. The requests
   // cost nothing. Rejects when one fails.
+  //
+  // A price goes into the quote cache (dez.model/modelCache/keepQuote)
+  // with the values that the request sends, so every caller fills it. The
+  // records and the errors do not: model_cache.json holds no provider data.
   async 'dez.provider/mediaQuote' (input: ProviderMediaQuoteInput): Promise<ProviderMediaQuote | null> {
     const provider = requireProvider(input.providerId)
     const { kind, modelId } = input
     const values = parameterValues(provider.id, modelId, input.parameters)
     const entry = sbp('dez.model/modelCache/rawModel', provider.id, modelId) as unknown
     if (isTextKind(kind)) return null
+    let quote: ProviderMediaQuote | null
     if (isClipKind(kind)) {
-      const quote = provider.clipQuote(kind, modelId, values, entry, await requestSecret(provider))
-      if (quote) return { usd: quote.usd(await jsonResponse(provider, quote.request)) }
+      const priceRequest = provider.clipQuote(kind, modelId, values, entry, await requestSecret(provider))
+      if (priceRequest) {
+        quote = { usd: priceRequest.usd(await jsonResponse(provider, priceRequest.request)) }
+      } else {
+        const mediaEntry = sbp('dez.model/modelCache/rawModel', provider.id, modelId, 'media') as unknown
+        quote = provider.clipEntryPrice(kind, values, entry, mediaEntry) ?? null
+      }
+    } else {
+      const priceRequest = provider.imageQuote(kind, modelId, await requestSecret(provider))
+      if (!priceRequest) return null
+      const records = priceRequest.request ? await jsonResponse(provider, priceRequest.request) : undefined
       const mediaEntry = sbp('dez.model/modelCache/rawModel', provider.id, modelId, 'media') as unknown
-      return provider.clipEntryPrice(kind, values, entry, mediaEntry) ?? null
+      const usd = priceRequest.usd(kind, values, { entry, mediaEntry, records })
+      if (usd === undefined && records === undefined) return null
+      quote = { ...(usd !== undefined && { usd }), ...(records !== undefined && { records }) }
     }
-
-    const quote = provider.imageQuote(kind, modelId, await requestSecret(provider))
-    if (!quote) return null
-    const records = quote.request ? await jsonResponse(provider, quote.request) : undefined
-    const mediaEntry = sbp('dez.model/modelCache/rawModel', provider.id, modelId, 'media') as unknown
-    const usd = quote.usd(kind, values, { entry, mediaEntry, records })
-    if (usd === undefined && records === undefined) return null
-    return { ...(usd !== undefined && { usd }), ...(records !== undefined && { records }) }
+    if (quote?.usd !== undefined) {
+      sbp('dez.model/modelCache/keepQuote', {
+        providerId: provider.id,
+        modelId,
+        kind,
+        values,
+        usd: quote.usd,
+        ...(quote.note !== undefined && { note: quote.note }),
+        at: Date.now(),
+      } satisfies PriceQuote)
+    }
+    return quote
   },
 })

@@ -20,6 +20,7 @@ import type { ModelOutputsConfig, ProviderConfig, ProviderThinkingConfig } from 
 import { withKeptClipData } from '../providers/keptClipData'
 import { modelEntriesFingerprint, withKeptImageLimits } from '../providers/learnedImageLimit'
 import type { ParameterValue, ParameterValues } from '../providers/modelParameters'
+import { freshQuotes, withQuote, type PriceQuote } from '../providers/modelPrices'
 import { isToolsEnabled, toolsApply } from '../providers/modelToggles'
 import { providerModel, type ModelInfo, type ProviderId, type ProviderModelsResult } from '../providers/types'
 import type { ActiveModel, ContentNode, ModelRef, Section, SectionThinking, Tab, ThinkingReplay, ThinkingRound } from '../chat/types'
@@ -486,6 +487,8 @@ function cachedModel(model: ModelRef): ModelInfo | undefined {
     .find((candidate) => candidate.id === model.modelId)
 }
 
+// A copy of the cache that shares nothing with the store. It holds only
+// the quotes that are fresh now, so a save drops the old ones.
 function cloneModelCache(cache: ModelCache): ModelCache {
   const providers: Partial<Record<ProviderId, CachedProvider>> = {}
   for (const [key, entry] of Object.entries(cache.providers)) {
@@ -497,7 +500,8 @@ function cloneModelCache(cache: ModelCache): ModelCache {
       lastCheckedAt: entry.lastCheckedAt,
     }
   }
-  return { providers, version: cache.version }
+  const quotes = freshQuotes(cache.quotes ?? [], Date.now()).map((quote) => ({ ...quote, values: { ...quote.values } }))
+  return { providers, ...(quotes.length > 0 && { quotes }), version: cache.version }
 }
 
 export async function saveModelCache(): Promise<void> {
@@ -1376,6 +1380,15 @@ export default sbp('sbp/selectors/register', {
     delete store.errors[providerId]
     store.rawModels.delete(providerId)
     store.rawMediaModels.delete(providerId)
+    if (store.cache.quotes) store.cache.quotes = store.cache.quotes.filter((quote) => quote.providerId !== providerId)
+  },
+
+  // Keeps the provider's price of one media request (modelPrices.ts) in
+  // place of an older one of the same request, and drops the quotes that
+  // are no longer fresh. The model cache watch saves it.
+  'dez.model/modelCache/keepQuote' (quote: PriceQuote): void {
+    const store = useModelCacheStore()
+    store.cache.quotes = withQuote(store.cache.quotes ?? [], { ...quote, values: { ...quote.values } }, Date.now())
   },
 
   // A copy of the raw entry of a model, for the `model_info` tool and the

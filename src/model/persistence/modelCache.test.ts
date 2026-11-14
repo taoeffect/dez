@@ -84,6 +84,29 @@ describe('model cache persistence format', () => {
     expect(parseModelCacheJson(serializeModelCacheJson(parsed))).toStrictEqual(parsed)
   })
 
+  it('round-trips the price quotes, drops only a quote that is not valid, and writes no quote list with no quote', () => {
+    const quotes = [
+      { providerId: 'venice', modelId: 'wan', kind: 'video', values: { duration: '5s', duration_seconds: 5, audio: true }, usd: 0.5, at: 10 },
+      { providerId: 'openrouter', modelId: 'x/y', kind: 'image', values: {}, usd: 0, note: 'free today', at: 20 },
+    ]
+    const badQuotes = [
+      { ...quotes[0], providerId: 'Bad Id' },
+      { ...quotes[0], kind: 'chat' },
+      { ...quotes[0], values: { duration: null } },
+      { ...quotes[0], usd: -1 },
+      { ...quotes[0], note: '' },
+      { ...quotes[0], at: '10' },
+      'quote',
+    ]
+    const parsed = parseModelCacheJson(JSON.stringify({ version: MODEL_CACHE_VERSION, providers: {}, quotes: [quotes[0], ...badQuotes, quotes[1]] }))
+
+    expect(parsed.quotes).toStrictEqual(quotes)
+    expect(parseModelCacheJson(serializeModelCacheJson(parsed))).toStrictEqual(parsed)
+    for (const json of [{ version: MODEL_CACHE_VERSION, providers: {} }, { version: MODEL_CACHE_VERSION, providers: {}, quotes: 'none' }, { version: MODEL_CACHE_VERSION, providers: {}, quotes: badQuotes }]) {
+      expect(Object.hasOwn(parseModelCacheJson(JSON.stringify(json)), 'quotes')).toBe(false)
+    }
+  })
+
   it('round-trips outputs and request kinds, and drops only a model with an unknown one', () => {
     const models = [
       { id: 'edit', name: 'Edit', provider: 'venice', outputs: ['image'], request: 'imageEdit' },

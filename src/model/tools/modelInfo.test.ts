@@ -1,10 +1,11 @@
 import { describe, expect, it } from 'vitest'
 import type { ModelRef } from '../chat/types'
 import type { ModelCache } from '../persistence/types'
+import type { ProviderMediaQuote } from '../providers/streamTypes'
 import { providerInfo } from '../providers/testing'
 import type { ModelInfo } from '../providers/types'
 import { unstoredOutputMessage, unusableModelMessage } from '../providers/unusableModel'
-import { MODEL_INFO_SIZE_CAP, modelInfoSelection, modelInfoTarget, modelInfoText, type ModelInfoFacts } from './modelInfo'
+import { MODEL_INFO_SIZE_CAP, modelCost, modelInfoSelection, modelInfoTarget, modelInfoText, type ModelInfoFacts } from './modelInfo'
 import { modelUsage, USAGE_TEXTS } from './modelUsage'
 import { ToolError } from './types'
 
@@ -407,19 +408,55 @@ describe('modelInfoText', () => {
       expect(parsed(modelInfoText(OPENROUTER, VIDEO, { ...all, cost: { error: 'No answer' } }, { only: ['cost'] })).dez).toStrictEqual({ cost: { error: 'No answer' } })
     })
 
-    // No note when Dez has no provider entry: the result holds no entry.
-    it('names in `note` each named part of `dez` that the model does not have', () => {
+    // The runner always gives a cost when the call names it (`modelCost`),
+    // so only parameters can be missing.
+    it('says in `note` that the model has no parameters when the call names them', () => {
       expect(JSON.parse(modelInfoText(OPENROUTER, GEMINI, {}, { only: ['usage', 'parameters', 'cost'] }))).toStrictEqual({
         id: 'openrouter/google/gemini-3-pro',
         usage: modelUsage(GEMINI, chatFacts),
-        note: 'Dez knows no parameters of this model. '
-          + 'Dez has no price of one request of this model. Call model_info without `only` to get the provider\'s entries, which can hold its prices.',
+        note: 'Dez knows no parameters of this model.',
       })
-      expect(JSON.parse(modelInfoText(OPENROUTER, VIDEO, { ...all, cost: undefined }, { only: ['parameters', 'cost'] }))).toStrictEqual({
-        id: 'openrouter/x-ai/grok-video',
-        dez: { parameters },
-        note: 'Dez has no price of one request of this model. Call model_info without `only` to get the provider\'s entries, which can hold its prices.',
+      expect(JSON.parse(modelInfoText(OPENROUTER, GEMINI, {}, { only: ['cost'] }))).toStrictEqual({ id: 'openrouter/google/gemini-3-pro' })
+      expect(JSON.parse(modelInfoText(OPENROUTER, VIDEO, all, { only: ['parameters'] }))).toStrictEqual({ id: 'openrouter/x-ai/grok-video', dez: { parameters } })
+    })
+  })
+
+  describe('modelCost', () => {
+    const quote = (fields: ProviderMediaQuote) => fields
+
+    it('gives the quote of the provider, with its note', () => {
+      expect(modelCost(OPENROUTER, VIDEO, quote({ usd: 0.1 }))).toStrictEqual({ usd: 0.1 })
+      expect(modelCost(OPENROUTER, VIDEO, quote({ usd: 0, note: 'free today' }))).toStrictEqual({ usd: 0, note: 'free today' })
+    })
+
+    // The quote is for the values of the call, the list price for the
+    // default values.
+    it('gives the quote or its error before the list price', () => {
+      const listed: ModelInfo = { ...VIDEO, price: { unit: 'clip', usd: 0.5 } }
+      expect(modelCost(OPENROUTER, listed, quote({ usd: 0.1 }))).toStrictEqual({ usd: 0.1 })
+      expect(modelCost(OPENROUTER, listed, quote({ error: 'No price for 4k' }))).toStrictEqual({ error: 'No price for 4k' })
+      expect(modelCost(OPENROUTER, listed, quote({ records: [] }))).toStrictEqual({ usdPerClip: 0.5 })
+      expect(modelCost(OPENROUTER, listed, null)).toStrictEqual({ usdPerClip: 0.5 })
+    })
+
+    it('gives the list price under a name that tells its unit, with its note', () => {
+      const cost = (price: ModelInfo['price']) => modelCost(OPENROUTER, { ...GEMINI, price }, null)
+      expect(cost({ unit: 'token', input: 2, output: 12 })).toStrictEqual({ usdPer1MInputTokens: 2, usdPer1MOutputTokens: 12 })
+      expect(cost({ unit: 'token', input: 2, output: 12, cachedInput: 0.2, note: 'over 200k tokens: more' }))
+        .toStrictEqual({ usdPer1MInputTokens: 2, usdPer1MOutputTokens: 12, usdPer1MCachedInputTokens: 0.2, note: 'over 200k tokens: more' })
+      expect(cost({ unit: 'character', usd: 30 })).toStrictEqual({ usdPer1MCharacters: 30, usdPer1000Characters: 0.03 })
+      expect(cost({ unit: 'second', usd: 0.006 })).toStrictEqual({ usdPerSecond: 0.006 })
+      expect(cost({ unit: 'image', usd: 0.04, note: 'at 1024x1024' })).toStrictEqual({ usdPerImage: 0.04, note: 'at 1024x1024' })
+      expect(cost({ unit: 'clip', usd: 0.5 })).toStrictEqual({ usdPerClip: 0.5 })
+    })
+
+    it('tells why there is no price', () => {
+      expect(modelCost(OPENROUTER, VIDEO, quote({ records: [{ cost: 1 }] }))).toStrictEqual({
+        error: 'OpenRouter gives no one price of a request with these values: its price records are in `priceEntry`. '
+          + 'Call model_info with `part: priceEntry` when this result does not hold it.',
       })
+      expect(modelCost(OPENROUTER, GEMINI, null)).toStrictEqual({ error: 'OpenRouter gives no price for this model.' })
+      expect(modelCost(OPENROUTER, VIDEO, quote({}))).toStrictEqual({ error: 'OpenRouter gives no price for this model.' })
     })
   })
 

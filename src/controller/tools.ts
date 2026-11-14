@@ -6,6 +6,7 @@ import type { ModelRef, Section, Tab } from '../model/chat/types'
 import type { ModelCache } from '../model/persistence/types'
 import type { KnownLimit } from '../model/providers/knownLimits'
 import { effectiveParameterValues } from '../model/providers/modelParameters'
+import { isFreshPrice } from '../model/providers/modelPrices'
 import { toggleRows, toggleValue } from '../model/providers/modelToggles'
 import type { ProviderMediaQuote } from '../model/providers/streamTypes'
 import { effectiveRequest, type ProviderInfo, type ProviderInputImageRules, type ProviderSettingsDescriptor } from '../model/providers/types'
@@ -14,9 +15,9 @@ import { AUDIO_TOOL, audioClipId, audioClipOf, audioCutPart, audioCutRequest, au
 import { brightnessPlan, contrastPlan, convertPlan, cropPlan, flipPlan, IMAGE_TOOL, imageIdArgument, imageOf, imageResultText, invertPlan, rotatePlan, saturationPlan, scalePlan, unreadableImageText, unwritableFormatError, type ImagePlan } from '../model/tools/imageTool'
 import { isIntermediate, jobCallLabel, jobInspectText, jobResultText, jobsListText, jobStartedText, jobsWaitText, unknownJobText, type JobResult } from '../model/tools/jobs'
 import { parameterValuesArgument, type ModelTarget } from '../model/tools/modelArguments'
-import { modelInfoSelection, modelInfoText, modelInfoTarget, type ModelInfoFacts } from '../model/tools/modelInfo'
+import { modelCost, modelInfoSelection, modelInfoText, modelInfoTarget, type ModelInfoFacts } from '../model/tools/modelInfo'
 import { invocationInputsText, MODEL_INVOKE_TOOL, modelInvocation } from '../model/tools/modelInvoke'
-import { modelListText } from '../model/tools/modelList'
+import { modelListArguments, modelListText } from '../model/tools/modelList'
 import { unexpectedToolErrorText, unknownToolText } from '../model/tools/registry'
 import { parseSubcommandCall, type SubcommandTool } from '../model/tools/subcommands'
 import { ToolError, type ToolArguments, type ToolRunResult } from '../model/tools/types'
@@ -98,13 +99,18 @@ function callSections(context: ToolRunContext): Section[] {
 }
 
 // The model of a `model_info` call (the one that it names, else the reply's
-// model `replyModel`), and its raw model-list entry in memory (undefined
-// when there is none). Throws for a model that the user cannot use
-// (`modelInfoTarget`).
-async function modelInfoLookup(args: ToolArguments, replyModel: ModelRef): Promise<ModelTarget & { entry: unknown }> {
+// model `replyModel`), its raw model-list entry in memory (undefined when
+// there is none), and the time of its provider's last model check. Throws
+// for a model that the user cannot use (`modelInfoTarget`).
+async function modelInfoLookup(args: ToolArguments, replyModel: ModelRef): Promise<ModelTarget & { entry: unknown, lastCheckedAt: number }> {
   const providers = await sbp('dez.provider/infos') as ProviderInfo[]
-  const target = modelInfoTarget(sbp('dez.model/modelCache/snapshot') as ModelCache, providers, args, replyModel)
-  return { ...target, entry: sbp('dez.model/modelCache/rawModel', target.provider.id, target.model.id) as unknown }
+  const cache = sbp('dez.model/modelCache/snapshot') as ModelCache
+  const target = modelInfoTarget(cache, providers, args, replyModel)
+  return {
+    ...target,
+    entry: sbp('dez.model/modelCache/rawModel', target.provider.id, target.model.id) as unknown,
+    lastCheckedAt: cache.providers[target.provider.id]?.lastCheckedAt ?? 0,
+  }
 }
 
 // The runner of a tool with subcommands (subcommands.ts): gives the list or
@@ -198,33 +204,52 @@ function imageRunner(plan: ImagePlan): ToolRunner {
 }
 
 const TOOL_RUNNERS: Record<string, ToolRunner> = {
-  // The models as the model picker shows them, from the model cache as it
-  // is (refreshed at startup and when the picker opens): no network request.
-  async model_list (args) {
+  // The models as the model picker shows them, from the model cache. First
+  // it runs a model check of each provider in the cache whose last check
+  // is older than PRICE_LIFETIME_MS, so that the list prices are fresh. A
+  // model check is free. A check that fails hides its provider, as in the
+  // picker; a provider whose check runs already is not checked again, and
+  // the result tells that its prices can be old. Bad arguments fail the
+  // call before any check.
+  async model_list (args, signal) {
+    modelListArguments(args)
     const providers = await sbp('dez.provider/infos') as ProviderInfo[]
-    const cache = sbp('dez.model/modelCache/snapshot') as ModelCache
-    return modelListText(cache, providers, args)
+    const checked = (sbp('dez.model/modelCache/snapshot') as ModelCache).providers
+    const now = Date.now()
+    const providerIds = providers.flatMap((provider) => {
+      const entry = checked[provider.id]
+      return provider.configured && entry && !isFreshPrice(entry.lastCheckedAt, now) ? [provider.id] : []
+    })
+    if (providerIds.length > 0) {
+      await untilAborted(() => sbp('dez.controller/modelCache/refresh', { providerIds }) as Promise<void>, signal)
+    }
+    return modelListText(sbp('dez.model/modelCache/snapshot') as ModelCache, providers, args)
   },
   // All that Dez knows about one model: the one that the call names, else
   // the reply's model. The raw entries of the provider's model list are in
   // memory only, so after a start they are missing until the provider's
   // next model check; then this one runs a check of that provider now, and
-  // looks again (the model may be gone). A call with `only` gives no entry,
-  // so it runs no check.
+  // looks again (the model may be gone). It also runs one when the call
+  // asks for the price and the last check is older than PRICE_LIFETIME_MS,
+  // so that the list prices are fresh. A call whose `only` leaves out
+  // `cost` gives no entry and no price, so it runs no check.
   //
   // The result also tells the value that a request sends for each
   // parameter now (the call's own value, else the user's from the provider
   // settings popup, else the default), the toggles that apply with their
   // values, the rules of an input image, and the limits that Dez knows from
-  // other places than the provider's data. For a media model it asks the
+  // other places than the provider's data. Unless `only` leaves out `cost`,
+  // it gives the price (`modelCost`): for a media model it asks the
   // provider for the price of one request with those values, or for the
-  // model's price records, unless `only` leaves out `cost`; that costs
-  // nothing. A failed price request does not fail the call.
+  // model's price records, which costs nothing. It always asks, never the
+  // quote cache, so that a new price of the provider shows at once. A
+  // failed price request does not fail the call.
   async model_info (args, signal, context) {
     const selection = modelInfoSelection(args)
     const only = selection && 'only' in selection ? selection.only : undefined
+    const wantsCost = !only || only.includes('cost')
     let found = await modelInfoLookup(args, context.model)
-    if (found.entry === undefined && !only) {
+    if (wantsCost && (found.entry === undefined || !isFreshPrice(found.lastCheckedAt, Date.now()))) {
       await untilAborted(() => sbp('dez.controller/modelCache/refresh', { providerIds: [found.provider.id], force: true }) as Promise<void>, signal)
       found = await modelInfoLookup(args, context.model)
     }
@@ -247,12 +272,13 @@ const TOOL_RUNNERS: Record<string, ToolRunner> = {
     const mediaEntry = sbp('dez.model/modelCache/rawModel', provider.id, model.id, 'media') as unknown
     if (mediaEntry !== undefined) facts.mediaEntry = mediaEntry
 
-    const kind = effectiveRequest(model)
-    if (kind !== 'chat' && kind !== 'none' && (!only || only.includes('cost'))) {
+    if (wantsCost) {
+      const kind = effectiveRequest(model)
       try {
-        const quote = await untilAborted(() => sbp('dez.provider/mediaQuote', { ...ref, kind, parameters: values }) as Promise<ProviderMediaQuote | null>, signal)
-        if (quote?.usd !== undefined) facts.cost = { usd: quote.usd, ...(quote.note !== undefined && { note: quote.note }) }
-        else if (quote?.error !== undefined) facts.cost = { error: quote.error }
+        const quote = kind === 'chat' || kind === 'none'
+          ? null
+          : await untilAborted(() => sbp('dez.provider/mediaQuote', { ...ref, kind, parameters: values }) as Promise<ProviderMediaQuote | null>, signal)
+        facts.cost = modelCost(provider, model, quote)
         if (quote?.records !== undefined) facts.priceEntry = quote.records
       } catch (error) {
         if (signal.aborted) throw error
