@@ -20,7 +20,8 @@
 //! The limits of the confinement: the network is not confined (the argument
 //! checks refuse its protocols); the program can read the facts of any file
 //! (size, time, owner, and extended attributes), not its content; on macOS
-//! it can also read the files of the system that a program needs to start.
+//! it can also read the files of the system that a program needs to start,
+//! and the names in the root folder `/`.
 
 use std::path::{Path, PathBuf};
 

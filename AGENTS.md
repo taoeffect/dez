@@ -291,6 +291,7 @@ Do not ever read, view, print, or `cat` `~/.config/dez/provider_keys.json`; it c
 - **`@tauri-apps/plugin-store` is unused**: app files use Dez's own Rust file I/O.
 - **Secrets wrapper is not a vault**: `src/utils/secret.ts`; never log provider headers, native HTTP payloads, or diagnostics without sanitization.
 - **Sounds and the ffmpeg programs are in Git LFS**: clone with LFS (`git lfs pull`). A pointer file in place of a sound builds with no error, and only `play()` fails (the e2e guard in `tests/e2e/notifications.e2e.ts` catches it); a pointer file in place of a program stops the build (`src-tauri/build.rs`).
+- **tauri-build puts the bundled programs next to a debug build**: keep it at 2.7 or newer; an older one copies them into a wrong folder with the build folder layout of Rust 1.100, and every run of a program fails as "missing" (`src-tauri/Cargo.toml`).
 - When using the `agentic_fetch` tool:
   - If searching the web, *ALWAYS* tell the tool to never use local tools like Grep, and only search the web
   - If searching local folders, *ALWAYS* tell the tool to restrict its searches to this folder only and to never search outside of it

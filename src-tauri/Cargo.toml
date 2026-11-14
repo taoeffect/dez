@@ -18,6 +18,12 @@ crate-type = ["staticlib", "cdylib", "rlib"]
 # checks the bundled ffmpeg and ffprobe programs (binaries/) against
 # binaries/manifest.json with them.
 [build-dependencies]
+# tauri-build copies the bundled programs (`bundle.externalBin`) next to the
+# Dez program of a debug build. It must be 2.7 or newer: older versions take
+# the third parent of OUT_DIR as the target folder, and the cargo of Rust
+# 1.100 puts OUT_DIR one folder deeper, so the copies went into
+# target/debug/build/ and every run of a bundled program failed.
+# https://github.com/tauri-apps/tauri/pull/15831
 tauri-build = { version = "=2.7.4", features = [] }
 sha2 = "=0.10.9"
 serde_json = "=1.0.149"
