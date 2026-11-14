@@ -183,8 +183,8 @@ function onOverlayClick(event: MouseEvent) {
               <code>asset_view</code>: an image, some frames of a video clip, or the wave and the
               loudness of an audio clip. It sees these pictures only in the reply where it asked for
               them. A model that reads no images gets only the facts of the asset (for example its
-              size, length, and format). With the Dez tool <code>asset_info</code>, a model reads
-              the facts of an asset, and who made it.
+              size, length, and format), and the loudness of an audio clip. With the Dez tool
+              <code>asset_info</code>, a model reads the facts of an asset, and who made it.
             </p>
 
             <h3>Ids</h3>

@@ -343,7 +343,7 @@ export function assetViewPictures(items: readonly AssetViewItem[]): ReplyPicture
  *  (`imageInput` false). */
 export function assetViewText(items: readonly AssetViewItem[], imageInput: boolean): string {
   const lines = items.flatMap((item) => [`@${item.id} | ${item.kind} | ${item.facts}`, ...item.notes])
-  if (!imageInput) lines.push('This model gets no pictures, so Dez gives the facts only.')
+  if (!imageInput) lines.push('This model gets no pictures, so Dez gives only the facts, and the loudness of an audio clip.')
   else if (items.some((item) => item.picture)) {
     lines.push('You see each picture after the results of the calls of this round, after a line that names it. '
       + 'You see the pictures in this reply only. In a later reply, call asset_view again to see them again.')
