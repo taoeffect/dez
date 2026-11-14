@@ -637,20 +637,31 @@ mod tests {
         assert!(dir.file_names().is_empty());
     }
 
-    // The top text of the error ("error sending request") alone does not
-    // tell what broke: the text of each cause under it follows.
-    #[tokio::test]
-    async fn a_network_error_tells_its_cause() {
-        let dir = TempDir::new("download-closed");
-        // The server reads the request and closes the connection with no
-        // answer.
-        let url = serve(Vec::new(), false).await;
+    // A test error: its text, and the error under it.
+    #[derive(Debug, thiserror::Error)]
+    #[error("{text}")]
+    struct ChainError {
+        text: &'static str,
+        source: Option<Box<ChainError>>,
+    }
 
-        let error = get(url, &dir.0.join("clip.mp4"), rule(1024, None)).await.expect_err("closed");
+    // An error whose `source()` chain holds `texts`, the top text first.
+    fn chain(texts: &[&'static str]) -> ChainError {
+        let mut errors = texts.iter().rev().map(|&text| ChainError { text, source: None });
+        let innermost = errors.next().expect("a text");
+        errors.fold(innermost, |source, error| ChainError { source: Some(Box::new(source)), ..error })
+    }
 
-        // reqwest 0.12: "error sending request: client error (SendRequest):
-        // connection closed before message completed".
-        assert!(error.starts_with("error sending request: ") && error.contains("closed"), "{error}");
+    // The top text of a reqwest error ("error sending request") alone does
+    // not tell what broke: the text of each cause under it follows. Some
+    // error types put their source into their own text; that text does not
+    // come twice.
+    #[test]
+    fn error_chain_text_adds_each_new_cause() {
+        assert_eq!(error_chain_text(&chain(&["outer"])), "outer");
+        assert_eq!(error_chain_text(&chain(&["outer", "middle", "inner"])), "outer: middle: inner");
+        assert_eq!(error_chain_text(&chain(&["outer: middle", "middle", "inner"])), "outer: middle: inner");
+        assert_eq!(error_chain_text(&chain(&["outer", "", "inner"])), "outer: inner");
     }
 
     // The request as the webview sends it: JSON with the body `body`.
