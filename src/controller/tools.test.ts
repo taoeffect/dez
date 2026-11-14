@@ -847,18 +847,18 @@ describe('dez.controller/tools/run', () => {
       expect(deletedImages).toStrictEqual([IMAGE])
     })
 
-    it('jobs_wait ends at once when the user stops the reply, and keeps the result of the job for a later reader', async () => {
-      const slow = heldWork()
-      const { id } = jobs.start('model_invoke', slow.work, LONG)
+    it('jobs_wait ends at once when the user stops the reply, and the stopped job leaves no result', async () => {
+      jobs.start('model_invoke', heldWork().work, LONG)
       const abort = new AbortController()
       const wait = jobTool('jobs_wait', {}, abort.signal)
 
+      // What `dez.stream/stop` does.
       abort.abort()
+      jobs.stopAll()
 
       expect((await wait).isError).toBe(true)
       expect(consoleError).not.toHaveBeenCalled()
-      slow.finish({ text: 'Done.', isError: false, assets: [] })
-      expect((await jobs.settle()).map((job) => job.id)).toStrictEqual([id])
+      expect(await jobs.settle()).toStrictEqual([])
     })
 
     it('jobs_list lists the jobs of the reply and does not wait', async () => {

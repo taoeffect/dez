@@ -10,9 +10,12 @@ import { sectionRolesChanged, sectionTexts } from './lineBlocks'
 // a clip of the conversation shows as a chip: a small rounded fill behind
 // the text, in the mention color. The chip tells the user that Dez read the
 // word as a mention, and which asset it names; a word with no chip (`@zz`,
-// an e-mail address) is plain text for a request too. The mention stays
-// doc text, so the caret, the selection, find, and copy work as on any
-// text: the chip is a mark decoration, never a widget.
+// an e-mail address) is plain text for a request too. The one exception is
+// a line that the path scrub of a request changes (a bare path of a stored
+// file, a broken reference or tag): it can hold a mention that a request
+// takes and that has no chip (`namedMentions`). The mention stays doc text,
+// so the caret, the selection, find, and copy work as on any text: the chip
+// is a mark decoration, never a widget.
 //
 // The chips come from `namedMentions` (assetMentions.ts), the rule that a
 // test ties to the request builder. Sections of both roles get them: a

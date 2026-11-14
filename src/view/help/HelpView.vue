@@ -163,8 +163,8 @@ function onOverlayClick(event: MouseEvent) {
             <p>
               A clip goes only to a model that takes audio or video, for example a video model or
               a transcription model. A chat model gets only the id of a clip. A model that needs
-              exactly one image, for example an image editor, takes the newest image of the
-              conversation when your message has none.
+              an image and can work with one, for example an image editor, takes the newest image
+              of the conversation when your message has none.
             </p>
             <p>
               A chat model can ask another model for an image, a clip, a transcription, or an

@@ -107,7 +107,7 @@ export function sectionsToStreamMessages(sections: Section[], requestModel: Mode
  *  `imagesLeftOut` and `clipsLeftOut` count the message's images and clips
  *  that the request does not take, so that the submit can tell the user.
  *
- *  When the message has no image, a request that needs exactly one image
+ *  When the message has no image, a request whose lowest image count is one
  *  (`minInputImages`) takes the newest image reference of `sections` (the
  *  tab's sections, in which the reply's own section is still empty), so
  *  that "Make it blue" or "Make it move" uses the image of the reply

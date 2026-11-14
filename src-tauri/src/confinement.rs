@@ -13,9 +13,9 @@
 //!   OS. It is the only program of the computer that a run starts.
 //!
 //! Where the OS has neither (an old or a stripped kernel, a macOS with no
-//! `sandbox-exec`), the program runs with no confinement, by the user's
-//! choice, and the argument checks of the page (`argumentProblem` in
-//! videoTool.ts) are its only guard. Dez then writes one warning to its log.
+//! `sandbox-exec`), the program runs with no confinement, and the argument
+//! checks of the page (`argumentProblem` in videoTool.ts) are its only
+//! guard. Dez then writes one warning to its log.
 //!
 //! The limits of the confinement: the network is not confined (the argument
 //! checks refuse its protocols); the program can read the facts of any file

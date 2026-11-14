@@ -679,7 +679,7 @@ describe('ffmpegRunResult', () => {
     const long = ffmpegRunResult({ nullOutput: false }, ENDED, NO_FILES, logOf(), outputOf('x'.repeat(PROGRAM_OUTPUT_CAP + 1)))
 
     expect(list).toStrictEqual({ text: 'ffmpeg ended with no error and made no file. Its output:\nV..... libx264', isError: false })
-    expect(long.text).toContain(`This is its first ${PROGRAM_OUTPUT_CAP} characters.`)
+    expect(long.text).toContain(`These are its first ${PROGRAM_OUTPUT_CAP} characters.`)
   })
 
   it('takes a run with the null format and no file as done', () => {
@@ -776,7 +776,7 @@ describe('the ffprobe results', () => {
     const text = ffprobeResultText(inputs, outputOf('x'.repeat(PROGRAM_OUTPUT_CAP)), outputOf('warn'))
     const lines = text.split('\n')
 
-    expect(lines[0]).toContain(`this is the first ${PROGRAM_OUTPUT_CAP} characters`)
+    expect(lines[0]).toContain(`these are the first ${PROGRAM_OUTPUT_CAP} characters`)
     expect(lines[0]).toContain('-show_entries')
     expect(lines[1]).toBe('The image @e went to ffprobe as a JPEG copy, with white in place of transparent pixels: the facts are those of the copy.')
     expect(lines[2]).toBe('x'.repeat(PROGRAM_OUTPUT_CAP))

@@ -218,8 +218,8 @@ function chatUsage(model: ModelInfo, facts: UsageFacts): string[] {
 function inputImagesUsage(kind: MediaKind, model: ModelInfo): string[] {
   const max = maxInputImages(kind, model.images)
   const min = minInputImages(kind, model.images)
-  // With no image in the message, only a model that needs exactly one image
-  // gets the newest image of the conversation (`mediaRequestInput`).
+  // With no image in the message, only a model whose lowest image count is
+  // one gets the newest image of the conversation (`mediaRequestInput`).
   const takesNewest = min === 1
   if (max === 0) return [USAGE_TEXTS.noImages]
   // A message to a model that is known not to read images carries no

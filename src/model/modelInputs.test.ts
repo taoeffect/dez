@@ -28,9 +28,9 @@ describe('modelInputs', () => {
   })
 
   // A message to a model that reads no images carries none; only a kind
-  // that needs exactly one image then gets the newest image of the
+  // whose lowest image count is one then gets the newest image of the
   // conversation (`mediaRequestInput`).
-  it('gives a media model that reads no images an image only when its kind needs exactly one', () => {
+  it('gives a media model that reads no images an image only when the lowest image count of its kind is one', () => {
     expect(modelInputs({ request: 'video', imageInput: false, images: { maxImages: 2 } })).toStrictEqual(['text'])
     expect(modelInputs({ request: 'imageEdit', imageInput: false })).toStrictEqual(['text', 'image'])
     expect(modelInputs({ request: 'imageEdit', imageInput: false, images: { maxImages: 3, minImages: 2 } })).toStrictEqual(['text'])

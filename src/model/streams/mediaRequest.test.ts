@@ -126,7 +126,7 @@ describe('preparedMediaRequest', () => {
 
   // "Make it blue" from the user edits the image of the reply before. A
   // model names each input, so that it never edits an image by chance.
-  it('gives a tool prompt that names no image no image of the conversation, where a user message gets the newest one', () => {
+  it('gives no image of the conversation to a tool prompt that names none, where a user message gets the newest one', () => {
     expect([invoked('imageEdit', 'Make it blue').input.images, submitted('imageEdit', 'Make it blue').images]).toStrictEqual([[], [GENERATED]])
   })
 })

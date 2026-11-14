@@ -1008,7 +1008,7 @@ export function ffmpegRunResult(
   // A run that only prints (`-encoders`, `-h filter=scale`) writes to the
   // standard output; a run with files or with the null format does not.
   if (output.text.trim() !== '') {
-    const cut = output.cut ? ` This is its first ${PROGRAM_OUTPUT_CAP} characters.` : ''
+    const cut = output.cut ? ` These are its first ${PROGRAM_OUTPUT_CAP} characters.` : ''
     return { text: `ffmpeg ended with no error and made no file.${notKeptText(notKept)} Its output:${cut}\n${output.text.trim()}`, isError: false }
   }
   if (call.nullOutput) {
@@ -1077,7 +1077,7 @@ export function ffprobeResultText(inputs: readonly VideoInput[], output: OutputS
   const whole = [output.text.trim(), errorOutput.text.trim()].filter((text) => text !== '').join('\n\n')
   const cut = output.cut || errorOutput.cut || whole.length > PROGRAM_OUTPUT_CAP
   const notes = [
-    ...(cut ? [`ffprobe wrote more than a result holds: this is the first ${PROGRAM_OUTPUT_CAP} characters. Ask for less, for example with -show_entries or -read_intervals.`] : []),
+    ...(cut ? [`ffprobe wrote more than a result holds: these are the first ${PROGRAM_OUTPUT_CAP} characters. Ask for less, for example with -show_entries or -read_intervals.`] : []),
     ...inputs
       .filter((input) => input.kind === 'image' && input.jpegCopy)
       .map(({ id }) => `The image @${id} went to ffprobe as ${JPEG_COPY_NOTE}: the facts are those of the copy.`),

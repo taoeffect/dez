@@ -14,7 +14,7 @@ export type ModelInputFacts = Pick<ModelInfo, 'request' | 'imageInput' | 'images
  *  image rules `rules` and the `ModelInfo.imageInput` flag `imageInput`:
  *  the kind takes some (`maxInputImages`), and the model is not known not
  *  to read images. A model that is known not to read them still gets an
- *  image when its kind needs exactly one (an upscale). */
+ *  image when the lowest image count of its kind is one (an upscale). */
 export function takesInputImages(kind: MediaKind, imageInput: boolean | undefined, rules: InputImageRules | undefined): boolean {
   return maxInputImages(kind, rules) > 0 && (imageInput !== false || minInputImages(kind, rules) === 1)
 }
@@ -26,8 +26,8 @@ export function takesInputImages(kind: MediaKind, imageInput: boolean | undefine
  *  - a media kind: the text unless the kind sends none (`sendsPrompt`);
  *    images when the kind takes some (`maxInputImages`) and they go (a
  *    message to a model that is known not to read images carries none, and
- *    then only a kind that needs exactly one image gets the newest image of
- *    the conversation, `mediaRequestInput`); and the clips of each kind
+ *    then only a kind whose lowest image count is one gets the newest image
+ *    of the conversation, `mediaRequestInput`); and the clips of each kind
  *    that it takes (`maxInputClips`).
  *  - `none`, or an output that Dez does not store: nothing, as Dez sends
  *    such a model no request. */
