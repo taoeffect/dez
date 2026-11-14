@@ -1,4 +1,4 @@
-import { pointerClickAt } from './dom'
+import { pointerClickAt, waitForValue } from './dom'
 import type { E2EBrowser } from './session'
 import { assetPartPoint } from './thread'
 
@@ -69,9 +69,44 @@ export async function toolPanel (browser: E2EBrowser, index: number): Promise<To
   }, index)
 }
 
-/** Presses the chip `index` (doc order), which opens or closes its panel. */
+/** A picture that the panel of an `asset_view` chip shows: the label of
+ *  the picture as the model got it, and `size`, the pixels of its file
+ *  (`48x36`), null while it loads, or "missing" when its copy is gone. */
+export interface ToolPanelPicture {
+  label: string
+  size: string | null
+}
+
+/** The pictures of the panel of the chip `index` (doc order); null while
+ *  the panel is closed. */
+export async function toolPanelPictures (browser: E2EBrowser, index: number): Promise<ToolPanelPicture[] | null> {
+  return browser.execute((chipIndex: number) => {
+    const panel = document.querySelectorAll('.cm-content .dez-tool-call')[chipIndex]?.querySelector('.dez-tool-call__panel')
+    if (!panel) return null
+    return Array.from(panel.querySelectorAll('.dez-tool-call__picture'), (item) => {
+      const img = item.querySelector<HTMLImageElement>('img.dez-tool-call__picture-img')
+      const loaded = img !== null && img.complete && img.naturalWidth > 0
+      return {
+        label: item.querySelector('.dez-tool-call__picture-label')?.textContent ?? '',
+        size: item.querySelector('.dez-image-missing') ? 'missing' : loaded ? `${img.naturalWidth}x${img.naturalHeight}` : null,
+      }
+    })
+  }, index)
+}
+
+/** Presses the chip `index` (doc order), which opens or closes its panel.
+ *  A panel that just opened or closed changes the height of its line, and
+ *  CodeMirror can move the chips some frames later, when it measures the
+ *  lines: the press waits until two reads give the chip the same place. */
 export async function pressToolChip (browser: E2EBrowser, index: number): Promise<void> {
-  await pointerClickAt(browser, await assetPartPoint(browser, '.dez-tool-call', index, '.dez-tool-call__chip'))
+  const place = () => assetPartPoint(browser, '.dez-tool-call', index, '.dez-tool-call__chip')
+  let point = await place()
+  await waitForValue(browser, `settled place of chip ${index}`, async () => {
+    const last = point
+    point = await place()
+    return point.x === last.x && point.y === last.y
+  }, true)
+  await pointerClickAt(browser, point)
 }
 
 /** The part of a chip that tells that its call is intermediate. */

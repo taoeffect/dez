@@ -8,7 +8,7 @@ import { REFUSED_DEVICES, REFUSED_PROTOCOLS } from '../../src/model/tools/videoT
 import { byteSizeText } from '../../src/utils/byteSize'
 import { consoleErrors, pointerClick, resetConsoleErrors, screenshotOnFailure, waitForValue } from './harness/dom'
 import { linkedDropDir } from './harness/drops'
-import { appFilePath, filesIn, mediaTempDir, newFileIn, storedFileName, workDir, writeTestFile } from './harness/fixtures'
+import { appFilePath, conversationFilePath, filesIn, mediaTempDir, newFileIn, storedFileName, workDir, writeTestFile } from './harness/fixtures'
 import { generatedImagesDir, shownImages, solidPng } from './harness/images'
 import { startedJob, waitCall } from './harness/jobs'
 import { clipTag, MP4_VIDEO, shownPlayers, silentWav, startClipServer, WEBM_VIDEO, type ClipServer, type ShownPlayer } from './harness/media'
@@ -16,8 +16,8 @@ import { startMockProviderApp, takeRequest, type MockProviderApp } from './harne
 import { mockChatPath, openAiToolCall, replyText, sendChatReply, sendToolCalls, toolResult, type HeldRequest, type MockProvider } from './harness/mockServer'
 import { pidsWithCwd, processExists } from './harness/processes'
 import type { E2EBrowser } from './harness/session'
-import { endedReply, newTab, openSeededConversation, openToasts, pickModel, submit, waitForThread } from './harness/thread'
-import { hiddenAssetNotes, hiddenPart, hidingPart, intermediateParts, pressToolChip, revealingPart } from './harness/toolChips'
+import { activeConversationId, endedReply, newTab, openSeededConversation, openToasts, pickModel, submit, waitForThread } from './harness/thread'
+import { hiddenAssetNotes, hiddenPart, hidingPart, intermediateParts, pressToolChip, revealingPart, toolChips, toolPanelPictures } from './harness/toolChips'
 
 // The `video` tool, driven through the real app against a mock chat model
 // in this process. The app runs the real ffmpeg and ffprobe of the debug
@@ -48,7 +48,17 @@ import { hiddenAssetNotes, hiddenPart, hidingPart, intermediateParts, pressToolC
 // - `asset_view` shows the model an image as it is, the frame sheet of a
 //   video clip, and the wave of an audio clip, with the times of the
 //   frames and the loudness from the log of the same ffmpeg, in each later
-//   request of the reply and in no request of the next reply.
+//   request of the reply and in no request of the next reply;
+// - on a clip of 4 shots that the spec makes with that ffmpeg, `asset_view`
+//   shows the frames at given times (`times`), one frame for each shot
+//   (`scenes`) with the wave of the sound as a strip under them, the
+//   spectrogram of a tone, and the loudness of the video clip; the panel
+//   of each chip shows the picture that its call showed the model, also
+//   after a relaunch;
+// - `layout` "grid" puts two images and the frame sheets of two video clips
+//   into one picture;
+// - the `checks` of `asset_info` find the black, frozen, and silent parts,
+//   the loudness curve, and the cuts of each clip.
 // No request holds a path of the test HOME (`takeRequest` checks each one).
 //
 // One app session serves the whole file; each test starts in a new tab.
@@ -60,6 +70,8 @@ const HOUR_MS = 60 * 60 * 1000
 // Even sizes, which the VP9 encoder needs for the usual pixel format.
 const PICTURE_PNG = solidPng(48, 36, [40, 90, 220])
 const SOUND_WAV = silentWav(1)
+// A wide and a tall image for the grid.
+const TALL_PNG = solidPng(36, 48, [220, 160, 40])
 
 // The bytes of each file of the conversation that `openClips` opens, by
 // the id of its clip or image.
@@ -74,6 +86,39 @@ const CLIPS_REPLY_INDEX = 3
 // A run with no end by itself for 10 minutes that does little work: a
 // tone into a WAV file at the pace of real time (`-re`).
 const ENDLESS_TONE = '-re -f lavfi -i sine=frequency=440 -t 600 tone.wav'
+
+// The arguments of ffmpeg that make the video clip `@a` of `openShots`, of
+// 4 shots of 1 s at 5 fps (a test picture, red, black, and the test picture
+// again), with a tone in the first second, 2 s of silence, and a tone of
+// 0.9 s: with a tone of 1 s, the Opus sound makes the clip 4.008 s long,
+// not 4 s.
+const SHOTS_ARGS = [
+  '-v error -y',
+  '-f lavfi -i testsrc=size=48x36:rate=5:duration=1',
+  '-f lavfi -i color=c=red:size=48x36:rate=5:duration=1',
+  '-f lavfi -i color=c=black:size=48x36:rate=5:duration=1',
+  '-f lavfi -i testsrc=size=48x36:rate=5:duration=1',
+  '-f lavfi -i sine=frequency=440:duration=1',
+  '-f lavfi -i anullsrc=r=44100:cl=mono:duration=2',
+  '-f lavfi -i sine=frequency=440:duration=0.9',
+  '-filter_complex [0:v][1:v][2:v][3:v]concat=n=4:v=1:a=0[v];[4:a][5:a][6:a]concat=n=3:v=0:a=1[a]',
+  '-map [v] -map [a] -c:v libvpx-vp9 -pix_fmt yuv420p -c:a libopus',
+].join(' ').split(' ')
+
+// The arguments of ffmpeg that make the audio clip `@b` of `openShots`: a
+// tone of 1 s in a WAV file.
+const TONE_ARGS = '-v error -y -f lavfi -i sine=frequency=440:duration=1'.split(' ')
+
+// The ids of the files of the conversation that `openShots` opens.
+type ShotId = 'a' | 'b' | 'c' | 'd' | 'e'
+const SHOT_IDS: ShotId[] = ['a', 'b', 'c', 'd', 'e']
+
+// The line of an `asset_view` result after the lines of its assets.
+const VIEW_END_LINE = 'You see each picture after the results of the calls of this round, after a line that names it. '
+  + 'You see the pictures in this reply only. In a later reply, call asset_view again to see them again.'
+
+// The loudness line of `asset_view` for the part `part` of a clip.
+const loudnessLine = (part: string) => new RegExp(`^Loudness of ${part}: -\\d+(\\.\\d)? LUFS integrated, \\d+(\\.\\d)? LU range, -\\d+(\\.\\d)? dBFS true peak\\.$`)
 
 const videoCall = (id: string, command: string, parameters: Record<string, unknown>) =>
   openAiToolCall(id, 'video', { command, parameters: JSON.stringify(parameters) })
@@ -107,6 +152,9 @@ describe('video tool', () => {
   let videoDir: string
   let audioDir: string
   let imagesDir: string
+  // The bytes of each file of the conversation that `openShots` opens, by
+  // the id of its clip or image. `beforeAll` makes the clips.
+  let shotSources: Record<ShotId, Buffer>
 
   const chatRequest = (): Promise<HeldRequest> => takeRequest(setup, CHAT_PATH)
 
@@ -129,6 +177,34 @@ describe('video tool', () => {
     return {
       streams: streams.map(({ codec_type: type, codec_name: codec, width, height }) => `${type} ${codec}${width === undefined ? '' : ` ${width}x${height}`}`),
       seconds: format.duration === undefined ? null : Math.round(Number(format.duration) * 10) / 10,
+    }
+  }
+
+  // The streams of the picture of the data URL `url`, which must be a
+  // JPEG, as ffprobe reads them from a copy in the file `name`
+  // (`video mjpeg 1292x240`).
+  async function sentJpegFacts (url: string, name: string): Promise<string[]> {
+    const [type, data] = url.split(',')
+    expect(type).toBe('data:image/jpeg;base64')
+    const file = path.join(linkedDir, name)
+    await writeTestFile(file, Buffer.from(data, 'base64'))
+    return mediaFacts(file).streams
+  }
+
+  // The picture message after the tool messages of the request `request`:
+  // the text and the data URL of each part, and the bytes of base64 of all
+  // its pictures.
+  function sentPictures (request: HeldRequest): { messages: WireMessage[], parts: string[], urls: string[], bytes: number } {
+    const { messages }: { messages: WireMessage[] } = JSON.parse(request.body)
+    expect(messages.at(-1)?.role).toBe('user')
+    const content = messages.at(-1)?.content
+    const parts = Array.isArray(content) ? content : []
+    const urls = parts.flatMap(({ image_url: image }) => (image ? [image.url] : []))
+    return {
+      messages,
+      parts: parts.map(({ type, text }) => text ?? type),
+      urls,
+      bytes: urls.reduce((sum, url) => sum + url.split(',')[1].length, 0),
     }
   }
 
@@ -178,6 +254,43 @@ describe('video tool', () => {
     return files
   }
 
+  // Opens a conversation with the files of `shotSources`, all from the
+  // user, and gives the path of each file:
+  // - `@a`: a video clip of 4 shots with sound (`SHOTS_ARGS`);
+  // - `@b`: a tone of 1 s in a WAV file;
+  // - `@c`, `@e`: a wide and a tall PNG image;
+  // - `@d`: a video clip of one color, 2 s, with no sound.
+  // The newest user message of a reply has no image, so the reply has a
+  // budget of 20 pictures.
+  async function openShots (name: string): Promise<Record<ShotId, string>> {
+    const { home } = setup.app
+    const files: Record<ShotId, string> = {
+      a: appFilePath(home, 'assets', 'video', `${name}-a.webm`),
+      b: appFilePath(home, 'assets', 'audio', `${name}-b.wav`),
+      c: appFilePath(home, 'assets', 'images', `${name}-c.png`),
+      d: appFilePath(home, 'assets', 'video', `${name}-d.webm`),
+      e: appFilePath(home, 'assets', 'images', `${name}-e.png`),
+    }
+    for (const id of SHOT_IDS) await writeTestFile(files[id], shotSources[id])
+    await openSeededConversation(browser, home, name, [
+      {
+        role: 'user',
+        text: [
+          clipTag('video', { id: 'a', type: 'video/webm', src: files.a }),
+          clipTag('audio', { id: 'b', type: 'audio/wav', src: files.b }),
+          `![${files.c}](id=c)`,
+          clipTag('video', { id: 'd', type: 'video/webm', src: files.d }),
+          `![${files.e}](id=e)`,
+          'Here are my shots.',
+        ].join('\n'),
+      },
+      { role: 'agent', text: 'Got them.' },
+      { role: 'user', text: '' },
+    ])
+    await pickModel(browser, CALLER.name, CALLER.modelName)
+    return files
+  }
+
   // Answers the chat request `request` with the `video` call `callId`,
   // and the request after it with a `jobs_wait` call, which gives the
   // result of the job of that call.
@@ -206,10 +319,11 @@ describe('video tool', () => {
   }
 
   // After the calls of a test: no work folder stays, no file of the
-  // conversation changed, and nothing failed.
-  async function expectCleanEnd (files: Record<SourceId, string>): Promise<void> {
+  // conversation changed (`files`, from `openClips` or `openShots`, with
+  // their bytes in `sources`), and nothing failed.
+  async function expectCleanEnd (files: Record<string, string>, sources: Record<string, Buffer> = SOURCES): Promise<void> {
     expect(await filesIn(workRoot)).toStrictEqual([])
-    for (const id of SOURCE_IDS) expect((await fs.promises.readFile(files[id])).equals(SOURCES[id]), `the file of @${id} is as it was`).toBe(true)
+    for (const [id, file] of Object.entries(files)) expect((await fs.promises.readFile(file)).equals(sources[id]), `the file of @${id} is as it was`).toBe(true)
     expect(await openToasts(browser, 'error')).toStrictEqual([])
     expect(await consoleErrors(browser)).toStrictEqual([])
   }
@@ -229,6 +343,17 @@ describe('video tool', () => {
     videoDir = appFilePath(home, 'assets', 'generated', 'video')
     audioDir = appFilePath(home, 'assets', 'generated', 'audio')
     imagesDir = generatedImagesDir(home)
+    const shotsFile = path.join(linkedDir, 'shots.webm')
+    const toneFile = path.join(linkedDir, 'tone.wav')
+    programOutput('dez-ffmpeg', [...SHOTS_ARGS, shotsFile])
+    programOutput('dez-ffmpeg', [...TONE_ARGS, toneFile])
+    shotSources = {
+      a: await fs.promises.readFile(shotsFile),
+      b: await fs.promises.readFile(toneFile),
+      c: PICTURE_PNG,
+      d: WEBM_VIDEO,
+      e: TALL_PNG,
+    }
   })
 
   beforeEach(async () => {
@@ -434,17 +559,13 @@ describe('video tool', () => {
     // A sine at the default level of the lavfi source, an eighth of the
     // full scale: about -18 dBFS.
     expect(loudness).toMatch(/^Loudness of 0 s to 1 s: -\d+(\.\d)? LUFS integrated, \d+(\.\d)? LU range, -1[78](\.\d)? dBFS true peak\.$/)
-    expect(end).toBe('You see each picture after the results of the calls of this round, after a line that names it. '
-      + 'You see the pictures in this reply only. In a later reply, call asset_view again to see them again.')
+    expect(end).toBe(VIEW_END_LINE)
 
     // The pictures are one user message right after the tool message, with
     // a line that names each one.
-    const { messages }: { messages: WireMessage[] } = JSON.parse(viewed.body)
+    const { messages, parts, urls, bytes } = sentPictures(viewed)
     expect(messages.at(-2)?.role).toBe('tool')
-    const pictures = messages.at(-1)
-    expect(pictures?.role).toBe('user')
-    const parts = Array.isArray(pictures?.content) ? pictures.content : []
-    expect(parts.map(({ type, text }) => text ?? type)).toStrictEqual([
+    expect(parts).toStrictEqual([
       `asset_view: the frame sheet of the video clip @a: ${layout}.`,
       'image_url',
       'asset_view: the image @c.',
@@ -452,24 +573,16 @@ describe('video tool', () => {
       'asset_view: the wave of the audio clip @g, 0 s to 1 s, time runs left to right.',
       'image_url',
     ])
-    const [sheetUrl, imageUrl, waveUrl] = parts.flatMap(({ image_url: image }) => (image ? [image.url] : []))
+    const [sheetUrl, imageUrl, waveUrl] = urls
     expect(imageUrl).toBe(`data:image/png;base64,${PICTURE_PNG.toString('base64')}`)
     // Four frames, each scaled into a box of 320 by 320 pixels (320x240),
     // with 4 pixels between them.
-    const jpegFacts = async (url: string, name: string) => {
-      const [type, data] = url.split(',')
-      expect(type).toBe('data:image/jpeg;base64')
-      const file = path.join(linkedDir, name)
-      await writeTestFile(file, Buffer.from(data, 'base64'))
-      return mediaFacts(file).streams
-    }
-    expect(await jpegFacts(sheetUrl, 'sheet.jpg')).toStrictEqual(['video mjpeg 1292x240'])
-    expect(await jpegFacts(waveUrl, 'wave.jpg')).toStrictEqual(['video mjpeg 800x200'])
+    expect(await sentJpegFacts(sheetUrl, 'sheet.jpg')).toStrictEqual(['video mjpeg 1292x240'])
+    expect(await sentJpegFacts(waveUrl, 'wave.jpg')).toStrictEqual(['video mjpeg 800x200'])
     // The newest user message has no image, so the budget had 20 pictures.
     // The sheet costs 47 * 9 = 423 tokens, the image 2 * 2 = 4, and the
     // wave 29 * 8 = 232; the bytes are those of the base64 data.
-    const sentBytes = [sheetUrl, imageUrl, waveUrl].reduce((sum, url) => sum + url.split(',')[1].length, 0)
-    expect(budget).toBe(`Picture budget left in this reply: 17 pictures, 56,749 tokens and ${byteSizeText(MAX_REPLY_PICTURE_BYTES - sentBytes)} of base64.`)
+    expect(budget).toBe(`Picture budget left in this reply: 17 pictures, 56,749 tokens and ${byteSizeText(MAX_REPLY_PICTURE_BYTES - bytes)} of base64.`)
 
     // The next request of the reply sends the same messages again, the
     // pictures at the same place.
@@ -492,6 +605,196 @@ describe('video tool', () => {
     await sendChatReply(next.reply, CALLER.modelName)
     await endedReply(browser, CLIPS_REPLY_INDEX + 2)
     await expectCleanEnd(files)
+  })
+
+  it('shows the model the frames of a video clip at given times and one for each shot, with the wave of its sound under them, and the spectrogram of a tone; the panel of each chip shows its picture, also after a relaunch', async () => {
+    const { home } = setup.app
+    const viewsDir = appFilePath(home, 'assets', 'generated', 'views')
+    const viewsBefore = await filesIn(viewsDir)
+    const files = await openShots('asset-view-shots')
+    await submit(browser, 'Look at my shots and my tone.')
+    const first = await chatRequest()
+    sendToolCalls(first.reply, [
+      openAiToolCall('call_scenes', 'asset_view', { assets: '@a', scenes: true, sound_picture: 'wave' }),
+      openAiToolCall('call_times', 'asset_view', { assets: '@a', times: '0.5 2.5' }),
+      openAiToolCall('call_spectrogram', 'asset_view', { assets: '@b', sound_picture: 'spectrogram' }),
+    ])
+
+    // The pictures of the three calls are one user message after their
+    // tool messages, in the order of the calls.
+    const viewed = await chatRequest()
+    const { messages, parts, urls } = sentPictures(viewed)
+    expect(messages.slice(-4, -1).map(({ role }) => role)).toStrictEqual(['tool', 'tool', 'tool'])
+    // The clip has a frame each 0.2 s, and a cut at the start of each shot.
+    const scenesLabel = 'asset_view: the frame sheet of the shots of the video clip @a: 4 frames in one row, at 0, 1, 2, 3 s; '
+      + 'under the frames, the wave of its sound, 0 s to 4 s, time runs left to right.'
+    // The first frame at or after 0.5 s is the one at 0.6 s.
+    const timesLabel = 'asset_view: the frame sheet of the video clip @a: 2 frames in one row, at 0.6, 2.6 s.'
+    const spectrogramLabel = 'asset_view: the spectrogram of the audio clip @b, 0 s to 1 s, time runs left to right and the frequency bottom to top.'
+    expect(parts).toStrictEqual([scenesLabel, 'image_url', timesLabel, 'image_url', spectrogramLabel, 'image_url'])
+    // Each frame fits in a box of 320 by 320 pixels (320x240), with 4
+    // pixels between two frames; the strip is 160 pixels high, 4 pixels
+    // under the frames. The spectrogram is 800x200 pixels, with its axes
+    // and its scale around it.
+    const [scenesUrl, timesUrl, spectrogramUrl] = urls
+    const panelPictures = [
+      { label: scenesLabel, size: '1292x404' },
+      { label: timesLabel, size: '644x240' },
+      { label: spectrogramLabel, size: '1082x328' },
+    ]
+    expect(await sentJpegFacts(scenesUrl, 'scenes.jpg')).toStrictEqual([`video mjpeg ${panelPictures[0].size}`])
+    expect(await sentJpegFacts(timesUrl, 'times.jpg')).toStrictEqual([`video mjpeg ${panelPictures[1].size}`])
+    expect(await sentJpegFacts(spectrogramUrl, 'spectrogram.jpg')).toStrictEqual([`video mjpeg ${panelPictures[2].size}`])
+
+    // The budget line of each result tells what is left after the pictures
+    // of its call and of the calls before it: the sheet of the shots costs
+    // 47 * 15 = 705 tokens, the sheet of the times 23 * 9 = 207, and the
+    // spectrogram 39 * 12 = 468.
+    const budgetLine = (pictures: number, tokens: string, sent: readonly string[]) => {
+      const left = MAX_REPLY_PICTURE_BYTES - sent.reduce((sum, url) => sum + url.split(',')[1].length, 0)
+      return `Picture budget left in this reply: ${pictures} pictures, ${tokens} tokens and ${byteSizeText(left)} of base64.`
+    }
+    const shotsLine = `@a | video | WebM | 4 s | 48x36 | 5 fps | vp9 | sound (opus) | ${byteSizeText(shotSources.a.length)}`
+    expect(toolResult(viewed, 'call_scenes').split('\n')).toStrictEqual([
+      shotsLine,
+      'Frame sheet of the shots of 0 s to 4 s: 4 frames in one row, at 0, 1, 2, 3 s. '
+        + 'The first frame is the first frame of the part, and each other one the first frame after a cut. Dez found 3 cuts in the part. '
+        + 'Under the frames: the wave of the sound of 0 s to 4 s, a strip of 1292x160 pixels; '
+        + 'time runs left to right over the whole width of the sheet, and the height is the peak level on a square-root scale.',
+      expect.stringMatching(loudnessLine('0 s to 4 s')),
+      VIEW_END_LINE,
+      budgetLine(19, '56,703', [scenesUrl]),
+    ])
+    // With `times`, the loudness is of the whole clip.
+    expect(toolResult(viewed, 'call_times').split('\n')).toStrictEqual([
+      shotsLine,
+      'Frame sheet of the first frame at or after each of `times` 0.5, 2.5 s: 2 frames in one row, at 0.6, 2.6 s.',
+      expect.stringMatching(loudnessLine('0 s to 4 s')),
+      VIEW_END_LINE,
+      budgetLine(18, '56,496', [scenesUrl, timesUrl]),
+    ])
+    expect(toolResult(viewed, 'call_spectrogram').split('\n')).toStrictEqual([
+      `@b | audio | WAV | 1 s | pcm_s16le | 44100 Hz | 1 channel | ${byteSizeText(shotSources.b.length)}`,
+      'Spectrogram of 0 s to 1 s: 1082x328 pixels, time runs left to right, on the axes at the top and the bottom in seconds of the clip; '
+        + 'the frequency runs bottom to top, on the axis at the left in Hz, on a linear scale; '
+        + 'and the color is the level of each frequency, on the scale at the right in dBFS.',
+      expect.stringMatching(loudnessLine('0 s to 1 s')),
+      VIEW_END_LINE,
+      budgetLine(17, '56,028', urls),
+    ])
+    await sendChatReply(viewed.reply, CALLER.modelName)
+    await endedReply(browser, CLIPS_REPLY_INDEX)
+
+    // Dez keeps a JPEG copy of each picture for the panel of its chip.
+    const copies = (await filesIn(viewsDir)).filter((name) => !viewsBefore.includes(name))
+    expect(copies.map((name) => storedFileName('jpg').test(name))).toStrictEqual([true, true, true])
+
+    // The panel of each chip shows the picture of its call under the label
+    // that the model got. One panel at a time: CodeMirror draws only the
+    // lines near the view.
+    const expectPanelPictures = async () => {
+      for (const [index, picture] of panelPictures.entries()) {
+        await pressToolChip(browser, index)
+        await waitForValue(browser, `pictures of the panel of chip ${index}`, () => toolPanelPictures(browser, index), [picture])
+        await pressToolChip(browser, index)
+        await waitForValue(browser, `closed panel of chip ${index}`, () => toolPanelPictures(browser, index), null)
+      }
+    }
+    await expectPanelPictures()
+
+    // The blocks of the calls name the copies in the conversation file, so
+    // the panels show them after a relaunch.
+    const conversationId = await activeConversationId(browser)
+    const conversationFile = conversationFilePath(home, conversationId)
+    await waitForValue(browser, 'saved pictures of the calls', async () => (await fs.promises.readFile(conversationFile, 'utf8').catch(() => '')).split(' pictures="').length - 1, 3)
+    browser = await setup.relaunch()
+    // A new page: the record that beforeEach started is gone.
+    await resetConsoleErrors(browser)
+    await waitForValue(browser, 'restored active tab', () => activeConversationId(browser), conversationId)
+    await waitForValue(browser, 'restored chips', async () => (await toolChips(browser)).length, 3)
+    await expectPanelPictures()
+    await expectCleanEnd(files, shotSources)
+  })
+
+  it('puts two images and the frame sheets of two video clips into one grid picture', async () => {
+    const files = await openShots('asset-grid')
+    await submit(browser, 'Compare all of them.')
+    const first = await chatRequest()
+    sendToolCalls(first.reply, [openAiToolCall('call_grid', 'asset_view', { assets: '@c @e @a @d', layout: 'grid', frames: 4 })])
+
+    const viewed = await chatRequest()
+    // Each sheet takes the first frame at or after the middle of each
+    // quarter of its clip.
+    const shotsSheet = '4 frames in one row, at 0.6, 1.6, 2.6, 3.6 s'
+    const colorSheet = '4 frames in one row, at 0.4, 0.8, 1.4, 1.8 s'
+    const map = `the images @c and @e, left to right; the frame sheet of the video clip @a: ${shotsSheet}; the frame sheet of the video clip @d: ${colorSheet}`
+    const { parts, urls, bytes } = sentPictures(viewed)
+    expect(parts).toStrictEqual([`asset_view: a grid, top to bottom: ${map}.`, 'image_url'])
+    // The images side by side at their own size, 4 pixels apart (88x48
+    // pixels), then each sheet (1292x240), 16 pixels apart: 48 + 16 + 240 +
+    // 16 + 240 = 560 pixels high.
+    expect(await sentJpegFacts(urls[0], 'grid.jpg')).toStrictEqual(['video mjpeg 1292x560'])
+    // The note of each sheet goes first, as the note of a picture. The grid
+    // is one picture of 47 * 20 = 940 tokens.
+    expect(toolResult(viewed, 'call_grid').split('\n')).toStrictEqual([
+      `@c | image | PNG | 48x36 | ${byteSizeText(PICTURE_PNG.length)}`,
+      `@e | image | PNG | 36x48 | ${byteSizeText(TALL_PNG.length)}`,
+      `@a | video | WebM | 4 s | 48x36 | 5 fps | vp9 | sound (opus) | ${byteSizeText(shotSources.a.length)}`,
+      `Frame sheet of 0 s to 4 s: ${shotsSheet}.`,
+      expect.stringMatching(loudnessLine('0 s to 4 s')),
+      `@d | video | WebM | 2 s | 48x36 | 5 fps | vp9 | no sound | ${byteSizeText(WEBM_VIDEO.length)}`,
+      `Frame sheet of 0 s to 2 s: ${colorSheet}.`,
+      `Grid picture of 1292x560 pixels, top to bottom: ${map}.`,
+      VIEW_END_LINE,
+      `Picture budget left in this reply: 19 pictures, 56,468 tokens and ${byteSizeText(MAX_REPLY_PICTURE_BYTES - bytes)} of base64.`,
+    ])
+    await sendChatReply(viewed.reply, CALLER.modelName)
+    await endedReply(browser, CLIPS_REPLY_INDEX)
+    await expectCleanEnd(files, shotSources)
+  })
+
+  it('finds the black, frozen, and silent parts, the loudness curve, and the cuts of each clip that an asset_info call checks', async () => {
+    const files = await openShots('asset-checks')
+    await submit(browser, 'Check my clips.')
+    const first = await chatRequest()
+    sendToolCalls(first.reply, [openAiToolCall('call_checks', 'asset_info', { assets: '@a @b @c @d', checks: 'black frozen silence loudness_curve cuts' })])
+
+    const checked = await chatRequest()
+    const noPicture = 'no check, the clip has no picture'
+    const noSound = 'no check, the clip has no sound'
+    const curveValue = '(-\\d+(\\.\\d)?|-inf)'
+    const curveLine = (values: number) => new RegExp(`^ {2}loudness_curve: ${curveValue}(, ${curveValue}){${values - 1}} LUFS, one value for each second from 0 s`)
+    expect(toolResult(checked, 'call_checks').split('\n')).toStrictEqual([
+      'Each line: id | kind | format and facts | shown, or hidden in the panel of its call\'s chip | who made it. '
+        + 'Under the line of a clip: a line for each check, with times in seconds of the clip.',
+      `@a | video | WebM | 4 s | 48x36 | 5 fps | vp9 | sound (opus) | ${byteSizeText(shotSources.a.length)} | shown | from the user`,
+      '  black: 2 s to 3 s',
+      // The red shot and the black one; the test pictures move.
+      '  frozen: 1 s to 2 s, 2 s to 3 s',
+      // The silence between the tones, which the Opus encode blurs by a few
+      // ms: the decoder of another computer can give other ms.
+      expect.stringMatching(/^ {2}silence: 1(\.0\d{0,2})? s to (2\.9\d{0,2}|3) s$/),
+      expect.stringMatching(curveLine(4)),
+      '  cuts: 1, 2, 3 s',
+      `@b | audio | WAV | 1 s | pcm_s16le | 44100 Hz | 1 channel | ${byteSizeText(shotSources.b.length)} | shown | from the user`,
+      `  black: ${noPicture}`,
+      `  frozen: ${noPicture}`,
+      '  silence: none',
+      expect.stringMatching(curveLine(1)),
+      `  cuts: ${noPicture}`,
+      // An image gets no check.
+      `@c | image | PNG | 48x36 | ${byteSizeText(PICTURE_PNG.length)} | shown | from the user`,
+      // A clip of one color is frozen from its first frame to its end.
+      `@d | video | WebM | 2 s | 48x36 | 5 fps | vp9 | no sound | ${byteSizeText(WEBM_VIDEO.length)} | shown | from the user`,
+      '  black: none',
+      '  frozen: 0 s to the end',
+      `  silence: ${noSound}`,
+      `  loudness_curve: ${noSound}`,
+      '  cuts: none',
+    ])
+    await sendChatReply(checked.reply, CALLER.modelName)
+    await endedReply(browser, CLIPS_REPLY_INDEX)
+    await expectCleanEnd(files, shotSources)
   })
 
   it('takes a frame of a clip as a new image, and makes a clip from a PNG image, which goes to ffmpeg as a JPEG copy', async () => {
