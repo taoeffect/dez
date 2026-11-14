@@ -22,7 +22,6 @@ import type {
   CopilotChatToken,
   CopilotDeviceFlowResponse,
   LatestRelease,
-  NativeMonitors,
 } from './nativeTypes'
 
 // TODO: in the future, use the star selector here to just directly invoke these
@@ -219,12 +218,6 @@ export default sbp('sbp/selectors/register', {
 
   'dez.native/isWindowFullscreen' (): Promise<boolean> {
     return invoke<boolean>('is_window_fullscreen')
-  },
-
-  // Tauri's `availableMonitors()` and `primaryMonitor()`, read on the main
-  // thread; see `monitors` in src-tauri/src/commands.rs for why.
-  'dez.native/monitors' (): Promise<NativeMonitors> {
-    return invoke<NativeMonitors>('monitors')
   },
 
   // "x11", "wayland", or another GDK backend name on Linux; null on the other

@@ -3,7 +3,6 @@ import { createPinia, setActivePinia } from 'pinia'
 import { afterEach, beforeEach, describe, expect, it, vi, type MockInstance } from 'vitest'
 import type { SettingsSnapshot } from '../model/state'
 import type { WindowGeometry } from '../model/state/settings'
-import type { NativeMonitors } from './nativeTypes'
 // Side-effect imports: register the dez.model/* selectors and the selectors
 // under test.
 import '../model/state/index'
@@ -27,6 +26,8 @@ vi.mock('@tauri-apps/api/window', () => {
   class PhysicalPosition {
     constructor (readonly x: number, readonly y: number) {}
   }
+  const area = { position: { x: 0, y: 0 }, size: { width: 1920, height: 1080 } }
+  const monitor = { ...area, workArea: area, scaleFactor: 1 }
   const listen = async (listener: () => void) => {
     desktop.listeners.push(listener)
     return () => {}
@@ -57,14 +58,13 @@ vi.mock('@tauri-apps/api/window', () => {
     LogicalPosition: PhysicalPosition,
     PhysicalPosition,
     getCurrentWindow: () => appWindow,
+    availableMonitors: async () => [monitor],
+    primaryMonitor: async () => monitor,
   }
 })
 
 let gdkBackend: () => Promise<string | null>
 let consoleError: MockInstance<typeof console.error>
-
-const area = { position: { x: 0, y: 0 }, size: { width: 1920, height: 1080 } }
-const monitor = { ...area, workArea: area, scaleFactor: 1 }
 
 sbp('sbp/selectors/register', {
   'dez.native/gdkBackend' (): Promise<string | null> {
@@ -72,9 +72,6 @@ sbp('sbp/selectors/register', {
   },
   async 'dez.native/isWindowFullscreen' (): Promise<boolean> {
     return false
-  },
-  async 'dez.native/monitors' (): Promise<NativeMonitors> {
-    return { monitors: [monitor], primary: monitor }
   },
 })
 
