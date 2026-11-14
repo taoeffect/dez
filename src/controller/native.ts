@@ -24,6 +24,7 @@ import type {
   LatestRelease,
   NativeMonitors,
 } from './nativeTypes'
+import { holdingCachePath } from './cacheHolds'
 
 // TODO: in the future, use the star selector here to just directly invoke these
 // without having to have a copy of every rust-function here. You'll have to forgive the AI.
@@ -66,9 +67,13 @@ export default sbp('sbp/selectors/register', {
   // a clip do not pass through the webview. Only a response that the rule
   // accepts is saved (`download_app_file` in src-tauri/src/http_bridge.rs);
   // read `saved` of the result. Rejects on a network error, a body over
-  // `rule.maxBytes`, and a cancel.
+  // `rule.maxBytes`, and a cancel. A download into the cache root holds its
+  // target while it runs, so that Delete Unused Files does not take its
+  // files (cacheHolds.ts); every download of a clip comes here, the ones of
+  // the model layer too.
   'dez.native/downloadAppFile' (request: NativeHttpRequest, requestId: string, file: AppFileRef, rule: NativeDownloadRule): Promise<NativeHttpDownload> {
-    return invoke<NativeHttpDownload>('download_app_file', { request, requestId, root: file.root, path: file.path, rule })
+    const download = () => invoke<NativeHttpDownload>('download_app_file', { request, requestId, root: file.root, path: file.path, rule })
+    return file.root === 'cache' ? holdingCachePath(file.path, download) : download()
   },
 
   'dez.native/getLatestRelease' (): Promise<LatestRelease> {

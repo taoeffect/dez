@@ -93,16 +93,22 @@ interface Job extends Omit<EndedJob, 'status'> {
   timer: ReturnType<typeof setTimeout>
 }
 
+// The source of a made asset: the path of a stored image, or the `src` of
+// a clip (a saved file, a temp copy, or a provider URL); null for a clip
+// with no source.
+function madeAssetSource(asset: MadeAsset): string | null {
+  return asset.kind === 'image' ? asset.path : asset.clip.src
+}
+
 /** Deletes the files of made assets that no text of a reply will name:
  *  the results of a job that nobody read before its reply stopped, what a
  *  work still gave after its job ended, and the output of a tool call or a
  *  media round whose reply took it no more. A clip at a provider URL has
- *  no file. A failure is only logged: Settings › General › Unused files
- *  finds an image or a saved clip that stays, and the cleanup of the temp
- *  copies (controller/media.ts) a temp copy. */
+ *  no file. A failure is only logged: Settings › General › Delete Unused
+ *  Files finds a file that stays. */
 export async function discardMadeAssets(assets: readonly MadeAsset[]): Promise<void> {
   for (const asset of assets) {
-    const path = asset.kind === 'image' ? asset.path : asset.clip.src
+    const path = madeAssetSource(asset)
     if (path === null) continue
     try {
       if (asset.kind === 'image') {
@@ -296,6 +302,15 @@ export class ReplyJobs {
       call: job.call,
       ...(job.cost !== undefined && { cost: job.cost }),
     }))
+  }
+
+  /** The sources (`madeAssetSource`) of the assets of every job that ended
+   *  with a result: the ones that no reader took yet, and the ones that a
+   *  reader took but may not have written into the reply yet. No text
+   *  names their files until the write, so Delete Unused Files keeps them
+   *  by this list (`dez.stream/jobAssetSources`). */
+  madeAssetSources(): string[] {
+    return [...this.jobs.values()].flatMap((job) => job.assets.flatMap((asset) => madeAssetSource(asset) ?? []))
   }
 
   /** Ends every job at once, when its reply ends: a stop, a new submit, or

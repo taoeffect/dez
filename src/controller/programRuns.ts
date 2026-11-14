@@ -15,6 +15,7 @@ import {
 import { clipReadProblemText } from '../model/tools/toolInputs'
 import { ToolError } from '../model/tools/types'
 import { workFolderPath } from '../model/tools/workFolders'
+import { holdingCachePath } from './cacheHolds'
 import { clipFromSources, downloadClip, type ClipSource } from './clipSources'
 import { discardMadeAssets, type MadeAsset } from './jobs'
 import type { BundledTool, BundledToolEnd, BundledToolInput, BundledToolOutput, BundledToolRun } from './nativeTypes'
@@ -45,16 +46,19 @@ const PROGRAM_FILES: Readonly<Record<ShippedProgram, BundledTool>> = { ffmpeg: '
  *  with all that it holds when the work ends, also after an error or a
  *  stop. The folder is not made here: the first write into it makes it. A
  *  delete that fails leaves the folder to the cleanup of the old work
- *  folders (workFolders.ts). */
-export async function inWorkFolder<T>(work: (folder: string) => Promise<T>): Promise<T> {
+ *  folders (workFolders.ts). Delete Unused Files does not take the folder
+ *  until its delete here (cacheHolds.ts). */
+export function inWorkFolder<T>(work: (folder: string) => Promise<T>): Promise<T> {
   const folder = workFolderPath(crypto.randomUUID())
-  try {
-    return await work(folder)
-  } finally {
-    await sbp('dez.native/deleteAppFile', folder, 'cache', { folder: true }).catch((error: unknown) => {
-      console.error(`Failed to delete the work folder ${folder}:`, error)
-    })
-  }
+  return holdingCachePath(folder, async () => {
+    try {
+      return await work(folder)
+    } finally {
+      await sbp('dez.native/deleteAppFile', folder, 'cache', { folder: true }).catch((error: unknown) => {
+        console.error(`Failed to delete the work folder ${folder}:`, error)
+      })
+    }
+  })
 }
 
 /** The size of the file at `path`; null for a file that Dez cannot read

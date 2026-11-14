@@ -6,8 +6,8 @@ import { deleteQuestion, deleteUnusedFiles, deletedToast, unusedFilesProgress } 
 
 const twoFiles: UnusedFiles = {
   files: [
-    { path: 'assets/images/a.png', size: 1024 * 1024 },
-    { path: 'assets/generated/video/b.mp4', size: 3 * 1024 * 1024 },
+    { root: 'app', path: 'assets/images/a.png', size: 1024 * 1024 },
+    { root: 'cache', path: 'work/b', size: 3 * 1024 * 1024 },
   ],
   bytes: 4 * 1024 * 1024,
 }
@@ -54,7 +54,7 @@ describe('deleteQuestion', () => {
   })
 
   it('names one file as one file', () => {
-    expect(deleteQuestion({ files: [{ path: 'assets/images/a.png', size: 300 }], bytes: 300 }))
+    expect(deleteQuestion({ files: [{ root: 'app', path: 'assets/images/a.png', size: 300 }], bytes: 300 }))
       .toBe('Are you sure you want to delete 1 unused file? This frees 300 B, and it cannot be undone.')
   })
 })

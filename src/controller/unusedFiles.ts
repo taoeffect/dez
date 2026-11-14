@@ -1,6 +1,10 @@
 import sbp from '@sbp/sbp'
+import { MEDIA_CACHE_FOLDER } from '../model/chat/mediaTags'
 import {
   STORED_FILE_FOLDERS,
+  cacheEntryKind,
+  isHeldCacheEntry,
+  oldCacheEntries,
   oldStoredFiles,
   removeNamedFiles,
   storedFilePath,
@@ -8,23 +12,35 @@ import {
   type UnusedFiles,
   type UnusedFilesDeleted,
 } from '../model/chat/unusedFiles'
+import { WORK_ROOT } from '../model/tools/workFolders'
 import { REPORT_ADVICE, errorText, explainedError, rawErrorText } from '../utils/errorText'
 import { fileNameOf } from '../utils/fileName'
+import { heldCachePaths } from './cacheHolds'
 import type { AppFileEntry } from './nativeTypes'
 
-// The cleanup of the stored files (pasted, dropped, and generated images
-// and clips) that no text uses any more: Settings › General › Unused files.
-// The rules for "unused" are in src/model/chat/unusedFiles.ts.
+// The cleanup of Settings › General › Delete Unused Files: the stored files
+// (pasted, dropped, and generated images and clips) that no text uses any
+// more, and the entries of Dez's cache folder that nothing uses (temp
+// copies of clips, left-over downloads, and work folders). The rules for
+// "unused" are in src/model/chat/unusedFiles.ts.
 
 // One scan or delete at a time: a scan that ran together with a delete
 // would count files that are gone a moment later.
 const QUEUE = 'dez.controller/unusedFiles'
 
+// The texts that can name a file that the cleanup must keep, other than
+// the conversation files: the texts in memory, and the sources of the job
+// results that no text names yet (`dez.stream/jobAssetSources`).
+function textsInMemory(): string[] {
+  return [...sbp('dez.model/heldTexts') as string[], ...sbp('dez.stream/jobAssetSources') as string[]]
+}
+
 export default sbp('sbp/selectors/register', {
-  // Finds the stored files that no conversation, open or closed tab, or
-  // saved prompt names, and adds up their size. `onProgress` gets the part
-  // of the scan that is done, from 0 to 1: the conversation files are the
-  // slow part, so it counts them. Nothing is deleted here.
+  // Finds the stored files that no conversation, open or closed tab, saved
+  // prompt, or job result of a reply names, and the cache entries that
+  // nothing uses, and adds up their size. `onProgress` gets the part of the
+  // scan that is done, from 0 to 1: the conversation files are the slow
+  // part, so it counts them. Nothing is deleted here.
   //
   // The files are listed first, and the texts are read after that: the
   // conversation files, and then the texts in memory, which hold what is
@@ -35,6 +51,8 @@ export default sbp('sbp/selectors/register', {
   // - A Save of a temp copy moves the file with its old file time, and
   //   writes the path into the clip's tag a moment later. The texts in
   //   memory are read after the listing, and once more before the delete.
+  // A cache entry that live work of this app uses (cacheHolds.ts) is left
+  // out, whatever its age.
   //
   // A failure is logged, shows an error toast, and rejects: a scan that did
   // not read everything must not give a list of files to delete.
@@ -43,11 +61,22 @@ export default sbp('sbp/selectors/register', {
       return await sbp('okTurtles.eventQueue/queueEvent', QUEUE, async (): Promise<UnusedFiles> => {
         onProgress(0)
         const appDir = await sbp('dez.native/getAppDir') as string
+        const cacheDir = await sbp('dez.native/getAppDir', 'cache') as string
         const now = Date.now()
+        const held = heldCachePaths()
         const candidates: StoredFile[] = []
         for (const folder of STORED_FILE_FOLDERS) {
           const entries = await sbp('dez.native/listAppFiles', folder) as AppFileEntry[]
           candidates.push(...oldStoredFiles(folder, entries, appDir, now))
+        }
+        const media = await sbp('dez.native/listAppFiles', MEDIA_CACHE_FOLDER, 'cache') as AppFileEntry[]
+        candidates.push(...oldCacheEntries(MEDIA_CACHE_FOLDER, media, cacheDir, held, now))
+        const workFolders = await sbp('dez.native/listAppFiles', WORK_ROOT, 'cache', { folders: true }) as AppFileEntry[]
+        for (const folder of oldCacheEntries(WORK_ROOT, workFolders, cacheDir, held, now)) {
+          // A listing of folders gives no size: the size of a work folder
+          // is the size of the files in it.
+          const files = await sbp('dez.native/listAppFiles', folder.path, 'cache') as AppFileEntry[]
+          candidates.push({ ...folder, size: files.reduce((sum, file) => sum + file.size, 0) })
         }
         const unnamed = new Set(candidates.map((file) => fileNameOf(file.path)))
         // With no file to look for, no text needs a read.
@@ -56,7 +85,7 @@ export default sbp('sbp/selectors/register', {
             removeNamedFiles(unnamed, text)
             onProgress((index + 1) / count)
           })
-          for (const text of sbp('dez.model/heldTexts') as string[]) removeNamedFiles(unnamed, text)
+          for (const text of textsInMemory()) removeNamedFiles(unnamed, text)
         }
         onProgress(1)
         const files = candidates.filter((file) => unnamed.has(fileNameOf(file.path)))
@@ -75,33 +104,42 @@ export default sbp('sbp/selectors/register', {
 
   // Deletes the files of a scan (`dez.controller/unusedFiles/find`), and
   // tells what it did. The user answered a prompt since the scan, and a
-  // reply can write text in that time, so the texts in memory are read
-  // again: a file that one of them names now stays. Only a file that a
-  // trash can delete goes (`storedFilePath`), so no other app file is
-  // deleted through this selector. A file that cannot be deleted is logged
-  // and counted, and the other files still go. A missing file counts as
-  // deleted.
+  // reply can write text or start work in that time, so the texts in
+  // memory and the held cache entries are read again: a file that one of
+  // them names or holds now stays. Only a file that a trash can delete
+  // (`storedFilePath`) and a cache entry of the cleanup (`cacheEntryKind`)
+  // go, so no other file is deleted through this selector. A file that
+  // cannot be deleted is logged and counted, and the other files still go.
+  // A missing file counts as deleted.
   async 'dez.controller/unusedFiles/delete' (unused: UnusedFiles): Promise<UnusedFilesDeleted> {
     try {
       return await sbp('okTurtles.eventQueue/queueEvent', QUEUE, async (): Promise<UnusedFilesDeleted> => {
         const appDir = await sbp('dez.native/getAppDir') as string
+        const cacheDir = await sbp('dez.native/getAppDir', 'cache') as string
         const unnamed = new Set(unused.files.map((file) => fileNameOf(file.path)))
-        for (const text of sbp('dez.model/heldTexts') as string[]) removeNamedFiles(unnamed, text)
+        for (const text of textsInMemory()) removeNamedFiles(unnamed, text)
+        const held = heldCachePaths()
         const result: UnusedFilesDeleted = { deleted: 0, bytes: 0, inUse: 0, failed: 0 }
         for (const file of unused.files) {
-          if (!unnamed.has(fileNameOf(file.path))) {
+          if (!unnamed.has(fileNameOf(file.path)) || (file.root === 'cache' && isHeldCacheEntry(file.path, held))) {
             result.inUse++
             continue
           }
           try {
-            if (storedFilePath(`${appDir}/${file.path}`, appDir) !== file.path) {
-              throw new Error('Not a stored image or a saved clip')
+            if (file.root === 'app') {
+              if (storedFilePath(`${appDir}/${file.path}`, appDir) !== file.path) {
+                throw new Error('Not a stored image or a saved clip')
+              }
+              await sbp('dez.native/deleteAppFile', file.path)
+            } else {
+              const kind = cacheEntryKind(file.path, cacheDir)
+              if (kind === null) throw new Error('Not a temp copy, a download, or a work folder of the cache folder')
+              await sbp('dez.native/deleteAppFile', file.path, 'cache', { folder: kind === 'work' })
             }
-            await sbp('dez.native/deleteAppFile', file.path)
             result.deleted++
             result.bytes += file.size
           } catch (error) {
-            console.error(`Failed to delete the unused file ${file.path}:`, error)
+            console.error(`Failed to delete the unused file ${file.root}:${file.path}:`, error)
             result.failed++
           }
         }

@@ -1,6 +1,7 @@
+import { WORK_ROOT } from '../tools/workFolders'
 import { IMAGE_FOLDERS, storedImageFile } from './images'
-import { savedMediaFile } from './mediaFiles'
-import { MEDIA_FOLDERS } from './mediaTags'
+import { savedMediaFile, tempMediaFile } from './mediaFiles'
+import { MEDIA_CACHE_FOLDER, MEDIA_FOLDERS } from './mediaTags'
 
 // The stored files that no text uses any more, for the cleanup in Settings ›
 // General. Dez stores a file for each pasted or dropped image and clip, for
@@ -14,6 +15,13 @@ import { MEDIA_FOLDERS } from './mediaTags'
 // folder). That is more than the recognizers of images.ts and mediaTags.ts
 // find, so the cleanup can keep a file that nothing shows, but it never
 // deletes a file that Dez shows or sends.
+//
+// The cleanup also takes the files of Dez's cache folder that nothing uses
+// (`cacheEntryKind`): a temp copy of a clip that no text names, and what
+// work of Dez left there (a download or a work folder whose app stopped
+// before its end). The hourly cleanup (controller/media.ts) deletes them
+// too, but only at the end of their lifetime (`MEDIA_TEMP_LIFETIME_MS`,
+// `WORK_FOLDER_LIFETIME_MS`).
 
 /** The folders of the stored files, relative to the app folder. */
 export const STORED_FILE_FOLDERS: readonly string[] = [
@@ -25,10 +33,16 @@ export const STORED_FILE_FOLDERS: readonly string[] = [
  *  write the file first, and the text that names it after that. */
 export const UNUSED_FILE_MIN_AGE_MS = 5 * 60 * 1000
 
+/** The root folder of a file of the cleanup (the `root` of the app-file
+ *  selectors): the app folder, or Dez's folder in the OS cache folder. */
+export type StoredFileRoot = 'app' | 'cache'
+
 export interface StoredFile {
-  /** Relative to the app folder: `assets/images/<name>`. */
+  root: StoredFileRoot
+  /** Relative to the root: `assets/images/<name>` in the app folder;
+   *  `media/<name>` or `work/<id>` (a folder) in the cache folder. */
   path: string
-  /** In bytes. */
+  /** In bytes; for a work folder, the size of the files in it. */
   size: number
 }
 
@@ -46,7 +60,8 @@ export interface UnusedFilesDeleted {
   deleted: number
   /** The total size of the deleted files, in bytes. */
   bytes: number
-  /** The number of the files that a text names again; they stay. */
+  /** The number of the files that are in use since the scan: a text names
+   *  them, or work of Dez holds them. They stay. */
   inUse: number
   /** The number of the files that could not be deleted. */
   failed: number
@@ -80,7 +95,66 @@ export function oldStoredFiles(folder: string, entries: readonly ListedFile[], a
   return entries.flatMap(({ name, updatedAt, size }) => {
     if (updatedAt + UNUSED_FILE_MIN_AGE_MS > now) return []
     const path = storedFilePath(`${appDir}/${folder}/${name}`, appDir)
-    return path === null ? [] : [{ path, size }]
+    return path === null ? [] : [{ root: 'app', path, size }]
+  })
+}
+
+/** What an entry of the cache folder is for the cleanup, by its path
+ *  (relative to the cache folder):
+ *  - `copy`: a temp copy of a clip (`tempMediaFile`). It is in use while a
+ *    text names it.
+ *  - `download`: the part file of a clip download (`<name>.part`), which
+ *    Dez moves or deletes when the download ends, or the temp file of a
+ *    write (`<name>.<process id>.<count>.tmp`, `PrivateFileWriter` in
+ *    src-tauri/src/persistence.rs), which becomes `<name>` when the write
+ *    ends. No text names it.
+ *  - `work`: a work folder of a bundled tool (model/tools/workFolders.ts),
+ *    which its owner deletes when the work ends. No text names it. */
+export type CacheEntryKind = 'copy' | 'download' | 'work'
+
+// The end that `PrivateFileWriter` adds to the name of the file that it
+// writes, until the write ends.
+const WRITE_TEMP_END = /\.\d+\.\d+\.tmp$/
+// A file name with one `.`, as Dez names the files of the media folder of
+// the cache: `<uuid>.<extension>`, `<uuid>.part`.
+const MEDIA_FILE_NAME = /^[A-Za-z0-9_-]+\.[A-Za-z0-9]+$/
+// The name of a work folder (a UUID).
+const WORK_FOLDER_NAME = /^[A-Za-z0-9_-]+$/
+
+/** The kind of the cache entry `path` (relative to the cache folder
+ *  `cacheDir`): a file directly in the media folder, or a folder directly
+ *  in the work root. Null for any other path, which the cleanup never
+ *  deletes. */
+export function cacheEntryKind(path: string, cacheDir: string): CacheEntryKind | null {
+  const [folder, name, ...below] = path.split('/')
+  if (name === undefined || below.length > 0) return null
+  if (folder === WORK_ROOT) return WORK_FOLDER_NAME.test(name) ? 'work' : null
+  if (folder !== MEDIA_CACHE_FOLDER) return null
+  const written = name.replace(WRITE_TEMP_END, '')
+  if (!MEDIA_FILE_NAME.test(written)) return null
+  if (written !== name || written.endsWith('.part')) return 'download'
+  return tempMediaFile(`${cacheDir}/${path}`, cacheDir) === path ? 'copy' : null
+}
+
+/** Whether live work of this app holds the cache entry `path`: `held`
+ *  (`heldCachePaths`, controller/cacheHolds.ts) holds the entry itself (a
+ *  work folder, the target of a download), or the file of the write whose
+ *  temp file it is. */
+export function isHeldCacheEntry(path: string, held: ReadonlySet<string>): boolean {
+  return held.has(path.replace(WRITE_TEMP_END, ''))
+}
+
+/** The entries of the listing `entries` of `folder` (relative to the cache
+ *  folder `cacheDir`) that the cleanup can delete: each one of a
+ *  `CacheEntryKind`, at least `UNUSED_FILE_MIN_AGE_MS` old at the time
+ *  `now`, that no live work holds (`held`). A temp copy among them is
+ *  still in use when a text names it. A work folder has the size 0: a
+ *  listing of folders gives no size. */
+export function oldCacheEntries(folder: string, entries: readonly ListedFile[], cacheDir: string, held: ReadonlySet<string>, now: number): StoredFile[] {
+  return entries.flatMap(({ name, updatedAt, size }) => {
+    const path = `${folder}/${name}`
+    if (updatedAt + UNUSED_FILE_MIN_AGE_MS > now || cacheEntryKind(path, cacheDir) === null || isHeldCacheEntry(path, held)) return []
+    return [{ root: 'cache', path, size }]
   })
 }
 

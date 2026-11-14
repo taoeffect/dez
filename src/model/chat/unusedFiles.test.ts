@@ -1,9 +1,10 @@
 import { describe, expect, it } from 'vitest'
 import { imageMarkdown } from './images'
 import { mediaTagText } from './mediaTags'
-import { STORED_FILE_FOLDERS, UNUSED_FILE_MIN_AGE_MS, oldStoredFiles, removeNamedFiles, storedFilePath } from './unusedFiles'
+import { STORED_FILE_FOLDERS, UNUSED_FILE_MIN_AGE_MS, cacheEntryKind, isHeldCacheEntry, oldCacheEntries, oldStoredFiles, removeNamedFiles, storedFilePath } from './unusedFiles'
 
 const APP_DIR = '/home/ann/.config/dez'
+const CACHE_DIR = '/home/ann/.cache/dez'
 const PNG = '5f1c2a9e-0b7d-4c3e-9a51-2d8f6e4b7c10.png'
 const WEBP = '0c4e7a51-9b2d-4f6a-8e13-5d7c9a2b4f60.webp'
 const SVG = '9a2b4f60-5d7c-4e13-8f6a-0c4e7a519b2d.svg'
@@ -73,8 +74,8 @@ describe('oldStoredFiles', () => {
     ], APP_DIR, NOW)
 
     expect(files).toStrictEqual([
-      { path: `assets/images/${PNG}`, size: 10 },
-      { path: 'assets/images/b.jpg', size: 2_000_000 },
+      { root: 'app', path: `assets/images/${PNG}`, size: 10 },
+      { root: 'app', path: 'assets/images/b.jpg', size: 2_000_000 },
     ])
   })
 
@@ -84,23 +85,100 @@ describe('oldStoredFiles', () => {
     const entries = [{ name: MP4, updatedAt: 0, size: 1 }, { name: PNG, updatedAt: 0, size: 2 }, { name: SVG, updatedAt: 0, size: 3 }]
 
     expect(oldStoredFiles('assets/generated/images', entries, APP_DIR, NOW)).toStrictEqual([
-      { path: `assets/generated/images/${PNG}`, size: 2 },
-      { path: `assets/generated/images/${SVG}`, size: 3 },
+      { root: 'app', path: `assets/generated/images/${PNG}`, size: 2 },
+      { root: 'app', path: `assets/generated/images/${SVG}`, size: 3 },
     ])
     expect(oldStoredFiles('assets/generated/video', entries, APP_DIR, NOW)).toStrictEqual([
-      { path: `assets/generated/video/${MP4}`, size: 1 },
-      { path: `assets/generated/video/${PNG}`, size: 2 },
-      { path: `assets/generated/video/${SVG}`, size: 3 },
+      { root: 'app', path: `assets/generated/video/${MP4}`, size: 1 },
+      { root: 'app', path: `assets/generated/video/${PNG}`, size: 2 },
+      { root: 'app', path: `assets/generated/video/${SVG}`, size: 3 },
     ])
     expect(oldStoredFiles('assets/audio', entries, APP_DIR, NOW)).toStrictEqual([
-      { path: `assets/audio/${MP4}`, size: 1 },
-      { path: `assets/audio/${PNG}`, size: 2 },
-      { path: `assets/audio/${SVG}`, size: 3 },
+      { root: 'app', path: `assets/audio/${MP4}`, size: 1 },
+      { root: 'app', path: `assets/audio/${PNG}`, size: 2 },
+      { root: 'app', path: `assets/audio/${SVG}`, size: 3 },
     ])
   })
 
   it('gives no file for a Dez folder whose path the recognizers refuse', () => {
     expect(oldStoredFiles('assets/images', [{ name: PNG, updatedAt: 0, size: 1 }], './.config/dez', NOW)).toEqual([])
+  })
+})
+
+describe('cacheEntryKind', () => {
+  it.each([
+    [`media/${MP4}`, 'copy'],
+    [`media/${PNG}`, 'copy'],
+    // The part file of a download, before Dez moves it.
+    ['media/0c4e7a51-9b2d.part', 'download'],
+    // The temp files of a write (`PrivateFileWriter`): a download into the
+    // part file, and the WAV copy of a speech clip.
+    ['media/0c4e7a51-9b2d.part.4012.7.tmp', 'download'],
+    [`media/${MP4}.4012.7.tmp`, 'download'],
+    ['work/5f1c2a9e-0b7d-4c3e-9a51-2d8f6e4b7c10', 'work'],
+  ])('gives the kind of %s', (path, kind) => {
+    expect(cacheEntryKind(path, CACHE_DIR)).toBe(kind)
+  })
+
+  it.each([
+    'media',
+    'media/notes',
+    'media/a.b.c',
+    'media/.part',
+    'media/a.1.2.tmp',
+    'media/sub/a.mp4',
+    'work',
+    'work/a.b',
+    'work/a/b.mp4',
+    `other/${MP4}`,
+    `assets/audio/${MP4}`,
+  ])('gives null for %s', (path) => {
+    expect(cacheEntryKind(path, CACHE_DIR)).toBeNull()
+  })
+
+  it('gives no copy for a cache folder whose path the temp copy rule refuses', () => {
+    expect(cacheEntryKind(`media/${MP4}`, '/home/ann/.cache/other')).toBeNull()
+  })
+})
+
+describe('isHeldCacheEntry', () => {
+  const held = new Set(['work/w1', 'media/d1.part'])
+
+  it.each([
+    ['work/w1', true],
+    ['media/d1.part', true],
+    // The temp file of the write of a held target.
+    ['media/d1.part.4012.7.tmp', true],
+    ['work/w2', false],
+    ['media/d1.mp4', false],
+    ['media/d1.mp4.4012.7.tmp', false],
+  ])('tells whether live work holds %s', (path, isHeld) => {
+    expect(isHeldCacheEntry(path, held)).toBe(isHeld)
+  })
+})
+
+describe('oldCacheEntries', () => {
+  it('gives the old entries of the cache rule that no live work holds', () => {
+    const media = oldCacheEntries('media', [
+      { name: MP4, updatedAt: OLD, size: 10 },
+      { name: 'young.mp4', updatedAt: OLD + 1, size: 1 },
+      { name: 'future.mp4', updatedAt: NOW + 86_400_000, size: 1 },
+      { name: 'd1.part', updatedAt: 0, size: 20 },
+      { name: 'd2.part.4012.7.tmp', updatedAt: 0, size: 30 },
+      { name: 'held.part.4012.7.tmp', updatedAt: 0, size: 1 },
+      { name: 'notes', updatedAt: 0, size: 1 },
+    ], CACHE_DIR, new Set(['media/held.part']), NOW)
+    const work = oldCacheEntries('work', [
+      { name: 'w1', updatedAt: 0, size: 0 },
+      { name: 'w2', updatedAt: 0, size: 0 },
+    ], CACHE_DIR, new Set(['work/w2']), NOW)
+
+    expect([...media, ...work]).toStrictEqual([
+      { root: 'cache', path: `media/${MP4}`, size: 10 },
+      { root: 'cache', path: 'media/d1.part', size: 20 },
+      { root: 'cache', path: 'media/d2.part.4012.7.tmp', size: 30 },
+      { root: 'cache', path: 'work/w1', size: 0 },
+    ])
   })
 })
 

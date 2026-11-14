@@ -3,7 +3,7 @@ import path from 'node:path'
 import { afterAll, afterEach, beforeAll, describe, expect, it } from 'vitest'
 import { startApp, type RunningApp } from './harness/app'
 import { consoleErrors, pointerClick, promptMessage, resetConsoleErrors, screenshotOnFailure, waitFor, waitForValue } from './harness/dom'
-import { appFilePath, conversationFilePath, makeConversation, seedAppState, seedConversation } from './harness/fixtures'
+import { appFilePath, conversationFilePath, makeConversation, mediaTempDir, seedAppState, seedConversation, workDir } from './harness/fixtures'
 import { solidPng } from './harness/images'
 import { silentWav } from './harness/media'
 import { createSession, destroySession, type E2EBrowser } from './harness/session'
@@ -11,8 +11,9 @@ import { activeTabId, newTab, openToasts, sbpCall } from './harness/thread'
 
 // Settings › General › Unused files, driven through the real app: the
 // button scans the stored files (pasted, dropped, and generated images and
-// clips) and shows a progress bar, a prompt states the count and the size
-// of the files that nothing uses, and a "Yes" deletes them.
+// clips) and the cache folder, and shows a progress bar, a prompt states
+// the count and the size of the files that nothing uses, and a "Yes"
+// deletes them.
 //
 // The seeded stored files, with what must happen to each one:
 // - an image that a saved conversation refers to: stays;
@@ -23,13 +24,26 @@ import { activeTabId, newTab, openToasts, sbpCall } from './harness/thread'
 // - an image that no text names, with a new file time: stays (a paste
 //   writes its file before its text);
 // - a file in an image folder that is not an image: stays.
+// The seeded entries of the cache folder:
+// - a temp copy of a clip that a saved conversation's media tag names:
+//   stays;
+// - a temp copy that no text names, the part file of a download that did
+//   not end, and a work folder with its files: deleted;
+// - a work folder with a new file time: stays (a run can be in it).
 //
 // One app session serves the whole file, and the tests run in order.
 
 const HOUR_MS = 60 * 60 * 1000
 const UNUSED_IMAGE_BYTES = 300_000
 const UNUSED_VIDEO_BYTES = 1_800_000
-const DELETE_PROMPT = 'Are you sure you want to delete 2 unused files? This frees 2.0 MB, and it cannot be undone.'
+const UNUSED_COPY_BYTES = 100_000
+const PART_BYTES = 50_000
+// The two files of the work folder that no run holds.
+const WORK_INPUT_BYTES = 200_000
+const WORK_OUTPUT_BYTES = 300_000
+// Two stored files, two cache files, and one work folder: 2_750_000 B in
+// all.
+const DELETE_PROMPT = 'Are you sure you want to delete 5 unused files? This frees 2.6 MB, and it cannot be undone.'
 
 const KEPT_FILES = [
   'assets/generated/audio/clip-saved.wav',
@@ -39,6 +53,10 @@ const KEPT_FILES = [
   'assets/images/notes.txt',
 ]
 const UNUSED_FILES = ['assets/generated/video/video-unused.webm', 'assets/images/image-unused.png']
+
+// The entries of the cache folder that this spec seeds, relative to it.
+const KEPT_CACHE_ENTRIES = ['media/copy-used.webm', 'work/work-young/in.webm']
+const UNUSED_CACHE_ENTRIES = ['media/copy-unused.webm', 'media/download-left.part', 'work/work-left/in.webm', 'work/work-left/out.webm']
 
 /** One state of the row while a cleanup runs. */
 interface RunStep {
@@ -60,6 +78,29 @@ describe('Settings: delete unused files', () => {
     fs.writeFileSync(file, bytes)
     const old = new Date(Date.now() - HOUR_MS)
     fs.utimesSync(file, old, old)
+  }
+
+  // Writes the cache file `relative` (in the media folder or a work
+  // folder). Its file time is one hour ago with `old`, else now. The time
+  // of a work folder is the last change of its list, so the folder gets
+  // the time of its file.
+  function seedCacheFile (relative: string, bytes: Buffer, { old }: { old: boolean }): void {
+    const file = path.join(path.dirname(mediaTempDir(app.home)), relative)
+    fs.mkdirSync(path.dirname(file), { recursive: true })
+    fs.writeFileSync(file, bytes)
+    if (!old) return
+    const time = new Date(Date.now() - HOUR_MS)
+    fs.utimesSync(file, time, time)
+    if (relative.startsWith('work/')) fs.utimesSync(path.dirname(file), time, time)
+  }
+
+  // The files of the media folder and of the work folders of the cache
+  // folder, relative to it.
+  function cacheFiles (): string[] {
+    const media = fs.readdirSync(mediaTempDir(app.home)).map((name) => `media/${name}`)
+    const work = fs.readdirSync(workDir(app.home))
+      .flatMap((folder) => fs.readdirSync(path.join(workDir(app.home), folder)).map((name) => `work/${folder}/${name}`))
+    return [...media, ...work].sort()
   }
 
   // The files of the four stored-file folders that this spec seeds,
@@ -111,6 +152,12 @@ describe('Settings: delete unused files', () => {
       seedStoredFile('assets/generated/video/video-unused.webm', Buffer.alloc(UNUSED_VIDEO_BYTES))
       seedStoredFile('assets/images/image-young.png', solidPng(4, 4, [0, 0, 200]))
       seedStoredFile('assets/images/notes.txt', Buffer.from('notes'))
+      seedCacheFile('media/copy-used.webm', Buffer.alloc(10), { old: true })
+      seedCacheFile('media/copy-unused.webm', Buffer.alloc(UNUSED_COPY_BYTES), { old: true })
+      seedCacheFile('media/download-left.part', Buffer.alloc(PART_BYTES), { old: true })
+      seedCacheFile('work/work-left/in.webm', Buffer.alloc(WORK_INPUT_BYTES), { old: true })
+      seedCacheFile('work/work-left/out.webm', Buffer.alloc(WORK_OUTPUT_BYTES), { old: true })
+      seedCacheFile('work/work-young/in.webm', Buffer.alloc(10), { old: false })
       await seedConversation(app.home, makeConversation({
         id: 'with-image',
         title: 'With image',
@@ -121,7 +168,14 @@ describe('Settings: delete unused files', () => {
         title: 'With clip',
         sections: [
           { role: 'user', nodes: [{ kind: 'text', text: 'Say hello' }] },
-          { role: 'agent', nodes: [{ kind: 'text', text: `<dez:audio id="a" type="audio/wav" src="${appFilePath(app.home, 'assets/generated/audio/clip-saved.wav')}"/>` }] },
+          {
+            role: 'agent',
+            nodes: [{
+              kind: 'text',
+              text: `<dez:audio id="a" type="audio/wav" src="${appFilePath(app.home, 'assets/generated/audio/clip-saved.wav')}"/>\n`
+                + `<dez:video id="b" type="video/webm" src="${path.join(mediaTempDir(app.home), 'copy-used.webm')}"/>`,
+            }],
+          },
           { role: 'user', nodes: [{ kind: 'text', text: '' }] },
         ],
       }))
@@ -180,17 +234,20 @@ describe('Settings: delete unused files', () => {
     await waitForValue(browser, 'row after No', rowState, { percent: null, buttonOff: false })
     expect(await promptMessage(browser)).toBeNull()
     expect(storedFiles()).toStrictEqual([...KEPT_FILES, ...UNUSED_FILES].sort())
+    expect(cacheFiles()).toStrictEqual([...KEPT_CACHE_ENTRIES, ...UNUSED_CACHE_ENTRIES].sort())
     expect(await openToasts(browser)).toEqual([])
   })
 
-  it('deletes on a Yes only the old files that no conversation and no open tab names', async () => {
+  it('deletes on a Yes only the old files that no conversation and no open tab names, and the old cache entries that nothing uses', async () => {
     await pointerClick(browser, '.unused-files-btn')
     await waitForValue(browser, 'prompt', () => promptMessage(browser), DELETE_PROMPT)
     await pointerClick(browser, '.confirm-btn--confirm')
 
-    await waitForValue(browser, 'result toast', () => openToasts(browser), [{ title: '', message: 'Deleted 2 unused files (2.0 MB).' }])
+    await waitForValue(browser, 'result toast', () => openToasts(browser), [{ title: '', message: 'Deleted 5 unused files (2.6 MB).' }])
     await waitForValue(browser, 'row after the delete', rowState, { percent: null, buttonOff: false })
     expect(storedFiles()).toStrictEqual(KEPT_FILES)
+    expect(cacheFiles()).toStrictEqual(KEPT_CACHE_ENTRIES)
+    expect(fs.existsSync(path.join(workDir(app.home), 'work-left'))).toBe(false)
     // The tab's text was never on disk, so only the texts in memory kept
     // its image.
     expect(fs.existsSync(conversationFilePath(app.home, unsavedConversationId))).toBe(false)
@@ -203,6 +260,7 @@ describe('Settings: delete unused files', () => {
     await waitForValue(browser, 'row after the scan', rowState, { percent: null, buttonOff: false })
     expect(await promptMessage(browser)).toBeNull()
     expect(storedFiles()).toStrictEqual(KEPT_FILES)
+    expect(cacheFiles()).toStrictEqual(KEPT_CACHE_ENTRIES)
     expect(await consoleErrors(browser)).toEqual([])
   })
 })

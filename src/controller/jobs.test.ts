@@ -273,6 +273,24 @@ describe('ReplyJobs', () => {
     expect(new Set(jobs.list().map((job) => job.id)).size).toBe(MAX_JOBS_PER_REPLY)
   })
 
+  // Delete Unused Files keeps these files: no text names them before a
+  // reader writes them into the reply.
+  it('gives the sources of the results that ended, also after a reader took them', async () => {
+    const first = heldWork()
+    const second = heldWork()
+    const third = heldWork()
+    jobs.start('model_invoke', first.work, LONG)
+    jobs.start('model_invoke', second.work, LONG)
+    jobs.start('model_invoke', third.work, LONG)
+    first.finish({ assets: [image, clip(URL_CLIP, URL_CLIP)] })
+    await settled()
+    await jobs.wait(running())
+    second.finish({ assets: [clip(TEMP_CLIP), clip(SAVED_CLIP)] })
+    await settled()
+
+    expect(jobs.madeAssetSources()).toStrictEqual([IMAGE, URL_CLIP, TEMP_CLIP, SAVED_CLIP])
+  })
+
   describe('settle', () => {
     it('waits until no job runs, then gives the results that no wait took', async () => {
       const first = heldWork()

@@ -38,9 +38,9 @@ export function deletedToast({ deleted, bytes, inUse, failed }: UnusedFilesDelet
   return { message, variant: deleted > 0 ? 'success' : 'default', duration: 5000 }
 }
 
-/** Runs one cleanup: scans for the stored files that nothing uses, asks the
- *  user with the count and the size, and deletes the files on a yes. Does
- *  nothing while a cleanup runs. */
+/** Runs one cleanup: scans for the stored files and the cache entries that
+ *  nothing uses, asks the user with the count and the size, and deletes
+ *  them on a yes. Does nothing while a cleanup runs. */
 export async function deleteUnusedFiles(): Promise<void> {
   if (unusedFilesProgress.value !== null) return
   unusedFilesProgress.value = 0

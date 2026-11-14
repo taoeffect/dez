@@ -219,14 +219,17 @@ function onOverlayClick(event: MouseEvent) {
               the provider gave, or from a temporary copy in
               <code v-if="tempDir">{{ tempDir }}</code><template v-else>the cache folder of the system</template>,
               which Dez deletes after {{ TEMP_COPY_HOURS }} hours. The clock on its player tells
-              until when the clip is available. Click Save on the player to keep the clip.
+              until when the clip is available. Click Save on the player to keep the clip. Delete
+              Unused Files in Settings › General deletes a temporary copy that no conversation uses
+              before that time.
             </p>
             <p>
               A Dez tool that cuts, joins, or converts clips stores its new clips and images at
               once, in the folders above. It works on copies of the assets, in a work folder in
               <code v-if="workDir">{{ workDir }}</code><template v-else>the cache folder of the system</template>,
               so the assets that it reads stay as they are. Dez deletes the work folder at the end
-              of the work, or {{ WORK_FOLDER_HOURS }} hours later if Dez closed before that.
+              of the work, or {{ WORK_FOLDER_HOURS }} hours later if Dez closed before that. Delete
+              Unused Files deletes such a work folder before that time.
             </p>
             <!-- The rule is in src-tauri/src/confinement.rs (Landlock on
                  Linux, Seatbelt on macOS), its folders are in
@@ -268,7 +271,9 @@ function onOverlayClick(event: MouseEvent) {
               </li>
               <li>
                 Click Delete Unused Files in Settings › General. Dez finds the stored files that no
-                conversation uses, and deletes them after you say yes.
+                conversation uses, and deletes them after you say yes. In the cache folder, it also
+                deletes the temporary copies of clips that no conversation uses, and the work folders
+                and downloads that Dez did not finish.
               </li>
             </ul>
             <p>
