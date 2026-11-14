@@ -185,11 +185,11 @@ function onOverlayClick(event: MouseEvent) {
               <code>asset_view</code>: an image or a part of it, frames of a video clip (at equal
               steps, at given times, or one for each shot), and the wave or the spectrogram of the
               sound of a clip, with the loudness of a clip with sound. It can also put several images
-              and clips into one grid picture. It sees these pictures only in the reply where it asked
-              for them, and each reply has a picture budget, so it sees a limited number of pictures.
-              Click the chip of the tool call to see the pictures that the model saw. A model that
-              reads no images gets only the facts of the asset (for example its size, length, and
-              format), and the loudness of a clip with sound.
+              and video clips into one grid picture. It sees these pictures only in the reply where it
+              asked for them, and each reply has a picture budget, so it sees a limited number of
+              pictures. Click the chip of the tool call to see the pictures that the model saw. A
+              model that reads no images gets only the facts of the asset (for example its size,
+              length, and format), and the loudness of a clip with sound.
             </p>
             <p>
               With the Dez tool <code>asset_info</code>, a model reads the facts of an asset, and who
