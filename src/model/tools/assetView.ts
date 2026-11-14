@@ -1,7 +1,17 @@
+import { byteSizeText } from '../../utils/byteSize'
+import type { ImageSize } from '../chat/imageDrawing'
 import type { ClipReadProblem } from '../chat/mediaFiles'
 import type { MediaTagKind } from '../chat/mediaTags'
 import type { PicturePart } from '../chat/types'
-import { MAX_REPLY_PICTURES, type ReplyPicture } from '../streams/replyPictures'
+import {
+  MAX_PICTURE_TOKENS,
+  MAX_REPLY_PICTURE_BYTES,
+  MAX_REPLY_PICTURE_TOKENS,
+  MAX_REQUEST_IMAGES,
+  pictureTokens,
+  type PictureBudget,
+  type ReplyPicture,
+} from '../streams/replyPictures'
 import { assetIdsArgument } from './arguments'
 import { shortNumber } from './assetFacts'
 import { clipReadAdviceText, type InputWording } from './toolInputs'
@@ -33,6 +43,11 @@ const MAX_SHEET_COLUMNS = 4
  *  sheet decodes only a part of the clip. */
 export const ASSET_VIEW_TIMEOUT_MS = 60_000
 
+// A count as the texts write it: `57,408`.
+function countText(count: number): string {
+  return count.toLocaleString('en-US')
+}
+
 // The description is static (no counts that change, no dates): the tools
 // array is in the provider's prompt cache.
 export const ASSET_VIEW_TOOL: ToolDefinition = {
@@ -42,8 +57,14 @@ export const ASSET_VIEW_TOOL: ToolDefinition = {
     + 'For each one, you get its facts (as asset_info gives them) and a picture: an image as it is; '
     + 'a video clip as a sheet of frames at equal steps (left to right, then top to bottom), with the time of each frame; '
     + 'an audio clip as a picture of its wave (time runs left to right), with its loudness. You do not hear a clip. '
-    + 'You see the pictures after the results of the calls of this round, in this reply only, '
-    + `and one reply shows at most ${MAX_REPLY_PICTURES} pictures. Dez makes them on the user's computer: no request goes to a model.`,
+    + 'You see the pictures after the results of the calls of this round, in this reply only. '
+    + 'Each later request of this reply sends them again, so the pictures of one reply have a budget: '
+    + `${MAX_REQUEST_IMAGES} pictures less the images of the user's newest message, ${countText(MAX_REPLY_PICTURE_TOKENS)} tokens, `
+    + `and ${MAX_REPLY_PICTURE_BYTES / 1024 ** 2} MB of base64. `
+    + `Dez counts a picture of W by H pixels as ceil(W / 28) * ceil(H / 28) tokens, at most ${countText(MAX_PICTURE_TOKENS)}: `
+    + `a wave picture as ${countText(pictureTokens({ width: 800, height: 200 }))}, a 1920x1080 frame as ${countText(pictureTokens({ width: 1920, height: 1080 }))}. `
+    + 'Each result tells the budget that is left. '
+    + "Dez makes the pictures on the user's computer: no request goes to a model.",
   parameters: [
     {
       name: 'assets',
@@ -248,21 +269,36 @@ export interface AssetViewItem {
   /** Its facts (`imageFactsText`, `clipFactsText`), or the text of why Dez
    *  could not read it. */
   facts: string
-  /** More lines: the frame times, the loudness, why there is no picture. */
+  /** More lines: the loudness, why there is no picture. */
   notes: string[]
-  /** Its picture, and what the picture shows (the text of the label that
-   *  goes before it); null for none. */
-  picture: { part: PicturePart, shows: string } | null
+  /** Its picture, of `size` pixels (null: not known), what the picture
+   *  shows (the text of the label that goes before it), and the line that
+   *  tells about the picture (the frame times, the wave, a smaller copy),
+   *  which the result has only while the picture goes; null for none. */
+  picture: { part: PicturePart, size: ImageSize | null, shows: string, note: string | null } | null
 }
 
 /** Whether a view makes the picture of an asset: `show`; `overLimit`
- *  when the reply has shown `MAX_REPLY_PICTURES` pictures; `noImageInput`
- *  when the model of the reply reads no images. */
+ *  when the picture budget of the reply has nothing left of one of its
+ *  parts; `noImageInput` when the model of the reply reads no images. */
 export type PictureChoice = 'show' | 'overLimit' | 'noImageInput'
 
-/** The note of an asset whose picture the reply cannot show any more. */
-export const PICTURE_LIMIT_NOTE = `No picture: this reply has shown ${MAX_REPLY_PICTURES} pictures, the most of one reply. `
+// What a picture costs, or what is left of a budget, but the pictures.
+function tokensAndBytesText({ tokens, bytes }: PictureBudget): string {
+  return `${countText(tokens)} tokens and ${byteSizeText(bytes)} of base64`
+}
+
+/** The note of an asset whose picture Dez did not make: the picture budget
+ *  of the reply has nothing left (`overLimit`). */
+export const PICTURE_LIMIT_NOTE = 'No picture: this reply has spent its picture budget (the last line tells what is left). '
   + 'In a later reply, call asset_view again to see it.'
+
+/** The note of an asset whose picture costs `cost`, more than the budget
+ *  `left` of the reply. */
+export function pictureCostNote(cost: PictureBudget, left: PictureBudget): string {
+  return `No picture: it costs ${tokensAndBytesText(cost)}, and this reply had only ${tokensAndBytesText(left)} left for pictures. `
+    + 'In a later reply, call asset_view again to see it.'
+}
 
 /** The note of an image whose picture is a smaller JPEG copy, of `width`
  *  by `height` pixels. */
@@ -347,19 +383,24 @@ export function clipNotReadNote(id: string, problem: ClipReadProblem): string {
 /** The pictures of a view, each with its label, for the reply
  *  (`ToolRunContext.showPictures`). */
 export function assetViewPictures(items: readonly AssetViewItem[]): ReplyPicture[] {
-  return items.flatMap((item) => (item.picture ? [{ label: `asset_view: ${item.picture.shows}.`, picture: item.picture.part }] : []))
+  return items.flatMap(({ picture }) => (picture ? [{ label: `asset_view: ${picture.shows}.`, picture: picture.part, size: picture.size }] : []))
 }
 
 /** The result text of an `asset_view` call: for each asset, a line as in
- *  `@a | image | PNG | 1024x768 | 1.2 MB`, then its notes. The last line
- *  tells where the pictures are, or that the model of the reply gets none
- *  (`imageInput` false). */
-export function assetViewText(items: readonly AssetViewItem[], imageInput: boolean): string {
-  const lines = items.flatMap((item) => [`@${item.id} | ${item.kind} | ${item.facts}`, ...item.notes])
-  if (!imageInput) lines.push('This model gets no pictures, so Dez gives only the facts, and the loudness of an audio clip.')
-  else if (items.some((item) => item.picture)) {
+ *  `@a | image | PNG | 1024x768 | 1.2 MB`, then the note of its picture and
+ *  its other notes. The last lines tell where the pictures are and the
+ *  picture budget that the reply has `left`, or that the model of the reply
+ *  gets no pictures (`left` null). */
+export function assetViewText(items: readonly AssetViewItem[], left: PictureBudget | null): string {
+  const lines = items.flatMap((item) => [`@${item.id} | ${item.kind} | ${item.facts}`, ...(item.picture?.note ? [item.picture.note] : []), ...item.notes])
+  if (left === null) {
+    lines.push('This model gets no pictures, so Dez gives only the facts, and the loudness of an audio clip.')
+    return lines.join('\n')
+  }
+  if (items.some((item) => item.picture)) {
     lines.push('You see each picture after the results of the calls of this round, after a line that names it. '
       + 'You see the pictures in this reply only. In a later reply, call asset_view again to see them again.')
   }
+  lines.push(`Picture budget left in this reply: ${left.pictures} ${left.pictures === 1 ? 'picture' : 'pictures'}, ${tokensAndBytesText(left)}.`)
   return lines.join('\n')
 }

@@ -13,7 +13,7 @@ import { errorText, explainedError } from '../utils/errorText'
 import type { ClipInputRules, GeneratedClip, GeneratedMedia, MediaKind, MediaProgress, ModelRequest, ProviderGenerateMediaResult, ProviderStreamChatResult } from '../model/providers'
 import { requireProvider } from '../model/providers/registry'
 import { agentSectionMessages, mediaRequestInput } from '../model/streams/messages'
-import { ReplyPictures } from '../model/streams/replyPictures'
+import { NO_PICTURE_BUDGET, ReplyPictures, requestImageCount } from '../model/streams/replyPictures'
 import {
   checkToolCalls,
   MAX_TOOL_ROUNDS,
@@ -368,7 +368,7 @@ async function runToolRound(tabId: string, reply: ReplyRuntime, model: ModelRef,
       model,
       jobs: reply.jobs,
       ...toolAssetWriters(tabId, reply, call.name, takesAssets),
-      picturesLeft: () => (takesAssets() ? reply.pictures.left : 0),
+      pictureBudget: () => (takesAssets() ? reply.pictures.left : NO_PICTURE_BUDGET),
       // The round's key is the id of its first call: the first result of
       // its tool message has it (`ReplyPictures.inMessages`).
       showPictures: (pictures) => { if (takesAssets()) reply.pictures.add(calls[0].id, pictures) },
@@ -765,7 +765,7 @@ export default sbp('sbp/selectors/register', {
       escaper: new ModelTextEscaper(),
       afterAsset: false,
       jobs: new ReplyJobs((usd) => countRequestCost(args.tabId, usd)),
-      pictures: new ReplyPictures(),
+      pictures: new ReplyPictures(requestImageCount(args.messages)),
     }
     repliesByTab.set(args.tabId, reply)
 

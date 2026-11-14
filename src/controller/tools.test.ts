@@ -3,6 +3,7 @@ import { createPinia, setActivePinia } from 'pinia'
 import { afterEach, beforeEach, describe, expect, it, vi, type MockInstance } from 'vitest'
 import { UnwritableImageTypeError, type DrawnImage, type DrawnMediaType, type ImageDrawing, type ImageSize } from '../model/chat/imageDrawing'
 import { mediaTagText, type MediaTagData } from '../model/chat/mediaTags'
+import { jpegHeader } from '../model/chat/testing'
 import { toolBlockText } from '../model/chat/toolBlocks'
 import type { ModelRef, Tab } from '../model/chat/types'
 import type { ModelCache } from '../model/persistence/types'
@@ -13,9 +14,9 @@ import { PRICE_LIFETIME_MS } from '../model/providers/modelPrices'
 import type { ProviderGenerateMediaInput, ProviderGenerateMediaResult, ProviderMediaQuote, ProviderMediaQuoteInput, ProviderStreamChatInput, ProviderStreamChatResult } from '../model/providers/streamTypes'
 import { providerInfo } from '../model/providers/testing'
 import type { ModelInfo, ProviderInfo, ProviderInputImageRules, ProviderSettingsDescriptor } from '../model/providers/types'
-import { MAX_REPLY_PICTURES, type ReplyPicture } from '../model/streams/replyPictures'
+import { NO_PICTURE_BUDGET, ReplyPictures, type PictureBudget, type ReplyPicture } from '../model/streams/replyPictures'
 import { assetProbeArgs, clipNotReadFacts } from '../model/tools/assetFacts'
-import { clipNotReadNote, PICTURE_LIMIT_NOTE, PICTURE_NOT_DRAWN_NOTE, PICTURE_NOT_READ_NOTE, smallerCopyNote, VIEW_FAILED_NOTE } from '../model/tools/assetView'
+import { clipNotReadNote, PICTURE_LIMIT_NOTE, PICTURE_NOT_DRAWN_NOTE, PICTURE_NOT_READ_NOTE, pictureCostNote, smallerCopyNote, VIEW_FAILED_NOTE } from '../model/tools/assetView'
 import { jobsListText, jobStartedText, jobsWaitResults, jobsWaitText, NO_JOBS_TEXT, NO_OPEN_JOBS_TEXT } from '../model/tools/jobs'
 import { modelCost, modelInfoText, type ModelInfoFacts } from '../model/tools/modelInfo'
 import { IMAGE_NOT_SAVED_TEXT, INVOCATION_TEXT_CAP, invocationAnswerStateText, invocationAnswerText, modelInvocation } from '../model/tools/modelInvoke'
@@ -149,7 +150,7 @@ sbp('sbp/selectors/register', {
 const REPLY_MODEL: ModelRef = { providerId: 'venice', modelId: 'venice-glm-5' }
 
 // The picture methods of a context of a reply that shows no picture.
-const NO_PICTURES: Pick<ToolRunContext, 'picturesLeft' | 'showPictures'> = { picturesLeft: () => 0, showPictures: () => {} }
+const NO_PICTURES: Pick<ToolRunContext, 'pictureBudget' | 'showPictures'> = { pictureBudget: () => NO_PICTURE_BUDGET, showPictures: () => {} }
 
 // Runs a call of a reply of `model` that takes no image and no clip, and
 // has no job.
@@ -1758,8 +1759,15 @@ describe('dez.controller/tools/run', () => {
       .map((time, n) => `[Parsed_showinfo_1 @ 0x1] n:   ${n} pts:  ${n} pts_time:${time} duration: 512 fmt:yuv420p\n`).join('')
     const EBUR128 = '[Parsed_ebur128_3 @ 0x2] Summary:\n  Integrated loudness:\n    I:         -23.1 LUFS\n'
       + '  Loudness range:\n    LRA:         9.4 LU\n  True peak:\n    Peak:      -18.8 dBFS\n'
+    // The pictures that ffmpeg makes: a frame sheet of 968 by 364 pixels
+    // (455 tokens), and a wave of 800 by 200 (232 tokens). The image @a,
+    // of 1000 by 500 pixels, costs 648 tokens.
+    const SHEET_JPEG = jpegHeader(968, 364)
+    const WAVE_JPEG = jpegHeader(800, 200)
+    // The last line of a view that showed no picture.
+    const FULL_BUDGET_LINE = 'Picture budget left in this reply: 20 pictures, 57,408 tokens and 20.0 MB of base64.'
     let tabId: string
-    let picturesLeft: number
+    let budget: PictureBudget
     let shown: ReplyPicture[]
     // The ffprobe output of each clip, by the name of its copy.
     let probes: Record<string, string>
@@ -1773,7 +1781,7 @@ describe('dez.controller/tools/run', () => {
         jobs: new ReplyJobs(),
         writeImage: () => null,
         writeClip: () => null,
-        picturesLeft: () => picturesLeft,
+        pictureBudget: () => budget,
         showPictures: (pictures) => { shown.push(...pictures) },
       }
       return sbp('dez.controller/tools/run', { name: 'asset_view', arguments: args }, running(), context) as Promise<ToolRunResult>
@@ -1791,7 +1799,7 @@ describe('dez.controller/tools/run', () => {
         { id: 'a2', role: 'agent', content: [{ kind: 'text', text: '' }] },
       ])
       readImage = async () => new Blob([FOX_BYTES], { type: 'image/png' })
-      picturesLeft = MAX_REPLY_PICTURES
+      budget = new ReplyPictures(0).left
       shown = []
       probes = { 'b.mp4': probed([VIDEO_STREAM, AUDIO_STREAM]), 'd.wav': probed([AUDIO_STREAM]) }
       frameSheetLog = SHOWINFO
@@ -1808,7 +1816,10 @@ describe('dez.controller/tools/run', () => {
         onOutput({ stream: 'stderr', text: EBUR128 })
         return ENDED
       }
-      native.fileBytes = ({ path }) => new TextEncoder().encode(path.slice(path.lastIndexOf('/') + 1))
+      native.fileBytes = ({ path }) => {
+        const name = path.slice(path.lastIndexOf('/') + 1)
+        return name.endsWith('-frames.jpg') ? SHEET_JPEG : name.endsWith('-wave.jpg') ? WAVE_JPEG : new TextEncoder().encode(name)
+      }
     })
 
     it('shows an image as it is, the frame sheet of a video clip, and the wave of an audio clip, with their facts, times, and loudness', async () => {
@@ -1821,11 +1832,13 @@ describe('dez.controller/tools/run', () => {
       expect(result.content).toMatch(/0 s to 2\.5 s: 3 frames in one row, at 0\.42, 1\.25, 2\.08 s/)
       expect(result.content).toMatch(/-23\.1 LUFS integrated, 9\.4 LU range, -18\.8 dBFS true peak/)
       expect(drawings).toStrictEqual([])
-      expect(shown.map(({ label, picture }) => ({ label: label.match(/@[a-z]+/)?.[0], picture }))).toStrictEqual([
-        { label: '@a', picture: { type: 'picture', mediaType: 'image/png', bytes: FOX_BYTES } },
-        { label: '@b', picture: { type: 'picture', mediaType: 'image/jpeg', bytes: new TextEncoder().encode('b-frames.jpg') } },
-        { label: '@d', picture: { type: 'picture', mediaType: 'image/jpeg', bytes: new TextEncoder().encode('d-wave.jpg') } },
+      expect(shown.map(({ label, picture, size }) => ({ label: label.match(/@[a-z]+/)?.[0], picture, size }))).toStrictEqual([
+        { label: '@a', picture: { type: 'picture', mediaType: 'image/png', bytes: FOX_BYTES }, size: { width: 1000, height: 500 } },
+        { label: '@b', picture: { type: 'picture', mediaType: 'image/jpeg', bytes: SHEET_JPEG }, size: { width: 968, height: 364 } },
+        { label: '@d', picture: { type: 'picture', mediaType: 'image/jpeg', bytes: WAVE_JPEG }, size: { width: 800, height: 200 } },
       ])
+      // 648 + 455 + 232 tokens, and 4 + 80 + 80 bytes of base64.
+      expect(lines.at(-1)).toBe('Picture budget left in this reply: 17 pictures, 56,073 tokens and 20.0 MB of base64.')
 
       // One copy of each clip, for its probe; the later runs find it in
       // the folder, which goes at the end with the pictures.
@@ -1851,10 +1864,11 @@ describe('dez.controller/tools/run', () => {
       expect(ffmpegRuns()).toHaveLength(1)
       expect(ffmpegRuns()[0].args.join(' ')).not.toContain('showwavespic')
       expect(native.readFiles).toStrictEqual([])
+      expect(result.content).not.toContain('Picture budget')
     })
 
-    it('shows no more pictures than the reply has left, and tells which assets got none', async () => {
-      picturesLeft = 1
+    it('makes no picture when the budget of the reply has no picture left, and tells which assets got none', async () => {
+      budget = { ...budget, pictures: 1 }
 
       const result = await assetView({ assets: 'a b d' })
 
@@ -1864,6 +1878,21 @@ describe('dez.controller/tools/run', () => {
       expect(ffmpegRuns()[0].args.join(' ')).not.toContain('showwavespic')
       expect(result.content).toMatch(/-23\.1 LUFS integrated/)
       expect(result.content.split(PICTURE_LIMIT_NOTE)).toHaveLength(3)
+      expect(result.content.split('\n').at(-1)).toBe('Picture budget left in this reply: 0 pictures, 56,760 tokens and 20.0 MB of base64.')
+    })
+
+    it('shows each picture that fits in the tokens that are left, and tells the cost of each one that does not, with no line about its picture', async () => {
+      budget = { ...budget, tokens: 500 }
+
+      const result = await assetView({ assets: 'a b d' })
+
+      expect(shown.map(({ label }) => label.match(/@[a-z]+/)?.[0])).toStrictEqual(['@b'])
+      expect(result.content).toContain(pictureCostNote({ tokens: 648, bytes: 4, pictures: 1 }, budget))
+      expect(result.content).toContain(pictureCostNote({ tokens: 232, bytes: 80, pictures: 1 }, { tokens: 45, bytes: budget.bytes - 80, pictures: 19 }))
+      expect(result.content).toMatch(/^Frame sheet of /m)
+      expect(result.content).not.toContain('Wave picture of')
+      expect(result.content).toMatch(/-23\.1 LUFS integrated/)
+      expect(result.content.split('\n').at(-1)).toBe('Picture budget left in this reply: 19 pictures, 45 tokens and 20.0 MB of base64.')
     })
 
     it.each([
@@ -1922,7 +1951,7 @@ describe('dez.controller/tools/run', () => {
       storedImageSize = { width: 8192, height: 4096 }
       drawError = new Error('No canvas to draw the image on.')
 
-      expect(await assetView({ assets: 'a' })).toStrictEqual({ content: `@a | image | PNG | 8192x4096 | 3 B\n${PICTURE_NOT_DRAWN_NOTE}`, isError: false })
+      expect(await assetView({ assets: 'a' })).toStrictEqual({ content: `@a | image | PNG | 8192x4096 | 3 B\n${PICTURE_NOT_DRAWN_NOTE}\n${FULL_BUDGET_LINE}`, isError: false })
       expect(shown).toStrictEqual([])
     })
 
@@ -1948,6 +1977,7 @@ describe('dez.controller/tools/run', () => {
           clipNotReadNote('c', 'deleted'),
           `@d | audio | ${clipNotReadFacts('unreadable')}`,
           clipNotReadNote('d', 'unreadable'),
+          FULL_BUDGET_LINE,
         ].join('\n'),
         isError: false,
       })

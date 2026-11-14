@@ -2,6 +2,7 @@ import { spawnSync } from 'node:child_process'
 import fs from 'node:fs'
 import path from 'node:path'
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from 'vitest'
+import { MAX_REPLY_PICTURE_BYTES } from '../../src/model/streams/replyPictures'
 import { jobStartedText, jobsWaitResults, startedJobId, type JobResult } from '../../src/model/tools/jobs'
 import { REFUSED_DEVICES, REFUSED_PROTOCOLS } from '../../src/model/tools/videoTool'
 import { byteSizeText } from '../../src/utils/byteSize'
@@ -420,7 +421,7 @@ describe('video tool', () => {
     sendToolCalls(tone.next.reply, [openAiToolCall('call_view', 'asset_view', { assets: '@a @c @g', frames: 4 })])
 
     const viewed = await chatRequest()
-    const [videoLine, sheet, imageLine, audioLine, wave, loudness, end] = toolResult(viewed, 'call_view').split('\n')
+    const [videoLine, sheet, imageLine, audioLine, wave, loudness, end, budget] = toolResult(viewed, 'call_view').split('\n')
     expect(videoLine).toBe(`@a | video | WebM | 2 s | 48x36 | 5 fps | vp9 | no sound | ${byteSizeText(WEBM_VIDEO.length)}`)
     // The times are those of the frames that ffmpeg took: the clip has a
     // frame each 0.2 s, and the sheet takes the first one at or after the
@@ -464,6 +465,11 @@ describe('video tool', () => {
     }
     expect(await jpegFacts(sheetUrl, 'sheet.jpg')).toStrictEqual(['video mjpeg 1292x240'])
     expect(await jpegFacts(waveUrl, 'wave.jpg')).toStrictEqual(['video mjpeg 800x200'])
+    // The newest user message has no image, so the budget had 20 pictures.
+    // The sheet costs 47 * 9 = 423 tokens, the image 2 * 2 = 4, and the
+    // wave 29 * 8 = 232; the bytes are those of the base64 data.
+    const sentBytes = [sheetUrl, imageUrl, waveUrl].reduce((sum, url) => sum + url.split(',')[1].length, 0)
+    expect(budget).toBe(`Picture budget left in this reply: 17 pictures, 56,749 tokens and ${byteSizeText(MAX_REPLY_PICTURE_BYTES - sentBytes)} of base64.`)
 
     // The next request of the reply sends the same messages again, the
     // pictures at the same place.

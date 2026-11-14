@@ -1,10 +1,12 @@
 import sbp from '@sbp/sbp'
 import { wholeImageDrawing, type DrawnImage, type ImageDrawing, type ImageSize } from '../model/chat/imageDrawing'
 import type { ImageMediaType } from '../model/chat/images'
+import { jpegSize } from '../model/chat/jpegSize'
 import type { PicturePart, Section } from '../model/chat/types'
 import type { ClipAttachment } from '../model/providers/clipInputs'
 import type { ModelInfo } from '../model/providers/types'
 import { conversationAssets } from '../model/streams/mediaRequest'
+import { budgetAfter, NO_PICTURE_BUDGET, pictureCost } from '../model/streams/replyPictures'
 import { probedClipFacts } from '../model/tools/assetFacts'
 import {
   ASSET_VIEW_TIMEOUT_MS,
@@ -26,6 +28,7 @@ import {
   noFramesNote,
   partHasNoFrame,
   PICTURE_LIMIT_NOTE,
+  pictureCostNote,
   PICTURE_NOT_DRAWN_NOTE,
   PICTURE_NOT_READ_NOTE,
   sheetFrameTimes,
@@ -67,8 +70,7 @@ import type { ToolRunContext } from './tools'
 // Anthropic API, and a provider can refuse a large image. A refusal would
 // fail each later request of the reply, as each one sends the picture
 // again. The Claude API refuses an image with a side over 3,000 px in a
-// request with more than 20 images, and the pictures of the reply with the
-// images of the newest user message can be more than 20.
+// request with more than 20 images.
 // https://platform.claude.com/docs/en/build-with-claude/vision
 const MAX_PICTURE_BYTES = 3_750_000
 const MAX_PICTURE_SIDE = 3000
@@ -110,7 +112,7 @@ async function viewImage(id: string, path: string, choice: PictureChoice): Promi
   if (choice === 'overLimit') item.notes.push(PICTURE_LIMIT_NOTE)
   if (choice !== 'show') return item
 
-  const { file, mediaType } = image
+  const { file, mediaType, size } = image
   let { drawn } = image
   // The size of a drawing is known only after the draw, and the PNG
   // drawing of a small file can be much larger than the file (an SVG that
@@ -126,15 +128,15 @@ async function viewImage(id: string, path: string, choice: PictureChoice): Promi
       return item
     }
   }
-  let part: PicturePart | null
+  const shows = imagePictureShows(id)
   if (drawn) {
-    part = { type: 'picture', mediaType: drawn.mediaType, bytes: drawn.bytes }
+    const part: PicturePart = { type: 'picture', mediaType: drawn.mediaType, bytes: drawn.bytes }
     // Only the copy of a too large image is a JPEG drawing.
-    if (drawn.mediaType === 'image/jpeg') item.notes.push(smallerCopyNote(drawn.width, drawn.height))
-  } else {
-    part = mediaType && { type: 'picture', mediaType, bytes: new Uint8Array(await file.arrayBuffer()) }
+    const note = drawn.mediaType === 'image/jpeg' ? smallerCopyNote(drawn.width, drawn.height) : null
+    item.picture = { part, size: { width: drawn.width, height: drawn.height }, shows, note }
+  } else if (mediaType) {
+    item.picture = { part: { type: 'picture', mediaType, bytes: new Uint8Array(await file.arrayBuffer()) }, size, shows, note: null }
   }
-  item.picture = part && { part, shows: imagePictureShows(id) }
   return item
 }
 
@@ -149,12 +151,12 @@ async function runFfmpeg(args: string[], folder: string, signal: AbortSignal): P
   return { end, log }
 }
 
-// The JPEG picture `name` that a run wrote into the work folder `folder`;
-// null when it is not there.
-async function readPicture(folder: string, name: string): Promise<PicturePart | null> {
+// The JPEG picture `name` that a run wrote into the work folder `folder`,
+// with its size; null when it is not there.
+async function readPicture(folder: string, name: string): Promise<{ part: PicturePart, size: ImageSize | null } | null> {
   try {
     const bytes = await sbp('dez.native/loadAppFileBytes', `${folder}/${name}`, 'cache') as Uint8Array
-    return { type: 'picture', mediaType: 'image/jpeg', bytes }
+    return { part: { type: 'picture', mediaType: 'image/jpeg', bytes }, size: jpegSize(bytes) }
   } catch (error) {
     console.error(`Failed to read the picture ${name} of an asset_view run:`, error)
     return null
@@ -184,7 +186,7 @@ async function frameSheet(input: ClipInput, call: AssetViewCall, part: ClipPart,
   const picture = await readPicture(folder, name)
   if (!picture) return { notes: [PICTURE_NOT_READ_NOTE], picture: null }
   const { note, shows } = frameSheetTexts(input.id, part, times, call.frames)
-  return { notes: [note], picture: { part: picture, shows } }
+  return { notes: [], picture: { ...picture, shows, note } }
 }
 
 // The loudness of the audio clip `input` over `part`, and with `wave`, the
@@ -203,7 +205,7 @@ async function audioView(input: ClipInput, part: ClipPart, wave: boolean, folder
   const picture = await readPicture(folder, name)
   if (!picture) return { notes: [...notes, PICTURE_NOT_READ_NOTE], picture: null }
   const { note, shows } = waveTexts(input.id, part)
-  return { notes: [note, ...notes], picture: { part: picture, shows } }
+  return { notes, picture: { ...picture, shows, note } }
 }
 
 // The view of `clip`: its facts from ffprobe, and its frame sheet, or its
@@ -234,7 +236,9 @@ async function viewClip(clip: ClipAttachment, call: AssetViewCall, choice: Pictu
 
 /** The result text of an `asset_view` call with the arguments `args`, for
  *  the conversation `sections`, after it showed the pictures of the call
- *  to the model of the reply (`context.showPictures`). Throws a
+ *  to the model of the reply (`context.showPictures`). Each picture that
+ *  fits in what is left of the picture budget of the reply goes; an asset
+ *  whose picture does not fit gets a note in its place. Throws a
  *  `ToolError` for bad arguments, and for an id that names no image and no
  *  clip of the conversation. A model that reads no images (`imageInput`
  *  false) gets the facts and the loudness only. A stop of `signal` stops a
@@ -243,7 +247,7 @@ export async function assetViewResult(
   args: ToolArguments,
   sections: readonly Section[],
   signal: AbortSignal,
-  context: Pick<ToolRunContext, 'model' | 'picturesLeft' | 'showPictures'>,
+  context: Pick<ToolRunContext, 'model' | 'pictureBudget' | 'showPictures'>,
 ): Promise<string> {
   const call = assetViewCall(args)
   const assets = conversationAssets(sections)
@@ -252,23 +256,35 @@ export async function assetViewResult(
 
   const model = sbp('dez.model/modelCache/model', context.model.providerId, context.model.modelId) as ModelInfo | null
   const imageInput = model?.imageInput !== false
-  let picturesLeft = imageInput ? context.picturesLeft() : 0
+  let left = imageInput ? context.pictureBudget() : NO_PICTURE_BUDGET
   const view = async (folder: string | null): Promise<AssetViewItem[]> => {
     const items: AssetViewItem[] = []
     for (const id of call.ids) {
       signal.throwIfAborted()
-      const choice: PictureChoice = !imageInput ? 'noImageInput' : picturesLeft > 0 ? 'show' : 'overLimit'
+      // With nothing left of one part of the budget, no picture fits, so
+      // Dez does not make one. Else only the made picture tells its cost.
+      const hasRoom = left.pictures > 0 && left.tokens > 0 && left.bytes > 0
+      const choice: PictureChoice = !imageInput ? 'noImageInput' : hasRoom ? 'show' : 'overLimit'
       const path = assets.images.get(id)
       // `folder` is a folder when the call names a clip.
       const item = path !== undefined
         ? await viewImage(id, path, choice)
         : await viewClip(assets.clips.get(id) as ClipAttachment, call, choice, folder as string, signal)
-      if (item.picture) picturesLeft -= 1
+      if (item.picture) {
+        const cost = pictureCost(item.picture.part, item.picture.size)
+        const after = budgetAfter(left, cost)
+        if (after) {
+          left = after
+        } else {
+          item.notes.push(pictureCostNote(cost, left))
+          item.picture = null
+        }
+      }
       items.push(item)
     }
     return items
   }
   const items = call.ids.some((id) => assets.clips.has(id)) ? await inWorkFolder(view) : await view(null)
   context.showPictures(assetViewPictures(items))
-  return assetViewText(items, imageInput)
+  return assetViewText(items, imageInput ? left : null)
 }

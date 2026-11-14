@@ -38,8 +38,9 @@ export type ImageFactsRead =
   | { kind: 'notRead', facts: string }
   /** The webview decoded it, but could not draw the picture of the plan. */
   | { kind: 'notDrawn', facts: string }
-  /** The type of its bytes, and the drawing of the plan (null: none). */
-  | { kind: 'read', facts: string, file: File, mediaType: ImageMediaType | null, drawn: DrawnImage | null }
+  /** The type of its bytes, its size in pixels, and the drawing of the plan
+   *  (null: none). */
+  | { kind: 'read', facts: string, file: File, mediaType: ImageMediaType | null, size: ImageSize, drawn: DrawnImage | null }
 
 /** The drawing, with its type, of the picture of an image of `size`,
  *  whose file has `bytes` bytes of the type `mediaType`; null for none. */
@@ -83,7 +84,8 @@ export async function readImageFacts(id: string, path: string, plan: PicturePlan
     console.error(`Failed to draw the picture of the image @${id}:`, error)
     return { kind: 'notDrawn', facts: imageFactsText(extension, size, file.size) }
   }
-  return { kind: 'read', facts: imageFactsText(extension, size, file.size), file, mediaType, drawn }
+  // Redraw resolves only after it gave the plan the size.
+  return { kind: 'read', facts: imageFactsText(extension, size, file.size), file, mediaType, size: size as ImageSize, drawn }
 }
 
 /** The probe of the clip of `input` for a call of the tool `toolName`: one
