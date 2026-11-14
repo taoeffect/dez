@@ -382,14 +382,14 @@ export function soundPictureOf({ soundPicture }: Pick<AssetViewCall, 'soundPictu
 }
 
 /** The pixels of the part `crop` of an image of `size`: each edge on the
- *  nearest line between two pixels. Null for a part of less than one pixel
- *  across or down. */
+ *  nearest line between two pixels, so a part that `assetViewCall` lets end
+ *  a float error past an edge ends on that edge. Null for a part of less
+ *  than one pixel across or down. */
 export function cropRegion(crop: ViewCrop, size: ImageSize): ImageRegion | null {
   const x = Math.round(crop.left * size.width)
   const y = Math.round(crop.top * size.height)
-  // `Math.min`: `assetViewCall` lets a part end a float error past the edge.
-  const width = Math.min(size.width, Math.round((crop.left + crop.width) * size.width)) - x
-  const height = Math.min(size.height, Math.round((crop.top + crop.height) * size.height)) - y
+  const width = Math.round((crop.left + crop.width) * size.width) - x
+  const height = Math.round((crop.top + crop.height) * size.height) - y
   return width < 1 || height < 1 ? null : { x, y, width, height }
 }
 

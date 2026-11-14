@@ -2293,7 +2293,7 @@ describe('dez.controller/tools/run', () => {
       expect(drawings.map(({ drawing }) => drawing.width)).toStrictEqual([1568, 1024])
       expect(result).toStrictEqual({ content: `@a | image | PNG | 3000x1500 | 3 B\n${PICTURE_TOO_LARGE_NOTE}\n${FULL_BUDGET_LINE}`, isError: false })
       expect(shown).toStrictEqual([])
-      expect(consoleError).toHaveBeenCalled()
+      expect(consoleError).toHaveBeenCalledWith('The smallest picture of the image @a has 3750001 bytes, more than Dez sends.')
     })
 
     it.each([

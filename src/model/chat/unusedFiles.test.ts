@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import { imageMarkdown } from './images'
 import { mediaTagText } from './mediaTags'
+import { toolBlockText } from './toolBlocks'
 import { STORED_FILE_FOLDERS, UNUSED_FILE_MIN_AGE_MS, cacheEntryKind, isHeldCacheEntry, oldCacheEntries, oldStoredFiles, removeNamedFiles, storedFilePath } from './unusedFiles'
 
 const APP_DIR = '/home/ann/.config/dez'
@@ -198,6 +199,15 @@ describe('removeNamedFiles', () => {
     const tag = mediaTagText({ kind: 'video', id: 'b', type: 'video/mp4', src: `${APP_DIR}/assets/generated/video/${MP4}`, url: null, expires: null, other: [] })
 
     expect(notNamed(`A clip:\n${tag}\n`)).toEqual([PNG, WEBP])
+  })
+
+  // The block writer escapes the quotes of the JSON in `pictures`
+  // (`&quot;<name>&quot;`): the scan must still find the name there.
+  it('takes out a picture copy that only the `pictures` attribute of a tool block names', () => {
+    const block = toolBlockText({ id: 'call_1', name: 'asset_view', status: 'success', arguments: { assets: '@a' }, result: '@a | image | PNG', pictures: [{ file: PNG, label: 'asset_view: the image @a.' }] })
+
+    expect(block).toContain(`&quot;${PNG}&quot;`)
+    expect(notNamed(block)).toEqual([WEBP, MP4])
   })
 
   it('takes out a file that plain text names, with any route to its folder', () => {

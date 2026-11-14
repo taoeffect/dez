@@ -142,10 +142,10 @@ describe('assetViewCall', () => {
 })
 
 describe('cropRegion', () => {
-  it('takes the pixels nearest to the edges of the part, and never past the image', () => {
+  it('takes the pixels nearest to the edges of the part, and ends a part a float error past the edge on the edge', () => {
     expect(cropRegion({ left: 0.5, top: 0, width: 0.5, height: 0.5 }, { width: 1000, height: 500 })).toStrictEqual({ x: 500, y: 0, width: 500, height: 250 })
     expect(cropRegion({ left: 0.333, top: 0.1, width: 0.333, height: 0.9 }, { width: 100, height: 10 })).toStrictEqual({ x: 33, y: 1, width: 34, height: 9 })
-    expect(cropRegion({ left: 0.7, top: 0, width: 0.3 + 1e-10, height: 1 }, { width: 10, height: 10 })).toStrictEqual({ x: 7, y: 0, width: 3, height: 10 })
+    expect(cropRegion({ left: 0.7, top: 0, width: 0.3 + 1e-9, height: 1 }, { width: 10, height: 10 })).toStrictEqual({ x: 7, y: 0, width: 3, height: 10 })
   })
 
   it('is null for a part of less than one pixel across or down', () => {
