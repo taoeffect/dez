@@ -6,7 +6,7 @@ import type { ClipAttachment } from '../model/providers/clipInputs'
 import type { ModelInfo } from '../model/providers/types'
 import { conversationAssets } from '../model/streams/mediaRequest'
 import { budgetAfter, NO_PICTURE_BUDGET, pictureCost } from '../model/streams/replyPictures'
-import { probedClipFacts } from '../model/tools/assetFacts'
+import { probedClipFacts, type ClipProbeFacts } from '../model/tools/assetFacts'
 import { cutTimes } from '../model/tools/clipAnalysis'
 import {
   ASSET_VIEW_TIMEOUT_MS,
@@ -46,6 +46,7 @@ import {
   sheetTooLargeNote,
   smallerCopyNote,
   smallerPictureDrawing,
+  soundlessPartNote,
   TIMES_TIMED_OUT_NOTE,
   timesSheetArgs,
   timesSheetTexts,
@@ -191,7 +192,8 @@ interface SheetRunPlan {
 type SheetRun =
   | { kind: 'sheet', times: number[], picture: { part: PicturePart, size: ImageSize | null } }
   | { kind: 'noFrame' }
-  | { kind: 'note', note: string }
+  // `failed`: the run failed or took too long (`runProblemNote`).
+  | { kind: 'note', note: string, failed: boolean }
 
 // The run `plan` for the clip `clip`, on the copy that is already in the
 // work folder `folder`: the sheet with the times of its frames, else that
@@ -203,16 +205,21 @@ async function sheetRun(clip: ClipAttachment, plan: SheetRunPlan, folder: string
   // write. A damaged clip fails in the same way: its run is a failed view.
   if (times.length === 0 && ran.end.kind === 'exited' && partHasNoFrame(ran.log)) return { kind: 'noFrame' }
   const problem = runProblemNote(clip, ran, plan.timedOutNote)
-  if (problem !== null) return { kind: 'note', note: problem }
+  if (problem !== null) return { kind: 'note', note: problem, failed: true }
   const picture = await readPicture(folder, plan.name)
-  if (!picture) return { kind: 'note', note: PICTURE_NOT_READ_NOTE }
+  if (!picture) return { kind: 'note', note: PICTURE_NOT_READ_NOTE, failed: false }
   // The file of a sheet of fine detail (noise, film grain) can be over the
   // limit, mostly at the `full` box.
-  if (picture.part.bytes.length > MAX_PICTURE_BYTES) return { kind: 'note', note: plan.tooLargeNote }
+  if (picture.part.bytes.length > MAX_PICTURE_BYTES) return { kind: 'note', note: plan.tooLargeNote, failed: false }
   return { kind: 'sheet', times, picture }
 }
 
-type SheetView = Pick<AssetViewItem, 'notes' | 'picture'>
+/** The frame sheet of a video clip and its notes. `failed`: a run failed
+ *  or took too long, and its note tells that Dez shows no more of the
+ *  clip, so the view runs nothing more on it. */
+interface SheetView extends Pick<AssetViewItem, 'notes' | 'picture'> {
+  failed?: boolean
+}
 
 // The frame sheet of `frames` frames at equal steps over `part` of the
 // video clip `input`, for a view with `detail`.
@@ -223,7 +230,7 @@ async function stepsSheet(input: ClipInput, frames: number, part: ClipPart, deta
   const plan = { args, name, from: part.start, frames, tooLargeNote: sheetTooLargeNote(detail, 'frames'), timedOutNote: VIEW_TIMED_OUT_NOTE }
   const ran = await sheetRun(input.clip, plan, folder, signal)
   if (ran.kind === 'noFrame') return { notes: [noFramesNote(part)], picture: null }
-  if (ran.kind === 'note') return { notes: [ran.note], picture: null }
+  if (ran.kind === 'note') return { notes: [ran.note], picture: null, failed: ran.failed }
   const { note, shows } = frameSheetTexts(input.id, part, ran.times, frames)
   return { notes: [], picture: { ...ran.picture, shows, note } }
 }
@@ -241,7 +248,7 @@ async function timesSheet(input: ClipInput, times: readonly number[], seconds: n
   const plan = { args, name, from: 0, frames: inClip.length, tooLargeNote: sheetTooLargeNote(detail, 'times'), timedOutNote: TIMES_TIMED_OUT_NOTE }
   const ran = await sheetRun(input.clip, plan, folder, signal)
   if (ran.kind === 'noFrame') return { notes: [missingTimesNote(times)], picture: null }
-  if (ran.kind === 'note') return { notes: [ran.note], picture: null }
+  if (ran.kind === 'note') return { notes: [ran.note], picture: null, failed: ran.failed }
   // The times are in order, so the times that got no frame (the picture of
   // the clip ends before them) are the last ones.
   const missing = times.slice(ran.times.length)
@@ -258,7 +265,7 @@ async function timesSheet(input: ClipInput, times: readonly number[], seconds: n
 async function scenesSheet(input: ClipInput, frames: number, part: ClipPart, detail: ViewDetail, folder: string, signal: AbortSignal): Promise<SheetView> {
   const cutsRan = await runFfmpeg(sceneCutsArgs(input.name, part), folder, signal)
   const problem = runProblemNote(input.clip, cutsRan)
-  if (problem !== null) return { notes: [problem], picture: null }
+  if (problem !== null) return { notes: [problem], picture: null, failed: true }
   const cuts = cutTimes(cutsRan.log).map((time) => part.start + time)
   const times = [part.start, ...cuts].slice(0, frames)
   const name = `${input.id}-frames.jpg`
@@ -266,20 +273,34 @@ async function scenesSheet(input: ClipInput, frames: number, part: ClipPart, det
   const plan = { args, name, from: part.start, frames: times.length, tooLargeNote: sheetTooLargeNote(detail, 'frames'), timedOutNote: VIEW_TIMED_OUT_NOTE }
   const ran = await sheetRun(input.clip, plan, folder, signal)
   if (ran.kind === 'noFrame') return { notes: [noFramesNote(part)], picture: null }
-  if (ran.kind === 'note') return { notes: [ran.note], picture: null }
+  if (ran.kind === 'note') return { notes: [ran.note], picture: null, failed: ran.failed }
   const { note, shows } = scenesSheetTexts(input.id, part, ran.times, times.length, cuts)
   return { notes: [], picture: { ...ran.picture, shows, note } }
 }
 
-// The loudness of the audio clip `input` over `part`, and with `wave`, the
-// picture of its wave: their notes and the picture.
-async function audioView(input: ClipInput, part: ClipPart, wave: boolean, folder: string, signal: AbortSignal): Promise<Pick<AssetViewItem, 'notes' | 'picture'>> {
+// The frame sheet of `part` of the video clip `input`, of `seconds` (null:
+// not known), with the frames that `call` picks.
+function frameSheet(input: ClipInput, call: AssetViewCall, seconds: number | null, part: ClipPart, folder: string, signal: AbortSignal): Promise<SheetView> {
+  const { sheet, detail } = call
+  if (sheet.kind === 'times') return timesSheet(input, sheet.times, seconds, detail, folder, signal)
+  if (sheet.kind === 'scenes') return scenesSheet(input, sheet.frames, part, detail, folder, signal)
+  return stepsSheet(input, sheet.frames, part, detail, folder, signal)
+}
+
+// The loudness of the sound of `part` of the clip `input`, and with
+// `wave`, the picture of its wave: their notes and the picture.
+async function soundView(input: ClipInput, part: ClipPart, wave: boolean, folder: string, signal: AbortSignal): Promise<Pick<AssetViewItem, 'notes' | 'picture'>> {
   const name = wave ? `${input.id}-wave.jpg` : null
   const ran = await runFfmpeg(audioViewArgs(input.name, part, name), folder, signal)
+  // A part with no sample of the sound (a video clip whose sound ends
+  // before the part) is no failure. Its run with the wave fails, as it has
+  // no picture to write, and its run with no wave logs a loudness summary
+  // of nothing, with a true peak of 0 dBFS: neither may reach the model.
+  if (ran.end.kind === 'exited' && partHasNoFrame(ran.log)) return { notes: [soundlessPartNote(part, wave)], picture: null }
   const problem = runProblemNote(input.clip, ran)
   const loudness = problem === null ? loudnessOf(ran.log) : null
   if (!loudness) {
-    if (problem === null) console.error(`ffmpeg gave no loudness of the audio clip @${input.id}:`, ran.log)
+    if (problem === null) console.error(`ffmpeg gave no loudness of the ${input.clip.kind} clip @${input.id}:`, ran.log)
     return { notes: [problem ?? VIEW_FAILED_NOTE], picture: null }
   }
   const notes = [loudnessNote(part, loudness)]
@@ -290,8 +311,22 @@ async function audioView(input: ClipInput, part: ClipPart, wave: boolean, folder
   return { notes, picture: { ...picture, shows, note } }
 }
 
+// The view of `part` of the video clip `input`, of the facts `facts`, for
+// `call`: its frame sheet when `choice` lets the view make a picture, then
+// the loudness of its sound, unless a run of the sheet failed. A clip with
+// no picture still gets the loudness of its sound, and one with no sound
+// gets no loudness and no note about it: its facts tell it.
+async function videoView(input: ClipInput, facts: ClipProbeFacts, part: ClipPart, call: AssetViewCall, choice: PictureChoice, folder: string, signal: AbortSignal): Promise<Pick<AssetViewItem, 'notes' | 'picture'>> {
+  const frames: SheetView = facts.video === null
+    ? { notes: [NO_VIDEO_STREAM_NOTE], picture: null }
+    : choice === 'show' ? await frameSheet(input, call, facts.seconds, part, folder, signal) : { notes: [], picture: null }
+  const sound = facts.audio === null || frames.failed ? [] : (await soundView(input, part, false, folder, signal)).notes
+  const limitNotes = facts.video !== null && choice === 'overLimit' ? [PICTURE_LIMIT_NOTE] : []
+  return { notes: [...frames.notes, ...sound, ...limitNotes], picture: frames.picture }
+}
+
 // The view of `clip`: its facts from ffprobe, and its frame sheet, or its
-// wave and loudness, from ffmpeg, all on one copy in the work folder
+// wave, and its loudness, from ffmpeg, all on one copy in the work folder
 // `folder`. A clip that Dez cannot read fails only its own view.
 async function viewClip(clip: ClipAttachment, call: AssetViewCall, choice: PictureChoice, folder: string, signal: AbortSignal): Promise<AssetViewItem> {
   const input = clipInput(clip)
@@ -303,23 +338,10 @@ async function viewClip(clip: ClipAttachment, call: AssetViewCall, choice: Pictu
   const { facts } = probed
   const part = clipPart(call, facts.seconds)
   if (typeof part === 'string') return { ...item, notes: [part] }
-  const limitNotes = choice === 'overLimit' ? [PICTURE_LIMIT_NOTE] : []
-  if (clip.kind === 'video') {
-    if (facts.video === null) return { ...item, notes: [NO_VIDEO_STREAM_NOTE] }
-    // A video clip gives only its frame sheet: with no picture, a view
-    // tells no more than `asset_info`.
-    if (choice !== 'show') return { ...item, notes: limitNotes }
-    const { sheet, detail } = call
-    const view = sheet.kind === 'times'
-      ? await timesSheet(input, sheet.times, facts.seconds, detail, folder, signal)
-      : sheet.kind === 'scenes'
-        ? await scenesSheet(input, sheet.frames, part, detail, folder, signal)
-        : await stepsSheet(input, sheet.frames, part, detail, folder, signal)
-    return { ...item, ...view }
-  }
+  if (clip.kind === 'video') return { ...item, ...await videoView(input, facts, part, call, choice, folder, signal) }
   if (facts.audio === null) return { ...item, notes: [NO_AUDIO_STREAM_NOTE] }
-  const view = await audioView(input, part, choice === 'show', folder, signal)
-  return { ...item, ...view, notes: [...view.notes, ...limitNotes] }
+  const view = await soundView(input, part, choice === 'show', folder, signal)
+  return { ...item, ...view, notes: [...view.notes, ...(choice === 'overLimit' ? [PICTURE_LIMIT_NOTE] : [])] }
 }
 
 /** The result of an `asset_view` call with the arguments `args`, for the

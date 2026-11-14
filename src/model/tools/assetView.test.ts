@@ -307,6 +307,16 @@ describe('partHasNoFrame', () => {
     expect(partHasNoFrame([NO_FILTERED_FRAMES, ...NOTHING_WRITTEN].join('\n'))).toBe(true)
   })
 
+  // The log of a real `audioViewArgs` run with no wave, on a part after the
+  // end of the sound of a video clip: ebur128 logs a summary of nothing.
+  it('is true for a part of a clip whose sound has no sample in it', () => {
+    expect(partHasNoFrame([
+      '[fc#0 @ 0xffffa7d88040] [ao0->#0:0 @ 0xffffa7d86330] No filtered frames for output stream, trying to initialize anyway.',
+      ebur128Log('-70.0', '0.0', '0.0'),
+      '[out#0/null @ 0xffffa7b987f0] Output file is empty, nothing was encoded(check -ss / -t / -frames parameters if used)',
+    ].join('\n'))).toBe(true)
+  })
+
   // The error lines of ffmpeg 8 on damaged clips that ffprobe reads.
   it.each([
     ['a cut file, with no frame that decodes', '[vf#0:0 @ 0xffff9dfe0020] Cannot determine format of input 0:0 after EOF'],

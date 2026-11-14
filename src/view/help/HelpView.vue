@@ -182,11 +182,12 @@ function onOverlayClick(event: MouseEvent) {
             </p>
             <p>
               A chat model can also look at any asset of the conversation itself, with the Dez tool
-              <code>asset_view</code>: an image, some frames of a video clip, or the wave and the
-              loudness of an audio clip. It sees these pictures only in the reply where it asked for
-              them. A model that reads no images gets only the facts of the asset (for example its
-              size, length, and format), and the loudness of an audio clip. With the Dez tool
-              <code>asset_info</code>, a model reads the facts of an asset, and who made it.
+              <code>asset_view</code>: an image, some frames of a video clip, or the wave of an audio
+              clip, with the loudness of a clip with sound. It sees these pictures only in the reply
+              where it asked for them. A model that reads no images gets only the facts of the asset
+              (for example its size, length, and format), and the loudness of a clip with sound. With
+              the Dez tool <code>asset_info</code>, a model reads the facts of an asset, and who made
+              it.
             </p>
 
             <h3>Ids</h3>

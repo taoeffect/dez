@@ -18,10 +18,12 @@ import { NO_PICTURE_BUDGET, ReplyPictures, type PictureBudget, type ReplyPicture
 import { assetProbeArgs, clipNotReadFacts } from '../model/tools/assetFacts'
 import { SCENE_CUT_FILTER } from '../model/tools/clipAnalysis'
 import {
+  audioViewArgs,
   clipNotReadNote,
   cropOfClipText,
   cropTexts,
   cropUnderPixelText,
+  NO_VIDEO_STREAM_NOTE,
   PICTURE_LIMIT_NOTE,
   PICTURE_NOT_DRAWN_NOTE,
   PICTURE_NOT_READ_NOTE,
@@ -29,6 +31,7 @@ import {
   pictureCostNote,
   sheetTooLargeNote,
   smallerCopyNote,
+  soundlessPartNote,
   VIEW_FAILED_NOTE,
 } from '../model/tools/assetView'
 import { jobsListText, jobStartedText, jobsWaitResults, jobsWaitText, NO_JOBS_TEXT, NO_OPEN_JOBS_TEXT } from '../model/tools/jobs'
@@ -1790,6 +1793,9 @@ describe('dez.controller/tools/run', () => {
     let frameSheetLog: string
     let frameSheetEnd: BundledToolEnd
     let cutsLog: string
+    // The log and the end of each run on the sound of a clip.
+    let soundLog: string
+    let soundEnd: BundledToolEnd
 
     function assetView(args: ToolArguments): Promise<ToolRunResult> {
       const context: ToolRunContext = {
@@ -1822,6 +1828,8 @@ describe('dez.controller/tools/run', () => {
       frameSheetLog = SHOWINFO
       frameSheetEnd = ENDED
       cutsLog = ''
+      soundLog = EBUR128
+      soundEnd = ENDED
       native.program = async (run, onOutput) => {
         if (run.tool === 'dez-ffprobe') {
           onOutput({ stream: 'stdout', text: probes[run.args.at(-1) as string] ?? '' })
@@ -1835,8 +1843,8 @@ describe('dez.controller/tools/run', () => {
           onOutput({ stream: 'stderr', text: frameSheetLog })
           return frameSheetEnd
         }
-        onOutput({ stream: 'stderr', text: EBUR128 })
-        return ENDED
+        onOutput({ stream: 'stderr', text: soundLog })
+        return soundEnd
       }
       native.fileBytes = ({ path }) => {
         const name = path.slice(path.lastIndexOf('/') + 1)
@@ -1844,15 +1852,23 @@ describe('dez.controller/tools/run', () => {
       }
     })
 
-    it('shows an image as it is, the frame sheet of a video clip, and the wave of an audio clip, with their facts, times, and loudness', async () => {
+    it('shows an image as it is, the frame sheet of a video clip, and the wave of an audio clip, with their facts, times, and the loudness of each clip', async () => {
       const result = await assetView({ assets: '@a @b @d', frames: 3, end: 2.5 })
 
       expect(result.isError).toBe(false)
       const lines = result.content.split('\n')
       expect(lines[0]).toBe('@a | image | PNG | 1000x500 | 3 B')
-      expect(lines).toContain('@b | video | MP4 | 5.04 s | 854x480 | 24 fps | h264 | sound (pcm_s16le) | 1.2 MB')
-      expect(result.content).toMatch(/0 s to 2\.5 s: 3 frames in one row, at 0\.417, 1\.25, 2\.083 s/)
-      expect(result.content).toMatch(/-23\.1 LUFS integrated, 9\.4 LU range, -18\.8 dBFS true peak/)
+      // The loudness of the video clip, which has sound, is of the part of
+      // its frame sheet.
+      const loudness = 'Loudness of 0 s to 2.5 s: -23.1 LUFS integrated, 9.4 LU range, -18.8 dBFS true peak.'
+      expect(lines.slice(1, 7)).toStrictEqual([
+        '@b | video | MP4 | 5.04 s | 854x480 | 24 fps | h264 | sound (pcm_s16le) | 1.2 MB',
+        'Frame sheet of 0 s to 2.5 s: 3 frames in one row, at 0.417, 1.25, 2.083 s.',
+        loudness,
+        expect.stringMatching(/^@d \| audio \| WAV \| /),
+        expect.stringMatching(/^Wave picture of 0 s to 2\.5 s: /),
+        loudness,
+      ])
       expect(drawings).toStrictEqual([])
       expect(shown.map(({ label, picture, size }) => ({ label: label.match(/@[a-z]+/)?.[0], picture, size }))).toStrictEqual([
         { label: '@a', picture: { type: 'picture', mediaType: 'image/png', bytes: FOX_BYTES }, size: { width: 1000, height: 500 } },
@@ -1878,10 +1894,13 @@ describe('dez.controller/tools/run', () => {
       expect(native.runs.map(({ run }) => ({ tool: run.tool, folder: run.folder, inputs: run.inputs, output: run.args.at(-1) }))).toStrictEqual([
         { tool: 'dez-ffprobe', folder, inputs: [{ name: 'b.mp4', source: SCENE }], output: 'b.mp4' },
         { tool: 'dez-ffmpeg', folder, inputs: [], output: 'b-frames.jpg' },
+        { tool: 'dez-ffmpeg', folder, inputs: [], output: '-' },
         { tool: 'dez-ffprobe', folder, inputs: [{ name: 'd.wav', source: VOICE }], output: 'd.wav' },
         { tool: 'dez-ffmpeg', folder, inputs: [], output: '-' },
       ])
       expect(ffmpegRuns()[0].args).toStrictEqual(expect.arrayContaining(['-to', '2.500', '-i', 'b.mp4']))
+      // A run on the sound of the video clip only, with no wave.
+      expect(ffmpegRuns()[1].args).toStrictEqual(audioViewArgs('b.mp4', { start: 0, end: 2.5 }, null))
       expect(native.readFiles).toStrictEqual([{ root: 'cache', path: `${folder}/b-frames.jpg` }, { root: 'cache', path: `${folder}/d-wave.jpg` }])
     })
 
@@ -1930,17 +1949,20 @@ describe('dez.controller/tools/run', () => {
       expect(result.content).toContain('Frame sheet of the first frame at or after each of `times` 0.4, 1.25, 2.08, 6 s: 3 frames in one row, at 0.417, 1.25, 2.083 s.')
       expect(result.content).toContain('No frame at or after 6 s:')
       expect(shown.map(({ label }) => label)).toStrictEqual(['asset_view: the frame sheet of the video clip @b: 3 frames in one row, at 0.417, 1.25, 2.083 s.'])
+      // The loudness of a call with `times` is of the whole clip.
+      expect(ffmpegRuns()[1].args).toStrictEqual(audioViewArgs('b.mp4', { start: 0, end: 5.04 }, null))
+      expect(result.content).toContain('Loudness of 0 s to 5.04 s: ')
 
       // The picture of a clip can end before the end of its sound.
       frameSheetLog = showinfoLog([0.4167])
       expect((await assetView({ assets: '@b', times: '0.4 4.9 5' })).content).toContain('No frame at or after 4.9, 5 s:')
     })
 
-    it('runs no program for times that are all after the end of the clip', async () => {
+    it('runs no frame sheet for times that are all after the end of the clip, and still gives the loudness of its sound', async () => {
       const result = await assetView({ assets: '@b', times: '6 7' })
 
       expect(result.content).toContain('No frame at or after 6, 7 s:')
-      expect(ffmpegRuns()).toStrictEqual([])
+      expect(ffmpegRuns().map(({ args }) => args)).toStrictEqual([audioViewArgs('b.mp4', { start: 0, end: 5.04 }, null)])
       expect(shown).toStrictEqual([])
     })
 
@@ -1959,6 +1981,9 @@ describe('dez.controller/tools/run', () => {
       expect(result.content).toContain('Frame sheet of the shots of 1 s to 5.04 s: 3 frames in one row, at 1, 1.25, 2.083 s.')
       expect(result.content).toMatch(/3 cuts in the part, and the sheet leaves out .*, from 3 s on: .*`start` 3\./)
       expect(shown).toHaveLength(1)
+      // The loudness is of the part of the sheet.
+      expect(ffmpegRuns()[2].args).toStrictEqual(audioViewArgs('b.mp4', { start: 1, end: 5.04 }, null))
+      expect(result.content).toContain('Loudness of 1 s to 5.04 s: ')
     })
 
     it('shows the first frame alone for a clip of one shot', async () => {
@@ -1971,16 +1996,63 @@ describe('dez.controller/tools/run', () => {
       expect(result.content).toContain('Dez found no cut in the part.')
     })
 
+    it('gives the loudness of the sound of a video clip with no picture', async () => {
+      probes['b.mp4'] = probed([AUDIO_STREAM])
+
+      const result = await assetView({ assets: '@b' })
+
+      expect(result.content.split('\n').slice(1, 3)).toStrictEqual([NO_VIDEO_STREAM_NOTE, expect.stringMatching(/^Loudness of 0 s to 5\.04 s: /)])
+      expect(ffmpegRuns().map(({ args }) => args)).toStrictEqual([audioViewArgs('b.mp4', { start: 0, end: 5.04 }, null)])
+    })
+
+    it('gives no loudness, and no note about it, for a video clip with no sound', async () => {
+      probes['b.mp4'] = probed([VIDEO_STREAM])
+
+      const result = await assetView({ assets: '@b' })
+
+      expect(result.content.split('\n').slice(0, 3)).toStrictEqual([
+        '@b | video | MP4 | 5.04 s | 854x480 | 24 fps | h264 | no sound | 1.2 MB',
+        expect.stringMatching(/^Frame sheet of 0 s to 5\.04 s: /),
+        expect.stringMatching(/^You see each picture /),
+      ])
+      expect(ffmpegRuns()).toHaveLength(1)
+    })
+
+    // ffmpeg reads no sample of the sound in the part (it ends before the
+    // part), and its ebur128 still logs a summary, of nothing.
+    it('tells of a part in which the sound of a clip has no sample, with no loudness and no failure', async () => {
+      soundLog = '[fc#0 @ 0x4] [ao0->#0:0 @ 0x5] No filtered frames for output stream, trying to initialize anyway.\n'
+        + EBUR128.replace('-23.1', '-70.0').replace('-18.8', '0.0')
+
+      const video = await assetView({ assets: '@b', start: 3 })
+
+      expect(video.content).toContain(soundlessPartNote({ start: 3, end: 5.04 }, false))
+      expect(video.content).not.toContain('LUFS')
+      expect(shown.map(({ label }) => label.match(/@[a-z]+/)?.[0])).toStrictEqual(['@b'])
+
+      // With the wave, the run fails, as it has no picture to write.
+      soundEnd = { kind: 'exited', code: 234 }
+      const audio = await assetView({ assets: '@d', start: 3 })
+
+      expect(audio.content).toContain(soundlessPartNote({ start: 3, end: 5.04 }, true))
+      expect(audio.content).not.toContain(VIEW_FAILED_NOTE)
+      expect(shown).toHaveLength(1)
+      expect(consoleError).not.toHaveBeenCalled()
+    })
+
     it('gives the facts and the loudness only, and no picture, to a model that reads no images', async () => {
       sbp('dez.model/modelCache/applyProviderResult', 'venice', { ok: true, models: MODELS('venice').map((model) => ({ ...model, imageInput: false })) })
 
       const result = await assetView({ assets: 'a b d' })
 
-      expect(result.content).toMatch(/-23\.1 LUFS integrated/)
       expect(shown).toStrictEqual([])
       expect(drawings).toStrictEqual([])
-      expect(ffmpegRuns()).toHaveLength(1)
-      expect(ffmpegRuns()[0].args.join(' ')).not.toContain('showwavespic')
+      // The loudness of each clip, from a run on its sound only.
+      expect(result.content.match(/-23\.1 LUFS integrated/g)).toHaveLength(2)
+      expect(ffmpegRuns().map(({ args }) => args)).toStrictEqual([
+        audioViewArgs('b.mp4', { start: 0, end: 5.04 }, null),
+        audioViewArgs('d.wav', { start: 0, end: 5.04 }, null),
+      ])
       expect(native.readFiles).toStrictEqual([])
       expect(result.content).not.toContain('Picture budget')
     })
@@ -1991,10 +2063,12 @@ describe('dez.controller/tools/run', () => {
       const result = await assetView({ assets: 'a b d' })
 
       expect(shown.map(({ picture }) => picture.mediaType)).toStrictEqual(['image/png'])
-      // The audio clip still gets its loudness, and the video clip no run.
-      expect(ffmpegRuns()).toHaveLength(1)
-      expect(ffmpegRuns()[0].args.join(' ')).not.toContain('showwavespic')
-      expect(result.content).toMatch(/-23\.1 LUFS integrated/)
+      // The clips still get their loudness, from runs on their sound only.
+      expect(ffmpegRuns().map(({ args }) => args)).toStrictEqual([
+        audioViewArgs('b.mp4', { start: 0, end: 5.04 }, null),
+        audioViewArgs('d.wav', { start: 0, end: 5.04 }, null),
+      ])
+      expect(result.content.match(/-23\.1 LUFS integrated/g)).toHaveLength(2)
       expect(result.content.split(PICTURE_LIMIT_NOTE)).toHaveLength(3)
       expect(result.content.split('\n').at(-1)).toBe('Picture budget left in this reply: 0 pictures, 56,760 tokens and 20.0 MB of base64.')
     })
@@ -2213,7 +2287,7 @@ describe('dez.controller/tools/run', () => {
       expect(shown).toStrictEqual([])
     })
 
-    it('tells a damaged clip that gives no frame as a view that failed, not as a part with no frame, and logs the cause', async () => {
+    it('tells a damaged clip that gives no frame as a view that failed, not as a part with no frame, logs the cause, and runs nothing more on it', async () => {
       frameSheetLog = 'Cannot determine format of input 0:0 after EOF\nNothing was written into output file'
       frameSheetEnd = { kind: 'exited', code: 183 }
 
@@ -2223,6 +2297,7 @@ describe('dez.controller/tools/run', () => {
       expect(result.content).not.toContain('No frame sheet')
       expect(consoleError).toHaveBeenCalledWith('ffmpeg could not make the view of the video clip @b:', frameSheetEnd, frameSheetLog)
       expect(shown).toStrictEqual([])
+      expect(ffmpegRuns()).toHaveLength(1)
     })
 
     it('refuses an id that names no asset, and a start after the end of a clip shows none of it', async () => {

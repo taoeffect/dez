@@ -24,8 +24,8 @@ import { FFMPEG_FIXED_ARGS } from './videoTool'
 // conversation again, so that it can check what it and other models made.
 // Each asset gives its facts and a picture: an image as it is (a large one
 // as a smaller copy, or only a part of it), a video clip as a sheet of
-// frames, and an audio clip as a picture of its wave,
-// with its loudness. The pictures go to the model through the reply
+// frames, and an audio clip as a picture of its wave; a clip with sound
+// also gives its loudness. The pictures go to the model through the reply
 // (`ToolRunContext.showPictures`, streams/replyPictures.ts), never into
 // the section, and a view makes no asset. controller/assetView.ts reads
 // the files and runs ffmpeg.
@@ -84,7 +84,8 @@ export const ASSET_VIEW_TOOL: ToolDefinition = {
     + 'For each one, you get its facts (as asset_info gives them) and a picture: an image as it is, or a smaller copy of a large one (see `detail`); '
     + 'a video clip as a sheet of frames (left to right, then top to bottom) with the time of each frame: '
     + 'at equal steps (`frames`), at the times that you give (`times`), or one for each shot (`scenes`); '
-    + 'an audio clip as a picture of its wave (time runs left to right), with its loudness. You do not hear a clip. '
+    + 'an audio clip as a picture of its wave (time runs left to right). '
+    + 'A clip with sound, video or audio, also gets the loudness of the part that you view. You do not hear a clip. '
     + 'View a whole clip first; then, for a part that looks wrong, view it again with `start` and `end` around that part, '
     + 'or with `times` for the frames that you need. '
     + 'You see the pictures after the results of the calls of this round, in this reply only. '
@@ -490,9 +491,11 @@ const NO_FILTERED_FRAMES = 'No filtered frames for output stream'
 // could not read or decode, whatever the format and the codec.
 const INPUT_ERROR = /Decoding error:|Error submitting .* to decoder|corrupt decoded frame|Error during demuxing:/
 
-/** Whether the log of a `frameSheetArgs` run that gave no frame tells that
- *  the part has none: ffmpeg read the clip to the end of the part with no
- *  error. A damaged clip also gives no frame, and its log tells otherwise. */
+/** Whether the log of a run that gave no frame tells that the part has
+ *  none: ffmpeg read the clip to the end of the part with no error. A
+ *  damaged clip also gives no frame, and its log tells otherwise. For a
+ *  run on the sound of a clip (`audioViewArgs`), the part has no sample of
+ *  the sound: the sound ends before it, or starts after it. */
 export function partHasNoFrame(log: string): boolean {
   return log.includes(NO_FILTERED_FRAMES) && !INPUT_ERROR.test(log)
 }
@@ -731,6 +734,12 @@ export function sheetTooLargeNote(detail: ViewDetail, choice: 'frames' | 'times'
 /** The note of an audio clip with no sound stream. */
 export const NO_AUDIO_STREAM_NOTE = 'No wave and no loudness: the clip has no sound.'
 
+/** The note of `part` of a clip whose sound has no sample in the part
+ *  (`partHasNoFrame`), for a run that also drew the wave (`wave`). */
+export function soundlessPartNote(part: ClipPart, wave: boolean): string {
+  return `${wave ? 'No wave and no loudness' : 'No loudness'}: the sound of the clip has no sample in ${partText(part)}.`
+}
+
 /** The note and the picture text of the wave of the audio clip `id`. */
 export function waveTexts(id: string, part: ClipPart): { note: string, shows: string } {
   return {
@@ -785,7 +794,7 @@ export function assetViewPictures(items: readonly AssetViewItem[]): ReplyPicture
 export function assetViewText(items: readonly AssetViewItem[], left: PictureBudget | null): string {
   const lines = items.flatMap((item) => [`@${item.id} | ${item.kind} | ${item.facts}`, ...(item.picture?.note ? [item.picture.note] : []), ...item.notes])
   if (left === null) {
-    lines.push('This model gets no pictures, so Dez gives only the facts, and the loudness of an audio clip.')
+    lines.push('This model gets no pictures, so Dez gives only the facts, and the loudness of a clip with sound.')
     return lines.join('\n')
   }
   if (items.some((item) => item.picture)) {
