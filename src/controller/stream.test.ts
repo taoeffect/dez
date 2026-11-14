@@ -11,11 +11,11 @@ import { missingImageProblem, TooManyImagesError, type InputImageRules } from '.
 import { missingClipProblem, type ClipAttachment, type InputClipRules } from '../model/providers/clipInputs'
 import type { ClipTextRules } from '../model/providers/clipText'
 import { customProviderConfigSchema } from '../model/providers/config'
-import { InputImageError, ProviderHttpError } from '../model/providers/errors'
+import { ProviderHttpError } from '../model/providers/errors'
 import { unstoredOutputMessage } from '../model/providers/unusableModel'
 import type { GeneratedClip, ProviderChatInputMessage, ProviderGenerateMediaInput, ProviderGenerateMediaResult, ProviderInfo, ProviderStreamChatInput, ProviderStreamChatResult } from '../model/providers'
 import { providerInfo } from '../model/providers/testing'
-import { CLIP_KINDS, isClipKind, isTextKind, type MediaKind } from '../model/providers/types'
+import { CLIP_KINDS, isClipKind, isTextKind, ProviderNotConfiguredError, type MediaKind } from '../model/providers/types'
 import type { RequestMessages } from '../model/streams/types'
 import { systemPromptErrorText } from '../model/systemPrompt'
 import { jobsWaitText, jobTimedOutText, startedJobId } from '../model/tools/jobs'
@@ -619,19 +619,22 @@ describe('conversation cost', () => {
   })
 
   // A provider takes no money for a request that it refused. An answer
-  // that broke off can have cost money. An input image that Dez could not
-  // read stops the request before it goes.
+  // that broke off can have cost money. A request that failed before it
+  // went (here: no API key) costs nothing.
   it('counts 0 for a request that the provider refused, no known price for one that broke off, and nothing for one that did not go', async () => {
-    for (const failure of [
-      new ProviderHttpError(model.providerId, 400, '', undefined, 'Thinker refused the request.', 'Thinker refused the request.'),
-      new Error('connection reset'),
-      new InputImageError(image('cat.png'), 'unreadable', 'Dez cannot read cat.png.'),
-    ]) {
+    for (const [sent, failure] of [
+      [true, new ProviderHttpError(model.providerId, 400, '', undefined, 'Thinker refused the request.', 'Thinker refused the request.')],
+      [true, new Error('connection reset')],
+      [false, new ProviderNotConfiguredError(model.providerId, 'Thinker', false)],
+    ] as const) {
       sbp('dez.model/tabs/replaceSections', activeTab().id, [
         { id: 'u1', role: 'user', content: [{ kind: 'text', text: 'Hi' }] },
         { id: 'a1', role: 'agent', content: [{ kind: 'text', text: '' }], model },
       ])
-      streamChat = async () => { throw failure }
+      streamChat = async (input) => {
+        if (sent) input.onSent?.()
+        throw failure
+      }
       await startStream()
     }
 

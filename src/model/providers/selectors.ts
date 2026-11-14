@@ -310,6 +310,7 @@ async function nativeChatStream(
   // here on (dez.http/stream keeps it under `requestId` at once), so an
   // abort during the reads above must stop here.
   input.signal?.throwIfAborted()
+  input.onSent?.()
   return { result: await sbp('dez.http/stream', request, requestId) as NativeHttpStreamResult, thinking }
 }
 

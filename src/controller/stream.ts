@@ -528,6 +528,9 @@ async function runChatRounds(args: StreamStartArgs, reply: ReplyRuntime): Promis
     // The round's reply held an image, saved or not.
     let madeImage = false
     let result: ProviderStreamChatResult
+    // A request that failed before it went costs nothing, and does not
+    // count.
+    let sent = false
     try {
       result = await sbp('dez.provider/streamChat', {
         providerId: args.model.providerId,
@@ -540,6 +543,7 @@ async function runChatRounds(args: StreamStartArgs, reply: ReplyRuntime): Promis
         messages,
         requestId,
         providerSettings,
+        onSent: () => { sent = true },
         onToken: (token: string) => {
           if (!roundIsCurrent()) return
           writeModelText(args.tabId, reply, reply.escaper.push(token))
@@ -557,8 +561,7 @@ async function runChatRounds(args: StreamStartArgs, reply: ReplyRuntime): Promis
         onClip: (clip: GeneratedClip) => writeReplyClip(args.tabId, reply, clip),
       }) as ProviderStreamChatResult
     } catch (error) {
-      const cost = failedChatRequestCost(error)
-      if (cost !== undefined) countRequestCost(args.tabId, cost)
+      if (sent) countRequestCost(args.tabId, failedChatRequestCost(error))
       throw error
     }
     // Also when a stop cut the answer off: it gives no price.

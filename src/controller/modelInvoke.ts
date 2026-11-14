@@ -133,7 +133,8 @@ async function invokeMediaModel(invocation: MediaInvocation, signal: AbortSignal
 // - `report` gets the count of the characters of the answer so far.
 // - `reportCost` gets null when the request goes, then its cost, when the
 //   provider or the model's list price tells it. A request that failed
-//   costs what `failedChatRequestCost` tells (0 for a refused request).
+//   after it went costs what `failedChatRequestCost` tells (0 for a
+//   refused request); one that failed before it went never calls it.
 async function invokeTextModel(
   invocation: ChatInvocation,
   signal: AbortSignal,
@@ -149,8 +150,8 @@ async function invokeTextModel(
   const assets: MadeAsset[] = []
   let answer = ''
   let imageNotSaved = false
+  let sent = false
   report(invocationAnswerStateText(0))
-  reportCost(null)
   try {
     const result = await sbp('dez.provider/streamChat', {
       providerId: provider.id,
@@ -165,6 +166,10 @@ async function invokeTextModel(
       signal,
       // The calling model reads the text of a request that failed.
       reader: 'model',
+      onSent: () => {
+        sent = true
+        reportCost(null)
+      },
       onThinking: () => {},
       onToken: (token: string) => {
         if (answerIsCut(answer)) return
@@ -195,8 +200,7 @@ async function invokeTextModel(
     }) as ProviderStreamChatResult
     reportCost(result.cost ?? null)
   } catch (error) {
-    const cost = failedChatRequestCost(error)
-    if (cost !== undefined) reportCost(cost)
+    if (sent) reportCost(failedChatRequestCost(error))
     // An error of `onImage` does not end the request by itself. And
     // `ReplyJobs` reads no assets of a failed job, so the images and the
     // clip that this job saved go here.

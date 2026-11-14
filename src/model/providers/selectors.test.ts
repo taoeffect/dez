@@ -622,6 +622,30 @@ describe('the stop of a chat stream', () => {
   })
 })
 
+// The caller counts the price of a request only once it went.
+describe('the send of a chat request', () => {
+  it('tells the caller that the request went, and never for one that failed before it went', async () => {
+    let sends = 0
+    const chat = (input: Record<string, unknown>) => sbp('dez.provider/streamChat', {
+      providerId: 'local',
+      modelId: 'served-model',
+      messages: [{ role: 'user', content: 'Hi' }],
+      onToken: () => {},
+      onSent: () => { sends++ },
+      ...input,
+    }) as Promise<unknown>
+
+    // The key store cannot be read, and OpenRouter needs a key.
+    await expect(chat({ providerId: 'openrouter' })).rejects.toThrow('Dez could not read the API key of OpenRouter.')
+    await expect(chat({ messages: [{ role: 'user', content: [{ type: 'image', path: `${APP_DIR}/assets/images/gone.png` }] }] })).rejects.toBeInstanceOf(InputImageError)
+    await expect(chat({ signal: AbortSignal.abort() })).rejects.toThrow('This operation was aborted')
+    expect([sends, streamRequests]).toStrictEqual([0, []])
+
+    await chat({})
+    expect([sends, streamRequests.length]).toStrictEqual([1, 1])
+  })
+})
+
 describe('the price of a chat request', () => {
   const chat = () => sbp('dez.provider/streamChat', {
     providerId: 'counted',

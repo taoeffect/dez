@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import { chatRequestCost, failedChatRequestCost } from './chatUsage'
-import { InputImageError, ProviderHttpError, ProviderRequestError } from './errors'
+import { ProviderHttpError, ProviderRequestError } from './errors'
 import type { ModelPrice } from './modelPrices'
 
 describe('the price of a chat request', () => {
@@ -37,9 +37,5 @@ describe('the price of a failed chat request', () => {
   it('is unknown for a request that broke off or stopped', () => {
     expect(failedChatRequestCost(new ProviderRequestError('The connection to Venice broke.', 'The connection broke.'))).toBeNull()
     expect(failedChatRequestCost(new DOMException('Aborted', 'AbortError'))).toBeNull()
-  })
-
-  it('counts no request when Dez could not read an input image, as none went', () => {
-    expect(failedChatRequestCost(new InputImageError('/home/u/cat.png', 'unreadable', 'Dez cannot read cat.png.'))).toBeUndefined()
   })
 })

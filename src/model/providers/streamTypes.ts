@@ -26,6 +26,11 @@ export interface ProviderStreamChatInput extends ChatRequestContext {
   // Who reads the text of a request that failed (requestReader.ts); the
   // user with none.
   reader?: RequestReader
+  // Called when the request goes to the provider, and again for a retry.
+  // A request that fails before (no API key, an input image that Dez
+  // cannot read, a stop) never calls it: only a request that went can
+  // cost money.
+  onSent?(): void
   // Sparse user overrides for this provider's settings
   // (ProviderConfig.settings) and its Thinking toggle; missing keys fall
   // back to the defaults.

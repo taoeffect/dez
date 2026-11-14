@@ -1417,6 +1417,7 @@ describe('dez.controller/tools/run', () => {
             audioOutput: false,
             providerSettings: { webSearch: false },
             reader: 'model',
+            onSent: expect.any(Function),
             requestId: expect.any(String),
             signal: expect.any(AbortSignal),
             onThinking: expect.any(Function),
@@ -1466,10 +1467,12 @@ describe('dez.controller/tools/run', () => {
         })
 
         // A provider takes no money for a request that it refused; an answer
-        // that broke off can have cost money.
-        it('has no known price while the answer comes, then the price of the request; a refused request costs 0, and another failure has no known price', async () => {
+        // that broke off can have cost money. A request that failed before
+        // it went is no paid request.
+        it('has no known price while the answer comes, then the price of the request; a refused request costs 0, another failure has no known price, and a request that did not go is no paid request', async () => {
           let end!: (cost: number) => void
           streamChat = async (input) => {
+            input.onSent?.()
             await input.onToken('A fox.')
             return { cost: await new Promise<number>((resolve) => { end = resolve }) }
           }
@@ -1478,14 +1481,21 @@ describe('dez.controller/tools/run', () => {
 
           end(0.002)
           await jobResult()
-          streamChat = async () => { throw new ProviderHttpError('venice', 400, '', undefined, 'Venice refused the request.', 'Venice refused the request.') }
-          await jobTool('model_invoke', ASK)
-          await jobResult()
-          streamChat = async () => { throw new ExplainedError('The connection broke.') }
-          await jobTool('model_invoke', ASK)
-          await jobResult()
+          for (const [sent, failure] of [
+            [true, new ProviderHttpError('venice', 400, '', undefined, 'Venice refused the request.', 'Venice refused the request.')],
+            [true, new ExplainedError('The connection broke.')],
+            [false, new InputImageError(FOX, 'unreadable', 'Dez cannot use the image fox.png.')],
+          ] as const) {
+            streamChat = async (input) => {
+              if (sent) input.onSent?.()
+              throw failure
+            }
+            await jobTool('model_invoke', ASK)
+            await jobResult()
+          }
 
-          expect(jobs.list().map((job) => [job.status, job.cost])).toStrictEqual([['finished', 0.002], ['failed', 0], ['failed', null]])
+          expect(jobs.list().map((job) => [job.status, Object.hasOwn(job, 'cost') ? job.cost : 'none']))
+            .toStrictEqual([['finished', 0.002], ['failed', 0], ['failed', null], ['failed', 'none']])
         })
 
         describe(`whose answer has more than ${INVOCATION_TEXT_CAP} characters`, () => {
