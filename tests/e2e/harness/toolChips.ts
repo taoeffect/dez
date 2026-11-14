@@ -46,7 +46,9 @@ export async function toolChips (browser: E2EBrowser): Promise<ToolChipView[]> {
 export interface ToolPanelView {
   parameters: Array<[string, string]>
   result: string | null
-  error: boolean
+  /** The call is in the error or the interrupted state. Not `error`: a
+   *  `browser.execute` result with a set `error` field fails the script. */
+  failed: boolean
 }
 
 /** The panel of the chip `index` (doc order); null while it is closed. The
@@ -62,7 +64,7 @@ export async function toolPanel (browser: E2EBrowser, index: number): Promise<To
     return {
       parameters: names.map((name, at): [string, string] => [name, values[at] ?? '']),
       result: result?.value ?? null,
-      error: result?.closest('.dez-tool-call__result')?.hasAttribute('data-error') ?? false,
+      failed: result?.closest('.dez-tool-call__result')?.hasAttribute('data-error') ?? false,
     }
   }, index)
 }

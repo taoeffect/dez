@@ -227,7 +227,7 @@ describe('tool calls', () => {
     const caret = await editorCaret(browser)
     await pointerClick(browser, '.cm-content .dez-tool-call__chip')
     await waitForValue(browser, 'open chip', () => toolChips(browser), [openChip])
-    expect(await toolPanel(browser, 0)).toEqual({ parameters: [['filter', 'tool']], result: TOOLER_LIST, error: false })
+    expect(await toolPanel(browser, 0)).toEqual({ parameters: [['filter', 'tool']], result: TOOLER_LIST, failed: false })
     expect(await editorCaret(browser)).toBe(caret)
     expect(await focusedArea(browser)).toBe('editor')
     await pointerClick(browser, '.cm-content .dez-tool-call__chip')
@@ -416,7 +416,7 @@ describe('tool calls', () => {
     await waitForValue(browser, 'panel of the call that did not run', async () => toolPanel(browser, (await toolChips(browser)).length - 1), {
       parameters: [['filter', 'tool']],
       result: ROUND_LIMIT_TOOL_RESULT.content,
-      error: false,
+      failed: false,
     })
     expect(await consoleErrors(browser)).toStrictEqual([`The reply reached the limit of ${MAX_TOOL_ROUNDS} tool rounds`])
     await resetConsoleErrors(browser)
@@ -486,7 +486,7 @@ describe('tool calls', () => {
       { role: 'user', text: '' },
     ])
     await pointerClick(browser, '.cm-content .dez-tool-call__chip')
-    await waitForValue(browser, 'model_info panel', () => toolPanel(browser, 0), { parameters: [['model', model]], result, error: false })
+    await waitForValue(browser, 'model_info panel', () => toolPanel(browser, 0), { parameters: [['model', model]], result, failed: false })
   })
 
   it('runs a model_info call with no arguments: the result is about the model of the reply, also after the user chose another model for the tab', async () => {
@@ -526,7 +526,7 @@ describe('tool calls', () => {
       { role: 'user', text: '' },
     ])
     await pointerClick(browser, '.cm-content .dez-tool-call__chip')
-    await waitForValue(browser, 'model_info panel', () => toolPanel(browser, 0), { parameters: [], result, error: false })
+    await waitForValue(browser, 'model_info panel', () => toolPanel(browser, 0), { parameters: [], result, failed: false })
   })
 
   it('runs image crop and scale calls: the new images go into the reply after the calls, and the requests name them by their ids', async () => {
@@ -809,7 +809,14 @@ describe('tool calls', () => {
     await waitForValue(browser, 'panel of the old tool', () => toolPanel(browser, 0), {
       parameters: [['image', 'a'], ['width', '10'], ['height', '10']],
       result: oldResult,
-      error: false,
+      failed: false,
+    })
+    // The panel of the refused call shows its result as a failure.
+    await pressToolChip(browser, 1)
+    await waitForValue(browser, 'panel of the refused call', () => toolPanel(browser, 1), {
+      parameters: [['query', 'cats']],
+      result: refusal,
+      failed: true,
     })
 
     await pickModel(browser, TOOLER.name, TOOLER.modelName)
