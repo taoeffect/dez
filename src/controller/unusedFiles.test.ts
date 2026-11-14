@@ -189,6 +189,22 @@ describe('dez.controller/unusedFiles/find', () => {
     expect(conversationReads).toBe(0)
   })
 
+  // No text names a download or a work folder, so a read of the
+  // conversations would find nothing.
+  it('reads no conversation when only downloads and work folders are old', async () => {
+    folders = { 'cache:media': [file('d1.part', 500)], 'cache:work:folders': [file('w1', 0)] }
+    conversations = ['text']
+
+    const { unused, progress } = await find()
+
+    expect(unused).toStrictEqual({
+      files: [{ root: 'cache', path: 'media/d1.part', size: 500 }, { root: 'cache', path: 'work/w1', size: 0 }],
+      bytes: 500,
+    })
+    expect(progress).toEqual([0, 1])
+    expect(conversationReads).toBe(0)
+  })
+
   it('gives every old file when there is no conversation', async () => {
     folders = { 'app:assets/images': [file('a.png', 5)] }
 

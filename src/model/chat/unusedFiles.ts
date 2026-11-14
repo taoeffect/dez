@@ -144,6 +144,14 @@ export function isHeldCacheEntry(path: string, held: ReadonlySet<string>): boole
   return held.has(path.replace(WRITE_TEMP_END, ''))
 }
 
+/** Whether a text can name the file `file` of the cleanup, and so keep it
+ *  (`removeNamedFiles`): a stored file, or a temp copy of a clip in the
+ *  cache folder `cacheDir`. A download and a work folder have no name that
+ *  a text holds: only live work keeps them (`isHeldCacheEntry`). */
+export function textCanName(file: StoredFile, cacheDir: string): boolean {
+  return file.root === 'app' || cacheEntryKind(file.path, cacheDir) === 'copy'
+}
+
 /** The entries of the listing `entries` of `folder` (relative to the cache
  *  folder `cacheDir`) that the cleanup can delete: each one of a
  *  `CacheEntryKind`, at least `UNUSED_FILE_MIN_AGE_MS` old at the time

@@ -8,6 +8,7 @@ import {
   oldStoredFiles,
   removeNamedFiles,
   storedFilePath,
+  textCanName,
   type StoredFile,
   type UnusedFiles,
   type UnusedFilesDeleted,
@@ -78,8 +79,8 @@ export default sbp('sbp/selectors/register', {
           const files = await sbp('dez.native/listAppFiles', folder.path, 'cache') as AppFileEntry[]
           candidates.push({ ...folder, size: files.reduce((sum, file) => sum + file.size, 0) })
         }
-        const unnamed = new Set(candidates.map((file) => fileNameOf(file.path)))
-        // With no file to look for, no text needs a read.
+        const unnamed = new Set(candidates.filter((file) => textCanName(file, cacheDir)).map((file) => fileNameOf(file.path)))
+        // With no file that a text can name, no text needs a read.
         if (unnamed.size > 0) {
           await sbp('dez.persistence/eachConversationText', (text: string, index: number, count: number) => {
             removeNamedFiles(unnamed, text)
@@ -88,7 +89,7 @@ export default sbp('sbp/selectors/register', {
           for (const text of textsInMemory()) removeNamedFiles(unnamed, text)
         }
         onProgress(1)
-        const files = candidates.filter((file) => unnamed.has(fileNameOf(file.path)))
+        const files = candidates.filter((file) => !textCanName(file, cacheDir) || unnamed.has(fileNameOf(file.path)))
         return { files, bytes: files.reduce((sum, file) => sum + file.size, 0) }
       }) as UnusedFiles
     } catch (error) {
@@ -116,12 +117,13 @@ export default sbp('sbp/selectors/register', {
       return await sbp('okTurtles.eventQueue/queueEvent', QUEUE, async (): Promise<UnusedFilesDeleted> => {
         const appDir = await sbp('dez.native/getAppDir') as string
         const cacheDir = await sbp('dez.native/getAppDir', 'cache') as string
-        const unnamed = new Set(unused.files.map((file) => fileNameOf(file.path)))
+        const unnamed = new Set(unused.files.filter((file) => textCanName(file, cacheDir)).map((file) => fileNameOf(file.path)))
         for (const text of textsInMemory()) removeNamedFiles(unnamed, text)
         const held = heldCachePaths()
         const result: UnusedFilesDeleted = { deleted: 0, bytes: 0, inUse: 0, failed: 0 }
         for (const file of unused.files) {
-          if (!unnamed.has(fileNameOf(file.path)) || (file.root === 'cache' && isHeldCacheEntry(file.path, held))) {
+          const named = textCanName(file, cacheDir) && !unnamed.has(fileNameOf(file.path))
+          if (named || (file.root === 'cache' && isHeldCacheEntry(file.path, held))) {
             result.inUse++
             continue
           }
