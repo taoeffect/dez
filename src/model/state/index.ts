@@ -32,7 +32,7 @@ import {
   sectionIsEmpty,
   sectionVisibleText,
 } from '../chat/content'
-import { agentTextEditedField, costField, withRequestCost } from '../chat/conversationCost'
+import { agentTextEditedField, costField, withRequestCost, type ConversationCost } from '../chat/conversationCost'
 import { durationField } from '../chat/duration'
 import { labelImageReferences } from '../chat/images'
 import { labelMediaTags } from '../chat/mediaTags'
@@ -632,6 +632,12 @@ export default sbp('sbp/selectors/register', {
   'dez.model/tabs/countRequestCost' (tabId: string, usd: number | null): void {
     const tab = useTabStore().tabs.find((candidate) => candidate.id === tabId)
     if (tab) tab.cost = withRequestCost(tab.cost, usd)
+  },
+
+  // What the requests of the tab's conversation cost (a copy); undefined
+  // before its first counted request, and for a missing tab.
+  'dez.model/tabs/cost' (tabId: string): ConversationCost | undefined {
+    return costField(useTabStore().tabs.find((candidate) => candidate.id === tabId)?.cost).cost
   },
 
   // The user changed or removed the text of a reply in the tab, so its

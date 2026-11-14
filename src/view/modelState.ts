@@ -1,6 +1,7 @@
 import { computed, type ComputedRef } from 'vue'
 import sbp from '@sbp/sbp'
 import type { ActiveModel, Section } from '../model/chat/types'
+import type { ConversationCost } from '../model/chat/conversationCost'
 import type { Prompt } from '../model/state/prompts'
 import type { DefaultModel, SettingsSection, Theme } from '../model/state/settings'
 import type { SettingsSnapshot, TabActivity } from '../model/state'
@@ -8,6 +9,13 @@ import type { ModelSnapshot } from '../model/snapshot'
 import type { ModelCache } from '../model/persistence/types'
 import type { ModelDisplayNames } from '../model/providers/types'
 import type { Shortcut } from '../model/shortcuts'
+
+/** The cost of the active tab's conversation (undefined before its first
+ *  counted request), and whether the user changed the text of a reply. */
+export interface ActiveTabCost {
+  cost: ConversationCost | undefined
+  edited: boolean
+}
 
 export interface ViewModelState {
   tabs: ComputedRef<ModelSnapshot['tabs']>
@@ -26,6 +34,7 @@ export interface ViewModelState {
   activeTabStreaming: ComputedRef<boolean>
   activeTabStreamingSectionId: ComputedRef<string | null>
   tabActivity: ComputedRef<Record<string, TabActivity>>
+  activeTabCost: ComputedRef<ActiveTabCost>
   shortcuts: ComputedRef<readonly Shortcut[]>
 }
 
@@ -69,6 +78,15 @@ export function useModelState(): ViewModelState {
     }),
     // Tab id -> busy or done, for the tab bar colors.
     tabActivity: computed(() => sbp('dez.model/tabs/activity') as Record<string, TabActivity>),
+    // For the cost label of the bottom bar. Reads only the active tab's
+    // cost and mark, so a streamed token does not compute it again.
+    activeTabCost: computed(() => {
+      const activeTabId = sbp('dez.model/tabs/activeId') as string
+      return {
+        cost: sbp('dez.model/tabs/cost', activeTabId) as ConversationCost | undefined,
+        edited: sbp('dez.model/tabs/agentTextEdited', activeTabId) as boolean,
+      }
+    }),
     // Every shortcut with its effective key; changes when the user sets a key.
     shortcuts: computed(() => sbp('dez.model/settings/shortcuts') as readonly Shortcut[]),
   }

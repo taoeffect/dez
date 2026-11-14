@@ -7,6 +7,7 @@ import ThreadEditor from "../thread/ThreadEditor.vue";
 import SettingsView from "../settings/SettingsView.vue";
 import ModelSelector from "../model-selector/ModelSelector.vue";
 import SubmitButton from "../thread/SubmitButton.vue";
+import CostLabel from "../thread/CostLabel.vue";
 import TabBar from "../tabs/TabBar.vue";
 import HistoryPanel from "../history/HistoryPanel.vue";
 import HelpView from "../help/HelpView.vue";
@@ -72,6 +73,7 @@ onUnmounted(() => {
     </main>
     <footer class="bottom-bar">
       <ModelSelector />
+      <CostLabel />
       <div class="bottom-bar-end">
         <SubmitButton />
         <!-- `mousedown.prevent` keeps the focus and the caret where they are. -->
@@ -161,10 +163,16 @@ onUnmounted(() => {
   background-color: var(--color-bg);
 }
 
+/* Three columns: the model picker, the cost label (`CostLabel.vue`), and
+   Submit with Help. The two side columns share the free space, so the label
+   stays in the middle of the bar, also when Submit turns into the narrower
+   Stop. A side column is never narrower than its content, so a long model
+   name does not wrap: it pushes the label to the right. */
 .bottom-bar {
-  display: flex;
+  display: grid;
+  grid-template-columns: minmax(max-content, 1fr) auto minmax(max-content, 1fr);
+  justify-items: start;
   align-items: center;
-  justify-content: space-between;
   gap: 8px;
   height: var(--bottom-bar-height);
   padding: 0 3px 0 8px;
@@ -173,8 +181,11 @@ onUnmounted(() => {
   flex-shrink: 0;
 }
 
-/* Submit and Help at the right end of the bar. */
+/* Submit and Help at the right end of the bar, in the last column also
+   while there is no cost label. */
 .bottom-bar-end {
+  grid-column: 3;
+  justify-self: end;
   display: flex;
   align-items: center;
   gap: 4px;
