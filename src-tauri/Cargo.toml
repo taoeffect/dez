@@ -44,10 +44,10 @@ serde_json = "=1.0.149"
 # (`/**`, with dot folders: `requireLiteralLeadingDot: false`). A desktop
 # program can read the disk anyway, and Dez loads no remote code.
 tauri = { version = "=2.12.5", features = ["devtools", "protocol-asset"] }
+# The Tauri CLI refuses a plugin crate and its npm package of different
+# major.minor versions: keep opener, store, dialog, and fs equal on both sides.
 tauri-plugin-opener = "=2.5.3"
 tauri-plugin-store = "=2.4.2"
-# The Tauri CLI refuses a plugin crate and its npm package of different
-# major.minor versions: dialog 2.7 and fs 2.5 on both sides.
 tauri-plugin-dialog = "=2.7.3"
 tauri-plugin-fs = "=2.5.2"
 serde = { version = "=1.0.228", features = ["derive"] }
