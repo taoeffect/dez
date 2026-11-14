@@ -14,7 +14,7 @@ import { normalizeOutputs, type ModelOutput } from '../modelOutputs'
 import { clampDoneSoundVolume } from '../doneSoundVolume'
 import { currentShortcutPlatform, findShortcut, normalizeShortcutKey, validateShortcutKey, type Shortcut, type ShortcutId, type ShortcutOverrides } from '../shortcuts'
 import { MAX_CLOSED_TABS, NEW_TAB_TITLE, useTabStore } from './tabs'
-import type { AppStatePayload, CachedProvider, ConversationSearchOutcome, ModelCache } from '../persistence/types'
+import type { AppStatePayload, CachedProvider, ContentNodeData, ConversationData, ConversationSearchOutcome, ModelCache } from '../persistence/types'
 import { emptyModelCache } from '../persistence/modelCache'
 import type { ModelOutputsConfig, ProviderConfig, ProviderThinkingConfig } from '../providers/config'
 import { withKeptClipData } from '../providers/keptClipData'
@@ -32,6 +32,7 @@ import {
   sectionIsEmpty,
   sectionVisibleText,
 } from '../chat/content'
+import { agentTextEditedField, costField, withRequestCost } from '../chat/conversationCost'
 import { durationField } from '../chat/duration'
 import { labelImageReferences } from '../chat/images'
 import { labelMediaTags } from '../chat/mediaTags'
@@ -75,33 +76,6 @@ export interface SettingsSnapshot {
 // `done` after a reply ended while the tab was in the background, until the
 // tab is active again.
 export type TabActivity = 'busy' | 'done'
-
-type ContentNodeData =
-  | { kind: 'text'; text: string }
-  | {
-      kind: 'prompt'
-      id: string
-      promptId: string | null
-      name: string
-      body: string
-      expanded?: boolean
-    }
-
-interface SectionData {
-  role: 'user' | 'agent'
-  nodes: ContentNodeData[]
-  model?: ModelRef
-  thinking?: SectionThinking
-  durationMs?: number
-}
-
-interface ConversationData {
-  id: string
-  title: string
-  sections: SectionData[]
-  activeModel: ActiveModel | null
-  created_at: number
-}
 
 interface TabData {
   id: string
@@ -155,6 +129,8 @@ function cloneTab(tab: Tab): ModelSnapshot['tabs'][number] {
     activeModel: cloneActiveModel(tab.activeModel),
     sections: cloneSections(tab.sections),
     createdAt: tab.createdAt,
+    ...costField(tab.cost),
+    ...agentTextEditedField(tab.agentTextEdited),
   }
 }
 
@@ -373,6 +349,8 @@ function tabFromConversation(conv: ConversationData, overrides: Partial<Tab> = {
     sections,
     activeModel: overrides.activeModel ?? conv.activeModel ?? null,
     createdAt: overrides.createdAt ?? (conv.created_at || Date.now()),
+    ...costField(conv.cost),
+    ...agentTextEditedField(conv.agentTextEdited),
   }
 }
 
@@ -648,6 +626,25 @@ export default sbp('sbp/selectors/register', {
     return activity
   },
 
+  // Adds one request of a reply to the cost of its tab (`withRequestCost`):
+  // its price in USD, or null when it is not known. A tab that was closed
+  // meanwhile gets nothing.
+  'dez.model/tabs/countRequestCost' (tabId: string, usd: number | null): void {
+    const tab = useTabStore().tabs.find((candidate) => candidate.id === tabId)
+    if (tab) tab.cost = withRequestCost(tab.cost, usd)
+  },
+
+  // The user changed or removed the text of a reply in the tab, so its
+  // cost can belong to text that is gone. The mark is never cleared.
+  'dez.model/tabs/markAgentTextEdited' (tabId: string): void {
+    const tab = useTabStore().tabs.find((candidate) => candidate.id === tabId)
+    if (tab) tab.agentTextEdited = true
+  },
+
+  'dez.model/tabs/agentTextEdited' (tabId: string): boolean {
+    return useTabStore().tabs.find((candidate) => candidate.id === tabId)?.agentTextEdited === true
+  },
+
   // The persisted form of a tab. Null when the tab is missing or every
   // section is empty: an empty conversation is neither saved nor exported.
   'dez.model/tabs/conversationData' (tabId: string): ConversationData | null {
@@ -665,6 +662,8 @@ export default sbp('sbp/selectors/register', {
       })),
       activeModel: cloneActiveModel(tab.activeModel),
       created_at: tab.createdAt,
+      ...costField(tab.cost),
+      ...agentTextEditedField(tab.agentTextEdited),
     }
   },
 

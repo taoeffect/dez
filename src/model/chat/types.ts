@@ -1,3 +1,4 @@
+import type { ConversationCost } from './conversationCost'
 import type { ToolCall, ToolResult } from '../tools/types'
 import type { JsonObject } from '../../utils/json'
 
@@ -139,6 +140,13 @@ export interface Tab {
   sections: Section[]
   activeModel: ActiveModel | null
   createdAt: number
+  /** What the requests of the conversation's replies cost. Absent before
+   *  the first counted request; never set to `undefined`. */
+  cost?: ConversationCost
+  /** The user changed or removed the text of a reply (an agent section),
+   *  so the cost can belong to text that is gone. Absent when not; never
+   *  set to `undefined`. Never cleared. */
+  agentTextEdited?: true
 }
 
 export type StreamEvent =

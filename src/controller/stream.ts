@@ -6,9 +6,10 @@ import { modelRefKey } from '../model/chat/modelRef'
 import { newMediaIds } from '../model/chat/mediaIds'
 import { MEDIA_HIDDEN_ATTRIBUTE, MEDIA_JOB_ATTRIBUTE, MEDIA_TOOL_ATTRIBUTE, mediaTagText } from '../model/chat/mediaTags'
 import { findToolBlocks, ModelTextEscaper } from '../model/chat/toolBlocks'
+import { failedChatRequestCost } from '../model/providers/chatUsage'
 import { TooManyImagesError, tooManyImagesMessage } from '../model/providers/clipImages'
 import { errorText, explainedError } from '../utils/errorText'
-import type { ClipInputRules, GeneratedMedia, MediaKind, ModelRequest, ProviderGenerateMediaResult, ProviderStreamChatResult } from '../model/providers'
+import type { ClipInputRules, GeneratedMedia, MediaKind, MediaProgress, ModelRequest, ProviderGenerateMediaResult, ProviderStreamChatResult } from '../model/providers'
 import { requireProvider } from '../model/providers/registry'
 import { agentSectionMessages, mediaRequestInput } from '../model/streams/messages'
 import {
@@ -134,6 +135,15 @@ function finalizeStream(tabId: string, session: EndedStreamSession | null): void
   sbp('dez.editor/reconcileAfterStreamFinish', tabId)
   sbp('dez.model/tabs/save', tabId).catch(() => {})
   sbp('dez.model/appState/save')
+}
+
+// Adds one request of a reply to the cost of its tab (`withRequestCost`),
+// also of a tab that is not active. A price can come after the end of the
+// reply (the answer of a stopped round), when the end has saved the
+// conversation: then it is saved again.
+function countRequestCost(tabId: string, usd: number | null): void {
+  sbp('dez.model/tabs/countRequestCost', tabId, usd)
+  if (!streamIsStreaming(tabId)) sbp('dez.model/tabs/save', tabId).catch(() => {})
 }
 
 // The toast group (`ToastData.group`) of the reply errors of a tab.
@@ -483,31 +493,40 @@ async function runChatRounds(args: StreamStartArgs, reply: ReplyRuntime): Promis
     const roundAfterToolCall = afterToolCall
     // The round's reply held an image, saved or not.
     let madeImage = false
-    const result = await sbp('dez.provider/streamChat', {
-      providerId: args.model.providerId,
-      conversationId: args.conversationId,
-      system,
-      tools,
-      imageOutput: args.imageOutput,
-      modelId: args.model.modelId,
-      messages,
-      requestId,
-      providerSettings,
-      onToken: (token: string) => {
-        if (!roundIsCurrent()) return
-        writeModelText(args.tabId, reply, reply.escaper.push(token))
-      },
-      onThinking: (token: string) => {
-        if (!roundIsCurrent()) return
-        updateStreamThinking(args.tabId, args.sectionId, () => appendThinkingToTabSection(args.tabId, args.sectionId, token, roundAfterToolCall))
-      },
-      // Not after a stop, unlike the text: the save is not instant, and a
-      // stopped reply must not grow later.
-      onImage: async (image: GeneratedMedia) => {
-        madeImage = true
-        if (replyIsCurrent(args.tabId, reply)) await writeReplyImage(args.tabId, reply, image)
-      },
-    }) as ProviderStreamChatResult
+    let result: ProviderStreamChatResult
+    try {
+      result = await sbp('dez.provider/streamChat', {
+        providerId: args.model.providerId,
+        conversationId: args.conversationId,
+        system,
+        tools,
+        imageOutput: args.imageOutput,
+        modelId: args.model.modelId,
+        messages,
+        requestId,
+        providerSettings,
+        onToken: (token: string) => {
+          if (!roundIsCurrent()) return
+          writeModelText(args.tabId, reply, reply.escaper.push(token))
+        },
+        onThinking: (token: string) => {
+          if (!roundIsCurrent()) return
+          updateStreamThinking(args.tabId, args.sectionId, () => appendThinkingToTabSection(args.tabId, args.sectionId, token, roundAfterToolCall))
+        },
+        // Not after a stop, unlike the text: the save is not instant, and a
+        // stopped reply must not grow later.
+        onImage: async (image: GeneratedMedia) => {
+          madeImage = true
+          if (replyIsCurrent(args.tabId, reply)) await writeReplyImage(args.tabId, reply, image)
+        },
+      }) as ProviderStreamChatResult
+    } catch (error) {
+      const cost = failedChatRequestCost(error)
+      if (cost !== undefined) countRequestCost(args.tabId, cost)
+      throw error
+    }
+    // Also when a stop cut the answer off: it gives no price.
+    countRequestCost(args.tabId, result.cost ?? null)
     if (!replyIsCurrent(args.tabId, reply)) return
 
     // Before the blocks and the finish, which saves the conversation.
@@ -587,18 +606,35 @@ async function runMediaRound(args: StreamStartArgs, reply: ReplyRuntime, kind: M
   const parameters = (sbp('dez.model/settings/snapshot') as SettingsSnapshot).modelParameters[modelRefKey(args.model)]
   const requestId = crypto.randomUUID()
   reply.requestId = requestId
-  const { media, clips, text = '' } = await sbp('dez.provider/generateMedia', {
-    providerId: args.model.providerId,
-    modelId: args.model.modelId,
-    kind,
-    prompt: input.prompt,
-    ...(input.lyrics !== undefined && { lyrics: input.lyrics }),
-    images: input.images,
-    ...(input.clips.length > 0 && { clips: input.clips }),
-    ...(parameters && { parameters }),
-    requestId,
-    signal: reply.abort.signal,
-  }) as ProviderGenerateMediaResult
+  // From the moment that the request went: its quote, or null when no
+  // quote is known. Undefined while it did not go.
+  let sentCost: number | null | undefined
+  let result: ProviderGenerateMediaResult
+  try {
+    result = await sbp('dez.provider/generateMedia', {
+      providerId: args.model.providerId,
+      modelId: args.model.modelId,
+      kind,
+      prompt: input.prompt,
+      ...(input.lyrics !== undefined && { lyrics: input.lyrics }),
+      images: input.images,
+      ...(input.clips.length > 0 && { clips: input.clips }),
+      ...(parameters && { parameters }),
+      requestId,
+      signal: reply.abort.signal,
+      onProgress: (progress: MediaProgress) => {
+        if (progress.phase === 'sent') sentCost = progress.quote ?? null
+      },
+    }) as ProviderGenerateMediaResult
+  } catch (error) {
+    // A request that went and failed counts 0, as a provider gives back the
+    // money of a request that it refused (the rule of `model_invoke`). A
+    // stop does not end the work of the provider, so it keeps the quote.
+    if (sentCost !== undefined) countRequestCost(args.tabId, reply.abort.signal.aborted ? sentCost : 0)
+    throw error
+  }
+  countRequestCost(args.tabId, result.cost ?? null)
+  const { media, clips, text = '' } = result
   // A stop or a new submit cancelled the request, which can end its body
   // early: a cut image is never saved. A clip that still came is whole, but
   // the reply takes no tag any more.
@@ -683,7 +719,7 @@ export default sbp('sbp/selectors/register', {
       toolRun: null,
       escaper: new ModelTextEscaper(),
       afterAsset: false,
-      jobs: new ReplyJobs(),
+      jobs: new ReplyJobs((usd) => countRequestCost(args.tabId, usd)),
     }
     repliesByTab.set(args.tabId, reply)
 

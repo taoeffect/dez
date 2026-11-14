@@ -414,7 +414,7 @@ export async function deleteSavedClip(view: EditorView, root: HTMLElement, place
     return
   }
   if (linked) {
-    followed.end(linesRemovalRange(view.state.doc, current), { undoable: true })
+    followed.end(linesRemovalRange(view.state.doc, current), { undoable: true, userEvent: 'delete' })
     syncDomSelection(view)
     return
   }
@@ -436,7 +436,7 @@ export async function deleteSavedClip(view: EditorView, root: HTMLElement, place
     followed.end()
     return
   }
-  followed.end(pasted ? linesRemovalRange(view.state.doc, tag) : { from: tag.from, to: tag.to, insert: mediaTagText(unsavedMediaTag(tag)) })
+  followed.end(pasted ? linesRemovalRange(view.state.doc, tag) : { from: tag.from, to: tag.to, insert: mediaTagText(unsavedMediaTag(tag)) }, { userEvent: 'delete' })
   // The prompt gave the focus back a few ms ago (`syncDomSelection`).
   syncDomSelection(view)
 }

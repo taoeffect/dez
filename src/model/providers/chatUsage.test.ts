@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest'
-import { chatRequestCost } from './chatUsage'
+import { chatRequestCost, failedChatRequestCost } from './chatUsage'
+import { InputImageError, ProviderHttpError, ProviderRequestError } from './errors'
 import type { ModelPrice } from './modelPrices'
 
 describe('the price of a chat request', () => {
@@ -21,5 +22,24 @@ describe('the price of a chat request', () => {
     expect(chatRequestCost(usage, undefined)).toBeUndefined()
     expect(chatRequestCost(usage, { unit: 'character', usd: 3.5 })).toBeUndefined()
     expect(chatRequestCost({ inputTokens: 1000 }, price)).toBeUndefined()
+  })
+})
+
+describe('the price of a failed chat request', () => {
+  const refusal = new ProviderHttpError('venice', 429, '', undefined, 'Venice refused the request.', 'Venice refused the request.')
+
+  it('is 0 for a request that the provider refused with an HTTP status, also as the cause of the error for a model', () => {
+    expect(failedChatRequestCost(refusal)).toBe(0)
+    expect(failedChatRequestCost(new ProviderRequestError('Venice refused the request.', 'Venice refused the call.', '', { cause: refusal }))).toBe(0)
+  })
+
+  // The provider can have made a part of the answer.
+  it('is unknown for a request that broke off or stopped', () => {
+    expect(failedChatRequestCost(new ProviderRequestError('The connection to Venice broke.', 'The connection broke.'))).toBeNull()
+    expect(failedChatRequestCost(new DOMException('Aborted', 'AbortError'))).toBeNull()
+  })
+
+  it('counts no request when Dez could not read an input image, as none went', () => {
+    expect(failedChatRequestCost(new InputImageError('/home/u/cat.png', 'unreadable', 'Dez cannot read cat.png.'))).toBeUndefined()
   })
 })

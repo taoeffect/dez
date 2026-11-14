@@ -1,4 +1,5 @@
 import sbp from '@sbp/sbp'
+import { failedChatRequestCost } from '../model/providers/chatUsage'
 import { TooManyImagesError, tooManyImagesMessage } from '../model/providers/clipImages'
 import { InputImageError } from '../model/providers/errors'
 import type { MediaProgress, ProviderGenerateMediaResult, ProviderStreamChatResult } from '../model/providers/streamTypes'
@@ -130,7 +131,8 @@ async function invokeMediaModel(invocation: MediaInvocation, signal: AbortSignal
 //   reply of a chat model that makes images.
 // - `report` gets the count of the characters of the answer so far.
 // - `reportCost` gets null when the request goes, then its cost, when the
-//   provider or the model's list price tells it.
+//   provider or the model's list price tells it. A request that failed
+//   costs what `failedChatRequestCost` tells (0 for a refused request).
 async function invokeTextModel(
   invocation: ChatInvocation,
   signal: AbortSignal,
@@ -186,6 +188,8 @@ async function invokeTextModel(
     }) as ProviderStreamChatResult
     reportCost(result.cost ?? null)
   } catch (error) {
+    const cost = failedChatRequestCost(error)
+    if (cost !== undefined) reportCost(cost)
     // An error of `onImage` does not end the request by itself. And
     // `ReplyJobs` reads no assets of a failed job, so the images that this
     // job saved go here.

@@ -6,7 +6,7 @@ import { mediaTagText, type MediaTagData } from '../model/chat/mediaTags'
 import type { ModelRef, Tab } from '../model/chat/types'
 import type { ModelCache } from '../model/persistence/types'
 import { TooManyImagesError } from '../model/providers/clipImages'
-import { InputImageError } from '../model/providers/errors'
+import { InputImageError, ProviderHttpError } from '../model/providers/errors'
 import type { KnownLimit } from '../model/providers/knownLimits'
 import { PRICE_LIFETIME_MS } from '../model/providers/modelPrices'
 import type { ProviderGenerateMediaInput, ProviderGenerateMediaResult, ProviderMediaQuote, ProviderMediaQuoteInput, ProviderStreamChatInput, ProviderStreamChatResult } from '../model/providers/streamTypes'
@@ -1401,7 +1401,9 @@ describe('dez.controller/tools/run', () => {
           answer.end()
         })
 
-        it('has no known price while the answer comes, then the price of the request, and none after a failure', async () => {
+        // A provider takes no money for a request that it refused; an answer
+        // that broke off can have cost money.
+        it('has no known price while the answer comes, then the price of the request; a refused request costs 0, and another failure has no known price', async () => {
           let end!: (cost: number) => void
           streamChat = async (input) => {
             await input.onToken('A fox.')
@@ -1412,11 +1414,14 @@ describe('dez.controller/tools/run', () => {
 
           end(0.002)
           await jobResult()
-          streamChat = async () => { throw new ExplainedError('Venice refused the request.') }
+          streamChat = async () => { throw new ProviderHttpError('venice', 400, '', undefined, 'Venice refused the request.', 'Venice refused the request.') }
+          await jobTool('model_invoke', ASK)
+          await jobResult()
+          streamChat = async () => { throw new ExplainedError('The connection broke.') }
           await jobTool('model_invoke', ASK)
           await jobResult()
 
-          expect(jobs.list().map((job) => [job.status, job.cost])).toStrictEqual([['finished', 0.002], ['failed', null]])
+          expect(jobs.list().map((job) => [job.status, job.cost])).toStrictEqual([['finished', 0.002], ['failed', 0], ['failed', null]])
         })
 
         describe(`whose answer has more than ${INVOCATION_TEXT_CAP} characters`, () => {

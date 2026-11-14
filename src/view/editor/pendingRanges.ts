@@ -110,14 +110,16 @@ export function followShownRange<T extends DocRange>(
    *  not in the undo history: the file change stays, so an undo could only
    *  bring back text that names a file that is gone. An `undoable` change
    *  changes no file (the removal of a linked file's text), so it is a
-   *  normal edit, in its own undo step. */
-  const end = (change?: ChangeSpec, { undoable = false } = {}): void => {
+   *  normal edit, in its own undo step. `userEvent` marks a change that the
+   *  user asked for (a trash), as against one that Dez makes (a save). */
+  const end = (change?: ChangeSpec, { undoable = false, userEvent }: { undoable?: boolean, userEvent?: string } = {}): void => {
     // In another state, or while another tab is active, there is no range.
     if (!pendingRange(view.state, rangeId)) return
     view.dispatch({
       ...(change && {
         changes: change,
         annotations: undoable ? isolateHistory.of('full') : Transaction.addToHistory.of(false),
+        ...(userEvent !== undefined && { userEvent }),
       }),
       effects: removePendingRange(rangeId),
     })

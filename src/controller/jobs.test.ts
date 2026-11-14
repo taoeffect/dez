@@ -230,7 +230,11 @@ describe('ReplyJobs', () => {
     expect(jobs.list()[1]).toMatchObject({ delivered: true, state: 'Queued.' })
   })
 
-  it('lists the last price that the work of a job reported, and keeps the price of a job that ended', async () => {
+  // The conversation total adds the price of each job once, when it is
+  // final.
+  it('lists the last price that the work of a job reported, keeps the price of a job that ended, and gives it to onCost at the end', async () => {
+    const counted: (number | null)[] = []
+    jobs = new ReplyJobs((usd) => counted.push(usd))
     const paid = heldWork()
     const unpriced = heldWork()
     const stopped = heldWork()
@@ -243,8 +247,10 @@ describe('ReplyJobs', () => {
     paid.reportCost(0.35)
     unpriced.reportCost(null)
     stopped.reportCost(1.2)
+    expect(counted).toStrictEqual([])
     paid.finish()
     await settled()
+    expect(counted).toStrictEqual([0.35])
     jobs.stopAll()
     // A price that a work reports after its job ended does not count.
     paid.reportCost(9)
@@ -253,6 +259,7 @@ describe('ReplyJobs', () => {
     // A job whose work reported no price has no `cost`.
     expect(jobs.list().map((job) => job.cost)).toStrictEqual([0.35, null, 1.2, undefined])
     expect(Object.hasOwn(jobs.list()[3], 'cost')).toBe(false)
+    expect(counted).toStrictEqual([0.35, null, 1.2])
   })
 
   it(`starts no job after ${MAX_JOBS_PER_REPLY} jobs of the reply, also when they ended`, async () => {

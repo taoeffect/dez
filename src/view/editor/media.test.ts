@@ -1,11 +1,12 @@
 import sbp from '@sbp/sbp'
 import { history, undo } from '@codemirror/commands'
-import { EditorState, type TransactionSpec } from '@codemirror/state'
+import { EditorState, type Transaction, type TransactionSpec } from '@codemirror/state'
 import type { EditorView } from '@codemirror/view'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { mediaTagText, type MediaTagData, type MediaTagKind } from '../../model/chat/mediaTags'
 import type { Role } from '../../model/chat/types'
 import { PILL_OPEN, SECTION_SEP, sectionsField, setSectionThinkingEffect } from '../thread/cmEditor'
+import { editsAgentText } from './agentTextEdits'
 import { deleteSavedClip, markdownMedia, renderedMedia } from './media'
 
 let confirmMessages: string[] = []
@@ -94,27 +95,39 @@ describe('renderedMedia', () => {
 })
 
 describe('deleteSavedClip (the trash of a player)', () => {
-  /** Deletes the clip `clip`, whose tag is the middle line of a user
-   *  section, after a typed `!` that undo can take back. The view and the
-   *  player root are stand-ins. Returns the state at the end. */
-  async function deleteClip(clip: MediaTagData): Promise<EditorState> {
+  // Each transaction that the view of the last `deleteClip` got.
+  let transactions: Transaction[] = []
+
+  /** Deletes the clip `clip`, whose tag is the middle line of a section of
+   *  `role` (after a user section for an agent section), after a typed `!`
+   *  that undo can take back. The view and the player root are stand-ins.
+   *  Returns the state at the end. */
+  async function deleteClip(clip: MediaTagData, role: Role = 'user'): Promise<EditorState> {
     const text = mediaTagText(clip)
+    const before = role === 'agent' ? `ask\n${SECTION_SEP}\nbefore\n` : 'before\n'
     let state = EditorState.create({
-      doc: `before\n${text}\nafter`,
-      extensions: [sectionsField.init(() => [{ id: 's0', role: 'user' }]), markdownMedia(), history()],
+      doc: `${before}${text}\nafter`,
+      extensions: [
+        sectionsField.init(() => (role === 'agent' ? [{ id: 's0', role: 'user' }, { id: 's1', role: 'agent' }] : [{ id: 's0', role: 'user' }])),
+        markdownMedia(),
+        history(),
+      ],
     })
     state = state.update({ changes: { from: state.doc.length, insert: '!' }, userEvent: 'input.type' }).state
+    transactions = []
     const view = {
       get state() {
         return state
       },
       dispatch(spec: TransactionSpec) {
-        state = state.update(spec).state
+        const tr = state.update(spec)
+        transactions.push(tr)
+        state = tr.state
       },
       hasFocus: false,
     } as unknown as EditorView
     vi.stubGlobal('document', { fullscreenElement: null })
-    await deleteSavedClip(view, { contains: () => false } as unknown as HTMLElement, () => 'before\n'.length, clip)
+    await deleteSavedClip(view, { contains: () => false } as unknown as HTMLElement, () => before.length, clip)
     return state
   }
 
@@ -146,6 +159,17 @@ describe('deleteSavedClip (the trash of a player)', () => {
     const unsaved = mediaTagText({ ...clip, src: clip.url })
     expect(state.doc.toString()).toBe(`before\n${unsaved}\nafter!`)
     expect(undoOnce(state)).toBe(`before\n${unsaved}\nafter`)
+  })
+
+  // The edited flag of the tab (agentTextEdits.ts).
+  it('makes the delete of a clip of a reply a change of the reply by the user', async () => {
+    const path = '/home/u/.config/dez/assets/generated/video/x.mp4'
+
+    const state = await deleteClip({ kind: 'video', id: 'b', type: 'video/mp4', src: path, url: 'https://cdn.example/x.mp4', expires: null, other: [] }, 'agent')
+
+    expect(deletedPaths).toStrictEqual([path])
+    expect(state.doc.toString()).toContain('src="https://cdn.example/x.mp4"')
+    expect(transactions.some(editsAgentText)).toBe(true)
   })
 
   it('removes the tag line of a linked clip, whose file stays, in a step that undo takes back', async () => {

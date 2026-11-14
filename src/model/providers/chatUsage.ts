@@ -1,3 +1,4 @@
+import { InputImageError, ProviderHttpError } from './errors'
 import { roundedPrice, type ModelPrice } from './modelPrices'
 
 /** What a provider tells, at the end of a chat stream, about the tokens
@@ -41,4 +42,16 @@ export function chatRequestCost(usage: ChatUsage | undefined, price: ModelPrice 
     + cached * (price.cachedInput ?? price.input)
     + usage.outputTokens * price.output
   return roundedPrice(microUsd / 1_000_000)
+}
+
+/** The price of a chat request whose `dez.provider/streamChat` rejected
+ *  with `error`: undefined when no request went (an input image that Dez
+ *  could not read), 0 when the provider refused it with an HTTP status (a
+ *  refused request costs nothing), else unknown (null): a stop, or a
+ *  connection or a stream that broke while the provider can have made a
+ *  part of the answer. For the reader `model`, the HTTP error is the
+ *  `cause` (`explainedProviderError`). */
+export function failedChatRequestCost(error: unknown): 0 | null | undefined {
+  if (error instanceof InputImageError) return undefined
+  return error instanceof ProviderHttpError || (error instanceof Error && error.cause instanceof ProviderHttpError) ? 0 : null
 }

@@ -874,7 +874,7 @@ function toggleSectionRole(view: EditorView, index: number): void {
     })
     return
   }
-  view.dispatch({ effects: toggleSectionRoleEffect.of({ id: section.id }) })
+  view.dispatch({ effects: toggleSectionRoleEffect.of({ id: section.id }), userEvent: 'input.role' })
 }
 
 /** Click handler: a Shift+press anywhere on a pill switches the role of the

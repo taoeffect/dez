@@ -1,3 +1,4 @@
+import type { ConversationCost } from '../chat/conversationCost'
 import type { ActiveModel, ModelRef, SectionThinking } from '../chat/types'
 import type { ModelOutput } from '../modelOutputs'
 import type { ProviderConfig } from '../providers/config'
@@ -57,6 +58,10 @@ export interface ConversationData {
   sections: SectionData[]
   activeModel: ActiveModel | null
   created_at: number
+  /** `Tab.cost`; absent in files of an older Dez. */
+  cost?: ConversationCost
+  /** `Tab.agentTextEdited`. */
+  agentTextEdited?: true
 }
 
 export interface ConversationSummary {

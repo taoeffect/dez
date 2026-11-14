@@ -249,6 +249,59 @@ describe('dez.model/tabs/reopenClosed', () => {
   })
 })
 
+describe('conversation cost and edited flag of a tab', () => {
+  function tabWithText (text: string): Tab {
+    const tab = sbp('dez.model/tabs/create') as Tab
+    sbp('dez.model/tabs/replaceSections', tab.id, [{ id: crypto.randomUUID(), role: 'user', content: [{ kind: 'text', text }] }])
+    return tab
+  }
+
+  function conversationData (tabId: string): ConversationData {
+    return sbp('dez.model/tabs/conversationData', tabId) as ConversationData
+  }
+
+  it('adds each request to its own tab, a known price to the sum and any other to the unpriced count', () => {
+    const priced = tabWithText('priced')
+    const other = tabWithText('other')
+
+    for (const usd of [0.25, null, 0, 0.5, Number.NaN, -1]) sbp('dez.model/tabs/countRequestCost', priced.id, usd)
+    sbp('dez.model/tabs/countRequestCost', 'missing', 1)
+
+    expect(conversationData(priced.id).cost).toStrictEqual({ usd: 0.75, requests: 6, unpriced: 3 })
+    expect(conversationData(other.id)).not.toHaveProperty('cost')
+  })
+
+  it('marks only the edited tab, and saves no mark for a tab that has none', () => {
+    const edited = tabWithText('edited')
+    const other = tabWithText('other')
+
+    sbp('dez.model/tabs/markAgentTextEdited', edited.id)
+    sbp('dez.model/tabs/markAgentTextEdited', 'missing')
+
+    expect(sbp('dez.model/tabs/agentTextEdited', edited.id)).toBe(true)
+    expect(sbp('dez.model/tabs/agentTextEdited', other.id)).toBe(false)
+    expect(conversationData(edited.id).agentTextEdited).toBe(true)
+    expect(conversationData(other.id)).not.toHaveProperty('agentTextEdited')
+  })
+
+  it('keeps the cost and the mark through a reload of the conversation and a reopen of the closed tab', async () => {
+    const tab = tabWithText('kept')
+    sbp('dez.model/tabs/countRequestCost', tab.id, 0.5)
+    sbp('dez.model/tabs/markAgentTextEdited', tab.id)
+    diskConversations.set('conv-copy', { ...conversationData(tab.id), id: 'conv-copy' })
+
+    const reloaded = await openConversation('conv-copy') as Tab
+    sbp('dez.model/tabs/close', tab.id)
+    sbp('dez.model/tabs/reopenClosed')
+    const reopened = tabs().find((candidate) => candidate.id === activeId()) as Tab
+
+    for (const copy of [reloaded, reopened]) {
+      expect(copy.cost).toStrictEqual({ usd: 0.5, requests: 1, unpriced: 0 })
+      expect(copy.agentTextEdited).toBe(true)
+    }
+  })
+})
+
 describe('dez.model/heldTexts', () => {
   it('gives each text and prompt body of the open and the closed tabs, each saved prompt, and the system prompt template', () => {
     sbp('dez.model/tabs/replaceSections', activeId(), [

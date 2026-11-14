@@ -1,3 +1,4 @@
+import type { ConversationCost } from './chat/conversationCost'
 import type { ActiveModel, ContentNode, ModelRef, SectionThinking } from './chat/types'
 import type { ModelOutput } from './modelOutputs'
 import type { ProviderConfig } from './providers/config'
@@ -21,6 +22,8 @@ export interface ModelSnapshot {
       durationMs?: number
     }[]
     createdAt: number
+    cost?: ConversationCost
+    agentTextEdited?: true
   }[]
   activeTabId: string
   activeModel: ActiveModel | null

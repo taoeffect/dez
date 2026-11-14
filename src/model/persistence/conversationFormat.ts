@@ -1,4 +1,5 @@
 import { stripLiveSentinels } from '../chat/content'
+import { agentTextEditedField, costField, type ConversationCost } from '../chat/conversationCost'
 import { durationField } from '../chat/duration'
 import { messagesAsMarkdown, sectionTextAsMarkdown } from '../chat/markdown'
 import { modelRefKey, parseModelRefKey } from '../chat/modelRef'
@@ -10,7 +11,7 @@ import type { ContentNodeData, ConversationData, SectionData } from './types'
 // (persistence.rs keeps only the ASCII letters, digits, `-`, and `_` of the
 // id):
 //
-//   <!-- title: X | model: provider/model | created: N -->
+//   <!-- title: X | model: provider/model | created: N | cost: 0.42 | requests: 7 | unpriced: 1 | edited: yes -->
 //
 //   <dez:pill type="user"/>
 //   text
@@ -23,6 +24,11 @@ import type { ContentNodeData, ConversationData, SectionData } from './types'
 // - The header `model:` is the tab's last selected model (`activeModel`),
 //   not the model of each reply. A pill with no `model` gives a section with
 //   no model; the header never fills it in.
+// - `cost:` (USD), `requests:`, and `unpriced:` are `Tab.cost`, and
+//   `edited: yes` is `Tab.agentTextEdited`. Each part is only there when
+//   set (`unpriced:` only when more than 0). Files of an older Dez have
+//   none of them, and an older Dez ignores them. A cost with a bad or a
+//   missing value is ignored as a whole.
 // - `duration-ms` is how long the reply took (`Section.durationMs`); files
 //   saved before Dez stored it have none.
 // - Each pill line starts a section. pillMarker.ts owns the pill markers,
@@ -52,7 +58,7 @@ function promptId(): string {
 
 export function serializeConversation(data: ConversationData): string {
   const model = data.activeModel ? modelRefKey(data.activeModel) : ''
-  let output = `<!-- title: ${escapeTitle(data.title)} | model: ${escapeTitle(model)} | created: ${data.created_at} -->\n`
+  let output = `<!-- title: ${escapeTitle(data.title)} | model: ${escapeTitle(model)} | created: ${data.created_at}${costHeaderParts(data)} -->\n`
 
   for (const section of data.sections) {
     output += '\n'
@@ -75,6 +81,17 @@ export function serializeConversation(data: ConversationData): string {
   return output
 }
 
+function costHeaderParts({ cost, agentTextEdited }: ConversationData): string {
+  const parts: string[] = []
+  if (cost) {
+    // 12 significant digits drop the float noise of a long sum (0.1 + 0.2).
+    parts.push(`cost: ${Number(cost.usd.toPrecision(12))}`, `requests: ${cost.requests}`)
+    if (cost.unpriced > 0) parts.push(`unpriced: ${cost.unpriced}`)
+  }
+  if (agentTextEdited) parts.push('edited: yes')
+  return parts.map((part) => ` | ${part}`).join('')
+}
+
 // The conversation as plain Markdown for people to read (Save As Markdown).
 // The history format above does not render: a CommonMark tag name cannot
 // hold `:`, so viewers show `<dez:pill …/>` as text. Each message gets its
@@ -93,7 +110,34 @@ export function serializeConversationAsMarkdown(data: ConversationData): string 
   return messages === '' ? title : `${title}\n${messages}`
 }
 
-function parseHeader(line: string): { title: string; model: string; createdAt: number } {
+interface ConversationHeader {
+  title: string
+  model: string
+  createdAt: number
+  cost?: ConversationCost
+  agentTextEdited?: true
+}
+
+const EMPTY_HEADER: ConversationHeader = { title: '', model: '', createdAt: 0 }
+
+/** The number of a header part's text; NaN when there is none. */
+function headerNumber(text: string | undefined): number {
+  return text === undefined || text === '' ? Number.NaN : Number(text)
+}
+
+/** The cost of the header's `cost:`, `requests:`, and `unpriced:` texts;
+ *  undefined when one of them is missing or bad. */
+function headerCost(usdText: string | undefined, requestsText: string | undefined, unpricedText: string | undefined): ConversationCost | undefined {
+  const usd = headerNumber(usdText)
+  const requests = headerNumber(requestsText)
+  const unpriced = unpricedText === undefined ? 0 : headerNumber(unpricedText)
+  if (!Number.isFinite(usd) || usd < 0) return undefined
+  if (!Number.isInteger(requests) || requests < 1) return undefined
+  if (!Number.isInteger(unpriced) || unpriced < 0 || unpriced > requests) return undefined
+  return { usd, requests, unpriced }
+}
+
+function parseHeader(line: string): ConversationHeader {
   const inner = line
     .trim()
     .replace(/^<!--/, '')
@@ -102,6 +146,7 @@ function parseHeader(line: string): { title: string; model: string; createdAt: n
   let title = ''
   let model = ''
   let createdAt = 0
+  const values = new Map<string, string>()
 
   for (const rawPart of inner.split('|')) {
     const part = rawPart.trim()
@@ -112,10 +157,19 @@ function parseHeader(line: string): { title: string; model: string; createdAt: n
     } else if (part.startsWith('created:')) {
       const parsed = Number.parseInt(part.slice('created:'.length).trim(), 10)
       createdAt = Number.isFinite(parsed) ? parsed : 0
+    } else {
+      const colon = part.indexOf(':')
+      if (colon > 0) values.set(part.slice(0, colon).trim(), part.slice(colon + 1).trim())
     }
   }
 
-  return { title, model, createdAt }
+  return {
+    title,
+    model,
+    createdAt,
+    ...costField(headerCost(values.get('cost'), values.get('requests'), values.get('unpriced'))),
+    ...agentTextEditedField(values.get('edited') === 'yes'),
+  }
 }
 
 function parsePromptOpen(trimmed: string): string | null {
@@ -188,26 +242,18 @@ function closesContainer(lines: string[], start: number): boolean {
 }
 
 export function parseConversation(id: string, content: string): ConversationData {
-  let title = ''
-  let model = ''
-  let createdAt = 0
+  let header = EMPTY_HEADER
   let body = content
   const firstLineEnd = content.indexOf('\n')
 
   if (firstLineEnd >= 0) {
     const first = content.slice(0, firstLineEnd)
     if (first.trimStart().startsWith('<!--') && first.trimEnd().endsWith('-->')) {
-      const header = parseHeader(first)
-      title = header.title
-      model = header.model
-      createdAt = header.createdAt
+      header = parseHeader(first)
       body = content.slice(firstLineEnd + 1)
     }
   } else if (content.trimStart().startsWith('<!--') && content.trimEnd().endsWith('-->')) {
-    const header = parseHeader(content)
-    title = header.title
-    model = header.model
-    createdAt = header.createdAt
+    header = parseHeader(content)
     body = ''
   }
 
@@ -300,9 +346,11 @@ export function parseConversation(id: string, content: string): ConversationData
 
   return {
     id,
-    title,
+    title: header.title,
     sections,
-    activeModel: activeModelFromHeader(model),
-    created_at: createdAt,
+    activeModel: activeModelFromHeader(header.model),
+    created_at: header.createdAt,
+    ...costField(header.cost),
+    ...agentTextEditedField(header.agentTextEdited),
   }
 }

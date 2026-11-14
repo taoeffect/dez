@@ -688,6 +688,68 @@ describe('agent pill durations', () => {
   })
 })
 
+describe('conversation cost and edited flag in the header', () => {
+  const conversation = (fields: Partial<ConversationData>): ConversationData => ({
+    id: 'conversation',
+    title: 'Chat',
+    sections: [section('user', [textNode('hi')]), section('agent', [textNode('hello')])],
+    activeModel: null,
+    created_at: 1,
+    ...fields,
+  })
+  const firstLine = (text: string) => text.slice(0, text.indexOf('\n'))
+
+  it('round-trips the cost and the edited flag, with no float noise and no unpriced part at 0', () => {
+    const priced = conversation({ cost: { usd: 0.1 + 0.2, requests: 3, unpriced: 1 }, agentTextEdited: true })
+    const tiny = conversation({ cost: { usd: 2.4e-7, requests: 1, unpriced: 0 } })
+
+    expect(firstLine(serializeConversation(priced))).toBe('<!-- title: Chat | model:  | created: 1 | cost: 0.3 | requests: 3 | unpriced: 1 | edited: yes -->')
+    expect(firstLine(serializeConversation(tiny))).toBe('<!-- title: Chat | model:  | created: 1 | cost: 2.4e-7 | requests: 1 -->')
+    expect(parseConversation('conversation', serializeConversation(priced))).toStrictEqual({ ...priced, cost: { usd: 0.3, requests: 3, unpriced: 1 } })
+    expect(parseConversation('conversation', serializeConversation(tiny))).toStrictEqual(tiny)
+  })
+
+  // Files of an older Dez must keep their bytes on a save, and must not
+  // come back with `cost: undefined`.
+  it('writes and reads a header with no cost and no flag as before', () => {
+    const data = conversation({})
+    const serialized = serializeConversation(data)
+
+    expect(firstLine(serialized)).toBe('<!-- title: Chat | model:  | created: 1 -->')
+    expect(parseConversation('conversation', serialized)).toStrictEqual(data)
+  })
+
+  it('reads the parts in any order', () => {
+    const parsed = parseConversation('conversation', '<!-- edited: yes | unpriced: 2 | title: Chat | requests: 2 | created: 1 | cost: 0 | model:  -->\n<dez:pill type="user"/>\nhi\n')
+
+    expect(parsed.cost).toStrictEqual({ usd: 0, requests: 2, unpriced: 2 })
+    expect(parsed.agentTextEdited).toBe(true)
+  })
+
+  // A hand edit must still open: a cost that is not whole is no cost.
+  it('ignores the whole cost when one of its values is missing or bad, and an edited value other than yes', () => {
+    const parts = [
+      'cost: 1',
+      'requests: 2',
+      'cost: abc | requests: 2',
+      'cost: | requests: 2',
+      'cost: -1 | requests: 2',
+      'cost: Infinity | requests: 2',
+      'cost: 1 | requests: 0',
+      'cost: 1 | requests: 1.5',
+      'cost: 1 | requests: 2 | unpriced: 3',
+      'cost: 1 | requests: 2 | unpriced: -1',
+      'cost: 1 | requests: 2 | unpriced: x',
+      'cost: 1 | requests: 2 | edited: no',
+    ]
+
+    const parsed = parts.map((part) => parseConversation('conversation', `<!-- title: Chat | model:  | created: 1 | ${part} -->\n<dez:pill type="user"/>\nhi\n`))
+
+    expect(parsed.map((data) => 'cost' in data)).toEqual([...parts.slice(0, -1).map(() => false), true])
+    expect(parsed.some((data) => 'agentTextEdited' in data)).toBe(false)
+  })
+})
+
 describe('conversation Markdown export', () => {
   function headings(markdown: string): string[] {
     const found: string[] = []

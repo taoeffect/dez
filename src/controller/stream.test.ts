@@ -11,6 +11,7 @@ import { missingImageProblem, TooManyImagesError, type InputImageRules } from '.
 import { missingClipProblem, type ClipAttachment, type InputClipRules } from '../model/providers/clipInputs'
 import type { ClipTextRules } from '../model/providers/clipText'
 import { customProviderConfigSchema } from '../model/providers/config'
+import { InputImageError, ProviderHttpError } from '../model/providers/errors'
 import { unstoredOutputMessage } from '../model/providers/unusableModel'
 import type { GeneratedClip, ProviderChatInputMessage, ProviderGenerateMediaInput, ProviderGenerateMediaResult, ProviderInfo, ProviderStreamChatInput, ProviderStreamChatResult } from '../model/providers'
 import { providerInfo } from '../model/providers/testing'
@@ -596,6 +597,58 @@ describe('reply duration', () => {
 
     expect(agentSection().durationMs).toBe(2500)
     expect(durations(savedConversations.at(-1)?.sections)).toStrictEqual(['none', 2500, 'none'])
+  })
+})
+
+describe('conversation cost', () => {
+  it('adds the price of each round of a reply, a round with no price as unpriced, and saves the total with the conversation', async () => {
+    replyRounds([
+      async (input) => ({ requestId: input.requestId as string, toolCalls: [{ id: 'c1', name: 'model_list', argumentsText: '{}' }], cost: 0.25 }),
+      async (input) => {
+        await input.onToken('None.')
+        return { requestId: input.requestId as string }
+      },
+    ])
+
+    await startStream({ sendTools: true })
+
+    const cost = { usd: 0.25, requests: 2, unpriced: 1 }
+    expect(activeTab().cost).toStrictEqual(cost)
+    expect(savedConversations.at(-1)?.cost).toStrictEqual(cost)
+  })
+
+  // A provider takes no money for a request that it refused. An answer
+  // that broke off can have cost money. An input image that Dez could not
+  // read stops the request before it goes.
+  it('counts 0 for a request that the provider refused, no known price for one that broke off, and nothing for one that did not go', async () => {
+    for (const failure of [
+      new ProviderHttpError(model.providerId, 400, '', undefined, 'Thinker refused the request.', 'Thinker refused the request.'),
+      new Error('connection reset'),
+      new InputImageError(image('cat.png'), 'unreadable', 'Dez cannot read cat.png.'),
+    ]) {
+      sbp('dez.model/tabs/replaceSections', activeTab().id, [
+        { id: 'u1', role: 'user', content: [{ kind: 'text', text: 'Hi' }] },
+        { id: 'a1', role: 'agent', content: [{ kind: 'text', text: '' }], model },
+      ])
+      streamChat = async () => { throw failure }
+      await startStream()
+    }
+
+    expect(activeTab().cost).toStrictEqual({ usd: 0, requests: 2, unpriced: 1 })
+  })
+
+  // The stop saves the conversation before the stopped round gives its
+  // price.
+  it('saves the conversation again with the price of a round that the user stopped', async () => {
+    streamChat = async (input) => {
+      await input.onToken('Partial')
+      await sbp('dez.stream/stop', activeTab().id)
+      return { requestId: input.requestId as string, cost: 0.25 }
+    }
+
+    await startStream()
+
+    await vi.waitFor(() => expect(savedConversations.at(-1)?.cost).toStrictEqual({ usd: 0.25, requests: 1, unpriced: 0 }))
   })
 })
 
@@ -1232,6 +1285,7 @@ describe('dez.stream/start media round', () => {
       images: [],
       requestId: expect.any(String),
       signal: expect.any(AbortSignal),
+      onProgress: expect.any(Function),
     }])
     expect(saves).toStrictEqual([{ folder: 'generated' }, { folder: 'generated' }])
     expect(sectionTexts()).toStrictEqual([
@@ -1342,6 +1396,40 @@ describe('dez.stream/start media round', () => {
     expect(saves).toStrictEqual([])
     expect(sectionTexts()).toStrictEqual(conversation())
     expect(toasts).toStrictEqual([])
+  })
+
+  // A provider takes no money for a request that it refused. A stop does
+  // not end the provider's work, so a stopped request keeps its quote.
+  it('adds the price of each request that went to the cost of the conversation: 0 for one that failed, the quote for one that the user stopped', async () => {
+    const send = (input: ProviderGenerateMediaInput, quote?: number) => input.onProgress?.({ phase: 'sent', jobId: null, ...(quote !== undefined && { quote }) })
+    for (const answer of [
+      async (input: ProviderGenerateMediaInput) => {
+        send(input, 0.5)
+        return { media: [png], clips: [], cost: 0.25 }
+      },
+      async (input: ProviderGenerateMediaInput) => {
+        send(input, 0.5)
+        throw new ExplainedError('Venice refused the request.')
+      },
+      async (input: ProviderGenerateMediaInput) => {
+        send(input, 0.5)
+        await sbp('dez.stream/stop', activeTab().id)
+        throw input.signal?.reason
+      },
+      async () => { throw new ExplainedError('Dez cannot read cat.png.') },
+      async (input: ProviderGenerateMediaInput) => {
+        send(input)
+        return { media: [png], clips: [] }
+      },
+    ]) {
+      generateMedia = answer
+      setConversation(conversation())
+      await sbp('dez.controller/submitTab', activeTab().id)
+    }
+
+    const cost = { usd: 0.75, requests: 4, unpriced: 1 }
+    expect(activeTab().cost).toStrictEqual(cost)
+    expect(savedConversations.at(-1)?.cost).toStrictEqual(cost)
   })
 
   it('drops the images of a request that a new submit in the tab ended', async () => {
@@ -2497,6 +2585,34 @@ describe('dez.stream/start jobs', () => {
     expect(savedConversations).toHaveLength(1)
     expect(toasts).toStrictEqual([])
     expect(alerts).toStrictEqual([])
+  })
+
+  // A job adds its price at its end; the stop ends the jobs before the
+  // reply's save.
+  it('adds the price of each job to the cost of the conversation, and the quote of a job that the stop ended', async () => {
+    const heldRequest = generateMedia
+    generateMedia = (input) => {
+      input.onProgress?.({ phase: 'sent', jobId: null, quote: 0.5 })
+      return heldRequest(input)
+    }
+    replyRounds([
+      async (input) => ({ requestId: input.requestId as string, toolCalls: [invokeCall('c1'), invokeCall('c2', FILMER)] }),
+      async (input) => {
+        await input.onToken('I started them.')
+        return { requestId: input.requestId as string }
+      },
+    ])
+
+    const stream = startStream({ sendTools: true })
+    await settled()
+    jobs[0].end({ media: [png], clips: [], cost: 0.25 })
+    await settled()
+    await sbp('dez.stream/stop', activeTab().id)
+    await stream
+
+    const cost = { usd: 0.75, requests: 4, unpriced: 2 }
+    expect(activeTab().cost).toStrictEqual(cost)
+    expect(savedConversations.at(-1)?.cost).toStrictEqual(cost)
   })
 
   it('stops the jobs of a reply that a new submit in the tab ends', async () => {

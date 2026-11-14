@@ -150,6 +150,11 @@ export class ReplyJobs {
   private readonly waits = new Set<() => void>()
   private stopped = false
 
+  /** `onCost` gets the price of each job that sent a paid request
+   *  (`JobInfo.cost`) once, at the end of the job, where the price is
+   *  final. */
+  constructor(private readonly onCost: (usd: number | null) => void = () => {}) {}
+
   /** How many jobs run now. */
   get running(): number {
     let count = 0
@@ -224,6 +229,7 @@ export class ReplyJobs {
     clearTimeout(job.timer)
     if (status === 'timed out' || status === 'stopped') job.abort.abort()
     if (status !== 'stopped') this.unread.push(job)
+    if (job.cost !== undefined) this.onCost(job.cost)
     for (const wake of [...this.waits]) wake()
   }
 

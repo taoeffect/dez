@@ -61,6 +61,7 @@ import { markdownLinks } from '../editor/links'
 import { mentionChips } from '../editor/mentions'
 import { focusKeepingScrollOnMouseDown } from '../editor/focus'
 import { activeFindQuery, findState } from '../editor/findState'
+import { editsAgentText } from '../editor/agentTextEdits'
 import { isModalOpen } from '../composables/useKeyboardShortcuts'
 
 const {
@@ -608,6 +609,7 @@ function acceptPrompt(prompt?: Prompt): boolean {
     selection: { anchor: autocompleteFrom.value + insert.length },
     effects: setPillsEffect.of(meta),
     scrollIntoView: true,
+    userEvent: 'input.complete',
   })
   closeAutocomplete()
   return true
@@ -664,6 +666,7 @@ const editorShortcutCommands: Record<ShortcutIdOfScope<'editor'>, Command> = {
       selection: { anchor: from + insert.length },
       effects: splitSectionEffect.of({ afterIndex }),
       scrollIntoView: true,
+      userEvent: 'input',
     })
     return true
   },
@@ -928,6 +931,11 @@ function buildState(openPanels?: OpenPanels): EditorState {
           tr.state.field(sectionsField) !== tr.startState.field(sectionsField),
         )
         if ((update.docChanged || roleToggled) && !syncingViewStructure) {
+          // Before the sync, whose save then holds the mark. The view's own
+          // tab: the active tab can be another one for a tick after a switch.
+          if (viewTabId && !sbp('dez.model/tabs/agentTextEdited', viewTabId) && update.transactions.some(editsAgentText)) {
+            sbp('dez.model/tabs/markAgentTextEdited', viewTabId)
+          }
           syncDocToStore(true)
         }
         if (update.docChanged || update.selectionSet || update.focusChanged) {

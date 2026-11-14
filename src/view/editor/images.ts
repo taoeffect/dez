@@ -480,7 +480,7 @@ export async function deleteImage(view: EditorView, from: number, path: string):
     const hiddenLines = hiddenAssetLines(view.state, range.from)
     removal = hiddenLines ? linesRemovalRange(view.state.doc, hiddenLines) : imageRemovalRange(view.state.doc, range)
   }
-  followed.end(removal, { undoable: image.linked })
+  followed.end(removal, { undoable: image.linked, userEvent: 'delete' })
   // The prompt gave the focus back a few ms ago (`syncDomSelection`).
   if (range) syncDomSelection(view)
 }

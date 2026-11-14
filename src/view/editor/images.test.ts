@@ -1,10 +1,11 @@
 import sbp from '@sbp/sbp'
 import { history, undo } from '@codemirror/commands'
-import { EditorSelection, EditorState, type TransactionSpec } from '@codemirror/state'
+import { EditorSelection, EditorState, type Transaction, type TransactionSpec } from '@codemirror/state'
 import type { EditorView } from '@codemirror/view'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { HIDDEN_IMAGE_PATH, hiddenImage, invokeBlock } from '../../model/chat/testing'
 import { SECTION_SEP, encodePrompt, sectionsField } from '../thread/cmEditor'
+import { editsAgentText } from './agentTextEdits'
 import { deleteImage, deleteImageBang, deleteImageParen, imageRemovalRange, imageTooltip, imageTooltipDelay, markdownImages, renderedImages, setImageTooltip } from './images'
 import { createState as createThreadState, joinSections, runCommand } from './testing'
 
@@ -231,18 +232,23 @@ describe('deleteImage (the image trash)', () => {
     edit: (spec: TransactionSpec) => void
     /** Stands for `view.setState` on a tab switch or a stream-end rebuild. */
     replaceState: (next: EditorState) => void
+    /** Each transaction that the view got. */
+    transactions: Transaction[]
   }
 
   /** A view stand-in that `deleteImage` reads and dispatches to; its state
    *  is `createState(doc)`, or `doc` when that is a state. */
   function createEditor(doc: string | EditorState): FakeEditor {
     let state = typeof doc === 'string' ? createState(doc) : doc
+    const transactions: Transaction[] = []
     const view = {
       get state() {
         return state
       },
       dispatch(spec: TransactionSpec) {
-        state = state.update(spec).state
+        const tr = state.update(spec)
+        transactions.push(tr)
+        state = tr.state
       },
     } as unknown as EditorView
     return {
@@ -252,6 +258,7 @@ describe('deleteImage (the image trash)', () => {
       replaceState(next: EditorState) {
         state = next
       },
+      transactions,
     }
   }
 
@@ -299,6 +306,18 @@ describe('deleteImage (the image trash)', () => {
     expect(undone.doc.toString()).toBe(['before', linked, 'after!'].join('\n'))
     expect(shown(undone)).toEqual([linked])
     expect(undoOnce(undone).doc.toString()).toBe(['before', linked, 'after'].join('\n'))
+  })
+
+  // The edited flag of the tab (agentTextEdits.ts).
+  it('makes the delete of an image of a reply a change of the reply by the user', async () => {
+    const editor = createEditor(createThreadState(['ask', ['before', red, 'after'].join('\n')], ['user', 'agent']))
+    const done = deleteImage(editor.view, editor.doc().indexOf(red), RED)
+    confirmCalls[0].answer(true)
+    ;(await nextDeleteCall()).finish()
+    await done
+
+    expect(editor.doc()).toBe(joinSections(['ask', 'before\nafter']))
+    expect(editor.transactions.some(editsAgentText)).toBe(true)
   })
 
   it('takes a hidden image out with the blank line that went out of view with it, so that the text keeps its look', async () => {
