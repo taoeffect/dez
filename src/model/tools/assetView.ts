@@ -153,7 +153,7 @@ export const ASSET_VIEW_TOOL: ToolDefinition = {
       type: 'string',
       description: `For a video clip: the times of the frames to show, in seconds of the clip, as in "14.96 15", at most ${MAX_SHEET_FRAMES}. `
         + 'Each frame is the first frame at or after its time, and a time that is in the list twice gives that frame and the next one. '
-        + 'The result tells the time of each frame, and a time as a result writes it gives that frame again. '
+        + 'The result tells the time of each frame, and a time that you copy from a result gives that frame again. '
         + 'Give no `frames`, `scenes`, `start`, or `end` with it.',
       required: false,
     },
