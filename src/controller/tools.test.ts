@@ -62,6 +62,8 @@ let storedImageSize: ImageSize
 let redrawError: Error | undefined
 let drawError: Error | undefined
 let drawings: { drawing: ImageDrawing, mediaType: string }[] = []
+// The byte count of each PNG drawing; every other drawing has 1 byte.
+let pngDrawingBytes: number
 let savedImages: { mediaType: string, options: unknown }[] = []
 let saveImage: () => Promise<string>
 let deletedImages: string[] = []
@@ -115,7 +117,8 @@ sbp('sbp/selectors/register', {
     if (!drawing) return null
     if (drawError) throw drawError
     drawings.push({ drawing, mediaType })
-    return { bytes: new Uint8Array([7]), mediaType: drawing.mediaType ?? mediaType, width: drawing.width, height: drawing.height }
+    const type = drawing.mediaType ?? mediaType
+    return { bytes: new Uint8Array(type === 'image/png' ? pngDrawingBytes : 1).fill(7), mediaType: type, width: drawing.width, height: drawing.height }
   },
   async 'dez.controller/images/save' (_bytes: Uint8Array, mediaType: string, options: unknown): Promise<string> {
     savedImages.push({ mediaType, options })
@@ -176,6 +179,7 @@ beforeEach(() => {
   redrawError = undefined
   drawError = undefined
   drawings = []
+  pngDrawingBytes = 1
   savedImages = []
   saveImage = async () => MADE_IMAGE
   deletedImages = []
@@ -1881,13 +1885,29 @@ describe('dez.controller/tools/run', () => {
       expect(result.content).toContain(smallerCopyNote(drawn.width, drawn.height))
     })
 
-    it('sends an SVG image as a PNG drawing at its own size', async () => {
+    it('sends an SVG image as a PNG drawing at its own size, when the drawing is not too large', async () => {
       readImage = async () => new Blob(['<svg/>'], { type: 'image/svg+xml' })
+      pngDrawingBytes = 3_750_000
 
       await assetView({ assets: 'a' })
 
       expect(drawings).toStrictEqual([{ drawing: { crop: { x: 0, y: 0, width: 1000, height: 500 }, width: 1000, height: 500, mediaType: 'image/png' }, mediaType: 'image/png' }])
       expect(shown.map(({ picture }) => picture.mediaType)).toStrictEqual(['image/png'])
+    })
+
+    it('sends an SVG image whose PNG drawing is too large as a JPEG copy on white', async () => {
+      readImage = async () => new Blob(['<svg/>'], { type: 'image/svg+xml' })
+      pngDrawingBytes = 3_750_001
+
+      const result = await assetView({ assets: 'a' })
+
+      const crop = { x: 0, y: 0, width: 1000, height: 500 }
+      expect(drawings).toStrictEqual([
+        { drawing: { crop, width: 1000, height: 500, mediaType: 'image/png' }, mediaType: 'image/png' },
+        { drawing: { crop, width: 1000, height: 500, background: '#ffffff', mediaType: 'image/jpeg' }, mediaType: 'image/jpeg' },
+      ])
+      expect(shown.map(({ picture }) => picture.mediaType)).toStrictEqual(['image/jpeg'])
+      expect(result.content).toContain(smallerCopyNote(1000, 500))
     })
 
     it('sends no picture of an image that the webview cannot decode, or of a clip that ffmpeg cannot read, and shows the others', async () => {

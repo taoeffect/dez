@@ -1,5 +1,5 @@
 import sbp from '@sbp/sbp'
-import { wholeImageDrawing, type ImageDrawing, type ImageSize } from '../model/chat/imageDrawing'
+import { wholeImageDrawing, type DrawnImage, type ImageDrawing, type ImageSize } from '../model/chat/imageDrawing'
 import type { ImageMediaType } from '../model/chat/images'
 import type { PicturePart, Section } from '../model/chat/types'
 import type { ClipAttachment } from '../model/providers/clipInputs'
@@ -59,36 +59,39 @@ import type { ToolRunContext } from './tools'
 // can hold a path: the model gets only the times and the loudness that Dez
 // reads from it.
 
-// An image whose file is larger than this, or whose longer side is longer
-// than `MAX_PICTURE_SIDE`, goes as a smaller JPEG copy: in base64, a file
-// of this size stays under the 5 MB image limit of the Anthropic API, and
-// a provider can refuse a large image. A refusal would fail each later
-// request of the reply, as each one sends the picture again. The Claude
-// API refuses an image with a side over 3,000 px in a request with more
-// than 20 images, and the pictures of the reply with the images of the
-// newest user message can be more than 20.
+// An image whose file or PNG drawing is larger than this, or whose longer
+// side is longer than `MAX_PICTURE_SIDE`, goes as a smaller JPEG copy: in
+// base64, a file of this size stays under the 5 MB image limit of the
+// Anthropic API, and a provider can refuse a large image. A refusal would
+// fail each later request of the reply, as each one sends the picture
+// again. The Claude API refuses an image with a side over 3,000 px in a
+// request with more than 20 images, and the pictures of the reply with the
+// images of the newest user message can be more than 20.
 // https://platform.claude.com/docs/en/build-with-claude/vision
 const MAX_PICTURE_BYTES = 3_750_000
 const MAX_PICTURE_SIDE = 3000
 const SMALLER_PICTURE_SIDE = 2048
+
+// The drawing of the smaller JPEG copy of the picture of an image of
+// `size`, at most `SMALLER_PICTURE_SIDE` pixels on its longer side.
+function smallerPictureDrawing(size: ImageSize): ImageDrawing {
+  const scale = Math.min(1, SMALLER_PICTURE_SIDE / Math.max(size.width, size.height))
+  return {
+    crop: { x: 0, y: 0, width: size.width, height: size.height },
+    width: Math.max(1, Math.round(size.width * scale)),
+    height: Math.max(1, Math.round(size.height * scale)),
+    // A JPEG has no transparent pixels.
+    background: '#ffffff',
+    mediaType: 'image/jpeg',
+  }
+}
 
 // The drawing of the picture of an image of the type `mediaType` (null:
 // a type that Dez does not send as it is) whose file has `bytes` bytes,
 // for redraw; null for an image that goes as it is. No provider is known
 // to take SVG images, so an SVG goes as a PNG drawing.
 function pictureDrawing(size: ImageSize, bytes: number, mediaType: ImageMediaType | null): ImageDrawing | null {
-  const longSide = Math.max(size.width, size.height)
-  if (bytes > MAX_PICTURE_BYTES || longSide > MAX_PICTURE_SIDE) {
-    const scale = Math.min(1, SMALLER_PICTURE_SIDE / longSide)
-    return {
-      crop: { x: 0, y: 0, width: size.width, height: size.height },
-      width: Math.max(1, Math.round(size.width * scale)),
-      height: Math.max(1, Math.round(size.height * scale)),
-      // A JPEG has no transparent pixels.
-      background: '#ffffff',
-      mediaType: 'image/jpeg',
-    }
-  }
+  if (bytes > MAX_PICTURE_BYTES || Math.max(size.width, size.height) > MAX_PICTURE_SIDE) return smallerPictureDrawing(size)
   if (mediaType === null || mediaType === 'image/svg+xml') return { ...wholeImageDrawing(size), mediaType: 'image/png' }
   return null
 }
@@ -105,7 +108,22 @@ async function viewImage(id: string, path: string, choice: PictureChoice): Promi
   if (choice === 'overLimit') item.notes.push(PICTURE_LIMIT_NOTE)
   if (choice !== 'show') return item
 
-  const { file, mediaType, drawn } = image
+  const { file, mediaType } = image
+  let { drawn } = image
+  // The size of a drawing is known only after the draw, and the PNG
+  // drawing of a small file can be much larger than the file (an SVG that
+  // holds a photo, an AVIF), so a PNG drawing that is too large is drawn
+  // again as the smaller JPEG copy.
+  if (drawn?.mediaType === 'image/png' && drawn.bytes.length > MAX_PICTURE_BYTES) {
+    try {
+      // Never null: the plan gives a drawing for every size.
+      drawn = await sbp('dez.controller/images/redraw', file, smallerPictureDrawing, 'image/jpeg') as DrawnImage
+    } catch (error) {
+      console.error(`Failed to draw the smaller picture of the image @${id}:`, error)
+      item.notes.push(PICTURE_NOT_DRAWN_NOTE)
+      return item
+    }
+  }
   let part: PicturePart | null
   if (drawn) {
     part = { type: 'picture', mediaType: drawn.mediaType, bytes: drawn.bytes }
