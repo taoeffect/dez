@@ -21,7 +21,7 @@ describe('jpegSize', () => {
     expect(jpegSize(filled)).toStrictEqual({ width: 800, height: 200 })
   })
 
-  it('reads no size from a file that ends before its frame header, a PNG, a scan with no frame header, or a height of 0', () => {
+  it('reads no size from a file that ends inside its frame header, a PNG, a scan with no frame header, or a height of 0', () => {
     const header = jpegHeader(800, 200)
     expect(jpegSize(header.slice(0, FRAME_HEADER + 6))).toBeNull()
     expect(jpegSize(new Uint8Array([0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A]))).toBeNull()

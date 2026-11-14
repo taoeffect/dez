@@ -13,8 +13,9 @@ const START_OF_IMAGE = 0xD8
 const END_OF_IMAGE = 0xD9
 const START_OF_SCAN = 0xDA
 
-// The frame header markers SOF0 to SOF15. DHT (0xC4), JPG (0xC8), and DAC
-// (0xCC) are in the same range, but they are tables, not frame headers.
+// The frame header markers SOF0 to SOF15. Three markers in the same range
+// are no frame headers: DHT (0xC4) and DAC (0xCC) are tables, and JPG
+// (0xC8) is reserved for extensions.
 function isFrameHeader(marker: number): boolean {
   return marker >= 0xC0 && marker <= 0xCF && marker !== 0xC4 && marker !== 0xC8 && marker !== 0xCC
 }

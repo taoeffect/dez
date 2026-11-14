@@ -16,9 +16,13 @@ export const SCENE_CUT_THRESHOLD = 10
  *  passes every frame on, and the first frame of a run is never a cut. */
 export const SCENE_CUT_FILTER = `scdet=threshold=${SCENE_CUT_THRESHOLD}`
 
-// A line of `SCENE_CUT_FILTER`. ffmpeg writes the time of a frame in its
-// stream as a plain decimal number, never with an exponent.
-const SCENE_CUT = /\[Parsed_scdet_\d+ @ [^\]]*\] lavfi\.scd\.score: [\d.]+, lavfi\.scd\.time: (-?[\d.]+)/g
+// A time in a log line of the filters of this module, in seconds. ffmpeg
+// writes each one as a plain decimal number, never with an exponent: a time
+// of 10 µs is `0.00001` (tried on the ffmpeg that Dez ships).
+const TIME = '-?[\\d.]+'
+
+// A line of `SCENE_CUT_FILTER`.
+const SCENE_CUT = new RegExp(`\\[Parsed_scdet_\\d+ @ [^\\]]*\\] lavfi\\.scd\\.score: [\\d.]+, lavfi\\.scd\\.time: (${TIME})`, 'g')
 
 /** The times of the cuts in the log of a run with `SCENE_CUT_FILTER`, in
  *  seconds of its input, in order: the time of the first frame of each new
@@ -97,9 +101,6 @@ export interface ClipInterval {
   start: number
   end: number | null
 }
-
-// A time of these filters, which ffmpeg can write with an exponent.
-const TIME = '-?[\\d.]+(?:e[-+]?\\d+)?'
 
 // A part that a filter writes as one line, from `black_start` to
 // `black_end`. At the end of the clip, `black_end` is the time of the last

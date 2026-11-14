@@ -93,8 +93,9 @@ let drawError: Error | undefined
 let drawings: { drawing: ImageDrawing, mediaType: string }[] = []
 // The byte count of the file of each drawing, of the type that it writes.
 let drawingBytes: (drawing: ImageDrawing, mediaType: DrawnMediaType) => number
-// The grids that the webview drew, with the type and the bytes of each
-// file, and the byte count of the file of each grid.
+// The pictures that the webview composed (the grids, and the frame sheets
+// with their sound strips), with the type and the bytes of each file, and
+// the byte count of the file of each composition (at least its JPEG header).
 let compositions: { files: { type: string, bytes: Uint8Array }[], composition: ImageComposition }[] = []
 let composedBytes: (composition: ImageComposition) => number
 let savedImages: { mediaType: string, options: unknown }[] = []
@@ -153,14 +154,19 @@ sbp('sbp/selectors/register', {
     const type = drawing.mediaType ?? mediaType
     return { bytes: new Uint8Array(drawingBytes(drawing, type)).fill(7), mediaType: type, width: drawing.width, height: drawing.height }
   },
-  // Plans from the sizes of the files: a JPEG (a frame sheet) has its own
-  // size, and each other file is a stored image.
+  // Plans from the sizes of the files: a JPEG (a frame sheet, a sound strip,
+  // or a composed sheet with its strip) has its own size, and each other
+  // file is a stored image. Every composition is a JPEG: its file is the
+  // start of a JPEG of its size, filled up to `composedBytes`.
   async 'dez.controller/images/compose' (files: readonly Blob[], plan: (sizes: readonly ImageSize[]) => ImageComposition): Promise<DrawnImage> {
     const read = await Promise.all(files.map(async (file) => ({ type: file.type, bytes: new Uint8Array(await file.arrayBuffer()) })))
     const composition = plan(read.map(({ bytes }) => jpegSize(bytes) ?? storedImageSize))
     if (drawError) throw drawError
     compositions.push({ files: read, composition })
-    return { bytes: new Uint8Array(composedBytes(composition)).fill(7), mediaType: composition.mediaType, width: composition.width, height: composition.height }
+    const header = jpegHeader(composition.width, composition.height)
+    const bytes = new Uint8Array(Math.max(header.length, composedBytes(composition))).fill(7)
+    bytes.set(header)
+    return { bytes, mediaType: composition.mediaType, width: composition.width, height: composition.height }
   },
   async 'dez.controller/images/save' (_bytes: Uint8Array, mediaType: string, options: unknown): Promise<string> {
     savedImages.push({ mediaType, options })
@@ -2437,6 +2443,9 @@ describe('dez.controller/tools/run', () => {
     describe('with `sound_picture`', () => {
       const SHEET_SHOWS = 'the frame sheet of the video clip @b: 3 frames in one row, at 0.417, 1.25, 2.083 s'
       const SHEET_NOTE = 'Frame sheet of 0 s to 2.5 s: 3 frames in one row, at 0.417, 1.25, 2.083 s.'
+      // The file that the webview composes of the frame sheet and its strip
+      // (`soundStripLayout`).
+      const SHEET_WITH_STRIP_JPEG = jpegHeader(968, 528)
       const shownPictures = () => shown.map(({ label, picture, size }) => ({ label, picture, size }))
 
       it('shows the spectrogram of an audio clip with its axes, and tells the time of a later part', async () => {
@@ -2492,7 +2501,7 @@ describe('dez.controller/tools/run', () => {
         }])
         expect(shownPictures()).toStrictEqual([{
           label: `asset_view: ${SHEET_SHOWS}; under the frames, the wave of its sound, 0 s to 2.5 s, time runs left to right.`,
-          picture: { type: 'picture', mediaType: 'image/jpeg', bytes: new Uint8Array([7]) },
+          picture: { type: 'picture', mediaType: 'image/jpeg', bytes: SHEET_WITH_STRIP_JPEG },
           size: { width: 968, height: 528 },
         }])
         const lines = result.content.split('\n')
@@ -2502,7 +2511,7 @@ describe('dez.controller/tools/run', () => {
             + 'time runs left to right over the whole width of the sheet, and the height is the peak level on a square-root scale.',
           expect.stringMatching(/^Loudness of 0 s to 2\.5 s: /),
         ])
-        // The cost of the whole picture: 665 tokens, and 4 bytes of base64.
+        // The cost of the whole picture: 665 tokens, and 80 bytes of base64.
         expect(lines.at(-1)).toBe('Picture budget left in this reply: 19 pictures, 56,743 tokens and 20.0 MB of base64.')
       })
 
@@ -2555,7 +2564,7 @@ describe('dez.controller/tools/run', () => {
 
         expect(shown).toStrictEqual([])
         expect(alone.content).toContain(pictureCostNote({ tokens: 455, bytes: 80, pictures: 1 }, budget))
-        expect(grid.content).toContain(gridCostNote(['a', 'b'], { tokens: 700, bytes: 4, pictures: 1 }, budget))
+        expect(grid.content).toContain(gridCostNote(['a', 'b'], { tokens: 700, bytes: 80, pictures: 1 }, budget))
         for (const { content } of [alone, grid]) {
           expect(content).not.toContain(soundStripFailedNote('wave'))
           expect(content).not.toContain(SHEET_NOTE)
@@ -2588,17 +2597,20 @@ describe('dez.controller/tools/run', () => {
         const result = await assetView({ assets: '@a @b', layout: 'grid', frames: 3, end: 2.5, sound_picture: 'wave' })
 
         // The sheet with its strip, then the grid of the image and that
-        // picture.
-        expect(compositions.map(({ files }) => files.map(({ bytes }) => bytes))).toStrictEqual([[SHEET_JPEG, STRIP_JPEG], [FOX_BYTES, new Uint8Array([7])]])
-        expect(shown.map(({ label }) => label)).toStrictEqual([
-          `asset_view: a grid, top to bottom: the image @a; ${SHEET_SHOWS}; under the frames, the wave of its sound, 0 s to 2.5 s, time runs left to right.`,
-        ])
+        // picture, at its own size on a line of its own, 16 pixels under the
+        // image.
+        expect(compositions.map(({ files }) => files.map(({ bytes }) => bytes))).toStrictEqual([[SHEET_JPEG, STRIP_JPEG], [FOX_BYTES, SHEET_WITH_STRIP_JPEG]])
+        expect(compositions[1].composition.places).toStrictEqual([{ x: 0, y: 0, width: 320, height: 160 }, { x: 0, y: 176, width: 968, height: 528 }])
+        expect(shown.map(({ label, size }) => ({ label, size }))).toStrictEqual([{
+          label: `asset_view: a grid, top to bottom: the image @a; ${SHEET_SHOWS}; under the frames, the wave of its sound, 0 s to 2.5 s, time runs left to right.`,
+          size: { width: 968, height: 704 },
+        }])
         expect(result.content).toMatch(/^Frame sheet of 0 s to 2\.5 s: .* Under the frames: the wave of the sound of 0 s to 2\.5 s, a strip of 968x160 pixels; /m)
       })
     })
 
     describe('with `layout` "grid"', () => {
-      const GRID_PICTURE = { type: 'picture', mediaType: 'image/jpeg', bytes: new Uint8Array([7]) }
+      const GRID_PICTURE = { type: 'picture', mediaType: 'image/jpeg', bytes: jpegHeader(968, 540) }
       const SHEET_SHOWS = 'the frame sheet of the video clip @b: 3 frames in one row, at 0.417, 1.25, 2.083 s'
 
       it('draws the images and the frame sheets in one picture after the others, and gives the note of each sheet with its clip', async () => {
@@ -2741,7 +2753,7 @@ describe('dez.controller/tools/run', () => {
         const result = await assetView({ assets: '@a @d @b', layout: 'grid', frames: 3, end: 2.5 })
 
         expect(shown.map(({ label }) => label.match(/@[a-z]+/)?.[0])).toStrictEqual(['@d'])
-        expect(result.content).toContain(gridCostNote(['a', 'b'], { tokens: 700, bytes: 4, pictures: 1 }, { tokens: 568, bytes: budget.bytes - 80, pictures: 19 }))
+        expect(result.content).toContain(gridCostNote(['a', 'b'], { tokens: 700, bytes: 80, pictures: 1 }, { tokens: 568, bytes: budget.bytes - 80, pictures: 19 }))
         expect(result.content).not.toContain('Frame sheet of')
         expect(result.content.split('\n').at(-1)).toBe('Picture budget left in this reply: 19 pictures, 568 tokens and 20.0 MB of base64.')
       })

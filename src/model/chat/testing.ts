@@ -1,6 +1,7 @@
 // Unit tests only: the texts of hidden assets (hiddenAssets.ts) and of the
 // tool blocks that own them, which the model tests and the editor tests
-// share, and the bytes of a JPEG picture.
+// share, and the start of a JPEG file with no picture data, which the model
+// tests and the controller tests share.
 import { jobStartedText } from '../tools/jobs'
 import { IMAGE_HIDDEN_KEY, IMAGE_TOOL_KEY, imageMarkdown } from './images'
 import { MEDIA_HIDDEN_ATTRIBUTE, MEDIA_TOOL_ATTRIBUTE, mediaTagText, type MediaTagKind } from './mediaTags'

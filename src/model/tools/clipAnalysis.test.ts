@@ -41,7 +41,10 @@ describe('clipChecksArgs', () => {
 
 // The lines below are lines of real runs of `clipChecksArgs` (ffmpeg 8) on
 // a clip of 10.04 s at 24 fps, black from 2 to 3 s and for one frame at
-// 8 s, with the same picture from 2 to 5 s, and silent from 2 to 4 s.
+// 8 s, with the same picture from 2 to 5 s, and silent from 2 to 4 s. Two
+// lines are added by hand: the black part that starts before 0 s, and the
+// frozen part at 9 s, which has no end line, as a part that lasts to the
+// end of the clip has none.
 describe('blackIntervals', () => {
   it('reads each black part, a part of one frame too', () => {
     const log = [
@@ -52,8 +55,8 @@ describe('blackIntervals', () => {
     expect(blackIntervals(log)).toStrictEqual([{ start: 2, end: 3 }, { start: 8, end: 8.083333 }])
   })
 
-  it('reads a time with an exponent, and puts a start before the clip at 0 s', () => {
-    expect(blackIntervals('[Parsed_blackdetect_0 @ 0x1] black_start:-2e-05 black_end:1.5e+00 black_duration:1.5'))
+  it('puts a start before the clip at 0 s', () => {
+    expect(blackIntervals('[Parsed_blackdetect_0 @ 0x1] black_start:-0.02 black_end:1.5 black_duration:1.52'))
       .toStrictEqual([{ start: 0, end: 1.5 }])
   })
 })
@@ -79,9 +82,8 @@ describe('silenceIntervals', () => {
       '[Parsed_silencedetect_3 @ 0xffffa1668090] silence_start: 2.014813',
       '[Parsed_ebur128_4 @ 0xffffad6000f0] t: 2.099979   TARGET:-23 LUFS    M:   nan S:-120.7     I: -21.0 LUFS       LRA:   0.0 LU',
       '[Parsed_silencedetect_3 @ 0xffffa1668090] silence_end: 3.998875 | silence_duration: 1.984062',
-      '[Parsed_silencedetect_3 @ 0xffffa1668090] silence_start: 9.014813',
     ].join('\n')
-    expect(silenceIntervals(log)).toStrictEqual([{ start: 2.014813, end: 3.998875 }, { start: 9.014813, end: null }])
+    expect(silenceIntervals(log)).toStrictEqual([{ start: 2.014813, end: 3.998875 }])
   })
 })
 

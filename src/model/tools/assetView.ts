@@ -55,8 +55,10 @@ export const MAX_SHEET_COLUMNS = 4
  *  puts between two images. */
 export const SHEET_PADDING = 4
 
-/** The longest run of ffmpeg for one clip, as for `ffprobe`: a frame
- *  sheet decodes only a part of the clip. */
+/** The longest run of ffmpeg for one clip in a view, and for the checks
+ *  of one clip (`asset_info`), as for `ffprobe`: the call waits for its
+ *  runs. A run of a long clip can take longer (the checks read the whole
+ *  clip); Dez then stops it, and the result says so. */
 export const ASSET_VIEW_TIMEOUT_MS = 60_000
 
 /** How large the pictures of a view are (`detail`): `review` costs little
