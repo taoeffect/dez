@@ -13,12 +13,13 @@ import { PRICE_LIFETIME_MS } from '../model/providers/modelPrices'
 import type { ProviderGenerateMediaInput, ProviderGenerateMediaResult, ProviderMediaQuote, ProviderMediaQuoteInput, ProviderStreamChatInput, ProviderStreamChatResult } from '../model/providers/streamTypes'
 import { providerInfo } from '../model/providers/testing'
 import type { ModelInfo, ProviderInfo, ProviderInputImageRules, ProviderSettingsDescriptor } from '../model/providers/types'
-import type { ReplyPicture } from '../model/streams/replyPictures'
+import { MAX_REPLY_PICTURES, type ReplyPicture } from '../model/streams/replyPictures'
 import { assetProbeArgs, clipNotReadFacts } from '../model/tools/assetFacts'
-import { clipNotReadNote, PICTURE_NOT_DRAWN_NOTE, PICTURE_NOT_READ_NOTE, smallerCopyNote, VIEW_FAILED_NOTE } from '../model/tools/assetView'
-import { jobStartedText, jobsWaitResults, NO_JOBS_TEXT, NO_OPEN_JOBS_TEXT } from '../model/tools/jobs'
-import { modelInfoText, type ModelInfoFacts } from '../model/tools/modelInfo'
+import { clipNotReadNote, PICTURE_LIMIT_NOTE, PICTURE_NOT_DRAWN_NOTE, PICTURE_NOT_READ_NOTE, smallerCopyNote, VIEW_FAILED_NOTE } from '../model/tools/assetView'
+import { jobsListText, jobStartedText, jobsWaitResults, jobsWaitText, NO_JOBS_TEXT, NO_OPEN_JOBS_TEXT } from '../model/tools/jobs'
+import { modelCost, modelInfoText, type ModelInfoFacts } from '../model/tools/modelInfo'
 import { IMAGE_NOT_SAVED_TEXT, INVOCATION_TEXT_CAP, invocationAnswerStateText, invocationAnswerText, modelInvocation } from '../model/tools/modelInvoke'
+import { modelListArguments, modelListText } from '../model/tools/modelList'
 import { TOOL_DEFINITIONS, unexpectedToolErrorText, unknownToolText } from '../model/tools/registry'
 import type { ToolArguments, ToolRunResult } from '../model/tools/types'
 import { ExplainedError } from '../utils/errorText'
@@ -256,15 +257,18 @@ describe('dez.controller/tools/run', () => {
     // As when the check of the provider runs already.
     it('tells that the prices of a provider can be old when its check gives no new list', async () => {
       refreshCheck = async () => {}
-      vi.setSystemTime(start + PRICE_LIFETIME_MS)
+      const now = start + PRICE_LIFETIME_MS
+      vi.setSystemTime(now)
 
-      expect((await run({ name: 'model_list', arguments: {} })).content.split('\n')).toStrictEqual([
-        `1 model ${columns} The prices of Venice can be old: its model list did not load in the last 60 minutes.`,
-        'venice/venice-gemini-3-pro | Gemini 3 Pro | Venice | ? | t,i | ? | $2.00/$12.00 per 1M tokens',
-      ])
+      const content = (await run({ name: 'model_list', arguments: {} })).content
+      const cache = sbp('dez.model/modelCache/snapshot') as ModelCache
+
+      expect(content).toBe(modelListText(cache, providers, modelListArguments({}), now))
+      // The same list from a fresh check has no note.
+      expect(content).not.toBe(modelListText(cache, providers, modelListArguments({}), start))
     })
 
-    it('runs no check for a call with an argument that the tool does not take', async () => {
+    it('runs no check for a call with an argument value that the tool does not take', async () => {
       vi.setSystemTime(start + PRICE_LIFETIME_MS)
 
       expect((await run({ name: 'model_list', arguments: { sort: 'cost' } })).isError).toBe(true)
@@ -315,7 +319,7 @@ describe('dez.controller/tools/run', () => {
   describe('model_info', () => {
     // The toggles of the default descriptor, with their defaults.
     const toggles = [{ key: 'thinking', label: 'Thinking', on: true }, { key: 'tools', label: 'Tools', on: true }, { key: 'webSearch', label: 'Web search', on: true }]
-    const noPrice = { error: 'Venice gives no price for this model.' }
+    const noPrice = modelCost(providers[0], MODELS('venice')[0], null)
     const gemini = (entry: unknown) => modelInfoText(providers[0], MODELS('venice')[0], { entry, values: {}, toggles, inputImages: {}, cost: noPrice })
 
     it('gives the raw entry in memory, with no model check', async () => {
@@ -496,16 +500,13 @@ describe('dez.controller/tools/run', () => {
         quoteAnswer = async () => null
 
         expect((await info()).content)
-          .toBe(modelInfoText(providers[0], VIDEO, facts({ duration: '8s', resolution: '720p', aspect_ratio: '16:9' }, { cost: { error: 'Venice gives no price for this model.' } })))
+          .toBe(modelInfoText(providers[0], VIDEO, facts({ duration: '8s', resolution: '720p', aspect_ratio: '16:9' }, { cost: modelCost(providers[0], VIDEO, null) })))
       })
 
       it('gives the price records of a provider that tells no one price', async () => {
         const records = [{ billable_type: 'output_image', cost: 0.04 }, { billable_type: 'output_image', cost: 0.08, variant: '4k' }]
         quoteAnswer = async () => ({ records })
-        const cost = {
-          error: 'Venice gives no one price of a request with these values: its price records are in `priceEntry`. '
-            + 'Call model_info with `part: priceEntry` when this result does not hold it.',
-        }
+        const cost = modelCost(providers[0], VIDEO, { records })
 
         expect((await info()).content)
           .toBe(modelInfoText(providers[0], VIDEO, facts({ duration: '8s', resolution: '720p', aspect_ratio: '16:9' }, { cost, priceEntry: records })))
@@ -995,8 +996,7 @@ describe('dez.controller/tools/run', () => {
 
       image.finish({ text: 'Image.', isError: false, assets: [] })
       await wait
-      expect(jobsWaitResults(result?.content ?? '').map((job) => job.id)).toStrictEqual([imageId])
-      expect(result?.content.split('\n')[0]).toBe('1 job ended. 1 job still runs: call jobs_wait again to get its result. The result of 1 other job is ready: call jobs_wait to get it.')
+      expect(result?.content).toBe(jobsWaitText([{ id: imageId, tool: 'model_invoke', status: 'finished', text: 'Image.', call: { number: 2, label: '' } }], 1, 1))
 
       expect(jobsWaitResults((await jobTool('jobs_wait')).content).map((job) => job.id)).toStrictEqual([fastId])
       music.finish({ text: 'Music.', isError: false, assets: [] })
@@ -1059,13 +1059,13 @@ describe('dez.controller/tools/run', () => {
       const ended = jobs.start('video', async () => ({ text: 'Done.', isError: false, assets: [] }), LONG).id
       await jobTool('jobs_wait')
 
-      const { content, isError } = await jobTool('jobs_list')
-      expect(isError).toBe(false)
-      expect(content.split('\n').slice(1, -1)).toStrictEqual([
-        `1 | ${running} | model_invoke | running | - | 0 | A red fox`,
-        `2 | ${ended} | video | finished | given | 0 | -`,
-      ])
-      expect(content.split('\n').at(-1)).toBe('Spend: none. No job of this reply sent a paid request.')
+      expect(await jobTool('jobs_list')).toStrictEqual({
+        content: jobsListText([
+          { id: running, tool: 'model_invoke', status: 'running', delivered: false, elapsedMs: 0, state: '', call: { number: 1, label: 'A red fox' } },
+          { id: ended, tool: 'video', status: 'finished', delivered: true, elapsedMs: 0, state: '', call: { number: 2, label: '' } },
+        ]),
+        isError: false,
+      })
     })
 
     it('job_inspect tells the status and the last state of the job that the call names', async () => {
@@ -1396,13 +1396,13 @@ describe('dez.controller/tools/run', () => {
 
       describe('to a text model', () => {
         // A chat request whose answer stays open after `start` until its
-        // test calls `end`.
-        function heldAnswer(start: (input: ProviderStreamChatInput) => void | Promise<void>): { end: () => void } {
-          let end!: () => void
-          const ended = new Promise<void>((resolve) => { end = resolve })
+        // test calls `end`, which gives the result of the request.
+        function heldAnswer(start: (input: ProviderStreamChatInput) => void | Promise<void>): { end: (result?: Pick<ProviderStreamChatResult, 'cost'>) => void } {
+          let end!: (result?: Pick<ProviderStreamChatResult, 'cost'>) => void
+          const ended = new Promise<Pick<ProviderStreamChatResult, 'cost'> | undefined>((resolve) => { end = resolve })
           streamChat = async (input) => {
             await start(input)
-            await ended
+            return await ended
           }
           return { end }
         }
@@ -1486,16 +1486,14 @@ describe('dez.controller/tools/run', () => {
         // that broke off can have cost money. A request that failed before
         // it went is no paid request.
         it('has no known price while the answer comes, then the price of the request; a refused request costs 0, another failure has no known price, and a request that did not go is no paid request', async () => {
-          let end!: (cost: number) => void
-          streamChat = async (input) => {
+          const answer = heldAnswer(async (input) => {
             input.onSent?.()
             await input.onToken('A fox.')
-            return { cost: await new Promise<number>((resolve) => { end = resolve }) }
-          }
+          })
           await jobTool('model_invoke', ASK)
           expect(jobs.list()[0].cost).toBeNull()
 
-          end(0.002)
+          answer.end({ cost: 0.002 })
           await jobResult()
           for (const [sent, failure] of [
             [true, new ProviderHttpError('venice', 400, true, '', undefined, 'Venice refused the request.', 'Venice refused the request.')],
@@ -1793,7 +1791,7 @@ describe('dez.controller/tools/run', () => {
         { id: 'a2', role: 'agent', content: [{ kind: 'text', text: '' }] },
       ])
       readImage = async () => new Blob([FOX_BYTES], { type: 'image/png' })
-      picturesLeft = 12
+      picturesLeft = MAX_REPLY_PICTURES
       shown = []
       probes = { 'b.mp4': probed([VIDEO_STREAM, AUDIO_STREAM]), 'd.wav': probed([AUDIO_STREAM]) }
       frameSheetLog = SHOWINFO
@@ -1865,7 +1863,7 @@ describe('dez.controller/tools/run', () => {
       expect(ffmpegRuns()).toHaveLength(1)
       expect(ffmpegRuns()[0].args.join(' ')).not.toContain('showwavespic')
       expect(result.content).toMatch(/-23\.1 LUFS integrated/)
-      expect(result.content.match(/No picture: this reply has shown 12 pictures/g)).toHaveLength(2)
+      expect(result.content.split(PICTURE_LIMIT_NOTE)).toHaveLength(3)
     })
 
     it.each([

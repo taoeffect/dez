@@ -70,7 +70,7 @@ describe('assetPlaces', () => {
       .toStrictEqual({ origin: { kind: 'job', tool: 'model_invoke', number: 1, label: 'A cat' }, hidden: false })
   })
 
-  it('tells that a hidden asset is hidden, also one with only its old hidden mark', () => {
+  it('names the job of an asset from its old hidden mark, and tells that it is hidden', () => {
     const reply = section('agent', `${invokeBlock('j-aaaa')}\n\n${hiddenImage('j-aaaa', 'b')}\n${hiddenClip('j-aaaa', 'c')}`, PAINTER)
     const job = { kind: 'job', tool: 'model_invoke', number: 1, label: 'A cat' }
 

@@ -93,7 +93,7 @@ describe('reply duration', () => {
     await submit(browser, 'How long?')
     const request = await setup.mock.waitForRequest(browser)
     let release = (): void => {}
-    const sending = sendChatReply(request.reply, 'the timer', new Promise<void>((resolve) => { release = resolve }))
+    const sending = sendChatReply(request.reply, 'the timer', { hold: new Promise<void>((resolve) => { release = resolve }) })
     try {
       await waitForValue(browser, 'held reply', async () => (await threadSections(browser))[1]?.text ?? null, replyText('the timer'))
       expect(await activeTabStreaming(browser)).toBe(true)

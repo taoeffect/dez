@@ -78,6 +78,20 @@ function deleteUnused (unused: UnusedFiles): Promise<UnusedFilesDeleted> {
   return sbp('dez.controller/unusedFiles/delete', unused) as Promise<UnusedFilesDeleted>
 }
 
+// Runs `scan` while work of this app holds the cache entries `paths`, and
+// ends that work after it, also after a failure, so no hold stays for the
+// next tests.
+async function whileHeld<T> (paths: string[], scan: () => Promise<T>): Promise<T> {
+  const ends: (() => void)[] = []
+  const holds = paths.map((path) => holdingCachePath(path, () => new Promise<void>((resolve) => { ends.push(resolve) })))
+  try {
+    return await scan()
+  } finally {
+    for (const end of ends) end()
+    await Promise.all(holds)
+  }
+}
+
 beforeEach(() => {
   vi.useFakeTimers()
   vi.setSystemTime(NOW)
@@ -157,15 +171,7 @@ describe('dez.controller/unusedFiles/find', () => {
     conversations = [`<dez:video id="a" type="video/mp4" src="${CACHE_DIR}/media/copy-used.mp4"/>\n`]
     jobAssetSources = [`${CACHE_DIR}/media/copy-of-job.webm`]
     // A run in a work folder, and a download, of this app.
-    let endWork = (): void => {}
-    const work = holdingCachePath('work/w-held', () => new Promise<void>((resolve) => { endWork = resolve }))
-    let endDownload = (): void => {}
-    const download = holdingCachePath('media/held.part', () => new Promise<void>((resolve) => { endDownload = resolve }))
-
-    const { unused } = await find()
-    endWork()
-    endDownload()
-    await Promise.all([work, download])
+    const { unused } = await whileHeld(['work/w-held', 'media/held.part'], find)
 
     expect(unused).toStrictEqual({
       files: [
@@ -273,15 +279,7 @@ describe('dez.controller/unusedFiles/delete', () => {
   })
 
   it('keeps a cache entry that work of this app holds since the scan', async () => {
-    let endWork = (): void => {}
-    const work = holdingCachePath('work/f', () => new Promise<void>((resolve) => { endWork = resolve }))
-    let endDownload = (): void => {}
-    const download = holdingCachePath('media/e.part', () => new Promise<void>((resolve) => { endDownload = resolve }))
-
-    const deleted = await deleteUnused(unused)
-    endWork()
-    endDownload()
-    await Promise.all([work, download])
+    const deleted = await whileHeld(['work/f', 'media/e.part'], () => deleteUnused(unused))
 
     expect(deleted).toStrictEqual({ deleted: 4, bytes: 43_210, inUse: 2, failed: 0 })
     expect(deletedFiles).toEqual(['app:assets/images/a.png', 'app:assets/generated/images/b.webp', 'app:assets/generated/video/c.mp4', 'cache:media/d.mp4'])

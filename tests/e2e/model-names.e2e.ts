@@ -185,7 +185,7 @@ describe('model names', () => {
       mock.chatModels.push(model)
       const hold = mock.hold
       mock.hold = null
-      await sendChatReply(res, model, hold)
+      await sendChatReply(res, model, { hold })
     }, {
       [`/${READABLE_PROVIDER.id}/v1/models`]: {
         data: [

@@ -251,13 +251,25 @@ export function replyText (name: string): string {
   return replyTokens(name).join('')
 }
 
+/** How `sendChatReply` ends its reply. */
+export interface ChatReplyOptions {
+  /** When set, the stream stays open after the tokens until it resolves. */
+  hold?: Promise<void> | null
+  /** The provider's price of the request, in a usage chunk before the end,
+   *  as OpenRouter sends it. Without it the request has no price of the
+   *  provider. */
+  usd?: number
+}
+
 /** Streams the reply that names `name` as chat completion SSE frames, then
- *  ends the stream with `[DONE]`. When `hold` is set, the stream stays open
- *  after the tokens until `hold` resolves. */
-export async function sendChatReply (res: http.ServerResponse, name: string, hold?: Promise<void> | null): Promise<void> {
+ *  ends the stream with `[DONE]`. */
+export async function sendChatReply (res: http.ServerResponse, name: string, { hold = null, usd }: ChatReplyOptions = {}): Promise<void> {
   startEventStream(res)
   for (const token of replyTokens(name)) writeChatFrame(res, { content: token })
   if (hold) await hold
+  if (usd !== undefined) {
+    res.write(`data: ${JSON.stringify({ choices: [], usage: { prompt_tokens: 5, completion_tokens: 4, total_tokens: 9, cost: usd } })}\n\n`)
+  }
   res.end('data: [DONE]\n\n')
 }
 

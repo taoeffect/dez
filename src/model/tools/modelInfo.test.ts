@@ -1,7 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import type { ModelRef } from '../chat/types'
 import type { ModelCache } from '../persistence/types'
-import type { ProviderMediaQuote } from '../providers/streamTypes'
 import { providerInfo } from '../providers/testing'
 import type { ModelInfo } from '../providers/types'
 import { unstoredOutputMessage, unusableModelMessage } from '../providers/unusableModel'
@@ -421,45 +420,6 @@ describe('modelInfoText', () => {
     })
   })
 
-  describe('modelCost', () => {
-    const quote = (fields: ProviderMediaQuote) => fields
-
-    it('gives the quote of the provider, with its note', () => {
-      expect(modelCost(OPENROUTER, VIDEO, quote({ usd: 0.1 }))).toStrictEqual({ usd: 0.1 })
-      expect(modelCost(OPENROUTER, VIDEO, quote({ usd: 0, note: 'free today' }))).toStrictEqual({ usd: 0, note: 'free today' })
-    })
-
-    // The quote is for the values of the call, the list price for the
-    // default values.
-    it('gives the quote or its error before the list price', () => {
-      const listed: ModelInfo = { ...VIDEO, price: { unit: 'clip', usd: 0.5 } }
-      expect(modelCost(OPENROUTER, listed, quote({ usd: 0.1 }))).toStrictEqual({ usd: 0.1 })
-      expect(modelCost(OPENROUTER, listed, quote({ error: 'No price for 4k' }))).toStrictEqual({ error: 'No price for 4k' })
-      expect(modelCost(OPENROUTER, listed, quote({ records: [] }))).toStrictEqual({ usdPerClip: 0.5 })
-      expect(modelCost(OPENROUTER, listed, null)).toStrictEqual({ usdPerClip: 0.5 })
-    })
-
-    it('gives the list price under a name that tells its unit, with its note', () => {
-      const cost = (price: ModelInfo['price']) => modelCost(OPENROUTER, { ...GEMINI, price }, null)
-      expect(cost({ unit: 'token', input: 2, output: 12 })).toStrictEqual({ usdPer1MInputTokens: 2, usdPer1MOutputTokens: 12 })
-      expect(cost({ unit: 'token', input: 2, output: 12, cachedInput: 0.2, note: 'over 200k tokens: more' }))
-        .toStrictEqual({ usdPer1MInputTokens: 2, usdPer1MOutputTokens: 12, usdPer1MCachedInputTokens: 0.2, note: 'over 200k tokens: more' })
-      expect(cost({ unit: 'character', usd: 30 })).toStrictEqual({ usdPer1MCharacters: 30, usdPer1000Characters: 0.03 })
-      expect(cost({ unit: 'second', usd: 0.006 })).toStrictEqual({ usdPerSecond: 0.006 })
-      expect(cost({ unit: 'image', usd: 0.04, note: 'at 1024x1024' })).toStrictEqual({ usdPerImage: 0.04, note: 'at 1024x1024' })
-      expect(cost({ unit: 'clip', usd: 0.5 })).toStrictEqual({ usdPerClip: 0.5 })
-    })
-
-    it('tells why there is no price', () => {
-      expect(modelCost(OPENROUTER, VIDEO, quote({ records: [{ cost: 1 }] }))).toStrictEqual({
-        error: 'OpenRouter gives no one price of a request with these values: its price records are in `priceEntry`. '
-          + 'Call model_info with `part: priceEntry` when this result does not hold it.',
-      })
-      expect(modelCost(OPENROUTER, GEMINI, null)).toStrictEqual({ error: 'OpenRouter gives no price for this model.' })
-      expect(modelCost(OPENROUTER, VIDEO, quote({}))).toStrictEqual({ error: 'OpenRouter gives no price for this model.' })
-    })
-  })
-
   describe('for a model with parameters', () => {
     const videoEntry = { id: 'x-ai/grok-video' }
     const mediaEntry = { id: 'x-ai/grok-video', pricing_skus: { cents_per_video_output_second_480p: '2' } }
@@ -535,5 +495,42 @@ describe('modelInfoText', () => {
       expect(result.providerEntry).toStrictEqual({ root: '/home/…' })
       expect(result).not.toHaveProperty('note')
     })
+  })
+})
+
+describe('modelCost', () => {
+  it('gives the quote of the provider, with its note', () => {
+    expect(modelCost(OPENROUTER, VIDEO, { usd: 0.1 })).toStrictEqual({ usd: 0.1 })
+    expect(modelCost(OPENROUTER, VIDEO, { usd: 0, note: 'free today' })).toStrictEqual({ usd: 0, note: 'free today' })
+  })
+
+  // The quote is for the values of the call, the list price for the
+  // default values.
+  it('gives the quote or its error before the list price', () => {
+    const listed: ModelInfo = { ...VIDEO, price: { unit: 'clip', usd: 0.5 } }
+    expect(modelCost(OPENROUTER, listed, { usd: 0.1 })).toStrictEqual({ usd: 0.1 })
+    expect(modelCost(OPENROUTER, listed, { error: 'No price for 4k' })).toStrictEqual({ error: 'No price for 4k' })
+    expect(modelCost(OPENROUTER, listed, { records: [] })).toStrictEqual({ usdPerClip: 0.5 })
+    expect(modelCost(OPENROUTER, listed, null)).toStrictEqual({ usdPerClip: 0.5 })
+  })
+
+  it('gives the list price under a name that tells its unit, with its note', () => {
+    const cost = (price: ModelInfo['price']) => modelCost(OPENROUTER, { ...GEMINI, price }, null)
+    expect(cost({ unit: 'token', input: 2, output: 12 })).toStrictEqual({ usdPer1MInputTokens: 2, usdPer1MOutputTokens: 12 })
+    expect(cost({ unit: 'token', input: 2, output: 12, cachedInput: 0.2, note: 'over 200k tokens: more' }))
+      .toStrictEqual({ usdPer1MInputTokens: 2, usdPer1MOutputTokens: 12, usdPer1MCachedInputTokens: 0.2, note: 'over 200k tokens: more' })
+    expect(cost({ unit: 'character', usd: 30 })).toStrictEqual({ usdPer1MCharacters: 30, usdPer1000Characters: 0.03 })
+    expect(cost({ unit: 'second', usd: 0.006 })).toStrictEqual({ usdPerSecond: 0.006 })
+    expect(cost({ unit: 'image', usd: 0.04, note: 'at 1024x1024' })).toStrictEqual({ usdPerImage: 0.04, note: 'at 1024x1024' })
+    expect(cost({ unit: 'clip', usd: 0.5 })).toStrictEqual({ usdPerClip: 0.5 })
+  })
+
+  it('tells why there is no price', () => {
+    expect(modelCost(OPENROUTER, VIDEO, { records: [{ cost: 1 }] })).toStrictEqual({
+      error: 'OpenRouter gives no one price of a request with these values: its price records are in `priceEntry`. '
+        + 'Call model_info with `part: priceEntry` when this result does not hold it.',
+    })
+    expect(modelCost(OPENROUTER, GEMINI, null)).toStrictEqual({ error: 'OpenRouter gives no price for this model.' })
+    expect(modelCost(OPENROUTER, VIDEO, {})).toStrictEqual({ error: 'OpenRouter gives no price for this model.' })
   })
 })

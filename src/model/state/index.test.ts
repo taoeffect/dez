@@ -78,6 +78,22 @@ async function openConversation (id: string): Promise<Tab | null> {
   return await sbp('dez.model/tabs/openConversation', id) as Tab | null
 }
 
+function activeTab (): Tab {
+  return tabs().find((tab) => tab.id === activeId()) as Tab
+}
+
+// What the editor does when the user types: the text and the title change
+// in the store only; nothing is saved to disk.
+function typeText (tabId: string, text: string): void {
+  sbp('dez.model/tabs/replaceSections', tabId, [{ id: crypto.randomUUID(), role: 'user', content: [{ kind: 'text', text }] }])
+}
+
+function tabWithText (text: string): Tab {
+  const tab = sbp('dez.model/tabs/create') as Tab
+  typeText(tab.id, text)
+  return tab
+}
+
 beforeEach(() => {
   setActivePinia(createPinia())
   loadCalls = []
@@ -145,24 +161,8 @@ describe('dez.model/tabs/reopenClosed', () => {
     sbp('dez.model/tabs/close', tabId)
   }
 
-  // What the editor does when the user types: the text and the title change
-  // in the store only; nothing is saved to disk.
-  function typeText (tabId: string, text: string): void {
-    sbp('dez.model/tabs/replaceSections', tabId, [{ id: crypto.randomUUID(), role: 'user', content: [{ kind: 'text', text }] }])
-  }
-
-  function tabWithText (text: string): Tab {
-    const tab = sbp('dez.model/tabs/create') as Tab
-    typeText(tab.id, text)
-    return tab
-  }
-
   function titles (): string[] {
     return tabs().map((tab) => tab.title)
-  }
-
-  function activeTab (): Tab {
-    return tabs().find((tab) => tab.id === activeId()) as Tab
   }
 
   it('reopens the newest closed tab first, at its old place, active, with its unsent text', () => {
@@ -250,12 +250,6 @@ describe('dez.model/tabs/reopenClosed', () => {
 })
 
 describe('conversation cost and edited flag of a tab', () => {
-  function tabWithText (text: string): Tab {
-    const tab = sbp('dez.model/tabs/create') as Tab
-    sbp('dez.model/tabs/replaceSections', tab.id, [{ id: crypto.randomUUID(), role: 'user', content: [{ kind: 'text', text }] }])
-    return tab
-  }
-
   function conversationData (tabId: string): ConversationData {
     return sbp('dez.model/tabs/conversationData', tabId) as ConversationData
   }
@@ -293,7 +287,7 @@ describe('conversation cost and edited flag of a tab', () => {
     const reloaded = await openConversation('conv-copy') as Tab
     sbp('dez.model/tabs/close', tab.id)
     sbp('dez.model/tabs/reopenClosed')
-    const reopened = tabs().find((candidate) => candidate.id === activeId()) as Tab
+    const reopened = activeTab()
 
     for (const copy of [reloaded, reopened]) {
       expect(copy.cost).toStrictEqual({ usd: 0.5, requests: 1, unpriced: 0 })
@@ -388,7 +382,7 @@ describe('tab titles', () => {
       { id: 'u1', role: 'user', content: [{ kind: 'text', text: '  ' }] },
       { id: 'u2', role: 'user', content: [{ kind: 'text', text }] },
     ])
-    return (tabs().find((tab) => tab.id === activeId()) as Tab).title
+    return activeTab().title
   }
 
   it('shows each image reference as [image], never its path', () => {

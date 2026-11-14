@@ -13,8 +13,6 @@ export const SINGLE_PRICE_UNITS = ['character', 'second', 'image', 'clip'] as co
 // together.
 export const PRICE_UNITS = ['token', ...SINGLE_PRICE_UNITS] as const
 
-export type PriceUnit = typeof PRICE_UNITS[number]
-
 // The price of one request unit of a model, in USD, from the provider's
 // model list (`ModelInfo.price`):
 // - `token`: per 1M input tokens, per 1M output tokens, and per 1M input

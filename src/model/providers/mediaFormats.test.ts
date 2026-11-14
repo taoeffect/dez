@@ -69,6 +69,11 @@ const AUDIO_URLS = AUDIOS.map((data) => `data:audio/mpeg;base64,${data}`)
 const clip = (kind: InputClipPart['kind'], use: InputClipPart['use'], data: string): InputClipPart =>
   ({ kind, use, mediaType: kind === 'audio' ? 'audio/mpeg' : 'video/mp4', bytes: base64ToBytes(data) })
 
+// A Venice price record: the same number in USD and in DIEM.
+const venicePrice = (usd: number) => ({ usd, diem: usd })
+// The upscale prices of a Venice image model.
+const VENICE_UPSCALE = { '2x': venicePrice(0.02), '4x': venicePrice(0.08) }
+
 describe('venice media requests', () => {
   it('asks /image/generate for a WebP image with no watermark and no safe mode', () => {
     expect(venice.request('image', 'https://api.venice.ai/api/v1/', 'z-image-turbo', { prompt: 'A red fox', images: [], values: {} })).toStrictEqual({
@@ -181,22 +186,20 @@ describe('venice image parameters', () => {
 })
 
 describe('venice image quotes', () => {
-  const price = (usd: number) => ({ usd, diem: usd })
-  const upscale = { '2x': price(0.02), '4x': price(0.08) }
   const usd = (kind: 'image' | 'imageEdit', pricing: Record<string, unknown>, values: ParameterValues = {}) =>
     venice.quote?.usd(kind, values, { entry: { id: 'm', model_spec: { pricing } }, mediaEntry: undefined, records: undefined })
   // The prices of `krea-3` (2026-11-11).
   const KREA_PRICES = {
-    resolutions: { '1K': price(0.07), '2K': price(0.1), '4K': price(0.15) },
+    resolutions: { '1K': venicePrice(0.07), '2K': venicePrice(0.1), '4K': venicePrice(0.15) },
     quality: {
-      '1K': { medium: price(0.04), high: price(0.07) },
-      '2K': { medium: price(0.08), high: price(0.1) },
-      '4K': { medium: price(0.13), high: price(0.15) },
+      '1K': { medium: venicePrice(0.04), high: venicePrice(0.07) },
+      '2K': { medium: venicePrice(0.08), high: venicePrice(0.1) },
+      '4K': { medium: venicePrice(0.13), high: venicePrice(0.15) },
     },
-    upscale,
+    upscale: VENICE_UPSCALE,
   }
   // The prices of `seedream-v5-5` (2026-11-11): no `generation` price.
-  const SEEDREAM_PRICES = { resolutions: { '1K': price(0.0255), '1.5K': price(0.034), '2K': price(0.051) }, upscale }
+  const SEEDREAM_PRICES = { resolutions: { '1K': venicePrice(0.0255), '1.5K': venicePrice(0.034), '2K': venicePrice(0.051) }, upscale: VENICE_UPSCALE }
 
   it('gives the price of the resolution and the quality of a request', () => {
     expect([
@@ -209,7 +212,7 @@ describe('venice image quotes', () => {
   it('gives the price of the resolution of a request', () => {
     expect([
       usd('image', SEEDREAM_PRICES, { resolution: '1.5K' }),
-      usd('imageEdit', { inpaint: price(0.02), resolutions: { '1K': price(0.02), '2K': price(0.03) } }, { resolution: '2K' }),
+      usd('imageEdit', { inpaint: venicePrice(0.02), resolutions: { '1K': venicePrice(0.02), '2K': venicePrice(0.03) } }, { resolution: '2K' }),
     ]).toStrictEqual([0.034, 0.03])
   })
 
@@ -226,9 +229,9 @@ describe('venice image quotes', () => {
   // costs more, and a quote does not know the count of the images.
   it('gives no price for a model whose price depends on the count of the input images', () => {
     const pricing = {
-      inpaint: price(0.0255),
-      resolutions: { '1K': price(0.0255), '2K': price(0.051) },
-      inputImages: { included: 0, additional: price(0.0102) },
+      inpaint: venicePrice(0.0255),
+      resolutions: { '1K': venicePrice(0.0255), '2K': venicePrice(0.051) },
+      inputImages: { included: 0, additional: venicePrice(0.0102) },
     }
 
     expect(usd('imageEdit', pricing, { resolution: '1K' })).toBeUndefined()
@@ -995,33 +998,31 @@ describe('venice clip quotes', () => {
 // Price tables of the live model list (2026-11-13), with short tier lists.
 // https://docs.venice.ai/pricing
 describe('venice list prices', () => {
-  const price = (usd: number) => ({ usd, diem: usd })
   const listPrice = (kind: MediaKind, pricing: Record<string, unknown>, values: ParameterValues = {}) =>
     MEDIA_FORMATS.venice.listPrice?.(kind, values, { id: 'm', model_spec: { pricing } }, undefined)
-  const upscale = { '2x': price(0.02), '4x': price(0.08) }
   // The tiers of `ace-step-15` and of `elevenlabs-voice-changer`.
   const SONG_TIERS = {
-    60: { ...price(0.03), min_seconds: 60, max_seconds: 60 },
-    90: { ...price(0.04), min_seconds: 61, max_seconds: 90 },
+    60: { ...venicePrice(0.03), min_seconds: 60, max_seconds: 60 },
+    90: { ...venicePrice(0.04), min_seconds: 61, max_seconds: 90 },
   }
   const VOICE_TIERS = {
-    120: { ...price(0.69), min_seconds: 61, max_seconds: 120 },
-    60: { ...price(0.35), min_seconds: 1, max_seconds: 60 },
+    120: { ...venicePrice(0.69), min_seconds: 61, max_seconds: 120 },
+    60: { ...venicePrice(0.35), min_seconds: 1, max_seconds: 60 },
   }
   // The edit prices of `grok-imagine-image-2-0-edit`, with the price of
   // each input image.
   const editPrices = (inputImages: unknown) => ({
-    inpaint: price(0.07),
-    resolutions: { '1K': price(0.07), '2K': price(0.1) },
-    quality: { '1K': { low: price(0.05), medium: price(0.07) } },
+    inpaint: venicePrice(0.07),
+    resolutions: { '1K': venicePrice(0.07), '2K': venicePrice(0.1) },
+    quality: { '1K': { low: venicePrice(0.05), medium: venicePrice(0.07) } },
     inputImages,
   })
 
   it('gives an image model the price of one image for the values, which the note names', () => {
     expect([
-      listPrice('image', { resolutions: { '1K': price(0.27) }, quality: { '1K': { high: price(0.26), low: price(0.02) } }, upscale }, { resolution: '1K', quality: 'high' }),
-      listPrice('image', { resolutions: { '1K': price(0.0255), '1.5K': price(0.034) }, upscale }, { resolution: '1.5K' }),
-      listPrice('image', { generation: price(0.01), upscale }),
+      listPrice('image', { resolutions: { '1K': venicePrice(0.27) }, quality: { '1K': { high: venicePrice(0.26), low: venicePrice(0.02) } }, upscale: VENICE_UPSCALE }, { resolution: '1K', quality: 'high' }),
+      listPrice('image', { resolutions: { '1K': venicePrice(0.0255), '1.5K': venicePrice(0.034) }, upscale: VENICE_UPSCALE }, { resolution: '1.5K' }),
+      listPrice('image', { generation: venicePrice(0.01), upscale: VENICE_UPSCALE }),
     ]).toStrictEqual([
       { unit: 'image', usd: 0.26, note: '1K, high' },
       { unit: 'image', usd: 0.034, note: '1.5K' },
@@ -1031,8 +1032,8 @@ describe('venice list prices', () => {
 
   it('tells the price of each input image of an edit that the price does not hold', () => {
     expect([
-      listPrice('imageEdit', editPrices({ included: 0, additional: price(0.011500000000000002) }), { resolution: '1K', quality: 'low' }),
-      listPrice('imageEdit', editPrices({ included: 1, additional: price(0.02499985) }), { resolution: '1K', quality: 'medium' }),
+      listPrice('imageEdit', editPrices({ included: 0, additional: venicePrice(0.011500000000000002) }), { resolution: '1K', quality: 'low' }),
+      listPrice('imageEdit', editPrices({ included: 1, additional: venicePrice(0.02499985) }), { resolution: '1K', quality: 'medium' }),
     ]).toStrictEqual([
       { unit: 'image', usd: 0.05, note: '1K, low; +$0.0115 per input image' },
       { unit: 'image', usd: 0.07, note: '1K, medium; +$0.025 per input image over 1' },
@@ -1040,17 +1041,17 @@ describe('venice list prices', () => {
   })
 
   it.each([
-    ['an edit whose included count is no whole number', 'imageEdit', editPrices({ included: 0.5, additional: price(0.01) })],
+    ['an edit whose included count is no whole number', 'imageEdit', editPrices({ included: 0.5, additional: venicePrice(0.01) })],
     ['an edit with no price of an extra image', 'imageEdit', editPrices({ included: 1 })],
     // Only an edit takes input images.
-    ['an image model with input image prices', 'image', { generation: price(0.01), inputImages: { included: 0, additional: price(0.01) } }],
-    ['a table with a key that Dez does not know', 'image', { generation: price(0.01), per_megapixel: price(0.01) }],
+    ['an image model with input image prices', 'image', { generation: venicePrice(0.01), inputImages: { included: 0, additional: venicePrice(0.01) } }],
+    ['a table with a key that Dez does not know', 'image', { generation: venicePrice(0.01), per_megapixel: venicePrice(0.01) }],
   ] as const)('gives no price for %s', (_name, kind, pricing) => {
     expect(listPrice(kind, pricing, { resolution: '1K', quality: 'low' })).toBeUndefined()
   })
 
   it('gives an upscale model the price of its scale', () => {
-    const pricing = { generation: price(0.01), upscale }
+    const pricing = { generation: venicePrice(0.01), upscale: VENICE_UPSCALE }
 
     expect([listPrice('upscale', pricing, { scale: 2 }), listPrice('upscale', pricing, { scale: 4 })]).toStrictEqual([
       { unit: 'image', usd: 0.02, note: '2x' },
@@ -1059,11 +1060,11 @@ describe('venice list prices', () => {
   })
 
   it.each([
-    ['speech per 1M characters', 'tts', { input: price(3.5) }, { unit: 'character', usd: 3.5 }],
-    ['music per 1K characters as per 1M', 'music', { per_thousand_characters: price(0.11500000000000002) }, { unit: 'character', usd: 115 }],
-    ['music per second', 'music', { per_second: price(0.0028750000000000004) }, { unit: 'second', usd: 0.002875 }],
-    ['music per clip', 'music', { generation: price(0.04) }, { unit: 'clip', usd: 0.04 }],
-    ['a transcription per second of the clip', 'transcription', { per_audio_second: price(0.0001) }, { unit: 'second', usd: 0.0001 }],
+    ['speech per 1M characters', 'tts', { input: venicePrice(3.5) }, { unit: 'character', usd: 3.5 }],
+    ['music per 1K characters as per 1M', 'music', { per_thousand_characters: venicePrice(0.11500000000000002) }, { unit: 'character', usd: 115 }],
+    ['music per second', 'music', { per_second: venicePrice(0.0028750000000000004) }, { unit: 'second', usd: 0.002875 }],
+    ['music per clip', 'music', { generation: venicePrice(0.04) }, { unit: 'clip', usd: 0.04 }],
+    ['a transcription per second of the clip', 'transcription', { per_audio_second: venicePrice(0.0001) }, { unit: 'second', usd: 0.0001 }],
   ] as const)('gives %s', (_name, kind, pricing, expected) => {
     expect(listPrice(kind, pricing)).toStrictEqual(expected)
   })
@@ -1090,8 +1091,8 @@ describe('venice list prices', () => {
   })
 
   it.each([
-    ['a table with two prices', 'music', { generation: price(0.04), per_second: price(0.001) }],
-    ['a price of another kind', 'tts', { generation: price(0.04) }],
+    ['a table with two prices', 'music', { generation: venicePrice(0.04), per_second: venicePrice(0.001) }],
+    ['a price of another kind', 'tts', { generation: venicePrice(0.04) }],
     ['a price that is no number', 'tts', { input: { usd: '3.5' } }],
     ['a video model', 'video', {}],
   ] as const)('gives no clip price for %s', (_name, kind, pricing) => {
