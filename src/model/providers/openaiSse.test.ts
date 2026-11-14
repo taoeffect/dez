@@ -371,3 +371,51 @@ describe('OpenAiStreamParser images', () => {
     ])
   })
 })
+
+describe('OpenAiStreamParser usage', () => {
+  // The last chunks of a live Venice stream (2026-11-14): the usage comes
+  // on a chunk with no choices, and the price is a top-level `cost` with a
+  // USD part and a DIEM part. Earlier chunks have `usage: null`.
+  it('reads the counts of a chunk with no choices and adds the two parts of a top-level cost', () => {
+    const { events, end } = run([
+      JSON.stringify({ choices: [{ index: 0, delta: { content: 'Hi' }, finish_reason: null }], usage: null }),
+      chunk({}, 'length'),
+      JSON.stringify({ choices: [], usage: { prompt_tokens: 11, completion_tokens: 5, total_tokens: 16 }, cost: { usd: 0.00001, diem: 0.00000232 } }),
+      '[DONE]',
+    ])
+
+    expect(events).toStrictEqual([{ kind: 'token', token: 'Hi' }, { kind: 'done' }])
+    expect(end.usage).toStrictEqual({ inputTokens: 11, outputTokens: 5, providerCost: 0.00001232 })
+  })
+
+  // A live OpenRouter chunk (2026-11-14): the usage, with its price and the
+  // cached input tokens, comes on a chunk that has choices too.
+  it('reads the counts, the cached input tokens, and the cost of a usage chunk that has choices', () => {
+    const { events, end } = run([
+      JSON.stringify({
+        choices: [{ index: 0, delta: { content: 'Done.' }, finish_reason: 'stop' }],
+        usage: { prompt_tokens: 1200, completion_tokens: 5, total_tokens: 1205, cost: 2.4e-7, is_byok: false, prompt_tokens_details: { cached_tokens: 1024 } },
+      }),
+      '[DONE]',
+    ])
+
+    expect(events).toStrictEqual([{ kind: 'token', token: 'Done.' }, { kind: 'done' }])
+    expect(end.usage).toStrictEqual({ inputTokens: 1200, outputTokens: 5, cachedInputTokens: 1024, providerCost: 2.4e-7 })
+  })
+
+  it('takes the last counts of a server that sends them on every chunk', () => {
+    const counted = (content: string, outputTokens: number, finishReason: string | null = null) => JSON.stringify({
+      choices: [{ index: 0, delta: { content }, finish_reason: finishReason }],
+      usage: { prompt_tokens: 7, completion_tokens: outputTokens },
+    })
+
+    expect(run([counted('A', 1), counted('B', 2, 'stop')]).end.usage).toStrictEqual({ inputTokens: 7, outputTokens: 2 })
+  })
+
+  it('gives no usage from a stream that was cut off or failed, as its counts are too low', () => {
+    const counted = JSON.stringify({ choices: [{ index: 0, delta: { content: 'A' } }], usage: { prompt_tokens: 7, completion_tokens: 1 } })
+
+    expect(run([counted]).end.usage).toBeUndefined()
+    expect(run([counted, chunk({}, 'error')]).end.usage).toBeUndefined()
+  })
+})

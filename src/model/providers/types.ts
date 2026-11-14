@@ -4,6 +4,7 @@ import type { MediaTagKind } from '../chat/mediaTags'
 import type { RequestMessage, ThinkingReplay } from '../chat/types'
 import { normalizeOutputs, type ModelOutput } from '../modelOutputs'
 import type { StreamedToolCall, ToolDefinition } from '../tools/types'
+import type { ChatUsage } from './chatUsage'
 import { cloneInputClipRules, type InputClipRules } from './clipInputs'
 import { cloneInputImageRules, type InputImageRules } from './clipImages'
 import { cloneClipTextRules, type ClipTextRules } from './clipText'
@@ -330,6 +331,10 @@ export interface SseStreamEnd {
   // none, or when the stream was cut off or had an `error` event: the
   // arguments of a call could then be cut off too.
   toolCalls?: StreamedToolCall[]
+  // What the provider told about the tokens and the price of the request.
+  // Absent when it told nothing, or when the stream was cut off or had an
+  // `error` event: the counts that came are then too low.
+  usage?: ChatUsage
 }
 
 // Reads the SSE payloads of one response, in order. Parsers keep state

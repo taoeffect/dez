@@ -62,8 +62,9 @@ ThreadEditor (CodeMirror doc) syncs to the active tab's sections
     -> dez.stream/start (the system prompt of Settings › System Prompt, and Dez's tools)
       -> dez.provider/streamChat -> dez.http/stream
         -> dez.native/streamHttp -> Rust http_bridge::stream_http (Headers/Chunk/Done/Error)
-    -> openaiSse.ts / anthropicSse.ts split answer tokens, thinking tokens, tool calls, and
-       (openaiSse.ts) reply images
+    -> openaiSse.ts / anthropicSse.ts split answer tokens, thinking tokens, tool calls, the
+       usage (token counts, the provider's price), and (openaiSse.ts) reply images; streamChat
+       gives the price of the request (chatUsage.ts: the provider's, else the list price)
     -> tokens go to the store, and to the editor if the tab is visible (dez.editor/*)
     -> a reply image is saved in assets/generated/images/ and written as an image reference
     -> a round that ends with tool calls writes <dez:tool> blocks, runs them (dez.controller/tools/run),

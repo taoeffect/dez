@@ -18,9 +18,10 @@ export async function assertStreamResponseOk(provider: Provider, response: Nativ
 // Sends the answer text to `onToken`, each image to `onImage` (`readImage`
 // gives the bytes of its URL), and, when the request asked for thinking
 // (`requestThinking`), the thinking to `onThinking`. Returns the replay of a
-// complete thinking, for the next request, and the tool calls, with the
-// Thinking toggle on or off. An error event inside the stream throws, after
-// the text before it went out.
+// complete thinking, for the next request, the tool calls, with the
+// Thinking toggle on or off, and what the provider told about the tokens
+// and the price. An error event inside the stream throws, after the text
+// before it went out.
 //
 // A provider that supports thinking always has its thinking split from the
 // answer text, so with the Thinking toggle off its thinking is dropped, not
@@ -31,7 +32,7 @@ export async function streamProviderTokens(
   result: NativeHttpStreamResult,
   requestThinking: ProviderChatRequest['thinking'],
   readImage: (url: string) => Promise<GeneratedMedia>,
-): Promise<Omit<ProviderStreamChatResult, 'requestId'>> {
+): Promise<Omit<ProviderStreamChatResult, 'requestId' | 'cost'>> {
   await assertStreamResponseOk(provider, result.response, result.chunks)
 
   const parser = provider.format.createStreamParser(provider.supportsThinking)
@@ -57,8 +58,8 @@ export async function streamProviderTokens(
 
   const end = parser.finish()
   await deliver(end.events)
-  const toolCalls = end.toolCalls && { toolCalls: end.toolCalls }
-  if (!requestThinking || !end.replay) return { ...toolCalls }
+  const ending = { ...(end.toolCalls && { toolCalls: end.toolCalls }), ...(end.usage && { usage: end.usage }) }
+  if (!requestThinking || !end.replay) return ending
   const thinkingReplay = end.replay.kind === 'field' ? end.replay : { ...end.replay, prefixHash: requestThinking.prefixHash }
-  return { thinkingReplay, ...toolCalls }
+  return { thinkingReplay, ...ending }
 }

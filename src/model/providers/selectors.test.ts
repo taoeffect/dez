@@ -132,6 +132,10 @@ function painterStream(): string {
   ].join('\n\n') + '\n\n'
 }
 
+// The reply of this chat server is one text chunk, then `usageChunk`.
+const USAGE_BASE_URL = 'http://localhost:6161/v1'
+let usageChunk: Record<string, unknown> = {}
+
 // The answer of a server to a non-stream request, by URL: a status and the
 // JSON of the body. A URL with no entry here gets the default answers of
 // the stand-in below.
@@ -223,7 +227,9 @@ sbp('sbp/selectors/register', {
               ? BROKEN_STREAM
               : request.url.startsWith(PAINTER_BASE_URL)
                 ? painterStream()
-                : 'data: {"choices":[{"delta":{"content":"Hello"}}]}\n\ndata: [DONE]\n\n')
+                : request.url.startsWith(USAGE_BASE_URL)
+                  ? `data: {"choices":[{"delta":{"content":"Hi"},"finish_reason":"stop"}]}\n\ndata: ${JSON.stringify(usageChunk)}\n\ndata: [DONE]\n\n`
+                  : 'data: {"choices":[{"delta":{"content":"Hello"}}]}\n\ndata: [DONE]\n\n')
       })(),
     }
   },
@@ -595,6 +601,42 @@ describe('the stop of a chat stream', () => {
     await chat({ messages: [{ role: 'user', content: 'Hi' }], requestId: 'chat-2', signal: later.signal })
     later.abort()
     expect(cancelledStreams).toEqual(['chat-1'])
+  })
+})
+
+describe('the price of a chat request', () => {
+  const chat = () => sbp('dez.provider/streamChat', {
+    providerId: 'counted',
+    modelId: 'm',
+    messages: [{ role: 'user', content: 'Hi' }],
+    requestId: 'chat-1',
+    onToken: () => {},
+  })
+
+  beforeEach(() => {
+    sbp('dez.model/customProviders/save', { id: 'counted', name: 'Counted', baseUrl: USAGE_BASE_URL, apiFormat: 'openai', models: [], fetchModels: true, auth: 'apiKey' })
+    sbp('dez.model/modelCache/applyProviderResult', 'counted', {
+      ok: true,
+      models: [{ id: 'm', name: 'M', provider: 'counted', price: { unit: 'token', input: 2, output: 10 } }],
+    })
+  })
+
+  it('gives the provider\'s own price, with the counts', async () => {
+    usageChunk = { choices: [], usage: { prompt_tokens: 11, completion_tokens: 5 }, cost: { usd: 0.0003, diem: 0.0001 } }
+
+    expect(await chat()).toStrictEqual({
+      requestId: 'chat-1',
+      usage: { inputTokens: 11, outputTokens: 5, providerCost: 0.0004 },
+      cost: 0.0004,
+    })
+  })
+
+  it('prices the counts at the list price of the model when the provider tells no price, and else gives none', async () => {
+    usageChunk = { choices: [], usage: { prompt_tokens: 1000, completion_tokens: 500 } }
+
+    expect(await chat()).toMatchObject({ cost: 0.007 })
+    sbp('dez.model/modelCache/applyProviderResult', 'counted', { ok: true, models: [{ id: 'm', name: 'M', provider: 'counted' }] })
+    expect(await chat()).not.toHaveProperty('cost')
   })
 })
 

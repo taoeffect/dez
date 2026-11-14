@@ -1,5 +1,6 @@
 import type { MessagePart, RequestMessage, ThinkingReplay } from '../chat/types'
 import type { StreamedToolCall } from '../tools/types'
+import type { ChatUsage } from './chatUsage'
 import type { ClipAttachment } from './clipInputs'
 import type { ParameterValues } from './modelParameters'
 import type { RequestReader } from './requestReader'
@@ -48,6 +49,13 @@ export interface ProviderStreamChatResult {
   // The tool loop runs them whatever the finish reason says: some servers
   // end a reply with tool calls with `stop`.
   toolCalls?: StreamedToolCall[]
+  // What the provider told about the tokens and the price of the request
+  // (SseStreamEnd.usage).
+  usage?: ChatUsage
+  // The price of the request in USD (`chatRequestCost`): the provider's
+  // own, else the token counts at the model's list price. Absent when it
+  // is unknown.
+  cost?: number
 }
 
 // How far a request of dez.provider/generateMedia is:

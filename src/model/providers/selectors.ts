@@ -13,6 +13,7 @@ import { fileNameOf } from '../../utils/fileName'
 import { secret, type Secret } from '../../utils/secret'
 import { sanitizeErrorText } from '../../utils/protocol/errors'
 import { nativeResponseJson, nativeResponseText, readNativeChunkBytes, type NativeHttpRequest, type NativeHttpResponse, type NativeHttpStreamResult } from '../../utils/protocol/nativeHttp'
+import { chatRequestCost } from './chatUsage'
 import { clipFileProblem, clipTagProblem, hasLengthRules, missingClipProblem, needsWavCopy, type ClipAttachment, type ClipUse, type InputClipRules } from './clipInputs'
 import { inputImageRulesFor, missingImageProblem } from './clipImages'
 import { CLIP_JOB_TIMEOUT_MS, clipPollDelay, sendClipRequest, type ClipRun } from './clipRequests'
@@ -482,7 +483,8 @@ export default sbp('sbp/selectors/register', {
   // stops a request that did not go yet (the images are read first). A
   // cancel before the response headers rejects; a cancel after them ends
   // the answer early with no error, so a caller that cancelled must drop
-  // the result.
+  // the result. The result tells the price of the request (`cost`) when
+  // the provider or the model's list price does.
   async 'dez.provider/streamChat' (input: ProviderStreamChatInput): Promise<ProviderStreamChatResult> {
     const provider = requireProvider(input.providerId)
     const requestId = input.requestId ?? crypto.randomUUID()
@@ -504,11 +506,11 @@ export default sbp('sbp/selectors/register', {
           stream = await nativeChatStream(provider, input, messages, requestId, true)
         }
 
-        return {
-          requestId: stream.result.requestId,
-          ...await streamProviderTokens(provider, input, stream.result, stream.thinking,
-            (url) => generatedImageFromUrl(url, (imageUrl) => fetchReplyImage(provider, imageUrl))),
-        }
+        const streamed = await streamProviderTokens(provider, input, stream.result, stream.thinking,
+          (url) => generatedImageFromUrl(url, (imageUrl) => fetchReplyImage(provider, imageUrl)))
+        const model = sbp('dez.model/modelCache/model', provider.id, input.modelId) as ModelInfo | null
+        const cost = chatRequestCost(streamed.usage, model?.price)
+        return { requestId: stream.result.requestId, ...streamed, ...(cost !== undefined && { cost }) }
       } catch (error) {
         throw explainedProviderError(provider, error, input.reader)
       }

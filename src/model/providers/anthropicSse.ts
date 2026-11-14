@@ -1,5 +1,6 @@
 import type { AnthropicThinkingBlock } from '../chat/types'
 import type { StreamedToolCall } from '../tools/types'
+import { usageNumber, withUsageReport, type ChatUsage } from './chatUsage'
 import { isRecord } from './modelParsing'
 import type { SseErrorEvent, SseStreamEnd, SseStreamParser, SseTokenEvent, StreamedThinkingReplay } from './types'
 
@@ -26,7 +27,16 @@ interface AnthropicChunk {
   content_block?: AnthropicContentBlock | null
   delta?: AnthropicDelta | null
   error?: unknown
+  // `message_start`: the message, with its `usage`.
+  message?: unknown
+  // `message_delta`: the counts at the end of the message.
+  usage?: unknown
 }
+
+// The token counts of the Messages API usage object.
+const USAGE_FIELDS = ['input_tokens', 'cache_read_input_tokens', 'cache_creation_input_tokens', 'output_tokens'] as const
+
+type UsageField = typeof USAGE_FIELDS[number]
 
 // The HTTP status of each error type of the Messages API. An `error` event
 // inside a stream has only the type, and the status tells whose fault the
@@ -79,7 +89,7 @@ function completeBlocks<Block>(streamed: Map<number, StreamedBlock<Block>>): Blo
 // Messages API streams. With `thinking`, it also keeps the `thinking` and
 // `redacted_thinking` blocks exactly as they stream, by their `index`, as
 // the replay: the provider checks each block against its signature. It
-// always collects the `tool_use` blocks as tool calls.
+// always collects the `tool_use` blocks as tool calls, and the usage.
 export class AnthropicStreamParser implements SseStreamParser {
   // Stream order, which is the order the blocks must go back in.
   private readonly thinkingBlocks = new Map<number, StreamedBlock<AnthropicThinkingBlock>>()
@@ -90,6 +100,7 @@ export class AnthropicStreamParser implements SseStreamParser {
   // An `error` event came out: the reader throws at it, and the replay and
   // tool calls of the stream may be cut off.
   private failed = false
+  private readonly usageCounts: Partial<Record<UsageField, number>> = {}
 
   constructor(private readonly thinking: boolean) {}
 
@@ -115,9 +126,18 @@ export class AnthropicStreamParser implements SseStreamParser {
       return [{ kind: 'token', token: delta.text }]
     }
 
+    if (chunk.type === 'message_start') {
+      this.readUsage(isRecord(chunk.message) ? chunk.message.usage : undefined)
+      return []
+    }
+    if (chunk.type === 'message_delta') {
+      this.readUsage(chunk.usage)
+      return []
+    }
+
     // The other events that matter are about the block at their `index`.
-    // `message_delta` has none; the tool loop does not need its
-    // `stop_reason`, as it runs the calls whatever the reason.
+    // The tool loop does not need the `stop_reason` of `message_delta`, as
+    // it runs the calls whatever the reason.
     if (typeof chunk.index !== 'number') return []
     if (this.readToolUse(chunk.index, chunk)) return []
     if (!this.thinking) return []
@@ -157,13 +177,41 @@ export class AnthropicStreamParser implements SseStreamParser {
   // compatible servers (MiniMax) may send none and the blocks go back as
   // they came. A stream that was cut off or failed gives no tool calls, as
   // their input may be cut off; every tool_use block must be complete too.
-  // A failed stream gives no replay either.
+  // It gives no usage, as its counts are too low. A failed stream gives no
+  // replay either.
   finish(): SseStreamEnd {
     if (this.failed) return { events: [] }
     const blocks = completeBlocks(this.thinkingBlocks)
     const replay: StreamedThinkingReplay | undefined = blocks && { kind: 'anthropicBlocks', blocks }
     const toolCalls = this.stopped ? completeBlocks(this.toolUses) : undefined
-    return { events: [], ...(replay && { replay }), ...(toolCalls && { toolCalls }) }
+    const usage = this.stopped ? this.usage() : undefined
+    return { events: [], ...(replay && { replay }), ...(toolCalls && { toolCalls }), ...(usage && { usage }) }
+  }
+
+  // `input_tokens` counts only the input tokens after the last cache mark;
+  // the tokens that the prompt cache gave and the ones that went into it
+  // are the other two counts.
+  private usage(): ChatUsage | undefined {
+    const counts = this.usageCounts
+    const input = counts.input_tokens
+    return withUsageReport(undefined, {
+      inputTokens: input === undefined ? undefined : input + (counts.cache_read_input_tokens ?? 0) + (counts.cache_creation_input_tokens ?? 0),
+      outputTokens: counts.output_tokens,
+      cachedInputTokens: counts.cache_read_input_tokens,
+    })
+  }
+
+  // `message_start` has the counts at the start (`message.usage`), and
+  // `message_delta` the counts at the end (`usage`): the counts so far, not
+  // the counts since the start, so a later count takes the place of an
+  // earlier one.
+  // https://platform.claude.com/docs/en/build-with-claude/streaming
+  private readUsage(usage: unknown): void {
+    if (!isRecord(usage)) return
+    for (const field of USAGE_FIELDS) {
+      const count = usageNumber(usage[field])
+      if (count !== undefined) this.usageCounts[field] = count
+    }
   }
 
   // A `tool_use` block gives the call's id and name at its start, and its

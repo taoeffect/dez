@@ -1,7 +1,9 @@
 import type { JsonObject } from '../../utils/json'
 import type { StreamedToolCall } from '../tools/types'
+import { usageNumber, withUsageReport, type ChatUsage } from './chatUsage'
 import { FORBIDDEN_BODY_KEYS } from './config'
 import { isRecord } from './modelParsing'
+import { roundedPrice } from './modelPrices'
 import type { SseErrorEvent, SseStreamEnd, SseStreamParser, SseTokenEvent, StreamedThinkingReplay } from './types'
 
 interface OpenAiChoiceDelta {
@@ -31,6 +33,12 @@ interface OpenAiChunk {
   // A failure inside a 200 stream, with `finish_reason: "error"`
   // (`streamErrorEvent`).
   error?: unknown
+  // The token counts of the request (`chunkUsage`). Most servers send them
+  // once, on the last chunk (Venice's has `choices: []`); some send counts
+  // that grow on every chunk, and some `null` on every other chunk.
+  usage?: unknown
+  // Venice: the price of the request (`chunkCost`).
+  cost?: unknown
 }
 
 // OpenRouter reports a failure after the 200 status as `{ code, message,
@@ -200,10 +208,40 @@ function reasoningDetailsText(details: Record<string, unknown>[]): string {
     .join('')
 }
 
+// The price that a server puts in its usage chunk, in USD: OpenRouter's
+// `usage.cost`, or Venice's top-level `cost`, with a USD part and a DIEM
+// part (Venice's own credit, which it spends first; one DIEM pays for one
+// USD of requests), which add up. Live shapes (2026-11-14):
+// OpenRouter `"usage": { …, "cost": 2.4e-7 }`; Venice
+// `"cost": { "usd": 0, "diem": 0.00000232 }`.
+function chunkCost(usage: Record<string, unknown> | undefined, cost: unknown): number | undefined {
+  const usageCost = usageNumber(usage?.cost)
+  if (usageCost !== undefined) return usageCost
+  if (!isRecord(cost)) return undefined
+  const usd = usageNumber(cost.usd)
+  const diem = usageNumber(cost.diem)
+  if (usd === undefined && diem === undefined) return undefined
+  return roundedPrice((usd ?? 0) + (diem ?? 0))
+}
+
+// The usage report of one chunk. `prompt_tokens` counts the cached input
+// tokens too, and `prompt_tokens_details.cached_tokens` tells how many
+// they are.
+function chunkUsage(chunk: OpenAiChunk): ChatUsage {
+  const usage = isRecord(chunk.usage) ? chunk.usage : undefined
+  const details = isRecord(usage?.prompt_tokens_details) ? usage.prompt_tokens_details : undefined
+  return {
+    inputTokens: usageNumber(usage?.prompt_tokens),
+    outputTokens: usageNumber(usage?.completion_tokens),
+    cachedInputTokens: usageNumber(details?.cached_tokens),
+    providerCost: chunkCost(usage, chunk.cost),
+  }
+}
+
 // Chat Completions streams. With `thinking`, it also reads the reasoning:
 // the text, the OpenRouter/Venice `reasoning_details` and the GitHub Copilot
 // `reasoning_opaque`, which `finish()` turns into the replay. It always
-// collects the tool calls, which `finish()` gives too.
+// collects the tool calls and the usage, which `finish()` gives too.
 export class OpenAiStreamParser implements SseStreamParser {
   private readonly inline: InlineThinkingSplitter | null
   // OpenRouter streams each detail in pieces with the same `index`; the
@@ -221,6 +259,8 @@ export class OpenAiStreamParser implements SseStreamParser {
   // An `error` event came out: the reader throws at it, and the replay and
   // tool calls of the stream may be cut off.
   private failed = false
+  // What the usage chunks told so far; later ones win.
+  private usage: ChatUsage | undefined
 
   constructor(private readonly thinking: boolean) {
     this.inline = thinking ? new InlineThinkingSplitter() : null
@@ -256,6 +296,7 @@ export class OpenAiStreamParser implements SseStreamParser {
       if (choice.finish_reason === 'error') failed = true
       else if (choice.finish_reason !== undefined && choice.finish_reason !== null) this.complete = true
     }
+    this.usage = withUsageReport(this.usage, chunkUsage(chunk))
 
     // The error goes after the text of its chunk, which came before it.
     // Text held back as a possible inline tag comes out first, as at the
@@ -269,13 +310,15 @@ export class OpenAiStreamParser implements SseStreamParser {
   }
 
   // The tool calls of a stream that was cut off or failed may have cut-off
-  // arguments, so such a stream gives none.
+  // arguments, so such a stream gives none, and no usage either.
   finish(): SseStreamEnd {
     const events: SseTokenEvent[] = []
     this.inline?.flush(events)
     const replay = this.replay()
-    const toolCalls = this.complete && !this.failed && this.toolCalls.length > 0 ? this.toolCalls : undefined
-    return { events, ...(replay && { replay }), ...(toolCalls && { toolCalls }) }
+    const whole = this.complete && !this.failed
+    const toolCalls = whole && this.toolCalls.length > 0 ? this.toolCalls : undefined
+    const usage = whole ? this.usage : undefined
+    return { events, ...(replay && { replay }), ...(toolCalls && { toolCalls }), ...(usage && { usage }) }
   }
 
   // The images of one chunk go after its text, so the text that the model

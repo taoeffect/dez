@@ -124,6 +124,7 @@ describe('AnthropicStreamParser tool calls', () => {
         { id: 'toolu_a', name: 'model_list', argumentsText: '{"filter": "gemini"}' },
         { id: 'toolu_b', name: 'model_list', argumentsText: '' },
       ],
+      usage: { outputTokens: 20 },
     })
   })
 
@@ -139,6 +140,7 @@ describe('AnthropicStreamParser tool calls', () => {
       events: [],
       replay: { kind: 'anthropicBlocks', blocks: [{ type: 'thinking', thinking: 'Look it up.', signature: 's0' }] },
       toolCalls: [{ id: 'toolu_a', name: 'model_list', argumentsText: '{}' }],
+      usage: { outputTokens: 20 },
     })
   })
 
@@ -169,6 +171,27 @@ describe('AnthropicStreamParser tool calls', () => {
       events: [],
       toolCalls: [{ id: 'toolu_a', name: 'model_list', argumentsText: '{}' }],
     })
+  })
+})
+
+describe('AnthropicStreamParser usage', () => {
+  const messageStart = (usage: Record<string, number>) => event({ type: 'message_start', message: { id: 'msg', usage } })
+  const endCounts = (usage: Record<string, number>) => event({ type: 'message_delta', delta: { stop_reason: 'end_turn' }, usage })
+  const answer = [textStart(0), textDelta(0, 'Hi.'), stop(0)]
+
+  it('counts the cached input tokens and the ones that went into the cache as input, and takes the end counts', () => {
+    const { end } = run([
+      messageStart({ input_tokens: 12, cache_creation_input_tokens: 300, cache_read_input_tokens: 2000, output_tokens: 1 }),
+      ...answer,
+      endCounts({ output_tokens: 40 }),
+      messageStop,
+    ])
+
+    expect(end.usage).toStrictEqual({ inputTokens: 2312, outputTokens: 40, cachedInputTokens: 2000 })
+  })
+
+  it('gives no usage from a stream that was cut off, as its counts are too low', () => {
+    expect(run([messageStart({ input_tokens: 12, output_tokens: 1 }), ...answer]).end.usage).toBeUndefined()
   })
 })
 
