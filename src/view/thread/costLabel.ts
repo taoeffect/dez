@@ -21,7 +21,8 @@ export function labelUsdText(usd: number): string {
 /** The label of the cost of a conversation: the sum, with `+` when a request
  *  has no known price (the real cost is higher), and ` (?)` when the user
  *  changed the text of a reply (the cost can be for text that is gone).
- *  The tooltip gives the sum with more digits and the request counts. */
+ *  The tooltip gives the sum with more digits and the request counts.
+ *  Help › General (`HelpView.vue`) tells the user these marks. */
 export function costLabelTexts(cost: ConversationCost, edited: boolean): CostLabelTexts {
   const unpriced = cost.unpriced > 0 ? '+' : ''
   const requests = `${cost.requests} ${cost.requests === 1 ? 'request' : 'requests'}`

@@ -25,9 +25,10 @@ let lastCheckNumber = 0
 const newestChecks = new Map<ProviderId, number>()
 
 // Per-provider staleness gate: a provider checked within this window is skipped
-// so refreshes (popup open, key save, Copilot sign-in) cap at 1 check per
-// provider per minute (REVIEW-1 #2 User Decision) and the persisted
-// lastCheckedAt timestamp is actually consumed.
+// so unforced refreshes (popup open, startup, the price check of `model_list`)
+// cap at 1 check per provider per minute (REVIEW-1 #2 User Decision) and the
+// persisted lastCheckedAt timestamp is actually consumed. A forced refresh
+// (key save, Copilot sign-in, "Check again", `model_info`) skips the gate.
 const MODEL_CACHE_TTL_MS = 60_000
 
 export default sbp('sbp/selectors/register', {
@@ -36,10 +37,11 @@ export default sbp('sbp/selectors/register', {
   // popup UI updates progressively rather than waiting for the slowest
   // provider. Plain calls (popup open, startup) share one in-flight run so
   // overlapping opens don't launch duplicate fetch storms. A call with
-  // options (a provider the user just changed, "Check again") always runs its
-  // own fetch at once: waiting for or joining the shared run could hide the
-  // change behind a check that started before it, or behind another provider
-  // that never answers.
+  // options runs on its own: waiting for or joining the shared run could
+  // hide the change behind a check that started before it, or behind another
+  // provider that never answers. A forced call (a provider the user just
+  // changed, "Check again", `model_info`) fetches at once; a call with only
+  // `providerIds` (`model_list`) still skips a provider that the gate skips.
   async 'dez.controller/modelCache/refresh' (options: ModelCacheRefreshOptions = {}): Promise<void> {
     const shared = !options.providerIds && !options.force
     if (shared && sharedRefresh) return sharedRefresh
@@ -57,8 +59,8 @@ export default sbp('sbp/selectors/register', {
       // Unless forced, skip providers checked within the TTL window, and
       // providers whose check is still running (every request of a check,
       // the model list and the Copilot token, times out, so it writes a
-      // result soon). So we never exceed one fetch per provider per minute,
-      // whichever workflow triggered the refresh.
+      // result soon). So no unforced refresh exceeds one fetch per provider
+      // per minute, whichever workflow triggered it.
       const due = providers.filter((provider) => {
         if (!provider.configured) return false
         if (requestedIds && !requestedIds.has(provider.id)) return false

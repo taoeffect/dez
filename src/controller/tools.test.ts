@@ -237,7 +237,8 @@ describe('dez.controller/tools/run', () => {
       const result = await run({ name: 'model_list', arguments: {} })
       // The closed provider is not configured.
       expect(refreshes).toStrictEqual([{ providerIds: ['venice'] }])
-      // The check of beforeEach gives a list with no prices.
+      // The check (`refreshCheck` of the outer beforeEach) gives a list with
+      // no prices.
       expect(result.content).toBe(`2 models ${columns}\nvenice/venice-gemini-3-pro | Gemini 3 Pro | Venice | ? | t,i | ? | ?\nvenice/venice-glm-5 | GLM 5 | Venice | ? | t,i | ? | ?`)
 
       await run({ name: 'model_list', arguments: {} })

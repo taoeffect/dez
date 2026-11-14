@@ -33,9 +33,10 @@ import type { Role } from './types'
 //     is deleted. It is a signed URL, which is a secret.
 //   - `expires`: the ISO time after which the source that is not saved (the
 //     URL, or the temp copy) stops working.
-//   - Any other attribute is metadata that Dez does not know here. A
-//     rewrite (read a tag, change fields, write it) keeps it, after the
-//     known attributes and in its order.
+//   - Any other attribute is metadata that the tag code does not read, as
+//     the marks of the work of a tool (`tool`, `job`, `made-by`, `hidden`:
+//     the constants below). A rewrite (read a tag, change fields, write
+//     it) keeps it, after the known attributes and in its order.
 // - Tags count in every section, and callers find them in one section at a
 //   time. A tag in a user section comes from a paste or a drop of a clip
 //   file. A linked `src` counts only in a user section

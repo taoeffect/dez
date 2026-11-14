@@ -37,16 +37,18 @@ export interface RequestOptions {
 // is built from its own section and, for the images that it mentions, the
 // sections before it.
 //
-// Only the newest user message carries images (image parts), unless
-// `sendImages` is false: its image references, and the images that it
-// names with an `@id` mention, however far back they are
-// (`userMessageContent`). Every earlier user message goes as text only,
+// Of the messages of the sections, only the newest user message carries
+// images (image parts), unless `sendImages` is false: its image references,
+// and the images that it names with an `@id` mention, however far back they
+// are (`userMessageContent`). Every earlier user message goes as text only,
 // with each image as its `![image](id=a)` text, so a long conversation
 // does not send all its images again with each request. An agent section's
 // images go as text only too: both formats take images only from the user.
 // So to show a model an old image, or an image that a model made, the user
-// mentions it in the new message. A clip adds no part, neither its tag nor
-// a mention of it (`@b`): only a media request sends clips (`messageClips`,
+// mentions it in the new message, or the model calls `asset_view`, whose
+// pictures are user messages that no section holds (`ReplyPictures`,
+// replyPictures.ts). A clip adds no part, neither its tag nor a mention of
+// it (`@b`): only a media request sends clips (`messageClips`,
 // `mediaRequestInput`), so the bytes of a chat request do not depend on
 // them.
 //
@@ -56,13 +58,15 @@ export interface RequestOptions {
 // result of that group names the asset (`roundRequestText`): the result
 // already tells the model the id.
 //
-// Prompt cache: a message is the same bytes in every later request, with
-// one exception. A user message with image parts loses them when a newer
-// user message comes, so the first request after that reads it, and what
-// follows it, with no cache hit, and the signed thinking replays from there
-// on no longer go back (their prefix changed; `wireChat`, apiFormats.ts).
-// All request rounds of one reply have the same newest user message, so
-// the bytes hold inside a reply.
+// Prompt cache: a message of the sections is the same bytes in every later
+// request, with one exception. A user message with image parts loses them
+// when a newer user message comes, so the first request after that reads
+// it, and what follows it, with no cache hit, and the signed thinking
+// replays from there on no longer go back (their prefix changed;
+// `wireChat`, apiFormats.ts). All request rounds of one reply have the same
+// newest user message, so the bytes hold inside a reply. The picture
+// messages of `asset_view` hold inside a reply too, and are gone from the
+// next one (replyPictures.ts).
 export function sectionsToStreamMessages(sections: Section[], requestModel: ModelRef, options: RequestOptions): Omit<RequestMessages, 'sendTools'> {
   let imagesLeftOut = 0
   // The images that a mention in the section at hand can name: the path of
@@ -350,12 +354,12 @@ function textWithToolCalls(rounds: readonly AgentRound[]): string {
   return withoutStoredFilePaths(parts.join(''))
 }
 
-// The content of the newest user message, the only one with image parts:
-// text and image parts in doc order (`messageTextPieces`). Each image part
-// comes right after its reference's text, `![image](id=a)`, at the end of
-// the text part before it, so that a model can name the image by its id
-// (and `promptWithNames`, mediaRequest.ts, finds that text). A media tag
-// goes in its request form and adds no part.
+// The content of the newest user message, the only section message with
+// image parts: text and image parts in doc order (`messageTextPieces`).
+// Each image part comes right after its reference's text,
+// `![image](id=a)`, at the end of the text part before it, so that a model
+// can name the image by its id (and `promptWithNames`, mediaRequest.ts,
+// finds that text). A media tag goes in its request form and adds no part.
 //
 // An `@id` mention (imageMentions.ts) that names an image of `imagesById`
 // counts as that image at that place: its image part comes right after the

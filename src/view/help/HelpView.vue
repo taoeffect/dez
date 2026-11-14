@@ -130,6 +130,13 @@ function onOverlayClick(event: MouseEvent) {
               saves each conversation: History (<kbd>{{ keys.history }}</kbd>) opens it again.
             </p>
             <p>
+              The amount in the middle of the bottom bar is about what the conversation cost: the
+              price of each request of its replies, also of the requests that a model sends to other
+              models with a Dez tool. A <code>+</code> after it means that Dez knows no price for some
+              requests, so the cost is higher. <code>(?)</code> means that you changed or deleted a
+              reply: its cost stays in the amount. Point at the amount to see the details.
+            </p>
+            <p>
               Paste or drop images, audio, and video into a message. A model that makes images,
               audio, or video puts them in its reply. The
               <button type="button" class="help-link" @click="page = 'assets'">Assets</button> page
@@ -150,11 +157,11 @@ function onOverlayClick(event: MouseEvent) {
           <section v-if="page === 'assets'" class="help-page help-page--assets">
             <h3>What a model sees</h3>
             <p>
-              The images, audio clips, and video clips of a conversation are its assets. A model
-              sees only the assets of your newest message: the ones that are in it, and the ones
-              that it names by id (<code>@a</code>). It does not see the assets of older messages
-              or of replies: a chat model gets only their ids. This saves tokens and cost, as Dez
-              does not send every old image again with each message.
+              The images, audio clips, and video clips of a conversation are its assets. When you
+              send a message, Dez sends the model only the assets of that message: the ones that are
+              in it, and the ones that the message names by id (<code>@a</code>). Of the assets of
+              older messages and of replies, a chat model gets only their ids. This saves tokens and
+              cost, as Dez does not send every old image again with each message.
             </p>
             <p>
               So when a model must see an older asset, name it in your new message, for example:
@@ -162,7 +169,7 @@ function onOverlayClick(event: MouseEvent) {
             </p>
             <p>
               A clip goes only to a model that takes audio or video, for example a video model or
-              a transcription model. A chat model gets only the id of a clip. A model that needs
+              a transcription model. Dez sends a chat model only the id of a clip. A model that needs
               an image and can work with one, for example an image editor, takes the newest image
               of the conversation when your message has none.
             </p>
@@ -191,11 +198,11 @@ function onOverlayClick(event: MouseEvent) {
 
             <h3>Intermediate assets</h3>
             <p>
-              A chat model that asks another model for an image or a clip, or that cuts, joins, or
-              converts clips with a Dez tool, can mark what it makes as intermediate: a part of its
-              work, for example a clip that it then joins with others, and not the result that you
-              asked for. Dez hides such an asset in the reply, and the chip of its tool call says
-              "intermediate asset hidden". Click the chip to see the asset.
+              A chat model that asks another model for an image or a clip, or that joins or changes
+              clips with the Dez tool <code>video</code>, can mark what it makes as intermediate: a
+              part of its work, for example a clip that it then joins with others, and not the
+              result that you asked for. Dez hides such an asset in the reply, and the chip of its
+              tool call says "intermediate asset hidden". Click the chip to see the asset.
             </p>
             <p>
               A hidden asset is an asset as any other: it has an id, you can name it with
