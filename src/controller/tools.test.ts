@@ -1895,6 +1895,8 @@ describe('dez.controller/tools/run', () => {
     const showinfoLog = (times: number[]) => times
       .map((time, n) => `[Parsed_showinfo_1 @ 0x1] n:   ${n} pts:  ${n} pts_time:${time} duration: 512 fmt:yuv420p\n`).join('')
     const SHOWINFO = showinfoLog([0.4167, 1.25, 2.0833])
+    // The label of the frame sheet of @b with the frames of SHOWINFO.
+    const SHEET_SHOWS = 'the frame sheet of the video clip @b: 3 frames in one row, at 0.417, 1.25, 2.083 s'
     const scdetLog = (times: number[]) => times.map((time) => `[Parsed_scdet_0 @ 0x3] lavfi.scd.score: 21.747, lavfi.scd.time: ${time}\n`).join('')
     const EBUR128 = '[Parsed_ebur128_3 @ 0x2] Summary:\n  Integrated loudness:\n    I:         -23.1 LUFS\n'
       + '  Loudness range:\n    LRA:         9.4 LU\n  True peak:\n    Peak:      -18.8 dBFS\n'
@@ -1920,7 +1922,9 @@ describe('dez.controller/tools/run', () => {
     let soundLog: string
     let soundEnd: BundledToolEnd
 
-    function assetView(args: ToolArguments): Promise<ToolRunResult> {
+    // Runs a call of a reply whose pictures go into `shown`, unless the
+    // test gives its own `showPictures`.
+    function assetView(args: ToolArguments, { signal = running(), showPictures = (pictures: ReplyPicture[]) => { shown.push(...pictures) } } = {}): Promise<ToolRunResult> {
       const context: ToolRunContext = {
         tabId,
         model: REPLY_MODEL,
@@ -1928,12 +1932,14 @@ describe('dez.controller/tools/run', () => {
         writeImage: () => null,
         writeClip: () => null,
         pictureBudget: () => budget,
-        showPictures: (pictures) => { shown.push(...pictures) },
+        showPictures,
       }
-      return sbp('dez.controller/tools/run', { name: 'asset_view', arguments: args }, running(), context) as Promise<ToolRunResult>
+      return sbp('dez.controller/tools/run', { name: 'asset_view', arguments: args }, signal, context) as Promise<ToolRunResult>
     }
 
     const ffmpegRuns = () => native.runs.filter(({ run }) => run.tool === 'dez-ffmpeg').map(({ run }) => run)
+    // The first id that the label of a picture names.
+    const labelId = ({ label }: { label: string }) => label.match(/@[a-z]+/)?.[0]
 
     beforeEach(() => {
       tabId = sbp('dez.model/tabs/activeId') as string
@@ -1970,11 +1976,13 @@ describe('dez.controller/tools/run', () => {
         return soundEnd
       }
       native.fileBytes = ({ path }) => {
-        const name = path.slice(path.lastIndexOf('/') + 1)
-        if (name.endsWith('-frames.jpg')) return SHEET_JPEG
-        if (name.endsWith('-strip.jpg')) return STRIP_JPEG
-        if (name.endsWith('-spectrogram.jpg')) return SPECTROGRAM_JPEG
-        return name.endsWith('-wave.jpg') ? WAVE_JPEG : new TextEncoder().encode(name)
+        if (path.endsWith('-frames.jpg')) return SHEET_JPEG
+        if (path.endsWith('-strip.jpg')) return STRIP_JPEG
+        if (path.endsWith('-spectrogram.jpg')) return SPECTROGRAM_JPEG
+        if (path.endsWith('-wave.jpg')) return WAVE_JPEG
+        // A new kind of file needs its bytes here: a read of any other file
+        // fails, so the view gets no picture of it.
+        throw new Error(`The test has no picture for ${path}.`)
       }
     })
 
@@ -1996,7 +2004,7 @@ describe('dez.controller/tools/run', () => {
         loudness,
       ])
       expect(drawings).toStrictEqual([])
-      expect(shown.map(({ label, picture, size }) => ({ label: label.match(/@[a-z]+/)?.[0], picture, size }))).toStrictEqual([
+      expect(shown.map((shownPicture) => ({ ...shownPicture, label: labelId(shownPicture) }))).toStrictEqual([
         { label: '@a', picture: { type: 'picture', mediaType: 'image/png', bytes: FOX_BYTES }, size: { width: 1000, height: 500 } },
         { label: '@b', picture: { type: 'picture', mediaType: 'image/jpeg', bytes: SHEET_JPEG }, size: { width: 968, height: 364 } },
         { label: '@d', picture: { type: 'picture', mediaType: 'image/jpeg', bytes: WAVE_JPEG }, size: { width: 800, height: 200 } },
@@ -2041,23 +2049,14 @@ describe('dez.controller/tools/run', () => {
       expect(result.isError).toBe(false)
       expect(shown).toHaveLength(3)
       expect(result.content.split('\n').at(-1)).toBe('Picture budget left in this reply: 17 pictures, 56,073 tokens and 20.0 MB of base64.')
-      expect(result.pictures?.map(({ label }) => label.match(/@[a-z]+/)?.[0])).toStrictEqual(['@a', '@d'])
+      expect(result.pictures?.map(labelId)).toStrictEqual(['@a', '@d'])
       expect(consoleError).toHaveBeenCalledWith('Failed to save the copy of a picture that a tool showed:', new Error('No space left on device'))
     })
 
     it('gives no copies, and no result, for a call that the user stopped', async () => {
       const stop = new AbortController()
-      const context: ToolRunContext = {
-        tabId,
-        model: REPLY_MODEL,
-        jobs: new ReplyJobs(),
-        writeImage: () => null,
-        writeClip: () => null,
-        pictureBudget: () => budget,
-        showPictures: () => { stop.abort() },
-      }
 
-      const result = await sbp('dez.controller/tools/run', { name: 'asset_view', arguments: { assets: '@a' } }, stop.signal, context) as ToolRunResult
+      const result = await assetView({ assets: '@a' }, { signal: stop.signal, showPictures: () => { stop.abort() } })
 
       expect(result.isError).toBe(true)
       expect(result.pictures).toBeUndefined()
@@ -2154,7 +2153,7 @@ describe('dez.controller/tools/run', () => {
 
       expect(video.content).toContain(soundlessPartNote({ start: 3, end: 5.04 }, 'none'))
       expect(video.content).not.toContain('LUFS')
-      expect(shown.map(({ label }) => label.match(/@[a-z]+/)?.[0])).toStrictEqual(['@b'])
+      expect(shown.map(labelId)).toStrictEqual(['@b'])
 
       // With the wave, the run fails, as it has no picture to write.
       soundEnd = { kind: 'exited', code: 234 }
@@ -2204,7 +2203,7 @@ describe('dez.controller/tools/run', () => {
 
       const result = await assetView({ assets: 'a b d' })
 
-      expect(shown.map(({ label }) => label.match(/@[a-z]+/)?.[0])).toStrictEqual(['@b'])
+      expect(shown.map(labelId)).toStrictEqual(['@b'])
       expect(result.content).toContain(pictureCostNote({ tokens: 648, bytes: 4, pictures: 1 }, budget))
       expect(result.content).toContain(pictureCostNote({ tokens: 232, bytes: 80, pictures: 1 }, { tokens: 45, bytes: budget.bytes - 80, pictures: 19 }))
       expect(result.content).toMatch(/^Frame sheet of /m)
@@ -2359,7 +2358,7 @@ describe('dez.controller/tools/run', () => {
       const result = await assetView({ assets: 'a b d' })
 
       expect(result.content).toContain('@a | image | PNG | 3 B | Dez could not read its picture')
-      expect(shown.map(({ label }) => label.match(/@[a-z]+/)?.[0])).toStrictEqual(['@d'])
+      expect(shown.map(labelId)).toStrictEqual(['@d'])
     })
 
     it('keeps the size of an image that the webview decoded but could not draw, and tells why it sends no picture', async () => {
@@ -2441,12 +2440,10 @@ describe('dez.controller/tools/run', () => {
     })
 
     describe('with `sound_picture`', () => {
-      const SHEET_SHOWS = 'the frame sheet of the video clip @b: 3 frames in one row, at 0.417, 1.25, 2.083 s'
       const SHEET_NOTE = 'Frame sheet of 0 s to 2.5 s: 3 frames in one row, at 0.417, 1.25, 2.083 s.'
       // The file that the webview composes of the frame sheet and its strip
       // (`soundStripLayout`).
       const SHEET_WITH_STRIP_JPEG = jpegHeader(968, 528)
-      const shownPictures = () => shown.map(({ label, picture, size }) => ({ label, picture, size }))
 
       it('shows the spectrogram of an audio clip with its axes, and tells the time of a later part', async () => {
         const result = await assetView({ assets: '@d', sound_picture: 'Spectrogram', start: 1 })
@@ -2454,7 +2451,7 @@ describe('dez.controller/tools/run', () => {
         expect(ffmpegRuns().map(({ args }) => args)).toStrictEqual([
           audioViewArgs('d.wav', { start: 1, end: 5.04 }, { kind: 'spectrogram', output: 'd-spectrogram.jpg', strip: null }),
         ])
-        expect(shownPictures()).toStrictEqual([{
+        expect(shown).toStrictEqual([{
           label: 'asset_view: the spectrogram of the audio clip @d, 1 s to 5.04 s, time runs left to right and the frequency bottom to top.',
           picture: { type: 'picture', mediaType: 'image/jpeg', bytes: SPECTROGRAM_JPEG },
           size: { width: 1084, height: 328 },
@@ -2499,7 +2496,7 @@ describe('dez.controller/tools/run', () => {
           files: [{ type: 'image/jpeg', bytes: SHEET_JPEG }, { type: 'image/jpeg', bytes: STRIP_JPEG }],
           composition: soundStripLayout([{ width: 968, height: 364 }, strip]),
         }])
-        expect(shownPictures()).toStrictEqual([{
+        expect(shown).toStrictEqual([{
           label: `asset_view: ${SHEET_SHOWS}; under the frames, the wave of its sound, 0 s to 2.5 s, time runs left to right.`,
           picture: { type: 'picture', mediaType: 'image/jpeg', bytes: SHEET_WITH_STRIP_JPEG },
           size: { width: 968, height: 528 },
@@ -2536,19 +2533,19 @@ describe('dez.controller/tools/run', () => {
           return SHEET_JPEG
         }
         expect(await view()).toBe(`${SHEET_NOTE} ${soundStripFailedNote('wave')}`)
-        expect(shownPictures()).toStrictEqual(sheetOnly)
+        expect(shown).toStrictEqual(sheetOnly)
         expect(compositions).toStrictEqual([])
 
         native.fileBytes = ({ path }) => path.endsWith('-strip.jpg') ? STRIP_JPEG : SHEET_JPEG
         drawError = new Error('No canvas to draw the image on.')
         expect(await view()).toBe(`${SHEET_NOTE} ${soundStripFailedNote('wave')}`)
-        expect(shownPictures()).toStrictEqual(sheetOnly)
+        expect(shown).toStrictEqual(sheetOnly)
         expect(consoleError).toHaveBeenCalledWith('Failed to draw the wave strip of the video clip @b under its frame sheet:', drawError)
 
         drawError = undefined
         composedBytes = () => 3_750_001
         expect(await view()).toBe(`${SHEET_NOTE} ${soundStripTooLargeNote('wave', 'review')}`)
-        expect(shownPictures()).toStrictEqual(sheetOnly)
+        expect(shown).toStrictEqual(sheetOnly)
       })
 
       it('tells of no strip of a frame sheet that does not go: over the budget, or in a grid that does not go', async () => {
@@ -2581,7 +2578,7 @@ describe('dez.controller/tools/run', () => {
           audioViewArgs('b.mp4', { start: 0, end: 5.04 }, { kind: 'spectrogram', output: 'b-spectrogram.jpg', strip: null }),
         ])
         expect(compositions).toStrictEqual([])
-        expect(shownPictures()).toStrictEqual([{
+        expect(shown).toStrictEqual([{
           label: 'asset_view: the spectrogram of the video clip @b, 0 s to 5.04 s, time runs left to right and the frequency bottom to top.',
           picture: { type: 'picture', mediaType: 'image/jpeg', bytes: SPECTROGRAM_JPEG },
           size: { width: 1084, height: 328 },
@@ -2611,7 +2608,6 @@ describe('dez.controller/tools/run', () => {
 
     describe('with `layout` "grid"', () => {
       const GRID_PICTURE = { type: 'picture', mediaType: 'image/jpeg', bytes: jpegHeader(968, 540) }
-      const SHEET_SHOWS = 'the frame sheet of the video clip @b: 3 frames in one row, at 0.417, 1.25, 2.083 s'
 
       it('draws the images and the frame sheets in one picture after the others, and gives the note of each sheet with its clip', async () => {
         const result = await assetView({ assets: '@a @d @b', layout: 'grid', frames: 3, end: 2.5 })
@@ -2632,7 +2628,7 @@ describe('dez.controller/tools/run', () => {
           },
         }])
         expect(drawings).toStrictEqual([])
-        expect(shown.map(({ label, picture, size }) => ({ label, picture, size }))).toStrictEqual([
+        expect(shown).toStrictEqual([
           { label: 'asset_view: the wave of the audio clip @d, 0 s to 2.5 s, time runs left to right.', picture: { type: 'picture', mediaType: 'image/jpeg', bytes: WAVE_JPEG }, size: { width: 800, height: 200 } },
           { label: `asset_view: a grid, top to bottom: the image @a; ${SHEET_SHOWS}.`, picture: GRID_PICTURE, size: { width: 968, height: 540 } },
         ])
@@ -2657,7 +2653,7 @@ describe('dez.controller/tools/run', () => {
         const result = await assetView({ assets: '@a @d', layout: 'grid' })
 
         expect(compositions).toStrictEqual([])
-        expect(shown.map(({ label }) => label.match(/@[a-z]+/)?.[0])).toStrictEqual(['@a', '@d'])
+        expect(shown.map(labelId)).toStrictEqual(['@a', '@d'])
         expect(result.content).not.toContain('Grid picture')
       })
 
@@ -2667,7 +2663,7 @@ describe('dez.controller/tools/run', () => {
         const result = await assetView({ assets: '@a @b', layout: 'grid' })
 
         expect(compositions).toStrictEqual([])
-        expect(shown.map(({ label, picture, size }) => ({ label, picture, size }))).toStrictEqual([
+        expect(shown).toStrictEqual([
           { label: 'asset_view: the image @a.', picture: { type: 'picture', mediaType: 'image/png', bytes: FOX_BYTES }, size: { width: 1000, height: 500 } },
         ])
         expect(result.content).not.toContain('Grid picture')
@@ -2681,7 +2677,7 @@ describe('dez.controller/tools/run', () => {
         const result = await assetView({ assets: '@a @b', layout: 'grid', frames: 3, end: 2.5 })
 
         expect(compositions).toStrictEqual([])
-        expect(shown.map(({ label, picture, size }) => ({ label, picture, size }))).toStrictEqual([
+        expect(shown).toStrictEqual([
           { label: `asset_view: ${SHEET_SHOWS}.`, picture: { type: 'picture', mediaType: 'image/jpeg', bytes: SHEET_JPEG }, size: { width: 968, height: 364 } },
         ])
         expect(result.content.split('\n').slice(1)).toStrictEqual([
@@ -2711,7 +2707,7 @@ describe('dez.controller/tools/run', () => {
         const result = await assetView({ assets: '@a @d @b', layout: 'grid', frames: 3, end: 2.5 })
 
         expect(compositions).toStrictEqual([])
-        expect(shown.map(({ label }) => label.match(/@[a-z]+/)?.[0])).toStrictEqual(['@d'])
+        expect(shown.map(labelId)).toStrictEqual(['@d'])
         const lines = result.content.split('\n')
         expect(lines[1]).toBe(PICTURE_LIMIT_NOTE)
         expect(lines.slice(5)).toStrictEqual([
@@ -2730,17 +2726,8 @@ describe('dez.controller/tools/run', () => {
           stop.abort()
           return new Blob([FOX_BYTES], { type: 'image/png' })
         }
-        const context: ToolRunContext = {
-          tabId,
-          model: REPLY_MODEL,
-          jobs: new ReplyJobs(),
-          writeImage: () => null,
-          writeClip: () => null,
-          pictureBudget: () => budget,
-          showPictures: (pictures) => { shown.push(...pictures) },
-        }
 
-        const result = await sbp('dez.controller/tools/run', { name: 'asset_view', arguments: { assets: '@b @a', layout: 'grid' } }, stop.signal, context) as ToolRunResult
+        const result = await assetView({ assets: '@b @a', layout: 'grid' }, { signal: stop.signal })
 
         expect(result.isError).toBe(true)
         expect(compositions).toStrictEqual([])
@@ -2752,7 +2739,7 @@ describe('dez.controller/tools/run', () => {
 
         const result = await assetView({ assets: '@a @d @b', layout: 'grid', frames: 3, end: 2.5 })
 
-        expect(shown.map(({ label }) => label.match(/@[a-z]+/)?.[0])).toStrictEqual(['@d'])
+        expect(shown.map(labelId)).toStrictEqual(['@d'])
         expect(result.content).toContain(gridCostNote(['a', 'b'], { tokens: 700, bytes: 80, pictures: 1 }, { tokens: 568, bytes: budget.bytes - 80, pictures: 19 }))
         expect(result.content).not.toContain('Frame sheet of')
         expect(result.content.split('\n').at(-1)).toBe('Picture budget left in this reply: 19 pictures, 568 tokens and 20.0 MB of base64.')
