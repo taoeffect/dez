@@ -297,8 +297,9 @@ function onOverlayClick(e: MouseEvent) {
                 </button>
               </div>
               <p class="settings-hint">
-                Images, audio, and video that no conversation or prompt uses any more stay on disk,
-                and temporary clips and work files stay in the cache folder of Dez for a while.
+                Images, audio, and video that no conversation or prompt uses any more stay on disk.
+                Temporary copies of clips and work folders that nothing uses also stay in the cache
+                folder of Dez for a while.
                 This looks for them, tells you how many there are and how much space they take,
                 and deletes them if you agree.
               </p>
