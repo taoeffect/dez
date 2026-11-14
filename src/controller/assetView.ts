@@ -23,6 +23,7 @@ import {
   NO_AUDIO_STREAM_NOTE,
   NO_VIDEO_STREAM_NOTE,
   noFramesNote,
+  partHasNoFrame,
   PICTURE_LIMIT_NOTE,
   PICTURE_NOT_DRAWN_NOTE,
   sheetFrameTimes,
@@ -151,8 +152,9 @@ async function frameSheet(input: ClipInput, call: AssetViewCall, part: ClipPart,
   const name = `${input.id}-frames.jpg`
   const ran = await runFfmpeg(frameSheetArgs(input.name, name, { start: part.start, end: part.end }, call.frames), folder, signal)
   const times = sheetFrameTimes(ran.log, part.start, call.frames)
-  // A part with no frame makes ffmpeg fail, as it has nothing to write.
-  if (times.length === 0 && ran.end.kind === 'exited') return { notes: [noFramesNote(part)], picture: null }
+  // A part with no frame makes ffmpeg fail, as it has nothing to write. A
+  // damaged clip fails in the same way: its run is a failed view.
+  if (times.length === 0 && ran.end.kind === 'exited' && partHasNoFrame(ran.log)) return { notes: [noFramesNote(part)], picture: null }
   const problem = runProblemNote(input.clip, ran)
   if (problem !== null) return { notes: [problem], picture: null }
   const picture = await readPicture(folder, name)

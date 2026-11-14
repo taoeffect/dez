@@ -7,6 +7,7 @@ import {
   frameSheetArgs,
   frameSheetTexts,
   loudnessOf,
+  partHasNoFrame,
   sheetFrameTimes,
   sheetGrid,
 } from './assetView'
@@ -123,6 +124,32 @@ describe('sheetFrameTimes', () => {
     expect(sheetFrameTimes(SHOWINFO_LOG, 2, 6)).toStrictEqual([2.208333, 2.625, 3])
     expect(sheetFrameTimes(SHOWINFO_LOG, 0, 2)).toStrictEqual([0.208333, 0.625])
     expect(sheetFrameTimes('Nothing was written into output file', 0, 6)).toStrictEqual([])
+  })
+})
+
+// The end of the log of a real `frameSheetArgs` run (ffmpeg 8) that wrote
+// no picture, after the lines of its case.
+const NOTHING_WRITTEN = [
+  '[vost#0:0/mjpeg @ 0xffffa3e22d50] [enc:mjpeg @ 0xffffa3e36c90] Could not open encoder before EOF',
+  '[out#0/image2 @ 0xffffa3e20920] Nothing was written into output file, because at least one of its streams received no packets.',
+  'Conversion failed!',
+]
+const NO_FILTERED_FRAMES = '[vf#0:0 @ 0xffffa3e1c2d0] No filtered frames for output stream, trying to initialize anyway.'
+
+describe('partHasNoFrame', () => {
+  it('is true for a part that ffmpeg read to its end with no frame in it', () => {
+    expect(partHasNoFrame([NO_FILTERED_FRAMES, ...NOTHING_WRITTEN].join('\n'))).toBe(true)
+  })
+
+  // The error lines of ffmpeg 8 on damaged clips that ffprobe reads.
+  it.each([
+    ['a cut file, with no frame that decodes', '[vf#0:0 @ 0xffff9dfe0020] Cannot determine format of input 0:0 after EOF'],
+    ['a frame that does not decode', `[vist#0:0/vp9 @ 0xffff8b377e20] [dec:vp9 @ 0xffff8b36e2b0] Decoding error: Invalid data found when processing input\n${NO_FILTERED_FRAMES}`],
+    ['a packet that the decoder refuses', `[vist#0:0/h264 @ 0xffffabd51640] [dec:h264 @ 0xffffabd512b0] Error submitting packet to decoder: Invalid data found when processing input\n${NO_FILTERED_FRAMES}`],
+    ['a corrupt frame', `[vist#0:0/h264 @ 0xffffabd51640] [dec:h264 @ 0xffffabd512b0] corrupt decoded frame\n${NO_FILTERED_FRAMES}`],
+    ['a packet that the demuxer cannot read', `[in#0/matroska,webm @ 0xffff8b378840] Error during demuxing: Invalid data found when processing input\n${NO_FILTERED_FRAMES}`],
+  ])('is false for a damaged clip: %s', (_case, lines) => {
+    expect(partHasNoFrame([lines, ...NOTHING_WRITTEN].join('\n'))).toBe(false)
   })
 })
 

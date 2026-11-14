@@ -182,6 +182,23 @@ export function sheetFrameTimes(log: string, start: number, frames: number): num
   return Array.from(log.matchAll(SHOWINFO_FRAME), (match) => start + Number(match[1])).slice(0, frames)
 }
 
+// ffmpeg logs this line when it read its input to the end and no frame
+// came out of the filters. A damaged clip can log it too, after a frame
+// that did not decode; one that it cannot decode at all logs "Cannot
+// determine format of input … after EOF" in its place.
+const NO_FILTERED_FRAMES = 'No filtered frames for output stream'
+
+// The error lines of ffmpeg about a packet or a frame of the input that it
+// could not read or decode, whatever the format and the codec.
+const INPUT_ERROR = /Decoding error:|Error submitting .* to decoder|corrupt decoded frame|Error during demuxing:/
+
+/** Whether the log of a `frameSheetArgs` run that gave no frame tells that
+ *  the part has none: ffmpeg read the clip to the end of the part with no
+ *  error. A damaged clip also gives no frame, and its log tells otherwise. */
+export function partHasNoFrame(log: string): boolean {
+  return log.includes(NO_FILTERED_FRAMES) && !INPUT_ERROR.test(log)
+}
+
 const LOUDNESS_FILTER = 'ebur128=framelog=quiet:peak=true'
 
 /** The ffmpeg arguments that read the loudness of `part` of the clip file

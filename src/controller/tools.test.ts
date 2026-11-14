@@ -15,7 +15,7 @@ import { providerInfo } from '../model/providers/testing'
 import type { ModelInfo, ProviderInfo, ProviderInputImageRules, ProviderSettingsDescriptor } from '../model/providers/types'
 import type { ReplyPicture } from '../model/streams/replyPictures'
 import { assetProbeArgs } from '../model/tools/assetFacts'
-import { PICTURE_NOT_DRAWN_NOTE, smallerCopyNote } from '../model/tools/assetView'
+import { PICTURE_NOT_DRAWN_NOTE, smallerCopyNote, VIEW_FAILED_NOTE } from '../model/tools/assetView'
 import { jobStartedText, jobsWaitResults, NO_JOBS_TEXT, NO_OPEN_JOBS_TEXT } from '../model/tools/jobs'
 import { modelInfoText, type ModelInfoFacts } from '../model/tools/modelInfo'
 import { IMAGE_NOT_SAVED_TEXT, INVOCATION_TEXT_CAP, invocationAnswerStateText, invocationAnswerText, modelInvocation } from '../model/tools/modelInvoke'
@@ -1895,14 +1895,26 @@ describe('dez.controller/tools/run', () => {
     })
 
     it('tells of a part with no frame, and of a clip that Dez cannot read, and shows no picture for them', async () => {
-      frameSheetLog = 'Nothing was written into output file'
-      frameSheetEnd = { kind: 'exited', code: 1 }
+      frameSheetLog = 'No filtered frames for output stream, trying to initialize anyway.\nNothing was written into output file'
+      frameSheetEnd = { kind: 'exited', code: 234 }
 
       const result = await assetView({ assets: 'b c' })
 
       expect(result.isError).toBe(false)
       expect(result.content).toContain('No frame sheet: ffmpeg found no frame in 0 s to 5.04 s of the clip.')
       expect(result.content).toContain('@c | audio | gone: the user deleted its file, and it has no web address')
+      expect(shown).toStrictEqual([])
+    })
+
+    it('tells a damaged clip that gives no frame as a view that failed, not as a part with no frame, and logs the cause', async () => {
+      frameSheetLog = 'Cannot determine format of input 0:0 after EOF\nNothing was written into output file'
+      frameSheetEnd = { kind: 'exited', code: 183 }
+
+      const result = await assetView({ assets: 'b' })
+
+      expect(result.content).toContain(VIEW_FAILED_NOTE)
+      expect(result.content).not.toContain('No frame sheet')
+      expect(consoleError).toHaveBeenCalledWith('ffmpeg could not make the view of the video clip @b:', frameSheetEnd, frameSheetLog)
       expect(shown).toStrictEqual([])
     })
 
