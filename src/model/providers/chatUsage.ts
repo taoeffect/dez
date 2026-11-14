@@ -13,7 +13,8 @@ export interface ChatUsage {
   providerCost?: number
 }
 
-/** A count or a price of a usage report: a number that is 0 or more. */
+/** A count or a price that a provider gives as a number (in a usage
+ *  report, or a price table): a number that is 0 or more. */
 export function usageNumber(value: unknown): number | undefined {
   return typeof value === 'number' && Number.isFinite(value) && value >= 0 ? value : undefined
 }

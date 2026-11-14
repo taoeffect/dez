@@ -517,20 +517,24 @@ function venicePriceOf(table: unknown, value: unknown): unknown {
 
 // The USD of one price of a Venice price table (`{ usd, diem }`).
 function veniceUsd(price: unknown): number | undefined {
-  const usd = valueAtPath(price, 'usd')
-  return typeof usd === 'number' && Number.isFinite(usd) && usd >= 0 ? usd : undefined
+  return usageNumber(valueAtPath(price, 'usd'))
 }
 
 // The price of one Venice image request of `kind` with `values`, from the
-// model's price table, with the option values that the price is for. None
-// when the table has a key that Dez does not know (but `moreKeys`, which
-// the caller reads), or no price for the values.
-function veniceImagePrice(kind: Exclude<ImageKind, 'upscale'>, values: ParameterValues, pricing: Record<string, unknown>, moreKeys: readonly string[] = []): { usd: number, options: string[] } | undefined {
+// model's price table, with the option values that the price is for. An
+// upscale has the price of its scale, whatever the other keys. None when
+// the table has a key that Dez does not know (but `moreKeys`, which the
+// caller reads), or no price for the values.
+function veniceImagePrice(kind: ImageKind, values: ParameterValues, pricing: Record<string, unknown>, moreKeys: readonly string[] = []): { usd: number, options: string[] } | undefined {
+  const priced = (usd: number | undefined, options: unknown[]) => (usd === undefined ? undefined : { usd, options: options.map(String) })
+  if (kind === 'upscale') {
+    const scale = `${String(values.scale)}x`
+    return priced(veniceUsd(venicePriceOf(pricing.upscale, scale)), [scale])
+  }
   const { key, others } = VENICE_IMAGE_PRICES[kind]
   const known = [key, ...others, ...VENICE_OPTION_PRICES, ...moreKeys]
   if (Object.keys(pricing).some((name) => !known.includes(name))) return undefined
   const { resolution, quality } = values
-  const priced = (usd: number | undefined, options: unknown[]) => (usd === undefined ? undefined : { usd, options: options.map(String) })
   if (Object.hasOwn(pricing, 'quality')) return priced(veniceUsd(venicePriceOf(venicePriceOf(pricing.quality, resolution), quality)), [resolution, quality])
   if (Object.hasOwn(pricing, 'resolutions')) return priced(veniceUsd(venicePriceOf(pricing.resolutions, resolution)), [resolution])
   return priced(veniceUsd(pricing[key]), [])
@@ -541,11 +545,10 @@ function veniceImagePrice(kind: Exclude<ImageKind, 'upscale'>, values: Parameter
 // holds fewer input images than a request can have (`inputImages`) tells
 // the price of each more image.
 function veniceImageListPrice(kind: ImageKind, values: ParameterValues, pricing: Record<string, unknown>): ModelPrice | undefined {
-  if (kind === 'upscale') return unitPrice('image', veniceUsd(valueAtPath(pricing, `upscale.${String(values.scale)}x`)), `${String(values.scale)}x`)
   const price = veniceImagePrice(kind, values, pricing, kind === 'imageEdit' ? ['inputImages'] : [])
   if (!price) return undefined
   const notes = price.options.length > 0 ? [price.options.join(', ')] : []
-  if (Object.hasOwn(pricing, 'inputImages')) {
+  if (kind === 'imageEdit' && Object.hasOwn(pricing, 'inputImages')) {
     const included = valueAtPath(pricing, 'inputImages.included')
     const more = veniceUsd(valueAtPath(pricing, 'inputImages.additional'))
     if (typeof included !== 'number' || !Number.isInteger(included) || included < 0 || more === undefined) return undefined
@@ -753,7 +756,6 @@ const veniceFormat: MediaFormat = {
       usd: (kind, values, { entry }) => {
         const pricing = valueAtPath(entry, 'model_spec.pricing')
         if (!isRecord(pricing)) return undefined
-        if (kind === 'upscale') return veniceUsd(valueAtPath(pricing, `upscale.${String(values.scale)}x`))
         return veniceImagePrice(kind, values, pricing)?.usd
       },
     },
