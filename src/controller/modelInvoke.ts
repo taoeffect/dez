@@ -21,7 +21,7 @@ import {
 import { TOOL_DEFINITIONS } from '../model/tools/registry'
 import { ToolError } from '../model/tools/types'
 import { ExplainedError } from '../utils/errorText'
-import { discardJobAssets, type JobAsset, type JobOutcome } from './jobs'
+import { discardMadeAssets, generatedClipAsset, type JobOutcome, type MadeAsset } from './jobs'
 
 // The request of a `model_invoke` call (model/tools/modelInvoke.ts), as the
 // work of a job of the reply (jobs.ts). This module registers no selector:
@@ -90,11 +90,7 @@ async function invokeMediaModel(invocation: MediaInvocation, signal: AbortSignal
     throw invocationError(invocation, error)
   }
 
-  const assets: JobAsset[] = result.clips.map((clip) => ({
-    kind: 'clip',
-    clip: { kind: clip.kind, type: clip.mediaType, src: clip.src, url: clip.url, expires: clip.expires },
-    ...(clip.jobId !== null && { jobId: clip.jobId }),
-  }))
+  const assets = result.clips.map(generatedClipAsset)
   // An abort cancelled the request, which can end the body of an image
   // early: a cut image is never saved. A clip that still came is whole,
   // and `ReplyJobs` deletes its temp copy.
@@ -106,7 +102,7 @@ async function invokeMediaModel(invocation: MediaInvocation, signal: AbortSignal
     }
   } catch (error) {
     // images/save logged the failure and showed its error toast.
-    await discardJobAssets(assets)
+    await discardMadeAssets(assets)
     throw new ToolError(IMAGE_NOT_SAVED_TEXT, '', { cause: error })
   }
   return { text: result.text === undefined ? '' : invocationTextResult(result.text), isError: false, assets }
@@ -132,7 +128,7 @@ async function invokeTextModel(
   const cancelRequest = () => {
     sbp('dez.http/cancelStream', requestId).catch((error: unknown) => console.error('Failed to cancel the request of an invoked model:', error))
   }
-  const assets: JobAsset[] = []
+  const assets: MadeAsset[] = []
   let answer = ''
   let imageNotSaved = false
   report(invocationAnswerStateText(0))
@@ -177,7 +173,7 @@ async function invokeTextModel(
     // `ReplyJobs` reads no assets of a failed job, so the images that this
     // job saved go here.
     cancelRequest()
-    await discardJobAssets(assets)
+    await discardMadeAssets(assets)
     throw imageNotSaved ? new ToolError(IMAGE_NOT_SAVED_TEXT, '', { cause: error }) : invocationError(invocation, error)
   }
   // An abort after the first bytes of the answer ends it early with no

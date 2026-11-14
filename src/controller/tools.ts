@@ -23,7 +23,7 @@ import { ToolError, type ToolArguments, type ToolRunResult } from '../model/tool
 import { ffmpegCall, ffprobeCall, joinClipsCall, VIDEO_TOOL, videoInputsText } from '../model/tools/videoTool'
 import { rawErrorText } from '../utils/errorText'
 import { audioClipSeconds, cutAudioClip } from './audioTool'
-import { discardJobAssets, writeJobAssets, type JobWork, type ReplyJobs } from './jobs'
+import { discardMadeAssets, writeJobAssets, type JobWork, type ReplyJobs } from './jobs'
 import { invokeModel } from './modelInvoke'
 import { runFfmpegJob, runFfprobe, runJoinJob } from './videoTool'
 
@@ -280,7 +280,7 @@ const TOOL_RUNNERS: Record<string, ToolRunner> = {
       const newId = context.writeClip(cut.clip)
       if (newId === null) {
         // A file that no tag names.
-        await discardJobAssets([{ kind: 'clip', clip: cut.clip }])
+        await discardMadeAssets([{ kind: 'clip', clip: cut.clip }])
         throw new ToolError('The reply stopped before Dez could add the new audio clip to it, so there is no new clip. This is not a fault of the call. '
           + 'Call the audio tool again only when the user asks for the clip again.')
       }

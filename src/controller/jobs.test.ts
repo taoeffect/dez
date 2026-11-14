@@ -2,7 +2,7 @@ import sbp from '@sbp/sbp'
 import { afterEach, beforeEach, describe, expect, it, vi, type MockInstance } from 'vitest'
 import { JOB_LIMIT_TEXT, MAX_JOBS_PER_REPLY } from '../model/tools/jobs'
 import { ToolError } from '../model/tools/types'
-import { discardJobAssets, ReplyJobs, writeJobAssets, type EndedJob, type JobAsset } from './jobs'
+import { discardMadeAssets, ReplyJobs, writeJobAssets, type EndedJob, type MadeAsset } from './jobs'
 import { APP_DIR, CACHE_DIR, heldWork, LONG, native, resetNative, running, settled } from './testing'
 
 const IMAGE = `${APP_DIR}/assets/generated/images/made.png`
@@ -10,8 +10,8 @@ const SAVED_CLIP = `${APP_DIR}/assets/generated/audio/made.wav`
 const TEMP_CLIP = `${CACHE_DIR}/media/made.mp4`
 const URL_CLIP = 'https://clips.test/made.mp4'
 
-const image: JobAsset = { kind: 'image', path: IMAGE }
-const clip = (src: string | null, url: string | null = null, jobId?: string): JobAsset => ({
+const image: MadeAsset = { kind: 'image', path: IMAGE }
+const clip = (src: string | null, url: string | null = null, jobId?: string): MadeAsset => ({
   kind: 'clip',
   clip: src?.endsWith('.wav') ? { kind: 'audio', type: 'audio/wav', src, url, expires: null } : { kind: 'video', type: 'video/mp4', src, url, expires: null },
   ...(jobId !== undefined && { jobId }),
@@ -375,11 +375,11 @@ describe('writeJobAssets', () => {
   })
 })
 
-describe('discardJobAssets', () => {
+describe('discardMadeAssets', () => {
   it('goes on after a delete that fails, and logs it', async () => {
     imageDeleteError = new Error('No such file')
 
-    await discardJobAssets([image, clip(SAVED_CLIP)])
+    await discardMadeAssets([image, clip(SAVED_CLIP)])
 
     expect(deletedClips).toStrictEqual([SAVED_CLIP])
     expect(consoleError).toHaveBeenCalledTimes(1)

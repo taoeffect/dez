@@ -15,7 +15,7 @@ import { clipReadProblemText } from '../model/tools/toolInputs'
 import { ToolError } from '../model/tools/types'
 import { workFolderPath } from '../model/tools/workFolders'
 import { clipFromSources, downloadClip, type ClipSource } from './clipSources'
-import { discardJobAssets, type JobAsset } from './jobs'
+import { discardMadeAssets, type MadeAsset } from './jobs'
 import type { BundledTool, BundledToolEnd, BundledToolInput, BundledToolOutput, BundledToolRun } from './nativeTypes'
 
 // The runs of ffmpeg and ffprobe, the programs that Dez ships, for the
@@ -144,11 +144,11 @@ export async function runProgram(
 }
 
 /** Moves the new files `files` of a work folder into the generated folders
- *  of the Dez folder, each under a new name, and gives them as the assets
- *  of a job. A move that fails keeps none of them: the ones that moved are
+ *  of the Dez folder, each under a new name, and gives them as made
+ *  assets. A move that fails keeps none of them: the ones that moved are
  *  deleted, and a `ToolError` tells the model. */
-export async function storeOutputs(folder: string, files: readonly KeptFile[], toolName: string): Promise<JobAsset[]> {
-  const assets: JobAsset[] = []
+export async function storeOutputs(folder: string, files: readonly KeptFile[], toolName: string): Promise<MadeAsset[]> {
+  const assets: MadeAsset[] = []
   try {
     const appDir = await sbp('dez.native/getAppDir') as string
     for (const { name, kind, type, extension } of files) {
@@ -165,7 +165,7 @@ export async function storeOutputs(folder: string, files: readonly KeptFile[], t
     }
   } catch (error) {
     console.error(`Failed to store the new files of the ${toolName} tool:`, error)
-    await discardJobAssets(assets)
+    await discardMadeAssets(assets)
     throw new ToolError(outputNotStoredText(toolName), '', { cause: error })
   }
   return assets

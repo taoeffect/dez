@@ -3,13 +3,12 @@ import type { ActiveModel, ModelRef, Section, SectionThinking, Tab } from '../mo
 import { sectionPlainText } from '../model/chat/content'
 import { IMAGE_HIDDEN_KEY, IMAGE_TOOL_KEY, imageMarkdown } from '../model/chat/images'
 import { modelRefKey } from '../model/chat/modelRef'
-import { tempMediaFile } from '../model/chat/mediaFiles'
 import { newMediaIds } from '../model/chat/mediaIds'
 import { MEDIA_HIDDEN_ATTRIBUTE, MEDIA_JOB_ATTRIBUTE, MEDIA_TOOL_ATTRIBUTE, mediaTagText } from '../model/chat/mediaTags'
 import { findToolBlocks, ModelTextEscaper } from '../model/chat/toolBlocks'
 import { TooManyImagesError, tooManyImagesMessage } from '../model/providers/clipImages'
 import { errorText, explainedError } from '../utils/errorText'
-import type { ClipInputRules, GeneratedClip, GeneratedMedia, MediaKind, ModelRequest, ProviderGenerateMediaResult, ProviderStreamChatResult } from '../model/providers'
+import type { ClipInputRules, GeneratedMedia, MediaKind, ModelRequest, ProviderGenerateMediaResult, ProviderStreamChatResult } from '../model/providers'
 import { requireProvider } from '../model/providers/registry'
 import { agentSectionMessages, mediaRequestInput } from '../model/streams/messages'
 import {
@@ -44,7 +43,7 @@ import {
   streamIsStreaming,
   streamSession,
 } from '../model/state/streams'
-import { ReplyJobs, writeJobAssets, type EndedJob } from './jobs'
+import { discardMadeAssets, generatedClipAsset, ReplyJobs, writeJobAssets, type EndedJob, type MadeAsset } from './jobs'
 import type { ToolRunCall, ToolRunContext } from './tools'
 
 interface StreamStartArgs {
@@ -370,22 +369,6 @@ function paragraphGap(sectionText: string): string {
   return sectionText === '' || sectionText.endsWith('\n\n') ? '' : sectionText.endsWith('\n') ? '\n' : '\n\n'
 }
 
-// Deletes the temp copies of clips that no tag will name. A failure is only
-// logged: the cleanup of the temp copies (controller/media.ts) deletes a
-// copy that stays.
-async function deleteTempCopies(clips: readonly GeneratedClip[]): Promise<void> {
-  if (clips.length === 0) return
-  try {
-    const cacheDir = await sbp('dez.native/getAppDir', 'cache') as string
-    for (const clip of clips) {
-      const file = tempMediaFile(clip.src, cacheDir)
-      if (file !== null) await sbp('dez.native/deleteAppFile', file, 'cache')
-    }
-  } catch (error) {
-    console.error('Failed to delete the temp copy of a clip:', error)
-  }
-}
-
 // Writes an image reference or a clip tag at the end of the reply's
 // section, as a paragraph of its own; `assetText` gives its text with a new
 // media id. Returns the id, or null when the section takes no text: the
@@ -620,7 +603,7 @@ async function runMediaRound(args: StreamStartArgs, reply: ReplyRuntime, kind: M
   // early: a cut image is never saved. A clip that still came is whole, but
   // the reply takes no tag any more.
   if (!replyIsCurrent(args.tabId, reply)) {
-    await deleteTempCopies(clips)
+    await discardMadeAssets(clips.map(generatedClipAsset))
     return
   }
 
@@ -637,13 +620,12 @@ async function runMediaRound(args: StreamStartArgs, reply: ReplyRuntime, kind: M
 
   // While the files were saved, the reply could end, or the user could
   // merge its section into the one before (as in a chat round). Files that
-  // no reference names are deleted; images/delete logs and shows its own
-  // failures.
+  // no reference names are deleted; images/delete shows its own failures.
   const sections = (sbp('dez.model/tab', args.tabId) as Tab | null)?.sections ?? []
   const texts = sections.map(sectionPlainText)
   const sectionText = texts[sections.findIndex((section) => section.id === args.sectionId)]
   if (!saved || !replyIsCurrent(args.tabId, reply) || sectionText === undefined) {
-    await Promise.allSettled([...paths.map((path) => sbp('dez.controller/images/delete', path)), deleteTempCopies(clips)])
+    await discardMadeAssets([...paths.map((path): MadeAsset => ({ kind: 'image', path })), ...clips.map(generatedClipAsset)])
     if (replyIsCurrent(args.tabId, reply)) finalizeStream(args.tabId, saved ? finishStreamSession(args.tabId) : errorStreamSession(args.tabId))
     return
   }

@@ -1,6 +1,7 @@
 import sbp from '@sbp/sbp'
 import { tempMediaFile } from '../model/chat/mediaFiles'
 import { isSavedMediaPath, type MediaTagData } from '../model/chat/mediaTags'
+import type { GeneratedClip } from '../model/providers/types'
 import { JOB_LIMIT_TEXT, jobTimedOutText, MAX_JOBS_PER_REPLY, newJobId, type JobCall, type JobInfo, type JobResultStatus, type JobStatus, type WrittenJobAsset } from '../model/tools/jobs'
 import { unexpectedToolErrorText } from '../model/tools/registry'
 import { ToolError } from '../model/tools/types'
@@ -14,13 +15,24 @@ import type { ToolRunContext } from './tools'
 // no selector: a reply owns its `ReplyJobs` (`ReplyRuntime.jobs`,
 // controller/stream.ts), and a runner gets it in its `ToolRunContext`.
 
-/** An image or a clip that a job made: a stored image file, or a clip as
- *  its tag holds it (a saved file, a temp copy, or a provider URL).
- *  `jobId` is the provider's id of the job that made the clip, when the
- *  provider made it as one: the clip's tag keeps it. */
-export type JobAsset =
+/** An image or a clip that the work of a reply made (a job, a tool call,
+ *  a media round) before a text of the reply names it: a stored image
+ *  file, or a clip as its tag holds it (a saved file, a temp copy, or a
+ *  provider URL). `jobId` is the provider's id of the job that made the
+ *  clip, when the provider made it as one: the clip's tag keeps it. */
+export type MadeAsset =
   | { kind: 'image', path: string }
   | { kind: 'clip', clip: Omit<MediaTagData, 'id' | 'other'>, jobId?: string }
+
+/** A clip of a media request (`dez.provider/generateMedia`) as a made
+ *  asset. */
+export function generatedClipAsset(clip: GeneratedClip): MadeAsset {
+  return {
+    kind: 'clip',
+    clip: { kind: clip.kind, type: clip.mediaType, src: clip.src, url: clip.url, expires: clip.expires },
+    ...(clip.jobId !== null && { jobId: clip.jobId }),
+  }
+}
 
 /** What the work of a job gave. */
 export interface JobOutcome {
@@ -29,7 +41,7 @@ export interface JobOutcome {
   text: string
   /** The work failed, and `text` tells why. */
   isError: boolean
-  assets: JobAsset[]
+  assets: MadeAsset[]
 }
 
 /** The work of a job. `signal` aborts when the job ends before its work
@@ -52,7 +64,7 @@ export interface EndedJob {
   tool: string
   status: JobResultStatus
   text: string
-  assets: JobAsset[]
+  assets: MadeAsset[]
   /** The call made the assets as a part of its work: they go into the
    *  reply as hidden assets of this job (`writeJobAssets`). */
   hidesAssets: boolean
@@ -74,13 +86,14 @@ interface Job extends Omit<EndedJob, 'status'> {
   timer: ReturnType<typeof setTimeout>
 }
 
-/** Deletes the files of assets that no text of a reply will name: the
- *  results of a job that nobody read before its reply stopped, and what a
- *  work still gave after its job ended. A clip at a provider URL has no
- *  file. A failure is only logged: Settings › General › Unused files finds
- *  an image or a saved clip that stays, and the cleanup of the temp copies
- *  (controller/media.ts) a temp copy. */
-export async function discardJobAssets(assets: readonly JobAsset[]): Promise<void> {
+/** Deletes the files of made assets that no text of a reply will name:
+ *  the results of a job that nobody read before its reply stopped, what a
+ *  work still gave after its job ended, and the output of a tool call or a
+ *  media round whose reply took it no more. A clip at a provider URL has
+ *  no file. A failure is only logged: Settings › General › Unused files
+ *  finds an image or a saved clip that stays, and the cleanup of the temp
+ *  copies (controller/media.ts) a temp copy. */
+export async function discardMadeAssets(assets: readonly MadeAsset[]): Promise<void> {
   for (const asset of assets) {
     const path = asset.kind === 'image' ? asset.path : asset.clip.src
     if (path === null) continue
@@ -94,7 +107,7 @@ export async function discardJobAssets(assets: readonly JobAsset[]): Promise<voi
         if (file !== null) await sbp('dez.native/deleteAppFile', file, 'cache')
       }
     } catch (error) {
-      console.error('Failed to delete a file that a job made:', error)
+      console.error('Failed to delete a made file that no text names:', error)
     }
   }
 }
@@ -106,7 +119,7 @@ export async function discardJobAssets(assets: readonly JobAsset[]): Promise<voi
  *  hides them get the job's id as their hidden marker. */
 export async function writeJobAssets(job: EndedJob, writers: Pick<ToolRunContext, 'writeImage' | 'writeClip'>): Promise<WrittenJobAsset[]> {
   const written: WrittenJobAsset[] = []
-  const lost: JobAsset[] = []
+  const lost: MadeAsset[] = []
   const options = { tool: job.tool, ...(job.hidesAssets && { hidden: job.id }) }
   for (const asset of job.assets) {
     const id = asset.kind === 'image'
@@ -115,7 +128,7 @@ export async function writeJobAssets(job: EndedJob, writers: Pick<ToolRunContext
     if (id === null) lost.push(asset)
     written.push({ kind: asset.kind === 'image' ? 'image' : asset.clip.kind, id })
   }
-  await discardJobAssets(lost)
+  await discardMadeAssets(lost)
   return written
 }
 
@@ -178,7 +191,7 @@ export class ReplyJobs {
     outcome.then((result) => {
       // The job timed out or stopped before its work ended: nobody reads
       // this result.
-      if (job.status !== 'running') void discardJobAssets(result.assets)
+      if (job.status !== 'running') void discardMadeAssets(result.assets)
       else this.end(job, result.isError ? 'failed' : 'finished', result.text, result.assets)
     }, (error: unknown) => {
       // The abort of a job that ended is not a failure.
@@ -192,7 +205,7 @@ export class ReplyJobs {
   // Ends a running job, and wakes every wait. A job that its work did not
   // end (a time limit, a stop) aborts the work's signal, which ends the
   // requests of the work.
-  private end(job: Job, status: Exclude<JobStatus, 'running'>, text = '', assets: JobAsset[] = []): void {
+  private end(job: Job, status: Exclude<JobStatus, 'running'>, text = '', assets: MadeAsset[] = []): void {
     job.status = status
     job.text = text
     job.assets = assets
@@ -276,6 +289,6 @@ export class ReplyJobs {
     for (const job of this.jobs.values()) {
       if (job.status === 'running') this.end(job, 'stopped')
     }
-    for (const job of this.unread.splice(0)) void discardJobAssets(job.assets)
+    for (const job of this.unread.splice(0)) void discardMadeAssets(job.assets)
   }
 }
