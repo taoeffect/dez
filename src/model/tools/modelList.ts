@@ -4,6 +4,7 @@ import { MODEL_OUTPUT_IDS, OUTPUT_LETTER_LEGEND, outputLetters, parseOutputTypes
 import { availableModels, matchingModelsByProvider, searchTerms } from '../modelSearch'
 import type { ModelCache } from '../persistence/types'
 import type { ModelInfo, ProviderInfo } from '../providers/types'
+import { unknownValuesText } from './arguments'
 import { ToolError, type ToolArguments, type ToolDefinition } from './types'
 
 /** The most model lines that one `model_list` result holds. */
@@ -168,13 +169,6 @@ function sortedRows(rows: readonly ListedModel[], column: ListColumn, direction:
 function stringArgument(args: ToolArguments, name: string): string {
   const value = args[name]
   return typeof value === 'string' ? value : ''
-}
-
-// The error of a call that gives `parameter` the values `values`, which it
-// does not take; `valid` tells what it takes.
-function unknownValuesText(parameter: string, values: readonly string[], valid: string): string {
-  const quoted = values.map((value) => JSON.stringify(value)).join(', ')
-  return `Unknown value${values.length === 1 ? '' : 's'} ${quoted} in \`${parameter}\`. Use ${valid}.`
 }
 
 // The types of the `type` or the `inputs` argument; none for a call with no

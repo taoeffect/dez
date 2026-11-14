@@ -267,6 +267,13 @@ describe('dez.controller/tools/run', () => {
       expect(refreshes).toStrictEqual([{ providerIds: ['venice'], force: true }])
     })
 
+    // The result with `only` holds no entry of the provider.
+    it('runs no model check for a call with `only`', async () => {
+      expect(JSON.parse((await run({ name: 'model_info', arguments: { model: 'venice/venice-gemini-3-pro', only: 'usage' } })).content))
+        .toStrictEqual({ id: 'venice/venice-gemini-3-pro', usage: expect.any(Array) })
+      expect(refreshes).toStrictEqual([])
+    })
+
     it('gives an error result that points to model_list when the model is gone after the check', async () => {
       refreshCheck = async () => {
         sbp('dez.model/modelCache/applyProviderResult', 'venice', { ok: true, models: [], entries: new Map() })
@@ -393,6 +400,23 @@ describe('dez.controller/tools/run', () => {
           isError: true,
         })
         expect(quotes).toHaveLength(1)
+      })
+
+      it('asks for a price only for a call whose `only` names `cost`', async () => {
+        expect(JSON.parse((await info({ only: 'parameters' })).content)).toStrictEqual({
+          id: 'venice/wan',
+          dez: {
+            parameters: [
+              { name: 'duration', label: 'Length', options: ['4s', '8s', '12s'], default: '4s', value: '8s' },
+              { name: 'resolution', label: 'Resolution', options: ['480p', '720p'], default: '480p', value: '720p' },
+              { name: 'aspect_ratio', label: 'Aspect ratio', options: ['16:9', '1:1'], default: '16:9', value: '16:9' },
+            ],
+          },
+        })
+        expect(quotes).toStrictEqual([])
+
+        expect(JSON.parse((await info({ only: 'cost', parameters: '{"duration": "12s"}' })).content)).toStrictEqual({ id: 'venice/wan', dez: { cost: { usd: 0.07 } } })
+        expect(quotes.map(({ parameters }) => parameters)).toStrictEqual([{ duration: '12s', resolution: '720p', aspect_ratio: '16:9' }])
       })
 
       // The provider's text can echo details of the user's account.

@@ -127,3 +127,10 @@ export function assetIdArgument(value: ToolArgumentValue | undefined, asset: str
   }
   return id
 }
+
+/** The error of a call that gives `parameter` the values `values`, which it
+ *  does not take; `valid` tells what it takes. */
+export function unknownValuesText(parameter: string, values: readonly string[], valid: string): string {
+  const quoted = values.map((value) => JSON.stringify(value)).join(', ')
+  return `Unknown value${values.length === 1 ? '' : 's'} ${quoted} in \`${parameter}\`. Use ${valid}.`
+}

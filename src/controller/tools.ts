@@ -14,7 +14,7 @@ import { AUDIO_TOOL, audioClipId, audioClipOf, audioCutPart, audioCutRequest, au
 import { brightnessPlan, contrastPlan, convertPlan, cropPlan, flipPlan, IMAGE_TOOL, imageIdArgument, imageOf, imageResultText, invertPlan, rotatePlan, saturationPlan, scalePlan, unreadableImageText, unwritableFormatError, type ImagePlan } from '../model/tools/imageTool'
 import { isIntermediate, jobCallLabel, jobInspectText, jobResultText, jobsListText, jobStartedText, jobsWaitText, unknownJobText, type JobResult } from '../model/tools/jobs'
 import { parameterValuesArgument, type ModelTarget } from '../model/tools/modelArguments'
-import { modelInfoPart, modelInfoText, modelInfoTarget, type ModelInfoFacts } from '../model/tools/modelInfo'
+import { modelInfoSelection, modelInfoText, modelInfoTarget, type ModelInfoFacts } from '../model/tools/modelInfo'
 import { invocationInputsText, MODEL_INVOKE_TOOL, modelInvocation } from '../model/tools/modelInvoke'
 import { modelListText } from '../model/tools/modelList'
 import { unexpectedToolErrorText, unknownToolText } from '../model/tools/registry'
@@ -209,7 +209,8 @@ const TOOL_RUNNERS: Record<string, ToolRunner> = {
   // the reply's model. The raw entries of the provider's model list are in
   // memory only, so after a start they are missing until the provider's
   // next model check; then this one runs a check of that provider now, and
-  // looks again (the model may be gone).
+  // looks again (the model may be gone). A call with `only` gives no entry,
+  // so it runs no check.
   //
   // The result also tells the value that a request sends for each
   // parameter now (the call's own value, else the user's from the provider
@@ -217,12 +218,13 @@ const TOOL_RUNNERS: Record<string, ToolRunner> = {
   // values, the rules of an input image, and the limits that Dez knows from
   // other places than the provider's data. For a media model it asks the
   // provider for the price of one request with those values, or for the
-  // model's price records; that costs nothing. A failed price request does
-  // not fail the call.
+  // model's price records, unless `only` leaves out `cost`; that costs
+  // nothing. A failed price request does not fail the call.
   async model_info (args, signal, context) {
-    const part = modelInfoPart(args)
+    const selection = modelInfoSelection(args)
+    const only = selection && 'only' in selection ? selection.only : undefined
     let found = await modelInfoLookup(args, context.model)
-    if (found.entry === undefined) {
+    if (found.entry === undefined && !only) {
       await untilAborted(() => sbp('dez.controller/modelCache/refresh', { providerIds: [found.provider.id], force: true }) as Promise<void>, signal)
       found = await modelInfoLookup(args, context.model)
     }
@@ -246,7 +248,7 @@ const TOOL_RUNNERS: Record<string, ToolRunner> = {
     if (mediaEntry !== undefined) facts.mediaEntry = mediaEntry
 
     const kind = effectiveRequest(model)
-    if (kind !== 'chat' && kind !== 'none') {
+    if (kind !== 'chat' && kind !== 'none' && (!only || only.includes('cost'))) {
       try {
         const quote = await untilAborted(() => sbp('dez.provider/mediaQuote', { ...ref, kind, parameters: values }) as Promise<ProviderMediaQuote | null>, signal)
         if (quote?.usd !== undefined) facts.cost = { usd: quote.usd, ...(quote.note !== undefined && { note: quote.note }) }
@@ -260,7 +262,7 @@ const TOOL_RUNNERS: Record<string, ToolRunner> = {
         facts.cost = { error: 'The price request to the provider failed. Help › Developer Console shows why.' }
       }
     }
-    return modelInfoText(provider, model, facts, part)
+    return modelInfoText(provider, model, facts, selection)
   },
   // The `audio` tool (audioTool.ts). `clip` cuts a part of an audio clip of
   // the conversation into a new stored WAV clip in the reply; ffmpeg does

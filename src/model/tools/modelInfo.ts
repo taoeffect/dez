@@ -9,6 +9,7 @@ import { imageRulesWithLearnedLimit } from '../providers/learnedImageLimit'
 import type { ParameterValues } from '../providers/modelParameters'
 import { effectiveRequest, MODEL_REQUESTS, type ModelInfo, type ProviderInfo, type ProviderInputImageRules } from '../providers/types'
 import { unstoredOutputMessage, unusableModelMessage } from '../providers/unusableModel'
+import { unknownValuesText } from './arguments'
 import { jsonWithoutLocalPaths } from './localPaths'
 import { FIND_MODELS, listedModel, namedModelTarget, type ModelTarget } from './modelArguments'
 import { modelUsage } from './modelUsage'
@@ -24,6 +25,16 @@ export const MODEL_INFO_SIZE_CAP = 50_000
 export const MODEL_INFO_PARTS = ['providerEntry', 'mediaEntry', 'priceEntry'] as const
 
 export type ModelInfoPart = (typeof MODEL_INFO_PARTS)[number]
+
+/** The parts of a `model_info` result that the `only` argument names:
+ *  `usage`, and `parameters` and `cost` of `dez`. */
+export const MODEL_INFO_ONLY_VALUES = ['usage', 'parameters', 'cost'] as const
+
+export type ModelInfoOnlyValue = (typeof MODEL_INFO_ONLY_VALUES)[number]
+
+/** What a `model_info` call asks for in place of the whole result: one
+ *  entry of the provider (`part`), or only some of the facts (`only`). */
+export type ModelInfoSelection = { part: ModelInfoPart } | { only: readonly ModelInfoOnlyValue[] }
 
 // The description comes from static tables only (no counts, no dates, no
 // random values): the tools array is in the provider's prompt cache, so it
@@ -84,6 +95,16 @@ export const MODEL_INFO_TOOL: ToolDefinition = {
         + 'the result is then only `id` and that entry. Use it for an entry that `note` names as left out.',
       required: false,
     },
+    {
+      name: 'only',
+      type: 'string',
+      description: `Parts of the result to give alone: a comma list of ${MODEL_INFO_ONLY_VALUES.join(', ')}, as in "usage,cost". `
+        + '`parameters` and `cost` are `dez.parameters` and `dez.cost`. '
+        + 'The result is then only `id` and those parts, which is much shorter than the whole result. '
+        + 'Use it when you need only these parts, for example the price of a request with other `parameters` values. '
+        + 'Do not use it with `part`.',
+      required: false,
+    },
   ],
 }
 
@@ -137,14 +158,29 @@ export function modelInfoTarget(cache: ModelCache, providers: readonly ProviderI
     + `To get the info of another model, give its full id in \`model\`. ${FIND_MODELS}`)
 }
 
-/** The entry that the `part` argument of a call names; undefined for a
- *  call with no `part`. Throws for a name that is no entry; the model reads
- *  the error. */
-export function modelInfoPart(args: ToolArguments): ModelInfoPart | undefined {
-  if (args.part === undefined) return undefined
-  const part = MODEL_INFO_PARTS.find((name) => name === args.part)
-  if (!part) throw new ToolError(`${JSON.stringify(args.part)} is not an entry of a model_info result. Use one of: ${MODEL_INFO_PARTS.join(', ')}.`)
-  return part
+/** What the `part` or the `only` argument of a call asks for; undefined for
+ *  a call with neither. Throws for a `part` that is no entry, for an `only`
+ *  that names no part or a word that is no part, and for a call with both;
+ *  the model reads the error. `only` takes the words in any case and order,
+ *  split at commas and white space, as `model_list` takes its type lists;
+ *  the selection has them in result order. */
+export function modelInfoSelection(args: ToolArguments): ModelInfoSelection | undefined {
+  if (args.part !== undefined && args.only !== undefined) {
+    throw new ToolError('Use `part` or `only`, not both: `part` gives one entry of the provider, and `only` gives `usage`, `dez.parameters`, or `dez.cost`.')
+  }
+  if (args.part !== undefined) {
+    const part = MODEL_INFO_PARTS.find((name) => name === args.part)
+    if (!part) throw new ToolError(`${JSON.stringify(args.part)} is not an entry of a model_info result. Use one of: ${MODEL_INFO_PARTS.join(', ')}.`)
+    return { part }
+  }
+  if (args.only === undefined) return undefined
+
+  const valid = `a comma list of: ${MODEL_INFO_ONLY_VALUES.join(', ')}`
+  const words = String(args.only).toLowerCase().split(/[\s,]+/).filter((word) => word !== '')
+  if (words.length === 0) throw new ToolError(`\`only\` names no part. Use ${valid}, or leave out \`only\` to get the whole result.`)
+  const unknown = [...new Set(words.filter((word) => !MODEL_INFO_ONLY_VALUES.some((value) => value === word)))]
+  if (unknown.length > 0) throw new ToolError(unknownValuesText('only', unknown, valid))
+  return { only: MODEL_INFO_ONLY_VALUES.filter((value) => words.includes(value)) }
 }
 
 function prettyJson(value: unknown): string {
@@ -244,14 +280,36 @@ function partText(id: string, part: ModelInfoPart, value: unknown): string {
   return cut(low)
 }
 
+// What the result with `only` says of a named part of `dez` that the model
+// does not have, so that the model does not look for it again.
+const MISSING_ONLY_TEXTS = {
+  parameters: 'Dez knows no parameters of this model.',
+  cost: 'Dez has no price of one request of this model. Call model_info without `only` to get the provider\'s entries, which can hold its prices.',
+} as const
+
+// The result with `only`: the id and the parts that it names, under their
+// names in the whole result. It has no entry, so it never needs the cap.
+function onlyText(id: string, dez: Readonly<Record<string, unknown>>, usage: readonly string[], only: readonly ModelInfoOnlyValue[]): string {
+  const named = (['parameters', 'cost'] as const).filter((name) => only.includes(name))
+  const kept = named.filter((name) => dez[name] !== undefined)
+  const notes = named.filter((name) => dez[name] === undefined).map((name) => MISSING_ONLY_TEXTS[name])
+  return prettyJson({
+    id,
+    ...(kept.length > 0 && { dez: Object.fromEntries(kept.map((name) => [name, dez[name]])) }),
+    ...(only.includes('usage') && { usage }),
+    ...(notes.length > 0 && { note: notes.join(' ') }),
+  })
+}
+
 /** The `model_info` result for a model: pretty JSON with its full id, name,
  *  provider, the facts that Dez uses (`dez`), how to use it (`usage`), and
  *  the provider's entries (`facts.entry` as `providerEntry`, `mediaEntry`,
- *  `priceEntry`). `dez` and `usage` are always in it. An entry is left out
- *  when the result would be over MODEL_INFO_SIZE_CAP characters with it, and
- *  `note` names each left-out entry with its size. With `part`, the result
- *  is only the id and that entry (`partText`); it throws when the model has
- *  no such entry.
+ *  `priceEntry`). The whole result always has `dez` and `usage`. An entry
+ *  is left out when the result would be over MODEL_INFO_SIZE_CAP characters
+ *  with it, and `note` names each left-out entry with its size. With a
+ *  `part` selection, the result is only the id and that entry (`partText`);
+ *  it throws when the model has no such entry. With `only`, it is only the
+ *  id and the parts that `only` names (`onlyText`).
  *
  *  The local file paths in the entries go as stand-ins (localPaths.ts).
  *  This is done here, and not when a request is built, because the result
@@ -259,15 +317,14 @@ function partText(id: string, part: ModelInfoPart, value: unknown): string {
  *  needs the same bytes in each later request. The model's own id and name
  *  stay as they are, even when a local server uses a path as the id: Dez
  *  needs the id to call the model, and `model_list` gives both. */
-export function modelInfoText(provider: ProviderInfo, model: ModelInfo, facts: ModelInfoFacts = {}, part?: ModelInfoPart): string {
+export function modelInfoText(provider: ProviderInfo, model: ModelInfo, facts: ModelInfoFacts = {}, selection?: ModelInfoSelection): string {
   const id = modelRefKey({ providerId: provider.id, modelId: model.id })
   const raw: Record<ModelInfoPart, unknown> = { providerEntry: facts.entry, mediaEntry: facts.mediaEntry, priceEntry: facts.priceEntry }
-  const entries = MODEL_INFO_PARTS.flatMap((name) => (raw[name] === undefined ? [] : [{ name, value: jsonWithoutLocalPaths(raw[name]) }]))
 
-  if (part !== undefined) {
-    const entry = entries.find(({ name }) => name === part)
-    if (!entry) throw new ToolError(`Dez has no ${part} for this model now. Call model_info without \`part\` to see which entries it has.`)
-    return partText(id, part, entry.value)
+  if (selection && 'part' in selection) {
+    const { part } = selection
+    if (raw[part] === undefined) throw new ToolError(`Dez has no ${part} for this model now. Call model_info without \`part\` to see which entries it has.`)
+    return partText(id, part, jsonWithoutLocalPaths(raw[part]))
   }
 
   // The image rules of a model can depend on its parameter values
@@ -279,13 +336,12 @@ export function modelInfoText(provider: ProviderInfo, model: ModelInfo, facts: M
   const ownImages = inputImageRulesFor(model.images, facts.values ?? {})
   const images = kind === 'chat' || kind === 'none' ? ownImages : imageRulesWithLearnedLimit(kind, ownImages, model.learnedImageLimit)
   const requestModel: ModelInfo = { ...model, ...(images && { images }) }
-  const info = {
-    id,
-    name: model.name,
-    provider: { id: provider.id, name: provider.name },
-    dez: dezFacts(requestModel, facts, provider.supportsThinking),
-    usage: modelUsage(requestModel, { toggles: facts.toggles ?? [], inputImages: facts.inputImages ?? {} }),
-  }
+  const dez = dezFacts(requestModel, facts, provider.supportsThinking)
+  const usage = modelUsage(requestModel, { toggles: facts.toggles ?? [], inputImages: facts.inputImages ?? {} })
+  if (selection) return onlyText(id, dez, usage, selection.only)
+
+  const info = { id, name: model.name, provider: { id: provider.id, name: provider.name }, dez, usage }
+  const entries = MODEL_INFO_PARTS.flatMap((name) => (raw[name] === undefined ? [] : [{ name, value: jsonWithoutLocalPaths(raw[name]) }]))
   const noEntry = facts.entry === undefined ? ['Dez has no entry from the provider\'s model list for this model now. Try again later.'] : []
   const sizes = new Map(entries.map(({ name, value }) => [name, prettyJson(value).length]))
   const render = (kept: readonly ModelInfoPart[], leftOut: readonly ModelInfoPart[]) => {

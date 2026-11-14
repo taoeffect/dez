@@ -4,7 +4,7 @@ import type { ModelCache } from '../persistence/types'
 import { providerInfo } from '../providers/testing'
 import type { ModelInfo } from '../providers/types'
 import { unstoredOutputMessage, unusableModelMessage } from '../providers/unusableModel'
-import { MODEL_INFO_SIZE_CAP, modelInfoPart, modelInfoTarget, modelInfoText, type ModelInfoFacts } from './modelInfo'
+import { MODEL_INFO_SIZE_CAP, modelInfoSelection, modelInfoTarget, modelInfoText, type ModelInfoFacts } from './modelInfo'
 import { modelUsage, USAGE_TEXTS } from './modelUsage'
 import { ToolError } from './types'
 
@@ -92,14 +92,37 @@ describe('modelInfoTarget', () => {
   })
 })
 
-describe('modelInfoPart', () => {
-  it('reads the entry that `part` names, and none for a call with no `part`', () => {
-    expect(modelInfoPart({ model: 'openrouter/m', part: 'mediaEntry' })).toBe('mediaEntry')
-    expect(modelInfoPart({ model: 'openrouter/m' })).toBeUndefined()
+describe('modelInfoSelection', () => {
+  it('reads the entry that `part` names, and none for a call with no `part` and no `only`', () => {
+    expect(modelInfoSelection({ model: 'openrouter/m', part: 'mediaEntry' })).toStrictEqual({ part: 'mediaEntry' })
+    expect(modelInfoSelection({ model: 'openrouter/m' })).toBeUndefined()
   })
 
   it.each(['dez', 'usage', '', 'providerentry'])('refuses %j, which is no entry', (part) => {
-    expect(() => modelInfoPart({ part })).toThrow(`${JSON.stringify(part)} is not an entry of a model_info result. Use one of: providerEntry, mediaEntry, priceEntry.`)
+    expect(() => modelInfoSelection({ part })).toThrow(new ToolError(`${JSON.stringify(part)} is not an entry of a model_info result. Use one of: providerEntry, mediaEntry, priceEntry.`))
+  })
+
+  it.each([
+    ['cost', ['cost']],
+    ['Cost, usage', ['usage', 'cost']],
+    ['parameters cost,usage', ['usage', 'parameters', 'cost']],
+    [' ,usage,, usage ', ['usage']],
+  ])('reads the parts that `only` %j names, in result order', (only, parts) => {
+    expect(modelInfoSelection({ only })).toStrictEqual({ only: parts })
+  })
+
+  it.each(['', ' , '])('refuses an `only` of %j, which names no part', (only) => {
+    expect(() => modelInfoSelection({ only })).toThrow(new ToolError('`only` names no part. Use a comma list of: usage, parameters, cost, or leave out `only` to get the whole result.'))
+  })
+
+  it('refuses an `only` with words that are no part, and names each once', () => {
+    expect(() => modelInfoSelection({ only: 'usage, dez.cost, price, price' }))
+      .toThrow(new ToolError('Unknown values "dez.cost", "price" in `only`. Use a comma list of: usage, parameters, cost.'))
+  })
+
+  it('refuses a call with both `part` and `only`', () => {
+    expect(() => modelInfoSelection({ part: 'providerEntry', only: 'usage' }))
+      .toThrow(new ToolError('Use `part` or `only`, not both: `part` gives one entry of the provider, and `only` gives `usage`, `dez.parameters`, or `dez.cost`.'))
   })
 })
 
@@ -330,12 +353,12 @@ describe('modelInfoText', () => {
 
   describe('with `part`', () => {
     it('gives only the id and that entry', () => {
-      expect(modelInfoText(OPENROUTER, VIDEO, { entry: { id: 'v' }, mediaEntry: { id: 'm' } }, 'mediaEntry'))
+      expect(modelInfoText(OPENROUTER, VIDEO, { entry: { id: 'v' }, mediaEntry: { id: 'm' } }, { part: 'mediaEntry' }))
         .toBe(JSON.stringify({ id: 'openrouter/x-ai/grok-video', mediaEntry: { id: 'm' } }, null, 2))
     })
 
     it('refuses an entry that the model does not have', () => {
-      expect(() => modelInfoText(OPENROUTER, VIDEO, { entry: { id: 'v' } }, 'priceEntry'))
+      expect(() => modelInfoText(OPENROUTER, VIDEO, { entry: { id: 'v' } }, { part: 'priceEntry' }))
         .toThrow('Dez has no priceEntry for this model now. Call model_info without `part` to see which entries it has.')
     })
 
@@ -345,7 +368,7 @@ describe('modelInfoText', () => {
       const big = { lines: Array.from({ length: 2300 }, (_, index) => `"line" ${index}`) }
       const entryText = JSON.stringify(big, null, 2)
       const wholeLength = JSON.stringify({ id: 'openrouter/x-ai/grok-video', providerEntry: big }, null, 2).length
-      const text = modelInfoText(OPENROUTER, VIDEO, { entry: big }, 'providerEntry')
+      const text = modelInfoText(OPENROUTER, VIDEO, { entry: big }, { part: 'providerEntry' })
       const result = JSON.parse(text) as { providerEntry: string, note: string }
 
       expect(entryText.length).toBeLessThan(MODEL_INFO_SIZE_CAP)
@@ -357,6 +380,46 @@ describe('modelInfoText', () => {
       // (an escape such as `\n` or `\"`).
       expect(text.length).toBeLessThanOrEqual(MODEL_INFO_SIZE_CAP)
       expect(text.length).toBeGreaterThan(MODEL_INFO_SIZE_CAP - 2)
+    })
+  })
+
+  describe('with `only`', () => {
+    const values = { duration: 5, duration_seconds: 5 }
+    const all: ModelInfoFacts = { entry: { id: 'x-ai/grok-video' }, values, cost: { usd: 0.1 }, mediaEntry: { id: 'm' }, priceEntry: [{ cost: 0.04 }], limits: [{ text: 'At most 2 images.', source: 'A test' }] }
+    const parameters = [
+      { name: 'duration', label: 'Length (seconds)', options: [1, 5, 10], default: 1, value: 5 },
+      { name: 'aspect_ratio', label: 'Aspect ratio', options: ['16:9', '1:1'] },
+      { name: 'duration_seconds', label: 'Length (seconds)', min: 1, max: 30, default: 5, value: 5 },
+    ]
+
+    it('gives only the id and the named parts, under their names in the whole result, with no entry', () => {
+      expect(modelInfoText(OPENROUTER, VIDEO, all, { only: ['usage', 'parameters', 'cost'] })).toBe(JSON.stringify({
+        id: 'openrouter/x-ai/grok-video',
+        dez: { parameters, cost: { usd: 0.1 } },
+        usage: modelUsage(VIDEO, { toggles: [], inputImages: {} }),
+      }, null, 2))
+      expect(modelInfoText(OPENROUTER, VIDEO, all, { only: ['cost'] })).toBe(JSON.stringify({ id: 'openrouter/x-ai/grok-video', dez: { cost: { usd: 0.1 } } }, null, 2))
+      expect(modelInfoText(OPENROUTER, VIDEO, all, { only: ['usage'] }))
+        .toBe(JSON.stringify({ id: 'openrouter/x-ai/grok-video', usage: modelUsage(VIDEO, { toggles: [], inputImages: {} }) }, null, 2))
+    })
+
+    it('gives a price error as the cost', () => {
+      expect(parsed(modelInfoText(OPENROUTER, VIDEO, { ...all, cost: { error: 'No answer' } }, { only: ['cost'] })).dez).toStrictEqual({ cost: { error: 'No answer' } })
+    })
+
+    // No note when Dez has no provider entry: the result holds no entry.
+    it('names in `note` each named part of `dez` that the model does not have', () => {
+      expect(JSON.parse(modelInfoText(OPENROUTER, GEMINI, {}, { only: ['usage', 'parameters', 'cost'] }))).toStrictEqual({
+        id: 'openrouter/google/gemini-3-pro',
+        usage: modelUsage(GEMINI, chatFacts),
+        note: 'Dez knows no parameters of this model. '
+          + 'Dez has no price of one request of this model. Call model_info without `only` to get the provider\'s entries, which can hold its prices.',
+      })
+      expect(JSON.parse(modelInfoText(OPENROUTER, VIDEO, { ...all, cost: undefined }, { only: ['parameters', 'cost'] }))).toStrictEqual({
+        id: 'openrouter/x-ai/grok-video',
+        dez: { parameters },
+        note: 'Dez has no price of one request of this model. Call model_info without `only` to get the provider\'s entries, which can hold its prices.',
+      })
     })
   })
 
