@@ -107,8 +107,9 @@ describe('assetPlaces', () => {
     expect(placeOf([reply], 'b')?.origin).toStrictEqual({ kind: 'call', tool: 'image', label: 'crop {\'image\': \'a\', \'width\': 10}' })
   })
 
-  it('names only the tool when no block of the section tells more', () => {
-    expect(placeOf([section('agent', toolImage('b', 'audio', 'j-gone'))], 'b')).toStrictEqual({ origin: { kind: 'call', tool: 'audio', label: '' }, hidden: false })
+  it('names only the job or the tool when no block of the section tells more', () => {
+    expect(placeOf([section('agent', toolImage('b', 'model_invoke', 'j-gone'))], 'b')).toStrictEqual({ origin: { kind: 'job', tool: 'model_invoke', number: null, label: '' }, hidden: false })
+    expect(placeOf([section('agent', toolImage('b', 'image'))], 'b')).toStrictEqual({ origin: { kind: 'call', tool: 'image', label: '' }, hidden: false })
   })
 
   it('takes the last of two assets with one id, and an image over a clip', () => {

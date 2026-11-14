@@ -48,9 +48,11 @@ interface ToolMarks {
 //    the arguments of its call;
 // 2. the result of a `jobs_wait` block that names its job or the asset (an
 //    asset of a job whose block is gone, or that has no job mark);
-// 3. the result of another block that names the asset (an `image` or an
+// 3. for an asset with a job mark, that job alone (its blocks are gone, so
+//    its number and its call are not known);
+// 4. the result of another block that names the asset (an `image` or an
 //    `audio clip` call, which makes it in its call);
-// 4. the tool mark alone.
+// 5. the tool mark alone.
 function toolOrigin(id: string, marks: ToolMarks, blocks: readonly ToolBlock[]): AssetOrigin {
   const { tool, jobId } = marks
   if (jobId !== null) {
@@ -64,6 +66,7 @@ function toolOrigin(id: string, marks: ToolMarks, blocks: readonly ToolBlock[]):
     const part = jobsWaitResults(block.result).find((result) => result.id === jobId || madeAssetIds(result.text).includes(id))
     if (part) return { kind: 'job', tool: part.tool, number: part.call.number, label: part.call.label }
   }
+  if (jobId !== null) return { kind: 'job', tool, number: null, label: '' }
   const call = blocks.find((block) => block.name !== JOBS_WAIT_TOOL.name && madeAssetIds(block.result).includes(id))
   return { kind: 'call', tool, label: call ? callLabel(call.name, call.arguments) : '' }
 }
