@@ -229,7 +229,6 @@ Rules:
 - `key_store.rs`: `provider_keys.json`. `copilot.rs`: Copilot device flow and token refresh.
 - `lib.rs`: plugins, permission reasons, app bootstrap, and the quit hook (`RunEvent::Exit`) that stops the bundled tools.
 - `../tauri.linux.conf.json`: the Linux copy of the main window, with Tauri's native file drop on (a test in `lib.rs` keeps the two windows the same otherwise).
-- `../tauri.conf.json` `app.macOSPrivateApi` and the `macos-private-api` feature of the `tauri` crate (`Cargo.toml`) go together: they turn on element fullscreen in WKWebView, for the media player.
 - `../binaries/`: the ffmpeg and ffprobe programs that Dez ships, one pair per build target (Git LFS), with `manifest.json` (their release, sizes, and SHA-256) and `NOTICE.md` (their license); only `scripts/update-ffmpeg.js` writes this folder. `bundle.externalBin` (`../tauri.conf.json`), the one list of the programs, puts them next to the Dez program as `dez-ffmpeg` and `dez-ffprobe`; `../build.rs` reads that list, stops a build whose programs are not the files of the manifest, and gives the list to `bundled_tools.rs`.
 
 ## Persistence layout
@@ -301,7 +300,6 @@ Do not ever read, view, print, or `cat` `~/.config/dez/provider_keys.json`; it c
 - **The card of a video holds a second, empty `<video>`** (`.media-player__stand-in`, `MediaPlayer.vue`): on macOS it keeps WebKit's text recognition view, which takes every click, off a fullscreen clip. Keep it with no source, larger than the clip's video, and after it in the DOM.
 - **The model picker draws only the rows in view** (`virtua`): a far row has no DOM. The rows set `pointer-events: auto`, because virtua turns pointer events off on its box for a moment after a scroll; a new clickable row kind needs the same.
 - **File drops differ by platform**: WebKitGTK gives the page no dropped `File`, so Linux uses Tauri's native drop (`tauri.linux.conf.json`, `dez.controller/images/watchFileDrops`); macOS keeps HTML5 drops, as the native drop would take text drags too, and pairs each `File` with a path of the drag pasteboard by name and size (`dez.controller/images/droppedFilePaths`; only a Mac can test it). A drop copies a file from a temp folder or a Dez folder, and any file dropped into an agent section; it links any other file (`src/model/chat/linkedFiles.ts`, `imageInsert.ts`). `AppLayout.vue` refuses file drops that no handler took.
-- **Read monitors with `dez.native/monitors`**, never the window API's `availableMonitors()`, `primaryMonitor()`, or `currentMonitor()`: in Tauri 2.10 those call GDK off the main thread and can crash the app on X11 (`monitors` in `commands.rs`).
 - **Shortcut key order differs by platform**: on Linux the menu accelerator gets the key first; put context checks in the selector both paths call, never only in a key handler.
 - **Never hard-code a shortcut key**: every binding path (window handler, CodeMirror keymap, find field, menu accelerators, button titles and keycaps) reads the effective keys from `src/model/shortcuts.ts` and the settings store.
 - **CSP disabled**: `"csp": null` in `tauri.conf.json` on purpose during development.
@@ -309,6 +307,7 @@ Do not ever read, view, print, or `cat` `~/.config/dez/provider_keys.json`; it c
 - **`@tauri-apps/plugin-store` is unused**: app files use Dez's own Rust file I/O.
 - **Secrets wrapper is not a vault**: `src/utils/secret.ts`; never log provider headers, native HTTP payloads, or diagnostics without sanitization.
 - **Sounds and the ffmpeg programs are in Git LFS**: clone with LFS (`git lfs pull`). A pointer file in place of a sound builds with no error, and only `play()` fails (the e2e guard in `tests/e2e/notifications.e2e.ts` catches it); a pointer file in place of a program stops the build (`src-tauri/build.rs`).
+- **tauri-build puts the bundled programs next to a debug build**: keep it at 2.7 or newer; an older one copies them into a wrong folder with the build folder layout of Rust 1.100, and every run of a program fails as "missing" (`src-tauri/Cargo.toml`).
 - When using the `agentic_fetch` tool:
   - If searching the web, *ALWAYS* tell the tool to never use local tools like Grep, and only search the web
   - If searching local folders, *ALWAYS* tell the tool to restrict its searches to this folder only and to never search outside of it

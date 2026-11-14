@@ -73,7 +73,6 @@ pub fn run() {
             commands::canonical_path,
             commands::dragged_file_paths,
             commands::is_window_fullscreen,
-            commands::monitors,
             commands::gdk_backend,
             commands::open_devtools,
             notification::show_notification,

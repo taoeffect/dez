@@ -164,6 +164,19 @@ export default sbp('sbp/selectors/register', {
           ...(isMacPlatform ? [] : [SEPARATOR, checkForUpdates, about]),
         ],
       })
+      const windowMenu = await Submenu.new({
+        text: 'Window',
+        items: [
+          ...(isMacPlatform ? [{ item: 'Minimize' }, { item: 'Maximize', text: 'Zoom' }, SEPARATOR] satisfies PredefinedMenuItemOptions[] : []),
+          await shortcutMenuItem(shortcuts, 'previousTab', { text: 'Previous Tab', action: () => sbp('dez.model/tabs/cycle', -1) }),
+          await shortcutMenuItem(shortcuts, 'nextTab', { text: 'Next Tab', action: () => sbp('dez.model/tabs/cycle', 1) }),
+          SEPARATOR,
+          ...await Promise.all(([1, 2, 3, 4, 5, 6, 7, 8, 9] as const).map((n) => shortcutMenuItem(shortcuts, `goToTab${n}`, {
+            text: `Tab ${n}`,
+            action: () => sbp('dez.model/tabs/switchToIndex', n - 1),
+          }))),
+        ],
+      })
       const menu = await Menu.new({
         items: [
           ...(isMacPlatform
@@ -278,26 +291,19 @@ export default sbp('sbp/selectors/register', {
               }),
             ],
           },
-          {
-            text: 'Window',
-            items: [
-              ...(isMacPlatform ? [{ item: 'Minimize' }, { item: 'Maximize', text: 'Zoom' }, SEPARATOR] satisfies PredefinedMenuItemOptions[] : []),
-              await shortcutMenuItem(shortcuts, 'previousTab', { text: 'Previous Tab', action: () => sbp('dez.model/tabs/cycle', -1) }),
-              await shortcutMenuItem(shortcuts, 'nextTab', { text: 'Next Tab', action: () => sbp('dez.model/tabs/cycle', 1) }),
-              SEPARATOR,
-              ...await Promise.all(([1, 2, 3, 4, 5, 6, 7, 8, 9] as const).map((n) => shortcutMenuItem(shortcuts, `goToTab${n}`, {
-                text: `Tab ${n}`,
-                action: () => sbp('dez.model/tabs/switchToIndex', n - 1),
-              }))),
-            ],
-          },
+          windowMenu,
           help,
         ],
       })
       await menu.setAsAppMenu()
-      // Tauri 2.10.3's `set_as_windows_menu_for_nsapp` command sets the help
-      // menu instead (menu/plugin.rs), so the Window menu is not registered.
-      if (isMacPlatform) await help.setAsHelpMenuForNSApp()
+      // macOS adds its own items to the menus that NSApp knows as the Window
+      // menu (the list of the app's windows) and the Help menu. muda finds
+      // the NSMenu of a submenu through the current app menu, so these calls
+      // come after `setAsAppMenu`.
+      if (isMacPlatform) {
+        await windowMenu.setAsWindowsMenuForNSApp()
+        await help.setAsHelpMenuForNSApp()
+      }
       // `immediate` also applies a key change made while the menu was built.
       watch(() => sbp('dez.model/settings/shortcuts') as readonly Shortcut[], () => {
         void sbp('okTurtles.eventQueue/queueEvent', 'dez.controller/menu/accelerators', updateAccelerators)

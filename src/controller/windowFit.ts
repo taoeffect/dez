@@ -6,7 +6,7 @@
 //
 // Positions and monitor areas are in the coordinates that the window system
 // uses for every screen: physical px, but logical points on macOS (see
-// `screenInPoints`).
+// `workAreaInPoints`).
 
 export interface Point {
   x: number
@@ -24,12 +24,6 @@ export interface MonitorArea {
   workArea: { position: Point; size: Extent }
   /** What one logical px is in the work area's coordinates. */
   scaleFactor: number
-}
-
-// A Tauri `Monitor`, all in physical px.
-export interface MonitorInfo extends MonitorArea {
-  position: Point
-  size: Extent
 }
 
 export interface WindowPlacement {
@@ -123,17 +117,14 @@ export function fitWindowGeometry(request: WindowPlacement, options: WindowFitOp
 // On macOS all screens share one coordinate space, in logical points, and
 // Tauri gives each monitor in physical px at the monitor's own scale factor:
 // with a Retina and a non-Retina screen, those physical rects overlap. So
-// on macOS the fit runs in points. It uses the whole screen, not the work
-// area: Tauri 2.10 puts the macOS work area at the top of the screen, over
-// the menu bar, which would move a window at the bottom of the screen up at
-// each launch. AppKit itself keeps a title bar below the menu bar.
-// https://github.com/tauri-apps/tauri/pull/14655 (fixed in Tauri 2.11)
-export function screenInPoints(monitor: MonitorInfo): MonitorArea {
+// on macOS the fit runs in points.
+export function workAreaInPoints(monitor: MonitorArea): MonitorArea {
+  const { position, size } = monitor.workArea
   const scale = monitor.scaleFactor
   return {
     workArea: {
-      position: { x: monitor.position.x / scale, y: monitor.position.y / scale },
-      size: { width: monitor.size.width / scale, height: monitor.size.height / scale },
+      position: { x: position.x / scale, y: position.y / scale },
+      size: { width: size.width / scale, height: size.height / scale },
     },
     scaleFactor: 1,
   }

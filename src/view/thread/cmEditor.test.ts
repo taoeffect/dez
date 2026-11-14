@@ -2,7 +2,7 @@ import { defaultKeymap, deleteCharForward, history, redo, undo, undoDepth } from
 import { ensureSyntaxTree } from '@codemirror/language'
 import { EditorSelection, EditorState, Transaction, type TransactionSpec } from '@codemirror/state'
 import { EditorView, keymap, runScopeHandlers } from '@codemirror/view'
-import { describe, expect, it } from 'vitest'
+import { describe, expect, it, vi } from 'vitest'
 import {
   PILL_BODY,
   PILL_CLOSE,
@@ -44,6 +44,13 @@ import { SENTINEL_CHAR, sectionVisibleText } from '../../model/chat/content'
 import type { ContentNode, ModelRef, Role, Section, SectionThinking } from '../../model/chat/types'
 import { toolBlockText } from '../../model/chat/toolBlocks'
 import { serializeConversationAsMarkdown } from '../../model/persistence/conversationFormat'
+
+// CodeMirror reads `navigator.platform` once, when it loads, to pick the
+// platform of its keymaps (Node gives `MacIntel` on macOS). The Linux keymap
+// tests need the Linux bindings, so this file runs as Linux on every host.
+vi.hoisted(() => {
+  vi.stubGlobal('navigator', { platform: 'Linux x86_64', userAgent: '', vendor: '', maxTouchPoints: 0 })
+})
 
 function textNode(text: string): ContentNode {
   return { kind: 'text', text }
