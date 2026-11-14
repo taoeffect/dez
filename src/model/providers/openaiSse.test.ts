@@ -372,6 +372,49 @@ describe('OpenAiStreamParser images', () => {
   })
 })
 
+describe('OpenAiStreamParser audio', () => {
+  // The shape of a live GPT Audio Mini answer on OpenRouter (2026-11-14),
+  // with short values: the transcript and the data come in pieces.
+  const VOICE_ANSWER = [
+    chunk({ role: 'assistant', content: '', audio: { id: 'audio_1', transcript: 'Hello' } }),
+    chunk({ audio: { transcript: ' there.' } }),
+    chunk({ audio: { data: 'AQA' } }),
+    chunk({ audio: { data: 'CAAMA' } }),
+    chunk({ audio: { expires_at: 1763424000 } }, 'stop'),
+    '[DONE]',
+  ]
+
+  it.each([true, false])('gives the transcript as answer text, and all data pieces as one audio event at the end (thinking %s)', (thinking) => {
+    expect(run(VOICE_ANSWER, thinking).events).toStrictEqual([
+      { kind: 'token', token: 'Hello' },
+      { kind: 'token', token: ' there.' },
+      { kind: 'done' },
+      { kind: 'audio', data: 'AQACAAMA' },
+    ])
+  })
+
+  it('gives the text of a chunk before its transcript', () => {
+    expect(joined(run([chunk({ content: 'A', audio: { transcript: 'B' } }, 'stop')]).events))
+      .toStrictEqual([{ kind: 'token', token: 'AB' }])
+  })
+
+  it.each([
+    ['was cut off', VOICE_ANSWER.slice(0, 4)],
+    ['failed', [...VOICE_ANSWER.slice(0, 4), JSON.stringify({ error: { message: 'Overloaded' }, choices: [{ index: 0, delta: { content: '' }, finish_reason: 'error' }] })]],
+  ])('gives no audio for a stream that %s', (_name, payloads) => {
+    expect(run(payloads).end.events).toStrictEqual([])
+  })
+
+  it.each([
+    ['no data', { transcript: 'Hi' }],
+    ['empty data', { data: '' }],
+    ['data that is no text', { data: 7 }],
+    ['an audio field that is no object', 'AQACAAMA'],
+  ])('gives no audio for %s', (_name, audio) => {
+    expect(run([chunk({ audio }, 'stop'), '[DONE]']).end.events).toStrictEqual([])
+  })
+})
+
 describe('OpenAiStreamParser usage', () => {
   // The last chunks of a live Venice stream (2026-11-14): the usage comes
   // on a chunk with no choices, and the price is a top-level `cost` with a

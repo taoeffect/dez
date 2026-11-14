@@ -168,7 +168,7 @@ function cloneProviderConfig(config: ProviderConfig): ProviderConfig {
     id, name, baseUrl, apiFormat, models, fetchModels, modelListQuery, modelImageInput, modelToolCalling,
     modelThinking, modelOutputs, modelReadableName, modelReleased, modelTokenPrices, auth, headers, imageRequestHeaders,
     maxOutputTokens, cacheBreakpoints, toolMessageCacheMark, promptCacheKey, requestBody, imageOutputBody,
-    mediaApi, settings, thinking,
+    audioOutputs, mediaApi, settings, thinking,
     ...uncopied
   } = config
   // A compile error when ProviderConfig gets a field that this clone does not
@@ -199,6 +199,7 @@ function cloneProviderConfig(config: ProviderConfig): ProviderConfig {
   if (promptCacheKey !== undefined) clone.promptCacheKey = promptCacheKey
   if (requestBody) clone.requestBody = cloneJsonObject(requestBody)
   if (imageOutputBody) clone.imageOutputBody = cloneJsonObject(imageOutputBody)
+  if (audioOutputs) clone.audioOutputs = audioOutputs.map((entry) => ({ ...entry, body: cloneJsonObject(entry.body) }))
   if (mediaApi) {
     const { format, modelRequestBodies } = mediaApi
     clone.mediaApi = {

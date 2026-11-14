@@ -24,8 +24,8 @@ export type MadeAsset =
   | { kind: 'image', path: string }
   | { kind: 'clip', clip: Omit<MediaTagData, 'id' | 'other'>, jobId?: string }
 
-/** A clip of a media request (`dez.provider/generateMedia`) as a made
- *  asset. */
+/** A clip that a provider made (a clip of a media request, or the audio
+ *  of a chat answer) as a made asset. */
 export function generatedClipAsset(clip: GeneratedClip): MadeAsset {
   return {
     kind: 'clip',

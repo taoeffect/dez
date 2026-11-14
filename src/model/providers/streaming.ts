@@ -4,7 +4,7 @@ import { decodeSseData } from '../../utils/protocol/sse'
 import { providerStatusError, providerStreamError } from './errors'
 import type { Provider, ProviderChatRequest } from './provider'
 import type { ProviderStreamChatInput, ProviderStreamChatResult } from './streamTypes'
-import type { GeneratedMedia, SseTokenEvent } from './types'
+import type { GeneratedClip, GeneratedMedia, SseTokenEvent } from './types'
 
 // A refused response's body is read to its end, and the error tells the
 // provider's text in it (`providerStatusError`; `keyed` too).
@@ -16,7 +16,9 @@ export async function assertStreamResponseOk(provider: Provider, response: Nativ
 }
 
 // Sends the answer text to `onToken`, each image to `onImage` (`readImage`
-// gives the bytes of its URL), and, when the request asked for thinking
+// gives the bytes of its URL), the audio of the answer to `onClip` when the
+// request asked for audio (`saveAudio` writes its file; with none, the
+// audio is dropped), and, when the request asked for thinking
 // (`requestThinking`), the thinking to `onThinking`. Returns the replay of a
 // complete thinking, for the next request, the tool calls, with the
 // Thinking toggle on or off, and what the provider told about the tokens
@@ -32,6 +34,7 @@ export async function streamProviderTokens(
   result: NativeHttpStreamResult,
   requestThinking: ProviderChatRequest['thinking'],
   readImage: (url: string) => Promise<GeneratedMedia>,
+  saveAudio: ((data: string) => Promise<GeneratedClip>) | undefined,
 ): Promise<Omit<ProviderStreamChatResult, 'requestId' | 'cost'>> {
   await assertStreamResponseOk(provider, result.response, result.chunks)
 
@@ -45,6 +48,8 @@ export async function streamProviderTokens(
         await input.onToken(event.token)
       } else if (event.kind === 'image') {
         await input.onImage(await readImage(event.url))
+      } else if (event.kind === 'audio') {
+        if (saveAudio) await input.onClip(await saveAudio(event.data))
       } else if (requestThinking) {
         await input.onThinking(event.token)
       }

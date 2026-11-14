@@ -137,6 +137,9 @@ export interface ChatInvocation extends InvocationTarget {
   /** The model makes images too: the request asks for them, as a request
    *  of the user does (`submitTab`). */
   imageOutput: boolean
+  /** The model makes audio: the request asks for it, as a request of the
+   *  user does (`submitTab`). */
+  audioOutput: boolean
   /** The user's toggles of the provider, which a request of the user to
    *  the model sends too (Thinking, web search); undefined for none. */
   providerSettings: Record<string, boolean> | undefined
@@ -244,6 +247,7 @@ export function modelInvocation(args: ToolArguments, { cache, providers, modelPa
       kind,
       content,
       imageOutput: effectiveOutputs(model).includes('image'),
+      audioOutput: effectiveOutputs(model).includes('audio'),
       providerSettings: providerSettings[provider.id],
       inputs: source.inputs,
       imageIds,

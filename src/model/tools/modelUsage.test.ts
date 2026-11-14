@@ -131,6 +131,17 @@ describe('modelUsage', () => {
         expect(modelUsage(model, NO_FACTS)[0] === USAGE_TEXTS.invokeSendsChat, request).toBe(sendsChatRequest(model))
       }
     })
+
+    it('tells that the answer can hold images or an audio clip exactly when a call asks the model for them', () => {
+      for (const outputs of [undefined, ['text'], ['text', 'image'], ['text', 'audio']] as const) {
+        const model: ModelInfo = { id: 'm', name: 'M', provider: 'p', request: 'chat', ...(outputs && { outputs: [...outputs] }) }
+        const call = invocationOf(model)
+        if (call.kind !== 'chat') throw new Error('The call went to a media model.')
+        const usage = modelUsage(model, NO_FACTS)
+
+        expect([usage.includes(USAGE_TEXTS.imageReply), usage.includes(USAGE_TEXTS.audioReply)], String(outputs)).toStrictEqual([call.imageOutput, call.audioOutput])
+      }
+    })
   })
 
   describe('of a media model', () => {

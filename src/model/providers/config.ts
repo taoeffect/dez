@@ -256,8 +256,9 @@ export const providerConfigSchema = z.object({
   // price per token, 1000000 for a price per 1M tokens). `otherRates`:
   // where the entry tells other rates of some requests (a long prompt, a
   // time of day), so that the price is only the base rate.
-  // `imageOutput`: where it holds the price of the image tokens that a
-  // chat model makes. `model_list` and `model_info` show the price.
+  // `imageOutput` and `audioOutput`: where it holds the price of the image
+  // and the audio tokens that a chat model makes. `model_list` and
+  // `model_info` show the price.
   modelTokenPrices: z.object({
     input: modelEntryPathSchema,
     output: modelEntryPathSchema,
@@ -265,6 +266,7 @@ export const providerConfigSchema = z.object({
     perTokens: z.number().positive(),
     otherRates: modelEntryPathSchema.optional(),
     imageOutput: modelEntryPathSchema.optional(),
+    audioOutput: modelEntryPathSchema.optional(),
   }).optional(),
   auth: z.enum(['apiKey', 'githubCopilot']).default('apiKey'),
   // Static headers added to every request.
@@ -300,6 +302,23 @@ export const providerConfigSchema = z.object({
   // no chat request asks for images. Only the OpenAI format reads the
   // images of a reply (openaiSse.ts).
   imageOutputBody: requestBodyPartSchema.optional(),
+  // The chat models whose known outputs hold `audio` answer with audio only
+  // when their request asks for it, and models differ in the fields of
+  // that ask. An entry is for the models whose ids start with
+  // `modelIdPrefix` (the first entry that matches wins): its `body` is
+  // merged into their chat requests right after `requestBody`, and
+  // `contentType` is the type of the audio that comes back, a file type
+  // (`audio/mpeg`), or raw PCM with its rate and channels
+  // (`audio/pcm;rate=24000`, pcmAudio.ts) and `pcmSampleBits`. A chat
+  // model that no entry names gets no ask, and its `audio` output does not
+  // count (Provider.parseModels). Only the OpenAI format reads the audio of
+  // a reply (openaiSse.ts).
+  audioOutputs: z.array(z.object({
+    modelIdPrefix: z.string().min(1),
+    body: requestBodyPartSchema,
+    contentType: z.string().toLowerCase().startsWith('audio/'),
+    pcmSampleBits: z.number().int().positive().optional(),
+  })).optional(),
   // The wire format of the provider's own image, audio, and video requests.
   // Missing: the provider has none, so its media models get no requests. A
   // request of a kind that the format does not serve fails the same way.
@@ -349,5 +368,6 @@ export type ProviderConfig = z.infer<typeof providerConfigSchema>
 export type ProviderThinkingConfig = z.infer<typeof thinkingConfigSchema>
 export type ModelCapabilityPath = z.infer<typeof modelCapabilityPathSchema>
 export type ModelOutputsConfig = z.infer<typeof modelOutputsConfigSchema>
+export type AudioOutputConfig = NonNullable<ProviderConfig['audioOutputs']>[number]
 export type MediaApiFormatId = (typeof MEDIA_API_FORMAT_IDS)[number]
 export type ProviderAuth = ProviderConfig['auth']

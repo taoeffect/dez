@@ -3,7 +3,7 @@ import { createPinia, setActivePinia } from 'pinia'
 import { afterEach, beforeEach, describe, expect, it, vi, type MockInstance } from 'vitest'
 import type { DecodedAudio } from '../chat/audioCut'
 import type { DrawnImage, DrawnMediaType, ImageDrawing, ImageSize } from '../chat/imageDrawing'
-import { ClipReadError } from '../chat/mediaFiles'
+import { ClipReadError, MEDIA_TEMP_LIFETIME_MS } from '../chat/mediaFiles'
 import type { ModelRef, Section } from '../chat/types'
 import { toolBlockText } from '../chat/toolBlocks'
 import type { ModelCache } from '../persistence/types'
@@ -16,7 +16,8 @@ import type { ClipAttachment, InputClipRules } from './clipInputs'
 import { InputImageError } from './errors'
 import type { KnownLimit } from './knownLimits'
 import type { MediaProgress, ProviderGenerateMediaResult, ProviderMediaQuote } from './streamTypes'
-import type { GeneratedMedia, ModelDisplayNames, ProviderModelsResult, ProviderSettingsDescriptor } from './types'
+import type { GeneratedClip, GeneratedMedia, ModelDisplayNames, ProviderModelsResult, ProviderSettingsDescriptor } from './types'
+import { wavFile } from './pcmAudio'
 // Side-effect imports: register the dez.model/* selectors and the selectors
 // under test.
 import '../state/index'
@@ -43,6 +44,7 @@ const jsonBody = (request: NativeHttpRequest) => JSON.parse(request.body as stri
 
 // The app folder and its stored images.
 const APP_DIR = '/home/u/.config/dez'
+const CACHE_DIR = '/home/u/.cache/dez'
 const STORED_IMAGE = Uint8Array.from([137, 80, 78, 71, 13, 10, 26, 10, 0, 255])
 const STORED_SVG = new TextEncoder().encode('<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 60 30"/>')
 // The linked files that dez.controller/images/readFile reads, by path, with
@@ -139,10 +141,17 @@ function painterStream(): string {
 const USAGE_BASE_URL = 'http://localhost:6161/v1'
 let usageChunk: Record<string, unknown> = {}
 
+// The reply of this chat server is the SSE `data:` payloads of
+// `singerPayloads`, as it is: an audio answer.
+const SINGER_BASE_URL = 'http://localhost:6262/v1'
+let singerPayloads: string[] = []
+
 // The answer of a server to a non-stream request, by URL: a status and the
 // JSON of the body. A URL with no entry here gets the default answers of
 // the stand-in below.
 let httpAnswers = new Map<string, { status: number, json: unknown }>()
+// The files that dez.native/saveAppFile wrote, with their roots.
+let savedFiles: Array<{ path: string, bytes: Uint8Array, root: string }> = []
 let consoleError: MockInstance<typeof console.error>
 
 // Stand-ins for the native layer: the key store cannot be read.
@@ -164,8 +173,11 @@ sbp('sbp/selectors/register', {
     const body = new TextEncoder().encode(JSON.stringify({ data: [{ id: 'served-model' }] }))
     return { status: 200, headers: {}, body: Array.from(body) }
   },
-  async 'dez.native/getAppDir' (): Promise<string> {
-    return APP_DIR
+  async 'dez.native/getAppDir' (root = 'app'): Promise<string> {
+    return root === 'cache' ? CACHE_DIR : APP_DIR
+  },
+  async 'dez.native/saveAppFile' (path: string, content: Uint8Array, root = 'app'): Promise<void> {
+    savedFiles.push({ path, bytes: content, root })
   },
   async 'dez.native/loadAppFileBytes' (path: string): Promise<Uint8Array> {
     imageReads.push(path)
@@ -230,9 +242,11 @@ sbp('sbp/selectors/register', {
               ? BROKEN_STREAM
               : request.url.startsWith(PAINTER_BASE_URL)
                 ? painterStream()
-                : request.url.startsWith(USAGE_BASE_URL)
-                  ? `data: {"choices":[{"delta":{"content":"Hi"},"finish_reason":"stop"}]}\n\ndata: ${JSON.stringify(usageChunk)}\n\ndata: [DONE]\n\n`
-                  : 'data: {"choices":[{"delta":{"content":"Hello"}}]}\n\ndata: [DONE]\n\n')
+                : request.url.startsWith(SINGER_BASE_URL)
+                  ? singerPayloads.map((payload) => `data: ${payload}\n\n`).join('')
+                  : request.url.startsWith(USAGE_BASE_URL)
+                    ? `data: {"choices":[{"delta":{"content":"Hi"},"finish_reason":"stop"}]}\n\ndata: ${JSON.stringify(usageChunk)}\n\ndata: [DONE]\n\n`
+                    : 'data: {"choices":[{"delta":{"content":"Hello"}}]}\n\ndata: [DONE]\n\n')
       })(),
     }
   },
@@ -251,6 +265,7 @@ beforeEach(() => {
   imageReads = []
   linkedImages = {}
   downloadRequests = []
+  savedFiles = []
   storedImageSize = { width: 1024, height: 768 }
   drawings = []
   clipFiles = {}
@@ -971,6 +986,99 @@ describe('images of a chat reply', () => {
     ['a URL that its server refuses', `${FAILING_BASE_URL}/cat.png`, 'The file that Painter made is not at its link any more: the link can have expired. Send the request again to make a new one.\n\nDetails: HTTP 404: Not found'],
   ])('fails the chat for %s', async (_name, url, message) => {
     await expect(streamPainter([url])).rejects.toThrow(message)
+  })
+})
+
+describe('the audio of a chat reply', () => {
+  // Three 16-bit samples. Their base64 text, "AQACAAMA", comes in two
+  // pieces that are no whole base64 groups: only the joined text decodes.
+  const SAMPLES = Uint8Array.from([1, 0, 2, 0, 3, 0])
+  const MP3 = Uint8Array.from([0x49, 0x44, 0x33, 3, 0, 0])
+  const chunk = (delta: Record<string, unknown>, finishReason?: string) =>
+    JSON.stringify({ choices: [{ delta, ...(finishReason && { finish_reason: finishReason }) }] })
+  // The shape of a live GPT Audio Mini answer on OpenRouter (2026-11-14).
+  const VOICE_ANSWER = [
+    chunk({ content: '', audio: { transcript: 'Hello' } }),
+    chunk({ audio: { transcript: ' there.' } }),
+    chunk({ audio: { data: 'AQA' } }),
+    chunk({ audio: { data: 'CAAMA' } }),
+    chunk({ audio: { expires_at: 1763424000 } }, 'stop'),
+    '[DONE]',
+  ]
+
+  beforeEach(() => {
+    sbp('dez.model/customProviders/save', {
+      id: 'singer',
+      name: 'Singer',
+      baseUrl: SINGER_BASE_URL,
+      apiFormat: 'openai',
+      models: [],
+      fetchModels: true,
+      auth: 'apiKey',
+      audioOutputs: [
+        { modelIdPrefix: 'voice', body: { modalities: ['text', 'audio'], audio: { voice: 'alloy', format: 'pcm16' } }, contentType: 'audio/pcm;rate=24000', pcmSampleBits: 16 },
+        { modelIdPrefix: 'music', body: { modalities: ['text', 'audio'], audio: { format: 'mp3' } }, contentType: 'audio/mpeg' },
+      ],
+    })
+  })
+
+  // The answer text and the clips, in the order that the callbacks got them.
+  async function streamSinger(modelId: string, audioOutput: boolean): Promise<unknown[]> {
+    const calls: unknown[] = []
+    await sbp('dez.provider/streamChat', {
+      providerId: 'singer',
+      modelId,
+      messages: [{ role: 'user', content: 'Say hello' }],
+      audioOutput,
+      onToken: (token: string) => { calls.push(token) },
+      onClip: (clip: GeneratedClip) => { calls.push(clip) },
+    })
+    return calls
+  }
+
+  it('gives the words as answer text, then the raw PCM of all pieces as a WAV temp copy, which lives as long as other temp copies', async () => {
+    singerPayloads = VOICE_ANSWER
+    const before = Date.now()
+
+    const calls = await streamSinger('voice-mini', true)
+
+    const path = savedFiles[0]?.path
+    expect(path).toMatch(/^media\/[0-9a-f-]{36}\.wav$/)
+    expect(savedFiles).toStrictEqual([{ path, bytes: wavFile(SAMPLES, { rate: 24000, channels: 1, sampleBits: 16 }), root: 'cache' }])
+    expect(calls).toStrictEqual(['Hello', ' there.', { kind: 'audio', mediaType: 'audio/wav', src: `${CACHE_DIR}/${path}`, url: null, expires: expect.any(String), jobId: null }])
+    const expires = Date.parse((calls[2] as GeneratedClip).expires)
+    expect(expires).toBeGreaterThanOrEqual(before + MEDIA_TEMP_LIFETIME_MS)
+    expect(expires).toBeLessThanOrEqual(Date.now() + MEDIA_TEMP_LIFETIME_MS)
+    expect(jsonBody(streamRequests[0])).toMatchObject({ modalities: ['text', 'audio'], audio: { voice: 'alloy', format: 'pcm16' } })
+  })
+
+  it('keeps the bytes of an audio file type as they are', async () => {
+    singerPayloads = [chunk({ content: '<instrumental>' }), chunk({ audio: { data: bytesToBase64(MP3) } }), chunk({}, 'stop'), '[DONE]']
+
+    const calls = await streamSinger('music-clip', true)
+
+    const path = savedFiles[0]?.path
+    expect(path).toMatch(/^media\/[0-9a-f-]{36}\.mp3$/)
+    expect(savedFiles).toStrictEqual([{ path, bytes: MP3, root: 'cache' }])
+    expect(calls).toStrictEqual(['<instrumental>', expect.objectContaining({ mediaType: 'audio/mpeg', src: `${CACHE_DIR}/${path}` })])
+  })
+
+  it.each([
+    ['a request that did not ask for audio', 'voice-mini', false, VOICE_ANSWER],
+    ['a model that no audioOutputs entry names', 'other', true, VOICE_ANSWER],
+    ['a stream that was cut off', 'voice-mini', true, VOICE_ANSWER.slice(0, 4)],
+  ])('gives no clip and writes no file for %s', async (_name, modelId, audioOutput, payloads) => {
+    singerPayloads = payloads
+
+    expect(await streamSinger(modelId, audioOutput)).toStrictEqual(['Hello', ' there.'])
+    expect(savedFiles).toStrictEqual([])
+  })
+
+  it('fails the chat for audio that is not base64 text', async () => {
+    singerPayloads = [chunk({ audio: { data: '***' } }, 'stop'), '[DONE]']
+
+    await expect(streamSinger('music-clip', true)).rejects.toThrow('Singer sent an answer that Dez cannot use.')
+    expect(savedFiles).toStrictEqual([])
   })
 })
 

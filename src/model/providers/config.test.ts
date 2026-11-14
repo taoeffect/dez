@@ -242,6 +242,25 @@ describe('provider config schema', () => {
     expect(parse({ body: JSON.parse('{"__proto__":{"polluted":true}}') })).toBe(false)
   })
 
+  it('takes an audio output entry only for a model id prefix, a JSON object body, an audio type, and a whole positive PCM sample size', () => {
+    const parse = (entry: Record<string, unknown>) => providerConfigSchema.safeParse({
+      id: 'p',
+      name: 'P',
+      baseUrl: 'http://h',
+      audioOutputs: [{ modelIdPrefix: 'voice/', body: { modalities: ['text', 'audio'] }, contentType: 'audio/pcm;rate=24000', pcmSampleBits: 16, ...entry }],
+    })
+
+    expect(parse({}).success).toBe(true)
+    // Types are case-insensitive; the schema keeps the lower-case form,
+    // which is the form that the file type rules read.
+    expect(parse({ contentType: 'Audio/MPEG', pcmSampleBits: undefined }).data?.audioOutputs?.[0].contentType).toBe('audio/mpeg')
+    expect(parse({ contentType: 'video/mp4' }).success).toBe(false)
+    expect(parse({ modelIdPrefix: '' }).success).toBe(false)
+    expect(parse({ body: ['audio'] }).success).toBe(false)
+    expect(parse({ pcmSampleBits: 0 }).success).toBe(false)
+    expect(parse({ pcmSampleBits: 12.5 }).success).toBe(false)
+  })
+
   it('keeps an empty thinking object and accepts only JSON objects as bodies', () => {
     const parse = (thinking: unknown) => providerConfigSchema.safeParse({ id: 'p', name: 'P', baseUrl: 'http://h', thinking })
     const bodies = {

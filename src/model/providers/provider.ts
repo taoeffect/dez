@@ -3,9 +3,10 @@ import type { JsonObject } from '../../utils/json'
 import type { NativeHttpHeaders, NativeHttpRequest, NativeHttpResponseHead } from '../../utils/protocol/nativeHttp'
 import type { Secret } from '../../utils/secret'
 import type { ImageSize } from '../chat/imageDrawing'
+import { effectiveOutputs } from '../modelOutputs'
 import { API_FORMATS, type ApiFormat } from './apiFormats'
 import { TooManyImagesError } from './clipImages'
-import { FORBIDDEN_BODY_KEYS, type ProviderConfig } from './config'
+import { FORBIDDEN_BODY_KEYS, type AudioOutputConfig, type ProviderConfig } from './config'
 import { ProviderHttpError } from './errors'
 import type { ImageSizeRules, InputImageLimits } from './imageSize'
 import { MEDIA_FORMATS, type AnswerCost, type ClipEntryPrice, type ClipFormat, type ClipInput, type ClipJob, type ImageFormat, type ImageQuoteFormat, type MediaFormat, type MediaInput, type MediaWireRequest, type TextFormat } from './mediaFormats'
@@ -97,7 +98,10 @@ export class Provider {
   // toggles that the model does not take, the outputs, and the request kind
   // are read only where the config's `modelReadableName`, `modelReleased`,
   // `modelImageInput`, `modelToolCalling`, `modelThinking`,
-  // `settings[].modelSupport`, and `modelOutputs` point.
+  // `settings[].modelSupport`, and `modelOutputs` point. A chat model makes
+  // `audio` only with an `audioOutputs` entry: with none, Dez cannot ask it
+  // for audio, so the model lists, the picker, and the tools do not offer
+  // it as an audio model.
   // Models that make nothing stay in this list; `mergeModels` drops them, so
   // the diagnostics report shows what the server sent.
   parseModels(data: unknown): ModelInfo[] {
@@ -109,6 +113,8 @@ export class Provider {
 
       const name = [model.name, model.display_name]
         .find((value): value is string => typeof value === 'string' && value.trim().length > 0)
+      const { outputs, request } = modelOutputsAndRequest(model, this.config.modelOutputs)
+      const madeOutputs = request === 'chat' && this.audioOutput(id) === undefined ? outputs?.filter((output) => output !== 'audio') : outputs
       models.push(providerModel(this.id, id, name?.trim() ?? id, {
         readableName: modelReadableName(model, this.config.modelReadableName),
         released: modelReleased(model, this.config.modelReleased),
@@ -116,7 +122,8 @@ export class Provider {
         toolCalling: modelCapability(model, this.config.modelToolCalling, 'tools'),
         thinking: modelCapability(model, this.config.modelThinking, 'reasoning'),
         unsupportedSettings: unsupportedSettings(model, this.config.settings),
-        ...modelOutputsAndRequest(model, this.config.modelOutputs),
+        outputs: madeOutputs,
+        request,
       }))
     }
 
@@ -254,7 +261,7 @@ export class Provider {
       const kind = effectiveRequest(model)
       const entry = entries.get(model.id)
       const price = kind === 'chat'
-        ? isRecord(entry) ? modelTokenPrice(entry, this.config.modelTokenPrices) : undefined
+        ? isRecord(entry) ? modelTokenPrice(entry, this.config.modelTokenPrices, effectiveOutputs(model)) : undefined
         : kind === 'none' ? undefined : listPrice?.(kind, effectiveParameterValues(model.parameters ?? []), entry, mediaEntries.get(model.id))
       return price ? { ...model, price } : model
     })
@@ -288,6 +295,8 @@ export class Provider {
     // A fixed part for a model, so the body stays the same in every request
     // of a conversation with that model (the prompt cache).
     if (context.imageOutput && this.config.imageOutputBody) mergeBodyPart(body, this.config.imageOutputBody)
+    const audioOutput = context.audioOutput ? this.audioOutput(model.id) : undefined
+    if (audioOutput) mergeBodyPart(body, audioOutput.body)
 
     for (const setting of toggles.settings) {
       const enabled = toggleValue(setting, overrides)
@@ -393,6 +402,13 @@ export class Provider {
   // answer with (`ClipFormat.pcmSampleBits`).
   pcmSampleBits(): number | undefined {
     return this.mediaFormatOrNone()?.clips?.pcmSampleBits
+  }
+
+  // The `audioOutputs` entry of a chat model (config.ts): the body that
+  // asks it for audio, and the type of the audio that it gives. The first
+  // entry whose prefix matches wins; undefined when none does.
+  audioOutput(modelId: string): AudioOutputConfig | undefined {
+    return this.config.audioOutputs?.find((entry) => modelId.startsWith(entry.modelIdPrefix))
   }
 
   clipJob(kind: ClipKind, modelId: string, data: unknown): ClipJob {

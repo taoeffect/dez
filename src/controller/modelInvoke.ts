@@ -3,7 +3,7 @@ import { failedChatRequestCost } from '../model/providers/chatUsage'
 import { TooManyImagesError, tooManyImagesMessage } from '../model/providers/clipImages'
 import { InputImageError } from '../model/providers/errors'
 import type { MediaProgress, ProviderGenerateMediaResult, ProviderStreamChatResult } from '../model/providers/streamTypes'
-import type { GeneratedMedia } from '../model/providers/types'
+import type { GeneratedClip, GeneratedMedia } from '../model/providers/types'
 import { unreadableImageText } from '../model/tools/imageTool'
 import {
   answerIsCut,
@@ -128,7 +128,8 @@ async function invokeMediaModel(invocation: MediaInvocation, signal: AbortSignal
 // - The answer text is the result text of the job, up to its size limit
 //   (`answerIsCut`). The thinking of the model is dropped.
 // - An image of the answer is saved in the generated image folder, as in a
-//   reply of a chat model that makes images.
+//   reply of a chat model that makes images, and the audio of the answer
+//   stays in its temp copy, as the clip of a media request.
 // - `report` gets the count of the characters of the answer so far.
 // - `reportCost` gets null when the request goes, then its cost, when the
 //   provider or the model's list price tells it. A request that failed
@@ -140,7 +141,7 @@ async function invokeTextModel(
   reportCost: (usd: number | null) => void,
   { toolsAllowed }: InvocationRights,
 ): Promise<JobOutcome> {
-  const { provider, model, content, imageOutput, providerSettings } = invocation
+  const { provider, model, content, imageOutput, audioOutput, providerSettings } = invocation
   const requestId = crypto.randomUUID()
   const cancelRequest = () => {
     sbp('dez.http/cancelStream', requestId).catch((error: unknown) => console.error('Failed to cancel the request of an invoked model:', error))
@@ -157,6 +158,7 @@ async function invokeTextModel(
       messages: [{ role: 'user', content }],
       tools: toolsAllowed ? TOOL_DEFINITIONS : [],
       imageOutput,
+      audioOutput,
       providerSettings,
       requestId,
       // A stop of the reply and the time limit of the job end the request.
@@ -169,10 +171,10 @@ async function invokeTextModel(
         answer += token
         report(invocationAnswerStateText(answer.length))
         // The result holds no more text, so the user must not pay for
-        // more. A model that makes images can still give one after its
-        // text, so only a request for text ends here. The cancel ends the
-        // answer with no error (`dez.provider/streamChat`).
-        if (answerIsCut(answer) && !imageOutput) cancelRequest()
+        // more. A model that makes images or audio can still give them
+        // after its text, so only a request for text ends here. The cancel
+        // ends the answer with no error (`dez.provider/streamChat`).
+        if (answerIsCut(answer) && !imageOutput && !audioOutput) cancelRequest()
       },
       onImage: async (image: GeneratedMedia) => {
         // The job ended: `ReplyJobs` takes no result any more.
@@ -185,20 +187,26 @@ async function invokeTextModel(
           throw error
         }
       },
+      // Also after the end of the job: `ReplyJobs` then deletes the temp
+      // copy, as it does with any asset of a result that came too late.
+      onClip: (clip: GeneratedClip) => {
+        assets.push(generatedClipAsset(clip))
+      },
     }) as ProviderStreamChatResult
     reportCost(result.cost ?? null)
   } catch (error) {
     const cost = failedChatRequestCost(error)
     if (cost !== undefined) reportCost(cost)
     // An error of `onImage` does not end the request by itself. And
-    // `ReplyJobs` reads no assets of a failed job, so the images that this
-    // job saved go here.
+    // `ReplyJobs` reads no assets of a failed job, so the images and the
+    // clip that this job saved go here.
     cancelRequest()
     await discardMadeAssets(assets)
     throw imageNotSaved ? new ToolError(IMAGE_NOT_SAVED_TEXT, '', { cause: error }) : invocationError(invocation, error)
   }
   // An abort after the first bytes of the answer ends it early with no
-  // error: the text is not whole. `ReplyJobs` deletes the saved images.
+  // error: the text is not whole. `ReplyJobs` deletes the saved images and
+  // the clip.
   if (signal.aborted) return { text: '', isError: false, assets }
   return { text: invocationAnswerText(answer), isError: false, assets }
 }

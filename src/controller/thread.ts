@@ -148,6 +148,7 @@ export default sbp('sbp/selectors/register', {
       messages,
       sendTools,
       imageOutput: effectiveOutputs(cachedModel).includes('image'),
+      audioOutput: effectiveOutputs(cachedModel).includes('audio'),
       inputRules,
     })
   },

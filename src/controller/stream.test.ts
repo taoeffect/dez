@@ -4,7 +4,7 @@ import { afterEach, beforeEach, describe, expect, it, vi, type MockInstance } fr
 import type { ActiveModel, Section, SectionThinking, Tab, ThinkingReplay } from '../model/chat/types'
 import { sectionVisibleText } from '../model/chat/content'
 import type { DrawnImage, DrawnMediaType, ImageDrawing, ImageSize } from '../model/chat/imageDrawing'
-import { findMediaTags } from '../model/chat/mediaTags'
+import { findMediaTags, mediaTagText } from '../model/chat/mediaTags'
 import { agentTextForRequest, findToolBlocks } from '../model/chat/toolBlocks'
 import type { ConversationData } from '../model/persistence/types'
 import { missingImageProblem, TooManyImagesError, type InputImageRules } from '../model/providers/clipImages'
@@ -25,7 +25,7 @@ import { NO_MODELS_TEXT } from '../model/tools/modelList'
 import { TOOL_DEFINITIONS, unknownToolText } from '../model/tools/registry'
 import type { ToastData } from '../view/toast/selectors'
 import { ExplainedError, UNEXPECTED_ERROR } from '../utils/errorText'
-import { APP_DIR, audioProgress, native, resetNative, settled, writes } from './testing'
+import { APP_DIR, audioProgress, CACHE_DIR, native, resetNative, settled, writes } from './testing'
 // Side-effect imports: register the dez.model/* selectors and the selectors
 // under test.
 import '../model/state/index'
@@ -158,6 +158,7 @@ async function startStream({ sendTools = false } = {}): Promise<void> {
     messages: [{ role: 'user', content: 'Hi' }],
     sendTools,
     imageOutput: false,
+    audioOutput: false,
   })
 }
 
@@ -2145,6 +2146,71 @@ describe('dez.stream/start images of a chat reply', () => {
     expect(sent[2].flatMap((message) => message.role === 'agent' ? [message.thinking ?? null] : [])).toStrictEqual([
       { text: 'Plan.', replay: replay('one') }, null,
     ])
+  })
+})
+
+describe('dez.stream/start audio of a chat reply', () => {
+  // A temp copy of the audio of the answer, as dez.provider/streamChat
+  // gives it.
+  const song = { kind: 'audio', mediaType: 'audio/mpeg', src: `${CACHE_DIR}/media/song.mp3`, url: null, expires: '2026-12-01T00:00:00.000Z', jobId: null } as const
+  const songTag = (id: string) => mediaTagText({ kind: 'audio', id, type: 'audio/mpeg', src: song.src, url: null, expires: song.expires, other: [] })
+
+  it('writes the tag of the clip, with a new id, as a whole line after the answer text', async () => {
+    sbp('dez.model/tabs/replaceSections', activeTab().id, [
+      { id: 'u1', role: 'user', content: [{ kind: 'text', text: `A fox: ![${image('fox.png')}](id=a)` }] },
+      { id: 'a1', role: 'agent', content: [{ kind: 'text', text: '' }], model },
+    ])
+    streamChat = async (input) => {
+      await input.onToken('<instrumental>')
+      await input.onClip(song)
+      return { requestId: input.requestId as string }
+    }
+
+    await startStream()
+
+    expect(sectionVisibleText(agentSection())).toBe(`<instrumental>\n\n${songTag('b')}`)
+    expect(savedConversations).toHaveLength(1)
+    expect(native.deletedFiles).toStrictEqual([])
+  })
+
+  it('asks for audio output only when the model makes audio', async () => {
+    const asked: unknown[] = []
+    streamChat = async (input) => {
+      asked.push([input.imageOutput, input.audioOutput])
+      return { requestId: input.requestId as string }
+    }
+    const submitWithOutputs = async (outputs: string[]) => {
+      sbp('dez.model/modelCache/applyProviderResult', model.providerId, {
+        ok: true,
+        models: [{ id: model.modelId, name: model.modelName, provider: model.providerId, outputs, request: 'chat' }],
+      })
+      await sbp('dez.controller/submitTab', activeTab().id)
+    }
+    sbp('dez.model/setActiveModel', model.providerId, model.modelId, model.modelName)
+
+    await sbp('dez.controller/submitTab', activeTab().id)
+    await submitWithOutputs(['text', 'image'])
+    await submitWithOutputs(['text', 'audio'])
+
+    expect(asked).toStrictEqual([[false, false], [true, false], [false, true]])
+  })
+
+  // A stop keeps the late text of its request, but takes no late clip.
+  it('deletes the temp copy of a clip that comes after the user stopped the reply', async () => {
+    streamChat = async (input) => {
+      await input.onToken('Before.')
+      cancelStream = async () => {
+        await input.onClip(song)
+        await input.onToken(' Late.')
+      }
+      await sbp('dez.stream/stop', activeTab().id)
+      throw new Error('cancelled')
+    }
+
+    await startStream()
+
+    expect(sectionVisibleText(agentSection())).toBe('Before. Late.')
+    expect(native.deletedFiles).toStrictEqual([{ root: 'cache', path: 'media/song.mp3', folder: false }])
   })
 })
 

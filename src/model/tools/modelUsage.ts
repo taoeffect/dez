@@ -1,5 +1,5 @@
 import type { MediaTagKind } from '../chat/mediaTags'
-import { effectiveOutputs } from '../modelOutputs'
+import { effectiveOutputs, type ModelOutput } from '../modelOutputs'
 import { imagesText, maxInputImages, minInputImages } from '../providers/clipImages'
 import { clipsText, maxInputClips, neededClipKind, type ClipUse, type InputClipRules } from '../providers/clipInputs'
 import { lyricsHowTo } from '../providers/clipText'
@@ -51,6 +51,7 @@ export const USAGE_TEXTS = {
   chatNoImages: 'It does not read images: each image goes only as text with its id, such as `![image](id=a)`.',
   textReply: 'It answers with text.',
   imageReply: 'It answers with text, and it can make images; each image gets a new id (@id).',
+  audioReply: 'It answers with text and an audio clip; the reply shows the clip as a player with a new id (@id).',
   toggles: `Each request sends the toggles of \`dez.toggles\`; the user sets them in ${SETTINGS_POPUP}.`,
   mediaRequest: 'A request holds only the newest user message, not the rest of the conversation.',
   promptImages: 'An image in the text goes into the prompt as its id text, such as `![image](id=a)`.',
@@ -225,9 +226,16 @@ function chatUsage(model: ModelInfo, facts: UsageFacts): string[] {
     USAGE_TEXTS.chatRequest,
     !toolsApply(model) ? USAGE_TEXTS.noTools : tools?.on === false ? USAGE_TEXTS.toolsOff : USAGE_TEXTS.tools,
     model.imageInput === false ? USAGE_TEXTS.chatNoImages : USAGE_TEXTS.chatImages,
-    effectiveOutputs(model).includes('image') ? USAGE_TEXTS.imageReply : USAGE_TEXTS.textReply,
+    chatReplyText(effectiveOutputs(model)),
     ...(facts.toggles.length > 0 ? [USAGE_TEXTS.toggles] : []),
   ]
+}
+
+// What a chat answer holds besides its text: the audio of an answer that
+// the request asks for (`audioOutput`), or the images.
+function chatReplyText(outputs: readonly ModelOutput[]): string {
+  if (outputs.includes('audio')) return USAGE_TEXTS.audioReply
+  return outputs.includes('image') ? USAGE_TEXTS.imageReply : USAGE_TEXTS.textReply
 }
 
 function inputImagesUsage(kind: MediaKind, model: ModelInfo): string[] {

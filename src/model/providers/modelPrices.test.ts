@@ -9,23 +9,24 @@ describe('chat token prices', () => {
   const openRouter = tokenPrices('openrouter')
   const venice = tokenPrices('venice')
   const usd = (value: number) => ({ usd: value, diem: value })
+  const TEXT = ['text'] as const
 
   it('gives an OpenRouter price per token in USD per 1M tokens, with the cache read price', () => {
     const entry = { id: 'm', pricing: { prompt: '0.0000025', completion: '0.00001', input_cache_read: '0.00000025', input_cache_write: '0.000003125' } }
 
-    expect(modelTokenPrice(entry, openRouter)).toStrictEqual({ unit: 'token', input: 2.5, output: 10, cachedInput: 0.25 })
+    expect(modelTokenPrice(entry, openRouter, TEXT)).toStrictEqual({ unit: 'token', input: 2.5, output: 10, cachedInput: 0.25 })
   })
 
   it('gives a Venice price per 1M tokens as it is, and tells that a long prompt has another rate', () => {
     const entry = { id: 'm', model_spec: { pricing: { input: usd(0.5), cache_input: usd(0.05), output: usd(2), extended: { context_token_threshold: 256000, input: usd(1.5), output: usd(6) } } } }
 
-    expect(modelTokenPrice(entry, venice)).toStrictEqual({ unit: 'token', input: 0.5, output: 2, cachedInput: 0.05, note: 'base rate; some requests have other rates' })
+    expect(modelTokenPrice(entry, venice, TEXT)).toStrictEqual({ unit: 'token', input: 0.5, output: 2, cachedInput: 0.05, note: 'base rate; some requests have other rates' })
   })
 
   it('tells the other rates of an OpenRouter model and the price of its output images, in one note', () => {
     const pricing = { prompt: '0.000002', completion: '0.000012', image_output: '0.00012', overrides: [{ min_prompt_tokens: 200000, prompt: '0.000004' }] }
 
-    expect(modelTokenPrice({ id: 'm', pricing }, openRouter)).toStrictEqual({
+    expect(modelTokenPrice({ id: 'm', pricing }, openRouter, ['text', 'image'])).toStrictEqual({
       unit: 'token',
       input: 2,
       output: 12,
@@ -33,17 +34,33 @@ describe('chat token prices', () => {
     })
   })
 
+  it('tells the price of the output audio of an OpenRouter voice model', () => {
+    const pricing = { prompt: '0.0000006', completion: '0.0000024', audio: '0.0000006', audio_output: '0.0000024' }
+
+    expect(modelTokenPrice({ id: 'openai/gpt-audio-mini', pricing }, openRouter, ['text', 'audio']))
+      .toStrictEqual({ unit: 'token', input: 0.6, output: 2.4, note: 'audio: $2.4 per 1M output tokens' })
+  })
+
   it.each([
     ['an empty list of other rates', { overrides: [] }],
     ['no other rates', { overrides: null }],
     ['an image output price of 0', { image_output: '0' }],
   ])('gives no note for %s', (_name, more) => {
-    expect(modelTokenPrice({ id: 'm', pricing: { prompt: '0.000001', completion: '0.000002', ...more } }, openRouter))
+    expect(modelTokenPrice({ id: 'm', pricing: { prompt: '0.000001', completion: '0.000002', ...more } }, openRouter, TEXT))
       .toStrictEqual({ unit: 'token', input: 1, output: 2 })
   })
 
-  it('gives a free model a price of 0', () => {
-    expect(modelTokenPrice({ id: 'm', pricing: { prompt: '0', completion: '0' } }, openRouter)).toStrictEqual({ unit: 'token', input: 0, output: 0 })
+  it.each([
+    ['a text model', { prompt: '0', completion: '0' }, TEXT],
+    ['a model that makes images, with a price of 0 for them', { prompt: '0', completion: '0', image_output: '0' }, ['text', 'image'] as const],
+  ])('gives a price of 0 to a free model: %s', (_name, pricing, outputs) => {
+    expect(modelTokenPrice({ id: 'm', pricing }, openRouter, outputs)).toStrictEqual({ unit: 'token', input: 0, output: 0 })
+  })
+
+  // OpenRouter's Lyria models list "0" for their tokens, and tell their
+  // price per clip only in their description (live, 2026-11-14).
+  it.each([['audio'], ['image']] as const)('gives no price to a model with free tokens that makes %s with no price for it', (media) => {
+    expect(modelTokenPrice({ id: 'google/lyria-3-clip-preview', pricing: { prompt: '0', completion: '0' } }, openRouter, ['text', media])).toBeUndefined()
   })
 
   // OpenRouter gives `-1` to a router, whose price is that of the model
@@ -54,11 +71,11 @@ describe('chat token prices', () => {
     ['a price that is no number', { prompt: 'free', completion: '0' }],
     ['an empty price', { prompt: '', completion: '0' }],
   ])('gives no price for %s', (_name, pricing) => {
-    expect(modelTokenPrice({ id: 'm', pricing }, openRouter)).toBeUndefined()
+    expect(modelTokenPrice({ id: 'm', pricing }, openRouter, TEXT)).toBeUndefined()
   })
 
   it('gives no price for a provider whose config has no token price paths', () => {
-    expect(modelTokenPrice({ id: 'm', pricing: { prompt: '0.000001', completion: '0.000002' } }, undefined)).toBeUndefined()
+    expect(modelTokenPrice({ id: 'm', pricing: { prompt: '0.000001', completion: '0.000002' } }, undefined, TEXT)).toBeUndefined()
   })
 })
 

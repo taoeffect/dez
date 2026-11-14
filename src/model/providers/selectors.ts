@@ -14,6 +14,7 @@ import { fileNameOf } from '../../utils/fileName'
 import { secret, type Secret } from '../../utils/secret'
 import { sanitizeErrorText } from '../../utils/protocol/errors'
 import { nativeResponseJson, nativeResponseText, readNativeChunkBytes, type NativeHttpRequest, type NativeHttpResponse, type NativeHttpStreamResult } from '../../utils/protocol/nativeHttp'
+import { saveChatAudio } from './chatAudio'
 import { chatRequestCost } from './chatUsage'
 import { clipFileProblem, clipTagProblem, hasLengthRules, missingClipProblem, needsWavCopy, type ClipAttachment, type ClipUse, type InputClipRules } from './clipInputs'
 import { inputImageRulesFor, missingImageProblem } from './clipImages'
@@ -510,7 +511,9 @@ export default sbp('sbp/selectors/register', {
   // cancel before the response headers rejects; a cancel after them ends
   // the answer early with no error, so a caller that cancelled must drop
   // the result. The result tells the price of the request (`cost`) when
-  // the provider or the model's list price does.
+  // the provider or the model's list price does. The audio of an answer
+  // goes to `input.onClip` as a temp copy (chatAudio.ts), which belongs to
+  // the caller: it keeps it in a reply, or deletes it.
   async 'dez.provider/streamChat' (input: ProviderStreamChatInput): Promise<ProviderStreamChatResult> {
     const provider = requireProvider(input.providerId)
     const requestId = input.requestId ?? crypto.randomUUID()
@@ -532,8 +535,11 @@ export default sbp('sbp/selectors/register', {
           stream = await nativeChatStream(provider, input, messages, requestId, true)
         }
 
+        // Only a request that asked for audio keeps the audio of its answer.
+        const audioOutput = input.audioOutput ? provider.audioOutput(input.modelId) : undefined
         const streamed = await streamProviderTokens(provider, input, stream.result, stream.thinking,
-          (url) => generatedImageFromUrl(url, (imageUrl) => fetchReplyImage(provider, imageUrl)))
+          (url) => generatedImageFromUrl(url, (imageUrl) => fetchReplyImage(provider, imageUrl)),
+          audioOutput && ((data) => saveChatAudio(data, audioOutput, provider.name)))
         const model = sbp('dez.model/modelCache/model', provider.id, input.modelId) as ModelInfo | null
         const cost = chatRequestCost(streamed.usage, model?.price)
         return { requestId: stream.result.requestId, ...streamed, ...(cost !== undefined && { cost }) }

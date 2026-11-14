@@ -30,16 +30,17 @@ const FILMER: ModelInfo = {
   images: { maxImages: 2, whenParameter: { name: 'images_as', value: 'references', rules: { maxImages: 3, references: {} } } },
 }
 // Text models: one with no known facts, one that is known not to read
-// images, and one that makes images too.
+// images, one that makes images too, and one that makes audio too.
 const CHATTER: ModelInfo = { id: 'chatter', name: 'Chatter', provider: VENICE.id }
 const BLIND: ModelInfo = { id: 'blind', name: 'Blind', provider: VENICE.id, imageInput: false }
 const SKETCHER: ModelInfo = { id: 'sketcher', name: 'Sketcher', provider: VENICE.id, outputs: ['text', 'image'] }
+const SINGER: ModelInfo = { id: 'singer', name: 'Singer', provider: VENICE.id, outputs: ['text', 'audio'] }
 const OTHER_API: ModelInfo = { id: 'other-api', name: 'Other', provider: VENICE.id, outputs: ['image'], request: 'none' }
 const TIFF_ONLY: ModelInfo = { id: 'tiff-only', name: 'Tiffer', provider: VENICE.id, outputs: ['image'], request: 'image', unstoredOutput: 'TIFF' }
 
 const CACHE: ModelCache = {
   version: 1,
-  providers: { venice: { models: [PAINTER, SPEAKER, SCRIBE, FILMER, CHATTER, BLIND, SKETCHER, OTHER_API, TIFF_ONLY], working: true, updatedAt: 0, lastCheckedAt: 0 } },
+  providers: { venice: { models: [PAINTER, SPEAKER, SCRIBE, FILMER, CHATTER, BLIND, SKETCHER, SINGER, OTHER_API, TIFF_ONLY], working: true, updatedAt: 0, lastCheckedAt: 0 } },
 }
 
 const RED = '/home/u/.config/dez/assets/images/red.png'
@@ -236,9 +237,12 @@ describe('modelInvocation for a text model', () => {
     expect(inputs).toStrictEqual([])
   })
 
-  it('asks for images only from a model that makes them', () => {
-    expect(chatInvocation({ model: 'venice/chatter', prompt: 'A fox.' }).imageOutput).toBe(false)
-    expect(chatInvocation({ model: 'venice/sketcher', prompt: 'A fox.' }).imageOutput).toBe(true)
+  it.each([
+    ['chatter', false, false],
+    ['sketcher', true, false],
+    ['singer', false, true],
+  ])('asks %s for images or audio only when it makes them', (id, imageOutput, audioOutput) => {
+    expect(chatInvocation({ model: `venice/${id}`, prompt: 'A fox.' })).toMatchObject({ imageOutput, audioOutput })
   })
 
   it('takes the toggles that the user set for the provider of the model', () => {

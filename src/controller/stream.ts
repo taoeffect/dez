@@ -9,7 +9,7 @@ import { findToolBlocks, ModelTextEscaper } from '../model/chat/toolBlocks'
 import { failedChatRequestCost } from '../model/providers/chatUsage'
 import { TooManyImagesError, tooManyImagesMessage } from '../model/providers/clipImages'
 import { errorText, explainedError } from '../utils/errorText'
-import type { ClipInputRules, GeneratedMedia, MediaKind, MediaProgress, ModelRequest, ProviderGenerateMediaResult, ProviderStreamChatResult } from '../model/providers'
+import type { ClipInputRules, GeneratedClip, GeneratedMedia, MediaKind, MediaProgress, ModelRequest, ProviderGenerateMediaResult, ProviderStreamChatResult } from '../model/providers'
 import { requireProvider } from '../model/providers/registry'
 import { agentSectionMessages, mediaRequestInput } from '../model/streams/messages'
 import { ReplyPictures } from '../model/streams/replyPictures'
@@ -66,6 +66,9 @@ interface StreamStartArgs {
   // The model's known outputs hold `image`: its chat requests ask for
   // image output (ChatRequestContext.imageOutput).
   imageOutput: boolean
+  // The model's known outputs hold `audio`: its chat requests ask for
+  // audio output (ChatRequestContext.audioOutput).
+  audioOutput: boolean
   // What the model takes as the input of a media request, for the
   // parameter values of the request (`mediaInputRules`): a model with
   // lyrics gets them from the message, and a video model gets the
@@ -435,6 +438,24 @@ async function writeReplyImage(tabId: string, reply: ReplyRuntime, image: Genera
   }
 }
 
+// Puts the audio of a chat reply (a temp copy) at the end of its section,
+// after the answer text, as a media reply's clip is. A temp copy that no
+// tag names is deleted: the reply ended, or the section takes no text.
+async function writeReplyClip(tabId: string, reply: ReplyRuntime, clip: GeneratedClip): Promise<void> {
+  const current = replyIsCurrent(tabId, reply)
+  if (current) flushModelText(tabId, reply)
+  const written = current && writeAsset(tabId, reply, (id) => mediaTagText({
+    kind: clip.kind,
+    id,
+    type: clip.mediaType,
+    src: clip.src,
+    url: clip.url,
+    expires: clip.expires,
+    other: [],
+  })) !== null
+  if (!written) await discardMadeAssets([generatedClipAsset(clip)])
+}
+
 // For a reply that ends while some of its jobs still run, or have results
 // that no `jobs_wait` gave to the model: the model ended its reply before
 // it got them, or the reply failed. Waits until no job runs, as a job can
@@ -514,6 +535,7 @@ async function runChatRounds(args: StreamStartArgs, reply: ReplyRuntime): Promis
         system,
         tools,
         imageOutput: args.imageOutput,
+        audioOutput: args.audioOutput,
         modelId: args.model.modelId,
         messages,
         requestId,
@@ -532,6 +554,7 @@ async function runChatRounds(args: StreamStartArgs, reply: ReplyRuntime): Promis
           madeImage = true
           if (replyIsCurrent(args.tabId, reply)) await writeReplyImage(args.tabId, reply, image)
         },
+        onClip: (clip: GeneratedClip) => writeReplyClip(args.tabId, reply, clip),
       }) as ProviderStreamChatResult
     } catch (error) {
       const cost = failedChatRequestCost(error)

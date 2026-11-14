@@ -21,6 +21,13 @@ interface OpenAiChoiceDelta {
   // answer that is not streamed.
   // https://openrouter.ai/docs/api/api-reference/chat/create-a-chat-completion
   images?: unknown
+  // OpenRouter and OpenAI: the audio of a request with `modalities: ["text",
+  // "audio"]`, `{ transcript?, data?, id?, expires_at? }`. The transcript
+  // comes in pieces; `data` is base64 text, all pieces of one stream
+  // (GPT Audio: raw PCM in pieces; Lyria: a whole mp3 file in one chunk;
+  // checked live, 2026-11-14).
+  // https://openrouter.ai/docs/guides/overview/multimodal/audio
+  audio?: unknown
 }
 
 interface OpenAiChoice {
@@ -251,6 +258,8 @@ export class OpenAiStreamParser implements SseStreamParser {
   // In stream order, and by the `index` of their pieces.
   private readonly toolCalls: StreamedToolCall[] = []
   private readonly toolCallsByIndex = new Map<number, StreamedToolCall>()
+  // The base64 pieces of the answer's audio, in stream order.
+  private readonly audioPieces: string[] = []
   private opaque = ''
   private firstTextField: ReasoningTextField | null = null
   // `[DONE]` or a `finish_reason` arrived. Without `failed`, the reasoning
@@ -280,14 +289,18 @@ export class OpenAiStreamParser implements SseStreamParser {
       const delta = choice.delta
       if (delta && this.thinking) this.readReasoning(delta, events)
 
-      const content = delta?.content
-      if (nonEmptyString(content)) {
+      // The words of the audio are the answer text of an audio answer (its
+      // `content` is empty).
+      const audio = isRecord(delta?.audio) ? delta.audio : undefined
+      for (const text of [delta?.content, audio?.transcript]) {
+        if (!nonEmptyString(text)) continue
         if (this.inline) {
-          this.inline.push(content, events)
+          this.inline.push(text, events)
         } else {
-          events.push({ kind: 'token', token: content })
+          events.push({ kind: 'token', token: text })
         }
       }
+      if (nonEmptyString(audio?.data)) this.audioPieces.push(audio.data)
 
       if (Array.isArray(delta?.images)) this.readImages(delta.images.filter(isRecord), events)
 
@@ -310,12 +323,15 @@ export class OpenAiStreamParser implements SseStreamParser {
   }
 
   // The tool calls of a stream that was cut off or failed may have cut-off
-  // arguments, so such a stream gives none, and no usage either.
+  // arguments, so such a stream gives none, and no usage either. Its audio
+  // can be cut off too, so it gives no audio; the audio of a whole stream
+  // comes after its text, as one event.
   finish(): SseStreamEnd {
     const events: SseTokenEvent[] = []
     this.inline?.flush(events)
     const replay = this.replay()
     const whole = this.complete && !this.failed
+    if (whole && this.audioPieces.length > 0) events.push({ kind: 'audio', data: this.audioPieces.join('') })
     const toolCalls = whole && this.toolCalls.length > 0 ? this.toolCalls : undefined
     const usage = whole ? this.usage : undefined
     return { events, ...(replay && { replay }), ...(toolCalls && { toolCalls }), ...(usage && { usage }) }

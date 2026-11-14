@@ -96,9 +96,11 @@ export interface GeneratedMedia {
   mediaType: ImageMediaType
 }
 
-// One clip (audio or video) that a media model made. Its bytes never come
-// through the webview, as a video is too large for the HTTP bridge: the
-// clip is at the provider's URL, or in a temp copy that Rust wrote.
+// One clip (audio or video) that a model made. The bytes of a media
+// request's clip never come through the webview, as a video is too large
+// for the HTTP bridge: the clip is at the provider's URL, or in a temp copy
+// that Rust wrote. Only the audio of a chat answer comes in the stream, as
+// base64 text (`chatAudio.ts` writes its temp copy).
 export interface GeneratedClip {
   kind: MediaTagKind
   // The media type, such as `video/mp4`.
@@ -293,21 +295,26 @@ export interface ChatRequestContext {
   // The model's known outputs hold `image` (ModelInfo.outputs): the body
   // gets the config's `imageOutputBody`, which asks for image output.
   imageOutput?: boolean
+  // The model's known outputs hold `audio`: the body gets the `body` of the
+  // config's `audioOutputs` entry of the model, which asks for audio output.
+  audioOutput?: boolean
 }
 
 // One parsed SSE `data:` payload yields zero or more of these, in either
 // API format. `token` is answer text and `thinking` is reasoning text.
 // `image` is an image that the model made, at its place in the answer; its
 // URL is a `data:` URL or an http(s) URL (`generatedImageFromUrl` in
-// generatedImages.ts reads it). `error` is a failure that the server
-// reported inside a stream that it started with a good status: `status` is
-// the HTTP status that the server gives the failure, `code` its own type of
-// the failure (`overloaded_error`), and `message` its text (can be empty).
-// A reader throws `providerStreamError` (errors.ts) at it.
+// generatedImages.ts reads it). `audio` is the whole audio of the answer,
+// as base64 text, after the answer text. `error` is a failure that the
+// server reported inside a stream that it started with a good status:
+// `status` is the HTTP status that the server gives the failure, `code` its
+// own type of the failure (`overloaded_error`), and `message` its text (can
+// be empty). A reader throws `providerStreamError` (errors.ts) at it.
 export type SseTokenEvent =
   | { kind: 'token', token: string }
   | { kind: 'thinking', token: string }
   | { kind: 'image', url: string }
+  | { kind: 'audio', data: string }
   | { kind: 'error', status?: number, code?: string, message: string }
   | { kind: 'done' }
 

@@ -36,7 +36,8 @@ export const BUILT_IN_PROVIDER_CONFIGS: readonly ProviderConfig[] = [
     // kind `video`, and the image of a message goes as a frame to a model
     // that takes frames (the video list, mediaFormats.ts). The few models
     // that need a video get the same request, and OpenRouter refuses it.
-    // "audio" comes only with "text": those models answer through chat.
+    // "audio" comes only with "text": those models answer through chat,
+    // with audio only when the request asks for it (`audioOutputs`).
     // "transcription" models write down the speech of an audio clip.
     modelOutputs: {
       path: 'architecture.output_modalities',
@@ -57,7 +58,10 @@ export const BUILT_IN_PROVIDER_CONFIGS: readonly ProviderConfig[] = [
     modelReleased: { path: 'created', format: 'unixSeconds' },
     // Texts of USD per token; `-1` for a router model (`openrouter/auto`),
     // whose price is that of the model that it picks. `overrides`: other
-    // rates by prompt length or time (checked live, 2026-11-14).
+    // rates by prompt length or time (checked live, 2026-11-14). The music
+    // models (Lyria) have "0" for their tokens and no audio price: their
+    // price per clip is only in their description (checked live,
+    // 2026-11-14), so Dez knows none (modelPrices.ts).
     // https://openrouter.ai/docs/api/api-reference/models/list-all-models-and-their-properties
     modelTokenPrices: {
       input: 'pricing.prompt',
@@ -66,6 +70,7 @@ export const BUILT_IN_PROVIDER_CONFIGS: readonly ProviderConfig[] = [
       perTokens: 1,
       otherRates: 'pricing.overrides',
       imageOutput: 'pricing.image_output',
+      audioOutput: 'pricing.audio_output',
     },
     auth: 'apiKey',
     // OpenRouter passes the marks on to the models that cache only a marked
@@ -80,6 +85,22 @@ export const BUILT_IN_PROVIDER_CONFIGS: readonly ProviderConfig[] = [
     // outputs hold `image`. The streamed images are in `delta.images`.
     // https://openrouter.ai/docs/api/api-reference/chat/create-a-chat-completion
     imageOutputBody: { modalities: ['image', 'text'] },
+    // The models that answer with audio (outputs "text" and "audio"). The
+    // OpenAI voice models need a voice, and while they stream they give
+    // only `pcm16`: raw 16-bit PCM, 24 kHz, one channel ("does not support
+    // 'mp3' when stream=true. Supported values are: 'pcm16'"). The music
+    // models (Lyria) give a whole mp3 file. Checked live, 2026-11-14.
+    // https://openrouter.ai/docs/guides/overview/multimodal/audio
+    // https://developers.openai.com/api/docs/guides/audio-chat-completions
+    audioOutputs: [
+      {
+        modelIdPrefix: 'openai/gpt-audio',
+        body: { modalities: ['text', 'audio'], audio: { voice: 'alloy', format: 'pcm16' } },
+        contentType: 'audio/pcm;rate=24000',
+        pcmSampleBits: 16,
+      },
+      { modelIdPrefix: 'google/lyria-', body: { modalities: ['text', 'audio'], audio: { format: 'mp3' } }, contentType: 'audio/mpeg' },
+    ],
     // The image-only, speech, and video models take OpenRouter's own image,
     // speech, and video APIs. A speech request asks for mp3. "HeyGen Voice
     // and Gemini TTS only return `pcm` [...]; these return a 400 for the

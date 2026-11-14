@@ -1087,6 +1087,9 @@ describe('dez.controller/tools/run', () => {
       const SCRIBE: ModelInfo = { id: 'scribe', name: 'Scribe', provider: 'venice', outputs: ['text'], request: 'transcription', clips: { audio: { use: 'source', maxClips: 1 } } }
       // A text model that makes images too.
       const SKETCHER: ModelInfo = { id: 'sketcher', name: 'Sketcher', provider: 'venice', outputs: ['text', 'image'] }
+      // A text model that makes audio too.
+      const SINGER: ModelInfo = { id: 'singer', name: 'Singer', provider: 'venice', outputs: ['text', 'audio'] }
+      const MADE_SONG = { kind: 'audio', mediaType: 'audio/mpeg', src: '/home/u/.cache/dez/media/song.mp3', url: null, expires: '2026-12-01T00:00:00.000Z', jobId: null } as const
       const FOX = '/home/u/.config/dez/assets/images/fox.png'
       // A linked file: its name is private.
       const LINKED = '/home/u/Pictures/private-name.png'
@@ -1132,7 +1135,7 @@ describe('dez.controller/tools/run', () => {
       }
 
       beforeEach(() => {
-        sbp('dez.model/modelCache/applyProviderResult', 'venice', { ok: true, models: [...MODELS('venice'), PAINTER, FILMER, SCRIBE, SKETCHER] })
+        sbp('dez.model/modelCache/applyProviderResult', 'venice', { ok: true, models: [...MODELS('venice'), PAINTER, FILMER, SCRIBE, SKETCHER, SINGER] })
         tabId = sbp('dez.model/tabs/activeId') as string
         sbp('dez.model/tabs/replaceSections', tabId, [
           { id: 'u1', role: 'user', content: [{ kind: 'text', text: `A fox: ![${FOX}](id=a) and ![${LINKED}](id=b)\n${mediaTagText(SPEECH)}` }] },
@@ -1411,6 +1414,7 @@ describe('dez.controller/tools/run', () => {
             messages: [{ role: 'user', content: [{ type: 'text', text: 'What does @a' }, { type: 'image', path: FOX }, { type: 'text', text: ' show?' }] }],
             tools: [],
             imageOutput: false,
+            audioOutput: false,
             providerSettings: { webSearch: false },
             reader: 'model',
             requestId: expect.any(String),
@@ -1418,6 +1422,7 @@ describe('dez.controller/tools/run', () => {
             onThinking: expect.any(Function),
             onToken: expect.any(Function),
             onImage: expect.any(Function),
+            onClip: expect.any(Function),
           }])
           expect(written).toStrictEqual([])
           expect(mediaRequests).toStrictEqual([])
@@ -1436,6 +1441,19 @@ describe('dez.controller/tools/run', () => {
           expect(chatRequests[0].imageOutput).toBe(true)
           expect(savedImages).toStrictEqual([{ mediaType: 'image/png', options: { folder: 'generated' } }])
           expect(written).toStrictEqual([{ path: MADE_IMAGE, tool: 'model_invoke', madeBy: jobs.list()[0].id }])
+        })
+
+        it('asks a model that makes audio for it, and jobs_wait puts the clip of the answer into the reply', async () => {
+          streamChat = async (input) => {
+            await input.onToken('<instrumental>')
+            await input.onClip(MADE_SONG)
+          }
+
+          await jobTool('model_invoke', { model: 'venice/singer', prompt: 'A short song.' })
+
+          expect(await jobResult()).toContain(`${invocationAnswerText('<instrumental>')}\nMade the audio clip @c.\n</job>`)
+          expect(chatRequests[0]).toMatchObject({ imageOutput: false, audioOutput: true })
+          expect(written).toStrictEqual([{ path: MADE_SONG.src, tool: 'model_invoke', madeBy: jobs.list()[0].id }])
         })
 
         it('tells in the state of the job how much text came so far', async () => {

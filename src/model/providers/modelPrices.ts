@@ -1,3 +1,4 @@
+import type { ModelOutput } from '../modelOutputs'
 import type { ProviderConfig } from './config'
 import type { ParameterValues } from './modelParameters'
 import { isRecord, valueAtPath } from './modelParsing'
@@ -142,18 +143,26 @@ export function priceText(price: ModelPrice): string {
 // (`modelTokenPrices` in config.ts). Both the input and the output price
 // are needed; with one missing or under 0 the price is unknown. A list
 // that has other rates for some requests (a long prompt, a time of day)
-// gives its base rate, and the note says so.
-export function modelTokenPrice(entry: Record<string, unknown>, config: ProviderConfig['modelTokenPrices']): ModelPrice | undefined {
+// gives its base rate, and the note says so. `outputs`: what the model
+// makes (`effectiveOutputs`). A model whose tokens are free but that makes
+// images or audio with no price of its own for them has an unknown price,
+// not 0: OpenRouter's music models (Lyria) list "0" for their tokens and
+// tell their price per clip only in their description.
+export function modelTokenPrice(entry: Record<string, unknown>, config: ProviderConfig['modelTokenPrices'], outputs: readonly ModelOutput[]): ModelPrice | undefined {
   if (config === undefined) return undefined
   const input = priceNumber(valueAtPath(entry, config.input))
   const output = priceNumber(valueAtPath(entry, config.output))
   if (input === undefined || output === undefined) return undefined
   const perMillion = (usd: number): number => roundedPrice(usd * 1_000_000 / config.perTokens)
-  const cachedInput = config.cachedInput === undefined ? undefined : priceNumber(valueAtPath(entry, config.cachedInput))
-  const imageOutput = config.imageOutput === undefined ? undefined : priceNumber(valueAtPath(entry, config.imageOutput))
+  const pathPrice = (path: string | undefined) => path === undefined ? undefined : priceNumber(valueAtPath(entry, path))
+  const cachedInput = pathPrice(config.cachedInput)
+  const mediaPrices = { image: pathPrice(config.imageOutput), audio: pathPrice(config.audioOutput) }
+  const unpricedMedia = (['image', 'audio'] as const).some((media) => outputs.includes(media) && mediaPrices[media] === undefined)
+  if (input === 0 && output === 0 && unpricedMedia) return undefined
   const notes = [
     ...(config.otherRates !== undefined && hasData(valueAtPath(entry, config.otherRates)) ? ['base rate; some requests have other rates'] : []),
-    ...(imageOutput ? [`images: $${perMillion(imageOutput)} per 1M output tokens`] : []),
+    ...(mediaPrices.image ? [`images: $${perMillion(mediaPrices.image)} per 1M output tokens`] : []),
+    ...(mediaPrices.audio ? [`audio: $${perMillion(mediaPrices.audio)} per 1M output tokens`] : []),
   ]
   return {
     unit: 'token',

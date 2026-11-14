@@ -481,6 +481,24 @@ describe('declarative provider settings', () => {
     expect(body(builtInProvider('openrouter'))).not.toHaveProperty('modalities')
   })
 
+  it('merges the body of the first audioOutputs entry of the model, only into a request that asks for audio output', () => {
+    const provider = customProvider({
+      requestBody: { modalities: ['text'], top: 'kept' },
+      audioOutputs: [
+        { modelIdPrefix: 'voice/', body: { modalities: ['text', 'audio'], audio: { voice: 'alloy', format: 'pcm16' } }, contentType: 'audio/pcm;rate=24000', pcmSampleBits: 16 },
+        { modelIdPrefix: 'voice/', body: { audio: { format: 'mp3' } }, contentType: 'audio/mpeg' },
+        { modelIdPrefix: 'music/', body: { modalities: ['text', 'audio'], audio: { format: 'mp3' } }, contentType: 'audio/mpeg' },
+      ],
+    })
+    const body = (modelId: string, context?: ChatRequestContext) => requestBody(provider.chatRequest(messages, { id: modelId }, key, {}, context).request)
+
+    expect(body('voice/mini', { audioOutput: true })).toMatchObject({ modalities: ['text', 'audio'], audio: { voice: 'alloy', format: 'pcm16' }, top: 'kept' })
+    expect(body('music/clip', { audioOutput: true })).toMatchObject({ modalities: ['text', 'audio'], audio: { format: 'mp3' } })
+    expect(body('voice/mini', { audioOutput: false })).not.toHaveProperty('audio')
+    expect(body('voice/mini')).not.toHaveProperty('audio')
+    expect(body('other', { audioOutput: true })).toStrictEqual(body('other'))
+  })
+
   it('adds no venice_parameters to a provider without settings', () => {
     const body = requestBody(builtInProvider('openrouter').chatRequest(messages, { id: 'm' }, key, { webSearch: false }).request)
 
@@ -1397,7 +1415,8 @@ describe('provider models', () => {
     // images; an image-only model takes the image API; a router lists
     // "image" but has no image price, so it is a text model; speech and
     // video models take the media API; a model that writes text and audio
-    // answers through chat.
+    // answers through chat, and it makes audio only when an `audioOutputs`
+    // entry tells how to ask it for audio.
     expect(kinds('openrouter', [
       { id: 'text', architecture: { output_modalities: ['text'] }, pricing: { prompt: '0.000001', completion: '0.000002' } },
       { id: 'text-image', architecture: { output_modalities: ['image', 'text'] }, pricing: { image_output: '0.00003' } },
@@ -1405,6 +1424,7 @@ describe('provider models', () => {
       { id: 'router', architecture: { output_modalities: ['text', 'image'] }, pricing: { prompt: '-1', completion: '-1' } },
       { id: 'speech', architecture: { output_modalities: ['speech'] } },
       { id: 'video', architecture: { output_modalities: ['video'] } },
+      { id: 'google/lyria-3-clip-preview', architecture: { output_modalities: ['text', 'audio'] } },
       { id: 'text-audio', architecture: { output_modalities: ['text', 'audio'] } },
       { id: 'speech-to-text', architecture: { output_modalities: ['transcription'] } },
       { id: 'rerank', architecture: { output_modalities: ['rerank'] } },
@@ -1415,7 +1435,8 @@ describe('provider models', () => {
       ['router', ['text'], 'chat'],
       ['speech', ['audio'], 'tts'],
       ['video', ['video'], 'video'],
-      ['text-audio', ['text', 'audio'], 'chat'],
+      ['google/lyria-3-clip-preview', ['text', 'audio'], 'chat'],
+      ['text-audio', ['text'], 'chat'],
       ['speech-to-text', ['text'], 'transcription'],
     ])
     expect(kinds('copilot', [

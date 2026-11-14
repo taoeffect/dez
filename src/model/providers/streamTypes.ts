@@ -11,8 +11,8 @@ import type { ChatRequestContext, GeneratedClip, GeneratedMedia, MediaKind, Prov
 // the request.
 export type ProviderChatInputMessage = RequestMessage<MessagePart>
 
-// `conversationId`, `system`, `tools`, and `imageOutput` go into the request
-// body (ChatRequestContext).
+// `conversationId`, `system`, `tools`, `imageOutput`, and `audioOutput` go
+// into the request body (ChatRequestContext).
 export interface ProviderStreamChatInput extends ChatRequestContext {
   providerId: ProviderId
   modelId: string
@@ -38,6 +38,10 @@ export interface ProviderStreamChatInput extends ChatRequestContext {
   // text: the next `onToken` call comes after this one ends. A reply has
   // images only when the request asked for them (`imageOutput`).
   onImage(image: GeneratedMedia): void | Promise<void>
+  // The audio of the reply, as a temp copy (`chatAudio.ts`), after all its
+  // text. A reply has audio only when the request asked for it
+  // (`audioOutput`) and its stream was whole.
+  onClip(clip: GeneratedClip): void | Promise<void>
 }
 
 export interface ProviderStreamChatResult {
