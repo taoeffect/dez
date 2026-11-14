@@ -516,8 +516,9 @@ export async function assetViewResult(
   // With nothing left of one part of the budget, no picture fits, so Dez
   // does not make one. Else only the made picture tells its cost.
   const pictureChoice = (): PictureChoice => (!imageInput ? 'noImageInput' : left.pictures > 0 && left.tokens > 0 && left.bytes > 0 ? 'show' : 'overLimit')
-  // A grid is one picture, so its choice is made once, before the pictures
-  // of the other assets take their part of the budget.
+  // The assets of a grid share one choice, made before the pictures of the
+  // other assets take their part of the budget. Those pictures can spend
+  // the budget, so the draw of the grid checks it again.
   const gridIds = imageInput && call.layout === 'grid' ? call.ids.filter((id) => assets.images.has(id) || assets.clips.get(id)?.kind === 'video') : []
   const inGrid = new Set(gridIds.length >= 2 ? gridIds : [])
   const gridChoice = pictureChoice()
@@ -559,7 +560,13 @@ export async function assetViewResult(
     return items
   }
   const items = call.ids.some((id) => assets.clips.has(id)) ? await inWorkFolder(view) : await view(null)
-  const grid = members.length > 0 ? await gridView(members, call.detail) : null
+  // A stop during the last asset does not wait for the draw of the grid.
+  signal.throwIfAborted()
+  const gridGoes = members.length > 0 && pictureChoice() === 'show'
+  // A grid that cannot go gives each of its assets the note that it gets
+  // when the call starts with a spent budget (`gridChoice`).
+  if (!gridGoes) for (const { piece } of members) items.find((item) => item.id === piece.id)?.notes.push(PICTURE_LIMIT_NOTE)
+  const grid = gridGoes ? await gridView(members, call.detail) : null
   if (grid?.picture) {
     const cost = pictureCost(grid.picture.part, grid.picture.size)
     const after = budgetAfter(left, cost)

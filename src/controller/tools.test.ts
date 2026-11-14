@@ -2638,6 +2638,48 @@ describe('dez.controller/tools/run', () => {
         expect(ffmpegRuns().map(({ args }) => args)).toStrictEqual([audioViewArgs('b.mp4', { start: 0, end: 5.04 }, null)])
       })
 
+      it('draws no grid when the other pictures of the call spent the last picture of the budget, and tells each asset of the grid', async () => {
+        budget = { ...budget, pictures: 1 }
+
+        const result = await assetView({ assets: '@a @d @b', layout: 'grid', frames: 3, end: 2.5 })
+
+        expect(compositions).toStrictEqual([])
+        expect(shown.map(({ label }) => label.match(/@[a-z]+/)?.[0])).toStrictEqual(['@d'])
+        const lines = result.content.split('\n')
+        expect(lines[1]).toBe(PICTURE_LIMIT_NOTE)
+        expect(lines.slice(5)).toStrictEqual([
+          expect.stringMatching(/^@b \| video \| /),
+          expect.stringMatching(/^Loudness of 0 s to 2\.5 s: /),
+          PICTURE_LIMIT_NOTE,
+          expect.stringMatching(/^You see each picture /),
+          // 232 tokens and 80 bytes of base64 for the wave.
+          'Picture budget left in this reply: 0 pictures, 57,176 tokens and 20.0 MB of base64.',
+        ])
+      })
+
+      it('draws no grid for a call that the user stopped during its last asset', async () => {
+        const stop = new AbortController()
+        readImage = async () => {
+          stop.abort()
+          return new Blob([FOX_BYTES], { type: 'image/png' })
+        }
+        const context: ToolRunContext = {
+          tabId,
+          model: REPLY_MODEL,
+          jobs: new ReplyJobs(),
+          writeImage: () => null,
+          writeClip: () => null,
+          pictureBudget: () => budget,
+          showPictures: (pictures) => { shown.push(...pictures) },
+        }
+
+        const result = await sbp('dez.controller/tools/run', { name: 'asset_view', arguments: { assets: '@b @a', layout: 'grid' } }, stop.signal, context) as ToolRunResult
+
+        expect(result.isError).toBe(true)
+        expect(compositions).toStrictEqual([])
+        expect(shown).toStrictEqual([])
+      })
+
       it('tells the cost of a grid that does not fit in the tokens that are left, after the pictures that fit, with no sheet note', async () => {
         budget = { ...budget, tokens: 800 }
 

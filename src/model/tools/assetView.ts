@@ -704,9 +704,14 @@ export interface AssetViewGrid {
  *  parts; `noImageInput` when the model of the reply reads no images. */
 export type PictureChoice = 'show' | 'overLimit' | 'noImageInput'
 
-// What a picture costs, or what is left of a budget, but the pictures.
+// The tokens and the base64 bytes of the cost of a picture.
 function tokensAndBytesText({ tokens, bytes }: PictureBudget): string {
   return `${countText(tokens)} tokens and ${byteSizeText(bytes)} of base64`
+}
+
+// What is left of a budget, with its pictures.
+function budgetLeftText(left: PictureBudget): string {
+  return `${left.pictures} ${left.pictures === 1 ? 'picture' : 'pictures'}, ${tokensAndBytesText(left)}`
 }
 
 /** The note of an asset whose picture Dez did not make: the picture budget
@@ -717,7 +722,7 @@ export const PICTURE_LIMIT_NOTE = 'No picture: this reply has spent its picture 
 /** The note of an asset whose picture costs `cost`, more than the budget
  *  `left` of the reply. */
 export function pictureCostNote(cost: PictureBudget, left: PictureBudget): string {
-  return `No picture: it costs ${tokensAndBytesText(cost)}, and this reply had only ${tokensAndBytesText(left)} left for pictures. `
+  return `No picture: it costs ${tokensAndBytesText(cost)}, and this reply had only ${budgetLeftText(left)} left for pictures. `
     + 'In a later reply, call asset_view again to see it.'
 }
 
@@ -730,7 +735,7 @@ export function idsListText(ids: readonly string[]): string {
  *  budget `left` of the reply. */
 export function gridCostNote(ids: readonly string[], cost: PictureBudget, left: PictureBudget): string {
   return `No grid picture of ${idsListText(ids)}: it costs ${tokensAndBytesText(cost)}, `
-    + `and this reply had only ${tokensAndBytesText(left)} left for pictures. In a later reply, call asset_view again to see them.`
+    + `and this reply had only ${budgetLeftText(left)} left for pictures. In a later reply, call asset_view again to see them.`
 }
 
 /** The note of the grid of `ids`, which the webview could not draw. */
@@ -1021,6 +1026,6 @@ export function assetViewText(items: readonly AssetViewItem[], grid: AssetViewGr
     lines.push('You see each picture after the results of the calls of this round, after a line that names it. '
       + 'You see the pictures in this reply only. In a later reply, call asset_view again to see them again.')
   }
-  lines.push(`Picture budget left in this reply: ${left.pictures} ${left.pictures === 1 ? 'picture' : 'pictures'}, ${tokensAndBytesText(left)}.`)
+  lines.push(`Picture budget left in this reply: ${budgetLeftText(left)}.`)
   return lines.join('\n')
 }
