@@ -81,7 +81,7 @@ export interface RenderedToolCall extends ToolBlock {
   state: ToolCallState
   /** Null for a call that is not intermediate. */
   intermediate: IntermediateCall | null
-  /** The chip's short form of the arguments (`toolCallSummary`). */
+  /** The chip's short form of the arguments (`toolCallSummaries`). */
   summary: string
 }
 
@@ -128,7 +128,7 @@ const SUMMARY_PART_MAX_CHARS = 40
 
 /** A text value that starts with at least this many characters of the
  *  same argument of another call shows from the word where the two differ
- *  (`toolCallSummary`). */
+ *  (`toolCallSummaries`). */
 const SHARED_START_MIN_CHARS = 20
 
 /** What a chip says before the name of a tool that Dez does not have: an

@@ -80,8 +80,8 @@ describe('chat token prices', () => {
 })
 
 describe('price texts', () => {
-  // At least 2 decimals, and 3 decimals after the first zeros of a small
-  // price; never an exponent.
+  // At least 2 decimals, and about 4 significant digits for a small price,
+  // with no other zeros at the end; `$0` for 0; never an exponent.
   it.each([
     [0.1, '$0.10'],
     [3.5, '$3.50'],

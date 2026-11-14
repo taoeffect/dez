@@ -256,8 +256,8 @@ describe('ReplyJobs', () => {
     expect(jobs.list()[1]).toMatchObject({ delivered: true, state: 'Queued.' })
   })
 
-  // The conversation total adds the price of each job once, when it is
-  // final.
+  // The conversation total adds the price of each job once, at the end of
+  // the job.
   it('lists the last price that the work of a job reported, keeps the price of a job that ended, and gives it to onCost at the end', async () => {
     const counted: (number | null)[] = []
     jobs = new ReplyJobs((usd) => counted.push(usd))

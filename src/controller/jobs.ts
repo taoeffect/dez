@@ -172,8 +172,8 @@ export class ReplyJobs {
   private stopped = false
 
   /** `onCost` gets the price of each job that sent a paid request
-   *  (`JobInfo.cost`) once, at the end of the job, where the price is
-   *  final. */
+   *  (`JobInfo.cost`) once, at the end of the job: the last price that its
+   *  work reported before that end. */
   constructor(private readonly onCost: (usd: number | null) => void = () => {}) {}
 
   /** How many jobs run now. */

@@ -189,8 +189,11 @@ export interface ModelInfo {
   learnedImageLimit?: LearnedImageLimit
   // The price of the model's requests that the provider's model list gives
   // (modelPrices.ts): token prices for a chat model, else the price of one
-  // unit of a media request for the default values of its parameters. Only
-  // `model_list` and `model_info` show it. Missing: the list gives none.
+  // unit of a media request for the default values of its parameters.
+  // `model_list` and `model_info` show it, and the cost of a request whose
+  // provider tells no price comes from it: the tokens of a chat request
+  // (`chatRequestCost`, chatUsage.ts), the characters of a speech request
+  // with no quote (`textLengthCost`). Missing: the list gives none.
   price?: ModelPrice
 }
 

@@ -117,9 +117,9 @@ export function freshQuote(quotes: readonly PriceQuote[], request: QuoteRequest,
     .reduce<PriceQuote | undefined>((newest, quote) => (newest && newest.at >= quote.at ? newest : quote), undefined)
 }
 
-/** A price in USD as a short text: at least 2 decimals, and about 4
- *  significant digits for a small price (`$0.0115`, `$0.10`, `$3.50`),
- *  never with an exponent. */
+/** A price in USD as a short text: `$0` for 0, else at least 2 decimals,
+ *  and about 4 significant digits for a small price (`$0.0115`, `$0.10`,
+ *  `$3.50`), never with an exponent. */
 export function usdText(usd: number): string {
   if (usd === 0) return '$0'
   const decimals = Math.min(100, Math.max(2, Math.ceil(-Math.log10(usd)) + 3))

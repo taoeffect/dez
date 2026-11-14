@@ -353,17 +353,15 @@ function parameterValues(providerId: ProviderId, modelId: string, chosen: Readon
   return effectiveParameterValues(model?.parameters ?? [], chosen)
 }
 
-// The price in USD of one media request before it goes, as far as Dez can
-// tell it at no cost: a fresh quote of the quote cache, else the answer to
-// the provider's free price request (dez.provider/mediaQuote, which fills
-// that cache), else, for speech with a list price per character, that
-// price for the characters of the prompt. Undefined when no price is
-// known, and for a text kind (a transcription), whose price is by the
-// length of its clip. A price request that fails is only logged: the
-// media request goes all the same. A stop of `input.signal` rejects.
+// The price in USD of one image or clip request before it goes, as far as
+// Dez can tell it at no cost: a fresh quote of the quote cache, else the
+// answer to the provider's free price request (dez.provider/mediaQuote,
+// which fills that cache), else, for speech with a list price per
+// character, that price for the characters of the prompt. Undefined when
+// no price is known. A price request that fails is only logged: the media
+// request goes all the same. A stop of `input.signal` rejects.
 async function mediaRequestQuote(provider: Provider, input: ProviderGenerateMediaInput, values: ParameterValues, model: ModelInfo | null): Promise<number | undefined> {
   const { kind, modelId, signal } = input
-  if (isTextKind(kind)) return undefined
   const cached = sbp('dez.model/modelCache/quote', { providerId: provider.id, modelId, kind, values }) as PriceQuote | null
   if (cached) return cached.usd
   try {

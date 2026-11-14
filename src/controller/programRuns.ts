@@ -21,10 +21,10 @@ import { discardMadeAssets, type MadeAsset } from './jobs'
 import type { BundledTool, BundledToolEnd, BundledToolInput, BundledToolOutput, BundledToolRun } from './nativeTypes'
 
 // The runs of ffmpeg and ffprobe, the programs that Dez ships, for the
-// Dez tools that use them (videoTool.ts, audioTool.ts). This module
-// registers no selector. Its texts for a model are in
-// model/tools/programRuns.ts; `toolName` is the Dez tool of the call, which
-// those texts name.
+// Dez tools that run them (videoTool.ts, audioTool.ts, assetInfo.ts,
+// assetView.ts). This module registers no selector. Its texts for a model
+// are in model/tools/programRuns.ts; `toolName` is the Dez tool of the
+// call, which those texts name.
 //
 // Each call has its own new work folder in the cache root
 // (model/tools/workFolders.ts). The program runs in it and gets only

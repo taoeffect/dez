@@ -299,7 +299,6 @@ describe('modelListText', () => {
       expect(priceOf(priced({ unit: 'clip', usd: 0.0115, note: 'with sound' }))).toBe('$0.0115 per clip (with sound)')
     })
 
-    // D13: the quote of the default values stands in for a list price.
     it('tells the fresh quote of the default values of an image or clip model that has no list price', () => {
       const video = priced(undefined, {
         outputs: ['video'],
