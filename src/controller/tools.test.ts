@@ -16,7 +16,20 @@ import { providerInfo } from '../model/providers/testing'
 import type { ModelInfo, ProviderInfo, ProviderInputImageRules, ProviderSettingsDescriptor } from '../model/providers/types'
 import { NO_PICTURE_BUDGET, ReplyPictures, type PictureBudget, type ReplyPicture } from '../model/streams/replyPictures'
 import { assetProbeArgs, clipNotReadFacts } from '../model/tools/assetFacts'
-import { clipNotReadNote, PICTURE_LIMIT_NOTE, PICTURE_NOT_DRAWN_NOTE, PICTURE_NOT_READ_NOTE, pictureCostNote, smallerCopyNote, VIEW_FAILED_NOTE } from '../model/tools/assetView'
+import {
+  clipNotReadNote,
+  cropOfClipText,
+  cropTexts,
+  cropUnderPixelText,
+  PICTURE_LIMIT_NOTE,
+  PICTURE_NOT_DRAWN_NOTE,
+  PICTURE_NOT_READ_NOTE,
+  PICTURE_TOO_LARGE_NOTE,
+  pictureCostNote,
+  sheetTooLargeNote,
+  smallerCopyNote,
+  VIEW_FAILED_NOTE,
+} from '../model/tools/assetView'
 import { jobsListText, jobStartedText, jobsWaitResults, jobsWaitText, NO_JOBS_TEXT, NO_OPEN_JOBS_TEXT } from '../model/tools/jobs'
 import { modelCost, modelInfoText, type ModelInfoFacts } from '../model/tools/modelInfo'
 import { IMAGE_NOT_SAVED_TEXT, INVOCATION_TEXT_CAP, invocationAnswerStateText, invocationAnswerText, modelInvocation } from '../model/tools/modelInvoke'
@@ -64,8 +77,8 @@ let storedImageSize: ImageSize
 let redrawError: Error | undefined
 let drawError: Error | undefined
 let drawings: { drawing: ImageDrawing, mediaType: string }[] = []
-// The byte count of each PNG drawing; every other drawing has 1 byte.
-let pngDrawingBytes: number
+// The byte count of the file of each drawing, of the type that it writes.
+let drawingBytes: (drawing: ImageDrawing, mediaType: DrawnMediaType) => number
 let savedImages: { mediaType: string, options: unknown }[] = []
 let saveImage: () => Promise<string>
 let deletedImages: string[] = []
@@ -120,7 +133,7 @@ sbp('sbp/selectors/register', {
     if (drawError) throw drawError
     drawings.push({ drawing, mediaType })
     const type = drawing.mediaType ?? mediaType
-    return { bytes: new Uint8Array(type === 'image/png' ? pngDrawingBytes : 1).fill(7), mediaType: type, width: drawing.width, height: drawing.height }
+    return { bytes: new Uint8Array(drawingBytes(drawing, type)).fill(7), mediaType: type, width: drawing.width, height: drawing.height }
   },
   async 'dez.controller/images/save' (_bytes: Uint8Array, mediaType: string, options: unknown): Promise<string> {
     savedImages.push({ mediaType, options })
@@ -181,7 +194,7 @@ beforeEach(() => {
   redrawError = undefined
   drawError = undefined
   drawings = []
-  pngDrawingBytes = 1
+  drawingBytes = () => 1
   savedImages = []
   saveImage = async () => MADE_IMAGE
   deletedImages = []
@@ -1896,25 +1909,37 @@ describe('dez.controller/tools/run', () => {
     })
 
     it.each([
-      ['a file that is too large', 4_000_000, { width: 1000, height: 500 }, { width: 1000, height: 500 }],
-      ['a picture with a long side over 3000 pixels', 3, { width: 3001, height: 1500 }, { width: 2048, height: 1024 }],
-    ])('sends %s as a JPEG copy on white, at most 2048 pixels on its long side', async (_case, bytes, size, drawn) => {
+      ['a file that is too large as a copy of the same size', 'review', 4_000_000, { width: 1000, height: 500 }, { width: 1000, height: 500 }],
+      ['a picture with a long side over 1568 pixels at that side, for review', 'review', 3, { width: 3001, height: 1500 }, { width: 1568, height: 784 }],
+      ['a picture with a long side over 3000 pixels at that side, for full', 'full', 3, { width: 1500, height: 3001 }, { width: 1500, height: 3000 }],
+    ] as const)('sends %s, as a JPEG copy on white', async (_case, detail, bytes, size, drawn) => {
       readImage = async () => new Blob([new Uint8Array(bytes)], { type: 'image/png' })
       storedImageSize = size
 
-      const result = await assetView({ assets: 'a' })
+      const result = await assetView({ assets: 'a', detail })
 
       expect(drawings).toStrictEqual([{
         drawing: { crop: { x: 0, y: 0, ...size }, ...drawn, background: '#ffffff', mediaType: 'image/jpeg' },
         mediaType: 'image/png',
       }])
-      expect(shown.map(({ picture }) => picture.mediaType)).toStrictEqual(['image/jpeg'])
-      expect(result.content).toContain(smallerCopyNote(drawn.width, drawn.height))
+      expect(shown.map(({ picture, size }) => ({ mediaType: picture.mediaType, size }))).toStrictEqual([{ mediaType: 'image/jpeg', size: drawn }])
+      expect(result.content).toContain(smallerCopyNote(drawn, size, detail))
+    })
+
+    it('sends an image of more than 1568 pixels as it is for full detail', async () => {
+      storedImageSize = { width: 2000, height: 1000 }
+
+      await assetView({ assets: 'a', detail: 'full' })
+
+      expect(drawings).toStrictEqual([])
+      expect(shown.map(({ picture, size }) => ({ picture, size }))).toStrictEqual([
+        { picture: { type: 'picture', mediaType: 'image/png', bytes: FOX_BYTES }, size: { width: 2000, height: 1000 } },
+      ])
     })
 
     it('sends an SVG image as a PNG drawing at its own size, when the drawing is not too large', async () => {
       readImage = async () => new Blob(['<svg/>'], { type: 'image/svg+xml' })
-      pngDrawingBytes = 3_750_000
+      drawingBytes = () => 3_750_000
 
       await assetView({ assets: 'a' })
 
@@ -1924,7 +1949,7 @@ describe('dez.controller/tools/run', () => {
 
     it('sends an SVG image whose PNG drawing is too large as a JPEG copy on white', async () => {
       readImage = async () => new Blob(['<svg/>'], { type: 'image/svg+xml' })
-      pngDrawingBytes = 3_750_001
+      drawingBytes = (_drawing, mediaType) => mediaType === 'image/png' ? 3_750_001 : 1
 
       const result = await assetView({ assets: 'a' })
 
@@ -1934,7 +1959,93 @@ describe('dez.controller/tools/run', () => {
         { drawing: { crop, width: 1000, height: 500, background: '#ffffff', mediaType: 'image/jpeg' }, mediaType: 'image/jpeg' },
       ])
       expect(shown.map(({ picture }) => picture.mediaType)).toStrictEqual(['image/jpeg'])
-      expect(result.content).toContain(smallerCopyNote(1000, 500))
+      expect(result.content).toContain(smallerCopyNote(crop, crop, 'review'))
+    })
+
+    it('draws a JPEG copy that is still too large again at 2048, 1568, then 1024 pixels, until it fits', async () => {
+      readImage = async () => new Blob([new Uint8Array(4_000_000)], { type: 'image/png' })
+      storedImageSize = { width: 3000, height: 1500 }
+      drawingBytes = (drawing) => drawing.width > 1024 ? 3_750_001 : 1
+
+      const result = await assetView({ assets: 'a', detail: 'full' })
+
+      expect(drawings.map(({ drawing, mediaType }) => [drawing.width, drawing.height, drawing.mediaType, mediaType])).toStrictEqual([
+        [3000, 1500, 'image/jpeg', 'image/png'],
+        [2048, 1024, 'image/jpeg', 'image/jpeg'],
+        [1568, 784, 'image/jpeg', 'image/jpeg'],
+        [1024, 512, 'image/jpeg', 'image/jpeg'],
+      ])
+      expect(shown.map(({ size }) => size)).toStrictEqual([{ width: 1024, height: 512 }])
+      expect(result.content).toContain(smallerCopyNote({ width: 1024, height: 512 }, storedImageSize, 'full'))
+    })
+
+    it('sends no picture of an image whose smallest JPEG copy is still too large, and logs it', async () => {
+      storedImageSize = { width: 3000, height: 1500 }
+      drawingBytes = () => 3_750_001
+
+      const result = await assetView({ assets: 'a' })
+
+      expect(drawings.map(({ drawing }) => drawing.width)).toStrictEqual([1568, 1024])
+      expect(result).toStrictEqual({ content: `@a | image | PNG | 3000x1500 | 3 B\n${PICTURE_TOO_LARGE_NOTE}\n${FULL_BUDGET_LINE}`, isError: false })
+      expect(shown).toStrictEqual([])
+      expect(consoleError).toHaveBeenCalled()
+    })
+
+    it.each([
+      ['at its own pixels', 'review', { width: 1000, height: 500 }, '0.5 0 0.5 0.5', { x: 500, y: 0, width: 500, height: 250 }, { width: 500, height: 250 }],
+      ['as a smaller copy at the side of review', 'review', { width: 4000, height: 2000 }, '0 0 1 0.5', { x: 0, y: 0, width: 4000, height: 1000 }, { width: 1568, height: 392 }],
+      ['as a smaller copy at the side of full', 'full', { width: 4000, height: 2000 }, '0 0 1 0.5', { x: 0, y: 0, width: 4000, height: 1000 }, { width: 3000, height: 750 }],
+    ] as const)('shows a crop of an image %s, as a PNG for a PNG, and tells which part it is', async (_case, detail, size, crop, region, picture) => {
+      storedImageSize = size
+
+      const result = await assetView({ assets: '@a', crop, detail })
+
+      expect(drawings).toStrictEqual([{ drawing: { crop: region, ...picture, mediaType: 'image/png' }, mediaType: 'image/png' }])
+      const texts = cropTexts('a', region, picture, detail)
+      expect(shown.map(({ label, picture, size }) => ({ label, mediaType: picture.mediaType, size }))).toStrictEqual([
+        { label: `asset_view: ${texts.shows}.`, mediaType: 'image/png', size: picture },
+      ])
+      expect(result.content).toContain(texts.note)
+    })
+
+    it('sends a crop whose PNG drawing is too large as a JPEG copy of the same part', async () => {
+      drawingBytes = (_drawing, mediaType) => mediaType === 'image/png' ? 3_750_001 : 1
+
+      const result = await assetView({ assets: '@a', crop: '0.5 0 0.5 0.5' })
+
+      const region = { x: 500, y: 0, width: 500, height: 250 }
+      expect(drawings.map(({ drawing }) => drawing)).toStrictEqual([
+        { crop: region, width: 500, height: 250, mediaType: 'image/png' },
+        { crop: region, width: 500, height: 250, background: '#ffffff', mediaType: 'image/jpeg' },
+      ])
+      expect(shown.map(({ picture }) => picture.mediaType)).toStrictEqual(['image/jpeg'])
+      expect(result.content).toContain(cropTexts('a', region, { width: 500, height: 250 }, 'review').note)
+    })
+
+    it('refuses a crop of a clip, and a crop of less than one pixel of the image', async () => {
+      expect(await assetView({ assets: '@b', crop: '0 0 0.5 0.5' })).toStrictEqual({ content: cropOfClipText('b', 'video'), isError: true })
+      expect(native.runs).toStrictEqual([])
+
+      expect(await assetView({ assets: '@a', crop: '0.5 0 0.0004 1' })).toStrictEqual({ content: cropUnderPixelText('a', storedImageSize), isError: true })
+      expect(drawings).toStrictEqual([])
+      expect(shown).toStrictEqual([])
+    })
+
+    it.each([['review', 320], ['full', 640]] as const)('fits each frame of a sheet in the box of %s detail', async (detail, box) => {
+      await assetView({ assets: '@b', detail })
+
+      expect(ffmpegRuns()[0].args.join(' ')).toContain(`scale=w=${box}:h=${box}:`)
+    })
+
+    it('sends no frame sheet whose file is too large, and tells how to make a smaller one', async () => {
+      const sheet = new Uint8Array(3_750_001)
+      sheet.set(SHEET_JPEG)
+      native.fileBytes = ({ path }) => path.endsWith('-frames.jpg') ? sheet : new Uint8Array()
+
+      const result = await assetView({ assets: '@b', detail: 'full' })
+
+      expect(result.content).toContain(sheetTooLargeNote('full'))
+      expect(shown).toStrictEqual([])
     })
 
     it('sends no picture of an image that the webview cannot decode, or of a clip that ffmpeg cannot read, and shows the others', async () => {

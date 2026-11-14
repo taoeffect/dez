@@ -1,5 +1,6 @@
 import { byteSizeText } from '../../utils/byteSize'
-import type { ImageSize } from '../chat/imageDrawing'
+import { drawnMediaType, wholeImageDrawing, type ImageDrawing, type ImageRegion, type ImageSize } from '../chat/imageDrawing'
+import type { ImageMediaType } from '../chat/images'
 import type { ClipReadProblem } from '../chat/mediaFiles'
 import type { MediaTagKind } from '../chat/mediaTags'
 import type { PicturePart } from '../chat/types'
@@ -12,7 +13,7 @@ import {
   type PictureBudget,
   type ReplyPicture,
 } from '../streams/replyPictures'
-import { assetIdsArgument } from './arguments'
+import { assetIdsArgument, unknownValuesText } from './arguments'
 import { shortNumber } from './assetFacts'
 import { clipReadAdviceText, type InputWording } from './toolInputs'
 import { ToolError, type ToolArguments, type ToolDefinition } from './types'
@@ -20,8 +21,9 @@ import { FFMPEG_FIXED_ARGS } from './videoTool'
 
 // The `asset_view` tool: a model sees images and clips of its
 // conversation again, so that it can check what it and other models made.
-// Each asset gives its facts and a picture: an image as it is, a video
-// clip as a sheet of frames, and an audio clip as a picture of its wave,
+// Each asset gives its facts and a picture: an image as it is (a large one
+// as a smaller copy, or only a part of it), a video clip as a sheet of
+// frames, and an audio clip as a picture of its wave,
 // with its loudness. The pictures go to the model through the reply
 // (`ToolRunContext.showPictures`, streams/replyPictures.ts), never into
 // the section, and a view makes no asset. controller/assetView.ts reads
@@ -43,6 +45,27 @@ const MAX_SHEET_COLUMNS = 4
  *  sheet decodes only a part of the clip. */
 export const ASSET_VIEW_TIMEOUT_MS = 60_000
 
+/** How large the pictures of a view are (`detail`): `review` costs little
+ *  of the picture budget, `full` shows fine detail. */
+export type ViewDetail = 'review' | 'full'
+const VIEW_DETAILS: readonly ViewDetail[] = ['review', 'full']
+
+/** The longest side of the picture of an image, by `detail`: a larger
+ *  image goes as a smaller copy. No picture has a side over the `full`
+ *  one: the Claude API refuses a side over 3,000 px in a request with more
+ *  than 20 images, and a refused picture fails each later request of the
+ *  reply, as each one sends it again.
+ *  https://platform.claude.com/docs/en/build-with-claude/vision */
+export const IMAGE_PICTURE_SIDES: Readonly<Record<ViewDetail, number>> = { review: 1568, full: 3000 }
+
+/** The box that each frame of a frame sheet fits in, by `detail`: a sheet
+ *  of `MAX_SHEET_COLUMNS` columns stays under 3,000 px on each side. */
+export const FRAME_BOXES: Readonly<Record<ViewDetail, number>> = { review: 320, full: 640 }
+
+/** The most bytes of the file of a picture: in base64, a file of this size
+ *  stays under the 5 MB image limit of the Anthropic API. */
+export const MAX_PICTURE_BYTES = 3_750_000
+
 // A count as the texts write it: `57,408`.
 function countText(count: number): string {
   return count.toLocaleString('en-US')
@@ -54,7 +77,7 @@ export const ASSET_VIEW_TOOL: ToolDefinition = {
   name: 'asset_view',
   description: 'Show you images and clips of this conversation, so that you can check them: '
     + 'what you and other models made (the intermediate parts and the final result), before you use them or tell the user that the work is done. '
-    + 'For each one, you get its facts (as asset_info gives them) and a picture: an image as it is; '
+    + 'For each one, you get its facts (as asset_info gives them) and a picture: an image as it is, or a smaller copy of a large one (see `detail`); '
     + 'a video clip as a sheet of frames at equal steps (left to right, then top to bottom), with the time of each frame; '
     + 'an audio clip as a picture of its wave (time runs left to right), with its loudness. You do not hear a clip. '
     + 'You see the pictures after the results of the calls of this round, in this reply only. '
@@ -64,6 +87,7 @@ export const ASSET_VIEW_TOOL: ToolDefinition = {
     + `Dez counts a picture of W by H pixels as ceil(W / 28) * ceil(H / 28) tokens, at most ${countText(MAX_PICTURE_TOKENS)}: `
     + `a wave picture as ${countText(pictureTokens({ width: 800, height: 200 }))}, a 1920x1080 frame as ${countText(pictureTokens({ width: 1920, height: 1080 }))}. `
     + 'Each result tells the budget that is left. '
+    + 'To check a small detail of an image, view only that part of it with `crop`. '
     + "Dez makes the pictures on the user's computer: no request goes to a model.",
   parameters: [
     {
@@ -90,6 +114,25 @@ export const ASSET_VIEW_TOOL: ToolDefinition = {
       description: 'For a clip: the second of the clip where the part to show ends. Default: the end of the clip.',
       required: false,
     },
+    {
+      name: 'detail',
+      type: 'string',
+      description: 'How large the pictures are: "review" (the default) or "full". '
+        + `With "review", an image is at most ${countText(IMAGE_PICTURE_SIDES.review)} pixels on its longer side, `
+        + `and each frame of a sheet fits in ${FRAME_BOXES.review} by ${FRAME_BOXES.review} pixels; `
+        + `with "full", at most ${countText(IMAGE_PICTURE_SIDES.full)} pixels, and ${FRAME_BOXES.full} by ${FRAME_BOXES.full}. `
+        + '"full" costs more of the picture budget: use it for a detail that "review" does not show.',
+      required: false,
+    },
+    {
+      name: 'crop',
+      type: 'string',
+      description: 'For one image, which `assets` names alone: the part of it to show, as "left top width height", '
+        + 'four numbers from 0 to 1 that are fractions of the width and the height of the image, from its top left corner. '
+        + '"0.5 0 0.5 0.5" is the top right quarter. '
+        + 'Dez shows the part at its own pixels, or as a smaller copy at the size of `detail`.',
+      required: false,
+    },
   ],
 }
 
@@ -98,6 +141,15 @@ const NOT_DONE = 'Dez showed nothing.'
 /** The words of `asset_view` in the text of an id that names no image and
  *  no clip (`unknownAssetsText`). */
 export const ASSET_VIEW_WORDING: InputWording = { argument: '`assets`', notDone: NOT_DONE }
+
+/** A part of an image, in fractions of its width (`left`, `width`) and of
+ *  its height (`top`, `height`), from its top left corner. */
+export interface ViewCrop {
+  left: number
+  top: number
+  width: number
+  height: number
+}
 
 /** The checked arguments of an `asset_view` call. */
 export interface AssetViewCall {
@@ -108,11 +160,49 @@ export interface AssetViewCall {
    *  the clip. */
   start: number
   end: number | null
+  detail: ViewDetail
+  /** The part of the one image of the call to show; null for all of it. */
+  crop: ViewCrop | null
+}
+
+// The `detail` of a call; a blank or absent one is the default.
+function detailArgument(args: ToolArguments): ViewDetail {
+  const text = typeof args.detail === 'string' ? args.detail.trim() : ''
+  if (text === '') return 'review'
+  const detail = VIEW_DETAILS.find((value) => value === text.toLowerCase())
+  if (!detail) throw new ToolError(`${unknownValuesText('detail', [text], `one of: ${VIEW_DETAILS.join(', ')}`)} ${NOT_DONE}`)
+  return detail
+}
+
+// The part of an image that the `crop` text `text` names. Throws a
+// `ToolError` for a text that is not four numbers from 0 to 1, for a part
+// with no width or height, and for a part past an edge of the image.
+function cropArgument(text: string): ViewCrop {
+  const numbers = text.split(/[\s,]+/).filter((word) => word !== '').map(Number)
+  const quoted = JSON.stringify(text)
+  if (numbers.length !== 4 || numbers.some((value) => !Number.isFinite(value) || value < 0 || value > 1)) {
+    throw new ToolError(`\`crop\` is ${quoted}: give four numbers from 0 to 1, "left top width height", as in "0.4 0.1 0.2 0.3". ${NOT_DONE}`)
+  }
+  const [left, top, width, height] = numbers
+  if (width === 0 || height === 0) {
+    throw new ToolError(`\`crop\` ${quoted} has a ${width === 0 ? 'width' : 'height'} of 0: give a part with a width and a height above 0. ${NOT_DONE}`)
+  }
+  // The margin keeps a float error of a sum that ends at the edge from a
+  // refusal that would read "1, and the most is 1".
+  for (const [start, size, edge, names] of [[left, width, 'right', 'left + width'], [top, height, 'bottom', 'top + height']] as const) {
+    if (start + size > 1 + 1e-9) {
+      throw new ToolError(`\`crop\` ${quoted} goes past the ${edge} edge of the image: ${names} is ${shortNumber(start + size)}, and the most is 1. ${NOT_DONE}`)
+    }
+  }
+  return { left, top, width, height }
 }
 
 /** The checked arguments of an `asset_view` call. Throws a `ToolError` for
  *  a bad `assets` (`assetIdsArgument`), a `frames` out of its range, a
- *  `start` before 0, and an `end` that is not after `start`. */
+ *  `start` before 0, an `end` that is not after `start`, an unknown
+ *  `detail`, a bad `crop`, and a `crop` for more than one asset. Whether
+ *  the asset of a `crop` is an image, the caller checks. A blank `detail`
+ *  or `crop` is none. */
 export function assetViewCall(args: ToolArguments): AssetViewCall {
   const ids = assetIdsArgument(args, { max: MAX_ASSET_VIEW_IDS, notDone: NOT_DONE })
   const frames = typeof args.frames === 'number' ? args.frames : DEFAULT_SHEET_FRAMES
@@ -126,7 +216,84 @@ export function assetViewCall(args: ToolArguments): AssetViewCall {
   if (end !== null && end <= start) {
     throw new ToolError(`\`end\` (${end}) is not after \`start\` (${start}): give an \`end\` after \`start\`, or no \`end\` for the end of the clip. ${NOT_DONE}`)
   }
-  return { ids, frames, start, end }
+  const detail = detailArgument(args)
+  const cropText = typeof args.crop === 'string' ? args.crop.trim() : ''
+  const crop = cropText === '' ? null : cropArgument(cropText)
+  if (crop && ids.length > 1) {
+    throw new ToolError(`\`crop\` is a part of one image, and \`assets\` names ${ids.length} assets. `
+      + `Give \`assets\` only the image to crop, or give no \`crop\`. ${NOT_DONE}`)
+  }
+  return { ids, frames, start, end, detail, crop }
+}
+
+/** The pixels of the part `crop` of an image of `size`: each edge on the
+ *  nearest line between two pixels. Null for a part of less than one pixel
+ *  across or down. */
+export function cropRegion(crop: ViewCrop, size: ImageSize): ImageRegion | null {
+  const x = Math.round(crop.left * size.width)
+  const y = Math.round(crop.top * size.height)
+  // `Math.min`: `assetViewCall` lets a part end a float error past the edge.
+  const width = Math.min(size.width, Math.round((crop.left + crop.width) * size.width)) - x
+  const height = Math.min(size.height, Math.round((crop.top + crop.height) * size.height)) - y
+  return width < 1 || height < 1 ? null : { x, y, width, height }
+}
+
+// The size of `region` made smaller to at most `side` pixels on its longer
+// side; never larger.
+function sizeWithin(region: ImageRegion, side: number): ImageSize {
+  const scale = Math.min(1, side / Math.max(region.width, region.height))
+  return { width: Math.max(1, Math.round(region.width * scale)), height: Math.max(1, Math.round(region.height * scale)) }
+}
+
+// The drawing of the JPEG copy of the part `region` of an image, on white,
+// at most `side` pixels on its longer side.
+function jpegPictureDrawing(region: ImageRegion, side: number): ImageDrawing {
+  // A JPEG has no transparent pixels.
+  return { crop: region, ...sizeWithin(region, side), background: '#ffffff', mediaType: 'image/jpeg' }
+}
+
+/** The first drawing of the picture of an image of `size`, whose file has
+ *  `bytes` bytes of the type `mediaType` (null: a type that Dez does not
+ *  send as it is), for a view with `detail` and `crop`; null for an image
+ *  that goes as it is. No side is over the side of `detail`
+ *  (`IMAGE_PICTURE_SIDES`). A crop goes at its own pixels, as a JPEG for a
+ *  JPEG and else as a PNG, which keeps transparent pixels; a crop of less
+ *  than one pixel (`cropRegion`) has no drawing, and the caller refuses
+ *  it. An image with a side over that of `detail`, or a file over
+ *  `MAX_PICTURE_BYTES`, goes as a JPEG copy. No provider is known to take
+ *  SVG images, so an SVG goes as a PNG drawing. A drawing whose file is
+ *  still too large goes again as `smallerPictureDrawing`. */
+export function imagePictureDrawing(
+  { detail, crop }: Pick<AssetViewCall, 'detail' | 'crop'>,
+  size: ImageSize,
+  bytes: number,
+  mediaType: ImageMediaType | null,
+): ImageDrawing | null {
+  const side = IMAGE_PICTURE_SIDES[detail]
+  if (crop) {
+    const region = cropRegion(crop, size)
+    return region && { crop: region, ...sizeWithin(region, side), mediaType: drawnMediaType(mediaType ?? 'image/png') }
+  }
+  const whole = wholeImageDrawing(size)
+  if (bytes > MAX_PICTURE_BYTES || Math.max(size.width, size.height) > side) return jpegPictureDrawing(whole.crop, side)
+  if (mediaType === null || mediaType === 'image/svg+xml') return { ...whole, mediaType: 'image/png' }
+  return null
+}
+
+// The longer sides of the JPEG copies that a picture whose file is over
+// `MAX_PICTURE_BYTES` is drawn again at, one after the other. A JPEG of
+// 1,024 by 1,024 pixels of noise is under 2 MB (the shipped ffmpeg, 4:4:4
+// at its best quality), so the last one fits.
+const SMALLER_PICTURE_SIDES = [2048, 1568, 1024]
+
+/** The next drawing of a picture whose `drawing` gave a file over
+ *  `MAX_PICTURE_BYTES`: a PNG goes as a JPEG copy of the same size, and a
+ *  JPEG as a copy at the next side of `SMALLER_PICTURE_SIDES` under its
+ *  longer side. Null when there is no smaller side. */
+export function smallerPictureDrawing(drawing: ImageDrawing): ImageDrawing | null {
+  const longer = Math.max(drawing.width, drawing.height)
+  const side = drawing.mediaType === 'image/jpeg' ? SMALLER_PICTURE_SIDES.find((candidate) => candidate < longer) : longer
+  return side === undefined ? null : jpegPictureDrawing(drawing.crop, side)
 }
 
 /** The part of a clip that a view shows, in seconds from the start of the
@@ -140,7 +307,7 @@ export interface ClipPart {
 /** The part of a clip of `seconds` (null: not known) that `call` shows,
  *  or the text of why it shows none: a `start` at or after the end of the
  *  clip. An `end` after the end of the clip stops at that end. */
-export function clipPart(call: AssetViewCall, seconds: number | null): ClipPart | string {
+export function clipPart(call: Pick<AssetViewCall, 'start' | 'end'>, seconds: number | null): ClipPart | string {
   if (seconds !== null && call.start >= seconds) {
     return `\`start\` (${shortNumber(call.start)} s) is not before the end of the clip (${shortNumber(seconds)} s), so Dez showed none of it: give a smaller \`start\`.`
   }
@@ -174,10 +341,11 @@ export function sheetGrid(frames: number): { columns: number, rows: number } {
 /** The ffmpeg arguments of the frame sheet of the clip file `input`, the
  *  JPEG file `output`: `frames` frames at equal steps over `part`, each one
  *  the first frame at or after the middle of its step, each one scaled
- *  into a 320 by 320 box, in the rows of `sheetGrid`. `showinfo` logs the
- *  time of each frame that the sheet takes (`sheetFrameTimes`), so `-v
- *  info` follows the fixed arguments: the later `-v` wins. */
-export function frameSheetArgs(input: string, output: string, part: { start: number, end: number }, frames: number): string[] {
+ *  into a square of `box` pixels (`FRAME_BOXES`), in the rows of
+ *  `sheetGrid`. `showinfo` logs the time of each frame that the sheet takes
+ *  (`sheetFrameTimes`), so `-v info` follows the fixed arguments: the
+ *  later `-v` wins. */
+export function frameSheetArgs(input: string, output: string, part: { start: number, end: number }, frames: number, box: number): string[] {
   const step = (part.end - part.start) / frames
   // The first target is half a step in. It is rounded down to the
   // millisecond, then one more millisecond: a target equal to the time of a
@@ -188,7 +356,7 @@ export function frameSheetArgs(input: string, output: string, part: { start: num
   const filters = [
     `select='gte(t\\,${offset.toFixed(3)}+${step.toFixed(6)}*selected_n)'`,
     'showinfo',
-    'scale=w=320:h=320:force_original_aspect_ratio=decrease:force_divisible_by=2',
+    `scale=w=${box}:h=${box}:force_original_aspect_ratio=decrease:force_divisible_by=2`,
     'setsar=1',
     `tile=${columns}x${rows}:padding=4:color=white`,
   ]
@@ -300,16 +468,62 @@ export function pictureCostNote(cost: PictureBudget, left: PictureBudget): strin
     + 'In a later reply, call asset_view again to see it.'
 }
 
-/** The note of an image whose picture is a smaller JPEG copy, of `width`
- *  by `height` pixels. */
-export function smallerCopyNote(width: number, height: number): string {
-  return `The picture is a smaller JPEG copy, of ${width}x${height} pixels: the image is too large to send as it is.`
+// The advice of a picture with fewer pixels than the part of the image that
+// it shows, for a view with `detail`; `cropped` for the picture of a crop.
+function moreDetailAdvice(detail: ViewDetail, cropped: boolean): string {
+  const crop = cropped ? 'with a smaller `crop`' : 'with `crop` for a part of the image'
+  return detail === 'review'
+    ? `For more detail, call again with \`detail\` "full" (at most ${countText(IMAGE_PICTURE_SIDES.full)} pixels on a side), or ${crop}.`
+    : `For more detail, call again ${crop}.`
+}
+
+/** The note of an image of `size` whose picture is a JPEG copy of
+ *  `picture` pixels, for a view with `detail`: a smaller copy, with how to
+ *  see more, or a copy at the size of the image, whose file is too large to
+ *  send as it is. */
+export function smallerCopyNote(picture: ImageSize, size: ImageSize, detail: ViewDetail): string {
+  const pixels = `${picture.width}x${picture.height} pixels`
+  if (picture.width < size.width || picture.height < size.height) return `The picture is a smaller JPEG copy, of ${pixels}. ${moreDetailAdvice(detail, false)}`
+  return `The picture is a JPEG copy, of ${pixels}: the file of the image is too large to send as it is.`
+}
+
+/** The note and the picture text of the picture of the part `region` of
+ *  the image `id`, a drawing of `picture` pixels, for a view with
+ *  `detail`. */
+export function cropTexts(id: string, region: ImageRegion, picture: ImageSize, detail: ViewDetail): { note: string, shows: string } {
+  const corners = `from x ${region.x}, y ${region.y} to x ${region.x + region.width}, y ${region.y + region.height}`
+  const pixels = `${picture.width}x${picture.height} pixels`
+  const drawn = picture.width < region.width || picture.height < region.height
+    ? `as a smaller copy, of ${pixels}. ${moreDetailAdvice(detail, true)}`
+    : `at its own ${pixels}.`
+  return {
+    note: `The picture is the part of the image ${corners} (in pixels of the image, from its top left corner), ${drawn}`,
+    shows: `the part of the image @${id} ${corners}`,
+  }
+}
+
+/** The error of a `crop` for the clip `id`, of the kind `kind`. */
+export function cropOfClipText(id: string, kind: MediaTagKind): string {
+  return `\`crop\` is a part of an image, and @${id} is ${kind === 'audio' ? 'an audio' : 'a video'} clip. Give no \`crop\` for a clip. ${NOT_DONE}`
+}
+
+/** The error of a `crop` that takes less than one pixel across or down of
+ *  the image `id`, of `size`. */
+export function cropUnderPixelText(id: string, size: ImageSize): string {
+  return `\`crop\` takes less than one pixel across or down of the image @${id}, which is ${size.width}x${size.height} pixels. `
+    + `Give a larger width or height in \`crop\`. ${NOT_DONE}`
 }
 
 /** The note of an image whose picture the webview could not draw (its
- *  smaller copy, or the PNG copy of a type that does not go as it is). */
+ *  smaller copy, its part, or the PNG copy of a type that does not go as it
+ *  is). */
 export const PICTURE_NOT_DRAWN_NOTE = 'No picture: Dez could not draw the copy of this image that it sends. '
   + 'Help › Developer Console shows the cause. This is not a fault of the call.'
+
+/** The note of an image whose smallest JPEG copy (`smallerPictureDrawing`)
+ *  is still over `MAX_PICTURE_BYTES`. */
+export const PICTURE_TOO_LARGE_NOTE = 'No picture: even the smallest JPEG copy that Dez draws of this image is too large to send. '
+  + 'This is not a fault of the call.'
 
 /** What the picture of the image `id` shows. */
 export function imagePictureShows(id: string): string {
@@ -342,6 +556,12 @@ export const UNKNOWN_LENGTH_NOTE = 'No frame sheet: Dez does not know the length
 
 /** The note of a video clip with no picture stream. */
 export const NO_VIDEO_STREAM_NOTE = 'No frame sheet: the clip has no picture.'
+
+/** The note of a frame sheet whose file is over `MAX_PICTURE_BYTES`, for
+ *  a view with `detail`. */
+export function sheetTooLargeNote(detail: ViewDetail): string {
+  return `No frame sheet: its file is too large to send. Call again with fewer \`frames\`${detail === 'full' ? ', or with `detail` "review"' : ''}.`
+}
 
 /** The note of an audio clip with no sound stream. */
 export const NO_AUDIO_STREAM_NOTE = 'No wave and no loudness: the clip has no sound.'

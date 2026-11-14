@@ -3,13 +3,16 @@ import {
   assetViewCall,
   audioViewArgs,
   clipPart,
+  cropRegion,
   DEFAULT_SHEET_FRAMES,
   frameSheetArgs,
   frameSheetTexts,
+  imagePictureDrawing,
   loudnessOf,
   partHasNoFrame,
   sheetFrameTimes,
   sheetGrid,
+  smallerPictureDrawing,
 } from './assetView'
 import { refusal } from './testing'
 
@@ -46,9 +49,20 @@ function ebur128Log(integrated: string, range: string, peak: string): string {
 }
 
 describe('assetViewCall', () => {
-  it('takes the ids, and the frames, start, and end with their defaults', () => {
-    expect(assetViewCall({ assets: '@f @a' })).toStrictEqual({ ids: ['f', 'a'], frames: DEFAULT_SHEET_FRAMES, start: 0, end: null })
-    expect(assetViewCall({ assets: '@f', frames: 16, start: 1.5, end: 3 })).toStrictEqual({ ids: ['f'], frames: 16, start: 1.5, end: 3 })
+  it('takes the ids, and the frames, start, end, detail, and crop with their defaults', () => {
+    expect(assetViewCall({ assets: '@f @a' })).toStrictEqual({ ids: ['f', 'a'], frames: DEFAULT_SHEET_FRAMES, start: 0, end: null, detail: 'review', crop: null })
+    expect(assetViewCall({ assets: '@f', frames: 16, start: 1.5, end: 3, detail: 'full', crop: '0.25 0 0.5 1' })).toStrictEqual({
+      ids: ['f'], frames: 16, start: 1.5, end: 3, detail: 'full', crop: { left: 0.25, top: 0, width: 0.5, height: 1 },
+    })
+  })
+
+  it('takes a detail in any case, crop numbers split by commas, and blank texts as none', () => {
+    expect(assetViewCall({ assets: '@f', detail: ' Full ', crop: '0.1, 0.2,0.3 0.4' })).toMatchObject({ detail: 'full', crop: { left: 0.1, top: 0.2, width: 0.3, height: 0.4 } })
+    expect(assetViewCall({ assets: '@f @a', detail: ' ', crop: '  ' })).toMatchObject({ detail: 'review', crop: null })
+  })
+
+  it('takes a crop that ends at the right and bottom edges', () => {
+    expect(assetViewCall({ assets: '@f', crop: '0.7 0.9 0.3 0.1' }).crop).toStrictEqual({ left: 0.7, top: 0.9, width: 0.3, height: 0.1 })
   })
 
   it('refuses more than 4 ids, frames out of 2 to 16, a start before 0, and an end that is not after the start', () => {
@@ -59,10 +73,106 @@ describe('assetViewCall', () => {
     expect(refusal(() => assetViewCall({ assets: '@f', start: 2, end: 2 }))).toMatch(/`end`/)
     expect(refusal(() => assetViewCall({ assets: '@f', end: 0 }))).toMatch(/`end`/)
   })
+
+  it('refuses an unknown detail, and a crop that is not four numbers from 0 to 1', () => {
+    expect(refusal(() => assetViewCall({ assets: '@f', detail: 'high' }))).toMatch(/`detail`/)
+    for (const crop of ['0.1 0.2 0.3', '0.1 0.2 0.3 0.4 0.5', 'a b c d', '0.1 0.2 1.5 0.1', '-0.1 0 0.5 0.5']) {
+      expect(refusal(() => assetViewCall({ assets: '@f', crop }))).toMatch(/`crop`/)
+    }
+  })
+
+  it('refuses a crop with no width or height, past an edge, or for more than one asset', () => {
+    expect(refusal(() => assetViewCall({ assets: '@f', crop: '0 0 0 0.5' }))).toMatch(/width of 0/)
+    expect(refusal(() => assetViewCall({ assets: '@f', crop: '0.6 0 0.5 0.5' }))).toMatch(/right edge/)
+    expect(refusal(() => assetViewCall({ assets: '@f', crop: '0 0.6 0.5 0.5' }))).toMatch(/bottom edge/)
+    expect(refusal(() => assetViewCall({ assets: '@f @a', crop: '0 0 0.5 0.5' }))).toMatch(/2 assets/)
+  })
+})
+
+describe('cropRegion', () => {
+  it('takes the pixels nearest to the edges of the part, and never past the image', () => {
+    expect(cropRegion({ left: 0.5, top: 0, width: 0.5, height: 0.5 }, { width: 1000, height: 500 })).toStrictEqual({ x: 500, y: 0, width: 500, height: 250 })
+    expect(cropRegion({ left: 0.333, top: 0.1, width: 0.333, height: 0.9 }, { width: 100, height: 10 })).toStrictEqual({ x: 33, y: 1, width: 34, height: 9 })
+    expect(cropRegion({ left: 0.7, top: 0, width: 0.3 + 1e-10, height: 1 }, { width: 10, height: 10 })).toStrictEqual({ x: 7, y: 0, width: 3, height: 10 })
+  })
+
+  it('is null for a part of less than one pixel across or down', () => {
+    expect(cropRegion({ left: 0.5, top: 0, width: 0.001, height: 1 }, { width: 100, height: 100 })).toBeNull()
+    expect(cropRegion({ left: 0, top: 0, width: 1, height: 0.004 }, { width: 100, height: 100 })).toBeNull()
+  })
+})
+
+describe('imagePictureDrawing', () => {
+  const review = { detail: 'review', crop: null } as const
+  const full = { detail: 'full', crop: null } as const
+  const whole = (width: number, height: number) => ({ x: 0, y: 0, width, height })
+
+  it('sends an image that fits the side of its detail and the byte limit as it is', () => {
+    expect(imagePictureDrawing(review, { width: 1568, height: 1000 }, 3_750_000, 'image/png')).toBeNull()
+    expect(imagePictureDrawing(full, { width: 3000, height: 3000 }, 1000, 'image/jpeg')).toBeNull()
+  })
+
+  it('sends a JPEG copy on white at the side of its detail for a larger image', () => {
+    expect(imagePictureDrawing(review, { width: 3000, height: 1500 }, 1000, 'image/png'))
+      .toStrictEqual({ crop: whole(3000, 1500), width: 1568, height: 784, background: '#ffffff', mediaType: 'image/jpeg' })
+    expect(imagePictureDrawing(full, { width: 1500, height: 4000 }, 1000, 'image/webp'))
+      .toStrictEqual({ crop: whole(1500, 4000), width: 1125, height: 3000, background: '#ffffff', mediaType: 'image/jpeg' })
+  })
+
+  it('sends a JPEG copy of the same size for a file over the byte limit', () => {
+    expect(imagePictureDrawing(review, { width: 1000, height: 500 }, 3_750_001, 'image/png'))
+      .toStrictEqual({ crop: whole(1000, 500), width: 1000, height: 500, background: '#ffffff', mediaType: 'image/jpeg' })
+  })
+
+  it('sends a PNG drawing of an SVG or of a type that does not go as it is', () => {
+    expect(imagePictureDrawing(review, { width: 800, height: 600 }, 1000, 'image/svg+xml')).toMatchObject({ crop: whole(800, 600), width: 800, height: 600, mediaType: 'image/png' })
+    expect(imagePictureDrawing(review, { width: 800, height: 600 }, 1000, null)).toMatchObject({ mediaType: 'image/png' })
+  })
+
+  it('draws a crop at its own pixels, a JPEG as a JPEG and else as a PNG', () => {
+    const crop = { left: 0.5, top: 0.5, width: 0.5, height: 0.5 }
+    expect(imagePictureDrawing({ detail: 'review', crop }, { width: 1000, height: 600 }, 9_000_000, 'image/jpeg'))
+      .toStrictEqual({ crop: { x: 500, y: 300, width: 500, height: 300 }, width: 500, height: 300, mediaType: 'image/jpeg' })
+    expect(imagePictureDrawing({ detail: 'review', crop }, { width: 1000, height: 600 }, 1000, 'image/webp')).toMatchObject({ width: 500, height: 300, mediaType: 'image/png' })
+    expect(imagePictureDrawing({ detail: 'review', crop }, { width: 1000, height: 600 }, 1000, null)).toMatchObject({ mediaType: 'image/png' })
+  })
+
+  it('draws a crop smaller only down to the side of its detail', () => {
+    const crop = { left: 0, top: 0, width: 1, height: 0.5 }
+    expect(imagePictureDrawing({ detail: 'review', crop }, { width: 4000, height: 2000 }, 1000, 'image/png')).toMatchObject({ width: 1568, height: 392 })
+    expect(imagePictureDrawing({ detail: 'full', crop }, { width: 4000, height: 2000 }, 1000, 'image/png')).toMatchObject({ width: 3000, height: 750 })
+  })
+
+  it('has no drawing for a crop of less than one pixel', () => {
+    expect(imagePictureDrawing({ detail: 'review', crop: { left: 0, top: 0, width: 0.001, height: 1 } }, { width: 100, height: 100 }, 1000, 'image/png')).toBeNull()
+  })
+})
+
+describe('smallerPictureDrawing', () => {
+  it('draws a JPEG again at 2048, 1568, then 1024 pixels on its longer side, then gives up', () => {
+    const region = { x: 10, y: 20, width: 3000, height: 1500 }
+    let drawing = imagePictureDrawing({ detail: 'full', crop: null }, { width: 3000, height: 1500 }, 9_000_000, 'image/png')
+    const sides: number[] = []
+    while (drawing) {
+      sides.push(drawing.width)
+      drawing = smallerPictureDrawing({ ...drawing, crop: region })
+      if (drawing) expect(drawing).toMatchObject({ crop: region, height: drawing.width / 2, background: '#ffffff', mediaType: 'image/jpeg' })
+    }
+    expect(sides).toStrictEqual([3000, 2048, 1568, 1024])
+  })
+
+  it('draws a PNG again as a JPEG of the same size, and a small JPEG at the next side under it', () => {
+    const region = { x: 0, y: 0, width: 800, height: 600 }
+    expect(smallerPictureDrawing({ crop: region, width: 800, height: 600, mediaType: 'image/png' }))
+      .toStrictEqual({ crop: region, width: 800, height: 600, background: '#ffffff', mediaType: 'image/jpeg' })
+    const large = { x: 0, y: 0, width: 1600, height: 1200 }
+    expect(smallerPictureDrawing({ crop: large, width: 1600, height: 1200, mediaType: 'image/jpeg' })).toMatchObject({ width: 1568, height: 1176 })
+    expect(smallerPictureDrawing({ crop: region, width: 800, height: 600, mediaType: 'image/jpeg' })).toBeNull()
+  })
 })
 
 describe('clipPart', () => {
-  const call = (start: number, end: number | null) => ({ ids: ['f'], frames: 6, start, end })
+  const call = (start: number, end: number | null) => ({ start, end })
 
   it('ends at the end of the clip, or at an end before it', () => {
     expect(clipPart(call(1, null), 10)).toStrictEqual({ start: 1, end: 10 })
@@ -97,13 +207,13 @@ describe('sheetGrid', () => {
 
 describe('frameSheetArgs', () => {
   it('takes the first frame at or after the middle of each step, and reads only the part', () => {
-    const whole = frameSheetArgs('f.mp4', 'f-frames.jpg', { start: 0, end: 10 }, 6)
+    const whole = frameSheetArgs('f.mp4', 'f-frames.jpg', { start: 0, end: 10 }, 6, 320)
     expect(whole).not.toContain('-ss')
     expect(whole.slice(whole.indexOf('-to'), whole.indexOf('-to') + 4)).toStrictEqual(['-to', '10.000', '-i', 'f.mp4'])
     expect(whole[whole.indexOf('-vf') + 1]).toMatch(/^select='gte\(t\\,0\.832\+1\.666667\*selected_n\)',showinfo,.*tile=3x2:/)
     expect(whole.at(-1)).toBe('f-frames.jpg')
 
-    const part = frameSheetArgs('f.mp4', 'f-frames.jpg', { start: 2, end: 4 }, 5)
+    const part = frameSheetArgs('f.mp4', 'f-frames.jpg', { start: 2, end: 4 }, 5, 320)
     expect(part.slice(part.indexOf('-ss'), part.indexOf('-ss') + 4)).toStrictEqual(['-ss', '2.000', '-to', '4.000'])
     expect(part[part.indexOf('-vf') + 1]).toMatch(/^select='gte\(t\\,0\.199\+0\.400000\*selected_n\)'/)
   })

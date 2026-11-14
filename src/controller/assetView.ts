@@ -1,6 +1,5 @@
 import sbp from '@sbp/sbp'
-import { wholeImageDrawing, type DrawnImage, type ImageDrawing, type ImageSize } from '../model/chat/imageDrawing'
-import type { ImageMediaType } from '../model/chat/images'
+import type { DrawnImage, ImageDrawing, ImageSize } from '../model/chat/imageDrawing'
 import { jpegSize } from '../model/chat/jpegSize'
 import type { PicturePart, Section } from '../model/chat/types'
 import type { ClipAttachment } from '../model/providers/clipInputs'
@@ -18,11 +17,18 @@ import {
   audioViewArgs,
   clipNotReadNote,
   clipPart,
+  cropOfClipText,
+  cropRegion,
+  cropTexts,
+  cropUnderPixelText,
+  FRAME_BOXES,
   frameSheetArgs,
   frameSheetTexts,
+  imagePictureDrawing,
   imagePictureShows,
   loudnessNote,
   loudnessOf,
+  MAX_PICTURE_BYTES,
   NO_AUDIO_STREAM_NOTE,
   NO_VIDEO_STREAM_NOTE,
   noFramesNote,
@@ -31,8 +37,11 @@ import {
   pictureCostNote,
   PICTURE_NOT_DRAWN_NOTE,
   PICTURE_NOT_READ_NOTE,
+  PICTURE_TOO_LARGE_NOTE,
   sheetFrameTimes,
+  sheetTooLargeNote,
   smallerCopyNote,
+  smallerPictureDrawing,
   UNKNOWN_LENGTH_NOTE,
   VIEW_FAILED_NOTE,
   VIEW_TIMED_OUT_NOTE,
@@ -46,7 +55,7 @@ import { clipInput, type ClipInput, type ProgramEnd } from '../model/tools/progr
 import { unknownAssetsText } from '../model/tools/toolInputs'
 import { ToolError, type ToolArguments } from '../model/tools/types'
 import { FFMPEG_OUTPUT_BYTES } from '../model/tools/videoTool'
-import { probeClip, readImageFacts } from './assetInfo'
+import { probeClip, readImageFacts, type PicturePlan } from './assetInfo'
 import { inWorkFolder, runProgram } from './programRuns'
 import type { ToolRunContext } from './tools'
 
@@ -64,78 +73,59 @@ import type { ToolRunContext } from './tools'
 // can hold a path: the model gets only the times and the loudness that Dez
 // reads from it.
 
-// An image whose file or PNG drawing is larger than this, or whose longer
-// side is longer than `MAX_PICTURE_SIDE`, goes as a smaller JPEG copy: in
-// base64, a file of this size stays under the 5 MB image limit of the
-// Anthropic API, and a provider can refuse a large image. A refusal would
-// fail each later request of the reply, as each one sends the picture
-// again. The Claude API refuses an image with a side over 3,000 px in a
-// request with more than 20 images.
-// https://platform.claude.com/docs/en/build-with-claude/vision
-const MAX_PICTURE_BYTES = 3_750_000
-const MAX_PICTURE_SIDE = 3000
-const SMALLER_PICTURE_SIDE = 2048
-
-// The drawing of the smaller JPEG copy of the picture of an image of
-// `size`, at most `SMALLER_PICTURE_SIDE` pixels on its longer side.
-function smallerPictureDrawing(size: ImageSize): ImageDrawing {
-  const scale = Math.min(1, SMALLER_PICTURE_SIDE / Math.max(size.width, size.height))
-  return {
-    crop: { x: 0, y: 0, width: size.width, height: size.height },
-    width: Math.max(1, Math.round(size.width * scale)),
-    height: Math.max(1, Math.round(size.height * scale)),
-    // A JPEG has no transparent pixels.
-    background: '#ffffff',
-    mediaType: 'image/jpeg',
-  }
-}
-
-// The drawing of the picture of an image of the type `mediaType` (null:
-// a type that Dez does not send as it is) whose file has `bytes` bytes,
-// for redraw; null for an image that goes as it is. No provider is known
-// to take SVG images, so an SVG goes as a PNG drawing.
-function pictureDrawing(size: ImageSize, bytes: number, mediaType: ImageMediaType | null): ImageDrawing | null {
-  if (bytes > MAX_PICTURE_BYTES || Math.max(size.width, size.height) > MAX_PICTURE_SIDE) return smallerPictureDrawing(size)
-  if (mediaType === null || mediaType === 'image/svg+xml') return { ...wholeImageDrawing(size), mediaType: 'image/png' }
-  return null
-}
-
-// The view of the image `id`, whose file is at `path`: its facts as
-// `asset_info` gives them (`readImageFacts`), and its picture, drawn when
-// it cannot go as it is. An image that the webview cannot decode gives no
-// picture: its file could make the provider refuse the request.
-async function viewImage(id: string, path: string, choice: PictureChoice): Promise<AssetViewItem> {
-  const image = await readImageFacts(id, path, choice === 'show' ? pictureDrawing : undefined)
+// The view of the image `id`, whose file is at `path`, for `call`: its
+// facts as `asset_info` gives them (`readImageFacts`), and its picture,
+// drawn when it cannot go as it is (`imagePictureDrawing`). An image that
+// the webview cannot decode gives no picture: its file could make the
+// provider refuse the request. Throws a `ToolError` for a crop of less
+// than one pixel of the image.
+async function viewImage(id: string, path: string, call: AssetViewCall, choice: PictureChoice): Promise<AssetViewItem> {
+  // Not `ImageDrawing | null = null`: TypeScript would take the variable
+  // for null after the callback, which sets it.
+  let drawing = null as ImageDrawing | null
+  const plan: PicturePlan = (size, bytes, mediaType) => (drawing = imagePictureDrawing(call, size, bytes, mediaType))
+  const image = await readImageFacts(id, path, choice === 'show' ? plan : undefined)
   const item: AssetViewItem = { id, kind: 'image', facts: image.facts, notes: [], picture: null }
   if (image.kind === 'notDrawn') item.notes.push(PICTURE_NOT_DRAWN_NOTE)
   if (image.kind !== 'read') return item
+  if (call.crop && !cropRegion(call.crop, image.size)) throw new ToolError(cropUnderPixelText(id, image.size))
   if (choice === 'overLimit') item.notes.push(PICTURE_LIMIT_NOTE)
   if (choice !== 'show') return item
 
   const { file, mediaType, size } = image
   let { drawn } = image
-  // The size of a drawing is known only after the draw, and the PNG
-  // drawing of a small file can be much larger than the file (an SVG that
-  // holds a photo, an AVIF), so a PNG drawing that is too large is drawn
-  // again as the smaller JPEG copy.
-  if (drawn?.mediaType === 'image/png' && drawn.bytes.length > MAX_PICTURE_BYTES) {
+  // The size of the file of a drawing is known only after the draw: the
+  // PNG drawing of a small file can be much larger than the file (an SVG
+  // that holds a photo, an AVIF), and so can the JPEG copy of fine detail.
+  // So a drawing that is too large is drawn again smaller until it fits.
+  while (drawn && drawn.bytes.length > MAX_PICTURE_BYTES) {
+    // A drawing came from the plan, so `drawing` is set.
+    const next = smallerPictureDrawing(drawing as ImageDrawing)
+    if (!next) {
+      console.error(`The smallest picture of the image @${id} has ${drawn.bytes.length} bytes, more than Dez sends.`)
+      item.notes.push(PICTURE_TOO_LARGE_NOTE)
+      return item
+    }
     try {
-      // Never null: the plan gives a drawing for every size.
-      drawn = await sbp('dez.controller/images/redraw', file, smallerPictureDrawing, 'image/jpeg') as DrawnImage
+      // Never null: the plan gives a drawing.
+      drawn = await sbp('dez.controller/images/redraw', file, () => next, 'image/jpeg') as DrawnImage
     } catch (error) {
       console.error(`Failed to draw the smaller picture of the image @${id}:`, error)
       item.notes.push(PICTURE_NOT_DRAWN_NOTE)
       return item
     }
+    drawing = next
   }
-  const shows = imagePictureShows(id)
   if (drawn) {
     const part: PicturePart = { type: 'picture', mediaType: drawn.mediaType, bytes: drawn.bytes }
-    // Only the copy of a too large image is a JPEG drawing.
-    const note = drawn.mediaType === 'image/jpeg' ? smallerCopyNote(drawn.width, drawn.height) : null
-    item.picture = { part, size: { width: drawn.width, height: drawn.height }, shows, note }
+    const picture: ImageSize = { width: drawn.width, height: drawn.height }
+    const texts = call.crop
+      ? cropTexts(id, (drawing as ImageDrawing).crop, picture, call.detail)
+      // With no crop, only the copy of a too large image is a JPEG drawing.
+      : { shows: imagePictureShows(id), note: drawn.mediaType === 'image/jpeg' ? smallerCopyNote(picture, size, call.detail) : null }
+    item.picture = { part, size: picture, ...texts }
   } else if (mediaType) {
-    item.picture = { part: { type: 'picture', mediaType, bytes: new Uint8Array(await file.arrayBuffer()) }, size, shows, note: null }
+    item.picture = { part: { type: 'picture', mediaType, bytes: new Uint8Array(await file.arrayBuffer()) }, size, shows: imagePictureShows(id), note: null }
   }
   return item
 }
@@ -171,12 +161,13 @@ function runProblemNote(clip: ClipAttachment, { end, log }: { end: ProgramEnd, l
   return end.kind === 'timedOut' ? VIEW_TIMED_OUT_NOTE : VIEW_FAILED_NOTE
 }
 
-// The frame sheet of the video clip `input` over `part`: its notes and
-// its picture.
+// The frame sheet of the video clip `input` over `part`, with the frame
+// box of the `detail` of `call`: its notes and its picture.
 async function frameSheet(input: ClipInput, call: AssetViewCall, part: ClipPart, folder: string, signal: AbortSignal): Promise<Pick<AssetViewItem, 'notes' | 'picture'>> {
   if (part.end === null) return { notes: [UNKNOWN_LENGTH_NOTE], picture: null }
   const name = `${input.id}-frames.jpg`
-  const ran = await runFfmpeg(frameSheetArgs(input.name, name, { start: part.start, end: part.end }, call.frames), folder, signal)
+  const args = frameSheetArgs(input.name, name, { start: part.start, end: part.end }, call.frames, FRAME_BOXES[call.detail])
+  const ran = await runFfmpeg(args, folder, signal)
   const times = sheetFrameTimes(ran.log, part.start, call.frames)
   // A part with no frame makes ffmpeg fail, as it has nothing to write. A
   // damaged clip fails in the same way: its run is a failed view.
@@ -185,6 +176,9 @@ async function frameSheet(input: ClipInput, call: AssetViewCall, part: ClipPart,
   if (problem !== null) return { notes: [problem], picture: null }
   const picture = await readPicture(folder, name)
   if (!picture) return { notes: [PICTURE_NOT_READ_NOTE], picture: null }
+  // The file of a sheet of fine detail (noise, film grain) can be over the
+  // limit, mostly at the `full` box.
+  if (picture.part.bytes.length > MAX_PICTURE_BYTES) return { notes: [sheetTooLargeNote(call.detail)], picture: null }
   const { note, shows } = frameSheetTexts(input.id, part, times, call.frames)
   return { notes: [], picture: { ...picture, shows, note } }
 }
@@ -239,10 +233,11 @@ async function viewClip(clip: ClipAttachment, call: AssetViewCall, choice: Pictu
  *  to the model of the reply (`context.showPictures`). Each picture that
  *  fits in what is left of the picture budget of the reply goes; an asset
  *  whose picture does not fit gets a note in its place. Throws a
- *  `ToolError` for bad arguments, and for an id that names no image and no
- *  clip of the conversation. A model that reads no images (`imageInput`
- *  false) gets the facts and the loudness only. A stop of `signal` stops a
- *  run of a program and rejects with the stop. */
+ *  `ToolError` for bad arguments, for an id that names no image and no
+ *  clip of the conversation, and for a crop of a clip or of less than one
+ *  pixel. A model that reads no images (`imageInput` false) gets the facts
+ *  and the loudness only. A stop of `signal` stops a run of a program and
+ *  rejects with the stop. */
 export async function assetViewResult(
   args: ToolArguments,
   sections: readonly Section[],
@@ -253,6 +248,9 @@ export async function assetViewResult(
   const assets = conversationAssets(sections)
   const unknown = call.ids.filter((id) => !assets.images.has(id) && !assets.clips.has(id))
   if (unknown.length > 0) throw new ToolError(unknownAssetsText(unknown, assets, ASSET_VIEW_WORDING))
+  // A call with a crop names one asset.
+  const croppedClip = call.crop && assets.clips.get(call.ids[0])
+  if (croppedClip) throw new ToolError(cropOfClipText(croppedClip.id, croppedClip.kind))
 
   const model = sbp('dez.model/modelCache/model', context.model.providerId, context.model.modelId) as ModelInfo | null
   const imageInput = model?.imageInput !== false
@@ -268,7 +266,7 @@ export async function assetViewResult(
       const path = assets.images.get(id)
       // `folder` is a folder when the call names a clip.
       const item = path !== undefined
-        ? await viewImage(id, path, choice)
+        ? await viewImage(id, path, call, choice)
         : await viewClip(assets.clips.get(id) as ClipAttachment, call, choice, folder as string, signal)
       if (item.picture) {
         const cost = pictureCost(item.picture.part, item.picture.size)
