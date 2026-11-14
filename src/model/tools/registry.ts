@@ -33,6 +33,18 @@ export function toolDefinition(name: string): ToolDefinition | undefined {
   return TOOL_DEFINITIONS.find((tool) => tool.name === name)
 }
 
+// The subcommand that a `video` call runs, with its own arguments; null for
+// a call that Dez refuses or that asks for a help text.
+function videoRunCall(args: ToolArguments) {
+  try {
+    const call = parseSubcommandCall(VIDEO_TOOL, args)
+    return call.kind === 'run' ? call : null
+  } catch (error) {
+    if (error instanceof ToolError) return null
+    throw error
+  }
+}
+
 /** Whether a call, as its tool block holds it (`name` and `args`), asks
  *  Dez to hide the images and clips that its job makes
  *  (`INTERMEDIATE_PARAMETER`, jobs.ts). The flag is an argument of
@@ -43,13 +55,8 @@ export function toolDefinition(name: string): ToolDefinition | undefined {
 export function isIntermediateCall(name: string, args: ToolArguments): boolean {
   if (name === MODEL_INVOKE_TOOL.name) return isIntermediate(args)
   if (name !== VIDEO_TOOL.name) return false
-  try {
-    const call = parseSubcommandCall(VIDEO_TOOL, args)
-    return call.kind === 'run' && isIntermediate(call.arguments)
-  } catch (error) {
-    if (error instanceof ToolError) return false
-    throw error
-  }
+  const call = videoRunCall(args)
+  return call !== null && isIntermediate(call.arguments)
 }
 
 /** The label of a call, as its tool block holds it (`name` and `args`):
@@ -61,12 +68,8 @@ export function isIntermediateCall(name: string, args: ToolArguments): boolean {
 export function callLabel(name: string, args: ToolArguments): string {
   if (name === MODEL_INVOKE_TOOL.name) return invocationLabel(args)
   if (name === VIDEO_TOOL.name) {
-    try {
-      const call = parseSubcommandCall(VIDEO_TOOL, args)
-      if (call.kind === 'run') return videoCallLabel(call.name, call.arguments)
-    } catch (error) {
-      if (!(error instanceof ToolError)) throw error
-    }
+    const call = videoRunCall(args)
+    if (call !== null) return videoCallLabel(call.name, call.arguments)
   }
   return typeof args.command === 'string' ? jobCallLabel(`${args.command} ${String(args.parameters ?? '')}`) : ''
 }

@@ -6,19 +6,17 @@ import { ClipReadError } from '../model/chat/mediaFiles'
 import type { Section } from '../model/chat/types'
 import type { ClipAttachment } from '../model/providers/clipInputs'
 import { conversationAssets } from '../model/streams/mediaRequest'
-import { assetProbeArgs, clipProbeFacts, imageFactsText } from '../model/tools/assetFacts'
+import { assetIdsArgument } from '../model/tools/arguments'
 import {
-  ASSET_INFO_TOOL,
-  ASSET_INFO_WORDING,
-  assetIdsArgument,
-  assetInfoLine,
-  assetInfoText,
+  assetProbeArgs,
+  clipProbeFacts,
+  FILE_NOT_READ_FACTS,
   IMAGE_NOT_DECODED_FACTS,
-  IMAGE_NOT_READ_FACTS,
-  MAX_ASSET_INFO_IDS,
+  imageFactsText,
   probedClipFacts,
   type ProbedClip,
-} from '../model/tools/assetInfo'
+} from '../model/tools/assetFacts'
+import { ASSET_INFO_TOOL, ASSET_INFO_WORDING, assetInfoLine, assetInfoText, MAX_ASSET_INFO_IDS } from '../model/tools/assetInfo'
 import { clipInput, type ClipInput } from '../model/tools/programRuns'
 import { unknownAssetsText } from '../model/tools/toolInputs'
 import { ToolError, type ToolArguments } from '../model/tools/types'
@@ -60,7 +58,7 @@ export async function readImageFacts(id: string, path: string, plan: PicturePlan
     file = await sbp('dez.controller/images/readFile', path) as File
   } catch (error) {
     console.error(`Failed to read the image @${id}:`, error)
-    return { kind: 'notRead', facts: IMAGE_NOT_READ_FACTS }
+    return { kind: 'notRead', facts: FILE_NOT_READ_FACTS }
   }
   const mediaType = isImageMediaType(file.type) ? file.type : imageMediaType(path)
   const extension = mediaType && imageExtension(mediaType)

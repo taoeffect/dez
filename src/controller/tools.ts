@@ -212,7 +212,7 @@ const TOOL_RUNNERS: Record<string, ToolRunner> = {
   // the result tells that its prices can be old. Bad arguments fail the
   // call before any check.
   async model_list (args, signal) {
-    modelListArguments(args)
+    const listArguments = modelListArguments(args)
     const providers = await sbp('dez.provider/infos') as ProviderInfo[]
     const checked = (sbp('dez.model/modelCache/snapshot') as ModelCache).providers
     const now = Date.now()
@@ -223,7 +223,7 @@ const TOOL_RUNNERS: Record<string, ToolRunner> = {
     if (providerIds.length > 0) {
       await untilAborted(() => sbp('dez.controller/modelCache/refresh', { providerIds }) as Promise<void>, signal)
     }
-    return modelListText(sbp('dez.model/modelCache/snapshot') as ModelCache, providers, args)
+    return modelListText(sbp('dez.model/modelCache/snapshot') as ModelCache, providers, listArguments)
   },
   // All that Dez knows about one model: the one that the call names, else
   // the reply's model. The raw entries of the provider's model list are in

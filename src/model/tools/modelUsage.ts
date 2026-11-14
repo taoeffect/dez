@@ -249,8 +249,9 @@ function inputImagesUsage(kind: MediaKind, model: ModelInfo): string[] {
   // image (`dez.model/streamMessagesForTab`), so only the fallback of
   // `mediaRequestInput` gives one.
   if (model.imageInput === false) return [takesNewest ? USAGE_TEXTS.newestImageOnly : USAGE_TEXTS.noImagesRead]
-  const frames = !model.images?.references && MEDIA_USAGE[kind].images === USAGE_TEXTS.frames
-  const role = model.images?.references ? USAGE_TEXTS.videoReferences : frames && max === 1 ? USAGE_TEXTS.firstFrame : MEDIA_USAGE[kind].images
+  const references = model.images?.references
+  const frames = !references && MEDIA_USAGE[kind].images === USAGE_TEXTS.frames
+  const role = references ? USAGE_TEXTS.videoReferences : frames && max === 1 ? USAGE_TEXTS.firstFrame : MEDIA_USAGE[kind].images
   // A video request with a reference clip sends its images as references
   // too, whatever the image rules (OpenRouter: frames would drop the clips;
   // mediaFormats.ts). A background clip keeps the frames (Venice).
@@ -260,7 +261,7 @@ function inputImagesUsage(kind: MediaKind, model: ModelInfo): string[] {
   return [
     `It takes ${takenImages(min, max)} of the message (pasted, or named with @id)${max === 1 ? '' : ', in text order'}.`,
     ...(role === undefined ? [] : [role]),
-    ...(role === USAGE_TEXTS.videoReferences ? [USAGE_TEXTS.characterSheets] : []),
+    ...(references ? [USAGE_TEXTS.characterSheets] : []),
     ...(frames ? [USAGE_TEXTS.frameShape, USAGE_TEXTS.nextScene] : []),
     ...(clipsMakeReferences ? [USAGE_TEXTS.clipsMakeReferences] : []),
     ...(takesNewest ? [newest] : []),

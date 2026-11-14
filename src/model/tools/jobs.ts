@@ -77,18 +77,18 @@ export function jobStartedText(jobId: string, number: number): string {
 
 const STARTED_JOB = new RegExp(`^Started the job (${JOB_ID_SOURCE})\\.(?: It is job (\\d+) of this reply\\b)?`)
 
-/** The id of the job that a call started, from its result text
- *  (`jobStartedText`); null for any other text. */
-export function startedJobId(resultText: string): string | null {
-  return STARTED_JOB.exec(resultText)?.[1] ?? null
-}
-
 /** The id and the number (`JobCall.number`) of the job that a call
  *  started, from its result text (`jobStartedText`); the number is null
  *  when the text does not tell it. Null for any other text. */
 export function startedJob(resultText: string): { id: string, number: number | null } | null {
   const match = STARTED_JOB.exec(resultText)
   return match ? { id: match[1], number: match[2] === undefined ? null : Number(match[2]) } : null
+}
+
+/** The id of the job that a call started, from its result text
+ *  (`jobStartedText`); null for any other text. */
+export function startedJobId(resultText: string): string | null {
+  return startedJob(resultText)?.id ?? null
 }
 
 /** The error result of a call that would start one job too many. */

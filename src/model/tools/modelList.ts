@@ -225,17 +225,17 @@ function sortArgument(args: ToolArguments): { column: ListColumn, direction: Sor
   return { column, direction: directionKey ?? 'asc' }
 }
 
-/** The checked arguments of a `model_list` call. */
-export interface ModelListArguments {
+// The checked arguments of a `model_list` call (`modelListArguments`).
+interface ModelListArguments {
   filter: string
   outputs: ModelOutput[]
   inputs: ModelOutput[]
   sort?: { column: ListColumn, direction: SortDirection }
 }
 
-/** The arguments of a `model_list` call. Throws for an argument value that
- *  the tool does not take; the error names the valid values, for the model
- *  to read. */
+/** The checked arguments of a `model_list` call, for `modelListText`.
+ *  Throws for an argument value that the tool does not take; the error
+ *  names the valid values, for the model to read. */
 export function modelListArguments(args: ToolArguments): ModelListArguments {
   return { filter: stringArgument(args, 'filter'), outputs: typesArgument(args, 'type'), inputs: typesArgument(args, 'inputs'), sort: sortArgument(args) }
 }
@@ -244,25 +244,23 @@ export function modelListArguments(args: ToolArguments): ModelListArguments {
 export const NO_MODELS_TEXT = 'The user has no models that Dez can use: no provider is set up, or the model lists of the providers did not load. '
   + 'Tell the user to add an API key in Settings › Providers, or to look there for a provider with an error.'
 
-/** The `model_list` result for the arguments of a call: the models that the
- *  user can pick (as the model picker shows them, with no Favorites group)
- *  that match `filter`, `type` (what they make, any of them), and `inputs`
- *  (what Dez can send them, `modelInputs`, all of them). They come in
- *  provider order, then model cache order, or in the order of the `sort`
- *  column, and the cap of `MODEL_LIST_LIMIT` lines comes after the sort. A
- *  first line gives the count, the columns (`LIST_COLUMNS`), the sort, and
- *  the letter legend; then each model has one line with every column. A
- *  `filter` with no letters or digits selects every model, as in the
- *  picker, and so does a `type` or `inputs` of only commas and white space.
- *  The price of a model is its list price, else a quote of the cache that
- *  is fresh at `now` (`listedPrice`). The first line tells each provider
- *  whose list prices are older than PRICE_LIFETIME_MS at `now`.
- *
- *  Throws for an argument value that the tool does not take, before it
- *  looks at the models (`modelListArguments`). With no model, or no match,
+/** The `model_list` result for the checked arguments of a call
+ *  (`modelListArguments`): the models that the user can pick (as the model
+ *  picker shows them, with no Favorites group) that match `filter`, `type`
+ *  (what they make, any of them), and `inputs` (what Dez can send them,
+ *  `modelInputs`, all of them). They come in provider order, then model
+ *  cache order, or in the order of the `sort` column, and the cap of
+ *  `MODEL_LIST_LIMIT` lines comes after the sort. A first line gives the
+ *  count, the columns (`LIST_COLUMNS`), the sort, and the letter legend;
+ *  then each model has one line with every column. A `filter` with no
+ *  letters or digits selects every model, as in the picker, and so does a
+ *  `type` or `inputs` of only commas and white space. The price of a model
+ *  is its list price, else a quote of the cache that is fresh at `now`
+ *  (`listedPrice`). The first line tells each provider whose list prices
+ *  are older than PRICE_LIFETIME_MS at `now`. With no model, or no match,
  *  the result says why and what the model can do. */
-export function modelListText(cache: ModelCache, providers: readonly ProviderInfo[], args: ToolArguments = {}, now = Date.now()): string {
-  const { filter, outputs, inputs, sort } = modelListArguments(args)
+export function modelListText(cache: ModelCache, providers: readonly ProviderInfo[], args: ModelListArguments = modelListArguments({}), now = Date.now()): string {
+  const { filter, outputs, inputs, sort } = args
 
   const models = availableModels(cache, providers)
   if (models.length === 0) return NO_MODELS_TEXT

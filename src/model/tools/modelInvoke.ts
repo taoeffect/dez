@@ -242,12 +242,13 @@ export function modelInvocation(args: ToolArguments, { cache, providers, modelPa
       const path = assets.images.get(id)
       return path === undefined ? [] : [[path, id] as const]
     }))
+    const outputs = effectiveOutputs(model)
     return {
       ...target,
       kind,
       content,
-      imageOutput: effectiveOutputs(model).includes('image'),
-      audioOutput: effectiveOutputs(model).includes('audio'),
+      imageOutput: outputs.includes('image'),
+      audioOutput: outputs.includes('audio'),
       providerSettings: providerSettings[provider.id],
       inputs: source.inputs,
       imageIds,

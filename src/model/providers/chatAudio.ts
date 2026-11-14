@@ -2,11 +2,11 @@ import sbp from '@sbp/sbp'
 import { base64ToBytes } from '../../utils/base64'
 import { ExplainedError, REPORT_ADVICE } from '../../utils/errorText'
 import { sanitizeErrorText } from '../../utils/protocol/errors'
-import { MEDIA_TEMP_LIFETIME_MS } from '../chat/mediaFiles'
 import { MEDIA_CACHE_FOLDER } from '../chat/mediaTags'
+import { tempCopyClip } from './clipRequests'
 import type { AudioOutputConfig } from './config'
 import { UnusableAnswerError } from './errors'
-import { audioFileType, wavFile } from './pcmAudio'
+import { clipFileType, wavFile } from './pcmAudio'
 import type { GeneratedClip } from './types'
 
 /** Writes the audio of a chat answer (`data`: the base64 text of the
@@ -26,7 +26,7 @@ export async function saveChatAudio(data: string, output: AudioOutputConfig, pro
     throw new UnusableAnswerError('The audio of the answer is not base64 text.')
   }
 
-  const fileType = audioFileType(output.contentType, output.pcmSampleBits)
+  const fileType = clipFileType(output.contentType, output.pcmSampleBits)
   if (fileType === null) {
     throw new ExplainedError(
       `Dez cannot store the audio of the answer: the provider settings of ${providerName} give it a type that Dez does not know (\`audioOutputs\`). Fix the type in the provider settings. ${REPORT_ADVICE}`,
@@ -38,14 +38,5 @@ export async function saveChatAudio(data: string, output: AudioOutputConfig, pro
   const file = `${MEDIA_CACHE_FOLDER}/${crypto.randomUUID()}.${extension}`
   await sbp('dez.native/saveAppFile', file, pcm ? wavFile(bytes, pcm) : bytes, 'cache')
   const cacheDir = await sbp('dez.native/getAppDir', 'cache') as string
-  return {
-    kind: 'audio',
-    mediaType,
-    src: `${cacheDir}/${file}`,
-    url: null,
-    // A time before the write, so the copy is there until then (see
-    // `MEDIA_TEMP_LIFETIME_MS`).
-    expires: new Date(startedAt + MEDIA_TEMP_LIFETIME_MS).toISOString(),
-    jobId: null,
-  }
+  return tempCopyClip({ kind: 'audio', mediaType, jobId: null }, file, cacheDir, startedAt)
 }

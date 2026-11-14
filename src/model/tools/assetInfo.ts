@@ -1,12 +1,8 @@
 import type { AssetOrigin, AssetPlace } from '../chat/assetOrigins'
-import { IMAGE_ID_SOURCE } from '../chat/images'
-import { mediaFileExtension, type ClipReadProblem } from '../chat/mediaFiles'
 import type { MediaTagKind } from '../chat/mediaTags'
 import { modelRefKey } from '../chat/modelRef'
-import type { ClipAttachment } from '../providers/clipInputs'
-import { clipFactsText, type ClipProbeFacts } from './assetFacts'
 import type { InputWording } from './toolInputs'
-import { ToolError, type ToolArguments, type ToolDefinition } from './types'
+import type { ToolDefinition } from './types'
 
 // The `asset_info` tool: one line of facts for each image and clip that a
 // call names, with who made it (assetOrigins.ts) and whether the editor
@@ -48,72 +44,6 @@ const NOT_DONE = 'Dez read no facts.'
 /** The words of `asset_info` in the text of an id that names no image and
  *  no clip (`unknownAssetsText`). */
 export const ASSET_INFO_WORDING: InputWording = { argument: '`assets`', notDone: NOT_DONE }
-
-const ASSET_ID_WORD = new RegExp(`^@?(${IMAGE_ID_SOURCE})$`)
-
-/** The ids that the `assets` argument of a call names (split as the
- *  `join_clips` subcommand of `video` splits its clips), each one once, in
- *  the order of the call. Throws a `ToolError` that ends with `notDone`
- *  for a word that is no id, for no id, and for more than `max` ids. */
-export function assetIdsArgument(args: ToolArguments, { max, notDone }: { max: number, notDone: string }): string[] {
-  const words = (typeof args.assets === 'string' ? args.assets : '').split(/[\s,]+/).filter((word) => word !== '')
-  const form = 'Give the ids of the images and the clips, as in "@a @c".'
-  const ids = new Set<string>()
-  for (const word of words) {
-    const id = ASSET_ID_WORD.exec(word)?.[1]
-    if (id === undefined) throw new ToolError(`\`assets\` holds ${JSON.stringify(word)}, which is no id of an image or a clip. ${form} ${notDone}`)
-    ids.add(id)
-  }
-  if (ids.size === 0) throw new ToolError(`\`assets\` names no image and no clip. ${form} ${notDone}`)
-  if (ids.size > max) {
-    throw new ToolError(`\`assets\` names ${ids.size} images and clips, and one call takes at most ${max}. `
-      + `Call again with the first ${max}, then again with the rest. ${notDone}`)
-  }
-  return [...ids]
-}
-
-/** The facts text of an image whose file Dez could not read. */
-export const IMAGE_NOT_READ_FACTS = 'Dez could not read its file'
-
-/** The facts text of an image whose picture the webview could not
- *  decode. */
-export const IMAGE_NOT_DECODED_FACTS = 'Dez could not read its picture'
-
-/** The facts text of a clip whose file ffprobe could not read. */
-export const CLIP_NOT_PROBED_FACTS = 'ffprobe could not read its file'
-
-/** The facts text of a clip that Dez could not read (`ClipReadError`), by
- *  its problem. */
-export function clipNotReadFacts(problem: ClipReadProblem): string {
-  switch (problem) {
-    case 'deleted':
-      return 'gone: the user deleted its file, and it has no web address'
-    case 'expired':
-      return 'expired: its provider does not keep it any more, and the user did not save it'
-    case 'unreadable':
-      return 'Dez could not read its file'
-  }
-}
-
-/** What one ffprobe run tells of a clip: its facts; the problem of a clip
- *  that Dez could not read (`ClipReadError`); or that ffprobe could not
- *  read its file. */
-export type ProbedClip =
-  | { kind: 'probed', facts: ClipProbeFacts }
-  | { kind: 'notRead', problem: ClipReadProblem }
-  | { kind: 'notProbed' }
-
-/** The facts text of `clip` from its probe. */
-export function probedClipFacts(clip: Pick<ClipAttachment, 'kind' | 'type' | 'url'>, probed: ProbedClip): string {
-  switch (probed.kind) {
-    case 'probed':
-      return clipFactsText(clip.kind, mediaFileExtension(clip.type, clip.url), probed.facts)
-    case 'notRead':
-      return clipNotReadFacts(probed.problem)
-    case 'notProbed':
-      return CLIP_NOT_PROBED_FACTS
-  }
-}
 
 // A label as the end of an origin text, as in `: "scene 3 …"`. A label
 // has no `"` (`jobCallLabel`).

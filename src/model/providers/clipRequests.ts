@@ -1,12 +1,12 @@
 import sbp from '@sbp/sbp'
-import { MAX_SAVED_CLIP_BYTES, MEDIA_TEMP_LIFETIME_MS, mediaFileExtension } from '../chat/mediaFiles'
+import { MAX_SAVED_CLIP_BYTES, MEDIA_TEMP_LIFETIME_MS } from '../chat/mediaFiles'
 import { MEDIA_CACHE_FOLDER } from '../chat/mediaTags'
 import { byteSizeText } from '../../utils/byteSize'
 import { ExplainedError, rawErrorText } from '../../utils/errorText'
 import { responseOk, sanitizeErrorText } from '../../utils/protocol/errors'
 import { responseContentType, textFromNativeBody, type NativeHttpDownload, type NativeHttpRequest } from '../../utils/protocol/nativeHttp'
 import { providerStatusError, UnusableAnswerError } from './errors'
-import { pcmLayout, wavFile } from './pcmAudio'
+import { clipFileType, wavFile } from './pcmAudio'
 import type { Provider } from './provider'
 import { CLIP_KINDS, type ClipKind, type GeneratedClip } from './types'
 
@@ -56,6 +56,15 @@ function clipTimeoutError(run: ClipRun, requestError?: unknown): ExplainedError 
     sanitizeErrorText(rawErrorText(requestError)),
     { cause: requestError },
   )
+}
+
+/** The clip of a temp copy that Dez wrote at `file`, a path in
+ *  `MEDIA_CACHE_FOLDER` of the cache root (whose path is `cacheDir`).
+ *  `startedAt` is a time before the download or the write of the copy, so
+ *  the copy is there until the clip's `expires` (see
+ *  `MEDIA_TEMP_LIFETIME_MS`). */
+export function tempCopyClip(clip: Pick<GeneratedClip, 'kind' | 'mediaType' | 'jobId'>, file: string, cacheDir: string, startedAt: number): GeneratedClip {
+  return { ...clip, src: `${cacheDir}/${file}`, url: null, expires: new Date(startedAt + MEDIA_TEMP_LIFETIME_MS).toISOString() }
 }
 
 // Sends one request of a clip, with the time that the clip has left as its
@@ -120,10 +129,8 @@ export async function sendClipRequest(
   // small. A PCM response that does not tell its layout gets no file, and
   // the error names its whole content type.
   const contentType = responseContentType(download)
-  const pcm = pcmLayout(contentType, run.provider.pcmSampleBits())
-  const mediaType = pcm ? 'audio/wav' : contentType.split(';', 1)[0].trim()
-  const extension = mediaFileExtension(mediaType, null)
-  if (extension === null) {
+  const fileType = clipFileType(contentType, run.provider.pcmSampleBits())
+  if (fileType === null) {
     // A failed delete must not hide the error of the file type: the
     // cleanup of the temp copies deletes the part file later.
     await sbp('dez.native/deleteAppFile', part, 'cache').catch((error: unknown) => {
@@ -134,6 +141,7 @@ export async function sendClipRequest(
       `Content type: ${sanitizeErrorText(contentType, 100)}`,
     )
   }
+  const { mediaType, extension, pcm } = fileType
   const file = `${MEDIA_CACHE_FOLDER}/${name}.${extension}`
   if (pcm) {
     try {
@@ -149,18 +157,7 @@ export async function sendClipRequest(
   } else {
     await sbp('dez.native/moveAppFile', { root: 'cache', path: part }, { root: 'cache', path: file })
   }
-  return {
-    clip: {
-      kind: CLIP_KINDS[run.kind],
-      mediaType,
-      src: `${cacheDir}/${file}`,
-      url: null,
-      // A time before the download, so the copy is there until then (see
-      // `MEDIA_TEMP_LIFETIME_MS`).
-      expires: new Date(startedAt + MEDIA_TEMP_LIFETIME_MS).toISOString(),
-      jobId,
-    },
-  }
+  return { clip: tempCopyClip({ kind: CLIP_KINDS[run.kind], mediaType, jobId }, file, cacheDir, startedAt) }
 }
 
 // Waits before the next request for a job's state. Rejects at once when

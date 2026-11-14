@@ -5,7 +5,7 @@ import type { PicturePart, Section } from '../model/chat/types'
 import type { ClipAttachment } from '../model/providers/clipInputs'
 import type { ModelInfo } from '../model/providers/types'
 import { conversationAssets } from '../model/streams/mediaRequest'
-import { probedClipFacts } from '../model/tools/assetInfo'
+import { probedClipFacts } from '../model/tools/assetFacts'
 import {
   ASSET_VIEW_TIMEOUT_MS,
   ASSET_VIEW_TOOL,

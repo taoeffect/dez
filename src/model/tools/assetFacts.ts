@@ -1,6 +1,8 @@
 import { byteSizeText } from '../../utils/byteSize'
 import { formatName } from '../../utils/formatName'
+import { mediaFileExtension, type ClipReadProblem } from '../chat/mediaFiles'
 import type { MediaTagKind } from '../chat/mediaTags'
+import type { ClipAttachment } from '../providers/clipInputs'
 import { FFPROBE_FIXED_ARGS, parseProbeOutput, probeDuration, probeText, shownVideoSize, usableFrameRate } from './videoTool'
 
 // The facts of an image or a clip as a short text for a model, as in
@@ -116,4 +118,47 @@ export function clipFactsText(kind: MediaTagKind, extension: string | null, fact
     audio === null ? 'no sound' : `sound${audio.codec === '' ? '' : ` (${audio.codec})`}`,
     size,
   ])
+}
+
+/** The facts text of an image or a clip whose file Dez could not read. */
+export const FILE_NOT_READ_FACTS = 'Dez could not read its file'
+
+/** The facts text of an image whose picture the webview could not
+ *  decode. */
+export const IMAGE_NOT_DECODED_FACTS = 'Dez could not read its picture'
+
+// The facts text of a clip whose file ffprobe could not read.
+const CLIP_NOT_PROBED_FACTS = 'ffprobe could not read its file'
+
+/** The facts text of a clip that Dez could not read (`ClipReadError`), by
+ *  its problem. */
+export function clipNotReadFacts(problem: ClipReadProblem): string {
+  switch (problem) {
+    case 'deleted':
+      return 'gone: the user deleted its file, and it has no web address'
+    case 'expired':
+      return 'expired: its provider does not keep it any more, and the user did not save it'
+    case 'unreadable':
+      return FILE_NOT_READ_FACTS
+  }
+}
+
+/** What one ffprobe run tells of a clip: its facts; the problem of a clip
+ *  that Dez could not read (`ClipReadError`); or that ffprobe could not
+ *  read its file. */
+export type ProbedClip =
+  | { kind: 'probed', facts: ClipProbeFacts }
+  | { kind: 'notRead', problem: ClipReadProblem }
+  | { kind: 'notProbed' }
+
+/** The facts text of `clip` from its probe. */
+export function probedClipFacts(clip: Pick<ClipAttachment, 'kind' | 'type' | 'url'>, probed: ProbedClip): string {
+  switch (probed.kind) {
+    case 'probed':
+      return clipFactsText(clip.kind, mediaFileExtension(clip.type, clip.url), probed.facts)
+    case 'notRead':
+      return clipNotReadFacts(probed.problem)
+    case 'notProbed':
+      return CLIP_NOT_PROBED_FACTS
+  }
 }

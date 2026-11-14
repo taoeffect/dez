@@ -1,24 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { assetIdsArgument, assetInfoLine, assetOriginText } from './assetInfo'
-import { refusal } from './testing'
-
-const RULE = { max: 3, notDone: 'Dez did nothing.' }
-
-describe('assetIdsArgument', () => {
-  it('takes ids with and without the @, split by spaces and commas, each one once', () => {
-    expect(assetIdsArgument({ assets: ' @c, a\n@c  bb,' }, RULE)).toStrictEqual(['c', 'a', 'bb'])
-  })
-
-  it('refuses a word that is no id, and no ids, and tells what Dez did not do', () => {
-    expect(refusal(() => assetIdsArgument({ assets: '@a @B' }, RULE))).toMatch(/"@B".*Dez did nothing\.$/)
-    expect(refusal(() => assetIdsArgument({ assets: ' , ' }, RULE))).toMatch(/Dez did nothing\.$/)
-  })
-
-  it('refuses more than the most ids of one call, and counts a repeated id once', () => {
-    expect(assetIdsArgument({ assets: '@a @b @c @a' }, RULE)).toHaveLength(3)
-    expect(refusal(() => assetIdsArgument({ assets: '@a @b @c @d' }, RULE))).toMatch(/at most 3\b.*Dez did nothing\.$/)
-  })
-})
+import { assetInfoLine, assetOriginText } from './assetInfo'
 
 describe('assetOriginText', () => {
   it('names the user or the model', () => {

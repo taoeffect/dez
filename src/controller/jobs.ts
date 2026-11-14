@@ -266,8 +266,10 @@ export class ReplyJobs {
   // The results that no reader took, which count as read from now on: of
   // the jobs `ids`, or of every job. The other results stay unread.
   private takeUnread(ids?: readonly string[]): EndedJob[] {
-    const taken = ids ? this.unread.filter((job) => ids.includes(job.id)) : [...this.unread]
-    const kept = this.unread.filter((job) => !taken.includes(job))
+    const wanted = ids && new Set(ids)
+    const taken: Job[] = []
+    const kept: Job[] = []
+    for (const job of this.unread) (!wanted || wanted.has(job.id) ? taken : kept).push(job)
     this.unread.splice(0, this.unread.length, ...kept)
     return taken.map((job) => {
       job.delivered = true

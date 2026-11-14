@@ -3,7 +3,7 @@ import type { ModelCache } from '../persistence/types'
 import { PRICE_LIFETIME_MS, type PriceQuote } from '../providers/modelPrices'
 import { providerInfo } from '../providers/testing'
 import type { ModelInfo, ProviderInfo } from '../providers/types'
-import { MODEL_LIST_LIMIT, modelListText } from './modelList'
+import { MODEL_LIST_LIMIT, modelListArguments, modelListText } from './modelList'
 
 function cache(...entries: [ProviderInfo, ModelInfo[]][]): ModelCache {
   return {
@@ -55,6 +55,24 @@ const LINES = {
   whisper: 'openrouter/openai/whisper-2 | OpenAI: Whisper 2 | OpenRouter | t | a | 2024-09-30 | ?',
 }
 
+describe('modelListArguments', () => {
+  it('refuses a value that a parameter does not take and names the valid values', () => {
+    const types = 'Use a comma list of: text, image, audio, video.'
+    // The letters of the columns are no types.
+    expect(() => modelListArguments({ type: 'i,v' })).toThrow(`Unknown values "i", "v" in \`type\`. ${types}`)
+    expect(() => modelListArguments({ inputs: 'audio speech' })).toThrow(`Unknown value "speech" in \`inputs\`. ${types}`)
+    expect(() => modelListArguments({ sort: 'date' }))
+      .toThrow('Unknown value "date" in `sort`. Use one of: id, name, provider, type, inputs, released, price.')
+    expect(() => modelListArguments({ sort: 'name', sort_dir: 'down' })).toThrow('Unknown value "down" in `sort_dir`. Use one of: asc, desc.')
+  })
+
+  // The model would read a list in another order than the one it asked for.
+  it('refuses a sort direction with no sort column', () => {
+    expect(() => modelListArguments({ sort_dir: 'desc' })).toThrow('`sort_dir` is the direction of `sort`. '
+      + 'Call model_list again with `sort` too (one of: id, name, provider, type, inputs, released, price), or with no `sort_dir`.')
+  })
+})
+
 describe('modelListText', () => {
   it('lists every model by full id, in provider order and then cache order, with what it makes and what Dez sends it', () => {
     expect(modelListText(CACHE, PROVIDERS)).toBe([
@@ -70,7 +88,7 @@ describe('modelListText', () => {
   })
 
   it('quotes the filter in the count line of a filtered list', () => {
-    expect(modelListText(CACHE, PROVIDERS, { filter: 'gemini preview' })).toBe([
+    expect(modelListText(CACHE, PROVIDERS, modelListArguments({ filter: 'gemini preview' }))).toBe([
       `2 models match "gemini preview" ${HEADER}`,
       LINES.veniceGemini,
       LINES.openRouterGemini,
@@ -78,12 +96,12 @@ describe('modelListText', () => {
   })
 
   it('counts one match in the singular', () => {
-    expect(modelListText(CACHE, PROVIDERS, { filter: 'mistral' })).toBe([`1 model matches "mistral" ${HEADER}`, LINES.mistral].join('\n'))
+    expect(modelListText(CACHE, PROVIDERS, modelListArguments({ filter: 'mistral' }))).toBe([`1 model matches "mistral" ${HEADER}`, LINES.mistral].join('\n'))
     expect(modelListText(cache([VENICE, VENICE_MODELS.slice(1, 2)]), PROVIDERS)).toBe([`1 model ${HEADER}`, LINES.mistral].join('\n'))
   })
 
   it('selects the models that make one of the given types, and counts unknown outputs as text', () => {
-    expect(modelListText(CACHE, PROVIDERS, { type: 'text' })).toBe([
+    expect(modelListText(CACHE, PROVIDERS, modelListArguments({ type: 'text' }))).toBe([
       `5 models match type text ${HEADER}`,
       LINES.veniceGemini,
       LINES.mistral,
@@ -91,7 +109,7 @@ describe('modelListText', () => {
       LINES.flash,
       LINES.whisper,
     ].join('\n'))
-    expect(modelListText(CACHE, PROVIDERS, { type: 'Video, image' })).toBe([
+    expect(modelListText(CACHE, PROVIDERS, modelListArguments({ type: 'Video, image' }))).toBe([
       `3 models match type image,video ${HEADER}`,
       LINES.zImage,
       LINES.wan,
@@ -100,8 +118,8 @@ describe('modelListText', () => {
   })
 
   it('selects the models that Dez can send all of the given inputs in one request', () => {
-    expect(modelListText(CACHE, PROVIDERS, { inputs: 'audio,video' })).toBe([`1 model matches inputs audio,video ${HEADER}`, LINES.wan].join('\n'))
-    expect(modelListText(CACHE, PROVIDERS, { inputs: 'audio' })).toBe([
+    expect(modelListText(CACHE, PROVIDERS, modelListArguments({ inputs: 'audio,video' }))).toBe([`1 model matches inputs audio,video ${HEADER}`, LINES.wan].join('\n'))
+    expect(modelListText(CACHE, PROVIDERS, modelListArguments({ inputs: 'audio' }))).toBe([
       `2 models match inputs audio ${HEADER}`,
       LINES.wan,
       LINES.whisper,
@@ -109,7 +127,7 @@ describe('modelListText', () => {
   })
 
   it('selects the models that match the filter, the type, and the inputs together, and counts the ones that the filter left out', () => {
-    expect(modelListText(CACHE, PROVIDERS, { filter: 'venice', type: 'video,text', inputs: 'image' })).toBe([
+    expect(modelListText(CACHE, PROVIDERS, modelListArguments({ filter: 'venice', type: 'video,text', inputs: 'image' }))).toBe([
       `3 models match "venice" and type text,video and inputs image ${HEADER} `
         + 'Without `filter`, 5 models match type text,video and inputs image: a `filter` word matches only names and ids, not types.',
       LINES.veniceGemini,
@@ -121,24 +139,24 @@ describe('modelListText', () => {
   // A paid test asked for "openrouter video" with type video, and the
   // word "video" left out the models with no "video" in their names.
   it('counts the models of the types alone when the filter leaves some out, also with no match, and only then', () => {
-    expect(modelListText(CACHE, PROVIDERS, { filter: 'flux', type: 'text' })).toBe('No models match "flux" and type text. '
+    expect(modelListText(CACHE, PROVIDERS, modelListArguments({ filter: 'flux', type: 'text' }))).toBe('No models match "flux" and type text. '
       + 'Call model_list again with fewer words in `filter` or other values in `type`, or with no `filter` and no `type` to list every model. '
       + 'Without `filter`, 5 models match type text: a `filter` word matches only names and ids, not types.')
-    expect(modelListText(CACHE, PROVIDERS, { filter: 'video', type: 'video' })).toBe([`1 model matches "video" and type video ${HEADER}`, LINES.wan].join('\n'))
-    expect(modelListText(CACHE, PROVIDERS, { filter: 'whisper' }).split('\n')[0]).toBe(`1 model matches "whisper" ${HEADER}`)
+    expect(modelListText(CACHE, PROVIDERS, modelListArguments({ filter: 'video', type: 'video' }))).toBe([`1 model matches "video" and type video ${HEADER}`, LINES.wan].join('\n'))
+    expect(modelListText(CACHE, PROVIDERS, modelListArguments({ filter: 'whisper' })).split('\n')[0]).toBe(`1 model matches "whisper" ${HEADER}`)
   })
 
   it('lists every model for a filter with no letters or digits, and for a type or inputs of only commas and white space', () => {
-    expect(modelListText(CACHE, PROVIDERS, { filter: ' - ', type: ' , ', inputs: '\t,' })).toBe(modelListText(CACHE, PROVIDERS))
+    expect(modelListText(CACHE, PROVIDERS, modelListArguments({ filter: ' - ', type: ' , ', inputs: '\t,' }))).toBe(modelListText(CACHE, PROVIDERS))
   })
 
   it('says so when no model matches, with the filter as a JSON string, and tells how to widen the call', () => {
     const filterFix = 'Call model_list again with fewer words in `filter`, or with no `filter` to list every model.'
-    expect(modelListText(CACHE, PROVIDERS, { filter: 'xyz' })).toBe(`No models match "xyz". ${filterFix}`)
-    expect(modelListText(CACHE, PROVIDERS, { filter: 'say "hi"' })).toBe(`No models match "say \\"hi\\"". ${filterFix}`)
-    expect(modelListText(CACHE, PROVIDERS, { type: 'audio' }))
+    expect(modelListText(CACHE, PROVIDERS, modelListArguments({ filter: 'xyz' }))).toBe(`No models match "xyz". ${filterFix}`)
+    expect(modelListText(CACHE, PROVIDERS, modelListArguments({ filter: 'say "hi"' }))).toBe(`No models match "say \\"hi\\"". ${filterFix}`)
+    expect(modelListText(CACHE, PROVIDERS, modelListArguments({ type: 'audio' })))
       .toBe('No models match type audio. Call model_list again with other values in `type`, or with no `type` to list every model.')
-    expect(modelListText(CACHE, PROVIDERS, { filter: 'mistral', type: 'image', inputs: 'audio' })).toBe('No models match "mistral" and type image and inputs audio. '
+    expect(modelListText(CACHE, PROVIDERS, modelListArguments({ filter: 'mistral', type: 'image', inputs: 'audio' }))).toBe('No models match "mistral" and type image and inputs audio. '
       + 'Call model_list again with fewer words in `filter` or other values in `type` or fewer values in `inputs`, '
       + 'or with no `filter` and no `type` and no `inputs` to list every model.')
   })
@@ -146,37 +164,21 @@ describe('modelListText', () => {
   it('shows `-` for a model that makes none of the four types and that Dez cannot send anything, and no types select it', () => {
     const models: ModelInfo[] = [{ id: 'embed', name: 'Embed', provider: VENICE.id, outputs: [], request: 'none' }]
     expect(modelListText(cache([VENICE, models]), PROVIDERS)).toBe([`1 model ${HEADER}`, 'venice/embed | Embed | Venice | - | - | ? | ?'].join('\n'))
-    expect(modelListText(cache([VENICE, models]), PROVIDERS, { type: 'text,image,audio,video' }))
+    expect(modelListText(cache([VENICE, models]), PROVIDERS, modelListArguments({ type: 'text,image,audio,video' })))
       .toBe('No models match type text,image,audio,video. Call model_list again with other values in `type`, or with no `type` to list every model.')
-  })
-
-  it('refuses a value that a parameter does not take and names the valid values, before it looks at the models', () => {
-    const types = 'Use a comma list of: text, image, audio, video.'
-    // The letters of the columns are no types.
-    expect(() => modelListText(CACHE, PROVIDERS, { type: 'i,v' })).toThrow(`Unknown values "i", "v" in \`type\`. ${types}`)
-    expect(() => modelListText(cache(), PROVIDERS, { inputs: 'audio speech' })).toThrow(`Unknown value "speech" in \`inputs\`. ${types}`)
-    expect(() => modelListText(cache(), PROVIDERS, { sort: 'date' }))
-      .toThrow('Unknown value "date" in `sort`. Use one of: id, name, provider, type, inputs, released, price.')
-    expect(() => modelListText(cache(), PROVIDERS, { sort: 'name', sort_dir: 'down' })).toThrow('Unknown value "down" in `sort_dir`. Use one of: asc, desc.')
-  })
-
-  // The model would read a list in another order than the one it asked for.
-  it('refuses a sort direction with no sort column', () => {
-    expect(() => modelListText(CACHE, PROVIDERS, { sort_dir: 'desc' })).toThrow('`sort_dir` is the direction of `sort`. '
-      + 'Call model_list again with `sort` too (one of: id, name, provider, type, inputs, released, price), or with no `sort_dir`.')
   })
 
   it('says so when the user can use no model, whatever the arguments, and what the user can do', () => {
     const none = 'The user has no models that Dez can use: no provider is set up, or the model lists of the providers did not load. '
       + 'Tell the user to add an API key in Settings › Providers, or to look there for a provider with an error.'
     expect(modelListText(cache(), PROVIDERS)).toBe(none)
-    expect(modelListText(CACHE, [providerInfo('venice', 'Venice', false)], { filter: 'gemini', type: 'text', inputs: 'image', sort: 'name' })).toBe(none)
+    expect(modelListText(CACHE, [providerInfo('venice', 'Venice', false)], modelListArguments({ filter: 'gemini', type: 'text', inputs: 'image', sort: 'name' }))).toBe(none)
   })
 
   // Equal values keep provider order, then cache order, in both directions,
   // and an unknown type comes last in both.
   it('sorts by the count of letters and then the table order of the letters', () => {
-    expect(modelListText(CACHE, PROVIDERS, { sort: 'type' })).toBe([
+    expect(modelListText(CACHE, PROVIDERS, modelListArguments({ sort: 'type' }))).toBe([
       `7 models ${COLUMNS}, sorted by type asc. ${LEGEND}`,
       LINES.veniceGemini,
       LINES.whisper,
@@ -186,7 +188,7 @@ describe('modelListText', () => {
       LINES.mistral,
       LINES.flash,
     ].join('\n'))
-    expect(modelListText(CACHE, PROVIDERS, { sort: 'type', sort_dir: 'desc' })).toBe([
+    expect(modelListText(CACHE, PROVIDERS, modelListArguments({ sort: 'type', sort_dir: 'desc' }))).toBe([
       `7 models ${COLUMNS}, sorted by type desc. ${LEGEND}`,
       LINES.openRouterGemini,
       LINES.wan,
@@ -196,7 +198,7 @@ describe('modelListText', () => {
       LINES.mistral,
       LINES.flash,
     ].join('\n'))
-    expect(modelListText(CACHE, PROVIDERS, { inputs: 'image', sort: 'Inputs', sort_dir: 'DESC' }).split('\n').slice(0, 3)).toStrictEqual([
+    expect(modelListText(CACHE, PROVIDERS, modelListArguments({ inputs: 'image', sort: 'Inputs', sort_dir: 'DESC' })).split('\n').slice(0, 3)).toStrictEqual([
       `5 models match inputs image ${COLUMNS}, sorted by inputs desc. ${LEGEND}`,
       LINES.wan,
       LINES.veniceGemini,
@@ -206,7 +208,7 @@ describe('modelListText', () => {
   // A date that the provider does not tell comes last in both directions,
   // and equal dates keep provider order, then cache order.
   it('sorts by release date, the oldest first', () => {
-    expect(modelListText(CACHE, PROVIDERS, { sort: 'released' })).toBe([
+    expect(modelListText(CACHE, PROVIDERS, modelListArguments({ sort: 'released' }))).toBe([
       `7 models ${COLUMNS}, sorted by released asc. ${LEGEND}`,
       LINES.whisper,
       LINES.veniceGemini,
@@ -216,7 +218,7 @@ describe('modelListText', () => {
       LINES.mistral,
       LINES.flash,
     ].join('\n'))
-    expect(modelListText(CACHE, PROVIDERS, { sort: 'released', sort_dir: 'desc' }).split('\n').slice(1)).toStrictEqual([
+    expect(modelListText(CACHE, PROVIDERS, modelListArguments({ sort: 'released', sort_dir: 'desc' })).split('\n').slice(1)).toStrictEqual([
       LINES.wan,
       LINES.zImage,
       LINES.veniceGemini,
@@ -229,12 +231,12 @@ describe('modelListText', () => {
 
   it('sorts text as a person reads it: numbers by value, and case does not count', () => {
     const models: ModelInfo[] = ['model 10', 'Model 9', 'alpha', 'Beta'].map((name, index) => ({ id: `m${index}`, name, provider: VENICE.id }))
-    const names = (sort_dir?: string) => modelListText(cache([VENICE, models]), PROVIDERS, { sort: 'name', ...(sort_dir && { sort_dir }) })
+    const names = (sort_dir?: string) => modelListText(cache([VENICE, models]), PROVIDERS, modelListArguments({ sort: 'name', ...(sort_dir && { sort_dir }) }))
       .split('\n').slice(1).map((line) => line.split(' | ')[1])
 
     expect(names()).toStrictEqual(['alpha', 'Beta', 'Model 9', 'model 10'])
     expect(names('desc')).toStrictEqual(['model 10', 'Model 9', 'Beta', 'alpha'])
-    expect(modelListText(CACHE, PROVIDERS, { sort: 'provider' }).split('\n').slice(1)).toStrictEqual([
+    expect(modelListText(CACHE, PROVIDERS, modelListArguments({ sort: 'provider' })).split('\n').slice(1)).toStrictEqual([
       LINES.openRouterGemini,
       LINES.flash,
       LINES.whisper,
@@ -257,7 +259,7 @@ describe('modelListText', () => {
     expect(over.at(-2)).toBe(`venice/m${MODEL_LIST_LIMIT - 1} | M ${MODEL_LIST_LIMIT - 1} | Venice | ? | t,i | 2049-01-01 | ?`)
     expect(over.at(-1)).toBe('… and 3 more. Use a narrower filter.')
 
-    const newestFirst = modelListText(cache([VENICE, many(MODEL_LIST_LIMIT + 3)]), PROVIDERS, { sort: 'released', sort_dir: 'desc' }).split('\n')
+    const newestFirst = modelListText(cache([VENICE, many(MODEL_LIST_LIMIT + 3)]), PROVIDERS, modelListArguments({ sort: 'released', sort_dir: 'desc' })).split('\n')
     expect(newestFirst[1]).toBe(`venice/m${MODEL_LIST_LIMIT + 2} | M ${MODEL_LIST_LIMIT + 2} | Venice | ? | t,i | 2052-01-01 | ?`)
     expect(newestFirst.at(-2)).toBe('venice/m3 | M 3 | Venice | ? | t,i | 2003-01-01 | ?')
     expect(newestFirst.at(-1)).toBe('… and 3 more. Use a narrower filter.')
@@ -286,7 +288,7 @@ describe('modelListText', () => {
     const NOW = 1000
     const priced = (price: ModelInfo['price'], extra: Partial<ModelInfo> = {}): ModelInfo => ({ id: 'm', name: 'M', provider: VENICE.id, price, ...extra })
     const priceOf = (model: ModelInfo, quotes?: PriceQuote[]) =>
-      modelListText({ ...cache([VENICE, [model]]), ...(quotes && { quotes }) }, PROVIDERS, {}, NOW).split('\n')[1].split(' | ')[6]
+      modelListText({ ...cache([VENICE, [model]]), ...(quotes && { quotes }) }, PROVIDERS, modelListArguments({}), NOW).split('\n')[1].split(' | ')[6]
 
     it('tells the list price in US dollars in its unit, with its note in parentheses and no |', () => {
       expect(priceOf(priced({ unit: 'token', input: 0.1, output: 3.5 }))).toBe('$0.10/$3.50 per 1M tokens')
@@ -313,7 +315,7 @@ describe('modelListText', () => {
       // A quote of other values, of another kind, or an old one is no price.
       expect(priceOf(video, [quote(video, { duration: '5s' }, 0)])).toBe('?')
       expect(priceOf(video, [{ ...quote(video, { duration: '8s' }, 0), kind: 'imageToVideo' }])).toBe('?')
-      expect(modelListText({ ...cache([VENICE, [image]]), quotes: [quote(image, {}, 0)] }, PROVIDERS, {}, PRICE_LIFETIME_MS).endsWith(' | ?')).toBe(true)
+      expect(modelListText({ ...cache([VENICE, [image]]), quotes: [quote(image, {}, 0)] }, PROVIDERS, modelListArguments({}), PRICE_LIFETIME_MS).endsWith(' | ?')).toBe(true)
       // The list price wins over a quote.
       expect(priceOf({ ...image, price: { unit: 'image', usd: 0.04 } }, [quote(image, {}, 0)])).toBe('$0.04 per image')
     })
@@ -329,7 +331,7 @@ describe('modelListText', () => {
         priced({ unit: 'token', input: 0.5, output: 2 }, { id: 'tok-2.5' }),
         priced({ unit: 'character', usd: 30 }, { id: 'chars' }),
       ]
-      const ids = (sort_dir: string) => modelListText(cache([VENICE, models]), PROVIDERS, { sort: 'price', sort_dir }, NOW)
+      const ids = (sort_dir: string) => modelListText(cache([VENICE, models]), PROVIDERS, modelListArguments({ sort: 'price', sort_dir }), NOW)
         .split('\n').slice(1).map((line) => line.split(' | ')[0])
 
       expect(ids('asc')).toStrictEqual(['venice/tok-2.5', 'venice/tok-4', 'venice/chars', 'venice/img', 'venice/clip', 'venice/none'])
@@ -340,7 +342,7 @@ describe('modelListText', () => {
       const tokens = priced({ unit: 'token', input: 1, output: 2 })
       const old = cache([VENICE, [tokens]])
       old.providers[OPENROUTER.id] = { models: [{ ...tokens, provider: OPENROUTER.id }], working: true, updatedAt: PRICE_LIFETIME_MS, lastCheckedAt: PRICE_LIFETIME_MS }
-      const header = (models: ModelCache, now: number) => modelListText(models, PROVIDERS, {}, now).split('\n')[0]
+      const header = (models: ModelCache, now: number) => modelListText(models, PROVIDERS, modelListArguments({}), now).split('\n')[0]
 
       expect(header(old, PRICE_LIFETIME_MS)).toBe(`2 models ${HEADER} The prices of Venice can be old: its model list did not load in the last 60 minutes.`)
       expect(header(old, 2 * PRICE_LIFETIME_MS)).toBe(`2 models ${HEADER} `

@@ -139,6 +139,7 @@ export default sbp('sbp/selectors/register', {
     }
     warnClipsLeftOut(model.modelName, cachedModel.clips !== undefined, mediaClips.sent, mediaClips.leftOut)
 
+    const outputs = effectiveOutputs(cachedModel)
     await sbp('dez.stream/start', {
       tabId,
       conversationId: tab.conversationId,
@@ -147,8 +148,8 @@ export default sbp('sbp/selectors/register', {
       request: kind,
       messages,
       sendTools,
-      imageOutput: effectiveOutputs(cachedModel).includes('image'),
-      audioOutput: effectiveOutputs(cachedModel).includes('audio'),
+      imageOutput: outputs.includes('image'),
+      audioOutput: outputs.includes('audio'),
       inputRules,
     })
   },

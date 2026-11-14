@@ -128,6 +128,37 @@ export function assetIdArgument(value: ToolArgumentValue | undefined, asset: str
   return id
 }
 
+/** The ids of the images and the clips that the text argument `parameter`
+ *  of a call names (`a` or `@a`), split by white space and commas, in the
+ *  order of the call; an id can be there twice. Throws a ToolError for a
+ *  word that is no id. `asset` is the kind of asset with its article (`a
+ *  clip`), and `advice` ends the error text: the form of a good argument,
+ *  and what Dez did not do. */
+export function assetIdWords(args: ToolArguments, parameter: string, asset: string, advice: string): string[] {
+  const value = args[parameter]
+  const words = (typeof value === 'string' ? value : '').split(/[\s,]+/).filter((word) => word !== '')
+  return words.map((word) => {
+    const id = ASSET_ID_ARGUMENT.exec(word)?.[1]
+    if (id === undefined) throw new ToolError(`\`${parameter}\` holds ${JSON.stringify(word)}, which is no id of ${asset}. ${advice}`)
+    return id
+  })
+}
+
+/** The ids that the `assets` argument of a call names (`assetIdWords`),
+ *  each one once, in the order of the call. Throws a `ToolError` that ends
+ *  with `notDone` for a word that is no id, for no id, and for more than
+ *  `max` ids. */
+export function assetIdsArgument(args: ToolArguments, { max, notDone }: { max: number, notDone: string }): string[] {
+  const form = 'Give the ids of the images and the clips, as in "@a @c".'
+  const ids = new Set(assetIdWords(args, 'assets', 'an image or a clip', `${form} ${notDone}`))
+  if (ids.size === 0) throw new ToolError(`\`assets\` names no image and no clip. ${form} ${notDone}`)
+  if (ids.size > max) {
+    throw new ToolError(`\`assets\` names ${ids.size} images and clips, and one call takes at most ${max}. `
+      + `Call again with the first ${max}, then again with the rest. ${notDone}`)
+  }
+  return [...ids]
+}
+
 /** The error of a call that gives `parameter` the values `values`, which it
  *  does not take; `valid` tells what it takes. */
 export function unknownValuesText(parameter: string, values: readonly string[], valid: string): string {

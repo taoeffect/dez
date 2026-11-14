@@ -7,6 +7,7 @@ import { CLIP_FILE_EXTENSIONS, MAX_SAVED_CLIP_BYTES, storableClip } from '../cha
 import { newMediaIds } from '../chat/mediaIds'
 import type { Section } from '../chat/types'
 import { conversationAssets, type ConversationAssets } from '../streams/mediaRequest'
+import { assetIdWords } from './arguments'
 import { ASSET_NAMES, INTERMEDIATE_PARAMETER, jobCallLabel, jobTimeoutMs, jobTimeoutParameter } from './jobs'
 import { clipInput, tellUserConsole, type ClipInput, type KeptFile, type ProgramEnd, type ShippedProgram } from './programRuns'
 import { subcommandToolDefinition, type SubcommandTool } from './subcommands'
@@ -584,13 +585,8 @@ export interface JoinCall {
  *  name. */
 export function joinClipsCall(args: ToolArguments, sections: readonly Section[]): JoinCall {
   const timeoutMs = jobTimeoutMs(args, DEFAULT_VIDEO_TIMEOUT_SECONDS)
-  const words = (typeof args.clips === 'string' ? args.clips : '').split(/[\s,]+/).filter((word) => word !== '')
   const form = 'Give the ids of the video clips in the order of the join, as in "@c @d".'
-  const ids = words.map((word) => {
-    const id = /^@?([a-z]+)$/.exec(word)?.[1]
-    if (id === undefined) throw new ToolError(`\`clips\` holds ${JSON.stringify(word)}, which is no id of a clip. ${form} Dez started no job.`)
-    return id
-  })
+  const ids = assetIdWords(args, 'clips', 'a clip', `${form} Dez started no job.`)
   if (ids.length < 2) {
     throw new ToolError(`\`clips\` names ${ids.length === 0 ? 'no clip' : 'one clip'}, and a join needs two or more video clips. ${form} Dez started no job.`)
   }
@@ -629,18 +625,15 @@ export function joinProbeArgs(name: string): string[] {
   return [...FFPROBE_FIXED_ARGS, '-v', 'error', '-show_data_hash', 'md5', '-show_entries', JOIN_PROBE_ENTRIES, '-of', 'json', name]
 }
 
-/** The output of an ffprobe run with `-of json`. It comes from a program
- *  that read a file of any origin, so every field can be missing or of
- *  another type. */
-export interface ProbeOutput {
-  streams: Record<string, unknown>[]
-  format: Record<string, unknown>
-}
-
 const probeSchema = z.object({
   streams: z.array(z.record(z.string(), z.unknown())).catch([]),
   format: z.record(z.string(), z.unknown()).catch({}),
 })
+
+/** The output of an ffprobe run with `-of json`. It comes from a program
+ *  that read a file of any origin, so every field can be missing or of
+ *  another type. */
+export type ProbeOutput = z.infer<typeof probeSchema>
 
 /** The streams and the format of an ffprobe output with `-of json`; null
  *  for an output that is no JSON object. */

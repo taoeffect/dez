@@ -2,7 +2,7 @@ import { mediaFileExtension } from '../chat/mediaFiles'
 
 // WAV files: raw PCM audio (`audio/pcm`), the samples of a clip with no
 // file format, which no player plays, gets a WAV header before its samples
-// (`wavFile`; `audioFileType` tells the file of audio of a content type);
+// (`wavFile`; `clipFileType` tells the file of a clip of a content type);
 // decoded audio (Web Audio's float samples) becomes a 16-bit WAV file
 // (`wavFileOfChannels`, for the webview's cut of an audio clip).
 
@@ -42,8 +42,8 @@ export function pcmLayout(contentType: string, sampleBits: number | undefined): 
   return rate === undefined || channels === undefined ? null : { rate, channels, sampleBits }
 }
 
-// The file that Dez stores audio of a content type in.
-export interface AudioFileType {
+// The file that Dez stores a clip (audio or video) of a content type in.
+export interface ClipFileType {
   mediaType: string
   extension: string
   // Raw PCM: the layout of its samples, which get a WAV header (`wavFile`).
@@ -51,12 +51,12 @@ export interface AudioFileType {
   pcm: PcmLayout | null
 }
 
-/** The file of audio of `contentType` (lower case, with its parameters):
+/** The file of a clip of `contentType` (lower case, with its parameters):
  *  a WAV file for raw PCM whose layout is known (`pcmLayout`), else the
- *  file type of the media type. Null when Dez cannot store the audio: a
+ *  file type of the media type. Null when Dez cannot store the clip: a
  *  media type that Dez gives no file name to, raw PCM with no rate, or an
  *  API that does not tell the sample size (`sampleBits`). */
-export function audioFileType(contentType: string, sampleBits: number | undefined): AudioFileType | null {
+export function clipFileType(contentType: string, sampleBits: number | undefined): ClipFileType | null {
   const pcm = pcmLayout(contentType, sampleBits)
   const mediaType = pcm ? 'audio/wav' : contentType.split(';', 1)[0].trim()
   const extension = mediaFileExtension(mediaType, null)

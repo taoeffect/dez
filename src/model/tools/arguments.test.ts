@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest'
-import { parseToolArguments } from './arguments'
+import { assetIdsArgument, parseToolArguments } from './arguments'
+import { refusal } from './testing'
 import type { ToolDefinition } from './types'
 
 const SAMPLE: ToolDefinition = {
@@ -92,5 +93,23 @@ describe('parseToolArguments', () => {
 
   it('accepts a whole number written with a fraction as an integer', () => {
     expect(parseToolArguments(SAMPLE, '{"query":"a","limit":2.0}')).toStrictEqual({ ok: true, arguments: { query: 'a', limit: 2 } })
+  })
+})
+
+describe('assetIdsArgument', () => {
+  const RULE = { max: 3, notDone: 'Dez did nothing.' }
+
+  it('takes ids with and without the @, split by spaces and commas, each one once', () => {
+    expect(assetIdsArgument({ assets: ' @c, a\n@c  bb,' }, RULE)).toStrictEqual(['c', 'a', 'bb'])
+  })
+
+  it('refuses a word that is no id, and no ids, and tells what Dez did not do', () => {
+    expect(refusal(() => assetIdsArgument({ assets: '@a @B' }, RULE))).toMatch(/"@B".*Dez did nothing\.$/)
+    expect(refusal(() => assetIdsArgument({ assets: ' , ' }, RULE))).toMatch(/Dez did nothing\.$/)
+  })
+
+  it('refuses more than the most ids of one call, and counts a repeated id once', () => {
+    expect(assetIdsArgument({ assets: '@a @b @c @a' }, RULE)).toHaveLength(3)
+    expect(refusal(() => assetIdsArgument({ assets: '@a @b @c @d' }, RULE))).toMatch(/at most 3\b.*Dez did nothing\.$/)
   })
 })

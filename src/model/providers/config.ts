@@ -1,7 +1,7 @@
 import * as z from 'zod'
 import { MODEL_OUTPUT_IDS } from '../modelOutputs'
 import { BUILT_IN_PROVIDER_IDS } from './builtins'
-import { audioFileType } from './pcmAudio'
+import { clipFileType } from './pcmAudio'
 import { THINKING_SETTING_KEY } from './thinking'
 import { TOOLS_SETTING_KEY } from './toolsSetting'
 import { MEDIA_KINDS, MODEL_REQUESTS } from './types'
@@ -311,7 +311,7 @@ export const providerConfigSchema = z.object({
   // `contentType` is the type of the audio that comes back, a file type
   // (`audio/mpeg`), or raw PCM with its rate and channels
   // (`audio/pcm;rate=24000`, pcmAudio.ts) and `pcmSampleBits`. An entry
-  // whose audio Dez cannot store (`audioFileType`) is refused here: the
+  // whose audio Dez cannot store (`clipFileType`) is refused here: the
   // save of the audio would fail only after the provider billed the
   // request. A chat model that no entry names gets no ask, and its `audio`
   // output does not count (Provider.parseModels). Only the OpenAI format
@@ -322,7 +322,7 @@ export const providerConfigSchema = z.object({
     contentType: z.string().toLowerCase().startsWith('audio/'),
     pcmSampleBits: z.number().int().positive().optional(),
   }).refine(
-    (entry) => audioFileType(entry.contentType, entry.pcmSampleBits) !== null,
+    (entry) => clipFileType(entry.contentType, entry.pcmSampleBits) !== null,
     'Audio output type must be one that Dez can store: a file type such as audio/mpeg, or audio/pcm with its rate (audio/pcm;rate=24000) and pcmSampleBits',
   )).optional(),
   // The wire format of the provider's own image, audio, and video requests.
