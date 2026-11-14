@@ -67,9 +67,6 @@ export const MEDIA_FOLDERS = {
   pasted: { audio: 'assets/audio', video: 'assets/video' },
 } as const satisfies Record<string, Record<MediaTagKind, string>>
 
-/** Where a stored clip came from: a folder group of `MEDIA_FOLDERS`. */
-export type MediaFolder = keyof typeof MEDIA_FOLDERS
-
 // The name of Dez's folder in the OS cache folder (`~/.cache` on Linux):
 // the `cache` root of the app-file selectors. `root_dir` in
 // src-tauri/src/persistence.rs builds the same folder.

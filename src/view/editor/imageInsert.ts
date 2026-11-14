@@ -154,7 +154,7 @@ async function storeClip(source: File | Promise<File | null>, clip: StorableClip
     return null
   }
   try {
-    const path = await sbp('dez.controller/media/save', { kind: clip.kind, type: clip.type, src: null, url: null }, { bytes, folder: 'pasted' }) as string
+    const path = await sbp('dez.controller/media/save', { kind: clip.kind, type: clip.type, src: null, url: null }, { bytes }) as string
     return { path, clip }
   } catch {
     // The save selector has logged the error and shown a toast.

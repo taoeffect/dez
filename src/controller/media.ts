@@ -1,7 +1,7 @@
 import sbp from '@sbp/sbp'
-import { AUDIO_CUT_RATE, audioPartFrames, type AudioPart, type CutAudio } from '../model/chat/audioCut'
+import { AUDIO_CUT_RATE, type DecodedAudio } from '../model/chat/audioCut'
 import { MAX_SAVED_CLIP_BYTES, MEDIA_TEMP_LIFETIME_MS, mediaFileExtension, savedMediaFile, tempMediaFile } from '../model/chat/mediaFiles'
-import { MEDIA_CACHE_FOLDER, MEDIA_FOLDERS, type MediaFolder, type MediaTagData } from '../model/chat/mediaTags'
+import { MEDIA_CACHE_FOLDER, MEDIA_FOLDERS, type MediaTagData } from '../model/chat/mediaTags'
 import { newStoredFilePath } from '../model/chat/storedFilePaths'
 import { signedUrlGone } from '../model/providers/errors'
 import { wavFileOfChannels } from '../model/providers/pcmAudio'
@@ -94,27 +94,27 @@ async function readClipUrl (url: string, type: string, signal: AbortSignal | und
 }
 
 export default sbp('sbp/selectors/register', {
-  // Keeps a clip: its file goes into the media folder of its kind in the app
-  // folder (`folder`: `generated` for a clip that a model or a Dez tool
-  // made, `pasted` for a clip file that the user pasted or dropped), and the
-  // absolute path of that file comes back, for the `src` of the clip's tag
-  // (src/model/chat/mediaTags.ts). With `bytes` (a pasted or dropped file),
-  // they go to a new file named for the clip's type. Else a clip whose
-  // `src` is a temp copy of this computer moves there under its name, and
-  // any other clip is downloaded from its `url` (http and https only) with
-  // no provider header: the URL is a signed one, and a key must not go to
-  // the host of a clip. A failure is logged, shows an error toast, and
-  // rejects, so the caller keeps the tag as it is.
+  // Keeps a clip: its file goes into a media folder of its kind in the app
+  // folder, and the absolute path of that file comes back, for the `src` of
+  // the clip's tag (src/model/chat/mediaTags.ts). With `bytes` (a clip file
+  // that the user pasted or dropped), they go to a new file named for the
+  // clip's type, in the `pasted` folder. Else (the Save of a clip that a
+  // model or a Dez tool made) the file goes into the `generated` folder: a
+  // clip whose `src` is a temp copy of this computer moves there under its
+  // name, and any other clip is downloaded from its `url` (http and https
+  // only) with no provider header: the URL is a signed one, and a key must
+  // not go to the host of a clip. A failure is logged, shows an error
+  // toast, and rejects, so the caller keeps the tag as it is.
   async 'dez.controller/media/save' (
     clip: Pick<MediaTagData, 'kind' | 'type' | 'src' | 'url'>,
-    { bytes, folder = 'generated' }: { bytes?: Uint8Array, folder?: MediaFolder } = {},
+    { bytes }: { bytes?: Uint8Array } = {},
   ): Promise<string> {
     try {
       const tempFile = bytes !== undefined || clip.src === null ? null : tempMediaFile(clip.src, await sbp('dez.native/getAppDir', 'cache') as string)
       const fileName = bytes !== undefined
         ? newClipFileName(clip.type, null)
         : tempFile !== null ? fileNameOf(tempFile) : downloadFileName(clip)
-      const file = `${MEDIA_FOLDERS[folder][clip.kind]}/${fileName}`
+      const file = `${MEDIA_FOLDERS[bytes !== undefined ? 'pasted' : 'generated'][clip.kind]}/${fileName}`
       const path = newStoredFilePath(await sbp('dez.native/getAppDir') as string, file, clip.kind)
       if (bytes !== undefined) {
         await sbp('dez.native/saveAppFile', file, bytes).catch((error: unknown) => {
@@ -195,18 +195,15 @@ export default sbp('sbp/selectors/register', {
       : sbp('dez.controller/images/readFile', source.path, source.linked ? { maxBytes: MAX_SAVED_CLIP_BYTES } : {}) as Promise<File>)
   },
 
-  // Cuts a part of an audio clip in the webview: decodes `file` (any audio
-  // type that the webview decodes) at `AUDIO_CUT_RATE`, asks `plan` which
-  // part to keep of audio of that length in seconds, and gives that part as
-  // a 16-bit WAV file. A part of the whole clip converts it to WAV. Null
-  // when `plan` gives null: nothing is cut. There is no Rust code for this:
-  // the webview has the decoders (Web Audio). A media request uses it for
-  // the length and the WAV copy of an input clip. The `audio` tool does not:
-  // it cuts with ffmpeg (audioTool.ts), which was 3 to 7 times faster in a
-  // measurement on Linux and does not stop the page during the decode.
-  // Rejects when the webview cannot decode the file and when `plan` throws;
-  // the caller logs it.
-  async 'dez.controller/media/cutAudio' (file: Blob, plan: (duration: number) => AudioPart | null): Promise<CutAudio | null> {
+  // Decodes an audio clip in the webview (any audio type that the webview
+  // decodes) for a media request: gives its length in seconds, and with
+  // `wav`, a WAV copy of the whole clip, with 16-bit samples at
+  // `AUDIO_CUT_RATE`. There is no Rust code for this: the webview has the
+  // decoders (Web Audio). The `audio` tool does not use it: it cuts with
+  // ffmpeg (audioTool.ts), which was 3 to 7 times faster in a measurement
+  // on Linux and does not stop the page during the decode. Rejects when the
+  // webview cannot decode the file; the caller logs it.
+  async 'dez.controller/media/decodeAudio' (file: Blob, { wav }: { wav: boolean }): Promise<DecodedAudio> {
     // An offline context needs no sound device, and its decode resamples to
     // its rate. Its own length and channel count are only for a render,
     // which this context never does.
@@ -216,11 +213,9 @@ export default sbp('sbp/selectors/register', {
     const audio = await context.decodeAudioData(await file.arrayBuffer()).catch((error: unknown) => {
       throw new Error('The audio cannot be decoded.', { cause: error })
     })
-    const part = plan(audio.duration)
-    if (!part) return null
-    const { from, to } = audioPartFrames(part, audio.sampleRate, audio.length)
-    const channels = Array.from({ length: audio.numberOfChannels }, (_, index) => audio.getChannelData(index).subarray(from, to))
-    return { part, bytes: wavFileOfChannels(channels, audio.sampleRate), duration: (to - from) / audio.sampleRate }
+    if (!wav) return { seconds: audio.duration, wav: null }
+    const channels = Array.from({ length: audio.numberOfChannels }, (_, index) => audio.getChannelData(index))
+    return { seconds: audio.duration, wav: wavFileOfChannels(channels, audio.sampleRate) }
   },
 
   // Whether the URL of a clip answers: one GET of its first byte, with no

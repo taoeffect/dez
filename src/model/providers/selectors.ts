@@ -1,5 +1,5 @@
 import sbp from '@sbp/sbp'
-import type { CutAudio } from '../chat/audioCut'
+import type { DecodedAudio } from '../chat/audioCut'
 import { drawnMediaType, wholeImageDrawing, type DrawnImage, type ImageDrawing, type ImageSize } from '../chat/imageDrawing'
 import { IMAGE_FOLDERS, imageMediaType, isImageMediaType, isLinkedImagePath, storedImageFile, type ImageMediaType } from '../chat/images'
 import { canonicalMediaType, ClipReadError, type ClipReadProblem } from '../chat/mediaFiles'
@@ -117,11 +117,7 @@ async function inputClipParts(
     if (!wav && !hasLengthRules(kindRules)) {
       return { clip, use: kindRules.use, mediaType, bytes: new Uint8Array(await file.arrayBuffer()), seconds: null, wavCopy: false }
     }
-    const measured = { seconds: null as number | null }
-    const copy = await (sbp('dez.controller/media/cutAudio', file, (duration: number) => {
-      measured.seconds = duration
-      return wav ? { start: 0, end: duration } : null
-    }) as Promise<CutAudio | null>).catch((error: unknown) => {
+    const decoded = await (sbp('dez.controller/media/decodeAudio', file, { wav }) as Promise<DecodedAudio>).catch((error: unknown) => {
       console.error(`Failed to decode the audio clip @${clip.id} of a media request:`, error)
       // A clip that goes as it is does not need the decode: its length is
       // then unknown, and the provider checks it.
@@ -132,8 +128,9 @@ async function inputClipParts(
         { cause: error },
       )
     })
-    const bytes = copy ? copy.bytes : new Uint8Array(await file.arrayBuffer())
-    return { clip, use: kindRules.use, mediaType: copy ? 'audio/wav' : mediaType, bytes, seconds: measured.seconds, wavCopy: copy !== null }
+    const copy = decoded?.wav ?? null
+    const bytes = copy ?? new Uint8Array(await file.arrayBuffer())
+    return { clip, use: kindRules.use, mediaType: copy ? 'audio/wav' : mediaType, bytes, seconds: decoded?.seconds ?? null, wavCopy: copy !== null }
   }))
   const problem = clipFileProblem(modelName, rules, sources.flatMap((source) => ('bytes' in source ? [{ clip: source.clip, seconds: source.seconds, byteLength: source.bytes.length, wavCopy: source.wavCopy }] : [])), reader)
   if (problem !== null) throw new ExplainedError(problem)

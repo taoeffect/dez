@@ -16,7 +16,7 @@ import { ToolError, type ToolArguments } from './types'
 // one, for example to fit the length that a model takes.
 //
 // ffmpeg, a program that Dez ships, decodes and cuts the clip, in place of
-// Web Audio (`dez.controller/media/cutAudio`): it was 3 to 7 times faster
+// Web Audio (`dez.controller/media/decodeAudio`): it was 3 to 7 times faster
 // in a measurement on Linux, it does not stop the page while it decodes a
 // long clip, and no byte of the clip comes into the webview. This module
 // has the pure parts: the definition, the checks of a call, the arguments

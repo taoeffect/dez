@@ -1,8 +1,8 @@
 import sbp from '@sbp/sbp'
 import { afterEach, beforeEach, describe, expect, it, vi, type MockInstance } from 'vitest'
-import type { AudioPart, CutAudio } from '../model/chat/audioCut'
+import type { DecodedAudio } from '../model/chat/audioCut'
 import { ClipReadError, MAX_SAVED_CLIP_BYTES, MEDIA_TEMP_LIFETIME_MS, savedMediaFile } from '../model/chat/mediaFiles'
-import type { MediaFolder, MediaTagData } from '../model/chat/mediaTags'
+import type { MediaTagData } from '../model/chat/mediaTags'
 import type {
   NativeDownloadRule,
   NativeHttpDownload,
@@ -149,7 +149,7 @@ afterEach(() => {
 })
 
 describe('dez.controller/media/save', () => {
-  function save(clip: Clip, options?: { bytes?: Uint8Array, folder?: MediaFolder }): Promise<string> {
+  function save(clip: Clip, options?: { bytes?: Uint8Array }): Promise<string> {
     return sbp('dez.controller/media/save', clip, options) as Promise<string>
   }
 
@@ -248,22 +248,10 @@ describe('dez.controller/media/save', () => {
     expect(toasts).toEqual([{ title: 'Could not save the clip', message, variant: 'error' }])
   })
 
-  it('writes the bytes of a clip that Dez made to a new file of its type, with no move and no download', async () => {
-    const bytes = Uint8Array.from([1, 2, 3])
-    const clip: Clip = { kind: 'audio', type: 'audio/wav', src: `${CACHE_DIR}/media/${NAME}.mp3`, url: CLIP_URL }
-    const path = await save(clip, { bytes })
-
-    expect(path).toMatch(/^\/home\/ann\/\.config\/dez\/assets\/generated\/audio\/[0-9a-f-]{36}\.wav$/)
-    expect(savedFiles).toStrictEqual([{ file: { root: 'app', path: path.slice(APP_DIR.length + 1) }, bytes }])
-    expect(moves).toEqual([])
-    expect(downloads).toEqual([])
-    expect(toasts).toEqual([])
-  })
-
-  it('writes the bytes of a pasted clip file to the pasted folder of its kind', async () => {
+  it('writes the bytes of a pasted clip file to a new file of its type in the pasted folder of its kind, with no move and no download', async () => {
     const bytes = Uint8Array.from([4, 5])
-    const audio = await save({ kind: 'audio', type: 'audio/mpeg', src: null, url: null }, { bytes, folder: 'pasted' })
-    const video = await save({ kind: 'video', type: 'video/quicktime', src: null, url: null }, { bytes, folder: 'pasted' })
+    const audio = await save({ kind: 'audio', type: 'audio/mpeg', src: null, url: null }, { bytes })
+    const video = await save({ kind: 'video', type: 'video/quicktime', src: null, url: null }, { bytes })
 
     expect(audio).toMatch(/^\/home\/ann\/\.config\/dez\/assets\/audio\/[0-9a-f-]{36}\.mp3$/)
     expect(video).toMatch(/^\/home\/ann\/\.config\/dez\/assets\/video\/[0-9a-f-]{36}\.mov$/)
@@ -271,11 +259,13 @@ describe('dez.controller/media/save', () => {
       { file: { root: 'app', path: audio.slice(APP_DIR.length + 1) }, bytes },
       { file: { root: 'app', path: video.slice(APP_DIR.length + 1) }, bytes },
     ])
+    expect(moves).toEqual([])
+    expect(downloads).toEqual([])
     expect(toasts).toEqual([])
   })
 
   it('logs, shows an error toast, and rejects when the bytes cannot be written', async () => {
-    const writeError = 'Failed to write assets/generated/audio/a.wav: No space left on device (os error 28)'
+    const writeError = 'Failed to write assets/audio/a.wav: No space left on device (os error 28)'
     saveAppFile = async () => {
       throw writeError
     }
@@ -571,13 +561,13 @@ describe('dez.controller/media/readClip', () => {
   })
 })
 
-describe('dez.controller/media/cutAudio', () => {
+describe('dez.controller/media/decodeAudio', () => {
   const RATE = 48000
   let decoded: Float32Array[] | Error
   let contexts: number[][]
   let decodedInputs: number[][]
 
-  // Web Audio's offline context, as the cut uses it: the decode gives the
+  // Web Audio's offline context, as the decode uses it: the decode gives the
   // channels of `decoded` at the context's rate.
   class FakeOfflineAudioContext {
     readonly rate: number
@@ -601,8 +591,8 @@ describe('dez.controller/media/cutAudio', () => {
     }
   }
 
-  function cutAudio(plan: (duration: number) => AudioPart | null): Promise<CutAudio | null> {
-    return sbp('dez.controller/media/cutAudio', new Blob([Uint8Array.from([5, 6])]), plan) as Promise<CutAudio | null>
+  function decodeAudio(wav: boolean): Promise<DecodedAudio> {
+    return sbp('dez.controller/media/decodeAudio', new Blob([Uint8Array.from([5, 6])]), { wav }) as Promise<DecodedAudio>
   }
 
   beforeEach(() => {
@@ -615,49 +605,42 @@ describe('dez.controller/media/cutAudio', () => {
     vi.unstubAllGlobals()
   })
 
-  it('decodes the file at 48 kHz, asks the plan with the length in seconds, and gives the part as a 16-bit WAV file', async () => {
-    // Two seconds of stereo; the first frame of the part is marked.
+  it('decodes the file at 48 kHz, and gives its length in seconds and a 16-bit WAV copy of the whole clip', async () => {
+    // Two seconds of stereo; the first and the last frame are marked.
     const left = new Float32Array(2 * RATE)
     const right = new Float32Array(2 * RATE)
-    left[RATE / 2] = 0.5
-    right[RATE / 2] = -1
+    left[0] = 0.5
+    right[0] = -1
+    left[2 * RATE - 1] = 1
     decoded = [left, right]
-    const durations: number[] = []
 
-    const cut = await cutAudio((duration) => {
-      durations.push(duration)
-      return { start: 0.5, end: 1 }
-    })
+    const { seconds, wav } = await decodeAudio(true)
 
     expect(contexts.map(([, , rate]) => rate)).toStrictEqual([RATE])
     expect(decodedInputs).toStrictEqual([[5, 6]])
-    expect(durations).toStrictEqual([2])
-    expect([cut?.part, cut?.duration]).toStrictEqual([{ start: 0.5, end: 1 }, 0.5])
-    const wav = new DataView(cut!.bytes.buffer)
+    expect(seconds).toBe(2)
+    const file = new DataView(wav!.buffer)
+    const lastFrame = 44 + (2 * RATE - 1) * 2 * 2
     expect({
-      length: cut!.bytes.length,
-      channels: wav.getUint16(22, true),
-      rate: wav.getUint32(24, true),
-      firstFrame: [wav.getInt16(44, true), wav.getInt16(46, true)],
-    }).toStrictEqual({ length: 44 + RATE / 2 * 2 * 2, channels: 2, rate: RATE, firstFrame: [16384, -32768] })
+      length: wav!.length,
+      channels: file.getUint16(22, true),
+      rate: file.getUint32(24, true),
+      firstFrame: [file.getInt16(44, true), file.getInt16(46, true)],
+      lastFrame: [file.getInt16(lastFrame, true), file.getInt16(lastFrame + 2, true)],
+    }).toStrictEqual({ length: 44 + 2 * RATE * 2 * 2, channels: 2, rate: RATE, firstFrame: [16384, -32768], lastFrame: [32767, 0] })
   })
 
-  it('cuts nothing when the plan gives null', async () => {
-    decoded = [new Float32Array(RATE)]
+  it('gives only the length when the caller asks for no WAV copy', async () => {
+    decoded = [new Float32Array(RATE / 2)]
 
-    expect(await cutAudio(() => null)).toBeNull()
+    expect(await decodeAudio(false)).toStrictEqual({ seconds: 0.5, wav: null })
   })
 
-  it('rejects with a text for a model when the webview cannot decode the file, and with the error of the plan', async () => {
+  it('rejects with a text for a model when the webview cannot decode the file', async () => {
     const decodeError = new Error('Decoding failed')
     decoded = decodeError
-    await expect(cutAudio(() => null)).rejects.toThrow(expect.objectContaining({ message: 'The audio cannot be decoded.', cause: decodeError }))
 
-    decoded = [new Float32Array(RATE)]
-    const planError = new Error('"start" must be 0 or more.')
-    await expect(cutAudio(() => {
-      throw planError
-    })).rejects.toBe(planError)
+    await expect(decodeAudio(true)).rejects.toThrow(expect.objectContaining({ message: 'The audio cannot be decoded.', cause: decodeError }))
   })
 })
 

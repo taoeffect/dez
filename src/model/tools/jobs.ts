@@ -212,9 +212,7 @@ export interface JobResult {
   status: JobResultStatus
   /** `jobResultText`. */
   text: string
-  /** Null in a result that Dez wrote before the job parts named their
-   *  calls. */
-  call: JobCall | null
+  call: JobCall
 }
 
 /** The result of a `jobs_wait` call when no job runs and no result waits. */
@@ -231,9 +229,8 @@ const jobTextEscape = tagEscape('job')
 
 function jobPart({ id, tool, status, text, call }: JobResult): string {
   const body = text.trim() === '' ? NO_JOB_OUTPUT_TEXT : jobTextEscape.escape(text)
-  const number = call === null ? '' : ` number="${call.number}"`
-  const label = call === null || call.label === '' ? '' : ` call="${call.label}"`
-  return `<job id="${id}"${number} tool="${tool}" status="${status}"${label}>\n${body}\n</job>`
+  const label = call.label === '' ? '' : ` call="${call.label}"`
+  return `<job id="${id}" number="${call.number}" tool="${tool}" status="${status}"${label}>\n${body}\n</job>`
 }
 
 /** The result of a `jobs_wait` call: a first line that tells how many jobs
@@ -254,10 +251,9 @@ export function jobsWaitText(results: readonly JobResult[], running: number): st
 }
 
 // One part of `jobPart`. The body is escaped, so its first `\n</job>` line
-// is the end of the part, and a part inside a body does not start one. A
-// part of an older conversation has no `number` and no `call`.
+// is the end of the part, and a part inside a body does not start one.
 const JOB_PART = new RegExp(
-  `<job id="(${JOB_ID_SOURCE})"(?: number="(\\d+)")? tool="([^"\\n]*)" status="(finished|failed|timed out)"(?: call="([^"\\n]*)")?>\\n([\\s\\S]*?)\\n</job>`,
+  `<job id="(${JOB_ID_SOURCE})" number="(\\d+)" tool="([^"\\n]*)" status="(finished|failed|timed out)"(?: call="([^"\\n]*)")?>\\n([\\s\\S]*?)\\n</job>`,
   'g',
 )
 
@@ -270,7 +266,7 @@ export function jobsWaitResults(resultText: string): JobResult[] {
     tool,
     status: status as JobResultStatus,
     text: body === NO_JOB_OUTPUT_TEXT ? '' : jobTextEscape.unescape(body),
-    call: number === undefined ? null : { number: Number(number), label: label ?? '' },
+    call: { number: Number(number), label: label ?? '' },
   }))
 }
 

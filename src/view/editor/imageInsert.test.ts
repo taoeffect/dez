@@ -21,7 +21,7 @@ interface SaveCall {
 
 interface ClipSave {
   clip: Pick<MediaTagData, 'kind' | 'type' | 'src' | 'url'>
-  options: { bytes: Uint8Array, folder: string }
+  options: { bytes: Uint8Array }
 }
 
 interface Toast {
@@ -274,7 +274,7 @@ describe('pasteFiles', () => {
     await vi.waitFor(() => expect(editor.doc()).toBe(reference()))
   })
 
-  it('stores a pasted clip in the pasted clip folder of its kind, and puts its tag on a line of its own', async () => {
+  it('stores the bytes of a pasted clip as a clip of its kind and type, and puts its tag on a line of its own', async () => {
     const editor = createEditor('see', 3)
 
     expect(paste(editor.view, { files: [clipFile('dance.mp4', 'video/mp4', 21)] })).toBe(true)
@@ -282,7 +282,7 @@ describe('pasteFiles', () => {
     await vi.waitFor(() => expect(editor.doc()).toBe(`see\n${clipTag('video', 'video/mp4', 21, 'a')}`))
     expect(clipSaves).toStrictEqual([{
       clip: { kind: 'video', type: 'video/mp4', src: null, url: null },
-      options: { bytes: new Uint8Array([21, 0, 0]), folder: 'pasted' },
+      options: { bytes: new Uint8Array([21, 0, 0]) },
     }])
     expect(editor.view.state.selection.main.head).toBe(editor.doc().length)
   })
@@ -445,7 +445,7 @@ describe('dropFiles', () => {
     const text = `${reference(1)}\n${clipTag('video', 'video/mp4', 21, 'b')}\n${clipTag('audio', 'audio/mpeg', 22, 'c')}`
     await vi.waitFor(() => expect(editor.doc()).toBe(`one \n${text}\ntwo`))
     expect(editor.view.state.selection.main.head).toBe('one \n'.length + text.length)
-    expect(clipSaves.map(({ clip, options }) => [clip.kind, clip.type, options.folder])).toStrictEqual([['video', 'video/mp4', 'pasted'], ['audio', 'audio/mpeg', 'pasted']])
+    expect(clipSaves.map(({ clip }) => [clip.kind, clip.type])).toStrictEqual([['video', 'video/mp4'], ['audio', 'audio/mpeg']])
     expect(toasts).toStrictEqual([])
   })
 

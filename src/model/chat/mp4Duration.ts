@@ -1,7 +1,7 @@
 // The length of an MP4 or QuickTime (`.mov`) video, read from its movie
 // header, so that Dez can check a clip against a model's length rules
 // before a paid request. The webview can tell the length of an audio clip
-// (`dez.controller/media/cutAudio` decodes it), but it has no decoder of a
+// (`dez.controller/media/decodeAudio` decodes it), but it has no decoder of a
 // video that does not play. The file is a list of boxes, each one a 32-bit
 // big-endian size, then a 4-letter type, then its content; the `moov` box
 // holds the `mvhd` box, with the time scale (units in one second) and the

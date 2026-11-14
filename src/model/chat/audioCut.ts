@@ -1,11 +1,10 @@
-// A cut of an audio clip in the webview (`dez.controller/media/cutAudio`):
-// Web Audio decodes the clip, and a part of its samples becomes a WAV file.
-// A media request uses it for an input clip. The `audio` tool cuts with
-// ffmpeg (model/tools/audioTool.ts), at the rate `AUDIO_CUT_RATE`.
+// The audio facts that the `audio` tool and a media request share. The
+// `audio` tool cuts a clip with ffmpeg (model/tools/audioTool.ts). A media
+// request decodes an input clip in the webview
+// (`dez.controller/media/decodeAudio`) for its length and its WAV copy.
 
-/** The rate that a cut decodes every clip at, in frames a second. The
- *  decode resamples a clip to the rate of its context, so every WAV file of
- *  a cut has this rate. */
+/** The rate of every WAV file that Dez makes of an audio clip, in frames a
+ *  second: ffmpeg and the webview decode resample a clip to it. */
 export const AUDIO_CUT_RATE = 48000
 
 /** A part of an audio clip, in seconds from its start: `start` is 0 or
@@ -15,20 +14,9 @@ export interface AudioPart {
   end: number
 }
 
-/** The WAV file that a cut made of `part` of a clip, and its length in
- *  seconds. */
-export interface CutAudio {
-  part: AudioPart
-  bytes: Uint8Array
-  duration: number
-}
-
-/** The frames of `part` in decoded audio of `length` frames at `rate`:
- *  from the frame `from` up to the frame `to`, which is not in the part.
- *  Each end goes to the nearest frame, and the part has at least one
- *  frame: a part of a clip shorter than one frame is the nearest frame. */
-export function audioPartFrames(part: AudioPart, rate: number, length: number): { from: number; to: number } {
-  const from = Math.max(0, Math.min(length - 1, Math.round(part.start * rate)))
-  const to = Math.min(length, Math.max(from + 1, Math.round(part.end * rate)))
-  return { from, to }
+/** An audio clip that the webview decoded: its length in seconds, and its
+ *  WAV copy (the whole clip), or null when the caller asked for none. */
+export interface DecodedAudio {
+  seconds: number
+  wav: Uint8Array | null
 }

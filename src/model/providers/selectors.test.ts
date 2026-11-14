@@ -1,7 +1,7 @@
 import sbp from '@sbp/sbp'
 import { createPinia, setActivePinia } from 'pinia'
 import { afterEach, beforeEach, describe, expect, it, vi, type MockInstance } from 'vitest'
-import type { AudioPart, CutAudio } from '../chat/audioCut'
+import type { DecodedAudio } from '../chat/audioCut'
 import type { DrawnImage, DrawnMediaType, ImageDrawing, ImageSize } from '../chat/imageDrawing'
 import { ClipReadError } from '../chat/mediaFiles'
 import type { ModelRef, Section } from '../chat/types'
@@ -60,18 +60,16 @@ let drawings: Array<[ImageDrawing | null, string]> = []
 const DRAWN_IMAGE = Uint8Array.from([1, 2, 3, 4])
 
 // The stand-ins of the webview's clip reads (dez.controller/media/readClip,
-// dez.controller/media/cutAudio): each clip is the file of its id in
+// dez.controller/media/decodeAudio): each clip is the file of its id in
 // `clipFiles`, unless no clip can be read (`clipReadError`). Every audio
 // clip is `audioSeconds` long (an error: the webview cannot decode it), and
 // its WAV copy is the file `WAV_COPY`. `clipReads` holds the id of each
-// clip read, `audioDecodes` counts the decodes, and `audioCuts` holds the
-// part of each WAV copy.
+// clip read, and `audioDecodes` counts the decodes.
 let clipFiles: Record<string, Uint8Array> = {}
 let clipReadError: ClipReadError | null
 let clipReads: string[] = []
 let audioSeconds: number | Error
 let audioDecodes = 0
-let audioCuts: AudioPart[] = []
 const WAV_COPY = new TextEncoder().encode('RIFF\x08\x00\x00\x00WAVEfmt ')
 
 // Requests to this base URL get HTTP 404; every other server answers.
@@ -185,12 +183,10 @@ sbp('sbp/selectors/register', {
     if (clipReadError) throw clipReadError
     return new Blob([clipFiles[clip.id]])
   },
-  async 'dez.controller/media/cutAudio' (_file: Blob, plan: (duration: number) => AudioPart | null): Promise<CutAudio | null> {
+  async 'dez.controller/media/decodeAudio' (_file: Blob, { wav }: { wav: boolean }): Promise<DecodedAudio> {
     audioDecodes += 1
     if (audioSeconds instanceof Error) throw audioSeconds
-    const part = plan(audioSeconds)
-    if (part) audioCuts.push(part)
-    return part && { part, bytes: WAV_COPY, duration: part.end - part.start }
+    return { seconds: audioSeconds, wav: wav ? WAV_COPY : null }
   },
   // Every clip request gets the clip as its answer.
   async 'dez.native/downloadAppFile' (request: NativeHttpRequest): Promise<NativeHttpDownload> {
@@ -253,7 +249,6 @@ beforeEach(() => {
   clipReads = []
   audioSeconds = 10
   audioDecodes = 0
-  audioCuts = []
   consoleError = vi.spyOn(console, 'error').mockImplementation(() => {})
   sbp('dez.model/customProviders/save', {
     id: 'local',
@@ -1308,7 +1303,6 @@ describe('media requests', () => {
 
       await generate({ modelId: REFERENCE_MODEL, kind: 'imageToVideo', clips: [clip('video', 'v1', 'video/mp4'), clip('audio', 'a1', 'audio/ogg')] })
 
-      expect(audioCuts).toStrictEqual([{ start: 0, end: 12 }])
       expect(downloadRequests.map(jsonBody)).toStrictEqual([{
         duration: '5s',
         model: REFERENCE_MODEL,

@@ -76,7 +76,7 @@ describe('the marker of a hidden asset', () => {
 describe('jobResultInBlocks', () => {
   const results = jobsWaitText([
     { id: 'j-aaaa', tool: 'model_invoke', status: 'finished', text: 'The cat is blue.', call: { number: 1, label: 'A cat' } },
-    { id: 'j-bbbb', tool: 'model_invoke', status: 'failed', text: 'The provider refused the prompt.', call: null },
+    { id: 'j-bbbb', tool: 'model_invoke', status: 'failed', text: 'The provider refused the prompt.', call: { number: 2, label: 'A dog' } },
   ], 1)
 
   it('gives the result that a jobs_wait block of the section holds for the job', () => {
