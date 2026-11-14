@@ -67,8 +67,10 @@ describe('the video tool', () => {
       .filter((line) => line.startsWith('- '))
       .map((line) => line.slice(line.indexOf(': ') + 2))
 
-    expect(examples).toHaveLength(6)
+    expect(examples).toHaveLength(8)
     expect(ffmpegWords(examples[0])).toStrictEqual(['-i', 'c.webm', '-i', 'b.wav', '-map', '0:v', '-map', '1:a', '-c:v', 'copy', '-c:a', 'aac', '-shortest', 'out.mp4'])
+    // The filter graph of the mix is one word, without its quotes.
+    expect(ffmpegWords(examples[6])).toContain('[1:a]volume=0.25[music];[0:a][music]amix=inputs=2:duration=first:normalize=0[a]')
     for (const example of examples) expect(() => ffmpegCall({ arguments: example }, CONVERSATION), example).not.toThrow()
     expect(() => ffmpegCall(subcommand('ffmpeg').example as ToolArguments, CONVERSATION)).not.toThrow()
     expect(() => ffprobeCall(subcommand('ffprobe').example as ToolArguments, CONVERSATION)).not.toThrow()

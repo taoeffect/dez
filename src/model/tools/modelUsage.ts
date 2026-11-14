@@ -70,6 +70,20 @@ export const USAGE_TEXTS = {
   // nothing else tells the calling model so.
   frameShape: 'The video usually gets the shape (the aspect ratio) of its first frame, so give an image that has the shape that the video must have; the image tool can crop one.',
   videoReferences: 'They are references for the video, not frames of it.',
+  // Continuity: how to keep the characters of a story of several clips the
+  // same (the next four texts). A clip that goes on from another one
+  // starts from the last frame of that clip, which the help of the ffmpeg
+  // subcommand shows how to take (FFMPEG_HELP, videoTool.ts). That clip
+  // must be there first, so such clips cannot be jobs that run at the
+  // same time.
+  nextScene: 'For a scene that goes on from another video clip, give the last frame of that clip as the first frame, so that the characters and the place stay the same; '
+    + 'the ffmpeg subcommand of the video tool takes that frame as an image (its help has the example). '
+    + 'Such a clip needs the clip before it, so make these clips one after the other, not as jobs that run at the same time.',
+  characterSheets: 'To keep a character the same in each clip, make one image of each character first (a character sheet), and name the same images with @id in each request of a clip where that character is.',
+  // A voice clip of a speech model is a file with no web address, so only
+  // a model that takes such a file gets this text (`inputClipsUsage`).
+  characterVoices: 'To keep the voice of a character the same in each clip, make one voice clip of that character first (for example a line of a speech model), and name that same clip with @id in each request of a clip where that character speaks.',
+  ttsVoice: 'To keep one voice for each character, send every line of a character with the same `voice`.',
   clipsMakeReferences: 'With a clip in the message (pasted, or named with @id), the images go as references for the video, not as its frames.',
   parameters: `Each request sends the \`value\` of each of \`dez.parameters\`; the user sets them under "Model Parameters" in ${SETTINGS_POPUP}.`,
   imageResult: 'It answers with an image, which goes into the reply with a new id (@id).',
@@ -155,6 +169,7 @@ function inputClipsUsage(kind: MediaKind, clips: InputClipRules | undefined): st
       takenClipsUsage(clipKind, maxInputClips(clips, clipKind)),
       CLIP_USE_USAGE[rules.use],
       ...(rules.promptName === undefined ? [] : [clipNamesUsage(clipKind, rules.promptName)]),
+      ...(clipKind === 'audio' && (rules.use === 'reference' || rules.use === 'voice') && !rules.urlOnly ? [USAGE_TEXTS.characterVoices] : []),
       ...(rules.urlOnly ? [urlOnlyClipsUsage(clipKind)] : []),
     ]
   })
@@ -237,7 +252,8 @@ function inputImagesUsage(kind: MediaKind, model: ModelInfo): string[] {
   return [
     `It takes ${takenImages(min, max)} of the message (pasted, or named with @id)${max === 1 ? '' : ', in text order'}.`,
     ...(role === undefined ? [] : [role]),
-    ...(frames ? [USAGE_TEXTS.frameShape] : []),
+    ...(role === USAGE_TEXTS.videoReferences ? [USAGE_TEXTS.characterSheets] : []),
+    ...(frames ? [USAGE_TEXTS.frameShape, USAGE_TEXTS.nextScene] : []),
     ...(clipsMakeReferences ? [USAGE_TEXTS.clipsMakeReferences] : []),
     ...(takesNewest ? [newest] : []),
   ]
@@ -261,6 +277,8 @@ function mediaUsage(kind: MediaKind, model: ModelInfo, facts: UsageFacts): strin
     ...(takesImages && facts.inputImages.limits ? [USAGE_TEXTS.limits] : []),
     ...inputClipsUsage(kind, model.clips),
     ...(model.parameters ? [USAGE_TEXTS.parameters] : []),
+    // Both media formats name the voice of a speech request `voice`.
+    ...(kind === 'tts' && model.parameters?.some((parameter) => parameter.name === 'voice') ? [USAGE_TEXTS.ttsVoice] : []),
     isTextKind(kind) ? USAGE_TEXTS.transcriptResult : !isClipKind(kind) ? USAGE_TEXTS.imageResult : CLIP_KINDS[kind] === 'audio' ? USAGE_TEXTS.audioResult : USAGE_TEXTS.videoResult,
   ]
 }

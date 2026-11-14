@@ -27,10 +27,11 @@ import { hiddenAssetNotes, hiddenPart, hidingPart, intermediateParts, pressToolC
 // - `ffmpeg` runs as a job on copies of the inputs that its arguments name
 //   with `@id`: a new clip and a new image go into the generated folders
 //   and into the reply, with a new id and the name of the tool; a later
-//   call of the reply mixes music under the sound of such a new clip; a
-//   PNG image goes as a JPEG copy; a run with `-f null -` gives only its
-//   log; with `is_intermediate`, its new clip is hidden under the chip of
-//   its call;
+//   call of the reply mixes music under the sound of such a new clip, and
+//   another one takes the last frame of such a clip as an image (both the
+//   examples of the help); a PNG image goes as a JPEG copy; a run with
+//   `-f null -` gives only its log; with `is_intermediate`, its new clip
+//   is hidden under the chip of its call;
 // - `ffprobe` gives its output as the result of its call, with the neutral
 //   names of the copies;
 // - a call whose arguments name a file of the computer, the network, or a
@@ -323,10 +324,11 @@ describe('video tool', () => {
     expect(loudness.result.text).toMatch(/mean_volume: -?[\d.]+ dB/)
     expect(loudness.result.text).not.toContain('Made the')
 
-    // Music under the sound of the clip that the first call made: a filter
-    // graph with labels, on a clip of this reply.
+    // Music under the sound of the clip that the first call made, at a
+    // lower level: the filter graph with labels of the example of the help,
+    // on a clip of this reply.
     const under = await runJob(loudness.next, 'call_under', 'ffmpeg', {
-      arguments: '-i @g -i @e -filter_complex "[0:a][1:a]amix=inputs=2:duration=first[a]" -map 0:v -map "[a]" -c:v copy -c:a libopus under.webm',
+      arguments: '-i @g -i @e -filter_complex "[1:a]volume=0.25[music];[0:a][music]amix=inputs=2:duration=first:normalize=0[a]" -map 0:v -map "[a]" -c:v copy -c:a libopus under.webm',
     })
     expect(under.started).toBe(`${jobStartedText(under.jobId, 3)}\nThe inputs of the run: the video clip @g as g.webm, the audio clip @e as e.wav.`)
     expect(under.result.status).toBe('finished')
@@ -518,6 +520,42 @@ describe('video tool', () => {
     // first message can have no DOM: find the new image by its file name.
     await waitForValue(browser, 'the new image in the editor', async () => (await shownImages(browser)).find(({ alt }) => alt === imageName), { alt: imageName, width: 48, height: 36 })
     await waitForValue(browser, 'player of the new clip', async () => (await shownPlayers(browser)).at(-1), madeVideoPlayer('h', 1))
+    await expectCleanEnd(files)
+  })
+
+  // The way of the help to start a next scene where a clip ends. Each frame
+  // of `testsrc` is another picture; the clips of `SOURCES` show one
+  // picture in every frame.
+  it('takes the last frame of a clip that the reply made as a new image, with the example of the help', async () => {
+    const files = await openClips('ffmpeg-last-frame')
+    const videosBefore = await filesIn(videoDir)
+    const imagesBefore = await filesIn(imagesDir)
+    await submit(browser, 'Make a clip, and take its last frame for the next scene.')
+    // 10 frames, at 0 s, 0.2 s, …, 1.8 s.
+    const count = await runJob(await chatRequest(), 'call_count', 'ffmpeg', { arguments: '-f lavfi -i testsrc=size=48x36:rate=5:duration=2 -c:v libvpx-vp9 count.webm' })
+    expect(count.result.text.endsWith('\nMade the video clip @g.')).toBe(true)
+    const last = await runJob(count.next, 'call_last', 'ffmpeg', { arguments: '-sseof -1 -i @g -update 1 -q:v 2 last.jpg' })
+    expect(last.started).toBe(`${jobStartedText(last.jobId, 2)}\nThe inputs of the run: the video clip @g as g.webm.`)
+    expect(last.result.text).toMatch(/^ffmpeg ended with no error and made 1 file that Dez keeps: last\.jpg \(image\)\. The line at the end gives its id\.\n[\s\S]+\nMade the image @h\.$/)
+    await sendChatReply(last.next.reply, CALLER.modelName)
+
+    const reply = await endedReply(browser, CLIPS_REPLY_INDEX)
+    const countPath = path.join(videoDir, await newFileIn(browser, videoDir, videosBefore))
+    const imageName = await newFileIn(browser, imagesDir, imagesBefore)
+    expect(imageName).toMatch(storedFileName('jpg'))
+    const imagePath = path.join(imagesDir, imageName)
+    expect(reply.endsWith(`</dez:tool>\n\n![${imagePath}](id=h|tool=video|made-by=${last.jobId})\n\n${replyText(CALLER.modelName)}`)).toBe(true)
+    expect(mediaFacts(countPath)).toStrictEqual({ streams: ['video vp9 48x36'], seconds: 2 })
+
+    // The image is the frame at 1.8 s, the last one, and not the one
+    // before it: the same ffmpeg takes each of them with a seek.
+    const frames = [1.8, 1.6].map((seconds) => {
+      const file = path.join(linkedDir, `last-frame-${seconds}.jpg`)
+      programOutput('dez-ffmpeg', ['-v', 'error', '-y', '-ss', String(seconds), '-i', countPath, '-frames:v', '1', '-update', '1', '-q:v', '2', file])
+      return fs.readFileSync(file)
+    })
+    const image = await fs.promises.readFile(imagePath)
+    expect(frames.map((frame) => image.equals(frame))).toStrictEqual([true, false])
     await expectCleanEnd(files)
   })
 

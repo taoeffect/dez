@@ -169,8 +169,15 @@ function onOverlayClick(event: MouseEvent) {
             <p>
               A chat model can ask another model for an image, a clip, a transcription, or an
               answer. It names by id the assets that the other model gets, so that model can also
-              get an asset of an older message or of a reply. This is how a chat model looks at an
-              older image: it asks a model that reads images about it.
+              get an asset of an older message or of a reply.
+            </p>
+            <p>
+              A chat model can also look at any asset of the conversation itself, with the Dez tool
+              <code>asset_view</code>: an image, some frames of a video clip, or the wave and the
+              loudness of an audio clip. It sees these pictures only in the reply where it asked for
+              them. A model that reads no images gets only the facts of the asset (for example its
+              size, length, and format). With the Dez tool <code>asset_info</code>, a model reads
+              the facts of an asset, and who made it.
             </p>
 
             <h3>Ids</h3>

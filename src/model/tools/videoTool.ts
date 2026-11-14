@@ -136,7 +136,9 @@ const FFMPEG_HELP = [
   '- Cut 5 seconds that start at second 2: -ss 2 -t 5 -i @c -c:v libx264 -c:a aac cut.mp4',
   '- Scale to a width of 640: -i @c -vf scale=640:-2 -c:v libx264 -c:a copy small.mp4',
   '- Take the frame at second 1 as an image: -ss 1 -i @c -frames:v 1 -update 1 frame.jpg',
+  '- Take the last frame as an image, for the first frame of a next scene (each frame of the last second goes into the same file, and the last one stays): -sseof -1 -i @c -update 1 -q:v 2 last.jpg',
   '- Make a video clip from the image @a and the sound @b: -loop 1 -i @a -i @b -c:v libx264 -tune stillimage -pix_fmt yuv420p -c:a aac -shortest still.mp4',
+  '- Put the music @b under the sound (the dialog) of the video clip @c, at a quarter of its level: -i @c -i @b -filter_complex "[1:a]volume=0.25[music];[0:a][music]amix=inputs=2:duration=first:normalize=0[a]" -map 0:v -map "[a]" -c:v copy -c:a aac mixed.mp4',
   '- Measure the loudness of @b, with no new file: -v info -i @b -af volumedetect -f null -',
 ].join('\n')
 

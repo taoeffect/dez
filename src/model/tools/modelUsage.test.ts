@@ -11,6 +11,7 @@ import { isToolsEnabled, modelToggles, toggleRows, toggleValue, toolsApply } fro
 import { providerInfo } from '../providers/testing'
 import { MEDIA_KINDS, MODEL_REQUESTS, type ChatImagePart, type MediaKind, type ModelInfo, type ModelRequest } from '../providers/types'
 import { mediaRequestInput, sectionsToStreamMessages } from '../streams/messages'
+import { parameterValuesArgument } from './modelArguments'
 import { modelInvocation } from './modelInvoke'
 import { clipNamesUsage, modelUsage, neededClipUsage, referenceNamesUsage, takenClipsUsage, urlOnlyClipsUsage, USAGE_TEXTS, type UsageFacts } from './modelUsage'
 import { ToolError } from './types'
@@ -216,6 +217,32 @@ describe('modelUsage', () => {
       expect(modelUsage({ id: 'm', name: 'M', provider: 'p', request: 'video' }, NO_FACTS)).not.toContain(USAGE_TEXTS.parameters)
     })
 
+    // The speech models of each media format, with voices and with none. A
+    // `model_invoke` call chooses a voice in its `parameters`.
+    it('tells to keep one voice for each character exactly when a call can choose the voice that a speech request sends', () => {
+      const speechModels: { format: keyof typeof MEDIA_FORMATS, entry: { id: string } & Record<string, unknown> }[] = [
+        { format: 'venice', entry: { id: 'tts-kokoro', model_spec: { voices: ['af_alloy', 'af_bella'] } } },
+        { format: 'venice', entry: { id: 'tts-plain', model_spec: {} } },
+        { format: 'openrouter', entry: { id: 'hexgrad/kokoro-82m', supported_voices: ['af_alloy', 'af_bella'] } },
+        { format: 'openrouter', entry: { id: 'other/speech' } },
+      ]
+
+      for (const { format, entry } of speechModels) {
+        const clipFormat = MEDIA_FORMATS[format].clips as ClipFormat
+        const model: ModelInfo = { id: entry.id, name: 'M', provider: 'p', request: 'tts', parameters: clipFormat.parameters('tts', entry, undefined) }
+        let values: ParameterValues | null
+        try {
+          values = parameterValuesArgument(model, { parameters: JSON.stringify({ voice: 'af_bella' }) })
+        } catch (error) {
+          if (!(error instanceof ToolError)) throw error
+          values = null
+        }
+        const sendsVoice = values !== null && clipFormat.request('tts', 'https://api.example.com/v1', entry.id, { prompt: 'Hi', images: [], values }).body?.voice === 'af_bella'
+
+        expect(modelUsage(model, NO_FACTS).includes(USAGE_TEXTS.ttsVoice), JSON.stringify(entry)).toBe(sendsVoice)
+      }
+    })
+
     describe('the clips of the message', () => {
       const SONG: MediaTagData = { kind: 'audio', id: 'c', type: 'audio/mpeg', src: '/home/u/.cache/dez/media/s.mp3', url: null, expires: null, other: [] }
       const DANCE: MediaTagData = { kind: 'video', id: 'd', type: 'video/mp4', src: '/home/u/.cache/dez/media/d.mp4', url: null, expires: null, other: [] }
@@ -286,10 +313,13 @@ describe('modelUsage', () => {
       // frame, Venice frames with and without a background audio clip, and a
       // Venice reference family with its clips. Each request has one image
       // (two for the last frame, as many as the model takes), and one clip
-      // of each kind that the model takes; the frame fields are those of
-      // the two formats.
-      it('tells that the images are frames exactly when a video request sends them so, with and without a clip, and names a last frame only when one goes', () => {
+      // of each kind that the model takes; the frame and the reference
+      // fields are those of the two formats. The way to keep a story going
+      // follows: a last frame as the next first frame, or the same
+      // character images as references.
+      it('tells that the images are frames exactly when a video request sends them so, with and without a clip, names a last frame only when one goes, and tells the way to keep the characters of a story that the images allow', () => {
         const FRAME_FIELDS = ['frame_images', 'image_url', 'end_image_url']
+        const REFERENCE_FIELDS = ['reference_image_urls', 'image_references', 'elements', 'input_references']
         const image: ChatImagePart = { type: 'image', mediaType: 'image/png', data: 'iVBORw0KGgo=' }
         interface FormatModel { format: keyof typeof MEDIA_FORMATS, id: string, entry: unknown, mediaEntry?: unknown, values: ParameterValues }
         const venice = (id: string, constraints: Record<string, unknown>): FormatModel => ({ format: 'venice', id, entry: { id, model_spec: { constraints } }, values: {} })
@@ -324,6 +354,7 @@ describe('modelUsage', () => {
               values: { ...values, duration: 1 },
             }).body ?? {}
             const sendsFrames = (withClips: boolean) => FRAME_FIELDS.some((field) => Object.hasOwn(frameRequest(1, withClips), field))
+            const sendsReferences = REFERENCE_FIELDS.some((field) => Object.hasOwn(frameRequest(1, false), field))
             const twoImages = frameRequest(2, false)
             const sendsLastFrame = Object.hasOwn(twoImages, 'end_image_url') || JSON.stringify(twoImages).includes('"last_frame"')
             const label = `${format} ${kind} ${JSON.stringify({ entry, values })}`
@@ -333,6 +364,8 @@ describe('modelUsage', () => {
             // A frame gives the video its shape; a reference does not.
             expect(usage.includes(USAGE_TEXTS.frameShape), label).toBe(sendsFrames(false))
             expect(usage.includes(USAGE_TEXTS.clipsMakeReferences), label).toBe(sendsFrames(false) && !sendsFrames(true))
+            expect(usage.includes(USAGE_TEXTS.nextScene), label).toBe(sendsFrames(false))
+            expect(usage.includes(USAGE_TEXTS.characterSheets), label).toBe(sendsReferences)
           }
         }
       })
@@ -358,6 +391,20 @@ describe('modelUsage', () => {
 
             expect(usage.includes(urlOnlyClipsUsage(clipKind)), `${clipKind} ${JSON.stringify(model)}`).toBe(refusedAsFile && !refusedWithUrl)
           }
+        }
+      })
+
+      // The voice clip of a character is the line of a speech model: a file
+      // with no web address. A background clip is the sound of the video as
+      // it is, the voice of no character.
+      it('tells to give each character one voice clip exactly when a video request takes an audio clip file as a reference or a voice', () => {
+        for (const model of clipModels('video')) {
+          const usage = modelUsage(model, NO_FACTS)
+          const { clips } = mediaInput('video', model, [clipsReply, user('u1', `![${FIRST}](id=a) with @c`)])
+          const takesFile = clips.length > 0 && clipTagProblem('M', model.clips, clips, 1) === null
+          const use = model.clips?.audio?.use
+
+          expect(usage.includes(USAGE_TEXTS.characterVoices), JSON.stringify(model)).toBe(takesFile && (use === 'reference' || use === 'voice'))
         }
       })
 
