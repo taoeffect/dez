@@ -29,7 +29,7 @@
     "@sbp/okturtles.eventqueue": "1.2.1",
     "@sbp/okturtles.events": "1.0.1",
     "@sbp/sbp": "2.4.1",
-    "@tauri-apps/api": "2",
+    "@tauri-apps/api": "2.12.4",
     "@tauri-apps/plugin-dialog": "2.7.0",
     "@tauri-apps/plugin-fs": "2.5.0",
     "@tauri-apps/plugin-opener": "2",
@@ -45,7 +45,7 @@
     "zod": "4.3.6"
   },
   "devDependencies": {
-    "@tauri-apps/cli": "2",
+    "@tauri-apps/cli": "2.12.4",
     "@vitejs/plugin-vue": "5.2.1",
     "typescript": "~5.6.2",
     "vite": "6.4.1",

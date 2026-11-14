@@ -214,7 +214,6 @@ Rules:
 - `key_store.rs`: `provider_keys.json`. `copilot.rs`: Copilot device flow and token refresh.
 - `lib.rs`: plugins, permission reasons, app bootstrap, and the quit hook (`RunEvent::Exit`) that stops the bundled tools.
 - `../tauri.linux.conf.json`: the Linux copy of the main window, with Tauri's native file drop on (a test in `lib.rs` keeps the two windows the same otherwise).
-- `../tauri.conf.json` `app.macOSPrivateApi` and the `macos-private-api` feature of the `tauri` crate (`Cargo.toml`) go together: they turn on element fullscreen in WKWebView, for the media player.
 - `../binaries/`: the ffmpeg and ffprobe programs that Dez ships, one pair per build target (Git LFS), with `manifest.json` (their release, sizes, and SHA-256) and `NOTICE.md` (their license); only `scripts/update-ffmpeg.js` writes this folder. `bundle.externalBin` (`../tauri.conf.json`), the one list of the programs, puts them next to the Dez program as `dez-ffmpeg` and `dez-ffprobe`; `../build.rs` reads that list, stops a build whose programs are not the files of the manifest, and gives the list to `bundled_tools.rs`.
 
 ## Persistence layout

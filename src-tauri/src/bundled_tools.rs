@@ -1351,13 +1351,20 @@ mod tests {
         }
 
         // A run of a real bundled program as `run_bundled_tool` makes it:
-        // confined to `confined_to`, with no other folder to read. cargo
-        // puts the test program into `target/<profile>/deps/`, and the
-        // programs that build.rs copied are one folder up.
+        // confined to `confined_to`, with no other folder to read.
+        // tauri-build copies the programs next to the Dez program of the
+        // build (`target/<profile>/`). The folder of the test program below
+        // it depends on the version of cargo (`deps/` before Rust 1.100, a
+        // folder deep in `build/` since), so the programs are in the first
+        // folder above the test program that holds them.
         fn bundled_run(name: &str, args: &[&str], folder: &Path, confined_to: &Path) -> ProgramRun {
-            let tools = tools_dir().expect("tools folder").parent().expect("the folder above deps").to_path_buf();
+            let test_dir = tools_dir().expect("the folder of the test program");
+            let program = test_dir
+                .ancestors()
+                .find_map(|dir| tool_path(dir, name).ok())
+                .unwrap_or_else(|| panic!("No folder above {} holds the bundled program {}", test_dir.display(), name));
             ProgramRun {
-                program: tool_path(&tools, name).expect("a bundled program"),
+                program,
                 confined_to: confined_to.to_path_buf(),
                 also_readable: Vec::new(),
                 ..program_run("", args, folder)
