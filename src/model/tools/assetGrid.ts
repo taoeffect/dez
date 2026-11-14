@@ -112,7 +112,13 @@ export function gridTexts(pieces: readonly GridPiece[], layout: GridLayout, deta
     ...(layout.imagesSmaller ? [`Each image fits in ${box} by ${box} pixels: a larger one is a smaller copy.`] : []),
     ...(layout.scale < 1 ? [`The whole grid is a smaller copy, at ${Math.floor(layout.scale * 100)}% of the size of its parts.`] : []),
   ]
-  const ways = ['with fewer assets', ...(detail === 'review' ? ['with `detail` "full"'] : []), 'with `layout` "separate"']
+  // An image fits in its frame box whatever the count of assets, so fewer
+  // assets help only a grid that was made smaller as a whole.
+  const ways = [
+    ...(layout.scale < 1 ? ['with fewer assets'] : []),
+    ...(detail === 'review' ? ['with `detail` "full"'] : []),
+    'with `layout` "separate"',
+  ]
   const advice = `For more detail, call again ${new Intl.ListFormat('en', { type: 'disjunction' }).format(ways)}.`
   return {
     note: [`Grid picture of ${layout.width}x${layout.height} pixels, top to bottom: ${map}.`, ...smaller, ...(smaller.length > 0 ? [advice] : [])].join(' '),

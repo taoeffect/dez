@@ -68,7 +68,7 @@ describe('gridTexts', () => {
     expect(shows).toBe(`a grid, top to bottom: ${map}`)
     expect(note).toBe(`Grid picture of ${layout.width}x${layout.height} pixels, top to bottom: ${map}. `
       + 'Each image fits in 320 by 320 pixels: a larger one is a smaller copy. '
-      + 'For more detail, call again with fewer assets, with `detail` "full", or with `layout` "separate".')
+      + 'For more detail, call again with `detail` "full" or with `layout` "separate".')
   })
 
   it('tells the size of a grid that is a smaller copy, and no more detail for one that is not', () => {
