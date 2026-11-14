@@ -63,9 +63,13 @@ import type { ToolRunContext } from './tools'
 // than `MAX_PICTURE_SIDE`, goes as a smaller JPEG copy: in base64, a file
 // of this size stays under the 5 MB image limit of the Anthropic API, and
 // a provider can refuse a large image. A refusal would fail each later
-// request of the reply, as each one sends the picture again.
+// request of the reply, as each one sends the picture again. The Claude
+// API refuses an image with a side over 3,000 px in a request with more
+// than 20 images, and the pictures of the reply with the images of the
+// newest user message can be more than 20.
+// https://platform.claude.com/docs/en/build-with-claude/vision
 const MAX_PICTURE_BYTES = 3_750_000
-const MAX_PICTURE_SIDE = 4096
+const MAX_PICTURE_SIDE = 3000
 const SMALLER_PICTURE_SIDE = 2048
 
 // The drawing of the picture of an image of the type `mediaType` (null:

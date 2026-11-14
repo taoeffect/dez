@@ -1866,7 +1866,7 @@ describe('dez.controller/tools/run', () => {
 
     it.each([
       ['a file that is too large', 4_000_000, { width: 1000, height: 500 }, { width: 1000, height: 500 }],
-      ['a picture with a long side over 4096 pixels', 3, { width: 8192, height: 4096 }, { width: 2048, height: 1024 }],
+      ['a picture with a long side over 3000 pixels', 3, { width: 3001, height: 1500 }, { width: 2048, height: 1024 }],
     ])('sends %s as a JPEG copy on white, at most 2048 pixels on its long side', async (_case, bytes, size, drawn) => {
       readImage = async () => new Blob([new Uint8Array(bytes)], { type: 'image/png' })
       storedImageSize = size
