@@ -26,7 +26,7 @@ describe('the price of a chat request', () => {
 })
 
 describe('the price of a failed chat request', () => {
-  const refusal = new ProviderHttpError('venice', 429, '', undefined, 'Venice refused the request.', 'Venice refused the request.')
+  const refusal = new ProviderHttpError('venice', 429, true, '', undefined, 'Venice refused the request.', 'Venice refused the request.')
 
   it('is 0 for a request that the provider refused with an HTTP status, also as the cause of the error for a model', () => {
     expect(failedChatRequestCost(refusal)).toBe(0)

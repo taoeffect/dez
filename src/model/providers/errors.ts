@@ -52,6 +52,9 @@ export class ProviderHttpError extends ProviderRequestError {
   constructor(
     readonly providerId: ProviderId,
     readonly status: number,
+    // The request had the provider's key: a request of its API, not of a
+    // file at a URL from a response (`statusExplanation`).
+    readonly keyed: boolean,
     // The provider's text (`providerText`), or the body when it has none
     // (`providerStatusError`), after sanitizeErrorText.
     sanitizedText: string,
@@ -65,6 +68,18 @@ export class ProviderHttpError extends ProviderRequestError {
     super(explanation, modelExplanation, `HTTP ${status}${sanitizedText ? `: ${sanitizedText}` : ''}`)
     this.name = 'ProviderHttpError'
   }
+}
+
+/** Whether `error`, or its `cause`, is the provider's HTTP refusal of a
+ *  request of its API, which costs nothing. A refusal of the download of a
+ *  file that an answer named (a reply image, a clip) is not one: the
+ *  request that made the file went through. The cause is the error for a
+ *  model reader (`explainedProviderError`) and of a `TooManyImagesError`. */
+export function isProviderRefusal(error: unknown): boolean {
+  const http = error instanceof ProviderHttpError ? error
+    : error instanceof Error && error.cause instanceof ProviderHttpError ? error.cause
+      : null
+  return http?.keyed === true
 }
 
 type ProviderIdentity = Pick<Provider, 'id' | 'name' | 'config' | 'builtIn'>
@@ -209,6 +224,7 @@ export function providerStatusError(provider: ProviderIdentity, response: Native
   return new ProviderHttpError(
     provider.id,
     response.status,
+    keyed,
     text,
     bodyJson,
     statusExplanation(provider, response.status, keyed, hasReason, 'user'),

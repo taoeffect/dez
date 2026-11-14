@@ -339,8 +339,8 @@ export interface JobInfo {
   state: string
   call: JobCall
   /** The price in USD of the paid request of the job: the provider's own,
-   *  else its quote, and 0 for a request that failed. Null when no price
-   *  is known; absent for a job that sent no paid request. */
+   *  else its quote, and 0 for a request that the provider refused. Null
+   *  when no price is known; absent for a job that sent no paid request. */
   cost?: number | null
 }
 
@@ -368,7 +368,7 @@ function spendText(jobs: readonly JobInfo[]): string {
   const total = priced.reduce((sum, cost) => sum + cost, 0)
   const rest = unpriced === 0 ? '' : `, and ${jobCountText(unpriced)} with no known price`
   return `Spend (an estimate): ${usdText(total)} for ${jobCountText(priced.length)} with a known price `
-    + `(the provider's price, else its quote; a failed request costs nothing)${rest}.`
+    + `(the provider's price, else its quote; a refused request costs nothing)${rest}.`
 }
 
 /** The result of a `jobs_list` call: a first line with the count, the

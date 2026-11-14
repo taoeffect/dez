@@ -12,6 +12,7 @@ import { base64ToBytes, bytesToBase64 } from '../../utils/base64'
 import { ExplainedError } from '../../utils/errorText'
 import type { NativeHttpDownload, NativeHttpRequest, NativeHttpResponse, NativeHttpStreamResult } from '../../utils/protocol/nativeHttp'
 import { NativeHttpError } from '../../utils/protocol/errors'
+import { failedChatRequestCost } from './chatUsage'
 import type { ClipAttachment, InputClipRules } from './clipInputs'
 import { InputImageError } from './errors'
 import type { KnownLimit } from './knownLimits'
@@ -1010,6 +1011,18 @@ describe('images of a chat reply', () => {
     ['a URL that its server refuses', `${FAILING_BASE_URL}/cat.png`, 'The file that Painter made is not at its link any more: the link can have expired. Send the request again to make a new one.\n\nDetails: HTTP 404: Not found'],
   ])('fails the chat for %s', async (_name, url, message) => {
     await expect(streamPainter([url])).rejects.toThrow(message)
+  })
+
+  // The answer named the image, so its chat request went through, and the
+  // provider took its money.
+  it('has no known price for a request whose image URL its server refused, and 0 for a refused chat request', async () => {
+    sbp('dez.model/customProviders/save', { id: 'broken', name: 'Broken server', baseUrl: FAILING_BASE_URL, apiFormat: 'openai', models: [], fetchModels: true, auth: 'apiKey' })
+
+    const imageRefused = await streamPainter([`${FAILING_BASE_URL}/cat.png`]).catch((error: unknown) => error)
+    const chatRefused = await sbp('dez.provider/streamChat', { providerId: 'broken', modelId: 'm', messages: [{ role: 'user', content: 'Two cats' }], onToken: () => {} })
+      .catch((error: unknown) => error)
+
+    expect([failedChatRequestCost(imageRefused), failedChatRequestCost(chatRefused)]).toStrictEqual([null, 0])
   })
 })
 

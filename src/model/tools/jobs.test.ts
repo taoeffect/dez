@@ -222,9 +222,9 @@ describe('jobsListText', () => {
     ['no paid job has a known price', [null, undefined], 'Spend: unknown: no price is known for the job that sent a paid request.'],
     ['no paid jobs have a known price', [null, null], 'Spend: unknown: no price is known for the 2 jobs that sent a paid request.'],
     ['every paid job has a known price', [0.1, 0.2, 0, undefined],
-      'Spend (an estimate): $0.30 for 3 jobs with a known price (the provider\'s price, else its quote; a failed request costs nothing).'],
+      'Spend (an estimate): $0.30 for 3 jobs with a known price (the provider\'s price, else its quote; a refused request costs nothing).'],
     ['some paid jobs have no known price', [0.0042, null, null],
-      'Spend (an estimate): $0.0042 for 1 job with a known price (the provider\'s price, else its quote; a failed request costs nothing), and 2 jobs with no known price.'],
+      'Spend (an estimate): $0.0042 for 1 job with a known price (the provider\'s price, else its quote; a refused request costs nothing), and 2 jobs with no known price.'],
   ])('ends with the spend of the reply when %s', (_name, costs, spend) => {
     const jobs = costs.map((cost, index) => job({ id: `j-00${index}`, ...(cost !== undefined && { cost }) }))
     expect(jobsListText(jobs).split('\n').at(-1)).toBe(spend)

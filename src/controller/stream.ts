@@ -8,6 +8,7 @@ import { MEDIA_HIDDEN_ATTRIBUTE, MEDIA_JOB_ATTRIBUTE, MEDIA_MADE_BY_ATTRIBUTE, M
 import { findToolBlocks, ModelTextEscaper } from '../model/chat/toolBlocks'
 import { failedChatRequestCost } from '../model/providers/chatUsage'
 import { TooManyImagesError, tooManyImagesMessage } from '../model/providers/clipImages'
+import { isProviderRefusal } from '../model/providers/errors'
 import { errorText, explainedError } from '../utils/errorText'
 import type { ClipInputRules, GeneratedClip, GeneratedMedia, MediaKind, MediaProgress, ModelRequest, ProviderGenerateMediaResult, ProviderStreamChatResult } from '../model/providers'
 import { requireProvider } from '../model/providers/registry'
@@ -648,6 +649,8 @@ async function runMediaRound(args: StreamStartArgs, reply: ReplyRuntime, kind: M
   // From the moment that the request went: its quote, or null when no
   // quote is known. Undefined while it did not go.
   let sentCost: number | null | undefined
+  // The provider runs the request as a job of its own, which it bills.
+  let queued = false
   let result: ProviderGenerateMediaResult
   try {
     result = await sbp('dez.provider/generateMedia', {
@@ -663,13 +666,16 @@ async function runMediaRound(args: StreamStartArgs, reply: ReplyRuntime, kind: M
       signal: reply.abort.signal,
       onProgress: (progress: MediaProgress) => {
         if (progress.phase === 'sent') sentCost = progress.quote ?? null
+        if (progress.phase === 'queued') queued = true
       },
     }) as ProviderGenerateMediaResult
   } catch (error) {
-    // A request that went and failed counts 0, as a provider gives back the
-    // money of a request that it refused (the rule of `model_invoke`). A
-    // stop does not end the work of the provider, so it keeps the quote.
-    if (sentCost !== undefined) countRequestCost(args.tabId, reply.abort.signal.aborted ? sentCost : 0)
+    // A request that went counts 0 only when the provider refused it, as a
+    // refused request costs nothing (the rule of `model_invoke`). Any other
+    // failure, a stop, and a failure after the provider started its job
+    // (a poll, the download, an answer that Dez cannot use, the time limit)
+    // keep the quote: the provider can have taken the money.
+    if (sentCost !== undefined) countRequestCost(args.tabId, !queued && isProviderRefusal(error) ? 0 : sentCost)
     throw error
   }
   countRequestCost(args.tabId, result.cost ?? null)

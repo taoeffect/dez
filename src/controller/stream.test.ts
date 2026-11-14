@@ -623,7 +623,7 @@ describe('conversation cost', () => {
   // went (here: no API key) costs nothing.
   it('counts 0 for a request that the provider refused, no known price for one that broke off, and nothing for one that did not go', async () => {
     for (const [sent, failure] of [
-      [true, new ProviderHttpError(model.providerId, 400, '', undefined, 'Thinker refused the request.', 'Thinker refused the request.')],
+      [true, new ProviderHttpError(model.providerId, 400, true, '', undefined, 'Thinker refused the request.', 'Thinker refused the request.')],
       [true, new Error('connection reset')],
       [false, new ProviderNotConfiguredError(model.providerId, 'Thinker', false)],
     ] as const) {
@@ -1403,9 +1403,11 @@ describe('dez.stream/start media round', () => {
   })
 
   // A provider takes no money for a request that it refused. A stop does
-  // not end the provider's work, so a stopped request keeps its quote.
-  it('adds the price of each request that went to the cost of the conversation: 0 for one that failed, the quote for one that the user stopped', async () => {
+  // not end the provider's work, and a provider bills a request that it
+  // took (its job, an answer that Dez cannot use), so they keep the quote.
+  it('adds the price of each request that went to the cost of the conversation: 0 for one that the provider refused, the quote for one that failed after the provider took it or that the user stopped', async () => {
     const send = (input: ProviderGenerateMediaInput, quote?: number) => input.onProgress?.({ phase: 'sent', jobId: null, ...(quote !== undefined && { quote }) })
+    const refusal = new ProviderHttpError(model.providerId, 400, true, '', undefined, 'Venice refused the request.', 'Venice refused the request.')
     for (const answer of [
       async (input: ProviderGenerateMediaInput) => {
         send(input, 0.5)
@@ -1413,7 +1415,17 @@ describe('dez.stream/start media round', () => {
       },
       async (input: ProviderGenerateMediaInput) => {
         send(input, 0.5)
-        throw new ExplainedError('Venice refused the request.')
+        throw refusal
+      },
+      // A poll of the provider's job that it refused.
+      async (input: ProviderGenerateMediaInput) => {
+        send(input, 0.5)
+        input.onProgress?.({ phase: 'queued', jobId: 'q-17' })
+        throw new ExplainedError('Venice refused the request. To ask Venice about this clip, give its job id: q-17.', '', { cause: refusal })
+      },
+      async (input: ProviderGenerateMediaInput) => {
+        send(input, 0.5)
+        throw new ExplainedError('Venice sent an answer that Dez cannot use.')
       },
       async (input: ProviderGenerateMediaInput) => {
         send(input, 0.5)
@@ -1431,7 +1443,7 @@ describe('dez.stream/start media round', () => {
       await sbp('dez.controller/submitTab', activeTab().id)
     }
 
-    const cost = { usd: 0.75, requests: 4, unpriced: 1 }
+    const cost = { usd: 1.75, requests: 6, unpriced: 1 }
     expect(activeTab().cost).toStrictEqual(cost)
     expect(savedConversations.at(-1)?.cost).toStrictEqual(cost)
   })

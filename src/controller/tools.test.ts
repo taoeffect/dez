@@ -1362,20 +1362,28 @@ describe('dez.controller/tools/run', () => {
         expect(jobs.list().map((job) => job.cost)).toStrictEqual([0.3, null])
       })
 
-      // A provider gives back the money of a request that it refused.
-      it('counts a request that failed as free, and a job whose request did not go as one with no paid request', async () => {
-        let sends = true
+      // A provider gives back the money of a request that it refused, and
+      // bills one that it took: its job, or an answer that Dez cannot use.
+      it('counts a refused request as free, keeps the quote of a request that failed after the provider took it, and counts a job whose request did not go as one with no paid request', async () => {
+        const refusal = new ProviderHttpError('venice', 400, true, '', undefined, 'Venice refused the request.', 'Venice refused the request.')
+        let failure: { sends: boolean, queued?: boolean, error: Error } = { sends: true, error: new ExplainedError('Venice refused the request: the prompt breaks its rules.', '', { cause: refusal }) }
         generateMedia = async (input) => {
-          if (sends) input.onProgress?.({ phase: 'sent', jobId: null, quote: 0.3 })
-          throw new ExplainedError('Venice refused the request: the prompt breaks its rules.')
+          if (failure.sends) input.onProgress?.({ phase: 'sent', jobId: null, quote: 0.3 })
+          if (failure.queued) input.onProgress?.({ phase: 'queued', jobId: 'q-17' })
+          throw failure.error
         }
         await jobTool('model_invoke', PAINT)
-        sends = false
+        // A poll of the provider's job that it refused.
+        failure = { sends: true, queued: true, error: new ExplainedError('Venice refused the request. Venice ran this request as its job q-17.', '', { cause: refusal }) }
+        await jobTool('model_invoke', PAINT)
+        failure = { sends: true, error: new ExplainedError('Venice sent an answer that Dez cannot use.') }
+        await jobTool('model_invoke', PAINT)
+        failure = { sends: false, error: refusal }
         await jobTool('model_invoke', PAINT)
         await jobTool('jobs_wait', { all: true })
 
-        const [refused, unsent] = jobs.list()
-        expect([refused.status, refused.cost, unsent.status, Object.hasOwn(unsent, 'cost')]).toStrictEqual(['failed', 0, 'failed', false])
+        expect(jobs.list().map((job) => [job.status, Object.hasOwn(job, 'cost') ? job.cost : 'none']))
+          .toStrictEqual([['failed', 0], ['failed', 0.3], ['failed', 0.3], ['failed', 'none']])
       })
 
       describe('to a text model', () => {
@@ -1482,7 +1490,7 @@ describe('dez.controller/tools/run', () => {
           end(0.002)
           await jobResult()
           for (const [sent, failure] of [
-            [true, new ProviderHttpError('venice', 400, '', undefined, 'Venice refused the request.', 'Venice refused the request.')],
+            [true, new ProviderHttpError('venice', 400, true, '', undefined, 'Venice refused the request.', 'Venice refused the request.')],
             [true, new ExplainedError('The connection broke.')],
             [false, new InputImageError(FOX, 'unreadable', 'Dez cannot use the image fox.png.')],
           ] as const) {

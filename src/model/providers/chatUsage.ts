@@ -1,4 +1,4 @@
-import { ProviderHttpError } from './errors'
+import { isProviderRefusal } from './errors'
 import { roundedPrice, type ModelPrice } from './modelPrices'
 
 /** What a provider tells, at the end of a chat stream, about the tokens
@@ -46,11 +46,10 @@ export function chatRequestCost(usage: ChatUsage | undefined, price: ModelPrice 
 
 /** The price of a chat request that went (`onSent`) and whose
  *  `dez.provider/streamChat` then rejected with `error`: 0 when the
- *  provider refused it with an HTTP status (a refused request costs
- *  nothing), else unknown (null): a stop, or a connection or a stream that
- *  broke while the provider can have made a part of the answer. For the
- *  reader `model`, the HTTP error is the `cause`
- *  (`explainedProviderError`). */
+ *  provider refused it (`isProviderRefusal`: a refused request costs
+ *  nothing), else unknown (null): a stop, a connection or a stream that
+ *  broke while the provider can have made a part of the answer, or a
+ *  failed download of an image of the answer, which the provider made. */
 export function failedChatRequestCost(error: unknown): 0 | null {
-  return error instanceof ProviderHttpError || (error instanceof Error && error.cause instanceof ProviderHttpError) ? 0 : null
+  return isProviderRefusal(error) ? 0 : null
 }

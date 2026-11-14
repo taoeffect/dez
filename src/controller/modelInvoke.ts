@@ -1,7 +1,7 @@
 import sbp from '@sbp/sbp'
 import { failedChatRequestCost } from '../model/providers/chatUsage'
 import { TooManyImagesError, tooManyImagesMessage } from '../model/providers/clipImages'
-import { InputImageError } from '../model/providers/errors'
+import { InputImageError, isProviderRefusal } from '../model/providers/errors'
 import type { MediaProgress, ProviderGenerateMediaResult, ProviderStreamChatResult } from '../model/providers/streamTypes'
 import type { GeneratedClip, GeneratedMedia } from '../model/providers/types'
 import { unreadableImageText } from '../model/tools/imageTool'
@@ -69,13 +69,18 @@ export interface InvocationRights {
 // - `report` gets each step of the request, with the provider's own job id
 //   as soon as there is one.
 // - `reportCost` gets the quote when the request goes, then the cost of
-//   the result. A request that failed counts 0, as a provider gives back
-//   the money of a request that it refused. A stopped or timed-out job
-//   keeps its quote: `ReplyJobs` takes no report after the end of a job.
+//   the result. A request that the provider refused counts 0, as a refused
+//   request costs nothing. Any other failure keeps the quote, and so does a
+//   failure after the provider started its job (a poll, the download, an
+//   answer that Dez cannot use, the time limit): the provider can have
+//   taken the money. A stopped or timed-out job keeps its quote too:
+//   `ReplyJobs` takes no report after the end of a job.
 async function invokeMediaModel(invocation: MediaInvocation, signal: AbortSignal, report: (state: string) => void, reportCost: (usd: number | null) => void): Promise<JobOutcome> {
   const { provider, model, kind, request, parameters, timeoutMs } = invocation
   report(INVOCATION_READS_INPUTS)
   let sent = false
+  // The provider runs the request as a job of its own, which it bills.
+  let queued = false
   let result: ProviderGenerateMediaResult
   try {
     result = await sbp('dez.provider/generateMedia', {
@@ -94,12 +99,13 @@ async function invokeMediaModel(invocation: MediaInvocation, signal: AbortSignal
           sent = true
           reportCost(progress.quote ?? null)
         }
+        if (progress.phase === 'queued') queued = true
         report(invocationStateText(provider.name, progress))
       },
       reader: 'model',
     }) as ProviderGenerateMediaResult
   } catch (error) {
-    if (sent) reportCost(0)
+    if (sent && !queued && isProviderRefusal(error)) reportCost(0)
     throw invocationError(invocation, error)
   }
   reportCost(result.cost ?? null)
