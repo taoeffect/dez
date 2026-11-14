@@ -23,7 +23,7 @@ import { clipInput, type ClipInput } from '../model/tools/programRuns'
 import { unknownAssetsText } from '../model/tools/toolInputs'
 import { ToolError, type ToolArguments } from '../model/tools/types'
 import { FFPROBE_OUTPUT_BYTES, FFPROBE_TIMEOUT_MS } from '../model/tools/videoTool'
-import { clipCopy, inWorkFolder, runProgram } from './programRuns'
+import { copyInputClip, inWorkFolder, runProgram } from './programRuns'
 
 // The work of the `asset_info` tool (model/tools/assetInfo.ts): it reads
 // the facts of each image and clip that a call names. This module
@@ -98,7 +98,7 @@ export async function probeClip(input: ClipInput, folder: string, signal: AbortS
   const { clip } = input
   let copy
   try {
-    copy = await clipCopy(input, folder, signal)
+    copy = await copyInputClip(input, folder, signal)
   } catch (error) {
     if (!(error instanceof ClipReadError)) throw error
     console.error(`Failed to read the ${clip.kind} clip @${clip.id}:`, error)

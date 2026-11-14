@@ -80,7 +80,7 @@ export async function readableFileSize(path: string): Promise<number | null> {
  *  linked file larger than `MAX_SAVED_CLIP_BYTES` is refused, as a dropped
  *  clip that Dez copies has that cap. Throws a `ClipReadError` for a clip
  *  that no source gives, and the stop of `signal`. */
-export async function clipCopy({ name, clip }: Pick<ClipInput, 'name' | 'clip'>, folder: string, signal: AbortSignal): Promise<BundledToolInput | null> {
+export async function copyInputClip({ name, clip }: Pick<ClipInput, 'name' | 'clip'>, folder: string, signal: AbortSignal): Promise<BundledToolInput | null> {
   const copy = { root: 'cache', path: `${folder}/${name}` } as const
   return await clipFromSources(clip, signal, async (source: ClipSource) => {
     if (source.kind === 'url') {
@@ -104,12 +104,12 @@ export async function clipCopy({ name, clip }: Pick<ClipInput, 'name' | 'clip'>,
   })
 }
 
-/** `clipCopy` for a call of the tool `toolName` that cannot go without the
- *  clip: throws a `ToolError` for a clip that no source gives, with the
- *  text of its problem for the model. */
+/** `copyInputClip` for a call of the tool `toolName` that cannot go
+ *  without the clip: throws a `ToolError` for a clip that no source
+ *  gives, with the text of its problem for the model. */
 export async function clipInputFile(input: ClipInput, folder: string, signal: AbortSignal, toolName: string): Promise<BundledToolInput | null> {
   try {
-    return await clipCopy(input, folder, signal)
+    return await copyInputClip(input, folder, signal)
   } catch (error) {
     if (!(error instanceof ClipReadError)) throw error
     throw new ToolError(clipReadProblemText(input.kind, input.id, toolName, error.problem), error.details, { cause: error })
