@@ -1,5 +1,5 @@
 import sbp from '@sbp/sbp'
-import type { DrawnImage, ImageDrawing, ImageSize } from '../model/chat/imageDrawing'
+import type { DrawnImage, ImageComposition, ImageDrawing, ImageSize } from '../model/chat/imageDrawing'
 import { jpegSize } from '../model/chat/jpegSize'
 import type { PicturePart, Section } from '../model/chat/types'
 import type { ClipAttachment } from '../model/providers/clipInputs'
@@ -36,9 +36,9 @@ import {
   loudnessOf,
   MAX_PICTURE_BYTES,
   missingTimesNote,
-  NO_AUDIO_STREAM_NOTE,
   NO_VIDEO_STREAM_NOTE,
   noFramesNote,
+  noSoundNote,
   partHasNoFrame,
   PICTURE_LIMIT_NOTE,
   pictureCostNote,
@@ -52,20 +52,30 @@ import {
   smallerCopyNote,
   smallerPictureDrawing,
   smallerPictureSide,
+  SOUND_STRIP_HEIGHTS,
   soundlessPartNote,
+  soundPictureOf,
+  soundPictureTexts,
+  soundStripFailedNote,
+  soundStripLayout,
+  soundStripTexts,
+  soundStripTooLargeNote,
   TIMES_TIMED_OUT_NOTE,
   timesSheetArgs,
   timesSheetTexts,
   UNKNOWN_LENGTH_NOTE,
   VIEW_FAILED_NOTE,
   VIEW_TIMED_OUT_NOTE,
-  waveTexts,
   type AssetViewCall,
   type AssetViewGrid,
   type AssetViewItem,
   type ClipPart,
   type PictureChoice,
+  type SoundDraw,
+  type SoundPicture,
+  type SoundPictureKind,
   type ViewDetail,
+  type ViewPicture,
 } from '../model/tools/assetView'
 import { clipInput, type ClipInput, type ProgramEnd } from '../model/tools/programRuns'
 import { unknownAssetsText } from '../model/tools/toolInputs'
@@ -213,9 +223,16 @@ async function runFfmpeg(args: string[], folder: string, signal: AbortSignal): P
   return { end, log }
 }
 
-// The JPEG picture `name` that a run wrote into the work folder `folder`,
-// with its size; null when it is not there.
-async function readPicture(folder: string, name: string): Promise<{ part: PicturePart, size: ImageSize | null } | null> {
+/** A JPEG picture that a run of ffmpeg wrote, with its size (null: not
+ *  known). */
+interface RunPicture {
+  part: PicturePart
+  size: ImageSize | null
+}
+
+// The JPEG picture `name` that a run wrote into the work folder `folder`;
+// null when it is not there.
+async function readPicture(folder: string, name: string): Promise<RunPicture | null> {
   try {
     const bytes = await sbp('dez.native/loadAppFileBytes', `${folder}/${name}`, 'cache') as Uint8Array
     return { part: { type: 'picture', mediaType: 'image/jpeg', bytes }, size: jpegSize(bytes) }
@@ -251,7 +268,7 @@ interface SheetRunPlan {
 }
 
 type SheetRun =
-  | { kind: 'sheet', times: number[], picture: { part: PicturePart, size: ImageSize | null } }
+  | { kind: 'sheet', times: number[], picture: RunPicture }
   | { kind: 'noFrame' }
   // `failed`: the run failed or took too long (`runProblemNote`).
   | { kind: 'note', note: string, failed: boolean }
@@ -348,16 +365,24 @@ function frameSheet(input: ClipInput, call: AssetViewCall, seconds: number | nul
   return stepsSheet(input, sheet.frames, part, detail, folder, signal)
 }
 
+// The drawing of `picture` of the sound of the clip `input` (none for
+// "none"): a strip of `strip` pixels under a frame sheet, or a picture of
+// its own (`strip` null).
+function soundDraw(input: ClipInput, picture: SoundPicture, strip: ImageSize | null): SoundDraw | null {
+  return picture === 'none' ? null : { kind: picture, output: `${input.id}-${picture}${strip ? '-strip' : ''}.jpg`, strip }
+}
+
 // The loudness of the sound of `part` of the clip `input`, and with
-// `wave`, the picture of its wave: their notes and the picture.
-async function soundView(input: ClipInput, part: ClipPart, wave: boolean, folder: string, signal: AbortSignal): Promise<Pick<AssetViewItem, 'notes' | 'picture'>> {
-  const name = wave ? `${input.id}-wave.jpg` : null
-  const ran = await runFfmpeg(audioViewArgs(input.name, part, name), folder, signal)
+// `draw`, the picture of its sound: their notes, and the picture as ffmpeg
+// drew it, which the caller gives its texts.
+async function soundView(input: ClipInput, part: ClipPart, draw: SoundDraw | null, folder: string, signal: AbortSignal): Promise<{ notes: string[], picture: RunPicture | null }> {
+  const ran = await runFfmpeg(audioViewArgs(input.name, part, draw), folder, signal)
   // A part with no sample of the sound (a video clip whose sound ends
-  // before the part) is no failure. Its run with the wave fails, as it has
-  // no picture to write, and its run with no wave logs a loudness summary
-  // of nothing, with a true peak of 0 dBFS: neither may reach the model.
-  if (ran.end.kind === 'exited' && partHasNoFrame(ran.log)) return { notes: [soundlessPartNote(part, wave)], picture: null }
+  // before the part) is no failure. Its run with a picture fails, as it has
+  // no picture to write, and its run with no picture logs a loudness
+  // summary of nothing, with a true peak of 0 dBFS: neither may reach the
+  // model.
+  if (ran.end.kind === 'exited' && partHasNoFrame(ran.log)) return { notes: [soundlessPartNote(part, draw?.kind ?? 'none')], picture: null }
   const problem = runProblemNote(input.clip, ran)
   const loudness = problem === null ? loudnessOf(ran.log) : null
   if (!loudness) {
@@ -365,30 +390,85 @@ async function soundView(input: ClipInput, part: ClipPart, wave: boolean, folder
     return { notes: [problem ?? VIEW_FAILED_NOTE], picture: null }
   }
   const notes = [loudnessNote(part, loudness)]
-  if (name === null) return { notes, picture: null }
-  const picture = await readPicture(folder, name)
-  if (!picture) return { notes: [...notes, PICTURE_NOT_READ_NOTE], picture: null }
-  const { note, shows } = waveTexts(input.id, part)
-  return { notes, picture: { ...picture, shows, note } }
+  if (draw === null) return { notes, picture: null }
+  const picture = await readPicture(folder, draw.output)
+  if (!picture) return { notes: [...notes, draw.strip ? soundStripFailedNote(draw.kind) : PICTURE_NOT_READ_NOTE], picture: null }
+  return { notes, picture }
+}
+
+// The frame sheet `sheet` of the video clip `id` with the strip `strip` of
+// `kind` of the sound of `part` (of `sampleRate`) under it, as one picture
+// (`soundStripLayout`), for a view with `detail`. When the webview cannot
+// draw it, or its file is too large, the picture is the sheet alone, with
+// the note of why.
+async function withSoundStrip(
+  id: string,
+  sheet: ViewPicture,
+  strip: RunPicture,
+  { kind, part, sampleRate, detail }: { kind: SoundPictureKind, part: ClipPart, sampleRate: number | null, detail: ViewDetail },
+): Promise<{ picture: ViewPicture, notes: string[] }> {
+  try {
+    // Not `ImageComposition | null = null`: as in gridView.
+    let layout = null as ImageComposition | null
+    const files = [sheet.part, strip.part].map(({ bytes, mediaType }) => new Blob([bytes], { type: mediaType }))
+    const drawn = await sbp('dez.controller/images/compose', files, (sizes: readonly ImageSize[]) => (layout = soundStripLayout(sizes))) as DrawnImage
+    if (drawn.bytes.length > MAX_PICTURE_BYTES) return { picture: sheet, notes: [soundStripTooLargeNote(kind, detail)] }
+    // A drawing came from the plan, so `layout` is set; its second place
+    // is the strip.
+    const { width, height } = (layout as ImageComposition).places[1]
+    const texts = soundStripTexts(kind, part, { width, height }, sampleRate)
+    return {
+      picture: {
+        part: { type: 'picture', mediaType: drawn.mediaType, bytes: drawn.bytes },
+        size: { width: drawn.width, height: drawn.height },
+        shows: `${sheet.shows}; ${texts.shows}`,
+        note: sheet.note === null ? texts.note : `${sheet.note} ${texts.note}`,
+      },
+      notes: [],
+    }
+  } catch (error) {
+    console.error(`Failed to draw the ${kind} strip of the video clip @${id} under its frame sheet:`, error)
+    return { picture: sheet, notes: [soundStripFailedNote(kind)] }
+  }
 }
 
 // The view of `part` of the video clip `input`, of the facts `facts`, for
 // `call`: its frame sheet when `choice` lets the view make a picture, then
-// the loudness of its sound, unless a run of the sheet failed. A clip with
-// no picture still gets the loudness of its sound, and one with no sound
-// gets no loudness and no note about it: its facts tell it.
+// the loudness of its sound, unless a run of the sheet failed, with the
+// picture of its sound that `call` asks for (`soundPictureOf`): a strip
+// under the sheet, or a picture of its own when the clip has no sheet. A
+// clip with no picture still gets the loudness of its sound. One with no
+// sound gets no loudness and no note about it, as its facts tell it, but
+// for the picture of its sound that the call asks for.
 async function videoView(input: ClipInput, facts: ClipProbeFacts, part: ClipPart, call: AssetViewCall, choice: PictureChoice, folder: string, signal: AbortSignal): Promise<Pick<AssetViewItem, 'notes' | 'picture'>> {
   const frames: SheetView = facts.video === null
     ? { notes: [NO_VIDEO_STREAM_NOTE], picture: null }
     : choice === 'show' ? await frameSheet(input, call, facts.seconds, part, folder, signal) : { notes: [], picture: null }
-  const sound = facts.audio === null || frames.failed ? [] : (await soundView(input, part, false, folder, signal)).notes
-  const limitNotes = facts.video !== null && choice === 'overLimit' ? [PICTURE_LIMIT_NOTE] : []
-  return { notes: [...frames.notes, ...sound, ...limitNotes], picture: frames.picture }
+  const asked = soundPictureOf(call, 'video')
+  const picture = choice === 'show' ? asked : 'none'
+  const limitNotes = choice === 'overLimit' && (facts.video !== null || (facts.audio !== null && asked !== 'none')) ? [PICTURE_LIMIT_NOTE] : []
+  if (facts.audio === null || frames.failed) {
+    const noSound = facts.audio === null && asked !== 'none' ? [noSoundNote(asked, false)] : []
+    return { notes: [...frames.notes, ...noSound, ...limitNotes], picture: frames.picture }
+  }
+  const sheet = frames.picture
+  // The strip is as wide as the sheet. A sheet of an unknown size gets a
+  // strip that the drawing stretches to its width.
+  const draw = soundDraw(input, picture, sheet && { width: sheet.size?.width ?? FRAME_BOXES[call.detail], height: SOUND_STRIP_HEIGHTS[call.detail] })
+  const sound = await soundView(input, part, draw, folder, signal)
+  const notes = [...frames.notes, ...sound.notes]
+  if (!draw || !sound.picture) return { notes: [...notes, ...limitNotes], picture: sheet }
+  if (!sheet) {
+    return { notes: [...notes, ...limitNotes], picture: { ...sound.picture, ...soundPictureTexts(input.id, 'video', draw.kind, part, sound.picture.size) } }
+  }
+  const joined = await withSoundStrip(input.id, sheet, sound.picture, { kind: draw.kind, part, sampleRate: facts.audio.sampleRate, detail: call.detail })
+  return { notes: [...notes, ...joined.notes, ...limitNotes], picture: joined.picture }
 }
 
-// The view of `clip`: its facts from ffprobe, and its frame sheet, or its
-// wave, and its loudness, from ffmpeg, all on one copy in the work folder
-// `folder`. A clip that Dez cannot read fails only its own view.
+// The view of `clip`: its facts from ffprobe, and its frame sheet, or the
+// picture of its sound, and its loudness, from ffmpeg, all on one copy in
+// the work folder `folder`. A clip that Dez cannot read fails only its own
+// view.
 async function viewClip(clip: ClipAttachment, call: AssetViewCall, choice: PictureChoice, folder: string, signal: AbortSignal): Promise<AssetViewItem> {
   const input = clipInput(clip)
   const probed = await probeClip(input, folder, signal, ASSET_VIEW_TOOL.name)
@@ -400,9 +480,16 @@ async function viewClip(clip: ClipAttachment, call: AssetViewCall, choice: Pictu
   const part = clipPart(call, facts.seconds)
   if (typeof part === 'string') return { ...item, notes: [part] }
   if (clip.kind === 'video') return { ...item, ...await videoView(input, facts, part, call, choice, folder, signal) }
-  if (facts.audio === null) return { ...item, notes: [NO_AUDIO_STREAM_NOTE] }
-  const view = await soundView(input, part, choice === 'show', folder, signal)
-  return { ...item, ...view, notes: [...view.notes, ...(choice === 'overLimit' ? [PICTURE_LIMIT_NOTE] : [])] }
+  const asked = soundPictureOf(call, 'audio')
+  if (facts.audio === null) return { ...item, notes: [noSoundNote(asked, true)] }
+  const picture = choice === 'show' ? asked : 'none'
+  const draw = soundDraw(input, picture, null)
+  const sound = await soundView(input, part, draw, folder, signal)
+  return {
+    ...item,
+    notes: [...sound.notes, ...(choice === 'overLimit' && asked !== 'none' ? [PICTURE_LIMIT_NOTE] : [])],
+    picture: draw && sound.picture && { ...sound.picture, ...soundPictureTexts(clip.id, 'audio', draw.kind, part, sound.picture.size) },
+  }
 }
 
 /** The result of an `asset_view` call with the arguments `args`, for the
@@ -461,7 +548,8 @@ export async function assetViewResult(
         ? await viewImage(id, path, call, choice)
         : await viewClip(assets.clips.get(id) as ClipAttachment, call, choice, folder as string, signal)
       if (item.picture && inGrid.has(id)) {
-        // The frame sheet of a video clip of the grid is a member of it.
+        // The picture of a video clip of the grid (its frame sheet, with
+        // its sound strip) is a member of it.
         const { part, shows, note } = item.picture
         members.push({ file: new Blob([part.bytes], { type: part.mediaType }), piece: { kind: 'sheet', id, shows }, note })
         item.picture = null

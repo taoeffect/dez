@@ -28,6 +28,7 @@ import {
   gridNotDrawnNote,
   gridTooLargeNote,
   NO_VIDEO_STREAM_NOTE,
+  noSoundNote,
   PICTURE_LIMIT_NOTE,
   PICTURE_NOT_DRAWN_NOTE,
   PICTURE_NOT_READ_NOTE,
@@ -36,6 +37,9 @@ import {
   sheetTooLargeNote,
   smallerCopyNote,
   soundlessPartNote,
+  soundStripFailedNote,
+  soundStripLayout,
+  soundStripTooLargeNote,
   VIEW_FAILED_NOTE,
 } from '../model/tools/assetView'
 import { jobsListText, jobStartedText, jobsWaitResults, jobsWaitText, NO_JOBS_TEXT, NO_OPEN_JOBS_TEXT } from '../model/tools/jobs'
@@ -1798,10 +1802,13 @@ describe('dez.controller/tools/run', () => {
     const EBUR128 = '[Parsed_ebur128_3 @ 0x2] Summary:\n  Integrated loudness:\n    I:         -23.1 LUFS\n'
       + '  Loudness range:\n    LRA:         9.4 LU\n  True peak:\n    Peak:      -18.8 dBFS\n'
     // The pictures that ffmpeg makes: a frame sheet of 968 by 364 pixels
-    // (455 tokens), and a wave of 800 by 200 (232 tokens). The image @a,
-    // of 1000 by 500 pixels, costs 648 tokens.
+    // (455 tokens), a wave of 800 by 200 (232 tokens), a spectrogram with
+    // its axes of a sound of 48 kHz, and a sound strip under the sheet. The
+    // image @a, of 1000 by 500 pixels, costs 648 tokens.
     const SHEET_JPEG = jpegHeader(968, 364)
     const WAVE_JPEG = jpegHeader(800, 200)
+    const SPECTROGRAM_JPEG = jpegHeader(1084, 328)
+    const STRIP_JPEG = jpegHeader(968, 160)
     // The last line of a view that showed no picture.
     const FULL_BUDGET_LINE = 'Picture budget left in this reply: 20 pictures, 57,408 tokens and 20.0 MB of base64.'
     let tabId: string
@@ -1867,7 +1874,10 @@ describe('dez.controller/tools/run', () => {
       }
       native.fileBytes = ({ path }) => {
         const name = path.slice(path.lastIndexOf('/') + 1)
-        return name.endsWith('-frames.jpg') ? SHEET_JPEG : name.endsWith('-wave.jpg') ? WAVE_JPEG : new TextEncoder().encode(name)
+        if (name.endsWith('-frames.jpg')) return SHEET_JPEG
+        if (name.endsWith('-strip.jpg')) return STRIP_JPEG
+        if (name.endsWith('-spectrogram.jpg')) return SPECTROGRAM_JPEG
+        return name.endsWith('-wave.jpg') ? WAVE_JPEG : new TextEncoder().encode(name)
       }
     })
 
@@ -2045,7 +2055,7 @@ describe('dez.controller/tools/run', () => {
 
       const video = await assetView({ assets: '@b', start: 3 })
 
-      expect(video.content).toContain(soundlessPartNote({ start: 3, end: 5.04 }, false))
+      expect(video.content).toContain(soundlessPartNote({ start: 3, end: 5.04 }, 'none'))
       expect(video.content).not.toContain('LUFS')
       expect(shown.map(({ label }) => label.match(/@[a-z]+/)?.[0])).toStrictEqual(['@b'])
 
@@ -2053,7 +2063,7 @@ describe('dez.controller/tools/run', () => {
       soundEnd = { kind: 'exited', code: 234 }
       const audio = await assetView({ assets: '@d', start: 3 })
 
-      expect(audio.content).toContain(soundlessPartNote({ start: 3, end: 5.04 }, true))
+      expect(audio.content).toContain(soundlessPartNote({ start: 3, end: 5.04 }, 'wave'))
       expect(audio.content).not.toContain(VIEW_FAILED_NOTE)
       expect(shown).toHaveLength(1)
       expect(consoleError).not.toHaveBeenCalled()
@@ -2331,6 +2341,147 @@ describe('dez.controller/tools/run', () => {
       expect(result.content).toMatch(/`start` \(6 s\) is not before the end of the clip \(5\.04 s\)/)
       expect(ffmpegRuns()).toStrictEqual([])
       expect(shown).toStrictEqual([])
+    })
+
+    describe('with `sound_picture`', () => {
+      const SHEET_SHOWS = 'the frame sheet of the video clip @b: 3 frames in one row, at 0.417, 1.25, 2.083 s'
+      const shownPictures = () => shown.map(({ label, picture, size }) => ({ label, picture, size }))
+
+      it('shows the spectrogram of an audio clip with its axes, and tells the time of a later part', async () => {
+        const result = await assetView({ assets: '@d', sound_picture: 'Spectrogram', start: 1 })
+
+        expect(ffmpegRuns().map(({ args }) => args)).toStrictEqual([
+          audioViewArgs('d.wav', { start: 1, end: 5.04 }, { kind: 'spectrogram', output: 'd-spectrogram.jpg', strip: null }),
+        ])
+        expect(shownPictures()).toStrictEqual([{
+          label: 'asset_view: the spectrogram of the audio clip @d, 1 s to 5.04 s, time runs left to right and the frequency bottom to top.',
+          picture: { type: 'picture', mediaType: 'image/jpeg', bytes: SPECTROGRAM_JPEG },
+          size: { width: 1084, height: 328 },
+        }])
+        expect(result.content).toMatch(/^Spectrogram of 1 s to 5\.04 s: 1084x328 pixels, .*\(add 1 s for the time in the clip\)/m)
+        expect(result.content).toMatch(/-23\.1 LUFS integrated/)
+      })
+
+      it('gives an audio clip with "none" its loudness only, and no note of a picture over the budget', async () => {
+        const result = await assetView({ assets: '@d', sound_picture: 'none' })
+
+        expect(ffmpegRuns().map(({ args }) => args)).toStrictEqual([audioViewArgs('d.wav', { start: 0, end: 5.04 }, null)])
+        expect(shown).toStrictEqual([])
+        expect(native.readFiles).toStrictEqual([])
+        expect(result.content.split('\n').slice(1)).toStrictEqual([expect.stringMatching(/^Loudness of 0 s to 5\.04 s: /), FULL_BUDGET_LINE])
+
+        budget = { ...budget, pictures: 0 }
+        expect((await assetView({ assets: '@d', sound_picture: 'none' })).content).not.toContain(PICTURE_LIMIT_NOTE)
+        expect((await assetView({ assets: '@d' })).content).toContain(PICTURE_LIMIT_NOTE)
+      })
+
+      it('tells which picture of the sound a clip with no sound does not get', async () => {
+        probes['d.wav'] = probed([VIDEO_STREAM])
+        probes['b.mp4'] = probed([VIDEO_STREAM])
+
+        expect((await assetView({ assets: '@d', sound_picture: 'spectrogram' })).content).toContain(noSoundNote('spectrogram', true))
+        expect((await assetView({ assets: '@d', sound_picture: 'none' })).content).toContain(noSoundNote('none', true))
+        const video = await assetView({ assets: '@b', sound_picture: 'wave' })
+
+        expect(video.content).toContain(noSoundNote('wave', false))
+        // The frame sheet only.
+        expect(ffmpegRuns()).toHaveLength(1)
+        expect(shown.map(({ picture }) => picture.bytes)).toStrictEqual([SHEET_JPEG])
+      })
+
+      it('draws the wave of a video clip as a strip under its frame sheet, at the width of the sheet, in one picture', async () => {
+        const result = await assetView({ assets: '@b', frames: 3, end: 2.5, sound_picture: 'wave' })
+
+        const strip = { width: 968, height: 160 }
+        expect(ffmpegRuns()[1].args).toStrictEqual(audioViewArgs('b.mp4', { start: 0, end: 2.5 }, { kind: 'wave', output: 'b-wave-strip.jpg', strip }))
+        expect(compositions).toStrictEqual([{
+          files: [{ type: 'image/jpeg', bytes: SHEET_JPEG }, { type: 'image/jpeg', bytes: STRIP_JPEG }],
+          composition: soundStripLayout([{ width: 968, height: 364 }, strip]),
+        }])
+        expect(shownPictures()).toStrictEqual([{
+          label: `asset_view: ${SHEET_SHOWS}; under the frames, the wave of its sound, 0 s to 2.5 s, time runs left to right.`,
+          picture: { type: 'picture', mediaType: 'image/jpeg', bytes: new Uint8Array([7]) },
+          size: { width: 968, height: 528 },
+        }])
+        const lines = result.content.split('\n')
+        expect(lines.slice(1, 3)).toStrictEqual([
+          'Frame sheet of 0 s to 2.5 s: 3 frames in one row, at 0.417, 1.25, 2.083 s. '
+            + 'Under the frames: the wave of the sound of 0 s to 2.5 s, a strip of 968x160 pixels; '
+            + 'time runs left to right over the whole width of the sheet, and the height is the peak level on a square-root scale.',
+          expect.stringMatching(/^Loudness of 0 s to 2\.5 s: /),
+        ])
+        // The cost of the whole picture: 665 tokens, and 4 bytes of base64.
+        expect(lines.at(-1)).toBe('Picture budget left in this reply: 19 pictures, 56,743 tokens and 20.0 MB of base64.')
+      })
+
+      it('draws a spectrogram strip at the height of `detail`, and tells its frequency range from the sample rate', async () => {
+        const result = await assetView({ assets: '@b', detail: 'full', sound_picture: 'spectrogram' })
+
+        expect(ffmpegRuns()[1].args).toStrictEqual(audioViewArgs('b.mp4', { start: 0, end: 5.04 }, {
+          kind: 'spectrogram', output: 'b-spectrogram-strip.jpg', strip: { width: 968, height: 320 },
+        }))
+        expect(result.content).toMatch(/Under the frames: the spectrogram of the sound of 0 s to 5\.04 s, .* from 0 to 24,000 Hz on a linear scale/)
+      })
+
+      it('sends the frame sheet alone, with a note, when the strip cannot be read, drawn, or sent', async () => {
+        const view = async () => {
+          shown = []
+          return (await assetView({ assets: '@b', frames: 3, end: 2.5, sound_picture: 'wave' })).content
+        }
+        const sheetOnly = [{ label: `asset_view: ${SHEET_SHOWS}.`, picture: { type: 'picture', mediaType: 'image/jpeg', bytes: SHEET_JPEG }, size: { width: 968, height: 364 } }]
+
+        native.fileBytes = ({ path }) => {
+          if (path.endsWith('-strip.jpg')) throw new Error('No such file')
+          return SHEET_JPEG
+        }
+        expect(await view()).toContain(soundStripFailedNote('wave'))
+        expect(shownPictures()).toStrictEqual(sheetOnly)
+        expect(compositions).toStrictEqual([])
+
+        native.fileBytes = ({ path }) => path.endsWith('-strip.jpg') ? STRIP_JPEG : SHEET_JPEG
+        drawError = new Error('No canvas to draw the image on.')
+        expect(await view()).toContain(soundStripFailedNote('wave'))
+        expect(shownPictures()).toStrictEqual(sheetOnly)
+        expect(consoleError).toHaveBeenCalledWith('Failed to draw the wave strip of the video clip @b under its frame sheet:', drawError)
+
+        drawError = undefined
+        composedBytes = () => 3_750_001
+        expect(await view()).toContain(soundStripTooLargeNote('wave', 'review'))
+        expect(shownPictures()).toStrictEqual(sheetOnly)
+      })
+
+      it('shows the sound picture of a video clip with no frame sheet as a picture of its own', async () => {
+        probes['b.mp4'] = probed([AUDIO_STREAM])
+
+        const result = await assetView({ assets: '@b', sound_picture: 'spectrogram' })
+
+        expect(ffmpegRuns().map(({ args }) => args)).toStrictEqual([
+          audioViewArgs('b.mp4', { start: 0, end: 5.04 }, { kind: 'spectrogram', output: 'b-spectrogram.jpg', strip: null }),
+        ])
+        expect(compositions).toStrictEqual([])
+        expect(shownPictures()).toStrictEqual([{
+          label: 'asset_view: the spectrogram of the video clip @b, 0 s to 5.04 s, time runs left to right and the frequency bottom to top.',
+          picture: { type: 'picture', mediaType: 'image/jpeg', bytes: SPECTROGRAM_JPEG },
+          size: { width: 1084, height: 328 },
+        }])
+        expect(result.content).toContain(NO_VIDEO_STREAM_NOTE)
+
+        budget = { ...budget, pictures: 0 }
+        expect((await assetView({ assets: '@b', sound_picture: 'spectrogram' })).content).toContain(PICTURE_LIMIT_NOTE)
+        expect((await assetView({ assets: '@b' })).content).not.toContain(PICTURE_LIMIT_NOTE)
+      })
+
+      it('puts the frame sheet with its strip into a grid as one piece', async () => {
+        const result = await assetView({ assets: '@a @b', layout: 'grid', frames: 3, end: 2.5, sound_picture: 'wave' })
+
+        // The sheet with its strip, then the grid of the image and that
+        // picture.
+        expect(compositions.map(({ files }) => files.map(({ bytes }) => bytes))).toStrictEqual([[SHEET_JPEG, STRIP_JPEG], [FOX_BYTES, new Uint8Array([7])]])
+        expect(shown.map(({ label }) => label)).toStrictEqual([
+          `asset_view: a grid, top to bottom: the image @a; ${SHEET_SHOWS}; under the frames, the wave of its sound, 0 s to 2.5 s, time runs left to right.`,
+        ])
+        expect(result.content).toMatch(/^Frame sheet of 0 s to 2\.5 s: .* Under the frames: the wave of the sound of 0 s to 2\.5 s, a strip of 968x160 pixels; /m)
+      })
     })
 
     describe('with `layout` "grid"', () => {

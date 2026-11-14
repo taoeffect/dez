@@ -1,5 +1,5 @@
 import { byteSizeText } from '../../utils/byteSize'
-import { drawnMediaType, wholeImageDrawing, type ImageDrawing, type ImageRegion, type ImageSize } from '../chat/imageDrawing'
+import { drawnMediaType, wholeImageDrawing, type ImageComposition, type ImageDrawing, type ImageRegion, type ImageSize } from '../chat/imageDrawing'
 import type { ImageMediaType } from '../chat/images'
 import type { ClipReadProblem } from '../chat/mediaFiles'
 import type { MediaTagKind } from '../chat/mediaTags'
@@ -24,12 +24,14 @@ import { FFMPEG_FIXED_ARGS } from './videoTool'
 // conversation again, so that it can check what it and other models made.
 // Each asset gives its facts and a picture: an image as it is (a large one
 // as a smaller copy, or only a part of it), a video clip as a sheet of
-// frames, and an audio clip as a picture of its wave; a clip with sound
-// also gives its loudness. With `layout` "grid", the images and the frame
-// sheets of a call go into one picture (assetGrid.ts). The pictures go to
-// the model through the reply (`ToolRunContext.showPictures`,
-// streams/replyPictures.ts), never into the section, and a view makes no
-// asset. controller/assetView.ts reads the files and runs ffmpeg.
+// frames, and an audio clip as a picture of its wave or its spectrogram
+// (`sound_picture`), which a video clip can get as a strip under its
+// frames; a clip with sound also gives its loudness. With `layout` "grid",
+// the images and the frame sheets of a call go into one picture
+// (assetGrid.ts). The pictures go to the model through the reply
+// (`ToolRunContext.showPictures`, streams/replyPictures.ts), never into the
+// section, and a view makes no asset. controller/assetView.ts reads the
+// files and runs ffmpeg.
 //
 // This module must not import chat/toolBlocks.ts or registry.ts: the
 // registry imports it, and toolBlocks imports the registry.
@@ -81,6 +83,22 @@ export const IMAGE_PICTURE_SIDES: Readonly<Record<ViewDetail, number>> = { revie
  *  under 3,000 px on each side. */
 export const FRAME_BOXES: Readonly<Record<ViewDetail, number>> = { review: 320, full: 640 }
 
+/** What a view draws of the sound of a clip (`sound_picture`): its wave,
+ *  its spectrogram, or no picture (the loudness still comes). */
+export type SoundPicture = 'wave' | 'spectrogram' | 'none'
+export type SoundPictureKind = Exclude<SoundPicture, 'none'>
+const SOUND_PICTURES: readonly SoundPicture[] = ['wave', 'spectrogram', 'none']
+
+/** The size of the drawing of the sound of a clip as a picture of its
+ *  own. A spectrogram gets its axes and its scale around it, so its
+ *  picture is larger, by the width of its labels. */
+const SOUND_PICTURE_SIZE: ImageSize = { width: 800, height: 200 }
+
+/** The height of the sound strip under the frame sheet of a video clip,
+ *  by `detail`: half the frame box. The tallest sheet of `full` (4 rows of
+ *  640 pixels) with its strip stays under 3,000 pixels. */
+export const SOUND_STRIP_HEIGHTS: Readonly<Record<ViewDetail, number>> = { review: 160, full: 320 }
+
 /** The most bytes of the file of a picture: in base64, a file of this size
  *  stays under the 5 MB image limit of the Anthropic API. */
 export const MAX_PICTURE_BYTES = 3_750_000
@@ -99,7 +117,8 @@ export const ASSET_VIEW_TOOL: ToolDefinition = {
     + 'For each one, you get its facts (as asset_info gives them) and a picture: an image as it is, or a smaller copy of a large one (see `detail`); '
     + 'a video clip as a sheet of frames (left to right, then top to bottom) with the time of each frame: '
     + 'at equal steps (`frames`), at the times that you give (`times`), or one for each shot (`scenes`); '
-    + 'an audio clip as a picture of its wave (time runs left to right). '
+    + 'an audio clip as a picture of its wave, or of its spectrogram (time runs left to right); '
+    + 'with `sound_picture`, a video clip also gets one of these as a strip under its frames. '
     + 'A clip with sound, video or audio, also gets the loudness of the part that you view. You do not hear a clip. '
     + 'View a whole clip first; then, for a part that looks wrong, view it again with `start` and `end` around that part, '
     + 'or with `times` for the frames that you need. '
@@ -157,6 +176,19 @@ export const ASSET_VIEW_TOOL: ToolDefinition = {
       required: false,
     },
     {
+      name: 'sound_picture',
+      type: 'string',
+      description: 'For a clip with sound: the picture of its sound, "wave", "spectrogram", or "none". '
+        + '"wave" shows the peak level over time. "spectrogram" shows the level of each frequency over time: '
+        + 'a hum, a hiss, clicks, a missing range of highs or lows, or which parts are music and which are speech. '
+        + '"none" shows no picture of the sound; the loudness still comes. '
+        + 'An audio clip gets it as its picture, by default "wave"; its spectrogram has axes of time and frequency and a scale in dBFS. '
+        + `A video clip gets it as a strip under its frame sheet, by default "none": the strip is as wide as the sheet, ${SOUND_STRIP_HEIGHTS.review} pixels high `
+        + `(${SOUND_STRIP_HEIGHTS.full} with \`detail\` "full"), and it has no axes. `
+        + 'It spans the whole part that you view (with `times`, the whole clip), time running left to right, and the result tells its frequency range.',
+      required: false,
+    },
+    {
       name: 'detail',
       type: 'string',
       description: 'How large the pictures are: "review" (the default) or "full". '
@@ -181,7 +213,7 @@ export const ASSET_VIEW_TOOL: ToolDefinition = {
       description: '"separate" (the default) or "grid". With "separate", each asset gets its own picture. '
         + 'With "grid", all the images and video clips of the call go into one picture, top to bottom in the order of `assets`: '
         + `images side by side in rows of at most ${MAX_SHEET_COLUMNS}, each one in the frame box of \`detail\`, `
-        + 'and the frame sheet of each video clip in rows of its own. An audio clip still gets its own picture. '
+        + 'and the frame sheet of each video clip, with its sound strip, in rows of its own. An audio clip still gets its own picture. '
         + 'A grid costs less of the picture budget than a picture for each asset, and it shows each image smaller. '
         + 'With fewer than 2 images and video clips, the call shows separate pictures.',
       required: false,
@@ -226,14 +258,18 @@ export interface AssetViewCall {
   layout: ViewLayout
   /** The part of the one image of the call to show; null for all of it. */
   crop: ViewCrop | null
+  /** The picture of the sound of a clip; null for the default of its kind
+   *  (`soundPictureOf`). */
+  soundPicture: SoundPicture | null
 }
 
 // The value of the text argument `name` of a call: one of `values`, in any
-// case. A blank or absent one is the first of `values`, the default.
-function choiceArgument<T extends string>(args: ToolArguments, name: string, values: readonly T[]): T {
+// case; null for a blank or absent one, which the caller takes as its
+// default.
+function choiceArgument<T extends string>(args: ToolArguments, name: string, values: readonly T[]): T | null {
   const argument = args[name]
   const text = typeof argument === 'string' ? argument.trim() : ''
-  if (text === '') return values[0]
+  if (text === '') return null
   const value = values.find((candidate) => candidate === text.toLowerCase())
   if (!value) throw new ToolError(`${unknownValuesText(name, [text], `one of: ${values.join(', ')}`)} ${NOT_DONE}`)
   return value
@@ -303,13 +339,13 @@ function sheetArgument(args: ToolArguments): SheetChoice {
  *  a bad `assets` (`assetIdsArgument`), more ids than its `layout` takes, a
  *  `frames` out of its range, a bad `times` or one with `frames`,
  *  `scenes`, `start`, or `end`, a `start` before 0, an `end` that is not
- *  after `start`, an unknown `detail` or `layout`, a bad `crop`, and a
- *  `crop` for more than one asset. Whether the asset of a `crop` is an
- *  image, the caller checks. A blank `times`, `detail`, `layout`, or `crop`
- *  is none. */
+ *  after `start`, an unknown `detail`, `layout`, or `sound_picture`, a bad
+ *  `crop`, and a `crop` for more than one asset. Whether the asset of a
+ *  `crop` is an image, the caller checks. A blank `times`, `detail`,
+ *  `layout`, `crop`, or `sound_picture` is none. */
 export function assetViewCall(args: ToolArguments): AssetViewCall {
   const ids = assetIdsArgument(args, { max: MAX_ASSET_VIEW_GRID_IDS, notDone: NOT_DONE })
-  const layout = choiceArgument(args, 'layout', VIEW_LAYOUTS)
+  const layout = choiceArgument(args, 'layout', VIEW_LAYOUTS) ?? 'separate'
   if (layout === 'separate' && ids.length > MAX_ASSET_VIEW_IDS) {
     throw new ToolError(`\`assets\` names ${ids.length} images and clips, and a call with a picture for each one takes at most ${MAX_ASSET_VIEW_IDS}. `
       + `Call again with \`layout\` "grid" (at most ${MAX_ASSET_VIEW_GRID_IDS}, in one picture), `
@@ -322,14 +358,22 @@ export function assetViewCall(args: ToolArguments): AssetViewCall {
   if (end !== null && end <= start) {
     throw new ToolError(`\`end\` (${end}) is not after \`start\` (${start}): give an \`end\` after \`start\`, or no \`end\` for the end of the clip. ${NOT_DONE}`)
   }
-  const detail = choiceArgument(args, 'detail', VIEW_DETAILS)
+  const detail = choiceArgument(args, 'detail', VIEW_DETAILS) ?? 'review'
   const cropText = typeof args.crop === 'string' ? args.crop.trim() : ''
   const crop = cropText === '' ? null : cropArgument(cropText)
   if (crop && ids.length > 1) {
     throw new ToolError(`\`crop\` is a part of one image, and \`assets\` names ${ids.length} assets. `
       + `Give \`assets\` only the image to crop, or give no \`crop\`. ${NOT_DONE}`)
   }
-  return { ids, sheet, start, end, detail, layout, crop }
+  const soundPicture = choiceArgument(args, 'sound_picture', SOUND_PICTURES)
+  return { ids, sheet, start, end, detail, layout, crop, soundPicture }
+}
+
+/** The picture of the sound of a clip of `kind` that `call` draws: the one
+ *  of `sound_picture`, else the wave of an audio clip and none for a video
+ *  clip, whose frame sheet is its picture. */
+export function soundPictureOf({ soundPicture }: Pick<AssetViewCall, 'soundPicture'>, kind: MediaTagKind): SoundPicture {
+  return soundPicture ?? (kind === 'audio' ? 'wave' : 'none')
 }
 
 /** The pixels of the part `crop` of an image of `size`: each edge on the
@@ -546,20 +590,56 @@ export function partHasNoFrame(log: string): boolean {
 
 const LOUDNESS_FILTER = 'ebur128=framelog=quiet:peak=true'
 
+/** A picture of the sound that a loudness run draws (`audioViewArgs`):
+ *  the wave or the spectrogram of the part, into the JPEG file `output`.
+ *  `strip`: the size of a strip under a frame sheet, with no axes; null
+ *  for a picture of its own (`SOUND_PICTURE_SIZE`), where a spectrogram
+ *  gets its axes of time and frequency and its dBFS scale around it. */
+export interface SoundDraw {
+  kind: SoundPictureKind
+  output: string
+  strip: ImageSize | null
+}
+
+// The filter that draws `draw`. A wave has the height of its peaks on a
+// square-root scale, so that a quiet part still shows. A spectrogram keeps
+// the linear frequency scale of ffmpeg: its bins are linear, so a log
+// scale smears the low notes over a wide band.
+function soundDrawFilter({ kind, strip }: SoundDraw): string {
+  const { width, height } = strip ?? SOUND_PICTURE_SIZE
+  return kind === 'wave'
+    ? `showwavespic=s=${width}x${height}:colors=white:scale=sqrt:filter=peak`
+    : `showspectrumpic=s=${width}x${height}:legend=${strip ? 0 : 1}`
+}
+
 /** The ffmpeg arguments that read the loudness of `part` of the clip file
- *  `input` (`loudnessOf` reads the log), and with `wave`, also draw the
- *  wave of that part into the JPEG file `wave`: 800 by 200 pixels, the
- *  height of the peaks on a square-root scale, so that a quiet part still
- *  shows. */
-export function audioViewArgs(input: string, part: ClipPart, wave: string | null): string[] {
-  const graph = wave === null
+ *  `input` (`loudnessOf` reads the log), and with `draw`, also draw the
+ *  wave or the spectrogram of that part. */
+export function audioViewArgs(input: string, part: ClipPart, draw: SoundDraw | null): string[] {
+  const graph = draw === null
     ? `[0:a:0]${LOUDNESS_FILTER}[e]`
-    : `[0:a:0]asplit[w][l];[w]showwavespic=s=800x200:colors=white:scale=sqrt:filter=peak[p];[l]${LOUDNESS_FILTER}[e]`
+    : `[0:a:0]asplit[d][l];[d]${soundDrawFilter(draw)}[p];[l]${LOUDNESS_FILTER}[e]`
   return [
     ...FFMPEG_FIXED_ARGS, '-v', 'info', ...partArgs(part), '-i', input, '-filter_complex', graph,
-    ...(wave === null ? [] : ['-map', '[p]', ...pictureOutputArgs(wave)]),
+    ...(draw === null ? [] : ['-map', '[p]', ...pictureOutputArgs(draw.output)]),
     '-map', '[e]', '-f', 'null', '-',
   ]
+}
+
+/** The drawing of the frame sheet of a video clip with its sound strip
+ *  under it (dez.controller/images/compose), from their `sizes`: the sheet
+ *  as it is, then, `SHEET_PADDING` lower, the strip at the width of the
+ *  sheet, on white, as a JPEG. */
+export function soundStripLayout([sheet, strip]: readonly ImageSize[]): ImageComposition {
+  const y = sheet.height + SHEET_PADDING
+  return {
+    width: sheet.width,
+    height: y + strip.height,
+    places: [{ x: 0, y: 0, width: sheet.width, height: sheet.height }, { x: 0, y, width: sheet.width, height: strip.height }],
+    // A JPEG has no transparent pixels.
+    background: '#ffffff',
+    mediaType: 'image/jpeg',
+  }
 }
 
 /** The loudness of a part of a clip, as the `ebur128` filter writes the
@@ -815,21 +895,75 @@ export function sheetTooLargeNote(detail: ViewDetail, choice: 'frames' | 'times'
   return `No frame sheet: its file is too large to send. Call again with fewer \`${choice}\`${detail === 'full' ? ', or with `detail` "review"' : ''}.`
 }
 
-/** The note of an audio clip with no sound stream. */
-export const NO_AUDIO_STREAM_NOTE = 'No wave and no loudness: the clip has no sound.'
-
-/** The note of `part` of a clip whose sound has no sample in the part
- *  (`partHasNoFrame`), for a run that also drew the wave (`wave`). */
-export function soundlessPartNote(part: ClipPart, wave: boolean): string {
-  return `${wave ? 'No wave and no loudness' : 'No loudness'}: the sound of the clip has no sample in ${partText(part)}.`
+// What a view does not give of the sound of a clip: the picture `picture`
+// (nothing for "none"), and with `loudness`, its loudness. One of the two
+// at least.
+function missingSoundText(picture: SoundPicture, loudness: boolean): string {
+  return `No ${[...(picture === 'none' ? [] : [picture]), ...(loudness ? ['loudness'] : [])].join(' and no ')}`
 }
 
-/** The note and the picture text of the wave of the audio clip `id`. */
-export function waveTexts(id: string, part: ClipPart): { note: string, shows: string } {
-  return {
-    note: `Wave picture of ${partText(part)}: 800x200 pixels, time runs left to right, and the height is the peak level on a square-root scale.`,
-    shows: `the wave of the audio clip @${id}, ${partText(part)}, time runs left to right`,
+/** The note of a clip with no sound stream, for a view that would draw
+ *  `picture` of its sound, and with `loudness`, tell its loudness: not
+ *  "none" with no loudness. */
+export function noSoundNote(picture: SoundPicture, loudness: boolean): string {
+  return `${missingSoundText(picture, loudness)}: the clip has no sound.`
+}
+
+/** The note of `part` of a clip whose sound has no sample in the part
+ *  (`partHasNoFrame`), for a run that also drew `picture` of the sound. */
+export function soundlessPartNote(part: ClipPart, picture: SoundPicture): string {
+  return `${missingSoundText(picture, true)}: the sound of the clip has no sample in ${partText(part)}.`
+}
+
+/** The note and the picture text of `picture` of the sound of `part` of
+ *  the clip `id`, of `kind`, as a picture of its own (`SoundDraw`) of
+ *  `size` (null: not known). */
+export function soundPictureTexts(id: string, kind: MediaTagKind, picture: SoundPictureKind, part: ClipPart, size: ImageSize | null): { note: string, shows: string } {
+  const pixels = size ? `${size.width}x${size.height} pixels, ` : ''
+  if (picture === 'wave') {
+    return {
+      note: `Wave picture of ${partText(part)}: ${pixels}time runs left to right, and the height is the peak level on a square-root scale.`,
+      shows: `the wave of the ${kind} clip @${id}, ${partText(part)}, time runs left to right`,
+    }
   }
+  // The time axes of ffmpeg start at 0 at the start of the part (`-ss`).
+  const seconds = part.start > 0 ? `in seconds from the start of the part (add ${shortNumber(part.start)} s for the time in the clip)` : 'in seconds of the clip'
+  return {
+    note: `Spectrogram of ${partText(part)}: ${pixels}time runs left to right, on the axes at the top and the bottom ${seconds}; `
+      + 'the frequency runs bottom to top, on the axis at the left in Hz, on a linear scale; '
+      + 'and the color is the level of each frequency, on the scale at the right in dBFS.',
+    shows: `the spectrogram of the ${kind} clip @${id}, ${partText(part)}, time runs left to right and the frequency bottom to top`,
+  }
+}
+
+/** The note and the picture text of the sound strip of `picture` under a
+ *  frame sheet, of `part` of a sound of `sampleRate` (null: not known), of
+ *  `size`. The strip has no axes, so the note tells them. */
+export function soundStripTexts(picture: SoundPictureKind, part: ClipPart, size: ImageSize, sampleRate: number | null): { note: string, shows: string } {
+  const strip = `Under the frames: the ${picture} of the sound of ${partText(part)}, a strip of ${size.width}x${size.height} pixels`
+  const time = 'time runs left to right over the whole width of the sheet'
+  const top = sampleRate === null ? 'half the sample rate' : `${countText(sampleRate / 2)} Hz`
+  return {
+    note: picture === 'wave'
+      ? `${strip}; ${time}, and the height is the peak level on a square-root scale.`
+      : `${strip} with no axes; ${time}, the frequency bottom to top from 0 to ${top} on a linear scale, `
+        + 'and the color is the level: black is silent, then blue, purple, red, orange, yellow, and white, the loudest.',
+    shows: `under the frames, the ${picture} of its sound, ${partText(part)}, time runs left to right`,
+  }
+}
+
+/** The note of the sound strip of `picture` that Dez could not read from
+ *  ffmpeg, or could not draw under the frame sheet. */
+export function soundStripFailedNote(picture: SoundPictureKind): string {
+  return `No ${picture} strip: Dez could not put it under the frame sheet, so the picture is the sheet alone. `
+    + 'Help › Developer Console shows the cause. This is not a fault of the call.'
+}
+
+/** The note of the sound strip of `picture` with which the frame sheet is
+ *  over `MAX_PICTURE_BYTES`, for a view with `detail`. */
+export function soundStripTooLargeNote(picture: SoundPictureKind, detail: ViewDetail): string {
+  return `No ${picture} strip: the frame sheet with it is too large to send, so the picture is the sheet alone. `
+    + `To see the ${picture}, call again with fewer frames${detail === 'full' ? ', or with `detail` "review"' : ''}.`
 }
 
 /** The note of the loudness of `part`. */

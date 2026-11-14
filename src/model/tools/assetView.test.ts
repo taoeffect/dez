@@ -13,9 +13,14 @@ import {
   partHasNoFrame,
   sceneCutsArgs,
   scenesSheetTexts,
+  SHEET_PADDING,
   sheetFrameTimes,
   sheetGrid,
   smallerPictureDrawing,
+  soundPictureOf,
+  soundPictureTexts,
+  soundStripLayout,
+  soundStripTexts,
   timesSheetArgs,
 } from './assetView'
 import { refusal } from './testing'
@@ -53,12 +58,12 @@ function ebur128Log(integrated: string, range: string, peak: string): string {
 }
 
 describe('assetViewCall', () => {
-  it('takes the ids, and the frames, start, end, detail, layout, and crop with their defaults', () => {
+  it('takes the ids, and the frames, start, end, detail, layout, crop, and sound picture with their defaults', () => {
     expect(assetViewCall({ assets: '@f @a' })).toStrictEqual({
-      ids: ['f', 'a'], sheet: { kind: 'steps', frames: DEFAULT_SHEET_FRAMES }, start: 0, end: null, detail: 'review', layout: 'separate', crop: null,
+      ids: ['f', 'a'], sheet: { kind: 'steps', frames: DEFAULT_SHEET_FRAMES }, start: 0, end: null, detail: 'review', layout: 'separate', crop: null, soundPicture: null,
     })
-    expect(assetViewCall({ assets: '@f', frames: 16, start: 1.5, end: 3, detail: 'full', layout: 'grid', crop: '0.25 0 0.5 1' })).toStrictEqual({
-      ids: ['f'], sheet: { kind: 'steps', frames: 16 }, start: 1.5, end: 3, detail: 'full', layout: 'grid', crop: { left: 0.25, top: 0, width: 0.5, height: 1 },
+    expect(assetViewCall({ assets: '@f', frames: 16, start: 1.5, end: 3, detail: 'full', layout: 'grid', crop: '0.25 0 0.5 1', sound_picture: 'spectrogram' })).toStrictEqual({
+      ids: ['f'], sheet: { kind: 'steps', frames: 16 }, start: 1.5, end: 3, detail: 'full', layout: 'grid', crop: { left: 0.25, top: 0, width: 0.5, height: 1 }, soundPicture: 'spectrogram',
     })
   })
 
@@ -88,10 +93,18 @@ describe('assetViewCall', () => {
     expect(refusal(() => assetViewCall({ assets: '@f', times: Array.from({ length: 17 }, (_, index) => index).join(' ') }))).toMatch(/at most 16 times/)
   })
 
-  it('takes a detail and a layout in any case, crop numbers split by commas, and blank texts as none', () => {
-    expect(assetViewCall({ assets: '@f', detail: ' Full ', layout: 'GRID', crop: '0.1, 0.2,0.3 0.4' }))
-      .toMatchObject({ detail: 'full', layout: 'grid', crop: { left: 0.1, top: 0.2, width: 0.3, height: 0.4 } })
-    expect(assetViewCall({ assets: '@f @a', detail: ' ', layout: '  ', crop: '  ' })).toMatchObject({ detail: 'review', layout: 'separate', crop: null })
+  it('takes a detail, a layout, and a sound picture in any case, crop numbers split by commas, and blank texts as none', () => {
+    expect(assetViewCall({ assets: '@f', detail: ' Full ', layout: 'GRID', crop: '0.1, 0.2,0.3 0.4', sound_picture: ' Wave ' }))
+      .toMatchObject({ detail: 'full', layout: 'grid', crop: { left: 0.1, top: 0.2, width: 0.3, height: 0.4 }, soundPicture: 'wave' })
+    expect(assetViewCall({ assets: '@f @a', detail: ' ', layout: '  ', crop: '  ', sound_picture: ' ' }))
+      .toMatchObject({ detail: 'review', layout: 'separate', crop: null, soundPicture: null })
+  })
+
+  it('gives an audio clip its wave and a video clip no sound picture by default, and each one the picture of the call', () => {
+    const none = assetViewCall({ assets: '@f', sound_picture: 'NONE' })
+    expect([soundPictureOf(assetViewCall({ assets: '@f' }), 'audio'), soundPictureOf(assetViewCall({ assets: '@f' }), 'video')]).toStrictEqual(['wave', 'none'])
+    expect([soundPictureOf(none, 'audio'), soundPictureOf(none, 'video')]).toStrictEqual(['none', 'none'])
+    expect(soundPictureOf({ soundPicture: 'spectrogram' }, 'video')).toBe('spectrogram')
   })
 
   it('takes a crop that ends at the right and bottom edges', () => {
@@ -110,9 +123,10 @@ describe('assetViewCall', () => {
     expect(refusal(() => assetViewCall({ assets: '@f', end: 0 }))).toMatch(/`end`/)
   })
 
-  it('refuses an unknown detail or layout, and a crop that is not four numbers from 0 to 1', () => {
+  it('refuses an unknown detail, layout, or sound picture, and a crop that is not four numbers from 0 to 1', () => {
     expect(refusal(() => assetViewCall({ assets: '@f', detail: 'high' }))).toMatch(/`detail`/)
     expect(refusal(() => assetViewCall({ assets: '@f', layout: 'tiles' }))).toMatch(/`layout`/)
+    expect(refusal(() => assetViewCall({ assets: '@f', sound_picture: 'waveform' }))).toMatch(/`sound_picture`.*wave, spectrogram, none/)
     for (const crop of ['0.1 0.2 0.3', '0.1 0.2 0.3 0.4 0.5', 'a b c d', '0.1 0.2 1.5 0.1', '-0.1 0 0.5 0.5']) {
       expect(refusal(() => assetViewCall({ assets: '@f', crop }))).toMatch(/`crop`/)
     }
@@ -366,19 +380,55 @@ describe('scenesSheetTexts', () => {
 })
 
 describe('audioViewArgs', () => {
-  it('draws the wave only when it has a file for it, and reads the loudness in both runs', () => {
-    const withWave = audioViewArgs('g.webm', { start: 0, end: null }, 'g-wave.jpg')
+  const filterOf = (args: string[]): string => args[args.indexOf('-filter_complex') + 1]
+
+  it('draws the picture only when it has a drawing for it, and reads the loudness in both runs', () => {
+    const withWave = audioViewArgs('g.webm', { start: 0, end: null }, { kind: 'wave', output: 'g-wave.jpg', strip: null })
     expect(withWave).not.toContain('-ss')
     expect(withWave).not.toContain('-to')
-    expect(withWave[withWave.indexOf('-filter_complex') + 1]).toContain('showwavespic')
+    expect(filterOf(withWave)).toContain('showwavespic=s=800x200:')
     expect(withWave.slice(withWave.indexOf('[p]') - 1, withWave.indexOf('g-wave.jpg') + 1)).toStrictEqual(['-map', '[p]', '-frames:v', '1', '-update', '1', '-q:v', '3', 'g-wave.jpg'])
     expect(withWave.slice(-5)).toStrictEqual(['-map', '[e]', '-f', 'null', '-'])
 
     const loudnessOnly = audioViewArgs('g.webm', { start: 1, end: 3 }, null)
-    expect(loudnessOnly[loudnessOnly.indexOf('-filter_complex') + 1]).toBe('[0:a:0]ebur128=framelog=quiet:peak=true[e]')
+    expect(filterOf(loudnessOnly)).toBe('[0:a:0]ebur128=framelog=quiet:peak=true[e]')
     expect(loudnessOnly.slice(loudnessOnly.indexOf('-ss'), loudnessOnly.indexOf('-ss') + 4)).toStrictEqual(['-ss', '1.000', '-to', '3.000'])
     expect(loudnessOnly).not.toContain('[p]')
     expect(loudnessOnly.slice(-5)).toStrictEqual(['-map', '[e]', '-f', 'null', '-'])
+  })
+
+  it('gives a spectrogram of its own its axes, and a strip the size of the strip with no axes', () => {
+    const own = audioViewArgs('g.webm', { start: 0, end: null }, { kind: 'spectrogram', output: 'g-spectrogram.jpg', strip: null })
+    expect(filterOf(own)).toContain('showspectrumpic=s=800x200:legend=1[p]')
+    expect(own).toContain('g-spectrogram.jpg')
+    const strip = audioViewArgs('v.webm', { start: 0, end: null }, { kind: 'spectrogram', output: 'v-spectrogram-strip.jpg', strip: { width: 968, height: 160 } })
+    expect(filterOf(strip)).toContain('showspectrumpic=s=968x160:legend=0[p]')
+    const waveStrip = audioViewArgs('v.webm', { start: 0, end: null }, { kind: 'wave', output: 'v-wave-strip.jpg', strip: { width: 1292, height: 320 } })
+    expect(filterOf(waveStrip)).toContain('showwavespic=s=1292x320:')
+  })
+})
+
+describe('soundStripLayout', () => {
+  it('puts the strip under the sheet, at the width of the sheet, with the gap of a sheet', () => {
+    expect(soundStripLayout([{ width: 968, height: 364 }, { width: 800, height: 160 }])).toMatchObject({
+      width: 968,
+      height: 364 + SHEET_PADDING + 160,
+      places: [{ x: 0, y: 0, width: 968, height: 364 }, { x: 0, y: 364 + SHEET_PADDING, width: 968, height: 160 }],
+      mediaType: 'image/jpeg',
+    })
+  })
+})
+
+describe('sound picture texts', () => {
+  it('tells the time of the axes of a spectrogram of a later part as time of the part', () => {
+    expect(soundPictureTexts('g', 'audio', 'spectrogram', { start: 0, end: 4 }, null).note).toMatch(/in seconds of the clip;/)
+    expect(soundPictureTexts('g', 'audio', 'spectrogram', { start: 2.5, end: 4 }, null).note).toMatch(/add 2\.5 s for the time in the clip/)
+  })
+
+  it('tells the frequency range of a spectrogram strip from the sample rate, and half the sample rate when that is not known', () => {
+    const size = { width: 968, height: 160 }
+    expect(soundStripTexts('spectrogram', { start: 0, end: null }, size, 44_100).note).toMatch(/from 0 to 22,050 Hz/)
+    expect(soundStripTexts('spectrogram', { start: 0, end: null }, size, null).note).toMatch(/from 0 to half the sample rate/)
   })
 })
 

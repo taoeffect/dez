@@ -2,13 +2,14 @@ import type { ImageComposition, ImageRegion, ImageSize } from '../chat/imageDraw
 import { FRAME_BOXES, idsListText, imagePictureShows, SHEET_PADDING, sheetGrid, sizeWithin, type ViewDetail } from './assetView'
 
 // The one picture of an `asset_view` call with `layout` "grid": its images
-// and the frame sheets of its video clips, top to bottom in the order of
+// and the pictures of its video clips (each one a frame sheet, with its
+// sound strip when the call asks for one), top to bottom in the order of
 // the call. A run of images goes side by side, in the rows of `sheetGrid`
 // (at most `MAX_SHEET_COLUMNS`, as even as can be), each image in the frame
 // box of `detail`, so that an image and a frame look the same size. Each
-// frame sheet is a line of its own, at its own size. The whole grid is then
-// made smaller to the picture side of the view. The webview draws it
-// (dez.controller/images/compose); controller/assetView.ts makes the
+// picture of a clip is a line of its own, at its own size. The whole grid
+// is then made smaller to the picture side of the view. The webview draws
+// it (dez.controller/images/compose); controller/assetView.ts makes the
 // pieces.
 
 /** The space between two lines of a grid, but between two lines of images,
@@ -16,8 +17,10 @@ import { FRAME_BOXES, idsListText, imagePictureShows, SHEET_PADDING, sheetGrid, 
  *  frames of each clip, and each run of images, together as one block. */
 const GRID_GAP = 16
 
-/** A piece of a grid: the image `id`, or the frame sheet of the video clip
- *  `id`, with the text of what the sheet shows (`frameSheetTexts`). */
+/** A piece of a grid: the image `id`, or the picture of the video clip
+ *  `id` (its frame sheet, with its sound strip under it, or the picture of
+ *  its sound alone when it has no sheet), with the text of what the
+ *  picture shows. */
 export type GridPiece =
   | { kind: 'image', id: string }
   | { kind: 'sheet', id: string, shows: string }
