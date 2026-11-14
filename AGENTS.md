@@ -214,7 +214,6 @@ Rules:
 - `key_store.rs`: `provider_keys.json`. `copilot.rs`: Copilot device flow and token refresh.
 - `lib.rs`: plugins, permission reasons, app bootstrap, and the quit hook (`RunEvent::Exit`) that stops the bundled tools.
 - `../tauri.linux.conf.json`: the Linux copy of the main window, with Tauri's native file drop on (a test in `lib.rs` keeps the two windows the same otherwise).
-- `../tauri.conf.json` `app.macOSPrivateApi` and the `macos-private-api` feature of the `tauri` crate (`Cargo.toml`) go together: they turn on element fullscreen in WKWebView, for the media player.
 - `../binaries/`: the ffmpeg and ffprobe programs that Dez ships, one pair per build target (Git LFS), with `manifest.json` (their release, sizes, and SHA-256) and `NOTICE.md` (their license); only `scripts/update-ffmpeg.js` writes this folder. `bundle.externalBin` (`../tauri.conf.json`), the one list of the programs, puts them next to the Dez program as `dez-ffmpeg` and `dez-ffprobe`; `../build.rs` reads that list, stops a build whose programs are not the files of the manifest, and gives the list to `bundled_tools.rs`.
 
 ## Persistence layout
@@ -292,6 +291,7 @@ Do not ever read, view, print, or `cat` `~/.config/dez/provider_keys.json`; it c
 - **`@tauri-apps/plugin-store` is unused**: app files use Dez's own Rust file I/O.
 - **Secrets wrapper is not a vault**: `src/utils/secret.ts`; never log provider headers, native HTTP payloads, or diagnostics without sanitization.
 - **Sounds and the ffmpeg programs are in Git LFS**: clone with LFS (`git lfs pull`). A pointer file in place of a sound builds with no error, and only `play()` fails (the e2e guard in `tests/e2e/notifications.e2e.ts` catches it); a pointer file in place of a program stops the build (`src-tauri/build.rs`).
+- **tauri-build puts the bundled programs next to a debug build**: keep it at 2.7 or newer; an older one copies them into a wrong folder with the build folder layout of Rust 1.100, and every run of a program fails as "missing" (`src-tauri/Cargo.toml`).
 - When using the `agentic_fetch` tool:
   - If searching the web, *ALWAYS* tell the tool to never use local tools like Grep, and only search the web
   - If searching local folders, *ALWAYS* tell the tool to restrict its searches to this folder only and to never search outside of it
