@@ -20,10 +20,11 @@ import { heldCachePaths } from './cacheHolds'
 import type { AppFileEntry } from './nativeTypes'
 
 // The cleanup of Settings › General › Delete Unused Files: the stored files
-// (pasted, dropped, and generated images and clips) that no text uses any
-// more, and the entries of Dez's cache folder that nothing uses (temp
-// copies of clips, left-over downloads, and work folders). The rules for
-// "unused" are in src/model/chat/unusedFiles.ts.
+// (pasted, dropped, and generated images and clips, and the copies of the
+// pictures that tools showed their model) that no text uses any more, and
+// the entries of Dez's cache folder that nothing uses (temp copies of clips,
+// left-over downloads, and work folders). The rules for "unused" are in
+// src/model/chat/unusedFiles.ts.
 
 // One scan or delete at a time: a scan that ran together with a delete
 // would count files that are gone a moment later.
@@ -38,10 +39,11 @@ function textsInMemory(): string[] {
 
 export default sbp('sbp/selectors/register', {
   // Finds the stored files that no conversation, open or closed tab, saved
-  // prompt, or job result of a reply names, and the cache entries that
-  // nothing uses, and adds up their size. `onProgress` gets the part of the
-  // scan that is done, from 0 to 1: the conversation files are the slow
-  // part, so it counts them. Nothing is deleted here.
+  // prompt, or work of a reply that runs (a job result, a picture copy of a
+  // tool round) names, and the cache entries that nothing uses, and adds up
+  // their size. `onProgress` gets the part of the scan that is done, from 0
+  // to 1: the conversation files are the slow part, so it counts them.
+  // Nothing is deleted here.
   //
   // The files are listed first, and the texts are read after that: the
   // conversation files, and then the texts in memory, which hold what is
@@ -107,11 +109,11 @@ export default sbp('sbp/selectors/register', {
   // tells what it did. The user answered a prompt since the scan, and a
   // reply can write text or start work in that time, so the texts in
   // memory and the held cache entries are read again: a file that one of
-  // them names or holds now stays. Only a file that a trash can delete
-  // (`storedFilePath`) and a cache entry of the cleanup (`cacheEntryKind`)
-  // go, so no other file is deleted through this selector. A file that
-  // cannot be deleted is logged and counted, and the other files still go.
-  // A missing file counts as deleted.
+  // them names or holds now stays. Only a stored file (`storedFilePath`) and
+  // a cache entry of the cleanup (`cacheEntryKind`) go, so no other file is
+  // deleted through this selector. A file that cannot be deleted is logged
+  // and counted, and the other files still go. A missing file counts as
+  // deleted.
   async 'dez.controller/unusedFiles/delete' (unused: UnusedFiles): Promise<UnusedFilesDeleted> {
     try {
       return await sbp('okTurtles.eventQueue/queueEvent', QUEUE, async (): Promise<UnusedFilesDeleted> => {

@@ -7,8 +7,10 @@ import { imageMediaType } from './images'
 // can see what the model saw, Dez keeps a copy of each picture in the views
 // folder, and the block of the call names the copies in its `pictures`
 // attribute (toolBlocks.ts). Only the panel of the call's chip shows them:
-// no request sends a copy or its name, and no `@id` names one. Only Delete
-// Unused Files deletes a copy, when no text names it (unusedFiles.ts).
+// no request sends a copy or its name, and no `@id` names one. Dez deletes
+// the copies of a call whose result no block takes, such as a stopped call
+// (controller/shownPictures.ts); else only Delete Unused Files deletes a
+// copy, when no text names it (unusedFiles.ts).
 
 /** One picture that a tool call showed its model, as its block keeps it. */
 export interface ShownPicture {
