@@ -158,12 +158,13 @@ async function viewImage(id: string, path: string, call: AssetViewCall, choice: 
 }
 
 /** A member of the grid picture of a view (`layout` "grid"): the file of
- *  its piece (an image, or the JPEG of a frame sheet), and the note of a
- *  frame sheet, which its asset gets only when the grid goes. */
+ *  its piece (an image, or the JPEG of a frame sheet), and for a frame
+ *  sheet, the picture of its clip, whose note its asset gets only when the
+ *  grid goes, and which goes as it is when the grid has no other member. */
 interface GridMember {
   file: Blob
   piece: GridPiece
-  note: string | null
+  sheet: ViewPicture | null
 }
 
 // The view of the image `id`, whose file is at `path`, for a grid: its
@@ -175,7 +176,7 @@ async function gridImage(id: string, path: string, choice: PictureChoice): Promi
   const item: AssetViewItem = { id, kind: 'image', facts: image.facts, notes: [], picture: null }
   if (image.kind !== 'read') return { item, member: null }
   if (choice === 'overLimit') item.notes.push(PICTURE_LIMIT_NOTE)
-  return { item, member: choice === 'show' ? { file: image.file, piece: { kind: 'image', id }, note: null } : null }
+  return { item, member: choice === 'show' ? { file: image.file, piece: { kind: 'image', id }, sheet: null } : null }
 }
 
 // The grid picture of `members`, for a view with `detail`, or the note of
@@ -489,8 +490,9 @@ async function viewClip(clip: ClipAttachment, call: AssetViewCall, choice: Pictu
  *  saved copies of those pictures (`saveShownPictures`). Each picture that
  *  fits in what is left of the picture budget of the reply goes; an asset
  *  whose picture does not fit gets a note in its place. With `layout`
- *  "grid" and at least 2 images and video clips, those go into one grid
- *  picture, after the pictures of the other assets. Throws a `ToolError`
+ *  "grid", the images and video clips go into one grid picture, after the
+ *  pictures of the other assets, when at least 2 of them give a part of
+ *  it; else each one gets its own picture. Throws a `ToolError`
  *  for bad arguments, for an id that names no image and no clip of the
  *  conversation, and for a crop of a clip or of less than one pixel. A
  *  model that reads no images (`imageInput` false) gets the facts and the
@@ -516,6 +518,20 @@ export async function assetViewResult(
   // With nothing left of one part of the budget, no picture fits, so Dez
   // does not make one. Else only the made picture tells its cost.
   const pictureChoice = (): PictureChoice => (!imageInput ? 'noImageInput' : left.pictures > 0 && left.tokens > 0 && left.bytes > 0 ? 'show' : 'overLimit')
+  // Keeps the picture of its own of `item` when it fits in what is left of
+  // the budget, and takes its cost from what is left; else the item gets
+  // the note of that cost in place of the picture.
+  const keepIfFits = (item: AssetViewItem): void => {
+    if (!item.picture) return
+    const cost = pictureCost(item.picture.part, item.picture.size)
+    const after = budgetAfter(left, cost)
+    if (after) {
+      left = after
+    } else {
+      item.notes.push(pictureCostNote(cost, left))
+      item.picture = null
+    }
+  }
   // The assets of a grid share one choice, made before the pictures of the
   // other assets take their part of the budget. Those pictures can spend
   // the budget, so the draw of the grid checks it again.
@@ -542,18 +558,11 @@ export async function assetViewResult(
       if (item.picture && inGrid.has(id)) {
         // The picture of a video clip of the grid (its frame sheet, with
         // its sound strip) is a member of it.
-        const { part, shows, note } = item.picture
-        members.push({ file: new Blob([part.bytes], { type: part.mediaType }), piece: { kind: 'sheet', id, shows }, note })
+        const { part, shows } = item.picture
+        members.push({ file: new Blob([part.bytes], { type: part.mediaType }), piece: { kind: 'sheet', id, shows }, sheet: item.picture })
         item.picture = null
-      } else if (item.picture) {
-        const cost = pictureCost(item.picture.part, item.picture.size)
-        const after = budgetAfter(left, cost)
-        if (after) {
-          left = after
-        } else {
-          item.notes.push(pictureCostNote(cost, left))
-          item.picture = null
-        }
+      } else {
+        keepIfFits(item)
       }
       items.push(item)
     }
@@ -562,19 +571,35 @@ export async function assetViewResult(
   const items = call.ids.some((id) => assets.clips.has(id)) ? await inWorkFolder(view) : await view(null)
   // A stop during the last asset does not wait for the draw of the grid.
   signal.throwIfAborted()
-  const gridGoes = members.length > 0 && pictureChoice() === 'show'
+  const membersGo = members.length > 0 && pictureChoice() === 'show'
   // A grid that cannot go gives each of its assets the note that it gets
   // when the call starts with a spent budget (`gridChoice`).
-  if (!gridGoes) for (const { piece } of members) items.find((item) => item.id === piece.id)?.notes.push(PICTURE_LIMIT_NOTE)
-  const grid = gridGoes ? await gridView(members, call.detail) : null
+  if (!membersGo) for (const { piece } of members) items.find((item) => item.id === piece.id)?.notes.push(PICTURE_LIMIT_NOTE)
+  // An asset of the grid can give no member: an image that the webview
+  // cannot decode, or a clip whose sheet failed or has no frame. A grid of
+  // the one member that is left would draw it in a frame box, much smaller
+  // than its picture with `separate`, so it gets that picture in place of
+  // the grid.
+  if (membersGo && members.length === 1) {
+    const [{ piece, sheet }] = members
+    const index = items.findIndex(({ id }) => id === piece.id)
+    if (sheet) {
+      items[index].picture = sheet
+    } else {
+      // `gridImage` read the image but made no picture of it.
+      items[index] = await viewImage(piece.id, assets.images.get(piece.id) as string, call, 'show')
+    }
+    keepIfFits(items[index])
+  }
+  const grid = membersGo && members.length > 1 ? await gridView(members, call.detail) : null
   if (grid?.picture) {
     const cost = pictureCost(grid.picture.part, grid.picture.size)
     const after = budgetAfter(left, cost)
     if (after) {
       left = after
       // The note of a frame sheet goes first, as the note of a picture.
-      for (const { piece, note } of members) {
-        if (note) items.find((item) => item.id === piece.id)?.notes.unshift(note)
+      for (const { piece, sheet } of members) {
+        if (sheet?.note) items.find((item) => item.id === piece.id)?.notes.unshift(sheet.note)
       }
     } else {
       grid.notes.push(gridCostNote(members.map(({ piece }) => piece.id), cost, left))

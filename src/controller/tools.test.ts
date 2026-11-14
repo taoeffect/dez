@@ -2627,6 +2627,39 @@ describe('dez.controller/tools/run', () => {
         expect(result.content).not.toContain('Grid picture')
       })
 
+      it('shows the image that is left of a grid whose clip gave no sheet as `separate` does, at its own size', async () => {
+        frameSheetEnd = { kind: 'exited', code: 1 }
+
+        const result = await assetView({ assets: '@a @b', layout: 'grid' })
+
+        expect(compositions).toStrictEqual([])
+        expect(shown.map(({ label, picture, size }) => ({ label, picture, size }))).toStrictEqual([
+          { label: 'asset_view: the image @a.', picture: { type: 'picture', mediaType: 'image/png', bytes: FOX_BYTES }, size: { width: 1000, height: 500 } },
+        ])
+        expect(result.content).not.toContain('Grid picture')
+        // 648 tokens and 4 bytes of base64.
+        expect(result.content.split('\n').at(-1)).toBe('Picture budget left in this reply: 19 pictures, 56,760 tokens and 20.0 MB of base64.')
+      })
+
+      it('shows the frame sheet that is left of a grid whose image the webview cannot decode as `separate` does, with its note', async () => {
+        redrawError = new Error('The image cannot be decoded.')
+
+        const result = await assetView({ assets: '@a @b', layout: 'grid', frames: 3, end: 2.5 })
+
+        expect(compositions).toStrictEqual([])
+        expect(shown.map(({ label, picture, size }) => ({ label, picture, size }))).toStrictEqual([
+          { label: `asset_view: ${SHEET_SHOWS}.`, picture: { type: 'picture', mediaType: 'image/jpeg', bytes: SHEET_JPEG }, size: { width: 968, height: 364 } },
+        ])
+        expect(result.content.split('\n').slice(1)).toStrictEqual([
+          expect.stringMatching(/^@b \| video \| /),
+          'Frame sheet of 0 s to 2.5 s: 3 frames in one row, at 0.417, 1.25, 2.083 s.',
+          expect.stringMatching(/^Loudness of 0 s to 2\.5 s: /),
+          expect.stringMatching(/^You see each picture /),
+          // 455 tokens and 80 bytes of base64.
+          'Picture budget left in this reply: 19 pictures, 56,953 tokens and 20.0 MB of base64.',
+        ])
+      })
+
       it('makes no grid when the budget has no picture left, and tells each asset that got none', async () => {
         budget = { ...budget, pictures: 0 }
 
