@@ -2,10 +2,10 @@
 //! tells the webview (`dez.native/showNotification`).
 //!
 //! Not tauri-plugin-notification: its desktop `show()` gives no click
-//! callback, and its releases from 2.5.0 need tauri 2.12. Not notify-rust
-//! either: on Linux it drops the `ActivationToken` signal that a Wayland
-//! activation needs, and on macOS it reports a body click only for a
-//! notification with an action, which macOS shows as an extra button.
+//! callback. Not notify-rust either: on Linux it drops the
+//! `ActivationToken` signal that a Wayland activation needs, and on macOS it
+//! reports a body click only for a notification with an action, which macOS
+//! shows as an extra button.
 
 use tauri::ipc::Channel;
 use tauri::WebviewWindow;

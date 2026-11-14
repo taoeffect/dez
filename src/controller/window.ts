@@ -5,7 +5,7 @@ import { debounce } from 'turtledash'
 import type { SettingsSnapshot } from '../model/state'
 import type { WindowGeometry } from '../model/state/settings'
 import { isMacPlatform } from '../utils/platform'
-import { fitWindowGeometry, screenInPoints, type Extent, type Point } from './windowFit'
+import { fitWindowGeometry, workAreaInPoints, type Extent, type Point } from './windowFit'
 
 // `minWidth` and `minHeight` of the main window in tauri.conf.json; the
 // window API cannot read them.
@@ -113,8 +113,8 @@ export default sbp('sbp/selectors/register', {
           ? { width: saved.width, height: saved.height, position: positionOf(saved), maximized: saved.maximized }
           : { width: inner.width / scale, height: inner.height / scale, position: null, maximized: false },
         {
-          monitors: isMacPlatform ? monitors.map(screenInPoints) : monitors,
-          primary: isMacPlatform && primary ? screenInPoints(primary) : primary,
+          monitors: isMacPlatform ? monitors.map(workAreaInPoints) : monitors,
+          primary: isMacPlatform && primary ? workAreaInPoints(primary) : primary,
           minSize: WINDOW_MIN_SIZE,
           frame,
         },
