@@ -102,17 +102,20 @@ const BROKEN_STREAM = [
 
 // This media server answers a generate request with JSON, an edit and an
 // upscale with the image's bytes, and a transcription with JSON, each in
-// two chunks. The file host answers the same way.
+// two chunks. The file host answers the same way. The OpenRouter-format
+// image request (`/images`) gets JSON with the price of the request.
 const MEDIA_BASE_URL = 'http://localhost:5050/api/v1'
 const WEBP_IMAGE = new TextEncoder().encode('RIFF\x0c\x00\x00\x00WEBPVP8 ')
 const JPEG_IMAGE = Uint8Array.from([0xff, 0xd8, 0xff, 0xe0, 0, 1])
 const HOSTED_IMAGE_URL = 'https://files.example.com/cat.jpg'
 const HOSTED_PAGE_URL = 'https://files.example.com/cat.html'
+const ANSWERED_IMAGE_COST = 0.12
 const MEDIA_ANSWERS = new Map([
   [`${MEDIA_BASE_URL}/image/generate`, { contentType: 'application/json', body: new TextEncoder().encode(JSON.stringify({ images: [bytesToBase64(WEBP_IMAGE)] })) }],
   [`${MEDIA_BASE_URL}/image/multi-edit`, { contentType: 'image/png', body: STORED_IMAGE }],
   [`${MEDIA_BASE_URL}/image/upscale`, { contentType: 'image/png', body: STORED_IMAGE }],
   [`${MEDIA_BASE_URL}/audio/transcriptions`, { contentType: 'application/json', body: new TextEncoder().encode(JSON.stringify({ text: ' Hello there. ', duration: 3 })) }],
+  [`${MEDIA_BASE_URL}/images`, { contentType: 'application/json', body: new TextEncoder().encode(JSON.stringify({ data: [{ b64_json: bytesToBase64(WEBP_IMAGE) }], usage: { cost: ANSWERED_IMAGE_COST } })) }],
   [HOSTED_IMAGE_URL, { contentType: 'image/jpeg', body: JPEG_IMAGE }],
   [HOSTED_PAGE_URL, { contentType: 'image/jpeg', body: new TextEncoder().encode('<html>Not here</html>') }],
 ])
@@ -1626,6 +1629,14 @@ describe('the price of a clip', () => {
 describe('the price of an image', () => {
   const quote = (providerId: string, modelId: string, kind: string, parameters: Record<string, unknown> = {}) =>
     sbp('dez.provider/mediaQuote', { providerId, modelId, kind, parameters }) as Promise<ProviderMediaQuote | null>
+  // An image request, and each step of it with the count of the image
+  // requests that went before it.
+  async function generateImage(providerId: string, modelId: string): Promise<[ProviderGenerateMediaResult, Array<[MediaProgress, number]>]> {
+    const steps: Array<[MediaProgress, number]> = []
+    const onProgress = (progress: MediaProgress) => steps.push([progress, streamRequests.length])
+    const result = await sbp('dez.provider/generateMedia', { providerId, modelId, kind: 'image', prompt: 'A red fox', onProgress }) as ProviderGenerateMediaResult
+    return [result, steps]
+  }
 
   // A model in the model cache, as a model check leaves it.
   function cacheModel(providerId: string, model: Record<string, unknown>, entry: unknown, mediaEntry?: unknown) {
@@ -1680,6 +1691,15 @@ describe('the price of an image', () => {
       expect([await quote('media', 'm', 'image', { resolution: '4K' }), await quote('media', 'm', 'image')]).toStrictEqual([{ usd: 0.05 }, null])
       expect(httpRequests).toStrictEqual([])
     })
+
+    it('tells the price of a request when it goes, and gives it as the cost of the request', async () => {
+      cacheModel('media', { id: 'm', request: 'image' }, pricing({ generation: { usd: 0.01 } }))
+
+      const [result, steps] = await generateImage('media', 'm')
+
+      expect([result.cost, steps]).toStrictEqual([0.01, [[{ phase: 'sent', jobId: null, quote: 0.01 }, 0]]])
+      expect(httpRequests).toStrictEqual([])
+    })
   })
 
   describe('from the price records of the model', () => {
@@ -1726,6 +1746,15 @@ describe('the price of an image', () => {
       httpAnswers.set(RECORDS_URL, { status: 404, json: { error: 'No model' } })
 
       await expect(quote('routed', 'acme/pic', 'image')).rejects.toThrow('Details: HTTP 404: No model')
+    })
+
+    it('asks for the records before an image request, and gives the price that the answer tells over the quote', async () => {
+      httpAnswers.set(RECORDS_URL, { status: 200, json: endpoints([record(0.13)]) })
+
+      const [result, steps] = await generateImage('routed', 'acme/pic')
+
+      expect([result.cost, steps]).toStrictEqual([ANSWERED_IMAGE_COST, [[{ phase: 'sent', jobId: null, quote: 0.13 }, 0]]])
+      expect(httpRequests.map(({ url }) => url)).toStrictEqual([RECORDS_URL])
     })
   })
 })

@@ -1,4 +1,5 @@
 import { tagEscape } from '../chat/tagEscape'
+import { usdText } from '../providers/modelPrices'
 import { ToolError, type ToolArguments, type ToolDefinition, type ToolParameter } from './types'
 
 // Jobs: the slow work of a Dez tool, such as a request to a media model. A
@@ -270,7 +271,7 @@ export function jobsWaitText(results: readonly JobResult[], running: number): st
   let rest = 'No job still runs.'
   if (running === 1) rest = '1 job still runs: call jobs_wait again to get its result.'
   else if (running > 1) rest = `${running} jobs still run: call jobs_wait again to get their results (with \`all\`, one call waits for all of them).`
-  return [`${results.length === 1 ? '1 job' : `${results.length} jobs`} ended. ${rest}`, ...results.map(jobPart)].join('\n\n')
+  return [`${jobCountText(results.length)} ended. ${rest}`, ...results.map(jobPart)].join('\n\n')
 }
 
 // One part of `jobPart`. The body is escaped, so its first `\n</job>` line
@@ -306,6 +307,10 @@ export interface JobInfo {
   /** The last state that the job reported; blank for none. */
   state: string
   call: JobCall
+  /** The price in USD of the paid request of the job: the provider's own,
+   *  else its quote, and 0 for a request that failed. Null when no price
+   *  is known; absent for a job that sent no paid request. */
+  cost?: number | null
 }
 
 /** The result of a `jobs_list` call for a reply with no job. */
@@ -317,13 +322,32 @@ function resultColumn(job: JobInfo): string {
   return job.delivered ? 'given' : 'ready'
 }
 
+// A count of jobs, as in `1 job`, `3 jobs`.
+function jobCountText(count: number): string {
+  return count === 1 ? '1 job' : `${count} jobs`
+}
+
+// The last line of `jobsListText`: what the paid requests of the jobs cost,
+// from the prices that the jobs know (`JobInfo.cost`), with no request.
+function spendText(jobs: readonly JobInfo[]): string {
+  const priced = jobs.flatMap(({ cost }) => typeof cost === 'number' ? [cost] : [])
+  const unpriced = jobs.filter(({ cost }) => cost === null).length
+  if (priced.length === 0 && unpriced === 0) return 'Spend: none: no job of this reply sent a paid request.'
+  if (priced.length === 0) return `Spend: unknown: no price is known for ${unpriced === 1 ? 'the job' : `the ${unpriced} jobs`} that sent a paid request.`
+  const total = priced.reduce((sum, cost) => sum + cost, 0)
+  const rest = unpriced === 0 ? '' : `, and ${jobCountText(unpriced)} with no known price`
+  return `Spend (an estimate): ${usdText(total)} for ${jobCountText(priced.length)} with a known price `
+    + `(the provider's price, else its quote; a failed request costs nothing)${rest}.`
+}
+
 /** The result of a `jobs_list` call: a first line with the count, the
  *  columns, and what their values mean, then one line for each job, in the
- *  order of their starts. The label of the call is the last column: it is
- *  free text, which can hold the column mark. */
+ *  order of their starts, and a last line with the spend of the reply on
+ *  paid requests. The label of the call is the last column of a job line:
+ *  it is free text, which can hold the column mark. */
 export function jobsListText(jobs: readonly JobInfo[]): string {
   if (jobs.length === 0) return NO_JOBS_TEXT
-  const head = `${jobs.length === 1 ? '1 job' : `${jobs.length} jobs`} of this reply (number | id | tool | status | result | seconds | call). `
+  const head = `${jobCountText(jobs.length)} of this reply (number | id | tool | status | result | seconds | call). `
     + 'number: the place of the job in the order of the starts. '
     + 'result: `ready` means that the next jobs_wait gives it, `given` that a jobs_wait gave it, and `-` that there is none. '
     + 'seconds: how long the job ran, or runs so far. '
@@ -331,7 +355,7 @@ export function jobsListText(jobs: readonly JobInfo[]): string {
   const rows = jobs.map((job) => [
     job.call.number, job.id, job.tool, job.status, resultColumn(job), Math.round(job.elapsedMs / 1000), job.call.label === '' ? '-' : job.call.label,
   ].join(' | '))
-  return [head, ...rows].join('\n')
+  return [head, ...rows, spendText(jobs)].join('\n')
 }
 
 /** The result of a `job_inspect` call: the status of the job, what to do
@@ -398,6 +422,7 @@ export const JOBS_LIST_TOOL: ToolDefinition = {
   name: 'jobs_list',
   description: 'List the jobs that this reply started, in the order of the starts: the number, the id, the tool, and the status of each job, '
     + 'whether `jobs_wait` gave its result, how long it ran, and how its call begins. '
+    + 'The last line is an estimate of what the paid requests of these jobs cost. '
     + 'It does not wait, and it gives no result of a job.',
   parameters: [],
 }

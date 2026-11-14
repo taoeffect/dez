@@ -8,7 +8,7 @@ import { TooManyImagesError } from './clipImages'
 import { FORBIDDEN_BODY_KEYS, type ProviderConfig } from './config'
 import { ProviderHttpError } from './errors'
 import type { ImageSizeRules, InputImageLimits } from './imageSize'
-import { MEDIA_FORMATS, type ClipEntryPrice, type ClipFormat, type ClipInput, type ClipJob, type ImageFormat, type ImageQuoteFormat, type MediaFormat, type MediaInput, type MediaWireRequest, type TextFormat } from './mediaFormats'
+import { MEDIA_FORMATS, type AnswerCost, type ClipEntryPrice, type ClipFormat, type ClipInput, type ClipJob, type ImageFormat, type ImageQuoteFormat, type MediaFormat, type MediaInput, type MediaWireRequest, type TextFormat } from './mediaFormats'
 import { effectiveParameterValues, type ParameterValues } from './modelParameters'
 import { modelTokenPrice } from './modelPrices'
 import { isRecord, modelCapability, modelData, modelOutputsAndRequest, modelReadableName, modelReleased, unsupportedSettings } from './modelParsing'
@@ -337,8 +337,9 @@ export class Provider {
     return this.mediaApiRequest(this.withModelBody(kind, modelId, this.imageFormat().request(kind, this.config.baseUrl, modelId, input)), secret)
   }
 
-  // The images of a 2xx response to `imageRequest`.
-  imageResult(kind: ImageKind, head: NativeHttpResponseHead, body: Uint8Array): GeneratedMedia[] {
+  // The images of a 2xx response to `imageRequest`, with the price of the
+  // request when the answer tells it.
+  imageResult(kind: ImageKind, head: NativeHttpResponseHead, body: Uint8Array): { media: GeneratedMedia[] } & AnswerCost {
     return this.imageFormat().parseResponse(kind, head, body)
   }
 
@@ -347,8 +348,9 @@ export class Provider {
     return this.mediaApiRequest(this.withModelBody(kind, modelId, this.textFormat().request(kind, this.config.baseUrl, modelId, input)), secret)
   }
 
-  // The text of the body of a 2xx response to `textRequest`.
-  textResult(kind: TextKind, body: Uint8Array): string {
+  // The text of the body of a 2xx response to `textRequest`, with the
+  // price of the request when the answer tells it.
+  textResult(kind: TextKind, body: Uint8Array): { text: string } & AnswerCost {
     return this.textFormat().parseResponse(kind, body)
   }
 

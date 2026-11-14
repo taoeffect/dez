@@ -43,8 +43,9 @@ export async function startMockServer (handler: MockHandler): Promise<MockServer
 }
 
 /** Passes the chat requests (a POST to one of `chatPaths`) to `onChat`.
- *  A GET to a path of `jsonAnswers` gets the value of that path as JSON at
- *  once, such as a model list. Every other request gets a 404. */
+ *  A GET or another POST to a path of `jsonAnswers` gets the value of that
+ *  path as JSON at once, such as a model list or a price. Every other
+ *  request gets a 404. */
 export async function startChatMock (
   chatPaths: readonly string[],
   onChat: MockHandler,
@@ -53,7 +54,7 @@ export async function startChatMock (
   return startMockServer((req, res, body, bytes) => {
     const path = req.url ?? ''
     if (req.method === 'POST' && chatPaths.includes(path)) return onChat(req, res, body, bytes)
-    if (req.method === 'GET' && Object.hasOwn(jsonAnswers, path)) {
+    if ((req.method === 'GET' || req.method === 'POST') && Object.hasOwn(jsonAnswers, path)) {
       res.writeHead(200, { 'Content-Type': 'application/json' })
       res.end(JSON.stringify(jsonAnswers[path]))
       return

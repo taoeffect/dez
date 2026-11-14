@@ -69,6 +69,10 @@ export interface ProviderStreamChatResult {
 export interface MediaProgress {
   phase: 'sent' | 'queued' | 'downloading'
   jobId: string | null
+  // Only in the `sent` step, and only when Dez knows it: the price in USD
+  // of the request (a quote of the provider, or a list price for the
+  // request's text).
+  quote?: number
 }
 
 // The input of dez.provider/generateMedia. `kind` is the model's request
@@ -126,6 +130,9 @@ export interface ProviderGenerateMediaResult {
   clips: GeneratedClip[]
   // The text that the model wrote (a transcription), which can be empty.
   text?: string
+  // The price in USD of the request: the one that the provider's answer
+  // tells, else the quote of the `sent` step. Absent when Dez knows none.
+  cost?: number
 }
 
 // The input of dez.provider/mediaQuote: the fields of the

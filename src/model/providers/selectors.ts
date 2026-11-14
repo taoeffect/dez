@@ -7,6 +7,7 @@ import { mp4DurationSeconds } from '../chat/mp4Duration'
 import type { MessagePart } from '../chat/types'
 import { modelRefKey } from '../chat/modelRef'
 import type { ModelCache } from '../persistence/types'
+import { untilAborted } from '../../utils/abort'
 import { bytesToBase64 } from '../../utils/base64'
 import { ExplainedError, explainedError, rawErrorText, REPORT_ADVICE } from '../../utils/errorText'
 import { fileNameOf } from '../../utils/fileName'
@@ -24,7 +25,7 @@ import { knownLimitsOf, type KnownLimit } from './knownLimits'
 import { learnedImageLimitRow, learnedImagesProblem } from './learnedImageLimit'
 import type { InputClipPart, MediaWireRequest } from './mediaFormats'
 import { effectiveParameterValues, type ParameterValues } from './modelParameters'
-import type { PriceQuote } from './modelPrices'
+import { textLengthCost, type PriceQuote } from './modelPrices'
 import { modelToggles, type ToggleModel } from './modelToggles'
 import type { Provider, ProviderChatRequest } from './provider'
 import { getProvider, listProviders, requireProvider } from './registry'
@@ -349,6 +350,30 @@ function parameterValues(providerId: ProviderId, modelId: string, chosen: Readon
   return effectiveParameterValues(model?.parameters ?? [], chosen)
 }
 
+// The price in USD of one media request before it goes, as far as Dez can
+// tell it at no cost: a fresh quote of the quote cache, else the answer to
+// the provider's free price request (dez.provider/mediaQuote, which fills
+// that cache), else, for speech with a list price per character, that
+// price for the characters of the prompt. Undefined when no price is
+// known, and for a text kind (a transcription), whose price is by the
+// length of its clip. A price request that fails is only logged: the
+// media request goes all the same. A stop of `input.signal` rejects.
+async function mediaRequestQuote(provider: Provider, input: ProviderGenerateMediaInput, values: ParameterValues, model: ModelInfo | null): Promise<number | undefined> {
+  const { kind, modelId, signal } = input
+  if (isTextKind(kind)) return undefined
+  const cached = sbp('dez.model/modelCache/quote', { providerId: provider.id, modelId, kind, values }) as PriceQuote | null
+  if (cached) return cached.usd
+  try {
+    const request = () => sbp('dez.provider/mediaQuote', { providerId: provider.id, modelId, kind, parameters: input.parameters }) as Promise<ProviderMediaQuote | null>
+    const quote = await (signal ? untilAborted(request, signal) : request())
+    if (quote?.usd !== undefined) return quote.usd
+  } catch (error) {
+    if (signal?.aborted) throw error
+    console.error(`Failed to get the price of a request to ${modelId} of ${provider.name}; the request goes with no known price:`, error)
+  }
+  return kind === 'tts' ? textLengthCost(model?.price, input.prompt) : undefined
+}
+
 export default sbp('sbp/selectors/register', {
   async 'dez.provider/infos' (): Promise<ProviderInfo[]> {
     let keyIds: string[] = []
@@ -558,6 +583,10 @@ export default sbp('sbp/selectors/register', {
   // - A text (a transcription of an audio clip): one request through
   //   dez.http/stream, and the text of its answer in `text`.
   //
+  // Before an image or a clip request goes, Dez gets its price at no cost
+  // (`mediaRequestQuote`): the `sent` step tells it, and the result's
+  // `cost` is the price that the answer tells, else that one.
+  //
   // A provider takes the money for a job when it starts. So after that
   // point, a failure and a stop log the job id, and the message of a
   // failure names it: with the id, the user can ask the provider for the
@@ -572,7 +601,9 @@ export default sbp('sbp/selectors/register', {
     }
     signal?.addEventListener('abort', cancelRequest)
     let jobId: string | null = null
-    const progress = (phase: MediaProgress['phase']) => input.onProgress?.({ phase, jobId })
+    const progress = (phase: MediaProgress['phase'], quote?: number) => input.onProgress?.({ phase, jobId, ...(quote !== undefined && { quote }) })
+    // The `cost` of a result: absent when no price is known.
+    const priced = (cost: number | undefined) => (cost === undefined ? {} : { cost })
     try {
       const paths = input.images ?? []
       const clips = input.clips ?? []
@@ -607,16 +638,19 @@ export default sbp('sbp/selectors/register', {
         progress('sent')
         const { response, chunks } = await sbp('dez.http/stream', request, requestId) as NativeHttpStreamResult
         await assertStreamResponseOk(provider, response, chunks)
-        return { media: [], clips: [], text: provider.textResult(kind, await readNativeChunkBytes(chunks)) }
+        const { text, cost } = provider.textResult(kind, await readNativeChunkBytes(chunks))
+        return { media: [], clips: [], text, ...priced(cost) }
       }
 
       if (!isClipKind(kind)) {
         const request = provider.imageRequest(kind, modelId, { prompt: input.prompt, images, values }, await requestSecret(provider))
+        const quote = await mediaRequestQuote(provider, input, values, cachedModel)
         signal?.throwIfAborted()
-        progress('sent')
+        progress('sent', quote)
         const { response, chunks } = await sbp('dez.http/stream', request, requestId) as NativeHttpStreamResult
         await assertStreamResponseOk(provider, response, chunks)
-        return { media: provider.imageResult(kind, response, await readNativeChunkBytes(chunks)), clips: [] }
+        const { media, cost } = provider.imageResult(kind, response, await readNativeChunkBytes(chunks))
+        return { media, clips: [], ...priced(cost ?? quote) }
       }
 
       const limitMs = input.timeoutMs ?? CLIP_JOB_TIMEOUT_MS
@@ -640,8 +674,9 @@ export default sbp('sbp/selectors/register', {
       // tells a field value that the model needs: the request goes once
       // more with it (`Provider.clipRequestAfterRefusal`).
       const firstRequest = provider.clipRequest(kind, modelId, clipInput)
+      const quote = await mediaRequestQuote(provider, input, values, cachedModel)
       signal?.throwIfAborted()
-      progress('sent')
+      progress('sent', quote)
       const first = await sendClipRequest(run, apiRequest(firstRequest), null, cacheDir).catch(async (error: unknown) => {
         const refusal = provider.imageCountRefusal(kind, error, images.length)
         if (refusal) {
@@ -654,7 +689,7 @@ export default sbp('sbp/selectors/register', {
         console.error(`${provider.name} refused a request to ${modelId}, which goes once more with the fields that the refusal names:`, error)
         return sendClipRequest(run, apiRequest(fixed), null, cacheDir)
       })
-      if ('clip' in first) return { media: [], clips: [first.clip] }
+      if ('clip' in first) return { media: [], clips: [first.clip], ...priced(quote) }
 
       const job = provider.clipJob(kind, modelId, first.data)
       jobId = job.id
@@ -662,13 +697,13 @@ export default sbp('sbp/selectors/register', {
       for (;;) {
         await clipPollDelay(signal)
         const poll = await sendClipRequest(run, apiRequest(job.poll), jobId, cacheDir)
-        if ('clip' in poll) return { media: [], clips: [poll.clip] }
+        if ('clip' in poll) return { media: [], clips: [poll.clip], ...priced(quote) }
 
         const state = job.state(poll.data)
         if (state === 'running') continue
         if ('url' in state) {
           const clip = { kind: CLIP_KINDS[kind], mediaType: state.mediaType, src: state.url, url: state.url, expires: new Date(state.expires).toISOString(), jobId }
-          return { media: [], clips: [clip] }
+          return { media: [], clips: [clip], ...priced(state.cost ?? quote) }
         }
         // A file URL comes from a response and can name any host, so its
         // request has no header: the API key goes only to the URLs that
@@ -678,7 +713,7 @@ export default sbp('sbp/selectors/register', {
         const request: NativeHttpRequest = keyed ? apiRequest(state.download) : { method: 'GET', url: state.fileUrl }
         const download = await sendClipRequest(run, request, jobId, cacheDir, keyed)
         if (!('clip' in download)) throw new UnusableAnswerError('The answer to the clip download holds no clip.')
-        return { media: [], clips: [download.clip] }
+        return { media: [], clips: [download.clip], ...priced(state.cost ?? quote) }
       }
     } catch (error) {
       const explained = explainedProviderError(provider, error, reader)

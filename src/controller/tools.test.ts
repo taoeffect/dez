@@ -73,7 +73,7 @@ let generateMedia: (input: ProviderGenerateMediaInput) => Promise<ProviderGenera
 // comes), and the ids of the requests that were cancelled. Set in
 // beforeEach and by the tests.
 let chatRequests: ProviderStreamChatInput[] = []
-let streamChat: (input: ProviderStreamChatInput) => Promise<void>
+let streamChat: (input: ProviderStreamChatInput) => Promise<Pick<ProviderStreamChatResult, 'cost'> | void>
 let cancelledRequests: string[] = []
 
 sbp('sbp/selectors/register', {
@@ -126,8 +126,7 @@ sbp('sbp/selectors/register', {
   },
   async 'dez.provider/streamChat' (input: ProviderStreamChatInput): Promise<ProviderStreamChatResult> {
     chatRequests.push(input)
-    await streamChat(input)
-    return { requestId: input.requestId ?? '' }
+    return { requestId: input.requestId ?? '', ...await streamChat(input) ?? {} }
   },
   async 'dez.http/cancelStream' (requestId: string): Promise<void> {
     cancelledRequests.push(requestId)
@@ -1008,10 +1007,11 @@ describe('dez.controller/tools/run', () => {
 
       const { content, isError } = await jobTool('jobs_list')
       expect(isError).toBe(false)
-      expect(content.split('\n').slice(1)).toStrictEqual([
+      expect(content.split('\n').slice(1, -1)).toStrictEqual([
         `1 | ${running} | model_invoke | running | - | 0 | A red fox`,
         `2 | ${ended} | video | finished | given | 0 | -`,
       ])
+      expect(content.split('\n').at(-1)).toBe('Spend: none: no job of this reply sent a paid request.')
     })
 
     it('job_inspect tells the status and the last state of the job that the call names', async () => {
@@ -1056,11 +1056,12 @@ describe('dez.controller/tools/run', () => {
       const SKETCH = { model: 'venice/sketcher', prompt: 'Draw a fox.' }
 
       // A request that the provider answers when its test calls `answer`.
-      // It reports the provider's job id first.
-      function heldRequest(): { answer: (result: ProviderGenerateMediaResult) => void } {
+      // It goes with the price `quote`, and reports the provider's job id.
+      function heldRequest({ quote }: { quote?: number } = {}): { answer: (result: ProviderGenerateMediaResult) => void } {
         let answer!: (result: ProviderGenerateMediaResult) => void
         const result = new Promise<ProviderGenerateMediaResult>((resolve) => { answer = resolve })
         generateMedia = (input) => {
+          input.onProgress?.({ phase: 'sent', jobId: null, ...(quote !== undefined && { quote }) })
           input.onProgress?.({ phase: 'queued', jobId: 'q-17' })
           return result
         }
@@ -1254,7 +1255,7 @@ describe('dez.controller/tools/run', () => {
       it('saves no image that still comes after its job ended', async () => {
         const request = heldRequest()
         const abort = new AbortController()
-        const work = invokeModel(invocationOf(PAINT), abort.signal, () => {}, { toolsAllowed: false })
+        const work = invokeModel(invocationOf(PAINT), abort.signal, () => {}, () => {}, { toolsAllowed: false })
 
         abort.abort()
         request.answer({ media: [PNG], clips: [] })
@@ -1286,6 +1287,46 @@ describe('dez.controller/tools/run', () => {
         expect(result).toContain('status="timed out"')
         expect(result).toContain('q-17')
         expect(mediaRequests[0].signal?.aborted).toBe(true)
+      })
+
+      // The spend line of jobs_list adds these prices.
+      it('gives a job the quote of its request while it runs, then the price of the result', async () => {
+        const request = heldRequest({ quote: 0.3 })
+        await jobTool('model_invoke', FILM)
+        expect(jobs.list()[0].cost).toBe(0.3)
+
+        request.answer({ media: [], clips: [MADE_VIDEO], cost: 0.25 })
+        await jobResult()
+        expect(jobs.list()[0].cost).toBe(0.25)
+      })
+
+      it('keeps the quote of a job that the reply stopped, and has no known price for a request with no quote', async () => {
+        const request = heldRequest({ quote: 0.3 })
+        await jobTool('model_invoke', FILM)
+        heldRequest()
+        await jobTool('model_invoke', FILM)
+
+        jobs.stopAll()
+        request.answer({ media: [], clips: [MADE_VIDEO], cost: 0.25 })
+        await vi.waitFor(() => expect(native.deletedFiles).toHaveLength(1))
+
+        expect(jobs.list().map((job) => job.cost)).toStrictEqual([0.3, null])
+      })
+
+      // A provider gives back the money of a request that it refused.
+      it('counts a request that failed as free, and a job whose request did not go as one with no paid request', async () => {
+        let sends = true
+        generateMedia = async (input) => {
+          if (sends) input.onProgress?.({ phase: 'sent', jobId: null, quote: 0.3 })
+          throw new ExplainedError('Venice refused the request: the prompt breaks its rules.')
+        }
+        await jobTool('model_invoke', PAINT)
+        sends = false
+        await jobTool('model_invoke', PAINT)
+        await jobTool('jobs_wait', { all: true })
+
+        const [refused, unsent] = jobs.list()
+        expect([refused.status, refused.cost, unsent.status, Object.hasOwn(unsent, 'cost')]).toStrictEqual(['failed', 0, 'failed', false])
       })
 
       describe('to a text model', () => {
@@ -1358,6 +1399,24 @@ describe('dez.controller/tools/run', () => {
 
           expect((await jobTool('job_inspect', { job_id: id })).content).toContain(invocationAnswerStateText(5))
           answer.end()
+        })
+
+        it('has no known price while the answer comes, then the price of the request, and none after a failure', async () => {
+          let end!: (cost: number) => void
+          streamChat = async (input) => {
+            await input.onToken('A fox.')
+            return { cost: await new Promise<number>((resolve) => { end = resolve }) }
+          }
+          await jobTool('model_invoke', ASK)
+          expect(jobs.list()[0].cost).toBeNull()
+
+          end(0.002)
+          await jobResult()
+          streamChat = async () => { throw new ExplainedError('Venice refused the request.') }
+          await jobTool('model_invoke', ASK)
+          await jobResult()
+
+          expect(jobs.list().map((job) => [job.status, job.cost])).toStrictEqual([['finished', 0.002], ['failed', null]])
         })
 
         describe(`whose answer has more than ${INVOCATION_TEXT_CAP} characters`, () => {
@@ -1441,7 +1500,7 @@ describe('dez.controller/tools/run', () => {
             await input.onImage(PNG)
           }
 
-          expect(await invokeModel(invocationOf(SKETCH), abort.signal, () => {}, { toolsAllowed: false })).toStrictEqual({ text: '', isError: false, assets: [] })
+          expect(await invokeModel(invocationOf(SKETCH), abort.signal, () => {}, () => {}, { toolsAllowed: false })).toStrictEqual({ text: '', isError: false, assets: [] })
           expect(savedImages).toStrictEqual([])
         })
 

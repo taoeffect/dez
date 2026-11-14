@@ -22,6 +22,7 @@ import { unexpectedToolErrorText, unknownToolText } from '../model/tools/registr
 import { parseSubcommandCall, type SubcommandTool } from '../model/tools/subcommands'
 import { ToolError, type ToolArguments, type ToolRunResult } from '../model/tools/types'
 import { ffmpegCall, ffprobeCall, joinClipsCall, VIDEO_TOOL, videoInputsText } from '../model/tools/videoTool'
+import { untilAborted } from '../utils/abort'
 import { rawErrorText } from '../utils/errorText'
 import { audioClipSeconds, cutAudioClip } from './audioTool'
 import { discardMadeAssets, writeJobAssets, type JobWork, type ReplyJobs } from './jobs'
@@ -74,23 +75,6 @@ export interface ToolRunContext {
 // aborts when the user stops the reply; a runner that waits on something
 // must stop then.
 type ToolRunner = (args: ToolArguments, signal: AbortSignal, context: ToolRunContext) => Promise<string>
-
-// Runs `start` and waits for its work until the user stops the reply; then
-// rejects at once. The work itself goes on: a model-list check still updates
-// the model cache. Nothing starts after a stop, so a stopped reply sends no
-// request, and no work that nobody waits for can reject unhandled.
-function untilAborted<T>(start: () => Promise<T>, signal: AbortSignal): Promise<T> {
-  signal.throwIfAborted()
-  const work = start()
-  return new Promise<T>((resolve, reject) => {
-    const onAbort = () => reject(signal.reason)
-    signal.addEventListener('abort', onAbort, { once: true })
-    work.then(resolve, reject).finally(() => signal.removeEventListener('abort', onAbort))
-    // `start` runs before the listener is added, and a stop in it (a selector
-    // that stops the reply before its first await) fires no event any more.
-    if (signal.aborted) onAbort()
-  })
-}
 
 // The sections of the tab of a call, where a tool finds the images and
 // the clips that the call names; none for a tab that is gone.
@@ -380,7 +364,7 @@ const TOOL_RUNNERS: Record<string, ToolRunner> = {
       providerSettings,
       sections: callSections(context),
     })
-    return startJob(context, MODEL_INVOKE_TOOL.name, (signal, report) => invokeModel(invocation, signal, report, { toolsAllowed: false }), {
+    return startJob(context, MODEL_INVOKE_TOOL.name, (signal, report, reportCost) => invokeModel(invocation, signal, report, reportCost, { toolsAllowed: false }), {
       timeoutMs: invocation.timeoutMs,
       hidesAssets: isIntermediate(args),
       label: jobCallLabel(String(args.prompt ?? '')),

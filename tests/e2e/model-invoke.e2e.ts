@@ -101,6 +101,8 @@ describe('model_invoke', () => {
         { provider: HELPER },
       ],
       heldPaths: [GENERATE_PATH, EDIT_PATH, QUEUE_PATH, RETRIEVE_PATH],
+      // The free price request that goes before each request of a song.
+      jsonAnswers: { [`/${STUDIO.id}/v1/audio/quote`]: { quote: 0.05 } },
     })
     browser = setup.browser
     generatedDir = generatedImagesDir(setup.app.home)

@@ -181,13 +181,28 @@ describe('jobsListText', () => {
     ]).split('\n')
 
     expect(lines[0]).toMatch(/^5 jobs of this reply \(number \| id \| tool \| status \| result \| seconds \| call\)\. /)
-    expect(lines.slice(1)).toStrictEqual([
+    expect(lines.slice(1, -1)).toStrictEqual([
       '1 | j-aaaa | model_invoke | running | - | 12 | A fox | a dog',
       '2 | j-bbbb | model_invoke | finished | ready | 40 | -',
       '3 | j-cccc | video | failed | given | 1 | join_clips @c @d',
       '4 | j-dddd | model_invoke | timed out | given | 1800 | Rain',
       '5 | j-eeee | model_invoke | stopped | - | 3 | Wind',
     ])
+  })
+
+  // The last line. A job with no `cost` sent no paid request; a null cost
+  // is a paid request with no known price.
+  it.each([
+    ['no job sent a paid request', [undefined, undefined], 'Spend: none: no job of this reply sent a paid request.'],
+    ['no paid job has a known price', [null, undefined], 'Spend: unknown: no price is known for the job that sent a paid request.'],
+    ['no paid jobs have a known price', [null, null], 'Spend: unknown: no price is known for the 2 jobs that sent a paid request.'],
+    ['every paid job has a known price', [0.1, 0.2, 0, undefined],
+      'Spend (an estimate): $0.30 for 3 jobs with a known price (the provider\'s price, else its quote; a failed request costs nothing).'],
+    ['some paid jobs have no known price', [0.0042, null, null],
+      'Spend (an estimate): $0.0042 for 1 job with a known price (the provider\'s price, else its quote; a failed request costs nothing), and 2 jobs with no known price.'],
+  ])('ends with the spend of the reply when %s', (_name, costs, spend) => {
+    const jobs = costs.map((cost, index) => job({ id: `j-00${index}`, ...(cost !== undefined && { cost }) }))
+    expect(jobsListText(jobs).split('\n').at(-1)).toBe(spend)
   })
 
   it('says so for a reply with no job', () => {

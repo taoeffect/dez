@@ -1,7 +1,7 @@
 import sbp from '@sbp/sbp'
 import { TooManyImagesError, tooManyImagesMessage } from '../model/providers/clipImages'
 import { InputImageError } from '../model/providers/errors'
-import type { MediaProgress, ProviderGenerateMediaResult } from '../model/providers/streamTypes'
+import type { MediaProgress, ProviderGenerateMediaResult, ProviderStreamChatResult } from '../model/providers/streamTypes'
 import type { GeneratedMedia } from '../model/providers/types'
 import { unreadableImageText } from '../model/tools/imageTool'
 import {
@@ -67,9 +67,14 @@ export interface InvocationRights {
 // - A text (a transcription) is the result text of the job.
 // - `report` gets each step of the request, with the provider's own job id
 //   as soon as there is one.
-async function invokeMediaModel(invocation: MediaInvocation, signal: AbortSignal, report: (state: string) => void): Promise<JobOutcome> {
+// - `reportCost` gets the quote when the request goes, then the cost of
+//   the result. A request that failed counts 0, as a provider gives back
+//   the money of a request that it refused. A stopped or timed-out job
+//   keeps its quote: `ReplyJobs` takes no report after the end of a job.
+async function invokeMediaModel(invocation: MediaInvocation, signal: AbortSignal, report: (state: string) => void, reportCost: (usd: number | null) => void): Promise<JobOutcome> {
   const { provider, model, kind, request, parameters, timeoutMs } = invocation
   report(INVOCATION_READS_INPUTS)
+  let sent = false
   let result: ProviderGenerateMediaResult
   try {
     result = await sbp('dez.provider/generateMedia', {
@@ -83,13 +88,20 @@ async function invokeMediaModel(invocation: MediaInvocation, signal: AbortSignal
       parameters,
       signal,
       timeoutMs,
-      onProgress: (progress: MediaProgress) => report(invocationStateText(provider.name, progress)),
+      onProgress: (progress: MediaProgress) => {
+        if (progress.phase === 'sent') {
+          sent = true
+          reportCost(progress.quote ?? null)
+        }
+        report(invocationStateText(provider.name, progress))
+      },
       reader: 'model',
     }) as ProviderGenerateMediaResult
   } catch (error) {
+    if (sent) reportCost(0)
     throw invocationError(invocation, error)
   }
-
+  reportCost(result.cost ?? null)
   const assets = result.clips.map(generatedClipAsset)
   // An abort cancelled the request, which can end the body of an image
   // early: a cut image is never saved. A clip that still came is whole,
@@ -117,10 +129,13 @@ async function invokeMediaModel(invocation: MediaInvocation, signal: AbortSignal
 // - An image of the answer is saved in the generated image folder, as in a
 //   reply of a chat model that makes images.
 // - `report` gets the count of the characters of the answer so far.
+// - `reportCost` gets null when the request goes, then its cost, when the
+//   provider or the model's list price tells it.
 async function invokeTextModel(
   invocation: ChatInvocation,
   signal: AbortSignal,
   report: (state: string) => void,
+  reportCost: (usd: number | null) => void,
   { toolsAllowed }: InvocationRights,
 ): Promise<JobOutcome> {
   const { provider, model, content, imageOutput, providerSettings } = invocation
@@ -132,8 +147,9 @@ async function invokeTextModel(
   let answer = ''
   let imageNotSaved = false
   report(invocationAnswerStateText(0))
+  reportCost(null)
   try {
-    await sbp('dez.provider/streamChat', {
+    const result = await sbp('dez.provider/streamChat', {
       providerId: provider.id,
       modelId: model.id,
       messages: [{ role: 'user', content }],
@@ -167,7 +183,8 @@ async function invokeTextModel(
           throw error
         }
       },
-    })
+    }) as ProviderStreamChatResult
+    reportCost(result.cost ?? null)
   } catch (error) {
     // An error of `onImage` does not end the request by itself. And
     // `ReplyJobs` reads no assets of a failed job, so the images that this
@@ -193,15 +210,22 @@ async function invokeTextModel(
  *  - A text (a transcription, the answer of a text model) is the result
  *    text of the job. It is never written into the reply: the calling
  *    model decides what the user sees.
- *  - `report` gets how far the request is.
+ *  - `report` gets how far the request is, and `reportCost` the price of
+ *    the paid request (`JobWork`).
  *
  *  Rejects with a `ToolError` for a failure that Dez knows
  *  (`invocationError`); `ReplyJobs` logs it with its cause. When `signal`
  *  aborts (the job timed out, or its reply ended), the request ends,
  *  `ReplyJobs` takes no result and no error any more, and it deletes the
  *  files of a result that still comes. */
-export function invokeModel(invocation: ModelInvocation, signal: AbortSignal, report: (state: string) => void, rights: InvocationRights): Promise<JobOutcome> {
+export function invokeModel(
+  invocation: ModelInvocation,
+  signal: AbortSignal,
+  report: (state: string) => void,
+  reportCost: (usd: number | null) => void,
+  rights: InvocationRights,
+): Promise<JobOutcome> {
   return invocation.kind === 'chat'
-    ? invokeTextModel(invocation, signal, report, rights)
-    : invokeMediaModel(invocation, signal, report)
+    ? invokeTextModel(invocation, signal, report, reportCost, rights)
+    : invokeMediaModel(invocation, signal, report, reportCost)
 }

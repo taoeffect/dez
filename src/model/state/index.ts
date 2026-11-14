@@ -20,7 +20,7 @@ import type { ModelOutputsConfig, ProviderConfig, ProviderThinkingConfig } from 
 import { withKeptClipData } from '../providers/keptClipData'
 import { modelEntriesFingerprint, withKeptImageLimits } from '../providers/learnedImageLimit'
 import type { ParameterValue, ParameterValues } from '../providers/modelParameters'
-import { freshQuotes, withQuote, type PriceQuote } from '../providers/modelPrices'
+import { freshQuote, freshQuotes, withQuote, type PriceQuote, type QuoteRequest } from '../providers/modelPrices'
 import { isToolsEnabled, toolsApply } from '../providers/modelToggles'
 import { providerModel, type ModelInfo, type ProviderId, type ProviderModelsResult } from '../providers/types'
 import type { ActiveModel, ContentNode, ModelRef, Section, SectionThinking, Tab, ThinkingReplay, ThinkingRound } from '../chat/types'
@@ -1389,6 +1389,13 @@ export default sbp('sbp/selectors/register', {
   'dez.model/modelCache/keepQuote' (quote: PriceQuote): void {
     const store = useModelCacheStore()
     store.cache.quotes = withQuote(store.cache.quotes ?? [], { ...quote, values: { ...quote.values } }, Date.now())
+  },
+
+  // A copy of the newest fresh quote of `request` (a model, its request
+  // kind, and the values of the request), or null when the cache has none.
+  'dez.model/modelCache/quote' (request: QuoteRequest): PriceQuote | null {
+    const quote = freshQuote(useModelCacheStore().cache.quotes ?? [], request, Date.now())
+    return quote ? { ...quote, values: { ...quote.values } } : null
   },
 
   // A copy of the raw entry of a model, for the `model_info` tool and the

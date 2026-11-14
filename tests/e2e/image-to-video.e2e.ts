@@ -136,7 +136,8 @@ describe('image-to-video models', () => {
       },
     }, {
       heldPaths: [QUEUE_PATH, RETRIEVE_PATH],
-      jsonAnswers: { [`/${FILMS.id}/v1/models`]: MODEL_LIST },
+      // The free price request that goes before each request of a clip.
+      jsonAnswers: { [`/${FILMS.id}/v1/models`]: MODEL_LIST, [`/${FILMS.id}/v1/video/quote`]: { quote: 0.35 } },
     })
     browser = setup.browser
   })

@@ -11,6 +11,7 @@ import { trimTrailingSlashes, type MediaApiFormatId } from './config'
 import type { ClipUse, InputClipRules } from './clipInputs'
 import type { InputImageRules } from './clipImages'
 import type { ClipTextRules } from './clipText'
+import { usageNumber } from './chatUsage'
 import { ClipNotMadeError, UnusableAnswerError } from './errors'
 import { generatedBase64Image, generatedImage } from './generatedImages'
 import { imageSizeRules, type ImageSizeRules, type InputImageLimits } from './imageSize'
@@ -103,10 +104,20 @@ export interface MediaWireRequest {
 // - `download`: in the response to a request of the media API.
 // - `fileUrl`: at a URL that gives the clip with no header, and that no
 //   player can play from. Dez makes a temp copy of it.
-export type ClipLocation =
+// `cost` is the provider's own price of the job in USD, when the answer
+// tells it (`AnswerCost`).
+export type ClipLocation = (
   | { url: string, mediaType: string, expires: number }
   | { download: MediaWireRequest }
   | { fileUrl: string }
+) & AnswerCost
+
+// The provider's own price in USD of the request that an answer answers,
+// when the answer tells it. Absent when it does not, so that a result with
+// no price has no `cost` key.
+export interface AnswerCost {
+  cost?: number
+}
 
 // A clip that the provider makes after its first response.
 export interface ClipJob {
@@ -134,9 +145,10 @@ export interface ImageFormat {
   // type that Dez stores.
   unstoredOutput?(kind: ImageKind, entry: unknown, mediaEntry: unknown): string | undefined
   request(kind: ImageKind, baseUrl: string, modelId: string, input: MediaInput): MediaWireRequest
-  // The images of a 2xx response to a request of `kind`. Throws when the
-  // body holds none.
-  parseResponse(kind: ImageKind, head: NativeHttpResponseHead, body: Uint8Array): GeneratedMedia[]
+  // The images of a 2xx response to a request of `kind`, and the price of
+  // the request when the answer tells it. Throws when the body holds no
+  // image.
+  parseResponse(kind: ImageKind, head: NativeHttpResponseHead, body: Uint8Array): { media: GeneratedMedia[] } & AnswerCost
   // The size rules of each input image of a request of a kind, for an API
   // whose docs tell them. They are rules of the request, not of a model.
   inputImageSize?: Readonly<Partial<Record<ImageKind, ImageSizeRules>>>
@@ -241,9 +253,10 @@ export interface ClipFormat {
 export interface TextFormat {
   request(kind: TextKind, baseUrl: string, modelId: string, input: MediaInput): MediaWireRequest
   // The text of the JSON of a 2xx response to a request of `kind`, as the
-  // model wrote it (an empty text for a clip with no speech). Throws when
-  // it holds no text.
-  parseResponse(kind: TextKind, body: Uint8Array): string
+  // model wrote it (an empty text for a clip with no speech), and the
+  // price of the request when the answer tells it. Throws when it holds no
+  // text.
+  parseResponse(kind: TextKind, body: Uint8Array): { text: string } & AnswerCost
 }
 
 // Everything that differs between the media APIs that a provider can speak
@@ -285,13 +298,24 @@ function jsonBody(body: Uint8Array): unknown {
   }
 }
 
-// The text of a transcription answer: JSON `{ text, … }` for Venice and
-// OpenRouter. An empty text is the transcript of a clip with no speech.
-function transcriptText(body: Uint8Array): string {
-  const data = jsonBody(body)
+// The text of a transcription answer (its JSON `data`): `{ text, … }` for
+// Venice and OpenRouter. An empty text is the transcript of a clip with no
+// speech.
+function transcriptText(data: unknown): string {
   const text = isRecord(data) ? data.text : undefined
   if (typeof text !== 'string') throw new UnusableAnswerError('The answer holds no text.')
   return text
+}
+
+// The price that OpenRouter gives in the JSON `data` of an answer of its
+// image, transcription, and video APIs (`usage.cost`, in USD; the video
+// API gives it with the state of a finished job), as a part of a result.
+// https://openrouter.ai/docs/api/api-reference/images/generate-an-image
+// https://openrouter.ai/docs/api/api-reference/stt/create-transcription
+// https://openrouter.ai/docs/api/api-reference/video-generation/poll-video-generation-status
+function openRouterAnswerCost(data: unknown): AnswerCost {
+  const cost = usageNumber(valueAtPath(data, 'usage.cost'))
+  return cost === undefined ? {} : { cost }
 }
 
 // A URL that a player can load: http or https, with no space or line break
@@ -667,12 +691,12 @@ const veniceFormat: MediaFormat = {
     // https://docs.venice.ai/guides/media/image-editing
     // https://docs.venice.ai/api-reference/endpoint/image/upscale
     parseResponse: (_kind, head, body) => {
-      if (!responseContentType(head).startsWith('application/json')) return [generatedImage(body)]
+      if (!responseContentType(head).startsWith('application/json')) return { media: [generatedImage(body)] }
 
       const data = jsonBody(body)
       const images = isRecord(data) && Array.isArray(data.images) ? data.images : []
       if (images.length === 0) throw new UnusableAnswerError('The answer holds no image.')
-      return images.map((image) => generatedBase64Image(image))
+      return { media: images.map((image) => generatedBase64Image(image)) }
     },
     // edit: "For edit endpoints, images must be at least 256×256 pixels,
     // and the total pixel count must not exceed 33,177,600 (8K
@@ -1126,7 +1150,7 @@ const veniceFormat: MediaFormat = {
       url: `${trimTrailingSlashes(baseUrl)}/audio/transcriptions`,
       form: [{ name: 'model', value: modelId }, { name: 'response_format', value: 'json' }, clipFormFile('file', sourceClip(clips))],
     }),
-    parseResponse: (_kind, body) => transcriptText(body),
+    parseResponse: (_kind, body) => ({ text: transcriptText(jsonBody(body)) }),
   },
   listPrice: (kind, values, entry) => {
     const pricing = valueAtPath(entry, 'model_spec.pricing')
@@ -1524,7 +1548,7 @@ const openRouterFormat: MediaFormat = {
       const data = jsonBody(body)
       const images = isRecord(data) && Array.isArray(data.data) ? data.data : []
       if (images.length === 0) throw new UnusableAnswerError('The answer holds no image.')
-      return images.map((image) => generatedBase64Image(isRecord(image) ? image.b64_json : undefined))
+      return { media: images.map((image) => generatedBase64Image(isRecord(image) ? image.b64_json : undefined)), ...openRouterAnswerCost(data) }
     },
     quote: {
       recordsRequest: (kind, baseUrl, modelId) => {
@@ -1682,9 +1706,9 @@ const openRouterFormat: MediaFormat = {
           if (isClipUrl(url) && !Number.isNaN(new Date(expires).getTime())) {
             // The docs name no type for the stored copy; every example is
             // an mp4 file.
-            return { url, mediaType: 'video/mp4', expires }
+            return { url, mediaType: 'video/mp4', expires, ...openRouterAnswerCost(poll) }
           }
-          return { download: { url: `${jobUrl}/content?index=0` } }
+          return { download: { url: `${jobUrl}/content?index=0` }, ...openRouterAnswerCost(poll) }
         },
       }
     },
@@ -1750,7 +1774,10 @@ const openRouterFormat: MediaFormat = {
       url: `${trimTrailingSlashes(baseUrl)}/audio/transcriptions`,
       form: [{ name: 'model', value: modelId }, clipFormFile('file', sourceClip(clips))],
     }),
-    parseResponse: (_kind, body) => transcriptText(body),
+    parseResponse: (_kind, body) => {
+      const data = jsonBody(body)
+      return { text: transcriptText(data), ...openRouterAnswerCost(data) }
+    },
   },
   listPrice: openRouterListPrice,
 }

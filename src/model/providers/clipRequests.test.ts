@@ -58,6 +58,12 @@ const SAMPLES = Uint8Array.from([1, 0, 2, 0, 3, 0, 4, 0])
 let deleteError: Error | null = null
 let cancelled: string[] = []
 let httpRequests: NativeHttpRequest[] = []
+// The price that the venice-like provider tells for a music or video
+// request (POST /audio/quote, /video/quote); null: the price request fails.
+const QUOTE_USD = 0.35
+let quoteUsd: number | null = QUOTE_USD
+// While set, the price request waits for this promise.
+let quoteHeld: Promise<void> | null = null
 // The answers of the media server to the clip requests, in order. A
 // function answers when its promise settles.
 let answers: Array<NativeHttpDownload | (() => Promise<NativeHttpDownload>)> = []
@@ -75,9 +81,15 @@ sbp('sbp/selectors/register', {
   async 'dez.native/getAppDir' (root = 'app'): Promise<string> {
     return root === 'cache' ? CACHE_DIR : '/home/u/.config/dez'
   },
-  // No clip request reads a list: a request here is a failure of the test.
+  // A clip request reads no list; it asks only for its price.
   async 'dez.native/httpRequest' (request: NativeHttpRequest): Promise<NativeHttpResponse> {
     httpRequests.push(request)
+    if (request.url.endsWith('/quote')) {
+      if (quoteHeld) await quoteHeld
+      return quoteUsd === null
+        ? { status: 500, headers: {}, body: bytesOf('Internal error') }
+        : { status: 200, headers: { 'content-type': 'application/json' }, body: bytesOf(JSON.stringify({ quote: quoteUsd })) }
+    }
     return { status: 404, headers: {}, body: bytesOf('Not found') }
   },
   async 'dez.native/downloadAppFile' (request: NativeHttpRequest, requestId: string, file: FileRef, rule: NativeDownloadRule): Promise<NativeHttpDownload> {
@@ -121,6 +133,8 @@ beforeEach(() => {
   deleteError = null
   cancelled = []
   httpRequests = []
+  quoteUsd = QUOTE_USD
+  quoteHeld = null
   answers = []
   vi.useFakeTimers({ now: STARTED_AT })
   consoleError = vi.spyOn(console, 'error').mockImplementation(() => {})
@@ -333,6 +347,7 @@ describe('a clip job', () => {
     expect(await result).toStrictEqual({
       media: [],
       clips: [{ kind: 'audio', mediaType: 'audio/wav', src: tempPath(3, 'wav'), url: null, expires: isoAfter(10 * SECOND_MS + DAY_MS), jobId: 'q-1' }],
+      cost: QUOTE_USD,
     })
     const retrieve = { method: 'POST', url: `${VENICE_URL}/audio/retrieve`, headers: POST_HEADERS, body: JSON.stringify({ model: 'm', queue_id: 'q-1' }) }
     // One request id serves the whole job, and each request must end
@@ -387,6 +402,7 @@ describe('a clip job', () => {
     expect(await result).toStrictEqual({
       media: [],
       clips: [{ kind: 'video', mediaType: 'video/mp4', src: tempPath(4, 'mp4'), url: null, expires: isoAfter(10 * SECOND_MS + DAY_MS), jobId: 'q-1' }],
+      cost: QUOTE_USD,
     })
     expect(requestUrls()).toStrictEqual([`POST ${VENICE_URL}/video/queue`, `POST ${VENICE_URL}/video/retrieve`, `POST ${VENICE_URL}/video/retrieve`, `GET ${url}`])
     expect(downloads[3].request).toStrictEqual({ method: 'GET', url, timeoutMs: JOB_TIMEOUT_MS - 10 * SECOND_MS })
@@ -394,7 +410,7 @@ describe('a clip job', () => {
     // default.
     expect(JSON.parse(downloads[0].request.body as string)).toStrictEqual({ model: 'm', prompt: 'A red fox', duration: '4s', aspect_ratio: '16:9', resolution: '480p' })
     expect(downloads.map(({ rule }) => rule.contentTypes)).toStrictEqual([['video/'], ['video/'], ['video/'], ['video/']])
-    expect(httpRequests).toEqual([])
+    expect(httpRequests.map(({ method, url }) => `${method} ${url}`)).toStrictEqual([`POST ${VENICE_URL}/video/quote`])
     expect(moves).toStrictEqual([{ from: tempFile(4, 'part'), to: tempFile(4, 'mp4') }])
   })
 
@@ -645,6 +661,91 @@ describe('a clip job', () => {
     await failure
 
     expect(downloads).toHaveLength(3)
+  })
+})
+
+describe('the price of a clip', () => {
+  it('asks for the price of the values before the request, and tells it at the first step and in the result', async () => {
+    cacheModel('venice-like', VENICE_VIDEO_PARAMETERS)
+    answers = [json({ queue_id: 'q-1' }), clip('video/mp4')]
+    const steps: Array<[MediaProgress, number]> = []
+
+    const result = generate({ kind: 'video', onProgress: (progress: MediaProgress) => steps.push([progress, downloads.length]) })
+    await vi.advanceTimersByTimeAsync(5 * SECOND_MS)
+
+    expect((await result).cost).toBe(QUOTE_USD)
+    expect(steps).toStrictEqual([[{ phase: 'sent', jobId: null, quote: QUOTE_USD }, 0], [{ phase: 'queued', jobId: 'q-1' }, 1]])
+    expect(JSON.parse(httpRequests[0].body as string)).toStrictEqual({ model: 'm', duration: '4s', resolution: '480p', aspect_ratio: '16:9' })
+  })
+
+  it('takes the price of a request with the same values from the quote cache, with no new price request', async () => {
+    cacheModel('venice-like', VENICE_VIDEO_PARAMETERS)
+    answers = [json({ queue_id: 'q-1' }), clip('video/mp4'), json({ queue_id: 'q-2' }), clip('video/mp4'), json({ queue_id: 'q-3' }), clip('video/mp4')]
+    const costs: Array<number | undefined> = []
+
+    for (const [parameters, usd] of [[{}, 0.35], [{}, 0.7], [{ duration: '8s' }, 0.7]] as const) {
+      quoteUsd = usd
+      const result = generate({ kind: 'video', parameters })
+      await vi.advanceTimersByTimeAsync(5 * SECOND_MS)
+      costs.push((await result).cost)
+    }
+
+    expect(costs).toStrictEqual([0.35, 0.35, 0.7])
+    expect(httpRequests).toHaveLength(2)
+  })
+
+  it('makes the clip with no known price when the price request fails, and logs the failure', async () => {
+    cacheModel('venice-like', VENICE_VIDEO_PARAMETERS)
+    quoteUsd = null
+    answers = [json({ queue_id: 'q-1' }), clip('video/mp4')]
+    const steps: MediaProgress[] = []
+
+    const result = generate({ kind: 'video', onProgress: (progress: MediaProgress) => steps.push(progress) })
+    await vi.advanceTimersByTimeAsync(5 * SECOND_MS)
+
+    const { clips, ...rest } = await result
+    expect([clips.length, rest]).toStrictEqual([1, { media: [] }])
+    expect(steps[0]).toStrictEqual({ phase: 'sent', jobId: null })
+    expect(consoleError.mock.calls.map(([text]) => text)).toStrictEqual(['Failed to get the price of a request to m of Media server; the request goes with no known price:'])
+  })
+
+  it('stops at once while the price request runs, and sends no clip request', async () => {
+    cacheModel('venice-like', VENICE_VIDEO_PARAMETERS)
+    quoteHeld = new Promise(() => {})
+    const abort = new AbortController()
+
+    const failure = expect(generate({ kind: 'video', signal: abort.signal })).rejects.toThrow('This operation was aborted')
+    await vi.advanceTimersByTimeAsync(0)
+    expect(httpRequests).toHaveLength(1)
+    abort.abort()
+    await failure
+
+    expect(downloads).toEqual([])
+    expect(consoleError).not.toHaveBeenCalled()
+  })
+
+  it('gives the price that the answer of a finished job tells over the quote', async () => {
+    cacheModel('router-like', OPENROUTER_VIDEO_PARAMETERS)
+    sbp('dez.model/modelCache/keepQuote', { providerId: 'router-like', modelId: 'm', kind: 'video', values: { duration: 1, resolution: '480p' }, usd: 2, at: STARTED_AT })
+    answers = [json({ id: 'gen-1' }, 202), json({ status: 'completed', usage: { cost: 1.25 } }), clip('video/mp4')]
+    const steps: MediaProgress[] = []
+
+    const result = generate({ providerId: 'router-like', kind: 'video', onProgress: (progress: MediaProgress) => steps.push(progress) })
+    await vi.advanceTimersByTimeAsync(5 * SECOND_MS)
+
+    expect([steps[0].quote, (await result).cost]).toStrictEqual([2, 1.25])
+  })
+
+  // No provider tells the price of speech before the request: the list
+  // price is per character of its text.
+  it('reckons the price of speech from the list price per character, for the characters of its text', async () => {
+    sbp('dez.model/modelCache/applyProviderResult', 'venice-like', { ok: true, models: [{ id: 'm', name: 'M', provider: 'venice-like', price: { unit: 'character', usd: 15 } }] })
+    answers = [clip('audio/mpeg')]
+
+    const { cost } = await generate({ kind: 'tts', prompt: 'Héllo 🦊' })
+
+    expect(cost).toBe(0.000105)
+    expect(httpRequests).toEqual([])
   })
 })
 

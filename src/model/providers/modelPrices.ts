@@ -51,6 +51,14 @@ export function unitPrice(unit: typeof SINGLE_PRICE_UNITS[number], usd: number |
   return usd === undefined ? undefined : { unit, usd: roundedPrice(usd), ...(note && { note }) }
 }
 
+/** The price in USD of a request whose price is by the characters of its
+ *  text (`price` of the unit `character`, per 1M characters), for `text`;
+ *  undefined for a price of another unit. A character is a code point, as
+ *  a person counts it. */
+export function textLengthCost(price: ModelPrice | undefined, text: string): number | undefined {
+  return price?.unit === 'character' ? roundedPrice(Array.from(text).length * price.usd / 1_000_000) : undefined
+}
+
 /** How long a price stays good without a new check: a quote of the
  *  provider, or the list prices of the provider's model check. Short, so
  *  that a sale of the provider shows soon. */

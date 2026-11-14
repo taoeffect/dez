@@ -87,7 +87,8 @@ describe('music models', () => {
       modelOutputs: { path: 'type', values: { music: { outputs: ['audio'], request: 'music' } } },
     }, {
       heldPaths: [QUEUE_PATH, RETRIEVE_PATH],
-      jsonAnswers: { [`/${SONGS.id}/v1/models`]: MODEL_LIST },
+      // The free price request that goes before each request of a song.
+      jsonAnswers: { [`/${SONGS.id}/v1/models`]: MODEL_LIST, [`/${SONGS.id}/v1/audio/quote`]: { quote: 0.05 } },
     })
     browser = setup.browser
   })

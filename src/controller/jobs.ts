@@ -49,13 +49,18 @@ export interface JobOutcome {
  *  requests. `report` keeps a state text for `jobs_list` and `job_inspect`,
  *  such as the phase of the work and a provider's job id; it goes to the
  *  chat provider too, and the result of a job that timed out ends with it.
+ *  `reportCost` keeps the price in USD of the paid request of the work
+ *  (`JobInfo.cost`; null: no price is known), for the spend line of
+ *  `jobs_list`: a work that sends a paid request calls it when the request
+ *  goes, and again when its price is final. A work that sends none never
+ *  calls it.
  *
  *  The work makes its files, but writes nothing into the reply: a job can
  *  end while the model writes text, and the asset of a tool goes after the
  *  blocks of a group. The reader of the result writes them
  *  (`writeJobAssets`). A work that throws fails its job, as a runner that
  *  throws fails its call: a `ToolError` gives its text as the result. */
-export type JobWork = (signal: AbortSignal, report: (state: string) => void) => Promise<JobOutcome>
+export type JobWork = (signal: AbortSignal, report: (state: string) => void, reportCost: (usd: number | null) => void) => Promise<JobOutcome>
 
 /** A job that ended with a result, as its reader gets it. */
 export interface EndedJob {
@@ -76,6 +81,8 @@ interface Job extends Omit<EndedJob, 'status'> {
   status: JobStatus
   // The last text that the work reported.
   state: string
+  // The last price that the work reported (`JobInfo.cost`).
+  cost?: number | null
   startedAt: number
   endedAt: number | null
   // A reader took the result.
@@ -184,9 +191,13 @@ export class ReplyJobs {
     // await fails its job as a work that rejects does. The `await` listens
     // to the work's promise in this tick: a plain `return` of it would
     // listen one tick later, and two works that end in the tick of their
-    // starts would then end in the order of the starts.
+    // starts would then end in the order of the starts. A report after the
+    // end of the job changes nothing: a stopped or timed-out job keeps the
+    // price of its request when it ended.
     const outcome = (async () => await work(job.abort.signal, (state) => {
       if (job.status === 'running') job.state = state
+    }, (usd) => {
+      if (job.status === 'running') job.cost = usd
     }))()
     outcome.then((result) => {
       // The job timed out or stopped before its work ended: nobody reads
@@ -276,6 +287,7 @@ export class ReplyJobs {
       elapsedMs: (job.endedAt ?? now) - job.startedAt,
       state: job.state,
       call: job.call,
+      ...(job.cost !== undefined && { cost: job.cost }),
     }))
   }
 

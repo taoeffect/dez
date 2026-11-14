@@ -99,7 +99,15 @@ describe('images of the OpenRouter image API', () => {
       models: [FLUX, STYLE_MODEL, VECTOR_MODEL, SCAN_MODEL].map(({ id, name }) => ({ id, name, outputs: ['image'], request: 'image' })),
     }, {
       heldPaths: [IMAGES_PATH],
-      jsonAnswers: { [`/${ROUTER.id}/v1/images/models`]: IMAGE_LIST, [`/${ROUTER.id}/v1/videos/models`]: { data: [] } },
+      jsonAnswers: {
+        [`/${ROUTER.id}/v1/images/models`]: IMAGE_LIST,
+        [`/${ROUTER.id}/v1/videos/models`]: { data: [] },
+        // The price records that a request of each model reads first.
+        ...Object.fromEntries([FLUX, STYLE_MODEL, VECTOR_MODEL, SCAN_MODEL].map(({ id }) => [
+          `/${ROUTER.id}/v1/images/models/${id}/endpoints`,
+          { id, endpoints: [{ pricing: [{ billable: 'output_image', unit: 'image', cost_usd: 0.01 }] }] },
+        ])),
+      },
     })
     browser = setup.browser
     // The rules of the reference images come with the model check of the

@@ -249,10 +249,12 @@ describe('venice media responses', () => {
   it('reads every image of a JSON answer, each with the type of its bytes', () => {
     const body = json({ id: 'generate-1', images: [bytesToBase64(WEBP), bytesToBase64(PNG)], timing: {} })
 
-    expect(venice.parseResponse('image', head('application/json; charset=utf-8'), body)).toStrictEqual([
-      { bytes: WEBP, mediaType: 'image/webp' },
-      { bytes: PNG, mediaType: 'image/png' },
-    ])
+    expect(venice.parseResponse('image', head('application/json; charset=utf-8'), body)).toStrictEqual({
+      media: [
+        { bytes: WEBP, mediaType: 'image/webp' },
+        { bytes: PNG, mediaType: 'image/png' },
+      ],
+    })
   })
 
   it.each([
@@ -261,12 +263,12 @@ describe('venice media responses', () => {
     ['image/gif', GIF],
     ['image/webp', WEBP],
   ] as const)('takes a binary answer as one %s image', (mediaType, bytes) => {
-    expect(venice.parseResponse('imageEdit', head(mediaType), bytes)).toStrictEqual([{ bytes, mediaType }])
+    expect(venice.parseResponse('imageEdit', head(mediaType), bytes)).toStrictEqual({ media: [{ bytes, mediaType }] })
   })
 
   it('takes the type of a binary answer from its bytes, not from its header', () => {
-    expect(venice.parseResponse('imageEdit', head('image/png'), JPEG)).toStrictEqual([{ bytes: JPEG, mediaType: 'image/jpeg' }])
-    expect(venice.parseResponse('imageEdit', { status: 200, headers: {} }, PNG)).toStrictEqual([{ bytes: PNG, mediaType: 'image/png' }])
+    expect(venice.parseResponse('imageEdit', head('image/png'), JPEG)).toStrictEqual({ media: [{ bytes: JPEG, mediaType: 'image/jpeg' }] })
+    expect(venice.parseResponse('imageEdit', { status: 200, headers: {} }, PNG)).toStrictEqual({ media: [{ bytes: PNG, mediaType: 'image/png' }] })
   })
 
   it.each([
@@ -1428,7 +1430,7 @@ describe('openrouter images', () => {
       .toStrictEqual(new ExplainedError('This provider has no upscale request that Dez can use. Choose another model.'))
   })
 
-  it('takes the images of the answer, each with the type of its bytes', () => {
+  it('takes the images of the answer, each with the type of its bytes, and the price that the answer tells', () => {
     const svg = new TextEncoder().encode('<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 8 8"/>')
     const body = json({ created: 1, data: [
       { b64_json: bytesToBase64(PNG), media_type: 'image/webp' },
@@ -1436,11 +1438,26 @@ describe('openrouter images', () => {
       { b64_json: bytesToBase64(svg), media_type: 'image/svg+xml' },
     ], usage: { cost: 0.008 } })
 
-    expect(openRouterImages.parseResponse('image', head('application/json'), body)).toStrictEqual([
-      { bytes: PNG, mediaType: 'image/png' },
-      { bytes: JPEG, mediaType: 'image/jpeg' },
-      { bytes: svg, mediaType: 'image/svg+xml' },
-    ])
+    expect(openRouterImages.parseResponse('image', head('application/json'), body)).toStrictEqual({
+      media: [
+        { bytes: PNG, mediaType: 'image/png' },
+        { bytes: JPEG, mediaType: 'image/jpeg' },
+        { bytes: svg, mediaType: 'image/svg+xml' },
+      ],
+      cost: 0.008,
+    })
+  })
+
+  // A price that is no number of 0 or more is no price.
+  it.each([
+    ['no usage', {}],
+    ['a usage with no cost', { usage: { prompt_tokens: 3 } }],
+    ['a cost that is text', { usage: { cost: '0.008' } }],
+    ['a cost under 0', { usage: { cost: -1 } }],
+  ])('gives no price for an answer with %s', (_name, fields) => {
+    const body = json({ data: [{ b64_json: bytesToBase64(PNG) }], ...fields })
+
+    expect(openRouterImages.parseResponse('image', head('application/json'), body)).toStrictEqual({ media: [{ bytes: PNG, mediaType: 'image/png' }] })
   })
 
   it.each([
@@ -1653,6 +1670,18 @@ describe('openrouter clip jobs', () => {
     expect(job().state(poll)).toStrictEqual({ download: { url: `${OPENROUTER_URL}/videos/gen-1/content?index=0` } })
   })
 
+  it('gives the price that the state of a finished job tells, with each place of the clip', () => {
+    const usage = { usage: { cost: 0.5 } }
+
+    expect([
+      job().state({ status: 'completed', urls: [SIGNED_URL], expires_at: 1_794_000_000, ...usage }),
+      job().state({ status: 'completed', ...usage }),
+    ]).toStrictEqual([
+      { url: SIGNED_URL, mediaType: 'video/mp4', expires: 1_794_000_000_000, cost: 0.5 },
+      { download: { url: `${OPENROUTER_URL}/videos/gen-1/content?index=0` }, cost: 0.5 },
+    ])
+  })
+
   it.each([
     ['a job that failed', { status: 'failed', error: 'Content policy violation' }, 'State: failed: Content policy violation'],
     ['a job that expired', { status: 'expired' }, 'State: expired'],
@@ -1702,7 +1731,15 @@ describe('transcriptions', () => {
     expect([
       parse({ text: ' Hello there. ', duration: 3 }),
       parse({ text: '', usage: { seconds: 2 } }),
-    ]).toStrictEqual([' Hello there. ', ''])
+    ]).toStrictEqual([{ text: ' Hello there. ' }, { text: '' }])
+  })
+
+  // Venice tells no price in its answer.
+  it('reads the price of an OpenRouter answer', () => {
+    const data = { text: 'Hi.', usage: { seconds: 2, cost: 0.0004 } }
+
+    expect((['venice', 'openrouter'] as const).map((format) => MEDIA_FORMATS[format].texts?.parseResponse('transcription', json(data))))
+      .toStrictEqual([{ text: 'Hi.' }, { text: 'Hi.', cost: 0.0004 }])
   })
 
   it.each([

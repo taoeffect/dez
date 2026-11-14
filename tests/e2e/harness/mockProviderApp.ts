@@ -25,8 +25,9 @@ export interface MockProviderAppOptions extends AppOptions {
   /** More POST paths that the mock holds for the test as it holds chat
    *  requests, such as a media API path. */
   heldPaths?: readonly string[]
-  /** GET paths that the mock answers with JSON at once, such as the model
-   *  list of a provider whose config has `fetchModels: true`. */
+  /** GET and POST paths that the mock answers with JSON at once, such as
+   *  the model list of a provider whose config has `fetchModels: true`, or
+   *  the free price request that goes before a media request. */
   jsonAnswers?: Readonly<Record<string, unknown>>
 }
 

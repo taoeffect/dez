@@ -128,22 +128,25 @@ export const settled = () => vi.advanceTimersByTimeAsync(0)
 export interface HeldWork {
   work: JobWork
   finish (outcome?: Partial<JobOutcome>): void
-  /** The signal and the state writer that the job gave its work. */
+  /** The signal and the writers of the state and of the price that the
+   *  job gave its work. */
   signal (): AbortSignal
   report (state: string): void
+  reportCost (usd: number | null): void
 }
 
 export function heldWork(): HeldWork {
   let resolveWork!: (outcome: JobOutcome) => void
-  let seen!: { signal: AbortSignal, report: (state: string) => void }
+  let seen!: { signal: AbortSignal, report: (state: string) => void, reportCost: (usd: number | null) => void }
   return {
-    work: (signal, report) => {
-      seen = { signal, report }
+    work: (signal, report, reportCost) => {
+      seen = { signal, report, reportCost }
       return new Promise<JobOutcome>((resolve) => { resolveWork = resolve })
     },
     finish: (outcome = {}) => resolveWork({ text: '', isError: false, assets: [], ...outcome }),
     signal: () => seen.signal,
     report: (state) => seen.report(state),
+    reportCost: (usd) => seen.reportCost(usd),
   }
 }
 
