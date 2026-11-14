@@ -45,7 +45,8 @@ import { hiddenAssetNotes, hiddenPart, hidingPart, intermediateParts, pressToolC
 //   type symbol, a label), and shows it in its panel while it is open,
 //   with its trash and its Save. The model gets the same result, the
 //   asset keeps its id, and an `@id` mention of it sends it. It stays
-//   hidden after a relaunch;
+//   hidden after a relaunch. A new call of the same tool that changes the
+//   summary of the chip keeps the chip and its player;
 // - the answer of a text model to such a call shows in the panel too.
 // No request holds a path of the test HOME.
 //
@@ -569,6 +570,51 @@ describe('model_invoke', () => {
     expect(await intermediateParts(browser)).toStrictEqual([hidingPart('audio'), null])
     expect(await openToasts(browser, 'error')).toStrictEqual([])
     expect(await consoleErrors(browser)).toStrictEqual([])
+  })
+
+  // The summary of a chip tells it apart from the calls of the same tool in
+  // its section (`toolCallSummaries`), so a new call can change it. A new
+  // chip would make a new player, which stops a clip that plays, and take
+  // the focus from the chip: the drawn chip takes the new summary in place.
+  it('keeps the chip and the player of its open panel when a new call of the same tool changes its summary', async () => {
+    const model = `${STUDIO.id}/${SONG_MODEL.id}`
+    const prompt = 'A slow song for a rainy night'
+    await submit(browser, 'Make a draft song.')
+    const first = await requestTo(CHAT_PATH)
+    sendToolCalls(first.reply, [openAiToolCall('call_song', 'model_invoke', { model, prompt, is_intermediate: true })])
+    const queue = await requestTo(QUEUE_PATH, { model: SONG_MODEL.id, prompt })
+    const second = await requestTo(CHAT_PATH)
+    startedJob(second, 'call_song')
+    sendToolCalls(second.reply, [waitCall('call_wait')])
+    await finishVeniceJob(setup, queue, { retrievePath: RETRIEVE_PATH, modelId: SONG_MODEL.id, queueId: 'queue-1', clip: { type: 'audio/wav', bytes: SONG_WAV } })
+    const third = await requestTo(CHAT_PATH)
+
+    await pressToolChip(browser, 0)
+    await waitForValue(browser, 'player in the panel', async () => (await shownPlayers(browser)).length, 1)
+    expect((await toolChips(browser))[0].summary).toBe(`"${model}" "${prompt}"`)
+    await browser.execute(() => {
+      const root = document.querySelector('.cm-content .dez-tool-call')
+      const chip = root?.querySelector<HTMLElement>('.dez-tool-call__chip')
+      root?.querySelector('.media-player')?.setAttribute('data-e2e-kept', '')
+      chip?.setAttribute('data-e2e-kept', '')
+      chip?.focus()
+    })
+
+    // The new call is refused at once, as `@z` names nothing; its chip is
+    // the change.
+    sendToolCalls(third.reply, [openAiToolCall('call_again', 'model_invoke', { model, prompt: 'A slow song for a rainy day with @z' })])
+    const fourth = await requestTo(CHAT_PATH)
+    await waitForValue(browser, 'summaries', async () => (await toolChips(browser)).map((chip) => chip.summary), [`"${model}" "…night"`, null, `"${model}" "…day with @z"`])
+    expect((await toolChips(browser))[0].label).toBe(`Tool call model_invoke, "${model}" "…night", intermediate asset`)
+    expect(await browser.execute(() => ({
+      player: document.querySelector('.cm-content .media-player')?.hasAttribute('data-e2e-kept') ?? false,
+      focus: document.activeElement?.matches('.dez-tool-call__chip[data-e2e-kept]') ?? false,
+    }))).toStrictEqual({ player: true, focus: true })
+
+    await sendChatReply(fourth.reply, CALLER.modelName)
+    await endedReply(browser)
+    expect(await openToasts(browser, 'error')).toStrictEqual([])
+    expect(await consoleErrors(browser)).toStrictEqual([expect.stringContaining('The tool model_invoke failed')])
   })
 
   it('shows the answer of a text model to an intermediate call in the panel of its chip', async () => {

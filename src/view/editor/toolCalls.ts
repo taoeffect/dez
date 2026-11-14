@@ -372,6 +372,8 @@ const drawnCalls = new WeakMap<HTMLElement, RenderedToolCall>()
 
 const ROOT_CLASS = 'dez-tool-call'
 const CHIP_CLASS = 'dez-tool-call__chip'
+const NAME_CLASS = 'dez-tool-call__name'
+const SUMMARY_CLASS = 'dez-tool-call__summary'
 const PANEL_CLASS = 'dez-tool-call__panel'
 const HEADING_CLASS = 'dez-tool-call__heading'
 const RESULT_CLASS = 'dez-tool-call__result'
@@ -486,6 +488,13 @@ function renderIntermediate(chip: HTMLElement, call: RenderedToolCall, open: boo
   chip.appendChild(part)
 }
 
+/** Draws the summary part of `chip`, after the tool's name; none for an
+ *  empty summary. */
+function renderSummary(chip: HTMLElement, summary: string): void {
+  chip.querySelector(`.${SUMMARY_CLASS}`)?.remove()
+  if (summary !== '') chip.querySelector(`.${NAME_CLASS}`)?.after(span(SUMMARY_CLASS, summary))
+}
+
 function createChip(view: EditorView, call: RenderedToolCall): HTMLElement {
   const chip = span(CHIP_CLASS)
   chip.setAttribute('role', 'button')
@@ -500,8 +509,8 @@ function createChip(view: EditorView, call: RenderedToolCall): HTMLElement {
   // The words go in their own span, so the name keeps the name's look
   // (`dezTheme`) and the flex gap spaces the two.
   if (isUnrecognizedTool(call.name)) chip.appendChild(span('dez-tool-call__unrecognized', UNRECOGNIZED_TOOL_TEXT))
-  chip.appendChild(span('dez-tool-call__name', call.name))
-  if (call.summary !== '') chip.appendChild(span('dez-tool-call__summary', call.summary))
+  chip.appendChild(span(NAME_CLASS, call.name))
+  renderSummary(chip, call.summary)
   const word = STATE_WORDS[call.state]
   if (word) chip.appendChild(span('dez-tool-call__state', word))
   const toggle = () => view.dispatch({ effects: toggleToolCallOpenEffect.of(call.id) })
@@ -663,10 +672,11 @@ function renderOpenState(view: EditorView, root: HTMLElement, call: RenderedTool
   return true
 }
 
-// Every part of a call that the chip draws, but its intermediate data.
-// Arguments keep their definition order, so equal ones give equal JSON.
+// Every part of a call that the chip draws, but its intermediate data and
+// its summary. Arguments keep their definition order, so equal ones give
+// equal JSON.
 function sameCall(a: RenderedToolCall, b: RenderedToolCall): boolean {
-  return a.id === b.id && a.name === b.name && a.state === b.state && a.result === b.result && a.summary === b.summary && JSON.stringify(a.arguments) === JSON.stringify(b.arguments)
+  return a.id === b.id && a.name === b.name && a.state === b.state && a.result === b.result && JSON.stringify(a.arguments) === JSON.stringify(b.arguments)
 }
 
 /** A chip and, while open, its panel. The open state is not part of the
@@ -681,7 +691,7 @@ class ToolCallWidget extends WidgetType {
   // DOM. Doc offsets are left out: a stream token before a chip moves it.
   // The intermediate data holds none, and its fields keep one order.
   eq(other: WidgetType): boolean {
-    return other instanceof ToolCallWidget && sameCall(this.call, other.call) && JSON.stringify(this.call.intermediate) === JSON.stringify(other.call.intermediate)
+    return other instanceof ToolCallWidget && sameCall(this.call, other.call) && this.call.summary === other.call.summary && JSON.stringify(this.call.intermediate) === JSON.stringify(other.call.intermediate)
   }
   toDOM(view: EditorView): HTMLElement {
     const root = span(ROOT_CLASS)
@@ -700,16 +710,20 @@ class ToolCallWidget extends WidgetType {
     })
     return root
   }
-  // The hidden assets of a call change while its chip is drawn: the job's
-  // result comes, a Save or a Delete changes the tag of a hidden clip, or
-  // the trash takes a hidden image out of the doc. A new chip would make
-  // new players (a clip that plays would stop, with no Save animation, as
-  // `MediaWidget.updateDOM` tells), so the drawn chip takes the new data
-  // in place. Any other change of the call makes a new chip.
+  // Two parts of a call change while its chip is drawn. Its hidden assets:
+  // the job's result comes, a Save or a Delete changes the tag of a hidden
+  // clip, or the trash takes a hidden image out of the doc. Its summary: a
+  // new call of the same tool in the section (`toolCallSummaries`). A new
+  // chip would make new players (a clip that plays would stop, with no
+  // Save animation, as `MediaWidget.updateDOM` tells), and take the focus
+  // from the chip, so the drawn chip takes the new data in place. Any other
+  // change of the call makes a new chip.
   updateDOM(dom: HTMLElement, view: EditorView, from: ToolCallWidget): boolean {
     const chip = dom.querySelector<HTMLElement>(`.${CHIP_CLASS}`)
     if (!chip || !drawnCalls.has(dom) || !sameCall(from.call, this.call)) return false
     drawnCalls.set(dom, this.call)
+    if (from.call.summary !== this.call.summary) renderSummary(chip, this.call.summary)
+    // This also draws the chip's accessible name, which holds the summary.
     renderIntermediate(chip, this.call, chip.getAttribute('aria-expanded') === 'true')
     const panel = dom.querySelector<HTMLElement>(`.${PANEL_CLASS}`)
     if (panel) renderHiddenPart(view, panel, this.call)
