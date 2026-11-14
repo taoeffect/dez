@@ -218,9 +218,9 @@ describe('jobsListText', () => {
   // The last line. A job with no `cost` sent no paid request; a null cost
   // is a paid request with no known price.
   it.each([
-    ['no job sent a paid request', [undefined, undefined], 'Spend: none: no job of this reply sent a paid request.'],
-    ['no paid job has a known price', [null, undefined], 'Spend: unknown: no price is known for the job that sent a paid request.'],
-    ['no paid jobs have a known price', [null, null], 'Spend: unknown: no price is known for the 2 jobs that sent a paid request.'],
+    ['no job sent a paid request', [undefined, undefined], 'Spend: none. No job of this reply sent a paid request.'],
+    ['no paid job has a known price', [null, undefined], 'Spend: unknown. No price is known for the job that sent a paid request.'],
+    ['no paid jobs have a known price', [null, null], 'Spend: unknown. No price is known for the 2 jobs that sent a paid request.'],
     ['every paid job has a known price', [0.1, 0.2, 0, undefined],
       'Spend (an estimate): $0.30 for 3 jobs with a known price (the provider\'s price, else its quote; a refused request costs nothing).'],
     ['some paid jobs have no known price', [0.0042, null, null],

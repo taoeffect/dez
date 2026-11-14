@@ -363,8 +363,8 @@ function jobCountText(count: number): string {
 function spendText(jobs: readonly JobInfo[]): string {
   const priced = jobs.flatMap(({ cost }) => typeof cost === 'number' ? [cost] : [])
   const unpriced = jobs.filter(({ cost }) => cost === null).length
-  if (priced.length === 0 && unpriced === 0) return 'Spend: none: no job of this reply sent a paid request.'
-  if (priced.length === 0) return `Spend: unknown: no price is known for ${unpriced === 1 ? 'the job' : `the ${unpriced} jobs`} that sent a paid request.`
+  if (priced.length === 0 && unpriced === 0) return 'Spend: none. No job of this reply sent a paid request.'
+  if (priced.length === 0) return `Spend: unknown. No price is known for ${unpriced === 1 ? 'the job' : `the ${unpriced} jobs`} that sent a paid request.`
   const total = priced.reduce((sum, cost) => sum + cost, 0)
   const rest = unpriced === 0 ? '' : `, and ${jobCountText(unpriced)} with no known price`
   return `Spend (an estimate): ${usdText(total)} for ${jobCountText(priced.length)} with a known price `

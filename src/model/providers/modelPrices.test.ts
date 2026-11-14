@@ -20,7 +20,7 @@ describe('chat token prices', () => {
   it('gives a Venice price per 1M tokens as it is, and tells that a long prompt has another rate', () => {
     const entry = { id: 'm', model_spec: { pricing: { input: usd(0.5), cache_input: usd(0.05), output: usd(2), extended: { context_token_threshold: 256000, input: usd(1.5), output: usd(6) } } } }
 
-    expect(modelTokenPrice(entry, venice, TEXT)).toStrictEqual({ unit: 'token', input: 0.5, output: 2, cachedInput: 0.05, note: 'base rate; some requests have other rates' })
+    expect(modelTokenPrice(entry, venice, TEXT)).toStrictEqual({ unit: 'token', input: 0.5, output: 2, cachedInput: 0.05, note: 'base rate, some requests have other rates' })
   })
 
   it('tells the other rates of an OpenRouter model and the price of its output images, in one note', () => {
@@ -30,7 +30,7 @@ describe('chat token prices', () => {
       unit: 'token',
       input: 2,
       output: 12,
-      note: 'base rate; some requests have other rates; images: $120.00 per 1M output tokens',
+      note: 'base rate, some requests have other rates; images: $120.00 per 1M output tokens',
     })
   })
 

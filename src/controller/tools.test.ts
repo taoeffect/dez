@@ -1065,7 +1065,7 @@ describe('dez.controller/tools/run', () => {
         `1 | ${running} | model_invoke | running | - | 0 | A red fox`,
         `2 | ${ended} | video | finished | given | 0 | -`,
       ])
-      expect(content.split('\n').at(-1)).toBe('Spend: none: no job of this reply sent a paid request.')
+      expect(content.split('\n').at(-1)).toBe('Spend: none. No job of this reply sent a paid request.')
     })
 
     it('job_inspect tells the status and the last state of the job that the call names', async () => {

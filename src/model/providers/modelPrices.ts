@@ -160,7 +160,7 @@ export function modelTokenPrice(entry: Record<string, unknown>, config: Provider
   const unpricedMedia = (['image', 'audio'] as const).some((media) => outputs.includes(media) && mediaPrices[media] === undefined)
   if (input === 0 && output === 0 && unpricedMedia) return undefined
   const notes = [
-    ...(config.otherRates !== undefined && hasData(valueAtPath(entry, config.otherRates)) ? ['base rate; some requests have other rates'] : []),
+    ...(config.otherRates !== undefined && hasData(valueAtPath(entry, config.otherRates)) ? ['base rate, some requests have other rates'] : []),
     ...(mediaPrices.image ? [`images: ${usdText(perMillion(mediaPrices.image))} per 1M output tokens`] : []),
     ...(mediaPrices.audio ? [`audio: ${usdText(perMillion(mediaPrices.audio))} per 1M output tokens`] : []),
   ]

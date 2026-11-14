@@ -543,7 +543,7 @@ function veniceImagePrice(kind: ImageKind, values: ParameterValues, pricing: Rec
 // The list price of a Venice image model: one image for the default
 // values, which the note names. The note of an edit model whose price
 // holds fewer input images than a request can have (`inputImages`) tells
-// the price of each more image.
+// the price of each extra image.
 function veniceImageListPrice(kind: ImageKind, values: ParameterValues, pricing: Record<string, unknown>): ModelPrice | undefined {
   const price = veniceImagePrice(kind, values, pricing, kind === 'imageEdit' ? ['inputImages'] : [])
   if (!price) return undefined

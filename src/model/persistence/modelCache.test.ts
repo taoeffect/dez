@@ -63,7 +63,7 @@ describe('model cache persistence format', () => {
   it('round-trips the price of a model, and drops only a price that is not valid', () => {
     const model = { id: 'm', name: 'M', provider: 'openrouter' }
     const prices = [
-      { unit: 'token', input: 2.5, output: 10, cachedInput: 0.25, note: 'base rate; some requests have other rates' },
+      { unit: 'token', input: 2.5, output: 10, cachedInput: 0.25, note: 'base rate, some requests have other rates' },
       { unit: 'token', input: 0, output: 0 },
       { unit: 'character', usd: 115 },
       { unit: 'clip', usd: 0.03, note: '60 s' },

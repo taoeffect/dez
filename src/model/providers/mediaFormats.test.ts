@@ -1041,7 +1041,7 @@ describe('venice list prices', () => {
 
   it.each([
     ['an edit whose included count is no whole number', 'imageEdit', editPrices({ included: 0.5, additional: price(0.01) })],
-    ['an edit with no price of a more image', 'imageEdit', editPrices({ included: 1 })],
+    ['an edit with no price of an extra image', 'imageEdit', editPrices({ included: 1 })],
     // Only an edit takes input images.
     ['an image model with input image prices', 'image', { generation: price(0.01), inputImages: { included: 0, additional: price(0.01) } }],
     ['a table with a key that Dez does not know', 'image', { generation: price(0.01), per_megapixel: price(0.01) }],
