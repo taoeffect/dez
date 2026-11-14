@@ -7,7 +7,7 @@ import { CLIP_FILE_EXTENSIONS, MAX_SAVED_CLIP_BYTES, storableClip } from '../cha
 import { newMediaIds } from '../chat/mediaIds'
 import type { Section } from '../chat/types'
 import { conversationAssets, type ConversationAssets } from '../streams/mediaRequest'
-import { ASSET_NAMES, jobTimeoutMs, jobTimeoutParameter } from './jobs'
+import { ASSET_NAMES, INTERMEDIATE_PARAMETER, jobTimeoutMs, jobTimeoutParameter } from './jobs'
 import { clipInput, tellUserConsole, type ClipInput, type KeptFile, type ProgramEnd, type ShippedProgram } from './programRuns'
 import { subcommandToolDefinition, type SubcommandTool } from './subcommands'
 import { assetText, unknownInputsProblem } from './toolInputs'
@@ -21,7 +21,8 @@ import { ToolError, type ToolArguments, type ToolParameter } from './types'
 // the programs. What the `audio` tool shares with this one about a run is
 // in programRuns.ts.
 //
-// - `join_clips` and `ffmpeg` start a job of the reply (controller/jobs.ts).
+// - `join_clips` and `ffmpeg` start a job of the reply (controller/jobs.ts);
+//   with `is_intermediate`, the job hides what it makes (chat/hiddenAssets.ts).
 // - `ffprobe` is fast, so its call waits for it.
 //
 // A call names an input as `@id`. The program gets a copy of that file
@@ -163,6 +164,7 @@ export const VIDEO_TOOL: SubcommandTool = {
           description: 'The ids of the video clips in the order of the join, as in "@c @d". A clip can be there more than once.',
           required: true,
         },
+        INTERMEDIATE_PARAMETER,
         jobTimeoutParameter(DEFAULT_VIDEO_TIMEOUT_SECONDS),
       ],
       example: { clips: '@c @d' },
@@ -171,7 +173,7 @@ export const VIDEO_TOOL: SubcommandTool = {
       name: 'ffmpeg',
       summary: 'Run ffmpeg with your own arguments on the clips and the images, for example to cut or scale a clip, to put sound on a video clip, or to take a frame as an image.',
       description: FFMPEG_HELP,
-      parameters: [ARGUMENTS_PARAMETER, jobTimeoutParameter(DEFAULT_VIDEO_TIMEOUT_SECONDS)],
+      parameters: [ARGUMENTS_PARAMETER, INTERMEDIATE_PARAMETER, jobTimeoutParameter(DEFAULT_VIDEO_TIMEOUT_SECONDS)],
       example: { arguments: '-i @c -i @b -map 0:v -map 1:a -c:v copy -c:a aac -shortest out.mp4' },
     },
     {

@@ -124,6 +124,29 @@ export function jobTimeoutMs(args: ToolArguments, defaultSeconds: number): numbe
   return seconds * 1000
 }
 
+/** The `is_intermediate` parameter of a tool whose job makes images or
+ *  clips (`model_invoke`, the `join_clips` and `ffmpeg` subcommands of
+ *  `video`). With `true`, the job marks what it makes as hidden assets
+ *  (`hidesAssets` of `ReplyJobs.start`, chat/hiddenAssets.ts). Nothing of
+ *  a request or of a result that the model reads changes. Static text: it
+ *  goes into a tool definition or a help text. */
+export const INTERMEDIATE_PARAMETER: ToolParameter = {
+  name: 'is_intermediate',
+  type: 'boolean',
+  description: 'Set it to `true` when the call makes only a part that you use to assemble the result that the user asked for, '
+    + 'and not a result that the user asked to see: a frame, one scene of a video, a sound track. '
+    + 'The image or the clip is then hidden in your reply: the user sees only the chip of this call, and can open the chip to see it. '
+    + 'It gets an id as any other one, which a later call can name with @id. '
+    + 'The default is `false`: the image or the clip shows in your reply.',
+  required: false,
+}
+
+/** Whether the checked arguments of a call set `is_intermediate`
+ *  (`INTERMEDIATE_PARAMETER`). */
+export function isIntermediate(args: ToolArguments): boolean {
+  return args[INTERMEDIATE_PARAMETER.name] === true
+}
+
 // Whole seconds, as a job's time is not exact.
 function secondsText(milliseconds: number): string {
   const count = Math.round(milliseconds / 1000)

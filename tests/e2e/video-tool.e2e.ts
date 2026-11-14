@@ -15,6 +15,7 @@ import { mockChatPath, openAiToolCall, replyText, sendChatReply, sendToolCalls, 
 import { pidsWithCwd, processExists } from './harness/processes'
 import type { E2EBrowser } from './harness/session'
 import { endedReply, newTab, openSeededConversation, openToasts, pickModel, submit, waitForThread } from './harness/thread'
+import { hiddenAssetNotes, hiddenPart, hidingPart, intermediateParts, pressToolChip, revealingPart } from './harness/toolChips'
 
 // The `video` tool, driven through the real app against a mock chat model
 // in this process. The app runs the real ffmpeg and ffprobe of the debug
@@ -27,7 +28,8 @@ import { endedReply, newTab, openSeededConversation, openToasts, pickModel, subm
 //   and into the reply, with a new id and the name of the tool; a later
 //   call of the reply mixes music under the sound of such a new clip; a
 //   PNG image goes as a JPEG copy; a run with `-f null -` gives only its
-//   log;
+//   log; with `is_intermediate`, its new clip is hidden under the chip of
+//   its call;
 // - `ffprobe` gives its output as the result of its call, with the neutral
 //   names of the copies;
 // - a call whose arguments name a file of the computer, the network, or a
@@ -325,6 +327,38 @@ describe('video tool', () => {
     expect(reply.endsWith(`</dez:tool>\n\n<dez:video id="h" type="video/webm" src="${underPath}" tool="video"/>\n\n${replyText(CALLER.modelName)}`)).toBe(true)
     for (const file of [madePath, underPath]) expect(mediaFacts(file)).toStrictEqual({ streams: ['video vp9 48x36', 'audio opus'], seconds: 1 })
     await waitForValue(browser, 'player of the last new clip', async () => (await shownPlayers(browser)).at(-1), madeVideoPlayer('h', 1))
+    await expectCleanEnd(files)
+  })
+
+  it('hides the clip of an ffmpeg call with is_intermediate under the chip of its call, which shows it when it opens', async () => {
+    const files = await openClips('ffmpeg-intermediate')
+    const before = await filesIn(videoDir)
+    await submit(browser, 'Put the sound on the clip, as a step of your work.')
+    const mix = await runJob(await chatRequest(), 'call_part', 'ffmpeg', { arguments: '-i @a -i @e -map 0:v -map 1:a -c:v copy -c:a libopus -shortest part.webm', is_intermediate: true })
+    // The flag changes nothing that the model reads.
+    expect(mix.started).toBe(`${jobStartedText(mix.jobId, 1)}\nThe inputs of the run: the video clip @a as a.webm, the audio clip @e as e.wav.`)
+    expect(mix.result.status).toBe('finished')
+    expect(mix.result.text.endsWith('\nMade the video clip @g.')).toBe(true)
+    await sendChatReply(mix.next.reply, CALLER.modelName)
+
+    const reply = await endedReply(browser, CLIPS_REPLY_INDEX)
+    const madePath = path.join(videoDir, await newFileIn(browser, videoDir, before))
+    expect(reply.endsWith(`</dez:tool>\n\n<dez:video id="g" type="video/webm" src="${madePath}" tool="video" hidden="${mix.jobId}"/>\n\n${replyText(CALLER.modelName)}`)).toBe(true)
+
+    // The chip of the `video` call tells of the clip; the `jobs_wait` chip
+    // does not, and no player shows the clip at its place.
+    await waitForValue(browser, 'chips after the reply', () => intermediateParts(browser), [hidingPart('video'), null])
+    expect((await shownPlayers(browser)).map(({ id }) => id)).not.toContain('g')
+    expect(await hiddenAssetNotes(browser)).toStrictEqual([{ text: 'Hidden intermediate video clip @g. Open its tool call to see it.', visible: false }])
+
+    await pressToolChip(browser, 0)
+    await waitForValue(browser, 'player in the panel', async () => (await shownPlayers(browser)).find(({ id }) => id === 'g'), madeVideoPlayer('g', 1))
+    expect(await intermediateParts(browser)).toStrictEqual([revealingPart('video'), null])
+    expect(await hiddenPart(browser, 0)).toStrictEqual({ heading: 'Intermediate asset', assets: 1, text: null })
+
+    await pressToolChip(browser, 0)
+    await waitForValue(browser, 'player after the chip closed', async () => (await shownPlayers(browser)).map(({ id }) => id).includes('g'), false)
+    expect(await intermediateParts(browser)).toStrictEqual([hidingPart('video'), null])
     await expectCleanEnd(files)
   })
 

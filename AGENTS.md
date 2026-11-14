@@ -74,12 +74,13 @@ ThreadEditor (CodeMirror doc) syncs to the active tab's sections
        that its prompt names with @id: a media request (dez.provider/generateMedia), or, for a text
        model, one chat request that holds only that prompt (dez.provider/streamChat: no
        conversation, no system prompt, and no tools, so the invoked model can call no tool)
-    -> the images and clips of a model_invoke call with is_intermediate get a `hidden` mark: the
-       editor shows them in the open panel of the call's chip, not at their place in the reply
     -> a video call runs ffmpeg or ffprobe, the programs that Dez ships, in a new work folder, on
        copies of the images and clips that its arguments name with @id (join_clips and ffmpeg as a
        job, ffprobe at once); the new files that Dez keeps go into the generated folders
     -> an audio clip call cuts its clip with that ffmpeg in the same way, and waits for it (no job)
+    -> the images and clips of a model_invoke, join_clips, or ffmpeg call with is_intermediate get a
+       `hidden` mark: the editor shows them in the open panel of the call's chip, not at their place
+       in the reply
     -> a model with a media request kind (image, imageEdit, upscale, tts, music, video, imageToVideo,
        videoToVideo, voiceChange, transcription) gets one media round in place of the chat rounds:
        dez.provider/generateMedia (one request, or a queue, poll, retrieve job for a clip; the input
@@ -110,7 +111,7 @@ ThreadEditor (CodeMirror doc) syncs to the active tab's sections
 - `controller/media.ts`: `dez.controller/media/*`: save a clip (move its temp copy, else download its URL, or write the bytes of a pasted file), delete a saved clip, read a clip's bytes (`readClip`), decode an audio clip for its length and a WAV copy (`decodeAudio`: in the webview, no Rust, for the input clips of a media request; the types are in `model/chat/audioCut.ts`), the cleanup of old temp copies, and whether a clip URL answers (`urlAnswers`: the player asks it to tell a gone clip from one that the computer cannot play). `controller/clipSources.ts`: the one rule of which sources a clip can come from, and the download of a clip (no selectors); `readClip` and `controller/programRuns.ts` use it.
 - `model/tools/workFolders.ts`, `controller/workFolders.ts`: the work folders of the bundled tools (`dez.native/runBundledTool`) in the cache root, and the delete of the old ones, which `dez.controller/media/startCleanup` runs next to the cleanup of the temp copies.
 - `controller/unusedFiles.ts`: `dez.controller/unusedFiles/*`: find (with progress) and delete the stored files that no text names. The rules are in `model/chat/unusedFiles.ts`; the run of the Settings row is in `view/settings/unusedFiles.ts`.
-- `view/editor/toolCalls.ts`: `<dez:tool>` blocks shown as chips, each with a panel of its parameters and result; a block of a tool that Dez does not have shows as an `old/unrecognized tool: <name>` chip, and a call that the round limit stopped as a `not run` chip; the chip of an intermediate `model_invoke` call (an eye, the type symbols, a label, and its hidden assets or text in the panel); the spacing of the chip lines (`ChipSpacing`), and every line that takes no height.
+- `view/editor/toolCalls.ts`: `<dez:tool>` blocks shown as chips, each with a panel of its parameters and result; a block of a tool that Dez does not have shows as an `old/unrecognized tool: <name>` chip, and a call that the round limit stopped as a `not run` chip; the chip of an intermediate call (`isIntermediateCall`, `model/tools/registry.ts`: an eye, the type symbols, a label, and its hidden assets or text in the panel); the spacing of the chip lines (`ChipSpacing`), and every line that takes no height.
 - `view/editor/hiddenAssets.ts`: the hidden assets of the editor state, the placeholder at the place of one, and its Backspace and Delete rule. The rule of which assets a chip hides is in `model/chat/hiddenAssets.ts`.
 - `view/editor/media.ts`: `<dez:audio>` and `<dez:video>` tags shown as players (an agent section's made clips, a user section's pasted or dropped clips); the Save and Delete of a clip; the right-click menu. `view/media/`: `MediaPlayer.vue` (the video.js parts in Dez's own skin: the Save control, the expiry clock, the hover toolbar with the id badge and the clip's facts, the card of a clip that is gone or that the computer cannot play), `clipState.ts` (with `clipProblem`, which tells which, and `clipFile`, the local file of the menu), `videoSizes.ts`, `releaseMedia.ts` (the release of a media element that left the document).
 - `view/editor/lineBlocks.ts`: the rules that blocks of whole lines share (tool chips, players): text next to one, Backspace, Delete.

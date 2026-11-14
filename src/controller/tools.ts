@@ -12,7 +12,7 @@ import { effectiveRequest, type ProviderInfo, type ProviderInputImageRules, type
 import type { SettingsSnapshot } from '../model/state'
 import { AUDIO_TOOL, audioClipId, audioClipOf, audioCutPart, audioCutRequest, audioCutResultText, audioLengthText } from '../model/tools/audioTool'
 import { brightnessPlan, contrastPlan, convertPlan, cropPlan, flipPlan, IMAGE_TOOL, imageIdArgument, imageOf, imageResultText, invertPlan, rotatePlan, saturationPlan, scalePlan, unreadableImageText, unwritableFormatError, type ImagePlan } from '../model/tools/imageTool'
-import { jobCallLabel, jobInspectText, jobResultText, jobsListText, jobStartedText, jobsWaitText, unknownJobText, type JobResult } from '../model/tools/jobs'
+import { isIntermediate, jobCallLabel, jobInspectText, jobResultText, jobsListText, jobStartedText, jobsWaitText, unknownJobText, type JobResult } from '../model/tools/jobs'
 import { parameterValuesArgument, type ModelTarget } from '../model/tools/modelArguments'
 import { modelInfoPart, modelInfoText, modelInfoTarget, type ModelInfoFacts } from '../model/tools/modelInfo'
 import { invocationInputsText, MODEL_INVOKE_TOOL, modelInvocation } from '../model/tools/modelInvoke'
@@ -341,7 +341,7 @@ const TOOL_RUNNERS: Record<string, ToolRunner> = {
   // `is_intermediate` changes nothing of the request or of the results
   // that the model reads: the job only marks its images and clips as
   // hidden (`hidesAssets`), and the editor shows them under the chip of
-  // this call.
+  // this call. The same holds for `join_clips` and `ffmpeg` of `video`.
   async model_invoke (args, _signal, context) {
     const providers = await sbp('dez.provider/infos') as ProviderInfo[]
     const { modelParameters, providerSettings } = sbp('dez.model/settings/snapshot') as SettingsSnapshot
@@ -354,7 +354,7 @@ const TOOL_RUNNERS: Record<string, ToolRunner> = {
     })
     return startJob(context, MODEL_INVOKE_TOOL.name, (signal, report) => invokeModel(invocation, signal, report, { toolsAllowed: false }), {
       timeoutMs: invocation.timeoutMs,
-      hidesAssets: args.is_intermediate === true,
+      hidesAssets: isIntermediate(args),
       label: jobCallLabel(String(args.prompt ?? '')),
     }, invocationInputsText(invocation.inputs))
   },
@@ -370,12 +370,12 @@ const TOOL_RUNNERS: Record<string, ToolRunner> = {
     async join_clips (args, _signal, context) {
       const call = joinClipsCall(args, callSections(context))
       const label = jobCallLabel(`join_clips ${String(args.clips ?? '')}`)
-      return startJob(context, VIDEO_TOOL.name, (signal, report) => runJoinJob(call, signal, report), { timeoutMs: call.timeoutMs, label }, videoInputsText(call.inputs))
+      return startJob(context, VIDEO_TOOL.name, (signal, report) => runJoinJob(call, signal, report), { timeoutMs: call.timeoutMs, hidesAssets: isIntermediate(args), label }, videoInputsText(call.inputs))
     },
     async ffmpeg (args, _signal, context) {
       const call = ffmpegCall(args, callSections(context))
       const label = jobCallLabel(`ffmpeg ${String(args.arguments ?? '')}`)
-      return startJob(context, VIDEO_TOOL.name, (signal, report) => runFfmpegJob(call, signal, report), { timeoutMs: call.timeoutMs, label }, videoInputsText(call.inputs))
+      return startJob(context, VIDEO_TOOL.name, (signal, report) => runFfmpegJob(call, signal, report), { timeoutMs: call.timeoutMs, hidesAssets: isIntermediate(args), label }, videoInputsText(call.inputs))
     },
     async ffprobe (args, signal, context) {
       return runFfprobe(ffprobeCall(args, callSections(context)), signal)

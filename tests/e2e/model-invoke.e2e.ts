@@ -12,7 +12,7 @@ import { startMockProviderApp, takeRequestTo, type MockProviderApp } from './har
 import { answerHeld, mockChatPath, openAiToolCall, replyText, sendChatReply, sendToolCalls, startEventStream, toolResult, writeChatFrame, type HeldRequest, type MockProvider } from './harness/mockServer'
 import type { E2EBrowser } from './harness/session'
 import { activeConversationId, activeTabStreaming, assetPartPoint, docPos, editorDoc, endedReply, focusEditor, newTab, openToasts, setCaret, submit, threadSections, waitForThread } from './harness/thread'
-import { hiddenAssetNotes, hiddenPart, intermediateParts, pressToolChip, toolChips, toolPanel, type IntermediatePartView } from './harness/toolChips'
+import { hiddenAssetNotes, hiddenPart, hidingPart, intermediateParts, pressToolChip, revealingPart, toolChips, toolPanel } from './harness/toolChips'
 
 // The `model_invoke` tool, driven through the real app against a mock chat
 // model (the caller), a mock of Venice's media API
@@ -448,10 +448,6 @@ describe('model_invoke', () => {
     await waitForValue(browser, 'error toast closed', () => openToasts(browser, 'error'), [])
   })
 
-  // What the chip of an intermediate call shows of an asset that it hides,
-  // with its panel closed, and with its panel open.
-  const hides = (type: string): IntermediatePartView => ({ eye: 'closed', lit: false, types: [type], text: 'intermediate asset hidden' })
-  const reveals = (type: string): IntermediatePartView => ({ eye: 'open', lit: true, types: [type], text: 'intermediate asset' })
   const imageSizes = async (): Promise<Array<{ width: number, height: number }>> => (await shownImages(browser)).map(({ width, height }) => ({ width, height }))
 
   /** Runs a reply whose one `model_invoke` call is intermediate and makes
@@ -487,7 +483,7 @@ describe('model_invoke', () => {
 
     // The image does not show at its place, and its lines take no room.
     // The chip of its call tells of it; the `jobs_wait` chip does not.
-    await waitForValue(browser, 'chips after the reply', () => intermediateParts(browser), [hides('image'), null])
+    await waitForValue(browser, 'chips after the reply', () => intermediateParts(browser), [hidingPart('image'), null])
     expect((await toolChips(browser))[0].label).toBe(`Tool call model_invoke, "${STUDIO.id}/${STUDIO.modelId}", intermediate asset hidden`)
     expect(await shownImages(browser)).toStrictEqual([])
     const note = 'Hidden intermediate image @a. Open its tool call to see it.'
@@ -502,14 +498,14 @@ describe('model_invoke', () => {
     // The open chip shows the image in its panel, before the call.
     await pressToolChip(browser, 0)
     await waitForValue(browser, 'image in the panel', imageSizes, [{ width: 48, height: 36 }])
-    expect(await intermediateParts(browser)).toStrictEqual([reveals('image'), null])
+    expect(await intermediateParts(browser)).toStrictEqual([revealingPart('image'), null])
     expect((await toolChips(browser))[0].label).toBe(`Tool call model_invoke, "${STUDIO.id}/${STUDIO.modelId}", intermediate asset`)
     expect(await hiddenPart(browser, 0)).toStrictEqual({ heading: 'Intermediate asset', assets: 1, text: null })
     expect((await toolPanel(browser, 0))?.result).toBe(started)
 
     await pressToolChip(browser, 0)
     await waitForValue(browser, 'image after the chip closed', () => shownImages(browser), [])
-    expect(await intermediateParts(browser)).toStrictEqual([hides('image'), null])
+    expect(await intermediateParts(browser)).toStrictEqual([hidingPart('image'), null])
 
     // The hidden image has its id, and a mention of it sends the image.
     await submit(browser, 'Use @a now.')
@@ -544,13 +540,13 @@ describe('model_invoke', () => {
 
     const reply = await endedReply(browser)
     expect(reply).toMatch(new RegExp(`</dez:tool>\\n\\n<dez:audio id="a" type="audio/wav" src="[^"]+\\.wav" expires="[^"]+" tool="model_invoke" job="queue-1" hidden="${jobId}"/>\\n\\n`))
-    await waitForValue(browser, 'chips after the reply', () => intermediateParts(browser), [hides('audio'), null])
+    await waitForValue(browser, 'chips after the reply', () => intermediateParts(browser), [hidingPart('audio'), null])
     expect(await shownPlayers(browser)).toStrictEqual([])
 
     await pressToolChip(browser, 0)
     const player: ShownPlayer = { kind: 'audio', id: 'a', available: true, source: 'blob', seconds: 2, picture: null, clock: 'Not saved', save: 'save' }
     await waitForValue(browser, 'player in the panel', () => shownPlayers(browser), [player])
-    expect(await intermediateParts(browser)).toStrictEqual([reveals('audio'), null])
+    expect(await intermediateParts(browser)).toStrictEqual([revealingPart('audio'), null])
     expect(await hiddenPart(browser, 0)).toStrictEqual({ heading: 'Intermediate asset', assets: 1, text: null })
 
     // Save writes the tag anew: its file is the saved one, and a file has
@@ -563,11 +559,11 @@ describe('model_invoke', () => {
     const savedDir = appFilePath(setup.app.home, 'assets', 'generated', 'audio')
     const saved = new RegExp(`<dez:audio id="a" type="audio/wav" src="${savedDir}/[^"]+\\.wav" tool="model_invoke" job="queue-1" hidden="${jobId}"/>`)
     await waitForValue(browser, 'saved tag', async () => saved.test((await threadSections(browser))[1].text), true)
-    expect(await intermediateParts(browser)).toStrictEqual([reveals('audio'), null])
+    expect(await intermediateParts(browser)).toStrictEqual([revealingPart('audio'), null])
 
     await pressToolChip(browser, 0)
     await waitForValue(browser, 'player after the chip closed', () => shownPlayers(browser), [])
-    expect(await intermediateParts(browser)).toStrictEqual([hides('audio'), null])
+    expect(await intermediateParts(browser)).toStrictEqual([hidingPart('audio'), null])
     expect(await openToasts(browser, 'error')).toStrictEqual([])
     expect(await consoleErrors(browser)).toStrictEqual([])
   })
@@ -613,7 +609,7 @@ describe('model_invoke', () => {
     // A new page: the record that beforeEach started is gone.
     await resetConsoleErrors(browser)
     await waitForValue(browser, 'restored active tab', () => activeConversationId(browser), conversationId)
-    await waitForValue(browser, 'restored chips', () => intermediateParts(browser), [hides('image'), null])
+    await waitForValue(browser, 'restored chips', () => intermediateParts(browser), [hidingPart('image'), null])
     expect(await shownImages(browser)).toStrictEqual([])
 
     await pressToolChip(browser, 0)

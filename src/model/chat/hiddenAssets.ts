@@ -4,11 +4,13 @@ import { findMediaTags, MEDIA_HIDDEN_ATTRIBUTE, type MediaTag } from './mediaTag
 import type { ToolBlock } from './toolBlocks'
 
 // Hidden assets: the images and clips that a call made as a part of its
-// work (`is_intermediate` of `model_invoke`). The text of such an asset is
-// where every asset of a job is (after the blocks of the `jobs_wait` group
-// that gave its result), with a marker that names its job
-// (`IMAGE_HIDDEN_KEY`, `MEDIA_HIDDEN_ATTRIBUTE`). The editor shows it under
-// the chip of the call that started that job, and not at its own place.
+// work (`is_intermediate` of `model_invoke`, and of the `join_clips` and
+// `ffmpeg` subcommands of `video`; `isIntermediateCall`,
+// tools/registry.ts). The text of such an asset is where every asset of a
+// job is (after the blocks of the `jobs_wait` group that gave its result),
+// with a marker that names its job (`IMAGE_HIDDEN_KEY`,
+// `MEDIA_HIDDEN_ATTRIBUTE`). The editor shows it under the chip of the
+// call that started that job, and not at its own place.
 //
 // The marker alone hides nothing. An asset is hidden only while a tool
 // block of its agent section started its job, so that there is a chip to

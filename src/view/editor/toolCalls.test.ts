@@ -171,6 +171,25 @@ describe('the intermediate data of a call (RenderedToolCall.intermediate)', () =
 
     expect(intermediate([shown, waited('finished', 'Made the image @b.')])).toBeNull()
   })
+
+  function video(status: ToolBlockStatus, command: string, parameters: Record<string, unknown>, more: Record<string, boolean> = {}): string {
+    const args = { command, parameters: JSON.stringify(parameters), ...more }
+    return toolBlockText({ id: 'call_1', name: 'video', status, arguments: args, result: status === 'running' ? '' : jobStartedText('j-aaaa', 1) })
+  }
+
+  it('marks a join_clips or ffmpeg call of the video tool whose parameters have is_intermediate, and holds the assets of its job', () => {
+    expect(intermediate([video('running', 'ffmpeg', { arguments: '-i @c cut.mp4', is_intermediate: true })], true)).toStrictEqual({ jobId: null, assets: [], text: '', status: null })
+    expect(intermediate([video('success', 'join_clips', { clips: '@c @d', is_intermediate: true })])).toStrictEqual({ jobId: 'j-aaaa', assets: [], text: '', status: null })
+
+    const call = intermediate([video('success', 'ffmpeg', { arguments: '-i @c cut.mp4', is_intermediate: true }), '', hiddenClip('j-aaaa', 'e', 'video')])
+    expect(call?.assets.map((asset) => asset.kind === 'clip' && [asset.tag.kind, asset.tag.id])).toStrictEqual([['video', 'e']])
+  })
+
+  it('is null for a video call that asks to hide nothing: no is_intermediate, the flag next to command, and ffprobe, which takes no flag', () => {
+    expect(intermediate([video('success', 'join_clips', { clips: '@c @d' })])).toBeNull()
+    expect(intermediate([video('running', 'ffmpeg', { arguments: '-i @c cut.mp4' }, { is_intermediate: true })], true)).toBeNull()
+    expect(intermediate([video('running', 'ffprobe', { arguments: '@c', is_intermediate: true })], true)).toBeNull()
+  })
 })
 
 describe('the spacing of the chip lines', () => {

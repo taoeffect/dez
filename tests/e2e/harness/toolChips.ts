@@ -85,6 +85,17 @@ export interface IntermediatePartView {
   text: string
 }
 
+/** What the chip of an intermediate call shows of one asset of `type`
+ *  that it hides, with its panel closed. */
+export function hidingPart (type: string): IntermediatePartView {
+  return { eye: 'closed', lit: false, types: [type], text: 'intermediate asset hidden' }
+}
+
+/** As `hidingPart`, with its panel open. */
+export function revealingPart (type: string): IntermediatePartView {
+  return { eye: 'open', lit: true, types: [type], text: 'intermediate asset' }
+}
+
 /** The intermediate part of each chip of the active editor, in doc order;
  *  null for a chip with no such part. */
 export async function intermediateParts (browser: E2EBrowser): Promise<Array<IntermediatePartView | null>> {

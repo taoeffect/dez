@@ -1,12 +1,13 @@
 import type { JsonObject } from '../../utils/json'
 import { AUDIO_TOOL_DEFINITION } from './audioTool'
 import { IMAGE_TOOL_DEFINITION } from './imageTool'
-import { JOB_INSPECT_TOOL, JOBS_LIST_TOOL, JOBS_WAIT_TOOL } from './jobs'
+import { isIntermediate, JOB_INSPECT_TOOL, JOBS_LIST_TOOL, JOBS_WAIT_TOOL } from './jobs'
 import { MODEL_INFO_TOOL } from './modelInfo'
 import { MODEL_INVOKE_TOOL } from './modelInvoke'
 import { MODEL_LIST_TOOL } from './modelList'
-import type { ToolDefinition } from './types'
-import { VIDEO_TOOL_DEFINITION } from './videoTool'
+import { parseSubcommandCall } from './subcommands'
+import { ToolError, type ToolArguments, type ToolDefinition } from './types'
+import { VIDEO_TOOL, VIDEO_TOOL_DEFINITION } from './videoTool'
 
 /** Every Dez tool, in the order that requests list them. A new tool goes
  *  at the end: the tools before it then keep their bytes in the tools
@@ -26,6 +27,25 @@ export const TOOL_DEFINITIONS: readonly ToolDefinition[] = [
 /** The Dez tool with this name; undefined when no Dez tool has it. */
 export function toolDefinition(name: string): ToolDefinition | undefined {
   return TOOL_DEFINITIONS.find((tool) => tool.name === name)
+}
+
+/** Whether a call, as its tool block holds it (`name` and `args`), asks
+ *  Dez to hide the images and clips that its job makes
+ *  (`INTERMEDIATE_PARAMETER`, jobs.ts). The flag is an argument of
+ *  `model_invoke`, and a parameter of the `video` subcommands that make
+ *  files, in the `parameters` text, where their runners read it. False
+ *  for the call of any other tool, and for a `video` call that Dez
+ *  refuses or that asks for a help text. */
+export function isIntermediateCall(name: string, args: ToolArguments): boolean {
+  if (name === MODEL_INVOKE_TOOL.name) return isIntermediate(args)
+  if (name !== VIDEO_TOOL.name) return false
+  try {
+    const call = parseSubcommandCall(VIDEO_TOOL, args)
+    return call.kind === 'run' && isIntermediate(call.arguments)
+  } catch (error) {
+    if (error instanceof ToolError) return false
+    throw error
+  }
 }
 
 /** The error result of a call to a tool that Dez does not have. */

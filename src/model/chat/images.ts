@@ -125,7 +125,7 @@ export interface ImageMetadataItem {
 export const IMAGE_TOOL_KEY = 'tool'
 
 /** The metadata key of an image that a call made as a part of its work
- *  (`is_intermediate` of `model_invoke`), as in
+ *  (`is_intermediate` of `model_invoke` or of a `video` subcommand), as in
  *  `![<path>](id=b|tool=model_invoke|hidden=j-k3x9)`; its value is the id
  *  of the Dez job that made the image. The editor shows such an image
  *  under the chip of the call that started that job, and not at the place

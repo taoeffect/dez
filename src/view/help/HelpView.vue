@@ -184,11 +184,11 @@ function onOverlayClick(event: MouseEvent) {
 
             <h3>Intermediate assets</h3>
             <p>
-              A chat model that asks another model for an image or a clip can mark it as
-              intermediate: a part of its work, for example a clip that it then joins with others,
-              and not the result that you asked for. Dez hides such an asset in the reply, and the
-              chip of its tool call says "intermediate asset hidden". Click the chip to see the
-              asset.
+              A chat model that asks another model for an image or a clip, or that cuts, joins, or
+              converts clips with a Dez tool, can mark what it makes as intermediate: a part of its
+              work, for example a clip that it then joins with others, and not the result that you
+              asked for. Dez hides such an asset in the reply, and the chip of its tool call says
+              "intermediate asset hidden". Click the chip to see the asset.
             </p>
             <p>
               A hidden asset is an asset as any other: it has an id, you can name it with

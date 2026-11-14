@@ -9,8 +9,7 @@ import { MODEL_OUTPUT_IDS, effectiveOutputs, type ModelOutput } from '../../mode
 import type { ModelInfo } from '../../model/providers/types'
 import { isRoundLimitResult } from '../../model/streams/toolRound'
 import { jobOwnText, startedJobId, type JobResultStatus } from '../../model/tools/jobs'
-import { MODEL_INVOKE_TOOL } from '../../model/tools/modelInvoke'
-import { toolDefinition } from '../../model/tools/registry'
+import { isIntermediateCall, toolDefinition } from '../../model/tools/registry'
 import type { ToolArguments } from '../../model/tools/types'
 import { assetIcon } from '../assetIcons'
 import { sectionsField, type SectionModel } from '../thread/cmEditor'
@@ -56,8 +55,9 @@ export type IntermediateAsset =
   | { kind: 'clip', tag: MediaTagData }
 
 /** What the chip of an intermediate call shows on top of the parts of
- *  every chip. A call is intermediate when its `model_invoke` call has
- *  `is_intermediate`, and it runs or started a job; or when it owns a
+ *  every chip. A call is intermediate when it asks to hide what its job
+ *  makes (`isIntermediateCall`: `is_intermediate` of `model_invoke`, or of
+ *  a `video` subcommand), and it runs or started a job; or when it owns a
  *  hidden asset. A call that failed before it started a job is a failed
  *  call as any other. */
 export interface IntermediateCall {
@@ -198,7 +198,7 @@ function addSectionSpacing(spacing: ChipSpacing, text: string, offset: number, c
 function intermediateCall(call: ToolBlock, state: ToolCallState, chips: readonly ToolBlock[], hidden: readonly HiddenAsset[]): IntermediateCall | null {
   const jobId = startedJobId(call.result)
   const assets = jobId === null ? [] : hidden.filter((asset) => asset.jobId === jobId)
-  const asked = call.name === MODEL_INVOKE_TOOL.name && call.arguments.is_intermediate === true && (state === 'running' || jobId !== null)
+  const asked = (state === 'running' || jobId !== null) && isIntermediateCall(call.name, call.arguments)
   if (assets.length === 0 && !asked) return null
   const result = jobId === null ? null : jobResultInBlocks(chips, jobId)
   const text = result?.status === 'finished' && assets.length === 0 ? jobOwnText(result.text) : ''

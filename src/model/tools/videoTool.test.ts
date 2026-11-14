@@ -50,8 +50,8 @@ describe('the video tool', () => {
   it('is one tool with the subcommands join_clips, ffmpeg, and ffprobe', () => {
     expect(VIDEO_TOOL_DEFINITION.name).toBe('video')
     expect(VIDEO_TOOL.subcommands.map(({ name, parameters }) => [name, parameters.map((parameter) => parameter.name)])).toStrictEqual([
-      ['join_clips', ['clips', 'timeout_seconds']],
-      ['ffmpeg', ['arguments', 'timeout_seconds']],
+      ['join_clips', ['clips', 'is_intermediate', 'timeout_seconds']],
+      ['ffmpeg', ['arguments', 'is_intermediate', 'timeout_seconds']],
       ['ffprobe', ['arguments']],
     ])
   })

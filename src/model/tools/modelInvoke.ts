@@ -11,7 +11,7 @@ import type { MediaProgress } from '../providers/streamTypes'
 import { effectiveRequest, sendsPrompt, type MediaKind, type ModelInfo, type ProviderInfo } from '../providers/types'
 import { unstoredOutputMessage, unusableModelMessage } from '../providers/unusableModel'
 import { conversationAssets, mediaInputRules, preparedMediaRequest, promptRequestProblem, promptRequestSource, type MediaRequestInput, type PromptInput, type PromptRequestSource } from '../streams/mediaRequest'
-import { jobTimeoutMs, jobTimeoutParameter } from './jobs'
+import { INTERMEDIATE_PARAMETER, jobTimeoutMs, jobTimeoutParameter } from './jobs'
 import { withoutLocalPaths } from './localPaths'
 import { FIND_MODELS, namedModelTarget, parameterValuesArgument } from './modelArguments'
 import { MODEL_INFO_SIZE_CAP } from './modelInfo'
@@ -94,16 +94,7 @@ export const MODEL_INVOKE_TOOL: ToolDefinition = {
         + '(for example `{"duration": "5s"}`). A parameter with no value here gets the value that the user chose, else its default.',
       required: false,
     },
-    {
-      name: 'is_intermediate',
-      type: 'boolean',
-      description: 'Set it to `true` when the call makes only a part that you use to assemble the result that the user asked for, '
-        + 'and not a result that the user asked to see: a frame, one scene of a video, a sound track. '
-        + 'The image or the clip is then hidden in your reply: the user sees only the chip of this call, and can open the chip to see it. '
-        + 'It gets an id as any other one, which a later call can name with @id. '
-        + 'The default is `false`: the image or the clip shows in your reply.',
-      required: false,
-    },
+    INTERMEDIATE_PARAMETER,
     jobTimeoutParameter(DEFAULT_INVOKE_TIMEOUT_SECONDS),
   ],
 }
