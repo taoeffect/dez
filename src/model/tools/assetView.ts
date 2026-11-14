@@ -344,12 +344,15 @@ function sheetArgument(args: ToolArguments): SheetChoice {
  *  `crop` is an image, the caller checks. A blank `times`, `detail`,
  *  `layout`, `crop`, or `sound_picture` is none. */
 export function assetViewCall(args: ToolArguments): AssetViewCall {
-  const ids = assetIdsArgument(args, { max: MAX_ASSET_VIEW_GRID_IDS, notDone: NOT_DONE })
   const layout = choiceArgument(args, 'layout', VIEW_LAYOUTS) ?? 'separate'
+  // The cap of `separate` has its own text below, which also tells of the grid.
+  const ids = assetIdsArgument(args, { max: layout === 'grid' ? MAX_ASSET_VIEW_GRID_IDS : Infinity, notDone: NOT_DONE })
   if (layout === 'separate' && ids.length > MAX_ASSET_VIEW_IDS) {
+    const grid = ids.length > MAX_ASSET_VIEW_GRID_IDS
+      ? `with \`layout\` "grid" and the first ${MAX_ASSET_VIEW_GRID_IDS} (in one picture), then again with the rest`
+      : `with \`layout\` "grid" (at most ${MAX_ASSET_VIEW_GRID_IDS}, in one picture)`
     throw new ToolError(`\`assets\` names ${ids.length} images and clips, and a call with a picture for each one takes at most ${MAX_ASSET_VIEW_IDS}. `
-      + `Call again with \`layout\` "grid" (at most ${MAX_ASSET_VIEW_GRID_IDS}, in one picture), `
-      + `or with the first ${MAX_ASSET_VIEW_IDS}, then again with the rest. ${NOT_DONE}`)
+      + `Call again ${grid}, or with the first ${MAX_ASSET_VIEW_IDS}, then again with the rest. ${NOT_DONE}`)
   }
   const sheet = sheetArgument(args)
   const start = typeof args.start === 'number' ? args.start : 0

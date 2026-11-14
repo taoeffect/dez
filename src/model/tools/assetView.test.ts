@@ -116,6 +116,7 @@ describe('assetViewCall', () => {
     expect(refusal(() => assetViewCall({ assets: '@a @b @c @d @e' }))).toMatch(/at most 4\b.*`layout` "grid"/)
     expect(assetViewCall({ assets: twelve, layout: 'grid' }).ids).toHaveLength(12)
     expect(refusal(() => assetViewCall({ assets: `${twelve} @m`, layout: 'grid' }))).toMatch(/at most 12\b/)
+    expect(refusal(() => assetViewCall({ assets: `${twelve} @m` }))).toMatch(/at most 4\b.*`layout` "grid" and the first 12\b/)
     expect(refusal(() => assetViewCall({ assets: '@f', frames: 1 }))).toMatch(/2 to 16/)
     expect(refusal(() => assetViewCall({ assets: '@f', frames: 17 }))).toMatch(/2 to 16/)
     expect(refusal(() => assetViewCall({ assets: '@f', start: -1 }))).toMatch(/`start`/)
