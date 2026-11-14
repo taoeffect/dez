@@ -1,13 +1,14 @@
 import type { JsonObject } from '../../utils/json'
+import { ASSET_INFO_TOOL } from './assetInfo'
 import { AUDIO_TOOL_DEFINITION } from './audioTool'
 import { IMAGE_TOOL_DEFINITION } from './imageTool'
-import { isIntermediate, JOB_INSPECT_TOOL, JOBS_LIST_TOOL, JOBS_WAIT_TOOL } from './jobs'
+import { isIntermediate, JOB_INSPECT_TOOL, jobCallLabel, JOBS_LIST_TOOL, JOBS_WAIT_TOOL } from './jobs'
 import { MODEL_INFO_TOOL } from './modelInfo'
-import { MODEL_INVOKE_TOOL } from './modelInvoke'
+import { invocationLabel, MODEL_INVOKE_TOOL } from './modelInvoke'
 import { MODEL_LIST_TOOL } from './modelList'
 import { parseSubcommandCall } from './subcommands'
 import { ToolError, type ToolArguments, type ToolDefinition } from './types'
-import { VIDEO_TOOL, VIDEO_TOOL_DEFINITION } from './videoTool'
+import { VIDEO_TOOL, VIDEO_TOOL_DEFINITION, videoCallLabel } from './videoTool'
 
 /** Every Dez tool, in the order that requests list them. A new tool goes
  *  at the end: the tools before it then keep their bytes in the tools
@@ -22,6 +23,7 @@ export const TOOL_DEFINITIONS: readonly ToolDefinition[] = [
   JOB_INSPECT_TOOL,
   MODEL_INVOKE_TOOL,
   VIDEO_TOOL_DEFINITION,
+  ASSET_INFO_TOOL,
 ]
 
 /** The Dez tool with this name; undefined when no Dez tool has it. */
@@ -46,6 +48,25 @@ export function isIntermediateCall(name: string, args: ToolArguments): boolean {
     if (error instanceof ToolError) return false
     throw error
   }
+}
+
+/** The label of a call, as its tool block holds it (`name` and `args`):
+ *  the start of the argument that tells most what the call asks for. It is
+ *  the label of the call's job (`JobCall.label`) for a tool that starts
+ *  jobs, so that a later text that names the call (`asset_info`) matches
+ *  the `jobs_wait` result. A call of a subcommand tool gets its subcommand
+ *  and its parameters; a call of any other tool has no label (blank). */
+export function callLabel(name: string, args: ToolArguments): string {
+  if (name === MODEL_INVOKE_TOOL.name) return invocationLabel(args)
+  if (name === VIDEO_TOOL.name) {
+    try {
+      const call = parseSubcommandCall(VIDEO_TOOL, args)
+      if (call.kind === 'run') return videoCallLabel(call.name, call.arguments)
+    } catch (error) {
+      if (!(error instanceof ToolError)) throw error
+    }
+  }
+  return typeof args.command === 'string' ? jobCallLabel(`${args.command} ${String(args.parameters ?? '')}`) : ''
 }
 
 /** The error result of a call to a tool that Dez does not have. */

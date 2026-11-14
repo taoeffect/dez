@@ -11,7 +11,7 @@ import type { MediaProgress } from '../providers/streamTypes'
 import { effectiveRequest, sendsPrompt, type MediaKind, type ModelInfo, type ProviderInfo } from '../providers/types'
 import { unstoredOutputMessage, unusableModelMessage } from '../providers/unusableModel'
 import { conversationAssets, mediaInputRules, preparedMediaRequest, promptRequestProblem, promptRequestSource, type MediaRequestInput, type PromptInput, type PromptRequestSource } from '../streams/mediaRequest'
-import { INTERMEDIATE_PARAMETER, jobTimeoutMs, jobTimeoutParameter } from './jobs'
+import { INTERMEDIATE_PARAMETER, jobCallLabel, jobTimeoutMs, jobTimeoutParameter } from './jobs'
 import { withoutLocalPaths } from './localPaths'
 import { FIND_MODELS, namedModelTarget, parameterValuesArgument } from './modelArguments'
 import { MODEL_INFO_SIZE_CAP } from './modelInfo'
@@ -279,6 +279,12 @@ export function invocationInputsText(inputs: readonly PromptInput[]): string {
   return inputs.length === 0
     ? 'The request has no input image and no input clip.'
     : `The inputs of the request: ${inputs.map(assetText).join(', ')}.`
+}
+
+/** The label of a `model_invoke` call (`JobCall.label`): the start of its
+ *  prompt. */
+export function invocationLabel(args: ToolArguments): string {
+  return jobCallLabel(String(args.prompt ?? ''))
 }
 
 /** The state of a job before its request goes. */

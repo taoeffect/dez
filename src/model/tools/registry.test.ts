@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import { RESERVED_TOOL_ATTRIBUTES } from '../chat/toolBlocks'
-import { TOOL_DEFINITIONS, toolDefinition, toolJsonSchema, unknownToolText } from './registry'
+import { callLabel, TOOL_DEFINITIONS, toolDefinition, toolJsonSchema, unknownToolText } from './registry'
 import type { ToolDefinition } from './types'
 
 const SAMPLE: ToolDefinition = {
@@ -48,6 +48,26 @@ describe('toolDefinition', () => {
     expect(toolDefinition('model_list')?.name).toBe('model_list')
     expect(toolDefinition('Model_List')).toBeUndefined()
     expect(toolDefinition('web_search')).toBeUndefined()
+  })
+})
+
+describe('callLabel', () => {
+  it('gives the start of the prompt of a model_invoke call', () => {
+    expect(callLabel('model_invoke', { model: 'studio/paint', prompt: 'Scene 3:\n"the fox runs"' })).toBe('Scene 3: \'the fox runs\'')
+  })
+
+  it('gives the subcommand and its main argument of a video call', () => {
+    expect(callLabel('video', { command: 'join_clips', parameters: '{"clips": "@a @b", "is_intermediate": true}' })).toBe('join_clips @a @b')
+    expect(callLabel('video', { command: 'ffmpeg', parameters: '{"arguments": "-i @a out.mp4"}' })).toBe('ffmpeg -i @a out.mp4')
+  })
+
+  it('gives the subcommand and its parameters of another call, also a bad video call', () => {
+    expect(callLabel('image', { command: 'crop', parameters: '{"image": "a"}' })).toBe('crop {\'image\': \'a\'}')
+    expect(callLabel('video', { command: 'join_clips', parameters: 'clips @a' })).toBe('join_clips clips @a')
+  })
+
+  it('gives no label for a call with no subcommand', () => {
+    expect(callLabel('jobs_wait', {})).toBe('')
   })
 })
 

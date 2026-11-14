@@ -2357,7 +2357,8 @@ describe('dez.stream/start jobs', () => {
   // A `model_invoke` call, which starts a job.
   const invokeCall = (id: string, target = PAINTER) => ({ id, name: 'model_invoke', argumentsText: JSON.stringify({ model: target, prompt: PROMPT }) })
   const fox = generated('fox.png')
-  const foxReference = `![${fox}](id=a|tool=model_invoke)`
+  // The reference of the image of the job of the call `callId`.
+  const foxReference = (callId: string) => `![${fox}](id=a|tool=model_invoke|made-by=${jobId(callId)})`
   // A clip that the provider made as its job `q-17`, in a temp copy.
   const run: GeneratedClip = { kind: 'video', mediaType: 'video/mp4', src: '/home/u/.cache/dez/media/run.mp4', url: null, expires: '2026-12-01T00:00:00.000Z', jobId: 'q-17' }
   // The requests of the jobs, in the order of the starts: the signal of
@@ -2419,7 +2420,7 @@ describe('dez.stream/start jobs', () => {
     expect(sent[2].at(-1)).toStrictEqual({ role: 'tool', results: [{ callId: 'c2', content: result, isError: false }] })
     const text = sectionVisibleText(agentSection())
     expect(callResult('c2')).toBe(result)
-    expect(text.slice(text.lastIndexOf('</dez:tool>\n'))).toBe(`</dez:tool>\n\n${foxReference}\n\nHere it is.`)
+    expect(text.slice(text.lastIndexOf('</dez:tool>\n'))).toBe(`</dez:tool>\n\n${foxReference('c1')}\n\nHere it is.`)
     expect(toasts).toStrictEqual([])
   })
 
@@ -2441,7 +2442,7 @@ describe('dez.stream/start jobs', () => {
     jobs[0].end({ media: [], clips: [run] })
     await stream
 
-    const tag = `<dez:video id="a" type="video/mp4" src="${run.src}" expires="${run.expires}" tool="model_invoke" job="q-17"/>`
+    const tag = `<dez:video id="a" type="video/mp4" src="${run.src}" expires="${run.expires}" tool="model_invoke" job="q-17" made-by="${jobId('c1')}"/>`
     expect(sectionTexts()).toStrictEqual([
       { role: 'user', text: 'Hi' },
       { role: 'agent', text: `${invokeBlock('c1', FILMER)}I started it.\n\n${tag}` },
@@ -2452,7 +2453,7 @@ describe('dez.stream/start jobs', () => {
     expect(alerts).toStrictEqual([{ tabId: activeTab().id, status: 'finished' }])
   })
 
-  // Both readers of a job's result write the marker: a `jobs_wait` call,
+  // Both readers of a job's result write the markers: a `jobs_wait` call,
   // and the end of the reply.
   it('marks the assets of a call with `is_intermediate` as hidden assets of its job, at the place of any other asset', async () => {
     const intermediateCall = (id: string, target: string) => ({ id, name: 'model_invoke', argumentsText: JSON.stringify({ model: target, prompt: PROMPT, is_intermediate: true }) })
@@ -2478,8 +2479,8 @@ describe('dez.stream/start jobs', () => {
     expect(callResult('c3')).toBe(jobsWaitText([{ id: jobId('c1'), tool: 'model_invoke', status: 'finished', text: 'Made the image @a.', call: { number: 1, label: PROMPT } }], 1))
     const text = sectionVisibleText(agentSection())
     expect(text.slice(text.lastIndexOf('</dez:tool>\n'))).toBe(
-      `</dez:tool>\n\n![${fox}](id=a|tool=model_invoke|hidden=${jobId('c1')})\n\nDone.\n\n`
-      + `<dez:video id="b" type="video/mp4" src="${run.src}" expires="${run.expires}" tool="model_invoke" job="q-17" hidden="${jobId('c2')}"/>`,
+      `</dez:tool>\n\n![${fox}](id=a|tool=model_invoke|made-by=${jobId('c1')}|hidden=${jobId('c1')})\n\nDone.\n\n`
+      + `<dez:video id="b" type="video/mp4" src="${run.src}" expires="${run.expires}" tool="model_invoke" job="q-17" made-by="${jobId('c2')}" hidden="${jobId('c2')}"/>`,
     )
     expect(toasts).toStrictEqual([])
   })
@@ -2531,7 +2532,7 @@ describe('dez.stream/start jobs', () => {
     jobs[0].end({ media: [png], clips: [] })
     await stream
 
-    expect(sectionVisibleText(agentSection())).toBe(`${invokeBlock('c1')}\n${foxReference}`)
+    expect(sectionVisibleText(agentSection())).toBe(`${invokeBlock('c1')}\n${foxReference('c1')}`)
     expect(toasts.map((toast) => toast.data)).toStrictEqual([
       { variant: 'error', title: 'Request failed', message: 'Venice refused the API key.\n\nDetails: HTTP 401: Authentication failed', group: expect.any(String) },
     ])

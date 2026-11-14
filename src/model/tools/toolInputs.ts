@@ -22,6 +22,22 @@ export interface InputWording {
   notDone: string
 }
 
+/** The error text of a call whose argument names the assets `unknownIds`
+ *  (ids, without the @), which no image and no clip of the conversation
+ *  `assets` has: it tells what Dez did not do, and the ids that the call
+ *  can name. */
+export function unknownAssetsText(unknownIds: readonly string[], assets: ConversationAssets, { argument, notDone }: InputWording): string {
+  const unknown = unknownIds.map((id) => `@${id}`)
+  const lead = `${unknown.join(', ')} ${unknown.length === 1 ? 'names' : 'name'} no image and no clip of this conversation`
+  const known = [
+    ...Array.from(assets.images.keys(), (id) => assetText({ id, kind: 'image' })),
+    ...Array.from(assets.clips.values(), assetText),
+  ]
+  return known.length === 0
+    ? `${lead}: it has none, so ${argument} can name no input. ${notDone}`
+    : `${lead}. ${notDone} The conversation has ${known.join(', ')}: call again with these ids.`
+}
+
 /** Why a call whose argument holds the `@id` words `unknownIds`, which
  *  name no image and no clip, does nothing; null when it can go. A model
  *  that names an input that is not there (a wrong id, an image that the
@@ -33,19 +49,11 @@ export function unknownInputsProblem(
   unknownIds: readonly string[],
   assets: ConversationAssets,
   nextId: string,
-  { argument, notDone }: InputWording,
+  wording: InputWording,
 ): string | null {
-  const unknown = unknownIds.filter((id) => id.length <= nextId.length).map((id) => `@${id}`)
+  const unknown = unknownIds.filter((id) => id.length <= nextId.length)
   if (unknown.length === 0) return null
-  const lead = `${unknown.join(', ')} ${unknown.length === 1 ? 'names' : 'name'} no image and no clip of this conversation`
-  const known = [
-    ...Array.from(assets.images.keys(), (id) => assetText({ id, kind: 'image' })),
-    ...Array.from(assets.clips.values(), assetText),
-  ]
-  const notAnInput = 'Write a word that is no input without the @.'
-  return known.length === 0
-    ? `${lead}: it has none, so ${argument} can name no input. ${notDone} ${notAnInput}`
-    : `${lead}. ${notDone} The conversation has ${known.join(', ')}: call again with these ids. ${notAnInput}`
+  return `${unknownAssetsText(unknown, assets, wording)} Write a word that is no input without the @.`
 }
 
 /** The error result of a call of the tool `tool` whose input clip `id`

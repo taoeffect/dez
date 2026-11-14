@@ -172,11 +172,17 @@ export const MEDIA_TOOL_ATTRIBUTE = 'tool'
 export const MEDIA_JOB_ATTRIBUTE = 'job'
 
 /** The attribute of a clip that a call made as a part of its work, as in
- *  `<dez:audio id="c" type="audio/wav" src="…" tool="model_invoke" hidden="j-k3x9"/>`;
+ *  `<dez:audio id="c" type="audio/wav" src="…" tool="model_invoke" made-by="j-k3x9" hidden="j-k3x9"/>`;
  *  its value is the id of the Dez job that made the clip, as
  *  `IMAGE_HIDDEN_KEY` (images.ts) for an image. `job` is taken: it is the
  *  provider's id of its own job. */
 export const MEDIA_HIDDEN_ATTRIBUTE = 'hidden'
+
+/** The attribute of a clip that a Dez job made, hidden or not, as
+ *  `IMAGE_MADE_BY_KEY` (images.ts) for an image: its value is the id of
+ *  the Dez job. A request leaves it out, as every attribute of a tag other
+ *  than `id` and `type` (`mediaTagRequestText`). */
+export const MEDIA_MADE_BY_ATTRIBUTE = 'made-by'
 
 /** One tag in a text. */
 export interface MediaTag extends MediaTagData {

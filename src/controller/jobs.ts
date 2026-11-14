@@ -120,14 +120,15 @@ export async function discardMadeAssets(assets: readonly MadeAsset[]): Promise<v
 }
 
 /** Puts the assets of an ended job into the reply with `writers`, under the
- *  name of the job's tool, and tells the new id of each. All the writes are
- *  in one tick. An asset that the reply takes no more (its writer gives
- *  null) has no id, and its file is deleted. The assets of a job that
- *  hides them get the job's id as their hidden marker. */
+ *  name of the job's tool and with the job's id (`madeBy`), and tells the
+ *  new id of each. All the writes are in one tick. An asset that the reply
+ *  takes no more (its writer gives null) has no id, and its file is
+ *  deleted. The assets of a job that hides them get the job's id as their
+ *  hidden marker too. */
 export async function writeJobAssets(job: EndedJob, writers: Pick<ToolRunContext, 'writeImage' | 'writeClip'>): Promise<WrittenJobAsset[]> {
   const written: WrittenJobAsset[] = []
   const lost: MadeAsset[] = []
-  const options = { tool: job.tool, ...(job.hidesAssets && { hidden: job.id }) }
+  const options = { tool: job.tool, madeBy: job.id, ...(job.hidesAssets && { hidden: job.id }) }
   for (const asset of job.assets) {
     const id = asset.kind === 'image'
       ? writers.writeImage(asset.path, options)

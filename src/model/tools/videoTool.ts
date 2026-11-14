@@ -7,7 +7,7 @@ import { CLIP_FILE_EXTENSIONS, MAX_SAVED_CLIP_BYTES, storableClip } from '../cha
 import { newMediaIds } from '../chat/mediaIds'
 import type { Section } from '../chat/types'
 import { conversationAssets, type ConversationAssets } from '../streams/mediaRequest'
-import { ASSET_NAMES, INTERMEDIATE_PARAMETER, jobTimeoutMs, jobTimeoutParameter } from './jobs'
+import { ASSET_NAMES, INTERMEDIATE_PARAMETER, jobCallLabel, jobTimeoutMs, jobTimeoutParameter } from './jobs'
 import { clipInput, tellUserConsole, type ClipInput, type KeptFile, type ProgramEnd, type ShippedProgram } from './programRuns'
 import { subcommandToolDefinition, type SubcommandTool } from './subcommands'
 import { assetText, unknownInputsProblem } from './toolInputs'
@@ -555,6 +555,14 @@ export function videoInputsText(inputs: readonly VideoInput[]): string {
   return `The inputs of the run: ${parts.join(', ')}.`
 }
 
+/** The label of a call of a `video` subcommand (`JobCall.label`): the
+ *  subcommand, and the argument that tells what the call asks for (the
+ *  clips of a join, else the command line). `args` are the subcommand's own
+ *  arguments. */
+export function videoCallLabel(command: string, args: ToolArguments): string {
+  return jobCallLabel(`${command} ${String((command === 'join_clips' ? args.clips : args.arguments) ?? '')}`)
+}
+
 /** The clips of a `join_clips` call. */
 export interface JoinCall {
   /** The clips in the order of the join. A clip can be there twice. */
@@ -616,12 +624,28 @@ export function joinProbeArgs(name: string): string[] {
   return [...FFPROBE_FIXED_ARGS, '-v', 'error', '-show_data_hash', 'md5', '-show_entries', JOIN_PROBE_ENTRIES, '-of', 'json', name]
 }
 
-// The output of `joinProbeArgs`. It comes from a program that read a file
-// of any origin, so every field can be missing or of another type.
+/** The output of an ffprobe run with `-of json`. It comes from a program
+ *  that read a file of any origin, so every field can be missing or of
+ *  another type. */
+export interface ProbeOutput {
+  streams: Record<string, unknown>[]
+  format: Record<string, unknown>
+}
+
 const probeSchema = z.object({
   streams: z.array(z.record(z.string(), z.unknown())).catch([]),
   format: z.record(z.string(), z.unknown()).catch({}),
 })
+
+/** The streams and the format of an ffprobe output with `-of json`; null
+ *  for an output that is no JSON object. */
+export function parseProbeOutput(text: string): ProbeOutput | null {
+  try {
+    return probeSchema.parse(JSON.parse(text))
+  } catch {
+    return null
+  }
+}
 
 /** The facts of a clip that the plan of a join needs. */
 export interface ClipFacts {
@@ -639,59 +663,71 @@ export interface ClipFacts {
   duration: number | null
 }
 
-// A scalar of the probe output as text; blank for none.
-function probeText(value: unknown): string {
+/** A scalar of the probe output as text; blank for none. */
+export function probeText(value: unknown): string {
   return typeof value === 'string' || typeof value === 'number' ? String(value) : ''
 }
 
-// A frame rate of the probe output, when it is one that a clip can have
-// (ffprobe gives `0/0` for none, and the tick rate of a container for a
-// clip with a changing rate). The text goes into a filter, so only a
-// fraction of two whole numbers passes.
-function usableFrameRate(value: unknown): string {
+/** A frame rate of the probe output, when it is one that a clip can have
+ *  (ffprobe gives `0/0` for none, and the tick rate of a container for a
+ *  clip with a changing rate). The text goes into a filter, so only a
+ *  fraction of two whole numbers passes. */
+export function usableFrameRate(value: unknown): string {
   const match = /^(\d+)\/(\d+)$/.exec(probeText(value))
   if (!match) return ''
   const rate = Number(match[1]) / Number(match[2])
   return Number.isFinite(rate) && rate > 0 && rate <= 120 ? match[0] : ''
 }
 
-/** The facts of a clip from the output of its `joinProbeArgs` run. Null
- *  when the output names no video stream with a size: the file holds only
- *  sound, or the program could not read it. */
-export function clipFacts(probeOutput: string): ClipFacts | null {
-  let probe: z.infer<typeof probeSchema>
-  try {
-    probe = probeSchema.parse(JSON.parse(probeOutput))
-  } catch {
-    return null
-  }
-  const { streams, format } = probe
-  const video = streams.find((stream) => stream.codec_type === 'video')
-  const audio = streams.find((stream) => stream.codec_type === 'audio')
-  if (!video) return null
-  const { width, height } = video
+/** The size of the picture of the video stream `stream` of a probe output
+ *  as a player shows it, and the rotation of the stream in degrees (its
+ *  `stream_side_data` entry; 0 for none). Null when the stream tells no
+ *  size. */
+export function shownVideoSize(stream: Record<string, unknown>): { width: number, height: number, rotation: number } | null {
+  const { width, height } = stream
   if (typeof width !== 'number' || typeof height !== 'number' || !Number.isInteger(width) || !Number.isInteger(height) || width <= 0 || height <= 0) return null
-
-  const sideData = Array.isArray(video.side_data_list) ? video.side_data_list as unknown[] : []
+  const sideData = Array.isArray(stream.side_data_list) ? stream.side_data_list as unknown[] : []
   const rotation = sideData
     .map((data) => (data !== null && typeof data === 'object' ? (data as Record<string, unknown>).rotation : undefined))
     .find((value): value is number => typeof value === 'number') ?? 0
   // ffmpeg turns the frames of a clip with a rotation when it decodes them.
   const turned = Math.abs(rotation) % 180 === 90
+  return { width: turned ? height : width, height: turned ? width : height, rotation }
+}
+
+/** The length in seconds of the file of a probe output; null when it tells
+ *  none. */
+export function probeDuration(format: Record<string, unknown>): number | null {
   const duration = Number(probeText(format.duration))
+  return Number.isFinite(duration) && duration > 0 ? duration : null
+}
+
+/** The facts of a clip from the output of its `joinProbeArgs` run. Null
+ *  when the output names no video stream with a size: the file holds only
+ *  sound, or the program could not read it. */
+export function clipFacts(probeOutput: string): ClipFacts | null {
+  const probe = parseProbeOutput(probeOutput)
+  if (!probe) return null
+  const { streams, format } = probe
+  const video = streams.find((stream) => stream.codec_type === 'video')
+  const audio = streams.find((stream) => stream.codec_type === 'audio')
+  if (!video) return null
+  const size = shownVideoSize(video)
+  if (!size) return null
+
   const facts = (stream: Record<string, unknown>, keys: readonly string[]) => keys.map((key) => probeText(stream[key]))
   return {
     signature: JSON.stringify([
       probeText(format.format_name),
       streams.map((stream) => probeText(stream.codec_type)),
-      [...facts(video, ['index', 'codec_name', 'profile', 'level', 'width', 'height', 'pix_fmt', 'r_frame_rate', 'time_base', 'sample_aspect_ratio', 'extradata_hash']), rotation],
+      [...facts(video, ['index', 'codec_name', 'profile', 'level', 'width', 'height', 'pix_fmt', 'r_frame_rate', 'time_base', 'sample_aspect_ratio', 'extradata_hash']), size.rotation],
       audio ? facts(audio, ['index', 'codec_name', 'profile', 'sample_rate', 'channels', 'channel_layout', 'time_base', 'extradata_hash']) : null,
     ]),
-    width: turned ? height : width,
-    height: turned ? width : height,
+    width: size.width,
+    height: size.height,
     frameRate: usableFrameRate(video.avg_frame_rate) || usableFrameRate(video.r_frame_rate),
     hasAudio: audio !== undefined,
-    duration: Number.isFinite(duration) && duration > 0 ? duration : null,
+    duration: probeDuration(format),
   }
 }
 

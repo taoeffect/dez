@@ -126,12 +126,19 @@ export const IMAGE_TOOL_KEY = 'tool'
 
 /** The metadata key of an image that a call made as a part of its work
  *  (`is_intermediate` of `model_invoke` or of a `video` subcommand), as in
- *  `![<path>](id=b|tool=model_invoke|hidden=j-k3x9)`; its value is the id
- *  of the Dez job that made the image. The editor shows such an image
- *  under the chip of the call that started that job, and not at the place
- *  of its reference (hiddenAssets.ts). It is an image as any other: it has
- *  its id, and a message can name it with `@id`. */
+ *  `![<path>](id=b|tool=model_invoke|made-by=j-k3x9|hidden=j-k3x9)`; its
+ *  value is the id of the Dez job that made the image. The editor shows
+ *  such an image under the chip of the call that started that job, and not
+ *  at the place of its reference (hiddenAssets.ts). It is an image as any
+ *  other: it has its id, and a message can name it with `@id`. */
 export const IMAGE_HIDDEN_KEY = 'hidden'
+
+/** The metadata key of an image that a Dez job made, hidden or not, as in
+ *  `![<path>](id=b|tool=model_invoke|made-by=j-k3x9)`; its value is the id
+ *  of the job. `asset_info` (tools/assetInfo.ts) finds the call that
+ *  started the job by it, in the same agent section. A job id is unique
+ *  only in its reply, which is one agent section. */
+export const IMAGE_MADE_BY_KEY = 'made-by'
 
 /** One image reference in a text. */
 export interface ImageReference {

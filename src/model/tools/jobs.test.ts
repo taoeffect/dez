@@ -12,6 +12,7 @@ import {
   newJobId,
   NO_JOBS_TEXT,
   NO_OPEN_JOBS_TEXT,
+  startedJob,
   startedJobId,
   unknownJobText,
   type JobInfo,
@@ -73,6 +74,21 @@ describe('startedJobId', () => {
     expect(startedJobId(`Note.\n${jobStartedText('j-k3x9', 1)}`)).toBeNull()
     expect(startedJobId('Started the job j-K3X9.')).toBeNull()
     expect(startedJobId('1 job ended. No job still runs.')).toBeNull()
+  })
+})
+
+describe('startedJob', () => {
+  it('reads the id and the number of a start text', () => {
+    expect(startedJob(`${jobStartedText('j-k3x9', 12)}\nThe model takes about 2 minutes.`)).toStrictEqual({ id: 'j-k3x9', number: 12 })
+  })
+
+  // A conversation of an older Dez has this text.
+  it('reads no number from a start text that names none', () => {
+    expect(startedJob('Started the job j-k3x9. It runs in the background.')).toStrictEqual({ id: 'j-k3x9', number: null })
+  })
+
+  it('gives null for any other text', () => {
+    expect(startedJob('1 job ended. No job still runs.')).toBeNull()
   })
 })
 

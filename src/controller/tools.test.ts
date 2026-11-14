@@ -3,6 +3,7 @@ import { createPinia, setActivePinia } from 'pinia'
 import { afterEach, beforeEach, describe, expect, it, vi, type MockInstance } from 'vitest'
 import { UnwritableImageTypeError, type DrawnImage, type DrawnMediaType, type ImageDrawing, type ImageSize } from '../model/chat/imageDrawing'
 import { mediaTagText, type MediaTagData } from '../model/chat/mediaTags'
+import { toolBlockText } from '../model/chat/toolBlocks'
 import type { ModelRef, Tab } from '../model/chat/types'
 import type { ModelCache } from '../model/persistence/types'
 import { TooManyImagesError } from '../model/providers/clipImages'
@@ -12,6 +13,7 @@ import { PRICE_LIFETIME_MS } from '../model/providers/modelPrices'
 import type { ProviderGenerateMediaInput, ProviderGenerateMediaResult, ProviderMediaQuote, ProviderMediaQuoteInput, ProviderStreamChatInput, ProviderStreamChatResult } from '../model/providers/streamTypes'
 import { providerInfo } from '../model/providers/testing'
 import type { ModelInfo, ProviderInfo, ProviderInputImageRules, ProviderSettingsDescriptor } from '../model/providers/types'
+import { assetProbeArgs } from '../model/tools/assetFacts'
 import { jobStartedText, jobsWaitResults, NO_JOBS_TEXT, NO_OPEN_JOBS_TEXT } from '../model/tools/jobs'
 import { modelInfoText, type ModelInfoFacts } from '../model/tools/modelInfo'
 import { IMAGE_NOT_SAVED_TEXT, INVOCATION_TEXT_CAP, invocationAnswerStateText, invocationAnswerText, modelInvocation } from '../model/tools/modelInvoke'
@@ -21,7 +23,7 @@ import { ExplainedError } from '../utils/errorText'
 import { ReplyJobs, type JobOutcome } from './jobs'
 import { invokeModel } from './modelInvoke'
 import type { BundledToolEnd } from './nativeTypes'
-import { APP_DIR, audioProgress, ENDED, heldWork, LONG, native, resetNative, writes } from './testing'
+import { APP_DIR, audioProgress, deletedWorkFolder, ENDED, heldWork, LONG, native, resetNative, running, writes } from './testing'
 import type { ToolRunCall, ToolRunContext } from './tools'
 // Side-effect imports: register the dez.model/* selectors and the selector
 // under test.
@@ -971,7 +973,7 @@ describe('dez.controller/tools/run', () => {
       expect((await jobTool('jobs_wait')).content).toBe(
         `1 job ended. No job still runs.\n\n<job id="${id}" number="1" tool="model_invoke" status="finished">\nMade the image @c.\nMade the audio clip @d.\n</job>`,
       )
-      expect(written).toStrictEqual([{ path: IMAGE, tool: 'model_invoke' }, { path: SONG, tool: 'model_invoke' }])
+      expect(written).toStrictEqual([{ path: IMAGE, tool: 'model_invoke', madeBy: id }, { path: SONG, tool: 'model_invoke', madeBy: id }])
       expect(deletedImages).toStrictEqual([])
       expect(deletedClips).toStrictEqual([])
     })
@@ -1110,7 +1112,7 @@ describe('dez.controller/tools/run', () => {
         expect(await jobResult()).toContain(`<job id="${job.id}" number="1" tool="model_invoke" status="finished" call="The fox of @a in snow.">\nMade the image @c.\n</job>`)
         expect(mediaRequests).toMatchObject([{ providerId: 'venice', modelId: 'painter', kind: 'image', images: [FOX], clips: [], reader: 'model', timeoutMs: 60_000 }])
         expect(savedImages).toStrictEqual([{ mediaType: 'image/png', options: { folder: 'generated' } }])
-        expect(written).toStrictEqual([{ path: MADE_IMAGE, tool: 'model_invoke' }])
+        expect(written).toStrictEqual([{ path: MADE_IMAGE, tool: 'model_invoke', madeBy: job.id }])
       })
 
       // Calls that begin with the same words: only the number tells which
@@ -1139,7 +1141,7 @@ describe('dez.controller/tools/run', () => {
 
         request.answer({ media: [], clips: [MADE_VIDEO] })
         expect(await jobResult()).toContain('Made the video clip @c.')
-        expect(written).toStrictEqual([{ path: TEMP_COPY, tool: 'model_invoke', jobId: 'q-17' }])
+        expect(written).toStrictEqual([{ path: TEMP_COPY, tool: 'model_invoke', madeBy: id, jobId: 'q-17' }])
         expect(native.deletedFiles).toStrictEqual([])
       })
 
@@ -1153,8 +1155,8 @@ describe('dez.controller/tools/run', () => {
 
         expect(await jobResult()).toContain(`<job id="${id}" number="1" tool="model_invoke" status="finished" call="A fox runs.">\nMade the video clip @c.\nMade the image @d.\n</job>`)
         expect(written).toStrictEqual([
-          { path: TEMP_COPY, tool: 'model_invoke', hidden: id, jobId: 'q-17' },
-          { path: MADE_IMAGE, tool: 'model_invoke', hidden: id },
+          { path: TEMP_COPY, tool: 'model_invoke', madeBy: id, hidden: id, jobId: 'q-17' },
+          { path: MADE_IMAGE, tool: 'model_invoke', madeBy: id, hidden: id },
         ])
       })
 
@@ -1164,7 +1166,7 @@ describe('dez.controller/tools/run', () => {
         await jobTool('model_invoke', { ...PAINT, is_intermediate: false })
         await jobResult()
 
-        expect(written).toStrictEqual([{ path: MADE_IMAGE, tool: 'model_invoke' }])
+        expect(written).toStrictEqual([{ path: MADE_IMAGE, tool: 'model_invoke', madeBy: jobs.list()[0].id }])
       })
 
       it('gives the text of a model that writes down speech as the result of the job, and writes nothing into the reply', async () => {
@@ -1389,7 +1391,7 @@ describe('dez.controller/tools/run', () => {
           expect(await jobResult()).toContain(`${invocationAnswerText('Here it is.')}\nMade the image @c.\n</job>`)
           expect(chatRequests[0].imageOutput).toBe(true)
           expect(savedImages).toStrictEqual([{ mediaType: 'image/png', options: { folder: 'generated' } }])
-          expect(written).toStrictEqual([{ path: MADE_IMAGE, tool: 'model_invoke' }])
+          expect(written).toStrictEqual([{ path: MADE_IMAGE, tool: 'model_invoke', madeBy: jobs.list()[0].id }])
         })
 
         it('tells in the state of the job how much text came so far', async () => {
@@ -1535,6 +1537,104 @@ describe('dez.controller/tools/run', () => {
           expect(chatRequests[0].signal?.aborted).toBe(true)
         })
       })
+    })
+  })
+
+  describe('asset_info', () => {
+    const FOX = `${APP_DIR}/assets/images/fox.png`
+    const SCENE = `${APP_DIR}/assets/generated/video/scene.mp4`
+    const VOICE = `${APP_DIR}/assets/audio/voice.wav`
+    // What ffprobe writes for each clip: a video clip with sound.
+    const PROBED = JSON.stringify({
+      streams: [
+        { codec_name: 'h264', codec_type: 'video', width: 854, height: 480, avg_frame_rate: '24/1', r_frame_rate: '24/1' },
+        { codec_name: 'aac', codec_type: 'audio', sample_rate: '48000', channels: 2 },
+      ],
+      format: { duration: '5.040000', size: '1250000' },
+    })
+    const COLUMNS = 'Each line: id | kind | format and facts | shown, or hidden in the panel of its call\'s chip | who made it.'
+    let tabId: string
+
+    function assetInfo(assets: string): Promise<ToolRunResult> {
+      const context: ToolRunContext = { tabId, model: REPLY_MODEL, jobs: new ReplyJobs(), writeImage: () => null, writeClip: () => null }
+      return sbp('dez.controller/tools/run', { name: 'asset_info', arguments: { assets } }, running(), context) as Promise<ToolRunResult>
+    }
+
+    beforeEach(() => {
+      tabId = sbp('dez.model/tabs/activeId') as string
+      const start = toolBlockText({
+        id: 'call_1',
+        name: 'model_invoke',
+        status: 'success',
+        arguments: { model: 'venice/film', prompt: 'Scene 1: a fox', is_intermediate: true },
+        result: jobStartedText('j-aaaa', 1),
+      })
+      const scene = mediaTagText({
+        kind: 'video',
+        id: 'b',
+        type: 'video/mp4',
+        src: SCENE,
+        url: null,
+        expires: null,
+        other: [{ name: 'tool', value: 'model_invoke' }, { name: 'made-by', value: 'j-aaaa' }, { name: 'hidden', value: 'j-aaaa' }],
+      })
+      sbp('dez.model/tabs/replaceSections', tabId, [
+        { id: 'u1', role: 'user', content: [{ kind: 'text', text: `A fox: ![${FOX}](id=a)` }] },
+        // The clip @c has no file and no web address any more.
+        { id: 'a1', role: 'agent', model: REPLY_MODEL, content: [{ kind: 'text', text: `${start}\n\n${scene}\n<dez:audio id="c" type="audio/wav"/>` }] },
+        { id: 'u2', role: 'user', content: [{ kind: 'text', text: `<dez:audio id="d" type="audio/wav" src="${VOICE}"/>\nWhich is which?` }] },
+        { id: 'a2', role: 'agent', content: [{ kind: 'text', text: '' }] },
+      ])
+      readImage = async () => new Blob([new Uint8Array(2048)])
+      native.program = writes('stdout', PROBED)
+    })
+
+    it('gives the facts, the place, and the origin of each asset, with one ffprobe run for each clip in one work folder', async () => {
+      expect(await assetInfo('@a, @b @c d')).toStrictEqual({
+        content: [
+          COLUMNS,
+          '@a | image | PNG | 1000x500 | 2 KB | shown | from the user',
+          '@b | video | MP4 | 5.04 s | 854x480 | 24 fps | h264 | sound (aac) | 1.2 MB | hidden | made by the model_invoke job 1 of its reply: "Scene 1: a fox"',
+          '@c | audio | gone: the user deleted its file, and it has no web address | shown | made by the model venice/venice-glm-5',
+          '@d | audio | WAV | 5.04 s | aac | 48000 Hz | 2 channels | 1.2 MB | shown | from the user',
+        ].join('\n'),
+        isError: false,
+      })
+
+      expect(readImages).toStrictEqual([FOX])
+      expect(drawings).toStrictEqual([])
+      const folder = deletedWorkFolder()
+      expect(native.runs.map(({ run }) => ({ tool: run.tool, args: run.args, folder: run.folder, inputs: run.inputs }))).toStrictEqual([
+        { tool: 'dez-ffprobe', args: assetProbeArgs('b.mp4'), folder, inputs: [{ name: 'b.mp4', source: SCENE }] },
+        { tool: 'dez-ffprobe', args: assetProbeArgs('d.wav'), folder, inputs: [{ name: 'd.wav', source: VOICE }] },
+      ])
+    })
+
+    it('refuses an id that names no asset, with the ids that the call can name, and reads nothing', async () => {
+      expect(await assetInfo('@a @z')).toStrictEqual({
+        content: '@z names no image and no clip of this conversation. Dez read no facts. '
+          + 'The conversation has the image @a, the video clip @b, the audio clip @c, the audio clip @d: call again with these ids.',
+        isError: true,
+      })
+      expect(readImages).toStrictEqual([])
+      expect(native.runs).toStrictEqual([])
+    })
+
+    it('tells in its line that Dez could not read an image or a clip, and gives the other lines', async () => {
+      native.program = writes('stderr', 'Invalid data found when processing input', { kind: 'exited', code: 1 })
+      readImage = async () => {
+        throw new Error('No such file')
+      }
+
+      expect((await assetInfo('a b')).content).toBe([
+        COLUMNS,
+        '@a | image | Dez could not read its file | shown | from the user',
+        '@b | video | ffprobe could not read its file | hidden | made by the model_invoke job 1 of its reply: "Scene 1: a fox"',
+      ].join('\n'))
+
+      readImage = async () => new Blob([new Uint8Array(2048)])
+      redrawError = new Error('The image cannot be decoded.')
+      expect((await assetInfo('a')).content).toBe(`${COLUMNS}\n@a | image | PNG | 2 KB | Dez could not read its picture | shown | from the user`)
     })
   })
 })

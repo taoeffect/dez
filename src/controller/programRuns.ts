@@ -74,34 +74,41 @@ export async function readableFileSize(path: string): Promise<number | null> {
  *  web address, which is downloaded into the work folder here. Rust copies
  *  and downloads, so the bytes of the clip never come into the webview. A
  *  linked file larger than `MAX_SAVED_CLIP_BYTES` is refused, as a dropped
- *  clip that Dez copies has that cap. Throws a `ToolError` for a clip that
- *  no source gives, and the stop of `signal`. */
-export async function clipInputFile({ kind, id, name, clip }: ClipInput, folder: string, signal: AbortSignal, toolName: string): Promise<BundledToolInput | null> {
+ *  clip that Dez copies has that cap. Throws a `ClipReadError` for a clip
+ *  that no source gives, and the stop of `signal`. */
+export async function clipCopy({ name, clip }: Pick<ClipInput, 'name' | 'clip'>, folder: string, signal: AbortSignal): Promise<BundledToolInput | null> {
   const copy = { root: 'cache', path: `${folder}/${name}` } as const
-  try {
-    return await clipFromSources(clip, signal, async (source: ClipSource) => {
-      if (source.kind === 'url') {
-        try {
-          await downloadClip(source.url, copy, signal)
-        } catch (error) {
-          // A part of the clip can stay, and a later source of the clip
-          // needs the name: a run refuses an input whose name the folder
-          // has.
-          await sbp('dez.native/deleteAppFile', copy.path, copy.root).catch((deleteError: unknown) => {
-            console.error('Failed to delete the part of a clip download:', deleteError)
-          })
-          throw error
-        }
-        return null
+  return await clipFromSources(clip, signal, async (source: ClipSource) => {
+    if (source.kind === 'url') {
+      try {
+        await downloadClip(source.url, copy, signal)
+      } catch (error) {
+        // A part of the clip can stay, and a later source of the clip
+        // needs the name: a run refuses an input whose name the folder
+        // has.
+        await sbp('dez.native/deleteAppFile', copy.path, copy.root).catch((deleteError: unknown) => {
+          console.error('Failed to delete the part of a clip download:', deleteError)
+        })
+        throw error
       }
-      const size = await readableFileSize(source.path)
-      if (size === null) throw new Error('The file of the clip is gone, or Dez may not read it.')
-      if (source.linked && size > MAX_SAVED_CLIP_BYTES) throw new Error(INPUT_CLIP_TOO_LARGE)
-      return { name, source: source.path }
-    })
+      return null
+    }
+    const size = await readableFileSize(source.path)
+    if (size === null) throw new Error('The file of the clip is gone, or Dez may not read it.')
+    if (source.linked && size > MAX_SAVED_CLIP_BYTES) throw new Error(INPUT_CLIP_TOO_LARGE)
+    return { name, source: source.path }
+  })
+}
+
+/** `clipCopy` for a call of the tool `toolName` that cannot go without the
+ *  clip: throws a `ToolError` for a clip that no source gives, with the
+ *  text of its problem for the model. */
+export async function clipInputFile(input: ClipInput, folder: string, signal: AbortSignal, toolName: string): Promise<BundledToolInput | null> {
+  try {
+    return await clipCopy(input, folder, signal)
   } catch (error) {
     if (!(error instanceof ClipReadError)) throw error
-    throw new ToolError(clipReadProblemText(kind, id, toolName, error.problem), error.details, { cause: error })
+    throw new ToolError(clipReadProblemText(input.kind, input.id, toolName, error.problem), error.details, { cause: error })
   }
 }
 

@@ -13,17 +13,18 @@ import { effectiveRequest, type ProviderInfo, type ProviderInputImageRules, type
 import type { SettingsSnapshot } from '../model/state'
 import { AUDIO_TOOL, audioClipId, audioClipOf, audioCutPart, audioCutRequest, audioCutResultText, audioLengthText } from '../model/tools/audioTool'
 import { brightnessPlan, contrastPlan, convertPlan, cropPlan, flipPlan, IMAGE_TOOL, imageIdArgument, imageOf, imageResultText, invertPlan, rotatePlan, saturationPlan, scalePlan, unreadableImageText, unwritableFormatError, type ImagePlan } from '../model/tools/imageTool'
-import { isIntermediate, jobCallLabel, jobInspectText, jobResultText, jobsListText, jobStartedText, jobsWaitText, unknownJobText, type JobResult } from '../model/tools/jobs'
+import { isIntermediate, jobInspectText, jobResultText, jobsListText, jobStartedText, jobsWaitText, unknownJobText, type JobResult } from '../model/tools/jobs'
 import { parameterValuesArgument, type ModelTarget } from '../model/tools/modelArguments'
 import { modelCost, modelInfoSelection, modelInfoText, modelInfoTarget, type ModelInfoFacts } from '../model/tools/modelInfo'
-import { invocationInputsText, MODEL_INVOKE_TOOL, modelInvocation } from '../model/tools/modelInvoke'
+import { invocationInputsText, invocationLabel, MODEL_INVOKE_TOOL, modelInvocation } from '../model/tools/modelInvoke'
 import { modelListArguments, modelListText } from '../model/tools/modelList'
 import { unexpectedToolErrorText, unknownToolText } from '../model/tools/registry'
 import { parseSubcommandCall, type SubcommandTool } from '../model/tools/subcommands'
 import { ToolError, type ToolArguments, type ToolRunResult } from '../model/tools/types'
-import { ffmpegCall, ffprobeCall, joinClipsCall, VIDEO_TOOL, videoInputsText } from '../model/tools/videoTool'
+import { ffmpegCall, ffprobeCall, joinClipsCall, VIDEO_TOOL, videoCallLabel, videoInputsText } from '../model/tools/videoTool'
 import { untilAborted } from '../utils/abort'
 import { rawErrorText } from '../utils/errorText'
+import { assetInfoResult } from './assetInfo'
 import { audioClipSeconds, cutAudioClip } from './audioTool'
 import { discardMadeAssets, writeJobAssets, type JobWork, type ReplyJobs } from './jobs'
 import { invokeModel } from './modelInvoke'
@@ -49,25 +50,27 @@ export interface ToolRunContext {
   /** Writes the reference of a stored image that the tool made into the
    *  reply, with a new image id, and returns that id. The reference names
    *  the tool of the call, or `tool` (the `jobs_wait` runner writes what
-   *  the job of another tool made). `hidden` is the id of the Dez job that
-   *  made the image as a part of its work: the reference keeps it
-   *  (`IMAGE_HIDDEN_KEY`), and the editor shows the image under the chip
-   *  of that job's call. Null when the reply takes no image any more (a
-   *  stop ended the tool round): the runner then deletes the file.
+   *  the job of another tool made). `madeBy` is the id of the Dez job that
+   *  made the image (`IMAGE_MADE_BY_KEY`), which `asset_info` reads.
+   *  `hidden` is the id of the Dez job that made the image as a part of its
+   *  work: the reference keeps it (`IMAGE_HIDDEN_KEY`), and the editor shows
+   *  the image under the chip of that job's call. Null when the reply takes
+   *  no image any more (a stop ended the tool round): the runner then
+   *  deletes the file.
    *
    *  The result of the call must name the new id with `madeAssetText`
    *  (tools/jobs.ts): a request sends that result and not the reference,
    *  so only the result tells the model of the image. */
-  writeImage(path: string, options?: { tool?: string, hidden?: string }): string | null
+  writeImage(path: string, options?: { tool?: string, madeBy?: string, hidden?: string }): string | null
   /** Writes the tag of a clip that the tool made into the reply, with a new
    *  media id and the tool's name (`tool`, as for `writeImage`), and
    *  returns that id. `jobId` is the provider's id of the job that made
-   *  the clip, which the tag keeps (`MEDIA_JOB_ATTRIBUTE`); `hidden` is as
-   *  for `writeImage` (`MEDIA_HIDDEN_ATTRIBUTE`). Null when the reply takes
-   *  no clip any more (a stop ended the tool round): the runner then
-   *  deletes the file. The result of the call must name the new id, as for
-   *  `writeImage`. */
-  writeClip(clip: Omit<MediaTagData, 'id' | 'other'>, options?: { tool?: string, jobId?: string, hidden?: string }): string | null
+   *  the clip, which the tag keeps (`MEDIA_JOB_ATTRIBUTE`); `madeBy` and
+   *  `hidden` are as for `writeImage` (`MEDIA_MADE_BY_ATTRIBUTE`,
+   *  `MEDIA_HIDDEN_ATTRIBUTE`). Null when the reply takes no clip any more
+   *  (a stop ended the tool round): the runner then deletes the file. The
+   *  result of the call must name the new id, as for `writeImage`. */
+  writeClip(clip: Omit<MediaTagData, 'id' | 'other'>, options?: { tool?: string, jobId?: string, madeBy?: string, hidden?: string }): string | null
 }
 
 // The code of each Dez tool (TOOL_DEFINITIONS), by tool name. A runner gives
@@ -367,7 +370,7 @@ const TOOL_RUNNERS: Record<string, ToolRunner> = {
     return startJob(context, MODEL_INVOKE_TOOL.name, (signal, report, reportCost) => invokeModel(invocation, signal, report, reportCost, { toolsAllowed: false }), {
       timeoutMs: invocation.timeoutMs,
       hidesAssets: isIntermediate(args),
-      label: jobCallLabel(String(args.prompt ?? '')),
+      label: invocationLabel(args),
     }, invocationInputsText(invocation.inputs))
   },
   // The `video` tool (model/tools/videoTool.ts): ffmpeg and ffprobe, the
@@ -381,18 +384,23 @@ const TOOL_RUNNERS: Record<string, ToolRunner> = {
   video: subcommandRunner(VIDEO_TOOL, {
     async join_clips (args, _signal, context) {
       const call = joinClipsCall(args, callSections(context))
-      const label = jobCallLabel(`join_clips ${String(args.clips ?? '')}`)
-      return startJob(context, VIDEO_TOOL.name, (signal, report) => runJoinJob(call, signal, report), { timeoutMs: call.timeoutMs, hidesAssets: isIntermediate(args), label }, videoInputsText(call.inputs))
+      return startJob(context, VIDEO_TOOL.name, (signal, report) => runJoinJob(call, signal, report), { timeoutMs: call.timeoutMs, hidesAssets: isIntermediate(args), label: videoCallLabel('join_clips', args) }, videoInputsText(call.inputs))
     },
     async ffmpeg (args, _signal, context) {
       const call = ffmpegCall(args, callSections(context))
-      const label = jobCallLabel(`ffmpeg ${String(args.arguments ?? '')}`)
-      return startJob(context, VIDEO_TOOL.name, (signal, report) => runFfmpegJob(call, signal, report), { timeoutMs: call.timeoutMs, hidesAssets: isIntermediate(args), label }, videoInputsText(call.inputs))
+      return startJob(context, VIDEO_TOOL.name, (signal, report) => runFfmpegJob(call, signal, report), { timeoutMs: call.timeoutMs, hidesAssets: isIntermediate(args), label: videoCallLabel('ffmpeg', args) }, videoInputsText(call.inputs))
     },
     async ffprobe (args, signal, context) {
       return runFfprobe(ffprobeCall(args, callSections(context)), signal)
     },
   }),
+  // The facts of the images and the clips that the call names, with who
+  // made each one and whether the editor hides it (controller/assetInfo.ts).
+  // The call waits for them and starts no job: an image needs one decode in
+  // the webview, and a clip one short ffprobe run.
+  async asset_info (args, signal, context) {
+    return assetInfoResult(args, callSections(context), signal)
+  },
 }
 
 export default sbp('sbp/selectors/register', {

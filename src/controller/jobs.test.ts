@@ -368,7 +368,7 @@ describe('writeJobAssets', () => {
     id: 'j-aaaa', tool: 'model_invoke', status: 'finished', text: '', assets: [image, clip(SAVED_CLIP), clip(URL_CLIP, URL_CLIP, 'q-1')], hidesAssets: false, call: { number: 1, label: '' },
   }
 
-  it('writes each asset under the name of the job\'s tool, a clip with the job id of its provider, and gives the new ids', async () => {
+  it('writes each asset under the name of the job\'s tool and the job\'s id, a clip with the job id of its provider, and gives the new ids', async () => {
     const writes: unknown[] = []
     const ids = ['c', 'd', 'e']
     const written = await writeJobAssets(job, {
@@ -377,7 +377,8 @@ describe('writeJobAssets', () => {
     })
 
     expect(written).toStrictEqual([{ kind: 'image', id: 'c' }, { kind: 'audio', id: 'd' }, { kind: 'video', id: 'e' }])
-    expect(writes).toStrictEqual([[IMAGE, { tool: 'model_invoke' }], [SAVED_CLIP, { tool: 'model_invoke' }], [URL_CLIP, { tool: 'model_invoke', jobId: 'q-1' }]])
+    const options = { tool: 'model_invoke', madeBy: 'j-aaaa' }
+    expect(writes).toStrictEqual([[IMAGE, options], [SAVED_CLIP, options], [URL_CLIP, { ...options, jobId: 'q-1' }]])
     expect(deletedImages).toStrictEqual([])
     expect(deletedClips).toStrictEqual([])
   })
@@ -390,9 +391,9 @@ describe('writeJobAssets', () => {
     })
 
     expect(writes).toStrictEqual([
-      { tool: 'model_invoke', hidden: 'j-aaaa' },
-      { tool: 'model_invoke', hidden: 'j-aaaa' },
-      { tool: 'model_invoke', hidden: 'j-aaaa', jobId: 'q-1' },
+      { tool: 'model_invoke', madeBy: 'j-aaaa', hidden: 'j-aaaa' },
+      { tool: 'model_invoke', madeBy: 'j-aaaa', hidden: 'j-aaaa' },
+      { tool: 'model_invoke', madeBy: 'j-aaaa', hidden: 'j-aaaa', jobId: 'q-1' },
     ])
   })
 

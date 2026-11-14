@@ -4,6 +4,7 @@ import path from 'node:path'
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from 'vitest'
 import { jobStartedText, jobsWaitResults, startedJobId, type JobResult } from '../../src/model/tools/jobs'
 import { REFUSED_DEVICES, REFUSED_PROTOCOLS } from '../../src/model/tools/videoTool'
+import { byteSizeText } from '../../src/utils/byteSize'
 import { consoleErrors, pointerClick, resetConsoleErrors, screenshotOnFailure, waitForValue } from './harness/dom'
 import { linkedDropDir } from './harness/drops'
 import { appFilePath, filesIn, mediaTempDir, newFileIn, storedFileName, workDir, writeTestFile } from './harness/fixtures'
@@ -38,7 +39,10 @@ import { hiddenAssetNotes, hiddenPart, hidingPart, intermediateParts, pressToolC
 // - every work folder is gone after its call, and no file of the
 //   conversation changes;
 // - the lists of refused protocols and devices hold every one of this
-//   ffmpeg build.
+//   ffmpeg build;
+// - `asset_info` tells the facts of each image and clip that its call
+//   names (the clips from the same ffprobe), whether the editor hides it,
+//   and who made it: the user, a model, or a job of the reply.
 // No request holds a path of the test HOME (`takeRequest` checks each one).
 //
 // One app session serves the whole file; each test starts in a new tab.
@@ -254,7 +258,7 @@ describe('video tool', () => {
     const madeName = await newFileIn(browser, videoDir, before)
     expect(madeName).toMatch(storedFileName('webm'))
     const madePath = path.join(videoDir, madeName)
-    expect(reply.endsWith(`</dez:tool>\n\n<dez:video id="g" type="video/webm" src="${madePath}" tool="video"/>\n\n${replyText(CALLER.modelName)}`)).toBe(true)
+    expect(reply.endsWith(`</dez:tool>\n\n<dez:video id="g" type="video/webm" src="${madePath}" tool="video" made-by="${job.jobId}"/>\n\n${replyText(CALLER.modelName)}`)).toBe(true)
     expect(mediaFacts(madePath)).toStrictEqual({ streams: ['video vp9 48x36'], seconds: 6 })
     await waitForValue(browser, 'player of the new clip', async () => (await shownPlayers(browser)).at(-1), madeVideoPlayer('g', 6))
     await expectCleanEnd(files)
@@ -281,7 +285,7 @@ describe('video tool', () => {
     const madeName = await newFileIn(browser, videoDir, before)
     expect(madeName).toMatch(storedFileName('webm'))
     const madePath = path.join(videoDir, madeName)
-    expect(reply.endsWith(`</dez:tool>\n\n<dez:video id="g" type="video/webm" src="${madePath}" tool="video"/>\n\n${replyText(CALLER.modelName)}`)).toBe(true)
+    expect(reply.endsWith(`</dez:tool>\n\n<dez:video id="g" type="video/webm" src="${madePath}" tool="video" made-by="${job.jobId}"/>\n\n${replyText(CALLER.modelName)}`)).toBe(true)
     expect(mediaFacts(madePath)).toStrictEqual({ streams: ['video vp9 48x36'], seconds: 4 })
     await waitForValue(browser, 'player of the new clip', async () => (await shownPlayers(browser)).at(-1), madeVideoPlayer('g', 4))
     await expectCleanEnd(files)
@@ -323,8 +327,8 @@ describe('video tool', () => {
     expect(madeName).toMatch(storedFileName('webm'))
     const madePath = path.join(videoDir, madeName)
     const underPath = path.join(videoDir, await newFileIn(browser, videoDir, [...before, madeName]))
-    expect(reply).toContain(`</dez:tool>\n\n<dez:video id="g" type="video/webm" src="${madePath}" tool="video"/>\n<dez:tool id="call_loudness"`)
-    expect(reply.endsWith(`</dez:tool>\n\n<dez:video id="h" type="video/webm" src="${underPath}" tool="video"/>\n\n${replyText(CALLER.modelName)}`)).toBe(true)
+    expect(reply).toContain(`</dez:tool>\n\n<dez:video id="g" type="video/webm" src="${madePath}" tool="video" made-by="${mix.jobId}"/>\n<dez:tool id="call_loudness"`)
+    expect(reply.endsWith(`</dez:tool>\n\n<dez:video id="h" type="video/webm" src="${underPath}" tool="video" made-by="${under.jobId}"/>\n\n${replyText(CALLER.modelName)}`)).toBe(true)
     for (const file of [madePath, underPath]) expect(mediaFacts(file)).toStrictEqual({ streams: ['video vp9 48x36', 'audio opus'], seconds: 1 })
     await waitForValue(browser, 'player of the last new clip', async () => (await shownPlayers(browser)).at(-1), madeVideoPlayer('h', 1))
     await expectCleanEnd(files)
@@ -343,7 +347,7 @@ describe('video tool', () => {
 
     const reply = await endedReply(browser, CLIPS_REPLY_INDEX)
     const madePath = path.join(videoDir, await newFileIn(browser, videoDir, before))
-    expect(reply.endsWith(`</dez:tool>\n\n<dez:video id="g" type="video/webm" src="${madePath}" tool="video" hidden="${mix.jobId}"/>\n\n${replyText(CALLER.modelName)}`)).toBe(true)
+    expect(reply.endsWith(`</dez:tool>\n\n<dez:video id="g" type="video/webm" src="${madePath}" tool="video" made-by="${mix.jobId}" hidden="${mix.jobId}"/>\n\n${replyText(CALLER.modelName)}`)).toBe(true)
 
     // The chip of the `video` call tells of the clip; the `jobs_wait` chip
     // does not, and no player shows the clip at its place.
@@ -359,6 +363,40 @@ describe('video tool', () => {
     await pressToolChip(browser, 0)
     await waitForValue(browser, 'player after the chip closed', async () => (await shownPlayers(browser)).map(({ id }) => id).includes('g'), false)
     expect(await intermediateParts(browser)).toStrictEqual([hidingPart('video'), null])
+    await expectCleanEnd(files)
+  })
+
+  it('tells the facts of each image and clip that an asset_info call names, whether it is hidden, and who made it', async () => {
+    const files = await openClips('asset-info')
+    const before = await filesIn(videoDir)
+    await submit(browser, 'Tell me about my clips.')
+    // A clip that a job made as a step of its work: hidden, and made by the
+    // job.
+    const mix = await runJob(await chatRequest(), 'call_part', 'ffmpeg', { arguments: '-i @a -i @e -map 0:v -map 1:a -c:v copy -c:a libopus -shortest part.webm', is_intermediate: true })
+    expect(mix.result.text.endsWith('\nMade the video clip @g.')).toBe(true)
+    sendToolCalls(mix.next.reply, [openAiToolCall('call_info', 'asset_info', { assets: '@g @a @b @c @d @e @f' })])
+
+    const third = await chatRequest()
+    const [header, made, ...sources] = toolResult(third, 'call_info').split('\n')
+    expect(header).toBe('Each line: id | kind | format and facts | shown, or hidden in the panel of its call\'s chip | who made it.')
+    // The length and the frame rate of the new clip are those of its
+    // encode.
+    const madeBytes = (await fs.promises.stat(path.join(videoDir, await newFileIn(browser, videoDir, before)))).size
+    expect(made).toMatch(/^@g \| video \| WebM \| [\d.]+ s \| 48x36 \| [\d.]+ fps \| vp9 \| sound \(opus\) \| /)
+    expect(made.split(' | ').slice(-3)).toStrictEqual([byteSizeText(madeBytes), 'hidden', `made by the video job 1 of its reply: "${mix.result.call.label}"`])
+    const video = '2 s | 48x36 | 5 fps | vp9 | no sound'
+    expect(sources).toStrictEqual([
+      `@a | video | WebM | ${video} | ${byteSizeText(WEBM_VIDEO.length)} | shown | from the user`,
+      `@b | video | WebM | ${video} | ${byteSizeText(WEBM_VIDEO.length)} | shown | from the user`,
+      `@c | image | PNG | 48x36 | ${byteSizeText(PICTURE_PNG.length)} | shown | from the user`,
+      `@d | video | MP4 | ${video} | ${byteSizeText(MP4_VIDEO.length)} | shown | made by a model`,
+      `@e | audio | WAV | 1 s | pcm_u8 | 8000 Hz | 1 channel | ${byteSizeText(SOUND_WAV.length)} | shown | made by a model`,
+      `@f | video | WebM | ${video} | ${byteSizeText(WEBM_VIDEO.length)} | shown | made by a model`,
+    ])
+    expect(third.body).not.toContain(linkedDir)
+    await sendChatReply(third.reply, CALLER.modelName)
+
+    await endedReply(browser, CLIPS_REPLY_INDEX)
     await expectCleanEnd(files)
   })
 
@@ -388,8 +426,8 @@ describe('video tool', () => {
     const videoName = await newFileIn(browser, videoDir, videosBefore)
     expect(videoName).toMatch(storedFileName('webm'))
     const videoPath = path.join(videoDir, videoName)
-    expect(reply).toContain(`</dez:tool>\n\n![${imagePath}](id=g|tool=video)\n<dez:tool id="call_still"`)
-    expect(reply.endsWith(`</dez:tool>\n\n<dez:video id="h" type="video/webm" src="${videoPath}" tool="video"/>\n\n${replyText(CALLER.modelName)}`)).toBe(true)
+    expect(reply).toContain(`</dez:tool>\n\n![${imagePath}](id=g|tool=video|made-by=${frame.jobId})\n<dez:tool id="call_still"`)
+    expect(reply.endsWith(`</dez:tool>\n\n<dez:video id="h" type="video/webm" src="${videoPath}" tool="video" made-by="${still.jobId}"/>\n\n${replyText(CALLER.modelName)}`)).toBe(true)
     expect(mediaFacts(imagePath)).toStrictEqual({ streams: ['video mjpeg 48x36'], seconds: null })
     expect(mediaFacts(videoPath)).toStrictEqual({ streams: ['video vp9 48x36', 'audio opus'], seconds: 1 })
     // The editor draws only the lines near its view, so the image of the
