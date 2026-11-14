@@ -15,7 +15,7 @@ import { providerInfo } from '../model/providers/testing'
 import type { ModelInfo, ProviderInfo, ProviderInputImageRules, ProviderSettingsDescriptor } from '../model/providers/types'
 import type { ReplyPicture } from '../model/streams/replyPictures'
 import { assetProbeArgs } from '../model/tools/assetFacts'
-import { smallerCopyNote } from '../model/tools/assetView'
+import { PICTURE_NOT_DRAWN_NOTE, smallerCopyNote } from '../model/tools/assetView'
 import { jobStartedText, jobsWaitResults, NO_JOBS_TEXT, NO_OPEN_JOBS_TEXT } from '../model/tools/jobs'
 import { modelInfoText, type ModelInfoFacts } from '../model/tools/modelInfo'
 import { IMAGE_NOT_SAVED_TEXT, INVOCATION_TEXT_CAP, invocationAnswerStateText, invocationAnswerText, modelInvocation } from '../model/tools/modelInvoke'
@@ -57,8 +57,10 @@ let knownLimits: Record<string, KnownLimit[]>
 let readImages: string[] = []
 let readImage: () => Promise<Blob>
 let storedImageSize: ImageSize
-// Set to make the webview fail to draw.
+// Set to make the webview fail to decode an image, or only to draw one
+// that it decoded.
 let redrawError: Error | undefined
+let drawError: Error | undefined
 let drawings: { drawing: ImageDrawing, mediaType: string }[] = []
 let savedImages: { mediaType: string, options: unknown }[] = []
 let saveImage: () => Promise<string>
@@ -111,6 +113,7 @@ sbp('sbp/selectors/register', {
     if (redrawError) throw redrawError
     const drawing = plan(storedImageSize)
     if (!drawing) return null
+    if (drawError) throw drawError
     drawings.push({ drawing, mediaType })
     return { bytes: new Uint8Array([7]), mediaType: drawing.mediaType ?? mediaType, width: drawing.width, height: drawing.height }
   },
@@ -171,6 +174,7 @@ beforeEach(() => {
   readImage = async () => new Blob([])
   storedImageSize = { width: 1000, height: 500 }
   redrawError = undefined
+  drawError = undefined
   drawings = []
   savedImages = []
   saveImage = async () => MADE_IMAGE
@@ -1716,6 +1720,12 @@ describe('dez.controller/tools/run', () => {
       redrawError = new Error('The image cannot be decoded.')
       expect((await assetInfo('a')).content).toBe(`${COLUMNS}\n@a | image | PNG | 2 KB | Dez could not read its picture | shown | from the user`)
     })
+
+    it('gives the format of the bytes, as asset_view does, for a file whose extension does not match them', async () => {
+      readImage = async () => new Blob([new Uint8Array(2048)], { type: 'image/jpeg' })
+
+      expect((await assetInfo('a')).content).toBe(`${COLUMNS}\n@a | image | JPEG | 1000x500 | 2 KB | shown | from the user`)
+    })
   })
 
   describe('asset_view', () => {
@@ -1874,6 +1884,14 @@ describe('dez.controller/tools/run', () => {
 
       expect(result.content).toContain('@a | image | PNG | 3 B | Dez could not read its picture')
       expect(shown.map(({ label }) => label.match(/@[a-z]+/)?.[0])).toStrictEqual(['@d'])
+    })
+
+    it('keeps the size of an image that the webview decoded but could not draw, and tells why it sends no picture', async () => {
+      storedImageSize = { width: 8192, height: 4096 }
+      drawError = new Error('No canvas to draw the image on.')
+
+      expect(await assetView({ assets: 'a' })).toStrictEqual({ content: `@a | image | PNG | 8192x4096 | 3 B\n${PICTURE_NOT_DRAWN_NOTE}`, isError: false })
+      expect(shown).toStrictEqual([])
     })
 
     it('tells of a part with no frame, and of a clip that Dez cannot read, and shows no picture for them', async () => {

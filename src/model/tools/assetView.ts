@@ -252,6 +252,11 @@ export function smallerCopyNote(width: number, height: number): string {
   return `The picture is a smaller JPEG copy, of ${width}x${height} pixels: the image is too large to send as it is.`
 }
 
+/** The note of an image whose picture the webview could not draw (its
+ *  smaller copy, or the PNG copy of a type that does not go as it is). */
+export const PICTURE_NOT_DRAWN_NOTE = 'No picture: Dez could not draw the copy of this image that it sends. '
+  + 'Help › Developer Console shows the cause. This is not a fault of the call.'
+
 /** What the picture of the image `id` shows. */
 export function imagePictureShows(id: string): string {
   return `the image @${id}`

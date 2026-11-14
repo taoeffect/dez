@@ -1,12 +1,11 @@
 import sbp from '@sbp/sbp'
-import { wholeImageDrawing, type DrawnImage, type ImageDrawing, type ImageSize } from '../model/chat/imageDrawing'
-import { imageExtension, imageMediaType, isImageMediaType, type ImageMediaType } from '../model/chat/images'
+import { wholeImageDrawing, type ImageDrawing, type ImageSize } from '../model/chat/imageDrawing'
+import type { ImageMediaType } from '../model/chat/images'
 import type { PicturePart, Section } from '../model/chat/types'
 import type { ClipAttachment } from '../model/providers/clipInputs'
 import type { ModelInfo } from '../model/providers/types'
 import { conversationAssets } from '../model/streams/mediaRequest'
-import { imageFactsText } from '../model/tools/assetFacts'
-import { IMAGE_NOT_DECODED_FACTS, IMAGE_NOT_READ_FACTS, probedClipFacts } from '../model/tools/assetInfo'
+import { probedClipFacts } from '../model/tools/assetInfo'
 import {
   ASSET_VIEW_TIMEOUT_MS,
   ASSET_VIEW_TOOL,
@@ -25,6 +24,7 @@ import {
   NO_VIDEO_STREAM_NOTE,
   noFramesNote,
   PICTURE_LIMIT_NOTE,
+  PICTURE_NOT_DRAWN_NOTE,
   sheetFrameTimes,
   smallerCopyNote,
   UNKNOWN_LENGTH_NOTE,
@@ -40,7 +40,7 @@ import { clipInput, type ClipInput, type ProgramEnd } from '../model/tools/progr
 import { clipReadProblemText, unknownAssetsText } from '../model/tools/toolInputs'
 import { ToolError, type ToolArguments } from '../model/tools/types'
 import { FFMPEG_OUTPUT_BYTES } from '../model/tools/videoTool'
-import { probeClip } from './assetInfo'
+import { probeClip, readImageFacts } from './assetInfo'
 import { inWorkFolder, runProgram } from './programRuns'
 import type { ToolRunContext } from './tools'
 
@@ -88,40 +88,19 @@ function pictureDrawing(size: ImageSize, bytes: number, mediaType: ImageMediaTyp
   return null
 }
 
-// The view of the image `id`, whose file is at `path`. The webview decodes
-// it for its size in pixels (as for `asset_info`), and draws its picture
-// when it cannot go as it is. An image that the webview cannot decode
-// gives no picture: its file could make the provider refuse the request.
+// The view of the image `id`, whose file is at `path`: its facts as
+// `asset_info` gives them (`readImageFacts`), and its picture, drawn when
+// it cannot go as it is. An image that the webview cannot decode gives no
+// picture: its file could make the provider refuse the request.
 async function viewImage(id: string, path: string, choice: PictureChoice): Promise<AssetViewItem> {
-  const item: AssetViewItem = { id, kind: 'image', facts: IMAGE_NOT_READ_FACTS, notes: [], picture: null }
-  let file: File
-  try {
-    file = await sbp('dez.controller/images/readFile', path) as File
-  } catch (error) {
-    console.error(`Failed to read the image @${id}:`, error)
-    return item
-  }
-  // The type of the bytes, as the asset protocol tells it: a linked file
-  // whose extension does not match its bytes goes with the right type.
-  const mediaType = isImageMediaType(file.type) ? file.type : imageMediaType(path)
-  const extension = mediaType && imageExtension(mediaType)
-  // Not `ImageSize | null = null`: TypeScript would take the variable for
-  // null after the callback, which sets it.
-  let size = null as ImageSize | null
-  let drawn: DrawnImage | null
-  try {
-    drawn = await sbp('dez.controller/images/redraw', file, (decoded: ImageSize) => {
-      size = decoded
-      return choice === 'show' ? pictureDrawing(decoded, file.size, mediaType) : null
-    }, 'image/png') as DrawnImage | null
-  } catch (error) {
-    console.error(`Failed to decode the image @${id}:`, error)
-    return { ...item, facts: `${imageFactsText(extension, null, file.size)} | ${IMAGE_NOT_DECODED_FACTS}` }
-  }
-  item.facts = imageFactsText(extension, size, file.size)
+  const image = await readImageFacts(id, path, choice === 'show' ? pictureDrawing : undefined)
+  const item: AssetViewItem = { id, kind: 'image', facts: image.facts, notes: [], picture: null }
+  if (image.kind === 'notDrawn') item.notes.push(PICTURE_NOT_DRAWN_NOTE)
+  if (image.kind !== 'read') return item
   if (choice === 'overLimit') item.notes.push(PICTURE_LIMIT_NOTE)
   if (choice !== 'show') return item
 
+  const { file, mediaType, drawn } = image
   let part: PicturePart | null
   if (drawn) {
     part = { type: 'picture', mediaType: drawn.mediaType, bytes: drawn.bytes }

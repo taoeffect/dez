@@ -1,7 +1,7 @@
 import sbp from '@sbp/sbp'
 import { assetPlaces, type AssetPlace } from '../model/chat/assetOrigins'
-import type { ImageSize } from '../model/chat/imageDrawing'
-import { imageExtension, imageMediaType } from '../model/chat/images'
+import type { DrawnImage, ImageDrawing, ImageSize } from '../model/chat/imageDrawing'
+import { imageExtension, imageMediaType, isImageMediaType, type ImageMediaType } from '../model/chat/images'
 import { ClipReadError } from '../model/chat/mediaFiles'
 import type { Section } from '../model/chat/types'
 import type { ClipAttachment } from '../model/providers/clipInputs'
@@ -33,31 +33,59 @@ import { clipCopy, inWorkFolder, runProgram } from './programRuns'
 // gets the facts of the others. The cause goes to the log only: a native
 // error and the output of ffprobe can hold a path.
 
-// The facts text of the image `id`, whose file is at `path`: the webview
-// decodes it for its size in pixels, as for the `image` tool.
-async function imageFacts(id: string, path: string): Promise<string> {
+/** What `readImageFacts` read of an image. `facts` is its facts text
+ *  (`imageFactsText`), or the text of what Dez could not read. */
+export type ImageFactsRead =
+  /** Dez could not read its file, or the webview could not decode it. */
+  | { kind: 'notRead', facts: string }
+  /** The webview decoded it, but could not draw the picture of the plan. */
+  | { kind: 'notDrawn', facts: string }
+  /** The type of its bytes, and the drawing of the plan (null: none). */
+  | { kind: 'read', facts: string, file: File, mediaType: ImageMediaType | null, drawn: DrawnImage | null }
+
+/** The drawing, with its type, of the picture of an image of `size`,
+ *  whose file has `bytes` bytes of the type `mediaType`; null for none. */
+export type PicturePlan = (size: ImageSize, bytes: number, mediaType: ImageMediaType | null) => ImageDrawing | null
+
+/** The facts of the image `id`, whose file is at `path`, for `asset_info`
+ *  and `asset_view`, which must give the same facts: one read of the file,
+ *  and a decode in the webview for its size in pixels, as for the `image`
+ *  tool. The format is the type of the bytes, as the asset protocol tells
+ *  it, so a linked file whose extension does not match its bytes gets the
+ *  right format. `plan` (asset_view) gives the drawing of a picture; a
+ *  drawing that fails after the decode keeps the size in the facts. */
+export async function readImageFacts(id: string, path: string, plan: PicturePlan = () => null): Promise<ImageFactsRead> {
   let file: File
   try {
     file = await sbp('dez.controller/images/readFile', path) as File
   } catch (error) {
     console.error(`Failed to read the image @${id}:`, error)
-    return IMAGE_NOT_READ_FACTS
+    return { kind: 'notRead', facts: IMAGE_NOT_READ_FACTS }
   }
-  const mediaType = imageMediaType(path)
+  const mediaType = isImageMediaType(file.type) ? file.type : imageMediaType(path)
   const extension = mediaType && imageExtension(mediaType)
+  // Not `ImageSize | null = null`: TypeScript would take the variable for
+  // null after the callback, which sets it.
   let size = null as ImageSize | null
+  let drawn: DrawnImage | null
   try {
-    // A plan that draws nothing: redraw only decodes the image and tells
-    // its size, so the type of the drawing does not count.
-    await sbp('dez.controller/images/redraw', file, (decoded: ImageSize) => {
+    // Every plan names the type of its drawing, so 'image/png' is only
+    // the type that redraw needs.
+    drawn = await sbp('dez.controller/images/redraw', file, (decoded: ImageSize) => {
       size = decoded
-      return null
-    }, 'image/png')
+      return plan(decoded, file.size, mediaType)
+    }, 'image/png') as DrawnImage | null
   } catch (error) {
-    console.error(`Failed to decode the image @${id}:`, error)
-    return `${imageFactsText(extension, null, file.size)} | ${IMAGE_NOT_DECODED_FACTS}`
+    // Redraw gives the size to the plan after the decode, so with a size,
+    // only the drawing failed.
+    if (size === null) {
+      console.error(`Failed to decode the image @${id}:`, error)
+      return { kind: 'notRead', facts: `${imageFactsText(extension, null, file.size)} | ${IMAGE_NOT_DECODED_FACTS}` }
+    }
+    console.error(`Failed to draw the picture of the image @${id}:`, error)
+    return { kind: 'notDrawn', facts: imageFactsText(extension, size, file.size) }
   }
-  return imageFactsText(extension, size, file.size)
+  return { kind: 'read', facts: imageFactsText(extension, size, file.size), file, mediaType, drawn }
 }
 
 /** The probe of the clip of `input` for a call of the tool `toolName`: one
@@ -112,7 +140,7 @@ export async function assetInfoResult(args: ToolArguments, sections: readonly Se
       continue
     }
     signal.throwIfAborted()
-    facts.set(id, await imageFacts(id, path))
+    facts.set(id, (await readImageFacts(id, path)).facts)
   }
   if (clips.length > 0) {
     await inWorkFolder(async (folder) => {
