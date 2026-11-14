@@ -161,6 +161,14 @@ export const MOMENTARY_WINDOW_SECONDS = 0.4
 // `nan`.
 const MOMENTARY = new RegExp(`\\[Parsed_ebur128_\\d+ @ [^\\]]*\\] t:\\s*(${TIME})\\s[^\\n]*?\\bM:\\s*(nan|-?inf|-?[\\d.]+)`, 'g')
 
+// The value of the lines that ebur128 writes before its window is full: the
+// loudness of its floor energy (1e-12). A full window divides that floor by
+// its length, so even digital silence is lower (-163.5). The lines go by
+// this value, not by time or count: the sound of a clip can start after
+// 0 s, and at 11025 Hz there are 4 of them, as a step is `rate / 10`
+// samples rounded down.
+const STAND_IN_LUFS = '-120.7'
+
 /** The loudness curve in the log of a `clipChecksArgs` run with
  *  `loudness_curve`. Each value is the mean of the momentary loudness of
  *  the 100 ms steps of its part, taken over their energy, as loudness adds
@@ -168,13 +176,13 @@ const MOMENTARY = new RegExp(`\\[Parsed_ebur128_\\d+ @ [^\\]]*\\] t:\\s*(${TIME}
  *  much. The steps before the window is full are left out. Null for a log
  *  with no step after that (a sound shorter than the window). */
 export function loudnessCurve(log: string): LoudnessCurve | null {
-  // The filter keeps the steps after the window is full. Their times are a
-  // bit under each 100 ms (0.399979), so the bound has a margin.
-  const blocks = Array.from(log.matchAll(MOMENTARY), ([, time, lufs]) => ({
-    time: Number(time),
+  const lines = Array.from(log.matchAll(MOMENTARY), ([, time, lufs]) => ({ time: Number(time), lufs }))
+  const firstFull = lines.findIndex(({ lufs }) => lufs !== STAND_IN_LUFS)
+  const blocks = (firstFull < 0 ? [] : lines.slice(firstFull)).map(({ time, lufs }) => ({
+    time,
     // The energy, up to a factor that the mean takes out again.
     energy: lufs === 'nan' || lufs.endsWith('inf') ? 0 : 10 ** (Number(lufs) / 10),
-  })).filter(({ time }) => time > MOMENTARY_WINDOW_SECONDS - 0.05)
+  }))
   if (blocks.length === 0) return null
   // Not `Math.max(...times)`: a long sound has more steps than a call can
   // take arguments.

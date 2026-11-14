@@ -103,6 +103,24 @@ describe('loudnessCurve', () => {
     expect(curve?.values.map((value) => value?.toFixed(2))).toStrictEqual(['-20.00', '-22.60', '-Infinity'])
   })
 
+  it('leaves out the steps before the window is full for a sound that starts after 0 s', () => {
+    const log = [
+      line(0.3, '-120.7'), line(0.4, '-120.7'), line(0.5, '-120.7'),
+      ...[0.6, 0.7, 0.8, 0.9, 1].map((t) => line(t, ' -20.0')),
+    ].join('\n')
+    expect(loudnessCurve(log)?.values.map((value) => value?.toFixed(2))).toStrictEqual(['-20.00'])
+  })
+
+  // At 11025 Hz, ebur128 steps 1102 samples and fills its window of 4410
+  // samples only at the fifth step.
+  it('leaves out each step before the window is full, 4 of them at 11025 Hz', () => {
+    const log = [
+      ...[0.1, 0.2, 0.3, 0.4].map((t) => line(t, '-120.7')),
+      ...[0.5, 0.6, 0.7, 0.8, 0.9, 1].map((t) => line(t, ' -20.0')),
+    ].join('\n')
+    expect(loudnessCurve(log)?.values.map((value) => value?.toFixed(2))).toStrictEqual(['-20.00'])
+  })
+
   it('gives at most 120 values, one for each 3 s of a sound of 5 minutes', () => {
     const log = Array.from({ length: 3000 }, (_, index) => line((index + 1) / 10, ' -18.0')).join('\n')
     const curve = loudnessCurve(log)
