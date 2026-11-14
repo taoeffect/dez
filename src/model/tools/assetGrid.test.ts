@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest'
 import { gridLayout, gridTexts, type GridPiece } from './assetGrid'
 
 const image = (id: string): GridPiece => ({ kind: 'image', id })
-const sheet = (id: string): GridPiece => ({ kind: 'sheet', id, shows: `the frame sheet of the video clip @${id}: 2 frames in one row, at 1, 2 s` })
+const sheet = (id: string): GridPiece => ({ kind: 'clip', id, shows: `the frame sheet of the video clip @${id}: 2 frames in one row, at 1, 2 s` })
 const square = (side: number) => ({ width: side, height: side })
 
 describe('gridLayout', () => {

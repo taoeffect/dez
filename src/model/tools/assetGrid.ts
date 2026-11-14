@@ -23,7 +23,7 @@ const GRID_GAP = 16
  *  picture shows. */
 export type GridPiece =
   | { kind: 'image', id: string }
-  | { kind: 'sheet', id: string, shows: string }
+  | { kind: 'clip', id: string, shows: string }
 
 /** The drawing of a grid, and what its texts tell: `scale`, the size of
  *  the picture to the size of its parts (at most 1), and `imagesSmaller`,
@@ -36,7 +36,7 @@ export interface GridLayout extends ImageComposition {
 // The lines of a grid of `pieces`, top to bottom, each one the numbers of
 // its pieces, left to right.
 function gridLines(pieces: readonly GridPiece[]): number[][] {
-  // A run of images, or one sheet.
+  // A run of images, or the picture of one clip.
   const runs: number[][] = []
   pieces.forEach((piece, index) => {
     const last = runs.at(-1)
@@ -104,7 +104,7 @@ export function gridLayout(pieces: readonly GridPiece[], sizes: readonly ImageSi
 export function gridTexts(pieces: readonly GridPiece[], layout: GridLayout, detail: ViewDetail): { note: string, shows: string } {
   const map = gridLines(pieces).map((line) => {
     const first = pieces[line[0]]
-    if (first.kind === 'sheet') return first.shows
+    if (first.kind === 'clip') return first.shows
     return line.length === 1 ? imagePictureShows(first.id) : `the images ${idsListText(line.map((piece) => pieces[piece].id))}, left to right`
   }).join('; ')
   const box = FRAME_BOXES[detail]

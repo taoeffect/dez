@@ -28,6 +28,7 @@ import {
   gridCostNote,
   gridNotDrawnNote,
   gridTooLargeNote,
+  jpegCopyNote,
   NO_VIDEO_STREAM_NOTE,
   noSoundNote,
   PICTURE_LIMIT_NOTE,
@@ -36,7 +37,6 @@ import {
   PICTURE_TOO_LARGE_NOTE,
   pictureCostNote,
   sheetTooLargeNote,
-  smallerCopyNote,
   soundlessPartNote,
   soundStripFailedNote,
   soundStripLayout,
@@ -2228,7 +2228,7 @@ describe('dez.controller/tools/run', () => {
         mediaType: 'image/png',
       }])
       expect(shown.map(({ picture, size }) => ({ mediaType: picture.mediaType, size }))).toStrictEqual([{ mediaType: 'image/jpeg', size: drawn }])
-      expect(result.content).toContain(smallerCopyNote(drawn, size, detail))
+      expect(result.content).toContain(jpegCopyNote(drawn, size, detail))
     })
 
     it('sends an image of more than 1568 pixels as it is for full detail', async () => {
@@ -2264,7 +2264,7 @@ describe('dez.controller/tools/run', () => {
         { drawing: { crop, width: 1000, height: 500, background: '#ffffff', mediaType: 'image/jpeg' }, mediaType: 'image/jpeg' },
       ])
       expect(shown.map(({ picture }) => picture.mediaType)).toStrictEqual(['image/jpeg'])
-      expect(result.content).toContain(smallerCopyNote(crop, crop, 'review'))
+      expect(result.content).toContain(jpegCopyNote(crop, crop, 'review'))
     })
 
     it('draws a JPEG copy that is still too large again at 2048, 1568, then 1024 pixels, until it fits', async () => {
@@ -2281,7 +2281,7 @@ describe('dez.controller/tools/run', () => {
         [1024, 512, 'image/jpeg', 'image/jpeg'],
       ])
       expect(shown.map(({ size }) => size)).toStrictEqual([{ width: 1024, height: 512 }])
-      expect(result.content).toContain(smallerCopyNote({ width: 1024, height: 512 }, storedImageSize, 'full'))
+      expect(result.content).toContain(jpegCopyNote({ width: 1024, height: 512 }, storedImageSize, 'full'))
     })
 
     it('sends no picture of an image whose smallest JPEG copy is still too large, and logs it', async () => {

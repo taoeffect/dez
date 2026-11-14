@@ -766,7 +766,7 @@ function moreDetailAdvice(detail: ViewDetail, cropped: boolean): string {
  *  `picture` pixels, for a view with `detail`: a smaller copy, with how to
  *  see more, or a copy at the size of the image, whose file is too large to
  *  send as it is. */
-export function smallerCopyNote(picture: ImageSize, size: ImageSize, detail: ViewDetail): string {
+export function jpegCopyNote(picture: ImageSize, size: ImageSize, detail: ViewDetail): string {
   const pixels = `${picture.width}x${picture.height} pixels`
   if (picture.width < size.width || picture.height < size.height) return `The picture is a smaller JPEG copy, of ${pixels}. ${moreDetailAdvice(detail, false)}`
   return `The picture is a JPEG copy, of ${pixels}: the file of the image is too large to send as it is.`

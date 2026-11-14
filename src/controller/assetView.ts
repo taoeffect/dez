@@ -32,6 +32,7 @@ import {
   IMAGE_PICTURE_SIDES,
   imagePictureDrawing,
   imagePictureShows,
+  jpegCopyNote,
   loudnessNote,
   loudnessOf,
   MAX_PICTURE_BYTES,
@@ -49,7 +50,6 @@ import {
   scenesSheetTexts,
   sheetFrameTimes,
   sheetTooLargeNote,
-  smallerCopyNote,
   smallerPictureDrawing,
   smallerPictureSide,
   SOUND_STRIP_HEIGHTS,
@@ -149,7 +149,7 @@ async function viewImage(id: string, path: string, call: AssetViewCall, choice: 
     const texts = call.crop
       ? cropTexts(id, (drawing as ImageDrawing).crop, picture, call.detail)
       // With no crop, only the copy of a too large image is a JPEG drawing.
-      : { shows: imagePictureShows(id), note: drawn.mediaType === 'image/jpeg' ? smallerCopyNote(picture, size, call.detail) : null }
+      : { shows: imagePictureShows(id), note: drawn.mediaType === 'image/jpeg' ? jpegCopyNote(picture, size, call.detail) : null }
     item.picture = { part, size: picture, ...texts }
   } else if (mediaType) {
     item.picture = { part: { type: 'picture', mediaType, bytes: new Uint8Array(await file.arrayBuffer()) }, size, shows: imagePictureShows(id), note: null }
@@ -158,13 +158,13 @@ async function viewImage(id: string, path: string, call: AssetViewCall, choice: 
 }
 
 /** A member of the grid picture of a view (`layout` "grid"): the file of
- *  its piece (an image, or the JPEG of a frame sheet), and for a frame
- *  sheet, the picture of its clip, whose note its asset gets only when the
+ *  its piece (an image, or the JPEG of the picture of a video clip), and
+ *  for a video clip, that picture, whose note its asset gets only when the
  *  grid goes, and which goes as it is when the grid has no other member. */
 interface GridMember {
   file: Blob
   piece: GridPiece
-  sheet: ViewPicture | null
+  clipPicture: ViewPicture | null
 }
 
 /** What a picture that does not fit in the picture budget of the reply
@@ -183,7 +183,7 @@ async function gridImage(id: string, path: string, choice: PictureChoice): Promi
   const item: AssetViewItem = { id, kind: 'image', facts: image.facts, notes: [], picture: null }
   if (image.kind !== 'read') return { item, member: null }
   if (choice === 'overLimit') item.notes.push(PICTURE_LIMIT_NOTE)
-  return { item, member: choice === 'show' ? { file: image.file, piece: { kind: 'image', id }, sheet: null } : null }
+  return { item, member: choice === 'show' ? { file: image.file, piece: { kind: 'image', id }, clipPicture: null } : null }
 }
 
 // The grid picture of `members`, for a view with `detail`, when `charge`
@@ -447,22 +447,22 @@ async function withSoundStrip(
 // sound gets no loudness and no note about it, as its facts tell it, but
 // for the picture of its sound that the call asks for.
 async function videoView(input: ClipInput, facts: ClipProbeFacts, part: ClipPart, call: AssetViewCall, choice: PictureChoice, folder: string, signal: AbortSignal): Promise<Pick<AssetViewItem, 'notes' | 'picture'>> {
-  const frames: SheetView = facts.video === null
+  const sheetView: SheetView = facts.video === null
     ? { notes: [NO_VIDEO_STREAM_NOTE], picture: null }
     : choice === 'show' ? await frameSheet(input, call, facts.seconds, part, folder, signal) : { notes: [], picture: null }
   const asked = soundPictureOf(call, 'video')
-  const picture = choice === 'show' ? asked : 'none'
+  const soundKind = choice === 'show' ? asked : 'none'
   const limitNotes = choice === 'overLimit' && (facts.video !== null || (facts.audio !== null && asked !== 'none')) ? [PICTURE_LIMIT_NOTE] : []
-  if (facts.audio === null || frames.failed) {
+  if (facts.audio === null || sheetView.failed) {
     const noSound = facts.audio === null && asked !== 'none' ? [noSoundNote(asked, false)] : []
-    return { notes: [...frames.notes, ...noSound, ...limitNotes], picture: frames.picture }
+    return { notes: [...sheetView.notes, ...noSound, ...limitNotes], picture: sheetView.picture }
   }
-  const sheet = frames.picture
+  const sheet = sheetView.picture
   // The strip is as wide as the sheet. A sheet of an unknown size gets a
   // strip that the drawing stretches to its width.
-  const draw = soundDraw(input, picture, sheet && { width: sheet.size?.width ?? FRAME_BOXES[call.detail], height: SOUND_STRIP_HEIGHTS[call.detail] })
+  const draw = soundDraw(input, soundKind, sheet && { width: sheet.size?.width ?? FRAME_BOXES[call.detail], height: SOUND_STRIP_HEIGHTS[call.detail] })
   const sound = await soundView(input, part, draw, folder, signal)
-  const notes = [...frames.notes, ...sound.notes, ...limitNotes]
+  const notes = [...sheetView.notes, ...sound.notes, ...limitNotes]
   if (!draw || !sound.picture) return { notes, picture: sheet && sound.stripNote ? withNote(sheet, sound.stripNote) : sheet }
   if (!sheet) {
     return { notes, picture: { ...sound.picture, ...soundPictureTexts(input.id, 'video', draw.kind, part, sound.picture.size) } }
@@ -487,8 +487,8 @@ async function viewClip(clip: ClipAttachment, call: AssetViewCall, choice: Pictu
   if (clip.kind === 'video') return { ...item, ...await videoView(input, facts, part, call, choice, folder, signal) }
   const asked = soundPictureOf(call, 'audio')
   if (facts.audio === null) return { ...item, notes: [noSoundNote(asked, true)] }
-  const picture = choice === 'show' ? asked : 'none'
-  const draw = soundDraw(input, picture, null)
+  const soundKind = choice === 'show' ? asked : 'none'
+  const draw = soundDraw(input, soundKind, null)
   const sound = await soundView(input, part, draw, folder, signal)
   return {
     ...item,
@@ -574,9 +574,10 @@ export async function assetViewResult(
         : await viewClip(assets.clips.get(id) as ClipAttachment, call, choice, folder as string, signal)
       if (item.picture && inGrid.has(id)) {
         // The picture of a video clip of the grid (its frame sheet, with
-        // its sound strip) is a member of it.
+        // its sound strip, or the picture of its sound alone) is a member
+        // of it.
         const { part, shows } = item.picture
-        members.push({ file: new Blob([part.bytes], { type: part.mediaType }), piece: { kind: 'sheet', id, shows }, sheet: item.picture })
+        members.push({ file: new Blob([part.bytes], { type: part.mediaType }), piece: { kind: 'clip', id, shows }, clipPicture: item.picture })
         item.picture = null
       } else {
         keepIfFits(item)
@@ -598,10 +599,10 @@ export async function assetViewResult(
   // than its picture with `separate`, so it gets that picture in place of
   // the grid.
   if (membersGo && members.length === 1) {
-    const [{ piece, sheet }] = members
+    const [{ piece, clipPicture }] = members
     const index = items.findIndex(({ id }) => id === piece.id)
-    if (sheet) {
-      items[index].picture = sheet
+    if (clipPicture) {
+      items[index].picture = clipPicture
     } else {
       // `gridImage` read the image but made no picture of it.
       items[index] = await viewImage(piece.id, assets.images.get(piece.id) as string, call, 'show')
@@ -610,9 +611,10 @@ export async function assetViewResult(
   }
   const grid = membersGo && members.length > 1 ? await gridView(members, call.detail, charge) : null
   if (grid?.picture) {
-    // The note of a frame sheet goes first, as the note of a picture.
-    for (const { piece, sheet } of members) {
-      if (sheet?.note) items.find((item) => item.id === piece.id)?.notes.unshift(sheet.note)
+    // The note of the picture of a clip goes before its other notes, as
+    // for a picture of its own.
+    for (const { piece, clipPicture } of members) {
+      if (clipPicture?.note) items.find((item) => item.id === piece.id)?.notes.unshift(clipPicture.note)
     }
   }
   const pictures = assetViewPictures(items, grid)
