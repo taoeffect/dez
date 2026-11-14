@@ -1,4 +1,4 @@
-import { pointerClickAt, waitForValue } from './dom'
+import { pointerClickAt, waitForValue, type Point } from './dom'
 import type { E2EBrowser } from './session'
 import { assetPartPoint } from './thread'
 
@@ -97,16 +97,20 @@ export async function toolPanelPictures (browser: E2EBrowser, index: number): Pr
 /** Presses the chip `index` (doc order), which opens or closes its panel.
  *  A panel that just opened or closed changes the height of its line, and
  *  CodeMirror can move the chips some frames later, when it measures the
- *  lines: the press waits until two reads give the chip the same place. */
+ *  lines: the press waits until two reads, one poll interval apart, give
+ *  the chip the same place. The first poll of `waitUntil` runs at once, so
+ *  it only reads: a comparison of two reads right after each other can
+ *  pass before the move. */
 export async function pressToolChip (browser: E2EBrowser, index: number): Promise<void> {
-  const place = () => assetPartPoint(browser, '.dez-tool-call', index, '.dez-tool-call__chip')
-  let point = await place()
+  // Not `let point: Point | null = null`: TypeScript would take it for null
+  // after the callback, which it does not see assign.
+  let point = null as Point | null
   await waitForValue(browser, `settled place of chip ${index}`, async () => {
     const last = point
-    point = await place()
-    return point.x === last.x && point.y === last.y
+    point = await assetPartPoint(browser, '.dez-tool-call', index, '.dez-tool-call__chip')
+    return last !== null && point.x === last.x && point.y === last.y
   }, true)
-  await pointerClickAt(browser, point)
+  await pointerClickAt(browser, point as Point)
 }
 
 /** The part of a chip that tells that its call is intermediate. */
