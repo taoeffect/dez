@@ -145,6 +145,9 @@ const SANDBOX_EXEC: &str = "/usr/bin/sandbox-exec";
 //   of a `subpath` would not.
 // - The reads of the system: the frameworks and libraries (with the dyld
 //   cache in the cryptexes), their data, and the time zone.
+// - The read of the root folder `/` (a `literal`: the names in `/`, and no
+//   file below it): on macOS 27, dyld reads it before `main` to find its
+//   cache, and a deny makes dyld abort every program (SIGABRT).
 // - The paths come as parameters (`-D`), never as text of the profile, so a
 //   path cannot change the profile. Seatbelt matches resolved paths
 //   (`/private/var/…`), so they are canonical.
@@ -161,6 +164,7 @@ const SEATBELT_PROFILE: &str = r#"(version 1)
 (allow default)
 (deny file-read-data file-write*)
 (allow file-read-data
+  (literal "/")
   (subpath "/System")
   (subpath "/usr/lib")
   (subpath "/usr/share")
