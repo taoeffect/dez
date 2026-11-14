@@ -1,18 +1,8 @@
 import { describe, expect, it } from 'vitest'
 import { assetIdsArgument, assetInfoLine, assetOriginText } from './assetInfo'
-import { ToolError } from './types'
+import { refusal } from './testing'
 
 const RULE = { max: 3, notDone: 'Dez did nothing.' }
-
-function idsError(assets: string): string {
-  try {
-    assetIdsArgument({ assets }, RULE)
-  } catch (error) {
-    expect(error).toBeInstanceOf(ToolError)
-    return (error as ToolError).message
-  }
-  throw new Error('assetIdsArgument did not throw')
-}
 
 describe('assetIdsArgument', () => {
   it('takes ids with and without the @, split by spaces and commas, each one once', () => {
@@ -20,13 +10,13 @@ describe('assetIdsArgument', () => {
   })
 
   it('refuses a word that is no id, and no ids, and tells what Dez did not do', () => {
-    expect(idsError('@a @B')).toMatch(/"@B".*Dez did nothing\.$/)
-    expect(idsError(' , ')).toMatch(/Dez did nothing\.$/)
+    expect(refusal(() => assetIdsArgument({ assets: '@a @B' }, RULE))).toMatch(/"@B".*Dez did nothing\.$/)
+    expect(refusal(() => assetIdsArgument({ assets: ' , ' }, RULE))).toMatch(/Dez did nothing\.$/)
   })
 
   it('refuses more than the most ids of one call, and counts a repeated id once', () => {
     expect(assetIdsArgument({ assets: '@a @b @c @a' }, RULE)).toHaveLength(3)
-    expect(idsError('@a @b @c @d')).toMatch(/at most 3\b.*Dez did nothing\.$/)
+    expect(refusal(() => assetIdsArgument({ assets: '@a @b @c @d' }, RULE))).toMatch(/at most 3\b.*Dez did nothing\.$/)
   })
 })
 

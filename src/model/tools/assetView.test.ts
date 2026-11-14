@@ -11,17 +11,7 @@ import {
   sheetFrameTimes,
   sheetGrid,
 } from './assetView'
-import { ToolError, type ToolArguments } from './types'
-
-function callError(args: ToolArguments): string {
-  try {
-    assetViewCall(args)
-  } catch (error) {
-    expect(error).toBeInstanceOf(ToolError)
-    return (error as ToolError).message
-  }
-  throw new Error('assetViewCall did not throw')
-}
+import { refusal } from './testing'
 
 // Lines of a real run of `frameSheetArgs` (ffmpeg 8, an mp4 of 24 fps):
 // the config lines and the color lines of `showinfo` are no frames.
@@ -62,12 +52,12 @@ describe('assetViewCall', () => {
   })
 
   it('refuses more than 4 ids, frames out of 2 to 16, a start before 0, and an end that is not after the start', () => {
-    expect(callError({ assets: '@a @b @c @d @e' })).toMatch(/at most 4\b/)
-    expect(callError({ assets: '@f', frames: 1 })).toMatch(/2 to 16/)
-    expect(callError({ assets: '@f', frames: 17 })).toMatch(/2 to 16/)
-    expect(callError({ assets: '@f', start: -1 })).toMatch(/`start`/)
-    expect(callError({ assets: '@f', start: 2, end: 2 })).toMatch(/`end`/)
-    expect(callError({ assets: '@f', end: 0 })).toMatch(/`end`/)
+    expect(refusal(() => assetViewCall({ assets: '@a @b @c @d @e' }))).toMatch(/at most 4\b/)
+    expect(refusal(() => assetViewCall({ assets: '@f', frames: 1 }))).toMatch(/2 to 16/)
+    expect(refusal(() => assetViewCall({ assets: '@f', frames: 17 }))).toMatch(/2 to 16/)
+    expect(refusal(() => assetViewCall({ assets: '@f', start: -1 }))).toMatch(/`start`/)
+    expect(refusal(() => assetViewCall({ assets: '@f', start: 2, end: 2 }))).toMatch(/`end`/)
+    expect(refusal(() => assetViewCall({ assets: '@f', end: 0 }))).toMatch(/`end`/)
   })
 })
 
