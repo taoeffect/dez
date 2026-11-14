@@ -17,7 +17,7 @@ import { generatedBase64Image, generatedImage } from './generatedImages'
 import { imageSizeRules, type ImageSizeRules, type InputImageLimits } from './imageSize'
 import type { MultipartField } from './multipart'
 import { isOptionValue, parameterTakes, type ModelParameter, type OptionsParameter, type OptionValue, type ParameterValues, type RangeParameter } from './modelParameters'
-import { priceNumber, roundedPrice, unitPrice, type ModelPrice } from './modelPrices'
+import { priceNumber, roundedPrice, unitPrice, usdText, type ModelPrice } from './modelPrices'
 import { isRecord, valueAtPath } from './modelParsing'
 import { CLIP_KINDS, type ChatImagePart, type ClipKind, type GeneratedMedia, type ImageKind, type MediaKind, type TextKind } from './types'
 import { VENICE_AUDIO_TYPES, VENICE_MAX_AUDIO_BYTES, VENICE_REFERENCE_FIELDS, VENICE_VIDEO_TYPES, veniceFamilyByIdPrefix, veniceReferenceBody, veniceReferenceClipRules, veniceReferenceFamily } from './veniceReferences'
@@ -549,7 +549,7 @@ function veniceImageListPrice(kind: ImageKind, values: ParameterValues, pricing:
     const included = valueAtPath(pricing, 'inputImages.included')
     const more = veniceUsd(valueAtPath(pricing, 'inputImages.additional'))
     if (typeof included !== 'number' || !Number.isInteger(included) || included < 0 || more === undefined) return undefined
-    notes.push(`+$${roundedPrice(more)} per input image${included > 0 ? ` over ${included}` : ''}`)
+    notes.push(`+${usdText(more)} per input image${included > 0 ? ` over ${included}` : ''}`)
   }
   return unitPrice('image', price.usd, notes.join('; '))
 }

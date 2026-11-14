@@ -30,7 +30,7 @@ describe('chat token prices', () => {
       unit: 'token',
       input: 2,
       output: 12,
-      note: 'base rate; some requests have other rates; images: $120 per 1M output tokens',
+      note: 'base rate; some requests have other rates; images: $120.00 per 1M output tokens',
     })
   })
 
@@ -38,7 +38,7 @@ describe('chat token prices', () => {
     const pricing = { prompt: '0.0000006', completion: '0.0000024', audio: '0.0000006', audio_output: '0.0000024' }
 
     expect(modelTokenPrice({ id: 'openai/gpt-audio-mini', pricing }, openRouter, ['text', 'audio']))
-      .toStrictEqual({ unit: 'token', input: 0.6, output: 2.4, note: 'audio: $2.4 per 1M output tokens' })
+      .toStrictEqual({ unit: 'token', input: 0.6, output: 2.4, note: 'audio: $2.40 per 1M output tokens' })
   })
 
   it.each([

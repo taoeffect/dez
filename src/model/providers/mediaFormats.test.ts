@@ -1032,10 +1032,10 @@ describe('venice list prices', () => {
   it('tells the price of each input image of an edit that the price does not hold', () => {
     expect([
       listPrice('imageEdit', editPrices({ included: 0, additional: price(0.011500000000000002) }), { resolution: '1K', quality: 'low' }),
-      listPrice('imageEdit', editPrices({ included: 1, additional: price(0.0092) }), { resolution: '1K', quality: 'medium' }),
+      listPrice('imageEdit', editPrices({ included: 1, additional: price(0.02499985) }), { resolution: '1K', quality: 'medium' }),
     ]).toStrictEqual([
       { unit: 'image', usd: 0.05, note: '1K, low; +$0.0115 per input image' },
-      { unit: 'image', usd: 0.07, note: '1K, medium; +$0.0092 per input image over 1' },
+      { unit: 'image', usd: 0.07, note: '1K, medium; +$0.025 per input image over 1' },
     ])
   })
 

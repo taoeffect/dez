@@ -161,8 +161,8 @@ export function modelTokenPrice(entry: Record<string, unknown>, config: Provider
   if (input === 0 && output === 0 && unpricedMedia) return undefined
   const notes = [
     ...(config.otherRates !== undefined && hasData(valueAtPath(entry, config.otherRates)) ? ['base rate; some requests have other rates'] : []),
-    ...(mediaPrices.image ? [`images: $${perMillion(mediaPrices.image)} per 1M output tokens`] : []),
-    ...(mediaPrices.audio ? [`audio: $${perMillion(mediaPrices.audio)} per 1M output tokens`] : []),
+    ...(mediaPrices.image ? [`images: ${usdText(perMillion(mediaPrices.image))} per 1M output tokens`] : []),
+    ...(mediaPrices.audio ? [`audio: ${usdText(perMillion(mediaPrices.audio))} per 1M output tokens`] : []),
   ]
   return {
     unit: 'token',
