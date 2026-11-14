@@ -382,7 +382,7 @@ const TOOL_RUNNERS: Record<string, ToolRunner> = {
       providerSettings,
       sections: callSections(context),
     })
-    return startJob(context, MODEL_INVOKE_TOOL.name, (signal, report, reportCost) => invokeModel(invocation, signal, report, reportCost, { toolsAllowed: false }), {
+    return startJob(context, MODEL_INVOKE_TOOL.name, (signal, report, reportCost, keepAsset) => invokeModel(invocation, signal, report, reportCost, keepAsset, { toolsAllowed: false }), {
       timeoutMs: invocation.timeoutMs,
       hidesAssets: isIntermediate(args),
       label: invocationLabel(args),

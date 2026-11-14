@@ -135,7 +135,8 @@ async function invokeMediaModel(invocation: MediaInvocation, signal: AbortSignal
 //   (`answerIsCut`). The thinking of the model is dropped.
 // - An image of the answer is saved in the generated image folder, as in a
 //   reply of a chat model that makes images, and the audio of the answer
-//   stays in its temp copy, as the clip of a media request.
+//   stays in its temp copy, as the clip of a media request. `keepAsset`
+//   gets each one at once, as the answer can go on long after it.
 // - `report` gets the count of the characters of the answer so far.
 // - `reportCost` gets null when the request goes, then its cost, when the
 //   provider or the model's list price tells it. A request that failed
@@ -146,6 +147,7 @@ async function invokeTextModel(
   signal: AbortSignal,
   report: (state: string) => void,
   reportCost: (usd: number | null) => void,
+  keepAsset: (asset: MadeAsset) => void,
   { toolsAllowed }: InvocationRights,
 ): Promise<JobOutcome> {
   const { provider, model, content, imageOutput, audioOutput, providerSettings } = invocation
@@ -154,6 +156,10 @@ async function invokeTextModel(
     sbp('dez.http/cancelStream', requestId).catch((error: unknown) => console.error('Failed to cancel the request of an invoked model:', error))
   }
   const assets: MadeAsset[] = []
+  const keep = (asset: MadeAsset) => {
+    assets.push(asset)
+    keepAsset(asset)
+  }
   let answer = ''
   let imageNotSaved = false
   let sent = false
@@ -191,7 +197,7 @@ async function invokeTextModel(
         // The job ended: `ReplyJobs` takes no result any more.
         if (signal.aborted) return
         try {
-          assets.push({ kind: 'image', path: await sbp('dez.controller/images/save', image.bytes, image.mediaType, { folder: 'generated' }) as string })
+          keep({ kind: 'image', path: await sbp('dez.controller/images/save', image.bytes, image.mediaType, { folder: 'generated' }) as string })
         } catch (error) {
           // images/save logged the failure and showed its error toast.
           imageNotSaved = true
@@ -201,7 +207,7 @@ async function invokeTextModel(
       // Also after the end of the job: `ReplyJobs` then deletes the temp
       // copy, as it does with any asset of a result that came too late.
       onClip: (clip: GeneratedClip) => {
-        assets.push(generatedClipAsset(clip))
+        keep(generatedClipAsset(clip))
       },
     }) as ProviderStreamChatResult
     reportCost(result.cost ?? null)
@@ -232,8 +238,9 @@ async function invokeTextModel(
  *  - A text (a transcription, the answer of a text model) is the result
  *    text of the job. It is never written into the reply: the calling
  *    model decides what the user sees.
- *  - `report` gets how far the request is, and `reportCost` the price of
- *    the paid request (`JobWork`).
+ *  - `report` gets how far the request is, `reportCost` the price of the
+ *    paid request, and `keepAsset` the files that the work keeps while it
+ *    goes on (`JobWork`).
  *
  *  Rejects with a `ToolError` for a failure that Dez knows
  *  (`invocationError`); `ReplyJobs` logs it with its cause. When `signal`
@@ -245,9 +252,10 @@ export function invokeModel(
   signal: AbortSignal,
   report: (state: string) => void,
   reportCost: (usd: number | null) => void,
+  keepAsset: (asset: MadeAsset) => void,
   rights: InvocationRights,
 ): Promise<JobOutcome> {
   return invocation.kind === 'chat'
-    ? invokeTextModel(invocation, signal, report, reportCost, rights)
+    ? invokeTextModel(invocation, signal, report, reportCost, keepAsset, rights)
     : invokeMediaModel(invocation, signal, report, reportCost)
 }

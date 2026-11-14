@@ -58,9 +58,20 @@ export interface JobOutcome {
  *  The work makes its files, but writes nothing into the reply: a job can
  *  end while the model writes text, and the asset of a tool goes after the
  *  blocks of a group. The reader of the result writes them
- *  (`writeJobAssets`). A work that throws fails its job, as a runner that
- *  throws fails its call: a `ToolError` gives its text as the result. */
-export type JobWork = (signal: AbortSignal, report: (state: string) => void, reportCost: (usd: number | null) => void) => Promise<JobOutcome>
+ *  (`writeJobAssets`). A work that keeps a file while it goes on (an image
+ *  of an answer whose stream goes on) tells it at once with `keepAsset`:
+ *  until its result names the file, only that list keeps it from Delete
+ *  Unused Files (`madeAssetSources`). The result still holds the asset. A
+ *  work whose files come right before its end needs no call: the cleanup
+ *  keeps a file younger than `UNUSED_FILE_MIN_AGE_MS`. A work that throws
+ *  fails its job, as a runner that throws fails its call: a `ToolError`
+ *  gives its text as the result. */
+export type JobWork = (
+  signal: AbortSignal,
+  report: (state: string) => void,
+  reportCost: (usd: number | null) => void,
+  keepAsset: (asset: MadeAsset) => void,
+) => Promise<JobOutcome>
 
 /** A job that ended with a result, as its reader gets it. */
 export interface EndedJob {
@@ -77,8 +88,11 @@ export interface EndedJob {
   call: JobCall
 }
 
-interface Job extends Omit<EndedJob, 'status'> {
+interface Job extends Omit<EndedJob, 'status' | 'assets'> {
   status: JobStatus
+  // While the job runs, the files that its work kept so far (`keepAsset`);
+  // from its end, the assets of its result.
+  assets: MadeAsset[]
   // The last text that the work reported.
   state: string
   // The last price that the work reported (`JobInfo.cost`).
@@ -215,6 +229,10 @@ export class ReplyJobs {
       if (job.status === 'running') job.state = state
     }, (usd) => {
       if (job.status === 'running') job.cost = usd
+    }, (asset) => {
+      // A file that a work keeps after the end of its job comes in its
+      // late result, which is thrown away with its files below.
+      if (job.status === 'running') job.assets.push(asset)
     }))()
     outcome.then((result) => {
       // The job timed out or stopped before its work ended: nobody reads
@@ -318,11 +336,12 @@ export class ReplyJobs {
     }))
   }
 
-  /** The sources (`madeAssetSource`) of the assets of every job that ended
-   *  with a result: the ones that no reader took yet, and the ones that a
-   *  reader took but may not have written into the reply yet. No text
-   *  names their files until the write, so Delete Unused Files keeps them
-   *  by this list (`dez.stream/jobAssetSources`). */
+  /** The sources (`madeAssetSources`) of the files that the work of a job
+   *  that runs kept so far, and of the assets of every job that ended with
+   *  a result: the ones that no reader took yet, and the ones that a reader
+   *  took but may not have written into the reply yet. No text names their
+   *  files until the write, so Delete Unused Files keeps them by this list
+   *  (`dez.stream/jobAssetSources`). */
   madeAssetSources(): string[] {
     return [...this.jobs.values()].flatMap((job) => job.assets.flatMap((asset) => madeAssetSource(asset) ?? []))
   }

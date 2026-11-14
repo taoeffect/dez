@@ -2,7 +2,7 @@ import sbp from '@sbp/sbp'
 import { expect, vi } from 'vitest'
 import { ToolError } from '../model/tools/types'
 import type { NativeDownloadRule, NativeHttpDownload, NativeHttpRequest } from '../utils/protocol/nativeHttp'
-import type { JobOutcome, JobWork } from './jobs'
+import type { JobOutcome, JobWork, MadeAsset } from './jobs'
 import type { AppFileEntry, AppFileRef, BundledToolEnd, BundledToolOutput, BundledToolRun } from './nativeTypes'
 
 // Shared helpers of the unit tests of the controller code that runs the
@@ -137,25 +137,27 @@ export const settled = () => vi.advanceTimersByTimeAsync(0)
 export interface HeldWork {
   work: JobWork
   finish (outcome?: Partial<JobOutcome>): void
-  /** The signal and the writers of the state and of the price that the
-   *  job gave its work. */
+  /** The signal and the writers of the state, of the price, and of a kept
+   *  file that the job gave its work. */
   signal (): AbortSignal
   report (state: string): void
   reportCost (usd: number | null): void
+  keepAsset (asset: MadeAsset): void
 }
 
 export function heldWork(): HeldWork {
   let resolveWork!: (outcome: JobOutcome) => void
-  let seen!: { signal: AbortSignal, report: (state: string) => void, reportCost: (usd: number | null) => void }
+  let seen!: { signal: AbortSignal, report: (state: string) => void, reportCost: (usd: number | null) => void, keepAsset: (asset: MadeAsset) => void }
   return {
-    work: (signal, report, reportCost) => {
-      seen = { signal, report, reportCost }
+    work: (signal, report, reportCost, keepAsset) => {
+      seen = { signal, report, reportCost, keepAsset }
       return new Promise<JobOutcome>((resolve) => { resolveWork = resolve })
     },
     finish: (outcome = {}) => resolveWork({ text: '', isError: false, assets: [], ...outcome }),
     signal: () => seen.signal,
     report: (state) => seen.report(state),
     reportCost: (usd) => seen.reportCost(usd),
+    keepAsset: (asset) => seen.keepAsset(asset),
   }
 }
 

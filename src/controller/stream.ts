@@ -839,8 +839,9 @@ export default sbp('sbp/selectors/register', {
     }
   },
 
-  // The sources of the job results of every reply that runs, whose files
-  // no text may name yet (`ReplyJobs.madeAssetSources`). Delete Unused
+  // The sources of the files of the jobs of every reply that runs, which
+  // no text may name yet: the files that a job keeps while it runs, and
+  // the assets of the results (`ReplyJobs.madeAssetSources`). Delete Unused
   // Files keeps those files, as it keeps the files that a text names.
   'dez.stream/jobAssetSources' (): string[] {
     return [...repliesByTab.values()].flatMap((reply) => reply.jobs.madeAssetSources())

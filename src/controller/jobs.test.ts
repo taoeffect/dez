@@ -301,7 +301,8 @@ describe('ReplyJobs', () => {
 
   // Delete Unused Files keeps these files: no text names them before a
   // reader writes them into the reply.
-  it('gives the sources of the results that ended, also after a reader took them', async () => {
+  it('gives the sources of the files that a running job kept, and of the results that ended, also after a reader took them', async () => {
+    const keptImage = `${APP_DIR}/assets/generated/images/kept.png`
     const first = heldWork()
     const second = heldWork()
     const third = heldWork()
@@ -312,9 +313,11 @@ describe('ReplyJobs', () => {
     await settled()
     await jobs.wait(running())
     second.finish({ assets: [clip(TEMP_CLIP), clip(SAVED_CLIP)] })
+    // The answer of the third job goes on after an image.
+    third.keepAsset({ kind: 'image', path: keptImage })
     await settled()
 
-    expect(jobs.madeAssetSources()).toStrictEqual([IMAGE, URL_CLIP, TEMP_CLIP, SAVED_CLIP])
+    expect(jobs.madeAssetSources()).toStrictEqual([IMAGE, URL_CLIP, TEMP_CLIP, SAVED_CLIP, keptImage])
   })
 
   describe('settle', () => {

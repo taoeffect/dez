@@ -30,7 +30,7 @@ const QUEUE = 'dez.controller/unusedFiles'
 
 // The texts that can name a file that the cleanup must keep, other than
 // the conversation files: the texts in memory, and the sources of the job
-// results that no text names yet (`dez.stream/jobAssetSources`).
+// files that no text names yet (`dez.stream/jobAssetSources`).
 function textsInMemory(): string[] {
   return [...sbp('dez.model/heldTexts') as string[], ...sbp('dez.stream/jobAssetSources') as string[]]
 }

@@ -1308,7 +1308,7 @@ describe('dez.controller/tools/run', () => {
       it('saves no image that still comes after its job ended', async () => {
         const request = heldRequest()
         const abort = new AbortController()
-        const work = invokeModel(invocationOf(PAINT), abort.signal, () => {}, () => {}, { toolsAllowed: false })
+        const work = invokeModel(invocationOf(PAINT), abort.signal, () => {}, () => {}, () => {}, { toolsAllowed: false })
 
         abort.abort()
         request.answer({ media: [PNG], clips: [] })
@@ -1591,7 +1591,7 @@ describe('dez.controller/tools/run', () => {
             await input.onImage(PNG)
           }
 
-          expect(await invokeModel(invocationOf(SKETCH), abort.signal, () => {}, () => {}, { toolsAllowed: false })).toStrictEqual({ text: '', isError: false, assets: [] })
+          expect(await invokeModel(invocationOf(SKETCH), abort.signal, () => {}, () => {}, () => {}, { toolsAllowed: false })).toStrictEqual({ text: '', isError: false, assets: [] })
           expect(savedImages).toStrictEqual([])
         })
 
@@ -1606,6 +1606,20 @@ describe('dez.controller/tools/run', () => {
           expect(chatRequests[0].signal?.aborted).toBe(true)
           await vi.waitFor(() => expect(deletedImages).toStrictEqual([MADE_IMAGE]))
           expect(consoleError).not.toHaveBeenCalled()
+        })
+
+        // No text names them before the job ends, which can be long after
+        // them: Delete Unused Files keeps them by this list.
+        it('tells the job the image and the clip of an answer that goes on', async () => {
+          const answer = heldAnswer(async (input) => {
+            await input.onImage(PNG)
+            await input.onClip(MADE_SONG)
+          })
+          await jobTool('model_invoke', SKETCH)
+
+          await vi.waitFor(() => expect(jobs.madeAssetSources()).toStrictEqual([MADE_IMAGE, MADE_SONG.src]))
+          expect(jobs.list()[0].status).toBe('running')
+          answer.end()
         })
 
         it('ends the job at its time limit, stops the request, and tells how much text came', async () => {
