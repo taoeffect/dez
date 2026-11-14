@@ -231,10 +231,12 @@ function chunkCost(usage: Record<string, unknown> | undefined, cost: unknown): n
   return roundedPrice((usd ?? 0) + (diem ?? 0))
 }
 
-// The usage report of one chunk. `prompt_tokens` counts the cached input
+// The usage report of one chunk, or undefined for a chunk with no usage
+// and no cost (most chunks). `prompt_tokens` counts the cached input
 // tokens too, and `prompt_tokens_details.cached_tokens` tells how many
 // they are.
-function chunkUsage(chunk: OpenAiChunk): ChatUsage {
+function chunkUsage(chunk: OpenAiChunk): ChatUsage | undefined {
+  if (!isRecord(chunk.usage) && !isRecord(chunk.cost)) return undefined
   const usage = isRecord(chunk.usage) ? chunk.usage : undefined
   const details = isRecord(usage?.prompt_tokens_details) ? usage.prompt_tokens_details : undefined
   return {
@@ -309,7 +311,8 @@ export class OpenAiStreamParser implements SseStreamParser {
       if (choice.finish_reason === 'error') failed = true
       else if (choice.finish_reason !== undefined && choice.finish_reason !== null) this.complete = true
     }
-    this.usage = withUsageReport(this.usage, chunkUsage(chunk))
+    const report = chunkUsage(chunk)
+    if (report) this.usage = withUsageReport(this.usage, report)
 
     // The error goes after the text of its chunk, which came before it.
     // Text held back as a possible inline tag comes out first, as at the
