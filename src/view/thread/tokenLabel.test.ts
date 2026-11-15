@@ -60,7 +60,7 @@ describe('token label', () => {
       expect(tooltip.split('\n')[0]).toBe('Size of this buffer: about 81,234 tokens')
       expect(tooltip).toContain('since its last compaction')
       expect(tooltip).toContain('The buffer fills 41% of it.')
-      expect(tooltip).toContain('Dez compacts the conversation again when the buffer gets to 130,000 tokens.')
+      expect(tooltip).toContain('Dez compacts the conversation again when the buffer gets to 130,000 tokens')
       expect(total?.tooltip.split('\n')[0]).toBe('Size of the whole conversation: about 1,231,234 tokens')
       expect(total?.tooltip).toContain('each of its 3 compactions')
       // A sum with a counted buffer is no estimate.
@@ -73,8 +73,8 @@ describe('token label', () => {
     it('tells a later compaction size when the compaction left the buffer near the threshold', () => {
       const tooltip = (left: number) => tokenLabelTexts({ tokens: 125_000, estimated: false }, 200_000, { count: 1, tokens: 300_000, cost, left }).tooltip
 
-      expect(tooltip(120_000)).toContain('Dez compacts the conversation again when the buffer gets to 152,500 tokens.')
-      expect(tooltip(20_000)).toContain('when the buffer gets to 130,000 tokens.')
+      expect(tooltip(120_000)).toContain('Dez compacts the conversation again when the buffer gets to 152,500 tokens')
+      expect(tooltip(20_000)).toContain('when the buffer gets to 130,000 tokens')
     })
   })
 })

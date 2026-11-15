@@ -49,7 +49,9 @@ const WHOLE_NUMBER = new Intl.NumberFormat('en-US', { maximumFractionDigits: 0 }
  *  tooltip gives the whole number, what it counts, how much of
  *  `contextWindow` it fills (the window of the active model, in tokens;
  *  undefined when Dez knows none: no model, or a model of no chat request),
- *  and at which size Dez compacts it (`compactionDueSize`).
+ *  and at which size Dez compacts it (`compactionDueSize`), or that it
+ *  compacts sooner when the images and pictures are near a limit of the
+ *  model (`compactionReason`).
  *
  *  After a compaction (`compactions`), that count is the size of the
  *  buffer, and `total` is the size of the whole conversation: the sizes
@@ -75,8 +77,8 @@ export function tokenLabelTexts(size: ContextSize, contextWindow: number | undef
     lines.push(
       `Context window of the model: ${WHOLE_NUMBER.format(contextWindow)} tokens. The ${subject} fills ${windowShareText(size.tokens, contextWindow)} of it.`,
       compactions
-        ? `Dez compacts the conversation again when the buffer gets to ${dueSize} tokens.`
-        : `Dez compacts the conversation when it gets to ${dueSize} tokens: notes of the model then take the place of the earlier messages.`,
+        ? `Dez compacts the conversation again when the buffer gets to ${dueSize} tokens, or sooner when its images and pictures are near a limit of the model.`
+        : `Dez compacts the conversation when it gets to ${dueSize} tokens, or sooner when its images and pictures are near a limit of the model: notes of the model then take the place of the earlier messages.`,
     )
   }
   const texts: TokenLabelTexts = { text: `${size.estimated ? '~' : ''}${labelTokenText(size.tokens)}`, tooltip: lines.join('\n') }
