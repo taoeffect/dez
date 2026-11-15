@@ -92,6 +92,11 @@ describe('firstSectionRole', () => {
     // A prompt pill on the line of the tag.
     expect(firstSectionRole('<dez:compaction count="1"/>\uE000p1\uE001Body\uE002')).toBe('user')
   })
+
+  it('reads only the first line of a whole doc', () => {
+    expect(firstSectionRole('<dez:compaction count="1"/>\nNotes\n\u001E\nHello')).toBe('agent')
+    expect(firstSectionRole('Hello\n<dez:compaction count="1"/>')).toBe('user')
+  })
 })
 
 describe('contentCompactionTag and sectionCompactionTag', () => {

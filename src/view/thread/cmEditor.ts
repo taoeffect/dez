@@ -7,7 +7,7 @@ import { ChangeSet, EditorSelection, EditorState, MapMode, StateEffect, StateFie
 import { tags as t } from '@lezer/highlight'
 import type { MarkdownConfig } from '@lezer/markdown'
 import type { ContentNode, ModelRef, Role, Section, SectionThinking } from '../../model/chat/types'
-import { contentCompactionTag, firstSectionRole, withoutCompactionTag } from '../../model/chat/compaction'
+import { contentCompactionTag, firstLine, firstSectionRole, withoutCompactionTag } from '../../model/chat/compaction'
 import { durationField } from '../../model/chat/duration'
 import { modelRefField } from '../../model/chat/modelRef'
 import { PILL_MARKER, parsePillMarkerMatch, pillMarkerText } from '../../model/chat/pillMarker'
@@ -185,12 +185,6 @@ function normalizeSectionModels(models: SectionModel[], firstRole: Role): Sectio
   const copy = models.slice()
   copy[0] = { ...copy[0], role: firstRole }
   return copy
-}
-
-// The role of the first section of a doc string (`firstSectionRole`).
-function docFirstSectionRole(doc: string): Role {
-  const lineEnd = doc.indexOf('\n')
-  return firstSectionRole(lineEnd < 0 ? doc : doc.slice(0, lineEnd))
 }
 
 /** Produce `{ id, role, model?, thinking?, durationMs? }` for each section
@@ -542,7 +536,7 @@ export function reconcileSectionModelsToDoc(
       reconciled.push({ id: crypto.randomUUID(), role: 'user', generated: true })
     }
   }
-  return normalizeSectionModels(reconciled, docFirstSectionRole(doc))
+  return normalizeSectionModels(reconciled, firstSectionRole(doc))
 }
 
 /** `models` with the models that the undo or redo `tr` puts back, each at
@@ -823,11 +817,11 @@ function buildSeparatorDecorations(
   chips: readonly (ModelChip | null)[] | null,
 ): DecorationSet {
   const ranges: { from: number; to: number; deco: Decoration }[] = []
-  if (docFirstSectionRole(doc) === 'agent') {
-    const lineEnd = doc.indexOf('\n')
+  const tagLine = firstLine(doc)
+  if (firstSectionRole(tagLine) === 'agent') {
     ranges.push({
       from: 0,
-      to: lineEnd < 0 ? doc.length : lineEnd,
+      to: tagLine.length,
       deco: Decoration.replace({
         widget: chips ? new RoleSeparatorWidget(0, 'agent', chips[0] ?? null, models[0]?.durationMs ?? null) : undefined,
         inclusive: false,

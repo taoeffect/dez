@@ -134,8 +134,8 @@ const TAG_LINE = new RegExp(String.raw`^${TAG_START}(${MARKER_ATTRIBUTES})\/>$`)
 const COUNT = /^[1-9]\d*$/
 const ASSET_ID = new RegExp(`^${IMAGE_ID_SOURCE}$`)
 
-// The line of `text` that starts at offset 0, with no line break.
-function firstLine(text: string): string {
+/** The line of `text` that starts at offset 0, with no line break. */
+export function firstLine(text: string): string {
   const end = text.indexOf('\n')
   return end < 0 ? text : text.slice(0, end)
 }
@@ -192,12 +192,12 @@ export function compactionLastId(text: string): string | null {
   return tagAttributes(firstLine(text))?.lastId ?? null
 }
 
-/** The role of the first section of a conversation whose editor doc has
- *  the first line `firstDocLine`: `agent` when the line is a valid tag,
+/** The role of the first section of a conversation whose editor doc (or
+ *  first doc line) is `text`: `agent` when its first line is a valid tag,
  *  else `user`. A prompt pill on that line makes it no tag, as the line
  *  then holds the sentinels of the pill. */
-export function firstSectionRole(firstDocLine: string): Role {
-  return tagAttributes(firstDocLine) ? 'agent' : 'user'
+export function firstSectionRole(text: string): Role {
+  return tagAttributes(firstLine(text)) ? 'agent' : 'user'
 }
 
 /** The tag at the start of the content of a section, by the rule of the
