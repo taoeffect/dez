@@ -220,6 +220,13 @@ function showReplyError(tabId: string, title: string, message: string): void {
   })
 }
 
+// The model cache's entry of `model`. A model that the cache does not have
+// gets only its id, so the readers of its limits (`contextWindowOf`,
+// `imageLimitOf`, ...) take the numbers of its family.
+function modelInfoOf(model: ModelRef): Partial<ModelInfo> & Pick<ModelInfo, 'id'> {
+  return (sbp('dez.model/modelCache/model', model.providerId, model.modelId) as ModelInfo | null) ?? { id: model.modelId }
+}
+
 // Tells the user that the chat requests of a reply to `model` go with
 // `count` fewer images than the conversation has, because of the image
 // limits of the model (`RequestOptions.imageLimit` and
@@ -228,8 +235,7 @@ function showReplyError(tabId: string, title: string, message: string): void {
 // the ones with no part; with a lower limit of one message, they are also
 // the last images of a message that holds more.
 function warnImagesOverLimit(model: ActiveModel, count: number): void {
-  const cached = sbp('dez.model/modelCache/model', model.providerId, model.modelId) as ModelInfo | null
-  const info = cached ?? { id: model.modelId }
+  const info = modelInfoOf(model)
   const limit = imageLimitOf(info)
   const messageLimit = messageImageLimitOf(info)
   const were = count === 1 ? 'was' : 'were'
@@ -427,8 +433,7 @@ async function pictureBudgetOf(reply: ReplyRuntime, model: ModelRef, messages: r
   reply.imageBytes ??= imageFileSizes(messages)
   const imageBytes = await reply.imageBytes
   const rule = modelFamily(model.modelId).imageTokens
-  const cached = sbp('dez.model/modelCache/model', model.providerId, model.modelId) as ModelInfo | null
-  const info = cached ?? { id: model.modelId }
+  const info = modelInfoOf(model)
   const shown = run.results.flatMap((result) => result?.pictures ?? [])
   return {
     left: pictureBudgetLeft(
@@ -446,8 +451,7 @@ async function pictureBudgetOf(reply: ReplyRuntime, model: ModelRef, messages: r
 // rounds the same parts. Null for a model that reads no images, which
 // gets no picture.
 function replyPictureParts(base: readonly StreamMessage[], model: ModelRef): RequestImages | null {
-  const cached = sbp('dez.model/modelCache/model', model.providerId, model.modelId) as ModelInfo | null
-  const { sendImages, imageLimit = Infinity, messageImageLimit } = imageOptionsOf(cached ?? { id: model.modelId })
+  const { sendImages, imageLimit = Infinity, messageImageLimit } = imageOptionsOf(modelInfoOf(model))
   return sendImages ? newRequestImages(imageLimit - requestImageCount(base), messageImageLimit) : null
 }
 
@@ -679,9 +683,8 @@ const REPLY_ENDED: CompactionStep = { kind: 'ended' }
 function messagesBefore(sections: Section[], sectionId: string, model: ModelRef, sendTools: boolean): Pick<RequestMessages, 'messages' | 'imagesOverLimit'> | null {
   const index = sections.findIndex((section) => section.id === sectionId)
   if (index < 0) return null
-  const cached = sbp('dez.model/modelCache/model', model.providerId, model.modelId) as ModelInfo | null
   const { messages, imagesOverLimit } = sectionsToStreamMessages(sections.slice(0, index), model, {
-    ...imageOptionsOf(cached ?? { id: model.modelId }),
+    ...imageOptionsOf(modelInfoOf(model)),
     sendTools,
   })
   return { messages, imagesOverLimit }
@@ -706,11 +709,11 @@ function earlierReplyWriter(sections: Section[], replySectionId: string, replyMo
   const ref = newestReplyModel(sections, replySectionId)
   if (ref === null || sameModelRef(ref, replyModel)) return null
   const provider = getProvider(ref.providerId)
-  const cached = sbp('dez.model/modelCache/model', ref.providerId, ref.modelId) as ModelInfo | null
-  const model: ActiveModel = { ...ref, modelName: cached?.name ?? ref.modelId }
+  const info = modelInfoOf(ref)
+  const model: ActiveModel = { ...ref, modelName: info.name ?? ref.modelId }
   const sendTools = sbp('dez.model/requestSendsTools', ref) as boolean
   const messages = messagesBefore(sections, replySectionId, ref, sendTools)?.messages ?? null
-  if (!provider || effectiveRequest(cached ?? {}) !== 'chat' || messages === null) {
+  if (!provider || effectiveRequest(info) !== 'chat' || messages === null) {
     throw new ExplainedError(
       `This conversation is too large for ${replyModel.modelName}. To go on with that model, Dez must first ask the model of the newest reply, ${model.modelName}, `
       + `for notes that take the place of the conversation, and Dez cannot send a chat request to ${model.modelName}. `
@@ -719,7 +722,7 @@ function earlierReplyWriter(sections: Section[], replySectionId: string, replyMo
   }
   const settings = sbp('dez.model/settings/snapshot') as SettingsSnapshot
   const tools = sendTools ? TOOL_DEFINITIONS : []
-  const outputs = effectiveOutputs(cached ?? {})
+  const outputs = effectiveOutputs(info)
   return {
     model,
     messages,
@@ -822,8 +825,7 @@ async function compactIfDue(args: StreamStartArgs, reply: ReplyRuntime, frame: R
   firstCheck: boolean
 }): Promise<CompactionStep> {
   const { tabId, sectionId, model } = args
-  const cached = sbp('dez.model/modelCache/model', model.providerId, model.modelId) as ModelInfo | null
-  const info = cached ?? { id: model.modelId }
+  const info = modelInfoOf(model)
   const contextWindow = contextWindowOf(info)
   const rule = modelFamily(model.modelId).imageTokens
   const contextTokens = (sbp('dez.model/tabs/contextSize', tabId, model) as ContextSize | undefined)?.tokens ?? 0
