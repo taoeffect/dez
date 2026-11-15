@@ -14,7 +14,7 @@ import { appFilePath, conversationFilePath, filesIn, makeConversation, seedConve
 import { pasteImageReference, pngDataUrl, shownImages, solidPng, type ShownImage } from './harness/images'
 import { shownPlayers, WEBM_VIDEO, type ShownPlayer } from './harness/media'
 import { startMockProviderApp, takeRequest, type MockProviderApp } from './harness/mockProviderApp'
-import { mockChatPath, openAiToolCall, replyText, sendAnthropicReply, sendChatReply, sendChatText, sendToolCalls, startEventStream, toolResult, writeChatFrame, type HeldRequest, type MockProvider } from './harness/mockServer'
+import { LARGE_TOKENS, mockChatPath, openAiToolCall, replyText, sendAnthropicReply, sendChatReply, sendChatText, sendToolCalls, startEventStream, toolResult, writeChatFrame, type HeldRequest, type MockProvider } from './harness/mockServer'
 import type { E2EBrowser } from './harness/session'
 import { activeConversationId, activeTabStreaming, AT_BOTTOM_PX, editorCaret, editorDoc, focusEditor, misplacedLines, newTab, openToasts, pickModel, pressRolePill, savedPillLines, sbpCall, submit, threadSections, viewFromBottom, waitForThread, type ThreadSection } from './harness/thread'
 import { hiddenAssetNotes, hiddenPart, pressToolChip, toolChips, toolPanelPictures, type ToolChipView } from './harness/toolChips'
@@ -67,12 +67,6 @@ const CLAUDE: MockProvider = { id: 'claude', name: 'Claude Mock', modelId: 'clau
 const MODEL_KEY = `${PROVIDER.id}/${PROVIDER.modelId}`
 const CHAT_PATH = mockChatPath(PROVIDER)
 
-// The tokens of a request after which the next request of its conversation
-// is due for a compaction. The list of the mock model tells no context
-// window, and its id is of no model family, so Dez takes the window of an
-// unknown model for it, and this count is over the compaction threshold
-// of that window.
-const LARGE_TOKENS = 140_000
 // The first line of the instruction of a compaction request.
 const INSTRUCTION_START = compactionInstruction({ assetTable: '', jobs: [], cost: undefined, tools: false }).split('\n')[0]
 const NOTES_SUMMARY = 'The user wants to go on with the task.'

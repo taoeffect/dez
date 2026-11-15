@@ -2,6 +2,7 @@ import type { JsonObject } from '../../utils/json'
 import { ASSET_INFO_TOOL } from './assetInfo'
 import { ASSET_VIEW_TOOL } from './assetView'
 import { AUDIO_TOOL_DEFINITION } from './audioTool'
+import { CONVERSATION_INFO_TOOL } from './conversationInfo'
 import { IMAGE_TOOL_DEFINITION } from './imageTool'
 import { isIntermediate, JOB_INSPECT_TOOL, jobCallLabel, JOBS_LIST_TOOL, JOBS_WAIT_TOOL } from './jobs'
 import { MODEL_INFO_TOOL } from './modelInfo'
@@ -26,6 +27,7 @@ export const TOOL_DEFINITIONS: readonly ToolDefinition[] = [
   VIDEO_TOOL_DEFINITION,
   ASSET_INFO_TOOL,
   ASSET_VIEW_TOOL,
+  CONVERSATION_INFO_TOOL,
 ]
 
 /** The Dez tool with this name; undefined when no Dez tool has it. */

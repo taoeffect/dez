@@ -1,6 +1,7 @@
 import { computed, type ComputedRef } from 'vue'
 import sbp from '@sbp/sbp'
 import type { ActiveModel, Section } from '../model/chat/types'
+import type { Compactions } from '../model/chat/compaction'
 import type { ConversationCost } from '../model/chat/conversationCost'
 import type { Prompt } from '../model/state/prompts'
 import type { DefaultModel, SettingsSection, Theme } from '../model/state/settings'
@@ -11,10 +12,13 @@ import type { ModelDisplayNames } from '../model/providers/types'
 import type { Shortcut } from '../model/shortcuts'
 
 /** The cost of the active tab's conversation (undefined before its first
- *  counted request), and whether the user changed the text of a reply. */
+ *  counted request), whether the user changed the text of a reply, and the
+ *  numbers of the compactions of the conversation (undefined before its
+ *  first one), which tell the cost of its buffer. */
 export interface ActiveTabCost {
   cost: ConversationCost | undefined
   edited: boolean
+  compactions: Compactions | undefined
 }
 
 export interface ViewModelState {
@@ -86,12 +90,14 @@ export function useModelState(): ViewModelState {
     // Tab id -> busy or done, for the tab bar colors.
     tabActivity: computed(() => sbp('dez.model/tabs/activity') as Record<string, TabActivity>),
     // For the cost label of the bottom bar. Reads only the active tab's
-    // cost and mark, so a streamed token does not compute it again.
+    // cost, mark, and compaction numbers, so a streamed token does not
+    // compute it again.
     activeTabCost: computed(() => {
       const activeTabId = sbp('dez.model/tabs/activeId') as string
       return {
         cost: sbp('dez.model/tabs/cost', activeTabId) as ConversationCost | undefined,
         edited: sbp('dez.model/tabs/agentTextEdited', activeTabId) as boolean,
+        compactions: sbp('dez.model/tabs/compactions', activeTabId) as Compactions | undefined,
       }
     }),
     // Every shortcut with its effective key; changes when the user sets a key.

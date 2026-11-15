@@ -100,8 +100,8 @@ export const SOUND_STRIP_HEIGHTS: Readonly<Record<ViewDetail, number>> = { revie
  *  stays under the 5 MB image limit of the Anthropic API. */
 export const MAX_PICTURE_BYTES = 3_750_000
 
-// A count as the texts write it: `57,408`.
-function countText(count: number): string {
+/** A count as the texts for a model write it: `57,408`. */
+export function countText(count: number): string {
   return count.toLocaleString('en-US')
 }
 
@@ -710,6 +710,13 @@ function budgetLeftText(left: PictureBudget): string {
   return `${left.pictures} ${left.pictures === 1 ? 'picture' : 'pictures'}, ${tokensAndBytesText(left)}`
 }
 
+/** The line that tells a model the picture budget that its reply has
+ *  `left`: the last line of an `asset_view` result, and a line of
+ *  `conversation_info`. */
+export function pictureBudgetLeftText(left: PictureBudget): string {
+  return `Picture budget left in this reply: ${budgetLeftText(left)}.`
+}
+
 /** The note of an asset whose picture Dez did not make: the picture budget
  *  of the reply has nothing left (`overLimit`). */
 export const PICTURE_LIMIT_NOTE = 'No picture: this reply has spent its picture budget (the last line tells what is left). '
@@ -1036,6 +1043,6 @@ export function assetViewText(items: readonly AssetViewItem[], grid: AssetViewGr
     lines.push('You see each picture after the results of the calls of this round, after a line that names it. '
       + 'You see the pictures in this reply only. In a later reply, call asset_view again to see them again.')
   }
-  lines.push(`Picture budget left in this reply: ${budgetLeftText(left)}.`)
+  lines.push(pictureBudgetLeftText(left))
   return lines.join('\n')
 }

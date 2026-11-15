@@ -1,18 +1,23 @@
 import sbp from '@sbp/sbp'
+import type { Compactions } from '../model/chat/compaction'
+import type { ContextSize } from '../model/chat/contextSize'
+import type { ConversationCost } from '../model/chat/conversationCost'
 import { drawnMediaType, UnwritableImageTypeError, type DrawnImage, type ImageSize } from '../model/chat/imageDrawing'
 import type { MediaTagData } from '../model/chat/mediaTags'
 import { modelRefKey } from '../model/chat/modelRef'
 import type { ModelRef, Section, Tab } from '../model/chat/types'
 import type { ModelCache } from '../model/persistence/types'
 import type { KnownLimit } from '../model/providers/knownLimits'
+import { contextWindowOf } from '../model/providers/modelFamilies'
 import { effectiveParameterValues } from '../model/providers/modelParameters'
 import { isFreshPrice } from '../model/providers/modelPrices'
 import { toggleRows, toggleValue } from '../model/providers/modelToggles'
 import type { ProviderMediaQuote } from '../model/providers/streamTypes'
-import { effectiveRequest, type ProviderInfo, type ProviderInputImageRules, type ProviderSettingsDescriptor } from '../model/providers/types'
+import { effectiveRequest, type ModelInfo, type ProviderInfo, type ProviderInputImageRules, type ProviderSettingsDescriptor } from '../model/providers/types'
 import type { SettingsSnapshot } from '../model/state'
 import type { PictureBudget } from '../model/streams/pictureBudget'
 import { AUDIO_TOOL, audioClipId, audioClipOf, audioCutPart, audioCutRequest, audioCutResultText, audioLengthText } from '../model/tools/audioTool'
+import { conversationInfoText } from '../model/tools/conversationInfo'
 import { brightnessPlan, contrastPlan, convertPlan, cropPlan, flipPlan, IMAGE_TOOL, imageIdArgument, imageOf, imageResultText, invertPlan, rotatePlan, saturationPlan, scalePlan, unreadableImageText, unwritableFormatError, type ImagePlan } from '../model/tools/imageTool'
 import { isIntermediate, jobInspectText, jobResultText, jobsListText, jobStartedText, jobsWaitText, unknownJobText, waitedJobIds, type JobResult } from '../model/tools/jobs'
 import { parameterValuesArgument, type ModelTarget } from '../model/tools/modelArguments'
@@ -423,6 +428,29 @@ const TOOL_RUNNERS: Record<string, ToolRunner> = {
   // and a frame sheet or a wave is one short ffmpeg run.
   async asset_view (args, signal, context) {
     return assetViewResult(args, callSections(context), signal, context)
+  },
+  // The numbers of the conversation of the call, for the model of the
+  // reply (model/tools/conversationInfo.ts): the ones that the bottom bar
+  // shows the user, and the picture budget. The request of the round that
+  // made the call is in the cost and in the context size already
+  // (`runChatRounds`, stream.ts). The window and the threshold are the
+  // ones that the compaction check of the reply uses (`compactIfDue`).
+  async conversation_info (_args, _signal, context) {
+    const { providerId, modelId } = context.model
+    const contextSize = sbp('dez.model/tabs/contextSize', context.tabId, context.model) as ContextSize | undefined
+    if (!contextSize) {
+      throw new ToolError('The tab of this conversation is closed, so Dez has no numbers of it. This is not a fault of the call, and a new call gives the same answer.')
+    }
+    const model = sbp('dez.model/modelCache/model', providerId, modelId) as ModelInfo | null
+    return conversationInfoText({
+      contextSize,
+      contextWindow: contextWindowOf(model ?? { id: modelId }),
+      compactions: sbp('dez.model/tabs/compactions', context.tabId) as Compactions | undefined,
+      cost: sbp('dez.model/tabs/cost', context.tabId) as ConversationCost | undefined,
+      jobs: context.jobs.list(),
+      // A model that reads no images gets no pictures, as in asset_view.
+      pictureBudget: model?.imageInput === false ? null : await context.pictureBudget(),
+    })
   },
 }
 

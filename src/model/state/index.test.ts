@@ -2,6 +2,7 @@ import sbp from '@sbp/sbp'
 import { createPinia, setActivePinia } from 'pinia'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import type { ContextSize } from '../chat/contextSize'
+import type { Compactions } from '../chat/compaction'
 import { toolBlockText } from '../chat/toolBlocks'
 import type { ActiveModel, ContentNode, ModelRef, Section, SectionThinking, Tab, ThinkingReplay } from '../chat/types'
 import type { AppStatePayload, ConversationData, ModelCache } from '../persistence/types'
@@ -550,6 +551,23 @@ describe('dez.model/tabs/compact', () => {
     compact(tab.id, compacted(2), 90_000)
 
     expect(tabNow(tab.id).compactions).toStrictEqual({ count: 2, tokens: 240_000, cost: { usd: 0.25, requests: 2, unpriced: 1 } })
+  })
+
+  it('gives the numbers of the compactions of a tab as a copy, and nothing before its first one', () => {
+    const tab = conversation()
+    const numbers = () => sbp('dez.model/tabs/compactions', tab.id) as Compactions | undefined
+    expect(numbers()).toBeUndefined()
+    expect(sbp('dez.model/tabs/compactions', 'missing')).toBeUndefined()
+
+    sbp('dez.model/tabs/countRequestCost', tab.id, 0.5)
+    compact(tab.id, compacted(), 150_000)
+    const read = numbers() as Compactions
+    expect(read).toStrictEqual({ count: 1, tokens: 150_000, cost: { usd: 0.5, requests: 1, unpriced: 0 } })
+
+    // A change of the read numbers changes nothing in the tab.
+    read.cost.usd = 9
+    read.tokens = 1
+    expect(numbers()).toStrictEqual({ count: 1, tokens: 150_000, cost: { usd: 0.5, requests: 1, unpriced: 0 } })
   })
 
   it('changes nothing for a missing tab, and for a reply whose section is gone', () => {

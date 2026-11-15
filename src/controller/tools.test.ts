@@ -1,6 +1,7 @@
 import sbp from '@sbp/sbp'
 import { createPinia, setActivePinia } from 'pinia'
 import { afterEach, beforeEach, describe, expect, it, vi, type MockInstance } from 'vitest'
+import type { ContextSize } from '../model/chat/contextSize'
 import { UnwritableImageTypeError, type ComposedImage, type DrawnImage, type DrawnMediaType, type ImageComposition, type ImageDrawing, type ImageSize } from '../model/chat/imageDrawing'
 import { imageMediaType } from '../model/chat/images'
 import { jpegSize } from '../model/chat/jpegSize'
@@ -13,6 +14,7 @@ import type { ModelCache } from '../model/persistence/types'
 import { TooManyImagesError } from '../model/providers/clipImages'
 import { InputImageError, ProviderHttpError } from '../model/providers/errors'
 import type { KnownLimit } from '../model/providers/knownLimits'
+import { contextWindowOf } from '../model/providers/modelFamilies'
 import { PRICE_LIFETIME_MS } from '../model/providers/modelPrices'
 import type { ProviderGenerateMediaInput, ProviderGenerateMediaResult, ProviderMediaQuote, ProviderMediaQuoteInput, ProviderStreamChatInput, ProviderStreamChatResult } from '../model/providers/streamTypes'
 import { providerInfo } from '../model/providers/testing'
@@ -48,6 +50,7 @@ import {
   soundStripTooLargeNote,
   VIEW_FAILED_NOTE,
 } from '../model/tools/assetView'
+import { conversationInfoText } from '../model/tools/conversationInfo'
 import { jobsListText, jobStartedText, jobsWaitResults, jobsWaitText, NO_JOBS_TEXT, NO_OPEN_JOBS_TEXT } from '../model/tools/jobs'
 import { modelCost, modelInfoText, type ModelInfoFacts } from '../model/tools/modelInfo'
 import { IMAGE_NOT_SAVED_TEXT, INVOCATION_TEXT_CAP, invocationAnswerStateText, invocationAnswerText, modelInvocation } from '../model/tools/modelInvoke'
@@ -2869,6 +2872,115 @@ describe('dez.controller/tools/run', () => {
         expect(tooLarge.content).toContain(gridTooLargeNote(['a', 'b']))
         expect(consoleError).toHaveBeenCalledWith('The smallest grid picture of @a @b has 3750001 bytes, more than Dez sends.')
       })
+    })
+  })
+
+  describe('conversation_info', () => {
+    const BUDGET: PictureBudget = { pictures: 12, tokens: 57_408, bytes: 3 * 1024 ** 2 }
+    const WINDOW = contextWindowOf({ id: REPLY_MODEL.modelId })
+    let tabId: string
+    let jobs: ReplyJobs
+    // How many times the call asked for the picture budget.
+    let budgetReads: number
+
+    async function conversationInfo(): Promise<ToolRunResult> {
+      const context: ToolRunContext = {
+        tabId,
+        model: REPLY_MODEL,
+        jobs,
+        writeImage: () => null,
+        writeClip: () => null,
+        pictureBudget: async () => {
+          budgetReads += 1
+          return BUDGET
+        },
+      }
+      return await sbp('dez.controller/tools/run', { name: 'conversation_info', arguments: {} }, new AbortController().signal, context) as ToolRunResult
+    }
+    const sizeNow = () => sbp('dez.model/tabs/contextSize', tabId, REPLY_MODEL) as ContextSize
+
+    beforeEach(() => {
+      jobs = new ReplyJobs()
+      budgetReads = 0
+      tabId = sbp('dez.model/tabs/activeId') as string
+      sbp('dez.model/tabs/replaceSections', tabId, [
+        { id: 'u1', role: 'user', content: [{ kind: 'text', text: 'Make a film for at most 5 dollars.' }] },
+        { id: 'a1', role: 'agent', model: REPLY_MODEL, content: [{ kind: 'text', text: '' }] },
+      ])
+    })
+
+    // Ends the time limits of the jobs that a test left.
+    afterEach(() => jobs.stopAll())
+
+    it('tells the numbers of the tab of the call: the size that the provider counted, the window of the model, the cost, and the picture budget', async () => {
+      sbp('dez.model/tabs/countRequestCost', tabId, 0.25)
+      sbp('dez.model/tabs/countRequestCost', tabId, null)
+      sbp('dez.model/tabs/countRequestContext', tabId, REPLY_MODEL, 81_234)
+
+      expect(await conversationInfo()).toStrictEqual({
+        content: conversationInfoText({
+          contextSize: { tokens: 81_234, estimated: false },
+          contextWindow: WINDOW,
+          compactions: undefined,
+          cost: { usd: 0.25, requests: 2, unpriced: 1 },
+          jobs: [],
+          pictureBudget: BUDGET,
+        }),
+        isError: false,
+      })
+    })
+
+    it('tells the cost since the newest compaction and the size of the whole conversation after a compaction of the tab', async () => {
+      sbp('dez.model/tabs/countRequestCost', tabId, 2)
+      sbp('dez.model/tabs/compact', tabId, {
+        sections: [
+          { id: 'notes', role: 'agent', model: REPLY_MODEL, content: [{ kind: 'text', text: '<dez:compaction count="1"/>\nThe notes.' }] },
+          { id: 'u1', role: 'user', content: [{ kind: 'text', text: 'Make a film for at most 5 dollars.' }] },
+          { id: 'a1', role: 'agent', model: REPLY_MODEL, content: [{ kind: 'text', text: '' }] },
+        ],
+        replySectionId: 'a1',
+        tokens: 150_000,
+      })
+      sbp('dez.model/tabs/countRequestCost', tabId, 0.5)
+
+      const lines = (await conversationInfo()).content.split('\n')
+
+      expect(lines).toContain('Cost of the conversation since its newest compaction (an estimate): $0.50 for 1 request.')
+      expect(lines).toContain('Cost of the conversation so far (an estimate): $2.50 for 2 requests.')
+      expect(lines.find((line) => line.startsWith('Compactions so far: 1.'))).toContain(`${(150_000 + sizeNow().tokens).toLocaleString('en-US')} tokens`)
+    })
+
+    // The window of the model list wins over the one of the family, as in
+    // the compaction check of a reply.
+    it('counts by the model of the reply as the model list has it, and reads no picture budget for a model that reads no images', async () => {
+      sbp('dez.model/modelCache/applyProviderResult', 'venice', { ok: true, models: [{ ...MODELS('venice')[1], contextWindow: 64_000, imageInput: false }] })
+
+      const { content } = await conversationInfo()
+
+      expect(content).toContain('Context window of your model: 64,000 tokens.')
+      expect(content).toContain('gets to 41,600 tokens')
+      expect(content.split('\n').at(-1)).toBe('Picture budget: none. Your model gets no pictures.')
+      expect(budgetReads).toBe(0)
+    })
+
+    it('tells the quote of a job that still runs, which the cost of the tab does not hold yet', async () => {
+      const film = heldWork()
+      jobs.start('model_invoke', film.work, LONG)
+      film.reportCost(1.75)
+
+      const { content } = await conversationInfo()
+
+      expect(content).toContain('Cost of the conversation so far: none.')
+      expect(content).toContain('$1.75 for 1 job.')
+    })
+
+    it('gives an error result for a tab that is gone', async () => {
+      tabId = 'gone'
+
+      const result = await conversationInfo()
+
+      expect(result.isError).toBe(true)
+      expect(result.content).toContain('The tab of this conversation is closed')
     })
   })
 })

@@ -224,6 +224,13 @@ export interface MockUsage {
   usd?: number
 }
 
+/** The `promptTokens` of a request after which the next request of its
+ *  conversation is due for a compaction. The list of a mock model tells no
+ *  context window, and its id is of no model family, so Dez takes the
+ *  window of an unknown model for it, and this count is over the
+ *  compaction threshold of that window. */
+export const LARGE_TOKENS = 140_000
+
 function writeUsage (res: http.ServerResponse, { promptTokens, usd }: MockUsage): void {
   if (promptTokens === undefined && usd === undefined) return
   const prompt = promptTokens ?? 5

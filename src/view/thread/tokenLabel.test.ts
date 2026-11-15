@@ -31,4 +31,41 @@ describe('token label', () => {
     expect(tooltip(9, 200_000)).toContain('less than 1%')
     expect(tooltip(250_000, 200_000)).toContain('125%')
   })
+
+  // 65% of the window, and never more than 250,000 tokens.
+  it('tells in the tooltip at which size Dez compacts a conversation of the model, and nothing for a model with no window', () => {
+    const tooltip = (contextWindow?: number) => tokenLabelTexts({ tokens: 81_234, estimated: false }, contextWindow).tooltip
+
+    expect(tooltip(200_000)).toContain('Dez compacts the conversation when it gets to 130,000 tokens')
+    expect(tooltip(1_000_000)).toContain('when it gets to 250,000 tokens')
+    expect(tooltip()).not.toContain('compacts')
+  })
+
+  it('shows no total before the first compaction', () => {
+    expect(tokenLabelTexts({ tokens: 81_234, estimated: true }, 200_000)).not.toHaveProperty('total')
+  })
+
+  describe('after a compaction', () => {
+    const cost = { usd: 7.38, requests: 131, unpriced: 0 }
+    const texts = (estimated: boolean, count = 3) => tokenLabelTexts({ tokens: 81_234, estimated }, 200_000, { count, tokens: 1_150_000, cost })
+
+    it('shows the size of the buffer, and in parentheses the sizes at the compactions plus the buffer', () => {
+      expect([texts(true).text, texts(true).total?.text]).toEqual(['~81.2k', '(1.2M)'])
+      expect([texts(false).text, texts(false).total?.text]).toEqual(['81.2k', '(1.2M)'])
+    })
+
+    it('tells in each tooltip which number it is, with the whole number', () => {
+      const { tooltip, total } = texts(true)
+
+      expect(tooltip.split('\n')[0]).toBe('Size of this buffer: about 81,234 tokens')
+      expect(tooltip).toContain('since its last compaction')
+      expect(tooltip).toContain('The buffer fills 41% of it.')
+      expect(tooltip).toContain('Dez compacts the conversation again when the buffer gets to 130,000 tokens.')
+      expect(total?.tooltip.split('\n')[0]).toBe('Size of the whole conversation: about 1,231,234 tokens')
+      expect(total?.tooltip).toContain('each of its 3 compactions')
+      // A sum with a counted buffer is no estimate.
+      expect(texts(false).total?.tooltip.split('\n')[0]).toBe('Size of the whole conversation: 1,231,234 tokens')
+      expect(texts(false, 1).total?.tooltip).toContain('at its compaction.')
+    })
+  })
 })

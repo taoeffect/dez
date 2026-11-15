@@ -138,14 +138,17 @@ function onOverlayClick(event: MouseEvent) {
               is the conversation with the system prompt and the tools that go with it. A
               <code>~</code> before it marks an estimate of Dez. With no <code>~</code>, it is the
               count of the provider in the newest reply. Point at the number to see how much of the
-              context window of the model the conversation fills.
+              context window of the model the conversation fills, and at which size Dez compacts
+              the conversation.
             </p>
             <p>
               The amount after it is about what the conversation cost: the price of each request of
               its replies, also of the requests that a model sends to other models with a Dez tool.
               A <code>+</code> after it means that Dez knows no price for some requests, so the cost
               is higher. <code>(?)</code> means that you changed or deleted a reply: its cost stays
-              in the amount. Point at the amount to see the details.
+              in the amount. Point at the amount to see the details. A model can read the size and
+              the cost too, with a Dez tool. So you can give a model a budget, as in "spend at most
+              5 dollars".
             </p>
             <p>
               A long conversation can get too large for one request to the model. Dez then compacts
@@ -154,7 +157,10 @@ function onOverlayClick(event: MouseEvent) {
               they are. The bottom bar shows "Compacting…" while the model writes the notes, and the
               reply goes on after that. A compacted conversation starts with an Agent message that
               holds the notes, under a Compaction chip. A compaction cannot be undone: Undo does not
-              bring the earlier text back.
+              bring the earlier text back. After a compaction, the bottom bar shows two sizes and
+              two amounts, as in <code>~81.2k (1.2M) · $0.42 ($7.80)</code>: first the size and the
+              cost of the conversation since its last compaction, and after each of them, in
+              parentheses, the one of the whole conversation.
             </p>
             <p>
               Paste or drop images, audio, and video into a message. A model that makes images,

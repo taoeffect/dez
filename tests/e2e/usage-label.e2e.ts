@@ -4,9 +4,9 @@ import { Key } from 'webdriverio'
 import type { ActiveModel } from '../../src/model/chat/types'
 import { consoleErrors, resetConsoleErrors, screenshotOnFailure, typeKeys, waitForValue } from './harness/dom'
 import { startMockProviderApp, type MockProviderApp } from './harness/mockProviderApp'
-import { replyText, sendChatReply, type MockProvider } from './harness/mockServer'
+import { LARGE_TOKENS, openAiToolCall, replyText, sendChatReply, sendChatText, sendToolCalls, toolResult, type MockProvider } from './harness/mockServer'
 import type { E2EBrowser } from './harness/session'
-import { activeTabId, docPos, focusEditor, newTab, sbpCall, setCaret, submit, waitForThread } from './harness/thread'
+import { activeTabId, docPos, endedReply, focusEditor, newTab, sbpCall, setCaret, submit, waitForThread } from './harness/thread'
 
 // The usage label of the bottom bar (the token count, a dot, the cost),
 // through the real app against a mock server in this process:
@@ -18,6 +18,10 @@ import { activeTabId, docPos, focusEditor, newTab, sbpCall, setCaret, submit, wa
 // - the token count left of the cost: Dez's estimate with `~`, and the
 //   count of the provider with none;
 // - the label is the one of the active tab;
+// - after a compaction, each part shows the number of the buffer (the
+//   conversation since the compaction), then the number of the whole
+//   conversation in parentheses, each with its own tooltip and its own
+//   `+`; a model reads the same numbers with the `conversation_info` tool;
 // - in a bar with too little room, the label hides whole parts, and Submit
 //   stays in the window.
 //
@@ -64,8 +68,8 @@ describe('usage label', () => {
   // The texts of the parts of the usage label that show, left to right. A
   // part that does not fit is on a line that the label cuts off, so it is
   // not in the list; a part that shows only partly gets `(cut)`, which no
-  // test expects. The digits of an estimate (a text with `~`) show as `#`:
-  // its number changes with each change of the system prompt and the tools.
+  // test expects. The numbers of an estimate (a text with `~`) show as
+  // `#`: they change with each change of the system prompt and the tools.
   async function usageTexts (): Promise<string[]> {
     const parts = await browser.execute(() => {
       const label = document.querySelector<HTMLElement>('.bottom-bar .usage-label')
@@ -85,7 +89,55 @@ describe('usage label', () => {
     return parts
       .filter(({ onShownLine }) => onShownLine)
       .sort((a, b) => a.left - b.left)
-      .map(({ text, whole }) => `${whole ? '' : '(cut) '}${text.startsWith('~') ? text.replace(/[\d.]+/, '#') : text}`)
+      .map(({ text, whole }) => `${whole ? '' : '(cut) '}${text.startsWith('~') ? text.replace(/[\d.]+/g, '#') : text}`)
+  }
+
+  // The first line of each tooltip of the usage label: of the two parts,
+  // and of the number in parentheses of each part (`total`), which only
+  // the label of a compacted conversation has. Null for a tooltip that the
+  // label does not have.
+  async function tooltipStarts (): Promise<Record<'token' | 'tokenTotal' | 'cost' | 'costTotal', string | null>> {
+    return browser.execute(() => {
+      const start = (selector: string): string | null => document.querySelector<HTMLElement>(`.bottom-bar ${selector}`)?.title.split('\n')[0] ?? null
+      return {
+        token: start('.token-label'),
+        tokenTotal: start('.token-label .usage-label__total'),
+        cost: start('.cost-label'),
+        costTotal: start('.cost-label .usage-label__total'),
+      }
+    })
+  }
+
+  // What the label of the active tab shows while the model name next to it
+  // takes its room bit by bit, in a window of the least width: one entry
+  // for each change, to the label that shows nothing. Submit must stay in
+  // the window all the time.
+  async function textsWhileRoomGoes (): Promise<string[][]> {
+    const model = await sbpCall(browser, 'dez.model/activeModel') as ActiveModel
+    const rect = await browser.getWindowRect()
+    const pageWidth = (): Promise<number> => browser.execute(() => window.innerWidth)
+    const widePage = await pageWidth()
+    const shown: string[][] = []
+    try {
+      // The least width of the window (`minWidth`, tauri.conf.json).
+      await browser.setWindowRect(null, null, 600, rect.height)
+      await waitForValue(browser, 'narrow page', async () => await pageWidth() <= 600, true)
+      // The model name gets one narrow character longer in each step, so
+      // it takes the room of the label bit by bit, and no state of the
+      // label is left out.
+      for (let dots = 0; dots < 250 && shown.at(-1)?.length !== 0; dots += 1) {
+        await sbpCall(browser, 'dez.model/setActiveModel', model.providerId, model.modelId, `Model ${'.'.repeat(dots)}`)
+        const texts = await usageTexts()
+        if (!isDeepStrictEqual(texts, shown.at(-1))) shown.push(texts)
+        const submitInWindow = await browser.execute(() => document.querySelector('.bottom-bar-end')!.getBoundingClientRect().right <= document.documentElement.clientWidth)
+        expect(submitInWindow, `Submit in the window, with ${dots} dots in the model name`).toBe(true)
+      }
+    } finally {
+      await sbpCall(browser, 'dez.model/setActiveModel', model.providerId, model.modelId, model.modelName)
+      await browser.setWindowRect(null, null, rect.width, rect.height)
+      await waitForValue(browser, 'page width after the window size is back', pageWidth, widePage)
+    }
+    return shown
   }
 
   // Asks `question` in the active tab and answers it with `sendChatReply`;
@@ -205,35 +257,74 @@ describe('usage label', () => {
     await waitForValue(browser, 'label after new text', usageTexts, ['~#', DOT, '$0.50'])
   })
 
+  it('shows the buffer, then the whole conversation in parentheses, after a compaction, and conversation_info tells a model the same numbers', async () => {
+    // The first request is near the context window of the model, so the
+    // next request of the conversation is due for a compaction.
+    await submit(browser, 'Question')
+    await sendChatReply((await setup.mock.waitForRequest(browser)).reply, 'the model', { promptTokens: LARGE_TOKENS, usd: 0.5 })
+    await endedReply(browser)
+    await waitForValue(browser, 'label before the compaction', usageTexts, ['140k', DOT, '$0.50'])
+    expect(await tooltipStarts()).toEqual({
+      token: 'Size of this conversation: 140,004 tokens',
+      tokenTotal: null,
+      cost: 'Cost of this conversation: about $0.50',
+      costTotal: null,
+    })
+
+    await submit(browser, 'Go on.')
+    const compaction = await setup.mock.waitForRequest(browser)
+    sendChatText(compaction.reply, '## Summary\nThe notes of the work.\n', { promptTokens: LARGE_TOKENS + 1000, usd: 0.3 })
+
+    // The notes took the place of the conversation. The buffer has no
+    // counted request yet: its size is an estimate, and it cost nothing.
+    // The compaction request is in the cost of the whole conversation.
+    const first = await setup.mock.waitForRequest(browser)
+    await waitForValue(browser, 'label right after the compaction', usageTexts, ['~#k (#k)', DOT, '$0.00 ($0.80)'])
+    expect((await tooltipStarts()).cost).toBe('Cost of this buffer (the conversation since its last compaction): nothing yet')
+
+    // The model of the reply asks Dez for the numbers.
+    sendToolCalls(first.reply, [openAiToolCall('call_info', 'conversation_info', {})], { usd: 0.05 })
+    const second = await setup.mock.waitForRequest(browser)
+    const info = toolResult(second, 'call_info')
+    expect(info).toMatch(/^Compactions so far: 1\. /m)
+    expect(info.split('\n').filter((line) => line.startsWith('Cost of the conversation'))).toEqual([
+      'Cost of the conversation since its newest compaction (an estimate): $0.05 for 1 request.',
+      'Cost of the conversation so far (an estimate): $0.85 for 3 requests.',
+    ])
+    expect(info).not.toContain(setup.app.home)
+
+    // The provider counts 9 tokens for the last request of the reply, and
+    // the conversation had 141,000 at its compaction.
+    await sendChatReply(second.reply, 'the reader of the notes', { usd: 0.02 })
+    await endedReply(browser, 3)
+    await waitForValue(browser, 'label after the reply', usageTexts, ['9 (141k)', DOT, '$0.07 ($0.87)'])
+    expect(await tooltipStarts()).toEqual({
+      token: 'Size of this buffer: 9 tokens',
+      tokenTotal: 'Size of the whole conversation: 141,009 tokens',
+      cost: 'Cost of this buffer (the conversation since its last compaction): about $0.07',
+      costTotal: 'Cost of the whole conversation: about $0.87',
+    })
+
+    // The mark of an edited reply is the last text of the cost, and each
+    // sum has its own `+`: the next request has a usage chunk with no
+    // price.
+    await focusEditor(browser)
+    await setCaret(browser, await docPos(browser, replyText('the reader of the notes'), replyText('the reader of the notes').length))
+    await typeKeys(browser, ' Edited')
+    await waitForValue(browser, 'label after the edit', labelLook, { text: '$0.07 ($0.87) (?)', look: 'idle', italic: true })
+    await submit(browser, 'Next question')
+    await sendChatReply((await setup.mock.waitForRequest(browser)).reply, 'the next', { promptTokens: 5 })
+    await endedReply(browser, 5)
+    const withMarks = ['9 (141k)', DOT, '$0.07+ ($0.87+) (?)']
+    await waitForValue(browser, 'label after a reply with no price', usageTexts, withMarks)
+
+    // The two numbers of a part stay together: a part goes whole.
+    expect(await textsWhileRoomGoes()).toEqual([withMarks, ['9 (141k)'], []])
+  })
+
   it('gives way to Submit in a bar with too little room: first the cost goes, then the token count', async () => {
     await askAndAnswer('Question', 'the model', 0.5)
     await waitForValue(browser, 'label in a bar with room', usageTexts, ['9', DOT, '$0.50'])
-    const model = await sbpCall(browser, 'dez.model/activeModel') as ActiveModel
-    const rect = await browser.getWindowRect()
-    const pageWidth = (): Promise<number> => browser.execute(() => window.innerWidth)
-    const widePage = await pageWidth()
-    // What the label showed while the model name got longer; a new entry
-    // for each change.
-    const shown: string[][] = []
-    try {
-      // The least width of the window (`minWidth`, tauri.conf.json).
-      await browser.setWindowRect(null, null, 600, rect.height)
-      await waitForValue(browser, 'narrow page', async () => await pageWidth() <= 600, true)
-      // The model name gets one narrow character longer in each step, so
-      // it takes the room of the label bit by bit, and no state of the
-      // label is left out.
-      for (let dots = 40; dots < 250 && shown.at(-1)?.length !== 0; dots += 1) {
-        await sbpCall(browser, 'dez.model/setActiveModel', model.providerId, model.modelId, `Model ${'.'.repeat(dots)}`)
-        const texts = await usageTexts()
-        if (!isDeepStrictEqual(texts, shown.at(-1))) shown.push(texts)
-        const submitInWindow = await browser.execute(() => document.querySelector('.bottom-bar-end')!.getBoundingClientRect().right <= document.documentElement.clientWidth)
-        expect(submitInWindow, `Submit in the window, with ${dots} dots in the model name`).toBe(true)
-      }
-    } finally {
-      await sbpCall(browser, 'dez.model/setActiveModel', model.providerId, model.modelId, model.modelName)
-      await browser.setWindowRect(null, null, rect.width, rect.height)
-      await waitForValue(browser, 'page width after the window size is back', pageWidth, widePage)
-    }
-    expect(shown).toEqual([['9', DOT, '$0.50'], ['9'], []])
+    expect(await textsWhileRoomGoes()).toEqual([['9', DOT, '$0.50'], ['9'], []])
   })
 })

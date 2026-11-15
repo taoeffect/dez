@@ -1,6 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { effectScope, reactive, type EffectScope } from 'vue'
 import sbp from '@sbp/sbp'
+import type { Compactions } from '../../model/chat/compaction'
 import type { ContextSize } from '../../model/chat/contextSize'
 import type { ActiveModel } from '../../model/chat/types'
 import { modelFamily } from '../../model/providers/modelFamilies'
@@ -11,6 +12,7 @@ import { CONTEXT_SIZE_READ_INTERVAL_MS, useActiveContextSize } from './useActive
 const state = reactive({
   activeTabId: 'first',
   sizes: {} as Record<string, ContextSize>,
+  compactions: {} as Record<string, Compactions>,
   activeModel: null as ActiveModel | null,
   cachedModel: null as ModelInfo | null,
 })
@@ -24,6 +26,7 @@ sbp('sbp/selectors/register', {
     const size = state.sizes[tabId]
     return size && { ...size }
   },
+  'dez.model/tabs/compactions': (tabId: string) => state.compactions[tabId],
   'dez.model/activeModel': () => state.activeModel,
   'dez.model/modelCache/model': () => state.cachedModel,
 })
@@ -43,6 +46,7 @@ describe('useActiveContextSize', () => {
     vi.useFakeTimers()
     state.activeTabId = 'first'
     state.sizes = { first: { tokens: 100, estimated: false }, second: { tokens: 7000, estimated: true } }
+    state.compactions = {}
     state.activeModel = null
     state.cachedModel = null
     reads = 0
@@ -55,13 +59,30 @@ describe('useActiveContextSize', () => {
 
   it('gives the size of the active tab, and the one of another tab at once after a switch', () => {
     const shown = shownSize()
-    expect(shown.value).toStrictEqual({ tokens: 100, estimated: false, contextWindow: undefined })
+    expect(shown.value).toStrictEqual({ tokens: 100, estimated: false, contextWindow: undefined, compactions: undefined })
 
     // A change right before the switch: the read interval has not passed.
     setTokens('first', 150)
     state.activeTabId = 'second'
 
-    expect(shown.value).toStrictEqual({ tokens: 7000, estimated: true, contextWindow: undefined })
+    expect(shown.value).toStrictEqual({ tokens: 7000, estimated: true, contextWindow: undefined, compactions: undefined })
+  })
+
+  it('gives the compaction numbers of the tab with its size, also the numbers of a new compaction', () => {
+    const numbers = (count: number): Compactions => ({ count, tokens: count * 150_000, cost: { usd: count, requests: 9 * count, unpriced: 0 } })
+    state.compactions.second = numbers(2)
+    const shown = shownSize()
+
+    state.activeTabId = 'second'
+    expect(shown.value?.compactions).toStrictEqual(numbers(2))
+
+    // A compaction puts a small text into the tab, and then its numbers.
+    vi.advanceTimersByTime(CONTEXT_SIZE_READ_INTERVAL_MS + 1)
+    setTokens('second', 20)
+    state.compactions.second = numbers(3)
+    vi.advanceTimersByTime(CONTEXT_SIZE_READ_INTERVAL_MS)
+
+    expect(shown.value).toStrictEqual({ tokens: 20, estimated: true, contextWindow: undefined, compactions: numbers(3) })
   })
 
   it('reads at most once in each interval while the tab keeps changing, and once more after the last change', () => {

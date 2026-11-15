@@ -1,6 +1,7 @@
 import { effect, onScopeDispose, shallowRef, type ShallowRef } from 'vue'
 import sbp from '@sbp/sbp'
 import { debounce, throttle } from 'turtledash'
+import type { Compactions } from '../../model/chat/compaction'
 import type { ContextSize } from '../../model/chat/contextSize'
 import type { ActiveModel } from '../../model/chat/types'
 import { contextWindowOf } from '../../model/providers/modelFamilies'
@@ -8,9 +9,15 @@ import { effectiveRequest, type ModelInfo } from '../../model/providers/types'
 
 /** The context size of the active tab, with the context window of its
  *  active model, in tokens. No window: the tab has no model, or its model
- *  takes no chat request (Dez knows no window of an image model). */
+ *  takes no chat request (Dez knows no window of an image model).
+ *  `compactions` are the numbers of the compactions of the tab's
+ *  conversation (undefined before its first one), which give the size of
+ *  the whole conversation. They come from the same read as the size: a
+ *  compaction changes both, and a later read of only one of them would
+ *  show the old size with the new sum for a moment. */
 export interface ActiveContextSize extends ContextSize {
   contextWindow: number | undefined
+  compactions: Compactions | undefined
 }
 
 /** The least time between two reads of the size while the tab changes. */
@@ -37,7 +44,11 @@ export function useActiveContextSize(): Readonly<ShallowRef<ActiveContextSize | 
     stale = false
     shownTabId = sbp('dez.model/tabs/activeId') as string
     const size = sbp('dez.model/tabs/contextSize', shownTabId) as ContextSize | undefined
-    shown.value = size && { ...size, contextWindow: contextWindowOfModel(sbp('dez.model/activeModel') as ActiveModel | null) }
+    shown.value = size && {
+      ...size,
+      contextWindow: contextWindowOfModel(sbp('dez.model/activeModel') as ActiveModel | null),
+      compactions: sbp('dez.model/tabs/compactions', shownTabId) as Compactions | undefined,
+    }
   }, {
     scheduler: () => {
       stale = true

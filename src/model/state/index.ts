@@ -34,7 +34,7 @@ import {
   sectionIsEmpty,
   sectionVisibleText,
 } from '../chat/content'
-import { compactionsField } from '../chat/compaction'
+import { compactionsField, type Compactions } from '../chat/compaction'
 import { contextField, contextSize, type ContextSize } from '../chat/contextSize'
 import { agentTextEditedField, costField, withRequestCost, type ConversationCost } from '../chat/conversationCost'
 import { durationField } from '../chat/duration'
@@ -755,6 +755,14 @@ export default sbp('sbp/selectors/register', {
     }
     delete tab.context
     return true
+  },
+
+  // The numbers of the compactions of the tab's conversation (a copy);
+  // undefined before its first compaction, and for a missing tab. With
+  // them, the cost and the context size of the tab give the numbers of the
+  // buffer and of the whole conversation (`Compactions`).
+  'dez.model/tabs/compactions' (tabId: string): Compactions | undefined {
+    return compactionsField(useTabStore().tabs.find((candidate) => candidate.id === tabId)?.compactions).compactions
   },
 
   // The user changed or removed the text of a reply in the tab, so its
